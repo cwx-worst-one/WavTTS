@@ -1,0 +1,6 @@
+{
+    "rid1": {"label": "speaker1", "wav_file": "rid1.wav"},
+    "rid2": {"label": "speaker1", "wav_file": "rid2.wav"},
+    "rid3": {"label": "speaker2", "wav_file": "rid3.wav"},
+    "rid4": {"label": "speaker2", "wav_file": "rid4.wav"}
+}

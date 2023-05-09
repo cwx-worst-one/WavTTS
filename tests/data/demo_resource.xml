@@ -1,0 +1,31 @@
+<?xml version="1.0" ?>
+<service>
+	<models>
+		<model task_type="fake_model">
+			<model_path>fake_model_v1.0.model</model_path>
+			<model_param>
+				<input_names>input</input_names>
+				<output_names>output</output_names>
+				<input_num>1</input_num>
+				<output_num>1</output_num>
+				<model_key>UnifiedMusicModel</model_key>
+				<stage_seq>DemoStage</stage_seq>
+			</model_param>
+			<context>
+				<context_key>MusicBaseContext</context_key>
+			</context>
+			<submodels>
+				<submodel type="DemoStage">
+					<raw_model_files>
+						<file name="model">bm_li.onnx</file>
+						<file name="params">bm_li.json</file>
+					</raw_model_files>
+					<decoder_type>onnx</decoder_type>
+					<model_param>
+						<model_key>DecoderStage</model_key>
+					</model_param>
+				</submodel>
+			</submodels>
+		</model>
+	</models>
+</service>

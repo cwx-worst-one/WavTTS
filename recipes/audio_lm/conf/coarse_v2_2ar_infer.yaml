@@ -1,0 +1,94 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+hp: !include:hparams.yaml
+
+seed: 42
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+run_opts:
+    log_dir: logs
+    fast_dev_run: False
+    tensorboard_dir: !ref <run_opts[log_dir]>
+    log_name: coarse
+    version: 0.2
+    precision: 32
+    accelerator: auto
+    strategy: ddp_find_unused_parameters_false
+    cache_dir: .cache
+    profiler: simple
+    flash_attn: null
+    batch_size: 2
+    num_workers: 8
+
+predict_dataset: !new:recipes.audio_lm.datasets.AudioPathDataset
+    dir: hdfs://haruna/home/byte_speech_sv/user/dj/tmp/samantha/tmp_audo
+    cache_dir: !ref <run_opts[cache_dir]>
+
+
+# dataloader configuration
+predict_dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <predict_dataset>
+    batch_size: !ref <run_opts[batch_size]>
+    num_workers: !ref <run_opts[num_workers]>
+    shuffle: False
+    drop_last: False
+    pin_memory: False
+
+# datamodule configuration
+pl_datamodule: !new:recipes.audio_lm.lit_modules.DataModule
+    predict_dataloader: !ref <predict_dataloader>
+
+pl_module: !new:recipes.audio_lm.lit_modules.v2.lit_coarse_infer_2ar.CoarseInfer
+    extra_params: !ref <hp>
+    output_path: hdfs://haruna/home/byte_speech_sv/user/dj/tmp/samantha/output
+    cache_dir: !ref <run_opts[cache_dir]>
+    required_modules:
+        mulan:
+            - hdfs://haruna/home/byte_speech_sv/user/litang/mulan/2023-03-11_audio_emb_asset6/mulan_2023-02-24_v3.pt
+            - !name:recipes.audio_lm.requires.model_initializer.init_mulan
+              cache_dir: !ref <run_opts[cache_dir]>
+        mulan_centers:
+            - hdfs://haruna/home/byte_speech_sv/user/litang/mulan/2023-03-11_audio_emb_asset6/kmeans_minibatch_codebook-1024x12.npy
+            - !name:recipes.audio_lm.requires.model_initializer.init_mulan_centers
+              cache_dir: !ref <run_opts[cache_dir]>
+        coarse:
+            - hdfs://haruna/home/byte_speech_sv/user/dj/tmp/samantha/2ar_coarse.lightling.ckpt
+            - !name:recipes.audio_lm.requires.model_initializer.init_coarse_2ar
+              cache_dir: !ref <run_opts[cache_dir]>
+        fine:
+            - hdfs://haruna/home/byte_speech_sv/user/dj/tmp/samantha/fine_rvq.lightling.ckpt
+            - !name:recipes.audio_lm.requires.model_initializer.init_fine_dummy
+              cache_dir: !ref <run_opts[cache_dir]>
+        w2v:
+            - hdfs://haruna/home/byte_speech_sv/user/litang/mulan/2023-03-11_audio_emb_asset6/
+            - !name:recipes.audio_lm.requires.model_initializer.init_w2v
+              cache_dir: !ref <run_opts[cache_dir]>
+        sound_stream:
+            - hdfs://haruna/home/byte_speech_sv/user/wangxin.colin/pretrained/sound_stream_1000k/
+            - !name:recipes.audio_lm.requires.model_initializer.init_sound_stream_decoder
+              cache_dir: !ref <run_opts[cache_dir]>
+
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[tensorboard_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+
+trainer: !new:pytorch_lightning.Trainer
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: 'auto'
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False  # warning: setting to True can cause slowdowns
+    enable_model_summary: True
+    log_every_n_steps: 1
+    strategy: !ref <run_opts[strategy]>
+    max_epochs: 1
+    precision: !ref <run_opts[precision]>

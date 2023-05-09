@@ -1,0 +1,73 @@
+---
+
+sample_rate: 24000
+source_sample_rate: 24000
+hop_size: 480
+fmin: 0
+fmax: 12000
+num_mels: 80
+
+n_fft: 2048
+win_size: 1200
+frame_shift_ms: null
+use_lws: False
+signal_normalization: True
+allow_clipping_in_normalization: True
+symmetric_mels: True
+max_abs_value: 4.
+preemphasis: 0.85
+min_level_db: -100
+ref_level_db: 20
+min_db: -115
+power: 1.5
+griffin_lim_iters: 60
+rescale: True
+rescaling_max: 0.999
+trim_silence: True
+trim_fft_size: 512
+trim_hop_size: 128
+trim_top_db: 30
+clip_mels_length: True
+num_silent_frames: 4
+max_mel_frames: 10000
+
+# vocoder training setting
+mel_win: 64
+batch_size: 16
+opt_type: 'Adam'
+g_learning_rate: 0.0002
+d_learning_rate: 0.0002
+warmup_g_steps: 2000  # warmup for GAN
+max_steps: 2000000  # 2M steps
+lambda_g_loss: 1.0
+lambda_fm_loss: 1.0
+lambda_quant_loss: 1.0
+lambda_wav: 0
+loss_type: "stft"  # ['mel', 'stft']
+
+# model setting
+model_type: "bytewave_wn_causal"  # ['bytewave' 'bytewave_wn' 'bytewave_wn_causal']
+out_channels: 1
+decoder_initial_channel: 768
+encoder_initial_channel: 16
+upsample_rates: [10, 6, 4, 2]
+down_rates: [2, 2, 10, 12]
+use_sine: True
+trunc_noise: False
+use_sn: False
+use_mpd: True
+use_mbd: True
+use_sine_mbd: True
+fmap_depth: 2
+LRELU_SLOPE: 0.1
+smaller_encoder: True
+
+# quant setting
+quant_token_num: 1024
+quant_token_dim: 256  # encoder_initial_channel * 16
+quant_beta: 0.25
+num_res: 12
+
+# LM setting
+num_coarse: 4
+num_fine: 8

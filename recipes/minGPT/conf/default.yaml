@@ -1,0 +1,98 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+# data configuration
+data_dir: './data'
+
+# running parameters
+log_dir: 'logs'
+run_opts:
+    fast_dev_run: False
+    tensorboard_dir: !ref <log_dir>
+    log_name: 'minGPT'
+    version: '0.1'
+    precision: 16
+    num_workers: 4
+    accelerator: 'auto'
+    strategy: 'deepspeed_stage_3_offload'
+
+seed: 0
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+# training parameters
+training_params:
+    num_epochs: 10
+    batch_size: 1
+    block_size: 128
+    n_layer: 15
+    n_head: 16
+    n_embd: 3072
+    learning_rate: 0.0006
+    warmup_tokens: 10240
+    weight_decay: 0.001
+
+# dataset configuration
+train_dataset: !new:recipes.minGPT.dataset.chardataset.CharDataset
+    data_dir: !ref <data_dir>
+    block_size: !ref <training_params[block_size]>
+
+# dataloader configuration
+train_dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <train_dataset>
+    batch_size: !ref <training_params[batch_size]>
+    num_workers: !ref <run_opts[num_workers]>
+
+# datamodule configuration
+pl_datamodule: !new:recipes.minGPT.modules.pl_datamodule.GPTDataModule
+    train_dataloader: !ref <train_dataloader>
+
+# training module configuration
+pl_module: !new:recipes.minGPT.modules.pl_module.GPT
+    dataset: !ref <train_dataset>
+    weight_decay: !ref <training_params[weight_decay]>
+    betas: (0.9, 0.95)
+    learning_rate: !ref <training_params[learning_rate]>
+    n_embd: !ref <training_params[n_embd]>
+    block_size: !ref <training_params[block_size]>
+    n_layer: !ref <training_params[n_layer]>
+    n_head: !ref <training_params[n_head]>
+    embd_pdrop: 0.1
+    resid_pdrop: 0.1
+    attn_pdrop: 0.1
+
+cuda_callback: !new:samantha.callbacks.memory.CUDACallback
+
+lr_decay_callback: !new:recipes.minGPT.modules.callback.LearningRateDecayCallback
+    learning_rate: !ref <training_params[learning_rate]>
+    dataset: !ref <train_dataset>
+    block_size: !ref <training_params[block_size]>
+    warmup_tokens: !ref <training_params[warmup_tokens]>
+
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[tensorboard_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+
+trainer: !new:pytorch_lightning.Trainer
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: 'auto'
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: True
+    strategy: !ref <run_opts[strategy]>
+    enable_model_summary: True
+    logger: !ref <logger>
+    log_every_n_steps: 100
+    gradient_clip_val: 0.1
+    max_epochs: !ref <training_params[num_epochs]>
+    precision: !ref <run_opts[precision]>
+    callbacks:
+        - !ref <cuda_callback>
+        - !ref <lr_decay_callback>

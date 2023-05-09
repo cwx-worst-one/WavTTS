@@ -1,0 +1,13 @@
+.idea
+.wav
+logdir*
+*.py[cod]
+.DS_Store
+outputs
+__MACOSX
+*.ckpt
+*.pt
+*.onnx
+*.pyc
+__pycache__
+*.jsonl

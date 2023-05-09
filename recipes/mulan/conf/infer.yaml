@@ -1,0 +1,91 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 2023
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+# data configuration
+save_path: logs
+hdfs_save_path: null  # hdfs://harunava/home/byte_speech_sv/jingsonggao
+filename: music_emb
+
+# running parameters
+ckpt_path: null
+
+log_dir: logs
+run_opts:
+    fast_dev_run: False
+    tensorboard_dir: !ref <log_dir>
+    log_name: MuLan
+    log_every_n_steps: 10
+    version: AEKP
+    precision: 32
+    num_workers: 4
+    accelerator: auto
+    strategy: ddp_find_unused_parameters_false
+    enable_activation_ckpt: True
+    num_steps: 60000
+    val_check_interval: 800
+    batch_size: 36
+    sample_buffer_size: 600
+    val_batch_size: 128
+    predict_batch_size: 128
+    spec_aug: True
+    text_encoder: bert
+    music_encoder: ast
+    learning_rate: 4.e-5
+    weight_decay: 5.e-4
+    temperature: learnable  # temperature in Multiview Coding loss
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+predict_dataset: !new:recipes.mulan.dataset.infer.MuLanInferDataset
+    meta_path: null
+    batch_size: !ref <run_opts[predict_batch_size]>
+
+predict_dataloader: !new:webdataset.WebLoader
+    dataset: !ref <predict_dataset>
+    num_workers: 4
+    batch_size: null
+
+# datamodule configuration
+pl_datamodule: !new:recipes.mulan.modules.pl_datamodule.MuLanInferDataModule
+    predict_dataloader: !ref <predict_dataloader>
+
+# model configuration
+pl_module: !new:recipes.mulan.modules.pl_module.LitMuLanModule
+    music_encoder: !ref <run_opts[music_encoder]>
+    text_encoder: !ref <run_opts[text_encoder]>
+    spec_aug: !ref <run_opts[spec_aug]>
+    lr: !ref <run_opts[learning_rate]>
+    weight_decay: !ref <run_opts[weight_decay]>
+    temperature: !ref <run_opts[temperature]>
+
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[tensorboard_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+
+callbacks:
+    - !new:recipes.mulan.modules.callbacks.MuLanInferWriter
+      save_path: !ref <save_path>
+      hdfs_save_path: !ref <hdfs_save_path>
+      filename: !ref <filename>
+
+trainer: !new:pytorch_lightning.Trainer
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: auto
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: True
+    strategy: !ref <run_opts[strategy]>
+    enable_model_summary: True
+    use_distributed_sampler: False
+    logger: !ref <logger>
+    callbacks: !ref <callbacks>
+    precision: !ref <run_opts[precision]>

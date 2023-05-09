@@ -1,0 +1,3 @@
+nltk
+pybind11
+flash-attn

@@ -1,0 +1,211 @@
+---
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+data_params:
+    sample_rate: 24000
+    audio_segment_length_seconds: 10
+    frame_rate: 80
+    n_output_frames:
+        800  # NOTE: update with audio_segment_length_seconds * frame_rate
+    n_audio_samples:
+        240000  # NOTE: update with audio_segment_length_seconds * sample_rate
+    n_validation_samples: 300
+    shard_lists:
+        [
+            "/mnt/bn/audio-diffusion/data/karaoke_for_singsong_mulan149.txt",
+            "/mnt/bn/audio-diffusion/data/resso_mss_mulan149_shard_list.v1.txt",
+        ]
+    shard_list_probs: [0.5, 0.5]
+    semantic_frame_rate: 25
+    n_semantic_frames: 250
+
+# training parameters
+training_params:
+    max_steps: 1000000
+    batch_size: 16
+    valid_batch_size: 1
+    base_lr: 0.0001
+    warmup_steps: 5000
+    hold_steps: 50000
+    decay_steps: 5000000
+    weight_decay: 0.0000001
+    shuffle_buffer: 150
+
+ckpt_path: null
+
+# running parameters
+log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+run_opts:
+    fast_dev_run: False
+    tensorboard_dir: !ref <log_dir>
+    log_name: "diffusion"
+    version: "DAG_700M_singsong"
+    precision: 32
+    num_workers: 8
+    accelerator: "auto"
+
+seed: 0
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+demo_params:
+    num_demos: 1
+    max_demos_per_step: 1
+
+audio_transforms:
+    !new:recipes.audio_diffusion.modules.transforms.diffusion.SingSongTransforms
+    audio_key: "acc.npy"
+    audio_key2: "vocal.npy"
+    semantic_key: "vocal_semantic_emb.npy"
+    semantic_key2: "acc_semantic_emb.npy"
+    sample_range_key: "acc_sample_range.npy"
+    sample_range_key2: "vocal_sample_range.npy"
+    sample_rate: !ref <data_params[sample_rate]>
+    soundstream_frame_rate: !ref <data_params[frame_rate]>
+    semantic_frame_rate: !ref <data_params[semantic_frame_rate]>
+    n_samples: !ref <data_params[n_audio_samples]>
+    include_emb: False
+    min_volume_threshold: 0.05  # approx. -25db peak RMS
+    white_noise_amplitude_stddev: 0.00  # Original paper sets it to 0.01
+    vocal_relative_gain_threshold: 1.77
+
+preprocessor:
+    !new:recipes.audio_diffusion.modules.preprocess.WebDatasetBufferPreprocessor
+    sample_rate: !ref <data_params[sample_rate]>
+    transforms: !ref <audio_transforms>
+
+train_web_dataset:
+    !new:recipes.audio_diffusion.modules.datasets.webdataset_ext.MultiWebDataset
+    urls: !apply:recipes.audio_diffusion.conf.parse_shard_list.get_train_shards
+        - !ref <data_params[shard_lists]>
+    probs:
+        - !ref <data_params[shard_list_probs]>
+
+validation_web_dataset: !new:webdataset.WebDataset
+    urls:
+        !apply:recipes.audio_diffusion.conf.parse_shard_list.get_validation_shards
+        - !ref <data_params[shard_lists]>
+    nodesplitter: !name:recipes.audio_diffusion.helper.return_self
+    shardshuffle: True
+
+train_dataset: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
+    wds_dataset: !ref <train_web_dataset>
+    pipeline:
+        - !name:webdataset.WebDataset.shuffle
+          - !ref <training_params[shuffle_buffer]>
+        - !name:webdataset.WebDataset.decode
+        - !name:webdataset.WebDataset.compose
+          - !name:recipes.audio_diffusion.modules.preprocess.WebDatasetBufferPreprocessor.train_buffer_preprocessor
+            - !ref <preprocessor>
+        - !name:webdataset.WebDataset.to_tuple
+          - "acc_semantic"
+          - "vocal_semantic"
+        - !name:webdataset.WebDataset.batched
+          - !ref <training_params[batch_size]>
+
+validation_dataset: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
+    wds_dataset: !ref <validation_web_dataset>
+    pipeline:
+        - !name:webdataset.WebDataset.shuffle
+          - !ref <training_params[shuffle_buffer]>
+        - !name:webdataset.WebDataset.decode
+        - !name:webdataset.WebDataset.compose
+          - !name:recipes.audio_diffusion.modules.preprocess.WebDatasetBufferPreprocessor.train_buffer_preprocessor
+            - !ref <preprocessor>
+        - !name:webdataset.WebDataset.to_tuple
+          - "acc_semantic"
+          - "vocal_semantic"
+        - !name:webdataset.WebDataset.batched
+          - !ref <training_params[valid_batch_size]>
+        - !name:webdataset.WebDataset.with_epoch
+          - !ref <data_params[n_validation_samples]>
+
+pl_datamodule: !new:recipes.audio_diffusion.modules.pl_datamodule.WebDataModule
+    train_dataset: !ref <train_dataset>
+    validation_dataset: !ref <validation_dataset>
+    batch_size: !ref <training_params[batch_size]>
+    num_workers: !ref <run_opts[num_workers]>
+    pin_memory: True
+
+model: !new:recipes.audio_diffusion.modules.model_types.DAG_unet.DAGNext
+    num_signal_channels: 1024
+    downsampling_factors: [1, 2, 5]
+    hidden_sizes: [1024, 2048, 3072]
+    middle_bypassed: [False, False, False]
+    resampling_block_kernel_sizes: [15, 15, 15]
+    resampling_block_depths: [8, 4, 2]
+    text_cond_dim: 1024
+    text_cond_hidden_dim: 1024
+    enable_text_cond_pos_encoding: True
+    text_cond_noise_coeff: 0.000
+
+# training module configuration
+optimizer_class: !name:torch.optim.AdamW
+    lr: !ref <training_params[base_lr]>
+    weight_decay: !ref <training_params[weight_decay]>
+    betas: (0.9, 0.98)
+
+scheduler_class: !name:recipes.audio_diffusion.modules.lr_scheduler.TriStageLR
+    warmup_steps: !ref <training_params[warmup_steps]>
+    hold_steps: !ref <training_params[hold_steps]>
+    decay_steps: !ref <training_params[decay_steps]>
+
+pl_module: !new:recipes.audio_diffusion.modules.pl_module.DiffusionLitModule
+    model: !ref <model>
+    optimizer_class: !ref <optimizer_class>
+    scheduler_class: !ref <scheduler_class>
+    diffusion_scheme:
+        !new:recipes.audio_diffusion.modules.diffusion_schemes.VDiffusionScheme
+
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[tensorboard_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+
+checkpoint: !new:pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: "loss/valid"
+    mode: "min"
+    save_last: True
+
+lr_monitor: !new:pytorch_lightning.callbacks.LearningRateMonitor
+    logging_interval: "step"
+
+trainer: !new:pytorch_lightning.Trainer
+    strategy: "ddp"
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: "auto"
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: False
+    log_every_n_steps: 20
+    max_steps: !ref <training_params[max_steps]>
+    precision: !ref <run_opts[precision]>
+    accumulate_grad_batches: 1
+    auto_scale_batch_size: None
+    gradient_clip_val: 10.0
+    val_check_interval: 1000
+    check_val_every_n_epoch: null  # required now that we use an IterableDataset
+    track_grad_norm: 2
+    callbacks:
+        - !ref <checkpoint>
+        - !ref <lr_monitor>
+
+################################################################################
+##########                    PREDICTION CONFIGURATION                ##########
+################################################################################
+# TBD
+
+################################################################################
+##########                      EXPORT CONFIGURATION                  ##########
+################################################################################
+# TBD
+
+profiler:
+    enabled: False
+    max_steps: 30

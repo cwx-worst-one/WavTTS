@@ -1,0 +1,15 @@
+hparams:
+    dist_backend: "nccl"
+    dist_url: "tcp://localhost:12345"
+    batch_size: 10
+    opt_type: 'AdamW'
+    learning_rate: 0.0003
+    max_steps: 100000  # 2M steps
+    warmup_steps: 20000
+    audio_token_dedup: true
+    max_token_lens: 2048
+    audio_tokens_num: 1000
+    mask_input_for_loss: false
+    task: joint
+    text_tokenizer: "char"
+    bpe_tokenizer_file: "/opt/tiger/bytegen/models/valle/text_token/train960_bpe1000.json"

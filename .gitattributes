@@ -1,0 +1,6 @@
+tests/samples/audios/test_audio1.wav filter=lfs diff=lfs merge=lfs -text
+tests/data/audios/44k_3ch.wav filter=lfs diff=lfs merge=lfs -text
+tests/data/audios/test_audio1.wav filter=lfs diff=lfs merge=lfs -text
+tests/samples/audios/test_audio2.mp3 filter=lfs diff=lfs merge=lfs -text
+llm/sami_tasks/examples/speech_e2e/data/dev-clean_mhubert-km1000.jsonl filter=lfs diff=lfs merge=lfs -text
+**/*.audio filter=lfs diff=lfs merge=lfs -text

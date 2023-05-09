@@ -1,0 +1,69 @@
+---
+
+hp: !include:hparams_x480.yaml
+
+seed: 1995
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+run_opts:
+    log_dir: logs
+    fast_dev_run: False
+    tensorboard_dir: !ref <run_opts[log_dir]>
+    log_name: infer
+    version: 0.2
+    precision: 32
+    accelerator: auto
+    strategy: ddp_find_unused_parameters_false
+    cache_dir: .cache
+    profiler: simple
+    flash_attn: null
+    batch_size: 2
+    num_workers: 8
+
+predict_dataset: !new:recipes.audio_lm.datasets.dataset.InferenceDataset
+    csv_path: hdfs://haruna/home/byte_speech_sv/user/wangxin.colin/google_prompts_small.csv
+
+# dataloader configuration
+predict_dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <predict_dataset>
+    batch_size: !ref <run_opts[batch_size]>
+    num_workers: !ref <run_opts[num_workers]>
+    shuffle: False
+    drop_last: False
+    pin_memory: False
+
+# datamodule configuration
+pl_datamodule: !new:recipes.audio_lm.lit_modules.DataModule
+    predict_dataloader: !ref <predict_dataloader>
+
+pl_module: !new:recipes.audio_lm.lit_modules.infer.MusicLMInfer
+    extra_params:
+        from_cli: False
+        mulan_version: "247"
+        mulan_centers: hdfs://haruna/home/byte_speech_sv/user/dongguo/aigc/mulan_gpt/kmeans_minibatch_codebook-mulan249-1024x12.npy
+        AudioLM_semantic: hdfs://haruna/home/byte_speech_sv/zongyu.yin/ckpts/musiclm/semantic_sparse_mulan247_429M_epoch=22-step=88000-accu=36.77.ckpt
+        AudioLM_coarse: hdfs://haruna/home/byte_speech_sv/zongyu.yin/ckpts/musiclm/coarse_sparse_mulan247_434M_epoch=08-step=131000-accu=29.93.ckpt
+        AudioLM_fine: hdfs://haruna/home/byte_speech_sv/user/litang/musiclm/2023-04-03_fine_v4/checkpoints/epoch=03-step=194000-accu=16.34.ckpt
+        SoundStream: hdfs://haruna/home/byte_speech_sv/user/litang/vqgan_dev/2023-03-24_ss_dev_stft_x480_small_encoder/sound_stream_190k/ss_decoder_0.pt
+        MuLan: hdfs://haruna/home/byte_speech_sv/user/dongguo/aigc/mulan_gpt/mulan-step=033600-median_rank_0=247-kaggle.ckpt
+        num_coarse: !ref <hp[num_coarse]>
+        num_fine: !ref <hp[num_fine]>
+        num_res: !ref <hp[num_res]>
+        output_wav_dir: /mnt/bn/data-storage/output_wav
+
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[tensorboard_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+
+trainer: !new:pytorch_lightning.Trainer
+    fast_dev_run: False
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: auto
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    enable_model_summary: True
+    log_every_n_steps: 1
+    strategy: !ref <run_opts[strategy]>
+    max_epochs: 1
+    precision: !ref <run_opts[precision]>

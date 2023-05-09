@@ -1,0 +1,172 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+# data configuration
+data_dir: './data'
+
+# running parameters
+run_opts:
+    fast_dev_run: False
+    tensorboard_dir: 'logs'
+    log_name: 'sample_project'
+    version: '0.1'
+    precision: 32
+    num_workers: 4
+    accelerator: 'auto'
+
+seed: 0
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+ckpt_path: null
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+# training parameters
+training_params:
+    num_classes: 10
+    num_epochs: 2
+    batch_size: 128
+    learning_rate: 0.01
+    weight_decay: 0.001
+
+# dataset configuration
+transform_crop: !new:torchvision.transforms.RandomCrop
+    size: 32
+    padding: 4
+transform_flip: !new:torchvision.transforms.RandomHorizontalFlip
+transform_tensor: !new:torchvision.transforms.ToTensor
+transform_normalize: !new:torchvision.transforms.Normalize
+    mean:
+        - 0.4914
+        - 0.4822
+        - 0.4465
+    std:
+        - 0.2471
+        - 0.2435
+        - 0.2616
+
+train_preprocess: !new:torchvision.transforms.Compose
+    transforms: [
+        !ref <transform_crop>,
+        !ref <transform_flip>,
+        !ref <transform_tensor>,
+        !ref <transform_normalize>,
+    ]
+
+val_preprocess: !new:torchvision.transforms.Compose
+    transforms: [
+        !ref <transform_tensor>,
+        !ref <transform_normalize>,
+    ]
+
+train_dataset: !new:torchvision.datasets.FakeData
+    size: 100
+    transform: !ref <train_preprocess>
+
+val_dataset: !new:torchvision.datasets.FakeData
+    size: 10
+    transform: !ref <train_preprocess>
+
+
+# dataloader configuration
+train_dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <train_dataset>
+    batch_size: !ref <training_params[batch_size]>
+    num_workers: !ref <run_opts[num_workers]>
+    shuffle: True
+    drop_last: True
+    pin_memory: True
+
+val_dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <val_dataset>
+    batch_size: !ref <training_params[batch_size]>
+    num_workers: !ref <run_opts[num_workers]>
+    drop_last: True
+    pin_memory: True
+
+test_dataloader: !ref val_dataloader
+
+predict_dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <val_dataset>
+    batch_size: 1
+    num_workers: !ref <run_opts[num_workers]>
+    pin_memory: True
+
+
+# datamodule configuration
+pl_datamodule: !new:recipes.sample_project.modules.pl_datamodule.CIFAR10DataModule
+    train_dataloader: !ref <train_dataloader>
+    val_dataloader: !ref <val_dataloader>
+    test_dataloader: !ref <val_dataloader>
+    predict_dataloader: !ref <predict_dataloader>
+
+
+# model configuration
+model: !new:recipes.sample_project.modules.model.CNNModel
+    input_names: [img_tensor]
+    output_names: [label]
+    stages:
+        - !name:recipes.sample_project.modules.model.CNNModelStage
+          takes: [img_tensor]
+          provides: [label]
+          num_classes: !ref <training_params[num_classes]>
+          serialize_opts:
+              io_meta:
+                  image_tensor: [b, 3, 224, 224]
+                  label: [b, 10]
+              sample_input_shape:
+                  image_tensor: [10, 3, 224, 224]
+              graph_path: cnn_model_stage.onnx
+              tolerance: 1e-5
+
+# training module configuration
+optimizer_class: !name:torch.optim.SGD
+    lr: !ref <training_params[learning_rate]>
+    weight_decay: !ref <training_params[weight_decay]>
+    momentum: 0.9
+    nesterov: True
+
+scheduler_class: !name:torch.optim.lr_scheduler.StepLR
+    step_size: 100
+    gamma: 0.5
+
+
+pl_module: !new:recipes.sample_project.modules.pl_module.LitCIFAR10Module
+    model: !ref <model>
+    optimizer_class: !ref <optimizer_class>
+    scheduler_class: !ref <scheduler_class>
+    criterion: !new:torch.nn.CrossEntropyLoss
+    accuracy: !new:torchmetrics.Accuracy
+        task: multiclass
+        num_classes: 10
+
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[tensorboard_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+
+checkpoint: !new:pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: 'acc/val'
+    mode: 'max'
+    save_last: True
+
+lr_monitor: !new:pytorch_lightning.callbacks.LearningRateMonitor
+    logging_interval: 'step'
+
+trainer: !new:pytorch_lightning.Trainer
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: 'auto'
+    deterministic: False  # warning: setting to True can cause slowdowns
+    enable_model_summary: False
+    log_every_n_steps: 1
+    max_epochs: !ref <training_params[num_epochs]>
+    precision: !ref <run_opts[precision]>
+    callbacks:
+        - !ref <checkpoint>
+        - !ref <lr_monitor>

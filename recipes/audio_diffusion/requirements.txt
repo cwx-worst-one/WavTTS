@@ -1,0 +1,6 @@
+einops
+pykeops
+frechet_audio_distance
+h5py
+a-unet
+deepspeed
