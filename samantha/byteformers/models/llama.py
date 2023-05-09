@@ -133,7 +133,10 @@ class Llama(nn.Module):
         super().__init__()
         self.config = config
         self.transformer = LlamaModel(config)
-        self.lm_head = nn.Linear(config.n_embd, config.logit_num, bias=False)
+        output_dim = config.logit_num
+        if output_dim is None:
+            output_dim = config.vocab_size
+        self.lm_head = nn.Linear(config.n_embd, output_dim, bias=False)
 
     def _init_weights(self, module: nn.Module) -> None:
         self.transformer._init_weights(module)

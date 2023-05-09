@@ -14,7 +14,7 @@ TTQUERY_URLS = [
 
 class TTQueryDataset(IterableDataset):
     def __init__(self, mode="train", **kwargs):
-        self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+        self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
         self.dataset = (
             wds.WebDataset(TTQUERY_URLS, **kwargs)
             .decode()

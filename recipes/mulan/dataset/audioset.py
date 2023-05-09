@@ -14,7 +14,7 @@ AUDIOSET_URLS = [
 
 class AudioSetDataset(IterableDataset):
     def __init__(self, mode="train", **kwargs):
-        self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+        self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
         self.dataset = (
             wds.WebDataset(AUDIOSET_URLS, **kwargs)
             .decode()

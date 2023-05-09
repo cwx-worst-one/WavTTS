@@ -7,7 +7,7 @@ from einops import rearrange, repeat
 from pytorch_lightning.utilities import grad_norm
 from torch.distributions.one_hot_categorical import OneHotCategorical
 
-from samantha.byteformers import Llama, LlamaConfig
+from samantha.stages.module.byteformers.models import Llama, LlamaConfig
 
 
 def generate_offsets(

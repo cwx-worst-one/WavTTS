@@ -1,5 +1,6 @@
 import random
 
+import numpy as np
 import webdataset as wds
 from torch.utils.data import IterableDataset
 from transformers import AutoTokenizer
@@ -14,13 +15,13 @@ PLAYLIST_URLS = [
 
 class PlaylistDataset(IterableDataset):
     def __init__(self, mode="train", **kwargs):
-        self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+        self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
         self.dataset = (
             wds.WebDataset(PLAYLIST_URLS, **kwargs)
             .decode()
             .map(utils.process_audio)
             .map(self._process_text)
-            .map(self._process_aed)
+            .map(self._aed_filter)
             .map(utils.tokenize_text(self.tokenizer, mode))
         )
 
@@ -36,10 +37,14 @@ class PlaylistDataset(IterableDataset):
             return None
         return data
 
-    def _process_aed(self, data):
-        # TODO add aed logic
-        # aed_result = data["aed.npy"]
-        return data
+    def _aed_filter(self, data):
+        aed = data["aed.npy"]
+        # class label: https://github.com/qiuqiangkong/audioset_tagging_cnn/blob/master/metadata/class_labels_indices.csv
+        aed_music_related = np.concatenate([aed[27:30], aed[32:38], aed[137:282]])
+        if np.max(aed_music_related) > 0.4:
+            return data
+        else:
+            return None
 
     def __iter__(self):
         return iter(self.dataset)

@@ -105,3 +105,52 @@ class RotaryEmbedding(torch.nn.Module):
             apply_rotary_pos_emb(q, self._cos_cached, self._sin_cached),
             apply_rotary_pos_emb(k, self._cos_cached, self._sin_cached),
         )
+
+
+class SeerEmbedding(RotaryEmbedding):
+    def __init__(
+        self, dim_model: int, n_priors: int, n_seers: int, seq_len: int, *_, **__
+    ):
+        super().__init__(dim_model, *_, **__)
+        self.n_priors = n_priors
+        self.n_seers = n_seers
+        self.seq_len = seq_len
+
+        t = torch.arange(self.n_priors + self.seq_len, dtype=torch.float32)
+        t[self.n_priors :] = (
+            t[self.n_priors :]
+            .reshape(self.n_seers, -1)
+            .transpose(1, 0)
+            .reshape(self.seq_len)
+        )
+        freqs = torch.einsum("i,j->ij", t, self.inv_freq)
+        emb = torch.cat((freqs, freqs), dim=-1)
+        self._cos_cached = emb.cos()[None, None, :, :]
+        self._sin_cached = emb.sin()[None, None, :, :]
+
+    def _update_cos_sin_tables(self, x):
+        self._cos_cached = self._cos_cached.to(dtype=x.dtype)
+        self._sin_cached = self._sin_cached.to(dtype=x.dtype)
+        self._cos_cached = self._cos_cached.to(device=x.device)
+        self._sin_cached = self._sin_cached.to(device=x.device)
+
+        return self._cos_cached, self._sin_cached
+
+    def forward(
+        self, q: torch.Tensor, k: torch.Tensor, q_len: Optional[int] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+
+        self._cos_cached, self._sin_cached = self._update_cos_sin_tables(k)
+        if q.shape[2] != k.shape[2] and q_len is not None:
+            return (
+                apply_rotary_pos_emb(
+                    q,
+                    self._cos_cached[..., q_len - self.n_seers :, :],
+                    self._sin_cached[..., q_len - self.n_seers :, :],
+                ),
+                apply_rotary_pos_emb(k, self._cos_cached, self._sin_cached),
+            )
+        return (
+            apply_rotary_pos_emb(q, self._cos_cached, self._sin_cached),
+            apply_rotary_pos_emb(k, self._cos_cached, self._sin_cached),
+        )

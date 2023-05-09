@@ -35,7 +35,7 @@ class TextMusicDataset(Dataset):
         self.music_feature_path = f"{path}/{music_feature_path}"
         self.music_feature_type = music_feature_type
 
-        tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+        tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
         self.encodings_text = tokenizer(
             self.df[self.text_key].tolist(), truncation=True, padding=True
         )

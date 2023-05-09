@@ -15,12 +15,19 @@ from recipes.mulan.models.text_encoder import get_text_encoder
 
 class LitMuLanModule(pl.LightningModule):
     def __init__(
-        self, music_encoder, text_encoder, spec_aug, lr, weight_decay, temperature
+        self,
+        music_encoder,
+        text_encoder,
+        emb_dim,
+        spec_aug,
+        lr,
+        weight_decay,
+        temperature,
     ):
         super().__init__()
         self.save_hyperparameters()  # save hyperparameter in ckpt
-        self.music_encoder = get_music_encoder(music_encoder)
-        self.text_encoder = get_text_encoder(text_encoder)
+        self.music_encoder = get_music_encoder(music_encoder, emb_dim)
+        self.text_encoder = get_text_encoder(text_encoder, emb_dim)
         self.spec_aug = spec_aug
         self.lr = lr
         self.weight_decay = weight_decay
@@ -35,7 +42,7 @@ class LitMuLanModule(pl.LightningModule):
         self.val_outputs = dict()
 
     def on_fit_start(self):
-        self.music_encoder.manually_to_device(self.device)
+        self.music_encoder.mut.manually_to_device(self.device)
 
     def on_predict_start(self):
         self.text_encoder.cpu()  # save gpu memory
@@ -68,6 +75,9 @@ class LitMuLanModule(pl.LightningModule):
                 "LayerNorm",
                 "embeddings",
                 "layernorm",
+                "norm.bias",
+                "norm.weight",
+                "rotary",
             ]
             for name, param in self.named_parameters():  # self.parameters()
                 _found = False
@@ -126,6 +136,9 @@ class LitMuLanModule(pl.LightningModule):
             select_negative[item[0], item[1]] = 0
 
         negative_mat = loss_mat * select_negative
+        negative_mat[~select_negative.bool()] = negative_mat[
+            ~select_negative.bool()
+        ].detach()
 
         loss = (loss_mat.diagonal()) / (
             loss_mat.diagonal()
@@ -209,7 +222,7 @@ class LitMuLanModule(pl.LightningModule):
         return {"music_vec": music_embed}
 
     def _shared_step(self, batch, spec_aug=False):
-        music_embed = self.music_encoder(batch["audio"], spec_aug)
+        music_embed = self.music_encoder(batch["audio"].unsqueeze(1), spec_aug=spec_aug)
         text_embed = self.text_encoder(
             batch["input_ids"], batch["attention_mask"], batch["token_type_ids"]
         )

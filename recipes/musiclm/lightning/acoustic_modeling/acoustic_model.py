@@ -129,27 +129,52 @@ class AcousticModel(LitModuleBase):
 
     @autocast()
     def sample_audio_tokens(
-        self, cond_token_ids: torch.Tensor, temperature: float = 1.0
+        self,
+        cond_token_ids: torch.Tensor,
+        temperature: float = 1.0,
+        seq_len: Optional[int] = None,
+        prefix: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
         """Sample token id's in R^codebook_size
         Predicted tokens are back in the SoundStream token space R^(codebook_size).
         Args:
             cond_token_ids (Optional[torch.Tensor], optional): Defaults to None.
             temperature (float, optional): _description_. Defaults to 1.0.
+            seq_len (int, optional): how many samples to generate.
+                Defaults to None (use model's max sequence length).
+            prefix (torch.LongTensor): prefix of previous tokens, shape (b, q, s).
+                Defaults to None (no prefix).
         Returns:
             [torch.Tensor]: _description_
         """
+        if seq_len is None:
+            seq_len = self.hparams.max_sequence_length
+
         sampled_token_ids = cond_token_ids.clone()
         cond_seq_len = cond_token_ids.shape[1]
+        q = len(self.input_quantizers)
+
+        prefix_len = 0
+        if prefix is not None:
+            prefix_len = prefix.shape[2]
+            # (b, q, s) --> (b, s * q)
+            prefix = flatten_row_major(
+                self.offset(
+                    prefix,
+                    self.acoustic_start_channel,
+                    self.acoustic_end_channel,
+                    self.audio_model.codebook_size,
+                )
+            )
+            sampled_token_ids = torch.cat((sampled_token_ids, prefix), dim=1)
 
         prog_bar = tqdm(
-            desc="Sampling acoustic tokens",
-            total=self.hparams.max_sequence_length * len(self.input_quantizers),
+            desc="Sampling acoustic tokens", total=(seq_len - prefix_len) * q
         )
 
         self.model.transformer.init_cache()
         curr_input = sampled_token_ids
-        for _ in range(self.hparams.max_sequence_length):
+        for _ in range(seq_len - prefix_len):
             for quantizer_idx in self.input_quantizers:
                 sampled = self.sample_within_bounds(
                     curr_input,
@@ -163,10 +188,8 @@ class AcousticModel(LitModuleBase):
                 prog_bar.update()
 
         self.model.transformer.deinit_cache()
-        sampled_token_ids = sampled_token_ids[:, cond_seq_len:]
-        sampled_token_ids = rearrange(
-            sampled_token_ids, "b (s q) -> b q s", q=len(self.input_quantizers)
-        )
+        sampled_token_ids = sampled_token_ids[:, cond_seq_len + prefix_len * q :]
+        sampled_token_ids = rearrange(sampled_token_ids, "b (s q) -> b q s", q=q)
 
         offsets = generate_offsets(
             sampled_token_ids.shape[2],
@@ -182,8 +205,15 @@ class AcousticModel(LitModuleBase):
         audio: Optional[torch.Tensor] = None,
         acoustic_token_ids: Optional[torch.Tensor] = None,
         temperature: float = 1.0,
+        seq_len: Optional[int] = None,
+        prefix: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
         cond_token_ids = self.prepare_cond_token_ids(
             audio=audio, acoustic_token_ids=acoustic_token_ids
         )
-        return self.sample_audio_tokens(cond_token_ids, temperature)
+        return self.sample_audio_tokens(
+            cond_token_ids=cond_token_ids,
+            temperature=temperature,
+            seq_len=seq_len,
+            prefix=prefix,
+        )

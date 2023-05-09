@@ -1,3 +1,4 @@
+import math
 from typing import Any, Optional, Tuple, Union
 
 import torch
@@ -7,7 +8,7 @@ from einops import einsum, rearrange
 
 from ... import _is_triton_available
 from ...triton.softmax import softmax as triton_softmax
-from ..positional_embedding.rotary import RotaryEmbedding
+from ..positional_embedding.rotary import RotaryEmbedding, SeerEmbedding
 
 
 def _softmax(x: torch.Tensor, causal: bool = False) -> torch.Tensor:
@@ -239,3 +240,124 @@ class MultiHeadAttention(nn.Module):
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         q, k, v = self.qkv(x, context, kv_cache=kv_cache)
         return self.attention(q, k, v, return_attention=return_attention)
+
+
+class SeerAttention(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        n_heads: int,
+        n_priors: int,
+        n_seers: int,
+        seq_len: int,
+        dropout: float = 0.0,
+        bias: bool = True,
+        scale: Optional[float] = None,
+        d_k: Optional[int] = None,
+    ) -> None:
+        super().__init__()
+        self._use_cache = False
+
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.n_priors = n_priors
+        self.n_seers = n_seers
+        self.seq_len = seq_len
+        self.d_k = d_k
+
+        if not self.d_k:
+            self.d_k = d_model // n_heads
+
+        self.dropout_p = dropout
+
+        if not hasattr(torch.nn.functional, "scaled_dot_product_attention"):
+            raise ImportError("Flash Attention requires PyTorch >= 2.0")
+
+        self.rotary_embeddings = SeerEmbedding(
+            self.d_k, self.n_priors, self.n_seers, self.seq_len
+        )
+
+        self.qkv_dim_with_heads = self.d_k * self.n_heads
+
+        self.to_q = nn.Linear(self.d_model, self.qkv_dim_with_heads, bias=bias)
+        self.to_k = nn.Linear(self.d_model, self.qkv_dim_with_heads, bias=bias)
+        self.to_v = nn.Linear(self.d_model, self.qkv_dim_with_heads, bias=bias)
+
+        self.scale = scale
+        if scale is None:
+            self.scale = self.d_k**-0.5
+
+        self.out = nn.Linear(self.qkv_dim_with_heads, d_model, bias=bias)
+
+    def rearrange_heads(self, x: torch.Tensor) -> torch.Tensor:
+        return rearrange(
+            x, "b s (n_heads d_k) -> b n_heads s d_k", n_heads=self.n_heads
+        )
+
+    def qkv(self, x: torch.Tensor, kv_cache: Optional[dict] = None) -> torch.Tensor:
+        q = self.to_q(x)
+        k = self.to_k(x)
+        v = self.to_v(x)
+
+        q = self.rearrange_heads(q)
+        k = self.rearrange_heads(k)
+        v = self.rearrange_heads(v)
+
+        if kv_cache is not None:
+            if not self._use_cache:
+                raise RuntimeError("`_use_cache` needs to be enabled first")
+            kv_cache[self.to_k] = (
+                torch.cat((kv_cache[self.to_k], k), dim=2)
+                if self.to_k in kv_cache
+                else k
+            )
+            kv_cache[self.to_v] = (
+                torch.cat((kv_cache[self.to_v], v), dim=2)
+                if self.to_v in kv_cache
+                else v
+            )
+            k = kv_cache[self.to_k]
+            v = kv_cache[self.to_v]
+
+        cache_len = k.shape[2] if self._use_cache else None
+        q, k = self.rotary_embeddings(q, k, q_len=cache_len)
+        return q, k, v
+
+    def seer_mask(self, q: torch.Tensor, k: torch.Tensor) -> torch.Tensor:
+        # Assuming:
+        # q_len <= k_len
+        # (q_len - self.n_priors) % self.n_seers == 0
+        # (k_len - self.n_priors) % self.n_seers == 0
+        q_len = q.size(2)
+        k_len = k.size(2)
+        attn_mask = torch.zeros(q_len, k_len, dtype=torch.bool, device=q.device)
+        attn_mask[:, : self.n_priors] = True
+        prefix_q_len = self.n_priors if q_len == k_len else 0
+        sub_q_len = math.ceil((q_len - prefix_q_len) / self.n_seers)
+        sub_k_len = math.ceil((k_len - self.n_priors) / self.n_seers)
+        sub_mask = torch.ones(
+            sub_q_len, sub_k_len, dtype=torch.bool, device=q.device
+        ).tril(sub_k_len - sub_q_len)
+        sub_mask = sub_mask.repeat_interleave(self.n_seers, dim=0)
+        sub_mask = sub_mask.repeat_interleave(self.n_seers, dim=1)
+        attn_mask[prefix_q_len:, self.n_priors :] = sub_mask
+        return attn_mask
+
+    def attention(
+        self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, attn_mask: torch.Tensor
+    ):
+        dropout_p = self.dropout_p if self.training else 0
+        with torch.backends.cuda.sdp_kernel(
+            enable_flash=True, enable_math=True, enable_mem_efficient=True
+        ):
+            attn_out = torch.nn.functional.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask, dropout_p=dropout_p
+            )
+
+        attn_out = rearrange(attn_out, "b n_heads s d_k -> b s (n_heads d_k)")
+        return self.out(attn_out)
+
+    def forward(self, x: torch.Tensor, kv_cache: Optional[dict] = None) -> torch.Tensor:
+        q, k, v = self.qkv(x, kv_cache=kv_cache)
+        attn_mask = self.seer_mask(q, k)
+        return self.attention(q, k, v, attn_mask)

@@ -6,7 +6,10 @@ import torch
 import torch.nn.functional as F
 from einops import rearrange
 
-from recipes.audio_lm.requires.mulan.mulan_infer import LitMuLanModule, mulan_rvq_indexs
+from recipes.audio_lm.requires.mulan.mulan_infer_247 import (
+    LitMuLanModule,
+    mulan_rvq_indexs,
+)
 
 MULAN_247_MODEL_PATHS = (
     "/mnt/bn/audio-diffusion/pretrained_models/mulan/v247/mulan_247.pt",

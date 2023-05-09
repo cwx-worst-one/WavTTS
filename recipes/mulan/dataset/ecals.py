@@ -15,7 +15,7 @@ ECALS_URLS = [
 
 class ECALSDataset(IterableDataset):
     def __init__(self, mode="train", **kwargs):
-        self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+        self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
         with open("assets/ecals_gpt3_expansion.pkl", "rb") as f:
             self.ecals_gpt3 = pickle.load(f)
         self.dataset = (
@@ -49,9 +49,8 @@ class ECALSDataset(IterableDataset):
         # add gpt3 expansion
         music_id = meta["music_id"]
         if music_id in self.ecals_gpt3:
-            # use gpt3 expansion with 75% probability
-            if random.random() < 0.75:
-                text = self.ecals_gpt3[music_id].replace("\n", "")
+            # use gpt3 expansion
+            text = self.ecals_gpt3[music_id].replace("\n", "")
         data["text"] = text
         data["data_source"] = source
         data["music_id"] = utils.fix_hash(music_id)

@@ -85,15 +85,33 @@ class SemanticAcousticModel(AcousticModel):
         mulan_token_ids: torch.Tensor,
         semantic_token_ids: torch.Tensor,
         temperature: float,
+        seq_len: Optional[int] = None,
+        prefix: Optional[torch.LongTensor] = None,
     ):
         mulan_token_ids = mulan_token_ids.to(self.device)
         semantic_token_ids = semantic_token_ids.to(self.device)
         cond_token_ids = self.prepare_cond_token_ids(
             mulan_token_ids=mulan_token_ids, semantic_token_ids=semantic_token_ids
         )
-        return self.sample_audio_tokens(cond_token_ids, temperature)
+        return self.sample_audio_tokens(
+            cond_token_ids=cond_token_ids,
+            temperature=temperature,
+            seq_len=seq_len,
+            prefix=prefix,
+        )
 
-    def sample_with_audio_conditioning(self, audio, temperature: float):
+    def sample_with_audio_conditioning(
+        self,
+        audio,
+        temperature: float,
+        seq_len: Optional[int] = None,
+        prefix: Optional[torch.LongTensor] = None,
+    ):
         audio = audio.to(self.device)
         cond_token_ids = self.prepare_cond_token_ids(audio=audio)
-        return self.sample_audio_tokens(cond_token_ids, temperature)
+        return self.sample_audio_tokens(
+            cond_token_ids=cond_token_ids,
+            temperature=temperature,
+            seq_len=seq_len,
+            prefix=prefix,
+        )

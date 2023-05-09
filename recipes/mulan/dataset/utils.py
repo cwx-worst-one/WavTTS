@@ -1,5 +1,6 @@
 import hashlib
 import random
+import re
 
 import numpy as np
 import torch
@@ -41,7 +42,7 @@ def tokenize_text(tokenizer, mode="train"):
             text,
             padding="max_length",
             truncation=True,
-            max_length=200,
+            max_length=400,
             return_tensors="pt",
         )
         data["input_ids"] = encodings["input_ids"]
@@ -49,14 +50,14 @@ def tokenize_text(tokenizer, mode="train"):
         data["attention_mask"] = encodings["attention_mask"]
 
         # Randomly knock out tokens for training
-        if mode == "train":
-            # scheme 1:
-            original_attention_masks = data["attention_mask"]
-            mask_of_mask = torch.rand(original_attention_masks.shape)
-            sampled_mask = (
-                mask_of_mask > 0.05
-            ) * original_attention_masks  # TODO random knock out 5%
-            data["attention_mask"] = sampled_mask
+        # if mode == "train":
+        #     # scheme 1:
+        #     original_attention_masks = data["attention_mask"]
+        #     mask_of_mask = torch.rand(original_attention_masks.shape)
+        #     sampled_mask = (
+        #         mask_of_mask > 0.05
+        #     ) * original_attention_masks  # TODO random knock out 5%
+        #     data["attention_mask"] = sampled_mask
 
         return data
 
@@ -81,3 +82,18 @@ def collate_fn(batch):
 
 def select_datasets(datasets, selected_names):
     return [datasets[name] for name in selected_names]
+
+
+def remove_emoji(string):
+    emoji_pattern = re.compile(
+        "["
+        "\U0001F600-\U0001F64F"  # emoticons
+        "\U0001F300-\U0001F5FF"  # symbols & pictographs
+        "\U0001F680-\U0001F6FF"  # transport & map symbols
+        "\U0001F1E0-\U0001F1FF"  # flags (iOS)
+        "\U00002702-\U000027B0"
+        "\U000024C2-\U0001F251"
+        "]+",
+        flags=re.UNICODE,
+    )
+    return emoji_pattern.sub(r"", string)

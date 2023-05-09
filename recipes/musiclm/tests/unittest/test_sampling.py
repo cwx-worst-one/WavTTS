@@ -1,3 +1,5 @@
+from typing import Optional
+
 import numpy as np
 import pytest
 import torch
@@ -105,43 +107,101 @@ def unified_model() -> UnifiedModel:
     return model
 
 
+@pytest.mark.parametrize("seq_len", [None, 8])
+@pytest.mark.parametrize("prefix_len", [0, 5])
 def test_sampling_acoustic_model(
-    coarse_model: AcousticModel, fine_model: AcousticModel
+    fine_model: AcousticModel, seq_len: Optional[int], prefix_len: int
 ):
+    target_seq_len = fine_model.hparams.max_sequence_length
+    if seq_len is not None:
+        target_seq_len = seq_len
+
+    prefix = None
+    if prefix_len > 0:
+        prefix = (
+            torch.randint(
+                0, codebook_size, (1, len(fine_model.input_quantizers), prefix_len)
+            )
+            .long()
+            .to(fine_model.device)
+        )
+
     audio = torch.randn(1, 240000, device=torch_device)
-    fine_token_ids = fine_model.sample_with_audio_conditioning(audio, temperature=1)
+    fine_token_ids = fine_model.sample_with_audio_conditioning(
+        audio, temperature=1.0, seq_len=seq_len, prefix=prefix
+    )
 
     assert fine_token_ids.shape == (
         1,
         len(fine_model.input_quantizers),
-        fine_model.hparams.max_sequence_length,
+        target_seq_len - prefix_len,
     )
     assert fine_token_ids.min() >= 0
     assert fine_token_ids.max() < fine_model.hparams.codebook_size
 
 
+@pytest.mark.parametrize("seq_len", [None, 8])
+@pytest.mark.parametrize("prefix_len", [0, 5])
 def test_sampling_semantic_acoustic_model(
     semantic_acoustic_model: SemanticAcousticModel,
+    seq_len: Optional[int],
+    prefix_len: int,
 ):
+    target_seq_len = semantic_acoustic_model.hparams.max_sequence_length
+    if seq_len is not None:
+        target_seq_len = seq_len
+
+    prefix = None
+    if prefix_len > 0:
+        prefix = (
+            torch.randint(
+                0,
+                codebook_size,
+                (1, len(semantic_acoustic_model.input_quantizers), prefix_len),
+            )
+            .long()
+            .to(semantic_acoustic_model.device)
+        )
+
     audio = torch.randn(1, 240000, device=torch_device)
     coarse_token_ids = semantic_acoustic_model.sample_with_audio_conditioning(
-        audio, temperature=1.0
+        audio, temperature=1.0, seq_len=seq_len, prefix=prefix
     )
     assert coarse_token_ids.shape == (
         1,
         len(semantic_acoustic_model.input_quantizers),
-        semantic_acoustic_model.hparams.max_sequence_length,
+        target_seq_len - prefix_len,
     )
     assert coarse_token_ids.min() >= 0
     assert coarse_token_ids.max() < semantic_acoustic_model.hparams.codebook_size
 
 
-def test_sampling_semantic_model(semantic_model: MulanSemanticModel):
+@pytest.mark.parametrize("seq_len", [None, 8])
+@pytest.mark.parametrize("prefix_len", [0, 5])
+def test_sampling_semantic_model(
+    semantic_model: MulanSemanticModel, seq_len: Optional[int], prefix_len: int
+):
+    target_seq_len = semantic_model.hparams.max_sequence_length
+    if seq_len is not None:
+        target_seq_len = seq_len
+
+    prefix = None
+    if prefix_len > 0:
+        prefix = (
+            torch.randint(0, codebook_size, (1, prefix_len))
+            .long()
+            .to(semantic_model.device)
+        )
+
     audio = torch.randn(1, 240000, device=torch_device)
     semantic_token_ids = semantic_model.sample_with_conditioning(
-        cond_data=audio, temperature=1.0, data_type="music"
+        cond_data=audio,
+        temperature=1.0,
+        data_type="music",
+        seq_len=seq_len,
+        prefix=prefix,
     )
-    assert semantic_token_ids.shape == (1, semantic_model.hparams.max_sequence_length)
+    assert semantic_token_ids.shape == (1, target_seq_len - prefix_len)
     assert semantic_token_ids.min() >= 0
     assert semantic_token_ids.max() < semantic_model.hparams.codebook_size
 

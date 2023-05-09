@@ -152,3 +152,38 @@ class FineModule(CoarseModule):
                 else:
                     fine_samples = torch.cat([fine_samples, samples], dim=1)
         return fine_samples
+
+    def predict2(self, coarse_ids, temp=0.4, sample_len=4000, sample_mode="naive"):
+        bs = coarse_ids.size(0)
+        device = coarse_ids.device
+        num_coarse = self.extra_params.num_coarse
+        num_fine = self.extra_params.num_fine
+        num_res = self.extra_params.num_res
+        eos_ids = (
+            torch.zeros(size=[bs, 1], dtype=torch.long, device=device) + num_res * 1024
+        )  # [b, 1]
+
+        fine_samples = None
+        input_tokens = torch.cat([coarse_ids, eos_ids], dim=1)
+        past_key_values = None
+
+        pbar = tqdm(range(sample_len))
+        for i in pbar:
+            pbar.set_description("Fine")
+            fine_outputs = self.model(
+                input_tokens, past_key_values=past_key_values, use_cache=True
+            )
+            logits = fine_outputs["logits"]  # [b, t, d]
+            layer_idx = i % num_fine + num_coarse
+            predict_logits = logits[
+                :, -1:, layer_idx * 1024 : (layer_idx + 1) * 1024
+            ]  # [b, d]
+            samples = sample(predict_logits, temp=temp, mode=sample_mode)
+            samples = samples + layer_idx * 1024
+            past_key_values = fine_outputs["past_key_values"]
+            input_tokens = samples
+            if fine_samples is None:
+                fine_samples = samples
+            else:
+                fine_samples = torch.cat([fine_samples, samples], dim=1)
+        return fine_samples

@@ -1,0 +1,149 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+hp: !include:hparams_x480.yaml
+
+seed: 555
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+run_opts:
+    log_dir: /mnt/bn/zongyu-lq/logs
+    fast_dev_run: False
+    tensorboard_dir: !ref <run_opts[log_dir]>
+    log_name: coarse_seer
+    version: 1.0
+    precision: "16-mixed"
+    accelerator: auto
+    strategy: ddp_find_unused_parameters_false
+    cache_dir: .module_cache/seer
+    num_steps: 1_000_000
+    batch_size: 8
+    sample_buffer_size: 600
+    num_workers: 8
+    learning_rate: 0.0003
+    weight_decay: 0.03
+    checkpointing: False
+    n_seers: 5
+    n_priors: 263
+    duration: 10
+_checkpointing: !ref <run_opts[checkpointing]>
+
+seer_config: !new:samantha.stages.module.byteformers.models.SeerConfig
+    vocab_size: !ref <hp[num_coarse]> * <hp[quant_token_num]> + 12288 + 1 + 1024 + <run_opts[n_seers]>
+    n_embd: 1024
+    n_layer: 24
+    n_head: 16
+    n_seers: !ref <run_opts[n_seers]>
+    n_priors: !ref <run_opts[n_priors]>
+    seq_len: !ref <run_opts[duration]> * <hp[num_coarse]> * <hp[sample_rate]> // <hp[hop_size]>
+    logit_num: !ref <hp[num_coarse]> * <hp[quant_token_num]>
+
+train_dataset: !new:recipes.audio_lm.datasets.AudioLMDataset
+    sample_rate: 24000
+    sample_duration: !ref <run_opts[duration]>
+    meta_paths:
+        - /mnt/bd/sami-mm-audios-shard1/metadata/15m_filter_trim_us_copy.txt
+        - /mnt/bn/audio-diffusion/data/9m_aed/metalist.txt
+        - /mnt/bn/audio-diffusion/data/musiccaps/musiccaps_list.txt
+
+# dataloader configuration
+train_dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <train_dataset>
+    batch_size: !ref <run_opts[batch_size]>
+    num_workers: !ref <run_opts[num_workers]>
+    shuffle: True
+    drop_last: True
+    pin_memory: True
+
+# datamodule configuration
+pl_datamodule: !new:recipes.audio_lm.lit_modules.DataModule
+    train_dataloader: !ref <train_dataloader>
+
+# model configuration
+model_cls: !name:samantha.stages.module.byteformers.models.Seer
+    config: !ref <seer_config>
+
+# training module configuration
+optimizer_cls: !name:torch.optim.AdamW
+    lr: !ref <run_opts[learning_rate]>
+    weight_decay: !ref <run_opts[weight_decay]>
+    betas: [0.9, 0.96]
+    eps: 0.00000001
+
+scheduler_cls: !name:recipes.audio_lm.lr_schedulers.musiclm_lr_scheduler.WarmupCosine
+    init_lr: !ref <run_opts[learning_rate]>
+    warmup_steps: 2000
+    cycle_steps: 500000
+    min_lr: !ref <run_opts[learning_rate]> * 0.1
+
+# coarse model setting
+pl_module: !new:recipes.audio_lm.lit_modules.SeerCoarseModule
+    checkpointing: !ref <run_opts[checkpointing]>
+    model_cls: !ref <model_cls>
+    optimizer_cls: !ref <optimizer_cls>
+    scheduler_cls: !ref <scheduler_cls>
+    criterion_cls: !name:recipes.audio_lm.modules.MaskedCrossEntropy
+    extra_params: !ref <hp>
+    n_priors: !ref <run_opts[n_priors]>
+    n_seers: !ref <run_opts[n_seers]>
+    mulan_token_sep: True
+    required_modules:
+        mulan:
+            - hdfs://harunava/home/byte_speech_sv/weitsung.lu/mulan_exp/MuLan_large/g4/checkpoints/mulan-step=044800-median_rank_1=170-kaggle.ckpt
+            - !name:recipes.audio_lm.requires.model_initializer.init_mulan
+              cache_dir: !ref <run_opts[cache_dir]>
+              version: "g4"
+        mulan_centers:
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/mulan/kmeans_minibatch_codebook-mulan1b_g4_170-1024x12.npy
+            - !name:recipes.audio_lm.requires.model_initializer.init_mulan_centers
+              cache_dir: !ref <run_opts[cache_dir]>
+        w2v:
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1
+            - !name:recipes.audio_lm.requires.model_initializer.init_w2v
+              cache_dir: !ref <run_opts[cache_dir]>
+        sound_stream:
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
+            - !name:recipes.audio_lm.requires.model_initializer.init_sound_stream
+              cache_dir: !ref <run_opts[cache_dir]>
+
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[tensorboard_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+
+callbacks:
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      every_n_train_steps: 1000
+      mode: max
+      save_last: True
+      save_top_k: 5
+      save_on_train_epoch_end: True
+      verbose: True
+      monitor: accu
+      filename: "{step:06d}-{accu:.2f}"
+    - !new:pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: 'step'
+
+trainer: !new:pytorch_lightning.Trainer
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: 'auto'
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False  # warning: setting to True can cause slowdowns
+    enable_model_summary: True
+    log_every_n_steps: 50
+    strategy: !ref <run_opts[strategy]>
+    max_steps: !ref <run_opts[num_steps]>
+    precision: !ref <run_opts[precision]>
+    callbacks: !ref <callbacks>
+    gradient_clip_val: 1.0
+
+ckpt_path: null

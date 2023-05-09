@@ -1,0 +1,148 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 0
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+ckpt_path: null
+
+# running parameters
+log_dir: logs
+run_opts:
+    fast_dev_run: False
+    tensorboard_dir: !ref <log_dir>
+    log_name: "soundstream"
+    version: "48k"
+    strategy: ddp_find_unused_parameters_true
+    precision: 32
+    log_every_n_steps: 10
+    num_steps: 6000000
+    save_every_n_train_steps: 200
+    val_check_interval: 200
+    val_output_samples_dir: "generated_samples"
+
+training_params:
+    sample_rate: 48000
+    train_batch_size: 36
+    train_num_workers: 24
+    val_batch_size: 16
+    val_num_workers: 4
+    learning_rate: 0.0002
+    weight_decay: 0.0
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+# dataloader configuration
+train_dataset: !new:recipes.soundstream.dataset.mtg_jamendo.MTGJamendoDataset
+    num_steps: !ref <run_opts[num_steps]>
+    mode: train
+
+val_dataset: !new:recipes.soundstream.dataset.mtg_jamendo.MTGJamendoDataset
+    mode: val
+
+train_dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <train_dataset>
+    batch_size: !ref <training_params[train_batch_size]>
+    num_workers: !ref <training_params[train_num_workers]>
+    pin_memory: True
+    worker_init_fn: !name:recipes.soundstream.dataset.mtg_jamendo.worker_init_fn
+
+val_dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <val_dataset>
+    batch_size: !ref <training_params[val_batch_size]>
+    num_workers: !ref <training_params[val_num_workers]>
+    pin_memory: True
+
+# datamodule configuration
+pl_datamodule: !new:recipes.soundstream.modules.pl_datamodule.SoundstreamDataModule
+    train_dataloader: !ref <train_dataloader>
+    val_dataloader: !ref <val_dataloader>
+
+# training module configuration
+optimizer_cls: !name:torch.optim.Adam
+    lr: !ref <training_params[learning_rate]>
+    weight_decay: !ref <training_params[weight_decay]>
+
+gen_lr_scheduler_cls: !name:torch.optim.lr_scheduler.LambdaLR
+    lr_lambda: !name:recipes.soundstream.utils.lr_schedulers.lr_lambda 
+        warmup_steps: 10000
+        decay_factor: 0.5
+        decay_interval: 200000
+    
+dis_lr_scheduler_cls: !name:torch.optim.lr_scheduler.LambdaLR
+    lr_lambda: !name:recipes.soundstream.utils.lr_schedulers.lr_lambda 
+        warmup_steps: 0
+        decay_factor: 0.5
+        decay_interval: 200000
+
+pl_module: !new:recipes.soundstream.modules.pl_module.SoundstreamModule
+    generator: !new:recipes.soundstream.models.vqgan_res.VQGAN
+        model_type: bytewave_wn_causal
+        num_res: 12
+        quant_token_num: 1024
+        quant_token_dim: 256
+        quant_beta: 0.25
+        down_rates: [2, 2, 10, 12]
+        upsample_rates: [10, 6, 4, 2]
+        encoder_initial_channel: 16
+        decoder_initial_channel: 768
+        trunc_noise: False
+        smaller_encoder: True
+        init_cluster_size: 32 # tmp
+    discriminator: !new:recipes.soundstream.models.modules.ms_tfd.MultiScaleSTFTDiscriminator
+        filters: 32
+        pretrain: False
+    quant_token_num: 1024
+    generator_warmup_steps: 2000
+    lambda_generator_loss: 1.0
+    lambda_quant_loss: 1.0
+    lambda_wav_loss: 0
+    sample_rate: !ref <training_params[sample_rate]>
+    val_output_samples_dir: !ref <run_opts[val_output_samples_dir]>
+    optimizer_cls: !ref <optimizer_cls>
+    gen_lr_scheduler_cls: !ref <gen_lr_scheduler_cls>
+    dis_lr_scheduler_cls: !ref <dis_lr_scheduler_cls>
+
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[tensorboard_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+
+checkpoint: !new:pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: step
+    mode: max
+    save_top_k: 5
+    every_n_train_steps: !ref <run_opts[save_every_n_train_steps]>
+    save_last: True
+    filename: soundstream-{step:06d}
+
+lr_monitor: !new:pytorch_lightning.callbacks.LearningRateMonitor
+    logging_interval: step
+
+plugins:
+    - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    num_sanity_val_steps: 0
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    accelerator: auto
+    devices: auto
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False  # warning: setting to True can cause slowdowns
+    strategy: !ref <run_opts[strategy]>
+    enable_model_summary: True
+    max_steps: !ref <run_opts[num_steps]>
+    val_check_interval: !ref <run_opts[val_check_interval]>
+    precision: !ref <run_opts[precision]>
+    log_every_n_steps: !ref <run_opts[log_every_n_steps]>
+    use_distributed_sampler: False
+    sync_batchnorm: True
+    logger: !ref <logger>
+    callbacks:
+        - !ref <checkpoint>
+        - !ref <lr_monitor>
+    plugins: !ref <plugins>

@@ -17,7 +17,7 @@ KARAOKE_URLS = [
 
 class KaraokeDataset(IterableDataset):
     def __init__(self, mixed_batch_size=72, mode="train", **kwargs):
-        self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+        self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
         self.meter = pyln.Meter(24000)
         self.mode = mode
         self.dataset = (

@@ -13,12 +13,12 @@ from scipy.io.wavfile import write
 def sample(predict_logits, temp, thresh=0.9, mode="naive"):
     if mode == "naive":
         predict_logits = predict_logits / (temp)
-        probs = predict_logits.softmax(dim=1)  # [b, d]
+        probs = predict_logits.softmax(dim=-1)
         dist = torch.distributions.categorical.Categorical(probs=probs)
-        samples = dist.sample().unsqueeze(1)
+        samples = dist.sample()
     elif mode == "gumbel":
         predict_logits = top_k(predict_logits, thresh=thresh)
-        samples = gumbel_sample(predict_logits, temp).unsqueeze(dim=1)
+        samples = gumbel_sample(predict_logits, temp)
     else:
         raise NotImplementedError()
     return samples
@@ -105,5 +105,5 @@ def top_k(logits, thresh=0.95):
     k = max(int((1 - thresh) * num_logits), 1)
     val, ind = torch.topk(logits, k)
     probs = torch.full_like(logits, float("-inf"))
-    probs.scatter_(1, ind, val)
+    probs.scatter_(-1, ind, val)
     return probs

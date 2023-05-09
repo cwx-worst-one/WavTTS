@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 from torch.cuda.amp import autocast
 from tqdm import tqdm
@@ -101,7 +103,11 @@ class MulanSemanticModel(LitModuleBase):
 
     @autocast()
     def sample_semantic_tokens(
-        self, cond_token_ids: torch.Tensor, temperature: float = 1.0
+        self,
+        cond_token_ids: torch.Tensor,
+        temperature: float = 1.0,
+        seq_len: Optional[int] = None,
+        prefix: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
         """Sample token id's in R^codebook_size
         Predicted tokens are back in the Semantic token space R^(codebook_size).
@@ -110,18 +116,33 @@ class MulanSemanticModel(LitModuleBase):
                 Defaults to None.
             temperature (float, optional): _description_.
                 Defaults to 1.0.
+            seq_len (int, optional): how many samples to generate.
+                Defaults to None (use model's max sequence length).
+            prefix (torch.LongTensor): prefix of previous tokens, shape (b, s).
+                Defaults to None (no prefix).
         Returns:
             [torch.Tensor]: _description_
         """
+        if seq_len is None:
+            seq_len = self.hparams.max_sequence_length
 
         sampled_token_ids = cond_token_ids.clone()
         cond_seq_len = cond_token_ids.shape[1]
 
+        prefix_len = 0
+        if prefix is not None:
+            prefix_len = prefix.shape[1]
+            prefix = self.offset(
+                prefix,
+                self.semantic_start_channel,
+                self.semantic_end_channel,
+                self.semantic_model.codebook_size,
+            )
+            sampled_token_ids = torch.cat((sampled_token_ids, prefix), dim=1)
+
         self.model.transformer.init_cache()
         curr_input = sampled_token_ids
-        for _ in tqdm(
-            range(self.hparams.max_sequence_length), desc="Sampling semantic tokens..."
-        ):
+        for _ in tqdm(range(seq_len - prefix_len), desc="Sampling semantic tokens..."):
             sampled = self.sample_within_bounds(
                 curr_input,
                 codebook_size=self.semantic_model.codebook_size,
@@ -130,17 +151,11 @@ class MulanSemanticModel(LitModuleBase):
                 temperature=temperature,
             )
 
-            sampled_offset = self.offset(
-                sampled,
-                self.semantic_start_channel,
-                self.semantic_end_channel,
-                self.semantic_model.codebook_size,
-            )
-            sampled_token_ids = torch.cat((sampled_token_ids, sampled_offset), dim=1)
+            sampled_token_ids = torch.cat((sampled_token_ids, sampled), dim=1)
             curr_input = sampled
 
         self.model.transformer.deinit_cache()
-        sampled_token_ids = sampled_token_ids[:, cond_seq_len:]
+        sampled_token_ids = sampled_token_ids[:, cond_seq_len + prefix_len :]
 
         offsets = generate_offsets(
             sampled_token_ids.shape[1],
@@ -152,8 +167,18 @@ class MulanSemanticModel(LitModuleBase):
         return sampled_token_ids - offsets
 
     def sample_with_conditioning(
-        self, cond_data: torch.Tensor, temperature: float, data_type: str = "music"
+        self,
+        cond_data: torch.Tensor,
+        temperature: float,
+        data_type: str = "music",
+        seq_len: Optional[int] = None,
+        prefix: Optional[torch.LongTensor] = None,
     ):
         cond_data = cond_data.to(self.device)
         cond_token_ids = self.prepare_cond_token_ids(cond_data, data_type=data_type)
-        return self.sample_semantic_tokens(cond_token_ids, temperature)
+        return self.sample_semantic_tokens(
+            cond_token_ids=cond_token_ids,
+            temperature=temperature,
+            seq_len=seq_len,
+            prefix=prefix,
+        )

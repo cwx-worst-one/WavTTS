@@ -3,7 +3,7 @@ from typing import Any, List, Optional, Tuple
 import torch
 import torch.nn as nn
 
-from ..components.attention import MultiHeadAttention
+from ..components.attention import MultiHeadAttention, SeerAttention
 
 
 class BaseModel(nn.Module):
@@ -48,7 +48,7 @@ class BaseModel(nn.Module):
             return cache[module]
 
         def install_hooks(layer: nn.Module):
-            if isinstance(layer, MultiHeadAttention):
+            if isinstance(layer, (MultiHeadAttention, SeerAttention)):
                 layer._use_cache = True
                 self.hooks.append(layer.to_k.register_forward_hook(save_to_cache))
                 self.hooks.append(layer.to_v.register_forward_hook(save_to_cache))
@@ -62,7 +62,7 @@ class BaseModel(nn.Module):
 
     def deinit_cache(self) -> None:
         def unset_cache(layer: nn.Module):
-            if isinstance(layer, MultiHeadAttention):
+            if isinstance(layer, (MultiHeadAttention, SeerAttention)):
                 layer._use_cache = False
 
         self.apply(unset_cache)

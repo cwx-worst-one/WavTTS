@@ -4,7 +4,7 @@ import pytorch_lightning as pl
 import torch
 from bytedance import easycycle
 
-import samantha.utils.infer_dtype as infer
+import samantha.core.infer_dtype as infer
 from samantha.utils.hparams import DotDict
 
 from ...requires.model_initializer import (

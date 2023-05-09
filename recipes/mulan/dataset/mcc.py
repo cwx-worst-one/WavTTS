@@ -1,3 +1,4 @@
+import pickle
 import random
 
 import webdataset as wds
@@ -25,7 +26,7 @@ MCC_N2M_URLS = [
 
 class MCCGPTGenDataset(IterableDataset):
     def __init__(self, mode="train", **kwargs):
-        self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+        self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
         self.dataset = (
             wds.WebDataset(MCC_GPT_GEN_URLS, **kwargs)
             .decode()
@@ -47,7 +48,7 @@ class MCCGPTGenDataset(IterableDataset):
 
 class AEDGPTGenDataset(IterableDataset):
     def __init__(self, mode="train", **kwargs):
-        self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+        self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
         self.dataset = (
             wds.WebDataset(AED_GPT_GEN_URLS, **kwargs)
             .decode()
@@ -55,10 +56,27 @@ class AEDGPTGenDataset(IterableDataset):
             .map(self._process_text)
             .map(utils.tokenize_text(self.tokenizer, mode))
         )
+        with open("assets/chatgpt_g4_aed.pkl", "rb") as f:
+            self.chatgpt_g4 = pickle.load(f)
 
     def _process_text(self, data):
         meta = data["meta.json"]
-        data["text"] = meta["gpt_generated_caption"]
+
+        text = ""
+        if random.random() < 0.5:
+            text = meta["gpt_generated_caption"]
+        else:
+            if str(meta["music_id"]) in self.chatgpt_g4:
+                tags = self.chatgpt_g4[str(meta["music_id"])]
+                # get all the items into list
+                tags = [v for v in tags.values()]
+                # randomize the order
+                random.shuffle(tags)
+                for tag in tags:
+                    if random.random() < 0.8:
+                        text += tag
+        data["text"] = text
+
         data["data_source"] = meta["data_source"]
         data["music_id"] = meta["music_id"]
         return data
@@ -69,7 +87,7 @@ class AEDGPTGenDataset(IterableDataset):
 
 class MCCN2MDataset(IterableDataset):
     def __init__(self, mode="train", **kwargs):
-        self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+        self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
         self.dataset = (
             wds.WebDataset(MCC_N2M_URLS, **kwargs)
             .decode()
@@ -77,14 +95,31 @@ class MCCN2MDataset(IterableDataset):
             .map(self._process_text)
             .map(utils.tokenize_text(self.tokenizer, mode))
         )
+        with open("assets/chatgpt_g4_mcc.pkl", "rb") as f:
+            self.chatgpt_g4 = pickle.load(f)
 
     def _process_text(self, data):
         meta = data["meta.json"]
-        n2m_texts = meta["n2m"]
         # n2m is a list of 3 matched texts
-        data["text"] = random.choice(n2m_texts)
+        # data["text"] = random.choice(n2m_texts)
+        text = ""
+        if random.random() < 0.5:
+            n2m_texts = meta["n2m"]
+            text += random.choice(n2m_texts)
+        else:
+            if str(meta["music_id"]) in self.chatgpt_g4:
+                tags = self.chatgpt_g4[str(meta["music_id"])]
+                # get all the items into list
+                tags = [v for v in tags.values()]
+                # randomize the order
+                random.shuffle(tags)
+                for tag in tags:
+                    if random.random() < 0.8:
+                        text += tag
+        data["text"] = text
         data["data_source"] = meta["data_source"]
         data["music_id"] = meta["music_id"]
+
         return data
 
     def __iter__(self):

@@ -8,38 +8,41 @@ seed: 2023
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 
 # running parameters
-log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+log_dir: hdfs://harunava/home/byte_speech_sv/weitsung.lu/mulan_exp #!apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
 run_opts:
     fast_dev_run: False
     tensorboard_dir: !ref <log_dir>
-    log_name: MuLan
+    log_name: MuLan_large
     log_every_n_steps: 10
-    version: AEKP
-    precision: 32
+    version: g4
+    precision: 16
     num_workers: 4
     accelerator: auto
     strategy: ddp_find_unused_parameters_false
     enable_activation_ckpt: True
-    num_steps: 60000
+    num_steps: 600000
     val_check_interval: 800
-    batch_size: 36
+    batch_size: 72
     sample_buffer_size: 600
     val_batch_size: 128
     spec_aug: True
     text_encoder: bert
-    music_encoder: ast
+    music_encoder: mut
+    emb_dim: 512
     learning_rate: 4.e-5
     weight_decay: 5.e-4
-    temperature: learnable  # temperature in Multiview Coding loss
+    temperature: 0.1  # temperature in Multiview Coding loss
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
 
-# short_form_dataset: !new:recipes.mulan.dataset.short_form.ShortFormDataList
-#     resampled: True
-#     seed: !ref <seed>
+short_form_dataset: !new:recipes.mulan.dataset.short_form.ShortFormDataset
+    resampled: True
+
+long_form_dataset: !new:recipes.mulan.dataset.long_form.LongFormDataset
+    resampled: True
 
 audioset_dataset: !new:recipes.mulan.dataset.audioset.AudioSetDataset
     resampled: True
@@ -66,7 +69,8 @@ tt_query_dataset: !new:recipes.mulan.dataset.tt_query.TTQueryDataset
     resampled: True
 
 train_datasets:
-    # short_form: !ref <short_form_dataset>
+    short_form: !ref <short_form_dataset>
+    long_form: !ref <long_form_dataset>
     audio_set: !ref <audioset_dataset>
     ecals: !ref <ecals_dataset>
     karaoke: !ref <karaoke_dataset>
@@ -76,8 +80,8 @@ train_datasets:
     mcc_n2m: !ref <mcc_n2m_dataset>
     tt_query: !ref <tt_query_dataset>
 
-selected_dataset_names: [audio_set, ecals, karaoke, playlist]
-weights: [0.2, 0.2, 0.2, 0.2]
+selected_dataset_names: [mcc_n2m]
+weights: [1]
 
 train_dataset: !new:samantha.dataio.dataset.MultiIterableDataset
     datasets: !apply:recipes.mulan.dataset.utils.select_datasets
@@ -115,6 +119,7 @@ pl_datamodule: !new:recipes.mulan.modules.pl_datamodule.MuLanDataModule
 pl_module: !new:recipes.mulan.modules.pl_module.LitMuLanModule
     music_encoder: !ref <run_opts[music_encoder]>
     text_encoder: !ref <run_opts[text_encoder]>
+    emb_dim: !ref <run_opts[emb_dim]>
     spec_aug: !ref <run_opts[spec_aug]>
     lr: !ref <run_opts[learning_rate]>
     weight_decay: !ref <run_opts[weight_decay]>
@@ -143,6 +148,8 @@ callbacks:
       monitor: median_rank_2
       mode: min
       filename: mulan-{step:06d}-{median_rank_2:.0f}-kaggle
+    - !new:recipes.mulan.modules.ema.EMA
+      decay: 0.999
 
 plugins:
     - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
@@ -163,3 +170,4 @@ trainer: !new:pytorch_lightning.Trainer
     precision: !ref <run_opts[precision]>
     callbacks: !ref <callbacks>
     plugins: !ref <plugins>
+
