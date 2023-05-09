@@ -292,7 +292,6 @@ class AudioPipeline:
         return result
 
     def build_pipeline(self, pipeline):
-
         if not isinstance(pipeline, list):
             raise TypeError(f"Expecting pipeline is a list, but got {type(pipeline)}")
 
@@ -301,7 +300,6 @@ class AudioPipeline:
                 name = action.pop("name", None)
                 self._compose_action(name, **action)
             elif isinstance(action, list):
-
                 act_len = len(action)
                 if act_len > 1:
                     if isinstance(action[-1], dict):

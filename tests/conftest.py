@@ -3,6 +3,7 @@ import pathlib
 import shutil
 
 import pytest
+import torch
 
 
 @pytest.fixture
@@ -36,13 +37,24 @@ def global_datadir(tmp_path_factory, original_global_datadir):
     return prep_global_datadir(tmp_path_factory, original_global_datadir)
 
 
+def pytest_addoption(parser):
+    device = torch.device("cpu")
+    if torch.cuda.is_available():
+        device = torch.device(0)
+    parser.addoption("--device", action="store", default=device)
+
+
+def pytest_generate_tests(metafunc):
+    # This is called for every test. Only get/set command line arguments
+    # if the argument is specified in the list of test "fixturenames".
+    option_value = metafunc.config.option.device
+    if "device" in metafunc.fixturenames and option_value is not None:
+        metafunc.parametrize("device", [option_value])
+
+
 def pytest_configure(config):
-    config.addinivalue_line(
-        "markers", "disable: mark tests as be disabled",
-    )
-    config.addinivalue_line(
-        "markers", "benchmark: mark tests as benchmark cases",
-    )
+    config.addinivalue_line("markers", "disable: mark tests as be disabled")
+    config.addinivalue_line("markers", "benchmark: mark tests as benchmark cases")
 
 
 collect_ignore = []

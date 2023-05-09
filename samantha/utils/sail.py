@@ -168,7 +168,6 @@ def compile_and_upload_model(dname):
 
 
 class SAILInferProcessor:
-
     DTYPE_MAPPING = {
         infer.Dtype.ID: easycycle.DataType.DATA_RECORD_ID,
         infer.Dtype.TEXT: easycycle.DataType.TEXT,

@@ -97,32 +97,6 @@ predict_dataloader: !new:torch.utils.data.DataLoader
     pin_memory: True
 
 
-# datamodule configuration
-pl_datamodule: !new:recipes.sample_project.modules.pl_datamodule.CIFAR10DataModule
-    train_dataloader: !ref <train_dataloader>
-    val_dataloader: !ref <val_dataloader>
-    test_dataloader: !ref <val_dataloader>
-    predict_dataloader: !ref <predict_dataloader>
-
-
-# model configuration
-model: !new:recipes.sample_project.modules.model.CNNModel
-    input_names: [img_tensor]
-    output_names: [label]
-    stages:
-        - !name:recipes.sample_project.modules.model.CNNModelStage
-          takes: [img_tensor]
-          provides: [label]
-          num_classes: !ref <training_params[num_classes]>
-          serialize_opts:
-              io_meta:
-                  image_tensor: [b, 3, 224, 224]
-                  label: [b, 10]
-              sample_input_shape:
-                  image_tensor: [10, 3, 224, 224]
-              graph_path: cnn_model_stage.onnx
-              tolerance: 1e-5
-
 # training module configuration
 optimizer_class: !name:torch.optim.SGD
     lr: !ref <training_params[learning_rate]>
@@ -134,15 +108,6 @@ scheduler_class: !name:torch.optim.lr_scheduler.StepLR
     step_size: 100
     gamma: 0.5
 
-
-pl_module: !new:recipes.sample_project.modules.pl_module.LitCIFAR10Module
-    model: !ref <model>
-    optimizer_class: !ref <optimizer_class>
-    scheduler_class: !ref <scheduler_class>
-    criterion: !new:torch.nn.CrossEntropyLoss
-    accuracy: !new:torchmetrics.Accuracy
-        task: multiclass
-        num_classes: 10
 
 logger: !new:pytorch_lightning.loggers.TensorBoardLogger
     save_dir: !ref <run_opts[tensorboard_dir]>

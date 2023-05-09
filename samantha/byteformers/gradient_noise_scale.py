@@ -152,7 +152,6 @@ class GradientNoiseScale:
             # calculate Gbig and Gsmall
             # this needs to be done in fp32 or it overflows
             if self.is_pipe_parallel:
-
                 g_big = torch.square(torch.norm(grads.to(torch.float)))
                 g_small = torch.square(torch.norm(grad.to(torch.float)))
 

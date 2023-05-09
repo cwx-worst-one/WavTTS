@@ -1,6 +1,6 @@
 import pytorch_lightning as pl
 
-from recipes.template.no_sami_engine.models.model import get_model
+from recipes.template.models.model import get_model
 
 
 class TemplateModule(pl.LightningModule):

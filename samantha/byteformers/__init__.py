@@ -28,7 +28,9 @@ def _is_triton_available():
     if not torch.cuda.is_available():
         return False
     try:
-        from samantha.byteformers.triton.softmax import softmax as triton_softmax  # noqa
+        from samantha.byteformers.triton.softmax import (  # noqa
+            softmax as triton_softmax,
+        )
 
         return True
     except (ImportError, AttributeError) as e:

@@ -7,7 +7,7 @@ from samantha.dataio.audio_pipeline import AudioPipeline
 
 @pytest.fixture
 def data_iter(global_datadir):
-    return [global_datadir / "audios/44k_3ch.wav"]
+    return [global_datadir / "44k_3ch.wav"]
 
 
 @pytest.fixture

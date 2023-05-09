@@ -2,7 +2,7 @@
 line-length = 88
 color = true
 skip-magic-trailing-comma = true
-target-version = ['py38']
+target-version = ['py39']
 exclude = '''
 (
   /(
@@ -11,6 +11,7 @@ exclude = '''
     | \.mypy_cache
     | \.tox
     | \.venv
+    | recipes
   )/
 )
 '''

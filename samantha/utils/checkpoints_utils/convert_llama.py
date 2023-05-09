@@ -54,7 +54,6 @@ def convert_llama_state_dict(
     inv_freq: float,
     dtype: torch.dtype = torch.float32,
 ) -> Dict[str, torch.Tensor]:
-
     converted = {}
     converted["transformer.wte.weight"] = state_dict["tok_embeddings.weight"].to(dtype)
     converted["lm_head.weight"] = state_dict["output.weight"].to(dtype)

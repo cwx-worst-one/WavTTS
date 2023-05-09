@@ -139,7 +139,6 @@ class SeerEmbedding(RotaryEmbedding):
     def forward(
         self, q: torch.Tensor, k: torch.Tensor, q_len: Optional[int] = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-
         self._cos_cached, self._sin_cached = self._update_cos_sin_tables(k)
         if q.shape[2] != k.shape[2] and q_len is not None:
             return (

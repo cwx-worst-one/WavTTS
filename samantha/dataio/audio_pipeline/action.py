@@ -11,7 +11,6 @@ def _read_from_data(
     num_channel: int = 1,
     channel_first: bool = False,
 ):
-
     if isinstance(data, np.ndarray):
         if channel_first:
             data = data.T.reshape((-1))
@@ -147,7 +146,6 @@ class Action:
         return f"Action(name={self.name}, args={self.args}, kwargs={self.kwargs})"
 
     def __call__(self, input=None):
-
         if input is None:
             return self.func(*self.args, **self.kwargs)
 

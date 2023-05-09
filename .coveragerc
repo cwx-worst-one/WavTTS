@@ -1,0 +1,20 @@
+[run]
+omit =
+    samantha/utils/hdfs_helper.py
+    samantha/callbacks/*
+    samantha/utils/distributed.py
+    samantha/utils/result_io.py
+    samantha/utils/sail.py
+    samantha/utils/infer_dtype.py
+
+[report]
+exclude_lines =
+    # Skip any pass lines such as may be used for @abstractmethod
+    pass
+
+    # Skip any logging lines
+    logger
+    logging
+
+    # Have to re-enable the standard pragma
+    pragma: no cover
