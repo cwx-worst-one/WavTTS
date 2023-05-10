@@ -3,14 +3,16 @@ from typing import Any, List, Optional, Tuple
 import torch
 import torch.nn as nn
 
-from ..components.attention import MultiHeadAttention, SeerAttention
+from samantha.byteformers.components.attention.base import (
+    MultiHeadAttention,
+    SeerAttention,
+)
 
 
 class BaseModel(nn.Module):
     def __init__(self, config: Any) -> None:
         super().__init__()
         self.config = config
-        self.hooks = []
 
     def init_cache(
         self, init_values: Optional[torch.Tensor] = None, cache: Optional[dict] = None
@@ -37,7 +39,7 @@ class BaseModel(nn.Module):
                 A dictionary object mapping the key/value projection modules
                 to its cache
         """
-
+        self.hooks = []
         cache = {**cache} if cache is not None else {}
 
         def save_to_cache(module, _, output):

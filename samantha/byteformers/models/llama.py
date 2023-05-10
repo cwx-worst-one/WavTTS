@@ -24,7 +24,7 @@ class LlamaConfig:
     attn_bias: bool = False
     mlp_bias: bool = False
     mlp_dropout: float = 0.0
-    rms_norm_epsilon: float = 1e-5
+    rms_norm_epsilon: float = 1e-6
     initializer_range: float = 0.02
     activation_fn: Activation = Activation.SiLU
     attention_kwargs: Optional[dict] = field(default_factory=dict)
@@ -75,8 +75,8 @@ class LlamaBlock(nn.Module):
         N = 256
         return ((n_inner - 1) // N) * N + N
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x + self.attn(self.ln_1(x))
+    def forward(self, x: torch.Tensor, kv_cache=None) -> torch.Tensor:
+        x = x + self.attn(self.ln_1(x), kv_cache=kv_cache)
         x = x + self.mlp(self.ln_2(x))
         return x
 
@@ -121,10 +121,10 @@ class LlamaModel(BaseModel):
                 std=self.config.initializer_range / math.sqrt(2 * self.config.n_layer),
             )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, kv_cache=None) -> torch.Tensor:
         x = self.wte(x)
         for block in self.h:
-            x = block(x)
+            x = block(x, kv_cache=kv_cache)
         return self.ln_f(x)
 
 
@@ -154,6 +154,9 @@ class Llama(nn.Module):
             n_params -= self.transformer.wpe.weight.numel()
         return n_params
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.transformer(x)
+    @torch.inference_mode()
+    def forward(self, x: torch.Tensor, kv_cache=None, last_logit_only: bool = False):
+        x = self.transformer(x, kv_cache=kv_cache)
+        if last_logit_only:
+            x = x[:, -1]
         return self.lm_head(x)

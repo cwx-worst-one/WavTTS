@@ -10,14 +10,14 @@ import numpy as np
 import pytest
 import torch
 
-from tests.helpers.runif import RunIf
-from tests.helpers.testing_utils import torch_device
-from tests.unittests.byteformers.models.utils import ids_tensor
-from samantha.byteformers.models.llama import Llama, LlamaConfig, LlamaModel
+from samantha.byteformers.models import Llama, LlamaConfig, LlamaModel
 from samantha.utils.checkpoints_utils.convert_llama import (
     calc_rotary_inv_freq,
     convert_llama_state_dict,
 )
+from tests.helpers.runif import RunIf
+from tests.helpers.testing_utils import torch_device
+from tests.unittests.byteformers.models.utils import ids_tensor
 
 files = {
     "original_model.py": "https://gist.githubusercontent.com/lantiga/fd36849fb1c498da949a0af635318a7b/raw/7dd20f51c2a1ff2886387f0e25c1750a485a08e1/llama_model.py",  # noqa
@@ -53,7 +53,7 @@ class LlamaModelTester:
         n_embd: int = 32,
         n_layer: int = 2,
         initializer_range: float = 0.02,
-        rms_norm_epsilon: float = 1e-6,
+        rms_norm_epsilon: float = 1e-5,
     ):
         self.batch_size = batch_size
         self.seq_len = seq_len
@@ -126,6 +126,25 @@ def test_llama_model_compile(model_tester: LlamaModelTester) -> None:
     )
 
 
+def load_equivalent_llama(mt, model, o_llama):
+    orig_llama_config = o_llama.ModelArgs(
+        dim=mt.n_embd,
+        n_layers=mt.n_layer,
+        n_heads=mt.n_head,
+        vocab_size=mt.vocab_size,
+        norm_eps=mt.rms_norm_epsilon,
+        max_seq_len=mt.seq_len,
+    )
+    orig_llama_model = o_llama.Transformer(orig_llama_config).to(torch_device).eval()
+    inv_freq = calc_rotary_inv_freq(mt.n_embd, mt.n_head)
+
+    converted_state_dict = convert_llama_state_dict(
+        orig_llama_model.state_dict(), inv_freq, dtype=torch.float32
+    )
+    model.load_state_dict(converted_state_dict)
+    return model, orig_llama_model
+
+
 @torch.no_grad()
 def test_to_orig_llama(model_tester: LlamaModelTester, orig_llama) -> None:
     model_tester.seq_len = 64
@@ -133,39 +152,23 @@ def test_to_orig_llama(model_tester: LlamaModelTester, orig_llama) -> None:
     model_tester.n_layer = 16
     model_tester.n_head = 16
     model_tester.n_embd = 32
-    model_tester.rms_norm_epsilon = 1e-5
 
-    llama_model = model_tester.create_and_test_model_with_lm_head()
+    model = model_tester.create_and_test_model_with_lm_head()
 
-    orig_llama_config = orig_llama.ModelArgs(
-        dim=model_tester.n_embd,
-        n_layers=model_tester.n_layer,
-        n_heads=model_tester.n_head,
-        vocab_size=model_tester.vocab_size,
-        norm_eps=model_tester.rms_norm_epsilon,
-        max_seq_len=model_tester.seq_len,
-    )
+    model, orig_llama_model = load_equivalent_llama(model_tester, model, orig_llama)
 
     batch_size = 3
 
     token_sample = torch.randint(
         0,
-        orig_llama_config.vocab_size,
-        size=(batch_size, orig_llama_config.max_seq_len),
+        model_tester.vocab_size,
+        size=(batch_size, model_tester.seq_len),
         dtype=torch.int64,
         device=torch_device,
     )
-    orig_llama_model = orig_llama.Transformer(orig_llama_config).to(torch_device).eval()
-
-    inv_freq = calc_rotary_inv_freq(model_tester.n_embd, model_tester.n_head)
-
-    converted_state_dict = convert_llama_state_dict(
-        orig_llama_model.state_dict(), inv_freq, dtype=torch.float32
-    )
-    llama_model.load_state_dict(converted_state_dict)
 
     orig_llama_embed = orig_llama_model.tok_embeddings(token_sample)
-    llama_embed = llama_model.transformer.wte(token_sample)
+    llama_embed = model.transformer.wte(token_sample)
     assert torch.allclose(orig_llama_embed, llama_embed)
 
     seq_len = token_sample.shape[1]
@@ -176,19 +179,20 @@ def test_to_orig_llama(model_tester: LlamaModelTester, orig_llama) -> None:
     orig_llama_block_out = orig_llama_model.layers[0](
         orig_llama_embed, 0, orig_llama_model.freqs_cis[:seq_len], mask
     )
-    llama_block_out = llama_model.transformer.h[0](llama_embed)
+    llama_block_out = model.transformer.h[0](llama_embed)
     np.testing.assert_allclose(
         orig_llama_block_out.cpu(), llama_block_out.cpu(), atol=1e-6
     )
 
     expected = orig_llama_model(token_sample, 0)
-    out = llama_model(token_sample)
+    out = model(token_sample)
     np.testing.assert_allclose(out.cpu(), expected.cpu(), atol=1e-5)
 
 
 @torch.no_grad()
-def test_llama_kv_cache(model_tester: LlamaModelTester) -> None:
+def test_llama_kv_cache(model_tester: LlamaModelTester, orig_llama) -> None:
     n_samples = 20
+    model_tester.seq_len = 64
     model_tester.batch_size = 2
     model_tester.vocab_size = 12000
     model_tester.n_embd = 32
@@ -196,6 +200,8 @@ def test_llama_kv_cache(model_tester: LlamaModelTester) -> None:
     model_tester.n_head = 2
 
     model = model_tester.create_and_test_model_with_lm_head()
+
+    model, orig_llama_model = load_equivalent_llama(model_tester, model, orig_llama)
 
     # 1. no k/v cache
     sampled_ids = ids_tensor(
@@ -207,36 +213,30 @@ def test_llama_kv_cache(model_tester: LlamaModelTester) -> None:
         sampled_ids = torch.cat((sampled_ids, sampled), dim=1)
     assert sampled_ids.shape == (model_tester.batch_size, n_samples + 1)
 
-    def sample_with_kv_cache(samples, start_idx):
+    def sample_with_kv_cache(samples, start_idx, kv_cache):
         for idx in range(start_idx, n_samples):
-            logits = model(samples[:, idx : idx + 1])
+            logits = model(samples[:, idx : idx + 1], kv_cache=kv_cache)
             sampled = logits[:, -1].softmax(dim=-1).argmax(dim=-1, keepdim=True)
             samples = torch.cat((samples, sampled), dim=1)
         return samples
 
     # 2. k/v cache without prefix
+    kv_cache = {}
     sampled_ids_cache = sampled_ids[:, :1]
-    kv_cache = model.transformer.init_cache()
-    sampled_ids_cache = sample_with_kv_cache(sampled_ids_cache, start_idx=0)
-    model.transformer.deinit_cache()
-    np.testing.assert_array_almost_equal(sampled_ids.cpu(), sampled_ids_cache.cpu())
+    sampled_ids_cache = sample_with_kv_cache(sampled_ids_cache, start_idx=0, kv_cache=kv_cache)
+    torch.testing.assert_close(sampled_ids, sampled_ids_cache)
 
     # 3. k/v cache with prefix
     prefix_len = 10
     sampled_ids_cache_prefix = sampled_ids[:, : prefix_len + 1].clone()
 
-    kv_cache2 = model.transformer.init_cache()
-    model(sampled_ids_cache_prefix[:, :prefix_len])
-
-    for k, k2 in zip(kv_cache.values(), kv_cache2.values()):
-        for i in range(prefix_len):
-            np.testing.assert_allclose(k[:, i].cpu(), k2[:, i].cpu(), atol=1e-7)
+    kv_cache2 = {}
+    model(sampled_ids_cache_prefix[:, :prefix_len], kv_cache=kv_cache2)
 
     for idx in range(prefix_len, n_samples):
-        logits = model(sampled_ids_cache_prefix[:, idx : idx + 1])
+        logits = model(sampled_ids_cache_prefix[:, idx : idx + 1], kv_cache=kv_cache2)
         sampled = logits[:, -1].softmax(dim=-1).argmax(dim=-1, keepdim=True)
         sampled_ids_cache_prefix = torch.cat((sampled_ids_cache_prefix, sampled), dim=1)
-    model.transformer.deinit_cache()
-    np.testing.assert_array_almost_equal(
-        sampled_ids.cpu(), sampled_ids_cache_prefix.cpu()
+    torch.testing.assert_close(
+        sampled_ids, sampled_ids_cache_prefix
     )

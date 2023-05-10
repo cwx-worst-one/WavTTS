@@ -6,16 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import einsum, rearrange
 
-from ... import _is_triton_available
-from ...triton.softmax import softmax as triton_softmax
 from ..positional_embedding.rotary import RotaryEmbedding, SeerEmbedding
-
-
-def _softmax(x: torch.Tensor, causal: bool = False) -> torch.Tensor:
-    if _is_triton_available():
-        return triton_softmax(x, mask=None, causal=causal)
-    else:
-        return x.softmax(dim=-1)
 
 
 def scaled_dot_product(
@@ -31,7 +22,6 @@ def scaled_dot_product(
     score = einsum(
         q, k, "b n_heads seq_i d_k, b n_heads seq_j d_k -> b n_heads seq_i seq_j"
     )
-
     score *= scale
 
     if attn_bias is not None:
@@ -48,7 +38,7 @@ def scaled_dot_product(
         )
         score = score.masked_fill(causal_mask, -torch.finfo(score.dtype).max)
 
-    attention = _softmax(score)
+    attention = score.float().softmax(dim=-1).type_as(q)
     attention = F.dropout(attention, p=dropout_p)
 
     score = einsum(
@@ -72,6 +62,7 @@ class MultiHeadAttention(nn.Module):
         d_k: Optional[int] = None,
         enable_flash: bool = True,
         enable_mem_efficient: bool = True,
+        max_seq_len: Optional[int] = None,
     ) -> None:
         super().__init__()
         self._use_cache = False
@@ -94,7 +85,7 @@ class MultiHeadAttention(nn.Module):
             raise ImportError("Flash Attention requires PyTorch >= 2.0")
 
         self.rotary_embeddings = (
-            RotaryEmbedding(self.d_k) if use_rotary_embeddings else None
+            RotaryEmbedding(self.d_k, max_seq_len) if use_rotary_embeddings else None
         )
 
         self.qkv_dim_with_heads = self.d_k * self.n_heads
@@ -153,8 +144,7 @@ class MultiHeadAttention(nn.Module):
         v = self.rearrange_heads(v)
 
         if kv_cache is not None:
-            if not self._use_cache:
-                raise RuntimeError("`_use_cache` needs to be enabled first")
+            self._use_cache = True
             kv_cache[self.to_k] = (
                 torch.cat((kv_cache[self.to_k], k), dim=2)
                 if self.to_k in kv_cache
@@ -168,6 +158,8 @@ class MultiHeadAttention(nn.Module):
 
             k = kv_cache[self.to_k]
             v = kv_cache[self.to_v]
+        else:
+            self._use_cache = False
 
         if self.rotary_embeddings:
             cache_len = k.shape[2] if self._use_cache else None
@@ -215,13 +207,13 @@ class MultiHeadAttention(nn.Module):
                 enable_mem_efficient=self.enable_mem_efficient,
             ):
                 score = torch.nn.functional.scaled_dot_product_attention(
-                    q,
-                    k,
-                    v,
+                    q.float(),
+                    k.float(),
+                    v.float(),
                     attn_mask=attn_mask,
                     dropout_p=dropout_p,
                     is_causal=is_causal,
-                )
+                ).type_as(q)
         else:
             score, attention = scaled_dot_product(
                 q, k, v, scale=self.scale, dropout_p=dropout_p, is_causal=self.causal
@@ -238,7 +230,7 @@ class MultiHeadAttention(nn.Module):
         kv_cache: Optional[dict] = None,
         return_attention: bool = False,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        q, k, v = self.qkv(x, context, kv_cache=kv_cache)
+        q, k, v = self.qkv(x, context=context, kv_cache=kv_cache)
         return self.attention(q, k, v, return_attention=return_attention)
 
 
