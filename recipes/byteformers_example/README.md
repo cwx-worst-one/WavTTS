@@ -4,7 +4,6 @@ This is a minimal example of using optimised Transformer base components to trai
 Under the hood, it uses:
 1. [Triton](https://github.com/openai/triton)
 2. [Fully-Sharded Data Parallel](https://engineering.fb.com/2021/07/15/open-source/fsdp/)
-3. [Lightning Fabric](https://lightning.ai/pages/open-source/fabric/) with a custom trainer written for scaling (`byteformers.trainer.FabricTrainer`)
 
 
 ## Quickstart
@@ -18,7 +17,11 @@ pip3 install -r ./recipes/byteformers_example/requirements.txt
 ```
 3. Run model:
 ```bash
-python3 ./recipes/byteformers_example/main.py 
+bash launch.sh fit --conf ./recipes/byteformers_example/conf/shakespeare.yml
+```
+4. Generate using a prompt:
+```bash
+python3 ./recipes/byteformers_example/scripts/generate.py --prompt "hello there"
 ```
 
 ## Model weights

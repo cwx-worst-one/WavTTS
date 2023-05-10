@@ -1,10 +1,41 @@
-import pytorch_lightning as pl
+from time import time
+
 import torch
 from deepspeed.profiling.flops_profiler import FlopsProfiler
+from pytorch_lightning import Callback
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
+from samantha.byteformers.benchmarks.utils import flops_achieved
 
-class FlopsProfilerCallback(pl.Callback):
+
+class FlopsProfilerCallback(Callback):
+    def __init__(self, profile_step: int = 20) -> None:
+        self.profile_step = profile_step
+
+    @rank_zero_only
+    def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
+        if pl_module.global_step and pl_module.global_step % self.profile_step == 0:
+            self.start_time = time()
+
+    @rank_zero_only
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        if (
+            pl_module.global_step - 1
+            and (pl_module.global_step - 1) % self.profile_step == 0
+        ):
+            if not hasattr(pl_module, "total_flops"):
+                raise NotImplementedError(
+                    "Model requires `total_flops` attribute to be initialized"
+                )
+            end_time = time() - self.start_time
+            current_tflops = (
+                flops_achieved(end_time, batch[0].shape[0], pl_module.total_flops)
+                / 10**12
+            )
+            pl_module.log("TFLOPs", current_tflops, prog_bar=True)
+
+
+class DeepSpeedFlopsProfilerCallback(Callback):
     """FLOPs profiler using the DeepSpeed framework.
     As documented in https://www.deepspeed.ai/tutorials/flops-profiler/
 
@@ -40,7 +71,7 @@ class FlopsProfilerCallback(pl.Callback):
             params = self.prof.get_total_params()
 
             pl_module.log("parameters", params)
-            pl_module.log("FLOPs", flops)
+            pl_module.log("TFLOPs", flops / 10**12)
 
             self.prof.print_model_profile(
                 profile_step=self.profile_step, detailed=False

@@ -50,50 +50,48 @@ def calc_rotary_inv_freq(n_embd: int, n_head: int) -> float:
 
 
 def convert_llama_state_dict(
-    state_dict: Dict[str, torch.Tensor],
-    inv_freq: float,
-    dtype: torch.dtype = torch.float32,
+    state_dict: Dict[str, torch.Tensor], inv_freq: float
 ) -> Dict[str, torch.Tensor]:
     converted = {}
-    converted["transformer.wte.weight"] = state_dict["tok_embeddings.weight"].to(dtype)
-    converted["lm_head.weight"] = state_dict["output.weight"].to(dtype)
-    converted["transformer.ln_f.weight"] = state_dict["norm.weight"].to(dtype)
+    converted["transformer.wte.weight"] = state_dict["tok_embeddings.weight"]
+    converted["lm_head.weight"] = state_dict["output.weight"]
+    converted["transformer.ln_f.weight"] = state_dict["norm.weight"]
 
     layer_idxs = [k.split(".")[1] for k in state_dict if k.startswith("layers")]
     for layer_idx in tqdm(layer_idxs, desc="Transfering weights"):
         # attention
         converted[f"transformer.h.{layer_idx}.attn.to_q.weight"] = state_dict[
             f"layers.{layer_idx}.attention.wq.weight"
-        ].to(dtype)
+        ]
         converted[f"transformer.h.{layer_idx}.attn.to_k.weight"] = state_dict[
             f"layers.{layer_idx}.attention.wk.weight"
-        ].to(dtype)
+        ]
         converted[f"transformer.h.{layer_idx}.attn.to_v.weight"] = state_dict[
             f"layers.{layer_idx}.attention.wv.weight"
-        ].to(dtype)
+        ]
 
         converted[f"transformer.h.{layer_idx}.attn.WO.weight"] = state_dict[
             f"layers.{layer_idx}.attention.wo.weight"
-        ].to(dtype)
+        ]
 
         # mlp
         converted[f"transformer.h.{layer_idx}.mlp.c_fc1.weight"] = state_dict[
             f"layers.{layer_idx}.feed_forward.w1.weight"
-        ].to(dtype)
+        ]
         converted[f"transformer.h.{layer_idx}.mlp.c_proj.weight"] = state_dict[
             f"layers.{layer_idx}.feed_forward.w2.weight"
-        ].to(dtype)
+        ]
         converted[f"transformer.h.{layer_idx}.mlp.c_fc2.weight"] = state_dict[
             f"layers.{layer_idx}.feed_forward.w3.weight"
-        ].to(dtype)
+        ]
 
         # rms norm
         converted[f"transformer.h.{layer_idx}.ln_1.weight"] = state_dict[
             f"layers.{layer_idx}.attention_norm.weight"
-        ].to(dtype)
+        ]
         converted[f"transformer.h.{layer_idx}.ln_2.weight"] = state_dict[
             f"layers.{layer_idx}.ffn_norm.weight"
-        ].to(dtype)
+        ]
 
         converted[
             f"transformer.h.{layer_idx}.attn.rotary_embeddings.inv_freq"
@@ -102,7 +100,7 @@ def convert_llama_state_dict(
 
 
 def convert_meta_llama_weights(
-    ckpt_dir: str, output_dir: str, model_size: str = "7B", dtype: str = torch.float32
+    ckpt_dir: str, output_dir: str, model_size: str = "7B"
 ) -> None:  # pragma: no cover
     ckpt_dir = Path(ckpt_dir)
     output_dir = Path(output_dir)
@@ -138,7 +136,7 @@ def convert_meta_llama_weights(
         checkpoint = torch.load(file, map_location="cpu")
 
         inv_freq = calc_rotary_inv_freq(n_embd=n_embd, n_head=n_head)
-        converted = convert_llama_state_dict(checkpoint, inv_freq, dtype=dtype)
+        converted = convert_llama_state_dict(checkpoint, inv_freq)
 
         if combined is None:
             combined = converted

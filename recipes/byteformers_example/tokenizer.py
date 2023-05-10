@@ -5,9 +5,16 @@ from typing import Optional
 import torch
 from sentencepiece import SentencePieceProcessor, SentencePieceTrainer
 
+from samantha.utils.hdfs_helper import get
+
 
 class LlamaTokenizer:
     def __init__(self, model_path: Path) -> None:
+        if not os.path.exists(model_path):
+            get(
+                "hdfs://harunava/home/byte_speech_sv/models/llama/tokenizer.model",
+                model_path,
+            )
         self.processor = SentencePieceProcessor(model_file=str(model_path))
         self.bos_id = self.processor.bos_id()
         self.eos_id = self.processor.eos_id()
