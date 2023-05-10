@@ -1,0 +1,34 @@
+.auto-wrapper: &auto-wrapper
+  only:
+    - develop
+    - master
+
+.manual-wrapper: &manual-wrapper
+  when: manual
+  except:
+    - develop
+    - master
+
+.decode-test: &decode-test
+  stage: decode_test
+  script:
+    - echo "begin decode test"
+    - pwd
+    - git log --oneline -n 3
+    - export CUDA_VISIBLE_DEVICES=6,7
+    - export DOLPHIN_DISTRIBUTED_FRAMEWORK=torch
+    - ps x -o pid,ppid,tty,stat,rss,rsz,time,command
+    - free -h
+    - bash -x tests/decode_test/decode_test.sh
+  tags:
+    - gpu
+  artifacts:
+    expire_in: 2 hrs
+
+auto-decode-test:
+  <<: *auto-wrapper
+  <<: *decode-test
+
+manual-decode-test:
+  <<: *manual-wrapper
+  <<: *decode-test

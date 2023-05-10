@@ -1,0 +1,28 @@
+black:
+  stage: lint
+  script:
+    - echo "begin black lint"
+    - pwd
+    - git log --oneline -n 3
+    - pip3 install black==22.10.0
+    - pip3 show pylint black
+    - python3 -m black --diff --color -l 100 -S --safe core/ tests/ train.py | head -n 500
+    - python3 -m black --check -l 100 -S --safe core/ tests/ train.py | head -n 500
+  tags:
+    - cpu
+  artifacts:
+    expire_in: 2 hrs
+
+pylint:
+  stage: lint
+  script:
+    - echo "begin pylint"
+    - pwd
+    - git log --oneline -n 3
+    - pip3 install pylint==2.15.4
+    - pip3 show pylint black
+    - pylint -j 16 --rcfile=.pylintrc train.py core/ tests/ | head -n 500
+  tags:
+    - cpu
+  artifacts:
+    expire_in: 2 hrs

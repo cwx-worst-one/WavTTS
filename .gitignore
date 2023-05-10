@@ -1,13 +1,79 @@
-.idea
-.wav
-logdir*
-*.py[cod]
-.DS_Store
-outputs
-__MACOSX
-*.ckpt
-*.pt
-*.onnx
+# Visual Studio Code files
+.vs
+/.vscode/*
+!/.vscode/extensions.json
+!/.vscode/settings_recommended.json
+
+# Editor temporaries
+*.swn
+*.swo
+*.swp
+*.swm
+*~
+
+# Dolphin runtime info
+reorder.dict
+tmp/
+total.code
+total_bpe.dict
+fbank_80dim_cmvn.kaldi
+datum_pb2.py
+lmdb_shard*/
+char_bpe.dict
+rank*cer*txt*
+cer_*txt*
+*.workspace.xml
+
+# Dolphin runtime template dirs
+demo/
+voxceleb2_train/
+stress_prediction/
+nnlm_ez/
+kws_rnnt_train/
+kws_ce_train/
+endpoints/
+dfsmnln_online/
+dfsmnln_online_pretrain/
+exp/
+stress_eval/
+tensorboard/
+falconclaw-data/
+dist_init_file*
+
+# Distribution / packaging
+build/
+eggs/
+.eggs/
+*.egg-info/
+lib/
+lib64/
+wheels/
+
+# Compiled Object files
+*.so
+*.o
+
+# Compiled python
 *.pyc
+*.pyd
 __pycache__
+
+# macOS dir files
+.DS_Store
+
+# Idea settings
+.idea
+
+# Binary files
+*.pth
+*.pt
+*.data
+*.index
+*.onnx
+*.wav
 *.jsonl
+
+# ignore the weekly_test reports
+scripts/weekly_test/report/
+scripts/weekly_test/report_json/
+scripts/weekly_test/Dolphin*.md
