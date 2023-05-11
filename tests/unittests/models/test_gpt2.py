@@ -3,8 +3,8 @@ import torch
 
 from tests.helpers.runif import RunIf
 from tests.helpers.testing_utils import torch_device
-from tests.unittests.byteformers.models.utils import ids_tensor
-from samantha.byteformers.models.gpt2 import GPT2, GPT2Config, GPT2Model
+from tests.unittests.models.utils import ids_tensor
+from samantha.models.gpt2 import GPT2, GPT2Config, GPT2Model
 
 
 class GPT2ModelTester:

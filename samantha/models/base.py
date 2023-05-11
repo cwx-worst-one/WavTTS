@@ -3,10 +3,7 @@ from typing import Any, List, Optional, Tuple
 import torch
 import torch.nn as nn
 
-from samantha.byteformers.components.attention.base import (
-    MultiHeadAttention,
-    SeerAttention,
-)
+from samantha.components.attention import MultiHeadAttention, SeerAttention
 
 
 class BaseModel(nn.Module):

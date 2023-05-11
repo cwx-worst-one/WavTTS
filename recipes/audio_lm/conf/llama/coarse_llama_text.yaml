@@ -36,7 +36,7 @@ run_opts:
     hdfs_path: null
 _checkpointing: !ref <run_opts[checkpointing]>
 
-llama_config: !new:samantha.stages.module.byteformers.models.LlamaConfig
+llama_config: !new:samantha.models.LlamaConfig
     vocab_size: !ref <hp[num_coarse]> * <hp[quant_token_num]> + 1 + 30522
     n_embd: 1024
     n_layer: 24
@@ -82,7 +82,7 @@ pl_datamodule: !new:recipes.audio_lm.lit_modules.WDSDataModule
     num_workers: !ref <run_opts[num_workers]>
 
 # model configuration
-model_cls: !name:samantha.stages.module.byteformers.models.Llama
+model_cls: !name:samantha.models.Llama
     config: !ref <llama_config>
 
 # training module configuration

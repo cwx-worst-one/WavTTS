@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # CREDITS: This is mainly taken from GPT-NeoX, but with some changes
-# to accomodate more flexible deployments
+# to accommodate more flexible deployments
 
 import torch
 

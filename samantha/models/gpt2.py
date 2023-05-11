@@ -6,11 +6,12 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
-from ..components.attention import _is_blocksparse_available
-from ..components.attention.base import MultiHeadAttention
-from ..components.feedforward import MLP
-from ..components.normalization import LayerNorm
-from ..factory.utils import get_clones
+from samantha.components.attention import _is_blocksparse_available
+from samantha.components.attention.base import MultiHeadAttention
+from samantha.components.feedforward import MLP
+from samantha.components.normalization import LayerNorm
+from samantha.models.utils import get_clones
+
 from .base import BaseModel
 
 
@@ -67,7 +68,7 @@ class GPT2Block(nn.Module):
 
 
 if _is_blocksparse_available:
-    from ..components.attention import BlockSparseAttention
+    from samantha.components import BlockSparseAttention
 
     class GPT2SparseBlock(GPT2Block):
         def __init__(self, config: GPT2Config):

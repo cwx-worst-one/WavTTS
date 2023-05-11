@@ -10,7 +10,8 @@ import torch
 import torch.nn.functional as F
 from einops import rearrange
 
-from ... import _is_triton_available
+from samantha.byteformers import _is_triton_available
+
 from ...components.attention.base import MultiHeadAttention
 
 logger = logging.getLogger(__name__)

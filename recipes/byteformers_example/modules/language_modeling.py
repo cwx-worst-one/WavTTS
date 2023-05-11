@@ -10,7 +10,7 @@ from pytorch_lightning.utilities import grad_norm
 from tqdm import tqdm
 
 from samantha.byteformers.benchmarks.utils import flops
-from samantha.byteformers.models import Llama, LlamaConfig
+from samantha.models import Llama, LlamaConfig
 from samantha.utils.checkpoints_utils.convert_llama import convert_meta_llama_weights
 from samantha.utils.hdfs_helper import get
 

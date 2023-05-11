@@ -10,14 +10,14 @@ import numpy as np
 import pytest
 import torch
 
-from samantha.byteformers.models import Llama, LlamaConfig, LlamaModel
+from samantha.models import Llama, LlamaConfig, LlamaModel
 from samantha.utils.checkpoints_utils.convert_llama import (
     calc_rotary_inv_freq,
     convert_llama_state_dict,
 )
 from tests.helpers.runif import RunIf
 from tests.helpers.testing_utils import torch_device
-from tests.unittests.byteformers.models.utils import ids_tensor
+from tests.unittests.models.utils import ids_tensor
 
 files = {
     "original_model.py": "https://gist.githubusercontent.com/lantiga/fd36849fb1c498da949a0af635318a7b/raw/7dd20f51c2a1ff2886387f0e25c1750a485a08e1/llama_model.py",  # noqa

@@ -1,7 +1,7 @@
 # Load base image
 FROM hub.byted.org/base/lab.pytorch2:2.0.0.post2
 
-RUN sudo apt -q update && sudo apt -q install -y libsndfile1 ffmpeg tmux git-lfs
+RUN sudo apt -q update && sudo apt -q install -y libsndfile1 ffmpeg tmux git-lfs python3-tk
 
 RUN pip3 install -q --upgrade pip setuptools -i https://bytedpypi.byted.org/simple
 

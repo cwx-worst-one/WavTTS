@@ -6,7 +6,7 @@
 import pytest
 import torch
 
-from samantha.byteformers.components.attention import MultiHeadAttention
+from samantha.components.attention import MultiHeadAttention
 from samantha.byteformers.triton.utils import get_current_cuda_device
 
 # CREDITS:
@@ -42,7 +42,7 @@ if _triton_available:
         from triton.ops.blocksparse import matmul as blocksparse_matmul
         from triton.ops.blocksparse import softmax as blocksparse_softmax
 
-        from samantha.byteformers.components.attention.blocksparse import (
+        from samantha.components.attention import (
             BlockSparseAttention,
         )
         from samantha.byteformers.triton.utils import gpu_capabilities_older_than_70

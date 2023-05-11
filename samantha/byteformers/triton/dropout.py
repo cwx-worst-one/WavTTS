@@ -13,7 +13,8 @@ import torch
 import triton
 from torch.cuda.amp import custom_bwd, custom_fwd
 
-from ..components.activations import Activation, build_activation
+from samantha.components.activations import Activation, build_activation
+
 from .k_activations import get_triton_activation_index
 from .k_dropout import k_dropout_bw, k_dropout_fw
 

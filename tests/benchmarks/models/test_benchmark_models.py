@@ -1,11 +1,11 @@
 import pytest
 
-from tests.benchmarks.byteformers.models.common import benchmark_model_plots
+from tests.benchmarks.models.common import benchmark_model_plots
 from tests.helpers.runif import RunIf
-from tests.unittests.byteformers.models.test_gpt2 import (  # noqa
+from tests.unittests.models.test_gpt2 import (  # noqa
     model_tester as gpt2_model_tester,
 )
-from tests.unittests.byteformers.models.test_llama import (  # noqa
+from tests.unittests.models.test_llama import (  # noqa
     model_tester as llama_model_tester,
 )
 

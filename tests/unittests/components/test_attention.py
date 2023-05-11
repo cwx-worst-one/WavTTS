@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from samantha.byteformers.components.attention import MultiHeadAttention
+from samantha.components.attention import MultiHeadAttention
 from tests.helpers.testing_utils import torch_device
 
 

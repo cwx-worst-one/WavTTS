@@ -1,11 +1,11 @@
 import pytest
 import torch
 
-from samantha.byteformers.components.positional_embedding.rotary import (
+from samantha.components.positional_embedding.rotary import (
     RotaryEmbedding,
     apply_rotary_pos_emb,
 )
-from tests.unittests.byteformers.models.test_llama import (  # noqa
+from tests.unittests.models.test_llama import (  # noqa
     LlamaModelTester,
     model_tester,
     orig_llama,

@@ -10,7 +10,7 @@ from torch.autograd.profiler import record_function
 
 from tests.helpers.runif import RunIf
 from tests.helpers.testing_utils import is_cuda_available
-from tests.unittests.byteformers.models.test_gpt2 import GPT2ModelTester
+from tests.unittests.models.test_gpt2 import GPT2ModelTester
 
 
 def _get_trace_handler(name: str):

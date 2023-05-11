@@ -4,9 +4,9 @@ from typing import Any, Optional
 import torch
 import torch.nn as nn
 
-from ..components.attention import MultiHeadAttention
-from ..components.feedforward import MLP
-from .utils import get_clones
+from samantha.components.attention import MultiHeadAttention
+from samantha.components.feedforward import MLP
+from samantha.models.utils import get_clones
 
 
 @dataclass

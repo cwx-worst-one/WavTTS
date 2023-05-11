@@ -35,7 +35,7 @@ run_opts:
     duration: 10
 _checkpointing: !ref <run_opts[checkpointing]>
 
-seer_config: !new:samantha.stages.module.byteformers.models.SeerConfig
+seer_config: !new:samantha.models.SeerConfig
     vocab_size: !ref <hp[num_coarse]> * <hp[quant_token_num]> + 12288 + 1 + 1024 + <run_opts[n_seers]>
     n_embd: 1024
     n_layer: 24
@@ -67,7 +67,7 @@ pl_datamodule: !new:recipes.audio_lm.lit_modules.DataModule
     train_dataloader: !ref <train_dataloader>
 
 # model configuration
-model_cls: !name:samantha.stages.module.byteformers.models.Seer
+model_cls: !name:samantha.models.Seer
     config: !ref <seer_config>
 
 # training module configuration

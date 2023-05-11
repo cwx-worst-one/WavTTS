@@ -9,7 +9,7 @@ import pytest
 import torch
 from torch.cuda.amp.autocast_mode import autocast
 
-from samantha.byteformers.components.activations import Activation, build_activation
+from samantha.components.activations import Activation, build_activation
 
 _triton_available = torch.cuda.is_available()
 if _triton_available:

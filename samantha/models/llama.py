@@ -6,11 +6,12 @@ import torch
 import torch.nn as nn
 from typing_extensions import Self
 
-from ..components.activations import Activation
-from ..components.attention import MultiHeadAttention
-from ..components.feedforward import GatedMLP
-from ..components.normalization import RMSNorm
-from ..factory.utils import get_clones
+from samantha.components.activations import Activation
+from samantha.components.attention import MultiHeadAttention
+from samantha.components.feedforward import GatedMLP
+from samantha.components.normalization import RMSNorm
+from samantha.models.utils import get_clones
+
 from .base import BaseModel
 
 

@@ -5,11 +5,12 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-from ..components.activations import Activation
-from ..components.attention import SeerAttention
-from ..components.feedforward import GatedMLP
-from ..components.normalization import RMSNorm
-from ..factory.utils import get_clones
+from samantha.components.activations import Activation
+from samantha.components.attention import SeerAttention
+from samantha.components.feedforward import GatedMLP
+from samantha.components.normalization import RMSNorm
+from samantha.models.utils import get_clones
+
 from .base import BaseModel
 
 

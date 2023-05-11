@@ -9,7 +9,7 @@ from typing import Optional
 import triton
 import triton.language as tl
 
-from ..components.activations import Activation
+from samantha.components.activations import Activation
 
 _kAlpha = math.sqrt(2.0 / math.pi)
 
