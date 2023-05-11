@@ -154,7 +154,6 @@ class Llama(nn.Module):
             n_params -= self.transformer.wpe.weight.numel()
         return n_params
 
-    @torch.inference_mode()
     def forward(self, x: torch.Tensor, kv_cache=None, last_logit_only: bool = False):
         x = self.transformer(x, kv_cache=kv_cache)
         if last_logit_only:

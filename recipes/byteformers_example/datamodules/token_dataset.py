@@ -43,12 +43,10 @@ class TokenDataModule(LightningDataModule):
         super().__init__()
         self.data_fp = data_fp
         self.tokenizer = tokenizer
+        self.seq_len = seq_len
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.pin_memory = pin_memory
-
-        # self.train_dataset = TokenDataset("train.bin", seq_len=seq_len)
-        # self.valid_dataset = TokenDataset("valid.bin", seq_len=seq_len)
 
     def prepare_data(self) -> None:
         with open(self.data_fp, "r") as f:
@@ -66,6 +64,8 @@ class TokenDataModule(LightningDataModule):
         # Or load a pre-trained tokenizer (e.g., LLaMA's)
         TokenDataset.prepare(train_data, self.tokenizer, "train.bin")
         TokenDataset.prepare(val_data, self.tokenizer, "valid.bin")
+        self.train_dataset = TokenDataset("train.bin", seq_len=self.seq_len)
+        self.valid_dataset = TokenDataset("valid.bin", seq_len=self.seq_len)
 
     def train_dataloader(self):
         return DataLoader(

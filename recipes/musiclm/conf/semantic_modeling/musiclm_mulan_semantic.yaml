@@ -33,8 +33,8 @@ run_opts:
     fast_dev_run: False
     tensorboard_dir: !ref <log_dir>
     log_name: musiclm_semantic-modeling_mulan_semantic
-    version: baseline_v6
-    precision: 16-mixed
+    version: baseline
+    precision: bf16-mixed
     num_workers: 6
     accelerator: auto
 
@@ -164,8 +164,8 @@ scheduler_class: !name:recipes.musiclm.optim.lr_scheduler.TriStageLR
 
 pl_module: !new:recipes.musiclm.lightning.semantic_modeling.mulan_semantic_model.MulanSemanticModel
     n_embd: 1024
-    n_head: 8
-    n_layer: 8
+    n_head: 16
+    n_layer: 24
     codebook_size: !ref <data_params[codebook_size]>
     n_codebooks: !ref <data_params[n_codebooks]>
     max_sequence_length: !ref <data_params[n_audio_frames]>

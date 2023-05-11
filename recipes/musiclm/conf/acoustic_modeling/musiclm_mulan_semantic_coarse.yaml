@@ -33,7 +33,7 @@ run_opts:
     fast_dev_run: False
     tensorboard_dir: !ref <log_dir>
     log_name: musiclm_mulan_semantic_coarse
-    version: baseline_v6
+    version: baseline
     precision: 16-mixed
     num_workers: 6
     accelerator: auto

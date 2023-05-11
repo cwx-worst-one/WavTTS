@@ -6,7 +6,7 @@
 
 # training parameters
 training_params:
-  model_name: "100M"
+  model_name: "300M"
   vocab_size: 32000
   seq_len: 1024
   max_steps: 600000
