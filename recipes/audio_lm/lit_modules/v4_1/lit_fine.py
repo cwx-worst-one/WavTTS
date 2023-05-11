@@ -143,7 +143,7 @@ class FineModule(CoarseModule):
                 predict_logits = logits[
                     :, -1, layer_idx * 1024 : (layer_idx + 1) * 1024
                 ]  # [b, d]
-                samples = sample(predict_logits, temp=0.4, mode="gumbel")
+                samples = sample(predict_logits, temp=0.4, mode="gumbel").unsqueeze(1)
                 samples = samples + layer_idx * 1024
                 past_key_values = fine_outputs["past_key_values"]
                 input_tokens = samples

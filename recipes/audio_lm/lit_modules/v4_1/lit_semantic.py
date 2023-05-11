@@ -153,7 +153,7 @@ class SemanticModule(CoarseModule):
                 )
                 logits = semantic_outputs["logits"]  # [b, t, d]
                 predict_logits = logits[:, -1, 0:1024]
-                samples = sample(predict_logits, temp=1, mode="gumbel")
+                samples = sample(predict_logits, temp=1, mode="gumbel").unsqueeze(1)
                 past_key_values = semantic_outputs["past_key_values"]
                 input_tokens = samples
                 if semantic_samples is None:

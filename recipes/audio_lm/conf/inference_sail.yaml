@@ -44,7 +44,7 @@ pl_module: !new:recipes.audio_lm.lit_modules.infer.MusicLMInfer
         AudioLM_semantic: hdfs://haruna/home/byte_speech_sv/zongyu.yin/ckpts/musiclm/semantic_sparse_mulan247_429M_epoch=22-step=88000-accu=36.77.ckpt
         AudioLM_coarse: hdfs://haruna/home/byte_speech_sv/zongyu.yin/ckpts/musiclm/coarse_sparse_mulan247_434M_epoch=08-step=131000-accu=29.93.ckpt
         AudioLM_fine: hdfs://haruna/home/byte_speech_sv/user/litang/musiclm/2023-04-03_fine_v4/checkpoints/epoch=03-step=194000-accu=16.34.ckpt
-        SoundStream: hdfs://haruna/home/byte_speech_sv/user/litang/vqgan_dev/2023-03-24_ss_dev_stft_x480_small_encoder/sound_stream_190k/ss_decoder_0.pt
+        SoundStream: hdfs://haruna/home/byte_speech_sv/user/litang/vqgan_dev/2023-03-24_ss_dev_stft_x480_small_encoder/sound_stream_190k/
         MuLan: hdfs://haruna/home/byte_speech_sv/user/dongguo/aigc/mulan_gpt/mulan-step=033600-median_rank_0=247-kaggle.ckpt
         num_coarse: !ref <hp[num_coarse]>
         num_fine: !ref <hp[num_fine]>

@@ -279,7 +279,7 @@ class CoarseModule(pl.LightningModule):
                 predict_logits = logits[
                     :, -1, 1024 + layer_idx * 1024 : 1024 + (layer_idx + 1) * 1024
                 ]  # [b,d] # offset: w2v-bert
-                samples = sample(predict_logits, temp=0.95, mode="gumbel")
+                samples = sample(predict_logits, temp=0.95, mode="gumbel").unsqueeze(1)
                 samples = (
                     samples + 1024 + layer_idx * 1024
                 )  # [b, 1], # offset: w2v-bert

@@ -1,6 +1,6 @@
 import lightning.pytorch as pl
 
-from samantha.byteformers import GradientNoiseScale
+from samantha.callbacks.gradient_noise_scale import GradientNoiseScale
 
 
 class GradientNoiseScaleLogger(pl.Callback):
