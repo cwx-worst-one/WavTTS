@@ -128,7 +128,7 @@ class AudioPathDataset(Dataset):
             else os.path.basename(dir)
         )
 
-        from ..utils.hdfs_tools import hdfs_cp
+        from samantha.utils.hdfs_tools import hdfs_cp
 
         if dir != local_path:
             hdfs_cp(dir, local_path, True)

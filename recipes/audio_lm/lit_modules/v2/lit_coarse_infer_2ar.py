@@ -13,7 +13,7 @@ from tqdm import tqdm
 from samantha.utils.hparams import DotDict
 
 from ...requires.mulan.mulan_infer import mulan_inference, mulan_rvq_indexs
-from ...utils.hdfs_tools import hdfs_cp, hdfs_mkdir
+from samantha.utils.hdfs_tools import hdfs_cp, hdfs_mkdir
 
 
 def save_wav(audio, output_file, sr=24000):

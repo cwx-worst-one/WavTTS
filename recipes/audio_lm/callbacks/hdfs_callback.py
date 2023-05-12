@@ -2,7 +2,7 @@ import os
 
 from pytorch_lightning.callbacks import Callback
 
-from recipes.audio_lm.utils.hdfs_tools import hdfs_mkdir, hdfs_put
+from samantha.utils.hdfs_tools import hdfs_mkdir, hdfs_put
 
 
 class HdfsSavingCallback(Callback):

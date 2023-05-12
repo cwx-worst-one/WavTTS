@@ -10,8 +10,8 @@ from cruise import CruiseTrainer
 from hyperpyyaml import load_hyperpyyaml
 from pytorch_lightning import Trainer
 
-from recipes.llm_asr.utils.hdfs_tools import hdfs_open
 from samantha.utils.experiment import create_experiment_directory
+from samantha.utils.hdfs_tools import hdfs_open
 from samantha.utils.hparams import DotDict
 from samantha.utils.parser import parse_arguments
 from samantha.utils.result_io import (

@@ -1,6 +1,7 @@
 [run]
 omit =
     samantha/utils/hdfs_helper.py
+    samantha/utils/hdfs_tools.py
     samantha/callbacks/*
     samantha/utils/distributed.py
     samantha/utils/result_io.py
