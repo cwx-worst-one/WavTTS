@@ -10,6 +10,8 @@ from torchaudio_augmentations import Compose
 
 from recipes.musiclm.utils.math import safe_divide
 
+from pydub import AudioSegment
+
 
 def to_tensor(x: np.ndarray):
     return torch.from_numpy(x)
@@ -181,3 +183,38 @@ class SplitView(nn.Module):
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor]:
         return tuple(map(lambda v: v(x), self.views))
+
+
+class LoudnessCheck:
+    def __init__(
+        self,
+        sample_rate: int,
+        threshold: float = 0.05,
+        loudness_ratio_threshold: float = 0.5,
+    ):
+        self.sample_rate = sample_rate
+        self.threshold = threshold
+        self.loudness_ratio_threshold = loudness_ratio_threshold
+    
+    def __call__(self, audio: torch.Tensor) -> bool:
+        window_size = int(self.sample_rate * 0.1)
+
+        frames = audio.unfold(1, window_size, window_size)
+        energy = torch.max(torch.abs(frames), dim=-1)[0]
+        ratio = torch.sum(energy > self.threshold) / energy.size(1)
+
+        if ratio < self.loudness_ratio_threshold:
+            return False
+        return True
+
+
+class ReadMP3:
+    def __init__(self, sample_rate: int):
+        self.sample_rate = sample_rate
+
+    def __call__(self, mp3: bytes) -> np.ndarray:
+        audio = AudioSegment.from_file(mp3, format="mp3")
+        audio = audio.set_channels(1)
+        audio = audio.set_frame_rate(self.sample_rate)
+        wav = np.asarray(audio.get_array_of_samples())
+        return wav
