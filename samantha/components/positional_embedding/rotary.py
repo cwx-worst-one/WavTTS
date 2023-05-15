@@ -124,7 +124,7 @@ class SeerEmbedding(torch.nn.Module):
         seq_len: int,
         use_complex: bool = True,
         *_,
-        **__
+        **__,
     ):
         super().__init__()
         self.n_priors = n_priors
@@ -141,7 +141,7 @@ class SeerEmbedding(torch.nn.Module):
         t = torch.arange(
             self.n_priors + self.seq_len,
             dtype=torch.float32,
-            device=self.inv_freq.device
+            device=self.inv_freq.device,
         )
         t[self.n_priors :] = (
             t[self.n_priors :]
