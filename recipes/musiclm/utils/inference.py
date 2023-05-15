@@ -1,0 +1,109 @@
+import io
+import random
+import re
+import unicodedata
+
+import librosa
+import numpy as np
+import torch
+from pydub import AudioSegment
+from scipy.io.wavfile import write
+
+
+def sample(predict_logits, temp, thresh=0.9, mode="naive"):
+    if mode == "naive":
+        predict_logits = predict_logits / (temp)
+        probs = predict_logits.softmax(dim=-1)
+        dist = torch.distributions.categorical.Categorical(probs=probs)
+        samples = dist.sample()
+    elif mode == "gumbel":
+        predict_logits = top_k(predict_logits, thresh=thresh)
+        samples = gumbel_sample(predict_logits, temp)
+    else:
+        raise NotImplementedError()
+    return samples
+
+
+def set_seed(seed=1996):
+    # reproduction setting
+    random.seed(seed)
+    np.random.seed(seed + 1)
+    torch.manual_seed(seed + 2)
+    return
+
+
+def slugify(value, allow_unicode=False):
+    """
+    Taken from https://github.com/django/django/blob/master/django/utils/text.py
+    Convert to ASCII if 'allow_unicode' is False. Convert spaces or repeated
+    dashes to single dashes. Remove characters that aren't alphanumerics,
+    underscores, or hyphens. Convert to lowercase. Also strip leading and
+    trailing whitespace, dashes, and underscores.
+    """
+    value = str(value)
+    if allow_unicode:
+        value = unicodedata.normalize("NFKC", value)
+    else:
+        value = (
+            unicodedata.normalize("NFKD", value)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+        )
+    value = re.sub(r"[^\w\s-]", "", value.lower())
+    return re.sub(r"[-\s]+", "-", value).strip("-_")
+
+
+def dump_wav(audio, sr=24000):
+    audio = audio * 32768.0
+    audio = audio.astype("int16")
+    handle = io.BytesIO()
+    write(handle, sr, audio)
+    handle.seek(0)
+    return handle.read()
+
+
+def save_wav(audio, output_file, sr=24000):
+
+    audio = audio * 32768.0
+    audio = audio.astype("int16")
+    write(output_file, sr, audio)
+    return
+
+
+def load_wav(path):
+    if path.endswith(".npy"):
+        wav = np.load(path)
+    elif path.endswith(".wav"):
+        wav, sr = librosa.load(path, sr=24000)
+    else:
+        audio = AudioSegment.from_file(path)
+        audio = audio.set_channels(1)
+        audio = audio.set_frame_rate(24000)
+        wav = np.asarray(audio.get_array_of_samples())
+    if wav.dtype == np.int16:
+        wav = wav / 32768.0
+    elif wav.dtype == np.int32:
+        wav = wav / 2_147_483_648.0
+    return wav
+
+
+def log(t, eps=1e-5):
+    return torch.log(t + eps)
+
+
+def gumbel_noise(t):
+    noise = torch.zeros_like(t).uniform_(0, 1)
+    return -log(-log(noise))
+
+
+def gumbel_sample(t: torch.Tensor, temperature=1.0, dim=-1):
+    return ((t / temperature) + gumbel_noise(t)).argmax(dim=dim)
+
+
+def top_k(logits, thresh=0.95):
+    num_logits = logits.shape[-1]
+    k = max(int((1 - thresh) * num_logits), 1)
+    val, ind = torch.topk(logits, k)
+    probs = torch.full_like(logits, float("-inf"))
+    probs.scatter_(-1, ind, val)
+    return probs

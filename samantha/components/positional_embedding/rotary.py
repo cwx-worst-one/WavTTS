@@ -115,49 +115,63 @@ class RotaryEmbedding(torch.nn.Module):
         )
 
 
-class SeerEmbedding(RotaryEmbedding):
+class SeerEmbedding(torch.nn.Module):
     def __init__(
-        self, dim_model: int, n_priors: int, n_seers: int, seq_len: int, *_, **__
+        self,
+        dim_model: int,
+        n_priors: int,
+        n_seers: int,
+        seq_len: int,
+        use_complex: bool = True,
+        *_,
+        **__
     ):
-        super().__init__(dim_model, *_, **__)
+        super().__init__()
         self.n_priors = n_priors
         self.n_seers = n_seers
         self.seq_len = seq_len
 
-        t = torch.arange(self.n_priors + self.seq_len, dtype=torch.float32)
+        self.use_complex = use_complex
+        # Generate and save the inverse frequency buffer (non trainable)
+        inv_freq = 1.0 / (10000 ** (torch.arange(0, dim_model, 2).float() / dim_model))
+        self.register_buffer("inv_freq", inv_freq)
+        self._cache = self.compute_cache()
+
+    def compute_cache(self, dtype=torch.float16):
+        t = torch.arange(
+            self.n_priors + self.seq_len,
+            dtype=torch.float32,
+            device=self.inv_freq.device
+        )
         t[self.n_priors :] = (
             t[self.n_priors :]
             .reshape(self.n_seers, -1)
             .transpose(1, 0)
             .reshape(self.seq_len)
         )
-        freqs = torch.einsum("i,j->ij", t, self.inv_freq)
-        emb = torch.cat((freqs, freqs), dim=-1)
-        self._cos_cached = emb.cos()[None, None, :, :]
-        self._sin_cached = emb.sin()[None, None, :, :]
+        freqs = torch.einsum("i,j->ij", t, self.inv_freq).float()
+        self._cache = torch.stack([torch.cos(freqs), torch.sin(freqs)], dim=-1)
+        self._cache = self._cache[None, None, :, :]
 
-    def _update_cos_sin_tables(self, x):
-        self._cos_cached = self._cos_cached.to(dtype=x.dtype)
-        self._sin_cached = self._sin_cached.to(dtype=x.dtype)
-        self._cos_cached = self._cos_cached.to(device=x.device)
-        self._sin_cached = self._sin_cached.to(device=x.device)
-
-        return self._cos_cached, self._sin_cached
+        if dtype in (torch.float16, torch.bfloat16, torch.int8):
+            self._cache = self._cache.float()
+        return self._cache
 
     def forward(
         self, q: torch.Tensor, k: torch.Tensor, q_len: Optional[int] = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        self._cos_cached, self._sin_cached = self._update_cos_sin_tables(k)
+        if self._cache.device != q.device:
+            self._cache = self._cache.to(q.device)
         if q.shape[2] != k.shape[2] and q_len is not None:
             return (
                 apply_rotary_pos_emb(
                     q,
-                    self._cos_cached[..., q_len - self.n_seers :, :],
-                    self._sin_cached[..., q_len - self.n_seers :, :],
+                    self._cache[:, :, q_len - self.n_seers : q_len],
+                    use_complex=self.use_complex,
                 ),
-                apply_rotary_pos_emb(k, self._cos_cached, self._sin_cached),
+                apply_rotary_pos_emb(k, self._cache, use_complex=self.use_complex),
             )
         return (
-            apply_rotary_pos_emb(q, self._cos_cached, self._sin_cached),
-            apply_rotary_pos_emb(k, self._cos_cached, self._sin_cached),
+            apply_rotary_pos_emb(q, self._cache, use_complex=self.use_complex),
+            apply_rotary_pos_emb(k, self._cache, use_complex=self.use_complex),
         )
