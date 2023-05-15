@@ -54,6 +54,7 @@ class LlamaModelTester:
         n_layer: int = 2,
         initializer_range: float = 0.02,
         rms_norm_epsilon: float = 1e-5,
+        use_rotary_embeddings: bool = True,
     ):
         self.batch_size = batch_size
         self.seq_len = seq_len
@@ -63,6 +64,7 @@ class LlamaModelTester:
         self.n_layer = n_layer
         self.initializer_range = initializer_range
         self.rms_norm_epsilon = rms_norm_epsilon
+        self.use_rotary_embeddings = use_rotary_embeddings
 
     def get_inputs(self):
         return ids_tensor(
@@ -78,6 +80,7 @@ class LlamaModelTester:
             logit_num=self.vocab_size,
             initializer_range=self.initializer_range,
             rms_norm_epsilon=self.rms_norm_epsilon,
+            use_rotary_embeddings=self.use_rotary_embeddings,
             attention_kwargs={"enable_flash": False, "enable_mem_efficient": False},
         )
 
@@ -115,6 +118,7 @@ def test_llama_model(model_tester: LlamaModelTester) -> None:
 @RunIf(min_torch="2.0")
 def test_llama_model_compile(model_tester: LlamaModelTester) -> None:
     inputs = model_tester.get_inputs()
+    model_tester.use_rotary_embeddings = False
 
     model = model_tester.create_and_test_model()
     model = torch.compile(model)
@@ -139,7 +143,7 @@ def load_equivalent_llama(mt, model, o_llama):
     inv_freq = calc_rotary_inv_freq(mt.n_embd, mt.n_head)
 
     converted_state_dict = convert_llama_state_dict(
-        orig_llama_model.state_dict(), inv_freq, dtype=torch.float32
+        orig_llama_model.state_dict(), inv_freq
     )
     model.load_state_dict(converted_state_dict)
     return model, orig_llama_model

@@ -68,7 +68,7 @@ class GPT2Block(nn.Module):
 
 
 if _is_blocksparse_available:
-    from samantha.components import BlockSparseAttention
+    from samantha.components.attention import BlockSparseAttention
 
     class GPT2SparseBlock(GPT2Block):
         def __init__(self, config: GPT2Config):

@@ -29,6 +29,7 @@ class LlamaConfig:
     initializer_range: float = 0.02
     activation_fn: Activation = Activation.SiLU
     attention_kwargs: Optional[dict] = field(default_factory=dict)
+    use_rotary_embeddings: bool = True
 
     @classmethod
     def from_name(cls, name: str) -> Self:
@@ -53,7 +54,7 @@ class LlamaBlock(nn.Module):
             n_heads=config.n_head,
             bias=config.attn_bias,
             causal=True,
-            use_rotary_embeddings=True,
+            use_rotary_embeddings=config.use_rotary_embeddings,
             **config.attention_kwargs,
         )
         self.ln_2 = RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
