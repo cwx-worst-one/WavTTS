@@ -247,13 +247,13 @@ class BaseRunner(metaclass=ABCMeta):
         enable_oss = self.opt_util_cfg.get('enable_oss', False) and parallel_mode != 'none'
 
         if not enable_oss:
-            self.build_optimizer()
+            self.optimizer = self.build_optimizer()
         self.build_compressor()
         # grad_clip after accumulation
         grad_clip_after = self.opt_util_cfg.get('grad_clip_mode', 'accum_after') != 'accum_before'
         self.solution, self.optimizer, self.dist_handler = dist_parallel(
             model=self.solution,
-            optimizer_constructor=self._optimizer_constructor if enable_oss else self.optimizer,
+            optimizer_constructor=self.build_optimizer if enable_oss else self.optimizer,
             parallel_mode=parallel_mode,
             oss_config=self.opt_util_cfg,
             bmuf_config=bmuf_cfg if self.use_bmuf else None,
@@ -1147,14 +1147,6 @@ class BaseRunner(metaclass=ABCMeta):
         logging.info("Model has %.2fM Parameters", (param_numel / 1024 / 1024))
         self.params = [(name, p) for name, p in self.solution.named_parameters() if p.requires_grad]
 
-    def _optimizer_constructor(self, params=None, **_kwargs):
-        '''optimizer constructor for auto parallel'''
-        numel = sum(p.numel() for group in params for p in group['params'] if p.requires_grad)
-        logging.all_rank_info("OSS has %.2fM Parameters" % (numel / (1e6 + 1e-3)))
-        optimizer_cfg = self.optimizer_cfg.copy()
-        optimizer_cfg['params'] = params
-        return build_from_cfg(optimizer_cfg, OPTIMIZERS)
-
     def build_optimizer(self):
         '''build_optimizer'''
         optimizer_cfg = self.optimizer_cfg
@@ -1165,9 +1157,10 @@ class BaseRunner(metaclass=ABCMeta):
         else:
             opt_builder = DefaultOptimizerConstructor(optimizer_cfg)
         logging.info("Optimizer Config: {}".format(optimizer_cfg))
-        self.optimizer = opt_builder(self.solution)
+        optimizer = opt_builder(self.solution)
         if version.parse(torch.__version__) < version.parse('1.9'):
-            self.optimizer.zero_grad = types.MethodType(zero_grad_, self.optimizer)
+            optimizer.zero_grad = types.MethodType(zero_grad_, optimizer)
+        return optimizer
 
     def build_lr_scheduler(self):
         '''build lr scheduler'''

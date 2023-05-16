@@ -93,7 +93,7 @@ if [[ -n $(which torchrun) ]]; then
 else
   mpirun -np $ARNOLD_WORKER_GPU ${DOLPHIN_CMD_PREFIX} ${PROFILER_CMD} python3 train.py "$@"
 fi
-unset LD_PRELOAD
+exit_code=$?
 
 # upload Arnold local logs
 PYTHONPATH=$PYTHONPATH:$(pwd) python3 scripts/upload_log.py "$@"
