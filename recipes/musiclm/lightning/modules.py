@@ -7,8 +7,8 @@ from tqdm import tqdm
 
 from samantha.utils.hparams import DotDict
 
-from ..requires.w2v.w2v_infer import w2v_bert_tokenization
-from ..utils.inference import sample
+from recipes.musiclm.models.compat.semantic_model import w2v_bert_tokenization
+from ..inference.utils import sample
 
 
 class BaseModule(pl.LightningModule):
@@ -21,16 +21,12 @@ class BaseModule(pl.LightningModule):
         required_modules,
         checkpointing=False,
         extra_params=None,
-        mulan_token_sep=False,
     ):
         super().__init__()
         self.save_hyperparameters()
         self.model = model_cls()
         self.criterion = criterion_cls()
         self.extra_params = DotDict(extra_params)
-        self.codec_token_num = self.extra_params.codec_token_num
-        self.mulan_token_sep = mulan_token_sep
-        self.mulan_token_num = self.extra_params.mulan_token_num
         self.requires = {}
         self.val_outputs = dict()
         if checkpointing:
@@ -48,15 +44,29 @@ class BaseModule(pl.LightningModule):
     def profiler(self):
         return getattr(self.trainer, "profiler") or PassThroughProfiler()
 
+    def seer_rearrange(self, seq, inv=False):
+        b = seq.size(0)
+        if inv:
+            return seq.reshape(b, -1, self.extra_params.n_seers).transpose(2, 1).reshape(b, -1)
+        else:
+            return seq.reshape(b, self.extra_params.n_seers, -1).transpose(2, 1).reshape(b, -1)
+
     def _shared_step(self, batch):
-        raise NotImplementedError()
+        with torch.autocast(device_type="cuda", enabled=False):
+            input_ids, target_ids = self.prepare_feature(batch[0].squeeze(1).float())
+        logits = self.model(input_ids)
+
+        x = logits[:, -target_ids.size(1) :, :]
+        loss = self.criterion(x, target_ids)
+        accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
+        return loss, accu
 
     def training_step(self, batch, batch_idx):
         loss, accu = self._shared_step(batch)
         self.log_dict({"tr_loss": loss, "accu": accu}, prog_bar=True, sync_dist=True)
         return loss
 
-    def validation_step(self, batch, batch_idx, dataloader_idx):
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
         loss, accu = self._shared_step(batch)
         if dataloader_idx not in self.val_outputs:
             self.val_outputs[dataloader_idx] = []
@@ -90,7 +100,7 @@ class BaseModule(pl.LightningModule):
         params = []
         for name, p in self.model.named_parameters():
             if "ln_" in name or "bias" in name:
-                print("Skip WD on {}".format(name))
+                print(f"Skip weight decay: {name}")
                 params.append({"params": [p], "weight_decay": 0.0})
             else:
                 params.append({"params": [p]})
@@ -106,27 +116,31 @@ class BaseModule(pl.LightningModule):
         raise NotImplementedError()
 
     @torch.no_grad()
-    def get_mulan_embed(self, x):
-        # [b, 1, d]
-        return self.requires["mulan_infer_fn"](
+    def get_mulan_tokens(self, x):
+        mulan_embeds = self.requires["mulan_infer_fn"](
             model=self.requires["mulan"], music=x.float(), device=x.device
-        ).unsqueeze(1)
+        )
+        mulan_tokens, _ = self.requires["mulan_rvq_fn"](
+            mulan_embeds, self.requires["mulan_centers"]
+        )
+        return mulan_tokens
 
     @torch.no_grad()
-    def get_quant(self, x):
+    def get_soundstream_tokens(self, x):
         output = self.requires["ss"](x.float())[2]
         output = torch.stack(output, dim=2)
         return output
 
     @torch.no_grad()
-    def get_w2v_token(self, x):
-        return w2v_bert_tokenization(
+    def get_wav2vec_tokens(self, x):
+        wav2vec_tokens = w2v_bert_tokenization(
             frontend=self.requires["ssl_frontend"],
             w2v_model=self.requires["semantic"],
             wavs=x.float(),
             centers=self.requires["centroids"],
             device=x.device,
         )
+        return wav2vec_tokens
 
 
 class SemanticModule(BaseModule):
@@ -139,7 +153,6 @@ class SemanticModule(BaseModule):
         required_modules,
         checkpointing=False,
         extra_params=None,
-        mulan_token_sep=False,
     ):
         super().__init__(
             model_cls=model_cls,
@@ -149,51 +162,42 @@ class SemanticModule(BaseModule):
             required_modules=required_modules,
             checkpointing=checkpointing,
             extra_params=extra_params,
-            mulan_token_sep=mulan_token_sep,
         )
         self.save_hyperparameters()
-
-    def _shared_step(self, batch):
-        with torch.autocast(device_type="cuda", enabled=False):
-            input_ids, target_ids = self.prepare_feature(batch.float())
-
-        logits = self.model(input_ids)
-
-        x = logits[:, -target_ids.size(1) :, :]
-        loss = self.criterion(x, target_ids)
-        accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
-        return loss, accu
 
     @torch.no_grad()
     def prepare_feature(self, wavs):
         device = wavs.device
         b, _ = wavs.size()
 
-        w2v_ids = self.get_w2v_token(wavs)
-        # w2v_ids = torch.randint(0, 1024, (b, 750)).to(device)
+        wav2vec_ids = self.get_wav2vec_tokens(wavs)
 
-        mulan_embeds = self.get_mulan_embed(wavs)  # [b, 1, d]
-        mulan_ids, _ = self.requires["mulan_rvq_fn"](
-            mulan_embeds.squeeze(1), self.requires["mulan_centers"]
-        )
-        # mulan_ids = torch.randint(0, 1024, (b, 12)).to(device)
-        mulan_ids = mulan_ids + 1024
-        if self.mulan_token_sep:
-            mulan_ids = (
-                mulan_ids
-                + torch.arange(mulan_ids.size(1)).to(device) * self.mulan_token_num
-            )
+        mulan_ids = self.get_mulan_tokens(wavs)
+        mulan_ids = mulan_ids + self.extra_params.wav2vec_codebook_size
 
         sos_ids = (
-            torch.zeros(size=[b, 1], dtype=w2v_ids.dtype, device=device)
-            + 1024
-            + mulan_ids.size(1) * self.mulan_token_num
+            torch.zeros(size=[b, 1], dtype=mulan_ids.dtype, device=device)
+            + self.extra_params.wav2vec_codebook_size
         )
+        if not self.extra_params.mulan_codebook_shared:
+            mulan_ids = (
+                mulan_ids
+                + torch.arange(mulan_ids.size(1), device=device) * self.extra_params.mulan_codebook_size
+            )
+            sos_ids = (
+                sos_ids
+                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+            )
+        else:
+            sos_ids = (
+                sos_ids
+                + self.extra_params.mulan_codebook_size
+            )
 
         input_ids = torch.cat(
-            [mulan_ids, sos_ids, w2v_ids[:, : -1]], dim=1
+            [mulan_ids, sos_ids, wav2vec_ids[:, : -1]], dim=1
         )
-        return input_ids, w2v_ids
+        return input_ids, wav2vec_ids
 
 
 class SeerSemanticModule(BaseModule):
@@ -204,11 +208,8 @@ class SeerSemanticModule(BaseModule):
         optimizer_cls,
         scheduler_cls,
         required_modules,
-        n_priors,
-        n_seers,
         checkpointing=False,
         extra_params=None,
-        mulan_token_sep=False,
     ):
         super().__init__(
             model_cls=model_cls,
@@ -218,59 +219,95 @@ class SeerSemanticModule(BaseModule):
             required_modules=required_modules,
             checkpointing=checkpointing,
             extra_params=extra_params,
-            mulan_token_sep=mulan_token_sep,
         )
-        self.n_priors = n_priors
-        self.n_seers = n_seers
         self.save_hyperparameters()
-
-    def _shared_step(self, batch):
-        with torch.autocast(device_type="cuda", enabled=False):
-            input_ids, target_ids = self.prepare_feature(batch[0].squeeze(1).float())
-
-        logits = self.model(input_ids)
-
-        x = logits[:, -target_ids.size(1) :, :]
-        loss = self.criterion(x, target_ids)
-        accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
-        return loss, accu
 
     @torch.no_grad()
     def prepare_feature(self, wavs):
         device = wavs.device
         b, _ = wavs.size()
 
-        w2v_ids = (
-            self.get_w2v_token(wavs)
-            .reshape(b, self.n_seers, -1)
-            .transpose(2, 1)
-            .reshape(b, -1)
-        )
+        wav2vec_ids = self.get_wav2vec_tokens(wavs)
+        wav2vec_ids = self.seer_rearrange(wav2vec_ids)
 
-        mulan_embeds = self.get_mulan_embed(wavs)  # [b, 1, d]
-        mulan_ids, _ = self.requires["mulan_rvq_fn"](
-            mulan_embeds.squeeze(1), self.requires["mulan_centers"]
-        )
-        mulan_ids = mulan_ids + 1024
-        if self.mulan_token_sep:
+        mulan_ids = self.get_mulan_tokens(wavs)
+        mulan_ids = mulan_ids + self.extra_params.wav2vec_codebook_size
+
+        seer_ids = torch.arange(self.extra_params.n_seers, device=device).expand(b, -1)
+        seer_ids = seer_ids + self.extra_params.wav2vec_codebook_size
+    
+        if not self.extra_params.mulan_codebook_shared:
             mulan_ids = (
                 mulan_ids
-                + torch.arange(mulan_ids.size(1)).to(device) * self.mulan_token_num
+                + torch.arange(mulan_ids.size(1), device=device) * self.extra_params.mulan_codebook_size
+            )
+            seer_ids = (
+                seer_ids
+                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+            )
+        else:
+            seer_ids = (
+                seer_ids
+                + self.extra_params.mulan_codebook_size
             )
 
-        seer_ids = (
-            torch.arange(self.n_seers).expand(b, -1).to(device)
-            + 1024
-            + mulan_ids.size(1) * self.mulan_token_num
-        )
-
-        if self.n_priors != mulan_ids.size(1):
+        if mulan_ids.size(1) != self.model.config.n_priors:
             raise ValueError("Invalid prefix length.")
-        if w2v_ids.size(1) % self.n_seers != 0:
+        if wav2vec_ids.size(1) % self.extra_params.n_seers != 0:
             raise ValueError("Invalid number of seers.")
 
-        input_ids = torch.cat([mulan_ids, seer_ids, w2v_ids[:, : -self.n_seers]], dim=1)
-        return input_ids, w2v_ids
+        input_ids = torch.cat([mulan_ids, seer_ids, wav2vec_ids[:, : -self.extra_params.n_seers]], dim=1)
+        return input_ids, wav2vec_ids
+
+    @torch.no_grad()
+    def predict(
+        self, mulan_ids, sample_len=250, temp=0.9, sample_mode="gumbel"
+    ):
+        if sample_len % self.model.config.n_seers != 0:
+            raise ValueError("Invalid sample length.")
+        device = mulan_ids.device
+        b, _ = mulan_ids.size()
+        mulan_ids = (
+            mulan_ids
+            + self.extra_params.wav2vec_codebook_size
+        )
+        seer_ids = (
+            torch.arange(self.extra_params.n_seers, device=device).expand(b, -1)
+            + self.extra_params.wav2vec_codebook_size
+        )
+
+        if not self.extra_params.mulan_codebook_shared:
+            mulan_ids = (
+                mulan_ids
+                + torch.arange(mulan_ids.size(1), device=device) * self.extra_params.mulan_codebook_size
+            )
+            seer_ids = (
+                seer_ids
+                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+            )
+        else:
+            seer_ids = (
+                seer_ids
+                + self.extra_params.mulan_codebook_size
+            )
+
+        if mulan_ids.size(1) != self.model.config.n_priors:
+            raise ValueError("Invalid prefix length.")
+
+        input_ids = torch.cat([mulan_ids, seer_ids], dim=1)
+        kv_cache = {}
+        pbar = tqdm(range(math.ceil(sample_len / self.extra_params.n_seers)))
+        coarse_samples = None
+        for i in pbar:
+            pbar.set_description("SeerSemantic")
+            predict_logits = self.model(input_ids, kv_cache=kv_cache)
+            samples = sample(predict_logits, temp=temp, mode=sample_mode)
+            input_ids = samples
+            if coarse_samples is None:
+                coarse_samples = samples
+            else:
+                coarse_samples = torch.cat([coarse_samples, samples], dim=1)
+        return self.seer_rearrange(coarse_samples, inv=True)
 
 
 class CoarseModule(BaseModule):
@@ -283,7 +320,6 @@ class CoarseModule(BaseModule):
         required_modules,
         checkpointing=False,
         extra_params=None,
-        mulan_token_sep=False,
     ):
         super().__init__(
             model_cls=model_cls,
@@ -293,20 +329,8 @@ class CoarseModule(BaseModule):
             required_modules=required_modules,
             checkpointing=checkpointing,
             extra_params=extra_params,
-            mulan_token_sep=mulan_token_sep,
         )
         self.save_hyperparameters()
-
-    def _shared_step(self, batch):
-        with torch.autocast(device_type="cuda", enabled=False):
-            input_ids, target_ids = self.prepare_feature(batch[0].squeeze(1).float())
-
-        logits = self.model(input_ids)
-
-        x = logits[:, -target_ids.size(1) :, :]
-        loss = self.criterion(x, target_ids)
-        accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
-        return loss, accu
 
     @torch.no_grad()
     def prepare_feature(self, wavs):
@@ -314,48 +338,63 @@ class CoarseModule(BaseModule):
         num_coarse = self.extra_params.num_coarse
         b, _ = wavs.size()
 
-        wav_ids = self.get_quant(wavs)
-        wav_ids = (
-            wav_ids[:, :, 0:num_coarse]
-            + torch.arange(num_coarse).to(device) * self.codec_token_num
+        soundstream_ids = self.get_soundstream_tokens(wavs)
+        soundstream_ids = (
+            soundstream_ids[:, :, 0 : num_coarse]
+            + torch.arange(num_coarse, device=device) * self.extra_params.soundstream_codebook_size
         )
-        wav_ids = torch.reshape(wav_ids, [b, -1])
+        soundstream_ids = torch.reshape(soundstream_ids, [b, -1])
 
-        w2v_ids = self.get_w2v_token(wavs)
-        # w2v_ids = torch.randint(0, 1024, (b, 750)).to(device)
-        w2v_ids = w2v_ids + num_coarse * self.codec_token_num
+        wav2vec_ids = self.get_wav2vec_tokens(wavs)
+        wav2vec_ids = wav2vec_ids + num_coarse * self.extra_params.soundstream_codebook_size
 
-        mulan_embeds = self.get_mulan_embed(wavs)  # [b, 1, d]
-        mulan_ids, _ = self.requires["mulan_rvq_fn"](
-            mulan_embeds.squeeze(1), self.requires["mulan_centers"]
+        mulan_ids = self.get_mulan_tokens(wavs)
+        mulan_ids = (
+            mulan_ids
+            + self.extra_params.wav2vec_codebook_size
+            + num_coarse * self.extra_params.soundstream_codebook_size
         )
-        # mulan_ids = torch.randint(0, 1024, (b, 12)).to(device)
-        mulan_ids = mulan_ids + num_coarse * self.codec_token_num + 1024
-        if self.mulan_token_sep:
-            mulan_ids = (
-                mulan_ids
-                + torch.arange(mulan_ids.size(1)).to(device) * self.mulan_token_num
-            )
 
         sep_ids = (
-            torch.zeros(size=[b, 1], dtype=w2v_ids.dtype, device=device)
-            + num_coarse * self.codec_token_num
-            + 1024
-            + mulan_ids.size(1) * self.mulan_token_num
+            torch.zeros(size=[b, 1], dtype=soundstream_ids.dtype, device=device)
+            + num_coarse * self.extra_params.soundstream_codebook_size
+            + self.extra_params.wav2vec_codebook_size
         )
 
         sos_ids = (
-            torch.zeros(size=[b, 1], dtype=w2v_ids.dtype, device=device)
-            + num_coarse * self.codec_token_num
-            + 1024
-            + mulan_ids.size(1) * self.mulan_token_num
+            torch.zeros(size=[b, 1], dtype=soundstream_ids.dtype, device=device)
+            + num_coarse * self.extra_params.soundstream_codebook_size
+            + self.extra_params.wav2vec_codebook_size
             + 1
         )
 
+        if not self.extra_params.mulan_codebook_shared:
+            mulan_ids = (
+                mulan_ids
+                + torch.arange(mulan_ids.size(1), device=device) * self.extra_params.mulan_codebook_size
+            )
+            sep_ids = (
+                sep_ids
+                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+            )
+            sos_ids = (
+                sos_ids
+                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+            )
+        else:
+            sep_ids = (
+                sep_ids
+                + self.extra_params.mulan_codebook_size
+            )
+            sos_ids = (
+                sos_ids
+                + self.extra_params.mulan_codebook_size
+            )
+
         input_ids = torch.cat(
-            [mulan_ids, sep_ids, w2v_ids, sos_ids, wav_ids[:, : -1]], dim=1
+            [mulan_ids, sep_ids, wav2vec_ids, sos_ids, soundstream_ids[:, : -1]], dim=1
         )
-        return input_ids, wav_ids
+        return input_ids, soundstream_ids
 
 
 class SemanticFreeCoarseModule(BaseModule):
@@ -368,7 +407,6 @@ class SemanticFreeCoarseModule(BaseModule):
         required_modules,
         checkpointing=False,
         extra_params=None,
-        mulan_token_sep=False,
     ):
         super().__init__(
             model_cls=model_cls,
@@ -378,20 +416,8 @@ class SemanticFreeCoarseModule(BaseModule):
             required_modules=required_modules,
             checkpointing=checkpointing,
             extra_params=extra_params,
-            mulan_token_sep=mulan_token_sep,
         )
         self.save_hyperparameters()
-
-    def _shared_step(self, batch):
-        with torch.autocast(device_type="cuda", enabled=False):
-            input_ids, target_ids = self.prepare_feature(batch.float())
-
-        logits = self.model(input_ids)
-
-        x = logits[:, -target_ids.size(1) :, :]
-        loss = self.criterion(x, target_ids)
-        accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
-        return loss, accu
 
     @torch.no_grad()
     def prepare_feature(self, wavs):
@@ -399,32 +425,38 @@ class SemanticFreeCoarseModule(BaseModule):
         num_coarse = self.extra_params.num_coarse
         b, _ = wavs.size()
 
-        wav_ids = self.get_quant(wavs)
-        wav_ids = (
-            wav_ids[:, :, 0:num_coarse]
-            + torch.arange(num_coarse).to(device) * self.codec_token_num
+        soundstream_ids = self.get_soundstream_tokens(wavs)
+        soundstream_ids = (
+            soundstream_ids[:, :, 0 : num_coarse]
+            + torch.arange(num_coarse, device=device) * self.extra_params.soundstream_codebook_size
         )
-        wav_ids = torch.reshape(wav_ids, [b, -1])
+        soundstream_ids = torch.reshape(soundstream_ids, [b, -1])
 
-        mulan_embeds = self.get_mulan_embed(wavs)  # [b, 1, d]
-        mulan_ids, _ = self.requires["mulan_rvq_fn"](
-            mulan_embeds.squeeze(1), self.requires["mulan_centers"]
-        )
-        mulan_ids = mulan_ids + num_coarse * self.codec_token_num
-        if self.mulan_token_sep:
-            mulan_ids = (
-                mulan_ids
-                + torch.arange(mulan_ids.size(1)).to(device) * self.mulan_token_num
-            )
+        mulan_ids = self.get_mulan_tokens(wavs)
+        mulan_ids = mulan_ids + num_coarse * self.extra_params.soundstream_codebook_size
 
         sos_ids = (
             torch.zeros(size=[b, 1], dtype=mulan_ids.dtype, device=device)
-            + num_coarse * self.codec_token_num
-            + mulan_ids.size(1) * self.mulan_token_num
+            + num_coarse * self.extra_params.soundstream_codebook_size
         )
 
-        input_ids = torch.cat([mulan_ids, sos_ids, wav_ids[:, :-1]], dim=1)
-        return input_ids, wav_ids
+        if not self.extra_params.mulan_codebook_shared:
+            mulan_ids = (
+                mulan_ids
+                + torch.arange(mulan_ids.size(1), device=device) * self.extra_params.mulan_codebook_size
+            )
+            sos_ids = (
+                sos_ids
+                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+            )
+        else:
+            sos_ids = (
+                sos_ids
+                + self.extra_params.mulan_codebook_size
+            )
+
+        input_ids = torch.cat([mulan_ids, sos_ids, soundstream_ids[:, :-1]], dim=1)
+        return input_ids, soundstream_ids
 
     @torch.no_grad()
     def predict(self, mulan_ids, sample_len=2000, temp=0.9, sample_mode="naive"):
@@ -432,18 +464,26 @@ class SemanticFreeCoarseModule(BaseModule):
         num_coarse = self.extra_params.num_coarse
         b, _ = mulan_ids.size()
 
-        mulan_ids = mulan_ids + num_coarse * self.codec_token_num
-        if self.mulan_token_sep:
-            mulan_ids = (
-                mulan_ids
-                + torch.arange(mulan_ids.size(1)).to(device) * self.mulan_token_num
-            )
-
+        mulan_ids = mulan_ids + num_coarse * self.extra_params.soundstream_codebook_size
         sos_ids = (
             torch.zeros(size=[b, 1], dtype=mulan_ids.dtype, device=device)
-            + num_coarse * self.codec_token_num
-            + mulan_ids.size(1) * self.mulan_token_num
+            + num_coarse * self.extra_params.soundstream_codebook_size
         )
+
+        if not self.extra_params.mulan_codebook_shared:
+            mulan_ids = (
+                mulan_ids
+                + torch.arange(mulan_ids.size(1), device=device) * self.extra_params.mulan_codebook_size
+            )
+            sos_ids = (
+                sos_ids
+                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+            )
+        else:
+            sos_ids = (
+                sos_ids
+                + self.extra_params.mulan_codebook_size
+            )
         input_ids = torch.cat([mulan_ids, sos_ids], dim=1)
         self.model.transformer.init_cache()
         pbar = tqdm(range(sample_len))
@@ -472,11 +512,8 @@ class SeerCoarseModule(BaseModule):
         optimizer_cls,
         scheduler_cls,
         required_modules,
-        n_priors,
-        n_seers,
         checkpointing=False,
         extra_params=None,
-        mulan_token_sep=False,
     ):
         super().__init__(
             model_cls=model_cls,
@@ -486,29 +523,8 @@ class SeerCoarseModule(BaseModule):
             required_modules=required_modules,
             checkpointing=checkpointing,
             extra_params=extra_params,
-            mulan_token_sep=mulan_token_sep,
         )
-        self.n_priors = n_priors
-        self.n_seers = n_seers
         self.save_hyperparameters()
-
-    def _shared_step(self, batch):
-        with torch.autocast(device_type="cuda", enabled=False):
-            input_ids, target_ids = self.prepare_feature(batch.float())
-
-        logits = self.model(input_ids)
-
-        x = logits[:, -target_ids.size(1) :, :]
-        loss = self.criterion(x, target_ids)
-        accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
-        return loss, accu
-
-    def seer_rearrange(self, seq, inv=False):
-        b = seq.size(0)
-        if inv:
-            return seq.reshape(b, -1, self.n_seers).transpose(2, 1).reshape(b, -1)
-        else:
-            return seq.reshape(b, self.n_seers, -1).transpose(2, 1).reshape(b, -1)
 
     @torch.no_grad()
     def prepare_feature(self, wavs):
@@ -516,96 +532,135 @@ class SeerCoarseModule(BaseModule):
         num_coarse = self.extra_params.num_coarse
         b, _ = wavs.size()
 
-        wav_ids = self.get_quant(wavs)
-        wav_ids = (
-            wav_ids[:, :, 0:num_coarse]
-            + torch.arange(num_coarse).to(device) * self.codec_token_num
+        soundstream_ids = self.get_soundstream_tokens(wavs)
+        soundstream_ids = (
+            soundstream_ids[:, :, 0 : num_coarse]
+            + torch.arange(num_coarse, device=device) * self.extra_params.soundstream_codebook_size
         )
-        wav_ids = torch.reshape(wav_ids, [b, -1])
-        wav_ids = self.seer_rearrange(wav_ids)
+        soundstream_ids = torch.reshape(soundstream_ids, [b, -1])
+        soundstream_ids = self.seer_rearrange(soundstream_ids)
 
-        w2v_ids = self.get_w2v_token(wavs) + num_coarse * self.codec_token_num
-
-        mulan_embeds = self.get_mulan_embed(wavs)  # [b, 1, d]
-        mulan_ids, _ = self.requires["mulan_rvq_fn"](
-            mulan_embeds.squeeze(1), self.requires["mulan_centers"]
+        wav2vec_ids = (
+            self.get_wav2vec_tokens(wavs)
+            + num_coarse * self.extra_params.soundstream_codebook_size
         )
-        mulan_ids = mulan_ids + num_coarse * self.codec_token_num + 1024
-        if self.mulan_token_sep:
-            mulan_ids = (
-                mulan_ids
-                + torch.arange(mulan_ids.size(1)).to(device) * self.mulan_token_num
-            )
+
+        mulan_ids = self.get_mulan_tokens(wavs)
+        mulan_ids = (
+            mulan_ids
+            + num_coarse * self.extra_params.soundstream_codebook_size
+            + self.extra_params.wav2vec_codebook_size
+        )
 
         seer_ids = (
-            torch.arange(self.n_seers).expand(b, -1).to(device)
-            + num_coarse * self.codec_token_num
-            + 1024
-            + mulan_ids.size(1) * self.mulan_token_num
+            torch.arange(self.extra_params.n_seers, device=device).expand(b, -1)
+            + num_coarse * self.extra_params.soundstream_codebook_size
+            + self.extra_params.wav2vec_codebook_size
         )
 
         sep_ids = (
-            torch.zeros(size=[b, 1], dtype=w2v_ids.dtype, device=device)
-            + num_coarse * self.codec_token_num
-            + 1024
-            + mulan_ids.size(1) * self.mulan_token_num
-            + self.n_seers
+            torch.zeros(size=[b, 1], dtype=wav2vec_ids.dtype, device=device)
+            + num_coarse * self.extra_params.soundstream_codebook_size
+            + self.extra_params.wav2vec_codebook_size
+            + self.extra_params.n_seers
         )
-        if self.n_priors != mulan_ids.size(1) + sep_ids.size(1) + w2v_ids.size(1):
+
+        if not self.extra_params.mulan_codebook_shared:
+            mulan_ids = (
+                mulan_ids
+                + torch.arange(mulan_ids.size(1), device=device) * self.extra_params.mulan_codebook_size
+            )
+            seer_ids = (
+                seer_ids
+                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+            )
+            sep_ids = (
+                sep_ids
+                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+            )
+        else:
+            seer_ids = (
+                seer_ids
+                + self.extra_params.mulan_codebook_size
+            )
+            sep_ids = (
+                sep_ids
+                + self.extra_params.mulan_codebook_size
+            )
+
+        if mulan_ids.size(1) + sep_ids.size(1) + wav2vec_ids.size(1) != self.model.config.n_priors:
             raise ValueError("Invalid prefix length.")
-        if wav_ids.size(1) % self.n_seers != 0:
+        if soundstream_ids.size(1) % self.extra_params.n_seers != 0:
             raise ValueError("Invalid length.")
 
         input_ids = torch.cat(
-            [mulan_ids, sep_ids, w2v_ids, seer_ids, wav_ids[:, : -self.n_seers]], dim=1
+            [mulan_ids, sep_ids, wav2vec_ids, seer_ids, soundstream_ids[:, : -self.extra_params.n_seers]], dim=1
         )
-        return input_ids, wav_ids
+        return input_ids, soundstream_ids
 
     @torch.no_grad()
     def predict(
-        self, mulan_ids, w2v_ids, sample_len=2000, temp=0.9, sample_mode="naive"
+        self, mulan_ids, wav2vec_ids, sample_len=2000, temp=0.9, sample_mode="naive"
     ):
-        if sample_len % self.n_seers != 0:
+        if sample_len % self.extra_params.n_seers != 0:
             raise ValueError("Invalid sample length.")
         device = mulan_ids.device
         num_coarse = self.extra_params.num_coarse
         b, _ = mulan_ids.size()
-
-        mulan_ids = mulan_ids + num_coarse * self.codec_token_num + 1024
-        if self.mulan_token_sep:
-            mulan_ids = (
-                mulan_ids
-                + torch.arange(mulan_ids.size(1)).to(device) * self.mulan_token_num
-            )
-
-        w2v_ids = w2v_ids + num_coarse * self.codec_token_num
-
+        wav2vec_ids = wav2vec_ids + num_coarse * self.extra_params.soundstream_codebook_size
+        mulan_ids = (
+            mulan_ids
+            + num_coarse * self.extra_params.soundstream_codebook_size
+            + self.extra_params.wav2vec_codebook_size
+        )
         seer_ids = (
-            torch.arange(self.n_seers).expand(b, -1).to(device)
-            + num_coarse * self.codec_token_num
-            + 1024
-            + mulan_ids.size(1) * self.mulan_token_num
+            torch.arange(self.extra_params.n_seers, device=device).expand(b, -1)
+            + num_coarse * self.extra_params.soundstream_codebook_size
+            + self.extra_params.wav2vec_codebook_size
         )
         sep_ids = (
-            torch.zeros(size=[b, 1], dtype=w2v_ids.dtype, device=device)
-            + num_coarse * self.codec_token_num
-            + 1024
-            + mulan_ids.size(1) * self.mulan_token_num
-            + self.n_seers
+            torch.zeros(size=[b, 1], dtype=wav2vec_ids.dtype, device=device)
+            + num_coarse * self.extra_params.soundstream_codebook_size
+            + self.extra_params.wav2vec_codebook_size
+            + self.extra_params.n_seers
         )
-        if self.n_priors != mulan_ids.size(1) + sep_ids.size(1) + w2v_ids.size(1):
+
+        if not self.extra_params.mulan_codebook_shared:
+            mulan_ids = (
+                mulan_ids
+                + torch.arange(mulan_ids.size(1), device=device) * self.extra_params.mulan_codebook_size
+            )
+            seer_ids = (
+                seer_ids
+                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+            )
+            sep_ids = (
+                sep_ids
+                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+            )
+        else:
+            seer_ids = (
+                seer_ids
+                + self.extra_params.mulan_codebook_size
+            )
+            sep_ids = (
+                sep_ids
+                + self.extra_params.mulan_codebook_size
+            )
+
+        if mulan_ids.size(1) + sep_ids.size(1) + wav2vec_ids.size(1) != self.model.config.n_priors:
             raise ValueError("Invalid prefix length.")
 
-        input_ids = torch.cat([mulan_ids, sep_ids, w2v_ids, seer_ids], dim=1)
+        input_ids = torch.cat([mulan_ids, sep_ids, wav2vec_ids, seer_ids], dim=1)
         self.model.transformer.init_cache()
-        pbar = tqdm(range(math.ceil(sample_len / self.n_seers)))
+        pbar = tqdm(range(math.ceil(sample_len / self.extra_params.n_seers)))
         coarse_samples = None
         for i in pbar:
             pbar.set_description("SeerCoarse")
             logits = self.model(input_ids)
             layer_idx = i % num_coarse
             predict_logits = logits[
-                :, -self.n_seers :, layer_idx * 1024 : (layer_idx + 1) * 1024
+                :, -self.extra_params.n_seers :, layer_idx * 1024 : (layer_idx + 1) * 1024
             ]
             samples = sample(predict_logits, temp=temp, mode=sample_mode)
             samples = samples + layer_idx * 1024
@@ -618,71 +673,6 @@ class SeerCoarseModule(BaseModule):
         return self.seer_rearrange(coarse_samples, inv=True)
 
 
-class TextCoarseModule(BaseModule):
-    def __init__(
-        self,
-        model_cls,
-        criterion_cls,
-        optimizer_cls,
-        scheduler_cls,
-        required_modules,
-        checkpointing=False,
-        extra_params=None,
-        mulan_token_sep=False,
-    ):
-        super().__init__(
-            model_cls=model_cls,
-            criterion_cls=criterion_cls,
-            optimizer_cls=optimizer_cls,
-            scheduler_cls=scheduler_cls,
-            required_modules=required_modules,
-            checkpointing=checkpointing,
-            extra_params=extra_params,
-            mulan_token_sep=mulan_token_sep,
-        )
-        self.save_hyperparameters()
-
-    def _shared_step(self, batch):
-        with self.profiler.profile("[LightningModule]TextCoarseModule.prepare_feature"):
-            with torch.autocast(device_type="cuda", enabled=False):
-                text_tokens, input_tokens = self.prepare_feature(batch)
-
-        with self.profiler.profile("[LightningModule]TextCoarseModule.model_forward"):
-            logits = self.model(input_tokens)
-
-        loss_offset = text_tokens.size(1)
-        x = logits[:, loss_offset : input_tokens.size(1) - 1, :]
-        targets = input_tokens[:, loss_offset + 1 : input_tokens.size(1)]
-        loss = self.criterion(x, targets)
-        accu = (x.argmax(dim=-1) == targets).float().mean() * 100
-        return loss, accu
-
-    @torch.no_grad()
-    def prepare_feature(self, batch):
-        wavs = batch["audio"].float()
-        device = wavs.device
-        num_coarse = self.extra_params.num_coarse
-        b = wavs.size(0)
-
-        wav_ids = self.get_quant(wavs)
-        wav_ids = (
-            wav_ids[:, :, 0:num_coarse]
-            + torch.arange(num_coarse).to(device) * self.codec_token_num
-        )
-        wav_ids = torch.reshape(wav_ids, [b, -1])  # [b, k*t]
-
-        eos_ids = (
-            torch.zeros(size=[b, 1], dtype=wav_ids.dtype, device=device)
-            + num_coarse * self.codec_token_num
-        )
-
-        text_ids = batch["input_ids"] + num_coarse * self.codec_token_num + 1
-
-        input_tokens = torch.cat([text_ids, eos_ids, wav_ids], dim=1)
-
-        return text_ids, input_tokens
-
-
 class FineModule(BaseModule):
     def __init__(
         self,
@@ -693,7 +683,6 @@ class FineModule(BaseModule):
         required_modules,
         checkpointing=False,
         extra_params=None,
-        mulan_token_sep=False,
     ):
         super().__init__(
             model_cls=model_cls,
@@ -703,65 +692,91 @@ class FineModule(BaseModule):
             required_modules=required_modules,
             checkpointing=checkpointing,
             extra_params=extra_params,
-            mulan_token_sep=mulan_token_sep,
         )
         self.save_hyperparameters()
-
-    def _shared_step(self, batch):
-        with self.profiler.profile("[LightningModule]FineModule.prepare_feature"):
-            with torch.autocast(device_type="cuda", enabled=False):
-                coarse_ids, input_tokens = self.prepare_feature(batch.float())
-                org_len = input_tokens.size(1)
-                if hasattr(self.model.config, "train_len"):
-                    train_len = self.model.config.train_len
-                else:
-                    train_len = org_len
-                assert train_len >= org_len
-                input_tokens = torch.nn.functional.pad(
-                    input_tokens, [0, train_len - org_len]
-                )
-
-        with self.profiler.profile("[LightningModule]FineModule.model_forward"):
-            # TODO: add location attention mask
-            # global_step = self.trainer.global_step
-            logits = self.model(input_tokens)["logits"]
-
-        loss_offset = coarse_ids.size(1)
-        x = logits[:, loss_offset : org_len - 1, :]
-        targets = input_tokens[:, loss_offset + 1 : org_len] - (
-            self.extra_params.num_coarse * self.codec_token_num
-        )
-        loss = self.criterion(x, targets)
-        accu = (x.argmax(dim=-1) == targets).float().mean() * 100
-        return loss, accu
 
     @torch.no_grad()
     def prepare_feature(self, wavs):
         device = wavs.device
-        num_coarse, num_fine, num_res, codec_token_num = (
+        b, _ = wavs.size()
+        num_coarse, num_fine = (
             self.extra_params.num_coarse,
             self.extra_params.num_fine,
-            self.extra_params.num_res,
-            self.extra_params.codec_token_num,
         )
-        wav_ids = self.get_quant(wavs)
-        b = wav_ids.size(0)
+        soundstream_ids = self.get_soundstream_tokens(wavs)
+        
         # get coarse ids
         coarse_ids = (
-            wav_ids[:, :, 0:num_coarse]
-            + torch.arange(num_coarse).to(device) * codec_token_num
+            soundstream_ids[:, :, 0 : num_coarse]
+            + (torch.arange(num_coarse, device=device) + num_fine) * self.extra_params.soundstream_codebook_size
         ).reshape((b, -1))
         # get fine ids
         fine_ids = (
-            wav_ids[:, :, num_coarse : num_coarse + num_fine]
-            + (torch.arange(num_fine).to(device) + num_coarse) * codec_token_num
+            soundstream_ids[:, :, num_coarse : num_coarse + num_fine]
+            + torch.arange(num_fine, device=device) * self.extra_params.soundstream_codebook_size
         ).reshape((b, -1))
-        # get eos id
-        eos_id = num_res * self.codec_token_num
-        eos_ids = torch.zeros([b, 1], dtype=wav_ids.dtype, device=device) + eos_id
+        # get sos id
+        sos_ids = (
+            torch.zeros([b, 1], dtype=soundstream_ids.dtype, device=device)
+            + (num_coarse + num_fine) * self.extra_params.soundstream_codebook_size
+        )
         # final input tokens
-        input_tokens = torch.cat([coarse_ids, eos_ids, fine_ids], dim=1)
-        return coarse_ids, input_tokens
+        input_tokens = torch.cat([coarse_ids, sos_ids, fine_ids[:, : -1]], dim=1)
+        return input_tokens, fine_ids
+
+
+class SeerFineModule(BaseModule):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+        self.save_hyperparameters()
+
+    @torch.no_grad()
+    def prepare_feature(self, wavs):
+        device = wavs.device
+        b, _ = wavs.size()
+        num_coarse, num_fine = (
+            self.extra_params.num_coarse,
+            self.extra_params.num_fine,
+        )
+        soundstream_ids = self.get_soundstream_tokens(wavs)
+        
+        # get coarse ids
+        coarse_ids = (
+            soundstream_ids[:, :, 0 : num_coarse]
+            + (torch.arange(num_coarse, device=device) + num_fine) * self.extra_params.soundstream_codebook_size
+        ).reshape((b, -1))
+        # get fine ids
+        fine_ids = (
+            soundstream_ids[:, :, num_coarse : num_coarse + num_fine]
+            + torch.arange(num_fine, device=device) * self.extra_params.soundstream_codebook_size
+        ).reshape((b, -1))
+        fine_ids = self.seer_rearrange(fine_ids)
+        # get seer ids
+        seer_ids = (
+            torch.arange(self.extra_params.n_seers, device=device).expand(b, -1)
+            + num_coarse * self.extra_params.soundstream_codebook_size
+            + num_fine * self.extra_params.soundstream_codebook_size
+        )
+        # final input tokens
+        input_tokens = torch.cat([coarse_ids, seer_ids, fine_ids[:, : -self.extra_params.n_seers]], dim=1)
+        return input_tokens, fine_ids
 
 
 class MaskedCrossEntropy(torch.nn.Module):

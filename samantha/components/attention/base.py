@@ -246,6 +246,7 @@ class SeerAttention(nn.Module):
         bias: bool = True,
         scale: Optional[float] = None,
         d_k: Optional[int] = None,
+        seer_rearrange: bool = True,
     ) -> None:
         super().__init__()
         self._use_cache = False
@@ -266,7 +267,7 @@ class SeerAttention(nn.Module):
             raise ImportError("Flash Attention requires PyTorch >= 2.0")
 
         self.rotary_embeddings = SeerEmbedding(
-            self.d_k, self.n_priors, self.n_seers, self.seq_len
+            self.d_k, self.n_priors, self.n_seers, self.seq_len, seer_rearrange
         )
 
         self.qkv_dim_with_heads = self.d_k * self.n_heads

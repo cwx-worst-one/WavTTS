@@ -29,6 +29,7 @@ class SeerConfig:
     mlp_dropout: float = 0.0
     rms_norm_epsilon: float = 1e-5
     initializer_range: float = 0.02
+    seer_rearrange: bool = True
     activation_fn: Activation = Activation.SiLU
     attention_kwargs: Optional[dict] = field(default_factory=dict)
 
@@ -44,6 +45,7 @@ class SeerBlock(nn.Module):
             n_seers=config.n_seers,
             seq_len=config.seq_len,
             bias=config.attn_bias,
+            seer_rearrange=config.seer_rearrange,
             **config.attention_kwargs,
         )
         self.ln_2 = RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)

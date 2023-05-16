@@ -123,6 +123,7 @@ class SeerEmbedding(torch.nn.Module):
         n_seers: int,
         seq_len: int,
         use_complex: bool = True,
+        seer_rearrange: bool = True,
         *_,
         **__,
     ):
@@ -130,6 +131,7 @@ class SeerEmbedding(torch.nn.Module):
         self.n_priors = n_priors
         self.n_seers = n_seers
         self.seq_len = seq_len
+        self.seer_rearrange = seer_rearrange
 
         self.use_complex = use_complex
         # Generate and save the inverse frequency buffer (non trainable)
@@ -143,12 +145,13 @@ class SeerEmbedding(torch.nn.Module):
             dtype=torch.float32,
             device=self.inv_freq.device,
         )
-        t[self.n_priors :] = (
-            t[self.n_priors :]
-            .reshape(self.n_seers, -1)
-            .transpose(1, 0)
-            .reshape(self.seq_len)
-        )
+        if self.seer_rearrange:
+            t[self.n_priors :] = (
+                t[self.n_priors :]
+                .reshape(self.n_seers, -1)
+                .transpose(1, 0)
+                .reshape(self.seq_len)
+            )
         freqs = torch.einsum("i,j->ij", t, self.inv_freq).float()
         self._cache = torch.stack([torch.cos(freqs), torch.sin(freqs)], dim=-1)
         self._cache = self._cache[None, None, :, :]

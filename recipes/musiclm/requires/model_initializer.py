@@ -4,10 +4,10 @@ import numpy as np
 import torch
 from transformers import AutoModel
 
-import sami_ai.utils.hdfs_helper as hh
+import samantha.utils.hdfs_helper as hh
 
 from ..utils.dist import local_zero_first
-from .w2v.ssl_frontend import SSLFrontend
+from recipes.musiclm.models.compat.semantic_model import SSLFrontend
 
 
 def value(func: str):
@@ -126,7 +126,7 @@ def init_mert(hpath, local_rank, cache_dir=None):
             }
 
 
-def init_w2v(hpath, local_rank, cache_dir=None):
+def init_wav2vec(hpath, local_rank, cache_dir=None):
     if cache_dir is not None:
         os.makedirs(cache_dir, exist_ok=True)
 
@@ -163,7 +163,7 @@ def init_w2v(hpath, local_rank, cache_dir=None):
             }
 
 
-def init_sound_stream(hpath, local_rank, cache_dir=None):
+def init_soundstream(hpath, local_rank, cache_dir=None):
     if cache_dir is not None:
         os.makedirs(cache_dir, exist_ok=True)
 
@@ -181,7 +181,7 @@ def init_sound_stream(hpath, local_rank, cache_dir=None):
         return {"ss": load_torch_script_module(h_ss, device)}
 
 
-def init_sound_stream_decoder(hpath, local_rank, cache_dir=None):
+def init_soundstream_decoder(hpath, local_rank, cache_dir=None):
     if cache_dir is not None:
         os.makedirs(cache_dir, exist_ok=True)
 
@@ -194,37 +194,3 @@ def init_sound_stream_decoder(hpath, local_rank, cache_dir=None):
         if not hh.get(h_ss, local_path):
             raise ConnectionError(f"Cannot retrieve file from {h_ss}.")
     return {"ss_dec": load_torch_script_module(local_path, device)}
-
-
-def init_coarse_2ar(hpath, local_rank, cache_dir=None):
-    from ..lit_modules.v2.lit_coarse_2ar import CoarseModule
-
-    if cache_dir is not None:
-        os.makedirs(cache_dir, exist_ok=True)
-
-    device = torch.device(f"cuda:{local_rank}")
-    local_path = f"{cache_dir}/{os.path.basename(hpath)}"
-
-    if not os.path.exists(local_path):
-        if not hh.get(hpath, local_path):
-            raise ConnectionError(f"Cannot retrieve file from {hpath}.")
-    model = CoarseModule.load_from_checkpoint(local_path, device=device)
-    model.eval()
-    return {"coarse": model.to(device)}
-
-
-def init_fine_dummy(hpath, local_rank, cache_dir=None):
-    from ..lit_modules.v2.lit_coarse_2ar import CoarseModule
-
-    if cache_dir is not None:
-        os.makedirs(cache_dir, exist_ok=True)
-
-    device = torch.device(f"cuda:{local_rank}")
-    local_path = f"{cache_dir}/{os.path.basename(hpath)}"
-
-    if not os.path.exists(local_path):
-        if not hh.get(hpath, local_path):
-            raise ConnectionError(f"Cannot retrieve file from {hpath}.")
-    model = CoarseModule.load_from_checkpoint(local_path, device=device)
-    model.eval()
-    return {"fine": model.to(device)}
