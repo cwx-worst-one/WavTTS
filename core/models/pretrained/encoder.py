@@ -232,7 +232,7 @@ class TransformerEncoder(nn.Module):
 
         # forward from every begining
         if start_after_layer < 0:
-            x_conv = self.pos_conv(x.transpose(1, 2))
+            x_conv = self.pos_conv(x.transpose(1, 2).contiguous())
             x_conv = x_conv.transpose(1, 2)
             x += x_conv
 
