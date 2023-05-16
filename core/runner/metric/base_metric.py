@@ -139,16 +139,15 @@ class BaseMetric:
                 count_to_reduce_name.append(name)
 
         # do dist reduce
-        if len(sum_to_reduce_name) > 0:
-            sum_tensor = torch.as_tensor(sum_to_reduce, dtype=torch.float32, device='cuda')
-            dist_allreduce(sum_tensor, name='reduce_metric_sums', op=ReduceOp.SUM)
-            sum_tensor = sum_tensor.cpu()
+        if len(sum_to_reduce_name) > 0 or len(count_to_reduce_name) > 0:
+            lst = sum_to_reduce + count_to_reduce
+            tensor = torch.as_tensor(lst, dtype=torch.float32, device='cuda')
+            dist_allreduce(tensor, name='reduce_metric_sums', op=ReduceOp.SUM)
+            tensor = tensor.cpu()
+            sum_num = len(sum_to_reduce)
+            sum_tensor, count_tensor = tensor[:sum_num], tensor[sum_num:]
             for name, sum_val in zip(sum_to_reduce_name, sum_tensor):
                 value_buf[name][0] = sum_val
-        if len(count_to_reduce_name) > 0:
-            count_tensor = torch.as_tensor(count_to_reduce, dtype=torch.int64, device='cuda')
-            dist_allreduce(count_tensor, name='reduce_metric_counts', op=ReduceOp.SUM)
-            count_tensor = count_tensor.cpu()
             for name, count_val in zip(count_to_reduce_name, count_tensor):
                 value_buf[name][1] = count_val
 

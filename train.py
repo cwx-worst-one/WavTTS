@@ -10,7 +10,8 @@ import sys
 from argparse import ArgumentParser
 
 from core.runner import RUNNERS
-from core.utils import Config, distributed_init, get_logger
+from core.utils import Config, distributed_init, get_logger, get_local_rank, all_rank_info
+from core.utils.dist_util import get_local_size
 from core.solutions.inference.penguin.tasks.rnnt.stream_test import run_penguin
 
 try:
@@ -50,13 +51,14 @@ def main():
     '''main functions'''
     args, unknown = parse_args()
     # init distributed environment if necessary
-    port = os.getenv('METIS_WORKER_0_PORT', '0').split(',')[0]
+    port = int(os.getenv('METIS_WORKER_0_PORT', '0').split(',')[0])
     worker_id = int(os.getenv('DMLC_WORKER_ID', '0'))
     worker_num = int(os.getenv('ARNOLD_WORKER_NUM', '1'))
     gpu_num = int(os.getenv('OMPI_COMM_WORLD_SIZE', '1'))
-    rank = int(os.getenv('OMPI_COMM_WORLD_RANK', '0')) + worker_id * gpu_num
-    world_size = worker_num * gpu_num
-    distributed_init(int(port), block=args.nccl_block, rank=rank, world_size=world_size)
+    rank = int(os.getenv('RANK', int(os.getenv('OMPI_COMM_WORLD_RANK', '0')) + worker_id * gpu_num))
+    world_size = int(os.getenv('WORLD_SIZE', worker_num * gpu_num))
+
+    distributed_init(port, block=args.nccl_block, rank=rank, world_size=world_size)
 
     if rank == 0 or args.inference:
         logger = get_logger(log_level='INFO')
@@ -79,7 +81,13 @@ def main():
             logger.error('old falconclaw init error: %r', e)
 
     logger.info(cfg.filename + ':\n' + cfg.dump())
-    logger.info('Enabled distributed training with rank %d world_size %d', rank, world_size)
+    all_rank_info(
+        'Enabled distributed training with rank %d world_size %d local_rank %d local_size %d',
+        rank,
+        world_size,
+        get_local_rank(),
+        get_local_size(),
+    )
 
     runner_cls = RUNNERS.get(cfg.runner)
     if runner_cls is None:

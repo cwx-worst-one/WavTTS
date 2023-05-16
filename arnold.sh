@@ -88,8 +88,11 @@ if [ "$DATA_TIME_PROFILE" == "1" ]; then
   bash -x scripts/data_time.sh "$@"
   export ARNOLD_PROFILER=2
 fi
-mpirun -np $ARNOLD_WORKER_GPU ${DOLPHIN_CMD_PREFIX} ${PROFILER_CMD} python3 train.py "$@"
-exit_code=$?
+if [[ -n $(which torchrun) ]]; then
+  TORCHRUN --no-python ${DOLPHIN_CMD_PREFIX} ${PROFILER_CMD} python3 train.py "$@"
+else
+  mpirun -np $ARNOLD_WORKER_GPU ${DOLPHIN_CMD_PREFIX} ${PROFILER_CMD} python3 train.py "$@"
+fi
 unset LD_PRELOAD
 
 # upload Arnold local logs

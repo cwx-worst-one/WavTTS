@@ -51,24 +51,19 @@ class ProfilerHook(Hook):
         '''
         if runner.iter == self.start_step:
             self._cudart.cudaProfilerStart()
+            cfg = [
+                torch.autograd.ProfilerState.NVTX,  # other is CPU or CUDA
+                False,  # record input shape
+                False,  # profile_memory
+                False,  # with_stack
+                False,  # with_flops
+            ]
+            if version.parse(torch.__version__) >= version.parse('1.10.0'):
+                cfg.append(False)  # with_modules
             # pylint: disable=protected-access
-            if version.parse(torch.__version__) < version.parse('1.8.0'):
-                torch.autograd._enable_profiler(
-                    torch.autograd.ProfilerConfig(
-                        torch.autograd.ProfilerState.NVTX,  # other is CPU.CUDA
-                        False,  # record input shape
-                    )
-                )
-            else:
-                torch.autograd._enable_profiler_legacy(
-                    torch.autograd.ProfilerConfig(
-                        torch.autograd.ProfilerState.NVTX,  # other is CPU.CUDA
-                        False,  # record input shape
-                        False,  # profile_memory
-                        False,  # with_stack
-                        False,  # with_flops
-                    )
-                )
+            if version.parse(torch.__version__) >= version.parse('1.12.0'):
+                cfg.append(torch.profiler._ExperimentalConfig())
+            torch.autograd._enable_profiler_legacy(torch.autograd.ProfilerConfig(*cfg))
 
         if runner.iter > self.end_step or runner.iter < self.start_step:
             return
@@ -78,13 +73,11 @@ class ProfilerHook(Hook):
         torch.cuda.nvtx.range_pop()
         if runner.iter == self.end_step:
             # pylint: disable=protected-access
-            if version.parse(torch.__version__) < version.parse('1.8.0'):
-                torch.autograd._disable_profiler()
-            else:
-                torch.autograd._disable_profiler_legacy()
+            torch.autograd._disable_profiler_legacy()
             self._cudart.cudaProfilerStop()
         if runner.iter > self.end_step or runner.iter < self.start_step:
             return
+
 
 
 def register_nvtx_hook(runner, model, name, start_step, end_step, max_depth, cur_depth=1):

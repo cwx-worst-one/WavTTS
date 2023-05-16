@@ -341,7 +341,7 @@ class BaseSeModuleRunner(BaseRunner, metaclass=ABCMeta):
                     torch.isnan(self.loss) or torch.isinf(self.loss)
                 ):
                     logging.error("rank %d, iter %d get nan loss", self.rank, self.iter)
-                    self.optimizer.zero_grad()
+                    self.optimizer.zero_grad(set_to_none=True)
             except RuntimeError as e:
                 self.handle_error(e, batch_data)
                 continue
@@ -351,7 +351,7 @@ class BaseSeModuleRunner(BaseRunner, metaclass=ABCMeta):
             gnorm = self.clip_grads()
             if self.train_cfg.get('skip_nan', False) and (torch.isnan(gnorm) or torch.isinf(gnorm)):
                 logging.error("rank %d, iter %d get nan gnorm", self.rank, self.iter)
-                self.optimizer.zero_grad()
+                self.optimizer.zero_grad(set_to_none=True)
             self.train_log_buffer.update({'gnorm': gnorm})
         self.dist_handler.step(iters=self.iter)  # Pass in iter because of bmuf step
 

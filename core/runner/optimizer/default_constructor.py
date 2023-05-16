@@ -1,4 +1,6 @@
 ''' optimizer constructor. '''
+import torch
+from packaging import version
 from core.utils import build_from_cfg
 from .builder import OPTIMIZER_BUILDERS, OPTIMIZERS
 
@@ -54,25 +56,44 @@ class DefaultOptimizerConstructor:
 
     def __call__(self, model):
         '''__call__.'''
-        if hasattr(model, 'module'):
-            model = model.module
-
+        # pylint: disable=too-many-branches
         optimizer_cfg = self.optimizer_cfg.copy()
         optimizer_name = optimizer_cfg.pop('type')
-        if (
-            optimizer_cfg.get('use_fused_optimizer', True)
-            and optimizer_name in ['Adam', 'AdamW', 'FusedByteAdam']
-            and not optimizer_cfg.get('amsgrad', False)
-            and not optimizer_cfg.get('maximize', False)
-        ):
-            optimizer_cfg['adam_w_mode'] = optimizer_name in ('AdamW', 'FusedByteAdam')
-            optimizer_name = 'FusedAdam'
-        if (
-            optimizer_cfg.get('use_fused_optimizer', True)
-            and optimizer_name == 'SGD'
-            and not optimizer_cfg.get('maximize', False)
-        ):
-            optimizer_name = 'FusedSGD'
+        use_fused_optimizer = optimizer_cfg.pop('use_fused_optimizer', True)
+        if version.parse(torch.__version__) >= version.parse('2.0'):
+            # used Fused Optimizer in torch
+            # torch.optim.Adam support fused in pytorch2.0
+            optimizer_name = optimizer_name.replace('Fused', '')
+            optimizer_name = optimizer_name.replace('ByteAdam', 'AdamW')
+            if optimizer_name in ('Adam', 'AdamW'):
+                optimizer_cfg['fused'] = use_fused_optimizer
+            elif optimizer_name in (
+                'ASGD',
+                'Adadelta',
+                'Adagrad',
+                'Adamax',
+                'NAdam',
+                'RAdam',
+                'RMSprop',
+                'Rprop',
+                'SGD',
+            ):
+                optimizer_cfg['foreach'] = use_fused_optimizer
+        else:
+            if (
+                optimizer_cfg.get('use_fused_optimizer', True)
+                and optimizer_name in ['Adam', 'AdamW', 'FusedByteAdam']
+                and not optimizer_cfg.get('amsgrad', False)
+                and not optimizer_cfg.get('maximize', False)
+            ):
+                optimizer_cfg['adam_w_mode'] = optimizer_name in ('AdamW', 'FusedByteAdam')
+                optimizer_name = 'FusedAdam'
+            if (
+                optimizer_cfg.get('use_fused_optimizer', True)
+                and optimizer_name == 'SGD'
+                and not optimizer_cfg.get('maximize', False)
+            ):
+                optimizer_name = 'FusedSGD'
         optimizer_cfg['type'] = optimizer_name
 
         if not isinstance(optimizer_cfg.get('lr', 0), list):

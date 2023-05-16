@@ -1,5 +1,6 @@
 '''optimizer helper'''
 import torch
+from packaging import version
 from core.utils import get_world_size, dist_broadcast
 
 
@@ -54,7 +55,10 @@ class AdamaxOptimizerHelper(OptimizerHelper):
                     continue
                 state = self.optimizer.state[p]
                 if len(state) == 0:
-                    state['step'] = 0
+                    if version.parse(torch.__version__) >= version.parse('1.12'):
+                        state['step'] = torch.tensor(0.0)
+                    else:
+                        state['step'] = 0
                     state['exp_avg'] = torch.zeros_like(p.data.float())
                     state['exp_inf'] = torch.zeros_like(p.data.float())
 
@@ -80,7 +84,11 @@ class AdamOptimizerHelper(OptimizerHelper):
                     continue
                 state = self.optimizer.state[p]
                 if len(state) == 0:
-                    state['step'] = 0
+                    if version.parse(torch.__version__) >= version.parse('1.12'):
+                        step = 1 if group['capturable'] or group['fused'] else 0
+                        state['step'] = torch.tensor((step,), dtype=torch.float, device='cuda')
+                    else:
+                        state['step'] = 0
                     state['exp_avg'] = torch.zeros_like(p.data.float())
                     state['exp_avg_sq'] = torch.zeros_like(p.data.float())
                     if group.get('amsgrad'):

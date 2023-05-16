@@ -63,7 +63,10 @@ except Exception as e:
 
 # TODO(zhengyijie): The zero_grad function call will be uniformly modified
 # instead of rewriting the zero_grad function.
-def zero_grad_(self):
+# This function could be removed in the torch2.0 version.
+# But now, we need to keep it for compatibility with torch1.8.1 version.
+# Because the zero_grad function in apex optimizer is not uniform.
+def zero_grad_(self, **_kwargs):
     '''
     do zero grads inplace.
     '''

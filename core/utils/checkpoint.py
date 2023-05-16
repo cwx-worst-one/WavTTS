@@ -18,7 +18,7 @@ def _merge(states):
         else:
             v = sum(vs)
             if len(vs) > 1:
-                mode = 'true' if v.is_floating_point() else 'trunc'
+                mode = 'floor' if v.is_floating_point() else 'trunc'
                 v = v.div(len(vs), rounding_mode=mode)
         model_state[k] = v
     return model_state

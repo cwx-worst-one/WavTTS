@@ -8,7 +8,7 @@ import random
 import numpy as np
 import torch
 import librosa
-from falconclaw.dataloader import KVReader  # pylint:disable=import-error
+from dataloader import KVReader  # pylint:disable=import-error
 from scipy.signal import fftconvolve
 from core.utils import gen_diffuse
 from core.utils.se.simulator_module import ModuleSimulator

@@ -9,6 +9,7 @@ import pickle
 from abc import ABCMeta, abstractmethod
 import types
 from collections import OrderedDict
+from packaging import version
 import numpy as np
 import torch
 
@@ -194,7 +195,7 @@ class BaseRunner(metaclass=ABCMeta):
         self.solution.cuda()
 
         # Broadcast model state dict from rank 0
-        self.optimizer.zero_grad()
+        self.optimizer.zero_grad(set_to_none=True)
 
         if self.tensor_parallel_size > 1:
             # broadcast model and optimizer state in tp format
@@ -810,7 +811,7 @@ class BaseRunner(metaclass=ABCMeta):
             if 'best' in checkpoint['meta']:
                 self._best_metric = checkpoint['meta']['best']
         if 'optimizer' in checkpoint and resume_optimizer and self.dist_handler is None:
-            self.optimizer.zero_grad()
+            self.optimizer.zero_grad(set_to_none=True)
             self.optimizer.load_state_dict(checkpoint['optimizer'])
         if 'lr_scheduler' in checkpoint and resume_lr_scheduler:
             self.lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
@@ -1165,7 +1166,8 @@ class BaseRunner(metaclass=ABCMeta):
             opt_builder = DefaultOptimizerConstructor(optimizer_cfg)
         logging.info("Optimizer Config: {}".format(optimizer_cfg))
         self.optimizer = opt_builder(self.solution)
-        self.optimizer.zero_grad = types.MethodType(zero_grad_, self.optimizer)
+        if version.parse(torch.__version__) < version.parse('1.9'):
+            self.optimizer.zero_grad = types.MethodType(zero_grad_, self.optimizer)
 
     def build_lr_scheduler(self):
         '''build lr scheduler'''
@@ -1304,7 +1306,7 @@ class BaseRunner(metaclass=ABCMeta):
             pass
         torch.cuda.empty_cache()
         clear_cuda_error()
-        self.optimizer.zero_grad()
+        self.optimizer.zero_grad(set_to_none=True)
         batch_info = ' '.join(
             [
                 '{}:{}'.format(k, v.shape)

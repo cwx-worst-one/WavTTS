@@ -3,12 +3,17 @@
 import torch
 import torchvision
 
-from apex.optimizers import FusedAdam, FusedSGD
+try:
+    from apex.optimizers import FusedAdam, FusedSGD
+except Exception:
+    FusedAdam, FusedSGD = None, None
 from torch.optim import Adam, SGD, AdamW
 
 
 def test_fused_adam():
     '''test fused adam.'''
+    if FusedAdam is None:
+        return
     model = torchvision.models.resnet101().cuda()
     params = list(model.parameters())
     grads = [torch.rand_like(p) for p in params]
