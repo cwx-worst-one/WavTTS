@@ -1,7 +1,7 @@
 import json
 import re
 import tarfile
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Union
+from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Union
 
 from webdataset import filters, shardlists
 from webdataset.compat import FluidInterface
@@ -16,6 +16,21 @@ from webdataset.tariterators import (
 )
 
 from samantha.utils.hdfs_helper import hopen
+
+
+def resolve_url2index(url2index: Union[str, Dict[str, str]]) -> Dict[str, str]:
+    if type(url2index) == str:  # Load mapping from file
+        url2index_map = {}
+        with hopen(url2index, "r") as f:
+            for line in f:
+                if type(line) == bytes:
+                    line = line.decode("utf-8")
+                ary = line.strip().split("\t")
+                url2index_map[ary[0]] = ary[1]
+        return url2index_map
+    else:
+        assert type(url2index) == dict
+        return url2index
 
 
 def parse_index(line: Union[str, bytes]) -> Dict[str, Any]:
@@ -180,8 +195,7 @@ class IndexedWebDataset(DataPipeline, FluidInterface):
 
     def __init__(
         self,
-        urls: List[str],
-        index_files: List[str],
+        url2index: Union[str, Dict[str, str]],
         handler: Callable[[Exception], bool] = reraise_exception,
         resampled: bool = False,
         shardshuffle: Optional[Any] = None,
@@ -189,8 +203,8 @@ class IndexedWebDataset(DataPipeline, FluidInterface):
         nodesplitter=shardlists.single_node_only,
     ):
         super().__init__()
-        assert len(urls) == len(index_files)
-        url2index = {url: index for url, index in zip(urls, index_files)}
+        url2index = resolve_url2index(url2index)
+        urls = list(url2index.keys())
         if resampled:
             self.append(shardlists.ResampledShards(urls))
         else:

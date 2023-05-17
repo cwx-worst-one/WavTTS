@@ -1,0 +1,1 @@
+pipe:cat tests/data/webdataset/compressed.tar	tests/data/webdataset/compressed.index
