@@ -57,4 +57,4 @@ sudo pip3 uninstall -y panther-gpu
 pip3 uninstall -y panther-gpu
 pip3 uninstall -y panther-gpu # double check
 sudo -E pip3 install \
-    *torch*/panther_gpu-*-cp37-cp37m-linux_x86_64.whl
+    *torch*/panther_gpu-*-linux_x86_64.whl
