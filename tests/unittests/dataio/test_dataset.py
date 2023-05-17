@@ -1,6 +1,7 @@
 import pickle
 
 import pytest
+import torch.utils.data
 from torch.utils.data import IterableDataset
 
 from samantha.dataio.dataset import MultiIterableDataset
@@ -99,3 +100,22 @@ def test_sample_multi_iterable_dataset_prob():
     with pytest.raises(StopIteration):
         for _ in range(total + 1):
             next(multi_dataset_iter)
+
+
+def test_draw_num_samples_from_multi_iterable_dataset():
+    ds_1 = CountingIterableDataset(0, 1024)
+    ds_2 = CountingIterableDataset(1024, 2048)
+
+    num_samples = 1024
+    batch_size = 4
+    num_workers = 8
+    dataset = MultiIterableDataset([ds_1, ds_2], num_samples=num_samples)
+    dataloader = torch.utils.data.DataLoader(dataset=dataset, num_workers=num_workers, batch_size=batch_size)
+
+    total_samples, total_batches = 0, 0
+    for item in dataloader:
+        total_batches += 1
+        total_samples += len(item)
+
+    assert total_samples == num_samples
+    assert total_batches == num_samples // batch_size
