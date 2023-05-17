@@ -59,18 +59,14 @@ karaoke_preprocessor: !new:recipes.musiclm.preprocess.WebDatasetBufferPreprocess
     sample_rate: !ref <data_params[sample_rate]>
     transforms: !ref <karaoke_audio_transforms>
 
-mcc_shardlist_path: "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/genre_balanced_mcc_hdfs_paths_1704.csv"
-mcc_metalist_path: "/mnt/bn/audio-diffusion/data/MCC_40M_metalist.txt"
-
-mcc_train_shards: !new:webdataset.WebDataset
-    urls: !apply:recipes.musiclm.datasets.mcc.get_mcc_shardlist [!ref <mcc_shardlist_path>]
+mcc_train_shards: !new:samantha.dataio.webdataset.extension.IndexedWebDataset
+    url2index: "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/genre_balanced_mcc_hdfs_paths_1704.tar_to_index.tsv"
     resampled: True
     shardshuffle: True
 
 mcc_audio_transforms: !new:recipes.musiclm.transforms.musiclm.MCCTransforms
     n_samples: !ref <data_params[duration]> * <data_params[sample_rate]>
     sample_rate: !ref <data_params[sample_rate]>
-    metalist_path: !ref <mcc_metalist_path>
     audio_key: "mp3"
     min_volume_threshold: 0.05
     loudness_ratio_threshold: 0.5
