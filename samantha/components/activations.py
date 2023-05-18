@@ -25,10 +25,21 @@ def new_gelu(x):
 
 
 class Activation(str, Enum):
+    GLU = "glu"
     GeLU = "gelu"
     SiLU = "silu"
     ReLU = "relu"
     LeakyReLU = "leaky_relu"
+
+
+class GLU(nn.Module):
+    def __init__(self, dim: int = 1):
+        super().__init__()
+        self.dim = dim
+
+    def forward(self, x):
+        out, gate = x.chunk(2, dim=self.dim)
+        return out * gate.sigmoid()
 
 
 class NewGeLU(nn.Module):
@@ -44,5 +55,6 @@ def build_activation(activation: Optional[Activation]):
         Activation.ReLU: nn.ReLU,
         Activation.SiLU: nn.SiLU,
         Activation.GeLU: NewGeLU,
+        Activation.GLU: GLU,
         Activation.LeakyReLU: nn.LeakyReLU,
     }[activation]()

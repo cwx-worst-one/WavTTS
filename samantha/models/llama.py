@@ -30,6 +30,7 @@ class LlamaConfig:
     initializer_range: float = 0.02
     activation_fn: Activation = Activation.SiLU
     attention_kwargs: Optional[dict] = field(default_factory=dict)
+    causal: bool = True
     use_rotary_embeddings: bool = True
 
     @classmethod
@@ -54,9 +55,8 @@ class LlamaBlock(nn.Module):
             d_model=config.n_embd,
             n_heads=config.n_head,
             bias=config.attn_bias,
-            causal=True,
+            causal=config.causal,
             use_rotary_embeddings=config.use_rotary_embeddings,
-            max_seq_len=config.max_seq_len,
             **config.attention_kwargs,
         )
         self.ln_2 = RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
@@ -88,8 +88,9 @@ class LlamaBlock(nn.Module):
 class LlamaModel(BaseModel):
     def __init__(self, config: LlamaConfig):
         super().__init__(config=config)
-        assert config.vocab_size is not None
-        self.wte = nn.Embedding(config.vocab_size, config.n_embd)
+
+        if config.vocab_size:
+            self.wte = nn.Embedding(config.vocab_size, config.n_embd)
 
         layer = LlamaBlock(config)
         self.h = get_clones(layer, config.n_layer)
@@ -126,7 +127,8 @@ class LlamaModel(BaseModel):
             )
 
     def forward(self, x: torch.Tensor, kv_cache=None) -> torch.Tensor:
-        x = self.wte(x)
+        if self.config.vocab_size:
+            x = self.wte(x)
         for block in self.h:
             x = block(x, kv_cache=kv_cache)
         return self.ln_f(x)

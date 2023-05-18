@@ -25,8 +25,9 @@ class SoundStreamModel(EncoderTransformBase):
         self.encoder = torch.jit.load(encoder_fp, map_location="cpu").eval()
         self.decoder = torch.jit.load(decoder_fp, map_location="cpu").eval()
 
-        self.num_quantizers = 6
+        self.num_quantizers = 12
         self.codebook_size = 1024
+        self.frame_rate = 50
 
     def encode(self, waveform):
         if waveform.ndim == 3:
@@ -47,7 +48,7 @@ class SoundStreamModel(EncoderTransformBase):
 
 class EncodecModel(EncoderTransformBase):
     def __init__(self, sample_rate: int, target_bandwidth: float) -> None:
-        super().__init__(sample_rate, n_output_frames=None)
+        super().__init__(sample_rate)
 
         if sample_rate == 24000:
             self.model = Encodec.encodec_model_24khz()
@@ -58,6 +59,8 @@ class EncodecModel(EncoderTransformBase):
                 "This sample rate is not supported for EnCodec (24kHz/48kHz)"
             )
         self.model.set_target_bandwidth(target_bandwidth)
+        self.num_quantizers = 16
+        self.codebook_size = 1024
 
     def encode(self, waveform):
         return self.model.encode(waveform)

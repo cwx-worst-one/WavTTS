@@ -29,6 +29,7 @@ class SemanticModel(pl.LightningModule):
         self.register_buffer("centers", torch.from_numpy(np.load(centroids_fp)))
         self.n_frames = 250
         self.codebook_size = 1024
+        self.frame_rate = 25
 
     @torch.no_grad()
     def forward(self, x: torch.Tensor, padding: bool = False) -> torch.Tensor:

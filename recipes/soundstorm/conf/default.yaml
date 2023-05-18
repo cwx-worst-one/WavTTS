@@ -1,0 +1,276 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+data_params:
+    sample_rate: 24000
+    n_audio_samples: 240000
+
+# training parameters
+training_params:
+    max_steps: 1000000
+    batch_size: 44 # 10 for v100, 128 for A100
+    base_lr: 4.0e-4
+    warmup_steps: 3000
+    hold_steps: 30000
+    decay_steps: 3000000
+    weight_decay: 0.00000001
+    betas: (0.9, 0.98)
+    shuffle_buffer: 512
+    gradient_clip_val: 1.0
+
+
+ckpt_path: null
+
+# running parameters
+log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+run_opts:
+    fast_dev_run: False
+    tensorboard_dir: !ref <log_dir>
+    log_name: soundstorm
+    version: baseline
+    precision: bf16-mixed
+    num_workers: 3
+    accelerator: auto
+
+seed: 0
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+karaoke_audio_transforms: !new:recipes.musiclm.transforms.musiclm.MusicLMTransforms
+    n_samples: !ref <data_params[n_audio_samples]>
+    audio_key: "acc.npy"
+    sample_range_key: "acc_sample_range.npy"
+    min_volume_threshold: 0.05
+
+
+karaoke_preprocessor: !new:recipes.musiclm.preprocess.WebDatasetBufferPreprocessor
+    sample_rate: !ref <data_params[sample_rate]>
+    transforms: !ref <karaoke_audio_transforms>
+
+karaoke_train_shards: !new:webdataset.WebDataset
+    urls: "pipe:hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/data/karaoke_for_singsong/shards-{0000..0130}.tar"
+    resampled: True
+    shardshuffle: True
+
+
+karaoke_train_dataset: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
+    wds_dataset: !ref <karaoke_train_shards>
+    pipeline:
+        - !name:webdataset.WebDataset.select
+          - !name:samantha.utils.datastructures.select_keys
+            keys:
+                - "acc.npy"
+                - "acc_sample_range.npy"
+        - !name:webdataset.WebDataset.decode
+        - !name:webdataset.WebDataset.compose
+          - !name:recipes.musiclm.preprocess.WebDatasetBufferPreprocessor.train_buffer_preprocessor
+            - !ref <karaoke_preprocessor>
+        - !name:webdataset.WebDataset.shuffle
+          - !ref <training_params[shuffle_buffer]>
+        - !name:webdataset.WebDataset.to_tuple
+          - "audio.npy"
+        - !name:webdataset.WebDataset.batched
+          - !ref <training_params[batch_size]>
+
+
+playlist_audio_transforms: !new:recipes.musiclm.transforms.musiclm.MusicLMTransforms
+    n_samples: !ref <data_params[n_audio_samples]>
+    audio_key: "audio.npy"
+    min_volume_threshold: 0.05
+
+playlist_preprocessor: !new:recipes.musiclm.preprocess.WebDatasetBufferPreprocessor
+    sample_rate: !ref <data_params[sample_rate]>
+    transforms: !ref <playlist_audio_transforms>
+
+playlist_train_shards: !new:webdataset.WebDataset
+    urls: "pipe:hdfs dfs -cat /home/byte_speech_sv/mulan/playlist_v5_uio/audio_shards/shards_{0000..2597}.tar"
+    resampled: True
+    shardshuffle: True
+
+playlist_train_dataset: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
+    wds_dataset: !ref <playlist_train_shards>
+    pipeline:
+        - !name:webdataset.WebDataset.select
+          - !name:samantha.utils.datastructures.select_keys
+            keys:
+                - "audio.npy"
+        - !name:webdataset.WebDataset.decode
+        - !name:webdataset.WebDataset.compose
+          - !name:recipes.musiclm.preprocess.WebDatasetBufferPreprocessor.train_buffer_preprocessor
+            - !ref <playlist_preprocessor>
+        - !name:webdataset.WebDataset.shuffle
+          - !ref <training_params[shuffle_buffer]>
+        - !name:webdataset.WebDataset.to_tuple
+          - "audio.npy"
+        - !name:webdataset.WebDataset.batched
+          - !ref <training_params[batch_size]>
+
+combined_train_dataset: !new:recipes.musiclm.datamodules.webdataset.RandomSample
+    datasets:
+        - !ref <karaoke_train_dataset>
+        - !ref <playlist_train_dataset>
+    probabilities:
+        - 0.05
+        - 0.95
+
+train_dataset: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
+    wds_dataset: !ref <combined_train_dataset>
+    pipeline:
+        - !name:webdataset.WebDataset.shuffle
+          - !ref <training_params[shuffle_buffer]>
+
+
+# train_dataset: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
+#     wds_dataset: !new:webdataset.WebDataset
+#         urls: "test_dataset.tar"
+#         resampled: True
+#     pipeline:
+#         - !name:webdataset.WebDataset.decode
+#         - !name:webdataset.WebDataset.shuffle
+#           - !ref <training_params[shuffle_buffer]>
+#         - !name:webdataset.WebDataset.to_tuple
+#           - "semantic_tokens.npy"
+#           - "audio_tokens.npy"
+#           - "audio.npy"
+#         - !name:webdataset.WebDataset.batched
+#           - !ref <training_params[batch_size]>
+
+# validation_dataset: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
+#     wds_dataset: !new:webdataset.WebDataset
+#         urls: "test_dataset.tar"
+#         resampled: False
+#     pipeline:
+#         - !name:webdataset.WebDataset.decode
+#         - !name:webdataset.WebDataset.to_tuple
+#           - "semantic_tokens.npy"
+#           - "audio_tokens.npy"
+#           - "audio.npy"
+#         - !name:webdataset.WebDataset.batched
+#           - !ref <training_params[batch_size]>
+
+
+validation_web_dataset: !new:webdataset.WebDataset
+    urls: "pipe:hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/data/karaoke_for_singsong/shards-0131.tar"
+    nodesplitter: !name:recipes.musiclm.datamodules.webdataset.return_self
+
+
+validation_dataset: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
+    wds_dataset: !ref <validation_web_dataset>
+    pipeline:
+        - !name:webdataset.WebDataset.decode
+        - !name:webdataset.WebDataset.compose
+          - !name:recipes.musiclm.preprocess.WebDatasetBufferPreprocessor.train_buffer_preprocessor
+            - !ref <karaoke_preprocessor>
+        - !name:webdataset.WebDataset.to_tuple
+          - "audio.npy"
+        - !name:webdataset.WebDataset.batched
+          - !ref <training_params[batch_size]>
+
+
+pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.WebDataModule
+    train_dataset: !ref <train_dataset>
+    validation_dataset: !ref <validation_dataset>
+    batch_size: !ref <training_params[batch_size]>
+    num_workers: !ref <run_opts[num_workers]>
+    pin_memory: True
+
+# training module configuration
+optimizer_class: !name:torch.optim.AdamW
+    lr: !ref <training_params[base_lr]>
+    weight_decay: !ref <training_params[weight_decay]>
+    betas: !ref <training_params[betas]>
+    fused: False
+
+scheduler_class: !name:recipes.musiclm.optim.lr_scheduler.TriStageLR
+    warmup_steps: !ref <training_params[warmup_steps]>
+    hold_steps: !ref <training_params[hold_steps]>
+    decay_steps: !ref <training_params[decay_steps]>
+
+# masking_scheme: !new:recipes.soundstorm.lightning.masking_scheme.SoundStormMaskingScheme
+#     sample_q_uniformly: True
+#     sample_t: True
+
+masking_scheme: !new:recipes.soundstorm.lightning.masking_scheme.DucMaskingScheme
+    coarse_layers: 4
+    mask_all_fine: False
+    coarse_prob: null
+
+pl_module: !new:recipes.soundstorm.lightning.soundstorm.SoundStorm
+    sample_rate: !ref <data_params[sample_rate]>
+    n_embd: 1024
+    n_head: 16
+    n_layer: 44
+    conv_kernel_size: 5
+    n_audio_samples: !ref <data_params[n_audio_samples]>
+    audio_prompting: False
+    masking_scheme: !ref <masking_scheme>
+    fine_quantizer_embedding_dropout: True
+    attention_kwargs:
+        enable_flash: True
+        enable_mem_efficient: True  # only for V100
+    optimizer_class: !ref <optimizer_class>
+    scheduler_class: !ref <scheduler_class>
+
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[tensorboard_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+    default_hp_metric: False
+
+checkpoint: !new:pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: 'loss/valid'
+    mode: 'min'
+    save_last: True
+
+lr_monitor: !new:pytorch_lightning.callbacks.LearningRateMonitor
+    logging_interval: 'step'
+
+audio_demo: !new:recipes.soundstorm.callbacks.audio_demo.AudioDemo
+    sample_rate: !ref <data_params[sample_rate]>
+    max_demos_per_step: 1
+
+# total_tokens: !new:recipes.musiclm.callbacks.loggers.LogTotalTokensCallback
+# log_gradient_scaler: !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
+
+plugins:
+    - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    strategy: "ddp_find_unused_parameters_true"
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: 'auto'
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    log_every_n_steps: 50
+    max_steps: !ref <training_params[max_steps]>
+    precision: !ref <run_opts[precision]>
+    accumulate_grad_batches: 1
+    gradient_clip_val: !ref <training_params[gradient_clip_val]>
+    val_check_interval: 500
+    check_val_every_n_epoch: null  # required now that we use an IterableDataset
+    num_sanity_val_steps: 0
+    callbacks:
+        - !ref <checkpoint>
+        - !ref <lr_monitor>
+        - !ref <audio_demo>
+        # - !ref <total_tokens>
+        # - !ref <log_gradient_scaler>
+    plugins: !ref <plugins>
+
+################################################################################
+##########                    PREDICTION CONFIGURATION                ##########
+################################################################################
+# TBD
+
+################################################################################
+##########                      EXPORT CONFIGURATION                  ##########
+################################################################################
+# TBD
