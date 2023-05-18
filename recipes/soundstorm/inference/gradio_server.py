@@ -125,14 +125,7 @@ if __name__ == "__main__":
     local_fp = download_model(ckpt_idx=0)
 
     print("Loading SoundStorm...")
-    soundstorm = load_model(
-        local_fp,
-        device,
-        n_audio_samples=n_audio_samples,
-        masking_scheme=None,
-        fine_quantizer_embedding_dropout=False,
-        strict=False,
-    )  # TODO
+    soundstorm = load_model(local_fp, device, n_audio_samples=n_audio_samples)
     soundstorm.local_fp = local_fp
 
     iterations = "32,32,32,32,8,8,8,8,8,8,8,8"

@@ -1,7 +1,7 @@
 import pytorch_lightning as pl
 import webdataset as wds
-from webdataset.pipeline import DataPipeline
 from torch.utils.data import DataLoader
+from webdataset.pipeline import DataPipeline
 
 
 class DataModule(pl.LightningDataModule):
@@ -29,7 +29,9 @@ class DataModule(pl.LightningDataModule):
             wds.to_tuple("audio.npy"),
             wds.batched(self.batch_size),
         )
-        return DataLoader(train_dataset_batched, batch_size=None, num_workers=self.num_workers)
+        return DataLoader(
+            train_dataset_batched, batch_size=None, num_workers=self.num_workers
+        )
 
     def val_dataloader(self):
         validation_dataset_batched = DataPipeline(
@@ -37,4 +39,6 @@ class DataModule(pl.LightningDataModule):
             wds.to_tuple("audio.npy"),
             wds.batched(self.batch_size),
         )
-        return DataLoader(validation_dataset_batched, batch_size=None, num_workers=self.num_workers)
+        return DataLoader(
+            validation_dataset_batched, batch_size=None, num_workers=self.num_workers
+        )

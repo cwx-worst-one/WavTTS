@@ -1,11 +1,11 @@
 from webdataset import WebDataset
-from recipes.musiclm.transforms.musiclm import MusicLMTransforms
+
 from recipes.musiclm.preprocess import WebDatasetBufferPreprocessor
+from recipes.musiclm.transforms.musiclm import MusicLMTransforms
 from samantha.dataio.webdataset.pipeline import WebPipeline
 
 
 class KaraokeDataset(WebPipeline):
-
     def __init__(
         self,
         urls: str,
@@ -16,10 +16,7 @@ class KaraokeDataset(WebPipeline):
         min_volume_threshold: float = 0.05,
         **kwargs,
     ):
-        dataset = WebDataset(
-            urls=urls,
-            **kwargs,
-        )
+        dataset = WebDataset(urls=urls, **kwargs)
         audio_transforms = MusicLMTransforms(
             n_samples=int(duration * sample_rate),
             audio_key=audio_key,
@@ -27,10 +24,9 @@ class KaraokeDataset(WebPipeline):
             min_volume_threshold=min_volume_threshold,
         )
         preprocessor = WebDatasetBufferPreprocessor(
-            sample_rate=sample_rate,
-            transforms=audio_transforms,
+            sample_rate=sample_rate, transforms=audio_transforms
         )
-        pipeline=[]
+        pipeline = []
         pipeline.append("decode")
         pipeline.append({"compose": [preprocessor.train_buffer_preprocessor]})
         super().__init__(dataset, pipeline)

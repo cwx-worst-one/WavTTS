@@ -1,15 +1,15 @@
 from typing import Callable, List, Optional
+
 import webdataset as wds
-from recipes.musiclm.transforms.musiclm import MCCTransforms
+
 from recipes.musiclm.preprocess import WebDatasetBufferPreprocessor
+from recipes.musiclm.transforms.musiclm import MCCTransforms
+from samantha.dataio.dataset import MultiIterableDataset
 from samantha.dataio.webdataset.extension import IndexedWebDataset
 from samantha.dataio.webdataset.pipeline import WebPipeline
 
-from samantha.dataio.dataset import MultiIterableDataset
-
 
 class MCC40MDataset(WebPipeline):
-
     def __init__(
         self,
         url2index: str,
@@ -24,15 +24,11 @@ class MCC40MDataset(WebPipeline):
         avoid_vocal: bool = True,
         max_vocal_threshold: float = 0.25,
         exclude_licenses: List[str] = ["C"],
-        max_num_crops: Optional[int] = 3,   # recommended for 30s crops
+        max_num_crops: Optional[int] = 3,  # recommended for 30s crops
         handler: Callable = wds.warn_and_continue,
         **kwargs,
     ):
-        dataset = IndexedWebDataset(
-            url2index=url2index,
-            handler=handler,
-            **kwargs,
-        )
+        dataset = IndexedWebDataset(url2index=url2index, handler=handler, **kwargs)
 
         audio_transforms = MCCTransforms(
             n_samples=int(duration * sample_rate),
@@ -49,10 +45,9 @@ class MCC40MDataset(WebPipeline):
             crop_step_size=int(duration * sample_rate / 5),
         )
         preprocessor = WebDatasetBufferPreprocessor(
-            sample_rate=sample_rate,
-            transforms=audio_transforms,
+            sample_rate=sample_rate, transforms=audio_transforms
         )
-        pipeline=[
+        pipeline = [
             "decode",
             {"compose": [preprocessor.train_buffer_preprocessor]},
             {"shuffle": [shuffle_buffer_size]},
@@ -61,7 +56,6 @@ class MCC40MDataset(WebPipeline):
 
 
 class WrappedMCC40MDataset(MultiIterableDataset):
-
     def __init__(
         self,
         url2index_list: list,
@@ -99,7 +93,8 @@ class WrappedMCC40MDataset(MultiIterableDataset):
                 max_num_crops=max_num_crops,
                 handler=handler,
                 **kwargs,
-            ) for url2index in url2index_list
+            )
+            for url2index in url2index_list
         ]
 
         super().__init__(

@@ -298,6 +298,7 @@ class SoundStorm(pl.LightningModule):
         temperature: float = 1.0,
         sampled_t: Optional[int] = None,
         seed_tokens: Optional[torch.Tensor] = None,
+        prefix_tokens: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Iterative decoding scheme from the SoundStorm/MaskGIT papers.
 
@@ -331,8 +332,18 @@ class SoundStorm(pl.LightningModule):
         if sampled_t:
             audio_tokens[..., :sampled_t] = seed_tokens[..., :sampled_t]
 
+        if seed_tokens is None:
+            start_quantizer = 0
+        else:
+            start_quantizer = seed_tokens.shape[1]
+            audio_tokens[:, : seed_tokens.shape[1]] = seed_tokens
+
+        if prefix_tokens is not None:
+            ratio = 1 - float(prefix_tokens.shape[2]) / max_seq_len
+            iterations = [max(int(i * ratio), 1) for i in iterations]
+            audio_tokens[:, :, : prefix_tokens.shape[2]] = prefix_tokens
+
         metrics = defaultdict(list)
-        start_quantizer = 0
         for q in tqdm(
             range(start_quantizer, self.n_quantizers),
             desc="Iteratively decoding audio tokens...",
