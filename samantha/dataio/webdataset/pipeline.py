@@ -3,6 +3,8 @@ from typing import Dict, List, Union
 import webdataset as wds
 from torch.utils.data import IterableDataset
 
+from samantha.dataio.webdataset.extension import IndexedWebDataset
+
 
 class WebPipeline(IterableDataset):
     r"""WebPipeline is a tool to apply a sequence of webdataset transformations
@@ -47,7 +49,7 @@ class WebPipeline(IterableDataset):
         pipeline: List[Union[str, Dict]],
     ):
         super().__init__()
-        if isinstance(dataset, wds.WebDataset):
+        if isinstance(dataset, (wds.WebDataset, IndexedWebDataset)):
             dataset = dataset
         else:
             dataset = wds.FluidWrapper(dataset)

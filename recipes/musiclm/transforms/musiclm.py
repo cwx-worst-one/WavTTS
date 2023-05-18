@@ -1,6 +1,8 @@
 from typing import Any, Dict, Generator, Optional
 import io
+import sys
 import torch
+import random
 from torchaudio_augmentations import Compose
 
 from recipes.musiclm.transforms.audio import (
@@ -111,15 +113,26 @@ class MCCTransforms(TransformBase):
         if self.aed_filtered and not x["__index_data__"].get("aed_filtered", False):
             self._update_stats(skipped=True)
             return
-
-        audio = self.base_transform(io.BytesIO(x[self.audio_key]))
-        audio = self.random_pad(audio)
-        # Return up to self.num_crops crops
-        max_num_crops = audio.size(1) // self.n_samples
-        num_crops = 0
-        while num_crops < max_num_crops:
-            cropped_audio = self.random_crop(audio)
+        try:
+            audio = self.base_transform(io.BytesIO(x[self.audio_key]))
+        except Exception as e:
+            print(f"[MP3 decoding error] {e}")
+            self._update_stats(skipped=True)
+            return
+        if audio.size(1) < self.n_samples * 0.95:
+            self._update_stats(skipped=True)
+            return
+        else:            
+            audio = self.random_pad(audio)
+        step_size = self.n_samples // 2
+        max_num_crops = max(1, audio.size(1) // self.n_samples // 4)
+        num_windows = (audio.size(1) // step_size) - 1
+        sts = list(range(num_windows))
+        random.shuffle(sts)
+        for i, st in enumerate(sts):
+            if i > max_num_crops:
+                break
+            cropped_audio = audio[:, st * step_size : st * step_size + self.n_samples]
             if self.is_loud(cropped_audio):
                 yield {"audio.npy": cropped_audio}
-            num_crops += 1
         self._update_stats(skipped=False)

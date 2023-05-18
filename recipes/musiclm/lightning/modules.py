@@ -31,6 +31,9 @@ class BaseModule(pl.LightningModule):
         self.val_outputs = dict()
         if checkpointing:
             self.model.gradient_checkpointing_enable()
+    
+    def on_before_optimizer_step(self, optimizer):
+        self.log_dict(pl.utilities.grad_norm(self, norm_type=2), sync_dist=True)
 
     def setup(self, stage: str) -> None:
         if stage == "fit" and not self.requires:
@@ -52,8 +55,12 @@ class BaseModule(pl.LightningModule):
             return seq.reshape(b, self.extra_params.n_seers, -1).transpose(2, 1).reshape(b, -1)
 
     def _shared_step(self, batch):
+        if isinstance(batch, list):
+            batch = batch[0]
+        if batch.dim() == 3:
+            batch = batch.squeeze(1)
         with torch.autocast(device_type="cuda", enabled=False):
-            input_ids, target_ids = self.prepare_feature(batch[0].squeeze(1).float())
+            input_ids, target_ids = self.prepare_feature(batch.float())
         logits = self.model(input_ids)
 
         x = logits[:, -target_ids.size(1) :, :]

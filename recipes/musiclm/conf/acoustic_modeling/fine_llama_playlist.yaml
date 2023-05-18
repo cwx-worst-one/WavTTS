@@ -22,7 +22,7 @@ data_params:
 # training parameters
 training_params:
     max_steps: 1000000
-    batch_size: 144
+    batch_size: 7
     learning_rate: 4.0e-4
     warmup_steps: 10000
     cycle_steps: 500000
@@ -37,8 +37,8 @@ log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
 run_opts:
     fast_dev_run: False
     tensorboard_dir: !ref <log_dir>
-    log_name: semantic_llama
-    version: base
+    log_name: fine_llama
+    version: playlist
     cache_dir: .module_cache/musiclm
     precision: "16-mixed"
     num_workers: 6
@@ -59,33 +59,55 @@ karaoke_preprocessor: !new:recipes.musiclm.preprocess.WebDatasetBufferPreprocess
     sample_rate: !ref <data_params[sample_rate]>
     transforms: !ref <karaoke_audio_transforms>
 
-mcc_train_shards: !new:samantha.dataio.webdataset.extension.IndexedWebDataset
-    url2index: "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/genre_balanced_mcc_hdfs_paths_1704.tar_to_index.tsv"
+karaoke_train_shards: !new:webdataset.WebDataset
+    urls: "pipe:hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/data/karaoke_for_singsong/shards-{0000..0130}.tar"
     resampled: True
     shardshuffle: True
 
-mcc_audio_transforms: !new:recipes.musiclm.transforms.musiclm.MCCTransforms
-    n_samples: !ref <data_params[duration]> * <data_params[sample_rate]>
-    sample_rate: !ref <data_params[sample_rate]>
-    audio_key: "mp3"
-    min_volume_threshold: 0.05
-    loudness_ratio_threshold: 0.5
-
-mcc_preprocessor: !new:recipes.musiclm.preprocess.WebDatasetBufferPreprocessor
-    sample_rate: !ref <data_params[sample_rate]>
-    transforms: !ref <mcc_audio_transforms>
-
-mcc_train_dataset: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
-    wds_dataset: !ref <mcc_train_shards>
+karaoke_train_dataset: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
+    wds_dataset: !ref <karaoke_train_shards>
     pipeline:
         - !name:webdataset.WebDataset.select
           - !name:samantha.utils.datastructures.select_keys
             keys:
-                - "mp3"
+                - "acc.npy"
+                - "acc_sample_range.npy"
         - !name:webdataset.WebDataset.decode
         - !name:webdataset.WebDataset.compose
           - !name:recipes.musiclm.preprocess.WebDatasetBufferPreprocessor.train_buffer_preprocessor
-            - !ref <mcc_preprocessor>
+            - !ref <karaoke_preprocessor>
+        - !name:webdataset.WebDataset.shuffle
+          - !ref <training_params[shuffle_buffer]>
+        - !name:webdataset.WebDataset.to_tuple
+          - "audio.npy"
+        - !name:webdataset.WebDataset.batched
+          - !ref <training_params[batch_size]>
+
+playlist_audio_transforms: !new:recipes.musiclm.transforms.musiclm.MusicLMTransforms
+    n_samples: !ref <data_params[duration]> * <data_params[sample_rate]>
+    audio_key: "audio.npy"
+    min_volume_threshold: 0.0
+
+playlist_preprocessor: !new:recipes.musiclm.preprocess.WebDatasetBufferPreprocessor
+    sample_rate: !ref <data_params[sample_rate]>
+    transforms: !ref <playlist_audio_transforms>
+
+playlist_train_shards: !new:webdataset.WebDataset
+    urls: "pipe:hdfs dfs -cat /home/byte_speech_sv/mulan/playlist_v5_uio/audio_shards/shards_{0000..2597}.tar"
+    resampled: True
+    shardshuffle: True
+
+playlist_train_dataset: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
+    wds_dataset: !ref <playlist_train_shards>
+    pipeline:
+        - !name:webdataset.WebDataset.select
+          - !name:samantha.utils.datastructures.select_keys
+            keys:
+                - "audio.npy"
+        - !name:webdataset.WebDataset.decode
+        - !name:webdataset.WebDataset.compose
+          - !name:recipes.musiclm.preprocess.WebDatasetBufferPreprocessor.train_buffer_preprocessor
+            - !ref <playlist_preprocessor>
         - !name:webdataset.WebDataset.shuffle
           - !ref <training_params[shuffle_buffer]>
         - !name:webdataset.WebDataset.to_tuple
@@ -95,9 +117,11 @@ mcc_train_dataset: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
 
 combined_train_dataset: !new:recipes.musiclm.datamodules.webdataset.RandomSample
     datasets:
-        - !ref <mcc_train_dataset>
+        - !ref <karaoke_train_dataset>
+        - !ref <playlist_train_dataset>
     probabilities:
-        - 1.0
+        - 0.02
+        - 0.98
 
 train_dataset: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
     wds_dataset: !ref <combined_train_dataset>
@@ -108,6 +132,7 @@ train_dataset: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
 validation_web_dataset: !new:webdataset.WebDataset
     urls: "pipe:hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/data/karaoke_for_singsong/shards-0131.tar"
     nodesplitter: !name:recipes.musiclm.datamodules.webdataset.return_self
+
 
 validation_dataset: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
     wds_dataset: !ref <validation_web_dataset>
@@ -129,11 +154,11 @@ pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.WebDataModule
     pin_memory: True
 
 model_config: !new:samantha.models.LlamaConfig
-    vocab_size: !ref <data_params[mulan_codebook_size]> * 12 + <data_params[wav2vec_codebook_size]> + 1
+    vocab_size: !ref <data_params[num_coarse]> * <data_params[soundstream_codebook_size]> + <data_params[num_fine]> * <data_params[soundstream_codebook_size]> + 1
     n_embd: 1024
     n_layer: 24
     n_head: 16
-    logit_num: !ref <data_params[wav2vec_codebook_size]>
+    logit_num: !ref <data_params[num_fine]> * <data_params[soundstream_codebook_size]>
 
 model_cls: !name:samantha.models.Llama
     config: !ref <model_config>
@@ -150,7 +175,7 @@ scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupC
     cycle_steps: !ref <training_params[cycle_steps]>
     min_lr: !ref <training_params[learning_rate]> * 0.1
 
-pl_module: !new:recipes.musiclm.lightning.modules.SemanticModule
+pl_module: !new:recipes.musiclm.lightning.modules.FineModule
     checkpointing: !ref <run_opts[checkpointing]>
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
@@ -158,18 +183,9 @@ pl_module: !new:recipes.musiclm.lightning.modules.SemanticModule
     criterion_cls: !name:recipes.musiclm.lightning.modules.MaskedCrossEntropy
     extra_params: !ref <data_params>
     required_modules:
-        mulan:
-            - hdfs://harunava/home/byte_speech_sv/weitsung.lu/mulan_exp/MuLan_large/g4/checkpoints/mulan-step=044800-median_rank_1=170-kaggle.ckpt
-            - !name:recipes.musiclm.requires.model_initializer.init_mulan
-              cache_dir: !ref <run_opts[cache_dir]>
-              version: "g4"
-        mulan_centers:
-            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/mulan/kmeans_minibatch_codebook-mulan1b_g4_170-1024x12.npy
-            - !name:recipes.musiclm.requires.model_initializer.init_mulan_centers
-              cache_dir: !ref <run_opts[cache_dir]>
-        wav2vec:
-            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1
-            - !name:recipes.musiclm.requires.model_initializer.init_wav2vec
+        soundstream:
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
+            - !name:recipes.musiclm.requires.model_initializer.init_soundstream
               cache_dir: !ref <run_opts[cache_dir]>
 
 logger: !new:pytorch_lightning.loggers.TensorBoardLogger

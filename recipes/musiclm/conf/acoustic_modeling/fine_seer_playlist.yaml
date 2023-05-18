@@ -16,13 +16,16 @@ data_params:
     mulan_codebook_size: 1024
     soundstream_codebook_size: 1024
     mulan_codebook_shared: False
+    wav2vec_frame_rate: 25
+    soundstream_frame_rate: 50
     num_coarse: 4
     num_fine: 8
+    n_seers: 5
 
 # training parameters
 training_params:
     max_steps: 1000000
-    batch_size: 144
+    batch_size: 1
     learning_rate: 4.0e-4
     warmup_steps: 10000
     cycle_steps: 500000
@@ -37,8 +40,8 @@ log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
 run_opts:
     fast_dev_run: False
     tensorboard_dir: !ref <log_dir>
-    log_name: semantic_llama
-    version: base
+    log_name: fine_seer
+    version: playlist
     cache_dir: .module_cache/musiclm
     precision: "16-mixed"
     num_workers: 6
@@ -146,7 +149,6 @@ validation_dataset: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
         - !name:webdataset.WebDataset.batched
           - !ref <training_params[batch_size]>
 
-
 pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.WebDataModule
     train_dataset: !ref <train_dataset>
     validation_dataset: !ref <validation_dataset>
@@ -154,14 +156,17 @@ pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.WebDataModule
     num_workers: !ref <run_opts[num_workers]>
     pin_memory: True
 
-model_config: !new:samantha.models.LlamaConfig
-    vocab_size: !ref <data_params[mulan_codebook_size]> * 12 + <data_params[wav2vec_codebook_size]> + 1
+model_config: !new:samantha.models.SeerConfig
+    vocab_size: !ref <data_params[n_seers]> + <data_params[soundstream_codebook_size]> * <data_params[num_coarse]> + <data_params[soundstream_codebook_size]> * <data_params[num_fine]>
     n_embd: 1024
     n_layer: 24
     n_head: 16
-    logit_num: !ref <data_params[wav2vec_codebook_size]>
+    n_seers: !ref <data_params[n_seers]>
+    n_priors: !ref <data_params[duration]> * <data_params[soundstream_frame_rate]> * <data_params[num_coarse]>
+    seq_len: !ref <data_params[duration]> * <data_params[soundstream_frame_rate]> * <data_params[num_fine]>
+    logit_num: !ref <data_params[soundstream_codebook_size]> * <data_params[num_fine]>
 
-model_cls: !name:samantha.models.Llama
+model_cls: !name:samantha.models.Seer
     config: !ref <model_config>
 
 optimizer_cls: !name:torch.optim.AdamW
@@ -176,7 +181,7 @@ scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupC
     cycle_steps: !ref <training_params[cycle_steps]>
     min_lr: !ref <training_params[learning_rate]> * 0.1
 
-pl_module: !new:recipes.musiclm.lightning.modules.SemanticModule
+pl_module: !new:recipes.musiclm.lightning.modules.SeerFineModule
     checkpointing: !ref <run_opts[checkpointing]>
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
@@ -184,18 +189,9 @@ pl_module: !new:recipes.musiclm.lightning.modules.SemanticModule
     criterion_cls: !name:recipes.musiclm.lightning.modules.MaskedCrossEntropy
     extra_params: !ref <data_params>
     required_modules:
-        mulan:
-            - hdfs://harunava/home/byte_speech_sv/weitsung.lu/mulan_exp/MuLan_large/g4/checkpoints/mulan-step=044800-median_rank_1=170-kaggle.ckpt
-            - !name:recipes.musiclm.requires.model_initializer.init_mulan
-              cache_dir: !ref <run_opts[cache_dir]>
-              version: "g4"
-        mulan_centers:
-            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/mulan/kmeans_minibatch_codebook-mulan1b_g4_170-1024x12.npy
-            - !name:recipes.musiclm.requires.model_initializer.init_mulan_centers
-              cache_dir: !ref <run_opts[cache_dir]>
-        wav2vec:
-            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1
-            - !name:recipes.musiclm.requires.model_initializer.init_wav2vec
+        soundstream:
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
+            - !name:recipes.musiclm.requires.model_initializer.init_soundstream
               cache_dir: !ref <run_opts[cache_dir]>
 
 logger: !new:pytorch_lightning.loggers.TensorBoardLogger

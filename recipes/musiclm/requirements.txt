@@ -7,3 +7,4 @@ encodec==0.1.1
 byted-frechet-audio-distance==0.2.1
 matplotlib
 librosa
+rotary_embedding_torch
