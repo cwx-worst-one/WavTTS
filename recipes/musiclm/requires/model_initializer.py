@@ -131,36 +131,43 @@ def init_wav2vec(hpath, local_rank, cache_dir=None):
         os.makedirs(cache_dir, exist_ok=True)
 
     device = torch.device(f"cuda:{local_rank}")
-    h_semantic, h_centroids = (
-        f"{hpath}/semantic.jit.pt",
-        f"{hpath}/centroids_epoch_10.npy",
-    )
-
-    l_semantic, l_centroids = (
-        f"{cache_dir}/semantic.jit.pt",
-        f"{cache_dir}/centroids_epoch_10.npy",
-    )
     if hpath.startswith("hdfs://"):
+        local_path = f"{cache_dir}/{os.path.basename(hpath)}"
         with local_zero_first():
-            if not os.path.exists(l_centroids):
-                if not hh.get(h_centroids, l_centroids):
-                    raise ConnectionError(f"Cannot retrieve file from {h_centroids}.")
-
-            if not os.path.exists(l_semantic):
-                if not hh.get(h_semantic, l_semantic):
-                    raise ConnectionError(f"Cannot retrieve file from {h_semantic}.")
+            if not os.path.exists(local_path):
+                if not hh.get(hpath, local_path):
+                    raise ConnectionError(f"Cannot retrieve file from {hpath}.")
         return {
             "ssl_frontend": SSLFrontend(),
-            "semantic": load_torch_script_module(l_semantic, device),
-            "centroids": torch.from_numpy(np.load(l_centroids)).to(device),
+            "semantic": load_torch_script_module(local_path, device),
         }
     else:
         with local_zero_first():
             return {
                 "ssl_frontend": SSLFrontend(),
-                "semantic": load_torch_script_module(h_semantic, device),
-                "centroids": torch.from_numpy(np.load(h_centroids)).to(device),
+                "semantic": load_torch_script_module(hpath, device),
             }
+
+
+def init_semantic_centers(hpath, local_rank, cache_dir=None):
+    if cache_dir is not None:
+        os.makedirs(cache_dir, exist_ok=True)
+
+    device = torch.device(f"cuda:{local_rank}")
+    if hpath.startswith("hdfs://"):
+        local_path = f"{cache_dir}/{os.path.basename(hpath)}"
+        with local_zero_first():
+            if not os.path.exists(local_path):
+                if not hh.get(hpath, local_path):
+                    raise ConnectionError(f"Cannot retrieve file from {hpath}.")
+            semantic_centers = np.load(local_path)
+            semantic_centers = torch.from_numpy(semantic_centers).float().to(device)
+            return {"semantic_centers": semantic_centers}
+    else:
+        with local_zero_first():
+            semantic_centers = np.load(hpath)
+            semantic_centers = torch.from_numpy(semantic_centers).float().to(device)
+            return {"semantic_centers": semantic_centers}
 
 
 def init_soundstream(hpath, local_rank, cache_dir=None):

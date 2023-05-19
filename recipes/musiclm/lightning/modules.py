@@ -144,7 +144,7 @@ class BaseModule(pl.LightningModule):
             frontend=self.requires["ssl_frontend"],
             w2v_model=self.requires["semantic"],
             wavs=x.float(),
-            centers=self.requires["centroids"],
+            centers=self.requires["semantic_centers"],
             device=x.device,
         )
         return wav2vec_tokens
@@ -400,6 +400,56 @@ class CoarseModule(BaseModule):
 
         input_ids = torch.cat(
             [mulan_ids, sep_ids, wav2vec_ids, sos_ids, soundstream_ids[:, : -1]], dim=1
+        )
+        return input_ids, soundstream_ids
+
+
+class MulanFreeCoarseModule(BaseModule):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+        self.save_hyperparameters()
+
+    @torch.no_grad()
+    def prepare_feature(self, wavs):
+        device = wavs.device
+        num_coarse = self.extra_params.num_coarse
+        b, _ = wavs.size()
+
+        soundstream_ids = self.get_soundstream_tokens(wavs)
+        soundstream_ids = (
+            soundstream_ids[:, :, 0 : num_coarse]
+            + torch.arange(num_coarse, device=device) * self.extra_params.soundstream_codebook_size
+        )
+        soundstream_ids = torch.reshape(soundstream_ids, [b, -1])
+
+        wav2vec_ids = self.get_wav2vec_tokens(wavs)
+        wav2vec_ids = wav2vec_ids + num_coarse * self.extra_params.soundstream_codebook_size
+
+        sos_ids = (
+            torch.zeros(size=[b, 1], dtype=soundstream_ids.dtype, device=device)
+            + num_coarse * self.extra_params.soundstream_codebook_size
+            + self.extra_params.wav2vec_codebook_size
+        )
+
+        input_ids = torch.cat(
+            [wav2vec_ids, sos_ids, soundstream_ids[:, : -1]], dim=1
         )
         return input_ids, soundstream_ids
 

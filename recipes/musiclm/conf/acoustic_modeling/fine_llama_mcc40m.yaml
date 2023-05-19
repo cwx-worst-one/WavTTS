@@ -147,6 +147,7 @@ validation_dataset: !new:recipes.musiclm.datasets.karaoke.KaraokeDataset
     audio_key: "acc.npy"
     sample_range_key: "acc_sample_range.npy"
     min_volume_threshold: 0.05
+    is_train: False
 
 pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.WebDataModule
     train_dataset: !ref <train_dataset>

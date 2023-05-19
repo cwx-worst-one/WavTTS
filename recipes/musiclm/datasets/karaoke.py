@@ -18,6 +18,7 @@ class KaraokeDataset(WebPipeline):
         audio_key: str = "acc.npy",
         sample_range_key: str = "acc_sample_range.npy",
         min_volume_threshold: float = 0.05,
+        is_train: bool = True,
         **kwargs,
     ):
         dataset = WebDataset(
@@ -34,15 +35,17 @@ class KaraokeDataset(WebPipeline):
             sample_rate=sample_rate,
             transforms=audio_transforms,
         )
-        pipeline=[
+        pipeline=[]
+        pipeline.append(
             {"select": {"predicate": partial(
                 select_keys,
                 keys=[audio_key, sample_range_key]
-            )}},
-            "decode",
-            {"compose": [preprocessor.train_buffer_preprocessor]},
-            {"shuffle": [shuffle_buffer_size]},
-            {"to_tuple": ["audio.npy"]},
-            {"batched": [batch_size]}
-        ]
+            )}}
+        )
+        pipeline.append("decode")
+        pipeline.append({"compose": [preprocessor.train_buffer_preprocessor]})
+        if is_train:
+            pipeline.append({"shuffle": [shuffle_buffer_size]})
+        pipeline.append({"to_tuple": ["audio.npy"]})
+        pipeline.append({"batched": [batch_size]})
         super().__init__(dataset, pipeline)
