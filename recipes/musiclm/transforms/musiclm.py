@@ -1,4 +1,4 @@
-from typing import Any, Dict, Generator, Optional
+from typing import Any, Dict, List, Generator, Optional
 import io
 import sys
 import torch
@@ -77,7 +77,11 @@ class MCCTransforms(TransformBase):
         audio_key: str = "mp3",
         min_volume_threshold: float = 0.05,
         loudness_ratio_threshold: float = 0.5,
-        aed_filtered: bool = True,
+        aed_filtered: bool = False,
+        avoid_sound_effect: bool = False,
+        exclude_licenses: List[str] = [],
+        max_num_crops: Optional[int] = None,    # if None, auto set based on audio length
+        crop_step_size: Optional[int] = None,   # if None, auto set based on n_samples
     ) -> None:
         super().__init__()
         self.n_samples = n_samples
@@ -86,6 +90,14 @@ class MCCTransforms(TransformBase):
         self.min_volume_threshold = min_volume_threshold
         self.loudness_ratio_threshold = loudness_ratio_threshold
         self.aed_filtered = aed_filtered
+        self.avoid_sound_effect = avoid_sound_effect
+        self.exclude_licenses = set(exclude_licenses)
+        self.max_num_crops = max_num_crops
+        if crop_step_size is None:
+            crop_step_size = self.n_samples // 2
+        assert crop_step_size <= self.n_samples
+        self.crop_step_size = crop_step_size
+        self.crop_wing_span = self.n_samples // self.crop_step_size
 
         self.is_loud = LoudnessCheck(
             self.sample_rate,
@@ -109,10 +121,25 @@ class MCCTransforms(TransformBase):
         self.random_pad = RandomPad(n_samples=n_samples)
         self.random_crop = RandomResizedCrop(n_samples=n_samples)
 
+    def is_metadata_good(self, metadata: Dict[str, Any]) -> bool:
+        # Apply AED filtering if applicable
+        if self.aed_filtered and not metadata.get("aed_filtered", False):
+            return False
+        # Avoid sound effect if applicable
+        if self.avoid_sound_effect and metadata.get("final_theme") == "Sound Effect":
+            return False
+        # Apply license-based filtering if applicable
+        if len(self.exclude_licenses) > 0:
+            for license in metadata.get("license_types", []):
+                if license in self.exclude_licenses:
+                    return False
+        return True
+
     def __call__(self, x: Dict[str, Any]) -> Generator:
-        if self.aed_filtered and not x["__index_data__"].get("aed_filtered", False):
+        if not self.is_metadata_good(x["__index_data__"]):
             self._update_stats(skipped=True)
             return
+
         try:
             audio = self.base_transform(io.BytesIO(x[self.audio_key]))
         except Exception as e:
@@ -124,15 +151,32 @@ class MCCTransforms(TransformBase):
             return
         else:            
             audio = self.random_pad(audio)
-        step_size = self.n_samples // 2
-        max_num_crops = max(1, audio.size(1) // self.n_samples // 4)
-        num_windows = (audio.size(1) // step_size) - 1
-        sts = list(range(num_windows))
-        random.shuffle(sts)
-        for i, st in enumerate(sts):
-            if i > max_num_crops:
+        
+        # Determine possible crop starting points
+        num_windows = 1 + (audio.size(1) - self.n_samples) // self.crop_step_size
+        window_ids = list(range(num_windows))
+        random.shuffle(window_ids)
+        # Return up to max_num_crops
+        max_num_crops = self.max_num_crops
+        if max_num_crops is None:
+            max_num_crops = max(1, audio.size(1) // self.n_samples // 4)
+        num_crops = 0
+        taboo = set()
+        for wid in window_ids:
+            if wid in taboo:
+                continue
+            st_sample = wid * self.crop_step_size
+            cropped_audio = audio[:, st_sample : st_sample + self.n_samples]
+            if not self.is_loud(cropped_audio):
+                continue
+            yield {"audio.npy": cropped_audio}
+            num_crops += 1
+            if num_crops >= max_num_crops:
                 break
-            cropped_audio = audio[:, st * step_size : st * step_size + self.n_samples]
-            if self.is_loud(cropped_audio):
-                yield {"audio.npy": cropped_audio}
-        self._update_stats(skipped=False)
+            # Avoid overlapping segments
+            for overlapped_wid in range(
+                max(0, wid - self.crop_wing_span + 1),
+                min(num_windows, wid + self.crop_wing_span),
+            ):
+                taboo.add(overlapped_wid)
+        self._update_stats(skipped=num_crops == 0)

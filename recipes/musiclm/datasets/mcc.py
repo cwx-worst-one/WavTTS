@@ -1,3 +1,4 @@
+from typing import List, Optional
 import os
 from functools import partial
 import librosa
@@ -142,6 +143,10 @@ class MCC40MDataset(WebPipeline):
         audio_key: str = "mp3",
         min_volume_threshold: float = 0.05,
         loudness_ratio_threshold: float = 0.5,
+        aed_filtered: bool = True,
+        avoid_sound_effect: bool = True,
+        exclude_licenses: List[str] = ["C"],
+        max_num_crops: Optional[int] = 3,   # recommended for 30s crops
         **kwargs,
     ):
         dataset = IndexedWebDataset(
@@ -155,6 +160,11 @@ class MCC40MDataset(WebPipeline):
             audio_key=audio_key,
             min_volume_threshold=min_volume_threshold,
             loudness_ratio_threshold=loudness_ratio_threshold,
+            aed_filtered=aed_filtered,
+            avoid_sound_effect=avoid_sound_effect,
+            exclude_licenses=exclude_licenses,
+            max_num_crops=max_num_crops,
+            crop_step_size=int(duration * sample_rate / 5),
         )
         preprocessor = WebDatasetBufferPreprocessor(
             sample_rate=sample_rate,
