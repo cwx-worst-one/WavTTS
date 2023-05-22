@@ -102,6 +102,55 @@ def test_sample_multi_iterable_dataset_prob():
             next(multi_dataset_iter)
 
 
+def item_transform(item, **_):
+    item = pickle.loads(item)
+    return item["audio.npy"], item["meta.json"]
+
+
+@pytest.mark.disable
+def test_mix_read_wds_kv():
+    from hyperpyyaml import load_hyperpyyaml
+
+    config_str = """
+    wds_dataset: !new:samantha.dataio.webdataset.WebPipeline
+        dataset: !new:webdataset.WebDataset
+            urls: "pipe: hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/jingsong.gao/wds/audioset_{0000..0109}.tar"
+        pipeline:
+            - decode
+            - to_tuple: "audio.npy meta.json"
+
+    kv_dataset: !new:core.dataset.falcon_dataset.FalconDataset
+        path_list:
+          - hdfs://harunava/home/byte_speech_sv/jingsong.gao/kv/audio_set
+        cfg:
+            chunk_size: 20
+            io_thread_num: 12
+            max_batch_size: 12360
+            shuffle: False
+        item_transform: !name:tests.unittests.dataio.test_dataset.item_transform
+
+    dataset: !new:samantha.dataio.dataset.MultiIterableDataset
+        datasets:
+          - !ref <wds_dataset>
+          - !ref <kv_dataset>
+        num_samples: 1024
+
+    dataloader: !new:torch.utils.data.DataLoader
+        dataset: !ref <dataset>
+        batch_size: 4
+        num_workers: 8
+    """
+    cfg = load_hyperpyyaml(config_str)
+    dataloader = cfg["dataloader"]
+    for idx, item in enumerate(dataloader):
+        assert len(item[0]) == 4
+        assert "tags" in item[1]
+        assert "data_source" in item[1]
+        assert "music_id" in item[1]
+        assert len(item[1]["tags"]) == 4
+        assert len(item[1]["data_source"]) == 4
+        assert len(item[1]["music_id"]) == 4
+
 def test_draw_num_samples_from_multi_iterable_dataset():
     ds_1 = CountingIterableDataset(0, 1024)
     ds_2 = CountingIterableDataset(1024, 2048)

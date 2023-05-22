@@ -10,7 +10,7 @@ from itertools import accumulate
 from core.utils import logging
 from core.utils import Registry
 from core.utils.split import split_list
-
+from core.dataset.utils import get_parquet_file_info
 
 SAMPLER = Registry("sampler")
 
@@ -23,14 +23,13 @@ def setup_sampler_cfg(cfg):
     NativeSampler (default, raw sampler method)
     GlobalSampler (global shuffle)
     '''
-    native_parallel_file_num = cfg.get('native_parallel_file_num', 1)
-    global_shuffle_speed_up = cfg.get('global_shuffle_speed_up', False)
+    sampler_args = dict()
+    sampler_args['NativeSampler'] = cfg.get('native_parallel_file_num', 1)
+    sampler_args['GlobalSampler'] = cfg.get('global_shuffle_speed_up', False)
+    sampler_args['ParquetSampler'] = cfg.get('parquet_rows_group_shuffle', False)
     global_shuffle = cfg.get('global_shuffle', False)
     sampler_method = cfg.get('sampler', 'GlobalSampler' if global_shuffle else 'NativeSampler')
-    sampler_cfg = (
-        SAMPLER.get(sampler_method),
-        global_shuffle_speed_up if sampler_method == 'GlobalSampler' else native_parallel_file_num,
-    )
+    sampler_cfg = (SAMPLER.get(sampler_method), sampler_args.get(sampler_method))
     return sampler_cfg
 
 
@@ -636,3 +635,78 @@ class BalancedSampler(BaseSampler):
         if self.process_mutex:
             cls_picked = split_list(cls_picked, self.global_process_num)[self.global_pid]
         return cls_picked
+
+
+@SAMPLER.register_module()
+class ParquetSampler(BaseSampler):
+    """ParquetSampler class
+    usage example:
+    `
+    sampler = ParquetSampler(args) # instantiation
+    sampler.reset(args) # must do
+    sampler.reset
+    for idx in sampler: # get data
+        do_something()
+    `
+    """
+
+    def __init__(
+        self,
+        pid,
+        prefetch_worker_num,
+        local_rank,
+        local_world_size,
+        rank,
+        world_size,
+        shuffle,
+        split_path_by_rank,
+        file_list,
+        rows_group_shuffle,
+    ):
+        '''
+        init.
+        args:
+        pid: process_idx in one GPU
+        prefetch_worker_num: process_num in one GPU
+        local_rank: GPU idx in one worker
+        local_world_size: GPU num in one worker
+        rank: GPU idx in all worker
+        world_size: GPU num in all worker
+        shuffle: whether use data shuffle,
+        split_path_by_rank: split datas to different rank,
+        file_num: parquet file num
+        '''
+        super().__init__(pid, prefetch_worker_num, local_rank, local_world_size, rank, world_size)
+        self.shuffle = shuffle
+        self.split_path_by_rank = split_path_by_rank
+        self.file_list = file_list
+        self.rows_group_shuffle = rows_group_shuffle
+        self.parquet_info = [None] * len(self.file_list)
+
+    def reset(self, seed, skip_num=0):
+        '''reset random seed, must do before use.'''
+        self.seed = seed
+        self.skip_num = skip_num
+        path_idxs = list(range(len(self.file_list)))
+        if self.shuffle:
+            random.shuffle(path_idxs)
+        if self.split_path_by_rank:
+            path_idxs = split_list(path_idxs, self.world_size)[self.rank]
+        self.path_idxs = split_list(path_idxs, self.prefetch_worker_num)[self.pid]
+
+    def __iter__(self):
+        '''yield the ret data'''
+        for path_idx in self.path_idxs:
+            if self.parquet_info[path_idx] is None:
+                self.parquet_info[path_idx] = get_parquet_file_info(self.file_list[path_idx])
+            num_row_groups = self.parquet_info[path_idx]['num_row_groups']
+            num_rows = self.parquet_info[path_idx]['num_rows']
+            # implement a temporary resume solution.
+            # TODO: providing a more fine-grained resume implementation
+            if self.skip_num >= num_rows:
+                self.skip_num -= num_rows
+                continue
+            num_row_groups = list(range(num_row_groups))
+            if self.rows_group_shuffle:
+                random.shuffle(num_row_groups)
+            yield num_row_groups, path_idx

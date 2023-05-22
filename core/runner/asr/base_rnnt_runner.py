@@ -2,7 +2,7 @@
 
 import torch
 from core.dataset import (
-    HDFSDataset,
+    MixedHDFSDataset,
     ValidHDFSDataset,
     build_item_augmentation,
     build_draw_batch_fn,
@@ -71,7 +71,7 @@ class BaseRNNTRunner(BaseAsrRunner):
             val_bucket_schedule = dataset_cfg.bucket_schedule
 
         split_path_list_by_rank = dataset_cfg.get('split_path_list_by_rank', 1)
-        self.train_data_loader = HDFSDataset(
+        self.train_data_loader = MixedHDFSDataset(
             self.train_file_list,
             dataset_cfg.bucket_schedule,
             dataset_cfg,

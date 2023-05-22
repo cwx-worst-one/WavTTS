@@ -5,6 +5,7 @@ Dataset function and class from Dolphin.
 import multiprocessing as mp
 
 from .hdfs_dataset import HDFSDataset, ValidHDFSDataset
+from .mix_dataloader import MixedHDFSDataset
 from .debug_dataset import DebugHDFSDataset
 from .balance_dataset import BalancedHDFSDataset
 from .dictionary import Dictionary, ScpDictionary
@@ -27,6 +28,7 @@ __all__ = [
     'get_paths',
     'DataFetcher',
     'TargetDataFetcher',
+    'MixedHDFSDataset',
 ]
 
 mp.set_start_method('spawn', force=True)
