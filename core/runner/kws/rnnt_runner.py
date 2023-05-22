@@ -2,7 +2,6 @@
 import io
 import os.path as osp
 import torch
-import kaldi_io
 from subword_nmt.apply_bpe import BPE
 from core.dataset import ValidHDFSDataset, get_meta, build_draw_batch_fn
 from core.runner.metric.kws_metric import KwsRnntMetric
