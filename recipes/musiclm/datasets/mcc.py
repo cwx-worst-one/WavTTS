@@ -145,6 +145,8 @@ class MCC40MDataset(WebPipeline):
         loudness_ratio_threshold: float = 0.5,
         aed_filtered: bool = True,
         avoid_sound_effect: bool = True,
+        avoid_vocal: bool = True,
+        max_vocal_threshold: float = 0.25,
         exclude_licenses: List[str] = ["C"],
         max_num_crops: Optional[int] = 3,   # recommended for 30s crops
         **kwargs,
@@ -163,6 +165,8 @@ class MCC40MDataset(WebPipeline):
             aed_filtered=aed_filtered,
             avoid_sound_effect=avoid_sound_effect,
             exclude_licenses=exclude_licenses,
+            avoid_vocal=avoid_vocal,
+            max_vocal_threshold=max_vocal_threshold,
             max_num_crops=max_num_crops,
             crop_step_size=int(duration * sample_rate / 5),
         )

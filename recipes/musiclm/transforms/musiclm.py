@@ -18,6 +18,24 @@ from recipes.musiclm.transforms.audio import (
 from recipes.musiclm.transforms.base import TransformBase
 
 
+class Segment:
+    def __init__(self, st: float, en: float):
+        self.st = st
+        self.en = en
+
+    def duration(self) -> float:
+        return self.en - self.st
+
+    def is_overlap(self, st: float, en: float) -> bool:
+        return self.st <= en and st <= self.en
+
+    def __repr__(self):
+        return f"({self.st}, {self.en})"
+
+    def __str__(self):
+        return f"({self.st}, {self.en})"
+
+
 class MusicLMTransforms(TransformBase):
     def __init__(
         self,
@@ -80,6 +98,8 @@ class MCCTransforms(TransformBase):
         aed_filtered: bool = False,
         avoid_sound_effect: bool = False,
         exclude_licenses: List[str] = [],
+        avoid_vocal: bool = False,
+        max_vocal_threshold: float = 0.25,
         max_num_crops: Optional[int] = None,    # if None, auto set based on audio length
         crop_step_size: Optional[int] = None,   # if None, auto set based on n_samples
     ) -> None:
@@ -92,6 +112,8 @@ class MCCTransforms(TransformBase):
         self.aed_filtered = aed_filtered
         self.avoid_sound_effect = avoid_sound_effect
         self.exclude_licenses = set(exclude_licenses)
+        self.avoid_vocal = avoid_vocal
+        self.max_vocal_threshold = max_vocal_threshold
         self.max_num_crops = max_num_crops
         if crop_step_size is None:
             crop_step_size = self.n_samples // 2
@@ -135,10 +157,55 @@ class MCCTransforms(TransformBase):
                     return False
         return True
 
+    def get_vocal_data(self, metadata: Dict[str, Any]):
+        thresh = 2  # 2 seconds
+        trans_5stem = metadata.get("mir.json", {}).get("trans_5stem", {})
+        vocal = trans_5stem.get("notes", {}).get("vocal", [])
+        total_duration = trans_5stem.get("end_time", 0)
+        if total_duration <= 0:
+            return [], 0.0
+        vocal_segments = []
+        vocal_duration = 0.0
+        curr_segment = None
+        for x in vocal:
+            st = x["start"]
+            en = x["end"]
+            if curr_segment is None:
+                curr_segment = Segment(st, en)
+            elif st - curr_segment.en <= thresh:
+                curr_segment.en = en
+            else:
+                if curr_segment.duration() >= thresh:
+                    vocal_segments.append(curr_segment)
+                    vocal_duration += curr_segment.duration()
+                curr_segment = Segment(st, en)
+        if curr_segment is not None:
+            if curr_segment.duration() >= thresh:
+                vocal_segments.append(curr_segment)
+                vocal_duration += curr_segment.duration()
+        return vocal_segments, vocal_duration / total_duration
+
+    def contains_vocal(
+        self, vocal_segments: List[Segment], st: float, en: float
+    ) -> bool:
+        for vocal_segment in vocal_segments:
+            if vocal_segment.is_overlap(st, en):
+                #print(f"Skipped: st={st} en={en} vocal_segment={vocal_segment}")
+                return True
+        return False
+
     def __call__(self, x: Dict[str, Any]) -> Generator:
         if not self.is_metadata_good(x["__index_data__"]):
             self._update_stats(skipped=True)
             return
+        vocal_segments = []
+        if self.avoid_vocal:
+            vocal_segments, vocal_ratio = self.get_vocal_data(x["__index_data__"])
+            #print(f"vocal_segments: {vocal_segments}, vocal_ratio: {vocal_ratio}")
+            if vocal_ratio > self.max_vocal_threshold:
+                #print(f"Skipped: vocal_ratio={vocal_ratio}")
+                self._update_stats(skipped=True)
+                return
 
         try:
             audio = self.base_transform(io.BytesIO(x[self.audio_key]))
@@ -166,7 +233,14 @@ class MCCTransforms(TransformBase):
             if wid in taboo:
                 continue
             st_sample = wid * self.crop_step_size
-            cropped_audio = audio[:, st_sample : st_sample + self.n_samples]
+            en_sample = st_sample + self.n_samples
+            if self.avoid_vocal and self.contains_vocal(
+                vocal_segments,
+                st_sample / self.sample_rate,
+                en_sample / self.sample_rate,
+            ):
+                continue
+            cropped_audio = audio[:, st_sample:en_sample]
             if not self.is_loud(cropped_audio):
                 continue
             yield {"audio.npy": cropped_audio}
