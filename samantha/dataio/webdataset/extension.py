@@ -3,6 +3,7 @@ import re
 import tarfile
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Union
 
+from pyarrow.fs import FileSystem
 from webdataset import filters, shardlists
 from webdataset.compat import FluidInterface
 from webdataset.filters import reraise_exception
@@ -12,7 +13,6 @@ from webdataset.tariterators import (
     group_by_keys,
     meta_prefix,
     meta_suffix,
-    url_opener,
 )
 
 from samantha.utils.hdfs_helper import hopen
@@ -45,7 +45,7 @@ def parse_index(line: Union[str, bytes]) -> Dict[str, Any]:
 
 
 def indexed_tarfile_iterator(
-    fileobj: tarfile.TarFile,
+    fileobj,
     index: str,
     skip_meta: Optional[str] = r"__[^/]*__($|/)",
     handler: Callable[[Exception], bool] = reraise_exception,
@@ -60,7 +60,7 @@ def indexed_tarfile_iterator(
     Yields:
         a stream of samples.
     """
-    with tarfile.open(fileobj=fileobj, mode="r|*") as stream:
+    with tarfile.open(fileobj=fileobj, mode="r:") as stream:
         with hopen(index, "r") as index_stream:
             index_iter = iter(index_stream)
             curr_index = None
@@ -110,6 +110,9 @@ def indexed_tarfile_iterator(
                         continue
                     else:
                         break
+    # We need to close fileobj after close the stream,
+    # otherwise, hdfs client will throw an error
+    fileobj.close()
 
 
 def indexed_tarfile_expander(
@@ -131,7 +134,9 @@ def indexed_tarfile_expander(
             assert isinstance(source, dict)
             assert "stream" in source
             for sample in indexed_tarfile_iterator(
-                source["stream"], index=url2index[url], handler=handler
+                source["stream"],
+                index=url2index[url],
+                handler=handler,
             ):
                 assert (
                     isinstance(sample, dict) and "data" in sample and "fname" in sample
@@ -140,6 +145,25 @@ def indexed_tarfile_expander(
                 yield sample
         except Exception as exn:  # pragma: no cover
             exn.args = exn.args + (source.get("stream"), source.get("url"))
+            if handler(exn):
+                continue
+            else:
+                break
+
+
+def url_opener_ra(data, handler=reraise_exception, **kw):
+    """Open url as a random accessible stream."""
+    for sample in data:
+        assert isinstance(sample, dict), sample
+        assert "url" in sample
+        url = sample["url"]
+        try:
+            fs, path = FileSystem.from_uri(url)
+            stream = fs.open_input_file(path)
+            sample.update(stream=stream)
+            yield sample
+        except Exception as exn:
+            exn.args = exn.args + (url,)
             if handler(exn):
                 continue
             else:
@@ -159,8 +183,12 @@ def indexed_tarfile_samples(
     Returns:
         stream of samples
     """
-    streams = url_opener(src, handler=handler)
-    files = indexed_tarfile_expander(streams, url2index=url2index, handler=handler)
+    streams = url_opener_ra(src, handler=handler)
+    files = indexed_tarfile_expander(
+        streams,
+        url2index=url2index,
+        handler=handler
+    )
     samples = group_by_keys(files, handler=handler)
     return samples
 
@@ -204,6 +232,11 @@ class IndexedWebDataset(DataPipeline, FluidInterface):
     ):
         super().__init__()
         url2index = resolve_url2index(url2index)
+        def maybe_remove_hdfs_cat(url):
+            # Backward compatiblity, in old style we use hdfs -cat to
+            # read webdataset from hdfs
+            return url.replace("pipe:hdfs dfs -cat ", "")
+        url2index = {maybe_remove_hdfs_cat(k): v for k, v in url2index.items()}
         urls = list(url2index.keys())
         if resampled:
             self.append(shardlists.ResampledShards(urls))
@@ -220,6 +253,7 @@ class IndexedWebDataset(DataPipeline, FluidInterface):
                     self.append(filters.shuffle(shardshuffle))
         self.append(
             filters.pipelinefilter(indexed_tarfile_samples)(
-                url2index=url2index, handler=handler
+                url2index=url2index,
+                handler=handler,
             )
         )
