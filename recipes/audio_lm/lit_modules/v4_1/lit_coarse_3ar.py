@@ -246,7 +246,7 @@ class CoarseModule(pl.LightningModule):
             cache_len = prev_end - cur_beg
             prev_end = cur_end
             semantic_beg = int(cur_beg / 50 / num_coarse * 25)
-            semantic_end = semantic_beg + 10 * 25 - 3
+            semantic_end = semantic_beg + 10 * 25
             semantic_slice = semantic_samples[:, semantic_beg:semantic_end]
             if cache_len == 0:
                 input_tokens = torch.cat(
@@ -277,8 +277,8 @@ class CoarseModule(pl.LightningModule):
                 logits = coarse_outputs["logits"]  # [b, t, d]
                 layer_idx = i % num_coarse
                 predict_logits = logits[
-                    :, -1, 1024 + layer_idx * 1024 : 1024 + (layer_idx + 1) * 1024
-                ]  # [b,d] # offset: w2v-bert
+                    :, -1, layer_idx * 1024 : (layer_idx + 1) * 1024
+                ]
                 samples = sample(predict_logits, temp=0.95, mode="gumbel").unsqueeze(1)
                 samples = (
                     samples + 1024 + layer_idx * 1024

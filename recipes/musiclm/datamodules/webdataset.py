@@ -68,15 +68,17 @@ class RandomSample(DataPipeline, FluidInterface):
 class WebDataModule(pl.LightningDataModule):
     def __init__(
         self,
-        train_dataset,
-        validation_dataset,
         batch_size: int,
         num_workers: int,
         pin_memory: bool,
+        train_dataset=None,
+        validation_dataset=None,
+        predict_dataset=None,
     ):
         super().__init__()
         self.train_dataset = train_dataset
         self.validation_dataset = validation_dataset
+        self.predict_dataset = predict_dataset
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.pin_memory = pin_memory
@@ -101,7 +103,7 @@ class WebDataModule(pl.LightningDataModule):
 
     def predict_dataloader(self):
         return WebLoader(
-            dataset=self.train_dataset,
+            dataset=self.predict_dataset,
             batch_size=None,
             shuffle=False,
             num_workers=self.num_workers,

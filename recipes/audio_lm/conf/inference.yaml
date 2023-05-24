@@ -24,7 +24,8 @@ run_opts:
     cache_dir: .cache
     profiler: simple
     flash_attn: null
-    batch_size: 2
+    batch_size: 20
+    rounds: 3
     num_workers: 8
 
 predict_dataset: !new:recipes.audio_lm.datasets.dataset.InferenceDataset
@@ -83,5 +84,5 @@ trainer: !new:pytorch_lightning.Trainer
     enable_model_summary: True
     log_every_n_steps: 1
     strategy: !ref <run_opts[strategy]>
-    max_epochs: 1
+    max_epochs: !ref <run_opts[rounds]>
     precision: !ref <run_opts[precision]>

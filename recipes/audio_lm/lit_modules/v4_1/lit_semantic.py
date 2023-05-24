@@ -117,7 +117,7 @@ class SemanticModule(CoarseModule):
                 mulan_tokens + torch.arange(mulan_tokens.size(1)).to(device) * 1024
             )
 
-        slice_range = [[0, 247]]
+        slice_range = [[0, 250]]
         # beg = 0
         # while True:
         #     end = beg + 10 * semantic_frame_rate + semantic_offset

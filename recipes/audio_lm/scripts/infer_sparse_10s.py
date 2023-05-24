@@ -1,14 +1,108 @@
 import argparse
 import os
+import random
+import re
 import time
+import unicodedata
 
+import librosa
 import numpy as np
 import torch
+from pydub import AudioSegment
 from tqdm import tqdm
 
 from samantha.utils.hparams import DotDict
 
-from ..utils.utils import sample, save_wav, set_seed, slugify
+
+def set_seed(seed=1996):
+    # reproduction setting
+    random.seed(seed)
+    np.random.seed(seed + 1)
+    torch.manual_seed(seed + 2)
+    return
+
+
+def slugify(value, allow_unicode=False):
+    """
+    Taken from https://github.com/django/django/blob/master/django/utils/text.py
+    Convert to ASCII if 'allow_unicode' is False. Convert spaces or repeated
+    dashes to single dashes. Remove characters that aren't alphanumerics,
+    underscores, or hyphens. Convert to lowercase. Also strip leading and
+    trailing whitespace, dashes, and underscores.
+    """
+    value = str(value)
+    if allow_unicode:
+        value = unicodedata.normalize("NFKC", value)
+    else:
+        value = (
+            unicodedata.normalize("NFKD", value)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+        )
+    value = re.sub(r"[^\w\s-]", "", value.lower())
+    return re.sub(r"[-\s]+", "-", value).strip("-_")
+
+
+def save_wav(audio, output_file, sr=24000):
+    from scipy.io.wavfile import write
+
+    audio = audio * 32768.0
+    audio = audio.astype("int16")
+    write(output_file, sr, audio)
+    return
+
+
+def load_wav(path):
+    if path.endswith(".npy"):
+        wav = np.load(path)
+    elif path.endswith(".wav"):
+        wav, sr = librosa.load(path, sr=24000)
+    else:
+        audio = AudioSegment.from_file(path)
+        audio = audio.set_channels(1)
+        audio = audio.set_frame_rate(24000)
+        wav = np.asarray(audio.get_array_of_samples())
+    if wav.dtype == np.int16:
+        wav = wav / 32768.0
+    elif wav.dtype == np.int32:
+        wav = wav / 2_147_483_648.0
+    return wav
+
+
+def sample(predict_logits, temp, mode="naive"):
+    if mode == "naive":
+        predict_logits = predict_logits / (temp)
+        probs = predict_logits.softmax(dim=1)  # [b, d]
+        dist = torch.distributions.categorical.Categorical(probs=probs)
+        samples = dist.sample().unsqueeze(1).to(args.device)
+    elif mode == "gumbel":
+        predict_logits = top_k(predict_logits, thres=args.gt)
+        samples = gumbel_sample(predict_logits, temp).unsqueeze(dim=1)
+    else:
+        raise NotImplementedError()
+    return samples
+
+
+def log(t, eps=1e-5):
+    return torch.log(t + eps)
+
+
+def gumbel_noise(t):
+    noise = torch.zeros_like(t).uniform_(0, 1)
+    return -log(-log(noise))
+
+
+def gumbel_sample(t, temperature=1.0, dim=-1):
+    return ((t / temperature) + gumbel_noise(t)).argmax(dim=dim)
+
+
+def top_k(logits, thres=0.95):
+    num_logits = logits.shape[-1]
+    k = max(int((1 - thres) * num_logits), 1)
+    val, ind = torch.topk(logits, k)
+    probs = torch.full_like(logits, float("-inf"))
+    probs.scatter_(1, ind, val)
+    return probs
 
 
 def text2semantic(semantic_model, mulan_tokens, mulan_token_sep):
@@ -312,7 +406,18 @@ def gather_prompts(mulan_model):
         ) as fp:
             for line in fp.readlines():
                 items.append(["image2text2music", line.strip()])
-
+    if args.prompts_group in ["long_text", "all"]:
+        with open(
+            "/mlx/users/zongyu.yin/playground/long_text.txt", "r"
+        ) as fp:
+            for line in fp.readlines():
+                items.append(["long_text", line.strip()])
+    if args.prompts_group in ["240523", "all"]:
+        import pandas as pd
+        df = pd.read_csv("/mlx/users/zongyu.yin/playground/240523.csv")
+        for _, row in df.iterrows():
+            items.append([row["category"], row["text"]])
+                
     if args.prompts_group == "direct_prompt":
         for i in range(args.bs):
             items.append(["direct_prompt", args.direct_prompt])
@@ -463,6 +568,8 @@ if __name__ == "__main__":
             "direct_prompt",
             "google_short",
             "google_long",
+            "long_text",
+            "240523"
         ],
         default="google_short",
     )
@@ -515,7 +622,7 @@ if __name__ == "__main__":
     ] = "/mnt/bn/zongyu-lq/logs/semantic_sparse/mulan_g4/checkpoints/step=035216-val_accu_0=35.57.ckpt"  # noqa
     ckpts[
         "coarse"
-    ] = "/mnt/bn/zongyu-lq/logs/coarse_sparse/mulan_g4/checkpoints/step=058010-val_accu_0=28.79.ckpt"  # noqa
+    ] = "/mnt/bn/zongyu-lq/logs/coarse_sparse/mulan_g4/checkpoints/step=070680-val_accu_0=28.99.ckpt"  # noqa
 
     if args.mulan_free:
         # coarse mulan-free
@@ -563,15 +670,15 @@ if __name__ == "__main__":
     # mulan g4
     ckpts[
         "mulan"
-    ] = "/mlx/users/zongyu.yin/playground/samantha/.module_cache/musiclm_3ar_1024x12_x480/mulan-step=044800-median_rank_1=170-kaggle.ckpt"  # noqa
+    ] = "/mnt/bn/zongyu-lq/.module_cache/musiclm/mulan-step=044800-median_rank_1=170-kaggle.ckpt"  # noqa
     ckpts[
         "mulan_centers"
-    ] = "/mlx/users/zongyu.yin/playground/samantha/.module_cache/musiclm_3ar_1024x12_x480/kmeans_minibatch_codebook-mulan1b_g4_170-1024x12.npy"  # noqa
+    ] = "/mnt/bn/zongyu-lq/.module_cache/musiclm/kmeans_minibatch_codebook-mulan1b_g4_170-1024x12.npy"  # noqa
 
     ckpts = DotDict(ckpts)
-    filepath_prefix = "outputs/"
-    filepath_prefix += (
-        "MusicLM_sparse_mulang4_040523"
+    filepath_prefix = "generated_output/"
+    filepath_prefix += (p
+        "MusicLM_sparse_mulang4"
         + ("_free" if args.mulan_free else "")
         + ("_mert" if args.mert else "")
     )

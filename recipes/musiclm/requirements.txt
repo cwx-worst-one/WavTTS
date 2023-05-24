@@ -8,3 +8,5 @@ byted-frechet-audio-distance==0.2.1
 matplotlib
 librosa
 rotary_embedding_torch
+nnAudio
+transformers==4.29.1

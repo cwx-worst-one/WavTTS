@@ -22,6 +22,7 @@ class LlamaConfig:
     n_embd: int
     vocab_size: Optional[int] = None
     logit_num: Optional[int] = None
+    max_seq_len: Optional[int] = None
     attn_bias: bool = False
     mlp_bias: bool = False
     mlp_dropout: float = 0.0
@@ -55,6 +56,7 @@ class LlamaBlock(nn.Module):
             bias=config.attn_bias,
             causal=True,
             use_rotary_embeddings=config.use_rotary_embeddings,
+            max_seq_len=config.max_seq_len,
             **config.attention_kwargs,
         )
         self.ln_2 = RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
@@ -156,8 +158,8 @@ class Llama(nn.Module):
             n_params -= self.transformer.wpe.weight.numel()
         return n_params
 
-    def forward(self, x: torch.Tensor, kv_cache=None, last_logit_only: bool = False):
-        x = self.transformer(x, kv_cache=kv_cache)
+    def forward(self, input_ids: torch.Tensor, kv_cache: dict = None, last_logit_only: bool = False):
+        x = self.transformer(input_ids, kv_cache=kv_cache)
         if last_logit_only:
             x = x[:, -1]
         return self.lm_head(x)

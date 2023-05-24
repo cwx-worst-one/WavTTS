@@ -3,6 +3,7 @@ import os
 import numpy as np
 import torch
 from transformers import AutoModel
+from transformers import Wav2Vec2FeatureExtractor
 
 import samantha.utils.hdfs_helper as hh
 
@@ -107,23 +108,8 @@ def init_mert(hpath, local_rank, cache_dir=None):
         .eval()
         .to(device)
     )
-
-    local_path = f"{cache_dir}/{os.path.basename(hpath)}"
-    if hpath.startswith("hdfs://"):
-        with local_zero_first():
-            if not os.path.exists(local_path):
-                if not hh.get(hpath, local_path):
-                    raise ConnectionError(f"Cannot retrieve file from {hpath}.")
-            return {
-                "mert_model": model,
-                "mert_centroids": torch.from_numpy(np.load(local_path)).to(device),
-            }
-    else:
-        with local_zero_first():
-            return {
-                "mert_model": model,
-                "mert_centroids": torch.from_numpy(np.load(hpath)).to(device),
-            }
+    processor = Wav2Vec2FeatureExtractor.from_pretrained("m-a-p/MERT-v1-330M",trust_remote_code=True)
+    return {"semantic": model, "processor": processor}
 
 
 def init_wav2vec(hpath, local_rank, cache_dir=None):

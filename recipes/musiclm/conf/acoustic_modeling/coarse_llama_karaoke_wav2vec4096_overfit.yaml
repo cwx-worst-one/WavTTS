@@ -38,7 +38,7 @@ run_opts:
     fast_dev_run: False
     tensorboard_dir: !ref <log_dir>
     log_name: coarse_llama
-    version: karaoke_wav2vec_codebook_4096
+    version: karaoke_wav2vec_codebook_4096_shards_0131
     cache_dir: /mnt/bn/zongyu-lq/.module_cache/musiclm
     precision: "bf16-mixed"
     num_workers: 6
@@ -50,7 +50,7 @@ run_opts:
 ################################################################################
 
 karaoke_train_dataset: !new:recipes.musiclm.datasets.karaoke.KaraokeDataset
-    urls: "pipe:hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/data/karaoke_for_singsong/shards-{0000..0130}.tar"
+    urls: "pipe:hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/data/karaoke_for_singsong/shards-0131.tar"
     sample_rate: !ref <data_params[sample_rate]>
     duration: !ref <data_params[duration]>
     batch_size: !ref <training_params[batch_size]>

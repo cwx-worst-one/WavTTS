@@ -12,12 +12,16 @@ _checkpointing: !ref <run_opts[checkpointing]>
 data_params:
     sample_rate: 24000
     duration: 10
-    wav2vec_codebook_size: 4096
+    wav2vec_codebook_size: 1024
+    wav2vec_frame_rate: 25
     mulan_codebook_size: 1024
     soundstream_codebook_size: 1024
+    soundstream_frame_rate: 50
     mulan_codebook_shared: False
     num_coarse: 4
     num_fine: 8
+    cross_attn: False
+    mert: False
 
 # training parameters
 training_params:
@@ -37,8 +41,8 @@ log_dir: /mnt/bn/zongyu-lq/logs
 run_opts:
     fast_dev_run: False
     tensorboard_dir: !ref <log_dir>
-    log_name: coarse_llama
-    version: karaoke_wav2vec_codebook_4096
+    log_name: coarse_flash_llama
+    version: karaoke_wav2vec_codebook_1024
     cache_dir: /mnt/bn/zongyu-lq/.module_cache/musiclm
     precision: "bf16-mixed"
     num_workers: 6
@@ -92,14 +96,20 @@ pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.WebDataModule
     num_workers: !ref <run_opts[num_workers]>
     pin_memory: True
 
-model_config: !new:samantha.models.LlamaConfig
+model_config: !new:transformers.LlamaConfig
     vocab_size: !ref <data_params[num_coarse]> * <data_params[soundstream_codebook_size]> + <data_params[wav2vec_codebook_size]> + 1
-    n_embd: 1024
-    n_layer: 24
-    n_head: 16
-    logit_num: !ref <data_params[num_coarse]> * <data_params[soundstream_codebook_size]>
+    hidden_size: 1024
+    intermediate_size: 2731
+    num_hidden_layers: 24
+    num_attention_heads: 16
+    hidden_act: "silu"
+    max_position_embeddings: !ref <data_params[num_coarse]> * <data_params[soundstream_frame_rate]> * <data_params[duration]> + <data_params[wav2vec_frame_rate]> * <data_params[duration]>
+    initializer_range: 0.02
+    rms_norm_eps: 1e-6
+    use_cache: !apply:operator.not_ [!ref <_checkpointing>]
+    num_logits: !ref <data_params[num_coarse]> * <data_params[soundstream_codebook_size]>
 
-model_cls: !name:samantha.models.Llama
+model_cls: !name:samantha.models.flash_llama.LlamaForCausalLM
     config: !ref <model_config>
 
 optimizer_cls: !name:torch.optim.AdamW
@@ -127,7 +137,7 @@ pl_module: !new:recipes.musiclm.lightning.modules.MulanFreeCoarseModule
             - !name:recipes.musiclm.requires.model_initializer.init_wav2vec
               cache_dir: !ref <run_opts[cache_dir]>
         semantic_centers:
-            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_60_codebook_4096.npy
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_10.npy
             - !name:recipes.musiclm.requires.model_initializer.init_semantic_centers
               cache_dir: !ref <run_opts[cache_dir]>
         soundstream:

@@ -1,5 +1,12 @@
 import math
+from typing import Optional, Tuple, Union
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from transformers import GPT2Model
+from transformers import GPT2PreTrainedModel
+from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
 import pytorch_lightning as pl
 import torch
 from pytorch_lightning.profilers import PassThroughProfiler
@@ -60,9 +67,13 @@ class BaseModule(pl.LightningModule):
         if batch.dim() == 3:
             batch = batch.squeeze(1)
         with torch.autocast(device_type="cuda", enabled=False):
-            input_ids, target_ids = self.prepare_feature(batch.float())
-        logits = self.model(input_ids)
-
+            input_ids, context, target_ids = self.prepare_feature(batch.float())
+        if context is None:
+            logits = self.model(input_ids=input_ids)
+        else:
+            logits = self.model(input_ids=input_ids, encoder_hidden_states=context)
+        if isinstance(logits, dict):
+            logits = logits["logits"]
         x = logits[:, -target_ids.size(1) :, :]
         loss = self.criterion(x, target_ids)
         accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
@@ -88,10 +99,6 @@ class BaseModule(pl.LightningModule):
                 accu += a
             loss /= len(outputs)
             accu /= len(outputs)
-
-            if self.local_rank == 0:
-                print(f"[VAL/LOSS] {loss}")
-                print(f"[VAL/ACCU] {accu}")
 
             self.log_dict(
                 {
@@ -148,6 +155,28 @@ class BaseModule(pl.LightningModule):
             device=x.device,
         )
         return wav2vec_tokens
+    
+    @torch.no_grad()
+    def get_wav2vec_embeds(self, x):
+        b, t = x.size()
+        feats, feat_mask = self.requires["ssl_frontend"](
+            x, torch.LongTensor([t]).repeat([b]).to(x.device)
+        )
+        wav2vec_embeds, _ = self.requires["semantic"](feats, feat_mask)
+        return wav2vec_embeds
+
+    @torch.no_grad()
+    def get_wav2vec_embeds_from_tokens(self, x):
+        wav2vec_tokens = self.get_wav2vec_tokens(x)
+        wav2vec_embeds = self.requires["semantic_centers"][wav2vec_tokens]
+        return wav2vec_embeds
+
+    @torch.no_grad()
+    def get_mert_embeds(self, x):
+        output_emb = self.requires["semantic"](
+            x, output_hidden_states=True
+        ).hidden_states[12]
+        return output_emb
 
 
 class SemanticModule(BaseModule):
@@ -205,6 +234,73 @@ class SemanticModule(BaseModule):
             [mulan_ids, sos_ids, wav2vec_ids[:, : -1]], dim=1
         )
         return input_ids, wav2vec_ids
+
+    @torch.no_grad()
+    def predict(
+        self, mulan_ids, hp
+    ):
+        device = mulan_ids.device
+        b, _ = mulan_ids.size()
+        mulan_ids = (
+            mulan_ids
+            + hp.wav2vec_codebook_size
+        )
+        sos_ids = (
+            torch.zeros(size=[b, 1], dtype=mulan_ids.dtype, device=device)
+            + hp.wav2vec_codebook_size
+        )
+        if not hp.mulan_codebook_shared:
+            mulan_ids = (
+                mulan_ids
+                + torch.arange(mulan_ids.size(1), device=device) * hp.mulan_codebook_size
+            )
+            sos_ids = (
+                sos_ids
+                + mulan_ids.size(1) * hp.mulan_codebook_size
+            )
+        else:
+            sos_ids = (
+                sos_ids
+                + hp.mulan_codebook_size
+            )
+
+        slice_range = []
+        beg = 0
+        while True:
+            end = beg + 10 * hp.wav2vec_frame_rate
+            if end >= hp.duration * hp.wav2vec_frame_rate:
+                end = hp.duration * hp.wav2vec_frame_rate
+                beg = end - (10 * hp.wav2vec_frame_rate)
+                slice_range.append([beg, end])
+                break
+            else:
+                slice_range.append([beg, end])
+            beg += hp.stride * hp.wav2vec_frame_rate
+        prev_end = 0
+
+        semantic_samples = None
+        for cur_beg, cur_end in slice_range:
+            cache_len = prev_end - cur_beg
+            prev_end = cur_end
+            if cache_len == 0:
+                input_ids = torch.cat([mulan_ids, sos_ids], dim=1)
+            else:
+                prefix_semantic_samples = semantic_samples[:, cur_beg : cur_beg + cache_len]
+                input_ids = torch.cat(
+                    [mulan_ids, sos_ids, prefix_semantic_samples], dim=1
+                )
+            kv_cache = {}
+            pbar = tqdm(range(cur_end - cur_beg - cache_len))
+            for _ in pbar:
+                pbar.set_description(f"Semantic [{cur_beg} - {cur_end}]")
+                predict_logits = self.model(input_ids, kv_cache=kv_cache)[:, -1:, :]
+                samples = sample(predict_logits, temp=hp.semantic_temperatue, mode=hp.sample_mode)
+                input_ids = samples
+                if semantic_samples is None:
+                    semantic_samples = samples
+                else:
+                    semantic_samples = torch.cat([semantic_samples, samples], dim=1)
+        return semantic_samples
 
 
 class SeerSemanticModule(BaseModule):
@@ -401,7 +497,7 @@ class CoarseModule(BaseModule):
         input_ids = torch.cat(
             [mulan_ids, sep_ids, wav2vec_ids, sos_ids, soundstream_ids[:, : -1]], dim=1
         )
-        return input_ids, soundstream_ids
+        return input_ids, None, soundstream_ids
 
 
 class MulanFreeCoarseModule(BaseModule):
@@ -431,6 +527,7 @@ class MulanFreeCoarseModule(BaseModule):
         device = wavs.device
         num_coarse = self.extra_params.num_coarse
         b, _ = wavs.size()
+        context = None
 
         soundstream_ids = self.get_soundstream_tokens(wavs)
         soundstream_ids = (
@@ -439,19 +536,112 @@ class MulanFreeCoarseModule(BaseModule):
         )
         soundstream_ids = torch.reshape(soundstream_ids, [b, -1])
 
-        wav2vec_ids = self.get_wav2vec_tokens(wavs)
-        wav2vec_ids = wav2vec_ids + num_coarse * self.extra_params.soundstream_codebook_size
+        if self.extra_params.cross_attn:
+            if self.extra_params.mert:
+                mert_embeds = self.get_mert_embeds(wavs)
+                context = mert_embeds
+            else:
+                if self.extra_params.embeds_from_centers:
+                    wav2vec_embeds = self.get_wav2vec_embeds_from_tokens(wavs)
+                else:
+                    wav2vec_embeds = self.get_wav2vec_embeds(wavs)
+                context = wav2vec_embeds
+            sos_ids = (
+                torch.zeros(size=[b, 1], dtype=soundstream_ids.dtype, device=device)
+                + num_coarse * self.extra_params.soundstream_codebook_size
+            )
+            input_ids = torch.cat(
+                [sos_ids, soundstream_ids[:, : -1]], dim=1
+            )
+        else:
+            wav2vec_ids = self.get_wav2vec_tokens(wavs)
+            wav2vec_ids = wav2vec_ids + num_coarse * self.extra_params.soundstream_codebook_size
 
-        sos_ids = (
-            torch.zeros(size=[b, 1], dtype=soundstream_ids.dtype, device=device)
-            + num_coarse * self.extra_params.soundstream_codebook_size
-            + self.extra_params.wav2vec_codebook_size
-        )
+            sos_ids = (
+                torch.zeros(size=[b, 1], dtype=soundstream_ids.dtype, device=device)
+                + num_coarse * self.extra_params.soundstream_codebook_size
+                + self.extra_params.wav2vec_codebook_size
+            )
 
-        input_ids = torch.cat(
-            [wav2vec_ids, sos_ids, soundstream_ids[:, : -1]], dim=1
-        )
-        return input_ids, soundstream_ids
+            input_ids = torch.cat(
+                [wav2vec_ids, sos_ids, soundstream_ids[:, : -1]], dim=1
+            )
+        return input_ids, context, soundstream_ids
+
+    @torch.no_grad()
+    def predict(
+        self, wav2vec_ids, hp
+    ):
+        device = wav2vec_ids.device
+        b = wav2vec_ids.size(0)
+        num_coarse = hp.num_coarse
+        soundstream_codebook_size = hp.soundstream_codebook_size
+        wav2vec_codebook_size = hp.wav2vec_codebook_size
+        soundstream_frame_rate = hp.soundstream_frame_rate
+
+        if hp.cross_attn:
+            sos_ids = (
+                torch.zeros(size=[b, 1], dtype=torch.long, device=device)
+                + num_coarse * soundstream_codebook_size
+            )
+        else:
+            wav2vec_ids = wav2vec_ids + num_coarse * soundstream_codebook_size
+            sos_ids = (
+                torch.zeros(size=[b, 1], dtype=wav2vec_ids.dtype, device=device)
+                + num_coarse * soundstream_codebook_size
+                + wav2vec_codebook_size
+            )
+
+        slice_range = []
+        beg = 0
+        while True:
+            end = beg + 10 * soundstream_frame_rate * num_coarse
+            if end >= hp.duration * soundstream_frame_rate * num_coarse:
+                end = hp.duration * soundstream_frame_rate * num_coarse
+                beg = end - 10 * soundstream_frame_rate * num_coarse
+                slice_range.append([beg, end])
+                break
+            else:
+                slice_range.append([beg, end])
+            beg += hp.stride * soundstream_frame_rate * num_coarse
+        prev_end = 0
+
+        coarse_samples = None
+        for cur_beg, cur_end in slice_range:
+            cache_len = prev_end - cur_beg
+            prev_end = cur_end
+            if cache_len == 0:
+                input_ids = sos_ids
+            else:
+                prefix_coarse_samples = coarse_samples[:, cur_beg : cur_beg + cache_len]
+                input_ids = torch.cat(
+                    [sos_ids, prefix_coarse_samples], dim=1
+                )
+            if hp.cross_attn:
+                past_key_values = None
+            else:
+                input_ids = torch.cat([wav2vec_ids, input_ids], dim=1)
+                kv_cache = {}
+            
+            pbar = tqdm(range(cur_end - cur_beg - cache_len))
+            for i in pbar:
+                pbar.set_description(f"Coarse [{cur_beg} - {cur_end}]")
+                if hp.cross_attn:
+                    model_output = self.model(input_ids, encoder_hidden_states=wav2vec_ids, past_key_values=past_key_values, use_cache=True)
+                    logits = model_output["logits"]
+                    past_key_values = model_output["past_key_values"]
+                else:
+                    logits = self.model(input_ids, kv_cache=kv_cache)
+                layer_idx = i % num_coarse
+                predict_logits = logits[:, -1:, layer_idx * soundstream_codebook_size : (layer_idx + 1) * soundstream_codebook_size]
+                samples = sample(predict_logits, temp=hp.coarse_temperature, mode=hp.sample_mode)
+                samples = samples + layer_idx * soundstream_codebook_size
+                input_ids = samples
+                if coarse_samples is None:
+                    coarse_samples = samples
+                else:
+                    coarse_samples = torch.cat([coarse_samples, samples], dim=1)
+        return coarse_samples
 
 
 class SemanticFreeCoarseModule(BaseModule):
@@ -779,7 +969,7 @@ class FineModule(BaseModule):
         )
         # final input tokens
         input_tokens = torch.cat([coarse_ids, sos_ids, fine_ids[:, : -1]], dim=1)
-        return input_tokens, fine_ids
+        return input_tokens, None, fine_ids
 
 
 class SeerFineModule(BaseModule):
@@ -857,3 +1047,95 @@ class MaskedCrossEntropy(torch.nn.Module):
         loss = loss.view(*mask.size()) * mask
         loss = (loss / mask.sum()).sum()
         return loss
+
+
+class LanguageModel(GPT2PreTrainedModel):
+    _keys_to_ignore_on_load_missing = [
+        r"attn.masked_bias",
+        r"attn.bias",
+        r"lm_head.weight",
+    ]
+
+    def __init__(
+        self,
+        config,
+        logit_num,
+    ):
+        super().__init__(config)
+
+        self.transformer = GPT2Model(config)
+
+        self.lm_head = nn.Linear(
+            config.n_embd, logit_num, bias=False
+        )
+
+        # Model parallel
+        self.model_parallel = False
+        self.device_map = None
+
+        # Initialize weights and apply final processing
+        self.post_init()
+
+    def wte(self, input_ids):
+        return self.transformer.wte(input_ids)
+
+    def gradient_checkpointing_enable(self):
+        self.transformer.gradient_checkpointing_enable()
+
+    def forward(
+        self,
+        input_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
+        attention_mask: Optional[torch.FloatTensor] = None,
+        token_type_ids: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        head_mask: Optional[torch.FloatTensor] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        encoder_hidden_states: Optional[torch.Tensor] = None,
+        encoder_attention_mask: Optional[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Union[Tuple, CausalLMOutputWithCrossAttentions]:
+        r"""# noqa
+        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Labels for language modeling. Note that the labels **are shifted** inside the model, i.e. you can set
+            `labels = input_ids` Indices are selected in `[-100, 0, ..., config.vocab_size]` All labels set to `-100`
+            are ignored (masked), the loss is only computed for labels in `[0, ..., config.vocab_size]`
+        """
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
+
+        transformer_outputs = self.transformer(
+            input_ids=input_ids,
+            past_key_values=past_key_values,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+            encoder_hidden_states=encoder_hidden_states,
+            encoder_attention_mask=encoder_attention_mask,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        hidden_states = transformer_outputs.last_hidden_state
+
+        # Set device for model parallelism
+        if self.model_parallel:
+            torch.cuda.set_device(self.transformer.first_device)
+            hidden_states = hidden_states.to(self.lm_head.weight.device)
+
+        lm_logits = self.lm_head(hidden_states)
+
+        return CausalLMOutputWithCrossAttentions(
+            logits=lm_logits,
+            past_key_values=transformer_outputs.past_key_values,
+            hidden_states=transformer_outputs.hidden_states,
+            attentions=transformer_outputs.attentions,
+            cross_attentions=transformer_outputs.cross_attentions,
+        )

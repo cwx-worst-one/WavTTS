@@ -1,4 +1,5 @@
 from typing import List, Optional
+import torch
 import os
 from functools import partial
 import librosa
@@ -120,7 +121,7 @@ class MCC7MDataset(Dataset):
                     beg = np.random.randint(low=0, high=wav_len - self.segment_size + 1)
                     rand_slice = wav[beg : beg + self.segment_size]
                 # prevent silence
-                if np.sqrt(np.mean(rand_slice**2)) > 1e-2 and self.is_loud(rand_slice):
+                if np.sqrt(np.mean(rand_slice**2)) > 1e-2 and self.is_loud(torch.from_numpy(rand_slice[None, :])):
                     rand_slice = rand_slice / scale * 0.95
                     break
                 else:

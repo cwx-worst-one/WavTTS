@@ -94,7 +94,7 @@ class RotaryEmbedding(torch.nn.Module):
         # Reset the tables if the sequence length has changed,
         if self._seq_len_cached is None or seq_len > self._seq_len_cached:
             self._cache = self.compute_cache(seq_len, dtype=x.dtype)
-        return self._cache
+        return self._cache.to(x.device)
 
     def forward(
         self, q: torch.Tensor, k: torch.Tensor, q_len: Optional[int] = None

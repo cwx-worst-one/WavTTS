@@ -12,7 +12,7 @@ _checkpointing: !ref <run_opts[checkpointing]>
 data_params:
     sample_rate: 24000
     duration: 10
-    wav2vec_codebook_size: 4096
+    wav2vec_codebook_size: 1024
     mulan_codebook_size: 1024
     soundstream_codebook_size: 1024
     mulan_codebook_shared: False
@@ -38,7 +38,7 @@ run_opts:
     fast_dev_run: False
     tensorboard_dir: !ref <log_dir>
     log_name: coarse_llama
-    version: karaoke_wav2vec_codebook_4096
+    version: karaoke_wav2vec_codebook_1024
     cache_dir: /mnt/bn/zongyu-lq/.module_cache/musiclm
     precision: "bf16-mixed"
     num_workers: 6
@@ -127,7 +127,7 @@ pl_module: !new:recipes.musiclm.lightning.modules.MulanFreeCoarseModule
             - !name:recipes.musiclm.requires.model_initializer.init_wav2vec
               cache_dir: !ref <run_opts[cache_dir]>
         semantic_centers:
-            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_60_codebook_4096.npy
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_10.npy
             - !name:recipes.musiclm.requires.model_initializer.init_semantic_centers
               cache_dir: !ref <run_opts[cache_dir]>
         soundstream:

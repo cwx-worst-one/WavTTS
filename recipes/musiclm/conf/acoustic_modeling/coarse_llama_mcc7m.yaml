@@ -31,7 +31,7 @@ training_params:
     gradient_clip_val: 1.0
 
 ckpt_path: null
-log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+log_dir: /mnt/bn/zongyu-lq/logs
 
 # running parameters
 run_opts:
@@ -39,8 +39,8 @@ run_opts:
     tensorboard_dir: !ref <log_dir>
     log_name: coarse_llama
     version: mcc7m
-    cache_dir: .module_cache/musiclm
-    precision: "16-mixed"
+    cache_dir: /mnt/bn/zongyu-lq/.module_cache/musiclm
+    precision: "bf16-mixed"
     num_workers: 6
     accelerator: auto
     checkpointing: False

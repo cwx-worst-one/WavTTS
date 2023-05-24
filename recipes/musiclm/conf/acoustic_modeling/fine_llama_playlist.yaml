@@ -199,6 +199,7 @@ log_gradient_scaler: !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCal
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
       save_top_k: 10
+      save_last: True
       monitor: val_accu_0
       mode: max
       filename: "{step:06d}-{val_accu_0:.2f}"
@@ -223,7 +224,7 @@ trainer: !new:pytorch_lightning.Trainer
     precision: !ref <run_opts[precision]>
     accumulate_grad_batches: 1
     gradient_clip_val: !ref <training_params[gradient_clip_val]>
-    val_check_interval: 3000
+    val_check_interval: 1000
     check_val_every_n_epoch: null
     num_sanity_val_steps: 0
     callbacks: !ref <callbacks>
