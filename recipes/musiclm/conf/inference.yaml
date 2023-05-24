@@ -14,7 +14,12 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 hp:
     sample_rate: 24000
     duration: 10
-    stride: 5
+    semantic_duration: 10
+    coarse_duration: 10
+    fine_duration: 4
+    semantic_stride: 5
+    coarse_stride: 5
+    fine_stride: 3
     wav2vec_codebook_size: 1024
     mulan_codebook_size: 1024
     soundstream_codebook_size: 1024
@@ -23,14 +28,16 @@ hp:
     mulan_codebook_shared: False
     num_coarse: 4
     num_fine: 8
-    semantic_temperatue: 0.9
-    coarse_temperature: 0.8
-    fine_temperature: 0.4
+    semantic_temperatue: 0.1
+    coarse_temperature: 0.9
+    fine_temperature: 0.8
     sample_mode: "gumbel"
     seed: !ref <seed>
-    # prompt_path: "/mnt/bn/audio-diffusion/data/google_prompts/google_prompts.csv"
-    prompt_path: "/mlx/users/zongyu.yin/playground/long_text.txt"
-    output_dir: ./generated_output/long_text
+    prompt_path: "/mnt/bn/audio-diffusion/data/google_prompts/google_prompts.csv"
+    output_dir: ./generated_output/google_prompts
+    semantic_ckpt: "/mnt/bn/zongyu-lq/logs/semantic_sparse/mulan_g4/checkpoints/step=035216-val_accu_0=35.57.ckpt"
+    coarse_ckpt: "/mnt/bn/zongyu-lq/logs/coarse_sparse/mulan_g4/checkpoints/step=070680-val_accu_0=28.99.ckpt"
+    fine_ckpt: "/mnt/bn/zongyu-lq/ckpts/musiclm/epoch=03-step=193000-accu=18.92.ckpt"
 
 run_opts:
     fast_dev_run: False
@@ -59,9 +66,6 @@ pl_datamodule: !new:recipes.musiclm.datamodules.lit_datamodule.DataModule
     predict_dataloader: !ref <predict_dataloader>
 
 pl_module: !new:recipes.musiclm.lightning.inference.InferenceModule
-    semantic_ckpt: "/mnt/bn/zongyu-lq/logs/semantic_sparse/mulan_g4/checkpoints/step=035216-val_accu_0=35.57.ckpt"
-    coarse_ckpt: "/mnt/bn/zongyu-lq/logs/coarse_sparse/mulan_g4/checkpoints/step=070680-val_accu_0=28.99.ckpt"
-    fine_ckpt: "/mnt/bn/zongyu-lq/ckpts/musiclm/epoch=03-step=193000-accu=18.92.ckpt"
     extra_params: !ref <hp>
     required_modules:
         mulan:

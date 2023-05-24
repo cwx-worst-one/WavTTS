@@ -267,15 +267,15 @@ class SemanticModule(BaseModule):
         slice_range = []
         beg = 0
         while True:
-            end = beg + 10 * hp.wav2vec_frame_rate
+            end = beg + hp.semantic_duration * hp.wav2vec_frame_rate
             if end >= hp.duration * hp.wav2vec_frame_rate:
                 end = hp.duration * hp.wav2vec_frame_rate
-                beg = end - (10 * hp.wav2vec_frame_rate)
+                beg = end - (hp.semantic_duration * hp.wav2vec_frame_rate)
                 slice_range.append([beg, end])
                 break
             else:
                 slice_range.append([beg, end])
-            beg += hp.stride * hp.wav2vec_frame_rate
+            beg += hp.semantic_stride * hp.wav2vec_frame_rate
         prev_end = 0
 
         semantic_samples = None
@@ -499,6 +499,113 @@ class CoarseModule(BaseModule):
         )
         return input_ids, None, soundstream_ids
 
+    @torch.no_grad()
+    def predict(
+        self, mulan_ids, wav2vec_ids, hp
+    ):
+        device = mulan_ids.device
+        b, _ = mulan_ids.size()
+        num_coarse = hp.num_coarse
+        wav2vec_ids = wav2vec_ids + num_coarse * hp.soundstream_codebook_size
+        mulan_ids = (
+            mulan_ids
+            + hp.wav2vec_codebook_size
+            + num_coarse * hp.soundstream_codebook_size
+        )
+
+        sep_ids = (
+            torch.zeros(size=[b, 1], dtype=mulan_ids.dtype, device=device)
+            + num_coarse * hp.soundstream_codebook_size
+            + hp.wav2vec_codebook_size
+        )
+
+        sos_ids = (
+            torch.zeros(size=[b, 1], dtype=mulan_ids.dtype, device=device)
+            + num_coarse * hp.soundstream_codebook_size
+            + hp.wav2vec_codebook_size
+            + 1
+        )
+
+        if not hp.mulan_codebook_shared:
+            mulan_ids = (
+                mulan_ids
+                + torch.arange(mulan_ids.size(1), device=device) * hp.mulan_codebook_size
+            )
+            sep_ids = (
+                sep_ids
+                + mulan_ids.size(1) * hp.mulan_codebook_size
+            )
+            sos_ids = (
+                sos_ids
+                + mulan_ids.size(1) * hp.mulan_codebook_size
+            )
+        else:
+            sep_ids = (
+                sep_ids
+                + hp.mulan_codebook_size
+            )
+            sos_ids = (
+                sos_ids
+                + hp.mulan_codebook_size
+            )
+
+        slice_range = []
+        beg = 0
+        while True:
+            end = beg + hp.coarse_duration * hp.soundstream_frame_rate * num_coarse
+            if end >= hp.duration * hp.soundstream_frame_rate * num_coarse:
+                end = hp.duration * hp.soundstream_frame_rate * num_coarse
+                beg = end - hp.coarse_duration * hp.soundstream_frame_rate * num_coarse
+                slice_range.append([beg, end])
+                break
+            else:
+                slice_range.append([beg, end])
+            beg += hp.coarse_stride * hp.soundstream_frame_rate * num_coarse
+
+        prev_end = 0
+        coarse_samples = None
+        for cur_beg, cur_end in slice_range:
+            cache_len = prev_end - cur_beg
+            prev_end = cur_end
+            semantic_beg = int(cur_beg / hp.soundstream_frame_rate / num_coarse * hp.wav2vec_frame_rate)
+            semantic_end = semantic_beg + hp.semantic_duration * hp.wav2vec_frame_rate
+            semantic_slice = wav2vec_ids[:, semantic_beg:semantic_end]
+            if cache_len == 0:
+                input_ids = torch.cat(
+                    [mulan_ids, sep_ids, semantic_slice, sos_ids], dim=1
+                )
+            else:
+                prefix_coarse_samples = coarse_samples[:, cur_beg : cur_beg + cache_len]
+                input_ids = torch.cat(
+                    [
+                        mulan_ids,
+                        sep_ids,
+                        semantic_slice,
+                        sos_ids,
+                        prefix_coarse_samples,
+                    ],
+                    dim=1,
+                )
+            kv_cache = {}
+            pbar = tqdm(range(cur_end - cur_beg - cache_len))
+            for i in pbar:
+                pbar.set_description(
+                    f"Coarse [{cur_beg} - {cur_end}] [{semantic_beg} - {semantic_end}]"
+                )
+                predict_logits = self.model(input_ids, kv_cache=kv_cache)
+                layer_idx = i % num_coarse
+                predict_logits = predict_logits[
+                    :, -1:, layer_idx * hp.soundstream_codebook_size : (layer_idx + 1) * hp.soundstream_codebook_size
+                ] 
+                samples = sample(predict_logits, temp=hp.coarse_temperature, mode=hp.sample_mode)
+                samples = samples + layer_idx * hp.soundstream_codebook_size
+                input_ids = samples
+                if coarse_samples is None:
+                    coarse_samples = samples
+                else:
+                    coarse_samples = torch.cat([coarse_samples, samples], dim=1)
+        return coarse_samples
+
 
 class MulanFreeCoarseModule(BaseModule):
     def __init__(
@@ -595,15 +702,15 @@ class MulanFreeCoarseModule(BaseModule):
         slice_range = []
         beg = 0
         while True:
-            end = beg + 10 * soundstream_frame_rate * num_coarse
+            end = beg + hp.coarse_duration * soundstream_frame_rate * num_coarse
             if end >= hp.duration * soundstream_frame_rate * num_coarse:
                 end = hp.duration * soundstream_frame_rate * num_coarse
-                beg = end - 10 * soundstream_frame_rate * num_coarse
+                beg = end - hp.coarse_duration * soundstream_frame_rate * num_coarse
                 slice_range.append([beg, end])
                 break
             else:
                 slice_range.append([beg, end])
-            beg += hp.stride * soundstream_frame_rate * num_coarse
+            beg += hp.coarse_stride * soundstream_frame_rate * num_coarse
         prev_end = 0
 
         coarse_samples = None
@@ -970,6 +1077,75 @@ class FineModule(BaseModule):
         # final input tokens
         input_tokens = torch.cat([coarse_ids, sos_ids, fine_ids[:, : -1]], dim=1)
         return input_tokens, None, fine_ids
+
+    @torch.no_grad()
+    def predict(
+        self, coarse_ids, hp
+    ):
+        device = coarse_ids.device
+        b, _ = coarse_ids.size()
+        num_coarse = hp.num_coarse
+        num_fine = hp.num_fine
+        coarse_ids = coarse_ids + num_fine * hp.soundstream_codebook_size
+
+        sos_ids = (
+            torch.zeros([b, 1], dtype=coarse_ids.dtype, device=device)
+            + (num_coarse + num_fine) * hp.soundstream_codebook_size
+        )
+
+        slice_range = []
+        beg = 0
+        while True:
+            end = beg + hp.fine_duration * hp.soundstream_frame_rate * num_fine
+            if end >= hp.duration * hp.soundstream_frame_rate * num_fine:
+                end = hp.duration * hp.soundstream_frame_rate * num_fine
+                beg = end - hp.fine_duration * hp.soundstream_frame_rate * num_fine
+                slice_range.append([beg, end])
+                break
+            else:
+                slice_range.append([beg, end])
+            beg += hp.fine_stride * hp.soundstream_frame_rate * num_fine
+        prev_end = 0
+        fine_samples = None
+        for cur_beg, cur_end in slice_range:
+            cache_len = prev_end - cur_beg
+            prev_end = cur_end
+            coarse_beg = int(cur_beg / num_fine * num_coarse)
+            coarse_end = coarse_beg + hp.fine_duration * hp.soundstream_frame_rate * num_coarse
+            coarse_slice = coarse_ids[:, coarse_beg : coarse_end]
+            if cache_len == 0:
+                input_ids = torch.cat(
+                    [coarse_slice, sos_ids], dim=1
+                )
+            else:
+                prefix_fine_samples = fine_samples[:, cur_beg : cur_beg + cache_len]
+                input_ids = torch.cat(
+                    [
+                        coarse_slice,
+                        sos_ids,
+                        prefix_fine_samples,
+                    ],
+                    dim=1,
+                )
+            kv_cache = {}
+            pbar = tqdm(range(cur_end - cur_beg - cache_len))
+            for i in pbar:
+                pbar.set_description(
+                    f"Fine [{cur_beg} - {cur_end}] [{coarse_beg} - {coarse_end}]"
+                )
+                predict_logits = self.model(input_ids, kv_cache=kv_cache)
+                layer_idx = i % num_fine
+                predict_logits = predict_logits[
+                    :, -1:, layer_idx * hp.soundstream_codebook_size : (layer_idx + 1) * hp.soundstream_codebook_size
+                ] 
+                samples = sample(predict_logits, temp=hp.fine_temperature, mode=hp.sample_mode)
+                samples = samples + layer_idx * hp.soundstream_codebook_size
+                input_ids = samples
+                if fine_samples is None:
+                    fine_samples = samples
+                else:
+                    fine_samples = torch.cat([fine_samples, samples], dim=1)
+        return fine_samples + num_coarse * hp.soundstream_codebook_size
 
 
 class SeerFineModule(BaseModule):

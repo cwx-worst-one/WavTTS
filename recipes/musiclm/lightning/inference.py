@@ -3,11 +3,9 @@ import os
 import pytorch_lightning as pl
 import torch
 
-# from recipes.musiclm.lightning.modules import SemanticModule
-# from recipes.musiclm.lightning.modules import MulanFreeCoarseModule as CoarseModule
-from recipes.audio_lm.lit_modules.v4_1.lit_semantic import SemanticModule
-from recipes.audio_lm.lit_modules.v4_1.lit_coarse_3ar import CoarseModule
-from recipes.audio_lm.lit_modules.v4_1.lit_fine import FineModule
+from recipes.musiclm.lightning.modules import SemanticModule
+from recipes.musiclm.lightning.modules import CoarseModule
+from recipes.musiclm.lightning.modules import FineModule
 from samantha.utils.hparams import DotDict
 from ..inference.utils import slugify, save_wav
 from recipes.musiclm.models.compat.semantic_model import w2v_bert_tokenization
@@ -16,18 +14,15 @@ from recipes.musiclm.models.compat.semantic_model import w2v_bert_tokenization
 class InferenceModule(pl.LightningModule):
     def __init__(
         self,
-        semantic_ckpt,
-        coarse_ckpt,
-        fine_ckpt,
         required_modules,
         extra_params=None,
     ):
         super().__init__()
         self.save_hyperparameters()
-        self.semantic_module = SemanticModule.load_from_checkpoint(semantic_ckpt).eval()
-        self.coarse_module = CoarseModule.load_from_checkpoint(coarse_ckpt).eval()
-        self.fine_module = FineModule.load_from_checkpoint(fine_ckpt).eval()
         self.extra_params = DotDict(extra_params)
+        self.semantic_module = SemanticModule.load_from_checkpoint(self.extra_params.semantic_ckpt).eval()
+        self.coarse_module = CoarseModule.load_from_checkpoint(self.extra_params.coarse_ckpt).eval()
+        self.fine_module = FineModule.load_from_checkpoint(self.extra_params.fine_ckpt).eval()
         self.requires = {}
         self.load_required_modules()
 
@@ -49,10 +44,10 @@ class InferenceModule(pl.LightningModule):
         mulan_tokens, ds = self.requires["mulan_rvq_fn"](
             mulan_embeds, self.requires["mulan_centers"]
         )
-        semantic_samples = self.semantic_module.predict(mulan_tokens)
+        semantic_samples = self.semantic_module.predict(mulan_tokens, self.extra_params)
         # coarse_samples = self.coarse_module.predict(semantic_samples, self.extra_params)
-        coarse_samples = self.coarse_module.predict(mulan_tokens, semantic_samples)
-        fine_samples = self.fine_module.predict(coarse_samples)
+        coarse_samples = self.coarse_module.predict(mulan_tokens, semantic_samples, self.extra_params)
+        fine_samples = self.fine_module.predict(coarse_samples, self.extra_params)
 
         bs = coarse_samples.size(0)
         coarse_samples = coarse_samples.view([bs, -1, self.extra_params.num_coarse])
