@@ -212,3 +212,5 @@ ENV LIBHDFS_OPTS "-Xms4g -Xmx16g -Dhadoop.root.logger=${HADOOP_ROOT_LOGGER:-ERRO
 RUN pip3 uninstall -y triton && \
     pip3 install --force pytorch-triton==2.1.0+7d1a95b046 -i https://download.pytorch.org/whl/nightly/cu117 && \
     pip3 install expecttest hypothesis
+
+RUN pip3 uninstall -y pyarrow && pip3 install fsspec==2021.11.1 pyarrow==8.0.0

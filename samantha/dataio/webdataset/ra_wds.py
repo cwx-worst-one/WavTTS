@@ -5,23 +5,19 @@ from webdataset import filters, shardlists
 from webdataset.compat import FluidInterface
 from webdataset.filters import reraise_exception
 from webdataset.pipeline import DataPipeline
-from webdataset.tariterators import (
-    meta_prefix,
-    meta_suffix,
-)
 from webdataset.shardlists import expand_urls
+from webdataset.tariterators import meta_prefix, meta_suffix
 
-from samantha.dataio.webdataset.extension import (
-    group_by_keys,
-    url_opener_ra,
-)
+from samantha.dataio.webdataset.extension import group_by_keys, url_opener_ra
 
 
 def tar_file_iterator(fileobj, skip_meta=r"__[^/]*__($|/)", handler=reraise_exception):
     """Iterate over tar file, yielding filename, content pairs for the given tar stream.
 
-    :param fileobj: byte stream suitable for tarfile
-    :param skip_meta: regexp for keys that are skipped entirely (Default value = r"__[^/]*__($|/)")
+    Args:
+        fileobj: byte stream suitable for tarfile
+        skip_meta: regexp for keys that are skipped entirely
+            Default value = r"__[^/]*__($|/)"
 
     """
     stream = tarfile.open(fileobj=fileobj, mode="r:")
@@ -100,10 +96,12 @@ class WebDataset(DataPipeline, FluidInterface):
         nodesplitter=shardlists.single_node_only,
     ):
         super().__init__()
+
         def maybe_remove_hdfs_cat(url):
             # Backward compatiblity, in old style we use hdfs -cat to
             # read webdataset from hdfs
             return url.replace("pipe:", "").replace("hdfs dfs -cat ", "")
+
         urls = expand_urls(urls)
         urls = [maybe_remove_hdfs_cat(url) for url in urls]
         if resampled:

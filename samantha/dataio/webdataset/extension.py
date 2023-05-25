@@ -1,18 +1,8 @@
 import json
 import re
-import tarfile
 import sys
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Iterable,
-    Iterator,
-    Optional,
-    Set,
-    Tuple,
-    Union,
-)
+import tarfile
+from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Set, Tuple, Union
 
 from pyarrow.fs import FileSystem
 from webdataset import filters, shardlists
@@ -57,7 +47,7 @@ def group_by_keys(
                 # We don't always ensure that there's no duplicate key when creating the
                 # dataset, so we'll just ignore duplicate key errors here.
                 print(
-                    f"WARN {fname}: duplicate file name in tar file {suffix} {current_sample.keys()}",
+                    f"WARN {fname}: duplicate file name in tar file {suffix} {current_sample.keys()}",  # noqa
                     file=sys.stderr,
                     flush=True,
                 )
@@ -189,9 +179,7 @@ def indexed_tarfile_expander(
             assert isinstance(source, dict)
             assert "stream" in source
             for sample in indexed_tarfile_iterator(
-                source["stream"],
-                index=url2index[url],
-                handler=handler,
+                source["stream"], index=url2index[url], handler=handler
             ):
                 assert (
                     isinstance(sample, dict) and "data" in sample and "fname" in sample
@@ -239,11 +227,7 @@ def indexed_tarfile_samples(
         stream of samples
     """
     streams = url_opener_ra(src, handler=handler)
-    files = indexed_tarfile_expander(
-        streams,
-        url2index=url2index,
-        handler=handler
-    )
+    files = indexed_tarfile_expander(streams, url2index=url2index, handler=handler)
     samples = group_by_keys(files, handler=handler)
     return samples
 
@@ -287,10 +271,12 @@ class IndexedWebDataset(DataPipeline, FluidInterface):
     ):
         super().__init__()
         url2index = resolve_url2index(url2index)
+
         def maybe_remove_hdfs_cat(url):
-            # Backward compatiblity, in old style we use hdfs -cat to
+            # Backward compatibility, in old style we use hdfs -cat to
             # read webdataset from hdfs
             return url.replace("pipe:hdfs dfs -cat ", "")
+
         url2index = {maybe_remove_hdfs_cat(k): v for k, v in url2index.items()}
         urls = list(url2index.keys())
         if resampled:
@@ -308,7 +294,6 @@ class IndexedWebDataset(DataPipeline, FluidInterface):
                     self.append(filters.shuffle(shardshuffle))
         self.append(
             filters.pipelinefilter(indexed_tarfile_samples)(
-                url2index=url2index,
-                handler=handler,
+                url2index=url2index, handler=handler
             )
         )

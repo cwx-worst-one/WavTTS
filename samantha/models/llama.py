@@ -158,7 +158,12 @@ class Llama(nn.Module):
             n_params -= self.transformer.wpe.weight.numel()
         return n_params
 
-    def forward(self, input_ids: torch.Tensor, kv_cache: dict = None, last_logit_only: bool = False):
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        kv_cache: dict = None,
+        last_logit_only: bool = False,
+    ):
         x = self.transformer(input_ids, kv_cache=kv_cache)
         if last_logit_only:
             x = x[:, -1]

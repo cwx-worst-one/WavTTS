@@ -8,15 +8,12 @@ trigger:
     types: [branch]
 jobs:
   lint:
-    image: hub.byted.org/base/samantha:latest
+    image: hub.byted.org/base/samantha_preview:latest
     steps:
       - uses: actions/checkout
         inputs:
           depth: 1
           submodules: False
-      - name: env
-        commands:
-          - pip3 install -r scripts/requirements.txt
       - name: isort
         commands:
           - git ls-files samantha | grep -E "\.py$" | xargs isort --check-only
@@ -32,15 +29,12 @@ jobs:
         commands:
           - yamllint samantha recipes --no-warnings
   unittest:
-    image: hub.byted.org/base/samantha:latest
+    image: hub.byted.org/base/samantha_preview:latest
     steps:
       - uses: actions/checkout
         inputs:
           depth: 1
           submodules: True
-      - name: env
-        commands:
-          - pip3 install -r scripts/requirements.txt
       - name: unittest
         commands:
           - sh tests/.run-coverage.sh

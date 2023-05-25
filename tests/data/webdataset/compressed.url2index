@@ -1,1 +1,1 @@
-pipe:hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/duc.le1/index_test/compressed.tar	tests/data/webdataset/compressed.index
+file:///%s/webdataset/compressed.tar	%s/webdataset/compressed.index
