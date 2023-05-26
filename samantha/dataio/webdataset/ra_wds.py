@@ -1,37 +1,20 @@
 import re
 import tarfile
 
-
-from pyarrow.fs import FileSystem
 from webdataset import filters, shardlists
 from webdataset.compat import FluidInterface
 from webdataset.filters import reraise_exception
 from webdataset.pipeline import DataPipeline
 from webdataset.tariterators import (
-    group_by_keys,
     meta_prefix,
     meta_suffix,
 )
 from webdataset.shardlists import expand_urls
 
-
-def url_opener(data, handler=reraise_exception, **kw):
-    """Open url as a random accessible stream."""
-    for sample in data:
-        assert isinstance(sample, dict), sample
-        assert "url" in sample
-        url = sample["url"]
-        try:
-            fs, path = FileSystem.from_uri(url)
-            stream = fs.open_input_file(path)
-            sample.update(stream=stream)
-            yield sample
-        except Exception as exn:
-            exn.args = exn.args + (url,)
-            if handler(exn):
-                continue
-            else:
-                break
+from samantha.dataio.webdataset.extension import (
+    group_by_keys,
+    url_opener_ra,
+)
 
 
 def tar_file_iterator(fileobj, skip_meta=r"__[^/]*__($|/)", handler=reraise_exception):
@@ -98,7 +81,7 @@ def tar_file_expander(data, handler=reraise_exception):
 
 
 def tarfile_samples(src, handler=reraise_exception):
-    streams = url_opener(src, handler=handler)
+    streams = url_opener_ra(src, handler=handler)
     files = tar_file_expander(streams, handler=handler)
     samples = group_by_keys(files, handler=handler)
     return samples

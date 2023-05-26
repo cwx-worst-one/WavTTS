@@ -1,7 +1,18 @@
 import json
 import re
 import tarfile
-from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Union
+import sys
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Iterator,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 from pyarrow.fs import FileSystem
 from webdataset import filters, shardlists
@@ -10,12 +21,56 @@ from webdataset.filters import reraise_exception
 from webdataset.pipeline import DataPipeline
 from webdataset.tariterators import (
     base_plus_ext,
-    group_by_keys,
     meta_prefix,
     meta_suffix,
+    valid_sample,
 )
 
 from samantha.utils.hdfs_helper import hopen
+
+
+def group_by_keys(
+    data: Iterable[Dict[str, Any]],
+    keys: Callable[[str], Tuple[str, str]] = base_plus_ext,
+    lcase: bool = True,
+    suffixes: Optional[Set[str]] = None,
+    handler: Callable[[Exception], bool] = reraise_exception,
+) -> Iterator[Dict[str, Any]]:
+    """
+    Similar to original group_by_keys, but ignoring duplicate key errors.
+    """
+    current_sample = None
+    for filesample in data:
+        try:
+            assert isinstance(filesample, dict)
+            fname, value = filesample["fname"], filesample["data"]
+            prefix, suffix = keys(fname)
+            if prefix is None:
+                continue
+            if lcase:
+                suffix = suffix.lower()
+            if current_sample is None or prefix != current_sample["__key__"]:
+                if valid_sample(current_sample):
+                    yield current_sample
+                current_sample = dict(__key__=prefix, __url__=filesample["__url__"])
+            if suffix in current_sample:
+                # We don't always ensure that there's no duplicate key when creating the
+                # dataset, so we'll just ignore duplicate key errors here.
+                print(
+                    f"WARN {fname}: duplicate file name in tar file {suffix} {current_sample.keys()}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                continue
+            if suffixes is None or suffix in suffixes:
+                current_sample[suffix] = value
+        except Exception as exn:
+            if handler(exn):
+                continue
+            else:
+                break
+    if valid_sample(current_sample):
+        yield current_sample
 
 
 def resolve_url2index(url2index: Union[str, Dict[str, str]]) -> Dict[str, str]:
