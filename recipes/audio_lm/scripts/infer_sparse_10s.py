@@ -677,7 +677,7 @@ if __name__ == "__main__":
 
     ckpts = DotDict(ckpts)
     filepath_prefix = "generated_output/"
-    filepath_prefix += (p
+    filepath_prefix += (
         "MusicLM_sparse_mulang4"
         + ("_free" if args.mulan_free else "")
         + ("_mert" if args.mert else "")

@@ -8,7 +8,6 @@ from transformers import GPT2Model
 from transformers import GPT2PreTrainedModel
 from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
 import pytorch_lightning as pl
-import torch
 from pytorch_lightning.profilers import PassThroughProfiler
 from tqdm import tqdm
 
@@ -49,6 +48,8 @@ class BaseModule(pl.LightningModule):
     def load_required_modules(self):
         for name, (hpath, initializer) in self.hparams.required_modules.items():
             self.requires.update(initializer(hpath, local_rank=self.local_rank))
+            if name == "mulan_centers":
+                assert self.extra_params.mulan_num_rvq == self.requires["mulan_centers"].shape[0]
 
     @property
     def profiler(self):
@@ -67,11 +68,8 @@ class BaseModule(pl.LightningModule):
         if batch.dim() == 3:
             batch = batch.squeeze(1)
         with torch.autocast(device_type="cuda", enabled=False):
-            input_ids, context, target_ids = self.prepare_feature(batch.float())
-        if context is None:
-            logits = self.model(input_ids=input_ids)
-        else:
-            logits = self.model(input_ids=input_ids, encoder_hidden_states=context)
+            input_ids, target_ids = self.prepare_feature(batch.float())
+        logits = self.model(input_ids=input_ids)
         if isinstance(logits, dict):
             logits = logits["logits"]
         x = logits[:, -target_ids.size(1) :, :]
@@ -209,27 +207,16 @@ class SemanticModule(BaseModule):
         wav2vec_ids = self.get_wav2vec_tokens(wavs)
 
         mulan_ids = self.get_mulan_tokens(wavs)
-        mulan_ids = mulan_ids + self.extra_params.wav2vec_codebook_size
-
+        mulan_ids = (
+            mulan_ids
+            + torch.arange(self.extra_params.mulan_num_rvq, device=device) * self.extra_params.mulan_codebook_size
+            + self.extra_params.wav2vec_codebook_size
+        )
         sos_ids = (
             torch.zeros(size=[b, 1], dtype=mulan_ids.dtype, device=device)
             + self.extra_params.wav2vec_codebook_size
+            + self.extra_params.mulan_num_rvq * self.extra_params.mulan_codebook_size
         )
-        if not self.extra_params.mulan_codebook_shared:
-            mulan_ids = (
-                mulan_ids
-                + torch.arange(mulan_ids.size(1), device=device) * self.extra_params.mulan_codebook_size
-            )
-            sos_ids = (
-                sos_ids
-                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
-            )
-        else:
-            sos_ids = (
-                sos_ids
-                + self.extra_params.mulan_codebook_size
-            )
-
         input_ids = torch.cat(
             [mulan_ids, sos_ids, wav2vec_ids[:, : -1]], dim=1
         )
@@ -243,26 +230,14 @@ class SemanticModule(BaseModule):
         b, _ = mulan_ids.size()
         mulan_ids = (
             mulan_ids
-            + hp.wav2vec_codebook_size
+            + torch.arange(self.extra_params.mulan_num_rvq, device=device) * self.extra_params.mulan_codebook_size
+            + self.extra_params.wav2vec_codebook_size
         )
         sos_ids = (
             torch.zeros(size=[b, 1], dtype=mulan_ids.dtype, device=device)
+            + hp.mulan_num_rvq * hp.mulan_codebook_size
             + hp.wav2vec_codebook_size
         )
-        if not hp.mulan_codebook_shared:
-            mulan_ids = (
-                mulan_ids
-                + torch.arange(mulan_ids.size(1), device=device) * hp.mulan_codebook_size
-            )
-            sos_ids = (
-                sos_ids
-                + mulan_ids.size(1) * hp.mulan_codebook_size
-            )
-        else:
-            sos_ids = (
-                sos_ids
-                + hp.mulan_codebook_size
-            )
 
         slice_range = []
         beg = 0
@@ -289,11 +264,14 @@ class SemanticModule(BaseModule):
                 input_ids = torch.cat(
                     [mulan_ids, sos_ids, prefix_semantic_samples], dim=1
                 )
-            kv_cache = {}
+            past_key_values = None
             pbar = tqdm(range(cur_end - cur_beg - cache_len))
             for _ in pbar:
                 pbar.set_description(f"Semantic [{cur_beg} - {cur_end}]")
-                predict_logits = self.model(input_ids, kv_cache=kv_cache)[:, -1:, :]
+                model_output = self.model(input_ids, past_key_values=past_key_values, use_cache=True)
+                past_key_values = model_output["past_key_values"]
+                logits = model_output["logits"]
+                predict_logits = logits[:, -1:, :]
                 samples = sample(predict_logits, temp=hp.semantic_temperatue, mode=hp.sample_mode)
                 input_ids = samples
                 if semantic_samples is None:
@@ -413,7 +391,7 @@ class SeerSemanticModule(BaseModule):
         return self.seer_rearrange(coarse_samples, inv=True)
 
 
-class CoarseModule(BaseModule):
+class MulanCoarseModule(BaseModule):
     def __init__(
         self,
         model_cls,
@@ -607,7 +585,7 @@ class CoarseModule(BaseModule):
         return coarse_samples
 
 
-class MulanFreeCoarseModule(BaseModule):
+class CoarseModule(BaseModule):
     def __init__(
         self,
         model_cls,
@@ -634,7 +612,6 @@ class MulanFreeCoarseModule(BaseModule):
         device = wavs.device
         num_coarse = self.extra_params.num_coarse
         b, _ = wavs.size()
-        context = None
 
         soundstream_ids = self.get_soundstream_tokens(wavs)
         soundstream_ids = (
@@ -643,61 +620,35 @@ class MulanFreeCoarseModule(BaseModule):
         )
         soundstream_ids = torch.reshape(soundstream_ids, [b, -1])
 
-        if self.extra_params.cross_attn:
-            if self.extra_params.mert:
-                mert_embeds = self.get_mert_embeds(wavs)
-                context = mert_embeds
-            else:
-                if self.extra_params.embeds_from_centers:
-                    wav2vec_embeds = self.get_wav2vec_embeds_from_tokens(wavs)
-                else:
-                    wav2vec_embeds = self.get_wav2vec_embeds(wavs)
-                context = wav2vec_embeds
-            sos_ids = (
-                torch.zeros(size=[b, 1], dtype=soundstream_ids.dtype, device=device)
-                + num_coarse * self.extra_params.soundstream_codebook_size
-            )
-            input_ids = torch.cat(
-                [sos_ids, soundstream_ids[:, : -1]], dim=1
-            )
-        else:
-            wav2vec_ids = self.get_wav2vec_tokens(wavs)
-            wav2vec_ids = wav2vec_ids + num_coarse * self.extra_params.soundstream_codebook_size
-
-            sos_ids = (
-                torch.zeros(size=[b, 1], dtype=soundstream_ids.dtype, device=device)
-                + num_coarse * self.extra_params.soundstream_codebook_size
-                + self.extra_params.wav2vec_codebook_size
-            )
-
-            input_ids = torch.cat(
-                [wav2vec_ids, sos_ids, soundstream_ids[:, : -1]], dim=1
-            )
-        return input_ids, context, soundstream_ids
+        wav2vec_ids = self.get_wav2vec_tokens(wavs)
+        wav2vec_ids = wav2vec_ids + num_coarse * self.extra_params.soundstream_codebook_size
+        sos_ids = (
+            torch.zeros(size=[b, 1], dtype=soundstream_ids.dtype, device=device)
+            + num_coarse * self.extra_params.soundstream_codebook_size
+            + self.extra_params.wav2vec_codebook_size
+        )
+        input_ids = torch.cat(
+            [wav2vec_ids, sos_ids, soundstream_ids[:, : -1]], dim=1
+        )
+        return input_ids, soundstream_ids
 
     @torch.no_grad()
     def predict(
-        self, wav2vec_ids, hp
+        self, semantic_samples, hp
     ):
-        device = wav2vec_ids.device
-        b = wav2vec_ids.size(0)
+        device = semantic_samples.device
+        b = semantic_samples.size(0)
         num_coarse = hp.num_coarse
         soundstream_codebook_size = hp.soundstream_codebook_size
         wav2vec_codebook_size = hp.wav2vec_codebook_size
         soundstream_frame_rate = hp.soundstream_frame_rate
-
-        if hp.cross_attn:
-            sos_ids = (
-                torch.zeros(size=[b, 1], dtype=torch.long, device=device)
-                + num_coarse * soundstream_codebook_size
-            )
-        else:
-            wav2vec_ids = wav2vec_ids + num_coarse * soundstream_codebook_size
-            sos_ids = (
-                torch.zeros(size=[b, 1], dtype=wav2vec_ids.dtype, device=device)
-                + num_coarse * soundstream_codebook_size
-                + wav2vec_codebook_size
-            )
+        semantic_frame_rate = hp.wav2vec_frame_rate
+        semantic_samples = semantic_samples + num_coarse * soundstream_codebook_size
+        sos_ids = (
+            torch.zeros(size=[b, 1], dtype=semantic_samples.dtype, device=device)
+            + num_coarse * soundstream_codebook_size
+            + wav2vec_codebook_size
+        )
 
         slice_range = []
         beg = 0
@@ -711,34 +662,29 @@ class MulanFreeCoarseModule(BaseModule):
             else:
                 slice_range.append([beg, end])
             beg += hp.coarse_stride * soundstream_frame_rate * num_coarse
-        prev_end = 0
 
+        prev_end = 0
         coarse_samples = None
         for cur_beg, cur_end in slice_range:
             cache_len = prev_end - cur_beg
             prev_end = cur_end
+            semantic_beg = int(cur_beg / soundstream_frame_rate / num_coarse * semantic_frame_rate)
+            semantic_end = semantic_beg + hp.semantic_duration * semantic_frame_rate
+            semantic_slice = semantic_samples[:, semantic_beg : semantic_end]
             if cache_len == 0:
-                input_ids = sos_ids
+                input_ids = torch.cat([semantic_slice, sos_ids], dim=1)
             else:
                 prefix_coarse_samples = coarse_samples[:, cur_beg : cur_beg + cache_len]
                 input_ids = torch.cat(
-                    [sos_ids, prefix_coarse_samples], dim=1
+                    [semantic_slice, sos_ids, prefix_coarse_samples], dim=1
                 )
-            if hp.cross_attn:
-                past_key_values = None
-            else:
-                input_ids = torch.cat([wav2vec_ids, input_ids], dim=1)
-                kv_cache = {}
-            
+            past_key_values = None
             pbar = tqdm(range(cur_end - cur_beg - cache_len))
             for i in pbar:
-                pbar.set_description(f"Coarse [{cur_beg} - {cur_end}]")
-                if hp.cross_attn:
-                    model_output = self.model(input_ids, encoder_hidden_states=wav2vec_ids, past_key_values=past_key_values, use_cache=True)
-                    logits = model_output["logits"]
-                    past_key_values = model_output["past_key_values"]
-                else:
-                    logits = self.model(input_ids, kv_cache=kv_cache)
+                pbar.set_description(f"Coarse [{cur_beg} - {cur_end}] [{semantic_beg} - {semantic_end}]")
+                model_output = self.model(input_ids, past_key_values=past_key_values, use_cache=True)
+                past_key_values = model_output["past_key_values"]
+                logits = model_output["logits"]
                 layer_idx = i % num_coarse
                 predict_logits = logits[:, -1:, layer_idx * soundstream_codebook_size : (layer_idx + 1) * soundstream_codebook_size]
                 samples = sample(predict_logits, temp=hp.coarse_temperature, mode=hp.sample_mode)
@@ -1076,43 +1022,46 @@ class FineModule(BaseModule):
         )
         # final input tokens
         input_tokens = torch.cat([coarse_ids, sos_ids, fine_ids[:, : -1]], dim=1)
-        return input_tokens, None, fine_ids
+        return input_tokens, fine_ids
 
     @torch.no_grad()
     def predict(
-        self, coarse_ids, hp
+        self, coarse_samples, hp
     ):
-        device = coarse_ids.device
-        b, _ = coarse_ids.size()
+        device = coarse_samples.device
+        b, _ = coarse_samples.size()
         num_coarse = hp.num_coarse
         num_fine = hp.num_fine
-        coarse_ids = coarse_ids + num_fine * hp.soundstream_codebook_size
+        soundstream_codebook_size = hp.soundstream_codebook_size
+        soundstream_frame_rate = hp.soundstream_frame_rate
+        coarse_samples = coarse_samples + num_fine * soundstream_codebook_size
 
         sos_ids = (
-            torch.zeros([b, 1], dtype=coarse_ids.dtype, device=device)
-            + (num_coarse + num_fine) * hp.soundstream_codebook_size
+            torch.zeros([b, 1], dtype=coarse_samples.dtype, device=device)
+            + (num_coarse + num_fine) * soundstream_codebook_size
         )
 
         slice_range = []
         beg = 0
         while True:
-            end = beg + hp.fine_duration * hp.soundstream_frame_rate * num_fine
-            if end >= hp.duration * hp.soundstream_frame_rate * num_fine:
-                end = hp.duration * hp.soundstream_frame_rate * num_fine
-                beg = end - hp.fine_duration * hp.soundstream_frame_rate * num_fine
+            end = beg + hp.fine_duration * soundstream_frame_rate * num_fine
+            if end >= hp.duration * soundstream_frame_rate * num_fine:
+                end = hp.duration * soundstream_frame_rate * num_fine
+                beg = end - hp.fine_duration * soundstream_frame_rate * num_fine
                 slice_range.append([beg, end])
                 break
             else:
                 slice_range.append([beg, end])
-            beg += hp.fine_stride * hp.soundstream_frame_rate * num_fine
+            beg += hp.fine_stride * soundstream_frame_rate * num_fine
+
         prev_end = 0
         fine_samples = None
         for cur_beg, cur_end in slice_range:
             cache_len = prev_end - cur_beg
             prev_end = cur_end
             coarse_beg = int(cur_beg / num_fine * num_coarse)
-            coarse_end = coarse_beg + hp.fine_duration * hp.soundstream_frame_rate * num_coarse
-            coarse_slice = coarse_ids[:, coarse_beg : coarse_end]
+            coarse_end = coarse_beg + hp.fine_duration * soundstream_frame_rate * num_coarse
+            coarse_slice = coarse_samples[:, coarse_beg : coarse_end]
             if cache_len == 0:
                 input_ids = torch.cat(
                     [coarse_slice, sos_ids], dim=1
@@ -1127,25 +1076,28 @@ class FineModule(BaseModule):
                     ],
                     dim=1,
                 )
-            kv_cache = {}
+
+            past_key_values = None
             pbar = tqdm(range(cur_end - cur_beg - cache_len))
             for i in pbar:
                 pbar.set_description(
                     f"Fine [{cur_beg} - {cur_end}] [{coarse_beg} - {coarse_end}]"
                 )
-                predict_logits = self.model(input_ids, kv_cache=kv_cache)
+                model_output = self.model(input_ids, past_key_values=past_key_values, use_cache=True)
+                past_key_values = model_output["past_key_values"]
+                logits = model_output["logits"]
                 layer_idx = i % num_fine
-                predict_logits = predict_logits[
-                    :, -1:, layer_idx * hp.soundstream_codebook_size : (layer_idx + 1) * hp.soundstream_codebook_size
+                predict_logits = logits[
+                    :, -1:, layer_idx * soundstream_codebook_size : (layer_idx + 1) * soundstream_codebook_size
                 ] 
                 samples = sample(predict_logits, temp=hp.fine_temperature, mode=hp.sample_mode)
-                samples = samples + layer_idx * hp.soundstream_codebook_size
+                samples = samples + layer_idx * soundstream_codebook_size
                 input_ids = samples
                 if fine_samples is None:
                     fine_samples = samples
                 else:
                     fine_samples = torch.cat([fine_samples, samples], dim=1)
-        return fine_samples + num_coarse * hp.soundstream_codebook_size
+        return fine_samples + num_coarse * soundstream_codebook_size
 
 
 class SeerFineModule(BaseModule):
@@ -1213,7 +1165,7 @@ class MaskedCrossEntropy(torch.nn.Module):
         logits = logits.view(-1, logits.size(-1))
         targets = targets.view(-1, 1)
 
-        log_probs = torch.nn.functional.log_softmax(logits.float(), dim=-1)
+        log_probs = F.log_softmax(logits.float(), dim=-1)
         loss = -torch.gather(log_probs, dim=1, index=targets)
 
         if mask is None:

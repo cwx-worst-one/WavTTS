@@ -29,8 +29,10 @@ class InferenceModule(pl.LightningModule):
     def load_required_modules(self):
         for name, (hpath, initializer) in self.hparams.required_modules.items():
             self.requires.update(initializer(hpath, local_rank=self.local_rank))
-
-    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+            if name == "mulan_centers":
+                assert self.extra_params.mulan_num_rvq == self.requires["mulan_centers"].shape[0]
+    
+    def _predict_step(self, batch, round):
         text_embs = []
         prompts = batch["text"]
         categories = batch["category"]
@@ -41,15 +43,14 @@ class InferenceModule(pl.LightningModule):
             text_embs.append(text_emb)
 
         mulan_embeds = torch.cat(text_embs, dim=0)
-        mulan_tokens, ds = self.requires["mulan_rvq_fn"](
+        mulan_ids, ds = self.requires["mulan_rvq_fn"](
             mulan_embeds, self.requires["mulan_centers"]
         )
-        semantic_samples = self.semantic_module.predict(mulan_tokens, self.extra_params)
-        # coarse_samples = self.coarse_module.predict(semantic_samples, self.extra_params)
-        coarse_samples = self.coarse_module.predict(mulan_tokens, semantic_samples, self.extra_params)
+        bs = mulan_ids.size(0)
+        semantic_samples = self.semantic_module.predict(mulan_ids, self.extra_params)
+        coarse_samples = self.coarse_module.predict(semantic_samples, self.extra_params)
         fine_samples = self.fine_module.predict(coarse_samples, self.extra_params)
-
-        bs = coarse_samples.size(0)
+        
         coarse_samples = coarse_samples.view([bs, -1, self.extra_params.num_coarse])
         fine_samples = fine_samples.view([bs, -1, self.extra_params.num_fine])
         vqgan_inputs = (
@@ -64,9 +65,13 @@ class InferenceModule(pl.LightningModule):
         for i, wav in enumerate(wavs):
             wav_dir = os.path.join(self.extra_params.output_dir, categories[i])
             os.makedirs(wav_dir, exist_ok=True)
-            fp = os.path.join(wav_dir, f"{slugify(prompts[i])[:128]}")
+            fp = os.path.join(wav_dir, f"{slugify(prompts[i])[:128]}.{round}.wav")
             print(f"[Saving] {fp}")
-            save_wav(wav.cpu().numpy(), fp + f".{self.current_epoch}.wav", sr=24000)
+            save_wav(wav.cpu().numpy(), fp, sr=24000)
+
+    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+        for i in range(self.extra_params.num_rounds):
+            self._predict_step(batch, i)
 
 
 class SemanticGTInferenceModule(pl.LightningModule):
@@ -99,22 +104,6 @@ class SemanticGTInferenceModule(pl.LightningModule):
             device=x.device,
         )
         return wav2vec_tokens
-    
-    @torch.no_grad()
-    def get_wav2vec_embeds(self, x):
-        b, t = x.size()
-        feats, feat_mask = self.requires["ssl_frontend"](
-            x, torch.LongTensor([t]).repeat([b]).to(x.device)
-        )
-        wav2vec_embeds, _ = self.requires["semantic"](feats, feat_mask)
-        return wav2vec_embeds
-
-    @torch.no_grad()
-    def get_mert_embeds(self, x):
-        output_emb = self.requires["semantic"](
-            x, output_hidden_states=True
-        ).hidden_states[12]
-        return output_emb
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         if isinstance(batch, list):

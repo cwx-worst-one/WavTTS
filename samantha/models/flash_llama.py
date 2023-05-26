@@ -408,6 +408,16 @@ class LlamaCausalAttention(nn.Module):
 
         past_key_value = (key_states, value_states) if use_cache else None
 
+        if use_cache:
+            q_len = query_states.size(2)
+            k_len = key_states.size(2)
+            attn_mask = torch.ones(
+                q_len, k_len, dtype=torch.bool, device=query_states.device
+            ).tril(k_len - q_len)
+            is_causal = False
+        else:
+            attn_mask = None
+            is_causal = True
         with torch.backends.cuda.sdp_kernel(
             enable_flash=True, enable_math=True, enable_mem_efficient=False
         ):
@@ -415,9 +425,9 @@ class LlamaCausalAttention(nn.Module):
                 query_states.float(),
                 key_states.float(),
                 value_states.float(),
-                attn_mask=None,
+                attn_mask=attn_mask,
                 dropout_p=0.0,
-                is_causal=True,
+                is_causal=is_causal,
             ).to(query_states.dtype)
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):

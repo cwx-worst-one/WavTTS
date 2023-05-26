@@ -452,7 +452,7 @@ class GPT2CausalAttention(nn.Module):
         self.num_heads = self.num_heads - len(heads)
         self.pruned_heads = self.pruned_heads.union(heads)
 
-    def _attn(self, query, key, value):
+    def _attn(self, query, key, value, use_cache=False):
         if self.is_cross_attention:
             with torch.backends.cuda.sdp_kernel(
                 enable_flash=True, enable_math=True, enable_mem_efficient=True
@@ -466,6 +466,16 @@ class GPT2CausalAttention(nn.Module):
                     is_causal=False,
                 ).to(query.dtype)
         else:
+            if use_cache:
+                q_len = query.size(2)
+                k_len = key.size(2)
+                attn_mask = torch.ones(
+                    q_len, k_len, dtype=torch.bool, device=query.device
+                ).tril(k_len - q_len)
+                is_causal = False
+            else:
+                attn_mask = None
+                is_causal = True
             with torch.backends.cuda.sdp_kernel(
                 enable_flash=True, enable_math=True, enable_mem_efficient=True
             ):
@@ -473,9 +483,9 @@ class GPT2CausalAttention(nn.Module):
                     query.float(),
                     key.float(),
                     value.float(),
-                    attn_mask=None,
+                    attn_mask=attn_mask,
                     dropout_p=0.0,
-                    is_causal=True,
+                    is_causal=is_causal,
                 ).to(query.dtype)
 
         return attn_output
@@ -531,7 +541,7 @@ class GPT2CausalAttention(nn.Module):
         else:
             present = None
 
-        attn_output = self._attn(query, key, value)
+        attn_output = self._attn(query, key, value, use_cache)
 
         attn_output = self._merge_heads(attn_output, self.num_heads, self.head_dim)
         attn_output = self.c_proj(attn_output)
