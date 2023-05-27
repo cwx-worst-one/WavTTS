@@ -1,4 +1,4 @@
-FROM hub.byted.org/base/lab.pytorch2.staging:2.1.0.post0
+FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.post1
 LABEL maintainer="liyong.0517 <liyong.0517@bytedance.com>"
 
 ARG http_proxy="http://sys-proxy-rd-relay.byted.org:8118"
@@ -130,8 +130,8 @@ RUN pip3 install \
         --no-cache-dir \
         byted-dataloader
 
-ARG CRUISE_VERSION=1.0.0.1350
-ARG PANTHER_VERSION=1.7.6.40
+ARG CRUISE_VERSION=1.0.0.1371
+ARG PANTHER_VERSION=1.7.6.49
 ARG FALCONCLAW_VERSION=1.0.5.129
 ARG ONNX_VERSION=1.0.0.8
 ARG OPENFST_VERSION=1.0.0.8
