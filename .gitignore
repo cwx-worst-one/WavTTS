@@ -73,6 +73,13 @@ __pycache__
 *.wav
 *.jsonl
 
+# logs
+/**/cruise_logs
+/**/wandb
+
+# ipynb ckpts
+.ipynb_checkpoints
+
 # ignore the weekly_test reports
 scripts/weekly_test/report/
 scripts/weekly_test/report_json/

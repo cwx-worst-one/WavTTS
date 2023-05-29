@@ -22,3 +22,4 @@ ignore: |
   recipes/speartts
   recipes/speech_qa
   recipes/valle
+  recipes/mariana_tasks

@@ -1,0 +1,19 @@
+network:
+  hidden_size: 6144
+  n_embed: 6144  # vocab embedding
+  n_inner: 24576
+  n_head: 48
+  n_layer: 56
+  vocab_size: 64000
+  max_position_embeddings: 2048
+  layer_norm_epsilon: 1.0e-5
+  activation_function: gelu_new
+  resid_pdrop: 0.
+  embd_pdrop: 0.
+  attn_pdrop: 0.
+  scale_attn_weights: true # TODO:
+  scale_attn_by_inverse_layer_idx: false # TODO:
+  reorder_and_upcast_attn: false # TODO:
+  initializer_range: 0.008068715304598784
+  gradient_checkpointing: false
+  tie_weight: true

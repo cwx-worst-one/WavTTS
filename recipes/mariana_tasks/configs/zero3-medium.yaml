@@ -1,0 +1,49 @@
+log_every_n_steps: 50
+precision: 'bf16'
+strategy: 'deepspeed'
+accelerator_kwargs:
+  # only used for deepspeed strategy
+  ds_config:
+    steps_per_print: 50
+    prescale_gradients: false
+    zero_allow_untested_optimizer: true
+    bf16:
+      enabled: true
+    fp16:
+      enabled: false
+    wall_clock_breakdown: false
+    gradient_clipping: 1.0
+    zero_optimization:
+      stage: 3
+      #stage3_gather_16bit_weights_on_model_save: true
+      allgather_partitions: true
+      reduce_scatter: true
+      allgather_bucket_size: 2e9
+      reduce_bucket_size: 1e9
+      overlap_comm: true
+      contiguous_gradients: true
+      stage3_max_reuse_distance: 3e9
+      param_persistence_threshold: 1e7
+      offload_optimizer:
+        device: "none"
+optimizer_kwargs:
+  optimizer:
+    type: "deepspeed.ops.adam.FusedAdam"
+    params:
+      lr: 1e-4
+      betas:
+      - 0.9
+      - 0.95
+      eps: 1.0e-08
+      weight_decay: 0.1
+      bias_correction: true
+      adam_w_mode: true
+  scheduler:
+    type: "mariana.optim.lr_scheduler.get_cosine_schedule_with_warmup_lrdecay"
+    total_steps_param_name: "num_training_steps"
+    warmup_steps_param_name: "num_warmup_steps"
+    interval: "step"
+    params:
+      warmup_step_rate: 0.005
+      lr_end: 0.1
+      lr_decay_rate: 0.8666666666666667
