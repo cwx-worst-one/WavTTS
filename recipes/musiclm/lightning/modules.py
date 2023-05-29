@@ -230,8 +230,8 @@ class SemanticModule(BaseModule):
         b, _ = mulan_ids.size()
         mulan_ids = (
             mulan_ids
-            + torch.arange(self.extra_params.mulan_num_rvq, device=device) * self.extra_params.mulan_codebook_size
-            + self.extra_params.wav2vec_codebook_size
+            + torch.arange(hp.mulan_num_rvq, device=device) * hp.mulan_codebook_size
+            + hp.wav2vec_codebook_size
         )
         sos_ids = (
             torch.zeros(size=[b, 1], dtype=mulan_ids.dtype, device=device)

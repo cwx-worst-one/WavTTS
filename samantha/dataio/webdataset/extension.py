@@ -150,7 +150,9 @@ def indexed_tarfile_iterator(
                     break
                 except Exception as exn:  # pragma: no cover
                     if hasattr(exn, "args") and len(exn.args) > 0:
-                        exn.args = (exn.args[0] + " @ " + str(fileobj),) + exn.args[1:]
+                        exn.args = (
+                            str(exn.args[0]) + " @ " + str(fileobj),
+                        ) + exn.args[1:]
                     if handler(exn):
                         continue
                     else:

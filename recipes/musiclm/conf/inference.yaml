@@ -11,9 +11,9 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 extra_params:
     prompt_path: "/mnt/bn/audio-diffusion/data/google_prompts/google_prompts.csv"
     output_dir: ./generated_output/google_prompts
-    semantic_ckpt: "/mnt/bn/zongyu-lq/logs/semantic_flash_llama/karaoke_and_playlist/checkpoints/last.ckpt"
-    coarse_ckpt: "/mnt/bn/zongyu-lq/logs/coarse_flash_llama/karaoke_and_playlist/checkpoints/last.ckpt"
-    fine_ckpt: "/mnt/bn/zongyu-lq/logs/fine_flash_llama/karaoke_and_playlist/checkpoints/last.ckpt"
+    semantic_ckpt: "/mnt/bn/audio-diffusion/ckpts/musiclm/semantic_flash_llama/karaoke_and_playlist/checkpoints/last.ckpt"
+    coarse_ckpt: "/mnt/bn/audio-diffusion/ckpts/musiclm/coarse_flash_llama/karaoke_and_playlist/checkpoints/last.ckpt"
+    fine_ckpt: "/mnt/bn/audio-diffusion/ckpts/musiclm/fine_flash_llama/karaoke_and_playlist/checkpoints/last.ckpt"
     sample_rate: 24000
     duration: 10
     num_rounds: 3
