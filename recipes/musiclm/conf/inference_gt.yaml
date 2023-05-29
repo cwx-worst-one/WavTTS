@@ -54,14 +54,11 @@ predict_dataset: !new:recipes.musiclm.datasets.karaoke.KaraokeDataset
     nodesplitter: !name:recipes.musiclm.datamodules.webdataset.return_self
     sample_rate: !ref <extra_params[sample_rate]>
     duration: !ref <extra_params[duration]>
-    batch_size: !ref <run_opts[batch_size]>
-    shuffle_buffer_size: 0
     audio_key: "acc.npy"
     sample_range_key: "acc_sample_range.npy"
     min_volume_threshold: 0.05
-    is_train: False
 
-pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.WebDataModule
+pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.DataModule
     predict_dataset: !ref <predict_dataset>
     batch_size: !ref <run_opts[batch_size]>
     num_workers: !ref <run_opts[num_workers]>
