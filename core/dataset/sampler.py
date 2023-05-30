@@ -150,6 +150,7 @@ class NativeSampler(BaseSampler):
         self.seed = 12345
         self.parallel_file_num = max(1, parallel_file_num)
         self.multiples = 1
+        self.path_offset = 0
         self.check_file_nums()
         self.dataset_weights = None
         if dataset_weights:
@@ -191,12 +192,25 @@ class NativeSampler(BaseSampler):
         if self.split_path_by_rank:
             path_idxs = split_list(path_idxs, self.world_size)[self.rank]
         self.path_idxs = split_list(path_idxs, self.prefetch_worker_num)[self.pid]
+        self.path_offset = 0
+        if self.skip_num >= 0:
+            for st in range(0, len(self.path_idxs), 128):
+                path_idxs = self.path_idxs[st : st + 128]
+                file_entry_nums = self.reader.get_entry_num(path_idxs, False, True)
+                for entry_num in file_entry_nums:
+                    entry_num = (entry_num // self.chunk_size) * self.chunk_size
+                    if self.skip_num < entry_num:
+                        break
+                    self.skip_num -= entry_num
+                    self.path_offset += 1
+                if self.skip_num < entry_num:
+                    break
 
     def __iter__(self):
         '''
         for yeild datas
         '''
-        for st in range(0, len(self.path_idxs), self.parallel_file_num):
+        for st in range(self.path_offset, len(self.path_idxs), self.parallel_file_num):
             file_entry_nums = self.reader.get_entry_num(
                 self.path_idxs[st : st + self.parallel_file_num], False, True
             )
@@ -231,6 +245,7 @@ class NativeSampler(BaseSampler):
                 chunk_path_idxs = [bisect.bisect(breakpoints, chunk_idx) for chunk_idx in chunks]
                 chunk_path_idxs = [self.path_idxs[st + i] for i in chunk_path_idxs]
                 yield chunks, chunk_path_idxs
+        self.path_offset = 0
 
     def get_dataset_weights(self, dataset_weights, dataset_length):
         '''get dataset weights'''
@@ -686,7 +701,7 @@ class ParquetSampler(BaseSampler):
     def reset(self, seed, skip_num=0):
         '''reset random seed, must do before use.'''
         self.seed = seed
-        self.skip_num = skip_num
+        self.skip_num = (skip_num + self.prefetch_worker_num - 1) // self.prefetch_worker_num
         path_idxs = list(range(len(self.file_list)))
         if self.shuffle:
             random.shuffle(path_idxs)

@@ -3,7 +3,7 @@
 import torch
 from core.dataset import (
     MixedHDFSDataset,
-    ValidHDFSDataset,
+    MixedValidHDFSDataset,
     build_item_augmentation,
     build_draw_batch_fn,
     build_device_augmentation,
@@ -83,7 +83,7 @@ class BaseRNNTRunner(BaseAsrRunner):
         )
 
         valid_split_each_dataset = self.solution_cfg.get('valid_multi_cer', False)
-        self.valid_data_loader = ValidHDFSDataset(
+        self.valid_data_loader = MixedValidHDFSDataset(
             self.valid_file_list,
             val_bucket_schedule,
             dataset_cfg,
@@ -103,3 +103,4 @@ class BaseRNNTRunner(BaseAsrRunner):
             if hasattr(self, 'reorder_dict_map'):
                 cfg.reorder_dict_map = getattr(self, 'reorder_dict_map')
             self.solution.init_beam_search(cfg, self.lm_solution)
+

@@ -4,6 +4,7 @@ supported: pickle, protobuf.
 '''
 
 import pickle
+from typing import Any
 import numpy as np
 from dataloader import ParseLoads
 from .preprocess import PREPROCESS
@@ -115,3 +116,21 @@ class DecordRaw:
             elif d_type == 'bytes':
                 item[name] = bytes.decode(feature)
         return item
+
+
+@PREPROCESS.register_module()
+class WdsFormat:
+    ''' parse wds dataset to kv format '''
+    def __init__(self, wav_key='npy'):
+        self.wav_key = wav_key
+
+    def __call__(self, item, **_kwargs):
+        ''' call func'''
+        if item is None or self.wav_key not in item:
+            return item
+        new_item = item['json']
+        new_item['uttid'] = item['__key__']
+        new_item['waveform'] = item['npy']
+        if 'augmentation' not in item:
+            new_item['augmentation'] = []
+        return new_item

@@ -4,25 +4,29 @@ An Mixed Dataloader
 import torch
 import time
 from torch.utils.data import DataLoader
-try:
-    from hyperpyyaml import load_hyperpyyaml
-except ImportError:
-    load_hyperpyyaml = None
 
 from core.extensions import mpu, AmpEnable
 from core.utils import get_dist_info, logging
 from core.dataset.batching import get_batch_strategy
 from core.dataset.falcon_dataset import FalconDataset
 from core.dataset.parquet_dataset import ParquetDataset
+from core.dataset.wds_dataset import WdsDataset
 from core.dataset.cuda import to_cuda, pin_memory
-from samantha.dataio.dataset import MultiIterableDataset
+from samantha.dataio.dataset import MultiIterableDataset, SplitIterableDataset
 
 
 class MixedDataLoader:
     '''MixedDataset'''
 
     def __init__(
-        self, dataset, bucket_schedule, cfg, batch_transforms, device_transforms=None, rank=0
+        self,
+        dataset,
+        bucket_schedule,
+        cfg,
+        batch_transforms,
+        device_transforms=None,
+        rank=0,
+        split_each_dataset=False,
     ):
         '''init'''
         self.dataset = dataset
@@ -66,18 +70,56 @@ class MixedDataLoader:
         self.cuda_cache_size = cfg.get('cuda_cache_size', 2)
         self.init_cuda_event(self.cuda_cache_size)
         self.prefetch_retry = cfg.get('prefetch_retry', 3)
+        self.split_each_dataset = split_each_dataset
+        self.dataloader_state_dict = dict()
+        for dataset in self.dataset._datasets:
+            dataset_kind = dataset.__class__.__name__
+            self.dataloader_state_dict[dataset_kind] = 0
+
+    def update_state_dict(self, data):
+        '''flush dataloader state dict'''
+        ### update data
+        data_state = data.pop('dataset_state', None)
+        if data_state:
+            # dataset class name
+            # this data and skip None data count
+            cur_dataset_kind, cur_data_cnt, _path_idx = data_state
+            self.dataloader_state_dict[cur_dataset_kind] += cur_data_cnt
 
     def __iter__(self):
         '''iter'''
         if self.dataloader is None:
+            persistent_workers = self.prefetch_worker_num > 0
             self.dataloader = DataLoader(
                 self.dataset,
                 num_workers=self.prefetch_worker_num,
                 batch_size=None,
                 collate_fn=MixedDataLoader._collate_fn,
-                persistent_workers=True,
+                persistent_workers=persistent_workers,
             )
+
+        # flash dataloader state dict
+        for dataset_kind in self.dataloader_state_dict:
+            self.dataloader_state_dict[dataset_kind] = 0
+
         for data in self.dataloader:
+            # flush dataloader state
+            # TODO: add there or add after draw batch
+            self.update_state_dict(data)
+            if data is None and self.split_each_dataset:
+                for data in self.batch_strategy.collect_last_batch():
+                    if not self.drop_last and len(data) > 0:
+                        try:
+                            batch_data = self.batch_transforms(data)
+                        except Exception:
+                            logging.warning(
+                                "rank %d: batch transforms failed", self.rank, exc_info=True
+                            )
+                            continue
+                        yield self._prefetch_batch(batch_data)
+                yield
+                continue
+
             batch_data = self.batch_strategy.collate_batch(data, self.max_batch_size)
             if batch_data is None:
                 # data is discarded or batch is not full
@@ -89,6 +131,7 @@ class MixedDataLoader:
                 # skip this bucket batch
                 continue
             yield self._prefetch_batch(batch_data)
+
         for data in self.batch_strategy.collect_last_batch():
             if not self.drop_last and len(data) > 0:
                 try:
@@ -176,6 +219,11 @@ class MixedDataLoader:
         event.wait()
         return batch_data
 
+    def __del__(self):
+        '''del
+        we need del dataloader because we set persistent_workers=True'''
+        if self.dataloader is not None:
+            del self.dataloader
 
 class MixedHDFSDataset:
     '''
@@ -197,43 +245,58 @@ class MixedHDFSDataset:
         '''init func'''
         self.rank, self.world_size = get_dist_info()
         self.cfg = cfg
-        self.falcon_dataset = None
-        self.parquet_dataset = None
-        self.web_dataset = None
-        self.path_list = path_list
+        self.origin_path_list = path_list  # mixed
+        # Distinguish file formats by file name
+        self.init_path_list(path_list)
         self.bucket_schedule = bucket_schedule
         self.item_transform = item_transform
         self.batch_transforms = batch_transforms
         self.device_transforms = device_transforms
-        self.num_samples = cfg.get('num_samples', 10000)
+        self.num_samples = cfg.get('num_samples', -1)
         self.weight = cfg.get('weight', None)
         self.split_path_list_by_rank = split_path_list_by_rank
         self.shuffle = shuffle
-        self.epoch = epoch_count
+        self.epoch_count = epoch_count
         self.skip_item_num = 0
-        self.build_dataloader()
+        self.weight = self.cfg.get('weight', dict())
+        self.dataloader = None
+        self._state = dict()
 
-    def build_dataloader(self):
-        '''build dataloader'''
+    def init_path_list(self, path_list):
+        '''filter parquet file list'''
+        self.kv_path_list = []
+        self.parquet_path_list = []
+        self.wds_path_list = []
+        for path in path_list:
+            if '.parquet' in path:
+                self.parquet_path_list.append(path)
+            elif '.tar' in path:
+                self.wds_path_list.append(path)
+            else:
+                self.kv_path_list.append(path)
+
+    def build_dataset(self):
+        '''build dataset'''
         datasets = []
         weights = []
-        # build falcon dataset
-        falcon_dataset = FalconDataset(
-            path_list=self.path_list,
-            cfg=self.cfg,
-            item_transform=self.item_transform,
-            rank=self.rank,
-            world_size=self.world_size,
-            shuffle=self.shuffle,
-            split_path_list_by_rank=self.split_path_list_by_rank,
-        )
-        datasets.append(falcon_dataset)
-        weights.append(self.weight)
+        if self.kv_path_list:
+            # build falcon dataset
+            falcon_dataset = FalconDataset(
+                path_list=self.kv_path_list,
+                cfg=self.cfg,
+                item_transform=self.item_transform,
+                rank=self.rank,
+                world_size=self.world_size,
+                shuffle=self.shuffle,
+                split_path_list_by_rank=self.split_path_list_by_rank,
+            )
+            datasets.append(falcon_dataset)
+            weights.append(self.weight.get('kv', None))
 
         # build parquet dataset
-        if self.cfg.get('parquet', None):
+        if self.parquet_path_list:
             parquet_dataset = ParquetDataset(
-                path_list=self.cfg.parquet.path_list,
+                path_list=self.parquet_path_list,
                 cfg=self.cfg,
                 item_transform=self.item_transform,
                 rank=self.rank,
@@ -242,22 +305,37 @@ class MixedHDFSDataset:
                 split_path_list_by_rank=self.split_path_list_by_rank,
             )
             datasets.append(parquet_dataset)
-            weights.append(self.cfg.parquet.get('weight', None))
-        else:
-            parquet_dataset = None
+            weights.append(self.weight.get('parquet', None))
 
         # build web dataset
-        if self.cfg.get('webdataset', None):
-            wds_cfg = load_hyperpyyaml(self.cfg.webdataset)
-            web_dataset = wds_cfg['wds_dataset']
+        if self.wds_path_list:
+            web_dataset = WdsDataset(
+                path_list=self.wds_path_list,
+                cfg=self.cfg,
+                item_transform=self.item_transform,
+                rank=self.rank,
+                world_size=self.world_size,
+                shuffle=self.shuffle,
+                split_path_list_by_rank=self.split_path_list_by_rank,
+            )
+            weights.append(self.weight.get('parquet', None))
+
             datasets.append(web_dataset)
-            weights.append(wds_cfg.get('weight', None))
-        else:
-            web_dataset = None
-            
+            weights.append(self.weight.get('wds', None))
 
         if sum([w is None for w in weights]) > 0:
             weights = None
+        return datasets, weights
+
+    def build_dataloader(self):
+        '''build dataloader'''
+        datasets, weights = self.build_dataset()
+
+        # dataset reset
+        for dataset in datasets:
+            dataset_kind = dataset.__class__.__name__
+            dataset.reset(self.epoch_count, self._state.get(dataset_kind, 0))
+            self._state[dataset_kind] = 0
 
         multi_iterable_dataset = MultiIterableDataset(
             datasets, num_samples=self.num_samples, weights=weights
@@ -275,22 +353,48 @@ class MixedHDFSDataset:
     def reset(self):
         '''reset'''
         logging.all_rank_info(
-            "rank %d: %s reset, epoch count %d, skip_item_num %d",
+            "rank %d: %s reset, epoch count %d, resume_state_dict %s",
             self.rank,
             self.__class__.__name__,
-            self.epoch,
-            self.skip_item_num,
+            self.epoch_count,
+            self._state,
         )
+        if self.dataloader is None:
+            self.build_dataloader()
         self.data_generator = iter(self.dataloader)
+        self.epoch_count += 1
+
+    def reset_epoch_count(self, epoch_cout, state_dict=0):
+        '''reset epoch count
+
+        It's for resume.
+
+        Args:
+            epoch_cout(int): epoch count
+            skip_item_num(int): reset item idx in the epoch
+        '''
+        self.epoch_count = epoch_cout
+        self._state = state_dict
+        logging.all_rank_info(
+            "rank %d: %s reset_epoch_count, epoch count %d, resume dataloader state %s",
+            self.rank,
+            self.__class__.__name__,
+            self.epoch_count,
+            self._state,
+        )
 
     def terminate(self):
         '''terminate'''
         logging.all_rank_info("rank %d: MixedHDFSDataset terminate", self.rank)
+        del self.dataloader
 
     def state_dict(self):
         '''state dict'''
-        state_dict = {'inner_data_count': 0}
-        return state_dict
+        return self.dataloader.dataloader_state_dict
+
+    def set_oom_info(self):
+        '''see oom info'''
+        return
 
     def next(self):
         '''next'''
@@ -299,3 +403,87 @@ class MixedHDFSDataset:
             return data
         except StopIteration:
             return None
+
+
+class MixedValidHDFSDataset(MixedHDFSDataset):
+    '''ValidHDFSDataset support reading multi datasets'''
+
+    def __init__(
+        self,
+        path_list,
+        bucket_schedule,
+        cfg,
+        item_transform,
+        batch_transforms,
+        device_transforms=None,
+        split_path_list_by_rank=True,
+        epoch_count=0,
+        shuffle=False,
+        split_each_dataset=False,
+    ):
+        cfg = cfg.copy()
+        self.split_each_dataset = split_each_dataset
+        cfg.prefetch_worker_num = 1
+        cfg.cache_name = cfg.get('valid_cache_name', 'falcon_dataset_valid')
+        super().__init__(
+            path_list,
+            bucket_schedule,
+            cfg,
+            item_transform,
+            batch_transforms,
+            device_transforms,
+            split_path_list_by_rank,
+            epoch_count,
+            shuffle,
+        )
+
+    def build_dataset(self):
+        '''build dataset'''
+        if not self.split_each_dataset:
+            return super().build_dataset()
+        datasets = []
+        weights = []
+        for kv_path in self.kv_path_list:
+            falcon_dataset = FalconDataset(
+                path_list=[kv_path],
+                cfg=self.cfg,
+                item_transform=self.item_transform,
+                rank=self.rank,
+                world_size=self.world_size,
+                shuffle=self.shuffle,
+                split_path_list_by_rank=self.split_path_list_by_rank,
+            )
+            datasets.append(falcon_dataset)
+
+        # build parquet dataset
+        for parquet_path in self.parquet_path_list:
+            parquet_dataset = ParquetDataset(
+                path_list=[parquet_path],
+                cfg=self.cfg,
+                item_transform=self.item_transform,
+                rank=self.rank,
+                world_size=self.world_size,
+                shuffle=self.shuffle,
+                split_path_list_by_rank=self.split_path_list_by_rank,
+            )
+            datasets.append(parquet_dataset)
+
+        return datasets, weights
+
+    def build_dataloader(self):
+        if not self.split_each_dataset:
+            return super().build_dataloader()
+
+        datasets, _weights = self.build_dataset()
+
+        split_iterable_dataset = SplitIterableDataset(datasets)
+
+        self.dataloader = MixedDataLoader(
+            dataset=split_iterable_dataset,
+            bucket_schedule=self.bucket_schedule,
+            cfg=self.cfg,
+            batch_transforms=self.batch_transforms,
+            device_transforms=self.device_transforms,
+            rank=self.rank,
+            split_each_dataset=self.split_each_dataset,
+        )

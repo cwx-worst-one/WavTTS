@@ -6,9 +6,21 @@ project = "librispeech_rnnt"
 runner = 'RNNTRunner'
 # increment to add and override args.
 data = dict(
-    data_root='hdfs://haruna/home/byte_arnold_hl_speech_asr/user/huanglu.thu19/datasets/dolphin/librispeech_wav/',
-    train_file_list='["train_sub{}".format(i) for i in range(16)]',
-    valid_file_list='["dev_clean", "dev_other"]',
+    data_root=[
+        'hdfs://haruna/home/byte_arnold_hl_speech_asr/user/huanglu.thu19/datasets/dolphin/librispeech_wav/',
+        'hdfs://haruna/home/byte_arnold_hl_speech_asr/user/litianyu.y/datasets/parquet/librispeech_wav/',
+        'hdfs://haruna/home/byte_arnold_hl_speech_asr/user/litianyu.y/datasets/webdataset/librispeech_wav/'
+    ],
+    train_file_list=[
+        '["train_sub{}".format(i) for i in range(16)]',
+        '["train_sub{}.parquet".format(i) for i in range(3)]', # 32M row group size - 71
+        '[f"{i:05d}.tar" for i in range(282)]', # 1000 + 4G per shard
+    ],
+    valid_file_list=[
+        '["dev_clean", "dev_other"]',
+        '["dev_clean.parquet", "dev_other.parquet"]',
+        '[f"dev_clean{i:05}.tar" for i in range(3)] + [f"dev_other{i:05}.tar" for i in range(3)]'
+    ],
     meta_file="meta",
     fbank_dim=80,
     io_cache_size=2048, # cache_size used by FalconReader
@@ -20,7 +32,7 @@ data = dict(
     max_batch_size=12800,
     shuffle=True,
     drop_last=False,
-    chunk_size=20,
+    chunk_size=40,
     use_lid=False,
     use_recombine=1,
     use_code_switch=1,
@@ -29,6 +41,7 @@ data = dict(
     train_item_transform=[
         dict(type='PickleParser'),
         dict(type='ProtoParser'),
+        dict(type='WdsFormat'), # parse wds data
         dict(type='DecordRaw', key2type={'frames':'int16', 'transcript':'bytes', 'uttid':'bytes'}),
         dict(type='LabelParser', in_key='transcript'),
         dict(type='WavConvert', in_key='frames'),
@@ -57,6 +70,7 @@ data = dict(
     valid_item_transform=[
         dict(type='PickleParser'),
         dict(type='ProtoParser'),
+        dict(type='WdsFormat'), # parse wds data
         dict(type='DecordRaw', key2type={'frames':'int16', 'transcript':'bytes', 'uttid':'bytes'}),
         dict(type='LabelParser', in_key='transcript'),
         dict(type='WavConvert', in_key='frames'),
@@ -77,11 +91,6 @@ data = dict(
         dict(type='RefLabelCollate'),
         dict(type='FbankCollate', fbank_dim=80),
     ],
-    weight=1, # kv weight
-    parquet={
-        'path_list':['hdfs://haruna/home/byte_arnold_hl_speech_asr/user/litianyu.y/datasets/parquet/librispeech_wav/train_sub000/data{}.parquet'.format(i) for i in range(16)],
-        'weight':1,
-    }
 )
 solution = dict(
     type='base_rnnt_solution',

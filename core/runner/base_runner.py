@@ -594,12 +594,12 @@ class BaseRunner(metaclass=ABCMeta):
         meta = {
             'epoch': self.epoch,
             'iter': self.iter,
-            'inner_data_count': 0,
+            'dataloader_state': None,
         }
         # update inner_utt
         if self.train_data_loader:
             dataloader_state_dict = self.train_data_loader.state_dict()
-            meta.update(dataloader_state_dict)
+            meta['dataloader_state'] = dataloader_state_dict
         if self._best_metric is not None:
             meta['best'] = self._best_metric
 
@@ -800,9 +800,11 @@ class BaseRunner(metaclass=ABCMeta):
 
         if resume_progress:
             self._epoch = checkpoint['meta']['epoch']
-            skip_data_num = checkpoint['meta'].get('inner_data_count', 0)
+            dataloader_state = checkpoint['meta'].get('dataloader_state', None)
+            if dataloader_state is None:
+                dataloader_state = checkpoint['meta'].get('inner_data_count', 0)
             if self.train_data_loader is not None:
-                self.train_data_loader.reset_epoch_count(self._epoch, skip_data_num)
+                self.train_data_loader.reset_epoch_count(self._epoch, dataloader_state)
             self._iter = checkpoint['meta']['iter'] + 1
             if not self.is_inference and not self.is_export_onnx and self._max_iters <= self._iter:
                 raise ValueError(

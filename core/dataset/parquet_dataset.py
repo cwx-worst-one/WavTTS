@@ -39,9 +39,10 @@ class ParquetDataset(IterableDataset):
         # preprocess each item, set on demand
         self.item_transform = item_transform
         self.epoch = 0
-        self.resume = 0
+        cfg = cfg.copy()
         cfg.sampler = 'ParquetSampler'
         self.sampler_cfg = setup_sampler_cfg(cfg)
+        self.skip_item_num = cfg.get('skip_item_num', 0)
         self.shuffle = shuffle
         self.sampler = None
         self.columns = cfg.get('columns', None)
@@ -51,6 +52,7 @@ class ParquetDataset(IterableDataset):
         self.io_reuse = cfg.get('io_reuse', 1)
         self.local_world_size = get_local_size()
         self.local_rank = get_local_rank()
+        self.dataset_kind = self.__class__.__name__
 
     def set_seed(self):
         '''set seed'''
@@ -61,8 +63,6 @@ class ParquetDataset(IterableDataset):
 
     def init_sampler(self):
         '''init sampler'''
-        self.local_world_size = get_local_size()
-        self.local_rank = get_local_rank()
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is None:
             self.prefetch_num = 1
@@ -96,8 +96,9 @@ class ParquetDataset(IterableDataset):
         self.set_seed()
         if self.sampler is None:
             self.init_sampler()
-        self.sampler.reset(self.base_seed, skip_num=self.resume)
-        self.resume = 0
+        self.sampler.reset(self.base_seed, skip_num=self.skip_item_num)
+        self.skip_item_num = 0
+        data_count = 0
         for row_groups, path_idx in self.sampler:
             kwargs = {
                 'local_rank': self.local_rank,
@@ -123,16 +124,24 @@ class ParquetDataset(IterableDataset):
                                 item = self.item_transform(item, **kwargs)
                             except Exception:
                                 logging.warning(
-                                    "rank %d: prefetch %d item_transform failed!",
+                                    "rank %d: %s prefetch %d item_transform failed!",
                                     self.rank,
+                                    self.__class__.__name__,
                                     self.pid,
                                     exc_info=True,
                                 )
-                        yield item
-
+                                data_count += 1
+                                continue
+                        data_count += 1
+                        if item is not None:
+                            item['dataset_state'] = (self.dataset_kind, data_count, path_idx)
+                            yield item
+                            data_count = 0
+            self.file_handle.close()
+        self.epoch += 1
     def reset(self, epoch_count=0, skip_item_num=0):
         '''
         dataset reset
         '''
         self.epoch = epoch_count
-        self.skip_item_num = skip_item_num
+        self.skip_item_num += skip_item_num

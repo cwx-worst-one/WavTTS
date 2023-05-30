@@ -6,13 +6,13 @@ falcon dataset support tfrecord and tensorbundle use FalconReader
 import random
 import numpy as np
 import torch
+
 from core.extensions import mpu
 from core.dataset.sampler import setup_sampler_cfg
 from core.utils.dist_util import get_local_rank, get_local_size
 from core.utils import logging
 from torch.utils.data import IterableDataset
 from dataloader import FalconReader
-
 
 class FalconDataset(IterableDataset):
     """
@@ -43,7 +43,7 @@ class FalconDataset(IterableDataset):
         self.reader = None
         self.item_transform = item_transform
         self.epoch = 0
-        self.resume = 0
+        self.skip_item_num = cfg.get('skip_item_num', 0)
         self.sampler_cfg = setup_sampler_cfg(cfg)
         self.shuffle = shuffle
         self.sampler = None
@@ -51,6 +51,7 @@ class FalconDataset(IterableDataset):
         self.io_reuse = cfg.get('io_reuse', 1)
         self.local_world_size = get_local_size()
         self.local_rank = get_local_rank()
+        self.dataset_kind = self.__class__.__name__
 
     def set_seed(self):
         '''set seed'''
@@ -115,8 +116,9 @@ class FalconDataset(IterableDataset):
             self.init_falconreader()
         if self.sampler is None:
             self.init_sampler()
-        self.sampler.reset(self.base_seed, skip_num=self.resume)
-        self.resume = 0
+        self.sampler.reset(self.base_seed, skip_num=self.skip_item_num)
+        self.skip_item_num = 0
+        data_count = 0
         for chunks, path_idxs in self.sampler:
             kwargs = {
                 'local_rank': self.local_rank,
@@ -136,6 +138,7 @@ class FalconDataset(IterableDataset):
                     self.io_thread_num,
                     exc_info=True,
                 )
+                data_count += len(chunks) * self.chunk_size
                 continue
             for path_idx, raw_data in zip(path_idxs, raw_datas):
                 kwargs['path_idx'] = path_idx
@@ -146,19 +149,26 @@ class FalconDataset(IterableDataset):
                     try:
                         item = self.item_transform(item, **kwargs)
                     except Exception:
+                        data_count += 1
                         logging.warning(
-                            "rank %d: prefetch %d item_transform failed!",
+                            "rank %d: %s prefetch %d item_transform failed!",
                             self.rank,
+                            self.__class__.__name__,
                             self.pid,
                             exc_info=True,
+
                         )
                         continue
+                    data_count += 1
                     if item is not None:
+                        item['dataset_state'] = (self.dataset_kind, data_count, path_idx)
                         yield item
+                        data_count = 0
+        self.epoch += 1
 
     def reset(self, epoch_count=0, skip_item_num=0):
         '''
         dataset reset
         '''
         self.epoch = epoch_count
-        self.skip_item_num = skip_item_num
+        self.skip_item_num += skip_item_num

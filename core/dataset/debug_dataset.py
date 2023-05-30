@@ -51,7 +51,7 @@ class DebugHDFSDataset(BaseDataset):
             epoch_count,
             *get_dist_info(),
             shuffle,
-            split_path_list_by_rank
+            split_path_list_by_rank,
         )
         self.prefetch_worker_num = cfg.get('prefetch_worker_num', 4)
         self.deterministic = cfg.get('deterministic', False)
@@ -202,11 +202,7 @@ class DebugHDFSDataset(BaseDataset):
                     try:
                         item = self.item_transform(item, **kwargs)
                     except Exception:
-                        logging.warning(
-                            "rank %d: item_transform failed!",
-                            self.rank,
-                            exc_info=True,
-                        )
+                        logging.warning("rank %d: item_transform failed!", self.rank, exc_info=True)
                         continue
                     if item is None:
                         continue
@@ -217,11 +213,7 @@ class DebugHDFSDataset(BaseDataset):
                     try:
                         batch_data = self.batch_transforms(batch_data)
                     except Exception:
-                        logging.warning(
-                            "rank %d: item_transform failed!",
-                            self.rank,
-                            exc_info=True,
-                        )
+                        logging.warning("rank %d: item_transform failed!", self.rank, exc_info=True)
                         continue
                     yield batch_data
                     del batch_data

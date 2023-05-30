@@ -224,15 +224,9 @@ class HDFSDataset(ProcessedDataset):
             assert len(self.dataset_weights) == len(self.dataset_length)
             assert sum(self.dataset_length) == len(self.origin_path_list)
             logging.info(
-                "rank %d: HDFSDataset dataset weights: %r",
-                self.rank,
-                self.dataset_weights,
+                "rank %d: HDFSDataset dataset weights: %r", self.rank, self.dataset_weights
             )
-            logging.info(
-                "rank %d: HDFSDataset dataset lengths: %r",
-                self.rank,
-                self.dataset_length,
-            )
+            logging.info("rank %d: HDFSDataset dataset lengths: %r", self.rank, self.dataset_length)
 
     def reset(self):
         """
@@ -631,11 +625,7 @@ class HDFSDataset(ProcessedDataset):
                 try:
                     batch_data = batch_transforms(batch_data)
                 except Exception:
-                    logging.warning(
-                        "rank %d: batch transforms failed.",
-                        rank,
-                        exc_info=True,
-                    )
+                    logging.warning("rank %d: batch transforms failed.", rank, exc_info=True)
                     # skip this bucket batch
                     continue
                 for _ in range(batch_reuse):
@@ -781,13 +771,7 @@ class ValidHDFSDataset(ProcessedDataset):
 
     @staticmethod
     def split_path(
-        path_list,
-        shuffle,
-        split_path_list_by_rank,
-        rank,
-        world_size,
-        prefetch_id=0,
-        prefetch_num=1,
+        path_list, shuffle, split_path_list_by_rank, rank, world_size, prefetch_id=0, prefetch_num=1
     ):
         """split paths."""
         my_paths = path_list.copy()
@@ -925,27 +909,15 @@ class ValidHDFSDataset(ProcessedDataset):
                                 safe_put(stop_queue, batch_queue, batch_data)
                             except Exception:
                                 logging.warning(
-                                    "rank %d: batch transforms failed.",
-                                    rank,
-                                    exc_info=True,
+                                    "rank %d: batch transforms failed.", rank, exc_info=True
                                 )
                     del raw_datas
                 if split_each_dataset:
                     ValidHDFSDataset.clear_bucket_list(
-                        stop_queue,
-                        batch_queue,
-                        batch_transforms,
-                        batch_strategy,
-                        rank,
-                        drop_last,
+                        stop_queue, batch_queue, batch_transforms, batch_strategy, rank, drop_last
                     )
             if not split_each_dataset:
                 ValidHDFSDataset.clear_bucket_list(
-                    stop_queue,
-                    batch_queue,
-                    batch_transforms,
-                    batch_strategy,
-                    rank,
-                    drop_last,
+                    stop_queue, batch_queue, batch_transforms, batch_strategy, rank, drop_last
                 )
             epoch_count += 1
