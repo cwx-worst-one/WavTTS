@@ -1,0 +1,4 @@
+testcase
+logs
+*.log
+*.csv

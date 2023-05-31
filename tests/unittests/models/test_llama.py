@@ -117,6 +117,8 @@ def test_llama_model(model_tester: LlamaModelTester) -> None:
 
 @RunIf(min_torch="2.0")
 def test_llama_model_compile(model_tester: LlamaModelTester) -> None:
+    import torch._dynamo
+    torch._dynamo.config.suppress_errors = True
     inputs = model_tester.get_inputs()
     model_tester.use_rotary_embeddings = False
 

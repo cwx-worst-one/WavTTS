@@ -1,0 +1,32 @@
+model_params:
+    model: 'GPT2'
+    gradient_checkpointing: False
+    nlayer: 24
+    nhead: 16
+    vocab_size: 4096
+    dtype: !apply:tests.model_test.utils.parser.parse_precision ["fp16"]
+    providers: ["huggingface", "xperf", "ctiga", "other_provider"]
+    from_pretrained: {'huggingface': "tests/model_test/testcase/hf_test_model"}
+
+benchmark_params:
+    metrics: ["time", "gpu_memory", "other_metric"]
+    repeats: 10
+    verbose: False
+    output_dir: 'tests/model_test/logs'
+    exp_dir: 'test1'
+    action: 'train'
+    use_ft_linear: False
+    use_ft_attn: True
+    use_ft_layernorm: False
+    gradient_checkpointing: False
+    fused_bias_fc: False
+    fused_ft_kernel: False
+    fused_mlp: False
+    fused_dropout_add_ln: False
+    residual_in_fp32: False
+    variables:
+        batch_size: [2, 4, 8, 16]
+        max_seqlen: [512, 1024]
+
+
+

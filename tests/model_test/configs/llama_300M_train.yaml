@@ -1,0 +1,35 @@
+model_params:
+    model: 'Llama'
+    model_name: '300M'
+    gradient_checkpointing: False
+    N: 256
+    max_position_embeddings: 2048
+    vocab_size: 32000
+    bos_token_id: 1
+    eos_token_id: 2
+    rotary_emb_compat: "default"
+    dtype: !apply:tests.model_test.utils.parser.parse_precision ["fp16"]
+    providers: ["huggingface", "ctiga", "janne"]
+
+benchmark_params:
+    metrics: ["time", "gpu_memory"]
+    repeats: 10
+    verbose: False
+    output_dir: 'tests/model_test/logs'
+    exp_dir: 'test1'
+    action: 'train'
+    use_ft_linear: False
+    use_ft_attn: True
+    use_ft_layernorm: False
+    gradient_checkpointing: False
+    fused_bias_fc: False
+    fused_ft_kernel: False
+    fused_mlp: False
+    fused_dropout_add_ln: False
+    residual_in_fp32: False
+    variables:
+        batch_size: [2, 4, 8, 16]
+        max_seqlen: [512, 1024]
+
+
+

@@ -218,3 +218,4 @@ RUN pip3 uninstall -y triton && \
     pip3 install expecttest hypothesis
 
 RUN pip3 uninstall -y pyarrow && pip3 install fsspec==2021.11.1 pyarrow==8.0.0
+RUN pip3 install ruamel.yaml==0.17.24
