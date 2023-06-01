@@ -2,7 +2,18 @@ import json
 import re
 import sys
 import tarfile
-from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Set, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 from pyarrow.fs import FileSystem
 from webdataset import filters, shardlists
@@ -17,6 +28,7 @@ from webdataset.tariterators import (
 )
 
 from samantha.utils.hdfs_helper import hopen
+from samantha.utils.hdfs_tools import hdfs_open
 
 
 def group_by_keys(
@@ -106,57 +118,60 @@ def indexed_tarfile_iterator(
         a stream of samples.
     """
     with tarfile.open(fileobj=fileobj, mode="r:") as stream:
-        with hopen(index, "r") as index_stream:
+        index_stream = None
+        if isinstance(index, str):
+            index_stream = hdfs_open(index, "r")
             index_iter = iter(index_stream)
-            curr_index = None
-            for tarinfo in stream:
-                fname = tarinfo.name
-                try:
-                    if not tarinfo.isreg():
-                        continue
-                    if fname is None:
-                        continue
-                    if (
-                        "/" not in fname
-                        and fname.startswith(meta_prefix)
-                        and fname.endswith(meta_suffix)
-                    ):
-                        # skipping metadata for now
-                        continue
-                    if skip_meta is not None and re.match(skip_meta, fname):
-                        continue
-                    prefix, _ = base_plus_ext(fname)
-                    if prefix is None:
-                        continue
-                    if curr_index is None or (
-                        curr_index["found"] and curr_index["prefix"] != prefix
-                    ):
-                        curr_index = parse_index(next(index_iter))
-                    if curr_index["prefix"] != prefix:
-                        continue
-                    if not curr_index["found"]:  # flush index data if there's any
-                        if "data" in curr_index:
-                            # WebDataset will not decode if the filename begins with "_"
-                            yield dict(
-                                fname=f"{prefix}.__index_data__",
-                                data=curr_index["data"],
-                            )
-                        curr_index["found"] = True
-                    data = stream.extractfile(tarinfo).read()
-                    result = dict(fname=fname, data=data)
-                    yield result
-                    stream.members = []
-                except StopIteration:  # this means the index stream is finished
+        elif isinstance(index, list):
+            index_iter = iter(index)
+        curr_index = None
+        for tarinfo in stream:
+            fname = tarinfo.name
+            try:
+                if not tarinfo.isreg():
+                    continue
+                if fname is None:
+                    continue
+                if (
+                    "/" not in fname
+                    and fname.startswith(meta_prefix)
+                    and fname.endswith(meta_suffix)
+                ):
+                    # skipping metadata for now
+                    continue
+                if skip_meta is not None and re.match(skip_meta, fname):
+                    continue
+                prefix, _ = base_plus_ext(fname)
+                if prefix is None:
+                    continue
+                if curr_index is None or (
+                    curr_index["found"] and curr_index["prefix"] != prefix
+                ):
+                    curr_index = parse_index(next(index_iter))
+                if curr_index["prefix"] != prefix:
+                    continue
+                if not curr_index["found"]:  # flush index data if there's any
+                    if "data" in curr_index:
+                        # WebDataset will not decode if the filename begins with "_"
+                        yield dict(
+                            fname=f"{prefix}.__index_data__", data=curr_index["data"]
+                        )
+                    curr_index["found"] = True
+                data = stream.extractfile(tarinfo).read()
+                result = dict(fname=fname, data=data)
+                yield result
+                stream.members = []
+            except StopIteration:  # this means the index stream is finished
+                break
+            except Exception as exn:  # pragma: no cover
+                if hasattr(exn, "args") and len(exn.args) > 0:
+                    exn.args = (exn.args[0] + " @ " + str(fileobj),) + exn.args[1:]
+                if handler(exn):
+                    continue
+                else:
                     break
-                except Exception as exn:  # pragma: no cover
-                    if hasattr(exn, "args") and len(exn.args) > 0:
-                        exn.args = (
-                            str(exn.args[0]) + " @ " + str(fileobj),
-                        ) + exn.args[1:]
-                    if handler(exn):
-                        continue
-                    else:
-                        break
+        if index_stream is not None:
+            index_stream.close()
     # We need to close fileobj after close the stream,
     # otherwise, hdfs client will throw an error
     fileobj.close()
@@ -264,7 +279,7 @@ class IndexedWebDataset(DataPipeline, FluidInterface):
 
     def __init__(
         self,
-        url2index: Union[str, Dict[str, str]],
+        url2index: Union[str, Dict[str, str], Dict[str, List]],
         handler: Callable[[Exception], bool] = reraise_exception,
         resampled: bool = False,
         shardshuffle: Optional[Any] = None,
