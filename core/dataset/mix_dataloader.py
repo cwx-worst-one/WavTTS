@@ -318,7 +318,6 @@ class MixedHDFSDataset:
                 shuffle=self.shuffle,
                 split_path_list_by_rank=self.split_path_list_by_rank,
             )
-            weights.append(self.weight.get('parquet', None))
 
             datasets.append(web_dataset)
             weights.append(self.weight.get('wds', None))
@@ -451,7 +450,7 @@ class MixedValidHDFSDataset(MixedHDFSDataset):
                 rank=self.rank,
                 world_size=self.world_size,
                 shuffle=self.shuffle,
-                split_path_list_by_rank=self.split_path_list_by_rank,
+                split_path_list_by_rank=False,
             )
             datasets.append(falcon_dataset)
 
@@ -464,7 +463,7 @@ class MixedValidHDFSDataset(MixedHDFSDataset):
                 rank=self.rank,
                 world_size=self.world_size,
                 shuffle=self.shuffle,
-                split_path_list_by_rank=self.split_path_list_by_rank,
+                split_path_list_by_rank=False,
             )
             datasets.append(parquet_dataset)
 

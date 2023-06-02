@@ -160,7 +160,7 @@ class NativeSampler(BaseSampler):
         '''
         check whether need expand file nums
         '''
-        multiples = 4 * (
+        multiples = (
             self.world_size * self.prefetch_worker_num
             if self.split_path_by_rank
             else self.prefetch_worker_num
@@ -724,4 +724,6 @@ class ParquetSampler(BaseSampler):
             num_row_groups = list(range(num_row_groups))
             if self.rows_group_shuffle:
                 random.shuffle(num_row_groups)
+            if not self.split_path_by_rank:
+                num_row_groups = split_list(num_row_groups, self.world_size)[self.rank]
             yield num_row_groups, path_idx
