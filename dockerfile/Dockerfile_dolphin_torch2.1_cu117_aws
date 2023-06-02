@@ -207,3 +207,67 @@ RUN pip3 uninstall -y triton && \
 
 RUN pip3 uninstall -y pyarrow && pip3 install --no-cache-dir fsspec==2023.6.0 pyarrow==12.0.0 && \
     pip3 install --no-cache-dir ruamel.yaml==0.17.24
+
+
+################### AWS #########################
+ARG EFA_INSTALLER_VERSION=1.23.0
+ARG AWS_OFI_NCCL_VERSION=aws
+ARG NCCL_TESTS_VERSION=v2.0.0
+
+RUN apt-get update -y \
+    && apt-get purge -y libmlx5-1 ibverbs-utils libibverbs-dev libibverbs1 \
+    && apt-get update -y \
+    && apt-get install -y --allow-unauthenticated \
+    git \
+    gcc \
+    vim \
+    kmod \
+    openssh-client \
+    openssh-server \
+    build-essential \
+    curl \
+    autoconf \
+    libtool \
+    gdb \
+    automake \
+    python3-distutils \
+    cmake \
+    pciutils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update -y && apt install -y libopenmpi-dev
+RUN pip install mpi4py
+
+RUN apt-get update -y && apt-get install -y environment-modules tcl libnl-3-200 libnl-3-dev libnl-route-3-200 libnl-route-3-dev
+
+RUN cd $HOME \
+    && curl -O "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz" \
+    && tar -xf $HOME/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz \
+    && cd aws-efa-installer \
+    && apt install -y ./DEBS/UBUNTU2004/x86_64/rdma-core/*.deb \
+    && apt install -y ./DEBS/UBUNTU2004/x86_64/*.deb \
+    && cd - \
+    && rm -fr aws-efa-installer $HOME/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz
+
+
+###################################################
+## Install NCCL
+RUN git clone --branch v2.11.4-1 --depth 1 "https://github.com/NVIDIA/nccl.git" /opt/nccl \
+    && cd /opt/nccl \
+    && make -j src.build CUDA_HOME=/usr/local/cuda \
+    NVCC_GENCODE="-gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_70,code=sm_70 -gencode=arch=compute_60,code=sm_60"
+
+###################################################
+## Install AWS-OFI-NCCL plugin
+RUN git clone "https://github.com/aws/aws-ofi-nccl.git" /opt/aws-ofi-nccl \
+    && cd /opt/aws-ofi-nccl \
+    && git checkout ${AWS_OFI_NCCL_VERSION} \
+    && ./autogen.sh \
+    && ./configure --prefix=/opt/aws-ofi-nccl/install \
+       --with-libfabric=/opt/amazon/efa/ \
+       --with-cuda=/usr/local/cuda \
+       --with-mpi=/opt/amazon/openmpi/ \
+       --enable-platform-aws \
+    && make && make install \
+    && cd - \
+    && rm -fr /opt/aws-ofi-nccl
