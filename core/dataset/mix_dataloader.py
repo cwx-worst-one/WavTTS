@@ -70,6 +70,7 @@ class MixedDataLoader:
         self.cuda_cache_size = cfg.get('cuda_cache_size', 2)
         self.init_cuda_event(self.cuda_cache_size)
         self.prefetch_retry = cfg.get('prefetch_retry', 3)
+        self.persistent_workers = cfg.get('persistent_workers', True)
         self.split_each_dataset = split_each_dataset
         self.dataloader_state_dict = dict()
         for dataset in self.dataset._datasets:
@@ -95,7 +96,7 @@ class MixedDataLoader:
                 num_workers=self.prefetch_worker_num,
                 batch_size=None,
                 collate_fn=MixedDataLoader._collate_fn,
-                persistent_workers=persistent_workers,
+                persistent_workers=self.persistent_workers,
             )
 
         # flash dataloader state dict
@@ -423,6 +424,8 @@ class MixedValidHDFSDataset(MixedHDFSDataset):
         cfg = cfg.copy()
         self.split_each_dataset = split_each_dataset
         cfg.prefetch_worker_num = 1
+        cfg.persistent_workers = False
+        cfg.global_shuffle = False
         cfg.cache_name = cfg.get('valid_cache_name', 'falcon_dataset_valid')
         super().__init__(
             path_list,
