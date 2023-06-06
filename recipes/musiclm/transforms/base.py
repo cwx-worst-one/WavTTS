@@ -17,7 +17,7 @@ class TransformBase:
             self.skipped += 1
             if self.skipped % 100 == 0:
                 print(
-                    f"Skipped {self.skipped}/{self.count} items",
+                    f"[{torch.utils.data.get_worker_info().id}] Skipped {self.skipped}/{self.count} items",
                     file=sys.stderr,
                     flush=True,
                 )

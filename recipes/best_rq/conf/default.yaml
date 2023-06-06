@@ -1,0 +1,200 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+ckpt_path: null
+
+seed: 555
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+extra_params:
+    sample_rate: 16000
+    duration: 10
+    fbank_dim: 80
+    fbank_mean_path: /mnt/bn/zongyu-lq/mcc40m_fbank_cmvn/mean_1600.pt
+    fbank_std_path: /mnt/bn/zongyu-lq/mcc40m_fbank_cmvn/std_1600.pt
+
+# running parameters
+run_opts:
+    fast_dev_run: False
+    log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+    log_name: best_rq
+    version: mcc40m
+    precision: 16
+    num_workers: 6
+    accelerator: auto
+    max_steps: 2000000
+    batch_size: 56
+    learning_rate: 4.0e-4
+    warmup_steps: 10000
+    cycle_steps: 500000
+    weight_decay: 0.01
+    sub_shuffle_buffer: 60
+    min_volume_threshold: 0.05
+    loudness_ratio_threshold: 0.1
+    shuffle_buffer: 360
+    gradient_clip_val: 1.0
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+train_dataset: !new:recipes.best_rq.modules.datasets.WrappedMCC40MDataset
+    url2index_list:
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/a.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/b.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/c.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/d.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/e.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/f.tsv"
+    sample_rate: !ref <extra_params[sample_rate]>
+    fbank_dim: !ref <extra_params[fbank_dim]>
+    fbank_mean_path: !ref <extra_params[fbank_mean_path]>
+    fbank_std_path: !ref <extra_params[fbank_std_path]>
+    batch_size: !ref <run_opts[batch_size]>
+    duration: !ref <extra_params[duration]>
+    shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+    sub_shuffle_buffer_size: !ref <run_opts[sub_shuffle_buffer]>
+    audio_key: "mp3"
+    min_volume_threshold: !ref <run_opts[min_volume_threshold]>
+    loudness_ratio_threshold: !ref <run_opts[loudness_ratio_threshold]>
+    resampled: True
+    shardshuffle: True
+    num_samples: -1
+    seed: !ref <seed>
+
+validation_dataset: !new:recipes.best_rq.modules.datasets.KaraokeDataset
+    urls: "pipe:hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/data/karaoke_for_singsong/shards-0131.tar"
+    nodesplitter: !name:recipes.musiclm.datamodules.webdataset.return_self
+    training: False
+    fbank_dim: !ref <extra_params[fbank_dim]>
+    fbank_mean_path: !ref <extra_params[fbank_mean_path]>
+    fbank_std_path: !ref <extra_params[fbank_std_path]>
+    batch_size: !ref <run_opts[batch_size]>
+    sample_rate: !ref <extra_params[sample_rate]>
+    duration: !ref <extra_params[duration]>
+    audio_key: "acc.npy"
+    sample_range_key: "acc_sample_range.npy"
+    min_volume_threshold: !ref <run_opts[min_volume_threshold]>
+
+pl_datamodule: !new:recipes.best_rq.modules.lit_datamodule.DataModule
+    train_dataset: !ref <train_dataset>
+    validation_dataset: !ref <validation_dataset>
+    num_workers: !ref <run_opts[num_workers]>
+    pin_memory: True
+
+model_config:
+    model_type: 'BestRqPretrainModel'
+    # front_end
+    front_end_type: 'Conv2dPooling'
+    front_end_conv0_ch: 256
+    front_end_conv1_ch: 256
+    front_end_padding: 1
+    downsampling_size: 4
+    fbank_dim: !ref <extra_params[fbank_dim]>
+    # backbone
+    acoustic_backbone_type: 'MaskedConformerBackbone'
+    conformer_normalize_before: True
+    conformer_attention_heads: 8
+    conformer_mask_topology: Null
+    conformer_linear_units: 4096
+    conformer_num_blocks: 24
+    conformer_dropout_rate: 0.1
+    conformer_positional_dropout_rate: 0.1
+    conformer_attention_dropout_rate: 0.1
+    conformer_positionwise_layer_type: 'linear'
+    conformer_activation_fn: 'gelu'
+    conformer_positionwise_conv_kernel_size: 1
+    conformer_macaron_style: 1
+    conformer_pos_enc_layer_type: 'fix_rel_pos'
+    conformer_selfattention_layer_type: 'rel_selfattn'
+    conformer_layer_order: 'mhsa_before_conv'
+    conformer_use_cnn_module: 1
+    conformer_cnn_module: 'ConvolutionModule'
+    conformer_cnn_module_kernel: '5'
+    conformer_cnn_norm_type: 'layer_norm'
+    conformer_layernorm_interval: 0
+    conformer_weight_scale: 1.0
+    conformer_half_pooling: 0
+    backbone_memory_size: 1024
+    dropout: 0.1
+    # BEST-RQ configure
+    quantizer_input_dim: 720 # Conv2dPooling stack 7 frames but 2 frames are repeated. Currently we simply use a repeated Unfold function.
+    encoder_output_dim: 1024
+    n_softmax: 8
+    mask_prob: 0.2
+    mask_span_length: 40 # 400ms
+    valid_mask_start_stride: 2000 # 2s
+    codebook_size: 4096
+    codebook_dim: 16
+    prototype_initialization_method: 'gaussian'
+    projection_initialization_method: 'xavier'
+    # Loss
+    label_smooth_factor: 0
+
+model_args: !new:core.utils.Config
+    cfg_dict: !ref <model_config>
+
+model_cls: !name:core.solutions.pretrain.bestrq_pretrain_solution.BestRqPretrainModel
+    args: !ref <model_args>
+
+optimizer_cls: !name:torch.optim.AdamW
+    lr: !ref <run_opts[learning_rate]>
+    weight_decay: !ref <run_opts[weight_decay]>
+    betas: [0.9, 0.96]
+    eps: 0.00000001
+
+scheduler_cls: !name:recipes.best_rq.modules.lit_module.WarmupCosine
+    init_lr: !ref <run_opts[learning_rate]>
+    warmup_steps: !ref <run_opts[warmup_steps]>
+    cycle_steps: !ref <run_opts[cycle_steps]>
+    min_lr: !ref <run_opts[learning_rate]> * 0.1
+
+pl_module: !new:recipes.best_rq.modules.lit_module.BestRq
+    checkpointing: False
+    model_cls: !ref <model_cls>
+    optimizer_cls: !ref <optimizer_cls>
+    scheduler_cls: !ref <scheduler_cls>
+
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[log_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+    default_hp_metric: False
+
+callbacks:
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      save_top_k: 10
+      save_last: True
+      monitor: tr_loss
+      mode: min
+      filename: "{step:06d}-{tr_loss:.4f}"
+    - !new:pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: 'step'
+    - !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
+
+plugins:
+    - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    strategy: "ddp_find_unused_parameters_false"
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: 'auto'
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    log_every_n_steps: 100
+    max_steps: !ref <run_opts[max_steps]>
+    precision: !ref <run_opts[precision]>
+    accumulate_grad_batches: 1
+    gradient_clip_val: !ref <run_opts[gradient_clip_val]>
+    val_check_interval: 3000
+    check_val_every_n_epoch: null
+    num_sanity_val_steps: 2
+    callbacks: !ref <callbacks>
+    plugins: !ref <plugins>

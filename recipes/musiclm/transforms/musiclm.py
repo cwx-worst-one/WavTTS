@@ -1,6 +1,5 @@
 from typing import Any, Dict, List, Generator, Optional
 import io
-import sys
 import torch
 import random
 from torchaudio_augmentations import Compose
@@ -243,7 +242,16 @@ class MCCTransforms(TransformBase):
             cropped_audio = audio[:, st_sample:en_sample]
             if not self.is_loud(cropped_audio):
                 continue
-            yield {"audio.npy": cropped_audio}
+            genre = x["__url__"].split("/")[-2].split(".")[0]
+            output = {
+                "audio": cropped_audio,
+                "clip_id": x["metadata.json"]["clip_id"],
+                "meta_song_id": x["metadata.json"]["meta_song_id"],
+                "genre": genre,
+                "sample_start_pos": st_sample,
+                "sample_rate": self.sample_rate
+            }
+            yield output
             num_crops += 1
             if num_crops >= max_num_crops:
                 break
