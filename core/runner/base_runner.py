@@ -834,6 +834,19 @@ class BaseRunner(metaclass=ABCMeta):
                 resume_iters=self._iter,
             )
 
+        # NOTE: fix torch2.0 fused adam resume issue
+        if version.parse(torch.__version__) >= version.parse('2.0'):
+            if self.optimizer.__class__ in (
+                torch.optim.Adam, 
+                torch.optim.AdamW,
+                ) and self.optimizer.defaults.get('fused', False):
+                for group in self.optimizer.param_groups:
+                    for p in group['params']:
+                        state = self.optimizer.state[p]
+                        if group['capturable'] or group['fused']:
+                            if 'step' in state and isinstance(state['step'], torch.Tensor):
+                                state['step'] = state['step'].cuda()
+
         logging.info('resumed epoch %d, iter %d', self.epoch, self.iter)
         return True
 
