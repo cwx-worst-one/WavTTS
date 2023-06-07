@@ -821,7 +821,7 @@ class MemoryMaskMultiheadAttention(MultiheadAttention):
     def regist_memory_mask(mask_topology):
         '''regist_memory_mask'''
         max_length = 3000
-        temp_mask = torch.ones((max_length, max_length), device='cuda')
+        temp_mask = torch.ones((max_length, max_length))
         if mask_topology is not None:
             left_kernel_size, right_kernel_size = mask_topology
             if left_kernel_size >= 0:
@@ -892,7 +892,7 @@ class MemoryMaskMultiheadAttention(MultiheadAttention):
 
     def apply_attn_weights_mask(self, attn_weights, do_attn_mask=True, key_padding_mask=None):
         if do_attn_mask:
-            self_att_memory_mask = self.get_self_att_memory_mask()
+            self_att_memory_mask = self.get_self_att_memory_mask().to(attn_weights.device)
             _, _, tgt_len, src_len = attn_weights.size()
             if self.training:
                 self_attn_memory_mask = self_att_memory_mask[0:tgt_len, 0:src_len]
@@ -1174,7 +1174,7 @@ class MemoryMaskRelPositionMultiHeadedAttention(MemoryMaskMultiheadAttention):
         _, _, tgt_len, src_len = attn_weights.size()
         assert tgt_len <= src_len
 
-        self_att_memory_mask = self.get_self_att_memory_mask()
+        self_att_memory_mask = self.get_self_att_memory_mask().to(attn_weights.device)
         self_att_memory_mask = self_att_memory_mask[src_len - tgt_len : src_len, 0:src_len]
 
         attn_weights = attn_weights.masked_fill(

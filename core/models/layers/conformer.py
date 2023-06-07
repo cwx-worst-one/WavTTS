@@ -416,7 +416,7 @@ class ConformerLayer(nn.Module):
         '''forward of self attention'''
         if self.training and self.fused_conformer and cache is None and pos_emb is not None:
             # When exporting QSVD Conformer, self_attn will be replaced by panther module
-            self_att_memory_mask = self.self_attn.get_self_att_memory_mask()
+            self_att_memory_mask = self.self_attn.get_self_att_memory_mask().to(x.device)
             ws = [
                 self.self_attn.in_proj.weight,
                 self.self_attn.in_proj.bias,
