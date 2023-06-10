@@ -1,6 +1,3 @@
-[submodule "llm"]
-	path = llm
-	url = git@code.byted.org:lab-audio/sami_ai_llm.git
 [submodule "mariana"]
 	path = mariana
 	url = git@code.byted.org:seed/mariana.git
