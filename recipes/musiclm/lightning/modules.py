@@ -1,4 +1,5 @@
 import math
+import time
 from typing import Optional, Tuple, Union
 import torch
 import torch.nn as nn
@@ -34,7 +35,14 @@ class BaseModule(pl.LightningModule):
         self.extra_params = DotDict(extra_params)
         self.requires = {}
         self.val_outputs = dict()
+        # Variables for MFU calculation
+        self.last_time = None
+        self.exclude_time = 0
+        self.accumulate_tokens = 0
+        self.accumulate_flops = 0
+        self.flops_factor = 2
         if checkpointing:
+            self.flops_factor = 3
             self.model.gradient_checkpointing_enable()
     
     def on_before_optimizer_step(self, optimizer):
@@ -60,14 +68,28 @@ class BaseModule(pl.LightningModule):
             return seq.reshape(b, -1, self.extra_params.n_seers).transpose(2, 1).reshape(b, -1)
         else:
             return seq.reshape(b, self.extra_params.n_seers, -1).transpose(2, 1).reshape(b, -1)
+    
+    def flops_per_token(self, seq_len):
+        L, H, T, V = (
+            self.model.config.num_hidden_layers,
+            self.model.config.hidden_size,
+            seq_len,
+            self.model.config.vocab_size,
+        )
+        N = 12 * H * H * L + V * H
+        fwd_bwd_factor = 2 + 2 * self.flops_factor
+        flops_per_token = fwd_bwd_factor * (N + 2 * L * H * T + 3 * L * H)
+        return flops_per_token
 
     def _shared_step(self, batch):
         if isinstance(batch, list):
             batch = batch[0]
         if batch.dim() == 3:
             batch = batch.squeeze(1)
+        t = time.perf_counter()
         with torch.autocast(device_type="cuda", enabled=False):
             input_ids, target_ids = self.prepare_feature(batch.float())
+        self.exclude_time += time.perf_counter() - t
         logits = self.model(input_ids=input_ids)
         if isinstance(logits, dict):
             logits = logits["logits"]
@@ -76,6 +98,35 @@ class BaseModule(pl.LightningModule):
         x = logits[:, -target_ids.size(1) :, :]
         loss = self.criterion(x, target_ids)
         accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
+        seq_len = input_ids.size(1)
+        num_tokens = input_ids.size(0) * seq_len
+        self.accumulate_tokens += num_tokens
+        self.accumulate_flops += self.flops_per_token(seq_len) * num_tokens
+        if self.trainer.global_step % self.trainer.log_every_n_steps == 0:
+            # Calculate FLOPs
+            if self.last_time is None:
+                self.last_time = time.perf_counter()
+            else:
+                cur_time = time.perf_counter()
+                duration = cur_time - self.last_time
+                # Exclude time for preparing features
+                flops = self.accumulate_flops / (duration  - self.exclude_time)
+                peak_flops = 1
+                if self.trainer.precision in (32, '32', '32-true'):
+                    peak_flops = 19.5e12
+                elif self.trainer.precision in (16, "16", "16-mixed", 'bf16', 'bf16-mixed'):
+                    peak_flops = 312e12
+                elif self.trainer.precision in (64, '64', '64-true'):
+                    peak_flops = 9.7e12
+                mfu = flops / peak_flops
+                num_tokens_per_sec = self.accumulate_tokens / duration
+                self.log("training/mfu", mfu, prog_bar=True, sync_dist=True)
+                self.log("training/tokens_per_second(M)", num_tokens_per_sec / 1e6, prog_bar=True, sync_dist=True, reduce_fx="sum")
+
+                self.last_time, self.exclude_time = cur_time, 0
+                self.accumulate_tokens = 0
+                self.accumulate_flops = 0
+
         return loss, accu
 
     def training_step(self, batch, batch_idx):

@@ -126,13 +126,16 @@ pl_module: !new:recipes.musiclm.lightning.modules.CoarseModule
             - !name:recipes.musiclm.requires.model_initializer.init_soundstream
               cache_dir: !ref <run_opts[cache_dir]>
 
-logger: !new:pytorch_lightning.loggers.TensorBoardLogger
-    save_dir: !ref <run_opts[log_dir]>
-    name: !ref <run_opts[log_name]>
-    version: !ref <run_opts[version]>
-    default_hp_metric: False
-
-log_gradient_scaler: !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
+logger:
+    - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
+      save_dir: !ref <run_opts[log_dir]>
+      name: !ref <run_opts[log_name]>
+      version: !ref <run_opts[version]>
+      default_hp_metric: False
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[log_dir]>
+      project: !ref <run_opts[log_name]>
+      version: !ref <run_opts[version]>
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
