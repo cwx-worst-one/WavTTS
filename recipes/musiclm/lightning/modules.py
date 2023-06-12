@@ -1,6 +1,5 @@
 import math
 from typing import Optional, Tuple, Union
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -72,6 +71,8 @@ class BaseModule(pl.LightningModule):
         logits = self.model(input_ids=input_ids)
         if isinstance(logits, dict):
             logits = logits["logits"]
+        elif isinstance(logits, tuple):
+            logits = logits[0]
         x = logits[:, -target_ids.size(1) :, :]
         loss = self.criterion(x, target_ids)
         accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
@@ -278,6 +279,151 @@ class SemanticModule(BaseModule):
                     semantic_samples = samples
                 else:
                     semantic_samples = torch.cat([semantic_samples, samples], dim=1)
+        return semantic_samples
+
+
+class SemanticDiffusionModule(BaseModule):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+        assert self.model.config.n_embd % 2 == 0
+        self.rff_freq = nn.Parameter(
+            16 * torch.randn([1, int(self.model.config.n_embd // 2)]),
+            requires_grad=False
+        )
+        self.save_hyperparameters()
+
+    def _shared_step(self, batch):
+        if isinstance(batch, list):
+            batch = batch[0]
+        if batch.dim() == 3:
+            batch = batch.squeeze(1)
+        with torch.autocast(device_type="cuda", enabled=False):
+            mulan_ids, sigmas_embeds, noisy_embeds, target = self.prepare_feature(batch.float())
+        mulan_embeds = self.model.transformer.wte(mulan_ids)
+        encoder_hidden_states = torch.cat([sigmas_embeds, mulan_embeds], dim=1)
+        logits = self.model(
+            inputs_embeds=noisy_embeds,
+            encoder_hidden_states=encoder_hidden_states,
+        )
+        if isinstance(logits, dict):
+            logits = logits["logits"]
+        loss = self.criterion(logits, target)
+        return loss
+
+    def training_step(self, batch, batch_idx):
+        loss = self._shared_step(batch)
+        self.log_dict({"tr_loss": loss}, prog_bar=True, sync_dist=True)
+        return loss
+
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
+        loss = self._shared_step(batch)
+        if dataloader_idx not in self.val_outputs:
+            self.val_outputs[dataloader_idx] = []
+        self.val_outputs[dataloader_idx].append((loss))
+
+    def on_validation_epoch_end(self):
+        for dataloader_idx, outputs in self.val_outputs.items():
+            loss = 0
+            for l in outputs:
+                loss += l
+            loss /= len(outputs)
+
+            self.log_dict(
+                {
+                    f"val_loss_{dataloader_idx}": loss,
+                },
+                prog_bar=True,
+                sync_dist=True,
+            )
+            self.val_outputs[dataloader_idx] = []
+
+    @torch.no_grad()
+    def _get_alpha_beta(self, sigmas):
+        angle = sigmas * math.pi / 2
+        alpha, beta = torch.cos(angle), torch.sin(angle)
+        return alpha, beta
+
+    @torch.no_grad()
+    def prepare_feature(self, wavs):
+        device = wavs.device
+        b, _ = wavs.size()
+
+        wav2vec_embeds = self.get_wav2vec_embeds(wavs)
+
+        mulan_ids = self.get_mulan_tokens(wavs)
+        mulan_ids = (
+            mulan_ids
+            + torch.arange(self.extra_params.mulan_num_rvq, device=device) * self.extra_params.mulan_codebook_size
+        )
+
+        sigmas = torch.rand([b, 1, 1], device=device)
+        # Get noise
+        noise = torch.randn_like(wav2vec_embeds)
+        # Combine input and noise weighted by half-circle
+        alphas, betas = self._get_alpha_beta(sigmas)
+        noisy_embeds = alphas * wav2vec_embeds + betas * noise
+        target = alphas * noise - betas * wav2vec_embeds
+        sigmas_embeds = 2 * math.pi * sigmas * self.rff_freq
+        sigmas_embeds = torch.cat(
+            [torch.sin(sigmas_embeds), torch.cos(sigmas_embeds)],
+            dim=-1
+        )
+        return mulan_ids, sigmas_embeds, noisy_embeds, target
+
+    @torch.no_grad()
+    def predict(
+        self, mulan_ids, hp
+    ):
+        assert hp.duration == hp.semantic_duration
+        device = mulan_ids.device
+        b, _ = mulan_ids.size()
+        mulan_ids = (
+            mulan_ids
+            + torch.arange(self.extra_params.mulan_num_rvq, device=device) * self.extra_params.mulan_codebook_size
+        )
+        semantic_samples = torch.randn(
+            (b, hp.semantic_duration * hp.wav2vec_frame_rate, hp.wav2vec_n_embd),
+            device=device,
+        )
+        mulan_embeds = self.model.transformer.wte(mulan_ids)
+        sigmas = (1.0 - torch.arange(hp.num_diffusion_steps, device=device) / (hp.num_diffusion_steps - 1))[:, None, None]
+        alphas, betas = self._get_alpha_beta(sigmas)
+        sigmas_embeds = 2 * math.pi * sigmas * self.rff_freq
+        sigmas_embeds = torch.cat(
+            [torch.sin(sigmas_embeds), torch.cos(sigmas_embeds)],
+            dim=-1
+        )
+        pbar = tqdm(range(hp.num_diffusion_steps - 1))
+        for i in pbar:
+            pbar.set_description(f"Semantic [{0} - {hp.num_diffusion_steps - 1}]")
+            encoder_hidden_states = torch.cat([sigmas_embeds[i : i + 1].expand((b, -1, -1)), mulan_embeds], dim=1)
+            samples = self.model(
+                inputs_embeds=semantic_samples,
+                encoder_hidden_states=encoder_hidden_states,
+            )
+            if isinstance(samples, dict):
+                samples = samples["logits"]
+            x_pred = alphas[i] * semantic_samples - betas[i] * samples
+            noise_pred = betas[i] * semantic_samples + alphas[i] * samples
+            semantic_samples = alphas[i + 1] * x_pred + betas[i + 1] * noise_pred
+
         return semantic_samples
 
 
@@ -683,6 +829,133 @@ class CoarseModule(BaseModule):
             for i in pbar:
                 pbar.set_description(f"Coarse [{cur_beg} - {cur_end}] [{semantic_beg} - {semantic_end}]")
                 model_output = self.model(input_ids, past_key_values=past_key_values, use_cache=True)
+                past_key_values = model_output["past_key_values"]
+                logits = model_output["logits"]
+                layer_idx = i % num_coarse
+                predict_logits = logits[:, -1:, layer_idx * soundstream_codebook_size : (layer_idx + 1) * soundstream_codebook_size]
+                samples = sample(predict_logits, temp=hp.coarse_temperature, mode=hp.sample_mode)
+                samples = samples + layer_idx * soundstream_codebook_size
+                input_ids = samples
+                if coarse_samples is None:
+                    coarse_samples = samples
+                else:
+                    coarse_samples = torch.cat([coarse_samples, samples], dim=1)
+        return coarse_samples
+
+
+class CoarseCrossAttnModule(BaseModule):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+        self.save_hyperparameters()
+
+    def _shared_step(self, batch):
+        if isinstance(batch, list):
+            batch = batch[0]
+        if batch.dim() == 3:
+            batch = batch.squeeze(1)
+        with torch.autocast(device_type="cuda", enabled=False):
+            input_ids, encoder_hidden_states, target_ids = self.prepare_feature(batch.float())
+        logits = self.model(input_ids=input_ids, encoder_hidden_states=encoder_hidden_states)
+        if isinstance(logits, dict):
+            logits = logits["logits"]
+        x = logits[:, -target_ids.size(1) :, :]
+        loss = self.criterion(x, target_ids)
+        accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
+        return loss, accu
+
+    @torch.no_grad()
+    def prepare_feature(self, wavs):
+        device = wavs.device
+        num_coarse = self.extra_params.num_coarse
+        b, _ = wavs.size()
+
+        soundstream_ids = self.get_soundstream_tokens(wavs)
+        soundstream_ids = (
+            soundstream_ids[:, :, 0 : num_coarse]
+            + torch.arange(num_coarse, device=device) * self.extra_params.soundstream_codebook_size
+        )
+        soundstream_ids = torch.reshape(soundstream_ids, [b, -1])
+
+        wav2vec_embeds = self.get_wav2vec_embeds(wavs)
+        sos_ids = (
+            torch.zeros(size=[b, 1], dtype=soundstream_ids.dtype, device=device)
+            + num_coarse * self.extra_params.soundstream_codebook_size
+        )
+        input_ids = torch.cat(
+            [sos_ids, soundstream_ids[:, : -1]], dim=1
+        )
+        return input_ids, wav2vec_embeds, soundstream_ids
+
+    @torch.no_grad()
+    def predict(
+        self, semantic_samples, hp
+    ):
+        device = semantic_samples.device
+        b = semantic_samples.size(0)
+        num_coarse = hp.num_coarse
+        soundstream_codebook_size = hp.soundstream_codebook_size
+        soundstream_frame_rate = hp.soundstream_frame_rate
+        semantic_frame_rate = hp.wav2vec_frame_rate
+        sos_ids = (
+            torch.zeros(size=[b, 1], dtype=torch.long, device=device)
+            + num_coarse * soundstream_codebook_size
+        )
+
+        slice_range = []
+        beg = 0
+        while True:
+            end = beg + hp.coarse_duration * soundstream_frame_rate * num_coarse
+            if end >= hp.duration * soundstream_frame_rate * num_coarse:
+                end = hp.duration * soundstream_frame_rate * num_coarse
+                beg = end - hp.coarse_duration * soundstream_frame_rate * num_coarse
+                slice_range.append([beg, end])
+                break
+            else:
+                slice_range.append([beg, end])
+            beg += hp.coarse_stride * soundstream_frame_rate * num_coarse
+
+        prev_end = 0
+        coarse_samples = None
+        for cur_beg, cur_end in slice_range:
+            cache_len = prev_end - cur_beg
+            prev_end = cur_end
+            semantic_beg = int(cur_beg / soundstream_frame_rate / num_coarse * semantic_frame_rate)
+            semantic_end = semantic_beg + hp.semantic_duration * semantic_frame_rate
+            semantic_slice = semantic_samples[:, semantic_beg : semantic_end]
+            if cache_len == 0:
+                input_ids = sos_ids
+            else:
+                prefix_coarse_samples = coarse_samples[:, cur_beg : cur_beg + cache_len]
+                input_ids = torch.cat(
+                    [sos_ids, prefix_coarse_samples], dim=1
+                )
+            past_key_values = None
+            pbar = tqdm(range(cur_end - cur_beg - cache_len))
+            for i in pbar:
+                pbar.set_description(f"Coarse [{cur_beg} - {cur_end}] [{semantic_beg} - {semantic_end}]")
+                model_output = self.model(
+                    input_ids=input_ids,
+                    encoder_hidden_states=semantic_slice,
+                    past_key_values=past_key_values,
+                    use_cache=True,
+                )
                 past_key_values = model_output["past_key_values"]
                 logits = model_output["logits"]
                 layer_idx = i % num_coarse

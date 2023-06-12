@@ -13,25 +13,25 @@ _checkpointing: False
 
 extra_params:
     sample_rate: 24000
-    duration: 4
-    soundstream_codebook_size: 1024
-    soundstream_frame_rate: 50
-    num_coarse: 4
-    num_fine: 8
+    duration: 10
+    wav2vec_codebook_size: 1024
+    wav2vec_frame_rate: 25
+    mulan_codebook_size: 1024
+    mulan_num_rvq: 12
 
 # running parameters
 run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
-    log_name: fine_flash_llama
+    log_name: semantic_flash_llama
     version: mcc40m
     cache_dir: .module_cache/musiclm
     precision: "bf16-mixed"
     num_workers: 6
     accelerator: auto
-    val_check_interval: 5000
+    val_check_interval: 2000
     max_steps: 1000000
-    batch_size: 9
+    batch_size: 72
     learning_rate: 4.0e-3
     warmup_steps: 10000
     cycle_steps: 500000
@@ -77,17 +77,17 @@ pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.DataModule
     pin_memory: True
 
 model_config: !new:transformers.LlamaConfig
-    vocab_size: !ref <extra_params[num_coarse]> * <extra_params[soundstream_codebook_size]> + <extra_params[num_fine]> * <extra_params[soundstream_codebook_size]> + 1
+    vocab_size: !ref <extra_params[wav2vec_codebook_size]> + <extra_params[mulan_num_rvq]> * <extra_params[mulan_codebook_size]> + 1
     hidden_size: 1536
     intermediate_size: 4128
     num_hidden_layers: 24
     num_attention_heads: 12
     hidden_act: "silu"
-    max_position_embeddings: !ref <extra_params[num_coarse]> * <extra_params[soundstream_frame_rate]> * <extra_params[duration]> + <extra_params[num_fine]> * <extra_params[soundstream_frame_rate]> * <extra_params[duration]>
+    max_position_embeddings: !ref <extra_params[mulan_num_rvq]> + <extra_params[wav2vec_frame_rate]> * <extra_params[duration]>
     initializer_range: 0.02
     rms_norm_eps: 1e-6
     use_cache: False
-    num_logits: !ref <extra_params[num_fine]> * <extra_params[soundstream_codebook_size]>
+    num_logits: !ref <extra_params[wav2vec_codebook_size]>
 
 model_cls: !name:samantha.models.flash_llama.LlamaForCausalLM
     config: !ref <model_config>
@@ -104,7 +104,7 @@ scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupC
     cycle_steps: !ref <run_opts[cycle_steps]>
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
-pl_module: !new:recipes.musiclm.lightning.modules.FineModule
+pl_module: !new:recipes.musiclm.lightning.modules.SemanticModule
     checkpointing: !ref <_checkpointing>
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
@@ -112,9 +112,22 @@ pl_module: !new:recipes.musiclm.lightning.modules.FineModule
     criterion_cls: !name:recipes.musiclm.lightning.modules.MaskedCrossEntropy
     extra_params: !ref <extra_params>
     required_modules:
-        soundstream:
-            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
-            - !name:recipes.musiclm.requires.model_initializer.init_soundstream
+        mulan:
+            - hdfs://harunava/home/byte_speech_sv/weitsung.lu/mulan_exp/MuLan_large/gpt_all/checkpoints/mulan-step=036000-median_rank_0=127-kaggle.ckpt
+            - !name:recipes.musiclm.requires.model_initializer.init_mulan
+              cache_dir: !ref <run_opts[cache_dir]>
+              version: "g4"
+        mulan_centers:
+            - hdfs://harunava/home/byte_speech_sv/dongguo/mulan/codebook/kmeans_minibatch_codebook-mulan1b_g4_mix_127-1024x12.npy
+            - !name:recipes.musiclm.requires.model_initializer.init_mulan_centers
+              cache_dir: !ref <run_opts[cache_dir]>
+        wav2vec:
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/semantic.jit.pt
+            - !name:recipes.musiclm.requires.model_initializer.init_wav2vec
+              cache_dir: !ref <run_opts[cache_dir]>
+        semantic_centers:
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_10.npy
+            - !name:recipes.musiclm.requires.model_initializer.init_semantic_centers
               cache_dir: !ref <run_opts[cache_dir]>
 
 logger: !new:pytorch_lightning.loggers.TensorBoardLogger

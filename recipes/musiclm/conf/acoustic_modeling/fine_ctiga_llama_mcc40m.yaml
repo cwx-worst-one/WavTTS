@@ -23,7 +23,7 @@ extra_params:
 run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
-    log_name: fine_flash_llama
+    log_name: fine_ctiga_llama
     version: mcc40m
     cache_dir: .module_cache/musiclm
     precision: "bf16-mixed"
@@ -76,20 +76,38 @@ pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.DataModule
     num_workers: !ref <run_opts[num_workers]>
     pin_memory: True
 
-model_config: !new:transformers.LlamaConfig
+model_config: !new:s3a.providers.ctiga.models.gpt.GPT2Config
     vocab_size: !ref <extra_params[num_coarse]> * <extra_params[soundstream_codebook_size]> + <extra_params[num_fine]> * <extra_params[soundstream_codebook_size]> + 1
-    hidden_size: 1536
-    intermediate_size: 4128
-    num_hidden_layers: 24
-    num_attention_heads: 12
-    hidden_act: "silu"
-    max_position_embeddings: !ref <extra_params[num_coarse]> * <extra_params[soundstream_frame_rate]> * <extra_params[duration]> + <extra_params[num_fine]> * <extra_params[soundstream_frame_rate]> * <extra_params[duration]>
+    max_position_embeddings: 0
+    use_cache: !apply:operator.not_ [!ref <_checkpointing>]
+    n_positions: 0  # No absolute position embedding
+    n_embd: 1536
+    n_layer: 24
+    n_head: 12
+    n_inner: 4128
+    use_rms_norm: True
+    activation_function: "swiglu"
+    resid_pdrop: 0.0
+    embd_pdrop: 0.0
+    attn_pdrop: 0.0
+    layer_norm_epsilon: 1e-6
     initializer_range: 0.02
-    rms_norm_eps: 1e-6
-    use_cache: False
-    num_logits: !ref <extra_params[num_fine]> * <extra_params[soundstream_codebook_size]>
+    rms_norm: True
+    rotary_emb_fraction: 1.0
+    rotary_emb_interleaved: True
+    rotary_emb_compat: "default"
+    tie_word_embeddings: False
+    qkv_proj_bias: False
+    out_proj_bias: False
+    mlp_fc1_bias: False
+    mlp_fc2_bias: False
+    use_flash_attn: True
+    fused_bias_fc: True
+    fused_mlp: False
+    fused_dropout_add_ln: True
+    residual_in_fp32: True
 
-model_cls: !name:samantha.models.flash_llama.LlamaForCausalLM
+model_cls: !name:s3a.providers.ctiga.models.gpt.GPTLMHeadModel
     config: !ref <model_config>
 
 optimizer_cls: !name:torch.optim.AdamW

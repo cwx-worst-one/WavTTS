@@ -1,9 +1,7 @@
-from functools import partial
 from webdataset import WebDataset
 from recipes.musiclm.transforms.musiclm import MusicLMTransforms
 from recipes.musiclm.preprocess import WebDatasetBufferPreprocessor
 from samantha.dataio.webdataset.pipeline import WebPipeline
-from samantha.utils.datastructures import select_keys
 
 
 class KaraokeDataset(WebPipeline):
@@ -33,12 +31,6 @@ class KaraokeDataset(WebPipeline):
             transforms=audio_transforms,
         )
         pipeline=[]
-        pipeline.append(
-            {"select": {"predicate": partial(
-                select_keys,
-                keys=[audio_key, sample_range_key]
-            )}}
-        )
         pipeline.append("decode")
         pipeline.append({"compose": [preprocessor.train_buffer_preprocessor]})
         super().__init__(dataset, pipeline)

@@ -142,16 +142,16 @@ class MCC40MDataset(WebPipeline):
         url2index: str,
         sample_rate: int,
         duration: float,
-        shuffle_buffer_size: int,
         audio_key: str = "mp3",
         min_volume_threshold: float = 0.05,
-        loudness_ratio_threshold: float = 0.5,
+        loudness_ratio_threshold: float = 0.2,
         aed_filtered: bool = True,
         avoid_sound_effect: bool = True,
         avoid_vocal: bool = True,
         max_vocal_threshold: float = 0.25,
         exclude_licenses: List[str] = ["C"],
-        max_num_crops: Optional[int] = 3,   # recommended for 30s crops
+        max_num_crops: Optional[int] = None,
+        crop_step_size: Optional[int] = None,
         handler: Callable = wds.warn_and_continue,
         **kwargs,
     ):
@@ -173,17 +173,15 @@ class MCC40MDataset(WebPipeline):
             avoid_vocal=avoid_vocal,
             max_vocal_threshold=max_vocal_threshold,
             max_num_crops=max_num_crops,
-            crop_step_size=int(duration * sample_rate / 5),
+            crop_step_size=crop_step_size,
         )
         preprocessor = WebDatasetBufferPreprocessor(
             sample_rate=sample_rate,
             transforms=audio_transforms,
         )
         pipeline=[
-            {"select": {"predicate": partial(select_keys, keys=[audio_key])}},
             "decode",
             {"compose": [preprocessor.train_buffer_preprocessor]},
-            {"shuffle": [shuffle_buffer_size]},
         ]
         super().__init__(dataset, pipeline)
 
@@ -195,18 +193,18 @@ class WrappedMCC40MDataset(MultiIterableDataset):
         url2index_list: list,
         sample_rate: int,
         duration: float,
-        shuffle_buffer_size: int,
         audio_key: str = "mp3",
         min_volume_threshold: float = 0.05,
-        loudness_ratio_threshold: float = 0.1,
+        loudness_ratio_threshold: float = 0.2,
         aed_filtered: bool = True,
         avoid_sound_effect: bool = True,
         avoid_vocal: bool = True,
         max_vocal_threshold: float = 0.25,
         exclude_licenses: List[str] = ["C"],
-        max_num_crops: Optional[int] = 3,
+        max_num_crops: Optional[int] = None,
+        crop_step_size: Optional[int] = None,
         handler: Callable = wds.warn_and_continue,
-        num_samples: int = 10_000_000,
+        num_samples: int = -1,
         seed: int = 2023,
         **kwargs,
     ):
@@ -215,7 +213,6 @@ class WrappedMCC40MDataset(MultiIterableDataset):
                 url2index=url2index,
                 sample_rate=sample_rate,
                 duration=duration,
-                shuffle_buffer_size=shuffle_buffer_size,
                 audio_key=audio_key,
                 min_volume_threshold=min_volume_threshold,
                 loudness_ratio_threshold=loudness_ratio_threshold,
@@ -225,6 +222,7 @@ class WrappedMCC40MDataset(MultiIterableDataset):
                 max_vocal_threshold=max_vocal_threshold,
                 exclude_licenses=exclude_licenses,
                 max_num_crops=max_num_crops,
+                crop_step_size=crop_step_size,
                 handler=handler,
                 **kwargs,
             ) for url2index in url2index_list

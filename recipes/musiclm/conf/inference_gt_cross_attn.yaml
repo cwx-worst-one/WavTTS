@@ -9,14 +9,14 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
 
 extra_params:
-    prompt_path: "/mnt/bn/audio-diffusion/data/google_prompts/text_prompt_collection_20230523.csv"
-    output_dir: ./generated_output/google_prompts_semantic_step_25k
-    semantic_ckpt: "/mnt/bn/zongyu-lq/logs/musiclm/semantic_flash_llama/mcc40m/step=025000.ckpt"
-    coarse_ckpt: "/mnt/bn/zongyu-lq/logs/coarse_flash_llama/mcc40m/checkpoints/step=099000-tr_loss=3.0950.ckpt"
+    gt_infer_mode: "semantic->coarse->fine"  # ["mulan->semantic->coarse->fine", "semantic->coarse->fine", "coarse->fine"]
+    output_dir: generated_output/cross_attn_gt_infer
+    semantic_ckpt: "/mnt/bn/zongyu-lq/logs/semantic_diffusion_flash_gpt2/mcc40m/checkpoints/step=004000-tr_loss=0.3553.ckpt"
+    coarse_ckpt: "/mnt/bn/zongyu-lq/logs/coarse_gpt2/karaoke_wav2vec_cross_attn/checkpoints/step=041000-val_accu_0=24.35.ckpt"
     fine_ckpt: "/mnt/bn/zongyu-lq/logs/fine_flash_llama/mcc40m/checkpoints/step=120000-val_accu_0=11.06.ckpt"
     sample_rate: 24000
     duration: 10
-    num_rounds: 3
+    num_rounds: 1
     semantic_duration: 10
     coarse_duration: 10
     fine_duration: 4
@@ -42,30 +42,29 @@ run_opts:
     accelerator: auto
     strategy: ddp_find_unused_parameters_false
     cache_dir: .module_cache/musiclm
-    batch_size: 5
+    batch_size: 20
     num_workers: 1
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
-predict_dataset: !new:recipes.musiclm.datasets.inference.InferenceDataset
-    prompt_path: !ref <extra_params[prompt_path]>
+predict_dataset: !new:recipes.musiclm.datasets.karaoke.KaraokeDataset
+    urls: "pipe:hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/data/karaoke_for_singsong/shards-0131.tar"
+    nodesplitter: !name:recipes.musiclm.datamodules.webdataset.return_self
+    sample_rate: !ref <extra_params[sample_rate]>
+    duration: !ref <extra_params[duration]>
+    audio_key: "acc.npy"
+    sample_range_key: "acc_sample_range.npy"
+    min_volume_threshold: 0.05
 
-# dataloader configuration
-predict_dataloader: !new:torch.utils.data.DataLoader
-    dataset: !ref <predict_dataset>
+pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.DataModule
+    predict_dataset: !ref <predict_dataset>
     batch_size: !ref <run_opts[batch_size]>
     num_workers: !ref <run_opts[num_workers]>
-    shuffle: False
-    drop_last: False
-    pin_memory: False
+    pin_memory: True
 
-# datamodule configuration
-pl_datamodule: !new:recipes.musiclm.datamodules.lit_datamodule.DataModule
-    predict_dataloader: !ref <predict_dataloader>
-
-pl_module: !new:recipes.musiclm.lightning.inference.InferenceModule
+pl_module: !new:recipes.musiclm.lightning.inference.GTCrossAttnInferenceModule
     extra_params: !ref <extra_params>
     required_modules:
         mulan:
@@ -77,7 +76,19 @@ pl_module: !new:recipes.musiclm.lightning.inference.InferenceModule
             - hdfs://harunava/home/byte_speech_sv/dongguo/mulan/codebook/kmeans_minibatch_codebook-mulan1b_g4_mix_127-1024x12.npy
             - !name:recipes.musiclm.requires.model_initializer.init_mulan_centers
               cache_dir: !ref <run_opts[cache_dir]>
+        wav2vec:
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/semantic.jit.pt
+            - !name:recipes.musiclm.requires.model_initializer.init_wav2vec
+              cache_dir: !ref <run_opts[cache_dir]>
+        semantic_centers:
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_10.npy
+            - !name:recipes.musiclm.requires.model_initializer.init_semantic_centers
+              cache_dir: !ref <run_opts[cache_dir]>
         soundstream:
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
+            - !name:recipes.musiclm.requires.model_initializer.init_soundstream
+              cache_dir: !ref <run_opts[cache_dir]>
+        soundstream_dec:
             - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
             - !name:recipes.musiclm.requires.model_initializer.init_soundstream_decoder
               cache_dir: !ref <run_opts[cache_dir]>

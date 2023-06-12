@@ -80,7 +80,7 @@ class MusicLMTransforms(TransformBase):
                 self.min_volume_threshold is None
                 or torch.mean(torch.abs(cropped_audio)) >= self.min_volume_threshold
             ):
-                yield {"audio.npy": cropped_audio}
+                yield {"audio": cropped_audio}
                 num_crops += 1
             num_tries += 1
         self._update_stats(num_crops == 0)
@@ -93,7 +93,7 @@ class MCCTransforms(TransformBase):
         sample_rate: int,
         audio_key: str = "mp3",
         min_volume_threshold: float = 0.05,
-        loudness_ratio_threshold: float = 0.5,
+        loudness_ratio_threshold: float = 0.2,
         aed_filtered: bool = False,
         avoid_sound_effect: bool = False,
         exclude_licenses: List[str] = [],
@@ -225,7 +225,7 @@ class MCCTransforms(TransformBase):
         # Return up to max_num_crops
         max_num_crops = self.max_num_crops
         if max_num_crops is None:
-            max_num_crops = max(1, audio.size(1) // self.n_samples // 4)
+            max_num_crops = max(1, audio.size(1) // self.n_samples)
         num_crops = 0
         taboo = set()
         for wid in window_ids:
@@ -239,7 +239,7 @@ class MCCTransforms(TransformBase):
                 en_sample / self.sample_rate,
             ):
                 continue
-            cropped_audio = audio[:, st_sample:en_sample]
+            cropped_audio = audio[:, st_sample : en_sample]
             if not self.is_loud(cropped_audio):
                 continue
             genre = x["__url__"].split("/")[-2].split(".")[0]

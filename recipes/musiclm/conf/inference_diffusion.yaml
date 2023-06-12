@@ -10,20 +10,21 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 
 extra_params:
     prompt_path: "/mnt/bn/audio-diffusion/data/google_prompts/text_prompt_collection_20230523.csv"
-    output_dir: ./generated_output/google_prompts_semantic_step_25k
-    semantic_ckpt: "/mnt/bn/zongyu-lq/logs/musiclm/semantic_flash_llama/mcc40m/step=025000.ckpt"
-    coarse_ckpt: "/mnt/bn/zongyu-lq/logs/coarse_flash_llama/mcc40m/checkpoints/step=099000-tr_loss=3.0950.ckpt"
+    output_dir: generated_output/diffusion_cross_attn
+    semantic_ckpt: "/mnt/bn/zongyu-lq/logs/semantic_diffusion_flash_gpt2/mcc40m/checkpoints/step=004000-tr_loss=0.3553.ckpt"
+    coarse_ckpt: "/mnt/bn/zongyu-lq/logs/coarse_gpt2/karaoke_wav2vec_cross_attn/checkpoints/step=041000-val_accu_0=24.35.ckpt"
     fine_ckpt: "/mnt/bn/zongyu-lq/logs/fine_flash_llama/mcc40m/checkpoints/step=120000-val_accu_0=11.06.ckpt"
     sample_rate: 24000
+    num_diffusion_steps: 100
     duration: 10
-    num_rounds: 3
+    num_rounds: 1
     semantic_duration: 10
     coarse_duration: 10
     fine_duration: 4
     semantic_stride: 5
     coarse_stride: 5
     fine_stride: 3
-    wav2vec_codebook_size: 1024
+    wav2vec_n_embd: 1024
     mulan_codebook_size: 1024
     mulan_num_rvq: 12
     soundstream_codebook_size: 1024
@@ -65,7 +66,7 @@ predict_dataloader: !new:torch.utils.data.DataLoader
 pl_datamodule: !new:recipes.musiclm.datamodules.lit_datamodule.DataModule
     predict_dataloader: !ref <predict_dataloader>
 
-pl_module: !new:recipes.musiclm.lightning.inference.InferenceModule
+pl_module: !new:recipes.musiclm.lightning.inference.DiffusionInferenceModule
     extra_params: !ref <extra_params>
     required_modules:
         mulan:
