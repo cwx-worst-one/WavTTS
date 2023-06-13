@@ -9,7 +9,7 @@ from typing import IO, Any, AnyStr, List
 
 import torch
 
-HDFS_BIN = "export PATH=/usr/bin:$PATH; /opt/tiger/yarn_deploy/hadoop/bin/hdfs"
+HDFS_BIN = "hdfs"
 
 
 class hdfs_open:

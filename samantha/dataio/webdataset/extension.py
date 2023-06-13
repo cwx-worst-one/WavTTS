@@ -24,6 +24,7 @@ from webdataset.tariterators import (
     base_plus_ext,
     meta_prefix,
     meta_suffix,
+    url_opener,
     valid_sample,
 )
 
@@ -105,6 +106,7 @@ def indexed_tarfile_iterator(
     fileobj,
     index: str,
     skip_meta: Optional[str] = r"__[^/]*__($|/)",
+    use_pipe: bool = False,
     handler: Callable[[Exception], bool] = reraise_exception,
 ) -> Iterator[Dict[str, Any]]:
     """Iterate over tar file, yielding filename, content pairs for the given tar stream.
@@ -117,7 +119,8 @@ def indexed_tarfile_iterator(
     Yields:
         a stream of samples.
     """
-    with tarfile.open(fileobj=fileobj, mode="r:") as stream:
+    mode = "r|*" if use_pipe else "r:"
+    with tarfile.open(fileobj=fileobj, mode=mode) as stream:
         index_stream = None
         if isinstance(index, str):
             index_stream = hdfs_open(index, "r")
@@ -180,6 +183,7 @@ def indexed_tarfile_iterator(
 def indexed_tarfile_expander(
     data: Iterable[Dict[str, Any]],
     url2index: Dict[str, str],
+    use_pipe: bool = False,
     handler: Callable[[Exception], bool] = reraise_exception,
 ) -> Iterator[Dict[str, Any]]:
     """Expand indexed tar files.
@@ -196,7 +200,10 @@ def indexed_tarfile_expander(
             assert isinstance(source, dict)
             assert "stream" in source
             for sample in indexed_tarfile_iterator(
-                source["stream"], index=url2index[url], handler=handler
+                source["stream"],
+                index=url2index[url],
+                use_pipe=use_pipe,
+                handler=handler,
             ):
                 assert (
                     isinstance(sample, dict) and "data" in sample and "fname" in sample
@@ -233,6 +240,7 @@ def url_opener_ra(data, handler=reraise_exception, **kw):
 def indexed_tarfile_samples(
     src: Iterable[Dict[str, Any]],
     url2index: Dict[str, str],
+    use_pipe: bool = False,
     handler: Callable[[Exception], bool] = reraise_exception,
 ) -> Iterable[Dict[str, Any]]:
     """Given a stream of indexed tar files, yield samples.
@@ -243,8 +251,13 @@ def indexed_tarfile_samples(
     Returns:
         stream of samples
     """
-    streams = url_opener_ra(src, handler=handler)
-    files = indexed_tarfile_expander(streams, url2index=url2index, handler=handler)
+    if use_pipe:
+        streams = url_opener(src, handler=handler)
+    else:
+        streams = url_opener_ra(src, handler=handler)
+    files = indexed_tarfile_expander(
+        streams, url2index=url2index, use_pipe=use_pipe, handler=handler
+    )
     samples = group_by_keys(files, handler=handler)
     return samples
 
@@ -285,16 +298,20 @@ class IndexedWebDataset(DataPipeline, FluidInterface):
         shardshuffle: Optional[Any] = None,
         detshuffle: bool = False,
         nodesplitter=shardlists.single_node_only,
+        use_pipe: bool = False,
     ):
         super().__init__()
         url2index = resolve_url2index(url2index)
 
-        def maybe_remove_hdfs_cat(url):
-            # Backward compatibility, in old style we use hdfs -cat to
-            # read webdataset from hdfs
-            return url.replace("pipe:hdfs dfs -cat ", "")
+        def handle_hdfs_cat(url):
+            if not use_pipe:
+                return url.replace("pipe:", "").replace("hdfs dfs -cat", "")
+            else:
+                if url.startswith("hdfs://"):
+                    return f"pipe:hdfs dfs -cat {url}"
+                return url
 
-        url2index = {maybe_remove_hdfs_cat(k): v for k, v in url2index.items()}
+        url2index = {handle_hdfs_cat(k): v for k, v in url2index.items()}
         urls = list(url2index.keys())
         if resampled:
             self.append(shardlists.ResampledShards(urls))
@@ -311,6 +328,6 @@ class IndexedWebDataset(DataPipeline, FluidInterface):
                     self.append(filters.shuffle(shardshuffle))
         self.append(
             filters.pipelinefilter(indexed_tarfile_samples)(
-                url2index=url2index, handler=handler
+                url2index=url2index, handler=handler, use_pipe=use_pipe
             )
         )
