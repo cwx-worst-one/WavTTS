@@ -305,7 +305,8 @@ class IndexedWebDataset(DataPipeline, FluidInterface):
 
         def handle_hdfs_cat(url):
             if not use_pipe:
-                return url.replace("pipe:", "").replace("hdfs dfs -cat", "")
+                url = url.replace("pipe:", "").replace("hdfs dfs -cat", "")
+                return url.strip()
             else:
                 if url.startswith("hdfs://"):
                     return f"pipe:hdfs dfs -cat {url}"
