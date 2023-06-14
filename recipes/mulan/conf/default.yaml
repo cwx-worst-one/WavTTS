@@ -8,7 +8,7 @@ seed: 2023
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 
 # running parameters
-log_dir: hdfs://harunava/home/byte_speech_sv/weitsung.lu/mulan_exp #!apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+log_dir: hdfs://harunava/home/byte_speech_sv/weituo/mulan_exp #!apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
 run_opts:
     fast_dev_run: False
     tensorboard_dir: !ref <log_dir>
