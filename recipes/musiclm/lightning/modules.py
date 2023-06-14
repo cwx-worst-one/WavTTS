@@ -324,7 +324,7 @@ class SemanticModule(BaseModule):
                 past_key_values = model_output["past_key_values"]
                 logits = model_output["logits"]
                 predict_logits = logits[:, -1:, :]
-                samples = sample(predict_logits, temp=hp.semantic_temperatue, mode=hp.sample_mode)
+                samples = sample(predict_logits, temp=hp.semantic_temperature, mode=hp.sample_mode)
                 input_ids = samples
                 if semantic_samples is None:
                     semantic_samples = samples

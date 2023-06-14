@@ -31,7 +31,7 @@ extra_params:
     soundstream_frame_rate: 50
     num_coarse: 4
     num_fine: 8
-    semantic_temperatue: 1.0
+    semantic_temperature: 1.0
     coarse_temperature: 0.9
     fine_temperature: 0.8
     sample_mode: "gumbel"
