@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Generator, Optional
+from typing import Any, Dict, List, Generator, Optional, Tuple
 import io
 import torch
 import random
@@ -142,19 +142,19 @@ class MCCTransforms(TransformBase):
         self.random_pad = RandomPad(n_samples=n_samples)
         self.random_crop = RandomResizedCrop(n_samples=n_samples)
 
-    def is_metadata_good(self, metadata: Dict[str, Any]) -> bool:
+    def is_metadata_good(self, metadata: Dict[str, Any]) -> Tuple[bool, str]:
         # Apply AED filtering if applicable
         if self.aed_filtered and not metadata.get("aed_filtered", False):
-            return False
+            return False, "Not AED Filtered"
         # Avoid sound effect if applicable
         if self.avoid_sound_effect and metadata.get("final_theme") == "Sound Effect":
-            return False
+            return False, "Sound Effect"
         # Apply license-based filtering if applicable
         if len(self.exclude_licenses) > 0:
             for license in metadata.get("license_types", []):
                 if license in self.exclude_licenses:
-                    return False
-        return True
+                    return False, "Excluded License"
+        return True, None
 
     def get_vocal_data(self, metadata: Dict[str, Any]):
         thresh = 2  # 2 seconds
@@ -194,8 +194,9 @@ class MCCTransforms(TransformBase):
         return False
 
     def __call__(self, x: Dict[str, Any]) -> Generator:
-        if not self.is_metadata_good(x["__index_data__"]):
-            self._update_stats(skipped=True)
+        is_good, message = self.is_metadata_good(x["__index_data__"])
+        if not is_good:
+            self._update_stats(skipped=True, message=message)
             return
         vocal_segments = []
         if self.avoid_vocal:
@@ -203,17 +204,17 @@ class MCCTransforms(TransformBase):
             #print(f"vocal_segments: {vocal_segments}, vocal_ratio: {vocal_ratio}")
             if vocal_ratio > self.max_vocal_threshold:
                 #print(f"Skipped: vocal_ratio={vocal_ratio}")
-                self._update_stats(skipped=True)
+                self._update_stats(skipped=True, message="Has Vocal")
                 return
 
         try:
             audio = self.base_transform(io.BytesIO(x[self.audio_key]))
         except Exception as e:
             print(f"[MP3 decoding error] {e}")
-            self._update_stats(skipped=True)
+            self._update_stats(skipped=True, message="MP3 Decoding Error")
             return
         if audio.size(1) < self.n_samples * 0.95:
-            self._update_stats(skipped=True)
+            self._update_stats(skipped=True, message="Audio Too Short")
             return
         else:            
             audio = self.random_pad(audio)
@@ -261,4 +262,7 @@ class MCCTransforms(TransformBase):
                 min(num_windows, wid + self.crop_wing_span),
             ):
                 taboo.add(overlapped_wid)
-        self._update_stats(skipped=num_crops == 0)
+        if num_crops == 0:
+            self._update_stats(skipped=True, message="No Valid Crop")
+        else:
+            self._update_stats(skipped=False)
