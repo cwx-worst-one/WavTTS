@@ -126,7 +126,7 @@ logger:
     - !new:pytorch_lightning.loggers.wandb.WandbLogger
       save_dir: !ref <run_opts[log_dir]>
       project: !ref <run_opts[log_name]>
-      version: !ref <run_opts[version]>
+      name: !ref <run_opts[version]>
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint

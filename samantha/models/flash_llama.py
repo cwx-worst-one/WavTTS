@@ -632,6 +632,17 @@ class LlamaPreTrainedModel(PreTrainedModel):
         if isinstance(module, LlamaModel):
             module.gradient_checkpointing = value
 
+    def fwd_flop_per_token(self, seq_len):
+        L, H, F, T, V = (
+            self.config.num_hidden_layers,
+            self.config.hidden_size,
+            self.config.intermediate_size,
+            seq_len,
+            self.config.vocab_size,
+        )
+        N = 4 * H * H * L + 3 * F * H * L + V * H
+        return 2 * (N + 2 * L * H * T + 3 * L * H)
+
 
 LLAMA_INPUTS_DOCSTRING = r"""
     Args:
