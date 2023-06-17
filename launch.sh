@@ -38,4 +38,13 @@ export NCCL_SOCKET_IFNAME=eth0
 export NCCL_DEBUG=WARN
 
 # initiate actions using main.py
-python3 -m samantha.main $@
+# check if TORCHRUN is available
+if [ -x "$(command -v TORCHRUN)" ]; then
+    CMD="TORCHRUN"
+else
+    CMD="python3"
+fi
+
+echo "Use launcher: ${CMD}"
+
+$CMD -m samantha.main $@
