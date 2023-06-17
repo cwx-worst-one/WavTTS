@@ -11,7 +11,7 @@ data_params:
 # training parameters
 training_params:
     max_steps: 1000000
-    batch_size: 16 # 10 for v100, 24 for A100
+    batch_size: 14 # 10 for v100, 24 for A100
     base_lr: 4.0e-4
     warmup_steps: 3000
     hold_steps: 30000
