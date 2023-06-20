@@ -1,20 +1,21 @@
 import math
 import time
 from typing import Optional, Tuple, Union
+
+import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import GPT2Model
-from transformers import GPT2PreTrainedModel
-from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
-import pytorch_lightning as pl
-from pytorch_lightning.utilities import rank_zero_warn
 from pytorch_lightning.profilers import PassThroughProfiler
+from pytorch_lightning.utilities import rank_zero_warn
 from tqdm import tqdm
-
-from samantha.utils.hparams import DotDict
+from transformers import GPT2Model, GPT2PreTrainedModel
+from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
 
 from recipes.musiclm.models.compat.semantic_model import w2v_bert_tokenization
+from samantha.utils.hparams import DotDict
+from samantha.utils.model_metric import ModelMetric
+
 from ..inference.utils import sample
 
 
@@ -36,18 +37,7 @@ class BaseModule(pl.LightningModule):
         self.extra_params = DotDict(extra_params)
         self.requires = {}
         self.val_outputs = dict()
-        # Variables for MFU calculation
-        self.compute_mfu = hasattr(self.model, "fwd_flop_per_token")
-        if not self.compute_mfu:
-            rank_zero_warn(
-                "`self.model.fwd_flop_per_token()` is not implemented, "
-                "disable MFU calculation."
-            )
-        self.last_time = None
-        self.exclude_time = 0
-        self.accumulate_tokens = 0
-        self.accumulate_flops = 0
-        self.bwd_factor = 2
+
         if checkpointing:
             self.model.gradient_checkpointing_enable()
     
@@ -55,6 +45,11 @@ class BaseModule(pl.LightningModule):
         self.log_dict(pl.utilities.grad_norm(self, norm_type=2), sync_dist=True)
 
     def setup(self, stage: str) -> None:
+        # Variables for MFU calculation
+        self.metric = ModelMetric(
+            precision=self.trainer.precision,
+            model_obj=self.model,
+        )
         if stage == "fit" and not self.requires:
             self.load_required_modules()
 
@@ -83,7 +78,7 @@ class BaseModule(pl.LightningModule):
         t = time.perf_counter()
         with torch.autocast(device_type="cuda", enabled=False):
             input_ids, target_ids = self.prepare_feature(batch.float())
-        self.exclude_time += time.perf_counter() - t
+        exclude_time = time.perf_counter() - t
         logits = self.model(input_ids=input_ids)
         if isinstance(logits, dict):
             logits = logits["logits"]
@@ -92,36 +87,18 @@ class BaseModule(pl.LightningModule):
         x = logits[:, -target_ids.size(1) :, :]
         loss = self.criterion(x, target_ids)
         accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
-        if self.compute_mfu:
-            seq_len = input_ids.size(1)
-            num_tokens = input_ids.size(0) * seq_len
-            self.accumulate_tokens += num_tokens
-            fwd_flop = self.model.fwd_flop_per_token(seq_len) * num_tokens
-            self.accumulate_flops += fwd_flop * (1 + self.bwd_factor)
-            if self.trainer.global_step % self.trainer.log_every_n_steps == 0:
-                # Calculate FLOPs
-                if self.last_time is None:
-                    self.last_time = time.perf_counter()
-                else:
-                    cur_time = time.perf_counter()
-                    duration = cur_time - self.last_time
-                    # Exclude time for preparing features
-                    flops = self.accumulate_flops / (duration  - self.exclude_time)
-                    peak_flops = 1
-                    if self.trainer.precision in (32, '32', '32-true'):
-                        peak_flops = 19.5e12
-                    elif self.trainer.precision in (16, "16", "16-mixed", 'bf16', 'bf16-mixed'):
-                        peak_flops = 312e12
-                    elif self.trainer.precision in (64, '64', '64-true'):
-                        peak_flops = 9.7e12
-                    mfu = flops / peak_flops
-                    num_tokens_per_sec = self.accumulate_tokens / duration
-                    self.log("training/mfu", mfu, prog_bar=True, sync_dist=True)
-                    self.log("training/tokens_per_second(M)", num_tokens_per_sec / 1e6, prog_bar=True, sync_dist=True, reduce_fx="sum")
 
-                    self.last_time, self.exclude_time = cur_time, 0
-                    self.accumulate_tokens = 0
-                    self.accumulate_flops = 0
+        batch_size, seq_len = input_ids.size()[:2]
+        self.metric.update(
+            batch_size=batch_size,
+            stage=self.trainer.state.stage,
+            seq_length=seq_len,
+            exclude_time=exclude_time,
+        )
+
+        if self.trainer.global_step % self.trainer.log_every_n_steps == 0:
+            metric = self.metric.compute(step=self.trainer.global_step)
+            self.log_dict(metric, prog_bar=True, sync_dist=True)
 
         return loss, accu
 
