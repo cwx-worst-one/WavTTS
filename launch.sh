@@ -37,6 +37,10 @@ export NCCL_IB_HCA=${ARNOLD_RDMA_DEVICE}
 export NCCL_SOCKET_IFNAME=eth0
 export NCCL_DEBUG=WARN
 
+# patch triton
+sudo cp samantha/utils/patches/matmul.py /usr/local/lib/python3.9/dist-packages/triton/ops/blocksparse/ || echo
+sudo cp samantha/utils/patches/matmul.py /home/tiger/.local/lib/python3.9/site-packages/triton/ops/blocksparse/ || echo
+
 # initiate actions using main.py
 # check if TORCHRUN is available
 if [ -x "$(command -v TORCHRUN)" ]; then
