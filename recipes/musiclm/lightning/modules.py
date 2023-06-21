@@ -86,7 +86,7 @@ class BaseModule(pl.LightningModule):
         loss = self.criterion(x, target_ids)
         accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
 
-        batch_size, seq_len = input_ids.size()[:2]
+        batch_size, seq_len = input_ids["input_ids"].size()[:2]
         self.metric.update(
             batch_size=batch_size,
             stage=self.trainer.state.stage,
@@ -285,6 +285,201 @@ class SemanticModule(BaseModule):
             [mulan_ids, sos_ids, wav2vec_ids[:, : -1]], dim=1
         )
         return {"input_ids": input_ids}, wav2vec_ids
+
+    @torch.no_grad()
+    def predict(
+        self, mulan_ids, hp
+    ):
+        if isinstance(self.model, gpt.GPTLMHeadModel):
+            self.model.config.use_flash_attn = False
+        device = mulan_ids.device
+        b, _ = mulan_ids.size()
+        mulan_ids = (
+            mulan_ids
+            + torch.arange(hp.mulan_num_rvq, device=device) * hp.mulan_codebook_size
+            + hp.wav2vec_codebook_size
+        )
+        sos_ids = (
+            torch.zeros(size=[b, 1], dtype=mulan_ids.dtype, device=device)
+            + hp.mulan_num_rvq * hp.mulan_codebook_size
+            + hp.wav2vec_codebook_size
+        )
+
+        slice_range = []
+        beg = 0
+        while True:
+            end = beg + hp.semantic_duration * hp.wav2vec_frame_rate
+            if end >= hp.duration * hp.wav2vec_frame_rate:
+                end = hp.duration * hp.wav2vec_frame_rate
+                beg = end - (hp.semantic_duration * hp.wav2vec_frame_rate)
+                slice_range.append([beg, end])
+                break
+            else:
+                slice_range.append([beg, end])
+            beg += hp.semantic_stride * hp.wav2vec_frame_rate
+        prev_end = 0
+
+        semantic_samples = None
+        for cur_beg, cur_end in slice_range:
+            cache_len = prev_end - cur_beg
+            prev_end = cur_end
+            if cache_len == 0:
+                input_ids = torch.cat([mulan_ids, sos_ids], dim=1)
+            else:
+                prefix_semantic_samples = semantic_samples[:, cur_beg : cur_beg + cache_len]
+                input_ids = torch.cat(
+                    [mulan_ids, sos_ids, prefix_semantic_samples], dim=1
+                )
+            gen_length = cur_end - cur_beg - cache_len
+            if isinstance(self.model, gpt.GPTLMHeadModel):
+                max_sequence_len = hp.mulan_num_rvq + hp.wav2vec_frame_rate * hp.semantic_duration
+                inference_params = InferenceParams(max_sequence_len=max_sequence_len, max_batch_size=b)
+            else:
+                past_key_values = None
+            pbar = tqdm(range(gen_length))
+            for _ in pbar:
+                pbar.set_description(f"Semantic [{cur_beg} - {cur_end}]")
+                if isinstance(self.model, gpt.GPTLMHeadModel):
+                    logits = self.model(
+                        input_ids,
+                        inference_params=inference_params,
+                        position_ids=None,
+                        last_token_only=False
+                    ).logits
+                    inference_params.sequence_len_offset += input_ids.size(1)
+                else:
+                    model_output = self.model(
+                        input_ids,
+                        past_key_values=past_key_values,
+                        use_cache=True
+                    )
+                    past_key_values = model_output["past_key_values"]
+                    logits = model_output["logits"]
+                predict_logits = logits[:, -1:, :hp.wav2vec_codebook_size]
+                samples = sample(predict_logits, temp=hp.semantic_temperature, mode=hp.sample_mode)
+                input_ids = samples
+                if semantic_samples is None:
+                    semantic_samples = samples
+                else:
+                    semantic_samples = torch.cat([semantic_samples, samples], dim=1)
+        return semantic_samples
+
+
+class SemanticEmbedARModule(BaseModule):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+        self.save_hyperparameters()
+        semantic_type = self.extra_params.get("semantic_type", "wav2vec")
+        if semantic_type == "wav2vec":
+            self.semantic_embed_fn = self.get_wav2vec_embeds
+        elif semantic_type == "best_rq":
+            self.semantic_embed_fn = self.get_best_rq_embeds
+        else:
+            raise KeyError(f"Invalid semantic_type, got {semantic_type}")
+
+    def _shared_step(self, batch):
+        if isinstance(batch, list):
+            batch = batch[0]
+        if batch.dim() == 3:
+            batch = batch.squeeze(1)
+        t = time.perf_counter()
+        with torch.autocast(device_type="cuda", enabled=False):
+            input_ids, target_ids = self.prepare_feature(batch.float())
+        exclude_time = time.perf_counter() - t
+        input_ids, input_embeds = input_ids["input_ids"], input_ids["input_embeds"]
+        input_embeds = torch.cat(
+            [
+                self.model.model.embed_tokens(input_ids),
+                self.model.embed_head(input_embeds)
+            ],
+            dim=1
+        )
+        input_ids = {"inputs_embeds": input_embeds}
+        logits = self.model(**input_ids)
+        if isinstance(logits, dict):
+            logits = logits["logits"]
+        elif isinstance(logits, tuple):
+            logits = logits[0]
+        x = logits[:, -target_ids.size(1) :, :]
+        loss = self.criterion(x, target_ids)
+
+        batch_size, seq_len = input_embeds.size()[:2]
+        self.metric.update(
+            batch_size=batch_size,
+            stage=self.trainer.state.stage,
+            seq_length=seq_len,
+            exclude_time=exclude_time,
+        )
+
+        if self.trainer.global_step % self.trainer.log_every_n_steps == 0:
+            metric = self.metric.compute(step=self.trainer.global_step)
+            self.log_dict(metric, prog_bar=True, sync_dist=True)
+
+        return loss
+
+    def training_step(self, batch, batch_idx):
+        loss = self._shared_step(batch)
+        self.log_dict({"tr_loss": loss}, prog_bar=True, sync_dist=True)
+        return loss
+
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
+        loss = self._shared_step(batch)
+        if dataloader_idx not in self.val_outputs:
+            self.val_outputs[dataloader_idx] = []
+        self.val_outputs[dataloader_idx].append((loss))
+
+    def on_validation_epoch_end(self):
+        for dataloader_idx, outputs in self.val_outputs.items():
+            loss = 0
+            for l in outputs:
+                loss += l
+            loss /= len(outputs)
+
+            self.log_dict(
+                {
+                    f"val_loss_{dataloader_idx}": loss,
+                },
+                prog_bar=True,
+                sync_dist=True,
+            )
+            self.val_outputs[dataloader_idx] = []
+
+    @torch.no_grad()
+    def prepare_feature(self, wavs):
+        device = wavs.device
+        b, _ = wavs.size()
+
+        wav2vec_embeds = self.semantic_embed_fn(wavs)
+        mulan_ids = self.get_mulan_tokens(wavs)
+        mulan_ids = (
+            mulan_ids
+            + torch.arange(self.extra_params.mulan_num_rvq, device=device) * self.extra_params.mulan_codebook_size
+        )
+        sos_ids = (
+            torch.zeros(size=[b, 1], dtype=mulan_ids.dtype, device=device)
+            + self.extra_params.mulan_num_rvq * self.extra_params.mulan_codebook_size
+        )
+        input_ids = torch.cat(
+            [mulan_ids, sos_ids], dim=1
+        )
+        return {"input_ids": input_ids, "input_embeds": wav2vec_embeds[:, : -1]}, wav2vec_embeds
 
     @torch.no_grad()
     def predict(
