@@ -425,7 +425,9 @@ class TextEncoder(nn.Module):
     def __init__(self, pretrained_model="bert-base-uncased", emb_dim: int = 128):
         super(TextEncoder, self).__init__()
         self.text_model = AutoModel.from_pretrained(
-            pretrained_model, add_pooling_layer=False
+            pretrained_model,
+            cache_dir="/mnt/bn/audio-diffusion/.module_cache",
+            add_pooling_layer=False,
         )
         self.text_model.gradient_checkpointing_enable()
         self.text_linear = nn.Linear(1024, emb_dim)
@@ -451,7 +453,10 @@ class MusicEncoder(nn.Module):
     def __init__(self, pretrained_model, emb_dim: int = 128, sample_rate: int = 24000):
         super(MusicEncoder, self).__init__()
         processor = AutoProcessor.from_pretrained(pretrained_model)
-        music_model = AutoModel.from_pretrained(pretrained_model)
+        music_model = AutoModel.from_pretrained(
+            pretrained_model,
+            cache_dir="/mnt/bn/audio-diffusion/.module_cache",
+        )
         self.feat_extract = {  # Use a dict to avoid auto convert fp16
             "mel": torchaudio.transforms.MelSpectrogram(
                 sample_rate=sample_rate,

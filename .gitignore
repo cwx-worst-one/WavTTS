@@ -76,6 +76,7 @@ __pycache__
 # logs
 /**/cruise_logs
 /**/wandb
+/**/lightning_logs
 
 # ipynb ckpts
 .ipynb_checkpoints
@@ -84,3 +85,6 @@ __pycache__
 scripts/weekly_test/report/
 scripts/weekly_test/report_json/
 scripts/weekly_test/Dolphin*.md
+
+# module cache
+.module_cache/

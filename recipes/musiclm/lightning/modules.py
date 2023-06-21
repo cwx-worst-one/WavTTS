@@ -1,16 +1,14 @@
 import math
 import time
-from typing import Optional, Tuple, Union
 
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from pytorch_lightning.profilers import PassThroughProfiler
-from pytorch_lightning.utilities import rank_zero_warn
 from tqdm import tqdm
-from transformers import GPT2Model, GPT2PreTrainedModel
-from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
+from s3a.providers.ctiga.models import gpt
+from s3a.providers.ctiga.utils.generation import InferenceParams
 
 from recipes.musiclm.models.compat.semantic_model import w2v_bert_tokenization
 from samantha.utils.hparams import DotDict
@@ -79,7 +77,7 @@ class BaseModule(pl.LightningModule):
         with torch.autocast(device_type="cuda", enabled=False):
             input_ids, target_ids = self.prepare_feature(batch.float())
         exclude_time = time.perf_counter() - t
-        logits = self.model(input_ids=input_ids)
+        logits = self.model(**input_ids)
         if isinstance(logits, dict):
             logits = logits["logits"]
         elif isinstance(logits, tuple):
@@ -134,14 +132,14 @@ class BaseModule(pl.LightningModule):
             self.val_outputs[dataloader_idx] = []
 
     def configure_optimizers(self):
-        params = []
-        for name, p in self.model.named_parameters():
-            if "ln_" in name or "bias" in name:
-                print(f"Skip weight decay: {name}")
-                params.append({"params": [p], "weight_decay": 0.0})
-            else:
-                params.append({"params": [p]})
-        optimizer = self.hparams.optimizer_cls(params)
+        # params = []
+        # for name, p in self.model.named_parameters():
+        #     if "ln_" in name or "bias" in name:
+        #         print(f"Skip weight decay: {name}")
+        #         params.append({"params": [p], "weight_decay": 0.0})
+        #     else:
+        #         params.append({"params": [p]})
+        optimizer = self.hparams.optimizer_cls(self.model.parameters())
         scheduler = self.hparams.scheduler_cls(optimizer)
         return {
             "optimizer": optimizer,
@@ -178,6 +176,41 @@ class BaseModule(pl.LightningModule):
             device=x.device,
         )
         return wav2vec_tokens
+
+    @torch.no_grad()
+    def get_best_rq_embeds(self, x):
+        best_rq_embeds = self.requires["semantic"].model.get_latent(
+            self.requires["feature_fn"](x)[:, :, :-1],
+            layer_ix=12
+        )
+        return best_rq_embeds.contiguous()
+
+    @torch.no_grad()
+    def get_best_rq_tokens(self, x):
+        centers = self.requires["semantic_centers"]
+        best_rq_embeds = self.get_best_rq_embeds(x)
+        b, t, d = best_rq_embeds.shape
+        dataset = best_rq_embeds.view([b * t, d])
+        num_points = dataset.size(0)
+        chunk_size = int(5e8)
+        codes = torch.zeros(num_points, dtype=torch.long, device=x.device)
+        centers_t = torch.transpose(centers, 0, 1)  # [1024, 1024]
+        centers_norms = torch.sum(centers**2, dim=1).view(1, -1)
+        inertia = 0
+        for i in range(0, num_points, chunk_size):
+            begin = i
+            end = min(begin + chunk_size, num_points)
+            dataset_piece = dataset[begin:end, :]
+            dataset_norms = torch.sum(dataset_piece**2, dim=1).view(-1, 1)
+            distances = torch.mm(dataset_piece, centers_t)
+            distances *= -2.0
+            distances += dataset_norms
+            distances += centers_norms
+            _, min_ind = torch.min(distances, dim=1)
+            codes[begin:end] = min_ind
+            inertia += distances[range(distances.shape[0]), min_ind].sum()
+        codes = codes.view([b, t])
+        return codes
     
     @torch.no_grad()
     def get_wav2vec_embeds(self, x):
@@ -223,14 +256,20 @@ class SemanticModule(BaseModule):
             extra_params=extra_params,
         )
         self.save_hyperparameters()
+        semantic_type = self.extra_params.get("semantic_type", "wav2vec")
+        if semantic_type == "wav2vec":
+            self.semantic_token_fn = self.get_wav2vec_tokens
+        elif semantic_type == "best_rq":
+            self.semantic_token_fn = self.get_best_rq_tokens
+        else:
+            raise KeyError(f"Invalid semantic_type, got {semantic_type}")
 
     @torch.no_grad()
     def prepare_feature(self, wavs):
         device = wavs.device
         b, _ = wavs.size()
 
-        wav2vec_ids = self.get_wav2vec_tokens(wavs)
-
+        wav2vec_ids = self.semantic_token_fn(wavs)
         mulan_ids = self.get_mulan_tokens(wavs)
         mulan_ids = (
             mulan_ids
@@ -245,12 +284,14 @@ class SemanticModule(BaseModule):
         input_ids = torch.cat(
             [mulan_ids, sos_ids, wav2vec_ids[:, : -1]], dim=1
         )
-        return input_ids, wav2vec_ids
+        return {"input_ids": input_ids}, wav2vec_ids
 
     @torch.no_grad()
     def predict(
         self, mulan_ids, hp
     ):
+        if isinstance(self.model, gpt.GPTLMHeadModel):
+            self.model.config.use_flash_attn = False
         device = mulan_ids.device
         b, _ = mulan_ids.size()
         mulan_ids = (
@@ -289,14 +330,32 @@ class SemanticModule(BaseModule):
                 input_ids = torch.cat(
                     [mulan_ids, sos_ids, prefix_semantic_samples], dim=1
                 )
-            past_key_values = None
-            pbar = tqdm(range(cur_end - cur_beg - cache_len))
+            gen_length = cur_end - cur_beg - cache_len
+            if isinstance(self.model, gpt.GPTLMHeadModel):
+                max_sequence_len = hp.mulan_num_rvq + hp.wav2vec_frame_rate * hp.semantic_duration
+                inference_params = InferenceParams(max_sequence_len=max_sequence_len, max_batch_size=b)
+            else:
+                past_key_values = None
+            pbar = tqdm(range(gen_length))
             for _ in pbar:
                 pbar.set_description(f"Semantic [{cur_beg} - {cur_end}]")
-                model_output = self.model(input_ids, past_key_values=past_key_values, use_cache=True)
-                past_key_values = model_output["past_key_values"]
-                logits = model_output["logits"]
-                predict_logits = logits[:, -1:, :]
+                if isinstance(self.model, gpt.GPTLMHeadModel):
+                    logits = self.model(
+                        input_ids,
+                        inference_params=inference_params,
+                        position_ids=None,
+                        last_token_only=False
+                    ).logits
+                    inference_params.sequence_len_offset += input_ids.size(1)
+                else:
+                    model_output = self.model(
+                        input_ids,
+                        past_key_values=past_key_values,
+                        use_cache=True
+                    )
+                    past_key_values = model_output["past_key_values"]
+                    logits = model_output["logits"]
+                predict_logits = logits[:, -1:, :hp.wav2vec_codebook_size]
                 samples = sample(predict_logits, temp=hp.semantic_temperature, mode=hp.sample_mode)
                 input_ids = samples
                 if semantic_samples is None:
@@ -777,6 +836,14 @@ class CoarseModule(BaseModule):
         )
         self.save_hyperparameters()
 
+        semantic_type = self.extra_params.get("semantic_type", "wav2vec")
+        if semantic_type == "wav2vec":
+            self.semantic_token_fn = self.get_wav2vec_tokens
+        elif semantic_type == "best_rq":
+            self.semantic_token_fn = self.get_best_rq_tokens
+        else:
+            raise KeyError(f"Invalid semantic_type, got {semantic_type}")
+
     @torch.no_grad()
     def prepare_feature(self, wavs):
         device = wavs.device
@@ -790,7 +857,7 @@ class CoarseModule(BaseModule):
         )
         soundstream_ids = torch.reshape(soundstream_ids, [b, -1])
 
-        wav2vec_ids = self.get_wav2vec_tokens(wavs)
+        wav2vec_ids = self.semantic_token_fn(wavs)
         wav2vec_ids = wav2vec_ids + num_coarse * self.extra_params.soundstream_codebook_size
         sos_ids = (
             torch.zeros(size=[b, 1], dtype=soundstream_ids.dtype, device=device)
@@ -800,19 +867,20 @@ class CoarseModule(BaseModule):
         input_ids = torch.cat(
             [wav2vec_ids, sos_ids, soundstream_ids[:, : -1]], dim=1
         )
-        return input_ids, soundstream_ids
+        return {"input_ids": input_ids}, soundstream_ids
 
     @torch.no_grad()
     def predict(
         self, semantic_samples, hp
     ):
+        if isinstance(self.model, gpt.GPTLMHeadModel):
+            self.model.config.use_flash_attn = False
         device = semantic_samples.device
         b = semantic_samples.size(0)
         num_coarse = hp.num_coarse
         soundstream_codebook_size = hp.soundstream_codebook_size
         wav2vec_codebook_size = hp.wav2vec_codebook_size
         soundstream_frame_rate = hp.soundstream_frame_rate
-        semantic_frame_rate = hp.wav2vec_frame_rate
         semantic_samples = semantic_samples + num_coarse * soundstream_codebook_size
         sos_ids = (
             torch.zeros(size=[b, 1], dtype=semantic_samples.dtype, device=device)
@@ -838,8 +906,8 @@ class CoarseModule(BaseModule):
         for cur_beg, cur_end in slice_range:
             cache_len = prev_end - cur_beg
             prev_end = cur_end
-            semantic_beg = int(cur_beg / soundstream_frame_rate / num_coarse * semantic_frame_rate)
-            semantic_end = semantic_beg + hp.semantic_duration * semantic_frame_rate
+            semantic_beg = int(cur_beg / soundstream_frame_rate / num_coarse * hp.wav2vec_frame_rate)
+            semantic_end = semantic_beg + hp.semantic_duration * hp.wav2vec_frame_rate
             semantic_slice = semantic_samples[:, semantic_beg : semantic_end]
             if cache_len == 0:
                 input_ids = torch.cat([semantic_slice, sos_ids], dim=1)
@@ -848,13 +916,31 @@ class CoarseModule(BaseModule):
                 input_ids = torch.cat(
                     [semantic_slice, sos_ids, prefix_coarse_samples], dim=1
                 )
-            past_key_values = None
-            pbar = tqdm(range(cur_end - cur_beg - cache_len))
+            gen_length = cur_end - cur_beg - cache_len
+            if isinstance(self.model, gpt.GPTLMHeadModel):
+                max_sequence_len = hp.wav2vec_frame_rate * hp.semantic_duration + hp.duration * soundstream_frame_rate * num_coarse
+                inference_params = InferenceParams(max_sequence_len=max_sequence_len, max_batch_size=b)
+            else:
+                past_key_values = None
+            pbar = tqdm(range(gen_length))
             for i in pbar:
                 pbar.set_description(f"Coarse [{cur_beg} - {cur_end}] [{semantic_beg} - {semantic_end}]")
-                model_output = self.model(input_ids, past_key_values=past_key_values, use_cache=True)
-                past_key_values = model_output["past_key_values"]
-                logits = model_output["logits"]
+                if isinstance(self.model, gpt.GPTLMHeadModel):
+                    logits = self.model(
+                        input_ids,
+                        inference_params=inference_params,
+                        position_ids=None,
+                        last_token_only=False
+                    ).logits
+                    inference_params.sequence_len_offset += input_ids.size(1)
+                else:
+                    model_output = self.model(
+                        input_ids,
+                        past_key_values=past_key_values,
+                        use_cache=True
+                    )
+                    past_key_values = model_output["past_key_values"]
+                    logits = model_output["logits"]
                 layer_idx = i % num_coarse
                 predict_logits = logits[:, -1:, layer_idx * soundstream_codebook_size : (layer_idx + 1) * soundstream_codebook_size]
                 samples = sample(predict_logits, temp=hp.coarse_temperature, mode=hp.sample_mode)
@@ -888,21 +974,13 @@ class CoarseCrossAttnModule(BaseModule):
             extra_params=extra_params,
         )
         self.save_hyperparameters()
-
-    def _shared_step(self, batch):
-        if isinstance(batch, list):
-            batch = batch[0]
-        if batch.dim() == 3:
-            batch = batch.squeeze(1)
-        with torch.autocast(device_type="cuda", enabled=False):
-            input_ids, encoder_hidden_states, target_ids = self.prepare_feature(batch.float())
-        logits = self.model(input_ids=input_ids, encoder_hidden_states=encoder_hidden_states)
-        if isinstance(logits, dict):
-            logits = logits["logits"]
-        x = logits[:, -target_ids.size(1) :, :]
-        loss = self.criterion(x, target_ids)
-        accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
-        return loss, accu
+        semantic_type = self.extra_params.get("semantic_type", "wav2vec")
+        if semantic_type == "wav2vec":
+            self.semantic_embeds_fn = self.get_wav2vec_embeds
+        elif semantic_type == "best_rq":
+            self.semantic_embeds_fn = self.get_best_rq_embeds
+        else:
+            raise KeyError(f"Invalid semantic_type, got {semantic_type}")
 
     @torch.no_grad()
     def prepare_feature(self, wavs):
@@ -917,7 +995,7 @@ class CoarseCrossAttnModule(BaseModule):
         )
         soundstream_ids = torch.reshape(soundstream_ids, [b, -1])
 
-        wav2vec_embeds = self.get_wav2vec_embeds(wavs)
+        wav2vec_embeds = self.semantic_embeds_fn(wavs)
         sos_ids = (
             torch.zeros(size=[b, 1], dtype=soundstream_ids.dtype, device=device)
             + num_coarse * self.extra_params.soundstream_codebook_size
@@ -925,7 +1003,7 @@ class CoarseCrossAttnModule(BaseModule):
         input_ids = torch.cat(
             [sos_ids, soundstream_ids[:, : -1]], dim=1
         )
-        return input_ids, wav2vec_embeds, soundstream_ids
+        return {"input_ids": input_ids, "encoder_hidden_states": wav2vec_embeds}, soundstream_ids
 
     @torch.no_grad()
     def predict(
@@ -936,7 +1014,6 @@ class CoarseCrossAttnModule(BaseModule):
         num_coarse = hp.num_coarse
         soundstream_codebook_size = hp.soundstream_codebook_size
         soundstream_frame_rate = hp.soundstream_frame_rate
-        semantic_frame_rate = hp.wav2vec_frame_rate
         sos_ids = (
             torch.zeros(size=[b, 1], dtype=torch.long, device=device)
             + num_coarse * soundstream_codebook_size
@@ -960,8 +1037,8 @@ class CoarseCrossAttnModule(BaseModule):
         for cur_beg, cur_end in slice_range:
             cache_len = prev_end - cur_beg
             prev_end = cur_end
-            semantic_beg = int(cur_beg / soundstream_frame_rate / num_coarse * semantic_frame_rate)
-            semantic_end = semantic_beg + hp.semantic_duration * semantic_frame_rate
+            semantic_beg = int(cur_beg / soundstream_frame_rate / num_coarse * hp.wav2vec_frame_rate)
+            semantic_end = semantic_beg + hp.semantic_duration * hp.wav2vec_frame_rate
             semantic_slice = semantic_samples[:, semantic_beg : semantic_end]
             if cache_len == 0:
                 input_ids = sos_ids
@@ -1318,8 +1395,8 @@ class FineModule(BaseModule):
             + (num_coarse + num_fine) * self.extra_params.soundstream_codebook_size
         )
         # final input tokens
-        input_tokens = torch.cat([coarse_ids, sos_ids, fine_ids[:, : -1]], dim=1)
-        return input_tokens, fine_ids
+        input_ids = torch.cat([coarse_ids, sos_ids, fine_ids[:, : -1]], dim=1)
+        return {"input_ids": input_ids}, fine_ids
 
     @torch.no_grad()
     def predict(
@@ -1472,95 +1549,3 @@ class MaskedCrossEntropy(torch.nn.Module):
         loss = loss.view(*mask.size()) * mask
         loss = (loss / mask.sum()).sum()
         return loss
-
-
-class LanguageModel(GPT2PreTrainedModel):
-    _keys_to_ignore_on_load_missing = [
-        r"attn.masked_bias",
-        r"attn.bias",
-        r"lm_head.weight",
-    ]
-
-    def __init__(
-        self,
-        config,
-        logit_num,
-    ):
-        super().__init__(config)
-
-        self.transformer = GPT2Model(config)
-
-        self.lm_head = nn.Linear(
-            config.n_embd, logit_num, bias=False
-        )
-
-        # Model parallel
-        self.model_parallel = False
-        self.device_map = None
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    def wte(self, input_ids):
-        return self.transformer.wte(input_ids)
-
-    def gradient_checkpointing_enable(self):
-        self.transformer.gradient_checkpointing_enable()
-
-    def forward(
-        self,
-        input_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        token_type_ids: Optional[torch.LongTensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, CausalLMOutputWithCrossAttentions]:
-        r"""# noqa
-        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Labels for language modeling. Note that the labels **are shifted** inside the model, i.e. you can set
-            `labels = input_ids` Indices are selected in `[-100, 0, ..., config.vocab_size]` All labels set to `-100`
-            are ignored (masked), the loss is only computed for labels in `[0, ..., config.vocab_size]`
-        """
-        return_dict = (
-            return_dict if return_dict is not None else self.config.use_return_dict
-        )
-
-        transformer_outputs = self.transformer(
-            input_ids=input_ids,
-            past_key_values=past_key_values,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            encoder_hidden_states=encoder_hidden_states,
-            encoder_attention_mask=encoder_attention_mask,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
-        hidden_states = transformer_outputs.last_hidden_state
-
-        # Set device for model parallelism
-        if self.model_parallel:
-            torch.cuda.set_device(self.transformer.first_device)
-            hidden_states = hidden_states.to(self.lm_head.weight.device)
-
-        lm_logits = self.lm_head(hidden_states)
-
-        return CausalLMOutputWithCrossAttentions(
-            logits=lm_logits,
-            past_key_values=transformer_outputs.past_key_values,
-            hidden_states=transformer_outputs.hidden_states,
-            attentions=transformer_outputs.attentions,
-            cross_attentions=transformer_outputs.cross_attentions,
-        )

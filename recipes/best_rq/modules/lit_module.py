@@ -1,10 +1,9 @@
-import torch
-
 import pytorch_lightning as pl
 from pytorch_lightning.profilers import PassThroughProfiler
-
+from samantha.utils.hparams import DotDict
 import warnings
-
+import torch
+import os
 import numpy as np
 from torch.optim.lr_scheduler import _LRScheduler
 
@@ -33,15 +32,19 @@ class BestRq(pl.LightningModule):
 
     def _shared_step(self, batch):
         model_outputs = self.model(batch)
-        return model_outputs["backward_loss"], model_outputs["acc"] * 100
+        return model_outputs["loss"], model_outputs["accu"], model_outputs["num_uni_code"]
 
     def training_step(self, batch, batch_idx):
-        loss, accu = self._shared_step(batch)
-        self.log_dict({"tr_loss": loss, "accu": accu}, prog_bar=True, sync_dist=True)
+        loss, accu, num_uni_code = self._shared_step(batch)
+        self.log_dict(
+            {"tr_loss": loss, "accu": accu, "num_uni_code": num_uni_code},
+            prog_bar=True,
+            sync_dist=True
+        )
         return loss
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
-        loss, accu = self._shared_step(batch)
+        loss, accu, _ = self._shared_step(batch)
         if dataloader_idx not in self.val_outputs:
             self.val_outputs[dataloader_idx] = []
         self.val_outputs[dataloader_idx].append((loss, accu))
@@ -73,6 +76,47 @@ class BestRq(pl.LightningModule):
             "optimizer": optimizer,
             "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
         }
+
+
+class Inference(pl.LightningModule):
+    def __init__(
+        self,
+        extra_params,
+        checkpointing=False,
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+        self.extra_params = DotDict(extra_params)
+        self.module = BestRq.load_from_checkpoint(self.extra_params.state_dict_path).eval()
+        self.embeds_bucket = dict()
+        self.bucket_idx = dict()
+        if checkpointing:
+            self.model.gradient_checkpointing_enable()
+
+    def predict_step(self, batch, batch_idx):
+        feature = batch["feature"][:, :, :-1]
+        embeds = self.module.model.get_latent(
+            feature, layer_ix=self.extra_params.layer_ix
+        )
+        embeds = embeds.reshape((-1, embeds.size(-1))).cpu()
+        if self.global_rank not in self.embeds_bucket:
+            self.embeds_bucket[self.global_rank] = embeds
+        else:
+            self.embeds_bucket[self.global_rank] = torch.cat(
+                [self.embeds_bucket[self.global_rank], embeds],
+                dim=0,
+            )
+            if self.embeds_bucket[self.global_rank].size(0) >= self.extra_params.bucket_size:
+                if self.global_rank not in self.bucket_idx:
+                    self.bucket_idx[self.global_rank] = 0
+                np.save(
+                    os.path.join(
+                        self.extra_params.output_dir,
+                        f"rank{self.global_rank}_bucket{self.bucket_idx[self.global_rank]}.npy"),
+                    self.embeds_bucket[self.global_rank].numpy()
+                )
+                self.embeds_bucket.pop(self.global_rank)
+                self.bucket_idx[self.global_rank] += 1
 
 
 class WarmupCosine(_LRScheduler):

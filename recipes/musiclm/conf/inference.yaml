@@ -10,13 +10,13 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 
 extra_params:
     prompt_path: "/mnt/bn/audio-diffusion/data/google_prompts/text_prompt_collection_20230523.csv"
-    output_dir: ./generated_output/google_prompts_semantic_step_25k
-    semantic_ckpt: "/mnt/bn/zongyu-lq/logs/musiclm/semantic_flash_llama/mcc40m/step=025000.ckpt"
-    coarse_ckpt: "/mnt/bn/zongyu-lq/logs/coarse_flash_llama/mcc40m/checkpoints/step=099000-tr_loss=3.0950.ckpt"
-    fine_ckpt: "/mnt/bn/zongyu-lq/logs/fine_flash_llama/mcc40m/checkpoints/step=120000-val_accu_0=11.06.ckpt"
+    output_dir: "generated_output/google_prompts"
+    semantic_ckpt: "/mnt/bn/audio-diffusion/ckpts/musiclm/semantic_flash_llama/mcc40m/step=040000-tr_loss=2.3858.ckpt"
+    coarse_ckpt: "/mnt/bn/audio-diffusion/ckpts/musiclm/coarse_flash_llama/mcc40m/step=099000-tr_loss=3.0950.ckpt"
+    fine_ckpt: "/mnt/bn/audio-diffusion/ckpts/musiclm/fine_flash_llama/mcc40m/step=120000-val_accu_0=11.06.ckpt"
     sample_rate: 24000
     duration: 10
-    num_rounds: 3
+    num_rounds: 1
     semantic_duration: 10
     coarse_duration: 10
     fine_duration: 4
@@ -42,7 +42,7 @@ run_opts:
     accelerator: auto
     strategy: ddp_find_unused_parameters_false
     cache_dir: .module_cache/musiclm
-    batch_size: 5
+    batch_size: 10
     num_workers: 1
 
 ################################################################################

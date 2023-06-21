@@ -210,12 +210,8 @@ class RandomProjectionQuantizer(nn.Module):
             dim: input dimension (channels)
             codebook_size: the number of code in the codebook
             codebook_dim: the dimension of the the code
-<<<<<<< HEAD
-            quantizer_num: the number of quantizers. See multi-softmax in https://arxiv.org/abs/2303.01037
-=======
             quantizer_num: the number of quantizers.
                     See multi-softmax in https://arxiv.org/abs/2303.01037
->>>>>>> usm_develop
             initialization_type: the initialization method of the projection matrix
         """
         super().__init__()

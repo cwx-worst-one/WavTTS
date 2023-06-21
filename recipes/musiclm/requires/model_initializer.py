@@ -9,6 +9,10 @@ import samantha.utils.hdfs_helper as hh
 
 from ..utils.dist import local_zero_first
 from recipes.musiclm.models.compat.semantic_model import SSLFrontend
+from recipes.best_rq.modules.lit_module import BestRq
+from recipes.best_rq.modules.lit_datamodule import NormalizeFeature
+from torchaudio.transforms import MelSpectrogram, AmplitudeToDB
+from torchaudio_augmentations import Compose
 
 
 def value(func: str):
@@ -132,6 +136,64 @@ def init_wav2vec(hpath, local_rank, cache_dir=None):
             return {
                 "ssl_frontend": SSLFrontend(),
                 "semantic": load_torch_script_module(hpath, device),
+            }
+
+
+def init_best_rq(hpath, local_rank, cache_dir=None):
+    if cache_dir is not None:
+        os.makedirs(cache_dir, exist_ok=True)
+
+    device = torch.device(f"cuda:{local_rank}")
+    # with local_zero_first():
+    #     if not os.path.exists(
+    #         f"{cache_dir}/mel_mean_1000.pt"
+    #     ):
+    #         if not hh.get(
+    #             "hdfs://harunava/home/byte_speech_sv/zongyu.yin/assets/mel_mean_1000.pt",
+    #             f"{cache_dir}/mel_mean_1000.pt"
+    #         ):
+    #             raise ConnectionError(f"Cannot retrieve mel_mean_1000.pt.")
+    #     if not os.path.exists(
+    #         f"{cache_dir}/mel_std_1000.pt"
+    #     ):
+    #         if not hh.get(
+    #             "hdfs://harunava/home/byte_speech_sv/zongyu.yin/assets/mel_std_1000.pt",
+    #             f"{cache_dir}/mel_std_1000.pt"
+    #         ):
+    #             raise ConnectionError(f"Cannot retrieve mel_std_1000.pt.")
+    # mean = torch.load(f"{cache_dir}/mel_mean_1000.pt").to(device)
+    # std = torch.load(f"{cache_dir}/mel_std_1000.pt").to(device)
+    mean = torch.tensor(3.287).to(device)
+    std = torch.tensor(20.043).to(device)
+    feature_fn = Compose(
+        [
+            MelSpectrogram(
+                sample_rate=24000,
+                n_fft=2048,
+                hop_length=240,
+                n_mels=128,
+            ).eval().to(device),
+            AmplitudeToDB().eval().to(device),
+            NormalizeFeature(mean, std).eval().to(device)
+        ]
+    )
+    if hpath.startswith("hdfs://"):
+        local_path = f"{cache_dir}/{os.path.basename(hpath)}"
+        with local_zero_first():
+            if not os.path.exists(local_path):
+                if not hh.get(hpath, local_path):
+                    raise ConnectionError(f"Cannot retrieve file from {hpath}.")
+            model = BestRq.load_from_checkpoint(local_path).eval().to(device)
+            return {
+                "feature_fn": feature_fn,
+                "semantic": model,
+            }
+    else:
+        with local_zero_first():
+            model = BestRq.load_from_checkpoint(hpath).eval().to(device)
+            return {
+                "feature_fn": feature_fn,
+                "semantic": model,
             }
 
 
