@@ -92,6 +92,7 @@ class MCCTransforms(TransformBase):
         n_samples: int,
         sample_rate: int,
         audio_key: str = "mp3",
+        normalize_audio: bool = True,
         min_volume_threshold: float = 0.05,
         loudness_ratio_threshold: float = 0.2,
         aed_filtered: bool = False,
@@ -125,19 +126,15 @@ class MCCTransforms(TransformBase):
             self.min_volume_threshold,
             self.loudness_ratio_threshold
         )
-        self.read_mp3 = ReadMP3(self.sample_rate)
-        self.to_tensor = ToTensor()
-        self.audio_dim = SetAudioDimensions()
-        self.normalize_audio_fp32 = NormalizeAudioToFloat32()
-        self.normalize_audio = NormalizeAudio()
-        self.base_transform = Compose(
-            [
-                self.read_mp3,
-                self.to_tensor,
-                self.audio_dim,
-                self.normalize_audio_fp32
-            ]
-        )
+        base_transforms = [
+            ReadMP3(self.sample_rate),
+            ToTensor(),
+            SetAudioDimensions(),
+            NormalizeAudioToFloat32(),
+        ]
+        if normalize_audio:
+            base_transforms.append(NormalizeAudio())
+        self.base_transform = Compose(base_transforms)
 
         self.random_pad = RandomPad(n_samples=n_samples)
         self.random_crop = RandomResizedCrop(n_samples=n_samples)
