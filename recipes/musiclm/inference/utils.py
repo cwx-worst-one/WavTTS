@@ -2,6 +2,7 @@ import io
 import random
 import re
 import unicodedata
+import hashlib
 
 import librosa
 import numpy as np
@@ -50,6 +51,23 @@ def set_seed(seed=1996):
     return
 
 
+def generate_hash(string):
+    """
+    (added by Bochen on 2023-06-12)
+    encode string (e.g., text prompt) to 64-byte encoded string that captures nuance
+    the encoded string is not random
+    it can be used to differentiate filename for similar text prompts
+    e.g.,
+    - input1: "The main soundtrack of an arcade game. It is fast-paced."
+        - output1: "cd14cca5dca6bb29f284de44f9c3e446b08bbfafab1019d64f38a9294bc4b47a"
+    - input2: "The main soundtrack of an arcade game. It is slow-paced."
+        - output2: "10b106b469638031217236f8a83bc0d672a18536bd2a2c8830ce5a0fb628e2a5"
+    """
+    hash_object = hashlib.sha256(string.encode())
+    hash_value = hash_object.hexdigest()
+    return hash_value
+
+
 def slugify(value, allow_unicode=False):
     """
     Taken from https://github.com/django/django/blob/master/django/utils/text.py
@@ -69,6 +87,15 @@ def slugify(value, allow_unicode=False):
         )
     value = re.sub(r"[^\w\s-]", "", value.lower())
     return re.sub(r"[-\s]+", "-", value).strip("-_")
+
+
+def format_name(text_prompt):
+    """
+    (added by Bochen on 2023-06-12)
+    format the text_prompt for a unique filename
+    """
+    formatted_text = slugify(text_prompt)[:128] + "_" + generate_hash(text_prompt)[:4]
+    return formatted_text
 
 
 def dump_wav(audio, sr=24000):

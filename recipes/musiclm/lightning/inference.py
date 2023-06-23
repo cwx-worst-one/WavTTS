@@ -9,7 +9,7 @@ from recipes.musiclm.lightning.modules import SemanticDiffusionModule
 from recipes.musiclm.lightning.modules import CoarseCrossAttnModule
 from recipes.musiclm.lightning.modules import FineModule
 from samantha.utils.hparams import DotDict
-from ..inference.utils import slugify, save_wav
+from ..inference.utils import slugify, save_wav, format_name
 from recipes.musiclm.models.compat.semantic_model import w2v_bert_tokenization
 
 
@@ -145,7 +145,7 @@ class InferenceModule(BaseModule):
         for i, wav in enumerate(wavs):
             wav_dir = os.path.join(self.extra_params.output_dir, categories[i])
             os.makedirs(wav_dir, exist_ok=True)
-            fp = os.path.join(wav_dir, f"{slugify(prompts[i])[:128]}.{round}.wav")
+            fp = os.path.join(wav_dir, f"{format_name(prompts[i])}.{round}.wav")
             print(f"[Saving] {fp}")
             save_wav(wav.cpu().numpy(), fp, sr=24000)
 
@@ -208,7 +208,7 @@ class DiffusionInferenceModule(BaseModule):
         for i, wav in enumerate(wavs):
             wav_dir = os.path.join(self.extra_params.output_dir, categories[i])
             os.makedirs(wav_dir, exist_ok=True)
-            fp = os.path.join(wav_dir, f"{slugify(prompts[i])[:128]}.{round}.wav")
+            fp = os.path.join(wav_dir, f"{format_name(prompts[i])}.{round}.wav")
             print(f"[Saving] {fp}")
             save_wav(wav.cpu().numpy(), fp, sr=24000)
 

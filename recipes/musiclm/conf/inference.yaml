@@ -10,7 +10,7 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 
 extra_params:
     prompt_path: "/mnt/bn/audio-diffusion/data/google_prompts/text_prompt_collection_20230523.csv"
-    output_dir: "generated_output/google_prompts"
+    output_dir: ./generated_output/text_prompt_collection_20230523
     semantic_ckpt: "/mnt/bn/audio-diffusion/ckpts/musiclm/semantic_flash_llama/mcc40m/step=040000-tr_loss=2.3858.ckpt"
     coarse_ckpt: "/mnt/bn/audio-diffusion/ckpts/musiclm/coarse_flash_llama/mcc40m/step=099000-tr_loss=3.0950.ckpt"
     fine_ckpt: "/mnt/bn/audio-diffusion/ckpts/musiclm/fine_flash_llama/mcc40m/step=120000-val_accu_0=11.06.ckpt"
