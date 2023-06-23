@@ -1,2 +1,2 @@
 from .hdfs_callback import HdfsSavingCallback
-from .step_time_logger import StepTimeLogger
+from .timer import Timer
