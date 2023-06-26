@@ -100,7 +100,7 @@ class WebDataset(DataPipeline, FluidInterface):
         def maybe_remove_hdfs_cat(url):
             # Backward compatiblity, in old style we use hdfs -cat to
             # read webdataset from hdfs
-            return url.replace("pipe:", "").replace("hdfs dfs -cat ", "")
+            return url.replace("pipe:", "").replace("hdfs dfs -cat ", "").strip()
 
         urls = expand_urls(urls)
         urls = [maybe_remove_hdfs_cat(url) for url in urls]

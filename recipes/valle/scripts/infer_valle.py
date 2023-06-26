@@ -1,5 +1,6 @@
 import argparse
 import os
+from tqdm import tqdm
 
 import torch
 from scipy.io.wavfile import write
@@ -10,6 +11,7 @@ from recipes.valle.lit_modules import ValleCoarse, ValleFine
 from recipes.soundstream.models.vqgan_res import VQGAN
 from recipes.soundstream.utils.utils import get_config_from_file
 from samantha.utils.hparams import DotDict
+from recipes.valle.utils.model_init import init_sound_stream_decoder
 
 
 def save_wav(audio, output_file, sr=24000):
@@ -29,6 +31,13 @@ def to_device(tensors, device):
     return tensors_to_device
 
 
+def get_step_epoch_from_ckpt(ckpt_path):
+    data = torch.load(ckpt_path)
+    global_step = data["global_step"]
+    epoch = data["epoch"]
+    return global_step, epoch
+
+
 def prepare_models(args, device):
     ar_model = ValleCoarse.load_from_checkpoint(
         args.ar_ckpt_path, device=torch.device(device)
@@ -39,11 +48,10 @@ def prepare_models(args, device):
         args.nar_ckpt_path, device=torch.device(device)
     ).to(args.device)
     nar_model.eval()
-    
-    hp = get_config_from_file(args.codec_config).hparams
-    vqgan_model = VQGAN(hp).to(device)
-    ckpt = torch.load(args.codec_ckpt, map_location=device)
-    vqgan_model.load_state_dict(ckpt["G"])
+
+    rank = int(device.split(":")[1])
+    vqgan_model = init_sound_stream_decoder(
+        args.codec_ckpt_path, rank, cache_dir=f".cache_dir")["ss_dec"]
     vqgan_model.eval()
 
     return ar_model, nar_model, vqgan_model
@@ -52,10 +60,12 @@ def prepare_models(args, device):
 @torch.no_grad()
 def main(args):
     devices = args.device
-    ar_model_hps = DotDict({"phone_tokens_num": 200, "audio_tokens_num": 1024})
+    ar_model_hps = DotDict({"phone_tokens_num": 200, "audio_tokens_num": 1024})  # TODO: phone token number固定了，不同模型不一样，这里会报错
     ar_model, nar_model, vqgan_model = prepare_models(args, devices)
-    os.makedirs(args.out_dir, exist_ok=True)
-    #### prepare dataset for inference !!!!
+    out_dir = args.out_dir
+
+    os.makedirs(out_dir, exist_ok=True)
+    # prepare dataset for inference !!!!
     test_dataset = GPT2TTSDataset(
         args.meta_file, hp=ar_model_hps, return_full_seq=True, inference=True
     )
@@ -71,7 +81,7 @@ def main(args):
     )
 
     temperature = 1.0
-    for i, loaded_data in enumerate(test_data_loader):
+    for i, loaded_data in tqdm(enumerate(test_data_loader)):
         seqs, seq_lens, pos_ids, seq_sen_ids, init_full_seqs, utts = to_device(
             loaded_data, device=devices
         )
@@ -81,13 +91,12 @@ def main(args):
 
         # ar
         seqs, pos_ids, seq_sen_ids, _ = ar_model.generate(
-            (seqs, seq_lens, pos_ids, seq_sen_ids), test_dataset.tokenizer
+            (seqs, seq_lens, pos_ids, seq_sen_ids, utts), test_dataset.tokenizer
         )
         b, t = seqs.shape
-        
         full_seqs = torch.stack([seqs] * num_res, dim=1)  # [b, n_codebook, t]
-        full_seqs[:, :, text_len[0] : text_len[0] + unmask_len[0]] = \
-            init_full_seqs[:, text_len[0] :, :].transpose(1, 2)
+        full_seqs[:, :, text_len[0]: text_len[0] + unmask_len[0]] = \
+            init_full_seqs[:, text_len[0]:, :].transpose(1, 2)
         layer_index = torch.ones(size=[b], device=devices)  # [b,]
         mask1 = layer_index.unsqueeze(1) > torch.arange(num_res, device=devices).unsqueeze(0)  # [b, 1] > [1, n_codebook] = [b, n_codebook]
         mask2 = (text_len + unmask_len).unsqueeze(1) > torch.arange(t, device=devices).unsqueeze(0)  # [b, 1] > [1, t] = [b, t]
@@ -96,32 +105,38 @@ def main(args):
 
         # nar
         full_seqs = nar_model.generate(full_seqs,
-                                       unmask_len, 
-                                       seq_sen_ids, 
-                                       pos_ids, 
-                                       mask2, 
-                                       test_dataset.tokenizer, 
-                                       temperature=temperature)
+                                    unmask_len, 
+                                    seq_sen_ids, 
+                                    pos_ids, 
+                                    mask2, 
+                                    test_dataset.tokenizer, 
+                                    temperature=temperature)
 
-        full_seq = full_seqs[:, :, text_len[0] :]  # [b, n_codbook, t]
+        full_seq = full_seqs[:, :, text_len[0]:]  # [b, n_codbook, t]
         full_seq = (full_seq - test_dataset.tokenizer.phone_token_num - 1)[:, :, :-1]
 
-        wav2 = vqgan_model.decode(vqgan_model.get_quant_output_from_index(full_seq))
+        wav2 = vqgan_model(full_seq)
         wav2 = wav2.cpu().squeeze(1).squeeze(0).numpy()
-        save_wav(wav2, os.path.join(args.out_dir, "{}.wav".format(utts[0])), sr=24000)
+
+        ### wav_prompt_infer
+        os.makedirs(os.path.join(args.out_dir, 'gen_with_prompt'), exist_ok=True)
+        save_wav(wav2, os.path.join(out_dir, 'gen_with_prompt', "{}.wav".format(utts[0])), sr=24000)
+
+        ### wav_infer
+        os.makedirs(os.path.join(args.out_dir, 'gen'), exist_ok=True)
         wav_gen = wav2[unmask_len * 300 :]
-        save_wav(wav_gen, os.path.join(args.out_dir, "{}.wav".format(utts[0] + "-gen")),sr=24000)
+        save_wav(wav_gen, os.path.join(out_dir, 'gen', "{}.wav".format(utts[0])),sr=24000)
 
 if __name__ == "__main__":
     # Generation configs
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ar_ckpt_path")
+    parser.add_argument("--ar_ckpt_path", type=str, required=True)
     parser.add_argument("--nar_ckpt_path", type=str, required=True)
-    parser.add_argument("--codec_config", type=str, required=True)
-    parser.add_argument(
-        "--codec_ckpt", type=str, required=True, help="codec model ckpt path"
-    )
+    parser.add_argument("--codec_ckpt_path", type=str,
+                        default="hdfs://haruna/home/byte_speech_sv/user/congjian/2023-01-17_causal_x300_1024_6book_doubleG_export/",
+                        help="codec model ckpt path")
     parser.add_argument("--meta_file", type=str, required=True)
+    parser.add_argument("--use_pos_ids", type=bool, default=True)
     parser.add_argument(
         "--device", type=str, default="cpu", help='Inference device, "cpu" or "cuda"'
     )

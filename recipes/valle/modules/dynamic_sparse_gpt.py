@@ -28,7 +28,7 @@ from torch import nn
 from torch.cuda.amp import autocast
 from torch.nn import CrossEntropyLoss
 from einops import rearrange, repeat
-from transformers import GPT2Config
+from transformers import GPT2Config, RwkvConfig
 from transformers.activations import ACT2FN
 from transformers.modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,

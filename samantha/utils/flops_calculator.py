@@ -3,6 +3,7 @@ from functools import partial
 from s3a.providers.ctiga.models.gpt import GPTPreTrainedModel
 
 from samantha.models.flash_llama import LlamaPreTrainedModel
+from samantha.models.sparse_llama import LLaMa as SparseLLama
 
 
 def llama_calculator(num_layers, hidden_size, intermediate_size, vocab_size, seq_len):
@@ -27,5 +28,18 @@ def retrieve_calculator(model_obj):
             model_obj.config.n_embd,
             model_obj.config.n_inner,
             model_obj.config.vocab_size,
+        )
+    if isinstance(model_obj, SparseLLama):
+        config = model_obj.params
+        intermediate_size = int(config.dim * 4 * 2 / 3)
+        intermediate_size = config.multiple_of * (
+            (intermediate_size + config.multiple_of - 1) // config.multiple_of
+        )
+        return partial(
+            llama_calculator,
+            config.n_layers,
+            config.dim,
+            intermediate_size,
+            config.vocab_size,
         )
     return None

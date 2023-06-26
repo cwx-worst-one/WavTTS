@@ -14,6 +14,7 @@ class WarmupCosine(_LRScheduler):
         min_lr,
         last_epoch=-1,
         verbose=False,
+        reset_scheduler=False,
     ):
         self.optimizer = optimizer
 
@@ -47,11 +48,16 @@ class WarmupCosine(_LRScheduler):
         self.cycle_steps = cycle_steps
         super().__init__(optimizer, last_epoch, verbose)
 
+        self.reset_scheduler = reset_scheduler
+
     def state_dict(self):
         return {"last_epoch": self.last_epoch}
 
     def load_state_dict(self, state_dict):
-        self.last_epoch = state_dict["last_epoch"]
+        if self.reset_scheduler:
+            self.last_epoch = 1
+        else:
+            self.last_epoch = state_dict["last_epoch"]
 
     def cal_lr(self, init_lr, min_lr):
         if self.last_epoch <= self.warmup_steps:

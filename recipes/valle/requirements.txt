@@ -1,0 +1,5 @@
+--index-url https://bytedpypi.byted.org/simple
+bytedeuler~=0.28
+ffmpeg-python==0.2.0
+torchdata==0.6.0
+webdataset==0.2.35

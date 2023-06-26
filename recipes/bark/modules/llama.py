@@ -14,15 +14,11 @@ from einops import rearrange, repeat
 from triton.ops.blocksparse import matmul as sparse_matmul
 from triton.ops.blocksparse import softmax as sparse_softmax
 
-'''
-import fairscale.nn.model_parallel.initialize as fs_init
-from fairscale.nn.model_parallel.layers import (
-    ParallelEmbedding,
-    RowParallelLinear,
-    ColumnParallelLinear,
-)
-'''
 
+__all__ = [
+    "LLaMa",
+    "LLaMaNAR",
+]
 
 sparse_fns = {}
 
@@ -72,7 +68,7 @@ class ModelArgs:
     n_layers: int = 8
     n_heads: int = 8
     vocab_size: int = 1024  # defined later by tokenizer
-    out_dim: int = 1024  # maybe not same as vocab_size
+    out_dim: int = 1024     # maybe not same as vocab_size
     multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
     norm_eps: float = 1e-6
 
@@ -82,6 +78,14 @@ class ModelArgs:
     resid_pdrop: float = 0.1
     sparse: bool = False
     checkpointing: bool = False
+
+    # for codec
+    num_res: int = -1
+    num_coarse: int = -1
+    num_fine: int = -1
+
+    audio_tokens_num: int = 1024
+    phone_tokens_num: int = 200
 
 
 class RMSNorm(torch.nn.Module):
@@ -204,6 +208,7 @@ class Attention(nn.Module):
 
     def __init__(self, args: ModelArgs):
         super().__init__()
+        self.args = args
 
         #self.n_local_heads = args.n_heads // fs_init.get_model_parallel_world_size()
         self.n_local_heads = args.n_heads
@@ -261,17 +266,10 @@ class Attention(nn.Module):
         )
         self.attn_dropout = nn.Dropout(args.attn_pdrop)
         self.resid_dropout = nn.Dropout(args.resid_pdrop)
-        # self.pos_embedding = PositionEmbedding(args.max_seq_len, self.head_dim)
+        # for block sparse
         self.block = 32
-        '''
-        # TODO
-        self.cache_k = torch.zeros(
-            (args.max_batch_size, args.max_seq_len, self.n_local_heads, self.head_dim)
-        ).cuda()
-        self.cache_v = torch.zeros(
-            (args.max_batch_size, args.max_seq_len, self.n_local_heads, self.head_dim)
-        ).cuda()
-        '''
+        # for inference
+        self.args.use_cache = False
 
     def forward(self, x: torch.Tensor, start_pos: int, freqs_cis: torch.Tensor,
                 mask: Optional[torch.Tensor]):
@@ -283,31 +281,28 @@ class Attention(nn.Module):
         xv = xv.view(bsz, seqlen, self.n_local_heads, self.head_dim)
         xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
 
-        '''
-        # TODO
-        self.cache_k = self.cache_k.to(xq)
-        self.cache_v = self.cache_v.to(xq)
+        if self.args.use_cache:
+            if not hasattr(self, "cache_k") or not hasattr(self, "cache_v"):
+                self.cache_k = torch.zeros(
+                    (self.args.max_batch_size, self.args.max_seq_len, self.n_local_heads, self.head_dim)
+                ).to(xq)
+                self.cache_v = torch.zeros(
+                    (self.args.max_batch_size, self.args.max_seq_len, self.n_local_heads, self.head_dim)
+                ).to(xq)
+            self.cache_k = self.cache_k.to(xq)
+            self.cache_v = self.cache_v.to(xq)
+            # cache k and v
+            self.cache_k[:bsz, start_pos : start_pos + seqlen] = xk
+            self.cache_v[:bsz, start_pos : start_pos + seqlen] = xv
+            keys = self.cache_k[:bsz, : start_pos + seqlen]
+            values = self.cache_v[:bsz, : start_pos + seqlen]
+        else:
+            keys = xk
+            values = xv
 
-        self.cache_k[:bsz, start_pos : start_pos + seqlen] = xk
-        self.cache_v[:bsz, start_pos : start_pos + seqlen] = xv
-
-        keys = self.cache_k[:bsz, : start_pos + seqlen]
-        values = self.cache_v[:bsz, : start_pos + seqlen]
-        '''
-
-        xq = xq.transpose(1, 2)
-        xk = xk.transpose(1, 2)
-        xv = xv.transpose(1, 2)
-
-        '''
-        pos_ids = torch.arange(start_pos, seqlen + start_pos).to(x.device).unsqueeze(0)
-        xq = self.pos_embedding(xq, pos_ids)
-        xk = self.pos_embedding(xk, pos_ids)
-        '''
-
-        # TODO: cache inference
-        keys = xk
-        values = xv
+        xq = xq.transpose(1, 2)         # [b, t, head, dim] -> [b, head, t, dim]
+        keys = keys.transpose(1, 2)     # [b, t, head, dim] -> [b, head, t, dim]
+        values = values.transpose(1, 2) # [b, t, head, dim] -> [b, head, t, dim]
 
         if not self.sparse or not self.training:
             scores = torch.matmul(xq, keys.transpose(2, 3)) / math.sqrt(self.head_dim)
@@ -398,17 +393,15 @@ class TransformerBlock(nn.Module):
 
 class LLaMa(nn.Module):
 
-    def __init__(self, params: ModelArgs):
+    def __init__(self, params: ModelArgs, token_input=True):
         super().__init__()
         self.params = params
         self.vocab_size = params.vocab_size
         self.n_layers = params.n_layers
-        '''
-        self.tok_embeddings = ParallelEmbedding(
-            params.vocab_size, params.dim, init_method=lambda x: x
-        )
-        '''
-        self.tok_embeddings = nn.Embedding(params.vocab_size, params.dim)
+        self.token_input = token_input
+
+        if self.token_input:
+            self.tok_embeddings = nn.Embedding(params.vocab_size, params.dim)
 
         self.layers = torch.nn.ModuleList()
         for layer_id in range(params.n_layers):
@@ -425,33 +418,37 @@ class LLaMa(nn.Module):
         self.freqs_cis = precompute_freqs_cis(
             self.params.dim // self.params.n_heads,
             self.params.max_seq_len * 2)
+
         self.apply(self._init_weights)
 
-    def forward(self, tokens: torch.Tensor, start_pos: int = 0):
-        _bsz, seqlen = tokens.shape
-        h = self.tok_embeddings(tokens)
+    def forward(self, inputs: torch.Tensor, start_pos: int = 0):
+        if self.token_input:
+            _bsz, seqlen = inputs.shape
+            h = self.tok_embeddings(inputs)
+        else:
+            _bsz, seqlen, _ = inputs.shape
+            h = inputs
+
         self.freqs_cis = self.freqs_cis.to(h.device)
         freqs_cis = self.freqs_cis[start_pos:start_pos + seqlen]
 
         mask = None
         if seqlen > 1:
-            mask = torch.full((1, 1, seqlen, seqlen),
-                              float("-inf"),
-                              device=tokens.device)
+            mask = torch.full((1, 1, seqlen, seqlen), float("-inf"), device=inputs.device)
             mask = torch.triu(mask, diagonal=start_pos + 1).type_as(h)
 
         for layer in self.layers:
             if self.params.checkpointing:
                 def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        return module(*inputs)
+                    def custom_forward(*_inputs):
+                        return module(*_inputs)
                     return custom_forward
                 h = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(layer),
                     h, start_pos, freqs_cis, mask
                 )
             else:
-                h = layer(h, start_pos, freqs_cis, mask)  # causal mask
+                h = layer(h, start_pos, freqs_cis, mask) # causal mask
 
         h = self.norm(h)
         output = self.output(h)
@@ -459,22 +456,6 @@ class LLaMa(nn.Module):
         return output_dict
 
     def _init_weights(self, module: nn.Module) -> None:
-        """Reinitialize selected weights subject to the OpenAI GPT-2 Paper
-        Scheme: A modified initialization which accounts for the accumulation
-        on the residual path with model depth. Scale the weights of residual
-        layers at initialization by a factor of 1/√N where N is the # of
-        residual layers.
-
-        Source:
-        https://openai.com/blog/better-language-models/
-
-        Reference (Megatron-LM):
-        https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/model/gpt_model.py
-
-        Args:
-            module (_type_): _description_
-        """
-
         if isinstance(module, nn.Linear):
             torch.nn.init.normal_(
                 module.weight,
@@ -494,23 +475,263 @@ class LLaMa(nn.Module):
         self.params.checkpointing = True
 
 
+class LLaMaEncoder(LLaMa):
+
+    def __init__(self, params: ModelArgs):
+        super().__init__(params=params, token_input=False)
+
+    def forward(self, inputs: torch.Tensor, start_pos: int = 0, mask=None):
+        if self.token_input:
+            _bsz, seqlen = inputs.shape
+            h = self.tok_embeddings(inputs)
+        else:
+            _bsz, seqlen, _ = inputs.shape
+            h = inputs
+
+        self.freqs_cis = self.freqs_cis.to(h.device)
+        freqs_cis = self.freqs_cis[start_pos:start_pos + seqlen]
+
+        for layer in self.layers:
+            if self.params.checkpointing:
+                def create_custom_forward(module):
+                    def custom_forward(*inputs):
+                        return module(*inputs)
+                    return custom_forward
+                h = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(layer),
+                    h, start_pos, freqs_cis, mask
+                )
+            else:
+                h = layer(h, start_pos, freqs_cis, mask)
+
+        h = self.norm(h)
+        output = self.output(h)
+        output_dict = {"logits": output.float()}
+        return output_dict
+
+
+class LLaMaNAR(nn.Module):
+
+    def __init__(self, params: ModelArgs):
+        super().__init__()
+        self.params = params
+        self.n_layers = params.n_layers
+
+        self.res_embedding = nn.Embedding(params.num_res - 1, params.dim)
+        self.embeddings = nn.ModuleList(
+            [nn.Embedding(params.vocab_size, embedding_dim=params.dim, padding_idx=0) for i in range(params.num_res)]
+        )
+        self.dense_layer = nn.Linear(params.dim * params.num_res, params.dim, bias=False)
+        self.transformer = LLaMaEncoder(params)
+
+        self.apply(self._init_weights)
+
+    def forward(self, x, seq_len, layer_index=None):
+        # x: [B, t, n_code]
+        device = x.device
+        b, t, n_code = x.size()
+
+        # predicted layer index
+        if layer_index is None:
+            layer_index = torch.randint(low=1, high=n_code, size=[b,], device=device)
+        # [1, n_code] < [b, 1] = [b, n_code]
+        codebook_mask = torch.arange(n_code, device=device).unsqueeze(0) < layer_index.unsqueeze(1)
+        # seqlen mask: [1, t] < [b, 1] = [b, t]
+        seq_mask = torch.arange(t, device=device).unsqueeze(0) < seq_len.unsqueeze(1)
+        codec_mask = torch.logical_and(codebook_mask.unsqueeze(1), seq_mask.unsqueeze(2))
+        # TODO: add T partial mask and condition mask
+
+        mask_x = torch.where(codec_mask, x + 1, torch.zeros_like(x)) # offset: pad 1
+        embeddings = []
+        for i in range(n_code):
+            embeddings.append(self.embeddings[i](mask_x[:, :, i]))
+        embeddings = torch.cat(embeddings, dim=-1) # [b, t, d*num_res]
+        embeddings = self.dense_layer(embeddings)
+
+        ### transformers ###
+        res_embeddings = self.res_embedding(layer_index - 1).unsqueeze(1) # [b, 1, d]
+        outputs = embeddings + res_embeddings
+        # attention mask
+        attn_mask = torch.full((b, 1, t, t), float("-inf"), device=x.device)
+        attn_mask = torch.where(seq_mask.unsqueeze(1).unsqueeze(2), torch.zeros_like(attn_mask), attn_mask)
+        model_outputs = self.transformer(outputs, mask=attn_mask)
+        # get targets and loss mask
+        targets = []
+        x_ = torch.where(seq_mask.unsqueeze(2), x + 1, torch.zeros_like(x)) # offset: pad 1
+        for i, ind in enumerate(layer_index):
+            targets.append(x_[i, :, ind])
+        targets = torch.stack(targets, dim=0)
+        loss_mask = seq_mask
+        assert (targets == 0).sum() == (loss_mask == 0).sum() # 确保loss_mask与输入的一致性
+        model_outputs.update(
+            {
+                "targets": (targets - 1).clamp(0), # remove offset: pad 1
+                "loss_mask": loss_mask,
+            }
+        )
+
+        return model_outputs
+
+    def _init_weights(self, module: nn.Module) -> None:
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(
+                module.weight,
+                mean=0.0,
+                std=0.02 / math.sqrt(2 * self.n_layers),
+            )
+            if hasattr(module, 'bias') and module.bias is not None:
+                module.bias.zero_()
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(
+                module.weight,
+                mean=0.0,
+                std=0.02 / math.sqrt(2 * self.n_layers),
+            )
+
+    def gradient_checkpointing_enable(self):
+        self.params.checkpointing = True
+
+
+class LLaMaNAR2(nn.Module):
+
+    def __init__(self, params: ModelArgs):
+        super().__init__()
+        self.params = params
+        self.n_layers = params.n_layers
+
+        self.res_embedding = nn.Embedding(params.num_res - 1, params.dim)
+        self.embeddings = nn.ModuleList(
+            [nn.Embedding(params.vocab_size, embedding_dim=params.dim, padding_idx=0) for i in range(params.num_res)]
+        )
+        self.dense_layer = nn.Linear(params.dim * params.num_res, params.dim, bias=False)
+        self.transformer = LLaMaEncoder(params)
+
+        self.apply(self._init_weights)
+
+    def forward(self, x, seq_len, seq_sen_id, layer_index=None):
+        # x: [B, t, n_code]
+        device = x.device
+        b, t, n_code = x.size()
+
+        text_len = (seq_sen_id == 1).sum(dim=1)
+        wav_len = (seq_sen_id == 2).sum(dim=1)
+
+        # predicted layer index
+        if layer_index is None:
+            layer_index = torch.randint(low=1, high=n_code, size=[b,], device=device)
+        # [1, n_code] < [b, 1] = [b, n_code]
+        codebook_mask = torch.arange(n_code, device=device).unsqueeze(0) < layer_index.unsqueeze(1)
+        unmask_len = torch.randint(low=1, high=320, size=[b,], device=device) # 320 frames means 4 seconds
+        rand_len = torch.randint(low=1, high=10000, size=[b,], device=device)
+        unmask_len = torch.where(wav_len < unmask_len, rand_len % wav_len, unmask_len).clamp(1) # [b,]
+        overall_mask = (unmask_len + text_len).unsqueeze(1) > torch.arange(t, device=device).unsqueeze(0) # [b, 1] > [1, t] = [b, t]
+
+        # seqlen mask: [1, t] < [b, 1] = [b, t]
+        seq_mask = (text_len + wav_len).unsqueeze(1) > torch.arange(t, device=device).unsqueeze(0) # [b, 1] > [1, t] = [b, t]
+        mask = (codebook_mask.unsqueeze(1) + overall_mask.unsqueeze(2)) * seq_mask.unsqueeze(2) # ([3, 1, 6] + [3, 1034, 1]) * [3, 1034, 1] => [3, 1034, 6]
+
+        # TODO: add T partial mask and condition mask
+        mask_x = torch.where(mask, x, torch.zeros_like(x))
+
+        embeddings = []
+        for i in range(n_code):
+            embeddings.append(self.embeddings[i](mask_x[:, :, i]))
+        embeddings = torch.cat(embeddings, dim=-1) # [b, t, d*num_res]
+        embeddings = self.dense_layer(embeddings)
+
+        ### transformers ###
+        res_embeddings = self.res_embedding(layer_index - 1).unsqueeze(1) # [b, 1, d]
+        outputs = embeddings + res_embeddings
+        # attention mask
+        attn_mask = torch.full((b, 1, t, t), float("-inf"), device=x.device)
+        attn_mask = torch.where(seq_mask.unsqueeze(1).unsqueeze(2), torch.zeros_like(attn_mask), attn_mask)
+        model_outputs = self.transformer(outputs, mask=attn_mask)
+
+        # get targets and loss mask
+        targets = []
+        x_ = torch.where(seq_mask.unsqueeze(2), x, torch.zeros_like(x))
+        for i, ind in enumerate(layer_index):
+            targets.append(x_[i, :, ind])
+        targets = torch.stack(targets, dim=0)
+        loss_mask = seq_mask * (~overall_mask)
+        # assert (targets == 0).sum() == (loss_mask == 0).sum() # 确保loss_mask与输入的一致性
+        model_outputs.update(
+            {
+                "targets": (targets - 1 - self.params.phone_tokens_num).clamp(0), # remove offset: pad 1
+                "loss_mask": loss_mask,
+            }
+        )
+
+        return model_outputs
+
+    def predict(self, x, seq_len, seq_sen_id, layer_index):
+        # x: [B, t, n_code]
+        device = x.device
+        b, t, n_code = x.size()
+
+        text_len = (seq_sen_id == 1).sum(dim=1)
+        wav_len = (seq_sen_id == 2).sum(dim=1)
+
+        # [1, n_code] < [b, 1] = [b, n_code]
+        codebook_mask = torch.arange(n_code, device=device).unsqueeze(0) < layer_index.unsqueeze(1)
+        overall_mask = (seq_len + text_len).unsqueeze(1) > torch.arange(t, device=device).unsqueeze(0) # [b, 1] > [1, t] = [b, t]
+
+        # seqlen mask: [1, t] < [b, 1] = [b, t]
+        seq_mask = (text_len + wav_len).unsqueeze(1) > torch.arange(t, device=device).unsqueeze(0) # [b, 1] > [1, t] = [b, t]
+        mask = (codebook_mask.unsqueeze(1) + overall_mask.unsqueeze(2)) * seq_mask.unsqueeze(2) # ([3, 6, 1] + [3, 1, 1034]) * [3, 1, 1034] => [3, 6, 1034]
+
+        # TODO: add T partial mask and condition mask
+        mask_x = torch.where(mask, x, torch.zeros_like(x))
+
+        embeddings = []
+        for i in range(n_code):
+            embeddings.append(self.embeddings[i](mask_x[:, :, i]))
+        embeddings = torch.cat(embeddings, dim=-1) # [b, t, d*num_res]
+        embeddings = self.dense_layer(embeddings)
+
+        ### transformers ###
+        res_embeddings = self.res_embedding(layer_index - 1).unsqueeze(1) # [b, 1, d]
+        outputs = embeddings + res_embeddings
+        # attention mask
+        attn_mask = torch.full((b, 1, t, t), float("-inf"), device=x.device)
+        attn_mask = torch.where(seq_mask.unsqueeze(1).unsqueeze(2), torch.zeros_like(attn_mask), attn_mask)
+        model_outputs = self.transformer(outputs, mask=attn_mask)
+
+        return model_outputs
+
+    def _init_weights(self, module: nn.Module) -> None:
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(
+                module.weight,
+                mean=0.0,
+                std=0.02 / math.sqrt(2 * self.n_layers),
+            )
+            if hasattr(module, 'bias') and module.bias is not None:
+                module.bias.zero_()
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(
+                module.weight,
+                mean=0.0,
+                std=0.02 / math.sqrt(2 * self.n_layers),
+            )
+
+    def gradient_checkpointing_enable(self):
+        self.params.checkpointing = True
+
 if __name__ == '__main__':
-    xq = torch.randn(size=[2, 4096, 16, 32])
-    xk = torch.randn(size=[2, 4096, 16, 32])
-    freqs_cis = precompute_freqs_cis(32, 4096 * 2)
+    params = ModelArgs()
+    model = LLaMa(params).eval()
+    params.use_cache = True
+    input_tokens = torch.randint(low=0, high=1024, size=[2, 100])
 
-    xq1, xk1 = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis[0:4096])
-    xq1 = xq1.transpose(1, 2) # [b, t, h, d] -> [b, h, t, d]
-    xk1 = xk1.transpose(1, 2) # [b, t, h, d] -> [b, h, t, d]
+    with torch.no_grad():
+        out1 = model(input_tokens)['logits']
 
-    xq = xq.transpose(1, 2) # [b, t, h, d] -> [b, h, t, d]
-    xk = xk.transpose(1, 2) # [b, t, h, d] -> [b, h, t, d]
+        out2 = []
+        for i in range(100):
+            out = model(input_tokens[:, i:i+1], start_pos=i)
+            out2.append(out['logits'])
+        out2 = torch.cat(out2, dim=1)
 
-    pos_embedding = PositionEmbedding(4096, 32)
-    position_ids = torch.arange(4096).unsqueeze(0)#.repeat(2, 1)
-    xq2 = pos_embedding(xq, position_ids)
-    xk2 = pos_embedding(xk, position_ids)
-
-    print(xq1.shape, xq2.shape)
-    err = xq1 - xq2
-    print(err.abs().max())
+    err = out1 - out2
+    print(out1.abs().mean(), err.abs().max(), out2.abs().mean())

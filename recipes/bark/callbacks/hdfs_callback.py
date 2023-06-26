@@ -4,7 +4,7 @@ from multiprocessing import Process, Queue
 
 from pytorch_lightning.callbacks import Callback
 
-from recipes.bark.utils.hdfs_tools import hdfs_mkdir, hdfs_put
+from recipes.bark.utils.hdfs_tools import hdfs_mkdir, hdfs_put, hdfs_rm
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,8 @@ class HdfsSavingCallback(Callback):
                             local_path, self.hdfs_path + "/checkpoints/" + fn
                         )
                     )
+                    if force:
+                        hdfs_rm(self.hdfs_path + "/checkpoints/" + fn)
                     hdfs_put(
                         local_path, self.hdfs_path + "/checkpoints/" + fn, force=force
                     )

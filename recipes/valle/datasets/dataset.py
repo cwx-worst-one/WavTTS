@@ -5,14 +5,13 @@ from torch.utils.data import Dataset
 
 from samantha.utils.hparams import DotDict
 
-
 class PhoneTokenizerWithAudioTokens:
     def __init__(self, phone_token_num, audio_token_num) -> None:
         self.audio_token_num = audio_token_num
         self.phone_token_num = phone_token_num
         self.vocab_size = (
             audio_token_num + phone_token_num + 3
-        )  #  <s> </s>, <sep>, <pad>
+        )  # <s> </s>, <sep>, <pad>
         self.pad = 0
         self.bos = self.vocab_size - 1
         self.eos = self.vocab_size - 1
@@ -26,8 +25,9 @@ class PhoneTokenizerWithAudioTokens:
         else:
             return None
 
+
 class GPT2TTSDataset(Dataset):
-    def __init__(self, path, hp=None, return_full_seq=False, inference=False):
+    def __init__(self, path, hp=None, return_full_seq=False, inference=False, dynamic_batch_size=False):
         self.path = path
         self.hp = DotDict(hp)
         self.metas = self.get_metadata(path)
@@ -36,6 +36,10 @@ class GPT2TTSDataset(Dataset):
         )
         self.return_full_seq = return_full_seq
         self.inference = inference
+        if dynamic_batch_size:
+            self.seqlens = [int(x.split("|")[2]) + 2 for x in self.metas]
+        else:
+            self.seqlens = None
 
     def get_metadata(self, path):
         with open(path, "r") as f:
@@ -45,13 +49,21 @@ class GPT2TTSDataset(Dataset):
     def get_text_wavid(self, idx):
         if self.inference:
             x = self.metas[idx].split("|")
-            wav_id_path, prompt_text_id_path, text_id_path = x[0], x[1], x[2]
-            wav_id = np.load(wav_id_path)
-            # load text id
-            prompt_text_id = np.load(prompt_text_id_path)
-            text_id = np.load(text_id_path)
-            text_id = np.concatenate((prompt_text_id[:-1], np.array([2]), text_id[1:]))
-            uttid = os.path.splitext(os.path.basename(text_id_path))[0]
+            if len(x) == 3:
+                wav_id_path, prompt_text_id_path, text_id_path = x[0], x[1], x[2]
+                wav_id = np.load(wav_id_path)
+                # load text id
+                prompt_text_id = np.load(prompt_text_id_path)
+                text_id = np.load(text_id_path)
+                text_id = np.concatenate((prompt_text_id[:-1], np.array([2]), text_id[1:]))
+                uttid = os.path.splitext(os.path.basename(text_id_path))[0]
+            elif len(x) == 2:
+                # 无prompt模式的inference
+                wav_id_path, text_id_path = x[0], x[1]
+                uttid = os.path.splitext(os.path.basename(text_id_path))[0]
+                wav_id = np.load(wav_id_path)
+                wav_id = np.zeros_like(wav_id)[:1, :]
+                text_id = np.load(text_id_path)
         else:
             x = self.metas[idx].split("|")
             wav_id_path, text_id_path = x[0], x[1]
@@ -93,7 +105,7 @@ class GPT2TTSDataset(Dataset):
             # get position embedding
             pos_id = np.asarray(list(range(text_len + 2)) + list(range(wav_len + 1)))
             seq_sen_id = np.asarray([1] * (text_len + 2) + [2] * (wav_len + 1))
-        
+
         seq = np.asarray(seq)
 
         if self.return_full_seq:
@@ -115,6 +127,7 @@ class GPT2TTSDataset(Dataset):
 
         return seq, pos_id, seq_sen_id, full_seq, uttid
 
+
 class ValleCollator(object):
     def __init__(self, tokenizer_pad, block_sparse=False):
         self.pad = tokenizer_pad
@@ -130,8 +143,10 @@ class ValleCollator(object):
         pos_ids = []
         full_seqs = []
         utt_ids = []
-
+        # print(results)
+        # print(len(results))
         max_seq_len = max(seq.shape[0] for seq, _, _, _, _ in results)
+        
         if self.block_sparse:
             max_seq_len = (max_seq_len // 32 + 1) * 32
         for seq, pos_id, seq_sen_id, full_seq, utt_id in results:
@@ -185,3 +200,4 @@ class ValleCollator(object):
         full_seqs = torch.from_numpy(full_seqs) if full_seqs is not None else None
 
         return seqs, seq_lens, pos_ids, seq_sen_ids, full_seqs, utt_ids
+

@@ -28,11 +28,13 @@ class DotDict(dict):
     __setattr__ = dict.__setitem__
     __delattr__ = dict.__delitem__
 
-    def __init__(self, py_dict: dict = None):
+    def __init__(self, py_dict: dict = None, **kwargs):
         super().__init__()
 
         if py_dict is None:
             py_dict = {}
+
+        py_dict.update(kwargs)
 
         for key, value in py_dict.items():
             if isinstance(value, dict):

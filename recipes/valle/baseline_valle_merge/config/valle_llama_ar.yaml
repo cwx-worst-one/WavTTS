@@ -1,0 +1,197 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 1996
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+run_opts:
+    log_dir: logs
+    fast_dev_run: False
+    tensorboard_dir: !ref <run_opts[log_dir]>
+    log_name: semantic
+    version: 1.0
+    precision: 16
+    accelerator: auto
+    strategy: ddp_find_unused_parameters_false # deepspeed_stage_2_offload, ddp_find_unused_parameters_false
+    cache_dir: .module_cache/llm_debug/
+    profiler: simple
+    flash_attn: null
+    num_epochs: 100
+    batch_size: 1
+    num_workers: 4
+    learning_rate: 0.0003
+    weight_decay: 0.1
+    checkpointing: True
+    n_step_save: 100
+    batch_total_tokens: 140000
+    min_len: 10
+    max_len: 8000
+    buffer_size: 2000
+    quality_check: True
+    return_full_seq: False
+    enable_buffer_length: True
+
+hp:
+    phone_tokens_num: 8000
+    audio_tokens_num: 1024
+    quality_check: !ref <run_opts[quality_check]>
+    return_full_seq: !ref <run_opts[return_full_seq]>
+    mask_input_for_train: False
+    mask_input_for_val: True
+    lr: !ref <run_opts[learning_rate]>
+    weight_decay: 0.1
+    sample_rate: 24000
+    metaid2textid: recipes/valle/datasets/dict/metaid_to_textid.json
+
+llama_config: !new:recipes.bark.modules.llama.ModelArgs
+    dim: 1024
+    n_layers: 24
+    n_heads: 16
+    vocab_size: 9027 # vocab_size = hp.phone_tokens_num + audio_tokens_num + 3
+    out_dim: 9027
+    multiple_of: 256
+    norm_eps: 0.000001
+    max_batch_size: 32
+    max_seq_len: !ref <run_opts[max_len]>
+    attn_pdrop: 0.1
+    resid_pdrop: 0
+    sparse: True
+    checkpointing: !ref <run_opts[checkpointing]>
+
+train_dataset: !new:recipes.valle.datasets.WDSDataset
+    wds_lst: !ref <run_opts[train_wds_lst]>
+    metaid2textid: !ref <hp[metaid2textid]>
+    hp: !ref <hp>
+    resampled: True
+
+# val_dataset: !new:recipes.valle.datasets.WDSDataset
+#     wds_lst: !ref <run_opts[valid_wds_lst]>
+#     metaid2textid: !ref <hp[metaid2textid]>
+#     hp: !ref <hp>
+#     resampled: False
+
+min_len: !ref <run_opts[min_len]>
+max_len: !ref <run_opts[max_len]>
+max_token_lens: !ref <run_opts[batch_total_tokens]>
+buffer_size: !ref <run_opts[buffer_size]>
+enable_buffer_length: !ref <run_opts[enable_buffer_length]>
+
+collate_fn: !new:recipes.valle.datasets.WDSCollator
+    tokenizer_pad: 0
+
+# dataloader configuration
+train_dataloader: !new:torch.utils.data.DataLoader
+    dataset: !apply:recipes.valle.datasets.dynamic_bucketizer [!ref <train_dataset>, !ref <max_token_lens>, !ref <min_len>, !ref <max_len>, !ref <buffer_size>, !ref <enable_buffer_length>]
+    batch_size: !ref <run_opts[batch_size]>
+    num_workers: !ref <run_opts[num_workers]>
+    shuffle: False
+    drop_last: True
+    collate_fn: !ref <collate_fn>
+    pin_memory: True
+
+# val_dataloader: !new:torch.utils.data.DataLoader
+#     dataset: !apply:recipes.valle.datasets.dynamic_bucketizer [!ref <val_dataset>, !ref <max_token_lens>, !ref <min_len>, !ref <max_len>, !ref <buffer_size>]
+#     batch_size: !ref <run_opts[batch_size]>
+#     num_workers: !ref <run_opts[num_workers]>
+#     shuffle: False
+#     drop_last: False
+#     collate_fn: !ref <collate_fn>
+#     pin_memory: True
+
+# datamodule configuration
+pl_datamodule: !new:recipes.valle.lit_modules.DataModule
+    train_dataloader: !ref <train_dataloader>
+    # val_dataloader: !ref <val_dataloader>
+
+# model configuration
+model_cls: !name:samantha.models.sparse_llama.LLaMa
+    params: !ref <llama_config>
+
+# training module configuration
+#optimizer_cls: !name:torch.optim.AdamW
+optimizer_cls: !name:deepspeed.ops.adam.FusedAdam # FusedAdam, DeepSpeedCPUAdam
+    lr: !ref <run_opts[learning_rate]>
+    weight_decay: !ref <run_opts[weight_decay]>
+    betas: [0.9, 0.95]
+    eps: 0.00000001
+
+_steps_per_epoch: !apply:operator.length_hint [!ref <train_dataloader>]
+_world_size: !apply:recipes.bark.utils.env.getenv_int ["WORLD_SIZE", 1]
+scheduler_cls: !name:recipes.bark.lr_schedulers.musiclm_lr_scheduler.WarmupCosine
+    init_lr: !ref <run_opts[learning_rate]>
+    warmup_steps: 2000
+    cycle_steps: 400000
+    min_lr: !ref <run_opts[learning_rate]> * 0.1
+
+# lightning model setting
+pl_module: !new:recipes.valle.lit_modules.llama.valle_coarse_wds.ValleCoarseWdsModule
+    model_cls: !ref <model_cls>
+    optimizer_cls: !ref <optimizer_cls>
+    scheduler_cls: !ref <scheduler_cls>
+    criterion_cls: !name:recipes.bark.modules.MaskedCrossEntropy
+    tokenizer_len: !ref <hp[phone_tokens_num]>
+    n_semantic: !ref <hp[audio_tokens_num]>
+    checkpointing: !ref <run_opts[checkpointing]>
+    extra_params: !ref <hp>
+    required_modules:
+        sound_stream:
+            - hdfs://harunava/home/byte_speech_sv/litang/2023-01-17_causal_x300_1024_6book_doubleG_export
+            - !name:recipes.bark.requires.model_initializer.init_sound_stream
+              cache_dir: !ref <run_opts[cache_dir]>
+
+logger:
+    - !new:pytorch_lightning.loggers.TensorBoardLogger
+      save_dir: !ref <run_opts[tensorboard_dir]>
+      name: !ref <run_opts[log_name]>
+      version: !ref <run_opts[version]>
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[tensorboard_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
+
+callbacks:
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      every_n_train_steps: !ref <run_opts[n_step_save]>
+      mode: max
+      save_last: True
+      save_top_k: 20
+      save_on_train_epoch_end: True
+      verbose: True
+      monitor: accu
+      filename: "{epoch:02d}-{step}-{accu:.2f}"
+    - !new:pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: 'step'
+    - !new:samantha.callbacks.timer.Timer
+
+plugins:
+    - !new:samantha.plugins.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: 'auto'
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False  # warning: setting to True can cause slowdowns
+    enable_model_summary: True
+    log_every_n_steps: 100
+    strategy: !ref <run_opts[strategy]>
+    # max_epochs: !ref <run_opts[num_epochs]>
+    #limit_train_batches: 100 # debug
+    precision: !ref <run_opts[precision]>
+    profiler: !ref <run_opts[profiler]>
+    callbacks: !ref <callbacks>
+    gradient_clip_val: 1.0
+    benchmark: true
+    accumulate_grad_batches: !ref 140000 // <run_opts[batch_total_tokens]>
+    plugins: !ref <plugins>
+    use_distributed_sampler: False
+
+
+ckpt_path: null

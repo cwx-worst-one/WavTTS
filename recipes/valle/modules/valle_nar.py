@@ -24,10 +24,12 @@ class VALLENAR(nn.Module):
         vocab_size = self.hp.vocab_size
         audio_token_num = self.hp.audio_token_num
         n_positions = self.hp.n_positions
+        self.n_layers = n_layer
+        self.gradient_checkpointing = False
 
         self.wpe = nn.Embedding(n_positions, n_embd) # [max_pos, dim]
         self.embeddings = nn.ModuleList(
-            [nn.Embedding(vocab_size, embedding_dim=n_embd, padding_idx=0)] * self.hp.num_res
+            [nn.Embedding(vocab_size, embedding_dim=n_embd, padding_idx=0) for _ in range(self.hp.num_res)]
         )
         self.dense_layer = nn.Linear(n_embd * self.hp.num_res, n_embd, bias=False)
         self.res_embedding = nn.Embedding(self.hp.num_res - 1, n_embd)
@@ -47,6 +49,26 @@ class VALLENAR(nn.Module):
                 )
             )
         self.mlp_layer = nn.Linear(n_embd, audio_token_num + 2, bias=False)
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module: nn.Module) -> None:
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(
+                module.weight,
+                mean=0.0,
+                std=0.02 / math.sqrt(2 * self.n_layers),
+            )
+            if hasattr(module, 'bias') and module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(
+                module.weight,
+                mean=0.0,
+                std=0.02 / math.sqrt(2 * self.n_layers),
+            )
+
+    def gradient_checkpointing_enable(self):
+        self.gradient_checkpointing = True
 
     def forward(self, x, seq_sen_ids, position_ids):
         # x: [B, n_codebook, t]
@@ -81,7 +103,17 @@ class VALLENAR(nn.Module):
         outputs = embeddings + self.wpe(position_ids) + res_embeddings
 
         for layer in self.layers:
-            outputs = layer(outputs, src_key_padding_mask=~seq_mask)
+            if self.gradient_checkpointing:
+                def create_custom_forward(module):
+                    def custom_forward(*inputs):
+                        # None for past_key_value
+                        return module(*inputs, src_key_padding_mask=~seq_mask)
+                    return custom_forward
+                outputs = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(layer),
+                    outputs)
+            else:
+                outputs = layer(outputs, src_key_padding_mask=~seq_mask)
         logits = self.mlp_layer(outputs) # [b, t, n_logits]
 
         # get target token
