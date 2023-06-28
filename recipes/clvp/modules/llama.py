@@ -8,7 +8,7 @@ import math
 import torch
 from torch import nn
 import torch.nn.functional as F
-
+from torch.nn import TransformerEncoderLayer
 from torch.cuda.amp import autocast
 from einops import rearrange, repeat
 
@@ -19,8 +19,10 @@ from triton.ops.blocksparse import softmax as sparse_softmax
 __all__ = [
     "ModelArgs",
     "LLaMa",
+    "LLaMaEncoder",
     "LLaMaNAR",
     "LLaMaSoundStormUp",
+    "LLaMaCLVP",
 ]
 
 sparse_fns = {}
@@ -86,7 +88,6 @@ class ModelArgs:
     num_res: int = -1
     num_coarse: int = -1
     num_fine: int = -1
-    scale_factor: float = 1.6
 
 
 class RMSNorm(torch.nn.Module):
@@ -385,8 +386,8 @@ class LLaMa(nn.Module):
 
 class LLaMaEncoder(LLaMa):
 
-    def __init__(self, params: ModelArgs):
-        super().__init__(params=params, token_input=False)
+    def __init__(self, params: ModelArgs, token_input=False):
+        super().__init__(params=params, token_input=token_input)
 
     def forward(self, inputs: torch.Tensor, start_pos: int = 0, pos_ids=None, mask=None):
         if self.token_input:
@@ -433,7 +434,7 @@ class LLaMaNAR(nn.Module):
             [nn.Embedding(params.vocab_size, embedding_dim=params.dim, padding_idx=0) for i in range(params.num_res)]
         )
         self.dense_layer = nn.Linear(params.dim * params.num_res, params.dim, bias=False)
-        self.transformer = LLaMaEncoder(params, token_input=False)
+        self.transformer = LLaMaEncoder(params)
 
         self.apply(self._init_weights)
 
@@ -540,13 +541,13 @@ class LLaMaSoundStormUp(nn.Module):
         self.embeddings = nn.ModuleList(
             [
                 PaddingEmbedding(
-                    1025, # n_code + 1
+                    params.vocab_size,
                     embedding_dim=params.dim,
                     padding_idx=0,
                 ) for i in range(params.num_res)
             ]
         )
-        self.cond_embedding = nn.Embedding(params.vocab_size, params.dim) # n_semantic
+        self.cond_embedding = nn.Embedding(1024, params.dim) # n_semantic
         self.cond_conv = nn.Conv1d(params.dim, params.dim, kernel_size=3, padding=1)
         self.dense_layer = nn.Linear(params.dim * (params.num_res + 1), params.dim, bias=False)
         self.transformer = LLaMaEncoder(params)
@@ -583,7 +584,7 @@ class LLaMaSoundStormUp(nn.Module):
 
         # condition embeddings
         cond_embeddings = self.cond_embedding(cond).transpose(1, 2) # [b, t, d] -> [b, d, t]
-        cond_embeddings = torch.nn.functional.interpolate(cond_embeddings, scale_factor=self.params.scale_factor) # [b, t, d] -> [b, d, t]
+        cond_embeddings = torch.nn.functional.interpolate(cond_embeddings, scale_factor=1.6) # [b, t, d] -> [b, d, t]
         cond_embeddings = self.cond_conv(cond_embeddings).transpose(1, 2) # [b, d, t] -> [b, t, d]
         if cond_embeddings.size(1) < t:
             cond_embeddings = torch.nn.functional.pad(cond_embeddings, (0, 0, 0, t - cond_embeddings.size(1)))
@@ -664,12 +665,48 @@ class LLaMaSoundStormUp(nn.Module):
         self.params.checkpointing = True
 
 
+class LLaMaCLVP(nn.Module):
+
+    def __init__(self, params: ModelArgs):
+        super().__init__()
+        self.params = params
+        self.transformer = LLaMaEncoder(params, token_input=True)
+        self.dense = nn.Linear(params.out_dim, params.out_dim, bias=False)
+
+    def forward(self, inputs, input_lengths):
+        b, t = inputs.shape
+        device = inputs.device
+        inputs = torch.nn.functional.pad(inputs + 1, (1, 0))
+
+        attn_mask = torch.full((b, 1, t + 1, t + 1), float("-inf"), device=inputs.device)
+        seq_mask = torch.arange(t + 1).unsqueeze(0).to(device) < (input_lengths + 1).unsqueeze(1) # [b=1, t] < [b, t=1] = [b, t]
+        attn_mask = torch.where(seq_mask.unsqueeze(1).unsqueeze(2), torch.zeros_like(attn_mask), attn_mask)
+        outputs = self.transformer(inputs, mask=attn_mask)['logits']
+
+        outputs = torch.where(seq_mask.unsqueeze(2), outputs, torch.zeros_like(outputs))
+        outputs = outputs.sum(dim=1) / seq_mask.sum(dim=1).unsqueeze(1)
+        outputs = self.dense(outputs)
+        outputs = torch.nn.functional.normalize(outputs, dim=1, eps=1e-8)
+
+        return outputs
+
+    def gradient_checkpointing_enable(self):
+        self.params.checkpointing = True
+
+
 if __name__ == '__main__':
     params = ModelArgs()
     params.num_res = 12
-    model = LLaMaSoundStorm(params)
+    model = LLaMaCLVP(params)
 
-    x = torch.arange(2 * 100 * (params.num_res + 1)).view([2, (params.num_res + 1), 100]).transpose(1, 2) % 1000
-    seq_len = torch.LongTensor([100, 50])
+    model.eval()
+    inputs = torch.randint(low=0, high=1023, size=[2, 100])
+    input_lengths = torch.LongTensor([50, 100])
 
-    y = model(x, seq_len)
+    y = model(inputs, input_lengths)
+    inputs = torch.nn.functional.pad(inputs, (0, 100))
+    y2 = model(inputs, input_lengths)
+
+    err = y - y2
+    print((y**2).sum())
+    print(err.abs().max())

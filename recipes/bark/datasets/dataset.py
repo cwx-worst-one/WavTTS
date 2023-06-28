@@ -80,3 +80,36 @@ class BarkDataset(Dataset):
             text = f.read()
         text = np.asarray(self.tokenizer(text)["input_ids"])
         return wav_16k, wav_24k, text
+
+
+class SoundStormDataset(Dataset):
+    def __init__(
+        self,
+        meta_paths,
+        tokenizer_cls,
+        min_dur=3,
+        max_dur=30,
+    ):
+        self.metalist = []
+        self.tokenizer = tokenizer_cls()
+        self.max_dur = max_dur
+
+        for meta in tqdm(meta_paths):
+            with open(meta, 'r') as f:
+                lines = [l.strip() for l in f]
+            self.metalist += lines
+
+    def __len__(self):
+        return len(self.metalist)
+
+    def __getitem__(self, idx):
+        info = self.metalist[idx]
+        audio_path = info.split('|')[0]
+        wav_24k, _ = librosa.load(audio_path, sr=24000)
+        #wav_24k = wav_24k / max(0.001, np.max(np.abs(wav_24k))) * 0.95
+
+        wav_16k = librosa.resample(y=wav_24k, orig_sr=24000, target_sr=16000)
+
+        text = np.random.randint(low=0, high=1024, size=[10,])
+
+        return wav_16k, wav_24k, text

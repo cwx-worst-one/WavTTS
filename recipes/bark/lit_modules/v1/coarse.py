@@ -3,8 +3,10 @@ import torch
 import numpy as np
 
 from pytorch_lightning.profilers import PassThroughProfiler
+from tqdm import tqdm
 
 from samantha.utils.hparams import DotDict
+from recipes.bark.lit_modules.sample import sample
 
 
 class CoarseModule(pl.LightningModule):
@@ -97,7 +99,7 @@ class CoarseModule(pl.LightningModule):
         beg_ends = []
         for i, l in enumerate(semantic_length):
             # random slice
-            if l < 256:
+            if l <= 255:
                 new_semantic_codes[i, 0:l] = semantic_codes[i, 0:l]
                 beg_ends.append([0, l.item()])
             else:
@@ -150,3 +152,77 @@ class CoarseModule(pl.LightningModule):
         output = self.requires["ss"](x)[2]
         output = torch.stack(output, dim=2) # [b, t, n_code]
         return output
+
+    @torch.no_grad()
+    def inference_from_semantic(self, semantic_codes, semantic_lens):
+        b = semantic_codes.size(0)
+        device = semantic_codes.device
+
+        self.model.params.use_cache = True
+        # chunk semantic if too long
+        semantic_token_chunk = []
+        b, t = semantic_codes.size()
+        chunks = []
+        for i in range(0, t, 125):
+            chunks.append([i, min(i + 255, t)])
+            if i + 255 >= t:
+                break
+
+        coarse_outputs = None
+        for chunk in tqdm(chunks):
+            beg, end = chunk
+            semantic_inputs = semantic_codes[:, beg:end]
+            # eos of semantic
+            semantic_inputs = torch.nn.functional.pad(
+                semantic_inputs,
+                (0, 256 - (end - beg)),
+                value=self.n_semantic
+            )
+            # 续写
+            if coarse_outputs is not None:
+                coarse_history = coarse_outputs[:, -int(2 * 1.6 * (255 - 125)):]
+                coarse_history = coarse_history + self.n_semantic + 1 # offset: semantic + eos
+                coarse_history = (coarse_history.reshape(b, -1, 2) + torch.arange(2, device=device) * 1024).reshape(b, -1)
+
+                coarse_history_len = coarse_history.size(-1)
+                input_tokens = torch.cat(
+                    [
+                        semantic_inputs,
+                        # offset: semantic + eos
+                        torch.zeros(size=[b, 1], device=device, dtype=torch.long) + 2 * 1024 + self.n_semantic + 1, # bos
+                        coarse_history,
+                    ],
+                    dim=1
+                )
+            else:
+                coarse_history = None
+                coarse_history_len = 0
+                input_tokens = torch.cat(
+                    [
+                        semantic_inputs,
+                        # offset: semantic + eos
+                        torch.zeros(size=[b, 1], device=device, dtype=torch.long) + 2 * 1024 + self.n_semantic + 1, # bos
+                    ],
+                    dim=1
+                )
+
+            coarse_chunk_outputs = []
+            infer_len = int(np.ceil(1.6 * (end - beg)) * 2) # max=816
+            start_pos = 0
+            for i in range(infer_len - coarse_history_len):
+                layer_index = i % 2
+                logits = self.model(input_tokens, start_pos=start_pos)['logits']
+                start_pos += input_tokens.size(1)
+                pred_logits = logits[:, -1, self.n_semantic + 1 + layer_index * 1024: self.n_semantic + 1 + (layer_index + 1) * 1024]
+                samples = sample(pred_logits, temp=1.0, mode="naive", device=device)
+                # next infer
+                coarse_chunk_outputs.append(samples)
+                input_tokens = samples + self.n_semantic + 1 + layer_index * 1024
+            coarse_chunk_outputs = torch.cat(coarse_chunk_outputs, dim=1)
+            if coarse_outputs is not None:
+                coarse_outputs = torch.cat([coarse_outputs, coarse_chunk_outputs], dim=1)
+            else:
+                coarse_outputs = coarse_chunk_outputs
+        self.model.params.use_cache = False
+
+        return coarse_outputs

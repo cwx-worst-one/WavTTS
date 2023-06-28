@@ -4,11 +4,9 @@ import numpy as np
 
 from pytorch_lightning.profilers import PassThroughProfiler
 from tqdm import tqdm
-import time
 
 from samantha.utils.hparams import DotDict
 from recipes.bark.lit_modules.sample import sample
-from samantha.utils.model_metric import ModelMetric
 
 
 class SemanticModule(pl.LightningModule):
@@ -45,11 +43,6 @@ class SemanticModule(pl.LightningModule):
             self.model.gradient_checkpointing_enable()
 
     def setup(self, stage: str) -> None:
-        self.metric = ModelMetric(
-            precision=self.trainer.precision,
-            model_obj=self.model,
-        )
-
         if stage == "fit" and not self.requires:
             self.load_required_modules()
 
@@ -62,29 +55,16 @@ class SemanticModule(pl.LightningModule):
         return getattr(self.trainer, "profiler") or PassThroughProfiler()
 
     def training_step(self, batch, batch_idx):
-        t = time.perf_counter()
+
         with self.profiler.profile("[LightningModule]SemanticModule.prepare_feature"):
             with torch.autocast(device_type="cuda", enabled=False):
                 wavs_16k, wavs_24k, texts, wav_16k_lens, wav_24k_lens, text_lens = batch
                 wavs_16k, wavs_24k = wavs_16k.float() / 32768.0, wavs_24k.float() / 32768.0
                 input_tokens, loss_mask = self.prepare_feature(wavs_16k, wavs_24k, texts, wav_16k_lens, wav_24k_lens, text_lens)
                 org_len = input_tokens.size(1)
-        exclude_time = time.perf_counter() - t
-        b, t = input_tokens.size()[:2]
-        self.metric.update(
-            batch_size=b,
-            seq_length=t,
-            exclude_time=exclude_time,
-            stage=self.trainer.state.stage,
-        )
-        if self.trainer.global_step % self.trainer.log_every_n_steps == 0:
-            self.log_dict(
-                self.metric.compute(self.trainer.global_step),
-                prog_bar=True,
-                sync_dist=True,
-            )
+
         with self.profiler.profile("[LightningModule]SemanticModule.model_forward"):
-            logits = self.model(input_tokens).logits
+            logits = self.model(input_tokens)["logits"]
 
         if self.local_rank == 0:
             print("Bark: Semantic Training, V1...")
@@ -96,9 +76,7 @@ class SemanticModule(pl.LightningModule):
         self.log_dict(
             {
                 "tr_loss": loss.item(),
-                "accu": accu.item(),
-                "bsz": b,
-                "seq_len": t,
+                "accu": accu.item()
             },
             prog_bar=True,
             sync_dist=True

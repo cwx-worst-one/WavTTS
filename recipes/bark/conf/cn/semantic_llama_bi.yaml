@@ -20,18 +20,33 @@ run_opts:
     version: 1.0
     precision: 16
     accelerator: auto
-    strategy: deepspeed_stage_2_offload # deepspeed_stage_2_offload, ddp_find_unused_parameters_false
+    strategy: ddp_find_unused_parameters_false # deepspeed_stage_2_offload, ddp_find_unused_parameters_false
     cache_dir: .module_cache/bark_8192_mhubert_x300_ss
     profiler: simple
     flash_attn: null
     num_epochs: 100
-    batch_size: 8
+    batch_size: 32
     num_workers: 8
-    learning_rate: 0.00015
+    learning_rate: 0.0003
     weight_decay: 0.1
     checkpointing: false
     n_step_save: 1000
     hdfs_path: null
+
+llama_config: !new:recipes.bark.modules.llama.ModelArgs
+    dim: 1024
+    n_layers: 24
+    n_heads: 16
+    vocab_size: 40194
+    out_dim: 40194
+    multiple_of: 256
+    norm_eps: 0.000001
+    max_batch_size: 32
+    max_seq_len: 4096
+    attn_pdrop: 0.1
+    resid_pdrop: 0.1
+    sparse: false
+    checkpointing: !ref <run_opts[checkpointing]>
 
 train_dataset: !new:recipes.bark.datasets.BarkDataset
     meta_paths:
@@ -42,9 +57,8 @@ train_dataset: !new:recipes.bark.datasets.BarkDataset
         - !ref <run_opts[cache_dir]>/podcast_150h.txt
         - !ref <run_opts[cache_dir]>/podcast_150h.txt
         - !ref <run_opts[cache_dir]>/podcast_150h.txt
-    tokenizer_cls: !name:transformers.AutoTokenizer.from_pretrained
-        pretrained_model_name_or_path: "StabilityAI/stablelm-base-alpha-3b"
-        cache_dir: !ref <run_opts[cache_dir]>
+    tokenizer_cls: !name:transformers.LlamaTokenizer.from_pretrained
+        pretrained_model_name_or_path: !ref <run_opts[cache_dir]>/llama_hf
     min_dur: 3
     max_dur: 20
 
@@ -63,13 +77,12 @@ pl_datamodule: !new:recipes.bark.lit_modules.DataModule
     train_dataloader: !ref <train_dataloader>
 
 # model configuration
-model_cls: !name:recipes.bark.modules.stablelm.GPTNeoXForCausalLM.from_pretrained
-    pretrained_model_name_or_path: "StabilityAI/stablelm-base-alpha-3b"
-    cache_dir: !ref <run_opts[cache_dir]>
+model_cls: !name:recipes.bark.modules.llama.LLaMa
+    params: !ref <llama_config>
 
 # training module configuration
 #optimizer_cls: !name:torch.optim.AdamW
-optimizer_cls: !name:deepspeed.ops.adam.DeepSpeedCPUAdam # FusedAdam, DeepSpeedCPUAdam
+optimizer_cls: !name:deepspeed.ops.adam.FusedAdam # FusedAdam, DeepSpeedCPUAdam
     lr: !ref <run_opts[learning_rate]>
     weight_decay: !ref <run_opts[weight_decay]>
     betas: [0.9, 0.95]
@@ -80,16 +93,16 @@ _world_size: !apply:recipes.bark.utils.env.getenv_int ["WORLD_SIZE", 1]
 scheduler_cls: !name:recipes.bark.lr_schedulers.musiclm_lr_scheduler.WarmupCosine
     init_lr: !ref <run_opts[learning_rate]>
     warmup_steps: 2000
-    cycle_steps: 200000
+    cycle_steps: 400000
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
 # lightning model setting
-pl_module: !new:recipes.bark.lit_modules.v1.semantic.SemanticModule
+pl_module: !new:recipes.bark.lit_modules.v1_bi.semantic.SemanticModule
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
     criterion_cls: !name:recipes.bark.modules.MaskedCrossEntropy
-    tokenizer_len: 50277
+    tokenizer_len: 32000
     n_semantic: 8192
     checkpointing: <run_opts[checkpointing]>
     extra_params: !ref <hp>
@@ -120,7 +133,7 @@ callbacks:
       filename: "{epoch:02d}-{step}-{accu:.2f}"
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: 'step'
-    - !new:recipes.bark.callbacks.hdfs_callback.HdfsSavingCallback
+    - !new:samantha.callbacks.hdfs_callback.HdfsSavingCallback
       hdfs_path: !ref <run_opts[hdfs_path]>
       save_dir: !ref <run_opts[tensorboard_dir]>
       name: !ref <run_opts[log_name]>

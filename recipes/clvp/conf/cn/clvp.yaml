@@ -1,0 +1,165 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+hp: !include:../hparams.yaml
+
+seed: 1996
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+run_opts:
+    log_dir: logs
+    fast_dev_run: False
+    tensorboard_dir: !ref <run_opts[log_dir]>
+    log_name: semantic
+    version: 1.0
+    precision: 32
+    accelerator: auto
+    strategy: ddp_find_unused_parameters_false # deepspeed_stage_2_offload, ddp_find_unused_parameters_false
+    cache_dir: .module_cache/clvp_ss_x300
+    profiler: simple
+    flash_attn: null
+    num_epochs: 1000
+    batch_size: 16
+    num_workers: 2
+    learning_rate: 0.0003
+    weight_decay: 0.001
+    checkpointing: false
+    n_step_save: 5000
+    hdfs_path: null
+
+text_llama_config: !new:recipes.clvp.modules.llama.ModelArgs
+    dim: 768
+    n_layers: 12
+    n_heads: 12
+    vocab_size: 32001
+    out_dim: 768
+    multiple_of: 256
+    norm_eps: 0.000001
+    max_batch_size: 32
+    max_seq_len: 2048
+    attn_pdrop: 0.1
+    resid_pdrop: 0.0
+    sparse: false
+    checkpointing: !ref <run_opts[checkpointing]>
+
+audio_llama_config: !new:recipes.clvp.modules.llama.ModelArgs
+    dim: 768
+    n_layers: 12
+    n_heads: 12
+    vocab_size: 1026
+    out_dim: 768
+    multiple_of: 256
+    norm_eps: 0.000001
+    max_batch_size: 32
+    max_seq_len: 2048
+    attn_pdrop: 0.1
+    resid_pdrop: 0.0
+    sparse: false
+    checkpointing: !ref <run_opts[checkpointing]>
+
+train_dataset: !new:recipes.clvp.datasets.wds_dataset.CLVPDataset
+    meta_paths:
+        - .module_cache/tar_list_giga_clvp.txt
+    tokenizer_cls: !name:transformers.LlamaTokenizer.from_pretrained
+        pretrained_model_name_or_path: .module_cache/bark_8192_mhubert_x300_ss/llama_hf
+
+# dataloader configuration
+train_dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <train_dataset>
+    batch_size: !ref <run_opts[batch_size]>
+    num_workers: !ref <run_opts[num_workers]>
+    drop_last: True
+    pin_memory: True
+    collate_fn: !name:recipes.clvp.datasets.wds_dataset.collate_fn
+
+# datamodule configuration
+pl_datamodule: !new:recipes.clvp.lit_modules.DataModule
+    train_dataloader: !ref <train_dataloader>
+
+# model configuration
+text_model_cls: !name:recipes.clvp.modules.llama.LLaMaCLVP
+    params: !ref <text_llama_config>
+
+audio_model_cls: !name:recipes.clvp.modules.llama.LLaMaCLVP
+    params: !ref <audio_llama_config>
+
+# training module configuration
+#optimizer_cls: !name:torch.optim.AdamW
+optimizer_cls: !name:deepspeed.ops.adam.FusedAdam # FusedAdam, DeepSpeedCPUAdam
+    lr: !ref <run_opts[learning_rate]>
+    weight_decay: !ref <run_opts[weight_decay]>
+    betas: [0.9, 0.95]
+    eps: 0.00000001
+
+_steps_per_epoch: !apply:operator.length_hint [!ref <train_dataloader>]
+_world_size: !apply:recipes.clvp.utils.env.getenv_int ["WORLD_SIZE", 1]
+scheduler_cls: !name:recipes.clvp.lr_schedulers.musiclm_lr_scheduler.WarmupCosine
+    init_lr: !ref <run_opts[learning_rate]>
+    warmup_steps: 10000
+    cycle_steps: 1000000
+    min_lr: !ref <run_opts[learning_rate]> * 0.1
+
+# lightning model setting
+pl_module: !new:recipes.clvp.lit_modules.v1.clvp.CLVPModule
+    text_model_cls: !ref <text_model_cls>
+    audio_model_cls: !ref <audio_model_cls>
+    optimizer_cls: !ref <optimizer_cls>
+    scheduler_cls: !ref <scheduler_cls>
+    criterion_cls: !name:recipes.clvp.modules.MaskedCrossEntropy
+    checkpointing: <run_opts[checkpointing]>
+    extra_params: !ref <hp>
+
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[tensorboard_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+
+callbacks:
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      every_n_train_steps: !ref <run_opts[n_step_save]>
+      mode: min
+      save_last: True
+      save_top_k: 20
+      save_on_train_epoch_end: True
+      verbose: True
+      monitor: tr_loss
+      filename: "{epoch:02d}-{step}-{loss:.4f}"
+    - !new:pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: 'step'
+    - !new:samantha.callbacks.hdfs_callback.HdfsSavingCallback
+      hdfs_path: !ref <run_opts[hdfs_path]>
+      save_dir: !ref <run_opts[tensorboard_dir]>
+      name: !ref <run_opts[log_name]>
+      version: !ref <run_opts[version]>
+      n_log: !ref <run_opts[n_step_save]>
+      async_upload: true
+
+plugins:
+    - !new:samantha.plugins.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: 'auto'
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False  # warning: setting to True can cause slowdowns
+    enable_model_summary: True
+    log_every_n_steps: 1
+    strategy: !ref <run_opts[strategy]>
+    max_epochs: !ref <run_opts[num_epochs]>
+    #limit_train_batches: 100 # debug
+    precision: !ref <run_opts[precision]>
+    profiler: !ref <run_opts[profiler]>
+    callbacks: !ref <callbacks>
+    benchmark: true
+    gradient_clip_val: 0.5
+    plugins: !ref <plugins>
+
+ckpt_path: null
