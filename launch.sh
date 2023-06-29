@@ -3,6 +3,12 @@
 # suppress excessive logs
 export BYTED_TORCH_C10D_LOG_LEVEL=ERROR
 
+# setting hdfs envs
+export LD_LIBRARY_PATH=/opt/tiger/native_libhdfs/lib/native:$LD_LIBRARY_PATH
+export ARNOLD_HDFS_NATIVE=1
+export ARNOLD_HDFS_CELER=1
+export INFSEC_HADOOP_ENABLED=1
+export CPP_HDFS_CONF=/opt/tiger/arnold/hdfs_client/conf/celer_us/core-site.xml:/opt/tiger/arnold/hdfs_client/conf/celer_us/hdfs-site.xml
 
 CUR_DIR=$(cd $(dirname $0); pwd)
 cd $CUR_DIR
