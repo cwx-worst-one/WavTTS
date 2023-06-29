@@ -41,7 +41,7 @@ class hdfs_open:
             else:
                 raise RuntimeError("unsupported io mode: {}".format(mode))
         else:
-            self.pipe = open(hdfs_path, mode)
+            self.pipe = open(hdfs_path, mode, encoding="utf-8")
 
     def __enter__(self):
         return self

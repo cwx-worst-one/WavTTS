@@ -169,6 +169,10 @@ class LitMuLanModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         # Combine multiple dataloader batches into one batch
 
+        # print("\n\n")
+
+        # print(batch.keys())
+
         text_vec, music_vec = self._shared_step(batch, spec_aug=self.spec_aug).values()
         text_vec = rearrange(
             self.all_gather(text_vec, sync_grads=True), "w b d -> (w b) d"
@@ -179,11 +183,15 @@ class LitMuLanModule(pl.LightningModule):
         music_id = rearrange(
             self.all_gather(batch["music_id"], sync_grads=True), "w b -> (w b) "
         )
-
+        
         loss = self._multiview_loss(text_vec, music_vec, music_id)
+
         return {"loss": loss}
 
     def validation_step(self, batch, batch_idx, dataloader_idx):
+        # print("\n\n")
+
+        # print(batch.keys())
         result = self._shared_step(batch)
         if dataloader_idx not in self.val_outputs:
             self.val_outputs[dataloader_idx] = []

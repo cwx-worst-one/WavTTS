@@ -15,6 +15,8 @@ def fix_hash(x):
 def process_audio(data):
     audio = data["audio.npy"]
     audio = (audio / 32768.0).astype("float32")
+    if len(audio.shape) == 1:
+        audio = audio[None, :]
 
     music_len = 24000 * 10
     if audio.shape[-1] < music_len:
@@ -25,6 +27,10 @@ def process_audio(data):
 
     audio = torch.from_numpy(audio[..., start_idx : start_idx + music_len]).float()
     data["audio"] = audio
+
+    # delete full audio from the sample, otherwise 
+    # it will take a lot of memory in sample buffer
+    del data["audio.npy"]
 
     return data
 
@@ -78,6 +84,20 @@ def collate_fn(batch):
             out_batch[k] = torch.cat(v)
 
     return out_batch
+
+
+# def collate_ymv_fn(batch):
+#     keys = ["audio", "input_ids", "attention_mask", "token_type_ids"]
+#     out_batch = {k: [] for k in keys}
+#     for b in batch:
+#         for k in keys:
+#             out_batch[k].append(b[k])
+
+#     for k, v in out_batch.items():
+#         out_batch[k] = torch.cat(v)
+
+#     return out_batch
+
 
 
 def select_datasets(datasets, selected_names):

@@ -8,13 +8,14 @@ seed: 2023
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 
 # running parameters
-log_dir: hdfs://harunava/home/byte_speech_sv/weituo/mulan_exp #!apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+# log_dir: hdfs://harunava/home/byte_speech_sv/weituo/mulan_exp #!apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+log_dir: /mnt/bn/weituo-nas/mulan_ckpt #!apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
 run_opts:
     fast_dev_run: False
     tensorboard_dir: !ref <log_dir>
     log_name: MuLan_large
     log_every_n_steps: 10
-    version: g4
+    version: g4_ymv
     precision: 16
     num_workers: 4
     accelerator: auto
@@ -22,65 +23,50 @@ run_opts:
     enable_activation_ckpt: True
     num_steps: 600000
     val_check_interval: 800
-    batch_size: 72
-    sample_buffer_size: 600
+    batch_size: 32
+    # sample_buffer_size: 600
+    shuffle_buffer: 600
     val_batch_size: 128
-    spec_aug: True
+    spec_aug: False
     text_encoder: bert
     music_encoder: mut
     emb_dim: 512
     learning_rate: 4.e-5
     weight_decay: 5.e-4
     temperature: 0.1  # temperature in Multiview Coding loss
+    min_volume_threshold: 0.05
+    loudness_ratio_threshold: 0.2
+
+extra_params:
+    sample_rate: 24000
+    duration: 10
+    wav2vec_codebook_size: 1024
+    wav2vec_frame_rate: 25
+    mulan_codebook_size: 1024
+    mulan_num_rvq: 12
+
+
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
 
-short_form_dataset: !new:recipes.mulan.dataset.short_form.ShortFormDataset
+ymv_train_dataset: !new:recipes.mulan.dataset.youtube.YMVDataset
+    url2index: "/mnt/bn/audio-diffusion/data/disco/url2idx.txt"
+    sample_rate: !ref <extra_params[sample_rate]>
+    duration: !ref <extra_params[duration]>
+    min_volume_threshold: !ref <run_opts[min_volume_threshold]>
+    loudness_ratio_threshold: !ref <run_opts[loudness_ratio_threshold]>
     resampled: True
+    shardshuffle: True
+    seed: !ref <seed>
 
-long_form_dataset: !new:recipes.mulan.dataset.long_form.LongFormDataset
-    resampled: True
-
-audioset_dataset: !new:recipes.mulan.dataset.audioset.AudioSetDataset
-    resampled: True
-
-ecals_dataset: !new:recipes.mulan.dataset.ecals.ECALSDataset
-    resampled: True
-
-karaoke_dataset: !new:recipes.mulan.dataset.karaoke.KaraokeDataset
-    resampled: True
-
-playlist_dataset: !new:recipes.mulan.dataset.playlist.PlaylistDataset
-    resampled: True
-
-mcc_gpt_dataset: !new:recipes.mulan.dataset.mcc.MCCGPTGenDataset
-    resampled: True
-
-aed_gpt_dataset: !new:recipes.mulan.dataset.mcc.AEDGPTGenDataset
-    resampled: True
-
-mcc_n2m_dataset: !new:recipes.mulan.dataset.mcc.MCCN2MDataset
-    resampled: True
-
-tt_query_dataset: !new:recipes.mulan.dataset.tt_query.TTQueryDataset
-    resampled: True
 
 train_datasets:
-    short_form: !ref <short_form_dataset>
-    long_form: !ref <long_form_dataset>
-    audio_set: !ref <audioset_dataset>
-    ecals: !ref <ecals_dataset>
-    karaoke: !ref <karaoke_dataset>
-    playlist: !ref <playlist_dataset>
-    mcc_gpt: !ref <mcc_gpt_dataset>
-    aed_gpt: !ref <aed_gpt_dataset>
-    mcc_n2m: !ref <mcc_n2m_dataset>
-    tt_query: !ref <tt_query_dataset>
+    youtube: !ref <ymv_train_dataset>
 
-selected_dataset_names: [mcc_n2m]
+selected_dataset_names: [youtube]
 weights: [1]
 
 train_dataset: !new:samantha.dataio.dataset.MultiIterableDataset
@@ -90,6 +76,8 @@ train_dataset: !new:samantha.dataio.dataset.MultiIterableDataset
     weights: !ref <weights>
     num_samples: 10_000_000
     seed: !ref <seed>
+
+
 
 kaggle_val_0: !new:recipes.mulan.dataset.val.TextMusicDataset
     path: data/kaggle
@@ -103,13 +91,15 @@ kaggle_val_1: !new:recipes.mulan.dataset.val.TextMusicDataset
 
 val_dataset: [!ref <kaggle_val_0>, !ref <kaggle_val_1>]
 
-# datamodule configuration
-pl_datamodule: !new:recipes.mulan.modules.pl_datamodule.MuLanDataModule
+
+
+pl_datamodule: !new:recipes.mulan.modules.pl_datamodule.MuLanYMVDataModule
     train_dataset: !ref <train_dataset>
-    batch_size: !ref <run_opts[batch_size]>
-    sample_buffer_size: !ref <run_opts[sample_buffer_size]>
     val_dataset: !ref <val_dataset>
-    val_batch_size: !ref <run_opts[val_batch_size]>
+    batch_size: !ref <run_opts[batch_size]>
+    shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+    num_workers: !ref <run_opts[num_workers]>
+    pin_memory: True
 
 pl_module: !new:recipes.mulan.modules.pl_module.LitMuLanModule
     music_encoder: !ref <run_opts[music_encoder]>
