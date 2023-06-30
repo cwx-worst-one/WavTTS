@@ -100,6 +100,7 @@ class MCCTransforms(TransformBase):
         exclude_licenses: List[str] = [],
         avoid_vocal: bool = False,
         max_vocal_threshold: float = 0.25,
+        audio_metrics_filtered: bool = False,
         max_num_crops: Optional[int] = None,    # if None, auto set based on audio length
         crop_step_size: Optional[int] = None,   # if None, auto set based on n_samples
     ) -> None:
@@ -114,6 +115,7 @@ class MCCTransforms(TransformBase):
         self.exclude_licenses = set(exclude_licenses)
         self.avoid_vocal = avoid_vocal
         self.max_vocal_threshold = max_vocal_threshold
+        self.audio_metrics_filtered = audio_metrics_filtered
         self.max_num_crops = max_num_crops
         if crop_step_size is None:
             crop_step_size = self.n_samples // 2
@@ -126,8 +128,12 @@ class MCCTransforms(TransformBase):
             self.min_volume_threshold,
             self.loudness_ratio_threshold
         )
-        base_transforms = [
-            ReadMP3(self.sample_rate),
+        self.read_mp3 = ReadMP3(self.sample_rate)
+
+        base_transforms = []
+        if audio_key == "mp3":
+            base_transforms.append(lambda x: self.read_mp3(io.BytesIO(x)))
+        base_transforms += [
             ToTensor(),
             SetAudioDimensions(),
             NormalizeAudioToFloat32(),
@@ -151,6 +157,53 @@ class MCCTransforms(TransformBase):
             for license in metadata.get("license_types", []):
                 if license in self.exclude_licenses:
                     return False, "Excluded License"
+        # Apply AudioMetrics filtering if applicable
+        if self.audio_metrics_filtered:
+            is_good, msg = self.is_audio_metrics_good(metadata.get("audio_metrics", {}))
+            if not is_good:
+                return False, msg
+        return True, None
+
+    def is_audio_metrics_good(self, audio_metrics: Dict[str, Any]) -> Tuple[bool, str]:
+        # Clipping
+        clip = audio_metrics.get("clipping", {})
+        if clip.get("rate", 0) >= 5e-5:
+            return False, "clipping"
+        for ch in ["left", "right"]:
+            if clip.get(f"peak_rate_{ch}", 0) >= 0.05:
+                return False, "clipping"
+        # Loudness
+        loudness = audio_metrics.get("loudness", {})
+        if (
+            loudness.get("integrated_loudness", -7) > -5 or
+            loudness.get("max_mom_loud", -7) >= 0 or
+            loudness.get("max_short_term_loud", -7) >= 0
+        ):
+            return False, "loudness"
+        # RMS stats
+        rms_stats = audio_metrics.get("rms_stats", {})
+        if rms_stats.get("peak", 0) > 3:
+            return False, "rms_stats"
+        for ch in ["left", "right"]:
+            if (
+                rms_stats.get(f"{ch}_total", -10) > -5 or
+                rms_stats.get(f"{ch}_total", -10) < -40 or
+                rms_stats.get(f"normed_std_{ch}", -10) < -19.5
+            ):
+                return False, "rms_stats"
+        # Cutoff frequency
+        cutoff_freq = audio_metrics.get("cutoff_frequency", {})
+        for ch in ["left", "right"]:
+            if (
+                cutoff_freq.get(f"rel_{ch}", 48000) < 15000 and
+                cutoff_freq.get(f"rel_{ch}_conf", 0) > 0.6 and
+                cutoff_freq.get(f"band_std_{ch}", 10) < 5
+            ):
+                return False, "cutoff_frequency"
+        # Phase
+        phase = audio_metrics.get("phase_check", {})
+        if phase.get("has_phase_issue", False) or abs(phase.get("rms_downmix_diff", 0.1)) > 3:
+            return False, "phase_check"
         return True, None
 
     def get_vocal_data(self, metadata: Dict[str, Any]):
@@ -205,7 +258,7 @@ class MCCTransforms(TransformBase):
                 return
 
         try:
-            audio = self.base_transform(io.BytesIO(x[self.audio_key]))
+            audio = self.base_transform(x[self.audio_key])
         except Exception as e:
             print(f"[MP3 decoding error] {e}")
             self._update_stats(skipped=True, message="MP3 Decoding Error")
@@ -240,12 +293,11 @@ class MCCTransforms(TransformBase):
             cropped_audio = audio[:, st_sample : en_sample]
             if not self.is_loud(cropped_audio):
                 continue
-            genre = x["__url__"].split("/")[-2].split(".")[0]
             output = {
                 "audio": cropped_audio,
-                "clip_id": x["metadata.json"]["clip_id"],
-                "meta_song_id": x["metadata.json"]["meta_song_id"],
-                "genre": genre,
+                "key": x["__key__"],
+                "metadata": x["__index_data__"],
+                "url": x["__url__"],
                 "sample_start_pos": st_sample,
                 "sample_rate": self.sample_rate
             }
