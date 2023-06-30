@@ -45,12 +45,9 @@ extra_params:
     mulan_codebook_size: 1024
     mulan_num_rvq: 12
 
-
-
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
-
 
 pgc_dataset: !new:recipes.mulan.dataset.metacritic_everynoise.MMEDataset
     name: mcc600k
@@ -95,7 +92,6 @@ train_dataset: !new:samantha.dataio.dataset.MultiIterableDataset
     num_samples: 10_000_000
     seed: !ref <seed>
 
-
 kaggle_val_0: !new:recipes.mulan.dataset.val.TextMusicDataset
     path: data/kaggle
     csv_name: kaggle_val_meta.csv
@@ -107,8 +103,6 @@ kaggle_val_1: !new:recipes.mulan.dataset.val.TextMusicDataset
     text_key: aspect_list
 
 val_dataset: [!ref <kaggle_val_0>, !ref <kaggle_val_1>]
-
-
 
 pl_datamodule: !new:recipes.mulan.modules.pl_datamodule.MuLanMMEDataModule
     train_dataset: !ref <train_dataset>
@@ -127,10 +121,15 @@ pl_module: !new:recipes.mulan.modules.pl_module.LitMuLanModule
     weight_decay: !ref <run_opts[weight_decay]>
     temperature: !ref <run_opts[temperature]>
 
-logger: !new:pytorch_lightning.loggers.TensorBoardLogger
-    save_dir: !ref <run_opts[tensorboard_dir]>
-    name: !ref <run_opts[log_name]>
-    version: !ref <run_opts[version]>
+logger:
+    - !new:pytorch_lightning.loggers.TensorBoardLogger
+      save_dir: !ref <run_opts[tensorboard_dir]>
+      name: !ref <run_opts[log_name]>
+      version: !ref <run_opts[version]>
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <log_dir>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
 
 callbacks:
     - !new:pytorch_lightning.callbacks.LearningRateMonitor

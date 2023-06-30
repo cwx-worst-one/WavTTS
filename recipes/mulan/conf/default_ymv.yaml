@@ -45,12 +45,9 @@ extra_params:
     mulan_codebook_size: 1024
     mulan_num_rvq: 12
 
-
-
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
-
 
 ymv_train_dataset: !new:recipes.mulan.dataset.youtube.YMVDataset
     url2index: "/mnt/bn/audio-diffusion/data/disco/url2idx.txt"
@@ -61,7 +58,6 @@ ymv_train_dataset: !new:recipes.mulan.dataset.youtube.YMVDataset
     resampled: True
     shardshuffle: True
     seed: !ref <seed>
-
 
 train_datasets:
     youtube: !ref <ymv_train_dataset>
@@ -78,7 +74,6 @@ train_dataset: !new:samantha.dataio.dataset.MultiIterableDataset
     seed: !ref <seed>
 
 
-
 kaggle_val_0: !new:recipes.mulan.dataset.val.TextMusicDataset
     path: data/kaggle
     csv_name: kaggle_val_meta.csv
@@ -90,7 +85,6 @@ kaggle_val_1: !new:recipes.mulan.dataset.val.TextMusicDataset
     text_key: aspect_list
 
 val_dataset: [!ref <kaggle_val_0>, !ref <kaggle_val_1>]
-
 
 
 pl_datamodule: !new:recipes.mulan.modules.pl_datamodule.MuLanYMVDataModule
@@ -110,10 +104,15 @@ pl_module: !new:recipes.mulan.modules.pl_module.LitMuLanModule
     weight_decay: !ref <run_opts[weight_decay]>
     temperature: !ref <run_opts[temperature]>
 
-logger: !new:pytorch_lightning.loggers.TensorBoardLogger
-    save_dir: !ref <run_opts[tensorboard_dir]>
-    name: !ref <run_opts[log_name]>
-    version: !ref <run_opts[version]>
+logger:
+    - !new:pytorch_lightning.loggers.TensorBoardLogger
+      save_dir: !ref <run_opts[tensorboard_dir]>
+      name: !ref <run_opts[log_name]>
+      version: !ref <run_opts[version]>
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <log_dir>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
 
 callbacks:
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
@@ -150,4 +149,3 @@ trainer: !new:pytorch_lightning.Trainer
     precision: !ref <run_opts[precision]>
     callbacks: !ref <callbacks>
     plugins: !ref <plugins>
-

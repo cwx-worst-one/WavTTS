@@ -284,6 +284,9 @@ class MuT(nn.Module):
         output_type="emb",
     ):
         super().__init__()
+        self.num_layers = depth
+        self.hidden_size = dim
+        self.intermediate_size = mlp_dim
 
         self.logmel_frontend = {"logmel": LogMel(sample_rate=sample_rate)}
 

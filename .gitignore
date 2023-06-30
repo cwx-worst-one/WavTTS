@@ -88,3 +88,12 @@ scripts/weekly_test/Dolphin*.md
 
 # module cache
 .module_cache/
+
+# data directory
+assets/
+data/
+
+# log directory
+log/
+logs/
+cruise_logs/

@@ -11,6 +11,7 @@ from torch import nn
 
 from recipes.mulan.models.music_encoder import get_music_encoder
 from recipes.mulan.models.text_encoder import get_text_encoder
+from samantha.utils.model_metric import ModelMetric
 
 
 class LitMuLanModule(pl.LightningModule):
@@ -47,6 +48,16 @@ class LitMuLanModule(pl.LightningModule):
     def on_predict_start(self):
         self.text_encoder.cpu()  # save gpu memory
         self.music_encoder.manually_to_device(self.device)
+
+    def setup(self, stage: str):
+        # Variables for MFU calculation
+        self.metric = ModelMetric(
+            precision=self.trainer.precision,
+            model_obj_or_objs={
+                "music_tower": self.music_encoder,
+                "text_tower": self.text_encoder,
+            },
+        )
 
     @property
     def deepspeed_offload(self) -> bool:
@@ -168,11 +179,6 @@ class LitMuLanModule(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         # Combine multiple dataloader batches into one batch
-
-        # print("\n\n")
-
-        # print(batch.keys())
-
         text_vec, music_vec = self._shared_step(batch, spec_aug=self.spec_aug).values()
         text_vec = rearrange(
             self.all_gather(text_vec, sync_grads=True), "w b d -> (w b) d"
@@ -234,4 +240,21 @@ class LitMuLanModule(pl.LightningModule):
         text_embed = self.text_encoder(
             batch["input_ids"], batch["attention_mask"], batch["token_type_ids"]
         )
+
+        # mfu calculation
+        batch_size, seq_len = batch["input_ids"].size()[:2]
+        num_tokens = batch_size * seq_len  # text token only
+        self.metric.update(
+            num_tokens=num_tokens,
+            stage=self.trainer.state.stage,
+            model_kwargs={
+                "music_tower": {"batch_size": batch_size},
+                "text_tower": {"batch_size": batch_size, "seq_len": seq_len},
+            }
+        )
+
+        if self.trainer.global_step % self.trainer.log_every_n_steps == 0:
+            metric = self.metric.compute(step=self.trainer.global_step)
+            self.log_dict(metric, prog_bar=True, sync_dist=True)
+
         return {"text_vec": text_embed, "music_vec": music_embed}

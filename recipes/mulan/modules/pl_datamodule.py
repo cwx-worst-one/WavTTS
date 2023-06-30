@@ -42,7 +42,6 @@ class MuLanDataModule(pl.LightningDataModule):
         return val_loaders
 
 
-
 class MuLanMCCDataModule(pl.LightningDataModule):
     def __init__(
         self,
@@ -105,18 +104,11 @@ class MuLanYMVDataModule(pl.LightningDataModule):
 
     def train_dataloader(self):
         train_dataset_batched = wds.DataPipeline(
-                    self.train_dataset,
-                                wds.shuffle(self.sample_buffer_size),
-                                            wds.batched(self.batch_size, collation_fn=utils.collate_fn),
-                                                    )
+            self.train_dataset,
+            wds.shuffle(self.sample_buffer_size),
+            wds.batched(self.batch_size, collation_fn=utils.collate_fn),
+        )
         return DataLoader(train_dataset_batched, batch_size=None, num_workers=4, collate_fn=lambda x:x)
-        # result_loader = DataLoader(
-        #     self.train_dataset, 
-        #     batch_size=self.batch_size, 
-        #     collate_fn=utils.collate_fn, 
-        #     num_workers=self.num_workers
-        # )
-        return result_loader
 
     def val_dataloader(self):
         val_loaders = [
@@ -129,8 +121,6 @@ class MuLanYMVDataModule(pl.LightningDataModule):
             for val in self.val_dataset
         ]
         return val_loaders
-
-
 
 
 class MuLanMMEDataModule(pl.LightningDataModule):
@@ -155,12 +145,11 @@ class MuLanMMEDataModule(pl.LightningDataModule):
 
     def train_dataloader(self):
         train_dataset_batched = wds.DataPipeline(
-                    self.train_dataset,
-                    wds.shuffle(self.sample_buffer_size),
-                    wds.batched(self.batch_size, collation_fn=utils.collate_fn),
-                    )
+            self.train_dataset,
+            wds.shuffle(self.sample_buffer_size),
+            wds.batched(self.batch_size, collation_fn=utils.collate_fn),
+        )
         return DataLoader(train_dataset_batched, batch_size=None, num_workers=4, collate_fn=lambda x:x)
-
 
     def val_dataloader(self):
         val_loaders = [
@@ -173,50 +162,3 @@ class MuLanMMEDataModule(pl.LightningDataModule):
             for val in self.val_dataset
         ]
         return val_loaders
-
-
-
-
-
-
-class MuLanInferDataModule(pl.LightningDataModule):
-    def __init__(self, predict_dataloader):
-        super().__init__()
-        self._predict_dataloader = predict_dataloader
-
-    def predict_dataloader(self):
-        return self._predict_dataloader
-
-
-
-
-
-
-
-
-
-if __name__ == "__main__":
-    # from recipes.mulan.datasets.mcc_new import WrappedMCC40MDataset
-    # train_dataset = WrappedMCC40MDataset(
-    #     url2index_list = ["/mnt/bn/weituo-nas/music_edit/unify_repo/tmp/data/a.tsv"],
-    #     sample_rate=24000,
-    #     duration=10,
-    #     min_volume_threshold=0.05,
-    #     loudness_ratio_threshold=0.2,
-    #     resampled=True,
-    #     shardshuffle=True,
-    #     seed=2023
-    # )
-
-    # mccmodule = MuLanMCCDataModule(
-    #     batch_size=8,
-    #     num_workers=1,
-    #     train_dataset=train_dataset,
-    #     validation_dataset=None
-    # )
-
-    train_loader = mccmodule.train_dataloader()
-    for i, batch in enumerate(train_loader):
-        print(batch)
-        break
-

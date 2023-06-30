@@ -120,10 +120,15 @@ pl_module: !new:recipes.mulan.modules.pl_module.LitMuLanModule
     weight_decay: !ref <run_opts[weight_decay]>
     temperature: !ref <run_opts[temperature]>
 
-logger: !new:pytorch_lightning.loggers.TensorBoardLogger
-    save_dir: !ref <run_opts[tensorboard_dir]>
-    name: !ref <run_opts[log_name]>
-    version: !ref <run_opts[version]>
+logger:
+    - !new:pytorch_lightning.loggers.TensorBoardLogger
+      save_dir: !ref <run_opts[tensorboard_dir]>
+      name: !ref <run_opts[log_name]>
+      version: !ref <run_opts[version]>
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <log_dir>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
 
 callbacks:
     - !new:pytorch_lightning.callbacks.LearningRateMonitor

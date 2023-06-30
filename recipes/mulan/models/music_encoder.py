@@ -5,6 +5,7 @@ import torchaudio
 from transformers import AutoModel, AutoProcessor
 
 from recipes.mae.models.mut import PretrainedMuTWrapper, RMSNorm
+from samantha.utils.flops_calculator import llama_calculator
 
 
 class MusicEncoder(nn.Module):
@@ -75,6 +76,7 @@ class MuTWrapper(nn.Module):
     def __init__(self, emb_dim: int = 128):
         super(MuTWrapper, self).__init__()
 
+        self.emb_dim = emb_dim
         mlp_head = nn.Sequential(RMSNorm(1280), nn.Linear(1280, emb_dim))
         mut = PretrainedMuTWrapper(
             output_layer=mlp_head,
@@ -89,6 +91,23 @@ class MuTWrapper(nn.Module):
         emb = self.mut(audio, spec_aug=spec_aug)
         emb = F.normalize(emb, p=2, dim=1)
         return emb
+    
+    def flops_fn(self, batch_size):
+        # only mut flops, ignore final projection
+        mut = self.mut.mut
+        flops = 0
+        # add mut flops
+        flops += llama_calculator(
+            mut.num_layers,
+            mut.hidden_size,
+            mut.intermediate_size,
+            0,  # no embedding layer
+            501,  # seq_len after melspec plus [CLS]
+            batch_size,
+        )
+        # add projection layer flops
+        flops += 6 * batch_size * mut.hidden_size * self.emb_dim
+        return flops
 
 
 def get_music_encoder(music_encoder="ast", emb_dim=128):
