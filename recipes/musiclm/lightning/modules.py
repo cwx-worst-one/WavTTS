@@ -46,7 +46,7 @@ class BaseModule(pl.LightningModule):
         # Variables for MFU calculation
         self.metric = ModelMetric(
             precision=self.trainer.precision,
-            model_obj=self.model,
+            model_obj_or_objs=self.model,
         )
         if stage == "fit" and not self.requires:
             self.load_required_modules()
@@ -88,10 +88,10 @@ class BaseModule(pl.LightningModule):
 
         batch_size, seq_len = input_ids["input_ids"].size()[:2]
         self.metric.update(
-            batch_size=batch_size,
+            num_tokens=batch_size * seq_len,
             stage=self.trainer.state.stage,
-            seq_length=seq_len,
             exclude_time=exclude_time,
+            model_kwargs={"batch_size": batch_size, "seq_len": seq_len}
         )
 
         if self.trainer.global_step % self.trainer.log_every_n_steps == 0:

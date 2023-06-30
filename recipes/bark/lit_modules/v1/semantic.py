@@ -47,7 +47,7 @@ class SemanticModule(pl.LightningModule):
     def setup(self, stage: str) -> None:
         self.metric = ModelMetric(
             precision=self.trainer.precision,
-            model_obj=self.model,
+            model_obj_or_objs=self.model,
         )
 
         if stage == "fit" and not self.requires:
@@ -72,10 +72,10 @@ class SemanticModule(pl.LightningModule):
         exclude_time = time.perf_counter() - t
         b, t = input_tokens.size()[:2]
         self.metric.update(
-            batch_size=b,
-            seq_length=t,
+            num_tokens=b * t,
             exclude_time=exclude_time,
             stage=self.trainer.state.stage,
+            model_kwargs={"batch_size": b, "seq_len": t},
         )
         if self.trainer.global_step % self.trainer.log_every_n_steps == 0:
             self.log_dict(
