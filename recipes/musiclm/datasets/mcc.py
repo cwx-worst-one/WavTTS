@@ -7,7 +7,7 @@ import numpy as np
 from pydub import AudioSegment
 import webdataset as wds
 from torch.utils.data import Dataset
-from recipes.musiclm.transforms.musiclm import MCCTransforms
+from recipes.musiclm.transforms.musiclm import MCCTransforms, ARFiltering
 from recipes.musiclm.preprocess import WebDatasetBufferPreprocessor
 from samantha.dataio.webdataset.extension import IndexedWebDataset
 from samantha.dataio.webdataset.pipeline import WebPipeline
@@ -148,10 +148,11 @@ class MCC40MDataset(WebPipeline):
         loudness_ratio_threshold: float = 0.2,
         aed_filtered: bool = True,
         avoid_sound_effect: bool = True,
+        exclude_licenses: List[str] = ["C"],
         avoid_vocal: bool = True,
         max_vocal_threshold: float = 0.25,
         audio_metrics_filtered: bool = True,
-        exclude_licenses: List[str] = ["C"],
+        ar_filtering: Optional[ARFiltering] = None,
         max_num_crops: Optional[int] = None,
         crop_step_size: Optional[int] = None,
         handler: Callable = wds.warn_and_continue,
@@ -176,6 +177,7 @@ class MCC40MDataset(WebPipeline):
             avoid_vocal=avoid_vocal,
             max_vocal_threshold=max_vocal_threshold,
             audio_metrics_filtered=audio_metrics_filtered,
+            ar_filtering=ar_filtering,
             max_num_crops=max_num_crops,
             crop_step_size=crop_step_size,
         )
@@ -203,15 +205,17 @@ class WrappedMCC40MDataset(MultiIterableDataset):
         loudness_ratio_threshold: float = 0.2,
         aed_filtered: bool = True,
         avoid_sound_effect: bool = True,
+        exclude_licenses: List[str] = ["C"],
         avoid_vocal: bool = True,
         max_vocal_threshold: float = 0.25,
         audio_metrics_filtered: bool = True,
-        exclude_licenses: List[str] = ["C"],
+        ar_filtering: Optional[ARFiltering] = None,
         max_num_crops: Optional[int] = None,
         crop_step_size: Optional[int] = None,
         handler: Callable = wds.warn_and_continue,
         num_samples: int = -1,
         seed: int = 2023,
+        weights: Optional[List[float]] = None,
         **kwargs,
     ):
         datasets = [
@@ -225,10 +229,11 @@ class WrappedMCC40MDataset(MultiIterableDataset):
                 loudness_ratio_threshold=loudness_ratio_threshold,
                 aed_filtered=aed_filtered,
                 avoid_sound_effect=avoid_sound_effect,
+                exclude_licenses=exclude_licenses,
                 avoid_vocal=avoid_vocal,
                 max_vocal_threshold=max_vocal_threshold,
                 audio_metrics_filtered=audio_metrics_filtered,
-                exclude_licenses=exclude_licenses,
+                ar_filtering=ar_filtering,
                 max_num_crops=max_num_crops,
                 crop_step_size=crop_step_size,
                 handler=handler,
@@ -236,9 +241,12 @@ class WrappedMCC40MDataset(MultiIterableDataset):
             ) for url2index in url2index_list
         ]
 
+        if weights is None:
+            weights=[1.0 for _ in range(len(datasets))]
+        assert len(weights) == len(datasets)
         super().__init__(
             datasets=datasets,
             num_samples=num_samples,
-            weights=[1.0 for _ in range(len(datasets))],
+            weights=weights,
             seed=seed,
         )

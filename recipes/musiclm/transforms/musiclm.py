@@ -2,6 +2,9 @@ from typing import Any, Dict, List, Generator, Optional, Tuple
 import io
 import torch
 import random
+import pickle
+import os
+import numpy as np
 from torchaudio_augmentations import Compose
 
 from recipes.musiclm.transforms.audio import (
@@ -33,6 +36,49 @@ class Segment:
 
     def __str__(self):
         return f"({self.st}, {self.en})"
+
+
+class ARFiltering:
+    def __init__(
+        self,
+        genre_stats_fname: str = "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/genre_quantile_stats.pkl",
+        semantic_diversity_range: Tuple[int, int] = (50, 100),
+        semantic_probs_range: Tuple[int, int] = (25, 100),
+    ):
+        assert len(semantic_diversity_range) == 2 and semantic_diversity_range[0] < semantic_diversity_range[1]
+        assert len(semantic_probs_range) == 2 and semantic_probs_range[0] < semantic_probs_range[1]
+        for x in list(semantic_diversity_range) + list(semantic_probs_range):
+            assert type(x) == int and x >= 0 and x <= 100, f"Invalid quantile: {x}"
+        print(f"Loading genre stats from {genre_stats_fname}...")
+        with open(genre_stats_fname, "rb") as f:
+            genre_stats = pickle.load(f)
+        print(f"...loaded stats for {len(genre_stats)} genres")
+        self.genres = set(genre_stats.keys())
+        self.semantic_diversity_range = {}
+        self.semantic_probs_range = {}
+
+        def get_value(scores, q):
+            if q == 0:
+                return 0.0
+            elif q == 100:
+                return 1.0
+            else:
+                # quantile starts from 1, so we need to offset the index
+                return scores[q - 1]
+
+        for genre in genre_stats:
+            self.semantic_diversity_range[genre] = [
+                get_value(genre_stats[genre]["semantic_diversity"], q) for q in semantic_diversity_range
+            ]
+            self.semantic_probs_range[genre] = [
+                get_value(genre_stats[genre]["semantic_probs"], q) for q in semantic_probs_range
+            ]
+            print(f"{genre}: sd={self.semantic_diversity_range[genre]}, sp={self.semantic_probs_range[genre]}")
+
+    def is_valid(self, genre, sd_score, sp_score):
+        sd_min, sd_max = self.semantic_diversity_range[genre]
+        sp_min, sp_max = self.semantic_probs_range[genre]
+        return sd_score >= sd_min and sd_score <= sd_max and sp_score >= sp_min and sp_score <= sp_max
 
 
 class MusicLMTransforms(TransformBase):
@@ -101,6 +147,7 @@ class MCCTransforms(TransformBase):
         avoid_vocal: bool = False,
         max_vocal_threshold: float = 0.25,
         audio_metrics_filtered: bool = False,
+        ar_filtering: Optional[ARFiltering] = None,
         max_num_crops: Optional[int] = None,    # if None, auto set based on audio length
         crop_step_size: Optional[int] = None,   # if None, auto set based on n_samples
     ) -> None:
@@ -116,6 +163,7 @@ class MCCTransforms(TransformBase):
         self.avoid_vocal = avoid_vocal
         self.max_vocal_threshold = max_vocal_threshold
         self.audio_metrics_filtered = audio_metrics_filtered
+        self.ar_filtering = ar_filtering
         self.max_num_crops = max_num_crops
         if crop_step_size is None:
             crop_step_size = self.n_samples // 2
@@ -243,6 +291,47 @@ class MCCTransforms(TransformBase):
                 return True
         return False
 
+    def get_window_ids(self, audio, x):
+        metadata = x["__index_data__"]
+        num_windows = 1 + (audio.size(1) - self.n_samples) // self.crop_step_size
+        window_ids = list(range(num_windows))
+        if self.ar_filtering is None:
+            return audio, window_ids, num_windows
+        elif "ar_data_quality" not in metadata:
+            print(f"WARNING: ar_filtering is set but can't find ar_data_quality in metadata: {metadata}")
+            return audio, window_ids, num_windows
+        else:
+            # Only work for MCC40M numpy
+            genre = "-".join(os.path.basename(x["__url__"]).split("-")[:-1])
+            if genre not in self.ar_filtering.genres:
+                print(f"WARNING: can't find genre {genre} in ar_filtering's genres: {self.ar_filtering.genres}")
+                return audio, window_ids, num_windows
+            ar_data_quality = metadata["ar_data_quality"]
+            segment_config = ar_data_quality["segment_config"]
+            segment_duration = segment_config["segment_duration"]
+            segment_step_sec = segment_duration - segment_config["overlap"]
+            sd = ar_data_quality["semantic_diversity"]
+            sp = ar_data_quality["semantic_probs"]
+            num_segments = len(sd)
+            audio = audio[..., :segment_config["max_duration"] * self.sample_rate]
+            num_windows = 1 + (audio.size(1) - self.n_samples) // self.crop_step_size
+            window_length_sec = self.n_samples // self.sample_rate
+            window_step_sec = self.crop_step_size // self.sample_rate
+            window_ids = []
+            for wid in range(num_windows):
+                window_start_sec = wid * window_step_sec
+                window_end_sec = window_start_sec + window_length_sec
+                segment_start_id = window_start_sec // segment_step_sec
+                for segment_end_id in range(segment_start_id, num_segments):
+                    segment_end_sec = segment_duration + segment_end_id * segment_step_sec
+                    if segment_end_sec >= window_end_sec:
+                        break
+                window_sd_score = np.mean(sd[segment_start_id:segment_end_id + 1])
+                window_sp_score = np.mean(sp[segment_start_id:segment_end_id + 1])
+                if self.ar_filtering.is_valid(genre, window_sd_score, window_sp_score):
+                    window_ids.append(wid)
+            return audio, window_ids, num_windows
+
     def __call__(self, x: Dict[str, Any]) -> Generator:
         is_good, message = self.is_metadata_good(x["__index_data__"])
         if not is_good:
@@ -270,8 +359,7 @@ class MCCTransforms(TransformBase):
             audio = self.random_pad(audio)
         
         # Determine possible crop starting points
-        num_windows = 1 + (audio.size(1) - self.n_samples) // self.crop_step_size
-        window_ids = list(range(num_windows))
+        audio, window_ids, num_windows = self.get_window_ids(audio, x)
         random.shuffle(window_ids)
         # Return up to max_num_crops
         max_num_crops = self.max_num_crops
