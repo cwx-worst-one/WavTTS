@@ -162,7 +162,7 @@ RUN \
     tar -xvf lab.speech.tensorflow_onnx_panther_$ONNX_VERSION.tar.gz && \
     pip3 install \
         --no-cache-dir \
-        tf2onnx-1.9.2-py3-none-any.whl && \
+        tf2onnx-1.9.3-py3-none-any.whl && \
     wget http://luban-source.byted.org/repository/scm/lab.speech.panther_arnold_$PANTHER_VERSION.tar.gz && \
     tar -xvf lab.speech.panther_arnold_$PANTHER_VERSION.tar.gz && \
     pip3 install \
