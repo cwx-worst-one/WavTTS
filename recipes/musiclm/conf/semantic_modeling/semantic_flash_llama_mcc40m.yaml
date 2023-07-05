@@ -27,7 +27,7 @@ run_opts:
     version: mcc40m
     cache_dir: .module_cache/musiclm
     precision: "bf16-mixed"
-    num_workers: 6
+    num_workers: 8
     accelerator: auto
     val_check_interval: 2000
     max_steps: 1000000
@@ -45,18 +45,64 @@ run_opts:
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
+ar_filtering: !new:recipes.musiclm.transforms.musiclm.ARFiltering
+    genre_stats_fname: "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/genre_quantile_stats.pkl"
+    semantic_diversity_range: (50, 100)
+    semantic_probs_range: (20, 100)
+
 train_dataset: !new:recipes.musiclm.datasets.mcc.WrappedMCC40MDataset
     url2index_list:
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/a.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/b.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/c.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/d.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/e.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/f.tsv"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.alternative-hip-hop"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.blues"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.childhood"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.chinese-style"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.classical"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.country"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.devotional"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.easy-listening"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.electronic"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.folk"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.hip-hop-rap"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.indie-folk"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.jazz"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.k-pop"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.new-age"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.others"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.pop"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.rock"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.soundtrack"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.techno"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.trance"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.world-music"
+    weights:
+        - 1.0
+        - 2.0
+        - 2.0
+        - 1.0
+        - 4.0
+        - 2.0
+        - 2.0
+        - 1.0
+        - 2.0
+        - 2.0
+        - 2.0
+        - 2.0
+        - 4.0
+        - 2.0
+        - 2.0
+        - 1.0
+        - 4.0
+        - 2.0
+        - 2.0
+        - 1.0
+        - 2.0
+        - 2.0
     sample_rate: !ref <extra_params[sample_rate]>
     duration: !ref <extra_params[duration]>
     min_volume_threshold: !ref <run_opts[min_volume_threshold]>
     loudness_ratio_threshold: !ref <run_opts[loudness_ratio_threshold]>
+    ar_filtering: !ref <ar_filtering>
+    max_num_crops: 3
     resampled: True
     shardshuffle: True
     seed: !ref <seed>
