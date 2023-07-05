@@ -49,20 +49,35 @@ run_opts:
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
-predict_dataset: !new:recipes.musiclm.datasets.karaoke.KaraokeDataset
-    urls: "pipe:hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/data/karaoke_for_singsong/shards-0131.tar"
-    nodesplitter: !name:recipes.musiclm.datamodules.webdataset.return_self
-    sample_rate: !ref <extra_params[sample_rate]>
-    duration: !ref <extra_params[duration]>
-    audio_key: "acc.npy"
-    sample_range_key: "acc_sample_range.npy"
-    min_volume_threshold: 0.05
+# Non-vocal
+# predict_dataset: !new:recipes.musiclm.datasets.karaoke.KaraokeDataset
+#     urls: "pipe:hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/data/karaoke_for_singsong/shards-0131.tar"
+#     nodesplitter: !name:recipes.musiclm.datamodules.webdataset.return_self
+#     sample_rate: !ref <extra_params[sample_rate]>
+#     duration: !ref <extra_params[duration]>
+#     audio_key: "acc.npy"
+#     sample_range_key: "acc_sample_range.npy"
+#     min_volume_threshold: 0.05
 
-pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.DataModule
-    predict_dataset: !ref <predict_dataset>
+# pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.DataModule
+#     predict_dataset: !ref <predict_dataset>
+#     batch_size: !ref <run_opts[batch_size]>
+#     num_workers: !ref <run_opts[num_workers]>
+#     pin_memory: True
+
+# Vocal
+predict_dataset: !new:recipes.musiclm.datasets.plastic.PlasticDataset
+
+predict_dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <predict_dataset>
     batch_size: !ref <run_opts[batch_size]>
     num_workers: !ref <run_opts[num_workers]>
-    pin_memory: True
+    shuffle: False
+    drop_last: False
+    pin_memory: False
+
+pl_datamodule: !new:recipes.musiclm.datamodules.lit_datamodule.DataModule
+    predict_dataloader: !ref <predict_dataloader>
 
 pl_module: !new:recipes.musiclm.lightning.inference.GTInferenceModule
     extra_params: !ref <extra_params>

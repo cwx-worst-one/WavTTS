@@ -7,6 +7,7 @@ import hashlib
 import librosa
 import numpy as np
 import torch
+import torchaudio
 from pydub import AudioSegment
 from scipy.io.wavfile import write
 from hyperpyyaml import load_hyperpyyaml
@@ -108,9 +109,9 @@ def dump_wav(audio, sr=24000):
 
 
 def save_wav(audio, output_file, sr=24000):
-    audio = audio * 32768.0
-    audio = audio.astype("int16")
-    write(output_file, sr, audio)
+    if audio.dim() == 1:
+        audio = audio.unsqueeze(0)
+    torchaudio.save(output_file, audio, sr)
 
 
 def load_wav(path):

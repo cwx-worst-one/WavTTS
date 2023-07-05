@@ -147,7 +147,7 @@ class InferenceModule(BaseModule):
             os.makedirs(wav_dir, exist_ok=True)
             fp = os.path.join(wav_dir, f"{format_name(prompts[i])}.{round}.wav")
             print(f"[Saving] {fp}")
-            save_wav(wav.cpu().numpy(), fp, sr=24000)
+            save_wav(wav.cpu(), fp, sr=24000)
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         for i in range(self.extra_params.num_rounds):
@@ -210,7 +210,7 @@ class DiffusionInferenceModule(BaseModule):
             os.makedirs(wav_dir, exist_ok=True)
             fp = os.path.join(wav_dir, f"{format_name(prompts[i])}.{round}.wav")
             print(f"[Saving] {fp}")
-            save_wav(wav.cpu().numpy(), fp, sr=24000)
+            save_wav(wav.cpu(), fp, sr=24000)
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         for i in range(self.extra_params.num_rounds):
@@ -305,8 +305,8 @@ class GTInferenceModule(BaseModule):
             os.makedirs(wav_dir, exist_ok=True)
             fp = os.path.join(wav_dir, f"{batch_idx * bs + i}")
             print(f"[Saving] {fp}")
-            save_wav(wav.cpu().numpy(), f"{fp}.{round}.wav", sr=24000)
-            save_wav(batch[i].cpu().numpy(), f"{fp}.wav", sr=24000)
+            save_wav(wav.cpu(), f"{fp}.{round}.wav", sr=24000)
+            save_wav(batch[i].cpu(), f"{fp}.wav", sr=24000)
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         for i in range(self.extra_params.num_rounds):
@@ -401,8 +401,8 @@ class GTCrossAttnInferenceModule(BaseModule):
             os.makedirs(wav_dir, exist_ok=True)
             fp = os.path.join(wav_dir, f"{batch_idx * bs + i}")
             print(f"[Saving] {fp}")
-            save_wav(wav.cpu().numpy(), f"{fp}.{round}.wav", sr=24000)
-            save_wav(batch[i].cpu().numpy(), f"{fp}.wav", sr=24000)
+            save_wav(wav.cpu(), f"{fp}.{round}.wav", sr=24000)
+            save_wav(batch[i].cpu(), f"{fp}.wav", sr=24000)
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         for i in range(self.extra_params.num_rounds):
@@ -525,8 +525,8 @@ class GTCrossAttnInferenceModule(pl.LightningModule):
             os.makedirs(wav_dir, exist_ok=True)
             fp = os.path.join(wav_dir, f"{batch_idx * bs + i}")
             print(f"[Saving] {fp}")
-            save_wav(wav.cpu().numpy(), f"{fp}.{round}.wav", sr=24000)
-            save_wav(batch[i].cpu().numpy(), f"{fp}.wav", sr=24000)
+            save_wav(wav.cpu(), f"{fp}.{round}.wav", sr=24000)
+            save_wav(batch[i].cpu(), f"{fp}.wav", sr=24000)
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         for i in range(self.extra_params.num_rounds):

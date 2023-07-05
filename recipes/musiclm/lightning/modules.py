@@ -12,7 +12,7 @@ from s3a.providers.ctiga.utils.generation import InferenceParams
 
 from recipes.musiclm.models.compat.semantic_model import w2v_bert_tokenization
 from samantha.utils.hparams import DotDict
-from samantha.utils.model_metric import ModelMetric
+# from samantha.utils.model_metric import ModelMetric
 
 from ..inference.utils import sample
 
@@ -43,11 +43,11 @@ class BaseModule(pl.LightningModule):
         self.log_dict(pl.utilities.grad_norm(self, norm_type=2), sync_dist=True)
 
     def setup(self, stage: str) -> None:
-        # Variables for MFU calculation
-        self.metric = ModelMetric(
-            precision=self.trainer.precision,
-            model_obj_or_objs=self.model,
-        )
+        # # Variables for MFU calculation
+        # self.metric = ModelMetric(
+        #     precision=self.trainer.precision,
+        #     model_obj_or_objs=self.model,
+        # )
         if stage == "fit" and not self.requires:
             self.load_required_modules()
 
@@ -73,10 +73,10 @@ class BaseModule(pl.LightningModule):
             batch = batch[0]
         if batch.dim() == 3:
             batch = batch.squeeze(1)
-        t = time.perf_counter()
+        # t = time.perf_counter()
         with torch.autocast(device_type="cuda", enabled=False):
             input_ids, target_ids = self.prepare_feature(batch.float())
-        exclude_time = time.perf_counter() - t
+        # exclude_time = time.perf_counter() - t
         logits = self.model(**input_ids)
         if isinstance(logits, dict):
             logits = logits["logits"]
@@ -86,17 +86,17 @@ class BaseModule(pl.LightningModule):
         loss = self.criterion(x, target_ids)
         accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
 
-        batch_size, seq_len = input_ids["input_ids"].size()[:2]
-        self.metric.update(
-            num_tokens=batch_size * seq_len,
-            stage=self.trainer.state.stage,
-            exclude_time=exclude_time,
-            model_kwargs={"batch_size": batch_size, "seq_len": seq_len}
-        )
+        # batch_size, seq_len = input_ids["input_ids"].size()[:2]
+        # self.metric.update(
+        #     num_tokens=batch_size * seq_len,
+        #     stage=self.trainer.state.stage,
+        #     exclude_time=exclude_time,
+        #     model_kwargs={"batch_size": batch_size, "seq_len": seq_len}
+        # )
 
-        if self.trainer.global_step % self.trainer.log_every_n_steps == 0:
-            metric = self.metric.compute(step=self.trainer.global_step)
-            self.log_dict(metric, prog_bar=True, sync_dist=True)
+        # if self.trainer.global_step % self.trainer.log_every_n_steps == 0:
+        #     metric = self.metric.compute(step=self.trainer.global_step)
+        #     self.log_dict(metric, sync_dist=True)
 
         return loss, accu
 
@@ -132,14 +132,14 @@ class BaseModule(pl.LightningModule):
             self.val_outputs[dataloader_idx] = []
 
     def configure_optimizers(self):
-        # params = []
-        # for name, p in self.model.named_parameters():
-        #     if "ln_" in name or "bias" in name:
-        #         print(f"Skip weight decay: {name}")
-        #         params.append({"params": [p], "weight_decay": 0.0})
-        #     else:
-        #         params.append({"params": [p]})
-        optimizer = self.hparams.optimizer_cls(self.model.parameters())
+        params = []
+        for name, p in self.model.named_parameters():
+            if "bias" in name or "layernorm" in name or "ln_" in name:
+                print(f"Skip weight decay: {name}")
+                params.append({"params": [p], "weight_decay": 0.0})
+            else:
+                params.append({"params": [p]})
+        optimizer = self.hparams.optimizer_cls(params)
         scheduler = self.hparams.scheduler_cls(optimizer)
         return {
             "optimizer": optimizer,

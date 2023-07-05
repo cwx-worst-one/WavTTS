@@ -124,10 +124,12 @@ class DataModule(pl.LightningDataModule):
         shuffle_buffer_size: int = 100,
         train_dataset=None,
         validation_dataset=None,
+        predict_dataset=None,
     ):
         super().__init__()
         self.train_dataset = train_dataset
         self.validation_dataset = validation_dataset
+        self.predict_dataset = predict_dataset
         self.batch_size = batch_size
         self.shuffle_buffer_size = shuffle_buffer_size
         self.num_workers = num_workers
@@ -149,3 +151,11 @@ class DataModule(pl.LightningDataModule):
             wds.batched(self.batch_size),
         )
         return DataLoader(validation_dataset_batched, batch_size=None, num_workers=self.num_workers)
+
+    def predict_dataloader(self):
+        predict_dataset_batched = DataPipeline(
+            self.predict_dataset,
+            wds.to_tuple("audio"),
+            wds.batched(self.batch_size),
+        )
+        return DataLoader(predict_dataset_batched, batch_size=None, num_workers=self.num_workers)
