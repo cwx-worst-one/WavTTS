@@ -38,7 +38,7 @@ run_opts:
     weight_decay: 0.01
     min_volume_threshold: 0.05
     loudness_ratio_threshold: 0.2
-    shuffle_buffer: 1000
+    shuffle_buffer: 256
     gradient_clip_val: 1.0
 
 ################################################################################
@@ -99,6 +99,7 @@ train_dataset: !new:recipes.musiclm.datasets.mcc.WrappedMCC40MDataset
         - 2.0
     sample_rate: !ref <extra_params[sample_rate]>
     duration: !ref <extra_params[duration]>
+    audio_key: "audio.npy"
     min_volume_threshold: !ref <run_opts[min_volume_threshold]>
     loudness_ratio_threshold: !ref <run_opts[loudness_ratio_threshold]>
     ar_filtering: !ref <ar_filtering>
