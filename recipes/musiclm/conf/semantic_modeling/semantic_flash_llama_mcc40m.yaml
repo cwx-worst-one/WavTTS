@@ -31,10 +31,10 @@ run_opts:
     accelerator: auto
     val_check_interval: 2000
     max_steps: 1000000
-    batch_size: 72
+    batch_size: 64
     learning_rate: 4.0e-3
-    warmup_steps: 10000
-    cycle_steps: 500000
+    warmup_steps: 5000
+    cycle_steps: 50000
     weight_decay: 0.01
     min_volume_threshold: 0.05
     loudness_ratio_threshold: 0.2
@@ -103,7 +103,7 @@ train_dataset: !new:recipes.musiclm.datasets.mcc.WrappedMCC40MDataset
     min_volume_threshold: !ref <run_opts[min_volume_threshold]>
     loudness_ratio_threshold: !ref <run_opts[loudness_ratio_threshold]>
     ar_filtering: !ref <ar_filtering>
-    max_num_crops: 3
+    max_num_crops: 6
     resampled: True
     shardshuffle: True
     seed: !ref <seed>
@@ -188,17 +188,16 @@ logger:
       project: !ref <run_opts[log_name]>
       name: !ref <run_opts[version]>
 
-log_gradient_scaler: !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
-
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
       monitor: step
-      save_top_k: 300
+      save_top_k: 50
       every_n_train_steps: !ref <run_opts[val_check_interval]>
       mode: max
       filename: "{step:06d}-{tr_loss:.4f}-{val_loss_0:.4f}"
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: 'step'
+    - !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
 
 plugins:
     - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
