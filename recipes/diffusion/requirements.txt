@@ -1,6 +1,6 @@
 --index-url https://bytedpypi.byted.org/simple
 
-
+torch_complex==0.4.3
 rotary-embedding-torch
 
 torch==2.0.0

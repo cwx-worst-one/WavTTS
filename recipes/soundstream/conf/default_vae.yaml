@@ -14,68 +14,70 @@ run_opts:
     fast_dev_run: False
     tensorboard_dir: !ref <log_dir>
     log_name: "soundstream"
-    version: "0.1"
-    strategy: ddp_find_unused_parameters_true
+    version: "24k_vae"
+    strategy: ddp_find_unused_parameters_true #!new:pytorch_lightning.strategies.ddp.DDPStrategy static_graph: True
     precision: 32
     log_every_n_steps: 10
     num_steps: 6000000
-    save_every_n_train_steps: 200
-    val_check_interval: 200
+    val_check_interval: 800
     val_output_samples_dir: "generated_samples"
 
 training_params:
     sample_rate: 24000
-    train_batch_size: 42
+    train_batch_size: 12
     train_num_workers: 4
-    val_batch_size: 16
+    val_batch_size: 12
     val_num_workers: 4
-    learning_rate: 0.0002
+    learning_rate: 0.00005
     weight_decay: 0.0
+    duration: 1.2
+    min_volume_threshold: 0.05
+    loudness_ratio_threshold: 0.2
+    sample_buffer_size: 1000
+
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
 # dataloader configuration
-train_dataset: !new:recipes.soundstream.dataset.train.ECALSDataset
-    batch_size: !ref <training_params[train_batch_size]>
-    sample_buffer_size: 600
-    mode: train
+train_dataset: !new:recipes.musiclm.datasets.mcc.WrappedMCC40MDataset
+    url2index_list:
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/npy_url2idx.txt"
+    sample_rate: !ref <training_params[sample_rate]>
+    duration: !ref <training_params[duration]>
+    audio_key: "audio.npy"
+    max_num_crops: 3
+    min_volume_threshold: !ref <training_params[min_volume_threshold]>
+    loudness_ratio_threshold: !ref <training_params[loudness_ratio_threshold]>
     resampled: True
+    shardshuffle: True
+    seed: !ref <seed>
 
-val_dataset: !new:recipes.soundstream.dataset.train.ECALSDataset
-    batch_size: !ref <training_params[val_batch_size]>
-    sample_buffer_size: 1
+val_dataset: !new:recipes.soundstream.dataset.mcc.MCCDataset
+    music_len: 240000 
     mode: val
-    num_steps_per_val: 5
     resampled: True
-
-train_dataloader: !new:torch.utils.data.DataLoader
-    dataset: !ref <train_dataset>
-    batch_size: null
-    num_workers: !ref <training_params[train_num_workers]>
-    pin_memory: True
-
-val_dataloader: !new:torch.utils.data.DataLoader
-    dataset: !ref <val_dataset>
-    batch_size: null
-    num_workers: !ref <training_params[val_num_workers]>
-    pin_memory: True
 
 # datamodule configuration
 pl_datamodule: !new:recipes.soundstream.modules.pl_datamodule.SoundstreamDataModule
-    train_dataloader: !ref <train_dataloader>
-    val_dataloader: !ref <val_dataloader>
+    train_dataset: !ref <train_dataset>
+    val_dataset: !ref <val_dataset>
+    train_batch_size: !ref <training_params[train_batch_size]>
+    val_batch_size: !ref <training_params[val_batch_size]>
+    train_num_workers: !ref <training_params[train_num_workers]>
+    val_num_workers: !ref <training_params[val_num_workers]>
+    sample_buffer_size: !ref <training_params[sample_buffer_size]>
+    num_steps_per_val: 4
 
 # training module configuration
-optimizer_cls: !name:torch.optim.Adam
+optimizer_cls: !name:torch.optim.AdamW
     lr: !ref <training_params[learning_rate]>
     weight_decay: !ref <training_params[weight_decay]>
 
-
 gen_lr_scheduler_cls: !name:torch.optim.lr_scheduler.LambdaLR
     lr_lambda: !name:recipes.soundstream.utils.lr_schedulers.lr_lambda 
-        warmup_steps: 10000
+        warmup_steps: 0
         decay_factor: 0.5
         decay_interval: 200000
     
@@ -85,29 +87,18 @@ dis_lr_scheduler_cls: !name:torch.optim.lr_scheduler.LambdaLR
         decay_factor: 0.5
         decay_interval: 200000
 
-
-pl_module: !new:recipes.soundstream.modules.pl_module.SoundstreamModule
-    generator: !new:recipes.soundstream.models.vqgan.VQGAN
-        model_type: bytewave_wn_causal
-        num_res: 12
-        quant_token_num: 1024
-        quant_token_dim: 256
-        quant_beta: 0.25
-        down_rates: [2, 2, 10, 12]
-        upsample_rates: [10, 6, 4, 2]
-        encoder_initial_channel: 16
-        decoder_initial_channel: 768
-        trunc_noise: False
-        smaller_encoder: True
-        init_cluster_size: 32 # tmp
-    discriminator: !new:recipes.soundstream.models.modules.ms_tfd.MultiScaleSTFTDiscriminator
-        filters: 32
-        pretrain: False
-    quant_token_num: 1024
-    generator_warmup_steps: 2000
+pl_module: !new:recipes.soundstream.modules.pl_module_vae.VocoderModule
+    seed: !ref <seed>
+    generator: !new:recipes.soundstream.models.vqgan.VQGAN_KL_new
+        latent_dim: 16
+        downsample_rates: [2, 3, 4, 4]
+        upsample_rates: [4, 4, 3 ,2]
+        encoder_base_dim: 96
+        decoder_base_dim: 2560
+    discriminator: !new:recipes.soundstream.models.modules.discriminator.MultiScaleSTFTDiscriminator
+        filters: 48
+    generator_warmup_steps: 0
     lambda_generator_loss: 1.0
-    lambda_quant_loss: 1.0
-    lambda_wav_loss: 0
     sample_rate: !ref <training_params[sample_rate]>
     val_output_samples_dir: !ref <run_opts[val_output_samples_dir]>
     optimizer_cls: !ref <optimizer_cls>
@@ -120,12 +111,11 @@ logger: !new:pytorch_lightning.loggers.TensorBoardLogger
     version: !ref <run_opts[version]>
 
 checkpoint: !new:pytorch_lightning.callbacks.ModelCheckpoint
-    monitor: step
+    monitor: val_sdr
     mode: max
     save_top_k: 5
-    every_n_train_steps: !ref <run_opts[save_every_n_train_steps]>
     save_last: True
-    filename: soundstream-{step:06d}
+    filename: soundstream-{step:06d}-{val_sdr:.4f}
 
 lr_monitor: !new:pytorch_lightning.callbacks.LearningRateMonitor
     logging_interval: step
@@ -138,7 +128,7 @@ trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>
     accelerator: auto
     devices: auto
-    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    num_nodes: 1 #!apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
     deterministic: False  # warning: setting to True can cause slowdowns
     strategy: !ref <run_opts[strategy]>
     enable_model_summary: True
@@ -152,4 +142,8 @@ trainer: !new:pytorch_lightning.Trainer
     callbacks:
         - !ref <checkpoint>
         - !ref <lr_monitor>
+        - !new:recipes.soundstream.utils.ema.EMA
+            decay: 0.999
+            cpu_offload: False
+
     plugins: !ref <plugins>

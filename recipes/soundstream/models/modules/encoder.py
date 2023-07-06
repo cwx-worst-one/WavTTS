@@ -156,9 +156,9 @@ class Encoder(nn.Module):
 
         self.downs.apply(init_weights)
         self.conv_post.apply(init_weights)
-        self.register_buffer("cnt", torch.FloatTensor([0]))
-        self.encoder_bn = nn.BatchNorm1d(ch4, affine=False, momentum=0.05)
-
+        # self.register_buffer("cnt", torch.FloatTensor([0]))
+        self.encoder_bn = nn.Identity() #nn.BatchNorm1d(ch4, affine=False, momentum=0.05)
+        
     def forward(self, x):
         x = self.conv_pre(x)
         for i in range(self.num_downsamples + 1):
@@ -176,9 +176,9 @@ class Encoder(nn.Module):
         x = F.leaky_relu(x)
         x = self.conv_post(x)
         x = self.encoder_bn(x)
-        if self.training:
-            x = x + torch.randn_like(x) * ((1e4 - self.cnt).clamp(0) / 1e4)
-            self.cnt.add_(1)
+        # if self.training:
+        #     x = x + torch.randn_like(x) * ((1e4 - self.cnt).clamp(0) / 1e4)
+            # self.cnt.add_(1)
         return x
 
     def freeze_bn(self):

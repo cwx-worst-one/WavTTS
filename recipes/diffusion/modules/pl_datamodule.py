@@ -1,10 +1,9 @@
 import pytorch_lightning as pl
 import webdataset as wds
-from webdataset.pipeline import DataPipeline
 from torch.utils.data import DataLoader
 from recipes.soundstream.dataset.utils import collate_fn
 
-class SoundstreamDataModule(pl.LightningDataModule):
+class DiffusionDataModule(pl.LightningDataModule):
     def __init__(self, 
         train_dataset, 
         val_dataset,
@@ -27,13 +26,13 @@ class SoundstreamDataModule(pl.LightningDataModule):
 
 
     def train_dataloader(self):
-        train_dataset_batched = DataPipeline(
+        train_dataset_batched = wds.DataPipeline(
             self.train_dataset,
             wds.shuffle(self.sample_buffer_size),
-            wds.to_tuple("audio"),
-            wds.batched(self.train_batch_size),
+            wds.batched(self.train_batch_size, collation_fn=collate_fn),
         )
         return DataLoader(train_dataset_batched, batch_size=None, num_workers=self.train_num_workers)
+
 
     def val_dataloader(self):
         val_dataset_batched = wds.DataPipeline(

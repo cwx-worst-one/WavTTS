@@ -1,69 +1,66 @@
-import julius
-import numpy as np
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+
+"""MS-STFT discriminator, provided here for reference."""
+
+import typing as tp
+
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import torchaudio
+from einops import rearrange
+from torch import nn
 from torch.nn import AvgPool1d, Conv1d, Conv2d, ConvTranspose1d
-from torch.nn.utils import remove_weight_norm, spectral_norm, weight_norm
+from torch.nn.utils import weight_norm
 
-from recipes.soundstream.models.modules.mrd import MultiResolutionDiscriminator
 from recipes.soundstream.models.modules.pqmf import PQMF
-from recipes.soundstream.models.modules.resblocks import SineGen
-from recipes.soundstream.utils.utils import get_padding, init_weights
 
-LRELU_SLOPE = 0.1
+FeatureMapType = tp.List[torch.Tensor]
+LogitsType = torch.Tensor
+DiscriminatorOutput = tp.Tuple[tp.List[LogitsType], tp.List[FeatureMapType]]
 
 
-class DiscriminatorP(torch.nn.Module):
-    def __init__(
-        self, period, kernel_size=5, stride=3, use_spectral_norm=False, fmap_depth=0
-    ):
-        super(DiscriminatorP, self).__init__()
+def WNConv1d(*args, **kwargs):
+    act = kwargs.pop("act", True)
+    conv = weight_norm(nn.Conv1d(*args, **kwargs))
+    if not act:
+        return conv
+    return nn.Sequential(conv, nn.LeakyReLU(0.1))
+
+
+def WNConv2d(*args, **kwargs):
+    act = kwargs.pop("act", True)
+    conv = weight_norm(nn.Conv2d(*args, **kwargs))
+    if not act:
+        return conv
+    return nn.Sequential(conv, nn.LeakyReLU(0.1))
+
+def get_2d_padding(
+    kernel_size: tp.Tuple[int, int], dilation: tp.Tuple[int, int] = (1, 1)
+):
+    return (
+        ((kernel_size[0] - 1) * dilation[0]) // 2,
+        ((kernel_size[1] - 1) * dilation[1]) // 2,
+    )
+
+class MPD(nn.Module):
+    def __init__(self, period):
+        super().__init__()
         self.period = period
-        self.fmap_depth = fmap_depth
-        norm_f = weight_norm if use_spectral_norm == False else spectral_norm
         self.convs = nn.ModuleList(
             [
-                norm_f(
-                    Conv2d(
-                        1,
-                        32,
-                        (kernel_size, 1),
-                        (stride, 1),
-                        padding=(get_padding(5, 1), 0),
-                    )
-                ),
-                norm_f(
-                    Conv2d(
-                        32,
-                        128,
-                        (kernel_size, 1),
-                        (stride, 1),
-                        padding=(get_padding(5, 1), 0),
-                    )
-                ),
-                norm_f(
-                    Conv2d(
-                        128,
-                        512,
-                        (kernel_size, 1),
-                        (stride, 1),
-                        padding=(get_padding(5, 1), 0),
-                    )
-                ),
-                norm_f(
-                    Conv2d(
-                        512,
-                        1024,
-                        (kernel_size, 1),
-                        (stride, 1),
-                        padding=(get_padding(5, 1), 0),
-                    )
-                ),
-                norm_f(Conv2d(1024, 1024, (kernel_size, 1), 1, padding=(2, 0))),
+                WNConv2d(1, 32, (5, 1), (3, 1), padding=(2, 0)),
+                WNConv2d(32, 128, (5, 1), (3, 1), padding=(2, 0)),
+                WNConv2d(128, 512, (5, 1), (3, 1), padding=(2, 0)),
+                WNConv2d(512, 1024, (5, 1), (3, 1), padding=(2, 0)),
+                WNConv2d(1024, 1024, (5, 1), 1, padding=(2, 0)),
             ]
         )
-        self.conv_post = norm_f(Conv2d(1024, 1, (3, 1), 1, padding=(1, 0)))
+        self.conv_post = WNConv2d(
+            1024, 1, kernel_size=(3, 1), padding=(1, 0), act=False
+        )
 
         dicts = {
             2: {"subbands": 2, "taps": 62, "cutoff_ratio": 0.26699457, "beta": 9.0},
@@ -78,97 +75,181 @@ class DiscriminatorP(torch.nn.Module):
         fmap = []
         x = self.pqmf(x)  # [B, D, T]
         x = x.transpose(1, 2).unsqueeze(1)  # [B, 1, T, D]
-        for i, l in enumerate(self.convs):
-            x = l(x)
-            x = F.leaky_relu(x, LRELU_SLOPE)
-            if i >= self.fmap_depth:
-                fmap.append(x)
+
+        for layer in self.convs:
+            x = layer(x)
+            fmap.append(x)
+
         x = self.conv_post(x)
+        # put final output in fmap
         fmap.append(x)
-        x = torch.flatten(x, 1, -1)
-        return x, fmap
 
+        return fmap
 
-class DiscriminatorS(torch.nn.Module):
-    def __init__(self, use_spectral_norm=False, fmap_depth=0):
-        super(DiscriminatorS, self).__init__()
-        self.fmap_depth = fmap_depth
-        norm_f = weight_norm if use_spectral_norm == False else spectral_norm
-        self.convs = nn.ModuleList(
+BANDS = [(0.0, 0.1), (0.1, 0.25), (0.25, 0.5), (0.5, 0.75), (0.75, 1.0)]
+class MRD(nn.Module):
+    def __init__(
+        self,
+        filters: int,
+        win_length: int,
+        hop_factor: float = 0.25,
+        bands: list = BANDS,
+    ):
+        """Complex multi-band spectrogram discriminator.
+        Parameters
+        ----------
+        win_length : int
+            Window length of STFT.
+        hop_factor : float, optional
+            Hop factor of the STFT, defaults to ``0.25 * win_length``.
+        bands : list, optional
+            Bands to run discriminator over.
+        """
+        super().__init__()
+
+        self.win_length = win_length
+        self.hop_factor = hop_factor
+        self.spec_transform = torchaudio.transforms.Spectrogram(
+            n_fft=win_length,
+            hop_length=int(win_length * hop_factor),
+            win_length=win_length,
+            window_fn=torch.hann_window,
+            center=True,
+            pad_mode='reflect',
+            power=None,
+        )
+
+        n_fft = win_length // 2 + 1
+        bands = [(int(b[0] * n_fft), int(b[1] * n_fft)) for b in bands]
+        self.bands = bands
+
+        convs = lambda: nn.ModuleList(
             [
-                norm_f(Conv1d(1, 128, 15, 1, padding=7)),
-                norm_f(Conv1d(128, 128, 41, 2, groups=4, padding=20)),
-                norm_f(Conv1d(128, 256, 41, 2, groups=16, padding=20)),
-                norm_f(Conv1d(256, 512, 41, 4, groups=16, padding=20)),
-                norm_f(Conv1d(512, 512, 41, 4, groups=16, padding=20)),
-                norm_f(Conv1d(512, 512, 41, 1, groups=16, padding=20)),
-                norm_f(Conv1d(512, 512, 5, 1, padding=2)),
+                WNConv2d(2, filters, (3, 9), (1, 1), padding=(1, 4)),
+                WNConv2d(filters, filters, (3, 9), (1, 2), padding=(1, 4)),
+                WNConv2d(filters, filters, (3, 9), (1, 2), padding=(1, 4)),
+                WNConv2d(filters, filters, (3, 9), (1, 2), padding=(1, 4)),
+                WNConv2d(filters, filters, (3, 3), (1, 1), padding=(1, 1)),
             ]
         )
-        self.conv_post = norm_f(Conv1d(512, 1, 3, 1, padding=1))
+        self.band_convs = nn.ModuleList([convs() for _ in range(len(self.bands))])
+        self.conv_post = WNConv2d(filters, 1, (3, 3), (1, 1), padding=(1, 1), act=False)
 
     def forward(self, x):
+        with torch.autocast(device_type="cuda", enabled=False):
+            x_stft = torch.view_as_real(self.spec_transform(x))
+            x_stft = rearrange(x_stft, "b c f t cp -> b (c cp) t f")
+        x_stft = x_stft.to(x.dtype)
+
+        x_bands = [x_stft[..., b[0] : b[1]] for b in self.bands]
+        
         fmap = []
-        for i, l in enumerate(self.convs):
-            x = l(x)
-            x = F.leaky_relu(x, LRELU_SLOPE)
-            if i >= self.fmap_depth:
-                fmap.append(x)
+        x = []
+        for band, stack in zip(x_bands, self.band_convs):
+            for layer in stack:
+                band = layer(band)
+                fmap.append(band)
+            x.append(band)
+
+        x = torch.cat(x, dim=-1)
         x = self.conv_post(x)
+        # put final output in fmap
         fmap.append(x)
-        x = torch.flatten(x, 1, -1)
-        return x, fmap
 
+        return fmap
 
-class Discriminator(nn.Module):
-    def __init__(self, hp, use_spectral_norm=False):
+class MultiScaleSTFTDiscriminator(nn.Module):
+    """Multi-Scale STFT (MS-STFT) discriminator.
+    Args:
+        filters (int): Number of filters in convolutions
+        in_channels (int): Number of input channels. Default: 1
+        out_channels (int): Number of output channels. Default: 1
+        n_ffts (Sequence[int]): Size of FFT for each scale
+        hop_lengths (Sequence[int]): Length of hop between STFT windows for each scale
+        win_lengths (Sequence[int]): Window size for each scale
+        **kwargs: additional args for STFTDiscriminator
+    """
+
+    def __init__(
+        self,
+        filters: int,
+        in_channels: int = 1,
+        out_channels: int = 1,
+        periods: tp.List = [2, 3, 5, 7, 11],
+        n_ffts: tp.List[int] = [2048, 512, 128],
+        hop_lengths: tp.List[int] = [512, 128, 32],
+        win_lengths: tp.List[int] = [1024, 256, 64],
+        **kwargs,
+    ):
         super().__init__()
-        self.hp = hp
-        fmap_depth = hp.fmap_depth
-        self.mpds = nn.ModuleList(
+        assert len(n_ffts) == len(hop_lengths) == len(win_lengths)
+        self.mrds = nn.ModuleList(
             [
-                DiscriminatorP(2, fmap_depth=fmap_depth),
-                DiscriminatorP(3, fmap_depth=fmap_depth),
-                DiscriminatorP(5, fmap_depth=fmap_depth),
-                DiscriminatorP(7, fmap_depth=fmap_depth),
-                DiscriminatorP(11, fmap_depth=fmap_depth),
+                MRD(
+                    filters,
+                    win_length=win_lengths[i],
+                )
+                for i in range(len(n_ffts))
             ]
         )
-        # self.mrd = MultiResolutionDiscriminator(hp)
-        self.msd = DiscriminatorS(use_spectral_norm=False, fmap_depth=fmap_depth)
+        self.mpds = nn.ModuleList([MPD(p) for p in periods])
 
-    def forward(self, y, y_hat, f0s=None):
-        y_org = y
-        y_hat_org = y_hat
+    def preprocess(self, x):
+        # Remove DC offset
+        x = x - x.mean(dim=-1, keepdims=True)
+        # Peak normalize the volume of input audio
+        x = 0.8 * x / (x.abs().max(dim=-1, keepdim=True)[0] + 1e-9)
+        return x
 
-        y_d_rs = []
-        y_d_gs = []
-        fmap_rs = []
-        fmap_gs = []
+    def forward(
+        self, x: torch.Tensor, y: torch.Tensor, return_scales=False
+    ) -> DiscriminatorOutput:
+        logit_rs, logit_gs, fmap_rs, fmap_gs = [], [], [], []
+        scales = []
 
-        # mpds
-        for i, d in enumerate(self.mpds):
-            y_d_r, fmap_r = d(y_org)
-            y_d_g, fmap_g = d(y_hat_org)
-            y_d_rs.append(y_d_r)
-            fmap_rs.append(fmap_r)
-            y_d_gs.append(y_d_g)
-            fmap_gs.append(fmap_g)
-        """# mrds
-        res_r = self.mrd(y_org)
-        res_g = self.mrd(y_hat_org)
-        for score, fmap in res_r:
-            y_d_rs.append(score)
-            fmap_rs.append(fmap)
-        for score, fmap in res_g:
-            y_d_gs.append(score)
-            fmap_gs.append(fmap)
-        """
-        # msd single layer
-        y_d_r, fmap_r = self.msd(y_org)
-        y_d_g, fmap_g = self.msd(y_hat_org)
-        y_d_rs.append(y_d_r)
-        y_d_gs.append(y_d_g)
-        fmap_rs.append(fmap_r)
-        fmap_gs.append(fmap_g)
-        return y_d_rs, y_d_gs, fmap_rs, fmap_gs
+        x = self.preprocess(x)
+        y = self.preprocess(y)
+
+        for mrd in self.mrds:
+            fmap_r = mrd(x)
+            fmap_g = mrd(y)
+
+            logit_rs.append(fmap_r[-1])
+            logit_gs.append(fmap_g[-1])
+            fmap_rs.append(fmap_r[:-1])
+            fmap_gs.append(fmap_g[:-1])
+
+        for mpd in self.mpds:
+            fmap_r = mpd(x)
+            fmap_g = mpd(y)
+
+            logit_rs.append(fmap_r[-1])
+            logit_gs.append(fmap_g[-1])
+            fmap_rs.append(fmap_r[:-1])
+            fmap_gs.append(fmap_g[:-1])
+
+        return logit_rs, logit_gs, fmap_rs, fmap_gs
+
+
+def test():
+    disc = MultiScaleSTFTDiscriminator(filters=32)
+    y = torch.randn(1, 1, 24000)
+    y_hat = torch.randn(1, 1, 24000)
+
+    y_disc_r, fmap_r = disc(y)
+    y_disc_gen, fmap_gen = disc(y_hat)
+    assert (
+        len(y_disc_r)
+        == len(y_disc_gen)
+        == len(fmap_r)
+        == len(fmap_gen)
+        == disc.num_discriminators
+    )
+
+    assert all([len(fm) == 5 for fm in fmap_r + fmap_gen])
+    assert all([list(f.shape)[:2] == [1, 32] for fm in fmap_r + fmap_gen for f in fm])
+    assert all([len(logits.shape) == 4 for logits in y_disc_r + y_disc_gen])
+
+
+if __name__ == "__main__":
+    test()

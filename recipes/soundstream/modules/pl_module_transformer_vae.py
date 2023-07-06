@@ -11,18 +11,26 @@ from recipes.soundstream.utils.losses import (
     feature_loss,
     generator_loss,
 )
+from recipes.soundstream.utils.audio_utils import (
+    pad_audio, 
+    enframe, 
+    deframe
+)
 from recipes.soundstream.utils.balancer import Balancer, EMA
 
 
-class SoundstreamModule(pl.LightningModule):
+class VocoderModule(pl.LightningModule):
     def __init__(
         self,
+        seed: int,
         generator,
         discriminator,
         balancer,
-        quant_token_num: int,
         generator_warmup_steps: int,
         sample_rate: int,
+        input_chunk_samples: int,
+        hop_samples: int,
+        valid_batch_size: int,
         val_output_samples_dir: str,
         optimizer_cls,
         gen_lr_scheduler_cls,
@@ -45,26 +53,54 @@ class SoundstreamModule(pl.LightningModule):
 
         if self.local_rank == 0:
             os.makedirs(val_output_samples_dir, exist_ok=True)
+
+    def on_fit_start(self):
+        # set torch seed for randomness
+        torch.manual_seed(self.hparams.seed + self.global_rank)
+
         
+    def _divide_params_group(self, model):
+        no_decay = [
+            "bn",
+            "bias",
+            "norm"
+            "rotary",
+            "embedding",
+        ]
+
+        base_params = []
+        no_decay_params = []
+        for name, param in model.named_parameters(): 
+            _found = False
+            for k in no_decay:
+                if k in name:
+                    no_decay_params.append(param)
+                    _found = True
+                    break
+            if not _found:
+                base_params.append(param)
+
+        return base_params, no_decay_params
 
     def configure_optimizers(self):
+
         # generator
-        optimizer_g = self.hparams.optimizer_cls(self.generator.parameters())
+        base_params, no_decay_params = self._divide_params_group(self.generator)
+
+        optimizer_g = self.hparams.optimizer_cls(
+            [{"params": base_params}, {"params": no_decay_params, "weight_decay": 0.0}],
+        )
         scheduler_g = self.hparams.gen_lr_scheduler_cls(optimizer_g)
+        
         # discriminator
-        optimizer_d = self.hparams.optimizer_cls(self.discriminator.parameters())
+        base_params, no_decay_params = self._divide_params_group(self.discriminator)
+
+        optimizer_d = self.hparams.optimizer_cls(
+            [{"params": base_params}, {"params": no_decay_params, "weight_decay": 0.0}],
+        )
         scheduler_d = self.hparams.dis_lr_scheduler_cls(optimizer_d)
 
         return [optimizer_g, optimizer_d], [scheduler_g, scheduler_d]
-
-    def _get_token_usage_rate(self, quant_index):
-        one_hot = torch.nn.functional.one_hot(
-            quant_index[0].reshape(-1), self.hparams.quant_token_num
-        )
-        one_hot = self.all_gather(one_hot).sum(dim=0)
-        one_hot = one_hot.sum(dim=0).clamp(0, 1)
-        rate = 100 * one_hot.sum() / self.hparams.quant_token_num
-        return rate
 
     def training_step(self, batch, batch_idx):
         # get optimizor and scheduler
@@ -72,11 +108,9 @@ class SoundstreamModule(pl.LightningModule):
         sch_g, sch_d = self.lr_schedulers()
 
         # train discriminator
-        wavs_g, quant_loss, quant_index, encoder_out = self.generator(
+        wavs_g, kl_loss, std_mean = self.generator(
             batch["audio"], warmup=batch_idx < 1e4
         )
-        # get token usage rate
-        rate = self._get_token_usage_rate(quant_index)
 
         self.toggle_optimizer(opt_d)
         y_d_rs, y_d_gs, _, _ = self.discriminator(batch["audio"], wavs_g.detach())
@@ -90,7 +124,7 @@ class SoundstreamModule(pl.LightningModule):
             opt_d.zero_grad()
             self.manual_backward(total_loss_d)
             norm_d = torch.nn.utils.clip_grad_norm_(
-                self.discriminator.parameters(), 1000.0
+                self.discriminator.parameters(), 1.0
             )
             opt_d.step()
             sch_d.step()
@@ -104,8 +138,8 @@ class SoundstreamModule(pl.LightningModule):
         # mpd + mrd
         y_d_rs, y_d_gs, fmap_rs, fmap_gs = self.discriminator(batch["audio"], wavs_g)
         # g logit loss
-        loss_g, loss_g_items = generator_loss(y_d_gs)
 
+        loss_g, loss_g_items = generator_loss(y_d_gs)
         sc_loss, mag_loss = self.stft_criterion(batch["audio"], wavs_g)
 
         # fmap loss
@@ -115,7 +149,7 @@ class SoundstreamModule(pl.LightningModule):
         if batch_idx > self.hparams.generator_warmup_steps:
             total_loss_g = {
                 'generator_loss': loss_g,
-                'quant_loss': quant_loss,
+                'kl_loss': kl_loss,
                 'sc_loss': sc_loss,
                 'mag_loss': mag_loss,
                 'fmap_loss': fmap_loss,
@@ -123,7 +157,7 @@ class SoundstreamModule(pl.LightningModule):
             }
         else:
             total_loss_g = {
-                'quant_loss': quant_loss,
+                'kl_loss': kl_loss,
                 'sc_loss': sc_loss,
                 'mag_loss': mag_loss,
                 'wav_loss': (wavs_g - batch["audio"]).abs().mean()
@@ -131,33 +165,24 @@ class SoundstreamModule(pl.LightningModule):
 
         opt_g.zero_grad()
         # self.manual_backward(total_loss_g)
-        self.hparams.balancer.backward(total_loss_g, wavs_g)
-        norm_g = torch.nn.utils.clip_grad_norm_(self.generator.parameters(), 1000.0)
+        self.hparams.balancer.backward(self, total_loss_g, wavs_g)
+        norm_g = torch.nn.utils.clip_grad_norm_(self.generator.parameters(), 100.0)
         opt_g.step()
         sch_g.step()
         self.untoggle_optimizer(opt_g)
 
         # log
-        norm_w = (
-            (self.generator.quant_vaes[0].embedding.weight.data ** 2)
-            .sum(dim=1)
-            .sqrt()
-            .max()
-        )
         self.log_dict(
             {
                 "total_loss_d": total_loss_d,
-                # "total_loss_g": total_loss_g,
                 "sc_loss": sc_loss,
                 "mag_loss": mag_loss,
                 "fmap_loss": fmap_loss,
-                "quant_loss": quant_loss,
+                "kl_loss": kl_loss,
                 "norm_d": norm_d,
                 "norm_g": norm_g,
-                "norm_w": norm_w,
                 "loss_g": loss_g,
                 "loss_d": loss_d,
-                "rate": rate,
                 "step": self.current_step,
             },
             prog_bar=True,
@@ -167,9 +192,40 @@ class SoundstreamModule(pl.LightningModule):
 
         self.current_step += 1
 
-    def validation_step(self, batch, batch_idx):
-        wavs_g, _, _, _ = self.generator(batch["audio"], warmup=False)
+    def split_forward(self, x):
+        """
+        Input batch size shoud be 1 (1, n_channels, samples)
+        """
+        origin_len = x.shape[-1]
+        # Pad
+        x = pad_audio(
+            x, 
+            segment_samples=self.hparams.input_chunk_samples,
+            hop_samples=self.hparams.hop_samples,
+        )
+        # Enframe
+        x_chunk = enframe(
+            x, 
+            segment_samples=self.hparams.input_chunk_samples,
+            hop_samples=self.hparams.hop_samples,
+        )
+        # Inference
+        out = []
+        for b in torch.split(x_chunk, self.hparams.valid_batch_size):
+            o, _, _ = self.generator(b, warmup=False)
+            out.append(o.detach())
+        # Deframe and depad
+        out = deframe(torch.cat(out, dim=0), hop_samples=self.hparams.hop_samples)[..., :origin_len]
+        return out
 
+
+    def validation_step(self, batch, batch_idx):
+        wavs_g = []
+        for wav in batch["audio"]:
+            wav_g = self.split_forward(wav)
+            wavs_g.append(wav_g)
+        wavs_g = torch.stack(wavs_g, dim=0)
+        
         # calculate SDR
         sdrs = []
         for wav_g, wav_o in zip(wavs_g, batch["audio"]):

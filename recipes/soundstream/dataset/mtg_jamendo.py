@@ -19,9 +19,15 @@ def get_file_list(folder, ext=".mp3"):
 
 # torch dataset
 class MTGJamendoDataset(torch.utils.data.Dataset):
-    def __init__(self, num_steps=None, mode="train"):
+    def __init__(self, 
+        num_steps=None, 
+        music_len=30720,
+        mode="train"
+        ):
 
         assert mode in ["train", "val"]
+
+        self.music_len = music_len
 
         fs = get_file_list(BASE_DIR)
         if mode == "train":
@@ -47,28 +53,26 @@ class MTGJamendoDataset(torch.utils.data.Dataset):
             audio = audio.mean(axis=0, keepdims=True)
 
         if self.mode == "train":
-            music_len = 30720
-            if audio.shape[-1] < music_len:
+            if audio.shape[-1] < self.music_len:
                 audio = np.pad(
-                    audio, ((0, 0), (0, music_len - audio.shape[-1])), "constant"
+                    audio, ((0, 0), (0, self.music_len - audio.shape[-1])), "constant"
                 )
                 start_idx = 0
             else:
-                start_idx = random.randint(0, audio.shape[-1] - music_len)
+                start_idx = random.randint(0, audio.shape[-1] - self.music_len)
         else:
-            music_len = 30720 * 8 * 2
             mid_point = int(audio.shape[-1] // 2)
-            if mid_point + music_len > audio.shape[-1]:
+            if mid_point + self.music_len > audio.shape[-1]:
                 audio = np.pad(
                     audio,
-                    ((0, 0), (0, mid_point + music_len - audio.shape[-1])),
+                    ((0, 0), (0, mid_point + self.music_len - audio.shape[-1])),
                     "constant",
                 )
                 start_idx = 0
             else:
                 start_idx = mid_point
 
-        audio = torch.from_numpy(audio[..., start_idx : start_idx + music_len]).float()
+        audio = torch.from_numpy(audio[..., start_idx : start_idx + self.music_len]).float()
 
         return {"audio": audio, "music_id": f.split("/")[-1].split(".")[0]}
 

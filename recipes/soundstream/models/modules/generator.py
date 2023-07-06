@@ -107,7 +107,7 @@ class Generator(nn.Module):
         if "causal" not in model_type:
             self.conv_pre = nn.Sequential(
                 Conv1d(
-                    encoder_initial_channel * (2**4),
+                    16, #encoder_initial_channel * (2**4),
                     decoder_initial_channel,
                     7,
                     padding=3,
@@ -146,7 +146,7 @@ class Generator(nn.Module):
             self.conv_pre = nn.Sequential(
                 nn.ConstantPad1d([6, 0], 0.0),
                 Conv1d(
-                    encoder_initial_channel * (2**4),
+                    16, #encoder_initial_channel * (2**4),
                     decoder_initial_channel,
                     7,
                     padding=0,

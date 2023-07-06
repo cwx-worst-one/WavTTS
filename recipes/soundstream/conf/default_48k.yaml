@@ -19,7 +19,6 @@ run_opts:
     precision: 32
     log_every_n_steps: 10
     num_steps: 6000000
-    save_every_n_train_steps: 200
     val_check_interval: 200
     val_output_samples_dir: "generated_samples"
 
@@ -80,7 +79,7 @@ dis_lr_scheduler_cls: !name:torch.optim.lr_scheduler.LambdaLR
         decay_interval: 200000
 
 pl_module: !new:recipes.soundstream.modules.pl_module.SoundstreamModule
-    generator: !new:recipes.soundstream.models.vqgan_res.VQGAN
+    generator: !new:recipes.soundstream.models.vqgan.VQGAN
         model_type: bytewave_wn_causal
         num_res: 12
         quant_token_num: 1024
@@ -96,11 +95,19 @@ pl_module: !new:recipes.soundstream.modules.pl_module.SoundstreamModule
     discriminator: !new:recipes.soundstream.models.modules.ms_tfd.MultiScaleSTFTDiscriminator
         filters: 32
         pretrain: False
+    balancer: !new:recipes.soundstream.utils.balancer.Balancer
+        ema_averager: !name:recipes.soundstream.utils.balancer.EMA
+        weights:
+            generator_loss: 1.0
+            quant_loss: 1.0
+            sc_loss: 50
+            mag_loss: 50
+            fmap_loss: 20
+            wav_loss: 0
+        scale_gradients: True
+        deny_list: [quant_loss]
     quant_token_num: 1024
-    generator_warmup_steps: 2000
-    lambda_generator_loss: 1.0
-    lambda_quant_loss: 1.0
-    lambda_wav_loss: 0
+    generator_warmup_steps: 20
     sample_rate: !ref <training_params[sample_rate]>
     val_output_samples_dir: !ref <run_opts[val_output_samples_dir]>
     optimizer_cls: !ref <optimizer_cls>
@@ -113,12 +120,11 @@ logger: !new:pytorch_lightning.loggers.TensorBoardLogger
     version: !ref <run_opts[version]>
 
 checkpoint: !new:pytorch_lightning.callbacks.ModelCheckpoint
-    monitor: step
+    monitor: val_sdr
     mode: max
     save_top_k: 5
-    every_n_train_steps: !ref <run_opts[save_every_n_train_steps]>
     save_last: True
-    filename: soundstream-{step:06d}
+    filename: soundstream-{step:06d}-{val_sdr:.4f}
 
 lr_monitor: !new:pytorch_lightning.callbacks.LearningRateMonitor
     logging_interval: step
@@ -145,4 +151,8 @@ trainer: !new:pytorch_lightning.Trainer
     callbacks:
         - !ref <checkpoint>
         - !ref <lr_monitor>
+        - !new:recipes.soundstream.utils.ema.EMA
+            decay: 0.999
+            cpu_offload: False
+
     plugins: !ref <plugins>
