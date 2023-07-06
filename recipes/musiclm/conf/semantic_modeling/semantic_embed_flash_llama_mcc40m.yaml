@@ -31,8 +31,8 @@ run_opts:
     accelerator: auto
     val_check_interval: 2000
     max_steps: 1000000
-    batch_size: 72
-    learning_rate: 4.0e-3
+    batch_size: 144
+    learning_rate: 3.0e-4
     warmup_steps: 10000
     cycle_steps: 500000
     weight_decay: 0.01
@@ -47,12 +47,12 @@ run_opts:
 
 train_dataset: !new:recipes.musiclm.datasets.mcc.WrappedMCC40MDataset
     url2index_list:
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/a.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/b.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/c.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/d.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/e.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/f.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/a.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/b.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/c.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/d.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/e.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/f.tsv"
     sample_rate: !ref <extra_params[sample_rate]>
     duration: !ref <extra_params[duration]>
     min_volume_threshold: !ref <run_opts[min_volume_threshold]>

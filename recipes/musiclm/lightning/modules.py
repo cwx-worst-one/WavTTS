@@ -1,20 +1,22 @@
 import math
 import time
+from typing import Optional, Tuple, Union
 
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from einops import rearrange
 from pytorch_lightning.profilers import PassThroughProfiler
-from tqdm import tqdm
 from s3a.providers.ctiga.models import gpt
 from s3a.providers.ctiga.utils.generation import InferenceParams
+from tqdm import tqdm
 
 from recipes.musiclm.models.compat.semantic_model import w2v_bert_tokenization
 from samantha.utils.hparams import DotDict
 # from samantha.utils.model_metric import ModelMetric
 
-from ..inference.utils import sample
+from recipes.musiclm.inference.utils import sample
 
 
 class BaseModule(pl.LightningModule):
@@ -38,12 +40,12 @@ class BaseModule(pl.LightningModule):
 
         if checkpointing:
             self.model.gradient_checkpointing_enable()
-    
+
     def on_before_optimizer_step(self, optimizer):
         self.log_dict(pl.utilities.grad_norm(self, norm_type=2), sync_dist=True)
 
     def setup(self, stage: str) -> None:
-        # # Variables for MFU calculation
+        # Variables for MFU calculation
         # self.metric = ModelMetric(
         #     precision=self.trainer.precision,
         #     model_obj_or_objs=self.model,
@@ -55,7 +57,10 @@ class BaseModule(pl.LightningModule):
         for name, (hpath, initializer) in self.hparams.required_modules.items():
             self.requires.update(initializer(hpath, local_rank=self.local_rank))
             if name == "mulan_centers":
-                assert self.extra_params.mulan_num_rvq == self.requires["mulan_centers"].shape[0]
+                assert (
+                    self.extra_params.mulan_num_rvq
+                    == self.requires["mulan_centers"].shape[0]
+                )
 
     @property
     def profiler(self):
@@ -64,9 +69,17 @@ class BaseModule(pl.LightningModule):
     def seer_rearrange(self, seq, inv=False):
         b = seq.size(0)
         if inv:
-            return seq.reshape(b, -1, self.extra_params.n_seers).transpose(2, 1).reshape(b, -1)
+            return (
+                seq.reshape(b, -1, self.extra_params.n_seers)
+                .transpose(2, 1)
+                .reshape(b, -1)
+            )
         else:
-            return seq.reshape(b, self.extra_params.n_seers, -1).transpose(2, 1).reshape(b, -1)
+            return (
+                seq.reshape(b, self.extra_params.n_seers, -1)
+                .transpose(2, 1)
+                .reshape(b, -1)
+            )
 
     def _shared_step(self, batch):
         if isinstance(batch, list):
@@ -132,14 +145,17 @@ class BaseModule(pl.LightningModule):
             self.val_outputs[dataloader_idx] = []
 
     def configure_optimizers(self):
-        params = []
-        for name, p in self.model.named_parameters():
-            if "bias" in name or "layernorm" in name or "ln_" in name:
-                print(f"Skip weight decay: {name}")
-                params.append({"params": [p], "weight_decay": 0.0})
-            else:
-                params.append({"params": [p]})
-        optimizer = self.hparams.optimizer_cls(params)
+        if isinstance(self.model, gpt.GPTLMHeadModel):
+            optimizer = self.hparams.optimizer_cls(self.model.parameters())
+        else:
+            params = []
+            for name, p in self.model.named_parameters():
+                if "bias" in name or "layernorm" in name or "ln_" in name:
+                    print(f"Skip weight decay: {name}")
+                    params.append({"params": [p], "weight_decay": 0.0})
+                else:
+                    params.append({"params": [p]})
+            optimizer = self.hparams.optimizer_cls(params)
         scheduler = self.hparams.scheduler_cls(optimizer)
         return {
             "optimizer": optimizer,
@@ -151,10 +167,15 @@ class BaseModule(pl.LightningModule):
         raise NotImplementedError()
 
     @torch.no_grad()
-    def get_mulan_tokens(self, x):
+    def get_mulan_embeds(self, x):
         mulan_embeds = self.requires["mulan_infer_fn"](
             model=self.requires["mulan"], music=x.float(), device=x.device
         )
+        return mulan_embeds
+
+    @torch.no_grad()
+    def get_mulan_tokens(self, x):
+        mulan_embeds = self.get_mulan_embeds(x)
         mulan_tokens, _ = self.requires["mulan_rvq_fn"](
             mulan_embeds, self.requires["mulan_centers"]
         )
@@ -177,41 +198,70 @@ class BaseModule(pl.LightningModule):
         )
         return wav2vec_tokens
 
+    def _compute_distance(self, x, y):
+        x_norms = torch.sum(x**2, dim=1).view(-1, 1)
+        y_norms = torch.sum(y**2, dim=1).view(1, -1)
+        distances = x_norms - 2 * torch.mm(x, y.transpose(0, 1)) + y_norms
+        return distances
+
+    def _compute_codes(self, points):
+        b, t, d = points.size()
+        distances = self._compute_distance(
+            rearrange(points, "b t d -> (b t) d"), self.requires["semantic_centers"]
+        )
+        _, min_ind = torch.min(distances, dim=1)
+        return rearrange(min_ind, "(b t) -> b t", b=b)
+
     @torch.no_grad()
     def get_best_rq_embeds(self, x):
-        best_rq_embeds = self.requires["semantic"].model.get_latent(
-            self.requires["feature_fn"](x)[:, :, :-1],
-            layer_ix=12
+        best_rq_embeds = self.requires["semantic"].get_latent(
+            x, self.extra_params.semantic_layer_idx
+        )
+        return best_rq_embeds.contiguous()
+
+    def _compute_distance(self, x, y):
+        x_norms = torch.sum(x**2, dim=1).view(-1, 1)
+        y_norms = torch.sum(y**2, dim=1).view(1, -1)
+        distances = x_norms - 2 * torch.mm(x, y.transpose(0, 1)) + y_norms
+        return distances
+
+    def _compute_codes(self, points):
+        b, t, d = points.size()
+        distances = self._compute_distance(
+            rearrange(points, "b t d -> (b t) d"), self.requires["semantic_centers"]
+        )
+        _, min_ind = torch.min(distances, dim=1)
+        return rearrange(min_ind, "(b t) -> b t", b=b)
+
+    @torch.no_grad()
+    def get_best_rq_embeds(self, x):
+        best_rq_embeds = self.requires["semantic"].get_latent(
+            x, self.extra_params.semantic_layer_idx
         )
         return best_rq_embeds.contiguous()
 
     @torch.no_grad()
     def get_best_rq_tokens(self, x):
-        centers = self.requires["semantic_centers"]
+        cmvn = self.requires["semantic_cmvn"]
         best_rq_embeds = self.get_best_rq_embeds(x)
-        b, t, d = best_rq_embeds.shape
-        dataset = best_rq_embeds.view([b * t, d])
-        num_points = dataset.size(0)
-        chunk_size = int(5e8)
-        codes = torch.zeros(num_points, dtype=torch.long, device=x.device)
-        centers_t = torch.transpose(centers, 0, 1)  # [1024, 1024]
-        centers_norms = torch.sum(centers**2, dim=1).view(1, -1)
-        inertia = 0
-        for i in range(0, num_points, chunk_size):
-            begin = i
-            end = min(begin + chunk_size, num_points)
-            dataset_piece = dataset[begin:end, :]
-            dataset_norms = torch.sum(dataset_piece**2, dim=1).view(-1, 1)
-            distances = torch.mm(dataset_piece, centers_t)
-            distances *= -2.0
-            distances += dataset_norms
-            distances += centers_norms
-            _, min_ind = torch.min(distances, dim=1)
-            codes[begin:end] = min_ind
-            inertia += distances[range(distances.shape[0]), min_ind].sum()
-        codes = codes.view([b, t])
+        best_rq_embeds = (best_rq_embeds - cmvn[0]) / cmvn[1]
+        codes = self._compute_codes(best_rq_embeds)
         return codes
-    
+
+    @torch.no_grad()
+    def get_melspec_embeds(self, x):
+        feature = self.requires["semantic"].preprocessing(x)
+        melspec_embeds = self.requires["semantic"]._subsample(feature)
+        return melspec_embeds.contiguous()
+
+    @torch.no_grad()
+    def get_melspec_tokens(self, x):
+        cmvn = self.requires["semantic_cmvn"]
+        melspec_embeds = self.get_melspec_embeds(x)
+        melspec_embeds = (melspec_embeds - cmvn[0]) / cmvn[1]
+        codes = self._compute_codes(melspec_embeds)
+        return codes
+
     @torch.no_grad()
     def get_wav2vec_embeds(self, x):
         b, t = x.size()
@@ -261,6 +311,8 @@ class SemanticModule(BaseModule):
             self.semantic_token_fn = self.get_wav2vec_tokens
         elif semantic_type == "best_rq":
             self.semantic_token_fn = self.get_best_rq_tokens
+        elif semantic_type == "melspec":
+            self.semantic_token_fn = self.get_melspec_tokens
         else:
             raise KeyError(f"Invalid semantic_type, got {semantic_type}")
 
@@ -273,7 +325,8 @@ class SemanticModule(BaseModule):
         mulan_ids = self.get_mulan_tokens(wavs)
         mulan_ids = (
             mulan_ids
-            + torch.arange(self.extra_params.mulan_num_rvq, device=device) * self.extra_params.mulan_codebook_size
+            + torch.arange(self.extra_params.mulan_num_rvq, device=device)
+            * self.extra_params.mulan_codebook_size
             + self.extra_params.wav2vec_codebook_size
         )
         sos_ids = (
@@ -281,15 +334,11 @@ class SemanticModule(BaseModule):
             + self.extra_params.wav2vec_codebook_size
             + self.extra_params.mulan_num_rvq * self.extra_params.mulan_codebook_size
         )
-        input_ids = torch.cat(
-            [mulan_ids, sos_ids, wav2vec_ids[:, : -1]], dim=1
-        )
+        input_ids = torch.cat([mulan_ids, sos_ids, wav2vec_ids[:, :-1]], dim=1)
         return {"input_ids": input_ids}, wav2vec_ids
 
     @torch.no_grad()
-    def predict(
-        self, mulan_ids, hp
-    ):
+    def predict(self, mulan_ids, hp):
         if isinstance(self.model, gpt.GPTLMHeadModel):
             self.model.config.use_flash_attn = False
         device = mulan_ids.device
@@ -326,14 +375,20 @@ class SemanticModule(BaseModule):
             if cache_len == 0:
                 input_ids = torch.cat([mulan_ids, sos_ids], dim=1)
             else:
-                prefix_semantic_samples = semantic_samples[:, cur_beg : cur_beg + cache_len]
+                prefix_semantic_samples = semantic_samples[
+                    :, cur_beg : cur_beg + cache_len
+                ]
                 input_ids = torch.cat(
                     [mulan_ids, sos_ids, prefix_semantic_samples], dim=1
                 )
             gen_length = cur_end - cur_beg - cache_len
             if isinstance(self.model, gpt.GPTLMHeadModel):
-                max_sequence_len = hp.mulan_num_rvq + hp.wav2vec_frame_rate * hp.semantic_duration
-                inference_params = InferenceParams(max_sequence_len=max_sequence_len, max_batch_size=b)
+                max_sequence_len = (
+                    hp.mulan_num_rvq + hp.wav2vec_frame_rate * hp.semantic_duration
+                )
+                inference_params = InferenceParams(
+                    max_sequence_len=max_sequence_len, max_batch_size=b
+                )
             else:
                 past_key_values = None
             pbar = tqdm(range(gen_length))
@@ -344,19 +399,19 @@ class SemanticModule(BaseModule):
                         input_ids,
                         inference_params=inference_params,
                         position_ids=None,
-                        last_token_only=False
+                        last_token_only=False,
                     ).logits
                     inference_params.sequence_len_offset += input_ids.size(1)
                 else:
                     model_output = self.model(
-                        input_ids,
-                        past_key_values=past_key_values,
-                        use_cache=True
+                        input_ids, past_key_values=past_key_values, use_cache=True
                     )
                     past_key_values = model_output["past_key_values"]
                     logits = model_output["logits"]
-                predict_logits = logits[:, -1:, :hp.wav2vec_codebook_size]
-                samples = sample(predict_logits, temp=hp.semantic_temperature, mode=hp.sample_mode)
+                predict_logits = logits[:, -1:, : hp.wav2vec_codebook_size]
+                samples = sample(
+                    predict_logits, temp=hp.semantic_temperature, mode=hp.sample_mode
+                )
                 input_ids = samples
                 if semantic_samples is None:
                     semantic_samples = samples
@@ -391,8 +446,11 @@ class SemanticEmbedARModule(BaseModule):
             self.semantic_embed_fn = self.get_wav2vec_embeds
         elif semantic_type == "best_rq":
             self.semantic_embed_fn = self.get_best_rq_embeds
+        elif semantic_type == "melspec":
+            self.semantic_token_fn = self.get_melspec_embeds
         else:
             raise KeyError(f"Invalid semantic_type, got {semantic_type}")
+        del self.model.transformer.wte
 
     def _shared_step(self, batch):
         if isinstance(batch, list):
@@ -401,38 +459,24 @@ class SemanticEmbedARModule(BaseModule):
             batch = batch.squeeze(1)
         t = time.perf_counter()
         with torch.autocast(device_type="cuda", enabled=False):
-            input_ids, target_ids = self.prepare_feature(batch.float())
-        exclude_time = time.perf_counter() - t
-        input_ids, input_embeds = input_ids["input_ids"], input_ids["input_embeds"]
-        input_embeds = torch.cat(
+            model_input, target_embeds = self.prepare_feature(batch.float())
+        model_input["inputs_embeds"] = torch.cat(
             [
-                self.model.model.embed_tokens(input_ids),
-                self.model.embed_head(input_embeds)
+                self.model.sos_embed.expand(
+                    model_input["inputs_embeds"].size(0), -1, -1
+                ),
+                model_input["inputs_embeds"],
             ],
-            dim=1
+            dim=1,
         )
-        input_ids = {"inputs_embeds": input_embeds}
-        logits = self.model(**input_ids)
+        logits = self.model(**model_input)
         if isinstance(logits, dict):
             logits = logits["logits"]
         elif isinstance(logits, tuple):
             logits = logits[0]
-        x = logits[:, -target_ids.size(1) :, :]
-        loss = self.criterion(x, target_ids)
-
-        batch_size, seq_len = input_embeds.size()[:2]
-        self.metric.update(
-            batch_size=batch_size,
-            stage=self.trainer.state.stage,
-            seq_length=seq_len,
-            exclude_time=exclude_time,
-        )
-
-        if self.trainer.global_step % self.trainer.log_every_n_steps == 0:
-            metric = self.metric.compute(step=self.trainer.global_step)
-            self.log_dict(metric, prog_bar=True, sync_dist=True)
-
-        return loss
+        x = logits[:, -target_embeds.size(1) :, :]
+        loss = self.criterion(x, target_embeds)
+        return torch.log10(loss)
 
     def training_step(self, batch, batch_idx):
         loss = self._shared_step(batch)
@@ -453,52 +497,26 @@ class SemanticEmbedARModule(BaseModule):
             loss /= len(outputs)
 
             self.log_dict(
-                {
-                    f"val_loss_{dataloader_idx}": loss,
-                },
-                prog_bar=True,
-                sync_dist=True,
+                {f"val_loss_{dataloader_idx}": loss}, prog_bar=True, sync_dist=True
             )
             self.val_outputs[dataloader_idx] = []
 
     @torch.no_grad()
     def prepare_feature(self, wavs):
-        device = wavs.device
         b, _ = wavs.size()
 
         wav2vec_embeds = self.semantic_embed_fn(wavs)
-        mulan_ids = self.get_mulan_tokens(wavs)
-        mulan_ids = (
-            mulan_ids
-            + torch.arange(self.extra_params.mulan_num_rvq, device=device) * self.extra_params.mulan_codebook_size
-        )
-        sos_ids = (
-            torch.zeros(size=[b, 1], dtype=mulan_ids.dtype, device=device)
-            + self.extra_params.mulan_num_rvq * self.extra_params.mulan_codebook_size
-        )
-        input_ids = torch.cat(
-            [mulan_ids, sos_ids], dim=1
-        )
-        return {"input_ids": input_ids, "input_embeds": wav2vec_embeds[:, : -1]}, wav2vec_embeds
+        mulan_embeds = self.get_mulan_embeds(wavs)
+        return {
+            "inputs_embeds": wav2vec_embeds[:, :-1],
+            "encoder_hidden_states": mulan_embeds.unsqueeze(1),
+        }, wav2vec_embeds
 
     @torch.no_grad()
-    def predict(
-        self, mulan_ids, hp
-    ):
-        if isinstance(self.model, gpt.GPTLMHeadModel):
-            self.model.config.use_flash_attn = False
-        device = mulan_ids.device
-        b, _ = mulan_ids.size()
-        mulan_ids = (
-            mulan_ids
-            + torch.arange(hp.mulan_num_rvq, device=device) * hp.mulan_codebook_size
-            + hp.wav2vec_codebook_size
-        )
-        sos_ids = (
-            torch.zeros(size=[b, 1], dtype=mulan_ids.dtype, device=device)
-            + hp.mulan_num_rvq * hp.mulan_codebook_size
-            + hp.wav2vec_codebook_size
-        )
+    def predict(self, mulan_embeds, hp):
+        if mulan_embeds.dim() == 2:
+            mulan_embeds = mulan_embeds.unsqueeze(1)
+        b = mulan_embeds.size(0)
 
         slice_range = []
         beg = 0
@@ -519,40 +537,31 @@ class SemanticEmbedARModule(BaseModule):
             cache_len = prev_end - cur_beg
             prev_end = cur_end
             if cache_len == 0:
-                input_ids = torch.cat([mulan_ids, sos_ids], dim=1)
+                inputs_embeds = self.model.sos_embed.expand(b, -1, -1)
             else:
-                prefix_semantic_samples = semantic_samples[:, cur_beg : cur_beg + cache_len]
-                input_ids = torch.cat(
-                    [mulan_ids, sos_ids, prefix_semantic_samples], dim=1
+                prefix_semantic_samples = semantic_samples[
+                    :, cur_beg : cur_beg + cache_len
+                ]
+                inputs_embeds = torch.cat(
+                    [self.model.sos_embed.expand(b, -1, -1), prefix_semantic_samples],
+                    dim=1,
                 )
+
             gen_length = cur_end - cur_beg - cache_len
-            if isinstance(self.model, gpt.GPTLMHeadModel):
-                max_sequence_len = hp.mulan_num_rvq + hp.wav2vec_frame_rate * hp.semantic_duration
-                inference_params = InferenceParams(max_sequence_len=max_sequence_len, max_batch_size=b)
-            else:
-                past_key_values = None
+            past_key_values = None
             pbar = tqdm(range(gen_length))
             for _ in pbar:
                 pbar.set_description(f"Semantic [{cur_beg} - {cur_end}]")
-                if isinstance(self.model, gpt.GPTLMHeadModel):
-                    logits = self.model(
-                        input_ids,
-                        inference_params=inference_params,
-                        position_ids=None,
-                        last_token_only=False
-                    ).logits
-                    inference_params.sequence_len_offset += input_ids.size(1)
-                else:
-                    model_output = self.model(
-                        input_ids,
-                        past_key_values=past_key_values,
-                        use_cache=True
-                    )
-                    past_key_values = model_output["past_key_values"]
-                    logits = model_output["logits"]
-                predict_logits = logits[:, -1:, :hp.wav2vec_codebook_size]
-                samples = sample(predict_logits, temp=hp.semantic_temperature, mode=hp.sample_mode)
-                input_ids = samples
+                model_output = self.model(
+                    inputs_embeds=inputs_embeds,
+                    encoder_hidden_states=mulan_embeds,
+                    past_key_values=past_key_values,
+                    use_cache=True,
+                )
+                past_key_values = model_output["past_key_values"]
+                logits = model_output["logits"]
+                samples = logits[:, -1:]
+                inputs_embeds = samples
                 if semantic_samples is None:
                     semantic_samples = samples
                 else:
@@ -580,12 +589,13 @@ class SemanticDiffusionModule(BaseModule):
             checkpointing=checkpointing,
             extra_params=extra_params,
         )
-        assert self.model.config.n_embd % 2 == 0
+        assert self.model.config.hidden_size % 2 == 0
         self.rff_freq = nn.Parameter(
-            16 * torch.randn([1, int(self.model.config.n_embd // 2)]),
-            requires_grad=False
+            16 * torch.randn([1, int(self.model.config.hidden_size // 2)]),
+            requires_grad=False,
         )
         self.save_hyperparameters()
+        del self.model.transformer.wte
 
     def _shared_step(self, batch):
         if isinstance(batch, list):
@@ -593,17 +603,33 @@ class SemanticDiffusionModule(BaseModule):
         if batch.dim() == 3:
             batch = batch.squeeze(1)
         with torch.autocast(device_type="cuda", enabled=False):
-            mulan_ids, sigmas_embeds, noisy_embeds, target = self.prepare_feature(batch.float())
-        mulan_embeds = self.model.transformer.wte(mulan_ids)
+            mulan_embeds, sigmas_embeds, noisy_embeds, target = self.prepare_feature(
+                batch.float()
+            )
+        mulan_embeds = self.model.cond_linear(mulan_embeds)
+        uncond = torch.zeros_like(mulan_embeds)
+        dropout_mask = (
+            torch.rand(mulan_embeds.shape[0], device=mulan_embeds.device)
+            > self.extra_params.cfg_dropout_rate
+        ).view(-1, 1, 1)
+        mulan_embeds = torch.where(dropout_mask, mulan_embeds, uncond)
+        encoder_hidden_states = torch.cat([sigmas_embeds, mulan_embeds], dim=1)
+        uncond = torch.zeros_like(encoder_hidden_states)
+        dropout_mask = (
+            torch.rand(
+                mulan_embeds.shape[0], device=mulan_embeds.device
+            )
+            > self.extra_params.cfg_dropout_rate
+        ).view(-1, 1, 1)
+        mulan_embeds = torch.where(dropout_mask, mulan_embeds, uncond)
         encoder_hidden_states = torch.cat([sigmas_embeds, mulan_embeds], dim=1)
         logits = self.model(
-            inputs_embeds=noisy_embeds,
-            encoder_hidden_states=encoder_hidden_states,
+            inputs_embeds=noisy_embeds, encoder_hidden_states=encoder_hidden_states
         )
         if isinstance(logits, dict):
             logits = logits["logits"]
         loss = self.criterion(logits, target)
-        return loss
+        return torch.log10(loss)
 
     def training_step(self, batch, batch_idx):
         loss = self._shared_step(batch)
@@ -624,11 +650,7 @@ class SemanticDiffusionModule(BaseModule):
             loss /= len(outputs)
 
             self.log_dict(
-                {
-                    f"val_loss_{dataloader_idx}": loss,
-                },
-                prog_bar=True,
-                sync_dist=True,
+                {f"val_loss_{dataloader_idx}": loss}, prog_bar=True, sync_dist=True
             )
             self.val_outputs[dataloader_idx] = []
 
@@ -645,11 +667,7 @@ class SemanticDiffusionModule(BaseModule):
 
         wav2vec_embeds = self.get_wav2vec_embeds(wavs)
 
-        mulan_ids = self.get_mulan_tokens(wavs)
-        mulan_ids = (
-            mulan_ids
-            + torch.arange(self.extra_params.mulan_num_rvq, device=device) * self.extra_params.mulan_codebook_size
-        )
+        mulan_embeds = self.get_mulan_embeds(wavs).unsqueeze(1)
 
         sigmas = torch.rand([b, 1, 1], device=device)
         # Get noise
@@ -660,46 +678,60 @@ class SemanticDiffusionModule(BaseModule):
         target = alphas * noise - betas * wav2vec_embeds
         sigmas_embeds = 2 * math.pi * sigmas * self.rff_freq
         sigmas_embeds = torch.cat(
-            [torch.sin(sigmas_embeds), torch.cos(sigmas_embeds)],
-            dim=-1
+            [torch.sin(sigmas_embeds), torch.cos(sigmas_embeds)], dim=-1
         )
-        return mulan_ids, sigmas_embeds, noisy_embeds, target
+        return mulan_embeds, sigmas_embeds, noisy_embeds, target
 
     @torch.no_grad()
-    def predict(
-        self, mulan_ids, hp
-    ):
+    def predict(self, mulan_embeds, hp):
         assert hp.duration == hp.semantic_duration
-        device = mulan_ids.device
-        b, _ = mulan_ids.size()
-        mulan_ids = (
-            mulan_ids
-            + torch.arange(self.extra_params.mulan_num_rvq, device=device) * self.extra_params.mulan_codebook_size
-        )
+        if mulan_embeds.dim() == 2:
+            mulan_embeds = mulan_embeds.unsqueeze(1)
+        device = mulan_embeds.device
+        b = mulan_embeds.size(0)
         semantic_samples = torch.randn(
-            (b, hp.semantic_duration * hp.wav2vec_frame_rate, hp.wav2vec_n_embd),
+            (b, hp.semantic_duration * hp.wav2vec_frame_rate, hp.wav2vec_embed_dim),
             device=device,
         )
-        mulan_embeds = self.model.transformer.wte(mulan_ids)
-        sigmas = (1.0 - torch.arange(hp.num_diffusion_steps, device=device) / (hp.num_diffusion_steps - 1))[:, None, None]
+        mulan_embeds = self.model.cond_linear(mulan_embeds)
+        sigmas = (
+            1.0
+            - torch.arange(hp.num_diffusion_steps, device=device)
+            / (hp.num_diffusion_steps - 1)
+        )[:, None, None]
         alphas, betas = self._get_alpha_beta(sigmas)
         sigmas_embeds = 2 * math.pi * sigmas * self.rff_freq
         sigmas_embeds = torch.cat(
-            [torch.sin(sigmas_embeds), torch.cos(sigmas_embeds)],
-            dim=-1
+            [torch.sin(sigmas_embeds), torch.cos(sigmas_embeds)], dim=-1
         )
         pbar = tqdm(range(hp.num_diffusion_steps - 1))
         for i in pbar:
-            pbar.set_description(f"Semantic [{0} - {hp.num_diffusion_steps - 1}]")
-            encoder_hidden_states = torch.cat([sigmas_embeds[i : i + 1].expand((b, -1, -1)), mulan_embeds], dim=1)
+            encoder_hidden_states = torch.cat(
+                [sigmas_embeds[i : i + 1].expand((b, -1, -1)), mulan_embeds], dim=1
+            )
+            uncond_encoder_hidden_states = torch.cat(
+                [
+                    sigmas_embeds[i : i + 1].expand((b, -1, -1)),
+                    torch.zeros_like(mulan_embeds, device=device),
+                ],
+                dim=1,
+            )
             samples = self.model(
                 inputs_embeds=semantic_samples,
                 encoder_hidden_states=encoder_hidden_states,
+            )["logits"]
+            uncond_samples = self.model(
+                inputs_embeds=semantic_samples,
+                encoder_hidden_states=uncond_encoder_hidden_states,
+            )["logits"]
+            v_pred = (
+                hp.guidance_scale * samples + (1.0 - hp.guidance_scale) * uncond_samples
             )
-            if isinstance(samples, dict):
-                samples = samples["logits"]
-            x_pred = alphas[i] * semantic_samples - betas[i] * samples
-            noise_pred = betas[i] * semantic_samples + alphas[i] * samples
+            pbar.set_description(
+                f"Semantic [{alphas[i].item():.2f} - {betas[i].item():.2f}]"
+            )
+            x_pred = alphas[i] * semantic_samples - betas[i] * v_pred
+            noise_pred = betas[i] * semantic_samples + alphas[i] * v_pred
             semantic_samples = alphas[i + 1] * x_pred + betas[i + 1] * noise_pred
 
         return semantic_samples
@@ -740,42 +772,36 @@ class SeerSemanticModule(BaseModule):
 
         seer_ids = torch.arange(self.extra_params.n_seers, device=device).expand(b, -1)
         seer_ids = seer_ids + self.extra_params.wav2vec_codebook_size
-    
+
         if not self.extra_params.mulan_codebook_shared:
             mulan_ids = (
                 mulan_ids
-                + torch.arange(mulan_ids.size(1), device=device) * self.extra_params.mulan_codebook_size
+                + torch.arange(mulan_ids.size(1), device=device)
+                * self.extra_params.mulan_codebook_size
             )
             seer_ids = (
-                seer_ids
-                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+                seer_ids + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
             )
         else:
-            seer_ids = (
-                seer_ids
-                + self.extra_params.mulan_codebook_size
-            )
+            seer_ids = seer_ids + self.extra_params.mulan_codebook_size
 
         if mulan_ids.size(1) != self.model.config.n_priors:
             raise ValueError("Invalid prefix length.")
         if wav2vec_ids.size(1) % self.extra_params.n_seers != 0:
             raise ValueError("Invalid number of seers.")
 
-        input_ids = torch.cat([mulan_ids, seer_ids, wav2vec_ids[:, : -self.extra_params.n_seers]], dim=1)
+        input_ids = torch.cat(
+            [mulan_ids, seer_ids, wav2vec_ids[:, : -self.extra_params.n_seers]], dim=1
+        )
         return input_ids, wav2vec_ids
 
     @torch.no_grad()
-    def predict(
-        self, mulan_ids, sample_len=250, temp=0.9, sample_mode="gumbel"
-    ):
+    def predict(self, mulan_ids, sample_len=250, temp=0.9, sample_mode="gumbel"):
         if sample_len % self.model.config.n_seers != 0:
             raise ValueError("Invalid sample length.")
         device = mulan_ids.device
         b, _ = mulan_ids.size()
-        mulan_ids = (
-            mulan_ids
-            + self.extra_params.wav2vec_codebook_size
-        )
+        mulan_ids = mulan_ids + self.extra_params.wav2vec_codebook_size
         seer_ids = (
             torch.arange(self.extra_params.n_seers, device=device).expand(b, -1)
             + self.extra_params.wav2vec_codebook_size
@@ -784,17 +810,14 @@ class SeerSemanticModule(BaseModule):
         if not self.extra_params.mulan_codebook_shared:
             mulan_ids = (
                 mulan_ids
-                + torch.arange(mulan_ids.size(1), device=device) * self.extra_params.mulan_codebook_size
+                + torch.arange(mulan_ids.size(1), device=device)
+                * self.extra_params.mulan_codebook_size
             )
             seer_ids = (
-                seer_ids
-                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+                seer_ids + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
             )
         else:
-            seer_ids = (
-                seer_ids
-                + self.extra_params.mulan_codebook_size
-            )
+            seer_ids = seer_ids + self.extra_params.mulan_codebook_size
 
         if mulan_ids.size(1) != self.model.config.n_priors:
             raise ValueError("Invalid prefix length.")
@@ -845,13 +868,16 @@ class MulanCoarseModule(BaseModule):
 
         soundstream_ids = self.get_soundstream_tokens(wavs)
         soundstream_ids = (
-            soundstream_ids[:, :, 0 : num_coarse]
-            + torch.arange(num_coarse, device=device) * self.extra_params.soundstream_codebook_size
+            soundstream_ids[:, :, 0:num_coarse]
+            + torch.arange(num_coarse, device=device)
+            * self.extra_params.soundstream_codebook_size
         )
         soundstream_ids = torch.reshape(soundstream_ids, [b, -1])
 
         wav2vec_ids = self.get_wav2vec_tokens(wavs)
-        wav2vec_ids = wav2vec_ids + num_coarse * self.extra_params.soundstream_codebook_size
+        wav2vec_ids = (
+            wav2vec_ids + num_coarse * self.extra_params.soundstream_codebook_size
+        )
 
         mulan_ids = self.get_mulan_tokens(wavs)
         mulan_ids = (
@@ -876,35 +902,26 @@ class MulanCoarseModule(BaseModule):
         if not self.extra_params.mulan_codebook_shared:
             mulan_ids = (
                 mulan_ids
-                + torch.arange(mulan_ids.size(1), device=device) * self.extra_params.mulan_codebook_size
+                + torch.arange(mulan_ids.size(1), device=device)
+                * self.extra_params.mulan_codebook_size
             )
             sep_ids = (
-                sep_ids
-                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+                sep_ids + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
             )
             sos_ids = (
-                sos_ids
-                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+                sos_ids + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
             )
         else:
-            sep_ids = (
-                sep_ids
-                + self.extra_params.mulan_codebook_size
-            )
-            sos_ids = (
-                sos_ids
-                + self.extra_params.mulan_codebook_size
-            )
+            sep_ids = sep_ids + self.extra_params.mulan_codebook_size
+            sos_ids = sos_ids + self.extra_params.mulan_codebook_size
 
         input_ids = torch.cat(
-            [mulan_ids, sep_ids, wav2vec_ids, sos_ids, soundstream_ids[:, : -1]], dim=1
+            [mulan_ids, sep_ids, wav2vec_ids, sos_ids, soundstream_ids[:, :-1]], dim=1
         )
         return input_ids, None, soundstream_ids
 
     @torch.no_grad()
-    def predict(
-        self, mulan_ids, wav2vec_ids, hp
-    ):
+    def predict(self, mulan_ids, wav2vec_ids, hp):
         device = mulan_ids.device
         b, _ = mulan_ids.size()
         num_coarse = hp.num_coarse
@@ -931,25 +948,14 @@ class MulanCoarseModule(BaseModule):
         if not hp.mulan_codebook_shared:
             mulan_ids = (
                 mulan_ids
-                + torch.arange(mulan_ids.size(1), device=device) * hp.mulan_codebook_size
+                + torch.arange(mulan_ids.size(1), device=device)
+                * hp.mulan_codebook_size
             )
-            sep_ids = (
-                sep_ids
-                + mulan_ids.size(1) * hp.mulan_codebook_size
-            )
-            sos_ids = (
-                sos_ids
-                + mulan_ids.size(1) * hp.mulan_codebook_size
-            )
+            sep_ids = sep_ids + mulan_ids.size(1) * hp.mulan_codebook_size
+            sos_ids = sos_ids + mulan_ids.size(1) * hp.mulan_codebook_size
         else:
-            sep_ids = (
-                sep_ids
-                + hp.mulan_codebook_size
-            )
-            sos_ids = (
-                sos_ids
-                + hp.mulan_codebook_size
-            )
+            sep_ids = sep_ids + hp.mulan_codebook_size
+            sos_ids = sos_ids + hp.mulan_codebook_size
 
         slice_range = []
         beg = 0
@@ -969,7 +975,9 @@ class MulanCoarseModule(BaseModule):
         for cur_beg, cur_end in slice_range:
             cache_len = prev_end - cur_beg
             prev_end = cur_end
-            semantic_beg = int(cur_beg / hp.soundstream_frame_rate / num_coarse * hp.wav2vec_frame_rate)
+            semantic_beg = int(
+                cur_beg / hp.soundstream_frame_rate / num_coarse * hp.wav2vec_frame_rate
+            )
             semantic_end = semantic_beg + hp.semantic_duration * hp.wav2vec_frame_rate
             semantic_slice = wav2vec_ids[:, semantic_beg:semantic_end]
             if cache_len == 0:
@@ -997,9 +1005,15 @@ class MulanCoarseModule(BaseModule):
                 predict_logits = self.model(input_ids, kv_cache=kv_cache)
                 layer_idx = i % num_coarse
                 predict_logits = predict_logits[
-                    :, -1:, layer_idx * hp.soundstream_codebook_size : (layer_idx + 1) * hp.soundstream_codebook_size
-                ] 
-                samples = sample(predict_logits, temp=hp.coarse_temperature, mode=hp.sample_mode)
+                    :,
+                    -1:,
+                    layer_idx
+                    * hp.soundstream_codebook_size : (layer_idx + 1)
+                    * hp.soundstream_codebook_size,
+                ]
+                samples = sample(
+                    predict_logits, temp=hp.coarse_temperature, mode=hp.sample_mode
+                )
                 samples = samples + layer_idx * hp.soundstream_codebook_size
                 input_ids = samples
                 if coarse_samples is None:
@@ -1036,6 +1050,8 @@ class CoarseModule(BaseModule):
             self.semantic_token_fn = self.get_wav2vec_tokens
         elif semantic_type == "best_rq":
             self.semantic_token_fn = self.get_best_rq_tokens
+        elif semantic_type == "melspec":
+            self.semantic_token_fn = self.get_melspec_tokens
         else:
             raise KeyError(f"Invalid semantic_type, got {semantic_type}")
 
@@ -1047,27 +1063,26 @@ class CoarseModule(BaseModule):
 
         soundstream_ids = self.get_soundstream_tokens(wavs)
         soundstream_ids = (
-            soundstream_ids[:, :, 0 : num_coarse]
-            + torch.arange(num_coarse, device=device) * self.extra_params.soundstream_codebook_size
+            soundstream_ids[:, :, 0:num_coarse]
+            + torch.arange(num_coarse, device=device)
+            * self.extra_params.soundstream_codebook_size
         )
         soundstream_ids = torch.reshape(soundstream_ids, [b, -1])
 
         wav2vec_ids = self.semantic_token_fn(wavs)
-        wav2vec_ids = wav2vec_ids + num_coarse * self.extra_params.soundstream_codebook_size
+        wav2vec_ids = (
+            wav2vec_ids + num_coarse * self.extra_params.soundstream_codebook_size
+        )
         sos_ids = (
             torch.zeros(size=[b, 1], dtype=soundstream_ids.dtype, device=device)
             + num_coarse * self.extra_params.soundstream_codebook_size
             + self.extra_params.wav2vec_codebook_size
         )
-        input_ids = torch.cat(
-            [wav2vec_ids, sos_ids, soundstream_ids[:, : -1]], dim=1
-        )
+        input_ids = torch.cat([wav2vec_ids, sos_ids, soundstream_ids[:, :-1]], dim=1)
         return {"input_ids": input_ids}, soundstream_ids
 
     @torch.no_grad()
-    def predict(
-        self, semantic_samples, hp
-    ):
+    def predict(self, semantic_samples, hp):
         if isinstance(self.model, gpt.GPTLMHeadModel):
             self.model.config.use_flash_attn = False
         device = semantic_samples.device
@@ -1101,9 +1116,11 @@ class CoarseModule(BaseModule):
         for cur_beg, cur_end in slice_range:
             cache_len = prev_end - cur_beg
             prev_end = cur_end
-            semantic_beg = int(cur_beg / soundstream_frame_rate / num_coarse * hp.wav2vec_frame_rate)
+            semantic_beg = int(
+                cur_beg / soundstream_frame_rate / num_coarse * hp.wav2vec_frame_rate
+            )
             semantic_end = semantic_beg + hp.semantic_duration * hp.wav2vec_frame_rate
-            semantic_slice = semantic_samples[:, semantic_beg : semantic_end]
+            semantic_slice = semantic_samples[:, semantic_beg:semantic_end]
             if cache_len == 0:
                 input_ids = torch.cat([semantic_slice, sos_ids], dim=1)
             else:
@@ -1113,32 +1130,45 @@ class CoarseModule(BaseModule):
                 )
             gen_length = cur_end - cur_beg - cache_len
             if isinstance(self.model, gpt.GPTLMHeadModel):
-                max_sequence_len = hp.wav2vec_frame_rate * hp.semantic_duration + hp.duration * soundstream_frame_rate * num_coarse
-                inference_params = InferenceParams(max_sequence_len=max_sequence_len, max_batch_size=b)
+                max_sequence_len = (
+                    hp.wav2vec_frame_rate * hp.semantic_duration
+                    + hp.duration * soundstream_frame_rate * num_coarse
+                )
+                inference_params = InferenceParams(
+                    max_sequence_len=max_sequence_len, max_batch_size=b
+                )
             else:
                 past_key_values = None
             pbar = tqdm(range(gen_length))
             for i in pbar:
-                pbar.set_description(f"Coarse [{cur_beg} - {cur_end}] [{semantic_beg} - {semantic_end}]")
+                pbar.set_description(
+                    f"Coarse [{cur_beg} - {cur_end}] [{semantic_beg} - {semantic_end}]"
+                )
                 if isinstance(self.model, gpt.GPTLMHeadModel):
                     logits = self.model(
                         input_ids,
                         inference_params=inference_params,
                         position_ids=None,
-                        last_token_only=False
+                        last_token_only=False,
                     ).logits
                     inference_params.sequence_len_offset += input_ids.size(1)
                 else:
                     model_output = self.model(
-                        input_ids,
-                        past_key_values=past_key_values,
-                        use_cache=True
+                        input_ids, past_key_values=past_key_values, use_cache=True
                     )
                     past_key_values = model_output["past_key_values"]
                     logits = model_output["logits"]
                 layer_idx = i % num_coarse
-                predict_logits = logits[:, -1:, layer_idx * soundstream_codebook_size : (layer_idx + 1) * soundstream_codebook_size]
-                samples = sample(predict_logits, temp=hp.coarse_temperature, mode=hp.sample_mode)
+                predict_logits = logits[
+                    :,
+                    -1:,
+                    layer_idx
+                    * soundstream_codebook_size : (layer_idx + 1)
+                    * soundstream_codebook_size,
+                ]
+                samples = sample(
+                    predict_logits, temp=hp.coarse_temperature, mode=hp.sample_mode
+                )
                 samples = samples + layer_idx * soundstream_codebook_size
                 input_ids = samples
                 if coarse_samples is None:
@@ -1174,6 +1204,8 @@ class CoarseCrossAttnModule(BaseModule):
             self.semantic_embeds_fn = self.get_wav2vec_embeds
         elif semantic_type == "best_rq":
             self.semantic_embeds_fn = self.get_best_rq_embeds
+        elif semantic_type == "melspec":
+            self.semantic_embeds_fn = self.get_melspec_embeds
         else:
             raise KeyError(f"Invalid semantic_type, got {semantic_type}")
 
@@ -1185,8 +1217,9 @@ class CoarseCrossAttnModule(BaseModule):
 
         soundstream_ids = self.get_soundstream_tokens(wavs)
         soundstream_ids = (
-            soundstream_ids[:, :, 0 : num_coarse]
-            + torch.arange(num_coarse, device=device) * self.extra_params.soundstream_codebook_size
+            soundstream_ids[:, :, 0:num_coarse]
+            + torch.arange(num_coarse, device=device)
+            * self.extra_params.soundstream_codebook_size
         )
         soundstream_ids = torch.reshape(soundstream_ids, [b, -1])
 
@@ -1195,15 +1228,14 @@ class CoarseCrossAttnModule(BaseModule):
             torch.zeros(size=[b, 1], dtype=soundstream_ids.dtype, device=device)
             + num_coarse * self.extra_params.soundstream_codebook_size
         )
-        input_ids = torch.cat(
-            [sos_ids, soundstream_ids[:, : -1]], dim=1
-        )
-        return {"input_ids": input_ids, "encoder_hidden_states": wav2vec_embeds}, soundstream_ids
+        input_ids = torch.cat([sos_ids, soundstream_ids[:, :-1]], dim=1)
+        return {
+            "input_ids": input_ids,
+            "encoder_hidden_states": wav2vec_embeds,
+        }, soundstream_ids
 
     @torch.no_grad()
-    def predict(
-        self, semantic_samples, hp
-    ):
+    def predict(self, semantic_samples, hp):
         device = semantic_samples.device
         b = semantic_samples.size(0)
         num_coarse = hp.num_coarse
@@ -1232,20 +1264,22 @@ class CoarseCrossAttnModule(BaseModule):
         for cur_beg, cur_end in slice_range:
             cache_len = prev_end - cur_beg
             prev_end = cur_end
-            semantic_beg = int(cur_beg / soundstream_frame_rate / num_coarse * hp.wav2vec_frame_rate)
+            semantic_beg = int(
+                cur_beg / soundstream_frame_rate / num_coarse * hp.wav2vec_frame_rate
+            )
             semantic_end = semantic_beg + hp.semantic_duration * hp.wav2vec_frame_rate
-            semantic_slice = semantic_samples[:, semantic_beg : semantic_end]
+            semantic_slice = semantic_samples[:, semantic_beg:semantic_end]
             if cache_len == 0:
                 input_ids = sos_ids
             else:
                 prefix_coarse_samples = coarse_samples[:, cur_beg : cur_beg + cache_len]
-                input_ids = torch.cat(
-                    [sos_ids, prefix_coarse_samples], dim=1
-                )
+                input_ids = torch.cat([sos_ids, prefix_coarse_samples], dim=1)
             past_key_values = None
             pbar = tqdm(range(cur_end - cur_beg - cache_len))
             for i in pbar:
-                pbar.set_description(f"Coarse [{cur_beg} - {cur_end}] [{semantic_beg} - {semantic_end}]")
+                pbar.set_description(
+                    f"Coarse [{cur_beg} - {cur_end}] [{semantic_beg} - {semantic_end}]"
+                )
                 model_output = self.model(
                     input_ids=input_ids,
                     encoder_hidden_states=semantic_slice,
@@ -1255,8 +1289,16 @@ class CoarseCrossAttnModule(BaseModule):
                 past_key_values = model_output["past_key_values"]
                 logits = model_output["logits"]
                 layer_idx = i % num_coarse
-                predict_logits = logits[:, -1:, layer_idx * soundstream_codebook_size : (layer_idx + 1) * soundstream_codebook_size]
-                samples = sample(predict_logits, temp=hp.coarse_temperature, mode=hp.sample_mode)
+                predict_logits = logits[
+                    :,
+                    -1:,
+                    layer_idx
+                    * soundstream_codebook_size : (layer_idx + 1)
+                    * soundstream_codebook_size,
+                ]
+                samples = sample(
+                    predict_logits, temp=hp.coarse_temperature, mode=hp.sample_mode
+                )
                 samples = samples + layer_idx * soundstream_codebook_size
                 input_ids = samples
                 if coarse_samples is None:
@@ -1296,8 +1338,9 @@ class SemanticFreeCoarseModule(BaseModule):
 
         soundstream_ids = self.get_soundstream_tokens(wavs)
         soundstream_ids = (
-            soundstream_ids[:, :, 0 : num_coarse]
-            + torch.arange(num_coarse, device=device) * self.extra_params.soundstream_codebook_size
+            soundstream_ids[:, :, 0:num_coarse]
+            + torch.arange(num_coarse, device=device)
+            * self.extra_params.soundstream_codebook_size
         )
         soundstream_ids = torch.reshape(soundstream_ids, [b, -1])
 
@@ -1312,17 +1355,14 @@ class SemanticFreeCoarseModule(BaseModule):
         if not self.extra_params.mulan_codebook_shared:
             mulan_ids = (
                 mulan_ids
-                + torch.arange(mulan_ids.size(1), device=device) * self.extra_params.mulan_codebook_size
+                + torch.arange(mulan_ids.size(1), device=device)
+                * self.extra_params.mulan_codebook_size
             )
             sos_ids = (
-                sos_ids
-                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+                sos_ids + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
             )
         else:
-            sos_ids = (
-                sos_ids
-                + self.extra_params.mulan_codebook_size
-            )
+            sos_ids = sos_ids + self.extra_params.mulan_codebook_size
 
         input_ids = torch.cat([mulan_ids, sos_ids, soundstream_ids[:, :-1]], dim=1)
         return input_ids, soundstream_ids
@@ -1342,17 +1382,14 @@ class SemanticFreeCoarseModule(BaseModule):
         if not self.extra_params.mulan_codebook_shared:
             mulan_ids = (
                 mulan_ids
-                + torch.arange(mulan_ids.size(1), device=device) * self.extra_params.mulan_codebook_size
+                + torch.arange(mulan_ids.size(1), device=device)
+                * self.extra_params.mulan_codebook_size
             )
             sos_ids = (
-                sos_ids
-                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+                sos_ids + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
             )
         else:
-            sos_ids = (
-                sos_ids
-                + self.extra_params.mulan_codebook_size
-            )
+            sos_ids = sos_ids + self.extra_params.mulan_codebook_size
         input_ids = torch.cat([mulan_ids, sos_ids], dim=1)
         self.model.transformer.init_cache()
         pbar = tqdm(range(sample_len))
@@ -1403,8 +1440,9 @@ class SeerCoarseModule(BaseModule):
 
         soundstream_ids = self.get_soundstream_tokens(wavs)
         soundstream_ids = (
-            soundstream_ids[:, :, 0 : num_coarse]
-            + torch.arange(num_coarse, device=device) * self.extra_params.soundstream_codebook_size
+            soundstream_ids[:, :, 0:num_coarse]
+            + torch.arange(num_coarse, device=device)
+            * self.extra_params.soundstream_codebook_size
         )
         soundstream_ids = torch.reshape(soundstream_ids, [b, -1])
         soundstream_ids = self.seer_rearrange(soundstream_ids)
@@ -1437,33 +1475,36 @@ class SeerCoarseModule(BaseModule):
         if not self.extra_params.mulan_codebook_shared:
             mulan_ids = (
                 mulan_ids
-                + torch.arange(mulan_ids.size(1), device=device) * self.extra_params.mulan_codebook_size
+                + torch.arange(mulan_ids.size(1), device=device)
+                * self.extra_params.mulan_codebook_size
             )
             seer_ids = (
-                seer_ids
-                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+                seer_ids + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
             )
             sep_ids = (
-                sep_ids
-                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+                sep_ids + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
             )
         else:
-            seer_ids = (
-                seer_ids
-                + self.extra_params.mulan_codebook_size
-            )
-            sep_ids = (
-                sep_ids
-                + self.extra_params.mulan_codebook_size
-            )
+            seer_ids = seer_ids + self.extra_params.mulan_codebook_size
+            sep_ids = sep_ids + self.extra_params.mulan_codebook_size
 
-        if mulan_ids.size(1) + sep_ids.size(1) + wav2vec_ids.size(1) != self.model.config.n_priors:
+        if (
+            mulan_ids.size(1) + sep_ids.size(1) + wav2vec_ids.size(1)
+            != self.model.config.n_priors
+        ):
             raise ValueError("Invalid prefix length.")
         if soundstream_ids.size(1) % self.extra_params.n_seers != 0:
             raise ValueError("Invalid length.")
 
         input_ids = torch.cat(
-            [mulan_ids, sep_ids, wav2vec_ids, seer_ids, soundstream_ids[:, : -self.extra_params.n_seers]], dim=1
+            [
+                mulan_ids,
+                sep_ids,
+                wav2vec_ids,
+                seer_ids,
+                soundstream_ids[:, : -self.extra_params.n_seers],
+            ],
+            dim=1,
         )
         return input_ids, soundstream_ids
 
@@ -1476,7 +1517,9 @@ class SeerCoarseModule(BaseModule):
         device = mulan_ids.device
         num_coarse = self.extra_params.num_coarse
         b, _ = mulan_ids.size()
-        wav2vec_ids = wav2vec_ids + num_coarse * self.extra_params.soundstream_codebook_size
+        wav2vec_ids = (
+            wav2vec_ids + num_coarse * self.extra_params.soundstream_codebook_size
+        )
         mulan_ids = (
             mulan_ids
             + num_coarse * self.extra_params.soundstream_codebook_size
@@ -1497,27 +1540,23 @@ class SeerCoarseModule(BaseModule):
         if not self.extra_params.mulan_codebook_shared:
             mulan_ids = (
                 mulan_ids
-                + torch.arange(mulan_ids.size(1), device=device) * self.extra_params.mulan_codebook_size
+                + torch.arange(mulan_ids.size(1), device=device)
+                * self.extra_params.mulan_codebook_size
             )
             seer_ids = (
-                seer_ids
-                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+                seer_ids + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
             )
             sep_ids = (
-                sep_ids
-                + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
+                sep_ids + mulan_ids.size(1) * self.extra_params.mulan_codebook_size
             )
         else:
-            seer_ids = (
-                seer_ids
-                + self.extra_params.mulan_codebook_size
-            )
-            sep_ids = (
-                sep_ids
-                + self.extra_params.mulan_codebook_size
-            )
+            seer_ids = seer_ids + self.extra_params.mulan_codebook_size
+            sep_ids = sep_ids + self.extra_params.mulan_codebook_size
 
-        if mulan_ids.size(1) + sep_ids.size(1) + wav2vec_ids.size(1) != self.model.config.n_priors:
+        if (
+            mulan_ids.size(1) + sep_ids.size(1) + wav2vec_ids.size(1)
+            != self.model.config.n_priors
+        ):
             raise ValueError("Invalid prefix length.")
 
         input_ids = torch.cat([mulan_ids, sep_ids, wav2vec_ids, seer_ids], dim=1)
@@ -1529,7 +1568,9 @@ class SeerCoarseModule(BaseModule):
             logits = self.model(input_ids)
             layer_idx = i % num_coarse
             predict_logits = logits[
-                :, -self.extra_params.n_seers :, layer_idx * 1024 : (layer_idx + 1) * 1024
+                :,
+                -self.extra_params.n_seers :,
+                layer_idx * 1024 : (layer_idx + 1) * 1024,
             ]
             samples = sample(predict_logits, temp=temp, mode=sample_mode)
             samples = samples + layer_idx * 1024
@@ -1573,16 +1614,18 @@ class FineModule(BaseModule):
             self.extra_params.num_fine,
         )
         soundstream_ids = self.get_soundstream_tokens(wavs)
-        
+
         # get coarse ids
         coarse_ids = (
-            soundstream_ids[:, :, 0 : num_coarse]
-            + (torch.arange(num_coarse, device=device) + num_fine) * self.extra_params.soundstream_codebook_size
+            soundstream_ids[:, :, 0:num_coarse]
+            + (torch.arange(num_coarse, device=device) + num_fine)
+            * self.extra_params.soundstream_codebook_size
         ).reshape((b, -1))
         # get fine ids
         fine_ids = (
             soundstream_ids[:, :, num_coarse : num_coarse + num_fine]
-            + torch.arange(num_fine, device=device) * self.extra_params.soundstream_codebook_size
+            + torch.arange(num_fine, device=device)
+            * self.extra_params.soundstream_codebook_size
         ).reshape((b, -1))
         # get sos id
         sos_ids = (
@@ -1590,13 +1633,11 @@ class FineModule(BaseModule):
             + (num_coarse + num_fine) * self.extra_params.soundstream_codebook_size
         )
         # final input tokens
-        input_ids = torch.cat([coarse_ids, sos_ids, fine_ids[:, : -1]], dim=1)
+        input_ids = torch.cat([coarse_ids, sos_ids, fine_ids[:, :-1]], dim=1)
         return {"input_ids": input_ids}, fine_ids
 
     @torch.no_grad()
-    def predict(
-        self, coarse_samples, hp
-    ):
+    def predict(self, coarse_samples, hp):
         device = coarse_samples.device
         b, _ = coarse_samples.size()
         num_coarse = hp.num_coarse
@@ -1629,21 +1670,16 @@ class FineModule(BaseModule):
             cache_len = prev_end - cur_beg
             prev_end = cur_end
             coarse_beg = int(cur_beg / num_fine * num_coarse)
-            coarse_end = coarse_beg + hp.fine_duration * soundstream_frame_rate * num_coarse
-            coarse_slice = coarse_samples[:, coarse_beg : coarse_end]
+            coarse_end = (
+                coarse_beg + hp.fine_duration * soundstream_frame_rate * num_coarse
+            )
+            coarse_slice = coarse_samples[:, coarse_beg:coarse_end]
             if cache_len == 0:
-                input_ids = torch.cat(
-                    [coarse_slice, sos_ids], dim=1
-                )
+                input_ids = torch.cat([coarse_slice, sos_ids], dim=1)
             else:
                 prefix_fine_samples = fine_samples[:, cur_beg : cur_beg + cache_len]
                 input_ids = torch.cat(
-                    [
-                        coarse_slice,
-                        sos_ids,
-                        prefix_fine_samples,
-                    ],
-                    dim=1,
+                    [coarse_slice, sos_ids, prefix_fine_samples], dim=1
                 )
 
             past_key_values = None
@@ -1652,14 +1688,22 @@ class FineModule(BaseModule):
                 pbar.set_description(
                     f"Fine [{cur_beg} - {cur_end}] [{coarse_beg} - {coarse_end}]"
                 )
-                model_output = self.model(input_ids, past_key_values=past_key_values, use_cache=True)
+                model_output = self.model(
+                    input_ids, past_key_values=past_key_values, use_cache=True
+                )
                 past_key_values = model_output["past_key_values"]
                 logits = model_output["logits"]
                 layer_idx = i % num_fine
                 predict_logits = logits[
-                    :, -1:, layer_idx * soundstream_codebook_size : (layer_idx + 1) * soundstream_codebook_size
-                ] 
-                samples = sample(predict_logits, temp=hp.fine_temperature, mode=hp.sample_mode)
+                    :,
+                    -1:,
+                    layer_idx
+                    * soundstream_codebook_size : (layer_idx + 1)
+                    * soundstream_codebook_size,
+                ]
+                samples = sample(
+                    predict_logits, temp=hp.fine_temperature, mode=hp.sample_mode
+                )
                 samples = samples + layer_idx * soundstream_codebook_size
                 input_ids = samples
                 if fine_samples is None:
@@ -1700,16 +1744,18 @@ class SeerFineModule(BaseModule):
             self.extra_params.num_fine,
         )
         soundstream_ids = self.get_soundstream_tokens(wavs)
-        
+
         # get coarse ids
         coarse_ids = (
-            soundstream_ids[:, :, 0 : num_coarse]
-            + (torch.arange(num_coarse, device=device) + num_fine) * self.extra_params.soundstream_codebook_size
+            soundstream_ids[:, :, 0:num_coarse]
+            + (torch.arange(num_coarse, device=device) + num_fine)
+            * self.extra_params.soundstream_codebook_size
         ).reshape((b, -1))
         # get fine ids
         fine_ids = (
             soundstream_ids[:, :, num_coarse : num_coarse + num_fine]
-            + torch.arange(num_fine, device=device) * self.extra_params.soundstream_codebook_size
+            + torch.arange(num_fine, device=device)
+            * self.extra_params.soundstream_codebook_size
         ).reshape((b, -1))
         fine_ids = self.seer_rearrange(fine_ids)
         # get seer ids
@@ -1719,7 +1765,9 @@ class SeerFineModule(BaseModule):
             + num_fine * self.extra_params.soundstream_codebook_size
         )
         # final input tokens
-        input_tokens = torch.cat([coarse_ids, seer_ids, fine_ids[:, : -self.extra_params.n_seers]], dim=1)
+        input_tokens = torch.cat(
+            [coarse_ids, seer_ids, fine_ids[:, : -self.extra_params.n_seers]], dim=1
+        )
         return input_tokens, fine_ids
 
 
@@ -1744,3 +1792,93 @@ class MaskedCrossEntropy(torch.nn.Module):
         loss = loss.view(*mask.size()) * mask
         loss = (loss / mask.sum()).sum()
         return loss
+
+
+from transformers import GPT2Model, GPT2PreTrainedModel
+from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
+
+
+class LanguageModel(GPT2PreTrainedModel):
+    _keys_to_ignore_on_load_missing = [
+        r"attn.masked_bias",
+        r"attn.bias",
+        r"lm_head.weight",
+    ]
+
+    def __init__(self, config, logit_num):
+        super().__init__(config)
+
+        self.transformer = GPT2Model(config)
+
+        self.lm_head = nn.Linear(config.n_embd, logit_num, bias=False)
+
+        # Model parallel
+        self.model_parallel = False
+        self.device_map = None
+
+        # Initialize weights and apply final processing
+        self.post_init()
+
+    def wte(self, input_ids):
+        return self.transformer.wte(input_ids)
+
+    def gradient_checkpointing_enable(self):
+        self.transformer.gradient_checkpointing_enable()
+
+    def forward(
+        self,
+        input_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
+        attention_mask: Optional[torch.FloatTensor] = None,
+        token_type_ids: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        head_mask: Optional[torch.FloatTensor] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        encoder_hidden_states: Optional[torch.Tensor] = None,
+        encoder_attention_mask: Optional[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Union[Tuple, CausalLMOutputWithCrossAttentions]:
+        r"""# noqa
+        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Labels for language modeling. Note that the labels **are shifted** inside the model, i.e. you can set
+            `labels = input_ids` Indices are selected in `[-100, 0, ..., config.vocab_size]` All labels set to `-100`
+            are ignored (masked), the loss is only computed for labels in `[0, ..., config.vocab_size]`
+        """
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
+
+        transformer_outputs = self.transformer(
+            input_ids=input_ids,
+            past_key_values=past_key_values,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+            encoder_hidden_states=encoder_hidden_states,
+            encoder_attention_mask=encoder_attention_mask,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        hidden_states = transformer_outputs.last_hidden_state
+
+        # Set device for model parallelism
+        if self.model_parallel:
+            torch.cuda.set_device(self.transformer.first_device)
+            hidden_states = hidden_states.to(self.lm_head.weight.device)
+
+        lm_logits = self.lm_head(hidden_states)
+
+        return CausalLMOutputWithCrossAttentions(
+            logits=lm_logits,
+            past_key_values=transformer_outputs.past_key_values,
+            hidden_states=transformer_outputs.hidden_states,
+            attentions=transformer_outputs.attentions,
+            cross_attentions=transformer_outputs.cross_attentions,
+        )

@@ -155,6 +155,7 @@ class DataModule(pl.LightningDataModule):
     def predict_dataloader(self):
         predict_dataset_batched = DataPipeline(
             self.predict_dataset,
+            # wds.shuffle(self.shuffle_buffer_size),
             wds.to_tuple("audio"),
             wds.batched(self.batch_size),
         )

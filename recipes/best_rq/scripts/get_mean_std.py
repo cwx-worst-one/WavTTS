@@ -1,5 +1,5 @@
 from recipes.best_rq.modules.lit_datamodule import DataModule
-from recipes.musiclm.datasets.mcc import WrappedMCC40MDataset
+from recipes.musiclm.datasets.mcc import PGCDataset
 import torch
 from tqdm import tqdm
 
@@ -39,34 +39,29 @@ class Preprocessor:
             print("[EST] mean:", self.mean)
             print("[EST] std:", torch.sqrt(self.std / (self.total_samples - 1)))
             if i % 100 == 0:
-                torch.save(self.mean, f"/mnt/bn/zongyu-lq/features/best_rq/mv/mean_{i}.pt")
-                torch.save(torch.sqrt(self.std / (self.total_samples - 1)), f"/mnt/bn/zongyu-lq/features/best_rq/mv/std_{i}.pt")
+                torch.save(self.mean, f"/mnt/bn/zongyu-lq/features/best_rq/mv/pgc600k_mean_{i}.pt")
+                torch.save(torch.sqrt(self.std / (self.total_samples - 1)), f"/mnt/bn/zongyu-lq/features/best_rq/mv/pgc600k_std_{i}.pt")
             if i >= num_iter:
                 return
 
 
 
 if __name__ == "__main__":
-    mcc_dataset = WrappedMCC40MDataset(
-        [
-            "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/a.tsv",
-            "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/b.tsv",
-            "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/c.tsv",
-            "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/d.tsv",
-            "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/e.tsv",
-            "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/f.tsv",
-        ],
+    mcc_dataset = PGCDataset(
         sample_rate=24000,
         duration=30,
+        normalize_audio=True,
+        resampled=True,
+        shardshuffle=True,
     )
     datamodule = DataModule(
-        batch_size=100,
+        batch_size=120,
         mask_hop=0.4,
         mask_prob=0.5,
         feature_mean=0,
         feature_std=1,
-        num_workers=6,
-        shuffle_buffer_size=1000,
+        num_workers=2,
+        shuffle_buffer_size=360,
         train_dataset=mcc_dataset,
         sample_rate=24000,
         n_fft=2048,

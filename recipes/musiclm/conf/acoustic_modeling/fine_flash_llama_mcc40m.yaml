@@ -24,14 +24,14 @@ run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
     log_name: fine_flash_llama
-    version: mcc40m
+    version: mcc40m_324m
     cache_dir: .module_cache/musiclm
     precision: "bf16-mixed"
     num_workers: 6
     accelerator: auto
     val_check_interval: 5000
     max_steps: 1000000
-    batch_size: 9
+    batch_size: 16
     learning_rate: 4.0e-3
     warmup_steps: 10000
     cycle_steps: 500000
@@ -47,12 +47,12 @@ run_opts:
 
 train_dataset: !new:recipes.musiclm.datasets.mcc.WrappedMCC40MDataset
     url2index_list:
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/a.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/b.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/c.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/d.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/e.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/f.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/a.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/b.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/c.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/d.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/e.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/f.tsv"
     sample_rate: !ref <extra_params[sample_rate]>
     duration: !ref <extra_params[duration]>
     min_volume_threshold: !ref <run_opts[min_volume_threshold]>
@@ -78,10 +78,10 @@ pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.DataModule
 
 model_config: !new:transformers.LlamaConfig
     vocab_size: !ref <extra_params[num_coarse]> * <extra_params[soundstream_codebook_size]> + <extra_params[num_fine]> * <extra_params[soundstream_codebook_size]> + 1
-    hidden_size: 1536
-    intermediate_size: 4128
+    hidden_size: 1024
+    intermediate_size: 2752
     num_hidden_layers: 24
-    num_attention_heads: 12
+    num_attention_heads: 16
     hidden_act: "silu"
     max_position_embeddings: !ref <extra_params[num_coarse]> * <extra_params[soundstream_frame_rate]> * <extra_params[duration]> + <extra_params[num_fine]> * <extra_params[soundstream_frame_rate]> * <extra_params[duration]>
     initializer_range: 0.02

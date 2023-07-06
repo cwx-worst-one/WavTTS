@@ -7,7 +7,7 @@ import numpy as np
 from pydub import AudioSegment
 import webdataset as wds
 from torch.utils.data import Dataset
-from recipes.musiclm.transforms.musiclm import MCCTransforms, ARFiltering
+from recipes.musiclm.transforms.musiclm import MCCTransforms, PGCTransforms, ARFiltering
 from recipes.musiclm.preprocess import WebDatasetBufferPreprocessor
 from samantha.dataio.webdataset.extension import IndexedWebDataset
 from samantha.dataio.webdataset.pipeline import WebPipeline
@@ -250,3 +250,48 @@ class WrappedMCC40MDataset(MultiIterableDataset):
             weights=weights,
             seed=seed,
         )
+
+
+class PGCDataset(WebPipeline):
+
+    def __init__(
+        self,
+        duration: float,
+        sample_rate: int = 24000,
+        url2index: str = "/mnt/bn/audio-diffusion/data/mcc_pgc_600k/pgc_url2idx.txt",
+        audio_key: str = "audio.npy",
+        normalize_audio: bool = True,
+        min_volume_threshold: float = 0.05,
+        loudness_ratio_threshold: float = 0.2,
+        max_num_crops: Optional[int] = None,
+        crop_step_size: Optional[int] = None,
+        handler: Callable = wds.warn_and_continue,
+        use_pipe: bool = True,
+        **kwargs,
+    ):
+        dataset = IndexedWebDataset(
+            url2index=url2index,
+            use_pipe=use_pipe,
+            handler=handler,
+            **kwargs,
+        )
+
+        audio_transforms = PGCTransforms(
+            n_samples=int(duration * sample_rate),
+            sample_rate=sample_rate,
+            audio_key=audio_key,
+            normalize_audio=normalize_audio,
+            min_volume_threshold=min_volume_threshold,
+            loudness_ratio_threshold=loudness_ratio_threshold,
+            max_num_crops=max_num_crops,
+            crop_step_size=crop_step_size,
+        )
+        preprocessor = WebDatasetBufferPreprocessor(
+            sample_rate=sample_rate,
+            transforms=audio_transforms,
+        )
+        pipeline=[
+            "decode",
+            {"compose": [preprocessor.train_buffer_preprocessor]},
+        ]
+        super().__init__(dataset, pipeline)

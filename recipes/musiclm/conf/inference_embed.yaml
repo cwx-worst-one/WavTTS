@@ -9,13 +9,12 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
 
 extra_params:
-    prompt_path: "/mlx/users/zongyu.yin/playground/text_prompts_for_quick_evaluation.txt"
-    output_dir: generated_output/quick_evaluation_semantic_embed_diffusion_step34k
-    semantic_ckpt: "/mnt/bn/zongyu-lq/logs/semantic_diffusion_flash_gpt2/karaoke/checkpoints/step=034000-tr_loss=-0.7400-val_loss_0=-0.6652.ckpt"
+    prompt_path: "/mnt/bn/audio-diffusion/data/google_prompts/text_prompt_collection_20230615.csv"
+    output_dir: "generated_output/text_prompt_collection_semantic_embed"
+    semantic_ckpt: "/mnt/bn/zongyu-lq/logs/semantic_embed_flash_gpt2/pgc600k/checkpoints/step=016000-tr_loss=-1.4449-val_loss_0=-1.4556.ckpt"
     coarse_ckpt: "/mnt/bn/zongyu-lq/logs/coarse_gpt2/karaoke_wav2vec_cross_attn/checkpoints/step=041000-val_accu_0=24.35.ckpt"
-    fine_ckpt: "/mnt/bn/zongyu-lq/logs/fine_flash_llama/mcc40m/checkpoints/step=120000-val_accu_0=11.06.ckpt"
+    fine_ckpt: "/mnt/bn/audio-diffusion/ckpts/musiclm/fine_flash_llama/mcc40m/step=120000-val_accu_0=11.06.ckpt"
     sample_rate: 24000
-    num_diffusion_steps: 1000
     duration: 10
     num_rounds: 1
     semantic_duration: 10
@@ -24,18 +23,18 @@ extra_params:
     semantic_stride: 5
     coarse_stride: 5
     fine_stride: 3
-    wav2vec_embed_dim: 1024
-    mulan_embed_dim: 1024
+    wav2vec_codebook_size: 1024
+    mulan_codebook_size: 1024
+    mulan_num_rvq: 12
     soundstream_codebook_size: 1024
     wav2vec_frame_rate: 25
     soundstream_frame_rate: 50
     num_coarse: 4
     num_fine: 8
-    semantic_temperatue: 1.0
+    semantic_temperature: 1.0
     coarse_temperature: 0.9
     fine_temperature: 0.8
     sample_mode: "gumbel"
-    guidance_scale: 4
 
 run_opts:
     fast_dev_run: False
@@ -66,7 +65,7 @@ predict_dataloader: !new:torch.utils.data.DataLoader
 pl_datamodule: !new:recipes.musiclm.datamodules.lit_datamodule.DataModule
     predict_dataloader: !ref <predict_dataloader>
 
-pl_module: !new:recipes.musiclm.lightning.inference.InferenceDiffusionModule
+pl_module: !new:recipes.musiclm.lightning.inference.InferenceEmbedModule
     extra_params: !ref <extra_params>
     required_modules:
         mulan:

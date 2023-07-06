@@ -10,13 +10,15 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 
 extra_params:
     gt_infer_mode: "semantic->coarse->fine"  # ["mulan->semantic->coarse->fine", "semantic->coarse->fine", "coarse->fine"]
-    output_dir: ./generated_output/gt_infer
+    output_dir: generated_output/plastic_gt_infer_coarse_pgc600k_best_rq_cb1024_ct0.9
     semantic_ckpt: "/mnt/bn/audio-diffusion/ckpts/musiclm/semantic_flash_llama/karaoke_and_playlist/checkpoints/last.ckpt"
-    coarse_ckpt: "/mnt/bn/audio-diffusion/ckpts/musiclm/coarse_flash_llama/karaoke_and_playlist/checkpoints/last.ckpt"
-    fine_ckpt: "/mnt/bn/audio-diffusion/ckpts/musiclm/fine_flash_llama/karaoke_and_playlist/checkpoints/last.ckpt"
+    # coarse_ckpt: "/mnt/bn/zongyu-lq/logs/coarse_flash_llama/pgc600k_wav2vec/checkpoints/step=040000-tr_loss=4.0335-val_loss_0=4.0697.ckpt"
+    coarse_ckpt: "/mnt/bn/zongyu-lq/logs/coarse_flash_llama/pgc600k_best_rq_cb1024/checkpoints/step=040000-tr_loss=3.9867-val_loss_0=4.1129.ckpt"
+    # coarse_ckpt: "/mnt/bn/zongyu-lq/logs/coarse_flash_llama/pgc600k_best_rq_cb8192/checkpoints/step=040000-tr_loss=4.1411-val_loss_0=4.0975.ckpt"
+    fine_ckpt: "/mnt/bn/zongyu-lq/logs/fine_flash_llama/mcc40m_324m/checkpoints/step=110000-tr_loss=4.3135-val_loss_0=4.9265.ckpt"
     sample_rate: 24000
     duration: 10
-    num_rounds: 3
+    num_rounds: 1
     semantic_duration: 10
     coarse_duration: 10
     fine_duration: 4
@@ -42,8 +44,8 @@ run_opts:
     accelerator: auto
     strategy: ddp_find_unused_parameters_false
     cache_dir: .module_cache/musiclm
-    batch_size: 20
-    num_workers: 8
+    batch_size: 10
+    num_workers: 1
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -79,7 +81,7 @@ predict_dataloader: !new:torch.utils.data.DataLoader
 pl_datamodule: !new:recipes.musiclm.datamodules.lit_datamodule.DataModule
     predict_dataloader: !ref <predict_dataloader>
 
-pl_module: !new:recipes.musiclm.lightning.inference.GTInferenceModule
+pl_module: !new:recipes.musiclm.lightning.inference.InferenceGTModule
     extra_params: !ref <extra_params>
     required_modules:
         mulan:
@@ -95,9 +97,20 @@ pl_module: !new:recipes.musiclm.lightning.inference.GTInferenceModule
             - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/semantic.jit.pt
             - !name:recipes.musiclm.requires.model_initializer.init_wav2vec
               cache_dir: !ref <run_opts[cache_dir]>
+        best_rq:
+            - /mnt/bn/audio-diffusion/ckpts/best_rq/step=055000.pt
+            - !name:recipes.musiclm.requires.model_initializer.init_best_rq
+              cache_dir: !ref <run_opts[cache_dir]>
         semantic_centers:
-            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_10.npy
+            # - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_10.npy
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/kmeans/best_rq_1x8192_cb1024/centroids_epoch_10.npy
+            # - hdfs://harunava/home/byte_speech_sv/zongyu.yin/kmeans/best_rq_1x8192_cb8192/centroids_epoch_10.npy
             - !name:recipes.musiclm.requires.model_initializer.init_semantic_centers
+              cache_dir: !ref <run_opts[cache_dir]>
+        semantic_cmvn:
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/kmeans/best_rq_1x8192_cb1024/global.cmvn.npy
+            # - hdfs://harunava/home/byte_speech_sv/zongyu.yin/kmeans/best_rq_1x8192_cb8192/global.cmvn.npy
+            - !name:recipes.musiclm.requires.model_initializer.init_semantic_cmvn
               cache_dir: !ref <run_opts[cache_dir]>
         soundstream:
             - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k

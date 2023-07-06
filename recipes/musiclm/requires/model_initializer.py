@@ -2,17 +2,16 @@ import os
 
 import numpy as np
 import torch
-from transformers import AutoModel
-from transformers import Wav2Vec2FeatureExtractor
+from torchaudio.transforms import AmplitudeToDB, MelSpectrogram
+from torchaudio_augmentations import Compose
+from transformers import AutoModel, Wav2Vec2FeatureExtractor
 
 import samantha.utils.hdfs_helper as hh
+from recipes.best_rq.modules.lit_datamodule import NormalizeFeature
+from recipes.best_rq.modules.lit_module import BestRQ
+from recipes.musiclm.models.compat.semantic_model import SSLFrontend
 
 from ..utils.dist import local_zero_first
-from recipes.musiclm.models.compat.semantic_model import SSLFrontend
-from recipes.best_rq.modules.lit_module import BestRq
-from recipes.best_rq.modules.lit_datamodule import NormalizeFeature
-from torchaudio.transforms import MelSpectrogram, AmplitudeToDB
-from torchaudio_augmentations import Compose
 
 
 def value(func: str):
@@ -112,7 +111,9 @@ def init_mert(hpath, local_rank, cache_dir=None):
         .eval()
         .to(device)
     )
-    processor = Wav2Vec2FeatureExtractor.from_pretrained("m-a-p/MERT-v1-330M",trust_remote_code=True)
+    processor = Wav2Vec2FeatureExtractor.from_pretrained(
+        "m-a-p/MERT-v1-330M", trust_remote_code=True
+    )
     return {"semantic": model, "processor": processor}
 
 
@@ -144,57 +145,49 @@ def init_best_rq(hpath, local_rank, cache_dir=None):
         os.makedirs(cache_dir, exist_ok=True)
 
     device = torch.device(f"cuda:{local_rank}")
-    # with local_zero_first():
-    #     if not os.path.exists(
-    #         f"{cache_dir}/mel_mean_1000.pt"
-    #     ):
-    #         if not hh.get(
-    #             "hdfs://harunava/home/byte_speech_sv/zongyu.yin/assets/mel_mean_1000.pt",
-    #             f"{cache_dir}/mel_mean_1000.pt"
-    #         ):
-    #             raise ConnectionError(f"Cannot retrieve mel_mean_1000.pt.")
-    #     if not os.path.exists(
-    #         f"{cache_dir}/mel_std_1000.pt"
-    #     ):
-    #         if not hh.get(
-    #             "hdfs://harunava/home/byte_speech_sv/zongyu.yin/assets/mel_std_1000.pt",
-    #             f"{cache_dir}/mel_std_1000.pt"
-    #         ):
-    #             raise ConnectionError(f"Cannot retrieve mel_std_1000.pt.")
-    # mean = torch.load(f"{cache_dir}/mel_mean_1000.pt").to(device)
-    # std = torch.load(f"{cache_dir}/mel_std_1000.pt").to(device)
-    mean = torch.tensor(3.287).to(device)
-    std = torch.tensor(20.043).to(device)
-    feature_fn = Compose(
-        [
-            MelSpectrogram(
-                sample_rate=24000,
-                n_fft=2048,
-                hop_length=240,
-                n_mels=128,
-            ).eval().to(device),
-            AmplitudeToDB().eval().to(device),
-            NormalizeFeature(mean, std).eval().to(device)
-        ]
-    )
     if hpath.startswith("hdfs://"):
         local_path = f"{cache_dir}/{os.path.basename(hpath)}"
         with local_zero_first():
             if not os.path.exists(local_path):
                 if not hh.get(hpath, local_path):
                     raise ConnectionError(f"Cannot retrieve file from {hpath}.")
-            model = BestRq.load_from_checkpoint(local_path).eval().to(device)
-            return {
-                "feature_fn": feature_fn,
-                "semantic": model,
-            }
+            model = BestRQ.load_from_checkpoint(local_path).eval().to(device)
+            return {"semantic": model}
     else:
         with local_zero_first():
-            model = BestRq.load_from_checkpoint(hpath).eval().to(device)
-            return {
-                "feature_fn": feature_fn,
-                "semantic": model,
-            }
+            model = BestRQ.load_from_checkpoint(hpath).eval().to(device)
+            return {"semantic": model}
+
+
+def init_best_rq_minz(hpath, local_rank, cache_dir=None):
+    from recipes.best_rq.models.chromatic_t5_rq import BEST_RQ
+
+    device = torch.device(f"cuda:{local_rank}")
+    model = BEST_RQ(
+        codebook_dim=16,
+        codebook_size=8192,
+        hop_length=240,
+        n_mels=128,
+        conv_dim=512,
+        encoder_dim=1024,
+        encoder_depth=24,
+        mask_hop=0.4,
+        mask_prob=0.5,
+        is_flash=True,
+        global_mean=16.4,
+        global_std=14.7,
+        is_torchscript=True,
+    )
+    S = torch.load(
+        "/mnt/bn/audio-diffusion/pretrained_models/best_rq/chromatic_80k.pt"
+    )["state_dict"]
+    SS = {k[6:]: v for k, v in S.items()}
+    model.load_state_dict(SS, strict=False)
+
+    model = model.to(device)
+    model = model.half()
+    model.eval()
+    return {"semantic": model}
 
 
 def init_semantic_centers(hpath, local_rank, cache_dir=None):
@@ -216,6 +209,27 @@ def init_semantic_centers(hpath, local_rank, cache_dir=None):
             semantic_centers = np.load(hpath)
             semantic_centers = torch.from_numpy(semantic_centers).float().to(device)
             return {"semantic_centers": semantic_centers}
+
+
+def init_semantic_cmvn(hpath, local_rank, cache_dir=None):
+    if cache_dir is not None:
+        os.makedirs(cache_dir, exist_ok=True)
+
+    device = torch.device(f"cuda:{local_rank}")
+    if hpath.startswith("hdfs://"):
+        local_path = f"{cache_dir}/{os.path.basename(hpath)}"
+        with local_zero_first():
+            if not os.path.exists(local_path):
+                if not hh.get(hpath, local_path):
+                    raise ConnectionError(f"Cannot retrieve file from {hpath}.")
+            semantic_cmvn = np.load(local_path)
+            semantic_cmvn = torch.from_numpy(semantic_cmvn).float().to(device)
+            return {"semantic_cmvn": semantic_cmvn}
+    else:
+        with local_zero_first():
+            semantic_cmvn = np.load(hpath)
+            semantic_cmvn = torch.from_numpy(semantic_cmvn).float().to(device)
+            return {"semantic_cmvn": semantic_cmvn}
 
 
 def init_soundstream(hpath, local_rank, cache_dir=None):

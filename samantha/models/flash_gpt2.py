@@ -432,7 +432,7 @@ class GPT2PlaneAttention(nn.Module):
             self.c_attn = Conv1D(3 * self.embed_dim, self.embed_dim)
         self.c_proj = Conv1D(self.embed_dim, self.embed_dim)
 
-        self.attn_dropout = nn.Dropout(config.attn_pdrop)
+        self.attn_dropout = config.attn_pdrop
         self.resid_dropout = nn.Dropout(config.resid_pdrop)
 
         self.pruned_heads = set()
@@ -467,7 +467,7 @@ class GPT2PlaneAttention(nn.Module):
                 key.float(),
                 value.float(),
                 attn_mask=None,
-                dropout_p=0.0,
+                dropout_p=self.attn_dropout,
                 is_causal=False,
             ).to(query.dtype)
 
@@ -650,7 +650,7 @@ class GPT2CausalAttention(nn.Module):
             self.c_attn = Conv1D(3 * self.embed_dim, self.embed_dim)
         self.c_proj = Conv1D(self.embed_dim, self.embed_dim)
 
-        self.attn_dropout = nn.Dropout(config.attn_pdrop)
+        self.attn_dropout = config.attn_pdrop
         self.resid_dropout = nn.Dropout(config.resid_pdrop)
 
         self.pruned_heads = set()
@@ -686,7 +686,7 @@ class GPT2CausalAttention(nn.Module):
                     key.float(),
                     value.float(),
                     attn_mask=None,
-                    dropout_p=0.0,
+                    dropout_p=self.attn_dropout,
                     is_causal=False,
                 ).to(query.dtype)
         else:
@@ -708,7 +708,7 @@ class GPT2CausalAttention(nn.Module):
                     key.float(),
                     value.float(),
                     attn_mask=attn_mask,
-                    dropout_p=0.0,
+                    dropout_p=self.attn_dropout,
                     is_causal=is_causal,
                 ).to(query.dtype)
 
@@ -2945,7 +2945,9 @@ class GPT2ForDiffusion(GPT2PreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.transformer = GPT2PlaneModel(config)
-        self.output_layer = nn.Linear(config.n_embd, config.num_logits, bias=False)
+        self.input_linear = nn.Linear(config.input_dim, config.n_embd, bias=False)
+        self.output_linear = nn.Linear(config.n_embd, config.input_dim, bias=False)
+        self.cond_linear = nn.Linear(config.cond_dim, config.n_embd, bias=False)
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -2966,7 +2968,9 @@ class GPT2ForDiffusion(GPT2PreTrainedModel):
         return_dict = (
             return_dict if return_dict is not None else self.config.use_return_dict
         )
-
+        inputs_embeds = self.input_linear(inputs_embeds)
+        # Linear projection happens outside
+        # encoder_hidden_states = self.cond_linear(encoder_hidden_states)
         transformer_outputs = self.transformer(
             input_ids,
             past_key_values=past_key_values,
@@ -2980,7 +2984,118 @@ class GPT2ForDiffusion(GPT2PreTrainedModel):
         )
         hidden_states = transformer_outputs[0]
 
-        logits = self.output_layer(hidden_states)
+        logits = self.output_linear(hidden_states)
+
+        if not return_dict:
+            output = (logits,) + transformer_outputs[1:]
+            return output
+
+        return CausalLMOutputWithCrossAttentions(
+            logits=logits,
+            past_key_values=transformer_outputs.past_key_values,
+            hidden_states=transformer_outputs.hidden_states,
+        )
+
+
+class GPT2ForEmbedAR(GPT2PreTrainedModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.transformer = GPT2CausalModel(config)
+        self.input_linear = nn.Linear(config.input_dim, config.n_embd, bias=False)
+        self.output_linear = nn.Linear(config.n_embd, config.input_dim, bias=False)
+        self.cond_linear = nn.Linear(config.cond_dim, config.n_embd, bias=False)
+        self.sos_embed = nn.Parameter(
+            torch.randn((1, 1, config.input_dim)), requires_grad=True
+        )
+
+        # Initialize weights and apply final processing
+        self.post_init()
+
+    def forward(
+        self,
+        input_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
+        token_type_ids: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        encoder_hidden_states: Optional[torch.Tensor] = None,
+        use_cache: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Union[Tuple, CausalLMOutputWithCrossAttentions]:
+
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
+        inputs_embeds = self.input_linear(inputs_embeds)
+        encoder_hidden_states = self.cond_linear(encoder_hidden_states)
+        transformer_outputs = self.transformer(
+            input_ids=input_ids,
+            past_key_values=past_key_values,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            inputs_embeds=inputs_embeds,
+            encoder_hidden_states=encoder_hidden_states,
+            use_cache=use_cache,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        hidden_states = transformer_outputs[0]
+
+        logits = self.output_linear(hidden_states)
+
+        if not return_dict:
+            output = (logits,) + transformer_outputs[1:]
+            return output
+
+        return CausalLMOutputWithCrossAttentions(
+            logits=logits,
+            past_key_values=transformer_outputs.past_key_values,
+            hidden_states=transformer_outputs.hidden_states,
+        )
+
+
+class GPT2ForCrossAttn(GPT2PreTrainedModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.transformer = GPT2CausalModel(config)
+        self.output_linear = nn.Linear(config.n_embd, config.num_logits, bias=False)
+        self.cond_linear = nn.Linear(config.cond_dim, config.n_embd, bias=False)
+
+        # Initialize weights and apply final processing
+        self.post_init()
+
+    def forward(
+        self,
+        input_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
+        token_type_ids: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        encoder_hidden_states: Optional[torch.Tensor] = None,
+        use_cache: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Union[Tuple, CausalLMOutputWithCrossAttentions]:
+
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
+        encoder_hidden_states = self.cond_linear(encoder_hidden_states)
+        transformer_outputs = self.transformer(
+            input_ids=input_ids,
+            past_key_values=past_key_values,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            inputs_embeds=inputs_embeds,
+            encoder_hidden_states=encoder_hidden_states,
+            use_cache=use_cache,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        hidden_states = transformer_outputs[0]
+
+        logits = self.output_linear(hidden_states)
 
         if not return_dict:
             output = (logits,) + transformer_outputs[1:]

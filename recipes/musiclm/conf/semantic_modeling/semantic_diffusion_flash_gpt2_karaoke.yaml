@@ -9,36 +9,38 @@ ckpt_path: null
 seed: 555
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
-_checkpointing: False
+_checkpointing: !ref <run_opts[checkpointing]>
 
 extra_params:
     sample_rate: 24000
     duration: 10
-    soundstream_codebook_size: 1024
-    soundstream_frame_rate: 50
-    num_coarse: 4
-    semantic_type: best_rq
+    wav2vec_embed_dim: 1024
+    wav2vec_frame_rate: 25
+    mulan_embed_dim: 512
+    cfg_dropout_rate: 0.1
 
 # running parameters
 run_opts:
     fast_dev_run: False
-    log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
-    log_name: coarse_flash_gpt2_cross_attn
-    version: karaoke_best_rq_4cb
+    log_dir: logs
+    log_name: semantic_diffusion_flash_gpt2
+    version: karaoke
     cache_dir: .module_cache/musiclm
-    precision: "bf16-mixed"
+    precision: "32"
     num_workers: 6
     accelerator: auto
     val_check_interval: 2000
     max_steps: 1000000
-    batch_size: 8
+    batch_size: 56
     learning_rate: 3.0e-4
-    warmup_steps: 10000
-    cycle_steps: 500000
+    warmup_steps: 5000
+    cycle_steps: 200000
     weight_decay: 0.01
     min_volume_threshold: 0.05
-    shuffle_buffer: 500
+    loudness_ratio_threshold: 0.2
+    shuffle_buffer: 1000
     gradient_clip_val: 1.0
+    checkpointing: False
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -68,21 +70,23 @@ pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.DataModule
     pin_memory: True
 
 model_config: !new:transformers.GPT2Config
-    vocab_size: !ref <extra_params[num_coarse]> * <extra_params[soundstream_codebook_size]> + 1
-    n_positions: !ref <extra_params[num_coarse]> * <extra_params[duration]> * <extra_params[soundstream_frame_rate]>
+    vocab_size: 0
+    input_dim: !ref <extra_params[wav2vec_embed_dim]>
+    cond_dim: !ref <extra_params[mulan_embed_dim]>
+    n_positions: !ref <extra_params[duration]> * <extra_params[wav2vec_frame_rate]>
     n_embd: 1024
     n_layer: 24
     n_head: 16
     activation_function: gelu_new
     resid_pdrop: 0.0
     embd_pdrop: 0.0
-    attn_pdrop: 0.0
+    attn_pdrop: 0.1
     layer_norm_epsilon: 0.00001
     initializer_range: 0.02
     add_cross_attention: True
     use_cache: !apply:operator.not_ [!ref <_checkpointing>]
 
-model_cls: !name:samantha.models.flash_gpt2.GPT2LMHeadModel
+model_cls: !name:samantha.models.flash_gpt2.GPT2ForDiffusion
     config: !ref <model_config>
 
 optimizer_cls: !name:torch.optim.AdamW
@@ -97,33 +101,29 @@ scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupC
     cycle_steps: !ref <run_opts[cycle_steps]>
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
-pl_module: !new:recipes.musiclm.lightning.modules.CoarseCrossAttnModule
-    checkpointing: !ref <_checkpointing>
+pl_module: !new:recipes.musiclm.lightning.modules.SemanticDiffusionModule
+    checkpointing: !ref <run_opts[checkpointing]>
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
-    criterion_cls: !name:recipes.musiclm.lightning.modules.MaskedCrossEntropy
+    criterion_cls: !name:torch.nn.MSELoss
     extra_params: !ref <extra_params>
     required_modules:
-        best_rq:
-            - /mnt/bn/zongyu-lq/logs/best_rq/mcc40m_4cb/checkpoints/step=030000.pt
-            - !name:recipes.musiclm.requires.model_initializer.init_best_rq
+        mulan:
+            - hdfs://harunava/home/byte_speech_sv/weitsung.lu/mulan_exp/MuLan_large/gpt_all/checkpoints/mulan-step=036000-median_rank_0=127-kaggle.ckpt
+            - !name:recipes.musiclm.requires.model_initializer.init_mulan
               cache_dir: !ref <run_opts[cache_dir]>
-        soundstream:
-            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
-            - !name:recipes.musiclm.requires.model_initializer.init_soundstream
+              version: "g4"
+        wav2vec:
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/semantic.jit.pt
+            - !name:recipes.musiclm.requires.model_initializer.init_wav2vec
               cache_dir: !ref <run_opts[cache_dir]>
 
-logger:
-    - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
-      save_dir: !ref <run_opts[log_dir]>
-      name: !ref <run_opts[log_name]>
-      version: !ref <run_opts[version]>
-      default_hp_metric: False
-    - !new:pytorch_lightning.loggers.wandb.WandbLogger
-      save_dir: !ref <run_opts[log_dir]>
-      project: !ref <run_opts[log_name]>
-      version: !ref <run_opts[version]>
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[log_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+    default_hp_metric: False
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint

@@ -10,8 +10,9 @@ import numpy as np
 import torch
 from pydub import AudioSegment
 from tqdm import tqdm
-
+import torchaudio
 from samantha.utils.hparams import DotDict
+from recipes.musiclm.inference.utils import format_name
 
 
 def set_seed(seed=1996):
@@ -44,12 +45,9 @@ def slugify(value, allow_unicode=False):
 
 
 def save_wav(audio, output_file, sr=24000):
-    from scipy.io.wavfile import write
-
-    audio = audio * 32768.0
-    audio = audio.astype("int16")
-    write(output_file, sr, audio)
-    return
+    if audio.dim() == 1:
+        audio = audio.unsqueeze(0)
+    torchaudio.save(output_file, audio, sr)
 
 
 def load_wav(path):
@@ -328,7 +326,7 @@ def gather_prompts(mulan_model):
         import pandas as pd
 
         df = pd.read_csv(
-            "/mnt/bn/audio-diffusion/data/google_prompts/google_prompts.csv"
+            "/mnt/bn/audio-diffusion/data/google_prompts/text_prompt_collection_20230615.csv"
         )
         for _, row in df.iterrows():
             items.append([row["category"], row["text"]])
@@ -512,14 +510,14 @@ def main():
                 os.makedirs(wav_dir, exist_ok=True)
                 if args.prompts_group == "direct_prompt":
                     fp = os.path.join(
-                        wav_dir, f"{slugify(batch[wav_idx][1])[:128]}.{wav_idx}"
+                        wav_dir, f"{format_name(batch[wav_idx][1])}.{wav_idx}"
                     )
                 else:
                     fp = os.path.join(
-                        wav_dir, f"{slugify(batch[wav_idx][1])[:128]}.{rd}"
+                        wav_dir, f"{format_name(batch[wav_idx][1])}.{rd}"
                     )
                 print(f"[Saving] {fp}")
-                save_wav(wav.cpu().numpy(), fp + ".wav", sr=sample_rate)
+                save_wav(wav.cpu(), fp + ".wav", sr=sample_rate)
                 # with open(".".join(fp.split(".")[:-1]) + ".txt", "w") as prompt_txt:
                 #     prompt_txt.write(prompts[prompt_idx])
         print(f"[Elapsed Time] {time.time() - start_time}")
@@ -530,7 +528,7 @@ if __name__ == "__main__":
     # Generation configs
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "-r", "--rounds", type=int, default=10, help="How many rounds to run"
+        "-r", "--rounds", type=int, default=1, help="How many rounds to run"
     )
     parser.add_argument(
         "-b", "--bs", type=int, default=20, help="Batch size for each forward pass"
@@ -571,7 +569,7 @@ if __name__ == "__main__":
             "long_text",
             "240523"
         ],
-        default="google_short",
+        default="google",
     )
     default_prompt = "acoustic guitar"
     parser.add_argument("--direct_prompt", type=str, default=default_prompt)
@@ -646,7 +644,7 @@ if __name__ == "__main__":
 
     ckpts[
         "fine"
-    ] = "/mnt/bn/zongyu-lq/ckpts/musiclm/epoch=03-step=193000-accu=18.92.ckpt"
+    ] = "/mnt/bn/zongyu-lq/ckpts/musiclm/fine_sparse_epoch=03-step=193000-accu=18.92.ckpt"
     ckpts["ss_dec"] = "/mnt/bn/zongyu-lq/ckpts/soundstream/190k/ss_decoder_0.pt"
 
     from recipes.audio_lm.requires.mulan.mulan_infer_g4 import (

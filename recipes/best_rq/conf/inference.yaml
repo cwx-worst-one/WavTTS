@@ -13,8 +13,8 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 extra_params:
     sample_rate: 24000
     duration: 30
-    feature_mean: 3.287
-    feature_std: 20.043
+    # feature_mean: 3.287
+    # feature_std: 20.043
     # duration: 10
     # feature_mean: 3.06
     # feature_std: 20.07
@@ -23,10 +23,11 @@ extra_params:
     n_mels: 128
     mask_hop: 0.4
     mask_prob: 0.5
-    state_dict_path: "/mnt/bn/audio-diffusion/ckpts/best_rq/step=011000.pt"
-    output_dir: "/mnt/bn/zongyu-lq/features/best_rq/step=011000"
-    bucket_size: 900000
-    layer_ix: 12
+    state_dict_path: "/mnt/bn/zongyu-lq/logs/best_rq/pgc600k_25hz_4x8192_522m/checkpoints/step=075000-tr_loss=4.5369-val_loss_0=4.1857.pt"
+    output_dir: "/mnt/bn/zongyu-lq/features/best_rq/pgc600k_melspec"
+    bucket_size: 18000
+    layer_idx: 12
+    # latent_type: melspec
 
 # running parameters
 run_opts:
@@ -34,7 +35,7 @@ run_opts:
     precision: "32"
     num_workers: 6
     accelerator: auto
-    batch_size: 120
+    batch_size: 12
     min_volume_threshold: 0.05
     loudness_ratio_threshold: 0.2
     shuffle_buffer: 2000
@@ -43,43 +44,21 @@ run_opts:
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
-predict_dataset: !new:recipes.musiclm.datasets.mcc.WrappedMCC40MDataset
-    url2index_list:
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/a.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/b.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/c.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/d.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/e.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/f.tsv"
+predict_dataset: !new:recipes.musiclm.datasets.mcc.PGCDataset
     sample_rate: !ref <extra_params[sample_rate]>
     duration: !ref <extra_params[duration]>
     min_volume_threshold: !ref <run_opts[min_volume_threshold]>
     loudness_ratio_threshold: !ref <run_opts[loudness_ratio_threshold]>
+    max_num_crops: 1
     resampled: True
     shardshuffle: True
-    seed: !ref <seed>
 
-pl_datamodule: !new:recipes.best_rq.modules.lit_datamodule.DataModule
+pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.DataModule
     predict_dataset: !ref <predict_dataset>
     batch_size: !ref <run_opts[batch_size]>
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
     num_workers: !ref <run_opts[num_workers]>
     pin_memory: True
-    sample_rate: !ref <extra_params[sample_rate]>
-    feature_mean: !ref <extra_params[feature_mean]>
-    feature_std: !ref <extra_params[feature_std]>
-    n_fft: !ref <extra_params[n_fft]>
-    hop_length: !ref <extra_params[hop_length]>
-    n_mels: !ref <extra_params[n_mels]>
-    mask_hop: !ref <extra_params[mask_hop]>
-    mask_prob: !ref <extra_params[mask_prob]>
-
-# model_cls: !name:recipes.best_rq.models.best_rq.BestRq
-#     codebook_dim: 16
-#     codebook_size: 8192
-#     conv_dim: 512
-#     encoder_dim: 1024
-#     encoder_depth: 24
 
 pl_module: !new:recipes.best_rq.modules.lit_module.Inference
     checkpointing: False

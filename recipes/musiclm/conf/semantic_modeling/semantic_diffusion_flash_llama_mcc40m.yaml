@@ -14,96 +14,50 @@ _checkpointing: False
 extra_params:
     sample_rate: 24000
     duration: 10
-    wav2vec_codebook_size: 1024
+    wav2vec_hidden_size: 1024
     wav2vec_frame_rate: 25
     mulan_codebook_size: 1024
     mulan_num_rvq: 12
+    cfg_dropout_rate: 0.2
 
 # running parameters
 run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
-    log_name: semantic_flash_llama
-    version: mcc40m_filtered_705m
+    log_name: semantic_diffusion_flash_llama
+    version: mcc40m
     cache_dir: .module_cache/musiclm
     precision: "bf16-mixed"
-    num_workers: 8
+    num_workers: 6
     accelerator: auto
-    val_check_interval: 5000
+    val_check_interval: 2000
     max_steps: 1000000
-    batch_size: 64
-    learning_rate: 4.0e-3
-    warmup_steps: 5000
-    cycle_steps: 50000
+    batch_size: 128
+    learning_rate: 1.0e-3
+    warmup_steps: 10000
+    cycle_steps: 500000
     weight_decay: 0.01
     min_volume_threshold: 0.05
     loudness_ratio_threshold: 0.2
-    shuffle_buffer: 500
+    shuffle_buffer: 1000
     gradient_clip_val: 1.0
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
-ar_filtering: !new:recipes.musiclm.transforms.musiclm.ARFiltering
-    genre_stats_fname: "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/genre_quantile_stats.pkl"
-    semantic_diversity_range: (50, 100)
-    semantic_probs_range: (20, 100)
-
 train_dataset: !new:recipes.musiclm.datasets.mcc.WrappedMCC40MDataset
     url2index_list:
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.alternative-hip-hop"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.blues"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.childhood"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.chinese-style"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.classical"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.country"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.devotional"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.easy-listening"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.electronic"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.folk"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.hip-hop-rap"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.indie-folk"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.jazz"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.k-pop"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.new-age"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.others"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.pop"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.rock"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.soundtrack"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.techno"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.trance"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.world-music"
-    weights:
-        - 1.0
-        - 2.0
-        - 2.0
-        - 1.0
-        - 4.0
-        - 2.0
-        - 2.0
-        - 1.0
-        - 2.0
-        - 2.0
-        - 2.0
-        - 2.0
-        - 4.0
-        - 2.0
-        - 2.0
-        - 1.0
-        - 4.0
-        - 2.0
-        - 2.0
-        - 1.0
-        - 2.0
-        - 2.0
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/a.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/b.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/c.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/d.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/e.tsv"
+        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/f.tsv"
     sample_rate: !ref <extra_params[sample_rate]>
     duration: !ref <extra_params[duration]>
-    audio_key: "audio.npy"
     min_volume_threshold: !ref <run_opts[min_volume_threshold]>
     loudness_ratio_threshold: !ref <run_opts[loudness_ratio_threshold]>
-    ar_filtering: !ref <ar_filtering>
-    max_num_crops: 6
     resampled: True
     shardshuffle: True
     seed: !ref <seed>
@@ -124,19 +78,23 @@ pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.DataModule
     pin_memory: True
 
 model_config: !new:transformers.LlamaConfig
-    vocab_size: !ref <extra_params[wav2vec_codebook_size]> + <extra_params[mulan_num_rvq]> * <extra_params[mulan_codebook_size]> + 1
-    hidden_size: 1536
-    intermediate_size: 4128
+    bos_token_id: null
+    eos_token_id: null
+    pad_token_id: null
+    vocab_size: !ref <extra_params[mulan_num_rvq]> * <extra_params[mulan_codebook_size]>
+    embed_hidden_size: !ref <extra_params[wav2vec_hidden_size]>
+    hidden_size: 1024
+    intermediate_size: 2752
     num_hidden_layers: 24
-    num_attention_heads: 12
+    num_attention_heads: 16
     hidden_act: "silu"
-    max_position_embeddings: !ref <extra_params[mulan_num_rvq]> + <extra_params[wav2vec_frame_rate]> * <extra_params[duration]>
+    max_position_embeddings: !ref <extra_params[wav2vec_frame_rate]> * <extra_params[duration]>
     initializer_range: 0.02
     rms_norm_eps: 1e-6
     use_cache: False
-    num_logits: !ref <extra_params[wav2vec_codebook_size]>
+    add_cross_attention: True
 
-model_cls: !name:samantha.models.flash_llama.LlamaForCausalLM
+model_cls: !name:samantha.models.flash_llama.LlamaNonCausalModel
     config: !ref <model_config>
 
 optimizer_cls: !name:torch.optim.AdamW
@@ -151,12 +109,12 @@ scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupC
     cycle_steps: !ref <run_opts[cycle_steps]>
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
-pl_module: !new:recipes.musiclm.lightning.modules.SemanticModule
+pl_module: !new:recipes.musiclm.lightning.modules.SemanticDiffusionModule
     checkpointing: !ref <_checkpointing>
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
-    criterion_cls: !name:recipes.musiclm.lightning.modules.MaskedCrossEntropy
+    criterion_cls: !name:torch.nn.MSELoss
     extra_params: !ref <extra_params>
     required_modules:
         mulan:
@@ -172,10 +130,6 @@ pl_module: !new:recipes.musiclm.lightning.modules.SemanticModule
             - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/semantic.jit.pt
             - !name:recipes.musiclm.requires.model_initializer.init_wav2vec
               cache_dir: !ref <run_opts[cache_dir]>
-        semantic_centers:
-            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_10.npy
-            - !name:recipes.musiclm.requires.model_initializer.init_semantic_centers
-              cache_dir: !ref <run_opts[cache_dir]>
 
 logger:
     - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
@@ -188,16 +142,17 @@ logger:
       project: !ref <run_opts[log_name]>
       name: !ref <run_opts[version]>
 
+log_gradient_scaler: !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
+
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
       monitor: step
-      save_top_k: 50
+      save_top_k: 300
       every_n_train_steps: !ref <run_opts[val_check_interval]>
       mode: max
       filename: "{step:06d}-{tr_loss:.4f}-{val_loss_0:.4f}"
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: 'step'
-    - !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
 
 plugins:
     - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO

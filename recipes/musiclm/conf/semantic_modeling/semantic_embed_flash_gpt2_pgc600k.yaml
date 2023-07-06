@@ -14,29 +14,26 @@ _checkpointing: False
 extra_params:
     sample_rate: 24000
     duration: 10
-    wav2vec_codebook_size: 1024
+    wav2vec_embed_dim: 1024
     wav2vec_frame_rate: 25
-    soundstream_codebook_size: 1024
-    soundstream_frame_rate: 50
-    num_coarse: 4
-    semantic_type: best_rq
+    mulan_embed_dim: 512
 
 # running parameters
 run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
-    log_name: coarse_flash_llama
-    version: karaoke_best_rq
+    log_name: semantic_embed_flash_gpt2
+    version: pgc600k
     cache_dir: .module_cache/musiclm
     precision: "bf16-mixed"
     num_workers: 6
     accelerator: auto
-    val_check_interval: 5000
+    val_check_interval: 2000
     max_steps: 1000000
-    batch_size: 16
+    batch_size: 80
     learning_rate: 3.0e-4
-    warmup_steps: 10000
-    cycle_steps: 500000
+    warmup_steps: 2000
+    cycle_steps: 200000
     weight_decay: 0.01
     min_volume_threshold: 0.05
     loudness_ratio_threshold: 0.2
@@ -47,13 +44,13 @@ run_opts:
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
-train_dataset: !new:recipes.musiclm.datasets.karaoke.KaraokeDataset
-    urls: "pipe:hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/data/karaoke_for_singsong/shards-{0000..0130}.tar"
-    resampled: True
-    shardshuffle: True
+train_dataset: !new:recipes.musiclm.datasets.mcc.PGCDataset
     sample_rate: !ref <extra_params[sample_rate]>
     duration: !ref <extra_params[duration]>
     min_volume_threshold: !ref <run_opts[min_volume_threshold]>
+    loudness_ratio_threshold: !ref <run_opts[loudness_ratio_threshold]>
+    resampled: True
+    shardshuffle: True
 
 validation_dataset: !new:recipes.musiclm.datasets.karaoke.KaraokeDataset
     urls: "pipe:hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/data/karaoke_for_singsong/shards-0131.tar"
@@ -70,20 +67,24 @@ pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.DataModule
     num_workers: !ref <run_opts[num_workers]>
     pin_memory: True
 
-model_config: !new:transformers.LlamaConfig
-    vocab_size: !ref <extra_params[wav2vec_codebook_size]> + <extra_params[soundstream_codebook_size]> * <extra_params[num_coarse]> + 1
-    hidden_size: 1024
-    intermediate_size: 2752
-    num_hidden_layers: 24
-    num_attention_heads: 16
-    hidden_act: "silu"
-    max_position_embeddings: !ref <extra_params[wav2vec_frame_rate]> * <extra_params[duration]> + <extra_params[soundstream_frame_rate]> * <extra_params[num_coarse]> * <extra_params[duration]>
+model_config: !new:transformers.GPT2Config
+    vocab_size: 0
+    input_dim: !ref <extra_params[wav2vec_embed_dim]>
+    cond_dim: !ref <extra_params[mulan_embed_dim]>
+    n_positions: !ref <extra_params[duration]> * <extra_params[wav2vec_frame_rate]>
+    n_embd: 1024
+    n_layer: 24
+    n_head: 16
+    activation_function: gelu_new
+    resid_pdrop: 0.0
+    embd_pdrop: 0.0
+    attn_pdrop: 0.1
+    layer_norm_epsilon: 0.00001
     initializer_range: 0.02
-    rms_norm_eps: 1e-6
-    use_cache: False
-    num_logits: !ref <extra_params[soundstream_codebook_size]> * <extra_params[num_coarse]>
+    add_cross_attention: True
+    use_cache: !apply:operator.not_ [!ref <_checkpointing>]
 
-model_cls: !name:samantha.models.flash_llama.LlamaForCausalLM
+model_cls: !name:samantha.models.flash_gpt2.GPT2ForEmbedAR
     config: !ref <model_config>
 
 optimizer_cls: !name:torch.optim.AdamW
@@ -98,25 +99,22 @@ scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupC
     cycle_steps: !ref <run_opts[cycle_steps]>
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
-pl_module: !new:recipes.musiclm.lightning.modules.CoarseModule
+pl_module: !new:recipes.musiclm.lightning.modules.SemanticEmbedARModule
     checkpointing: !ref <_checkpointing>
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
-    criterion_cls: !name:recipes.musiclm.lightning.modules.MaskedCrossEntropy
+    criterion_cls: !name:torch.nn.MSELoss
     extra_params: !ref <extra_params>
     required_modules:
-        best_rq:
-            - /mnt/bn/audio-diffusion/ckpts/best_rq/step=011000.pt
-            - !name:recipes.musiclm.requires.model_initializer.init_best_rq
+        mulan:
+            - hdfs://harunava/home/byte_speech_sv/weitsung.lu/mulan_exp/MuLan_large/gpt_all/checkpoints/mulan-step=036000-median_rank_0=127-kaggle.ckpt
+            - !name:recipes.musiclm.requires.model_initializer.init_mulan
               cache_dir: !ref <run_opts[cache_dir]>
-        semantic_centers:
-            - /mnt/bn/zongyu-lq/ckpts/best_rq/best_rq_kmeans_minibatch_codebook.npy
-            - !name:recipes.musiclm.requires.model_initializer.init_semantic_centers
-              cache_dir: !ref <run_opts[cache_dir]>
-        soundstream:
-            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
-            - !name:recipes.musiclm.requires.model_initializer.init_soundstream
+              version: "g4"
+        wav2vec:
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/semantic.jit.pt
+            - !name:recipes.musiclm.requires.model_initializer.init_wav2vec
               cache_dir: !ref <run_opts[cache_dir]>
 
 logger:
@@ -125,10 +123,6 @@ logger:
       name: !ref <run_opts[log_name]>
       version: !ref <run_opts[version]>
       default_hp_metric: False
-    - !new:pytorch_lightning.loggers.wandb.WandbLogger
-      save_dir: !ref <run_opts[log_dir]>
-      project: !ref <run_opts[log_name]>
-      version: !ref <run_opts[version]>
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
@@ -152,7 +146,7 @@ trainer: !new:pytorch_lightning.Trainer
     num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
     deterministic: False
     enable_model_summary: True
-    log_every_n_steps: 50
+    log_every_n_steps: 100
     max_steps: !ref <run_opts[max_steps]>
     precision: !ref <run_opts[precision]>
     accumulate_grad_batches: 1

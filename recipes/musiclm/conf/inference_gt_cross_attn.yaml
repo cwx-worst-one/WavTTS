@@ -10,9 +10,9 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 
 extra_params:
     gt_infer_mode: "semantic->coarse->fine"  # ["mulan->semantic->coarse->fine", "semantic->coarse->fine", "coarse->fine"]
-    output_dir: generated_output/cross_attn_gt_infer
+    output_dir: generated_output/cross_attn_gt_infer_pgc600k_best_rq_layer12_step=025000
     semantic_ckpt: "/mnt/bn/zongyu-lq/logs/semantic_diffusion_flash_gpt2/mcc40m/checkpoints/step=004000-tr_loss=0.3553.ckpt"
-    coarse_ckpt: "/mnt/bn/zongyu-lq/logs/coarse_gpt2/karaoke_wav2vec_cross_attn/checkpoints/step=041000-val_accu_0=24.35.ckpt"
+    coarse_ckpt: "/mnt/bn/zongyu-lq/logs/coarse_flash_gpt2_cross_attn/pgc600k_best_rq_layer12/checkpoints/step=025000-tr_loss=3.1651-val_loss_0=3.2160.ckpt"
     fine_ckpt: "/mnt/bn/zongyu-lq/logs/fine_flash_llama/mcc40m/checkpoints/step=120000-val_accu_0=11.06.ckpt"
     sample_rate: 24000
     duration: 10
@@ -35,6 +35,8 @@ extra_params:
     coarse_temperature: 0.9
     fine_temperature: 0.8
     sample_mode: "gumbel"
+    semantic_type: best_rq
+    semantic_layer_idx: 12
 
 run_opts:
     fast_dev_run: False
@@ -49,22 +51,22 @@ run_opts:
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
-predict_dataset: !new:recipes.musiclm.datasets.karaoke.KaraokeDataset
-    urls: "pipe:hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/data/karaoke_for_singsong/shards-0131.tar"
-    nodesplitter: !name:recipes.musiclm.datamodules.webdataset.return_self
-    sample_rate: !ref <extra_params[sample_rate]>
-    duration: !ref <extra_params[duration]>
-    audio_key: "acc.npy"
-    sample_range_key: "acc_sample_range.npy"
-    min_volume_threshold: 0.05
+predict_dataset: !new:recipes.musiclm.datasets.plastic.PlasticDataset
 
-pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.DataModule
-    predict_dataset: !ref <predict_dataset>
+# dataloader configuration
+predict_dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <predict_dataset>
     batch_size: !ref <run_opts[batch_size]>
     num_workers: !ref <run_opts[num_workers]>
-    pin_memory: True
+    shuffle: False
+    drop_last: False
+    pin_memory: False
 
-pl_module: !new:recipes.musiclm.lightning.inference.GTCrossAttnInferenceModule
+# datamodule configuration
+pl_datamodule: !new:recipes.musiclm.datamodules.lit_datamodule.DataModule
+    predict_dataloader: !ref <predict_dataloader>
+
+pl_module: !new:recipes.musiclm.lightning.inference.InferenceGTCrossAttnModule
     extra_params: !ref <extra_params>
     required_modules:
         mulan:
@@ -79,6 +81,10 @@ pl_module: !new:recipes.musiclm.lightning.inference.GTCrossAttnInferenceModule
         wav2vec:
             - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/semantic.jit.pt
             - !name:recipes.musiclm.requires.model_initializer.init_wav2vec
+              cache_dir: !ref <run_opts[cache_dir]>
+        best_rq:
+            - /mnt/bn/zongyu-lq/logs/best_rq/pgc600k_25hz_4x8192_522m/checkpoints/step=075000-tr_loss=4.5369-val_loss_0=4.1857.pt
+            - !name:recipes.musiclm.requires.model_initializer.init_best_rq
               cache_dir: !ref <run_opts[cache_dir]>
         semantic_centers:
             - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_10.npy

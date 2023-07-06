@@ -403,3 +403,96 @@ class MCCTransforms(TransformBase):
             self._update_stats(skipped=True, message="No Valid Crop")
         else:
             self._update_stats(skipped=False)
+
+
+class PGCTransforms(TransformBase):
+    def __init__(
+        self,
+        n_samples: int,
+        sample_rate: int,
+        audio_key: str = "audio.npy",
+        normalize_audio: bool = True,
+        min_volume_threshold: float = 0.05,
+        loudness_ratio_threshold: float = 0.2,
+        max_num_crops: Optional[int] = None,    # if None, auto set based on audio length
+        crop_step_size: Optional[int] = None,   # if None, auto set based on n_samples
+    ) -> None:
+        super().__init__()
+        self.n_samples = n_samples
+        self.sample_rate = sample_rate
+        assert self.sample_rate == 24000
+        self.audio_key = audio_key
+        self.min_volume_threshold = min_volume_threshold
+        self.loudness_ratio_threshold = loudness_ratio_threshold
+        self.max_num_crops = max_num_crops
+        if crop_step_size is None:
+            crop_step_size = self.n_samples // 2
+        assert crop_step_size <= self.n_samples
+        self.crop_step_size = crop_step_size
+        self.crop_wing_span = self.n_samples // self.crop_step_size
+
+        self.is_loud = LoudnessCheck(
+            self.sample_rate,
+            self.min_volume_threshold,
+            self.loudness_ratio_threshold
+        )
+        base_transforms = [
+            ToTensor(),
+            SetAudioDimensions(),
+            NormalizeAudioToFloat32(),
+        ]
+        if normalize_audio:
+            base_transforms.append(NormalizeAudio())
+        self.base_transform = Compose(base_transforms)
+
+        self.random_pad = RandomPad(n_samples=n_samples)
+        self.random_crop = RandomResizedCrop(n_samples=n_samples)
+
+    def __call__(self, x: Dict[str, Any]) -> Generator:
+        if x["__index_data__"]["theme"] == "Sound Effect":
+            self._update_stats(skipped=True, message="Sound Effect")
+            return
+        audio = self.base_transform(x[self.audio_key])
+        if audio.size(1) < self.n_samples * 0.95:
+            self._update_stats(skipped=True, message="Audio Too Short")
+            return
+        else:            
+            audio = self.random_pad(audio)
+        # Determine possible crop starting points
+        num_windows = 1 + (audio.size(1) - self.n_samples) // self.crop_step_size
+        window_ids = list(range(num_windows))
+        random.shuffle(window_ids)
+        # Return up to max_num_crops
+        max_num_crops = self.max_num_crops
+        if max_num_crops is None:
+            max_num_crops = max(1, audio.size(1) // self.n_samples)
+        num_crops = 0
+        taboo = set()
+        for wid in window_ids:
+            if wid in taboo:
+                continue
+            st_sample = wid * self.crop_step_size
+            en_sample = st_sample + self.n_samples
+            cropped_audio = audio[:, st_sample : en_sample]
+            if not self.is_loud(cropped_audio):
+                continue
+            output = {
+                "audio": cropped_audio,
+                "meta": x["__index_data__"],
+                "sample_start_pos": st_sample,
+                "sample_rate": self.sample_rate
+            }
+            yield output
+            num_crops += 1
+            if num_crops >= max_num_crops:
+                break
+            # Avoid overlapping segments
+            for overlapped_wid in range(
+                max(0, wid - self.crop_wing_span + 1),
+                min(num_windows, wid + self.crop_wing_span),
+            ):
+                taboo.add(overlapped_wid)
+        if num_crops == 0:
+            self._update_stats(skipped=True, message="No Valid Crop")
+        else:
+            self._update_stats(skipped=False)
