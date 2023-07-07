@@ -88,6 +88,7 @@ class MusicLMTransforms(TransformBase):
         audio_key: str,
         sample_range_key: Optional[str] = None,
         min_volume_threshold: Optional[float] = 0.0,
+        normalize_audio: bool = True,
         num_crops: int = 1,
         num_tries: int = 5,
     ) -> None:
@@ -101,20 +102,22 @@ class MusicLMTransforms(TransformBase):
         self.to_tensor = ToTensor()
         self.audio_dim = SetAudioDimensions()
         self.normalize_audio_fp32 = NormalizeAudioToFloat32()
-        self.normalize_audio = NormalizeAudio()
         self.base_transform = Compose(
             [self.to_tensor, self.audio_dim, self.normalize_audio_fp32]
         )
-
+        self.normalize_audio = normalize_audio
+        self.audio_normalizer = NormalizeAudio()
         self.random_pad = RandomPad(n_samples=n_samples)
         self.random_crop = RandomResizedCrop(n_samples=n_samples)
 
     def __call__(self, x: Dict[str, torch.Tensor]) -> Generator:
         audio = self.base_transform(x[self.audio_key])
 
+        sample_range = None
         if self.sample_range_key is not None:
             sample_range = self.base_transform(x[self.sample_range_key])
-            audio = self.normalize_audio(audio, norm_tensor=sample_range)
+        if self.normalize_audio:
+            audio = self.audio_normalizer(audio, norm_tensor=sample_range)
 
         audio = self.random_pad(audio)
         # Return up to self.num_crops crops

@@ -84,6 +84,8 @@ class BaseModule(pl.LightningModule):
     def _shared_step(self, batch):
         if isinstance(batch, list):
             batch = batch[0]
+        elif isinstance(batch, dict):
+            batch = batch["audio"]
         if batch.dim() == 3:
             batch = batch.squeeze(1)
         # t = time.perf_counter()

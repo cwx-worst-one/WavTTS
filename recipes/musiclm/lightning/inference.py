@@ -102,6 +102,9 @@ class InferenceModule(BaseModule):
         self.requires = {}
         self.load_required_modules()
 
+    def setup(self, stage: str) -> None:
+        self.load_required_modules()
+
     def load_required_modules(self):
         for name, (hpath, initializer) in self.hparams.required_modules.items():
             self.requires.update(initializer(hpath, local_rank=self.local_rank))
@@ -126,17 +129,6 @@ class InferenceModule(BaseModule):
         )
         
         semantic_samples = self.semantic_module.predict(mulan_ids, self.extra_params)
-        
-        # semantic_samples = torch.stack([torch.load(f"/mnt/bn/audio-diffusion/data/semantic_sequences/semantic_sequences_text_prompt_collection_20230615/{categories[i]}/{slugify(prompts[i])[:128]}.pt") for i in range(bs)], dim=0).to("cuda")
-
-        # for i, semantic_sample in enumerate(semantic_samples):
-        #     wav_dir = os.path.join(self.extra_params.output_dir, categories[i])
-        #     os.makedirs(wav_dir, exist_ok=True)
-        #     fp = os.path.join(wav_dir, f"{slugify(prompts[i])[:128]}.pt")
-        #     torch.save(semantic_sample.cpu(), fp)
-        #     with open(f"{self.extra_params.output_dir}/text_prompt_collection_20230615.csv", "a") as ffp:
-        #         ffp.write(f'{categories[i]},"{prompts[i]}",{fp}\n')
-
         coarse_samples = self.coarse_module.predict(semantic_samples, self.extra_params)
         fine_samples = self.fine_module.predict(coarse_samples, self.extra_params)
         
@@ -151,12 +143,19 @@ class InferenceModule(BaseModule):
             1, 2
         )  # [b, t, n_codebook] -> [b, n_codebook, t]
         wavs = self.requires["ss_dec"](vqgan_inputs).squeeze(1)
+        if self.extra_params.save_cosine_similarity:
+            mulan_audio_embeds = self.requires["mulan_infer_fn"](model=self.requires["mulan"], music=wavs.float(), device=wavs.device)
+            cs = torch.nn.functional.cosine_similarity(mulan_embeds, mulan_audio_embeds, dim=1)
         for i, wav in enumerate(wavs):
             wav_dir = os.path.join(self.extra_params.output_dir, categories[i])
             os.makedirs(wav_dir, exist_ok=True)
-            fp = os.path.join(wav_dir, f"{format_name(prompts[i])}.{round}.wav")
+            fp = os.path.join(wav_dir, f"{format_name(prompts[i])}.{round}")
             print(f"[Saving] {fp}")
-            save_wav(wav.cpu(), fp, sr=24000)
+            if self.extra_params.save_cosine_similarity:
+                fp = fp + f".cs{cs[i]:.4f}"
+            if self.extra_params.save_semantic_samples:
+                torch.save(semantic_samples[i].cpu(), f"{fp}.pt")
+            save_wav(wav.cpu(), f"{fp}.wav", sr=24000)
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         for i in range(self.extra_params.num_rounds):

@@ -6,9 +6,10 @@
 
 ckpt_path: null
 
-seed: 1995
+seed: 555
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+_checkpointing: False
 
 extra_params:
     sample_rate: 24000
@@ -23,36 +24,28 @@ run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
     log_name: semantic_flash_llama
-    version: mcc7m
+    version: mcc7m_705m
     cache_dir: .module_cache/musiclm
     precision: "bf16-mixed"
     num_workers: 8
     accelerator: auto
+    val_check_interval: 2000
     max_steps: 1000000
-    batch_size: 144
-    learning_rate: 4.0e-4
-    warmup_steps: 2000
-    cycle_steps: 200000
+    batch_size: 64
+    learning_rate: 3.0e-4  # Adjust according to batch size
+    warmup_steps: 5000
+    cycle_steps: 50000
     weight_decay: 0.01
     min_volume_threshold: 0.05
-    loudness_ratio_threshold: 0.1
+    loudness_ratio_threshold: 0.2
+    shuffle_buffer: 256
     gradient_clip_val: 1.0
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
-karaoke_audio_transforms: !new:recipes.musiclm.transforms.musiclm.MusicLMTransforms
-    n_samples: !ref <extra_params[duration]> * <extra_params[sample_rate]>
-    audio_key: "acc.npy"
-    sample_range_key: "acc_sample_range.npy"
-    min_volume_threshold: !ref <run_opts[min_volume_threshold]>
-
-karaoke_preprocessor: !new:recipes.musiclm.preprocess.WebDatasetBufferPreprocessor
-    sample_rate: !ref <extra_params[sample_rate]>
-    transforms: !ref <karaoke_audio_transforms>
-
-mcc_train_dataset: !new:recipes.musiclm.datasets.mcc.MCC7MDataset
+train_dataset: !new:recipes.musiclm.datasets.mcc.MCC7MDataset
     sample_rate: !ref <extra_params[sample_rate]>
     sample_duration: !ref <extra_params[duration]>
     min_volume_threshold: !ref <run_opts[min_volume_threshold]>
@@ -60,36 +53,26 @@ mcc_train_dataset: !new:recipes.musiclm.datasets.mcc.MCC7MDataset
     meta_paths:
         - /mnt/bd/sami-mm-audios-shard1/metadata/15m_filter_trim_us_copy.txt
         - /mnt/bn/audio-diffusion/data/9m_aed/metalist.txt
-        - /mnt/bn/audio-diffusion/data/musiccaps/musiccaps_list.txt
 
 train_dataloader: !new:torch.utils.data.DataLoader
-    dataset: !ref <mcc_train_dataset>
+    dataset: !ref <train_dataset>
     batch_size: !ref <run_opts[batch_size]>
     num_workers: !ref <run_opts[num_workers]>
     shuffle: True
     drop_last: True
     pin_memory: True
 
-validation_web_dataset: !new:webdataset.WebDataset
+validation_dataset: !new:recipes.musiclm.datasets.karaoke.KaraokeDataset
     urls: "pipe:hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/data/karaoke_for_singsong/shards-0131.tar"
     nodesplitter: !name:recipes.musiclm.datamodules.webdataset.return_self
-
-validation_dataset: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
-    wds_dataset: !ref <validation_web_dataset>
-    pipeline:
-        - !name:webdataset.WebDataset.decode
-        - !name:webdataset.WebDataset.compose
-          - !name:recipes.musiclm.preprocess.WebDatasetBufferPreprocessor.train_buffer_preprocessor
-            - !ref <karaoke_preprocessor>
-        - !name:webdataset.WebDataset.to_tuple
-          - "audio.npy"
-        - !name:webdataset.WebDataset.batched
-          - !ref <run_opts[batch_size]>
+    sample_rate: !ref <extra_params[sample_rate]>
+    duration: !ref <extra_params[duration]>
+    min_volume_threshold: !ref <run_opts[min_volume_threshold]>
 
 validation_dataloader: !new:webdataset.WebLoader
     dataset: !ref <validation_dataset>
     shuffle: False
-    batch_size: null
+    batch_size: !ref <run_opts[batch_size]>
     num_workers: !ref <run_opts[num_workers]>
     pin_memory: True
 
@@ -99,10 +82,10 @@ pl_datamodule: !new:recipes.musiclm.datamodules.lit_datamodule.DataModule
 
 model_config: !new:transformers.LlamaConfig
     vocab_size: !ref <extra_params[wav2vec_codebook_size]> + <extra_params[mulan_num_rvq]> * <extra_params[mulan_codebook_size]> + 1
-    hidden_size: 1024
-    intermediate_size: 2752
+    hidden_size: 1536
+    intermediate_size: 4128
     num_hidden_layers: 24
-    num_attention_heads: 16
+    num_attention_heads: 12
     hidden_act: "silu"
     max_position_embeddings: !ref <extra_params[mulan_num_rvq]> + <extra_params[wav2vec_frame_rate]> * <extra_params[duration]>
     initializer_range: 0.02
@@ -126,7 +109,7 @@ scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupC
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
 pl_module: !new:recipes.musiclm.lightning.modules.SemanticModule
-    checkpointing: False
+    checkpointing: !ref <_checkpointing>
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
@@ -134,12 +117,12 @@ pl_module: !new:recipes.musiclm.lightning.modules.SemanticModule
     extra_params: !ref <extra_params>
     required_modules:
         mulan:
-            - hdfs://harunava/home/byte_speech_sv/weitsung.lu/mulan_exp/MuLan_large/g4/checkpoints/mulan-step=044800-median_rank_1=170-kaggle.ckpt
+            - hdfs://harunava/home/byte_speech_sv/weitsung.lu/mulan_exp/MuLan_large/gpt_all/checkpoints/mulan-step=036000-median_rank_0=127-kaggle.ckpt
             - !name:recipes.musiclm.requires.model_initializer.init_mulan
               cache_dir: !ref <run_opts[cache_dir]>
               version: "g4"
         mulan_centers:
-            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/mulan/kmeans_minibatch_codebook-mulan1b_g4_170-1024x12.npy
+            - hdfs://harunava/home/byte_speech_sv/dongguo/mulan/codebook/kmeans_minibatch_codebook-mulan1b_g4_mix_127-1024x12.npy
             - !name:recipes.musiclm.requires.model_initializer.init_mulan_centers
               cache_dir: !ref <run_opts[cache_dir]>
         wav2vec:
@@ -151,21 +134,24 @@ pl_module: !new:recipes.musiclm.lightning.modules.SemanticModule
             - !name:recipes.musiclm.requires.model_initializer.init_semantic_centers
               cache_dir: !ref <run_opts[cache_dir]>
 
-logger: !new:pytorch_lightning.loggers.TensorBoardLogger
-    save_dir: !ref <run_opts[log_dir]>
-    name: !ref <run_opts[log_name]>
-    version: !ref <run_opts[version]>
-    default_hp_metric: False
-
-log_gradient_scaler: !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
+logger:
+    - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
+      save_dir: !ref <run_opts[log_dir]>
+      name: !ref <run_opts[log_name]>
+      version: !ref <run_opts[version]>
+      default_hp_metric: False
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[log_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
-      save_top_k: 10
-      save_last: True
-      monitor: val_accu_0
+      monitor: step
+      save_top_k: 50
+      every_n_train_steps: !ref <run_opts[val_check_interval]>
       mode: max
-      filename: "{step:06d}-{val_accu_0:.2f}"
+      filename: "{step:06d}-{tr_loss:.4f}-{val_loss_0:.4f}"
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: 'step'
     - !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
@@ -187,7 +173,7 @@ trainer: !new:pytorch_lightning.Trainer
     precision: !ref <run_opts[precision]>
     accumulate_grad_batches: 1
     gradient_clip_val: !ref <run_opts[gradient_clip_val]>
-    val_check_interval: 1000
+    val_check_interval: !ref <run_opts[val_check_interval]>
     check_val_every_n_epoch: null
     num_sanity_val_steps: 2
     callbacks: !ref <callbacks>

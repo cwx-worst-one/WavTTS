@@ -37,6 +37,8 @@ extra_params:
     coarse_temperature: 0.9
     fine_temperature: 0.8
     sample_mode: "gumbel"
+    save_semantic_samples: False
+    save_cosine_similarity: False
 
 run_opts:
     fast_dev_run: False

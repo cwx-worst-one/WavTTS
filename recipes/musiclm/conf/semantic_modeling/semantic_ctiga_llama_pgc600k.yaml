@@ -13,7 +13,7 @@ _checkpointing: False
 
 extra_params:
     sample_rate: 24000
-    duration: 30
+    duration: 10
     wav2vec_codebook_size: 1024
     wav2vec_frame_rate: 25
     mulan_codebook_size: 1024
@@ -29,18 +29,18 @@ run_opts:
     version: !ref pgc600k_<extra_params[semantic_type]>_cb<extra_params[wav2vec_codebook_size]>
     cache_dir: .module_cache/musiclm
     precision: "16-mixed"
-    num_workers: 6
+    num_workers: 8
     accelerator: auto
     val_check_interval: 5000
     max_steps: 1000000
-    batch_size: 48
-    learning_rate: 3.0e-4
+    batch_size: 64
+    learning_rate: 4.0e-3
     warmup_steps: 5000
-    cycle_steps: 100000
-    weight_decay: 0.1
+    cycle_steps: 50000
+    weight_decay: 0.01
     min_volume_threshold: 0.05
     loudness_ratio_threshold: 0.2
-    shuffle_buffer: 512
+    shuffle_buffer: 256
     gradient_clip_val: 1.0
 
 ################################################################################
@@ -75,10 +75,10 @@ model_config: !new:s3a.providers.ctiga.models.gpt.GPT2Config
     vocab_size: !ref <extra_params[wav2vec_codebook_size]> + <extra_params[mulan_num_rvq]> * <extra_params[mulan_codebook_size]> + 1
     n_positions: 0
     max_position_embeddings: 0
-    n_embd: 1024
+    n_embd: 1536
     n_layer: 24
-    n_head: 8
-    n_inner: 2752
+    n_head: 12
+    n_inner: 4128
     use_rms_norm: True
     activation_function: "swiglu"
     resid_pdrop: 0.0
@@ -101,6 +101,7 @@ model_config: !new:s3a.providers.ctiga.models.gpt.GPT2Config
     fused_dropout_add_ln: True
     residual_in_fp32: True
     use_cache: !apply:operator.not_ [!ref <_checkpointing>]
+    num_logits: !ref <extra_params[wav2vec_codebook_size]>
 
 model_cls: !name:s3a.providers.ctiga.models.gpt.GPTLMHeadModel
     config: !ref <model_config>
@@ -157,7 +158,7 @@ logger:
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
       monitor: step
-      save_top_k: 100
+      save_top_k: 50
       every_n_train_steps: !ref <run_opts[val_check_interval]>
       mode: max
       filename: "{step:06d}-{tr_loss:.4f}-{val_loss_0:.4f}"

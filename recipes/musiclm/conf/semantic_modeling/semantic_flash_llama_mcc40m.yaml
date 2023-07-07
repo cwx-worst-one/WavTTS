@@ -29,16 +29,16 @@ run_opts:
     precision: "bf16-mixed"
     num_workers: 8
     accelerator: auto
-    val_check_interval: 5000
+    val_check_interval: 2000
     max_steps: 1000000
     batch_size: 64
-    learning_rate: 4.0e-3
+    learning_rate: 3.0e-4  # Adjust according to batch size
     warmup_steps: 5000
     cycle_steps: 50000
     weight_decay: 0.01
     min_volume_threshold: 0.05
     loudness_ratio_threshold: 0.2
-    shuffle_buffer: 500
+    shuffle_buffer: 256
     gradient_clip_val: 1.0
 
 ################################################################################
