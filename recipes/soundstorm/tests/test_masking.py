@@ -3,7 +3,10 @@ import numpy as np
 import pytest
 import torch
 
-from recipes.soundstorm.lightning.soundstorm import cosine_schedule, masking_scheme
+from recipes.soundstorm.lightning.masking_scheme import (
+    SoundStormMaskingScheme,
+    cosine_schedule,
+)
 from tests.unittests.models.utils import ids_tensor
 
 
@@ -28,6 +31,7 @@ def test_masking_scheme(batch_size):
         (batch_size, n_quantizers, max_seq_len), vocab_size=audio_codebook_size
     )
 
+    masking_scheme = SoundStormMaskingScheme(sample_q_uniformly=True, sample_t=False)
     masked_tokens, _, _ = masking_scheme(audio_tokens, mask_token_id)
     assert (masked_tokens == mask_token_id).sum() > 0
 

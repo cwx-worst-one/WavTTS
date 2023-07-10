@@ -11,10 +11,18 @@ from pytorch_lightning.utilities import grad_norm
 from tqdm import tqdm
 
 from recipes.musiclm.lightning.audio_model import SoundStreamModel
+from recipes.musiclm.lightning.modules import SemanticModule
 from recipes.musiclm.lightning.semantic_model import SemanticModel
+from recipes.musiclm.requires.model_initializer import (
+    init_mulan,
+    init_mulan_centers,
+    init_semantic_centers,
+    init_wav2vec,
+)
 from recipes.soundstorm.lightning.masking_scheme import MaskingScheme, cosine_schedule
 from samantha.models.conformer import Conformer, ConformerConfig  # noqa
 from samantha.models.llama import LlamaConfig, LlamaModel
+from samantha.utils.hparams import DotDict
 
 
 def upsample_tokens(token_ids: torch.Tensor, rate: int) -> torch.Tensor:
@@ -29,6 +37,164 @@ def upsample_tokens(token_ids: torch.Tensor, rate: int) -> torch.Tensor:
         torch.Tensor: _description_
     """
     return rearrange(token_ids.unsqueeze(dim=1).repeat(1, rate, 1), "b r s -> b (s r)")
+
+
+class SoundStormInference(pl.LightningModule):
+    def __init__(self, soundstorm_ckpt: str, semantic_ckpt: str):
+        super().__init__()
+
+        print(f"Loading SoundStorm model from {soundstorm_ckpt}...")
+        self.soundstorm = SoundStorm.load_from_checkpoint(
+            soundstorm_ckpt, strict=False
+        ).eval()
+
+        print(f"Loading Semantic model from {semantic_ckpt}...")
+        self.semantic_model = SemanticModule.load_from_checkpoint(semantic_ckpt).eval()
+
+        wav2vec = init_wav2vec(
+            "/mnt/bn/audio-diffusion/pretrained_models/w2v/2.1/semantic.jit.pt",
+            local_rank=0,
+        )
+        semantic_centers = init_semantic_centers(
+            "/mnt/bn/audio-diffusion/pretrained_models/w2v/2.1/centroids_epoch_10.npy",
+            local_rank=0,
+        )
+        self.semantic_model.requires.update(wav2vec)
+        self.semantic_model.requires.update(semantic_centers)
+
+        # self.semantic_model = SemanticModel().eval()
+        self.semantic_model.freeze()
+        self.semantic_model.frame_rate = 25
+        self.semantic_model.codebook_size = (
+            self.semantic_model.extra_params.wav2vec_codebook_size
+        )
+
+        ## Mulan Module
+        print("Loading MuLan model...")
+        mulan_module = init_mulan(
+            "/mnt/bn/audio-diffusion/pretrained_models/mulan-step=036000-median_rank_0=127-kaggle.ckpt",
+            local_rank=0,
+            version="g4",
+        )
+
+        mulan_centers = init_mulan_centers(
+            "/mnt/bn/audio-diffusion/pretrained_models/kmeans_minibatch_codebook-mulan1b_g4_mix_127-1024x12.npy",
+            local_rank=0,
+        )
+        self.requires = {}
+        self.requires.update(mulan_module)
+        self.requires.update(mulan_centers)
+
+    def sample_semantic_tokens(
+        self, mulan_tokens: torch.Tensor, duration: int, temperature: float
+    ) -> torch.Tensor:
+        hp = DotDict(self.semantic_model.hparams.extra_params)
+        hp.semantic_duration = duration
+        hp.semantic_temperature = temperature
+        hp.sample_mode = "gumbel"
+        return self.semantic_model.predict(mulan_tokens, hp)
+
+    def sample_mulan_tokens(self, text: List[str]):
+        text_embs = []
+        for t in text:
+            text_emb = self.requires["mulan_infer_fn"](
+                self.requires["mulan"], text=t, device="cuda"
+            )
+            text_embs.append(text_emb)
+
+        mulan_embeds = torch.cat(text_embs, dim=0)
+
+        mulan_ids, ds = self.requires["mulan_rvq_fn"](
+            mulan_embeds, self.requires["mulan_centers"]
+        )
+        return mulan_ids
+
+    @torch.no_grad()
+    def semantic2audio(
+        self,
+        semantic_tokens: torch.Tensor,
+        max_seq_len: int,
+        iterations: List[int],
+        score_strategies: List[str],
+        guidance_scale: Optional[float] = None,
+        sampled_t: Optional[int] = None,
+        temperatures: Optional[List[float]] = None,
+    ):
+        batch_size = semantic_tokens.shape[0]
+        pred_tokens = torch.empty(
+            batch_size,
+            self.soundstorm.n_quantizers,
+            0,
+            device=self.soundstorm.device,
+            dtype=torch.long,
+        )
+        ratio = self.soundstorm.semantic_to_audio_rate
+        samples_to_generate = semantic_tokens.shape[1] * ratio
+        semantic_window_size = max_seq_len // ratio
+        prefix_size = max_seq_len // 2
+        while pred_tokens.shape[2] < samples_to_generate:
+            if pred_tokens.shape[2] == 0:
+                st = 0
+                st_semantic = 0
+                en_semantic = st_semantic + semantic_window_size
+                this_prefix = None
+                this_prefix_size = 0
+            elif samples_to_generate - pred_tokens.shape[2] >= max_seq_len:
+                st = pred_tokens.shape[2] - prefix_size
+                st_semantic = st // ratio
+                en_semantic = st_semantic + semantic_window_size
+                this_prefix = pred_tokens[..., st : st + prefix_size]
+                this_prefix_size = prefix_size
+            else:
+                this_prefix_size = max_seq_len - (
+                    samples_to_generate - pred_tokens.shape[2]
+                )
+                st = pred_tokens.shape[2] - this_prefix_size
+                st_semantic = st // ratio
+                en_semantic = st_semantic + semantic_window_size
+                this_prefix = pred_tokens[..., st : st + this_prefix_size]
+            this_pred_tokens, _ = self.soundstorm.iterative_decoding(
+                semantic_tokens[..., st_semantic:en_semantic],
+                max_seq_len=max_seq_len,
+                iterations=iterations,
+                score_strategies=score_strategies,
+                guidance_scale=guidance_scale,
+                temperatures=temperatures,
+                sampled_t=sampled_t,
+                prefix_tokens=this_prefix,
+            )
+            pred_tokens = torch.cat(
+                (pred_tokens, this_pred_tokens[..., this_prefix_size:]), dim=2
+            )
+        return (self.soundstorm.audio_model.decode(pred_tokens), semantic_tokens)
+
+    @torch.no_grad()
+    def generate(
+        self,
+        text: str,
+        batch_size: int,
+        max_seq_len: int,
+        iterations: List[int],
+        score_strategies: List[str],
+        guidance_scale: float,
+        sampled_t: Optional[int] = None,
+        temperatures: Optional[List[float]] = None,
+        semantic_temperature: float = 0.9,
+    ):
+        text = [text] * batch_size
+        mulan_tokens = self.sample_mulan_tokens(text)
+        semantic_tokens = self.sample_semantic_tokens(
+            mulan_tokens, duration=10, temperature=semantic_temperature
+        )
+        return self.semantic2audio(
+            semantic_tokens,
+            max_seq_len,
+            iterations,
+            score_strategies,
+            guidance_scale,
+            sampled_t,
+            temperatures,
+        )
 
 
 class SoundStorm(pl.LightningModule):
@@ -54,12 +220,14 @@ class SoundStorm(pl.LightningModule):
         audio_prompting: bool,
         masking_scheme: MaskingScheme,
         fine_quantizer_embedding_dropout: bool,
+        conditioning_dropout: float,
         optimizer_class,
         scheduler_class,
         attention_kwargs: dict = {},
     ):
         super().__init__()
         self.save_hyperparameters()
+
         self.semantic_model = SemanticModel().eval()
         self.semantic_model.freeze()
         self.audio_model = SoundStreamModel(sample_rate).eval()
@@ -72,6 +240,7 @@ class SoundStorm(pl.LightningModule):
         self.n_quantizers = self.audio_model.num_quantizers
         self.out_dim = self.audio_model.codebook_size
         self.mask_token_id = self.audio_model.codebook_size
+        self.semantic_uncond_token_id = self.semantic_model.codebook_size
 
         # self.config = ConformerConfig(
         #     n_embd=n_embd,
@@ -91,7 +260,7 @@ class SoundStorm(pl.LightningModule):
             attention_kwargs=attention_kwargs,
         )
         self.semantic_embedding = nn.Embedding(
-            self.semantic_model.codebook_size, self.hparams.n_embd
+            self.semantic_model.codebook_size + 1, self.hparams.n_embd
         )
         self.audio_embedding = nn.ModuleList(
             [
@@ -152,26 +321,11 @@ class SoundStorm(pl.LightningModule):
         return audio_embs
 
     def prepare_inputs(self, batch: Tuple[torch.Tensor]) -> Tuple[torch.Tensor]:
-        if len(batch) == 1:
-            audio = batch[0]
-            with torch.no_grad():
-                audio_tokens = self.audio_model(audio)
-                semantic_tokens = self.semantic_model(audio)
-            return semantic_tokens, audio_tokens, audio
-        elif len(batch) == 3:
-            # for preprocessed datasets
-            semantic_tokens, audio_tokens, audio = batch
-            n_audio_frames = (
-                self.hparams.n_audio_samples // self.hparams.sample_rate
-            ) * self.audio_model.frame_rate
-            n_semantic_frames = (
-                self.hparams.n_audio_samples // self.hparams.sample_rate
-            ) * self.semantic_model.frame_rate
-            return (
-                semantic_tokens[:, :n_semantic_frames],
-                audio_tokens[:, :, :n_audio_frames],
-                audio[..., : self.hparams.n_audio_samples],
-            )
+        audio = batch[0]
+        with torch.no_grad():
+            audio_tokens = self.audio_model(audio)
+            semantic_tokens = self.semantic_model(audio)
+        return semantic_tokens, audio_tokens, audio
 
     def forward(
         self,
@@ -180,6 +334,9 @@ class SoundStorm(pl.LightningModule):
         selected_qs: torch.Tensor,
     ) -> torch.Tensor:
         """Forward pass of the model, given a batch of audio.
+
+        NOTE: Returns a tensor of logits of the quantizer heads listed in `selected_qs`,
+        so the quantizer dimension may not line up linearly!
 
         At the input side, we interleave the time-aligned conditioning tokens
         with the SoundStream tokens at the frame level, embed the resulting
@@ -204,6 +361,12 @@ class SoundStorm(pl.LightningModule):
         Returns:
             torch.Tensor: _description_
         """
+        if self.training:
+            batch_dropout = (
+                torch.rand(semantic_tokens.shape[0]) < self.hparams.conditioning_dropout
+            )
+            semantic_tokens[batch_dropout] = self.semantic_uncond_token_id
+
         semantic_tokens = upsample_tokens(semantic_tokens, self.semantic_to_audio_rate)
         semantic_emb = self.semantic_embedding(semantic_tokens)
         audio_embs = self.prepare_audio_embeddings(audio_tokens, selected_qs)
@@ -213,7 +376,9 @@ class SoundStorm(pl.LightningModule):
 
         x = self.transformer(cont_embeddings)
         logits = []
-        for h in self.heads:
+
+        selected_heads = [self.heads[q] for q in selected_qs]
+        for h in selected_heads:
             logits.append(h(x))
         return torch.stack(logits, dim=1)
 
@@ -295,10 +460,12 @@ class SoundStorm(pl.LightningModule):
         max_seq_len: int,
         iterations: List[int],
         score_strategies: List[str],
-        temperature: float = 1.0,
+        guidance_scale: float,
+        temperatures: Optional[List[float]] = None,
         sampled_t: Optional[int] = None,
         seed_tokens: Optional[torch.Tensor] = None,
         prefix_tokens: Optional[torch.Tensor] = None,
+        debug: bool = False,
     ) -> torch.Tensor:
         """Iterative decoding scheme from the SoundStorm/MaskGIT papers.
 
@@ -343,6 +510,9 @@ class SoundStorm(pl.LightningModule):
             iterations = [max(int(i * ratio), 1) for i in iterations]
             audio_tokens[:, :, : prefix_tokens.shape[2]] = prefix_tokens
 
+        if temperatures is None:
+            temperatures = [1.0] * self.n_quantizers
+
         metrics = defaultdict(list)
         for q in tqdm(
             range(start_quantizer, self.n_quantizers),
@@ -350,13 +520,26 @@ class SoundStorm(pl.LightningModule):
         ):
             q_iter = iterations[q]
             q_score_strategy = score_strategies[q]
-            q_temperature = temperature
+            q_temperature = temperatures[q]
             ratios = torch.linspace(0, 1.0, q_iter + 1)[1:]
             cos_ratios = cosine_schedule(ratios)
             quantizers = torch.LongTensor([q] * batch_size).to(semantic_tokens.device)
             for step_idx, ratio in enumerate(cos_ratios):
                 logits = self.forward(semantic_tokens, audio_tokens, quantizers)
-                probs = logits[:, q].softmax(dim=-1)
+
+                if guidance_scale is not None:
+                    uncond_semantic_tokens = torch.full_like(
+                        semantic_tokens, self.semantic_uncond_token_id
+                    )
+                    uncond_logits = self.forward(
+                        uncond_semantic_tokens, audio_tokens, quantizers
+                    )
+                    logits = (
+                        guidance_scale * logits + (1 - guidance_scale) * uncond_logits
+                    )
+
+                q_logits = logits[:, 0]
+                probs = q_logits.softmax(dim=-1)
                 masked_positions = audio_tokens[:, q] == self.mask_token_id
 
                 if masked_positions.sum() == 0:
@@ -371,7 +554,7 @@ class SoundStorm(pl.LightningModule):
                 else:
 
                     # sample candidates first
-                    probs_scaled = (logits[:, q] / q_temperature).softmax(dim=-1)
+                    probs_scaled = (q_logits / q_temperature).softmax(dim=-1)
                     sampled_tokens = torch.distributions.categorical.Categorical(
                         probs_scaled
                     ).sample()
@@ -402,16 +585,24 @@ class SoundStorm(pl.LightningModule):
                         raise ValueError(f"Unknown score strategy: {q_score_strategy}")
 
                     # keep only the top k scores
-                    tokens_left = masked_positions.sum()
+                    # we assume an equal unmasking schedule, so we simply take the number
+                    # of masked positions of the first batch element as our reference
+                    tokens_left = masked_positions[0].sum()
                     tokens_unmasked = masked_positions.shape[-1] - tokens_left
                     topk_tokens = ((1 - ratio) * masked_positions.shape[-1]).long()
-                    topk_tokens = max(topk_tokens - tokens_unmasked, 1)
+                    topk_tokens = topk_tokens - tokens_unmasked
+
+                    # always select at least 1
+                    topk_tokens = max(topk_tokens, 1)
+                    # select the topk, otherwise the remainder
                     topk_tokens = min(topk_tokens, tokens_left)
 
                     # don't select topk of previously sampled tokens
                     scores = torch.where(
                         masked_positions, scores, -torch.finfo(scores.dtype).max
                     )
+
+                    # batched topk
                     topk_probs, topk_indices = scores.topk(topk_tokens, dim=-1)
 
                     # create a mask that is True for all scores that meet the confidence criterium
@@ -426,13 +617,14 @@ class SoundStorm(pl.LightningModule):
                         fill_positions, sampled_tokens, audio_tokens[:, q]
                     )
 
-                    metrics["audio_tokens"].append(audio_tokens.clone().cpu())
-                    metrics["sampled_tokens"].append(sampled_tokens.clone().cpu())
-                    metrics["scores"].append(scores.clone().cpu())
-                    metrics["probs"].append(probs.clone().cpu())
-                    metrics["topk_probs"].append(topk_probs.clone().cpu())
-                    metrics["topk_indices"].append(topk_indices.clone().cpu())
-                    metrics["tokens_left"].append(tokens_left)
+                    if debug:
+                        metrics["audio_tokens"].append(audio_tokens.clone().cpu())
+                        metrics["sampled_tokens"].append(sampled_tokens.clone().cpu())
+                        metrics["scores"].append(scores.clone().cpu())
+                        metrics["probs"].append(probs.clone().cpu())
+                        metrics["topk_probs"].append(topk_probs.clone().cpu())
+                        metrics["topk_indices"].append(topk_indices.clone().cpu())
+                        metrics["tokens_left"].append(tokens_left)
         return audio_tokens, metrics
 
     def training_step(self, batch, batch_idx):

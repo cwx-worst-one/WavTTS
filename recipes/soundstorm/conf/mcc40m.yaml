@@ -11,7 +11,7 @@ data_params:
 # training parameters
 training_params:
     max_steps: 1000000
-    batch_size: 14 # 10 for v100, 24 for A100
+    batch_size: 56 # 10 for v100, 24 for A100
     base_lr: 4.0e-4
     warmup_steps: 3000
     hold_steps: 30000
@@ -97,12 +97,13 @@ pl_module: !new:recipes.soundstorm.lightning.soundstorm.SoundStorm
     sample_rate: !ref <data_params[sample_rate]>
     n_embd: 1536
     n_head: 12
-    n_layer: 48
+    n_layer: 18
     conv_kernel_size: 5
     n_audio_samples: !ref <data_params[n_audio_samples]>
     audio_prompting: False
     masking_scheme: !ref <masking_scheme>
     fine_quantizer_embedding_dropout: True
+    conditioning_dropout: 0.1
     attention_kwargs:
         enable_flash: True
         enable_mem_efficient: True  # only for V100

@@ -1,13 +1,15 @@
 import pytest
 import torch
 
-from recipes.soundstorm.lightning.soundstorm import SoundStorm, cosine_schedule
+from recipes.soundstorm.lightning.masking_scheme import SoundStormMaskingScheme
+from recipes.soundstorm.lightning.soundstorm import SoundStorm
 from tests.helpers.testing_utils import torch_device
 from tests.unittests.models.utils import ids_tensor
 
 
 @pytest.fixture
 def soundstorm_model():
+    masking_scheme = SoundStormMaskingScheme(sample_q_uniformly=True, sample_t=False)
     return (
         SoundStorm(
             sample_rate=24000,
@@ -16,8 +18,10 @@ def soundstorm_model():
             n_layer=2,
             conv_kernel_size=5,
             n_audio_samples=240000,
-            sample_q_uniformly=False,
             audio_prompting=False,
+            masking_scheme=masking_scheme,
+            fine_quantizer_embedding_dropout=True,
+            conditioning_dropout=0.2,
             optimizer_class=None,
             scheduler_class=None,
             attention_kwargs={},
@@ -27,10 +31,11 @@ def soundstorm_model():
     )
 
 
-@pytest.mark.parametrize("batch_size", [1])
+@pytest.mark.parametrize("batch_size", [1, 32])
 def test_decoding(soundstorm_model: SoundStorm, batch_size):
     vocab_size = 1024
     n_sec = 10
+    guidance_scale = 4.0
     audio_seq_len = soundstorm_model.audio_model.frame_rate * n_sec
     semantic_tokens = ids_tensor(
         (batch_size, soundstorm_model.semantic_model.frame_rate * n_sec),
@@ -38,9 +43,14 @@ def test_decoding(soundstorm_model: SoundStorm, batch_size):
         device=torch_device,
     )
 
-    iterations = [16] + [1] * 15
+    iterations = [32, 32, 32, 32, 8, 8, 8, 8, 1, 1, 1, 1]
+    score_strategies = ["maskgit"] * len(iterations)
     sampled_audio_tokens, _ = soundstorm_model.iterative_decoding(
-        semantic_tokens, max_seq_len=audio_seq_len, iterations=iterations
+        semantic_tokens,
+        max_seq_len=audio_seq_len,
+        iterations=iterations,
+        score_strategies=score_strategies,
+        guidance_scale=guidance_scale,
     )
 
     assert sampled_audio_tokens.shape == (

@@ -11,14 +11,14 @@ data_params:
 # training parameters
 training_params:
     max_steps: 1000000
-    batch_size: 44 # 10 for v100, 128 for A100
+    batch_size: 56 # 10 for v100, 24 for A100
     base_lr: 4.0e-4
     warmup_steps: 3000
     hold_steps: 30000
     decay_steps: 3000000
-    weight_decay: 0.00000001
+    weight_decay: 0.01
     betas: (0.9, 0.98)
-    shuffle_buffer: 512
+    shuffle_buffer: 1000
     gradient_clip_val: 1.0
 
 
@@ -73,7 +73,7 @@ karaoke_train_dataset: !apply:samantha.utils.webdataset.apply_webdataset_pipelin
         - !name:webdataset.WebDataset.shuffle
           - !ref <training_params[shuffle_buffer]>
         - !name:webdataset.WebDataset.to_tuple
-          - "audio.npy"
+          - "audio"
         - !name:webdataset.WebDataset.batched
           - !ref <training_params[batch_size]>
 
@@ -106,7 +106,7 @@ playlist_train_dataset: !apply:samantha.utils.webdataset.apply_webdataset_pipeli
         - !name:webdataset.WebDataset.shuffle
           - !ref <training_params[shuffle_buffer]>
         - !name:webdataset.WebDataset.to_tuple
-          - "audio.npy"
+          - "audio"
         - !name:webdataset.WebDataset.batched
           - !ref <training_params[batch_size]>
 
@@ -202,14 +202,15 @@ masking_scheme: !new:recipes.soundstorm.lightning.masking_scheme.DucMaskingSchem
 
 pl_module: !new:recipes.soundstorm.lightning.soundstorm.SoundStorm
     sample_rate: !ref <data_params[sample_rate]>
-    n_embd: 1024
-    n_head: 16
-    n_layer: 44
+    n_embd: 1536
+    n_head: 12
+    n_layer: 18
     conv_kernel_size: 5
     n_audio_samples: !ref <data_params[n_audio_samples]>
     audio_prompting: False
     masking_scheme: !ref <masking_scheme>
     fine_quantizer_embedding_dropout: True
+    conditioning_dropout: 0.1
     attention_kwargs:
         enable_flash: True
         enable_mem_efficient: True  # only for V100

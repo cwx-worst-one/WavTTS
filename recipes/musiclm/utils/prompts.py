@@ -4,8 +4,8 @@ from tqdm import tqdm
 from webdataset import WebDataset
 
 
-def gather_prompts(
-    mulan_model, prompts_group: str, direct_prompt: str, batch_size: int, device: str
+def gather_text_prompts(
+    prompts_group: str, direct_prompt: str, batch_size: int
 ):
     items = []
     if prompts_group in ["google", "all"]:
@@ -71,6 +71,21 @@ def gather_prompts(
         for _, row in df.iterrows():
             items.append(["audio prompt (musiccaps)", row["text"]])
 
+    prompts = []
+    categories = []
+    pbar = tqdm(items)
+    for item in pbar:
+        pbar.set_description("Extracting mulan text embeds...")
+        prompts.append(item[1])
+        categories.append(item[0])
+    return prompts, categories
+
+
+def gather_prompts(
+    mulan_model, prompts_group: str, direct_prompt: str, batch_size: int, device: str
+):
+    items = gather_text_prompts(prompts_group, direct_prompt, batch_size)
+    
     text_embs = []
     prompts = []
     categories = []
