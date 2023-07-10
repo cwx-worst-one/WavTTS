@@ -1,10 +1,11 @@
-import numpy as np
-import os
-from tqdm import tqdm
-from glob import glob
-from sklearn.cluster import MiniBatchKMeans
 import multiprocessing
+import os
 import time
+from glob import glob
+
+import numpy as np
+from sklearn.cluster import MiniBatchKMeans
+from tqdm import tqdm
 
 np.random.seed(2023)
 bucket_size = 900000
@@ -19,12 +20,7 @@ TEST_LENGTH = testset.shape[0]
 TRAIN_LENGTH = trainset.shape[0]
 
 
-def find_codebook(
-    trainset,
-    testset,
-    codebook_size=1024,
-    multiplier=1,
-):
+def find_codebook(trainset, testset, codebook_size=1024, multiplier=1):
 
     batch_size = 256 * multiprocessing.cpu_count()
 
@@ -55,10 +51,8 @@ def find_codebook(
 
     codebook = codebook / multiplier
     file_name = "best_rq_kmeans_minibatch_codebook.npy"
-    np.save(
-        os.path.join("/mnt/bn/zongyu-lq/ckpts/best_rq", file_name),
-        codebook,
-    )
+    np.save(os.path.join("/mnt/bn/zongyu-lq/ckpts/best_rq", file_name), codebook)
+
 
 if __name__ == "__main__":
     find_codebook(trainset, testset)

@@ -190,6 +190,15 @@ class BaseModule(pl.LightningModule):
         return output
 
     @torch.no_grad()
+    def get_wav2vec_embeds(self, x):
+        b, t = x.size()
+        feats, feat_mask = self.requires["ssl_frontend"](
+            x, torch.LongTensor([t]).repeat([b]).to(x.device)
+        )
+        wav2vec_embeds, _ = self.requires["semantic"](feats, feat_mask)
+        return wav2vec_embeds
+
+    @torch.no_grad()
     def get_wav2vec_tokens(self, x):
         wav2vec_tokens = w2v_bert_tokenization(
             frontend=self.requires["ssl_frontend"],
@@ -200,26 +209,19 @@ class BaseModule(pl.LightningModule):
         )
         return wav2vec_tokens
 
-    def _compute_distance(self, x, y):
-        x_norms = torch.sum(x**2, dim=1).view(-1, 1)
-        y_norms = torch.sum(y**2, dim=1).view(1, -1)
-        distances = x_norms - 2 * torch.mm(x, y.transpose(0, 1)) + y_norms
-        return distances
-
-    def _compute_codes(self, points):
-        b, t, d = points.size()
-        distances = self._compute_distance(
-            rearrange(points, "b t d -> (b t) d"), self.requires["semantic_centers"]
-        )
-        _, min_ind = torch.min(distances, dim=1)
-        return rearrange(min_ind, "(b t) -> b t", b=b)
+    @torch.no_grad()
+    def get_wav2vec_embeds_from_tokens(self, x):
+        wav2vec_tokens = self.get_wav2vec_tokens(x)
+        wav2vec_embeds = self.requires["semantic_centers"][wav2vec_tokens]
+        return wav2vec_embeds
 
     @torch.no_grad()
-    def get_best_rq_embeds(self, x):
-        best_rq_embeds = self.requires["semantic"].get_latent(
-            x, self.extra_params.semantic_layer_idx
-        )
-        return best_rq_embeds.contiguous()
+    def get_mert_embeds(self, x):
+        output_emb = self.requires["semantic"](
+            x, output_hidden_states=True
+        ).hidden_states[12]
+        return output_emb
+
 
     def _compute_distance(self, x, y):
         x_norms = torch.sum(x**2, dim=1).view(-1, 1)
@@ -263,28 +265,6 @@ class BaseModule(pl.LightningModule):
         melspec_embeds = (melspec_embeds - cmvn[0]) / cmvn[1]
         codes = self._compute_codes(melspec_embeds)
         return codes
-
-    @torch.no_grad()
-    def get_wav2vec_embeds(self, x):
-        b, t = x.size()
-        feats, feat_mask = self.requires["ssl_frontend"](
-            x, torch.LongTensor([t]).repeat([b]).to(x.device)
-        )
-        wav2vec_embeds, _ = self.requires["semantic"](feats, feat_mask)
-        return wav2vec_embeds
-
-    @torch.no_grad()
-    def get_wav2vec_embeds_from_tokens(self, x):
-        wav2vec_tokens = self.get_wav2vec_tokens(x)
-        wav2vec_embeds = self.requires["semantic_centers"][wav2vec_tokens]
-        return wav2vec_embeds
-
-    @torch.no_grad()
-    def get_mert_embeds(self, x):
-        output_emb = self.requires["semantic"](
-            x, output_hidden_states=True
-        ).hidden_states[12]
-        return output_emb
 
 
 class SemanticModule(BaseModule):

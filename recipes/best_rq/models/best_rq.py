@@ -1,19 +1,17 @@
 import torch
-from torch import nn, einsum
 from einops import rearrange
-from recipes.best_rq.models.flash_conformer import Wav2Vec2ConformerEncoder, Wav2Vec2ConformerConfig
+from torch import einsum, nn
+
+from recipes.best_rq.models.flash_conformer import (
+    Wav2Vec2ConformerConfig,
+    Wav2Vec2ConformerEncoder,
+)
 
 
 class RandomProjectionQuantizerV2(nn.Module):
-    """ Random projection and codebook lookup module """
+    """Random projection and codebook lookup module"""
 
-    def __init__(
-        self,
-        input_dim,
-        codebook_dim,
-        codebook_size,
-        num_quantizers=1,
-    ):
+    def __init__(self, input_dim, codebook_dim, codebook_size, num_quantizers=1):
         super().__init__()
 
         # randomly initialized projection
@@ -73,23 +71,28 @@ class Conv2dSubsampling(nn.Module):
 
     """
 
-    def __init__(
-        self, 
-        idim, 
-        odim, 
-        conv_layers,
-        kernel_size=5, 
-        input_channel=1
-    ):
+    def __init__(self, idim, odim, conv_layers, kernel_size=5, input_channel=1):
         """Construct an Conv2dSubsampling object."""
         super(Conv2dSubsampling, self).__init__()
         assert len(conv_layers) == 2
-        
+
         self.kernel_size = kernel_size
         self.conv = nn.Sequential(
-            nn.Conv2d(input_channel, conv_layers[0], self.kernel_size, 2, self.kernel_size // 2),
+            nn.Conv2d(
+                input_channel,
+                conv_layers[0],
+                self.kernel_size,
+                2,
+                self.kernel_size // 2,
+            ),
             nn.ReLU(),
-            nn.Conv2d(conv_layers[0], conv_layers[1], self.kernel_size, 2, self.kernel_size // 2),
+            nn.Conv2d(
+                conv_layers[0],
+                conv_layers[1],
+                self.kernel_size,
+                2,
+                self.kernel_size // 2,
+            ),
             nn.ReLU(),
         )
         self.conv_out_size = conv_layers[1] * (idim // 2 // 2)
@@ -115,7 +118,6 @@ class Conv2dSubsampling(nn.Module):
 
 
 class BestRqV2(nn.Module):
-
     def __init__(
         self,
         codebook_dim=16,
@@ -137,10 +139,7 @@ class BestRqV2(nn.Module):
 
         # random quantizer
         self.quantizer = RandomProjectionQuantizerV2(
-            n_mels * 4,
-            codebook_dim,
-            self.codebook_size,
-            self.n_softmax,
+            n_mels * 4, codebook_dim, self.codebook_size, self.n_softmax
         )
 
         # two convolution layers + one projection layer
@@ -159,12 +158,12 @@ class BestRqV2(nn.Module):
 
         # projection
         self.linear = nn.Linear(hidden_size, codebook_size * self.n_softmax)
-        
+
         # loss function
         self.criterion = nn.CrossEntropyLoss()
 
     def encoder(self, x):
-        """ 2-layer conv + w2v-conformer """
+        """2-layer conv + w2v-conformer"""
         x = self.conv(x)
         emb = self.w2v_conformer(x)["last_hidden_state"]
         logits = self.linear(emb)
@@ -185,9 +184,17 @@ class BestRqV2(nn.Module):
         target_tokens = self.quantizer(
             rearrange(feature, "b f (t s) -> b t (s f)", s=4)
         )
-        num_uni_code = sum(
-            [len(target_tokens[i, :, j].unique()) for i in range(bs) for j in range(self.n_softmax)]
-        ) / bs / self.n_softmax
+        num_uni_code = (
+            sum(
+                [
+                    len(target_tokens[i, :, j].unique())
+                    for i in range(bs)
+                    for j in range(self.n_softmax)
+                ]
+            )
+            / bs
+            / self.n_softmax
+        )
         # masking
         logits = self.encoder(masked_feature)
         # return logits and loss
@@ -201,20 +208,14 @@ class BestRqV2(nn.Module):
             "logits": logits,
             "loss": loss,
             "accu": accu,
-            "num_uni_code": num_uni_code
+            "num_uni_code": num_uni_code,
         }
 
 
 class RandomProjectionQuantizer(nn.Module):
-    """ Random projection and codebook lookup module """
+    """Random projection and codebook lookup module"""
 
-    def __init__(
-        self,
-        input_dim,
-        codebook_dim,
-        codebook_size,
-        seed=142,
-        ):
+    def __init__(self, input_dim, codebook_dim, codebook_size, seed=142):
         super().__init__()
 
         # random seed
@@ -271,7 +272,6 @@ class RandomProjectionQuantizer(nn.Module):
 
 
 class BestRq(nn.Module):
-
     def __init__(
         self,
         codebook_dim=16,
@@ -291,9 +291,7 @@ class BestRq(nn.Module):
 
         # random quantizer
         self.quantizer = RandomProjectionQuantizer(
-            n_mels * 4,
-            codebook_dim,
-            self.codebook_size,
+            n_mels * 4, codebook_dim, self.codebook_size
         )
 
         # two convolution layers + one projection layer
@@ -312,12 +310,12 @@ class BestRq(nn.Module):
         self.input_norm = nn.LayerNorm(n_mels)
         # projection
         self.linear = nn.Linear(encoder_dim, codebook_size)
-        
+
         # loss function
         self.criterion = nn.CrossEntropyLoss()
 
     def encoder(self, x):
-        """ 2-layer conv + w2v-conformer """
+        """2-layer conv + w2v-conformer"""
         x = self.conv(x)
         emb = self.w2v_conformer(x)["last_hidden_state"]
         logits = self.linear(emb)
@@ -338,9 +336,17 @@ class BestRq(nn.Module):
         target_tokens = self.quantizer(
             rearrange(feature, "b f (t s) -> b t (s f)", s=4)
         )
-        num_uni_code = sum(
-            [len(target_tokens[i, :, j].unique()) for i in range(bs) for j in range(self.n_softmax)]
-        ) / bs / self.n_softmax
+        num_uni_code = (
+            sum(
+                [
+                    len(target_tokens[i, :, j].unique())
+                    for i in range(bs)
+                    for j in range(self.n_softmax)
+                ]
+            )
+            / bs
+            / self.n_softmax
+        )
         # masking
         logits = self.encoder(masked_feature)
         # return logits and loss
@@ -354,5 +360,5 @@ class BestRq(nn.Module):
             "logits": logits,
             "loss": loss,
             "accu": accu,
-            "num_uni_code": num_uni_code
+            "num_uni_code": num_uni_code,
         }

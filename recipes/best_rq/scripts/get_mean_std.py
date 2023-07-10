@@ -1,7 +1,8 @@
-from recipes.best_rq.modules.lit_datamodule import DataModule
-from recipes.musiclm.datasets.mcc import PGCDataset
 import torch
 from tqdm import tqdm
+
+from recipes.best_rq.modules.lit_datamodule import DataModule
+from recipes.musiclm.datasets.mcc import PGCDataset
 
 
 class Preprocessor:
@@ -39,11 +40,16 @@ class Preprocessor:
             print("[EST] mean:", self.mean)
             print("[EST] std:", torch.sqrt(self.std / (self.total_samples - 1)))
             if i % 100 == 0:
-                torch.save(self.mean, f"/mnt/bn/zongyu-lq/features/best_rq/mv/pgc600k_mean_{i}.pt")
-                torch.save(torch.sqrt(self.std / (self.total_samples - 1)), f"/mnt/bn/zongyu-lq/features/best_rq/mv/pgc600k_std_{i}.pt")
+                torch.save(
+                    self.mean,
+                    f"/mnt/bn/zongyu-lq/features/best_rq/mv/pgc600k_mean_{i}.pt",
+                )
+                torch.save(
+                    torch.sqrt(self.std / (self.total_samples - 1)),
+                    f"/mnt/bn/zongyu-lq/features/best_rq/mv/pgc600k_std_{i}.pt",
+                )
             if i >= num_iter:
                 return
-
 
 
 if __name__ == "__main__":

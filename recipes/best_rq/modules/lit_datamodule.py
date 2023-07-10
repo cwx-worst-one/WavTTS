@@ -1,11 +1,12 @@
 from functools import partial
-import webdataset as wds
-from webdataset.pipeline import DataPipeline
+
 import pytorch_lightning as pl
 import torch
+import webdataset as wds
 from torch.utils.data import DataLoader
+from torchaudio.transforms import AmplitudeToDB, MelSpectrogram
 from torchaudio_augmentations import Compose
-from torchaudio.transforms import MelSpectrogram, AmplitudeToDB
+from webdataset.pipeline import DataPipeline
 
 
 class NormalizeFeature(torch.nn.Module):
@@ -28,23 +29,20 @@ def masking(x, sample_rate, mask_hop, hop_length, mask_prob):
 
     # get random mask indices
     start_indices = torch.rand(b, t // len_masking_raw) < mask_prob
-    time_domain_masked_indices = torch.nonzero(start_indices.repeat_interleave(len_masking_raw, dim=1))
-    token_domain_masked_indices = torch.nonzero(start_indices.repeat_interleave(len_masking_token, dim=1))
+    time_domain_masked_indices = torch.nonzero(
+        start_indices.repeat_interleave(len_masking_raw, dim=1)
+    )
+    token_domain_masked_indices = torch.nonzero(
+        start_indices.repeat_interleave(len_masking_token, dim=1)
+    )
 
     # mask with random values
-    masking_noise = torch.randn(len(time_domain_masked_indices)) * 0.1 # 0 mean 0.1 std
+    masking_noise = torch.randn(len(time_domain_masked_indices)) * 0.1  # 0 mean 0.1 std
     mx[tuple(time_domain_masked_indices.t())] = masking_noise
     return mx, token_domain_masked_indices
 
 
-def collation_fn(
-    batch,
-    feature_fn,
-    sample_rate,
-    mask_hop,
-    hop_length,
-    mask_prob,
-):
+def collation_fn(batch, feature_fn, sample_rate, mask_hop, hop_length, mask_prob):
     res = {"audio": []}
     for item in batch:
         res["audio"].append(item["audio"].squeeze(0))
@@ -110,10 +108,7 @@ class DataModule(pl.LightningDataModule):
                     n_mels=self.n_mels,
                 ),
                 AmplitudeToDB(),
-                NormalizeFeature(
-                    self.feature_mean,
-                    self.feature_std
-                )
+                NormalizeFeature(self.feature_mean, self.feature_std),
             ]
         )
 
@@ -130,10 +125,12 @@ class DataModule(pl.LightningDataModule):
                     mask_hop=self.mask_hop,
                     hop_length=self.hop_length,
                     mask_prob=self.mask_prob,
-                )
+                ),
             ),
         )
-        return DataLoader(train_dataset_batched, batch_size=None, num_workers=self.num_workers)
+        return DataLoader(
+            train_dataset_batched, batch_size=None, num_workers=self.num_workers
+        )
 
     def val_dataloader(self):
         validation_dataset_batched = DataPipeline(
@@ -147,11 +144,13 @@ class DataModule(pl.LightningDataModule):
                     mask_hop=self.mask_hop,
                     hop_length=self.hop_length,
                     mask_prob=self.mask_prob,
-                )
+                ),
             ),
         )
-        return DataLoader(validation_dataset_batched, batch_size=None, num_workers=self.num_workers)
-    
+        return DataLoader(
+            validation_dataset_batched, batch_size=None, num_workers=self.num_workers
+        )
+
     def predict_dataloader(self):
         predict_dataset_batched = DataPipeline(
             self.predict_dataset,
@@ -165,7 +164,9 @@ class DataModule(pl.LightningDataModule):
                     mask_hop=self.mask_hop,
                     hop_length=self.hop_length,
                     mask_prob=self.mask_prob,
-                )
+                ),
             ),
         )
-        return DataLoader(predict_dataset_batched, batch_size=None, num_workers=self.num_workers)
+        return DataLoader(
+            predict_dataset_batched, batch_size=None, num_workers=self.num_workers
+        )

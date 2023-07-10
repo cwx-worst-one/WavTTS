@@ -1,7 +1,10 @@
 from torch.optim.lr_scheduler import _LRScheduler
 
+
 class DinoLRScheduler(_LRScheduler):
-    def __init__(self, optimizer, base_lr, warmup_steps, hold_steps, decay_steps, last_epoch=-1):
+    def __init__(
+        self, optimizer, base_lr, warmup_steps, hold_steps, decay_steps, last_epoch=-1
+    ):
         self.base_lr = base_lr
         self.warmup_steps = warmup_steps
         self.hold_steps = hold_steps
@@ -16,7 +19,9 @@ class DinoLRScheduler(_LRScheduler):
             lr = self.base_lr
         else:
             gamma = 0.1 ** (1 / self.decay_steps)
-            lr = self.base_lr * gamma ** (current_step - self.warmup_steps - self.hold_steps)
+            lr = self.base_lr * gamma ** (
+                current_step - self.warmup_steps - self.hold_steps
+            )
 
         return [lr for _ in self.base_lrs]
 

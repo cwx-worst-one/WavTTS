@@ -1,15 +1,15 @@
 import torch
 from torch import nn
-from samantha.utils.hparams import DotDict
-from core.models.pretrained.utils import compute_mask_indices
-from core.models.asr.acoustic_frontend import Conv2dPooling
-from core.models.asr.acoustic_backbone import MaskedConformerBackbone
-from core.models.pretrained.quantizer import RandomProjectionQuantizer
+
 from core.criterions.criterion import Xentropy
+from core.models.asr.acoustic_backbone import MaskedConformerBackbone
+from core.models.asr.acoustic_frontend import Conv2dPooling
+from core.models.pretrained.quantizer import RandomProjectionQuantizer
+from core.models.pretrained.utils import compute_mask_indices
+from samantha.utils.hparams import DotDict
 
 
 class BestRq(nn.Module):
-
     def __init__(
         self,
         # frontend
@@ -27,17 +27,17 @@ class BestRq(nn.Module):
         conformer_dropout_rate=0.1,
         conformer_positional_dropout_rate=0.1,
         conformer_attention_dropout_rate=0.1,
-        conformer_positionwise_layer_type='linear',
-        conformer_activation_fn='gelu',
+        conformer_positionwise_layer_type="linear",
+        conformer_activation_fn="gelu",
         conformer_positionwise_conv_kernel_size=1,
         conformer_macaron_style=1,
-        conformer_pos_enc_layer_type='fix_rel_pos',
-        conformer_selfattention_layer_type='rel_selfattn',
-        conformer_layer_order='mhsa_before_conv',
+        conformer_pos_enc_layer_type="fix_rel_pos",
+        conformer_selfattention_layer_type="rel_selfattn",
+        conformer_layer_order="mhsa_before_conv",
         conformer_use_cnn_module=1,
-        conformer_cnn_module='ConvolutionModule',
-        conformer_cnn_module_kernel='5',
-        conformer_cnn_norm_type='layer_norm',
+        conformer_cnn_module="ConvolutionModule",
+        conformer_cnn_module_kernel="5",
+        conformer_cnn_norm_type="layer_norm",
         conformer_layernorm_interval=0,
         conformer_weight_scale=1.0,
         conformer_half_pooling=0,
@@ -64,13 +64,13 @@ class BestRq(nn.Module):
             kernel_size=(3, 1),
             dilation=1,
             padding=(front_end_padding, 0),
-            stride=(2, 1)
+            stride=(2, 1),
         )
         self.quantizer = RandomProjectionQuantizer(
             input_dim=quantizer_input_dim,
             codebook_dim=codebook_dim,
             codebook_size=codebook_size,
-            quantizer_num=self.n_softmax
+            quantizer_num=self.n_softmax,
         )
         self.proj_heads = nn.Linear(
             backbone_memory_size, n_softmax * codebook_size, bias=False
@@ -120,14 +120,8 @@ class BestRq(nn.Module):
         self.proj_heads = nn.Linear(
             backbone_memory_size, n_softmax * codebook_size, bias=False
         )
-        self.criterion = Xentropy(
-            DotDict(
-                {
-                    "label_smooth_factor": label_smooth_factor,
-                }
-            )
-        )
-    
+        self.criterion = Xentropy(DotDict({"label_smooth_factor": label_smooth_factor}))
+
     def _unfold(self, feature, feature_mask):
         b, t, d = feature.size()
         unfold_feature = (
@@ -145,7 +139,7 @@ class BestRq(nn.Module):
             > 0
         ).float()
         return unfold_feature, unfold_fbank_mask
-    
+
     def _subsample(self, feature, feature_mask):
         feature, feature_mask = self._unfold(feature, feature_mask)
         feature, feature_mask = self._unfold(feature, feature_mask)
@@ -169,7 +163,8 @@ class BestRq(nn.Module):
             mask_dropout=0.0,
         )
         mask_indicators = (
-            torch.from_numpy(mask_indicators).to(input_masks.device).long() * input_masks
+            torch.from_numpy(mask_indicators).to(input_masks.device).long()
+            * input_masks
         )
         return mask_indicators
 
@@ -180,9 +175,15 @@ class BestRq(nn.Module):
     #     return emb[layer_ix]
 
     def forward(self, batch):
-        feature, feature_mask, codes, subsampled_mask_indicators = self.prepare_feature(batch)
-        front_end_out, backbone_mask, frontend_shape = self.acoustic_front_end_module(feature, feature_mask)
-        encoder_backbone_out = self.encoder_backbone(front_end_out, backbone_mask, frontend_shape)
+        feature, feature_mask, codes, subsampled_mask_indicators = self.prepare_feature(
+            batch
+        )
+        front_end_out, backbone_mask, frontend_shape = self.acoustic_front_end_module(
+            feature, feature_mask
+        )
+        encoder_backbone_out = self.encoder_backbone(
+            front_end_out, backbone_mask, frontend_shape
+        )
 
         b, t_enc, d = encoder_backbone_out.size()
         logits = self.proj_heads(encoder_backbone_out).view(
@@ -210,10 +211,23 @@ class BestRq(nn.Module):
         target_mask = subsampled_mask_indicators * backbone_mask
 
         forward_out = self.criterion(
-            logits=logits, src_mask=backbone_mask, target=targets, target_mask=target_mask
+            logits=logits,
+            src_mask=backbone_mask,
+            target=targets,
+            target_mask=target_mask,
         )
-        
-        num_uni_code = sum([len(targets.view(b, self.n_softmax, t_enc)[i, j].unique()) for i in range(b) for j in range(self.n_softmax)]) / b / self.n_softmax
+
+        num_uni_code = (
+            sum(
+                [
+                    len(targets.view(b, self.n_softmax, t_enc)[i, j].unique())
+                    for i in range(b)
+                    for j in range(self.n_softmax)
+                ]
+            )
+            / b
+            / self.n_softmax
+        )
         return {
             "logits": logits,
             "loss": forward_out["backward_loss"],
@@ -227,10 +241,15 @@ class BestRq(nn.Module):
         b, t, d = feature.size()
         feature_mask = torch.ones((b, t), dtype=feature.dtype, device=feature.device)
         mask_indicators = self._gen_mask_indicators(feature_mask)
-        subsampled_feature, subsampled_mask_indicators = self._subsample(feature, mask_indicators)
+        subsampled_feature, subsampled_mask_indicators = self._subsample(
+            feature, mask_indicators
+        )
 
         noise = self.mask_noise_std * torch.randn_like(feature, device=feature.device)
-        feature = feature * (1.0 - mask_indicators)[:, :, None] + noise * mask_indicators[:, :, None]
+        feature = (
+            feature * (1.0 - mask_indicators)[:, :, None]
+            + noise * mask_indicators[:, :, None]
+        )
 
         b, t_sub, d_sub = subsampled_feature.size()
         codes = self.quantizer(subsampled_feature.view(b * t_sub, d_sub))
