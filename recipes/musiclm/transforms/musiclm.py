@@ -148,7 +148,7 @@ class MCCTransforms(TransformBase):
         avoid_sound_effect: bool = False,
         exclude_licenses: List[str] = [],
         avoid_vocal: bool = False,
-        max_vocal_threshold: float = 0.25,
+        max_vocal_threshold: float = 0.5,
         audio_metrics_filtered: bool = False,
         ar_filtering: Optional[ARFiltering] = None,
         max_num_crops: Optional[int] = None,    # if None, auto set based on audio length
@@ -258,16 +258,16 @@ class MCCTransforms(TransformBase):
         return True, None
 
     def get_vocal_data(self, metadata: Dict[str, Any]):
-        thresh = 2  # 2 seconds
-        trans_5stem = metadata.get("mir.json", {}).get("trans_5stem", {})
-        vocal = trans_5stem.get("notes", {}).get("vocal", [])
-        total_duration = trans_5stem.get("end_time", 0)
+        thresh = 2  # hardcode 2 seconds
+        vad = metadata.get("vad", {})
+        vad_segments = vad.get("segment", [])
+        total_duration = vad.get("extra", {}).get("audio_duration_in_seconds", 0.0)
         if total_duration <= 0:
             return [], 0.0
         vocal_segments = []
         vocal_duration = 0.0
         curr_segment = None
-        for x in vocal:
+        for x in vad_segments:
             st = x["start"]
             en = x["end"]
             if curr_segment is None:
