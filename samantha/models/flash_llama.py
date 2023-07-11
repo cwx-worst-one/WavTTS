@@ -1476,9 +1476,18 @@ class LlamaNonCausalModel(LlamaPreTrainedModel):
 
 
 class LlamaForCausalLM(LlamaPreTrainedModel):
-    def __init__(self, config):
+    def __init__(self, config, frozen_layers=0):
         super().__init__(config)
         self.model = LlamaCausalModel(config)
+        if frozen_layers > 0:
+            print("Freezing embed_tokens...")
+            for param in self.model.embed_tokens.parameters():
+                param.requires_grad = False
+            for i in range(frozen_layers):
+                print(f"Freezing layers[{i}]...")
+                for param in self.model.layers[i].parameters():
+                    param.requires_grad = False
+
         self.num_logits = config_get(config, "num_logits", config.vocab_size)
         self.lm_head = nn.Linear(config.hidden_size, self.num_logits, bias=False)
 

@@ -82,15 +82,20 @@ class BaseModule(pl.LightningModule):
             )
 
     def _shared_step(self, batch):
+        text = None
         if isinstance(batch, list):
-            batch = batch[0]
+            wavs = batch[0]
+            if len(batch) > 1:
+                text = batch[1]
         elif isinstance(batch, dict):
-            batch = batch["audio"]
-        if batch.dim() == 3:
-            batch = batch.squeeze(1)
+            wavs = batch["audio"]
+            if "text" in batch:
+                text = batch["text"]
+        if wavs.dim() == 3:
+            wavs = wavs.squeeze(1)
         # t = time.perf_counter()
         with torch.autocast(device_type="cuda", enabled=False):
-            input_ids, target_ids = self.prepare_feature(batch.float())
+            input_ids, target_ids = self.prepare_feature(wavs.float(), text=text)
         # exclude_time = time.perf_counter() - t
         logits = self.model(**input_ids)
         if isinstance(logits, dict):
@@ -165,19 +170,27 @@ class BaseModule(pl.LightningModule):
         }
 
     @torch.no_grad()
-    def prepare_feature(self, wavs):
+    def prepare_feature(self, wavs, text=None):
         raise NotImplementedError()
 
     @torch.no_grad()
-    def get_mulan_embeds(self, x):
-        mulan_embeds = self.requires["mulan_infer_fn"](
-            model=self.requires["mulan"], music=x.float(), device=x.device
-        )
+    def get_mulan_embeds(self, x, data_type="music"):
+        if data_type == "music":
+            mulan_embeds = self.requires["mulan_infer_fn"](
+                model=self.requires["mulan"], music=x.float(), device=x.device
+            )
+        elif data_type == "text":
+            # x should be a list of strings
+            mulan_embeds = self.requires["mulan_infer_fn"](
+                model=self.requires["mulan"], text=x, device=self.requires["mulan"].device
+            )
+        else:
+            raise ValueError(f"Unknown data type: {data_type}")
         return mulan_embeds
 
     @torch.no_grad()
-    def get_mulan_tokens(self, x):
-        mulan_embeds = self.get_mulan_embeds(x)
+    def get_mulan_tokens(self, x, data_type="music"):
+        mulan_embeds = self.get_mulan_embeds(x, data_type=data_type)
         mulan_tokens, _ = self.requires["mulan_rvq_fn"](
             mulan_embeds, self.requires["mulan_centers"]
         )
@@ -277,6 +290,7 @@ class SemanticModule(BaseModule):
         required_modules,
         checkpointing=False,
         extra_params=None,
+        seed_model=None,
     ):
         super().__init__(
             model_cls=model_cls,
@@ -287,7 +301,7 @@ class SemanticModule(BaseModule):
             checkpointing=checkpointing,
             extra_params=extra_params,
         )
-        self.save_hyperparameters()
+        self.save_hyperparameters(ignore=["seed_model"])
         semantic_type = self.extra_params.get("semantic_type", "wav2vec")
         if semantic_type == "wav2vec":
             self.semantic_token_fn = self.get_wav2vec_tokens
@@ -298,13 +312,23 @@ class SemanticModule(BaseModule):
         else:
             raise KeyError(f"Invalid semantic_type, got {semantic_type}")
 
+        if seed_model is not None:
+            print(f"Loading seed model from {seed_model}")
+            state_dict = torch.load(seed_model, map_location=torch.device("cpu"))[
+                "state_dict"
+            ]
+            self.load_state_dict(state_dict=state_dict, strict=False)
+
     @torch.no_grad()
-    def prepare_feature(self, wavs):
+    def prepare_feature(self, wavs, text=None):
         device = wavs.device
         b, _ = wavs.size()
 
         wav2vec_ids = self.semantic_token_fn(wavs)
-        mulan_ids = self.get_mulan_tokens(wavs)
+        if text is None:
+            mulan_ids = self.get_mulan_tokens(wavs)
+        else:
+            mulan_ids = self.get_mulan_tokens(text, data_type="text")
         mulan_ids = (
             mulan_ids
             + torch.arange(self.extra_params.mulan_num_rvq, device=device)
@@ -484,11 +508,14 @@ class SemanticEmbedARModule(BaseModule):
             self.val_outputs[dataloader_idx] = []
 
     @torch.no_grad()
-    def prepare_feature(self, wavs):
+    def prepare_feature(self, wavs, text=None):
         b, _ = wavs.size()
 
         wav2vec_embeds = self.semantic_embed_fn(wavs)
-        mulan_embeds = self.get_mulan_embeds(wavs)
+        if text is None:
+            mulan_embeds = self.get_mulan_embeds(wavs)
+        else:
+            mulan_embeds = self.get_mulan_embeds(text, data_type="text")
         return {
             "inputs_embeds": wav2vec_embeds[:, :-1],
             "encoder_hidden_states": mulan_embeds.unsqueeze(1),
@@ -643,14 +670,17 @@ class SemanticDiffusionModule(BaseModule):
         return alpha, beta
 
     @torch.no_grad()
-    def prepare_feature(self, wavs):
+    def prepare_feature(self, wavs, text=None):
         device = wavs.device
         b, _ = wavs.size()
 
         wav2vec_embeds = self.get_wav2vec_embeds(wavs)
 
-        mulan_embeds = self.get_mulan_embeds(wavs).unsqueeze(1)
-
+        if text is None:
+            mulan_embeds = self.get_mulan_embeds(wavs)
+        else:
+            mulan_embeds = self.get_mulan_embeds(text, data_type="text")
+        mulan_embeds = mulan_embeds.unsqueeze(1)
         sigmas = torch.rand([b, 1, 1], device=device)
         # Get noise
         noise = torch.randn_like(wav2vec_embeds)
@@ -742,14 +772,17 @@ class SeerSemanticModule(BaseModule):
         self.save_hyperparameters()
 
     @torch.no_grad()
-    def prepare_feature(self, wavs):
+    def prepare_feature(self, wavs, text=None):
         device = wavs.device
         b, _ = wavs.size()
 
         wav2vec_ids = self.get_wav2vec_tokens(wavs)
         wav2vec_ids = self.seer_rearrange(wav2vec_ids)
 
-        mulan_ids = self.get_mulan_tokens(wavs)
+        if text is None:
+            mulan_ids = self.get_mulan_tokens(wavs)
+        else:
+            mulan_ids = self.get_mulan_tokens(text, data_type="text")
         mulan_ids = mulan_ids + self.extra_params.wav2vec_codebook_size
 
         seer_ids = torch.arange(self.extra_params.n_seers, device=device).expand(b, -1)
@@ -843,7 +876,7 @@ class MulanCoarseModule(BaseModule):
         self.save_hyperparameters()
 
     @torch.no_grad()
-    def prepare_feature(self, wavs):
+    def prepare_feature(self, wavs, text=None):
         device = wavs.device
         num_coarse = self.extra_params.num_coarse
         b, _ = wavs.size()
@@ -861,7 +894,10 @@ class MulanCoarseModule(BaseModule):
             wav2vec_ids + num_coarse * self.extra_params.soundstream_codebook_size
         )
 
-        mulan_ids = self.get_mulan_tokens(wavs)
+        if text is None:
+            mulan_ids = self.get_mulan_tokens(wavs)
+        else:
+            mulan_ids = self.get_mulan_tokens(text, data_type="text")
         mulan_ids = (
             mulan_ids
             + self.extra_params.wav2vec_codebook_size
@@ -1038,7 +1074,7 @@ class CoarseModule(BaseModule):
             raise KeyError(f"Invalid semantic_type, got {semantic_type}")
 
     @torch.no_grad()
-    def prepare_feature(self, wavs):
+    def prepare_feature(self, wavs, text=None):
         device = wavs.device
         num_coarse = self.extra_params.num_coarse
         b, _ = wavs.size()
@@ -1192,7 +1228,7 @@ class CoarseCrossAttnModule(BaseModule):
             raise KeyError(f"Invalid semantic_type, got {semantic_type}")
 
     @torch.no_grad()
-    def prepare_feature(self, wavs):
+    def prepare_feature(self, wavs, text=None):
         device = wavs.device
         num_coarse = self.extra_params.num_coarse
         b, _ = wavs.size()
@@ -1313,7 +1349,7 @@ class SemanticFreeCoarseModule(BaseModule):
         self.save_hyperparameters()
 
     @torch.no_grad()
-    def prepare_feature(self, wavs):
+    def prepare_feature(self, wavs, text=None):
         device = wavs.device
         num_coarse = self.extra_params.num_coarse
         b, _ = wavs.size()
@@ -1326,7 +1362,10 @@ class SemanticFreeCoarseModule(BaseModule):
         )
         soundstream_ids = torch.reshape(soundstream_ids, [b, -1])
 
-        mulan_ids = self.get_mulan_tokens(wavs)
+        if text is None:
+            mulan_ids = self.get_mulan_tokens(wavs)
+        else:
+            mulan_ids = self.get_mulan_tokens(text, data_type="text")
         mulan_ids = mulan_ids + num_coarse * self.extra_params.soundstream_codebook_size
 
         sos_ids = (
@@ -1415,7 +1454,7 @@ class SeerCoarseModule(BaseModule):
         self.save_hyperparameters()
 
     @torch.no_grad()
-    def prepare_feature(self, wavs):
+    def prepare_feature(self, wavs, text=None):
         device = wavs.device
         num_coarse = self.extra_params.num_coarse
         b, _ = wavs.size()
@@ -1434,7 +1473,10 @@ class SeerCoarseModule(BaseModule):
             + num_coarse * self.extra_params.soundstream_codebook_size
         )
 
-        mulan_ids = self.get_mulan_tokens(wavs)
+        if text is None:
+            mulan_ids = self.get_mulan_tokens(wavs)
+        else:
+            mulan_ids = self.get_mulan_tokens(text, data_type="text")
         mulan_ids = (
             mulan_ids
             + num_coarse * self.extra_params.soundstream_codebook_size
@@ -1588,7 +1630,7 @@ class FineModule(BaseModule):
         self.save_hyperparameters()
 
     @torch.no_grad()
-    def prepare_feature(self, wavs):
+    def prepare_feature(self, wavs, text=None):
         device = wavs.device
         b, _ = wavs.size()
         num_coarse, num_fine = (
@@ -1718,7 +1760,7 @@ class SeerFineModule(BaseModule):
         self.save_hyperparameters()
 
     @torch.no_grad()
-    def prepare_feature(self, wavs):
+    def prepare_feature(self, wavs, text=None):
         device = wavs.device
         b, _ = wavs.size()
         num_coarse, num_fine = (
