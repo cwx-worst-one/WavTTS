@@ -4,6 +4,28 @@ import torchaudio
 from einops import rearrange
 from librosa import hz_to_note, midi_to_hz, note_to_midi
 from torch import einsum, nn
+import os
+
+class BEST_RQ_SCRIPT(nn.Module):
+    """ 
+    Simplified BEST-RQ with CNN + T5 Encoder
+    Latent representation is quantized with a randomly initialized projection and codebook
+    """
+    def __init__(
+        self,
+        device='cpu'
+    ):
+        super().__init__()
+        # pretrained torchscript
+        self.device = device
+        local_rank = os.getenv("LOCAL_RANK", 0)
+        torchscript_path = f"/mnt/bn/audio-diffusion/torchscript/best_rq/chromatic_80k_{local_rank}.pt"
+        self.best_rq = torch.jit.load(torchscript_path, map_location=device)
+
+    def get_latent(self, x, layer_ix):
+        _, hidden_states = self.best_rq(x.to(self.device))
+        return hidden_states[layer_ix].to(self.device).float()
+
 
 
 class RandomProjectionQuantizer(nn.Module):

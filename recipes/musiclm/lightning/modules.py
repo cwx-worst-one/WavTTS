@@ -10,7 +10,7 @@ from einops import rearrange
 from pytorch_lightning.profilers import PassThroughProfiler
 from s3a.providers.ctiga.models import gpt
 from s3a.providers.ctiga.utils.generation import InferenceParams
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from recipes.musiclm.models.compat.semantic_model import w2v_bert_tokenization
 from samantha.utils.hparams import DotDict
@@ -54,7 +54,12 @@ class BaseModule(pl.LightningModule):
             self.load_required_modules()
 
     def load_required_modules(self):
-        for name, (hpath, initializer) in self.hparams.required_modules.items():
+        for name, item in self.hparams.required_modules.items():
+            if isinstance(item, (list, tuple)):
+                hpath, initializer = item
+            elif isinstance(item, dict):
+                hpath = item['hpath']
+                initializer = item['initializer']
             self.requires.update(initializer(hpath, local_rank=self.local_rank))
             if name == "mulan_centers":
                 assert (
@@ -278,7 +283,7 @@ class BaseModule(pl.LightningModule):
         melspec_embeds = (melspec_embeds - cmvn[0]) / cmvn[1]
         codes = self._compute_codes(melspec_embeds)
         return codes
-
+    
 
 class SemanticModule(BaseModule):
     def __init__(

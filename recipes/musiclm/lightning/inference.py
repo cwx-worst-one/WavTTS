@@ -39,12 +39,17 @@ class BaseModule(pl.LightningModule):
             device=x.device,
         )
         return wav2vec_tokens
-
+    
     @torch.no_grad()
-    def get_mulan_tokens(self, x):
+    def get_mulan_embeds(self, x):
         mulan_embeds = self.requires["mulan_infer_fn"](
             model=self.requires["mulan"], music=x.float(), device=x.device
         )
+        return mulan_embeds
+
+    @torch.no_grad()
+    def get_mulan_tokens(self, x):
+        mulan_embeds = self.get_mulan_embeds(x)
         mulan_tokens, _ = self.requires["mulan_rvq_fn"](
             mulan_embeds, self.requires["mulan_centers"]
         )

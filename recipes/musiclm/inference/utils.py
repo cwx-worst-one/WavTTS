@@ -15,10 +15,10 @@ import torchaudio
 from samantha.utils.hparams import DotDict
 
 
-def load_config(hparams_file: str):
+def load_config(hparams_file: str, overrides=None):
     # Load hyperparameter file with command-line overrides
     with open(hparams_file, "r", encoding="utf-8") as fin:
-        hparams = load_hyperpyyaml(fin)
+        hparams = load_hyperpyyaml(fin, overrides)
 
     cfg = DotDict(hparams)
     return cfg

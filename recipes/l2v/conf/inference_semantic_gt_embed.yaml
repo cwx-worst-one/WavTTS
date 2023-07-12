@@ -1,0 +1,141 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 1995
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+extra_params:
+    gt_infer_mode: "mulan->semantic->coarse->fine"  # ["mulan->semantic->coarse->fine", "semantic->coarse->fine", "coarse->fine", "all"]
+    output_dir: ./generated_output/best_rq_embed
+
+    # ashaw
+    semantic_ckpt: "/mnt/bn/lyrics-to-song/ashaw/logs/l2s/semantic_embed/semantic_best_rq_embed_v0/checkpoints/step=194000-tr_loss=0.2242-val_loss_0=0.2130.ckpt"
+    coarse_ckpt: "/mnt/bn/lyrics-to-song/ashaw/logs/l2s/semantic_rep/coarse_flash_gpt2_cross_attn/best_rq_minz_cross_attn/checkpoints/step=154000-tr_loss=2.9742-val_loss_0=3.2636.ckpt"
+    fine_ckpt: "/mnt/bn/lyrics-to-song/ashaw/logs/l2s/fine/fine_flash_llama_mcc_vocals/vocal_finetune_60m/checkpoints/last.ckpt"
+
+    sample_rate: 24000
+    duration: 10
+    num_rounds: 1
+    semantic_duration: 10
+    coarse_duration: 10
+    fine_duration: 4
+    semantic_stride: 5
+    coarse_stride: 5
+    fine_stride: 3
+    wav2vec_codebook_size: 8192
+    mulan_codebook_size: 1024
+    mulan_num_rvq: 12
+    soundstream_codebook_size: 1024
+    wav2vec_frame_rate: 25
+    soundstream_frame_rate: 50
+    num_coarse: 4
+    num_fine: 8
+    semantic_temperatue: 1.0
+    coarse_temperature: 0.9
+    fine_temperature: 0.8
+    sample_mode: "gumbel"
+    semantic_type: "best_rq"
+    semantic_layer_idx: 12
+    use_continuous_embedding: True
+
+    lyrics_codebook_size: 80
+    lyrics_max_seq_len: 150
+
+    max_items: 16
+    inference_type: audio_prompt
+    prompt_path: null
+
+run_opts:
+    fast_dev_run: False
+    precision: 32
+    accelerator: auto
+    strategy: ddp_find_unused_parameters_false
+    cache_dir: .module_cache/musiclm
+    batch_size: 8
+    num_workers: 8
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+lyrics_tokenizer: !new:recipes.l2v.datasets.tokenizers.phoneme_tokenizer.PhonemeTokenizer
+    allow_unknown: False
+
+lyrics_collator: !new:recipes.l2v.datasets.lyrics.LyricsCollator
+    lyrics_padding_value: !ref <lyrics_tokenizer.pad_id>
+    lyrics_max_seq_len: !ref <extra_params[lyrics_max_seq_len]>
+    audio_max_seq_len: !ref <extra_params[duration]> * <extra_params[sample_rate]>
+
+predict_dataset: !apply:recipes.l2v.datasets.inference_dataset.CoarseInferenceDataset.default_dataset
+    inference_type: !ref <extra_params[inference_type]>
+    prompt_path: !ref <extra_params[prompt_path]>
+    max_items: !ref <extra_params[max_items]>
+
+pl_datamodule: !apply:recipes.l2v.datasets.inference_dataset.create_datamodule
+    predict_dataset: !ref <predict_dataset>
+    batch_size: !ref <run_opts[batch_size]>
+
+# # Plastic dataset
+# predict_dataset: !new:recipes.musiclm.datasets.plastic.PlasticDataset
+# # dataloader configuration
+# predict_dataloader: !new:torch.utils.data.DataLoader
+#     dataset: !ref <predict_dataset>
+#     batch_size: !ref <run_opts[batch_size]>
+#     num_workers: !ref <run_opts[num_workers]>
+#     shuffle: False
+#     drop_last: False
+#     pin_memory: False
+# # datamodule configuration
+# pl_datamodule: !new:recipes.musiclm.datamodules.lit_datamodule.DataModule
+#     predict_dataloader: !ref <predict_dataloader>
+
+pl_module: !new:recipes.l2v.lightning.inference.GTInferenceModule
+    extra_params: !ref <extra_params>
+    required_modules:
+        mulan:
+            - hdfs://harunava/home/byte_speech_sv/weitsung.lu/mulan_exp/MuLan_large/gpt_all/checkpoints/mulan-step=036000-median_rank_0=127-kaggle.ckpt
+            - !name:recipes.musiclm.requires.model_initializer.init_mulan
+              cache_dir: !ref <run_opts[cache_dir]>
+              version: "g4"
+        mulan_centers:
+            - hdfs://harunava/home/byte_speech_sv/dongguo/mulan/codebook/kmeans_minibatch_codebook-mulan1b_g4_mix_127-1024x12.npy
+            - !name:recipes.musiclm.requires.model_initializer.init_mulan_centers
+              cache_dir: !ref <run_opts[cache_dir]>
+        wav2vec:
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/semantic.jit.pt
+            - !name:recipes.musiclm.requires.model_initializer.init_wav2vec
+              cache_dir: !ref <run_opts[cache_dir]>
+        semantic_centers:
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_10.npy
+            - !name:recipes.musiclm.requires.model_initializer.init_semantic_centers
+              cache_dir: !ref <run_opts[cache_dir]>
+        soundstream:
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
+            - !name:recipes.musiclm.requires.model_initializer.init_soundstream
+              cache_dir: !ref <run_opts[cache_dir]>
+        soundstream_dec:
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
+            - !name:recipes.musiclm.requires.model_initializer.init_soundstream_decoder
+              cache_dir: !ref <run_opts[cache_dir]>
+        best_rq:
+            - null
+            - !name:recipes.musiclm.requires.model_initializer.init_best_rq_minz
+              cache_dir: null
+        # best_rq:
+        #     - /mnt/bn/audio-diffusion/ckpts/best_rq/step=055000.pt
+        #     - !name:recipes.musiclm.requires.model_initializer.init_best_rq
+        #       cache_dir: !ref <run_opts[cache_dir]>
+
+trainer: !new:pytorch_lightning.Trainer
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: 'auto'
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    strategy: !ref <run_opts[strategy]>
+    precision: !ref <run_opts[precision]>

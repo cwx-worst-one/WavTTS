@@ -209,11 +209,12 @@ class LoudnessCheck:
 
 
 class ReadMP3:
-    def __init__(self, sample_rate: int):
+    def __init__(self, sample_rate: int, audio_format='mp3'):
         self.sample_rate = sample_rate
+        self.audio_format = audio_format
 
     def __call__(self, mp3: bytes) -> np.ndarray:
-        audio = AudioSegment.from_file(mp3, format="mp3")
+        audio = AudioSegment.from_file(mp3, format=self.audio_format)
         audio = audio.set_channels(1)
         audio = audio.set_frame_rate(self.sample_rate)
         wav = np.asarray(audio.get_array_of_samples())
