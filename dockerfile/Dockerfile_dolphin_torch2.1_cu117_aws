@@ -23,6 +23,8 @@ ARG https_proxy="http://sys-proxy-rd-relay.byted.org:8118"
 ARG no_proxy="byted.org"
 ENV DEBIAN_FRONTEND noninteractive
 
+RUN pip3 uninstall -y pytorch-triton
+
 RUN apt update && \
     apt install \
         -yq --no-install-recommends \
@@ -223,9 +225,6 @@ ENV LIBHDFS_OPTS "-Xms4g -Xmx16g -Dhadoop.root.logger=${HADOOP_ROOT_LOGGER:-ERRO
 # triton was installed by xformers, but we have pytorch-triton instead.
 # howerver, uninstall triton would remove triton's lib, we must force reinstall it
 # TODO: fix it with xfromers
-RUN pip3 uninstall -y triton && \
-    pip3 install --no-cache-dir --force pytorch-triton==2.1.0+7d1a95b046 -i https://download.pytorch.org/whl/nightly/cu117 && \
-    pip3 install --no-cache-dir expecttest hypothesis
 
 RUN pip3 uninstall -y pyarrow && pip3 install --no-cache-dir fsspec==2023.6.0 pyarrow==12.0.0 && \
     pip3 install --no-cache-dir ruamel.yaml==0.17.24
