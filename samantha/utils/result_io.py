@@ -61,19 +61,18 @@ def prep_training_output(log_dir):
             for monitor_key in monitor_keys:
                 cur_callback = cur_ckpt["callbacks"][monitor_key]
                 cur_monitor = cur_callback["monitor"]
-                current_score = float(cur_callback["current_score"])
+                current_score = cur_callback["current_score"]
+                if current_score is not None:
+                    current_score = float(current_score)
                 metas[cur_monitor] = str(current_score)
 
             ckpt_hdfs = (
                 cur_ckpt_loc
                 if hh.ishdfs(log_dir)
-                else os.path.join(arnold_output, "checkpoint", cur_ckpt_fn)
+                else os.path.join(arnold_output, "checkpoints", cur_ckpt_fn)
             )
-            cur_ret = easycycle.TrainResult(
-                ckpt_name=cur_ckpt_fn,
-                resource=os.getenv("SAIL_MODEL_RESOURCE", None),
-                ckpt_hdfs=ckpt_hdfs,
-                metas=metas,
+            cur_ret = easycycle.Checkpoint(
+                name=cur_ckpt_fn, hdfs=ckpt_hdfs, extra=metas
             )
             result.append(cur_ret)
 
@@ -85,7 +84,7 @@ def prep_training_output(log_dir):
             file_loc = os.path.join(base_dir, event_file)
             tfevents.append(file_loc)
     if result:
-        result[-1].metas.update(
+        result[-1].extra.update(
             {
                 "tfevents": ",".join(tfevents),
                 "hparams": os.path.join(base_dir, "hparams.yaml"),
@@ -153,9 +152,6 @@ def parse_post_to_sail_params(run_opts):
 
     # experiment_id is required for post_to_sail
     exp_id = os.environ.get("SAIL_EXPERIMENT_ID", None)
-    if not exp_id:
-        logger.error("Environ SAIL_EXPERIMENT_ID is not given.")
-        raise ValueError("No experiment_id is provided")
     logger.info("experiment_id is {}".format(exp_id))
 
     # arnold_output_dir is required for post_to_sail
@@ -234,7 +230,19 @@ def upload_artifacts(action, artifacts):
     host = easycycle.Host.CN
     username = os.getenv("ARNOLD_TRIAL_OWNER", "samantha")
     if action == "fit":
-        easycycle.upload_train_product(host=host, user=username, ckpts=artifacts)
+        merlin_job_id = os.getenv("MERLIN_JOB_ID", None)
+        is_merlin = merlin_job_id is not None
+        req = easycycle.RegisterRawModelReq()
+        req.name = os.getenv("ModelName", "TestModel")
+        req.owner = username
+        req.train_dataset_id = os.getenv("TrainDatasetID", "null")
+        req.train_task_id = (
+            merlin_job_id if is_merlin else os.getenv("ARNOLD_TRIAL_ID", "null")
+        )
+        req.train_task_type = "MERLIN" if is_merlin else "ARNOLD"
+        req.checkpoints = artifacts
+        easycycle.register_raw_model(req)
+        # easycycle.upload_train_product(host=host, user=username, ckpts=artifacts)
     elif action == "test":
         easycycle.upload_evaluate_product(host=host, user=username, result=artifacts)
     elif action == "predict":
