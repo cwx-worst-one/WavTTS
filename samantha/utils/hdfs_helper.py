@@ -209,7 +209,7 @@ def put_many(local_paths: List[str], hdfs_path: str) -> bool:
     return res.exit == 0
 
 
-def sync_hdfs_dir(src_dir, dst_dir, retry_times=10):
+def sync_hdfs_dir(src_dir, dst_dir, retry_times=10, multi_processing=True):
     r"""This function will sync stuff to hdfs, the default destination
     is `ARNOLD_OUTPUT` which set by ARNOLD trial.
 
@@ -217,15 +217,41 @@ def sync_hdfs_dir(src_dir, dst_dir, retry_times=10):
         src_dir (str): local directory
         dst_dir (str): destination hdfs folder
         retry_times (int): number of retry time if sync failed.
+        multi_processing (bool): sync files with multi-processes or not.
 
     Returns:
        List: destination hdfs paths
     """
 
-    hdfs_files = []
-    for fn in os.listdir(src_dir):
-        local_file = os.path.join(src_dir, fn)
-        hdfs_files.append(sync_hdfs(local_file, dst_dir, retry_times))
+    if multi_processing:
+        from multiprocessing import Pool
+
+        hdfs_files = []
+        worker_pool = Pool(5)
+        worker_ret = []
+
+        def inner_sync(src_dir, dst_dir, retry_times):
+            for fn in os.listdir(src_dir):
+                local_file = os.path.join(src_dir, fn)
+                if os.path.isdir(local_file):
+                    nested_dst_dir = os.path.join(dst_dir, fn)
+                    mkdir(nested_dst_dir)
+                    inner_sync(local_file, nested_dst_dir, retry_times)
+                else:
+                    worker_ret.append(
+                        worker_pool.apply_async(
+                            func=sync_hdfs, args=(local_file, dst_dir, retry_times)
+                        )
+                    )
+
+        inner_sync(src_dir, dst_dir, retry_times)
+        for ret in worker_ret:
+            hdfs_files.append(ret.get())
+    else:
+        hdfs_files = []
+        for fn in os.listdir(src_dir):
+            local_file = os.path.join(src_dir, fn)
+            hdfs_files.append(sync_hdfs(local_file, dst_dir, retry_times))
     return hdfs_files
 
 
