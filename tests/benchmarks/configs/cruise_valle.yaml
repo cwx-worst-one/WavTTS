@@ -1,0 +1,13 @@
+data:
+  train_num_workers: 4
+  valid_num_workers: 1
+  bucket_schedule: '50,100,200,300,400,500,600,700,800,900,1000,1200,1493'
+  bucket_schedule_key: 'length'
+  batch_means_tokens: True
+  max_batch_size: 140000
+  shuffle: True
+  train_file_list:
+    - data_root: 'hdfs://haruna/home/byte_speech_sv/user/yanlin.chn/bigTTS/data/webdataset_out'
+      file_prefix: 'shard_00*/*.parquet'
+  
+  

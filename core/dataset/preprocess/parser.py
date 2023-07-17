@@ -4,6 +4,7 @@ supported: pickle, protobuf.
 '''
 
 import pickle
+import json
 from typing import Any
 import numpy as np
 from dataloader import ParseLoads
@@ -128,9 +129,31 @@ class WdsFormat:
         ''' call func'''
         if item is None or self.wav_key not in item:
             return item
-        new_item = item['json']
-        new_item['uttid'] = item['__key__']
-        new_item['waveform'] = item['npy']
-        if 'augmentation' not in item:
-            new_item['augmentation'] = []
+        try:
+            new_item = json.loads(item['json'])
+            new_item['uttid'] = item['__key__']
+            waveform = np.frombuffer(item['npy'], dtype=np.int16)
+            new_item['waveform'] = waveform.reshape(1, -1)
+            if 'augmentation' not in item:
+                new_item['augmentation'] = []
+            new_item['file_type'] = 'webdataset'
+            return new_item
+        except:
+            return item
+
+@PREPROCESS.register_module()
+class ParquetParser:
+    ''' parse wds dataset to kv format '''
+    def __init__(self, wav_key='audio'):
+        self.wav_key = wav_key
+
+    def __call__(self, item, **_kwargs):
+        ''' call func'''
+        if item is None or self.wav_key not in item:
+            return item
+        new_item = json.loads(item['meta'])
+        new_item['uttid'] = item['uttid']
+        new_item['wav'] = item[self.wav_key]
+        new_item['label'] = item['text']
+        new_item['file_type'] = 'parquet'
         return new_item

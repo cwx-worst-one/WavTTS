@@ -3,6 +3,8 @@ An Mixed Dataloader
 """
 import torch
 import time
+import queue
+import threading
 from torch.utils.data import DataLoader
 
 from core.extensions import mpu, AmpEnable
@@ -12,11 +14,13 @@ from core.dataset.falcon_dataset import FalconDataset
 from core.dataset.parquet_dataset import ParquetDataset
 from core.dataset.wds_dataset import WdsDataset
 from core.dataset.cuda import to_cuda, pin_memory
+from core.dataset.queue_utils import thread_safe_get, thread_safe_put
 from samantha.dataio.dataset import MultiIterableDataset, SplitIterableDataset
 
 
 class MixedDataLoader:
     '''MixedDataset'''
+    DATA_GET_RETRY = 60 * 60 * 5  # 5 hours
 
     def __init__(
         self,
@@ -68,6 +72,7 @@ class MixedDataLoader:
         self.event_idx = 0
         self.device_transforms = device_transforms
         self.cuda_cache_size = cfg.get('cuda_cache_size', 2)
+        self.proc_cache_size = cfg.get('proc_cache_size', 4)
         self.init_cuda_event(self.cuda_cache_size)
         self.prefetch_retry = cfg.get('prefetch_retry', 3)
         self.persistent_workers = cfg.get('persistent_workers', True)
@@ -76,6 +81,25 @@ class MixedDataLoader:
         for dataset in self.dataset._datasets:
             dataset_kind = dataset.__class__.__name__
             self.dataloader_state_dict[dataset_kind] = 0
+
+    def _lazy_init(self):
+        if self.dataloader is not None:
+            return
+        persistent_workers = self.prefetch_worker_num > 0
+        self.dataloader = DataLoader(
+            self.dataset,
+            num_workers=self.prefetch_worker_num,
+            batch_size=None,
+            collate_fn=MixedDataLoader._collate_fn,
+            persistent_workers=persistent_workers,
+        )
+        # TODO: set queue size
+        self._data_queue = queue.Queue(self.proc_cache_size)
+        self._done_event = threading.Event()
+        self._thread = threading.Thread(target=self._prefetch_loop)
+        # set thread daemon, No need to join this thread when terminate.
+        self._thread.daemon = True
+        self._thread.start()
 
     def update_state_dict(self, data):
         '''flush dataloader state dict'''
@@ -87,60 +111,68 @@ class MixedDataLoader:
             cur_dataset_kind, cur_data_cnt, _path_idx = data_state
             self.dataloader_state_dict[cur_dataset_kind] += cur_data_cnt
 
+    def _prefetch_loop(self):
+        ''' prefectch thread. '''
+        torch.set_num_threads(1)  # this flag is thread local
+        while not self._done_event.is_set():
+            # TODO: take care epoch end
+            # flash dataloader state dict
+            for dataset_kind in self.dataloader_state_dict:
+                self.dataloader_state_dict[dataset_kind] = 0
+
+            for data in self.dataloader:
+                # flush dataloader state
+                # TODO: add there or add after draw batch
+                self.update_state_dict(data)
+                if data is None and self.split_each_dataset:
+                    for data in self.batch_strategy.collect_last_batch():
+                        if not self.drop_last and len(data) > 0:
+                            try:
+                                batch_data = self.batch_transforms(data)
+                            except Exception:
+                                logging.warning(
+                                    "rank %d: batch transforms failed", self.rank, exc_info=True
+                                )
+                                continue
+                            batch_data = self._prefetch_batch(batch_data)
+                            if batch_data is not None:
+                                thread_safe_put(self._done_event, self._data_queue, batch_data)
+                    thread_safe_put(self._done_event, self._data_queue, None)
+                    continue
+
+                batch_data = self.batch_strategy.collate_batch(data, self.max_batch_size)
+                if batch_data is None:
+                    # data is discarded or batch is not full
+                    continue
+                try:
+                    batch_data = self.batch_transforms(batch_data)
+                except Exception:
+                    logging.warning("rank %d: batch transforms failed.", self.rank, exc_info=True)
+                    # skip this bucket batch
+                    continue
+                batch_data = self._prefetch_batch(batch_data)
+                thread_safe_put(self._done_event, self._data_queue, batch_data)
+
+            for data in self.batch_strategy.collect_last_batch():
+                if not self.drop_last and len(data) > 0:
+                    try:
+                        batch_data = self.batch_transforms(data)
+                    except Exception:
+                        logging.warning("rank %d: batch transforms failed", self.rank, exc_info=True)
+                        continue
+                    batch_data =  self._prefetch_batch(batch_data)
+                    thread_safe_put(self._done_event, self._data_queue, batch_data)
+            thread_safe_put(self._done_event, self._data_queue, None)
+
+
     def __iter__(self):
         '''iter'''
-        if self.dataloader is None:
-            persistent_workers = self.prefetch_worker_num > 0
-            self.dataloader = DataLoader(
-                self.dataset,
-                num_workers=self.prefetch_worker_num,
-                batch_size=None,
-                collate_fn=MixedDataLoader._collate_fn,
-                persistent_workers=self.persistent_workers,
-            )
-
-        # flash dataloader state dict
-        for dataset_kind in self.dataloader_state_dict:
-            self.dataloader_state_dict[dataset_kind] = 0
-
-        for data in self.dataloader:
-            # flush dataloader state
-            # TODO: add there or add after draw batch
-            self.update_state_dict(data)
-            if data is None and self.split_each_dataset:
-                for data in self.batch_strategy.collect_last_batch():
-                    if not self.drop_last and len(data) > 0:
-                        try:
-                            batch_data = self.batch_transforms(data)
-                        except Exception:
-                            logging.warning(
-                                "rank %d: batch transforms failed", self.rank, exc_info=True
-                            )
-                            continue
-                        yield self._prefetch_batch(batch_data)
-                yield
-                continue
-
-            batch_data = self.batch_strategy.collate_batch(data, self.max_batch_size)
+        self._lazy_init()
+        while not self._done_event.is_set():
+            batch_data = thread_safe_get(self._done_event, self._data_queue, retry=self.DATA_GET_RETRY)
             if batch_data is None:
-                # data is discarded or batch is not full
-                continue
-            try:
-                batch_data = self.batch_transforms(batch_data)
-            except Exception:
-                logging.warning("rank %d: batch transforms failed.", self.rank, exc_info=True)
-                # skip this bucket batch
-                continue
-            yield self._prefetch_batch(batch_data)
-
-        for data in self.batch_strategy.collect_last_batch():
-            if not self.drop_last and len(data) > 0:
-                try:
-                    batch_data = self.batch_transforms(data)
-                except Exception:
-                    logging.warning("rank %d: batch transforms failed", self.rank, exc_info=True)
-                    continue
-                yield self._prefetch_batch(batch_data)
+                break
+            yield batch_data
 
     @staticmethod
     def _collate_fn(item):
@@ -223,6 +255,7 @@ class MixedDataLoader:
     def __del__(self):
         '''del
         we need del dataloader because we set persistent_workers=True'''
+        self._done_event.set()
         if self.dataloader is not None:
             del self.dataloader
 

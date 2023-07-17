@@ -60,6 +60,46 @@ def get_batch_strategy(cfg, bucket_schedule=None, batch_strategy=None, bucket_sc
     )
 
 
+def setup_bucket(cfg, batch_strategy='BucketBatching'):
+    ''' bucket. '''
+    batch_means_tokens = cfg.get('batch_means_tokens', True)
+    bucket_schedule_key = cfg.get('bucket_schedule_key', '')
+    max_batch_size = cfg.get('max_batch_size', 1)
+    bucket_schedule = cfg.get('bucket_schedule', None)
+    if bucket_schedule is not None:
+        bucket_schedule = [int(item) for item in bucket_schedule.split(',')]
+    batch_strategy = globals()[batch_strategy]
+
+    if isinstance(max_batch_size, str) and ',' in cfg.max_batch_size:
+        # max_batch_size for every bucket is set by user.
+        max_batch_size = [int(item) for item in max_batch_size.strip().split(',')]
+        if bucket_schedule is not None:
+            assert len(max_batch_size) == len(bucket_schedule)
+    elif bucket_schedule is not None:
+        # max_batch_size for every bucket is calculated by max_batch_scale.
+        max_batch_scale = cfg.get('max_batch_scale', 0)
+        if max_batch_scale != 0:
+            assert batch_means_tokens and max_batch_scale > 0
+        max_bucket = min(bucket_schedule[-1], 2000)
+        max_batch_size = [
+            max_batch_size + max_batch_scale * max(max_bucket - item, 0)
+            for item in bucket_schedule
+        ]
+
+    return batch_strategy(
+        bucket_schedule=bucket_schedule,
+        bucket_schedule_key=cfg.get('bucket_schedule_key', ''),
+        bucket_schedule_shape=cfg.get('bucket_schedule_shape', 0),
+        use_old_bucket=cfg.get('use_old_bucket', False),
+        batch_means_tokens=cfg.get('batch_means_tokens', True),
+        bucket_skip_warning_num=cfg.get('bucket_skip_warning_num', 10000),
+        bucket_size=cfg.get('bucket_size', 20),
+        domain_num=cfg.get('domain_num', 1),
+        domain_key=cfg.get('domain_key', 'domain'),
+        domain_id_key=cfg.get('dimain_id_key', 'domain_id'),
+    )
+
+
 class BaseBatching:
     '''base batch collater.'''
 
