@@ -40,7 +40,7 @@ class LyricsTransforms(TransformBase):
         self.handler = handler
         self.max_num_segments = max_num_segments
 
-        self.read_mp3 = ReadMP3(self.sample_rate, self.audio_format)
+        self.read_mp3 = ReadMP3(self.sample_rate, self.audio_format, fast=(self.audio_format=='mp3'))
         self.to_tensor = ToTensor()
         self.audio_dim = SetAudioDimensions()
         self.normalize_audio_fp32 = NormalizeAudioToFloat32()
@@ -49,7 +49,7 @@ class LyricsTransforms(TransformBase):
         self.base_transform = Compose(
             [
                 self.read_mp3,
-                self.to_tensor, 
+                self.to_tensor,
                 self.audio_dim, 
                 self.normalize_audio_fp32,
             ]

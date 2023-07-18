@@ -4,6 +4,8 @@ from typing import List, Optional, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
+import torchaudio
+from julius.resample import ResampleFrac
 from torch import Tensor
 from torch.nn.functional import avg_pool1d, pad
 from torchaudio_augmentations import Compose
@@ -14,6 +16,7 @@ from pydub import AudioSegment
 
 
 def to_tensor(x: np.ndarray):
+    if torch.is_tensor(x): return x
     return torch.from_numpy(x)
 
 
@@ -209,13 +212,44 @@ class LoudnessCheck:
 
 
 class ReadMP3:
-    def __init__(self, sample_rate: int, audio_format='mp3'):
+    def __init__(self, sample_rate: int, audio_format='mp3', fast: bool = False):
+        """Class to decode MP3 files and return an audio tensor
+
+        Args:
+            sample_rate (int): Target sample rate
+
+            audio_format (str, optional): _description_. Defaults to 'mp3'.
+
+            fast (bool, optional): Whether to use a faster implementation.
+                NOTE: This will likely have a (negative) effect on the performance of evaluating
+                models trained with a different MP3 decoding scheme. Preferably set this flag to
+                True when re-training a model. Defaults to False.
+        """
         self.sample_rate = sample_rate
         self.audio_format = audio_format
+        self.fast = fast
+
+        self.kernel_sample_rate = 48000
+        if fast: 
+            self.resample_fn = ResampleFrac(self.kernel_sample_rate, self.sample_rate)
+
+    def build_resample_kernel_fn(self, new_sr: int):
+        if new_sr != self.kernel_sample_rate:
+            self.kernel_sample_rate = new_sr
+            self.resample_fn = ResampleFrac(self.kernel_sample_rate, self.sample_rate)
 
     def __call__(self, mp3: bytes) -> np.ndarray:
-        audio = AudioSegment.from_file(mp3, format=self.audio_format)
-        audio = audio.set_channels(1)
-        audio = audio.set_frame_rate(self.sample_rate)
-        wav = np.asarray(audio.get_array_of_samples())
-        return wav
+
+        if self.fast:
+            audio, sr = torchaudio.load(mp3, normalize=True, format=self.audio_format)
+            audio = audio.mean(dim=0, keepdim=True)
+            if sr != self.sample_rate:
+                self.build_resample_kernel_fn(sr)
+                audio = self.resample_fn(audio)
+            return audio
+        else:
+            audio = AudioSegment.from_file(mp3, format=self.audio_format)
+            audio = audio.set_channels(1)
+            audio = audio.set_frame_rate(self.sample_rate)
+            wav = np.asarray(audio.get_array_of_samples())
+            return wav
