@@ -1,6 +1,7 @@
 import math
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
+from time import perf_counter
 
 import pytorch_lightning as pl
 import torch
@@ -19,7 +20,12 @@ from recipes.musiclm.requires.model_initializer import (
     init_semantic_centers,
     init_wav2vec,
 )
-from recipes.soundstorm.lightning.masking_scheme import MaskingScheme, cosine_schedule
+from recipes.soundstorm.lightning.masking_scheme import (
+    DucMaskingScheme,
+    MaskingScheme,
+    cosine_schedule,
+)
+from samantha.components.attention.base import MultiHeadAttention
 from samantha.models.conformer import Conformer, ConformerConfig  # noqa
 from samantha.models.llama import LlamaConfig, LlamaModel
 from samantha.utils.hparams import DotDict
@@ -43,11 +49,30 @@ class SoundStormInference(pl.LightningModule):
     def __init__(self, soundstorm_ckpt: str, semantic_ckpt: str):
         super().__init__()
 
-        print(f"Loading SoundStorm model from {soundstorm_ckpt}...")
-        self.soundstorm = SoundStorm.load_from_checkpoint(
-            soundstorm_ckpt, strict=False
-        ).eval()
+        self._init_soundstorm(soundstorm_ckpt)
+        self._init_semantic(semantic_ckpt)
 
+        ## Mulan Module
+        print("Loading MuLan model...")
+        mulan_module = init_mulan(
+            "/mnt/bn/audio-diffusion/pretrained_models/mulan-step=036000-median_rank_0=127-kaggle.ckpt",
+            local_rank=0,
+            version="g4",
+        )
+
+        mulan_centers = init_mulan_centers(
+            "/mnt/bn/audio-diffusion/pretrained_models/kmeans_minibatch_codebook-mulan1b_g4_mix_127-1024x12.npy",
+            local_rank=0,
+        )
+        self.requires = {}
+        self.requires.update(mulan_module)
+        self.requires.update(mulan_centers)
+
+    def _init_soundstorm(self, soundstorm_ckpt: str):
+        print(f"Loading SoundStorm model from {soundstorm_ckpt}...")
+        self.soundstorm = SoundStorm.load_from_checkpoint(soundstorm_ckpt, strict=False).eval()
+
+    def _init_semantic(self, semantic_ckpt: str):
         print(f"Loading Semantic model from {semantic_ckpt}...")
         self.semantic_model = SemanticModule.load_from_checkpoint(semantic_ckpt).eval()
 
@@ -68,22 +93,6 @@ class SoundStormInference(pl.LightningModule):
         self.semantic_model.codebook_size = (
             self.semantic_model.extra_params.wav2vec_codebook_size
         )
-
-        ## Mulan Module
-        print("Loading MuLan model...")
-        mulan_module = init_mulan(
-            "/mnt/bn/audio-diffusion/pretrained_models/mulan-step=036000-median_rank_0=127-kaggle.ckpt",
-            local_rank=0,
-            version="g4",
-        )
-
-        mulan_centers = init_mulan_centers(
-            "/mnt/bn/audio-diffusion/pretrained_models/kmeans_minibatch_codebook-mulan1b_g4_mix_127-1024x12.npy",
-            local_rank=0,
-        )
-        self.requires = {}
-        self.requires.update(mulan_module)
-        self.requires.update(mulan_centers)
 
     def sample_semantic_tokens(
         self, mulan_tokens: torch.Tensor, duration: int, temperature: float
@@ -120,6 +129,7 @@ class SoundStormInference(pl.LightningModule):
         sampled_t: Optional[int] = None,
         temperatures: Optional[List[float]] = None,
     ):
+        tik = perf_counter()
         batch_size = semantic_tokens.shape[0]
         pred_tokens = torch.empty(
             batch_size,
@@ -166,7 +176,12 @@ class SoundStormInference(pl.LightningModule):
             pred_tokens = torch.cat(
                 (pred_tokens, this_pred_tokens[..., this_prefix_size:]), dim=2
             )
-        return (self.soundstorm.audio_model.decode(pred_tokens), semantic_tokens)
+        tok = perf_counter()
+        return (
+            self.soundstorm.audio_model.decode(pred_tokens),
+            semantic_tokens,
+            tok - tik,
+        )
 
     @torch.no_grad()
     def generate(
@@ -176,7 +191,7 @@ class SoundStormInference(pl.LightningModule):
         max_seq_len: int,
         iterations: List[int],
         score_strategies: List[str],
-        guidance_scale: float,
+        guidance_scale: Optional[float] = None,
         sampled_t: Optional[int] = None,
         temperatures: Optional[List[float]] = None,
         semantic_temperature: float = 0.9,
@@ -217,12 +232,17 @@ class SoundStorm(pl.LightningModule):
         n_layer: int,
         conv_kernel_size: int,
         n_audio_samples: int,
-        audio_prompting: bool,
-        masking_scheme: MaskingScheme,
-        fine_quantizer_embedding_dropout: bool,
-        conditioning_dropout: float,
         optimizer_class,
         scheduler_class,
+        audio_prompting: bool = False,
+        masking_scheme: MaskingScheme = DucMaskingScheme(
+            coarse_layers=4, mask_all_fine=False, coarse_prob=None
+        ),
+        fine_quantizer_embedding_dropout: bool = True,
+        conditioning_dropout: float = 0.0,
+        frontend: str = "sum",
+        frontend_n_head: int = 4,
+        frontend_rope: bool = True,
         attention_kwargs: dict = {},
     ):
         super().__init__()
@@ -278,6 +298,15 @@ class SoundStorm(pl.LightningModule):
             ]
         )
 
+        if self.hparams.frontend == "mha":
+            self.mha_frontend = MultiHeadAttention(
+                d_model=self.hparams.n_embd,
+                n_heads=self.hparams.frontend_n_head,
+                bias=False,
+                use_rotary_embeddings=self.hparams.frontend_rope,
+                max_seq_len=self.n_quantizers + 1,
+            )
+
         self.apply(self._init_weights)
 
     def _init_weights(self, module: nn.Module) -> None:
@@ -313,11 +342,11 @@ class SoundStorm(pl.LightningModule):
         audio_embs = []
         for q in range(self.n_quantizers):
             audio_embs.append(self.audio_embedding[q](audio_tokens[:, q]))
-        audio_embs = torch.stack(audio_embs, dim=1)
+        audio_embs = torch.stack(audio_embs, dim=2)
 
         if self.hparams.fine_quantizer_embedding_dropout:
             for idx in range(audio_embs.shape[0]):
-                audio_embs[idx, quantizers[idx] + 1 :] = 0
+                audio_embs[idx, :, quantizers[idx] + 1 :] = 0
         return audio_embs
 
     def prepare_inputs(self, batch: Tuple[torch.Tensor]) -> Tuple[torch.Tensor]:
@@ -361,26 +390,34 @@ class SoundStorm(pl.LightningModule):
         Returns:
             torch.Tensor: _description_
         """
-        if self.training:
+        if self.training and self.hparams.conditioning_dropout > 0:
             batch_dropout = (
                 torch.rand(semantic_tokens.shape[0]) < self.hparams.conditioning_dropout
             )
             semantic_tokens[batch_dropout] = self.semantic_uncond_token_id
 
         semantic_tokens = upsample_tokens(semantic_tokens, self.semantic_to_audio_rate)
-        semantic_emb = self.semantic_embedding(semantic_tokens)
-        audio_embs = self.prepare_audio_embeddings(audio_tokens, selected_qs)
+        semantic_emb = self.semantic_embedding(semantic_tokens).unsqueeze(dim=2)    # (B, T, 1, D)
+        audio_embs = self.prepare_audio_embeddings(audio_tokens, selected_qs)   # (B, T, Q, D)
+        B, T, _, D = audio_embs.shape
 
-        cont_embeddings = torch.cat((semantic_emb.unsqueeze(dim=1), audio_embs), dim=1)
-        cont_embeddings = cont_embeddings.sum(dim=1)
+        if self.hparams.frontend == "sum":
+            feats = torch.cat((semantic_emb, audio_embs), dim=2).sum(dim=2) # (B, T, D)
+        elif self.hparams.frontend == "mha":
+            query = [audio_embs[i, :, selected_qs[i]] for i in range(B)]
+            query = torch.stack(query, dim=0).reshape(B * T, -1, D) # (B * T, 1, D)
+            feats = torch.cat((semantic_emb, audio_embs), dim=2)    # (B, T, 1 + Q, D)
+            feats = feats.reshape(B * T, -1, D) # (B * T, 1 + Q, D)
+            feats = self.mha_frontend(x=query, context=feats)   # (B * T, 1, D)
+            feats = feats.reshape(B, T, -1) # (B, T, D)
+        else:
+            raise ValueError(f"Unknown frontend: {self.hparams.frontend}")
 
-        x = self.transformer(cont_embeddings)
+        x = self.transformer(feats)
         logits = []
-
-        selected_heads = [self.heads[q] for q in selected_qs]
-        for h in selected_heads:
-            logits.append(h(x))
-        return torch.stack(logits, dim=1)
+        for i in range(x.shape[0]):
+            logits.append(self.heads[selected_qs[i]](x[i]))
+        return torch.stack(logits, dim=0)
 
     def step(self, batch, return_loss: bool = True):
         """
@@ -427,7 +464,7 @@ class SoundStorm(pl.LightningModule):
             perplexity
         """
         batch_indices = torch.arange(targets.shape[0], device=targets.device)
-        preds = preds[batch_indices, selected_qs]
+        preds = preds[batch_indices]
         targets = targets[batch_indices, selected_qs]
         mask = masked_audio_tokens[batch_indices, selected_qs] == self.mask_token_id
 
@@ -460,7 +497,7 @@ class SoundStorm(pl.LightningModule):
         max_seq_len: int,
         iterations: List[int],
         score_strategies: List[str],
-        guidance_scale: float,
+        guidance_scale: Optional[float] = None,
         temperatures: Optional[List[float]] = None,
         sampled_t: Optional[int] = None,
         seed_tokens: Optional[torch.Tensor] = None,
@@ -538,8 +575,7 @@ class SoundStorm(pl.LightningModule):
                         guidance_scale * logits + (1 - guidance_scale) * uncond_logits
                     )
 
-                q_logits = logits[:, 0]
-                probs = q_logits.softmax(dim=-1)
+                probs = logits.softmax(dim=-1)
                 masked_positions = audio_tokens[:, q] == self.mask_token_id
 
                 if masked_positions.sum() == 0:
@@ -554,7 +590,7 @@ class SoundStorm(pl.LightningModule):
                 else:
 
                     # sample candidates first
-                    probs_scaled = (q_logits / q_temperature).softmax(dim=-1)
+                    probs_scaled = (logits / q_temperature).softmax(dim=-1)
                     sampled_tokens = torch.distributions.categorical.Categorical(
                         probs_scaled
                     ).sample()

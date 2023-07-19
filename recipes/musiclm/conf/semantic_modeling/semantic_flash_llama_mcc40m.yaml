@@ -52,50 +52,28 @@ ar_filtering: !new:recipes.musiclm.transforms.musiclm.ARFiltering
 
 train_dataset: !new:recipes.musiclm.datasets.mcc.WrappedMCC40MDataset
     url2index_list:
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.alternative-hip-hop"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.blues"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.childhood"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.chinese-style"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.alternative-hip-hop+chinese-style+others"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.blues+childhood+country+devotional+k-pop+soundtrack+trance+world-music"
         - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.classical"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.country"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.devotional"
         - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.easy-listening"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.electronic"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.folk"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.electronic+techno"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.folk+indie-folk"
         - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.hip-hop-rap"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.indie-folk"
         - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.jazz"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.k-pop"
         - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.new-age"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.others"
         - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.pop"
         - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.rock"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.soundtrack"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.techno"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.trance"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.world-music"
     weights:
         - 1.0
         - 2.0
-        - 2.0
-        - 1.0
         - 4.0
-        - 2.0
-        - 2.0
         - 1.0
-        - 2.0
         - 2.0
         - 2.0
         - 2.0
         - 4.0
         - 2.0
-        - 2.0
-        - 1.0
         - 4.0
-        - 2.0
-        - 2.0
-        - 1.0
-        - 2.0
         - 2.0
     sample_rate: !ref <extra_params[sample_rate]>
     duration: !ref <extra_params[duration]>
