@@ -10,6 +10,24 @@ export ARNOLD_HDFS_CELER=1
 export INFSEC_HADOOP_ENABLED=1
 export CPP_HDFS_CONF=/opt/tiger/arnold/hdfs_client/conf/celer_us/core-site.xml:/opt/tiger/arnold/hdfs_client/conf/celer_us/hdfs-site.xml
 
+# arnold env: can speed up communication among nodes
+export ARNOLD_SORT_IP=1
+
+# setup cruise: install custom cruise version by specify env OVERRIDE_CRUISE_VERSION
+if [ -z "$OVERRIDE_CRUISE_VERSION" ]
+then
+    echo "OVERRIDE_CRUISE_VERSION not set, will not update cruise"
+else
+    echo "OVERRIDE_CRUISE_VERSION set, will update cruise to $OVERRIDE_CRUISE_VERSION"
+    cd /opt/tiger;
+    rm -rf cruise;
+    mkdir -p cruise && cd cruise;
+    wget http://luban-source.byted.org/repository/scm/data.aml.cruise_1.0.0.$OVERRIDE_CRUISE_VERSION.tar.gz;
+    tar -xf data.aml.cruise*.tar.gz;
+    export PYTHONPATH=/opt/tiger/cruise:$PYTHONPATH
+fi
+
+
 CUR_DIR=$(cd $(dirname $0); pwd)
 cd $CUR_DIR
 
@@ -20,7 +38,6 @@ export NNODES=${ARNOLD_WORKER_NUM}
 export NPROC_PER_NODE=${ARNOLD_WORKER_GPU}
 export WORLD_SIZE=$((NNODES * NPROC_PER_NODE))
 export ARNOLD_OUTPUT=${ARNOLD_OUTPUT}
-export SAIL_EXPERIMENT_ID=${SAIL_EXPERIMENT_ID}
 
 echo "TOTAL WORKERS    :   ${NNODES}"
 echo "CURRENT WORKER ID:   ${NODE_RANK}"
@@ -29,7 +46,6 @@ echo "MASTER NODE IP   :   ${MASTER_ADDR}"
 echo "MASTER NODE PORT :   ${MASTER_PORT}"
 echo "WORLD SIZE       :   ${WORLD_SIZE}"
 echo "ARNOLD OUTPUT    :   ${ARNOLD_OUTPUT}"
-echo "SAIL EXP ID      :   ${SAIL_EXPERIMENT_ID}"
 
 # export BYTED_TORCH_BYTECCL=O3 # enable byteps
 
