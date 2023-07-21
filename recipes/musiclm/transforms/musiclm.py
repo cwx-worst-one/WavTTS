@@ -268,8 +268,8 @@ class MCCTransforms(TransformBase):
         vocal_duration = 0.0
         curr_segment = None
         for x in vad_segments:
-            st = x["start"]
-            en = x["end"]
+            st = x["start"] / 1000.0
+            en = x["end"] / 1000.0
             if curr_segment is None:
                 curr_segment = Segment(st, en)
             elif st - curr_segment.en <= thresh:
