@@ -26,6 +26,9 @@ def bert_calculator(
 
 
 def retrieve_calculator(model_obj):
+    if hasattr(model_obj, "flops_fn"):
+        return model_obj.flops_fn
+
     if isinstance(model_obj, LlamaPreTrainedModel):
         return partial(
             llama_calculator,
@@ -63,6 +66,4 @@ def retrieve_calculator(model_obj):
             model_obj.config.intermediate_size,
             model_obj.config.vocab_size,
         )
-    if hasattr(model_obj, "flops_fn"):
-        return model_obj.flops_fn
     return None

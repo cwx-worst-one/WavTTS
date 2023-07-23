@@ -1,0 +1,154 @@
+import sys, os
+ABSPATH = os.path.abspath(os.path.realpath(os.path.dirname(__file__)))
+sys.path.append(os.path.join(ABSPATH, '../../'))
+import os.path as osp
+import json
+from collections import OrderedDict
+from tqdm import tqdm
+import euler
+euler.install_thrift_import_hook()
+from server.sami_thrift import SAMI, InvokeRequest
+from server.base_thrift import Base
+import os
+
+_client = None
+_base = None
+
+GATEWAYS = [
+    'sd://lab.sami.gateway',
+    'sd://lab.sami.gateway.service.hl'
+]
+
+
+def InvokeServer(file_id, text, speaker):
+    payload_obj = {
+        'audio_info': {'format': 'wav', 'sample_rate': 24000, 'pitch_rate': 0, 'speech_rate': 0, 'speaker': speaker,
+                       'need_alignment': True, "silence_duration": 0},
+        # 'text': '??',
+        # 'text': '��������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������á�?'
+        # 'text': ''''1. You're listening to Faith Radio Online-Simply to Relax, I'm Faith. When you're faced with so many negative and draining situations, realize how minuscule problems will seem when you view your life as a whole--and remember the positive things.''',
+        # 'text': '''Although you'll need a warm coat weather this time of year hardly ever dips below freezing For warmer weather without throngs of tourists and the sweltering humidity come in May or September High average temperatures flit between the mid-70s and the lower 80s''',
+        'text': text,
+    }
+    payload_str = json.dumps(payload_obj)
+
+    global _base
+    if _base is None:
+        _base = Base()
+    req = InvokeRequest(
+        Base=_base,
+        access_key="JcSZxNEqVL",
+        method="TTS",
+        payload=payload_str,
+    )
+
+    global _client
+    if _client is None:
+        for gateway in GATEWAYS:
+            _client = euler.Client(SAMI, gateway + '?cluster=release_thrift', timeout=1200)
+            result = _client.Invoke(req)
+            if result.BaseResp.StatusMessage == 'ServerFailedInvoke':
+                continue
+            else:
+                break
+    result = _client.Invoke(req)
+    return result.data, file_id, result.BaseResp.StatusMessage
+
+
+def parse_raw_text(text_filepath):
+    text_dict = OrderedDict()
+    f = open(text_filepath)
+    # with mfs.GFile(text_filepath, 'r') as f:
+    lines = f.readlines()
+    print("lines: ", len(lines))
+    for index, line in enumerate(lines):
+        metas = line.strip().split('\t')
+        if len(metas) == 2:
+            text_dict[metas[0]] = metas[1]
+        else:
+            text_dict[f'{index:08}'] = metas[0]
+    return text_dict
+
+
+def generate_tacolabels_from_text(text_filepath, lab_output_dir, language='Chinese'):
+    os.makedirs(lab_output_dir, exist_ok=True)
+    text_dict = parse_raw_text(text_filepath)
+    if language == 'Chinese' or language == 'English':
+        speaker = 'front_end'
+    elif language == 'Japanese':
+        speaker = 'front_end_jp'
+    elif language == 'BrazilPortuguese':
+        speaker = 'front_end_bp'
+    elif language == 'SouthKorean':
+        speaker = 'front_end_kr'
+    else:
+        raise ValueError('language error : {}'.format(language))
+    sucess_labs = []
+    for file_id, text in tqdm(text_dict.items()):
+        output_path = osp.join(lab_output_dir, f'{file_id}.lab')
+        if os.path.exists(output_path):
+            sucess_labs.append(osp.abspath(output_path))
+            continue
+        lab_data, file_id, invoke_response = InvokeServer(file_id, text, speaker)
+        if lab_data is None:
+            print(f'file_id {file_id} failed to get results. Status: {invoke_response}(`speaker` represents language)')
+            continue
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(lab_data)
+        sucess_labs.append(osp.abspath(output_path))
+    return sucess_labs
+
+
+def generate_tacolabels_from_text_by_split(text_filepath, utt2split, lab_output_dir_prefix, language='Chinese'):
+    text_dict = parse_raw_text(text_filepath)
+    if language == 'Chinese' or language == 'English':
+        speaker = 'front_end'
+    elif language == 'Japanese':
+        speaker = 'front_end_jp'
+    elif language == 'BrazilPortuguese':
+        speaker = 'front_end_bp'
+    elif language == 'SouthKorean':
+        speaker = 'front_end_kr'
+    else:
+        raise ValueError('language error : {}'.format(language))
+    sucess_labs = []
+    print("text_dict.items(): ", len(text_dict.items()))
+    for file_id, text in tqdm(text_dict.items()):
+        if file_id not in utt2split.keys():
+            print(f'file_id {file_id} not in utt2split, skip.')
+            continue
+        split = utt2split[file_id]
+        lab_output_dir = osp.join(lab_output_dir_prefix, split)
+        os.makedirs(lab_output_dir, exist_ok=True)
+        output_path = osp.join(lab_output_dir, f'{file_id}.lab')
+        if os.path.exists(output_path):
+            continue
+        lab_data, file_id, invoke_response = InvokeServer(file_id, text, speaker)
+        if lab_data is None:
+            print(f'file_id {file_id} failed to get results. Status: {invoke_response}(`speaker` represents language)')
+            continue
+        with open(output_path, 'wb') as f:
+            f.write(lab_data)
+        sucess_labs.append(osp.abspath(output_path))
+    return sucess_labs
+
+in_text_path = sys.argv[1]
+utt2split_path = sys.argv[2]
+taco_lab_dir_prefix = sys.argv[3]
+
+f = open(utt2split_path)
+lines = f.readlines()
+f.close()
+utt2split = dict()
+for line in lines:
+    line = line.strip()
+    utt, split = line.split(' ')
+    utt2split[utt] = split
+
+# generate lab file from text_file and output to output_dir
+sucess_labs = generate_tacolabels_from_text_by_split(
+    in_text_path,
+    utt2split,
+    taco_lab_dir_prefix,
+    language='English'
+)
