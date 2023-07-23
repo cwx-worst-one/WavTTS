@@ -68,6 +68,16 @@ profiler: !new:pytorch_lightning.profilers.PyTorchProfiler
     with_stack: True
     with_flops: True
 
+callbacks:
+    - !new:samantha.callbacks.HDFSModelCheckpoint
+    #   dirpath: ./logs/checkpoints
+      monitor: step
+      mode: max
+      save_top_k: 100
+      every_n_train_steps: 100
+    - !new:samantha.callbacks.Timer
+
+
 trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>
     accelerator: !ref <run_opts[accelerator]>
@@ -76,10 +86,11 @@ trainer: !new:pytorch_lightning.Trainer
     deterministic: False
     strategy: !ref <run_opts[strategy]>
     enable_model_summary: True
-    enable_checkpointing: False
+    enable_checkpointing: True
     logger: !ref <logger>
     log_every_n_steps: 100
     profiler: !ref <profiler>
     gradient_clip_val: 0.1
     max_epochs: !ref <training_params[num_epochs]>
     precision: !ref <run_opts[precision]>
+    callbacks: !ref <callbacks>

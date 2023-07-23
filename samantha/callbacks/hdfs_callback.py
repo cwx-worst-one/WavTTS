@@ -4,7 +4,7 @@ from multiprocessing import Process, Queue
 
 from pytorch_lightning.callbacks import Callback
 
-from samantha.utils.hdfs_tools import hdfs_mkdir, hdfs_put, hdfs_rm
+from samantha.utils.hdfs_tools import hdfs_mkdir, hdfs_put
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,7 @@ class HdfsSavingCallback(Callback):
         self._queue = None
         self._worker = None
         self._async_upload = async_upload
+        self._ckpt_history = set()
 
     def on_after_backward(self, trainer, pl_module):
         global_rank = trainer.global_rank
@@ -77,33 +78,26 @@ class HdfsSavingCallback(Callback):
 
     def _target_func(self, global_step):
         if global_step > 1 and global_step % self.n_log == 0:
+
             logger.info(f"Processing {global_step=} checkpoints")
+
+            # sync checkpoints
             ckpt_paths = self._find_newest_ckpts()
-            if len(ckpt_paths) >= 1:
-                ckpt_paths = ckpt_paths[0:2]
-                for i, p in enumerate(ckpt_paths):
-                    local_path = os.path.join(self.local_dir, p)
-                    if i == 0:
-                        force = True
-                        fn = "last.ckpt"
-                    else:
-                        force = False
-                        fn = os.path.basename(local_path)
-                    logger.info(
-                        "Putting {} to {}".format(
-                            local_path, self.hdfs_path + "/checkpoints/" + fn
-                        )
-                    )
-                    if force:
-                        hdfs_rm(self.hdfs_path + "/checkpoints/" + fn)
-                    hdfs_put(
-                        local_path, self.hdfs_path + "/checkpoints/" + fn, force=force
-                    )
+            for p in ckpt_paths:
+                local_path = os.path.join(self.local_dir, p)
+                fn = os.path.basename(local_path)
+                hdfs_path = self.hdfs_path + "/checkpoints/" + fn
+                logger.info(f"Putting {local_path=} to {hdfs_path=}")
+
+                hdfs_put(local_path, hdfs_path, force="last" in fn)
+
+            # sync events
             hdfs_put(
                 os.path.join(self.local_dir, "../", "events*"),
                 self.hdfs_path + "/",
                 force=True,
             )
+
             logger.info(f"Processed {global_step=} checkpoints")
 
     def _find_newest_ckpts(self):
@@ -111,6 +105,11 @@ class HdfsSavingCallback(Callback):
             os.makedirs(self.local_dir, exist_ok=True)
             return []
         ckpts = os.listdir(self.local_dir)
-        ckpts = [c for c in ckpts if c.endswith(".ckpt") and "last" not in c]
-        ckpts.sort(key=lambda x: -int(x.split("-")[1].split("=")[-1]))
-        return ckpts
+        ckpts = [c for c in ckpts if c.endswith(".ckpt")]
+        new_ckpts = []
+        for ckpt in ckpts:
+            fn = os.path.basename(ckpt)
+            if ckpt not in self._ckpt_history or "last" in fn:
+                new_ckpts.append(ckpt)
+                self._ckpt_history.add(ckpt)
+        return new_ckpts
