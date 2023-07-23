@@ -1,6 +1,7 @@
 r"""This module provides awesome HDFS relevant utilities."""
 
 import contextlib
+import glob
 import logging
 import os
 import shutil
@@ -339,6 +340,20 @@ def list_dir(path: str):
     if ishdfs(path):
         return hdfs_ls(path)
     return os.listdir(path)
+
+
+def glob_files(pattern: str):
+    r"""List all files which names match the pattern
+
+    Args:
+        pattern: file name pattern
+
+    Returns:
+        List: file paths match the pattern
+    """
+    if ishdfs(pattern):
+        return hdfs_ls(pattern)
+    return glob.glob(pattern)
 
 
 def walk_one(path: str):
