@@ -1,7 +1,6 @@
 #!/bin/bash -ex
 
-cd $(dirname $0)/../../
-
+cd $(dirname $0)
 WORK_DIR=$(pwd)
 echo "work dir: $WORK_DIR"
 

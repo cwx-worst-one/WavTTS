@@ -15,7 +15,7 @@ hdfs dfs -get hdfs://haruna/home/byte_speech_sv/user/wangxin.colin/experiments/m
 hdfs dfs -get hdfs://haruna/home/byte_speech_sv/user/wangxin.colin/experiments/mariana/bbpe64k-0303
 hdfs dfs -get hdfs://haruna/home/byte_speech_sv/user/wangxin.colin/experiments/mariana/global_step_2860_zero3_merge_states_with_bestrq_codes.pt
 
-bash recipes/mariana_tasks/train.sh -m recipes.mariana_tasks.asr.train \
+bash cruise_launch.sh -m recipes.mariana_tasks.asr.train \
 --model=recipes/mariana_tasks/configs/13b_v120_bbpe_64k.yaml \
 --model.network.vocab_size=65026 \
 --model.network.use_rmpad=true \

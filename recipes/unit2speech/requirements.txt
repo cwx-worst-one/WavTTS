@@ -1,0 +1,16 @@
+praat-parselmouth==0.4.3
+pydub
+sentencepiece
+sentence_transformers
+nltk
+open_clip_torch
+h5py
+torchlibrosa
+mpire 
+lion-pytorch
+InstructorEmbedding
+ipdb
+sru
+nnAudio
+matplotlib
+torch-complex
