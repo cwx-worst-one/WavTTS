@@ -17,12 +17,19 @@ bash recipes/musiclm/bootstrap.sh fit --conf recipes/l2v/conf/semantic_modeling/
 
 ### Options:
 * Change mulan version (Mulan v1.3 -> Vocal Mulan): --pl_module.required_modules.mulan.hpath /mnt/bn/audio-diffusion/mulan_exp/MuLan_large/mulan_mme_0701_supcon/checkpoints/mulan-step=006600-median_rank_0=228-kaggle.ckpt
-* Model size (110M -> 300M): --model_config.num_hidden_layers 24 --model_config.num_attention_heads 16 --model_config.num_hidden_layers 24
+* Model size (110M -> 300M): --model_config.num_hidden_layers 24 --model_config.num_attention_heads 16
 * Log dir: --run_opts.log_dir /mnt/bn/lyrics-to-song/ashaw/logs/arnold
 
 # Inference
 
 ## Mulan-Phoneme Inference (Coarse model)
+
+TLDR: run latest inference script.
+```bash
+bash recipes/l2v/scripts/run_inference.sh /mnt/bn/lyrics-to-song/ashaw/results/l2s/generated_samples
+```
+
+Run config directly:
 ```bash
 # Infer with Audio Prompt + Lyrics
 mlx worker launch -- python3 -m samantha.main predict --config recipes/l2v/conf/inference_mulan_phoneme.yaml --extra_params.output_dir ./generated_output --extra_params.inference_type audio_prompt --extra_params.conditions audio_prompt,lyrics

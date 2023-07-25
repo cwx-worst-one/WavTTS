@@ -1,0 +1,39 @@
+{
+    "lyrics": [
+        "In the morning light, I start to rise, <n> The world's before me, a canvas in my eyes",
+        "Oh, let the music guide my soul, <n> Let the rhythm take control",
+        "Yeah, yeah, I'm in my zone, feeling blessed now <n> Started from the bottom, but I'm up now",
+        "In this journey of mine, I'll find my way, <n> Through the ups and downs, I won't stray.",
+        "Oh, oh, oh, let the beat take control, <n> Oh, oh, oh, gonna lose all control."
+    ],
+    "mulan_text" : [
+        "upbeat edm country male singing remix avicii",
+        "disney africa singing",
+        "pop singing ballad celine dion",
+        "80s rock nostalgia eagles",
+        "eminem intense rap beat fast",
+        "beatles singalong british pop",
+        "katy perry pop uplifting female vocals",
+        "smooth bruno mars funk holler",
+        "screaming rock punk linkin park",
+        "dance pop rick astley soul",
+        "hiphop pop rihanna vocals singing",
+        "country music vocals guitar pop taylor swift",
+        "chinese pop jay chou hiphop"
+    ],
+    "mulan_audio": [
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/1 - avicii - wake me up.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/2 - lion king - circle of life.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/3 - celine dion - my heart will go on.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/4 - eagles - hotel california.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/5 - eminem - lose yourself.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/6 - beatles - hey jude.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/7 - katy perry - firework.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/8 - bruno mars - uptown funk.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/9 - linkin park - numb.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/10 - rick astley - never gonna give you up.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/11 - rihanna - umbrella.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/12 - taylor swift - love story.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/13 - jay chou - greatest works of art.wav"
+    ]
+}

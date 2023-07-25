@@ -59,6 +59,7 @@ def create_tar(input_hdfs_url):
         
     print('Tarred files to output url:', index, output_tar_path, lyrics_index_output_fp)
     sink.close()
+    lyrics_writer.close()
 
 tar_files = [f'hdfs://harunava/home/byte_speech_sv/data/karaoke_for_singsong/shards-{idx:04d}.tar' for idx in range(132)]
 

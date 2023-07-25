@@ -173,8 +173,12 @@ class LyricsChromaTransform():
         # return np.pad(notes, pad_width=((0, 0), (0, 60-notes.shape[-1])), mode='constant', constant_values=(12, 12))
     
     def __call__(self, item):
-        cropped_vocals = item['vocal_audio']
-        vocal_chroma = LyricsChromaTransform.get_chromagram(cropped_vocals.numpy(), self.sample_rate, max_len=int(self.sample_duration*6))
+        if item is None: return None # other transforms may pass None
+        cropped_vocals = item.get('vocal_audio')
+        if cropped_vocals is None:
+            vocal_chroma = None
+        else:
+            vocal_chroma = LyricsChromaTransform.get_chromagram(cropped_vocals.numpy(), self.sample_rate, max_len=int(self.sample_duration*6))
         return { **item, 'vocal_chroma': vocal_chroma }
 
 # Segment clipping
@@ -290,9 +294,9 @@ def _words_to_segment(words, start_time, end_time, start_index=0):
 PAD_TIME = -2
 def _strip_non_words(words):
     words = words.copy()
-    while words and words[-1]['start_time'] < 0:
+    while words and (words[-1]['start_time'] < 0 or words[-1]['confidence'] < 0.05):
         words.pop()
-    while words and words[0]['start_time'] < 0:
+    while words and (words[0]['start_time'] < 0 or words[0]['confidence'] < 0.05):
         words.pop(0)
     return words
 

@@ -1,6 +1,8 @@
 import itertools
 import os
 import json
+import librosa
+import torch
 from pathlib import Path
 from recipes.l2v.datasets.tokenizers.phoneme_tokenizer import PhonemeTokenizer
 from recipes.l2v.datasets.transforms.lyrics import LyricsTokenTransform
@@ -40,17 +42,40 @@ class CoarseInferenceDataset(Dataset):
             prompt_path = default_prompt_path
         with open(prompt_path, 'r') as f:
             prompts = json.load(f)
-            input_lyrics = prompts['lyrics']
-            input_prompts = prompts['mulan_text']
+            lyrics = prompts['lyrics']
+            mulan_text = prompts['mulan_text']
+            mulan_audio = prompts.get('mulan_audio')
         if inference_type == 'text_prompt':
-            return cls.default_lyrics_text_prompt(input_lyrics, input_prompts, max_items)
+            return cls.default_lyrics_text_prompt(lyrics, mulan_text, max_items)
+        if inference_type == 'text_prompt_combinations':
+            return cls.default_lyrics_text_prompt(lyrics, mulan_text, max_items, run_combinations=True)
         if inference_type == 'audio_prompt':
-            return cls.default_lyrics_audio_prompt(input_lyrics, input_prompts, max_items)
+            return cls.default_lyrics_audio_prompt(lyrics, mulan_audio, max_items)
+        if inference_type == 'validation_prompt':
+            return cls.default_validation_prompt(lyrics, mulan_text, max_items)
 
     @classmethod
-    def default_lyrics_text_prompt(cls, input_lyrics, input_prompts, max_items=16):
-        lyrics_prompt_pairs = list(itertools.product(input_lyrics, input_prompts))
+    def default_lyrics_text_prompt(cls, input_lyrics, input_prompts, max_items=16, run_combinations=False):
+        if run_combinations:
+            lyrics_prompt_pairs = list(itertools.product(input_lyrics, input_prompts))
+        else:
+            lyrics_prompt_pairs = zip(input_lyrics, input_prompts)
         default_phoneme_predict_items = [ { 'lyrics': lyrics, 'mulan_text': mulan_text } for lyrics, mulan_text in lyrics_prompt_pairs ]
+        if max_items is not None:
+            default_phoneme_predict_items = default_phoneme_predict_items[:max_items]
+        lyrics_tokenizer = PhonemeTokenizer(allow_unknown=False)
+        predict_dataset = CoarseInferenceDataset(default_phoneme_predict_items, lyrics_tokenizer)
+        return predict_dataset
+    
+    @classmethod
+    def default_lyrics_audio_prompt(cls, input_lyrics, input_audio, max_items=16, run_combinations=True):
+        if input_audio is not None:
+            input_audio = [librosa.load(wav_path, sr=24000, mono=True)[0] for wav_path in input_audio]
+        if run_combinations:
+            lyrics_prompt_pairs = list(itertools.product(input_lyrics, input_audio))
+        else:
+            lyrics_prompt_pairs = zip(input_lyrics, input_audio)
+        default_phoneme_predict_items = [ { 'lyrics': lyrics, 'mulan_audio': mulan_audio } for lyrics, mulan_audio in lyrics_prompt_pairs ]
         if max_items is not None:
             default_phoneme_predict_items = default_phoneme_predict_items[:max_items]
         lyrics_tokenizer = PhonemeTokenizer(allow_unknown=False)
@@ -58,19 +83,19 @@ class CoarseInferenceDataset(Dataset):
         return predict_dataset
 
     @classmethod
-    def default_lyrics_audio_prompt(cls, input_lyrics, input_mulan_text, max_items=16):
+    def default_validation_prompt(cl, lyrics, mulan_text, max_items=16):
         lyrics_tokenizer = PhonemeTokenizer(allow_unknown=False)
 
         # Local: 
         if os.path.exists('/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/webdataset/shards-0131.tar'):
-            # url2index = {
-            #     '/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/webdataset/shards-0000.tar': 
-            #     '/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/webdataset/shards-0000.tar.index'
-            # }
             url2index = {
-                '/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/webdataset/shards-0131.tar': 
-                '/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/webdataset/shards-0131.tar.index'
+                '/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/webdataset/shards-0000.tar': 
+                '/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/webdataset/shards-0000.tar.index'
             }
+            # url2index = {
+            #     '/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/webdataset/shards-0131.tar': 
+            #     '/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/webdataset/shards-0131.tar.index'
+            # }
         else:
             # Web:
             url2index = '/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/karaoke_valid.tar_to_index.tsv'
@@ -89,16 +114,14 @@ class CoarseInferenceDataset(Dataset):
         )
         it = iter(valid_ds)
         predict_items = [next(it) for i in range(max_items)]
+        vocal_predict_items = [next(it) for i in range(max_items)]
 
-        # Note: Shifted items is a hack to switch up target vocal conditioning
-        shifted_predict_items = [item.copy() for item in predict_items[1:] + [predict_items[0]]]
-        for idx, (item, shifted_item, lyrics, mulan_text) in enumerate(
-            zip(predict_items, shifted_predict_items, itertools.cycle(input_lyrics), itertools.cycle(input_mulan_text))
-        ):
-            item['lyrics'] = lyrics
+        for idx, (item, vocal_item, lyric, mulan_text) in enumerate(zip(predict_items, vocal_predict_items, itertools.cycle(lyrics), itertools.cycle(mulan_text))):
+            item['mulan_audio'] = item['mulan_audio']
             item['mulan_text'] = mulan_text
-            item['vocal_audio'] = shifted_item['vocal_audio']
-            item['vocal_chroma'] = shifted_item.get('vocal_chroma')
+            item['lyrics'] = lyric
+            item['vocal_audio'] = vocal_item['vocal_audio']
+            item['vocal_chroma'] = vocal_item.get('vocal_chroma')
 
         predict_dataset = CoarseInferenceDataset(predict_items, lyrics_tokenizer)
         return predict_dataset

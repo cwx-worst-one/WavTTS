@@ -31,7 +31,7 @@ run_opts:
     version: karaoke_best_rq
     cache_dir: .module_cache/musiclm
     precision: 32
-    num_workers: 16
+    num_workers: 12
     accelerator: auto
     val_check_interval: 2000
     max_steps: 1000000

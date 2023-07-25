@@ -202,7 +202,7 @@ class ConditionalMulanPhonemeCoarseModule(BaseModule):
     def prepare_conditions(self, soundstream_ids, mulan_ids, lyrics_ids, vocal_mulan_ids=None, chroma_ids=None):
         device = self.device
         num_coarse = self.extra_params.num_coarse
-        b, _ = mulan_ids.size() if mulan_ids is not None else lyrics_ids.size()
+        b = [ids.size(0) for ids in [soundstream_ids, mulan_ids, lyrics_ids] if ids is not None][0]
 
         mulan_vocab_size = self.extra_params.mulan_vocab_size
         soundstream_vocab_size = self.extra_params.soundstream_vocab_size
@@ -286,7 +286,7 @@ class ConditionalMulanPhonemeCoarseModule(BaseModule):
 
     @torch.no_grad()
     def get_mulan_prompt_tokens(self, texts, device="cuda"):
-        mulan_embeds = self.get_mulan_prompt_tokens(texts, device)
+        mulan_embeds = self.get_mulan_prompt_embeds(texts, device)
         mulan_ids, ds = self.requires["mulan_rvq_fn"](
             mulan_embeds, self.requires["mulan_centers"]
         )
@@ -316,15 +316,15 @@ class ConditionalMulanPhonemeCoarseModule(BaseModule):
                 coarse_samples = samples
             else:
                 coarse_samples = torch.cat([coarse_samples, samples], dim=1)
-        return samples
+        return coarse_samples
 
     @torch.no_grad()
     def predict(self, batch, hp, conditions):
 
         lyrics_tokens = batch.get('lyrics_tokens')
-        vocal_audio = batch.get('vocal_audio')
         mulan_text = batch.get('mulan_text')
         mulan_audio = batch.get('mulan_audio')
+        vocal_audio = batch.get('vocal_audio')
         chroma = batch.get("vocal_chroma")
 
         if 'text_prompt' in conditions:
@@ -340,7 +340,6 @@ class ConditionalMulanPhonemeCoarseModule(BaseModule):
         chroma_ids = chroma if 'vocal_chroma' in conditions else None
 
         soundstream_ids, *condition_ids = self.prepare_conditions(soundstream_ids, mulan_ids, lyrics_ids, vocal_mulan_ids, chroma_ids)
-        print('Shapes', soundstream_ids.shape, [x.shape for x in condition_ids])
 
         input_ids = torch.cat(condition_ids + [soundstream_ids], dim=1)
         return self.predict_with_inputs(input_ids, hp)
@@ -419,22 +418,40 @@ class EmbedMulanPhonemeCoarseModule(ConditionalMulanPhonemeCoarseModule):
 
     # @torch.no_grad() # need grad for input embeddings
     def prepare_feature(self, batch):
+        mulan_audio, target_audio, lyrics_tokens = batch.get("mulan_audio"), batch.get("target_audio"), batch.get("lyrics_tokens")
+        vocal_audio, vocal_chroma = batch.get("vocal_audio"), batch.get("vocal_chroma")
+
+        soundstream_ids = None
+        mulan_ids = None
+        mulan_embeds = None
+        vocal_mulan_embeds = None
+        chroma_ids = None
+        lyrics_ids = lyrics_tokens
+            
         with torch.no_grad():
-            mulan_audio, target_audio, lyrics_tokens = batch.get("mulan_audio"), batch.get("target_audio"), batch.get("lyrics_tokens")
-
             soundstream_ids = self.get_soundstream_tokens(target_audio)
-            mulan_ids = None
-            mulan_embeds = self.get_mulan_embeds(mulan_audio)
-            lyrics_ids = lyrics_tokens
 
-            soundstream_ids, mulan_ids, lyrics_ids, *_ = self.prepare_conditions(soundstream_ids, mulan_ids, lyrics_ids)
+            if mulan_audio is not None:
+                mulan_embeds = self.get_mulan_embeds(mulan_audio)
+
+            if vocal_audio is not None and random.random() > self.extra_params.vocal_condition_p:
+                vocal_mulan_embeds = self.get_mulan_embeds(vocal_audio)
+            if vocal_audio is not None and random.random() > self.extra_params.chroma_condition_p:
+                chroma_ids = vocal_chroma
+
+            soundstream_ids, mulan_ids, lyrics_ids, _, chroma_ids = self.prepare_conditions(soundstream_ids, mulan_ids, lyrics_ids, chroma_ids=chroma_ids)
 
         from samantha.models.flash_llama import LlamaForCausalLM
         model: LlamaForCausalLM = self.model
         soundstream_embeds = model.model.embed_tokens(soundstream_ids)
-        mulan_embeds = self.mulan_lin_embed(mulan_embeds)[:, None, :]
-        lyrics_embeds = model.model.embed_tokens(lyrics_ids)
-        inputs_embeds = torch.cat([mulan_embeds, lyrics_embeds, soundstream_embeds[:, :-1, :]], dim=1)
+        b, sl, d = soundstream_embeds.shape
+        empty_embeds = input_ids = torch.zeros((b, 0, d), dtype=soundstream_embeds.dtype, device=self.device)
+
+        mulan_embeds = self.mulan_lin_embed(mulan_embeds)[:, None, :] if mulan_embeds is not None else empty_embeds
+        lyrics_embeds = model.model.embed_tokens(lyrics_ids) if lyrics_ids is not None else empty_embeds
+        vocal_mulan_embeds = self.mulan_lin_embed(vocal_mulan_embeds)[:, None, :] if vocal_mulan_embeds is not None else empty_embeds
+        chroma_embeds = model.model.embed_tokens(chroma_ids) if chroma_ids is not None else empty_embeds
+        inputs_embeds = torch.cat([mulan_embeds, lyrics_embeds, vocal_mulan_embeds, chroma_embeds, soundstream_embeds[:, :-1, :]], dim=1)
         target_ids = soundstream_ids[:, 1:]
         inputs = {
             "inputs_embeds": inputs_embeds
@@ -449,6 +466,8 @@ class EmbedMulanPhonemeCoarseModule(ConditionalMulanPhonemeCoarseModule):
         lyrics_tokens = batch.get('lyrics_tokens')
         mulan_text = batch.get('mulan_text')
         mulan_audio = batch.get('mulan_audio')
+        vocal_audio = batch.get('vocal_audio')
+        vocal_chroma = batch.get("vocal_chroma")
 
         if 'text_prompt' in conditions:
             mulan_embeds = self.get_mulan_prompt_embeds(mulan_text)
@@ -457,27 +476,34 @@ class EmbedMulanPhonemeCoarseModule(ConditionalMulanPhonemeCoarseModule):
         else:
             mulan_embeds = None
 
+        if 'mulan_vocals' in conditions:
+            vocal_mulan_embeds = self.get_mulan_embeds(vocal_audio)
+        else:
+            vocal_mulan_embeds = None
+
+
         soundstream_ids = None
         lyrics_ids = lyrics_tokens.to(self.device) if 'lyrics' in conditions else None
+        chroma_ids = vocal_chroma if 'vocal_chroma' in conditions else None
         mulan_ids = None
-        soundstream_ids, mulan_ids, lyrics_ids, *_ = self.prepare_conditions(soundstream_ids, mulan_ids, lyrics_ids)
+        soundstream_ids, mulan_ids, lyrics_ids, _, chroma_ids = self.prepare_conditions(soundstream_ids, mulan_ids, lyrics_ids, chroma_ids=chroma_ids)
 
 
 
         from samantha.models.flash_llama import LlamaForCausalLM
         model: LlamaForCausalLM = self.model
         soundstream_embeds = model.model.embed_tokens(soundstream_ids)
-        mulan_embeds = self.mulan_lin_embed(mulan_embeds)[:, None, :]
-        lyrics_embeds = model.model.embed_tokens(lyrics_ids)
-        inputs_embeds = torch.cat([mulan_embeds, lyrics_embeds, soundstream_embeds[:, :-1, :]], dim=1)
 
+        b, sl, d = soundstream_embeds.shape
+        empty_embeds = input_ids = torch.zeros((b, 0, d), dtype=soundstream_embeds.dtype, device=self.device)
 
+        mulan_embeds = self.mulan_lin_embed(mulan_embeds)[:, None, :] if mulan_embeds is not None else empty_embeds
+        lyrics_embeds = model.model.embed_tokens(lyrics_ids) if lyrics_ids is not None else empty_embeds
+        vocal_mulan_embeds = self.mulan_lin_embed(vocal_mulan_embeds)[:, None, :] if vocal_mulan_embeds is not None else empty_embeds
+        chroma_embeds = model.model.embed_tokens(chroma_ids) if chroma_ids is not None else empty_embeds
+        inputs_embeds = torch.cat([mulan_embeds, lyrics_embeds, vocal_mulan_embeds, chroma_embeds, soundstream_embeds[:, :-1, :]], dim=1)
 
-
-        # input_ids = torch.cat(condition_ids + [soundstream_ids], dim=1)
-
-        # soundstream_frame_rate = self.extra_params.soundstream_frame_rate
-        soundstream_frame_rate = 50
+        soundstream_frame_rate = self.extra_params.soundstream_frame_rate
         soundstream_codebook_size = self.extra_params.soundstream_codebook_size
         num_coarse = self.extra_params.num_coarse
         num_tokens = self.extra_params.duration * soundstream_frame_rate * num_coarse

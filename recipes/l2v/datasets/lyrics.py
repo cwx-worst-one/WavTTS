@@ -3,7 +3,7 @@ import torch
 import webdataset as wds
 import pytorch_lightning as pl
 # from recipes.musiclm.transforms.musiclm import MCCTransforms
-from recipes.l2v.datasets.transforms.lyrics import LyricsTransforms, LyricsTokenTransform
+from recipes.l2v.datasets.transforms.lyrics import LyricsTransforms, LyricsTokenTransform, LyricsChromaTransform
 from recipes.musiclm.preprocess import WebDatasetBufferPreprocessor
 from samantha.dataio.webdataset.extension import IndexedWebDataset
 from samantha.dataio.webdataset.pipeline import WebPipeline
@@ -91,7 +91,7 @@ class InstrumentalCollator(WavCollator):
     "Converts musiclm dataloader to work with l2v models"
     def __call__(self, batches):
         wavs = [item['audio'] for item in batches]
-        wavs = wav_collate(batches, audio_max_seq_len=self.audio_max_seq_len)
+        wavs = wav_collate(wavs, audio_max_seq_len=self.audio_max_seq_len)
         return {
             'mulan_audio': wavs,
             'target_audio': wavs,
@@ -211,11 +211,10 @@ class LyricsDataModule(pl.LightningDataModule):
         if dataset_type == 'mixture_only':
             train_dataset = create_mixture_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, segment_transforms, lyrics_collator)
         elif dataset_type == 'conditional_vocals':
+            segment_transforms = [LyricsTokenTransform(lyrics_tokenizer, lyrics_max_seq_len), LyricsChromaTransform()]
             train_dataset = create_conditional_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, segment_transforms, lyrics_collator)
         elif dataset_type == 'multitask':
             train_dataset = create_multitask_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, segment_transforms, lyrics_collator)
-        elif dataset_type == 'conditional_acc':
-            train_dataset = create_acc_conditional_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, segment_transforms, lyrics_collator)
         validation_dataset = create_validation_dataset(sample_rate, sample_duration, batch_size, segment_transforms, lyrics_collator)
         return LyricsDataModule(train_dataset=train_dataset, validation_dataset=validation_dataset, num_workers=num_workers, pin_memory=pin_memory)
 
@@ -428,17 +427,5 @@ def create_conditional_dataset(sample_rate, sample_duration, batch_size, shuffle
         [mixture_batch_ds, vocal_batch_ds, mixture_mcc9m_batch_ds, instrumental_batch_ds], 
         num_samples=10_000_000, seed=2023,
         weights=[0.15, 0.15, 0.55, 0.15]
-    )
-    return combined_ds
-
-def create_acc_conditional_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, segment_transforms, lyrics_collator):
-    mixture_batch_ds = create_mixture_conditional_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, segment_transforms, lyrics_collator)
-    vocal_batch_ds = create_vocal_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, segment_transforms, lyrics_collator)
-    mixture_mcc9m_batch_ds = create_mixture_mcc_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, segment_transforms, lyrics_collator)
-    # instrumental_batch_ds = create_instumental_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size)
-    combined_ds = MultiIterableDataset(
-        [mixture_batch_ds, vocal_batch_ds, mixture_mcc9m_batch_ds], 
-        num_samples=10_000_000, seed=2023,
-        weights=[0.4, 0.1, 0.5]
     )
     return combined_ds

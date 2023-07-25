@@ -149,8 +149,8 @@ class GTInferenceModule(BaseModule):
             os.makedirs(wav_dir, exist_ok=True)
             fp = os.path.join(wav_dir, f"{batch_idx * bs + i}")
             print(f"[Saving] {fp}")
-            save_wav(output_wav.cpu(), f"{fp}.{round}.wav", sr=24000)
-            save_wav(mulan_audio[i].cpu(), f"{fp}.wav", sr=24000)
+            save_wav(output_wav.cpu().float(), f"{fp}.{round}.wav", sr=24000)
+            save_wav(mulan_audio[i].cpu().float(), f"{fp}.wav", sr=24000)
             with open(f"{fp}.txt", 'w') as f:
                 f.write(f'Lyrics: {lyrics}')
 
@@ -167,7 +167,10 @@ class ConditionalMulanPhonemeInferenceModule(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
         self.extra_params = DotDict(extra_params)
-        self.coarse_module = EmbedMulanPhonemeCoarseModule.load_from_checkpoint(self.extra_params.coarse_ckpt).eval()
+        if self.extra_params.use_continuous_embedding:
+            self.coarse_module = EmbedMulanPhonemeCoarseModule.load_from_checkpoint(self.extra_params.coarse_ckpt).eval()
+        else:
+            self.coarse_module = ConditionalMulanPhonemeCoarseModule.load_from_checkpoint(self.extra_params.coarse_ckpt).eval()
         self.fine_module = FineModule.load_from_checkpoint(self.extra_params.fine_ckpt).eval()
         self.requires = {}
         self.load_required_modules()
@@ -221,7 +224,7 @@ class ConditionalMulanPhonemeInferenceModule(pl.LightningModule):
                 file_name += f'{round}-{i}'
             wav_fp = os.path.join(wav_dir, f"{file_name}.wav")
             print(f"[Saving] {wav_fp}")
-            save_wav(wav.cpu(), wav_fp, sr=24000)
+            save_wav(wav.cpu().float(), wav_fp, sr=24000)
 
             txt_fp = os.path.join(wav_dir, f"{file_name}.txt")
             with open(txt_fp, 'w') as f:
@@ -235,11 +238,11 @@ class ConditionalMulanPhonemeInferenceModule(pl.LightningModule):
 
             if mulan_audio is not None and 'audio_prompt' in conditions:
                 input_wav_fp = os.path.join(wav_dir, f"{file_name}.audio_prompt.wav")
-                save_wav(mulan_audio[i].cpu(), input_wav_fp, sr=24000)
+                save_wav(mulan_audio[i].cpu().float(), input_wav_fp, sr=24000)
 
             if vocal_audio is not None and 'mulan_vocals' in conditions:
                 input_vocals_fp = os.path.join(wav_dir, f"{file_name}.vocal_prompt.wav")
-                save_wav(vocal_audio[i].cpu(), input_vocals_fp, sr=24000)
+                save_wav(vocal_audio[i].cpu().float(), input_vocals_fp, sr=24000)
 
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
