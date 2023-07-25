@@ -62,6 +62,10 @@ class HDFSModelCheckpoint(ModelCheckpoint):
             every_n_epochs=every_n_epochs,
             save_on_train_epoch_end=save_on_train_epoch_end,
         )
+        # record last.ckpt modify time.
+        # use dict to support last-v1.ckpt, last-v2.ckpt, etc.
+        # when reusing the same local checkpoint directory.
+        self._last_mtime = dict()
         self._ckpt_history = set()
         self._worker_pool = Pool(num_sync_process)
 
@@ -81,10 +85,21 @@ class HDFSModelCheckpoint(ModelCheckpoint):
 
     @rank_zero_only
     def check_and_sync_checkpoints(self):
+        def maybe_sync_last(ckpt_path):
+            fn = os.path.basename(ckpt_path)
+            if "last" not in fn:
+                return False
+
+            mtime = os.path.getmtime(ckpt_path)
+            if mtime == self._last_mtime.get(fn, None):
+                return False
+            self._last_mtime.update({fn: mtime})
+            return True
+
         ckpts = self.list_checkpoints()
         for ckpt in ckpts:
-            fn = os.path.basename(ckpt)
-            if ckpt not in self._ckpt_history or "last" in fn:
+            if ckpt not in self._ckpt_history or maybe_sync_last(ckpt):
+                fn = os.path.basename(ckpt)
                 self._ckpt_history.add(ckpt)
                 hdfs_path = os.path.join(self.hdfs_path, fn)
                 self._worker_pool.apply_async(
