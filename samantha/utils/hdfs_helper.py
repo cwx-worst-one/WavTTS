@@ -306,6 +306,7 @@ def hdfs_ls(hdfs_path: str):
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True
     )
     (out, err) = proc.communicate()
+    err = err.decode()
 
     if proc.returncode != 0:
         errmsg = (

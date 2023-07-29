@@ -29,8 +29,14 @@ jobs:
         commands:
           - yamllint samantha recipes --no-warnings
   unittest:
-    image: hub.byted.org/base/samantha_preview:1.0.0.43
+    image: none
+    runs-on:
+      cluster: gpu
+      linux: { }
     steps:
+      - name: check env
+        commands:
+          - nvidia-smi
       - uses: actions/checkout
         inputs:
           depth: 1

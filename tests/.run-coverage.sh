@@ -3,9 +3,5 @@ wget "https://www.easyodeaudio.com.cn/api/sail/obj?signature=1f8e41f900e50798d13
 
 git ls-files tests \
   | grep -e "\.py$" \
-  | grep -v unit_test \
-  | grep -v batch_test \
-  | grep -v dev/data_preprocess.py \
-  | grep -v export_test \
   | grep -v benchmarks/dataloader \
   | xargs python3 -m pytest -m "not disable" --cov-report=xml:coverage.xml --cov=samantha --junit-xml=report.xml

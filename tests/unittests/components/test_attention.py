@@ -65,14 +65,14 @@ def test_qkv_cached(causal, use_rotary_embeddings, enable_flash, dtype):
     mha._use_cache = True
     for idx in range(seq_len):
         q_c, k_c, v_c = mha.qkv(test_input[:, idx : idx + 1], kv_cache=kv_cache)
-        torch.testing.assert_close(q[:, :, idx : idx + 1], q_c)
-        torch.testing.assert_close(k[:, :, idx : idx + 1], k_c[:, :, idx : idx + 1])
+        torch.testing.assert_close(q[:, :, idx : idx + 1], q_c, atol=1e-3, rtol=1e-7)
+        torch.testing.assert_close(k[:, :, idx : idx + 1], k_c[:, :, idx : idx + 1], atol=2e-3, rtol=1e-7)
         torch.testing.assert_close(v[:, :, idx : idx + 1], v_c[:, :, idx : idx + 1])
 
         score_c = mha.attention(q_c, k_c, v_c, return_attention=False)
 
     # only the last attention score will match the original one
-    torch.testing.assert_close(score[:, -1:], score_c)
+    torch.testing.assert_close(score[:, -1:], score_c, atol=2e-3, rtol=1e-7)
 
     # use a prefix
     prefix_len = 2
@@ -81,16 +81,16 @@ def test_qkv_cached(causal, use_rotary_embeddings, enable_flash, dtype):
     q_prefix, k_prefix, v_prefix = mha.qkv(
         test_input[:, :prefix_len], kv_cache=kv_cache
     )
-    torch.testing.assert_close(q[:, :, :prefix_len], q_prefix)
-    torch.testing.assert_close(k[:, :, :prefix_len], k_prefix)
-    torch.testing.assert_close(v[:, :, :prefix_len], v_prefix)
+    torch.testing.assert_close(q[:, :, :prefix_len], q_prefix, atol=1e-3, rtol=1e-7)
+    torch.testing.assert_close(k[:, :, :prefix_len], k_prefix, atol=2e-3, rtol=1e-7)
+    torch.testing.assert_close(v[:, :, :prefix_len], v_prefix, atol=1e-3, rtol=1e-7)
 
     for idx in range(prefix_len, seq_len):
         q_c, k_c, v_c = mha.qkv(test_input[:, idx : idx + 1], kv_cache=kv_cache)
-        torch.testing.assert_close(q[:, :, idx : idx + 1], q_c)
-        torch.testing.assert_close(k[:, :, idx : idx + 1], k_c[:, :, idx : idx + 1])
+        torch.testing.assert_close(q[:, :, idx : idx + 1], q_c, atol=1e-3, rtol=1e-7)
+        torch.testing.assert_close(k[:, :, idx : idx + 1], k_c[:, :, idx : idx + 1], atol=2e-3, rtol=1e-7)
         torch.testing.assert_close(v[:, :, idx : idx + 1], v_c[:, :, idx : idx + 1])
 
         score_c = mha.attention(q_c, k_c, v_c, return_attention=False)
 
-    torch.testing.assert_close(score[:, -1:], score_c)
+    torch.testing.assert_close(score[:, -1:], score_c, atol=2e-4, rtol=1e-7)

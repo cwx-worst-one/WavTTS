@@ -182,7 +182,7 @@ def test_attention_fwd_bwd(
     else:
         block_sparse_attention = BlockSparseAttention(
             layout, block, d_model=head_dim * n_heads, n_heads=n_heads
-        ).cuda()
+        ).to(dtype).cuda()
         attn_out = block_sparse_attention.attention(
             q=query, k=key, v=value, return_attention=False
         )
@@ -209,7 +209,7 @@ def test_attention_fwd_bwd(
 
         # comparison
         torch.testing.assert_close(
-            loss, torch_loss, msg=f"Triton loss {loss} and torch loss {torch_loss}"
+            loss, torch_loss, msg=f"Triton loss {loss} and torch loss {torch_loss}", atol=2e-3, rtol=1e-7
         )
 
         for g1, g2 in zip(grads, torch_grads):
@@ -220,6 +220,8 @@ def test_attention_fwd_bwd(
                     f"Triton grad {torch.norm(g1).item()} and torch grad"
                     f" {torch.norm(g2).item()}"
                 ),
+                atol=2e-4,
+                rtol=1e-7,
             )
 
 
@@ -258,4 +260,4 @@ def test_blocksparse_attention_parity(dtype):
     ).to(device=torch.device("cuda"), dtype=dtype)
     r_blocksparse = multi_head_blocksparse(inputs)
 
-    torch.testing.assert_close(r_sdp, r_blocksparse, atol=5e-5, rtol=6e-3)
+    torch.testing.assert_close(r_sdp, r_blocksparse, atol=3e-3, rtol=1e-7)

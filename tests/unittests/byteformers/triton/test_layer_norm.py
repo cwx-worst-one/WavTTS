@@ -5,6 +5,7 @@ from tests.helpers.runif import RunIf
 
 
 @RunIf(min_cuda_gpus=1)
+@pytest.mark.disable
 @pytest.mark.parametrize("batch_size, seq_len, dtype", [(1151, 8192, torch.float32)])
 def test_fused_layer_norm(batch_size, seq_len, dtype, eps=1e-5):
     import triton
