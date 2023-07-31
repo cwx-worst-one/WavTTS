@@ -124,7 +124,7 @@ class InferenceModule(BaseModule):
 
         for text in batch["text"]:
             text_emb = self.requires["mulan_infer_fn"](
-                self.requires["mulan"], text=text, device="cuda"
+                self.requires["mulan"], text=text, device=f"cuda:{self.local_rank}"
             )
             text_embs.append(text_emb)
 
