@@ -162,3 +162,42 @@ class MuLanMMEDataModule(pl.LightningDataModule):
             for val in self.val_dataset
         ]
         return val_loaders
+
+
+class MuLanQQDataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        train_dataset,
+        val_dataset,
+        batch_size=72,
+        val_batch_size=128,
+        shuffle_buffer_size=600,
+        num_workers=4,
+        pin_memory = True
+    ):
+        super().__init__()
+        self.train_dataset = train_dataset
+        self.val_dataset = val_dataset
+        self.batch_size = batch_size
+        self.val_batch_size = val_batch_size
+        self.sample_buffer_size = shuffle_buffer_size
+        self.num_workers = num_workers
+        self.pin_memory = pin_memory
+
+    def train_dataloader(self):
+        train_dataset_batched = wds.DataPipeline(
+            self.train_dataset,
+            wds.shuffle(self.sample_buffer_size),
+            wds.batched(self.batch_size, collation_fn=utils.collate_fn),
+        )
+        return DataLoader(train_dataset_batched, batch_size=None, num_workers=4)
+
+    def val_dataloader(self):
+        val_loaders = [
+            DataLoader(wds.DataPipeline(
+            val,
+            wds.batched(self.batch_size, collation_fn=utils.collate_fn),
+            ), batch_size=None, num_workers=4)
+            for val in self.val_dataset
+        ]
+        return val_loaders

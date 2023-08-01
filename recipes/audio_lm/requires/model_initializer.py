@@ -46,6 +46,15 @@ def init_mulan(hpath, local_rank, cache_dir=None, version="149"):
             mulan_inference,
             mulan_rvq_indexs,
         )
+    elif version in ["film"]:
+        from recipes.film.modules.pl_module import LitMuLanModule
+        with local_zero_first():
+            module = LitMuLanModule.load_from_checkpoint(hpath).eval()
+            return {
+                "mulan": module, 
+                "mulan_infer_fn": mulan_inference,
+            }
+
     else:
         raise KeyError(f"Not a valid mulan version. {version}")
     if cache_dir is not None:

@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torchaudio
 from transformers import AutoModel, AutoProcessor
 
-from recipes.mae.models.mut import PretrainedMuTWrapper, RMSNorm
+from recipes.mae.models.mut import MuT, PretrainedMuTWrapper, PretrainedMuTWrapper25hz,RMSNorm
 from samantha.utils.flops_calculator import llama_calculator
 
 
@@ -73,23 +73,28 @@ class MusicEncoder(nn.Module):
 
 
 class MuTWrapper(nn.Module):
-    def __init__(self, emb_dim: int = 128):
+    def __init__(self, emb_dim: int = 128, output_type="cls", seq_len=500):
         super(MuTWrapper, self).__init__()
 
         self.emb_dim = emb_dim
-        mlp_head = nn.Sequential(RMSNorm(1280), nn.Linear(1280, emb_dim))
+        if seq_len == 500:
+            mlp_head = nn.Sequential(RMSNorm(1280), nn.Linear(1280, emb_dim))
+        elif seq_len == 250:
+            mlp_head = nn.Sequential(RMSNorm(1280), nn.AvgPool2d((2, 1)), nn.Linear(1280, emb_dim))
+        else:
+            raise NotImplementedError(f"Seq len {seq_len} is not supported yet.")
         mut = PretrainedMuTWrapper(
             output_layer=mlp_head,
             checkpointing=True,
             use_flash_attn=True,
-            output_type="cls",
+            output_type=output_type,
             pretained_path="mutmae-step=177600-loss_1=5-sf.pth",
         )
         self.mut = mut
 
     def forward(self, audio, spec_aug=False):
         emb = self.mut(audio, spec_aug=spec_aug)
-        emb = F.normalize(emb, p=2, dim=1)
+        emb = F.normalize(emb, p=2, dim=-1)
         return emb
     
     def flops_fn(self, batch_size):
@@ -102,7 +107,7 @@ class MuTWrapper(nn.Module):
             mut.hidden_size,
             mut.intermediate_size,
             0,  # no embedding layer
-            501,  # seq_len after melspec plus [CLS]
+            250,  # seq_len after melspec plus [CLS]
             batch_size,
         )
         # add projection layer flops
@@ -110,13 +115,198 @@ class MuTWrapper(nn.Module):
         return flops
 
 
-def get_music_encoder(music_encoder="ast", emb_dim=128):
+class MuTWrapper25hz(nn.Module):
+    def __init__(self, emb_dim: int = 128, output_type="cls", seq_len=250):
+        super(MuTWrapper25hz, self).__init__()
+
+        self.emb_dim = emb_dim
+        if seq_len == 250:
+            mlp_head = nn.Sequential(RMSNorm(1280), nn.Linear(1280, emb_dim))
+        else:
+            raise NotImplementedError(f"Seq len {seq_len} is not supported yet.")
+        mut = PretrainedMuTWrapper25hz(
+            output_layer=mlp_head,
+            checkpointing=True,
+            use_flash_attn=True,
+            output_type=output_type,
+            pretained_path="mutmae-step=046400-loss_0=10-kaggle.pth",
+        )
+        self.mut = mut
+
+    def forward(self, audio, spec_aug=False):
+        emb = self.mut(audio, spec_aug=spec_aug)
+        emb = F.normalize(emb, p=2, dim=-1)
+        return emb
+    
+    def flops_fn(self, batch_size):
+        # only mut flops, ignore final projection
+        mut = self.mut.mut
+        flops = 0
+        # add mut flops
+        flops += llama_calculator(
+            mut.num_layers,
+            mut.hidden_size,
+            mut.intermediate_size,
+            0,  # no embedding layer
+            250,  # seq_len after melspec plus [CLS]
+            batch_size,
+        )
+        # add projection layer flops
+        flops += 6 * batch_size * mut.hidden_size * self.emb_dim
+        return flops
+
+class MuTinyWrapper(nn.Module):
+    def __init__(self, emb_dim: int = 128, output_type="seq"):
+        super(MuTinyWrapper, self).__init__()
+
+        self.emb_dim = emb_dim
+        mlp_head = nn.Sequential(RMSNorm(1280), nn.AvgPool2d((2, 1)), nn.Linear(1280, emb_dim))
+        mut = PretrainedMuTWrapper(
+            output_layer=mlp_head,
+            checkpointing=True,
+            use_flash_attn=True,
+            output_type=output_type,
+            pretained_path="mutmae-step=177600-loss_1=5-sf.pth",
+            num_layers=16,
+        )
+        self.mut = mut
+
+    def forward(self, audio, spec_aug=False):
+        emb = self.mut(audio, spec_aug=spec_aug)
+        emb = F.normalize(emb, p=2, dim=-1)
+        return emb
+    
+    def flops_fn(self, batch_size):
+        # only mut flops, ignore final projection
+        mut = self.mut.mut
+        flops = 0
+        # add mut flops
+        flops += llama_calculator(
+            mut.num_layers,
+            mut.hidden_size,
+            mut.intermediate_size,
+            0,  # no embedding layer
+            250,  # seq_len after melspec
+            batch_size,
+        )
+        # add projection layer flops
+        flops += 6 * batch_size * mut.hidden_size * self.emb_dim
+        return flops
+
+class MuTinyWrapper25hz(nn.Module):
+    def __init__(self, emb_dim: int = 128, output_type="seq"):
+        super(MuTinyWrapper25hz, self).__init__()
+
+        self.emb_dim = emb_dim
+        mlp_head = nn.Sequential(RMSNorm(1280), nn.Linear(1280, emb_dim))
+        mut = PretrainedMuTWrapper25hz(
+            output_layer=mlp_head,
+            checkpointing=True,
+            use_flash_attn=True,
+            output_type=output_type,
+            pretained_path="mutmae-step=046400-loss_0=10-kaggle.pth",
+            num_layers=16,
+        )
+        self.mut = mut
+
+    def forward(self, audio, spec_aug=False):
+        emb = self.mut(audio, spec_aug=spec_aug)
+        emb = F.normalize(emb, p=2, dim=-1)
+        return emb
+    
+    def flops_fn(self, batch_size):
+        # only mut flops, ignore final projection
+        mut = self.mut.mut
+        flops = 0
+        # add mut flops
+        flops += llama_calculator(
+            mut.num_layers,
+            mut.hidden_size,
+            mut.intermediate_size,
+            0,  # no embedding layer
+            250,  # seq_len after melspec
+            batch_size,
+        )
+        # add projection layer flops
+        flops += 6 * batch_size * mut.hidden_size * self.emb_dim
+        return flops
+
+class MuTFinal25hz(nn.Module):
+    def __init__(
+        self,
+        emb_dim=32,
+    ):
+        super(MuTFinal25hz, self).__init__()
+        mut = MuT(
+            spec_shape=(128, 1000),
+            patch_shape=(128, 4),
+            num_classes=1000,
+            sample_rate=24000,
+            dim=1280,
+            depth=16,
+            heads=16,
+            dim_head=80,
+            channels=1,
+            mlp_dim=5120,
+            checkpointing=True,
+            use_flash_attn=False,
+            output_type="seq",
+        )
+        mut.mlp_head = nn.Sequential(RMSNorm(1280), nn.Linear(1280, emb_dim))
+        self.emb_dim = emb_dim
+        self.mut = mut
+
+    def manually_to_device(self, device):
+        for k, v in self.mut.logmel_frontend["logmel"].feat_extract.items():
+            self.mut.logmel_frontend["logmel"].feat_extract[k] = v.to(device)
+
+    def forward(self, audio, spec_aug=False):
+        emb = self.mut(audio, spec_aug=spec_aug)
+        emb = F.normalize(emb, p=2, dim=-1)
+        return emb
+    
+    def flops_fn(self, batch_size):
+        # only mut flops, ignore final projection
+        mut = self.mut
+        flops = 0
+        # add mut flops
+        flops += llama_calculator(
+            mut.num_layers,
+            mut.hidden_size,
+            mut.intermediate_size,
+            0,  # no embedding layer
+            250,  # seq_len after melspec
+            batch_size,
+        )
+        # add projection layer flops
+        flops += 6 * batch_size * mut.hidden_size * self.emb_dim
+        return flops
+
+
+def get_music_encoder(music_encoder="ast", emb_dim=128, output_type="cls", seq_len=500):
     sample_rate = 24000
     if music_encoder == "ast":
+        print("using ast")
         return MusicEncoder(
             "MIT/ast-finetuned-audioset-10-10-0.4593", emb_dim, sample_rate
         )
     elif music_encoder == "mut":
-        return MuTWrapper(emb_dim)
+        print("using mut 50hz")
+        return MuTWrapper(emb_dim, output_type, seq_len)
+
+    elif music_encoder == "mut-25HZ":
+        print("using mut 25hz")
+        return MuTWrapper25hz(emb_dim, output_type, 250)
+    elif music_encoder == "mut-tiny":
+        print("using mut tiny")
+        return MuTinyWrapper(emb_dim)
+    elif music_encoder == "mut-tiny-25HZ":
+        print("using mut tiny")
+        return MuTinyWrapper25hz(emb_dim)
+    elif music_encoder == "mut-final-25HZ":
+        print("using mut final 25hz")
+        return MuTFinal25hz(emb_dim)
     else:
         raise NotImplementedError
+
+

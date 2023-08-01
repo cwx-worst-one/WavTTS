@@ -6,11 +6,14 @@ echo "work dir: $(pwd)"
 pip3 install -q --upgrade pip -i https://bytedpypi.byted.org/simple
 pip3 install -q -r recipes/mulan/requirements.txt
 pip3 install -U --pre triton -i https://bytedpypi.byted.org/simple
+pip3 install -i https://bytedpypi.byted.org/simple http://luban-source.byted.org/repository/scm/data.aml.cruise_1.0.0.1260.tar.gz
 
 export 'PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512'
 
 # Download mae ckpt
 hdfs dfs -get "/home/byte_speech_sv/weitsung.lu/mut_mae/MuT_MAE/mut_large/mutmae-step=177600-loss_1=5-sf.pth"
+hdfs dfs -get "/home/byte_speech_sv/xuchen.song/mae/mutmae-step=046400-loss_0=10-kaggle.pth"
+
 
 # Download gpt3 expansion
 hdfs_base="hdfs://harunava/home/byte_speech_sv/mulan"
@@ -33,12 +36,19 @@ fi
 # Download validation set
 if [ ! -d "data/" ] 
 then
-    echo "Download validation set"
+    echo "Download kaggle validation set"
     mkdir -p data/kaggle
-    hdfs dfs -get $hdfs_base/validation/kaggle_val.tar.gz data/kaggle
+    hdfs dfs -get $hdfs_base/validation/kaggle_val_mul.tar.gz data/kaggle
     echo "Unzip validation set"
-    tar -xzf data/kaggle/kaggle_val.tar.gz -C data/kaggle
-    rm data/kaggle/kaggle_val.tar.gz
+    tar -xzf data/kaggle/kaggle_val_mul.tar.gz -C data/kaggle
+    rm data/kaggle/kaggle_val_mul.tar.gz
+
+    echo "Download QQ validation set"
+    mkdir -p data/qq
+    hdfs dfs -get $hdfs_base/validation/qq_val.tar.gz data/qq
+    echo "Unzip validation set"
+    tar -xzf data/qq/qq_val.tar.gz -C data/qq
+    rm data/qq/qq_val.tar.gz
 else
     echo "Validation set exists, skip download"
 fi

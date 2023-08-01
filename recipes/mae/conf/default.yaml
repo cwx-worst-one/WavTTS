@@ -8,8 +8,8 @@ seed: 2023
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 
 # running parameters
-log_dir: hdfs://harunava/home/byte_speech_sv/weitsung.lu/mut_mae #!apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
-resume_checkpoint: 'mutmae-step=060000-loss_1=5-sf.ckpt'
+log_dir: /mnt/bn/mm-data/projects/mulan/mae_xuchen #!apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+#resume_checkpoint: 'mutmae-step=060000-loss_1=5-sf.ckpt'
 run_opts:
     fast_dev_run: False
     tensorboard_dir: !ref <log_dir>
@@ -22,9 +22,9 @@ run_opts:
     strategy: ddp #ddp_find_unused_parameters_false
     num_steps: 60000000
     val_check_interval: 800
-    batch_size: 80
+    batch_size: 512
     sample_buffer_size: 600
-    val_batch_size: 128
+    val_batch_size: 160
     emb_dim: 513
     learning_rate: 5.e-5
     weight_decay: 5.e-4
@@ -71,7 +71,7 @@ train_datasets:
 selected_dataset_names: [audio_set, ecals, playlist, tt_query, short_form]
 weights: [0.1, 0.2, 0.2, 0.2, 0.4]
 
-train_dataset: !new:samantha.dataio.dataset.MultiIterableDatasetWithSampling
+train_dataset: !new:samantha.dataio.dataset.MultiIterableDataset
     datasets: !apply:recipes.mae.dataset.utils.select_datasets
         - !ref <train_datasets>
         - !ref <selected_dataset_names>
@@ -143,10 +143,11 @@ trainer: !new:pytorch_lightning.Trainer
     enable_model_summary: True
     max_steps: !ref <run_opts[num_steps]>
     val_check_interval: !ref <run_opts[val_check_interval]>
-    resume_from_checkpoint: !ref <resume_checkpoint>
-    replace_sampler_ddp: False
+    #resume_from_checkpoint: !ref <resume_checkpoint>
+    use_distributed_sampler: False
     logger: !ref <logger>
     log_every_n_steps: !ref <run_opts[log_every_n_steps]>
     precision: !ref <run_opts[precision]>
     callbacks: !ref <callbacks>
     plugins: !ref <plugins>
+    # gradient_clip_val: 1

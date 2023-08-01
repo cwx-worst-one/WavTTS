@@ -118,12 +118,12 @@ callbacks:
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: step
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
-      save_top_k: 5
+      save_top_k: 3
       monitor: median_rank_0
       mode: min
       filename: mulan-{step:06d}-{median_rank_0:.0f}-kaggle
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
-      save_top_k: 5
+      save_top_k: 3
       monitor: median_rank_1
       mode: min
       filename: mulan-{step:06d}-{median_rank_1:.0f}-kaggle

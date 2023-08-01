@@ -36,7 +36,7 @@ def filter_g4_category_labels(s):
 
 
 class MCCGPTGenDataset(IterableDataset):
-    def __init__(self, mode="train", **kwargs):
+    def __init__(self, mode="train", seq_len=250, **kwargs):
         self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
         self.dataset = (
             wds.WebDataset(MCC_GPT_GEN_URLS, **kwargs)
@@ -45,7 +45,7 @@ class MCCGPTGenDataset(IterableDataset):
             .map(lambda x: {"chunk_id": x[0], "meta.json": x[1], "audio.npy": x[2]})
             .map(utils.process_audio)
             .map(self._process_text)
-            .map(utils.tokenize_text(self.tokenizer, mode))
+            .map(utils.tokenize_text(self.tokenizer, mode, seq_len))
         )
 
     def _process_text(self, data):
@@ -60,7 +60,7 @@ class MCCGPTGenDataset(IterableDataset):
 
 
 class AEDGPTGenDataset(IterableDataset):
-    def __init__(self, mode="train", verbose=False, **kwargs):
+    def __init__(self, mode="train", seq_len=250, verbose=False, **kwargs):
         self.verbose = verbose
         self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
         self.dataset = (
@@ -70,7 +70,7 @@ class AEDGPTGenDataset(IterableDataset):
             .map(lambda x: {"chunk_id": x[0], "meta.json": x[1], "audio.npy": x[2]})
             .map(utils.process_audio)
             .map(self._process_text)
-            .map(utils.tokenize_text(self.tokenizer, mode))
+            .map(utils.tokenize_text(self.tokenizer, mode, seq_len))
         )
         with open("assets/chatgpt_g4_aed.pkl", "rb") as f:
             self.chatgpt_g4 = pickle.load(f)
@@ -110,11 +110,12 @@ class AEDGPTGenDataset(IterableDataset):
                     if "instrument" not in k.lower() and "place" not in k.lower()
                 ]
                 tags = [s for s in tags if len(s) > 0]
-                # randomize the order
-                random.shuffle(tags)
-                for tag in tags:
-                    if random.random() < 0.8:
-                        text += tag + " "
+                if not tags:
+                    text = ""
+                else:
+                    # randomly choose 1-len(tags) tags
+                    tags = random.sample(tags, random.randint(1, len(tags)))
+                    text = " ".join(tags)
                 if self.verbose:
                     chunk_id = data["chunk_id"]
                     print(
@@ -130,7 +131,7 @@ class AEDGPTGenDataset(IterableDataset):
 
 
 class MCCN2MDataset(IterableDataset):
-    def __init__(self, mode="train", verbose=False, **kwargs):
+    def __init__(self, mode="train", seq_len=250, verbose=False, **kwargs):
         self.verbose = verbose
         self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
         self.dataset = (
@@ -140,7 +141,7 @@ class MCCN2MDataset(IterableDataset):
             .map(lambda x: {"chunk_id": x[0], "meta.json": x[1], "audio.npy": x[2]})
             .map(utils.process_audio)
             .map(self._process_text)
-            .map(utils.tokenize_text(self.tokenizer, mode))
+            .map(utils.tokenize_text(self.tokenizer, mode, seq_len))
         )
         with open("assets/chatgpt_g4_mcc.pkl", "rb") as f:
             self.chatgpt_g4 = pickle.load(f)
@@ -175,11 +176,12 @@ class MCCN2MDataset(IterableDataset):
                     if "instrument" not in k.lower() and "place" not in k.lower()
                 ]
                 tags = [s for s in tags if len(s) > 0]
-                # randomize the order
-                random.shuffle(tags)
-                for tag in tags:
-                    if random.random() < 0.8:
-                        text += tag + " "
+                if not tags:
+                    text = ""
+                else:
+                    # randomly choose 1-len(tags) tags
+                    tags = random.sample(tags, random.randint(1, len(tags)))
+                    text = " ".join(tags)
                 if self.verbose:
                     chunk_id = data["chunk_id"]
                     print(
@@ -195,13 +197,62 @@ class MCCN2MDataset(IterableDataset):
         return iter(self.dataset)
 
 
+class MCCN2MDatasetApril(IterableDataset):
+    def __init__(self, mode="train", seq_len=250, **kwargs):
+        self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
+        self.dataset = (
+            wds.WebDataset(MCC_N2M_URLS, **kwargs)
+            .decode()
+            .map(utils.process_audio)
+            .map(self._process_text)
+            .map(utils.tokenize_text(self.tokenizer, mode, seq_len))
+        )
+        with open("assets/chatgpt_g4_mcc.pkl", "rb") as f:
+            self.chatgpt_g4 = pickle.load(f)
+
+    def _process_text(self, data):
+        meta = data["meta.json"]
+        # n2m is a list of 3 matched texts
+        # data["text"] = random.choice(n2m_texts)
+        text = ""
+        if random.random() < 0.5:
+            n2m_texts = meta["n2m"]
+            text += random.choice(n2m_texts)
+        else:
+            if str(meta["music_id"]) in self.chatgpt_g4:
+                tags = self.chatgpt_g4[str(meta["music_id"])]
+                # get all the items into list
+                tags = [
+                    filter_g4_category_labels(tags[k])
+                    for k in tags
+                    if "instrument" not in k.lower() and "place" not in k.lower()
+                ]
+                tags = [s for s in tags if len(s) > 0]
+                if not tags:
+                    text = ""
+                else:
+                    # randomly choose 1-len(tags) tags
+                    tags = random.sample(tags, random.randint(1, len(tags)))
+                    text = " ".join(tags)
+        data["text"] = text.strip()
+        data["data_source"] = meta["data_source"]
+        data["music_id"] = meta["music_id"]
+
+        return data
+
+    def __iter__(self):
+        return iter(self.dataset)
+
+
+
+
 if __name__ == "__main__":
 
     g4_dataset = MCCGPTGenDataset()
     g4_loader = wds.WebLoader(g4_dataset, num_workers=1, batch_size=None)
 
     for batch in g4_loader:
-        print(batch)
+        print(batch['input_ids'].shape)
         break
 
     n2m_dataset = MCCN2MDataset()

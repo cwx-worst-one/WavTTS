@@ -6,83 +6,158 @@
 
 seed: 2023
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+_checkpointing: True
 
 # running parameters
 # log_dir: hdfs://harunava/home/byte_speech_sv/weituo/mulan_exp #!apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
-log_dir: /mnt/bn/audio-diffusion/mulan_exp #!apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+log_dir: logs
 run_opts:
     fast_dev_run: False
     tensorboard_dir: !ref <log_dir>
-    log_name: MuLan_large
+    log_name: FiLMGEN
     log_every_n_steps: 10
-    version: mmme_longterm
+    version: g4_mme
     precision: 16
     num_workers: 4
     accelerator: auto
     strategy: ddp_find_unused_parameters_false
-    enable_activation_ckpt: True
+    enable_activation_ckpt: !ref <_checkpointing>
     num_steps: 600000
     val_check_interval: 200
+    seq_len: 250
     batch_size: 72
-    # sample_buffer_size: 600
+    gen_batch_size: 8 # use only a small subset in the GPU consuming decoder modules
     shuffle_buffer: 600
     val_batch_size: 128
     spec_aug: False
     text_encoder: bert
-    music_encoder: mut
-    emb_dim: 512
+    music_encoder: mut-tiny-25HZ
     learning_rate: 4.e-5
+    gen_learning_rate: 2.e-4
     weight_decay: 5.e-4
     temperature: 0.1  # temperature in Multiview Coding loss
     min_volume_threshold: 0.05
     loudness_ratio_threshold: 0.2
-    use_supcontrast: False
     use_flatclr: False
     gather_batches: True
+    mulan_alpha: 0.5
+    cache_dir: .module_cache/musiclm
 
-extra_params:
-    sample_rate: 24000
+
+################################################################################
+##########                      MODEL CONFIGURATION                   ##########
+################################################################################
+
+size_params:
+    soundstream_frame_rate: 50
     duration: 10
-    wav2vec_codebook_size: 1024
-    wav2vec_frame_rate: 25
-    mulan_codebook_size: 1024
-    mulan_num_rvq: 12
+    emb_dim: 32
+    num_coarse: 4
+    soundstream_codebook_size: 1024
+    text_beta: 0.9
+    text_warmup_steps: 10000
+
+model_config: !new:transformers.GPT2Config
+    vocab_size: !ref <size_params[num_coarse]> * <size_params[soundstream_codebook_size]> + 1
+    num_logits: !ref <size_params[num_coarse]> * <size_params[soundstream_codebook_size]>
+    cond_dim: !ref <size_params[emb_dim]>
+    n_positions: !ref <size_params[num_coarse]> * <size_params[duration]> * <size_params[soundstream_frame_rate]>
+    n_embd: 1024
+    n_layer: 20
+    n_head: 16
+    activation_function: gelu_new
+    resid_pdrop: 0.0
+    embd_pdrop: 0.0
+    attn_pdrop: 0.0
+    layer_norm_epsilon: 0.00001
+    initializer_range: 0.02
+    add_cross_attention: True
+    use_cache: !apply:operator.not_ [!ref <_checkpointing>]
+
+decoder_cls: !name:samantha.models.flash_gpt2.GPT2ForCrossAttn
+    config: !ref <model_config>
 
 ################################################################################
-##########                    TRAINING CONFIGURATION                  ##########
+##########                      DATA CONFIGURATION                    ##########
 ################################################################################
+
+
+audioset_dataset: !new:recipes.mulan.dataset.audioset.AudioSetDataset
+    seq_len: !ref <run_opts[seq_len]>
+    resampled: True
+ecals_dataset: !new:recipes.mulan.dataset.ecals.ECALSDataset
+    seq_len: !ref <run_opts[seq_len]>
+    resampled: True
+karaoke_dataset: !new:recipes.mulan.dataset.karaoke.KaraokeDataset
+    seq_len: !ref <run_opts[seq_len]>
+    resampled: True
+playlist_dataset: !new:recipes.mulan.dataset.playlist.PlaylistDataset
+    seq_len: !ref <run_opts[seq_len]>
+    resampled: True
+mcc_gpt_dataset: !new:recipes.mulan.dataset.mcc.MCCGPTGenDataset
+    seq_len: !ref <run_opts[seq_len]>
+    resampled: True
+aed_gpt_dataset: !new:recipes.mulan.dataset.mcc.AEDGPTGenDataset
+    seq_len: !ref <run_opts[seq_len]>
+    resampled: True
+mcc_n2m_dataset: !new:recipes.mulan.dataset.mcc.MCCN2MDatasetApril
+    seq_len: !ref <run_opts[seq_len]>
+    resampled: True
+tt_query_dataset: !new:recipes.mulan.dataset.tt_query.TTQueryDataset
+    seq_len: !ref <run_opts[seq_len]>
+    resampled: True
+disco_dataset: !new:recipes.mulan.dataset.disco.DiscoDataset
+    seq_len: !ref <run_opts[seq_len]>
+    resampled: True
+
+shortform_dataset: !new:recipes.mulan.dataset.short_form.ShortFormDataset
+    seq_len: !ref <run_opts[seq_len]>
+    resampled: True
+
 
 mcc3m_dataset: !new:recipes.mulan.dataset.mme.MMEDataset
     name: "mcc3.5m"
     audio_type: vocal
+    seq_len: !ref <run_opts[seq_len]>
     resampled: True
-
 pgc_dataset: !new:recipes.mulan.dataset.mme.MMEDataset
     name: mcc600k
     audio_type: vocal
+    seq_len: !ref <run_opts[seq_len]>
     resampled: True
-
 metacritic_vocal_dataset: !new:recipes.mulan.dataset.mme.MMEDataset
     name: metacritic
     audio_type: vocal
+    seq_len: !ref <run_opts[seq_len]>
     resampled: True
-
 metacritic_nonvocal_dataset: !new:recipes.mulan.dataset.mme.MMEDataset
     name: metacritic
     audio_type: nonvocal
+    seq_len: !ref <run_opts[seq_len]>
     resampled: True
-
 everynoise_vocal_dataset: !new:recipes.mulan.dataset.mme.MMEDataset
     name: everynoise
     audio_type: vocal
+    seq_len: !ref <run_opts[seq_len]>
     resampled: True
-
 everynoise_nonvocal_dataset: !new:recipes.mulan.dataset.mme.MMEDataset
     name: everynoise
     audio_type: nonvocal
+    seq_len: !ref <run_opts[seq_len]>
     resampled: True
 
 train_datasets:
+    audio_set: !ref <audioset_dataset>
+    ecals: !ref <ecals_dataset>
+    karaoke: !ref <karaoke_dataset>
+    playlist: !ref <playlist_dataset>
+    mcc_gpt: !ref <mcc_gpt_dataset>
+    aed_gpt: !ref <aed_gpt_dataset>
+    mcc_n2m: !ref <mcc_n2m_dataset>
+    tt_query: !ref <tt_query_dataset>
+    disco: !ref <disco_dataset>
+    shortform: !ref <shortform_dataset>
+
     3m_vocal: !ref <mcc3m_dataset>
     pgc_vocal: !ref <pgc_dataset>
     meta_vocal: !ref <metacritic_vocal_dataset>
@@ -90,8 +165,9 @@ train_datasets:
     every_vocal: !ref <everynoise_vocal_dataset>
     every_nonvocal: !ref <everynoise_nonvocal_dataset>
 
-selected_dataset_names: [3m_vocal, pgc_vocal, meta_vocal, every_vocal]
-weights: [0.6, 0.2, 0.1, 0.1]
+selected_dataset_names: [mcc_n2m, 3m_vocal, pgc_vocal, meta_vocal, every_vocal, meta_nonvocal, every_nonvocal,tt_query, disco,shortform, playlist]
+weights: [0.6, 0.6, 0.2, 0.05, 0.05, 0.05, 0.05, 0.6, 0.6, 0.6, 0.6]
+
 
 train_dataset: !new:samantha.dataio.dataset.MultiIterableDataset
     datasets: !apply:recipes.mulan.dataset.utils.select_datasets
@@ -121,17 +197,25 @@ pl_datamodule: !new:recipes.mulan.modules.pl_datamodule.MuLanMMEDataModule
     num_workers: !ref <run_opts[num_workers]>
     pin_memory: True
 
-pl_module: !new:recipes.mulan.modules.pl_module.LitMuLanModule
+pl_module: !new:recipes.mulan.modules.pl_module_filmgen.FiLMGenModel
     music_encoder: !ref <run_opts[music_encoder]>
     text_encoder: !ref <run_opts[text_encoder]>
-    emb_dim: !ref <run_opts[emb_dim]>
-    spec_aug: !ref <run_opts[spec_aug]>
+    decoder_cls: !ref <decoder_cls>
+    criterion_cls: !name:recipes.audio_lm.modules.MaskedCrossEntropy
+    size_params: !ref <size_params>
+    gen_batch_size: !ref <run_opts[gen_batch_size]>
     lr: !ref <run_opts[learning_rate]>
+    gen_lr: !ref <run_opts[gen_learning_rate]>
     weight_decay: !ref <run_opts[weight_decay]>
     temperature: !ref <run_opts[temperature]>
-    use_supcontrast: !ref <run_opts[use_supcontrast]>
+    mulan_loss_weight: !ref <run_opts[mulan_alpha]>
     use_flatclr: !ref <run_opts[use_flatclr]>
     gather_batches: !ref <run_opts[gather_batches]>
+    required_modules:
+        soundstream:
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
+            - !name:recipes.musiclm.requires.model_initializer.init_soundstream
+              cache_dir: !ref <run_opts[cache_dir]>
 
 logger:
     - !new:pytorch_lightning.loggers.TensorBoardLogger
@@ -153,9 +237,9 @@ callbacks:
       filename: mulan-{step:06d}-{median_rank_0:.0f}-kaggle
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
       save_top_k: 3
-      monitor: median_rank_1
-      mode: min
-      filename: mulan-{step:06d}-{median_rank_1:.0f}-kaggle
+      monitor: accu_acoustic_0
+      mode: max
+      filename: mulan-{step:06d}-{accu_acoustic_0:.2f}-kaggle
     - !new:recipes.mulan.modules.ema.EMA
       decay: 0.999
 

@@ -13,14 +13,14 @@ TTQUERY_URLS = [
 
 
 class TTQueryDataset(IterableDataset):
-    def __init__(self, mode="train", **kwargs):
+    def __init__(self, mode="train", seq_len=250, **kwargs):
         self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
         self.dataset = (
             wds.WebDataset(TTQUERY_URLS, **kwargs)
             .decode()
             .map(utils.process_audio)
             .map(self._process_text)
-            .map(utils.tokenize_text(self.tokenizer, mode))
+            .map(utils.tokenize_text(self.tokenizer, mode, seq_len))
         )
 
     def _process_text(self, data):

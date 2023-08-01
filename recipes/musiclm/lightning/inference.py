@@ -484,3 +484,64 @@ class InferenceGTCrossAttnModule(BaseModule):
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         for i in range(self.extra_params.num_rounds):
             self._predict_step(batch, batch_idx, i)
+
+
+class InferenceFilmGenModule(BaseModule):
+    def __init__(
+        self,
+        required_modules,
+        extra_params=None,
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+        self.extra_params = DotDict(extra_params)
+        self.fine_module = FineModule.load_from_checkpoint(self.extra_params.fine_ckpt).eval()
+        self.requires = {}
+    
+    def setup(self, stage):
+        self.load_required_modules()
+    
+    def _load_required_module(self, name):
+        hpath, initializer = self.hparams.required_modules[name]
+        self.requires.update(initializer(hpath, local_rank=self.local_rank))
+
+    def load_required_modules(self):
+        self._load_required_module("mulan")
+        self._load_required_module("soundstream_dec")
+
+    def _predict_step(self, batch, batch_idx, round):
+        prompts = batch["text"]
+        categories = batch["category"]
+        bs = len(prompts)
+
+        coarse_samples = self.requires["mulan_infer_fn"](
+            self.requires["mulan"], texts=batch["text"]
+        )
+        print(f"{coarse_samples.shape=}")
+
+        fine_samples = self.fine_module.predict(coarse_samples, self.extra_params)
+        print(f"{fine_samples.shape=}")
+
+        coarse_samples = coarse_samples.view([bs, -1, self.extra_params.num_coarse])
+        fine_samples = fine_samples.view([bs, -1, self.extra_params.num_fine])
+        vqgan_inputs = (
+            torch.cat([coarse_samples, fine_samples], dim=2)
+            - torch.arange(self.extra_params.num_coarse + self.extra_params.num_fine, device=coarse_samples.device)
+            * self.extra_params.soundstream_codebook_size
+        )  # [b, t, n_codebook]
+        print(f"{vqgan_inputs.shape=}")
+        vqgan_inputs = vqgan_inputs.transpose(
+            1, 2
+        )  # [b, t, n_codebook] -> [b, n_codebook, t]
+        wavs = self.requires["ss_dec"](vqgan_inputs).squeeze(1)
+    
+        for i, wav in enumerate(wavs):
+            wav_dir = os.path.join(self.extra_params.output_dir, categories[i])
+            os.makedirs(wav_dir, exist_ok=True)
+            fp = os.path.join(wav_dir, f"{slugify(prompts[i])[:128]}.{round}.wav")
+            print(f"[Saving] {fp}")
+            save_wav(wav.cpu(), fp, sr=24000)
+
+    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+        for i in range(self.extra_params.num_rounds):
+            self._predict_step(batch, batch_idx, i)

@@ -16,10 +16,11 @@ KARAOKE_URLS = [
 
 
 class KaraokeDataset(IterableDataset):
-    def __init__(self, mixed_batch_size=72, mode="train", **kwargs):
+    def __init__(self, mixed_batch_size=72, mode="train", seq_len=250, **kwargs):
         self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
         self.meter = pyln.Meter(24000)
         self.mode = mode
+        self.seq_len = seq_len
         self.dataset = (
             wds.WebDataset(KARAOKE_URLS, **kwargs)
             .decode()
@@ -112,7 +113,7 @@ class KaraokeDataset(IterableDataset):
                 mixed_text.lower(),
                 padding="max_length",
                 truncation=True,
-                max_length=200,
+                max_length=self.seq_len,
                 return_tensors="pt",
             )
             input_ids = tokenized_text["input_ids"]

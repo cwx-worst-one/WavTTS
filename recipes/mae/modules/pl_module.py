@@ -3,6 +3,7 @@ from collections import defaultdict
 
 import pytorch_lightning as pl
 import torch
+#torch.backends.cuda.matmul.allow_tf32 = True
 from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 from einops import rearrange
 from matplotlib import pyplot as plt
@@ -13,18 +14,17 @@ from torch import nn
 from recipes.mae.models.mae import MAE
 from recipes.mae.models.mut import MuT
 
-
 class LitMutMAEModule(pl.LightningModule):
     def __init__(self, emb_dim, lr, weight_decay):
         super().__init__()
         self.save_hyperparameters()  # save hyperparameter in ckpt
         mut = MuT(
             spec_shape=(128, 1000),
-            patch_shape=(128, 2),
+            patch_shape=(128, 4), #(128, 2)
             num_classes=1000,
             sample_rate=24000,
             dim=1280,
-            depth=32,
+            depth=32, #32
             heads=16,
             dim_head=80,
             channels=1,
@@ -49,7 +49,15 @@ class LitMutMAEModule(pl.LightningModule):
     def on_fit_start(self):
         for k, v in self.mae.logmel_frontend["logmel"].feat_extract.items():
             self.mae.logmel_frontend["logmel"].feat_extract[k] = v.to(self.device)
-
+    def on_predict_start(self):
+        for k, v in self.mae.logmel_frontend["logmel"].feat_extract.items():
+            self.mae.logmel_frontend["logmel"].feat_extract[k] = v.to(self.device)
+    def on_validation_start(self):
+        for k, v in self.mae.logmel_frontend["logmel"].feat_extract.items():
+            self.mae.logmel_frontend["logmel"].feat_extract[k] = v.to(self.device)
+    def on_test_start(self):
+        for k, v in self.mae.logmel_frontend["logmel"].feat_extract.items():
+            self.mae.logmel_frontend["logmel"].feat_extract[k] = v.to(self.device)
     @property
     def deepspeed_offload(self) -> bool:
         strategy = self.trainer.strategy
@@ -96,7 +104,7 @@ class LitMutMAEModule(pl.LightningModule):
 
         return {"loss": results["loss"]}
 
-    def validation_step(self, batch, batch_idx, dataloader_idx):
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
         results = self._shared_step(batch)
 
         if self.local_rank == 0:
@@ -110,17 +118,18 @@ class LitMutMAEModule(pl.LightningModule):
             # masked
             masked_mel = mel_spec.clone()
             for i in masked_indices[0]:
-                masked_mel[0, 0, :, 2 * i : 2 * i + 2] = 0
+                masked_mel[0, 0, :, 4 * i : 4 * i + 4] = 0
             plt.imsave(
                 f"check/{_id}_masked_mel.png", masked_mel[0][0].detach().cpu().numpy()
             )
             # pred
             pred_pixel_values = rearrange(
-                pred_pixel_values, "b n (d w) -> b n d w", w=2
+                pred_pixel_values, "b n (d w) -> b n d w", w=4
             )
             pred_mel = mel_spec.clone()
             for i, ii in enumerate(masked_indices[0]):
-                pred_mel[0, 0, :, 2 * ii : 2 * ii + 2] = pred_pixel_values[0, i]
+                pred_mel[0, 0, :, 4 * ii : 4 * ii + 4] = pred_pixel_values[0, i]
+
             plt.imsave(
                 f"check/{_id}_pred_mel.png", pred_mel[0][0].detach().cpu().numpy()
             )

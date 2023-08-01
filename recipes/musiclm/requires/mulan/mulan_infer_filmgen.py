@@ -1,11 +1,17 @@
+import pytorch_lightning as pl
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import torchaudio
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 from rotary_embedding_torch import RotaryEmbedding
-from torch import nn
 from torch.utils.checkpoint import checkpoint
+from transformers import AutoModel, AutoTokenizer
+from tqdm import tqdm
+from recipes.musiclm.inference.utils import sample
+
+from samantha.utils.hparams import DotDict
 
 # helpers
 
@@ -281,12 +287,9 @@ class MuT(nn.Module):
         emb_dropout=0.0,
         checkpointing=True,
         use_flash_attn=False,
-        output_type="seq",
+        output_type="emb",
     ):
         super().__init__()
-        self.num_layers = depth
-        self.hidden_size = dim
-        self.intermediate_size = mlp_dim
 
         self.logmel_frontend = {"logmel": LogMel(sample_rate=sample_rate)}
 
@@ -316,7 +319,8 @@ class MuT(nn.Module):
             "cls",
             "mean",
             "seq",
-        }, "pool type must be either cls (cls token), mean (mean pooling) or seq (output sequence)"
+        }, "pool type must be either cls (cls token), mean (mean pooling) or seq (output sequence)"  # noqa
+
         self.output_type = output_type
         if output_type in ["cls"]:
             self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
@@ -337,7 +341,7 @@ class MuT(nn.Module):
 
         self.to_latent = nn.Identity()
 
-        #self.mlp_head = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, num_classes))
+        self.mlp_head = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, num_classes))
 
         self.tm = torchaudio.transforms.TimeMasking(time_mask_param=192)
         self.fm = torchaudio.transforms.FrequencyMasking(freq_mask_param=48)
@@ -382,8 +386,8 @@ class PretrainedMuTWrapper(nn.Module):
         checkpointing=True,
         use_flash_attn=False,
         output_type="cls",
+        num_layers=32,
         pretained_path: str = "mutmae-step=177600-loss_1=5-sf.pth",
-        num_layers: int = 32,
     ):
         super(PretrainedMuTWrapper, self).__init__()
         mut = MuT(
@@ -401,47 +405,7 @@ class PretrainedMuTWrapper(nn.Module):
             use_flash_attn=use_flash_attn,
             output_type=output_type,
         )
-        state_dict = torch.load(pretained_path, map_location="cpu")
-        mut.load_state_dict(state_dict, strict=False)
-        mut.mlp_head = output_layer
-        self.mut = mut
-
-    def manually_to_device(self, device):
-        for k, v in self.mut.logmel_frontend["logmel"].feat_extract.items():
-            self.mut.logmel_frontend["logmel"].feat_extract[k] = v.to(device)
-
-    def forward(self, audio, spec_aug=False):
-        out = self.mut(audio, spec_aug=spec_aug)
-
-        return out
-
-class PretrainedMuTWrapper25hz(nn.Module):
-    def __init__(
-        self,
-        output_layer,  # output dim from mut is 1280
-        checkpointing=True,
-        use_flash_attn=False,
-        output_type="cls",
-        pretained_path: str = "mutmae-step=177600-loss_1=5-sf.pth",
-        num_layers: int = 32,
-    ):
-        super(PretrainedMuTWrapper25hz, self).__init__()
-        mut = MuT(
-            spec_shape=(128, 1000),
-            patch_shape=(128, 4),
-            num_classes=1000,
-            sample_rate=24000,
-            dim=1280,
-            depth=num_layers,
-            heads=16,
-            dim_head=80,
-            channels=1,
-            mlp_dim=5120,
-            checkpointing=checkpointing,
-            use_flash_attn=use_flash_attn,
-            output_type=output_type,
-        )
-        # state_dict = torch.load(pretained_path, map_location="cpu")
+        # state_dict = torch.load(pretained_path, map_location='cpu')
         # mut.load_state_dict(state_dict, strict=False)
         mut.mlp_head = output_layer
         self.mut = mut
@@ -454,31 +418,194 @@ class PretrainedMuTWrapper25hz(nn.Module):
         out = self.mut(audio, spec_aug=spec_aug)
 
         return out
+
+
+class MuTinyWrapper(nn.Module):
+    def __init__(self, emb_dim: int = 128, output_type="seq"):
+        super(MuTinyWrapper, self).__init__()
+
+        self.emb_dim = emb_dim
+        mlp_head = nn.Sequential(RMSNorm(1280), nn.AvgPool2d((2, 1)), nn.Linear(1280, emb_dim))
+        mut = PretrainedMuTWrapper(
+            output_layer=mlp_head,
+            checkpointing=True,
+            use_flash_attn=True,
+            output_type=output_type,
+            pretained_path="mutmae-step=177600-loss_1=5-sf.pth",
+            num_layers=16,
+        )
+        self.mut = mut
+
+    def forward(self, audio, spec_aug=False):
+        emb = self.mut(audio, spec_aug=spec_aug)
+        emb = F.normalize(emb, p=2, dim=-1)
+        return emb
+
+
+class TextEncoder(nn.Module):
+    def __init__(self, pretrained_model="bert-base-uncased", emb_dim: int = 128, output_type="cls"):
+        super(TextEncoder, self).__init__()
+        self.emb_dim = emb_dim
+        self.output_type = output_type
+        self.text_model = AutoModel.from_pretrained(
+            pretrained_model, add_pooling_layer=False
+        )
+        self.text_model.gradient_checkpointing_enable()
+        self.text_linear = nn.Linear(1024, emb_dim)
+
+    def forward(self, input_ids, attention_mask, token_type_ids):
+        outputs = self.text_model(
+            input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids
+        )
+        last_hidden_state = outputs["last_hidden_state"]
+        if self.output_type == "cls":
+            text_output = last_hidden_state[:, 0, :]
+        else:
+            text_output = last_hidden_state
+        text_output = self.text_linear(text_output)
+        text_embed = F.normalize(text_output, p=2, dim=-1)
+        return text_embed
+
+
+def get_text_encoder(text_encoder="bert", emb_dim=128):
+    if text_encoder == "bert":
+        return TextEncoder("bert-large-uncased", emb_dim, output_type="seq")
+    else:
+        raise NotImplementedError
+
+
+def get_music_encoder(music_encoder="mut-tiny", emb_dim=128):
+    if music_encoder == "mut-tiny":
+        return MuTinyWrapper(emb_dim)
+    else:
+        raise NotImplementedError
+
+
+class FiLMGenModel(pl.LightningModule):
+    def __init__(
+        self,
+        music_encoder,
+        text_encoder,
+        decoder_cls,
+        criterion_cls,
+        required_modules,
+        size_params,
+        lr,
+        gen_lr,
+        weight_decay,
+        gen_batch_size: int = 4,
+        temperature: float = 0.1,
+        mulan_loss_weight: float = 0.5,
+        use_flatclr: bool = False,
+        gather_batches: bool = True,
+    ):
+        super().__init__()
+        self.save_hyperparameters()  # save hyperparameter in ckpt
+        self.size_params = DotDict(size_params)
+
+        self.music_encoder = get_music_encoder(
+            music_encoder, self.size_params.emb_dim
+        )
+        self.text_encoder = get_text_encoder(
+            text_encoder, self.size_params.emb_dim
+        )
+        self.decoder = decoder_cls()
+        self.criterion = criterion_cls()
+        self.requires = {}
+
+        self.temperature = torch.log(torch.tensor(1 / self.hparams.temperature))
+
+        # Validation outputs
+        self.val_outputs = dict()
+        self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
+
+    def tokenize_text(self, texts):
+        tokenized_text = self.tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            max_length=250,
+            return_tensors="pt",
+        )
+        input_ids = tokenized_text["input_ids"]
+        attention_mask = tokenized_text["attention_mask"]
+        token_type_ids = tokenized_text["token_type_ids"]
+        return input_ids, attention_mask, token_type_ids
+
+    def encode_text(self, texts):
+        input_ids, attention_mask, token_type_ids = self.tokenize_text(texts)
+        device = next(self.text_encoder.parameters()).device
+        input_ids = input_ids.to(device)
+        attention_mask = attention_mask.to(device)
+        token_type_ids = token_type_ids.to(device)
+        text_embed = self.text_encoder(input_ids, attention_mask, token_type_ids)
+        return text_embed
+    
+    def decode_coarse(self, text_embeds, temp=0.9, sample_mode="gumbel"):
+        device = text_embeds.device
+        b = text_embeds.size(0)
+        num_coarse = 4
+        soundstream_codebook_size = 1024
+        soundstream_frame_rate = 50
+        coarse_duration = 10
+        duration = 10
+        sample_len = 2000
+        sos_ids = (
+            torch.zeros(size=[b, 1], dtype=torch.long, device=device)
+            + num_coarse * soundstream_codebook_size
+        )
+        input_ids = sos_ids
+        pbar = tqdm(range(sample_len))
+        pbar.set_description("FilmGen")
+        coarse_samples = None
+        past_key_values = None
+        for i in pbar:
+            model_output = self.decoder(
+                input_ids=input_ids,
+                encoder_hidden_states=text_embeds,
+                past_key_values=past_key_values,
+                use_cache=True,
+            )
+            past_key_values = model_output["past_key_values"]
+            logits = model_output["logits"]
+            layer_idx = i % num_coarse
+            predict_logits = logits[:, -1:, layer_idx * 1024 : (layer_idx + 1) * 1024]
+            samples = sample(predict_logits, temp=temp, mode=sample_mode)
+            samples = samples + layer_idx * 1024
+            input_ids = samples
+            if coarse_samples is None:
+                coarse_samples = samples
+            else:
+                coarse_samples = torch.cat([coarse_samples, samples], dim=1)
+        return coarse_samples
+
+
+def create_mulan_model(ckpt_path, device):
+    litmodel = FiLMGenModel.load_from_checkpoint(ckpt_path)
+
+    # text tower
+    litmodel.text_encoder.eval()
+    litmodel.text_encoder.to(device)
+    # decoder
+    litmodel.decoder.eval()
+    litmodel.decoder.to(device)
+
+    return litmodel
+
+
+@torch.no_grad()
+def mulan_inference(
+    model, texts=None, device="cpu", avg=True, shift_seconds=1
+):
+    assert (texts is not None), "text inputs cannot be None"
+
+    emb = model.encode_text(texts)
+    coarse_samples = model.decode_coarse(emb)
+
+    return coarse_samples
+
 if __name__ == "__main__":
-    # model = MuT(
-    #     spec_shape=(128, 1000),
-    #     patch_shape=(128, 2),
-    #     num_classes=1000,
-    #     sample_rate=24000,
-    #     dim=1024,
-    #     depth=6,
-    #     heads=8,
-    #     dim_head=128,
-    #     channels=1,
-    #     mlp_dim=2048
-    # )
-    # dummy_input = torch.randn(3, 1, 240000)
-    # print(model(dummy_input).shape)
-    torch.manual_seed(42)
-    output_layer = nn.Sequential(RMSNorm(1280), nn.Linear(1280, 20))
-    mut = PretrainedMuTWrapper(
-        output_layer, checkpointing=True, use_flash_attn=False, output_type="seq"
-    )
-    device = torch.device("cuda:0")
-    mut.to(device)
-    mut.eval()
-    mut.manually_to_device(device)
-    dummy_input = torch.randn(3, 1, 240000)
-    output = mut(dummy_input.to(device))
-    print(output[0][0])
-    print(output.shape)
+    ckpt_path = "/mnt/bn/audio-diffusion/filmgen_exp/film_72_gen_8_diff_lr/checkpoints/mulan-step=029000-median_rank_0=70-kaggle.ckpt"
+    model = create_mulan_model(ckpt_path, device="cuda")
+    text = ["piano", "guitar music"]
+    coarse = mulan_inference(model, texts=text)

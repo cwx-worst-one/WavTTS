@@ -35,7 +35,7 @@ def process_audio(data):
     return data
 
 
-def tokenize_text(tokenizer, mode="train"):
+def tokenize_text(tokenizer, mode="train", seq_len=250):
     def _tokenize_text(data):
         text = data["text"]
 
@@ -48,7 +48,7 @@ def tokenize_text(tokenizer, mode="train"):
             text,
             padding="max_length",
             truncation=True,
-            max_length=400,
+            max_length=seq_len,
             return_tensors="pt",
         )
         data["input_ids"] = encodings["input_ids"]

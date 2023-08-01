@@ -8,79 +8,115 @@ seed: 2023
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 
 # running parameters
-log_dir: hdfs://harunava/home/byte_speech_sv/weituo/mulan_exp #!apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+# log_dir: hdfs://harunava/home/byte_speech_sv/weituo/mulan_exp #!apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+log_dir: /mnt/bn/mm-data/user/film_exp #!apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
 run_opts:
+    music_seq_len: 250
     fast_dev_run: False
     tensorboard_dir: !ref <log_dir>
     log_name: MuLan_large
     log_every_n_steps: 10
-    version: g4
+    version: mix_all_gpu8
     precision: 16
     num_workers: 4
     accelerator: auto
     strategy: ddp_find_unused_parameters_false
     enable_activation_ckpt: True
     num_steps: 600000
-    val_check_interval: 800
+    val_check_interval: 200
     batch_size: 72
-    sample_buffer_size: 600
+    # sample_buffer_size: 600
+    shuffle_buffer: 600
     val_batch_size: 128
     spec_aug: True
     text_encoder: bert
-    music_encoder: mut
-    emb_dim: 512
+    music_encoder: mut-final-25HZ
+    emb_dim: 32
     learning_rate: 4.e-5
     weight_decay: 5.e-4
     temperature: 0.1  # temperature in Multiview Coding loss
+    min_volume_threshold: 0.05
+    loudness_ratio_threshold: 0.2
+    seq_len: 250
+
+extra_params:
+    sample_rate: 24000
+    duration: 10
+    wav2vec_codebook_size: 1024
+    wav2vec_frame_rate: 25
+    mulan_codebook_size: 1024
+    mulan_num_rvq: 12
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
 
-short_form_dataset: !new:recipes.mulan.dataset.short_form.ShortFormDataset
-    resampled: True
-
-long_form_dataset: !new:recipes.mulan.dataset.long_form.LongFormDataset
-    resampled: True
-
 audioset_dataset: !new:recipes.mulan.dataset.audioset.AudioSetDataset
+    seq_len: !ref <run_opts[seq_len]>
     resampled: True
-
 ecals_dataset: !new:recipes.mulan.dataset.ecals.ECALSDataset
+    seq_len: !ref <run_opts[seq_len]>
     resampled: True
-
 karaoke_dataset: !new:recipes.mulan.dataset.karaoke.KaraokeDataset
+    seq_len: !ref <run_opts[seq_len]>
     resampled: True
-
 playlist_dataset: !new:recipes.mulan.dataset.playlist.PlaylistDataset
+    seq_len: !ref <run_opts[seq_len]>
     resampled: True
-
 mcc_gpt_dataset: !new:recipes.mulan.dataset.mcc.MCCGPTGenDataset
+    seq_len: !ref <run_opts[seq_len]>
     resampled: True
-
 aed_gpt_dataset: !new:recipes.mulan.dataset.mcc.AEDGPTGenDataset
+    seq_len: !ref <run_opts[seq_len]>
     resampled: True
-
-mcc_n2m_dataset: !new:recipes.mulan.dataset.mcc.MCCN2MDataset
+mcc_n2m_dataset: !new:recipes.mulan.dataset.mcc.MCCN2MDatasetApril
+    seq_len: !ref <run_opts[seq_len]>
     resampled: True
-
 tt_query_dataset: !new:recipes.mulan.dataset.tt_query.TTQueryDataset
+    seq_len: !ref <run_opts[seq_len]>
+    resampled: True
+disco_dataset: !new:recipes.mulan.dataset.disco.DiscoDataset
+    seq_len: !ref <run_opts[seq_len]>
     resampled: True
 
+shortform_dataset: !new:recipes.mulan.dataset.short_form.ShortFormDataset
+    seq_len: !ref <run_opts[seq_len]>
+    resampled: True
+
+
+mcc3m_dataset: !new:recipes.mulan.dataset.mme.MMEDataset
+    name: "mcc3.5m"
+    audio_type: vocal
+    seq_len: !ref <run_opts[seq_len]>
+    resampled: True
+pgc_dataset: !new:recipes.mulan.dataset.mme.MMEDataset
+    name: mcc600k
+    audio_type: vocal
+    seq_len: !ref <run_opts[seq_len]>
+    resampled: True
+metacritic_vocal_dataset: !new:recipes.mulan.dataset.mme.MMEDataset
+    name: metacritic
+    audio_type: vocal
+    seq_len: !ref <run_opts[seq_len]>
+    resampled: True
 metacritic_nonvocal_dataset: !new:recipes.mulan.dataset.mme.MMEDataset
     name: metacritic
     audio_type: nonvocal
+    seq_len: !ref <run_opts[seq_len]>
     resampled: True
-
+everynoise_vocal_dataset: !new:recipes.mulan.dataset.mme.MMEDataset
+    name: everynoise
+    audio_type: vocal
+    seq_len: !ref <run_opts[seq_len]>
+    resampled: True
 everynoise_nonvocal_dataset: !new:recipes.mulan.dataset.mme.MMEDataset
     name: everynoise
     audio_type: nonvocal
+    seq_len: !ref <run_opts[seq_len]>
     resampled: True
 
 train_datasets:
-    short_form: !ref <short_form_dataset>
-    long_form: !ref <long_form_dataset>
     audio_set: !ref <audioset_dataset>
     ecals: !ref <ecals_dataset>
     karaoke: !ref <karaoke_dataset>
@@ -89,11 +125,18 @@ train_datasets:
     aed_gpt: !ref <aed_gpt_dataset>
     mcc_n2m: !ref <mcc_n2m_dataset>
     tt_query: !ref <tt_query_dataset>
-    meta: !ref <metacritic_nonvocal_dataset>
-    every: !ref <everynoise_nonvocal_dataset>
+    disco: !ref <disco_dataset>
+    shortform: !ref <shortform_dataset>
 
-selected_dataset_names: [karaoke, mcc_gpt, aed_gpt, mcc_n2m, meta, every]
-weights: [0.1, 0.2, 0.1, 0.6, 0.1, 0.1]
+    3m_vocal: !ref <mcc3m_dataset>
+    pgc_vocal: !ref <pgc_dataset>
+    meta_vocal: !ref <metacritic_vocal_dataset>
+    meta_nonvocal: !ref <metacritic_nonvocal_dataset>
+    every_vocal: !ref <everynoise_vocal_dataset>
+    every_nonvocal: !ref <everynoise_nonvocal_dataset>
+
+selected_dataset_names: [mcc_n2m, 3m_vocal, pgc_vocal, meta_vocal, every_vocal, meta_nonvocal, every_nonvocal,tt_query, disco,shortform, playlist]
+weights: [0.6, 0.6, 0.2, 0.05, 0.05, 0.05, 0.05, 0.6, 0.6, 0.6, 0.6]
 
 train_dataset: !new:samantha.dataio.dataset.MultiIterableDataset
     datasets: !apply:recipes.mulan.dataset.utils.select_datasets
@@ -107,23 +150,25 @@ kaggle_val_0: !new:recipes.mulan.dataset.val.TextMusicDataset
     path: data/kaggle
     csv_name: kaggle_val_meta.csv
     text_key: text
+    max_text_len: !ref <run_opts[seq_len]>
 
 kaggle_val_1: !new:recipes.mulan.dataset.val.TextMusicDataset
     path: data/kaggle
     csv_name: kaggle_val_meta.csv
     text_key: aspect_list
+    max_text_len: !ref <run_opts[seq_len]>
 
 val_dataset: [!ref <kaggle_val_0>, !ref <kaggle_val_1>]
 
-# datamodule configuration
-pl_datamodule: !new:recipes.mulan.modules.pl_datamodule.MuLanDataModule
+pl_datamodule: !new:recipes.mulan.modules.pl_datamodule.MuLanMMEDataModule
     train_dataset: !ref <train_dataset>
-    batch_size: !ref <run_opts[batch_size]>
-    sample_buffer_size: !ref <run_opts[sample_buffer_size]>
     val_dataset: !ref <val_dataset>
-    val_batch_size: !ref <run_opts[val_batch_size]>
+    batch_size: !ref <run_opts[batch_size]>
+    shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+    num_workers: !ref <run_opts[num_workers]>
+    pin_memory: True
 
-pl_module: !new:recipes.mulan.modules.pl_module.LitMuLanModule
+pl_module: !new:recipes.mulan.modules.pl_module_film.LitFiLMModule
     music_encoder: !ref <run_opts[music_encoder]>
     text_encoder: !ref <run_opts[text_encoder]>
     emb_dim: !ref <run_opts[emb_dim]>
@@ -131,6 +176,8 @@ pl_module: !new:recipes.mulan.modules.pl_module.LitMuLanModule
     lr: !ref <run_opts[learning_rate]>
     weight_decay: !ref <run_opts[weight_decay]>
     temperature: !ref <run_opts[temperature]>
+    text_seq_len: !ref <run_opts[seq_len]>
+    music_seq_len: !ref <run_opts[music_seq_len]>
 
 logger:
     - !new:pytorch_lightning.loggers.TensorBoardLogger
@@ -152,9 +199,9 @@ callbacks:
       filename: mulan-{step:06d}-{median_rank_0:.0f}-kaggle
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
       save_top_k: 3
-      monitor: median_rank_1
-      mode: min
-      filename: mulan-{step:06d}-{median_rank_1:.0f}-kaggle
+      monitor: step
+      mode: max
+      filename: mulan-{step:06d}-{median_rank_0:.0f}_{median_rank_1:.0f}-kaggle
     - !new:recipes.mulan.modules.ema.EMA
       decay: 0.999
 
@@ -177,4 +224,3 @@ trainer: !new:pytorch_lightning.Trainer
     precision: !ref <run_opts[precision]>
     callbacks: !ref <callbacks>
     plugins: !ref <plugins>
-

@@ -7,8 +7,11 @@ from torchaudio_augmentations import Compose
 from transformers import AutoModel, Wav2Vec2FeatureExtractor
 
 import samantha.utils.hdfs_helper as hh
-# from recipes.best_rq.modules.lit_datamodule import NormalizeFeature
-# from recipes.best_rq.modules.lit_module import BestRQ
+from recipes.best_rq.modules.lit_datamodule import NormalizeFeature
+try:
+    from recipes.best_rq.modules.lit_module import BestRQ
+except:
+    BestRQ = None
 from recipes.musiclm.models.compat.semantic_model import SSLFrontend
 
 from ..utils.dist import local_zero_first
@@ -50,6 +53,12 @@ def init_mulan(hpath, local_rank, cache_dir=None, version="149"):
             mulan_inference,
             mulan_rvq_indexs,
         )
+    elif version in ["filmgen"]:
+        from .mulan.mulan_infer_filmgen import (
+            create_mulan_model,
+            mulan_inference,
+        )
+        mulan_rvq_indexs = None
     else:
         raise KeyError(f"Not a valid mulan version. {version}")
     if cache_dir is not None:
