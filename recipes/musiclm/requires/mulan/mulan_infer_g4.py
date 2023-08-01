@@ -13,7 +13,7 @@ from pytorch_lightning.strategies import DeepSpeedStrategy
 from pytorch_lightning.utilities import rank_zero_info
 from rotary_embedding_torch import RotaryEmbedding
 from torch.utils.checkpoint import checkpoint
-from transformers import AutoModel, AutoProcessor, AutoTokenizer
+from transformers import AutoModel, AutoProcessor, AutoTokenizer, AutoConfig
 
 # helpers
 
@@ -424,11 +424,8 @@ class PretrainedMuTWrapper(nn.Module):
 class TextEncoder(nn.Module):
     def __init__(self, pretrained_model="bert-base-uncased", emb_dim: int = 128):
         super(TextEncoder, self).__init__()
-        self.text_model = AutoModel.from_pretrained(
-            pretrained_model,
-            cache_dir="/mnt/bn/audio-diffusion/.module_cache",
-            add_pooling_layer=False,
-        )
+        config = AutoConfig.from_pretrained(pretrained_model)
+        self.text_model =  AutoModel.from_config(config, add_pooling_layer=False)
         self.text_model.gradient_checkpointing_enable()
         self.text_linear = nn.Linear(1024, emb_dim)
 
@@ -452,11 +449,9 @@ def get_text_encoder(text_encoder="bert", emb_dim=128):
 class MusicEncoder(nn.Module):
     def __init__(self, pretrained_model, emb_dim: int = 128, sample_rate: int = 24000):
         super(MusicEncoder, self).__init__()
-        processor = AutoProcessor.from_pretrained(pretrained_model)
-        music_model = AutoModel.from_pretrained(
-            pretrained_model,
-            cache_dir="/mnt/bn/audio-diffusion/.module_cache",
-        )
+        config = AutoConfig.from_pretrained(pretrained_model)
+        processor = AutoProcessor.from_config(config)
+        music_model =  AutoModel.from_config(config)
         self.feat_extract = {  # Use a dict to avoid auto convert fp16
             "mel": torchaudio.transforms.MelSpectrogram(
                 sample_rate=sample_rate,
