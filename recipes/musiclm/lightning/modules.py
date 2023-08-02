@@ -324,8 +324,46 @@ class SemanticModule(BaseModule):
             ]
             self.load_state_dict(state_dict=state_dict, strict=False)
 
+    def _shared_step(self, batch):
+        text = None
+        has_vocal = None
+        if isinstance(batch, list):
+            wavs = batch[0]
+            if len(batch) == 2:
+                if self.extra_params.get("sft", False):
+                    text = batch[1]
+                elif self.extra_params.get("vad_conditioned", False):
+                    has_vocal = batch[1]
+            elif len(batch) == 3:
+                if self.extra_params.get("sft", False):
+                    text = batch[1]
+                if self.extra_params.get("vad_conditioned", False):
+                    has_vocal = batch[2]
+        elif isinstance(batch, dict):
+            wavs = batch["audio"]
+            if self.extra_params.get("sft", False) and "text" in batch:
+                text = batch["text"]
+            if self.extra_params.get("vad_conditioned", False) and "has_vocal" in batch:
+                has_vocal = batch["has_vocal"]
+        if wavs.dim() == 3:
+            wavs = wavs.squeeze(1)
+        # t = time.perf_counter()
+        with torch.autocast(device_type="cuda", enabled=False):
+            input_ids, target_ids = self.prepare_feature(wavs.float(), text=text, has_vocal=has_vocal)
+        # exclude_time = time.perf_counter() - t
+        logits = self.model(**input_ids)
+        if isinstance(logits, dict):
+            logits = logits["logits"]
+        elif isinstance(logits, tuple):
+            logits = logits[0]
+        x = logits[:, -target_ids.size(1) :, :]
+        loss = self.criterion(x, target_ids)
+        accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
+
+        return loss, accu
+
     @torch.no_grad()
-    def prepare_feature(self, wavs, text=None):
+    def prepare_feature(self, wavs, text=None, has_vocal=None):
         device = wavs.device
         b, _ = wavs.size()
 
@@ -340,11 +378,20 @@ class SemanticModule(BaseModule):
             * self.extra_params.mulan_codebook_size
             + self.extra_params.wav2vec_codebook_size
         )
-        sos_ids = (
-            torch.zeros(size=[b, 1], dtype=mulan_ids.dtype, device=device)
-            + self.extra_params.wav2vec_codebook_size
-            + self.extra_params.mulan_num_rvq * self.extra_params.mulan_codebook_size
-        )
+        if self.extra_params.get("vad_conditioned", False):
+            if has_vocal is None:   # default to no vocal
+                has_vocal = torch.BoolTensor([False] * b)
+            sos_ids = (
+                has_vocal.long().reshape(b, 1).to(device)
+                + self.extra_params.wav2vec_codebook_size
+                + self.extra_params.mulan_num_rvq * self.extra_params.mulan_codebook_size
+            )
+        else:
+            sos_ids = (
+                torch.zeros(size=[b, 1], dtype=mulan_ids.dtype, device=device)
+                + self.extra_params.wav2vec_codebook_size
+                + self.extra_params.mulan_num_rvq * self.extra_params.mulan_codebook_size
+            )
         input_ids = torch.cat([mulan_ids, sos_ids, wav2vec_ids[:, :-1]], dim=1)
         return {"input_ids": input_ids}, wav2vec_ids
 
@@ -364,6 +411,8 @@ class SemanticModule(BaseModule):
             + hp.mulan_num_rvq * hp.mulan_codebook_size
             + hp.wav2vec_codebook_size
         )
+        if getattr(hp, "generate_vocal", False):
+            sos_ids += 1
 
         slice_range = []
         beg = 0

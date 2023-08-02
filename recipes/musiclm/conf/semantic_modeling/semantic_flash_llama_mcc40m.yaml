@@ -18,6 +18,7 @@ extra_params:
     wav2vec_frame_rate: 25
     mulan_codebook_size: 1024
     mulan_num_rvq: 12
+    vad_conditioned: False
 
 # running parameters
 run_opts:
@@ -47,8 +48,8 @@ run_opts:
 
 ar_filtering: !new:recipes.musiclm.transforms.musiclm.ARFiltering
     genre_stats_fname: "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/genre_quantile_stats.pkl"
-    semantic_diversity_range: (50, 100)
-    semantic_probs_range: (20, 100)
+    semantic_diversity_range: (10, 90)
+    semantic_probs_range: (10, 90)
 
 train_dataset: !new:recipes.musiclm.datasets.mcc.WrappedMCC40MDataset
     url2index_list:
@@ -84,6 +85,7 @@ train_dataset: !new:recipes.musiclm.datasets.mcc.WrappedMCC40MDataset
     max_num_crops: 6
     avoid_vocal: True
     max_vocal_threshold: 0.5
+    overlap_vocal_threshold: 0.1
     resampled: True
     shardshuffle: True
     seed: !ref <seed>
@@ -102,9 +104,10 @@ pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.DataModule
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
     num_workers: !ref <run_opts[num_workers]>
     pin_memory: True
+    train_keys: ["audio", "has_vocal"]
 
 model_config: !new:transformers.LlamaConfig
-    vocab_size: !ref <extra_params[wav2vec_codebook_size]> + <extra_params[mulan_num_rvq]> * <extra_params[mulan_codebook_size]> + 1
+    vocab_size: !ref <extra_params[wav2vec_codebook_size]> + <extra_params[mulan_num_rvq]> * <extra_params[mulan_codebook_size]> + 2
     hidden_size: 1536
     intermediate_size: 4128
     num_hidden_layers: 24

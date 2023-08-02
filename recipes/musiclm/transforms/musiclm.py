@@ -28,8 +28,19 @@ class Segment:
     def duration(self) -> float:
         return self.en - self.st
 
-    def is_overlap(self, st: float, en: float) -> bool:
-        return self.st <= en and st <= self.en
+    def is_overlap(
+        self,
+        st: float,
+        en: float,
+        thresh: float = 0.1,
+    ) -> bool:
+        if self.st > en or st > self.en:
+            return False
+        if en - st <= 0:
+            return False
+        overlap_duration = min(self.en, en) - max(self.st, st)
+        overlap_ratio = overlap_duration / (en - st)
+        return overlap_ratio >= thresh
 
     def __repr__(self):
         return f"({self.st}, {self.en})"
@@ -149,6 +160,7 @@ class MCCTransforms(TransformBase):
         exclude_licenses: List[str] = [],
         avoid_vocal: bool = False,
         max_vocal_threshold: float = 0.5,
+        overlap_vocal_threshold: float = 0.1,
         audio_metrics_filtered: bool = False,
         ar_filtering: Optional[ARFiltering] = None,
         max_num_crops: Optional[int] = None,    # if None, auto set based on audio length
@@ -165,6 +177,7 @@ class MCCTransforms(TransformBase):
         self.exclude_licenses = set(exclude_licenses)
         self.avoid_vocal = avoid_vocal
         self.max_vocal_threshold = max_vocal_threshold
+        self.overlap_vocal_threshold = overlap_vocal_threshold
         self.audio_metrics_filtered = audio_metrics_filtered
         self.ar_filtering = ar_filtering
         self.max_num_crops = max_num_crops
@@ -289,7 +302,7 @@ class MCCTransforms(TransformBase):
         self, vocal_segments: List[Segment], st: float, en: float
     ) -> bool:
         for vocal_segment in vocal_segments:
-            if vocal_segment.is_overlap(st, en):
+            if vocal_segment.is_overlap(st, en, thresh=self.overlap_vocal_threshold):
                 #print(f"Skipped: st={st} en={en} vocal_segment={vocal_segment}")
                 return True
         return False
@@ -340,14 +353,12 @@ class MCCTransforms(TransformBase):
         if not is_good:
             self._update_stats(skipped=True, message=message)
             return
-        vocal_segments = []
-        if self.avoid_vocal:
-            vocal_segments, vocal_ratio = self.get_vocal_data(x["__index_data__"])
-            #print(f"vocal_segments: {vocal_segments}, vocal_ratio: {vocal_ratio}")
-            if vocal_ratio > self.max_vocal_threshold:
-                #print(f"Skipped: vocal_ratio={vocal_ratio}")
-                self._update_stats(skipped=True, message="Has Vocal")
-                return
+        vocal_segments, vocal_ratio = self.get_vocal_data(x["__index_data__"])
+        #print(f"vocal_segments: {vocal_segments}, vocal_ratio: {vocal_ratio}")
+        if self.avoid_vocal and vocal_ratio > self.max_vocal_threshold:
+            #print(f"Skipped: vocal_ratio={vocal_ratio}")
+            self._update_stats(skipped=True, message="Has Vocal")
+            return
 
         try:
             audio = self.base_transform(x[self.audio_key])
@@ -375,17 +386,19 @@ class MCCTransforms(TransformBase):
                 continue
             st_sample = wid * self.crop_step_size
             en_sample = st_sample + self.n_samples
-            if self.avoid_vocal and self.contains_vocal(
+            has_vocal = self.contains_vocal(
                 vocal_segments,
                 st_sample / self.sample_rate,
                 en_sample / self.sample_rate,
-            ):
+            )
+            if self.avoid_vocal and has_vocal:
                 continue
             cropped_audio = audio[:, st_sample : en_sample]
             if not self.is_loud(cropped_audio):
                 continue
             output = {
                 "audio": cropped_audio,
+                "has_vocal": has_vocal,
                 "key": x["__key__"],
                 "metadata": x["__index_data__"],
                 "url": x["__url__"],
