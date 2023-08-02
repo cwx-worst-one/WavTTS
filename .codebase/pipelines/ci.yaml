@@ -41,8 +41,11 @@ jobs:
         inputs:
           depth: 1
           submodules: True
+      - uses: actions/doas
+        id: doas
       - name: unittest
         commands:
+          - export PYTHONPATH=/opt/tiger/cruise:$PYTHONPATH
           - sh tests/.run-coverage.sh
       - uses: actions/report
         if: True

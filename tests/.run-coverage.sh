@@ -1,5 +1,5 @@
 #!/bin/bash
-wget "https://www.easyodeaudio.com.cn/api/sail/obj?signature=1f8e41f900e50798d13db48739616700&v=tos%3A7231201152149372965" -O tests/data/44k_3ch.wav
+hdfs dfs -get /home/byte_speech_sv/user/wangxin.colin/tests/44k_3ch.wav tests/data/44k_3ch.wav
 
 git ls-files tests \
   | grep -e "\.py$" \
