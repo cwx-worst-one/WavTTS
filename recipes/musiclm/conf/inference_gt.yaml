@@ -10,7 +10,7 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 
 extra_params:
     gt_infer_mode: "semantic->coarse->fine"  # ["mulan->semantic->coarse->fine", "semantic->coarse->fine", "coarse->fine"]
-    output_dir: generated_output/plastic_gt_infer_coarse_pgc600k_best_rq_cb1024_ct0.9
+    output_dir: generated_output/plastic_gt_infer_coarse_pgc600k_semantic
     semantic_ckpt: "/mnt/bn/audio-diffusion/ckpts/musiclm/semantic_flash_llama/karaoke_and_playlist/checkpoints/last.ckpt"
     # coarse_ckpt: "/mnt/bn/zongyu-lq/logs/coarse_flash_llama/pgc600k_wav2vec/checkpoints/step=040000-tr_loss=4.0335-val_loss_0=4.0697.ckpt"
     coarse_ckpt: "/mnt/bn/zongyu-lq/logs/coarse_flash_llama/pgc600k_best_rq_cb1024/checkpoints/step=040000-tr_loss=3.9867-val_loss_0=4.1129.ckpt"
@@ -102,8 +102,8 @@ pl_module: !new:recipes.musiclm.lightning.inference.InferenceGTModule
             - !name:recipes.musiclm.requires.model_initializer.init_best_rq
               cache_dir: !ref <run_opts[cache_dir]>
         semantic_centers:
-            # - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_10.npy
-            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/kmeans/best_rq_1x8192_cb1024/centroids_epoch_10.npy
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_10.npy
+            # - hdfs://harunava/home/byte_speech_sv/zongyu.yin/kmeans/best_rq_1x8192_cb1024/centroids_epoch_10.npy
             # - hdfs://harunava/home/byte_speech_sv/zongyu.yin/kmeans/best_rq_1x8192_cb8192/centroids_epoch_10.npy
             - !name:recipes.musiclm.requires.model_initializer.init_semantic_centers
               cache_dir: !ref <run_opts[cache_dir]>

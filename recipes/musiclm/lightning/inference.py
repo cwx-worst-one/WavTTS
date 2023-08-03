@@ -307,6 +307,8 @@ class InferenceGTModule(BaseModule):
                 self.coarse_module = CoarseModule.load_from_checkpoint(self.extra_params.coarse_ckpt).eval()
                 if self.gt_infer_mode in ["mulan->semantic->coarse->fine"]:
                     self.semantic_module = SemanticModule.load_from_checkpoint(self.extra_params.semantic_ckpt).eval()
+        elif self.gt_infer_mode == "semantic":
+            print("Getting GT semantic tokens...")
         else:
             raise ValueError(f"Invalid ground truth inference mode: {self.gt_infer_mode}")
         self.semantic_type = self.extra_params.get("semantic_type", "wav2vec")
@@ -324,12 +326,12 @@ class InferenceGTModule(BaseModule):
         self.requires.update(initializer(hpath, local_rank=self.local_rank))
 
     def load_required_modules(self):
-        if self.gt_infer_mode in ["mulan->semantic->coarse->fine", "semantic->coarse->fine", "coarse->fine"]:
+        if self.gt_infer_mode in ["mulan->semantic->coarse->fine", "semantic->coarse->fine", "coarse->fine", "semantic"]:
             self._load_required_module("soundstream_dec")
             if self.gt_infer_mode in ["mulan->semantic->coarse->fine"]:
                 self._load_required_module("mulan")
                 self._load_required_module("mulan_centers")
-            elif self.gt_infer_mode in ["semantic->coarse->fine"]:
+            elif self.gt_infer_mode in ["semantic->coarse->fine", "semantic"]:
                 semantic_type = self.extra_params.get("semantic_type", "wav2vec")
                 self._load_required_module(semantic_type)
                 self._load_required_module("semantic_centers")
@@ -362,6 +364,16 @@ class InferenceGTModule(BaseModule):
                 soundstream_ids[:, :, 0 : self.extra_params.num_coarse]
                 + torch.arange(self.extra_params.num_coarse, device=device) * self.extra_params.soundstream_codebook_size
             ).reshape((bs, -1))
+        elif self.extra_params.gt_infer_mode == "semantic":
+            semantic_tokens = self.semantic_token_fn(batch)
+            for i, semantic_token in enumerate(semantic_tokens):
+                wav_dir = os.path.join(self.extra_params.output_dir)
+                os.makedirs(wav_dir, exist_ok=True)
+                fp = os.path.join(wav_dir, f"{batch_idx * bs + i}")
+                print(f"[Saving] {fp}")
+                save_wav(batch[i].cpu(), f"{fp}.wav", sr=24000)
+                torch.save(semantic_token.cpu(), f"{fp}.pt")
+            return
 
         fine_samples = self.fine_module.predict(coarse_samples, self.extra_params)
 
