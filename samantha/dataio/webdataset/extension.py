@@ -15,7 +15,7 @@ from typing import (
     Union,
 )
 
-from pyarrow.fs import FileSystem
+from lightning_fabric.utilities.cloud_io import get_filesystem
 from webdataset import filters, shardlists
 from webdataset.compat import FluidInterface
 from webdataset.filters import reraise_exception
@@ -218,15 +218,15 @@ def indexed_tarfile_expander(
                 break
 
 
-def url_opener_ra(data, handler=reraise_exception, **kw):
+def url_opener_ra(data, handler=reraise_exception, skip_instance_cache=False, **kw):
     """Open url as a random accessible stream."""
     for sample in data:
         assert isinstance(sample, dict), sample
         assert "url" in sample
         url = sample["url"]
         try:
-            fs, path = FileSystem.from_uri(url)
-            stream = fs.open_input_file(path)
+            fs = get_filesystem(url)
+            stream = fs.open(url, skip_instance_cache=skip_instance_cache)
             sample.update(stream=stream)
             yield sample
         except Exception as exn:

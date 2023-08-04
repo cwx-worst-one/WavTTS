@@ -6,13 +6,27 @@ from typing import IO, Any, Callable, Dict, Optional, Union
 
 import fsspec
 import torch
-from fsspec.core import url_to_fs
-from fsspec.implementations.local import AbstractFileSystem
+from lightning_fabric.utilities.cloud_io import get_filesystem
 from lightning_fabric.utilities.types import _MAP_LOCATION_TYPE, _PATH
 from pytorch_lightning.plugins import CheckpointIO
 from pytorch_lightning.utilities import rank_zero_warn
 
+import samantha.utils.hdfs_helper as hh
+from samantha.utils.distributed import rank_zero_first
+
 logger = logging.getLogger(__name__)
+
+
+def _check_ckpt_path(path):
+    path = str(path)
+    exists = True
+    if hh.ishdfs(path):
+        exists = hh.exists(path)
+    else:
+        fs = get_filesystem(path, skip_instance_cache=False)
+        exists = fs.exists(path)
+    if not exists:
+        raise FileNotFoundError(f"Checkpoint at {path} not found. Aborting training.")
 
 
 def _load(
@@ -28,18 +42,29 @@ def _load(
     if not isinstance(path_or_url, (str, Path)):  # pragma: no cover
         # any sort of BytesIO or similar
         return torch.load(path_or_url, map_location=map_location)
-    if str(path_or_url).startswith("http"):  # pragma: no cover
+
+    path_or_url = str(path_or_url)
+
+    if path_or_url.startswith("http"):  # pragma: no cover
         return torch.hub.load_state_dict_from_url(
             str(path_or_url), map_location=map_location
         )
+
+    if hh.ishdfs(path_or_url):
+        local_path = os.path.basename(path_or_url)
+        with rank_zero_first(is_global=False):
+            if not os.path.exists(local_path):
+                logger.info(f"Downloading checkpoint from {path_or_url}")
+                if not hh.get(path_or_url, local_path):
+                    raise ConnectionError(
+                        f"Failed to download checkpoint from {path_or_url} to"
+                        f" {local_path}"
+                    )
+        path_or_url = local_path
+
     fs = get_filesystem(path_or_url)
-    with fs.open(path_or_url, "rb") as f:
+    with fs.open(path_or_url, "rb", skip_instance_cache=True) as f:
         return torch.load(f, map_location=map_location)
-
-
-def get_filesystem(path: _PATH, **kwargs: Any) -> AbstractFileSystem:
-    fs, _ = url_to_fs(str(path), **kwargs)
-    return fs
 
 
 def _atomic_save(checkpoint: Dict[str, Any], filepath: Union[str, Path]) -> None:
@@ -126,12 +151,7 @@ class LargeTorchCheckpointIO(CheckpointIO):
         path: _PATH,
         map_location: Optional[Callable] = lambda storage, loc: storage,
     ) -> Dict[str, Any]:
-        fs = get_filesystem(path)
-        if not fs.exists(path):  # pragma: no cover
-            raise FileNotFoundError(
-                f"Checkpoint at {path} not found. Aborting training."
-            )
-
+        _check_ckpt_path(path)
         return _load(path, map_location=map_location)
 
     def remove_checkpoint(self, path: _PATH) -> None:

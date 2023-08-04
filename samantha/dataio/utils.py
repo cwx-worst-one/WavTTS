@@ -3,6 +3,11 @@
 import os
 import subprocess
 
+from bytedance.easycycle import get_dataset_collection_info
+from lightning_fabric.utilities.exceptions import MisconfigurationException
+
+from samantha.dataio.webdataset.ra_wds import expand_urls
+
 
 def run_command(cmd):
     """run command, get output"""
@@ -90,3 +95,35 @@ def sort_data_sources(file_list):
         data_sources.append(wds_files)
         source_types.append("webdataset")
     return data_sources, source_types
+
+
+def __expand_paths(path_lst):
+    if path_lst is None:
+        return None
+    paths = []
+    for lst in path_lst:
+        paths.extend(expand_urls(lst))
+    return paths
+
+
+def parse_data_urls(data_id=None, data_urls=None):
+    if data_id is not None and data_urls is not None:
+        raise MisconfigurationException(
+            f"Combination of parameters {data_id=} and {data_urls=} should be mutually "
+            f"exclusive."
+        )
+    if data_id is None and data_urls is None:
+        raise MisconfigurationException("User must specify either data_id or data_urls")
+
+    if data_id is not None:
+        paths = get_dataset_collection_info(data_id)
+        return __expand_paths(paths)
+
+    if isinstance(data_urls, str):
+        data_urls = [data_urls]
+    if not isinstance(data_urls, list):
+        raise TypeError(
+            f"Expecting data_urls either be str or list, but got"
+            f" {data_urls=}, {type(data_urls)=}"
+        )
+    return __expand_paths(data_urls)

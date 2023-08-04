@@ -91,15 +91,30 @@ def tar_file_expander(data, handler=reraise_exception):
                 break
 
 
-def tarfile_samples(src, handler=reraise_exception):
-    streams = url_opener_ra(src, handler=handler)
+def tarfile_samples(src, handler=reraise_exception, skip_instance_cache=False):
+    streams = url_opener_ra(
+        src, handler=handler, skip_instance_cache=skip_instance_cache
+    )
     files = tar_file_expander(streams, handler=handler)
     samples = group_by_keys(files, handler=handler)
     return samples
 
 
 class WebDataset(DataPipeline, FluidInterface):
-    """WebDataset accelerated by random accessible stream"""
+    r"""WebDataset accelerated by random accessible stream
+
+    Args:
+        urls (Union[str, List[str]]): data path urls, could be patten or expandable
+            expression like hdfs://dataset/*.tar or like hdfs://dataset/{000..010}.tar.
+        handler (Callable): exception handler.
+        resampled (bool): whether placement repetitively sample an url from urls.
+        shardshuffle (bool): shuffle on shard (url/file) level or not.
+        detshuffle (bool): determined shuffle or not, only works when shardshuffle on.
+        nodesplitter (Callable): split urls into each node.
+        skip_instance_cache (bool): whether disable fsspec instance cache, the instance
+            cache may cause excessive memory usage in some situations, see
+            https://filesystem-spec.readthedocs.io/en/latest/features.html#instance-caching # noqa
+    """
 
     def __init__(
         self,
@@ -109,6 +124,7 @@ class WebDataset(DataPipeline, FluidInterface):
         shardshuffle=None,
         detshuffle=False,
         nodesplitter=shardlists.single_node_only,
+        skip_instance_cache=False,
     ):
         super().__init__()
 
@@ -132,4 +148,8 @@ class WebDataset(DataPipeline, FluidInterface):
                     self.append(filters.detshuffle(shardshuffle))
                 else:
                     self.append(filters.shuffle(shardshuffle))
-        self.append(filters.pipelinefilter(tarfile_samples)(handler=handler))
+        self.append(
+            filters.pipelinefilter(tarfile_samples)(
+                handler=handler, skip_instance_cache=skip_instance_cache
+            )
+        )

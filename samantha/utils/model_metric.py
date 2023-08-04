@@ -91,9 +91,9 @@ class ModelMetric(Metric):
         flops = self.delta_flops / self.delta_time
         throughput = self.num_tokens / self.delta_time / 1e6
         metric = {
-            "train/TFlops": flops / (2**40),
-            "train/mfu": flops / self.flops_theoretical(),
-            "train/tokens_per_second(M)": throughput,
+            "training/TFlops": flops / (2**40),
+            "training/mfu": flops / self.flops_theoretical(),
+            "training/tokens_per_sec(M)": throughput,
         }
         self.reset()
         return metric

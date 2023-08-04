@@ -372,6 +372,13 @@ def walk_one(path: str):
     return next(os.walk(path))[1]
 
 
+def exists(path):
+    if not ishdfs(path):
+        return os.path.exists(path)
+    cmd = f"{HDFS} -test -e {path}"
+    return _run_command(cmd).exit == 0
+
+
 class HdfsFile:
     """A wrapper of HDFS file and make it open like local file.
 

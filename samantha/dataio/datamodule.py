@@ -1,14 +1,12 @@
 from typing import Any, Dict, List
 
-from bytedance import easycycle
 from cruise.data_module import DistributedCruiseDataLoader
 from lightning_fabric.utilities.exceptions import MisconfigurationException
 from pytorch_lightning import LightningDataModule
 from pytorch_lightning.utilities.types import EVAL_DATALOADERS, TRAIN_DATALOADERS
 
 from samantha.dataio.batching import BucketBatcher
-from samantha.dataio.utils import sort_data_sources
-from samantha.dataio.webdataset.ra_wds import expand_urls
+from samantha.dataio.utils import parse_data_urls, sort_data_sources
 
 
 class ProcessorBase:
@@ -147,24 +145,15 @@ class UniDataModule(LightningDataModule):
                 f"exclusive."
             )
 
-        def _expand_paths(path_lst):
-            if path_lst is None:
-                return None
-            paths = []
-            for lst in path_lst:
-                paths.extend(expand_urls(lst))
-            return paths
+        self.hparams.train_data_path = parse_data_urls(
+            data_id=self.hparams.train_data_id, data_urls=self.hparams.train_data_path
+        )
 
-        if self.hparams.train_data_id:
-            self.hparams.train_data_path = easycycle.get_dataset_collection_info(
-                int(self.hparams.train_data_id)
+        if self.hparams.valid_data_path or self.hparams.valid_data_id:
+            self.hparams.valid_data_path = parse_data_urls(
+                data_id=self.hparams.valid_data_id,
+                data_urls=self.hparams.valid_data_path,
             )
-        if self.hparams.valid_data_id:
-            self.hparams.valid_data_path = easycycle.get_dataset_collection_info(
-                int(self.hparams.valid_data_id)
-            )
-        self.hparams.train_data_path = _expand_paths(self.hparams.train_data_path)
-        self.hparams.valid_data_path = _expand_paths(self.hparams.valid_data_path)
 
     def train_dataloader(self) -> TRAIN_DATALOADERS:
         if self.hparams.train_data_path is None:
