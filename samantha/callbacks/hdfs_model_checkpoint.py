@@ -98,7 +98,7 @@ class HDFSModelCheckpoint(ModelCheckpoint):
 
         ckpts = self.list_checkpoints()
         for ckpt in ckpts:
-            if ckpt not in self._ckpt_history or maybe_sync_last(ckpt):
+            if maybe_sync_last(ckpt) or ckpt not in self._ckpt_history:
                 fn = os.path.basename(ckpt)
                 self._ckpt_history.add(ckpt)
                 hdfs_path = os.path.join(self.hdfs_path, fn)

@@ -11,6 +11,10 @@ def tests_root_dir():
     return os.path.dirname(__file__)
 
 
+@pytest.fixture
+def project_dir():
+    return pathlib.Path(__file__).parent.parent
+
 @pytest.fixture(scope="session")
 def original_global_datadir():
     return pathlib.Path(os.path.realpath(__file__)).parent / "data"

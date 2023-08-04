@@ -68,13 +68,15 @@ profiler: !new:pytorch_lightning.profilers.PyTorchProfiler
     with_stack: True
     with_flops: True
 
-callbacks:
-    - !new:samantha.callbacks.HDFSModelCheckpoint
+hdfs_model_ckpt: !new:samantha.callbacks.HDFSModelCheckpoint
     #   dirpath: ./logs/checkpoints
-      monitor: step
-      mode: max
-      save_top_k: 100
-      every_n_train_steps: 100
+    monitor: step
+    mode: max
+    save_top_k: 100
+    every_n_train_steps: 100
+
+callbacks:
+    - !ref <hdfs_model_ckpt>
     - !new:samantha.callbacks.Timer
 
 

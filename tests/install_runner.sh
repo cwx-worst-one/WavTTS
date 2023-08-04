@@ -9,4 +9,4 @@ chmod +x launcher
 ./launcher \
     -token eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MjUxLCJyb2xlIjoiYWdlbnQiLCJzY29wZXMiOm51bGwsImlzcyI6ImxlYWZib2F0Iiwic3ViIjoic2YtaFhLZVNuVVUwVyJ9.HGoejJdQxgDi2sfi-t9McMJ_Y4riRWdNjlY4gYinKKVCnJ4OceNlyn1qcfR14LxaeVNwZd7b2EgATOnNOJ6EzQ \
     -engine shell \
-    -concurrency 5
+    -concurrency 1

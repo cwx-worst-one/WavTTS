@@ -144,7 +144,7 @@ def rmdir(path: str) -> bool:
     """
 
     if ishdfs(path):
-        cmd = f"{HDFS} -rm -rf {path}"
+        cmd = f"{HDFS} -rm -r -f {path}"
         res = _run_command(cmd)
         result = res.exit == 0
     else:
