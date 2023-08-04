@@ -1,0 +1,185 @@
+from recipes.bigmusic.lightning.base_modules import BaseContinuousEmbedModule
+from recipes.bigmusic.lightning.embedding_modules import SoundstreamTokenEmbedder, WavToVecTokenEmbedder
+from recipes.bigmusic.lightning.embedding_modules import get_soundstream_tokens
+import torch
+from tqdm.auto import tqdm
+from recipes.musiclm.inference.utils import sample
+import torch.nn as nn
+
+class FineModule(BaseContinuousEmbedModule):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        hidden_size = extra_params['hidden_size']
+        embedder_dict = {
+            'coarse': SoundstreamTokenEmbedder(layer_range=(0,4), embedding_dim=hidden_size, add_sos=False)
+        }
+        input_embedders = nn.ModuleDict(embedder_dict)
+        target_embedder = SoundstreamTokenEmbedder(layer_range=(4,12), embedding_dim=hidden_size, add_sos=True)
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            input_embedders=input_embedders,
+            target_embedder=target_embedder,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+
+    def prepare_training_inputs(self, batch):
+        # Manually encode tokens we only run soundstream once
+        b = batch['target_audio'].shape[0]
+        soundstream_ids = get_soundstream_tokens(self.requires, batch['target_audio'])
+        num_coarse, num_fine = (
+            self.extra_params.num_coarse,
+            self.extra_params.num_fine,
+        )
+        device = self.device
+        # get coarse ids
+        coarse_ids = (
+            soundstream_ids[:, :, 0:num_coarse]
+            + (torch.arange(num_coarse, device=device))
+            * self.extra_params.soundstream_codebook_size
+        ).reshape((b, -1))
+        # get fine ids
+        fine_ids = (
+            soundstream_ids[:, :, num_coarse : num_coarse + num_fine]
+            + torch.arange(num_fine, device=device)
+            * self.extra_params.soundstream_codebook_size
+        ).reshape((b, -1))
+
+        # If we are predicting tokens, must get tokens first, before converting to embeddings
+        inputs_embeds = self.input_embedders['coarse'].embed(token_ids=coarse_ids)
+        sos_embeds = self.target_embedder.get_sos_embed(b)
+        target_embeds = self.target_embedder.embed(token_ids=fine_ids)[:, :-1, :]
+        return { "inputs_embeds": torch.cat([inputs_embeds, sos_embeds, target_embeds], dim=1) }, fine_ids
+
+    def sample_logits(self, i, logits, temp, mode):
+        soundstream_codebook_size = self.extra_params.soundstream_codebook_size
+        num_fine = self.extra_params.num_fine
+
+        layer_idx = i % num_fine
+        predict_logits = logits[
+            :,
+            -1:,
+            layer_idx
+            * soundstream_codebook_size : (layer_idx + 1)
+            * soundstream_codebook_size,
+        ]
+        samples = sample(
+            predict_logits, temp=temp, mode=mode
+        )
+        samples = samples + layer_idx * soundstream_codebook_size
+        return samples
+
+    @torch.no_grad()
+    def predict(self, coarse_samples, hp):
+        input_embeds = self.input_embedders['coarse'].embed(token_ids=coarse_samples)
+
+        num_coarse = hp.num_coarse
+        num_fine = hp.num_fine
+        soundstream_codebook_size = hp.soundstream_codebook_size
+        soundstream_frame_rate = hp.soundstream_frame_rate
+
+        input_framerate = soundstream_frame_rate * num_coarse
+        output_framerate = soundstream_frame_rate * num_fine
+
+        target_duration = hp.duration
+        slice_duration = hp.fine_duration
+        stride_duration = hp.fine_stride
+
+        temperature = hp.fine_temperature
+        sample_mode = hp.sample_mode
+
+        fine_samples = self.predict_slice(input_embeds, input_framerate, output_framerate, target_duration, slice_duration, stride_duration, temperature=temperature, sample_mode=sample_mode)
+        batch_size = coarse_samples.size(0)
+        # return (
+        #     fine_samples.reshape((batch_size, -1, num_fine))
+        #     - torch.arange(num_fine, device=coarse_samples.device)
+        #     * self.extra_params.soundstream_codebook_size
+        # )
+        return fine_samples + num_coarse * soundstream_codebook_size
+
+class CoarseModule(BaseContinuousEmbedModule):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        hidden_size = extra_params['hidden_size']
+        wav2vec_codebook_size = extra_params['wav2vec_codebook_size']
+        embedder_dict = {
+            'semantic': WavToVecTokenEmbedder(vocab_size=wav2vec_codebook_size, embedding_dim=hidden_size, add_sos=False)
+        }
+        input_embedders = nn.ModuleDict(embedder_dict)
+        target_embedder = SoundstreamTokenEmbedder(layer_range=(0,4), embedding_dim=hidden_size, add_sos=True)
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            input_embedders=input_embedders,
+            target_embedder=target_embedder,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+
+    def prepare_inputs_embeddings(self, batch):
+        # convert inputs to conditions
+        return self.input_embedders['semantic'].embed(self.requires, batch['target_audio'], with_sos=False)
+    
+    def sample_logits(self, i, logits, temp, mode):
+        soundstream_codebook_size = self.extra_params.soundstream_codebook_size
+        num_coarse = self.extra_params.num_coarse
+
+        layer_idx = i % num_coarse
+        predict_logits = logits[
+            :,
+            -1:,
+            layer_idx
+            * soundstream_codebook_size : (layer_idx + 1)
+            * soundstream_codebook_size,
+        ]
+        samples = sample(
+            predict_logits, temp=temp, mode=mode
+        )
+        samples = samples + layer_idx * soundstream_codebook_size
+        return samples
+
+    @torch.no_grad()
+    def predict(self, semantic_samples, hp):
+        input_embeds = self.input_embedders['semantic'].embed(token_ids=semantic_samples)
+
+        input_framerate = hp.wav2vec_frame_rate
+        output_framerate = hp.soundstream_frame_rate * hp.num_coarse
+        num_coarse = hp.num_coarse
+
+        target_duration = hp.duration
+        slice_duration = hp.coarse_duration
+        stride_duration = hp.coarse_stride
+
+        temperature = hp.coarse_temperature
+        sample_mode = hp.sample_mode
+
+        coarse_samples = self.predict_slice(input_embeds, input_framerate, output_framerate, target_duration, slice_duration, stride_duration, temperature=temperature, sample_mode=sample_mode)
+        return coarse_samples
+        # return (
+        #     coarse_samples.reshape((coarse_samples.shape(0), -1, num_coarse))
+        #     - torch.arange(num_coarse, device=coarse_samples.device)
+        #     * self.extra_params.soundstream_codebook_size
+        # )

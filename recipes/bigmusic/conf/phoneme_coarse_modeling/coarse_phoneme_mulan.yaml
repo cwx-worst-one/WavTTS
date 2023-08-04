@@ -1,0 +1,148 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+ckpt_path: null
+
+seed: 1995
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+extra_params:
+    sample_rate: 24000
+    duration: 10
+    lyrics_codebook_size: 80
+    lyrics_max_seq_len: 150
+    soundstream_codebook_size: 1024
+    soundstream_frame_rate: 50
+    mulan_embed_dim: 512
+    hidden_size: 1024
+    num_coarse: 4
+    num_fine: 8
+    dataset_type: mulan_audio # mulan_audio|mulan_text|t5_token|legacy_audio
+    soundstream_vocab_size: !ref <extra_params[soundstream_codebook_size]> * <extra_params[num_coarse]>
+    pretrained_path: null # for loading state dicts
+
+# running parameters
+run_opts:
+    fast_dev_run: False
+    log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+    log_name: coarse_phoneme_mulan
+    version: refactor_v1
+    cache_dir: .module_cache/l2s
+    precision: "bf16-mixed"
+    num_workers: 16
+    accelerator: auto
+    max_steps: 1000000
+    batch_size: 16
+    learning_rate: 4.0e-4
+    warmup_steps: 2000
+    cycle_steps: 200000
+    weight_decay: 0.01
+    shuffle_buffer: 0
+    gradient_clip_val: 1.0
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+pl_datamodule: !apply:recipes.bigmusic.datasets.lyrics.LyricsDataModule.from_dataset_type
+    batch_size: !ref <run_opts[batch_size]>
+    sample_rate: !ref <extra_params[sample_rate]>
+    sample_duration: !ref <extra_params[duration]>
+    shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+    lyrics_max_seq_len: !ref <extra_params[lyrics_max_seq_len]>
+    num_workers: !ref <run_opts[num_workers]>
+    pin_memory: True
+    dataset_type: !ref <extra_params[dataset_type]>
+
+model_config: !new:transformers.LlamaConfig
+    vocab_size: 1 # placeholder. Embedding table gets removed on load
+    hidden_size: !ref <extra_params[hidden_size]>
+    intermediate_size: 3072
+    num_hidden_layers: 24
+    num_attention_heads: 16
+    hidden_act: "silu"
+    max_position_embeddings: 4096 # hardcoded long sequence length for positional encoder
+    initializer_range: 0.02
+    rms_norm_eps: 1e-6
+    use_cache: False
+    num_logits: !ref <extra_params[soundstream_vocab_size]>
+
+model_cls: !name:samantha.models.flash_llama.LlamaForCausalLM
+    config: !ref <model_config>
+
+optimizer_cls: !name:torch.optim.AdamW
+    lr: !ref <run_opts[learning_rate]>
+    weight_decay: !ref <run_opts[weight_decay]>
+    betas: [0.9, 0.96]
+    eps: 0.00000001
+
+scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupCosine
+    init_lr: !ref <run_opts[learning_rate]>
+    warmup_steps: !ref <run_opts[warmup_steps]>
+    cycle_steps: !ref <run_opts[cycle_steps]>
+    min_lr: !ref <run_opts[learning_rate]> * 0.1
+
+pl_module: !new:recipes.bigmusic.lightning.phoneme_coarse_modules.LyricsCoarseModule
+    checkpointing: False
+    model_cls: !ref <model_cls>
+    optimizer_cls: !ref <optimizer_cls>
+    scheduler_cls: !ref <scheduler_cls>
+    criterion_cls: !name:recipes.musiclm.lightning.modules.MaskedCrossEntropy
+    extra_params: !ref <extra_params>
+    required_modules:
+        # Mulan mix - 160
+        mulan:
+            hpath: /mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=014000-median_rank_1=160-kaggle.ckpt
+            initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
+                cache_dir: !ref <run_opts[cache_dir]>
+                version: "g4"
+        soundstream:
+            hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
+            initializer: !name:recipes.musiclm.requires.model_initializer.init_soundstream
+                cache_dir: !ref <run_opts[cache_dir]>
+
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[log_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+    default_hp_metric: False
+
+# log_gradient_scaler: !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
+
+callbacks:
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      save_top_k: 10
+      save_last: True
+      monitor: val_accu_0
+      mode: max
+      filename: "{step:06d}-{val_accu_0:.2f}"
+    - !new:pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: 'step'
+    # - !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
+
+plugins:
+    - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    strategy: "ddp_find_unused_parameters_false"
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: 'auto'
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    log_every_n_steps: 100
+    max_steps: !ref <run_opts[max_steps]>
+    precision: !ref <run_opts[precision]>
+    accumulate_grad_batches: 1
+    gradient_clip_val: !ref <run_opts[gradient_clip_val]>
+    val_check_interval: 1000
+    check_val_every_n_epoch: null
+    num_sanity_val_steps: 0  # skip validation sanity checks so we don't run into hdfs file close errors
+    callbacks: !ref <callbacks>
+    plugins: !ref <plugins>

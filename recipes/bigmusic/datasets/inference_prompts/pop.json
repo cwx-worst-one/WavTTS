@@ -1,0 +1,49 @@
+{
+    "lyrics": [
+        "so wake me up when it's all over <n> when I'm wiser and I'm older <n> all this time I was finding myself",
+        "it is the circle of life <n> the circle of life",
+        "near, far, wherever you are",
+        "on a dark dessert highway <n> cool wind in my hair",
+        "His palms are sweaty, knees weak, arms are heavy <n> There's vomit on his sweater already, mom's spaghetti <n> He's nervous, but on the surface he looks calm and ready",
+        "hey jude, don't make it bad <n> take a sad song and make it better",
+        "do you ever feel like a plastic bag <n> drifting through the wind, wanting to start again",
+        "this is that ice cold <n> michelle piper that white gold <n> this one for them hood girls",
+        "I've become so numb <n> I can't feel you there <n> become so tired <n> so much more aware",
+        "Never gonna give you up <n> Never gonna let you down <n> Never gonna run around and desert you",
+        "You can stand under my umbrella, ella, ella, eh, eh, eh <n> Under my umbrella, ella, ella, eh, eh, eh",
+        "Romeo, take me somewhere we can be alone <n> I'll be waiting, all there's left to do is run <n> You'll be the prince",
+        "the greatest works of art is by jay chou"
+
+
+    ],
+    "mulan_text" : [
+        "upbeat edm country male singing remix avicii",
+        "disney africa singing",
+        "pop singing ballad celine dion",
+        "80s rock nostalgia eagles",
+        "eminem intense rap beat fast",
+        "beatles singalong british pop",
+        "katy perry pop uplifting female vocals",
+        "smooth bruno mars funk holler",
+        "screaming rock punk linkin park",
+        "dance pop rick astley soul",
+        "hiphop pop rihanna vocals singing",
+        "country music vocals guitar pop taylor swift",
+        "chinese pop jay chou hiphop"
+    ],
+    "mulan_audio": [
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/1 - avicii - wake me up.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/2 - lion king - circle of life.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/3 - celine dion - my heart will go on.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/4 - eagles - hotel california.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/5 - eminem - lose yourself.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/6 - beatles - hey jude.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/7 - katy perry - firework.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/8 - bruno mars - uptown funk.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/9 - linkin park - numb.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/10 - rick astley - never gonna give you up.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/11 - rihanna - umbrella.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/12 - taylor swift - love story.wav",
+        "/mnt/bn/audio-diffusion/ashaw/datasets/l2s/pop_prompts_10s/13 - jay chou - greatest works of art.wav"
+    ]
+}

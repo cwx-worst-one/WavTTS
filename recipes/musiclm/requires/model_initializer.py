@@ -282,3 +282,19 @@ def init_soundstream_decoder(hpath, local_rank, cache_dir=None):
         if not hh.get(h_ss, local_path):
             raise ConnectionError(f"Cannot retrieve file from {h_ss}.")
     return {"ss_dec": load_torch_script_module(local_path, device)}
+
+def init_t5_encoder(hpath, local_rank, cache_dir=None):
+    from transformers import T5Tokenizer, T5Model, T5EncoderModel
+    if cache_dir is not None:
+        os.makedirs(cache_dir, exist_ok=True)
+
+    device = torch.device(f"cuda:{local_rank}")
+    # loading our model weights
+    model = (
+        T5EncoderModel.from_pretrained(
+            "t5-small", cache_dir="./inference_test"
+        )
+        .eval()
+        .to(device)
+    )
+    return {"t5": model}
