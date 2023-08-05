@@ -48,7 +48,9 @@ def prepare_models(args, device):
 @torch.no_grad()
 def main(args):
     devices = args.device
-    ar_model_hps = DotDict({"phone_tokens_num": 200, "audio_tokens_num": 1024})
+    # 这里务必要和训练一致！！！！！
+    ar_model_hps = DotDict({"phone_tokens_num": 7370, "speaker_tokens_num": 8192})
+    print(ar_model_hps)
     ar_model = prepare_models(args, devices)
         
 #    ar_step, ar_epoch = get_step_epoch_from_ckpt(args.ar_ckpt_path)
@@ -72,7 +74,11 @@ def main(args):
         drop_last=True,
     )
 
+    # spk_name = ['BaileyP', 'daily_life_F01-phone_prompt1', 'daily_life_F02-phone_prompt1', 'daily_life_F03-phone_prompt1',
+    #     'daily_life_M01-phone_prompt1', 'daily_life_M02-phone_prompt1', 'daily_life_M03-phone_prompt1', 
+    #     'Isabelle.npy', 'James', 'NayS', 'StellaY', 'TiaC']
 
+        
     for i, loaded_data in enumerate(test_data_loader):
         # seqs, seq_lens, pos_ids, seq_sen_ids, init_full_seqs, utts
         if loaded_data is None:
@@ -83,26 +89,24 @@ def main(args):
         #     continue
 
         
-        text_ids, text_id_lens, bns, bn_lens, seqs, seq_lens, pos_ids, seq_sen_ids, init_full_seqs, utts = to_device(
+        text_ids, text_id_lens, bns, bn_lens, seqs, seq_lens, utts = to_device(
             loaded_data, device=devices
         )
         
-        text_len = (seq_sen_ids == 1).sum(dim=1)
-        unmask_len = (seq_sen_ids == 2).sum(dim=1)
-        # num_res = init_full_seqs.shape[2]
         # ar
-        z_outputs, semantic_outputs, pos_ids, seq_sen_ids = ar_model.inference_from_text(
-            (text_ids, text_id_lens, bns, bn_lens, seqs, seq_lens, pos_ids, seq_sen_ids, utts), test_dataset.tokenizer
+        z_outputs, semantic_outputs = ar_model.inference_from_text(
+            (text_ids, text_id_lens, bns, bn_lens, seqs, seq_lens, utts), test_dataset.tokenizer
         )
         # b, t, c = semantic_outputs.shape
         # semantic_outputs = semantic_outputs.cpu().numpy()
         b, t, c = z_outputs.shape
         z_outputs = z_outputs.cpu().numpy()
 
-        # print('logs -= 2.5')
-        # semantic_outputs[:,:,32:] = semantic_outputs[:,:,32:] - 2.5
+        save_path = os.path.join(args.out_dir, '%s.npy'%utts[0])
+        # save_path = os.path.join(args.out_dir, '%s_%s.npy'%(spk_name[i//20], utts[0]))
 
-        np.save(os.path.join(args.out_dir, '%s.npy'%utts[0]), z_outputs)
+        print("save %s" % save_path)
+        np.save(save_path, z_outputs)
         
 
 

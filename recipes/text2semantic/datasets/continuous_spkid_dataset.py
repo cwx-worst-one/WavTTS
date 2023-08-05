@@ -7,29 +7,7 @@ from samantha.utils.hparams import DotDict
 import json
 import math
 import random
-
-class PhoneTokenizerWithAudioTokens:
-    def __init__(self, phone_token_num, audio_token_num) -> None:
-        self.audio_token_num = audio_token_num
-        self.phone_token_num = phone_token_num
-        self.vocab_size = (
-            audio_token_num + phone_token_num + 3
-        )  # <s> </s>, <sep>, <pad>
-        self.pad = 0
-        self.bos = self.vocab_size - 1
-        self.eos = self.vocab_size - 1
-        self.sep = self.vocab_size - 2
-
-    def tokenize(self, inputs, input_key): 
-        if input_key == "inputs":  # text_id
-            if inputs.max() >= self.phone_token_num:
-                # print(inputs, ' is OOV, ignore ...')
-                return None
-            return inputs + 1
-        elif input_key == "targets":  # wav_id
-            return inputs + 1 + self.phone_token_num
-        else:
-            return None
+from .continuous_dataset import ContinuousCollator, PhoneTokenizerWithAudioTokens
 
 
 class ContinuousTTSDataset(Dataset):
@@ -38,7 +16,7 @@ class ContinuousTTSDataset(Dataset):
         self.hp = DotDict(hp)
         self.metas = self.get_metadata(path)
         self.tokenizer = PhoneTokenizerWithAudioTokens(
-            self.hp.phone_tokens_num, self.hp.audio_tokens_num
+            self.hp.phone_tokens_num, self.hp.speaker_tokens_num
         )
         self.return_full_seq = return_full_seq
         self.inference = inference
@@ -72,6 +50,7 @@ class ContinuousTTSDataset(Dataset):
             text_id = np.load(text_id_path)
 
         text_id = self.tokenizer.tokenize(text_id, "inputs")
+        spk_id = self.tokenizer.tokenize(spk_id, "targets")
 
         return text_id, bn, uttid, spk_id
 
@@ -94,7 +73,7 @@ class ContinuousTTSDataset(Dataset):
                 [self.tokenizer.bos]
                 + list(text_id)
                 + [self.tokenizer.sep]
-                + [0] # spk id placeholder
+                + [spk_id] 
                 + [0] * bn_T # place holder
             )
             pos_id = np.asarray(list(range(text_len + 3)) + list(range(bn_T)))
@@ -104,7 +83,7 @@ class ContinuousTTSDataset(Dataset):
                 [self.tokenizer.bos]
                 + list(text_id)
                 + [self.tokenizer.sep]
-                + [0] # spk id placeholder
+                + [spk_id] # spk id placeholder
                 + [0] * bn_T # place holder
                 + [self.tokenizer.eos]
             )

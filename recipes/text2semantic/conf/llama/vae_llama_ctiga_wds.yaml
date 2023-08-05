@@ -4,8 +4,6 @@
 ##########                       BASIC CONFIGURATION                  ##########
 ################################################################################
 
-hp: !include:./hparams_valle.yaml
-
 seed: 1996
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 
@@ -14,6 +12,7 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 ################################################################################
 run_opts:
     log_dir: logs
+    hdfs_path: None
     fast_dev_run: False
     tensorboard_dir: !ref <run_opts[log_dir]>
     log_name: semantic
@@ -31,14 +30,18 @@ run_opts:
     weight_decay: 0.1
     checkpointing: False
     n_step_save: 2000
+    phone_tokens_num: 7370
+    speaker_tokens_num: 8192
     batch_total_tokens: 5000
+    use_phoneme_loss: False
+    simulated_cycle_rate: 0.0
     
 llama_config: !new:recipes.text2semantic.modules.continuous_vae_llama_ctiga.ModelArgs
     dim: 1024
     n_layers: 24
     n_heads: 16
-    vocab_size: 1227 # vocab_size = hp.phone_tokens_num + audio_tokens_num + 3
-    out_dim: 16
+    vocab_size: 15565 # vocab_size = hp.phone_tokens_num(7370) + speaker_num(4096) + 3
+    out_dim: 32
     multiple_of: 256
     norm_eps: 0.000001
     max_batch_size: 32
@@ -50,17 +53,18 @@ llama_config: !new:recipes.text2semantic.modules.continuous_vae_llama_ctiga.Mode
 
 train_dataset: !new:recipes.text2semantic.datasets.continuous_wds_dataset.ContinuousTTSDataset
     wds_urls: !ref <run_opts[urls]>
-    hp: !ref <hp>
+    phone_tokens_num: !ref <run_opts[phone_tokens_num]>
+    speaker_tokens_num: !ref <run_opts[speaker_tokens_num]>
     return_full_seq: !ref <run_opts[return_full_seq]>
+    simulated_cycle_rate: !ref <run_opts[simulated_cycle_rate]>
     batcher_config:
-        buckets: !apply:eval ["list(range(0, 10000, 100))"]
+        buckets: !apply:eval ["list(range(0, 4096, 100))"]  # [0, 100, 200 ... 4000] 4000以上的可以先丢掉
         dynamic_batch: True
         maximum_bucket_size: !ref <run_opts[batch_total_tokens]>
-        length_fn: !apply:eval ["lambda x: x[2].shape[0]"]
+        length_fn: !apply:eval ["lambda x: x[2].shape[0]"]  # seq.shape
 
 collator: !new:recipes.text2semantic.datasets.continuous_dataset.ContinuousCollator
     tokenizer_pad: 0
-
 
 # dataloader configuration
 train_dataloader: !new:torch.utils.data.DataLoader
@@ -92,7 +96,7 @@ _world_size: !apply:samantha.utils.envs.getenv_int ["WORLD_SIZE", 1]
 scheduler_cls: !name:recipes.bark.lr_schedulers.musiclm_lr_scheduler.WarmupCosine
     init_lr: !ref <run_opts[learning_rate]>
     warmup_steps: 2000
-    cycle_steps: 400000
+    cycle_steps: 300000
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
 # lightning model setting
@@ -102,10 +106,10 @@ pl_module: !new:recipes.text2semantic.lit_modules.llama.lit_vae_t2s_ctiga.VAET2S
     scheduler_cls: !ref <scheduler_cls>
     logits_criterion_cls: !name:recipes.text2semantic.modules.loss.MaskedCrossEntropy
     dense_criterion_cls: !name:recipes.text2semantic.modules.loss.MaskedKLLossPP
-    tokenizer_len: 200
-    n_semantic: 1024
+    tokenizer_len: !ref <run_opts[phone_tokens_num]>
+    n_semantic: !ref <run_opts[speaker_tokens_num]>
     checkpointing: !ref <run_opts[checkpointing]>
-    extra_params: !ref <hp>
+    use_phoneme_loss: !ref <run_opts[use_phoneme_loss]>
     required_modules: {}
 
 logger:
@@ -121,6 +125,7 @@ logger:
 callbacks:
     - !new:samantha.callbacks.HDFSModelCheckpoint
     #   dirpath: !ref <run_opts[log_dir]>/checkpoints
+      hdfs_path: !ref <run_opts[hdfs_path]>
       every_n_train_steps: !ref <run_opts[n_step_save]>
       mode: min
       save_last: True

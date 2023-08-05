@@ -407,6 +407,7 @@ class LLaMa(nn.Module):
     def __init__(
         self,
         params: ModelArgs,
+        use_speaker_id=False,
         token_input=True,
         provider="default",
         state_dict_path=None,
@@ -416,6 +417,8 @@ class LLaMa(nn.Module):
         self.vocab_size = params.vocab_size
         self.n_layers = params.n_layers
         self.token_input = token_input
+        self.use_speaker_id = use_speaker_id
+        print('use_speaker_id: ', self.use_speaker_id)
 
         if self.token_input:
             self.tok_embeddings = nn.Embedding(params.vocab_size, params.dim)
@@ -474,9 +477,10 @@ class LLaMa(nn.Module):
         inference_params=None,
     ):
 
-        # print(inputs.shape)
-        # print('text_id_lens: ', text_id_lens)
-        # print('bn_lens: ', bn_lens)
+        if self.use_speaker_id:
+            extra_shift_num = 3
+        else:
+            extra_shift_num = 2
 
         bsz, seqlen = inputs.shape
         token_in_h = self.tok_embeddings(inputs)
@@ -500,9 +504,9 @@ class LLaMa(nn.Module):
                     torch.cat(
                         # bos_text_sep  + bn + eos_pad0
                         (
-                            token_in_h[i, : text_id_lens[i] + 2, :],
+                            token_in_h[i, : text_id_lens[i] + extra_shift_num, :],
                             bn_in_h[i, : bn_lens[i], :],
-                            token_in_h[i, bn_lens[i] + text_id_lens[i] + 2 :, :],
+                            token_in_h[i, bn_lens[i] + text_id_lens[i] + extra_shift_num :, :],
                         ),
                         dim=-2,
                     )

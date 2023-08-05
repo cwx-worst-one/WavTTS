@@ -3,7 +3,6 @@ import math
 import pickle
 import sys
 import os 
-import random
 
 import numpy as np
 import torch
@@ -35,7 +34,7 @@ class HiddenPrints:
 
 
 class ContinuousTTSDataset(IterableDataset):
-    def __init__(self, wds_urls, phone_tokens_num, speaker_tokens_num, simulated_cycle_rate=0.0,
+    def __init__(self, wds_urls, phone_tokens_num, speaker_tokens_num, speaker_converter_dict, 
         return_full_seq=False, inference=False, drop_last=False, batcher_config=None):
         
         self.wds = (
@@ -50,7 +49,7 @@ class ContinuousTTSDataset(IterableDataset):
         )
         self.drop_last = drop_last
         self.text_converter_dict = load_json('recipes/valle/datasets/dict/metaid_to_textid.json')
-
+        self.speaker_converter_dict = load_json(speaker_converter_dict)
         
         self.tokenizer = PhoneTokenizerWithAudioTokens(
             phone_tokens_num, speaker_tokens_num
@@ -58,7 +57,6 @@ class ContinuousTTSDataset(IterableDataset):
         self.return_full_seq = return_full_seq
         self.inference = inference
         self.batcher = BucketBatcher(**batcher_config)
-        self.simulated_cycle_rate = simulated_cycle_rate
 
 
     def get_text_wavid(self, sample):
@@ -67,12 +65,20 @@ class ContinuousTTSDataset(IterableDataset):
         text = sample["text"]
         lab = sample["labels"]
         utt_id = sample["__key__"]
+        dataset_name = sample["dataset_name"]
+        speaker_name = sample["speaker_name"]
+
+        dataset_name = dataset_name.decode()
+        speaker_name = speaker_name.decode()
+        labels = lab.decode()
+        
+        spk_key = '/'.join([dataset_name, speaker_name])
+        spk_id = self.speaker_converter_dict[spk_key]
 
         if len(bn.shape) == 3 and bn.shape[0] == 1:
             bn = bn[0]
 
         text = text
-        labels = lab.decode()
         if labels is None:
             return None
         labels = list(filter(lambda x: x != "", labels.split('\n')))
@@ -83,24 +89,9 @@ class ContinuousTTSDataset(IterableDataset):
             return None
 
         text_id = self.tokenizer.tokenize(text_id, "inputs")
+        spk_id = self.tokenizer.tokenize(spk_id, "targets")
 
-        bn_T, bn_C = bn.shape[0], bn.shape[1]
-        text_len = text_id.shape[0]
-
-        if random.random() < self.simulated_cycle_rate:
-            if bn_T + text_len < 500:
-                text_cat_list = [text_id[:1]]
-                bn_cat_list = []
-                k = random.randint(2, 4)
-                for j in range(k):
-                    text_cat_list += [text_id[1:-1]]
-                    bn_cat_list += [bn]
-                text_cat_list += [text_id[-1:]]
-                text_id = np.concatenate(text_cat_list)
-                bn = np.concatenate(bn_cat_list)
-                print(k, ' ',text_id.shape, ' ', bn.shape)
-
-        # get len again
+        # get len
         bn_T, bn_C = bn.shape[0], bn.shape[1]
         text_len = text_id.shape[0]
 
@@ -108,6 +99,7 @@ class ContinuousTTSDataset(IterableDataset):
             [self.tokenizer.bos]
             + list(text_id)
             + [self.tokenizer.sep]
+            + [spk_id]
             + [0] * bn_T # place holder
             + [self.tokenizer.eos]
         )

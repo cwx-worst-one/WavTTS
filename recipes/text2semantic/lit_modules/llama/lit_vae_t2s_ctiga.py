@@ -9,9 +9,17 @@ import math
 
 from samantha.utils.hparams import DotDict
 from recipes.bark.lit_modules.sample import sample
-from recipes.text2semantic.lit_modules.lit_valle_coarse import sequence_mask
 from s3a.providers.ctiga.utils.generation import InferenceParams
 from samantha.utils.model_metric import ModelMetric
+
+def sequence_mask(seq_lens, max_len=None, device='cpu'):
+    b = seq_lens.shape[0]
+    if max_len is None:
+        max_len = seq_lens.max()
+    mask = torch.arange(max_len).unsqueeze(0).to(device) # [1, t]
+    mask = mask < (seq_lens.unsqueeze(1)) # [1, t] + [b, 1] = [b, t]
+    mask = mask.float()
+    return mask
 
 class VAET2SModule(pl.LightningModule):
 
@@ -25,8 +33,9 @@ class VAET2SModule(pl.LightningModule):
         required_modules,
         tokenizer_len=50277,
         n_semantic=8192,
+        use_speaker_id=False,
+        use_phoneme_loss=False,
         checkpointing=True,
-        extra_params=None,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -35,8 +44,9 @@ class VAET2SModule(pl.LightningModule):
         self.dense_criterion = dense_criterion_cls()
         self.tokenizer_len = tokenizer_len
         self.n_semantic = n_semantic
-        self.extra_params = DotDict(extra_params)
         self.requires = {}
+        self.use_speaker_id = use_speaker_id
+        self.use_phoneme_loss = use_phoneme_loss
 
         # hugging face setting
         if hasattr(self.model, "resize_token_embeddings"):
@@ -67,26 +77,31 @@ class VAET2SModule(pl.LightningModule):
         return getattr(self.trainer, "profiler") or PassThroughProfiler()
 
     def training_step(self, batch, batch_idx):
+        # no spkid: bos + sep
+        # spkid: bos + sep + spkid
+        if self.use_speaker_id:
+            extra_shift_num = 3
+        else:
+            extra_shift_num = 2
 
         with self.profiler.profile("[LightningModule]CoarseModule.prepare_feature"):
             with torch.autocast(device_type="cuda", enabled=False):
-                text_ids, text_id_lens, bns, bn_lens, input_tokens, seq_lens, pos_ids, seq_sen_ids, _, _ = batch
+                text_ids, text_id_lens, bns, bn_lens, seqs, seq_lens, utt_ids = batch
+                input_tokens = seqs
                 b, t = input_tokens.shape
                 loss_mask = sequence_mask(seq_lens, max_len=t, device="cuda")
                 _, text_t = text_ids.shape
-                text_loss_mask = sequence_mask(text_id_lens+2, max_len=text_t+2, device="cuda")
+                text_loss_mask = sequence_mask(text_id_lens+extra_shift_num, max_len=text_t+extra_shift_num, device="cuda")
                 text_loss_mask = F.pad(text_loss_mask, (0, t-text_loss_mask.shape[1]), "constant", 0)
 
-                loss_mask = loss_mask - text_loss_mask
+                if not self.use_phoneme_loss:
+                    loss_mask = loss_mask - text_loss_mask
                 org_len = input_tokens.size(1)
 
         with self.profiler.profile("[LightningModule]CoarseModule.model_forward"):
             ret_dict, _ = self.model(text_ids, text_id_lens, bns, bn_lens, input_tokens)
             logits = ret_dict["logits"]
             dense = ret_dict["dense"]
-
-        # if self.local_rank == 0:
-        #     print("VALLE: Coarse Training.")
 
         pred_logits = logits[:, 0:org_len - 1, :]
         pred_dense = dense[:, 0:org_len - 1, :]
@@ -95,7 +110,7 @@ class VAET2SModule(pl.LightningModule):
         targets_dense = []
         for i in range(bsz):
             targets_dense.append(
-                F.pad(bns[i, :bn_lens[i], :], (0, 0, text_id_lens[i]+2, t-(bn_lens[i]+text_id_lens[i]+2)), "constant", 0)
+                F.pad(bns[i, :bn_lens[i], :], (0, 0, text_id_lens[i]+extra_shift_num, t-(bn_lens[i]+text_id_lens[i]+extra_shift_num)), "constant", 0)
             )
 
         targets_dense = torch.stack(targets_dense)[:, 1:org_len, :]
@@ -106,9 +121,6 @@ class VAET2SModule(pl.LightningModule):
         kl_loss = self.dense_criterion(pred_m, pred_logs, 
             target_m.detach(), target_logs.detach(), z_mask=loss_mask[:, 1:])
 
-        # print('target: ', targets_dense[0][text_id_lens[0]: seq_lens[0]])
-        # print('pred_dense: ', pred_dense[0][text_id_lens[0]: seq_lens[0]])
-        # print('loss mask: ', loss_mask[0, 1:][text_id_lens[0]: seq_lens[0]])
         
         targets_logits = input_tokens[:, 1:org_len]
         ce_loss = self.logits_criterion(pred_logits.float(), targets_logits, mask=loss_mask[:, 1:])
@@ -207,9 +219,8 @@ class VAET2SModule(pl.LightningModule):
     @torch.no_grad()
     def inference_from_text(self, batch, tokenizer):
         
-        text_ids, text_id_lens, bns, bn_lens, seqs, seq_lens, pos_ids, seq_sen_ids, utts = batch
+        text_ids, text_id_lens, bns, bn_lens, seqs, seq_lens, utts = batch
         b, t = seqs.shape   
-        attention_mask = sequence_mask(seq_lens, max_len=None, device=seqs.device)
         input_tokens = seqs
         # seqs = (
         #         [self.tokenizer.bos]
@@ -220,7 +231,6 @@ class VAET2SModule(pl.LightningModule):
         # inference
         semantic_outputs = []
 
-        
         # llama style inference
         self.model.params.use_cache = True
         start_pos = 0
@@ -231,27 +241,24 @@ class VAET2SModule(pl.LightningModule):
             fused_ft_kernel=False
         )
         z_list = []
+        task_types = ['TTS']
         with torch.autocast(device_type="cuda", enabled=True):
-            for i in tqdm(range(3000)):
+            for i in tqdm(range(4000)):
                 if i == 0:
                     model_outputs, bn_in_z = self.model(text_ids, text_id_lens, 
-                        bns, bn_lens, input_tokens, start_pos=start_pos, inference_params=inference_params)
+                        bns, bn_lens, input_tokens, start_pos=start_pos, inference_params=inference_params
+                        )
                 else:
                     model_outputs, bn_in_z = self.model(None, None, 
-                        bns, None, input_tokens, start_pos=start_pos, use_cache=True, inference_params=inference_params)
+                        bns, None, input_tokens, start_pos=start_pos, use_cache=True, inference_params=inference_params
+                        )
                     z_list.append(bn_in_z)
                 logits = model_outputs["logits"]
                 pred_logits = logits[:, -1, :]
-                # pred_logits[:, 1:self.tokenizer_len + self.n_semantic + 2] = -1e3
-                # if i < 50:
-                #     pred_logits[:, self.tokenizer_len + self.n_semantic + 2] = -1e5
-                # samples = sample(pred_logits, temp=0.9, mode="naive", device=seqs.device) # [b, 1]
                 samples = torch.argmax(pred_logits)
-                # print(i , ' ', samples, '  ', self.tokenizer_len, '  ', self.n_semantic)
                 if i > 10 and samples.item() == self.tokenizer_len + self.n_semantic + 2:
                     break
                 pred_dense = model_outputs["dense"][:, -1:, :]
-                # print(i, ' ', input_tokens.shape, ' ', text_id_lens, ' ', bn_lens)
 
                 start_pos += input_tokens.size(1)
                 inference_params.sequence_len_offset = start_pos
@@ -260,10 +267,6 @@ class VAET2SModule(pl.LightningModule):
                 semantic_outputs.append(pred_dense)
                 input_tokens = torch.zeros([1, 1], dtype=torch.int).to(pred_dense.device)
                 bns = pred_dense
-                pos_ids = torch.cat([pos_ids, pos_ids[:, -1:] + 1], dim=1)  # [b, t]
-                seq_sen_ids = torch.cat(
-                    [seq_sen_ids, torch.zeros_like(seq_sen_ids[:, -1:]) + 2], dim=1
-                )
 
         z_outputs = torch.cat(z_list[1:], dim=1) # [b, t, c]
         semantic_outputs = torch.cat(semantic_outputs, dim=1) # [b, t, c]
@@ -271,7 +274,7 @@ class VAET2SModule(pl.LightningModule):
         # semantic_outputs = torch.cat([seqs, semantic_outputs], dim=1)
         self.model.params.use_cache = False
 
-        return z_outputs, semantic_outputs, pos_ids, seq_sen_ids
+        return z_outputs, semantic_outputs
 
 
 

@@ -97,3 +97,5 @@ data/
 log/
 logs/
 cruise_logs/
+
+.history/

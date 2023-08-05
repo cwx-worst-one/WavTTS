@@ -9,11 +9,11 @@ import math
 import random
 
 class PhoneTokenizerWithAudioTokens:
-    def __init__(self, phone_token_num, audio_token_num) -> None:
-        self.audio_token_num = audio_token_num
+    def __init__(self, phone_token_num, speaker_token_num) -> None:
+        self.speaker_token_num = speaker_token_num
         self.phone_token_num = phone_token_num
         self.vocab_size = (
-            audio_token_num + phone_token_num + 3
+            speaker_token_num + phone_token_num + 3
         )  # <s> </s>, <sep>, <pad>
         self.pad = 0
         self.bos = self.vocab_size - 1
@@ -22,9 +22,9 @@ class PhoneTokenizerWithAudioTokens:
 
     def tokenize(self, inputs, input_key): 
         if input_key == "inputs":  # text_id
-            if inputs.max() >= self.phone_token_num:
-                # print(inputs, ' is OOV, ignore ...')
-                return None
+            # if inputs.max() >= self.phone_token_num:
+            #     print(inputs, ' is OOV, ignore ...')
+            #     return None
             return inputs + 1
         elif input_key == "targets":  # wav_id
             return inputs + 1 + self.phone_token_num
@@ -38,7 +38,7 @@ class ContinuousTTSDataset(Dataset):
         self.hp = DotDict(hp)
         self.metas = self.get_metadata(path)
         self.tokenizer = PhoneTokenizerWithAudioTokens(
-            self.hp.phone_tokens_num, self.hp.audio_tokens_num
+            self.hp.phone_tokens_num, self.hp.speaker_tokens_num
         )
         self.return_full_seq = return_full_seq
         self.inference = inference
@@ -118,6 +118,8 @@ class ContinuousTTSDataset(Dataset):
             print(uttid, ' text_id is None')
             return None
 
+        text = None
+
         # get len
         bn_T, bn_C = bn.shape[0], bn.shape[1]
         text_len = text_id.shape[0]
@@ -129,8 +131,6 @@ class ContinuousTTSDataset(Dataset):
                 + [self.tokenizer.sep]
                 + [0] * bn_T # place holder
             )
-            pos_id = np.asarray(list(range(text_len + 2)) + list(range(bn_T)))
-            seq_sen_id = np.asarray([1] * (text_len + 2) + [2] * (bn_T))
         else:
             seq = (
                 [self.tokenizer.bos]
@@ -139,9 +139,6 @@ class ContinuousTTSDataset(Dataset):
                 + [0] * bn_T # place holder
                 + [self.tokenizer.eos]
             )
-            # get position embedding
-            pos_id = np.asarray(list(range(text_len + 2)) + list(range(bn_T + 1)))
-            seq_sen_id = np.asarray([1] * (text_len + 2) + [2] * (bn_T + 1))
 
         text_id = np.array(text_id)
         bn = np.array(bn)
@@ -153,7 +150,7 @@ class ContinuousTTSDataset(Dataset):
 
         full_seq = None
 
-        return text_id, bn, seq, pos_id, seq_sen_id, full_seq, uttid
+        return text_id, bn, seq, text, uttid
 
 
 class ContinuousCollator(object):
@@ -175,19 +172,21 @@ class ContinuousCollator(object):
         seqs = []
         seq_lens = []
         seq_sen_ids = []
-        pos_ids = []
-        full_seqs = []
         utt_ids = []
 
         if len(results) == 0:
             return None
 
-        max_seq_len = max(seq.shape[0] for _, _, seq, _, _, _, _ in results)
-        max_text_id_len = max(text_id.shape[0] for text_id, _, _, _, _, _, _ in results)
-        max_bn_len = max(bn.shape[0] for _, bn, _, _, _, _, _ in results)
+        # text_id, bn, seq, text, utt_id
+
+        max_seq_len = max(seq.shape[0] for text_id, bn, seq, text, utt_id in results)
+        max_text_id_len = max(text_id.shape[0] for text_id, bn, seq, text, utt_id in results)
+        max_bn_len = max(bn.shape[0] for text_id, bn, seq, text, utt_id in results)
         if self.block_sparse:
             max_seq_len = (max_seq_len // 32 + 1) * 32
-        for text_id, bn, seq, pos_id, seq_sen_id, full_seq, utt_id in results:
+        for text_id, bn, seq, text, utt_id in results:
+            # 暂时还不用text
+
             seq_lens.append(seq.shape[0])
             text_id_lens.append(text_id.shape[0])
             bn_lens.append(bn.shape[0])
@@ -206,40 +205,16 @@ class ContinuousCollator(object):
                 constant_values=self.pad,
             )
 
-            # position id
-            pos_id = np.pad(
-                pos_id,
-                (0, max_seq_len - seq.shape[0]),
-                mode="constant",
-                constant_values=self.pad,
-            )
-            # 区分是text还是wav
-            seq_sen_id = np.pad(
-                seq_sen_id,
-                (0, max_seq_len - seq.shape[0]),
-                mode="constant",
-                constant_values=self.pad,
-            )
             seq = np.pad(
                 seq,
                 (0, max_seq_len - seq.shape[0]),
                 mode="constant",
                 constant_values=self.pad,
             )
-            if full_seq is not None:
-                full_seq = np.pad(
-                    full_seq,
-                    [(0, max_seq_len - full_seq.shape[0]), (0, 0)],
-                    mode="constant",
-                    constant_values=0,
-                )  # [t, n_codebook]
-                full_seqs.append(full_seq)
 
             text_ids.append(text_id)
             bns.append(bn)
             seqs.append(seq)
-            pos_ids.append(pos_id)
-            seq_sen_ids.append(seq_sen_id)
             utt_ids.append(utt_id)
 
 
@@ -247,17 +222,10 @@ class ContinuousCollator(object):
         text_ids = np.asarray(text_ids)
         text_id_lens = np.asarray(text_id_lens)
         bns = np.stack(bns, axis=0)
-        # print('logs+=3')
-        # # bns[:, :, :32] = bns[:, :, :32]/10
-        # bns[:, :, 32:] = bns[:, :, 32:] + 3
-        # print('logs+=2.5')
-        # bns[:, :, 32:] = bns[:, :, 32:] + 2.5
         bn_lens = np.asarray(bn_lens)
         seqs = np.asarray(seqs)
         seq_lens = np.asarray(seq_lens)
-        pos_ids = np.asarray(pos_ids)
-        seq_sen_ids = np.asarray(seq_sen_ids)
-        full_seqs = np.array(full_seqs) if len(full_seqs) > 0 else None
+        
 
         # to torch
         text_ids = torch.from_numpy(text_ids)
@@ -266,8 +234,5 @@ class ContinuousCollator(object):
         bn_lens = torch.from_numpy(bn_lens)
         seqs = torch.from_numpy(seqs)
         seq_lens = torch.from_numpy(seq_lens)
-        pos_ids = torch.from_numpy(pos_ids)
-        seq_sen_ids = torch.from_numpy(seq_sen_ids)
-        full_seqs = torch.from_numpy(full_seqs) if full_seqs is not None else None
-
-        return text_ids, text_id_lens, bns, bn_lens, seqs, seq_lens, pos_ids, seq_sen_ids, full_seqs, utt_ids
+        
+        return text_ids, text_id_lens, bns, bn_lens, seqs, seq_lens, utt_ids

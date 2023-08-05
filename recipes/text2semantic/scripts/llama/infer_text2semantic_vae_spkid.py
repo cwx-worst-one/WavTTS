@@ -7,7 +7,7 @@ from scipy.io.wavfile import write
 from torch.utils.data import DataLoader
 
 from recipes.text2semantic.datasets.continuous_spkid_dataset import ContinuousTTSDataset, ContinuousCollator
-from recipes.text2semantic.lit_modules.llama.lit_vae_t2s_ctiga_spkid import VAET2SModule
+from recipes.text2semantic.lit_modules.llama.lit_vae_t2s_ctiga import VAET2SModule
 from samantha.utils.hparams import DotDict
 
 
@@ -48,7 +48,8 @@ def prepare_models(args, device):
 @torch.no_grad()
 def main(args):
     devices = args.device
-    ar_model_hps = DotDict({"phone_tokens_num": 200, "audio_tokens_num": 1024})
+    # 这里务必要和训练一致！！！！！
+    ar_model_hps = DotDict({"phone_tokens_num": 7370, "speaker_tokens_num": 8192})
     ar_model = prepare_models(args, devices)
         
 #    ar_step, ar_epoch = get_step_epoch_from_ckpt(args.ar_ckpt_path)
@@ -91,16 +92,18 @@ def main(args):
         unmask_len = (seq_sen_ids == 2).sum(dim=1)
         # num_res = init_full_seqs.shape[2]
         # ar
-        z_outputs, semantic_outputs, pos_ids, seq_sen_ids = ar_model.inference_from_text(
-            (text_ids, text_id_lens, bns, bn_lens, seqs, seq_lens, pos_ids, seq_sen_ids, init_full_seqs, utts, spk_ids), test_dataset.tokenizer
+        z_outputs, semantic_outputs = ar_model.inference_from_text(
+            (text_ids, text_id_lens, bns, bn_lens, seqs, seq_lens, utts), test_dataset.tokenizer
         )
         # b, t, c = semantic_outputs.shape
         # semantic_outputs = semantic_outputs.cpu().numpy()
         b, t, c = z_outputs.shape
         z_outputs = z_outputs.cpu().numpy()
 
-        # np.save(os.path.join(args.out_dir, '%s.npy'%utts[0]), semantic_outputs)
-        np.save(os.path.join(args.out_dir, '%s.npy'%utts[0]), z_outputs)
+        save_path = os.path.join(args.out_dir, '%s.npy'%utts[0])
+
+        print("save %s" % save_path)
+        np.save(save_path, z_outputs)
         
 
 
