@@ -99,3 +99,5 @@ logs/
 cruise_logs/
 
 .history/
+
+span.log

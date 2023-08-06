@@ -33,7 +33,8 @@ run_opts:
     phone_tokens_num: 7370
     speaker_tokens_num: 8192
     batch_total_tokens: 5000
-    use_phoneme_loss: False
+    urls: null 
+    data_id: null
     
 llama_config: !new:recipes.text2semantic.modules.continuous_vae_llama_ctiga.ModelArgs
     dim: 1024
@@ -51,7 +52,9 @@ llama_config: !new:recipes.text2semantic.modules.continuous_vae_llama_ctiga.Mode
     checkpointing: !ref <run_opts[checkpointing]>
 
 train_dataset: !new:recipes.text2semantic.datasets.continuous_wds_dataset.ContinuousTTSDataset
-    wds_urls: !ref <run_opts[urls]>
+    wds_urls: !apply:samantha.dataio.utils.parse_data_urls
+        data_id: !ref <run_opts[data_id]>
+        data_urls: !ref <run_opts[urls]>
     phone_tokens_num: !ref <run_opts[phone_tokens_num]>
     speaker_tokens_num: !ref <run_opts[speaker_tokens_num]>
     return_full_seq: !ref <run_opts[return_full_seq]>
@@ -108,7 +111,6 @@ pl_module: !new:recipes.text2semantic.lit_modules.llama.lit_vae_t2s_ctiga.VAET2S
     tokenizer_len: !ref <run_opts[phone_tokens_num]>
     n_semantic: !ref <run_opts[speaker_tokens_num]>
     checkpointing: !ref <run_opts[checkpointing]>
-    use_phoneme_loss: !ref <run_opts[use_phoneme_loss]>
     required_modules: {}
 
 logger:

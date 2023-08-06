@@ -21,8 +21,7 @@ bash launch.sh fit --config recipes/text2semantic/conf/llama/vae_llama_ctiga_wds
 --run_opts.n_step_save 5000 \
 --trainer.accumulate_grad_batches 1 \
 --run_opts.learning_rate 0.0003 \
---scheduler_cls.cycle_steps 300000 \
---run_opts.simulated_cycle_rate 0.05 \
+--scheduler_cls.cycle_steps 150000 \
 --run_opts.num_epochs 2000 "$@" 
 
 
