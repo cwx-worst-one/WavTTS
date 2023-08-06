@@ -79,7 +79,8 @@ pl_datamodule: !new:recipes.text2semantic.lit_modules.DataModule
     train_dataloader: !ref <train_dataloader>
 
 # model configuration
-model_cls: !name:recipes.text2semantic.modules.continuous_vae_llama_ctiga_spkid.LLaMa
+# model_cls: !name:recipes.text2semantic.modules.continuous_vae_llama_ctiga.LLaMa
+model_cls: !name:recipes.text2semantic.modules.llama.wfvae_ctiga_llama.VAELLaMa
     params: !ref <llama_config>
     provider: ctiga
 

@@ -42,6 +42,7 @@ class ContinuousTTSDataset(IterableDataset):
                 urls=wds_urls,
                 resampled=True,
                 # nodesplitter=wds.shardlists.split_by_node,
+                skip_instance_cache=True,
             )
             .decode()
             .shuffle(2048)

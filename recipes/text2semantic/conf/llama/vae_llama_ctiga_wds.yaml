@@ -34,7 +34,6 @@ run_opts:
     speaker_tokens_num: 8192
     batch_total_tokens: 5000
     use_phoneme_loss: False
-    simulated_cycle_rate: 0.0
     
 llama_config: !new:recipes.text2semantic.modules.continuous_vae_llama_ctiga.ModelArgs
     dim: 1024
@@ -56,7 +55,6 @@ train_dataset: !new:recipes.text2semantic.datasets.continuous_wds_dataset.Contin
     phone_tokens_num: !ref <run_opts[phone_tokens_num]>
     speaker_tokens_num: !ref <run_opts[speaker_tokens_num]>
     return_full_seq: !ref <run_opts[return_full_seq]>
-    simulated_cycle_rate: !ref <run_opts[simulated_cycle_rate]>
     batcher_config:
         buckets: !apply:eval ["list(range(0, 4096, 100))"]  # [0, 100, 200 ... 4000] 4000以上的可以先丢掉
         dynamic_batch: True
@@ -79,7 +77,8 @@ pl_datamodule: !new:recipes.text2semantic.lit_modules.DataModule
     train_dataloader: !ref <train_dataloader>
 
 # model configuration
-model_cls: !name:recipes.text2semantic.modules.continuous_vae_llama_ctiga.LLaMa
+# model_cls: !name:recipes.text2semantic.modules.continuous_vae_llama_ctiga.LLaMa
+model_cls: !name:recipes.text2semantic.modules.llama.wfvae_ctiga_llama.VAELLaMa
     params: !ref <llama_config>
     provider: ctiga
 

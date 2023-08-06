@@ -43,6 +43,7 @@ class ContinuousTTSDataset(IterableDataset):
                 urls=wds_urls,
                 resampled=True,
                 # nodesplitter=wds.shardlists.split_by_node,
+                skip_instance_cache=True,
             )
             .decode()
             .shuffle(2048)
@@ -86,19 +87,6 @@ class ContinuousTTSDataset(IterableDataset):
 
         bn_T, bn_C = bn.shape[0], bn.shape[1]
         text_len = text_id.shape[0]
-
-        if random.random() < self.simulated_cycle_rate:
-            if bn_T + text_len < 500:
-                text_cat_list = [text_id[:1]]
-                bn_cat_list = []
-                k = random.randint(2, 4)
-                for j in range(k):
-                    text_cat_list += [text_id[1:-1]]
-                    bn_cat_list += [bn]
-                text_cat_list += [text_id[-1:]]
-                text_id = np.concatenate(text_cat_list)
-                bn = np.concatenate(bn_cat_list)
-                print(k, ' ',text_id.shape, ' ', bn.shape)
 
         # get len again
         bn_T, bn_C = bn.shape[0], bn.shape[1]
