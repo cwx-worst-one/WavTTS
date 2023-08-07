@@ -445,7 +445,6 @@ def dds_matmul(a, b, trans_a, trans_b, trans_c, spdims, block, lut, width, out=N
 
 
 class _matmul(torch.autograd.Function):
-
     fn = {"sdd": sdd_matmul, "dsd": dsd_matmul, "dds": dds_matmul}
 
     @staticmethod

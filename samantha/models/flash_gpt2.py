@@ -2964,7 +2964,6 @@ class GPT2ForDiffusion(GPT2PreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, CausalLMOutputWithCrossAttentions]:
-
         return_dict = (
             return_dict if return_dict is not None else self.config.use_return_dict
         )
@@ -3023,7 +3022,6 @@ class GPT2ForEmbedAR(GPT2PreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, CausalLMOutputWithCrossAttentions]:
-
         return_dict = (
             return_dict if return_dict is not None else self.config.use_return_dict
         )
@@ -3077,7 +3075,6 @@ class GPT2ForCrossAttn(GPT2PreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, CausalLMOutputWithCrossAttentions]:
-
         return_dict = (
             return_dict if return_dict is not None else self.config.use_return_dict
         )

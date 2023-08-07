@@ -40,7 +40,6 @@ class UtteranceTextProcessor:
         sep_tokens=[],
         **kwargs,
     ):
-
         if not isinstance(tokenizer, str):
             # from created tokenizer object
             self.tokenizer = tokenizer

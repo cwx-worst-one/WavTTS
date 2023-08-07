@@ -35,7 +35,6 @@ class RawTextProcessor:
         tokenizer_kwargs=None,
         **kwargs,
     ):
-
         if not isinstance(text_keys, list):
             text_keys = [text_keys]
         self.text_keys = text_keys

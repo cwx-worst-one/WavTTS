@@ -1,10 +1,176 @@
+import random
 from typing import Callable, Optional, Union
 
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
+from torch import Tensor
+from torch.nn.functional import pad
 from torchaudio.functional.functional import _get_spec_norms
 from torchaudio.transforms import MelScale
+
+
+def safe_log(x: torch.Tensor, eps: float = 1e-20) -> torch.Tensor:
+    return torch.log(x + eps)
+
+
+def fp32_to_int16(audio: torch.Tensor) -> torch.Tensor:
+    max_val = torch.iinfo(torch.int16).max
+    return (audio * max_val).to(torch.int16)
+
+
+def to_tensor(x: np.ndarray):
+    if torch.is_tensor(x):
+        return x
+    return torch.from_numpy(x)
+
+
+def power_to_db(x: torch.Tensor) -> torch.Tensor:
+    return 10 * torch.log10(x)
+
+
+def amplitude_to_db(x: torch.Tensor) -> torch.Tensor:
+    return power_to_db(x.abs().pow(2))
+
+
+def normalize_audio_to_float32(tensor: torch.Tensor) -> torch.Tensor:
+    if tensor.dtype == torch.float32:
+        return tensor
+
+    if tensor.dtype == torch.float64:
+        return tensor.float()
+
+    info = torch.iinfo(tensor.dtype)
+    abs_max = 2 ** (info.bits - 1)
+    return tensor.float() / abs_max
+
+
+class ToTensor:
+    def __init__(self) -> None:
+        pass
+
+    def __call__(self, x):
+        """Converts numpy array to torch.Tensor
+
+        Args:
+            x (np.ndarray): Audio array
+
+        Returns:
+            torch.Tensor: Audio tensor
+        """
+        return to_tensor(x)
+
+
+class SetAudioDimensions:
+    def __init__(self):
+        pass
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        """Sets the expected audio dimensions according to
+        PyTorch standards: (n_channels, n_samples)
+
+        Args:
+            x (torch.Tensor): Tensor containing audio samples of size:
+                - [n_samples] -> [1, n_samples]
+                - [n_channels, n_samples] -> [n_channels, n_samples]
+                - [n_samples, n_channels] -> [n_channels, n_samples]
+
+        Returns:
+            torch.Tensor: Tensor containing audio samples of size:
+        """
+        if x.ndim == 1:
+            return x[None, :]
+        elif x.ndim == 2:
+            if x.shape[0] > x.shape[1]:
+                x = x.permute(1, 0)
+        return x
+
+
+def get_random_idx(n_samples: int):
+    return random.randint(0, n_samples)
+
+
+def crop_1d(audio: torch.Tensor, start_idx: int, n_samples: int):
+    if audio.shape[1] == n_samples:
+        return audio
+
+    if (start_idx + n_samples) > audio.shape[1]:
+        raise IndexError(
+            f"The number of samples needed({start_idx + n_samples}) to crop exceeds the"
+            f" max_samples({audio.shape[1]}) in the audio"
+        )
+    return audio[..., start_idx : start_idx + n_samples]
+
+
+class ResizedCrop(torch.nn.Module):
+    def __init__(self, start_idx: int, n_samples: int):
+        super().__init__()
+        self.start_idx = start_idx
+        self.n_samples = n_samples
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return crop_1d(x, self.start_idx, self.n_samples)
+
+
+class RandomResizedCrop(torch.nn.Module):
+    def __init__(self, n_samples: int):
+        super().__init__()
+        self.n_samples = n_samples
+
+    def forward(self, x):
+        max_samples = x.shape[-1]
+        rand_idx = get_random_idx(max_samples - self.n_samples)
+        return crop_1d(x, rand_idx, self.n_samples)
+
+
+class NormalizeAudioToFloat32:
+    def __init__(self):
+        pass
+
+    def __call__(self, x):
+        return normalize_audio_to_float32(x)
+
+
+class Pad(nn.Module):
+    def __init__(self, n_samples: int) -> None:
+        super().__init__()
+        self.n_samples = n_samples
+
+    def forward(self, x: Tensor) -> Tensor:
+        if x.ndim != 2:
+            raise ValueError(
+                f"Expected 2D input (n_channels x n_samples), got {x.ndim}D input"
+            )
+
+        if x.shape[-1] >= self.n_samples:
+            return x
+
+        return pad(x, (0, self.n_samples - x.shape[-1]))
+
+
+def pad_1d(audio: torch.Tensor, start_idx: int, n_samples: int):
+    y = torch.zeros(audio.shape[0], n_samples, device=audio.device)
+    y[:, start_idx : start_idx + audio.shape[-1]] = audio
+    return y
+
+
+class RandomPad(nn.Module):
+    def __init__(self, n_samples: int) -> None:
+        super().__init__()
+        self.n_samples = n_samples
+
+    def forward(self, x: Tensor) -> Tensor:
+        if x.ndim != 2:
+            raise ValueError(
+                f"Expected 2D input (n_channels x n_samples), got {x.ndim}D input"
+            )
+
+        if x.shape[-1] >= self.n_samples:
+            return x
+
+        rand_idx = random.randint(0, self.n_samples - x.shape[-1])
+        return pad_1d(x, rand_idx, self.n_samples)
 
 
 def dynamic_range_compression(x, C=1, clip_val=1e-5):
@@ -91,10 +257,15 @@ def batch_plot_spectrogram(
     ax=None,
 ):
     if spec.shape[0] > 1:
+        if ax is None:
+            _, ax = plt.subplots(spec.shape[0], 1)
+
         ax = ax.flatten()
         assert len(ax) == spec.shape[0]
-        for a in ax:
-            plot_spectrogram(spec.cpu(), plot_log=plot_log, mel=mel, title=title, ax=a)
+        for s, a in zip(spec, ax):
+            plot_spectrogram(
+                s.squeeze().cpu(), plot_log=plot_log, mel=mel, title=title, ax=a
+            )
     else:
         plot_spectrogram(
             spec.squeeze().cpu(), plot_log=plot_log, mel=mel, title=title, ax=ax

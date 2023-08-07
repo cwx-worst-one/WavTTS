@@ -271,12 +271,17 @@ def hopen(hdfs_path: str, mode: str = "r") -> IO[Any]:
     raise RuntimeError("unsupported io mode: {}".format(mode))
 
 
-def hdfs_torch_load(filepath: str, **kwargs):
+def hdfs_torch_load(filepath: str, jit: bool = False, **kwargs):
+    if jit:
+        torch_load_fn = torch.jit.load
+    else:
+        torch_load_fn = torch.load
+
     if not filepath.startswith("hdfs://"):
-        return torch.load(filepath, **kwargs)
+        return torch_load_fn(filepath, **kwargs)
     with hopen(filepath, "rb") as reader:
         accessor = io.BytesIO(reader.read())
-        state_dict = torch.load(accessor, **kwargs)
+        state_dict = torch_load_fn(accessor, **kwargs)
         del accessor
         return state_dict
 

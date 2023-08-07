@@ -5,7 +5,6 @@ from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
 
 class Timer(Callback):
-
     r"""Logs the time taken to complete a training step.
     Record the time taken to:
     1. load the data

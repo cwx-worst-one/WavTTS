@@ -131,7 +131,6 @@ class UniDataModule(LightningDataModule):
         self.kwargs = kwargs
 
     def _parse_data_paths(self):
-
         if self.hparams.train_data_id and self.hparams.train_data_path:
             raise MisconfigurationException(
                 f"Combination of parameters train_data_id={self.hparams.train_data_id} "

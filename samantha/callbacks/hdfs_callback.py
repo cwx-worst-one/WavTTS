@@ -78,7 +78,6 @@ class HdfsSavingCallback(Callback):
 
     def _target_func(self, global_step):
         if global_step > 1 and global_step % self.n_log == 0:
-
             logger.info(f"Processing {global_step=} checkpoints")
 
             # sync checkpoints

@@ -6,7 +6,6 @@ logger = logging.getLogger(__name__)
 
 
 class BucketBatcher:
-
     r"""Separate samples into different buckets according its size calculated by
     ``length_fn``, and collate batches from each bucket once their size satisfied
     the ``maximum_bucket_size`` when ``dynamic_batch`` is on, ``batch_size`` when off.
@@ -38,7 +37,6 @@ class BucketBatcher:
         length_fn: Callable = len,
         bucket_skip_warning_num: int = 10000,
     ):
-
         if buckets is None:
             buckets = [2**31]
 

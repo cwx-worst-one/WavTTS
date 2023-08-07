@@ -1,8 +1,12 @@
 import functools
-from typing import List
+from typing import Any, List
 
 from pytorch_lightning.utilities import rank_zero_deprecation
 from webdataset import WebDataset
+
+
+def return_self(x: Any) -> Any:
+    return x
 
 
 def apply_webdataset_pipeline(
