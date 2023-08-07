@@ -51,6 +51,7 @@ def parse_arguments(arg_list=None):
         "test": "Perform one evaluation epoch over the test set.",
         "predict": "Run inference on your data (no labels).",
         "export": "Export stage graph and params.",
+        "benchmark": "Benchmark tensor throughput of a lightning module",
     }
     parser.add_argument(
         "action",

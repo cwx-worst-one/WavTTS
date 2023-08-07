@@ -10,6 +10,7 @@ from cruise import CruiseTrainer
 from hyperpyyaml import load_hyperpyyaml
 from pytorch_lightning import Trainer
 
+from samantha.utils.benchmark import benchmark_model
 from samantha.utils.experiment import create_experiment_directory
 from samantha.utils.hdfs_tools import hdfs_open
 from samantha.utils.hparams import DotDict
@@ -31,6 +32,7 @@ def _get_extra_action_params(run_opts, cfg, action):
         "test": {"ckpt_path": None, "verbose": True},
         "predict": {"ckpt_path": None, "return_predictions": None},
         "export": {"ckpt_path": None},
+        "benchmark": {},
     }
     assert action in action_extra_params, f"Invalid action: {action}"
     extra_params = {
@@ -90,6 +92,11 @@ def main():
             raise ValueError(
                 "Exporting model is not supported when post_to_sail is False."
             )
+
+        if action == "benchmark":
+            # benchmark action
+            benchmark_model(trainer, pl_module, pl_datamodule, run_opts.output_dir)
+            return
 
         fn = getattr(trainer, action)
         fn(model=pl_module, datamodule=pl_datamodule, **extra_params)
