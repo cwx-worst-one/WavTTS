@@ -86,8 +86,11 @@ class HDFSModelCheckpoint(ModelCheckpoint):
             self.register_model()
 
     def register_model(self):
+        model_name = os.getenv("ModelName", None)
+        if model_name is None:
+            return
         req = easycycle.RegisterRawModelReq()
-        req.name = os.getenv("ModelName", "TestModel")
+        req.name = model_name
         req.model_type = os.getenv("ModelType", "Common")
         req.owner = os.getenv("ARNOLD_TRIAL_OWNER", "samantha")
         easycycle.register_raw_model(req)
@@ -124,8 +127,11 @@ class HDFSModelCheckpoint(ModelCheckpoint):
         logger.info(f"Synced {local_path=} to {hdfs_path=}.")
         if force:
             return
+        model_name = os.getenv("ModelName", None)
+        if model_name is None:
+            return
         req = easycycle.RegisterCkptsReq()
-        req.raw_model_name = os.getenv("ModelName", "TestModel")
+        req.raw_model_name = model_name
         req.creator = os.getenv("ARNOLD_TRIAL_OWNER", "samantha")
         req.train_dataset_id = os.getenv("DatasetID", "null")
         req.train_task_id = os.getenv("ARNOLD_TRIAL_ID", "null")
