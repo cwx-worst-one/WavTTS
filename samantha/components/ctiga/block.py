@@ -50,7 +50,7 @@ class Block(nn.Module):
         residual_in_fp32=False,
         sequence_parallel=False,
         mark_shared_params=False,
-        version=1,
+        version=2,
     ):
         """
         For prenorm=True, this Block has a slightly different structure compared to a regular

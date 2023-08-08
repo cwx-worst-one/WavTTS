@@ -67,7 +67,7 @@ def create_mixer_cls(
     config, layer_idx=None, process_group=None, device=None, dtype=None
 ):
     factory_kwargs = {"device": device, "dtype": dtype}
-    flashattn_version = getattr(config, "flashattn_version", 1)
+    flashattn_version = getattr(config, "flashattn_version", 2)
     assert flashattn_version in [1, 2]
     head_dim = getattr(
         config, "head_dim", config.hidden_size // config.num_attention_heads
@@ -255,7 +255,7 @@ def create_mlp_cls(config, layer_idx=None, process_group=None, device=None, dtyp
 def create_block(config, layer_idx=None, process_group=None, device=None, dtype=None):
     factory_kwargs = {"device": device, "dtype": dtype}
     sequence_parallel = getattr(config, "sequence_parallel", True)
-    flashattn_verison = getattr(config, "flashattn_version", 1)
+    flashattn_verison = getattr(config, "flashattn_version", 2)
     mixer_cls = create_mixer_cls(
         config, layer_idx, process_group=process_group, **factory_kwargs
     )
@@ -569,6 +569,10 @@ class GPTModel(GPTPreTrainedModel):
             )
             mixer_kwargs["cu_seqlens"] = cu_seqlens
             mixer_kwargs["max_seqlen"] = max_seqlen_in_batch
+
+            if getattr(self.config, "rotary_emb_fraction", 0.0) > 0.0:
+                mixer_kwargs["indices"] = indices
+                mixer_kwargs["key_padding_mask"] = attention_mask
 
         for layer in self.layers:
             if self.gradient_checkpointing and self.training:

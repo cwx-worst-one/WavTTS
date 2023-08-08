@@ -9,6 +9,7 @@ from einops import rearrange, repeat
 from pytorch_lightning.utilities.rank_zero import rank_zero_warn
 
 from samantha.utils.ctiga.blockmask import convert_blockmask
+from samantha.utils.ctiga.padding import pad_input, unpad_input
 
 try:
     # flash_attn_2
@@ -773,7 +774,7 @@ class MHA(nn.Module):
         checkpointing=False,
         blocksparse=False,
         blockmask=None,
-        version=1,
+        version=2,
         device=None,
         dtype=None,
     ) -> None:
@@ -951,6 +952,7 @@ class MHA(nn.Module):
         key_padding_mask=None,
         cu_seqlens=None,
         max_seqlen=None,
+        indices=None,
         mixer_subset=None,
         inference_params=None,
         **kwargs,
@@ -973,16 +975,25 @@ class MHA(nn.Module):
             inference_params: for generation. Adapted from Megatron-LM (and Apex)
             https://github.com/NVIDIA/apex/blob/3ff1a10f72ec07067c4e44759442329804ac5162/apex/transformer/testing/standalone_transformer_lm.py#L470
         """
+        is_pad = True
         if cu_seqlens is not None:
             assert max_seqlen is not None
-            assert key_padding_mask is None
+            # assert key_padding_mask is None
             assert self.use_flash_attn
             assert not self.dwconv
-            assert self.rotary_emb_dim == 0
+            if self.rotary_emb_dim > 0:
+                assert indices is not None
+                assert key_padding_mask is not None
+            else:
+                assert key_padding_mask is None
+            is_pad = False
+
         if key_padding_mask is not None:
-            assert cu_seqlens is None
-            assert max_seqlen is None
-            assert not self.use_flash_attn
+            if self.rotary_emb_dim == 0:
+                assert cu_seqlens is None
+                assert max_seqlen is None
+                assert not self.use_flash_attn
+
         if inference_params is not None:
             assert key_padding_mask is None
             assert cu_seqlens is None and max_seqlen is None
@@ -1009,7 +1020,14 @@ class MHA(nn.Module):
             )
             if inference_params is None:
                 if self.rotary_emb_dim > 0:
+                    if not is_pad:
+                        qkv = pad_input(
+                            qkv, indices, cu_seqlens.shape[0] - 1, max_seqlen
+                        )
                     qkv = self.rotary_emb(qkv)
+                    if not is_pad:
+                        qkv, _, _, _ = unpad_input(qkv, key_padding_mask)
+
                 if not self.checkpointing:
                     context = self.inner_attn(qkv, **kwargs)
                 else:
