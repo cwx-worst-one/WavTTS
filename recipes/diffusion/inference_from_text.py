@@ -14,7 +14,8 @@ import torch.nn.functional as F
 from einops import rearrange, repeat
 import numpy as np
 import torchaudio
-from recipes.diffusion.modules.pl_module import DiffusionModule
+from recipes.musiclm.lightning.modules import SemanticModule
+from recipes.diffusion.modules.pl_module import load_ema_checkpoint
 from recipes.diffusion.models.tnt import TNTDiffusionNetwork
 from recipes.musiclm.requires.mulan.mulan_infer_g4 import (
     create_mulan_model,
@@ -23,6 +24,7 @@ from recipes.musiclm.requires.mulan.mulan_infer_g4 import (
 )
 from recipes.soundstream.models.vqgan import VQGAN_KL_mix, VQGAN_KL_new
 from recipes.soundstream.modules.pl_module_vae import VocoderModule
+torch.backends.cuda.matmul.allow_tf32 = True
 
 def clip(x: Tensor, dynamic_threshold: float = 0.0):
     if dynamic_threshold == 0.0:
@@ -107,7 +109,7 @@ class ARVSampler(nn.Module):
 
             # model prediction
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=enabled):
-                v_pred = model[key].model(
+                v_pred = model[key](
                     current, 
                     timesteps=sigma_i, 
                     mulan_context=positive_mulan_context, 
@@ -117,7 +119,7 @@ class ARVSampler(nn.Module):
                 )
 
                 if classifier_free_guidance != 1:
-                    v_uncond = model[key].model(
+                    v_uncond = model[key](
                             current, 
                             timesteps=sigma_i, 
                             mulan_context=positive_mulan_context, 
@@ -127,7 +129,7 @@ class ARVSampler(nn.Module):
                         )
                     v_negative = v_uncond
                     if negative_mulan_context is not None:
-                        v_negative = model[key].model(
+                        v_negative = model[key](
                             current, 
                             timesteps=sigma_i, 
                             mulan_context=negative_mulan_context, 
@@ -161,7 +163,7 @@ class ARVSampler(nn.Module):
             positive_mulan_context=positive_mulan_context,
             negative_mulan_context=negative_mulan_context,
             semantic_context=semantic_context,
-            current=torch.randn(b, c, t, device=self.device),
+            current=torch.randn(b, c, t, device=self.device,),
             num_steps=num_steps, 
             bf16_portion=bf16_portion,
             chunk_index=-1, 
@@ -215,7 +217,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--bf16_portion',
         type=float,
-        default=0.0
+        default=1.0
     )
     parser.add_argument(
         '--schedule_slope',
@@ -228,9 +230,14 @@ if __name__ == '__main__':
         default=2.5
     )
     parser.add_argument(
-        '--input_dir_path', 
+        '--batch_size',
+        type=int,
+        default=16
+    )
+    parser.add_argument(
+        '--input_text_path', 
         type=str, 
-        default='../a100_textUpdate_mcc40mfiltered705mLargeBatch_S_playlist_C_F_Sstep=091000-tr_loss=2.4243-val_loss_0=2.8712.ckpt_Clast_standard.ckpt_Flast_standard.ckpt'
+        default='../prompts.txt'
     )
     parser.add_argument(
         '--output_dir_path', 
@@ -265,7 +272,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--semantic_model_path',
         type=str,
-        default='/mnt/bn/audio-diffusion/ducle/logs/semantic_flash_llama/mcc40m_filtered_705m/checkpoints/step=081000-tr_loss=2.4451-val_loss_0=2.8561.ckpt'
+        default='/mnt/bn/audio-diffusion/ducle/logs/semantic_flash_llama/mcc40m_conservative_filtered_vad2/checkpoints/step=091000-tr_loss=2.4243-val_loss_0=2.8712.ckpt'
     )
     parser.add_argument(
         '--semantic_center_path',
@@ -275,22 +282,22 @@ if __name__ == '__main__':
     parser.add_argument(
         '--diffusion_model_path_2_0',
         type=str,
-        default='/home/byte_speech_sv/weitsung.lu/diffusion/diffusion-step=346999.ckpt'
+        default='hdfs://harunava/home/byte_speech_sv/weitsung.lu/diffusion/model_11_MCCVAD_ensemble_1.0/checkpoints/diffusion-step=153999.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_1',
         type=str,
-        default='/home/byte_speech_sv/weitsung.lu/diffusion/diffusion-step=346999.ckpt'
+        default='hdfs://harunava/home/byte_speech_sv/weitsung.lu/diffusion/model_11_MCCVAD_ensemble_1.0/checkpoints/diffusion-step=153999.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_2',
         type=str,
-        default='/home/byte_speech_sv/weitsung.lu/diffusion/diffusion-step=346999.ckpt'
+        default='hdfs://harunava/home/byte_speech_sv/weitsung.lu/diffusion/model_11_MCCVAD_ensemble_1.1/checkpoints/diffusion-step=049999.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_3',
         type=str,
-        default='/home/byte_speech_sv/weitsung.lu/diffusion/diffusion-step=346999.ckpt'
+        default='hdfs://harunava/home/byte_speech_sv/weitsung.lu/diffusion/model_11_MCCVAD_ensemble_2.3/checkpoints/diffusion-step=024999.ckpt'
     )
     parser.add_argument(
         '--vocoder_model_path',
@@ -302,7 +309,6 @@ if __name__ == '__main__':
 
     # params
     os.makedirs(args.output_dir_path, exist_ok=True)
-    intput_path_list = glob.glob(f'{args.input_dir_path}/*/*.pt')
     device = torch.device(args.device)
     # download assets
     asset_path = args.asset_path
@@ -356,6 +362,35 @@ if __name__ == '__main__':
     mulan_centers = np.load(LOCAL_PATHS['mulan_center_path'])
     mulan_centers = torch.from_numpy(mulan_centers).float().to(device)
 
+     # Semantic model
+    class ExtraParams:
+        sample_rate = 24000
+        duration = 10
+        num_rounds = 3
+        semantic_duration = 10
+        coarse_duration = 10
+        fine_duration = 4
+        semantic_stride = 5
+        coarse_stride = 5
+        fine_stride = 3
+        wav2vec_codebook_size = 1024
+        mulan_codebook_size = 1024
+        mulan_num_rvq = 12
+        soundstream_codebook_size = 1024
+        wav2vec_frame_rate = 25
+        soundstream_frame_rate = 50
+        num_coarse = 4
+        num_fine = 8
+        semantic_temperature = 1.0
+        coarse_temperature = 0.9
+        fine_temperature = 0.8
+        sample_mode = "gumbel"
+
+
+    semantic_module = SemanticModule.load_from_checkpoint(LOCAL_PATHS['semantic_model_path']).to(device).eval()
+    semantic_centers = np.load(LOCAL_PATHS['semantic_center_path'])
+    semantic_centers = torch.from_numpy(semantic_centers).float().to(device)
+
     # diffusion
     diffusion_model = {}
     diffusion_model_path = {
@@ -365,9 +400,9 @@ if __name__ == '__main__':
         '2-3': LOCAL_PATHS['diffusion_model_path_2_3'],
     }
     for key in diffusion_model_path:
-        diffusion_model[key] = DiffusionModule.load_from_checkpoint(
+        diffusion_model[key] = load_ema_checkpoint(
             diffusion_model_path[key],
-            diffusion_model=TNTDiffusionNetwork(
+            TNTDiffusionNetwork(
                 input_dim=32,
                 feature_dim=1024,
                 context_dim=1,
@@ -379,13 +414,10 @@ if __name__ == '__main__':
                 semantic_cfg_prob=0.10,
                 use_checkpoint=False
             ),
-            target_dim=32,
-            num_chunks=1,
-            chunk_length=1250,
         )
         diffusion_model[key].eval()
         diffusion_model[key].to(device)
-        diffusion_model[key].sampler.set_device(device)
+        diffusion_model[key]
 
     sampler = ARVSampler(32, 1250, 1)
     sampler.set_device(device)
@@ -406,31 +438,26 @@ if __name__ == '__main__':
     vocoder_model = vocoder_model_pl.generator.eval().to(device)
 
     # get the prompts
-    tokens_batch = []
-    text_batch = []
-    for path in intput_path_list:
-        prompt = str(Path(path).stem).split('_')[0]
-        tokens_batch.append(torch.load(path))
-        text_batch.append(prompt)
-
-    tokens_batch = torch.stack(tokens_batch)
-
-    split_size = 1
-    tokens_batch = torch.split(tokens_batch, split_size, dim=0)
-
+    with open(args.input_text_path, 'r') as f:
+        prompt_list = [prompt.replace('\n', '') for prompt in f.readlines()][:32]
     # inference
     start_time = time()
     with torch.no_grad():
-        for i, batch in enumerate(tokens_batch):
-            mulan_emb = mulan_inference(mulan_model, text=text_batch[i], device=device)
+        for i in range(0, len(prompt_list), args.batch_size):
+            print(f"generating {i} to {i + args.batch_size}")
+            texts = prompt_list[i:(i + args.batch_size)]
+            mulan_emb = mulan_inference(mulan_model, text=texts, device=device)
             postive_mulan_ids, ds = mulan_rvq_indexs(mulan_emb, mulan_centers)
 
+            semantic_samples = semantic_module.predict(postive_mulan_ids, ExtraParams()) 
+
+            diffusion_start = time()
             pred_emb = sampler(
                 model=diffusion_model,
                 positive_mulan_context=postive_mulan_ids,
                 negative_mulan_context=None,
-                semantic_context=batch.to(device),
-                num_items=batch.shape[0],
+                semantic_context=semantic_samples,
+                num_items=semantic_samples.shape[0],
                 num_chunks=1,
                 num_steps=args.diffusion_steps,
                 bf16_portion=args.bf16_portion,
@@ -440,14 +467,14 @@ if __name__ == '__main__':
                 schdeule_slope=args.schedule_slope,
                 classifier_free_guidance=args.guidance_scale,
             ).detach()
-
+            print('d ', time() - diffusion_start)
             wavs_g = vocoder_model.decode(pred_emb.float()).detach()
 
-            for wav_g, path in zip(wavs_g, intput_path_list[i*split_size:(i+1)*split_size]):
+            for wav_g, text in zip(wavs_g, texts):
                 torchaudio.save(
-                    f'{args.output_dir_path}/{str(Path(path).stem)}.wav',
+                    f'{args.output_dir_path}/{text[:100]}.wav',
                     wav_g.cpu(),
                     24000,
                 )
 
-    print(f'Inference RTF: {(time() - start_time)/(len(intput_path_list)*10)}')
+    print(f'Inference RTF: {(time() - start_time)/(len(prompt_list)*10)}')

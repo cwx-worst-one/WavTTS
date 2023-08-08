@@ -4,7 +4,7 @@
 ##########                       BASIC CONFIGURATION                  ##########
 ################################################################################
 
-seed: 0
+seed: 42
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 ckpt_path: null
 
@@ -19,20 +19,18 @@ run_opts:
     precision: 32
     log_every_n_steps: 10
     num_steps: 6000000
-    val_check_interval: 800
+    val_check_interval: 1000
     val_output_samples_dir: "generated_samples"
 
 training_params:
     sample_rate: 24000
-    train_batch_size: 12
-    train_num_workers: 8
+    train_batch_size: 16
+    train_num_workers: 6
     val_batch_size: 12
     val_num_workers: 4
     learning_rate: 0.00005
     weight_decay: 0.005
-    duration: 1.2
-    min_volume_threshold: 0.05
-    loudness_ratio_threshold: 0.2
+    input_chunk_samples: 24000
     sample_buffer_size: 256
 
 
@@ -41,46 +39,58 @@ training_params:
 ################################################################################
 
 # dataloader configuration
-ar_filtering: !new:recipes.musiclm.transforms.musiclm.ARFiltering
-    genre_stats_fname: "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/genre_quantile_stats.pkl"
-    semantic_diversity_range: (50, 100)
-    semantic_probs_range: (20, 100)
-
-train_dataset: !new:recipes.musiclm.datasets.mcc.WrappedMCC40MDataset
-    url2index_list:
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.alternative-hip-hop+chinese-style+others"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.blues+childhood+country+devotional+k-pop+soundtrack+trance+world-music"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.classical"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.easy-listening"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.electronic+techno"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.folk+indie-folk"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.hip-hop-rap"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.jazz"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.new-age"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.pop"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/genre_specific/npy_url2idx.txt.rock"
-    weights:
-        - 1.0
-        - 2.0
-        - 4.0
-        - 1.0
-        - 2.0
-        - 2.0
-        - 2.0
-        - 4.0
-        - 2.0
-        - 4.0
-        - 2.0
-    sample_rate: !ref <training_params[sample_rate]>
-    duration: !ref <training_params[duration]>
-    audio_key: "audio.npy"
-    min_volume_threshold: !ref <training_params[min_volume_threshold]>
-    loudness_ratio_threshold: !ref <training_params[loudness_ratio_threshold]>
-    ar_filtering: null
-    avoid_vocal: False
-    max_num_crops: 6
+short_form_dataset: !new:recipes.mulan.dataset.short_form.ShortFormDataset
     resampled: True
-    shardshuffle: True
+
+long_form_dataset: !new:recipes.mulan.dataset.long_form.LongFormDataset
+    resampled: True
+
+audioset_dataset: !new:recipes.mulan.dataset.audioset.AudioSetDataset
+    resampled: True
+
+ecals_dataset: !new:recipes.mulan.dataset.ecals.ECALSDataset
+    resampled: True
+
+karaoke_dataset: !new:recipes.mulan.dataset.karaoke.KaraokeDataset
+    resampled: True
+
+playlist_dataset: !new:recipes.mulan.dataset.playlist.PlaylistDataset
+    resampled: True
+
+mcc_gpt_dataset: !new:recipes.mulan.dataset.mcc.MCCGPTGenDataset
+    resampled: True
+
+aed_gpt_dataset: !new:recipes.mulan.dataset.mcc.AEDGPTGenDataset
+    resampled: True
+
+mcc_n2m_dataset: !new:recipes.mulan.dataset.mcc.MCCN2MDataset
+    resampled: True
+
+tt_query_dataset: !new:recipes.mulan.dataset.tt_query.TTQueryDataset
+    resampled: True
+
+train_datasets:
+    short_form: !ref <short_form_dataset>
+    long_form: !ref <long_form_dataset>
+    audio_set: !ref <audioset_dataset>
+    ecals: !ref <ecals_dataset>
+    karaoke: !ref <karaoke_dataset>
+    playlist: !ref <playlist_dataset>
+    mcc_gpt: !ref <mcc_gpt_dataset>
+    aed_gpt: !ref <aed_gpt_dataset>
+    mcc_n2m: !ref <mcc_n2m_dataset>
+    tt_query: !ref <tt_query_dataset>
+
+
+selected_dataset_names: [short_form, long_form, ecals, playlist, mcc_n2m, tt_query]
+weights: [0.2, 0.1, 0.1, 0.2, 0.2, 0.2]
+
+train_dataset: !new:samantha.dataio.dataset.MultiIterableDataset
+    datasets: !apply:recipes.mulan.dataset.utils.select_datasets
+        - !ref <train_datasets>
+        - !ref <selected_dataset_names>
+    weights: !ref <weights>
+    num_samples: 10_000_000
     seed: !ref <seed>
 
 val_dataset: !new:recipes.soundstream.dataset.mcc.MCCDataset
@@ -116,7 +126,7 @@ dis_lr_scheduler_cls: !name:torch.optim.lr_scheduler.LambdaLR
         decay_factor: 0.5
         decay_interval: 200000
 
-pl_module: !new:recipes.soundstream.modules.pl_module_vae.VocoderModule.load_from_checkpoint
+pl_module: !new:recipes.soundstream.modules.pl_module_vae.VocoderModule
     seed: !ref <seed>
     generator: !new:recipes.soundstream.models.vqgan.VQGAN_KL_new
         latent_dim: 32

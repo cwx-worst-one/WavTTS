@@ -5,6 +5,7 @@ echo "work dir: $(pwd)"
 
 # Do something before lauching the main program
 # e.g. Download some data, install some extra packages, etc.
+pip3 install recipes/soundstream/torch-museval
 pip3 install -q -r recipes/diffusion/requirements.txt
 
 # get google prompts data

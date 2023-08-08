@@ -13,6 +13,9 @@ from recipes.soundstream.utils.losses import (
     generator_loss,
 )
 
+torch.backends.cuda.matmul.allow_tf32 = True
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 class VocoderModule(pl.LightningModule):
     def __init__(
         self,
@@ -67,21 +70,56 @@ class VocoderModule(pl.LightningModule):
     def on_fit_start(self):
         # set torch seed for randomness
         torch.manual_seed(self.hparams.seed + self.global_rank)
+    
+    def _divide_params_group(self, model):
+        no_decay = [
+            "bn",
+            "bias",
+            "norm"
+            "rotary",
+            "embedding",
+            ".g", # g in RMSNorm
+        ]
 
+        base_params = []
+        no_decay_params = []
+        for name, param in model.named_parameters(): 
+            _found = False
+            for k in no_decay:
+                if k in name:
+                    no_decay_params.append(param)
+                    _found = True
+                    break
+            if not _found:
+                base_params.append(param)
+
+        return base_params, no_decay_params
+        
     def configure_optimizers(self):
         # generator
-        optimizer_g = self.hparams.optimizer_cls(self.generator.parameters())
+        base_params_g, no_decay_params_g = self._divide_params_group(self.generator)
+
+        optimizer_g = self.hparams.optimizer_cls(
+            [{"params": base_params_g}, {"params": no_decay_params_g, "weight_decay": 0.0}],
+        )
         scheduler_g = self.hparams.gen_lr_scheduler_cls(optimizer_g)
         # discriminator
-        optimizer_d = self.hparams.optimizer_cls(self.discriminator.parameters())
+        base_params_d, no_decay_params_d = self._divide_params_group(self.discriminator)
+        optimizer_d = self.hparams.optimizer_cls(
+            [{"params": base_params_d}, {"params": no_decay_params_d, "weight_decay": 0.0}],
+        )
         scheduler_d = self.hparams.dis_lr_scheduler_cls(optimizer_d)
 
         return [optimizer_g, optimizer_d], [scheduler_g, scheduler_d]
 
+    
     def training_step(self, batch, batch_idx):
         if type(batch) is list:
             batch = {'audio': batch[0]}
-            
+
+        if len(batch['audio'].shape) == 2:
+            batch['audio'] = batch['audio'].unsqueeze(1)
+        
         # get optimizor and scheduler
         opt_g, opt_d = self.optimizers()
         sch_g, sch_d = self.lr_schedulers()

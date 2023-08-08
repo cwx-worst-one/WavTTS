@@ -19,10 +19,55 @@ from recipes.diffusion.models.diffusion import ARVSampler
 torch.backends.cuda.matmul.allow_tf32 = True
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+def load_ema_checkpoint(checkpoint_path, model):
+    ckpt = torch.load(checkpoint_path, map_location="cpu")
+
+    # divide param group
+    no_decay = [
+        "bn",
+        "bias",
+        "norm"
+        "rotary",
+        "embedding",
+        ".g", # g in RMSNorm
+    ]
+
+    base_params = {}
+    no_decay_params = {}
+    for name, param in model.named_parameters(): 
+        _found = False
+        for k in no_decay:
+            if k in name:
+                no_decay_params[name] = param
+                _found = True
+                break
+        if not _found:
+            base_params[name] = param
+    # combine the two dictionaries into one
+    new_state_dict = {}
+    new_keys = []
+    for k, v in base_params.items():
+        new_state_dict[k] = v
+        new_keys.append(k)
+    for k, v in no_decay_params.items():
+        new_state_dict[k] = v
+        new_keys.append(k)
+
+    for idx, k in enumerate(new_keys):
+        assert new_state_dict[k].shape == ckpt["optimizer_states"][0]["ema"][idx].shape
+        new_state_dict[k] = ckpt["optimizer_states"][0]["ema"][idx]
+
+    model.load_state_dict(new_state_dict)
+    return model
+
 class DiffusionModule(pl.LightningModule):
     def __init__(
             self, 
             seed,
+            diffusion_model,
+            target_dim,
+            num_chunks,
+            chunk_length,
             noise_range,
             sample_rate,
             asset_dir,
@@ -38,48 +83,18 @@ class DiffusionModule(pl.LightningModule):
         ):
         super().__init__()
         # all parameters in ctor will be saved to self.hparams
-        self.save_hyperparameters()
-        # self.model = get_model(self.hparams.model_name)
-        self.num_chunks = 1
-        self.chunk_length = 2500
+        self.save_hyperparameters(ignore=['diffusion_model'])
+   
         self.loss_function = torch.nn.MSELoss()
-
-        self.model = TNTDiffusionNetwork(
-            input_dim=16,
-            feature_dim=1024,
-            context_dim=1,
-            depth=16,
-            num_chunks=4,
-            segment_size=64,
-            segment_stride=64,
-            dropout=0,
-            mulan_cfg_prob=0.4,
-            semantic_cfg_prob=0.4,
-            use_checkpoint=False
-        )
-        # path = 'diffusion-step=030999.ckpt'
-        # ckpt = torch.load(path, map_location='cpu')
-        # new_dict = OrderedDict()
-        # replace_list = ['null_emb', 'fine_rotary_emb', 'coarse_rotary_emb']
-        # for key in ckpt['state_dict']:
-        #     if 'model' in key:
-        #         new_key = key.replace('model.', '')
-            #     for r in replace_list:
-            #         if r in new_key:
-            #             new_key = new_key.replace('emb', 'embedding')
-
-        #     new_dict[new_key] = ckpt['state_dict'][key]
-        # self.model.load_state_dict(new_dict)
-
-        self.sampler = ARVSampler(
-            in_channels=16,
-            length=self.num_chunks*self.chunk_length,
-            num_splits=self.num_chunks,
-        )
         
+        self.model = diffusion_model 
+        self.sampler = ARVSampler(
+            in_channels=target_dim,
+            length=num_chunks*chunk_length,
+            num_splits=num_chunks,
+        )
         # custom recorder for training step due to GAN training
         self.current_step = 0
-
     
     def on_fit_start(self):
         # init required models
@@ -101,7 +116,7 @@ class DiffusionModule(pl.LightningModule):
             device=self.device,
             cache_dir=self.hparams.asset_dir,
         )
-        self.vocoder_model = init_vocoder_yongye(
+        self.vocoder_model = init_vocoder(
             trainer=self.trainer,
             path=self.hparams.vocoder_model['model_path'],
             device=self.device,
@@ -235,10 +250,10 @@ class DiffusionModule(pl.LightningModule):
             # noise level ensemble
             lower_bound = self.hparams.noise_range[0]
             upper_bound = self.hparams.noise_range[1]
-            t = torch.rand(size=[b, 1, self.num_chunks], device=self.device, dtype=vocoder_embs.dtype)
+            t = torch.rand(size=[b, 1, self.hparams.num_chunks], device=self.device, dtype=vocoder_embs.dtype)
             t = (lower_bound - upper_bound) * t + upper_bound
         
-            t = repeat(t, 'b 1 n -> b 1 (n l)', l=self.chunk_length)
+            t = repeat(t, 'b 1 n -> b 1 (n l)', l=self.hparams.chunk_length)
 
             angles = math.pi /2. * t
             alphas, deltas = torch.cos(angles), torch.sin(angles)
@@ -300,7 +315,7 @@ class DiffusionModule(pl.LightningModule):
                 mulan_context=mulan_tokens,
                 semantic_context=semantic_tokens,
                 num_items=semantic_tokens.shape[0], # batch size: how many samples to generate
-                num_chunks=self.num_chunks,
+                num_chunks=self.hparams.num_chunks,
                 num_steps=20, # diffusion steps
                 start=None,
                 show_progress=False,

@@ -246,20 +246,20 @@ class VQGAN_KL_mix(nn.Module):
             smaller_encoder=True,
             model_type='bytewave_wn',
         )
-        ckpt = torch.load('assets/1000k_ckpt.pyt', map_location='cpu')
+        # ckpt = torch.load('assets/1000k_ckpt.pyt', map_location='cpu')
 
-        new_dict = OrderedDict()
-        for key in ckpt['G']:
-            if 'encoder' in key:
-                new_dict[key.replace('encoder.', '')] = ckpt['G'][key]
-        self.encoder.load_state_dict(new_dict)
+        # new_dict = OrderedDict()
+        # for key in ckpt['G']:
+        #     if 'encoder' in key:
+        #         new_dict[key.replace('encoder.', '')] = ckpt['G'][key]
+        # self.encoder.load_state_dict(new_dict)
 
-        self.mean_logvar_conv = nn.Conv1d(256, latent_dim*2, 1)
-        new_dict = OrderedDict()
-        for key in ckpt['G']:
-            if 'mean_logvar_conv' in key:
-                new_dict[key.replace('mean_logvar_conv.', '')] = ckpt['G'][key]
-        self.mean_logvar_conv.load_state_dict(new_dict)
+        self.mean_logvar_conv = nn.Conv1d(256, latent_dim * 2, 1)
+        # new_dict = OrderedDict()
+        # for key in ckpt['G']:
+        #     if 'mean_logvar_conv' in key:
+        #         new_dict[key.replace('mean_logvar_conv.', '')] = ckpt['G'][key]
+        # self.mean_logvar_conv.load_state_dict(new_dict)
 
         self.decoder = Decoder(
             input_channel=latent_dim,

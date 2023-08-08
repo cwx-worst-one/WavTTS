@@ -335,7 +335,6 @@ class TNTDiffusionNetwork(nn.Module):
             feature_dim=1024,
             context_dim=512,
             depth=8,
-            num_chunks=1,
             segment_size=64,
             segment_stride=32,
             dropout=0,
@@ -348,7 +347,6 @@ class TNTDiffusionNetwork(nn.Module):
         self.input_dim = input_dim
         self.feature_dim = feature_dim
         self.context_dim = context_dim
-        self.num_chunks = num_chunks
 
         self.segment_size = segment_size
         self.segment_stride = segment_stride
@@ -551,7 +549,6 @@ if __name__ == '__main__':
         feature_dim=512,
         context_dim=1024,
         depth=2,
-        num_chunks=4,
         segment_size=64,
         segment_stride=64,
         dropout=0,

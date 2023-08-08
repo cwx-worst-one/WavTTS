@@ -1,8 +1,11 @@
+import numpy as np
+import pyloudnorm as pyln
+from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 import webdataset as wds
 from webdataset.pipeline import DataPipeline
-from torch.utils.data import DataLoader
 from recipes.soundstream.dataset.utils import collate_fn
+
 
 class SoundstreamDataModule(pl.LightningDataModule):
     def __init__(self, 
@@ -24,14 +27,23 @@ class SoundstreamDataModule(pl.LightningDataModule):
         self.val_num_workers = val_num_workers
         self.sample_buffer_size = sample_buffer_size
         self.num_steps_per_val = num_steps_per_val
+        self.meter = pyln.Meter(24000)
 
+    def _loudness_detection(self, data):
+        db = self.meter.integrated_loudness(data['audio'].numpy().T)
+        if db < -50 or np.isneginf(db):  # don't cache silence
+            return None
+        return data
 
     def train_dataloader(self):
         train_dataset_batched = DataPipeline(
             self.train_dataset,
+            # wds.shuffle(self.sample_buffer_size),
+            # wds.to_tuple("audio"),
+            # wds.batched(self.train_batch_size),
+            wds.map(self._loudness_detection),
             wds.shuffle(self.sample_buffer_size),
-            wds.to_tuple("audio"),
-            wds.batched(self.train_batch_size),
+            wds.batched(self.train_batch_size, collation_fn=collate_fn),
         )
         return DataLoader(train_dataset_batched, batch_size=None, num_workers=self.train_num_workers)
 

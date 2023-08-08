@@ -4,13 +4,13 @@
 ##########                       BASIC CONFIGURATION                  ##########
 ################################################################################
 
-seed: 43
+seed: 0
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+ckpt_path: null
 
 # running parameters
 log_dir: logs
 asset_dir: recipes/diffusion/assets
-checkpoint_path: /mnt/bn/audio-diffusion/wtl/diffusion/model_12/checkpoints/diffusion-step=299999.ckpt
 
 run_opts:
     fast_dev_run: False
@@ -27,7 +27,7 @@ run_opts:
 
 training_params:
     sample_rate: 24000
-    noise_range: [0, 1.0]
+    noise_range: [0.0, 1.0]
     train_batch_size: 16
     train_num_workers: 8
     val_batch_size: 8
@@ -35,64 +35,53 @@ training_params:
     gradient_clip_val: 1.0
     learning_rate: 0.00008
     weight_decay: 0.005
-    duration: 10
+    n_audio_samples: 240000
     min_volume_threshold: 0.05
     loudness_ratio_threshold: 0.2
-    sample_buffer_size: 256
+    sample_buffer_size: 500
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
 # dataloader configuration
-ar_filtering: !new:recipes.musiclm.transforms.musiclm.ARFiltering
-    genre_stats_fname: "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/genre_quantile_stats.pkl"
-    semantic_diversity_range: (10, 90)
-    semantic_probs_range: (10, 90)
-
-train_dataset: !new:recipes.musiclm.datasets.mcc.WrappedMCC40MDataset
-    url2index_list:
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.alternative-hip-hop+chinese-style+others"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.blues+childhood+country+devotional+k-pop+soundtrack+trance+world-music"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.classical"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.easy-listening"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.electronic+techno"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.folk+indie-folk"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.hip-hop-rap"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.jazz"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.new-age"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.pop"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.rock"
-    weights:
-        - 1.0
-        - 2.0
-        - 4.0
-        - 1.0
-        - 2.0
-        - 2.0
-        - 2.0
-        - 4.0
-        - 2.0
-        - 4.0
-        - 2.0
-    sample_rate: !ref <training_params[sample_rate]>
-    duration: !ref <training_params[duration]>
+playlist_audio_transforms: !new:recipes.musiclm.transforms.musiclm.MusicLMTransforms
+    n_samples: !ref <training_params[n_audio_samples]>
     audio_key: "audio.npy"
-    min_volume_threshold: !ref <training_params[min_volume_threshold]>
-    loudness_ratio_threshold: !ref <training_params[loudness_ratio_threshold]>
-    ar_filtering: !ref <ar_filtering>
-    max_num_crops: 6
-    avoid_vocal: True
-    max_vocal_threshold: 0.5
+    min_volume_threshold: 0.05
+
+playlist_preprocessor: !new:recipes.musiclm.preprocess.WebDatasetBufferPreprocessor
+    sample_rate: !ref <training_params[sample_rate]>
+    transforms: !ref <playlist_audio_transforms>
+
+playlist_train_shards: !new:webdataset.WebDataset
+    urls: "pipe:hdfs dfs -cat /home/byte_speech_sv/mulan/playlist_v5_uio/audio_shards/shards_{0000..2597}.tar"
     resampled: True
     shardshuffle: True
-    seed: !ref <seed>
+
+train_dataset: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
+    wds_dataset: !ref <playlist_train_shards>
+    pipeline:
+        - !name:webdataset.WebDataset.select
+          - !name:samantha.utils.datastructures.select_keys
+            keys:
+                - "audio.npy"
+        - !name:webdataset.WebDataset.decode
+        - !name:webdataset.WebDataset.compose
+          - !name:recipes.musiclm.preprocess.WebDatasetBufferPreprocessor.train_buffer_preprocessor
+            - !ref <playlist_preprocessor>
+        - !name:webdataset.WebDataset.shuffle
+          - !ref <training_params[sample_buffer_size]>
+        - !name:webdataset.WebDataset.to_tuple
+          - "audio"
+        - !name:webdataset.WebDataset.batched
+          - !ref <training_params[train_batch_size]>
 
 val_dataset: !new:recipes.diffusion.dataset.google_prompt_val.GooglePromptVal
     num_samples: 80
 
 # datamodule configuration
-pl_datamodule: !new:recipes.diffusion.modules.pl_datamodule_mcc40m.DataModule
+pl_datamodule: !new:recipes.diffusion.modules.pl_datamodule_playlist.DataModule
     train_dataset: !ref <train_dataset>
     val_dataset: !ref <val_dataset>
     train_batch_size: !ref <training_params[train_batch_size]>
@@ -110,23 +99,21 @@ optimizer_cls: !name:torch.optim.AdamW
 scheduler_cls: !name:torch.optim.lr_scheduler.LambdaLR
     lr_lambda: !name:recipes.diffusion.utils.lr_schedulers.lr_lambda
         warmup_steps: 0
-        decay_factor: 0.9
+        decay_factor: 0.5
         decay_interval: 200000
 
-pl_module: !apply:recipes.diffusion.modules.pl_module.DiffusionModule.load_from_checkpoint
-    checkpoint_path: !ref <checkpoint_path>
-# pl_module: !new:recipes.diffusion.modules.pl_module.DiffusionModule
+pl_module: !new:recipes.diffusion.modules.pl_module.DiffusionModule
     seed: !ref <seed>
     diffusion_model: !new:recipes.diffusion.models.tnt.TNTDiffusionNetwork
         input_dim: 32
         feature_dim: 1024
         context_dim: 1
-        depth: 20
-        segment_size: 64
-        segment_stride: 64
+        depth: 16
+        segment_size: 32
+        segment_stride: 32
         dropout: 0
-        mulan_cfg_prob: 0.25
-        semantic_cfg_prob: 0.25
+        mulan_cfg_prob: 0.10
+        semantic_cfg_prob: 0.10
         use_checkpoint: False
     target_dim: 32
     num_chunks: 1
@@ -146,7 +133,7 @@ pl_module: !apply:recipes.diffusion.modules.pl_module.DiffusionModule.load_from_
     semantic_centers:
         model_path: /home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_10.npy
     vocoder_model:
-        model_path: hdfs://harunava/home/byte_speech_sv/weitsung.lu/soundstream/soundstream-step=337999-val_sdr=12.9491.ckpt
+        model_path: /home/byte_speech_sv/weitsung.lu/soundstream/dac_vae_125hz_24k/checkpoints/soundstream-step=592799-val_sdr=12.1354.ckpt
     val_output_samples_dir: !ref <run_opts[val_output_samples_dir]>
 
 logger: !new:pytorch_lightning.loggers.TensorBoardLogger

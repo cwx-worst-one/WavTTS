@@ -1,28 +1,35 @@
 import os
-import glob
-import argparse
-import math
 from tqdm import tqdm
-from time import time
-from pathlib import Path
-from typing import Any, Optional, Tuple
-
+import math
+import enum
 import torch
-from torch import Tensor
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import Tensor
+from typing import Any, Optional, Tuple
 from einops import rearrange, repeat
+
 import numpy as np
-import torchaudio
-from recipes.diffusion.modules.pl_module import DiffusionModule
-from recipes.diffusion.models.tnt import TNTDiffusionNetwork
+import time
+import gradio as gr
+import glob
+
+from recipes.musiclm.lightning.modules import SemanticModule
 from recipes.musiclm.requires.mulan.mulan_infer_g4 import (
     create_mulan_model,
     mulan_inference,
     mulan_rvq_indexs,
 )
-from recipes.soundstream.models.vqgan import VQGAN_KL_mix, VQGAN_KL_new
+from recipes.diffusion.modules.pl_module import DiffusionModule
+from recipes.diffusion.models.tnt import TNTDiffusionNetwork
+from recipes.diffusion.models.semantic_model.utils import (
+    load_torch_script_module,
+    w2v_bert_tokenization
+)
+from recipes.soundstream.models.vqgan import VQGAN_KL, VQGAN_KL_mix
+from recipes.soundstream.models.modules.discriminator import MultiScaleSTFTDiscriminator
 from recipes.soundstream.modules.pl_module_vae import VocoderModule
+
 
 def clip(x: Tensor, dynamic_threshold: float = 0.0):
     if dynamic_threshold == 0.0:
@@ -205,181 +212,196 @@ class ARVSampler(nn.Module):
         if num_chunks <= self.num_splits:
             return start[..., :self.num_chunks * self.split_length]
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        '--diffusion_steps',
-        type=int,
-        default=25
-    )
-    parser.add_argument(
-        '--bf16_portion',
-        type=float,
-        default=0.0
-    )
-    parser.add_argument(
-        '--schedule_slope',
-        type=float,
-        default=2.5
-    )
-    parser.add_argument(
-        '--guidance_scale',
-        type=float,
-        default=2.5
-    )
-    parser.add_argument(
-        '--input_dir_path', 
-        type=str, 
-        default='../a100_textUpdate_mcc40mfiltered705mLargeBatch_S_playlist_C_F_Sstep=091000-tr_loss=2.4243-val_loss_0=2.8712.ckpt_Clast_standard.ckpt_Flast_standard.ckpt'
-    )
-    parser.add_argument(
-        '--output_dir_path', 
-        type=str, 
-        default='google_outs'
-    )
-    parser.add_argument(
-        '--input_source',
-        type=str,
-        default='semantic'
-    )
-    parser.add_argument(
-        '--device',
-        type=str,
-        default='cuda:0'
-    )
-    parser.add_argument(
-        '--asset_path',
-        type=str,
-        default='recipes/diffusion/assets'
-    )
-    parser.add_argument(
-        '--mulan_model_path',
-        type=str,
-        default='hdfs://harunava/home/byte_speech_sv/weitsung.lu/mulan_exp/MuLan_large/v1.3_g4mix_127/checkpoints/mulan-step=036000-median_rank_0=127-kaggle.ckpt'
-    )
-    parser.add_argument(
-        '--mulan_center_path',
-        type=str,
-        default='/home/byte_speech_sv/dongguo/mulan/codebook/kmeans_minibatch_codebook-mulan1b_g4_mix_127-1024x12.npy'
-    )
-    parser.add_argument(
-        '--semantic_model_path',
-        type=str,
-        default='/mnt/bn/audio-diffusion/ducle/logs/semantic_flash_llama/mcc40m_filtered_705m/checkpoints/step=081000-tr_loss=2.4451-val_loss_0=2.8561.ckpt'
-    )
-    parser.add_argument(
-        '--semantic_center_path',
-        type=str,
-        default='/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_10.npy',
-    )
-    parser.add_argument(
-        '--diffusion_model_path_2_0',
-        type=str,
-        default='/home/byte_speech_sv/weitsung.lu/diffusion/diffusion-step=346999.ckpt'
-    )
-    parser.add_argument(
-        '--diffusion_model_path_2_1',
-        type=str,
-        default='/home/byte_speech_sv/weitsung.lu/diffusion/diffusion-step=346999.ckpt'
-    )
-    parser.add_argument(
-        '--diffusion_model_path_2_2',
-        type=str,
-        default='/home/byte_speech_sv/weitsung.lu/diffusion/diffusion-step=346999.ckpt'
-    )
-    parser.add_argument(
-        '--diffusion_model_path_2_3',
-        type=str,
-        default='/home/byte_speech_sv/weitsung.lu/diffusion/diffusion-step=346999.ckpt'
-    )
-    parser.add_argument(
-        '--vocoder_model_path',
-        type=str,
-        default='/home/byte_speech_sv/weitsung.lu/soundstream/dac_vae_125hz_24k/checkpoints/soundstream-step=592799-val_sdr=12.1354.ckpt'
-    )
 
-    args = parser.parse_args()
+def torch_fp32_to_numpy_int16(audio: torch.Tensor):
+    return (audio * 32767).to(torch.int16).T.detach().cpu().numpy()
 
-    # params
-    os.makedirs(args.output_dir_path, exist_ok=True)
-    intput_path_list = glob.glob(f'{args.input_dir_path}/*/*.pt')
-    device = torch.device(args.device)
-    # download assets
-    asset_path = args.asset_path
-    os.makedirs(f'{asset_path}/diffusion_2.0', exist_ok=True)
-    os.makedirs(f'{asset_path}/diffusion_2.1', exist_ok=True)
-    os.makedirs(f'{asset_path}/diffusion_2.2', exist_ok=True)
-    os.makedirs(f'{asset_path}/diffusion_2.3', exist_ok=True)
+def generate_audio(
+    text_prompt,
+    semantic_token_sequence,
+    num_iters,
+    bf16_portion,
+    schdeule_slope,
+    guidance,
+):
+    negative_prompt = ''
+
+    global mulan_model
+    global mulan_centers
+    global semantic_module
+    global diffusion_model
+    global sampler
+    global vocoder_model
+    global device
+
+    num_iters = int(num_iters)
+    bf16_portion = float(bf16_portion)
+    schdeule_slope = float(schdeule_slope)
+    guidance = float(guidance)
+    print('-----------------------------')
+    print("text_prompt", text_prompt)
+    print("num_iters", num_iters)
+    print("bf16_portion", bf16_portion)
+    print("guidance", guidance)
+    print('-----------------------------')
+    text_prompt = [text_prompt for i in range(1)]
+
+    with torch.no_grad():
+        time_start = time.time()
+        # text prompt
+        mulan_emb = mulan_inference(mulan_model, text=text_prompt, device=device)
+        postive_mulan_ids, ds = mulan_rvq_indexs(mulan_emb, mulan_centers)
+
+        if semantic_token_sequence != "":
+            semantic_samples = torch.tensor(
+                eval(semantic_token_sequence), device=device
+            )[None, :].repeat(1, 1)
+        else:
+            semantic_samples = semantic_module.predict(postive_mulan_ids, ExtraParams())  # .repeat(3, 1)
+
+        # negative prompt
+        if negative_prompt == '':
+            negative_mulan_ids = None
+        else:
+            mulan_emb = mulan_inference(mulan_model, text=negative_prompt, device=device)
+            negative_mulan_ids, ds = mulan_rvq_indexs(mulan_emb, mulan_centers)
+            negative_mulan_ids.repeat(1, 1)
+
+        text2semantic_time = time.time() - time_start
+
+        time_start = time.time()
+        pred_emb = sampler(
+            model=diffusion_model,
+            positive_mulan_context=postive_mulan_ids,
+            negative_mulan_context=negative_mulan_ids,
+            semantic_context=semantic_samples,
+            num_items=semantic_samples.shape[0],
+            num_chunks=1,
+            num_steps=num_iters,
+            bf16_portion=bf16_portion,
+            start=None,
+            show_progress=True,
+            angle_schedule='linear',
+            schdeule_slope=schdeule_slope,
+            classifier_free_guidance=guidance,
+        )
+
+        wavs_g = vocoder_model.decode(pred_emb.float())
+        diffusion2audio_time = time.time() - time_start
+
+        wav_g = wavs_g[0]
+
+        output_audio = []
+        # for wav_g in wavs_g:
+        wav_g = wav_g / wav_g.abs().max()
+        wav_g = torch_fp32_to_numpy_int16(wav_g)
+        output_audio.append(wav_g)
+
+        return (
+            (24000, output_audio[0]),
+            text2semantic_time,
+            diffusion2audio_time,
+            f"{list(semantic_samples[0].detach().cpu().numpy())}",
+        )
+REMOTE_PATHS = {
+    'mulan_model_path': '/home/byte_speech_sv/weitsung.lu/mulan_exp/MuLan_large/gpt_all/checkpoints/mulan-step=036000-median_rank_0=127-kaggle.ckpt',
+    'mulan_center_path': '/home/byte_speech_sv/dongguo/mulan/codebook/kmeans_minibatch_codebook-mulan1b_g4_mix_127-1024x12.npy',
+    'semantic_model_path': '/mnt/bn/audio-diffusion/ducle/logs/semantic_flash_llama/mcc40m_filtered_705m/checkpoints/step=081000-tr_loss=2.4451-val_loss_0=2.8561.ckpt',
+    'semantic_center_path': '/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_10.npy',
+    'diffusion_model_path': '/home/byte_speech_sv/weitsung.lu/diffusion/model_9_part5/checkpoints/diffusion-step=267999.ckpt',
+    'vocoder_model_path': '/home/byte_speech_sv/weitsung.lu/soundstream/yongye_vae_dac_fintune_v2/checkpoints/soundstream-step=486399-val_sdr=11.5247.ckpt',
+    'vocoder_model_path_2': '/home/byte_speech_sv/weitsung.lu/soundstream/yongye/1000k_ckpt.pyt'
+}
+
+LOCAL_PATHS = {
+    'mulan_model_path': 'recipes/diffusion/assets/mulan-step=036000-median_rank_0=127-kaggle.ckpt',
+    'mulan_center_path': 'recipes/diffusion/assets/kmeans_minibatch_codebook-mulan1b_g4_mix_127-1024x12.npy',
+    'semantic_model_path': 'recipes/diffusion/assets/step=081000-tr_loss=2.4451-val_loss_0=2.8561.ckpt',
+    'semantic_center_path': 'recipes/diffusion/assets/centroids_epoch_10.npy',
+    'diffusion_model_path': 'recipes/diffusion/assets/diffusion-step=267999.ckpt',
+    'vocoder_model_path': 'recipes/diffusion/assets/soundstream-step=486399-val_sdr=11.5247.ckpt',
+    'vocoder_model_path_2': 'assets/1000k_ckpt.pyt' # different path due to soundstream code
+}
+
+if __name__ == "__main__":
+     # settings
+    device = torch.device('cuda:0')
+    
+    # Download models
+    asset_path = 'recipes/diffusion/assets'
+    os.makedirs(asset_path, exist_ok=True)
     os.makedirs('assets', exist_ok=True)
-
-    REMOTE_PATHS = {
-        'mulan_model_path': args.mulan_model_path,
-        'mulan_center_path': args.mulan_center_path,
-        'semantic_model_path': args.semantic_model_path,
-        'semantic_center_path': args.semantic_center_path,
-        'diffusion_model_path_2_0': args.diffusion_model_path_2_0,
-        'diffusion_model_path_2_1': args.diffusion_model_path_2_1,
-        'diffusion_model_path_2_2': args.diffusion_model_path_2_2,
-        'diffusion_model_path_2_3': args.diffusion_model_path_2_3,
-        'vocoder_model_path': args.vocoder_model_path,
-        'vocoder_model_path_2': '/home/byte_speech_sv/weitsung.lu/soundstream/yongye/1000k_ckpt.pyt'
-    }
-
-    LOCAL_PATHS = {
-        'mulan_model_path': f'{asset_path}/{str(Path(REMOTE_PATHS["mulan_model_path"]).stem)}.ckpt',
-        'mulan_center_path': f'{asset_path}/{str(Path(REMOTE_PATHS["mulan_center_path"]).stem)}.npy',
-        'semantic_model_path': f'{asset_path}/{str(Path(REMOTE_PATHS["semantic_model_path"]).stem)}.ckpt',
-        'semantic_center_path': f'{asset_path}/{str(Path(REMOTE_PATHS["semantic_center_path"]).stem)}.npy',
-        'diffusion_model_path_2_0': f'{asset_path}/diffusion_2.0/{str(Path(REMOTE_PATHS["diffusion_model_path_2_0"]).stem)}.ckpt',
-        'diffusion_model_path_2_1': f'{asset_path}/diffusion_2.1/{str(Path(REMOTE_PATHS["diffusion_model_path_2_1"]).stem)}.ckpt',
-        'diffusion_model_path_2_2': f'{asset_path}/diffusion_2.2/{str(Path(REMOTE_PATHS["diffusion_model_path_2_2"]).stem)}.ckpt',
-        'diffusion_model_path_2_3': f'{asset_path}/diffusion_2.3/{str(Path(REMOTE_PATHS["diffusion_model_path_2_3"]).stem)}.ckpt',
-        'vocoder_model_path': f'{asset_path}/{str(Path(REMOTE_PATHS["vocoder_model_path"]).stem)}.ckpt',
-        'vocoder_model_path_2': 'assets/1000k_ckpt.pyt' # different path due to soundstream code
-    }
-
     for k, v in LOCAL_PATHS.items():
         if not os.path.exists(v):
-            print(f'Downloading {REMOTE_PATHS[k]}')
-            # get the folder path
-            folder_path = '/'.join(v.split('/')[:-1])
             if k == 'vocoder_model_path_2':
                 os.system(f'hdfs dfs -get {REMOTE_PATHS[k]} assets')
             else:
                 if '/home/' in REMOTE_PATHS[k]:
-                    os.system(f'hdfs dfs -get {REMOTE_PATHS[k]} {folder_path}')
+                    os.system(f'hdfs dfs -get {REMOTE_PATHS[k]} {asset_path}')
                 elif '/mnt/' in REMOTE_PATHS[k]:
-                    os.system(f'cp {REMOTE_PATHS[k]} {folder_path}')
+                    os.system(f'cp {REMOTE_PATHS[k]} {asset_path}')
+    
+
+    diffusion_model_path = {
+        '2-0': 'recipes/diffusion/assets/diffusion_2.0/diffusion-step=024999.ckpt',
+        '2-1': 'recipes/diffusion/assets/diffusion_2.1/diffusion-step=022999.ckpt',
+        '2-2': 'recipes/diffusion/assets/diffusion_2.2/diffusion-step=025999.ckpt',
+        '2-3': 'recipes/diffusion/assets/diffusion_2.3/diffusion-step=024999.ckpt',
+
+    }
 
     # Mulan
     mulan_model = create_mulan_model(LOCAL_PATHS['mulan_model_path'], device=device)
     mulan_centers = np.load(LOCAL_PATHS['mulan_center_path'])
     mulan_centers = torch.from_numpy(mulan_centers).float().to(device)
 
-    # diffusion
+    # Semantic model
+    class ExtraParams:
+        sample_rate = 24000
+        duration = 10
+        num_rounds = 3
+        semantic_duration = 10
+        coarse_duration = 10
+        fine_duration = 4
+        semantic_stride = 5
+        coarse_stride = 5
+        fine_stride = 3
+        wav2vec_codebook_size = 1024
+        mulan_codebook_size = 1024
+        mulan_num_rvq = 12
+        soundstream_codebook_size = 1024
+        wav2vec_frame_rate = 25
+        soundstream_frame_rate = 50
+        num_coarse = 4
+        num_fine = 8
+        semantic_temperature = 1.0
+        coarse_temperature = 0.9
+        fine_temperature = 0.8
+        sample_mode = "gumbel"
+
+
+    semantic_module = SemanticModule.load_from_checkpoint(LOCAL_PATHS['semantic_model_path']).to(device).eval()
+    semantic_centers = np.load(LOCAL_PATHS['semantic_center_path'])
+    semantic_centers = torch.from_numpy(semantic_centers).float().to(device)
+
+    # diffusion model
     diffusion_model = {}
-    diffusion_model_path = {
-        '2-0': LOCAL_PATHS['diffusion_model_path_2_0'],
-        '2-1': LOCAL_PATHS['diffusion_model_path_2_1'],
-        '2-2': LOCAL_PATHS['diffusion_model_path_2_2'],
-        '2-3': LOCAL_PATHS['diffusion_model_path_2_3'],
-    }
     for key in diffusion_model_path:
         diffusion_model[key] = DiffusionModule.load_from_checkpoint(
             diffusion_model_path[key],
             diffusion_model=TNTDiffusionNetwork(
-                input_dim=32,
+                input_dim=16,
                 feature_dim=1024,
                 context_dim=1,
                 depth=16,
-                segment_size=32,
-                segment_stride=32,
+                segment_size=64,
+                segment_stride=64,
                 dropout=0,
                 mulan_cfg_prob=0.10,
                 semantic_cfg_prob=0.10,
                 use_checkpoint=False
             ),
-            target_dim=32,
+            target_dim=16,
             num_chunks=1,
             chunk_length=1250,
         )
@@ -387,67 +409,70 @@ if __name__ == '__main__':
         diffusion_model[key].to(device)
         diffusion_model[key].sampler.set_device(device)
 
-    sampler = ARVSampler(32, 1250, 1)
+    sampler = ARVSampler(16, 2500, 1)
     sampler.set_device(device)
 
-    # vocoder model
     vocoder_model_pl = VocoderModule.load_from_checkpoint(
         LOCAL_PATHS['vocoder_model_path'],
-        generator=VQGAN_KL_new(
-            latent_dim=32,
+        generator=VQGAN_KL_mix(
+            latent_dim=16,
             downsample_rates=[2, 3, 4, 8],
-            upsample_rates=[8, 4, 3, 2],
+            upsample_rates=[4, 4, 3, 2],
             encoder_base_dim=96,
             decoder_base_dim=2560,
         ),
-        discriminator=None,
+        discriminator=MultiScaleSTFTDiscriminator(
+            filters=48,
+        ),
         strict=False
-        )
+    )
     vocoder_model = vocoder_model_pl.generator.eval().to(device)
 
-    # get the prompts
-    tokens_batch = []
-    text_batch = []
-    for path in intput_path_list:
-        prompt = str(Path(path).stem).split('_')[0]
-        tokens_batch.append(torch.load(path))
-        text_batch.append(prompt)
+    # gradio
+    text_prompt = gr.Textbox(
+        value="smooth hiphop", label="Text prompt (str)"
+    )
+    semantic_token_sequence = gr.Textbox(
+        label="Semantic token sequence (Optional)",
+        placeholder="Enter a sequence of semantic tokens as a list, so [712, 333, 236, ...]",
+    )
+    num_iters = gr.Textbox(
+        value=25,
+        label="Number of iterations for the diffusion process (defalut: (int) 20))"
+    )
+    bf16_portion = gr.Textbox(
+        value=0.9,
+        label="First N% of iterations will run in half precision. Experimental feature, may hurt quality. (default: (float) 0.7)"
+    )
+    schdeule_slope = gr.Textbox(
+        value=2.5,
+        label="Schedule slope for the diffusion process (default: (float) 2.0)"
+    )
+    guidance = gr.Textbox(
+        value=3.5,
+        label="Guidance for the classifier-free diffusion (default: (float) 2.5)"
+    )
 
-    tokens_batch = torch.stack(tokens_batch)
 
-    split_size = 1
-    tokens_batch = torch.split(tokens_batch, split_size, dim=0)
+    demo = gr.Interface(
+        fn=generate_audio,
+        inputs=[
+            text_prompt,
+            semantic_token_sequence,
+            num_iters,
+            bf16_portion,
+            schdeule_slope,
+            guidance,
+        ],
+        outputs=[
+            gr.Audio(label="Output 1"),
+            gr.Textbox(label="Text to semantic time (sec)"),
+            gr.Textbox(label="Diffusion to audio time (sec)"),
+            gr.Textbox(label="Semantic tokens 1"),
+        ],
+        title="Diffusion demo",
+        description="Interactive demo for the diffusion model.",
+    )
+    demo.queue(concurrency_count=4)
+    demo.launch(share=True)
 
-    # inference
-    start_time = time()
-    with torch.no_grad():
-        for i, batch in enumerate(tokens_batch):
-            mulan_emb = mulan_inference(mulan_model, text=text_batch[i], device=device)
-            postive_mulan_ids, ds = mulan_rvq_indexs(mulan_emb, mulan_centers)
-
-            pred_emb = sampler(
-                model=diffusion_model,
-                positive_mulan_context=postive_mulan_ids,
-                negative_mulan_context=None,
-                semantic_context=batch.to(device),
-                num_items=batch.shape[0],
-                num_chunks=1,
-                num_steps=args.diffusion_steps,
-                bf16_portion=args.bf16_portion,
-                start=None,
-                show_progress=True,
-                angle_schedule='linear',
-                schdeule_slope=args.schedule_slope,
-                classifier_free_guidance=args.guidance_scale,
-            ).detach()
-
-            wavs_g = vocoder_model.decode(pred_emb.float()).detach()
-
-            for wav_g, path in zip(wavs_g, intput_path_list[i*split_size:(i+1)*split_size]):
-                torchaudio.save(
-                    f'{args.output_dir_path}/{str(Path(path).stem)}.wav',
-                    wav_g.cpu(),
-                    24000,
-                )
-
-    print(f'Inference RTF: {(time() - start_time)/(len(intput_path_list)*10)}')
