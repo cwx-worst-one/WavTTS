@@ -40,6 +40,8 @@ extra_params:
     save_cosine_similarity: False
     generate_vocal: False
 
+    diffusion_condition: ['semantic', 'mulan']
+
 run_opts:
     fast_dev_run: False
     precision: 32

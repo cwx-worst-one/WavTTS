@@ -67,9 +67,17 @@ class ARVSampler(nn.Module):
             angle_schedule: str = 'linear', 
             schdeule_slope: float = 2.0,
             classifier_free_guidance: int = 1,
+            condition_signal: list = ['semantic', 'mulan'],
     ) -> Tensor:
         
         progress_bar = tqdm(range(num_steps), disable=not show_progress)
+
+        enable_semantic_condition, enable_mulan_condition = 1, 1
+
+        if 'semantic' in condition_signal:
+            enable_semantic_condition = 0
+        elif 'mulan' in condition_signal:
+            enable_mulan_condition = 0
 
         if angle_schedule == 'linear':
             angle_schedule = np.linspace(schdeule_slope, 1., num_steps)
@@ -110,8 +118,8 @@ class ARVSampler(nn.Module):
                     timesteps=sigma_i, 
                     mulan_context=positive_mulan_context, 
                     semantic_context=semantic_context,
-                    mulan_force_cfg=0,
-                    semantic_force_cfg=0,
+                    mulan_force_cfg=enable_mulan_condition,
+                    semantic_force_cfg=enable_semantic_condition,
                 )
 
                 if classifier_free_guidance != 1:
@@ -150,6 +158,7 @@ class ARVSampler(nn.Module):
         positive_mulan_context: torch.tensor, 
         negative_mulan_context: torch.tensor, 
         semantic_context: torch.tensor,
+        condition_signal: list = ['semantic', 'mulan'],
         **kwargs
     ) -> Tensor:
         b, c, t = num_items, self.in_channels, self.length
@@ -163,6 +172,7 @@ class ARVSampler(nn.Module):
             num_steps=num_steps, 
             bf16_portion=bf16_portion,
             chunk_index=-1, 
+            condition_signal=condition_signal,
             **kwargs
         )
 
@@ -182,6 +192,7 @@ class ARVSampler(nn.Module):
         angle_schedule: str = 'linear',
         schdeule_slope: float = 2.0,
         classifier_free_guidance = 1,
+        condition_signal: list = ['semantic', 'mulan'],
     ) -> Tensor:
         #assert_message = f"required at least {self.num_splits} chunks"
         #assert num_chunks >= self.num_splits, assert_message
@@ -197,7 +208,8 @@ class ARVSampler(nn.Module):
             classifier_free_guidance=classifier_free_guidance,
             positive_mulan_context=positive_mulan_context,
             negative_mulan_context=negative_mulan_context,
-            semantic_context=semantic_context
+            semantic_context=semantic_context,
+            condition_signal=condition_signal,
         )
         # Return start if only num_splits chunks
         if num_chunks <= self.num_splits:
@@ -325,6 +337,7 @@ class InferenceModule(BaseModule):
                 angle_schedule='linear',
                 schdeule_slope=self.extra_params['schedule_slope'],
                 classifier_free_guidance=self.extra_params['guidance_scale'],
+                condition_signal=self.extra_params['diffusion_condition'],
         ).detach()
         wavs = self.vocoder_model["model"].decode(pred_emb.float()).detach()
 
