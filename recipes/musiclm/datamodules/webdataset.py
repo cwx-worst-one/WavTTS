@@ -1,6 +1,6 @@
 import logging
 import random
-from typing import Any, List
+from typing import Any, List, Union
 
 import pytorch_lightning as pl
 from braceexpand import braceexpand
@@ -9,6 +9,14 @@ from webdataset import WebDataset, WebLoader
 from webdataset.compat import FluidInterface
 from webdataset.pipeline import DataPipeline
 from torch.utils.data import DataLoader
+from torch.utils.data import default_collate
+from webdataset.filters import pipelinefilter
+
+def _wds_to_dict(data, *args):
+    for item in data:
+        yield { k:v for k,v in item.items() if k in args }
+
+wds_to_dict = pipelinefilter(_wds_to_dict)
 
 logger = logging.getLogger(__name__)
 
@@ -122,14 +130,16 @@ class DataModule(pl.LightningDataModule):
         num_workers: int = 8,
         pin_memory: bool = True,
         shuffle_buffer_size: int = 100,
-        train_keys=["audio"],
-        val_keys=["audio"],
-        predict_keys=["audio"],
+        train_keys: Union[str, List[str]] = ["audio"],
+        val_keys: Union[str, List[str]] = ["audio"],
+        predict_keys: Union[str, List[str]] = ["audio"],
         train_dataset=None,
         validation_dataset=None,
         predict_dataset=None,
+        return_dict=False
     ):
         super().__init__()
+        def format_key_list(keys): return keys.split(',') if isinstance(keys, str) else keys
         self.train_dataset = train_dataset
         self.validation_dataset = validation_dataset
         self.predict_dataset = predict_dataset
@@ -137,32 +147,32 @@ class DataModule(pl.LightningDataModule):
         self.shuffle_buffer_size = shuffle_buffer_size
         self.num_workers = num_workers
         self.pin_memory = pin_memory
-        self.train_keys = train_keys
-        self.val_keys = val_keys
-        self.predict_keys = predict_keys
+        self.train_keys = format_key_list(train_keys)
+        self.val_keys = format_key_list(val_keys)
+        self.predict_keys = format_key_list(predict_keys)
+        self.return_dict = return_dict
 
     def train_dataloader(self):
         train_dataset_batched = DataPipeline(
             self.train_dataset,
             wds.shuffle(self.shuffle_buffer_size),
-            wds.to_tuple(*self.train_keys),
-            wds.batched(self.batch_size),
+            wds_to_dict(*self.train_keys) if self.return_dict else wds.to_tuple(*self.train_keys),
+            wds.batched(self.batch_size, collation_fn=default_collate),
         )
         return DataLoader(train_dataset_batched, batch_size=None, num_workers=self.num_workers)
 
     def val_dataloader(self):
         validation_dataset_batched = DataPipeline(
             self.validation_dataset,
-            wds.to_tuple(*self.val_keys),
-            wds.batched(self.batch_size),
+            wds_to_dict(*self.val_keys) if self.return_dict else wds.to_tuple(*self.val_keys),
+            wds.batched(self.batch_size, collation_fn=default_collate),
         )
         return DataLoader(validation_dataset_batched, batch_size=None, num_workers=self.num_workers)
 
     def predict_dataloader(self):
         predict_dataset_batched = DataPipeline(
             self.predict_dataset,
-            # wds.shuffle(self.shuffle_buffer_size),
-            wds.to_tuple(*self.predict_keys),
+            wds_to_dict(*self.predict_keys) if self.return_dict else wds.to_tuple(*self.predict_keys),
             wds.batched(self.batch_size),
         )
         return DataLoader(predict_dataset_batched, batch_size=None, num_workers=self.num_workers)

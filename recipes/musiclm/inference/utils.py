@@ -30,18 +30,27 @@ def load_model(pl_module, ckpt_path: str, device: str):
     return pl_module.to(device)
 
 
-def sample(predict_logits, temp, thresh=0.9, mode="naive"):
+def sample(predict_logits, temp, thresh=0.9, mode="naive", return_probs=False):
     if mode == "naive":
         predict_logits = predict_logits / (temp)
         probs = predict_logits.softmax(dim=-1)
         dist = torch.distributions.categorical.Categorical(probs=probs)
         samples = dist.sample()
+        if return_probs:
+            sample_probs = torch.gather(probs, -1, samples.unsqueeze(1)).squeeze(1)
     elif mode == "gumbel":
         predict_logits = top_k(predict_logits, thresh=thresh)
         samples = gumbel_sample(predict_logits, temp)
+        if return_probs:
+            probs = (predict_logits / temp).softmax(dim=-1)
+            sample_probs = torch.gather(probs, -1, samples.unsqueeze(1)).squeeze(1)
     else:
         raise NotImplementedError()
-    return samples
+
+    if return_probs:
+        return samples, sample_probs
+    else:
+        return samples
 
 
 def set_seed(seed=1996):

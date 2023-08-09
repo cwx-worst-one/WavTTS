@@ -13,6 +13,7 @@ import numpy as np
 import pytorch_lightning as pl
 from einops import rearrange
 from recipes.musiclm.lightning.modules import SemanticModule
+from recipes.musiclm.lightning.rlhf import SemanticSequenceTrainingModule
 from recipes.musiclm.lightning.inference import BaseModule
 from recipes.diffusion.modules.pl_module import load_ema_checkpoint
 from recipes.diffusion.models.tnt import TNTDiffusionNetwork
@@ -211,7 +212,16 @@ class InferenceModule(BaseModule):
         super().__init__()
         self.save_hyperparameters()
         self.extra_params = DotDict(extra_params)
-        self.semantic_module = SemanticModule.load_from_checkpoint(self.extra_params.semantic_ckpt).eval()
+        if self.extra_params.get("rl_finetuned_semantic", False):
+            print(f"Loading RL-finetuned semantic decoder: {self.extra_params.semantic_ckpt}")
+            self.semantic_module = SemanticSequenceTrainingModule.load_from_checkpoint(
+                self.extra_params.semantic_ckpt
+            ).eval()
+        else:
+            print(f"Loading semantic decoder: {self.extra_params.semantic_ckpt}")
+            self.semantic_module = SemanticModule.load_from_checkpoint(
+                self.extra_params.semantic_ckpt
+            ).eval()
         self.requires = {}
         self.load_required_modules()
 

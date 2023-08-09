@@ -20,6 +20,7 @@ from recipes.musiclm.requires.model_initializer import (
     init_semantic_centers,
     init_wav2vec,
 )
+from recipes.musiclm.utils.dist import local_zero_first
 from recipes.soundstorm.lightning.masking_scheme import (
     DucMaskingScheme,
     MaskingScheme,
@@ -687,3 +688,11 @@ class SoundStorm(pl.LightningModule):
             "frequency": 1,
         }
         return [optimizer], [scheduler]
+
+
+def init_soundstorm(hpath, local_rank):
+    device = torch.device(f"cuda:{local_rank}")
+    with local_zero_first():
+        print(f"Loading SoundStorm from {hpath}")
+        model = SoundStorm.load_from_checkpoint(hpath).eval().to(device)
+    return {"soundstorm": model}

@@ -50,6 +50,11 @@ def rms(x: torch.Tensor, kernel_size: int = 1000) -> torch.Tensor:
     return torch.sqrt(avg_pool1d(x**2, kernel_size=kernel_size, stride=1))
 
 
+def to_energy(audio, window_size):
+    frames = audio.unfold(1, window_size, window_size)
+    return torch.max(torch.abs(frames), dim=-1)[0]
+
+
 class Identity:
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         return x
@@ -201,9 +206,7 @@ class LoudnessCheck:
     
     def __call__(self, audio: torch.Tensor) -> bool:
         window_size = int(self.sample_rate * 0.1)
-
-        frames = audio.unfold(1, window_size, window_size)
-        energy = torch.max(torch.abs(frames), dim=-1)[0]
+        energy = to_energy(audio, window_size)
         ratio = torch.sum(energy > self.threshold) / energy.size(1)
 
         if ratio < self.loudness_ratio_threshold:

@@ -13,6 +13,7 @@ extra_params:
     output_dir: generated_output/text_prompt_collection_20230728
     model_dir: recipes/diffusion/assets
 
+    rl_finetuned_semantic: False
     semantic_ckpt: "/mnt/bn/audio-diffusion/ducle/logs/semantic_flash_llama/mcc40m_filtered_705m/checkpoints/step=081000-tr_loss=2.4451-val_loss_0=2.8561.ckpt"
     diffusion_ckpt_2_0: "hdfs://harunava/home/byte_speech_sv/weitsung.lu/diffusion/model_11_MCCVAD_ensemble_1.0/checkpoints/diffusion-step=153999.ckpt"
     diffusion_ckpt_2_1: "hdfs://harunava/home/byte_speech_sv/weitsung.lu/diffusion/model_11_MCCVAD_ensemble_1.0/checkpoints/diffusion-step=153999.ckpt"
@@ -51,7 +52,7 @@ run_opts:
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
-predict_dataset: !new:recipes.musiclm.datasets.inference.InferenceDataset
+predict_dataset: !apply:recipes.musiclm.datasets.inference.InferenceDataset.from_prompt_path
     prompt_path: !ref <extra_params[prompt_path]>
 
 # dataloader configuration

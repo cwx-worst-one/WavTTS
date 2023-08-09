@@ -49,7 +49,7 @@ run_opts:
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
-predict_dataset: !new:recipes.musiclm.datasets.inference.InferenceDataset
+predict_dataset: !apply:recipes.musiclm.datasets.inference.InferenceDataset.from_prompt_path
     prompt_path: !ref <extra_params[prompt_path]>
 
 # dataloader configuration

@@ -4,13 +4,17 @@ import os
 
 
 class InferenceDataset(Dataset):
-    def __init__(self, prompt_path):
-        self.items = []
+    def __init__(self, items):
+        self.items = items
+
+    @classmethod
+    def from_prompt_path(cls, prompt_path):
+        items = []
         _, ext = os.path.splitext(prompt_path)
         if ext == ".csv":
             df = pd.read_csv(prompt_path)
             for _, row in df.iterrows():
-                self.items.append(
+                items.append(
                     {
                         "category": row["category"],
                         "text": row["text"]
@@ -19,12 +23,13 @@ class InferenceDataset(Dataset):
         else:
             with open(prompt_path, "r") as fp:
                 for line in fp.readlines():
-                    self.items.append(
+                    items.append(
                         {
                             "category": "demos",
                             "text": line.strip()
                         }
                     )
+        return InferenceDataset(items)
 
     def __len__(self):
         return len(self.items)

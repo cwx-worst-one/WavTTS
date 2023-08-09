@@ -156,6 +156,7 @@ class MCC40MDataset(WebPipeline):
         ar_filtering: Optional[ARFiltering] = None,
         max_num_crops: Optional[int] = None,
         crop_step_size: Optional[int] = None,
+        additional_transforms: Optional[List] = None,
         handler: Callable = wds.warn_and_continue,
         **kwargs,
     ):
@@ -187,9 +188,10 @@ class MCC40MDataset(WebPipeline):
             sample_rate=sample_rate,
             transforms=audio_transforms,
         )
+        additional_transforms = [wds.map(t) for t in additional_transforms] if additional_transforms else []
         pipeline=[
             "decode",
-            {"compose": [preprocessor.train_buffer_preprocessor]},
+            {"compose": [preprocessor.train_buffer_preprocessor, *additional_transforms]},
         ]
         super().__init__(dataset, pipeline)
 
@@ -215,6 +217,7 @@ class WrappedMCC40MDataset(MultiIterableDataset):
         ar_filtering: Optional[ARFiltering] = None,
         max_num_crops: Optional[int] = None,
         crop_step_size: Optional[int] = None,
+        additional_transforms: Optional[List] = None,
         handler: Callable = wds.warn_and_continue,
         num_samples: int = -1,
         seed: int = 2023,
@@ -240,6 +243,7 @@ class WrappedMCC40MDataset(MultiIterableDataset):
                 ar_filtering=ar_filtering,
                 max_num_crops=max_num_crops,
                 crop_step_size=crop_step_size,
+                additional_transforms=additional_transforms,
                 handler=handler,
                 **kwargs,
             ) for url2index in url2index_list
