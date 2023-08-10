@@ -10,7 +10,7 @@ DYN_BATCH_SIZE=TRUE
 
 
 bash launch.sh fit --config recipes/text2semantic/conf/llama/vae_llama_ctiga_wds.yaml \
---run_opts.urls 'hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/chenyuanzhe/WFVAE_v2_fixtrim/*/chunk*/*.tar' \
+--run_opts.data_id 37 \
 --run_opts.return_full_seq False \
 --run_opts.log_dir ./logs \
 --run_opts.log_name debug \
@@ -25,4 +25,5 @@ bash launch.sh fit --config recipes/text2semantic/conf/llama/vae_llama_ctiga_wds
 --run_opts.num_epochs 2000 "$@" 
 
 
+# --run_opts.urls 'hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/chenyuanzhe/WFVAE_v2_fixtrim/*/chunk*/*.tar' \
 

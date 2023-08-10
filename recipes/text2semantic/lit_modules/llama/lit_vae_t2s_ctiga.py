@@ -268,7 +268,7 @@ class VAET2SModule(pl.LightningModule):
                 input_tokens = torch.zeros([1, 1], dtype=torch.int).to(pred_dense.device)
                 bns = pred_dense
 
-        z_outputs = torch.cat(z_list[1:], dim=1) # [b, t, c]
+        z_outputs = torch.cat(z_list, dim=1) # [b, t, c]
         semantic_outputs = torch.cat(semantic_outputs, dim=1) # [b, t, c]
 
         # semantic_outputs = torch.cat([seqs, semantic_outputs], dim=1)
