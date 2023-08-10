@@ -63,56 +63,65 @@ run_opts:
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
-ar_filtering: !new:recipes.musiclm.transforms.musiclm.ARFiltering
-    genre_stats_fname: "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/genre_quantile_stats.pkl"
-    semantic_diversity_range: (10, 90)
-    semantic_probs_range: (10, 90)
-
-metadata_transform: !new:recipes.musiclm.transforms.mcc_metadata.MetadataMulanTextTransform
+# ar_filtering: !new:recipes.musiclm.transforms.musiclm.ARFiltering
+#     genre_stats_fname: "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/genre_quantile_stats.pkl"
+#     semantic_diversity_range: (10, 90)
+#     semantic_probs_range: (10, 90)
 
 train_dataset: !new:recipes.musiclm.datasets.mcc.WrappedMCC40MDataset
+    # find full list here: hdfs dfs -ls -R hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/ | grep ".txt" | awk '{print $8}'
     url2index_list:
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.alternative-hip-hop+chinese-style+others"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.blues+childhood+country+devotional+k-pop+soundtrack+trance+world-music"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.classical"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.easy-listening"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.electronic+techno"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.folk+indie-folk"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.hip-hop-rap"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.jazz"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.new-age"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.pop"
-        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.rock"
-    weights:
-        - 1.0
-        - 2.0
-        - 4.0
-        - 1.0
-        - 2.0
-        - 2.0
-        - 2.0
-        - 4.0
-        - 2.0
-        - 4.0
-        - 2.0
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-alternative-indie+alternative-rock+experimental+indie-pop+latin+metal+r-b-soul+reggae+sertanejo+trap-rap.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-alternative-indie.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-alternative-rock.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-blues+childhood+country+devotional+k-pop+soundtrack+trance+world-music.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-blues.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-childhood.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-classical.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-country.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-devotional.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-easy-listening.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-electronic+techno.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-electronic.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-experimental.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-folk+indie-folk.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-folk.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-hip-hop-rap.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-indie-folk.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-indie-pop.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-jazz.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-k-pop.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-latin.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-metal.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-new-age.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-others.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-pop.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-r-b-soul.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-reggae.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-rock.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-sertanejo.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-soundtrack.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-techno.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-traditional-chinese-folk.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-trance.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-trap-rap.txt
+        - hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes/nonvocal-A-world-music.txt
     sample_rate: !ref <extra_params[sample_rate]>
     duration: !ref <extra_params[duration]>
     audio_key: "audio.npy"
-    min_volume_threshold: !ref <run_opts[min_volume_threshold]>
-    loudness_ratio_threshold: !ref <run_opts[loudness_ratio_threshold]>
-    ar_filtering: !ref <ar_filtering>
+    # min_volume_threshold: !ref <run_opts[min_volume_threshold]>
+    # loudness_ratio_threshold: !ref <run_opts[loudness_ratio_threshold]>
+    # ar_filtering: !ref <ar_filtering>
     max_num_crops: 10
-    avoid_vocal: True
-    max_vocal_threshold: 0.5
+    avoid_vocal: False
+    aed_filtered: False
     resampled: True
     shardshuffle: True
     use_pipe: True
-    additional_transforms:
-        - !ref <metadata_transform>
     seed: !ref <seed>
 
 validation_dataset: !new:recipes.musiclm.datasets.karaoke.KaraokeDataset
-    urls: "pipe:hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/data/karaoke_for_singsong/shards-0131.tar"
+    urls: "pipe:hdfs dfs -cat hdfs://haruna/home/byte_data_seed/lf_lq/speech/music/karaoke_for_singsong/shards-0131.tar"
     nodesplitter: !name:recipes.musiclm.datamodules.webdataset.return_self
     sample_rate: !ref <extra_params[sample_rate]>
     duration: !ref <extra_params[duration]>
@@ -164,31 +173,33 @@ pl_module: !new:recipes.musiclm.lightning.rlhf.SemanticSequenceTrainingModule
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
     extra_params: !ref <extra_params>
-    seed_model: "/mnt/bn/audio-diffusion/ducle/logs/semantic_flash_llama/mcc40m_conservative_filtered_vad2/checkpoints/step=091000-tr_loss=2.4243-val_loss_0=2.8712.ckpt"
+    seed_model: "hdfs://haruna/home/byte_speech_sv/andrew.shaw/data/rlhf/semantic/step=091000-tr_loss=2.4243-val_loss_0=2.8712.ckpt"
+    # seed_model: "hdfs://haruna/home/byte_speech_sv/andrew.shaw/data/rlhf/semantic/step=074000-tr_loss=2.4663-val_loss_0=2.8524.ckpt"
+    # seed_model: null
     required_modules:
         mulan:
-            - hdfs://harunava/home/byte_speech_sv/weitsung.lu/mulan_exp/MuLan_large/gpt_all/checkpoints/mulan-step=036000-median_rank_0=127-kaggle.ckpt
+            - hdfs://haruna/home/byte_speech_sv/andrew.shaw/data/rlhf/mulan/mulan-step=036000-median_rank_0=127-kaggle.ckpt
             - !name:recipes.musiclm.requires.model_initializer.init_mulan
               cache_dir: !ref <run_opts[cache_dir]>
               version: "g4"
         mulan_centers:
-            - hdfs://harunava/home/byte_speech_sv/dongguo/mulan/codebook/kmeans_minibatch_codebook-mulan1b_g4_mix_127-1024x12.npy
+            - hdfs://haruna/home/byte_speech_sv/andrew.shaw/data/rlhf/mulan/kmeans_minibatch_codebook-mulan1b_g4_mix_127-1024x12.npy
             - !name:recipes.musiclm.requires.model_initializer.init_mulan_centers
               cache_dir: !ref <run_opts[cache_dir]>
         diffusion:
-            - hdfs://harunava/home/byte_speech_sv/weitsung.lu/diffusion/model_11/checkpoints/diffusion-step=459999.ckpt
+            - hdfs://haruna/home/byte_speech_sv/andrew.shaw/data/rlhf/diffusion/diffusion-step=459999.ckpt
             - !name:recipes.diffusion.rl_inference.init_diffusion
               cache_dir: !ref <run_opts[cache_dir]>
         vocoder:
-            - hdfs://harunava/home/byte_speech_sv/weitsung.lu/soundstream/dac_vae_125hz_24k/checkpoints/soundstream-step=592799-val_sdr=12.1354.ckpt
+            - hdfs://haruna/home/byte_speech_sv/andrew.shaw/data/rlhf/diffusion/soundstream-step=592799-val_sdr=12.1354.ckpt
             - !name:recipes.diffusion.rl_inference.init_vocoder
               cache_dir: !ref <run_opts[cache_dir]>
         wav2vec:
-            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/semantic.jit.pt
+            - hdfs://haruna/home/byte_speech_sv/andrew.shaw/data/rlhf/wav2vec/semantic.jit.pt
             - !name:recipes.musiclm.requires.model_initializer.init_wav2vec
               cache_dir: !ref <run_opts[cache_dir]>
         semantic_centers:
-            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_10.npy
+            - hdfs://haruna/home/byte_speech_sv/andrew.shaw/data/rlhf/wav2vec/centroids_epoch_10.npy
             - !name:recipes.musiclm.requires.model_initializer.init_semantic_centers
               cache_dir: !ref <run_opts[cache_dir]>
 
@@ -198,6 +209,18 @@ logger:
       name: !ref <run_opts[log_name]>
       version: !ref <run_opts[version]>
       default_hp_metric: False
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[log_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
+
+
+hdfs_model_ckpt: !new:samantha.callbacks.HDFSModelCheckpoint
+    monitor: step
+    save_top_k: 50
+    every_n_train_steps: !ref <run_opts[val_check_interval]>
+    mode: max
+    filename: "{step:06d}"
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
@@ -206,6 +229,7 @@ callbacks:
       every_n_train_steps: !ref <run_opts[val_check_interval]>
       mode: max
       filename: "{step:06d}"
+    - !ref <hdfs_model_ckpt>
     - !new:recipes.musiclm.callbacks.checkpoints.ModelCheckpointSaveStep0
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: 'step'

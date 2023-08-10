@@ -88,7 +88,7 @@ class SemanticSequenceTrainingModule(pl.LightningModule):
         self.log_dict(pl.utilities.grad_norm(self, norm_type=2), sync_dist=True)
 
     def setup(self, stage: str) -> None:
-        if self.requires is None:
+        if stage in {"fit", "validate"} and not self.requires:
             self.load_required_modules()
 
     def load_required_modules(self):
@@ -180,6 +180,7 @@ class SemanticSequenceTrainingModule(pl.LightningModule):
             sampled_audio.reshape(B, beam, -1).float(),
             rewards,
             seq_probs,
+            text
         )
 
     @torch.no_grad()
@@ -239,7 +240,7 @@ class SemanticSequenceTrainingModule(pl.LightningModule):
         return sampled_audio.squeeze(1)
 
     def training_step(self, batch, batch_idx):
-        ce_loss, accu, seq_loss, _, _, rewards, seq_probs = self._shared_step(batch)
+        ce_loss, accu, seq_loss, _, _, rewards, seq_probs, _ = self._shared_step(batch)
         self.log_dict(
             {
                 "ce_loss/train": ce_loss,
@@ -268,17 +269,17 @@ class SemanticSequenceTrainingModule(pl.LightningModule):
         return ce_loss * ce_weight + seq_loss * seq_weight
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
-        ce_loss, accu, seq_loss, wavs, samples, rewards, seq_probs = self._shared_step(batch)
-        # Only save first batch
-        if batch_idx != 0:
-            wavs, samples = None, None
+        ce_loss, accu, seq_loss, wavs, samples, rewards, seq_probs, text = self._shared_step(batch)
         if dataloader_idx not in self.val_outputs:
             self.val_outputs[dataloader_idx] = []
         self.val_outputs[dataloader_idx].append(
-            (ce_loss, accu, seq_loss, wavs, samples, rewards, seq_probs)
+            (ce_loss, accu, seq_loss, wavs, samples, rewards, seq_probs, text)
         )
 
     def on_validation_epoch_end(self):
+        max_log_samples = self.extra_params.get("log_num_val_samples", None)
+        max_log_beam_samples = self.extra_params.get("log_num_val_beam_samples", None)
+        sample_count = 0
         for dataloader_idx, outputs in self.val_outputs.items():
             prefix = f"val_{dataloader_idx}"
             stats = {
@@ -293,7 +294,7 @@ class SemanticSequenceTrainingModule(pl.LightningModule):
                 f"seq_probs/{prefix}_max_mean": 0,
                 f"seq_probs/{prefix}_max_std": 0,
             }
-            for ce_l, a, seq_l, wavs, samples, rewards, seq_probs in outputs:
+            for batch_idx, (ce_l, a, seq_l, wavs, samples, rewards, seq_probs, texts) in enumerate(outputs):
                 stats[f"ce_loss/{prefix}"] += ce_l
                 stats[f"accuracy/{prefix}"] += a
                 stats[f"seq_loss/{prefix}"] += seq_l
@@ -304,21 +305,35 @@ class SemanticSequenceTrainingModule(pl.LightningModule):
                 stats[f"reward/{prefix}_max_std"] += rewards.max(dim=-1).values.std()
                 stats[f"seq_probs/{prefix}_max_mean"] += seq_probs.max(dim=-1).values.mean()
                 stats[f"seq_probs/{prefix}_max_std"] += seq_probs.max(dim=-1).values.std()
-                if wavs is not None:
-                    # Only save first item
+                for i in range(len(wavs)):
+                    if max_log_samples and sample_count >= max_log_samples: 
+                        break
+                    sample_count += 1
+
                     self.logger.experiment.add_audio(
-                        f"validation/target_{dataloader_idx}_{self.global_step}",
-                        wavs[0],
+                        f"validation/sampled_{dataloader_idx}_{batch_idx}_{i}_target",
+                        wavs[i],
                         self.global_step,
                         sample_rate=self.extra_params.sample_rate,
                     )
-                    for i in range(samples.shape[1]):
-                        rw = f"{rewards[0][i].item():.2f}"
+                    beam_samples = samples[i]
+                    for j in range(len(beam_samples)):
+                        if max_log_beam_samples and j >= max_log_beam_samples:
+                            break
                         self.logger.experiment.add_audio(
-                            f"validation/sampled_{dataloader_idx}_{self.global_step}_{i}_{rw}",
-                            samples[0][i],
+                            f"validation/sampled_{dataloader_idx}_{batch_idx}_{i}_{j}",
+                            samples[i][j],
                             self.global_step,
                             sample_rate=self.extra_params.sample_rate,
+                        )
+                        if texts is not None:
+                            log_text = f"Reward: {rewards[i][j].item():.2f} \nText: \n{texts[i]}"
+                        else:
+                            log_text = f"Reward: {rewards[i][j].item():.2f}"
+                        self.logger.experiment.add_text(
+                            f"validation/sampled_{dataloader_idx}_{batch_idx}_{i}_{j}",
+                            log_text,
+                            self.global_step,
                         )
             for key in stats:
                 stats[key] /= len(outputs)
@@ -510,16 +525,20 @@ class SemanticSequenceTrainingModule(pl.LightningModule):
         hp = { **self.extra_params, **hp } if hp is not None else self.extra_params
         hp = DotDict(hp)
         mulan_ids, mulan_embeds = self.get_mulan_tokens(text, data_type="text")
+        beam = 1
+        B = len(text)
         samples, mulan_ids, sos_ids = self.beam_inference(
             mulan_ids,
             hp,
-            beam=1,
+            beam=beam,
         )
-        sampled_audio = self.decoder_fn({
+        rewards, sampled_audio = self.get_reward({
             "samples": samples,
             "mulan_embeds": mulan_embeds,
-            "mulan_ids": mulan_ids
+            "mulan_ids": mulan_ids,
+            "batch_size": B,
+            "beam_size": beam,
         })
-
-        return sampled_audio
+        rewards = rewards.reshape(B, beam)
+        return sampled_audio, rewards
     

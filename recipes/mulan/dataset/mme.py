@@ -17,10 +17,14 @@ URL2IDX_Map = {
         "mcc600k": "/mnt/bn/audio-diffusion/data/mcc_pgc_600k/gpt_url2idx.txt",
         "metacritic": "/mnt/bn/audio-diffusion/data/metacritic/vocal_url2idx.txt",
         "everynoise": "/mnt/bn/audio-diffusion/data/everynoise/vocal_url2idx.txt",
+        "human_labelled_5k": "/mnt/bn/audio-diffusion/data/human/vocal_url2idx.txt",
     },
     "nonvocal": {
         "metacritic": "/mnt/bn/audio-diffusion/data/metacritic/non_vocal_url2idx.txt",
         "everynoise": "/mnt/bn/audio-diffusion/data/everynoise/non_vocal_url2idx.txt",
+        "human_labelled_5k": "/mnt/bn/audio-diffusion/data/human/nonvocal_dedu_url2idx.txt",
+        "human_labelled_5k_train": "/mnt/bn/audio-diffusion/ashaw/datasets/mulan/human/nonvocal_dedu_url2idx_train.txt",
+        "human_labelled_5k_valid": "/mnt/bn/audio-diffusion/ashaw/datasets/mulan/human/nonvocal_dedu_url2idx_valid.txt"
     }
 }
 
@@ -65,6 +69,11 @@ class MMEDataset(IterableDataset):
         elif self.name == "everynoise":
             meta = data['__index_data__']
             data["text"] = meta["genre"]
+            data["music_id"] = int(data["__key__"])
+            return data
+        elif self.name.startswith("human_labelled_5k"):
+            meta = data['__index_data__']
+            data["text"] = meta["human_texts"]
             data["music_id"] = int(data["__key__"])
             return data
     
