@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader
 
 from recipes.text2semantic.datasets.continuous_dataset import ContinuousTTSDataset, ContinuousCollator
 from recipes.text2semantic.lit_modules.llama.lit_vae_t2s_ctiga import VAET2SModule
+from recipes.text2semantic.scripts.infer_utils import setup_seed
 from samantha.utils.hparams import DotDict
 
 
@@ -141,5 +142,8 @@ if __name__ == "__main__":
         "--device", type=str, default="cpu", help='Inference device, "cpu" or "cuda"'
     )
     parser.add_argument("--out_dir", type=str, required=True, help="text file")
+    parser.add_argument("--seed", type=int, default=1996)
+
     args = parser.parse_args()
+    setup_seed(args.seed)
     main(args)
