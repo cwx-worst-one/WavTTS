@@ -12,14 +12,23 @@ class InferenceDataset(Dataset):
         items = []
         _, ext = os.path.splitext(prompt_path)
         if ext == ".csv":
-            df = pd.read_csv(prompt_path)
-            for _, row in df.iterrows():
-                items.append(
-                    {
-                        "category": row["category"],
-                        "text": row["text"]
-                    }
-                )
+            with open(prompt_path, "r") as f:
+                skipped_header = False
+                for line in f:
+                    # Skip first line (header)
+                    if not skipped_header:
+                        skipped_header = True
+                        continue
+                    ary = line.strip().split(",")
+                    if len(ary) < 2:
+                        print(f"Skipping invalid csv line: {line.strip()}")
+                        continue
+                    items.append(
+                        {
+                            "category": ary[0],
+                            "text": ",".join(ary[1:]),
+                        }
+                    )
         else:
             with open(prompt_path, "r") as fp:
                 for line in fp.readlines():

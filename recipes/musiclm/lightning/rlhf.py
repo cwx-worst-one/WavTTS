@@ -258,16 +258,14 @@ class SemanticSequenceTrainingModule(pl.LightningModule):
         )
         ce_weight = self.extra_params.ce_weight
         seq_weight = self.extra_params.seq_weight
-        # seq_loss can occasionally be NaN due to softmax, we guard against
-        # this by updating weights with CE loss only
+        # loss can occasionally be NaN due to softmax
+        if torch.any(torch.isnan(ce_loss)):
+            print(f"ce_loss=nan")
+            ce_loss = 0
         if torch.any(torch.isnan(seq_loss)):
-            print(
-                f"seq_loss=nan, update with CE loss only: rewards={rewards}",
-                file=sys.stderr,
-            )
-            return ce_loss * ce_weight
-        else:
-            return ce_loss * ce_weight + seq_weight * seq_loss
+            print(f"seq_loss=nan: rewards={rewards}")
+            seq_loss = 0
+        return ce_loss * ce_weight + seq_loss * seq_weight
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
         ce_loss, accu, seq_loss, wavs, samples, rewards, seq_probs = self._shared_step(batch)
