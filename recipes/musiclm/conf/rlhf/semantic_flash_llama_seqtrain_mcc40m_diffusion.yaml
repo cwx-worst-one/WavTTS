@@ -21,21 +21,22 @@ extra_params:
     mulan_codebook_size: 1024
     mulan_num_rvq: 12
     ce_weight: 0.1
-    seq_weight: 50
-    beam_size: 2
+    seq_weight: 10
+    beam_size: 4
     semantic_temperature: 1.0
-    diffusion_steps: 25
+    diffusion_steps: 10
     sample_mode: "gumbel"
     semantic_type: "wav2vec"
-    decoder_type: "diffusion"
+    decoder_type: "diffusion"   # alternative: "soundstorm"
     mulan_force_cfg: 1 # 1 = mulan context is not used for diffusion inference. 0 = use mulan context
     rewards:
         "mulan_sim": 1.0
         "energy_std": 1.0
     # To use text reward, set dataset_return_keys: audio,text
     dataset_return_keys: audio
-    log_num_val_samples: 1
-    log_num_val_beam_samples: null
+    log_num_val_samples: 10
+    log_num_val_beam_samples: 1
+    add_ref_to_beam: False
 
 # running parameters
 run_opts:
@@ -49,15 +50,16 @@ run_opts:
     accelerator: auto
     val_check_interval: 500
     max_steps: 1000000
-    batch_size: 22
-    learning_rate: 6.0e-6  # Adjust according to batch size
-    warmup_steps: 3000
-    cycle_steps: 50000
+    batch_size: 12
+    learning_rate: 1.0e-6  # Adjust according to batch size
+    warmup_steps: 1
+    cycle_steps: 10000
     weight_decay: 0.01
     min_volume_threshold: 0.05
     loudness_ratio_threshold: 0.2
-    shuffle_buffer: 256
+    shuffle_buffer: 128
     gradient_clip_val: 1.0
+    use_pipe: False
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -106,7 +108,7 @@ train_dataset: !new:recipes.musiclm.datasets.mcc.WrappedMCC40MDataset
     max_vocal_threshold: 0.5
     resampled: True
     shardshuffle: True
-    use_pipe: True
+    use_pipe: !ref <run_opts[use_pipe]>
     additional_transforms:
         - !ref <metadata_transform>
     seed: !ref <seed>
@@ -191,6 +193,14 @@ pl_module: !new:recipes.musiclm.lightning.rlhf.SemanticSequenceTrainingModule
             - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_10.npy
             - !name:recipes.musiclm.requires.model_initializer.init_semantic_centers
               cache_dir: !ref <run_opts[cache_dir]>
+        # Add this to use SoundStorm instead of diffusion
+        #soundstorm:
+        #    - "/mnt/bn/audio-diffusion/ducle/logs/soundstorm/mcc40m_conservative_filtered_vad/checkpoints/step=100000-loss=0.0000.ckpt"
+        #    - !name:recipes.soundstorm.lightning.soundstorm.init_soundstorm
+        #soundstream_dec:
+        #    - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
+        #    - !name:recipes.musiclm.requires.model_initializer.init_soundstream_decoder
+        #      cache_dir: !ref <run_opts[cache_dir]>
 
 logger:
     - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
@@ -202,7 +212,7 @@ logger:
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
       monitor: step
-      save_top_k: 50
+      save_top_k: 20
       every_n_train_steps: !ref <run_opts[val_check_interval]>
       mode: max
       filename: "{step:06d}"

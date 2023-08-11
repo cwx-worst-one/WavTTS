@@ -14,48 +14,34 @@ _checkpointing: False
 extra_params:
     sample_rate: 24000
     duration: 10
-    semantic_duration: 10
-    semantic_stride: 5
     wav2vec_codebook_size: 1024
     wav2vec_frame_rate: 25
     mulan_codebook_size: 1024
     mulan_num_rvq: 12
-    ce_weight: 0.1
-    seq_weight: 10
-    beam_size: 4
-    semantic_temperature: 1.0
-    diffusion_steps: 10
-    sample_mode: "gumbel"
-    semantic_type: "wav2vec"
-    decoder_type: "diffusion"   # alternative: "soundstorm"
-    mulan_force_cfg: 1 # 1 = mulan context is not used for diffusion inference. 0 = use mulan context
-    rewards:
-        "mulan_sim": 1.0
-        "energy_std": 1.0
-    # To use text reward, set dataset_return_keys: audio,text
+    sft: True
+    vad_conditioned: False
     dataset_return_keys: audio,text
-    log_num_val_samples: 10
-    log_num_val_beam_samples: 1
-    add_ref_to_beam: False
 
 # running parameters
 run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
-    log_name: semantic_flash_llama_rlhf_mulan_text
-    version: diffusion_mulan_text
+    log_name: semantic_flash_llama
+    version: mcc40m_mulan_text
     cache_dir: .module_cache/musiclm
     precision: "bf16-mixed"
     num_workers: 8
     accelerator: auto
-    val_check_interval: 200
+    val_check_interval: 2000
     max_steps: 1000000
-    batch_size: 12
-    learning_rate: 1.0e-6  # Adjust according to batch size
-    warmup_steps: 1
-    cycle_steps: 10000
+    batch_size: 64
+    learning_rate: 2.0e-4  # Adjust according to batch size
+    warmup_steps: 5000
+    cycle_steps: 50000
     weight_decay: 0.01
-    shuffle_buffer: 128
+    min_volume_threshold: 0.05
+    loudness_ratio_threshold: 0.2
+    shuffle_buffer: 256
     gradient_clip_val: 1.0
     seq_len: 400
     use_pipe: False
@@ -63,9 +49,6 @@ run_opts:
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
-
-# === Train on MCC Metadata ===
-# For training on MCC Metadata, copy dataset from semantic_flash_llama_seqtrain_mcc40m_diffusion.yaml
 
 # === Mulan Text Datasets ===
 
@@ -147,16 +130,16 @@ pl_datamodule: !new:recipes.musiclm.datamodules.webdataset.DataModule
     batch_size: !ref <run_opts[batch_size]>
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
     num_workers: !ref <run_opts[num_workers]>
+    pin_memory: True
+    return_dict: True
     train_keys: !ref <extra_params[dataset_return_keys]>
     val_keys: !ref <extra_params[dataset_return_keys]>
     predict_keys: !ref <extra_params[dataset_return_keys]>
-    return_dict: True
-    pin_memory: True
 
 model_config: !new:transformers.LlamaConfig
     vocab_size: !ref <extra_params[wav2vec_codebook_size]> + <extra_params[mulan_num_rvq]> * <extra_params[mulan_codebook_size]> + 1
     hidden_size: 1536
-    intermediate_size: 4608
+    intermediate_size: 4128
     num_hidden_layers: 24
     num_attention_heads: 12
     hidden_act: "silu"
@@ -181,13 +164,14 @@ scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupC
     cycle_steps: !ref <run_opts[cycle_steps]>
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
-pl_module: !new:recipes.musiclm.lightning.rlhf.SemanticSequenceTrainingModule
+pl_module: !new:recipes.musiclm.lightning.modules.SemanticModule
     checkpointing: !ref <_checkpointing>
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
+    criterion_cls: !name:recipes.musiclm.lightning.modules.MaskedCrossEntropy
     extra_params: !ref <extra_params>
-    seed_model: "/mnt/bn/audio-diffusion/ducle/logs/semantic_flash_llama/mcc40m_conservative_filtered_vad2/checkpoints/step=091000-tr_loss=2.4243-val_loss_0=2.8712.ckpt"
+    seed_model: null
     required_modules:
         mulan:
             - hdfs://harunava/home/byte_speech_sv/weitsung.lu/mulan_exp/MuLan_large/gpt_all/checkpoints/mulan-step=036000-median_rank_0=127-kaggle.ckpt
@@ -198,14 +182,6 @@ pl_module: !new:recipes.musiclm.lightning.rlhf.SemanticSequenceTrainingModule
             - hdfs://harunava/home/byte_speech_sv/dongguo/mulan/codebook/kmeans_minibatch_codebook-mulan1b_g4_mix_127-1024x12.npy
             - !name:recipes.musiclm.requires.model_initializer.init_mulan_centers
               cache_dir: !ref <run_opts[cache_dir]>
-        diffusion:
-            - hdfs://harunava/home/byte_speech_sv/weitsung.lu/diffusion/model_11/checkpoints/diffusion-step=459999.ckpt
-            - !name:recipes.diffusion.rl_inference.init_diffusion
-              cache_dir: !ref <run_opts[cache_dir]>
-        vocoder:
-            - hdfs://harunava/home/byte_speech_sv/weitsung.lu/soundstream/dac_vae_125hz_24k/checkpoints/soundstream-step=592799-val_sdr=12.1354.ckpt
-            - !name:recipes.diffusion.rl_inference.init_vocoder
-              cache_dir: !ref <run_opts[cache_dir]>
         wav2vec:
             - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/semantic.jit.pt
             - !name:recipes.musiclm.requires.model_initializer.init_wav2vec
@@ -214,14 +190,6 @@ pl_module: !new:recipes.musiclm.lightning.rlhf.SemanticSequenceTrainingModule
             - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_10.npy
             - !name:recipes.musiclm.requires.model_initializer.init_semantic_centers
               cache_dir: !ref <run_opts[cache_dir]>
-        # Add this to use SoundStorm instead of diffusion
-        #soundstorm:
-        #    - "/mnt/bn/audio-diffusion/ducle/logs/soundstorm/mcc40m_conservative_filtered_vad/checkpoints/step=100000-loss=0.0000.ckpt"
-        #    - !name:recipes.soundstorm.lightning.soundstorm.init_soundstorm
-        #soundstream_dec:
-        #    - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
-        #    - !name:recipes.musiclm.requires.model_initializer.init_soundstream_decoder
-        #      cache_dir: !ref <run_opts[cache_dir]>
 
 logger:
     - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
@@ -229,6 +197,10 @@ logger:
       name: !ref <run_opts[log_name]>
       version: !ref <run_opts[version]>
       default_hp_metric: False
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[log_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
@@ -236,11 +208,9 @@ callbacks:
       save_top_k: 20
       every_n_train_steps: !ref <run_opts[val_check_interval]>
       mode: max
-      filename: "{step:06d}"
-    - !new:recipes.musiclm.callbacks.checkpoints.ModelCheckpointSaveStep0
+      filename: "{step:06d}-{tr_loss:.4f}-{val_loss_0:.4f}"
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: 'step'
-    - !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
 
 plugins:
     - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
@@ -254,7 +224,7 @@ trainer: !new:pytorch_lightning.Trainer
     num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
     deterministic: False
     enable_model_summary: True
-    log_every_n_steps: 10
+    log_every_n_steps: 100
     max_steps: !ref <run_opts[max_steps]>
     precision: !ref <run_opts[precision]>
     accumulate_grad_batches: 1

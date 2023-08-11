@@ -11,3 +11,4 @@ rotary_embedding_torch
 nnAudio
 transformers==4.29.1
 pyloudnorm
+fsspec==2023.6.0

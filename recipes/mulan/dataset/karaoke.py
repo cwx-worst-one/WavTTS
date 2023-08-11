@@ -102,7 +102,7 @@ class KaraokeDataset(IterableDataset):
                 ins_names,
                 random.randint(min(2, len(ins_names) - 1), min(6, len(ins_names))),
             )
-            mixed_text = " ".join(picked_ins_names)
+            mixed_text = " ".join(picked_ins_names).lower()
             sorted_text = " ".join(sorted(picked_ins_names))
             mixed_audio = torch.zeros_like(out_batch["audio"][0])
             for ins_name in picked_ins_names:
@@ -110,7 +110,7 @@ class KaraokeDataset(IterableDataset):
 
             # tokenize text
             tokenized_text = self.tokenizer(
-                mixed_text.lower(),
+                mixed_text,
                 padding="max_length",
                 truncation=True,
                 max_length=self.seq_len,
@@ -131,6 +131,7 @@ class KaraokeDataset(IterableDataset):
             mixed_batch.append(
                 {
                     "audio": mixed_audio,
+                    "text": mixed_text,
                     "input_ids": input_ids,
                     "attention_mask": attention_mask,
                     "token_type_ids": token_type_ids,

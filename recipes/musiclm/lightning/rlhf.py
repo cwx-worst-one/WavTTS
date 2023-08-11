@@ -44,6 +44,7 @@ class SemanticSequenceTrainingModule(pl.LightningModule):
         self.extra_params = DotDict(extra_params)
         self.requires = None
         self.val_outputs = dict()
+        self.text_log_counter = 0
 
         if checkpointing:
             self.model.gradient_checkpointing_enable()
@@ -113,41 +114,62 @@ class SemanticSequenceTrainingModule(pl.LightningModule):
     def profiler(self):
         return getattr(self.trainer, "profiler") or PassThroughProfiler()
 
-    def _shared_step(self, batch):
+    def _shared_step(self, batch, mode):
+        wavs = None
         text = None
         if isinstance(batch, list):
-            wavs = batch[0]
-            if len(batch) > 1:
+            if len(batch) == 1:
+                if type(batch[0]) == list:
+                    text = batch[0]
+                else:
+                    wavs = batch[0]
+            else:
+                wavs = batch[0]
                 text = batch[1]
         elif isinstance(batch, dict):
-            wavs = batch["audio"]
+            if "audio" in batch:
+                wavs = batch["audio"]
             if "text" in batch:
                 text = batch["text"]
-        if wavs.dim() == 3:
-            wavs = wavs.squeeze(1)
+        if wavs is not None:
+            wavs = wavs.float()
+            if wavs.dim() == 3:
+                wavs = wavs.squeeze(1)
         # t = time.perf_counter()
         with torch.autocast(device_type="cuda", enabled=False):
-            input_ids, target_ids, mulan_ids, mulan_embeds = self.prepare_feature(wavs.float(), text=text)
-        # exclude_time = time.perf_counter() - t
-        logits = self.model(**input_ids)
-        if isinstance(logits, dict):
-            logits = logits["logits"]
-        elif isinstance(logits, tuple):
-            logits = logits[0]
-        B, T = target_ids.size()
+            input_ids, target_ids, mulan_ids, mulan_embeds = self.prepare_feature(wavs=wavs, text=text)
+        if target_ids is not None:
+            B, T = target_ids.size()
+        else:
+            B = mulan_ids.shape[0]
+            T = self.extra_params.semantic_duration * self.extra_params.wav2vec_frame_rate
         beam = self.extra_params.beam_size
 
         # CE loss
-        x = logits[:, -T:, :]
-        ce_loss = self.ce_criterion(x, target_ids)
-        accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
+        ce_loss = 0.0
+        accu = 0.0
+        if target_ids is not None:
+            logits = self.model(**input_ids)
+            if isinstance(logits, dict):
+                logits = logits["logits"]
+            elif isinstance(logits, tuple):
+                logits = logits[0]
+            # CE loss
+            x = logits[:, -T:, :]
+            ce_loss = self.ce_criterion(x, target_ids)
+            accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
 
         # Sequence loss
         # Inference
+        ref_samples = None
+        add_ref_to_beam = self.extra_params.get("add_ref_to_beam", False)
+        if add_ref_to_beam and target_ids is not None and mode == "training":
+            ref_samples = target_ids
         samples, mulan_ids, sos_ids = self.beam_inference(
             mulan_ids,
             self.extra_params,
             beam=beam,
+            ref_samples=ref_samples,
         )
         # Compute rewards
         rewards, sampled_audio = self.get_reward({
@@ -166,28 +188,32 @@ class SemanticSequenceTrainingModule(pl.LightningModule):
             seq_logits = seq_logits["logits"]
         elif isinstance(seq_logits, tuple):
             seq_logits = seq_logits[0]
-        seq_probs = torch.gather(
-            seq_logits[:, -T:, :].log_softmax(dim=-1),
-            -1,
-            samples.unsqueeze(2),
-        ).squeeze(2).reshape(B, beam, -1).mean(dim=-1).softmax(dim=-1)
-        seq_loss = -1 * (rewards * seq_probs).sum(dim=-1).mean()
+        seq_probs1 = F.log_softmax(seq_logits[:, -T:, :], dim=-1)
+        seq_probs2 = torch.gather(
+            seq_probs1, -1, samples.unsqueeze(2)
+        ).squeeze(2).reshape(B, beam, -1).mean(dim=-1)
+        seq_probs3 = F.softmax(seq_probs2, dim=-1)
+        seq_loss = -1 * (rewards * seq_probs3).sum(dim=-1).mean()
+        skip = torch.any(torch.isnan(seq_probs1)) or torch.any(torch.isnan(seq_probs3))
+        if skip:
+            print(f"Skipped samples: {samples}")
         return (
             ce_loss,
             accu,
             seq_loss,
-            wavs.float(),
+            wavs,
             sampled_audio.reshape(B, beam, -1).float(),
             rewards,
-            seq_probs,
-            text
+            seq_probs3,
+            text,
+            skip,
         )
 
     @torch.no_grad()
     def get_reward(self, items):
         sampled_audio = self.decoder_fn(items)
         items["sampled_audio"] = sampled_audio
-        reward = 0
+        reward = 0.0
         for rw_type, rw_weight in self.extra_params.get("rewards", DEFAULT_REWARDS).items():
             reward += rw_weight * self._get_reward(items, rw_type)
         return reward, sampled_audio
@@ -240,7 +266,13 @@ class SemanticSequenceTrainingModule(pl.LightningModule):
         return sampled_audio.squeeze(1)
 
     def training_step(self, batch, batch_idx):
-        ce_loss, accu, seq_loss, _, _, rewards, seq_probs, _ = self._shared_step(batch)
+        ce_loss, accu, seq_loss, _, _, rewards, seq_probs, text, skip = self._shared_step(
+            batch=batch,
+            mode="training",
+        )
+        if text is not None and self.text_log_counter < 5:
+            print(f"text: {text}")
+            self.text_log_counter += 1
         self.log_dict(
             {
                 "ce_loss/train": ce_loss,
@@ -257,19 +289,19 @@ class SemanticSequenceTrainingModule(pl.LightningModule):
             prog_bar=True,
             sync_dist=True,
         )
-        ce_weight = self.extra_params.ce_weight
-        seq_weight = self.extra_params.seq_weight
-        # loss can occasionally be NaN due to softmax
-        if torch.any(torch.isnan(ce_loss)):
-            print(f"ce_loss=nan")
-            ce_loss = 0
-        if torch.any(torch.isnan(seq_loss)):
-            print(f"seq_loss=nan: rewards={rewards}")
-            seq_loss = 0
-        return ce_loss * ce_weight + seq_loss * seq_weight
+        if skip:
+            print("Skipping update due to NaN...")
+            return None
+        else:
+            ce_weight = self.extra_params.ce_weight
+            seq_weight = self.extra_params.seq_weight
+            return ce_loss * ce_weight + seq_loss * seq_weight
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
-        ce_loss, accu, seq_loss, wavs, samples, rewards, seq_probs, text = self._shared_step(batch)
+        ce_loss, accu, seq_loss, wavs, samples, rewards, seq_probs, text, _ = self._shared_step(
+            batch=batch,
+            mode="validation",
+        )
         if dataloader_idx not in self.val_outputs:
             self.val_outputs[dataloader_idx] = []
         self.val_outputs[dataloader_idx].append(
@@ -316,20 +348,22 @@ class SemanticSequenceTrainingModule(pl.LightningModule):
                         self.global_step,
                         sample_rate=self.extra_params.sample_rate,
                     )
-                    beam_samples = samples[i]
-                    for j in range(len(beam_samples)):
+                    # Log highest reward first
+                    indices = torch.argsort(rewards[i], descending=True).cpu().tolist()
+                    for j in range(len(indices)):
+                        idx = indices[j]
                         if max_log_beam_samples and j >= max_log_beam_samples:
                             break
                         self.logger.experiment.add_audio(
                             f"validation/sampled_{dataloader_idx}_{batch_idx}_{i}_{j}",
-                            samples[i][j],
+                            samples[i][idx],
                             self.global_step,
                             sample_rate=self.extra_params.sample_rate,
                         )
                         if texts is not None:
-                            log_text = f"Reward: {rewards[i][j].item():.2f} \nText: \n{texts[i]}"
+                            log_text = f"Reward: {rewards[i][idx].item():.2f} \nText: \n{texts[i]}"
                         else:
-                            log_text = f"Reward: {rewards[i][j].item():.2f}"
+                            log_text = f"Reward: {rewards[i][idx].item():.2f}"
                         self.logger.experiment.add_text(
                             f"validation/sampled_{dataloader_idx}_{batch_idx}_{i}_{j}",
                             log_text,
@@ -357,14 +391,19 @@ class SemanticSequenceTrainingModule(pl.LightningModule):
 
     @torch.no_grad()
     def prepare_feature(self, wavs, text=None):
-        device = wavs.device
-        b, _ = wavs.size()
-
-        wav2vec_ids = self.semantic_token_fn(wavs)
-        if text is None:
-            mulan_ids, mulan_embeds = self.get_mulan_tokens(wavs)
+        assert wavs is not None or text is not None, "wavs and text can't both be None"
+        if wavs is not None:
+            device = wavs.device
+            b = wavs.shape[0]
+            if text is not None:
+                mulan_ids, mulan_embeds = self.get_mulan_tokens(text, data_type="text")
+            else:
+                mulan_ids, mulan_embeds = self.get_mulan_tokens(wavs)
         else:
+            device = self.device
+            b = len(text)
             mulan_ids, mulan_embeds = self.get_mulan_tokens(text, data_type="text")
+
         mulan_ids_offset = (
             mulan_ids
             + torch.arange(self.extra_params.mulan_num_rvq, device=device)
@@ -376,8 +415,16 @@ class SemanticSequenceTrainingModule(pl.LightningModule):
             + self.extra_params.wav2vec_codebook_size
             + self.extra_params.mulan_num_rvq * self.extra_params.mulan_codebook_size
         )
-        input_ids = torch.cat([mulan_ids_offset, sos_ids, wav2vec_ids[:, :-1]], dim=1)
-        return {"input_ids": input_ids}, wav2vec_ids, mulan_ids, mulan_embeds
+
+        input_ids = None
+        wav2vec_ids = None
+        if wavs is not None:
+            wav2vec_ids = self.semantic_token_fn(wavs)
+            input_ids = {
+                "input_ids": torch.cat([mulan_ids_offset, sos_ids, wav2vec_ids[:, :-1]], dim=1),
+            }
+
+        return input_ids, wav2vec_ids, mulan_ids, mulan_embeds
 
     @torch.no_grad()
     def get_mulan_embeds(self, x, data_type="music"):
@@ -435,12 +482,20 @@ class SemanticSequenceTrainingModule(pl.LightningModule):
         return wav2vec_embeds
 
     @torch.no_grad()
-    def beam_inference(self, mulan_ids, hp, beam=1):
+    def beam_inference(self, mulan_ids, hp, beam=1, ref_samples=None):
         """
+        Input:
+            mulan_ids: (batch_size, mulan_len)
+            [optional] ref_samples: (batch_size, seq_len)
+                If specified, add these samples to the beam
+
         Return a tuple of:
             semantic_samples: (batch_size * beam, seq_len)
             mulan_ids: (batch_size * beam, mulan_len)
             sos_ids: (batch_size * beam, 1)
+        
+        If ref_samples is not None, we'll reduce generation beam by 1 so
+        the final returned beam size stays unchanged.
         """
         device = mulan_ids.device
         b, _ = mulan_ids.size()
@@ -449,6 +504,10 @@ class SemanticSequenceTrainingModule(pl.LightningModule):
             + torch.arange(hp.mulan_num_rvq, device=device) * hp.mulan_codebook_size
             + hp.wav2vec_codebook_size
         )
+        if ref_samples is not None:
+            assert ref_samples.size(0) == b
+            assert beam > 1, "Can't use beam size 1 with ref_samples!"
+            beam = beam - 1
         # (b, s) --> (b * beam, s)
         mulan_ids = mulan_ids.repeat(1, beam).reshape(b * beam, -1)
         sos_ids = (
@@ -512,6 +571,23 @@ class SemanticSequenceTrainingModule(pl.LightningModule):
             - torch.arange(hp.mulan_num_rvq, device=device) * hp.mulan_codebook_size
             - hp.wav2vec_codebook_size
         )
+        # Add ref_samples to generation beam
+        if ref_samples is not None:
+            # (b * beam, s) -> (b, s) -> (b * (beam + 1), s)
+            mulan_ids = mulan_ids.reshape(b, beam, -1)[:, 0, :].repeat(
+                1, beam + 1
+            ).reshape(b * (beam + 1), -1)
+            sos_ids = sos_ids.reshape(b, beam, -1)[:, 0, :].repeat(
+                1, beam + 1
+            ).reshape(b * (beam + 1), -1)
+            # (b * beam, s) -> (b * (beam + 1), s)
+            semantic_samples = torch.cat(
+                [
+                    ref_samples.unsqueeze(1),
+                    semantic_samples.reshape(b, beam, -1),
+                ],
+                dim=1,
+            ).reshape(b * (beam + 1), -1)
         return semantic_samples, mulan_ids, sos_ids
 
     @torch.no_grad()

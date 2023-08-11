@@ -42,7 +42,8 @@ class BaseModule(pl.LightningModule):
             self.model.gradient_checkpointing_enable()
 
     def on_before_optimizer_step(self, optimizer):
-        self.log_dict(pl.utilities.grad_norm(self, norm_type=2), sync_dist=True)
+        if self.extra_params.get("track_grad_norm", False):
+            self.log_dict(pl.utilities.grad_norm(self, norm_type=2), sync_dist=True)
 
     def setup(self, stage: str) -> None:
         # Variables for MFU calculation
@@ -316,6 +317,7 @@ class SemanticModule(BaseModule):
             self.semantic_token_fn = self.get_melspec_tokens
         else:
             raise KeyError(f"Invalid semantic_type, got {semantic_type}")
+        self.text_log_counter = 0
 
         if seed_model is not None:
             print(f"Loading seed model from {seed_model}")
@@ -366,6 +368,9 @@ class SemanticModule(BaseModule):
     def prepare_feature(self, wavs, text=None, has_vocal=None):
         device = wavs.device
         b, _ = wavs.size()
+        if text is not None and self.text_log_counter < 5:
+            print(f"text: {text}")
+            self.text_log_counter += 1
 
         wav2vec_ids = self.semantic_token_fn(wavs)
         if text is None:
