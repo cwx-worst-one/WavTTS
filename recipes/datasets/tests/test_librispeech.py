@@ -6,7 +6,6 @@ from tqdm import tqdm
 
 from recipes.datasets.librispeech import LibriSpeechWebDataModule
 
-
 @pytest.mark.skip()
 def test_librispeech_datamodule():
     batch_size = 64

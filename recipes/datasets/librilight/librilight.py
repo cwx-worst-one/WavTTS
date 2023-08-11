@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import soundfile as sf
+import logging
 import torch
 from torch.utils.data import Dataset
 from torchaudio_augmentations import Compose
@@ -26,11 +27,11 @@ from samantha.transforms.audio import (
 )
 from samantha.utils.hdfs_tools import hdfs_loadtxt, hdfs_open
 from samantha.utils.webdataset import return_self
+from samantha.utils.hdfs_tools import hdfs_open, hdfs_loadtxt
 
 SAMPLE_RATE = 16000
 
 logger = logging.getLogger(__name__)
-
 
 def load_librilight_metadata(filepath: Path, ext_metadata: str):
     file_metadata = filepath.parent / (filepath.stem + ext_metadata)
@@ -381,13 +382,14 @@ class LibriLightWebDataModule(BaseDataModule):
 
     def load_transcriptions(self):
         uri = self.get_hdfs_transcription_uri()
-        logger.warn(f"Loading transcription file from HDFS: {uri}")
+        logger.warn(f"Loading transcription file from HDFS: {uri}") 
         transcriptions = hdfs_open(uri, "r").read()
         return transcriptions
 
     @staticmethod
     def get_hdfs_transcription_uri() -> str:
         return "hdfs://haruna/home/byte_speech_sv/data/speech/librilight/librilight_mos3.8_sim0.0_snr7_rms-13_asr0.85.txt"
+
 
     @staticmethod
     def get_hdfs_shard_uri(split: str) -> Tuple[str, str]:
@@ -442,10 +444,8 @@ class LibriLightWebDataModule(BaseDataModule):
             }
             writer.write(obj)
             index.append(id)
-
-        index_fp = os.path.join(
-            os.path.dirname(writer.fname), f"{current_shard-1:05d}.tar.index"
-        )
+        
+        index_fp = os.path.join(os.path.dirname(writer.fname), f"{current_shard-1:05d}.tar.index")
         print(f"Writing index: {index_fp}")
         write_index(index_fp, index)
         writer.close()

@@ -88,6 +88,8 @@ class AudioDemo(pl.Callback):
         print(f"Generating demo {demo_id} for step {module.global_step}")
 
         for idx, (a, sampled) in enumerate(zip(audio, sampled_audio)):
+            a = a.mean(dim=0, keepdim=True)
+            sampled = sampled.mean(dim=0, keepdim=True)
             module.logger.experiment.add_audio(
                 f"validation/target_audio-{idx}",
                 a,

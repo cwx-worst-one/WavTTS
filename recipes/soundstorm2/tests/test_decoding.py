@@ -1,42 +1,19 @@
 import pytest
 import torch
 
-from recipes.soundstorm.lightning.masking_scheme import SoundStormMaskingScheme
-from recipes.soundstorm.lightning.soundstorm import SoundStorm
+from recipes.soundstorm2.lightning.soundstorm import SoundStorm
+from recipes.soundstorm2.tests.test_model import soundstorm, SoundStormModelTester
 from tests.helpers.testing_utils import torch_device
 from tests.unittests.models.utils import ids_tensor
 
 
-@pytest.fixture
-def soundstorm_model():
-    masking_scheme = SoundStormMaskingScheme(sample_q_uniformly=True, sample_t=False)
-    return (
-        SoundStorm(
-            sample_rate=24000,
-            n_embd=16,
-            n_head=2,
-            n_layer=2,
-            conv_kernel_size=5,
-            n_audio_samples=240000,
-            audio_prompting=False,
-            masking_scheme=masking_scheme,
-            fine_quantizer_embedding_dropout=True,
-            conditioning_dropout=None,
-            optimizer_class=None,
-            scheduler_class=None,
-            attention_kwargs={},
-        )
-        .eval()
-        .to(torch_device)
-    )
-
-
-@pytest.mark.parametrize("batch_size", [1, 32])
-def test_decoding(soundstorm_model: SoundStorm, batch_size):
+@pytest.mark.parametrize("batch_size", [1, 3])
+def test_decoding(soundstorm: SoundStormModelTester, batch_size):
+    soundstorm = soundstorm.create_and_test_model()
     vocab_size = 1024
     n_sec = 10
 
-    audio_seq_len = soundstorm_model.audio_model.frame_rate * n_sec
+    audio_seq_len = soundstorm.audio_model.frame_rate * n_sec
     # semantic_model_frame_rate = 25
     # semantic_tokens = ids_tensor(
     #     (batch_size, semantic_model_frame_rate * n_sec),
@@ -48,10 +25,9 @@ def test_decoding(soundstorm_model: SoundStorm, batch_size):
         (batch_size, 4, audio_seq_len), vocab_size, device=torch_device
     )
 
-    iterations = [32, 32, 32, 32, 8, 8, 8, 8, 1, 1, 1, 1]
+    iterations = [2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1]
     score_strategies = ["maskgit"] * len(iterations)
-    sampled_audio_tokens, _ = soundstorm_model.iterative_decoding(
-        # semantic_tokens=semantic_tokens,
+    sampled_audio_tokens, _ = soundstorm.iterative_decoding(
         seed_tokens=seed_tokens,
         max_seq_len=audio_seq_len,
         iterations=iterations,
@@ -60,9 +36,9 @@ def test_decoding(soundstorm_model: SoundStorm, batch_size):
 
     assert sampled_audio_tokens.shape == (
         batch_size,
-        soundstorm_model.audio_model.num_quantizers,
+        soundstorm.audio_model.n_quantizers,
         audio_seq_len,
     )
 
     # we use greedy sampling at the last iteration, so there shouldn't be any masked tokens left
-    assert (sampled_audio_tokens == soundstorm_model.mask_token_id).sum() == 0
+    assert (sampled_audio_tokens == soundstorm.mask_token_id).sum() == 0

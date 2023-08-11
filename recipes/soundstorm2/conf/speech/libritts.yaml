@@ -97,6 +97,7 @@ masking_scheme: !new:recipes.soundstorm2.lightning.masking_scheme.SoundStormMask
 #     coarse_prob: null
 
 audio_model: !new:recipes.soundstorm2.lightning.soundstream.SoundStreamSpeech24k
+semantic_model: !new:recipes.soundstorm2.lightning.bestrq.BestRQMelCTCModel
 
 config: !new:recipes.soundstorm2.lightning.soundstorm.SoundStormConfig
     sample_rate: !ref <data_params[sample_rate]>

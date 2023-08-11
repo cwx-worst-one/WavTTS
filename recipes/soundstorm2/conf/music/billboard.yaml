@@ -12,13 +12,13 @@ data_params:
 training_params:
     max_steps: 1000000
     batch_size: 16
+    shuffle_buffer: 64
     base_lr: 4.0e-4
     warmup_steps: 3000
     hold_steps: 30000
     decay_steps: 3000000
     weight_decay: 0.01
     betas: (0.9, 0.98)
-    shuffle_buffer: 200
     gradient_clip_val: 1.0
 
 
@@ -33,7 +33,7 @@ run_opts:
     log_name: soundstormv2
     version: billboard
     precision: 16-mixed
-    num_workers: 6
+    num_workers: 16
     accelerator: auto
 
 seed: 0
@@ -73,7 +73,7 @@ scheduler_class: !name:samantha.optim.lr_scheduler.TriStageLR
 masking_scheme: !new:recipes.soundstorm2.lightning.masking_scheme.SoundStormMaskingScheme
     sample_q_uniformly: True
     sample_t: True
-    max_sample_t: 80 # TODO, dependent on audio model frame rate
+    max_sample_t: null # TODO, dependent on audio model frame rate and duration
 
 audio_model: !new:recipes.soundstorm2.lightning.dac.DACModel
     src_sample_rate: 44100 # BillBoard sample rate

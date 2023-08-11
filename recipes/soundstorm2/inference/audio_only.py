@@ -15,7 +15,6 @@ batch_size = 1
 sample_rate = 24000
 device = "cuda"
 
-
 def torch_fp32_to_numpy_int16(audio: torch.Tensor):
     return (audio * 32767).to(torch.int16).T.cpu().numpy()
 

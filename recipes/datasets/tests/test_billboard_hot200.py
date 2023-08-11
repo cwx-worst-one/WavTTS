@@ -36,11 +36,14 @@ def test_billboard200():
         json.dump(batch["metadata"][0], f)
 
 
+from recipes.soundstorm2.lightning.dac import DACModel
+from tests.helpers.testing_utils import torch_device
+
 def test_billboard200_throughput():
-    batch_size = 64
-    shuffle_buffer_size = 200
-    num_workers = 8
-    duration = 10.0
+    batch_size = 16
+    shuffle_buffer_size = 64
+    num_workers = 24
+    duration = 30.0
     shardshuffle = False
     pl_datamodule = BillboardHot200WebDataModule(
         sample_rate=SAMPLE_RATE,
@@ -51,5 +54,8 @@ def test_billboard200_throughput():
         shardshuffle=shardshuffle,
     )
     test_loader = pl_datamodule.train_dataloader()
+
+    dac = DACModel(src_sample_rate=SAMPLE_RATE, target_sample_rate=SAMPLE_RATE).to(torch_device)
+
     for batch in tqdm(test_loader):
         pass

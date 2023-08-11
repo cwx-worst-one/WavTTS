@@ -213,7 +213,6 @@ class SoundStorm(pl.LightningModule):
             semantic_tokens = None
         else:
             semantic_tokens = self.semantic_model(audio)
-
         return {
             "semantic_tokens": semantic_tokens,
             "audio_tokens": audio_tokens,
@@ -287,6 +286,7 @@ class SoundStorm(pl.LightningModule):
         logits = []
         for batch_idx in range(B):
             logits.append(self.heads[selected_qs[batch_idx]](x[batch_idx]))
+
         return torch.stack(logits, dim=0)
 
     def step(

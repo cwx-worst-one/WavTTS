@@ -1,48 +1,33 @@
-import os
-import re
+import sys
 from time import perf_counter
 
 import gradio as gr
 import torch
 
-from recipes.soundstorm.inference.semantic2audio import load_model2
+from recipes.soundstorm2.lightning.soundstorm import SoundStorm
+from recipes.datasets.libritts import LibriTTSWebDataModule
 from samantha.utils.hdfs_helper import get, hdfs_ls
+from recipes.soundstorm2.lightning.soundstream import SoundStreamSpeech24k
 
-arnold_task_id = 558104
 soundstorm = None
 batch_size = 1
 sample_rate = 24000
-n_audio_samples = 240000
 device = "cuda"
-
-
-def download_model(ckpt_idx: int):
-    ckpt_path = checkpoints[ckpt_idx]
-    local_fp = os.path.basename(ckpt_path)
-    if not os.path.exists(local_fp):
-        get(ckpt_path, local_fp)
-    return local_fp
-
 
 def torch_fp32_to_numpy_int16(audio: torch.Tensor):
     return (audio * 32767).to(torch.int16).T.cpu().numpy()
 
 
 def generate_audio(
-    text: str,
-    semantic_tokens: str,
-    ckpt_path: str,
-    semantic_ckpt_path: str,
     n_seconds: int,
     iterations: str,
     score_strategies: str,
     temperatures: str,
-    semantic_temperature: float,
 ):
     global soundstorm
 
     n_seconds = int(n_seconds)
-    max_seq_len = n_seconds * soundstorm.soundstorm.audio_model.frame_rate
+    max_seq_len = n_seconds * soundstorm.audio_model.frame_rate
 
     if getattr(soundstorm, "ckpt_path") != ckpt_path:
         soundstorm._init_soundstorm(ckpt_path)
@@ -89,18 +74,19 @@ def generate_audio(
     # tok = perf_counter()
     rtf = elapsed / duration_sec
 
+    with torch.no_grad():
+        sampled_audio = soundstorm.audio_model.decode(pred_audio_tokens)
+
+    tok = perf_counter()
+
+    elapsed = tok - tik
+    rtf = elapsed / n_seconds 
+
     return_audios = []
     for a in sampled_audio:
         return_audios.append((sample_rate, a.T.cpu().numpy()))
 
-    return *return_audios, f"{list(semantic_tokens[0].cpu().numpy())}", rtf
-
-
-def ckpt_label_formatter(ckpt):
-    trial_id = re.search(r"trials/(\d+?)/", ckpt).group(1)
-    ckpt_fp = os.path.basename(ckpt)
-    return f"{ckpt_fp} (Arnold trial {trial_id})"
-
+    return *return_audios, rtf
 
 from glob import glob
 
@@ -128,10 +114,15 @@ if __name__ == "__main__":
 
     text = gr.Textbox(label="Text prompt", placeholder="Enter a text prompt")
 
-    semantic_token_sequence = gr.Textbox(
-        label="Semantic token sequence (Optional)",
-        placeholder="Enter a sequence of semantic tokens as a list, so [712, 333, 236, ...]",
+    CKPT_PATH = sys.argv[1]
+
+    pl_datamodule = LibriTTSWebDataModule(
+        sample_rate=24000,
+        batch_size=1,
+        shuffle_buffer_size=100,
     )
+    train_loader = pl_datamodule.train_dataloader()
+    batch = next(iter(train_loader))
 
     # choices = list(map(ckpt_label_formatter, checkpoints))
     # default_ckpt = "/mnt/bn/audio-diffusion/logs/soundstorm/2829482/output/soundstorm/baseline/checkpoints/epoch=0-step=105000.ckpt"
@@ -146,9 +137,6 @@ if __name__ == "__main__":
         label="Semantic Checkpoint",
     )
 
-    soundstorm = load_model2(checkpoints[0], semantic_checkpoints[0], device)
-    soundstorm.ckpt_path = checkpoints[0]
-    soundstorm.semantic_ckpt_path = semantic_checkpoints[0]
 
     score_strategies = "random,random,random,random,maskgit,maskgit,maskgit,maskgit,maskgit,maskgit,maskgit,maskgit"
     n_seconds = gr.Textbox(value=10, label="Number of seconds", visible=True)
@@ -167,37 +155,22 @@ if __name__ == "__main__":
         value="0.95,0.95,0.95,0.95,0.95,0.95,0.95,0.95,0.95,0.95,0.95,0.95",
         label="Temperatures",
     )
-    semantic_temperature = gr.Slider(
-        minimum=0,
-        maximum=2.0,
-        value=1.0,
-        step=0.1,
-        interactive=True,
-        label="Semantic temperature",
-        visible=True,
-    )
 
     audio_outputs = [gr.Audio(label="Generated") for _ in range(batch_size)]
     demo = gr.Interface(
         fn=generate_audio,
         inputs=[
-            text,
-            semantic_token_sequence,
-            ckpt_dropdown,
-            semantic_ckpt_dropdown,
             n_seconds,
             iterations,
             score_strategies,
             temperatures,
-            semantic_temperature,
         ],
         outputs=[
             *audio_outputs,
-            gr.Textbox(label="Semantic tokens"),
             gr.Textbox(label="RTF (SoundStorm+SoundStream"),
         ],
         title="SoundStorm",
         description="Demo for efficient, non-autoregressive audio generation.",
     )
     demo.queue(concurrency_count=4)
-    demo.launch(share=True)
+    demo.launch(server_name="0.0.0.0")

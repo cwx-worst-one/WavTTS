@@ -10,7 +10,6 @@ if __name__ == "__main__":
     audio_dir = "/mnt/bn/janne-research-xl/data/mcc/billboard_hot_200"
     mp3_dir = "/mnt/bn/janne-research-xl/data/mcc/billboard_hot_200_mp3_320kbps"
     audio_fps = glob(os.path.join(audio_dir, "*.flac"))
-
     def parallelize(fp):
         try:
             mp3_fn = os.path.basename(fp).replace(".flac", ".mp3")

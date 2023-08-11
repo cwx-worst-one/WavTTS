@@ -31,7 +31,6 @@ SAMPLE_RATE = 44100
 
 logger = logging.getLogger(__name__)
 
-
 def _load_waveform(path: str, exp_sample_rate: int, read_binary: bool = True):
     if read_binary:
         with open(path, "rb") as f:
@@ -119,6 +118,17 @@ class BillboardHot200Dataset(Dataset):
         return data
 
     def process_split(self, data: pd.DataFrame, seed: int = 42) -> pd.DataFrame:
+        """This function generates a split for the Billboard Hot 200 dataset.
+        We make sure to include tracks from non-overlapping artists in our train/test
+        splits. The seed (default: 42) ensures that the split is reproducible.
+
+        Args:
+            data (pd.DataFrame): _description_
+            seed (int, optional): _description_. Defaults to 42.
+
+        Returns:
+            pd.DataFrame: _description_
+        """
         artists = data.primary_artist_name.unique()
         n_artists = len(artists)
         n_test_artists = int(0.1 * n_artists)
@@ -236,10 +246,10 @@ class BillboardHot200WebDataModule(BaseDataModule):
         self,
         sample_rate: int,
         batch_size: int,
-        shuffle_buffer_size: int,
+        shuffle_buffer_size: int = 64,
         duration: Optional[float] = None,
         split: str = "full",
-        num_workers: int = 8,
+        num_workers: int = 32,
         pin_memory: bool = True,
         resampled: bool = True,
         shardshuffle: bool = True,
@@ -286,8 +296,10 @@ class BillboardHot200WebDataModule(BaseDataModule):
     @staticmethod
     def get_hdfs_shard_uri(split: str):
         if split == "full":
-            train_shards = "pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/music/billboard_hot200/train/{00000..00230}.tar"
-            valid_shards = "pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/music/billboard_hot200/test/{00000..00025}.tar"
+            train_shards = "pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/music/billboard_hot200_mp3/train/{00000..00168}.tar"
+            valid_shards = "pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/music/billboard_hot200_mp3/test/{00000..00017}.tar"
+            # train_shards = "/mnt/bn/janne-research-xl/data/shards/billboard_hot200_mp3/train/{00000..00168}.tar"
+            # valid_shards = "/mnt/bn/janne-research-xl/data/shards/billboard_hot200_mp3/test/{00000..00017}.tar"
         else:
             raise NotImplementedError("Choose between `full`")
         return train_shards, valid_shards
@@ -304,7 +316,6 @@ class BillboardHot200WebDataModule(BaseDataModule):
         )
         index = []
         current_shard = writer.shard
-        slice_sec = 30
         for idx, item in enumerate(tqdm(dataset)):
             if current_shard != writer.shard:
                 index_fp = os.path.join(
@@ -340,8 +351,10 @@ class BillboardHot200WebDataModule(BaseDataModule):
         return int(self.duration * self.sample_rate)
 
     def wds_transform(self, item) -> Dict[str, Any]:
-        audio = item["audio.mp3"]
-        audio, sr = sf.read(io.BytesIO(audio))
+        audio = item["audio.mp3"] #.flac
+
+        audio, sr = torchaudio.load(io.BytesIO(audio), format="mp3")
+        # audio, sr = sf.read(io.BytesIO(audio)) # .flac
 
         audio = self.base_transform(audio)
 
@@ -360,7 +373,7 @@ class BillboardHot200WebDataModule(BaseDataModule):
 
 
 if __name__ == "__main__":
-    split = "train"  # "test"
+    split = "train"  # "train"
     # audio_dir = "/mnt/bn/janne-research-xl/data/mcc/billboard_hot_200/"
     audio_dir = "/mnt/bn/janne-research-xl/data/mcc/billboard_hot_200_mp3_320kbps"
     metadata_fp = "billboard_hot_200_spotify_mcc_filtered.pickle"
@@ -380,7 +393,6 @@ if __name__ == "__main__":
 
     pattern = f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/billboard_hot200_mp3/{split}/%05d.tar"
     maxsize = 1 << 30  # 1GiB, maximum size of each shard
-
     dataset.random_shuffle()
     start_shard_idx = 0
     BillboardHot200WebDataModule.create_webdataset(

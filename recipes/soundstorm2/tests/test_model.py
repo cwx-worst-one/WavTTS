@@ -1,3 +1,5 @@
+import random
+
 import pytest
 
 from recipes.soundstorm2.lightning.soundstorm import SoundStorm, SoundStormConfig
@@ -10,11 +12,11 @@ from tests.unittests.models.utils import ids_tensor
 class SoundStormModelTester:
     def __init__(
         self,
-        batch_size=14,
-        seq_len: int = 500,
-        n_head: int = 2,
-        n_embd: int = 32,
-        n_layer: int = 2,
+        batch_size=3,
+        seq_len: int = 7,
+        n_head: int = 1,
+        n_embd: int = 4,
+        n_layer: int = 1,
         n_quantizers: int = 12,
         attention_kwargs={"enable_flash": True, "enable_mem_efficient": False},
     ):
@@ -40,7 +42,7 @@ class SoundStormModelTester:
             self.model.audio_model.codebook_size,
             device=torch_device,
         )
-        selected_qs = list(range(0, self.n_quantizers)) * self.batch_size
+        selected_qs = random.choices(list(range(0, self.n_quantizers)), k=self.batch_size)
         return audio_tokens, selected_qs
 
     def create_and_test_model(self):
@@ -67,7 +69,7 @@ def test_model(soundstorm: SoundStormModelTester) -> None:
     out = model(audio_tokens, selected_qs)
     assert out.shape == (
         soundstorm.batch_size,
-        soundstorm.num_quantizers,
+        # soundstorm.n_quantizers,
         soundstorm.seq_len,
         soundstorm.model.out_dim,
     )

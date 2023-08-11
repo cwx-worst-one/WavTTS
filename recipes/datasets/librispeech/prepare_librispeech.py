@@ -1,6 +1,6 @@
 import torchaudio
 
-from recipes.datasets.librispeech import LibriSpeechDataset, LibriSpeechWebDataModule
+from recipes.datasets.librispeech import LibriSpeechDataset, LibriSpeechWebDataModule, SAMPLE_RATE
 
 if __name__ == "__main__":
 

@@ -8,7 +8,6 @@ from samantha.utils.hdfs_tools import hdfs_lightning_load_from_checkpoint
 
 logger = logging.getLogger(__name__)
 
-
 class BestRQMelModel(LightningModule):
 
     sample_rate: int = 16000

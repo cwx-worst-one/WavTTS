@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 import torch
 
-from recipes.soundstorm.lightning.masking_scheme import (
+from recipes.soundstorm2.lightning.masking_scheme import (
     SoundStormMaskingScheme,
     cosine_schedule,
 )
@@ -23,6 +23,7 @@ def test_cosine_schedule():
 
 @pytest.mark.parametrize("batch_size", [1, 4])
 @pytest.mark.parametrize("sample_q_uniformly", [True, False])
+@pytest.mark.parametrize("max_sample_t", [50, 400])
 @pytest.mark.parametrize("sample_t", [True, False])
 @pytest.mark.parametrize("keep_coarse_quant_idx", [None, 4, 8])
 def test_masking_scheme(

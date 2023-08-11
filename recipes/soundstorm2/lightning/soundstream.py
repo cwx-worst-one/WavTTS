@@ -1,12 +1,10 @@
 import logging
-
 import torch
 from pytorch_lightning import LightningModule
 
 from samantha.utils.hdfs_tools import hdfs_torch_load
 
 logger = logging.getLogger(__name__)
-
 
 class SoundStreamModel(LightningModule):
     pass
