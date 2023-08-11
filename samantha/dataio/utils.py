@@ -117,7 +117,8 @@ def parse_data_urls(data_id=None, data_urls=None):
 
     if data_id is not None:
         os.environ["DatasetID"] = str(data_id)
-        paths = get_dataset_collection_info(data_id)
+        path_list = get_dataset_collection_info(data_id)
+        paths = [v["data"] for v in path_list]
         return __expand_paths(paths)
 
     if isinstance(data_urls, str):
