@@ -16,6 +16,7 @@ class FineModule(BaseContinuousEmbedModule):
         required_modules,
         checkpointing=False,
         extra_params=None,
+        pretrained_path=None,
     ):
         hidden_size = extra_params['hidden_size']
         embedder_dict = {
@@ -33,6 +34,7 @@ class FineModule(BaseContinuousEmbedModule):
             target_embedder=target_embedder,
             checkpointing=checkpointing,
             extra_params=extra_params,
+            pretrained_path=pretrained_path,
         )
 
     def prepare_training_inputs(self, batch):
@@ -119,11 +121,12 @@ class CoarseModule(BaseContinuousEmbedModule):
         required_modules,
         checkpointing=False,
         extra_params=None,
+        pretrained_path=None,
     ):
         hidden_size = extra_params['hidden_size']
-        wav2vec_codebook_size = extra_params['wav2vec_codebook_size']
+        semantic_codebook_size = extra_params['semantic_codebook_size']
         embedder_dict = {
-            'semantic': WavToVecTokenEmbedder(vocab_size=wav2vec_codebook_size, embedding_dim=hidden_size, add_sos=False)
+            'semantic': WavToVecTokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=False)
         }
         input_embedders = nn.ModuleDict(embedder_dict)
         target_embedder = SoundstreamTokenEmbedder(layer_range=(0,4), embedding_dim=hidden_size, add_sos=True)
@@ -137,6 +140,7 @@ class CoarseModule(BaseContinuousEmbedModule):
             target_embedder=target_embedder,
             checkpointing=checkpointing,
             extra_params=extra_params,
+            pretrained_path=pretrained_path,
         )
 
     def prepare_inputs_embeddings(self, batch):
@@ -165,7 +169,7 @@ class CoarseModule(BaseContinuousEmbedModule):
     def predict(self, semantic_samples, hp):
         input_embeds = self.input_embedders['semantic'].embed(token_ids=semantic_samples)
 
-        input_framerate = hp.wav2vec_frame_rate
+        input_framerate = hp.semantic_frame_rate
         output_framerate = hp.soundstream_frame_rate * hp.num_coarse
         num_coarse = hp.num_coarse
 

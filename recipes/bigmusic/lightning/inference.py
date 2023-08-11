@@ -108,14 +108,18 @@ class ConditionalMulanPhonemeInferenceModule(pl.LightningModule):
         for i in range(self.extra_params.num_rounds):
             self._predict_step(batch, i)
 
-def save_outputs(wavs, conditions, batch, round, output_dir):
+def save_outputs(wavs, batch, round, output_dir):
     conditions = batch['conditions']
-    lyrics = batch['lyrics']
-    prompts = batch['mulan_text']
-    mulan_audio = batch.get('mulan_audio', None)
-    vocal_audio = batch.get('vocal_audio', None)
+    lyrics = batch.get('lyrics')
+    prompts = batch.get('mulan_text')
+    categories = batch.get('category')
+    mulan_audio = batch.get('mulan_audio')
+    vocal_audio = batch.get('vocal_audio')
     for i, wav in enumerate(wavs):
-        wav_dir = os.path.join(output_dir)
+        if categories is not None:
+            wav_dir = os.path.join(output_dir, categories[i])
+        else:
+            wav_dir = output_dir
         os.makedirs(wav_dir, exist_ok=True)
         file_name = ""
         if 'lyrics_tokens' in conditions:

@@ -30,7 +30,7 @@ class LyricsDataset(WebPipeline):
         sample_duration: float,
         audio_keys: dict,
         audio_format: str = "mp3",
-        max_num_segments: int = None,
+        max_num_segments: int = 10,
         shuffle_segments: bool = True,
         handler: Callable = wds.warn_and_continue,
         **kwargs,
@@ -320,7 +320,7 @@ class DefaultDatasets():
         def mulan_audio_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len):
             mixture_ds_batched = transform_dataset(
                 dataset=DefaultDatasets.Basic.mixture_dataset(sample_rate, sample_duration),
-                segment_transforms=[LyricsTokenTransform(lyrics_max_seq_len=lyrics_max_seq_len, allow_unknown=True)],
+                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len)],
                 batch_transforms=[AddConditionsTransform("mulan_audio,lyrics_tokens")],
                 batch_size=batch_size,
                 shuffle_buffer_size=shuffle_buffer_size
@@ -345,7 +345,7 @@ class DefaultDatasets():
             mixture_ds_batched = transform_dataset(
                 # only mcc60 has metadata attached for converting to mulan_text
                 dataset=DefaultDatasets.Basic.mcc60m_mixture_dataset(sample_rate, sample_duration),
-                segment_transforms=[LyricsTokenTransform(lyrics_max_seq_len=lyrics_max_seq_len, allow_unknown=True), MetadataMulanTextTransformVocalTag()],
+                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len), MetadataMulanTextTransformVocalTag()],
                 batch_transforms=[AddConditionsTransform("mulan_text,lyrics_tokens")],
                 batch_size=batch_size,
                 shuffle_buffer_size=shuffle_buffer_size
@@ -370,7 +370,7 @@ class DefaultDatasets():
             mixture_ds_batched = transform_dataset(
                 # only mcc60 has metadata attached for converting to mulan_text
                 dataset=DefaultDatasets.Basic.mcc60m_mixture_dataset(sample_rate, sample_duration),
-                segment_transforms=[LyricsTokenTransform(lyrics_max_seq_len=lyrics_max_seq_len, allow_unknown=True), MetadataT5Transform()],
+                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len), MetadataT5Transform()],
                 batch_transforms=[AddConditionsTransform("metadata_tokens,lyrics_tokens"), ],
                 batch_size=batch_size,
                 shuffle_buffer_size=shuffle_buffer_size
@@ -396,14 +396,14 @@ class DefaultDatasets():
 
             vocal_ds_batched = transform_dataset(
                 dataset=DefaultDatasets.Basic.vocal_only_dataset(sample_rate, sample_duration),
-                segment_transforms=[LyricsTokenTransform(lyrics_max_seq_len=lyrics_max_seq_len, allow_unknown=True), VocalChromaTransform()],
+                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len), VocalChromaTransform()],
                 batch_transforms=[AddConditionsTransform("lyrics_tokens,vocal_audio,vocal_chroma")],
                 batch_size=batch_size,
                 shuffle_buffer_size=shuffle_buffer_size
             )
             mss_ds_batched = transform_dataset(
                 dataset=DefaultDatasets.Basic.resso_mss_dataset(sample_rate=sample_rate, sample_duration=sample_duration),
-                segment_transforms=[LyricsTokenTransform(lyrics_max_seq_len=lyrics_max_seq_len, allow_unknown=True), VocalChromaTransform()],
+                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len), VocalChromaTransform()],
                 batch_transforms=[AddConditionsTransform("mulan_audio,lyrics_tokens,vocal_audio,vocal_chroma")],
                 batch_size=batch_size,
                 shuffle_buffer_size=shuffle_buffer_size
@@ -443,7 +443,7 @@ class DefaultDatasets():
         def default_validation_dataset(sample_rate, sample_duration, batch_size, lyrics_max_seq_len):
             return transform_dataset(
                 dataset=DefaultDatasets.Basic.karaoke_validation_dataset(sample_rate, sample_duration),
-                segment_transforms=[LyricsTokenTransform(lyrics_max_seq_len=lyrics_max_seq_len, allow_unknown=False)],
+                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len)],
                 batch_transforms=[AddConditionsTransform("mulan_audio,lyrics_tokens")],
                 batch_size=batch_size,
                 shuffle_buffer_size=None

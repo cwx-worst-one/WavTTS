@@ -13,7 +13,7 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 extra_params:
     sample_rate: 24000
     duration: 10
-    lyrics_codebook_size: 80
+    lyrics_codebook_size: 400
     lyrics_max_seq_len: 150
     soundstream_codebook_size: 1024
     soundstream_frame_rate: 50
@@ -23,7 +23,6 @@ extra_params:
     num_fine: 8
     dataset_type: mulan_audio # mulan_audio|mulan_text|t5_token|legacy_audio
     soundstream_vocab_size: !ref <extra_params[soundstream_codebook_size]> * <extra_params[num_coarse]>
-    pretrained_path: null # for loading state dicts
 
 # running parameters
 run_opts:
@@ -104,6 +103,7 @@ pl_module: !new:recipes.bigmusic.lightning.phoneme_coarse_modules.LyricsCoarseMo
             hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
             initializer: !name:recipes.musiclm.requires.model_initializer.init_soundstream
                 cache_dir: !ref <run_opts[cache_dir]>
+    pretrained_path: null # for loading state dicts
 
 logger: !new:pytorch_lightning.loggers.TensorBoardLogger
     save_dir: !ref <run_opts[log_dir]>

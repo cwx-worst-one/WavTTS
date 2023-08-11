@@ -130,6 +130,7 @@ class BaseContinuousEmbedModule(BaseModule):
         target_embedder: TokenEmbedder,
         checkpointing=False,
         extra_params=None,
+        pretrained_path=None,
     ):
         super().__init__(model_cls, criterion_cls, optimizer_cls, scheduler_cls, required_modules, checkpointing, extra_params)
         delete_embedding_module(self.model)
@@ -139,13 +140,23 @@ class BaseContinuousEmbedModule(BaseModule):
         self.target_embedder.apply(self.model._init_weights)
         self.use_cross_attn = self.extra_params.get("use_cross_attn", False)
 
-        if self.extra_params.get('pretrained_path'):
-            self.load_from_pretrained(self.extra_params.pretrained_path)
+        if pretrained_path is not None:
+            self.load_from_pretrained(pretrained_path)
 
     def load_from_pretrained(self, pretrained_path=None):
         print('Loading pre-trained model from checkpoint', pretrained_path)
         state = torch.load(pretrained_path)
-        self.load_state_dict(state['state_dict'], strict=False)
+        try:
+            self.load_state_dict(state['state_dict'], strict=False)
+        except RuntimeError as e:
+            print('Embedding size mismatch. Removing embeddings before load')
+            input_embedders, self.input_embedders = self.input_embedders, None
+            self.load_state_dict(state['state_dict'], strict=False)
+            self.input_embedders = input_embedders
+            
+    def infer_batch_size(self, batch):
+        batch_size = [len(t) for t in batch.values() if torch.is_tensor(t) or isinstance(t, list)][0]
+        return batch_size
 
     def prepare_inputs_embeddings(self, batch):
         raise NotImplementedError()
@@ -223,6 +234,7 @@ class BaseContinuousEmbedModule(BaseModule):
 
             # Get input slice
             if input_framerate is None: # Keep whole input if no framerate (e.g. mulan->semantic)
+                input_beg, input_end = 0, "end"
                 input_slice = inputs_embeds
             else:
                 input_beg, input_end = duration_to_framerate((slice_beg, slice_end), input_framerate)
@@ -231,7 +243,7 @@ class BaseContinuousEmbedModule(BaseModule):
             # Get prefix slice
             output_beg, output_end = duration_to_framerate((slice_beg, slice_end), output_framerate)
             prefix_beg, prefix_end = duration_to_framerate((slice_beg, slice_beg+cache_len), output_framerate)
-            prefix_slice = output_embeds[prefix_beg:prefix_end] if output_embeds is not None else torch.zeros((batch_size, 0, sos_embeds.size(-1)), device=sos_embeds.device)
+            prefix_slice = output_embeds[:, prefix_beg:prefix_end] if output_embeds is not None else torch.zeros((batch_size, 0, sos_embeds.size(-1)), device=sos_embeds.device)
 
             # Full prompt
             if self.use_cross_attn:

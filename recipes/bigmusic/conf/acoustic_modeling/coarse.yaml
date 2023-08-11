@@ -13,8 +13,8 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 extra_params:
     sample_rate: 24000
     duration: 10
-    wav2vec_codebook_size: 1024
-    wav2vec_frame_rate: 25
+    semantic_codebook_size: 1024
+    semantic_frame_rate: 25
     soundstream_codebook_size: 1024
     soundstream_frame_rate: 50
     hidden_size: 1024

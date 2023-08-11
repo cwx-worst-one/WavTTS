@@ -16,8 +16,6 @@ from recipes.musiclm.transforms.audio import (
     NormalizeAudio
 )
 from recipes.musiclm.transforms.base import TransformBase
-from recipes.bigmusic.datasets.tokenizers.phoneme_tokenizer import PhonemeTokenizer
-from transformers import T5Tokenizer
 
 class LyricsSegmentTransforms(TransformBase):
     def __init__(
@@ -26,7 +24,7 @@ class LyricsSegmentTransforms(TransformBase):
         sample_duration: int,
         audio_format: str,
         audio_keys: dict,
-        max_num_segments = 6, 
+        max_num_segments = 10,
         shuffle_segments: bool = True,
         url2index = None,
         handler: Callable = wds.ignore_and_continue,
@@ -192,7 +190,7 @@ def lyrics_to_segments(lyrics, maximum_clipped_length=10, minimum_voice_duration
 
             segment = None
         
-        # If current segment is long. skip: really long line. Break into multiple segments
+        # Break long segments into multiple segments
         if current_segment and current_segment.duration > maximum_clipped_length:
             cached_index = 0
             for i in range(math.ceil(current_segment.duration / maximum_clipped_length)):

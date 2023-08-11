@@ -9,10 +9,21 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
 
 extra_params:
+    num_rounds: 1
+    # prompt_path: /mnt/bn/ashaw-us/repos/samantha/recipes/bigmusic/datasets/inference_prompts/instrumental.json
+    prompt_path: "/mnt/bn/audio-diffusion/data/google_prompts/text_prompt_collection_20230713.csv"
+    inference_conditions: mulan_text,lyrics_tokens # mulan_text|mulan_audio,lyrics_tokens,vocal_audio|vocal_text,chroma
+    max_items: null
+    is_lyrics_prompt: False
+    run_combinations: False
+
     output_dir: ./generated_output/conditional
-    semantic_ckpt: "/mnt/bn/lyrics-to-song/ashaw/logs/l2s/semantic_unified/semantic_model_mulan_160/v1/checkpoints/last.ckpt"
+    semantic_ckpt: "/mnt/bn/lyrics-to-song/ashaw/logs/l2s/semantic_unified/semantic_model_mulan/semantic_unified_ctc_tokenizer/checkpoints/step=032000-val_accu_0=33.00.ckpt"
+
+    # 40m instrumental checkpoint
     # coarse_ckpt: "/mnt/bn/audio-diffusion/ckpts/musiclm/coarse_flash_llama/mcc40m/step=099000-tr_loss=3.0950.ckpt"
-    coarse_ckpt: "/mnt/bn/lyrics-to-song/ashaw/logs/l2s/coarse_unified/coarse_flash_llama_wav2vec/resso_mcc_wav2vec/checkpoints/step=200000-val_accu_0=16.64.ckpt"
+    # Re-trained vocal checkpoint
+    coarse_ckpt: "/mnt/bn/lyrics-to-song/ashaw/logs/l2s/coarse_unified/coarse_flash_llama_wav2vec/retrained_params/checkpoints/step=065000-val_accu_0=15.83.ckpt"
     # Fine - partial 60m balanced
     fine_ckpt: "/mnt/bn/lyrics-to-song/ashaw/logs/l2s/fine/fine_flash_llama_mcc_vocals/vocal_finetune_60m/checkpoints/last.ckpt"
 
@@ -22,26 +33,23 @@ extra_params:
     coarse_stride: 5
     fine_stride: 3
 
-    num_rounds: 1
-    max_items: 8
     semantic_temperature: 1.0
     coarse_temperature: 0.9
     fine_temperature: 0.8
     sample_mode: "gumbel"
-    prompt_path: /mnt/bn/ashaw-us/repos/samantha/recipes/bigmusic/datasets/inference_prompts/instrumental.json
-    run_combinations: False
-    conditions: mulan_text,lyrics_tokens # mulan_text|mulan_audio,lyrics_tokens,vocal_audio|vocal_text,chroma
 
     # Model Settings
     sample_rate: 24000
     duration: 10
     lyrics_max_seq_len: 150
-    wav2vec_frame_rate: 25
-    wav2vec_codebook_size: 1024
+    semantic_frame_rate: 25
+    semantic_codebook_size: 1024
     soundstream_codebook_size: 1024
     soundstream_frame_rate: 50
     num_coarse: 4
     num_fine: 8
+    # wav2vec_frame_rate: 25
+    # wav2vec_codebook_size: 1024
 
 run_opts:
     fast_dev_run: False
@@ -55,12 +63,13 @@ run_opts:
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
-predict_dataset: !apply:recipes.bigmusic.datasets.inference.dataset_from_prompt
+predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_from_prompt
     prompt_path: !ref <extra_params[prompt_path]>
-    conditions: !ref <extra_params[conditions]>
+    conditions: !ref <extra_params[inference_conditions]>
     max_items: !ref <extra_params[max_items]>
     batch_size: !ref <run_opts[batch_size]>
     run_combinations: !ref <extra_params[run_combinations]>
+    is_lyrics_prompt: !ref <extra_params[is_lyrics_prompt]>
 
 pl_datamodule: !new:recipes.bigmusic.datasets.lyrics.LyricsDataModule
     predict_dataset: !ref <predict_dataset>

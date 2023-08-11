@@ -13,15 +13,13 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 extra_params:
     sample_rate: 24000
     duration: 10
-    lyrics_codebook_size: 80
+    lyrics_codebook_size: 400
     lyrics_max_seq_len: 150
-    wav2vec_codebook_size: 1024
-    wav2vec_frame_rate: 25
+    semantic_codebook_size: 1024
+    semantic_frame_rate: 25
     mulan_embed_dim: 512
     hidden_size: 1024
     dataset_type: mulan_audio # mulan_audio|mulan_text|t5_token|legacy_audio
-
-    pretrained_path: null # for loading state dicts
 
 # running parameters
 run_opts:
@@ -67,7 +65,7 @@ model_config: !new:transformers.LlamaConfig
     initializer_range: 0.02
     rms_norm_eps: 1e-6
     use_cache: False
-    num_logits: !ref <extra_params[wav2vec_codebook_size]>
+    num_logits: !ref <extra_params[semantic_codebook_size]>
 
 model_cls: !name:samantha.models.flash_llama.LlamaForCausalLM
     config: !ref <model_config>
@@ -106,6 +104,7 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
             - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_10.npy
             - !name:recipes.musiclm.requires.model_initializer.init_semantic_centers
               cache_dir: !ref <run_opts[cache_dir]>
+    pretrained_path: null # for loading state dicts
 
 logger: !new:pytorch_lightning.loggers.TensorBoardLogger
     save_dir: !ref <run_opts[log_dir]>

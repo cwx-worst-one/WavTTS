@@ -44,7 +44,7 @@ class ConditionalCoarseModule(BaseContinuousEmbedModule):
 
     def prepare_inputs_embeddings(self, batch):
         conditions = batch['conditions'].split(',')
-        batch_size = [t.shape[0] for t in batch.values() if torch.is_tensor(t)][0]
+        batch_size = self.infer_batch_size(batch)
         with_sos=True
         # convert inputs to conditions
         inputs_embeds = []
@@ -124,8 +124,8 @@ class LyricsCoarseModule(BaseContinuousEmbedModule):
 
     def prepare_inputs_embeddings(self, batch):
         conditions = batch['conditions'].split(',')
-        batch_size = [t.shape[0] for t in batch.values() if torch.is_tensor(t)][0]
-        with_sos=True # TODO: clean this up
+        batch_size = self.infer_batch_size(batch)
+        with_sos=True # TODO: (AS) clean this up
         # convert inputs to conditions
         inputs_embeds = []
         if 'mulan_text' in conditions:
@@ -208,7 +208,7 @@ class T55LyricsCoarseModule(BaseContinuousEmbedModule):
 
     def prepare_inputs_embeddings(self, batch):
         conditions = batch['conditions'].split(',')
-        batch_size = [t.shape[0] for t in batch.values() if torch.is_tensor(t)][0]
+        batch_size = self.infer_batch_size(batch)
         with_sos=True
         # convert inputs to conditions
         inputs_embeds = []

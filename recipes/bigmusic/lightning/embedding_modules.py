@@ -57,7 +57,6 @@ def get_mulan_tokens(requires, x, data_type="music"):
 def get_t5_embeds(requires, x):
     return requires['t5'](input_ids=x)['last_hidden_state']
 
-
 class BaseEmbedder(nn.Module):
     @abstractmethod
     def embed(self, requires, batch, token_ids=None):
@@ -178,8 +177,8 @@ class MulanTokenEmbedder(TokenEmbedder):
 
 class LyricsTokenEmbedder(TokenEmbedder):
     def __init__(self, vocab_size, embedding_dim, add_sos=False):
-        super().__init__(vocab_size, embedding_dim, add_sos=add_sos, padding_idx=70)
-    # TODO: add padding_idx
+        super().__init__(vocab_size, embedding_dim, add_sos=add_sos)
+    # TODO: (AS) add padding_idx
     def get_tokens(self, requires, input):
         return input
 class MetadataT5TokenEmbedder(ContinuousEmbedder):

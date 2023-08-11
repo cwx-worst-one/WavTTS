@@ -7,8 +7,15 @@ from dataclasses import dataclass
 import math
 import librosa
 import numpy as np
-from recipes.bigmusic.datasets.tokenizers.phoneme_tokenizer import PhonemeTokenizer
 from transformers import T5Tokenizer
+from recipes.bigmusic.datasets.tokenizers.cmu_phonemes import CMUPhonemeTokenizer
+from transformers import Wav2Vec2PhonemeCTCTokenizer
+from recipes.musiclm.utils.dist import local_zero_first
+
+def pad_crop(sequence, seq_len, dtype, padding_value=0):
+    item_pad = torch.full((seq_len,), fill_value=padding_value, dtype=dtype)
+    item_pad[:len(sequence)] = torch.as_tensor(sequence[:seq_len])
+    return item_pad
 
 class MCCInstrumentalBatchTransform():
     "Converts musiclm dataloader to work with bigmusic models"
@@ -70,29 +77,39 @@ class MetadataMulanTextTransformVocalTag(MetadataMulanTextTransform):
     
 # Segment Transforms
 class LyricsTokenTransform():
-    def __init__(self, lyrics_max_seq_len: int, lyrics_tokenizer=None, allow_unknown=False, handler: Callable = wds.ignore_and_continue):
-        if lyrics_tokenizer is None:
-            lyrics_tokenizer = PhonemeTokenizer(allow_unknown=allow_unknown)
+    def __init__(self, lyrics_tokenizer, pad_id, lyrics_max_seq_len: int, handler: Callable = wds.ignore_and_continue):
         self.lyrics_tokenizer = lyrics_tokenizer
         self.lyrics_max_seq_len = lyrics_max_seq_len
+        self.pad_id = pad_id
         self.handler = handler
 
     def __call__(self, item):
         try:
             lyrics_text = item['lyrics']
-            lyrics_tokens = self.lyrics_tokenizer(lyrics_text)
+            lyrics_tokens = self.lyrics_tokenizer(lyrics_text)['input_ids']
             if len(lyrics_tokens) > self.lyrics_max_seq_len:
                 return None
         except Exception as e:
             self.handler(e)
             return None
-        num_pad = self.lyrics_max_seq_len - len(lyrics_tokens)
-        if num_pad > 0:
-            pad_id = self.lyrics_tokenizer.pad_id
-            lyrics_tokens += [pad_id for _ in range(num_pad)]
-        else: 
-            lyrics_tokens = lyrics_tokens[:self.lyrics_max_seq_len]
-        return { **item, 'lyrics_tokens': torch.LongTensor(lyrics_tokens) }    
+        
+        lyrics_tokens = pad_crop(torch.tensor(lyrics_tokens), self.lyrics_max_seq_len, torch.int, padding_value=self.pad_id)
+        return { **item, 'lyrics_tokens': lyrics_tokens }
+
+    @classmethod
+    def init_cmu_tokenizer(cls, lyrics_max_seq_len, allow_unknown=False, **kwargs):
+        cmu_tokenizer = CMUPhonemeTokenizer(allow_unknown=allow_unknown)
+        return LyricsTokenTransform(cmu_tokenizer, cmu_tokenizer.pad_id, lyrics_max_seq_len, **kwargs)
+
+    @classmethod
+    def init_espeak_tokenizer(cls, lyrics_max_seq_len, **kwargs):
+        with local_zero_first():
+            espeak_tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-cv-ft")
+        import logging, phonemizer
+        # To silence espeak logging warnings: "WARNING - words count mismatch on 100.0% of the lines"
+        phonemizer.logger.get_logger().setLevel(logging.ERROR)
+        return LyricsTokenTransform(espeak_tokenizer, espeak_tokenizer.pad_token_id, lyrics_max_seq_len, **kwargs)
+
 
 class AddConditionsTransform():
     def __init__(self, conditions=""):

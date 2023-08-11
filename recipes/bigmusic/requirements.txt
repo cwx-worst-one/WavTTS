@@ -1,0 +1,5 @@
+--index-url https://bytedpypi.byted.org/simple
+torch_complex
+rotary_embedding_torch
+transformers
+phonemizer

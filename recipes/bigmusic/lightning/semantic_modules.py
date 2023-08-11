@@ -14,18 +14,19 @@ class SemanticModule(BaseContinuousEmbedModule):
         required_modules,
         checkpointing=False,
         extra_params=None,
+        pretrained_path=None,
     ):
         
         hidden_size = extra_params['hidden_size']
         lyrics_vocab_size = extra_params['lyrics_codebook_size']
         mulan_embed_dim = extra_params['mulan_embed_dim']
-        wav2vec_vocab_size = extra_params['wav2vec_codebook_size']
+        semantic_codebook_size = extra_params['semantic_codebook_size']
         embedder_dict = {
             'mulan': MulanEmbedder(data_type='music', input_dim=mulan_embed_dim, embedding_dim=hidden_size, add_sos=True),
             'lyrics_tokens': LyricsTokenEmbedder(vocab_size=lyrics_vocab_size, embedding_dim=hidden_size, add_sos=True),
         }
         input_embedders = nn.ModuleDict(embedder_dict)
-        target_embedder = WavToVecTokenEmbedder(vocab_size=wav2vec_vocab_size, embedding_dim=hidden_size, add_sos=True)
+        target_embedder = WavToVecTokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=True)
 
         super().__init__(
             model_cls=model_cls,
@@ -37,12 +38,13 @@ class SemanticModule(BaseContinuousEmbedModule):
             target_embedder=target_embedder,
             checkpointing=checkpointing,
             extra_params=extra_params,
+            pretrained_path=pretrained_path,
         )
         self.save_hyperparameters()
 
     def prepare_inputs_embeddings(self, batch):
         conditions = batch['conditions'].split(',')
-        batch_size = [t.shape[0] for t in batch.values() if torch.is_tensor(t)][0]
+        batch_size = self.infer_batch_size(batch)
         with_sos=True
         # convert inputs to conditions
         inputs_embeds = []
@@ -64,7 +66,7 @@ class SemanticModule(BaseContinuousEmbedModule):
 
     @torch.no_grad()
     def predict(self, batch, hp):
-        frame_rate = self.extra_params.wav2vec_frame_rate
+        frame_rate = self.extra_params.semantic_frame_rate
         num_tokens = hp.duration * frame_rate
         temperature = hp.semantic_temperature
 
@@ -82,17 +84,18 @@ class SemanticT5Module(BaseContinuousEmbedModule):
         required_modules,
         checkpointing=False,
         extra_params=None,
+        pretrained_path=None,
     ):
         
         hidden_size = extra_params['hidden_size']
         lyrics_vocab_size = extra_params['lyrics_codebook_size']
-        wav2vec_vocab_size = extra_params['wav2vec_codebook_size']
+        semantic_codebook_size = extra_params['semantic_codebook_size']
         embedder_dict = {
             'metadata_tokens': MetadataT5TokenEmbedder(embedding_dim=hidden_size, add_sos=True),
             'lyrics_tokens': LyricsTokenEmbedder(vocab_size=lyrics_vocab_size, embedding_dim=hidden_size, add_sos=True),
         }
         input_embedders = nn.ModuleDict(embedder_dict)
-        target_embedder = WavToVecTokenEmbedder(vocab_size=wav2vec_vocab_size, embedding_dim=hidden_size, add_sos=True)
+        target_embedder = WavToVecTokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=True)
 
         super().__init__(
             model_cls=model_cls,
@@ -104,12 +107,13 @@ class SemanticT5Module(BaseContinuousEmbedModule):
             target_embedder=target_embedder,
             checkpointing=checkpointing,
             extra_params=extra_params,
+            pretrained_path=pretrained_path,
         )
         self.save_hyperparameters()
 
     def prepare_inputs_embeddings(self, batch):
         conditions = batch['conditions'].split(',')
-        batch_size = [t.shape[0] for t in batch.values() if torch.is_tensor(t)][0]
+        batch_size = self.infer_batch_size(batch)
         with_sos=True
         # convert inputs to conditions
         inputs_embeds = []
@@ -128,9 +132,10 @@ class SemanticT5Module(BaseContinuousEmbedModule):
 
     @torch.no_grad()
     def predict(self, batch, hp):
-        frame_rate = self.extra_params.wav2vec_frame_rate
+        frame_rate = self.extra_params.semantic_frame_rate
         num_tokens = hp.duration * frame_rate
         temperature = hp.semantic_temperature
 
         inputs_embeds = self.prepare_inputs_embeddings(batch)
         return super().predict(inputs_embeds, num_tokens, temperature)
+
