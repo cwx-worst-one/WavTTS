@@ -2,9 +2,8 @@ import re
 import tarfile
 
 import braceexpand
-from webdataset import filters, shardlists
+from webdataset import filters, shardlists, warn_and_continue
 from webdataset.compat import FluidInterface
-from webdataset.filters import reraise_exception
 from webdataset.pipeline import DataPipeline
 from webdataset.tariterators import meta_prefix, meta_suffix
 
@@ -26,7 +25,7 @@ def expand_urls(urls):
         return list(urls)
 
 
-def tar_file_iterator(fileobj, skip_meta=r"__[^/]*__($|/)", handler=reraise_exception):
+def tar_file_iterator(fileobj, skip_meta=r"__[^/]*__($|/)", handler=warn_and_continue):
     """Iterate over tar file, yielding filename, content pairs for the given tar stream.
 
     Args:
@@ -67,7 +66,7 @@ def tar_file_iterator(fileobj, skip_meta=r"__[^/]*__($|/)", handler=reraise_exce
     fileobj.close()
 
 
-def tar_file_expander(data, handler=reraise_exception):
+def tar_file_expander(data, handler=warn_and_continue):
     """Expand a stream of open tar files into a stream of tar file contents.
 
     This returns an iterator over (filename, file_contents).
@@ -91,7 +90,7 @@ def tar_file_expander(data, handler=reraise_exception):
                 break
 
 
-def tarfile_samples(src, handler=reraise_exception, skip_instance_cache=False):
+def tarfile_samples(src, handler=warn_and_continue, skip_instance_cache=False):
     streams = url_opener_ra(
         src, handler=handler, skip_instance_cache=skip_instance_cache
     )
@@ -119,7 +118,7 @@ class WebDataset(DataPipeline, FluidInterface):
     def __init__(
         self,
         urls,
-        handler=reraise_exception,
+        handler=warn_and_continue,
         resampled=False,
         shardshuffle=None,
         detshuffle=False,

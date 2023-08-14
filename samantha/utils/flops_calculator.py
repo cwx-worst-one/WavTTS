@@ -1,8 +1,8 @@
 from functools import partial
 
-from s3a.providers.ctiga.models.gpt import GPTPreTrainedModel
 from transformers import BertPreTrainedModel
 
+from samantha.models.ctiga.gpt import GPTPreTrainedModel
 from samantha.models.flash_llama import LlamaPreTrainedModel
 from samantha.models.sparse_llama import LLaMa as SparseLLama
 
