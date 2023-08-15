@@ -3,10 +3,10 @@ import os.path as osp
 import json
 from collections import OrderedDict
 from tqdm import tqdm
-# import euler
-# euler.install_thrift_import_hook()
-# from .server.sami_thrift import SAMI, InvokeRequest
-# from .server.base_thrift import Base
+import euler
+euler.install_thrift_import_hook()
+from .server.sami_thrift import SAMI, InvokeRequest
+from .server.base_thrift import Base
 import os
 
 _client = None

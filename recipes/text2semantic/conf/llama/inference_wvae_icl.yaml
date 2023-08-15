@@ -1,0 +1,46 @@
+---
+
+run_opts:
+    precision: 32
+    strategy: ddp
+    ar_model_name: VAET2SModule
+    ar_ckpt_path: epoch=00-step=55000-kl_loss=0.82.ckpt
+    output_dir: output_wavs
+    meta_lst: testset/inner/inner_long_en_meta.lst
+    num_workers: 4
+    wvae_encoder: hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/user/wangxin.colin/ckpts/wvae/wavevae_encoder_%d.pt # for va
+    wvae_decoder: hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/user/wangxin.colin/ckpts/wvae/wavevae_decoder_%d.pt # for va
+    # wvae_encoder: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wangxin.colin/ckpts/wvae/wavevae_encoder_%d.pt # for cn
+    # wvae_decoder: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wangxin.colin/ckpts/wvae/wavevae_decoder_%d.pt # for cn
+    fast_dev_run: False
+    seed: 1996
+
+predict_dataset: !new:recipes.text2semantic.datasets.meta_based_dataset.MetaBasedDataset
+    meta_lst: !ref <run_opts[meta_lst]>
+
+dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <predict_dataset>
+    num_workers: !ref <run_opts[num_workers]>
+    batch_size: null
+    drop_last: False
+
+pl_datamodule: !new:recipes.text2semantic.lit_modules.lit_data.DataModule
+    predict_dataloader: !ref <dataloader>
+
+pl_module: !new:recipes.text2semantic.lit_modules.lit_infer.BigTTSWVAEInfer
+    ar_model_name: !ref <run_opts[ar_model_name]>
+    ckpt_path: !ref <run_opts[ckpt_path]>
+    wvae_encoder: !ref <run_opts[wvae_encoder]>
+    wvae_decoder: !ref <run_opts[wvae_decoder]>
+    output_dir: !ref <run_opts[output_dir]>
+    seed: !ref <run_opts[seed]>
+
+trainer: !new:pytorch_lightning.Trainer
+    accelerator: "auto"
+    devices: "auto"
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    strategy: !ref <run_opts[strategy]>
+    precision: !ref <run_opts[precision]>
+    max_epochs: 1

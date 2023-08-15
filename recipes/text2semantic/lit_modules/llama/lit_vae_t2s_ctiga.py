@@ -138,6 +138,7 @@ class VAET2SModule(pl.LightningModule):
                 "bsz": b,
                 "seqlen": t,
                 "batch_tokens": batch_tokens,
+                "training/loss": total_loss.item(),
             },
             prog_bar=True,
             sync_dist=True
@@ -278,7 +279,7 @@ class VAET2SModule(pl.LightningModule):
 
         return z_outputs, semantic_outputs
 
-
+    predict = inference_from_text
 
 
 
