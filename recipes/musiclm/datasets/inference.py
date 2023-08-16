@@ -1,5 +1,6 @@
 from torch.utils.data import Dataset
 import pandas as pd
+import csv
 import os
 
 
@@ -8,27 +9,18 @@ class InferenceDataset(Dataset):
         self.items = items
 
     @classmethod
-    def from_prompt_path(cls, prompt_path):
+    def from_prompt_path(cls, prompt_path, skip_header=True):
         items = []
         _, ext = os.path.splitext(prompt_path)
+        skipped_header = False
         if ext == ".csv":
             with open(prompt_path, "r") as f:
-                skipped_header = False
-                for line in f:
-                    # Skip first line (header)
-                    if not skipped_header:
+                for ary in csv.reader(f):
+                    if skip_header and not skipped_header:
                         skipped_header = True
                         continue
-                    ary = line.strip().split(",")
-                    if len(ary) < 2:
-                        print(f"Skipping invalid csv line: {line.strip()}")
-                        continue
-                    items.append(
-                        {
-                            "category": ary[0],
-                            "text": ",".join(ary[1:]),
-                        }
-                    )
+                    assert len(ary) >= 2, f"Invalid csv line: {ary}"
+                    items.append({"category": ary[0], "text": ary[1]})
         else:
             with open(prompt_path, "r") as fp:
                 for line in fp.readlines():
