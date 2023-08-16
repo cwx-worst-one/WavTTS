@@ -7,27 +7,40 @@ from samantha.utils.hparams import DotDict
 import json
 import math
 import random
+from transformers import LlamaTokenizer
+
 
 class PhoneTokenizerWithAudioTokens:
-    def __init__(self, phone_token_num, speaker_token_num) -> None:
+    def __init__(self, phone_token_num, speaker_token_num, bpe_tokens_num=0) -> None:
         self.speaker_token_num = speaker_token_num
         self.phone_token_num = phone_token_num
+        self.bpe_tokens_num = bpe_tokens_num
         self.vocab_size = (
-            speaker_token_num + phone_token_num + 3
+            speaker_token_num + phone_token_num + 3 + bpe_tokens_num
         )  # <s> </s>, <sep>, <pad>
         self.pad = 0
         self.bos = self.vocab_size - 1
         self.eos = self.vocab_size - 1
         self.sep = self.vocab_size - 2
 
-    def tokenize(self, inputs, input_key): 
+    def tokenize(self, inputs, input_key):
+        """
+        pad: 0
+        textid: 
+        (bpe):
+        speaker_token_num:
+        sep: 15565-2 = 15563
+        bos=eos: 15565-1 = 15564
+        """
         if input_key == "inputs":  # text_id
             # if inputs.max() >= self.phone_token_num:
             #     print(inputs, ' is OOV, ignore ...')
             #     return None
             return inputs + 1
-        elif input_key == "targets":  # wav_id
+        elif input_key == "bpe": # bpe_id
             return inputs + 1 + self.phone_token_num
+        elif input_key == "spk":  # spk_id
+            return inputs + 1 + self.phone_token_num + self.bpe_tokens_num
         else:
             return None
 
@@ -37,8 +50,19 @@ class ContinuousTTSDataset(Dataset):
         self.path = path
         self.hp = DotDict(hp)
         self.metas = self.get_metadata(path)
+
+        if bpe_dir:
+            print('##### Using BPE #####')
+            self.bpe_tokenizer = LlamaTokenizer.from_pretrained(bpe_dir)
+            _bpe_tokens_num = len(self.bpe_tokenizer)
+
+        else:
+            self.bpe_tokenizer = None
+            _bpe_tokens_num = 0
+        assert _bpe_tokens_num == bpe_tokens_num
+
         self.tokenizer = PhoneTokenizerWithAudioTokens(
-            self.hp.phone_tokens_num, self.hp.speaker_tokens_num
+            self.hp.phone_tokens_num, self.hp.speaker_tokens_num, bpe_tokens_num
         )
         self.return_full_seq = return_full_seq
         self.inference = inference
@@ -62,8 +86,13 @@ class ContinuousTTSDataset(Dataset):
     def get_text_wavid(self, idx):
         if self.inference:
             x = self.metas[idx].split("|")
-            if len(x) == 3:
-                bn_path, prompt_text_id_path, text_id_path = x[0], x[1], x[2]
+            if len(x) in [3, 5]:
+                if len(x) == 3:
+                    bn_path, prompt_text_id_path, text_id_path = x[0], x[1], x[2]
+                elif len(x) == 5:
+                    bn_path, prompt_text_id_path, prompt_text, text_id_path, _text = x
+                    text = ' '.join(map(str.strip, [prompt_text, _text]))
+
                 bn = np.load(bn_path)
                 if len(bn.shape) == 3 and bn.shape[0] == 1:
                     bn = bn[0]
@@ -105,6 +134,16 @@ class ContinuousTTSDataset(Dataset):
             text_id = np.load(text_id_path)
 
         text_id = self.tokenizer.tokenize(text_id, "inputs")
+
+        # bpe_id
+        if self.bpe_tokenizer:
+            bpe_id = np.asarray(self.bpe_tokenizer(
+                text, truncation=True,  # max_length=self.hp.max_len,
+            ).input_ids)
+            bpe_id = self.tokenizer.tokenize(bpe_id, "bpe")
+
+            # text_id = np.concatenate([text_id, [self.tokenizer.sep], bpe_id])
+            text_id = np.concatenate([bpe_id, [self.tokenizer.sep], text_id])
 
         return text_id, bn, uttid
 

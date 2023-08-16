@@ -11,6 +11,7 @@ from samantha.utils.hparams import DotDict
 from recipes.bark.lit_modules.sample import sample
 from s3a.providers.ctiga.utils.generation import InferenceParams
 from samantha.utils.model_metric import ModelMetric
+torch.set_printoptions(threshold=1000000)
 
 def sequence_mask(seq_lens, max_len=None, device='cpu'):
     b = seq_lens.shape[0]
@@ -21,7 +22,7 @@ def sequence_mask(seq_lens, max_len=None, device='cpu'):
     mask = mask.float()
     return mask
 
-class VAET2SModule(pl.LightningModule):
+class VAET2SStopModule(pl.LightningModule):
 
     def __init__(
         self,
@@ -36,6 +37,7 @@ class VAET2SModule(pl.LightningModule):
         use_speaker_id=False,
         use_phoneme_loss=False,
         checkpointing=True,
+        stop_token_loss_weight=1.0,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -57,6 +59,7 @@ class VAET2SModule(pl.LightningModule):
             self.model.config.use_cache = False
         if checkpointing:
             self.model.gradient_checkpointing_enable()
+        self.stop_token_loss_weight = stop_token_loss_weight
 
     def setup(self, stage: str) -> None:
         self.model_metric = ModelMetric(
@@ -88,25 +91,26 @@ class VAET2SModule(pl.LightningModule):
 
         with self.profiler.profile("[LightningModule]CoarseModule.prepare_feature"):
             with torch.autocast(device_type="cuda", enabled=False):
-                text_ids, text_id_lens, bns, bn_lens, seqs, seq_lens, utt_ids = batch
+                text_ids, text_id_lens, bns, bn_lens, seqs, seq_lens, utt_ids, stop_tokens = batch
                 input_tokens = seqs
                 b, t = input_tokens.shape
                 loss_mask = sequence_mask(seq_lens, max_len=t, device="cuda")
                 _, text_t = text_ids.shape
                 text_loss_mask = sequence_mask(text_id_lens+extra_shift_num, max_len=text_t+extra_shift_num, device="cuda")
                 text_loss_mask = F.pad(text_loss_mask, (0, t-text_loss_mask.shape[1]), "constant", 0)
+                z_loss_mask = loss_mask - text_loss_mask
 
-                if not self.use_phoneme_loss:
-                    loss_mask = loss_mask - text_loss_mask
                 org_len = input_tokens.size(1)
 
         with self.profiler.profile("[LightningModule]CoarseModule.model_forward"):
             ret_dict, _ = self.model(text_ids, text_id_lens, bns, bn_lens, input_tokens)
             logits = ret_dict["logits"]
             dense = ret_dict["dense"]
+            pred_stop_token = ret_dict["stop_token"]
 
         pred_logits = logits[:, 0:org_len - 1, :]
         pred_dense = dense[:, 0:org_len - 1, :]
+        pred_stop_token = pred_stop_token[:, 0:org_len - 1, :]
 
         bsz, bn_t, bn_c = bns.shape
         targets_dense = []
@@ -120,28 +124,57 @@ class VAET2SModule(pl.LightningModule):
         target_m, target_logs = torch.split(targets_dense, bn_c//2, dim=-1)
         pred_m, pred_logs = torch.split(pred_dense, bn_c//2, dim=-1)
 
+        # kl_loss
         kl_loss = self.dense_criterion(pred_m, pred_logs, 
-            target_m.detach(), target_logs.detach(), z_mask=loss_mask[:, 1:])
+            target_m.detach(), target_logs.detach(), z_mask=z_loss_mask[:, 1:])
 
-        
-        targets_logits = input_tokens[:, 1:org_len]
-        ce_loss = self.logits_criterion(pred_logits.float(), targets_logits, mask=loss_mask[:, 1:])
-        accu = ((pred_logits.argmax(dim=-1) == targets_logits).float() * loss_mask[:, 1:]).sum() / loss_mask[:, 1:].sum() * 100
-        total_loss = kl_loss + ce_loss
+        # text_loss
+        text_loss = None
+        text_accu = None
+        if self.use_phoneme_loss:
+            targets_logits = input_tokens[:, 1:org_len]
+            text_loss = self.logits_criterion(pred_logits.float(), targets_logits, mask=text_loss_mask[:, 1:])            
+            text_accu = ((pred_logits.argmax(dim=-1) == targets_logits).float() * text_loss_mask[:, 1:]).sum() / text_loss_mask[:, 1:].sum() * 100
+
+        # stop_token_loss
+        target_stop_token = stop_tokens[:, 1:t]
+        stop_token_loss = self.logits_criterion(pred_stop_token.float(), target_stop_token, mask=z_loss_mask[:, 1:])
+        stop_token_accu = ((pred_stop_token.argmax(dim=-1) == target_stop_token).float()[:, -1:] * z_loss_mask[:, -1:]).sum() / z_loss_mask[:, -1:].sum() * 100
+
         batch_tokens = b * t
-        self.log_dict(
-            {
-                "kl_loss": kl_loss.item(),
-                "ce_loss": ce_loss.item(),
-                "loss": total_loss.item(),
-                "accu": accu.item(),
-                "bsz": b,
-                "seqlen": t,
-                "batch_tokens": batch_tokens,
-            },
-            prog_bar=True,
-            sync_dist=True
-        )
+        if self.use_phoneme_loss:
+            total_loss = kl_loss + text_loss + stop_token_loss * self.stop_token_loss_weight
+            self.log_dict(
+                {
+                    "kl_loss": kl_loss.item(),
+                    "text_loss": text_loss.item(),
+                    "text_accu": text_accu.item(),
+                    "stop_token_loss": text_loss.item(),
+                    "stop_token_accu": stop_token_accu.item(),
+                    "loss": total_loss.item(),
+                    "bsz": b,
+                    "seqlen": t,
+                    "batch_tokens": batch_tokens,
+                },
+                prog_bar=True,
+                sync_dist=True
+            )
+        else:
+            total_loss = kl_loss + stop_token_loss * self.stop_token_loss_weight
+            self.log_dict(
+                {
+                    "kl_loss": kl_loss.item(),
+                    "stop_token_loss": text_loss.item(),
+                    "stop_token_accu": stop_token_accu.item(),
+                    "loss": total_loss.item(),
+                    "bsz": b,
+                    "seqlen": t,
+                    "batch_tokens": batch_tokens,
+                },
+                prog_bar=True,
+                sync_dist=True
+            )
+
         self.model_metric.update(
             num_tokens=batch_tokens,
             stage=self.trainer.state.stage,
@@ -255,11 +288,16 @@ class VAET2SModule(pl.LightningModule):
                         bns, None, input_tokens, start_pos=start_pos, use_cache=True, inference_params=inference_params
                         )
                     z_list.append(bn_in_z)
-                logits = model_outputs["logits"]
-                pred_logits = logits[:, -1, :]
-                samples = torch.argmax(pred_logits)
-                if i > 10 and samples.item() == self.tokenizer_len + self.n_semantic + 2:
+                # logits = model_outputs["logits"]
+                # pred_logits = logits[:, -1, :]
+                # samples = torch.argmax(pred_logits)
+                # if i > 10 and samples.item() == self.tokenizer_len + self.n_semantic + 2:
+                #     break
+                pred_stop_token = model_outputs["stop_token"][:, -1, :]
+                samples = torch.argmax(pred_stop_token)
+                if i > 10 and samples.item() == 1:
                     break
+
                 pred_dense = model_outputs["dense"][:, -1:, :]
 
                 start_pos += input_tokens.size(1)
@@ -270,7 +308,7 @@ class VAET2SModule(pl.LightningModule):
                 input_tokens = torch.zeros([1, 1], dtype=torch.int).to(pred_dense.device)
                 bns = pred_dense
 
-        z_outputs = torch.cat(z_list, dim=1) # [b, t, c]
+        z_outputs = torch.cat(z_list[1:], dim=1) # [b, t, c]
         semantic_outputs = torch.cat(semantic_outputs, dim=1) # [b, t, c]
 
         # semantic_outputs = torch.cat([seqs, semantic_outputs], dim=1)

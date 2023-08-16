@@ -46,6 +46,7 @@ run_opts:
     spk2id: 'recipes/text2semantic/datasets/dict/sft_spk_0809.json'
     use_phoneme_loss: False
     use_sy: False
+    stop_token_loss_weight: 1.0
     
 llama_config: !new:recipes.text2semantic.modules.continuous_vae_llama_ctiga.ModelArgs
     dim: 1024
@@ -63,7 +64,7 @@ llama_config: !new:recipes.text2semantic.modules.continuous_vae_llama_ctiga.Mode
     sparse: false
     checkpointing: !ref <run_opts[checkpointing]>
 
-train_dataset: !new:recipes.text2semantic.datasets.continuous_wds_dataset.ContinuousTTSDataset
+train_dataset: !new:recipes.text2semantic.datasets.continuous_wds_stop_dataset.ContinuousTTSStopDataset
     wds_urls: !apply:samantha.dataio.utils.parse_data_urls
         data_id: !ref <run_opts[data_id]>
         data_urls: !ref <run_opts[urls]>
@@ -85,7 +86,7 @@ train_dataset: !new:recipes.text2semantic.datasets.continuous_wds_dataset.Contin
     use_spkid: !ref <run_opts[use_spkid]>
     use_sy: !ref <run_opts[use_sy]>
 
-collator: !new:recipes.text2semantic.datasets.continuous_dataset.ContinuousCollator
+collator: !new:recipes.text2semantic.datasets.continuous_wds_stop_dataset.ContinuousCollator
     tokenizer_pad: 0
 
 # dataloader configuration
@@ -102,7 +103,7 @@ pl_datamodule: !new:recipes.text2semantic.lit_modules.DataModule
 
 # model configuration
 # model_cls: !name:recipes.text2semantic.modules.continuous_vae_llama_ctiga.LLaMa
-model_cls: !name:recipes.text2semantic.modules.llama.wfvae_ctiga_llama.VAELLaMa
+model_cls: !name:recipes.text2semantic.modules.llama.wfvae_ctiga_llama_stop.VAELLaMaStop
     params: !ref <llama_config>
     use_speaker_id: !ref <run_opts[use_spkid]>
     provider: ctiga
@@ -124,7 +125,7 @@ scheduler_cls: !name:recipes.bark.lr_schedulers.musiclm_lr_scheduler.WarmupCosin
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
 # lightning model setting
-pl_module: !new:recipes.text2semantic.lit_modules.llama.lit_vae_t2s_ctiga.VAET2SModule
+pl_module: !new:recipes.text2semantic.lit_modules.llama.lit_vae_t2s_ctiga_stop.VAET2SStopModule
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
@@ -136,6 +137,7 @@ pl_module: !new:recipes.text2semantic.lit_modules.llama.lit_vae_t2s_ctiga.VAET2S
     use_speaker_id: !ref <run_opts[use_spkid]>
     use_phoneme_loss: !ref <run_opts[use_phoneme_loss]>
     required_modules: {}
+    stop_token_loss_weight: !ref <run_opts[stop_token_loss_weight]>
 
 logger:
     - !new:pytorch_lightning.loggers.TensorBoardLogger
