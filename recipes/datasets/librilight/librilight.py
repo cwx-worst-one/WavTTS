@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from multiprocessing import Pool
 from pathlib import Path
@@ -23,10 +24,12 @@ from samantha.transforms.audio import (
     ToTensor,
     fp32_to_int16,
 )
+from samantha.utils.hdfs_tools import hdfs_loadtxt, hdfs_open
 from samantha.utils.webdataset import return_self
-from samantha.utils.hdfs_tools import hdfs_open
 
 SAMPLE_RATE = 16000
+
+logger = logging.getLogger(__name__)
 
 
 def load_librilight_metadata(filepath: Path, ext_metadata: str):
@@ -271,9 +274,11 @@ def librilight_collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
         "shard": shard,
     }
 
+
 def write_index(hdfs_fp: str, index: List[str]):
     with hdfs_open(hdfs_fp, "w") as f:
         f.write("\n".join(index))
+
 
 class LibriLightWebDataModule(BaseDataModule):
     data_sample_rate = SAMPLE_RATE
@@ -328,9 +333,7 @@ class LibriLightWebDataModule(BaseDataModule):
             )
         else:
             if duration is None:
-                raise Exception(
-                    "duration must be set when not using BucketBatcher"
-                )
+                raise Exception("duration must be set when not using BucketBatcher")
 
         self.split = split
         self.duration = duration
@@ -349,7 +352,7 @@ class LibriLightWebDataModule(BaseDataModule):
             pipeline.append({"compose": [self.bucketize]})
 
         train_dataset = WebPipeline(train_dataset, pipeline)
-        predict_dataset = train_dataset # TODO
+        predict_dataset = train_dataset  # TODO
         validation_dataset = WebPipeline(validation_dataset, pipeline)
 
         super().__init__(
@@ -376,9 +379,18 @@ class LibriLightWebDataModule(BaseDataModule):
             self.random_pad = RandomPad(self.n_audio_samples)
             self.random_crop = RandomResizedCrop(self.n_audio_samples)
 
+    def load_transcriptions(self):
+        uri = self.get_hdfs_transcription_uri()
+        logger.warn(f"Loading transcription file from HDFS: {uri}")
+        transcriptions = hdfs_open(uri, "r").read()
+        return transcriptions
 
     @staticmethod
-    def get_hdfs_shard_uri(split: str):
+    def get_hdfs_transcription_uri() -> str:
+        return "hdfs://haruna/home/byte_speech_sv/data/speech/librilight/librilight_mos3.8_sim0.0_snr7_rms-13_asr0.85.txt"
+
+    @staticmethod
+    def get_hdfs_shard_uri(split: str) -> Tuple[str, str]:
         if split == "small":
             train_shards = "pipe: hdfs dfs -cat hdfs://haruna/home/byte_speech_sv/data/speech/librilight/small/{00000..00013}.tar"
             valid_shards = "pipe: hdfs dfs -cat hdfs://haruna/home/byte_speech_sv/data/speech/librilight/small/00014.tar"
@@ -388,25 +400,34 @@ class LibriLightWebDataModule(BaseDataModule):
         elif split == "large":
             train_shards = "pipe: hdfs dfs -cat hdfs://haruna/home/byte_speech_sv/data/speech/librilight/large/{00000..00932}.tar"
             valid_shards = "pipe: hdfs dfs -cat hdfs://haruna/home/byte_speech_sv/data/speech/librilight/large/00933.tar"
+        elif split == "large2":
+            train_shards = "pipe: hdfs dfs -cat hdfs://haruna/home/byte_speech_sv/data/speech/librilight/large2/{00000..01650}.tar"
+            valid_shards = "pipe: hdfs dfs -cat hdfs://haruna/home/byte_speech_sv/data/speech/librilight/large2/01651.tar"
         else:
             raise NotImplementedError("Choose between `small, medium`")
         return train_shards, valid_shards
 
     @staticmethod
-    def create_webdataset(dataset: LibriLightDataset, pattern: str, maxsize: int, start_shard_idx: int):
-        writer = ShardWriter(pattern=pattern, maxsize=maxsize, start_shard=start_shard_idx)
+    def create_webdataset(
+        dataset: LibriLightDataset, pattern: str, maxsize: int, start_shard_idx: int
+    ):
+        writer = ShardWriter(
+            pattern=pattern, maxsize=maxsize, start_shard=start_shard_idx
+        )
         index = []
         current_shard = writer.shard
         for idx, item in enumerate(tqdm(dataset)):
             if current_shard != writer.shard:
-                index_fp = os.path.join(os.path.dirname(writer.fname), f"{current_shard-1:05d}.tar.index")
+                index_fp = os.path.join(
+                    os.path.dirname(writer.fname), f"{current_shard-1:05d}.tar.index"
+                )
                 print(f"Writing index: {index_fp}")
                 write_index(index_fp, index)
                 current_shard = writer.shard
                 index = []
 
             id = f"{idx}-{item['speaker_id']}-{item['book_id']}-{item['chapter_id']}-{item['utterance_id']}-{item['utterance_sub_id']}"
-            
+
             # item["audio"] = fp32_to_int16(item["audio"])
             obj = {
                 "__key__": id,
@@ -421,6 +442,11 @@ class LibriLightWebDataModule(BaseDataModule):
             }
             writer.write(obj)
             index.append(id)
+
+        index_fp = os.path.join(
+            os.path.dirname(writer.fname), f"{current_shard-1:05d}.tar.index"
+        )
+        print(f"Writing index: {index_fp}")
         write_index(index_fp, index)
         writer.close()
 
@@ -434,7 +460,9 @@ class LibriLightWebDataModule(BaseDataModule):
 
         if self.use_bucket_batcher:
             if audio.shape[1] > self.max_audio_samples:
-                audio = audio[:, :self.max_audio_samples] # TODO: Revise trimming for long samples
+                audio = audio[
+                    :, : self.max_audio_samples
+                ]  # TODO: Revise trimming for long samples
         else:
             audio = self.random_pad(audio)
             audio = self.random_crop(audio)

@@ -3,11 +3,7 @@ from typing import Dict, List, Optional, Union
 import torch
 import torch.nn as nn
 
-from samantha.transforms.audio import MelSpectrogram, Spectrogram
-
-
-def safe_log(x: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
-    return torch.log(x + eps)
+from samantha.transforms.audio import MelSpectrogram, Spectrogram, safe_log
 
 
 def apply_reduction(losses: torch.Tensor, reduction: str = "none") -> torch.Tensor:
@@ -170,9 +166,9 @@ class STFTLoss(nn.Module):
 class MultiScaleSTFTLoss(nn.Module):
     def __init__(
         self,
-        n_ffts: List[int],
-        win_lengths: List[int],
-        hop_lengths: List[int],
+        n_ffts: List[int] = [8192, 4096, 2048, 1024, 512, 256, 128, 64],
+        win_lengths: List[int] = [512, 512, 512, 256, 128, 64, 32, 16],
+        hop_lengths: List[int] = [4096, 2048, 1024, 512, 256, 128, 64, 32],
         scale: Optional[str] = None,
         sample_rate: Optional[int] = None,
         n_mels: Optional[List[int]] = None,
@@ -184,7 +180,7 @@ class MultiScaleSTFTLoss(nn.Module):
         mag_distance: Optional[str] = "L1",
     ):
         super().__init__()
-        self.losses = []
+        self.losses = nn.ModuleList([])
         for idx in range(len(n_ffts)):
             self.losses.append(
                 STFTLoss(
@@ -193,7 +189,7 @@ class MultiScaleSTFTLoss(nn.Module):
                     hop_length=hop_lengths[idx],
                     scale=scale,
                     sample_rate=sample_rate,
-                    n_mels=n_mels[idx],
+                    n_mels=n_mels[idx] if n_mels is not None else None,
                     w_spectral_convergence=w_spectral_convergence,
                     w_log_mag=w_log_mag,
                     w_lin_mag=w_lin_mag,

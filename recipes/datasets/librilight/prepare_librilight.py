@@ -1,17 +1,18 @@
-import random
 import os
-import torchaudio
+import random
 from pathlib import Path
-from recipes.umm.datasets.librilight import (
+
+import torchaudio
+
+from recipes.datasets.librilight import (
     SAMPLE_RATE,
     LibriLightDataset,
     LibriLightWebDataModule,
     preprocess_librilight,
 )
 from recipes.umm.transforms.speech import SpeechTransform
-from samantha.utils.hdfs_helper import hdfs_ls, hdfs_getsize
+from samantha.utils.hdfs_helper import hdfs_getsize, hdfs_ls
 from samantha.utils.hdfs_tools import hdfs_loadtxt
-
 
 if __name__ == "__main__":
     preproc_dir = "/mnt/bn/janne-research-xl/data/librilight/preprocessed"
@@ -24,15 +25,12 @@ if __name__ == "__main__":
     # )
 
     ## Prepare webdataset
-    dataset = LibriLightDataset(
-        root=preproc_dir,
-        split=split,
-    )
+    dataset = LibriLightDataset(root=preproc_dir, split=split)
     ## NOTE: VERY IMPORTANT TO GET DIVERSE SHARDS:
-    random.seed(42) # make deterministic
+    random.seed(42)  # make deterministic
     random.shuffle(dataset._walker)
     pattern = f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/speech/librilight/{split}/%05d.tar"
-    maxsize = (1 << 32) * 2 # 8GiB, maximum size of each shard
+    maxsize = (1 << 32) * 2  # 8GiB, maximum size of each shard
 
     print(dataset._walker[:10])
     # dataset_start_idx = 0
@@ -42,8 +40,5 @@ if __name__ == "__main__":
     # dataset.total = len(dataset._walker)
 
     LibriLightWebDataModule.create_webdataset(
-        dataset,
-        str(pattern),
-        maxsize,
-        start_shard_idx=start_shard_idx
+        dataset, str(pattern), maxsize, start_shard_idx=start_shard_idx
     )

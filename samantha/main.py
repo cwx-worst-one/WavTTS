@@ -123,12 +123,13 @@ def main():
                 result=result,
             )
 
-    if not cfg.run_opts.fast_dev_run and trainer.global_rank == 0:
+    if not trainer.fast_dev_run and trainer.global_rank == 0:
         # Save hparams_file to "config.yaml" in experiment directory
         if isinstance(trainer, Trainer):
             log_dir = trainer.log_dir
         elif isinstance(trainer, CruiseTrainer):
             log_dir = trainer.default_root_dir
+
         create_experiment_directory(
             log_dir, hparams_file, overrides
         )  # pragma: no cover

@@ -45,9 +45,7 @@ def test_decoding(soundstorm_model: SoundStorm, batch_size):
     # )
 
     seed_tokens = ids_tensor(
-        (batch_size, 4, audio_seq_len),
-        vocab_size,
-        device=torch_device,
+        (batch_size, 4, audio_seq_len), vocab_size, device=torch_device
     )
 
     iterations = [32, 32, 32, 32, 8, 8, 8, 8, 1, 1, 1, 1]

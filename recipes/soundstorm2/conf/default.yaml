@@ -55,7 +55,7 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 
 pl_datamodule: !new:recipes.datasets.librilight.LibriLightWebDataModule
     sample_rate: !ref <data_params[sample_rate]>
-    split: "large"
+    split: "large2"
     batch_size: !ref <training_params[batch_size]>
     shuffle_buffer_size: !ref <training_params[shuffle_buffer]>
     num_workers: !ref <run_opts[num_workers]>

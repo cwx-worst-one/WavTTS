@@ -57,7 +57,13 @@ class SoundStormMaskingScheme(MaskingScheme):
     and all non-prompt tokens at finer RVQ levels.
     """
 
-    def __init__(self, sample_q_uniformly: bool, sample_t: bool, max_sample_t: Optional[int] = None, keep_coarse_quant_idx: Optional[int] = None):
+    def __init__(
+        self,
+        sample_q_uniformly: bool,
+        sample_t: bool,
+        max_sample_t: Optional[int] = None,
+        keep_coarse_quant_idx: Optional[int] = None,
+    ):
         """
         Args:
             sample_q_uniformly (bool): Sample all quantizers uniformly, or to use a cosine
@@ -72,7 +78,7 @@ class SoundStormMaskingScheme(MaskingScheme):
         self.sample_q_uniformly = sample_q_uniformly
         self.sample_t = sample_t
         self.max_sample_t = max_sample_t
-        self.keep_coarse_quant_idx = keep_coarse_quant_idx 
+        self.keep_coarse_quant_idx = keep_coarse_quant_idx
 
     def forward(
         self, audio_tokens: torch.Tensor, mask_token_id: int
@@ -104,7 +110,7 @@ class SoundStormMaskingScheme(MaskingScheme):
         # revert the offset
         if self.keep_coarse_quant_idx is not None:
             rand_qs = rand_qs + self.keep_coarse_quant_idx
-        
+
         rand_times = torch.empty(batch_size, 1, device=device).uniform_(0, 1)
         rand_probs = cosine_schedule(rand_times)  # [b, ]
         num_tokens_mask = (rand_probs * seq_len).clamp(min=1.0).long()

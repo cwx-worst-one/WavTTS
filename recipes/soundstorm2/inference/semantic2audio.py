@@ -73,6 +73,8 @@ def load_model(ckpt_path: str, device: str, **kwargs) -> SoundStorm:
     return SoundStorm.load_from_checkpoint(ckpt_path, **kwargs).to(device)
 
 
-def load_model2(soundstorm_path: str, semantic_ckpt_path: str, device: str, **kwargs) -> SoundStormInference:
+def load_model2(
+    soundstorm_path: str, semantic_ckpt_path: str, device: str, **kwargs
+) -> SoundStormInference:
     print(f"Loading from {soundstorm_path} / {semantic_ckpt_path}...")
     return SoundStormInference(soundstorm_path, semantic_ckpt_path, **kwargs).to(device)

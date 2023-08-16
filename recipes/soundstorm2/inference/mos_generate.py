@@ -1,9 +1,10 @@
 import argparse
 import os
+
 import torch
 import torchaudio
 
-from recipes.soundstorm.inference.semantic2audio import load_model, generate
+from recipes.soundstorm.inference.semantic2audio import generate, load_model
 
 
 def main(args):
@@ -60,9 +61,9 @@ if __name__ == "__main__":
     )
     args = parser.add_argument(
         "--iterations",
-        #default="16,16,12,12,4,4,2,2,1,1,1,1",  # RTF ~= 0.28
-        #default="48,32,24,16,8,4,2,2,1,1,1,1", # RTF ~= 0.50
-        default="128,64,32,16,8,8,4,4,2,2,2,2", # RTF ~= 1.23
+        # default="16,16,12,12,4,4,2,2,1,1,1,1",  # RTF ~= 0.28
+        # default="48,32,24,16,8,4,2,2,1,1,1,1", # RTF ~= 0.50
+        default="128,64,32,16,8,8,4,4,2,2,2,2",  # RTF ~= 1.23
     )
     args = parser.add_argument(
         "--score_strategies",
@@ -70,7 +71,7 @@ if __name__ == "__main__":
     )
     args = parser.add_argument(
         "--temperatures",
-        #default="1.0,1.0,0.95,0.95,0.9,0.9,0.8,0.8,0.4,0.4,0.4,0.4",
+        # default="1.0,1.0,0.95,0.95,0.9,0.9,0.8,0.8,0.4,0.4,0.4,0.4",
         default="0.95,0.95,0.95,0.95,0.95,0.95,0.95,0.95,0.95,0.95,0.95,0.95",
     )
     args = parser.parse_args()

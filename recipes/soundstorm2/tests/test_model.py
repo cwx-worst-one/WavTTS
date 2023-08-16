@@ -1,9 +1,10 @@
 import pytest
+
 from recipes.soundstorm2.lightning.soundstorm import SoundStorm, SoundStormConfig
 from recipes.soundstorm2.lightning.soundstream import SoundStreamSpeech24k
+from tests.helpers.runif import RunIf
 from tests.helpers.testing_utils import torch_device
 from tests.unittests.models.utils import ids_tensor
-from tests.helpers.runif import RunIf
 
 
 class SoundStormModelTester:
@@ -30,19 +31,25 @@ class SoundStormModelTester:
             sample_rate=24000,
             n_embd=self.n_embd,
             n_head=self.n_head,
-            n_layer=self.n_layer
+            n_layer=self.n_layer,
         )
 
     def get_inputs(self):
         audio_tokens = ids_tensor(
-            (self.batch_size, self.n_quantizers, self.seq_len), self.model.audio_model.codebook_size, device=torch_device
+            (self.batch_size, self.n_quantizers, self.seq_len),
+            self.model.audio_model.codebook_size,
+            device=torch_device,
         )
         selected_qs = list(range(0, self.n_quantizers)) * self.batch_size
         return audio_tokens, selected_qs
-    
 
     def create_and_test_model(self):
-        self.model = SoundStorm(config=self.config, audio_model=self.audio_model, optimizer_cls=None, scheduler_cls=None)
+        self.model = SoundStorm(
+            config=self.config,
+            audio_model=self.audio_model,
+            optimizer_cls=None,
+            scheduler_cls=None,
+        )
         self.model = self.model.to(torch_device)
         self.model.apply(self.model._init_weights)
         self.model.eval()
@@ -64,4 +71,3 @@ def test_model(soundstorm: SoundStormModelTester) -> None:
         soundstorm.seq_len,
         soundstorm.model.out_dim,
     )
-

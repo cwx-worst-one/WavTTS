@@ -1,8 +1,10 @@
-import torch
 import random
+
+import pytest
+import torch
 import torchaudio
 from tqdm import tqdm
-import pytest
+
 from samantha.dataio.batching import BucketBatcher
 
 
@@ -13,7 +15,7 @@ def generate_data(num_samples: int, max_seq_len: int):
 
 def test_bucket_batching():
     sample_rate = 24000
-    max_data_size = sample_rate * 30 # 30 seconds
+    max_data_size = sample_rate * 30  # 30 seconds
 
     batch_size = 8
     batcher = BucketBatcher(
@@ -22,7 +24,7 @@ def test_bucket_batching():
         batch_size=batch_size,
         length_fn=lambda x: x["audio"].shape[-1],
     )
-    
+
     for data in generate_data(num_samples=50, max_seq_len=max_data_size):
         batch = batcher.collate_batch(data)
         if batch:
@@ -32,4 +34,3 @@ def test_bucket_batching():
             audio = batch["audio"]
             # print((audio == 0).sum() / audio.numel())
             assert audio.shape[0] == batch_size
-

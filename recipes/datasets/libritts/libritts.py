@@ -1,7 +1,7 @@
 import os
-import random 
+import random
 from pathlib import Path
-from typing import Callable, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -12,8 +12,7 @@ from torchaudio_augmentations import Compose
 from tqdm import tqdm
 from webdataset import WebDataset
 
-from recipes.umm.datamodules.base import SpeechDataModule, speech_collate_fn
-from recipes.umm.datasets.base import _load_waveform
+from recipes.datasets.base import BaseDataModule, _load_waveform
 from samantha.dataio.batching import BucketBatcher
 from samantha.dataio.webdataset import ShardWriter
 from samantha.dataio.webdataset.pipeline import WebPipeline
@@ -156,7 +155,38 @@ class LibriTTSDataset(Dataset):
         }
 
 
-class LibriTTSWebDataModule(SpeechDataModule):
+def librispeech_collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
+    max_length = max([x["audio"].shape[-1] for x in batch])
+    random_pad = RandomPad(n_samples=max_length)
+
+    audio = []
+    original_text = []
+    normalized_text = []
+    speaker_id = []
+    utterance_id = []
+    chapter_id = []
+    shard = []
+    for idx in range(len(batch)):
+        audio.append(random_pad(batch[idx]["audio"]))
+        original_text.append(batch[idx]["original_text"])
+        normalized_text.append(batch[idx]["normalized_text"])
+        speaker_id.append(batch[idx]["speaker_id"])
+        chapter_id.append(batch[idx]["chapter_id"])
+        utterance_id.append(batch[idx]["utterance_id"])
+        shard.append(batch[idx]["shard"])
+
+    return {
+        "audio": torch.stack(audio),
+        "original_text": original_text,
+        "normalized_text": normalized_text,
+        "speaker_id": speaker_id,
+        "chapter_id": chapter_id,
+        "utterance_id": utterance_id,
+        "shard": shard,
+    }
+
+
+class LibriTTSWebDataModule(BaseDataModule):
     data_sample_rate = SAMPLE_RATE
 
     def __init__(
@@ -183,15 +213,15 @@ class LibriTTSWebDataModule(SpeechDataModule):
             28,
             30,
         ],
-        train_shards: str = "pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/speech/libritts/train-clean-360/{00000..00006}.tar",
-        valid_shards: str = "pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/speech/libritts/train-clean-360/00007.tar",
+        train_shards: str = "pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/speech/libritts/24000hz/train-clean-360/{00000..00007}.tar",
+        valid_shards: str = "pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/speech/libritts/24000hz/test-clean/00000.tar",
         use_bucket_batcher: bool = True,
         num_workers: int = 8,
         pin_memory: bool = True,
         resampled: bool = True,
         shardshuffle: bool = True,
         duration: Optional[float] = None,
-        collate_fn: Optional[Callable] = speech_collate_fn,
+        collate_fn: Optional[Callable] = librispeech_collate_fn,
     ):
         batcher = None
         self.use_bucket_batcher = use_bucket_batcher
@@ -210,9 +240,7 @@ class LibriTTSWebDataModule(SpeechDataModule):
             )
         else:
             if duration is None:
-                raise Exception(
-                    "duration must be set when not using BucketBatcher"
-                )
+                raise Exception("duration must be set when not using BucketBatcher")
 
         self.duration = duration
         train_dataset = WebDataset(
@@ -228,7 +256,7 @@ class LibriTTSWebDataModule(SpeechDataModule):
             pipeline.append({"compose": [self.bucketize]})
 
         train_dataset = WebPipeline(train_dataset, pipeline)
-        predict_dataset = train_dataset # TODO
+        predict_dataset = train_dataset  # TODO
         validation_dataset = WebPipeline(validation_dataset, pipeline)
 
         super().__init__(
@@ -254,7 +282,6 @@ class LibriTTSWebDataModule(SpeechDataModule):
         else:
             self.random_pad = RandomPad(self.n_audio_samples)
             self.random_crop = RandomResizedCrop(self.n_audio_samples)
-
 
     def create_webdataset(self, dataset: LibriTTSDataset, pattern: str, maxsize: int):
         writer = ShardWriter(pattern=pattern, maxsize=maxsize)
@@ -289,7 +316,9 @@ class LibriTTSWebDataModule(SpeechDataModule):
 
         if self.use_bucket_batcher:
             if audio.shape[1] > self.max_audio_samples:
-                audio = audio[:, :self.max_audio_samples] # TODO: Revise trimming for long samples
+                audio = audio[
+                    :, : self.max_audio_samples
+                ]  # TODO: Revise trimming for long samples
         else:
             audio = self.random_pad(audio)
             audio = self.random_crop(audio)

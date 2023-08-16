@@ -183,6 +183,17 @@ class NormalizeAudio(nn.Module):
             denom = norm_tensor.abs().max()
         return safe_divide(x, denom)
 
+class FastNormalizeAudio(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+
+    def forward(self, x, norm_tensor: Optional[torch.Tensor] = None, eps = 1e-8) -> torch.Tensor:
+        if norm_tensor is None:
+            denom = x.abs().max().clamp_min_(eps).expand_as(x)
+        else:
+            denom = norm_tensor.abs().max().clamp_min_(eps).expand_as(x)
+        return torch.div(x, denom)
+
 
 class SplitView(nn.Module):
     def __init__(self, views: List[Compose]) -> None:

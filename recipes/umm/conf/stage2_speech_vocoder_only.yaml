@@ -1,0 +1,185 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+ckpt_path: null
+
+seed: 555
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+extra_params:
+    sample_rate: 24000
+    n_mels: 80
+    n_fft: 512
+    win_length: 400
+    hop_length: 240
+    f_min: 0
+    f_max: 12000
+    feature_cmvn: "LibriLightWebDataModule_SpeechTransform.stats.pt"
+    w_gen: 1
+    w_fm: 1
+    w_mel: 45
+    w_stft: 30
+
+# running parameters
+run_opts:
+    fast_dev_run: False
+    cache_dir: .module_cache/umm
+    log_dir: "logs"
+    log_name: umm
+    version: stage2_speech_vocoder_only
+    precision: 32 # "16-mixed" # TODO
+    num_workers: 6
+    accelerator: auto
+    max_steps: 6000000
+    val_check_interval: 1000
+    ckpt_interval: 5000
+    batch_size: 20
+    learning_rate: 1.0e-4 # TODO
+    shuffle_buffer: 500
+    checkpointing: False
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+# pl_datamodule: !new:recipes.datasets.librilight.LibriLightWebDataModule
+#     use_bucket_batcher: False
+#     duration: 1.5
+#     sample_rate: !ref <extra_params[sample_rate]>
+#     split: "large2"
+#     batch_size: !ref <run_opts[batch_size]>
+#     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+#     num_workers: !ref <run_opts[num_workers]>
+#     pin_memory: True
+
+pl_datamodule: !new:recipes.datasets.libritts.LibriTTSWebDataModule
+    use_bucket_batcher: False
+    duration: 1.0
+    sample_rate: !ref <extra_params[sample_rate]>
+    batch_size: !ref <run_opts[batch_size]>
+    shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+    num_workers: !ref <run_opts[num_workers]>
+    pin_memory: True
+
+optimizer_g_cls: !name:torch.optim.AdamW
+    lr: !ref <run_opts[learning_rate]>
+    betas: [0.8, 0.99]
+    eps: 1e-9
+
+optimizer_d_cls: !name:torch.optim.AdamW
+    lr: !ref <run_opts[learning_rate]>
+    betas: [0.8, 0.99]
+    eps: 1e-9
+
+scheduler_g_cls: !name:torch.optim.lr_scheduler.MultiStepLR
+    gamma: 0.5
+    milestones:
+        - 1000000
+        - 1500000
+        - 2000000
+
+scheduler_d_cls: !name:torch.optim.lr_scheduler.MultiStepLR
+    gamma: 0.5
+    milestones:
+        - 1000000
+        - 1500000
+        - 2000000
+
+config: !new:recipes.umm.models.config.UMMConfig
+    feature_cmvn: !ref <extra_params[feature_cmvn]>
+    sample_rate: !ref <extra_params[sample_rate]>
+    num_channels: !ref <extra_params[n_mels]>
+    n_fft: !ref <extra_params[n_fft]>
+    win_length: !ref <extra_params[win_length]>
+    hop_length: !ref <extra_params[hop_length]>
+    mask_hop: 0.4
+    mask_prob: 0.2 # TODO
+    hidden_size: 1024
+    intermediate_size: 4096
+    num_hidden_layers: 24
+    num_attention_heads: 8
+    max_source_positions: 750
+    rq_codebook_dim: 16
+    rq_codebook_size: 4096 # TODO
+    rq_codebook_num: 8 # TODO
+    add_vq: True
+    vq_codebook_size: 32768
+    vq_codebook_dim: 256
+    vq_sync_codebook: True
+    add_vocoder: True
+    upsample_rates: [5, 4, 4, 3, 2, 2]
+    upsample_kernel_sizes: [15, 12, 12, 9, 6, 4]
+    upsample_initial_channel: 1536
+
+generator_cls: !name:recipes.umm.models.vocoder.BigVGAN
+    config: !ref <config>
+
+discriminator_cls: !name:recipes.umm.models.discriminator.MBPRD
+    use_spectral_norm: False
+    ifmbd: True
+
+pl_module: !new:recipes.umm.modules.lit_module.Stage2VocoderOnly
+    generator_cls: !ref <generator_cls>
+    discriminator_cls: !ref <discriminator_cls>
+    optimizer_g_cls: !ref <optimizer_g_cls>
+    optimizer_d_cls: !ref <optimizer_d_cls>
+    scheduler_g_cls: !ref <scheduler_g_cls>
+    scheduler_d_cls: !ref <scheduler_d_cls>
+    checkpointing: !ref <run_opts[checkpointing]>
+    extra_params: !ref <extra_params>
+    required_modules:
+        bestrq_mel_ctc_vq:
+            ckpt_path: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/finetune_speech_melrecon_ctc_25hz_vq32768x256/checkpoints/step=080000-tr_loss=0.3328-val_loss_0=1.5434.ckpt"
+            init_fn: !name:recipes.umm.requires.model_initializer.init_bestrq_mel_ctc_vq
+            cache_dir: !ref <run_opts[cache_dir]>
+
+logger:
+    - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
+      save_dir: !ref <run_opts[log_dir]>
+      name: !ref <run_opts[log_name]>
+      version: !ref <run_opts[version]>
+      default_hp_metric: False
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: logs # TODO
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
+
+callbacks:
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      monitor: step
+      save_top_k: 500
+      every_n_train_steps: !ref <run_opts[ckpt_interval]>
+      mode: max
+      filename: "{step:07d}"
+    - !new:pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: 'step'
+    - !new:recipes.umm.callbacks.log_audio.LogAudio
+      n_examples: 4
+
+plugins:
+    - !new:samantha.plugins.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    strategy: "ddp_find_unused_parameters_true"
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: "auto"
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    log_every_n_steps: 100
+    max_steps: !ref <run_opts[max_steps]>
+    precision: !ref <run_opts[precision]>
+    accumulate_grad_batches: 1
+    val_check_interval: !ref <run_opts[val_check_interval]>
+    check_val_every_n_epoch: null
+    num_sanity_val_steps: 2
+    limit_val_batches: 1
+    sync_batchnorm: True
+    callbacks: !ref <callbacks>
+    plugins: !ref <plugins>

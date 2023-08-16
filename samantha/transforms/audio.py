@@ -1,5 +1,5 @@
 import random
-from typing import Callable, Optional, Union
+from typing import Callable, List, Optional, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -253,18 +253,20 @@ def batch_plot_spectrogram(
     spec: torch.Tensor,
     plot_log: bool,
     mel: bool = False,
-    title: Optional[str] = None,
+    title: Union[str, List[str], None] = None,
     ax=None,
 ):
     if spec.shape[0] > 1:
+        if isinstance(title, str):
+            title = [title] * spec.shape[0]
         if ax is None:
             _, ax = plt.subplots(spec.shape[0], 1)
 
         ax = ax.flatten()
         assert len(ax) == spec.shape[0]
-        for s, a in zip(spec, ax):
+        for s, a, t in zip(spec, ax, title):
             plot_spectrogram(
-                s.squeeze().cpu(), plot_log=plot_log, mel=mel, title=title, ax=a
+                s.squeeze().cpu(), plot_log=plot_log, mel=mel, title=t, ax=a
             )
     else:
         plot_spectrogram(

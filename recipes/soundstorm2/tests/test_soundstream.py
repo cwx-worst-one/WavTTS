@@ -1,6 +1,7 @@
 import torch
 import torchaudio
-from recipes.soundstorm2.lightning.soundstream import SoundStreamSpeech24k 
+
+from recipes.soundstorm2.lightning.soundstream import SoundStreamSpeech24k
 from tests.helpers.testing_utils import torch_device
 
 
@@ -13,7 +14,12 @@ def test_soundstream():
     audio = torch.randn(batch_size, 1, n_samples, device=torch_device)
     tokens = soundstream(audio)
 
-    assert tokens.shape == (batch_size, soundstream.n_quantizers, soundstream.n_frames(n_seconds))
+    assert tokens.shape == (
+        batch_size,
+        soundstream.n_quantizers,
+        soundstream.n_frames(n_seconds),
+    )
+
 
 def test_soundstream_qa():
     batch_size = 8
@@ -28,4 +34,6 @@ def test_soundstream_qa():
 
     decoded_audio = soundstream.decode(tokens)
 
-    torchaudio.save("1188-133604-0017_rec.wav", decoded_audio[0].cpu(), soundstream.sample_rate)
+    torchaudio.save(
+        "1188-133604-0017_rec.wav", decoded_audio[0].cpu(), soundstream.sample_rate
+    )

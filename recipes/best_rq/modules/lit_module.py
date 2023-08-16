@@ -1178,7 +1178,7 @@ class BestRq(pl.LightningModule):
         }
 
 
-class Inference(pl.LightningModule):
+class get_latent(pl.LightningModule):
     def __init__(self, extra_params, checkpointing=False):
         super().__init__()
         self.save_hyperparameters()

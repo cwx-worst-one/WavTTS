@@ -25,7 +25,9 @@ def test_cosine_schedule():
 @pytest.mark.parametrize("sample_q_uniformly", [True, False])
 @pytest.mark.parametrize("sample_t", [True, False])
 @pytest.mark.parametrize("keep_coarse_quant_idx", [None, 4, 8])
-def test_masking_scheme(batch_size, sample_q_uniformly, sample_t, keep_coarse_quant_idx):
+def test_masking_scheme(
+    batch_size, sample_q_uniformly, sample_t, keep_coarse_quant_idx
+):
     audio_codebook_size = 1024
     mask_token_id = audio_codebook_size + 1
     n_quantizers = 12
@@ -34,7 +36,11 @@ def test_masking_scheme(batch_size, sample_q_uniformly, sample_t, keep_coarse_qu
         (batch_size, n_quantizers, max_seq_len), vocab_size=audio_codebook_size
     )
 
-    masking_scheme = SoundStormMaskingScheme(sample_q_uniformly=sample_q_uniformly, sample_t=sample_t, keep_coarse_quant_idx=keep_coarse_quant_idx)
+    masking_scheme = SoundStormMaskingScheme(
+        sample_q_uniformly=sample_q_uniformly,
+        sample_t=sample_t,
+        keep_coarse_quant_idx=keep_coarse_quant_idx,
+    )
     masked_tokens, _, _ = masking_scheme(audio_tokens, mask_token_id)
     assert (masked_tokens == mask_token_id).sum() > 0
 
@@ -53,5 +59,7 @@ def test_masking_scheme(batch_size, sample_q_uniformly, sample_t, keep_coarse_qu
     plt.xlabel("Sequence length")
     # plt.legend()
     plt.tight_layout()
-    plt.savefig(f"test_masking_scheme-sample_q_uniformly_{sample_q_uniformly}-sample_t_{sample_t}-{keep_coarse_quant_idx}.png")
+    plt.savefig(
+        f"test_masking_scheme-sample_q_uniformly_{sample_q_uniformly}-sample_t_{sample_t}-{keep_coarse_quant_idx}.png"
+    )
     plt.close()

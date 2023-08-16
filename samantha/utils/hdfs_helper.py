@@ -321,12 +321,48 @@ def hdfs_ls(hdfs_path: str):
             raise HdfsException(errmsg)
         return []
     elif err:
-        logger.debug("stderr:\n" + err)
+        logger.debug("stderr:\n" + err.decode())
 
     out = out.splitlines()
     out = [elem.decode() for elem in out if elem]
 
     return out
+
+
+def hdfs_getsize(hdfs_path: str):
+    """
+    Returns size of HDFS file (absolute paths).
+
+    Args:
+        hdfs_path (str): hdfs filepath
+
+    Returns:
+       out (int): number of bytes
+    """
+    logger.info("HDFS filesize " + hdfs_path)
+    cmd = f"hdfs dfs -du -s {hdfs_path} | awk '{{print $1}}'"
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True
+    )
+    (out, err) = proc.communicate()
+
+    if proc.returncode != 0:
+        errmsg = (
+            'Failed to get HDFS size "'
+            + hdfs_path
+            + '", return code '
+            + str(proc.returncode)
+        )
+        logger.error(errmsg)
+        logger.error(err)
+        if FAILED_TO_LIST_DIRECTORY_MSG not in err:
+            raise HdfsException(errmsg)
+        return []
+    elif err:
+        logger.debug("stderr:\n" + err)
+
+    out = out.decode().strip()
+    return int(out)
 
 
 def list_dir(path: str):

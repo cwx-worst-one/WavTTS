@@ -1,9 +1,16 @@
+import logging
+
 import torch
 from pytorch_lightning import LightningModule
+
 from samantha.utils.hdfs_tools import hdfs_torch_load
+
+logger = logging.getLogger(__name__)
+
 
 class SoundStreamModel(LightningModule):
     pass
+
 
 class SoundStreamSpeech24k(SoundStreamModel):
     """JIT files are generated as follows:
@@ -26,8 +33,14 @@ class SoundStreamSpeech24k(SoundStreamModel):
 
     def __init__(self):
         super().__init__()
-        self.encoder = hdfs_torch_load(self.encoder_fp, jit=True, map_location="cpu").eval()
-        self.decoder = hdfs_torch_load(self.decoder_fp, jit=True, map_location="cpu").eval()
+        logger.warn(f"Loading checkpoint from HDFS: {self.encoder_fp}...")
+        self.encoder = hdfs_torch_load(
+            self.encoder_fp, jit=True, map_location="cpu"
+        ).eval()
+        logger.warn(f"Loading checkpoint from HDFS: {self.decoder_fp}...")
+        self.decoder = hdfs_torch_load(
+            self.decoder_fp, jit=True, map_location="cpu"
+        ).eval()
 
     def n_frames(self, n_seconds: int):
         return n_seconds * self.frame_rate

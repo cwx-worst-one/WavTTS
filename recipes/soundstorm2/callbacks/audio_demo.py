@@ -28,12 +28,19 @@ class AudioDemo(pl.Callback):
 
         inputs = module.prepare_inputs(batch)
         audio = inputs["audio"][: self.max_demos_per_step]
-        audio_tokens = inputs["audio_tokens"][:self.max_demos_per_step]
-        semantic_tokens = None
-        # semantic_tokens = inputs["semantic_tokens"][: self.max_demos_per_step]
+        audio_tokens = inputs["audio_tokens"][: self.max_demos_per_step]
 
-        # TODO: only batch size 1 works for now
-        # semantic_tokens = semantic_tokens[:1]
+        if module.semantic_model is None:
+            semantic_tokens = None
+            seed_tokens = audio_tokens
+            sampled_t = torch.randint(50, 100, (1,), device=module.device)
+        else:
+            semantic_tokens = inputs["semantic_tokens"][: self.max_demos_per_step]
+            seed_tokens = None
+            sampled_t = None
+
+            # TODO: only batch size 1 works for now
+            semantic_tokens = semantic_tokens[:1]
 
         iterations = [48, 32, 24, 16, 8, 4, 2, 2, 1, 1, 1, 1]
         score_strategies = [
@@ -53,19 +60,16 @@ class AudioDemo(pl.Callback):
         guidance_scale = None
         temperatures = [1.0, 1.0, 0.95, 0.95, 0.9, 0.9, 0.8, 0.8, 0.4, 0.4, 0.4, 0.4]
 
-        sampled_t = None
-        sampled_t = torch.randint(50, 100, (1,), device=module.device)
-
         sampled_audio_tokens, _ = module.iterative_decoding(
+            semantic_tokens=semantic_tokens,
             max_seq_len=audio_tokens.shape[2],
             iterations=iterations,
             score_strategies=score_strategies,
-            semantic_tokens=semantic_tokens,
             guidance_scale=guidance_scale,
             temperatures=temperatures,
             sampled_t=sampled_t,
-            seed_tokens=audio_tokens,
-            prefix_tokens=None
+            seed_tokens=seed_tokens,
+            prefix_tokens=None,
         )
 
         with torch.no_grad():
@@ -73,7 +77,12 @@ class AudioDemo(pl.Callback):
 
         self.log_audio(module, sampled_audio, audio)
 
-    def log_audio(self, module: pl.LightningModule, sampled_audio: torch.Tensor, audio: torch.Tensor) -> None:
+    def log_audio(
+        self,
+        module: pl.LightningModule,
+        sampled_audio: torch.Tensor,
+        audio: torch.Tensor,
+    ) -> None:
         self.completed_demos[module.global_step] += audio.shape[0]
         demo_id = self.completed_demos[module.global_step]
         print(f"Generating demo {demo_id} for step {module.global_step}")
@@ -91,6 +100,7 @@ class AudioDemo(pl.Callback):
                 module.global_step,
                 sample_rate=self.sample_rate,
             )
+
 
 # class FineAudioDemo(AudioDemo):
 #     def __init__(self, keep_coarse_quant_idx: int, sample_rate: int, max_demos_per_step: int):
