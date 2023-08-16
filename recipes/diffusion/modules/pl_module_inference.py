@@ -76,7 +76,7 @@ class ARVSampler(nn.Module):
 
         if 'semantic' in condition_signal:
             enable_semantic_condition = 0
-        elif 'mulan' in condition_signal:
+        if 'mulan' in condition_signal:
             enable_mulan_condition = 0
 
         if angle_schedule == 'linear':
