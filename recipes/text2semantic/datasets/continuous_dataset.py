@@ -46,7 +46,7 @@ class PhoneTokenizerWithAudioTokens:
 
 
 class ContinuousTTSDataset(Dataset):
-    def __init__(self, path, hp=None, return_full_seq=False, inference=False, dynamic_batch_size=False):
+    def __init__(self, path, hp=None, return_full_seq=False, inference=False, dynamic_batch_size=False, bpe_dir=None, bpe_tokens_num=0):
         self.path = path
         self.hp = DotDict(hp)
         self.metas = self.get_metadata(path)
