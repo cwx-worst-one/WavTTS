@@ -1,4 +1,5 @@
 import logging
+import multiprocessing
 import os
 import tempfile
 from datetime import timedelta
@@ -11,8 +12,10 @@ from lightning_fabric.utilities.cloud_io import get_filesystem
 from lightning_fabric.utilities.types import _PATH
 from lightning_utilities.core.rank_zero import rank_zero_only, rank_zero_warn
 from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.types import STEP_OUTPUT
 
+from samantha.utils.envs import getenv_bool
 from samantha.utils.hdfs_tools import hdfs_mkdir, hdfs_put
 
 logger = logging.getLogger(__name__)
@@ -69,6 +72,7 @@ class HDFSModelCheckpoint(ModelCheckpoint):
         self._last_mtime = dict()
         self._ckpt_history = set()
         self._worker_pool = Pool(num_sync_process)
+        self.should_sync_platform = True
 
     def setup(
         self, trainer: "pl.Trainer", pl_module: "pl.LightningModule", stage: str
@@ -83,20 +87,65 @@ class HDFSModelCheckpoint(ModelCheckpoint):
         if trainer.is_global_zero and stage == "fit":
             self.__warn_if_dir_not_empty(self.dirpath)
             hdfs_mkdir(self.hdfs_path)
-            self.register_model()
+            self.register_model(trainer)
 
-    def register_model(self):
+    def register_model(self, trainer):
         model_name = os.getenv("ModelName", None)
-        if model_name is None:
-            return
+        model_arch = os.getenv("ModelArch", None)
+        ckpt_type = os.getenv("CheckpointType", None)
+        infer_type = os.getenv("InferType", None)
+        packed_model = os.getenv("PackedModel", None)
+        if (
+            model_name is None
+            or model_arch is None
+            or ckpt_type is None
+            or infer_type is None
+            or packed_model is None
+        ):
+            self.should_sync_platform = False
+            logger.warning(
+                f"Will not sync model checkpoints to platform cause some of those env "
+                f"variables are not provided:\n"
+                f"  ModelName={model_name}\n"
+                f"  ModelArch={model_arch}\n"
+                f"  CheckpointType={ckpt_type}\n"
+                f"  InferType={infer_type}\n"
+                f"  PackedModel={packed_model}"
+            )
+            return None
+        wandb_run_id = "null"
+        pool = multiprocessing.Pool(1)
+        project = "null"
+        for _logger in trainer.loggers:
+            if isinstance(_logger, WandbLogger):
+                project = _logger.name
+                name = _logger.experiment.name
+                wandb_run_id = pool.apply(
+                    easycycle.register_evaluation_wandb,
+                    kwds={"project": project, "name": name},
+                )
+                break
+        pool.close()
         req = easycycle.RegisterRawModelReq()
         req.name = model_name
         req.model_type = os.getenv("ModelType", "Common")
+        req.model_arch = model_arch
+        req.ckpt_type = ckpt_type
+        req.infer_type = infer_type
+        req.train_task_params = easycycle.TrainTaskParams(
+            task_marking=packed_model,
+            train_task_id=os.getenv("ARNOLD_TRIAL_ID", "null"),
+            train_dataset_id=os.getenv("DatasetID", "null"),
+            train_task_type="MERLIN" if os.getenv("MERLIN_JOB_ID", None) else "ARNOLD",
+            wandb_run_id=wandb_run_id,
+            wandb_project_name=project,
+            merlin_job_id=os.getenv("MERLIN_JOB_ID", "null"),
+        )
         req.owner = os.getenv("ARNOLD_TRIAL_OWNER", "samantha")
         easycycle.register_raw_model(req)
 
     @rank_zero_only
-    def check_and_sync_checkpoints(self):
+    def check_and_sync_checkpoints(self, global_step):
         def maybe_sync_last(ckpt_path):
             fn = os.path.basename(ckpt_path)
             if "last" not in fn:
@@ -116,30 +165,39 @@ class HDFSModelCheckpoint(ModelCheckpoint):
                 hdfs_path = os.path.join(self.hdfs_path, fn)
                 self._worker_pool.apply_async(
                     func=self._sync_checkpoint,
-                    args=(ckpt, hdfs_path, "last" in fn),
+                    args=(
+                        ckpt,
+                        hdfs_path,
+                        "last" in fn,
+                        self.should_sync_platform,
+                        global_step,
+                    ),
                     error_callback=lambda e: logger.warning(f"{e}"),
                     callback=lambda e: logger.info(f"{e}"),
                 )
 
     @classmethod
-    def _sync_checkpoint(cls, local_path, hdfs_path, force):
+    def _sync_checkpoint(
+        cls, local_path, hdfs_path, force, should_sync_platform, global_step
+    ):
         hdfs_put(local_path, hdfs_path, force=force)
         logger.info(f"Synced {local_path=} to {hdfs_path=}.")
         if force:
             return
-        model_name = os.getenv("ModelName", None)
-        if model_name is None:
+        if not should_sync_platform:
             return
+        model_name = os.getenv("ModelName", None)
         req = easycycle.RegisterCkptsReq()
         req.raw_model_name = model_name
         req.creator = os.getenv("ARNOLD_TRIAL_OWNER", "samantha")
-        req.train_dataset_id = os.getenv("DatasetID", "null")
         req.train_task_id = os.getenv("ARNOLD_TRIAL_ID", "null")
-        req.train_task_type = "MERLIN" if os.getenv("MERLIN_JOB_ID", None) else "ARNOLD"
 
         req.checkpoints = [
             easycycle.Checkpoint(
-                name=os.path.basename(hdfs_path), hdfs=hdfs_path, extra={}
+                name=os.path.basename(hdfs_path),
+                hdfs=hdfs_path,
+                extra={"step": str(global_step)},
+                auto_valid=getenv_bool("AutoEval", False),
             )
         ]
         easycycle.register_ckpts(req)
@@ -159,19 +217,19 @@ class HDFSModelCheckpoint(ModelCheckpoint):
         batch_idx: int,
     ) -> None:
         super().on_train_batch_end(trainer, pl_module, outputs, batch, batch_idx)
-        self.check_and_sync_checkpoints()
+        self.check_and_sync_checkpoints(global_step=trainer.global_step)
 
     def on_train_epoch_end(
         self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"
     ) -> None:
         super().on_train_epoch_end(trainer, pl_module)
-        self.check_and_sync_checkpoints()
+        self.check_and_sync_checkpoints(global_step=trainer.global_step)
 
     def on_validation_epoch_start(
         self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"
     ) -> None:
         super().on_validation_epoch_start(trainer, pl_module)
-        self.check_and_sync_checkpoints()
+        self.check_and_sync_checkpoints(global_step=trainer.global_step)
 
     def teardown(
         self, trainer: "pl.Trainer", pl_module: "pl.LightningModule", stage: str

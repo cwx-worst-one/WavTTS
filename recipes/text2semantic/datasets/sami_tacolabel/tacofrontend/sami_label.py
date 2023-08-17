@@ -70,7 +70,9 @@ def parse_raw_text(text_filepath):
 def generate_tacolabels_from_textstr(text:str, language='Chinese'):
     if language == 'Chinese' or language == 'English':
         speaker = 'front_end'
-    elif language == 'Chinese_new' or language == 'English_new':
+    elif language == 'Chinese_new':
+        speaker = "front_end_zh"
+    elif language == 'English_new':
         speaker = 'front_end_en'
     elif language == 'Japanese':
         speaker = 'front_end_jp'

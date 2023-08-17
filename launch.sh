@@ -2,7 +2,7 @@
 
 
 # pip 
-sudo pip3 install -U bytedance.easycycle==0.0.1.post22
+sudo pip3 install -U bytedance.easycycle==0.0.1.post29
 
 # suppress excessive logs
 export BYTED_TORCH_C10D_LOG_LEVEL=ERROR
