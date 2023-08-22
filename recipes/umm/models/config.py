@@ -161,3 +161,9 @@ class UMMConfig(PretrainedConfig):
     @property
     def len_masking_token(self):
         return int(self.len_masking_raw / self.hop_length / 4)
+
+    def get(self, name, default):
+        if hasattr(self, name):
+            return self.__getattribute__(name)
+        else:
+            return default

@@ -6,6 +6,7 @@ from recipes.datasets.mcc.mix import (
     MCCInstrumentalDataset,
     MCCVocalDataset,
     MixWebDataModule,
+    VocalWebDataModule
 )
 from recipes.umm.transforms.speech import SpeechTransform
 from samantha.transforms.audio import batch_plot_spectrogram
@@ -37,11 +38,12 @@ def test_mix_datamodule():
     batch_size = 8
     n_mels = 128
     sample_rate = 24000
-    pl_datamodule = MixWebDataModule(
+    pl_datamodule = VocalWebDataModule(
         sample_rate=sample_rate,
         batch_size=batch_size,
         shuffle_buffer_size=10,
         num_workers=2,
+        region="CN"
     )
     train_loader = pl_datamodule.train_dataloader()
     train_loader = iter(train_loader)
@@ -49,7 +51,7 @@ def test_mix_datamodule():
         batch = next(train_loader)
         audio = batch["audio"]
         for a_idx, a in enumerate(audio):
-            torchaudio.save(f"mix-batch-{i}-item-{a_idx}.wav", a, sample_rate)
+            torchaudio.save(f"./test_out/mix-batch-{i}-item-{a_idx}.wav", a, sample_rate)
 
         for n_fft in [2048]:
             for win_length in [n_fft]:
@@ -70,6 +72,7 @@ def test_mix_datamodule():
                     batch_plot_spectrogram(mel, plot_log=False, mel=True, title=text, ax=ax)
                     ax[0].set_title(title)
                     plt.tight_layout()
-                    plt.savefig(f"mix-batch-{i}-mel-{n_mels}-{n_fft}-{win_length}-{hop_length}.pdf")
+                    plt.savefig(f"./test_out/mix-batch-{i}-mel-{n_mels}-{n_fft}-{win_length}-{hop_length}.pdf")
                     assert mel.shape[0] == batch_size
                     assert mel.shape[1] == n_mels
+test_mix_datamodule()

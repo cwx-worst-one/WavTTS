@@ -80,3 +80,40 @@ class LogMaskedMelSpectrogram(pl.Callback):
             pl_module.logger.experiment.add_figure(
                 f"val_{dataloader_idx}/mel", fig, global_step=pl_module.global_step
             )
+
+
+class LogSpectrogram(pl.Callback):
+    def __init__(self, n_examples: int = 4):
+        super().__init__()
+        self.n_examples = n_examples
+
+    @torch.no_grad()
+    def on_validation_batch_end(
+        self,
+        trainer: "pl.Trainer",
+        pl_module: "pl.LightningModule",
+        outputs,
+        batch,
+        batch_idx: int,
+        dataloader_idx: int = 0,
+    ) -> None:
+        if batch_idx == 0:
+            log_dict = pl_module.get_spec(batch)
+            batch_idxs = [i for i in range(self.n_examples)]
+            fig, ax = plt.subplots(
+                4, self.n_examples, figsize=(20 * self.n_examples, 20)
+            )
+
+            for i, (k, v) in enumerate(log_dict["mel"].items()):
+                for mel, a in zip(v[batch_idxs], ax[i]):
+                    plot_spectrogram(mel.cpu(), plot_log=False, mel=True, title=k, ax=a)
+            for i, (k, v) in enumerate(log_dict["chroma"].items()):
+                for chroma, a in zip(v[batch_idxs], ax[i + 2]):
+                    plot_spectrogram(
+                        chroma.cpu(), plot_log=False, mel=True, title=k, ax=a
+                    )
+
+            plt.tight_layout()
+            pl_module.logger.experiment.add_figure(
+                f"val_{dataloader_idx}/spec", fig, global_step=pl_module.global_step
+            )

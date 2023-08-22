@@ -771,6 +771,8 @@ class FineTunedModel(BaseModel):
             )
         if config.add_vocoder:
             self.vocoder = BigVGAN(config)
+        if config.get("add_chroma", False):
+            self.chromarecon_head = Conv2dUpsampling(self.config.hidden_size, 12)
         del self.unfolder
         del self.rq
         del self.rq_head
@@ -784,12 +786,17 @@ class FineTunedModel(BaseModel):
 
         logits = self.ctc_head(hidden_state)
         recon_feature = self.melrecon_head(hidden_state)
+        if self.config.get("add_chroma", False):
+            recon_chroma = self.chromarecon_head(hidden_state)
         if self.config.add_vocoder:
             recon_wav = self.vocoder(hidden_state.transpose(1, 2)).squeeze(1)
 
         output_dict = {
             "logits": logits,
             "recon_feature": recon_feature,
+            "recon_chroma": recon_chroma
+            if self.config.get("add_chroma", False)
+            else None,
             "recon_wav": recon_wav if self.config.add_vocoder else None,
         }
         if self.config.add_vq:

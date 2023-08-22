@@ -12,6 +12,7 @@ from torchaudio_augmentations import Compose
 from webdataset import WebDataset
 from webdataset.pipeline import DataPipeline
 
+import samantha.utils.hdfs_helper as hh
 from recipes.musiclm.transforms.audio import (
     FastNormalizeAudio,
     LoudnessCheck,
@@ -507,6 +508,8 @@ class VocalWebDataModule(DataModule):
         num_workers: int = 4,
         pin_memory: bool = True,
         collate_fn: Optional[Callable] = collate_fn,
+        weights: Tuple[int, int] = [1, 1],
+        region: str = "US",
     ):
         buckets_samples = list(map(lambda i: i * sample_rate, buckets_in_sec))
         self.batcher = BucketBatcher(
@@ -515,7 +518,28 @@ class VocalWebDataModule(DataModule):
             batch_size=batch_size,
             length_fn=lambda x: x["audio"].shape[-1],
         )
+        if region == "US":
+            mcc_vocal_index = (
+                "/mnt/bn/audio-diffusion/data/vocal_mcc_npy/lyrics_npy_url2idx.txt"
+            )
+            mcc_vocal_val_index = (
+                "/mnt/bn/audio-diffusion/data/vocal_mcc_npy/lyrics_npy_url2idx_val.txt"
+            )
+        elif region == "CN":
+            mcc_vocal_index = "recipes/datasets/mcc/mcc60m_index_cn.txt"
+            mcc_vocal_val_index = "recipes/datasets/mcc/mcc60m_index_val_cn.txt"
+            hh.get(
+                "hdfs://haruna/home/byte_speech_sv/zongyu.yin/assets/mcc60m_index_train.txt",
+                mcc_vocal_index,
+            )
+            hh.get(
+                "hdfs://haruna/home/byte_speech_sv/zongyu.yin/assets/mcc60m_index_val.txt",
+                mcc_vocal_val_index,
+            )
+        else:
+            raise KeyError(f"Wrong region: {region}")
         mcc_vocal = MCCVocalDataset(
+            url2index=mcc_vocal_index,
             sample_rate=sample_rate,
             resampled=True,
             shardshuffle=True,
@@ -535,14 +559,14 @@ class VocalWebDataModule(DataModule):
         )
 
         train_dataset = WebPipeline(
-            MultiIterableDataset(datasets=[mcc_vocal, libritts], weights=[1, 2]),
+            MultiIterableDataset(datasets=[mcc_vocal, libritts], weights=weights),
             pipeline=[{"compose": [self.bucketize]}],
         )
 
         validation_dataset = [
             WebPipeline(
                 MCCVocalDataset(
-                    url2index="/mnt/bn/audio-diffusion/data/vocal_mcc_npy/lyrics_npy_url2idx_val.txt",
+                    url2index=mcc_vocal_val_index,
                     sample_rate=sample_rate,
                     nodesplitter=return_self,
                     min_duration=buckets_in_sec[0],

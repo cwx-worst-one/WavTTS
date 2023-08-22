@@ -266,3 +266,75 @@ class VocoderLoss(nn.Module):
         # Recon loss
         loss_dict["multi_stft_loss"] = self.multi_stft_loss_fn(recon_wav, wav)
         return loss_dict
+
+
+class MKIILoss(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.ctc_loss_fn = nn.CTCLoss(
+            reduction=config.ctc_loss_reduction, zero_infinity=config.ctc_zero_infinity
+        )
+        self.mel_loss_fn = STFTLoss()
+        self.chroma_loss_fn = STFTLoss()
+        self.config = config
+
+    def forward(self, logits, text_ids, recon_chroma, chroma, recon_mel, mel):
+        logits = logits.contiguous().float()
+        recon_chroma = recon_chroma.contiguous().float()
+        chroma = chroma.contiguous().float()
+        recon_mel = recon_mel.contiguous().float()
+        mel = mel.contiguous().float()
+        loss_dict = {}
+
+        chroma_loss = self.chroma_loss_fn.float()(recon_chroma, chroma)
+        loss_dict["loss_chroma_stft"] = chroma_loss["stft_loss"]
+        loss_dict["loss_chroma_spec_mag"] = chroma_loss["spec_mag_loss"]
+        loss_dict["loss_chroma_lin_mag"] = chroma_loss["lin_mag_loss"]
+
+        mel_loss = self.mel_loss_fn.float()(recon_mel, mel)
+        loss_dict["loss_mel_stft"] = mel_loss["stft_loss"]
+        loss_dict["loss_mel_spec_mag"] = mel_loss["spec_mag_loss"]
+        loss_dict["loss_mel_lin_mag"] = mel_loss["lin_mag_loss"]
+
+        # CTC
+        input_lengths = torch.full((logits.size(0),), logits.size(1), dtype=torch.long)
+        labels_mask = text_ids > 0
+        target_lengths = labels_mask.sum(-1)
+        flattened_targets = text_ids.masked_select(labels_mask)
+
+        # CTCLoss doesn't support fp16
+        log_probs = F.log_softmax(logits, dim=-1, dtype=torch.float32).transpose(
+            0, 1
+        )  # [N, T, C] -> [T, N, C]
+
+        with torch.backends.cudnn.flags(enabled=False):
+            ctc_loss = self.ctc_loss_fn(
+                log_probs, flattened_targets, input_lengths, target_lengths
+            )
+        loss_dict["loss_ctc"] = ctc_loss
+
+        return loss_dict
+
+
+class SoundStormLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, logits, targets, masked_acoustic_tokens, rand_qs, mask_id):
+        loss_dict = {}
+        batch_indices = torch.arange(logits.shape[0], device=logits.device)
+        targets = targets[batch_indices, :, rand_qs]
+        mask = masked_acoustic_tokens[batch_indices, :, rand_qs] == mask_id
+        masked_logits = logits[mask].contiguous().float()
+        masked_targets = targets[mask].contiguous()
+
+        accu = (masked_logits.argmax(1) == masked_targets).float().mean() * 100
+        log_probs = F.log_softmax(
+            masked_logits.float().view(-1, masked_logits.size(-1)), dim=-1
+        )
+        loss = -torch.gather(log_probs, dim=1, index=masked_targets.view(-1, 1)).mean()
+
+        loss_dict["loss"] = loss
+        loss_dict["accu"] = accu
+
+        return loss_dict

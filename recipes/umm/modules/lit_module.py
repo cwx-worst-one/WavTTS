@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import List, Optional, Union
 
 import pytorch_lightning as pl
 import torch
@@ -1465,3 +1465,616 @@ class Stage3(Stage2):
         )
         vq_ids = shared_encoder_output["vq_ids"]
         return vq_ids
+
+
+class MKII(pl.LightningModule):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        checkpointing=False,
+        extra_params=None,
+        required_modules=None,
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+        self.model = model_cls()
+        self.criterion = criterion_cls()
+        self.extra_params = DotDict(extra_params)
+        self.requires = {}
+        self.val_outputs = dict()
+
+        if checkpointing:
+            self.model.gradient_checkpointing_enable()
+
+    def setup(self, stage: str) -> None:
+        self.tokenizer = BertTokenizer.from_pretrained("bert-large-uncased")
+        if (
+            stage == "fit"
+            and not self.requires
+            and self.hparams.required_modules is not None
+        ):
+            self.load_required_modules()
+
+    def load_required_modules(self):
+        pretrained = self.hparams.required_modules["pretrained"]
+        state_dict = pretrained["init_fn"](
+            pretrained["ckpt_path"], self.local_rank, pretrained["cache_dir"]
+        )["state_dict"]
+        print(f'Loading pretrained model from {pretrained["ckpt_path"]}')
+        self.modify_state_dict(state_dict)
+        missing_keys, unexpected_keys = self.load_state_dict(
+            state_dict=state_dict, strict=False
+        )
+        print(f"[Missing] {missing_keys}")
+        print(f"[Unexpected] {unexpected_keys}")
+        return
+
+    def modify_state_dict(self, state_dict):
+        c = self.model.config
+        for k in list(state_dict.keys()):
+            if k.startswith("model.shared_encoder.layers"):
+                k_i = int(k.split(".")[3])
+                k_suffix = ".".join(k.split(".")[4:])
+                if k_i < c.num_hidden_layers:
+                    k_new = f"model.encoder_layers.{k_i}.{k_suffix}"
+                    state_dict[k_new] = state_dict[k]
+                    print(f"[MSD] {k} -> {k_new}")
+                else:
+                    if k_i < c.num_syllable_pre_layers + c.num_hidden_layers:
+                        k_new = f"model.syllable_pre_layers.{k_i - c.num_hidden_layers}.{k_suffix}"
+                    elif (
+                        k_i
+                        < c.num_syllable_pre_layers
+                        + c.num_syllable_post_layers
+                        + c.num_hidden_layers
+                    ):
+                        k_new = f"model.syllable_post_layers.{k_i - (c.num_syllable_pre_layers + c.num_hidden_layers)}.{k_suffix}"
+                    state_dict[k_new] = state_dict[k]
+                    print(f"[MSD] {k} -> {k_new}")
+                    if k_i < c.num_chroma_pre_layers + c.num_hidden_layers:
+                        k_new = f"model.chroma_pre_layers.{k_i - c.num_hidden_layers}.{k_suffix}"
+                    elif (
+                        k_i
+                        < c.num_chroma_pre_layers
+                        + c.num_chroma_post_layers
+                        + c.num_hidden_layers
+                    ):
+                        k_new = f"model.chroma_post_layers.{k_i - (c.num_chroma_pre_layers + c.num_hidden_layers)}.{k_suffix}"
+                    state_dict[k_new] = state_dict[k]
+                    print(f"[MSD] {k} -> {k_new}")
+                del state_dict[k]
+            elif k.startswith("model.melrecon_head"):
+                k_suffix = ".".join(k.split(".")[2:])
+                k_new = f"model.mel_head.{k_suffix}"
+                state_dict[k_new] = state_dict[k]
+                print(f"[MSD] {k} -> {k_new}")
+                del state_dict[k]
+            elif k.startswith("model.ctc_head"):
+                k_suffix = ".".join(k.split(".")[2:])
+                k_new = f"model.syllable_head.{k_suffix}"
+                state_dict[k_new] = state_dict[k]
+                print(f"[MSD] {k} -> {k_new}")
+                del state_dict[k]
+            elif k.startswith("model.shared_encoder.embed_positions"):
+                k_suffix = ".".join(k.split(".")[3:])
+                k_new = f"model.embed_positions.{k_suffix}"
+                state_dict[k_new] = state_dict[k]
+                print(f"[MSD] {k} -> {k_new}")
+                del state_dict[k]
+        return
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def prepare_feature(self, batch):
+        audio = batch["audio"].squeeze(dim=1).float()
+        audio = self.pad_audio(audio)
+        feature = self.preprocessing(audio)
+        encoded_text = self.tokenizer(
+            batch["text"],
+            add_special_tokens=False,
+            padding="longest",
+            return_tensors="pt",
+        )
+        text_ids = encoded_text["input_ids"].to(audio.device)
+        input_dict = {"text_ids": text_ids, "wav": audio}
+        input_dict.update(feature)
+        return input_dict
+
+    def _shared_step(self, batch):
+        input_dict = self.prepare_feature(batch)
+        output_dict = self.model(input_dict)
+
+        loss_dict = self.criterion(
+            logits=output_dict["syllable_out"],
+            text_ids=input_dict["text_ids"],
+            recon_chroma=output_dict["chroma_out"],
+            chroma=input_dict["chroma"],
+            recon_mel=output_dict["mel_out"],
+            mel=input_dict["mel"],
+        )
+
+        loss_dict["loss"] = (
+            loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
+            + loss_dict["loss_chroma_stft"] * self.model.config.w_loss_chroma
+            + loss_dict["loss_mel_stft"] * self.model.config.w_loss_mel
+        )
+        loss_dict["num_tokens"] = input_dict["text_ids"].size(1)
+        loss_dict["num_frames"] = input_dict["mel"].size(1)
+        loss_dict["feature_mean"] = input_dict["mel"].mean()
+        loss_dict["feature_std"] = input_dict["mel"].std()
+
+        if self.model.config.add_vq:
+            loss_dict["loss_vq_syllable"] = output_dict["syllable_vq_loss"]
+            loss_dict["loss_vq_chroma"] = output_dict["chroma_vq_loss"]
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + output_dict["syllable_vq_loss"] * self.model.config.w_loss_vq
+                + output_dict["chroma_vq_loss"] * self.model.config.w_loss_vq
+            )
+            nuc_chroma = self.get_nuc(output_dict["chroma_vq_indices"])
+            nuc_syllable = self.get_nuc(output_dict["syllable_vq_indices"])
+            qr_chroma = self.get_quant_rate(
+                output_dict["chroma_vq_indices"],
+                self.model.config.vq_chroma_codebook_size,
+            )
+            qr_syllable = self.get_quant_rate(
+                output_dict["syllable_vq_indices"],
+                self.model.config.vq_syllable_codebook_size,
+            )
+            loss_dict["nuc_chroma"] = nuc_chroma
+            loss_dict["nuc_syllable"] = nuc_syllable
+            loss_dict["qr_chroma"] = qr_chroma
+            loss_dict["qr_syllable"] = qr_syllable
+        return loss_dict
+
+    def training_step(self, batch, batch_idx):
+        loss_dict = self._shared_step(batch)
+        self.log_dict(loss_dict, prog_bar=True, sync_dist=True)
+        return loss_dict["loss"]
+
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
+        # Dummy function for triggering callbacks
+        return
+
+    # def validation_step(self, batch, batch_idx, dataloader_idx=0):
+    #     loss_dict = self._shared_step(batch)
+    #     if dataloader_idx not in self.val_outputs:
+    #         self.val_outputs[dataloader_idx] = []
+    #     self.val_outputs[dataloader_idx].append(loss_dict)
+
+    # def on_validation_epoch_end(self):
+    #     for dataloader_idx, outputs in self.val_outputs.items():
+    #         val_loss_dict = {}
+    #         for loss in outputs:
+    #             for k, v in loss.items():
+    #                 k = f"val_{k}/{dataloader_idx}"
+    #                 if k not in val_loss_dict:
+    #                     val_loss_dict[k] = v
+    #                 else:
+    #                     val_loss_dict[k] = val_loss_dict[k] + v
+    #         for k, v in val_loss_dict.items():
+    #             val_loss_dict[k] = v / len(outputs)
+    #         self.log_dict(val_loss_dict, prog_bar=True, sync_dist=True)
+    #         self.val_outputs[dataloader_idx] = []
+
+    def configure_optimizers(self):
+        # params = []
+        # for name, p in self.model.named_parameters():
+        #     if "vq" in name:
+        #         print(f"Set lr={self.model.config.vq_lr}: {name}")
+        #         params.append({"params": [p], "lr": self.model.config.vq_lr})
+        #     else:
+        #         params.append({"params": [p]})
+        if self.model.config.vq_train_only:
+            for name, param in self.model.named_parameters():
+                if "vq" not in name:
+                    print(f"Freezing {name}")
+                    param.requires_grad = False
+
+        optimizer = self.hparams.optimizer_cls(self.model.parameters())
+        scheduler = self.hparams.scheduler_cls(optimizer)
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
+        }
+
+    def get_nuc(self, target_tokens):
+        nuc = (
+            sum(
+                [
+                    len(target_tokens[i, :].unique())
+                    for i in range(target_tokens.size(0))
+                ]
+            )
+            / target_tokens.size(0)
+            / target_tokens.size(1)
+        )
+        return nuc
+
+    def get_quant_rate(self, quant_index, quant_token_num):
+        one_hot = torch.nn.functional.one_hot(
+            quant_index.reshape(-1), quant_token_num
+        ).sum(dim=0)
+        one_hot = self.all_gather(one_hot)
+        one_hot = one_hot.sum(dim=0).clamp(0, 1)
+        quant_rate = one_hot.sum() / quant_token_num
+        return quant_rate
+
+    @torch.no_grad()
+    def get_spec(self, batch):
+        input_dict = self.prepare_feature(batch)
+        output_dict = self.model(input_dict)
+        return {
+            "mel": {
+                "Reconstructed": output_dict["mel_out"].transpose(1, 2),
+                "Original": input_dict["mel"].transpose(1, 2),
+            },
+            "chroma": {
+                "Reconstructed": output_dict["chroma_out"].transpose(1, 2),
+                "Original": input_dict["chroma"].transpose(1, 2),
+            },
+        }
+
+    @torch.no_grad()
+    def pad_audio(self, x):
+        return self.model.pad_audio(x)
+
+    @torch.no_grad()
+    def preprocessing(self, x):
+        return self.model.preprocessing(x)
+
+
+class MKIIVQ(MKII):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+        assert self.model.config.add_vq == True
+
+    def load_required_modules(self):
+        pretrained = self.hparams.required_modules["pretrained"]
+        state_dict = pretrained["init_fn"](
+            pretrained["ckpt_path"], self.local_rank, pretrained["cache_dir"]
+        )["state_dict"]
+        print(f'Loading pretrained model from {pretrained["ckpt_path"]}')
+        missing_keys, unexpected_keys = self.load_state_dict(
+            state_dict=state_dict, strict=False
+        )
+        print(f"[Missing] {missing_keys}")
+        print(f"[Unexpected] {unexpected_keys}")
+        return
+
+    @torch.no_grad()
+    def tokenize(self, x):
+        return self.model.tokenize(x)
+
+
+class MKIIVocoder(pl.LightningModule):
+    def __init__(
+        self,
+        generator_cls,
+        discriminator_cls,
+        optimizer_g_cls,
+        optimizer_d_cls,
+        scheduler_g_cls,
+        scheduler_d_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+        self.generator, self.discriminator = generator_cls(), discriminator_cls()
+        self.optimizer_g_cls, self.optimizer_d_cls = (
+            self.hparams.optimizer_g_cls,
+            self.hparams.optimizer_d_cls,
+        )
+        self.scheduler_g_cls, self.scheduler_d_cls = (
+            self.hparams.scheduler_g_cls,
+            self.hparams.scheduler_d_cls,
+        )
+        self.stft_loss = MultiResolutionSTFTLoss()
+        self.ctc_loss = CTCLoss()
+
+        self.extra_params = DotDict(extra_params)
+
+        # disable automatic optimization for GAN training
+        self.automatic_optimization = False
+
+        # custom recorder for training step due to GAN training
+        self.current_step = 0
+        self.tokenizer = BertTokenizer.from_pretrained("bert-large-uncased")
+
+    def configure_optimizers(self):
+        # generator
+        optimizer_g = self.optimizer_g_cls(self.generator.parameters())
+        scheduler_g = self.scheduler_g_cls(optimizer_g)
+        # discriminator
+        optimizer_d = self.optimizer_d_cls(self.discriminator.parameters())
+        scheduler_d = self.scheduler_d_cls(optimizer_d)
+
+        return [optimizer_g, optimizer_d], [scheduler_g, scheduler_d]
+
+    def training_step(self, batch, batch_idx):
+        # get optimizor and scheduler
+        net_g, net_d = self.generator, self.discriminator
+        optim_g, optim_d = self.optimizers()
+        scheduler_g, scheduler_d = self.lr_schedulers()
+        input_dict = self.prepare_feature(batch)
+
+        # train discriminator
+        net_g_out = net_g(input_dict["audio"])
+        chroma_out = net_g_out["chroma_out"]
+        chroma_vq_indices = net_g_out["chroma_vq_indices"]
+        chroma_vq_loss = net_g_out["chroma_vq_loss"]
+        syllable_out = net_g_out["syllable_out"]
+        syllable_vq_indices = net_g_out["syllable_vq_indices"]
+        syllable_vq_loss = net_g_out["syllable_vq_loss"]
+        vocoder_out = net_g_out["vocoder_out"]
+        vocoder_taget = net_g_out["vocoder_taget"]
+
+        mel_hat = mel_spectrogram_torch(
+            vocoder_out.squeeze(1),
+            self.extra_params.n_fft,
+            self.extra_params.n_mels,
+            self.extra_params.sample_rate,
+            self.extra_params.hop_length,
+            self.extra_params.win_length,
+            self.extra_params.f_min,
+            self.extra_params.f_max,
+        )
+        mel = mel_spectrogram_torch(
+            vocoder_taget.squeeze(1),
+            self.extra_params.n_fft,
+            self.extra_params.n_mels,
+            self.extra_params.sample_rate,
+            self.extra_params.hop_length,
+            self.extra_params.win_length,
+            self.extra_params.f_min,
+            self.extra_params.f_max,
+        )
+
+        self.toggle_optimizer(optim_d)
+        y_d_hat_r, y_d_hat_g, _, _ = net_d(vocoder_taget, vocoder_out.detach())
+
+        # discriminator loss
+        loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(
+            y_d_hat_r, y_d_hat_g
+        )
+        loss_disc_all = loss_disc
+
+        # disciminator backward
+        optim_d.zero_grad()
+        self.manual_backward(loss_disc_all)
+        grad_norm_d = clip_grad_value_(net_d.parameters(), 1.0)
+        optim_d.step()
+        scheduler_d.step()
+        self.untoggle_optimizer(optim_d)
+
+        # train generator
+        self.toggle_optimizer(optim_g)
+        y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(vocoder_taget, vocoder_out)
+
+        # generator loss
+        loss_sc, loss_mag = self.stft_loss(
+            vocoder_taget.suqeeze(1), vocoder_out.suqeeze(1)
+        )
+        loss_syllable = self.ctc_loss(syllable_out, input_dict["text_ids"])
+        loss_mel = F.l1_loss(mel, mel_hat)
+        loss_chroma = F.l1_loss(input_dict["chroma"], chroma_out)
+        loss_fm = feature_loss(fmap_r, fmap_g)
+        loss_gen, losses_gen = generator_loss(y_d_hat_g)
+        loss_gen_all = (
+            self.extra_params.w_gen * loss_gen
+            + self.extra_params.w_fm * loss_fm
+            + self.extra_params.w_mel * loss_mel
+            + self.extra_params.w_chroma * loss_chroma
+            + self.extra_params.w_syllable * loss_syllable
+            + self.extra_params.w_stft * loss_sc
+            + self.extra_params.w_stft * loss_mag
+            + self.extra_params.w_vq * chroma_vq_loss
+            + self.extra_params.w_vq * syllable_vq_loss
+        )
+
+        # generator backward
+        optim_g.zero_grad()
+        self.manual_backward(loss_gen_all)
+        grad_norm_g = clip_grad_value_(net_g.parameters(), 1.0)
+        optim_g.step()
+        scheduler_g.step()
+        self.untoggle_optimizer(optim_g)
+
+        # log
+        self.log_dict(
+            {
+                "loss_disc": loss_disc,
+                "loss_gen": loss_gen,
+                "loss_fm": loss_fm,
+                "loss_mel": loss_mel,
+                "loss_chroma": loss_chroma,
+                "loss_chroma_vq": chroma_vq_loss,
+                "loss_syllable": loss_syllable,
+                "loss_syllable_vq": syllable_vq_loss,
+                "loss_sc": loss_sc,
+                "loss_mag": loss_mag,
+                "grad_norm_d": grad_norm_d,
+                "grad_norm_g": grad_norm_g,
+                "opt_lr": optim_g.param_groups[0]["lr"],
+                "sch_lr": scheduler_g.get_last_lr()[0],
+            },
+            prog_bar=True,
+            sync_dist=True,
+            rank_zero_only=True,
+        )
+
+        self.current_step += 1
+
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
+        # Dummy function for triggering callbacks
+        return
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def prepare_feature(self, batch):
+        encoded_text = self.tokenizer(
+            batch["text"],
+            add_special_tokens=False,
+            padding="longest",
+            return_tensors="pt",
+        )
+        text_ids = encoded_text["input_ids"].to(batch["audio"].device)
+        batch.update(text_ids=text_ids)
+        return batch
+
+
+class SoundStorm(pl.LightningModule):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+        self.model = model_cls()
+        self.criterion = criterion_cls()
+        self.extra_params = DotDict(extra_params)
+        self.requires = {}
+        self.val_outputs = dict()
+
+        if checkpointing:
+            self.model.gradient_checkpointing_enable()
+
+    def setup(self, stage: str) -> None:
+        if (
+            stage == "fit"
+            and not self.requires
+            and self.hparams.required_modules is not None
+        ):
+            self.load_required_modules()
+
+    def load_required_modules(self):
+        for name, item in self.hparams.required_modules.items():
+            hpath = item["ckpt_path"]
+            init_fn = item["init_fn"]
+            cache_dir = item["cache_dir"]
+            print(f"Loading {name} from {hpath}")
+            self.requires.update(
+                init_fn(hpath, local_rank=self.local_rank, cache_dir=cache_dir)
+            )
+        return
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def get_soundstream_tokens(self, x):
+        output = self.requires["ss"](x.float())[2]
+        output = torch.stack(output, dim=2)
+        return output
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def get_mkii_tokens(self, x):
+        embeds, tokens = self.requires["mkii"].tokenize(x.float())
+        return tokens
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def pad_audio(self, x):
+        return self.model.pad_audio(x)
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def prepare_feature(self, batch):
+        wav = self.pad_audio(batch["audio"].squeeze(1)).float()
+        device = wav.device
+        b, _ = wav.size()
+
+        soundstream_ids = self.get_soundstream_tokens(wav)
+        mkii_ids = self.get_mkii_tokens(wav)
+        mkii_ids[:, :, 1] = (
+            mkii_ids[:, :, 1] + self.model.config.vq_syllable_codebook_size
+        )
+        mkii_ids = torch.reshape(mkii_ids, [b, -1]).unsqueeze(2)
+        return {"acoustic_tokens": soundstream_ids, "semantic_tokens": mkii_ids}
+
+    def _shared_step(self, batch):
+        input_dict = self.prepare_feature(batch)
+        acoustic_tokens = input_dict["acoustic_tokens"]
+        semantic_tokens = input_dict["semantic_tokens"]
+        output_dict = self.model(
+            acoustic_tokens=acoustic_tokens, semantic_tokens=semantic_tokens
+        )
+        logits = output_dict["logits"]
+        masked_acoustic_tokens = output_dict["masked_acoustic_tokens"]
+        rand_qs = output_dict["rand_qs"]
+
+        loss_dict = self.criterion(
+            logits=logits,
+            targets=acoustic_tokens,
+            masked_acoustic_tokens=masked_acoustic_tokens,
+            rand_qs=rand_qs,
+            mask_id=self.model.masking_scheme.mask_id,
+        )
+        return loss_dict
+
+    def training_step(self, batch, batch_idx):
+        loss_dict = self._shared_step(batch)
+        self.log_dict(loss_dict, prog_bar=True, sync_dist=True)
+        return loss_dict["loss"]
+
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
+        # Dummy function for triggering callbacks
+        return
+
+    def configure_optimizers(self):
+        optimizer = self.hparams.optimizer_cls(self.model.parameters())
+        scheduler = self.hparams.scheduler_cls(optimizer)
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
+        }
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def sample(
+        self,
+        semantic_tokens: torch.Tensor,
+        num_iterations: List[int],
+        score_strategies: List[str],
+        temperatures: Optional[List[float]] = None,
+    ) -> torch.Tensor:
+        return self.model.sample(
+            semantic_tokens=semantic_tokens,
+            num_iterations=num_iterations,
+            score_strategies=score_strategies,
+            temperatures=temperatures,
+        )
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def token2audio(self, acoustic_tokens):
+        acoustic_tokens = acoustic_tokens.transpose(1, 2)  # [b, t, q] -> [b, q, t]
+        audio = self.requires["ss_dec"](acoustic_tokens).squeeze(1)
+        return audio

@@ -240,7 +240,7 @@ def plot_spectrogram(
     if title is not None:
         ax.set_title(title)
 
-    ylabel = "mel bin" if mel else "Hz"
+    ylabel = "bin" if mel else "Hz"
     ax.set_ylabel(ylabel)
 
     if plot_log:
