@@ -15,6 +15,7 @@ from triton.ops.blocksparse import matmul as sparse_matmul
 from triton.ops.blocksparse import softmax as sparse_softmax
 
 from samantha.models.ctiga.gpt import GPTModel
+from samantha.utils.cuda import get_compute_capability
 from transformers import GPT2Config
 
 
@@ -449,6 +450,7 @@ class LLaMa(nn.Module):
                 N = multiple_of
                 return ((n_inner - 1) // N) * N + N
 
+            cuda_cc = get_compute_capability()
             ctiga_config = GPT2Config(
                 n_positions=0,
                 vocab_size=params.vocab_size,
@@ -473,10 +475,10 @@ class LLaMa(nn.Module):
                 out_proj_bias=False,
                 mlp_fc1_bias=False,
                 mlp_fc2_bias=False,
-                use_flash_attn=True,
-                fused_bias_fc=True,
+                use_flash_attn=cuda_cc > 7.0,
+                fused_bias_fc=cuda_cc > 7.0,
                 fused_mlp=False,
-                fused_dropout_add_ln=True,
+                fused_dropout_add_ln=cuda_cc > 7.0,
                 residual_in_fp32=True,
                 checkpointing=params.checkpointing,
             )
