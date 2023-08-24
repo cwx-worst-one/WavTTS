@@ -126,14 +126,11 @@ class LlamaRMSNorm(nn.Module):
 class LlamaRotaryEmbedding(torch.nn.Module):
     def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None):
         super().__init__()
-        self.inv_freq = 1.0 / (
-            base ** (torch.arange(0, dim, 2).float().to(device) / dim)
-        )
-
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float().to(device) / dim))
+        self.register_buffer("inv_freq", inv_freq)
         # Build here to make `torch.jit.trace` work.
         self._set_cos_sin_cached(max_position_embeddings)
 
-    @torch.cuda.amp.autocast(enabled=False)
     def _set_cos_sin_cached(self, seq_len):
         self.max_seq_len_cached = seq_len
         t = torch.arange(
