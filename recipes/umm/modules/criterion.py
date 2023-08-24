@@ -171,13 +171,26 @@ class Stage2Loss(nn.Module):
         super().__init__()
         self.ctc_loss_fn = nn.CTCLoss()
         self.stft_loss_fn = STFTLoss()
+        self.chroma_loss_fn = STFTLoss()
 
-    def forward(self, recon_feature, feature, logits, text_ids):
+    def forward(
+        self, recon_feature, feature, logits, text_ids, recon_chroma=None, chroma=None
+    ):
         recon_feature = recon_feature.contiguous().float()
         feature = feature.contiguous().float()
 
         # Spec
         loss_dict = self.stft_loss_fn.float()(recon_feature, feature)
+
+        if recon_chroma is not None and chroma is not None:
+            recon_chroma = recon_chroma.contiguous().float()
+            chroma = chroma.contiguous().float()
+            chroma_loss = self.chroma_loss_fn.float()(recon_chroma, chroma)
+            loss_dict.update(
+                chroma_stft_loss=chroma_loss["stft_loss"],
+                chroma_spec_mag_loss=loss_dict["spec_mag_loss"],
+                chroma_lin_mag_loss=chroma_loss["lin_mag_loss"],
+            )
 
         # CTC
         input_lengths = torch.full((logits.size(0),), logits.size(1), dtype=torch.long)

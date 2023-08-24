@@ -11,6 +11,7 @@ from transformers.utils import ModelOutput
 
 from recipes.umm.models.vocoder import BigVGAN
 from recipes.umm.models.vq import EMAVectorQuantizer, VectorQuantize
+from recipes.umm.transforms.chroma import ChromaSpectrogram
 from recipes.umm.transforms.speech import SpeechTransform
 
 
@@ -31,29 +32,31 @@ class ConformerRotaryPositionalEmbedding(nn.Module):
 
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
         self.register_buffer("inv_freq", inv_freq)
-        self.cached_sequence_length = None
+        self.cached_sequence_length = 0
         self.cached_rotary_positional_embedding = None
 
-    def forward(self, hidden_states):
-        sequence_length = hidden_states.shape[1]
-
-        if (
-            sequence_length == self.cached_sequence_length
-            and self.cached_rotary_positional_embedding is not None
-        ):
-            return self.cached_rotary_positional_embedding
-
+    @torch.cuda.amp.autocast(enabled=False)
+    def _set_cos_sin_cache(self, sequence_length):
         self.cached_sequence_length = sequence_length
-        time_stamps = torch.arange(sequence_length).type_as(self.inv_freq)
+        time_stamps = torch.arange(
+            sequence_length, device=self.inv_freq.device, dtype=torch.float32
+        )
         freqs = torch.einsum("i,j->ij", time_stamps, self.inv_freq)
         embeddings = torch.cat((freqs, freqs), dim=-1)
-
         cos_embeddings = embeddings.cos()[:, None, None, :]
         sin_embeddings = embeddings.sin()[:, None, None, :]
         self.cached_rotary_positional_embedding = torch.stack(
             [cos_embeddings, sin_embeddings]
         )
-        return self.cached_rotary_positional_embedding
+
+    def forward(self, hidden_states):
+        sequence_length = hidden_states.shape[1]
+        if (
+            sequence_length > self.cached_sequence_length
+            or self.cached_rotary_positional_embedding is None
+        ):
+            self._set_cos_sin_cache(sequence_length)
+        return self.cached_rotary_positional_embedding[:, -sequence_length:]
 
 
 class ConformerFeedForward(nn.Module):
@@ -772,7 +775,17 @@ class FineTunedModel(BaseModel):
         if config.add_vocoder:
             self.vocoder = BigVGAN(config)
         if config.get("add_chroma", False):
-            self.chromarecon_head = Conv2dUpsampling(self.config.hidden_size, 12)
+            self.chroma_transform = ChromaSpectrogram(
+                sample_rate=config.sample_rate,
+                n_fft=config.n_fft,
+                win_length=config.win_length,
+                hop_length=config.hop_length,
+                n_chroma=config.n_chroma,
+                normalized=False,
+            )
+            self.chromarecon_head = Conv2dUpsampling(
+                self.config.hidden_size, config.n_chroma
+            )
         del self.unfolder
         del self.rq
         del self.rq_head
@@ -814,6 +827,18 @@ class FineTunedModel(BaseModel):
                 vq_embeds=vq_embeds if self.config.add_mulan else None,
             )
         return output_dict
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def preprocessing(self, x):
+        normalize = self.config.feature_cmvn is not None
+        mel = self.audio_transform(x, normalize=normalize)
+        input_dict = {"feature": mel}
+        if self.config.get("add_chroma", False):
+            chroma = self.chroma_transform(x)[:, :, :-1].transpose(1, 2)
+            chroma = F.normalize(chroma, p=2, dim=-1)
+            input_dict.update(chroma=chroma)
+        return input_dict
 
 
 class FineTunedVocoder(BaseModel):

@@ -46,21 +46,50 @@ run_opts:
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
+ar_filtering: !new:recipes.musiclm.transforms.musiclm.ARFiltering
+    genre_stats_fname: "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/genre_quantile_stats.pkl"
+    semantic_diversity_range: (10, 90)
+    semantic_probs_range: (10, 90)
+
 train_dataset: !new:recipes.musiclm.datasets.mcc.WrappedMCC40MDataset
     url2index_list:
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/a.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/b.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/c.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/d.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/e.tsv"
-        - "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/f.tsv"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.alternative-hip-hop+chinese-style+others"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.blues+childhood+country+devotional+k-pop+soundtrack+trance+world-music"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.classical"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.easy-listening"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.electronic+techno"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.folk+indie-folk"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.hip-hop-rap"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.jazz"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.new-age"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.pop"
+        - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.rock"
+    weights:
+        - 1.0
+        - 2.0
+        - 4.0
+        - 1.0
+        - 2.0
+        - 2.0
+        - 2.0
+        - 4.0
+        - 2.0
+        - 4.0
+        - 2.0
     sample_rate: !ref <extra_params[sample_rate]>
     duration: !ref <extra_params[duration]>
+    audio_key: "audio.npy"
     min_volume_threshold: !ref <run_opts[min_volume_threshold]>
     loudness_ratio_threshold: !ref <run_opts[loudness_ratio_threshold]>
+    ar_filtering: !ref <ar_filtering>
+    max_num_crops: 6
+    avoid_vocal: True
+    max_vocal_threshold: 0.5
+    overlap_vocal_threshold: 0.1
     resampled: True
     shardshuffle: True
     seed: !ref <seed>
+    use_pipe: True
 
 validation_dataset: !new:recipes.musiclm.datasets.karaoke.KaraokeDataset
     urls: "pipe:hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/data/karaoke_for_singsong/shards-0131.tar"

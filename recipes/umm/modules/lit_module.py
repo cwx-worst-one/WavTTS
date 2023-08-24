@@ -3,9 +3,12 @@ from typing import List, Optional, Union
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
+from einops import rearrange
 from pytorch_lightning.profilers import PassThroughProfiler
+from tqdm import tqdm
 from transformers import BertTokenizer
 
+from recipes.musiclm.inference.utils import sample
 from recipes.umm.models.utils import clip_grad_value_, mel_spectrogram_torch
 from recipes.umm.modules.criterion_vocoder import (
     MultiResolutionSTFTLoss,
@@ -943,26 +946,8 @@ class Stage2(BaseStage):
         missing_keys, unexpected_keys = self.load_state_dict(
             state_dict=state_dict, strict=False
         )
-        assert all(
-            any(
-                name.startswith(prefix_key)
-                for prefix_key in ["model.rq_head", "model.rq"]
-            )
-            for name in unexpected_keys
-        )
-        assert all(
-            any(
-                name.startswith(prefix_key)
-                for prefix_key in [
-                    "model.vq",
-                    "model.mulan_head",
-                    "model.ctc_head",
-                    "model.melrecon_head",
-                    "model.vocoder",
-                ]
-            )
-            for name in missing_keys
-        )
+        print(f"[Missing] {missing_keys}")
+        print(f"[Unexpected] {unexpected_keys}")
         if self.model.config.add_mulan:
             print(f'Loading mulan from {mulan["ckpt_path"]}')
             mulan = self.hparams.required_modules["mulan"]
@@ -976,7 +961,7 @@ class Stage2(BaseStage):
     def prepare_feature(self, batch):
         audio = batch["audio"].squeeze(dim=1).float()
         audio = self.pad_audio(audio)
-        feature = self.preprocessing(audio)
+        input_dict = self.preprocessing(audio)
         encoded_text = self.tokenizer(
             batch["text"],
             add_special_tokens=False,
@@ -984,7 +969,7 @@ class Stage2(BaseStage):
             return_tensors="pt",
         )
         text_ids = encoded_text["input_ids"].to(audio.device)
-        input_dict = {"feature": feature, "text_ids": text_ids, "wav": audio}
+        input_dict.update({"text_ids": text_ids, "wav": audio})
         if self.model.config.add_mulan:
             mulan_embeds = self.get_mulan_embeds(audio, data_type="music")
             input_dict["mulan_embeds"] = mulan_embeds
@@ -998,6 +983,9 @@ class Stage2(BaseStage):
             text_ids = input_dict["text_ids"]
             logits = output_dict["logits"]
             recon_feature = output_dict["recon_feature"]
+            if self.model.config.get("add_chroma", False):
+                chroma = input_dict["chroma"]
+                recon_chroma = output_dict["recon_chroma"]
             # if self.model.config.add_mulan:
             #     mulan_embeds = input_dict["mulan_embeds"]
             #     vq_embeds = output_dict["vq_embeds"]
@@ -1009,11 +997,21 @@ class Stage2(BaseStage):
                 feature=feature,
                 logits=logits,
                 text_ids=text_ids,
+                recon_chroma=recon_chroma
+                if self.model.config.get("add_chroma", False)
+                else None,
+                chroma=chroma if self.model.config.get("add_chroma", False) else None,
             )
             loss_dict["loss"] = (
                 loss_dict["ctc_loss"] * self.model.config.w_ctc_loss
                 + loss_dict["stft_loss"] * self.model.config.w_stft_loss
             )
+            if self.model.config.get("add_chroma", False):
+                loss_dict["loss"] = (
+                    loss_dict["loss"]
+                    + loss_dict["chroma_stft_loss"]
+                    * self.model.config.w_chroma_stft_loss
+                )
             if self.model.config.add_vq:
                 vq_states = output_dict["vq_states"]
                 vq_ids = output_dict["vq_ids"]
@@ -1025,6 +1023,7 @@ class Stage2(BaseStage):
                 loss_dict["vq_nuc"] = vq_nuc
                 loss_dict["vq_loss"] = vq_loss.sum()
                 loss_dict["vq_quant_rate"] = vq_quant_rate
+                loss_dict["vq_entropy"] = self.model.vq.embedding.entropy()
                 loss_dict["loss"] = (
                     loss_dict["loss"] + vq_loss.sum() * self.model.config.w_vq_loss
                 )
@@ -1466,6 +1465,14 @@ class Stage3(Stage2):
         vq_ids = shared_encoder_output["vq_ids"]
         return vq_ids
 
+    def training_step(self, batch, batch_idx):
+        loss_dict = self._shared_step(batch)
+        self.log_dict(loss_dict, prog_bar=True, sync_dist=True)
+        return loss_dict["loss"]
+
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
+        return
+
 
 class MKII(pl.LightningModule):
     def __init__(
@@ -1628,6 +1635,10 @@ class MKII(pl.LightningModule):
             loss_dict["nuc_syllable"] = nuc_syllable
             loss_dict["qr_chroma"] = qr_chroma
             loss_dict["qr_syllable"] = qr_syllable
+            loss_dict[
+                "entropy_vq_syllable"
+            ] = self.model.syllable_vq.embedding.entropy()
+            loss_dict["entropy_vq_chroma"] = self.model.chroma_vq.embedding.entropy()
         return loss_dict
 
     def training_step(self, batch, batch_idx):
@@ -1943,138 +1954,3 @@ class MKIIVocoder(pl.LightningModule):
         text_ids = encoded_text["input_ids"].to(batch["audio"].device)
         batch.update(text_ids=text_ids)
         return batch
-
-
-class SoundStorm(pl.LightningModule):
-    def __init__(
-        self,
-        model_cls,
-        criterion_cls,
-        optimizer_cls,
-        scheduler_cls,
-        required_modules=None,
-        checkpointing=False,
-        extra_params=None,
-    ):
-        super().__init__()
-        self.save_hyperparameters()
-        self.model = model_cls()
-        self.criterion = criterion_cls()
-        self.extra_params = DotDict(extra_params)
-        self.requires = {}
-        self.val_outputs = dict()
-
-        if checkpointing:
-            self.model.gradient_checkpointing_enable()
-
-    def setup(self, stage: str) -> None:
-        if (
-            stage == "fit"
-            and not self.requires
-            and self.hparams.required_modules is not None
-        ):
-            self.load_required_modules()
-
-    def load_required_modules(self):
-        for name, item in self.hparams.required_modules.items():
-            hpath = item["ckpt_path"]
-            init_fn = item["init_fn"]
-            cache_dir = item["cache_dir"]
-            print(f"Loading {name} from {hpath}")
-            self.requires.update(
-                init_fn(hpath, local_rank=self.local_rank, cache_dir=cache_dir)
-            )
-        return
-
-    @torch.no_grad()
-    @torch.cuda.amp.autocast(enabled=False)
-    def get_soundstream_tokens(self, x):
-        output = self.requires["ss"](x.float())[2]
-        output = torch.stack(output, dim=2)
-        return output
-
-    @torch.no_grad()
-    @torch.cuda.amp.autocast(enabled=False)
-    def get_mkii_tokens(self, x):
-        embeds, tokens = self.requires["mkii"].tokenize(x.float())
-        return tokens
-
-    @torch.no_grad()
-    @torch.cuda.amp.autocast(enabled=False)
-    def pad_audio(self, x):
-        return self.model.pad_audio(x)
-
-    @torch.no_grad()
-    @torch.cuda.amp.autocast(enabled=False)
-    def prepare_feature(self, batch):
-        wav = self.pad_audio(batch["audio"].squeeze(1)).float()
-        device = wav.device
-        b, _ = wav.size()
-
-        soundstream_ids = self.get_soundstream_tokens(wav)
-        mkii_ids = self.get_mkii_tokens(wav)
-        mkii_ids[:, :, 1] = (
-            mkii_ids[:, :, 1] + self.model.config.vq_syllable_codebook_size
-        )
-        mkii_ids = torch.reshape(mkii_ids, [b, -1]).unsqueeze(2)
-        return {"acoustic_tokens": soundstream_ids, "semantic_tokens": mkii_ids}
-
-    def _shared_step(self, batch):
-        input_dict = self.prepare_feature(batch)
-        acoustic_tokens = input_dict["acoustic_tokens"]
-        semantic_tokens = input_dict["semantic_tokens"]
-        output_dict = self.model(
-            acoustic_tokens=acoustic_tokens, semantic_tokens=semantic_tokens
-        )
-        logits = output_dict["logits"]
-        masked_acoustic_tokens = output_dict["masked_acoustic_tokens"]
-        rand_qs = output_dict["rand_qs"]
-
-        loss_dict = self.criterion(
-            logits=logits,
-            targets=acoustic_tokens,
-            masked_acoustic_tokens=masked_acoustic_tokens,
-            rand_qs=rand_qs,
-            mask_id=self.model.masking_scheme.mask_id,
-        )
-        return loss_dict
-
-    def training_step(self, batch, batch_idx):
-        loss_dict = self._shared_step(batch)
-        self.log_dict(loss_dict, prog_bar=True, sync_dist=True)
-        return loss_dict["loss"]
-
-    def validation_step(self, batch, batch_idx, dataloader_idx=0):
-        # Dummy function for triggering callbacks
-        return
-
-    def configure_optimizers(self):
-        optimizer = self.hparams.optimizer_cls(self.model.parameters())
-        scheduler = self.hparams.scheduler_cls(optimizer)
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
-        }
-
-    @torch.no_grad()
-    @torch.cuda.amp.autocast(enabled=False)
-    def sample(
-        self,
-        semantic_tokens: torch.Tensor,
-        num_iterations: List[int],
-        score_strategies: List[str],
-        temperatures: Optional[List[float]] = None,
-    ) -> torch.Tensor:
-        return self.model.sample(
-            semantic_tokens=semantic_tokens,
-            num_iterations=num_iterations,
-            score_strategies=score_strategies,
-            temperatures=temperatures,
-        )
-
-    @torch.no_grad()
-    @torch.cuda.amp.autocast(enabled=False)
-    def token2audio(self, acoustic_tokens):
-        acoustic_tokens = acoustic_tokens.transpose(1, 2)  # [b, t, q] -> [b, q, t]
-        audio = self.requires["ss_dec"](acoustic_tokens).squeeze(1)
-        return audio

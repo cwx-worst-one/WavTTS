@@ -6,7 +6,7 @@ from recipes.datasets.mcc.mix import (
     MCCInstrumentalDataset,
     MCCVocalDataset,
     MixWebDataModule,
-    VocalWebDataModule
+    VocalWebDataModule,
 )
 from recipes.umm.transforms.speech import SpeechTransform
 from samantha.transforms.audio import batch_plot_spectrogram
@@ -43,7 +43,8 @@ def test_mix_datamodule():
         batch_size=batch_size,
         shuffle_buffer_size=10,
         num_workers=2,
-        region="CN"
+        region="CN",
+        weights=(10, 1),
     )
     train_loader = pl_datamodule.train_dataloader()
     train_loader = iter(train_loader)
@@ -75,4 +76,3 @@ def test_mix_datamodule():
                     plt.savefig(f"./test_out/mix-batch-{i}-mel-{n_mels}-{n_fft}-{win_length}-{hop_length}.pdf")
                     assert mel.shape[0] == batch_size
                     assert mel.shape[1] == n_mels
-test_mix_datamodule()

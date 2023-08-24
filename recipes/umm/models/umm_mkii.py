@@ -31,29 +31,31 @@ class ConformerRotaryPositionalEmbedding(nn.Module):
 
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
         self.register_buffer("inv_freq", inv_freq)
-        self.cached_sequence_length = None
+        self.cached_sequence_length = 0
         self.cached_rotary_positional_embedding = None
 
-    def forward(self, hidden_states):
-        sequence_length = hidden_states.shape[1]
-
-        if (
-            sequence_length == self.cached_sequence_length
-            and self.cached_rotary_positional_embedding is not None
-        ):
-            return self.cached_rotary_positional_embedding
-
+    @torch.cuda.amp.autocast(enabled=False)
+    def _set_cos_sin_cache(self, sequence_length):
         self.cached_sequence_length = sequence_length
-        time_stamps = torch.arange(sequence_length).type_as(self.inv_freq)
+        time_stamps = torch.arange(
+            sequence_length, device=self.inv_freq.device, dtype=torch.float32
+        )
         freqs = torch.einsum("i,j->ij", time_stamps, self.inv_freq)
         embeddings = torch.cat((freqs, freqs), dim=-1)
-
         cos_embeddings = embeddings.cos()[:, None, None, :]
         sin_embeddings = embeddings.sin()[:, None, None, :]
         self.cached_rotary_positional_embedding = torch.stack(
             [cos_embeddings, sin_embeddings]
         )
-        return self.cached_rotary_positional_embedding
+
+    def forward(self, hidden_states):
+        sequence_length = hidden_states.shape[1]
+        if (
+            sequence_length > self.cached_sequence_length
+            or self.cached_rotary_positional_embedding is None
+        ):
+            self._set_cos_sin_cache(sequence_length)
+        return self.cached_rotary_positional_embedding[:, -sequence_length:]
 
 
 class ConformerFeedForward(nn.Module):

@@ -23,6 +23,7 @@ class hdfs_open:
                     shell=True,
                     stdout=subprocess.PIPE,
                     text=True,
+                    encoding="utf-8",
                 )
             elif mode == "wa":
                 self.pipe = subprocess.Popen(

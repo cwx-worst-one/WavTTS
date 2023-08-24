@@ -297,7 +297,14 @@ class MCCVocalDataset(MCCInstrumentalDataset):
         lyrics = item["__index_data__"].get("lyrics", None)
         if lyrics is None:
             return
-        audio = self.base_transform(item[self.audio_key])
+        try:
+            audio = self.base_transform(item[self.audio_key])
+        except Exception as e:
+            print(f"Error loading audio: {e}")
+            return
+        if audio.size(-1) < self.sample_rate:
+            print(f"Too short: {audio.size(-1)}")
+            return
         utterances = item["__index_data__"]["lyrics"].get("utterances", None)
         if utterances is None:
             return
@@ -309,6 +316,9 @@ class MCCVocalDataset(MCCInstrumentalDataset):
             )
             end = int(float(selected_utterance["end_time"]) / 1000 * self.sample_rate)
             clip = audio[:, start:end]
+            if clip.size(-1) < self.sample_rate:
+                print(f"Too short: {clip.size(-1)}")
+                return
             if not self.is_loud(clip):
                 return
             text = normalize_text(selected_utterance["text"])
@@ -508,8 +518,10 @@ class VocalWebDataModule(DataModule):
         num_workers: int = 4,
         pin_memory: bool = True,
         collate_fn: Optional[Callable] = collate_fn,
-        weights: Tuple[int, int] = [1, 1],
+        weights: Tuple[int, int] = (1, 1),
         region: str = "US",
+        use_pipe: bool = True,
+        val_resampled: bool = False,
     ):
         buckets_samples = list(map(lambda i: i * sample_rate, buckets_in_sec))
         self.batcher = BucketBatcher(
@@ -526,16 +538,16 @@ class VocalWebDataModule(DataModule):
                 "/mnt/bn/audio-diffusion/data/vocal_mcc_npy/lyrics_npy_url2idx_val.txt"
             )
         elif region == "CN":
-            mcc_vocal_index = "recipes/datasets/mcc/mcc60m_index_cn.txt"
-            mcc_vocal_val_index = "recipes/datasets/mcc/mcc60m_index_val_cn.txt"
-            hh.get(
-                "hdfs://haruna/home/byte_speech_sv/zongyu.yin/assets/mcc60m_index_train.txt",
-                mcc_vocal_index,
-            )
-            hh.get(
-                "hdfs://haruna/home/byte_speech_sv/zongyu.yin/assets/mcc60m_index_val.txt",
-                mcc_vocal_val_index,
-            )
+            mcc_vocal_index = "recipes/datasets/mcc/mcc60m_index_train.txt"
+            mcc_vocal_val_index = "recipes/datasets/mcc/mcc60m_index_val.txt"
+            # hh.get(
+            #     "hdfs://haruna/home/byte_speech_sv/zongyu.yin/assets/mcc60m_index_train.txt",
+            #     mcc_vocal_index,
+            # )
+            # hh.get(
+            #     "hdfs://haruna/home/byte_speech_sv/zongyu.yin/assets/mcc60m_index_val.txt",
+            #     mcc_vocal_val_index,
+            # )
         else:
             raise KeyError(f"Wrong region: {region}")
         mcc_vocal = MCCVocalDataset(
@@ -545,7 +557,7 @@ class VocalWebDataModule(DataModule):
             shardshuffle=True,
             min_duration=buckets_in_sec[0],
             max_duration=buckets_in_sec[-1],
-            use_pipe=True,
+            use_pipe=use_pipe,
             handler=wds.warn_and_continue,
         )
         libritts = LibriTTSDataset(
@@ -562,32 +574,58 @@ class VocalWebDataModule(DataModule):
             MultiIterableDataset(datasets=[mcc_vocal, libritts], weights=weights),
             pipeline=[{"compose": [self.bucketize]}],
         )
-
-        validation_dataset = [
-            WebPipeline(
-                MCCVocalDataset(
-                    url2index=mcc_vocal_val_index,
-                    sample_rate=sample_rate,
-                    nodesplitter=return_self,
-                    min_duration=buckets_in_sec[0],
-                    max_duration=buckets_in_sec[-1],
-                    use_pipe=True,
-                    handler=wds.warn_and_continue,
+        if val_resampled:
+            validation_dataset = [
+                WebPipeline(
+                    MCCVocalDataset(
+                        url2index=mcc_vocal_val_index,
+                        sample_rate=sample_rate,
+                        resampled=True,
+                        min_duration=buckets_in_sec[0],
+                        max_duration=buckets_in_sec[-1],
+                        use_pipe=use_pipe,
+                        handler=wds.warn_and_continue,
+                    ),
+                    pipeline=[{"compose": [self.bucketize]}],
                 ),
-                pipeline=[{"compose": [self.bucketize]}],
-            ),
-            WebPipeline(
-                LibriTTSDataset(
-                    urls="pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/speech/libritts/24000hz/test-clean/00000.tar",
-                    sample_rate=sample_rate,
-                    nodesplitter=return_self,
-                    min_duration=buckets_in_sec[0],
-                    max_duration=buckets_in_sec[-1],
-                    handler=wds.warn_and_continue,
+                WebPipeline(
+                    LibriTTSDataset(
+                        urls="pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/speech/libritts/24000hz/test-clean/00000.tar",
+                        sample_rate=sample_rate,
+                        resampled=True,
+                        min_duration=buckets_in_sec[0],
+                        max_duration=buckets_in_sec[-1],
+                        handler=wds.warn_and_continue,
+                    ),
+                    pipeline=[{"compose": [self.bucketize]}],
                 ),
-                pipeline=[{"compose": [self.bucketize]}],
-            ),
-        ]
+            ]
+        else:
+            validation_dataset = [
+                WebPipeline(
+                    MCCVocalDataset(
+                        url2index=mcc_vocal_val_index,
+                        sample_rate=sample_rate,
+                        nodesplitter=return_self,
+                        min_duration=buckets_in_sec[0],
+                        max_duration=buckets_in_sec[-1],
+                        use_pipe=use_pipe,
+                        handler=wds.warn_and_continue,
+                    ),
+                    pipeline=[{"compose": [self.bucketize]}],
+                ),
+                WebPipeline(
+                    LibriTTSDataset(
+                        urls="pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/speech/libritts/24000hz/test-clean/00000.tar",
+                        sample_rate=sample_rate,
+                        nodesplitter=return_self,
+                        min_duration=buckets_in_sec[0],
+                        max_duration=buckets_in_sec[-1],
+                        handler=wds.warn_and_continue,
+                    ),
+                    pipeline=[{"compose": [self.bucketize]}],
+                ),
+            ]
 
         super().__init__(
             shuffle_buffer_size=shuffle_buffer_size,
