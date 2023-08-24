@@ -16,6 +16,8 @@ from ..scripts.infer_utils import (
     setup_seed,
     spectrogram_torch,
     trim_silence,
+    trim_prompt_silence,
+    save_wav
 )
 from .llama.lit_vae_t2s_ctiga import VAET2SModule
 
@@ -42,6 +44,9 @@ class BigTTSWVAEInfer(LightningModule):
         text2id_path="recipes/valle/datasets/dict/metaid_to_textid.json",
         module_cache=".module_cache",
         seed=1996,
+        save_prompt=False,
+        trim_generated_wav=False,
+        scale_generated_wav=False
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -50,6 +55,9 @@ class BigTTSWVAEInfer(LightningModule):
         self.tokenizer = PhoneTokenizerWithAudioTokens(
             phone_token_num=phone_tokens_num, audio_token_num=speaker_tokens_num
         )
+        self.save_prompt = save_prompt
+        self.trim_generated_wav = trim_generated_wav
+        self.scale_generated_wav = scale_generated_wav
 
     def setup(self, stage):
         if stage == "predict":
@@ -67,31 +75,36 @@ class BigTTSWVAEInfer(LightningModule):
     def _decode(self, z_outputs):
         z_outputs = z_outputs.transpose(2, 1)
         generated_wav = self.wvae_decoder(z_outputs).squeeze()
-        generated_wav *= (32767) / max(0.01, max(torch.abs(generated_wav)))
         return generated_wav
 
     def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: int = 0) -> Any:
         setup_seed(self.hparams.seed)
-        sample = self.encode(batch)
+        sample, prompt_wav, prompt_wav_max = self.encode(batch)
         utt_ids = sample[-1]
         z_outputs, _ = self.ar_model.predict(sample, None)
         generated_wav = self._decode(z_outputs)
         output_dir = f"{self.hparams.output_dir}"
         os.makedirs(output_dir, exist_ok=True)
-        write(
-            f"{output_dir}/{utt_ids[0]}.wav",
-            24000,
-            generated_wav.cpu().numpy().astype(np.int16),
-        )
+
+        generated_wav = generated_wav.cpu().numpy()
+        if self.trim_generated_wav:
+            generated_wav = trim_silence(generated_wav)
+        if self.scale_generated_wav:
+            generated_wav *= min(0.99, prompt_wav_max) / max(0.01, np.max(np.abs(generated_wav)))
+        save_wav(generated_wav, f"{output_dir}/{utt_ids[0]}.wav", 24000)
+        if self.save_prompt:
+            save_wav(np.concatenate((prompt_wav, generated_wav), axis=0), f"{output_dir}/prompt-{utt_ids[0]}.wav", 24000)
 
     def encode(self, sample):
         device = f"cuda:{self.trainer.local_rank}"
         uttid, prompt_text, prompt_wav_path, text = sample
         wav, sr = librosa.load(prompt_wav_path, sr=None)
-        wav *= 1.0 / max(0.01, np.max(np.abs(wav)))
+        prompt_wav_max = np.max(np.abs(wav))
         if sr != 24_000:
             wav = librosa.core.resample(wav, sr, 24_000)
-        wav = trim_silence(wav)
+        wav = wav * 0.99 / max(0.01, np.max(np.abs(wav)))
+        wav = trim_prompt_silence(wav)
+        prompt_wav = wav.copy()
         wav = torch.from_numpy(wav).float()
         wav = F.pad(wav, (0, (wav.size(-1) // 600 + 1) * 600 - wav.size(-1)))
         wav = torch.stack([wav]).unsqueeze(1)
@@ -100,10 +113,12 @@ class BigTTSWVAEInfer(LightningModule):
         m = m.transpose(2, 1)
         logs = logs.transpose(2, 1)
         bn = torch.cat([m, logs], -1)  # (1, t, 64)
+        symbol_sets = ['.', ',', '?', '!', '，', '。', '？', '！']
+        if prompt_text[-1] in symbol_sets:
+            text = prompt_text + ' ' + text.strip()
+        else:
+            text = prompt_text + ', ' + text
         text_id = self.text2id(text)
-        if prompt_text is not None:
-            prompt_text_id = self.text2id(prompt_text)
-            text_id = np.hstack([prompt_text_id[:-1], 2, text_id[1:]])
 
         if len(bn.shape) == 3 and bn.shape[0] == 1:
             bn = bn[0]
@@ -132,5 +147,5 @@ class BigTTSWVAEInfer(LightningModule):
             torch.tensor([bn.shape[0]]).long().unsqueeze(0),
             seq.unsqueeze(0),
             torch.tensor([seq.shape[0]]).long().unsqueeze(0),
-            [uttid],
-        )
+            [uttid]
+        ), prompt_wav.squeeze(), prompt_wav_max

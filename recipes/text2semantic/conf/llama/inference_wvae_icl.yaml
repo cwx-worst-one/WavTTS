@@ -34,6 +34,9 @@ pl_module: !new:recipes.text2semantic.lit_modules.lit_infer.BigTTSWVAEInfer
     wvae_decoder: !ref <run_opts[wvae_decoder]>
     output_dir: !ref <run_opts[output_dir]>
     seed: !ref <run_opts[seed]>
+    save_prompt: false
+    trim_generated_wav: false
+    scale_generated_wav: false
 
 trainer: !new:pytorch_lightning.Trainer
     accelerator: "auto"

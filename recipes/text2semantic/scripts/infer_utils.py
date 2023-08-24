@@ -7,7 +7,14 @@ import torch
 
 import samantha.utils.hdfs_helper as hh
 from samantha.utils.distributed import rank_zero_first
+from scipy.io.wavfile import write
 
+
+def save_wav(audio, output_file, sr=24000):
+    audio = audio * 32768.0
+    audio = audio.astype("int16")
+    write(output_file, sr, audio)
+    return
 
 def to_device(tensors, device):
     tensors_to_device = []
@@ -73,23 +80,29 @@ def spectrogram_torch(y, n_fft, sampling_rate, hop_size, win_size, center=False)
     return spec
 
 
-def trim_silence(wav):
+def trim_prompt_silence(wav):
     """
     Trim leading and trailing silence
     """
-    # These params are separate and tunable per dataset.
-
-    # wav = np.pad(wav, (5400, 5400))
-
+    # These params are separate and tunable per dataset
+    wav = np.pad(wav, (5400, 5400))
     unused_trimed, index = librosa.effects.trim(
         wav, top_db=30, frame_length=512, hop_length=128
     )
-    # num_sil_samples = int(8 * 300)
-    # head silence is set as half of num_sil_samples
-    start_idx = max(index[0] - 1200, 0)
-    # tail silence is set as twice of num_sil_samples
-    stop_idx = min(index[1] + 2400, len(wav))
+    start_idx = max(index[0] - 3200, 0)
+    stop_idx =  index[1] + 2400 # avoid trim voiced segment.
+    trimmed = wav[start_idx:stop_idx]
+    trimmed = np.pad(trimmed, (0, 2400)) # pad silience (0.0) 100ms.
+    return trimmed
 
+
+def trim_silence(wav):
+    wav = np.pad(wav, (5400, 5400))
+    unused_trimed, index = librosa.effects.trim(
+        wav, top_db=30, frame_length=512, hop_length=128
+    )
+    start_idx = max(index[0] - 3200, 0)
+    stop_idx =  index[1] + 5400 # avoid trim voiced segment.
     trimmed = wav[start_idx:stop_idx]
     return trimmed
 

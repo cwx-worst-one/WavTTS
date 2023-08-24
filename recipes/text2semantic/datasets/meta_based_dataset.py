@@ -1,3 +1,4 @@
+import os
 from torch.utils.data import Dataset
 
 
@@ -9,8 +10,11 @@ class MetaBasedDataset(Dataset):
         meta = []
         with open(meta_lst, "r", encoding="utf8") as f:
             for line in f:
-                line = line.strip().split("|")
-                meta.append(line)
+                uttid, prompt_text, prompt_wav_path, text = line.strip().split("|")
+                if not os.path.isabs(prompt_wav_path):
+                    prompt_wav_path = os.path.join(os.path.dirname(meta_lst), prompt_wav_path)
+                assert os.path.exists(prompt_wav_path)
+                meta.append([uttid, prompt_text, prompt_wav_path, text])
         return meta
     
     def __len__(self):
