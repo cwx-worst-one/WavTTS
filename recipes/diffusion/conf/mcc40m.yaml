@@ -113,17 +113,17 @@ scheduler_cls: !name:torch.optim.lr_scheduler.LambdaLR
         decay_factor: 0.9
         decay_interval: 200000
 
-pl_module: !apply:recipes.diffusion.modules.pl_module.DiffusionModule.load_from_checkpoint
-    checkpoint_path: !ref <checkpoint_path>
-# pl_module: !new:recipes.diffusion.modules.pl_module.DiffusionModule
+# pl_module: !apply:recipes.diffusion.modules.pl_module.DiffusionModule.load_from_checkpoint
+#     checkpoint_path: !ref <checkpoint_path>
+pl_module: !new:recipes.diffusion.modules.pl_module.DiffusionModule
     seed: !ref <seed>
     diffusion_model: !new:recipes.diffusion.models.tnt.TNTDiffusionNetwork
         input_dim: 32
         feature_dim: 1024
         context_dim: 1
-        depth: 20
-        segment_size: 64
-        segment_stride: 64
+        depth: 16
+        segment_size: 32
+        segment_stride: 32
         dropout: 0
         mulan_cfg_prob: 0.25
         semantic_cfg_prob: 0.25
@@ -146,7 +146,7 @@ pl_module: !apply:recipes.diffusion.modules.pl_module.DiffusionModule.load_from_
     semantic_centers:
         model_path: /home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_10.npy
     vocoder_model:
-        model_path: hdfs://harunava/home/byte_speech_sv/weitsung.lu/soundstream/soundstream-step=337999-val_sdr=12.9491.ckpt
+        model_path: hdfs://harunava/home/byte_speech_sv/weitsung.lu/soundstream/dac_vae_125hz_24k_v2_part2/checkpoints/soundstream-step=374999-val_sdr=12.9557.ckpt
     val_output_samples_dir: !ref <run_opts[val_output_samples_dir]>
 
 logger: !new:pytorch_lightning.loggers.TensorBoardLogger

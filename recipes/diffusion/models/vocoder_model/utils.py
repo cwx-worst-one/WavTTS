@@ -3,6 +3,47 @@ import torch
 from recipes.soundstream.models.vqgan import VQGAN_KL, VQGAN_KL_new
 from recipes.soundstream.modules.pl_module_vae import VocoderModule
 
+def load_ema_checkpoint(checkpoint_path, model):
+    ckpt = torch.load(checkpoint_path, map_location="cpu")
+
+    # divide param group
+    no_decay = [
+        "bn",
+        "bias",
+        "norm"
+        "rotary",
+        "embedding",
+        ".g", # g in RMSNorm
+    ]
+
+    base_params = {}
+    no_decay_params = {}
+    for name, param in model.named_parameters(): 
+        _found = False
+        for k in no_decay:
+            if k in name:
+                no_decay_params[name] = param
+                _found = True
+                break
+        if not _found:
+            base_params[name] = param
+    # combine the two dictionaries into one
+    new_state_dict = {}
+    new_keys = []
+    for k, v in base_params.items():
+        new_state_dict[k] = v
+        new_keys.append(k)
+    for k, v in no_decay_params.items():
+        new_state_dict[k] = v
+        new_keys.append(k)
+
+    for idx, k in enumerate(new_keys):
+        assert new_state_dict[k].shape == ckpt["optimizer_states"][0]["ema"][idx].shape
+        new_state_dict[k] = ckpt["optimizer_states"][0]["ema"][idx]
+
+    model.load_state_dict(new_state_dict)
+    return model
+
 def init_vocoder(trainer, path, device, cache_dir=None):
     if cache_dir is not None:
         os.makedirs(cache_dir, exist_ok=True)
@@ -19,19 +60,15 @@ def init_vocoder(trainer, path, device, cache_dir=None):
         trainer.strategy.barrier()
     
     # TODO: put model confic somewhere else
-    vocoder_model_pl = VocoderModule.load_from_checkpoint(
-        local_path,
-        generator=VQGAN_KL_new(
+    model = generator=VQGAN_KL_new(
             latent_dim=32,
             downsample_rates=[2, 3, 4, 8],
             upsample_rates=[8, 4, 3, 2],
             encoder_base_dim=96,
             decoder_base_dim=2560,
-        ),
-        discriminator=None,
-        strict=False
-    )   
-    vocoder_model = vocoder_model_pl.generator.eval().to(device)
+        )
+
+    vocoder_model = load_ema_checkpoint(local_path, model).eval().to(device)
 
     return {
         "model": vocoder_model, # model.generator.encoder
@@ -82,5 +119,4 @@ def init_vocoder_yongye(trainer, path, device, cache_dir=None):
     return {
         "model": model,
     }
-
 
