@@ -1,5 +1,6 @@
 import json
 import numpy as np
+import time
 from recipes.text2semantic.datasets.sami_tacolabel import generate_tacolabels_from_textstr, enc_taco_label_no_bytes
 
 # Conver raw text -> tacolab -> metaids
@@ -26,10 +27,12 @@ class TextToTacolabID:
         if self.lab == 'old':
             taco_labels = generate_tacolabels_from_textstr(text, "English")
             while taco_labels is None:
+                time.sleep(1)
                 taco_labels = generate_tacolabels_from_textstr(text, "English")
         elif self.lab == 'new':
             taco_labels = generate_tacolabels_from_textstr(text, "English_new")
             while taco_labels is None:
+                time.sleep(1)
                 taco_labels = generate_tacolabels_from_textstr(text, "English_new")
         if self.lab == 'old':
             metas = taco_labels.decode().split("\n")[:-1] # metas[-1] is "".
