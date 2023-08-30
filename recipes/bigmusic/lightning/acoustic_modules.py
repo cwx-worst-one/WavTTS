@@ -1,5 +1,5 @@
 from recipes.bigmusic.lightning.base_modules import BaseContinuousEmbedModule
-from recipes.bigmusic.lightning.embedding_modules import SoundstreamTokenEmbedder, WavToVecTokenEmbedder, BestRQTokenEmbedder, BestRQEmbedder, BestRQMKIITokenEmbedder
+from recipes.bigmusic.lightning.embedding_modules import SoundstreamTokenEmbedder, WavToVecTokenEmbedder, BestRQTokenEmbedder, BestRQEmbedder
 from recipes.bigmusic.lightning.embedding_modules import get_soundstream_tokens
 import torch
 from tqdm.auto import tqdm
@@ -130,8 +130,6 @@ class CoarseModule(BaseContinuousEmbedModule):
             semantic_embedder = BestRQTokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=False)
         elif semantic_type == 'bestrq_embeds':
             semantic_embedder = BestRQEmbedder(input_dim=1024, embedding_dim=hidden_size, add_sos=False)
-        elif semantic_type == 'bestrq_mkii':
-            semantic_embedder = BestRQMKIITokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=False)
         else:
             raise NotImplementedError
         embedder_dict = {

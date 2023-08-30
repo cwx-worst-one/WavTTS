@@ -5,7 +5,6 @@ import pytorch_lightning as pl
 import torch
 import torchaudio
 
-from recipes.bigmusic.lightning.phoneme_coarse_modules import LyricsCoarseModule
 from recipes.bigmusic.lightning.acoustic_modules import CoarseModule
 from recipes.bigmusic.lightning.acoustic_modules import FineModule
 from samantha.utils.hparams import DotDict
@@ -259,54 +258,6 @@ class GTInferenceModule(pl.LightningModule):
         txt_fp = os.path.join(output_dir, "metrics.txt")
         with open(txt_fp, 'w') as f:
             f.write(f'avg wer: {wer}\n')
-
-class ConditionalMulanPhonemeInferenceModule(pl.LightningModule):
-    def __init__(
-        self,
-        required_modules,
-        extra_params=None,
-    ):
-        super().__init__()
-        self.save_hyperparameters()
-        self.extra_params = DotDict(extra_params)
-        self.coarse_module = LyricsCoarseModule.load_from_checkpoint(self.extra_params.coarse_ckpt).eval()
-        self.fine_module = FineModule.load_from_checkpoint(self.extra_params.fine_ckpt).eval()
-        self.requires = {}
-        self.load_required_modules()
-
-    def load_required_modules(self):
-        for name, item in self.hparams.required_modules.items():
-            if isinstance(item, (list, tuple)):
-                hpath, initializer = item
-            elif isinstance(item, dict):
-                hpath = item['hpath']
-                initializer = item['initializer']
-            self.requires.update(initializer(hpath, local_rank=self.local_rank))
-        self.coarse_module.load_required_modules()
-    
-    def _predict_step(self, batch, round):
-        coarse_samples = self.coarse_module.predict(batch, self.extra_params)
-        fine_samples = self.fine_module.predict(coarse_samples, self.extra_params)
-        bs = coarse_samples.size(0)
-        
-        coarse_samples = coarse_samples.view([bs, -1, self.extra_params.num_coarse])
-        fine_samples = fine_samples.view([bs, -1, self.extra_params.num_fine])
-        vqgan_inputs = (
-            torch.cat([coarse_samples, fine_samples], dim=2)
-            - torch.arange(self.extra_params.num_coarse + self.extra_params.num_fine, device=coarse_samples.device)
-            * self.extra_params.soundstream_codebook_size
-        )  # [b, t, n_codebook]
-        vqgan_inputs = vqgan_inputs.transpose(
-            1, 2
-        )  # [b, t, n_codebook] -> [b, n_codebook, t]
-        wavs = self.requires["ss_dec"](vqgan_inputs).squeeze(1)
-        batch['generated_audio'] = wavs
-        save_outputs(batch, round, self.extra_params.output_dir)
-
-
-    def predict_step(self, batch, batch_idx, dataloader_idx=0):
-        for i in range(self.extra_params.num_rounds):
-            self._predict_step(batch, i)
 
 def save_outputs(batch, round, output_dir):
     conditions = batch['conditions']

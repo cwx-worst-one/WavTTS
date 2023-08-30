@@ -85,7 +85,6 @@ class BaseEmbedder(nn.Module):
 
 class ContinuousEmbedder(BaseEmbedder):
     def __init__(self, input_dim, embedding_dim, add_sos=False):
-        # TODO: add eos token
         super().__init__()
         self.sos_id = 0 if add_sos else None
         if add_sos:
@@ -106,7 +105,6 @@ class ContinuousEmbedder(BaseEmbedder):
 
     def get_sos_embed(self, batch_size):
         assert self.sos_id is not None, "Error getting sos id. Must initialize embedder with add_sos=True"
-        # sos_ids = [[self.sos_id] for _ in  range(batch_size)]
         device = next(self.parameters()).device
         sos_ids = torch.full(size=(batch_size, 1), fill_value=self.sos_id, dtype=torch.long, device=device)
         return self.projection(self.embedder(sos_ids))
@@ -164,9 +162,6 @@ class TokenEmbedder(BaseEmbedder):
         if with_eos:
             token_ids = torch.cat([token_ids, self.get_eos_token(token_ids.size(0))], dim=1)
         return token_ids
-
-    # def empty_tensor(self, batch_size):
-    #     return torch.zeros((batch_size, 0), dtype=torch.long, device=self.device)
 
     def embed(self, requires=None, batch=None, token_ids=None, with_sos=False, with_eos=False):
         token_ids = self.tokenize(requires, batch, token_ids, with_sos, with_eos)

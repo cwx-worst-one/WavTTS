@@ -7,7 +7,6 @@ from tqdm import tqdm
 import librosa
 from pathlib import Path
 import shutil
-from recipes.l2v.datasets.tokenizers.phoneme_tokenizer import convert_text
 import webdataset
 from samantha.dataio.webdataset import WebDataset
 

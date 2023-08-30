@@ -1,7 +1,7 @@
 from recipes.bigmusic.lightning.base_modules import BaseContinuousEmbedModule
 from recipes.bigmusic.lightning.embedding_modules import (
     MulanEmbedder, LyricsTokenEmbedder, WavToVecTokenEmbedder, 
-    MetadataT5TokenEmbedder, SpeakerEmbedder, BestRQTokenEmbedder, BestRQMKIITokenEmbedder
+    MetadataT5TokenEmbedder, SpeakerEmbedder, BestRQTokenEmbedder
 )
 import torch
 from tqdm.auto import tqdm
@@ -38,8 +38,6 @@ class SemanticModule(BaseContinuousEmbedModule):
             target_embedder = WavToVecTokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=True)
         elif semantic_type == 'bestrq':
             target_embedder = BestRQTokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=True)
-        elif semantic_type == 'bestrq_mkii':
-            target_embedder = BestRQMKIITokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=True)
         else:
             raise NotImplementedError
 
