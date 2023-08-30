@@ -1,5 +1,5 @@
 from recipes.bigmusic.lightning.base_modules import BaseContinuousEmbedModule
-from recipes.bigmusic.lightning.embedding_modules import SoundstreamTokenEmbedder, WavToVecTokenEmbedder
+from recipes.bigmusic.lightning.embedding_modules import SoundstreamTokenEmbedder, WavToVecTokenEmbedder, BestRQTokenEmbedder, BestRQEmbedder, BestRQMKIITokenEmbedder
 from recipes.bigmusic.lightning.embedding_modules import get_soundstream_tokens
 import torch
 from tqdm.auto import tqdm
@@ -16,7 +16,6 @@ class FineModule(BaseContinuousEmbedModule):
         required_modules,
         checkpointing=False,
         extra_params=None,
-        pretrained_path=None,
     ):
         hidden_size = extra_params['hidden_size']
         embedder_dict = {
@@ -34,7 +33,6 @@ class FineModule(BaseContinuousEmbedModule):
             target_embedder=target_embedder,
             checkpointing=checkpointing,
             extra_params=extra_params,
-            pretrained_path=pretrained_path,
         )
 
     def prepare_training_inputs(self, batch):
@@ -121,12 +119,23 @@ class CoarseModule(BaseContinuousEmbedModule):
         required_modules,
         checkpointing=False,
         extra_params=None,
-        pretrained_path=None,
     ):
         hidden_size = extra_params['hidden_size']
         semantic_codebook_size = extra_params['semantic_codebook_size']
+        
+        semantic_type = extra_params.get('semantic_type', 'wav2vec')
+        if semantic_type  == 'wav2vec':
+            semantic_embedder = WavToVecTokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=False)
+        elif semantic_type == 'bestrq':
+            semantic_embedder = BestRQTokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=False)
+        elif semantic_type == 'bestrq_embeds':
+            semantic_embedder = BestRQEmbedder(input_dim=1024, embedding_dim=hidden_size, add_sos=False)
+        elif semantic_type == 'bestrq_mkii':
+            semantic_embedder = BestRQMKIITokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=False)
+        else:
+            raise NotImplementedError
         embedder_dict = {
-            'semantic': WavToVecTokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=False)
+            'semantic': semantic_embedder
         }
         input_embedders = nn.ModuleDict(embedder_dict)
         target_embedder = SoundstreamTokenEmbedder(layer_range=(0,4), embedding_dim=hidden_size, add_sos=True)
@@ -140,7 +149,6 @@ class CoarseModule(BaseContinuousEmbedModule):
             target_embedder=target_embedder,
             checkpointing=checkpointing,
             extra_params=extra_params,
-            pretrained_path=pretrained_path,
         )
 
     def prepare_inputs_embeddings(self, batch):
@@ -166,12 +174,14 @@ class CoarseModule(BaseContinuousEmbedModule):
         return samples
 
     @torch.no_grad()
-    def predict(self, semantic_samples, hp):
-        input_embeds = self.input_embedders['semantic'].embed(token_ids=semantic_samples)
+    def predict(self, semantic_samples, hp, semantic_embeds=None):
+        if semantic_embeds is not None:
+            input_embeds = semantic_embeds
+        else:
+            input_embeds = self.input_embedders['semantic'].embed(token_ids=semantic_samples)
 
-        input_framerate = hp.semantic_frame_rate
-        output_framerate = hp.soundstream_frame_rate * hp.num_coarse
-        num_coarse = hp.num_coarse
+        input_framerate = self.extra_params.semantic_frame_rate
+        output_framerate = self.extra_params.soundstream_frame_rate * self.extra_params.num_coarse
 
         target_duration = hp.duration
         slice_duration = hp.coarse_duration

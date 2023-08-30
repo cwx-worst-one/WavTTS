@@ -6,69 +6,75 @@
 
 ckpt_path: null
 
-seed: 1995
+seed: 555
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
 
 extra_params:
     sample_rate: 24000
     duration: 10
-    lyrics_codebook_size: 400
-    lyrics_max_seq_len: 150
     semantic_codebook_size: 32_768
     semantic_frame_rate: 25
-    mulan_embed_dim: 512
+    soundstream_codebook_size: 1024
+    soundstream_frame_rate: 50
     hidden_size: 1536
-    dataset_type: t5_token # style_audio|style_text|t5_token|legacy_audio
+    num_coarse: 4
     semantic_type: bestrq
-    pretrained_path: null # for loading state dicts
 
 # running parameters
 run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
-    log_name: semantic_model_t5
-    version: conditional_v0
+    log_name: coarse_flash_llama_wav2vec
+    version: coarse_v0
     cache_dir: .module_cache/musiclm
     precision: "bf16-mixed"
-    num_workers: 8
+    num_workers: 12
     accelerator: auto
-    max_steps: 1000000
-    batch_size: 28
-    learning_rate: 4.0e-4
-    warmup_steps: 2000
-    cycle_steps: 200000
+    max_steps: 2000000
+    batch_size: 6
+    learning_rate: 3.0e-4
+    warmup_steps: 10000
+    cycle_steps: 500000
     weight_decay: 0.01
-    shuffle_buffer: 10
+    min_volume_threshold: 0.05
+    loudness_ratio_threshold: 0.2
+    shuffle_buffer: 20
     gradient_clip_val: 1.0
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
+# pl_datamodule: !apply:recipes.bigmusic.datasets.lyrics.LyricsDataModule.wav_dataset
+#     batch_size: !ref <run_opts[batch_size]>
+#     sample_rate: !ref <extra_params[sample_rate]>
+#     sample_duration: !ref <extra_params[duration]>
+#     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+#     num_workers: !ref <run_opts[num_workers]>
+
 pl_datamodule: !apply:recipes.bigmusic.datasets.lyrics.LyricsDataModule.from_dataset_type
     batch_size: !ref <run_opts[batch_size]>
     sample_rate: !ref <extra_params[sample_rate]>
     sample_duration: !ref <extra_params[duration]>
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
-    lyrics_max_seq_len: !ref <extra_params[lyrics_max_seq_len]>
     num_workers: !ref <run_opts[num_workers]>
     pin_memory: True
-    dataset_type: !ref <extra_params[dataset_type]>
+    dataset_type: wav_only
     music_types: mixture
 
 model_config: !new:transformers.LlamaConfig
-    vocab_size: 1 # placeholder. Embedding table gets removed on load
+    vocab_size: 1
     hidden_size: !ref <extra_params[hidden_size]>
     intermediate_size: 4128
     num_hidden_layers: 24
     num_attention_heads: 12
     hidden_act: "silu"
-    max_position_embeddings: 4096 # hardcoded long sequence length for positional encoder
+    max_position_embeddings: 4096
     initializer_range: 0.02
     rms_norm_eps: 1e-6
     use_cache: False
-    num_logits: !ref <extra_params[semantic_codebook_size]>
+    num_logits: !ref <extra_params[soundstream_codebook_size]> * <extra_params[num_coarse]>
 
 model_cls: !name:samantha.models.flash_llama.LlamaForCausalLM
     config: !ref <model_config>
@@ -85,7 +91,7 @@ scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupC
     cycle_steps: !ref <run_opts[cycle_steps]>
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
-pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticT5Module
+pl_module: !new:recipes.bigmusic.lightning.acoustic_modules.CoarseModule
     checkpointing: False
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
@@ -93,14 +99,14 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticT5Module
     criterion_cls: !name:recipes.musiclm.lightning.modules.MaskedCrossEntropy
     extra_params: !ref <extra_params>
     required_modules:
+        soundstream:
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
+            - !name:recipes.musiclm.requires.model_initializer.init_soundstream
+              cache_dir: !ref <run_opts[cache_dir]>
         bestrq:
             hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
             initializer: !name:recipes.umm.requires.model_initializer.init_stage3
                 cache_dir: !ref <run_opts[cache_dir]>
-        t5:
-            hpath: null
-            initializer: !name:recipes.musiclm.requires.model_initializer.init_t5_encoder
-                cache_dir: null
 
 logger:
     - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
@@ -118,10 +124,15 @@ logger:
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
       save_top_k: 10
-      save_last: True
       monitor: val_accu_0
       mode: max
       filename: "{step:06d}-{val_accu_0:.2f}"
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      save_top_k: 10
+      save_last: True
+      monitor: tr_loss
+      mode: min
+      filename: "{step:06d}-{tr_loss:.4f}"
     # - !new:pytorch_lightning.callbacks.LearningRateMonitor
     #   logging_interval: 'step'
     # - !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
@@ -143,8 +154,11 @@ trainer: !new:pytorch_lightning.Trainer
     precision: !ref <run_opts[precision]>
     accumulate_grad_batches: 1
     gradient_clip_val: !ref <run_opts[gradient_clip_val]>
-    val_check_interval: 1000
+    val_check_interval: 5000
     check_val_every_n_epoch: null
-    num_sanity_val_steps: 0  # skip validation sanity checks so we don't run into hdfs file close errors
+    num_sanity_val_steps: 0
     callbacks: !ref <callbacks>
     plugins: !ref <plugins>
+
+
+# mlx worker launch --type a100-80g -- python3 -m samantha.main fit --config recipes/bigmusic/conf/acoustic_modeling/fine_flash_llama_karaoke_and_playlist.yaml --ckpt_path /mnt/bn/audio-diffusion/ckpts/musiclm/fine_flash_llama/karaoke_and_playlist/checkpoints/last.ckpt

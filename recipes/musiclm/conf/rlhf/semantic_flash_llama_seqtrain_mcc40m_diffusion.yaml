@@ -70,8 +70,6 @@ ar_filtering: !new:recipes.musiclm.transforms.musiclm.ARFiltering
     semantic_diversity_range: (10, 90)
     semantic_probs_range: (10, 90)
 
-metadata_transform: !new:recipes.musiclm.transforms.mcc_metadata.MetadataMulanTextTransform
-
 train_dataset: !new:recipes.musiclm.datasets.mcc.WrappedMCC40MDataset
     url2index_list:
         - "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.alternative-hip-hop+chinese-style+others"
@@ -109,8 +107,6 @@ train_dataset: !new:recipes.musiclm.datasets.mcc.WrappedMCC40MDataset
     resampled: True
     shardshuffle: True
     use_pipe: !ref <run_opts[use_pipe]>
-    additional_transforms:
-        - !ref <metadata_transform>
     seed: !ref <seed>
 
 validation_dataset: !new:recipes.musiclm.datasets.karaoke.KaraokeDataset

@@ -533,13 +533,16 @@ class BestRQMelCTC(BestRQ):
     def prepare_feature(self, batch):
         audio = batch["audio"].squeeze(dim=1).float()
         feature = self.preprocessing(audio)
-        encoded_text = self.tokenizer(
-            batch["normalized_text"],
-            add_special_tokens=False,
-            padding="longest",
-            return_tensors="pt",
-        )
-        text_ids = encoded_text["input_ids"].to(audio.device)
+        if "normalized_text" in batch:
+            encoded_text = self.tokenizer(
+                batch["normalized_text"],
+                add_special_tokens=False,
+                padding="longest",
+                return_tensors="pt",
+            )
+            text_ids = encoded_text["input_ids"].to(audio.device)
+        else:
+            text_ids = None
         return feature, text_ids
 
     def _shared_step(self, batch, return_loss: bool = True):
@@ -1454,16 +1457,22 @@ class Stage3(Stage2):
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
     def wav2token(self, wav):
-        if wav.dim() == 3:
-            wav = wav.squeeze(dim=1)
-        wav = self.pad_audio(wav.float())
-        feature = self.preprocessing(wav)
-        encoded_feature = self.model.audio_encoder(feature)
+        encoded_feature = self.wav2embed(wav)
         shared_encoder_output = self.model.shared_encoder.forward_to_vq(
             encoded_feature, vq=self.model.vq
         )
         vq_ids = shared_encoder_output["vq_ids"]
         return vq_ids
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def wav2embed(self, wav):
+        if wav.dim() == 3:
+            wav = wav.squeeze(dim=1)
+        wav = self.pad_audio(wav.float())
+        feature = self.preprocessing(wav)
+        encoded_feature = self.model.audio_encoder(feature)
+        return encoded_feature
 
     def training_step(self, batch, batch_idx):
         loss_dict = self._shared_step(batch)

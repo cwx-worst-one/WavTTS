@@ -30,7 +30,7 @@ run_opts:
     num_workers: 12
     accelerator: auto
     max_steps: 1000000
-    batch_size: 16
+    batch_size: 14
     learning_rate: 4.0e-4
     warmup_steps: 2000
     cycle_steps: 200000
@@ -49,13 +49,14 @@ pl_datamodule: !apply:recipes.bigmusic.datasets.lyrics.LyricsDataModule.from_dat
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
     num_workers: !ref <run_opts[num_workers]>
     pin_memory: True
-    dataset_type: acoustic_only
+    dataset_type: wav_only
+    music_types: mixture
 
 
 model_config: !new:transformers.LlamaConfig
     vocab_size: 1
     hidden_size: !ref <extra_params[hidden_size]>
-    intermediate_size: 3072
+    intermediate_size: 2752
     num_hidden_layers: 24
     num_attention_heads: 16
     hidden_act: "silu"
@@ -93,13 +94,18 @@ pl_module: !new:recipes.bigmusic.lightning.acoustic_modules.FineModule
             - !name:recipes.musiclm.requires.model_initializer.init_soundstream
               cache_dir: !ref <run_opts[cache_dir]>
 
-logger: !new:pytorch_lightning.loggers.TensorBoardLogger
-    save_dir: !ref <run_opts[log_dir]>
-    name: !ref <run_opts[log_name]>
-    version: !ref <run_opts[version]>
-    default_hp_metric: False
+logger:
+    - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
+      save_dir: !ref <run_opts[log_dir]>
+      name: !ref <run_opts[log_name]>
+      version: !ref <run_opts[version]>
+      default_hp_metric: False
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[log_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
 
-log_gradient_scaler: !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
+# log_gradient_scaler: !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
@@ -108,9 +114,9 @@ callbacks:
       monitor: val_accu_0
       mode: max
       filename: "{step:06d}-{val_accu_0:.2f}"
-    - !new:pytorch_lightning.callbacks.LearningRateMonitor
-      logging_interval: 'step'
-    - !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
+    # - !new:pytorch_lightning.callbacks.LearningRateMonitor
+    #   logging_interval: 'step'
+    # - !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
 
 plugins:
     - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO

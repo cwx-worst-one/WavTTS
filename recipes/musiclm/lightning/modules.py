@@ -1873,7 +1873,7 @@ class MaskedCrossEntropy(torch.nn.Module):
 
         mask = mask.contiguous()
         loss = loss.view(*mask.size()) * mask
-        loss = (loss / mask.sum()).sum()
+        loss = (loss.sum(dim=-1, keepdim=True) / mask.sum(dim=-1, keepdim=True)).mean()
         return loss
 
 

@@ -23,35 +23,10 @@ class MCCInstrumentalBatchTransform():
         wavs = item.pop('audio')
         if len(wavs.shape) == 3:
             wavs = wavs.squeeze(1)
-        return { **item, 'mulan_audio': wavs, 'target_audio': wavs }
+        return { **item, 'style_audio': wavs, 'target_audio': wavs }
     
-class MetadataT5Transform():
-    def __init__(self, max_seq_len: int=50):
-        self.text_tokenizer = T5Tokenizer.from_pretrained('t5-small')
-        self.max_seq_len = max_seq_len
 
-    def _mcc_metadata_to_string(self, item):
-        metadata = item['metadata']
-        fields = {
-            'final_genre': 'genre',
-            'final_mood': 'mood',
-            'final_theme': 'theme',
-        }
-        metadata_string = ""
-        for k in fields.keys():
-            if k not in metadata: continue
-            val = metadata[k]
-            if val is None or val == 'nan': continue
-            metadata_string += f'{fields[k]}: {metadata[k]} '
-        return metadata_string
-
-    def __call__(self, item):
-        metadata_string = self._mcc_metadata_to_string(item['metadata'])
-        metadata_tokens = torch.LongTensor(self.text_tokenizer.encode(metadata_string, padding='max_length', max_length=150))
-        return {
-            **item, 'metadata_tokens': metadata_tokens, 'metadata_text': metadata_string
-        }
-class MetadataMulanTextTransform():
+class MCCMetadataTextTransform():
     def _mcc_metadata_to_string(self, item):
         metadata = item['metadata']
         keys = ['final_genre', 'final_mood', 'final_theme']
@@ -65,16 +40,27 @@ class MetadataMulanTextTransform():
     def __call__(self, item):
         metadata_string = self._mcc_metadata_to_string(item)
         return {
-            **item, 'text': metadata_string
+            **item, 'style_text': metadata_string
         }
-class MetadataMulanTextTransformVocalTag(MetadataMulanTextTransform):
+
+class MetadataT5Transform(MCCMetadataTextTransform):
+    def __init__(self, max_seq_len: int=50):
+        self.text_tokenizer = T5Tokenizer.from_pretrained('t5-small')
+        self.max_seq_len = max_seq_len
+
     def __call__(self, item):
-        metadata_string = self._mcc_metadata_to_string(item)
-        metadata_string = 'vocal ' + metadata_string
+        if 'style_text' in item:
+            metadata_string = item['style_text']
+        elif 'metadata' in item:
+            metadata_string = self._mcc_metadata_to_string(item)
+        else:
+            # Could not encode metadata. Return original item
+            return item
+        style_tokens = torch.LongTensor(self.text_tokenizer.encode(metadata_string, padding='max_length', max_length=self.max_seq_len))
         return {
-            **item, 'mulan_text': metadata_string
+            **item, 'style_tokens': style_tokens, 'style_text': metadata_string
         }
-    
+
 # Segment Transforms
 class LyricsTokenTransform():
     def __init__(self, lyrics_tokenizer, pad_id, lyrics_max_seq_len: int, handler: Callable = wds.ignore_and_continue):
@@ -105,6 +91,7 @@ class LyricsTokenTransform():
     def init_espeak_tokenizer(cls, lyrics_max_seq_len, **kwargs):
         with local_zero_first():
             espeak_tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-cv-ft")
+            espeak_tokenizer._add_tokens(["<n>"])
         import logging, phonemizer
         # To silence espeak logging warnings: "WARNING - words count mismatch on 100.0% of the lines"
         phonemizer.logger.get_logger().setLevel(logging.ERROR)
@@ -121,8 +108,8 @@ class AddConditionsTransform():
 class AddMulanVocalTagTransform():
     # Mix mulan requires 'vocal' tag for vocal music generation
     def __call__(self, item):
-        mulan_text = 'vocal ' + item['mulan_text'] 
-        return { **item, 'mulan_text': mulan_text }
+        style_text = item['style_text'] + ' vocal'
+        return { **item, 'style_text': style_text }
 
 class VocalChromaTransform():
     "Transform for conditioning on vocal chromagram"

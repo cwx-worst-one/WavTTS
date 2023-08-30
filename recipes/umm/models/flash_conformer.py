@@ -1031,7 +1031,24 @@ class Wav2Vec2ConformerEncoder(nn.Module):
             attentions=all_self_attentions,
             quant_state=quant_state,
         )
-
+    
+    def forward_from_vq(
+        self,
+        token_embeddings,
+    ):
+        position_embeddings = self.embed_positions(token_embeddings)
+        for i, layer in enumerate(self.layers):
+            if self.config.vq_layer_idx > i:
+                continue
+            if self.config.vq_layer_idx == i:
+                hidden_states = token_embeddings
+            layer_outputs = layer(
+                hidden_states,
+                relative_position_embeddings=position_embeddings,
+            )
+            hidden_states = layer_outputs[0]
+        hidden_states = self.layer_norm(hidden_states)
+        return hidden_states
 
 # Copied from transformers.models.wav2vec2.modeling_wav2vec2.Wav2Vec2GumbelVectorQuantizer with Wav2Vec2->Wav2Vec2Conformer
 class Wav2Vec2ConformerGumbelVectorQuantizer(nn.Module):

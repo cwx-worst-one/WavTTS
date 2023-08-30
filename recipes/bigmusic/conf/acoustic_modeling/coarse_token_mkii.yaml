@@ -13,25 +13,26 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 extra_params:
     sample_rate: 24000
     duration: 10
-    semantic_codebook_size: 1024
-    semantic_frame_rate: 25
+    semantic_codebook_size: 65_536
+    semantic_frame_rate: 50
     soundstream_codebook_size: 1024
     soundstream_frame_rate: 50
-    hidden_size: 1024
+    hidden_size: 1536
     num_coarse: 4
+    semantic_type: bestrq_mkii
 
 # running parameters
 run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
     log_name: coarse_flash_llama_wav2vec
-    version: resso_mcc_wav2vec
-    cache_dir: .module_cache/musiclm
+    version: coarse_v0
+    cache_dir: .module_cache/bestrq_mkii
     precision: "bf16-mixed"
     num_workers: 12
     accelerator: auto
     max_steps: 2000000
-    batch_size: 16
+    batch_size: 6
     learning_rate: 3.0e-4
     warmup_steps: 10000
     cycle_steps: 500000
@@ -59,14 +60,15 @@ pl_datamodule: !apply:recipes.bigmusic.datasets.lyrics.LyricsDataModule.from_dat
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
     num_workers: !ref <run_opts[num_workers]>
     pin_memory: True
-    dataset_type: acoustic_only
+    dataset_type: wav_only
+    music_types: mixture
 
 model_config: !new:transformers.LlamaConfig
     vocab_size: 1
     hidden_size: !ref <extra_params[hidden_size]>
-    intermediate_size: 3072
+    intermediate_size: 4128
     num_hidden_layers: 24
-    num_attention_heads: 16
+    num_attention_heads: 12
     hidden_act: "silu"
     max_position_embeddings: 4096
     initializer_range: 0.02
@@ -97,24 +99,25 @@ pl_module: !new:recipes.bigmusic.lightning.acoustic_modules.CoarseModule
     criterion_cls: !name:recipes.musiclm.lightning.modules.MaskedCrossEntropy
     extra_params: !ref <extra_params>
     required_modules:
-        wav2vec:
-            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/semantic.jit.pt
-            - !name:recipes.musiclm.requires.model_initializer.init_wav2vec
-              cache_dir: !ref <run_opts[cache_dir]>
-        semantic_centers:
-            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/w2v/2.1/centroids_epoch_10.npy
-            - !name:recipes.musiclm.requires.model_initializer.init_semantic_centers
-              cache_dir: !ref <run_opts[cache_dir]>
         soundstream:
             - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
             - !name:recipes.musiclm.requires.model_initializer.init_soundstream
               cache_dir: !ref <run_opts[cache_dir]>
+        mkii:
+            hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage4_mkii_vq32768x16_vq32768x16/checkpoints/step=0020000.ckpt
+            initializer: !name:recipes.umm.requires.model_initializer.init_mkii
+                cache_dir: !ref <run_opts[cache_dir]>
 
-logger: !new:pytorch_lightning.loggers.TensorBoardLogger
-    save_dir: !ref <run_opts[log_dir]>
-    name: !ref <run_opts[log_name]>
-    version: !ref <run_opts[version]>
-    default_hp_metric: False
+logger:
+    - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
+      save_dir: !ref <run_opts[log_dir]>
+      name: !ref <run_opts[log_name]>
+      version: !ref <run_opts[version]>
+      default_hp_metric: False
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[log_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
 
 # log_gradient_scaler: !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
 
@@ -130,8 +133,8 @@ callbacks:
       monitor: tr_loss
       mode: min
       filename: "{step:06d}-{tr_loss:.4f}"
-    - !new:pytorch_lightning.callbacks.LearningRateMonitor
-      logging_interval: 'step'
+    # - !new:pytorch_lightning.callbacks.LearningRateMonitor
+    #   logging_interval: 'step'
     # - !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
 
 plugins:

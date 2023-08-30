@@ -6,6 +6,7 @@ from torchaudio_augmentations import Compose
 from dataclasses import dataclass
 import math
 import random
+import numpy as np
 
 from recipes.musiclm.transforms.audio import (
     NormalizeAudioToFloat32,
@@ -16,6 +17,10 @@ from recipes.musiclm.transforms.audio import (
     NormalizeAudio
 )
 from recipes.musiclm.transforms.base import TransformBase
+
+class ReadMP3BytesIO(ReadMP3):
+    def __call__(self, mp3: bytes) -> np.ndarray:
+        return super().__call__(io.BytesIO(mp3))
 
 class LyricsSegmentTransforms(TransformBase):
     def __init__(
@@ -38,7 +43,10 @@ class LyricsSegmentTransforms(TransformBase):
         self.max_num_segments = max_num_segments
         self.shuffle_segments = shuffle_segments
 
-        self.read_mp3 = ReadMP3(self.sample_rate, self.audio_format, fast=(self.audio_format=='mp3'))
+        if self.audio_format == 'npy':
+            self.read_mp3 = lambda x: x
+        else:
+            self.read_mp3 = ReadMP3BytesIO(self.sample_rate, self.audio_format, fast=(self.audio_format=='mp3'))
         self.to_tensor = ToTensor()
         self.audio_dim = SetAudioDimensions()
         self.normalize_audio_fp32 = NormalizeAudioToFloat32()
@@ -73,7 +81,7 @@ class LyricsSegmentTransforms(TransformBase):
                 audio = cached_wavs[audio_key]
             else:
                 try:
-                    audio = self.base_transform(io.BytesIO(x[audio_key]))[0, :]
+                    audio = self.base_transform(x[audio_key])[0, :]
                     cached_wavs[audio_key] = audio
                     assert len(audio.shape) == 1, 'Invalid audio shape'
                 except Exception as e:
@@ -86,8 +94,8 @@ class LyricsSegmentTransforms(TransformBase):
 
         # Hack: Resso MSS does not contain mixture. For mixture data, we must add acc + vocals
         if 'target_audio' not in audio_wavs:
-            assert 'mulan_audio' in audio_wavs and 'vocal_audio' in audio_wavs, 'Must provide target audio or mulan and vocal audio'
-            audio_wavs['target_audio'] = audio_wavs['mulan_audio'] + audio_wavs['vocal_audio']
+            assert 'style_audio' in audio_wavs and 'vocal_audio' in audio_wavs, 'Must provide target audio or mulan and vocal audio'
+            audio_wavs['target_audio'] = audio_wavs['style_audio'] + audio_wavs['vocal_audio']
         
         # Normalize wavs based on target_audio
         target_audio = audio_wavs['target_audio']
@@ -96,6 +104,8 @@ class LyricsSegmentTransforms(TransformBase):
 
         # Extract segment information
         index_data = x['__index_data__']
+        if 'lyrics' not in index_data:
+            return
         lyrics_json = index_data['lyrics']['utterances']
         segments: List[Segment] = lyrics_to_segments(lyrics_json, maximum_clipped_length=self.sample_duration)
         if self.shuffle_segments:

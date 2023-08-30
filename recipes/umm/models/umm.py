@@ -468,7 +468,10 @@ class Conv2dSubsampling(nn.Module):
         self.linear = nn.Linear(input_dim * 64, output_dim)
 
     def forward(self, x):
-        x = x.unsqueeze(1)  # (b, c, t, f)
+        if isinstance(x, dict):
+            x = x['feature']
+        if x.dim() == 3:
+            x = x.unsqueeze(1)  # (b, c, t, f)
         x = self.conv(x)
         x = rearrange(x, "b c t f -> b t (c f)")
         x = self.linear(x)

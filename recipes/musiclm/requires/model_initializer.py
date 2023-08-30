@@ -8,10 +8,6 @@ from transformers import AutoModel, Wav2Vec2FeatureExtractor
 
 import samantha.utils.hdfs_helper as hh
 from recipes.best_rq.modules.lit_datamodule import NormalizeFeature
-try:
-    from recipes.best_rq.modules.lit_module import BestRQ
-except:
-    BestRQ = None
 from recipes.musiclm.models.compat.semantic_model import SSLFrontend
 
 from ..utils.dist import local_zero_first
@@ -150,6 +146,10 @@ def init_wav2vec(hpath, local_rank, cache_dir=None):
 
 
 def init_best_rq(hpath, local_rank, cache_dir=None):
+    try:
+        from recipes.best_rq.modules.lit_module import BestRQ
+    except:
+        BestRQ = None
     if cache_dir is not None:
         os.makedirs(cache_dir, exist_ok=True)
 
@@ -166,7 +166,6 @@ def init_best_rq(hpath, local_rank, cache_dir=None):
         with local_zero_first():
             model = BestRQ.load_from_checkpoint(hpath).eval().to(device)
             return {"semantic": model}
-
 
 def init_best_rq_minz(hpath, local_rank, cache_dir=None):
     from recipes.best_rq.models.chromatic_t5_rq import BEST_RQ_SCRIPT
@@ -292,7 +291,7 @@ def init_t5_encoder(hpath, local_rank, cache_dir=None):
     # loading our model weights
     model = (
         T5EncoderModel.from_pretrained(
-            "t5-small", cache_dir="./inference_test"
+            "t5-small", cache_dir=cache_dir
         )
         .eval()
         .to(device)

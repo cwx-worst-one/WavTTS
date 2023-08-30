@@ -10,22 +10,26 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 
 extra_params:
     num_rounds: 1
-    prompt_path: "/mnt/bn/audio-diffusion/data/google_prompts/text_prompt_collection_20230713.csv"
-    inference_conditions: style_text,lyrics_tokens # style_text|style_audio,lyrics_tokens,vocal_audio|vocal_text,chroma
-    max_items: 20
+    prompt_path: "recipes/bigmusic/datasets/inference_prompts/pop.json"
+    inference_conditions: style_audio
+    max_items: null
     run_combinations: False
 
     output_dir: ./generated_output/conditional
-
-    # Semantic model
-    semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
-    semantic_ckpt: "/mnt/bn/audio-diffusion/jt/model_archive/vocalmusic/semantic_model_mulan/semantic_chroma_text_from_scratch_g80_2em3/checkpoints/step=122000-val_accu_0=8.82.ckpt"
     # Re-trained vocal checkpoint
-    coarse_ckpt: "/mnt/bn/audio-diffusion/jt/model_archive/vocalmusic/coarse_flash_llama_wav2vec/bestrq_chroma_coarse_0.7b/checkpoints/step=195000-tr_loss=3.6975.ckpt"
+    coarse_ckpt: "/mnt/bn/lyrics-to-song/ashaw/logs/l2s/coarse_unified/coarse_flash_llama_wav2vec/retrained_params/checkpoints/step=065000-val_accu_0=15.83.ckpt"
     # Fine - partial 60m balanced
-    fine_ckpt: "/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/fine/fine_mcc_mix/fixed_posemb_v1/checkpoints/step=206000-val_accu_0=10.44.ckpt"
-    # For WER Metrics
+    # fine_ckpt: "/mnt/bn/lyrics-to-song/ashaw/logs/l2s/fine/fine_flash_llama_mcc_vocals/vocal_finetune_60m/checkpoints/last.ckpt"
+    fine_ckpt: "/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/fine/fine_mcc_mix/fixed_posemb_v0/checkpoints/step=051000-val_accu_0=9.54.ckpt"
+
+    # for wer metrics
     umm_ckpt: "/mnt/bn/audio-diffusion/qq/logs/semantic_flash_llama/mcc/pretrain/step=0050000-loss=0.669.ckpt"
+
+    semantic_duration: 10
+    coarse_duration: 10
+    fine_duration: 4
+    coarse_stride: 5
+    fine_stride: 3
 
     semantic_temperature: 1.0
     coarse_temperature: 0.9
@@ -35,18 +39,12 @@ extra_params:
     # Model Settings
     sample_rate: 24000
     duration: 10
-    coarse_duration: 10
-    fine_duration: 4
-    coarse_stride: 5
-    fine_stride: 3
     lyrics_max_seq_len: 150
     semantic_frame_rate: 25
     soundstream_codebook_size: 1024
     soundstream_frame_rate: 50
     num_coarse: 4
     num_fine: 8
-    # wav2vec_frame_rate: 25
-    # wav2vec_codebook_size: 1024
 
 run_opts:
     fast_dev_run: False
@@ -66,14 +64,12 @@ predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_fr
     max_items: !ref <extra_params[max_items]>
     batch_size: !ref <run_opts[batch_size]>
     run_combinations: !ref <extra_params[run_combinations]>
-    lyrics_max_seq_len: !ref <extra_params[lyrics_max_seq_len]>
 
 pl_datamodule: !new:recipes.bigmusic.datasets.lyrics.LyricsDataModule
     predict_dataset: !ref <predict_dataset>
     num_workers: 0
 
-pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
-    semantic_cls_path: !ref <extra_params[semantic_cls_path]>
+pl_module: !new:recipes.bigmusic.lightning.inference.GTInferenceModule
     extra_params: !ref <extra_params>
     required_modules:
         soundstream_dec:

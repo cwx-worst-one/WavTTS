@@ -12,7 +12,6 @@ from samantha.utils.hparams import DotDict
 from recipes.musiclm.inference.utils import sample
 from recipes.bigmusic.lightning.embedding_modules import TokenEmbedder, BaseEmbedder
 
-
 class BaseModule(pl.LightningModule):
     def __init__(
         self,
@@ -35,12 +34,33 @@ class BaseModule(pl.LightningModule):
         if checkpointing:
             self.model.gradient_checkpointing_enable()
 
-    def on_before_optimizer_step(self, optimizer):
-        self.log_dict(pl.utilities.grad_norm(self, norm_type=2), sync_dist=True)
+    # Disable gradient logging for faster performance
+    # def on_before_optimizer_step(self, optimizer):
+    #     self.log_dict(pl.utilities.grad_norm(self, norm_type=2), sync_dist=True)
 
     def setup(self, stage: str) -> None:
         if stage == "fit" and not self.requires:
             self.load_required_modules()
+
+        pretrained_path = self.extra_params.get('pretrained_path')
+        if stage == "fit" and pretrained_path is not None:
+            self.load_from_pretrained(pretrained_path)
+
+    def load_from_pretrained(self, pretrained_path=None):
+        print('Loading pre-trained model from checkpoint', pretrained_path)
+        state_dict = torch.load(pretrained_path)['state_dict']
+        model_state_dict = self.state_dict()
+        for k in state_dict:
+            if k in model_state_dict:
+                if state_dict[k].shape != model_state_dict[k].shape:
+                    print(f"Skip loading parameter: {k}, "
+                                f"required shape: {model_state_dict[k].shape}, "
+                                f"loaded shape: {state_dict[k].shape}")
+                    state_dict[k] = model_state_dict[k]
+            else:
+                print(f"Dropping parameter {k}")
+
+        self.load_state_dict(state_dict, strict=False)
 
     def load_required_modules(self, ignore=()):
         for name, item in self.hparams.required_modules.items():
@@ -65,6 +85,11 @@ class BaseModule(pl.LightningModule):
         elif isinstance(logits, tuple):
             logits = logits[0]
         x = logits[:, -target_ids.size(1):, :]
+
+        # loss = self.criterion(x, target_ids, target_ids_padding)
+        # accu = (x.argmax(dim=-1) == target_ids).float() * target_ids_padding
+        # accu = (accu.sum(dim=-1) / target_ids_padding.sum(dim=-1)).mean() * 100   
+
         loss = self.criterion(x, target_ids)
         accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
         return loss, accu
@@ -130,7 +155,6 @@ class BaseContinuousEmbedModule(BaseModule):
         target_embedder: TokenEmbedder,
         checkpointing=False,
         extra_params=None,
-        pretrained_path=None,
     ):
         super().__init__(model_cls, criterion_cls, optimizer_cls, scheduler_cls, required_modules, checkpointing, extra_params)
         delete_embedding_module(self.model)
@@ -140,20 +164,6 @@ class BaseContinuousEmbedModule(BaseModule):
         self.target_embedder.apply(self.model._init_weights)
         self.use_cross_attn = self.extra_params.get("use_cross_attn", False)
 
-        if pretrained_path is not None:
-            self.load_from_pretrained(pretrained_path)
-
-    def load_from_pretrained(self, pretrained_path=None):
-        print('Loading pre-trained model from checkpoint', pretrained_path)
-        state = torch.load(pretrained_path)
-        try:
-            self.load_state_dict(state['state_dict'], strict=False)
-        except RuntimeError as e:
-            print('Embedding size mismatch. Removing embeddings before load')
-            input_embedders, self.input_embedders = self.input_embedders, None
-            self.load_state_dict(state['state_dict'], strict=False)
-            self.input_embedders = input_embedders
-            
     def infer_batch_size(self, batch):
         batch_size = [len(t) for t in batch.values() if torch.is_tensor(t) or isinstance(t, list)][0]
         return batch_size
@@ -161,19 +171,20 @@ class BaseContinuousEmbedModule(BaseModule):
     def prepare_inputs_embeddings(self, batch):
         raise NotImplementedError()
 
-    def prepare_training_inputs(self, batch):
-        # If we are predicting tokens, must get tokens first, before converting to embeddings
+    def prepare_training_inputs(self, batch):        
         target_ids = self.target_embedder.tokenize(self.requires, batch['target_audio'], with_sos=False)
         batch_size = target_ids.size(0)
         inputs_embeds = self.prepare_inputs_embeddings(batch)
         sos_embeds = self.target_embedder.get_sos_embed(batch_size)
         target_embeds = self.target_embedder.embed(token_ids=target_ids, with_sos=False)[:, :-1, :]
+
         if self.use_cross_attn:
             return {
                 "inputs_embeds": torch.cat([sos_embeds, target_embeds], dim=1),
                 "encoder_hidden_states": inputs_embeds
             }, target_ids
-        return { "inputs_embeds": torch.cat([inputs_embeds, sos_embeds, target_embeds], dim=1) }, target_ids
+        return { 
+            "inputs_embeds": torch.cat([inputs_embeds, sos_embeds, target_embeds], dim=1) }, target_ids
 
     # Prediction code
     def sample_logits(self, i, logits, temp, mode):

@@ -48,11 +48,11 @@ class ConditionalCoarseModule(BaseContinuousEmbedModule):
         with_sos=True
         # convert inputs to conditions
         inputs_embeds = []
-        if 'mulan_text' in conditions:
-            embeds = self.input_embedders['mulan'].embed(self.requires, batch['mulan_text'], with_sos=with_sos, data_type='text')
+        if 'style_text' in conditions:
+            embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_text'], with_sos=with_sos, data_type='text')
             inputs_embeds.append(embeds)
-        elif 'mulan_audio' in conditions:
-            embeds = self.input_embedders['mulan'].embed(self.requires, batch['mulan_audio'], with_sos=with_sos, data_type='music')
+        elif 'style_audio' in conditions:
+            embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_audio'], with_sos=with_sos, data_type='music')
             inputs_embeds.append(embeds)
         else:
             # adding SOS token no matter what so that all parameters get used
@@ -128,11 +128,11 @@ class LyricsCoarseModule(BaseContinuousEmbedModule):
         with_sos=True # TODO: (AS) clean this up
         # convert inputs to conditions
         inputs_embeds = []
-        if 'mulan_text' in conditions:
-            embeds = self.input_embedders['mulan'].embed(self.requires, batch['mulan_text'], with_sos=with_sos, data_type='text')
+        if 'style_text' in conditions:
+            embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_text'], with_sos=with_sos, data_type='text')
             inputs_embeds.append(embeds)
-        elif 'mulan_audio' in conditions:
-            embeds = self.input_embedders['mulan'].embed(self.requires, batch['mulan_audio'], with_sos=with_sos, data_type='music')
+        elif 'style_audio' in conditions:
+            embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_audio'], with_sos=with_sos, data_type='music')
             inputs_embeds.append(embeds)
         else:
             # adding SOS token no matter what so that all parameters get used
@@ -188,7 +188,7 @@ class T55LyricsCoarseModule(BaseContinuousEmbedModule):
         hidden_size = extra_params['hidden_size']
         lyrics_vocab_size = extra_params['lyrics_codebook_size']
         embedder_dict = {
-            'metadata_tokens': MetadataT5TokenEmbedder(embedding_dim=hidden_size, add_sos=True),
+            'style_tokens': MetadataT5TokenEmbedder(embedding_dim=hidden_size, add_sos=True),
             'lyrics_tokens': LyricsTokenEmbedder(vocab_size=lyrics_vocab_size, embedding_dim=hidden_size, add_sos=True),
         }
         input_embedders = nn.ModuleDict(embedder_dict)
@@ -217,11 +217,11 @@ class T55LyricsCoarseModule(BaseContinuousEmbedModule):
             inputs_embeds.append(embeds)
         else:
             inputs_embeds.append(self.input_embedders['lyrics_tokens'].get_sos_embed(batch_size))
-        if 'metadata_tokens' in conditions:
-            embeds = self.input_embedders['metadata_tokens'].embed(self.requires, batch['metadata_tokens'], with_sos=with_sos)
+        if 'style_tokens' in conditions:
+            embeds = self.input_embedders['style_tokens'].embed(self.requires, batch['style_tokens'], with_sos=with_sos)
             inputs_embeds.append(embeds)
         else:
-            inputs_embeds.append(self.input_embedders['metadata_tokens'].get_sos_embed(batch_size))
+            inputs_embeds.append(self.input_embedders['style_tokens'].get_sos_embed(batch_size))
         return torch.cat(inputs_embeds, dim=1)
 
     @torch.no_grad()

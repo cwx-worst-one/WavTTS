@@ -21,8 +21,9 @@ extra_params:
     hidden_size: 1024
     num_coarse: 4
     num_fine: 8
-    dataset_type: mulan_audio # mulan_audio|mulan_text|t5_token|legacy_audio
+    dataset_type: style_audio # style_audio|style_text|t5_token|legacy_audio
     soundstream_vocab_size: !ref <extra_params[soundstream_codebook_size]> * <extra_params[num_coarse]>
+    pretrained_path: null # for loading state dicts
 
 # running parameters
 run_opts:
@@ -56,6 +57,7 @@ pl_datamodule: !apply:recipes.bigmusic.datasets.lyrics.LyricsDataModule.from_dat
     num_workers: !ref <run_opts[num_workers]>
     pin_memory: True
     dataset_type: !ref <extra_params[dataset_type]>
+    music_types: mixture
 
 model_config: !new:transformers.LlamaConfig
     vocab_size: 1 # placeholder. Embedding table gets removed on load
@@ -103,7 +105,6 @@ pl_module: !new:recipes.bigmusic.lightning.phoneme_coarse_modules.LyricsCoarseMo
             hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
             initializer: !name:recipes.musiclm.requires.model_initializer.init_soundstream
                 cache_dir: !ref <run_opts[cache_dir]>
-    pretrained_path: null # for loading state dicts
 
 logger: !new:pytorch_lightning.loggers.TensorBoardLogger
     save_dir: !ref <run_opts[log_dir]>

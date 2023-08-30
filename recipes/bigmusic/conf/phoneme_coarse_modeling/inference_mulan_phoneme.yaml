@@ -27,7 +27,7 @@ extra_params:
     sample_mode: "gumbel"
     inference_type: text_prompt
     prompt_path: null
-    conditions: mulan_text,lyrics_tokens # mulan_text|mulan_audio,lyrics_tokens,vocal_audio|vocal_text,chroma
+    conditions: style_text,lyrics_tokens # style_text|style_audio,lyrics_tokens,vocal_audio|vocal_text,chroma
     use_continuous_embedding: True
 
     # Model Settings

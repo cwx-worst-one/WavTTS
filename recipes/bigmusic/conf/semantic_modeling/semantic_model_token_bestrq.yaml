@@ -19,7 +19,7 @@ extra_params:
     semantic_frame_rate: 25
     mulan_embed_dim: 512
     hidden_size: 1536
-    dataset_type: t5_token # style_audio|style_text|t5_token|legacy_audio
+    dataset_type: style_text # style_audio|style_text|t5_token|legacy_audio
     semantic_type: bestrq
     pretrained_path: null # for loading state dicts
 
@@ -27,8 +27,8 @@ extra_params:
 run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
-    log_name: semantic_model_t5
-    version: conditional_v0
+    log_name: semantic_model_mulan
+    version: v0
     cache_dir: .module_cache/musiclm
     precision: "bf16-mixed"
     num_workers: 8
@@ -85,7 +85,7 @@ scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupC
     cycle_steps: !ref <run_opts[cycle_steps]>
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
-pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticT5Module
+pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
     checkpointing: False
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
@@ -93,14 +93,16 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticT5Module
     criterion_cls: !name:recipes.musiclm.lightning.modules.MaskedCrossEntropy
     extra_params: !ref <extra_params>
     required_modules:
+        # Mulan mix - 160
+        mulan:
+            hpath: /mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=014000-median_rank_1=160-kaggle.ckpt
+            initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
+                cache_dir: !ref <run_opts[cache_dir]>
+                version: "g4"
         bestrq:
             hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
             initializer: !name:recipes.umm.requires.model_initializer.init_stage3
                 cache_dir: !ref <run_opts[cache_dir]>
-        t5:
-            hpath: null
-            initializer: !name:recipes.musiclm.requires.model_initializer.init_t5_encoder
-                cache_dir: null
 
 logger:
     - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
