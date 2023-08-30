@@ -5,6 +5,8 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import pytorch_lightning as pl
 import torch
+import ffmpeg
+import numpy as np
 import webdataset as wds
 import random
 from torch.utils.data import DataLoader
@@ -56,6 +58,10 @@ def pad_crop(sequence, seq_len, dtype, padding_value=0):
     item_pad_idx[:len(sequence)] = torch.ones_like(torch.as_tensor(sequence[:seq_len]), dtype=int)
     return item_pad, item_pad_idx
 
+def ffmpeg_read_audio(audio_bin, sample_rate=24000):
+    seg_bin, err = ffmpeg.input("pipe:").output("pipe:", loglevel="error", format="s16le", ar=sample_rate).run(input=audio_bin, quiet=True)
+    return (np.frombuffer(seg_bin, dtype="int16") / 32768.0).astype(np.float32)
+
 def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
     # TODO: (QQ) make these constants configurable.
     SPEAKER_PAD_ID = 0
@@ -91,22 +97,260 @@ def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
         "speaker_id": torch.stack(speaker_id),
         }
 
+def group_utterances(utterances, min_duration, max_duration, time_in_sec=False):
+    if time_in_sec:
+        utterances = [(int(u['start_time']), int(u['end_time']), u['text']) for u in utterances]            
+    else:
+        utterances = [(u['start_time']/1000, u['end_time']/1000, u['text']) for u in utterances]        
+    for i in range(len(utterances)-1):
+        if utterances[i][1] > utterances[i+1][0]:
+            logging.warning("utterances need to be non-overlapping")
+            return []
+    utterances = [u for u in utterances if u[1]-u[0] > 0]
+    segs = []
+    i = 0
+    s, cur_seg = i, []        
+    while i < len(utterances):
+        if utterances[i][1] - utterances[s][0] < min_duration:
+            cur_seg.append(utterances[i])                
+            i += 1
+        else:
+            j = i
+            while j < len(utterances) and utterances[j][1] - utterances[s][0] <= max_duration:
+                j += 1
+            if j == i:
+                i = s + 1
+            else:
+                k = random.randint(i+1, j)
+                cur_seg.extend([utterances[k] for k in range(i, k)])
+                segs.append([cur_seg[0][0], cur_seg[-1][1], 
+                            ' '.join([u[2] for u in cur_seg])])
+                i = k
+            # Move to the next vocal starting point
+            while i < len(utterances):
+                if len(utterances[i][2]) >= 2:
+                    break
+                i += 1
+            if i < len(utterances):
+                s, cur_seg = i, []        
+    return segs
+
+
+class LibriTTSDataset(WebPipeline):
+    name = "LibriTTS"
+    data_sample_rate = 24000
+
+    def __init__(
+        self,
+        urls="pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/speech/libritts/24000hz/train-clean-360/{00000..00007}.tar",
+        sample_rate=24000,
+        min_duration: int = 5,
+        max_duration: int = 30,
+        **kwargs,
+    ):
+        self.sample_rate = sample_rate
+        self.min_duration = min_duration
+        self.max_duration = max_duration        
+        base_transforms = [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
+        if self.data_sample_rate != sample_rate:
+            base_transforms.append(Resample(self.data_sample_rate, sample_rate))
+        self.base_transform = Compose(base_transforms)
+        dataset = WebDataset(urls=urls, **kwargs)
+        pipeline = ["decode", {"compose": [self.transform]}]
+
+        with local_zero_first():
+            self.phoneme_tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-cv-ft")
+        phonemizer.logger.get_logger().setLevel(logging.ERROR)
+
+        super().__init__(dataset, pipeline)
+
+    def transform(self, item_yielder) -> Dict[str, Any]:
+        for item in item_yielder:
+            audio = self.base_transform(item["audio.npy"])
+            if audio.size(-1) < self.min_duration * self.sample_rate:
+                continue
+            if audio.size(-1) > self.max_duration * self.sample_rate:
+                continue
+            normalized_text = normalize_text(item["normalized_text.txt"])
+            phoneme_tokens = self.phoneme_tokenizer(normalized_text)["input_ids"]                                
+            yield {
+                "audio": audio, 
+                "normalized_text": normalized_text,
+                "lyrics_tokens": phoneme_tokens,
+                "speaker_id": None,  # TODO: (QQ) extract speaker id.
+            }       
+
 class LibrilightDataset(WebPipeline):
     name = "LibrilightASR"
-    data_sample_rate = 24000
     
+    def __init__(
+        self,
+        url2index: str = "/mnt/bn/umm/data/librilight/url2idx.txt",
+        sample_rate: int = 24000,
+        audio_key: str = "bin",
+        min_duration: int = 5,
+        max_duration: int = 30,
+        normalize_audio: bool = True,
+        **kwargs,        
+    ):
+        self.sample_rate = sample_rate
+        self.min_duration = min_duration
+        self.max_duration = max_duration        
+        self.audio_key = audio_key     
+        base_transforms = []
+        base_transforms.append(lambda x: ffmpeg_read_audio(x, sample_rate=self.sample_rate))
+        base_transforms += [ToTensor(), SetAudioDimensions()]
+        if normalize_audio:
+            base_transforms.append(FastNormalizeAudio())
+        self.base_transform = Compose(base_transforms)            
+        dataset = IndexedWebDataset(url2index=url2index, use_pipe=True)
+        pipeline = ["decode", {"compose": [self.transform]}]
 
-class MCCInstrumentalDataset(MCCInstrumentalDataset):
+        with local_zero_first():
+            self.phoneme_tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-cv-ft")
+        phonemizer.logger.get_logger().setLevel(logging.ERROR)
+
+        super().__init__(dataset, pipeline)
+
+    def transform(self, item_yielder) -> Dict[str, Any]:
+        for item in item_yielder:
+            audio = self.base_transform(item[self.audio_key])
+            utterances = item["__index_data__"]
+            if len(utterances) == 0:
+                continue
+            speaker_id = utterances[0]["speaker_id"]
+            segments = group_utterances(utterances, self.min_duration, self.max_duration, time_in_sec=True)
+            for segment in segments:                
+                start = int(segment[0] * self.sample_rate)
+                end = int(segment[1] * self.sample_rate)
+                clip = audio[:, start:end]
+                normalized_text = normalize_text(segment[2])
+                phoneme_tokens = self.phoneme_tokenizer(normalized_text)["input_ids"]                                
+                yield {
+                    "audio": clip, 
+                    "normalized_text": normalized_text,
+                    "lyrics_tokens": phoneme_tokens,
+                    "speaker_id": speaker_id,
+                }               
+
+class MCCInstrumentalDataset(WebPipeline):
     name = "DecoderMCCInstrumental"
-    def transform(self, item) -> Dict[str, Any]:
-        mood = item["__index_data__"].get("final_mood")            
-        genre = item["__index_data__"].get("final_genre")
-        output = super().transform(item)
-        if output is None:
-            return
-        output["style_text"] = normalize_text(" ".join([x for x in [mood, genre] if (x is not None) and (x !='nan') ])),
-        output["normalized_text"] = ""
-        yield output     
+    data_sample_rate = 24000
+
+    def __init__(
+        self,
+        url2index: str = "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/npy_url2idx.txt",
+        sample_rate: int = 24000,
+        audio_key: str = "audio.npy",
+        min_duration: int = 5,
+        max_duration: int = 30,
+        min_volume_threshold: float = 0.05,
+        loudness_ratio_threshold: float = 0.2,
+        normalize_audio: bool = True,
+        # filtering
+        aed_filtered: bool = True,
+        audio_metrics_filtered: bool = True,
+        avoid_sound_effect: bool = True,
+        exclude_licenses: List[str] = ["C"],
+        **kwargs,
+    ):
+        self.sample_rate = sample_rate
+        self.audio_key = audio_key
+        self.min_duration = min_duration
+        self.max_duration = max_duration
+        self.aed_filtered = aed_filtered
+        self.audio_metrics_filtered = audio_metrics_filtered
+        self.avoid_sound_effect = avoid_sound_effect
+        self.exclude_licenses = exclude_licenses
+        self.is_loud = LoudnessCheck(
+            sample_rate, min_volume_threshold, loudness_ratio_threshold
+        )
+        base_transforms = []
+        if audio_key == "mp3":
+            self.read_mp3 = ReadMP3(sample_rate)
+            base_transforms.append(lambda x: self.read_mp3(io.BytesIO(x)))
+        base_transforms += [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
+        if normalize_audio:
+            base_transforms.append(FastNormalizeAudio())
+            # base_transforms.append(NormalizeAudio())
+        if self.data_sample_rate != sample_rate and audio_key != "mp3":
+            base_transforms.append(Resample(self.data_sample_rate, sample_rate))
+        self.base_transform = Compose(base_transforms)
+        dataset = IndexedWebDataset(url2index=url2index, **kwargs)
+        pipeline = ["decode", {"compose": [self.transform]}]
+        super().__init__(dataset, pipeline)
+
+    def is_audio_metrics_good(self, audio_metrics: Dict[str, Any]) -> Tuple[bool, str]:
+        # Clipping
+        clip = audio_metrics.get("clipping", {})
+        if clip.get("rate", 0) >= 5e-5:
+            return False
+        for ch in ["left", "right"]:
+            if clip.get(f"peak_rate_{ch}", 0) >= 0.05:
+                return False
+        # Loudness
+        loudness = audio_metrics.get("loudness", {})
+        if (
+            loudness.get("integrated_loudness", -7) > -5
+            or loudness.get("max_mom_loud", -7) >= 0
+            or loudness.get("max_short_term_loud", -7) >= 0
+        ):
+            return False
+        # RMS stats
+        rms_stats = audio_metrics.get("rms_stats", {})
+        if rms_stats.get("peak", 0) > 3:
+            return False
+        for ch in ["left", "right"]:
+            if (
+                rms_stats.get(f"{ch}_total", -10) > -5
+                or rms_stats.get(f"{ch}_total", -10) < -40
+                or rms_stats.get(f"normed_std_{ch}", -10) < -19.5
+            ):
+                return False
+        # Cutoff frequency
+        cutoff_freq = audio_metrics.get("cutoff_frequency", {})
+        for ch in ["left", "right"]:
+            if (
+                cutoff_freq.get(f"rel_{ch}", 48000) < 15000
+                and cutoff_freq.get(f"rel_{ch}_conf", 0) > 0.6
+                and cutoff_freq.get(f"band_std_{ch}", 10) < 5
+            ):
+                return False
+        # Phase
+        phase = audio_metrics.get("phase_check", {})
+        if (
+            phase.get("has_phase_issue", False)
+            or abs(phase.get("rms_downmix_diff", 0.1)) > 3
+        ):
+            return False
+        return True
+
+    def is_metadata_good(self, metadata: Dict[str, Any]) -> Tuple[bool, str]:
+        if self.aed_filtered and not metadata.get("aed_filtered", False):
+            return False
+        if self.avoid_sound_effect and metadata.get("final_theme") == "Sound Effect":
+            return False
+        if len(self.exclude_licenses) > 0:
+            for license in metadata.get("license_types", []):
+                if license in self.exclude_licenses:
+                    return False
+        audio_metrics_is_good = self.is_audio_metrics_good(
+            metadata.get("audio_metrics", {})
+        )
+        if self.audio_metrics_filtered and not audio_metrics_is_good:
+            return False
+        return True
+
+    def transform(self, item_yielder) -> Dict[str, Any]:
+        for item in item_yielder:
+            mood = item["__index_data__"].get("final_mood")            
+            genre = item["__index_data__"].get("final_genre")
+            output = super().transform(item)
+            if output is None:
+                continue 
+            output["style_text"] = normalize_text(" ".join([x for x in [mood, genre] if (x is not None) and (x !='nan') ])),
+            output["normalized_text"] = ""
+            yield output     
 
 
 class MCCVocalDataset(MCCInstrumentalDataset):
@@ -162,91 +406,35 @@ class MCCVocalDataset(MCCInstrumentalDataset):
         if confidence < self.lyrics_confidence:
             return False
         return True
-
-    def group_utterances(self, utterances, min_duration, max_duration):
-        utterances = [(u['start_time']/1000, u['end_time']/1000, u['text']) for u in utterances]        
-        for i in range(len(utterances)-1):
-            if utterances[i][1] > utterances[i+1][0]:
-                logging.warning("utterances need to be non-overlapping")
-                return []
-        utterances = [u for u in utterances if u[1]-u[0] > 0]
-        segs = []
-        i = 0
-        s, cur_seg = i, []        
-        while i < len(utterances):
-            if utterances[i][1] - utterances[s][0] < min_duration:
-                cur_seg.append(utterances[i])                
-                i += 1
-            else:
-                j = i
-                while j < len(utterances) and utterances[j][1] - utterances[s][0] <= max_duration:
-                    j += 1
-                if j == i:
-                    i = s + 1
-                else:
-                    k = random.randint(i+1, j)
-                    cur_seg.extend([utterances[k] for k in range(i, k)])
-                    segs.append([cur_seg[0][0], cur_seg[-1][1], 
-                                ' '.join([u[2] for u in cur_seg])])
-                    i = k
-                # Move to the next vocal starting point
-                while i < len(utterances):
-                    if len(utterances[i][2]) >= 2:
-                        break
-                    i += 1
-                if i < len(utterances):
-                    s, cur_seg = i, []        
-        return segs
         
-    def transform(self, item) -> Dict[str, Any]:
-        if not self.is_metadata_good(item["__index_data__"]):
-            return
-        lyrics = item["__index_data__"].get("lyrics", None)
-        if lyrics is None:
-            return
-        mood = item["__index_data__"].get("final_mood")
-        genre = item["__index_data__"].get("final_genre")
-        audio = self.base_transform(item[self.audio_key])
-        utterances = item["__index_data__"]["lyrics"].get("utterances", None)
-        if utterances is None:
-            return       
-        segments = self.group_utterances(utterances, self.min_duration, self.max_duration)
-        for segment in segments:                
-            start = int(segment[0] * self.sample_rate)
-            end = int(segment[1] * self.sample_rate)
-            clip = audio[:, start:end]
-            if not self.is_loud(clip):
+    def transform(self, item_yielder) -> Dict[str, Any]:
+        for item in item_yielder:
+            if not self.is_metadata_good(item["__index_data__"]):
                 continue
-            normalized_text = normalize_text(segment[2])
-            phoneme_tokens = self.phoneme_tokenizer(normalized_text)["input_ids"]                                
-            yield {
-                "audio": clip, 
-                "style_text": normalize_text(" ".join(['vocal'] + [x for x in [mood, genre] if (x is not None) and (x !='nan') ])),                    
-                "normalized_text": normalized_text,
-                "lyrics_tokens": phoneme_tokens,
-            }                
-
-        # random.shuffle(utterances)
-        # filtered_utterances = filter(self.filter_lyrics, utterances)
-        # for selected_utterance in filtered_utterances:
-        #     start = int(
-        #         float(selected_utterance["start_time"]) / 1000 * self.sample_rate
-        #     )
-        #     end = int(float(selected_utterance["end_time"]) / 1000 * self.sample_rate)
-        #     clip = audio[:, start:end]
-        #     if not self.is_loud(clip):
-        #         return
-        #     normalized_text = normalize_text(selected_utterance["text"])
-        #     # TODO: assumed 25Hz
-        #     if len(normalized_text) <= 0 or len(normalized_text) > clip.size(-1) / self.sample_rate * 25:
-        #         return
-        #     phoneme_tokens = self.phoneme_tokenizer(normalized_text)["input_ids"]
-        #     yield {
-        #         "audio": clip, 
-        #         "style_text": normalize_text(" ".join([x for x in [mood, genre] if (x is not None) and (x !='nan') ])),
-        #         "normalized_text": normalized_text,
-        #         "lyrics_token": phoneme_tokens,
-        #     }
+            lyrics = item["__index_data__"].get("lyrics", None)
+            if lyrics is None:
+                continue
+            mood = item["__index_data__"].get("final_mood")
+            genre = item["__index_data__"].get("final_genre")
+            audio = self.base_transform(item[self.audio_key])
+            utterances = item["__index_data__"]["lyrics"].get("utterances", None)
+            if utterances is None:
+                continue            
+            segments = group_utterances(utterances, self.min_duration, self.max_duration)
+            for segment in segments:                
+                start = int(segment[0] * self.sample_rate)
+                end = int(segment[1] * self.sample_rate)
+                clip = audio[:, start:end]
+                if not self.is_loud(clip):
+                    continue
+                normalized_text = normalize_text(segment[2])
+                phoneme_tokens = self.phoneme_tokenizer(normalized_text)["input_ids"]                                
+                yield {
+                    "audio": clip, 
+                    "style_text": normalize_text(" ".join(['vocal'] + [x for x in [mood, genre] if (x is not None) and (x !='nan') ])),                    
+                    "normalized_text": normalized_text,
+                    "lyrics_tokens": phoneme_tokens,
+                }                
 
 
 class DataModule(pl.LightningDataModule):
@@ -357,11 +545,17 @@ class MixWebDataModule(DataModule):
             use_pipe=True,
             handler=wds.reraise_exception,
         )
-
+        librilight = LibrilightDataset(
+            sample_rate=sample_rate,
+            min_duration=buckets_in_sec[0],
+            max_duration=buckets_in_sec[-1],
+            use_pipe=True,
+            handler=wds.reraise_exception,            
+        )
         train_dataset = WebPipeline(            
             mcc_vocal,
             # MultiIterableDataset(
-            #     datasets=[mcc_vocal, mcc_instrumental], weights=[2, 1]                
+            #     datasets=[mcc_vocal, mcc_instrumental, librilight], weights=[2, 1, 1]                
             # ),
             pipeline=[{"compose": [self.bucketize]}],
         )
@@ -391,7 +585,6 @@ class MixWebDataModule(DataModule):
 
     def bucketize(self, iterator: Iterable):
         for item in iterator:
-            for i in item:
-                batch = self.batcher.collate_batch(i)
-                if batch is not None:
-                    yield batch
+            batch = self.batcher.collate_batch(item)
+            if batch is not None:
+                yield batch
