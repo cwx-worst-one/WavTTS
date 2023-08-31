@@ -23,7 +23,8 @@ extra_params:
     intermediate_size: 3072
     num_hidden_layers: 24
     num_attention_heads: 16
-    pretrained_path: /mnt/bn/audio-diffusion/qq/logs/semantic_flash_llama/mcc/pretrain/step=070000-val_accu_0=21.20.ckpt   #null # for loading state dicts
+    pretrained_path: /mnt/bn/audio-diffusion/qq/logs/semantic_flash_llama/mcc/pretrain/semantic_chroma_step=049000-val_accu_0=8.88.ckpt    # 10s semantic
+    # pretrained_path: /mnt/bn/audio-diffusion/qq/logs/semantic_flash_llama/mcc/pretrain/step=070000-val_accu_0=21.20.ckpt   #null # for loading state dicts
 
 # running parameters
 run_opts:
@@ -69,7 +70,7 @@ model_config: !new:transformers.LlamaConfig
     initializer_range: 0.02
     rms_norm_eps: 1e-6
     use_cache: False
-    num_logits: !ref <extra_params[semantic_codebook_size]>
+    num_logits: !ref <extra_params[semantic_codebook_size]> + 2
 
 model_cls: !name:samantha.models.flash_llama.LlamaForCausalLM
     config: !ref <model_config>
@@ -95,13 +96,13 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.MixSemanticModule
     extra_params: !ref <extra_params>
     required_modules:
         bestrq:
-            # US UMM stage 3
-            hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_vq32768x32/checkpoints/step=0050000-loss=0.669.ckpt
+            # US UMM-chroma stage 3
+            hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
             initializer: !name:recipes.umm.requires.model_initializer.init_stage3
                 cache_dir: !ref <run_opts[cache_dir]>
         # bestrq:
-        #     # US UMM-chroma stage 3
-        #     hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
+        #     # US UMM stage 3
+        #     hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_vq32768x32/checkpoints/step=0050000-loss=0.669.ckpt
         #     initializer: !name:recipes.umm.requires.model_initializer.init_stage3
         #         cache_dir: !ref <run_opts[cache_dir]>
         # Mulan mix - 160

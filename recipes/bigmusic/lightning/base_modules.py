@@ -85,13 +85,8 @@ class BaseModule(pl.LightningModule):
         elif isinstance(logits, tuple):
             logits = logits[0]
         x = logits[:, -target_ids.size(1):, :]
-
-        # loss = self.criterion(x, target_ids, target_ids_padding)
-        # accu = (x.argmax(dim=-1) == target_ids).float() * target_ids_padding
-        # accu = (accu.sum(dim=-1) / target_ids_padding.sum(dim=-1)).mean() * 100   
-
-        loss = self.criterion(x, target_ids)
-        accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
+        loss = self.criterion(x, target_ids)        
+        accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100        
         return loss, accu
 
     def training_step(self, batch, batch_idx):
@@ -172,19 +167,25 @@ class BaseContinuousEmbedModule(BaseModule):
         raise NotImplementedError()
 
     def prepare_training_inputs(self, batch):        
-        target_ids = self.target_embedder.tokenize(self.requires, batch['target_audio'], with_sos=False)
+        target_ids = self.target_embedder.tokenize(self.requires, batch['target_audio'], with_sos=False, with_eos=False)
         batch_size = target_ids.size(0)
         inputs_embeds = self.prepare_inputs_embeddings(batch)
         sos_embeds = self.target_embedder.get_sos_embed(batch_size)
-        target_embeds = self.target_embedder.embed(token_ids=target_ids, with_sos=False)[:, :-1, :]
-
+        target_embeds = self.target_embedder.embed(token_ids=target_ids, with_sos=False, with_eos=False)
+        if self.target_embedder.eos_id is not None:
+            eos_ids = self.target_embedder.get_eos_token(batch_size)
+        else:
+            eos_ids = torch.zeros((batch_size, 0), dtype=target_ids.dtype).to(target_ids.device)
+            # targets must be offset by one if no eos id added
+            target_embeds = target_embeds[:, :-1, :]
         if self.use_cross_attn:
             return {
                 "inputs_embeds": torch.cat([sos_embeds, target_embeds], dim=1),
                 "encoder_hidden_states": inputs_embeds
-            }, target_ids
-        return { 
-            "inputs_embeds": torch.cat([inputs_embeds, sos_embeds, target_embeds], dim=1) }, target_ids
+            }, torch.cat([target_ids, eos_ids], dim=1)
+        input_embeds = torch.cat([inputs_embeds, sos_embeds, target_embeds], dim=1)
+        target_ids = torch.cat([target_ids, eos_ids], dim=1)        
+        return {"inputs_embeds":  input_embeds}, target_ids
 
     # Prediction code
     def sample_logits(self, i, logits, temp, mode):

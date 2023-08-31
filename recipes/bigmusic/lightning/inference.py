@@ -129,10 +129,12 @@ class SemanticInferenceModule(pl.LightningModule):
         return torch.tensor(wer_results), mcs, metrics
 
 
-    def _predict_step(self, batch, round):
-        conditions = batch['conditions']                
+    def _predict_step(self, batch, round):                 
         semantic_samples = self.semantic_module.predict(batch, self.extra_params)
-        # gt_semantic_samples = self.semantic_module.target_embedder.tokenize(self.semantic_module.requires, batch['style_audio'][:, :24_000*10])
+        eos_id = self.semantic_module.target_embedder.eos_id
+        if eos_id is not None:
+            eos_index = torch.cumsum(semantic_samples == eos_id, 1) > 0
+            semantic_samples[eos_index] = 0   
         coarse_samples = self.coarse_module.predict(semantic_samples, self.extra_params)
         fine_samples = self.fine_module.predict(coarse_samples, self.extra_params)
         bs = coarse_samples.size(0)
@@ -149,6 +151,7 @@ class SemanticInferenceModule(pl.LightningModule):
         )  # [b, t, n_codebook] -> [b, n_codebook, t]
         wavs = self.requires["ss_dec"](vqgan_inputs).squeeze(1)
 
+        # TODO: (QQ) truncate wavs according to eos.
         batch['generated_audio'] = wavs
         wer, mcs, metrics = self.run_metrics(wavs, batch)
         batch['metrics'] = metrics
