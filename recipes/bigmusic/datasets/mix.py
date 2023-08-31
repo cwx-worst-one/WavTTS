@@ -43,6 +43,7 @@ from samantha.transforms.audio import (
 from samantha.utils.webdataset import return_self
 from transformers import Wav2Vec2PhonemeCTCTokenizer
 
+MAX_PHONE_LEN = 400    
 
 def normalize_text(text):
     nlp_punctuation = punctuation.replace("'", "")
@@ -62,11 +63,11 @@ def ffmpeg_read_audio(audio_bin, sample_rate=24000):
     seg_bin, err = ffmpeg.input("pipe:").output("pipe:", loglevel="error", format="s16le", ar=sample_rate).run(input=audio_bin, quiet=True)
     return (np.frombuffer(seg_bin, dtype="int16") / 32768.0).astype(np.float32)
 
+
 def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
     # TODO: (QQ) make these constants configurable.
     SPEAKER_PAD_ID = 0
     PHONE_PAD_ID = 0 
-    MAX_PHONE_LEN = 200
     max_length = max([x["audio"].shape[-1] for x in batch])
     random_pad = RandomPad(n_samples=max_length)
     default_lyrics_token = torch.full((MAX_PHONE_LEN,), PHONE_PAD_ID, dtype=torch.int)
@@ -155,7 +156,7 @@ class LibriTTSDataset(WebPipeline):
         if self.data_sample_rate != sample_rate:
             base_transforms.append(Resample(self.data_sample_rate, sample_rate))
         self.base_transform = Compose(base_transforms)
-        dataset = WebDataset(urls=urls, **kwargs)
+        dataset = WebDataset(urls=urls)
         pipeline = ["decode", {"compose": [self.transform]}]
 
         with local_zero_first():
@@ -177,7 +178,8 @@ class LibriTTSDataset(WebPipeline):
                 "audio": audio, 
                 "normalized_text": normalized_text,
                 "lyrics_tokens": phoneme_tokens,
-                "speaker_id": None,  # TODO: (QQ) extract speaker id.
+                "speaker_id": torch.LongTensor([0]),  # TODO: (QQ) extract speaker id.
+                "style_text": "speech",
             }       
 
 class LibrilightDataset(WebPipeline):
@@ -230,7 +232,8 @@ class LibrilightDataset(WebPipeline):
                     "audio": clip, 
                     "normalized_text": normalized_text,
                     "lyrics_tokens": phoneme_tokens,
-                    "speaker_id": speaker_id,
+                    "speaker_id": torch.LongTensor([0]),  # TODO: (QQ) extract speaker id.
+                    "style_text": "speech",
                 }               
 
 class MCCInstrumentalDataset(WebPipeline):
@@ -545,7 +548,7 @@ class MixWebDataModule(DataModule):
             use_pipe=True,
             handler=wds.reraise_exception,
         )
-        librilight = LibrilightDataset(
+        libritts = LibriTTSDataset(
             sample_rate=sample_rate,
             min_duration=buckets_in_sec[0],
             max_duration=buckets_in_sec[-1],
@@ -553,14 +556,15 @@ class MixWebDataModule(DataModule):
             handler=wds.reraise_exception,            
         )
         train_dataset = WebPipeline(            
-            mcc_vocal,
-            # MultiIterableDataset(
-            #     datasets=[mcc_vocal, mcc_instrumental, librilight], weights=[2, 1, 1]                
-            # ),
+            # mcc_vocal,
+            MultiIterableDataset(
+                datasets=[mcc_vocal, mcc_instrumental, libritts], weights=[3, 1, 1]                
+            ),
             pipeline=[{"compose": [self.bucketize]}],
         )
 
         validation_dataset = WebPipeline(
+            # TODO (qq) change it to MTAT
             MCCVocalDataset(
                 url2index="/mnt/bn/audio-diffusion/data/vocal_mcc_npy/lyrics_npy_url2idx_val.txt",
                 sample_rate=sample_rate,
@@ -582,6 +586,90 @@ class MixWebDataModule(DataModule):
             predict_dataset=train_dataset,  # TODO
             collate_fn=collate_fn,
         )
+
+    def bucketize(self, iterator: Iterable):
+        for item in iterator:
+            batch = self.batcher.collate_batch(item)
+            if batch is not None:
+                yield batch
+
+
+class TTSWebDataModule(DataModule):
+    def __init__(
+        self,
+        sample_rate: int = 24000,
+        batch_size: int = 2,
+        buckets_in_sec: List[int] = [
+            20,
+            25,
+            30,
+        ],
+        shuffle_buffer_size: int = 10,
+        num_workers: int = 4,
+        pin_memory: bool = True,
+        collate_fn: Optional[Callable] = collate_fn,        
+        region: str = "CN",
+        use_pipe: bool = True,        
+    ):
+        buckets_samples = list(map(lambda i: i * sample_rate, buckets_in_sec))
+        self.batcher = BucketBatcher(
+            buckets=buckets_samples,
+            dynamic_batch=False,
+            batch_size=batch_size,
+            length_fn=lambda x: x["audio"].shape[-1],
+        )
+        if region == "US":
+            raise KeyError(f"Librilight data only in CN atm.")
+        elif region == "CN":
+            librilight_url = "/mnt/bn/umm/data/librilight/url2idx.txt"
+            libritts_url = "pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/speech/libritts/24000hz/train-clean-360/{00000..00007}.tar"
+            libritts_val_url = "pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/speech/libritts/24000hz/test-clean/00000.tar"
+        else:
+            raise KeyError(f"Wrong region: {region}")
+        librilight = LibrilightDataset(
+            url2index=librilight_url,
+            sample_rate=sample_rate,
+            resampled=True,
+            shardshuffle=True,
+            min_duration=buckets_in_sec[0],
+            max_duration=buckets_in_sec[-1],
+            use_pipe=use_pipe,
+            handler=wds.warn_and_continue,
+        )
+        libritts = LibriTTSDataset(
+            urls=libritts_url,
+            sample_rate=sample_rate,
+            resampled=True,
+            shardshuffle=True,
+            min_duration=buckets_in_sec[0],
+            max_duration=buckets_in_sec[-1],
+            use_pipe=use_pipe,
+            handler=wds.warn_and_continue,
+        )
+        train_dataset = WebPipeline(
+            MultiIterableDataset(datasets=[librilight, libritts], weights=[1, 1]),
+            pipeline=[{"compose": [self.bucketize]}],
+        )
+        validation_dataset = WebPipeline(
+            LibriTTSDataset(
+                urls=libritts_val_url,
+                sample_rate=sample_rate,                        
+                min_duration=buckets_in_sec[0],
+                max_duration=buckets_in_sec[-1],
+                use_pipe=use_pipe,
+                handler=wds.warn_and_continue,
+            ),
+            pipeline=[{"compose": [self.bucketize]}],
+        )
+        super().__init__(
+            shuffle_buffer_size=shuffle_buffer_size,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            train_dataset=train_dataset,
+            validation_dataset=validation_dataset,
+            predict_dataset=train_dataset,  # TODO
+            collate_fn=collate_fn,
+        )    
 
     def bucketize(self, iterator: Iterable):
         for item in iterator:
