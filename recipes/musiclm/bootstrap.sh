@@ -13,6 +13,14 @@ pip3 install --no-deps fsspec==2023.6.0
 
 export 'PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512'
 
+if [ -d "/mnt/bn/audio-diffusion/.module_cache" ]; then
+    echo "Found existing cache. Setting huggingface cache to /mnt/bn/audio-diffusion/.module_cache"
+    export TRANSFORMERS_CACHE=/mnt/bn/audio-diffusion/.module_cache
+else
+    echo "Warning: Could not find existing huggingface cache. Set TRANSFORMERS_CACHE=/cache/path to avoid download errors."
+fi
+
+
 # Download mae ckpt
 hdfs dfs -get "/home/byte_speech_sv/weitsung.lu/mut_mae/MuT_MAE/mut_large/mutmae-step=177600-loss_1=5-sf.pth"
 hdfs dfs -get "/home/byte_speech_sv/xuchen.song/mae/mutmae-step=046400-loss_0=10-kaggle.pth"
