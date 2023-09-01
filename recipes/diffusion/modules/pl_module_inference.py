@@ -292,10 +292,9 @@ class InferenceModule(BaseModule):
     def load_vocoder(self):
         # TODO: need ema load func in next version
         self.vocoder_model = init_vocoder(
-            trainer=self.trainer,
-            path=self.extra_params['vocoder_ckpt'],
-            device=self.device,
-            cache_dir=self.extra_params['model_dir'],
+            checkpoint_path=self.extra_params.vocoder_ckpt,
+            local_rank=self.local_rank,
+            cache_dir=self.extra_params.model_dir,
         )
 
     def load_required_modules(self):
@@ -339,7 +338,7 @@ class InferenceModule(BaseModule):
                 classifier_free_guidance=self.extra_params['guidance_scale'],
                 condition_signal=self.extra_params['diffusion_condition'],
         ).detach()
-        wavs = self.vocoder_model["model"].decode(pred_emb.float()).detach()
+        wavs = self.vocoder_model["vocoder"].decode(pred_emb.float()).detach()
 
 
         if self.extra_params.save_cosine_similarity:

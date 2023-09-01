@@ -85,6 +85,10 @@ class SemanticModule(BaseContinuousEmbedModule):
         inputs_embeds = self.prepare_inputs_embeddings(batch)
         return super().predict(inputs_embeds, num_tokens, temperature)
 
+    @torch.no_grad()
+    def super_predict(self, inputs_embeds, num_tokens, temperature):
+        return super().predict(inputs_embeds, num_tokens, temperature)
+
 
 class SemanticT5Module(BaseContinuousEmbedModule):
     def __init__(
@@ -296,7 +300,10 @@ class MixSemanticModule(BaseContinuousEmbedModule):
 
         inputs_embeds = self.prepare_inputs_embeddings(batch)
         return super().predict(inputs_embeds, num_tokens, temperature)
-    
+
+    @torch.no_grad()
+    def super_predict(self, inputs_embeds, num_tokens, temperature):
+        return super().predict(inputs_embeds, num_tokens, temperature)
 
     @torch.no_grad()
     def get_mel(self, batch):

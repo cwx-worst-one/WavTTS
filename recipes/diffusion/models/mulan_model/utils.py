@@ -43,7 +43,10 @@ def init_mulan(trainer, path, device, cache_dir=None):
     if cache_dir is not None:
         os.makedirs(cache_dir, exist_ok=True)
 
-    local_path = f"{cache_dir}/{os.path.basename(path)}"
+    if os.path.exists(path):
+        local_path = path
+    else:
+        local_path = f"{cache_dir}/{os.path.basename(path)}"
 
     if path.startswith("hdfs://") or path.startswith("/home"):
         if trainer.local_rank == 0:

@@ -8,6 +8,10 @@ echo "work dir: $(pwd)"
 pip3 install recipes/soundstream/torch-museval
 pip3 install -q -r recipes/diffusion/requirements.txt
 
+sudo apt update
+sudo apt install espeak -y
+pip3 install -qr ./recipes/bigmusic/requirements.txt
+
 # get google prompts data
 # check if it exists
 if [ ! -d "recipes/diffusion/assets/google_prompts" ]

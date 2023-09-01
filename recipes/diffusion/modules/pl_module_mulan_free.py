@@ -5,59 +5,23 @@ import soundfile as sf
 import pytorch_lightning as pl
 from collections import OrderedDict
 from einops import rearrange, repeat
+from recipes.musiclm.requires.mulan.mulan_infer_g4 import (
+    mulan_inference
+)
 from recipes.diffusion.models.semantic_model.utils import (
     init_wav2vec, 
+    init_bestrq,
     init_semantic_centers,
     w2v_bert_tokenization
 )
 from recipes.diffusion.models.mulan_model.utils import init_mulan, init_mulan_centers, mulan_inference_wrapper
 from recipes.diffusion.models.vocoder_model.utils import init_vocoder, init_vocoder_yongye
-from recipes.diffusion.models.tnt import TNTDiffusionNetwork
-from recipes.diffusion.models.diffusion import ARVSampler
+from recipes.diffusion.models.dualpath_net import DualPathDiffusionNetwork
+from recipes.diffusion.models.tnt_mulan_free import TNTDiffusionNetwork
+from recipes.diffusion.models.diffusion_mulan_free import ARVSampler
 
 torch.backends.cuda.matmul.allow_tf32 = True
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-def load_ema_checkpoint(checkpoint_path, model):
-    ckpt = torch.load(checkpoint_path, map_location="cpu")
-
-    # divide param group
-    no_decay = [
-        "bn",
-        "bias",
-        "norm"
-        "rotary",
-        "embedding",
-        ".g", # g in RMSNorm
-    ]
-
-    base_params = {}
-    no_decay_params = {}
-    for name, param in model.named_parameters(): 
-        _found = False
-        for k in no_decay:
-            if k in name:
-                no_decay_params[name] = param
-                _found = True
-                break
-        if not _found:
-            base_params[name] = param
-    # combine the two dictionaries into one
-    new_state_dict = {}
-    new_keys = []
-    for k, v in base_params.items():
-        new_state_dict[k] = v
-        new_keys.append(k)
-    for k, v in no_decay_params.items():
-        new_state_dict[k] = v
-        new_keys.append(k)
-
-    for idx, k in enumerate(new_keys):
-        assert new_state_dict[k].shape == ckpt["optimizer_states"][0]["ema"][idx].shape
-        new_state_dict[k] = ckpt["optimizer_states"][0]["ema"][idx]
-
-    model.load_state_dict(new_state_dict)
-    return model
 
 class DiffusionModule(pl.LightningModule):
     def __init__(
@@ -73,10 +37,7 @@ class DiffusionModule(pl.LightningModule):
             model_name, 
             optimizer_cls, 
             scheduler_cls,
-            mulan_model,
-            mulan_centers,
             semantic_model,
-            semantic_centers,
             vocoder_model,
             val_output_samples_dir,
         ):
@@ -97,34 +58,15 @@ class DiffusionModule(pl.LightningModule):
     
     def on_fit_start(self):
         # init required models
-        self.mulan_model = init_mulan(
-            trainer=self.trainer,
-            path=self.hparams.mulan_model['model_path'],
-            device=self.device,
-            cache_dir=self.hparams.asset_dir,
-        )
-        self.mulan_centers = init_mulan_centers(
-            trainer=self.trainer,
-            path=self.hparams.mulan_centers['model_path'],
-            device=self.device,
-            cache_dir=self.hparams.asset_dir,
-        )
-        self.semantic_model = init_wav2vec(
+        self.semantic_model = init_bestrq(
             trainer=self.trainer,
             path=self.hparams.semantic_model['model_path'],
             device=self.device,
             cache_dir=self.hparams.asset_dir,
         )
         self.vocoder_model = init_vocoder(
-            trainer=self.trainer,
-            path=self.hparams.vocoder_model['model_path'],
-            device=self.device,
-            cache_dir=self.hparams.asset_dir,
-        )
-        self.semantic_centers = init_semantic_centers(
-            trainer=self.trainer,
-            path=self.hparams.semantic_centers['model_path'],
-            device=self.device,
+            checkpoint_path=self.hparams.vocoder_model['model_path'],
+            local_rank=self.local_rank,
             cache_dir=self.hparams.asset_dir,
         )
         # set device for sampler
@@ -165,26 +107,6 @@ class DiffusionModule(pl.LightningModule):
         )
         scheduler = self.hparams.scheduler_cls(optimizer)
         return [optimizer], [scheduler]
-    
-    @torch.no_grad()
-    def get_mulan_tokens(self, x, domain='audio'):
-        if domain == 'audio':
-            mulan_tokens = mulan_inference_wrapper(
-                self.mulan_model['mulan_model'], 
-                self.mulan_centers['mulan_centers'],
-                music=x,
-                text=None, 
-                device=self.mulan_model['mulan_model'].device
-            )
-        elif domain == 'text':
-            mulan_tokens = mulan_inference_wrapper(
-                self.mulan_model['mulan_model'], 
-                self.mulan_centers['mulan_centers'],
-                music=None,
-                text=x, 
-                device=self.mulan_model['mulan_model'].device
-            )
-        return mulan_tokens
 
     @torch.no_grad()
     def get_semantic_embs(self, x):
@@ -213,18 +135,24 @@ class DiffusionModule(pl.LightningModule):
         return wav2vec_tokens.detach()
 
     @torch.no_grad()
+    def get_semantic_tokens(self, x):
+        lit_module = self.semantic_model['Stage3']
+        vq_ids = lit_module.wav2token(x)
+        return vq_ids.detach()
+
+    @torch.no_grad()
     def get_vocoder_embs(self, x):
         # input x has shape (b, c, t)
-        self.vocoder_model["model"].eval()
-        encoder_out = self.vocoder_model["model"].encode(x)
-        sample, _, _ = self.vocoder_model["model"].sample(encoder_out,  deterministic=False) # TODO: check wethear deterministic should be True or False
+        self.vocoder_model["vocoder"].eval()
+        encoder_out = self.vocoder_model["vocoder"].encode(x)
+        sample, _, _ = self.vocoder_model["vocoder"].sample(encoder_out,  deterministic=False) # TODO: check wethear deterministic should be True or False
         return sample.detach()
 
     @torch.no_grad()
     def vocoder_embs_to_wav(self, x):
         # input x has shape (b, c, t)
-        self.vocoder_model["model"].eval()
-        wav = self.vocoder_model["model"].decode(x)
+        self.vocoder_model["vocoder"].eval()
+        wav = self.vocoder_model["vocoder"].decode(x)
         return wav.detach()
 
     def forward(self, x):
@@ -235,10 +163,11 @@ class DiffusionModule(pl.LightningModule):
         # temp treatment for mcc
         if type(batch) is list:
             batch = {'audio': batch[0]}
+        elif 'target_audio' in batch:
+            batch['audio'] = batch['target_audio'][:, None, :] # bs, seq_len -> bs, ch1, seq_len
 
         with torch.autocast(device_type="cuda", enabled=False):
             # context
-            mulan_tokens = self.get_mulan_tokens(batch['audio'][:, 0].float(), domain='audio')
             semantic_tokens = self.get_semantic_tokens(batch['audio'].float())
             # target
             vocoder_embs = self.get_vocoder_embs(batch['audio'].float())
@@ -263,7 +192,6 @@ class DiffusionModule(pl.LightningModule):
         vt_pred = self.model(
             xt, 
             t, 
-            mulan_context=mulan_tokens,
             semantic_context=semantic_tokens,
         )
 
@@ -301,34 +229,40 @@ class DiffusionModule(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         with torch.autocast(device_type="cuda", enabled=False):
+            if type(batch) is list:
+                batch = {'audio': batch[0]}
+            elif 'target_audio' in batch:
+                batch['audio'] = batch['target_audio'][:, None, :] # bs, seq_len -> bs, ch1, seq_len
             # context
-            semantic_tokens, prompts = batch
-            mulan_tokens = self.get_mulan_tokens(
-                list(prompts), 
-                domain='text'
-            )
+            semantic_tokens = self.get_semantic_tokens(batch['audio'].float())
 
             # diffusion sampling
             pred_emb = self.sampler(
                 model=self.model, 
-                mulan_context=mulan_tokens,
                 semantic_context=semantic_tokens,
                 num_items=semantic_tokens.shape[0], # batch size: how many samples to generate
                 num_chunks=self.hparams.num_chunks,
                 num_steps=20, # diffusion steps
+                bf16_portion=0.0,
                 start=None,
                 show_progress=False,
                 angle_schedule='linear',
+                schdeule_slope=2.5,
                 classifier_free_guidance=2.5,
             )
             # generate audio
             wavs_g = self.vocoder_embs_to_wav(pred_emb.float())
-            
+
         # save the output wavs
-        for _id, wav in zip(prompts, wavs_g):
+        for idx, (gt, wav) in enumerate(zip(batch['audio'], wavs_g)):
             sf.write(
-                f"{self.hparams.val_output_samples_dir}/{self.current_step}/{_id}.wav",
+                f"{self.hparams.val_output_samples_dir}/{self.current_step}/{idx}.wav",
                 wav.cpu().numpy().T,
+                self.hparams.sample_rate,
+            )
+            sf.write(
+                f"{self.hparams.val_output_samples_dir}/{self.current_step}/{idx}.gt.wav",
+                gt.cpu().numpy().T,
                 self.hparams.sample_rate,
             )
 

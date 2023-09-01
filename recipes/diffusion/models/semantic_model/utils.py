@@ -3,6 +3,7 @@ import torch
 import numpy as np
 
 from recipes.diffusion.models.semantic_model.model import SSLFrontend
+from recipes.umm.requires.model_initializer import init_stage3
 
 def load_torch_script_module(module_path, device):
     module = torch.jit.load(module_path, map_location='cpu').to(device).eval()
@@ -26,6 +27,22 @@ def init_wav2vec(trainer, path, device, cache_dir=None):
         "ssl_frontend": SSLFrontend(),
         "semantic": load_torch_script_module(local_path, device),
     }
+
+def init_bestrq(trainer, path, device, cache_dir=None):
+    if cache_dir is not None:
+        os.makedirs(cache_dir, exist_ok=True)
+
+    local_path = f"{cache_dir}/{os.path.basename(path)}"
+
+    if path.startswith("hdfs://") or path.startswith("/home"):
+        if trainer.local_rank == 0:
+            if not os.path.exists(local_path):
+                try:
+                    os.system(f"hdfs dfs -get {path} {cache_dir}")
+                except Exception:
+                    raise ConnectionError(f"Cannot retrieve file from {path}.")
+    trainer.strategy.barrier()
+    return init_stage3(local_path, str(device).split(':')[-1])
 
 def init_semantic_centers(trainer, path, device, cache_dir=None):
     if cache_dir is not None:
