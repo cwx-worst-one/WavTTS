@@ -8,10 +8,9 @@
 data_dir: './data'
 
 # running parameters
-log_dir: 'logs'
 run_opts:
     fast_dev_run: False
-    tensorboard_dir: !ref <log_dir>
+    log_dir: logs
     log_name: 'GPT2'
     version: '0.1'
     precision: 16
@@ -58,7 +57,7 @@ pl_module: !new:recipes.GPT2.modules.pl_module.GPTLitModule
     model_type: !ref <training_params[model_type]>
 
 logger: !new:pytorch_lightning.loggers.TensorBoardLogger
-    save_dir: !ref <run_opts[tensorboard_dir]>
+    save_dir: !ref <run_opts[log_dir]>
     name: !ref <run_opts[log_name]>
     version: !ref <run_opts[version]>
 
@@ -75,9 +74,13 @@ hdfs_model_ckpt: !new:samantha.callbacks.HDFSModelCheckpoint
     save_top_k: 100
     every_n_train_steps: 100
 
+hdfs_backup: !new:samantha.callbacks.HDFSBackup
+    src_dir: !ref <logger.log_dir>
+
 callbacks:
     - !ref <hdfs_model_ckpt>
     - !new:samantha.callbacks.Timer
+    - !ref <hdfs_backup>
 
 
 trainer: !new:pytorch_lightning.Trainer
