@@ -5,62 +5,36 @@ import pytorch_lightning as pl
 import torch
 import torchaudio
 
-from recipes.bigmusic.lightning.acoustic_modules import CoarseModule
-from recipes.bigmusic.lightning.acoustic_modules import FineModule
 from samantha.utils.hparams import DotDict
-from recipes.musiclm.inference.utils import slugify, save_wav
-from recipes.umm.modules.lit_module import Stage3
-from transformers import BertTokenizer
+from recipes.musiclm.inference.utils import slugify, save_wav, generate_hash, format_name
+from recipes.diffusion.models.diffusion_model.utils import run_diffusion
+from recipes.bigmusic.lightning.embedding_modules import get_bestrq_umm_tokens
 import torch.functional
 import importlib
+from recipes.bigmusic.utils.metrics_asr import wav2lyrics, edit_distance
+from recipes.bigmusic.utils.model_initializer import run_2ar
 
 
 SAMPLE_RATE = 24000
 
-class GreedyCTCDecoder(torch.nn.Module):
-    def __init__(self, labels, blank=0):
-        super().__init__()
-        self.labels = labels
-        self.blank = blank
 
-    def forward(self, emission_batch):
-        """Given a sequence emission over labels, get the best path
-        Args:
-          emission_batch (Tensor): Logit tensors. Shape `[batch, num_seq, num_label]`.
-
-        Returns:
-          List[str]: The resulting transcript
-        """
-        res = []
-        for emission in emission_batch:
-            indices = torch.argmax(emission, dim=-1)  # [num_seq,]
-            indices = torch.unique_consecutive(indices, dim=-1)
-            indices = [i for i in indices if i != self.blank]
-            joined = " ".join([self.labels[i] for i in indices])
-            res.append(joined.replace("|", " ").strip())
-        return res
-
-
-def run_wer(umm_model, wavs, lyrics, verbose=True):
-    vocab = list(umm_model.tokenizer.get_vocab().keys())
-    greedy_decoder = GreedyCTCDecoder(vocab)
+def run_wer(wavs, lyrics, verbose=True):
     wer_results = []
-    input_batch = {"audio": wavs, "text": lyrics}
-    model_input = umm_model.prepare_feature(input_batch)
-    model_output = umm_model.model(model_input)
-    emission, recon_feature = model_output["logits"], model_output["recon_feature"]
+    _ = wav2lyrics(wavs)
+    asr_lyrics, _ = wav2lyrics(wavs)
     actual_transcript = lyrics
-    actual_transcript = [a.lower().replace(" <n> ", " ") for a in actual_transcript]
-    greedy_transcript = greedy_decoder(emission)
-    greedy_transcript = [g.lower().replace(" ' ", "'") for g in greedy_transcript]
+    greedy_transcript = asr_lyrics
+    actual_transcript = [a.lower().replace(" <n> ", " ").replace(',', '') for a in actual_transcript]
     for j, (a, g) in enumerate(zip(actual_transcript, greedy_transcript)):
-        greedy_wer = torchaudio.functional.edit_distance(a, g) / len(a)
+        edits = edit_distance(a, g)
+        # TODO: (AS) return detailed breakdown of ins, subs, dels
+        wer = edits.edits() / len(a)
         if verbose:
             print("=============================")
             print(f"Actual transcript: {a}")
             print(f"Greedy transcript: {g}")
-            print(f"WER: {greedy_wer}")
-        wer_results.append(greedy_wer)
+            print(f"WER: {wer}")
+        wer_results.append(wer)
     return wer_results, actual_transcript, greedy_transcript
 
 class SemanticInferenceModule(pl.LightningModule):
@@ -79,15 +53,23 @@ class SemanticInferenceModule(pl.LightningModule):
         semantic_class = getattr(module, cls_name)
 
         self.semantic_module = semantic_class.load_from_checkpoint(self.extra_params.semantic_ckpt).eval()
-        self.coarse_module = CoarseModule.load_from_checkpoint(self.extra_params.coarse_ckpt).eval()
-        self.fine_module = FineModule.load_from_checkpoint(self.extra_params.fine_ckpt).eval()
-        self.umm_module = Stage3.load_from_checkpoint(self.extra_params.umm_ckpt).eval()
         self.requires = {}
         self.wer_mcs = []
-        self.load_required_modules()
 
-    def load_required_modules(self):
-        for name, item in self.hparams.required_modules.items():
+        self.requires = {}
+        
+        required_modules = {}
+        if self.extra_params.token2wav_type == 'diffusion':
+            self.decoding_fn = run_diffusion
+            required_modules.update(self.hparams.required_modules['diffusion_modules'])
+        elif self.extra_params.token2wav_type == 'ar':
+            self.decoding_fn = run_2ar
+            required_modules.update(self.hparams.required_modules['ar_modules'])
+
+        self.load_required_modules(required_modules)
+
+    def load_required_modules(self, required_modules):
+        for name, item in required_modules.items():
             if isinstance(item, (list, tuple)):
                 hpath, initializer = item
             elif isinstance(item, dict):
@@ -95,9 +77,10 @@ class SemanticInferenceModule(pl.LightningModule):
                 initializer = item['initializer']
             self.requires.update(initializer(hpath, local_rank=self.local_rank))
         self.semantic_module.load_required_modules()
-        self.umm_module.tokenizer = BertTokenizer.from_pretrained('bert-large-uncased')
 
     def _mcs(self, wavs, batch):
+        if len(wavs.shape) == 3:
+            wavs = wavs.squeeze(1)
         conditions = batch['conditions']
         mulan_emb_names = [key for key in self.semantic_module.input_embedders.keys() if key.startswith("mulan")]
         if not mulan_emb_names:
@@ -119,7 +102,7 @@ class SemanticInferenceModule(pl.LightningModule):
         return mcs
 
     def run_metrics(self, wavs, batch):
-        wer_results, actual_transcript, greedy_transcript = run_wer(self.umm_module, wavs.to(self.device), batch['lyrics'])
+        wer_results, actual_transcript, greedy_transcript = run_wer(wavs.to(self.device), batch['lyrics'])
         mcs = self._mcs(wavs, batch)
         metrics = []
         for w, a, g, m in zip(wer_results, actual_transcript, greedy_transcript, mcs):
@@ -129,44 +112,23 @@ class SemanticInferenceModule(pl.LightningModule):
         return torch.tensor(wer_results), mcs, metrics
 
 
-    def _predict_step(self, batch, round):                 
+    def _predict_step(self, batch, round, batch_idx):
         semantic_samples = self.semantic_module.predict(batch, self.extra_params)
-        eos_id = self.semantic_module.target_embedder.eos_id
-        if eos_id is not None:
-            eos_index = torch.cumsum(semantic_samples == eos_id, 1) > 0
-            semantic_samples[eos_index] = 0   
-        coarse_samples = self.coarse_module.predict(semantic_samples, self.extra_params)
-        fine_samples = self.fine_module.predict(coarse_samples, self.extra_params)
-        bs = coarse_samples.size(0)
-
-        coarse_samples = coarse_samples.view([bs, -1, self.extra_params.num_coarse])
-        fine_samples = fine_samples.view([bs, -1, self.extra_params.num_fine])
-        vqgan_inputs = (
-            torch.cat([coarse_samples, fine_samples], dim=2)
-            - torch.arange(self.extra_params.num_coarse + self.extra_params.num_fine, device=coarse_samples.device)
-            * self.extra_params.soundstream_codebook_size
-        )  # [b, t, n_codebook]
-        vqgan_inputs = vqgan_inputs.transpose(
-            1, 2
-        )  # [b, t, n_codebook] -> [b, n_codebook, t]
-        wavs = self.requires["ss_dec"](vqgan_inputs).squeeze(1)
+        wavs = self.decoding_fn(self.requires, semantic_samples, self.extra_params) # 
 
         # TODO: (QQ) truncate wavs according to eos.
         batch['generated_audio'] = wavs
         wer, mcs, metrics = self.run_metrics(wavs, batch)
         batch['metrics'] = metrics
-        # batch['semantic_samples'] = semantic_samples
-        # batch['gt_semantic_samples'] = gt_semantic_samples
 
-        save_outputs(batch, round, self.extra_params.output_dir)
-        # wavs_list = self.semantic_module.cal_eos(semantic_samples, wavs)
+        save_outputs(batch, round, batch_idx, self.extra_params.output_dir)
         return [wer.mean(), mcs.mean()]
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0): 
         print("============== a new batch of size ", len(batch['lyrics']))       
         wer_mcs = []
         for i in range(self.extra_params.num_rounds):
-            wer_mcs.append(self._predict_step(batch, i))
+            wer_mcs.append(self._predict_step(batch, i, batch_idx))
         wer_mcs = np.array(wer_mcs).mean(axis=0)
         self.wer_mcs.append(wer_mcs)
         
@@ -180,7 +142,6 @@ class SemanticInferenceModule(pl.LightningModule):
             f.write(f'avg wer: {wer_mcs[0]}\n')
             f.write(f'avg mcs: {wer_mcs[1]}\n')
 
-
 class GTInferenceModule(pl.LightningModule):
     def __init__(
         self,
@@ -190,29 +151,37 @@ class GTInferenceModule(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
         self.extra_params = DotDict(extra_params)
-
-        self.umm_module = Stage3.load_from_checkpoint(self.extra_params.umm_ckpt).eval()
-        self.coarse_module = CoarseModule.load_from_checkpoint(self.extra_params.coarse_ckpt).eval()
-        self.fine_module = FineModule.load_from_checkpoint(self.extra_params.fine_ckpt).eval()
         self.requires = {}
-        self.load_required_modules()
+        
+        required_modules = {}
+        if self.extra_params.token2wav_type == 'diffusion':
+            self.decoding_fn = run_diffusion
+            required_modules.update(self.hparams.required_modules['diffusion_modules'])
+        elif self.extra_params.token2wav_type == 'ar':
+            self.decoding_fn = run_2ar
+            required_modules.update(self.hparams.required_modules['ar_modules'])
+
+        if self.extra_params.semantic_type == 'bestrq':
+            required_modules.update(self.hparams.required_modules['bestrq_modules'])
+            self.encoding_fn = get_bestrq_umm_tokens
+
+        self.load_required_modules(required_modules)
         self.wer = []
 
-    def load_required_modules(self):
-        for name, item in self.hparams.required_modules.items():
+    def load_required_modules(self, required_modules):
+        for name, item in required_modules.items():
             if isinstance(item, (list, tuple)):
                 hpath, initializer = item
             elif isinstance(item, dict):
                 hpath = item['hpath']
                 initializer = item['initializer']
             self.requires.update(initializer(hpath, local_rank=self.local_rank))
-        self.coarse_module.load_required_modules()
-        self.umm_module.tokenizer = BertTokenizer.from_pretrained('bert-large-uncased')
 
     def run_metrics(self, wavs, batch):
+        # TODO: (AS) put this in a callback
         if 'lyrics' not in batch: 
             return torch.zeros((wavs.shape[0])), None
-        wer_results, actual_transcript, greedy_transcript = run_wer(self.umm_module, wavs, batch['lyrics'])
+        wer_results, actual_transcript, greedy_transcript = run_wer(wavs, batch['lyrics'])
         metrics = []
         for w, a, g in zip(wer_results, actual_transcript, greedy_transcript):
             metrics.append(
@@ -221,34 +190,20 @@ class GTInferenceModule(pl.LightningModule):
         return torch.tensor(wer_results), metrics
 
 
-    def _predict_step(self, batch, round):
+    def _predict_step(self, batch, round, batch_idx):
         batch['target_audio'] = batch['style_audio'] # prepare_inputs expects target_audio key
-        semantic_embeds = self.coarse_module.prepare_inputs_embeddings(batch)
-        coarse_samples = self.coarse_module.predict(semantic_samples=None, hp=self.extra_params, semantic_embeds=semantic_embeds)
-        fine_samples = self.fine_module.predict(coarse_samples, self.extra_params)
-        bs = coarse_samples.size(0)
-        
-        coarse_samples = coarse_samples.view([bs, -1, self.extra_params.num_coarse])
-        fine_samples = fine_samples.view([bs, -1, self.extra_params.num_fine])
-        vqgan_inputs = (
-            torch.cat([coarse_samples, fine_samples], dim=2)
-            - torch.arange(self.extra_params.num_coarse + self.extra_params.num_fine, device=coarse_samples.device)
-            * self.extra_params.soundstream_codebook_size
-        )  # [b, t, n_codebook]
-        vqgan_inputs = vqgan_inputs.transpose(
-            1, 2
-        )  # [b, t, n_codebook] -> [b, n_codebook, t]
-        wavs = self.requires["ss_dec"](vqgan_inputs).squeeze(1)
+        semantic_samples = self.encoding_fn(self.requires, batch['target_audio'])
+        wavs = self.decoding_fn(self.requires, semantic_samples, self.extra_params) # 
         batch['generated_audio'] = wavs
         wer, metrics = self.run_metrics(wavs, batch)
         batch['metrics'] = metrics
-        save_outputs(batch, round, self.extra_params.output_dir)
+        save_outputs(batch, round, batch_idx, self.extra_params.output_dir)
         return wer.mean()
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):        
         wer = []
         for i in range(self.extra_params.num_rounds):
-            wer.append(self._predict_step(batch, i))
+            wer.append(self._predict_step(batch, i, batch_idx))
         wer = np.array(wer).mean(axis=0)
         self.wer.append(wer)
         print("batch metrics", wer)
@@ -262,7 +217,15 @@ class GTInferenceModule(pl.LightningModule):
         with open(txt_fp, 'w') as f:
             f.write(f'avg wer: {wer}\n')
 
-def save_outputs(batch, round, output_dir):
+def format_lyrics_and_style(lyrics, style_text):
+    lyrics_formated = slugify(lyrics) # this function was already there for MusicLM
+    text_formated = slugify(style_text)
+    text_combined = lyrics_formated + "_" + text_formated
+    text_encoded = generate_hash(text_combined) # this function was already there for MusicLM
+    name_formatted = lyrics_formated[:96] + "_" + text_formated[:32] + "_" + text_encoded[:4]
+    return name_formatted
+
+def save_outputs(batch, round, batch_idx, output_dir):
     conditions = batch['conditions']
     lyrics = batch.get('lyrics')
     prompts = batch.get('style_text')
@@ -271,8 +234,6 @@ def save_outputs(batch, round, output_dir):
     vocal_audio = batch.get('vocal_audio')
     metrics = batch.get('metrics')
     wavs = batch['generated_audio']
-    semantic_samples = batch.get('semantic_samples')
-    gt_semantic_samples = batch.get('gt_semantic_samples')
     for i, wav in enumerate(wavs):
         if categories is not None:
             wav_dir = os.path.join(output_dir, categories[i])
@@ -280,35 +241,27 @@ def save_outputs(batch, round, output_dir):
             wav_dir = output_dir
         os.makedirs(wav_dir, exist_ok=True)
         file_name = ""
-        if 'lyrics_tokens' in conditions:
-            file_name += slugify(lyrics[i])[:128]
-        if 'style_text' in conditions:
-            file_name += '--' + slugify(prompts[i])[:128]
-        if file_name: 
-            file_name += f'.{round}-{i}'
-        else:
-            file_name += f'{round}-{i}'
+        lyrics_str = lyrics[i] if 'lyrics_tokens' in conditions else None
+        style_text = prompts[i] if 'style_text' in conditions else None
+        if style_text and lyrics_str is None: # instrumental case. use old format
+            file_name = f"{format_name(style_text)}.{round}-{i}-{batch_idx}"
+        elif style_text and lyrics_str: # vocal case
+            file_name = f"{format_lyrics_and_style(lyrics_str, style_text)}.{round}-{i}-{batch_idx}"
+        else: # both style and lyrics are None, probably ground truth case
+            file_name = f'{round}-{i}-{batch_idx}'
         wav_fp = os.path.join(wav_dir, f"{file_name}.wav")
         print(f"[Saving] {wav_fp}")
         save_wav(wav.cpu().float(), wav_fp, sr=SAMPLE_RATE)
-
-        if semantic_samples is not None:
-            semantic_fp = os.path.join(wav_dir, f"{file_name}.semantic.pt")
-            torch.save(semantic_samples[i].cpu(), semantic_fp)
-        if gt_semantic_samples is not None:
-            semantic_fp = os.path.join(wav_dir, f"{file_name}.gt_semantic.pt")
-            torch.save(gt_semantic_samples[i].cpu(), semantic_fp)
 
         txt_fp = os.path.join(wav_dir, f"{file_name}.txt")
         with open(txt_fp, 'w') as f:
             f.write(f'Conditions: {conditions}\n')
             if 'lyrics_tokens' in conditions:
-                f.write(f'Lyrics: {lyrics[i]}\n')
+                f.write(f'Lyrics: {lyrics_str}\n')
             if 'style_text' in conditions:
-                f.write(f'Prompt: {prompts[i]}\n')
+                f.write(f'Prompt: {style_text}\n')
             if metrics is not None:
                 f.write(f'Metrics:\n {metrics[i]}\n')
-
 
         if 'lyrics_tokens' in conditions:
             txt_fp = os.path.join(wav_dir, f"{file_name}.lyrics.txt")

@@ -281,22 +281,22 @@ if __name__ == '__main__':
     parser.add_argument(
         '--diffusion_model_path_2_0',
         type=str,
-        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14/checkpoints/diffusion-step=124999.ckpt'
+        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_part2/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_1',
         type=str,
-        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14/checkpoints/diffusion-step=124999.ckpt'
+        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_part2/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_2',
         type=str,
-        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14/checkpoints/diffusion-step=124999.ckpt'
+        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_part2/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_3',
         type=str,
-        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14/checkpoints/diffusion-step=124999.ckpt'
+        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_part2/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--vocoder_model_path',

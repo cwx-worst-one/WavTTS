@@ -12,14 +12,14 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 
 extra_params:
     sample_rate: 24000
-    duration: 10
+    duration: 30
     lyrics_codebook_size: 400
     lyrics_max_seq_len: 150
     semantic_codebook_size: 32_768
     semantic_frame_rate: 25
     mulan_embed_dim: 512
-    hidden_size: 1536
-    dataset_type: t5_token # style_audio|style_text|t5_token|legacy_audio
+    hidden_size: 3072
+    dataset_type: style_text # style_audio|style_text|t5_token|legacy_audio
     semantic_type: bestrq
     pretrained_path: null # for loading state dicts
 
@@ -27,21 +27,20 @@ extra_params:
 run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
-    log_name: semantic_model_t5
-    version: conditional_v0
+    log_name: semantic_model_mulan
+    version: v0
     cache_dir: .module_cache/musiclm
     precision: "bf16-mixed"
     num_workers: 8
     accelerator: auto
     max_steps: 1000000
-    batch_size: 28
-    learning_rate: 4.0e-4
+    batch_size: 4
+    learning_rate: 2.0e-4
     warmup_steps: 2000
     cycle_steps: 200000
     weight_decay: 0.01
     shuffle_buffer: 10
     gradient_clip_val: 1.0
-    save_top_k: 10
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -63,13 +62,13 @@ model_config: !new:transformers.LlamaConfig
     hidden_size: !ref <extra_params[hidden_size]>
     intermediate_size: 4128
     num_hidden_layers: 24
-    num_attention_heads: 12
+    num_attention_heads: 24
     hidden_act: "silu"
     max_position_embeddings: 4096 # hardcoded long sequence length for positional encoder
     initializer_range: 0.02
     rms_norm_eps: 1e-6
     use_cache: False
-    num_logits: !ref <extra_params[semantic_codebook_size]> + 2
+    num_logits: !ref <extra_params[semantic_codebook_size]>
 
 model_cls: !name:samantha.models.flash_llama.LlamaForCausalLM
     config: !ref <model_config>
@@ -86,7 +85,7 @@ scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupC
     cycle_steps: !ref <run_opts[cycle_steps]>
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
-pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticT5Module
+pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
     checkpointing: False
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
@@ -94,14 +93,16 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticT5Module
     criterion_cls: !name:recipes.musiclm.lightning.modules.MaskedCrossEntropy
     extra_params: !ref <extra_params>
     required_modules:
+        # Mulan mix - 160
+        mulan:
+            hpath: /mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=014000-median_rank_1=160-kaggle.ckpt
+            initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
+                cache_dir: !ref <run_opts[cache_dir]>
+                version: "g4"
         bestrq:
             hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
             initializer: !name:recipes.umm.requires.model_initializer.init_stage3
                 cache_dir: !ref <run_opts[cache_dir]>
-        t5:
-            hpath: null
-            initializer: !name:recipes.musiclm.requires.model_initializer.init_t5_encoder
-                cache_dir: null
 
 logger:
     - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
@@ -118,7 +119,7 @@ logger:
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
-      save_top_k: !ref <run_opts[save_top_k]>
+      save_top_k: 10
       save_last: True
       monitor: val_accu_0
       mode: max

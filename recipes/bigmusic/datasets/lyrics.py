@@ -169,7 +169,7 @@ class DefaultDatasets():
             return WrappedLyricsDataset(
                 [
                     {
-                        "url2index": "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/karaoke_train.tar_to_index.tsv", 
+                        "url2index": "/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/indexes_with_meta/karaoke_train.tar_to_index.tsv", 
                         "audio_keys": { 'style_audio': 'full.mp3', 'target_audio': 'full.mp3'},
                     },
                     {
@@ -209,7 +209,7 @@ class DefaultDatasets():
             return WrappedLyricsDataset(
                 [
                     {
-                        "url2index": "/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/webdataset_acc/karaoke_train.tar_to_index.tsv", 
+                        "url2index": "/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/indexes_with_meta/karaoke_train.tar_to_index.tsv", 
                         "audio_keys": { 'style_audio': 'acc.mp3', 'target_audio': 'full.mp3', 'vocal_audio': 'vocal.mp3' },
                     },
                     {
@@ -228,7 +228,7 @@ class DefaultDatasets():
             return WrappedLyricsDataset(
                 [
                     {
-                        "url2index": "/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/webdataset_acc/karaoke_train.tar_to_index.tsv", 
+                        "url2index": "/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/indexes_with_meta/karaoke_train.tar_to_index.tsv", 
                         "audio_keys": { 'target_audio': 'vocal.mp3', 'vocal_audio': 'vocal.mp3' },
                     },
                     {

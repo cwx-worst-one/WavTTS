@@ -10,7 +10,7 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 # running parameters
 log_dir: /mnt/bn/audio-diffusion/wtl/
 asset_dir: recipes/diffusion/assets
-checkpoint_path: /mnt/bn/audio-diffusion/wtl/diffusion/model_14/checkpoints/diffusion-step=124999.ckpt
+checkpoint_path: /mnt/bn/audio-diffusion/wtl/diffusion/model_14_part2/checkpoints/last.ckpt
 
 run_opts:
     fast_dev_run: False

@@ -14,8 +14,6 @@ from recipes.musiclm.inference.utils import load_wav
 default_prompt_path = Path(__file__).absolute().parent/'inference_prompts/default.json'
 
 def inference_dataset_from_prompt(prompt_path, conditions="style_text,lyrics_tokens", batch_size=8, max_items=16, lyrics_max_seq_len=150, run_combinations=False):
-    if prompt_path == "validation":
-        return inference_validation(batch_size=batch_size)
     prompt_path = Path(prompt_path)
     if prompt_path.suffix == '.json':
         with open(prompt_path, 'r') as f:
@@ -47,7 +45,8 @@ def inference_dataset_from_prompt(prompt_path, conditions="style_text,lyrics_tok
         segment_transforms = [LyricsTokenTransform.init_espeak_tokenizer(
             lyrics_max_seq_len=lyrics_max_seq_len)]
         if 'style_tokens' in conditions: # t5 case: add t5 tokenizer
-            segment_transforms.append(MetadataT5Transform(max_seq_len=lyrics_max_seq_len))
+            # TODO: (AS) pass max_seq_len parameter to transform
+            segment_transforms.append(MetadataT5Transform())
         else: # mulan vocal case. add vocal tag to prompt to generate vocals
             segment_transforms.append(AddMulanVocalTagTransform())
     else:

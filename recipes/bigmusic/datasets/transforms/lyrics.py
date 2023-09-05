@@ -1,3 +1,4 @@
+from importlib.metadata import metadata
 from typing import Any, Dict, List, Generator, Optional, Callable
 import io
 import torch
@@ -27,15 +28,33 @@ class MCCInstrumentalBatchTransform():
     
 
 class MCCMetadataTextTransform():
-    def _mcc_metadata_to_string(self, item):
+    def _mcc_metadata_to_string(self, item, type="Vocal"):
         metadata = item['metadata']
-        keys = ['final_genre', 'final_mood', 'final_theme']
-        fields = []
-        for k in keys:
-            val = metadata.get(k)
-            if val is None or val == 'nan': continue
-            fields.extend(val.split(','))
-        return ' '.join(fields)
+        mood = metadata.get('final_mood')
+        genre = metadata.get('final_genre')
+        gender = metadata.get('merge_aed')
+        text = ""
+        if type == "Vocal":
+            text = "A "
+            if mood is not None and mood != 'nan':
+                text += mood.lower() + " "
+            if genre is not None and genre != 'nan':
+                text += genre.lower() + " "
+            text += "song"
+            if gender is not None and gender != 'nan':
+                if 'Female' in gender:
+                    text += " with female vocal"
+                elif 'Male' in gender:
+                    text += " with male vocal"
+            text += "."
+        elif type == "Instrumental":
+            text = ""
+            if mood is not None and mood != 'nan':
+                text += mood.lower() + " "
+            if genre is not None and genre != 'nan':
+                text += genre.lower() + " "
+            text += "music."
+        return text
 
     def __call__(self, item):
         metadata_string = self._mcc_metadata_to_string(item)

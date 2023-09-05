@@ -20,12 +20,8 @@ extra_params:
     # Semantic model
     semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
     semantic_ckpt: "/mnt/bn/audio-diffusion/jt/model_archive/vocalmusic/semantic_model_mulan/semantic_chroma_text_from_scratch_g80_2em3/checkpoints/step=122000-val_accu_0=8.82.ckpt"
-    # Re-trained vocal checkpoint
-    coarse_ckpt: "/mnt/bn/audio-diffusion/jt/model_archive/vocalmusic/coarse_flash_llama_wav2vec/bestrq_chroma_coarse_0.7b/checkpoints/step=195000-tr_loss=3.6975.ckpt"
-    # Fine - partial 60m balanced
-    fine_ckpt: "/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/fine/fine_mcc_mix/fixed_posemb_v1/checkpoints/step=206000-val_accu_0=10.44.ckpt"
-    # For WER Metrics
-    umm_ckpt: "/mnt/bn/audio-diffusion/qq/logs/semantic_flash_llama/mcc/pretrain/step=0050000-loss=0.669.ckpt"
+
+    token2wav_type: diffusion
 
     semantic_temperature: 1.0
     coarse_temperature: 0.9
@@ -53,7 +49,7 @@ run_opts:
     precision: 32
     accelerator: auto
     strategy: auto
-    cache_dir: .module_cache/musiclm/mulan_phoneme
+    cache_dir: .module_cache/musiclm
     batch_size: 16
     num_workers: 8
 
@@ -76,10 +72,37 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
     semantic_cls_path: !ref <extra_params[semantic_cls_path]>
     extra_params: !ref <extra_params>
     required_modules:
-        soundstream_dec:
-            hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
-            initializer: !name:recipes.musiclm.requires.model_initializer.init_soundstream_decoder
-                cache_dir: !ref <run_opts[cache_dir]>
+        bestrq_modules:
+            bestrq:
+                hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
+                initializer: !name:recipes.umm.requires.model_initializer.init_stage3
+                    cache_dir: !ref <run_opts[cache_dir]>
+        diffusion_modules:
+            diffusion:
+                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/model_14_part2/checkpoints/last.ckpt
+                initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
+                    cache_dir: !ref <run_opts[cache_dir]>
+            sampler:
+                hpath: null
+                initializer: !name:recipes.diffusion.inference_from_text_lyrics2song.init_sampler
+                    cache_dir: !ref <run_opts[cache_dir]>
+            vocoder:
+                hpath: hdfs://harunava/home/byte_speech_sv/weitsung.lu/soundstream/dac_vae_125hz_24k_v2_part2/checkpoints/soundstream-step=374999-val_sdr=12.9557.ckpt
+                initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
+                    cache_dir: !ref <run_opts[cache_dir]>
+        ar_modules:
+            coarse:
+                hpath: /mnt/bn/audio-diffusion/jt/model_archive/vocalmusic/coarse_flash_llama_wav2vec/bestrq_chroma_coarse_0.7b/checkpoints/step=195000-tr_loss=3.6975.ckpt
+                initializer: !name:recipes.bigmusic.utils.model_initializer.init_coarse
+                    cache_dir: !ref <run_opts[cache_dir]>
+            fine:
+                hpath: /mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/fine/fine_mcc_mix/fixed_posemb_v1/checkpoints/step=206000-val_accu_0=10.44.ckpt
+                initializer: !name:recipes.bigmusic.utils.model_initializer.init_fine
+                    cache_dir: !ref <run_opts[cache_dir]>
+            soundstream_dec:
+                hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
+                initializer: !name:recipes.musiclm.requires.model_initializer.init_soundstream_decoder
+                    cache_dir: !ref <run_opts[cache_dir]>
 
 trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>
