@@ -41,21 +41,28 @@ def upload_one_file_to_tos(key: str, data: str):
         except:
             print(f"Bad {data}")
 
-audio_folder = "/mnt/bn/mm-data/projects/mulan/testing_embed/clips_20s"
+audio_folder = "/mnt/bn/mm-data/projects/mulan/testing_embed/non_vocal_30k_clips_20s"
 assert os.path.exists(audio_folder)
 
 cache_folder = "/opt/tiger/mulan/cache_audios"
 os.makedirs(cache_folder, exist_ok=True)
 
 text_emb_folder = (
-    "/mnt/bn/mm-data/projects/mulan/testing_embed/vocal_rank_0_228/text_embeds_30k_vocal_mulan-step=006600-median_rank_0=228-kaggle.npy"
+    # "/mnt/bn/mm-data/projects/mulan/testing_embed/chinese_mulan_result/text_embeds/chinese_mulan_google_text_embeds.npy"
+    # "/opt/tiger/result_folder/text_embeds/mulanmix_text2.0_embeds.npy"
+    "/opt/tiger/result_folder/text_embeds/mulan127_text2.0_embeds.npy"
 )
 audio_emb_folder = (
-    "/mnt/bn/mm-data/projects/mulan/testing_embed/vocal_rank_0_228/vocal_30k_emb"
+    # "/mnt/bn/mm-data/projects/mulan/testing_embed/chinese_mulan_result/nonvocal_music_embeds"
+    # "/mnt/bn/mm-data/projects/mulan/testing_embed/mix_mulan_160_result/result_folder/music_embeds"
+    #"/mnt/bn/mm-data/projects/mulan/testing_embed/mulan127_result/result_folder/music_embeds"
+    "/opt/tiger/result_folder/mulan127_nonvocal_music_embeds"
 )
 
 ## Collect the texts
-f = "/mnt/bn/mm-data/user/dongguo/musiclm/test_cases/google_prompts.csv"
+# f = "/mnt/bn/mm-data/user/dongguo/musiclm/test_cases/google_prompts.csv"
+# f = "/mnt/bn/mm-data/projects/mulan/testing_embed/chinese_mulan_result/google_prompt_translate.csv"
+f = "/mnt/bn/audio-diffusion/data/musiclm_text_prompt/text_prompt_collection_2.0_20230817.csv"
 df = pd.read_csv(f)
 texts = df["text"].values.tolist()
 nsamples = len(texts)
@@ -163,4 +170,4 @@ summary = pd.DataFrame(
         # "top_5",
     ],
 )
-summary.to_csv("vocal_mulan_30k_rank_0_228.csv")
+summary.to_csv("/opt/tiger/result/mulan127_text2.0_nonvocal.csv")

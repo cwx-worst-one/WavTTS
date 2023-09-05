@@ -140,13 +140,16 @@ def calculate_prompt_text_embeds():
 
     import pandas as pd
     # to compute google prompts
-    # f = "/mnt/bn/mm-data/user/dongguo/musiclm/test_cases/google_prompts.csv"
+    # f = "/mnt/bn/mm-data/projects/mulan/testing_embed/chinese_mulan_result/short_prompt_translate.csv"
     # df = pd.read_csv(f)
-    # text_dset = df["text"].values.tolist()
+    # text_dset = df["text_chinese"].values.tolist()
 
-    f = "/mnt/bn/weituo-nas/music_edit/unify_repo/tmp/data/test_set/5k_non_vocal/non_vocal_half.csv"
+    # f = "/mnt/bn/weituo-nas/music_edit/unify_repo/tmp/data/test_set/5k_non_vocal/non_vocal_half.csv"
+    f = "/mnt/bn/audio-diffusion/data/musiclm_text_prompt/text_prompt_collection_2.0_20230817.csv"
     df = pd.read_csv(f)
-    text_dset = df.apply(clean, axis=1).tolist()
+    # text_dset = df.apply(clean, axis=1).tolist()
+    text_origin = df['text'].tolist()
+    text_dset = [text.lower().strip() for text in text_origin]
 
     nsamples = len(text_dset)
 
@@ -162,27 +165,35 @@ def calculate_prompt_text_embeds():
     parser.add_argument("--shard_id", type=int, default=0)
     parser.add_argument("--n_shards", type=int, default=1)
     parser.add_argument("--device_id", type=int, default=0)
-    parser.add_argument("--model_version", type=str, default="mulan_247")
+    parser.add_argument("--model_version", type=str, default="mulan_mix")
     args = parser.parse_args()
     device = f"cuda:{args.device_id}"
 
     if args.model_version == "mulan_127":
         args.ckpt_path = "/mnt/bn/mm-data/projects/mulan/ckpts/mulan_nonvocal/mulan_1b_gpt_all/mulan-step=036000-median_rank_0=127-kaggle.ckpt"
+    elif args.model_version == "mulan_mix":
+        args.ckpt_path = "/mnt/bn/mm-data/user/mulan_exp/MuLan_large/mulan_0724_mixall_25hz/checkpoints/mulan-step=014000-median_rank_1=160-kaggle.ckpt"
     elif args.model_version == "mulan_170":
         assert args.model_version == "mulan_170"
         args.ckpt_path = "/mnt/bn/mm-data/projects/mulan/ckpts/mulan_nonvocal/mulan_g4/mulan-step=044800-median_rank_1=170-kaggle.ckpt"
     elif args.model_version == "mulan_247":
         args.ckpt_path = "/mnt/bn/mm-data/projects/mulan/ckpts/mulan_nonvocal/mulan_v1.0/mulan-step=033600-median_rank_0=247-kaggle.ckpt"
+    elif args.model_version == "mulan_chinese":
+        args.ckpt_path = "/mnt/bn/audio-diffusion/mulan_exp/MuLan_large/chinese_mulan_v4/checkpoints/mulan-step=003000-median_rank_0=329-kaggle.ckpt"
     else:
         args.ckpt_path = "/mnt/bn/audio-diffusion/mulan_exp/MuLan_large/mulan_mme_0701_supcon/checkpoints/mulan-step=006600-median_rank_0=228-kaggle.ckpt"
 
     def load_mulan_model(args):
         device_id = args.device_id
         from recipes.audio_lm.requires.model_initializer import init_mulan
-
-        mulan_model = init_mulan(
-            args.ckpt_path, device_id, cache_dir=None, version="g4"
-        )
+        if args.model_version == "mulan_chinese":
+            mulan_model = init_mulan(
+                args.ckpt_path, device_id, cache_dir=None, version="chinese"
+            )
+        else:
+            mulan_model = init_mulan(
+                args.ckpt_path, device_id, cache_dir=None, version="g4"
+            )            
         mulan_model["mulan"].eval()
         assert mulan_model["mulan"].training is False
         return mulan_model
@@ -192,6 +203,8 @@ def calculate_prompt_text_embeds():
 
     # load csv to list using pandas
     tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
+    if args.model_version == "mulan_chinese":
+        tokenizer = AutoTokenizer.from_pretrained("bert-base-chinese")
     embeds = np.zeros(shape=[nsamples, 512], dtype=np.float32)
 
     with torch.no_grad():
@@ -213,15 +226,15 @@ def calculate_prompt_text_embeds():
             embeds[xl:xr, :] += (
                 mulan_modules["mulan"].text_encoder(**data).cpu().data.numpy()
             )
-    pickle.dump(
-        [text_dset, embeds],
-        open(
-            f"/opt/tiger/mulan/text_embeds/text_embeds_5k_half_247_comb{COMB_NUM}.pkl",
-            "wb",
-        ),
-    )
+    # pickle.dump(
+    #     [text_dset, embeds],
+    #     open(
+    #         f"/opt/tiger/mulan/text_embeds/text_embeds_5k_half_247_comb{COMB_NUM}.pkl",
+    #         "wb",
+    #     ),
+    # )
 
-    with open(f"/opt/tiger/mulan/text_embeds/text_embeds_5k_half_247_comb{COMB_NUM}.npy", "wb") as ff:
+    with open(f"/opt/tiger/result_folder/text_embeds/mulanmix_text2.0_embeds.npy", "wb") as ff:
         np.save(ff, embeds)
 
     print("so far so good?")
@@ -239,9 +252,9 @@ from tqdm import tqdm
 def load_mulan_model(args):
     device_id = args.device_id
     from recipes.audio_lm.requires.model_initializer import init_mulan
-
+    
     mulan_model = init_mulan(
-        args.ckpt_path, device_id, cache_dir=None, version="g4"
+        args.ckpt_path, device_id, cache_dir=None, version="llama"  # chinese or g4 or llama, llama-lora
     )
     mulan_model["mulan"].eval()
     assert mulan_model["mulan"].training is False
@@ -286,20 +299,21 @@ if __name__ == "__main__":
     parser.add_argument(
         "--input_folder",
         type=str,
-        default="/opt/tiger/mulan/non_vocal_half_clips_20s",
+        default="/mnt/bn/mm-data/projects/mulan/testing_embed/non_vocal_30k_clips_20s/",
     )
     parser.add_argument(
         "--target_folder",
         type=str,
-        default="/opt/tiger/mulan/music_embeds",
+        default="/opt/tiger/result_folder/mulan127_nonvocal_music_embeds",
     )
     parser.add_argument(
         "--ckpt_path",
         type=str,
         # default="/mnt/bn/mm-data/projects/mulan/ckpts/mulan_nonvocal/mulan_g4/mulan-step=044800-median_rank_1=170-kaggle.ckpt"
-        # default="/mnt/bn/mm-data/projects/mulan/ckpts/mulan_nonvocal/mulan_1b_gpt_all/mulan-step=036000-median_rank_0=127-kaggle.ckpt",
+        default="/mnt/bn/mm-data/projects/mulan/ckpts/mulan_nonvocal/mulan_1b_gpt_all/mulan-step=036000-median_rank_0=127-kaggle.ckpt",
         # default="/mnt/bn/mm-data/projects/mulan/ckpts/mme/mulan-step=002400-median_rank_0=232-kaggle.ckpt"
-        default="/mnt/bn/mm-data/projects/mulan/ckpts/mulan_nonvocal/mulan_v1.0/mulan-step=033600-median_rank_0=247-kaggle.ckpt"
+        # default="/mnt/bn/mm-data/projects/mulan/ckpts/mulan_nonvocal/mulan_v1.0/mulan-step=033600-median_rank_0=247-kaggle.ckpt"
+        # default="/mnt/bn/audio-diffusion/mulan_exp/MuLan_large/chinese_mulan_v4/checkpoints/mulan-step=003000-median_rank_0=329-kaggle.ckpt"
     )
     args = parser.parse_args()
     os.makedirs(args.target_folder, exist_ok=True)

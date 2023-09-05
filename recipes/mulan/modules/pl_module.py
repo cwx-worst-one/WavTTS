@@ -11,6 +11,7 @@ import torch.distributed as dist
 from recipes.mulan.models.music_encoder import get_music_encoder
 from recipes.mulan.models.text_encoder import get_text_encoder
 from recipes.mulan.modules.gather import GatherLayer
+from recipes.mulan.modules.llama_model import LlamaConfig
 from recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr import WarmupCosine
 from samantha.utils.model_metric import ModelMetric
 
@@ -30,18 +31,26 @@ class LitMuLanModule(pl.LightningModule):
         use_flatclr: bool = True,
         use_fine: bool = False,
         gather_batches: bool = True,
+        model_path: str = None,
     ):
         super().__init__()
         self.save_hyperparameters()  # save hyperparameter in ckpt
         output_type = "seq" if use_fine else "cls"
         self.music_encoder = get_music_encoder(music_encoder, emb_dim, output_type, music_seq_len)
-        self.text_encoder = get_text_encoder(text_encoder, emb_dim, output_type)
+        self.text_encoder = get_text_encoder(text_encoder, emb_dim, output_type, model_path)
         self.temperature = torch.log(torch.tensor(1 / temperature))
         # Validation outputs
         self.val_outputs = dict()
 
-    def on_fit_start(self):
-        self.music_encoder.mut.manually_to_device(self.device)
+    def on_fit_start(self):        
+        if self.hparams.music_encoder == "mut-final-25HZ":
+            self.music_encoder.manually_to_device(self.device)
+        else:
+            self.music_encoder.mut.manually_to_device(self.device)
+        if self.hparams.text_encoder in ["llama", "t5"]:
+            self.text_encoder.manually_to_device(self.device)
+
+        # self.music_encoder.mut.manually_to_device(self.device)
 
     def on_predict_start(self):
         self.text_encoder.cpu()  # save gpu memory
@@ -53,7 +62,7 @@ class LitMuLanModule(pl.LightningModule):
             precision=self.trainer.precision,
             model_obj_or_objs={
                 "music_tower": self.music_encoder,
-                "text_tower": self.text_encoder,
+                # "text_tower": self.text_encoder,
             },
         )
 
@@ -72,6 +81,8 @@ class LitMuLanModule(pl.LightningModule):
             "rotary",
         ]
         for name, param in self.named_parameters():
+            if not param.requires_grad:
+                continue 
             _found = False
             for k in no_decay:
                 if k in name:
@@ -91,7 +102,7 @@ class LitMuLanModule(pl.LightningModule):
             optimizer,
             init_lr=self.hparams.lr,
             warmup_steps=500,
-            cycle_steps=10000,
+            cycle_steps=50000,
             min_lr=self.hparams.lr * 0.1,
         )
 
@@ -301,7 +312,7 @@ class LitMuLanModule(pl.LightningModule):
     def _shared_step(self, batch, spec_aug=False):
         music_embed = self.music_encoder(batch["audio"].unsqueeze(1), spec_aug=spec_aug)
         text_embed = self.text_encoder(
-            batch["input_ids"], batch["attention_mask"], batch["token_type_ids"]
+            batch["input_ids"], batch["attention_mask"], batch.get("token_type_ids", None)
         )
 
         # mfu calculation
@@ -312,7 +323,7 @@ class LitMuLanModule(pl.LightningModule):
             stage=self.trainer.state.stage,
             model_kwargs={
                 "music_tower": {"batch_size": batch_size},
-                "text_tower": {"batch_size": batch_size, "seq_len": seq_len},
+                # "text_tower": {"batch_size": batch_size, "seq_len": seq_len},
             }
         )
 

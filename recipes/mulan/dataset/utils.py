@@ -14,7 +14,8 @@ def fix_hash(x):
 
 def process_audio(data):
     audio = data["audio.npy"]
-    audio = (audio / 32768.0).astype("float32")
+    if audio.dtype == np.int16:
+        audio = (audio / 32768.0).astype("float32")
     if len(audio.shape) == 1:
         audio = audio[None, :]
 
@@ -35,7 +36,7 @@ def process_audio(data):
     return data
 
 
-def tokenize_text(tokenizer, mode="train", seq_len=250):
+def tokenize_text(tokenizer, mode="train", seq_len=150):
     def _tokenize_text(data):
         text = data["text"]
 
@@ -52,7 +53,9 @@ def tokenize_text(tokenizer, mode="train", seq_len=250):
             return_tensors="pt",
         )
         data["input_ids"] = encodings["input_ids"]
-        data["token_type_ids"] = encodings["token_type_ids"]
+        if "token_type_ids" in encodings:
+            # T5 does not have token_type_ids
+            data["token_type_ids"] = encodings["token_type_ids"]
         data["attention_mask"] = encodings["attention_mask"]
 
         # Randomly knock out tokens for training
@@ -75,12 +78,13 @@ def collate_fn(batch):
     out_batch = {k: [] for k in keys}
     for b in batch:
         for k in keys:
-            out_batch[k].append(b[k])
+            if k in b:
+                out_batch[k].append(b[k])
 
     for k, v in out_batch.items():
         if k in ["music_id"]:
             out_batch[k] = torch.tensor(v)
-        else:
+        elif k in b:
             out_batch[k] = torch.cat(v)
 
     return out_batch

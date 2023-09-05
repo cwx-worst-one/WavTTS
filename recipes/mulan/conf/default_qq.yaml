@@ -69,8 +69,8 @@ train_datasets:
     zh600: !ref <zh_600k_dataset>
 
 
-selected_dataset_names: [zh600]
-weights: [1.0]
+selected_dataset_names: [qq,zh600]
+weights: [0.4,1.0]
 
 train_dataset: !new:samantha.dataio.dataset.MultiIterableDataset
     datasets: !apply:recipes.mulan.dataset.utils.select_datasets

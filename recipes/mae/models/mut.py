@@ -414,7 +414,45 @@ class PretrainedMuTWrapper(nn.Module):
         out = self.mut(audio, spec_aug=spec_aug)
 
         return out
+class FreeMuTWrapper(nn.Module):
+    def __init__(
+        self,
+        output_layer,  # output dim from mut is 1280
+        checkpointing=True,
+        use_flash_attn=False,
+        output_type="cls",
+        pretained_path: str = "mutmae-step=177600-loss_1=5-sf.pth",
+        num_layers: int = 64,
+    ):
+        super(FreeMuTWrapper, self).__init__()
+        mut = MuT(
+            spec_shape=(128, 1000),
+            patch_shape=(128, 2),
+            num_classes=1000,
+            sample_rate=24000,
+            dim=1280,
+            depth=num_layers,
+            heads=16,
+            dim_head=80,
+            channels=1,
+            mlp_dim=5120,
+            checkpointing=checkpointing,
+            use_flash_attn=use_flash_attn,
+            output_type=output_type,
+        )
+        state_dict = torch.load(pretained_path, map_location="cpu")
+        mut.load_state_dict(state_dict, strict=False)
+        mut.mlp_head = output_layer
+        self.mut = mut
 
+    def manually_to_device(self, device):
+        for k, v in self.mut.logmel_frontend["logmel"].feat_extract.items():
+            self.mut.logmel_frontend["logmel"].feat_extract[k] = v.to(device)
+
+    def forward(self, audio, spec_aug=False):
+        out = self.mut(audio, spec_aug=spec_aug)
+
+        return out
 class PretrainedMuTWrapper25hz(nn.Module):
     def __init__(
         self,

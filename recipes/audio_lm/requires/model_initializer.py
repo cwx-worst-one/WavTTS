@@ -46,6 +46,19 @@ def init_mulan(hpath, local_rank, cache_dir=None, version="149"):
             mulan_inference,
             mulan_rvq_indexs,
         )
+    elif version in ["chinese"]:
+        from .mulan.mulan_infer_chinese import (
+            create_mulan_model,
+            mulan_inference,
+            mulan_rvq_indexs
+        )
+    elif version in ["llama-lora", "llama"]:
+        from .mulan.mulan_infer_llama import (
+            create_mulan_model,
+            mulan_inference,
+            mulan_rvq_indexs            
+        )
+
     elif version in ["film"]:
         from recipes.film.modules.pl_module import LitMuLanModule
         with local_zero_first():

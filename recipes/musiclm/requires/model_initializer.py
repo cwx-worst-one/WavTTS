@@ -8,6 +8,10 @@ from transformers import AutoModel, Wav2Vec2FeatureExtractor
 
 import samantha.utils.hdfs_helper as hh
 from recipes.best_rq.modules.lit_datamodule import NormalizeFeature
+try:
+    from recipes.best_rq.modules.lit_module import BestRQ
+except:
+    BestRQ = None
 from recipes.musiclm.models.compat.semantic_model import SSLFrontend
 
 from ..utils.dist import local_zero_first

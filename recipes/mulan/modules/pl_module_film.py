@@ -137,9 +137,7 @@ class LitFiLMModule(pl.LightningModule):
         score1 = []
         score2 = []
         for i in range(len(text_vec)):
-            text_len = text_seq_lens[i]
-            text_len = max(text_len, 1)
-            t = text_vec[i:i+1, :text_len, :]  # only use non-padded part
+            t = text_vec[i:i+1, :text_seq_lens[i], :]  # only use non-padded part
             dot_product = torch.matmul(t, music_vec_t)
             s1 = torch.mean(torch.max(dot_product, dim=-1)[0], dim=-1)
             s2 = torch.mean(torch.max(dot_product, dim=-2)[0], dim=-1)

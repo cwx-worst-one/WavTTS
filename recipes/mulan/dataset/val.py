@@ -19,6 +19,7 @@ class TextMusicDataset(Dataset):
         music_feature_path="audio",
         music_feature_type="npy",
         max_text_len=250,
+        tok_path=None,
     ):
 
         # df_playlist
@@ -32,8 +33,13 @@ class TextMusicDataset(Dataset):
 
         self.music_feature_path = f"{path}/{music_feature_path}"
         self.music_feature_type = music_feature_type
+        
+        if tok_path is None:
+            tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
+        else:
+            tokenizer = AutoTokenizer.from_pretrained(tok_path)
+            tokenizer.pad_token = tokenizer.eos_token
 
-        tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
         self.encodings_text = tokenizer(
             self.df[self.text_key].tolist(),
             padding="max_length",
@@ -54,16 +60,15 @@ class TextMusicDataset(Dataset):
         else:
             audio = np.load(f"{self.music_feature_path}/{music_id}.npy")
 
-        input_ids = torch.tensor(self.encodings_text["input_ids"][index])
-        token_type_ids = torch.tensor(self.encodings_text["token_type_ids"][index])
-        attention_mask = torch.tensor(self.encodings_text["attention_mask"][index])
-
         item = {
-            "input_ids": input_ids,
-            "token_type_ids": token_type_ids,
-            "attention_mask": attention_mask,
             "audio": torch.tensor((audio / 32768.0).astype("float32")).squeeze(0),
         }
+
+        item["input_ids"] = torch.tensor(self.encodings_text["input_ids"][index])
+        if "token_type_ids" in self.encodings_text:
+            item["token_type_ids"] = torch.tensor(self.encodings_text["token_type_ids"][index])
+        item["attention_mask"] = torch.tensor(self.encodings_text["attention_mask"][index])
+
         return item
 
     def __len__(self):

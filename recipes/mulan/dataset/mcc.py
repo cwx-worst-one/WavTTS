@@ -198,8 +198,16 @@ class MCCN2MDataset(IterableDataset):
 
 
 class MCCN2MDatasetApril(IterableDataset):
-    def __init__(self, mode="train", seq_len=250, **kwargs):
-        self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
+    def __init__(self, mode="train", seq_len=250, tok_path=None, **kwargs):
+        if tok_path is not None: # which means we use llama for text tower
+            if tok_path == "t5-3b":
+                from transformers import T5Tokenizer
+                self.tokenizer = T5Tokenizer.from_pretrained("t5-3b")
+            else:
+                self.tokenizer = AutoTokenizer.from_pretrained(tok_path)
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+        else:
+            self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
         self.dataset = (
             wds.WebDataset(MCC_N2M_URLS, **kwargs)
             .decode()
@@ -222,19 +230,13 @@ class MCCN2MDatasetApril(IterableDataset):
             if str(meta["music_id"]) in self.chatgpt_g4:
                 tags = self.chatgpt_g4[str(meta["music_id"])]
                 # get all the items into list
-                tags = [
-                    filter_g4_category_labels(tags[k])
-                    for k in tags
-                    if "instrument" not in k.lower() and "place" not in k.lower()
-                ]
-                tags = [s for s in tags if len(s) > 0]
-                if not tags:
-                    text = ""
-                else:
-                    # randomly choose 1-len(tags) tags
-                    tags = random.sample(tags, random.randint(1, len(tags)))
-                    text = " ".join(tags)
-        data["text"] = text.strip()
+                tags = [v for v in tags.values()]
+                # randomize the order
+                random.shuffle(tags)
+                for tag in tags:
+                    if random.random() < 0.8:
+                        text += tag
+        data["text"] = text
         data["data_source"] = meta["data_source"]
         data["music_id"] = meta["music_id"]
 
