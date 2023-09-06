@@ -3,3 +3,4 @@ torch_complex
 rotary_embedding_torch
 transformers
 phonemizer
+ffmpeg

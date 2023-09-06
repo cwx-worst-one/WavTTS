@@ -16,6 +16,7 @@ from recipes.bigmusic.utils.model_initializer import run_2ar
 
 
 SAMPLE_RATE = 24000
+TOKEN_RATE = 25
 
 
 def run_wer(wavs, lyrics, verbose=True):
@@ -115,9 +116,13 @@ class SemanticInferenceModule(pl.LightningModule):
 
     def _predict_step(self, batch, round, batch_idx):
         semantic_samples = self.semantic_module.predict(batch, self.extra_params)
-        wavs = self.decoding_fn(self.requires, semantic_samples, self.extra_params) # 
-
-        # TODO: (QQ) truncate wavs according to eos.
+        eos_id = self.semantic_module.target_embedder.eos_id
+        if eos_id is not None:
+            eos_index = torch.cumsum(semantic_samples == eos_id, 1) > 0
+            semantic_samples[eos_index] = eos_id   
+        batch['eos_index'] = ((semantic_samples == 0).cumsum(axis=1)==eos_id).sum(axis=1) * int(SAMPLE_RATE / TOKEN_RATE)
+        wavs = self.decoding_fn(self.requires, semantic_samples, self.extra_params)
+        
         batch['generated_audio'] = wavs
         wer, mcs, metrics = self.run_metrics(wavs, batch)
         batch['metrics'] = metrics
@@ -237,7 +242,9 @@ def save_outputs(batch, round, batch_idx, output_dir):
     vocal_audio = batch.get('vocal_audio')
     metrics = batch.get('metrics')
     wavs = batch['generated_audio']
-    for i, wav in enumerate(wavs):
+    eos_index = batch['eos_index']
+    for i, (eos, wav) in enumerate(zip(eos_index, wavs)):
+        wav = wav[:eos]
         if categories is not None:
             wav_dir = os.path.join(output_dir, categories[i])
         else:

@@ -142,6 +142,51 @@ class LyricsDataModule(pl.LightningDataModule):
         validation_dataset = DefaultDatasets.Batched.default_validation_dataset(sample_rate, sample_duration, batch_size, lyrics_max_seq_len)
         return LyricsDataModule(train_dataset=train_dataset, validation_dataset=validation_dataset, num_workers=num_workers, pin_memory=pin_memory)
 
+
+class SingsongDataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        train_dataset=None,
+        validation_dataset=None,
+        predict_dataset=None,
+        num_workers: int = 8,
+        pin_memory: bool = True,
+    ):
+        super().__init__()
+        self.train_dataset = train_dataset
+        self.validation_dataset = validation_dataset
+        self.predict_dataset = predict_dataset
+        self.num_workers = num_workers
+        self.pin_memory = pin_memory
+
+    def train_dataloader(self):
+        return DataLoader(self.train_dataset, batch_size=None, num_workers=self.num_workers, pin_memory=self.pin_memory)
+
+    def val_dataloader(self):
+        return DataLoader(self.validation_dataset, batch_size=None, num_workers=self.num_workers, pin_memory=self.pin_memory)
+
+    def predict_dataloader(self):
+        return DataLoader(self.predict_dataset, batch_size=None, num_workers=self.num_workers, pin_memory=self.pin_memory)
+    
+    @classmethod
+    def from_dataset_type(
+        cls,
+        dataset_type: str,
+        batch_size: int,
+        sample_rate: int = 24000,
+        sample_duration: int = 10,
+        shuffle_buffer_size: int = 100,
+        num_workers: int = 8,
+        pin_memory: bool = True,
+    ):
+        if dataset_type == 'resso':            
+            train_dataset = DefaultDatasets.Batched.singsong_dataset(sample_rate, sample_duration, "train", batch_size, shuffle_buffer_size)
+            validation_dataset = DefaultDatasets.Batched.singsong_dataset(sample_rate, sample_duration, "val", batch_size, shuffle_buffer_size)
+        else:
+            raise NotImplementedError
+        return SingsongDataModule(train_dataset=train_dataset, validation_dataset=validation_dataset, num_workers=num_workers, pin_memory=pin_memory)
+
+
 def dictonary_collate(batch):
     """Fixes pytorch's default collate which cannot handle dictionaries or null fields."""
     def remove_invalid_fields(item):
@@ -205,24 +250,42 @@ class DefaultDatasets():
                 # use_pipe=True,
             )
         @staticmethod
-        def resso_mss_dataset(sample_rate, sample_duration):
-            return WrappedLyricsDataset(
-                [
-                    {
-                        "url2index": "/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/indexes_with_meta/karaoke_train.tar_to_index.tsv", 
-                        "audio_keys": { 'style_audio': 'acc.mp3', 'target_audio': 'full.mp3', 'vocal_audio': 'vocal.mp3' },
-                    },
-                    {
-                        "url2index": "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/resso_mss.tar_to_index.tsv", 
-                        "audio_keys": { 'style_audio': 'mss_acc', 'vocal_audio': 'mss_vocal'},
-                    },
-                ],
-                sample_rate=sample_rate,
-                sample_duration=sample_duration,
-                resampled=True,
-                shardshuffle=True,
-                weights=[0.2, 0.8]
-            )
+        def resso_mss_dataset(sample_rate, sample_duration, split="train"):
+            if split == "train":
+                return WrappedLyricsDataset(
+                    [
+                        {
+                            "url2index": "/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/indexes_with_meta/karaoke_train.tar_to_index.tsv", 
+                            "audio_keys": { 'style_audio': 'acc.mp3', 'target_audio': 'full.mp3', 'vocal_audio': 'vocal.mp3' },
+                        },
+                        {
+                            "url2index": "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/resso_mss.tar_to_index.tsv", 
+                            "audio_keys": { 'style_audio': 'mss_acc', 'vocal_audio': 'mss_vocal'},
+                        },
+                    ],
+                    sample_rate=sample_rate,
+                    sample_duration=sample_duration,
+                    resampled=True,
+                    shardshuffle=True,
+                    use_pipe=True,
+                    weights=[0.2, 0.8]
+                )
+            elif split == "val":
+                return WrappedLyricsDataset(
+                    [
+                        {
+                            "url2index": "/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/indexes_with_meta/karaoke_valid.tar_to_index.tsv", 
+                            "audio_keys": { 'style_audio': 'acc.mp3', 'target_audio': 'full.mp3', 'vocal_audio': 'vocal.mp3' },
+                        }
+                    ],
+                    sample_rate=sample_rate,
+                    sample_duration=sample_duration,
+                    resampled=True,
+                    shardshuffle=True,
+                    use_pipe=True,
+                    weights=[1]
+                )
+                
         @staticmethod
         def vocal_only_dataset(sample_rate, sample_duration):
             return WrappedLyricsDataset(
@@ -498,6 +561,17 @@ class DefaultDatasets():
             )
             return combined_ds
 
+        @staticmethod
+        def singsong_dataset(sample_rate, sample_duration, split, batch_size, shuffle_buffer_size):            
+            mss_ds_batched = transform_dataset(
+                dataset=DefaultDatasets.Basic.resso_mss_dataset(sample_rate=sample_rate, sample_duration=sample_duration, split=split),
+                segment_transforms=[],
+                batch_transforms=[AddConditionsTransform("style_audio,vocal_audio")],
+                batch_size=batch_size,
+                shuffle_buffer_size=shuffle_buffer_size
+            )
+            return mss_ds_batched
+        
         @staticmethod
         def default_validation_dataset(sample_rate, sample_duration, batch_size, lyrics_max_seq_len):
             return transform_dataset(

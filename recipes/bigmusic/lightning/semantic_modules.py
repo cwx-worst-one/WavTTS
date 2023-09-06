@@ -173,12 +173,14 @@ class SpeechSemanticModule(BaseContinuousEmbedModule):
         
         hidden_size = extra_params['hidden_size']
         lyrics_vocab_size = extra_params['lyrics_codebook_size']
-        speaker_vocab_size = extra_params['speaker_codebook_size']
-        semantic_vocab_size = extra_params['semantic_codebook_size']
+        # speaker_vocab_size = extra_params['speaker_codebook_size']
+        # For now we use mulan audio tower as speaker embedder
+        mulan_embed_dim = extra_params['mulan_embed_dim']
         embedder_dict = {
-            'speaker_id': SpeakerEmbedder(vocab_size=speaker_vocab_size, embedding_dim=hidden_size, add_sos=True),
-            'lyrics': LyricsTokenEmbedder(vocab_size=lyrics_vocab_size, embedding_dim=hidden_size, add_sos=True),
+            'mulan': MulanEmbedder(data_type='music', input_dim=mulan_embed_dim, embedding_dim=hidden_size, add_sos=True),
+            'lyrics_tokens': LyricsTokenEmbedder(vocab_size=lyrics_vocab_size, embedding_dim=hidden_size, add_sos=True),
         }
+        semantic_vocab_size = extra_params['semantic_codebook_size']
         input_embedders = nn.ModuleDict(embedder_dict)
         semantic_type = extra_params['semantic_type']
         if semantic_type  == 'wav2vec':
@@ -204,8 +206,16 @@ class SpeechSemanticModule(BaseContinuousEmbedModule):
     def prepare_inputs_embeddings(self, batch):
         with_sos=True
         # convert inputs to conditions
-        speaker_embeds = self.input_embedders['speaker_id'].embed(self.requires, batch['speaker_id'], with_sos=with_sos)
-        lyrics_embeds = self.input_embedders['lyrics'].embed(self.requires, batch['lyrics_tokens'], with_sos=with_sos)
+        # speaker_embeds = self.input_embedders['speaker_id'].embed(self.requires, batch['speaker_id'], with_sos=with_sos)
+        speaker_embeds = self.input_embedders['mulan'].embed(
+            self.requires, 
+            batch['target_audio'][:,:,0:10*24000].squeeze(), 
+            with_sos=with_sos, 
+            data_type='music')
+        lyrics_embeds = self.input_embedders['lyrics_tokens'].embed(
+            self.requires, 
+            batch['lyrics_tokens'], 
+            with_sos=with_sos)
         inputs_embeds = [speaker_embeds, lyrics_embeds]
         return torch.cat(inputs_embeds, dim=1)
 
@@ -252,10 +262,8 @@ class MixSemanticModule(BaseContinuousEmbedModule):
         hidden_size = extra_params['hidden_size']
         mulan_embed_dim = extra_params['mulan_embed_dim']
         lyrics_vocab_size = extra_params['lyrics_codebook_size']
-        speaker_vocab_size = extra_params['speaker_codebook_size']
         semantic_vocab_size = extra_params['semantic_codebook_size']
         embedder_dict = {
-            # 'speaker_id': SpeakerEmbedder(vocab_size=speaker_vocab_size, embedding_dim=hidden_size, add_sos=True),
             # TODO: (AS) rename mulan_text to style_text
             'mulan_text': MulanEmbedder(data_type='text', input_dim=mulan_embed_dim, embedding_dim=hidden_size, add_sos=True),
             'lyrics': LyricsTokenEmbedder(vocab_size=lyrics_vocab_size, embedding_dim=hidden_size, add_sos=True),
@@ -281,13 +289,9 @@ class MixSemanticModule(BaseContinuousEmbedModule):
     def prepare_inputs_embeddings(self, batch):
         with_sos=True
         # convert inputs to conditions
-        # speaker_embeds = self.input_embedders['speaker_id'].embed(
-        #     self.requires, 
-        #     torch.unsqueeze(torch.tensor([0] * len(batch['style_text'])), 1).cuda(), with_sos=with_sos)        
         style_embeds = self.input_embedders['mulan_text'].embed(self.requires, batch['style_text'], with_sos=with_sos)
         lyrics_embeds = self.input_embedders['lyrics'].embed(self.requires, batch['lyrics_tokens'], with_sos=with_sos)
         # Lyrics at last so it is ok to truncate at prefix_max_len
-        # inputs_embeds = [speaker_embeds, style_embeds, lyrics_embeds]        
         inputs_embeds = [style_embeds, lyrics_embeds]
         return torch.cat(inputs_embeds, dim=1)
 
@@ -321,9 +325,9 @@ class MixSemanticModule(BaseContinuousEmbedModule):
 
         target_mel, _ = bestrq_model.prepare_feature({'audio': batch['target_audio']})
         return predict_mel.transpose(1, 2), target_mel.transpose(1, 2)
-    
 
-class VocalAPSemanticModule(BaseContinuousEmbedModule):
+
+class SingSongSemanticModule(BaseContinuousEmbedModule):
     def __init__(
         self,
         model_cls,
@@ -336,11 +340,9 @@ class VocalAPSemanticModule(BaseContinuousEmbedModule):
     ):
         hidden_size = extra_params['hidden_size']
         mulan_embed_dim = extra_params['mulan_embed_dim']
-        lyrics_vocab_size = extra_params['lyrics_codebook_size']        
         semantic_vocab_size = extra_params['semantic_codebook_size']
-        embedder_dict = {            
+        embedder_dict = {
             'mulan': MulanEmbedder(data_type='music', input_dim=mulan_embed_dim, embedding_dim=hidden_size, add_sos=True),
-            'lyrics': LyricsTokenEmbedder(vocab_size=lyrics_vocab_size, embedding_dim=hidden_size, add_sos=True),
         }
         input_embedders = nn.ModuleDict(embedder_dict)
         semantic_type = extra_params['semantic_type']
@@ -362,11 +364,39 @@ class VocalAPSemanticModule(BaseContinuousEmbedModule):
 
     def prepare_inputs_embeddings(self, batch):
         with_sos=True
-        # convert inputs to conditions
-        print(batch['target_audio'].shape)
-        batch_audio_10s = batch['target_audio'][:, :, 0:10*24000].squeeze()
-        style_embeds = self.input_embedders['mulan'].embed(self.requires, batch_audio_10s, with_sos=with_sos)
-        lyrics_embeds = self.input_embedders['lyrics'].embed(self.requires, batch['lyrics_tokens'], with_sos=with_sos)
-        # Lyrics at last so it is ok to truncate at prefix_max_len        
-        inputs_embeds = [style_embeds, lyrics_embeds]
+        style_embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_audio'], with_sos=with_sos)        
+        vocal_embeds = self.target_embedder.embed(self.requires, batch['vocal_audio'], with_sos=True, with_eos=False)
+        inputs_embeds = [style_embeds, vocal_embeds]
         return torch.cat(inputs_embeds, dim=1)
+
+    def prepare_training_inputs(self, batch):        
+        if "target_audio" in batch:
+            target_audio = batch["target_audio"]
+        else:
+            assert "style_audio" in batch and "vocal_audio" in batch
+            target_audio = batch["style_audio"] + batch["vocal_audio"]
+        target_ids = self.target_embedder.tokenize(self.requires, target_audio, with_sos=False, with_eos=False)
+        batch_size = target_ids.size(0)
+        inputs_embeds = self.prepare_inputs_embeddings(batch)
+        sos_embeds = self.target_embedder.get_sos_embed(batch_size)
+        eos_ids = self.target_embedder.get_eos_token(batch_size)
+        target_embeds = self.target_embedder.embed(token_ids=target_ids, with_sos=False, with_eos=False)
+        if self.use_cross_attn:
+            return {
+                "inputs_embeds": torch.cat([sos_embeds, target_embeds], dim=1),
+                "encoder_hidden_states": inputs_embeds
+            }, torch.cat([target_ids, eos_ids], dim=1)
+        input_embeds = torch.cat([inputs_embeds, sos_embeds, target_embeds], dim=1)
+        target_ids = torch.cat([target_ids, eos_ids], dim=1)        
+        return {"inputs_embeds":  input_embeds}, target_ids
+    
+    @torch.no_grad()
+    def predict(self, batch, hp):
+        frame_rate = self.extra_params.semantic_frame_rate
+        num_tokens = hp.duration * frame_rate
+        temperature = hp.semantic_temperature
+
+        inputs_embeds = self.prepare_inputs_embeddings(batch)
+        return super().predict(inputs_embeds, num_tokens, temperature)
+        
+

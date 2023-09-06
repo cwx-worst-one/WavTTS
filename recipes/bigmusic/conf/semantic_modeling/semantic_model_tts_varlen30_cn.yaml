@@ -13,7 +13,7 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 extra_params:
     sample_rate: 24000
     lyrics_codebook_size: 400
-    prefix_max_len: 250  # prefix: 1 (mulan emb) + max 200 (phoneme sequence)
+    prefix_max_len: 350  # prefix: 1 (mulan emb) + max 349 (phoneme sequence)
     speaker_codebook_size: 5 # 2500 # not used for music mix
     semantic_codebook_size: 32_768
     semantic_frame_rate: 25
@@ -23,13 +23,12 @@ extra_params:
     intermediate_size: 3072
     num_hidden_layers: 24
     num_attention_heads: 16
-    pretrained_path: /mnt/bn/audio-diffusion/qq/logs/semantic_flash_llama/mcc/pretrain/semantic_chroma_step=049000-val_accu_0=8.88.ckpt    # 10s semantic
-    # pretrained_path: /mnt/bn/audio-diffusion/qq/logs/semantic_flash_llama/mcc/pretrain/step=070000-val_accu_0=21.20.ckpt   #null # for loading state dicts
 
 # running parameters
 run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+    hdfs_path: None
     log_name: semantic_model_mix
     version: v0
     cache_dir: .module_cache/musiclm
@@ -38,20 +37,20 @@ run_opts:
     accelerator: auto
     max_steps: 8000000
     val_check_interval: 1000
-    batch_size: 28
+    batch_size: 24
     learning_rate: 4.0e-4
     warmup_steps: 500
     cycle_steps: 100000
     weight_decay: 0.01
     shuffle_buffer: 0
     gradient_clip_val: 1.0
-    buckets_in_sec: [20, 25, 30]
+    buckets_in_sec: [20, 30]
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
-pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixWebDataModule
+pl_datamodule: !new:recipes.bigmusic.datasets.mix.TTSWebDataModule
     sample_rate: !ref <extra_params[sample_rate]>
     batch_size: !ref <run_opts[batch_size]>
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
@@ -87,7 +86,7 @@ scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupC
     cycle_steps: !ref <run_opts[cycle_steps]>
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
-pl_module: !new:recipes.bigmusic.lightning.semantic_modules.MixSemanticModule
+pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SpeechSemanticModule
     checkpointing: False
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
@@ -96,18 +95,18 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.MixSemanticModule
     extra_params: !ref <extra_params>
     required_modules:
         bestrq:
-            # US UMM-chroma stage 3
-            hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
+            # # US UMM-chroma stage 3
+            # hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
+            # CN UMM-chroma stage 3
+            hpath: hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
             initializer: !name:recipes.umm.requires.model_initializer.init_stage3
                 cache_dir: !ref <run_opts[cache_dir]>
-        # bestrq:
-        #     # US UMM stage 3
-        #     hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_vq32768x32/checkpoints/step=0050000-loss=0.669.ckpt
-        #     initializer: !name:recipes.umm.requires.model_initializer.init_stage3
-        #         cache_dir: !ref <run_opts[cache_dir]>
         # Mulan mix - 160
         mulan:
-            hpath: /mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=014000-median_rank_1=160-kaggle.ckpt
+            # # US Mulan
+            # hpath: /mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=014000-median_rank_1=160-kaggle.ckpt
+            # CN Mulan
+            hpath: hdfs://haruna/home/byte_speech_sv/jingsong.gao/mulan_ckpt/mulan-step=014000-median_rank_1=160-kaggle_minimal.ckpt
             initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                 cache_dir: !ref <run_opts[cache_dir]>
                 version: "g4"
@@ -118,15 +117,23 @@ logger: !new:pytorch_lightning.loggers.TensorBoardLogger
     version: !ref <run_opts[version]>
     default_hp_metric: False
 
-# log_gradient_scaler: !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
+hdfs_model_ckpt: !new:samantha.callbacks.HDFSModelCheckpoint
+    # dirpath: ./logs/checkpoints
+    hdfs_path: !ref <run_opts[hdfs_path]>
+    monitor: step
+    mode: max
+    save_top_k: 50
+    every_n_train_steps: !ref <run_opts[val_check_interval]>
+    filename: "{step:06d}-{val_accu_0:.2f}"
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
-      save_top_k: 10
+      save_top_k: 50
       save_last: True
       monitor: val_accu_0
       mode: max
       filename: "{step:06d}-{val_accu_0:.2f}"
+    - !ref <hdfs_model_ckpt>
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: 'step'
     # - !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
