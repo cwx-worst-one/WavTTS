@@ -21,28 +21,27 @@ extra_params:
     semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
     semantic_ckpt: "/mnt/bn/audio-diffusion/jt/model_archive/vocalmusic/semantic_model_mulan/semantic_chroma_text_from_scratch_g80_2em3/checkpoints/step=122000-val_accu_0=8.82.ckpt"
 
-    token2wav_type: diffusion
-
-    semantic_temperature: 1.0
-    coarse_temperature: 0.9
-    fine_temperature: 0.8
-    sample_mode: "gumbel"
+    ar_params:
+        coarse_duration: 10
+        fine_duration: 4
+        coarse_stride: 5
+        fine_stride: 3
+        coarse_temperature: 0.9
+        fine_temperature: 0.8
+    diffusion_params:
+        num_chunks: 1
+        diffusion_steps: 25
+        schedule_slope: 2.5
+        guidance_scale: 3
+        bf16_portion: 1.0
 
     # Model Settings
     sample_rate: 24000
-    duration: 10
-    coarse_duration: 10
-    fine_duration: 4
-    coarse_stride: 5
-    fine_stride: 3
-    lyrics_max_seq_len: 150
-    semantic_frame_rate: 25
-    soundstream_codebook_size: 1024
-    soundstream_frame_rate: 50
-    num_coarse: 4
-    num_fine: 8
-    # wav2vec_frame_rate: 25
-    # wav2vec_codebook_size: 1024
+    duration: 10 # 30
+    lyrics_max_seq_len: 150 # 400 for 30s
+    semantic_temperature: 1.0
+    sample_mode: "gumbel"
+    token2wav_type: diffusion
 
 run_opts:
     fast_dev_run: False

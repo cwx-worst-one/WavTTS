@@ -8,24 +8,18 @@ seed: 1995
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
 
-
 extra_params:
     num_rounds: 1
-    prompt_path: "/mnt/bn/audio-diffusion/data/mixture_prompts/karaoke-10s.csv"
-    inference_conditions: style_audio
-    max_items: null
+    prompt_path: "/mnt/bn/audio-diffusion/data/google_prompts/text_prompt_collection_20230713.csv"
+    inference_conditions: style_text,lyrics_tokens # style_text|style_audio,lyrics_tokens,vocal_audio|vocal_text,chroma
+    max_items: 20
     run_combinations: False
 
     output_dir: ./generated_output/conditional
-    # Re-trained vocal checkpoint
-    token2wav_type: diffusion
-    semantic_type: bestrq
 
-    # Model Settings
-    sample_rate: 24000
-    duration: 10
-    lyrics_max_seq_len: 150
-    sample_mode: "gumbel"
+    # Semantic model
+    semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
+    semantic_ckpt: "/mnt/bn/audio-diffusion/jt/model_archive/vocalmusic/semantic_model_mulan/semantic_chroma_text_from_scratch_g80_2em3/checkpoints/step=122000-val_accu_0=8.82.ckpt"
 
     ar_params:
         coarse_duration: 10
@@ -35,11 +29,19 @@ extra_params:
         coarse_temperature: 0.9
         fine_temperature: 0.8
     diffusion_params:
-        num_chunks: 1
+        num_chunks: 5
         diffusion_steps: 25
         schedule_slope: 2.5
         guidance_scale: 3
         bf16_portion: 1.0
+
+    # Model Settings
+    sample_rate: 24000
+    duration: 30 # 30
+    lyrics_max_seq_len: 150 # TODO: switch to 400 for 30s
+    semantic_temperature: 1.0
+    sample_mode: "gumbel"
+    token2wav_type: diffusion
 
 run_opts:
     fast_dev_run: False
@@ -59,12 +61,14 @@ predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_fr
     max_items: !ref <extra_params[max_items]>
     batch_size: !ref <run_opts[batch_size]>
     run_combinations: !ref <extra_params[run_combinations]>
+    lyrics_max_seq_len: !ref <extra_params[lyrics_max_seq_len]>
 
 pl_datamodule: !new:recipes.bigmusic.datasets.lyrics.LyricsDataModule
     predict_dataset: !ref <predict_dataset>
     num_workers: 0
 
-pl_module: !new:recipes.bigmusic.lightning.inference.GTInferenceModule
+pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
+    semantic_cls_path: !ref <extra_params[semantic_cls_path]>
     extra_params: !ref <extra_params>
     required_modules:
         bestrq_modules:

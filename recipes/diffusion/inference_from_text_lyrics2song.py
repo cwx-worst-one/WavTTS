@@ -395,7 +395,7 @@ if __name__ == '__main__':
             inputs_embeds = semantic_module.prepare_inputs_embeddings(batch={'conditions': "style_text,lyrics_tokens", 'lyrics_tokens': _lyrics_tokens, 'style_text': _prompts})
             semantic_samples = semantic_module.super_predict(inputs_embeds, 250 + 125*(args.num_chunks - 1), 1.0)
             if args.num_chunks > 1:
-                eos_id = self.semantic_module.target_embedder.eos_id
+                eos_id = semantic_module.target_embedder.eos_id
                 if eos_id is not None:
                     eos_index = torch.cumsum(semantic_samples == eos_id, 1) > 0
                     semantic_samples[eos_index] = 0   

@@ -11,6 +11,7 @@ fi
 
 # For ASR wer
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/tiger/pypetrel/pypetrel/lib/
+export PYTHONPATH="${PYTHONPATH}:/opt/tiger/pypetrel/pypetrel"
 if [ ! -d "/opt/tiger/pypetrel" ]; then
     cp -r /mnt/bn/audio-diffusion/ashaw/bvc/pypetrel /opt/tiger/pypetrel
 fi

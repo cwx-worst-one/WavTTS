@@ -62,10 +62,11 @@ class SemanticInferenceModule(pl.LightningModule):
         if self.extra_params.token2wav_type == 'diffusion':
             self.decoding_fn = run_diffusion
             required_modules.update(self.hparams.required_modules['diffusion_modules'])
+            self.decoding_params = DotDict({ **self.extra_params, **extra_params['diffusion_params'] })
         elif self.extra_params.token2wav_type == 'ar':
             self.decoding_fn = run_2ar
             required_modules.update(self.hparams.required_modules['ar_modules'])
-
+            self.decoding_params = DotDict({ **self.extra_params, **extra_params['ar_params'] })
         self.load_required_modules(required_modules)
 
     def load_required_modules(self, required_modules):
@@ -157,9 +158,11 @@ class GTInferenceModule(pl.LightningModule):
         if self.extra_params.token2wav_type == 'diffusion':
             self.decoding_fn = run_diffusion
             required_modules.update(self.hparams.required_modules['diffusion_modules'])
+            self.decoding_params = DotDict({ **self.extra_params, **extra_params['diffusion_params'] })
         elif self.extra_params.token2wav_type == 'ar':
             self.decoding_fn = run_2ar
             required_modules.update(self.hparams.required_modules['ar_modules'])
+            self.decoding_params = DotDict({ **self.extra_params, **extra_params['ar_params'] })
 
         if self.extra_params.semantic_type == 'bestrq':
             required_modules.update(self.hparams.required_modules['bestrq_modules'])
@@ -193,7 +196,7 @@ class GTInferenceModule(pl.LightningModule):
     def _predict_step(self, batch, round, batch_idx):
         batch['target_audio'] = batch['style_audio'] # prepare_inputs expects target_audio key
         semantic_samples = self.encoding_fn(self.requires, batch['target_audio'])
-        wavs = self.decoding_fn(self.requires, semantic_samples, self.extra_params) # 
+        wavs = self.decoding_fn(self.requires, semantic_samples, self.decoding_params) # 
         batch['generated_audio'] = wavs
         wer, metrics = self.run_metrics(wavs, batch)
         batch['metrics'] = metrics

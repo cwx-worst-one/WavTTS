@@ -85,10 +85,10 @@ class FineModule(BaseContinuousEmbedModule):
     def predict(self, coarse_samples, hp):
         input_embeds = self.input_embedders['coarse'].embed(token_ids=coarse_samples)
 
-        num_coarse = hp.num_coarse
-        num_fine = hp.num_fine
-        soundstream_codebook_size = hp.soundstream_codebook_size
-        soundstream_frame_rate = hp.soundstream_frame_rate
+        num_coarse = self.extra_params.num_coarse
+        num_fine = self.extra_params.num_fine
+        soundstream_codebook_size = self.extra_params.soundstream_codebook_size
+        soundstream_frame_rate = self.extra_params.soundstream_frame_rate
 
         input_framerate = soundstream_frame_rate * num_coarse
         output_framerate = soundstream_frame_rate * num_fine
