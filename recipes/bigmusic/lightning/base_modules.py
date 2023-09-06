@@ -48,7 +48,7 @@ class BaseModule(pl.LightningModule):
 
     def load_from_pretrained(self, pretrained_path=None):
         print('Loading pre-trained model from checkpoint', pretrained_path)
-        state_dict = torch.load(pretrained_path)['state_dict']
+        state_dict = torch.load(pretrained_path, map_location='cpu')['state_dict']
         model_state_dict = self.state_dict()
         for k in state_dict:
             if k in model_state_dict:

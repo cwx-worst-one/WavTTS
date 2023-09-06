@@ -68,7 +68,7 @@ model_config: !new:transformers.LlamaConfig
     initializer_range: 0.02
     rms_norm_eps: 1e-6
     use_cache: False
-    num_logits: !ref <extra_params[semantic_codebook_size]>
+    num_logits: !ref <extra_params[semantic_codebook_size]> + 2 # +2 for EOS
 
 model_cls: !name:samantha.models.flash_llama.LlamaForCausalLM
     config: !ref <model_config>

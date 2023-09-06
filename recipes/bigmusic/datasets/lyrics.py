@@ -573,11 +573,11 @@ class DefaultDatasets():
             return mss_ds_batched
         
         @staticmethod
-        def default_validation_dataset(sample_rate, sample_duration, batch_size, lyrics_max_seq_len):
+        def default_validation_dataset(sample_rate, sample_duration, batch_size, lyrics_max_seq_len, conditions="style_audio,lyrics_tokens"):
             return transform_dataset(
                 dataset=DefaultDatasets.Basic.karaoke_validation_dataset(sample_rate, sample_duration),
                 segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len)],
-                batch_transforms=[AddConditionsTransform("style_audio,lyrics_tokens")],
+                batch_transforms=[AddConditionsTransform(conditions)],
                 batch_size=batch_size,
                 shuffle_buffer_size=None
             )

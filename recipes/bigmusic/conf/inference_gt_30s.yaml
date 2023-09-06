@@ -23,7 +23,6 @@ extra_params:
     # Model Settings
     sample_rate: 24000
     duration: 30
-    lyrics_max_seq_len: 150
     sample_mode: "gumbel"
 
     ar_params:

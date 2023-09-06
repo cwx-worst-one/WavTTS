@@ -35,9 +35,9 @@ class SemanticModule(BaseContinuousEmbedModule):
         input_embedders = nn.ModuleDict(embedder_dict)
         semantic_type = extra_params.get('semantic_type', 'wav2vec')
         if semantic_type  == 'wav2vec':
-            target_embedder = WavToVecTokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=True, add_eos=True)
+            target_embedder = WavToVecTokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=True)
         elif semantic_type == 'bestrq':
-            target_embedder = BestRQTokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=True, add_eos=True)
+            target_embedder = BestRQTokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=True)
         else:
             raise NotImplementedError
 
@@ -112,9 +112,9 @@ class SemanticT5Module(BaseContinuousEmbedModule):
         input_embedders = nn.ModuleDict(embedder_dict)
         semantic_type = extra_params.get('semantic_type', 'wav2vec')
         if semantic_type  == 'wav2vec':
-            target_embedder = WavToVecTokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=True, add_eos=True)
+            target_embedder = WavToVecTokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=True, add_eos=False)
         elif semantic_type == 'bestrq':
-            target_embedder = BestRQTokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=True, add_eos=True)
+            target_embedder = BestRQTokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=True, add_eos=False)
         else:
             raise NotImplementedError
         super().__init__(

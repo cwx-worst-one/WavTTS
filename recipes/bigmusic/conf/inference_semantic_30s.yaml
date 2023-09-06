@@ -38,7 +38,7 @@ extra_params:
     # Model Settings
     sample_rate: 24000
     duration: 30 # 30
-    lyrics_max_seq_len: 150 # TODO: switch to 400 for 30s
+    lyrics_max_seq_len: 400 # TODO: switch to 400 for 30s
     semantic_temperature: 1.0
     sample_mode: "gumbel"
     token2wav_type: diffusion

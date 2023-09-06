@@ -13,11 +13,7 @@ import torch.functional
 import importlib
 from recipes.bigmusic.utils.metrics_asr import wav2lyrics, edit_distance
 from recipes.bigmusic.utils.model_initializer import run_2ar
-
-
-SAMPLE_RATE = 24000
-TOKEN_RATE = 25
-
+from itertools import zip_longest
 
 def run_wer(wavs, lyrics, verbose=True):
     wer_results = []
@@ -81,6 +77,8 @@ class SemanticInferenceModule(pl.LightningModule):
         self.semantic_module.load_required_modules()
 
     def _mcs(self, wavs, batch):
+        sample_rate = self.extra_params.sample_rate
+        mulan_max_duration = 10 * sample_rate
         if len(wavs.shape) == 3:
             wavs = wavs.squeeze(1)
         conditions = batch['conditions']
@@ -95,10 +93,10 @@ class SemanticInferenceModule(pl.LightningModule):
             ).squeeze(1).to(self.device)
         if 'style_audio' in conditions:
             gt_emb = self.semantic_module.input_embedders[mulan_emb_name].get_embeds(
-                self.semantic_module.requires, batch["style_audio"][:,0:10*SAMPLE_RATE], data_type='music'
+                self.semantic_module.requires, batch["style_audio"][:,0:mulan_max_duration], data_type='music'
             ).squeeze(1).to(self.device)
         audio_emb = self.semantic_module.input_embedders[mulan_emb_name].get_embeds(
-            self.semantic_module.requires, wavs[:,0:10*SAMPLE_RATE], data_type='music'
+            self.semantic_module.requires, wavs[:,0:mulan_max_duration], data_type='music'
         ).squeeze(1).to(self.device)
         mcs = torch.nn.functional.cosine_similarity(gt_emb, audio_emb).cpu().numpy()
         return mcs
@@ -112,22 +110,33 @@ class SemanticInferenceModule(pl.LightningModule):
                 f"MCS: {m}\nWER: {w}\nActual transcript: {a}\nGreedy transcript: {g}"
             )
         return torch.tensor(wer_results), mcs, metrics
+    
+    def process_eos_indexes(self, semantic_samples):
+        semantic_frame_rate = self.semantic_module.extra_params.semantic_frame_rate
+        sample_rate = self.extra_params.sample_rate
+        bs = semantic_samples.shape[0]
+        eos_id = self.semantic_module.target_embedder.eos_id
+        eos_index_list = []
+        if eos_id is not None:
+            eos_padding_id = 0
+            eos_mask = torch.cumsum(semantic_samples == eos_id, 1) > 0
+            semantic_samples[eos_mask] = eos_padding_id
+            token2wav_rate = int(sample_rate / semantic_frame_rate)
+            eos_index_list = ((semantic_samples == eos_padding_id).bool().cumsum(axis=1) == 0).bool().sum(axis=1) * token2wav_rate
+        return semantic_samples, eos_index_list
 
 
     def _predict_step(self, batch, round, batch_idx):
         semantic_samples = self.semantic_module.predict(batch, self.extra_params)
-        eos_id = self.semantic_module.target_embedder.eos_id
-        if eos_id is not None:
-            eos_index = torch.cumsum(semantic_samples == eos_id, 1) > 0
-            semantic_samples[eos_index] = eos_id   
-        batch['eos_index'] = ((semantic_samples == 0).cumsum(axis=1)==eos_id).sum(axis=1) * int(SAMPLE_RATE / TOKEN_RATE)
-        wavs = self.decoding_fn(self.requires, semantic_samples, self.extra_params)
+        semantic_samples, eos_index_list = self.process_eos_indexes(semantic_samples)
+        wavs = self.decoding_fn(self.requires, semantic_samples, self.decoding_params)
         
         batch['generated_audio'] = wavs
+        batch['eos_index_list'] = eos_index_list
         wer, mcs, metrics = self.run_metrics(wavs, batch)
         batch['metrics'] = metrics
 
-        save_outputs(batch, round, batch_idx, self.extra_params.output_dir)
+        save_outputs(batch, round, batch_idx, self.extra_params.output_dir, self.extra_params.sample_rate)
         return [wer.mean(), mcs.mean()]
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0): 
@@ -205,7 +214,7 @@ class GTInferenceModule(pl.LightningModule):
         batch['generated_audio'] = wavs
         wer, metrics = self.run_metrics(wavs, batch)
         batch['metrics'] = metrics
-        save_outputs(batch, round, batch_idx, self.extra_params.output_dir)
+        save_outputs(batch, round, batch_idx, self.extra_params.output_dir, self.extra_params.sample_rate)
         return wer.mean()
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):        
@@ -233,7 +242,7 @@ def format_lyrics_and_style(lyrics, style_text):
     name_formatted = lyrics_formated[:96] + "_" + text_formated[:32] + "_" + text_encoded[:4]
     return name_formatted
 
-def save_outputs(batch, round, batch_idx, output_dir):
+def save_outputs(batch, round, batch_idx, output_dir, sample_rate):
     conditions = batch['conditions']
     lyrics = batch.get('lyrics')
     prompts = batch.get('style_text')
@@ -242,9 +251,10 @@ def save_outputs(batch, round, batch_idx, output_dir):
     vocal_audio = batch.get('vocal_audio')
     metrics = batch.get('metrics')
     wavs = batch['generated_audio']
-    eos_index = batch['eos_index']
-    for i, (eos, wav) in enumerate(zip(eos_index, wavs)):
-        wav = wav[:eos]
+    eos_index_list = batch.get('eos_index_list', [])
+    for i, (eos, wav) in enumerate(zip_longest(eos_index_list, wavs)):
+        if eos is not None:
+            wav = wav[:eos]
         if categories is not None:
             wav_dir = os.path.join(output_dir, categories[i])
         else:
@@ -261,7 +271,7 @@ def save_outputs(batch, round, batch_idx, output_dir):
             file_name = f'{round}-{i}-{batch_idx}'
         wav_fp = os.path.join(wav_dir, f"{file_name}.wav")
         print(f"[Saving] {wav_fp}")
-        save_wav(wav.cpu().float(), wav_fp, sr=SAMPLE_RATE)
+        save_wav(wav.cpu().float(), wav_fp, sr=sample_rate)
 
         txt_fp = os.path.join(wav_dir, f"{file_name}.txt")
         with open(txt_fp, 'w') as f:
@@ -287,9 +297,9 @@ def save_outputs(batch, round, batch_idx, output_dir):
 
         if style_audio is not None:
             input_wav_fp = os.path.join(wav_dir, f"{file_name}.audio_prompt.wav")
-            save_wav(style_audio[i].cpu().float(), input_wav_fp, sr=24000)
+            save_wav(style_audio[i].cpu().float(), input_wav_fp, sr=sample_rate)
 
         if vocal_audio is not None:
             input_vocals_fp = os.path.join(wav_dir, f"{file_name}.vocal_prompt.wav")
-            save_wav(vocal_audio[i].cpu().float(), input_vocals_fp, sr=24000)
+            save_wav(vocal_audio[i].cpu().float(), input_vocals_fp, sr=sample_rate)
 

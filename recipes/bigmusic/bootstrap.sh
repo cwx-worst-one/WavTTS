@@ -24,6 +24,9 @@ else
     echo "Warning: Could not find existing huggingface cache. Set TRANSFORMERS_CACHE=/cache/path to avoid download errors."
 fi
 
+# Diffusion
+pip3 install ./recipes/soundstream/torch-museval
+
 sudo apt update
 sudo apt install espeak -y
 sudo apt install ffmpeg -y

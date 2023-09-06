@@ -11,7 +11,7 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
 
 extra_params:
-    sample_rate: 24000
+    sample_duration: 10
     lyrics_codebook_size: 400
     semantic_codebook_size: 32_768
     semantic_frame_rate: 25
@@ -21,40 +21,39 @@ extra_params:
     intermediate_size: 3072
     num_hidden_layers: 24
     num_attention_heads: 16
-    pretrained_path: null
+    pretrained_path: /mnt/bn/audio-diffusion/qq/logs/semantic_flash_llama/mcc/pretrain/semantic_chroma_step=049000-val_accu_0=8.88.ckpt    # 10s semantic
 
 # running parameters
 run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
-    log_name: semantic_model_mix_03B
+    log_name: singsong
     version: v0
     cache_dir: .module_cache/musiclm
     precision: "bf16-mixed"
     num_workers: 8
     accelerator: auto
-    max_steps: 1000000
+    max_steps: 8000000
     val_check_interval: 2000
-    batch_size: 20
+    batch_size: 32
     learning_rate: 4.0e-4
-    warmup_steps: 2000
+    warmup_steps: 500
     cycle_steps: 100000
     weight_decay: 0.01
-    shuffle_buffer: 0
+    shuffle_buffer: 50
     gradient_clip_val: 1.0
-    buckets_in_sec: [20, 25, 30]
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
-pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixWebDataModule
-    sample_rate: !ref <extra_params[sample_rate]>
+pl_datamodule: !apply:recipes.bigmusic.datasets.lyrics.SingsongDataModule.from_dataset_type
+    sample_duration: !ref <extra_params[sample_duration]>
     batch_size: !ref <run_opts[batch_size]>
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
     num_workers: !ref <run_opts[num_workers]>
     pin_memory: True
-    buckets_in_sec: !ref <run_opts[buckets_in_sec]>
+    dataset_type: resso
 
 model_config: !new:transformers.LlamaConfig
     vocab_size: 1 # placeholder. Embedding table gets removed on load
@@ -63,11 +62,11 @@ model_config: !new:transformers.LlamaConfig
     num_hidden_layers: !ref <extra_params[num_hidden_layers]>
     num_attention_heads: !ref <extra_params[num_attention_heads]>
     hidden_act: "silu"
-    max_position_embeddings: 4096
+    max_position_embeddings: 4000
     initializer_range: 0.02
     rms_norm_eps: 1e-6
     use_cache: False
-    num_logits: !ref <extra_params[semantic_codebook_size]> + 2
+    num_logits: !ref <extra_params[semantic_codebook_size]> + 2 # +2 for EOS
 
 model_cls: !name:samantha.models.flash_llama.LlamaForCausalLM
     config: !ref <model_config>
@@ -84,7 +83,7 @@ scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupC
     cycle_steps: !ref <run_opts[cycle_steps]>
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
-pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
+pl_module: !new:recipes.bigmusic.dev.qq.lightning.semantic_modules_qq.SingSongSemanticModule
     checkpointing: False
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
@@ -114,7 +113,7 @@ logger: !new:pytorch_lightning.loggers.TensorBoardLogger
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
-      save_top_k: 50
+      save_top_k: 20
       save_last: True
       monitor: val_accu_0
       mode: max

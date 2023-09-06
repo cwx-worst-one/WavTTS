@@ -72,7 +72,23 @@ class LyricsSegmentTransforms(TransformBase):
         cropped_segments['lyrics'] = lyrics_text
         return cropped_segments
 
+    # def has_valid_lyrics(self, index_data):
+    #     if 'lyrics' not in index_data:
+    #         return False
+    #     utterances = index_data['lyrics']['utterances']
+    #     confidences = []
+    #     for utterance in utterances:
+    #         # some lyrics may not have confidence (force alignment). return True anyways
+    #         if 'additions' not in utterance: return True
+    #         confidence = float(utterance["additions"]["confidence"])
+    #         confidences.append(confidence)
+    #     if len(confidences) == 0:
+    #         return False
+    #     print('Condfidence mean', np.array(confidences).mean(), confidences)
+    #     return np.array(confidences).mean()
+    
     def __call__(self, x: Dict[str, torch.Tensor]) -> Generator:
+
         # Extract audio Wavs
         cached_wavs = {}
         audio_wavs = {}
@@ -103,8 +119,10 @@ class LyricsSegmentTransforms(TransformBase):
             audio_wavs[name] = self.normalize_audio(audio_wav, target_audio)
 
         # Extract segment information
+        # extract lyrics
         index_data = x['__index_data__']
         if 'lyrics' not in index_data:
+            self._update_stats(skipped=True)
             return
         lyrics_json = index_data['lyrics']['utterances']
         segments: List[Segment] = lyrics_to_segments(lyrics_json, maximum_clipped_length=self.sample_duration)
@@ -143,6 +161,7 @@ class Segment():
     end: float
     text: str
     duration: float
+    confidence: float
         
     @classmethod
     def from_dict(cls, json_dict):
@@ -154,13 +173,17 @@ class Segment():
             end = -2
             duration = 0
         text = json_dict['text']
-        return Segment(start, end, text, duration)
+        if 'additions' in json_dict:
+            confidence = float(json_dict['additions']['confidence'])
+        else:
+            confidence = 1
+        return Segment(start, end, text, duration, confidence)
 
     def has_valid_time(self):
         return self.start >= 0
 
 def lyrics_to_segments(lyrics, maximum_clipped_length=10, minimum_voice_duration=3, 
-                       new_line_token=" <n> ", fixed_duration=True):
+                       new_line_token=" <n> ", fixed_duration=True, min_confidence=0.7):
     if not lyrics: return []
     if 'start_time' not in lyrics[0]:
         # convert force alignment lyrics to line format
@@ -179,6 +202,11 @@ def lyrics_to_segments(lyrics, maximum_clipped_length=10, minimum_voice_duration
         current_segment = Segment.from_dict(current_diction)
         if len(current_segment.text.strip()) == 0: continue
         if current_segment.start < 0: continue
+        if current_segment.confidence < min_confidence:
+            # low confidence segment. skip and reset
+            segment = None
+            current_segment = None
+            continue
             
         # Case #1: overflow. Append segment. Create new
         if segment and (current_segment.end - segment.start > maximum_clipped_length):

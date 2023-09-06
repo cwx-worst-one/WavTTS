@@ -16,7 +16,10 @@ from einops import rearrange, repeat
 import numpy as np
 import torchaudio
 from recipes.diffusion.utils.utils import download_checkpoint
-from recipes.bigmusic.lightning.semantic_modules import SemanticModule, MixSemanticModule
+# from recipes.bigmusic.lightning.semantic_modules import SemanticModule
+# TODO: (AS) switch this to unified model once training is complete
+from recipes.bigmusic.dev.v0.lightning.semantic_modules_v0 import SemanticModule
+from recipes.bigmusic.dev.qq.lightning.semantic_modules_qq import MixSemanticModule
 from recipes.musiclm.requires.mulan.mulan_infer_g4 import (
     create_mulan_model,
     mulan_inference,
@@ -329,20 +332,19 @@ if __name__ == '__main__':
 
     # 10s
     if args.num_chunks == 1:
-        lyrics_max_seq_len = 150
         semantic_module_cls = SemanticModule
     # 30s
     else:
-        lyrics_max_seq_len = 250
         semantic_module_cls = MixSemanticModule
     
-    # lyrics tokenizer
-    lyrics_tokenizer = LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len=lyrics_max_seq_len)
-
     # Semantic model
     semantic_model_path = download_checkpoint(REMOTE_PATHS['semantic_model_path'], cache_dir=asset_path)
     semantic_module = semantic_module_cls.load_from_checkpoint(semantic_model_path).to(device).eval()
     semantic_module.requires = { "mulan_infer_fn": mulan_inference, "mulan": mulan_model }
+
+    # lyrics tokenizer
+    lyrics_max_seq_len = semantic_module.extra_params.lyrics_max_seq_len
+    lyrics_tokenizer = LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len=lyrics_max_seq_len)
 
     # diffusion
     diffusion_model = {}
