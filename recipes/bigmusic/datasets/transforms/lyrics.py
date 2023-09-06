@@ -82,17 +82,18 @@ class MetadataT5Transform(MCCMetadataTextTransform):
 
 # Segment Transforms
 class LyricsTokenTransform():
-    def __init__(self, lyrics_tokenizer, pad_id, lyrics_max_seq_len: int, handler: Callable = wds.ignore_and_continue):
+    def __init__(self, lyrics_tokenizer, pad_id, lyrics_max_seq_len: int, truncate_long_lyrics: bool = False, handler: Callable = wds.ignore_and_continue):
         self.lyrics_tokenizer = lyrics_tokenizer
         self.lyrics_max_seq_len = lyrics_max_seq_len
         self.pad_id = pad_id
+        self.truncate_long_lyrics = truncate_long_lyrics
         self.handler = handler
 
     def __call__(self, item):
         try:
             lyrics_text = item['lyrics']
             lyrics_tokens = self.lyrics_tokenizer(lyrics_text)['input_ids']
-            if len(lyrics_tokens) > self.lyrics_max_seq_len:
+            if not self.truncate_long_lyrics and (len(lyrics_tokens) > self.lyrics_max_seq_len):
                 return None
         except Exception as e:
             self.handler(e)

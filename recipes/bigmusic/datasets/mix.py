@@ -137,6 +137,7 @@ def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
         "normalized_text": normalized_text,
         "lyrics_tokens": torch.stack(lyrics_tokens),
         "speaker_id": torch.stack(speaker_id),
+        "conditions": "style_text,lyrics_tokens",
         }
 
 def group_utterances(utterances, min_duration, max_duration, time_in_sec=False):
