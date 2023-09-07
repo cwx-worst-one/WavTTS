@@ -8,7 +8,7 @@ from pathlib import Path
 from torch.utils.data import Dataset
 from samantha.dataio.webdataset.pipeline import WebPipeline
 from recipes.bigmusic.datasets.lyrics import transform_dataset
-from recipes.bigmusic.datasets.transforms.lyrics import LyricsTokenTransform, AddConditionsTransform, AddMulanVocalTagTransform, MetadataT5Transform
+from recipes.bigmusic.datasets.transforms.lyrics import LyricsTokenTransform, AddConditionsTransform, AddMulanVocalTagTransform, MetadataT5Transform, RandomGenreTextTransform
 from recipes.musiclm.inference.utils import load_wav
 
 default_prompt_path = Path(__file__).absolute().parent/'inference_prompts/default.json'
@@ -42,8 +42,10 @@ def inference_dataset_from_prompt(prompt_path, conditions="style_text,lyrics_tok
         item = { key:value for key,value in zip(item_keys,pair) }
         items.append(item)
     if 'lyrics_tokens' in conditions:
-        segment_transforms = [LyricsTokenTransform.init_espeak_tokenizer(
-            lyrics_max_seq_len=lyrics_max_seq_len)]
+        segment_transforms = [LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len=lyrics_max_seq_len)]
+        if 'random_style_rewrite' in conditions:
+            # TODO: remove hack
+            segment_transforms.append(RandomGenreTextTransform())
         if 'style_tokens' in conditions: # t5 case: add t5 tokenizer
             # TODO: (AS) pass max_seq_len parameter to transform
             segment_transforms.append(MetadataT5Transform())

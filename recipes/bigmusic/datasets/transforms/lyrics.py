@@ -12,6 +12,7 @@ from transformers import T5Tokenizer
 from recipes.bigmusic.datasets.tokenizers.cmu_phonemes import CMUPhonemeTokenizer
 from transformers import Wav2Vec2PhonemeCTCTokenizer
 from recipes.musiclm.utils.dist import local_zero_first
+import random
 
 def pad_crop(sequence, seq_len, dtype, padding_value=0):
     item_pad = torch.full((seq_len,), fill_value=padding_value, dtype=dtype)
@@ -58,6 +59,26 @@ class MCCMetadataTextTransform():
 
     def __call__(self, item):
         metadata_string = self._mcc_metadata_to_string(item)
+        return {
+            **item, 'style_text': metadata_string
+        }
+
+MCC_MOOD = [ 'nan', 'Happy', 'Chil', 'Cute', 'Sweet', 'Romantic', 'Excited', 'Dynamic', 'Lonely', 'Sorrow', 'Angry', 'Tense' ]
+MCC_GENRE = [ 'nan', 'Rock', 'Pop', 'EDM', 'R&B', 'Country', 'Jazz', 'Reggae', 'Blues', 'Trap Rap', 'Metal', 'New Age' ]
+MCC_VOICE = [ 'nan', 'Female', 'Male' ]
+
+class RandomGenreTextTransform(MCCMetadataTextTransform):
+    "Randomly samples genre, mood, vocals. This is for non-MCC datasets where we don't have metadata"
+    def __call__(self, item):
+        metadata_item = {
+            'metadata': {
+                'final_mood': random.choice(MCC_MOOD),
+                'final_genre': random.choice(MCC_GENRE),
+                'merge_aed': random.choice(MCC_VOICE),
+                
+            }
+        }
+        metadata_string = self._mcc_metadata_to_string(metadata_item)
         return {
             **item, 'style_text': metadata_string
         }
