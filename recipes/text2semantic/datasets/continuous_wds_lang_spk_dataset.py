@@ -198,6 +198,13 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
         else:
             return False
 
+    def is_english_spanish_char(self, char):
+        special_Spanish_chars_list = ['á', 'é', 'í', 'ó', 'ú', 'Á', 'É', 'Í', 'Ó', 'Ú', 'ñ', 'Ñ', '¡', '¿', 'ü', 'Ü']
+        if (u'\u0041'<= char <= u'\u005a') or (u'\u0061'<= char <= u'\u007a') or char in special_Spanish_chars_list:
+            return True
+        else:
+            return False
+
     def get_lang_by_text(self, text):
         text = text.replace('\'', '')
         # en, zh
@@ -212,12 +219,12 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
             elif u'\u4e00' <= x <= u'\u9fff': # zh
                 len_zh_char += 1
                 i += 1
-            elif self.is_english_char(x): # en
+            elif self.is_english_spanish_char(x): # en
                 i += 1
                 if i >= len(text):
                     len_en_word += 1
                     break
-                while self.is_english_char(text[i]):
+                while self.is_english_spanish_char(text[i]):
                     i += 1
                     if i >= len(text):
                         break

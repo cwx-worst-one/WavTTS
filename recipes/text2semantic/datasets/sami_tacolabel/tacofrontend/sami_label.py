@@ -54,6 +54,41 @@ def InvokeServer(file_id, text, speaker):
     return result.data, file_id, result.BaseResp.StatusMessage
 
 
+def InvokeServerPunc(file_id, text, speaker):
+    payload_obj = {
+        'audio_info': {'format': 'wav', 'sample_rate': 24000, 'pitch_rate': 0, 'speech_rate': 0, 'speaker': speaker,
+                       'need_alignment': True, "silence_duration": 0},
+        "internal": {"lab_version": "V3", "enable_recover_puncts": True},
+        # 'text': '??',
+        # 'text': '��������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������á�?'
+        # 'text': ''''1. You're listening to Faith Radio Online-Simply to Relax, I'm Faith. When you're faced with so many negative and draining situations, realize how minuscule problems will seem when you view your life as a whole--and remember the positive things.''',
+        # 'text': '''Although you'll need a warm coat weather this time of year hardly ever dips below freezing For warmer weather without throngs of tourists and the sweltering humidity come in May or September High average temperatures flit between the mid-70s and the lower 80s''',
+        'text': text,
+    }
+    payload_str = json.dumps(payload_obj)
+
+    global _base
+    if _base is None:
+        _base = Base()
+    req = InvokeRequest(
+        Base=_base,
+        access_key="flKJmCtkYc",
+        method="TTS",
+        payload=payload_str,
+    )
+
+    global _client
+    if _client is None:
+        for gateway in GATEWAYS:
+            _client = euler.Client(SAMI, gateway + '?cluster=release_thrift', timeout=1200)
+            result = _client.Invoke(req)
+            if result.BaseResp.StatusMessage == 'ServerFailedInvoke':
+                continue
+            else:
+                break
+    result = _client.Invoke(req)
+    return result.data, file_id, result.BaseResp.StatusMessage
+
 def parse_raw_text(text_filepath):
     text_dict = OrderedDict()
     f = open(text_filepath)
@@ -150,3 +185,16 @@ def generate_tacolabels_from_text_by_split(text_filepath, utt2split, lab_output_
             f.write(lab_data)
         sucess_labs.append(osp.abspath(output_path))
     return sucess_labs
+
+def generate_tacolabels_from_textstr_punc(text:str, language='Chinese_v3_punc'):
+    if language == 'Chinese_v3_punc':
+        speaker = "front_end_zh"
+    elif language == 'English_v3_punc':
+        speaker = 'front_end_en'
+    else:
+        raise ValueError('language error : {}'.format(language))
+    
+    lab_data, file_id, invoke_response = InvokeServerPunc(None, text, speaker)
+    if lab_data is None:
+        print(f'file_id {file_id} failed to get results. Status: {invoke_response}(`speaker` represents language)')
+    return lab_data

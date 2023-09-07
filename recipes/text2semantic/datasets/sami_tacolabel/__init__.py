@@ -4,7 +4,7 @@ from .symbols import (_pad, _eos, punctuation, filters_set, seperate_set, phone_
                       consonant, vowel)
 
 from .labels import sanity_check_label, load_tacolabel_to_kaldi, phonemes_add_sp_with_text, convert_pinyin_to_phonememe
-from .tacofrontend import generate_tacolabels_from_text, generate_tacolabels_from_textstr
+from .tacofrontend import generate_tacolabels_from_text, generate_tacolabels_from_textstr, generate_tacolabels_from_textstr_punc
 
 from .encoding import enc_taco_label_no_bytes, enc_taco_label
 

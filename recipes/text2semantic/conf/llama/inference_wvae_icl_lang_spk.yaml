@@ -26,6 +26,7 @@ run_opts:
     spk2id: 'recipes/text2semantic/datasets/dict/spk2id.en_all_20230905.json'
     infer_spk_name: ''
     get_lang_by_tacolab: False
+    save_tacolab: False
 
 predict_dataset: !new:recipes.text2semantic.datasets.meta_based_dataset.MetaBasedDataset
     meta_lst: !ref <run_opts[meta_lst]>
@@ -57,6 +58,7 @@ pl_module: !new:recipes.text2semantic.lit_modules.lit_infer_lang_spk.BigTTSWVAEI
     spk2id: !ref <run_opts[spk2id]>
     infer_spk_name: !ref <run_opts[infer_spk_name]>
     get_lang_by_tacolab: !ref <run_opts[get_lang_by_tacolab]>
+    save_tacolab: !ref <run_opts[save_tacolab]>
 
 trainer: !new:pytorch_lightning.Trainer
     accelerator: "auto"

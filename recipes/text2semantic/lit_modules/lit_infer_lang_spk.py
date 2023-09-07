@@ -6,7 +6,7 @@ import librosa
 import numpy as np
 import torch
 import torch.nn.functional as F
-from ..scripts.infer_utils import (
+from recipes.text2semantic.scripts.infer_utils import (
     spectrogram_torch,
     trim_silence,
 )
@@ -14,9 +14,9 @@ from scipy.io.wavfile import read
 from zhon.hanzi import punctuation
 import string
 punctuation_all = punctuation + string.punctuation
-from .lit_infer import BigTTSWVAEInfer
+from recipes.text2semantic.lit_modules.lit_infer import BigTTSWVAEInfer
 from recipes.text2semantic.datasets.frontend import phone_to_int, tone_to_int
-from ..scripts.infer_utils import (
+from recipes.text2semantic.scripts.infer_utils import (
     load_torch_script,
     setup_seed,
     spectrogram_torch,
@@ -24,7 +24,8 @@ from ..scripts.infer_utils import (
     trim_prompt_silence,
 )
 from scipy.io.wavfile import write
-from ..utils.remote_io import load_json
+from recipes.text2semantic.utils.remote_io import load_json
+from recipes.text2semantic.datasets.sami_tacolabel import generate_tacolabels_from_textstr_punc
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,8 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
         spk_tokens_num=8192,
         spk2id='',
         infer_spk_name='',
-        get_lang_by_tacolab=False
+        get_lang_by_tacolab=False,
+        save_tacolab=False
     ):
         super().__init__(
                 ar_model_name=ar_model_name,
@@ -90,6 +92,7 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
         self.tone_to_int = tone_to_int
         self.infer_spk_name = infer_spk_name
         self.get_lang_by_tacolab = get_lang_by_tacolab
+        self.save_tacolab = save_tacolab
 
     def get_lang(self, tacolab):
         if len(tacolab[0].split('\t')) != 5:
@@ -240,10 +243,11 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
         output_dir = f"{self.hparams.output_dir}"
         os.makedirs(output_dir, exist_ok=True)
         output_path = f"{output_dir}/{utt_ids[0]}.wav"
-        if os.path.exists(output_path):
-            return
+        # if os.path.exists(output_path):
+        #     return
         z_outputs, _ = self.ar_model.predict(sample, None)
         generated_wav = self._decode(z_outputs)
+        generated_wav *= (32767) / max(0.01, max(torch.abs(generated_wav)))
         write(
             output_path,
             24000,
@@ -288,15 +292,26 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
 
         # get text_id
         if self.use_spk_id:
-            assert self.infer_tacolab_dir != ""
-            infer_utt = uttid
-            infer_tacolab_path = os.path.join(self.infer_tacolab_dir, infer_utt + '.lab')
-            if not os.path.exists(infer_tacolab_path):
-                print("infer_tacolab_path not exists, skip", infer_tacolab_path)
+            # assert self.infer_tacolab_dir != ""
+            # infer_utt = uttid
+            # infer_tacolab_path = os.path.join(self.infer_tacolab_dir, infer_utt + '.lab')
+            # if not os.path.exists(infer_tacolab_path):
+            #     print("infer_tacolab_path not exists, skip", infer_tacolab_path)
+            #     return None
+            # with open(infer_tacolab_path, 'r', encoding="utf-8") as f:
+            #     infer_tacolab = [x.strip('\n ') for x in f.readlines()]
+            
+            infer_tacolab = self.generate_tacolabels_engine(infer_text)
+            if infer_tacolab is None:
                 return None
-            with open(infer_tacolab_path, 'r', encoding="utf-8") as f:
-                infer_tacolab = [x.strip('\n ') for x in f.readlines()]
-            tacolab = '\n'.join(infer_tacolab[1:])
+            if self.save_tacolab:
+                save_infer_tacolab_dir = os.path.join(self.hparams.output_dir, '../infer_tacolab')
+                os.makedirs(save_infer_tacolab_dir, exist_ok=True)
+                infer_tacolab_path = os.path.join(save_infer_tacolab_dir, uttid + '.lab')
+                with open(infer_tacolab_path, 'w', encoding='utf-8') as f_w:
+                    f_w.write(infer_tacolab.decode())
+
+            tacolab = infer_tacolab.decode()
             tacolab_list = list(filter(lambda x: x != "", tacolab.split('\n')))
             text_id_phones_tones = self.convert_tacolab_to_text_id(tacolab_list)
 
@@ -306,20 +321,40 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             else:
                 text_id, phones, tones = text_id_phones_tones
         else:
-            assert self.prompt_tacolab_dir != ""
-            assert self.infer_tacolab_dir != ""
-            prompt_utt = prompt_wav_path.split('/')[-1][:-4]
-            infer_utt = uttid
-            prompt_tacolab_path = os.path.join(self.prompt_tacolab_dir, prompt_utt + '.lab')
-            infer_tacolab_path = os.path.join(self.infer_tacolab_dir, infer_utt + '.lab')
-            if not os.path.exists(prompt_tacolab_path) or not os.path.exists(infer_tacolab_path):
-                print("prompt_tacolab_path or infer_tacolab_path not exists, skip", prompt_tacolab_path, infer_tacolab_path)
+            # assert self.prompt_tacolab_dir != ""
+            # assert self.infer_tacolab_dir != ""
+            # prompt_utt = prompt_wav_path.split('/')[-1][:-4]
+            # infer_utt = uttid
+            # prompt_tacolab_path = os.path.join(self.prompt_tacolab_dir, prompt_utt + '.lab')
+            # infer_tacolab_path = os.path.join(self.infer_tacolab_dir, infer_utt + '.lab')
+            # if not os.path.exists(prompt_tacolab_path) or not os.path.exists(infer_tacolab_path):
+            #     print("prompt_tacolab_path or infer_tacolab_path not exists, skip", prompt_tacolab_path, infer_tacolab_path)
+            #     return None
+            # with open(prompt_tacolab_path, 'r', encoding="utf-8") as f:
+            #     prompt_tacolab = [x.strip('\n ') for x in f.readlines()]
+            # with open(infer_tacolab_path, 'r', encoding="utf-8") as f:
+            #     infer_tacolab = [x.strip('\n ') for x in f.readlines()]
+
+            prompt_tacolab = self.generate_tacolabels_engine(prompt_text)
+            infer_tacolab = self.generate_tacolabels_engine(infer_text)
+
+            if prompt_tacolab is None or infer_tacolab is None:
                 return None
-            with open(prompt_tacolab_path, 'r', encoding="utf-8") as f:
-                prompt_tacolab = [x.strip('\n ') for x in f.readlines()]
-            with open(infer_tacolab_path, 'r', encoding="utf-8") as f:
-                infer_tacolab = [x.strip('\n ') for x in f.readlines()]
-            tacolab = '\n'.join(prompt_tacolab + infer_tacolab[1:])
+
+            if self.save_tacolab:
+                save_prompt_tacolab_dir = os.path.join(self.hparams.output_dir, '../prompt_tacolab')
+                os.makedirs(save_prompt_tacolab_dir, exist_ok=True)
+                prompt_tacolab_path = os.path.join(save_prompt_tacolab_dir, uttid + '.lab')
+                with open(prompt_tacolab_path, 'w', encoding='utf-8') as f_w:
+                    f_w.write(prompt_tacolab.decode())
+
+                save_infer_tacolab_dir = os.path.join(self.hparams.output_dir, '../infer_tacolab')
+                os.makedirs(save_infer_tacolab_dir, exist_ok=True)
+                infer_tacolab_path = os.path.join(save_infer_tacolab_dir, uttid + '.lab')
+                with open(infer_tacolab_path, 'w', encoding='utf-8') as f_w:
+                    f_w.write(infer_tacolab.decode())
+
+            tacolab = prompt_tacolab.decode().strip('\n') + '\n' + infer_tacolab.decode()
             tacolab_list = list(filter(lambda x: x != "", tacolab.split('\n')))
             text_id_phones_tones = self.convert_tacolab_to_text_id(tacolab_list)
 
@@ -394,3 +429,18 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             data_dict['infer_spk_id'] = infer_spk_id
 
         return data_dict
+
+    def generate_tacolabels_engine(self, text_str):
+        lang_key = self.get_lang_by_text(text_str)
+        if lang_key == None:
+            print(f"{text_str}: Wrong lang_key")
+            return None
+        tacolab = None
+        if lang_key in ['zh', 'zh_en']:
+            tacolab = generate_tacolabels_from_textstr_punc(text_str, "Chinese_v3_punc")
+            # tacolab = 'phn\ttone\tws\tpwpp\tsentype\tword\tunit' + '\n' + tacolab.decode()
+        elif lang_key in ['en']:
+            tacolab = generate_tacolabels_from_textstr_punc(text_str, "English_v3_punc")
+            # tacolab = 'phn\ttone\tws\tpwpp\tsentype\tword' + '\n' + tacolab.decode()
+
+        return tacolab

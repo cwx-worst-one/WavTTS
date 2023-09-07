@@ -86,9 +86,6 @@ if [ ${stage} -eq 2 ];then
         out_wav_dir=$local_path/infer/${pair}/step${step}_seed1996/wav
         # [ -d $out_wav_dir ] && continue
 
-        prompt_tacolab_dir=/mnt/bn/huangzhiying-nas-speech2speech-volume1/code/bigtts_testset/${testspk}/prompt_lab_newv3_punc
-        infer_tacolab_dir=/mnt/bn/huangzhiying-nas-speech2speech-volume1/code/bigtts_testset/${testspk}/infer_lab_newv3_punc
-
         bash launch.sh predict \
             -c recipes/text2semantic/conf/llama/inference_wvae_icl_lang_spk.yaml \
             --run_opts.meta_lst $metalst \
@@ -96,12 +93,11 @@ if [ ${stage} -eq 2 ];then
             --run_opts.output_dir $out_wav_dir \
             --run_opts.wvae_encoder hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wangxin.colin/ckpts/wvae/wavevae_encoder_%d.pt \
             --run_opts.wvae_decoder hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wangxin.colin/ckpts/wvae/wavevae_decoder_%d.pt \
-            --run_opts.prompt_tacolab_dir $prompt_tacolab_dir \
-            --run_opts.infer_tacolab_dir $infer_tacolab_dir \
             --run_opts.ar_model_name 'VAET2SLangSpkModule' \
             --run_opts.use_lang_id True \
             --run_opts.lang_tokens_num 200 \
-            --run_opts.lang2id 'recipes/text2semantic/datasets/dict/lang2id.json'
+            --run_opts.lang2id 'recipes/text2semantic/datasets/dict/lang2id.json' \
+            --run_opts.save_tacolab True
 
         asr_type=internal
         metalst=/mnt/bn/huangzhiying-nas-speech2speech-volume1/code/bigtts_testset/${testspk}/meta.lst.${testset}
