@@ -30,33 +30,26 @@ run_opts:
     weight_decay: 0.1
     checkpointing: False
     n_step_save: 2000
-    phone_tokens_num: 7370
-    speaker_tokens_num: 8192
     batch_total_tokens: 5000
     urls: null 
     data_id: null
-    metaid_to_textid: 'recipes/text2semantic/datasets/dict/metaid_to_textid.json'
-    textid_version: 'v1' # v1 for "2002005004": 1, v2 for "E0t_10_S_1": 494
-    bpe_tokens_num: 0
-    use_bpe: False
-    use_spkid: False
     accumulate_grad_batches: 3
-    max_len: 4096
-    bpe_dir: 'recipes/text2semantic/datasets/dict/llama_7B_tokenizer'
-    spk2id: 'recipes/text2semantic/datasets/dict/sft_spk_0809.json'
-    use_phoneme_loss: False
-    use_sy: False
-    use_langid: False
-    lang_tokens_num: 0
+    max_len: 6000
+    stop_token_loss_weight: 1.0
+    use_lang_id: False
+    lang_tokens_num: 200
     lang2id: 'recipes/text2semantic/datasets/dict/lang2id.json'
-    save_top_k: 20
+    use_spk_id: False
+    spk_tokens_num: 8192
+    spk2id: 'recipes/text2semantic/datasets/dict/spk2id.en_all_20230905.json'
+    resume_ckpt_path: null
+    use_code_switch_data: True
+    get_lang_by_tacolab: False
     
-llama_config: !new:recipes.text2semantic.modules.continuous_vae_llama_ctiga.ModelArgs
+llama_config: !new:recipes.text2semantic.modules.llama.wfvae_ctiga_llama_lang_spk.ModelArgs
     dim: 1024
     n_layers: 24
     n_heads: 16
-    # vocab_size: 15565 # vocab_size = hp.phone_tokens_num(7370) + speaker_num(4096) + 3
-    vocab_size: !ref <run_opts[bpe_tokens_num]> + <run_opts[phone_tokens_num]> + <run_opts[speaker_tokens_num]> + 3 + <run_opts[lang_tokens_num]>
     out_dim: 32
     multiple_of: 256
     norm_eps: 0.000001
@@ -66,33 +59,27 @@ llama_config: !new:recipes.text2semantic.modules.continuous_vae_llama_ctiga.Mode
     resid_pdrop: 0.1
     sparse: false
     checkpointing: !ref <run_opts[checkpointing]>
+    lang_vocab_size: !ref <run_opts[lang_tokens_num]>
+    spk_vocab_size: !ref <run_opts[spk_tokens_num]>
 
-train_dataset: !new:recipes.text2semantic.datasets.continuous_wds_dataset.ContinuousTTSDataset
+train_dataset: !new:recipes.text2semantic.datasets.continuous_wds_lang_spk_dataset.ContinuousTTSLangSpkDataset
     wds_urls: !apply:samantha.dataio.utils.parse_data_urls
         data_id: !ref <run_opts[data_id]>
         data_urls: !ref <run_opts[urls]>
-    phone_tokens_num: !ref <run_opts[phone_tokens_num]>
-    speaker_tokens_num: !ref <run_opts[speaker_tokens_num]>
-    return_full_seq: !ref <run_opts[return_full_seq]>
-    max_length: !ref <run_opts[max_len]>
+    drop_last: False
     batcher_config:
-        buckets: !apply:eval ["list(range(0, 4100, 100))"]  # [0, 100, 200 ... 4000] 4000以上的可以先丢掉
+        buckets: !apply:eval ["list(range(0, 6000, 100))"]  # [0, 100, 200 ... 4000] 4000以上的可以先丢掉
         dynamic_batch: True
         maximum_bucket_size: !ref <run_opts[batch_total_tokens]>
-        length_fn: !apply:eval ["lambda x: x[2].shape[0]"]  # seq.shape
-    metaid_to_textid: !ref <run_opts[metaid_to_textid]>
-    textid_version: !ref <run_opts[textid_version]>
-    bpe_dir: !ref <run_opts[bpe_dir]>
-    bpe_tokens_num: !ref <run_opts[bpe_tokens_num]>
-    spk2id: !ref <run_opts[spk2id]>
-    use_bpe: !ref <run_opts[use_bpe]>
-    use_spkid: !ref <run_opts[use_spkid]>
-    use_sy: !ref <run_opts[use_sy]>
-    use_langid: !ref <run_opts[use_langid]>
-    lang_tokens_num: !ref <run_opts[lang_tokens_num]>
+        length_fn: !apply:eval ["lambda x: x[\"stop_token\"].shape[0]"]  # seq.shape
+    use_lang_id: !ref <run_opts[use_lang_id]>
     lang2id: !ref <run_opts[lang2id]>
+    use_spk_id: !ref <run_opts[use_spk_id]>
+    spk2id: !ref <run_opts[spk2id]>
+    use_code_switch_data: !ref <run_opts[use_code_switch_data]>
+    get_lang_by_tacolab: !ref <run_opts[get_lang_by_tacolab]>
 
-collator: !new:recipes.text2semantic.datasets.continuous_dataset.ContinuousCollator
+collator: !new:recipes.text2semantic.datasets.continuous_wds_lang_spk_dataset.ContinuousCollator
     tokenizer_pad: 0
 
 # dataloader configuration
@@ -109,10 +96,10 @@ pl_datamodule: !new:recipes.text2semantic.lit_modules.DataModule
 
 # model configuration
 # model_cls: !name:recipes.text2semantic.modules.continuous_vae_llama_ctiga.LLaMa
-model_cls: !name:recipes.text2semantic.modules.llama.wfvae_ctiga_llama.VAELLaMa
+model_cls: !name:recipes.text2semantic.modules.llama.wfvae_ctiga_llama_lang_spk.VAELLaMaLangSpk
     params: !ref <llama_config>
-    use_speaker_id: !ref <run_opts[use_spkid]>
-    use_lang_id: !ref <run_opts[use_langid]>
+    use_lang_id: !ref <run_opts[use_lang_id]>
+    use_spk_id: !ref <run_opts[use_spk_id]>
     provider: ctiga
 
 # training module configuration
@@ -132,19 +119,18 @@ scheduler_cls: !name:recipes.bark.lr_schedulers.musiclm_lr_scheduler.WarmupCosin
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
 # lightning model setting
-pl_module: !new:recipes.text2semantic.lit_modules.llama.lit_vae_t2s_ctiga.VAET2SModule
+pl_module: !new:recipes.text2semantic.lit_modules.llama.lit_vae_t2s_ctiga_lang_spk.VAET2SLangSpkModule
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
     logits_criterion_cls: !name:recipes.text2semantic.modules.loss.MaskedCrossEntropy
     dense_criterion_cls: !name:recipes.text2semantic.modules.loss.MaskedKLLossPP
-    tokenizer_len: !ref <run_opts[bpe_tokens_num]> + <run_opts[phone_tokens_num]>
-    n_semantic: !ref <run_opts[speaker_tokens_num]> + <run_opts[lang_tokens_num]>
     checkpointing: !ref <run_opts[checkpointing]>
-    use_speaker_id: !ref <run_opts[use_spkid]>
-    use_phoneme_loss: !ref <run_opts[use_phoneme_loss]>
     required_modules: {}
-    use_lang_id: !ref <run_opts[use_langid]>
+    stop_token_loss_weight: !ref <run_opts[stop_token_loss_weight]>
+    use_lang_id: !ref <run_opts[use_lang_id]>
+    use_spk_id: !ref <run_opts[use_spk_id]>
+    resume_ckpt_path: !ref <run_opts[resume_ckpt_path]>
 
 logger:
     - !new:pytorch_lightning.loggers.TensorBoardLogger
@@ -163,7 +149,7 @@ callbacks:
       every_n_train_steps: !ref <run_opts[n_step_save]>
       mode: min
       save_last: True
-      save_top_k: !ref <run_opts[save_top_k]>
+      save_top_k: 20
       save_on_train_epoch_end: True
       verbose: True
       monitor: kl_loss

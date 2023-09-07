@@ -36,6 +36,7 @@ class VAET2SModule(pl.LightningModule):
         use_speaker_id=False,
         use_phoneme_loss=False,
         checkpointing=True,
+        use_lang_id=False,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -47,8 +48,10 @@ class VAET2SModule(pl.LightningModule):
         self.requires = {}
         self.use_speaker_id = use_speaker_id
         self.use_phoneme_loss = use_phoneme_loss
+        self.use_lang_id = use_lang_id
         print("use_speaker_id: ", self.use_speaker_id)
         print("use_phoneme_loss: ", self.use_phoneme_loss)
+        print("use_lang_id: ", self.use_lang_id)
 
         # hugging face setting
         if hasattr(self.model, "resize_token_embeddings"):
@@ -81,10 +84,12 @@ class VAET2SModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         # no spkid: bos + sep
         # spkid: bos + sep + spkid
+        extra_shift_num = 2
         if self.use_speaker_id:
-            extra_shift_num = 3
-        else:
-            extra_shift_num = 2
+            extra_shift_num += 1
+        
+        if self.use_lang_id:
+            extra_shift_num += 1
 
         with self.profiler.profile("[LightningModule]CoarseModule.prepare_feature"):
             with torch.autocast(device_type="cuda", enabled=False):

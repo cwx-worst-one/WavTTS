@@ -7,11 +7,13 @@ from samantha.utils.hparams import DotDict
 import json
 
 class PhoneTokenizerWithAudioTokens:
-    def __init__(self, phone_token_num, audio_token_num) -> None:
-        self.audio_token_num = audio_token_num
+    def __init__(self, phone_token_num, speaker_token_num, bpe_tokens_num=0, lang_tokens_num=0) -> None:
+        self.speaker_token_num = speaker_token_num
         self.phone_token_num = phone_token_num
+        self.bpe_tokens_num = bpe_tokens_num
+        self.lang_tokens_num = lang_tokens_num
         self.vocab_size = (
-            audio_token_num + phone_token_num + 3
+            speaker_token_num + phone_token_num + 3 + bpe_tokens_num + lang_tokens_num
         )  # <s> </s>, <sep>, <pad>
         self.pad = 0
         self.bos = self.vocab_size - 1
@@ -24,8 +26,12 @@ class PhoneTokenizerWithAudioTokens:
                 # print(inputs, ' is OOV, ignore ...')
                 return None
             return inputs + 1
-        elif input_key == "targets":  # wav_id
+        elif input_key == "bpe": # bpe_id
             return inputs + 1 + self.phone_token_num
+        elif input_key == "spk":  # spk_id
+            return inputs + 1 + self.phone_token_num + self.bpe_tokens_num
+        elif input_key == "lang":  # lang_id
+            return inputs + 1 + self.phone_token_num + self.bpe_tokens_num + self.speaker_token_num
         else:
             return None
 

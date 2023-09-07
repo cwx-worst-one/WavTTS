@@ -14,17 +14,21 @@ class VAELLaMaStop(LLaMa):
         use_speaker_id=False,
         provider="default",
         state_dict_path=None,
+        use_lang_id=False,
+        use_phoneme_loss=True
     ):
         super().__init__(params, provider)
         self.params = params
         self.vocab_size = params.vocab_size
         self.n_layers = params.n_layers
         self.use_speaker_id = use_speaker_id
-        print('use_speaker_id: ', self.use_speaker_id)
+        self.use_lang_id = use_lang_id
 
         self.tok_embeddings = nn.Embedding(params.vocab_size, params.dim)
 
-        self.output = nn.Linear(params.dim, params.vocab_size, bias=False)
+        self.use_phoneme_loss = use_phoneme_loss
+        if self.use_phoneme_loss:
+            self.output = nn.Linear(params.dim, params.vocab_size, bias=False)
         self.h_output = nn.Linear(params.dim, params.out_dim * 2, bias=False)
         self.prenet = nn.Linear(params.out_dim, params.dim, bias=False)
         self.stop_token_head = nn.Linear(params.dim, 2, bias=False)
@@ -49,10 +53,12 @@ class VAELLaMaStop(LLaMa):
         inference_params=None,
     ):
 
+        extra_shift_num = 2
         if self.use_speaker_id:
-            extra_shift_num = 3
-        else:
-            extra_shift_num = 2
+            extra_shift_num += 1
+
+        if self.use_lang_id:
+            extra_shift_num += 1
 
         bsz, seqlen = inputs.shape
         token_in_h = self.tok_embeddings(inputs)
@@ -86,12 +92,16 @@ class VAELLaMaStop(LLaMa):
             h = torch.stack(h)
 
         h = super().forward(h, seqlen, start_pos, inference_params)
-        
-        output = self.output(h)
+
+        if self.use_phoneme_loss:
+            output = self.output(h)
         h_output = self.h_output(h)
         stop_token= self.stop_token_head(h)
 
-        output_dict = {"logits": output.float(), "dense": h_output.float(), "stop_token": stop_token.float()}
+        if self.use_phoneme_loss:
+            output_dict = {"logits": output.float(), "dense": h_output.float(), "stop_token": stop_token.float()}
+        else:
+            output_dict = {"dense": h_output.float(), "stop_token": stop_token.float()}
         return output_dict, bn_in_z
 
 

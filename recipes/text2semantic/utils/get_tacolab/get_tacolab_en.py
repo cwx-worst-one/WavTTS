@@ -24,6 +24,7 @@ def InvokeServer(file_id, text, speaker):
     payload_obj = {
         'audio_info': {'format': 'wav', 'sample_rate': 24000, 'pitch_rate': 0, 'speech_rate': 0, 'speaker': speaker,
                        'need_alignment': True, "silence_duration": 0},
+        "internal": {"lab_version": "V3", "enable_recover_puncts": True},
         # 'text': '??',
         # 'text': '��������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������������á�?'
         # 'text': ''''1. You're listening to Faith Radio Online-Simply to Relax, I'm Faith. When you're faced with so many negative and draining situations, realize how minuscule problems will seem when you view your life as a whole--and remember the positive things.''',
@@ -37,7 +38,7 @@ def InvokeServer(file_id, text, speaker):
         _base = Base()
     req = InvokeRequest(
         Base=_base,
-        access_key="flKJmCtkYc",
+        access_key="flKJmCtkYc", # NTuaIURpRe
         method="TTS",
         payload=payload_str,
     )
@@ -74,7 +75,7 @@ def generate_tacolabels_from_text(text_filepath, lab_output_dir, language='Chine
     os.makedirs(lab_output_dir, exist_ok=True)
     text_dict = parse_raw_text(text_filepath)
     if language == 'Chinese' or language == 'English':
-        speaker = 'front_end'
+        speaker = 'front_end_en'
     elif language == 'Japanese':
         speaker = 'front_end_jp'
     elif language == 'BrazilPortuguese':

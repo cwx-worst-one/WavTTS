@@ -20,6 +20,13 @@ from ..scripts.infer_utils import (
     save_wav
 )
 from .llama.lit_vae_t2s_ctiga import VAET2SModule
+from .llama.lit_vae_t2s_ctiga_lang_spk import VAET2SLangSpkModule
+from scipy.io.wavfile import read
+from ..utils.remote_io import load_json
+from transformers import LlamaTokenizer
+from zhon.hanzi import punctuation
+import string
+punctuation_all = punctuation + string.punctuation
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +34,8 @@ logger = logging.getLogger(__name__)
 def model_loader(name, ckpt_path):
     if name == "VAET2SModule":
         return VAET2SModule.load_from_checkpoint(checkpoint_path=ckpt_path).eval()
+    elif name == "VAET2SLangSpkModule":
+        return VAET2SLangSpkModule.load_from_checkpoint(checkpoint_path=ckpt_path).eval()
     else:
         raise ValueError(f"{name} is not supported.")
 
@@ -46,15 +55,74 @@ class BigTTSWVAEInfer(LightningModule):
         seed=1996,
         save_prompt=False,
         trim_generated_wav=False,
-        scale_generated_wav=False
+        scale_generated_wav=False,
+        tacolab_version='oldv1', # oldv1, newv3, newv3_punc
+        text2id_version='v1',
+        prompt_tacolab_dir="",
+        infer_tacolab_dir="",
+        use_sy=False,
+        use_lang_id=False,
+        lang_tokens_num=0,
+        lang2id=None,
+        use_spk_id=False,
+        spk2id='',
+        spkname='',
+        use_bpe=False,
+        bpe_tokens_num=0,
+        bpe_dir='',
+        max_length=4096
     ):
         super().__init__()
+        assert (text2id_version == 'v1' and tacolab_version == 'oldv1') \
+            or (text2id_version == 'v1' and tacolab_version == 'newv3') \
+            or (text2id_version == 'v2' and tacolab_version == 'newv3') \
+            or (text2id_version == 'v2' and tacolab_version == 'newv3_punc') \
+            or (text2id_version == 'v3' and tacolab_version == 'newv3') \
+            or (text2id_version == 'v3' and tacolab_version == 'newv3_punc'), \
+                (text2id_version, tacolab_version)
+
         self.save_hyperparameters()
         self.ar_model = model_loader(ar_model_name, ckpt_path).eval()
-        self.text2id = TextToTacolabID(text2id_path)
+        self.text2id = TextToTacolabID(text2id_path, text2id_version=text2id_version, use_sy=use_sy, tacolab_version=tacolab_version)
         self.tokenizer = PhoneTokenizerWithAudioTokens(
-            phone_token_num=phone_tokens_num, audio_token_num=speaker_tokens_num
+            phone_token_num=phone_tokens_num, speaker_token_num=speaker_tokens_num, bpe_tokens_num=bpe_tokens_num, lang_tokens_num=lang_tokens_num
         )
+        self.tacolab_version = tacolab_version
+        self.prompt_tacolab_dir = prompt_tacolab_dir
+        self.infer_tacolab_dir = infer_tacolab_dir
+        self.use_sy = use_sy
+
+        # lang
+        self.use_lang_id = use_lang_id
+        if self.use_lang_id:
+            self.lang2id = load_json(lang2id)
+            print(f"Loaded lang2id from {lang2id}")
+        else:
+            self.lang2id = None
+
+        self.use_bpe = use_bpe
+        self.use_spk_id = use_spk_id
+
+        if self.use_bpe:
+            print('##### Using BPE #####')
+            self.bpe_tokenizer = LlamaTokenizer.from_pretrained(bpe_dir)
+            _bpe_tokens_num = len(self.bpe_tokenizer)
+        else:
+            self.bpe_tokenizer = None
+            _bpe_tokens_num = 0
+        assert _bpe_tokens_num == bpe_tokens_num
+
+        if self.use_spk_id:
+            self.spk2id = load_json(spk2id)
+            print(f"Loaded spk2id from {spk2id}")
+            self.spk_id = self.spk2id[spkname]
+            print("self.spk_id: ", self.spk_id)
+            self.spk_id = self.tokenizer.tokenize(self.spk_id, "spk")
+            print("self.spk_id_tokenizer: ", self.spk_id)
+        else:
+            self.spk2id = None
+        self.max_length = max_length
+
         self.save_prompt = save_prompt
         self.trim_generated_wav = trim_generated_wav
         self.scale_generated_wav = scale_generated_wav
@@ -97,47 +165,137 @@ class BigTTSWVAEInfer(LightningModule):
 
     def encode(self, sample):
         device = f"cuda:{self.trainer.local_rank}"
-        uttid, prompt_text, prompt_wav_path, text = sample
-        wav, sr = librosa.load(prompt_wav_path, sr=None)
-        prompt_wav_max = np.max(np.abs(wav))
-        if sr != 24_000:
-            wav = librosa.core.resample(wav, sr, 24_000)
-        wav = wav * 0.99 / max(0.01, np.max(np.abs(wav)))
-        wav = trim_prompt_silence(wav)
-        prompt_wav = wav.copy()
-        wav = torch.from_numpy(wav).float()
-        wav = F.pad(wav, (0, (wav.size(-1) // 600 + 1) * 600 - wav.size(-1)))
-        wav = torch.stack([wav]).unsqueeze(1)
-        spec = spectrogram_torch(wav.squeeze(1), 2048, 24000, 300, 1200)
-        _, m, logs = self.wvae_encoder(wav.to(device), spec.to(device))
-        m = m.transpose(2, 1)
-        logs = logs.transpose(2, 1)
-        bn = torch.cat([m, logs], -1)  # (1, t, 64)
-        symbol_sets = ['.', ',', '?', '!', '，', '。', '？', '！']
-        if prompt_text[-1] in symbol_sets:
-            text = prompt_text + ' ' + text.strip()
+
+        prompt_wav_max = None
+        prompt_wav = None
+        if not self.use_spk_id:
+            uttid, prompt_text, prompt_wav_path, text = sample
+            sr, wav = read(prompt_wav_path)
+            if len(wav.shape) == 2 and wav.shape[-1] == 2:
+                wav = wav[:, 0]
+            prompt_wav_max = np.max(np.abs(wav))
+            if sr != 24_000:
+                wav = librosa.core.resample(wav, sr, 24_000)
+            wav = wav * 0.99 / max(0.01, np.max(np.abs(wav)))
+            wav = trim_prompt_silence(wav)
+            prompt_wav = wav.copy()
+            wav = torch.from_numpy(wav).float()
+            wav = wav.to(device)
+            wav = torch.stack([wav]).unsqueeze(1).float()
+            wav = F.pad(wav, (0, (wav.size(-1) // 600 + 1) * 600 - wav.size(-1), 0, 0, 0, 0), value=0.)
+            # wav = torch.stack([wav]).unsqueeze(1)
+            spec = spectrogram_torch(wav.squeeze(1), 2048, 24000, 300, 1200)
+            _, m, logs = self.wvae_encoder(wav, spec)
+            m = m.transpose(2, 1)
+            logs = logs.transpose(2, 1)
+            bn = torch.cat([m, logs], -1)  # (1, t, 64)
         else:
-            text = prompt_text + ', ' + text
-        text_id = self.text2id(text)
+            uttid, text = sample
+            bn = np.zeros([0, 32])
+            bn = torch.from_numpy(bn)
 
         if len(bn.shape) == 3 and bn.shape[0] == 1:
             bn = bn[0]
 
+        # get text_id
+        if self.tacolab_version == 'oldv1':
+            text_id = self.text2id(text=text)
+            if prompt_text is not None:
+                prompt_text_id = self.text2id(text=prompt_text)
+                text_id = np.hstack([prompt_text_id[:-1], 2, text_id[1:]])
+        elif self.tacolab_version in ['newv3', 'newv3_punc']:
+            if not self.use_spk_id:
+                assert self.prompt_tacolab_dir != ""
+                assert self.infer_tacolab_dir != ""
+                prompt_utt = prompt_wav_path.split('/')[-1][:-4]
+                infer_utt = uttid
+                prompt_tacolab_path = os.path.join(self.prompt_tacolab_dir, prompt_utt + '.lab')
+                infer_tacolab_path = os.path.join(self.infer_tacolab_dir, infer_utt + '.lab')
+                if not os.path.exists(prompt_tacolab_path) or not os.path.exists(infer_tacolab_path):
+                    print("prompt_tacolab_path or infer_tacolab_path not exists, skip", prompt_tacolab_path, infer_tacolab_path)
+                    return None
+                with open(prompt_tacolab_path, 'r', encoding="utf-8") as f:
+                    prompt_tacolab = [x.strip('\n ') for x in f.readlines()]
+                with open(infer_tacolab_path, 'r', encoding="utf-8") as f:
+                    infer_tacolab = [x.strip('\n ') for x in f.readlines()]
+                tacolab = '\n'.join(prompt_tacolab + infer_tacolab[1:])
+                tacolab_list = list(filter(lambda x: x != "", tacolab.split('\n')))
+                text_id = self.text2id(tacolab_list=tacolab_list)
+            else:
+                assert self.infer_tacolab_dir != ""
+                infer_utt = uttid
+                infer_tacolab_path = os.path.join(self.infer_tacolab_dir, infer_utt + '.lab')
+                if not os.path.exists(infer_tacolab_path):
+                    print("infer_tacolab_path not exists, skip", infer_tacolab_path)
+                    return None
+                with open(infer_tacolab_path, 'r', encoding="utf-8") as f:
+                    infer_tacolab = [x.strip('\n ') for x in f.readlines()]
+                tacolab = '\n'.join(infer_tacolab[1:])
+                tacolab_list = list(filter(lambda x: x != "", tacolab.split('\n')))
+                text_id = self.text2id(tacolab_list=tacolab_list)
+        # print("text_id: ", text_id)
+
         if text_id is None:
             logger.warning(f"{uttid} TextToTacolabID failed ...")
             return None
-
         text_id = self.tokenizer.tokenize(text_id, "inputs")
+        # print("text_id: ", text_id)
+
+        # add bpe_id
+        if not self.use_spk_id:
+            if prompt_text[-1] in punctuation_all:
+                text = prompt_text + ' ' + text.strip()
+            else:
+                text = prompt_text + ', ' + text
+        else:
+            text = text
+
+        if self.use_bpe:
+            bpe_id = np.asarray(self.bpe_tokenizer(
+                text, truncation=True, max_length=self.max_length,
+            ).input_ids)
+            bpe_id = self.tokenizer.tokenize(bpe_id, "bpe")
+
+            # text_id = np.concatenate([text_id, [self.tokenizer.sep], bpe_id])
+            text_id = np.concatenate([
+                bpe_id, 
+                [self.tokenizer.sep], 
+                text_id])
+        # print("text_id: ", text_id)
+
+        if self.use_lang_id:
+            lang_key = self.get_lang_by_text(text)
+            if lang_key == None:
+                print(f"{text}: Wrong lang_key")
+                return None
+            lang_id = self.lang2id[lang_key]
+            lang_id = self.tokenizer.tokenize(lang_id, "lang")
 
         bn_T, bn_C = bn.shape[0], bn.shape[1]
+
+        # [bos] bpe phone [sep] spk_id langid wav [eos]
+        if self.use_spk_id:
+            wav_id = np.asarray([self.spk_id])
+        else:
+            wav_id = np.zeros([bn_T], dtype=np.int64)
+
+        if self.use_lang_id:
+            wav_id = np.concatenate([
+                [lang_id],
+                wav_id])
 
         seq = (
             [self.tokenizer.bos]
             + list(text_id)
             + [self.tokenizer.sep]
-            + [0] * bn_T  # place holder
+            + list(wav_id)  # place holder
         )
+        # output_dir = f"{self.hparams.output_dir}" + '/../inputs'
+        # os.makedirs(output_dir, exist_ok=True)
+        # np.save(os.path.join(output_dir, uttid + '.npy'), np.asarray(seq))
 
+        # print("seq: ", seq)
+        # exit()
         text_id = torch.tensor(text_id).long()
         seq = torch.tensor(seq).long().to(device)
         return (
@@ -147,5 +305,88 @@ class BigTTSWVAEInfer(LightningModule):
             torch.tensor([bn.shape[0]]).long().unsqueeze(0),
             seq.unsqueeze(0),
             torch.tensor([seq.shape[0]]).long().unsqueeze(0),
-            [uttid]
+            [uttid],
         ), prompt_wav.squeeze(), prompt_wav_max
+
+    def is_english_char(self, char):
+        if (u'\u0041'<= char <= u'\u005a') or (u'\u0061'<= char <= u'\u007a'):
+            return True
+        else:
+            return False
+
+    def get_lang_by_text(self, text):
+        text = text.replace('\'', '')
+        # en, zh
+        len_en_word = 0
+        len_zh_char = 0
+        i = 0
+        while i < len(text):
+            x = text[i]
+            if x in punctuation_all: # punc
+                i += 1
+                continue
+            elif u'\u4e00' <= x <= u'\u9fff': # zh
+                len_zh_char += 1
+                i += 1
+            elif self.is_english_char(x): # en
+                i += 1
+                if i >= len(text):
+                    len_en_word += 1
+                    break
+                while self.is_english_char(text[i]):
+                    i += 1
+                    if i >= len(text):
+                        break
+                len_en_word += 1
+                continue
+            else: # blank or digit
+                if not (text[i] == " " or text[i].isdigit()):
+                    return None
+                i += 1
+
+        lang = 'en'
+        if len_zh_char > len_en_word:
+            lang = 'zh'
+
+        return lang
+
+
+
+# if __name__ == "__main__":
+    # lit_infer = BigTTSWVAEInfer('VAET2SModule',
+    #                             ckpt_path,
+    #                             wvae_encoder,
+    #                             wvae_decoder,
+    #                             output_dir,
+    #                             phone_tokens_num=7370,
+    #                             speaker_tokens_num=8192,
+    #                             text2id_path="recipes/valle/datasets/dict/metaid_to_textid.json",
+    #                             module_cache=".module_cache",
+    #                             seed=1996,
+    #                             tacolab_version='oldv1', # oldv1, newv3, newv3_punc
+    #                             text2id_version='v1',
+    #                             prompt_tacolab_dir="",
+    #                             infer_tacolab_dir="",
+    #                             use_sy=False,
+    #                             use_lang_id=False,
+    #                             lang_tokens_num=0,
+    #                             lang2id=None,
+    #                             use_spk_id=False,
+    #                             spk2id='',
+    #                             spkname='',
+    #                             use_bpe=False,
+    #                             bpe_tokens_num=0,
+    #                             bpe_dir='',
+    #                             max_length=4096)
+
+    # collector = ContinuousCollator(tokenizer_pad=0)
+    # dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=None, collate_fn=collector)
+    # import tqdm
+
+    # # for item in tqdm.tqdm(dataset):
+    # for item in tqdm.tqdm(dataloader):
+    #     # print(item)
+    #     # lengths = item[-1]
+    #     # batch_size = len(lengths)
+    #     # print(batch_size, max(lengths), batch_size * max(lengths))
+    #     exit()

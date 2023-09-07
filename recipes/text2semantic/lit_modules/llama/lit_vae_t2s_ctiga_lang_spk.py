@@ -21,7 +21,7 @@ def sequence_mask(seq_lens, max_len=None, device='cpu'):
     mask = mask.float()
     return mask
 
-class VAET2SStopModule(pl.LightningModule):
+class VAET2SLangSpkModule(pl.LightningModule):
 
     def __init__(
         self,
@@ -31,37 +31,35 @@ class VAET2SStopModule(pl.LightningModule):
         optimizer_cls,
         scheduler_cls,
         required_modules,
-        tokenizer_len=50277,
-        n_semantic=8192,
-        use_speaker_id=False,
-        use_phoneme_loss=False,
         checkpointing=True,
         stop_token_loss_weight=1.0,
         use_lang_id=False,
+        use_spk_id=False,
+        resume_ckpt_path=None,
     ):
         super().__init__()
         self.save_hyperparameters()
         self.model = model_cls()
         self.logits_criterion = logits_criterion_cls()
         self.dense_criterion = dense_criterion_cls()
-        self.tokenizer_len = tokenizer_len
-        self.n_semantic = n_semantic
         self.requires = {}
-        self.use_speaker_id = use_speaker_id
-        self.use_phoneme_loss = use_phoneme_loss
         self.use_lang_id = use_lang_id
-        print("use_speaker_id: ", self.use_speaker_id)
-        print("use_phoneme_loss: ", self.use_phoneme_loss)
         print("use_lang_id: ", self.use_lang_id)
+        self.use_spk_id = use_spk_id
+        print("use_spk_id: ", self.use_spk_id)
 
-        # hugging face setting
-        if hasattr(self.model, "resize_token_embeddings"):
-            print("Resize token embeddings...")
-            self.model.resize_token_embeddings(tokenizer_len + n_semantic + 2)
-            self.model.config.use_cache = False
         if checkpointing:
             self.model.gradient_checkpointing_enable()
         self.stop_token_loss_weight = stop_token_loss_weight
+
+        resume_ckpt_path = None
+        print("resume_ckpt_path: ", resume_ckpt_path)
+        if resume_ckpt_path:
+            state_dict = torch.load(resume_ckpt_path, map_location=torch.device('cpu'))['state_dict']
+            new_state_dict = []
+            new_state_dict = {k.replace("model.",""):v for k, v in state_dict.items()}
+            self.model.load_state_dict(new_state_dict, strict=False)
+            print("Loading state_dict from {} successfully".format(resume_ckpt_path))
 
     def setup(self, stage: str) -> None:
         self.model_metric = ModelMetric(
@@ -84,44 +82,39 @@ class VAET2SStopModule(pl.LightningModule):
         return getattr(self.trainer, "profiler") or PassThroughProfiler()
 
     def training_step(self, batch, batch_idx):
-        # no spkid: bos + sep
-        # spkid: bos + sep + spkid
-        extra_shift_num = 2
-        if self.use_speaker_id:
-            extra_shift_num += 1
-        
-        if self.use_lang_id:
-            extra_shift_num += 1
-
         with self.profiler.profile("[LightningModule]CoarseModule.prepare_feature"):
             with torch.autocast(device_type="cuda", enabled=False):
-                text_ids, text_id_lens, bns, bn_lens, seqs, seq_lens, utt_ids, stop_tokens = batch
-                input_tokens = seqs
-                b, t = input_tokens.shape
-                loss_mask = sequence_mask(seq_lens, max_len=t, device="cuda")
-                _, text_t = text_ids.shape
-                text_loss_mask = sequence_mask(text_id_lens+extra_shift_num, max_len=text_t+extra_shift_num, device="cuda")
-                text_loss_mask = F.pad(text_loss_mask, (0, t-text_loss_mask.shape[1]), "constant", 0)
+                frontend_inputs = {
+                        "phone": batch["phone"],
+                        "tone": batch["tone"],
+                        }
+
+                bns, stop_tokens = batch["bn"], batch["stop_token"]
+                text_lens, bn_lens = batch["text_lens"], batch["bn_lens"]
+
+                seq_lens = text_lens + bn_lens
+                seq_len = max(seq_lens)
+
+                loss_mask = sequence_mask(seq_lens, device="cuda")
+                text_loss_mask = sequence_mask(text_lens, device="cuda")
+                text_loss_mask = F.pad(text_loss_mask, (0, seq_len - text_loss_mask.shape[1]), "constant", 0)
                 z_loss_mask = loss_mask - text_loss_mask
 
-                org_len = input_tokens.size(1)
-
         with self.profiler.profile("[LightningModule]CoarseModule.model_forward"):
-            ret_dict, _ = self.model(text_ids, text_id_lens, bns, bn_lens, input_tokens)
-            dense = ret_dict["dense"]
+            ret_dict = self.model(frontend_inputs, bns, text_lens, bn_lens, lang_seqs=batch["lang_seq"], spk_seqs=batch["spk_seq"])
             pred_stop_token = ret_dict["stop_token"]
+            pred_dense = ret_dict["dense"]
 
-        pred_dense = dense[:, 0:org_len - 1, :]
-        pred_stop_token = pred_stop_token[:, 0:org_len - 1, :]
+        pred_stop_token = pred_stop_token[:, 0:seq_len - 1, :]
+        pred_dense = pred_dense[:, 0:seq_len - 1, :]
 
         bsz, bn_t, bn_c = bns.shape
         targets_dense = []
         for i in range(bsz):
             targets_dense.append(
-                F.pad(bns[i, :bn_lens[i], :], (0, 0, text_id_lens[i]+extra_shift_num, t-(bn_lens[i]+text_id_lens[i]+extra_shift_num)), "constant", 0)
+                F.pad(bns[i, :bn_lens[i], :], (0, 0, text_lens[i], seq_len-(bn_lens[i]+text_lens[i])), "constant", 0)
             )
-
-        targets_dense = torch.stack(targets_dense)[:, 1:org_len, :]
+        targets_dense = torch.stack(targets_dense)[:, 1:seq_len, :]
 
         target_m, target_logs = torch.split(targets_dense, bn_c//2, dim=-1)
         pred_m, pred_logs = torch.split(pred_dense, bn_c//2, dim=-1)
@@ -130,59 +123,33 @@ class VAET2SStopModule(pl.LightningModule):
         kl_loss = self.dense_criterion(pred_m, pred_logs, 
             target_m.detach(), target_logs.detach(), z_mask=z_loss_mask[:, 1:])
 
-        # text_loss
-        text_loss = None
-        text_accu = None
-        if self.use_phoneme_loss:
-            logits = ret_dict["logits"]
-            pred_logits = logits[:, 0:org_len - 1, :]
-            targets_logits = input_tokens[:, 1:org_len]
-            text_loss = self.logits_criterion(pred_logits.float(), targets_logits, mask=text_loss_mask[:, 1:])            
-            text_accu = ((pred_logits.argmax(dim=-1) == targets_logits).float() * text_loss_mask[:, 1:]).sum() / text_loss_mask[:, 1:].sum() * 100
-
         # stop_token_loss
-        target_stop_token = stop_tokens[:, 1:t]
+        target_stop_token = stop_tokens[:, 1:seq_len]
         stop_token_loss = self.logits_criterion(pred_stop_token.float(), target_stop_token, mask=z_loss_mask[:, 1:])
         stop_token_accu = ((pred_stop_token.argmax(dim=-1) == target_stop_token).float() * z_loss_mask[:, 1:]).sum() / z_loss_mask[:, 1:].sum() * 100
 
-        batch_tokens = b * t
-        if self.use_phoneme_loss:
-            total_loss = kl_loss + text_loss + stop_token_loss * self.stop_token_loss_weight
-            self.log_dict(
-                {
-                    "kl_loss": kl_loss.item(),
-                    "text_loss": text_loss.item(),
-                    "text_accu": text_accu.item(),
-                    "stop_token_loss": stop_token_loss.item(),
-                    "stop_token_accu": stop_token_accu.item(),
-                    "loss": total_loss.item(),
-                    "bsz": b,
-                    "seqlen": t,
-                    "batch_tokens": batch_tokens,
-                },
-                prog_bar=True,
-                sync_dist=True
-            )
-        else:
-            total_loss = kl_loss + stop_token_loss * self.stop_token_loss_weight
-            self.log_dict(
-                {
-                    "kl_loss": kl_loss.item(),
-                    "stop_token_loss": stop_token_loss.item(),
-                    "stop_token_accu": stop_token_accu.item(),
-                    "loss": total_loss.item(),
-                    "bsz": b,
-                    "seqlen": t,
-                    "batch_tokens": batch_tokens,
-                },
-                prog_bar=True,
-                sync_dist=True
-            )
+        total_loss = kl_loss + stop_token_loss * self.stop_token_loss_weight
+
+        batch_tokens= bsz * seq_len
+
+        self.log_dict(
+            {
+                "kl_loss": kl_loss.item(),
+                "stop_token_loss": stop_token_loss.item(),
+                "stop_token_accu": stop_token_accu.item(),
+                "loss": total_loss.item(),
+                "bsz": bsz,
+                "seqlen": seq_len,
+                "batch_tokens": batch_tokens,
+            },
+            prog_bar=True,
+            sync_dist=True
+        )
 
         self.model_metric.update(
             num_tokens=batch_tokens,
             stage=self.trainer.state.stage,
-            model_kwargs=dict(batch_size=b, seqlen=t),
+            model_kwargs=dict(batch_size=bsz, seqlen=seq_len),
         )
         if self.trainer.global_step % self.trainer.log_every_n_steps == 0:
             metric = self.model_metric.compute(self.trainer.global_step)
@@ -257,19 +224,18 @@ class VAET2SStopModule(pl.LightningModule):
 
     @torch.no_grad()
     def inference_from_text(self, batch, tokenizer):
-        
-        text_ids, text_id_lens, bns, bn_lens, seqs, seq_lens, utts = batch
-        b, t = seqs.shape   
-        input_tokens = seqs
-        # seqs = (
-        #         [self.tokenizer.bos]
-        #         + list(text_id)
-        #         + [self.tokenizer.sep]
-        #         + [0] * bn_T # place holder
-        #     )
-        # inference
-        semantic_outputs = []
+        bns = batch["bn"]
+        text_lens, bn_lens = batch["text_lens"], batch["bn_lens"]
+        lang_seq, infer_lang_id = batch["lang_seq"], batch["infer_lang_id"]
+        spk_seq, infer_spk_id = batch["spk_seq"], batch["infer_spk_id"]
 
+        frontend_inputs = {
+                "phone": batch["phone"],
+                "tone": batch["tone"],
+                }
+
+        b = bns.shape[0]
+        
         # llama style inference
         self.model.params.use_cache = True
         start_pos = 0
@@ -279,24 +245,21 @@ class VAET2SStopModule(pl.LightningModule):
             max_batch_size=b,
             fused_ft_kernel=False
         )
+        semantic_outputs = []
         z_list = []
-        task_types = ['TTS']
+
+        max_step = text_lens[0] * 10 - bn_lens[0]
+        
         with torch.autocast(device_type="cuda", enabled=True):
-            for i in tqdm(range(4000)):
+            for i in tqdm(range(max_step)):
                 if i == 0:
-                    model_outputs, bn_in_z = self.model(text_ids, text_id_lens, 
-                        bns, bn_lens, input_tokens, start_pos=start_pos, inference_params=inference_params
-                        )
+                    model_outputs = self.model(frontend_inputs, bns, text_lens, bn_lens, start_pos=start_pos, inference_params=inference_params, lang_seqs=lang_seq, spk_seqs=spk_seq)
+                    input_len = text_lens[0] + bn_lens[0]
                 else:
-                    model_outputs, bn_in_z = self.model(None, None, 
-                        bns, None, input_tokens, start_pos=start_pos, use_cache=True, inference_params=inference_params
-                        )
-                    z_list.append(bn_in_z)
-                # logits = model_outputs["logits"]
-                # pred_logits = logits[:, -1, :]
-                # samples = torch.argmax(pred_logits)
-                # if i > 10 and samples.item() == self.tokenizer_len + self.n_semantic + 2:
-                #     break
+                    model_outputs = self.model(frontend_inputs, bns, text_lens, bn_lens, start_pos=start_pos, use_cache=True, inference_params=inference_params, lang_seqs=lang_seq, spk_seqs=spk_seq)
+                    input_len = 1
+                    z_list.append(model_outputs['bn_in_z'])
+
                 pred_stop_token = model_outputs["stop_token"][:, -1, :]
                 samples = torch.argmax(pred_stop_token)
                 if i > 10 and samples.item() == 1:
@@ -304,20 +267,29 @@ class VAET2SStopModule(pl.LightningModule):
 
                 pred_dense = model_outputs["dense"][:, -1:, :]
 
-                start_pos += input_tokens.size(1)
+                start_pos += input_len
                 inference_params.sequence_len_offset = start_pos
 
                 # next infer
                 semantic_outputs.append(pred_dense)
-                input_tokens = torch.zeros([1, 1], dtype=torch.int).to(pred_dense.device)
                 bns = pred_dense
+                bn_lens[0] = 1
+
+                lang_id = torch.from_numpy(np.asarray([infer_lang_id]))
+                lang_id = lang_id.unsqueeze(0)
+                lang_id = lang_id.to(pred_dense.device)
+                lang_seq = lang_id
+
+                spk_seq = None
+                if self.use_spk_id:
+                    spk_id = torch.from_numpy(np.asarray([infer_spk_id]))
+                    spk_id = spk_id.unsqueeze(0)
+                    spk_id = spk_id.to(pred_dense.device)
+                    spk_seq = spk_id
 
         z_outputs = torch.cat(z_list, dim=1) # [b, t, c]
         semantic_outputs = torch.cat(semantic_outputs, dim=1) # [b, t, c]
-
-        # semantic_outputs = torch.cat([seqs, semantic_outputs], dim=1)
         self.model.params.use_cache = False
-
         return z_outputs, semantic_outputs
 
     predict = inference_from_text

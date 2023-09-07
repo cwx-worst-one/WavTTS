@@ -14,13 +14,16 @@ class VAELLaMa(LLaMa):
         use_speaker_id=False,
         provider="default",
         state_dict_path=None,
+        use_lang_id=False
     ):
         super().__init__(params, provider)
         self.params = params
         self.vocab_size = params.vocab_size
         self.n_layers = params.n_layers
         self.use_speaker_id = use_speaker_id
+        self.use_lang_id = use_lang_id
         print('use_speaker_id: ', self.use_speaker_id)
+        print('use_lang_id: ', self.use_lang_id)
 
         self.tok_embeddings = nn.Embedding(params.vocab_size, params.dim)
 
@@ -48,10 +51,12 @@ class VAELLaMa(LLaMa):
         inference_params=None,
     ):
 
+        extra_shift_num = 2
         if self.use_speaker_id:
-            extra_shift_num = 3
-        else:
-            extra_shift_num = 2
+            extra_shift_num += 1
+
+        if self.use_lang_id:
+            extra_shift_num += 1
 
         bsz, seqlen = inputs.shape
         token_in_h = self.tok_embeddings(inputs)

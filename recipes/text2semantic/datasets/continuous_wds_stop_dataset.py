@@ -56,7 +56,10 @@ class ContinuousTTSStopDataset(IterableDataset):
         max_length=4096,
         use_bpe=False,
         use_spkid=False,
-        use_sy=True):
+        use_sy=True,
+        use_langid=False,
+        lang_tokens_num=0,
+        lang2id=None):
 
         self.wds = (
             WebDataset(
@@ -95,7 +98,8 @@ class ContinuousTTSStopDataset(IterableDataset):
         self.tokenizer = PhoneTokenizerWithAudioTokens(
             phone_tokens_num,
             speaker_tokens_num,
-            bpe_tokens_num=bpe_tokens_num
+            bpe_tokens_num=bpe_tokens_num,
+            lang_tokens_num=lang_tokens_num
         )
         self.return_full_seq = return_full_seq
         self.inference = inference
@@ -103,6 +107,14 @@ class ContinuousTTSStopDataset(IterableDataset):
         self.simulated_cycle_rate = simulated_cycle_rate
         self.textid_version = textid_version
         self.use_sy = use_sy
+
+        # lang
+        self.use_langid = use_langid
+        if self.use_langid:
+            self.lang2id = load_json(lang2id)
+            print(f"Loaded lang2id from {lang2id}")
+        else:
+            self.lang2id = None
 
 
     def get_text_wavid(self, sample):
@@ -138,6 +150,14 @@ class ContinuousTTSStopDataset(IterableDataset):
             spk_id = self.tokenizer.tokenize(spk_id, "spk")
             # print("spk_id: ", spk_id)
 
+        if self.use_langid:
+            lang_key = self.get_lang_by_text(text)
+            if lang_key == None:
+                print(f"{text}: Wrong lang_key")
+                return None
+            lang_id = self.lang2id[lang_key]
+            lang_id = self.tokenizer.tokenize(lang_id, "lang")
+
         # text_id, [text_len]
         text_id = self.convert_tacolab_to_text_id(labels)
         if text_id is None:
@@ -168,6 +188,11 @@ class ContinuousTTSStopDataset(IterableDataset):
                 [0] * bn_T])
         else:
             wav_id = np.zeros([bn_T], dtype=np.int64)
+
+        if self.use_langid:
+            wav_id = np.concatenate([
+                [lang_id], 
+                wav_id])
 
         seq = (
             [self.tokenizer.bos]
@@ -210,6 +235,49 @@ class ContinuousTTSStopDataset(IterableDataset):
                 return None
             tacolab_v1.append('\t'.join([phone, tone, '0.0 0.0 0.0 1.0', ws, pw]))
         return tacolab_v1
+
+
+    def is_english_char(self, char):
+        if (u'\u0041'<= char <= u'\u005a') or (u'\u0061'<= char <= u'\u007a'):
+            return True
+        else:
+            return False
+
+    def get_lang_by_text(self, text):
+        text = text.replace('\'', '')
+        # en, zh
+        len_en_word = 0
+        len_zh_char = 0
+        i = 0
+        while i < len(text):
+            x = text[i]
+            if x in punctuation_all: # punc
+                i += 1
+                continue
+            elif u'\u4e00' <= x <= u'\u9fff': # zh
+                len_zh_char += 1
+                i += 1
+            elif self.is_english_char(x): # en
+                i += 1
+                if i >= len(text):
+                    len_en_word += 1
+                    break
+                while self.is_english_char(text[i]):
+                    i += 1
+                    if i >= len(text):
+                        break
+                len_en_word += 1
+                continue
+            else: # blank
+                if text[i] != " ":
+                    return None
+                i += 1
+
+        lang = 'en'
+        if len_zh_char > len_en_word:
+            lang = 'zh'
+
+        return lang
 
     def get_lang(self, tacolab):
         if len(tacolab[0].split('\t')) != 5:

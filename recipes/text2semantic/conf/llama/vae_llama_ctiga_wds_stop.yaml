@@ -47,13 +47,16 @@ run_opts:
     use_phoneme_loss: False
     use_sy: False
     stop_token_loss_weight: 1.0
+    use_langid: False
+    lang_tokens_num: 200
+    lang2id: 'recipes/text2semantic/datasets/dict/lang2id.json'
     
 llama_config: !new:recipes.text2semantic.modules.continuous_vae_llama_ctiga.ModelArgs
     dim: 1024
     n_layers: 24
     n_heads: 16
     # vocab_size: 15565 # vocab_size = hp.phone_tokens_num(7370) + speaker_num(4096) + 3
-    vocab_size: !ref <run_opts[bpe_tokens_num]> + <run_opts[phone_tokens_num]> + <run_opts[speaker_tokens_num]> + 3
+    vocab_size: !ref <run_opts[bpe_tokens_num]> + <run_opts[phone_tokens_num]> + <run_opts[speaker_tokens_num]> + 3 + <run_opts[lang_tokens_num]>
     out_dim: 32
     multiple_of: 256
     norm_eps: 0.000001
@@ -85,6 +88,9 @@ train_dataset: !new:recipes.text2semantic.datasets.continuous_wds_stop_dataset.C
     use_bpe: !ref <run_opts[use_bpe]>
     use_spkid: !ref <run_opts[use_spkid]>
     use_sy: !ref <run_opts[use_sy]>
+    use_langid: !ref <run_opts[use_langid]>
+    lang_tokens_num: !ref <run_opts[lang_tokens_num]>
+    lang2id: !ref <run_opts[lang2id]>
 
 collator: !new:recipes.text2semantic.datasets.continuous_wds_stop_dataset.ContinuousCollator
     tokenizer_pad: 0
@@ -106,7 +112,9 @@ pl_datamodule: !new:recipes.text2semantic.lit_modules.DataModule
 model_cls: !name:recipes.text2semantic.modules.llama.wfvae_ctiga_llama_stop.VAELLaMaStop
     params: !ref <llama_config>
     use_speaker_id: !ref <run_opts[use_spkid]>
+    use_lang_id: !ref <run_opts[use_langid]>
     provider: ctiga
+    use_phoneme_loss: !ref <run_opts[use_phoneme_loss]>
 
 # training module configuration
 #optimizer_cls: !name:torch.optim.AdamW
@@ -132,12 +140,13 @@ pl_module: !new:recipes.text2semantic.lit_modules.llama.lit_vae_t2s_ctiga_stop.V
     logits_criterion_cls: !name:recipes.text2semantic.modules.loss.MaskedCrossEntropy
     dense_criterion_cls: !name:recipes.text2semantic.modules.loss.MaskedKLLossPP
     tokenizer_len: !ref <run_opts[bpe_tokens_num]> + <run_opts[phone_tokens_num]>
-    n_semantic: !ref <run_opts[speaker_tokens_num]>
+    n_semantic: !ref <run_opts[speaker_tokens_num]> + <run_opts[lang_tokens_num]>
     checkpointing: !ref <run_opts[checkpointing]>
     use_speaker_id: !ref <run_opts[use_spkid]>
     use_phoneme_loss: !ref <run_opts[use_phoneme_loss]>
     required_modules: {}
     stop_token_loss_weight: !ref <run_opts[stop_token_loss_weight]>
+    use_lang_id: !ref <run_opts[use_langid]>
 
 logger:
     - !new:pytorch_lightning.loggers.TensorBoardLogger

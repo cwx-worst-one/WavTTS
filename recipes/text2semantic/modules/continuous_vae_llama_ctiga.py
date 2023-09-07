@@ -73,6 +73,7 @@ class ModelArgs:
 
     audio_tokens_num: int = 1024
     phone_tokens_num: int = 200
+    lang_vocab_size: int = 200
 
 
 class RMSNorm(torch.nn.Module):
