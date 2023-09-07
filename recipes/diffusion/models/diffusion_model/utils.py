@@ -73,7 +73,6 @@ def init_diffusion(checkpoint_path, local_rank, cache_dir):
 
 @torch.no_grad()
 def run_diffusion(requires, samples, params):
-    # TODO: (AS) num_chunks is the 30s window. fix this
     diffusion_model = requires['diffusion']
     sampler = requires['sampler']
     vocoder = requires['vocoder']
@@ -102,8 +101,12 @@ def run_diffusion(requires, samples, params):
     # torch.interpolate causes OOM for large batch sizes > 24. chunking to batch of 8 instead.
     # If you see this error, lower batch size: "RuntimeError: Expected output.numel() <= std::numeric_limits<int32_t>::max() to be true, but got false."
     wavs_g = torch.cat([vocoder.decode(c).detach() for c in torch.split(pred_emb, 8)])
-
     # wavs_g = vocoder.decode(pred_emb.float()).detach()
+
+    # For bigmusic: [bs, c, seq] -> [bs, seq] 
+    if len(wavs_g.shape) == 3:
+        wavs_g = wavs_g.squeeze(1)
+
     return wavs_g
 
 

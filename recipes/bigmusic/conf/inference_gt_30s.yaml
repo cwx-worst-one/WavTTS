@@ -86,7 +86,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.GTInferenceModule
                     cache_dir: !ref <run_opts[cache_dir]>
         ar_modules:
             coarse:
-                hpath: /mnt/bn/audio-diffusion/jt/model_archive/vocalmusic/coarse_flash_llama_wav2vec/bestrq_chroma_coarse_0.7b/checkpoints/step=195000-tr_loss=3.6975.ckpt
+                hpath: /mnt/bn/audio-diffusion/jt/model_archive/vocalmusic/coarse_flash_llama_wav2vec/bestrq_chroma_coarse_0.7b/checkpoints/step=295000-val_accu_0=17.92.ckpt
                 initializer: !name:recipes.bigmusic.utils.model_initializer.init_coarse
                     cache_dir: !ref <run_opts[cache_dir]>
             fine:

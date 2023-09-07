@@ -153,7 +153,7 @@ class SemanticInferenceModule(pl.LightningModule):
         output_dir = self.extra_params.output_dir
         os.makedirs(output_dir, exist_ok=True)
         txt_fp = os.path.join(output_dir, "metrics.txt")
-        with open(txt_fp, 'w') as f:
+        with open(txt_fp, 'w', encoding="utf-8") as f:
             f.write(f'avg wer: {wer_mcs[0]}\n')
             f.write(f'avg mcs: {wer_mcs[1]}\n')
 
@@ -252,6 +252,8 @@ def save_outputs(batch, round, batch_idx, output_dir, sample_rate):
     metrics = batch.get('metrics')
     wavs = batch['generated_audio']
     eos_index_list = batch.get('eos_index_list', [])
+    if len(wavs.shape) == 3:
+        wavs = wavs.squeeze(1)
     for i, (eos, wav) in enumerate(zip_longest(eos_index_list, wavs)):
         if eos is not None:
             wav = wav[:eos]
@@ -274,7 +276,7 @@ def save_outputs(batch, round, batch_idx, output_dir, sample_rate):
         save_wav(wav.cpu().float(), wav_fp, sr=sample_rate)
 
         txt_fp = os.path.join(wav_dir, f"{file_name}.txt")
-        with open(txt_fp, 'w') as f:
+        with open(txt_fp, 'w', encoding="utf-8") as f:
             f.write(f'Conditions: {conditions}\n')
             if 'lyrics_tokens' in conditions:
                 f.write(f'Lyrics: {lyrics_str}\n')
@@ -288,11 +290,11 @@ def save_outputs(batch, round, batch_idx, output_dir, sample_rate):
             l = lyrics[i]
             if l.endswith(" vocal"):
                 l = l[:-len(" vocal")]
-            with open(txt_fp, 'w') as f:
+            with open(txt_fp, 'w', encoding="utf-8") as f:
                 f.write(l)
         if 'style_text' in conditions:
             txt_fp = os.path.join(wav_dir, f"{file_name}.prompt.txt")
-            with open(txt_fp, 'w') as f:
+            with open(txt_fp, 'w', encoding="utf-8") as f:
                 f.write(prompts[i])
 
         if style_audio is not None:

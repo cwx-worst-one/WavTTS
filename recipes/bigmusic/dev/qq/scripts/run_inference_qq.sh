@@ -16,9 +16,8 @@ python3 -m  pdb -c continue -m  samantha.main predict --config recipes/bigmusic/
     --extra_params.prompt_path $PROMPT_PATH  \
     --extra_params.lyrics_max_seq_len 400 --extra_params.max_items null --run_opts.batch_size 16 --extra_params.duration 30 \
     --extra_params.semantic_cls_path recipes.bigmusic.dev.qq.lightning.semantic_modules_qq.MixSemanticModule \
-    --extra_params.token2wav_type ar \
-    --extra_params.semantic_ckpt /mnt/bn/lyrics-to-song/qq/logs/chroma_mulan_vocal/varlen_20_30_bs20_multi_03B_6w/checkpoints/step=140000-val_accu_0=18.91.ckpt \
-    --extra_params.coarse_ckpt /mnt/bn/audio-diffusion/jt/model_archive/vocalmusic/coarse_flash_llama_wav2vec/bestrq_chroma_coarse_0.7b/checkpoints/step=195000-tr_loss=3.6975.ckpt
+    --extra_params.token2wav_type diffusion \
+    --extra_params.semantic_ckpt /mnt/bn/lyrics-to-song/qq/logs/chroma_mulan_vocal/varlen_20_30_bs20_multi_03B_6w/checkpoints/step=140000-val_accu_0=18.91.ckpt
     
 # Convert all to mp3
 pushd $OUTPUT_DIR && find . -name "*.wav" -exec ffmpeg -y -i {} {}.mp3 \; -exec rm {} \; && popd
