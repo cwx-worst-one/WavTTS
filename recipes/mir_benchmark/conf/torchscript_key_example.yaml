@@ -1,0 +1,195 @@
+---
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 0
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+ckpt_path:
+
+# running parameters
+run_opts:
+  fast_dev_run: False
+  tensorboard_dir: '/mnt/bn/audio-diffusion/mir_benchmark/logs/key'
+  log_name: 'torchscript_key_example'
+  version: 'no_finetune'
+  precision: 16
+  accelerator: 'auto'
+  num_workers: 5
+  pin_memory: True
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+audio:
+  sampling_rate: 24000       # sampling rate for audio
+  sample_len: 12.0
+  label_hop: 2             # hop len in sec for label/activation curve  #{0.01 or 0.02}
+  n_timesteps: 6
+
+train_params:
+  learning_rate: 0.001
+  max_epochs: -1
+  batch_size: 64
+  shuffle_buffer: 1
+  scheduler_patience: 40
+  scheduler_decay_factor: 0.8
+  devices: 'auto'
+  num_iter: 100
+
+val_params:
+  num_sanity_val_steps: 2
+  batch_size: 1
+
+################################################################################
+##########             DATASET/DATALOADING CONFIGURATION              ##########
+################################################################################
+
+preprocessor: !new:recipes.mir_benchmark.utils.key_processor.KeyPreprocessor
+  - !ref <audio[sample_len]>
+  - !ref <audio[sampling_rate]>
+  - !ref <audio[label_hop]>
+
+urls: !apply:recipes.mir_benchmark.utils.concat_key_data.concatenate_dataset ["train"]
+train_dataset: !new:webdataset.WebDataset
+  urls: !ref <urls>
+  resampled: True
+
+train_transformed: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
+  wds_dataset: !ref <train_dataset>
+  pipeline:
+    - !name:webdataset.WebDataset.decode
+    - !name:webdataset.WebDataset.compose
+      - !name:recipes.mir_benchmark.utils.key_processor.KeyPreprocessor.train_batch_preprocess
+        - !ref <preprocessor>
+    - !name:webdataset.WebDataset.to_tuple ["audio key_label"]
+    - !name:webdataset.WebDataset.batched
+      - !ref <train_params[batch_size]>
+    - !name:webdataset.WebDataset.with_epoch
+      - !ref <train_params[num_iter]>
+
+val_urls: !apply:recipes.mir_benchmark.utils.concat_key_data.concatenate_dataset ["validation"]
+val_dataset: !new:webdataset.WebDataset 
+  urls: !ref <val_urls>
+  nodesplitter: !name:recipes.mir_benchmark.utils.utils.split_by_node
+
+val_transformed: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
+  wds_dataset: !ref <val_dataset>
+  pipeline:
+    - !name:webdataset.WebDataset.decode
+    - !name:webdataset.WebDataset.map
+      - !name:recipes.mir_benchmark.utils.key_processor.KeyPreprocessor.val_preprocess
+        - !ref <preprocessor>
+    - !name:webdataset.WebDataset.to_tuple ["audio key_label"]
+    - !name:webdataset.WebDataset.batched [1]
+
+test_urls: !apply:recipes.mir_benchmark.utils.concat_key_data.concatenate_dataset ["test"]
+test_dataset: !new:webdataset.WebDataset 
+  urls: !ref <test_urls>
+  nodesplitter: !name:recipes.mir_benchmark.utils.utils.split_by_node
+
+test_transformed: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
+  wds_dataset: !ref <test_dataset>
+  pipeline:
+    - !name:webdataset.WebDataset.decode
+    - !name:webdataset.WebDataset.map
+      - !name:recipes.mir_benchmark.utils.key_processor.KeyPreprocessor.val_preprocess
+        - !ref <preprocessor>
+    - !name:webdataset.WebDataset.to_tuple ["audio key_label"]
+    - !name:webdataset.WebDataset.batched [1]
+
+# dataloader configuration
+train_dataloader: !new:torch.utils.data.DataLoader
+  dataset: !ref <train_transformed>
+  shuffle: False
+  batch_size: null
+  num_workers: !ref <run_opts[num_workers]>
+  pin_memory: !ref <run_opts[pin_memory]>
+  persistent_workers: False
+
+val_dataloader: !new:torch.utils.data.DataLoader
+  dataset: !ref <val_transformed>
+  shuffle: False
+  batch_size: null
+  num_workers: !ref <run_opts[num_workers]>
+  pin_memory: !ref <run_opts[pin_memory]>
+  persistent_workers: False
+
+test_dataloader: !new:torch.utils.data.DataLoader
+  dataset: !ref <test_transformed>
+  shuffle: False
+  batch_size: null
+  num_workers: !ref <run_opts[num_workers]>
+  pin_memory: !ref <run_opts[pin_memory]>
+  persistent_workers: False
+
+# datamodule configuration
+pl_datamodule: !new:recipes.beat.pl_modules.pl_datamodule.BeatDataModule
+  train_dataloader: !ref <train_dataloader>
+  val_dataloader: !ref <val_dataloader>
+  test_dataloader: !ref <test_dataloader>
+
+################################################################################
+##########                      MODEL CONFIGURATION                   ##########
+################################################################################
+
+frontend: !new:recipes.mir_benchmark.models.frontend.Frontend
+  model:
+    !new:recipes.mir_benchmark.models.torchscript_t5.ExampleTorchscript
+      torchscript_path: "/mnt/bn/audio-diffusion/torchscript/best_rq/chromatic_130k.pt"
+  layer_ix: 12
+  is_update: False # False if linear probing
+  takes: [wavs]
+
+backend: !new:recipes.mir_benchmark.models.key_probing.KeyProbingStage
+  n_channel: 1024
+  resample: !ref <audio[n_timesteps]>
+  provides: [key_pred]
+
+model: !new:samantha.core.BaseModel
+  input_names: [wavs]
+  output_names: [key_pred]
+  stages:
+      - !ref <frontend>
+      - !ref <backend>
+
+pl_module: !new:recipes.mir_benchmark.pl_modules.key_pl.LitKey
+  model: !ref <model>
+  lr: !ref <train_params[learning_rate]>
+  scheduler_patience: !ref <train_params[scheduler_patience]>
+  scheduler_decay_factor: !ref <train_params[scheduler_decay_factor]>
+  sample_rate: !ref <audio[sampling_rate]>
+  sample_len: !ref <audio[sample_len]>
+  label_hop: !ref <audio[label_hop]>
+  model_batch_size: !ref <train_params[batch_size]>
+
+################################################################################
+##########                     TRAINER CONFIGURATION                  ##########
+################################################################################
+
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+  save_dir: !ref <run_opts[tensorboard_dir]>
+  name: !ref <run_opts[log_name]>
+  version: !ref <run_opts[version]>
+
+callbacks:
+  - !new:pytorch_lightning.callbacks.ModelCheckpoint
+    every_n_epochs: 1
+    mode: "max"
+    save_last: True
+    monitor: KMACC
+  - !new:pytorch_lightning.callbacks.LearningRateMonitor
+    logging_interval: 'step'
+
+trainer: !new:pytorch_lightning.Trainer
+  fast_dev_run: !ref <run_opts[fast_dev_run]>
+  num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+  logger: !ref <logger>
+  accelerator: !ref <run_opts[accelerator]>
+  devices: !ref <train_params[devices]>
+  precision: !ref <run_opts[precision]>
+  num_sanity_val_steps: !ref <val_params[num_sanity_val_steps]>
+  max_epochs: !ref <train_params[max_epochs]>
+  strategy: "deepspeed_stage_2"
+  callbacks: !ref <callbacks>

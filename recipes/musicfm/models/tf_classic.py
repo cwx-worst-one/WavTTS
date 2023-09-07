@@ -1,0 +1,253 @@
+import json
+
+import torch
+from einops import rearrange
+from sami_ai_models.recipes.musicfm.modules.neural_filterbank import TrainableFilterbank
+from torch import nn
+
+from recipes.musicfm.modules.conv import Conv2dSubsampling
+from recipes.musicfm.modules.features import (
+    MFCC,
+    STFT,
+    Chromagram,
+    ChromaticSTFT,
+    MelSTFT,
+)
+from recipes.musicfm.modules.freq_attention import FreqAttention
+from recipes.musicfm.modules.random_quantizer import RandomProjectionQuantizer
+
+
+class ClassicMusicFM(nn.Module):
+    """
+    A Foundation Model for Music trained with Classic Features
+
+    Input: 128-band mel spectrogram
+    Frontend: 2-layer Residual convolution
+    Backend: 24-layer Conformer
+    Quantizer: four codebooks for mel spectrogram, chromatic spectrogram, MFCC, and chromagram
+    """
+
+    def __init__(
+        self,
+        codebook_dim=16,
+        codebook_size=8192,
+        hop_length=240,
+        freq_attn_dim=128,
+        conv_dim=512,
+        encoder_dim=1024,
+        encoder_depth=24,
+        mask_hop=0.4,
+        mask_prob=0.6,
+        is_flash=True,
+        stat_path=None,
+    ):
+        super(ClassicMusicFM, self).__init__()
+
+        # global variables
+        self.hop_length = hop_length
+        self.mask_hop = mask_hop
+        self.mask_prob = mask_prob
+        self.codebook_size = codebook_size
+        self.features = ["mel", "chromatic", "mfcc", "chromagram"]
+
+        # load feature mean / std stats
+        with open(stat_path, "r") as f:
+            self.stat = json.load(f)
+
+        # multiple random quantizers
+        self.quantizer_mel = RandomProjectionQuantizer(
+            128 * 4, codebook_dim, codebook_size
+        )  # mel spec
+        self.quantizer_chromatic = RandomProjectionQuantizer(
+            68 * 4, codebook_dim, codebook_size
+        )  # chromatic spec
+        self.quantizer_mfcc = RandomProjectionQuantizer(
+            11 * 4, codebook_dim, codebook_size
+        )  # MFCC
+        self.quantizer_chromagram = RandomProjectionQuantizer(
+            12, codebook_dim, codebook_size
+        )  # chromagram
+
+        # feature extractor
+        self.preprocessor_spec = STFT(n_fft=2047)
+        self.preprocessor_mel = MelSTFT(n_fft=2047)
+        self.preprocessor_chromatic = ChromaticSTFT(n_fft=2047)
+        self.preprocessor_mfcc = MFCC(n_fft=2047)
+        self.preprocessor_chromagram = Chromagram(n_fft=2047)  # already average pooled
+
+        # trainable filterbank
+        self.fb = TrainableFilterbank(
+            n_fft=2047, n_filterbank=128, out_dim=freq_attn_dim
+        )
+
+        # frequency attention
+        self.freq_attention = FreqAttention(dim=freq_attn_dim, is_flash=is_flash)
+
+        # two residual convolution layers + one projection layer
+        self.conv = Conv2dSubsampling(freq_attn_dim, conv_dim, encoder_dim, 128)
+
+        # Conformer
+        if is_flash:
+            from recipes.musicfm.modules.flash_conformer import (
+                Wav2Vec2ConformerConfig,
+                Wav2Vec2ConformerEncoder,
+            )
+        else:
+            from transformers.models.wav2vec2_conformer.modeling_wav2vec2_conformer import (
+                Wav2Vec2ConformerConfig,
+                Wav2Vec2ConformerEncoder,
+            )
+        config = Wav2Vec2ConformerConfig.from_pretrained(
+            "facebook/wav2vec2-conformer-rope-large-960h-ft"
+        )
+        config.num_hidden_layers = encoder_depth
+        config.hidden_size = encoder_dim
+
+        self.conformer = Wav2Vec2ConformerEncoder(config)
+
+        # projection
+        self.linear = nn.Linear(encoder_dim, codebook_size * 4)
+
+        # loss function
+        self.loss = nn.CrossEntropyLoss()
+
+    def masking(self, x):
+        """random masking of 400ms with given probability"""
+        mx = x.clone()
+        b, t = mx.shape
+        len_masking_raw = int(24000 * self.mask_hop)
+        len_masking_token = int(24000 / self.hop_length / 2 / 2 * self.mask_hop)
+
+        # get random mask indices
+        start_indices = torch.rand(b, t // len_masking_raw) < self.mask_prob
+        time_domain_masked_indices = torch.nonzero(
+            start_indices.repeat_interleave(len_masking_raw, dim=1)
+        )
+        token_domain_masked_indices = torch.nonzero(
+            start_indices.repeat_interleave(len_masking_token, dim=1)
+        )
+
+        # mask with random values
+        masking_noise = (
+            torch.randn(time_domain_masked_indices.shape[0], dtype=x.dtype) * 0.1
+        )  # 0 mean 0.1 std
+        mx[tuple(time_domain_masked_indices.t())] = masking_noise.to(x.device)
+
+        return mx, token_domain_masked_indices
+
+    @torch.no_grad()
+    def preprocessing(self, x, features):
+        """extract classic audio features"""
+        # check precision
+        if x.dtype == torch.float16:
+            precision = 16
+        else:
+            precision = 32
+
+        out = {}
+        for key in features:
+            layer = getattr(self, "preprocessor_%s" % key)
+            out[key] = layer.float()(x.float())
+            if precision == 16:
+                out[key] = out[key].half()
+        return out
+
+    def encoder(self, x):
+        """trainable filterbank + frequency attention + 2-layer conv + w2v-conformer"""
+        # trainable filterbank
+        x = self.fb(x)
+
+        # frequency attention
+        x = self.freq_attention(x)
+
+        # CNN
+        x = self.conv(x)
+
+        # W2V conformer
+        out = self.conformer(x, output_hidden_states=True)
+        hidden_emb = out["hidden_states"]
+        last_emb = out["last_hidden_state"]
+        logits = self.linear(last_emb)
+        logits = {
+            key: logits[:, :, i * self.codebook_size : (i + 1) * self.codebook_size]
+            for i, key in enumerate(self.features)
+        }
+        return logits, hidden_emb
+
+    @torch.no_grad()
+    def normalize(self, x):
+        """normalize the input audio to have zero mean unit variance"""
+        for key in x.keys():
+            x[key] = (x[key] - self.stat["%s_mean" % key]) / self.stat["%s_std" % key]
+        return x
+
+    @torch.no_grad()
+    def rearrange(self, x):
+        """rearrange the batch to flatten every 4 steps"""
+        for key in x.keys():
+            if key == "chromagram":
+                x[key] = rearrange(x[key], "b f t -> b t f")
+            else:
+                x[key] = rearrange(x[key], "b f (t s) -> b t (s f)", s=4)
+        return x
+
+    @torch.no_grad()
+    def tokenize(self, x):
+        out = {}
+        for key in x.keys():
+            layer = getattr(self, "quantizer_%s" % key)
+            out[key] = layer(x[key])
+        return out
+
+    def get_targets(self, x):
+        x = self.preprocessing(x, features=self.features)
+        x = self.normalize(x)
+        x = self.rearrange(x)
+        target_tokens = self.tokenize(x)
+        return target_tokens
+
+    def get_predictions(self, x):
+        # preprocessing
+        x = self.preprocessing(x, features=["spec"])
+
+        # encoding
+        logits, hidden_emb = self.encoder(x["spec"])
+
+        return logits, hidden_emb
+
+    def get_latent(self, x, layer_ix=12):
+        x = self.preprocessing(x)
+        x = self.normalize(x)
+        x = self.conv(x)
+        hidden_states = self.conformer(x, output_hidden_states=True)["hidden_states"]
+        emb = hidden_states[layer_ix]
+        return emb
+
+    def get_loss(self, logits, target_tokens, masked_indices):
+        losses = {}
+        accuracies = {}
+        for key in logits.keys():
+            masked_logits = logits[key][tuple(masked_indices.t())]
+            masked_tokens = target_tokens[key][tuple(masked_indices.t())]
+            losses[key] = self.loss(masked_logits, masked_tokens)
+            accuracies[key] = (
+                torch.sum(masked_logits.argmax(-1) == masked_tokens)
+                / masked_tokens.numel()
+            )
+        return losses, accuracies
+
+    def forward(self, x):
+        # get target feature tokens
+        target_tokens = self.get_targets(x)
+
+        # masking
+        x, masked_indices = self.masking(x)
+
+        # forward
+        logits, hidden_emb = self.get_predictions(x)
+
+        # get loss
+        losses, accuracies = self.get_loss(logits, target_tokens, masked_indices)
+        print(losses, accuracies)
+
+        return logits, hidden_emb, losses, accuracies

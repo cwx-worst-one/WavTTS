@@ -24,3 +24,5 @@ ignore: |
   recipes/valle
   recipes/mariana_tasks
   recipes/text2semantic
+  recipes/mir_benchmark
+  recipes/musicfm
