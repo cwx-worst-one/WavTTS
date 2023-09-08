@@ -157,3 +157,15 @@ class SemanticT5Module(BaseContinuousEmbedModule):
 
         inputs_embeds = self.prepare_inputs_embeddings(batch)
         return super().predict(inputs_embeds, num_tokens, temperature)
+
+def process_eos_indexes(semantic_samples, semantic_module: SemanticModule, sample_rate=24000):
+    semantic_frame_rate = semantic_module.extra_params.semantic_frame_rate
+    eos_id = semantic_module.target_embedder.eos_id
+    eos_index_list = []
+    if eos_id is not None:
+        eos_padding_id = 0
+        eos_mask = torch.cumsum(semantic_samples == eos_id, 1) > 0
+        semantic_samples[eos_mask] = eos_padding_id
+        token2wav_rate = int(sample_rate / semantic_frame_rate)
+        eos_index_list = ((semantic_samples == eos_padding_id).bool().cumsum(axis=1) == 0).bool().sum(axis=1) * token2wav_rate
+    return semantic_samples, eos_index_list

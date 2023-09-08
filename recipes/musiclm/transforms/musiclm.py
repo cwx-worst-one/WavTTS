@@ -6,6 +6,8 @@ import pickle
 import os
 import numpy as np
 from torchaudio_augmentations import Compose
+import subprocess
+import pickle
 
 from recipes.musiclm.transforms.audio import (
     NormalizeAudio,
@@ -61,8 +63,13 @@ class ARFiltering:
         for x in list(semantic_diversity_range) + list(semantic_probs_range):
             assert type(x) == int and x >= 0 and x <= 100, f"Invalid quantile: {x}"
         print(f"Loading genre stats from {genre_stats_fname}...")
-        with open(genre_stats_fname, "rb") as f:
-            genre_stats = pickle.load(f)
+        if genre_stats_fname.startswith("hdfs://"):
+            p = subprocess.Popen(["hdfs", "dfs", "-cat", genre_stats_fname], stdout=subprocess.PIPE)
+            pickle_bytes, _ = p.communicate()
+            genre_stats = pickle.loads(pickle_bytes)
+        else:
+            with open(genre_stats_fname, "rb") as f:
+                genre_stats = pickle.load(f)
         print(f"...loaded stats for {len(genre_stats)} genres")
         self.genres = set(genre_stats.keys())
         self.semantic_diversity_range = {}
@@ -316,9 +323,14 @@ class MCCTransforms(TransformBase):
         elif "ar_data_quality" not in metadata:
             print(f"WARNING: ar_filtering is set but can't find ar_data_quality in metadata: {metadata}")
             return audio, window_ids, num_windows
+        elif not metadata["ar_data_quality"]:
+            # new meta use {} as default ar_data_quality
+            return audio, window_ids, num_windows
         else:
             # Only work for MCC40M numpy
             genre = "-".join(os.path.basename(x["__url__"]).split("-")[:-1])
+            if genre not in self.ar_filtering.genres:
+                genre = x["__url__"].split("genre=")[-1].split("/")[0]
             if genre not in self.ar_filtering.genres:
                 print(f"WARNING: can't find genre {genre} in ar_filtering's genres: {self.ar_filtering.genres}")
                 return audio, window_ids, num_windows

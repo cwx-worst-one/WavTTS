@@ -14,6 +14,7 @@ import importlib
 from recipes.bigmusic.utils.metrics_asr import wav2lyrics, edit_distance
 from recipes.bigmusic.utils.model_initializer import run_2ar
 from itertools import zip_longest
+from recipes.bigmusic.lightning.semantic_modules import SemanticModule, process_eos_indexes
 
 def run_wer(wavs, lyrics, verbose=True):
     wer_results = []
@@ -110,25 +111,10 @@ class SemanticInferenceModule(pl.LightningModule):
                 f"MCS: {m}\nWER: {w}\nActual transcript: {a}\nGreedy transcript: {g}"
             )
         return torch.tensor(wer_results), mcs, metrics
-    
-    def process_eos_indexes(self, semantic_samples):
-        semantic_frame_rate = self.semantic_module.extra_params.semantic_frame_rate
-        sample_rate = self.extra_params.sample_rate
-        bs = semantic_samples.shape[0]
-        eos_id = self.semantic_module.target_embedder.eos_id
-        eos_index_list = []
-        if eos_id is not None:
-            eos_padding_id = 0
-            eos_mask = torch.cumsum(semantic_samples == eos_id, 1) > 0
-            semantic_samples[eos_mask] = eos_padding_id
-            token2wav_rate = int(sample_rate / semantic_frame_rate)
-            eos_index_list = ((semantic_samples == eos_padding_id).bool().cumsum(axis=1) == 0).bool().sum(axis=1) * token2wav_rate
-        return semantic_samples, eos_index_list
-
 
     def _predict_step(self, batch, round, batch_idx):
         semantic_samples = self.semantic_module.predict(batch, self.extra_params)
-        semantic_samples, eos_index_list = self.process_eos_indexes(semantic_samples)
+        semantic_samples, eos_index_list = process_eos_indexes(semantic_samples, self.semantic_module, self.extra_params.sample_rate)
         wavs = self.decoding_fn(self.requires, semantic_samples, self.decoding_params)
         
         batch['generated_audio'] = wavs

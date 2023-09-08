@@ -1,0 +1,218 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 43
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+# running parameters
+log_dir: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl
+asset_dir: recipes/diffusion/assets
+checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_13/checkpoints/diffusion-step=252999.ckpt
+
+run_opts:
+    fast_dev_run: False
+    tensorboard_dir: !ref <log_dir>
+    log_name: "diffusion"
+    version: "model_13_part2"
+    strategy: ddp_find_unused_parameters_false #!new:pytorch_lightning.strategies.ddp.DDPStrategy static_graph: True
+    precision: 32
+    log_every_n_steps: 10
+    num_steps: 6000000
+    save_every_n_train_steps: 1000
+    val_check_interval: 1000
+    val_output_samples_dir: "generated_samples"
+
+training_params:
+    sample_rate: 24000
+    noise_range: [0, 1.0]
+    train_batch_size: 16
+    train_num_workers: 8
+    val_batch_size: 8
+    val_num_workers: 4
+    gradient_clip_val: 1.0
+    learning_rate: 0.00008
+    weight_decay: 0.005
+    duration: 10
+    min_volume_threshold: 0.05
+    loudness_ratio_threshold: 0.2
+    sample_buffer_size: 256
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+# dataloader configuration
+ar_filtering: !new:recipes.musiclm.transforms.musiclm.ARFiltering
+    genre_stats_fname: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/stats/genre_quantile_stats.pkl"
+    semantic_diversity_range: (10, 90)
+    semantic_probs_range: (10, 90)
+
+train_dataset: !new:recipes.musiclm.datasets.mcc.WrappedMCC40MDataset
+    url2index_list:
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-A-alternative-indie+alternative-rock+experimental+indie-pop+latin+metal+r-b-soul+reggae+sertanejo+trap-rap.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-A-blues+childhood+country+devotional+k-pop+soundtrack+trance+world-music.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-A-classical.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-A-easy-listening.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-A-electronic+techno.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-A-folk+indie-folk.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-A-hip-hop-rap.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-A-jazz.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-A-new-age.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-A-pop.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-A-rock.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-B-alternative-indie+alternative-rock+experimental+indie-pop+latin+metal+r-b-soul+reggae+sertanejo+trap-rap.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-B-blues+childhood+country+devotional+k-pop+soundtrack+trance+world-music.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-B-classical.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-B-easy-listening.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-B-electronic+techno.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-B-folk+indie-folk.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-B-hip-hop-rap.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-B-jazz.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-B-new-age.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-B-pop.txt"
+        - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_merge/nonvocal-B-rock.txt"
+    weights:
+        - 0.33
+        - 0.66
+        - 1.33
+        - 0.33
+        - 0.66
+        - 0.66
+        - 0.66
+        - 1.33
+        - 0.66
+        - 1.33
+        - 0.66
+        - 0.33
+        - 0.66
+        - 1.33
+        - 0.33
+        - 0.66
+        - 0.66
+        - 0.66
+        - 1.33
+        - 0.66
+        - 1.33
+        - 0.66
+
+    sample_rate: !ref <training_params[sample_rate]>
+    duration: !ref <training_params[duration]>
+    audio_key: "audio.npy"
+    min_volume_threshold: !ref <training_params[min_volume_threshold]>
+    loudness_ratio_threshold: !ref <training_params[loudness_ratio_threshold]>
+    ar_filtering: !ref <ar_filtering>
+    aed_filtered: True
+    max_num_crops: 6
+    resampled: True
+    shardshuffle: True
+    seed: !ref <seed>
+    avoid_vocal: False
+    use_pipe: True
+
+
+val_dataset: !new:recipes.diffusion.dataset.google_prompt_val.GooglePromptVal
+    num_samples: 80
+
+# datamodule configuration
+pl_datamodule: !new:recipes.diffusion.modules.pl_datamodule_mcc40m.DataModule
+    train_dataset: !ref <train_dataset>
+    val_dataset: !ref <val_dataset>
+    train_batch_size: !ref <training_params[train_batch_size]>
+    val_batch_size: !ref <training_params[val_batch_size]>
+    train_num_workers: !ref <training_params[train_num_workers]>
+    val_num_workers: !ref <training_params[val_num_workers]>
+    sample_buffer_size: !ref <training_params[sample_buffer_size]>
+    num_steps_per_val: 4
+
+# training module configuration
+optimizer_cls: !name:torch.optim.AdamW
+    lr: !ref <training_params[learning_rate]>
+    weight_decay: !ref <training_params[weight_decay]>
+
+scheduler_cls: !name:torch.optim.lr_scheduler.LambdaLR
+    lr_lambda: !name:recipes.diffusion.utils.lr_schedulers.lr_lambda
+        warmup_steps: 0
+        decay_factor: 0.9
+        decay_interval: 200000
+
+pl_module: !apply:recipes.diffusion.modules.pl_module.DiffusionModule.load_from_checkpoint
+    checkpoint_path: !ref <checkpoint_path>
+# pl_module: !new:recipes.diffusion.modules.pl_module.DiffusionModule
+#     seed: !ref <seed>
+    diffusion_model: !new:recipes.diffusion.models.tnt.TNTDiffusionNetwork
+        input_dim: 32
+        feature_dim: 1024
+        context_dim: 1
+        depth: 16
+        segment_size: 64
+        segment_stride: 64
+        dropout: 0
+        mulan_cfg_prob: 0.25
+        semantic_cfg_prob: 0.25
+        use_checkpoint: False
+    target_dim: 32
+    num_chunks: 1
+    chunk_length: 1250
+    noise_range: !ref <training_params[noise_range]>
+    sample_rate: !ref <training_params[sample_rate]>
+    asset_dir: !ref <asset_dir>
+    model_name: model
+    optimizer_cls: !ref <optimizer_cls>
+    scheduler_cls: !ref <scheduler_cls>
+    mulan_model:
+        model_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/jitong/mos_model/mulan_and_ss/mulan-step=036000-median_rank_0=127-kaggle.ckpt
+    mulan_centers:
+        model_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/jitong/mos_model/mulan_and_ss/kmeans_minibatch_codebook-mulan1b_g4_mix_127-1024x12.npy
+    semantic_model:
+        model_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/jitong/mos_model/mulan_and_ss/w2v/2.1/semantic.jit.pt
+    semantic_centers:
+        model_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/jitong/mos_model/mulan_and_ss/w2v/2.1/centroids_epoch_10.npy
+    vocoder_model:
+        model_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/soundstream-step=374999-val_sdr=12.9557.ckpt
+    val_output_samples_dir: !ref <run_opts[val_output_samples_dir]>
+
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[tensorboard_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+
+checkpoint: !new:pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: step
+    mode: max
+    save_top_k: 5
+    every_n_train_steps: !ref <run_opts[save_every_n_train_steps]>
+    save_last: True
+    filename: diffusion-{step:06d}
+
+lr_monitor: !new:pytorch_lightning.callbacks.LearningRateMonitor
+    logging_interval: step
+
+plugins:
+    - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    num_sanity_val_steps: 0
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    accelerator: auto
+    devices: auto
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False  # warning: setting to True can cause slowdowns
+    strategy: !ref <run_opts[strategy]>
+    enable_model_summary: True
+    max_steps: !ref <run_opts[num_steps]>
+    val_check_interval: !ref <run_opts[val_check_interval]>
+    precision: !ref <run_opts[precision]>
+    log_every_n_steps: !ref <run_opts[log_every_n_steps]>
+    use_distributed_sampler: False
+    sync_batchnorm: True
+    logger: !ref <logger>
+    gradient_clip_val: !ref <training_params[gradient_clip_val]>
+    callbacks:
+        - !ref <checkpoint>
+        - !ref <lr_monitor>
+        - !new:recipes.diffusion.utils.ema.EMA
+          decay: 0.999
+    plugins: !ref <plugins>

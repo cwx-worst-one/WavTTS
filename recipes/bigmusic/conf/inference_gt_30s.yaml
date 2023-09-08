@@ -73,7 +73,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.GTInferenceModule
                     cache_dir: !ref <run_opts[cache_dir]>
         diffusion_modules:
             diffusion:
-                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/model_14_part2/checkpoints/last.ckpt
+                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/model_14_fix_rot/checkpoints/last.ckpt
                 initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
                     cache_dir: !ref <run_opts[cache_dir]>
             sampler:

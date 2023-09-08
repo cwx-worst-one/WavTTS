@@ -5,15 +5,9 @@ import soundfile as sf
 import pytorch_lightning as pl
 from collections import OrderedDict
 from einops import rearrange, repeat
-from recipes.diffusion.models.semantic_model.utils import (
-    init_wav2vec, 
-    init_semantic_centers,
-    w2v_bert_tokenization
-)
 from recipes.diffusion.models.mulan_model.utils import init_mulan, init_mulan_centers, mulan_inference_wrapper
 from recipes.diffusion.models.vocoder_model.utils import init_vocoder, init_vocoder_yongye
-from recipes.diffusion.models.tnt import TNTDiffusionNetwork
-from recipes.diffusion.models.diffusion import ARVSampler
+from recipes.diffusion.models.diffusion_v2 import ARVSampler
 
 torch.backends.cuda.matmul.allow_tf32 = True
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -64,7 +58,7 @@ class DiffusionModule(pl.LightningModule):
             self, 
             seed,
             diffusion_model,
-            target_dim,
+            input_dim,
             num_chunks,
             chunk_length,
             noise_range,
@@ -75,8 +69,6 @@ class DiffusionModule(pl.LightningModule):
             scheduler_cls,
             mulan_model,
             mulan_centers,
-            semantic_model,
-            semantic_centers,
             vocoder_model,
             val_output_samples_dir,
         ):
@@ -88,12 +80,14 @@ class DiffusionModule(pl.LightningModule):
         
         self.model = diffusion_model 
         self.sampler = ARVSampler(
-            in_channels=target_dim,
+            in_channels=input_dim,
             length=num_chunks*chunk_length,
             num_splits=num_chunks,
         )
         # custom recorder for training step due to GAN training
         self.current_step = 0
+
+        self.audio_mask_emb = torch.nn.Parameter(torch.randn(32))
     
     def on_fit_start(self):
         # init required models
@@ -109,21 +103,9 @@ class DiffusionModule(pl.LightningModule):
             device=self.device,
             cache_dir=self.hparams.asset_dir,
         )
-        self.semantic_model = init_wav2vec(
-            trainer=self.trainer,
-            path=self.hparams.semantic_model['model_path'],
-            device=self.device,
-            cache_dir=self.hparams.asset_dir,
-        )
         self.vocoder_model = init_vocoder(
             trainer=self.trainer,
             path=self.hparams.vocoder_model['model_path'],
-            device=self.device,
-            cache_dir=self.hparams.asset_dir,
-        )
-        self.semantic_centers = init_semantic_centers(
-            trainer=self.trainer,
-            path=self.hparams.semantic_centers['model_path'],
             device=self.device,
             cache_dir=self.hparams.asset_dir,
         )
@@ -187,32 +169,6 @@ class DiffusionModule(pl.LightningModule):
         return mulan_tokens
 
     @torch.no_grad()
-    def get_semantic_embs(self, x):
-        # input x has shape (b, c, t)
-        self.semantic_model["ssl_frontend"].eval()
-        self.semantic_model["semantic"].eval()
-        b, _, t = x.size()
-        feats, feat_mask = self.semantic_model["ssl_frontend"](
-            x[:, 0], torch.LongTensor([t]).repeat([b]).to(x.device)
-        )
-        w2v_embeds, _ = self.semantic_model["semantic"](feats, feat_mask)
-
-        return w2v_embeds.detach()
-
-    @torch.no_grad()
-    def get_semantic_tokens(self, x):
-        self.semantic_model["ssl_frontend"].eval()
-        self.semantic_model["semantic"].eval()
-        wav2vec_tokens = w2v_bert_tokenization(
-            frontend=self.semantic_model["ssl_frontend"],
-            w2v_model=self.semantic_model["semantic"],
-            wavs=x[:, 0],
-            centers=self.semantic_centers["semantic_centers"],
-            device=x.device,
-        )
-        return wav2vec_tokens.detach()
-
-    @torch.no_grad()
     def get_vocoder_embs(self, x):
         # input x has shape (b, c, t)
         self.vocoder_model["model"].eval()
@@ -239,10 +195,10 @@ class DiffusionModule(pl.LightningModule):
         with torch.autocast(device_type="cuda", enabled=False):
             # context
             mulan_tokens = self.get_mulan_tokens(batch['audio'][:, 0].float(), domain='audio')
-            semantic_tokens = self.get_semantic_tokens(batch['audio'].float())
             # target
             vocoder_embs = self.get_vocoder_embs(batch['audio'].float())
-        
+
+
             # diffusion training
             b, d, l = vocoder_embs.shape
             et = torch.randn_like(vocoder_embs)
@@ -252,7 +208,6 @@ class DiffusionModule(pl.LightningModule):
             t = torch.rand(size=[b, 1, self.hparams.num_chunks], device=self.device, dtype=vocoder_embs.dtype)
             t = (lower_bound - upper_bound) * t + upper_bound
 
-        
             t = repeat(t, 'b 1 n -> b 1 (n l)', l=self.hparams.chunk_length)
 
             angles = math.pi /2. * t
@@ -260,12 +215,42 @@ class DiffusionModule(pl.LightningModule):
         
             xt = alphas * vocoder_embs + deltas * et
             vt = alphas * et - deltas * vocoder_embs
+
+            # multi-task
+            is_causal = False
+            if torch.rand(1) < 0.5:
+                conditional_signal = vocoder_embs.clone()
+                # select starting point and mask [20%-80 %]
+                mask_percent = torch.rand(size=[b])
+                mask_percent = (0.2 - 0.8) * mask_percent + 0.8
+                mask_point = (mask_percent * self.hparams.chunk_length).int()
+
+                mask_channel = torch.ones(size=[b, 1, self.hparams.chunk_length], device=self.device)
+                # base on mask point, mask_channel set to 0
+                for i in range(b):
+                    mask_channel[i, :, mask_point[i]:] = 0
+                    mask = repeat(self.audio_mask_emb, 'd -> d n', n=(self.hparams.chunk_length - mask_point[i]))
+                    conditional_signal[i, :, mask_point[i]:] = mask
+                condition_signal = torch.cat([mask_channel, conditional_signal], dim=1)
+                
+                xt = torch.cat([xt, condition_signal], dim=1)
+                is_causal = True
+            else:
+                # bidirection or unidirection
+                if torch.rand(1) < 0.5:
+                    is_causal = True
+
+                conditional_signal = repeat(self.audio_mask_emb, 'd -> b d n', b =b, n=(self.hparams.chunk_length))
+                mask_channel = torch.zeros(size=[b, 1, self.hparams.chunk_length], device=self.device)
+                condition_signal = torch.cat([mask_channel, conditional_signal], dim=1)
+                xt = torch.cat([xt, condition_signal], dim=1)
+
         
         vt_pred = self.model(
             xt, 
             t, 
             mulan_context=mulan_tokens,
-            semantic_context=semantic_tokens,
+            is_causal=is_causal,
         )
 
         with torch.autocast(device_type="cuda", enabled=False):
@@ -303,28 +288,35 @@ class DiffusionModule(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         with torch.autocast(device_type="cuda", enabled=False):
             # context
-            semantic_tokens, prompts = batch
+            _, prompts = batch
             mulan_tokens = self.get_mulan_tokens(
                 list(prompts), 
                 domain='text'
             )
 
+            # Sample start
+            xt = torch.randn(len(mulan_tokens), 32, self.hparams.chunk_length, device=self.device)
+            conditional_signal = repeat(self.audio_mask_emb, 'd -> b d n', b=len(mulan_tokens), n=(self.hparams.chunk_length))
+            mask_channel = torch.zeros(size=[len(mulan_tokens), 1, self.hparams.chunk_length], device=self.device)
+            condition_signal = torch.cat([mask_channel, conditional_signal], dim=1)
+            xt = torch.cat([xt, condition_signal], dim=1)
+
             # diffusion sampling
             pred_emb = self.sampler(
                 model=self.model, 
                 mulan_context=mulan_tokens,
-                semantic_context=semantic_tokens,
-                num_items=semantic_tokens.shape[0], # batch size: how many samples to generate
+                num_items=len(mulan_tokens), # batch size: how many samples to generate
                 num_chunks=self.hparams.num_chunks,
                 num_steps=20, # diffusion steps
-                start=None,
+                start=xt,
                 show_progress=False,
                 angle_schedule='linear',
                 classifier_free_guidance=2.5,
+                is_causal=True,
             )
             # generate audio
             wavs_g = self.vocoder_embs_to_wav(pred_emb.float())
-            
+
         # save the output wavs
         for _id, wav in zip(prompts, wavs_g):
             sf.write(

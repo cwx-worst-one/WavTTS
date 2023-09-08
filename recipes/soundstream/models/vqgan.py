@@ -191,7 +191,7 @@ class VQGAN_KL_new(nn.Module):
         )
 
         self.mean_logvar_conv = nn.Conv1d(self.encoder.enc_dim, latent_dim*2, 1)
-
+        self.latent_drop = nn.Dropout(0.05)
         self.decoder = Decoder(
             input_channel=latent_dim,
             channels=decoder_base_dim,
@@ -202,6 +202,7 @@ class VQGAN_KL_new(nn.Module):
     def forward(self, x,  deterministic=False):
         encoder_out = self.encode(x)
         sample, kl_loss, std_mean = self.sample(encoder_out, deterministic=deterministic)
+        sample = self.latent_drop(sample)
         decoder_out = self.decode(sample)
         return decoder_out, kl_loss, std_mean
 

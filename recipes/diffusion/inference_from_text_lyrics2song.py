@@ -16,15 +16,12 @@ from einops import rearrange, repeat
 import numpy as np
 import torchaudio
 from recipes.diffusion.utils.utils import download_checkpoint
-# from recipes.bigmusic.lightning.semantic_modules import SemanticModule
-# TODO: (AS) switch this to unified model once training is complete
-from recipes.bigmusic.dev.v0.lightning.semantic_modules_v0 import SemanticModule
-from recipes.bigmusic.dev.qq.lightning.semantic_modules_qq import MixSemanticModule
+from recipes.bigmusic.lightning.semantic_modules import SemanticModule, process_eos_indexes
 from recipes.musiclm.requires.mulan.mulan_infer_g4 import (
     create_mulan_model,
     mulan_inference,
 )
-from recipes.diffusion.models.diffusion_model.utils import init_diffusion
+from recipes.diffusion.models.diffusion_model.utils import init_diffusion, run_diffusion
 from recipes.diffusion.models.vocoder_model.utils import init_vocoder
 from recipes.bigmusic.datasets.transforms.lyrics import LyricsTokenTransform
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -34,6 +31,33 @@ def normalize_text(text):
     text = text.replace("&", " and ")
     text = text.replace("/", " ")    
     return text.translate(str.maketrans("", "", nlp_punctuation))
+
+def rewrite_metadata(metadata, type="Vocal"):        
+    mood = metadata.get('final_mood')
+    genre = metadata.get('final_genre')
+    gender = metadata.get('merge_aed')
+    text = ""
+    if type == "Vocal":
+        text = "A "
+        if mood is not None and mood != 'nan':
+            text += mood.lower() + " "
+        if genre is not None and genre != 'nan':
+            text += genre.lower() + " "
+        text += "song"
+        if gender is not None and gender != 'nan':
+            if 'Female' in gender:
+                text += " with female vocal"
+            elif 'Male' in gender:
+                text += " with male vocal"
+        text += "."
+    elif type == "Instrumental":
+        text = ""
+        if mood is not None and mood != 'nan':
+            text += mood.lower() + " "
+        if genre is not None and genre != 'nan':
+            text += genre.lower() + " "
+        text += "music."
+    return text
 
 def clip(x: Tensor, dynamic_threshold: float = 0.0):
     if dynamic_threshold == 0.0:
@@ -83,6 +107,7 @@ class ARVSampler(nn.Module):
             model: nn.Module,
             semantic_context: torch.tensor,
             current: Tensor, 
+            prev_noise: Optional[Tensor] = None,
             num_steps: int = 20, 
             bf16_portion: float = 0.,
             first: bool = False,
@@ -104,19 +129,22 @@ class ARVSampler(nn.Module):
         B, C, T = current.shape
 
         init_emb = current.clone()
-        et = torch.randn_like(init_emb)
 
         sigma = 1.
         for i in progress_bar:
-            
+    
             sigma_i = torch.ones(B, 1, T, device=self.device) * sigma
 
             if not first:
                 angles = math.pi /2. * sigma_i
                 alphas, deltas = torch.cos(angles), torch.sin(angles)
-                xt = alphas * init_emb + deltas * et
-                current[:, :, :625] = xt[:, :, :625]
-
+                xt = alphas * init_emb + deltas * prev_noise
+                # if i == 0:
+                current[:, :, :-625] = xt[:, :, :-625]
+                # elif i > 0:
+                #     current[:, :, :-625] = (current[:, :, :-625] + xt[:, :, :-625]) /2 #
+                
+     
             if i < int(num_steps*bf16_portion):
                 enabled = True
             else:
@@ -178,39 +206,51 @@ class ARVSampler(nn.Module):
 
         # Sample initial chunks
         b, c, t = num_items, self.in_channels, self.length
-        pred_embs = []
 
         # Sample initial chunks
         current_emb = torch.randn(b, c, t, device=self.device)
         semantic_hop_size = 125
-        overlap_size= 625
+        diffusion_hop_size = 625
+        tmp_emb = torch.zeros(b, c, 3750 + diffusion_hop_size *(num_chunks - 1), device=self.device)
+        avg_cnt = torch.zeros(b, c, 3750 + diffusion_hop_size *(num_chunks - 1), device=self.device)
+        prev_noise = current_emb
+        output_emb = []
         for i in range(num_chunks):
 
             pred_emb = self.sample_loop(
                 model=model,
-                semantic_context=semantic_context[:, 0 + (i*semantic_hop_size):250 + (i*semantic_hop_size)],
+                semantic_context=semantic_context[:, 0 + (i*semantic_hop_size):750 + (i*semantic_hop_size)],
                 current=current_emb,
+                prev_noise=prev_noise[..., 0 + (i*diffusion_hop_size):3750 + (i*diffusion_hop_size)],
                 num_steps=num_steps,
                 bf16_portion=bf16_portion,
                 angle_schedule=angle_schedule,
                 classifier_free_guidance=classifier_free_guidance,
                 first=(i==0),
             )
-            pred_embs.append(pred_emb)
-            current_emb = torch.cat([pred_emb[:, :, overlap_size:], torch.randn(b, c, overlap_size, device=self.device)], dim=-1)
+            # if i == 0:
+            #     output_emb.append(pred_emb)
+            # else:
+            #     output_emb.append(pred_emb[..., -diffusion_hop_size:])
 
-        tmp_emb = torch.zeros(b, c, 1250 + overlap_size *(num_chunks - 1), device=self.device)
+            tmp_emb[..., 0 + (i*diffusion_hop_size):3750 + (i*diffusion_hop_size)] += pred_emb
+            avg_cnt[..., 0 + (i*diffusion_hop_size):3750 + (i*diffusion_hop_size)] += 1
 
-        for i, emb in enumerate(pred_embs):
-            tmp_emb[..., 0 + (i*overlap_size):1250 + (i*overlap_size)] += emb
+            prev_emb = pred_emb[..., -diffusion_hop_size:]#tmp_emb[..., 0 + ((i+1)*diffusion_hop_size):1250 + (i*diffusion_hop_size)] / avg_cnt[...,  0 + ((i+1)*diffusion_hop_size):1250 + (i*diffusion_hop_size)]
+            # prev_emb = torch.cat(output_emb, dim=-1)[..., -1000:]
+            new_noise = torch.randn(b, c, diffusion_hop_size, device=self.device)
 
-        tmp_emb[..., overlap_size:-overlap_size] /= 2
+            prev_noise = torch.cat([prev_noise, new_noise], dim=-1)
+            current_emb = torch.cat([prev_emb, new_noise], dim=-1)
+
+        tmp_emb /= avg_cnt
         pred_emb = tmp_emb
         return pred_emb
+        # return torch.cat(output_emb, dim=-1)
 
 def init_sampler(checkpoint_path, local_rank, cache_dir):
     device = torch.device(f"cuda:{local_rank}")
-    sampler = ARVSampler(32, 1250, 1)
+    sampler = ARVSampler(32, 3750, 1)
     sampler.set_device(device)
     return { "sampler": sampler }
 
@@ -224,12 +264,12 @@ if __name__ == '__main__':
     parser.add_argument(
         '--num_chunks',
         type=int,
-        default=1
+        default=1,
     )
     parser.add_argument(
         '--bf16_portion',
         type=float,
-        default=1.0
+        default=0.0
     )
     parser.add_argument(
         '--schedule_slope',
@@ -244,7 +284,12 @@ if __name__ == '__main__':
     parser.add_argument(
         '--batch_size',
         type=int,
-        default=5,
+        default=2,
+    )
+    parser.add_argument(
+        '--samples_per_prompt',
+        type=int,
+        default=4,
     )
     parser.add_argument(
         '--input_text_path', 
@@ -277,29 +322,34 @@ if __name__ == '__main__':
         default='hdfs://harunava/home/byte_speech_sv/weitsung.lu/lyrics2song_30s_ckpts/mulan-step=014000-median_rank_1=160-kaggle.ckpt'
     )
     parser.add_argument(
+        '--lyrics_max_seq_len',
+        type=int,
+        default=400,
+    )
+    parser.add_argument(
         '--semantic_model_path',
         type=str,
-        default='/mnt/bn/audio-diffusion/jt/model_archive/vocalmusic/semantic_model_mulan/semantic_chroma_text_from_scratch_artist_gender_l24_h16_b8_g32_2em4/checkpoints/step=053000-val_accu_0=7.79.ckpt'
+        default='/mnt/bn/lyrics-to-song/qq/logs/semantic_model_mulan_text_07B/varlen30_tag3_bs12_07B_6w_v1/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_0',
         type=str,
-        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_part2/checkpoints/last.ckpt'
+        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_1',
         type=str,
-        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_part2/checkpoints/last.ckpt'
+        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_2',
         type=str,
-        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_part2/checkpoints/last.ckpt'
+        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_3',
         type=str,
-        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_part2/checkpoints/last.ckpt'
+        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--vocoder_model_path',
@@ -326,25 +376,19 @@ if __name__ == '__main__':
     }
 
     local_rank = str(device).split(':')[-1]
+
     # Mulan
     mulan_model_path = download_checkpoint(REMOTE_PATHS['mulan_model_path'], cache_dir=asset_path)
     mulan_model = create_mulan_model(mulan_model_path, device=device)
 
-    # 10s
-    if args.num_chunks == 1:
-        semantic_module_cls = SemanticModule
-    # 30s
-    else:
-        semantic_module_cls = MixSemanticModule
-    
     # Semantic model
     semantic_model_path = download_checkpoint(REMOTE_PATHS['semantic_model_path'], cache_dir=asset_path)
-    semantic_module = semantic_module_cls.load_from_checkpoint(semantic_model_path).to(device).eval()
+    semantic_module = SemanticModule.load_from_checkpoint(semantic_model_path).to(device).eval()
     semantic_module.requires = { "mulan_infer_fn": mulan_inference, "mulan": mulan_model }
 
     # lyrics tokenizer
-    lyrics_max_seq_len = semantic_module.extra_params.lyrics_max_seq_len
-    lyrics_tokenizer = LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len=lyrics_max_seq_len)
+    lyrics_max_seq_len = semantic_module.extra_params.get("lyrics_max_seq_len", 400)
+    lyrics_tokenizer = LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len=lyrics_max_seq_len, truncate_long_lyrics=True)
 
     # diffusion
     diffusion_model = {}
@@ -362,84 +406,87 @@ if __name__ == '__main__':
         diffusion_model[key] = diffusion_checkpoint_paths[ckpt_name]
 
     
-    sampler = init_sampler(None, local_rank, cache_dir=asset_path)['sampler']
-    vocoder_model = init_vocoder(REMOTE_PATHS['vocoder_model_path'], local_rank, cache_dir=asset_path)['vocoder']
+    requires = {
+        'diffusion': diffusion_model,
+        **init_sampler(None, local_rank, cache_dir=asset_path),
+        **init_vocoder(REMOTE_PATHS['vocoder_model_path'], local_rank, cache_dir=asset_path)
+    }
+    sample_rate = 24000
 
     # input text. 
     # TODO: move to a separate file
-    mood_prompts = ['', '', '']
-    genre_prompts = ['dream pop', 'hiphop jazz', 'acoustic country']
+
+    style_prompts = [
+        {
+            "final_mood": 'Chill',
+            "final_genre": 'Dream Pop',
+            'merge_aed': 'Female'
+        },
+        {
+            "final_mood": 'relax',
+            "final_genre": 'HipPop',
+            'merge_aed': 'Male'
+        },
+        {
+            "final_mood": '',
+            "final_genre": 'Acoustic country',
+            'merge_aed': 'Male'
+        },
+    ]
+    prompts = [rewrite_metadata(style_prompt, type="Vocal") for style_prompt in style_prompts]
     
-    prompts = [" ".join([m, g]) for m, g in zip(mood_prompts, genre_prompts)]
-    
-    # lyrics = [
-    #     "won't you talk to me texas, let me hear them drawl, i spent my last five dollars on this one long distance call won't you talk to me texas i got these homesick blues tell me i can come on home to you",
-    #     "it may be factual it may be cool ungain love everybody plays the fool how can you help it when the music starts to play and your ability to reason is swept away oh heaven",
-    #     " i see the crystal raindrops fall and the beauty of it all is when the sun comes shining through to make those rainbows in my mind when i think of you sometime and i wanna spend some time with you"
-    #     ] 
     lyrics = [
-        "Hey Jude, don't make it bad. Take a sad song and make it better."
-    ] * 3
-    lyrics = [{'lyrics': l} for l in lyrics]
+        "won't you talk to me texas, let me hear them drawl, i spent my last five dollars on this one long distance call won't you talk to me texas i got these homesick blues tell me i can come on home to you",
+        "it may be factual it may be cool ungain love everybody plays the fool how can you help it when the music starts to play and your ability to reason is swept away oh heaven",
+        " i see the crystal raindrops fall and the beauty of it all is when the sun comes shining through to make those rainbows in my mind when i think of you sometime and i wanna spend some time with you"
+        ] 
+    # lyrics = [
+    #     "Hey Jude, don't make it bad. Take a sad song and make it better."
+    # ] * 3
+    lyrics = []
+    prompts = []
+    import csv
+    csv_file = '/mnt/bn/audio-diffusion/data/mixture_prompts/multi-tag-30s.csv'
+    with open(csv_file, newline='') as csvfile:
+        csvreader = csv.reader(csvfile)
+        next(csvreader)
+        for row in csvreader:
+            prompts.append(row[0])
+            lyrics.append(row[1])
+    raw_lyrics = [normalize_text(l) for l in lyrics]
+    lyrics = [{'lyrics': normalize_text(l)} for l in lyrics]
     lyrics_tokens = [lyrics_tokenizer(lyric)['lyrics_tokens'] for lyric in lyrics]
     lyrics_tokens = torch.stack(lyrics_tokens).to(device)
 
     # inference
     start_time = time()
+    diffusion_params = vars(args)
     with torch.no_grad():
         for i in range(0, len(prompts), args.batch_size):
             print(f"generating {i} to {i + args.batch_size}")
 
             # Process the input lyrics and style prompt
             _lyrics_tokens = lyrics_tokens[i:(i + args.batch_size)]
+            _raw_lyrics = raw_lyrics[i:(i + args.batch_size)]
             _prompts = prompts[i:(i + args.batch_size)]
 
             inputs_embeds = semantic_module.prepare_inputs_embeddings(batch={'conditions': "style_text,lyrics_tokens", 'lyrics_tokens': _lyrics_tokens, 'style_text': _prompts})
-            semantic_samples = semantic_module.super_predict(inputs_embeds, 250 + 125*(args.num_chunks - 1), 1.0)
-            if args.num_chunks > 1:
-                eos_id = semantic_module.target_embedder.eos_id
-                if eos_id is not None:
-                    eos_index = torch.cumsum(semantic_samples == eos_id, 1) > 0
-                    semantic_samples[eos_index] = 0   
+            semantic_samples = semantic_module.super_predict(inputs_embeds, 750 + 125*(args.num_chunks - 1), 1.0)
 
+            semantic_samples, eos_index_list = process_eos_indexes(semantic_samples, semantic_module, sample_rate=sample_rate)
             diffusion_start = time()
-            pred_emb = sampler(
-                model=diffusion_model,
-                semantic_context=semantic_samples,
-                num_items=semantic_samples.shape[0],
-                num_chunks=args.num_chunks,
-                num_steps=args.diffusion_steps,
-                bf16_portion=args.bf16_portion,
-                start=None,
-                show_progress=True,
-                angle_schedule='linear',
-                schdeule_slope=args.schedule_slope,
-                classifier_free_guidance=args.guidance_scale,
-            ).detach()
+            wavs_g = run_diffusion(requires, semantic_samples, params=diffusion_params)
             print('d ', time() - diffusion_start)
-            wavs_g = vocoder_model.decode(pred_emb.float()).detach()
 
-            if args.num_chunks > 1:
-                for wav_g, text, eos in zip(wavs_g, _prompts, eos_index):
-                    # find first True in eos
-                    try:
-                        eos = torch.nonzero(eos)[0][0]
-                        wav_g[..., eos*960:] = 0
-                    except:
-                        pass
+            for wav_g, ly, text, eos in zip(wavs_g, _raw_lyrics, _prompts, eos_index_list):
+                if wav_g.dim() == 1:
+                    wav_g = wav_g.unsqueeze(0)
+                if eos is not None:
+                    wav_g = wav_g[:, :eos]
 
-                    torchaudio.save(
-                        f'{args.output_dir_path}/{text[:100]}.wav',
-                        wav_g.cpu(),
-                        24000,
-                    )
-            else:
-                for wav_g, text in zip(wavs_g, _prompts):
-
-                    torchaudio.save(
-                        f'{args.output_dir_path}/{text[:100]}.wav',
-                        wav_g.cpu(),
-                        24000,
-                    )
-
+                torchaudio.save(
+                    f'{args.output_dir_path}/{text[:50]}_{ly[:200]}.wav',
+                    wav_g.cpu(),
+                    sample_rate,
+                )
     print(f'Inference RTF: {(time() - start_time)/(len(prompts)*10)}')
