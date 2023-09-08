@@ -50,10 +50,10 @@ def _flash_attn_forward(q, k, v, dropout_p, softmax_scale, causal, return_softma
     # if v.stride(-1) != 1:
     #     v = v.contiguous()
     q, k, v = [maybe_contiguous(x) for x in (q, k, v)]
-    out, q, k, v, out_padded, softmax_lse, S_dmask = flash_attn_cuda.fwd(
+    out, q, k, v, out_padded, softmax_lse, score_cummax, S_dmask = flash_attn_cuda.fwd(
         q, k, v, None, dropout_p, softmax_scale, causal, return_softmax, None
     )
-    return out, q, k, v, out_padded, softmax_lse, S_dmask
+    return out, q, k, v, out_padded, softmax_lse, score_cummax, S_dmask
 
 
 def _flash_attn_varlen_forward(
@@ -70,7 +70,16 @@ def _flash_attn_varlen_forward(
     return_softmax,
 ):
     q, k, v = [maybe_contiguous(x) for x in (q, k, v)]
-    out, q, k, v, out_padded, softmax_lse, S_dmask = flash_attn_cuda.varlen_fwd(
+    (
+        out,
+        q,
+        k,
+        v,
+        out_padded,
+        softmax_lse,
+        score_cummax,
+        S_dmask,
+    ) = flash_attn_cuda.varlen_fwd(
         q,
         k,
         v,
@@ -88,7 +97,7 @@ def _flash_attn_varlen_forward(
     )
     # if out.isnan().any() or softmax_lse.isnan().any():
     #     breakpoint()
-    return out, q, k, v, out_padded, softmax_lse, S_dmask
+    return out, q, k, v, out_padded, softmax_lse, score_cummax, S_dmask
 
 
 def _flash_attn_backward(
@@ -166,7 +175,16 @@ class FlashAttnQKVPackedFunc(torch.autograd.Function):
         rng_state = torch.cuda.get_rng_state() if dropout_p > 0 else None
         if softmax_scale is None:
             softmax_scale = qkv.shape[-1] ** (-0.5)
-        out, q, k, v, out_padded, softmax_lse, S_dmask = _flash_attn_forward(
+        (
+            out,
+            q,
+            k,
+            v,
+            out_padded,
+            softmax_lse,
+            score_cummax,
+            S_dmask,
+        ) = _flash_attn_forward(
             qkv[:, :, 0],
             qkv[:, :, 1],
             qkv[:, :, 2],
@@ -179,7 +197,10 @@ class FlashAttnQKVPackedFunc(torch.autograd.Function):
         ctx.dropout_p = dropout_p
         ctx.softmax_scale = softmax_scale
         ctx.causal = causal
-        return out if not return_softmax else (out, softmax_lse, S_dmask)
+        outs = (out,)
+        if return_softmax:
+            outs += (softmax_lse, score_cummax, S_dmask)
+        return outs
 
     @staticmethod
     def backward(ctx, dout, *args):
@@ -225,7 +246,16 @@ class FlashAttnVarlenQKVPackedFunc(torch.autograd.Function):
         rng_state = torch.cuda.get_rng_state() if dropout_p > 0 else None
         if softmax_scale is None:
             softmax_scale = qkv.shape[-1] ** (-0.5)
-        out, q, k, v, out_padded, softmax_lse, S_dmask = _flash_attn_varlen_forward(
+        (
+            out,
+            q,
+            k,
+            v,
+            out_padded,
+            softmax_lse,
+            score_cummax,
+            S_dmask,
+        ) = _flash_attn_varlen_forward(
             qkv[:, 0],
             qkv[:, 1],
             qkv[:, 2],
@@ -243,7 +273,11 @@ class FlashAttnVarlenQKVPackedFunc(torch.autograd.Function):
         ctx.max_seqlen = max_seqlen
         ctx.softmax_scale = softmax_scale
         ctx.causal = causal
-        return out if not return_softmax else (out, softmax_lse, S_dmask)
+
+        outs = (out,)
+        if return_softmax:
+            outs += (softmax_lse, score_cummax, S_dmask)
+        return outs
 
     @staticmethod
     def backward(ctx, dout, *args):
@@ -284,7 +318,16 @@ class FlashAttnKVPackedFunc(torch.autograd.Function):
         rng_state = torch.cuda.get_rng_state() if dropout_p > 0 else None
         if softmax_scale is None:
             softmax_scale = q.shape[-1] ** (-0.5)
-        out, q, k, v, out_padded, softmax_lse, S_dmask = _flash_attn_forward(
+        (
+            out,
+            q,
+            k,
+            v,
+            out_padded,
+            softmax_lse,
+            score_cummax,
+            S_dmask,
+        ) = _flash_attn_forward(
             q,
             kv[:, :, 0],
             kv[:, :, 1],
@@ -297,7 +340,10 @@ class FlashAttnKVPackedFunc(torch.autograd.Function):
         ctx.dropout_p = dropout_p
         ctx.softmax_scale = softmax_scale
         ctx.causal = causal
-        return out if not return_softmax else (out, softmax_lse, S_dmask)
+        outs = (out,)
+        if return_softmax:
+            outs += (softmax_lse, score_cummax, S_dmask)
+        return outs
 
     @staticmethod
     def backward(ctx, dout, *args):
@@ -348,7 +394,16 @@ class FlashAttnVarlenKVPackedFunc(torch.autograd.Function):
         rng_state = torch.cuda.get_rng_state() if dropout_p > 0 else None
         if softmax_scale is None:
             softmax_scale = q.shape[-1] ** (-0.5)
-        out, q, k, v, out_padded, softmax_lse, S_dmask = _flash_attn_varlen_forward(
+        (
+            out,
+            q,
+            k,
+            v,
+            out_padded,
+            softmax_lse,
+            score_cummax,
+            S_dmask,
+        ) = _flash_attn_varlen_forward(
             q,
             kv[:, 0],
             kv[:, 1],
@@ -369,7 +424,10 @@ class FlashAttnVarlenKVPackedFunc(torch.autograd.Function):
         ctx.max_seqlen_k = max_seqlen_k
         ctx.softmax_scale = softmax_scale
         ctx.causal = causal
-        return out if not return_softmax else (out, softmax_lse, S_dmask)
+        outs = (out,)
+        if return_softmax:
+            outs += (softmax_lse, score_cummax, S_dmask)
+        return outs
 
     @staticmethod
     def backward(ctx, dout, *args):
@@ -421,7 +479,16 @@ class FlashAttnFunc(torch.autograd.Function):
         rng_state = torch.cuda.get_rng_state() if dropout_p > 0 else None
         if softmax_scale is None:
             softmax_scale = q.shape[-1] ** (-0.5)
-        out, q, k, v, out_padded, softmax_lse, S_dmask = _flash_attn_forward(
+        (
+            out,
+            q,
+            k,
+            v,
+            out_padded,
+            softmax_lse,
+            score_cummax,
+            S_dmask,
+        ) = _flash_attn_forward(
             q,
             k,
             v,
@@ -434,7 +501,10 @@ class FlashAttnFunc(torch.autograd.Function):
         ctx.dropout_p = dropout_p
         ctx.softmax_scale = softmax_scale
         ctx.causal = causal
-        return out if not return_softmax else (out, softmax_lse, S_dmask)
+        outs = (out,)
+        if return_softmax:
+            outs += (softmax_lse, score_cummax, S_dmask)
+        return outs
 
     @staticmethod
     def backward(ctx, dout, *args):
@@ -485,7 +555,16 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
         rng_state = torch.cuda.get_rng_state() if dropout_p > 0 else None
         if softmax_scale is None:
             softmax_scale = q.shape[-1] ** (-0.5)
-        out, q, k, v, out_padded, softmax_lse, S_dmask = _flash_attn_varlen_forward(
+        (
+            out,
+            q,
+            k,
+            v,
+            out_padded,
+            softmax_lse,
+            score_cummax,
+            S_dmask,
+        ) = _flash_attn_varlen_forward(
             q,
             k,
             v,
@@ -506,7 +585,10 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
         ctx.max_seqlen_k = max_seqlen_k
         ctx.softmax_scale = softmax_scale
         ctx.causal = causal
-        return out if not return_softmax else (out, softmax_lse, S_dmask)
+        outs = (out,)
+        if return_softmax:
+            outs += (softmax_lse, score_cummax, S_dmask)
+        return outs
 
     @staticmethod
     def backward(ctx, dout, *args):

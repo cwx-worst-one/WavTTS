@@ -107,7 +107,7 @@ class Block(nn.Module):
             ), "dropout_layer_norm is not installed"
             assert isinstance(self.norm1, (nn.LayerNorm, RMSNorm)) and isinstance(
                 self.dropout1, nn.Dropout
-            )
+            ), (type(self.norm1), type(self.dropout1))
 
         # TD [2023-01-07]: TODO: During training, if sequence_parallel is False and dropout != 0.0,
         # then the input to each worker in the tensor parallel group will be different.
@@ -141,6 +141,7 @@ class Block(nn.Module):
         residual: Optional[Tensor] = None,
         mixer_subset=None,
         mixer_kwargs=None,
+        return_attn_probs=False,
     ):
         r"""Pass the input through the encoder layer.
 
@@ -151,6 +152,11 @@ class Block(nn.Module):
                 before applying the query projection. Useful for e.g., ViT where we only care
                 about the CLS token in the last layer.
         """
+        if return_attn_probs:
+            assert self.training and (
+                mixer_kwargs is None
+                or mixer_kwargs.get("inference_params", None) is None
+            ), "only support return_attn_probs=True in training"
         fused_add_norm_fn = (
             dropout_add_rms_norm
             if RMSNorm and isinstance(self.norm1, RMSNorm)
@@ -195,7 +201,20 @@ class Block(nn.Module):
                 mixer_kwargs = {}
             if mixer_subset is not None:
                 mixer_kwargs["mixer_subset"] = mixer_subset
-            hidden_states = self.mixer(hidden_states, **mixer_kwargs)
+            assert not self.mixer.return_residual and not self.return_residual
+            mixer_out = self.mixer(
+                hidden_states, return_attn_probs=return_attn_probs, **mixer_kwargs
+            )
+            if return_attn_probs:
+                assert len(mixer_out) == 2
+                (
+                    hidden_states,
+                    attn_probs,
+                ) = mixer_out  # attn_probs: tuple(lse,score_cummax,dmask)
+            else:
+                assert len(mixer_out) == 1
+                hidden_states = mixer_out[0]
+
             if mixer_subset is not None:
                 residual = residual[:, mixer_subset]
             if not isinstance(self.mlp, nn.Identity):
@@ -236,14 +255,29 @@ class Block(nn.Module):
                         residual_in_fp32=self.residual_in_fp32,
                     )
                 hidden_states = self.mlp(hidden_states)
-            return hidden_states, residual
+            block_outs = (hidden_states, residual)
+            if return_attn_probs:
+                block_outs += (attn_probs,)
         else:
             assert residual is None
             mixer_out = self.mixer(
-                hidden_states, **(mixer_kwargs if mixer_kwargs is not None else {})
+                hidden_states,
+                return_attn_probs=return_attn_probs,
+                **(mixer_kwargs if mixer_kwargs is not None else {}),
             )
-            if self.return_residual:  # mixer out is actually a pair here
+            assert self.return_residual and self.mixer.return_residual
+            # if self.return_residual:  # mixer out is actually a pair here
+            #     mixer_out, hidden_states = mixer_out
+            if return_attn_probs:
+                assert len(mixer_out) == 3
+                (
+                    mixer_out,
+                    hidden_states,
+                    attn_porbs,
+                ) = mixer_out  # attn_probs: tuple(lse,score_cummax,dmask)
+            else:
                 mixer_out, hidden_states = mixer_out
+
             if not self.fused_dropout_add_ln:
                 if self.drop_path1 is not None:
                     hidden_states = self.norm1(
@@ -322,7 +356,10 @@ class Block(nn.Module):
                         rowscale=rowscale2,
                         prenorm=False,
                     )
-            return hidden_states
+            block_outs = (hidden_states,)
+            if return_attn_probs:
+                block_outs += (attn_probs,)
+        return block_outs
 
 
 class ParallelBlock(nn.Module):

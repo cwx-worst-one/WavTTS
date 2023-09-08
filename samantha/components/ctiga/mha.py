@@ -11,6 +11,7 @@ from pytorch_lightning.utilities.rank_zero import rank_zero_warn
 from samantha.utils.ctiga.blockmask import convert_blockmask
 from samantha.utils.ctiga.padding import pad_input, unpad_input
 
+# torch.set_printoptions(threshold=5)
 try:
     # flash_attn_2
     from .ops.flash_attn_2_interface import (
@@ -295,7 +296,14 @@ class FlashSelfAttentionV2(nn.Module):
         self.softmax_scale = softmax_scale
         self.drop = nn.Dropout(attention_dropout)
 
-    def forward(self, qkv, causal=None, cu_seqlens=None, max_seqlen=None):
+    def forward(
+        self,
+        qkv,
+        causal=None,
+        cu_seqlens=None,
+        max_seqlen=None,
+        return_attn_probs=False,
+    ):
         """Implements the multihead softmax attention.
         Arguments
         ---------
@@ -327,6 +335,7 @@ class FlashSelfAttentionV2(nn.Module):
                 self.drop.p if self.training else 0.0,
                 softmax_scale=self.softmax_scale,
                 causal=causal,
+                return_attn_probs=return_attn_probs,
             )
         else:
             return flash_attn_qkvpacked_func(
@@ -334,6 +343,7 @@ class FlashSelfAttentionV2(nn.Module):
                 self.drop.p if self.training else 0.0,
                 softmax_scale=self.softmax_scale,
                 causal=causal,
+                return_attn_probs=return_attn_probs,
             )
 
 
@@ -367,6 +377,7 @@ class FlashCrossAttentionV2(nn.Module):
         max_seqlen=None,
         cu_seqlens_k=None,
         max_seqlen_k=None,
+        return_attn_probs=False,
     ):
         """Implements the multihead softmax attention.
         Arguments
@@ -403,6 +414,7 @@ class FlashCrossAttentionV2(nn.Module):
                 self.drop.p if self.training else 0.0,
                 softmax_scale=self.softmax_scale,
                 causal=causal,
+                return_attn_probs=return_attn_probs,
             )
         else:
             batch_size = q.shape[0]
@@ -414,6 +426,7 @@ class FlashCrossAttentionV2(nn.Module):
                 self.drop.p if self.training else 0.0,
                 causal=causal,
                 softmax_scale=self.softmax_scale,
+                return_attn_probs=return_attn_probs,
             )
 
 
@@ -466,6 +479,7 @@ class SelfAttention(nn.Module):
         attention = torch.softmax(scores, dim=-1, dtype=v.dtype)
         attention_drop = self.drop(attention)
         output = torch.einsum("bhts,bshd->bthd", attention_drop, v)
+
         return output
 
 
@@ -955,6 +969,7 @@ class MHA(nn.Module):
         indices=None,
         mixer_subset=None,
         inference_params=None,
+        return_attn_probs=False,
         **kwargs,
     ):
         """
@@ -973,6 +988,7 @@ class MHA(nn.Module):
                 before applying the query projection. Useful for e.g., ViT where we only care
                 about the CLS token in the last layer.
             inference_params: for generation. Adapted from Megatron-LM (and Apex)
+            return_attn_probs: return attn_probs (softmax(mm(qk)/sqrt(d))) default:False
             https://github.com/NVIDIA/apex/blob/3ff1a10f72ec07067c4e44759442329804ac5162/apex/transformer/testing/standalone_transformer_lm.py#L470
         """
         is_pad = True
@@ -1004,6 +1020,13 @@ class MHA(nn.Module):
             if self.use_flash_attn
             else {"key_padding_mask": key_padding_mask, **kwargs}
         )
+
+        if return_attn_probs:
+            assert (
+                self.use_flash_attn and self.version == 2
+            ), "only support return_attn_probs=True used by FlashAttn2"
+            assert self.training, "only support return_attn_probs=True in training now"
+
         if not self.cross_attn:
             assert x_kv is None and mixer_subset is None
             if not self.return_residual:
@@ -1027,13 +1050,25 @@ class MHA(nn.Module):
                     qkv = self.rotary_emb(qkv)
                     if not is_pad:
                         qkv, _, _, _ = unpad_input(qkv, key_padding_mask)
-
                 if not self.checkpointing:
-                    context = self.inner_attn(qkv, **kwargs)
-                else:
-                    context = torch.utils.checkpoint.checkpoint(
-                        self.inner_attn, qkv, **kwargs
+                    attn_outs = self.inner_attn(
+                        qkv, return_attn_probs=return_attn_probs, **kwargs
                     )
+                else:
+                    attn_outs = torch.utils.checkpoint.checkpoint(
+                        self.inner_attn,
+                        qkv,
+                        return_attn_probs=return_attn_probs,
+                        **kwargs,
+                    )
+
+                if return_attn_probs:
+                    assert (
+                        len(attn_outs) == 4
+                    ), f"Expect 4 but got {len(attn_outs)} when return_attn_probs=True in attention"
+                    context, lse, score_cummax, dmask = attn_outs
+                else:
+                    context = attn_outs[0]
             else:
                 if (
                     not inference_params.fused_ft_kernel
@@ -1050,6 +1085,9 @@ class MHA(nn.Module):
                         None if inference_params.sequence_len_offset == 0 else False
                     )
                     context = self.inner_cross_attn(q, kv, causal=causal)
+                    if isinstance(context, (tuple, list)):
+                        assert len(context) == 1
+                        context = context[0]
                 else:
                     assert inference_params.fused_ft_kernel
                     assert ft_attention is not None
@@ -1106,16 +1144,39 @@ class MHA(nn.Module):
                 ).contiguous()
             if inference_params is None:
                 if not self.checkpointing:
-                    context = self.inner_cross_attn(q, kv, **kwargs)
-                else:
-                    context = torch.utils.checkpoint.checkpoint(
-                        self.inner_cross_attn, q, kv, **kwargs
+                    attn_outs = self.inner_cross_attn(
+                        q, kv, return_attn_probs=return_attn_probs, **kwargs
                     )
+                else:
+                    attn_outs = torch.utils.checkpoint.checkpoint(
+                        self.inner_cross_attn,
+                        q,
+                        kv,
+                        return_attn_probs=return_attn_probs,
+                        **kwargs,
+                    )
+
+                if return_attn_probs:
+                    assert (
+                        len(attn_outs) == 4
+                    ), f"Expect 4 but got {len(attn_outs)} when return_attn_probs=True in attention"
+                    context, lse, score_cummax, dmask = attn_outs
+                else:
+                    context = attn_outs[0]
             else:
                 kv = self._update_kv_cache(kv)
                 context = self.inner_cross_attn(q, kv, causal=False)
+                if isinstance(context, (tuple, list)):
+                    assert len(context) == 1
+                    context = context[0]
+
         out = self.out_proj(rearrange(context, "... h d -> ... (h d)"))
-        return out if not self.return_residual else (out, x)
+        outputs = (out,)
+        if self.return_residual:
+            outputs += (x,)
+        if return_attn_probs:
+            outputs += ((lse, score_cummax, dmask),)
+        return outputs
 
 
 class ParallelMHA(nn.Module):

@@ -515,6 +515,7 @@ class GPTModel(GPTPreTrainedModel):
         position_ids=None,
         attention_mask=None,
         inference_params=None,
+        return_attn_probs=False,
     ):
         # If using Tensor Parallel with sequence parallel, we combine the batch and the seqlen
         # dimensions so that we can split on it easily, in case of small batch size.
@@ -574,6 +575,12 @@ class GPTModel(GPTPreTrainedModel):
                 mixer_kwargs["indices"] = indices
                 mixer_kwargs["key_padding_mask"] = attention_mask
 
+        if return_attn_probs:
+            assert (
+                inference_params is None and self.training
+            ), "only support return_attn_probs=True in training"
+            all_attn_probs = []
+
         for layer in self.layers:
             if self.gradient_checkpointing and self.training:
 
@@ -585,10 +592,20 @@ class GPTModel(GPTPreTrainedModel):
 
                 if self.prenorm:
                     if not self.parallel_block:
-                        hidden_states, residual = torch.utils.checkpoint.checkpoint(
-                            create_custom_forward(layer), hidden_states, residual
+                        layer_outs = torch.utils.checkpoint.checkpoint(
+                            create_custom_forward(layer),
+                            hidden_states,
+                            residual,
+                            return_attn_probs=return_attn_probs,
                         )
+                        if return_attn_probs:
+                            assert len(layer_outs) == 3
+                            hidden_states, residual, attn_probs = layer_outs
+                        else:
+                            assert len(layer_outs) == 2
+                            hidden_states, residual = layer_outs
                     else:
+                        # NOTE: no support return_attn_probs now
                         (
                             hidden_states,
                             hidden_states2,
@@ -597,19 +614,37 @@ class GPTModel(GPTPreTrainedModel):
                             hidden_states,
                             hidden_states2,
                             residual,
+                            # return_attn_probs=return_attn_probs
                         )
                 else:
-                    hidden_states = torch.utils.checkpoint.checkpoint(
-                        create_custom_forward(layer), hidden_states
-                    )
+                    if not self.parallel_block:
+                        hidden_states = torch.utils.checkpoint.checkpoint(
+                            create_custom_forward(layer),
+                            hidden_states,
+                            return_attn_probs=return_attn_probs,
+                        )
+                    else:
+                        hidden_states = torch.utils.checkpoint.checkpoint(
+                            create_custom_forward(layer), hidden_states
+                        )
 
             else:
                 if self.prenorm:
                     if not self.parallel_block:
-                        hidden_states, residual = layer(
-                            hidden_states, residual, mixer_kwargs=mixer_kwargs
+                        layer_outs = layer(
+                            hidden_states,
+                            residual,
+                            mixer_kwargs=mixer_kwargs,
+                            return_attn_probs=return_attn_probs,
                         )
+                        if return_attn_probs:
+                            assert len(layer_outs) == 3
+                            hidden_states, residual, attn_probs = layer_outs
+                        else:
+                            assert len(layer_outs) == 2
+                            hidden_states, residual = layer_outs
                     else:
+                        # NOTE: no support return_attn_probs now
                         hidden_states, hidden_states2, residual = layer(
                             hidden_states,
                             hidden_states2,
@@ -617,7 +652,22 @@ class GPTModel(GPTPreTrainedModel):
                             mixer_kwargs=mixer_kwargs,
                         )
                 else:
-                    hidden_states = layer(hidden_states, mixer_kwargs=mixer_kwargs)
+                    if not self.parallel_block:
+                        layer_outs = layer(
+                            hidden_states,
+                            mixer_kwargs=mixer_kwargs,
+                            return_attn_probs=return_attn_probs,
+                        )
+                        if return_attn_probs:
+                            assert len(layer_outs) == 2
+                            hidden_states, attn_probs = layer_outs
+                        else:
+                            assert len(layer_outs) == 1
+                            hidden_states = layer_outs[0]
+                    else:
+                        hidden_states = layer(hidden_states, mixer_kwargs=mixer_kwargs)
+            if return_attn_probs:
+                all_attn_probs.append(attn_probs)
 
         if attention_mask is not None:
             hidden_states = pad_input(hidden_states, indices, batch, seqlen)
@@ -673,7 +723,10 @@ class GPTModel(GPTPreTrainedModel):
                         prenorm=False,
                         residual_in_fp32=self.residual_in_fp32,
                     )
-        return hidden_states
+        if return_attn_probs:
+            return (hidden_states, all_attn_probs)
+        else:
+            return hidden_states
 
     def fwd_flop_per_token(self, seq_len):
         # an estimate of the total non-embedding forward compute
@@ -765,7 +818,14 @@ class GPTLMHeadModel(GPTPreTrainedModel):
         )
 
     def forward(
-        self, input_ids, position_ids=None, inference_params=None, last_token_only=False
+        self,
+        input_ids=None,
+        inputs_embeds=None,
+        position_ids=None,
+        attention_mask=None,
+        inference_params=None,
+        last_token_only=False,
+        return_attn_probs=False,
     ):
         """
         inference_params: for generation. Adapted from Megatron-LM (and Apex)
@@ -773,9 +833,24 @@ class GPTLMHeadModel(GPTPreTrainedModel):
         last_token_only: whether to return the logit for the last token only,
             of shape (batch_size, vocab_size)
         """
-        hidden_states = self.transformer(
-            input_ids, position_ids=position_ids, inference_params=inference_params
+        assert (inputs_embeds is None) ^ (input_ids is None)
+        if return_attn_probs:
+            assert (
+                inference_params is None and self.training
+            ), "only support return_attn_probs=True in training"
+
+        outs = self.transformer(
+            input_ids=input_ids,
+            inputs_embeds=inputs_embeds,
+            position_ids=position_ids,
+            inference_params=inference_params,
+            attention_mask=attention_mask,
+            return_attn_probs=return_attn_probs,
         )
+        if return_attn_probs:
+            hidden_states, all_attn_probs = outs
+        else:
+            hidden_states = outs
         if last_token_only:
             hidden_states = hidden_states[:, -1]
         if self.project_out is not None:
@@ -790,8 +865,12 @@ class GPTLMHeadModel(GPTPreTrainedModel):
             lm_logits = rearrange(
                 lm_logits, "(n b) ... d -> b ... (n d)", b=hidden_states.shape[0]
             )
-        CausalLMOutput = namedtuple("CausalLMOutput", ["logits"])
-        return CausalLMOutput(logits=lm_logits)
+        if return_attn_probs:
+            CausalLMOutput = namedtuple("CausalLMOutput", ["logits", "attn_probs"])
+            return CausalLMOutput(logits=lm_logits, attn_probs=all_attn_probs)
+        else:
+            CausalLMOutput = namedtuple("CausalLMOutput", ["logits"])
+            return CausalLMOutput(logits=lm_logits)
 
     def load_state_dict(self, state_dict: Dict, strict=True):
         # Remapping from our checkpoints that used a different ordering of layers in the block
