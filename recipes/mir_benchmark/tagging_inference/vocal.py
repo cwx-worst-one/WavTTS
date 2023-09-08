@@ -3,6 +3,7 @@ from torch import nn
 
 from recipes.mir_benchmark.models.frontend import Frontend
 from recipes.mir_benchmark.models.tagging import TaggingVocalGRUStage
+from recipes.mir_benchmark.utils.utils import get_tags
 from recipes.musicfm.models.best_rq import BEST_RQ
 from samantha.core import BaseModel
 
@@ -12,23 +13,43 @@ class VocalTagging(nn.Module):
         super(VocalTagging, self).__init__()
         self.model = self.load_model(is_flash)
         self.vocal_tags = [
-            "age_中老年",  # age_old
-            "age_中青年",  # age_middle_aged
-            "age_幼年",  # age_child
-            "age_青年",  # age_young
-            "gender_NO",  # gender_no
-            "gender_女",  # gender_female
-            "gender_男",  # gender_male
-            "style_低沉和蔼",  # style_low_and_warm
-            "style_厚实低沉",  # style_thick_and_deep
-            "style_嘹亮自信",  # style_loud_and_confident
-            "style_成熟明亮",  # style_bright
-            "style_成熟磁性",  # style_husky
-            "style_明亮细腻",  # style_delicate
-            "style_淘气萌娃",  # style_playful
-            "style_甜美温柔",  # style_sweet
-            "style_磁性慵懒",  # style_relaxed
+            "age_old",  # age_中老年
+            "age_middle_aged",  # age_中青年
+            "age_child",  # age_幼年
+            "age_young",  # age_青年
+            "gender_no",  # gender_NO
+            "gender_female",  # gender_女
+            "gender_male",  # gender_男
+            "style_low_and_warm",  # style_低沉和蔼
+            "style_thick_and_deep",  # style_厚实低沉
+            "style_loud_and_confident",  # style_嘹亮自信
+            "style_bright",  # style_成熟明亮
+            "style_husky",  # style_成熟磁性
+            "style_delicate",  # style_明亮细腻
+            "style_playful",  # style_淘气萌娃
+            "style_sweet",  # style_甜美温柔
+            "style_relaxed",  # style_磁性慵懒
         ]
+        # Manually tuned to maximize per-class F1 scores
+        self.thresholds = torch.Tensor([
+            0.2,
+            0.7,
+            0.2,
+            0.1,
+            0.1,
+            0.8,
+            0.5,
+            0.1,
+            0.1,
+            0.1,
+            0.3,
+            0.3,
+            0.4,
+            0.1,
+            0.3,
+            0.7,
+        ])
+        assert len(self.vocal_tags) == len(self.thresholds)
 
     def load_model(self, is_flash):
         # model
@@ -64,13 +85,16 @@ class VocalTagging(nn.Module):
 
         return model
 
+    @torch.no_grad()
     def predict(self, x):
         """
-        x (torch.Tensor): input shape with (batch, 1, sample length)
-        out (torch.Tensor): output shape with (batch, 16)
+        Input:
+            x (torch.Tensor): input shape with (batch, 1, sample length)
+        Output:
+            tags (list[list[str]]): list of tags for each example in batch, always on CPU
+            probs (torch.Tensor): output shape with (batch, n_classes)
         """
-
         self.model.eval()
-        with torch.no_grad():
-            out = self.model(x)[0]
-        return out
+        probs = self.model(x)[0]
+        tags = get_tags(probs, self.vocal_tags, self.thresholds)
+        return tags, probs

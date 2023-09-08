@@ -3,6 +3,7 @@ from torch import nn
 
 from recipes.mir_benchmark.models.frontend import Frontend
 from recipes.mir_benchmark.models.tagging import TaggingGenreGRUStage
+from recipes.mir_benchmark.utils.utils import get_tags
 from recipes.musicfm.models.best_rq import BEST_RQ
 from samantha.core import BaseModel
 
@@ -47,6 +48,44 @@ class GenreTagging(nn.Module):
             "Reggaeton",
             "Brazilian_Punk",
         ]
+        # Manually tuned to maximize per-class F1 scores
+        self.thresholds = torch.Tensor([
+            0.6,
+            0.5,
+            0.3,
+            0.4,
+            0.3,
+            0.2,
+            0.3,
+            0.2,
+            0.3,
+            0.6,
+            0.3,
+            0.2,
+            0.7,
+            0.2,
+            0.1,
+            0.9,
+            0.7,
+            0.3,
+            0.7,
+            0.7,
+            0.2,
+            0.3,
+            0.1,
+            0.3,
+            0.7,
+            0.9,
+            0.6,
+            0.2,
+            0.7,
+            0.3,
+            0.4,
+            0.6,
+            0.5,
+            0.2,
+        ])
+        assert len(self.genre_tags) == len(self.thresholds)
 
     def load_model(self, is_flash):
         # model
@@ -82,12 +121,16 @@ class GenreTagging(nn.Module):
 
         return model
 
+    @torch.no_grad()
     def predict(self, x):
         """
-        x (torch.Tensor): input shape with (batch, 1, sample length)
-        out (torch.Tensor): output shape with (batch, 34)
+        Input:
+            x (torch.Tensor): input shape with (batch, 1, sample length)
+        Output:
+            tags (list[list[str]]): list of tags for each example in batch, always on CPU
+            probs (torch.Tensor): output shape with (batch, n_classes)
         """
         self.model.eval()
-        with torch.no_grad():
-            out = self.model(x)[0]
-        return out
+        probs = self.model(x)[0]
+        tags = get_tags(probs, self.genre_tags, self.thresholds)
+        return tags, probs
