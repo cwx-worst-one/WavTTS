@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import webdataset as wds
 from torch.utils.data import IterableDataset
+from transformers import LlamaTokenizer, T5Tokenizer, AutoTokenizer
 
 from samantha.dataio.batching import BucketBatcher
 from samantha.dataio.webdataset.ra_wds import WebDataset
@@ -45,23 +46,36 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
         drop_last=False,
         batcher_config=None,
         use_lang_id=False,
-        lang2id=None,
         use_spk_id=False,
         spk2id=None,
+        lang2id=None,
         use_code_switch_data=True,
-        get_lang_by_tacolab=False):
+        get_lang_by_tacolab=False,
+        bpe_dir=None, 
+        max_length=4096,
+        use_bpe=False,
+        use_extra_tag=False,
+        wds2tag=None,
+        tokenizer_type="llama",
+        ):
 
         self.wds = (
             WebDataset(
                 urls=wds_urls,
                 resampled=True,
-                # nodesplitter=wds.shardlists.split_by_node,
                 skip_instance_cache=True,
             )
             .decode()
             .shuffle(2048)
             .map(self.get_text_wavid)
         )
+
+        self.max_length = max_length
+        self.use_bpe = use_bpe
+        self.use_extra_tag = use_extra_tag
+
+        print(f"dataset/use_extra_tag: {use_extra_tag}")
+
         self.drop_last = drop_last
         self.batcher = BucketBatcher(**batcher_config)
 
@@ -81,18 +95,34 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
             print(f"Loaded spk2id from {spk2id}")
         else:
             self.spk2id = None
-        print("self.spk2id: ", self.spk2id)
+        # print("self.spk2id: ", self.spk2id)
 
         # phone/tone
         self.phone_to_int = phone_to_int
         self.tone_to_int = tone_to_int
             
-        print("self.phone_to_int: ", self.phone_to_int)
-        print("self.tone_to_int: ", self.tone_to_int)
+        logger.info(f"{self.phone_to_int=}, {self.tone_to_int=}")
 
         # for cross-lingual
         self.use_code_switch_data = use_code_switch_data
         self.get_lang_by_tacolab = get_lang_by_tacolab
+
+    
+        if self.use_extra_tag:
+            self.tag_dict = load_json(wds2tag)
+
+        if self.use_bpe:
+            print(f'##### Using BPE #####')
+            if tokenizer_type == "flan-T5-large":
+                self.bpe_tokenizer = T5Tokenizer.from_pretrained(bpe_dir)
+            elif tokenizer_type == "byte-T5-base":
+                self.bpe_tokenizer = AutoTokenizer.from_pretrained(bpe_dir)
+            elif tokenizer_type == "llama":
+                self.bpe_tokenizer = LlamaTokenizer.from_pretrained(bpe_dir)
+            else:
+                raise NotImplementedError
+        else:
+            self.bpe_tokenizer = None
 
     def get_text_wavid(self, sample):
 
@@ -100,6 +130,8 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
         text = sample["text"]
         lab = sample["labels"]
         utt_id = sample["__key__"]
+        url = sample["__url__"]
+
         data_dict = dict()
 
         if len(bn.shape) == 3 and bn.shape[0] == 1:
@@ -117,6 +149,13 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
             return None
         else:
             text_id, phones, tones = text_id_phones_tones
+        
+        if self.use_extra_tag:
+            tag_id = int(self.tag_dict.get(url, 0))
+            if tag_id == 0:
+                print(f"Warning: no tag id found for {url}")
+        else:
+            tag_id = None
 
         # pad eos
         text_id = np.concatenate([text_id, np.ones([text_id.shape[0], 1])], axis=-1)
@@ -144,25 +183,40 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
             dataset_name = sample.get("dataset_name")
             speaker_name = sample.get("speaker_name")
             if not dataset_name or not speaker_name:
-                print(f"{utt_id}: No speaker name")
-                return None
-            dataset_name = dataset_name.decode()
-            speaker_name = speaker_name.decode()
-            spk_key = '/'.join([dataset_name, speaker_name])
-            spk_id = self.spk2id[spk_key]
+                # print(f"{utt_id}: No speaker name")
+                spk_id = self.spk2id["default"]
+            else:
+                dataset_name = dataset_name.decode()
+                speaker_name = speaker_name.decode()
+                spk_key = '/'.join([dataset_name, speaker_name])
+                if spk_key in self.spk2id:
+                    spk_id = self.spk2id[spk_key]
+                else:
+                    print(f"{utt_id}: speaker {spk_key} not in dict, will use default spkID")
+                    spk_id = self.spk2id["default"]
             spk_id += 1
             spk_seq = np.asarray([spk_id] * bn.shape[0])
 
         # stop_token
         stop_token = np.zeros([text_id.shape[1] + bn.shape[0]])
         stop_token[-1] = 1
+    
+        # bpe_id
+        if self.use_bpe:
+            bpe_seq = np.asarray(self.bpe_tokenizer(
+                text, truncation=True, max_length=self.max_length,
+            ).input_ids)
+        else:
+            bpe_seq = None
 
         data_dict.update({
             "stop_token": stop_token,
             "bn": bn,
             "utt_id": utt_id,
             "lang_seq": lang_seq,
-            "spk_seq": spk_seq
+            "spk_seq": spk_seq,
+            "bpe_seq": bpe_seq,
+            "tag_id": tag_id
             })
         return data_dict
 
@@ -386,23 +440,33 @@ class ContinuousCollator(object):
 
         text_lens = []
         bn_lens = []
-        utt_ids = []
+        bpe_lens = []
+        # utt_ids = []
+        # tag_ids = []
         for x in results:
             text_lens.append(x["phone"].shape[0])
             bn_lens.append(x["bn"].shape[0])
-            utt_ids.append(x["utt_id"])
+            bpe_lens.append(x["bpe_seq"].shape[0])
+            # utt_ids.append(x["utt_id"])
+            # if x["tag_id"] is not None:
+            #     tag_ids.append(x["tag_id"])
 
         max_text_len = max(text_lens)
         max_bn_len = max(bn_lens)
+        max_bpe_len = max(bpe_lens)
 
         text_lens = torch.from_numpy(np.asarray(text_lens))
         bn_lens = torch.from_numpy(np.asarray(bn_lens))
+        bpe_lens = torch.from_numpy(np.asarray(bpe_lens))
 
         max_seq_len = max(text_lens + bn_lens)
 
         ret_dict["text_lens"] = text_lens
         ret_dict["bn_lens"] = bn_lens
-        ret_dict["utt_id"] = utt_ids
+        ret_dict["bpe_lens"] = bpe_lens
+        # ret_dict["utt_id"] = utt_ids
+        # if len(tag_ids) > 0:
+        #     ret_dict["tag_id"] = np.asarray(tag_ids)
 
         # length padding
         for x in results:
@@ -440,7 +504,14 @@ class ContinuousCollator(object):
                         mode="constant",
                         constant_values=self.pad,
                     )
-                elif k != "utt_id":
+                elif k == "bpe_seq":
+                    v = np.pad(
+                        v,
+                        (0, max_bpe_len - v.shape[0]),
+                        mode="constant",
+                        constant_values=self.pad,
+                    )
+                elif k not in ["utt_id", "tag_id"]:
                     v = np.pad(
                         v,
                         (0, max_text_len - v.shape[0]),
@@ -463,7 +534,7 @@ class ContinuousCollator(object):
                 except Exception:
                     print("ret_dict[k]: ", ret_dict[k])
 
-        to_long_list = ["phone", "tone", "stop_token", "lang_seq", "spk_seq"]
+        to_long_list = ["phone", "tone", "stop_token", "lang_seq", "spk_seq", "bpe_seq", "tag_id"]
         for x in to_long_list:
             if x in ret_dict:
                 if ret_dict[x] is not None:

@@ -6,7 +6,20 @@ import subprocess
 from bytedance.easycycle import get_dataset_collection_info
 from lightning_fabric.utilities.exceptions import MisconfigurationException
 
+from samantha.dataio import remote_io
 from samantha.dataio.webdataset.ra_wds import expand_urls
+
+
+@remote_io.remote_load(0)
+def parse_data_url_fn(fn):
+    urls = []
+    with open(fn, "r", encoding="utf-8") as fi:
+        for line in fi:
+            wds_path = line.strip()
+            if wds_path == "":
+                continue
+            urls.append(wds_path)
+    return urls
 
 
 def run_command(cmd):
@@ -106,7 +119,7 @@ def __expand_paths(path_lst):
     return paths
 
 
-def parse_data_urls(data_id=None, data_urls=None):
+def parse_data_urls(data_id=None, data_urls=None, use_url_lst=False):
     if data_id is not None and data_urls is not None:
         raise MisconfigurationException(
             f"Combination of parameters {data_id=} and {data_urls=} should be mutually "
@@ -122,7 +135,10 @@ def parse_data_urls(data_id=None, data_urls=None):
         return __expand_paths(paths)
 
     if isinstance(data_urls, str):
-        data_urls = [data_urls]
+        if use_url_lst:
+            data_urls = parse_data_url_fn(data_urls)
+        else:
+            data_urls = [data_urls]
     if not isinstance(data_urls, list):
         raise TypeError(
             f"Expecting data_urls either be str or list, but got"

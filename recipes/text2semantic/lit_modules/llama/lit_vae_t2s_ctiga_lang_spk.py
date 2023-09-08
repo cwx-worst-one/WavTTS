@@ -6,6 +6,8 @@ import numpy as np
 from pytorch_lightning.profilers import PassThroughProfiler
 from tqdm import tqdm
 import math
+import matplotlib.pyplot as plt
+import wandb
 
 from samantha.utils.hparams import DotDict
 from recipes.bark.lit_modules.sample import sample
@@ -35,6 +37,7 @@ class VAET2SLangSpkModule(pl.LightningModule):
         stop_token_loss_weight=1.0,
         use_lang_id=False,
         use_spk_id=False,
+        use_phoneme_loss=False,
         resume_ckpt_path=None,
     ):
         super().__init__()
@@ -47,6 +50,8 @@ class VAET2SLangSpkModule(pl.LightningModule):
         print("use_lang_id: ", self.use_lang_id)
         self.use_spk_id = use_spk_id
         print("use_spk_id: ", self.use_spk_id)
+        self.use_phoneme_loss = use_phoneme_loss
+        print("use_phoneme_loss: ", use_phoneme_loss)
 
         if checkpointing:
             self.model.gradient_checkpointing_enable()
@@ -97,13 +102,22 @@ class VAET2SLangSpkModule(pl.LightningModule):
 
                 loss_mask = sequence_mask(seq_lens, device="cuda")
                 text_loss_mask = sequence_mask(text_lens, device="cuda")
-                text_loss_mask = F.pad(text_loss_mask, (0, seq_len - text_loss_mask.shape[1]), "constant", 0)
-                z_loss_mask = loss_mask - text_loss_mask
+                pad_text_loss_mask = F.pad(text_loss_mask, (0, seq_len - text_loss_mask.shape[1]), "constant", 0)
+                z_loss_mask = loss_mask - pad_text_loss_mask
 
         with self.profiler.profile("[LightningModule]CoarseModule.model_forward"):
-            ret_dict = self.model(frontend_inputs, bns, text_lens, bn_lens, lang_seqs=batch["lang_seq"], spk_seqs=batch["spk_seq"])
+            ret_dict = self.model(frontend_inputs, bns, 
+                text_lens, bn_lens, 
+                lang_seqs=batch["lang_seq"], 
+                spk_seqs=batch["spk_seq"],
+                bpe_seqs=batch["bpe_seq"],
+                bpe_lens=batch["bpe_lens"],
+                tag_ids=batch["tag_id"]
+            )
             pred_stop_token = ret_dict["stop_token"]
             pred_dense = ret_dict["dense"]
+            attn_weights = ret_dict["attn_weights"]
+            pred_logits = ret_dict["logits"][:max(text_lens)]
 
         pred_stop_token = pred_stop_token[:, 0:seq_len - 1, :]
         pred_dense = pred_dense[:, 0:seq_len - 1, :]
@@ -128,13 +142,21 @@ class VAET2SLangSpkModule(pl.LightningModule):
         stop_token_loss = self.logits_criterion(pred_stop_token.float(), target_stop_token, mask=z_loss_mask[:, 1:])
         stop_token_accu = ((pred_stop_token.argmax(dim=-1) == target_stop_token).float() * z_loss_mask[:, 1:]).sum() / z_loss_mask[:, 1:].sum() * 100
 
-        total_loss = kl_loss + stop_token_loss * self.stop_token_loss_weight
+        # phoneme loss
+        targets_logits = batch["phone"]
+        if self.use_phoneme_loss:
+            phoneme_loss = self.logits_criterion(pred_logits.float(), targets_logits, mask=text_loss_mask)
+        else:
+            phoneme_loss = torch.tensor(0.)
+
+        total_loss = kl_loss + stop_token_loss * self.stop_token_loss_weight + phoneme_loss
 
         batch_tokens= bsz * seq_len
 
         self.log_dict(
             {
                 "kl_loss": kl_loss.item(),
+                "phoneme_loss": phoneme_loss.item(),
                 "stop_token_loss": stop_token_loss.item(),
                 "stop_token_accu": stop_token_accu.item(),
                 "loss": total_loss.item(),
@@ -152,6 +174,9 @@ class VAET2SLangSpkModule(pl.LightningModule):
             model_kwargs=dict(batch_size=bsz, seqlen=seq_len),
         )
         if self.trainer.global_step % self.trainer.log_every_n_steps == 0:
+            if self.trainer.global_rank == 0 and attn_weights is not None:
+                self.log_attention(attn_weights, batch_idx)
+
             metric = self.model_metric.compute(self.trainer.global_step)
             self.log_dict(
                 metric, sync_dist=True, prog_bar=True
@@ -169,40 +194,29 @@ class VAET2SLangSpkModule(pl.LightningModule):
                 "interval": "step"
             },
         }
-
+    
     @torch.no_grad()
-    def prepare_feature(self, wavs_16k, wavs_24k, texts, wav_16k_lens, wav_24k_lens, text_lens):
-        device = wavs_16k.device
+    def log_attention(self, attn_weights, batch_idx):
+        attn_weights = attn_weights.cpu().detach().numpy()[0]
 
-        # pad text to 256
-        if texts.size(1) >= 256:
-            texts = texts[:, 0:256]
+        # 取argmax操作，得到二值矩阵
+        len_src, len_tgt = attn_weights.shape
+        argmax_attn_weights = np.zeros_like(attn_weights)
+        if len_src >= len_tgt:
+            argmax_attn_weights[np.arange(len_src), attn_weights.argmax(1)] = 1
         else:
-            texts = torch.nn.functional.pad(texts, (0, 256 - texts.size(1)))
+            argmax_attn_weights[attn_weights.argmax(0), np.arange(len_tgt)] = 1
 
-        semantic_codes, semantic_length = self.get_semantic_codes(wavs_16k, wav_16k_lens)
-        # add semantic bos token and eos token
-        semantic_codes = torch.nn.functional.pad(semantic_codes, (1, 1))
-        # bos
-        semantic_codes[:, 0] = self.n_semantic
-        # eos
-        semantic_mask = torch.arange(semantic_codes.size(1)).unsqueeze(0).to(device) < (1 + semantic_length.unsqueeze(1))
-        semantic_codes = torch.where(
-            semantic_mask,
-            semantic_codes,
-            torch.zeros_like(semantic_codes) + self.n_semantic + 1,
-        )
-        # offset: BPE
-        semantic_codes += self.tokenizer_len
-
-        # concat input_tokens
-        input_tokens = torch.cat([texts, semantic_codes], dim=1)
-
-        # loss mask
-        text_mask = torch.arange(texts.size(1)).unsqueeze(0).to(device) < (1 + text_lens.unsqueeze(1)) # add eos loss
-        semantic_mask = torch.arange(semantic_codes.size(1)).unsqueeze(0).to(device) < (2 + semantic_length.unsqueeze(1))
-        loss_mask = torch.cat([text_mask, semantic_mask], dim=1).float()
-        return input_tokens, loss_mask
+        # 绘制注意力权重图
+        fig, ax = plt.subplots()
+        # plt.imshow(argmax_attn_weights, cmap='Blues')
+        im = ax.imshow(argmax_attn_weights, cmap='Blues')
+        plt.title("Attention Alignment Matrix")
+        plt.xlabel("Source Tokens")
+        plt.ylabel("Target Tokens")
+        # plt.colorbar(im)
+        # 将图像数据记录到WandB
+        wandb.log({f"Attention Alignment Matrix": wandb.Image(fig)})
 
     @torch.no_grad()
     def get_semantic_codes(self, wavs_16k, wavs_16k_len):
@@ -253,10 +267,34 @@ class VAET2SLangSpkModule(pl.LightningModule):
         with torch.autocast(device_type="cuda", enabled=True):
             for i in tqdm(range(max_step)):
                 if i == 0:
-                    model_outputs = self.model(frontend_inputs, bns, text_lens, bn_lens, start_pos=start_pos, inference_params=inference_params, lang_seqs=lang_seq, spk_seqs=spk_seq)
+                    model_outputs = self.model(
+                        frontend_inputs,
+                        bns,
+                        text_lens,
+                        bn_lens,
+                        start_pos=start_pos,
+                        inference_params=inference_params,
+                        lang_seqs=lang_seq,
+                        spk_seqs=spk_seq,
+                        bpe_seqs=batch["bpe_seq"],
+                        bpe_lens=batch["bpe_lens"],
+                        tag_ids=batch["tag_id"]
+                        )
                     input_len = text_lens[0] + bn_lens[0]
                 else:
-                    model_outputs = self.model(frontend_inputs, bns, text_lens, bn_lens, start_pos=start_pos, use_cache=True, inference_params=inference_params, lang_seqs=lang_seq, spk_seqs=spk_seq)
+                    model_outputs = self.model(frontend_inputs,
+                        bns,
+                        text_lens,
+                        bn_lens,
+                        start_pos=start_pos,
+                        use_cache=True,
+                        inference_params=inference_params,
+                        lang_seqs=lang_seq,
+                        spk_seqs=spk_seq,
+                        bpe_seqs=batch["bpe_seq"],
+                        bpe_lens=batch["bpe_lens"],
+                        tag_ids=batch["tag_id"]
+                        )
                     input_len = 1
                     z_list.append(model_outputs['bn_in_z'])
 

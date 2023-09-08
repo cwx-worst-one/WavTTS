@@ -516,6 +516,7 @@ class GPTModel(GPTPreTrainedModel):
         attention_mask=None,
         inference_params=None,
         return_attn_probs=False,
+        cond=None,
     ):
         # If using Tensor Parallel with sequence parallel, we combine the batch and the seqlen
         # dimensions so that we can split on it easily, in case of small batch size.
@@ -668,6 +669,10 @@ class GPTModel(GPTPreTrainedModel):
                         hidden_states = layer(hidden_states, mixer_kwargs=mixer_kwargs)
             if return_attn_probs:
                 all_attn_probs.append(attn_probs)
+
+            if cond is not None:
+                scln_scale, scln_bias = cond.chunk(2, dim=-1)
+                hidden_states = scln_scale * hidden_states + scln_bias
 
         if attention_mask is not None:
             hidden_states = pad_input(hidden_states, indices, batch, seqlen)

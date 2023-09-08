@@ -32,7 +32,7 @@ def _run_command(cmd):
 def ishdfs(path: Union[str, Path]):
     if isinstance(path, Path):
         path = path.as_posix()
-    return path.startswith("hdfs:")
+    return path.startswith("hdfs://") or path.startswith("webhdfs://")
 
 
 @contextlib.contextmanager
@@ -174,16 +174,23 @@ def put(local_path: str, hdfs_path: str) -> bool:
     return res.exit == 0
 
 
-def get(hdfs_path: str, local_path: str) -> bool:
+def get(hdfs_path: str, local_path: str, overwrite: bool = False) -> bool:
     """Download a hdfs file to local.
 
     Args:
         hdfs_path (str): A file path on hdfs to be downloaded.
         local_path (str): The targeted local directory.
+        overwrite (bool): overwrite the local file or not
     """
 
     if not isfile(hdfs_path):
         raise ValueError(f"{hdfs_path} does not exist.")
+    if os.path.exists(local_path):
+        if overwrite:
+            os.remove(local_path)
+        else:
+            raise ValueError(f"{local_path} exists, abort! (or set overwrite=True)")
+
     cmd = f"{HDFS} -get {hdfs_path} {local_path}"
     res = _run_command(cmd)
     return res.exit == 0
