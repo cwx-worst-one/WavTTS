@@ -7,7 +7,6 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from pytorch_lightning import LightningModule
-from scipy.io.wavfile import write
 
 from ..datasets import PhoneTokenizerWithAudioTokens
 from ..datasets.text_converter import TextToTacolabID
@@ -21,7 +20,6 @@ from ..scripts.infer_utils import (
 )
 from .llama.lit_vae_t2s_ctiga import VAET2SModule
 from .llama.lit_vae_t2s_ctiga_lang_spk import VAET2SLangSpkModule
-from scipy.io.wavfile import read
 from ..utils.remote_io import load_json
 from transformers import LlamaTokenizer
 from zhon.hanzi import punctuation
@@ -169,7 +167,7 @@ class BigTTSWVAEInfer(LightningModule):
         prompt_wav = None
         if not self.use_spk_id:
             uttid, prompt_text, prompt_wav_path, text = sample
-            sr, wav = read(prompt_wav_path)
+            wav, sr = librosa.load(prompt_wav_path, sr=None)
             if len(wav.shape) == 2 and wav.shape[-1] == 2:
                 wav = wav[:, 0]
             prompt_wav_max = np.max(np.abs(wav))

@@ -276,9 +276,9 @@ class VAET2SLangSpkModule(pl.LightningModule):
                         inference_params=inference_params,
                         lang_seqs=lang_seq,
                         spk_seqs=spk_seq,
-                        bpe_seqs=batch["bpe_seq"],
-                        bpe_lens=batch["bpe_lens"],
-                        tag_ids=batch["tag_id"]
+                        bpe_seqs=batch.get("bpe_seq", None),
+                        bpe_lens=batch.get("bpe_lens", None),
+                        tag_ids=batch.get("tag_id", None)
                         )
                     input_len = text_lens[0] + bn_lens[0]
                 else:
@@ -291,9 +291,9 @@ class VAET2SLangSpkModule(pl.LightningModule):
                         inference_params=inference_params,
                         lang_seqs=lang_seq,
                         spk_seqs=spk_seq,
-                        bpe_seqs=batch["bpe_seq"],
-                        bpe_lens=batch["bpe_lens"],
-                        tag_ids=batch["tag_id"]
+                        bpe_seqs=batch.get("bpe_seq", None),
+                        bpe_lens=batch.get("bpe_lens", None),
+                        tag_ids=batch.get("tag_id", None)
                         )
                     input_len = 1
                     z_list.append(model_outputs['bn_in_z'])
