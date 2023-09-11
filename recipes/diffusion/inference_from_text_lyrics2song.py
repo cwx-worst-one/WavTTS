@@ -97,7 +97,6 @@ class ARVSampler(nn.Module):
         self.length = length
         self.in_channels = in_channels
         self.num_splits = num_splits
-        self.split_length = length // num_splits
     
     def set_device(self, device: torch.device):
         self.device = device
@@ -205,14 +204,14 @@ class ARVSampler(nn.Module):
     ) -> Tensor:
 
         # Sample initial chunks
-        b, c, t = num_items, self.in_channels, self.length
+        b, c, seq_len = num_items, self.in_channels, self.length
 
         # Sample initial chunks
-        current_emb = torch.randn(b, c, t, device=self.device)
+        current_emb = torch.randn(b, c, seq_len, device=self.device)
         semantic_hop_size = 125
         diffusion_hop_size = 625
-        tmp_emb = torch.zeros(b, c, 3750 + diffusion_hop_size *(num_chunks - 1), device=self.device)
-        avg_cnt = torch.zeros(b, c, 3750 + diffusion_hop_size *(num_chunks - 1), device=self.device)
+        tmp_emb = torch.zeros(b, c, seq_len + diffusion_hop_size *(num_chunks - 1), device=self.device)
+        avg_cnt = torch.zeros(b, c, seq_len + diffusion_hop_size *(num_chunks - 1), device=self.device)
         prev_noise = current_emb
         output_emb = []
         for i in range(num_chunks):
@@ -221,7 +220,7 @@ class ARVSampler(nn.Module):
                 model=model,
                 semantic_context=semantic_context[:, 0 + (i*semantic_hop_size):750 + (i*semantic_hop_size)],
                 current=current_emb,
-                prev_noise=prev_noise[..., 0 + (i*diffusion_hop_size):3750 + (i*diffusion_hop_size)],
+                prev_noise=prev_noise[..., 0 + (i*diffusion_hop_size):seq_len + (i*diffusion_hop_size)],
                 num_steps=num_steps,
                 bf16_portion=bf16_portion,
                 angle_schedule=angle_schedule,
@@ -233,8 +232,8 @@ class ARVSampler(nn.Module):
             # else:
             #     output_emb.append(pred_emb[..., -diffusion_hop_size:])
 
-            tmp_emb[..., 0 + (i*diffusion_hop_size):3750 + (i*diffusion_hop_size)] += pred_emb
-            avg_cnt[..., 0 + (i*diffusion_hop_size):3750 + (i*diffusion_hop_size)] += 1
+            tmp_emb[..., 0 + (i*diffusion_hop_size):seq_len + (i*diffusion_hop_size)] += pred_emb
+            avg_cnt[..., 0 + (i*diffusion_hop_size):seq_len + (i*diffusion_hop_size)] += 1
 
             prev_emb = pred_emb[..., -diffusion_hop_size:]#tmp_emb[..., 0 + ((i+1)*diffusion_hop_size):1250 + (i*diffusion_hop_size)] / avg_cnt[...,  0 + ((i+1)*diffusion_hop_size):1250 + (i*diffusion_hop_size)]
             # prev_emb = torch.cat(output_emb, dim=-1)[..., -1000:]
@@ -248,9 +247,9 @@ class ARVSampler(nn.Module):
         return pred_emb
         # return torch.cat(output_emb, dim=-1)
 
-def init_sampler(checkpoint_path, local_rank, cache_dir):
+def init_sampler(checkpoint_path, local_rank, cache_dir, sequence_length=3750):
     device = torch.device(f"cuda:{local_rank}")
-    sampler = ARVSampler(32, 3750, 1)
+    sampler = ARVSampler(32, sequence_length, 1)
     sampler.set_device(device)
     return { "sampler": sampler }
 

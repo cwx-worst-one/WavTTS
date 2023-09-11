@@ -80,6 +80,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.GTInferenceModule
                 hpath: null
                 initializer: !name:recipes.diffusion.inference_from_text_lyrics2song.init_sampler
                     cache_dir: !ref <run_opts[cache_dir]>
+                    sequence_length: 1250
             vocoder:
                 hpath: hdfs://harunava/home/byte_speech_sv/weitsung.lu/soundstream/dac_vae_125hz_24k_v2_part2/checkpoints/soundstream-step=374999-val_sdr=12.9557.ckpt
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder

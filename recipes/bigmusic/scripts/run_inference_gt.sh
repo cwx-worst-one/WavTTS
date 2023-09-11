@@ -14,7 +14,7 @@ mkdir -p $OUTPUT_DIR
 # BestRQ - Vocal Chroma - diffusion - 10s
 python3 -m samantha.main predict --config recipes/bigmusic/conf/inference_gt_10s.yaml --extra_params.output_dir $OUTPUT_DIR/$FOLDER_NAME/diffusion_125k \
     --extra_params.inference_conditions style_audio --extra_params.prompt_path $PROMPT_PATH \
-    --extra_params.max_items null --run_opts.batch_size 32 \
+    --extra_params.max_items null --run_opts.batch_size 16 \
     --extra_params.token2wav_type diffusion
 
 

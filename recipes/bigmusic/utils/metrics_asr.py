@@ -1,12 +1,21 @@
-import pypetrel
 import json
 import io
 import torchaudio
 
-pypetrel.set_log_level(5)
 import time
 from dataclasses import dataclass
+import os
 
+PYPETREL_LIB_FOUND = False
+try:
+    import pypetrel
+    pypetrel.set_log_level(5)
+    if 'CUDA_VISIBLE_DEVICES' not in os.environ:
+        os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+        print('Warning: could not find env var: CUDA_VISIBLE_DEVICES. Setting default to 0')
+    PYPETREL_LIB_FOUND = True
+except Exception as e:
+    print('WARNING: could not locate pypetrel library. WER metrics will not be calculated', e)
 
 def wav2lyrics(wav_batch, sr=24000):
     """
@@ -16,10 +25,14 @@ def wav2lyrics(wav_batch, sr=24000):
     wav_batch: must have shape [batch, channel, time]
     sr: sample rate
     """
+    if not PYPETREL_LIB_FOUND:
+        return ["" for _ in wav_batch.shape(0)], wav_batch
+    elif not pypetrel.is_engine_initialized():
+        pypetrel.initialize_engine("/mnt/bn/audio-diffusion/ashaw/models/asr/en_us_lyric")
     if len(wav_batch.shape) == 2:
         wav_batch = wav_batch.unsqueeze(1)
-    if not pypetrel.is_engine_initialized():
-        pypetrel.initialize_engine("/mnt/bn/audio-diffusion/ashaw/models/asr/en_us_lyric")
+
+    
     out = {"indices": [], "lyrics": []}
     num = wav_batch.size(0)
     wav_iter = iter(wav_batch)
