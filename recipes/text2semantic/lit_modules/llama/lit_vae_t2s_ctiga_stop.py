@@ -9,7 +9,7 @@ import math
 
 from samantha.utils.hparams import DotDict
 from recipes.bark.lit_modules.sample import sample
-from s3a.providers.ctiga.utils.generation import InferenceParams
+from samantha.utils.ctiga.inference_params import InferenceParams
 from samantha.utils.model_metric import ModelMetric
 
 def sequence_mask(seq_lens, max_len=None, device='cpu'):
@@ -159,6 +159,7 @@ class VAET2SStopModule(pl.LightningModule):
                     "bsz": b,
                     "seqlen": t,
                     "batch_tokens": batch_tokens,
+                    "training/loss": total_loss.item(),
                 },
                 prog_bar=True,
                 sync_dist=True

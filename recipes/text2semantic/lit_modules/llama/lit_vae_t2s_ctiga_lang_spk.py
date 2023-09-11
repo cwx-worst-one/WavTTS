@@ -163,6 +163,7 @@ class VAET2SLangSpkModule(pl.LightningModule):
                 "bsz": bsz,
                 "seqlen": seq_len,
                 "batch_tokens": batch_tokens,
+                "training/loss": total_loss.item(),
             },
             prog_bar=True,
             sync_dist=True

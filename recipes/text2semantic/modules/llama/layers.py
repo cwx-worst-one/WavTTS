@@ -5,7 +5,7 @@ import math
 from collections import OrderedDict
 from torch.nn import init
 
-from s3a.providers.ctiga.ops.rms_norm import rms_norm
+from samantha.components.ctiga.ops.rms_norm import rms_norm
 
 
 class ConditionRMSNorm(nn.Module):
