@@ -1,6 +1,6 @@
 """bucket process module"""
 import logging
-from typing import Callable, List
+from typing import Callable, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -176,3 +176,111 @@ class BucketBatcher:
             self.bucket_list[bucket_idx] = []
             self.bucket_size[bucket_idx] = 0
             self.bucket_max_size[bucket_idx] = 0
+
+
+class TaggedBucketBatcher:
+    def __init__(
+        self,
+        buckets: Dict[str, List[int]],
+        batch_size: int,
+        tag_fn: Callable = lambda x: x["bucket_tag"],
+        length_fn: Callable = len,
+        bucket_skip_warning_num: int = 10000,
+    ):
+        self.buckets = buckets
+        self.batch_size = batch_size
+        self.tag_fn = tag_fn
+        self.length_fn = length_fn
+        self.bucket_skip_warning_num = bucket_skip_warning_num
+        self.bucket_num = {k: len(v) for k, v in self.buckets.items()}
+        self.bucket_list = {
+            k: [[] for _ in range(v)] for k, v in self.bucket_num.items()
+        }
+        self.throw_num = 0
+
+    def find_bucket(self, data_item):
+        """find a suitable bucket and push to bucket."""
+        tag, size = self.get_item_size(data_item)
+        if tag is None or size is None:
+            return None, None, None
+        bucket_idx = self.find_bucket_idx(tag, size)
+        if bucket_idx is None:
+            return None, None, None
+        return tag, size, bucket_idx
+
+    def find_bucket_idx(self, tag, size):
+        r"""find bucket idx for a size.
+
+        Args:
+            size(int): size of a data item
+        Returns:
+            int: the minimum bucket idx for this size, which match
+                 `size <= bucket_schedule[idx]`.
+                 -1 means no bucket match.
+        """
+
+        if size > self.buckets[tag][-1]:
+            logger.warning(
+                (
+                    f"{size=} exceeding the maximum bucket"
+                    + "[{tag}] size {self.buckets[tag][-1]}."
+                )
+            )
+            return None
+
+        bucket_length = len(self.buckets[tag])
+        low = -1
+        high = bucket_length - 1
+        while low + 1 < high:
+            mid = (high + low) >> 1
+            if self.buckets[tag][mid] < size:
+                low = mid
+            else:
+                high = mid
+        return high
+
+    def push_bucket(self, data_item, tag, bucket_idx):
+        self.bucket_list[tag][bucket_idx].append(data_item)
+
+    def get_item_size(self, data_item):
+        """get item size."""
+        try:
+            tag = self.tag_fn(data_item)
+            size = self.length_fn(data_item)
+        except Exception as e:
+            logger.warning(f"Failed to calculate data length with error message {e}")
+            tag = None
+            size = None
+        return tag, size
+
+    def collate_batch(self, data_item):
+        """
+        push data_item to bucket_list for collate batch.
+        Args:
+            data_item(any): data item.
+        Returns:
+            batch_data(any): collated batch data if batch is full else None.
+        """
+        tag, size, bucket_idx = self.find_bucket(data_item)
+        if tag is None or size is None or bucket_idx is None:
+            self.throw_num += 1
+            if self.throw_num % self.bucket_skip_warning_num == 100:
+                logger.warning(
+                    f"Cannot find suitable bucket. You have already "
+                    f"skipped {self.throw_num} data_item"
+                )
+            return None
+
+        bsz = len(self.bucket_list[tag][bucket_idx]) + 1
+        self.push_bucket(data_item, tag, bucket_idx)
+
+        if bsz >= self.batch_size:
+            batch_data = self.bucket_list[tag][bucket_idx]
+            self.clear(tag, bucket_idx)
+            return batch_data
+        else:
+            return None
+
+    def clear(self, tag, bucket_idx):
+        """clear data buffer"""
+        self.bucket_list[tag][bucket_idx] = []

@@ -1054,6 +1054,21 @@ class Stage2(BaseStage):
         }
 
     @torch.no_grad()
+    def get_spec(self, batch):
+        input_dict = self.prepare_feature(batch)
+        output_dict = self.model(input_dict)
+        return {
+            "mel": {
+                "Reconstructed": output_dict["recon_feature"].transpose(1, 2),
+                "Original": input_dict["feature"].transpose(1, 2),
+            },
+            "chroma": {
+                "Reconstructed": output_dict["recon_chroma"].transpose(1, 2),
+                "Original": input_dict["chroma"].transpose(1, 2),
+            },
+        }
+
+    @torch.no_grad()
     def get_audio(self, batch):
         input_dict = self.prepare_feature(batch)
         output_dict = self.model(input_dict)
@@ -1481,6 +1496,164 @@ class Stage3(Stage2):
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
         return
+
+
+class BaseUMM(pl.LightningModule):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        checkpointing=False,
+        extra_params=None,
+        required_modules=None,
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+        self.model = model_cls()
+        self.criterion = criterion_cls()
+        self.extra_params = DotDict(extra_params)
+        self.load_from_pretrained = False
+        if checkpointing:
+            self.model.gradient_checkpointing_enable()
+
+    def setup(self, stage: str) -> None:
+        if stage == "fit" and self.hparams.required_modules is not None:
+            self.load_required_modules()
+
+    def load_required_modules(self):
+        pretrained = self.hparams.required_modules["pretrained"]
+        state_dict = pretrained["init_fn"](
+            pretrained["ckpt_path"], self.local_rank, pretrained["cache_dir"]
+        )["state_dict"]
+        print(f'Loading pretrained model from {pretrained["ckpt_path"]}')
+        missing_keys, unexpected_keys = self.load_state_dict(
+            state_dict=state_dict, strict=False
+        )
+        print(f"[Missing] {missing_keys}")
+        print(f"[Unexpected] {unexpected_keys}")
+
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def prepare_feature(self, batch):
+        audio = batch["audio"].squeeze(dim=1).float()
+        audio = self.pad_audio(audio)
+        feature = self.preprocessing(audio)
+        input_dict = {"text_ids": batch["token"], "wav": audio}
+        input_dict.update(feature)
+        return input_dict
+
+    def _shared_step(self, batch):
+        input_dict = self.prepare_feature(batch)
+        output_dict = self.model(input_dict)
+
+        loss_dict = self.criterion(
+            ctc_logits=output_dict["ctc_out"],
+            text_ids=input_dict["text_ids"],
+            recon_chroma=output_dict["chroma_out"],
+            chroma=input_dict["chroma"],
+            recon_mel=output_dict["mel_out"],
+            mel=input_dict["mel"],
+        )
+        loss_dict["loss"] = (
+            loss_dict["loss_chroma"] * self.model.config.w_loss_chroma
+            + loss_dict["loss_mel"] * self.model.config.w_loss_mel
+            + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
+        )
+        if self.model.config.add_vq:
+            loss_dict["loss_vq"] = output_dict["vq_loss"]
+            loss_dict["loss"] = (
+                loss_dict["loss"] + output_dict["vq_loss"] * self.model.config.w_loss_vq
+            )
+            code_rate = self.get_code_rate(output_dict["vq_ids"])
+            quant_rate = self.get_quant_rate(
+                output_dict["vq_ids"], self.model.config.vq_codebook_size
+            )
+            loss_dict["aux/code_rate"] = code_rate
+            loss_dict["aux/quant_rate"] = quant_rate
+            loss_dict["aux/entropy"] = self.model.vq.embedding.entropy()
+            loss_dict["aux/w_loss_vq"] = self.model.config.w_loss_vq
+
+        loss_dict["aux/num_text_ids"] = input_dict["text_ids"].size(1) * input_dict[
+            "text_ids"
+        ].size(0)
+        loss_dict["aux/num_mel_frames"] = input_dict["mel"].size(1) * input_dict[
+            "mel"
+        ].size(0)
+        loss_dict["aux/mel_mean"] = input_dict["mel"].mean()
+        loss_dict["aux/mel_std"] = input_dict["mel"].std()
+        loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
+        loss_dict["aux/w_loss_chroma"] = self.model.config.w_loss_chroma
+        loss_dict["aux/w_loss_mel"] = self.model.config.w_loss_mel
+        return loss_dict
+
+    def training_step(self, batch, batch_idx):
+        loss_dict = self._shared_step(batch)
+        self.log_dict(loss_dict, prog_bar=True, sync_dist=True)
+        return loss_dict["loss"]
+
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
+        # Dummy function for triggering callbacks
+        return
+
+    def configure_optimizers(self):
+        optimizer = self.hparams.optimizer_cls(self.model.parameters())
+        scheduler = self.hparams.scheduler_cls(optimizer)
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
+        }
+
+    def get_code_rate(self, target_tokens):
+        code_rate = (
+            sum(
+                [
+                    len(target_tokens[i, :].unique())
+                    for i in range(target_tokens.size(0))
+                ]
+            )
+            / target_tokens.size(0)
+            / target_tokens.size(1)
+        )
+        return code_rate
+
+    def get_quant_rate(self, quant_index, quant_token_num):
+        one_hot = torch.nn.functional.one_hot(
+            quant_index.reshape(-1), quant_token_num
+        ).sum(dim=0)
+        one_hot = self.all_gather(one_hot)
+        one_hot = one_hot.sum(dim=0).clamp(0, 1)
+        quant_rate = one_hot.sum() / quant_token_num
+        return quant_rate
+
+    @torch.no_grad()
+    def get_spec(self, batch):
+        input_dict = self.prepare_feature(batch)
+        output_dict = self.model(input_dict)
+        return {
+            "mel": {
+                "Reconstructed": output_dict["mel_out"].transpose(1, 2),
+                "Original": input_dict["mel"].transpose(1, 2),
+            },
+            "chroma": {
+                "Reconstructed": output_dict["chroma_out"].transpose(1, 2),
+                "Original": input_dict["chroma"].transpose(1, 2),
+            },
+        }
+
+    @torch.no_grad()
+    def pad_audio(self, x):
+        return self.model.pad_audio(x)
+
+    @torch.no_grad()
+    def preprocessing(self, x):
+        return self.model.preprocessing(x)
+
+    @torch.no_grad()
+    def wav2token(self, x):
+        return self.model.wav2token(x)
 
 
 class MKII(pl.LightningModule):
@@ -1963,3 +2136,448 @@ class MKIIVocoder(pl.LightningModule):
         text_ids = encoded_text["input_ids"].to(batch["audio"].device)
         batch.update(text_ids=text_ids)
         return batch
+
+
+class ARModule(pl.LightningModule):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+        self.model = model_cls()
+        self.criterion = criterion_cls()
+        self.extra_params = DotDict(extra_params)
+        self.requires = {}
+        self.val_outputs = dict()
+
+        if checkpointing:
+            self.model.gradient_checkpointing_enable()
+
+    def setup(self, stage: str) -> None:
+        if (
+            stage == "fit"
+            and not self.requires
+            and self.hparams.required_modules is not None
+        ):
+            self.load_required_modules()
+
+    def load_required_modules(self):
+        for name, item in self.hparams.required_modules.items():
+            hpath = item["ckpt_path"]
+            init_fn = item["init_fn"]
+            cache_dir = item["cache_dir"]
+            print(f"Loading {name} from {hpath}")
+            self.requires.update(
+                init_fn(hpath, local_rank=self.local_rank, cache_dir=cache_dir)
+            )
+        return
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def get_soundstream_tokens(self, x):
+        output = self.requires["ss"](x.float())[2]
+        output = torch.stack(output, dim=2)
+        return output
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def get_mkii_tokens(self, x):
+        embeds, tokens = self.requires["mkii"].tokenize(x.float())
+        return tokens
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def get_mkii_embeds(self, x):
+        embeds, tokens = self.requires["mkii"].tokenize(x.float())
+        return embeds
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def pad_audio(self, x):
+        if x.size(-1) % (self.extra_params.hop_length * 4) > 0:
+            return F.pad(
+                x,
+                (
+                    0,
+                    self.extra_params.hop_length * 4
+                    - (x.size(-1) % (self.extra_params.hop_length * 4)),
+                ),
+                "constant",
+                0,
+            )
+        else:
+            return x
+
+    def configure_optimizers(self):
+        optimizer = self.hparams.optimizer_cls(self.model.parameters())
+        scheduler = self.hparams.scheduler_cls(optimizer)
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
+        }
+
+
+class SemanticModule(ARModule):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+
+    def setup(self, stage: str) -> None:
+        self.tokenizer = BertTokenizer.from_pretrained("bert-large-uncased")
+        self.load_required_modules()
+        assert (
+            self.extra_params.vq_syllable_codebook_size
+            == self.requires["mkii"].model.config.vq_syllable_codebook_size
+        )
+        assert (
+            self.extra_params.vq_chroma_codebook_size
+            == self.requires["mkii"].model.config.vq_chroma_codebook_size
+        )
+        assert (
+            self.extra_params.text_vocab_size
+            == self.requires["mkii"].model.config.vocab_size
+        )
+        self.vq_syllable_codebook_size = self.extra_params.vq_syllable_codebook_size
+        self.vq_chroma_codebook_size = self.extra_params.vq_chroma_codebook_size
+        self.eos_id = self.vq_syllable_codebook_size + self.vq_chroma_codebook_size
+        self.sos_id = self.eos_id + 1
+        self.text_vocab_size = self.extra_params.text_vocab_size
+        self.padding_value = (
+            self.vq_syllable_codebook_size
+            + self.vq_chroma_codebook_size
+            + 1
+            + 1
+            + self.text_vocab_size
+        )
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def prepare_feature(self, batch):
+        wav = self.pad_audio(batch["audio"].squeeze(1)).float()
+        device = wav.device
+        b, _ = wav.size()
+
+        encoded_text = self.tokenizer(
+            batch["text"], add_special_tokens=False, padding="do_not_pad"
+        )
+        text_ids = encoded_text["input_ids"]
+        mkii_ids = self.get_mkii_tokens(wav)
+        mkii_ids[:, :, 1] = mkii_ids[:, :, 1] + self.vq_syllable_codebook_size
+        mkii_ids = rearrange(mkii_ids, "b t q -> b (t q)")
+        sos_ids = (
+            torch.zeros(size=[b, 1], dtype=mkii_ids.dtype, device=device) + self.sos_id
+        )
+        eos_ids = (
+            torch.zeros(size=[b, 1], dtype=mkii_ids.dtype, device=device) + self.eos_id
+        )
+        input_ids = []
+        mkii_id_starts = []
+        target_ids = []
+        for i in range(b):
+            text_ids[i] = (
+                torch.tensor(text_ids[i], dtype=torch.long, device=device)
+                + self.vq_syllable_codebook_size
+                + self.vq_chroma_codebook_size
+                + 1  # eos
+                + 1  # sos
+            )
+            input_ids.append(
+                torch.cat([text_ids[i], sos_ids[i], mkii_ids[i], eos_ids[i]], dim=-1)
+            )
+            mkii_id_starts.append(text_ids[i].size(-1))
+            target_ids.append(torch.cat([mkii_ids[i], eos_ids[i]], dim=-1))
+        input_ids = torch.nn.utils.rnn.pad_sequence(
+            input_ids, batch_first=True, padding_value=self.padding_value
+        )
+        target_ids = torch.stack(target_ids, dim=0)
+        return {
+            "input_ids": input_ids,
+            "mkii_id_starts": mkii_id_starts,
+            "target_ids": target_ids,
+            "mkii_ids": mkii_ids,
+        }
+
+    def _shared_step(self, batch):
+        input_dict = self.prepare_feature(batch)
+        input_ids = input_dict["input_ids"]
+        target_ids = input_dict["target_ids"]
+        mkii_id_starts = input_dict["mkii_id_starts"]
+        logits = self.model(input_ids=input_ids)["logits"]
+        x = []
+        for i, start in enumerate(mkii_id_starts):
+            # for debug
+            # print(input_ids[i, start : start + target_ids[i].size(-1)])
+            x.append(logits[i, start : start + target_ids[i].size(-1)])
+        x = torch.stack(x, dim=0)
+        loss = self.criterion(x, target_ids)
+        accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
+        return {"loss": loss, "accu": accu, "num_tokens": input_ids.size(-1)}
+
+    def training_step(self, batch, batch_idx):
+        loss_dict = self._shared_step(batch)
+        self.log_dict(loss_dict, prog_bar=True, sync_dist=True)
+        return loss_dict["loss"]
+
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
+        # Dummy function for triggering callbacks
+        return
+
+    @torch.no_grad()
+    def predict(self, semantic_samples, hp):
+        device = semantic_samples.device
+        b = semantic_samples.size(0)
+        num_coarse = hp.num_coarse
+        soundstream_codebook_size = hp.soundstream_codebook_size
+        wav2vec_codebook_size = hp.wav2vec_codebook_size
+        soundstream_frame_rate = hp.soundstream_frame_rate
+        semantic_samples = semantic_samples + num_coarse * soundstream_codebook_size
+        sos_ids = (
+            torch.zeros(size=[b, 1], dtype=semantic_samples.dtype, device=device)
+            + num_coarse * soundstream_codebook_size
+            + wav2vec_codebook_size
+        )
+
+        slice_range = []
+        beg = 0
+        while True:
+            end = beg + hp.coarse_duration * soundstream_frame_rate * num_coarse
+            if end >= hp.duration * soundstream_frame_rate * num_coarse:
+                end = hp.duration * soundstream_frame_rate * num_coarse
+                beg = end - hp.coarse_duration * soundstream_frame_rate * num_coarse
+                slice_range.append([beg, end])
+                break
+            else:
+                slice_range.append([beg, end])
+            beg += hp.coarse_stride * soundstream_frame_rate * num_coarse
+
+        prev_end = 0
+        coarse_samples = None
+        for cur_beg, cur_end in slice_range:
+            cache_len = prev_end - cur_beg
+            prev_end = cur_end
+            semantic_beg = int(
+                cur_beg / soundstream_frame_rate / num_coarse * hp.wav2vec_frame_rate
+            )
+            semantic_end = semantic_beg + hp.semantic_duration * hp.wav2vec_frame_rate
+            semantic_slice = semantic_samples[:, semantic_beg:semantic_end]
+            if cache_len == 0:
+                input_ids = torch.cat([semantic_slice, sos_ids], dim=1)
+            else:
+                prefix_coarse_samples = coarse_samples[:, cur_beg : cur_beg + cache_len]
+                input_ids = torch.cat(
+                    [semantic_slice, sos_ids, prefix_coarse_samples], dim=1
+                )
+            gen_length = cur_end - cur_beg - cache_len
+            past_key_values = None
+            pbar = tqdm(range(gen_length))
+            for i in pbar:
+                pbar.set_description(
+                    f"Coarse [{cur_beg} - {cur_end}] [{semantic_beg} - {semantic_end}]"
+                )
+                model_output = self.model(
+                    input_ids, past_key_values=past_key_values, use_cache=True
+                )
+                past_key_values = model_output["past_key_values"]
+                logits = model_output["logits"]
+                layer_idx = i % num_coarse
+                predict_logits = logits[
+                    :,
+                    -1:,
+                    layer_idx
+                    * soundstream_codebook_size : (layer_idx + 1)
+                    * soundstream_codebook_size,
+                ]
+                samples = sample(
+                    predict_logits, temp=hp.coarse_temperature, mode=hp.sample_mode
+                )
+                samples = samples + layer_idx * soundstream_codebook_size
+                input_ids = samples
+                if coarse_samples is None:
+                    coarse_samples = samples
+                else:
+                    coarse_samples = torch.cat([coarse_samples, samples], dim=1)
+        return coarse_samples
+
+
+class CoarseModule(ARModule):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+
+    def setup(self, stage: str) -> None:
+        self.load_required_modules()
+        assert (
+            self.extra_params.vq_syllable_codebook_size
+            == self.requires["mkii"].model.config.vq_syllable_codebook_size
+        )
+        assert (
+            self.extra_params.vq_chroma_codebook_size
+            == self.requires["mkii"].model.config.vq_chroma_codebook_size
+        )
+        self.vq_syllable_codebook_size = self.extra_params.vq_syllable_codebook_size
+        self.vq_chroma_codebook_size = self.extra_params.vq_chroma_codebook_size
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def prepare_feature(self, batch):
+        wav = self.pad_audio(batch["audio"].squeeze(1)).float()
+        device = wav.device
+        num_coarse = self.extra_params.num_coarse
+        b, _ = wav.size()
+
+        soundstream_ids = self.get_soundstream_tokens(wav)
+        soundstream_ids = (
+            soundstream_ids[:, :, 0:num_coarse]
+            + torch.arange(num_coarse, device=device)
+            * self.extra_params.soundstream_codebook_size
+        )
+        soundstream_ids = torch.reshape(soundstream_ids, [b, -1])
+
+        mkii_ids = self.get_mkii_tokens(wav)
+        mkii_ids[:, :, 1] = mkii_ids[:, :, 1] + self.vq_syllable_codebook_size
+        mkii_ids = rearrange(mkii_ids, "b t q -> b (t q)")
+        mkii_ids = mkii_ids + num_coarse * self.extra_params.soundstream_codebook_size
+        sos_ids = (
+            torch.zeros(size=[b, 1], dtype=soundstream_ids.dtype, device=device)
+            + num_coarse * self.extra_params.soundstream_codebook_size
+            + self.vq_syllable_codebook_size
+            + self.vq_chroma_codebook_size
+        )
+        input_ids = torch.cat([mkii_ids, sos_ids, soundstream_ids[:, :-1]], dim=1)
+        return {"input_ids": input_ids, "target_ids": soundstream_ids}
+
+    def _shared_step(self, batch):
+        input_dict = self.prepare_feature(batch)
+        input_ids = input_dict["input_ids"]
+        target_ids = input_dict["target_ids"]
+        logits = self.model(input_ids=input_ids)["logits"]
+        x = logits[:, -target_ids.size(1) :, :]
+        # for debug
+        # print(input_ids[:, -target_ids.size(1)])
+        loss = self.criterion(x, target_ids)
+        accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
+        return {"loss": loss, "accu": accu, "num_tokens": input_ids.size(-1)}
+
+    def training_step(self, batch, batch_idx):
+        loss_dict = self._shared_step(batch)
+        self.log_dict(loss_dict, prog_bar=True, sync_dist=True)
+        return loss_dict["loss"]
+
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
+        # Dummy function for triggering callbacks
+        return
+
+    @torch.no_grad()
+    def predict(self, semantic_samples, hp):
+        device = semantic_samples.device
+        b = semantic_samples.size(0)
+        num_coarse = hp.num_coarse
+        soundstream_codebook_size = hp.soundstream_codebook_size
+        wav2vec_codebook_size = hp.wav2vec_codebook_size
+        soundstream_frame_rate = hp.soundstream_frame_rate
+        semantic_samples = semantic_samples + num_coarse * soundstream_codebook_size
+        sos_ids = (
+            torch.zeros(size=[b, 1], dtype=semantic_samples.dtype, device=device)
+            + num_coarse * soundstream_codebook_size
+            + wav2vec_codebook_size
+        )
+
+        slice_range = []
+        beg = 0
+        while True:
+            end = beg + hp.coarse_duration * soundstream_frame_rate * num_coarse
+            if end >= hp.duration * soundstream_frame_rate * num_coarse:
+                end = hp.duration * soundstream_frame_rate * num_coarse
+                beg = end - hp.coarse_duration * soundstream_frame_rate * num_coarse
+                slice_range.append([beg, end])
+                break
+            else:
+                slice_range.append([beg, end])
+            beg += hp.coarse_stride * soundstream_frame_rate * num_coarse
+
+        prev_end = 0
+        coarse_samples = None
+        for cur_beg, cur_end in slice_range:
+            cache_len = prev_end - cur_beg
+            prev_end = cur_end
+            semantic_beg = int(
+                cur_beg / soundstream_frame_rate / num_coarse * hp.wav2vec_frame_rate
+            )
+            semantic_end = semantic_beg + hp.semantic_duration * hp.wav2vec_frame_rate
+            semantic_slice = semantic_samples[:, semantic_beg:semantic_end]
+            if cache_len == 0:
+                input_ids = torch.cat([semantic_slice, sos_ids], dim=1)
+            else:
+                prefix_coarse_samples = coarse_samples[:, cur_beg : cur_beg + cache_len]
+                input_ids = torch.cat(
+                    [semantic_slice, sos_ids, prefix_coarse_samples], dim=1
+                )
+            gen_length = cur_end - cur_beg - cache_len
+            past_key_values = None
+            pbar = tqdm(range(gen_length))
+            for i in pbar:
+                pbar.set_description(
+                    f"Coarse [{cur_beg} - {cur_end}] [{semantic_beg} - {semantic_end}]"
+                )
+                model_output = self.model(
+                    input_ids, past_key_values=past_key_values, use_cache=True
+                )
+                past_key_values = model_output["past_key_values"]
+                logits = model_output["logits"]
+                layer_idx = i % num_coarse
+                predict_logits = logits[
+                    :,
+                    -1:,
+                    layer_idx
+                    * soundstream_codebook_size : (layer_idx + 1)
+                    * soundstream_codebook_size,
+                ]
+                samples = sample(
+                    predict_logits, temp=hp.coarse_temperature, mode=hp.sample_mode
+                )
+                samples = samples + layer_idx * soundstream_codebook_size
+                input_ids = samples
+                if coarse_samples is None:
+                    coarse_samples = samples
+                else:
+                    coarse_samples = torch.cat([coarse_samples, samples], dim=1)
+        return coarse_samples

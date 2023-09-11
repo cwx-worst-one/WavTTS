@@ -29,12 +29,11 @@ class ConformerRotaryPositionalEmbedding(nn.Module):
         dim = config.hidden_size // config.num_attention_heads
         base = config.rotary_embedding_base
 
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
         self.register_buffer("inv_freq", inv_freq)
         self.cached_sequence_length = 0
         self.cached_rotary_positional_embedding = None
 
-    @torch.cuda.amp.autocast(enabled=False)
     def _set_cos_sin_cache(self, sequence_length):
         self.cached_sequence_length = sequence_length
         time_stamps = torch.arange(
@@ -55,7 +54,9 @@ class ConformerRotaryPositionalEmbedding(nn.Module):
             or self.cached_rotary_positional_embedding is None
         ):
             self._set_cos_sin_cache(sequence_length)
-        return self.cached_rotary_positional_embedding[:, -sequence_length:]
+        return self.cached_rotary_positional_embedding[:, -sequence_length:].to(
+            dtype=hidden_states.dtype
+        )
 
 
 class ConformerFeedForward(nn.Module):
@@ -461,7 +462,7 @@ class EMAEmbedding(nn.Module):
         self.decay = decay
         self.eps = eps
 
-        weight = torch.randn(codebook_size, codebook_dim)
+        weight = torch.randn(codebook_size, codebook_dim, dtype=torch.float32)
         weight[0] = 0.0
         self.register_buffer("weight", weight)
         self.register_buffer("cluster_size", torch.zeros(codebook_size) + 8)
@@ -513,7 +514,9 @@ class EMAVectorQuantizer(nn.Module):
         )
         self.same_index_shape = same_index_shape
 
+    @torch.cuda.amp.autocast(enabled=False)
     def forward(self, z):
+        z = z.float()
         z_flattened = rearrange(z, "b t d -> (b t) d")
 
         d = (
@@ -560,6 +563,118 @@ class EMAVectorQuantizer(nn.Module):
             )
 
         return z_q, min_encoding_indices, loss
+
+
+class BaseUMM(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.audio_transform = SpeechTransform(
+            sample_rate=config.sample_rate,
+            n_mels=config.n_mels,
+            n_fft=config.n_fft,
+            win_length=config.win_length,
+            hop_length=config.hop_length,
+            f_min=0,
+            f_max=config.sample_rate // 2,
+        )
+        if config.feature_cmvn is not None:
+            self.audio_transform.load_from_checkpoint(config.feature_cmvn)
+
+        self.chroma_transform = ChromaSpectrogram(
+            sample_rate=config.sample_rate,
+            n_fft=config.n_fft,
+            win_length=config.win_length,
+            hop_length=config.hop_length,
+            n_chroma=config.n_chroma,
+            normalized=False,
+        )
+
+        self.audio_encoder = AudioEncoder(config)
+        self.embed_positions = ConformerRotaryPositionalEmbedding(config)
+        self.encoder_input_dropout = nn.Dropout(config.hidden_dropout)
+        self.encoder_pre_layers = nn.ModuleList(
+            [ConformerEncoderLayer(config) for _ in range(config.num_pre_layers)]
+        )
+        self.encoder_post_layers = nn.ModuleList(
+            [ConformerEncoderLayer(config) for _ in range(config.num_post_layers)]
+        )
+        self.chroma_head = Conv2dUpsampling(config.hidden_size, config.n_chroma)
+        self.mel_head = Conv2dUpsampling(config.hidden_size, config.n_mels)
+        self.ctc_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+
+        if config.add_vq:
+            self.vq_proj_in = nn.Linear(
+                config.hidden_size, config.vq_codebook_dim, bias=False
+            )
+            self.vq = EMAVectorQuantizer(
+                codebook_size=config.vq_codebook_size,
+                codebook_dim=config.vq_codebook_dim,
+                decay=config.vq_decay,
+            )
+            self.vq_proj_out = nn.Linear(
+                config.vq_codebook_dim, config.hidden_size, bias=False
+            )
+        self.config = config
+
+    def forward(self, input_dict):
+        feature = input_dict["mel"]
+        audio_feature = self.audio_encoder(feature)
+        hidden_states = self.encoder_input_dropout(audio_feature)
+        position_embeddings = self.embed_positions(hidden_states)
+        for layer in self.encoder_pre_layers:
+            hidden_states = layer(
+                hidden_states, position_embeddings=position_embeddings
+            )
+        if self.config.add_vq:
+            hidden_states = self.vq_proj_in(hidden_states)
+            vq_embeds, vq_indices, vq_loss = self.vq(hidden_states)
+            hidden_states = self.vq_proj_out(vq_embeds)
+        for layer in self.encoder_post_layers:
+            hidden_states = layer(
+                hidden_states, position_embeddings=position_embeddings
+            )
+
+        mel_out = self.mel_head(hidden_states)
+        chroma_out = self.chroma_head(hidden_states)
+        ctc_out = self.ctc_head(hidden_states)
+        output_dict = {"chroma_out": chroma_out, "mel_out": mel_out, "ctc_out": ctc_out}
+        if self.config.add_vq:
+            output_dict.update({"vq_ids": vq_indices, "vq_loss": vq_loss})
+        return output_dict
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def pad_audio(self, x):
+        rate = int(self.config.sample_rate / self.config.frame_rate)
+        if x.size(-1) % rate > 0:
+            return F.pad(x, (0, rate - (x.size(-1) % rate)), "constant", 0)
+        else:
+            return x
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def preprocessing(self, x):
+        normalize = self.config.feature_cmvn is not None
+        mel = self.audio_transform(x, normalize=normalize)
+        chroma = self.chroma_transform(x)[:, :, :-1].transpose(1, 2)
+        chroma = F.normalize(chroma, p=2, dim=-1)
+        return {"mel": mel, "chroma": chroma}
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def wav2token(self, wav):
+        wav = self.pad_audio(wav)
+        feature = self.preprocessing(wav)["mel"]
+        audio_feature = self.audio_encoder(feature)
+        hidden_states = self.encoder_input_dropout(audio_feature)
+        position_embeddings = self.embed_positions(hidden_states)
+        for layer in self.encoder_pre_layers:
+            hidden_states = layer(
+                hidden_states, position_embeddings=position_embeddings
+            )
+        hidden_states = self.vq_proj_in(hidden_states)
+        vq_embeds, vq_indices, vq_loss = self.vq(hidden_states)
+        return vq_indices
 
 
 class MKII(nn.Module):

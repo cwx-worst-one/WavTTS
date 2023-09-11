@@ -213,57 +213,48 @@ class Stage2Loss(nn.Module):
 
 
 class UMMLoss(nn.Module):
-    def __init__(self):
+    def __init__(self, config):
         super().__init__()
-        self.ctc_loss_fn = nn.CTCLoss()
-        self.stft_loss_fn = STFTLoss()
-        self.multi_stft_loss_fn = MultiScaleSTFTLoss(w_phase=1.0)
+        self.ctc_loss_fn = nn.CTCLoss(
+            blank=config.ctc_blank_id,
+            reduction=config.ctc_loss_reduction,
+            zero_infinity=config.ctc_zero_infinity,
+        )
+        self.mel_loss_fn = STFTLoss()
+        self.chroma_loss_fn = STFTLoss()
 
-    def forward(
-        self,
-        recon_feature,
-        feature,
-        logits,
-        text_ids,
-        recon_wav,
-        wav,
-        vq_embeds=None,
-        mulan_embeds=None,
-    ):
-        recon_feature = recon_feature.contiguous().float()
-        feature = feature.contiguous().float()
-        recon_wav = recon_wav.contiguous().float()
-        wav = wav.contiguous().float()
+    def forward(self, ctc_logits, text_ids, recon_mel, mel, recon_chroma, chroma):
+        recon_mel = recon_mel.contiguous().float()
+        mel = mel.contiguous().float()
+        recon_chroma = recon_chroma.contiguous().float()
+        chroma = chroma.contiguous().float()
 
-        # Recon loss
-        loss_dict = self.stft_loss_fn.float()(recon_feature, feature)
-        loss_dict["multi_stft_loss"] = self.multi_stft_loss_fn(recon_wav, wav)
+        loss_dict = {}
+
+        # Spec
+        mel_loss = self.mel_loss_fn.float()(recon_mel, mel)
+        chroma_loss = self.chroma_loss_fn.float()(recon_chroma, chroma)
+        loss_dict["loss_mel"] = mel_loss["stft_loss"]
+        loss_dict["loss_chroma"] = chroma_loss["stft_loss"]
 
         # CTC
-        if logits is not None and text_ids is not None:
-            input_lengths = torch.full(
-                (logits.size(0),), logits.size(1), dtype=torch.long
+        ctc_logits = ctc_logits.contiguous().float()
+        input_lengths = torch.full((ctc_logits.size(0),), ctc_logits.size(1), dtype=torch.long)
+        labels_mask = text_ids > 0
+        target_lengths = labels_mask.sum(-1)
+        flattened_targets = text_ids.masked_select(labels_mask)
+
+        # CTCLoss doesn't support fp16
+        log_probs = F.log_softmax(ctc_logits, dim=-1, dtype=torch.float32).transpose(
+            0, 1
+        )  # [N, T, C] -> [T, N, C]
+
+        with torch.backends.cudnn.flags(enabled=False):
+            ctc_loss = self.ctc_loss_fn(
+                log_probs, flattened_targets, input_lengths, target_lengths
             )
-            labels_mask = text_ids > 0
-            target_lengths = labels_mask.sum(-1)
-            flattened_targets = text_ids.masked_select(labels_mask)
+        loss_dict["loss_ctc"] = ctc_loss
 
-            # CTCLoss doesn't support fp16
-            log_probs = F.log_softmax(logits, dim=-1, dtype=torch.float32).transpose(
-                0, 1
-            )  # [N, T, C] -> [T, N, C]
-
-            with torch.backends.cudnn.flags(enabled=False):
-                ctc_loss = self.ctc_loss_fn(
-                    log_probs, flattened_targets, input_lengths, target_lengths
-                )
-            loss_dict["ctc_loss"] = ctc_loss
-
-        # MuLan regression loss
-        if vq_embeds is not None and mulan_embeds is not None:
-            vq_embeds = vq_embeds.contiguous().float()
-            mulan_embeds = mulan_embeds.contiguous().float()
-            loss_dict["mulan_loss"] = F.cosine_similarity(vq_embeds, mulan_embeds)
         return loss_dict
 
 

@@ -32,7 +32,7 @@ class UMMConfig(PretrainedConfig):
         vq_kmeans_init=True,
         vq_kmeans_iters=10,
         vq_sync_codebook=True,
-        w_vq_loss=1,
+        w_loss_vq=1,
         # shared encoder
         hidden_size=1024,
         num_hidden_layers=24,
@@ -60,17 +60,14 @@ class UMMConfig(PretrainedConfig):
         resblock_dilation_sizes=[[1, 3, 5], [1, 3, 5], [1, 3, 5]],
         vocoder_activation="snakebeta",
         snake_logscale=True,
-        w_stft_loss=1,
-        w_multi_stft_loss=1,
+        w_loss_mel=1,
+        w_loss_chroma=1,
         # CTC
-        vocab_size=30522,
+        vocab_size=30522 + 1,
         ctc_loss_reduction="mean",
         ctc_zero_infinity=False,
-        w_ctc_loss=1,
-        # MuLan
-        add_mulan=False,
-        mulan_hidden_size=1024,
-        w_mulan_loss=1,
+        ctc_blank_id=30522,
+        w_loss_ctc=1,
         **kwargs,
     ):
         super().__init__(
@@ -109,7 +106,7 @@ class UMMConfig(PretrainedConfig):
         self.vq_kmeans_init = vq_kmeans_init
         self.vq_kmeans_iters = vq_kmeans_iters
         self.vq_sync_codebook = vq_sync_codebook
-        self.w_vq_loss = w_vq_loss
+        self.w_loss_vq = w_loss_vq
 
         # shared encoder
         self.hidden_size = hidden_size
@@ -136,19 +133,15 @@ class UMMConfig(PretrainedConfig):
         self.resblock_dilation_sizes = resblock_dilation_sizes
         self.vocoder_activation = vocoder_activation
         self.snake_logscale = snake_logscale
-        self.w_stft_loss = w_stft_loss
-        self.w_multi_stft_loss = w_multi_stft_loss
+        self.w_loss_mel = w_loss_mel
+        self.w_loss_chroma = w_loss_chroma
 
         # ctc loss
         self.vocab_size = vocab_size
         self.ctc_loss_reduction = ctc_loss_reduction
         self.ctc_zero_infinity = ctc_zero_infinity
-        self.w_ctc_loss = w_ctc_loss
-
-        # mulan loss
-        self.add_mulan = add_mulan
-        self.mulan_hidden_size = mulan_hidden_size
-        self.w_mulan_loss = w_mulan_loss
+        self.ctc_blank_id = ctc_blank_id
+        self.w_loss_ctc = w_loss_ctc
 
     @property
     def rq_input_dim(self):
