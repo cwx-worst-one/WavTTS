@@ -10,7 +10,13 @@ class MetaBasedDataset(Dataset):
         meta = []
         with open(meta_lst, "r", encoding="utf8") as f:
             for line in f:
-                if len(line.strip().split("|")) == 4:
+                if len(line.strip().split("|")) == 5:
+                    uttid, prompt_text, prompt_wav_path, text, spk = line.strip().split("|")
+                    if not os.path.isabs(prompt_wav_path):
+                        prompt_wav_path = os.path.join(os.path.dirname(meta_lst), prompt_wav_path)
+                    assert os.path.exists(prompt_wav_path)
+                    meta.append([uttid, prompt_text, prompt_wav_path, text, spk])
+                elif len(line.strip().split("|")) == 4:
                     uttid, prompt_text, prompt_wav_path, text = line.strip().split("|")
                     if not os.path.isabs(prompt_wav_path):
                         prompt_wav_path = os.path.join(os.path.dirname(meta_lst), prompt_wav_path)

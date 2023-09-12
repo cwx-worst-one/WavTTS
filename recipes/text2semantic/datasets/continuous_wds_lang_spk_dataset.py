@@ -74,7 +74,7 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
         self.use_bpe = use_bpe
         self.use_extra_tag = use_extra_tag
 
-        print(f"dataset/use_extra_tag: {use_extra_tag}")
+        logger.info(f"dataset/use_extra_tag: {use_extra_tag}")
 
         self.drop_last = drop_last
         self.batcher = BucketBatcher(**batcher_config)
@@ -83,7 +83,7 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
         self.use_lang_id = use_lang_id
         if self.use_lang_id:
             self.lang2id = load_json(lang2id)
-            print(f"Loaded lang2id from {lang2id}")
+            logger.info(f"Loaded lang2id from {lang2id}")
         else:
             self.lang2id = None
         print("self.lang2id: ", self.lang2id)
@@ -92,7 +92,7 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
         self.use_spk_id = use_spk_id
         if self.use_spk_id:
             self.spk2id = load_json(spk2id)
-            print(f"Loaded spk2id from {spk2id}")
+            logger.info(f"Loaded spk2id from {spk2id}")
         else:
             self.spk2id = None
         # print("self.spk2id: ", self.spk2id)
@@ -112,7 +112,7 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
             self.tag_dict = load_json(wds2tag)
 
         if self.use_bpe:
-            print(f'##### Using BPE #####')
+            logger.info(f'##### Using BPE #####')
             if tokenizer_type == "flan-T5-large":
                 self.bpe_tokenizer = T5Tokenizer.from_pretrained(bpe_dir)
             elif tokenizer_type == "byte-T5-base":
@@ -153,7 +153,7 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
         if self.use_extra_tag:
             tag_id = int(self.tag_dict.get(url, 0))
             if tag_id == 0:
-                print(f"Warning: no tag id found for {url}")
+                logger.warning(f"Warning: no tag id found for {url}")
         else:
             tag_id = None
 
@@ -171,7 +171,7 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
             else:
                 lang_key = self.get_lang_by_text(text)
             if lang_key == None or lang_key not in ['zh', 'en']:
-                print(f"{text}: Wrong lang_key")
+                logger.error(f"{text}: Wrong lang_key")
                 return None
             lang_id = self.lang2id[lang_key]
             lang_id += 1
@@ -192,7 +192,7 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
                 if spk_key in self.spk2id:
                     spk_id = self.spk2id[spk_key]
                 else:
-                    print(f"{utt_id}: speaker {spk_key} not in dict, will use default spkID")
+                    logger.warning(f"{utt_id}: speaker {spk_key} not in dict, will use default spkID")
                     spk_id = self.spk2id["default"]
             spk_id += 1
             spk_seq = np.asarray([spk_id] * bn.shape[0])

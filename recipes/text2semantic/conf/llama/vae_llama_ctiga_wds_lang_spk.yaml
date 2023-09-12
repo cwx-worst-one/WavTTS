@@ -41,7 +41,7 @@ run_opts:
     lang2id: 'recipes/text2semantic/datasets/dict/lang2id.json'
     use_spk_id: False
     spk_tokens_num: 8192
-    spk2id: 'recipes/text2semantic/datasets/dict/spk2id.en_all_20230905.json'
+    spk2id: 'recipes/text2semantic/datasets/dict/spk2id.json'
     resume_ckpt_path: null
     use_code_switch_data: True
     get_lang_by_tacolab: False

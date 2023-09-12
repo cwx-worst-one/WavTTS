@@ -7,14 +7,17 @@ class MaskedCrossEntropy(nn.Module):
     def __init__(self):
         super().__init__()
 
-    def forward(self, logits, targets, mask=None):
+    def forward(self, logits, targets, mask=None, log_softmax=True):
         logits = logits.contiguous()
         targets = targets.contiguous()
 
         logits = logits.view(-1, logits.size(-1))
         targets = targets.view(-1, 1)
 
-        log_probs = F.log_softmax(logits, dim=-1)
+        if log_softmax:
+            log_probs = F.log_softmax(logits, dim=-1)
+        else:
+            log_probs = logits
         loss = -torch.gather(log_probs, dim=1, index=targets)
 
         if mask is None:

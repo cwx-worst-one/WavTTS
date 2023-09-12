@@ -9,6 +9,9 @@ from recipes.text2semantic.modules.llama.layers import FrontendEmbedding
 from dataclasses import dataclass
 from transformers import T5EncoderModel
 import math
+import logging
+
+logger = logging.getLogger(__name__)
 
 def sequence_mask_binary(seq_lens, max_len=None, device='cpu'):
     if max_len is None:
@@ -29,7 +32,7 @@ class PositionalEncoding(nn.Module):
         pos_embedding[:, 0::2] = torch.sin(pos * den)
         pos_embedding[:, 1::2] = torch.cos(pos * den)
         pos_embedding = pos_embedding.unsqueeze(-2)
-        print(f"Created pos_embedding with size:{pos_embedding.size()}")
+        logger.info(f"Created pos_embedding with size:{pos_embedding.size()}")
 
         self.dropout = nn.Dropout(dropout)
         self.register_buffer('pos_embedding', pos_embedding)
@@ -85,6 +88,7 @@ class VAELLaMaLangSpk(LLaMa):
         state_dict_path=None,
         use_lang_id=False,
         use_spk_id=False,
+        use_phoneme_loss=False,
         text_encoder_type=None,
         text_encoder_path=None,
         use_extra_tag=False,
@@ -94,17 +98,18 @@ class VAELLaMaLangSpk(LLaMa):
         self.params = params
         self.n_layers = params.n_layers
         self.use_lang_id = use_lang_id
-        print(f"use_lang_id: {self.use_lang_id}")
+        logger.info(f"use_lang_id: {self.use_lang_id}")
         self.use_spk_id = use_spk_id
-        print(f"use_spk_id: {self.use_spk_id}")
+        logger.info(f"use_spk_id: {self.use_spk_id}")
         self.text_encoder_type = text_encoder_type
-        print(f"text_encoder_type: {self.text_encoder_type}")
+        logger.info(f"text_encoder_type: {self.text_encoder_type}")
         self.text_encoder_path = text_encoder_path
-        print(f"text_encoder_path: {self.text_encoder_path}")
+        logger.info(f"text_encoder_path: {self.text_encoder_path}")
         self.attn_type = attn_type
-        print(f"attn_type: {self.attn_type}")
+        logger.info(f"attn_type: {self.attn_type}")
         self.use_extra_tag = use_extra_tag
-        print(f"use_extra_tag: {self.use_extra_tag}")
+        logger.info(f"use_extra_tag: {self.use_extra_tag}")
+        self.use_phoneme_loss = use_phoneme_loss
 
         self.tok_embeddings = FrontendEmbedding(
                 params.phone_embed_dim,
@@ -115,35 +120,36 @@ class VAELLaMaLangSpk(LLaMa):
                 )
 
         self.lang_embeddings = nn.Embedding(params.lang_vocab_size, params.dim)
-        self.spk_embeddings = nn.Embedding(params.spk_vocab_size, params.dim)
+        if self.use_spk_id:
+            self.spk_embeddings = nn.Embedding(params.spk_vocab_size, params.dim)
         if self.use_extra_tag:
             self.tag_embeddings = nn.Embedding(params.tag_vocab_size, params.dim * 2)
         
         if self.text_encoder_type in ["flan-T5-large", "byte-T5-base"]:
-            print(f"Using text encoder: {self.text_encoder_type}, {self.text_encoder_path}")
+            logger.info(f"Using text encoder: {self.text_encoder_type}, {self.text_encoder_path}")
             assert self.text_encoder_path != ""
             self.text_encoder = T5EncoderModel.from_pretrained(self.text_encoder_path)
             self.text_linear = nn.Linear(self.text_encoder.config.d_model, self.params.dim, bias=False)
+            if self.attn_type == "mha":
+                self.cross_attention = nn.MultiheadAttention(
+                    embed_dim=params.dim, 
+                    num_heads=params.cross_attention_n_heads,
+                    batch_first=True,
+                    bias=False
+                )
+                self.positional_encoding = PositionalEncoding(
+                        params.dim, 
+                        dropout=params.pos_pdrop, 
+                        maxlen=params.max_seq_len)
+                logger.info(f"Created positional_encoding with maxlen: {params.max_seq_len}")
+            else:
+                raise NotImplementedError
         else:
             self.text_encoder = None
         
-        if self.attn_type == "mha":
-            self.cross_attention = nn.MultiheadAttention(
-                embed_dim=params.dim, 
-                num_heads=params.cross_attention_n_heads,
-                batch_first=True,
-                bias=False
-            )
-            self.positional_encoding = PositionalEncoding(
-                    params.dim, 
-                    dropout=params.pos_pdrop, 
-                    maxlen=params.max_seq_len)
-            print(f"Created positional_encoding with maxlen: {params.max_seq_len}")
-        else:
-            raise NotImplementedError
-
         self.stop_token_head = nn.Linear(params.dim, 2, bias=False)
-        self.output = nn.Linear(params.dim, params.n_phone, bias=False)
+        if self.use_phoneme_loss:
+            self.output = nn.Linear(params.dim, params.n_phone, bias=False)
         self.h_output = nn.Linear(params.dim, params.out_dim * 2, bias=False)
         self.prenet = nn.Linear(params.out_dim, params.dim, bias=False)
 
@@ -234,7 +240,8 @@ class VAELLaMaLangSpk(LLaMa):
                     key=self.positional_encoding(bpe_in_h),
                     value=self.positional_encoding(bpe_in_h),
                     key_padding_mask=bpe_mask,
-                    attn_mask=attention_mask
+                    attn_mask=attention_mask,
+                    average_attn_weights=False
                 )
 
                 # 6. add attened text_in_h into the phone part of token_in_h
@@ -248,12 +255,16 @@ class VAELLaMaLangSpk(LLaMa):
 
         h = super().forward(h, seqlen, start_pos, inference_params, cond=cond)
 
-        output = self.output(h)
+        if self.use_phoneme_loss:
+            output = self.output(h)
+        else:
+            output = None
+
         h_output = self.h_output(h)
         stop_token= self.stop_token_head(h)
 
         output_dict = {
-            "logits": output.float(),
+            "logits": output.float() if output is not None else None,
             "dense": h_output.float(), 
             "stop_token": stop_token.float(), 
             "bn_in_z": bn_in_z,

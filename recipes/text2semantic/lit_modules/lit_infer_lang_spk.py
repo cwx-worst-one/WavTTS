@@ -1,4 +1,5 @@
 import logging
+from multiprocessing.sharedctypes import Value
 import os
 from typing import Any
 
@@ -53,13 +54,16 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
         use_bpe=False,
         bpe_tokens_num=0,
         bpe_dir='',
+        tokenizer_type='',
         max_length=4096,
         use_spk_id=False,
+        use_prompt=False,
         spk_tokens_num=8192,
         spk2id='',
         infer_spk_name='',
         get_lang_by_tacolab=False,
-        save_tacolab=False
+        save_tacolab=False,
+        tag_id=0,
     ):
         super().__init__(
                 ar_model_name=ar_model_name,
@@ -86,6 +90,7 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
                 use_bpe=use_bpe,
                 bpe_tokens_num=bpe_tokens_num,
                 bpe_dir=bpe_dir,
+                tokenizer_type=tokenizer_type,
                 max_length=max_length)
 
         self.phone_to_int = phone_to_int
@@ -93,6 +98,8 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
         self.infer_spk_name = infer_spk_name
         self.get_lang_by_tacolab = get_lang_by_tacolab
         self.save_tacolab = save_tacolab
+        self.tag_id = tag_id
+        self.use_prompt = use_prompt
 
     def get_lang(self, tacolab):
         if len(tacolab[0].split('\t')) != 5:
@@ -230,7 +237,7 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             phone_ids, tone_ids = np.array(phone_ids), np.array(tone_ids)
             return np.stack([phone_ids, tone_ids]), phones, tones
         except Exception as e:
-            print(e)
+            logger.info(e)
             return None
 
     def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: int = 0) -> Any:
@@ -256,16 +263,25 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
 
     def encode(self, sample):
         device = f"cuda:{self.trainer.local_rank}"
-
         data_dict = dict()
 
-        if self.use_spk_id:
+        if len(sample) == 5:
+            uttid, prompt_text, prompt_wav_path, infer_text, spk = sample 
+        elif len(sample) == 4:
+            uttid, prompt_text, prompt_wav_path, infer_text = sample 
+            spk = None
+        elif len(sample) == 2:
             uttid, infer_text = sample
+            prompt_text, prompt_wav_path, spk = None, None, None
+        else:
+            raise NotImplementedError(sample)
+
+        if not self.use_prompt:
             bn = np.zeros([0, 32])
             bn = torch.from_numpy(bn)
         else:
-            uttid, prompt_text, prompt_wav_path, infer_text = sample
-
+            assert prompt_text is not None
+            assert prompt_wav_path is not None
             sr, wav = read(prompt_wav_path)
             if len(wav.shape) == 2 and wav.shape[-1] == 2:
                 wav = wav[:, 0]
@@ -291,16 +307,7 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             bn = bn[0]
 
         # get text_id
-        if self.use_spk_id:
-            # assert self.infer_tacolab_dir != ""
-            # infer_utt = uttid
-            # infer_tacolab_path = os.path.join(self.infer_tacolab_dir, infer_utt + '.lab')
-            # if not os.path.exists(infer_tacolab_path):
-            #     print("infer_tacolab_path not exists, skip", infer_tacolab_path)
-            #     return None
-            # with open(infer_tacolab_path, 'r', encoding="utf-8") as f:
-            #     infer_tacolab = [x.strip('\n ') for x in f.readlines()]
-            
+        if not self.use_prompt:
             infer_tacolab = self.generate_tacolabels_engine(infer_text)
             if infer_tacolab is None:
                 return None
@@ -321,20 +328,6 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             else:
                 text_id, phones, tones = text_id_phones_tones
         else:
-            # assert self.prompt_tacolab_dir != ""
-            # assert self.infer_tacolab_dir != ""
-            # prompt_utt = prompt_wav_path.split('/')[-1][:-4]
-            # infer_utt = uttid
-            # prompt_tacolab_path = os.path.join(self.prompt_tacolab_dir, prompt_utt + '.lab')
-            # infer_tacolab_path = os.path.join(self.infer_tacolab_dir, infer_utt + '.lab')
-            # if not os.path.exists(prompt_tacolab_path) or not os.path.exists(infer_tacolab_path):
-            #     print("prompt_tacolab_path or infer_tacolab_path not exists, skip", prompt_tacolab_path, infer_tacolab_path)
-            #     return None
-            # with open(prompt_tacolab_path, 'r', encoding="utf-8") as f:
-            #     prompt_tacolab = [x.strip('\n ') for x in f.readlines()]
-            # with open(infer_tacolab_path, 'r', encoding="utf-8") as f:
-            #     infer_tacolab = [x.strip('\n ') for x in f.readlines()]
-
             prompt_tacolab = self.generate_tacolabels_engine(prompt_text)
             infer_tacolab = self.generate_tacolabels_engine(infer_text)
 
@@ -368,13 +361,13 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
         text_id = np.concatenate([text_id, np.ones([text_id.shape[0], 1])], axis=-1)
 
         if self.use_lang_id:
-            if self.use_spk_id:
+            if not self.use_prompt:
                 prompt_lang_id = 1 # dummy
                 lang_seq = np.asarray([prompt_lang_id] * bn.shape[0])
 
                 infer_lang_key = self.get_lang_by_text(infer_text)
                 if infer_lang_key == None:
-                    print(f"{infer_text}: Wrong lang_key")
+                    logger.info(f"{infer_text}: Wrong lang_key")
                     return None
                 infer_lang_id = self.lang2id[infer_lang_key]
                 infer_lang_id += 1
@@ -384,7 +377,7 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
                 else:
                     prompt_lang_key = self.get_lang_by_text(prompt_text)
                 if prompt_lang_key == None:
-                    print(f"{prompt_text}: Wrong lang_key")
+                    logger.info(f"{prompt_text}: Wrong lang_key")
                     return None
                 prompt_lang_id = self.lang2id[prompt_lang_key]
                 prompt_lang_id += 1
@@ -396,7 +389,7 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
                     infer_lang_key = self.get_lang_by_text(infer_text)
 
                 if infer_lang_key == None:
-                    print(f"{infer_text}: Wrong lang_key")
+                    logger.info(f"{infer_text}: Wrong lang_key")
                     return None
                 infer_lang_id = self.lang2id[infer_lang_key]
                 infer_lang_id += 1
@@ -405,16 +398,16 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             prompt_spk_id = 1 # dummy
             spk_seq = np.asarray([prompt_spk_id] * bn.shape[0])
 
-            infer_spk_key = self.infer_spk_name
-            if infer_spk_key == '':
-                print(f"{infer_spk_key}: Wrong spk_key")
+            infer_spk_key = self.infer_spk_name if self.infer_spk_name is not None else spk
+            if self.spk2id.get(infer_spk_key) is None:
+                logger.info(f"{infer_spk_key}: Wrong spk_key")
                 return None
             infer_spk_id = self.spk2id[infer_spk_key]
             infer_spk_id += 1
 
-        data_dict['bn'] = bn.unsqueeze(0).to(device)
-        data_dict['text_lens'] = torch.tensor([text_id.shape[1]]).long()
-        data_dict['bn_lens'] = torch.tensor([bn.shape[0]]).long()
+        data_dict['bn'] = bn.unsqueeze(0).to(device).to(device)
+        data_dict['text_lens'] = torch.tensor([text_id.shape[1]]).long().to(device)
+        data_dict['bn_lens'] = torch.tensor([bn.shape[0]]).long().to(device)
         data_dict["phone"] = torch.from_numpy(text_id[0, :]).long().unsqueeze(0).to(device)
         data_dict["tone"] = torch.from_numpy(text_id[1, :]).long().unsqueeze(0).to(device)
 
@@ -427,13 +420,29 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
         if self.use_spk_id:
             data_dict['spk_seq'] = torch.tensor(spk_seq).long().to(device).unsqueeze(0)
             data_dict['infer_spk_id'] = infer_spk_id
+        
+        # bpe_id
+        if self.use_bpe:
+            data_dict['bpe_seq'] = torch.from_numpy(
+                np.asarray(
+                    self.bpe_tokenizer(
+                        infer_text, 
+                        truncation=True, 
+                        max_length=self.max_length,
+            ).input_ids)).unsqueeze(0).to(device)
+            data_dict['bpe_lens'] = torch.tensor([data_dict['bpe_seq'].shape[1]]).long().to(device)
+        else:
+            data_dict['bpe_seq'] = None
+
+        data_dict['tag_id'] = torch.from_numpy(
+            np.asarray([int(self.tag_id)])).long().to(device)
 
         return data_dict
 
     def generate_tacolabels_engine(self, text_str):
         lang_key = self.get_lang_by_text(text_str)
         if lang_key == None:
-            print(f"{text_str}: Wrong lang_key")
+            logger.info(f"{text_str}: Wrong lang_key")
             return None
         tacolab = None
         if lang_key in ['zh', 'zh_en']:

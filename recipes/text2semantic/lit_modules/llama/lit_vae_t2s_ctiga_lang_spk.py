@@ -13,6 +13,10 @@ from samantha.utils.hparams import DotDict
 from recipes.bark.lit_modules.sample import sample
 from s3a.providers.ctiga.utils.generation import InferenceParams
 from samantha.utils.model_metric import ModelMetric
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 def sequence_mask(seq_lens, max_len=None, device='cpu'):
     b = seq_lens.shape[0]
@@ -38,6 +42,8 @@ class VAET2SLangSpkModule(pl.LightningModule):
         use_lang_id=False,
         use_spk_id=False,
         use_phoneme_loss=False,
+        use_ctc_loss=False,
+        freeze_text_encoder=False,
         resume_ckpt_path=None,
     ):
         super().__init__()
@@ -47,24 +53,31 @@ class VAET2SLangSpkModule(pl.LightningModule):
         self.dense_criterion = dense_criterion_cls()
         self.requires = {}
         self.use_lang_id = use_lang_id
-        print("use_lang_id: ", self.use_lang_id)
+        logger.info(f"use_lang_id: {self.use_lang_id}")
         self.use_spk_id = use_spk_id
-        print("use_spk_id: ", self.use_spk_id)
+        logger.info(f"use_spk_id: {self.use_spk_id}")
         self.use_phoneme_loss = use_phoneme_loss
-        print("use_phoneme_loss: ", use_phoneme_loss)
+        logger.info(f"use_phoneme_loss: {use_phoneme_loss}")
+        self.use_ctc_loss = use_ctc_loss
+        logger.info(f"use_ctc_loss: {use_ctc_loss}")
+        self.freeze_text_encoder = freeze_text_encoder
+        logger.info(f"freeze_text_encoder: {freeze_text_encoder}")
 
         if checkpointing:
             self.model.gradient_checkpointing_enable()
         self.stop_token_loss_weight = stop_token_loss_weight
 
+        if self.use_ctc_loss:
+            self.ctc_loss = torch.nn.CTCLoss(zero_infinity=True)
+
         resume_ckpt_path = None
-        print("resume_ckpt_path: ", resume_ckpt_path)
+        logger.info(f"resume_ckpt_path: {resume_ckpt_path}")
         if resume_ckpt_path:
             state_dict = torch.load(resume_ckpt_path, map_location=torch.device('cpu'))['state_dict']
             new_state_dict = []
             new_state_dict = {k.replace("model.",""):v for k, v in state_dict.items()}
             self.model.load_state_dict(new_state_dict, strict=False)
-            print("Loading state_dict from {} successfully".format(resume_ckpt_path))
+            logger.info("Loading state_dict from {} successfully".format(resume_ckpt_path))
 
     def setup(self, stage: str) -> None:
         self.model_metric = ModelMetric(
@@ -96,6 +109,7 @@ class VAET2SLangSpkModule(pl.LightningModule):
 
                 bns, stop_tokens = batch["bn"], batch["stop_token"]
                 text_lens, bn_lens = batch["text_lens"], batch["bn_lens"]
+                max_text_len = max(text_lens)
 
                 seq_lens = text_lens + bn_lens
                 seq_len = max(seq_lens)
@@ -117,7 +131,6 @@ class VAET2SLangSpkModule(pl.LightningModule):
             pred_stop_token = ret_dict["stop_token"]
             pred_dense = ret_dict["dense"]
             attn_weights = ret_dict["attn_weights"]
-            pred_logits = ret_dict["logits"][:max(text_lens)]
 
         pred_stop_token = pred_stop_token[:, 0:seq_len - 1, :]
         pred_dense = pred_dense[:, 0:seq_len - 1, :]
@@ -145,16 +158,24 @@ class VAET2SLangSpkModule(pl.LightningModule):
         # phoneme loss
         targets_logits = batch["phone"]
         if self.use_phoneme_loss:
+            pred_logits = ret_dict["logits"][:, :max_text_len, :]
             phoneme_loss = self.logits_criterion(pred_logits.float(), targets_logits, mask=text_loss_mask)
         else:
             phoneme_loss = torch.tensor(0.)
 
-        total_loss = kl_loss + stop_token_loss * self.stop_token_loss_weight + phoneme_loss
+        # ctc loss
+        if self.use_ctc_loss:
+            ctc_loss = self.add_ctc_loss(attn_weights, text_lens, batch["bpe_lens"], bns.device)
+        else:
+            ctc_loss = torch.tensor(0.)
+
+        total_loss = ctc_loss + kl_loss + stop_token_loss * self.stop_token_loss_weight + phoneme_loss
 
         batch_tokens= bsz * seq_len
 
         self.log_dict(
             {
+                "ctc_loss": ctc_loss.item(),
                 "kl_loss": kl_loss.item(),
                 "phoneme_loss": phoneme_loss.item(),
                 "stop_token_loss": stop_token_loss.item(),
@@ -186,6 +207,13 @@ class VAET2SLangSpkModule(pl.LightningModule):
         return total_loss
 
     def configure_optimizers(self):
+        params = []
+        for name, p in self.model.named_parameters():
+            if self.freeze_text_encoder and name.startswith("text_encoder"):
+                p.requires_grad = False
+                continue
+            params.append({"params": [p]})
+
         optimizer = self.hparams.optimizer_cls(self.model.parameters())
         scheduler = self.hparams.scheduler_cls(optimizer)
         return {
@@ -196,28 +224,79 @@ class VAET2SLangSpkModule(pl.LightningModule):
             },
         }
     
+    def add_ctc_loss(self, alignments, text_lens, bpe_lens, device):
+        #### ctc loss ####
+        neg_blank_loss, ctc_loss = 0., 0.
+        ctc_target_lens = bpe_lens - 1 # remove sep
+        ctc_targets = torch.arange(ctc_target_lens.max()).to(device).unsqueeze(0).repeat(alignments.shape[0], 1) + 1 # remove bos
+        ctc_input_lens = text_lens - 1  # remove eos
+        blank_mask = sequence_mask(ctc_input_lens, max_len=ctc_input_lens.max(), device=device)
+        sub_aligns = []
+        # 将 wave 部分切片
+        for i, sub_align in enumerate(alignments):
+            align = sub_align[:, :ctc_input_lens[i], :]
+            sub_aligns.append(align) # [head, t_bn, t]
+        # 补长度
+        max_len = max([sub_align.size(1) for sub_align in sub_aligns])
+        for i, sub_align in enumerate(sub_aligns):
+            sub_align = torch.where(torch.isinf(sub_align), torch.zeros_like(sub_align) - 1e3, sub_align).float().log_softmax(dim=-1) # log_softmax
+            sub_align = torch.where(torch.isinf(sub_align), torch.zeros_like(sub_align) - 15, sub_align).clamp(-15) # inf 处理
+            sub_align = F.pad(sub_align, (0, 0, 0, max_len - sub_align.size(-2)))
+            sub_aligns[i] = sub_align
+        sub_aligns = torch.stack(sub_aligns, dim=0) # [b, head, t_bn, t_seq]
+        _b, _head, _t_bn, _t_q = sub_aligns.size()
+        sub_aligns = sub_aligns.view(_b * _head, _t_bn, _t_q) # [b*head, t_bn, t_seq]
+
+        # head 匹配
+        ctc_targets = ctc_targets.unsqueeze(1).repeat(1, _head, 1).reshape(_b * _head, -1)
+        ctc_target_lens = ctc_target_lens.unsqueeze(1).repeat(1, _head).reshape(-1)
+        ctc_input_lens = ctc_input_lens.unsqueeze(1).repeat(1, _head).reshape(-1)
+        blank_mask = blank_mask.unsqueeze(1).repeat(1, _head, 1).reshape(_b * _head, -1)
+
+        # blank loss to prevent blank prediction
+        neg_blank_loss += (sub_aligns[:, :, 0] * blank_mask).sum() / blank_mask.sum()
+
+        # 均衡长度 align loss
+        guided_targets = ((ctc_target_lens - 1) / ctc_input_lens).unsqueeze(1) * torch.arange(ctc_input_lens.max()).unsqueeze(0).to(device) + 1 # [b*head, t]
+        guided_targets = torch.round(guided_targets).long().clamp(0, sub_aligns.size(-1) - 1)
+        guided_loss = self.logits_criterion(sub_aligns, guided_targets, blank_mask, log_softmax=False)
+        sub_aligns = sub_aligns.permute(1, 0, 2) # [b*head, t_bn, t_seq] -> [t_bn, b*head, t_seq]
+        ctc_loss += self.ctc_loss(
+            sub_aligns,
+            ctc_targets,
+            input_lengths=ctc_input_lens,
+            target_lengths=ctc_target_lens,
+        )
+
+        ctc_scale = min(1, self.trainer.global_step / 10_000) * 0.1
+        guided_scale = max(0, (1 - self.trainer.global_step / 20_000)) * 0.1
+        ctc_total_loss = ctc_scale * (ctc_loss + neg_blank_loss) + guided_scale * guided_loss
+        return ctc_total_loss
+    
     @torch.no_grad()
     def log_attention(self, attn_weights, batch_idx):
         attn_weights = attn_weights.cpu().detach().numpy()[0]
+        for i in range(attn_weights.shape[0]):
+            # 取argmax操作，得到二值矩阵
+            single_head_weight = attn_weights[i]
+            len_src, len_tgt = single_head_weight.shape
+            argmax_attn_weights = np.zeros_like(single_head_weight)
+            if len_src >= len_tgt:
+                argmax_attn_weights[np.arange(len_src), single_head_weight.argmax(1)] = 1
+            else:
+                argmax_attn_weights[single_head_weight.argmax(0), np.arange(len_tgt)] = 1
 
-        # 取argmax操作，得到二值矩阵
-        len_src, len_tgt = attn_weights.shape
-        argmax_attn_weights = np.zeros_like(attn_weights)
-        if len_src >= len_tgt:
-            argmax_attn_weights[np.arange(len_src), attn_weights.argmax(1)] = 1
-        else:
-            argmax_attn_weights[attn_weights.argmax(0), np.arange(len_tgt)] = 1
-
-        # 绘制注意力权重图
-        fig, ax = plt.subplots()
-        # plt.imshow(argmax_attn_weights, cmap='Blues')
-        im = ax.imshow(argmax_attn_weights, cmap='Blues')
-        plt.title("Attention Alignment Matrix")
-        plt.xlabel("Source Tokens")
-        plt.ylabel("Target Tokens")
-        # plt.colorbar(im)
-        # 将图像数据记录到WandB
-        wandb.log({f"Attention Alignment Matrix": wandb.Image(fig)})
+            # 绘制注意力权重图
+            fig, ax = plt.subplots()
+            # plt.imshow(argmax_attn_weights, cmap='Blues')
+            im = ax.imshow(argmax_attn_weights, cmap='Blues')
+            plt.title("Attention Alignment Matrix")
+            plt.xlabel("Source Tokens")
+            plt.ylabel("Target Tokens")
+            # plt.colorbar(im)
+            # 将图像数据记录到WandB
+            wandb.log({f"Attention Alignment Matrix {i}": wandb.Image(fig)})
+            plt.clf()
 
     @torch.no_grad()
     def get_semantic_codes(self, wavs_16k, wavs_16k_len):

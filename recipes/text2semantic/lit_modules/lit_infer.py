@@ -21,7 +21,7 @@ from ..scripts.infer_utils import (
 from .llama.lit_vae_t2s_ctiga import VAET2SModule
 from .llama.lit_vae_t2s_ctiga_lang_spk import VAET2SLangSpkModule
 from ..utils.remote_io import load_json
-from transformers import LlamaTokenizer
+from transformers import LlamaTokenizer, T5Tokenizer, AutoTokenizer
 from zhon.hanzi import punctuation
 import string
 punctuation_all = punctuation + string.punctuation
@@ -68,6 +68,7 @@ class BigTTSWVAEInfer(LightningModule):
         use_bpe=False,
         bpe_tokens_num=0,
         bpe_dir='',
+        tokenizer_type='',
         max_length=4096
     ):
         super().__init__()
@@ -94,7 +95,7 @@ class BigTTSWVAEInfer(LightningModule):
         self.use_lang_id = use_lang_id
         if self.use_lang_id:
             self.lang2id = load_json(lang2id)
-            print(f"Loaded lang2id from {lang2id}")
+            logger.info(f"Loaded lang2id from {lang2id}")
         else:
             self.lang2id = None
 
@@ -102,18 +103,22 @@ class BigTTSWVAEInfer(LightningModule):
         self.use_spk_id = use_spk_id
 
         if self.use_bpe:
-            print('##### Using BPE #####')
-            self.bpe_tokenizer = LlamaTokenizer.from_pretrained(bpe_dir)
-            _bpe_tokens_num = len(self.bpe_tokenizer)
+            logger.info(f'##### Using BPE #####')
+            if tokenizer_type == "flan-T5-large":
+                self.bpe_tokenizer = T5Tokenizer.from_pretrained(bpe_dir)
+            elif tokenizer_type == "byte-T5-base":
+                self.bpe_tokenizer = AutoTokenizer.from_pretrained(bpe_dir)
+            elif tokenizer_type == "llama":
+                self.bpe_tokenizer = LlamaTokenizer.from_pretrained(bpe_dir)
+            else:
+                raise NotImplementedError(tokenizer_type)
         else:
             self.bpe_tokenizer = None
-            _bpe_tokens_num = 0
-        assert _bpe_tokens_num == bpe_tokens_num
 
         if self.use_spk_id:
             self.spk2id = load_json(spk2id)
-            print(f"Loaded spk2id from {spk2id}")
-            self.spk_id = self.spk2id[spkname]
+            logger.info(f"Loaded spk2id from {spk2id}")
+            self.spk_id = self.spk2id.get(spkname, self.spk2id["default"])
             print("self.spk_id: ", self.spk_id)
             self.spk_id = self.tokenizer.tokenize(self.spk_id, "spk")
         else:
@@ -230,13 +235,11 @@ class BigTTSWVAEInfer(LightningModule):
                 tacolab = '\n'.join(infer_tacolab[1:])
                 tacolab_list = list(filter(lambda x: x != "", tacolab.split('\n')))
                 text_id = self.text2id(tacolab_list=tacolab_list)
-        # print("text_id: ", text_id)
 
         if text_id is None:
             logger.warning(f"{uttid} TextToTacolabID failed ...")
             return None
         text_id = self.tokenizer.tokenize(text_id, "inputs")
-        # print("text_id: ", text_id)
 
         # add bpe_id
         if not self.use_spk_id:
@@ -258,12 +261,11 @@ class BigTTSWVAEInfer(LightningModule):
                 bpe_id, 
                 [self.tokenizer.sep], 
                 text_id])
-        # print("text_id: ", text_id)
 
         if self.use_lang_id:
             lang_key = self.get_lang_by_text(text)
             if lang_key == None:
-                print(f"{text}: Wrong lang_key")
+                logger.info(f"{text}: Wrong lang_key")
                 return None
             lang_id = self.lang2id[lang_key]
             lang_id = self.tokenizer.tokenize(lang_id, "lang")
@@ -291,7 +293,7 @@ class BigTTSWVAEInfer(LightningModule):
         # os.makedirs(output_dir, exist_ok=True)
         # np.save(os.path.join(output_dir, uttid + '.npy'), np.asarray(seq))
 
-        # print("seq: ", seq)
+        # logger.info("seq: ", seq)
         # exit()
         text_id = torch.tensor(text_id).long()
         seq = torch.tensor(seq).long().to(device)
@@ -389,8 +391,8 @@ class BigTTSWVAEInfer(LightningModule):
 
     # # for item in tqdm.tqdm(dataset):
     # for item in tqdm.tqdm(dataloader):
-    #     # print(item)
+    #     # logger.info(item)
     #     # lengths = item[-1]
     #     # batch_size = len(lengths)
-    #     # print(batch_size, max(lengths), batch_size * max(lengths))
+    #     # logger.info(batch_size, max(lengths), batch_size * max(lengths))
     #     exit()
