@@ -4,7 +4,9 @@ import os
 import subprocess
 
 from bytedance.easycycle import get_dataset_collection_info
+from lightning_fabric.utilities.cloud_io import get_filesystem
 from lightning_fabric.utilities.exceptions import MisconfigurationException
+from pyarrow.parquet import ParquetFile
 
 from samantha.dataio import remote_io
 from samantha.dataio.webdataset.ra_wds import expand_urls
@@ -145,3 +147,18 @@ def parse_data_urls(data_id=None, data_urls=None, use_url_lst=False):
             f" {data_urls=}, {type(data_urls)=}"
         )
     return __expand_paths(data_urls)
+
+
+def parquet_reader(url, fs=None):
+    if fs is None:
+        fs = get_filesystem(url)
+    parquet_file = ParquetFile(url, filesystem=fs)
+    row_group_num = parquet_file.num_row_groups
+    row_groups = list(range(row_group_num))
+    for group_no, row_group in enumerate(row_groups):
+        group_data = parquet_file.read_row_group(row_group)
+        group_datas = group_data.to_pandas()
+        for row in group_datas.iterrows():
+            item = row[1].to_dict()
+            yield group_no, item
+    parquet_file.close()
