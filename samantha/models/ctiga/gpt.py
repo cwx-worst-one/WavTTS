@@ -587,17 +587,18 @@ class GPTModel(GPTPreTrainedModel):
 
                 def create_custom_forward(module):
                     def custom_forward(*inputs):
-                        return module(*inputs, mixer_kwargs=mixer_kwargs)
+                        return module(
+                            *inputs,
+                            mixer_kwargs=mixer_kwargs,
+                            return_attn_probs=return_attn_probs,
+                        )
 
                     return custom_forward
 
                 if self.prenorm:
                     if not self.parallel_block:
                         layer_outs = torch.utils.checkpoint.checkpoint(
-                            create_custom_forward(layer),
-                            hidden_states,
-                            residual,
-                            return_attn_probs=return_attn_probs,
+                            create_custom_forward(layer), hidden_states, residual
                         )
                         if return_attn_probs:
                             assert len(layer_outs) == 3
@@ -615,14 +616,11 @@ class GPTModel(GPTPreTrainedModel):
                             hidden_states,
                             hidden_states2,
                             residual,
-                            # return_attn_probs=return_attn_probs
                         )
                 else:
                     if not self.parallel_block:
                         hidden_states = torch.utils.checkpoint.checkpoint(
-                            create_custom_forward(layer),
-                            hidden_states,
-                            return_attn_probs=return_attn_probs,
+                            create_custom_forward(layer), hidden_states
                         )
                     else:
                         hidden_states = torch.utils.checkpoint.checkpoint(
