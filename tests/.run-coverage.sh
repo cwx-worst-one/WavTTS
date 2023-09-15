@@ -1,5 +1,9 @@
 #!/bin/bash
-hdfs dfs -get /home/byte_speech_sv/user/wangxin.colin/tests/44k_3ch.wav tests/data/44k_3ch.wav
+# if not exist wav file, download it from hdfs
+if [ ! -f tests/data/44k_3ch.wav ]; then
+  echo "Downloading wav file from hdfs"
+  hdfs dfs -get /home/byte_speech_sv/user/wangxin.colin/tests/44k_3ch.wav tests/data/
+fi
 
 git ls-files tests \
   | grep -e "\.py$" \

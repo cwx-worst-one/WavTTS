@@ -134,7 +134,13 @@ def parse_data_urls(data_id=None, data_urls=None, use_url_lst=False):
         os.environ["DatasetID"] = str(data_id)
         path_list = get_dataset_collection_info(data_id)
         paths = [v["data"] for v in path_list]
-        return __expand_paths(paths)
+        data_urls = __expand_paths(paths)
+        if path_list[0]["index"]:
+            idx_paths = [v["index"] for v in path_list]
+            idx_urls = __expand_paths(idx_paths)
+            return list(zip(data_urls, idx_urls))
+        else:
+            return data_urls
 
     if isinstance(data_urls, str):
         if use_url_lst:
