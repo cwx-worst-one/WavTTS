@@ -5,15 +5,17 @@ import torchaudio
 from tqdm import tqdm
 
 from recipes.datasets.billboard_hot200.billboard_hot200 import (
-    SAMPLE_RATE,
+    BillboardHot200PreprocessedWebDataModule,
     BillboardHot200WebDataModule,
 )
+from recipes.soundstorm2.lightning.dac import DACModel
+from tests.helpers.testing_utils import torch_device
 
 
-@pytest.mark.skip()
 def test_billboard200():
-    pl_datamodule = BillboardHot200WebDataModule(
-        sample_rate=SAMPLE_RATE, batch_size=8, shuffle_buffer_size=100
+    sample_rate = 24000
+    pl_datamodule = BillboardHot200PreprocessedWebDataModule(
+        sample_rate=sample_rate, batch_size=8, shuffle_buffer_size=8, num_workers=8
     )
     test_loader = pl_datamodule.val_dataloader()
     batch = next(iter(test_loader))
@@ -24,7 +26,7 @@ def test_billboard200():
     assert "lyrics" in batch
 
     fp = f"{batch['metadata'][0]['name']} - {batch['metadata'][0]['primary_artist_name']}"
-    torchaudio.save(fp + ".flac", batch["audio"][0], SAMPLE_RATE)
+    torchaudio.save(fp + ".flac", batch["audio"][0], sample_rate)
 
     with open(f"{fp}_track_features.json", "w") as f:
         json.dump(batch["track_features"][0], f)
@@ -35,27 +37,40 @@ def test_billboard200():
     with open(f"{fp}_metadata.json", "w") as f:
         json.dump(batch["metadata"][0], f)
 
-
-from recipes.soundstorm2.lightning.dac import DACModel
-from tests.helpers.testing_utils import torch_device
-
 def test_billboard200_throughput():
+    sample_rate = 24000
     batch_size = 16
-    shuffle_buffer_size = 64
-    num_workers = 24
+    shuffle_buffer_size = 8
+    num_workers = 8
     duration = 30.0
     shardshuffle = False
-    pl_datamodule = BillboardHot200WebDataModule(
-        sample_rate=SAMPLE_RATE,
-        duration=duration,
+    num_batches = 10
+    # dac = DACModel(src_sample_rate=SAMPLE_RATE, target_sample_rate=SAMPLE_RATE).to(torch_device)
+
+    # pl_datamodule = BillboardHot200WebDataModule(
+    #     sample_rate=SAMPLE_RATE,
+    #     batch_size=batch_size,
+    #     shuffle_buffer_size=shuffle_buffer_size,
+    #     duration=duration,
+    #     num_workers=num_workers,
+    #     shardshuffle=shardshuffle,
+    # )
+    # test_loader = pl_datamodule.train_dataloader()
+
+    # for idx, batch in tqdm(enumerate(test_loader)):
+    #     if idx == num_batches:
+    #         break
+
+    pl_datamodule_preproc = BillboardHot200PreprocessedWebDataModule(
+        sample_rate=sample_rate,
         batch_size=batch_size,
         shuffle_buffer_size=shuffle_buffer_size,
+        duration=duration,
         num_workers=num_workers,
         shardshuffle=shardshuffle,
     )
-    test_loader = pl_datamodule.train_dataloader()
+    test_loader = pl_datamodule_preproc.train_dataloader()
 
-    dac = DACModel(src_sample_rate=SAMPLE_RATE, target_sample_rate=SAMPLE_RATE).to(torch_device)
-
-    for batch in tqdm(test_loader):
-        pass
+    for idx, batch in tqdm(enumerate(test_loader)):
+        if idx == num_batches:
+            break

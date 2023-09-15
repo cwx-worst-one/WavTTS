@@ -34,7 +34,6 @@ class BaseDataModule(pl.LightningDataModule):
         validation_dataset=None,
         predict_dataset=None,
         batcher: Optional[BucketBatcher] = None,
-        collate_fn: Optional[Callable] = None
     ):
         super().__init__()
         self.sample_rate = sample_rate
@@ -46,7 +45,6 @@ class BaseDataModule(pl.LightningDataModule):
         self.num_workers = num_workers
         self.pin_memory = pin_memory
         self.batcher = batcher
-        self.collate_fn = collate_fn
         self.resample_fn = ResampleFrac(self.data_sample_rate, sample_rate)
 
     def resample(self, audio: torch.Tensor) -> torch.Tensor:
@@ -57,6 +55,10 @@ class BaseDataModule(pl.LightningDataModule):
     @property
     def _pytorch_dataloader_batch_size(self) -> int:
         return self.batch_size if self.batcher is None else None
+
+    @staticmethod
+    def collate_fn():
+        return None
 
     def train_dataloader(self):
         train_dataset_batched = DataPipeline(
