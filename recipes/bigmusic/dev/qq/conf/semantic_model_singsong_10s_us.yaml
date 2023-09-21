@@ -113,7 +113,7 @@ logger: !new:pytorch_lightning.loggers.TensorBoardLogger
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
-      save_top_k: 20
+      save_top_k: 10
       save_last: True
       monitor: val_accu_0
       mode: max

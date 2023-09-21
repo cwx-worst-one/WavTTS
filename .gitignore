@@ -92,6 +92,7 @@ scripts/weekly_test/Dolphin*.md
 # data directory
 assets/
 data/
+video/
 
 # log directory
 log/

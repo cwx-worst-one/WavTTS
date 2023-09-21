@@ -120,13 +120,13 @@ hdfs_model_ckpt: !new:samantha.callbacks.HDFSModelCheckpoint
     hdfs_path: !ref <run_opts[hdfs_path]>
     monitor: step
     mode: max
-    save_top_k: 50
+    save_top_k: 10
     every_n_train_steps: !ref <run_opts[val_check_interval]>
     filename: "{step:06d}-{val_accu_0:.2f}"
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
-      save_top_k: 50
+      save_top_k: 10
       save_last: True
       monitor: val_accu_0
       mode: max

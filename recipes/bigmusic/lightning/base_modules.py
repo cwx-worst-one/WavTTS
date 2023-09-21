@@ -1,6 +1,6 @@
 
 from typing import Optional, Tuple, Union, Mapping
-
+import pandas as pd
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -11,6 +11,7 @@ from tqdm.auto import tqdm
 from samantha.utils.hparams import DotDict
 from recipes.musiclm.inference.utils import sample
 from recipes.bigmusic.lightning.embedding_modules import TokenEmbedder, BaseEmbedder
+
 
 class BaseModule(pl.LightningModule):
     def __init__(
@@ -99,6 +100,9 @@ class BaseModule(pl.LightningModule):
         if dataloader_idx not in self.val_outputs:
             self.val_outputs[dataloader_idx] = []
         self.val_outputs[dataloader_idx].append((loss, accu))
+
+    def predict_step(self, batch, batch_idx):
+        pass
 
     def on_validation_epoch_end(self):
         for dataloader_idx, outputs in self.val_outputs.items():

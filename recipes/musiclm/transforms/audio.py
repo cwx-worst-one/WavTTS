@@ -51,6 +51,8 @@ def rms(x: torch.Tensor, kernel_size: int = 1000) -> torch.Tensor:
 
 
 def to_energy(audio, window_size):
+    if audio.dim() == 1:
+        audio = audio.unsqueeze(0)
     frames = audio.unfold(1, window_size, window_size)
     return torch.max(torch.abs(frames), dim=-1)[0]
 

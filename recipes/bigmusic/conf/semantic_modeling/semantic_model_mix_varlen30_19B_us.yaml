@@ -40,9 +40,10 @@ run_opts:
     warmup_steps: 2000
     cycle_steps: 100000
     weight_decay: 0.01
-    shuffle_buffer: 0
+    shuffle_buffer: 0   # 100
     gradient_clip_val: 1.0
-    buckets_in_sec: [20, 25, 30]
+    buckets_in_sec: [20, 25, 30]    # [8, 12, 16, 20, 24, 28, 30]
+    use_dynamic_batch: False
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -55,6 +56,7 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixWebDataModule
     num_workers: !ref <run_opts[num_workers]>
     pin_memory: True
     buckets_in_sec: !ref <run_opts[buckets_in_sec]>
+    use_dynamic_batch: !ref <run_opts[use_dynamic_batch]>
 
 model_config: !new:transformers.LlamaConfig
     vocab_size: 1 # placeholder. Embedding table gets removed on load
@@ -104,26 +106,24 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
                 cache_dir: !ref <run_opts[cache_dir]>
                 version: "g4"
 
-logger: !new:pytorch_lightning.loggers.TensorBoardLogger
-    save_dir: !ref <run_opts[log_dir]>
-    name: !ref <run_opts[log_name]>
-    version: !ref <run_opts[version]>
-    default_hp_metric: False
-
-# log_gradient_scaler: !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
+logger:
+    - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
+      save_dir: !ref <run_opts[log_dir]>
+      name: !ref <run_opts[log_name]>
+      version: !ref <run_opts[version]>
+      default_hp_metric: False
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[log_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
-      save_top_k: 50
+      save_top_k: 20
       save_last: True
       monitor: val_accu_0
       mode: max
       filename: "{step:06d}-{val_accu_0:.2f}"
-    - !new:pytorch_lightning.callbacks.LearningRateMonitor
-      logging_interval: 'step'
-    # - !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
-    # - !new:recipes.umm.callbacks.log_melspectrogram.LogMelSpectrogram
-    #   n_examples: 4
 
 plugins:
     - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO

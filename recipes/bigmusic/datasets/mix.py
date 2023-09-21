@@ -2,13 +2,14 @@ import io
 import random
 from string import punctuation
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
-
+import re
 import pytorch_lightning as pl
 import torch
 import ffmpeg
 import numpy as np
 import webdataset as wds
 import random
+import os
 from transformers import T5Tokenizer
 from torch.utils.data import DataLoader
 from torchaudio.transforms import Resample
@@ -66,30 +67,96 @@ def ffmpeg_read_audio(audio_bin, sample_rate=24000):
     return (np.frombuffer(seg_bin, dtype="int16") / 32768.0).astype(np.float32)
 
 def rewrite_metadata(metadata, type="Vocal"):        
+    if 'metadata' in metadata:
+        metadata = metadata['metadata']
     mood = metadata.get('final_mood')
     genre = metadata.get('final_genre')
     gender = metadata.get('merge_aed')
     text = ""
+
+    genre_text = ""
+    instrument_text = ""
+    # vocal_ages_text = ""
+    # vocal_style_text = ""
+    vocal_gender_text = ""
+
     if type == "Vocal":
-        text = "A "
-        if mood is not None and mood != 'nan':
-            text += mood.lower() + " "
-        if genre is not None and genre != 'nan':
-            text += genre.lower() + " "
-        text += "song"
+        # text = "A "
+        if mood is not None and mood != 'nan' and mood != '':
+            genre_text += mood.lower() + " "
+        if genre is not None and genre != 'nan' and genre != '':
+            genre_text += genre.lower() + " "
+
+        # text += "song"
         if gender is not None and gender != 'nan':
             if 'Female' in gender:
-                text += " with female vocal"
+                vocal_gender_text += "female"
             elif 'Male' in gender:
-                text += " with male vocal"
-        text += "."
+                text += "male" # with ... vocal
+        # text += "."
     elif type == "Instrumental":
-        text = ""
+        # text = ""
         if mood is not None and mood != 'nan':
-            text += mood.lower() + " "
+            instrument_text += mood.lower() + " "
         if genre is not None and genre != 'nan':
-            text += genre.lower() + " "
-        text += "music."
+            instrument_text += genre.lower() + " "
+        # text += "music."
+    elif type == "mir_tags":
+        # NOTE: randomly shuffle to diversify prompt
+        random.shuffle(metadata["genres"])
+        random.shuffle(metadata["instruments"]) 
+        random.shuffle(metadata["vocals"]) 
+
+        def multiple_choices_text_processor(text: List[str]) -> str:
+            if len(text) > 1:
+                text = ", ".join(text[:-1]) + f" and {text[-1]}"
+            elif len(text) == 1:
+                text = text[0]
+            else:
+                text = ""
+            return text.lower()
+
+        # example: 'rock, pop and blues'
+        genre_text += multiple_choices_text_processor(metadata["genres"])
+        genre_text = genre_text.replace("_", " ") # rnb_soul -> rnb soul
+
+        # example: 'piano, vocal and drums' 
+        instrument_text += multiple_choices_text_processor(metadata["instruments"])
+
+        ages = {
+            "age_old": "old age",
+            "age_middle_aged": "middle age",
+        }
+        gender = {
+            "gender_male": "male",
+            "gender_female": "female",
+        }
+        vocal_styles = {
+            "style_bright": "bright",
+            "style_loud_and_confident": "loud and confident",
+            "style_thick_and_deep": "thick and deep",
+            "style_husky": "husky",
+            "style_delicate": "delicate",
+            "style_low_and_warm": "low and warm",
+        }
+
+        vocal_ages_text = multiple_choices_text_processor([ages.get(v, "") for v in metadata["vocals"] if "age_" in v])
+        vocal_style_text = multiple_choices_text_processor([vocal_styles.get(v, "") for v in metadata["vocals"] if "style_" in v])
+        vocal_gender_text += multiple_choices_text_processor([gender.get(v, "") for v in metadata["vocals"] if "gender_" in v])
+
+        # example: 'A pop and rock song performed by piano, drums and bass guitar with a middle age, bright male vocal.'
+    
+    if instrument_text != "":
+        instrument_text = f"with an instrumentation consisting of {instrument_text}"
+
+    if vocal_gender_text != "":
+        vocal_gender_text = f"with a {vocal_gender_text} vocal"
+
+
+    # text = f"""A {genre_text} song {instrument_text} with a {vocal_ages_text}, {vocal_style_text} {vocal_gender_text} vocal."""
+    text = f"""A {genre_text} song {instrument_text} {vocal_gender_text}."""
+    # remove double whitespaces
+    text = re.sub(" +", " ", text)
     return text
 
 def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -97,9 +164,10 @@ def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
     SPEAKER_PAD_ID = 0
     PHONE_PAD_ID = 0 
     STYLE_PAD_ID = 0 
+    max_phone_len = int(batch[0]["max_phone_len"])    
     max_length = max([x["audio"].shape[-1] for x in batch])
     random_pad = RandomPad(n_samples=max_length)
-    default_lyrics_token = torch.full((MAX_PHONE_LEN,), PHONE_PAD_ID, dtype=torch.int)
+    default_lyrics_token = torch.full((max_phone_len,), PHONE_PAD_ID, dtype=torch.int)
     default_style_token = torch.full((MAX_STYLE_LEN,), STYLE_PAD_ID, dtype=torch.int)
     default_speaker_id = torch.LongTensor([SPEAKER_PAD_ID])    
     audio = []
@@ -108,6 +176,12 @@ def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
     normalized_text = []
     lyrics_tokens = []
     speaker_id = []     
+
+    # DEBUG
+    style_metadata = []
+    song_id = []
+    shard = []
+    worker_id = []
     for idx in range(len(batch)):        
         audio.append(random_pad(batch[idx]["audio"]))
         
@@ -126,10 +200,17 @@ def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
         
         phoneme_tokens, _ = pad_crop(
             torch.tensor(batch[idx].get("lyrics_tokens", default_lyrics_token.detach().clone())), 
-            MAX_PHONE_LEN, torch.int, PHONE_PAD_ID)
+            max_phone_len, torch.int, PHONE_PAD_ID)
         lyrics_tokens.append(phoneme_tokens)
         
         speaker_id.append(batch[idx].get("speaker_id", default_speaker_id.detach().clone()))        
+
+
+        style_metadata.append(batch[idx].get("style_metadata", None))
+        song_id.append(batch[idx].get("song_id", None))
+        shard.append(batch[idx].get("shard", None))
+        worker_id.append(batch[idx].get("worker_id", None))
+
     return {
         "target_audio": torch.stack(audio, dim=0), 
         "style_text": style_text,
@@ -138,13 +219,23 @@ def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
         "lyrics_tokens": torch.stack(lyrics_tokens),
         "speaker_id": torch.stack(speaker_id),
         "conditions": "style_text,lyrics_tokens",
-        }
 
-def group_utterances(utterances, min_duration, max_duration, time_in_sec=False):
+        # DEBUG:
+        "style_metadata": style_metadata,
+        "song_id": song_id,
+        "shard": shard,
+        "worker_id": worker_id,
+    }
+
+def group_utterances(utterances, min_duration, max_duration, time_in_sec=False, include_intro=False):
     if time_in_sec:
         utterances = [(int(u['start_time']), int(u['end_time']), u['text']) for u in utterances]            
     else:
-        utterances = [(u['start_time']/1000, u['end_time']/1000, u['text']) for u in utterances]        
+        utterances = [(int(u['start_time']/1000), int(u['end_time']/1000), u['text']) for u in utterances]
+    if include_intro:
+        u = utterances[0]
+        if u[0] > 0:            
+            utterances.insert(0, (0, u[0], ""))    
     for i in range(len(utterances)-1):
         if utterances[i][1] > utterances[i+1][0]:
             logging.warning("utterances need to be non-overlapping")
@@ -405,6 +496,8 @@ class MCCInstrumentalDataset(WebPipeline):
                 )
                 start = random.randint(0, audio.size(-1) - duration)
                 clip = audio[:, start : start + duration]
+                if clip.dim() == 1:
+                    clip = clip.unsqueeze(0)
                 if not self.is_loud(clip):
                     continue
                 yield {
@@ -431,6 +524,10 @@ class MCCVocalDataset(MCCInstrumentalDataset):
         audio_metrics_filtered: bool = True,
         avoid_sound_effect: bool = True,
         exclude_licenses: List[str] = ["C"],
+        segment_method: str = "random", # "first", "random"
+        segment_max_phone_len: int = 400,
+        include_intro: bool = False,
+        max_seg_per_track: int = -1,
         **kwargs,
     ):
         with local_zero_first():
@@ -454,6 +551,10 @@ class MCCVocalDataset(MCCInstrumentalDataset):
             **kwargs,
         )
         self.lyrics_confidence = lyrics_confidence
+        self.segment_method = segment_method
+        self.segment_max_phone_len = segment_max_phone_len
+        self.include_intro = include_intro
+        self.max_seg_per_track = max_seg_per_track
 
     def filter_lyrics(self, utterance):
         start_time = float(utterance["start_time"]) / 1000
@@ -486,26 +587,184 @@ class MCCVocalDataset(MCCInstrumentalDataset):
             # style_tokens = torch.LongTensor(self.t5_text_tokenizer.encode(
             #     style_text, padding='max_length', max_length=self.max_style_token_seq_len))
             audio = self.base_transform(item[self.audio_key])
+            if audio.dim() == 1:
+                audio = audio.unsqueeze(0)
+
             utterances = item["__index_data__"]["lyrics"].get("utterances", None)
             if utterances is None:
                 continue
             if not self.is_confident_lyrics(utterances, 0.8):
                 continue
-            segments = group_utterances(utterances, self.min_duration, self.max_duration)
-            for segment in segments:                
+            segments = group_utterances(utterances, self.min_duration, self.max_duration, 
+                                        time_in_sec=False, include_intro=self.include_intro)
+            index_data = item["__index_data__"]
+            metadata = index_data["metadata"]
+            if len(segments) < 1:
+                continue
+            if self.segment_method == "first":
+                segments = segments[:1]
+            elif self.max_seg_per_track > 0:
+                random.shuffle(segments)
+                segments = segments[:self.max_seg_per_track]
+
+            index_data = item["__index_data__"]
+            metadata = index_data["metadata"]
+            for segment in segments:
+                if segment[1] - segment[0] < 1:
+                    print("short segment")
+                    continue
                 start = int(segment[0] * self.sample_rate)
                 end = int(segment[1] * self.sample_rate)
                 clip = audio[:, start:end]
-                if not self.is_loud(clip):
-                    continue
+
+                # TODO!!!!!
+                # if not self.is_loud(clip):
+                #     continue
+
                 normalized_text = normalize_text(segment[2])
                 phoneme_tokens = self.phoneme_tokenizer(normalized_text)["input_ids"]                                
+                
+                shard = self.get_shard_info(item)
+                worker_id = self.get_worker_info()
+
                 yield {
                     "audio": clip, 
                     # "style_tokens": style_tokens,
                     "style_text": style_text,
                     "normalized_text": normalized_text,
                     "lyrics_tokens": phoneme_tokens,
+                    "max_phone_len": self.segment_max_phone_len,
+
+                    # DEBUG
+                    "song_id": metadata["meta_song_id"],
+                    "style_metadata": metadata,
+                    "shard": shard,
+                    "worker_id": worker_id,
+                }                
+
+
+def select_tag_metadata_from_timestamps(index_data, start: int, end: int) -> Dict[str, List[str]]:
+    mir_tags = index_data.get("tags")
+    genres = []
+    instruments = []
+    vocals = []
+    
+    if len(mir_tags["starts"]):
+        def closest_time(times, t):
+            difference = lambda times: abs(times - t)
+            return min(times, key=difference)
+
+        mir_start = closest_time(mir_tags["starts"], start)
+        mir_end = closest_time(mir_tags["ends"], end)
+        mir_start_idx = mir_tags["starts"].index(mir_start)
+        mir_end_idx = mir_tags["ends"].index(mir_end)
+
+        for idx in range(mir_start_idx, mir_end_idx + 1):
+            genres.extend(mir_tags["genre"][idx])
+            instruments.extend(mir_tags["instrument"][idx])
+            vocals.extend(mir_tags["vocal"][idx])
+    return dict(genres=genres, instruments=instruments, vocals=vocals)
+
+class BillboardDataset(WebPipeline):
+    name = "DecoderBillboard"
+    data_sample_rate = 24000
+
+    def __init__(
+        self,
+        url2index: str = "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/billboard_mss/train/mss_url2idx.txt",
+        sample_rate: int = 24000,
+        audio_key: str = "full.npy",
+        min_duration: int = 5,
+        max_duration: int = 30,
+        max_style_token_seq_len: int = 16,
+        normalize_audio: bool = True,
+        segment_method: str = "random", # "first", "random"
+        segment_max_phone_len: int = 400,
+        include_intro: bool = False,
+        max_seg_per_track: int = -1,
+        **kwargs,
+    ):
+        with local_zero_first():
+            self.phoneme_tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-cv-ft")
+        # To silence espeak logging warnings: "WARNING - words count mismatch on 100.0% of the lines". Must be set after tokenizer is initialized
+        phonemizer.logger.get_logger().setLevel(logging.ERROR)
+
+        self.sample_rate = sample_rate
+        self.audio_key = audio_key
+        self.min_duration = min_duration
+        self.max_duration = max_duration
+        self.max_style_token_seq_len = max_style_token_seq_len
+        self.segment_method = segment_method
+        self.segment_max_phone_len = segment_max_phone_len
+        self.include_intro = include_intro
+        self.max_seg_per_track = max_seg_per_track
+
+        base_transforms = []
+        if audio_key == "mp3":
+            self.read_mp3 = ReadMP3(sample_rate)
+            base_transforms.append(lambda x: self.read_mp3(io.BytesIO(x)))
+        base_transforms += [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
+        if normalize_audio:
+            base_transforms.append(FastNormalizeAudio())
+            # base_transforms.append(NormalizeAudio())
+        if self.data_sample_rate != sample_rate and audio_key != "mp3":
+            base_transforms.append(Resample(self.data_sample_rate, sample_rate))
+        self.base_transform = Compose(base_transforms)
+        dataset = IndexedWebDataset(url2index=url2index, **kwargs)
+        pipeline = ["decode", {"compose": [self.transform]}]
+        super().__init__(dataset, pipeline)
+
+    def is_confident_lyrics(self, utterance, threshold):
+        conf = 0
+        for utt in utterance:
+            conf += float(utt["confidence"])
+        conf /= len(utterance)
+        return True if conf > threshold else False
+
+    def transform(self, item_yielder) -> Dict[str, Any]:
+        for item in item_yielder:
+            audio = self.base_transform(item[self.audio_key])
+            utterances = item["__index_data__"]['sa_lyrics']['result'][0].get("utterances", None)
+            if utterances is None:
+                continue
+            if not self.is_confident_lyrics(utterances, 0.65):
+                continue
+                
+            # TODO: Segmenting
+            segments = group_utterances(utterances, self.min_duration, self.max_duration,
+                                        time_in_sec=False, include_intro=self.include_intro)
+            if len(segments) < 1:
+                continue
+            if self.segment_method == "first":
+                segments = segments[:1]
+            elif self.max_seg_per_track > 0:
+                random.shuffle(segments)
+                segments = segments[:self.max_seg_per_track]
+            for segment in segments:                
+                start = int(segment[0] * self.sample_rate)
+                end = int(segment[1] * self.sample_rate)
+                clip = audio[:, start:end]
+                normalized_text = normalize_text(segment[2])
+                phoneme_tokens = self.phoneme_tokenizer(normalized_text)["input_ids"]
+
+                style_metadata = select_tag_metadata_from_timestamps(item["__index_data__"], start, end)
+                style_text = rewrite_metadata(style_metadata, type="mir_tags")
+
+                song_id = item["__key__"]
+
+                shard = self.get_shard_info(item)
+                worker_id = self.get_worker_info()
+                
+                yield {
+                    "audio": clip, 
+                    "style_text": style_text,
+                    "style_metadata": style_metadata,
+                    "normalized_text": normalized_text,
+                    "lyrics_tokens": phoneme_tokens,
+                    "song_id": song_id,
+                    "max_phone_len": self.segment_max_phone_len,
+                    "shard": shard,
+                    "worker_id": worker_id,
                 }                
 
 
@@ -591,29 +850,51 @@ class MixWebDataModule(DataModule):
         pin_memory: bool = True,
         collate_fn: Optional[Callable] = collate_fn,
         region: str = "US",  
+        use_dynamic_batch: str = False,
+        segment_method: str = "random",
+        segment_max_phone_len: int = 400,
+        include_intro: bool = False,
+        max_seg_per_track: int = -1,
+        exclude_licenses: List[str] = ["C"],
     ):
         buckets_samples = list(map(lambda i: i * sample_rate, buckets_in_sec))
-        self.batcher = BucketBatcher(
-            buckets=buckets_samples,
-            dynamic_batch=False,
-            batch_size=batch_size,
-            length_fn=lambda x: x["audio"].shape[-1],
-        )
+        maximum_bucket_size = batch_size * sample_rate * buckets_in_sec[-1]
+        if use_dynamic_batch:
+            self.batcher = BucketBatcher(
+                buckets=buckets_samples,
+                dynamic_batch=True,
+                maximum_bucket_size=maximum_bucket_size,
+                length_fn=lambda x: x["audio"].shape[-1],
+            )
+        else:
+            self.batcher = BucketBatcher(
+                buckets=buckets_samples,
+                dynamic_batch=False,
+                batch_size=batch_size,
+                length_fn=lambda x: x["audio"].shape[-1],  
+            )
+        mcc_vocal_val_index = "/mnt/bn/audio-diffusion/data/vocal_mcc_npy/lyrics_npy_url2idx_val.txt"            
+        mcc_instrumental_index = "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/npy_url2idx.txt"
         if region == "US":
             mcc_vocal_index = (
                 "/mnt/bn/audio-diffusion/data/vocal_mcc_npy/lyrics_npy_url2idx.txt"
             )
-            mcc_vocal_val_index = (
-                "/mnt/bn/audio-diffusion/data/vocal_mcc_npy/lyrics_npy_url2idx_val.txt"
-            )
-            mcc_instrumental_index = (
-                "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/npy_url2idx.txt"
-            )
         elif region == "CN":
             mcc_vocal_index = "recipes/datasets/mcc/mcc60m_index.txt"
             mcc_vocal_val_index = "recipes/datasets/mcc/mcc60m_index_val.txt"
-            mcc_instrumental_index = "recipes/datasets/mcc/mcc60m_index_val.txt"
-
+            # mcc_instrumental_index = "recipes/datasets/mcc/mcc60m_index_val.txt"
+        elif region == "groupA":
+            mcc_vocal_index = "/mnt/bn/audio-diffusion/data/mcc60_slices/lyrics_npy_url2idx_groupA.txt"
+        elif region == "groupB":
+            mcc_vocal_index = "/mnt/bn/audio-diffusion/data/mcc60_slices/lyrics_npy_url2idx_groupB.txt"
+        elif region == "1":
+            mcc_vocal_index = "/mnt/bn/audio-diffusion/data/mcc60_slices/lyrics_npy_url2idx_1.txt"
+        elif region == "3":
+            mcc_vocal_index = "/mnt/bn/audio-diffusion/data/mcc60_slices/lyrics_npy_url2idx_3.txt"
+        elif region == "4":
+            mcc_vocal_index = "/mnt/bn/audio-diffusion/data/mcc60_slices/lyrics_npy_url2idx_4.txt"
+        else:
+            raise ValueError
         mcc_vocal = MCCVocalDataset(
             url2index=mcc_vocal_index,
             sample_rate=sample_rate,
@@ -621,19 +902,25 @@ class MixWebDataModule(DataModule):
             shardshuffle=True,
             min_duration=buckets_in_sec[0],
             max_duration=buckets_in_sec[-1],
-            use_pipe=True,
+            segment_method=segment_method,
+            segment_max_phone_len=segment_max_phone_len,
+            include_intro=include_intro,
+            max_seg_per_track=max_seg_per_track,
+            exclude_licenses=exclude_licenses,
+            use_pipe=False,
             handler=wds.reraise_exception,
         )
-        mcc_instrumental = MCCInstrumentalDataset(
-            url2index=mcc_instrumental_index,
-            sample_rate=sample_rate,
-            resampled=True,
-            shardshuffle=True,
-            min_duration=buckets_in_sec[0],
-            max_duration=buckets_in_sec[-1],
-            use_pipe=True,
-            handler=wds.reraise_exception,
-        )
+        # mcc_instrumental = MCCInstrumentalDataset(
+        #     url2index=mcc_instrumental_index,
+        #     sample_rate=sample_rate,
+        #     resampled=True,
+        #     shardshuffle=True,
+        #     min_duration=buckets_in_sec[0],
+        #     max_duration=buckets_in_sec[-1],
+        #     exclude_licenses=exclude_licenses,
+        #     use_pipe=False,
+        #     handler=wds.reraise_exception,
+        # )
         train_dataset = WebPipeline(            
             mcc_vocal,
             # MultiIterableDataset(
@@ -651,7 +938,12 @@ class MixWebDataModule(DataModule):
                 nodesplitter=return_self,
                 min_duration=buckets_in_sec[0],
                 max_duration=buckets_in_sec[-1],
-                use_pipe=True,
+                segment_method=segment_method,
+                segment_max_phone_len=segment_max_phone_len,
+                include_intro=include_intro,
+                max_seg_per_track=1,
+                exclude_licenses=["B", "C"],
+                use_pipe=False,
                 handler=wds.reraise_exception,                
             ),
             pipeline=[{"compose": [self.bucketize]}],
@@ -664,6 +956,139 @@ class MixWebDataModule(DataModule):
             train_dataset=train_dataset,
             validation_dataset=validation_dataset,
             predict_dataset=train_dataset,  # TODO
+            collate_fn=collate_fn,
+        )
+
+    def bucketize(self, iterator: Iterable):
+        for item in iterator:
+            batch = self.batcher.collate_batch(item)
+            if batch is not None:
+                yield batch
+
+
+class SFTWebDataModule(DataModule):
+    def __init__(
+        self,
+        weights: Optional[List[float]] = None,
+        sample_rate: int = 24000,
+        batch_size: int = 2,
+        buckets_in_sec: List[int] = [20, 25, 30],
+        shuffle_buffer_size: int = 10,
+        num_workers: int = 4,
+        pin_memory: bool = True,
+        collate_fn: Optional[Callable] = collate_fn,
+        use_dynamic_batch: str = False,
+        segment_method: str = "random",
+        segment_max_phone_len: int = 400,
+        include_intro: bool = False,
+        max_seg_per_track: int = 3,
+        use_pipe: bool = False,
+    ):    
+        buckets_samples = list(map(lambda i: i * sample_rate, buckets_in_sec))
+        maximum_bucket_size = batch_size * sample_rate * buckets_in_sec[-1]
+        if use_dynamic_batch:
+            self.batcher = BucketBatcher(
+                buckets=buckets_samples,
+                dynamic_batch=True,
+                maximum_bucket_size=maximum_bucket_size,
+                length_fn=lambda x: x["audio"].shape[-1],
+            )
+        else:
+            self.batcher = BucketBatcher(
+                buckets=buckets_samples,
+                dynamic_batch=False,
+                batch_size=batch_size,
+                length_fn=lambda x: x["audio"].shape[-1],  
+            )
+        mcc1m_groupA_url2index_list = [
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-blues.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-childhood.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-classical.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-country.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-devotional.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-easy-listening.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-electronic.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-folk.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-hip-hop-rap.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-jazz.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-metal.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-pop.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-r-b-soul.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-reggae.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-rock.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-soundtrack.txt",
+        ]
+        datasets = [
+            BillboardDataset(
+                url2index='hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/billboard_mss/train/mss_url2idx.txt',
+                resampled=True,
+                shardshuffle=True,
+                max_seg_per_track=max_seg_per_track,
+                use_pipe=use_pipe,
+                handler=wds.reraise_exception,
+            )] + [
+            MCCVocalDataset(
+                url2index=url2index,
+                sample_rate=sample_rate,
+                resampled=True,
+                shardshuffle=True,
+                min_duration=buckets_in_sec[0],
+                max_duration=buckets_in_sec[-1],
+                segment_method=segment_method,
+                segment_max_phone_len=segment_max_phone_len,
+                include_intro=include_intro,
+                max_seg_per_track=max_seg_per_track,
+                use_pipe=use_pipe,
+                handler=wds.reraise_exception,
+            ) for url2index in mcc1m_groupA_url2index_list
+            ]
+        mcc1m_groupA_url2index_weights = [1/16] * len(mcc1m_groupA_url2index_list)
+        weights = [1] + mcc1m_groupA_url2index_weights
+        assert len(weights) == len(datasets)
+
+        train_dataset = WebPipeline(            
+            MultiIterableDataset(datasets=datasets, weights=weights),
+            pipeline=[{"compose": [self.bucketize]}],
+        )
+   
+        datasets = [
+            BillboardDataset(
+                url2index="hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/billboard/test/url2index.txt",
+                max_seg_per_track=1,
+                use_pipe=False,
+                resampled=False,
+                nodesplitter=return_self,
+                handler=wds.reraise_exception,                
+            ),
+            MCCVocalDataset(
+                url2index="/mnt/bn/audio-diffusion/data/vocal_mcc_npy/pop_url2idx_val.txt",
+                sample_rate=sample_rate,
+                resampled=False,
+                nodesplitter=return_self,
+                min_duration=buckets_in_sec[0],
+                max_duration=buckets_in_sec[-1],
+                segment_method=segment_method,
+                segment_max_phone_len=segment_max_phone_len,
+                include_intro=include_intro,
+                max_seg_per_track=1,
+                use_pipe=False,
+                handler=wds.reraise_exception,
+            )
+        ]
+
+        val_weights = [0.5, 0.5] # TODO qq check weights
+        validation_dataset = WebPipeline(      
+            MultiIterableDataset(datasets=datasets, weights=val_weights),   
+            # TODO (qq) change it to MTAT
+            pipeline=[{"compose": [self.bucketize]}],
+        )
+        super().__init__(
+            shuffle_buffer_size=shuffle_buffer_size,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            train_dataset=train_dataset,
+            validation_dataset=validation_dataset,
+            predict_dataset=train_dataset,
             collate_fn=collate_fn,
         )
 

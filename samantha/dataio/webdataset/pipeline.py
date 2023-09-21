@@ -1,5 +1,6 @@
-from typing import Dict, List, Union
+from typing import Dict, List, Optional, Union
 
+import torch
 import webdataset as wds
 from torch.utils.data import IterableDataset
 
@@ -90,6 +91,19 @@ class WebPipeline(IterableDataset):
                 )
             dataset = self._apply_stage(dataset, func_name, args, kwargs)
         return dataset
+
+    @staticmethod
+    def get_shard_info(item: dict) -> str:
+        return item["__url__"]
+
+    @staticmethod
+    def get_worker_info() -> Optional[str]:
+        worker_id = torch.utils.data.get_worker_info()
+        if worker_id is not None:
+            worker_id = worker_id.id
+        else:
+            worker_id = None
+        return worker_id
 
     def __iter__(self):
         return iter(self.data_pipeline)
