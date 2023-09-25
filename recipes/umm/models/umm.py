@@ -6,6 +6,7 @@ import torch
 from einops import rearrange
 from torch import nn
 from torch.nn import functional as F
+from transformers import LlamaConfig
 from transformers.activations import ACT2FN
 from transformers.utils import ModelOutput
 
@@ -13,6 +14,7 @@ from recipes.umm.models.vocoder import BigVGAN
 from recipes.umm.models.vq import EMAVectorQuantizer, VectorQuantize
 from recipes.umm.transforms.chroma import ChromaSpectrogram
 from recipes.umm.transforms.speech import SpeechTransform
+from samantha.models.flash_llama import LlamaForCausalLM
 
 
 @dataclass
@@ -22,6 +24,7 @@ class ConformerEncoderOutput(ModelOutput):
     vq_states: Optional[torch.FloatTensor] = None
     vq_ids: Optional[torch.IntTensor] = None
     vq_loss: Optional[torch.FloatTensor] = None
+    vq_emb: Optional[torch.FloatTensor] = None
 
 
 class ConformerRotaryPositionalEmbedding(nn.Module):
@@ -35,7 +38,6 @@ class ConformerRotaryPositionalEmbedding(nn.Module):
         self.cached_sequence_length = 0
         self.cached_rotary_positional_embedding = None
 
-    @torch.cuda.amp.autocast(enabled=False)
     def _set_cos_sin_cache(self, sequence_length):
         self.cached_sequence_length = sequence_length
         time_stamps = torch.arange(
@@ -317,13 +319,14 @@ class ConformerEncoder(nn.Module):
         vq_states = None
         vq_ids = None
         vq_loss = None
+        vq_emb = None
 
         for i, layer in enumerate(self.layers):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
             if vq is not None and self.config.vq_layer_idx == i:
-                vq_states, vq_ids, vq_loss = vq(hidden_states)
+                vq_states, vq_ids, vq_loss, vq_emb = vq(hidden_states)
                 hidden_states = vq_states
 
             if self.gradient_checkpointing and self.training:
@@ -353,6 +356,7 @@ class ConformerEncoder(nn.Module):
             vq_states=vq_states,
             vq_ids=vq_ids,
             vq_loss=vq_loss,
+            vq_emb=vq_emb,
         )
 
     def forward_from_vq(self, hidden_states):
@@ -397,7 +401,7 @@ class ConformerEncoder(nn.Module):
         for i, layer in enumerate(self.layers):
 
             if self.config.vq_layer_idx == i:
-                vq_states, vq_ids, vq_loss = vq(hidden_states)
+                vq_states, vq_ids, vq_loss, vq_emb = vq(hidden_states)
                 hidden_states = vq_states
                 return ConformerEncoderOutput(
                     last_hidden_state=None,
@@ -405,6 +409,7 @@ class ConformerEncoder(nn.Module):
                     vq_states=vq_states,
                     vq_ids=vq_ids,
                     vq_loss=vq_loss,
+                    vq_emb=vq_emb,
                 )
 
             if self.gradient_checkpointing and self.training:
@@ -469,7 +474,7 @@ class Conv2dSubsampling(nn.Module):
 
     def forward(self, x):
         if isinstance(x, dict):
-            x = x['feature']
+            x = x["feature"]
         if x.dim() == 3:
             x = x.unsqueeze(1)  # (b, c, t, f)
         x = self.conv(x)
@@ -794,7 +799,7 @@ class FineTunedModel(BaseModel):
         del self.rq_head
 
     def forward(self, input_dict):
-        feature = input_dict["feature"]
+        feature = input_dict["mel"]
         encoded_feature = self.audio_encoder(feature)
         vq = self.vq if self.config.add_vq else None
         shared_encoder_output = self.shared_encoder(encoded_feature, vq=vq)
@@ -808,9 +813,9 @@ class FineTunedModel(BaseModel):
             recon_wav = self.vocoder(hidden_state.transpose(1, 2)).squeeze(1)
 
         output_dict = {
-            "logits": logits,
-            "recon_feature": recon_feature,
-            "recon_chroma": recon_chroma
+            "ctc_out": logits,
+            "mel_out": recon_feature,
+            "chroma_out": recon_chroma
             if self.config.get("add_chroma", False)
             else None,
             "recon_wav": recon_wav if self.config.add_vocoder else None,
@@ -836,12 +841,32 @@ class FineTunedModel(BaseModel):
     def preprocessing(self, x):
         normalize = self.config.feature_cmvn is not None
         mel = self.audio_transform(x, normalize=normalize)
-        input_dict = {"feature": mel}
+        input_dict = {"mel": mel}
         if self.config.get("add_chroma", False):
             chroma = self.chroma_transform(x)[:, :, :-1].transpose(1, 2)
             chroma = F.normalize(chroma, p=2, dim=-1)
             input_dict.update(chroma=chroma)
         return input_dict
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def wav2token(self, wav):
+        encoded_feature = self.wav2embed(wav)
+        shared_encoder_output = self.shared_encoder.forward_to_vq(
+            encoded_feature, vq=self.vq
+        )
+        vq_ids = shared_encoder_output["vq_ids"]
+        return vq_ids
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def wav2embed(self, wav):
+        if wav.dim() == 3:
+            wav = wav.squeeze(dim=1)
+        wav = self.pad_audio(wav.float())
+        feature = self.preprocessing(wav)["mel"]
+        encoded_feature = self.audio_encoder(feature)
+        return encoded_feature
 
 
 class FineTunedVocoder(BaseModel):
@@ -892,7 +917,7 @@ class FineTunedVocoder(BaseModel):
         return output_dict
 
 
-class BaseUMM(nn.Module):
+class UMMBase(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.audio_encoder = AudioEncoder(config)
@@ -923,7 +948,8 @@ class BaseUMM(nn.Module):
                 codebook_dim=config.vq_codebook_dim,
             )
         self.mel_head = Conv2dUpsampling(config.hidden_size, config.n_mels)
-        self.chroma_head = Conv2dUpsampling(config.hidden_size, config.n_chroma)
+        if not config.disable_chroma:
+            self.chroma_head = Conv2dUpsampling(config.hidden_size, config.n_chroma)
         self.ctc_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.config = config
 
@@ -937,7 +963,9 @@ class BaseUMM(nn.Module):
 
         ctc_out = self.ctc_head(hidden_state)
         mel_out = self.mel_head(hidden_state)
-        chroma_out = self.chroma_head(hidden_state)
+        chroma_out = (
+            None if self.config.disable_chroma else self.chroma_head(hidden_state)
+        )
         output_dict = {
             "ctc_out": ctc_out,
             "mel_out": mel_out,
@@ -962,8 +990,11 @@ class BaseUMM(nn.Module):
     def preprocessing(self, x):
         normalize = self.config.feature_cmvn is not None
         mel = self.audio_transform(x, normalize=normalize)
-        chroma = self.chroma_transform(x)[:, :, :-1].transpose(1, 2)
-        chroma = F.normalize(chroma, p=2, dim=-1)
+        if not self.config.disable_chroma:
+            chroma = self.chroma_transform(x)[:, :, :-1].transpose(1, 2)
+            chroma = F.normalize(chroma, p=2, dim=-1)
+        else:
+            chroma = None
         input_dict = {"mel": mel, "chroma": chroma}
         return input_dict
 
@@ -976,7 +1007,140 @@ class BaseUMM(nn.Module):
         feature = self.preprocessing(wav)["mel"]
         encoded_feature = self.audio_encoder(feature)
         shared_encoder_output = self.shared_encoder.forward_to_vq(
-            encoded_feature, vq=self.model.vq
+            encoded_feature, vq=self.vq
+        )
+        vq_ids = shared_encoder_output["vq_ids"]
+        return vq_ids
+
+
+class BaseUMM(UMMBase):
+    def __init__(self, config):
+        super().__init__(config)
+
+
+class UMMAR(UMMBase):
+    def __init__(self, config):
+        super().__init__(config)
+        self.ar_config = LlamaConfig(
+            vocab_size=1025,
+            hidden_size=config.hidden_size,
+            intermediate_size=config.hidden_size * 3,
+            num_hidden_layers=4,
+            num_attention_heads=8,
+            hidden_act="silu",
+            max_position_embeddings=1500,
+            initializer_range=0.02,
+            rms_norm_eps=1e-6,
+            use_cache=False,
+            num_logits=1024,
+        )
+        self.ar_head = LlamaForCausalLM(self.ar_config)
+
+    def forward(self, input_dict):
+        feature = input_dict["mel"]
+        ar_ids = input_dict["ar_ids"]
+        encoded_feature = self.audio_encoder(feature)
+        shared_encoder_output = self.shared_encoder(
+            encoded_feature, vq=self.vq if self.config.add_vq else None
+        )
+        hidden_state = shared_encoder_output["last_hidden_state"]
+
+        ctc_out = self.ctc_head(hidden_state)
+        mel_out = self.mel_head(hidden_state)
+        chroma_out = self.chroma_head(hidden_state)
+
+        ar_inputs_ids = torch.cat(
+            [
+                torch.zeros(
+                    size=[ar_ids.size(0), 1], dtype=ar_ids.dtype, device=ar_ids.device
+                )
+                + 1024,
+                ar_ids[:, :-1],
+            ],
+            dim=1,
+        )
+        ar_inputs_embeds = self.ar_head.model.embed_tokens(ar_inputs_ids)
+        ar_inputs_embeds = torch.cat(
+            [shared_encoder_output["vq_states"], ar_inputs_embeds], dim=1
+        )
+        ar_out = self.ar_head(inputs_embeds=ar_inputs_embeds)["logits"][
+            :, -ar_ids.size(1) :, :
+        ]
+
+        output_dict = {
+            "ctc_out": ctc_out,
+            "mel_out": mel_out,
+            "chroma_out": chroma_out,
+            "ar_out": ar_out,
+            "vq_states": shared_encoder_output["vq_states"],
+            "vq_ids": shared_encoder_output["vq_ids"],
+            "vq_loss": shared_encoder_output["vq_loss"],
+        }
+        return output_dict
+
+
+class UMMASR(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.audio_encoder = AudioEncoder(config)
+        self.shared_encoder = ConformerEncoder(config)
+        self.audio_transform = SpeechTransform(
+            sample_rate=config.sample_rate,
+            n_mels=config.num_channels,
+            n_fft=config.n_fft,
+            win_length=config.win_length,
+            hop_length=config.hop_length,
+            f_min=0,
+            f_max=config.sample_rate // 2,
+        )
+        if config.feature_cmvn is not None:
+            self.audio_transform.load_from_checkpoint(config.feature_cmvn)
+        self.ctc_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.config = config
+
+    def forward(self, input_dict):
+        feature = input_dict["mel"]
+        encoded_feature = self.audio_encoder(feature)
+        shared_encoder_output = self.shared_encoder(
+            encoded_feature, vq=self.vq if self.config.add_vq else None
+        )
+        hidden_state = shared_encoder_output["last_hidden_state"]
+        ctc_out = self.ctc_head(hidden_state)
+        output_dict = {
+            "ctc_out": ctc_out,
+            "vq_states": shared_encoder_output.get("vq_states"),
+            "vq_ids": shared_encoder_output.get("vq_ids"),
+            "vq_loss": shared_encoder_output.get("vq_loss"),
+        }
+        return output_dict
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def pad_audio(self, x):
+        rate = int(self.config.sample_rate / self.config.frame_rate)
+        if x.size(-1) % rate > 0:
+            return F.pad(x, (0, rate - (x.size(-1) % rate)), "constant", 0)
+        else:
+            return x
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def preprocessing(self, x):
+        normalize = self.config.feature_cmvn is not None
+        mel = self.audio_transform(x, normalize=normalize)
+        input_dict = {"mel": mel}
+        return input_dict
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def wav2token(self, wav):
+        if wav.dim() == 3:
+            wav = wav.squeeze(dim=1)
+        wav = self.pad_audio(wav.float())
+        feature = self.preprocessing(wav)["mel"]
+        encoded_feature = self.audio_encoder(feature)
+        shared_encoder_output = self.shared_encoder.forward_to_vq(
+            encoded_feature, vq=self.vq
         )
         vq_ids = shared_encoder_output["vq_ids"]
         return vq_ids

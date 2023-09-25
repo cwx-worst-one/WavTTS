@@ -12,14 +12,14 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 
 extra_params:
     sample_rate: 24000
-    frame_rate: 40
+    frame_rate: 25
     n_mels: 128
     n_chroma: 12
     n_fft: 2048
     win_length: 2048
-    hop_length: 150  # sample_rate / frame_rate / 4
+    hop_length: 240
     feature_cmvn: "recipes/datasets/mcc/MixWebDataModule_SpeechTransform.stats.pt"
-    tokenizer: "phoneme"
+    tokenizer: "tts_chinese_frontend_model"
 
 # running parameters
 run_opts:
@@ -28,15 +28,15 @@ run_opts:
     hdfs_log_dir: "hdfs:///home/byte_speech_sv/zongyu.yin/logs"
     log_dir: logs
     log_name: umm
-    version: !ref umm_40hz_<extra_params[tokenizer]>_vq<config[vq_codebook_size]>x<config[vq_codebook_dim]>
+    version: !ref umm_stage3_zh_dw1-1-0_<extra_params[tokenizer]>_vq<config[vq_codebook_size]>x<config[vq_codebook_dim]>-layer<config[vq_layer_idx]>
     precision: "32"
-    num_workers: 2
+    num_workers: 4
     accelerator: auto
     warmup_steps: 2000
     max_steps: 1000000
     val_check_interval: 5000
     ckpt_interval: 10000
-    batch_size: 3
+    batch_size: 10
     learning_rate: 5.0e-5
     cycle_steps: 30000
     weight_decay: 0.1
@@ -48,17 +48,18 @@ run_opts:
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
-pl_datamodule: !new:recipes.datasets.mcc.mix.MixWebDataModule
+pl_datamodule: !new:recipes.datasets.mcc.mix.MixZhWebDataModule
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
     sample_rate: !ref <extra_params[sample_rate]>
     batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <extra_params[sample_rate]>
     num_workers: !ref <run_opts[num_workers]>
     region: "CN"
-    weights: [1, 1, 1]
+    weights: [1, 1, 0]
     max_num_crops: null
-    min_duration: 1
-    max_duration: 70
+    min_duration: 2
+    max_duration: 30
     normalize_audio: False
+    use_pipe: False
     tokenizer: !ref <extra_params[tokenizer]>
     frame_rate: !ref <extra_params[frame_rate]>
 
@@ -78,6 +79,7 @@ config: !new:recipes.umm.models.config.UMMConfig
     feature_cmvn: !ref <extra_params[feature_cmvn]>
     sample_rate: !ref <extra_params[sample_rate]>
     n_mels: !ref <extra_params[n_mels]>
+    add_chroma: True
     n_chroma: !ref <extra_params[n_chroma]>
     n_fft: !ref <extra_params[n_fft]>
     win_length: !ref <extra_params[win_length]>
@@ -86,11 +88,11 @@ config: !new:recipes.umm.models.config.UMMConfig
     intermediate_size: 4096
     num_hidden_layers: 24
     num_attention_heads: 8
-    max_source_positions: 2800
+    max_source_positions: 750
     add_vq: True
+    vq_codebook_size: 32768
+    vq_codebook_dim: 32
     vq_layer_idx: 12
-    vq_codebook_size: 65536
-    vq_codebook_dim: 16
     vq_decay: 0.99
     w_loss_mel: 1.0
     w_loss_chroma: 1.0
@@ -98,15 +100,15 @@ config: !new:recipes.umm.models.config.UMMConfig
     w_loss_ctc: 0.5
     tokenizer: !ref <extra_params[tokenizer]>
     frame_rate: !ref <extra_params[frame_rate]>
-    vocab_size: 393
-    ctc_blank_id: 392
-    # vocab_size: 30523
-    # ctc_blank_id: 30522
+    vocab_size: 267
+    ctc_blank_id: 266
+    # vocab_size: 21129
+    # ctc_blank_id: 21128
 
-model_cls: !name:recipes.umm.models.umm.UMMBase
+model_cls: !name:recipes.umm.models.umm_mkii.Stage3
     config: !ref <config>
 
-pl_module: !new:recipes.umm.modules.lit_module.UMMBase
+pl_module: !new:recipes.umm.modules.lit_module.Stage3
     checkpointing: !ref <run_opts[checkpointing]>
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
@@ -116,7 +118,7 @@ pl_module: !new:recipes.umm.modules.lit_module.UMMBase
     extra_params: !ref <extra_params>
     required_modules:
         pretrained:
-            ckpt_path: "hdfs:///home/byte_speech_sv/zongyu.yin/logs/umm/umm_40hz_phoneme/checkpoints/step=010000.ckpt"
+            ckpt_path: "hdfs:///home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage2_zh_dw1-1-0_tts_chinese_frontend_model/checkpoints/step=040000.ckpt"
             init_fn: !name:recipes.umm.requires.model_initializer.init_pretrained
             cache_dir: !ref <run_opts[cache_dir]>
 

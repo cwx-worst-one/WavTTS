@@ -185,19 +185,43 @@ def init_soundstream(hpath, local_rank, cache_dir=None):
                     raise ConnectionError(f"Cannot retrieve file from {h_ss}.")
         else:
             local_path = h_ss
-        return {"ss": load_torch_script_module(local_path, device)}
+    return {"ss": load_torch_script_module(local_path, device)}
 
 
 def init_soundstream_decoder(hpath, local_rank, cache_dir=None):
     if cache_dir is not None:
         os.makedirs(cache_dir, exist_ok=True)
-
     device = torch.device(f"cuda:{local_rank}")
-
-    h_ss = f"{hpath}/ss_decoder_{local_rank}.pt"
-    local_path = f"{cache_dir}/ss_decoder_{local_rank}.pt"
-
-    if not os.path.exists(local_path):
-        if not hh.get(h_ss, local_path):
-            raise ConnectionError(f"Cannot retrieve file from {h_ss}.")
+    with local_zero_first():
+        h_ss = f"{hpath}/ss_decoder_{local_rank}.pt"
+        if hpath.startswith("hdfs://"):
+            local_path = f"{cache_dir}/ss_decoder_{local_rank}.pt"
+            if not os.path.exists(local_path):
+                if not hh.get(h_ss, local_path):
+                    raise ConnectionError(f"Cannot retrieve file from {h_ss}.")
+        else:
+            local_path = h_ss
     return {"ss_dec": load_torch_script_module(local_path, device)}
+
+
+def init_sami_tts_api(fe_version, fe_task, cache_dir="/opt/tiger/sami_tts_api/models"):
+    from sami_tts_api.sail import download_model
+
+    model_name = f"{fe_task}__{fe_version}.model"
+    local_path = f"{cache_dir}/{model_name}"
+    if cache_dir is not None:
+        os.makedirs(cache_dir, exist_ok=True)
+    with local_zero_first():
+        if not os.path.exists(local_path):
+            fe = download_model(fe_task, cache_dir, fe_version)
+            assert fe == local_path
+    return local_path
+
+    # model_name = f"{fe_task}__{fe_version}.model"
+    # hdfs_path = f"hdfs:///home/byte_speech_sv/zongyu.yin/sami_tts_api/models/{model_name}"
+    # local_path = f"{cache_dir}/{model_name}"
+    # with local_zero_first():
+    #     if not os.path.exists(local_path):
+    #         if not hh.get(hdfs_path, local_path):
+    #             raise ConnectionError(f"Cannot retrieve file from {hdfs_path}.")
+    # return local_path

@@ -69,12 +69,12 @@ class MaskedCrossEntropy(nn.Module):
         loss = -torch.gather(log_probs, dim=1, index=targets)
 
         if mask is None:
-            return {"rq_loss": loss.mean()}
+            return {"loss": loss.mean()}
 
         mask = mask.contiguous()
         loss = loss.view(*mask.size()) * mask
         loss = (loss / mask.sum()).sum()
-        return {"rq_loss": loss}
+        return {"loss": loss}
 
 
 class MOSTLoss(nn.Module):
@@ -221,25 +221,31 @@ class UMMLoss(nn.Module):
             zero_infinity=config.ctc_zero_infinity,
         )
         self.mel_loss_fn = STFTLoss()
-        self.chroma_loss_fn = STFTLoss()
+        if config.add_chroma:
+            self.chroma_loss_fn = STFTLoss()
+        self.config = config
 
     def forward(self, ctc_logits, text_ids, recon_mel, mel, recon_chroma, chroma):
-        recon_mel = recon_mel.contiguous().float()
-        mel = mel.contiguous().float()
-        recon_chroma = recon_chroma.contiguous().float()
-        chroma = chroma.contiguous().float()
-
         loss_dict = {}
 
-        # Spec
+        # Mel
+        recon_mel = recon_mel.contiguous().float()
+        mel = mel.contiguous().float()
         mel_loss = self.mel_loss_fn.float()(recon_mel, mel)
-        chroma_loss = self.chroma_loss_fn.float()(recon_chroma, chroma)
         loss_dict["loss_mel"] = mel_loss["stft_loss"]
-        loss_dict["loss_chroma"] = chroma_loss["stft_loss"]
+
+        # Chroma
+        if self.config.add_chroma:
+            recon_chroma = recon_chroma.contiguous().float()
+            chroma = chroma.contiguous().float()
+            chroma_loss = self.chroma_loss_fn.float()(recon_chroma, chroma)
+            loss_dict["loss_chroma"] = chroma_loss["stft_loss"]
 
         # CTC
         ctc_logits = ctc_logits.contiguous().float()
-        input_lengths = torch.full((ctc_logits.size(0),), ctc_logits.size(1), dtype=torch.long)
+        input_lengths = torch.full(
+            (ctc_logits.size(0),), ctc_logits.size(1), dtype=torch.long
+        )
         labels_mask = text_ids > 0
         target_lengths = labels_mask.sum(-1)
         flattened_targets = text_ids.masked_select(labels_mask)
@@ -254,6 +260,95 @@ class UMMLoss(nn.Module):
                 log_probs, flattened_targets, input_lengths, target_lengths
             )
         loss_dict["loss_ctc"] = ctc_loss
+
+        return loss_dict
+
+
+class Stage3ARLoss(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.ctc_loss_fn = nn.CTCLoss(
+            blank=config.ctc_blank_id,
+            reduction=config.ctc_loss_reduction,
+            zero_infinity=config.ctc_zero_infinity,
+        )
+        self.mel_loss_fn = STFTLoss()
+        self.chroma_loss_fn = STFTLoss()
+        self.ar_loss_fn = MaskedCrossEntropy()
+
+    def forward(
+        self, ctc_logits, ctc_ids, mel_out, mel, chroma_out, chroma, ar_logits, ar_ids
+    ):
+        mel_out = mel_out.contiguous().float()
+        mel = mel.contiguous().float()
+        chroma_out = chroma_out.contiguous().float()
+        chroma = chroma.contiguous().float()
+
+        loss_dict = {}
+
+        # Spec
+        mel_loss = self.mel_loss_fn.float()(mel_out, mel)
+        chroma_loss = self.chroma_loss_fn.float()(chroma_out, chroma)
+        loss_dict["loss_mel"] = mel_loss["stft_loss"]
+        loss_dict["loss_chroma"] = chroma_loss["stft_loss"]
+
+        # CTC
+        ctc_logits = ctc_logits.contiguous().float()
+        input_lengths = torch.full(
+            (ctc_logits.size(0),), ctc_logits.size(1), dtype=torch.long
+        )
+        labels_mask = ctc_ids > 0
+        target_lengths = labels_mask.sum(-1)
+        flattened_targets = ctc_ids.masked_select(labels_mask)
+
+        # CTCLoss doesn't support fp16
+        log_probs = F.log_softmax(ctc_logits, dim=-1, dtype=torch.float32).transpose(
+            0, 1
+        )  # [N, T, C] -> [T, N, C]
+
+        with torch.backends.cudnn.flags(enabled=False):
+            ctc_loss = self.ctc_loss_fn(
+                log_probs, flattened_targets, input_lengths, target_lengths
+            )
+        loss_dict["loss_ctc"] = ctc_loss
+
+        # AR
+        ar_loss = self.ar_loss_fn(ar_logits, ar_ids)
+        loss_dict["loss_ar"] = ar_loss["loss"]
+
+        return loss_dict
+
+
+class CTCLoss(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.ctc_loss_fn = nn.CTCLoss(
+            blank=config.ctc_blank_id,
+            reduction=config.ctc_loss_reduction,
+            zero_infinity=config.ctc_zero_infinity,
+        )
+
+    def forward(self, ctc_logits, text_ids):
+        loss_dict = {}
+        # CTC
+        ctc_logits = ctc_logits.contiguous().float()
+        input_lengths = torch.full(
+            (ctc_logits.size(0),), ctc_logits.size(1), dtype=torch.long
+        )
+        labels_mask = text_ids > 0
+        target_lengths = labels_mask.sum(-1)
+        flattened_targets = text_ids.masked_select(labels_mask)
+
+        # CTCLoss doesn't support fp16
+        log_probs = F.log_softmax(ctc_logits, dim=-1, dtype=torch.float32).transpose(
+            0, 1
+        )  # [N, T, C] -> [T, N, C]
+
+        with torch.backends.cudnn.flags(enabled=False):
+            loss = self.ctc_loss_fn(
+                log_probs, flattened_targets, input_lengths, target_lengths
+            )
+        loss_dict["loss_ctc"] = loss
 
         return loss_dict
 

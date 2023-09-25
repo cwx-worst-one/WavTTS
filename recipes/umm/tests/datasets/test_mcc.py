@@ -6,11 +6,15 @@ from recipes.datasets.mcc.mix import (
     MCCInstrumentalDataset,
     MCCVocalDataset,
     MixWebDataModule,
+    MixZhWebDataModule,
     VocalWebDataModule,
+    collate_audio_text,
 )
 from recipes.umm.transforms.speech import SpeechTransform
 from samantha.transforms.audio import batch_plot_spectrogram
 
+plt.rcParams['font.sans-serif']=['SimHei']
+plt.rcParams['axes.unicode_minus']=False
 
 @pytest.mark.skip()
 def test_mcc_datasets():
@@ -31,25 +35,27 @@ def test_mcc_datasets():
 
 
 def test_mix_datamodule():
-    batch_size = 8
     n_mels = 128
     sample_rate = 24000
-    pl_datamodule = MixWebDataModule(
+    pl_datamodule = MixZhWebDataModule(
         sample_rate=sample_rate,
-        batch_size=batch_size,
+        batch_size=sample_rate * 5 * 30,
         shuffle_buffer_size=10,
         num_workers=2,
         region="CN",
-        weights=(1, 1, 1),
+        weights=[1, 1, 0],
+        tokenizer=None,
+        collate_fn=collate_audio_text,
     )
     train_loader = pl_datamodule.train_dataloader()
     train_loader = iter(train_loader)
-    for i in range(10):
+    for i in range(3):
         batch = next(train_loader)
         audio = batch["audio"]
+        batch_size = audio.size(0)
         for a_idx, a in enumerate(audio):
             torchaudio.save(
-                f"./test_out/mix-batch-{i}-item-{a_idx}.wav", a, sample_rate
+                f"./test_out/mix-batch-{i}-item-{a_idx}.mp3", a, sample_rate, format="mp3"
             )
 
         for n_fft in [2048]:

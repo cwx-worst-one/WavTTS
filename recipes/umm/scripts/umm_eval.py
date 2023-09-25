@@ -1,14 +1,14 @@
 import torch
 import torchaudio
+
 assert torch.cuda.is_available()
 
+from jiwer import cer, wer
 from tqdm import tqdm
 from transformers import BertTokenizer
 
 from recipes.datasets.mcc.mix import MixWebDataModule
 from recipes.umm.modules.lit_module import Stage3
-
-from jiwer import wer, cer
 
 
 class GreedyCTCDecoder(torch.nn.Module):
@@ -33,6 +33,7 @@ class GreedyCTCDecoder(torch.nn.Module):
             joined = " ".join([self.labels[i] for i in indices])
             res.append(joined.replace("|", " ").strip())
         return res
+
 
 @torch.no_grad()
 def evaluate(it, verbose=True, max_i=1000):
@@ -62,7 +63,9 @@ def evaluate(it, verbose=True, max_i=1000):
         for j, (a, g) in enumerate(zip(actual_transcript, greedy_transcript)):
             greedy_wer = wer(a.lower(), g.lower())
             greedy_cer = cer(a.lower(), g.lower())
-            greedy_edit_distance = torchaudio.functional.edit_distance(a.lower(), g.lower()) / len(a)
+            greedy_edit_distance = torchaudio.functional.edit_distance(
+                a.lower(), g.lower()
+            ) / len(a)
             if verbose:
                 print("=============================")
                 print(f"Actual transcript: {a}")

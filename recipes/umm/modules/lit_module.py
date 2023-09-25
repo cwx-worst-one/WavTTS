@@ -1,13 +1,17 @@
+import logging
+import random
 from typing import List, Optional, Union
 
+import phonemizer
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
 from einops import rearrange
 from pytorch_lightning.profilers import PassThroughProfiler
 from tqdm import tqdm
-from transformers import BertTokenizer
+from transformers import BertTokenizer, Wav2Vec2PhonemeCTCTokenizer
 
+from recipes.datasets.mcc.sami_tokenizer import SamiTokenizer
 from recipes.musiclm.inference.utils import sample
 from recipes.umm.models.utils import clip_grad_value_, mel_spectrogram_torch
 from recipes.umm.modules.criterion_vocoder import (
@@ -16,6 +20,7 @@ from recipes.umm.modules.criterion_vocoder import (
     feature_loss,
     generator_loss,
 )
+from recipes.umm.requires.model_initializer import init_sami_tts_api
 from samantha.dataio.webdataset import ShardWriter
 from samantha.utils.hparams import DotDict
 
@@ -66,30 +71,11 @@ class BaseModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         loss_dict = self._shared_step(batch)
         self.log_dict(loss_dict, prog_bar=True, sync_dist=True)
-        return loss_dict["tr_loss"]
+        return loss_dict["loss"]
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
-        loss_dict = self._shared_step(batch)
-        if dataloader_idx not in self.val_outputs:
-            self.val_outputs[dataloader_idx] = []
-        self.val_outputs[dataloader_idx].append(loss_dict)
-
-    def on_validation_epoch_end(self):
-        for dataloader_idx, outputs in self.val_outputs.items():
-            val_loss_dict = {}
-            for loss in outputs:
-                for k, v in loss.items():
-                    if k == "tr_loss":
-                        k = "loss"
-                    k = f"val_{k}_{dataloader_idx}"
-                    if k not in val_loss_dict:
-                        val_loss_dict[k] = v
-                    else:
-                        val_loss_dict[k] = val_loss_dict[k] + v
-            for k, v in val_loss_dict.items():
-                val_loss_dict[k] = v / len(outputs)
-            self.log_dict(val_loss_dict, prog_bar=True, sync_dist=True)
-            self.val_outputs[dataloader_idx] = []
+        # Dummy function for triggering callbacks
+        return
 
     def configure_optimizers(self):
         optimizer = self.hparams.optimizer_cls(self.model.parameters())
@@ -651,7 +637,7 @@ class BestRQMelCTC(BestRQ):
         return quant_encoder_out, quant_idx, quant_loss
 
 
-class BaseStage(pl.LightningModule):
+class Stage0(pl.LightningModule):
     def __init__(
         self,
         model_cls,
@@ -674,6 +660,8 @@ class BaseStage(pl.LightningModule):
             self.model.gradient_checkpointing_enable()
 
     def setup(self, stage: str) -> None:
+        if self.global_rank == 0:
+            print(self.model)
         if (
             stage == "fit"
             and not self.requires
@@ -682,13 +670,60 @@ class BaseStage(pl.LightningModule):
             self.load_required_modules()
 
     def load_required_modules(self):
-        raise NotImplementedError()
+        pretrained = self.hparams.required_modules["pretrained"]
+        if pretrained["ckpt_path"].strip() != "":
+            state_dict = pretrained["init_fn"](
+                pretrained["ckpt_path"], self.local_rank, pretrained["cache_dir"]
+            )["state_dict"]
+            print(f'Loading pretrained model from {pretrained["ckpt_path"]}')
+            self.modify_state_dict(state_dict)
+            missing_keys, unexpected_keys = self.load_state_dict(
+                state_dict=state_dict, strict=False
+            )
+            print(f"[Missing] {missing_keys}")
+            print(f"[Unexpected] {unexpected_keys}")
+        if self.model.config.tokenizer in [
+            "tts_english_frontend_model",
+            "tts_chinese_frontend_model",
+        ]:
+            versions = {
+                "tts_english_frontend_model": "34.0",
+                "tts_chinese_frontend_model": "42.0",
+            }
+            self.fe_version = versions[self.model.config.tokenizer]
+            self.fe_task = self.model.config.tokenizer
+            print(
+                f"Loading sami_tts_api: version - {self.fe_task}, task - {self.fe_version}"
+            )
+            self.fe = init_sami_tts_api(
+                fe_version=self.fe_version, fe_task=self.fe_task
+            )
+            self.tokenizer = SamiTokenizer(fe=self.fe, fe_task=self.fe_task)
+            print(f"sami_tts_api loaded.")
+
+    def modify_state_dict(self, state_dict):
+        for k in list(state_dict.keys()):
+            if k.startswith("model.encoder_pre_layers"):
+                k_i = int(k.split(".")[2])
+                k_suffix = ".".join(k.split(".")[3:])
+                k_new = f"model.encoder_layers.{k_i}.{k_suffix}"
+                state_dict[k_new] = state_dict[k]
+                print(f"[MSD] {k} -> {k_new}")
+                del state_dict[k]
+            elif k.startswith("model.encoder_post_layers"):
+                k_i = int(k.split(".")[2]) + 12
+                k_suffix = ".".join(k.split(".")[3:])
+                k_new = f"model.encoder_layers.{k_i}.{k_suffix}"
+                state_dict[k_new] = state_dict[k]
+                print(f"[MSD] {k} -> {k_new}")
+                del state_dict[k]
+        return
 
     def forward(self, x: torch.Tensor) -> None:
-        pass
+        raise NotImplementedError()
 
-    # def on_before_optimizer_step(self, optimizer):
-    #     self.log_dict(pl.utilities.grad_norm(self, norm_type=2), sync_dist=True)
+    def _shared_step(self, batch):
+        raise NotImplementedError()
 
     @property
     def profiler(self):
@@ -700,25 +735,8 @@ class BaseStage(pl.LightningModule):
         return loss_dict["loss"]
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
-        loss_dict = self._shared_step(batch)
-        if dataloader_idx not in self.val_outputs:
-            self.val_outputs[dataloader_idx] = []
-        self.val_outputs[dataloader_idx].append(loss_dict)
-
-    def on_validation_epoch_end(self):
-        for dataloader_idx, outputs in self.val_outputs.items():
-            val_loss_dict = {}
-            for loss in outputs:
-                for k, v in loss.items():
-                    k = f"val_{k}_{dataloader_idx}"
-                    if k not in val_loss_dict:
-                        val_loss_dict[k] = v
-                    else:
-                        val_loss_dict[k] = val_loss_dict[k] + v
-            for k, v in val_loss_dict.items():
-                val_loss_dict[k] = v / len(outputs)
-            self.log_dict(val_loss_dict, prog_bar=True, sync_dist=True)
-            self.val_outputs[dataloader_idx] = []
+        # Dummy function for triggering callbacks
+        return
 
     def configure_optimizers(self):
         optimizer = self.hparams.optimizer_cls(self.model.parameters())
@@ -729,42 +747,12 @@ class BaseStage(pl.LightningModule):
         }
 
     @torch.no_grad()
-    def masking(self, x):
-        mx = x.clone()
-        b, t = mx.shape
-        device = x.device
-
-        # get random mask indices
-        start_indices = (
-            torch.rand(b, t // self.model.config.len_masking_raw, device=device)
-            < self.model.config.mask_prob
-        )
-        time_domain_masked_indices = torch.nonzero(
-            start_indices.repeat_interleave(self.model.config.len_masking_raw, dim=1)
-        )
-        token_domain_masked_indices = torch.nonzero(
-            start_indices.repeat_interleave(self.model.config.len_masking_token, dim=1)
-        )
-
-        # mask with random values
-        masking_noise = (
-            torch.randn(len(time_domain_masked_indices), dtype=x.dtype, device=device)
-            * 0.1
-        )  # 0 mean 0.1 std
-        mx[tuple(time_domain_masked_indices.t())] = masking_noise
-        return mx, token_domain_masked_indices
-
-    @torch.no_grad()
     def pad_audio(self, x):
         return self.model.pad_audio(x)
 
     @torch.no_grad()
     def preprocessing(self, x):
         return self.model.preprocessing(x)
-
-    @torch.no_grad()
-    def get_latent(self, x, layer_idx=12):
-        return self.model.get_latent(x, layer_idx=layer_idx)
 
     def get_nuc(self, target_tokens):
         if target_tokens.dim() == 3:
@@ -801,7 +789,7 @@ class BaseStage(pl.LightningModule):
         ).sum(dim=0)
         one_hot = self.all_gather(one_hot)
         one_hot = one_hot.sum(dim=0).clamp(0, 1)
-        quant_rate = 100 * one_hot.sum() / quant_token_num
+        quant_rate = one_hot.sum() / quant_token_num
         return quant_rate
 
     @torch.no_grad()
@@ -823,7 +811,7 @@ class BaseStage(pl.LightningModule):
         return mulan_embeds
 
 
-class Stage1(BaseStage):
+class Stage1(Stage0):
     def __init__(
         self,
         model_cls,
@@ -843,74 +831,100 @@ class Stage1(BaseStage):
             checkpointing=checkpointing,
             extra_params=extra_params,
         )
+
+    @torch.no_grad()
+    def masking(self, x):
+        mx = x.clone()
+        b, t = mx.shape
+        device = x.device
+
+        # get random mask indices
+        start_indices = (
+            torch.rand(b, t // self.model.config.len_masking_raw, device=device)
+            < self.model.config.mask_prob
+        )
+        if torch.all(start_indices == False):
+            start_indices[
+                random.randint(0, start_indices.size(0) - 1),
+                random.randint(0, start_indices.size(1) - 1),
+            ] = True
+        time_domain_masked_indices = torch.nonzero(
+            start_indices.repeat_interleave(self.model.config.len_masking_raw, dim=1)
+        )
+        token_domain_masked_indices = torch.nonzero(
+            start_indices.repeat_interleave(self.model.config.len_masking_token, dim=1)
+        )
+
+        # mask with random values
+        masking_noise = (
+            torch.randn(len(time_domain_masked_indices), dtype=x.dtype, device=device)
+            * 0.1
+        )  # 0 mean 0.1 std
+        mx[tuple(time_domain_masked_indices.t())] = masking_noise
+        return mx, token_domain_masked_indices
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
     def prepare_feature(self, batch):
         wav = batch["audio"].squeeze(dim=1).float()
         wav = self.pad_audio(wav)
-        feature = self.preprocessing(wav)
-        masked_wav, masked_indices = self.masking(wav)
-        masked_feature = self.preprocessing(masked_wav)
-        return {
-            "masked_feature": masked_feature,
-            "masked_indices": masked_indices,
-            "feature": feature,
-        }
+        mel = self.preprocessing(wav)["mel"]
+        masked_audio, masked_indices = self.masking(wav)
+        masked_mel = self.preprocessing(masked_audio)["mel"]
+        return {"masked_mel": masked_mel, "masked_indices": masked_indices, "mel": mel}
 
-    def _shared_step(self, batch, return_loss: bool = True):
+    def get_code_rate(self, target_tokens):
+        code_rate = (
+            sum(
+                [
+                    len(target_tokens[i, j, :].unique())
+                    for i in range(target_tokens.size(0))
+                    for j in range(target_tokens.size(1))
+                ]
+            )
+            / target_tokens.size(0)
+            / target_tokens.size(1)
+            / target_tokens.size(2)
+        )
+        return code_rate
+
+    def _shared_step(self, batch):
         input_dict = self.prepare_feature(batch)
         output_dict = self.model(input_dict)
-        rq_logits = output_dict["rq_logits"]
         rq_masked_logits = output_dict["rq_masked_logits"]
-        rq_target = output_dict["rq_target"]
         rq_masked_target = output_dict["rq_masked_target"]
-        if return_loss:
-            loss_dict = self.criterion(rq_masked_logits, rq_masked_target)
-            accu = (rq_masked_logits.argmax(1) == rq_masked_target).float().mean() * 100
-            # target_tokens: [batch, time, codebook_idx]
-            rq_nuc = self.get_nuc(rq_target.transpose(1, 2))
-            rq_quant_rate = 0
-            for i in range(self.model.config.rq_codebook_num):
-                rq_quant_rate += self.get_quant_rate(
-                    rq_target[:, :, i], self.model.config.rq_codebook_size
-                )
-            rq_quant_rate = rq_quant_rate / self.model.config.rq_codebook_num
-            loss_dict["loss"] = loss_dict["rq_loss"]
-            if self.model.config.add_vq:
-                vq_states = output_dict["vq_states"]
-                vq_ids = output_dict["vq_ids"]
-                vq_loss = output_dict["vq_loss"]
-                vq_quant_rate = self.get_quant_rate(
-                    vq_ids, self.model.config.vq_codebook_size
-                )
-                vq_nuc = self.get_nuc(vq_ids)
-                loss_dict["vq_nuc"] = vq_nuc
-                loss_dict["loss"] = loss_dict["loss"] + vq_loss.sum()
-                loss_dict["vq_loss"] = vq_loss.sum()
-                loss_dict["vq_quant_rate"] = vq_quant_rate
-            loss_dict["accu"] = accu
-            loss_dict["rq_nuc"] = rq_nuc
-            loss_dict["num_frames"] = input_dict["feature"].size(1)
-            loss_dict["feature_mean"] = input_dict["feature"].mean()
-            loss_dict["feature_std"] = input_dict["feature"].std()
-            loss_dict["rq_quant_rate"] = rq_quant_rate
-            return loss_dict
+        loss_dict = self.criterion(rq_masked_logits, rq_masked_target)
+        accu = (rq_masked_logits.argmax(1) == rq_masked_target).float().mean()
+        loss_dict["accu"] = accu
+        # target_tokens: [batch, time, codebook_idx]
+        code_rate = self.get_code_rate(output_dict["rq_target"].transpose(1, 2))
+        quant_rate = 0
+        for i in range(self.model.config.rq_codebook_num):
+            quant_rate += self.get_quant_rate(
+                output_dict["rq_target"][:, :, i], self.model.config.rq_codebook_size
+            )
+        quant_rate = quant_rate / self.model.config.rq_codebook_num
+        loss_dict["aux/code_rate"] = code_rate
+        loss_dict["aux/quant_rate"] = quant_rate
 
-        return output_dict
+        mel = input_dict["mel"]
+        loss_dict["aux/num_mel_frames"] = mel.size(0) * mel.size(1)
+        loss_dict["aux/mel_mean"] = mel.mean()
+        loss_dict["aux/mel_std"] = mel.std()
+        return loss_dict
 
     @torch.no_grad()
-    def get_mel(self, batch):
+    def get_spec(self, batch):
         input_dict = self.prepare_feature(batch)
-        masked_feature = input_dict["masked_feature"]
-        feature = input_dict["feature"]
+        mel = input_dict["mel"]
+        maksed_mel = input_dict["masked_mel"]
         return {
-            "Masked": masked_feature.transpose(1, 2),
-            "Original": feature.transpose(1, 2),
+            "Original Mel": mel.transpose(1, 2),
+            "Masked Mel": maksed_mel.transpose(1, 2),
         }
 
 
-class Stage2(BaseStage):
+class Stage2(Stage0):
     def __init__(
         self,
         model_cls,
@@ -931,40 +945,202 @@ class Stage2(BaseStage):
             extra_params=extra_params,
         )
 
-    def setup(self, stage: str) -> None:
-        self.tokenizer = BertTokenizer.from_pretrained("bert-large-uncased")
-        if (
-            stage == "fit"
-            and not self.requires
-            and self.hparams.required_modules is not None
-        ):
-            self.load_required_modules()
-
-    def load_required_modules(self):
-        pretrained = self.hparams.required_modules["pretrained"]
-        state_dict = pretrained["init_fn"](
-            pretrained["ckpt_path"], self.local_rank, pretrained["cache_dir"]
-        )["state_dict"]
-        print(f'Loading pretrained model from {pretrained["ckpt_path"]}')
-        missing_keys, unexpected_keys = self.load_state_dict(
-            state_dict=state_dict, strict=False
-        )
-        print(f"[Missing] {missing_keys}")
-        print(f"[Unexpected] {unexpected_keys}")
-        if self.model.config.add_mulan:
-            print(f'Loading mulan from {mulan["ckpt_path"]}')
-            mulan = self.hparams.required_modules["mulan"]
-            mulan = mulan["init_fn"](
-                mulan["ckpt_path"], self.local_rank, mulan["cache_dir"]
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def prepare_feature(self, batch):
+        input_dict = {}
+        audio = batch["audio"].squeeze(dim=1).float()
+        audio = self.pad_audio(audio)
+        if hasattr(self, "tokenizer"):
+            encoded_text = self.tokenizer(
+                batch["text"],
+                add_special_tokens=False,
+                padding="longest",
+                return_tensors="pt",
             )
-            self.requires.update(mulan)
+            text_ids = encoded_text["input_ids"].to(audio.device)
+            input_dict.update(text_ids=text_ids)
+        else:
+            input_dict.update(text_ids=batch["token"])
+        feature = self.preprocessing(audio)
+        input_dict.update(feature)
+        return input_dict
+
+    def _shared_step(self, batch):
+        input_dict = self.prepare_feature(batch)
+        output_dict = self.model(input_dict)
+
+        mel = input_dict["mel"]
+        text_ids = input_dict["text_ids"]
+
+        loss_dict = self.criterion(
+            ctc_logits=output_dict["ctc_out"],
+            text_ids=text_ids,
+            recon_chroma=output_dict["chroma_out"]
+            if self.model.config.add_chroma
+            else None,
+            chroma=input_dict["chroma"] if self.model.config.add_chroma else None,
+            recon_mel=output_dict["mel_out"],
+            mel=mel,
+        )
+        loss_dict["loss"] = (
+            loss_dict["loss_mel"] * self.model.config.w_loss_mel
+            + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
+        )
+        if self.model.config.add_chroma:
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + loss_dict["loss_chroma"] * self.model.config.w_loss_chroma
+            )
+
+        loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
+        loss_dict["aux/num_mel_frames"] = mel.size(0) * mel.size(1)
+        loss_dict["aux/mel_mean"] = mel.mean()
+        loss_dict["aux/mel_std"] = mel.std()
+        loss_dict["aux/w_loss_mel"] = self.model.config.w_loss_mel
+        loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
+        if self.model.config.add_chroma:
+            loss_dict["aux/w_loss_chroma"] = self.model.config.w_loss_chroma
+        return loss_dict
+
+    @torch.no_grad()
+    def get_spec(self, batch):
+        input_dict = self.prepare_feature(batch)
+        output_dict = self.model(input_dict)
+        out = {
+            "mel": {
+                "Reconstructed": output_dict["mel_out"].transpose(1, 2),
+                "Original": input_dict["mel"].transpose(1, 2),
+            }
+        }
+        if self.model.config.add_chroma:
+            out.update(
+                {
+                    "chroma": {
+                        "Reconstructed": output_dict["chroma_out"].transpose(1, 2),
+                        "Original": input_dict["chroma"].transpose(1, 2),
+                    }
+                }
+            )
+        return out
+
+
+class Stage3(Stage2):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+
+    def _shared_step(self, batch):
+        input_dict = self.prepare_feature(batch)
+        output_dict = self.model(input_dict)
+
+        mel = input_dict["mel"]
+        text_ids = input_dict["text_ids"]
+
+        loss_dict = self.criterion(
+            ctc_logits=output_dict["ctc_out"],
+            text_ids=text_ids,
+            recon_chroma=output_dict["chroma_out"]
+            if self.model.config.add_chroma
+            else None,
+            chroma=input_dict["chroma"] if self.model.config.add_chroma else None,
+            recon_mel=output_dict["mel_out"],
+            mel=mel,
+        )
+        loss_dict["loss"] = (
+            loss_dict["loss_mel"] * self.model.config.w_loss_mel
+            + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
+        )
+        if self.model.config.add_chroma:
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + loss_dict["loss_chroma"] * self.model.config.w_loss_chroma
+            )
+        loss_dict["loss_vq"] = output_dict["vq_loss"]
+        loss_dict["loss"] = (
+            loss_dict["loss"] + output_dict["vq_loss"] * self.model.config.w_loss_vq
+        )
+        code_rate = self.get_code_rate(output_dict["vq_ids"])
+        quant_rate = self.get_quant_rate(
+            output_dict["vq_ids"], self.model.config.vq_codebook_size
+        )
+        loss_dict["aux/code_rate"] = code_rate
+        loss_dict["aux/quant_rate"] = quant_rate
+        loss_dict["aux/entropy"] = self.model.vq.embedding.entropy()
+        loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
+        loss_dict["aux/num_mel_frames"] = mel.size(0) * mel.size(1)
+        loss_dict["aux/mel_mean"] = mel.mean()
+        loss_dict["aux/mel_std"] = mel.std()
+        loss_dict["aux/w_loss_mel"] = self.model.config.w_loss_mel
+        loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
+        if self.model.config.add_chroma:
+            loss_dict["aux/w_loss_chroma"] = self.model.config.w_loss_chroma
+        loss_dict["aux/w_loss_vq"] = self.model.config.w_loss_vq
+        return loss_dict
+
+    def get_code_rate(self, target_tokens):
+        code_rate = (
+            sum(
+                [
+                    len(target_tokens[i, :].unique())
+                    for i in range(target_tokens.size(0))
+                ]
+            )
+            / target_tokens.size(0)
+            / target_tokens.size(1)
+        )
+        return code_rate
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def wav2token(self, wav):
+        return self.model.wav2token(wav)
+
+
+class ASR(Stage0):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
     def prepare_feature(self, batch):
         audio = batch["audio"].squeeze(dim=1).float()
         audio = self.pad_audio(audio)
-        input_dict = self.preprocessing(audio)
+        feature = self.preprocessing(audio)
+        input_dict = {"wav": audio}
         encoded_text = self.tokenizer(
             batch["text"],
             add_special_tokens=False,
@@ -972,112 +1148,29 @@ class Stage2(BaseStage):
             return_tensors="pt",
         )
         text_ids = encoded_text["input_ids"].to(audio.device)
-        input_dict.update({"text_ids": text_ids, "wav": audio})
-        if self.model.config.add_mulan:
-            mulan_embeds = self.get_mulan_embeds(audio, data_type="music")
-            input_dict["mulan_embeds"] = mulan_embeds
+        input_dict.update(text_ids=text_ids)
+        input_dict.update(feature)
         return input_dict
 
-    def _shared_step(self, batch, return_loss: bool = True):
+    def _shared_step(self, batch):
         input_dict = self.prepare_feature(batch)
         output_dict = self.model(input_dict)
-        if return_loss:
-            feature = input_dict["feature"]
-            text_ids = input_dict["text_ids"]
-            logits = output_dict["logits"]
-            recon_feature = output_dict["recon_feature"]
-            if self.model.config.get("add_chroma", False):
-                chroma = input_dict["chroma"]
-                recon_chroma = output_dict["recon_chroma"]
-            # if self.model.config.add_mulan:
-            #     mulan_embeds = input_dict["mulan_embeds"]
-            #     vq_embeds = output_dict["vq_embeds"]
-            # else:
-            #     mulan_embeds = None
-            #     vq_embeds = None
-            loss_dict = self.criterion(
-                recon_feature=recon_feature,
-                feature=feature,
-                logits=logits,
-                text_ids=text_ids,
-                recon_chroma=recon_chroma
-                if self.model.config.get("add_chroma", False)
-                else None,
-                chroma=chroma if self.model.config.get("add_chroma", False) else None,
-            )
-            loss_dict["loss"] = (
-                loss_dict["ctc_loss"] * self.model.config.w_ctc_loss
-                + loss_dict["stft_loss"] * self.model.config.w_stft_loss
-            )
-            if self.model.config.get("add_chroma", False):
-                loss_dict["loss"] = (
-                    loss_dict["loss"]
-                    + loss_dict["chroma_stft_loss"]
-                    * self.model.config.w_chroma_stft_loss
-                )
-            if self.model.config.add_vq:
-                vq_states = output_dict["vq_states"]
-                vq_ids = output_dict["vq_ids"]
-                vq_loss = output_dict["vq_loss"]
-                vq_quant_rate = self.get_quant_rate(
-                    vq_ids, self.model.config.vq_codebook_size
-                )
-                vq_nuc = self.get_nuc(vq_ids)
-                loss_dict["vq_nuc"] = vq_nuc
-                loss_dict["vq_loss"] = vq_loss.sum()
-                loss_dict["vq_quant_rate"] = vq_quant_rate
-                loss_dict["vq_entropy"] = self.model.vq.embedding.entropy()
-                loss_dict["loss"] = (
-                    loss_dict["loss"] + vq_loss.sum() * self.model.config.w_vq_loss
-                )
-                # if self.model.config.add_mulan:
-                #     mulan_loss = output_dict["mulan_loss"]
-                #     loss_dict["mulan_loss"] = mulan_loss
-                #     loss_dict["loss"] = loss_dict["loss"] + mulan_loss * self.model.config.w_mulan_loss
-            loss_dict["num_tokens"] = text_ids.size(1)
-            loss_dict["num_frames"] = input_dict["feature"].size(1)
-            loss_dict["feature_mean"] = input_dict["feature"].mean()
-            loss_dict["feature_std"] = input_dict["feature"].std()
-            return loss_dict
 
-        return output_dict
+        mel = input_dict["mel"]
+        text_ids = input_dict["text_ids"]
 
-    @torch.no_grad()
-    def get_mel(self, batch):
-        input_dict = self.prepare_feature(batch)
-        output_dict = self.model(input_dict)
-        feature = input_dict["feature"]
-        recon_feature = output_dict["recon_feature"]
-        return {
-            "Reconstructed": recon_feature.transpose(1, 2),
-            "Original": feature.transpose(1, 2),
-        }
+        loss_dict = self.criterion(ctc_logits=output_dict["ctc_out"], text_ids=text_ids)
+        loss_dict["loss"] = loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
 
-    @torch.no_grad()
-    def get_spec(self, batch):
-        input_dict = self.prepare_feature(batch)
-        output_dict = self.model(input_dict)
-        return {
-            "mel": {
-                "Reconstructed": output_dict["recon_feature"].transpose(1, 2),
-                "Original": input_dict["feature"].transpose(1, 2),
-            },
-            "chroma": {
-                "Reconstructed": output_dict["recon_chroma"].transpose(1, 2),
-                "Original": input_dict["chroma"].transpose(1, 2),
-            },
-        }
-
-    @torch.no_grad()
-    def get_audio(self, batch):
-        input_dict = self.prepare_feature(batch)
-        output_dict = self.model(input_dict)
-        wav = input_dict["wav"]
-        recon_wav = output_dict["recon_wav"]
-        return {"Reconstructed": recon_wav, "Original": wav}
+        loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
+        loss_dict["aux/num_mel_frames"] = mel.size(0) * mel.size(1)
+        loss_dict["aux/mel_mean"] = mel.mean()
+        loss_dict["aux/mel_std"] = mel.std()
+        loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
+        return loss_dict
 
 
-class Stage2Vocoder(BaseStage):
+class Stage2Vocoder(Stage0):
     def __init__(
         self,
         model_cls,
@@ -1448,57 +1541,7 @@ class Stage2VocoderOnly(pl.LightningModule):
         return {"Reconstructed": recon_wav, "Original": wav}
 
 
-class Stage3(Stage2):
-    def __init__(
-        self,
-        model_cls,
-        criterion_cls,
-        optimizer_cls,
-        scheduler_cls,
-        required_modules=None,
-        checkpointing=False,
-        extra_params=None,
-    ):
-        super().__init__(
-            model_cls=model_cls,
-            criterion_cls=criterion_cls,
-            optimizer_cls=optimizer_cls,
-            scheduler_cls=scheduler_cls,
-            required_modules=required_modules,
-            checkpointing=checkpointing,
-            extra_params=extra_params,
-        )
-
-    @torch.no_grad()
-    @torch.cuda.amp.autocast(enabled=False)
-    def wav2token(self, wav):
-        encoded_feature = self.wav2embed(wav)
-        shared_encoder_output = self.model.shared_encoder.forward_to_vq(
-            encoded_feature, vq=self.model.vq
-        )
-        vq_ids = shared_encoder_output["vq_ids"]
-        return vq_ids
-
-    @torch.no_grad()
-    @torch.cuda.amp.autocast(enabled=False)
-    def wav2embed(self, wav):
-        if wav.dim() == 3:
-            wav = wav.squeeze(dim=1)
-        wav = self.pad_audio(wav.float())
-        feature = self.preprocessing(wav)
-        encoded_feature = self.model.audio_encoder(feature)
-        return encoded_feature
-
-    def training_step(self, batch, batch_idx):
-        loss_dict = self._shared_step(batch)
-        self.log_dict(loss_dict, prog_bar=True, sync_dist=True)
-        return loss_dict["loss"]
-
-    def validation_step(self, batch, batch_idx, dataloader_idx=0):
-        return
-
-
-class BaseUMM(pl.LightningModule):
+class UMMBase(pl.LightningModule):
     def __init__(
         self,
         model_cls,
@@ -1534,7 +1577,6 @@ class BaseUMM(pl.LightningModule):
         print(f"[Missing] {missing_keys}")
         print(f"[Unexpected] {unexpected_keys}")
 
-
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
     def prepare_feature(self, batch):
@@ -1552,16 +1594,22 @@ class BaseUMM(pl.LightningModule):
         loss_dict = self.criterion(
             ctc_logits=output_dict["ctc_out"],
             text_ids=input_dict["text_ids"],
-            recon_chroma=output_dict["chroma_out"],
-            chroma=input_dict["chroma"],
+            recon_chroma=None
+            if self.model.config.disable_chroma
+            else output_dict["chroma_out"],
+            chroma=None if self.model.config.disable_chroma else input_dict["chroma"],
             recon_mel=output_dict["mel_out"],
             mel=input_dict["mel"],
         )
         loss_dict["loss"] = (
-            loss_dict["loss_chroma"] * self.model.config.w_loss_chroma
-            + loss_dict["loss_mel"] * self.model.config.w_loss_mel
+            loss_dict["loss_mel"] * self.model.config.w_loss_mel
             + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
         )
+        if not self.model.config.disable_chroma:
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + loss_dict["loss_chroma"] * self.model.config.w_loss_chroma
+            )
         if self.model.config.add_vq:
             loss_dict["loss_vq"] = output_dict["vq_loss"]
             loss_dict["loss"] = (
@@ -1585,7 +1633,8 @@ class BaseUMM(pl.LightningModule):
         loss_dict["aux/mel_mean"] = input_dict["mel"].mean()
         loss_dict["aux/mel_std"] = input_dict["mel"].std()
         loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
-        loss_dict["aux/w_loss_chroma"] = self.model.config.w_loss_chroma
+        if not self.model.config.disable_chroma:
+            loss_dict["aux/w_loss_chroma"] = self.model.config.w_loss_chroma
         loss_dict["aux/w_loss_mel"] = self.model.config.w_loss_mel
         return loss_dict
 
@@ -1632,16 +1681,24 @@ class BaseUMM(pl.LightningModule):
     def get_spec(self, batch):
         input_dict = self.prepare_feature(batch)
         output_dict = self.model(input_dict)
-        return {
-            "mel": {
-                "Reconstructed": output_dict["mel_out"].transpose(1, 2),
-                "Original": input_dict["mel"].transpose(1, 2),
-            },
-            "chroma": {
-                "Reconstructed": output_dict["chroma_out"].transpose(1, 2),
-                "Original": input_dict["chroma"].transpose(1, 2),
-            },
-        }
+        if not self.model.config.disable_chroma:
+            return {
+                "mel": {
+                    "Reconstructed": output_dict["mel_out"].transpose(1, 2),
+                    "Original": input_dict["mel"].transpose(1, 2),
+                },
+                "chroma": {
+                    "Reconstructed": output_dict["chroma_out"].transpose(1, 2),
+                    "Original": input_dict["chroma"].transpose(1, 2),
+                },
+            }
+        else:
+            return {
+                "mel": {
+                    "Reconstructed": output_dict["mel_out"].transpose(1, 2),
+                    "Original": input_dict["mel"].transpose(1, 2),
+                }
+            }
 
     @torch.no_grad()
     def pad_audio(self, x):
@@ -1654,6 +1711,211 @@ class BaseUMM(pl.LightningModule):
     @torch.no_grad()
     def wav2token(self, x):
         return self.model.wav2token(x)
+
+
+class BaseUMM(UMMBase):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+
+
+class Stage3AR(Stage3):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+        self.requires = {}
+
+    def load_required_modules(self):
+        super().load_required_modules()
+        soundstream = self.hparams.required_modules["soundstream"]
+        print(f'Loading SoundStream from {soundstream["ckpt_path"]}')
+        ss = soundstream["init_fn"](
+            soundstream["ckpt_path"], self.local_rank, soundstream["cache_dir"]
+        )
+        self.requires.update(ss)
+        print("SoundStream loaded")
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def prepare_feature(self, batch):
+        input_dict = {}
+        audio = batch["audio"].squeeze(dim=1).float()
+        audio = self.pad_audio(audio)
+        if hasattr(self, "tokenizer"):
+            encoded_text = self.tokenizer(
+                batch["text"],
+                add_special_tokens=False,
+                padding="longest",
+                return_tensors="pt",
+            )
+            text_ids = encoded_text["input_ids"].to(audio.device)
+            input_dict.update(text_ids=text_ids)
+        else:
+            input_dict.update(text_ids=batch["token"])
+        feature = self.preprocessing(audio)
+        input_dict.update(feature)
+
+        soundstream_ids = self.requires["ss"](audio)[2]
+        soundstream_ids = torch.stack(soundstream_ids, dim=2)
+        soundstream_ids = soundstream_ids[:, :, 0:1]
+        soundstream_ids = torch.reshape(soundstream_ids, [audio.size(0), -1])
+        input_dict.update(ar_ids=soundstream_ids)
+
+        return input_dict
+
+    def _shared_step(self, batch):
+        input_dict = self.prepare_feature(batch)
+        output_dict = self.model(input_dict)
+
+        mel = input_dict["mel"]
+        text_ids = input_dict["text_ids"]
+
+        loss_dict = self.criterion(
+            ctc_logits=output_dict["ctc_out"],
+            ctc_ids=input_dict["text_ids"],
+            chroma_out=output_dict["chroma_out"],
+            chroma=input_dict["chroma"],
+            mel_out=output_dict["mel_out"],
+            mel=input_dict["mel"],
+            ar_logits=output_dict["ar_out"],
+            ar_ids=input_dict["ar_ids"],
+        )
+        loss_dict["loss_vq"] = output_dict["vq_loss"]
+        loss_dict["loss"] = (
+            loss_dict["loss_mel"] * self.model.config.w_loss_mel
+            + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
+            + loss_dict["loss_ar"] * self.model.config.w_loss_ar
+            + output_dict["vq_loss"] * self.model.config.w_loss_vq
+        )
+        if self.model.config.add_chroma:
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + loss_dict["loss_chroma"] * self.model.config.w_loss_chroma
+            )
+        code_rate = self.get_code_rate(output_dict["vq_ids"])
+        quant_rate = self.get_quant_rate(
+            output_dict["vq_ids"], self.model.config.vq_codebook_size
+        )
+        loss_dict["aux/code_rate"] = code_rate
+        loss_dict["aux/quant_rate"] = quant_rate
+        loss_dict["aux/entropy"] = self.model.vq.embedding.entropy()
+        loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
+        loss_dict["aux/num_mel_frames"] = mel.size(0) * mel.size(1)
+        loss_dict["aux/mel_mean"] = mel.mean()
+        loss_dict["aux/mel_std"] = mel.std()
+        loss_dict["aux/w_loss_mel"] = self.model.config.w_loss_mel
+        loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
+        if self.model.config.add_chroma:
+            loss_dict["aux/w_loss_chroma"] = self.model.config.w_loss_chroma
+        loss_dict["aux/w_loss_vq"] = self.model.config.w_loss_vq
+        loss_dict["aux/w_loss_ar"] = self.model.config.w_loss_ar
+        return loss_dict
+
+
+class UMMASR(UMMBase):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def prepare_feature(self, batch):
+        audio = batch["audio"].squeeze(dim=1).float()
+        audio = self.pad_audio(audio)
+        feature = self.preprocessing(audio)
+        # input_dict = {"text_ids": batch["token"], "wav": audio}
+        input_dict = {"wav": audio}
+        encoded_text = self.tokenizer(
+            batch["text"],
+            add_special_tokens=False,
+            padding="longest",
+            return_tensors="pt",
+        )
+        text_ids = encoded_text["input_ids"].to(audio.device)
+        input_dict.update(text_ids=text_ids)
+        input_dict.update(feature)
+        return input_dict
+
+    def _shared_step(self, batch):
+        input_dict = self.prepare_feature(batch)
+        output_dict = self.model(input_dict)
+
+        loss_dict = self.criterion(
+            ctc_logits=output_dict["ctc_out"], text_ids=input_dict["text_ids"]
+        )
+        loss_dict["loss"] = loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
+        if self.model.config.add_vq:
+            loss_dict["loss_vq"] = output_dict["vq_loss"]
+            loss_dict["loss"] = (
+                loss_dict["loss"] + output_dict["vq_loss"] * self.model.config.w_loss_vq
+            )
+            code_rate = self.get_code_rate(output_dict["vq_ids"])
+            quant_rate = self.get_quant_rate(
+                output_dict["vq_ids"], self.model.config.vq_codebook_size
+            )
+            loss_dict["aux/code_rate"] = code_rate
+            loss_dict["aux/quant_rate"] = quant_rate
+            loss_dict["aux/entropy"] = self.model.vq.embedding.entropy()
+            loss_dict["aux/w_loss_vq"] = self.model.config.w_loss_vq
+
+        loss_dict["aux/num_text_ids"] = input_dict["text_ids"].size(1) * input_dict[
+            "text_ids"
+        ].size(0)
+        loss_dict["aux/num_mel_frames"] = input_dict["mel"].size(1) * input_dict[
+            "mel"
+        ].size(0)
+        loss_dict["aux/mel_mean"] = input_dict["mel"].mean()
+        loss_dict["aux/mel_std"] = input_dict["mel"].std()
+        loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
+        return loss_dict
 
 
 class MKII(pl.LightningModule):

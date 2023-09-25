@@ -1,4 +1,3 @@
-import logging
 import math
 import random
 import sys
@@ -15,14 +14,12 @@ from typing import (
     Union,
 )
 
-import phonemizer
 import pytorch_lightning as pl
 import torch
 import webdataset as wds
 from torch.utils.data import DataLoader
 from torchaudio.transforms import Resample
 from torchaudio_augmentations import Compose
-from transformers import BertTokenizer, Wav2Vec2PhonemeCTCTokenizer
 from webdataset import WebDataset
 from webdataset.pipeline import DataPipeline
 
@@ -52,42 +49,11 @@ def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
     max_length = max([x["audio"].shape[-1] for x in batch])
     random_pad = RandomPad(n_samples=max_length)
     audio = []
-    # text = []
-    token = []
-    # tag = []
-    for idx in range(len(batch)):
-        audio.append(random_pad(batch[idx]["audio"]))
-        # text.append(batch[idx]["text"])
-        token.append(batch[idx]["token"])
-        # tag.append(batch[idx]["tag"])
-    return {
-        "audio": torch.stack(audio, dim=0),
-        # "text": text,
-        "token": torch.nn.utils.rnn.pad_sequence(
-            token, batch_first=True, padding_value=0
-        ),
-        # "tag": tag,
-    }
-
-
-def collate_audio_text(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
-    max_length = max([x["audio"].shape[-1] for x in batch])
-    random_pad = RandomPad(n_samples=max_length)
-    audio = []
     text = []
     for idx in range(len(batch)):
         audio.append(random_pad(batch[idx]["audio"]))
         text.append(batch[idx]["text"])
     return {"audio": torch.stack(audio, dim=0), "text": text}
-
-
-def collate_audio(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
-    max_length = max([x["audio"].shape[-1] for x in batch])
-    random_pad = RandomPad(n_samples=max_length)
-    audio = []
-    for idx in range(len(batch)):
-        audio.append(random_pad(batch[idx]["audio"]))
-    return {"audio": torch.stack(audio, dim=0)}
 
 
 class BaseTransforms:
@@ -148,8 +114,6 @@ class MCCTransforms(BaseTransforms):
         avoid_sound_effect: bool = True,
         exclude_licenses: List[str] = ["C"],
         max_num_crops: int = None,
-        tokenizer=None,
-        frame_rate: int = 25,
     ) -> None:
         print(f"[{self.name}] initializing...")
         super().__init__()
@@ -163,8 +127,6 @@ class MCCTransforms(BaseTransforms):
         self.avoid_sound_effect = avoid_sound_effect
         self.exclude_licenses = exclude_licenses
         self.max_num_crops = max_num_crops
-        self.tokenizer = tokenizer
-        self.frame_rate = frame_rate
         self.is_loud = LoudnessCheck(
             sample_rate, min_volume_threshold, loudness_ratio_threshold
         )
@@ -263,8 +225,6 @@ class MCCVocalTransforms(MCCTransforms):
         avoid_sound_effect: bool = True,
         exclude_licenses: List[str] = ["C"],
         max_num_crops: int = None,
-        tokenizer=None,
-        frame_rate: int = 25,
     ):
         super().__init__(
             sample_rate=sample_rate,
@@ -280,8 +240,6 @@ class MCCVocalTransforms(MCCTransforms):
             avoid_sound_effect=avoid_sound_effect,
             exclude_licenses=exclude_licenses,
             max_num_crops=max_num_crops,
-            tokenizer=tokenizer,
-            frame_rate=frame_rate,
         )
 
     def filter_lyrics(self, utterance):
@@ -313,8 +271,8 @@ class MCCVocalTransforms(MCCTransforms):
             self._update_stats(skipped=True, message="No utterances")
             return
 
+        random.shuffle(utterances)
         filtered_utterances = list(filter(self.filter_lyrics, utterances))
-        random.shuffle(filtered_utterances)
         if self.max_num_crops is not None and self.max_num_crops > 0:
             filtered_utterances = filtered_utterances[: self.max_num_crops]
 
@@ -337,24 +295,6 @@ class MCCVocalTransforms(MCCTransforms):
             clip = audio[:, start:end]
             text = normalize_text(str(selected_utterance["text"]))
             output_dict = {"audio": clip, "text": text, "tag": "vocal"}
-            if self.tokenizer is not None:
-                encoded_text = self.tokenizer(
-                    text,
-                    add_special_tokens=False,
-                    # padding="longest",
-                    return_tensors="pt",
-                )
-                token = encoded_text["input_ids"].squeeze(dim=0)
-                if token.size(-1) == 0:
-                    self._update_stats(skipped=True, message="Token zero length")
-                    return
-                elif (
-                    token.size(-1)
-                    > math.floor(clip.size(-1) / self.sample_rate) * self.frame_rate
-                ):
-                    self._update_stats(skipped=True, message="Token too long")
-                    return
-                output_dict.update(token=token)
             yield output_dict
             self._update_stats(skipped=False)
 
@@ -378,8 +318,6 @@ class MCCInstrumentalTransforms(MCCTransforms):
         avoid_sound_effect: bool = True,
         exclude_licenses: List[str] = ["C"],
         max_num_crops: int = None,
-        tokenizer=None,
-        frame_rate: int = 25,
     ):
         super().__init__(
             sample_rate=sample_rate,
@@ -395,8 +333,6 @@ class MCCInstrumentalTransforms(MCCTransforms):
             avoid_sound_effect=avoid_sound_effect,
             exclude_licenses=exclude_licenses,
             max_num_crops=max_num_crops,
-            tokenizer=tokenizer,
-            frame_rate=frame_rate,
         )
 
     def __call__(self, item: Dict[str, Any]) -> Generator:
@@ -434,17 +370,7 @@ class MCCInstrumentalTransforms(MCCTransforms):
             if not self.is_loud(clip):
                 self._update_stats(skipped=True, message="Not loud enough")
                 return
-            output_dict = {"audio": clip, "text": "", "tag": "instrumental"}
-            if self.tokenizer is not None:
-                encoded_text = self.tokenizer(
-                    "",
-                    add_special_tokens=False,
-                    # padding="longest",
-                    return_tensors="pt",
-                )
-                token = encoded_text["input_ids"].squeeze(dim=0)
-                output_dict.update(token=token)
-            yield output_dict
+            yield {"audio": clip, "text": "", "tag": "instrumental"}
             self._update_stats(skipped=False)
 
 
@@ -460,8 +386,6 @@ class KaraokeTransforms(BaseTransforms):
         max_duration: float = 30,
         normalize_audio: bool = False,
         max_num_crops: int = None,
-        tokenizer=None,
-        frame_rate: int = 25,
     ):
         super().__init__()
         self.sample_rate = sample_rate
@@ -469,8 +393,6 @@ class KaraokeTransforms(BaseTransforms):
         self.max_duration = max_duration
         self.audio_key = audio_key
         self.max_num_crops = max_num_crops
-        self.tokenizer = tokenizer
-        self.frame_rate = frame_rate
         base_transforms = []
         base_transforms += [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
         if self.data_sample_rate != sample_rate and self.audio_key.endswith("npy"):
@@ -501,8 +423,8 @@ class KaraokeTransforms(BaseTransforms):
             self._update_stats(skipped=True, message="No utterances")
             return
 
+        random.shuffle(utterances)
         filtered_utterances = list(filter(self.filter_lyrics, utterances))
-        random.shuffle(filtered_utterances)
         if self.max_num_crops is not None and self.max_num_crops > 0:
             filtered_utterances = filtered_utterances[: self.max_num_crops]
 
@@ -524,24 +446,6 @@ class KaraokeTransforms(BaseTransforms):
             clip = audio[:, start:end]
             text = normalize_text(str(selected_utterance["text"]))
             output_dict = {"audio": clip, "text": text, "tag": "vocal"}
-            if self.tokenizer is not None:
-                encoded_text = self.tokenizer(
-                    text,
-                    add_special_tokens=False,
-                    # padding="longest",
-                    return_tensors="pt",
-                )
-                token = encoded_text["input_ids"].squeeze(dim=0)
-                if token.size(-1) == 0:
-                    self._update_stats(skipped=True, message="Token zero length")
-                    return
-                elif (
-                    token.size(-1)
-                    > math.floor(clip.size(-1) / self.sample_rate) * self.frame_rate
-                ):
-                    self._update_stats(skipped=True, message="Token too long")
-                    return
-                output_dict.update(token=token)
             yield output_dict
             self._update_stats(skipped=False)
 
@@ -558,25 +462,19 @@ class LibriLightASRTransforms(BaseTransforms):
         max_duration: int = 30,
         normalize_audio: bool = False,
         max_num_crops: int = None,
-        tokenizer=None,
-        frame_rate: int = 25,
     ):
-        print(f"[{self.name}] initializing...")
         super().__init__()
         self.sample_rate = sample_rate
         self.min_duration = min_duration
         self.max_duration = max_duration
         self.audio_key = audio_key
         self.max_num_crops = max_num_crops
-        self.tokenizer = tokenizer
-        self.frame_rate = frame_rate
         base_transforms = [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
         if self.data_sample_rate != sample_rate and self.audio_key.endswith("npy"):
             base_transforms.append(Resample(self.data_sample_rate, sample_rate))
         if normalize_audio:
             base_transforms.append(FastNormalizeAudio())
         self.base_transform = Compose(base_transforms)
-        print(f"[{self.name}] initialized.")
 
     def filter_lyrics(self, utterance):
         start_time = float(utterance["start_time"])
@@ -597,8 +495,8 @@ class LibriLightASRTransforms(BaseTransforms):
             self._update_stats(skipped=True, message="No utterances")
             return
 
+        random.shuffle(utterances)
         filtered_utterances = list(filter(self.filter_lyrics, utterances))
-        random.shuffle(filtered_utterances)
         if self.max_num_crops is not None and self.max_num_crops > 0:
             filtered_utterances = filtered_utterances[: self.max_num_crops]
 
@@ -619,24 +517,6 @@ class LibriLightASRTransforms(BaseTransforms):
             clip = audio[:, start:end]
             text = normalize_text(str(selected_utterance["text"]))
             output_dict = {"audio": clip, "text": text, "tag": "vocal"}
-            if self.tokenizer is not None:
-                encoded_text = self.tokenizer(
-                    text,
-                    add_special_tokens=False,
-                    # padding="longest",
-                    return_tensors="pt",
-                )
-                token = encoded_text["input_ids"].squeeze(dim=0)
-                if token.size(-1) == 0:
-                    self._update_stats(skipped=True, message="Token zero length")
-                    return
-                elif (
-                    token.size(-1)
-                    > math.floor(clip.size(-1) / self.sample_rate) * self.frame_rate
-                ):
-                    self._update_stats(skipped=True, message="Token too long")
-                    return
-                output_dict.update(token=token)
             yield output_dict
             self._update_stats(skipped=False)
 
@@ -653,8 +533,6 @@ class LibriTTSTransforms(BaseTransforms):
         max_duration: int = 30,
         normalize_audio: bool = False,
         max_num_crops: int = None,
-        tokenizer=None,
-        frame_rate: int = 25,
     ):
         super().__init__()
         self.sample_rate = sample_rate
@@ -662,8 +540,6 @@ class LibriTTSTransforms(BaseTransforms):
         self.max_duration = max_duration
         self.audio_key = audio_key
         self.max_num_crops = max_num_crops
-        self.tokenizer = tokenizer
-        self.frame_rate = frame_rate
         base_transforms = [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
         if self.data_sample_rate != sample_rate:
             base_transforms.append(Resample(self.data_sample_rate, sample_rate))
@@ -681,89 +557,6 @@ class LibriTTSTransforms(BaseTransforms):
             return
         text = normalize_text(item["normalized_text.txt"])
         output_dict = {"audio": audio, "text": text, "tag": "vocal"}
-        if self.tokenizer is not None:
-            encoded_text = self.tokenizer(
-                text,
-                add_special_tokens=False,
-                # padding="longest",
-                return_tensors="pt",
-            )
-            token = encoded_text["input_ids"].squeeze(dim=0)
-            if token.size(-1) == 0:
-                self._update_stats(skipped=True, message="Token zero length")
-                return
-            elif (
-                token.size(-1)
-                > math.floor(audio.size(-1) / self.sample_rate) * self.frame_rate
-            ):
-                self._update_stats(skipped=True, message="Token too long")
-                return
-            output_dict.update(token=token)
-        yield output_dict
-        self._update_stats(skipped=False)
-
-
-class SpeechZhTransforms(BaseTransforms):
-    name = "SpeechZhTransforms"
-    data_sample_rate = 24000
-
-    def __init__(
-        self,
-        sample_rate: int = 24000,
-        audio_key: str = "audio.npy",
-        min_duration: int = 5,
-        max_duration: int = 30,
-        normalize_audio: bool = False,
-        max_num_crops: int = None,
-        tokenizer=None,
-        frame_rate: int = 25,
-    ):
-        super().__init__()
-        self.sample_rate = sample_rate
-        self.min_duration = min_duration
-        self.max_duration = max_duration
-        self.audio_key = audio_key
-        self.max_num_crops = max_num_crops
-        self.tokenizer = tokenizer
-        self.frame_rate = frame_rate
-        base_transforms = [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
-        if self.data_sample_rate != sample_rate:
-            base_transforms.append(Resample(self.data_sample_rate, sample_rate))
-        if normalize_audio:
-            base_transforms.append(FastNormalizeAudio())
-        self.base_transform = Compose(base_transforms)
-
-    def __call__(self, item: Dict[str, Any]) -> Generator:
-        audio = self.base_transform(item[self.audio_key])
-        if audio.size(-1) < self.min_duration * self.sample_rate:
-            self._update_stats(skipped=True, message="Audio too short")
-            return
-        if audio.size(-1) > self.max_duration * self.sample_rate:
-            self._update_stats(skipped=True, message="Audio too long")
-            return
-        text = item["__index_data__"].get("text", None)
-        if text is None or len(text) == 0:
-            self._update_stats(skipped=True, message="No text")
-            return
-        output_dict = {"audio": audio, "text": text, "tag": "speech"}
-        if self.tokenizer is not None:
-            encoded_text = self.tokenizer(
-                text,
-                add_special_tokens=False,
-                # padding="longest",
-                return_tensors="pt",
-            )
-            token = encoded_text["input_ids"].squeeze(dim=0)
-            if token.size(-1) == 0:
-                self._update_stats(skipped=True, message="Token zero length")
-                return
-            elif (
-                token.size(-1)
-                > math.floor(audio.size(-1) / self.sample_rate) * self.frame_rate
-            ):
-                self._update_stats(skipped=True, message="Token too long")
-                return
-            output_dict.update(token=token)
         yield output_dict
         self._update_stats(skipped=False)
 
@@ -779,16 +572,12 @@ class DouyinMusicTransforms(BaseTransforms):
         min_duration: int = 1,
         max_duration: int = 30,
         normalize_audio: bool = False,
-        tokenizer=None,
-        frame_rate: int = 25,
     ):
         super().__init__()
         self.sample_rate = sample_rate
         self.min_duration = min_duration
         self.max_duration = max_duration
         self.audio_key = audio_key
-        self.tokenizer = tokenizer
-        self.frame_rate = frame_rate
         base_transforms = [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
         if self.data_sample_rate != sample_rate and self.audio_key.endswith("npy"):
             base_transforms.append(Resample(self.data_sample_rate, sample_rate))
@@ -816,137 +605,8 @@ class DouyinMusicTransforms(BaseTransforms):
             return
 
         output_dict = {"audio": audio, "text": text, "tag": "vocal"}
-        if self.tokenizer is not None:
-            encoded_text = self.tokenizer(
-                text,
-                add_special_tokens=False,
-                # padding="longest",
-                return_tensors="pt",
-            )
-            token = encoded_text["input_ids"].squeeze(dim=0)
-            if token.size(-1) == 0:
-                self._update_stats(skipped=True, message="Token zero length")
-                return
-            elif (
-                token.size(-1)
-                > math.floor(audio.size(-1) / self.sample_rate) * self.frame_rate
-            ):
-                self._update_stats(skipped=True, message="Token too long")
-                return
-            output_dict.update(token=token)
         yield output_dict
         self._update_stats(skipped=False)
-
-
-class VocalZhTransforms(BaseTransforms):
-    name = "VocalZhTransforms"
-    data_sample_rate = 24000
-
-    def __init__(
-        self,
-        sample_rate: int = 24000,
-        audio_key: str = "audio.npy",
-        min_duration: int = 1,
-        max_duration: int = 30,
-        min_volume_threshold: float = 0.05,
-        loudness_ratio_threshold: float = 0.2,
-        lyrics_confidence: float = 0.8,
-        normalize_audio: bool = False,
-        max_num_crops: int = None,
-        tokenizer=None,
-        frame_rate: int = 25,
-    ):
-        super().__init__()
-        self.sample_rate = sample_rate
-        self.min_duration = min_duration
-        self.max_duration = max_duration
-        self.min_volume_threshold = min_volume_threshold
-        self.loudness_ratio_threshold = loudness_ratio_threshold
-        self.lyrics_confidence = lyrics_confidence
-        self.audio_key = audio_key
-        self.max_num_crops = max_num_crops
-        self.tokenizer = tokenizer
-        self.frame_rate = frame_rate
-        base_transforms = [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
-        if self.data_sample_rate != sample_rate and self.audio_key.endswith("npy"):
-            base_transforms.append(Resample(self.data_sample_rate, sample_rate))
-        if normalize_audio:
-            base_transforms.append(FastNormalizeAudio())
-        self.base_transform = Compose(base_transforms)
-
-    def filter_lyrics(self, utterance):
-        start_time = float(utterance["start_time"]) / 1000
-        end_time = float(utterance["end_time"]) / 1000
-        delta = end_time - start_time
-        confidence = float(utterance["confidence"])
-        if self.min_duration > delta:
-            return False
-        if self.max_duration < delta:
-            return False
-        if confidence < self.lyrics_confidence:
-            return False
-        if len(str(utterance["text"]).strip()) == 0:
-            return False
-        return True
-
-    def __call__(self, item: Dict[str, Any]) -> Generator:
-        lyrics = item["__index_data__"].get("lyrics", None)
-        if lyrics is None:
-            self._update_stats(skipped=True, message="No lyrics")
-            return
-        result = lyrics.get("result", None)
-        if result is None or len(result) != 1:
-            self._update_stats(skipped=True, message="No result")
-            return
-        utterances = result[0].get("utterances", None)
-        if utterances is None or len(utterances) == 0:
-            self._update_stats(skipped=True, message="No utterances")
-            return
-
-        filtered_utterances = list(filter(self.filter_lyrics, utterances))
-        random.shuffle(filtered_utterances)
-        if self.max_num_crops is not None and self.max_num_crops > 0:
-            filtered_utterances = filtered_utterances[: self.max_num_crops]
-
-        try:
-            audio = self.base_transform(item[self.audio_key])
-        except Exception as e:
-            self._update_stats(skipped=True, message=f"Error loading audio: {e}")
-            return
-
-        for selected_utterance in filtered_utterances:
-            start = int(
-                float(selected_utterance["start_time"]) / 1000 * self.sample_rate
-            )
-            end = int(float(selected_utterance["end_time"]) / 1000 * self.sample_rate)
-            if end > audio.size(-1):
-                self._update_stats(
-                    skipped=True, message="Lyrics timestamp out of range"
-                )
-                return
-            clip = audio[:, start:end]
-            text = normalize_text(str(selected_utterance["text"]))
-            output_dict = {"audio": clip, "text": text, "tag": "vocal"}
-            if self.tokenizer is not None:
-                encoded_text = self.tokenizer(
-                    text,
-                    add_special_tokens=False,
-                    # padding="longest",
-                    return_tensors="pt",
-                )
-                token = encoded_text["input_ids"].squeeze(dim=0)
-                if token.size(-1) == 0:
-                    self._update_stats(skipped=True, message="Token zero length")
-                    return
-                elif (
-                    token.size(-1)
-                    > math.floor(clip.size(-1) / self.sample_rate) * self.frame_rate
-                ):
-                    self._update_stats(skipped=True, message="Token too long")
-                    return
-                output_dict.update(token=token)
-            yield output_dict
-            self._update_stats(skipped=False)
 
 
 class WebDatasetBufferPreprocessor:
@@ -1002,8 +662,6 @@ class LibriLightASRDataset(WebPipeline):
         max_duration: int = 30,
         normalize_audio: bool = False,
         max_num_crops: int = None,
-        tokenizer=None,
-        frame_rate: int = 25,
         **kwargs,
     ):
         print(f"[{self.name}] initializing...")
@@ -1014,8 +672,6 @@ class LibriLightASRDataset(WebPipeline):
             max_duration=max_duration,
             normalize_audio=normalize_audio,
             max_num_crops=max_num_crops,
-            tokenizer=tokenizer,
-            frame_rate=frame_rate,
         )
         preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
         dataset = IndexedWebDataset(url2index=url2index, **kwargs)
@@ -1036,8 +692,6 @@ class LibriTTSDataset(WebPipeline):
         min_duration: int = 0,
         max_duration: int = 30,
         normalize_audio: bool = False,
-        tokenizer=None,
-        frame_rate: int = 25,
         **kwargs,
     ):
         print(f"[{self.name}] initializing...")
@@ -1047,8 +701,6 @@ class LibriTTSDataset(WebPipeline):
             min_duration=min_duration,
             max_duration=max_duration,
             normalize_audio=normalize_audio,
-            tokenizer=tokenizer,
-            frame_rate=frame_rate,
         )
         preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
         dataset = WebDataset(urls=urls, **kwargs)
@@ -1078,8 +730,6 @@ class MCCBaseDataset(WebPipeline):
         avoid_sound_effect: bool = True,
         exclude_licenses: List[str] = ["C"],
         max_num_crops: int = None,
-        tokenizer=None,
-        frame_rate: int = 25,
         **kwargs,
     ):
         print(f"[{self.name}] initializing...")
@@ -1098,8 +748,6 @@ class MCCBaseDataset(WebPipeline):
                 avoid_sound_effect=avoid_sound_effect,
                 exclude_licenses=exclude_licenses,
                 max_num_crops=max_num_crops,
-                tokenizer=tokenizer,
-                frame_rate=frame_rate,
             )
         elif self.name.startswith("MCCInstrumental"):
             transforms = MCCInstrumentalTransforms(
@@ -1116,8 +764,6 @@ class MCCBaseDataset(WebPipeline):
                 avoid_sound_effect=avoid_sound_effect,
                 exclude_licenses=exclude_licenses,
                 max_num_crops=max_num_crops,
-                tokenizer=tokenizer,
-                frame_rate=frame_rate,
             )
         else:
             raise KeyError("Invalid MCC dataset name")
@@ -1160,8 +806,6 @@ class MCCVocalDataset(MCCBaseDataset):
         avoid_sound_effect: bool = True,
         exclude_licenses: List[str] = ["C"],
         max_num_crops: int = None,
-        tokenizer=None,
-        frame_rate: int = 25,
         **kwargs,
     ):
         super().__init__(
@@ -1180,8 +824,6 @@ class MCCVocalDataset(MCCBaseDataset):
             avoid_sound_effect=avoid_sound_effect,
             exclude_licenses=exclude_licenses,
             max_num_crops=max_num_crops,
-            tokenizer=tokenizer,
-            frame_rate=frame_rate,
             **kwargs,
         )
 
@@ -1224,8 +866,6 @@ class MCCVocalDatasetGroupAGenreBalanced(MCCBaseDataset):
         avoid_sound_effect: bool = True,
         exclude_licenses: List[str] = ["C"],
         max_num_crops: int = None,
-        tokenizer=None,
-        frame_rate: int = 25,
         **kwargs,
     ):
         super().__init__(
@@ -1244,8 +884,6 @@ class MCCVocalDatasetGroupAGenreBalanced(MCCBaseDataset):
             avoid_sound_effect=avoid_sound_effect,
             exclude_licenses=exclude_licenses,
             max_num_crops=max_num_crops,
-            tokenizer=tokenizer,
-            frame_rate=frame_rate,
             **kwargs,
         )
 
@@ -1305,8 +943,6 @@ class KaraokeDataset(WebPipeline):
         min_duration: int = 0,
         max_duration: int = 30,
         normalize_audio: bool = False,
-        tokenizer=None,
-        frame_rate: int = 25,
         **kwargs,
     ):
         print(f"[{self.name}] initializing...")
@@ -1316,8 +952,6 @@ class KaraokeDataset(WebPipeline):
             min_duration=min_duration,
             max_duration=max_duration,
             normalize_audio=normalize_audio,
-            tokenizer=tokenizer,
-            frame_rate=frame_rate,
         )
         preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
         dataset = IndexedWebDataset(url2index=url2index, **kwargs)
@@ -1338,8 +972,6 @@ class DouyinMusicDataset(WebPipeline):
         min_duration: int = 0,
         max_duration: int = 30,
         normalize_audio: bool = False,
-        tokenizer=None,
-        frame_rate: int = 25,
         **kwargs,
     ):
 
@@ -1350,107 +982,9 @@ class DouyinMusicDataset(WebPipeline):
             min_duration=min_duration,
             max_duration=max_duration,
             normalize_audio=normalize_audio,
-            tokenizer=tokenizer,
-            frame_rate=frame_rate,
         )
         preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
         dataset = IndexedWebDataset(url2index=url2index, **kwargs)
-        pipeline = ["decode", {"compose": [preprocessor.train_buffer_preprocessor]}]
-        super().__init__(dataset, pipeline)
-        print(f"[{self.name}] initialized.")
-
-
-class VocalZhDataset(WebPipeline):
-    name = "VocalZh"
-    data_sample_rate = 24000
-
-    def __init__(
-        self,
-        url2index: Union[List[str], str] = None,
-        weights: List[float] = None,
-        sample_rate: int = 24000,
-        audio_key: str = "audio.npy",
-        min_duration: int = 2,
-        max_duration: int = 30,
-        min_volume_threshold: float = 0.05,
-        loudness_ratio_threshold: float = 0.2,
-        lyrics_confidence: float = 0.7,
-        normalize_audio: bool = False,
-        max_num_crops: int = None,
-        tokenizer=None,
-        frame_rate: int = 25,
-        **kwargs,
-    ):
-        print(f"[{self.name}] initializing...")
-        transforms = VocalZhTransforms(
-            sample_rate=sample_rate,
-            audio_key=audio_key,
-            min_duration=min_duration,
-            max_duration=max_duration,
-            min_volume_threshold=min_volume_threshold,
-            loudness_ratio_threshold=loudness_ratio_threshold,
-            lyrics_confidence=lyrics_confidence,
-            normalize_audio=normalize_audio,
-            max_num_crops=max_num_crops,
-            tokenizer=tokenizer,
-            frame_rate=frame_rate,
-        )
-        preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
-        print(f"[{self.name}] MultiIterableDataset constructing...")
-        if isinstance(url2index, list):
-            dataset = MultiIterableDataset(
-                datasets=[
-                    IndexedWebDataset(url2index=url, **kwargs) for url in url2index
-                ],
-                weights=weights,
-            )
-        else:
-            dataset = IndexedWebDataset(url2index=url2index, **kwargs)
-        print(f"[{self.name}] MultiIterableDataset constructed.")
-        pipeline = ["decode", {"compose": [preprocessor.train_buffer_preprocessor]}]
-        super().__init__(dataset, pipeline)
-        print(f"[{self.name}] initialized.")
-
-
-class SpeechZhDataset(WebPipeline):
-    name = "SpeechZhDataset"
-    data_sample_rate = 24000
-
-    def __init__(
-        self,
-        url2index: Union[List[str], str] = None,
-        weights: List[float] = None,
-        sample_rate: int = 24000,
-        audio_key: str = "audio.npy",
-        min_duration: float = 2,
-        max_duration: float = 30,
-        normalize_audio: bool = True,
-        tokenizer=None,
-        frame_rate: int = 25,
-        **kwargs,
-    ):
-        print(f"[{self.name}] initializing...")
-        transforms = SpeechZhTransforms(
-            sample_rate=sample_rate,
-            audio_key=audio_key,
-            min_duration=min_duration,
-            max_duration=max_duration,
-            normalize_audio=normalize_audio,
-            tokenizer=tokenizer,
-            frame_rate=frame_rate,
-        )
-        preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
-        print(f"[{self.name}] MultiIterableDataset constructing...")
-        if isinstance(url2index, list):
-            dataset = MultiIterableDataset(
-                datasets=[
-                    IndexedWebDataset(url2index=url, **kwargs) for url in url2index
-                ],
-                weights=weights,
-            )
-        else:
-            dataset = IndexedWebDataset(url2index=url2index, **kwargs)
-        print(f"[{self.name}] MultiIterableDataset constructed.")
         pipeline = ["decode", {"compose": [preprocessor.train_buffer_preprocessor]}]
         super().__init__(dataset, pipeline)
         print(f"[{self.name}] initialized.")
@@ -1547,7 +1081,7 @@ class VocalWebDataModule(DataModule):
         collate_fn: Optional[Callable] = collate_fn,
         weights: Tuple[int, int] = (1, 1),
         region: str = "US",
-        use_pipe: bool = False,
+        use_pipe: bool = True,
         val_resampled: bool = False,
     ):
         buckets_samples = list(map(lambda i: i * sample_rate, buckets_in_sec))
@@ -1683,11 +1217,9 @@ class MixWebDataModule(pl.LightningDataModule):
         collate_fn: Optional[Callable] = collate_fn,
         weights: List[int] = [1, 1, 1],
         region: str = "CN",
-        use_pipe: bool = False,
+        use_pipe: bool = True,
         fast_dev: bool = False,
         small: bool = False,
-        tokenizer: str = None,
-        frame_rate: int = 25,
     ):
         super().__init__()
         self.num_workers = num_workers
@@ -1695,16 +1227,6 @@ class MixWebDataModule(pl.LightningDataModule):
         self.pin_memory = pin_memory
         self.collate_fn = collate_fn
 
-        if tokenizer == "wordpiece":
-            self.tokenizer = BertTokenizer.from_pretrained("bert-large-uncased")
-        elif tokenizer == "phoneme":
-            self.tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained(
-                "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
-            )
-            phonemizer.logger.get_logger().setLevel(logging.ERROR)
-        else:
-            self.tokenizer = None
-        self.frame_rate = frame_rate
         assert batch_size >= min_duration * sample_rate
         buckets_samples = []
         sec = min_duration
@@ -1729,8 +1251,6 @@ class MixWebDataModule(pl.LightningDataModule):
                     sample_rate=sample_rate,
                     min_duration=min_duration,
                     max_duration=max_duration,
-                    tokenizer=self.tokenizer,
-                    frame_rate=self.frame_rate,
                     resampled=True,
                     shardshuffle=True,
                     handler=wds.warn_and_continue,
@@ -1746,8 +1266,6 @@ class MixWebDataModule(pl.LightningDataModule):
                         max_duration=max_duration,
                         max_num_crops=max_num_crops,
                         normalize_audio=normalize_audio,
-                        tokenizer=self.tokenizer,
-                        frame_rate=self.frame_rate,
                         resampled=True,
                         shardshuffle=True,
                         use_pipe=use_pipe,
@@ -1761,8 +1279,6 @@ class MixWebDataModule(pl.LightningDataModule):
                         max_duration=max_duration,
                         max_num_crops=max_num_crops,
                         normalize_audio=normalize_audio,
-                        tokenizer=self.tokenizer,
-                        frame_rate=self.frame_rate,
                         resampled=True,
                         shardshuffle=True,
                         use_pipe=use_pipe,
@@ -1778,8 +1294,6 @@ class MixWebDataModule(pl.LightningDataModule):
                     max_duration=max_duration,
                     max_num_crops=max_num_crops,
                     normalize_audio=normalize_audio,
-                    tokenizer=self.tokenizer,
-                    frame_rate=self.frame_rate,
                     resampled=True,
                     shardshuffle=True,
                     use_pipe=use_pipe,
@@ -1796,8 +1310,6 @@ class MixWebDataModule(pl.LightningDataModule):
                     max_duration=max_duration,
                     max_num_crops=max_num_crops,
                     normalize_audio=normalize_audio,
-                    tokenizer=self.tokenizer,
-                    frame_rate=self.frame_rate,
                     resampled=True,
                     shardshuffle=True,
                     use_pipe=use_pipe,
@@ -1820,8 +1332,6 @@ class MixWebDataModule(pl.LightningDataModule):
                 min_duration=min_duration,
                 max_duration=max_duration,
                 normalize_audio=False,
-                tokenizer=self.tokenizer,
-                frame_rate=self.frame_rate,
                 resampled=False,
                 use_pipe=use_pipe,
                 nodesplitter=return_self,
@@ -1834,8 +1344,6 @@ class MixWebDataModule(pl.LightningDataModule):
                 sample_rate=sample_rate,
                 min_duration=min_duration,
                 max_duration=max_duration,
-                tokenizer=self.tokenizer,
-                frame_rate=self.frame_rate,
                 resampled=False,
                 nodesplitter=return_self,
                 handler=wds.warn_and_continue,
@@ -1882,12 +1390,10 @@ class DouyinMusicDataModule(pl.LightningDataModule):
         shuffle_buffer_size: int = 50,
         num_workers: int = 4,
         pin_memory: bool = True,
-        collate_fn: Optional[Callable] = collate_audio_text,
+        collate_fn: Optional[Callable] = collate_fn,
         weights: List[int] = None,
         region: str = "CN",
-        use_pipe: bool = False,
-        tokenizer: str = "wordpiece",
-        frame_rate: int = 25,
+        use_pipe: bool = True,
     ):
         super().__init__()
         self.num_workers = num_workers
@@ -1895,16 +1401,6 @@ class DouyinMusicDataModule(pl.LightningDataModule):
         self.pin_memory = pin_memory
         self.collate_fn = collate_fn
 
-        if tokenizer == "wordpiece":
-            self.tokenizer = BertTokenizer.from_pretrained("bert-large-uncased")
-        elif tokenizer == "phoneme":
-            self.tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained(
-                "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
-            )
-            phonemizer.logger.get_logger().setLevel(logging.ERROR)
-        else:
-            self.tokenizer = None
-        self.frame_rate = frame_rate
         assert batch_size >= min_duration * sample_rate
         buckets_samples = []
         sec = min_duration
@@ -1930,8 +1426,6 @@ class DouyinMusicDataModule(pl.LightningDataModule):
                     min_duration=min_duration,
                     max_duration=max_duration,
                     normalize_audio=normalize_audio,
-                    tokenizer=self.tokenizer,
-                    frame_rate=self.frame_rate,
                     resampled=True,
                     shardshuffle=True,
                     use_pipe=use_pipe,
@@ -1953,8 +1447,6 @@ class DouyinMusicDataModule(pl.LightningDataModule):
                 min_duration=min_duration,
                 max_duration=max_duration,
                 normalize_audio=False,
-                tokenizer=self.tokenizer,
-                frame_rate=self.frame_rate,
                 resampled=False,
                 use_pipe=use_pipe,
                 nodesplitter=return_self,
@@ -1963,186 +1455,6 @@ class DouyinMusicDataModule(pl.LightningDataModule):
             pipeline=[{"compose": [self.bucketize]}],
         )
         self.validation_dataset = [karaoke]
-
-    def train_dataloader(self):
-        return DataLoader(
-            self.train_dataset,
-            batch_size=None,
-            num_workers=self.num_workers,
-            collate_fn=self.collate_fn,
-        )
-
-    def val_dataloader(self):
-        return [
-            DataLoader(
-                val,
-                batch_size=None,
-                num_workers=self.num_workers,
-                collate_fn=self.collate_fn,
-            )
-            for val in self.validation_dataset
-        ]
-
-    def bucketize(self, iterator: Iterable):
-        for item in iterator:
-            batch = self.batcher.collate_batch(item)
-            if batch is not None:
-                yield batch
-
-
-class MixZhWebDataModule(pl.LightningDataModule):
-    def __init__(
-        self,
-        sample_rate: int = 24000,
-        batch_size: int = 30 * 24000 * 2,
-        min_duration: int = 2,
-        max_duration: int = 30,
-        max_num_crops: int = 3,
-        normalize_audio: bool = False,
-        shuffle_buffer_size: int = 10,
-        num_workers: int = 4,
-        pin_memory: bool = True,
-        collate_fn: Optional[Callable] = collate_fn,
-        weights: List[int] = [1, 1, 1],
-        region: str = "CN",
-        use_pipe: bool = False,
-        tokenizer: str = None,
-        frame_rate: int = 25,
-    ):
-        super().__init__()
-        if tokenizer == "wordpiece":
-            self.tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
-        elif tokenizer == "phoneme":
-            self.tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained(
-                "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
-            )
-            phonemizer.logger.get_logger().setLevel(logging.ERROR)
-        else:
-            self.tokenizer = None
-            collate_fn = collate_audio_text
-        self.num_workers = num_workers
-        self.shuffle_buffer_size = shuffle_buffer_size
-        self.pin_memory = pin_memory
-        self.collate_fn = collate_fn
-        self.frame_rate = frame_rate
-        assert batch_size >= min_duration * sample_rate
-        buckets_samples = []
-        sec = min_duration
-        while sec <= max_duration:
-            buckets_samples.append(sec)
-            sec += math.ceil(sec * 0.1)
-        if buckets_samples[-1] < max_duration:
-            buckets_samples.append(max_duration)
-        print(f"[Buckets] {len(buckets_samples)} {str(buckets_samples)}")
-        buckets_samples = [x * sample_rate for x in buckets_samples]
-        self.batcher = BucketBatcher(
-            buckets=buckets_samples,
-            dynamic_batch=True,
-            maximum_bucket_size=batch_size,
-            length_fn=lambda x: x["audio"].size(-1),
-        )
-        datasets = []
-        if weights[0] > 0:
-            vocal = VocalZhDataset(
-                url2index=[
-                    INDEX[region]["MCCVocal-Zh-A"],
-                    INDEX[region]["MCCVocal-Zh-B"],
-                    INDEX[region]["MCCVocal-Zh-C"],
-                    INDEX[region]["HotGalaxy"],
-                    INDEX[region]["Soda"],
-                ],
-                weights=[1, 4, 80, 50, 50],
-                sample_rate=sample_rate,
-                min_duration=min_duration,
-                max_duration=max_duration,
-                max_num_crops=max_num_crops,
-                normalize_audio=normalize_audio,
-                tokenizer=self.tokenizer,
-                frame_rate=self.frame_rate,
-                resampled=True,
-                shardshuffle=True,
-                use_pipe=use_pipe,
-                handler=wds.warn_and_continue,
-            )
-            datasets.append(DataPipeline(vocal, wds.shuffle(shuffle_buffer_size)))
-        if weights[1] > 0:
-            speech = SpeechZhDataset(
-                url2index=[
-                    INDEX[region]["FanqieShort"],
-                    INDEX[region]["FanqieLong"],
-                    INDEX[region]["XimalayaShort"],
-                    INDEX[region]["XimalayaLong"],
-                    INDEX[region]["XiaoyuzhouShort"],
-                    INDEX[region]["XiaoyuzhouLong"],
-                ],
-                weights=[20, 20, 6, 3, 6, 3],
-                sample_rate=sample_rate,
-                min_duration=min_duration,
-                max_duration=max_duration,
-                normalize_audio=normalize_audio,
-                tokenizer=self.tokenizer,
-                frame_rate=self.frame_rate,
-                resampled=True,
-                shardshuffle=True,
-                use_pipe=use_pipe,
-                handler=wds.warn_and_continue,
-            )
-            datasets.append(DataPipeline(speech, wds.shuffle(shuffle_buffer_size)))
-        if weights[2] > 0:
-            mcc_instrumental = MCCInstrumentalDataset(
-                url2index=INDEX[region]["MCCInstrumental"],
-                sample_rate=sample_rate,
-                min_duration=min_duration,
-                max_duration=max_duration,
-                max_num_crops=max_num_crops,
-                normalize_audio=normalize_audio,
-                tokenizer=self.tokenizer,
-                frame_rate=self.frame_rate,
-                resampled=True,
-                shardshuffle=True,
-                use_pipe=use_pipe,
-                handler=wds.warn_and_continue,
-            )
-            datasets.append(
-                DataPipeline(mcc_instrumental, wds.shuffle(shuffle_buffer_size))
-            )
-        weights = [i for i in weights if i != 0]
-        self.train_dataset = DataPipeline(
-            MultiIterableDataset(
-                datasets=datasets, weights=[i for i in weights if i != 0]
-            ),
-            self.bucketize,
-        )
-
-        karaoke = WebPipeline(
-            KaraokeDataset(
-                sample_rate=sample_rate,
-                min_duration=min_duration,
-                max_duration=max_duration,
-                normalize_audio=False,
-                tokenizer=self.tokenizer,
-                frame_rate=self.frame_rate,
-                resampled=False,
-                use_pipe=use_pipe,
-                nodesplitter=return_self,
-                handler=wds.warn_and_continue,
-            ),
-            pipeline=[{"compose": [self.bucketize]}],
-        )
-        libritts = WebPipeline(
-            LibriTTSDataset(
-                sample_rate=sample_rate,
-                min_duration=min_duration,
-                max_duration=max_duration,
-                tokenizer=self.tokenizer,
-                frame_rate=self.frame_rate,
-                resampled=False,
-                nodesplitter=return_self,
-                handler=wds.warn_and_continue,
-            ),
-            pipeline=[{"compose": [self.bucketize]}],
-        )
-        self.validation_dataset = [karaoke, libritts]
 
     def train_dataloader(self):
         return DataLoader(

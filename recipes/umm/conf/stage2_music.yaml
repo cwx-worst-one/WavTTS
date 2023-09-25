@@ -12,29 +12,34 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 
 extra_params:
     sample_rate: 24000
+    frame_rate: 25
     n_mels: 128
+    n_chroma: 12
     n_fft: 2048
     win_length: 2048
     hop_length: 240
     feature_cmvn: "recipes/datasets/mcc/MixWebDataModule_SpeechTransform.stats.pt"
+    tokenizer: "wordpiece"
 
 # running parameters
 run_opts:
     fast_dev_run: False
     cache_dir: .module_cache/umm
-    log_dir: "logs"
+    hdfs_log_dir: "hdfs:///home/byte_speech_sv/zongyu.yin/logs"
+    log_dir: logs
     log_name: umm
     version: !ref stage2_music
     precision: "16-mixed" # TODO
-    num_workers: 8
+    num_workers: 4
     accelerator: auto
     max_steps: 5000000
     val_check_interval: 5000
+    ckpt_interval: 10000
     batch_size: 20
     learning_rate: 1.0e-4 # TODO
     cycle_steps: 50000
     weight_decay: 0.1
-    shuffle_buffer: 20
+    shuffle_buffer: 100
     gradient_clip_val: 1.0
     checkpointing: False
 
@@ -42,11 +47,26 @@ run_opts:
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
-pl_datamodule: !new:recipes.datasets.mcc.mix.VocalWebDataModule
+# pl_datamodule: !new:recipes.datasets.mcc.mix.VocalWebDataModule
+#     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+#     sample_rate: !ref <extra_params[sample_rate]>
+#     batch_size: !ref <run_opts[batch_size]>
+#     num_workers: !ref <run_opts[num_workers]>
+
+pl_datamodule: !new:recipes.datasets.mcc.mix.MixWebDataModule
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
     sample_rate: !ref <extra_params[sample_rate]>
-    batch_size: !ref <run_opts[batch_size]>
+    batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <extra_params[sample_rate]>
     num_workers: !ref <run_opts[num_workers]>
+    region: "CN"
+    weights: [1, 1, 0]
+    max_num_crops: null
+    min_duration: 2
+    max_duration: 30
+    normalize_audio: False
+    use_pipe: False
+    tokenizer: !ref <extra_params[tokenizer]>
+    frame_rate: !ref <extra_params[frame_rate]>
 
 optimizer_cls: !name:torch.optim.AdamW
     lr: !ref <run_opts[learning_rate]>
@@ -63,6 +83,7 @@ config: !new:recipes.umm.models.config.UMMConfig
     feature_cmvn: !ref <extra_params[feature_cmvn]>
     sample_rate: !ref <extra_params[sample_rate]>
     num_channels: !ref <extra_params[n_mels]>
+    n_chroma: !ref <extra_params[n_chroma]>
     n_fft: !ref <extra_params[n_fft]>
     win_length: !ref <extra_params[win_length]>
     hop_length: !ref <extra_params[hop_length]>
@@ -91,35 +112,39 @@ pl_module: !new:recipes.umm.modules.lit_module.Stage2
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
-    criterion_cls: !name:recipes.umm.modules.criterion.Stage2Loss
+    criterion_cls: !name:recipes.umm.modules.criterion.UMMLoss
+        config: !ref <config>
     extra_params: !ref <extra_params>
     required_modules:
         pretrained:
-            ckpt_path: "/mnt/bn/zongyu-lq/logs/umm/stage1_music_rq4096x16x8/checkpoints/step=0070000-loss=2.302.ckpt"
+            ckpt_path: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/stage1_music_rq4096x16x8/checkpoints/step=0070000-loss=2.302.ckpt"
             init_fn: !name:recipes.umm.requires.model_initializer.init_pretrained
             cache_dir: !ref <run_opts[cache_dir]>
 
 logger:
-    - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
-      save_dir: !ref <run_opts[log_dir]>
-      name: !ref <run_opts[log_name]>
-      version: !ref <run_opts[version]>
-      default_hp_metric: False
     - !new:pytorch_lightning.loggers.wandb.WandbLogger
-      save_dir: logs # TODO
+      save_dir: !ref <run_opts[log_dir]>
       project: !ref <run_opts[log_name]>
       name: !ref <run_opts[version]>
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      dirpath: !ref <run_opts[log_dir]>/<run_opts[log_name]>/<run_opts[version]>
       monitor: step
       save_top_k: 500
-      every_n_train_steps: !ref <run_opts[val_check_interval]> * 2
+      every_n_train_steps: !ref <run_opts[ckpt_interval]>
       mode: max
-      filename: "{step:07d}-{loss:.3f}"
+      filename: "{step:06d}"
+    - !new:samantha.callbacks.HDFSModelCheckpoint
+      hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+      monitor: step
+      save_top_k: 500
+      every_n_train_steps: !ref <run_opts[ckpt_interval]>
+      mode: max
+      filename: "{step:06d}"
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: 'step'
-    - !new:recipes.umm.callbacks.log_melspectrogram.LogMaskedMelSpectrogram
+    - !new:recipes.umm.callbacks.log_spectrogram.LogSpectrogram
       n_examples: 3
 
 plugins:
@@ -142,5 +167,6 @@ trainer: !new:pytorch_lightning.Trainer
     val_check_interval: !ref <run_opts[val_check_interval]>
     check_val_every_n_epoch: null
     num_sanity_val_steps: 2
+    limit_val_batches: 1
     callbacks: !ref <callbacks>
     plugins: !ref <plugins>

@@ -68,6 +68,7 @@ class UMMConfig(PretrainedConfig):
         ctc_zero_infinity=False,
         ctc_blank_id=30522,
         w_loss_ctc=1,
+        add_chroma=True,
         **kwargs,
     ):
         super().__init__(
@@ -142,6 +143,8 @@ class UMMConfig(PretrainedConfig):
         self.ctc_zero_infinity = ctc_zero_infinity
         self.ctc_blank_id = ctc_blank_id
         self.w_loss_ctc = w_loss_ctc
+
+        self.add_chroma = add_chroma
 
     @property
     def rq_input_dim(self):

@@ -424,8 +424,10 @@ class Conv2dSubsampling(nn.Module):
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(1, 256, kernel, 2, padding),
+            nn.BatchNorm2d(256),
             nn.ReLU(),
             nn.Conv2d(256, 256, kernel, 2, padding),
+            nn.BatchNorm2d(256),
             nn.ReLU(),
         )
         self.linear = nn.Linear(input_dim * 64, output_dim)
@@ -514,9 +516,7 @@ class EMAVectorQuantizer(nn.Module):
         )
         self.same_index_shape = same_index_shape
 
-    @torch.cuda.amp.autocast(enabled=False)
     def forward(self, z):
-        z = z.float()
         z_flattened = rearrange(z, "b t d -> (b t) d")
 
         d = (
@@ -565,9 +565,432 @@ class EMAVectorQuantizer(nn.Module):
         return z_q, min_encoding_indices, loss
 
 
-class BaseUMM(nn.Module):
+class RandomProjectionQuantizer(nn.Module):
+    """RandomProjectionQuantizer"""
+
+    def __init__(self, config):
+        """A quantizer based on random projection
+        See: https://arxiv.org/pdf/2202.01855.pdf
+        Args:
+            dim: input dimension (channels)
+            codebook_size: the number of code in the codebook
+            codebook_dim: the dimension of the the code
+            codebook_num: the number of quantizers.
+                    See multi-softmax in https://arxiv.org/abs/2303.01037
+            initialization_type: the initialization method of the projection matrix
+        """
+        super().__init__()
+        self.input_dim = config.rq_input_dim
+        self.codebook_size = config.rq_codebook_size
+        self.codebook_dim = config.rq_codebook_dim
+        self.codebook_num = config.rq_codebook_num
+
+        self.register_buffer(
+            "prototypes",
+            torch.zeros(
+                self.codebook_num,
+                1,
+                self.codebook_size,
+                self.codebook_dim,
+                requires_grad=False,
+            ),
+        )
+        self.register_buffer(
+            "proj",
+            torch.zeros(
+                self.input_dim,
+                self.codebook_num * self.codebook_dim,
+                requires_grad=False,
+            ),
+        )
+        self._initialize()
+
+    def _initialize(self):
+        """Initialize the parameters."""
+        nn.init.normal_(self.prototypes)
+        F.normalize(self.prototypes, dim=-1, out=self.prototypes)
+
+        fan_in = self.input_dim
+        fan_out = self.codebook_dim
+        gain = 1.0
+        std = gain * math.sqrt(2.0 / float(fan_in + fan_out))
+        with torch.no_grad():
+            self.proj.normal_(0, std)
+
+    def forward(self, x):
+        """
+        Forward a batch of representations to get discrete codes.
+        Args:
+            x: [batch_size, dim]
+        Returns:
+            codes: [batch_size, codebook_num], torch.int64
+        """
+        assert len(x.shape) == 2
+        batch_size, _ = x.shape
+
+        projected = torch.matmul(
+            x, self.proj
+        )  # [batch_size, codebook_num*codebook_dim]
+        projected = F.normalize(
+            projected.view(batch_size, self.codebook_num, self.codebook_dim),
+            p=2,
+            dim=-1,
+        )  # [batch_size, codebook_num, codebook_dim]
+        projected = projected.permute(1, 0, 2).view(
+            self.codebook_num, batch_size, 1, self.codebook_dim
+        )  # [codebook_num, batch_size, 1, codebook_dim]
+
+        # self.prototypes: [codebook_num, 1, codebook_size, codebook_dim]
+        # it is normalized in the function _initialize
+
+        # TODO: configure multiple distances, such as cosine similarity
+        # distances = torch.norm(projected - self.prototypes, p=2, dim=-1)
+        # [codebook_num, batch_size, codebook_size]
+
+        # Save spaces.
+        distances = (
+            projected.view(self.codebook_num, batch_size, self.codebook_dim)
+            .pow(2)
+            .sum(-1, keepdim=True)  # [codebook_num, batch_size, 1]
+            + self.prototypes.view(
+                self.codebook_num, self.codebook_size, self.codebook_dim
+            )
+            .pow(2)
+            .sum(-1, keepdim=True)
+            .transpose(1, 2)  # [codebook_num, 1, codebook_size]
+            - 2
+            * torch.bmm(
+                projected.view(self.codebook_num, batch_size, self.codebook_dim),
+                self.prototypes.view(
+                    self.codebook_num, self.codebook_size, self.codebook_dim
+                ).transpose(1, 2),
+            )  # [codebook_num, batch_size, codebook_size]
+        )
+
+        codes = torch.argmin(distances, dim=-1).transpose(0, 1)
+        # [batch_size, codebook_num]
+        return codes
+
+
+class LlamaRMSNorm(nn.Module):
+    def __init__(self, hidden_size, eps=1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.variance_epsilon = eps
+
+    def forward(self, hidden_states):
+        input_dtype = hidden_states.dtype
+        variance = hidden_states.to(torch.float32).pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+
+        return (self.weight * hidden_states).to(input_dtype)
+
+
+class LlamaRotaryEmbedding(torch.nn.Module):
+    def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None):
+        super().__init__()
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float().to(device) / dim))
+        self.register_buffer("inv_freq", inv_freq)
+        # Build here to make `torch.jit.trace` work.
+        self._set_cos_sin_cached(max_position_embeddings)
+
+    def _set_cos_sin_cached(self, seq_len):
+        self.max_seq_len_cached = seq_len
+        t = torch.arange(
+            self.max_seq_len_cached, device=self.inv_freq.device, dtype=torch.float32
+        )
+        freqs = torch.einsum("i,j->ij", t, self.inv_freq)
+        # Different from paper, but it uses a different permutation in order to obtain the same calculation
+        emb = torch.cat((freqs, freqs), dim=-1)
+        self.register_buffer(
+            "cos_cached", emb.cos()[None, None, :, :], persistent=False
+        )
+        self.register_buffer(
+            "sin_cached", emb.sin()[None, None, :, :], persistent=False
+        )
+
+    def forward(self, x, seq_len=None):
+        # x: [bs, num_attention_heads, seq_len, head_size]
+        # This `if` block is unlikely to be run after we build sin/cos in `__init__`. Keep the logic here just in case.
+        if seq_len > self.max_seq_len_cached:
+            self._set_cos_sin_cached(seq_len)
+
+        return (
+            self.cos_cached[:, :, :seq_len, ...].to(dtype=x.dtype),
+            self.sin_cached[:, :, :seq_len, ...].to(dtype=x.dtype),
+        )
+
+
+class LlamaMLP(nn.Module):
+    def __init__(self, hidden_size: int, intermediate_size: int, hidden_act: str):
+        super().__init__()
+        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
+        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
+        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
+        self.act_fn = ACT2FN[hidden_act]
+
+    def forward(self, x):
+        return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+
+
+class LlamaAttention(nn.Module):
+    def __init__(
+        self,
+        hidden_size,
+        num_attention_heads,
+        max_position_embeddings,
+        is_cross_attention=False,
+    ):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_heads = num_attention_heads
+        self.head_dim = self.hidden_size // self.num_heads
+        self.max_position_embeddings = max_position_embeddings
+
+        if (self.head_dim * self.num_heads) != self.hidden_size:
+            raise ValueError(
+                f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
+                f" and `num_heads`: {self.num_heads})."
+            )
+        self.q_proj = nn.Linear(
+            self.hidden_size, self.num_heads * self.head_dim, bias=False
+        )
+        self.k_proj = nn.Linear(
+            self.hidden_size, self.num_heads * self.head_dim, bias=False
+        )
+        self.v_proj = nn.Linear(
+            self.hidden_size, self.num_heads * self.head_dim, bias=False
+        )
+        self.o_proj = nn.Linear(
+            self.num_heads * self.head_dim, self.hidden_size, bias=False
+        )
+        self.rotary_emb = LlamaRotaryEmbedding(
+            self.head_dim, max_position_embeddings=self.max_position_embeddings
+        )
+        self.is_cross_attention = is_cross_attention
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_ids: Optional[torch.LongTensor] = None,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        bsz, q_len, _ = hidden_states.size()
+
+        query_states = (
+            self.q_proj(hidden_states)
+            .view(bsz, q_len, self.num_heads, self.head_dim)
+            .transpose(1, 2)
+        )
+        key_states = (
+            self.k_proj(hidden_states)
+            .view(bsz, q_len, self.num_heads, self.head_dim)
+            .transpose(1, 2)
+        )
+        value_states = (
+            self.v_proj(hidden_states)
+            .view(bsz, q_len, self.num_heads, self.head_dim)
+            .transpose(1, 2)
+        )
+
+        kv_seq_len = key_states.shape[-2]
+        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        query_states, key_states = self._apply_rotary_pos_emb(
+            query_states, key_states, cos, sin, position_ids
+        )
+        # [bsz, nh, t, hd]
+
+        with torch.backends.cuda.sdp_kernel(
+            enable_flash=True, enable_math=True, enable_mem_efficient=False
+        ):
+            attn_output = torch.nn.functional.scaled_dot_product_attention(
+                query_states.float(),
+                key_states.float(),
+                value_states.float(),
+                attn_mask=None,
+                dropout_p=0.0,
+                is_causal=True,
+            ).to(query_states.dtype)
+
+        if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
+            raise ValueError(
+                f"`attn_output` should be of size {(bsz, self.num_heads, q_len, self.head_dim)}, but is"
+                f" {attn_output.size()}"
+            )
+
+        attn_output = attn_output.transpose(1, 2)
+        attn_output = attn_output.reshape(bsz, q_len, self.hidden_size)
+
+        attn_output = self.o_proj(attn_output)
+
+        return attn_output
+
+    def _rotate_half(self, x):
+        """Rotates half the hidden dims of the input."""
+        x1 = x[..., : x.shape[-1] // 2]
+        x2 = x[..., x.shape[-1] // 2 :]
+        return torch.cat((-x2, x1), dim=-1)
+
+    def _apply_rotary_pos_emb(self, q, k, cos, sin, position_ids):
+        # The first two dimensions of cos and sin are always 1, so we can `squeeze` them.
+        cos = cos.squeeze(1).squeeze(0)  # [seq_len, dim]
+        sin = sin.squeeze(1).squeeze(0)  # [seq_len, dim]
+        cos = cos[position_ids].unsqueeze(1)  # [bs, 1, seq_len, dim]
+        sin = sin[position_ids].unsqueeze(1)  # [bs, 1, seq_len, dim]
+        q_embed = (q * cos) + (self._rotate_half(q) * sin)
+        k_embed = (k * cos) + (self._rotate_half(k) * sin)
+        return q_embed, k_embed
+
+
+class LlamaCrossAttention(nn.Module):
+    def __init__(self, hidden_size, num_attention_heads, max_position_embeddings):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_heads = num_attention_heads
+        self.head_dim = self.hidden_size // self.num_heads
+        self.max_position_embeddings = max_position_embeddings
+
+        if (self.head_dim * self.num_heads) != self.hidden_size:
+            raise ValueError(
+                f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
+                f" and `num_heads`: {self.num_heads})."
+            )
+        self.q_proj = nn.Linear(
+            self.hidden_size, self.num_heads * self.head_dim, bias=False
+        )
+        self.k_proj = nn.Linear(
+            self.hidden_size, self.num_heads * self.head_dim, bias=False
+        )
+        self.v_proj = nn.Linear(
+            self.hidden_size, self.num_heads * self.head_dim, bias=False
+        )
+        self.o_proj = nn.Linear(
+            self.num_heads * self.head_dim, self.hidden_size, bias=False
+        )
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        encoder_hidden_states: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        bsz, q_len, _ = hidden_states.size()
+        kv_len = encoder_hidden_states.size(1)
+        query_states = (
+            self.q_proj(hidden_states)
+            .view(bsz, q_len, self.num_heads, self.head_dim)
+            .transpose(1, 2)
+        )
+        key_states = (
+            self.k_proj(encoder_hidden_states)
+            .view(bsz, kv_len, self.num_heads, self.head_dim)
+            .transpose(1, 2)
+        )
+        value_states = (
+            self.v_proj(encoder_hidden_states)
+            .view(bsz, kv_len, self.num_heads, self.head_dim)
+            .transpose(1, 2)
+        )
+        with torch.backends.cuda.sdp_kernel(
+            enable_flash=True, enable_math=True, enable_mem_efficient=True
+        ):
+            attn_output = torch.nn.functional.scaled_dot_product_attention(
+                query_states.float(),
+                key_states.float(),
+                value_states.float(),
+                attn_mask=None,
+                dropout_p=0.0,
+                is_causal=False,
+            ).to(query_states.dtype)
+
+        if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
+            raise ValueError(
+                f"`attn_output` should be of size {(bsz, self.num_heads, q_len, self.head_dim)}, but is"
+                f" {attn_output.size()}"
+            )
+
+        attn_output = attn_output.transpose(1, 2)
+        attn_output = attn_output.reshape(bsz, q_len, self.hidden_size)
+
+        attn_output = self.o_proj(attn_output)
+
+        return attn_output
+
+
+class LlamaDecoderLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.self_attn = LlamaAttention(
+            hidden_size=config.ar_hidden_size,
+            num_attention_heads=config.ar_num_attention_heads,
+            max_position_embeddings=config.ar_max_position_embeddings,
+        )
+        self.mlp = LlamaMLP(
+            hidden_size=config.ar_hidden_size,
+            intermediate_size=config.ar_intermediate_size,
+            hidden_act=config.ar_hidden_act,
+        )
+        self.input_layernorm = LlamaRMSNorm(
+            config.ar_hidden_size, eps=config.ar_rms_norm_eps
+        )
+        self.post_attention_layernorm = LlamaRMSNorm(
+            config.ar_hidden_size, eps=config.ar_rms_norm_eps
+        )
+
+        if config.ar_add_cross_attention:
+            self.cross_attn = LlamaCrossAttention(
+                hidden_size=config.ar_hidden_size,
+                num_attention_heads=config.ar_num_attention_heads,
+                max_position_embeddings=config.ar_max_position_embeddings,
+            )
+            self.cross_attention_layernorm = nn.LayerNorm(
+                config.ar_hidden_size, eps=config.ar_rms_norm_eps
+            )
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        encoder_hidden_states: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+    ) -> Tuple[
+        torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]
+    ]:
+        residual = hidden_states
+
+        hidden_states = self.input_layernorm(hidden_states)
+
+        # Self Attention
+        hidden_states = self.self_attn(
+            hidden_states=hidden_states, position_ids=position_ids
+        )
+        hidden_states = residual + hidden_states
+
+        # Cross Attention
+        if encoder_hidden_states is not None:
+            residual = hidden_states
+            hidden_states = self.cross_attention_layernorm(hidden_states)
+            cross_attn_outputs = self.cross_attn(
+                hidden_states=hidden_states, encoder_hidden_states=encoder_hidden_states
+            )
+            # residual connection
+            hidden_states = residual + cross_attn_outputs
+
+        # Fully Connected
+        residual = hidden_states
+        hidden_states = self.post_attention_layernorm(hidden_states)
+        hidden_states = self.mlp(hidden_states)
+        hidden_states = residual + hidden_states
+
+        return hidden_states
+
+
+class Base(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.audio_encoder = AudioEncoder(config)
+        self.embed_positions = ConformerRotaryPositionalEmbedding(config)
+        self.encoder_input_dropout = nn.Dropout(config.hidden_dropout)
+        self.encoder_layers = nn.ModuleList(
+            [ConformerEncoderLayer(config) for _ in range(config.num_hidden_layers)]
+        )
         self.audio_transform = SpeechTransform(
             sample_rate=config.sample_rate,
             n_mels=config.n_mels,
@@ -580,67 +1003,7 @@ class BaseUMM(nn.Module):
         if config.feature_cmvn is not None:
             self.audio_transform.load_from_checkpoint(config.feature_cmvn)
 
-        self.chroma_transform = ChromaSpectrogram(
-            sample_rate=config.sample_rate,
-            n_fft=config.n_fft,
-            win_length=config.win_length,
-            hop_length=config.hop_length,
-            n_chroma=config.n_chroma,
-            normalized=False,
-        )
-
-        self.audio_encoder = AudioEncoder(config)
-        self.embed_positions = ConformerRotaryPositionalEmbedding(config)
-        self.encoder_input_dropout = nn.Dropout(config.hidden_dropout)
-        self.encoder_pre_layers = nn.ModuleList(
-            [ConformerEncoderLayer(config) for _ in range(config.num_pre_layers)]
-        )
-        self.encoder_post_layers = nn.ModuleList(
-            [ConformerEncoderLayer(config) for _ in range(config.num_post_layers)]
-        )
-        self.chroma_head = Conv2dUpsampling(config.hidden_size, config.n_chroma)
-        self.mel_head = Conv2dUpsampling(config.hidden_size, config.n_mels)
-        self.ctc_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-
-        if config.add_vq:
-            self.vq_proj_in = nn.Linear(
-                config.hidden_size, config.vq_codebook_dim, bias=False
-            )
-            self.vq = EMAVectorQuantizer(
-                codebook_size=config.vq_codebook_size,
-                codebook_dim=config.vq_codebook_dim,
-                decay=config.vq_decay,
-            )
-            self.vq_proj_out = nn.Linear(
-                config.vq_codebook_dim, config.hidden_size, bias=False
-            )
         self.config = config
-
-    def forward(self, input_dict):
-        feature = input_dict["mel"]
-        audio_feature = self.audio_encoder(feature)
-        hidden_states = self.encoder_input_dropout(audio_feature)
-        position_embeddings = self.embed_positions(hidden_states)
-        for layer in self.encoder_pre_layers:
-            hidden_states = layer(
-                hidden_states, position_embeddings=position_embeddings
-            )
-        if self.config.add_vq:
-            hidden_states = self.vq_proj_in(hidden_states)
-            vq_embeds, vq_indices, vq_loss = self.vq(hidden_states)
-            hidden_states = self.vq_proj_out(vq_embeds)
-        for layer in self.encoder_post_layers:
-            hidden_states = layer(
-                hidden_states, position_embeddings=position_embeddings
-            )
-
-        mel_out = self.mel_head(hidden_states)
-        chroma_out = self.chroma_head(hidden_states)
-        ctc_out = self.ctc_head(hidden_states)
-        output_dict = {"chroma_out": chroma_out, "mel_out": mel_out, "ctc_out": ctc_out}
-        if self.config.add_vq:
-            output_dict.update({"vq_ids": vq_indices, "vq_loss": vq_loss})
-        return output_dict
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
@@ -651,19 +1014,185 @@ class BaseUMM(nn.Module):
         else:
             return x
 
+
+class Stage1(Base):
+    def __init__(self, config):
+        super().__init__(config)
+        if config.rq_input_layernorm:
+            self.rq_input_layernorm = nn.LayerNorm(
+                config.num_channels
+                * pow(config.feature_encoder_kernel, config.feature_encoder_padding),
+                elementwise_affine=False,
+            )
+        self.unfolder = nn.Unfold(
+            kernel_size=(config.feature_encoder_kernel, 1),
+            dilation=1,
+            padding=(config.feature_encoder_padding, 0),
+            stride=(2, 1),
+        )
+        self.rq = RandomProjectionQuantizer(config)
+        self.rq_head = nn.Linear(
+            config.hidden_size,
+            config.rq_codebook_size * config.rq_codebook_num,
+            bias=False,
+        )
+
+    def forward(self, input_dict):
+        masked_feature = input_dict["masked_mel"]
+        masked_indices = input_dict["masked_indices"]
+
+        encoded_masked_feature = self.audio_encoder(masked_feature)
+        hidden_states = self.encoder_input_dropout(encoded_masked_feature)
+        position_embeddings = self.embed_positions(hidden_states)
+        for layer in self.encoder_layers:
+            hidden_states = layer(
+                hidden_states, position_embeddings=position_embeddings
+            )
+
+        logits = self.rq_head(hidden_states)
+        logits = rearrange(
+            logits, "b t (d c) -> b t d c", c=self.config.rq_codebook_num
+        )
+        masked_logits = logits[tuple(masked_indices.t())]
+        masked_logits = rearrange(
+            masked_logits, "b d c -> (b c) d", c=self.config.rq_codebook_num
+        )
+
+        feature = input_dict["mel"]
+        target = self.get_rq_target(feature)
+        masked_target = target[tuple(masked_indices.t())]
+        masked_target = rearrange(masked_target, "b c -> (b c)")
+        output_dict = {
+            "rq_logits": logits,
+            "rq_masked_logits": masked_logits,
+            "rq_target": target,
+            "rq_masked_target": masked_target,
+        }
+        return output_dict
+
+    def _unfold(self, feature):
+        d = feature.size(-1)
+        unfold_feature = self.unfolder(feature.unsqueeze(1))
+        unfold_feature = rearrange(unfold_feature, "b c (t d) -> b t (c d)", d=d)
+        return unfold_feature
+
+    def _subsample(self, feature):
+        feature = self._unfold(feature)
+        feature = self._unfold(feature)
+        return feature
+
+    @torch.no_grad()
+    def get_rq_target(self, feature):
+        rq_input = rearrange(self._subsample(feature), "b t d -> (b t) d")
+        if self.config.rq_input_layernorm:
+            rq_input = self.rq_input_layernorm(rq_input)
+        target_tokens = self.rq(rq_input)
+        target_tokens = rearrange(target_tokens, "(b t) c -> b t c", b=feature.size(0))
+        return target_tokens
+
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
     def preprocessing(self, x):
         normalize = self.config.feature_cmvn is not None
         mel = self.audio_transform(x, normalize=normalize)
-        chroma = self.chroma_transform(x)[:, :, :-1].transpose(1, 2)
-        chroma = F.normalize(chroma, p=2, dim=-1)
-        return {"mel": mel, "chroma": chroma}
+        return {"mel": mel}
+
+
+class Stage2(Base):
+    def __init__(self, config):
+        super().__init__(config)
+        self.mel_head = Conv2dUpsampling(config.hidden_size, config.n_mels)
+        self.ctc_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        if config.add_chroma:
+            self.chroma_transform = ChromaSpectrogram(
+                sample_rate=config.sample_rate,
+                n_fft=config.n_fft,
+                win_length=config.win_length,
+                hop_length=config.hop_length,
+                n_chroma=config.n_chroma,
+                normalized=False,
+            )
+            self.chroma_head = Conv2dUpsampling(config.hidden_size, config.n_chroma)
+
+    def forward(self, input_dict):
+        feature = input_dict["mel"]
+        audio_feature = self.audio_encoder(feature)
+        hidden_states = self.encoder_input_dropout(audio_feature)
+        position_embeddings = self.embed_positions(hidden_states)
+        for layer in self.encoder_layers:
+            hidden_states = layer(
+                hidden_states, position_embeddings=position_embeddings
+            )
+
+        mel_out = self.mel_head(hidden_states)
+        ctc_out = self.ctc_head(hidden_states)
+        output_dict = {"mel_out": mel_out, "ctc_out": ctc_out}
+        if self.config.add_chroma:
+            chroma_out = self.chroma_head(hidden_states)
+            output_dict.update(chroma_out=chroma_out)
+        return output_dict
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def preprocessing(self, x):
+        normalize = self.config.feature_cmvn is not None
+        mel = self.audio_transform(x, normalize=normalize)
+        input_dict = {"mel": mel}
+        if self.config.add_chroma:
+            chroma = self.chroma_transform(x)[:, :, :-1].transpose(1, 2)
+            chroma = F.normalize(chroma, p=2, dim=-1)
+            input_dict.update(chroma=chroma)
+        return input_dict
+
+
+class Stage3(Stage2):
+    def __init__(self, config):
+        super().__init__(config)
+        self.vq_proj_in = nn.Linear(
+            config.hidden_size, config.vq_codebook_dim, bias=False
+        )
+        self.vq = EMAVectorQuantizer(
+            codebook_size=config.vq_codebook_size,
+            codebook_dim=config.vq_codebook_dim,
+            decay=config.vq_decay,
+        )
+        self.vq_proj_out = nn.Linear(
+            config.vq_codebook_dim, config.hidden_size, bias=False
+        )
+
+    def forward(self, input_dict):
+        feature = input_dict["mel"]
+        audio_feature = self.audio_encoder(feature)
+        hidden_states = self.encoder_input_dropout(audio_feature)
+        position_embeddings = self.embed_positions(hidden_states)
+        for i, layer in enumerate(self.encoder_layers):
+            if i == self.config.vq_layer_idx:
+                hidden_states = self.vq_proj_in(hidden_states)
+                vq_embs, vq_ids, vq_loss = self.vq(hidden_states)
+                hidden_states = self.vq_proj_out(vq_embs)
+            hidden_states = layer(
+                hidden_states, position_embeddings=position_embeddings
+            )
+
+        mel_out = self.mel_head(hidden_states)
+        ctc_out = self.ctc_head(hidden_states)
+        output_dict = {
+            "mel_out": mel_out,
+            "ctc_out": ctc_out,
+            "vq_ids": vq_ids,
+            "vq_loss": vq_loss,
+        }
+        if self.config.add_chroma:
+            chroma_out = self.chroma_head(hidden_states)
+            output_dict.update(chroma_out=chroma_out)
+        return output_dict
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
     def wav2token(self, wav):
-        wav = self.pad_audio(wav)
+        if wav.dim() == 3:
+            wav = wav.squeeze(dim=1)
+        wav = self.pad_audio(wav.float())
         feature = self.preprocessing(wav)["mel"]
         audio_feature = self.audio_encoder(feature)
         hidden_states = self.encoder_input_dropout(audio_feature)
@@ -673,8 +1202,103 @@ class BaseUMM(nn.Module):
                 hidden_states, position_embeddings=position_embeddings
             )
         hidden_states = self.vq_proj_in(hidden_states)
-        vq_embeds, vq_indices, vq_loss = self.vq(hidden_states)
-        return vq_indices
+        vq_embs, vq_ids, vq_loss = self.vq(hidden_states)
+        return vq_ids
+
+
+class Stage3AR(Stage3):
+    def __init__(self, config):
+        super().__init__(config)
+        self.ar_embedding = nn.Embedding(1025, config.ar_hidden_size)
+        self.ar_layers = nn.ModuleList(
+            [LlamaDecoderLayer(config) for _ in range(config.ar_num_layers)]
+        )
+        self.vq_proj_ar = nn.Linear(config.vq_codebook_dim, config.ar_hidden_size)
+        self.ar_head = nn.Linear(config.ar_hidden_size, 1024)
+
+    def forward(self, input_dict):
+        feature = input_dict["mel"]
+        ar_ids = input_dict["ar_ids"]
+        audio_feature = self.audio_encoder(feature)
+        hidden_states = self.encoder_input_dropout(audio_feature)
+        position_embeddings = self.embed_positions(hidden_states)
+        for i, layer in enumerate(self.encoder_layers):
+            if i == self.config.vq_layer_idx:
+                hidden_states = self.vq_proj_in(hidden_states)
+                vq_embs, vq_ids, vq_loss = self.vq(hidden_states)
+                hidden_states = self.vq_proj_out(vq_embs)
+            hidden_states = layer(
+                hidden_states, position_embeddings=position_embeddings
+            )
+
+        mel_out = self.mel_head(hidden_states)
+        ctc_out = self.ctc_head(hidden_states)
+
+        # AR
+        ar_inputs_ids = torch.cat(
+            [
+                torch.zeros(
+                    size=[ar_ids.size(0), 1], dtype=ar_ids.dtype, device=ar_ids.device
+                )
+                + 1024,
+                ar_ids[:, :-1],
+            ],
+            dim=1,
+        )
+        ar_hidden_states = self.ar_embedding(ar_inputs_ids)
+        seq_length = max(ar_inputs_ids.size(1), vq_embs.size(1))
+        position_ids = torch.arange(
+            0, seq_length, dtype=torch.long, device=ar_ids.device
+        )
+        position_ids = position_ids.unsqueeze(0).view(-1, seq_length)
+        ar_encoder_embeds = self.vq_proj_ar(vq_embs)
+        for layer in self.ar_layers:
+            ar_hidden_states = layer(ar_hidden_states, ar_encoder_embeds, position_ids)
+        ar_out = self.ar_head(ar_hidden_states)
+
+        output_dict = {
+            "mel_out": mel_out,
+            "ctc_out": ctc_out,
+            "ar_out": ar_out,
+            "vq_ids": vq_ids,
+            "vq_loss": vq_loss,
+        }
+        if self.config.add_chroma:
+            chroma_out = self.chroma_head(hidden_states)
+            output_dict.update(chroma_out=chroma_out)
+        return output_dict
+
+
+class ASR(Base):
+    def __init__(self, config):
+        super().__init__(config)
+        self.ctc_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+
+    def forward(self, input_dict):
+        feature = input_dict["mel"]
+        audio_feature = self.audio_encoder(feature)
+        hidden_states = self.encoder_input_dropout(audio_feature)
+        position_embeddings = self.embed_positions(hidden_states)
+        for layer in self.encoder_pre_layers:
+            hidden_states = layer(
+                hidden_states, position_embeddings=position_embeddings
+            )
+        for layer in self.encoder_post_layers:
+            hidden_states = layer(
+                hidden_states, position_embeddings=position_embeddings
+            )
+
+        ctc_out = self.ctc_head(hidden_states)
+        output_dict = {"ctc_out": ctc_out}
+        return output_dict
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def preprocessing(self, x):
+        normalize = self.config.feature_cmvn is not None
+        mel = self.audio_transform(x, normalize=normalize)
+        input_dict = {"mel": mel}
+        return input_dict
 
 
 class MKII(nn.Module):

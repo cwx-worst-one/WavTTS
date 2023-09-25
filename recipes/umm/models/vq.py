@@ -1268,5 +1268,5 @@ class EMAVectorQuantizer(nn.Module):
             min_encoding_indices = min_encoding_indices.reshape(
                 z_q.shape[0], z_q.shape[1]
             )
-        z_q = self.proj_out(z_q)
-        return z_q, min_encoding_indices, loss
+        out = self.proj_out(z_q)
+        return out, min_encoding_indices, loss, z_q

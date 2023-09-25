@@ -290,6 +290,7 @@ class BestRQ(nn.Module):
         for _ in range(len(self.frontend_config.conv_dim)):
             feature = self._unfold(feature)
         return feature
+
     @torch.no_grad()
     def get_target_tokens(self, feature):
         quantizer_input = rearrange(self._subsample(feature), "b t d -> (b t) d")
@@ -382,6 +383,7 @@ class BestRQMel(BestRQ):
             self.frontend_config.n_mels,
             2 ** len(self.frontend_config.conv_dim),
         )
+
     def forward(self, masked_feature, masked_indices, feature):
         encoded_masked_feature = self.frontend(masked_feature)
         if self.vq is not None:
@@ -460,7 +462,9 @@ class BestRQMelCTC(BestRQ):
 
     def token_to_hidden_state(self, tokens):
         assert self.vq is not None
-        token_embeddings = self.vq.get_codes_from_indices(tokens.long()).view(*tokens.shape, -1)
+        token_embeddings = self.vq.get_codes_from_indices(tokens.long()).view(
+            *tokens.shape, -1
+        )
         token_embeddings = self.vq.project_out(token_embeddings)
         hidden_state = self.encoder.forward_from_vq(token_embeddings)
         return hidden_state
@@ -469,22 +473,23 @@ class BestRQMelCTC(BestRQ):
         hidden_state = self.token_to_hidden_state(tokens)
         recon_feature = self.spec_reconstructor(hidden_state)
         return recon_feature
-    
+
     def token_to_ctc(self, tokens):
         hidden_state = self.token_to_hidden_state(tokens)
         logits = self.lm_head(hidden_state)
 
         # CTCLoss doesn't support fp16
-        log_probs = F.log_softmax(
-            logits, dim=-1, dtype=torch.float32
-        ).transpose(0, 1)  # [N, T, C] -> [T, N, C]
+        log_probs = F.log_softmax(logits, dim=-1, dtype=torch.float32).transpose(
+            0, 1
+        )  # [N, T, C] -> [T, N, C]
         return log_probs
-    
+
     def get_ctc_loss(self, tokens, text_id):
         logits = self.token_to_ctc(tokens)
         # TODO: (QQ) fix loss function
         recon_feature, feature = torch.zeros((1)), torch.zeros((1))
         return self.criterion(recon_feature, feature, logits, text_id)
+
 
 class BestRQVocoder(BestRQMelCTC):
     def __init__(

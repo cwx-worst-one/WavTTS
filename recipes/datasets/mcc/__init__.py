@@ -1,5 +1,16 @@
 INDEX = {
     "CN": {
+        "HotGalaxy": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/kaiping/2023-09-20/url2index.txt",
+        "Soda": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/soda/1m/final_url2idx.txt",
+        "FanqieShort": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/fanqie_filter_v51_0_10s/url2idx.txt",
+        "FanqieLong": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/fanqie_filter_v51_gt10s/url2idx.txt",
+        "XimalayaShort": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/xmly_filter_v6_0_10s_20230903/url2idx.txt",
+        "XimalayaLong": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/xmly_filter_v6_gt10s_20230903/url2idx.txt",
+        "XiaoyuzhouShort": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/xyz_filter_v6_0_10s_20230903/url2idx.txt",
+        "XiaoyuzhouLong": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/xyz_filter_v6_gt10s_20230903/url2idx.txt",
+        "MCCVocal-Zh-A": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc60m_chinese/2023-09-24_repartition/type=A/lang=chinese/url2index.txt",
+        "MCCVocal-Zh-B": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc60m_chinese/2023-09-24_repartition/type=B/lang=chinese/url2index.txt",
+        "MCCVocal-Zh-C": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc60m_chinese/2023-09-24_repartition/type=C/lang=chinese/url2index.txt",
         "MCCVocal": [
             "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_vocal_merge/vocal-A-alternative-rock.txt",
             "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_vocal_merge/vocal-A-blues.txt",
@@ -82,6 +93,9 @@ INDEX = {
     },
     "US": {
         "MCCVocal": "/mnt/bn/audio-diffusion/data/vocal_mcc_npy/lyrics_npy_url2idx.txt",
+        "MCCVocal-Zh-A": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc60m_chinese/2023-09-24_repartition/type=A/lang=chinese/url2index.txt",
+        "MCCVocal-Zh-B": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc60m_chinese/2023-09-24_repartition/type=B/lang=chinese/url2index.txt",
+        "MCCVocal-Zh-C": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc60m_chinese/2023-09-24_repartition/type=C/lang=chinese/url2index.txt",
         "MCCInstrumental": [
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_merge/nonvocal-A-alternative-rock+indie-pop+sertanejo+trap-rap.txt",
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_merge/nonvocal-A-alternative-rock.txt",
