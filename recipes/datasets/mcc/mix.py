@@ -2168,3 +2168,160 @@ class MixZhWebDataModule(pl.LightningDataModule):
             batch = self.batcher.collate_batch(item)
             if batch is not None:
                 yield batch
+
+
+class MixLangVocalWebDataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        sample_rate: int = 24000,
+        batch_size: int = 30 * 24000 * 2,
+        min_duration: int = 2,
+        max_duration: int = 30,
+        max_num_crops: int = 3,
+        normalize_audio: bool = False,
+        shuffle_buffer_size: int = 10,
+        num_workers: int = 4,
+        pin_memory: bool = True,
+        collate_fn: Optional[Callable] = collate_fn,
+        weights: List[int] = [1, 1],
+        region: str = "CN",
+        use_pipe: bool = False,
+        tokenizer: str = None,
+        frame_rate: int = 25,
+    ):
+        super().__init__()
+        if tokenizer == "wordpiece":
+            self.tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
+        elif tokenizer == "phoneme":
+            self.tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained(
+                "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
+            )
+            phonemizer.logger.get_logger().setLevel(logging.ERROR)
+        else:
+            self.tokenizer = None
+            collate_fn = collate_audio_text
+        self.num_workers = num_workers
+        self.shuffle_buffer_size = shuffle_buffer_size
+        self.pin_memory = pin_memory
+        self.collate_fn = collate_fn
+        self.frame_rate = frame_rate
+        assert batch_size >= min_duration * sample_rate
+        buckets_samples = []
+        sec = min_duration
+        while sec <= max_duration:
+            buckets_samples.append(sec)
+            sec += math.ceil(sec * 0.1)
+        if buckets_samples[-1] < max_duration:
+            buckets_samples.append(max_duration)
+        print(f"[Buckets] {len(buckets_samples)} {str(buckets_samples)}")
+        buckets_samples = [x * sample_rate for x in buckets_samples]
+        self.batcher = BucketBatcher(
+            buckets=buckets_samples,
+            dynamic_batch=True,
+            maximum_bucket_size=batch_size,
+            length_fn=lambda x: x["audio"].size(-1),
+        )
+        datasets = []
+        if weights[0] > 0:
+            zh = VocalZhDataset(
+                url2index=[
+                    INDEX[region]["MCCVocal-Zh-A"],
+                    INDEX[region]["MCCVocal-Zh-B"],
+                    INDEX[region]["MCCVocal-Zh-C"],
+                    INDEX[region]["HotGalaxy"],
+                    INDEX[region]["Soda"],
+                ],
+                weights=[1, 4, 80, 50, 50],
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                max_num_crops=max_num_crops,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                resampled=True,
+                shardshuffle=True,
+                use_pipe=use_pipe,
+                handler=wds.warn_and_continue,
+            )
+            datasets.append(DataPipeline(zh, wds.shuffle(shuffle_buffer_size)))
+        if weights[1] > 0:
+            mcc_vocal = MCCVocalDataset(
+                url2index=INDEX[region]["MCCVocal"],
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                max_num_crops=max_num_crops,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                resampled=True,
+                shardshuffle=True,
+                use_pipe=use_pipe,
+                handler=wds.warn_and_continue,
+            )
+            datasets.append(
+                DataPipeline(mcc_vocal, wds.shuffle(shuffle_buffer_size))
+            )
+        weights = [i for i in weights if i != 0]
+        self.train_dataset = DataPipeline(
+            MultiIterableDataset(
+                datasets=datasets, weights=[i for i in weights if i != 0]
+            ),
+            self.bucketize,
+        )
+
+        karaoke = WebPipeline(
+            KaraokeDataset(
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                normalize_audio=False,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                resampled=False,
+                use_pipe=use_pipe,
+                nodesplitter=return_self,
+                handler=wds.warn_and_continue,
+            ),
+            pipeline=[{"compose": [self.bucketize]}],
+        )
+        libritts = WebPipeline(
+            LibriTTSDataset(
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                resampled=False,
+                nodesplitter=return_self,
+                handler=wds.warn_and_continue,
+            ),
+            pipeline=[{"compose": [self.bucketize]}],
+        )
+        self.validation_dataset = [karaoke, libritts]
+
+    def train_dataloader(self):
+        return DataLoader(
+            self.train_dataset,
+            batch_size=None,
+            num_workers=self.num_workers,
+            collate_fn=self.collate_fn,
+        )
+
+    def val_dataloader(self):
+        return [
+            DataLoader(
+                val,
+                batch_size=None,
+                num_workers=self.num_workers,
+                collate_fn=self.collate_fn,
+            )
+            for val in self.validation_dataset
+        ]
+
+    def bucketize(self, iterator: Iterable):
+        for item in iterator:
+            batch = self.batcher.collate_batch(item)
+            if batch is not None:
+                yield batch

@@ -1197,12 +1197,14 @@ class Stage3(Stage2):
         audio_feature = self.audio_encoder(feature)
         hidden_states = self.encoder_input_dropout(audio_feature)
         position_embeddings = self.embed_positions(hidden_states)
-        for layer in self.encoder_pre_layers:
+        for i, layer in enumerate(self.encoder_layers):
+            if i == self.config.vq_layer_idx:
+                hidden_states = self.vq_proj_in(hidden_states)
+                vq_embs, vq_ids, vq_loss = self.vq(hidden_states)
+                return vq_ids
             hidden_states = layer(
                 hidden_states, position_embeddings=position_embeddings
             )
-        hidden_states = self.vq_proj_in(hidden_states)
-        vq_embs, vq_ids, vq_loss = self.vq(hidden_states)
         return vq_ids
 
 
