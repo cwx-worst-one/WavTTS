@@ -7,50 +7,53 @@ from recipes.mir_benchmark.utils.utils import get_tags
 from recipes.musicfm.models.best_rq import BEST_RQ
 from samantha.core import BaseModel
 
+INSTRUMENT_TAGS = [
+    "Bass",
+    "Brass",
+    "Chromatic Percussion",
+    "Drums",
+    "Ensemble",
+    "Guitar",
+    "Organ",
+    "Percussive",
+    "Piano",
+    "Pipe",
+    "Reed",
+    "Sound Effects",
+    "Strings",
+    "Synth Effects",
+    "Synth Lead",
+    "Synth Pad",
+    "Vocal",
+]
 
+INSTRUMENT_TAGS_THRESHOLDS = [
+    0.3,
+    0.5,
+    0.3,
+    0.5,
+    0.2,
+    0.5,
+    0.5,
+    0.4,
+    0.4,
+    0.2,
+    0.2,
+    0.2,
+    0.4,
+    0.2,
+    0.2,
+    0.3,
+    0.0,    # will always output "Vocal" -> side effect of training data
+]
 class InstrumentTagging(nn.Module):
     def __init__(self, is_flash=False):
         super(InstrumentTagging, self).__init__()
         self.model = self.load_model(is_flash)
-        self.instrument_tags = [
-            "Bass",
-            "Brass",
-            "Chromatic Percussion",
-            "Drums",
-            "Ensemble",
-            "Guitar",
-            "Organ",
-            "Percussive",
-            "Piano",
-            "Pipe",
-            "Reed",
-            "Sound Effects",
-            "Strings",
-            "Synth Effects",
-            "Synth Lead",
-            "Synth Pad",
-            "Vocal",
-        ]
+        self.instrument_tags = INSTRUMENT_TAGS
         # Manually tuned to maximize per-class F1 scores
-        self.thresholds = torch.Tensor([
-            0.3,
-            0.5,
-            0.3,
-            0.5,
-            0.2,
-            0.5,
-            0.5,
-            0.4,
-            0.4,
-            0.2,
-            0.2,
-            0.2,
-            0.4,
-            0.2,
-            0.2,
-            0.3,
-            0.0,    # will always output "Vocal" -> side effect of training data
-        ])
+        thresholds = torch.Tensor(INSTRUMENT_TAGS_THRESHOLDS)
+        self.register_buffer('thresholds', thresholds, persistent=False)
         assert len(self.instrument_tags) == len(self.thresholds)
 
     def load_model(self, is_flash):

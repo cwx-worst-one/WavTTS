@@ -1,0 +1,13 @@
+/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_mulan_text_07B_groupB/groupA_1M/checkpoints/step=112000-tr_loss=4.3037-val_loss_0=4.6696.ckpt
+/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_mulan_text_07B_groupB/groupA_1M/checkpoints/step=160000-tr_loss=4.1294-val_loss_0=4.7160.ckpt
+/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_mulan_text_07B_groupB/groupB_1M/checkpoints/step=112000-tr_loss=4.2650-val_accu_0=17.33.ckpt
+/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_mulan_text_07B_groupB/groupB_1M/checkpoints/step=160000-tr_loss=4.2153-val_loss_0=4.6747.ckpt
+/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_mulan_text_07B_groupB/groupB_1M/checkpoints/step=200000-tr_loss=4.0080-val_loss_0=4.7199.ckpt
+/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_mulan_text_07B_groupB/groupB_2M/checkpoints/step=112000-tr_loss=4.3325-val_accu_0=17.47.ckpt
+/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_mulan_text_07B_groupB/groupB_2M/checkpoints/step=148000-tr_loss=4.2934-val_accu_0=17.46.ckpt
+/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_mulan_text_07B_groupB/groupB_2M/checkpoints/step=200000-tr_loss=4.2139-val_loss_0=4.6566.ckpt
+/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_mulan_text_07B_groupB/groupB_500k/checkpoints/step=112000-tr_loss=4.2068-val_accu_0=16.57.ckpt
+/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_mulan_text_07B_groupB/groupB_500k/checkpoints/step=148000-tr_loss=4.4629-val_accu_0=16.53.ckpt
+/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_mulan_text_07B_groupB/groupB_500k/checkpoints/step=200000-tr_loss=4.0889-val_loss_0=4.8461.ckpt
+/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_mulan_text_07B_groupB/groupB_full/checkpoints/step=112000-tr_loss=4.3462-val_loss_0=4.5151.ckpt
+/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_mulan_text_07B_groupB/groupB_full/checkpoints/step=144000-tr_loss=4.1775-val_loss_0=4.5250.ckpt

@@ -26,13 +26,11 @@ def wav2lyrics(wav_batch, sr=24000):
     sr: sample rate
     """
     if not PYPETREL_LIB_FOUND:
-        return ["" for _ in wav_batch.shape(0)], wav_batch
+        return ["" for _ in range(wav_batch.shape[0])], wav_batch
     elif not pypetrel.is_engine_initialized():
         pypetrel.initialize_engine("/mnt/bn/audio-diffusion/ashaw/models/asr/en_us_lyric")
     if len(wav_batch.shape) == 2:
         wav_batch = wav_batch.unsqueeze(1)
-
-    
     out = {"indices": [], "lyrics": []}
     num = wav_batch.size(0)
     wav_iter = iter(wav_batch)

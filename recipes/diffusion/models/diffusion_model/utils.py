@@ -80,8 +80,8 @@ def run_diffusion(requires, samples, params):
     num_chunks = params.get('num_chunks', 1)
     diffusion_steps = params.get('diffusion_steps', 25)
     schedule_slope = params.get('schedule_slope', 2.5)
-    guidance_scale = params.get('guidance_scale', 3)
-    bf16_portion = params.get('bf16_portion', 1.0)
+    guidance_scale = params.get('guidance_scale', 2.5)
+    bf16_portion = params.get('bf16_portion', 0.0)
 
     pred_emb = sampler(
         model=diffusion_model,

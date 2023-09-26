@@ -32,8 +32,8 @@ extra_params:
         num_chunks: 1
         diffusion_steps: 25
         schedule_slope: 2.5
-        guidance_scale: 3
-        bf16_portion: 1.0
+        guidance_scale: 2.5
+        bf16_portion: 0.0
 
     # Model Settings
     sample_rate: 24000
@@ -104,6 +104,15 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                 initializer: !name:recipes.musiclm.requires.model_initializer.init_soundstream_decoder
                     cache_dir: !ref <run_opts[cache_dir]>
 
+
+# separating out additional_callbacks so auto_eval can disable metrics
+additional_callbacks:
+    - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
+    - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
+    - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
+callbacks:
+    - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
+
 trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>
     accelerator: !ref <run_opts[accelerator]>
@@ -113,3 +122,4 @@ trainer: !new:pytorch_lightning.Trainer
     enable_model_summary: True
     strategy: !ref <run_opts[strategy]>
     precision: !ref <run_opts[precision]>
+    callbacks: !apply:operator.add [!ref <additional_callbacks>, !ref <callbacks>]

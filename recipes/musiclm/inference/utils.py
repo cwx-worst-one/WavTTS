@@ -123,15 +123,15 @@ def save_wav(audio, output_file, sr=24000):
     torchaudio.save(output_file, audio, sr)
 
 
-def load_wav(path):
+def load_wav(path, sr=24000):
     if path.endswith(".npy"):
         wav = np.load(path)
     elif path.endswith(".wav"):
-        wav, sr = librosa.load(path, sr=24000)
+        wav, sr = librosa.load(path, sr=sr)
     else:
         audio = AudioSegment.from_file(path)
         audio = audio.set_channels(1)
-        audio = audio.set_frame_rate(24000)
+        audio = audio.set_frame_rate(sr)
         wav = np.asarray(audio.get_array_of_samples())
     if wav.dtype == np.int16:
         wav = wav / 32768.0

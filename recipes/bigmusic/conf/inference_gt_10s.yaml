@@ -61,7 +61,14 @@ predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_fr
 
 pl_datamodule: !new:recipes.bigmusic.datasets.lyrics.LyricsDataModule
     predict_dataset: !ref <predict_dataset>
+    predict_num_rounds: 2
     num_workers: 0
+
+
+callbacks:
+    - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
+    # - !new:recipes.bigmusic.callbacks.mir_metrics.MIRTagMetricsCallback
+    - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
 
 pl_module: !new:recipes.bigmusic.lightning.inference.GTInferenceModule
     extra_params: !ref <extra_params>
@@ -108,3 +115,4 @@ trainer: !new:pytorch_lightning.Trainer
     enable_model_summary: True
     strategy: !ref <run_opts[strategy]>
     precision: !ref <run_opts[precision]>
+    callbacks: !ref <callbacks>

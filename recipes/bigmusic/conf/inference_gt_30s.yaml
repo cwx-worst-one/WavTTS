@@ -98,6 +98,10 @@ pl_module: !new:recipes.bigmusic.lightning.inference.GTInferenceModule
                 initializer: !name:recipes.musiclm.requires.model_initializer.init_soundstream_decoder
                     cache_dir: !ref <run_opts[cache_dir]>
 
+callbacks:
+    - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
+    - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
+
 trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>
     accelerator: !ref <run_opts[accelerator]>
@@ -107,3 +111,4 @@ trainer: !new:pytorch_lightning.Trainer
     enable_model_summary: True
     strategy: !ref <run_opts[strategy]>
     precision: !ref <run_opts[precision]>
+    callbacks: !ref <callbacks>

@@ -7,6 +7,7 @@ import torch
 from tqdm.auto import tqdm
 import torch.nn as nn
 from samantha.utils.hparams import DotDict
+from itertools import zip_longest
 
 # from recipes.umm.models.bestrq import BestRQMelCTC
 from recipes.umm.modules.lit_module import (
@@ -64,13 +65,13 @@ class SemanticModule(BaseContinuousEmbedModule):
             embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_text'], with_sos=with_sos, data_type='text')
             inputs_embeds.append(embeds)
         elif 'style_audio' in conditions:
-            embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_audio'], with_sos=with_sos, data_type='music')
+            embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_audio'].to(self.device), with_sos=with_sos, data_type='music')
             inputs_embeds.append(embeds)
         else:
             # adding SOS token no matter what so that all parameters get used
             inputs_embeds.append(self.input_embedders['mulan'].get_sos_embed(batch_size))
         if 'lyrics_tokens' in conditions:
-            embeds = self.input_embedders['lyrics_tokens'].embed(self.requires, batch['lyrics_tokens'], with_sos=with_sos)
+            embeds = self.input_embedders['lyrics_tokens'].embed(self.requires, batch['lyrics_tokens'].to(self.device), with_sos=with_sos)
             inputs_embeds.append(embeds)
         else:
             inputs_embeds.append(self.input_embedders['lyrics_tokens'].get_sos_embed(batch_size))
@@ -84,11 +85,6 @@ class SemanticModule(BaseContinuousEmbedModule):
 
         inputs_embeds = self.prepare_inputs_embeddings(batch)
         return super().predict(inputs_embeds, num_tokens, temperature)
-
-    @torch.no_grad()
-    def super_predict(self, inputs_embeds, num_tokens, temperature):
-        return super().predict(inputs_embeds, num_tokens, temperature)
-
 
 class SemanticT5Module(BaseContinuousEmbedModule):
     def __init__(
@@ -169,3 +165,11 @@ def process_eos_indexes(semantic_samples, semantic_module: SemanticModule, sampl
         token2wav_rate = int(sample_rate / semantic_frame_rate)
         eos_index_list = ((semantic_samples == eos_padding_id).bool().cumsum(axis=1) == 0).bool().sum(axis=1) * token2wav_rate
     return semantic_samples, eos_index_list
+
+def truncate_wav_to_eos(wavs, eos_index_list):
+    truncated_wavs = []
+    for i, (eos, wav) in enumerate(zip_longest(eos_index_list, wavs)):
+        if eos is not None:
+            wav = wav[:eos]
+        truncated_wavs.append(wav)
+    return truncated_wavs

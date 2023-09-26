@@ -10,16 +10,16 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 
 extra_params:
     num_rounds: 1
-    prompt_path: "/mnt/bn/audio-diffusion/data/google_prompts/text_prompt_collection_20230713.csv"
+    prompt_path: "/mnt/bn/audio-diffusion/data/mixture_prompts/suno100.csv"
     inference_conditions: style_text,lyrics_tokens # style_text|style_audio,lyrics_tokens,vocal_audio|vocal_text,chroma
-    max_items: 20
+    max_items: null
     run_combinations: False
 
     output_dir: ./generated_output/conditional
 
     # Semantic model
     semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
-    semantic_ckpt: "/mnt/bn/audio-diffusion/jt/model_archive/vocalmusic/semantic_model_mulan/semantic_chroma_text_from_scratch_g80_2em3/checkpoints/step=122000-val_accu_0=8.82.ckpt"
+    semantic_ckpt: "/mnt/bn/lyrics-to-song/qq/logs/semantic_model_mulan_text_07B/varlen30_tag3_bs12_07B_6w_v1/checkpoints/step=234000-val_accu_0=21.02.ckpt"
 
     ar_params:
         coarse_duration: 10
@@ -32,8 +32,8 @@ extra_params:
         num_chunks: 1
         diffusion_steps: 25
         schedule_slope: 2.5
-        guidance_scale: 3
-        bf16_portion: 1.0
+        guidance_scale: 2.5
+        bf16_portion: 0.0
 
     # Model Settings
     sample_rate: 24000
@@ -49,7 +49,7 @@ run_opts:
     accelerator: auto
     strategy: auto
     cache_dir: .module_cache/musiclm
-    batch_size: 16
+    batch_size: 8
     num_workers: 8
 
 ################################################################################
@@ -103,6 +103,14 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                 initializer: !name:recipes.musiclm.requires.model_initializer.init_soundstream_decoder
                     cache_dir: !ref <run_opts[cache_dir]>
 
+# separating out additional_callbacks so auto_eval can disable metrics
+additional_callbacks:
+    - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
+    - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
+    - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
+callbacks:
+    - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
+
 trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>
     accelerator: !ref <run_opts[accelerator]>
@@ -112,3 +120,4 @@ trainer: !new:pytorch_lightning.Trainer
     enable_model_summary: True
     strategy: !ref <run_opts[strategy]>
     precision: !ref <run_opts[precision]>
+    callbacks: !apply:operator.add [!ref <additional_callbacks>, !ref <callbacks>]

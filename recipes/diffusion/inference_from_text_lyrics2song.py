@@ -16,48 +16,17 @@ from einops import rearrange, repeat
 import numpy as np
 import torchaudio
 from recipes.diffusion.utils.utils import download_checkpoint
-from recipes.bigmusic.lightning.semantic_modules import SemanticModule, process_eos_indexes
+from recipes.bigmusic.lightning.semantic_modules import SemanticModule, process_eos_indexes, truncate_wav_to_eos
 from recipes.musiclm.requires.mulan.mulan_infer_g4 import (
     create_mulan_model,
     mulan_inference,
 )
 from recipes.diffusion.models.diffusion_model.utils import init_diffusion, run_diffusion
 from recipes.diffusion.models.vocoder_model.utils import init_vocoder
-from recipes.bigmusic.datasets.transforms.lyrics import LyricsTokenTransform
+from recipes.bigmusic.callbacks.save_outputs import save_batch_outputs, save_video
+from recipes.bigmusic.datasets.inference import inference_dataset_from_prompt
+from samantha.utils.hparams import DotDict
 torch.backends.cuda.matmul.allow_tf32 = True
-
-def normalize_text(text):
-    nlp_punctuation = punctuation.replace("'", "")
-    text = text.replace("&", " and ")
-    text = text.replace("/", " ")    
-    return text.translate(str.maketrans("", "", nlp_punctuation))
-
-def rewrite_metadata(metadata, type="Vocal"):        
-    mood = metadata.get('final_mood')
-    genre = metadata.get('final_genre')
-    gender = metadata.get('merge_aed')
-    text = ""
-    if type == "Vocal":
-        text = "A "
-        if mood is not None and mood != 'nan':
-            text += mood.lower() + " "
-        if genre is not None and genre != 'nan':
-            text += genre.lower() + " "
-        text += "song"
-        if gender is not None and gender != 'nan':
-            if 'Female' in gender:
-                text += " with female vocal"
-            elif 'Male' in gender:
-                text += " with male vocal"
-        text += "."
-    elif type == "Instrumental":
-        text = ""
-        if mood is not None and mood != 'nan':
-            text += mood.lower() + " "
-        if genre is not None and genre != 'nan':
-            text += genre.lower() + " "
-        text += "music."
-    return text
 
 def clip(x: Tensor, dynamic_threshold: float = 0.0):
     if dynamic_threshold == 0.0:
@@ -291,9 +260,9 @@ if __name__ == '__main__':
         default=4,
     )
     parser.add_argument(
-        '--input_text_path', 
+        '--input_prompt_path', 
         type=str, 
-        default='../prompts.txt'
+        default='/mnt/bn/audio-diffusion/data/mixture_prompts/suno100.csv'
     )
     parser.add_argument(
         '--output_dir_path', 
@@ -321,9 +290,9 @@ if __name__ == '__main__':
         default='hdfs://harunava/home/byte_speech_sv/weitsung.lu/lyrics2song_30s_ckpts/mulan-step=014000-median_rank_1=160-kaggle.ckpt'
     )
     parser.add_argument(
-        '--lyrics_max_seq_len',
+        '--duration',
         type=int,
-        default=400,
+        default=30,
     )
     parser.add_argument(
         '--semantic_model_path',
@@ -385,10 +354,6 @@ if __name__ == '__main__':
     semantic_module = SemanticModule.load_from_checkpoint(semantic_model_path).to(device).eval()
     semantic_module.requires = { "mulan_infer_fn": mulan_inference, "mulan": mulan_model }
 
-    # lyrics tokenizer
-    lyrics_max_seq_len = semantic_module.extra_params.get("lyrics_max_seq_len", 400)
-    lyrics_tokenizer = LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len=lyrics_max_seq_len, truncate_long_lyrics=True)
-
     # diffusion
     diffusion_model = {}
     diffusion_checkpoint_paths = {}
@@ -410,82 +375,63 @@ if __name__ == '__main__':
         **init_sampler(None, local_rank, cache_dir=asset_path),
         **init_vocoder(REMOTE_PATHS['vocoder_model_path'], local_rank, cache_dir=asset_path)
     }
+    batch_size = args.batch_size
+    duration = args.duration
     sample_rate = 24000
+    lyrics_max_seq_len = semantic_module.extra_params.get("lyrics_max_seq_len", 400)
 
-    # input text. 
-    # TODO: move to a separate file
-
-    style_prompts = [
-        {
-            "final_mood": 'Chill',
-            "final_genre": 'Dream Pop',
-            'merge_aed': 'Female'
-        },
-        {
-            "final_mood": 'relax',
-            "final_genre": 'HipPop',
-            'merge_aed': 'Male'
-        },
-        {
-            "final_mood": '',
-            "final_genre": 'Acoustic country',
-            'merge_aed': 'Male'
-        },
-    ]
-    prompts = [rewrite_metadata(style_prompt, type="Vocal") for style_prompt in style_prompts]
-    
-    lyrics = [
-        "won't you talk to me texas, let me hear them drawl, i spent my last five dollars on this one long distance call won't you talk to me texas i got these homesick blues tell me i can come on home to you",
-        "it may be factual it may be cool ungain love everybody plays the fool how can you help it when the music starts to play and your ability to reason is swept away oh heaven",
-        " i see the crystal raindrops fall and the beauty of it all is when the sun comes shining through to make those rainbows in my mind when i think of you sometime and i wanna spend some time with you"
-        ] 
-    # lyrics = [
-    #     "Hey Jude, don't make it bad. Take a sad song and make it better."
-    # ] * 3
-    lyrics = []
-    prompts = []
-    import csv
-    csv_file = '/mnt/bn/audio-diffusion/data/mixture_prompts/multi-tag-30s.csv'
-    with open(csv_file, newline='') as csvfile:
-        csvreader = csv.reader(csvfile)
-        next(csvreader)
-        for row in csvreader:
-            prompts.append(row[0])
-            lyrics.append(row[1])
-    raw_lyrics = [normalize_text(l) for l in lyrics]
-    lyrics = [{'lyrics': normalize_text(l)} for l in lyrics]
-    lyrics_tokens = [lyrics_tokenizer(lyric)['lyrics_tokens'] for lyric in lyrics]
-    lyrics_tokens = torch.stack(lyrics_tokens).to(device)
+    prompt_path = args.input_prompt_path
+    if prompt_path is None:
+        # [Example] Input prompt use case 
+        style_prompt_metadata = [
+            {
+                "final_mood": 'Chill',
+                "final_genre": 'Dream Pop',
+                'merge_aed': 'Female'
+            },
+            {
+                "final_mood": 'relax',
+                "final_genre": 'HipPop',
+                'merge_aed': 'Male'
+            },
+            {
+                "final_mood": '',
+                "final_genre": 'Acoustic country',
+                'merge_aed': 'Male'
+            },
+        ]
+        lyrics = [
+            "won't you talk to me texas, let me hear them drawl, i spent my last five dollars on this one long distance call won't you talk to me texas i got these homesick blues tell me i can come on home to you",
+            "it may be factual it may be cool ungain love everybody plays the fool how can you help it when the music starts to play and your ability to reason is swept away oh heaven",
+            " i see the crystal raindrops fall and the beauty of it all is when the sun comes shining through to make those rainbows in my mind when i think of you sometime and i wanna spend some time with you"
+            ]
+        prompts = { 'metadata': style_prompt_metadata, 'lyrics': lyrics }
+        inference_dataset = inference_dataset_from_prompt(prompts, conditions="style_text,lyrics_tokens", batch_size=batch_size, lyrics_max_seq_len=lyrics_max_seq_len)
+    else:
+        inference_dataset = inference_dataset_from_prompt(prompt_path, conditions="style_text,lyrics_tokens", batch_size=batch_size, lyrics_max_seq_len=lyrics_max_seq_len)
 
     # inference
     start_time = time()
     diffusion_params = vars(args)
+    total_items = 0
     with torch.no_grad():
-        for i in range(0, len(prompts), args.batch_size):
-            print(f"generating {i} to {i + args.batch_size}")
+        for batch_idx, batch in enumerate(inference_dataset):
+            print(f"generating {batch_idx}")
 
             # Process the input lyrics and style prompt
-            _lyrics_tokens = lyrics_tokens[i:(i + args.batch_size)]
-            _raw_lyrics = raw_lyrics[i:(i + args.batch_size)]
-            _prompts = prompts[i:(i + args.batch_size)]
-
-            inputs_embeds = semantic_module.prepare_inputs_embeddings(batch={'conditions': "style_text,lyrics_tokens", 'lyrics_tokens': _lyrics_tokens, 'style_text': _prompts})
-            semantic_samples = semantic_module.super_predict(inputs_embeds, 750 + 125*(args.num_chunks - 1), 1.0)
+            hp = DotDict({ "duration": duration, "semantic_temperature": 1 })
+            semantic_samples = semantic_module.predict(batch, hp)
 
             semantic_samples, eos_index_list = process_eos_indexes(semantic_samples, semantic_module, sample_rate=sample_rate)
             diffusion_start = time()
             wavs_g = run_diffusion(requires, semantic_samples, params=diffusion_params)
             print('d ', time() - diffusion_start)
+            wavs = truncate_wav_to_eos(wavs_g, eos_index_list)
 
-            for wav_g, ly, text, eos in zip(wavs_g, _raw_lyrics, _prompts, eos_index_list):
-                if wav_g.dim() == 1:
-                    wav_g = wav_g.unsqueeze(0)
-                if eos is not None:
-                    wav_g = wav_g[:, :eos]
+            outputs = { "generated_audio": wavs }
+            output_dir = args.output_dir_path
+            save_batch_outputs(outputs, batch, output_dir=output_dir, sample_rate=sample_rate, index_offset=total_items)
+            total_items += len(wavs)
+    save_video(output_dir, output_dir)
 
-                torchaudio.save(
-                    f'{args.output_dir_path}/{text[:50]}_{ly[:200]}.wav',
-                    wav_g.cpu(),
-                    sample_rate,
-                )
     print(f'Inference RTF: {(time() - start_time)/(len(prompts)*10)}')

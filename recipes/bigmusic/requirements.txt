@@ -4,3 +4,4 @@ rotary_embedding_torch
 transformers
 phonemizer
 ffmpeg
+fsspec>=2023.9.1 # fix use_pipe=False for parquet files
