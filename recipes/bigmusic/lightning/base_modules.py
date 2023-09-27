@@ -49,7 +49,9 @@ class BaseModule(pl.LightningModule):
 
     def load_from_pretrained(self, pretrained_path=None):
         print('Loading pre-trained model from checkpoint', pretrained_path)
-        state_dict = torch.load(pretrained_path, map_location='cpu')['state_dict']
+        state_dict = torch.load(
+            pretrained_path, map_location=torch.device("cpu")
+        )['state_dict']
         model_state_dict = self.state_dict()
         for k in state_dict:
             if k in model_state_dict:
@@ -170,7 +172,7 @@ class BaseContinuousEmbedModule(BaseModule):
     def prepare_inputs_embeddings(self, batch):
         raise NotImplementedError()
 
-    def prepare_training_inputs(self, batch):        
+    def prepare_training_inputs(self, batch, return_all=False):
         target_ids = self.target_embedder.tokenize(self.requires, batch['target_audio'], with_sos=False, with_eos=False)
         batch_size = target_ids.size(0)
         inputs_embeds = self.prepare_inputs_embeddings(batch)
@@ -187,27 +189,67 @@ class BaseContinuousEmbedModule(BaseModule):
                 "inputs_embeds": torch.cat([sos_embeds, target_embeds], dim=1),
                 "encoder_hidden_states": inputs_embeds
             }, torch.cat([target_ids, eos_ids], dim=1)
-        input_embeds = torch.cat([inputs_embeds, sos_embeds, target_embeds], dim=1)
-        target_ids = torch.cat([target_ids, eos_ids], dim=1)        
-        return {"inputs_embeds":  input_embeds}, target_ids
+        model_inputs = {
+            "inputs_embeds": torch.cat([inputs_embeds, sos_embeds, target_embeds], dim=1)
+        }
+        target_ids = torch.cat([target_ids, eos_ids], dim=1)
+        if return_all:
+            return model_inputs, target_ids, inputs_embeds, sos_embeds, target_embeds
+        else:
+            return model_inputs, target_ids
 
     # Prediction code
     def sample_logits(self, i, logits, temp, mode):
         return sample(logits, temp=temp, mode=mode)
 
     @torch.no_grad()
-    def predict(self, inputs_embeds, num_tokens, temperature=1, sample_mode="gumbel", tqdm_name=None):
-        tqdm_name = self.__class__.__name__ if tqdm_name is None else tqdm_name
-        batch_size = inputs_embeds.size(0)
-        sos_embeds = self.target_embedder.get_sos_embed(batch_size)
+    def predict(
+        self,
+        inputs_embeds,
+        num_tokens,
+        temperature=1,
+        sample_mode="gumbel",
+        tqdm_name=None,
+        beam=1,
+        ref_samples=None,
+        rl_training=False,
+    ):
+        """
+        Input:
+            beam: inference beam
+            [optional] ref_samples: (batch_size, seq_len)
+                If specified, add these samples to the beam. Beam size during generation
+                will be reduced by 1 so the final returned shape stays unchanged.
 
-        if self.use_cross_attn:
-            model_input = { 
-                "inputs_embeds": sos_embeds,
-                "encoder_hidden_states": inputs_embeds
-            }
-        else:
-            model_input = { "inputs_embeds": torch.cat([inputs_embeds, sos_embeds], dim=1) }
+        Return a tuple of:
+            output_tokens: (batch_size * beam, seq_len)
+            [if beam > 1]
+                inputs_embeds: (batch_size * beam, seq_len, dim)
+                sos_embeds: (batch_size * beam, 1, dim)
+        """
+        tqdm_name = self.__class__.__name__ if tqdm_name is None else tqdm_name
+        batch_size, seq_len, _ = inputs_embeds.size()
+        if ref_samples is not None:
+            assert ref_samples.size(0) == batch_size
+            assert ref_samples.size(1) == num_tokens
+            assert beam > 1, "Can't use beam size 1 with ref_samples!"
+            beam = beam - 1
+        # (b, s, d) --> (b * beam, s, d)
+        inputs_embeds = inputs_embeds.repeat(1, beam, 1).reshape(batch_size * beam, seq_len, -1)
+        sos_embeds = self.target_embedder.get_sos_embed(batch_size * beam)
+
+        def _init_model_input():
+            if self.use_cross_attn:
+                return { 
+                    "inputs_embeds": sos_embeds,
+                    "encoder_hidden_states": inputs_embeds
+                }
+            else:
+                return { "inputs_embeds": torch.cat([inputs_embeds, sos_embeds], dim=1) }
+
+        model_input = _init_model_input()
+        if rl_training:
+            rl_model_input = _init_model_input()
         
         output_tokens = None
         past_key_values = None
@@ -224,9 +266,34 @@ class BaseContinuousEmbedModule(BaseModule):
             logits = logits[:, -1:, :] # only predicting on last logit.
 
             predict_token = self.sample_logits(i, logits, temperature, sample_mode)
-            model_input['inputs_embeds'] = self.target_embedder.embedder(predict_token)
+            predict_token_emb = self.target_embedder.embedder(predict_token)
+            model_input['inputs_embeds'] = predict_token_emb
+            if rl_training and i < num_tokens - 1:
+                rl_model_input["inputs_embeds"] = torch.cat(
+                    [rl_model_input["inputs_embeds"], predict_token_emb],
+                    dim=1,
+                )
             output_tokens = torch.cat([output_tokens, predict_token], dim=1) if output_tokens is not None else predict_token
-        return output_tokens
+
+        # Add ref_samples to generation beam
+        if ref_samples is not None:
+            # (b * beam, s, d) -> (b, s, d) -> (b * (beam + 1), s, d)
+            inputs_embeds = inputs_embeds.reshape(batch_size, beam, seq_len, -1)[:, 0, :, :].repeat(
+                1, beam + 1, 1
+            ).reshape(batch_size * (beam + 1), seq_len, -1)
+            sos_embeds = self.target_embedder.get_sos_embed(batch_size * (beam + 1))
+            # (b * beam, s) -> (b * (beam + 1), s)
+            output_tokens = torch.cat(
+                [
+                    ref_samples.unsqueeze(1),
+                    output_tokens.reshape(batch_size, beam, -1),
+                ],
+                dim=1,
+            ).reshape(batch_size * (beam + 1), -1)
+        if rl_training:
+            return output_tokens, rl_model_input
+        else:
+            return output_tokens
 
     @torch.no_grad()
     def predict_slice(self, inputs_embeds, input_framerate, output_framerate, target_duration, slice_duration, stride_duration, temperature=1, sample_mode="gumbel", tqdm_name=None):

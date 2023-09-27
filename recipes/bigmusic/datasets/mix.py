@@ -216,6 +216,7 @@ def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
         "style_text": style_text,
         # "style_tokens": torch.stack(style_tokens),
         "normalized_text": normalized_text,
+        "lyrics": normalized_text,
         "lyrics_tokens": torch.stack(lyrics_tokens),
         "speaker_id": torch.stack(speaker_id),
         "conditions": "style_text,lyrics_tokens",
@@ -856,6 +857,7 @@ class MixWebDataModule(DataModule):
         include_intro: bool = False,
         max_seg_per_track: int = -1,
         exclude_licenses: List[str] = ["C"],
+        use_pipe: bool = False,
     ):
         buckets_samples = list(map(lambda i: i * sample_rate, buckets_in_sec))
         maximum_bucket_size = batch_size * sample_rate * buckets_in_sec[-1]
@@ -871,7 +873,7 @@ class MixWebDataModule(DataModule):
                 buckets=buckets_samples,
                 dynamic_batch=False,
                 batch_size=batch_size,
-                length_fn=lambda x: x["audio"].shape[-1],  
+                length_fn=lambda x: x["audio"].shape[-1],
             )
         mcc_vocal_val_index = "/mnt/bn/audio-diffusion/data/vocal_mcc_npy/lyrics_npy_url2idx_val.txt"            
         mcc_instrumental_index = "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/npy_url2idx.txt"
@@ -907,7 +909,7 @@ class MixWebDataModule(DataModule):
             include_intro=include_intro,
             max_seg_per_track=max_seg_per_track,
             exclude_licenses=exclude_licenses,
-            use_pipe=False,
+            use_pipe=use_pipe,
             handler=wds.reraise_exception,
         )
         # mcc_instrumental = MCCInstrumentalDataset(
@@ -943,7 +945,7 @@ class MixWebDataModule(DataModule):
                 include_intro=include_intro,
                 max_seg_per_track=1,
                 exclude_licenses=["B", "C"],
-                use_pipe=False,
+                use_pipe=use_pipe,
                 handler=wds.reraise_exception,                
             ),
             pipeline=[{"compose": [self.bucketize]}],

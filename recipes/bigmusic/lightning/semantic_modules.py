@@ -1,17 +1,36 @@
 from recipes.bigmusic.lightning.base_modules import BaseContinuousEmbedModule
 from recipes.bigmusic.lightning.embedding_modules import (
-    MulanEmbedder, LyricsTokenEmbedder, WavToVecTokenEmbedder, 
-    MetadataT5TokenEmbedder, SpeakerEmbedder, BestRQTokenEmbedder
+    MulanEmbedder,
+    LyricsTokenEmbedder,
+    WavToVecTokenEmbedder,
+    MetadataT5TokenEmbedder,
+    SpeakerEmbedder,
+    BestRQTokenEmbedder,
+)
+from recipes.bigmusic.utils.metrics_asr import (
+    wav2lyrics,
+    edit_distance,
+    remove_punc_case,
 )
 import torch
 from tqdm.auto import tqdm
 import torch.nn as nn
+import torch.nn.functional as F
 from samantha.utils.hparams import DotDict
+from recipes.musiclm.lightning.modules import MaskedCrossEntropy
+from recipes.musiclm.transforms.audio import to_energy
+from collections import defaultdict
 from itertools import zip_longest
 
 # from recipes.umm.models.bestrq import BestRQMelCTC
 from recipes.umm.modules.lit_module import (
-    BestRQMelCTC, Stage3)
+    BestRQMelCTC,
+    Stage3,
+)
+
+
+DEFAULT_REWARDS = {"mulan_sim": 1.0, "wer": 1.0}
+
 
 class SemanticModule(BaseContinuousEmbedModule):
     def __init__(
@@ -78,13 +97,346 @@ class SemanticModule(BaseContinuousEmbedModule):
         return torch.cat(inputs_embeds, dim=1)
 
     @torch.no_grad()
-    def predict(self, batch, hp):
+    def predict(self, batch, hp, beam=1, ref_samples=None):
         frame_rate = self.extra_params.semantic_frame_rate
         num_tokens = hp.duration * frame_rate
         temperature = hp.semantic_temperature
 
         inputs_embeds = self.prepare_inputs_embeddings(batch)
-        return super().predict(inputs_embeds, num_tokens, temperature)
+        return super().predict(
+            inputs_embeds,
+            num_tokens,
+            temperature=temperature,
+            beam=beam,
+            ref_samples=ref_samples,
+        )
+
+    @torch.no_grad()
+    def super_predict(self, inputs_embeds, num_tokens, temperature, **kwargs):
+        return super().predict(inputs_embeds, num_tokens, temperature, **kwargs)
+
+
+class SemanticRLModule(SemanticModule):
+    def __init__(
+        self,
+        model_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=MaskedCrossEntropy,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+        decoder_type = self.extra_params.get("decoder_type", "diffusion")
+        if decoder_type == "diffusion":
+            self.decoder_fn = self.run_diffusion
+        else:
+            raise ValueError(f"Unsupported decoder type: {decoder_type}")
+        self.val_outputs = dict()
+
+    def _shared_step(self, batch, mode):
+        wavs_gt = batch["target_audio"]
+        if wavs_gt.dim() == 2:
+            wavs_gt = wavs_gt.unsqueeze(1)
+        with torch.autocast(device_type="cuda", enabled=False):
+            model_inputs, target_ids, inputs_embeds, _, _ = self.prepare_training_inputs(batch, return_all=True)
+        B, T = target_ids.size()
+        beam = self.extra_params.beam_size
+
+        # CE loss
+        logits = self.model(**model_inputs)
+        if isinstance(logits, dict):
+            logits = logits["logits"]
+        elif isinstance(logits, tuple):
+            logits = logits[0]
+        x = logits[:, -T:, :]
+        ce_loss = self.criterion(x, target_ids)
+        accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
+
+        # Sequence loss
+        # Inference
+        ref_samples = None
+        if self.extra_params.add_ref_to_beam and mode == "training":
+            ref_samples = target_ids
+        num_tokens = self.extra_params.duration * self.extra_params.semantic_frame_rate
+        with torch.autocast(device_type="cuda", enabled=False):
+            sampled_semantic_tokens, model_inputs = self.super_predict(
+                inputs_embeds=inputs_embeds.float(),
+                num_tokens=num_tokens,
+                temperature=self.extra_params.semantic_temperature,
+                sample_mode=self.extra_params.sample_mode,
+                beam=beam,
+                ref_samples=ref_samples,
+                rl_training=True,
+            )
+            sampled_semantic_tokens_processed, eos_index_list = process_eos_indexes(
+                sampled_semantic_tokens,
+                self,
+                sample_rate=self.extra_params.sample_rate,
+            )
+        # Compute rewards
+        rewards, sampled_audio, reward_breakdown = self.get_reward({
+            "sampled_semantic_tokens": sampled_semantic_tokens_processed,
+            "eos_index_list": eos_index_list,
+            "target_audio": wavs_gt,
+            "batch_size": B,
+            "beam_size": beam,
+            "lyrics": batch.get("lyrics"),
+        })
+        # Compute sequence probs
+        seq_logits = self.model(**model_inputs)
+        if isinstance(seq_logits, dict):
+            seq_logits = seq_logits["logits"]
+        elif isinstance(seq_logits, tuple):
+            seq_logits = seq_logits[0]
+        seq_probs1 = F.log_softmax(seq_logits[:, -num_tokens:, :], dim=-1)
+        seq_probs2 = torch.gather(
+            seq_probs1, -1, sampled_semantic_tokens.unsqueeze(2)
+        ).squeeze(2)    # (B * beam, T)
+        # Only add up non-eos probs
+        if len(eos_index_list) > 0:
+            token2wav_rate = self.extra_params.sample_rate // self.extra_params.semantic_frame_rate
+            seq_len = eos_index_list // token2wav_rate + 1  # need to add 1 to include <eos>
+            for i in range(len(eos_index_list)):
+                seq_probs2[i, seq_len[i]:] = 0
+            seq_probs2 = (seq_probs2.sum(dim=-1) / seq_len).reshape(B, beam)
+        else:
+            seq_probs2 = seq_probs2.reshape(B, beam, -1).mean(dim=-1)
+        seq_probs3 = F.softmax(seq_probs2, dim=-1)
+        seq_loss = -1 * (rewards * seq_probs3).sum(dim=-1).mean()
+        skip = torch.any(torch.isnan(seq_probs1)) or torch.any(torch.isnan(seq_probs3))
+        if skip:
+            print(f"Skipped samples: {sampled_semantic_tokens}")
+        return (
+            ce_loss,
+            accu,
+            seq_loss,
+            wavs_gt,
+            sampled_audio,
+            rewards,
+            reward_breakdown,
+            seq_probs3,
+            skip,
+        )
+
+    def training_step(self, batch, batch_idx):
+        ce_loss, accu, seq_loss, _, _, _, reward_breakdown, seq_probs, skip = self._shared_step(
+            batch=batch,
+            mode="training",
+        )
+        stats = {
+            "ce_loss/train": ce_loss,
+            "accuracy/train": accu,
+            "seq_loss/train": seq_loss,
+            "seq_probs/train_max_mean": seq_probs.max(dim=-1).values.mean(),
+            "seq_probs/train_max_std": seq_probs.max(dim=-1).values.std(),
+        }
+        for rw_type, rw in reward_breakdown.items():
+            stats.update(
+                {
+                    f"reward_{rw_type}/train_avg_mean": rw.mean(dim=-1).mean(),
+                    f"reward_{rw_type}/train_avg_std": rw.mean(dim=-1).std(),
+                    f"reward_{rw_type}/train_intra_beam_std": rw.std(dim=-1).mean(),
+                    f"reward_{rw_type}/train_max_mean": rw.max(dim=-1).values.mean(),
+                    f"reward_{rw_type}/train_max_std": rw.max(dim=-1).values.std(),
+                }
+            )
+        self.log_dict(stats, prog_bar=True, sync_dist=True)
+        if skip:
+            print("Skipping update due to NaN...")
+            return None
+        else:
+            ce_weight = self.extra_params.ce_weight
+            seq_weight = self.extra_params.seq_weight
+            return ce_loss * ce_weight + seq_loss * seq_weight
+
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
+        if dataloader_idx not in self.val_outputs:
+            self.val_outputs[dataloader_idx] = []
+        self.val_outputs[dataloader_idx].append(
+            self._shared_step(
+                batch=batch,
+                mode="validation",
+            )
+        )
+
+    def on_validation_epoch_end(self):
+        max_log_samples = self.extra_params.get("log_num_val_samples", None)
+        max_log_beam_samples = self.extra_params.get("log_num_val_beam_samples", None)
+        sample_count = 0
+        for dataloader_idx, outputs in self.val_outputs.items():
+            prefix = f"val_{dataloader_idx}"
+            stats = defaultdict(int)
+            for batch_idx, (ce_l, a, seq_l, wavs_gt, wavs_sampled, rewards, reward_breakdown, seq_probs, _) in enumerate(outputs):
+                stats[f"ce_loss/{prefix}"] += ce_l
+                stats[f"accuracy/{prefix}"] += a
+                stats[f"seq_loss/{prefix}"] += seq_l
+                stats[f"seq_probs/{prefix}_max_mean"] += seq_probs.max(dim=-1).values.mean()
+                stats[f"seq_probs/{prefix}_max_std"] += seq_probs.max(dim=-1).values.std()
+                for rw_type, rw in reward_breakdown.items():
+                    stats[f"reward_{rw_type}/{prefix}_avg_mean"] += rw.mean(dim=-1).mean()
+                    stats[f"reward_{rw_type}/{prefix}_avg_std"] += rw.mean(dim=-1).std()
+                    stats[f"reward_{rw_type}/{prefix}_intra_beam_std"] += rw.std(dim=-1).mean()
+                    stats[f"reward_{rw_type}/{prefix}_max_mean"] += rw.max(dim=-1).values.mean()
+                    stats[f"reward_{rw_type}/{prefix}_max_std"] += rw.max(dim=-1).values.std()
+                for i in range(len(wavs_gt)):
+                    if max_log_samples and sample_count >= max_log_samples: 
+                        break
+                    sample_count += 1
+
+                    self.logger.experiment.add_audio(
+                        f"validation/sampled_{dataloader_idx}_{batch_idx}_{i}_target",
+                        wavs_gt[i],
+                        self.global_step,
+                        sample_rate=self.extra_params.sample_rate,
+                    )
+                    # Log highest reward first
+                    indices = torch.argsort(rewards[i], descending=True).cpu().tolist()
+                    for j in range(len(indices)):
+                        idx = indices[j]
+                        if max_log_beam_samples and j >= max_log_beam_samples:
+                            break
+                        self.logger.experiment.add_audio(
+                            f"validation/sampled_{dataloader_idx}_{batch_idx}_{i}_{j}",
+                            wavs_sampled[i][idx],
+                            self.global_step,
+                            sample_rate=self.extra_params.sample_rate,
+                        )
+                        log_text = ""
+                        for rw_type, rw in reward_breakdown.items():
+                            log_text += f"{rw_type}={rw[i][idx].item():.2f} "
+                        self.logger.experiment.add_text(
+                            f"validation/sampled_{dataloader_idx}_{batch_idx}_{i}_{j}",
+                            log_text,
+                            self.global_step,
+                        )
+            for key in stats:
+                stats[key] /= len(outputs)
+            self.log_dict(stats, prog_bar=True, sync_dist=True)
+            self.val_outputs[dataloader_idx] = []
+
+    @torch.no_grad()
+    def run_diffusion(self, items):
+        sampler = self.requires["sampler"]
+        diffusion = self.requires["diffusion"]
+        vocoder = self.requires["vocoder"]
+        semantic_tokens = items["sampled_semantic_tokens"]
+        eos_index_list = items["eos_index_list"]
+        # diffusion sampling
+        pred_emb = sampler(
+            model=diffusion,
+            semantic_context=semantic_tokens,
+            num_items=semantic_tokens.shape[0],
+            num_chunks=1,
+            num_steps=self.extra_params.diffusion_steps,
+            bf16_portion=self.extra_params.bf16_portion,
+            start=None,
+            show_progress=False,
+            angle_schedule="linear",
+            schdeule_slope=2.5,
+            classifier_free_guidance=3.0,
+        ).detach().float()
+        # torch.interpolate causes OOM for large batch sizes > 24. chunking to batch of 8 instead.
+        # If you see this error, lower batch size:
+        # RuntimeError: Expected output.numel() <= std::numeric_limits<int32_t>::max() to be true, but got false.
+        wavs = torch.cat([vocoder.decode(c).detach() for c in torch.split(pred_emb, 8)])
+        # Zero out samples after <eos>
+        if len(eos_index_list) > 0:
+            for i in range(len(eos_index_list)):
+                wavs[i, :, eos_index_list[i]:] = 0
+        return wavs
+
+    @torch.no_grad()
+    def get_reward(self, items):
+        b = items["batch_size"]
+        beam = items["beam_size"]
+        sampled_audio = self.decoder_fn(items).float()
+        items["sampled_audio"] = sampled_audio
+        reward = 0.0
+        reward_breakdown = {}
+        for rw_type, rw_weight in self.extra_params.get("rewards", DEFAULT_REWARDS).items():
+            rw = self._get_reward(items, rw_type).reshape(b, beam)
+            reward += rw_weight * rw
+            reward_breakdown[rw_type] = rw
+        return reward, sampled_audio.reshape(b, beam, -1), reward_breakdown
+
+    @torch.no_grad()
+    def _get_reward(self, items, reward_type):
+        sampled_audio = items["sampled_audio"]
+        target_audio = items["target_audio"]
+        b = items["batch_size"]
+        beam = items["beam_size"]
+        if reward_type == "mulan_sim":
+            if self.extra_params.use_non_vocal_mulan:
+                sampled_mulan_embeds = self.requires["non_vocal_mulan_infer_fn"](
+                    model=self.requires["non_vocal_mulan"],
+                    music=sampled_audio.squeeze(1),
+                    device=sampled_audio.device,
+                )
+                mulan_embeds = self.requires["non_vocal_mulan_infer_fn"](
+                    model=self.requires["non_vocal_mulan"],
+                    music=target_audio.squeeze(1),
+                    device=target_audio.device,
+                )
+            else:
+                sampled_mulan_embeds = self.input_embedders["mulan"].embed(
+                    self.requires,
+                    sampled_audio.squeeze(1),
+                    data_type="music",
+                ).squeeze(1)
+                mulan_embeds = self.input_embedders["mulan"].embed(
+                    self.requires,
+                    target_audio.squeeze(1),
+                    data_type="music",
+                ).squeeze(1)
+            # (b, d) --> (b * beam, d)
+            mulan_embeds = mulan_embeds.repeat(1, beam).reshape(b * beam, -1)
+            # Compute cosine similarity, we want to maximize this
+            return F.cosine_similarity(sampled_mulan_embeds, mulan_embeds)
+        elif reward_type == "wer":
+            eos_index_list = items["eos_index_list"]
+            lyrics, _ = wav2lyrics(
+                sampled_audio,
+                sample_lengths=None if len(eos_index_list) == 0 else eos_index_list,
+                sr=self.extra_params.sample_rate,
+                device_id=self.local_rank,
+                do_itn=self.extra_params.use_itn_asr,
+            )
+            wer = torch.zeros(b * beam).to(sampled_audio.device)
+            if len(lyrics) != sampled_audio.size(0):
+                # This sometimes happens, not sure why
+                print(f"lyrics: len={len(lyrics)} (expected {sampled_audio.size(0)}), content={lyrics}")
+            else:
+                for i in range(b):
+                    ref = remove_punc_case("" if items["lyrics"] is None else items["lyrics"][i])
+                    for j in range(beam):
+                        idx = i * beam + j
+                        hyp = remove_punc_case(lyrics[idx])
+                        if ref != "" and hyp != "":
+                            # Cap WER at 100% for more stable range
+                            wer[idx] = min(1.0, edit_distance(ref, hyp).edits() / len(ref))
+                        elif (ref == "" and hyp != "") or (ref != "" and hyp == ""):
+                            # Default to 100% WER
+                            wer[idx] = 1.0
+            # Return negative WER, we want to maximize this
+            return -1 * wer
+        elif reward_type == "energy_std":
+            # Compute negative relative energy std deviation, we want to maximize this
+            energy = to_energy(sampled_audio, int(self.extra_params.sample_rate * 0.1))
+            neg_rel_std = -1 * energy.std(dim=-1) / energy.mean(dim=-1)
+            # Clip relative std to maintain loss scale
+            return torch.clamp(neg_rel_std, min=-1, max=0)
+        else:
+            raise ValueError(f"Unknown reward type: {reward_type}")
+
 
 class SemanticT5Module(BaseContinuousEmbedModule):
     def __init__(

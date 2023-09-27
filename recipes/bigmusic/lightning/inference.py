@@ -71,6 +71,8 @@ class SemanticInferenceModule(pl.LightningModule):
             'generated_audio': wavs,
             'generated_audio_tensor': raw_wav_output
         }
+
+
 class GTInferenceModule(pl.LightningModule):
     def __init__(
         self,

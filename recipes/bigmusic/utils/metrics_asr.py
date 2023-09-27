@@ -2,10 +2,10 @@ import json
 import io
 import os
 import torchaudio
+import re
 
 import time
 from dataclasses import dataclass
-import os
 
 PYPETREL_LIB_FOUND = False
 try:
@@ -148,3 +148,7 @@ def edit_distance(seq1, seq2):
         dnew, dold = dold, dnew
 
     return dold[-1]
+
+
+def remove_punc_case(text):
+    return re.sub("[.,!?]", "", text).lower()

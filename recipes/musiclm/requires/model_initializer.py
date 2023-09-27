@@ -28,7 +28,7 @@ def load_torch_script_module(module_path, device):
     return module
 
 
-def init_mulan(hpath, local_rank, cache_dir=None, version="149"):
+def init_mulan(hpath, local_rank, cache_dir=None, version="149", prefix=""):
     if version in ["149"]:
         from .mulan.mulan_infer_149 import (
             create_mulan_model,
@@ -72,17 +72,17 @@ def init_mulan(hpath, local_rank, cache_dir=None, version="149"):
                 if not hh.get(hpath, local_path):
                     raise ConnectionError(f"Cannot retrieve file from {hpath}.")
             return {
-                "mulan": create_mulan_model(local_path, device=device),
-                "mulan_infer_fn": mulan_inference,
-                "mulan_rvq_fn": mulan_rvq_indexs,
+                f"{prefix}mulan": create_mulan_model(local_path, device=device),
+                f"{prefix}mulan_infer_fn": mulan_inference,
+                f"{prefix}mulan_rvq_fn": mulan_rvq_indexs,
             }
     else:
         local_path = hpath
         with local_zero_first():
             return {
-                "mulan": create_mulan_model(local_path, device=device),
-                "mulan_infer_fn": mulan_inference,
-                "mulan_rvq_fn": mulan_rvq_indexs,
+                f"{prefix}mulan": create_mulan_model(local_path, device=device),
+                f"{prefix}mulan_infer_fn": mulan_inference,
+                f"{prefix}mulan_rvq_fn": mulan_rvq_indexs,
             }
 
 
