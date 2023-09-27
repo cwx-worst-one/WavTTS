@@ -118,7 +118,7 @@ pl_module: !new:recipes.umm.modules.lit_module.Stage3
     extra_params: !ref <extra_params>
     required_modules:
         pretrained:
-            ckpt_path: "hdfs:///home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage2_zh_dw1-1-0_tts_chinese_frontend_model/checkpoints/step=040000.ckpt"
+            ckpt_path: "hdfs:///home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage2_zh_dw1-1-0_tts_chinese_frontend_model/checkpoints/step=030000.ckpt"
             init_fn: !name:recipes.umm.requires.model_initializer.init_pretrained
             cache_dir: !ref <run_opts[cache_dir]>
 

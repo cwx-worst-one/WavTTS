@@ -9,7 +9,7 @@ import numpy as np
 try:
     from sami_tts_api.engine import TtsEngine, generate_tts_config
 except Exception as e:
-    print(f"Failed loading sami_tts_api: {e}")
+    print(f"[Warning] Failed loading sami_tts_api: {e}")
 
 import contextlib
 

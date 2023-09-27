@@ -77,15 +77,14 @@ config: !new:recipes.umm.models.config.UMMConfig
     feature_cmvn: !ref <extra_params[feature_cmvn]>
     sample_rate: !ref <extra_params[sample_rate]>
     n_mels: !ref <extra_params[n_mels]>
-    add_chroma: False
+    add_chroma: True
     n_chroma: !ref <extra_params[n_chroma]>
     n_fft: !ref <extra_params[n_fft]>
     win_length: !ref <extra_params[win_length]>
     hop_length: !ref <extra_params[hop_length]>
     hidden_size: 1024
     intermediate_size: 4096
-    num_pre_layers: 12
-    num_post_layers: 12
+    num_hidden_layers: 24
     num_attention_heads: 8
     max_source_positions: 750
     add_vq: False

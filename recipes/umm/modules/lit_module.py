@@ -11,7 +11,10 @@ from pytorch_lightning.profilers import PassThroughProfiler
 from tqdm import tqdm
 from transformers import BertTokenizer, Wav2Vec2PhonemeCTCTokenizer
 
-from recipes.datasets.mcc.sami_tokenizer import SamiTokenizer
+try:
+    from recipes.datasets.mcc.sami_tokenizer import SamiTokenizer
+except Exception as e:
+    print(f"[Warning] Failed loading sami_tts_api: {e}")
 from recipes.musiclm.inference.utils import sample
 from recipes.umm.models.utils import clip_grad_value_, mel_spectrogram_torch
 from recipes.umm.modules.criterion_vocoder import (
