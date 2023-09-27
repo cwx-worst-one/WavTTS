@@ -49,7 +49,7 @@ run_opts:
     accelerator: auto
     strategy: auto
     cache_dir: .module_cache/musiclm
-    batch_size: 16
+    batch_size: 48
     num_workers: 8
 
 ################################################################################

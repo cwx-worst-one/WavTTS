@@ -46,6 +46,8 @@ class SemanticInferenceModule(pl.LightningModule):
             self.decoding_fn = run_2ar
             required_modules.update(self.hparams.required_modules['ar_modules'])
             self.decoding_params = DotDict({ **self.extra_params, **extra_params['ar_params'] })
+        else:
+            raise ValueError(f"Unhandled type: {self.extra_params.token2wav_type}")
         self.load_required_modules(required_modules)
 
     def load_required_modules(self, required_modules):
@@ -89,6 +91,8 @@ class GTInferenceModule(pl.LightningModule):
             self.decoding_fn = run_2ar
             required_modules.update(self.hparams.required_modules['ar_modules'])
             self.decoding_params = DotDict({ **self.extra_params, **extra_params['ar_params'] })
+        else:
+            raise ValueError(f"Unhandled type: {self.extra_params.token2wav_type}")
 
         if self.extra_params.semantic_type == 'bestrq':
             required_modules.update(self.hparams.required_modules['bestrq_modules'])

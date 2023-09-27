@@ -29,8 +29,7 @@ fi
 pip3 install ./recipes/soundstream/torch-museval
 
 sudo apt update
-sudo apt install espeak -y
-sudo apt install ffmpeg -y
+sudo apt install espeak ffmpeg zip -y
 pip3 install -qr ./recipes/bigmusic/requirements.txt
 
 sh launch.sh $@

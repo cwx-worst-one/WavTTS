@@ -27,6 +27,10 @@ class SaveOutputsCallback(pl.Callback):
         self.total_items += outputs['generated_audio_tensor'].shape[0]
     
 def format_lyrics_and_style(style_text, lyrics=None):
+    if style_text is None and lyrics is None: # gt case
+        return ""
+    if style_text is None: # dry vocal case
+        return format_name(lyrics)
     if lyrics is None:
         return format_name(style_text) # instrumental use case
     lyrics_formated = slugify(lyrics) # this function was already there for MusicLM

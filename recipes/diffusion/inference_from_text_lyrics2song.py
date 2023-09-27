@@ -132,7 +132,8 @@ class ARVSampler(nn.Module):
                 diffusion_model = model
 
             # model prediction
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=enabled):
+            dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
+            with torch.autocast(device_type="cuda", dtype=dtype, enabled=enabled):
                 v_pred = diffusion_model(
                     current, 
                     timesteps=sigma_i, 
