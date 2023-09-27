@@ -1,5 +1,6 @@
 import json
 import io
+import os
 import torchaudio
 
 import time
@@ -17,22 +18,43 @@ try:
 except Exception as e:
     print('WARNING: could not locate pypetrel library. WER metrics will not be calculated', e)
 
-def wav2lyrics(wav_batch, sr=24000):
+ASR_MODEL_PATH = "/mnt/bn/audio-diffusion/ashaw/models/asr/en_us_lyric"
+ASR_ITN_MODEL_PATH = "/mnt/bn/audio-diffusion/ashaw/models/asr/en_us_lyric_with_itn_v2"
+
+
+def wav2lyrics(
+    wav_batch,
+    sample_lengths=None,
+    sr=24000,
+    device_id=None,
+    do_itn=False,  # only valid for the first call
+):
     """
     As transcription jobs can fail and the order is not preserved,
     this function returns a dictionary contains lyrics and a corresponding wav tensor.
 
     wav_batch: must have shape [batch, channel, time]
+    sample_lengths: length of each audio sample in batch
     sr: sample rate
     """
-    if not PYPETREL_LIB_FOUND:
-        return ["" for _ in range(wav_batch.shape[0])], wav_batch
-    elif not pypetrel.is_engine_initialized():
-        pypetrel.initialize_engine("/mnt/bn/audio-diffusion/ashaw/models/asr/en_us_lyric")
     if len(wav_batch.shape) == 2:
         wav_batch = wav_batch.unsqueeze(1)
+    wav_batch = wav_batch.cpu()
+    if sample_lengths is not None:
+        wav_batch = [wav_batch[i, ..., :sample_lengths[i]] for i in range(len(sample_lengths))]
+
+    prev_flag = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if device_id is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+    
+    if not PYPETREL_LIB_FOUND:
+        return ["" for _ in len(wav_batch)], wav_batch
+    elif not pypetrel.is_engine_initialized():
+        model_path = ASR_ITN_MODEL_PATH if do_itn else ASR_MODEL_PATH
+        pypetrel.initialize_engine(model_path)
+    
     out = {"indices": [], "lyrics": []}
-    num = wav_batch.size(0)
+    num = len(wav_batch)
     wav_iter = iter(wav_batch)
     with pypetrel.asr.OfflineRecognizer(num) as recognizer:
         recognizing_idx = 0
@@ -46,7 +68,7 @@ def wav2lyrics(wav_batch, sr=24000):
                     break
           
                 byte_io = io.BytesIO()
-                torchaudio.save(byte_io, wav.cpu(), sr, format="wav")
+                torchaudio.save(byte_io, wav, sr, format="wav")
                 byte_io.seek(0)
                 wav_bytes = byte_io.read()
 
@@ -71,10 +93,15 @@ def wav2lyrics(wav_batch, sr=24000):
                 continue
             out["indices"].append(orig_idx)
             out["lyrics"].append(json.loads(output.json_output)["result"][0]["text"])
-    out["wav"] = wav_batch[out["indices"]]
+    out["wav"] = [wav_batch[idx] for idx in out["indices"]]
     lyrics_wavs = [(lyrics, wav) for idx,lyrics,wav in sorted(zip(out['indices'],out['lyrics'],out['wav']))]
     lyrics, wavs = zip(*lyrics_wavs)
     # pypetrel.destroy_engine() TODO: (AS) destroy engine at end of predict?
+    if device_id is not None:
+        if prev_flag is None:
+            del os.environ["CUDA_VISIBLE_DEVICES"]
+        else:
+            os.environ["CUDA_VISIBLE_DEVICES"] = prev_flag
     return lyrics, wavs
 
 

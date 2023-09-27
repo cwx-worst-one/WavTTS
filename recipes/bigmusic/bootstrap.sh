@@ -12,9 +12,9 @@ fi
 # For ASR wer
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/tiger/pypetrel/pypetrel/lib/
 export PYTHONPATH="${PYTHONPATH}:/opt/tiger/pypetrel/pypetrel"
-if ! grep -q "version:1.0.0.128" /opt/tiger/pypetrel/current_revision; then
+if ! grep -q "version:1.0.0.129" /opt/tiger/pypetrel/current_revision; then
     rm -rf /opt/tiger/pypetrel
-    cp -r /mnt/bn/audio-diffusion/ashaw/bvc/pypetrel.1.0.0.128 /opt/tiger/pypetrel
+    cp -r /mnt/bn/audio-diffusion/ashaw/bvc/pypetrel.1.0.0.129 /opt/tiger/pypetrel
 fi
 
 # For huggingface blocking our IP
