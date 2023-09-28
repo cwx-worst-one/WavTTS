@@ -1,19 +1,19 @@
 ARG REGION
 
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.dev20230703.cu118.uvm.nccl21805 as Aliyun_VA
+FROM hub.byted.org/base/lab.pytorch2.staging:a951c25b206f70497c2fefff8811edd4 as Aliyun_VA
 ENV LD_LIBRARY_PATH /opt/tiger/native_libhdfs/lib/native:$LD_LIBRARY_PATH
 ENV ARNOLD_HDFS_NATIVE 1
 ENV ARNOLD_HDFS_CELER 1
 ENV INFSEC_HADOOP_ENABLED 1
 ENV CPP_HDFS_CONF /opt/tiger/arnold/hdfs_client/conf/celer_us/core-site.xml:/opt/tiger/arnold/hdfs_client/conf/celer_us/hdfs-site.xml
 
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.dev20230703.cu118.uvm.nccl21805 as US-East
+FROM hub.byted.org/base/lab.pytorch2.staging:a951c25b206f70497c2fefff8811edd4 as US-East
 
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.dev20230703.cu118.uvm.nccl21805 as US-East-Red
+FROM hub.byted.org/base/lab.pytorch2.staging:a951c25b206f70497c2fefff8811edd4 as US-East-Red
 
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.dev20230703.cu118.uvm.nccl21805 as Aliyun_SG
+FROM hub.byted.org/base/lab.pytorch2.staging:a951c25b206f70497c2fefff8811edd4 as Aliyun_SG
 
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.dev20230703.cu118.uvm.nccl21805 as China-North-LF
+FROM hub.byted.org/base/lab.pytorch2.staging:a951c25b206f70497c2fefff8811edd4 as China-North-LF
 
 FROM ${REGION}
 LABEL maintainer="liyong.0517 <liyong.0517@bytedance.com>"
@@ -136,8 +136,8 @@ RUN pip3 install \
         einops==0.6.1 \
         zhon==1.1.5
 
-ARG CRUISE_VERSION=1.0.0.1985
-ARG PANTHER_VERSION=1.7.9.28
+ARG CRUISE_VERSION=1.0.0.2026
+ARG PANTHER_VERSION=1.7.9.40
 ARG FALCONCLAW_VERSION=1.0.5.129
 ARG ONNX_VERSION=1.0.0.22
 ARG OPENFST_VERSION=1.0.0.8
@@ -220,6 +220,10 @@ RUN mkdir -p /var/run/sshd && \
     mv /etc/ssh/ssh_config.new /etc/ssh/ssh_config
 # 4.3 for kinit
 ADD ./scripts/krb5.conf /etc/krb5.conf
+# 4.4 common_tools for compile image
+RUN mkdir -p /opt/common_tools
+ENV PATH "/opt/common_tools:/opt/tiger/typhoon-blade:$PATH"
+
 
 # uninstall triton for issues:
 # triton was installed by xformers, but we have pytorch-triton instead.
@@ -252,3 +256,64 @@ RUN pip3 install \
     pyzstd \
     ray[serve] \
     accelerate
+
+################### AWS #########################
+ARG EFA_INSTALLER_VERSION=1.26.1
+ARG AWS_OFI_NCCL_VERSION=aws
+ARG NCCL_TESTS_VERSION=v2.18.5-1
+
+RUN apt-get update -y \
+    && apt-get purge -y libmlx5-1 ibverbs-utils libibverbs-dev libibverbs1 \
+    && apt-get update -y \
+    && apt-get install -y --allow-unauthenticated \
+    git \
+    gcc \
+    vim \
+    kmod \
+    openssh-client \
+    openssh-server \
+    build-essential \
+    curl \
+    autoconf \
+    libtool \
+    gdb \
+    automake \
+    python3-distutils \
+    cmake \
+    pciutils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update -y && apt install -y libopenmpi-dev
+RUN pip install mpi4py
+
+RUN apt-get update -y && apt-get install -y environment-modules tcl libnl-3-200 libnl-3-dev libnl-route-3-200 libnl-route-3-dev
+
+RUN cd $HOME \
+    && curl -O "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz" \
+    && tar -xf $HOME/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz \
+    && cd aws-efa-installer \
+    && apt install -y ./DEBS/UBUNTU2004/x86_64/rdma-core/*.deb \
+    && apt install -y ./DEBS/UBUNTU2004/x86_64/*.deb \
+    && cd - \
+    && rm -fr aws-efa-installer $HOME/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz
+
+
+###################################################
+## Install NCCL
+RUN git clone --branch ${NCCL_TESTS_VERSION} --depth 1 "https://github.com/NVIDIA/nccl.git" /opt/nccl \
+    && cd /opt/nccl \
+    && make -j src.build CUDA_HOME=/usr/local/cuda \
+    NVCC_GENCODE="-gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_70,code=sm_70 -gencode=arch=compute_60,code=sm_60"
+
+###################################################
+## Install AWS-OFI-NCCL plugin
+RUN git clone "https://github.com/aws/aws-ofi-nccl.git" /opt/aws-ofi-nccl \
+    && cd /opt/aws-ofi-nccl \
+    && git checkout ${AWS_OFI_NCCL_VERSION} \
+    && ./autogen.sh \
+    && ./configure --prefix=/opt/aws-ofi-nccl/install \
+       --with-libfabric=/opt/amazon/efa/ \
+       --with-cuda=/usr/local/cuda \
+       --with-mpi=/opt/amazon/openmpi/ \
+       --enable-platform-aws \
+    && make && make install
