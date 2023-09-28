@@ -60,7 +60,7 @@ class SemanticInferenceModule(pl.LightningModule):
             self.requires.update(initializer(hpath, local_rank=self.local_rank))
         self.semantic_module.load_required_modules()
 
-    def predict_step(self, batch, batch_idx, dataloader_idx=0): 
+    def predict_step(self, batch, batch_idx=0, dataloader_idx=0):
         semantic_samples = self.semantic_module.predict(batch, self.extra_params)
         semantic_samples, eos_index_list = process_eos_indexes(semantic_samples, self.semantic_module, self.extra_params.sample_rate)
         raw_wav_output = self.decoding_fn(self.requires, semantic_samples, self.decoding_params).detach().cpu()
@@ -112,7 +112,7 @@ class GTInferenceModule(pl.LightningModule):
                 initializer = item['initializer']
             self.requires.update(initializer(hpath, local_rank=self.local_rank))
 
-    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+    def predict_step(self, batch, batch_idx=0, dataloader_idx=0):
         batch['target_audio'] = batch['style_audio'] # prepare_inputs expects target_audio key
         semantic_samples = self.encoding_fn(self.requires, batch['target_audio'])
         wavs = self.decoding_fn(self.requires, semantic_samples, self.decoding_params) # 

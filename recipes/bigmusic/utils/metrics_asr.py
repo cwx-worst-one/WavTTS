@@ -48,7 +48,7 @@ def wav2lyrics(
         os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
     
     if not PYPETREL_LIB_FOUND:
-        return ["" for _ in len(wav_batch)], wav_batch
+        return ["" for _ in range(len(wav_batch))], wav_batch
     elif not pypetrel.is_engine_initialized():
         model_path = ASR_ITN_MODEL_PATH if do_itn else ASR_MODEL_PATH
         pypetrel.initialize_engine(model_path)
