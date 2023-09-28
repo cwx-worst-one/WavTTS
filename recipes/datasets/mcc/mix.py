@@ -27,6 +27,7 @@ from webdataset import WebDataset
 from webdataset.pipeline import DataPipeline
 
 from recipes.datasets.mcc import INDEX
+from recipes.datasets.mcc.sami_tokenizer import convert_labels_to_text_id
 from recipes.musiclm.transforms.audio import FastNormalizeAudio, LoudnessCheck
 from samantha.dataio.batching import BucketBatcher
 from samantha.dataio.dataset import MultiIterableDataset
@@ -58,7 +59,7 @@ def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
     for idx in range(len(batch)):
         audio.append(random_pad(batch[idx]["audio"]))
         # text.append(batch[idx]["text"])
-        token.append(batch[idx]["token"])
+        token.append(batch[idx].get("token", torch.zeros(0).long()))
         # tag.append(batch[idx]["tag"])
     return {
         "audio": torch.stack(audio, dim=0),
@@ -436,13 +437,16 @@ class MCCInstrumentalTransforms(MCCTransforms):
                 return
             output_dict = {"audio": clip, "text": "", "tag": "instrumental"}
             if self.tokenizer is not None:
-                encoded_text = self.tokenizer(
-                    "",
-                    add_special_tokens=False,
-                    # padding="longest",
-                    return_tensors="pt",
-                )
-                token = encoded_text["input_ids"].squeeze(dim=0)
+                if self.tokenizer == "tts_chinese_frontend_model":
+                    token = torch.zeros(0).long()
+                else:
+                    encoded_text = self.tokenizer(
+                        "",
+                        add_special_tokens=False,
+                        # padding="longest",
+                        return_tensors="pt",
+                    )
+                    token = encoded_text["input_ids"].squeeze(dim=0)
                 output_dict.update(token=token)
             yield output_dict
             self._update_stats(skipped=False)
@@ -524,7 +528,7 @@ class KaraokeTransforms(BaseTransforms):
             clip = audio[:, start:end]
             text = normalize_text(str(selected_utterance["text"]))
             output_dict = {"audio": clip, "text": text, "tag": "vocal"}
-            if self.tokenizer is not None:
+            if self.tokenizer is not None and callable(self.tokenizer):
                 encoded_text = self.tokenizer(
                     text,
                     add_special_tokens=False,
@@ -681,7 +685,7 @@ class LibriTTSTransforms(BaseTransforms):
             return
         text = normalize_text(item["normalized_text.txt"])
         output_dict = {"audio": audio, "text": text, "tag": "vocal"}
-        if self.tokenizer is not None:
+        if self.tokenizer is not None and callable(self.tokenizer):
             encoded_text = self.tokenizer(
                 text,
                 add_special_tokens=False,
@@ -747,13 +751,22 @@ class SpeechZhTransforms(BaseTransforms):
             return
         output_dict = {"audio": audio, "text": text, "tag": "speech"}
         if self.tokenizer is not None:
-            encoded_text = self.tokenizer(
-                text,
-                add_special_tokens=False,
-                # padding="longest",
-                return_tensors="pt",
-            )
-            token = encoded_text["input_ids"].squeeze(dim=0)
+            if self.tokenizer == "tts_chinese_frontend_model":
+                labels = list(
+                    filter(
+                        lambda x: x != "", item["__index_data__"]["labels"].split("\n")
+                    )
+                )
+                labels, _, _ = convert_labels_to_text_id(labels)
+                token = torch.from_numpy(labels[0]).long()
+            else:
+                encoded_text = self.tokenizer(
+                    text,
+                    add_special_tokens=False,
+                    # padding="longest",
+                    return_tensors="pt",
+                )
+                token = encoded_text["input_ids"].squeeze(dim=0)
             if token.size(-1) == 0:
                 self._update_stats(skipped=True, message="Token zero length")
                 return
@@ -928,13 +941,22 @@ class VocalZhTransforms(BaseTransforms):
             text = normalize_text(str(selected_utterance["text"]))
             output_dict = {"audio": clip, "text": text, "tag": "vocal"}
             if self.tokenizer is not None:
-                encoded_text = self.tokenizer(
-                    text,
-                    add_special_tokens=False,
-                    # padding="longest",
-                    return_tensors="pt",
-                )
-                token = encoded_text["input_ids"].squeeze(dim=0)
+                if self.tokenizer == "tts_chinese_frontend_model":
+                    labels = list(
+                        filter(
+                            lambda x: x != "", selected_utterance["phoneme"].split("\n")
+                        )
+                    )
+                    labels, _, _ = convert_labels_to_text_id(labels)
+                    token = torch.from_numpy(labels[0]).long()
+                else:
+                    encoded_text = self.tokenizer(
+                        text,
+                        add_special_tokens=False,
+                        # padding="longest",
+                        return_tensors="pt",
+                    )
+                    token = encoded_text["input_ids"].squeeze(dim=0)
                 if token.size(-1) == 0:
                     self._update_stats(skipped=True, message="Token zero length")
                     return
@@ -2017,6 +2039,8 @@ class MixZhWebDataModule(pl.LightningDataModule):
                 "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
             )
             phonemizer.logger.get_logger().setLevel(logging.ERROR)
+        elif tokenizer == "tts_chinese_frontend_model":
+            self.tokenizer = tokenizer
         else:
             self.tokenizer = None
             collate_fn = collate_audio_text
@@ -2260,9 +2284,7 @@ class MixLangVocalWebDataModule(pl.LightningDataModule):
                 use_pipe=use_pipe,
                 handler=wds.warn_and_continue,
             )
-            datasets.append(
-                DataPipeline(mcc_vocal, wds.shuffle(shuffle_buffer_size))
-            )
+            datasets.append(DataPipeline(mcc_vocal, wds.shuffle(shuffle_buffer_size)))
         weights = [i for i in weights if i != 0]
         self.train_dataset = DataPipeline(
             MultiIterableDataset(

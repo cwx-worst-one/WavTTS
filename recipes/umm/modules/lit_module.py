@@ -685,24 +685,24 @@ class Stage0(pl.LightningModule):
             )
             print(f"[Missing] {missing_keys}")
             print(f"[Unexpected] {unexpected_keys}")
-        if self.model.config.tokenizer in [
-            "tts_english_frontend_model",
-            "tts_chinese_frontend_model",
-        ]:
-            versions = {
-                "tts_english_frontend_model": "34.0",
-                "tts_chinese_frontend_model": "42.0",
-            }
-            self.fe_version = versions[self.model.config.tokenizer]
-            self.fe_task = self.model.config.tokenizer
-            print(
-                f"Loading sami_tts_api: version - {self.fe_task}, task - {self.fe_version}"
-            )
-            self.fe = init_sami_tts_api(
-                fe_version=self.fe_version, fe_task=self.fe_task
-            )
-            self.tokenizer = SamiTokenizer(fe=self.fe, fe_task=self.fe_task)
-            print(f"sami_tts_api loaded.")
+        # if self.model.config.tokenizer in [
+        #     "tts_english_frontend_model",
+        #     "tts_chinese_frontend_model",
+        # ]:
+        #     versions = {
+        #         "tts_english_frontend_model": "34.0",
+        #         "tts_chinese_frontend_model": "42.0",
+        #     }
+        #     self.fe_version = versions[self.model.config.tokenizer]
+        #     self.fe_task = self.model.config.tokenizer
+        #     print(
+        #         f"Loading sami_tts_api: version - {self.fe_task}, task - {self.fe_version}"
+        #     )
+        #     self.fe = init_sami_tts_api(
+        #         fe_version=self.fe_version, fe_task=self.fe_task
+        #     )
+        #     self.tokenizer = SamiTokenizer(fe=self.fe, fe_task=self.fe_task)
+        #     print(f"sami_tts_api loaded.")
 
     def modify_state_dict(self, state_dict):
         for k in list(state_dict.keys()):

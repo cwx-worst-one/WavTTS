@@ -380,8 +380,7 @@ class SamiTokenizer:
                 with contextlib.redirect_stdout(None):
                     labels, tn = self.ex.run(text, config=self.cfg)
                 labels = list(filter(lambda x: x != "", labels.split("\n")))
-                text_id = convert_labels_to_text_id(labels)
-                text_id, _, _ = text_id
+                text_id, _, _ = convert_labels_to_text_id(labels)
                 text_ids.append(torch.from_numpy(text_id[0]).long())
         return {
             "input_ids": torch.nn.utils.rnn.pad_sequence(
