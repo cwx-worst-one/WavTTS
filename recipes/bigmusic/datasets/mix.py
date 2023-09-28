@@ -17,7 +17,7 @@ from torchaudio_augmentations import Compose
 from webdataset import WebDataset
 from webdataset.pipeline import DataPipeline
 import logging, phonemizer
-from recipes.bigmusic.datasets.lyrics import LyricsDataset
+from recipes.bigmusic.utils.format_utils import normalize_text
 from recipes.datasets.mcc.mix import (
     LibriTTSDataset,
     MCCInstrumentalDataset,
@@ -47,12 +47,6 @@ from transformers import Wav2Vec2PhonemeCTCTokenizer
 
 MAX_PHONE_LEN = 400
 MAX_STYLE_LEN = 16
-
-def normalize_text(text):
-    nlp_punctuation = punctuation.replace("'", "")
-    text = text.replace("&", " and ")
-    text = text.replace("/", " ")    
-    return text.translate(str.maketrans("", "", nlp_punctuation))
 
 def pad_crop(sequence, seq_len, dtype, padding_value=0):
     # in item_pad_idx, 0 indicates the values are padded.

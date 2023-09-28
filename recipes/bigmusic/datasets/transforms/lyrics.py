@@ -10,6 +10,7 @@ import librosa
 import numpy as np
 from transformers import T5Tokenizer
 from recipes.bigmusic.datasets.tokenizers.cmu_phonemes import CMUPhonemeTokenizer
+from recipes.bigmusic.utils.format_utils import normalize_text
 from transformers import Wav2Vec2PhonemeCTCTokenizer
 from recipes.musiclm.utils.dist import local_zero_first
 import random
@@ -103,16 +104,19 @@ class MetadataT5Transform(MCCMetadataTextTransform):
 
 # Segment Transforms
 class LyricsTokenTransform():
-    def __init__(self, lyrics_tokenizer, pad_id, lyrics_max_seq_len: int, truncate_long_lyrics: bool = False, handler: Callable = wds.ignore_and_continue):
+    def __init__(self, lyrics_tokenizer, pad_id, lyrics_max_seq_len: int, normalization_fn=normalize_text, truncate_long_lyrics: bool = False, handler: Callable = wds.ignore_and_continue):
         self.lyrics_tokenizer = lyrics_tokenizer
         self.lyrics_max_seq_len = lyrics_max_seq_len
         self.pad_id = pad_id
         self.truncate_long_lyrics = truncate_long_lyrics
+        self.normalization_fn = normalization_fn
         self.handler = handler
 
     def __call__(self, item):
         try:
             lyrics_text = item['lyrics']
+            if self.normalization_fn:
+                lyrics_text = self.normalization_fn(lyrics_text)
             lyrics_tokens = self.lyrics_tokenizer(lyrics_text)['input_ids']
             if not self.truncate_long_lyrics and (len(lyrics_tokens) > self.lyrics_max_seq_len):
                 return None
@@ -121,7 +125,7 @@ class LyricsTokenTransform():
             return None
         
         lyrics_tokens = pad_crop(torch.tensor(lyrics_tokens), self.lyrics_max_seq_len, torch.int, padding_value=self.pad_id)
-        return { **item, 'lyrics_tokens': lyrics_tokens }
+        return { **item, 'lyrics_tokens': lyrics_tokens, 'lyrics_normalized_text': lyrics_text }
 
     @classmethod
     def init_cmu_tokenizer(cls, lyrics_max_seq_len, allow_unknown=False, **kwargs):
