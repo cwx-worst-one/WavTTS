@@ -20,8 +20,8 @@ def generate_audio(
     gender: str,
 ):
     global vocal_model
-    sample_rate = 24000
-
+    params = vocal_model._hparams.extra_params
+    sample_rate = params["sample_rate"]
     tik = perf_counter()
 
     n_samples = 4
@@ -34,13 +34,14 @@ def generate_audio(
                 'lyrics': [lyrics] * n_samples}
     inference_dataset = inference_dataset_from_prompt(
         prompts, conditions="style_text,lyrics_tokens",
-        batch_size=n_samples, lyrics_max_seq_len=400)
+        batch_size=n_samples,
+        lyrics_max_seq_len=params["lyrics_max_seq_len"])
     batch = next(iter(inference_dataset))
     out_dict = vocal_model.predict_step(batch)
     sampled_audio = out_dict['generated_audio']
 
     tok = perf_counter()
-    rtf = (tok - tik) / 30.0
+    rtf = (tok - tik) / params["duration"]
     sampled_audio_0 = torch_fp32_to_numpy_int16(sampled_audio[0])
     sampled_audio_1 = torch_fp32_to_numpy_int16(sampled_audio[1])
     sampled_audio_2 = torch_fp32_to_numpy_int16(sampled_audio[2])
@@ -69,7 +70,7 @@ def get_model(hparams_file):
 
 if __name__ == "__main__":
     lyrics = gr.Textbox(
-        value="Imagine there's no countries \n It isn't hard to do \n Nothing to kill or die for \n And no religion, too \n Imagine all the people \n Livin' life in peace",
+        value="Imagine there's no countries\nIt isn't hard to do\nNothing to kill or die for\nAnd no religion, too\nImagine all the people\nLivin' life in peace",
         label="Lyrics",
     )
     genre = gr.Dropdown(
