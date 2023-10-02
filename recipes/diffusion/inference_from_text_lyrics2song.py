@@ -27,6 +27,9 @@ from recipes.bigmusic.callbacks.save_outputs import save_batch_outputs, save_vid
 from recipes.bigmusic.datasets.inference import inference_dataset_from_prompt
 from samantha.utils.hparams import DotDict
 torch.backends.cuda.matmul.allow_tf32 = True
+VOCODER_HZ = 125
+SEMANTIC_HZ = 25
+
 
 def clip(x: Tensor, dynamic_threshold: float = 0.0):
     if dynamic_threshold == 0.0:
@@ -48,22 +51,11 @@ def extend_dim(x: Tensor, dim: int):
     # e.g. if dim = 4: shape [b] => [b, 1, 1, 1],
     return x.view(*x.shape + (1,) * (dim - x.ndim))
 
-
-class UniformDistribution:
-    def __init__(self, vmin: float = 0., vmax: float = 1.):
-        super().__init__()
-        self.vmin, self.vmax = vmin, vmax
-
-    def __call__(self, num_samples: int, device: torch.device = torch.device("cpu")):
-        vmax, vmin = self.vmax, self.vmin
-        return (vmax - vmin) * torch.rand(num_samples, device=device) + vmin
-
-
 class ARVSampler(nn.Module):
-    def __init__(self, in_channels: int, length: int, num_splits: int):
+    def __init__(self, in_channels: int, duration: int, num_splits: int):
         super().__init__()
-        assert length % num_splits == 0, "length must be divisible by num_splits"
-        self.length = length
+        assert duration % num_splits == 0, "length must be divisible by num_splits"
+        self.duration = duration
         self.in_channels = in_channels
         self.num_splits = num_splits
     
@@ -107,11 +99,8 @@ class ARVSampler(nn.Module):
                 angles = math.pi /2. * sigma_i
                 alphas, deltas = torch.cos(angles), torch.sin(angles)
                 xt = alphas * init_emb + deltas * prev_noise
-                # if i == 0:
                 current[:, :, :-625] = xt[:, :, :-625]
-                # elif i > 0:
-                #     current[:, :, :-625] = (current[:, :, :-625] + xt[:, :, :-625]) /2 #
-                
+
      
             if i < int(num_steps*bf16_portion):
                 enabled = True
@@ -174,39 +163,35 @@ class ARVSampler(nn.Module):
     ) -> Tensor:
 
         # Sample initial chunks
-        b, c, seq_len = num_items, self.in_channels, self.length
+        b, c, duration = num_items, self.in_channels, self.duration
 
         # Sample initial chunks
-        current_emb = torch.randn(b, c, seq_len, device=self.device)
+        current_emb = torch.randn(b, c, duration*VOCODER_HZ, device=self.device)
         semantic_hop_size = 125
         diffusion_hop_size = 625
-        tmp_emb = torch.zeros(b, c, seq_len + diffusion_hop_size *(num_chunks - 1), device=self.device)
-        avg_cnt = torch.zeros(b, c, seq_len + diffusion_hop_size *(num_chunks - 1), device=self.device)
+        tmp_emb = torch.zeros(b, c, duration*VOCODER_HZ + diffusion_hop_size *(num_chunks - 1), device=self.device)
+        avg_cnt = torch.zeros(b, c, duration*VOCODER_HZ + diffusion_hop_size *(num_chunks - 1), device=self.device)
         prev_noise = current_emb
         output_emb = []
         for i in range(num_chunks):
 
             pred_emb = self.sample_loop(
                 model=model,
-                semantic_context=semantic_context[:, 0 + (i*semantic_hop_size):750 + (i*semantic_hop_size)],
+                semantic_context=semantic_context[:, 0 + (i*semantic_hop_size):duration*SEMANTIC_HZ + (i*semantic_hop_size)],
                 current=current_emb,
-                prev_noise=prev_noise[..., 0 + (i*diffusion_hop_size):seq_len + (i*diffusion_hop_size)],
+                prev_noise=prev_noise[..., 0 + (i*diffusion_hop_size):duration*VOCODER_HZ + (i*diffusion_hop_size)],
                 num_steps=num_steps,
                 bf16_portion=bf16_portion,
                 angle_schedule=angle_schedule,
                 classifier_free_guidance=classifier_free_guidance,
                 first=(i==0),
             )
-            # if i == 0:
-            #     output_emb.append(pred_emb)
-            # else:
-            #     output_emb.append(pred_emb[..., -diffusion_hop_size:])
 
-            tmp_emb[..., 0 + (i*diffusion_hop_size):seq_len + (i*diffusion_hop_size)] += pred_emb
-            avg_cnt[..., 0 + (i*diffusion_hop_size):seq_len + (i*diffusion_hop_size)] += 1
+            tmp_emb[..., 0 + (i*diffusion_hop_size):duration*VOCODER_HZ + (i*diffusion_hop_size)] += pred_emb
+            avg_cnt[..., 0 + (i*diffusion_hop_size):duration*VOCODER_HZ + (i*diffusion_hop_size)] += 1
 
-            prev_emb = pred_emb[..., -diffusion_hop_size:]#tmp_emb[..., 0 + ((i+1)*diffusion_hop_size):1250 + (i*diffusion_hop_size)] / avg_cnt[...,  0 + ((i+1)*diffusion_hop_size):1250 + (i*diffusion_hop_size)]
-            # prev_emb = torch.cat(output_emb, dim=-1)[..., -1000:]
+            prev_emb = pred_emb[..., -diffusion_hop_size:]
+
             new_noise = torch.randn(b, c, diffusion_hop_size, device=self.device)
 
             prev_noise = torch.cat([prev_noise, new_noise], dim=-1)
@@ -217,9 +202,9 @@ class ARVSampler(nn.Module):
         return pred_emb
         # return torch.cat(output_emb, dim=-1)
 
-def init_sampler(checkpoint_path, local_rank, cache_dir, sequence_length=3750):
+def init_sampler(checkpoint_path, local_rank, cache_dir, duration=30):
     device = torch.device(f"cuda:{local_rank}")
-    sampler = ARVSampler(32, sequence_length, 1)
+    sampler = ARVSampler(32, duration, 1)
     sampler.set_device(device)
     return { "sampler": sampler }
 
@@ -263,7 +248,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--input_prompt_path', 
         type=str, 
-        default='/mnt/bn/audio-diffusion/data/mixture_prompts/suno100.csv'
+        default='/mnt/bn/audio-diffusion/data/mixture_prompts/suno100.csv',
     )
     parser.add_argument(
         '--output_dir_path', 
@@ -291,34 +276,39 @@ if __name__ == '__main__':
         default='hdfs://harunava/home/byte_speech_sv/weitsung.lu/lyrics2song_30s_ckpts/mulan-step=014000-median_rank_1=160-kaggle.ckpt'
     )
     parser.add_argument(
+        '--lyrics_max_seq_len',
+        type=int,
+        default=1000,
+    )
+    parser.add_argument(
         '--duration',
         type=int,
-        default=30,
+        default=120,
     )
     parser.add_argument(
         '--semantic_model_path',
         type=str,
-        default='/mnt/bn/lyrics-to-song/qq/logs/semantic_model_mulan_text_07B/varlen30_tag3_bs12_07B_6w_v1/checkpoints/last.ckpt'
+        default= '/mnt/bn/audio-diffusion/qq/logs/semantic_model_mulan_text_07B_2min/varlen2min_tag3_bs12_07B_intro_8w/checkpoints/step=036000-val_accu_0=18.82.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_0',
         type=str,
-        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last.ckpt'
+        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_120s_finetune/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_1',
         type=str,
-        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last.ckpt'
+        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_120s_finetune/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_2',
         type=str,
-        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last.ckpt'
+        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_120s_finetune/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_3',
         type=str,
-        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last.ckpt'
+        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_120s_finetune/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--vocoder_model_path',
@@ -371,15 +361,15 @@ if __name__ == '__main__':
         diffusion_model[key] = diffusion_checkpoint_paths[ckpt_name]
 
     
-    requires = {
-        'diffusion': diffusion_model,
-        **init_sampler(None, local_rank, cache_dir=asset_path),
-        **init_vocoder(REMOTE_PATHS['vocoder_model_path'], local_rank, cache_dir=asset_path)
-    }
     batch_size = args.batch_size
     duration = args.duration
     sample_rate = 24000
-    lyrics_max_seq_len = semantic_module.extra_params.get("lyrics_max_seq_len", 400)
+    requires = {
+        'diffusion': diffusion_model,
+        **init_sampler(None, local_rank, cache_dir=asset_path, duration=duration),
+        **init_vocoder(REMOTE_PATHS['vocoder_model_path'], local_rank, cache_dir=asset_path)
+    }
+    lyrics_max_seq_len = semantic_module.extra_params.get("lyrics_max_seq_len", args.lyrics_max_seq_len)
 
     prompt_path = args.input_prompt_path
     if prompt_path is None:

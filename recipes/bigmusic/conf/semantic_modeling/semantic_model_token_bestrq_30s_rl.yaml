@@ -135,7 +135,7 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticRLModule
             hpath: null
             initializer: !name:recipes.diffusion.inference_from_text_lyrics2song.init_sampler
                 cache_dir: !ref <run_opts[cache_dir]>
-                sequence_length: !ref <extra_params[duration]> * 125
+                duration: !ref <extra_params[duration]>
         diffusion:
             hpath: !ref <run_opts[diffusion_ckpt]>
             initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
