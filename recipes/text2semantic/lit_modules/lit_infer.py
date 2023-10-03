@@ -346,8 +346,8 @@ class BigTTSWVAEInfer(LightningModule):
                 len_en_word += 1
                 continue
             else: # blank or digit
-                if not (text[i] == " " or text[i].isdigit()):
-                    return None
+                # if not (text[i] == " " or text[i].isdigit()):
+                #     return None
                 i += 1
 
         lang = 'en'
