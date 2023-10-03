@@ -17,7 +17,7 @@ class MCSMetricsCallback(pl.Callback):
 
 def run_mcs_metrics(requires, output_dir, device='cuda', sample_rate=24000):
     output_dir = Path(output_dir)
-    generated_output_fps = list(output_dir.glob('*.generated.wav'))
+    generated_output_fps = list(output_dir.glob('**/*.generated.wav'))
     mcs_totals = []
     mulan_max_duration = 10 * sample_rate
     def _load_audio_tensor(audio_path):
@@ -48,7 +48,7 @@ def run_mcs_metrics(requires, output_dir, device='cuda', sample_rate=24000):
         ).to(device)
         mcs = torch.nn.functional.cosine_similarity(gt_emb, audio_emb).cpu().item()
         mcs_totals.append(mcs)
-        metadata['mcs'] = round(mcs, 3)
+        update_json(metadata_fp, { 'mcs': round(mcs, 3)})
         
     metrics_fp = output_dir/'metrics.json'
     avg_mcs = round(float(np.array(mcs_totals).mean(axis=0)), 3)

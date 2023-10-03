@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 from recipes.musiclm.models.compat.semantic_model import w2v_bert_tokenization
 from abc import abstractmethod
+from recipes.musiclm.transforms.audio import RandomResizedCrop
+from recipes.bigmusic.utils.mulan_tag import MulanTagger
 
 # Functions
 @torch.no_grad()
@@ -168,15 +170,52 @@ class TokenEmbedder(BaseEmbedder):
         return self.embedder(token_ids)
 
 class MulanEmbedder(ContinuousEmbedder):
-    def __init__(self, data_type='music', input_dim=512, embedding_dim=1024, add_sos=False):
+    def __init__(self, data_type='music', input_dim=512, embedding_dim=1024, max_audio_length=10*24000, add_sos=False):
         super().__init__(input_dim, embedding_dim, add_sos)
         self.data_type = data_type
+        self.max_audio_length = max_audio_length # 10s * 24k sample rate
+        self.resize_transform = RandomResizedCrop(max_audio_length) 
 
     def get_embeds(self, requires, input_audio, data_type=None):
         if data_type is None:
             data_type = self.data_type
+        if data_type == 'music':
+            if self.training:
+                input_audio = self.resize_transform(input_audio)
+            else:
+                input_audio = input_audio[..., :self.max_audio_length]
         mulan_embeds = get_mulan_embeds(requires, input_audio, data_type)
         return mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
+
+class MulanTagEmbedder(ContinuousEmbedder):
+    def __init__(self, data_type='music', input_dim=512, embedding_dim=1024, max_audio_length=10*24000, add_sos=False):
+        super().__init__(input_dim, embedding_dim, add_sos)
+        self.data_type = data_type
+        self.max_audio_length = max_audio_length # 10s * 24k sample rate
+        self.resize_transform = RandomResizedCrop(max_audio_length)
+        self.mulan_tagger = MulanTagger()
+
+    def get_embeds(self, requires, input_audio, data_type=None):
+        if data_type == "text":
+            mulan_embeds = get_mulan_embeds(requires, input_audio, data_type)
+            return mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
+        elif data_type == "music":
+            if self.training:
+                input_audio = self.resize_transform(input_audio)
+            else:
+                input_audio = input_audio[..., :self.max_audio_length]
+            mulan_embeds = get_mulan_embeds(requires, input_audio, data_type)
+            return mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
+        elif data_type == "tag":
+            if self.training:
+                input_audio = self.resize_transform(input_audio)
+            else:
+                input_audio = input_audio[..., :self.max_audio_length]
+            mulan_audio_embeds = get_mulan_embeds(requires, input_audio, "music")
+            metadata = self.mulan_tagger.get_tags(requires, audio_embeds=mulan_audio_embeds)
+            style_text = [self.mulan_tagger.tag_to_style_text(m) for m in metadata]
+            mulan_text_embeds = get_mulan_embeds(requires, style_text, "text")
+            return mulan_text_embeds[:, None, :] # bs x d -> bs x seq_len x d
 
 class MulanTokenEmbedder(TokenEmbedder):
     def __init__(self, data_type='music', num_rvq=12, codebook_size=1024, embedding_dim=1024, add_sos=False):

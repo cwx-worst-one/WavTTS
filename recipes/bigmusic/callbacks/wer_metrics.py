@@ -15,7 +15,9 @@ class WERMetricsCallback(pl.Callback):
 
 def run_wer_metrics(output_dir, device='cuda'):
     output_dir = Path(output_dir)
-    generated_output_fps = list(output_dir.glob('*.generated.wav'))
+    generated_output_fps = list(output_dir.glob('**/*.generated.wav'))
+    if len(generated_output_fps) == 0:
+        return
     wer_totals = []
     for idx, generated_output_fp in enumerate(generated_output_fps):
         wav = torch.tensor(load_wav(str(generated_output_fp))).to(device)
@@ -39,9 +41,7 @@ def run_wer_metrics(output_dir, device='cuda'):
             'greedy_transcript': g,
             'actual_transcript': a
         }
-        metadata['wer'] = wer_metadata
-        with open(metadata_fp, 'w') as f:
-            json.dump(metadata, f, indent=2)
+        update_json(metadata_fp, { 'wer': wer_metadata })
         wer_totals.append([wer, ins, subs, dels])
         
     metrics_fp = output_dir/'metrics.json'

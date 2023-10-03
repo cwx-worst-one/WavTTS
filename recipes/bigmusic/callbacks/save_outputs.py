@@ -43,6 +43,7 @@ def format_lyrics_and_style(style_text, lyrics=None):
 def save_batch_outputs(outputs, batch, output_dir, sample_rate, sample_round=0, index_offset=0):
     conditions = batch['conditions']
     lyrics = batch.get('lyrics')
+    lyrics_normalized_text = batch.get('lyrics_normalized_text')
     prompts = batch.get('style_text')
     categories = batch.get('category')
     style_audio = batch.get('style_audio')
@@ -59,6 +60,7 @@ def save_batch_outputs(outputs, batch, output_dir, sample_rate, sample_round=0, 
         file_name = ""
         absolute_idx =  i + index_offset
         lyrics_str = lyrics[i] if 'lyrics_tokens' in conditions else None
+        lyrics_normalized_str = lyrics_normalized_text[i] if 'lyrics_tokens' in conditions and lyrics_normalized_text else None
         style_text = prompts[i] if 'style_text' in conditions else None
         file_name = f"{absolute_idx:03d}_{format_lyrics_and_style(style_text, lyrics_str)}"
         wav_fp = os.path.join(wav_dir, f"{file_name}.generated.wav")
@@ -77,6 +79,7 @@ def save_batch_outputs(outputs, batch, output_dir, sample_rate, sample_round=0, 
         metadata = {
             **metadata,
             'lyrics': lyrics_str,
+            'lyrics_normalized_text': lyrics_normalized_str,
             'style_text': style_text,
             'conditions': conditions,
             'index': {
@@ -108,7 +111,7 @@ def save_video(input_results_dir, output_video_dir, format_video_text_fn=default
     output_video_dir = Path(output_video_dir)
     output_video_dir_tmp = output_video_dir/'tmp'
     output_video_dir_tmp.mkdir(exist_ok=True, parents=True)
-    generated_output_fps = list(Path(input_results_dir).glob('*.generated.wav'))
+    generated_output_fps = list(Path(input_results_dir).glob('**/*.generated.wav'))
     for idx, generated_output_fp in enumerate(generated_output_fps):
         audio_fp = generated_output_fp
         metadata_fp = str(generated_output_fp).replace('generated.wav', 'metadata.json')

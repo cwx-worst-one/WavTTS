@@ -5,7 +5,8 @@ from recipes.bigmusic.lightning.embedding_modules import (
     WavToVecTokenEmbedder,
     MetadataT5TokenEmbedder,
     SpeakerEmbedder,
-    BestRQTokenEmbedder,
+    BestRQTokenEmbedder, 
+    MulanTagEmbedder
 )
 from recipes.bigmusic.utils.metrics_asr import (
     wav2lyrics,
@@ -49,7 +50,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         mulan_embed_dim = extra_params['mulan_embed_dim']
         semantic_codebook_size = extra_params['semantic_codebook_size']
         embedder_dict = {
-            'mulan': MulanEmbedder(data_type='music', input_dim=mulan_embed_dim, embedding_dim=hidden_size, add_sos=True),
+            'mulan': MulanTagEmbedder(input_dim=mulan_embed_dim, embedding_dim=hidden_size, add_sos=True),
             'lyrics_tokens': LyricsTokenEmbedder(vocab_size=lyrics_vocab_size, embedding_dim=hidden_size, add_sos=True),
         }
         input_embedders = nn.ModuleDict(embedder_dict)
@@ -85,6 +86,9 @@ class SemanticModule(BaseContinuousEmbedModule):
             inputs_embeds.append(embeds)
         elif 'style_audio' in conditions:
             embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_audio'].to(self.device), with_sos=with_sos, data_type='music')
+            inputs_embeds.append(embeds)
+        elif 'style_tag' in conditions: # using Mulan for on-the-fly MIR tagging
+            embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_audio'].to(self.device), with_sos=with_sos, data_type='tag')
             inputs_embeds.append(embeds)
         else:
             # adding SOS token no matter what so that all parameters get used

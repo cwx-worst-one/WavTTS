@@ -19,9 +19,6 @@ from webdataset.pipeline import DataPipeline
 import logging, phonemizer
 from recipes.bigmusic.utils.format_utils import normalize_text
 from recipes.datasets.mcc.mix import (
-    LibriTTSDataset,
-    MCCInstrumentalDataset,
-    MCCVocalDataset,
     DataModule
 )
 
@@ -61,96 +58,30 @@ def ffmpeg_read_audio(audio_bin, sample_rate=24000):
     return (np.frombuffer(seg_bin, dtype="int16") / 32768.0).astype(np.float32)
 
 def rewrite_metadata(metadata, type="Vocal"):        
-    if 'metadata' in metadata:
-        metadata = metadata['metadata']
     mood = metadata.get('final_mood')
     genre = metadata.get('final_genre')
     gender = metadata.get('merge_aed')
     text = ""
-
-    genre_text = ""
-    instrument_text = ""
-    # vocal_ages_text = ""
-    # vocal_style_text = ""
-    vocal_gender_text = ""
-
     if type == "Vocal":
-        # text = "A "
-        if mood is not None and mood != 'nan' and mood != '':
-            genre_text += mood.lower() + " "
-        if genre is not None and genre != 'nan' and genre != '':
-            genre_text += genre.lower() + " "
-
-        # text += "song"
+        text = "A "
+        if mood is not None and mood != 'nan':
+            text += mood.lower() + " "
+        if genre is not None and genre != 'nan':
+            text += genre.lower() + " "
+        text += "song"
         if gender is not None and gender != 'nan':
             if 'Female' in gender:
-                vocal_gender_text += "female"
+                text += " with female vocal"
             elif 'Male' in gender:
-                text += "male" # with ... vocal
-        # text += "."
+                text += " with male vocal"
+        text += "."
     elif type == "Instrumental":
-        # text = ""
+        text = ""
         if mood is not None and mood != 'nan':
-            instrument_text += mood.lower() + " "
+            text += mood.lower() + " "
         if genre is not None and genre != 'nan':
-            instrument_text += genre.lower() + " "
-        # text += "music."
-    elif type == "mir_tags":
-        # NOTE: randomly shuffle to diversify prompt
-        random.shuffle(metadata["genres"])
-        random.shuffle(metadata["instruments"]) 
-        random.shuffle(metadata["vocals"]) 
-
-        def multiple_choices_text_processor(text: List[str]) -> str:
-            if len(text) > 1:
-                text = ", ".join(text[:-1]) + f" and {text[-1]}"
-            elif len(text) == 1:
-                text = text[0]
-            else:
-                text = ""
-            return text.lower()
-
-        # example: 'rock, pop and blues'
-        genre_text += multiple_choices_text_processor(metadata["genres"])
-        genre_text = genre_text.replace("_", " ") # rnb_soul -> rnb soul
-
-        # example: 'piano, vocal and drums' 
-        instrument_text += multiple_choices_text_processor(metadata["instruments"])
-
-        ages = {
-            "age_old": "old age",
-            "age_middle_aged": "middle age",
-        }
-        gender = {
-            "gender_male": "male",
-            "gender_female": "female",
-        }
-        vocal_styles = {
-            "style_bright": "bright",
-            "style_loud_and_confident": "loud and confident",
-            "style_thick_and_deep": "thick and deep",
-            "style_husky": "husky",
-            "style_delicate": "delicate",
-            "style_low_and_warm": "low and warm",
-        }
-
-        vocal_ages_text = multiple_choices_text_processor([ages.get(v, "") for v in metadata["vocals"] if "age_" in v])
-        vocal_style_text = multiple_choices_text_processor([vocal_styles.get(v, "") for v in metadata["vocals"] if "style_" in v])
-        vocal_gender_text += multiple_choices_text_processor([gender.get(v, "") for v in metadata["vocals"] if "gender_" in v])
-
-        # example: 'A pop and rock song performed by piano, drums and bass guitar with a middle age, bright male vocal.'
-    
-    if instrument_text != "":
-        instrument_text = f"with an instrumentation consisting of {instrument_text}"
-
-    if vocal_gender_text != "":
-        vocal_gender_text = f"with a {vocal_gender_text} vocal"
-
-
-    # text = f"""A {genre_text} song {instrument_text} with a {vocal_ages_text}, {vocal_style_text} {vocal_gender_text} vocal."""
-    text = f"""A {genre_text} song {instrument_text} {vocal_gender_text}."""
-    # remove double whitespaces
-    text = re.sub(" +", " ", text)
+            text += genre.lower() + " "
+        text += "music."
     return text
 
 def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -185,10 +116,10 @@ def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
             style_label = batch[idx]["style_text"]
         style_text.append(style_label)     
         
-        style_text_tokens, _ = pad_crop(
-            torch.tensor(batch[idx].get("style_tokens", default_style_token.detach().clone())), 
-            MAX_STYLE_LEN, torch.int, STYLE_PAD_ID)
-        style_tokens.append(style_text_tokens)
+        # style_text_tokens, _ = pad_crop(
+        #     torch.tensor(batch[idx].get("style_tokens", default_style_token.detach().clone())), 
+        #     MAX_STYLE_LEN, torch.int, STYLE_PAD_ID)
+        # style_tokens.append(style_text_tokens)
 
         normalized_text.append(batch[idx]["normalized_text"])
         
@@ -275,11 +206,13 @@ class LibriTTSDataset(WebPipeline):
         sample_rate=24000,
         min_duration: int = 5,
         max_duration: int = 30,
+        handler=wds.warn_and_continue,
         **kwargs,
     ):
         self.sample_rate = sample_rate
         self.min_duration = min_duration
-        self.max_duration = max_duration        
+        self.max_duration = max_duration  
+        self.handler = handler      
         base_transforms = [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
         if self.data_sample_rate != sample_rate:
             base_transforms.append(Resample(self.data_sample_rate, sample_rate))
@@ -295,7 +228,11 @@ class LibriTTSDataset(WebPipeline):
 
     def transform(self, item_yielder) -> Dict[str, Any]:
         for item in item_yielder:
-            audio = self.base_transform(item["audio.npy"])
+            try:
+                audio = self.base_transform(item["audio.npy"])
+            except Exception as e:
+                self.handler(e)
+                continue
             if audio.size(-1) < self.min_duration * self.sample_rate:
                 continue
             if audio.size(-1) > self.max_duration * self.sample_rate:
@@ -306,34 +243,40 @@ class LibriTTSDataset(WebPipeline):
                 "audio": audio, 
                 "normalized_text": normalized_text,
                 "lyrics_tokens": phoneme_tokens,
-                "speaker_id": torch.LongTensor([0]),  # TODO: (QQ) extract speaker id.
                 "style_text": "speech",
+                "audio_type": "speech",
+                "max_phone_len": MAX_PHONE_LEN, # TODO: (AS) remove hardcoded value
             }       
 
 class LibrilightDataset(WebPipeline):
     name = "LibrilightASR"
+    data_sample_rate = 24000
+
     
     def __init__(
         self,
-        url2index: str = "hdfs://haruna/home/byte_speech_sv/data/speech/librilight/index/url2idx.txt",
+        url2index: str = "hdfs://harunava/home/byte_speech_sv/data/speech/librilight_asr_npy/url2idx.txt",
         sample_rate: int = 24000,
-        audio_key: str = "bin",
+        audio_key: str = "audio.npy",
         min_duration: int = 5,
         max_duration: int = 30,
-        normalize_audio: bool = True,
-        **kwargs,        
+        normalize_audio: bool = False,
+        handler=wds.warn_and_continue,
+        **kwargs,
     ):
         self.sample_rate = sample_rate
         self.min_duration = min_duration
-        self.max_duration = max_duration        
-        self.audio_key = audio_key     
-        base_transforms = []
-        base_transforms.append(lambda x: ffmpeg_read_audio(x, sample_rate=self.sample_rate))
-        base_transforms += [ToTensor(), SetAudioDimensions()]
+        self.max_duration = max_duration
+        self.audio_key = audio_key
+        self.handler = handler
+
+        base_transforms = [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
+        if self.data_sample_rate != sample_rate and self.audio_key.endswith("npy"):
+            base_transforms.append(Resample(self.data_sample_rate, sample_rate))
         if normalize_audio:
             base_transforms.append(FastNormalizeAudio())
-        self.base_transform = Compose(base_transforms)            
-        dataset = IndexedWebDataset(url2index=url2index, **kwargs)
+        self.base_transform = Compose(base_transforms)
+        dataset = IndexedWebDataset(url2index=url2index, handler=handler, **kwargs)
         pipeline = ["decode", {"compose": [self.transform]}]
 
         with local_zero_first():
@@ -344,11 +287,14 @@ class LibrilightDataset(WebPipeline):
 
     def transform(self, item_yielder) -> Dict[str, Any]:
         for item in item_yielder:
-            audio = self.base_transform(item[self.audio_key])
+            try:
+                audio = self.base_transform(item[self.audio_key])
+            except Exception as e:
+                self.handler(e)
+                continue
             utterances = item["__index_data__"]
             if len(utterances) == 0:
                 continue
-            speaker_id = utterances[0]["speaker_id"]
             segments = group_utterances(utterances, self.min_duration, self.max_duration, time_in_sec=True)
             for segment in segments:                
                 start = int(segment[0] * self.sample_rate)
@@ -360,8 +306,9 @@ class LibrilightDataset(WebPipeline):
                     "audio": clip, 
                     "normalized_text": normalized_text,
                     "lyrics_tokens": phoneme_tokens,
-                    "speaker_id": torch.LongTensor([0]),  # TODO: (QQ) extract speaker id.
                     "style_text": "speech",
+                    "audio_type": "speech",
+                    "max_phone_len": MAX_PHONE_LEN, # TODO: (AS) remove hardcoded value
                 }               
 
 class MCCInstrumentalDataset(WebPipeline):
@@ -384,6 +331,7 @@ class MCCInstrumentalDataset(WebPipeline):
         audio_metrics_filtered: bool = True,
         avoid_sound_effect: bool = True,
         exclude_licenses: List[str] = ["C"],
+        handler=wds.warn_and_continue,
         **kwargs,
     ):
         self.sample_rate = sample_rate
@@ -395,6 +343,7 @@ class MCCInstrumentalDataset(WebPipeline):
         self.audio_metrics_filtered = audio_metrics_filtered
         self.avoid_sound_effect = avoid_sound_effect
         self.exclude_licenses = exclude_licenses
+        self.handler = handler
         self.is_loud = LoudnessCheck(
             sample_rate, min_volume_threshold, loudness_ratio_threshold
         )
@@ -410,7 +359,7 @@ class MCCInstrumentalDataset(WebPipeline):
         if self.data_sample_rate != sample_rate and audio_key != "mp3":
             base_transforms.append(Resample(self.data_sample_rate, sample_rate))
         self.base_transform = Compose(base_transforms)
-        dataset = IndexedWebDataset(url2index=url2index, **kwargs)
+        dataset = IndexedWebDataset(url2index=url2index, handler=handler, **kwargs)
         pipeline = ["decode", {"compose": [self.transform]}]
         super().__init__(dataset, pipeline)
 
@@ -482,7 +431,11 @@ class MCCInstrumentalDataset(WebPipeline):
             #     style_text, padding='max_length', max_length=self.max_style_token_seq_len))
             if not self.is_metadata_good(item["__index_data__"]):
                 continue
-            audio = self.base_transform(item[self.audio_key])
+            try:
+                audio = self.base_transform(item[self.audio_key])
+            except Exception as e:
+                self.handler(e)
+                continue
             if audio.size(-1) < self.max_duration * self.sample_rate:
                 continue
             for i in range(4):            
@@ -500,6 +453,7 @@ class MCCInstrumentalDataset(WebPipeline):
                     "style_text": style_text,
                     # "style_tokens": style_tokens,
                     "normalized_text": "",
+                    "max_phone_len": MAX_PHONE_LEN, # TODO: (AS) remove hardcoded value
                     }
   
 class MCCVocalDataset(MCCInstrumentalDataset):
@@ -571,29 +525,45 @@ class MCCVocalDataset(MCCInstrumentalDataset):
         conf /= len(utterance)
         return True if conf > threshold else False
 
+    def extract_metadata_and_utterances(self, index_data):
+        if 'metadata' in index_data:
+            metadata = index_data['metadata']
+        else:
+            metadata = index_data
+            
+        # Hiphop has format metadata: {..., lyrics: []}, THe rest has format { metadata: {}, lyrics: []}
+        if 'lyrics' in metadata and metadata['lyrics'] is not None:
+            utterances = metadata['lyrics'].get('utterances')
+        elif 'lyrics' in index_data and index_data['lyrics'] is not None:
+            utterances = index_data['lyrics'].get('utterances')
+        else:
+            utterances = None
+
+        return metadata, utterances
+
     def transform(self, item_yielder) -> Dict[str, Any]:
         for item in item_yielder:
-            if not self.is_metadata_good(item["__index_data__"]):
+            metadata, utterances = self.extract_metadata_and_utterances(item['__index_data__'])
+            if not self.is_metadata_good(metadata):
                 continue
-            lyrics = item["__index_data__"].get("lyrics", None)
-            if lyrics is None:
+            if utterances is None:
                 continue
-            style_text = rewrite_metadata(item["__index_data__"])
+
+            style_text = rewrite_metadata(metadata)
             # style_tokens = torch.LongTensor(self.t5_text_tokenizer.encode(
             #     style_text, padding='max_length', max_length=self.max_style_token_seq_len))
-            audio = self.base_transform(item[self.audio_key])
+            try:
+                audio = self.base_transform(item[self.audio_key])
+            except Exception as e:
+                self.handler(e)
+                continue
             if audio.dim() == 1:
                 audio = audio.unsqueeze(0)
 
-            utterances = item["__index_data__"]["lyrics"].get("utterances", None)
-            if utterances is None:
-                continue
             if not self.is_confident_lyrics(utterances, 0.8):
                 continue
             segments = group_utterances(utterances, self.min_duration, self.max_duration, 
                                         time_in_sec=False, include_intro=self.include_intro)
-            index_data = item["__index_data__"]
-            metadata = index_data["metadata"]
             if len(segments) < 1:
                 continue
             if self.segment_method == "first":
@@ -601,9 +571,6 @@ class MCCVocalDataset(MCCInstrumentalDataset):
             elif self.max_seg_per_track > 0:
                 random.shuffle(segments)
                 segments = segments[:self.max_seg_per_track]
-
-            index_data = item["__index_data__"]
-            metadata = index_data["metadata"]
             for segment in segments:
                 if segment[1] - segment[0] < 1:
                     print("short segment")
@@ -611,6 +578,9 @@ class MCCVocalDataset(MCCInstrumentalDataset):
                 start = int(segment[0] * self.sample_rate)
                 end = int(segment[1] * self.sample_rate)
                 clip = audio[:, start:end]
+                if clip.shape[-1] < self.sample_rate * self.min_duration // 2:
+                    print('audio too short', clip.shape)
+                    continue
 
                 # TODO!!!!!
                 # if not self.is_loud(clip):
@@ -677,6 +647,7 @@ class BillboardDataset(WebPipeline):
         segment_max_phone_len: int = 400,
         include_intro: bool = False,
         max_seg_per_track: int = -1,
+        handler=wds.warn_and_continue,
         **kwargs,
     ):
         with local_zero_first():
@@ -693,6 +664,7 @@ class BillboardDataset(WebPipeline):
         self.segment_max_phone_len = segment_max_phone_len
         self.include_intro = include_intro
         self.max_seg_per_track = max_seg_per_track
+        self.handler = handler
 
         base_transforms = []
         if audio_key == "mp3":
@@ -705,7 +677,7 @@ class BillboardDataset(WebPipeline):
         if self.data_sample_rate != sample_rate and audio_key != "mp3":
             base_transforms.append(Resample(self.data_sample_rate, sample_rate))
         self.base_transform = Compose(base_transforms)
-        dataset = IndexedWebDataset(url2index=url2index, **kwargs)
+        dataset = IndexedWebDataset(url2index=url2index, handler=handler, **kwargs)
         pipeline = ["decode", {"compose": [self.transform]}]
         super().__init__(dataset, pipeline)
 
@@ -718,7 +690,11 @@ class BillboardDataset(WebPipeline):
 
     def transform(self, item_yielder) -> Dict[str, Any]:
         for item in item_yielder:
-            audio = self.base_transform(item[self.audio_key])
+            try:
+                audio = self.base_transform(item[self.audio_key])
+            except Exception as e:
+                self.handler(e)
+                continue
             utterances = item["__index_data__"]['sa_lyrics']['result'][0].get("utterances", None)
             if utterances is None:
                 continue
@@ -821,7 +797,6 @@ class DataModule(pl.LightningDataModule):
             collate_fn=self.collate_fn,
         )
 
-
 class MixWebDataModule(DataModule):
     def __init__(
         self,
@@ -844,7 +819,7 @@ class MixWebDataModule(DataModule):
         num_workers: int = 4,
         pin_memory: bool = True,
         collate_fn: Optional[Callable] = collate_fn,
-        region: str = "US",  
+        region: str = "US",
         use_dynamic_batch: str = False,
         segment_method: str = "random",
         segment_max_phone_len: int = 400,
@@ -869,7 +844,7 @@ class MixWebDataModule(DataModule):
                 batch_size=batch_size,
                 length_fn=lambda x: x["audio"].shape[-1],
             )
-        mcc_vocal_val_index = "/mnt/bn/audio-diffusion/data/vocal_mcc_npy/lyrics_npy_url2idx_val.txt"            
+        mcc_vocal_val_index = f'/mnt/bn/audio-diffusion/data/mcc60_slices/val_from_group_1.tsv' # Group A - Label 1 - genre balanced
         mcc_instrumental_index = "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/npy_url2idx.txt"
         if region == "US":
             mcc_vocal_index = (
@@ -1021,7 +996,7 @@ class SFTWebDataModule(DataModule):
                 shardshuffle=True,
                 max_seg_per_track=max_seg_per_track,
                 use_pipe=use_pipe,
-                handler=wds.reraise_exception,
+                handler=wds.warn_and_continue,
             )] + [
             MCCVocalDataset(
                 url2index=url2index,
@@ -1035,7 +1010,7 @@ class SFTWebDataModule(DataModule):
                 include_intro=include_intro,
                 max_seg_per_track=max_seg_per_track,
                 use_pipe=use_pipe,
-                handler=wds.reraise_exception,
+                handler=wds.warn_and_continue,
             ) for url2index in mcc1m_groupA_url2index_list
             ]
         mcc1m_groupA_url2index_weights = [1/16] * len(mcc1m_groupA_url2index_list)
@@ -1054,7 +1029,7 @@ class SFTWebDataModule(DataModule):
                 use_pipe=False,
                 resampled=False,
                 nodesplitter=return_self,
-                handler=wds.reraise_exception,                
+                handler=wds.warn_and_continue,                
             ),
             MCCVocalDataset(
                 url2index="/mnt/bn/audio-diffusion/data/vocal_mcc_npy/pop_url2idx_val.txt",
@@ -1068,7 +1043,7 @@ class SFTWebDataModule(DataModule):
                 include_intro=include_intro,
                 max_seg_per_track=1,
                 use_pipe=False,
-                handler=wds.reraise_exception,
+                handler=wds.warn_and_continue,
             )
         ]
 
@@ -1120,7 +1095,9 @@ class TTSWebDataModule(DataModule):
             length_fn=lambda x: x["audio"].shape[-1],
         )
         if region == "US":
-            raise KeyError(f"Librilight data only in CN atm.")
+            librilight_url = "hdfs:////home/byte_speech_sv/data/speech/librilight_asr_npy/url2idx.txt"
+            libritts_url = "pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/speech/libritts/24000hz/train-clean-360/{00000..00007}.tar"
+            libritts_val_url = "hdfs:///home/byte_speech_sv/data/speech/libritts/24000hz/test-clean/00000.tar"
         elif region == "CN":
             librilight_url = "hdfs://haruna/home/byte_speech_sv/data/speech/librilight/index/url2idx.txt"
             libritts_url = "pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/speech/libritts/24000hz/train-clean-360/{00000..00007}.tar"
