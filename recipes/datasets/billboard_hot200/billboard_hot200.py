@@ -1,21 +1,24 @@
-import io
 import json
 import logging
 import os
 import random
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from collections import defaultdict
+from copy import deepcopy
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 import pandas as pd
 import torch
-import torchaudio
-import webdataset as wds
 from torch.utils.data import Dataset
 from torchaudio_augmentations import Compose
 from tqdm import tqdm
-from webdataset import WebDataset
-
-from recipes.datasets.base import BaseDataModule
-from samantha.dataio.webdataset import ShardWriter
+# from recipes.bigmusic.datasets.tokenizers.phoneme import Wav2VecPhonemeTokenizer
+from recipes.datasets.base import (
+    BaseDataModule,
+    _load_waveform,
+    resample,
+    collate_batch,
+)
+from samantha.dataio.webdataset import IndexShardWriter
 from samantha.dataio.webdataset.extension import IndexedWebDataset
 from samantha.dataio.webdataset.pipeline import WebPipeline
 from samantha.transforms.audio import (
@@ -24,38 +27,38 @@ from samantha.transforms.audio import (
     RandomResizedCrop,
     SetAudioDimensions,
     ToTensor,
+    pad_1d,
 )
-from samantha.utils.hdfs_tools import hdfs_open
-from samantha.utils.webdataset import return_self
 
 SAMPLE_RATE = 44100
 
 logger = logging.getLogger(__name__)
 
 
-def _load_waveform(path: str, exp_sample_rate: int, read_binary: bool = True):
-    if read_binary:
-        with open(path, "rb") as f:
-            waveform = f.read()
-        sample_rate = SAMPLE_RATE
-    else:
-        waveform, sample_rate = torchaudio.load(path)
-        if exp_sample_rate != sample_rate:
-            raise ValueError(
-                f"sample rate should be {exp_sample_rate}, but got {sample_rate}"
-            )
-    return waveform, sample_rate
-
-
-def load_billboard_hot200_item(audio_fp: str):
-    waveform, _ = _load_waveform(audio_fp, SAMPLE_RATE)
-    return waveform
-
-
 def load_json(fp: str) -> dict:
     with open(fp) as f:
         return json.load(f)
 
+
+def musixmatch_to_lrc(
+    musixmatch_lyric, title: str = "", artist: str = "", album: str = ""
+):
+    def number_formatter(n: float) -> str:
+        return f"{int(n):02d}"
+
+    lines = []
+    for d in musixmatch_lyric:
+        start_time_ms = float(d["startTimeMs"])
+        ss, ms = divmod(start_time_ms, 1000)
+        mm, ss = divmod(ss, 60)
+        lyric = d["words"]
+
+        line = f"[{number_formatter(mm)}:{number_formatter(ss)}.{number_formatter(ms)}] {lyric}"
+        lines.append(line)
+
+    lines_str = "\n".join(lines)
+    lrc = f"[ar: {artist}]\n[al: {album}]\n[ti: {title}]\n\n{lines_str}"
+    return lrc
 
 class BillboardHot200Dataset(Dataset):
     """BillboardHot200 dataset.
@@ -64,50 +67,25 @@ class BillboardHot200Dataset(Dataset):
     split (str, optional): The split to use (small, medium, large)
     """
 
-    _ext_metadata = ".json"
-    _columns = [
-        "id",
-        "name",
-        "disc_number",
-        "track_number",
-        "duration_ms",
-        "primary_artist_name",
-        "album.name",
-        "album.release_date",
-        "album.type",
-        "album.id",
-        "album.total_tracks",
-        "popularity",
-        "external_ids.isrc",
-        "meta_song_id",
-    ]
-
     def __init__(
         self,
         metadata_fp: str,
         audio_dir: str,
-        track_features_dir: str,
-        track_lyrics_dir: str,
         split: str,
         verify_dataset: bool = True,
         ext_audio: str = ".flac",
+        lyrics_only: bool = False,
     ) -> None:
+        self._split = split
+        self._audio_dir = audio_dir
+        self._ext_audio = ext_audio
+        self._lyrics_only = lyrics_only
         data = pd.read_pickle(metadata_fp)
         data = self.process_dataframe(data)
         self.data = self.get_split(data, split)
-        self._split = split
-        self._audio_dir = audio_dir
-        self._track_features_dir = track_features_dir
-        self._track_lyrics_dir = track_lyrics_dir
-        self._ext_audio = ext_audio
 
         if not os.path.isdir(self._audio_dir):
             raise RuntimeError(f"Audio dataset not found at {self._audio_dir}.")
-
-        if not os.path.isdir(self._track_features_dir):
-            raise RuntimeError(
-                f"Audio features not found at {self._track_features_dir}."
-            )
 
         if verify_dataset:
             self.verify_dataset()
@@ -115,8 +93,27 @@ class BillboardHot200Dataset(Dataset):
         self._walker = self.data.index.tolist()
         self.total = len(self._walker)
 
+    @property
+    def audio_filepaths(self):
+        return self.data["audio_fp"].tolist()
+
     def process_dataframe(self, data: pd.DataFrame) -> pd.DataFrame:
         data = self.process_split(data)
+        data = data.drop_duplicates(
+            "meta_song_id"
+        )  # TODO: spotify_track_id has ~250k records
+
+        data = data.drop_duplicates("spotify_track_id")
+
+        if self._lyrics_only:
+            data = data.dropna(subset=["spotify_lyric_lines"])
+
+            # english only
+            data = data[data["spotify_lyric_language"] == "en"]
+
+            # synced only
+            data = data[data["spotify_lyric_syncType"] == "LINE_SYNCED"]
+        data["audio_fp"] = data["meta_song_id"].apply(self.get_audio_path)
         return data
 
     def process_split(self, data: pd.DataFrame, seed: int = 42) -> pd.DataFrame:
@@ -131,7 +128,8 @@ class BillboardHot200Dataset(Dataset):
         Returns:
             pd.DataFrame: _description_
         """
-        artists = data.primary_artist_name.unique()
+
+        artists = data["spotify_primary_artist_name"].unique()
         n_artists = len(artists)
         n_test_artists = int(0.1 * n_artists)
 
@@ -139,7 +137,9 @@ class BillboardHot200Dataset(Dataset):
         test_artists = random.sample(sorted(artists), k=n_test_artists)
 
         data["split"] = "train"
-        data.loc[data["primary_artist_name"].isin(test_artists), "split"] = "test"
+        data.loc[
+            data["spotify_primary_artist_name"].isin(test_artists), "split"
+        ] = "test"
         return data
 
     def get_split(self, data: pd.DataFrame, split: str) -> pd.DataFrame:
@@ -157,10 +157,6 @@ class BillboardHot200Dataset(Dataset):
         ):
             try:
                 if os.path.isfile(self.get_audio_path(row["meta_song_id"])):
-                    features_fp = self.get_track_features_path(
-                        row["album.id"], row["id"]
-                    )
-                    load_json(features_fp)
                     new_data.append(row)
             except Exception as e:
                 print(e)
@@ -171,7 +167,7 @@ class BillboardHot200Dataset(Dataset):
             random.seed(seed)
             random.shuffle(self._walker)
         else:
-            logger.warn("Shuffling not done as `split != train`")
+            logger.warning("Shuffling not done as `split != train`")
 
     def __len__(self):
         return self.total
@@ -179,64 +175,41 @@ class BillboardHot200Dataset(Dataset):
     def get_audio_path(self, meta_song_id: str):
         return os.path.join(self._audio_dir, meta_song_id + self._ext_audio)
 
-    def get_track_features_path(self, album_id: str, track_id: str):
-        return os.path.join(self._track_features_dir, album_id, track_id + ".json")
-
     def get_track_lyrics_path(self, album_id: str, track_id: str):
         return os.path.join(self._track_lyrics_dir, album_id, track_id + ".json")
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         index = self._walker[idx]
         row = self.data.loc[index]
-
-        audio_fp = self.get_audio_path(row["meta_song_id"])
-        features_fp = self.get_track_features_path(row["album.id"], row["id"])
-        lyrics_fp = self.get_track_lyrics_path(row["album.id"], row["id"])
-
-        track_features = None
-        if os.path.exists(features_fp):
-            track_features = load_json(features_fp)
-
-        lyrics = None
-        if os.path.exists(lyrics_fp):
-            lyrics = load_json(lyrics_fp)
-
-        metadata = row[self._columns].to_dict()
-        audio = load_billboard_hot200_item(audio_fp)
-        return {
-            "audio": audio,
-            "metadata": metadata,
-            "track_features": track_features,
-            "lyrics": lyrics,
-        }
+        return row
 
 
-def write_index(hdfs_fp: str, index: List[str]):
-    with hdfs_open(hdfs_fp, "w") as f:
-        f.write("\n".join(index))
-
-
-class BillboardHot200WebDataModule(BaseDataModule):
+class BillboardDataModule(BaseDataModule):
     data_sample_rate = SAMPLE_RATE
 
     def __init__(
         self,
+        url2index: str,
         sample_rate: int,
         batch_size: int,
         shuffle_buffer_size: int = 64,
         duration: Optional[float] = None,
-        num_workers: int = 32,
+        num_workers: int = 8,
         pin_memory: bool = True,
         resampled: bool = True,
         shardshuffle: bool = True,
     ):
+        self.url2index = url2index
         self.sample_rate = sample_rate
         self.duration = duration
-        self._data_stats = None
+        # self.phoneme_tokenizer = Wav2VecPhonemeTokenizer()
 
         transforms = [self.wds_transform]
-        train_dataset, validation_dataset, predict_dataset = self.get_datasets(
-            resampled=resampled, shardshuffle=shardshuffle, transforms=transforms
+        dataset = self.get_dataset(
+            url2index=url2index,
+            resampled=resampled,
+            shardshuffle=shardshuffle,
+            transforms=transforms,
         )
 
         super().__init__(
@@ -245,9 +218,9 @@ class BillboardHot200WebDataModule(BaseDataModule):
             shuffle_buffer_size=shuffle_buffer_size,
             num_workers=num_workers,
             pin_memory=pin_memory,
-            train_dataset=train_dataset,
-            validation_dataset=validation_dataset,
-            predict_dataset=predict_dataset,
+            train_dataset=dataset,
+            validation_dataset=dataset,
+            predict_dataset=dataset,
         )
         self.base_transform = Compose(
             [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
@@ -257,137 +230,111 @@ class BillboardHot200WebDataModule(BaseDataModule):
             self.random_pad = RandomPad(self.n_audio_samples)
             self.random_crop = RandomResizedCrop(self.n_audio_samples)
 
-    @staticmethod
-    def get_datasets(
-        resampled: bool, shardshuffle: bool, transforms: List[Callable] = []
-    ) -> Tuple[WebPipeline, WebPipeline, WebPipeline]:
-        train_shards = "pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/music/billboard_hot200_mp3/train/{00000..00168}.tar"
-        valid_shards = "pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/music/billboard_hot200_mp3/test/{00000..00017}.tar"
-        # train_shards = "/mnt/bn/janne-research-xl/data/shards/billboard_hot200_mp3/train/{00000..00168}.tar"
-        # valid_shards = "/mnt/bn/janne-research-xl/data/shards/billboard_hot200_mp3/test/{00000..00017}.tar"
-
-        train_dataset = WebDataset(
-            urls=train_shards, resampled=resampled, shardshuffle=shardshuffle
-        )
-        validation_dataset = WebDataset(urls=valid_shards, nodesplitter=return_self)
-
-        pipeline = []
-        pipeline.append("decode")
-        pipeline.append({"map": transforms})
-
-        train_dataset = WebPipeline(train_dataset, pipeline)
-        predict_dataset = train_dataset  # TODO
-        validation_dataset = WebPipeline(validation_dataset, pipeline)
-        return train_dataset, validation_dataset, predict_dataset
-
-    @staticmethod
-    def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
-        max_length = max([x["audio"].shape[-1] for x in batch])
-        random_pad = RandomPad(n_samples=max_length)
-
-        audio = []
-        metadata = []
-        track_features = []
-        lyrics = []
-        shard = []
-        for idx in range(len(batch)):
-            audio.append(random_pad(batch[idx]["audio"]))
-            metadata.append(batch[idx]["metadata"])
-            track_features.append(batch[idx]["track_features"])
-            lyrics.append(batch[idx]["lyrics"])
-            shard.append(batch[idx]["shard"])
-
-        return {
-            "audio": torch.stack(audio),
-            "metadata": metadata,
-            "track_features": track_features,
-            "lyrics": lyrics,
-            "shard": shard,
-        }
-
-    @staticmethod
-    def create_webdataset(
-        dataset: BillboardHot200Dataset,
-        pattern: str,
-        maxsize: int,
-        start_shard_idx: int,
-    ):
-        writer = ShardWriter(
-            pattern=pattern, maxsize=maxsize, start_shard=start_shard_idx
-        )
-        index = []
-        current_shard = writer.shard
-        for idx, item in enumerate(tqdm(dataset)):
-            if current_shard != writer.shard:
-                index_fp = os.path.join(
-                    os.path.dirname(writer.fname), f"{current_shard-1:05d}.tar.index"
-                )
-                print(f"Writing index: {index_fp}")
-                write_index(index_fp, index)
-                current_shard = writer.shard
-                index = []
-
-            id = f"{idx}-{item['metadata']['meta_song_id']}"
-            # item["audio"] = fp32_to_int16(item["audio"])
-
-            obj = {
-                "__key__": id,
-                f"audio{dataset._ext_audio}": item["audio"],
-                "metadata.json": item["metadata"],
-                "track_features.json": item["track_features"],
-                "lyrics.json": item["lyrics"],
-            }
-            writer.write(obj)
-            index.append(id)
-
-        index_fp = os.path.join(
-            os.path.dirname(writer.fname), f"{current_shard-1:05d}.tar.index"
-        )
-        print(f"Writing index: {index_fp}")
-        write_index(index_fp, index)
-        writer.close()
-
     @property
     def n_audio_samples(self) -> int:
         return int(self.duration * self.sample_rate)
 
-    def wds_transform(self, item) -> Dict[str, Any]:
-        audio = item["audio.mp3"]  # .flac
+    @staticmethod
+    def get_dataset(
+        url2index: str,
+        resampled: bool,
+        shardshuffle: bool,
+        transforms: List[Callable] = [],
+    ) -> Tuple[WebPipeline, WebPipeline, WebPipeline]:
+        dataset = IndexedWebDataset(
+            url2index=url2index,
+            resampled=resampled,
+            shardshuffle=shardshuffle,
+            use_pipe=True,  # False
+        )
+        pipeline = []
+        pipeline.append("decode")
+        pipeline.append({"compose": transforms})
+        return WebPipeline(dataset, pipeline)
 
-        audio, sr = torchaudio.load(io.BytesIO(audio), format="mp3")
-        # audio, sr = sf.read(io.BytesIO(audio)) # .flac
+    @staticmethod
+    def create_webdataset(
+        dataset: BillboardHot200Dataset,
+        sample_rate: int,
+        mono: bool,
+        pattern: str,
+        maxsize: int,
+        start_shard_idx: int,
+    ):
+        writer = IndexShardWriter(
+            pattern=pattern, maxsize=maxsize, start_shard=start_shard_idx
+        )
+        for idx, item in enumerate(tqdm(dataset)):
+            id = f"{idx}-{item['meta_song_id']}"
+            # item["audio"] = fp32_to_int16(item["audio"])
 
-        audio = self.base_transform(audio)
+            audio_fp = item["audio_fp"]
+            out_fp = resample(audio_fp, sample_rate, mono)
+            if not os.path.exists(out_fp):
+                # print(f"{out_fp} does not exist") # TODO log this
+                continue
 
-        if self.duration is not None:
-            audio = self.random_pad(audio)
-            audio = self.random_crop(audio)
+            audio, sr = _load_waveform(out_fp, sample_rate)
+            lyrics = item["spotify_lyric_lines"]
+            if not type(lyrics) == list:
+                lyrics = None
 
-        shard = os.path.basename(item["__url__"])
-        return {
-            "audio": audio,
-            "metadata": item["metadata.json"],
-            "track_features": item["track_features.json"],
-            "lyrics": item["lyrics.json"],
-            "shard": shard,
-        }
+            del item["audio_fp"]
+            del item["spotify_lyric_lines"]
+
+            obj = {
+                "__key__": id,
+                "audio.npy": audio.numpy(),
+                # f"audio{dataset._ext_audio}": item["audio"],
+                # "track_features.json": item["track_features"],
+            }
+
+            index = {"metadata": item.to_dict(), "lyrics": lyrics}
+            writer.write(obj, index)
+        writer.close()
+
+    def collate_fn(self, batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
+        batch_dict = collate_batch(batch)
+        return self.stack_batch_dict(batch_dict)
+
+    def stack_batch_dict(self, batch_dict):
+        batch_dict["audio"] = torch.stack(batch_dict["audio"], dim=0)
+        return batch_dict
+
+    def wds_transform(self, items) -> Iterator[Dict[str, Any]]:
+        for item in items:
+            audio = item["audio.npy"]
+            index = item["__index_data__"]
+            audio = self.base_transform(audio)
+
+            if self.duration is not None:
+                audio = self.random_pad(audio)
+                audio = self.random_crop(audio)
+
+            shard = os.path.basename(item["__url__"])
+            yield {
+                "audio": audio,
+                "metadata": index["metadata"],
+                "lyrics": lyrics,
+                "shard": shard,
+            }
 
 
-class BillboardHot200PreprocessedWebDataModule(BillboardHot200WebDataModule):
-    data_sample_rate = 24000
-
+class BillboardLyricsDataModule(BillboardDataModule):
     def __init__(
         self,
+        url2index: str,
         sample_rate: int,
+        duration: int,
         batch_size: int,
-        shuffle_buffer_size: int = 500,
-        duration: Optional[float] = None,
-        num_workers: int = 8,
+        shuffle_buffer_size: int = 64,
+        num_workers: int = 32,
         pin_memory: bool = True,
         resampled: bool = True,
         shardshuffle: bool = True,
     ):
         super().__init__(
+            url2index=url2index,
             sample_rate=sample_rate,
             batch_size=batch_size,
             shuffle_buffer_size=shuffle_buffer_size,
@@ -399,113 +346,113 @@ class BillboardHot200PreprocessedWebDataModule(BillboardHot200WebDataModule):
         )
 
     @staticmethod
-    def get_datasets(
-        resampled: bool, shardshuffle: bool, transforms: List[Callable] = []
-    ) -> Tuple[WebPipeline, WebPipeline, WebPipeline]:
-        train_url2index = "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/billboard/train/url2index.txt"
-        valid_url2index = "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/billboard/test/url2index.txt"
-        train_dataset = IndexedWebDataset(
-            train_url2index,
-            resampled=resampled,
-            shardshuffle=shardshuffle,
-            use_pipe=True,
-            handler=wds.warn_and_continue,
-        )
-        validation_dataset = IndexedWebDataset(
-            valid_url2index,
-            resampled=resampled,
-            shardshuffle=shardshuffle,
-            use_pipe=True,
-            handler=wds.warn_and_continue,
-        )
+    def group_lyrics(lyrics, duration: int, padding_sec: int = 5):
+        # TODO: Group backwards?
+        min_padding_ms = (duration - padding_sec) * 1000
 
-        pipeline = []
-        pipeline.append("decode")
-        pipeline.append({"map": transforms})
+        filtered_lyrics = []
+        for i in range(len(lyrics) - 1):
+            current_lyric = lyrics[i]
+            next_lyric = lyrics[i + 1]
 
-        train_dataset = WebPipeline(train_dataset, pipeline)
-        predict_dataset = train_dataset  # TODO
-        validation_dataset = WebPipeline(validation_dataset, pipeline)
-        return train_dataset, validation_dataset, predict_dataset
+            current_lyric["startTimeMs"] = int(current_lyric["startTimeMs"])
+            delta_time = abs(
+                int(next_lyric["startTimeMs"]) - current_lyric["startTimeMs"]
+            )
+            current_lyric.update({"deltaTimeMs": delta_time})
+            if delta_time > 0:
+                filtered_lyrics.append(current_lyric)
+
+        grouped_lyrics = []
+        for i in range(len(filtered_lyrics)):
+            g_lyrics = []
+            acc_delta_time = 0
+            for j in range(i, len(filtered_lyrics)):
+                if acc_delta_time >= min_padding_ms:
+                    break
+
+                lyric = deepcopy(filtered_lyrics[j])
+
+                acc_delta_time += lyric["deltaTimeMs"]
+                lyric["totalDurationMs"] = acc_delta_time
+                g_lyrics.append(lyric)
+
+            grouped_lyrics.append(g_lyrics)
+
+        # filter out lyrics above and below threshold
+        filtered_grouped_lyrics = []
+        for i in range(len(grouped_lyrics)):
+            total_duration_ms = grouped_lyrics[i][-1]["totalDurationMs"]
+            if total_duration_ms < min_padding_ms:
+                continue
+
+            filtered_grouped_lyrics.append(grouped_lyrics[i])
+        return filtered_grouped_lyrics
 
     @staticmethod
-    def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
-        max_length = max([x["audio"].shape[-1] for x in batch])
-        random_pad = RandomPad(n_samples=max_length)
+    def align_audio_with_lyrics(
+        audio: torch.Tensor, lyrics, sample_rate: int, max_audio_samples: int
+    ) -> torch.Tensor:
+        # align audio with lyrics
+        start_time = lyrics[0]["startTimeMs"]
+        duration_ms = lyrics[-1]["totalDurationMs"]
 
-        audio = []
-        metadata = []
-        track_features = []
-        lyrics = []
-        sa_lyrics = []
-        audio_metric = []
-        vad = []
-        shard = []
-        for idx in range(len(batch)):
-            audio.append(random_pad(batch[idx]["audio"]))
-            metadata.append(batch[idx]["metadata"])
-            track_features.append(batch[idx]["track_features"])
-            lyrics.append(batch[idx]["lyrics"])
-            sa_lyrics.append(batch[idx]["sa_lyrics"])
-            audio_metric.append(batch[idx]["audio_metric"])
-            vad.append(batch[idx]["vad"])
-            shard.append(batch[idx]["shard"])
+        start_time_samples = int((start_time / 1000) * sample_rate)
+        duration_samples = int((duration_ms / 1000) * sample_rate)
 
-        return {
-            "audio": torch.stack(audio),
-            "metadata": metadata,
-            "track_features": track_features,
-            "lyrics": lyrics,
-            "shard": shard,
-        }
+        # crop, or pad, from right
+        if duration_samples > max_audio_samples:
+            duration_samples = max_audio_samples
 
-    def wds_transform(self, item) -> Dict[str, Any]:
-        audio = item["audio.npy"]
+        audio = audio[:, start_time_samples : start_time_samples + duration_samples]
 
-        audio = self.base_transform(audio)
+        if audio.shape[1] < max_audio_samples:
+            audio = pad_1d(audio, start_idx=0, n_samples=max_audio_samples)
+        return audio
 
-        if self.duration is not None:
-            audio = self.random_pad(audio)
-            audio = self.random_crop(audio)
+    def stack_batch_dict(self, batch_dict):
+        batch_dict["audio"] = torch.stack(batch_dict["audio"], dim=0)
+        # batch_dict["phoneme_tokens"] = self.phoneme_tokenizer.collate_fn(
+        #     batch_dict["phoneme_tokens"]
+        # )
+        return batch_dict
+    
+    def get_phoneme_tokens(self, text: str) -> torch.Tensor:
+        return self.phoneme_tokenizer([text])[0]
 
-        shard = os.path.basename(item["__url__"])
+    def wds_transform(self, items) -> Iterator[Dict[str, Any]]:
+        for item in items:
+            audio = item["audio.npy"]
+            index = item["__index_data__"]
 
-        index_data = item["__index_data__"]
-        return {
-            "audio": audio,
-            "metadata": index_data["metadata"],
-            "track_features": index_data["track_features"],
-            "lyrics": index_data["lyrics"],
-            "sa_lyrics": index_data["sa_lyrics"],
-            "audio_metric": index_data["audio_metric"],
-            "vad": index_data["vad"],
-            "shard": shard,
-        }
+            # malformed audio
+            if audio.shape[1] == 0:
+                continue
 
+            audio = self.base_transform(audio)
 
-if __name__ == "__main__":
-    split = "train"  # "train"
-    # audio_dir = "/mnt/bn/janne-research-xl/data/mcc/billboard_hot_200/"
-    audio_dir = "/mnt/bn/janne-research-xl/data/mcc/billboard_hot_200_mp3_320kbps"
-    metadata_fp = "billboard_hot_200_spotify_mcc_filtered.pickle"
-    track_features_dir = (
-        "/mnt/bn/janne-research-xl/data/billboard_hot200/tracks_features"
-    )
-    track_lyrics_dir = "/mnt/bn/janne-research-xl/data/billboard_hot200/lyrics"
-    dataset = BillboardHot200Dataset(
-        metadata_fp=metadata_fp,
-        audio_dir=audio_dir,
-        track_features_dir=track_features_dir,
-        track_lyrics_dir=track_lyrics_dir,
-        split=split,
-        verify_dataset=True,
-        ext_audio=".mp3",
-    )
+            # lyrics
+            lyrics = index["lyrics"]
+            grouped_lyrics = self.group_lyrics(lyrics, duration=self.duration)
+            if not len(grouped_lyrics):
+                continue
 
-    pattern = f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/billboard_hot200_mp3/{split}/%05d.tar"
-    maxsize = 1 << 30  # 1GiB, maximum size of each shard
-    dataset.random_shuffle()
-    start_shard_idx = 0
-    BillboardHot200WebDataModule.create_webdataset(
-        dataset, pattern, maxsize, start_shard_idx=start_shard_idx
-    )
+            group_idx = random.randint(0, len(grouped_lyrics) - 1)
+            lyrics = grouped_lyrics[group_idx]
+            words = "\n".join([l["words"] for l in lyrics])
+
+            audio = self.align_audio_with_lyrics(
+                audio, lyrics, self.sample_rate, self.n_audio_samples
+            )
+
+            # phoneme_tokens = self.get_phoneme_tokens(words)
+
+            shard = os.path.basename(item["__url__"])
+            yield {
+                "audio": audio,
+                "metadata": index["metadata"],
+                "lyrics": words,
+                # "phoneme_tokens": phoneme_tokens,
+                "shard": shard,
+            }
+

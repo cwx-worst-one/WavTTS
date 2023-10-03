@@ -235,7 +235,7 @@ def plot_spectrogram(
     ax=None,
 ):
     if ax is None:
-        _, ax = plt.subplots(spec.shape[0], 1)
+        _, ax = plt.subplots(1, 1)
 
     if title is not None:
         ax.set_title(title)

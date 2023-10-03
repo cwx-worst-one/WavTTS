@@ -1,6 +1,8 @@
+import json
 import logging
+import os
 import time
-from typing import Any, Callable, Optional  # noqa
+from typing import Any, Callable, List, Optional, Tuple
 
 import webdataset as wds
 from pyarrow.fs import FileSystem
@@ -121,3 +123,69 @@ class ShardWriter:
     def __exit__(self, *args, **kw):
         """Exit context."""
         self.close()
+
+
+class IndexShardWriter(ShardWriter):
+    def __init__(
+        self,
+        pattern: str,
+        maxcount: int = 100000,
+        maxsize: float = 3e9,
+        post: Optional[Callable] = None,
+        start_shard: int = 0,
+        **kw,
+    ):
+        self.index = None
+        self.url2index = []
+        super().__init__(
+            pattern=pattern,
+            maxcount=maxcount,
+            maxsize=maxsize,
+            post=post,
+            start_shard=start_shard,
+            **kw,
+        )
+
+    @property
+    def url2index_fp(self) -> str:
+        return os.path.join(os.path.dirname(self.pattern), "url2index.txt")
+
+    def open_stream(self, fp: str):
+        if self.stream is None:
+            stream = open(fp, "wb")
+        else:
+            stream = self.stream.open_output_stream(fp)
+        return stream
+
+    def write_url2index(self, fp: str, url2index: List[Tuple[str, str]]):
+        stream = self.open_stream(fp)
+        for u in url2index:
+            stream.write(f"{u[0]}\t{u[1]}\n".encode())
+        stream.close()
+
+    def write_index(self, fp: str, index: List[Tuple[str, dict]]):
+        stream = self.open_stream(fp)
+        for idx in index:
+            stream.write(f"{idx[0]}\t{json.dumps(idx[1], default=str)}\n".encode())
+        stream.close()
+
+    def finish(self):
+        if self.index is not None:
+            index_fname = self.pattern % (self.shard - 1) + ".index"
+            self.write_index(index_fname, self.index)
+            self.url2index.append((self.fname, index_fname))
+            self.write_url2index(self.url2index_fp, self.url2index)
+
+        self.index = []
+
+    def write(self, obj: dict, index: dict):
+        if (
+            self.tarstream is None
+            or self.count >= self.maxcount
+            or self.size >= self.maxsize
+        ):
+            self.next_stream()
+
+        key = obj["__key__"].strip()
+        self.index.append((key, index))
+        return super().write(obj)

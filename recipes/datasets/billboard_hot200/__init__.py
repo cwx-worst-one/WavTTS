@@ -1,1 +1,1 @@
-from .billboard_hot200 import BillboardHot200WebDataModule
+from .billboard_hot200 import BillboardDataModule, BillboardLyricsDataModule
