@@ -17,6 +17,7 @@ from torchaudio_augmentations import Compose
 from webdataset import WebDataset
 from webdataset.pipeline import DataPipeline
 import logging, phonemizer
+from recipes.bigmusic.datasets.tokenizers.phoneme import MAX_PHONE_LEN
 from recipes.bigmusic.utils.format_utils import normalize_text
 from recipes.datasets.mcc.mix import (
     DataModule
@@ -42,7 +43,6 @@ from samantha.transforms.audio import (
 from samantha.utils.webdataset import return_self
 from transformers import Wav2Vec2PhonemeCTCTokenizer
 
-MAX_PHONE_LEN = 400
 MAX_STYLE_LEN = 16
 
 def pad_crop(sequence, seq_len, dtype, padding_value=0):
