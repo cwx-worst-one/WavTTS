@@ -14,12 +14,11 @@ extra_params:
     sample_rate: 24000
     frame_rate: 25
     n_mels: 128
-    n_chroma: 12
     n_fft: 2048
     win_length: 2048
     hop_length: 240
     feature_cmvn: "recipes/datasets/mcc/MixWebDataModule_SpeechTransform.stats.pt"
-    tokenizer: "wordpiece"
+    tokenizer: null
 
 # running parameters
 run_opts:
@@ -28,15 +27,16 @@ run_opts:
     hdfs_log_dir: "hdfs:///home/byte_speech_sv/zongyu.yin/logs"
     log_dir: logs
     log_name: umm
-    version: !ref umm_stage2_dw20-3-2_<extra_params[tokenizer]>
+    version: !ref umm_stage1_soda_dw1-1-0_rq<config[rq_codebook_size]>x<config[rq_codebook_dim]>x<config[rq_codebook_num]>
     precision: "16-mixed"
     num_workers: 4
     accelerator: auto
+    warmup_steps: 2000
     max_steps: 1000000
     val_check_interval: 5000
     ckpt_interval: 10000
-    batch_size: 18
-    learning_rate: 1.0e-4
+    batch_size: 20
+    learning_rate: 3.0e-4
     cycle_steps: 30000
     weight_decay: 0.1
     shuffle_buffer: 100
@@ -47,13 +47,13 @@ run_opts:
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
-pl_datamodule: !new:recipes.datasets.mcc.mix.MixWebDataModule
+pl_datamodule: !new:recipes.datasets.mcc.mix.SodaDataModule
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
     sample_rate: !ref <extra_params[sample_rate]>
     batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <extra_params[sample_rate]>
     num_workers: !ref <run_opts[num_workers]>
     region: "CN"
-    weights: [20, 3, 2]
+    weights: [1, 1, 0]
     max_num_crops: null
     min_duration: 2
     max_duration: 30
@@ -61,6 +61,7 @@ pl_datamodule: !new:recipes.datasets.mcc.mix.MixWebDataModule
     use_pipe: False
     tokenizer: !ref <extra_params[tokenizer]>
     frame_rate: !ref <extra_params[frame_rate]>
+    collate_fn: !name:recipes.datasets.mcc.mix.collate_audio
 
 optimizer_cls: !name:torch.optim.AdamW
     lr: !ref <run_opts[learning_rate]>
@@ -68,26 +69,33 @@ optimizer_cls: !name:torch.optim.AdamW
     betas: [0.9, 0.96] # TODO
     eps: 0.00000001
 
-scheduler_cls: !name:recipes.umm.modules.lr_scheduler.DecayCosine
+scheduler_cls: !name:recipes.umm.modules.lr_scheduler.WarmupCosine
     init_lr: !ref <run_opts[learning_rate]>
+    warmup_steps: !ref <run_opts[warmup_steps]>
     cycle_steps: !ref <run_opts[cycle_steps]>
-    min_lr: !ref <run_opts[learning_rate]> / 2
+    min_lr: !ref <run_opts[learning_rate]> * 0.1
 
 config: !new:recipes.umm.models.config.UMMConfig
     feature_cmvn: !ref <extra_params[feature_cmvn]>
     sample_rate: !ref <extra_params[sample_rate]>
     n_mels: !ref <extra_params[n_mels]>
-    add_chroma: True
-    n_chroma: !ref <extra_params[n_chroma]>
     n_fft: !ref <extra_params[n_fft]>
     win_length: !ref <extra_params[win_length]>
     hop_length: !ref <extra_params[hop_length]>
     hidden_size: 1024
     intermediate_size: 4096
-    num_hidden_layers: 24
+    num_pre_layers: 12
+    num_post_layers: 12
     num_attention_heads: 8
     max_source_positions: 750
+    mask_hop: 0.4
+    mask_prob: 0.2
+    rq_codebook_dim: 16
+    rq_codebook_size: 4096
+    rq_codebook_num: 8
+    rq_input_layernorm: False
     add_vq: False
+    vq_layer_idx: 12
     vq_codebook_size: 32768
     vq_codebook_dim: 32
     vq_decay: 0.99
@@ -97,27 +105,19 @@ config: !new:recipes.umm.models.config.UMMConfig
     w_loss_ctc: 1.0
     tokenizer: !ref <extra_params[tokenizer]>
     frame_rate: !ref <extra_params[frame_rate]>
-    # vocab_size: 393
-    # ctc_blank_id: 392
     vocab_size: 30523
     ctc_blank_id: 30522
 
-model_cls: !name:recipes.umm.models.umm_mkii.Stage2
+model_cls: !name:recipes.umm.models.umm_mkii.Stage1
     config: !ref <config>
 
-pl_module: !new:recipes.umm.modules.lit_module.Stage2
+pl_module: !new:recipes.umm.modules.lit_module.Stage1
     checkpointing: !ref <run_opts[checkpointing]>
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
-    criterion_cls: !name:recipes.umm.modules.criterion.UMMLoss
-        config: !ref <config>
+    criterion_cls: !name:recipes.umm.modules.criterion.MaskedCrossEntropy
     extra_params: !ref <extra_params>
-    required_modules:
-        pretrained:
-            ckpt_path: "hdfs:///home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage1_dw20-3-2_rq4096x16x8/checkpoints/step=040000.ckpt"
-            init_fn: !name:recipes.umm.requires.model_initializer.init_pretrained
-            cache_dir: !ref <run_opts[cache_dir]>
 
 logger:
     - !new:pytorch_lightning.loggers.wandb.WandbLogger
@@ -142,7 +142,7 @@ callbacks:
       filename: "{step:06d}"
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: 'step'
-    - !new:recipes.umm.callbacks.log_spectrogram.LogSpectrogram
+    - !new:recipes.umm.callbacks.log_spectrogram.LogMaskedMelSpectrogram
       n_examples: 3
 
 plugins:

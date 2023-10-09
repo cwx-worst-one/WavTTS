@@ -225,3 +225,22 @@ def init_sami_tts_api(fe_version, fe_task, cache_dir="/opt/tiger/sami_tts_api/mo
     #         if not hh.get(hdfs_path, local_path):
     #             raise ConnectionError(f"Cannot retrieve file from {hdfs_path}.")
     # return local_path
+
+
+def init_unified_decoder(hpath, local_rank, cache_dir=None):
+    from recipes.umm.modules.lit_module import UnifiedDecoder
+
+    if cache_dir is not None:
+        os.makedirs(cache_dir, exist_ok=True)
+
+    device = torch.device(f"cuda:{local_rank}")
+    with local_zero_first():
+        if hpath.startswith("hdfs://"):
+            local_path = f"{cache_dir}/{os.path.basename(hpath)}"
+            if not os.path.exists(local_path):
+                if not hh.get(hpath, local_path):
+                    raise ConnectionError(f"Cannot retrieve file from {hpath}.")
+        else:
+            local_path = hpath
+        model = UnifiedDecoder.load_from_checkpoint(local_path).to(device).eval()
+        return {"unified_decoder": model}

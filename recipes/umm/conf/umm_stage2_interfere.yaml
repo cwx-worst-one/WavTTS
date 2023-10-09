@@ -28,7 +28,7 @@ run_opts:
     hdfs_log_dir: "hdfs:///home/byte_speech_sv/zongyu.yin/logs"
     log_dir: logs
     log_name: umm
-    version: !ref umm_stage2_dw20-3-2_<extra_params[tokenizer]>
+    version: !ref umm_stage2_dw1-1-0_<extra_params[tokenizer]>_interfered
     precision: "16-mixed"
     num_workers: 4
     accelerator: auto
@@ -53,7 +53,7 @@ pl_datamodule: !new:recipes.datasets.mcc.mix.MixWebDataModule
     batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <extra_params[sample_rate]>
     num_workers: !ref <run_opts[num_workers]>
     region: "CN"
-    weights: [20, 3, 2]
+    weights: [1, 1, 0]
     max_num_crops: null
     min_duration: 2
     max_duration: 30
@@ -84,7 +84,8 @@ config: !new:recipes.umm.models.config.UMMConfig
     hop_length: !ref <extra_params[hop_length]>
     hidden_size: 1024
     intermediate_size: 4096
-    num_hidden_layers: 24
+    num_pre_layers: 12
+    num_post_layers: 12
     num_attention_heads: 8
     max_source_positions: 750
     add_vq: False
@@ -101,6 +102,7 @@ config: !new:recipes.umm.models.config.UMMConfig
     # ctc_blank_id: 392
     vocab_size: 30523
     ctc_blank_id: 30522
+    interfere_audio: True
 
 model_cls: !name:recipes.umm.models.umm_mkii.Stage2
     config: !ref <config>

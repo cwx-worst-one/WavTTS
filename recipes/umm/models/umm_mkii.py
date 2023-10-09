@@ -3,11 +3,12 @@ from dataclasses import dataclass
 from functools import reduce
 from typing import List, Optional, Tuple
 
+import numpy as np
 import torch
 from einops import rearrange
-from torch import nn
+from torch import Tensor, int32, nn
 from torch.nn import functional as F
-from tqdm import tqdm
+from torch.nn.utils import weight_norm
 from transformers.activations import ACT2FN
 from transformers.utils import ModelOutput
 
@@ -15,6 +16,10 @@ from recipes.umm.models.vocoder import BigVGAN
 from recipes.umm.models.vq import EMAVectorQuantizer
 from recipes.umm.transforms.chroma import ChromaSpectrogram
 from recipes.umm.transforms.speech import SpeechTransform
+
+
+def WNConv1d(*args, **kwargs):
+    return weight_norm(nn.Conv1d(*args, **kwargs))
 
 
 @dataclass
@@ -565,6 +570,307 @@ class EMAVectorQuantizer(nn.Module):
         return z_q, min_encoding_indices, loss
 
 
+class VectorQuantizer(nn.Module):
+    """
+    Improved version over vector quantiser, with the dynamic initialisation
+    for these unoptimised "dead" points.
+    num_embed: number of codebook entry
+    embed_dim: dimensionality of codebook entry
+    beta: weight for the commitment loss
+    distance: distance for looking up the closest code
+    anchor: anchor sampled methods
+    first_batch: if true, the offline version of our model
+    contras_loss: if true, use the contras_loss to further improve the performance
+    """
+
+    def __init__(
+        self,
+        num_embed,
+        embed_dim,
+        beta,
+        distance="cos",
+        anchor="probrandom",
+        first_batch=False,
+        contras_loss=False,
+    ):
+        super().__init__()
+
+        self.num_embed = num_embed
+        self.embed_dim = embed_dim
+        self.beta = beta
+        self.distance = distance
+        self.anchor = anchor
+        self.first_batch = first_batch
+        self.contras_loss = contras_loss
+        self.decay = 0.99
+        self.init = False
+
+        self.pool = FeaturePool(self.num_embed, self.embed_dim)
+        self.embedding = nn.Embedding(self.num_embed, self.embed_dim)
+        self.embedding.weight.data.uniform_(-1.0 / self.num_embed, 1.0 / self.num_embed)
+        self.register_buffer("embed_prob", torch.zeros(self.num_embed))
+
+    def forward(self, z, temp=None, rescale_logits=False, return_logits=False):
+        assert temp is None or temp == 1.0, "Only for interface compatible with Gumbel"
+        assert rescale_logits == False, "Only for interface compatible with Gumbel"
+        assert return_logits == False, "Only for interface compatible with Gumbel"
+        # reshape z -> (batch, height, width, channel) and flatten
+        z = rearrange(z, "b c h w -> b h w c").contiguous()
+        z_flattened = z.view(-1, self.embed_dim)
+
+        # clculate the distance
+        if self.distance == "l2":
+            # l2 distances from z to embeddings e_j (z - e)^2 = z^2 + e^2 - 2 e * z
+            d = (
+                -torch.sum(z_flattened.detach() ** 2, dim=1, keepdim=True)
+                - torch.sum(self.embedding.weight**2, dim=1)
+                + 2
+                * torch.einsum(
+                    "bd, dn-> bn",
+                    z_flattened.detach(),
+                    rearrange(self.embedding.weight, "n d-> d n"),
+                )
+            )
+        elif self.distance == "cos":
+            # cosine distances from z to embeddings e_j
+            normed_z_flattened = F.normalize(z_flattened, dim=1).detach()
+            normed_codebook = F.normalize(self.embedding.weight, dim=1)
+            d = torch.einsum(
+                "bd,dn->bn",
+                normed_z_flattened,
+                rearrange(normed_codebook, "n d -> d n"),
+            )
+
+        # encoding
+        sort_distance, indices = d.sort(dim=1)
+        # look up the closest point for the indices
+        encoding_indices = indices[:, -1]
+        encodings = torch.zeros(
+            encoding_indices.unsqueeze(1).shape[0], self.num_embed, device=z.device
+        )
+        encodings.scatter_(1, encoding_indices.unsqueeze(1), 1)
+
+        # quantise and unflatten
+        z_q = torch.matmul(encodings, self.embedding.weight).view(z.shape)
+        # compute loss for embedding
+        loss = self.beta * torch.mean((z_q.detach() - z) ** 2) + torch.mean(
+            (z_q - z.detach()) ** 2
+        )
+        # preserve gradients
+        z_q = z + (z_q - z).detach()
+        # reshape back to match original input shape
+        z_q = rearrange(z_q, "b h w c -> b c h w").contiguous()
+        # count
+        import pdb
+
+        pdb.set_trace()
+        avg_probs = torch.mean(encodings, dim=0)
+        perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
+        min_encodings = encodings
+
+        # online clustered reinitialisation for unoptimized points
+        if self.training:
+            # calculate the average usage of code entries
+            self.embed_prob.mul_(self.decay).add_(avg_probs, alpha=1 - self.decay)
+            # running average updates
+            if self.anchor in ["closest", "random", "probrandom"] and (not self.init):
+                # closest sampling
+                if self.anchor == "closest":
+                    sort_distance, indices = d.sort(dim=0)
+                    random_feat = z_flattened.detach()[indices[-1, :]]
+                # feature pool based random sampling
+                elif self.anchor == "random":
+                    random_feat = self.pool.query(z_flattened.detach())
+                # probabilitical based random sampling
+                elif self.anchor == "probrandom":
+                    norm_distance = F.softmax(d.t(), dim=1)
+                    prob = torch.multinomial(norm_distance, num_samples=1).view(-1)
+                    random_feat = z_flattened.detach()[prob]
+                # decay parameter based on the average usage
+                decay = (
+                    torch.exp(
+                        -(self.embed_prob * self.num_embed * 10) / (1 - self.decay)
+                        - 1e-3
+                    )
+                    .unsqueeze(1)
+                    .repeat(1, self.embed_dim)
+                )
+                self.embedding.weight.data = (
+                    self.embedding.weight.data * (1 - decay) + random_feat * decay
+                )
+                if self.first_batch:
+                    self.init = True
+            # contrastive loss
+            if self.contras_loss:
+                sort_distance, indices = d.sort(dim=0)
+                dis_pos = sort_distance[
+                    -max(1, int(sort_distance.size(0) / self.num_embed)) :, :
+                ].mean(dim=0, keepdim=True)
+                dis_neg = sort_distance[: int(sort_distance.size(0) * 1 / 2), :]
+                dis = torch.cat([dis_pos, dis_neg], dim=0).t() / 0.07
+                contra_loss = F.cross_entropy(
+                    dis,
+                    torch.zeros((dis.size(0),), dtype=torch.long, device=dis.device),
+                )
+                loss += contra_loss
+
+        return z_q, loss, (perplexity, min_encodings, encoding_indices)
+
+
+class FeaturePool:
+    """
+    This class implements a feature buffer that stores previously encoded features
+
+    This buffer enables us to initialize the codebook using a history of generated features
+    rather than the ones produced by the latest encoders
+    """
+
+    def __init__(self, pool_size, dim=64):
+        """
+        Initialize the FeaturePool class
+
+        Parameters:
+            pool_size(int) -- the size of featue buffer
+        """
+        self.pool_size = pool_size
+        if self.pool_size > 0:
+            self.nums_features = 0
+            self.features = (torch.rand((pool_size, dim)) * 2 - 1) / pool_size
+
+    def query(self, features):
+        """
+        return features from the pool
+        """
+        self.features = self.features.to(features.device)
+        if self.nums_features < self.pool_size:
+            if (
+                features.size(0) > self.pool_size
+            ):  # if the batch size is large enough, directly update the whole codebook
+                random_feat_id = torch.randint(
+                    0, features.size(0), (int(self.pool_size),)
+                )
+                self.features = features[random_feat_id]
+                self.nums_features = self.pool_size
+            else:
+                # if the mini-batch is not large nuough, just store it for the next update
+                num = self.nums_features + features.size(0)
+                self.features[self.nums_features : num] = features
+                self.nums_features = num
+        else:
+            if features.size(0) > int(self.pool_size):
+                random_feat_id = torch.randint(
+                    0, features.size(0), (int(self.pool_size),)
+                )
+                self.features = features[random_feat_id]
+            else:
+                random_id = torch.randperm(self.pool_size)
+                self.features[random_id[: features.size(0)]] = features
+
+        return self.features
+
+
+def round_ste(z: Tensor) -> Tensor:
+    """Round with straight through gradients."""
+    zhat = z.round()
+    return z + (zhat - z).detach()
+
+
+class FiniteScalarQuantization(nn.Module):
+    def __init__(self, levels: List[int]):
+        super().__init__()
+        _levels = torch.tensor(levels, dtype=int32)
+        self.register_buffer("_levels", _levels)
+
+        _basis = torch.cumprod(torch.tensor([1] + levels[:-1]), dim=0, dtype=int32)
+        self.register_buffer("_basis", _basis)
+
+        self.dim = len(levels)
+        self.n_codes = self._levels.prod().item()
+        implicit_codebook = self.indices_to_codes(torch.arange(self.n_codes))
+        self.register_buffer("implicit_codebook", implicit_codebook)
+
+    def forward(self, z: Tensor) -> Tuple[Tensor, Tensor]:
+        zhat = self.quantize(z)
+        indices = self.codes_to_indices(zhat)
+        return zhat, indices
+
+    def bound(self, z: Tensor, eps: float = 1e-3) -> Tensor:
+        """Bound `z`, an array of shape (..., d)."""
+        half_l = (self._levels - 1) * (1 - eps) / 2
+        offset = torch.where(self._levels % 2 == 0, 0.5, 0.0)
+        shift = (offset / half_l).tan()
+        return (z + shift).tanh() * half_l - offset
+
+    def quantize(self, z: Tensor) -> Tensor:
+        """Quantizes z, returns quantized zhat, same shape as z."""
+        quantized = round_ste(self.bound(z))
+        half_width = self._levels // 2  # Renormalize to [-1, 1].
+        return quantized / half_width
+
+    def _scale_and_shift(self, zhat_normalized: Tensor) -> Tensor:
+        half_width = self._levels // 2
+        return (zhat_normalized * half_width) + half_width
+
+    def _scale_and_shift_inverse(self, zhat: Tensor) -> Tensor:
+        half_width = self._levels // 2
+        return (zhat - half_width) / half_width
+
+    def codes_to_indices(self, zhat: Tensor) -> Tensor:
+        """Converts a `code` to an index in the codebook."""
+        assert zhat.shape[-1] == self.dim
+        zhat = self._scale_and_shift(zhat)
+        return (zhat * self._basis).sum(dim=-1).to(int32)
+
+    def indices_to_codes(self, indices: Tensor) -> Tensor:
+        """Inverse of `codes_to_indices`."""
+        indices = indices.unsqueeze(-1)
+        codes_non_centered = (indices // self._basis) % self._levels
+        return self._scale_and_shift_inverse(codes_non_centered)
+
+
+class FiniteScalarQuantizer(nn.Module):
+
+    """Finite Scalar Vector Quantizer.
+
+    Args:
+        dimension (int): Dimension of the codebooks.
+        bins (int): Codebook size.
+    """
+
+    _recommended_levels = {
+        256: [8, 6, 5],
+        1024: [8, 5, 5, 5],
+        4096: [7, 5, 5, 5, 5],
+        16384: [8, 8, 8, 6, 5],
+        65536: [8, 8, 8, 5, 5, 8],
+    }
+
+    def __init__(self, bins: int = 1024):
+        super().__init__()
+        n_q = 1
+        self.max_n_q = n_q
+        self.n_q = 1
+        self.bins = bins
+        self.levels = self.get_recommended_levels(self.bins)
+        self.vq = FiniteScalarQuantization(self.levels)
+
+    @staticmethod
+    def get_recommended_levels(bins: int) -> List[int]:
+        if bins not in FiniteScalarQuantizer._recommended_levels:
+            raise KeyError(
+                f"{bins} is not in one of the recommended FiniteScalarQuantizer levels"
+            )
+        return FiniteScalarQuantizer._recommended_levels[bins]
+
+    @property
+    def n_levels(self) -> int:
+        return len(self.levels)
+
+    def forward(self, x: torch.Tensor) -> Tuple[Tensor, Tensor]:
+        quantize, indices = self.vq(x)
+        return quantize, indices
+
+
 class RandomProjectionQuantizer(nn.Module):
     """RandomProjectionQuantizer"""
 
@@ -1014,6 +1320,35 @@ class Base(nn.Module):
         else:
             return x
 
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def interfere_audio(self, wav_batch):
+        interfered_batch = wav_batch.clone()
+        b, t = interfered_batch.size()
+        primary_indices = np.random.binomial(
+            size=b, n=1, p=self.config.mix_prob
+        ).astype(bool)
+        for primary_i, to_mix in enumerate(primary_indices):
+            if to_mix:
+                r = ((torch.rand(1) * 10 - 5) / 10)[0].to(wav_batch)
+                secondary_i = np.random.randint(b)
+                sampled_duration = np.random.randint(1, math.floor(t / 2))
+                primary_start = np.random.randint(0, t - sampled_duration)
+                secondary_start = np.random.randint(0, t - sampled_duration)
+                primary_clip = wav_batch[
+                    primary_i, primary_start : primary_start + sampled_duration
+                ]
+                secondary_clip = wav_batch[
+                    secondary_i, secondary_start : secondary_start + sampled_duration
+                ]
+                scale = (wav_batch[primary_i].square().mean()) / (
+                    (wav_batch[secondary_i].square().mean() * torch.pow(10, r) + 1.0e-5)
+                ).sqrt()
+                interfered_batch[
+                    primary_i, primary_start : primary_start + sampled_duration
+                ] = (primary_clip + scale * secondary_clip)
+        return interfered_batch
+
 
 class Stage1(Base):
     def __init__(self, config):
@@ -1115,7 +1450,11 @@ class Stage2(Base):
             self.chroma_head = Conv2dUpsampling(config.hidden_size, config.n_chroma)
 
     def forward(self, input_dict):
-        feature = input_dict["mel"]
+        feature = (
+            input_dict["mel_interfered"]
+            if self.config.interfere_audio
+            else input_dict["mel"]
+        )
         audio_feature = self.audio_encoder(feature)
         hidden_states = self.encoder_input_dropout(audio_feature)
         position_embeddings = self.embed_positions(hidden_states)
@@ -1138,6 +1477,10 @@ class Stage2(Base):
         normalize = self.config.feature_cmvn is not None
         mel = self.audio_transform(x, normalize=normalize)
         input_dict = {"mel": mel}
+        if self.config.interfere_audio:
+            x_interfered = self.interfere_audio(x)
+            mel_interfered = self.audio_transform(x_interfered, normalize=normalize)
+            input_dict.update(mel_interfered=mel_interfered)
         if self.config.add_chroma:
             chroma = self.chroma_transform(x)[:, :, :-1].transpose(1, 2)
             chroma = F.normalize(chroma, p=2, dim=-1)
@@ -1145,20 +1488,48 @@ class Stage2(Base):
         return input_dict
 
 
+class Transpose(nn.Module):
+    def forward(self, x):
+        return x.transpose(1, 2)
+
+
 class Stage3(Stage2):
     def __init__(self, config):
         super().__init__(config)
-        self.vq_proj_in = nn.Linear(
-            config.hidden_size, config.vq_codebook_dim, bias=False
-        )
+        if config.get("vq_proj_norm", None) == "bn":
+            self.vq_proj_in = nn.Sequential(
+                Transpose(),
+                WNConv1d(config.hidden_size, config.vq_codebook_dim, kernel_size=1),
+                nn.BatchNorm1d(config.vq_codebook_dim, affine=False, momentum=0.05),
+                Transpose(),
+            )
+            self.vq_proj_out = nn.Sequential(
+                Transpose(),
+                WNConv1d(config.vq_codebook_dim, config.hidden_size, kernel_size=1),
+                Transpose(),
+            )
+        elif config.get("vq_proj_norm", None) == "ln":
+            self.vq_proj_in = nn.Sequential(
+                nn.Linear(config.hidden_size, config.vq_codebook_dim, bias=False),
+                nn.LayerNorm(config.vq_codebook_dim, elementwise_affine=False),
+            )
+            self.vq_proj_out = nn.Sequential(
+                nn.Linear(config.vq_codebook_dim, config.hidden_size, bias=False)
+            )
+        else:
+            self.vq_proj_in = nn.Linear(
+                config.hidden_size, config.vq_codebook_dim, bias=False
+            )
+            self.vq_proj_out = nn.Linear(
+                config.vq_codebook_dim, config.hidden_size, bias=False
+            )
         self.vq = EMAVectorQuantizer(
             codebook_size=config.vq_codebook_size,
             codebook_dim=config.vq_codebook_dim,
             decay=config.vq_decay,
         )
-        self.vq_proj_out = nn.Linear(
-            config.vq_codebook_dim, config.hidden_size, bias=False
-        )
+        if config.get("vq_proj_noise", 0) > 0:
+            self.register_buffer("cnt", torch.FloatTensor([0]))
 
     def forward(self, input_dict):
         feature = input_dict["mel"]
@@ -1168,6 +1539,14 @@ class Stage3(Stage2):
         for i, layer in enumerate(self.encoder_layers):
             if i == self.config.vq_layer_idx:
                 hidden_states = self.vq_proj_in(hidden_states)
+                if self.config.get("vq_proj_noise", 0) > 0:
+                    noise_scale = (self.config.vq_proj_noise - self.cnt).clamp(
+                        0
+                    ) / self.config.vq_proj_noise
+                    hidden_states = (
+                        hidden_states + torch.randn_like(hidden_states) * noise_scale
+                    )
+                    self.cnt.add_(1)
                 vq_embs, vq_ids, vq_loss = self.vq(hidden_states)
                 hidden_states = self.vq_proj_out(vq_embs)
             hidden_states = layer(
@@ -1182,6 +1561,8 @@ class Stage3(Stage2):
             "vq_ids": vq_ids,
             "vq_loss": vq_loss,
         }
+        if self.config.get("vq_proj_noise", False):
+            output_dict.update(noise_scale=noise_scale)
         if self.config.add_chroma:
             chroma_out = self.chroma_head(hidden_states)
             output_dict.update(chroma_out=chroma_out)
@@ -1268,6 +1649,32 @@ class Stage3AR(Stage3):
         if self.config.add_chroma:
             chroma_out = self.chroma_head(hidden_states)
             output_dict.update(chroma_out=chroma_out)
+        return output_dict
+
+
+class AR(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.embedding = nn.Embedding(
+            config.vocab_size, config.ar_hidden_size, padding_idx=0
+        )
+        self.layers = nn.ModuleList(
+            [LlamaDecoderLayer(config) for _ in range(config.ar_num_layers)]
+        )
+        self.lm_head = nn.Linear(config.ar_hidden_size, config.vocab_size, bias=False)
+        self.config = config
+
+    def forward(self, input_ids):
+        hidden_states = self.embedding(input_ids)
+        position_ids = torch.arange(
+            0, input_ids.size(1), dtype=torch.long, device=input_ids.device
+        )
+        position_ids = position_ids.unsqueeze(0).view(-1, input_ids.size(1))
+        for layer in self.layers:
+            hidden_states = layer(hidden_states, None, position_ids)
+        logits = self.lm_head(hidden_states)
+
+        output_dict = {"logits": logits}
         return output_dict
 
 
@@ -1650,244 +2057,3 @@ class MKIIVocoder(nn.Module):
         }
 
         return output_dict
-
-
-class MaskingScheme(nn.Module):
-    def __init__(self, uniform_sample: bool, mask_id: int):
-        super().__init__()
-        self.uniform_sample = uniform_sample
-        self.mask_id = mask_id
-
-    def forward(
-        self, acoustic_tokens: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        b, t, q = acoustic_tokens.size()
-        device = acoustic_tokens.device
-        rand_ts = torch.randint(0, t - 1, (b,), device=device)
-        if self.uniform_sample:
-            rand_qs = self.sample_qs(b, q, device)
-        else:
-            rand_qs = (
-                (1 - self.cosine_schedule(torch.empty(b, device=device).uniform_(0, 1)))
-                * q
-            ).long()
-
-        rand_times = torch.empty(b, 1, device=device).uniform_(0, 1)
-        rand_probs = self.cosine_schedule(rand_times)  # [b, ]
-        num_tokens_mask = (rand_probs * t).clamp(min=1.0).long()
-
-        mask = torch.full_like(acoustic_tokens, False, dtype=torch.bool)
-        for i, sampled_q in enumerate(rand_qs):
-            rand_indices_no_replacement = torch.randperm(t, device=device)[
-                : num_tokens_mask[i]
-            ]
-            sampled_t = rand_ts[i]
-            rand_indices_no_replacement = rand_indices_no_replacement[
-                rand_indices_no_replacement >= sampled_t
-            ]
-            mask[i, rand_indices_no_replacement, sampled_q] = True
-            mask[i, sampled_t:, sampled_q + 1 :] = True
-        masked_audio_tokens = torch.where(mask, self.mask_id, acoustic_tokens)
-        return masked_audio_tokens, rand_qs
-
-    def cosine_schedule(self, ratio: torch.Tensor) -> torch.Tensor:
-        return torch.cos(ratio * math.pi / 2.0)
-
-    def sample_qs(self, batch_size: int, n_quantizers: int, device):
-        n_randperms = math.ceil(batch_size / n_quantizers)
-        qs = []
-        for _ in range(n_randperms):
-            qs.append(torch.randperm(n_quantizers, device=device))
-        return torch.cat(qs)[:batch_size]
-
-
-class SoundStorm(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.acoustic_embedding = nn.ModuleList(
-            [
-                nn.Embedding(config.ss_codebook_size + 1, config.hidden_size)
-                for _ in range(config.ss_num_quantizers)
-            ]
-        )
-        self.semantic_embedding = nn.Embedding(
-            config.vq_syllable_codebook_size + config.vq_chroma_codebook_size,
-            config.hidden_size,
-        )
-        self.conformer = ConformerEncoder(config)
-        self.heads = nn.ModuleList(
-            [
-                nn.Linear(config.hidden_size, config.ss_codebook_size, bias=False)
-                for _ in range(config.ss_num_quantizers)
-            ]
-        )
-        self.masking_scheme = MaskingScheme(
-            uniform_sample=config.uniform_sample, mask_id=config.ss_codebook_size
-        )
-        self.mha = MHA(config)
-        self.config = config
-
-    def decode(
-        self,
-        acoustic_tokens: torch.Tensor,
-        semantic_tokens: torch.Tensor,
-        selected_qs: torch.Tensor,
-    ):
-        acoustic_embeds = []
-        for q in range(self.config.ss_num_quantizers):
-            acoustic_embeds.append(self.acoustic_embedding[q](acoustic_tokens[:, :, q]))
-        acoustic_embeds = torch.stack(acoustic_embeds, dim=2)  # [B, T, Q, D]
-        semantic_embeds = self.semantic_embedding(semantic_tokens)  # [B, T, 1, D]
-        b, t, q, d = acoustic_embeds.size()
-        for i in range(acoustic_embeds.size(0)):
-            acoustic_embeds[i, :, selected_qs[i] + 1 :] = 0
-        query = [
-            acoustic_embeds[i, :, selected_qs[i] : selected_qs[i] + 1] for i in range(b)
-        ]
-        query = torch.stack(query, dim=0)
-        query = rearrange(query, "b t q d -> (b t) q d")  # (B * T, 1, D)
-        key = torch.cat((semantic_embeds, acoustic_embeds), dim=2)
-        key = rearrange(key, "b t q d -> (b t) q d")  # (B, T, 1 + Q, D)
-        value = key
-        conformer_input = self.mha(q=query, k=key, v=value)  # (B * T, 1, D)
-        conformer_input = rearrange(conformer_input, "(b t) 1 d -> b t d", b=b)
-        last_hidden_state = self.conformer(conformer_input)["last_hidden_state"]
-        logits = [self.heads[selected_qs[i]](last_hidden_state[i]) for i in range(b)]
-        logits = torch.stack(logits, dim=0)
-        return logits
-
-    def forward(
-        self, acoustic_tokens: torch.Tensor, semantic_tokens: torch.Tensor
-    ) -> torch.Tensor:
-        masked_acoustic_tokens, rand_qs = self.masking_scheme(acoustic_tokens)
-        logits = self.decode(masked_acoustic_tokens, semantic_tokens, rand_qs)
-        return {
-            "logits": logits,
-            "masked_acoustic_tokens": masked_acoustic_tokens,
-            "rand_qs": rand_qs,
-        }
-
-    @torch.no_grad()
-    @torch.cuda.amp.autocast(enabled=False)
-    def pad_audio(self, x):
-        if x.size(-1) % (self.config.hop_length * 4) > 0:
-            return F.pad(
-                x,
-                (
-                    0,
-                    self.config.hop_length * 4
-                    - (x.size(-1) % (self.config.hop_length * 4)),
-                ),
-                "constant",
-                0,
-            )
-        else:
-            return x
-
-    @torch.no_grad()
-    def sample(
-        self,
-        semantic_tokens: torch.Tensor,
-        num_iterations: List[int],
-        score_strategies: List[str],
-        temperatures: Optional[List[float]] = None,
-    ) -> torch.Tensor:
-        b, t, _ = semantic_tokens.size()
-        device = semantic_tokens.device
-        acoustic_tokens = torch.full(
-            (b, t, self.config.ss_num_quantizers),
-            self.masking_scheme.mask_id,
-            dtype=torch.long,
-            device=semantic_tokens.device,
-        )
-
-        if temperatures is None:
-            temperatures = [1.0] * self.config.ss_num_quantizers
-
-        for q in tqdm(range(self.config.ss_num_quantizers), desc="[SoundStorm]"):
-            q_num_iteration = num_iterations[q]
-            q_score_strategy = score_strategies[q]
-            q_temperature = temperatures[q]
-            ratios = torch.linspace(0, 1.0, q_num_iteration + 1)[1:]
-            cos_ratios = self.masking_scheme.cosine_schedule(ratios)
-            selected_qs = torch.LongTensor([q] * b).to(device)
-            for step_idx, ratio in enumerate(cos_ratios):
-                logits = self.decode(acoustic_tokens, semantic_tokens, selected_qs)
-                probs = logits.softmax(dim=-1)
-                masked_positions = (
-                    acoustic_tokens[:, :, q] == self.masking_scheme.mask_id
-                )
-
-                if masked_positions.sum() == 0:
-                    continue
-
-                if step_idx == q_num_iteration - 1:
-                    # greedy decoding for the last iteration
-                    sampled_tokens = probs.argmax(dim=-1)
-                    acoustic_tokens[:, :, q] = torch.where(
-                        masked_positions, sampled_tokens, acoustic_tokens[:, :, q]
-                    )
-                else:
-                    # sample candidates first
-                    probs_scaled = (logits / q_temperature).softmax(dim=-1)
-                    sampled_tokens = torch.distributions.categorical.Categorical(
-                        probs_scaled
-                    ).sample()
-
-                    # gather the probabilities of each of the candidates
-                    if q_score_strategy == "maskgit":
-                        scores = probs.gather(
-                            2, rearrange(sampled_tokens, "b n -> b n 1")
-                        )
-                        scores = rearrange(scores, "b n 1 -> b n")
-                    elif q_score_strategy == "max_prob":
-                        scores, _ = probs.max(dim=-1)
-                    elif q_score_strategy == "max_entropy":
-                        scores = torch.distributions.categorical.Categorical(
-                            probs
-                        ).entropy()
-                    elif q_score_strategy == "min_entropy":
-                        scores = (
-                            torch.distributions.categorical.Categorical(probs).entropy()
-                            * -1
-                        )
-                    elif q_score_strategy == "random":
-                        scores = torch.rand(probs.shape[:2]).to(probs.device)
-                    elif q_score_strategy == "sequential":
-                        m, n = probs.shape[:2]
-                        scores = torch.arange(n).repeat(m, 1).to(probs.device) * -1.0
-                    else:
-                        raise ValueError(f"Unknown score strategy: {q_score_strategy}")
-
-                    # keep only the top k scores
-                    # we assume an equal unmasking schedule, so we simply take the number
-                    # of masked positions of the first batch element as our reference
-                    tokens_left = masked_positions[0].sum()
-                    tokens_unmasked = masked_positions.shape[-1] - tokens_left
-                    topk_tokens = ((1 - ratio) * masked_positions.shape[-1]).long()
-                    topk_tokens = topk_tokens - tokens_unmasked
-
-                    # always select at least 1
-                    topk_tokens = max(topk_tokens, 1)
-                    # select the topk, otherwise the remainder
-                    topk_tokens = min(topk_tokens, tokens_left)
-
-                    # don't select topk of previously sampled tokens
-                    scores = torch.where(
-                        masked_positions, scores, -torch.finfo(scores.dtype).max
-                    )
-                    # batched topk
-                    topk_probs, topk_indices = scores.topk(topk_tokens, dim=-1)
-
-                    # create a mask that is True for all scores that meet the confidence criterium
-                    confidence_mask = torch.zeros_like(
-                        scores, dtype=torch.bool
-                    ).scatter(dim=-1, index=topk_indices, value=True)
-
-                    # only fill positions that are currently masked and meet the confidence criterium
-                    # otherwise fill with original token
-                    fill_positions = masked_positions & confidence_mask
-                    acoustic_tokens[:, :, q] = torch.where(
-                        fill_positions, sampled_tokens, acoustic_tokens[:, :, q]
-                    )
-        return acoustic_tokens

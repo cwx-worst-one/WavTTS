@@ -19,7 +19,7 @@ extra_params:
     win_length: 2048
     hop_length: 240
     feature_cmvn: "recipes/datasets/mcc/MixWebDataModule_SpeechTransform.stats.pt"
-    tokenizer: "wordpiece"
+    tokenizer: "tts_chinese_frontend_model"
 
 # running parameters
 run_opts:
@@ -28,7 +28,7 @@ run_opts:
     hdfs_log_dir: "hdfs:///home/byte_speech_sv/zongyu.yin/logs"
     log_dir: logs
     log_name: umm
-    version: !ref umm_stage2_dw20-3-2_<extra_params[tokenizer]>
+    version: !ref umm_stage2_soda_dw1-1-0_<extra_params[tokenizer]>
     precision: "16-mixed"
     num_workers: 4
     accelerator: auto
@@ -47,13 +47,13 @@ run_opts:
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
-pl_datamodule: !new:recipes.datasets.mcc.mix.MixWebDataModule
+pl_datamodule: !new:recipes.datasets.mcc.mix.SodaDataModule
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
     sample_rate: !ref <extra_params[sample_rate]>
     batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <extra_params[sample_rate]>
     num_workers: !ref <run_opts[num_workers]>
     region: "CN"
-    weights: [20, 3, 2]
+    weights: [1, 1, 0]
     max_num_crops: null
     min_duration: 2
     max_duration: 30
@@ -97,10 +97,10 @@ config: !new:recipes.umm.models.config.UMMConfig
     w_loss_ctc: 1.0
     tokenizer: !ref <extra_params[tokenizer]>
     frame_rate: !ref <extra_params[frame_rate]>
-    # vocab_size: 393
-    # ctc_blank_id: 392
-    vocab_size: 30523
-    ctc_blank_id: 30522
+    vocab_size: 267
+    ctc_blank_id: 266
+    # vocab_size: 21129
+    # ctc_blank_id: 21128
 
 model_cls: !name:recipes.umm.models.umm_mkii.Stage2
     config: !ref <config>
@@ -115,7 +115,7 @@ pl_module: !new:recipes.umm.modules.lit_module.Stage2
     extra_params: !ref <extra_params>
     required_modules:
         pretrained:
-            ckpt_path: "hdfs:///home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage1_dw20-3-2_rq4096x16x8/checkpoints/step=040000.ckpt"
+            ckpt_path: "hdfs:///home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage1_soda_dw1-1-0_rq4096x16x8/checkpoints/step=100000.ckpt"
             init_fn: !name:recipes.umm.requires.model_initializer.init_pretrained
             cache_dir: !ref <run_opts[cache_dir]>
 

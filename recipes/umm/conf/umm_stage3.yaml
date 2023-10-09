@@ -28,7 +28,7 @@ run_opts:
     hdfs_log_dir: "hdfs:///home/byte_speech_sv/zongyu.yin/logs"
     log_dir: logs
     log_name: umm
-    version: !ref umm_stage3_dw20-3-2_<extra_params[tokenizer]>_vq<config[vq_codebook_size]>x<config[vq_codebook_dim]>
+    version: !ref umm_stage3_dw20-3-2_<extra_params[tokenizer]>_vq<config[vq_codebook_size]>x<config[vq_codebook_dim]>-layer<config[vq_layer_idx]>
     precision: "32"
     num_workers: 4
     accelerator: auto
@@ -86,13 +86,13 @@ config: !new:recipes.umm.models.config.UMMConfig
     hop_length: !ref <extra_params[hop_length]>
     hidden_size: 1024
     intermediate_size: 4096
-    num_pre_layers: 12
-    num_post_layers: 12
+    num_hidden_layers: 24
     num_attention_heads: 8
     max_source_positions: 750
     add_vq: True
     vq_codebook_size: 32768
     vq_codebook_dim: 32
+    vq_layer_idx: 12
     vq_decay: 0.99
     w_loss_mel: 1.0
     w_loss_chroma: 1.0

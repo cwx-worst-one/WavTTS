@@ -32,6 +32,8 @@ class UMMConfig(PretrainedConfig):
         vq_kmeans_init=True,
         vq_kmeans_iters=10,
         vq_sync_codebook=True,
+        vq_proj_norm=None,
+        vq_proj_noise=0,
         w_loss_vq=1,
         # shared encoder
         hidden_size=1024,
@@ -69,6 +71,8 @@ class UMMConfig(PretrainedConfig):
         ctc_blank_id=30522,
         w_loss_ctc=1,
         add_chroma=True,
+        interfere_audio=False,
+        mix_prob=0.2,
         **kwargs,
     ):
         super().__init__(
@@ -107,6 +111,8 @@ class UMMConfig(PretrainedConfig):
         self.vq_kmeans_init = vq_kmeans_init
         self.vq_kmeans_iters = vq_kmeans_iters
         self.vq_sync_codebook = vq_sync_codebook
+        self.vq_proj_norm = vq_proj_norm
+        self.vq_proj_noise = vq_proj_noise
         self.w_loss_vq = w_loss_vq
 
         # shared encoder
@@ -145,6 +151,8 @@ class UMMConfig(PretrainedConfig):
         self.w_loss_ctc = w_loss_ctc
 
         self.add_chroma = add_chroma
+        self.mix_prob = mix_prob
+        self.interfere_audio = interfere_audio
 
     @property
     def rq_input_dim(self):

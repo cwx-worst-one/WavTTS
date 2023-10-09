@@ -1,11 +1,17 @@
+import math
+
 import matplotlib.pyplot as plt
+import numpy as np
 import pytest
+import torch
 import torchaudio
+from tqdm import tqdm
 
 from recipes.datasets.mcc.mix import (
     MCCInstrumentalDataset,
     MCCVocalDataset,
     MixWebDataModule,
+    SodaDataModule,
     MixZhWebDataModule,
     VocalWebDataModule,
     collate_audio_text,
@@ -13,8 +19,40 @@ from recipes.datasets.mcc.mix import (
 from recipes.umm.transforms.speech import SpeechTransform
 from samantha.transforms.audio import batch_plot_spectrogram
 
-plt.rcParams['font.sans-serif']=['SimHei']
-plt.rcParams['axes.unicode_minus']=False
+plt.rcParams["font.sans-serif"] = ["SimHei"]
+plt.rcParams["axes.unicode_minus"] = False
+
+
+def interfere_audio(wav_batch):
+    interfered_batch = wav_batch.clone()
+    b, t = interfered_batch.size()
+    primary_indices = np.random.binomial(size=b, n=1, p=0.5).astype(bool)
+    for primary_i, to_mix in tqdm(enumerate(primary_indices)):
+        if to_mix:
+            r = np.random.uniform(-5, 5)
+            secondary_i = np.random.randint(b)
+            sampled_duration = np.random.randint(1, math.floor(t / 2))
+            primary_start = np.random.randint(0, t - sampled_duration)
+            secondary_start = np.random.randint(0, t - sampled_duration)
+            primary_clip = interfered_batch[
+                primary_i, primary_start : primary_start + sampled_duration
+            ]
+            secondary_clip = interfered_batch[
+                secondary_i, secondary_start : secondary_start + sampled_duration
+            ]
+            scale = np.sqrt(
+                ((primary_clip**2).sum() / t)
+                / (((secondary_clip**2).sum() / t) * (10 ** (r / 10)))
+            )
+            interfered_batch[
+                primary_i, primary_start : primary_start + sampled_duration
+            ] = torch.stack([primary_clip, (scale * secondary_clip)], dim=0).mean(dim=0)
+            print(
+                f"[{primary_i}] {primary_start / 24000:.2f} - {(primary_start + sampled_duration) / 24000:.2f} | {scale:.2f}"
+            )
+    print("===============================")
+    return interfered_batch
+
 
 @pytest.mark.skip()
 def test_mcc_datasets():
@@ -37,9 +75,9 @@ def test_mcc_datasets():
 def test_mix_datamodule():
     n_mels = 128
     sample_rate = 24000
-    pl_datamodule = MixZhWebDataModule(
+    pl_datamodule = SodaDataModule(
         sample_rate=sample_rate,
-        batch_size=sample_rate * 5 * 30,
+        batch_size=sample_rate * 10 * 30,
         shuffle_buffer_size=10,
         num_workers=2,
         region="CN",
@@ -49,13 +87,23 @@ def test_mix_datamodule():
     )
     train_loader = pl_datamodule.train_dataloader()
     train_loader = iter(train_loader)
-    for i in range(3):
+    for i in range(10):
         batch = next(train_loader)
         audio = batch["audio"]
+        interfered_audio = interfere_audio(audio.squeeze(1)).unsqueeze(1)
         batch_size = audio.size(0)
-        for a_idx, a in enumerate(audio):
+        for a_idx, (a, i_a) in enumerate(zip(audio, interfered_audio)):
             torchaudio.save(
-                f"./test_out/mix-batch-{i}-item-{a_idx}.mp3", a, sample_rate, format="mp3"
+                f"./test_out/mix-batch-{i}-item-{a_idx}.mp3",
+                a,
+                sample_rate,
+                format="mp3",
+            )
+            torchaudio.save(
+                f"./test_out/mix-batch-{i}-item-{a_idx}_interfered.mp3",
+                i_a,
+                sample_rate,
+                format="mp3",
             )
 
         for n_fft in [2048]:
