@@ -1,19 +1,19 @@
+# TODO(gaolu.e820): Merge this one with non-aws version. Non-AWS containers
+# should just work even if EFA driver is present.
+
 ARG REGION
 
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.dev20230703.cu118.uvm.nccl21805 as Aliyun_VA
+FROM hub.byted.org/base/lab.pytorch2.staging:125c9a699f83c4e2deb6626952cf3552 as Aliyun_VA
+FROM hub.byted.org/base/lab.pytorch2.staging:125c9a699f83c4e2deb6626952cf3552 as US-East
+FROM hub.byted.org/base/lab.pytorch2.staging:125c9a699f83c4e2deb6626952cf3552 as US-East-Red
+FROM hub.byted.org/base/lab.pytorch2.staging:125c9a699f83c4e2deb6626952cf3552 as Aliyun_SG
+FROM hub.byted.org/base/lab.pytorch2.staging:125c9a699f83c4e2deb6626952cf3552 as China-North-LF
+
 ENV LD_LIBRARY_PATH /opt/tiger/native_libhdfs/lib/native:$LD_LIBRARY_PATH
 ENV ARNOLD_HDFS_NATIVE 1
 ENV ARNOLD_HDFS_CELER 1
 ENV INFSEC_HADOOP_ENABLED 1
 ENV CPP_HDFS_CONF /opt/tiger/arnold/hdfs_client/conf/celer_us/core-site.xml:/opt/tiger/arnold/hdfs_client/conf/celer_us/hdfs-site.xml
-
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.dev20230703.cu118.uvm.nccl21805 as US-East
-
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.dev20230703.cu118.uvm.nccl21805 as US-East-Red
-
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.dev20230703.cu118.uvm.nccl21805 as Aliyun_SG
-
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.dev20230703.cu118.uvm.nccl21805 as China-North-LF
 
 FROM ${REGION}
 LABEL maintainer="liyong.0517 <liyong.0517@bytedance.com>"
