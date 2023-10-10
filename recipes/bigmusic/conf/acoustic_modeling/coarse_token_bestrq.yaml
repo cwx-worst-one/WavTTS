@@ -126,13 +126,8 @@ callbacks:
       save_top_k: 10
       monitor: val_accu_0
       mode: max
-      filename: "{step:06d}-{val_accu_0:.2f}"
-    - !new:pytorch_lightning.callbacks.ModelCheckpoint
-      save_top_k: 10
       save_last: True
-      monitor: tr_loss
-      mode: min
-      filename: "{step:06d}-{tr_loss:.4f}"
+      filename: "{step:06d}-{val_accu_0:.2f}"
     # - !new:pytorch_lightning.callbacks.LearningRateMonitor
     #   logging_interval: 'step'
     # - !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback

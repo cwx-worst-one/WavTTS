@@ -1,17 +1,17 @@
 from typing import Callable, List, Optional
 import torch
+from pathlib import Path
 import webdataset as wds
 import pytorch_lightning as pl
 from recipes.bigmusic.datasets.transforms.lyrics import (
     LyricsTokenTransform, 
     VocalChromaTransform, 
     MCCMetadataTextTransform, 
-    MetadataT5Transform, 
+    StyleTextT5Transform, 
     AddConditionsTransform,
-    MCCInstrumentalBatchTransform,
-    AddMulanVocalTagTransform
+    RenameAudioKeyTransform,
 )
-from recipes.bigmusic.datasets.transforms.lyrics_segment import LyricsSegmentTransforms
+from recipes.bigmusic.datasets.transforms.lyrics_segment import LyricsSegmentTransforms, crop_pad_to_seq_length
 from recipes.musiclm.preprocess import WebDatasetBufferPreprocessor
 from samantha.dataio.webdataset.extension import IndexedWebDataset
 from samantha.dataio.webdataset.pipeline import WebPipeline
@@ -20,8 +20,13 @@ from torch.utils.data import DataLoader
 from samantha.dataio.dataset import MultiIterableDataset
 from recipes.musiclm.datamodules.webdataset import return_self
 from torch.utils.data import default_collate
+from torch.utils.data._utils.collate import collate, collate_tensor_fn, default_collate_fn_map
 from recipes.musiclm.datasets.mcc import WrappedMCC40MDataset
-
+from recipes.datasets.mcc.mix import MCCInstrumentalDataset
+from samantha.dataio.batching import BucketBatcher
+from recipes.bigmusic.datasets.index_lists import INDEX
+from samantha.utils.hdfs_tools import hdfs_open, hdfs_loadtxt
+from recipes.datasets.mcc.mix import LibriLightASRDataset, LibriTTSDataset
 class LyricsDataset(WebPipeline):
     def __init__(
         self,
@@ -32,15 +37,19 @@ class LyricsDataset(WebPipeline):
         audio_format: str = "mp3",
         max_num_segments: int = 10,
         shuffle_segments: bool = True,
+        resampled: bool =True,
+        shardshuffle: bool =True,
         handler: Callable = wds.warn_and_continue,
         **kwargs,
     ):
         dataset = IndexedWebDataset(
             url2index=url2index,
             handler=handler,
+            resampled=resampled,
+            shardshuffle=shardshuffle,
             **kwargs,
         )
-        audio_transforms = LyricsSegmentTransforms(
+        segment_transforms = LyricsSegmentTransforms(
             sample_rate=sample_rate,
             sample_duration=sample_duration,
             audio_keys=audio_keys,
@@ -48,10 +57,11 @@ class LyricsDataset(WebPipeline):
             max_num_segments=max_num_segments,
             shuffle_segments=shuffle_segments,
             url2index=url2index,
+            handler=handler
         )
         preprocessor = WebDatasetBufferPreprocessor(
             sample_rate=sample_rate,
-            transforms=audio_transforms,
+            transforms=segment_transforms,
         )
         pipeline=[
             "decode",
@@ -59,45 +69,13 @@ class LyricsDataset(WebPipeline):
         ]
         super().__init__(dataset, pipeline)
 
-class WrappedLyricsDataset(MultiIterableDataset):
-    def __init__(
-        self,
-        dataset_list: list,
-        sample_rate: int,
-        sample_duration: float,
-        handler: Callable = wds.warn_and_continue,
-        num_samples: int = 10_000_000,
-        weights: List[int] = None,
-        seed: int = 2023,
-        **kwargs,
-    ):
-        datasets = []
-        for item in dataset_list:
-            dataset = LyricsDataset(
-                url2index=item['url2index'],
-                sample_rate=sample_rate,
-                sample_duration=sample_duration,
-                audio_keys=item["audio_keys"],
-                audio_format=item.get("audio_format", "mp3"),
-                handler=handler,
-                **kwargs,
-            )
-            datasets.append(dataset)
-        if weights is None:
-            weights = [1.0 for _ in range(len(datasets))]
-        super().__init__(
-            datasets=datasets,
-            num_samples=num_samples,
-            weights=weights,
-            seed=seed,
-        )
-
 class LyricsDataModule(pl.LightningDataModule):
     def __init__(
         self,
         train_dataset=None,
         validation_dataset=None,
         predict_dataset=None,
+        predict_num_rounds=1,
         num_workers: int = 8,
         pin_memory: bool = True,
     ):
@@ -107,6 +85,7 @@ class LyricsDataModule(pl.LightningDataModule):
         self.predict_dataset = predict_dataset
         self.num_workers = num_workers
         self.pin_memory = pin_memory
+        self.predict_num_rounds = predict_num_rounds
 
     def train_dataloader(self):
         return DataLoader(self.train_dataset, batch_size=None, num_workers=self.num_workers, pin_memory=self.pin_memory)
@@ -115,7 +94,7 @@ class LyricsDataModule(pl.LightningDataModule):
         return DataLoader(self.validation_dataset, batch_size=None, num_workers=self.num_workers, pin_memory=self.pin_memory)
 
     def predict_dataloader(self):
-        return DataLoader(self.predict_dataset, batch_size=None, num_workers=self.num_workers, pin_memory=self.pin_memory)
+        return [DataLoader(self.predict_dataset, batch_size=None, num_workers=self.num_workers, pin_memory=self.pin_memory)]*self.predict_num_rounds
     
     @classmethod
     def from_dataset_type(
@@ -129,256 +108,207 @@ class LyricsDataModule(pl.LightningDataModule):
         num_workers: int = 8,
         pin_memory: bool = True,
         music_types: str = 'mixture,instrumental',
+        enable_punctuation: bool = False
     ):
+        sample_duration = sample_duration if isinstance(sample_duration, (list, tuple)) else [sample_duration]
         if dataset_type == 'style_audio':
-            train_dataset = DefaultDatasets.Batched.style_audio_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, music_types)
+            train_dataset, valid_dataset = DefaultDatasets.Batched.style_audio_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, music_types, enable_punctuation=enable_punctuation)
+        elif dataset_type == 'mcc9m':
+            train_dataset, valid_dataset = DefaultDatasets.Batched.mcc9m(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, enable_punctuation=enable_punctuation)
         elif dataset_type == 'style_text':
-            train_dataset = DefaultDatasets.Batched.style_text_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, music_types)
+            train_dataset, valid_dataset = DefaultDatasets.Batched.style_text_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, music_types, enable_punctuation=enable_punctuation)
+        elif dataset_type == 'style_text_2M':
+            train_dataset, valid_dataset = DefaultDatasets.Batched.style_text_2M_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, music_types)
+        elif dataset_type == 'style_text_300k':
+            train_dataset, valid_dataset = DefaultDatasets.Batched.style_text_300k_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, music_types)
+        elif dataset_type == 'style_mixed':
+            train_dataset, valid_dataset = DefaultDatasets.Batched.style_mixed_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, music_types, enable_punctuation=enable_punctuation)
         elif dataset_type == 't5_token':
-            train_dataset = DefaultDatasets.Batched.t5_token_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, music_types)
-        if dataset_type == 'wav_only':
-            train_dataset = DefaultDatasets.Batched.wav_only_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, music_types)
-        # TODO: (AS) change validation dataset based on dataset_type
-        validation_dataset = DefaultDatasets.Batched.default_validation_dataset(sample_rate, sample_duration, batch_size, lyrics_max_seq_len)
-        return LyricsDataModule(train_dataset=train_dataset, validation_dataset=validation_dataset, num_workers=num_workers, pin_memory=pin_memory)
+            train_dataset, valid_dataset = DefaultDatasets.Batched.t5_token_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, music_types)
+        elif dataset_type == 'wav_only':
+            train_dataset, valid_dataset = DefaultDatasets.Batched.wav_only_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, music_types)
+        return LyricsDataModule(train_dataset=train_dataset, validation_dataset=valid_dataset, num_workers=num_workers, pin_memory=pin_memory)
 
+def pad_collate_tensor_fn(batch, *, collate_fn_map):
+     max_length = max([x.shape[-1] for x in batch])
+     batch = [crop_pad_to_seq_length(x, max_length, x.dtype, padding_value=0) for x in batch]
+     return collate_tensor_fn(batch, collate_fn_map=collate_fn_map)
 
-class SingsongDataModule(pl.LightningDataModule):
-    def __init__(
-        self,
-        train_dataset=None,
-        validation_dataset=None,
-        predict_dataset=None,
-        num_workers: int = 8,
-        pin_memory: bool = True,
-    ):
-        super().__init__()
-        self.train_dataset = train_dataset
-        self.validation_dataset = validation_dataset
-        self.predict_dataset = predict_dataset
-        self.num_workers = num_workers
-        self.pin_memory = pin_memory
-
-    def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=None, num_workers=self.num_workers, pin_memory=self.pin_memory)
-
-    def val_dataloader(self):
-        return DataLoader(self.validation_dataset, batch_size=None, num_workers=self.num_workers, pin_memory=self.pin_memory)
-
-    def predict_dataloader(self):
-        return DataLoader(self.predict_dataset, batch_size=None, num_workers=self.num_workers, pin_memory=self.pin_memory)
-    
-    @classmethod
-    def from_dataset_type(
-        cls,
-        dataset_type: str,
-        batch_size: int,
-        sample_rate: int = 24000,
-        sample_duration: int = 10,
-        shuffle_buffer_size: int = 100,
-        num_workers: int = 8,
-        pin_memory: bool = True,
-    ):
-        if dataset_type == 'resso':            
-            train_dataset = DefaultDatasets.Batched.singsong_dataset(sample_rate, sample_duration, "train", batch_size, shuffle_buffer_size)
-            validation_dataset = DefaultDatasets.Batched.singsong_dataset(sample_rate, sample_duration, "val", batch_size, shuffle_buffer_size)
-        else:
-            raise NotImplementedError
-        return SingsongDataModule(train_dataset=train_dataset, validation_dataset=validation_dataset, num_workers=num_workers, pin_memory=pin_memory)
-
-
-def dictonary_collate(batch):
+def dictionary_collate(batch):
     """Fixes pytorch's default collate which cannot handle dictionaries or null fields."""
+    lyrics_collate_fn_map = {
+        **default_collate_fn_map,
+        torch.Tensor: pad_collate_tensor_fn
+    }
     def remove_invalid_fields(item):
         def invalid_field(field): return field is None or isinstance(field, dict)
         return { k:v for k,v in item.items() if not invalid_field(v)}
-    return default_collate([remove_invalid_fields(item) for item in batch])
+    batch = [remove_invalid_fields(item) for item in batch]
+    return collate(batch, collate_fn_map=lyrics_collate_fn_map)
 
-def transform_dataset(dataset, segment_transforms=(), batch_transforms=(), batch_size=None, collation_fn=dictonary_collate, shuffle_buffer_size=None):
-    data_pipeline = DataPipeline(dataset)
+class LyricsBucketBatcher(BucketBatcher):
+    def __init__(
+        self,
+        *args,
+        collate_fn = dictionary_collate,
+        **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self.collate_fn = collate_fn
+
+    def __call__(self, it):
+        for item in it:
+            batch = self.collate_batch(item)
+            if batch is not None:
+                yield self.collate_fn(batch)
+
+def default_bucket_batcher_fn(sample_rate, sample_duration, batch_size):
+    sample_duration = sample_duration if isinstance(sample_duration, (list, tuple)) else [sample_duration]
+    buckets_samples = [d*sample_rate for d in sample_duration]
+    length_fn = lambda x: x["target_audio"].shape[-1]
+    return LyricsBucketBatcher(buckets=buckets_samples, batch_size=batch_size, dynamic_batch=False, length_fn=length_fn)
+    
+def default_batch_fn(batch_size, collation_fn=dictionary_collate):
+    return wds.batched(batch_size, collation_fn=collation_fn)
+
+def transform_dataset(dataset, segment_transforms=(), batch_transforms=(), batch_fn=None, shuffle_buffer_size=None):
+    if isinstance(dataset, DataPipeline):
+        data_pipeline = dataset
+    else:
+        data_pipeline = DataPipeline(dataset)
     if shuffle_buffer_size is not None:
         data_pipeline.append(wds.shuffle(shuffle_buffer_size))
     for segment_transform in segment_transforms:
         data_pipeline.append(wds.map(segment_transform))
-    if batch_size is not None:
-        data_pipeline.append(wds.batched(batch_size, collation_fn=collation_fn))
-    for batch_transform in batch_transforms:
-        data_pipeline.append(wds.map(batch_transform))
+    if batch_fn is not None:
+        data_pipeline.append(batch_fn)
+        for batch_transform in batch_transforms:
+            data_pipeline.append(wds.map(batch_transform))
     return data_pipeline
+
+def infer_dataset_weights(index_lists):
+    weights = []
+    for index_list in index_lists:
+        if index_list.startswith('hdfs'):
+            line_count = len(hdfs_loadtxt(index_list))
+        elif Path(index_list).exists():
+            with open(index_list, 'r') as f:
+                line_count = len(f.read().splitlines())
+        else:
+            print('Invalid local path. Could not infer dataset weights', index_list)
+            return None
+        weights.append(line_count)
+    return weights
 
 
 class DefaultDatasets():
     class Basic:
         @staticmethod
-        def mixture_dataset(sample_rate, sample_duration):
-            return WrappedLyricsDataset(
-                [
-                    {
-                        "url2index": "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/karaoke_train.tar_to_index.tsv", 
-                        "audio_keys": { 'style_audio': 'full.mp3', 'target_audio': 'full.mp3'},
-                    },
-                    {
-                        "url2index": "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/resso.tar_to_index.tsv", 
-                        "audio_format": "m4a", # resso is m4a format for some reason
-                        "audio_keys": { 'style_audio': 'mp3', 'target_audio': 'mp3'},
-                    },
-                    {
-                        "url2index": "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc9m.tar_to_index.tsv", 
-                        "audio_keys": { 'style_audio': 'mp3', 'target_audio': 'mp3'},
-                    },
-                    {
-                        "url2index": "/mnt/bn/audio-diffusion/data/vocal_mcc/mcc_60m_url2index_final.tsv", 
-                        "audio_keys": { 'style_audio': 'mp3', 'target_audio': 'mp3'},
-                    },
-                ],
-                sample_rate=sample_rate,
-                sample_duration=sample_duration,
-                resampled=True,
-                shardshuffle=True,
-                use_pipe=True,
-                weights=[0.05, 0.25, 1, 20] # 50k, 250k, 1m, 35m
-            )
-        @staticmethod
-        def mcc60m_mixture_dataset(sample_rate, sample_duration):
-            return LyricsDataset(
-                url2index='/mnt/bn/audio-diffusion/data/vocal_mcc/mcc_60m_url2index_final.tsv',
-                sample_rate=sample_rate,
-                sample_duration=sample_duration,
-                audio_keys={ 'target_audio': 'mp3', 'style_audio': 'mp3' },
-                resampled=True,
-                shardshuffle=True,
-                # use_pipe=True,
-            )
-        @staticmethod
-        def resso_mss_dataset(sample_rate, sample_duration, split="train"):
-            if split == "train":
-                return WrappedLyricsDataset(
-                    [
-                        {
-                            "url2index": "/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/indexes_with_meta/karaoke_train.tar_to_index.tsv", 
-                            "audio_keys": { 'style_audio': 'acc.mp3', 'target_audio': 'full.mp3', 'vocal_audio': 'vocal.mp3' },
-                        },
-                        {
-                            "url2index": "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/resso_mss.tar_to_index.tsv", 
-                            "audio_keys": { 'style_audio': 'mss_acc', 'vocal_audio': 'mss_vocal'},
-                        },
-                    ],
+        def mcc60m_lossless_dataset(sample_rate, sample_duration, index_list=INDEX["US"]["MCCVocalB"], infer_weights=True):
+            datasets = [
+                LyricsDataset(
+                    url2index=url2index,
                     sample_rate=sample_rate,
                     sample_duration=sample_duration,
-                    resampled=True,
-                    shardshuffle=True,
-                    use_pipe=True,
-                    weights=[0.2, 0.8]
+                    audio_keys={ 'style_audio': 'audio.npy', 'target_audio': 'audio.npy'},
+                    audio_format='npy',
                 )
-            elif split == "val":
-                return WrappedLyricsDataset(
-                    [
-                        {
-                            "url2index": "/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/indexes_with_meta/karaoke_valid.tar_to_index.tsv", 
-                            "audio_keys": { 'style_audio': 'acc.mp3', 'target_audio': 'full.mp3', 'vocal_audio': 'vocal.mp3' },
-                        }
-                    ],
-                    sample_rate=sample_rate,
-                    sample_duration=sample_duration,
-                    resampled=True,
-                    shardshuffle=True,
-                    use_pipe=True,
-                    weights=[1]
-                )
-                
-        @staticmethod
-        def vocal_only_dataset(sample_rate, sample_duration):
-            return WrappedLyricsDataset(
-                [
-                    {
-                        "url2index": "/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/webdataset_acc/karaoke_train.tar_to_index.tsv", 
-                        "audio_keys": { 'target_audio': 'vocal.mp3', 'vocal_audio': 'vocal.mp3' },
-                    },
-                    {
-                        "url2index": "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/resso_mss.tar_to_index.tsv", 
-                        "audio_keys": { 'target_audio': 'mss_vocal', 'vocal_audio': 'mss_vocal'},
-                    },
-                ],
-                sample_rate=sample_rate,
-                sample_duration=sample_duration,
-                resampled=True,
-                shardshuffle=True,
-                weights=[0.1, 0.9]
-            )
-        @staticmethod
-        def mcc40m_instrumental_dataset(sample_rate, sample_duration):
-            return WrappedMCC40MDataset(
-                [
-                    "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/a.tsv",
-                    "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/b.tsv",
-                    "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/c.tsv",
-                    "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/d.tsv",
-                    "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/e.tsv",
-                    "/mnt/bn/audio-diffusion/data/genre_balanced_mcc/f.tsv",
-                ],
-                # [
-                #     "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/a.tsv",
-                #     "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/b.tsv",
-                #     "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/c.tsv",
-                #     "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/d.tsv",
-                #     "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/e.tsv",
-                #     "/mnt/bn/audio-diffusion/data/genre_balanced_mcc_celer/f.tsv",
-                # ],
-                sample_rate=sample_rate,
-                duration=sample_duration,
-                audio_key='mp3',
-                exclude_licenses = [],
-                loudness_ratio_threshold=0.2,
-                max_num_crops=3,
-                resampled=True,
-                shardshuffle=True,
-                use_pipe=True
-            )
-        @staticmethod
-        def mc40m_filtered_instrumental_dataset(sample_rate, sample_duration):
-            url2index = [
-                "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.alternative-hip-hop+chinese-style+others",
-                "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.blues+childhood+country+devotional+k-pop+soundtrack+trance+world-music",
-                "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.classical",
-                "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.easy-listening",
-                "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.electronic+techno",
-                "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.folk+indie-folk",
-                "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.hip-hop-rap",
-                "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.jazz",
-                "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.new-age",
-                "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.pop",
-                "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores+vad/genre_specific/npy_url2idx.txt.rock"
+                for url2index in index_list
             ]
-            weights = [1.0, 2.0, 4.0, 1.0, 2.0, 2.0, 2.0, 4.0, 2.0, 4.0, 2.0]
-            return WrappedMCC40MDataset(
-                url2index,
+            weights = infer_dataset_weights(index_list) if infer_weights else None
+            return MultiIterableDataset(
+                datasets=datasets, 
+                weights=weights,
+                seed=2023,
+            )
+        
+        @staticmethod
+        def speech_dataset(sample_rate, sample_duration):
+            librilight_ds = LibriLightASRDataset(
+                url2index=INDEX["US"]["LIBRILIGHT"], 
+                sample_rate=sample_rate, 
+                min_duration=sample_duration[0], 
+                max_duration=sample_duration[-1],
+                resampled=True,
+                shardshuffle=True,
+            )
+
+            libritts_ds = LibriTTSDataset(
+                urls=INDEX["US"]["LIBRITTS"],
                 sample_rate=sample_rate,
-                duration=sample_duration,
+                min_duration=sample_duration[0], 
+                max_duration=sample_duration[-1],
+                resampled=True,
+                shardshuffle=True,
+                handler=wds.warn_and_continue,
+            )
+            ds = MultiIterableDataset(
+                datasets=[librilight_ds, libritts_ds], 
+                weights=[50, 1],
+                seed=2023,
+            )
+            return transform_dataset(ds, segment_transforms=[MCCMetadataTextTransform("Speech"), RenameAudioKeyTransform()])
+        
+        @staticmethod
+        def mcc40m_lossless_dataset(sample_rate, sample_duration, index_list=INDEX["US"]["MCCInstrumental"]):
+            mcc_instrumental = WrappedMCC40MDataset(
+                url2index_list=index_list,
+                sample_rate=sample_rate,
+                duration=sample_duration[-1],
                 audio_key='audio.npy',
                 exclude_licenses = [],
                 loudness_ratio_threshold=0.2,
                 max_vocal_threshold=0.5,
                 max_num_crops=10,
-                weights=weights,
+                weights=None,
                 resampled=True,
                 shardshuffle=True,
-                use_pipe=True
+                use_pipe=False
             )
-        
+            return transform_dataset(mcc_instrumental, segment_transforms=[MCCMetadataTextTransform("Instrumental"), RenameAudioKeyTransform()])
+
+        @staticmethod
+        def resso_mss_dataset(sample_rate, sample_duration):
+            karaoke_ds = LyricsDataset(
+                url2index=INDEX["US"]["KARAOKE_TRAIN"],
+                sample_rate=sample_rate,
+                sample_duration=sample_duration,
+                audio_keys={ 'style_audio': 'acc.mp3', 'target_audio': 'full.mp3', 'vocal_audio': 'vocal.mp3' },
+                audio_format='mp3',
+            )
+            resso_mss_ds = LyricsDataset(
+                url2index=INDEX["US"]["RESSO_MSS"],
+                sample_rate=sample_rate,
+                sample_duration=sample_duration,
+                audio_keys={ 'style_audio': 'mss_acc', 'vocal_audio': 'mss_vocal'},
+                audio_format='mp3',
+            )
+            return MultiIterableDataset(
+                datasets=[karaoke_ds, resso_mss_ds],
+                weights=[0.2, 0.8],
+                seed=2023,
+            )
+
+        @staticmethod
+        def karaoke_vocal_validation_dataset(sample_rate, sample_duration):
+            return LyricsDataset(
+                url2index=INDEX["US"]["KARAOKE_VALID"],
+                sample_rate=sample_rate,
+                sample_duration=sample_duration,
+                audio_keys={ 'style_audio': 'acc.mp3', 'target_audio': 'full.mp3', 'vocal_audio': 'vocal.mp3' },
+                audio_format="mp3",
+                resampled=False,
+                shardshuffle=False,
+                nodesplitter=return_self,
+                max_num_segments=1,
+                shuffle_segments=False,
+                use_pipe=False
+            )
+
         @staticmethod
         def karaoke_validation_dataset(sample_rate, sample_duration):
-            import os
-            if os.path.exists('/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/webdataset/shards-0131.tar'):
-                url2index = {
-                    '/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/webdataset/shards-0131.tar': 
-                    '/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/webdataset/shards-0131.tar.index'
-                }
-            else:
-                # Web:
-                url2index = '/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/karaoke_valid.tar_to_index.tsv'
-
             return LyricsDataset(
-                url2index,
+                url2index=INDEX["US"]["KARAOKE_VALID"],
                 sample_rate=sample_rate,
                 sample_duration=sample_duration,
                 audio_keys={ "target_audio": "full.mp3", "style_audio": "full.mp3" },
@@ -388,135 +318,246 @@ class DefaultDatasets():
                 nodesplitter=return_self,
                 max_num_segments=1,
                 shuffle_segments=False,
-                use_pipe=True
+                use_pipe=False
+            )
+        @staticmethod
+        def mcc_validation_dataset(sample_rate, sample_duration):
+            return LyricsDataset(
+                url2index=INDEX["US"]["MCC60M_VALID_LABEL1"],
+                sample_rate=sample_rate,
+                sample_duration=sample_duration,
+                audio_keys={ 'style_audio': 'audio.npy', 'target_audio': 'audio.npy'},
+                audio_format="npy",
+                resampled=False,
+                shardshuffle=False,
+                nodesplitter=return_self,
+                max_num_segments=1,
+                shuffle_segments=False,
+                use_pipe=False
             )
         
     class Batched:
         @staticmethod
-        def style_audio_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, music_types):
+        def mcc9m(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, enable_punctuation=False, conditions="style_tag,lyrics_tokens"):
+            ds = LyricsDataset(
+                url2index=INDEX["US"]["MCC1M_EN_GT"],
+                audio_keys={ 'style_audio': 'mp3', 'target_audio': 'mp3'},
+                audio_format="mp3",
+                sample_rate=sample_rate,
+                sample_duration=sample_duration,
+                resampled=True,
+                shardshuffle=True,
+                use_pipe=False,
+            )
+            ds_batched = transform_dataset(
+                dataset=ds,
+                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len, enable_punctuation=enable_punctuation)],
+                batch_transforms=[AddConditionsTransform(conditions)],
+                batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
+                shuffle_buffer_size=shuffle_buffer_size
+            )
+
+            ds_valid = DefaultDatasets.Batched.default_validation_dataset(sample_rate, sample_duration, batch_size, lyrics_max_seq_len, conditions=conditions, enable_punctuation=enable_punctuation)
+            return ds_batched, ds_valid
+        @staticmethod
+        def style_audio_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, music_types, style_condition="style_tag", enable_punctuation=False):
+            # style_condition = style_audio for audio tower training, style_tag for MIR/Mulan on-the-fly tagging
             datasets = []
             weights = []
             if 'mixture' in music_types:
+                mixture_ds = DefaultDatasets.Basic.mcc60m_lossless_dataset(sample_rate, sample_duration)
                 mixture_ds_batched = transform_dataset(
-                    dataset=DefaultDatasets.Basic.mixture_dataset(sample_rate, sample_duration),
-                    segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len)],
-                    batch_transforms=[AddConditionsTransform("style_audio,lyrics_tokens")],
-                    batch_size=batch_size,
+                    dataset=mixture_ds,
+                    segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len, enable_punctuation=enable_punctuation)],
+                    batch_transforms=[AddConditionsTransform(f"{style_condition},lyrics_tokens")],
+                    batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                     shuffle_buffer_size=shuffle_buffer_size
                 )
                 datasets.append(mixture_ds_batched)
                 weights.append(0.7)
             if 'instrumental' in music_types:
                 instrumental_ds_batched = transform_dataset(
-                    dataset=DefaultDatasets.Basic.mc40m_filtered_instrumental_dataset(sample_rate=sample_rate, sample_duration=sample_duration),
+                    dataset=DefaultDatasets.Basic.mcc40m_lossless_dataset(sample_rate=sample_rate, sample_duration=sample_duration),
                     segment_transforms=[],
-                    batch_transforms=[MCCInstrumentalBatchTransform(), AddConditionsTransform("style_audio")],
-                    batch_size=batch_size,
+                    batch_transforms=[AddConditionsTransform(style_condition)],
+                    batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                     shuffle_buffer_size=shuffle_buffer_size
                 )
                 datasets.append(instrumental_ds_batched)
                 weights.append(0.3)
 
+            ds_valid = DefaultDatasets.Batched.default_validation_dataset(
+                sample_rate, sample_duration, batch_size, lyrics_max_seq_len, 
+                conditions=f"{style_condition},lyrics_tokens",
+                enable_punctuation=enable_punctuation
+            )
             if len(datasets) == 0:
                 raise ValueError('Unable to create dataset with music_types', music_types)
             if len(datasets) == 1:
-                return datasets[0]
+                return datasets[0], ds_valid
             combined_ds = MultiIterableDataset(
                 datasets, 
                 num_samples=10_000_000, seed=2023,
                 weights=weights
             )
-            return combined_ds
+            return combined_ds, ds_valid
 
         @staticmethod
-        def style_text_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, music_types):
+        def style_text_dataset(
+            sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, music_types, enable_punctuation=False,
+            index_list=INDEX["US"]["MCCVocalB"], infer_weights=True
+        ):
             datasets = []
             weights = []
             if 'mixture' in music_types:
+                mixture_ds = DefaultDatasets.Basic.mcc60m_lossless_dataset(sample_rate, sample_duration, index_list=index_list, infer_weights=infer_weights)
                 mixture_ds_batched = transform_dataset(
                     # only mcc60 has metadata attached for converting to style_text
-                    dataset=DefaultDatasets.Basic.mcc60m_mixture_dataset(sample_rate, sample_duration),
-                    segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len), MCCMetadataTextTransform(), AddMulanVocalTagTransform()],
+                    dataset=mixture_ds,
+                    segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len, enable_punctuation=enable_punctuation), MCCMetadataTextTransform("Vocal")],
                     batch_transforms=[AddConditionsTransform("style_text,lyrics_tokens")],
-                    batch_size=batch_size,
+                    batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                     shuffle_buffer_size=shuffle_buffer_size
                 )
                 datasets.append(mixture_ds_batched)
-                weights.append(0.7)
+                weights.append(0.6)
             if 'instrumental' in music_types:
                 instrumental_ds_batched = transform_dataset(
-                    dataset=DefaultDatasets.Basic.mc40m_filtered_instrumental_dataset(sample_rate=sample_rate, sample_duration=sample_duration),
-                    segment_transforms=[MCCMetadataTextTransform()],
-                    batch_transforms=[MCCInstrumentalBatchTransform(), AddConditionsTransform("style_text")],
-                    batch_size=batch_size,
+                    dataset=DefaultDatasets.Basic.mcc40m_lossless_dataset(sample_rate=sample_rate, sample_duration=sample_duration),
+                    segment_transforms=[],
+                    batch_transforms=[AddConditionsTransform("style_text")],
+                    batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                     shuffle_buffer_size=shuffle_buffer_size
                 )
                 datasets.append(instrumental_ds_batched)
-                weights.append(0.3)
+                weights.append(0.4)
 
+            if 'speech' in music_types:
+                speech_ds_batched = transform_dataset(
+                    dataset=DefaultDatasets.Basic.speech_dataset(sample_rate=sample_rate, sample_duration=sample_duration),
+                    segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len, enable_punctuation=enable_punctuation)],
+                    batch_transforms=[AddConditionsTransform("style_text,lyrics_tokens")],
+                    batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
+                    shuffle_buffer_size=shuffle_buffer_size
+                )
+                datasets.append(speech_ds_batched)
+                weights.append(0.4)
+
+            ds_valid = DefaultDatasets.Batched.default_validation_dataset(
+                sample_rate, sample_duration, batch_size, lyrics_max_seq_len, 
+                conditions=f"style_text,lyrics_tokens",
+                enable_punctuation=enable_punctuation
+            )
             if len(datasets) == 0:
                 raise ValueError('Unable to create dataset with music_types', music_types)
             if len(datasets) == 1:
-                return datasets[0]
+                return datasets[0], ds_valid
+            
             return MultiIterableDataset(
                 datasets, 
                 num_samples=10_000_000, seed=2023,
                 weights=weights
+            ), ds_valid
+        
+        @staticmethod
+        def style_text_2M_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, music_types, enable_punctuation=False):
+            return DefaultDatasets.Batched.style_text_dataset(
+                sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, music_types, enable_punctuation,
+                index_list=INDEX["US"]["MCCVocalB_2M"], infer_weights=False
             )
-            return combined_ds
+        @staticmethod
+        def style_text_300k_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, music_types, enable_punctuation=False):
+            return DefaultDatasets.Batched.style_text_dataset(
+                sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, music_types, enable_punctuation,
+                index_list=INDEX["US"]["MCCVocalB_300k"], infer_weights=False
+            )
+        
+        @staticmethod
+        def style_mixed_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, music_types, enable_punctuation=False):
+            import random
+            class RandomConditionsTransform():
+                def __init__(self, conditions=["style_tag,lyrics_tokens", "style_audio,lyrics_tokens"]):
+                    self.conditions = conditions
 
+                def __call__(self, item):
+                    random_condition = random.choice(self.conditions)
+                    return { **item, 'conditions': random_condition }
+
+            mixture_ds = DefaultDatasets.Basic.mcc60m_lossless_dataset(sample_rate, sample_duration)
+            mixture_ds_batched = transform_dataset(
+                dataset=mixture_ds,
+                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len, enable_punctuation=enable_punctuation), MCCMetadataTextTransform("Vocal")],
+                batch_transforms=[RandomConditionsTransform()],
+                batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
+                shuffle_buffer_size=shuffle_buffer_size
+            )
+            ds_valid = DefaultDatasets.Batched.default_validation_dataset(
+                sample_rate, sample_duration, batch_size, lyrics_max_seq_len, 
+                conditions=f"style_tag,lyrics_tokens",
+                enable_punctuation=enable_punctuation
+            )
+            return mixture_ds_batched, ds_valid
+        
         @staticmethod
         def t5_token_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, music_types):
             datasets = []
             weights = []
             if 'mixture' in music_types:
+                mixture_ds = DefaultDatasets.Basic.mcc60m_lossless_dataset(sample_rate, sample_duration)
                 mixture_ds_batched = transform_dataset(
                     # only mcc60 has metadata attached for converting to style_text
-                    dataset=DefaultDatasets.Basic.mcc60m_mixture_dataset(sample_rate, sample_duration),
-                    segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len), MetadataT5Transform()],
+                    dataset=mixture_ds,
+                    segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len), StyleTextT5Transform()],
                     batch_transforms=[AddConditionsTransform("style_tokens,lyrics_tokens"), ],
-                    batch_size=batch_size,
+                    batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                     shuffle_buffer_size=shuffle_buffer_size
                 )
                 datasets.append(mixture_ds_batched)
                 weights.append(0.7)
             if 'instrumental' in music_types:
                 instrumental_ds_batched = transform_dataset(
-                    dataset=DefaultDatasets.Basic.mc40m_filtered_instrumental_dataset(sample_rate=sample_rate, sample_duration=sample_duration),
-                    segment_transforms=[MetadataT5Transform()],
-                    batch_transforms=[AddConditionsTransform("style_tokens"), MCCInstrumentalBatchTransform()],
-                    batch_size=batch_size,
+                    dataset=DefaultDatasets.Basic.mcc40m_lossless_dataset(sample_rate=sample_rate, sample_duration=sample_duration),
+                    segment_transforms=[StyleTextT5Transform()],
+                    batch_transforms=[AddConditionsTransform("style_tokens")],
+                    batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                     shuffle_buffer_size=shuffle_buffer_size
                 )
                 datasets.append(instrumental_ds_batched)
                 weights.append(0.3)
+            ds_valid = transform_dataset(
+                dataset=DefaultDatasets.Basic.mcc_validation_dataset(sample_rate, sample_duration),
+                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len), StyleTextT5Transform()],
+                batch_transforms=[AddConditionsTransform("style_tokens,lyrics_tokens")],
+                batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
+                shuffle_buffer_size=None
+            )
             if len(datasets) == 0:
                 raise ValueError('Unable to create dataset with music_types', music_types)
             if len(datasets) == 1:
-                return datasets[0]
+                return datasets[0], ds_valid
             combined_ds =  MultiIterableDataset(
                 datasets, 
                 num_samples=10_000_000, seed=2023,
                 weights=weights
             )
-            return combined_ds
+            return combined_ds, ds_valid
 
         @staticmethod
-        def vocal_conditional_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, music_types):
+        def vocal_conditional_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len):
             multitask_ds_batched = DefaultDatasets.Batched.style_audio_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len)
 
             vocal_ds_batched = transform_dataset(
-                dataset=DefaultDatasets.Basic.vocal_only_dataset(sample_rate, sample_duration),
+                dataset=DefaultDatasets.Basic.resso_mss_dataset(sample_rate=sample_rate, sample_duration=sample_duration),
                 segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len), VocalChromaTransform()],
                 batch_transforms=[AddConditionsTransform("lyrics_tokens,vocal_audio,vocal_chroma")],
-                batch_size=batch_size,
+                batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                 shuffle_buffer_size=shuffle_buffer_size
             )
             mss_ds_batched = transform_dataset(
                 dataset=DefaultDatasets.Basic.resso_mss_dataset(sample_rate=sample_rate, sample_duration=sample_duration),
                 segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len), VocalChromaTransform()],
-                batch_transforms=[AddConditionsTransform("style_audio,lyrics_tokens,vocal_audio")],
-                batch_size=batch_size,
+                batch_transforms=[AddConditionsTransform("style_audio,lyrics_tokens,vocal_audio,vocal_chroma")],
+                batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                 shuffle_buffer_size=shuffle_buffer_size
             )
             combined_ds = MultiIterableDataset(
@@ -524,7 +565,14 @@ class DefaultDatasets():
                 num_samples=10_000_000, seed=2023,
                 weights=[0.7, 0.1, 0.2]
             )
-            return combined_ds
+            ds_valid = transform_dataset(
+                dataset=DefaultDatasets.Basic.karaoke_vocal_validation_dataset(sample_rate, sample_duration),
+                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len), VocalChromaTransform()],
+                batch_transforms=[AddConditionsTransform("lyrics_tokens,vocal_audio,vocal_chroma")],
+                batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
+                shuffle_buffer_size=None
+            )
+            return combined_ds, ds_valid
 
         @staticmethod
         def wav_only_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, music_types):
@@ -532,52 +580,48 @@ class DefaultDatasets():
             weights = []
             if 'mixture' in music_types:
                 mixture_ds_batched = transform_dataset(
-                    dataset=DefaultDatasets.Basic.mixture_dataset(sample_rate, sample_duration),
+                    dataset=DefaultDatasets.Basic.mcc60m_lossless_dataset(sample_rate, sample_duration),
                     segment_transforms=[],
                     batch_transforms=[],
-                    batch_size=batch_size,
+                    batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                     shuffle_buffer_size=shuffle_buffer_size
                 )
                 datasets.append(mixture_ds_batched)
                 weights.append(0.7)
             if 'instrumental' in music_types:
                 instrumental_ds_batched = transform_dataset(
-                    dataset=DefaultDatasets.Basic.mc40m_filtered_instrumental_dataset(sample_rate=sample_rate, sample_duration=sample_duration),
+                    dataset=DefaultDatasets.Basic.mcc40m_lossless_dataset(sample_rate=sample_rate, sample_duration=sample_duration),
                     segment_transforms=[],
-                    batch_transforms=[MCCInstrumentalBatchTransform()],
-                    batch_size=batch_size,
+                    batch_transforms=[],
+                    batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                     shuffle_buffer_size=shuffle_buffer_size
                 )
                 datasets.append(instrumental_ds_batched)
                 weights.append(0.3)
+            ds_valid = transform_dataset(
+                dataset=DefaultDatasets.Basic.mcc_validation_dataset(sample_rate, sample_duration),
+                segment_transforms=[],
+                batch_transforms=[],
+                batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
+                shuffle_buffer_size=None
+            )
             if len(datasets) == 0:
                 raise ValueError('Unable to create dataset with music_types', music_types)
             if len(datasets) == 1:
-                return datasets[0]
+                return datasets[0], ds_valid
             combined_ds = MultiIterableDataset(
                 datasets, 
                 num_samples=10_000_000, seed=2023,
                 weights=weights
             )
-            return combined_ds
+            return combined_ds, ds_valid
 
         @staticmethod
-        def singsong_dataset(sample_rate, sample_duration, split, batch_size, shuffle_buffer_size):            
-            mss_ds_batched = transform_dataset(
-                dataset=DefaultDatasets.Basic.resso_mss_dataset(sample_rate=sample_rate, sample_duration=sample_duration, split=split),
-                segment_transforms=[],
-                batch_transforms=[AddConditionsTransform("style_audio,vocal_audio")],
-                batch_size=batch_size,
-                shuffle_buffer_size=shuffle_buffer_size
-            )
-            return mss_ds_batched
-        
-        @staticmethod
-        def default_validation_dataset(sample_rate, sample_duration, batch_size, lyrics_max_seq_len, conditions="style_audio,lyrics_tokens"):
+        def default_validation_dataset(sample_rate, sample_duration, batch_size, lyrics_max_seq_len, conditions="style_text,lyrics_tokens", enable_punctuation=False):
             return transform_dataset(
-                dataset=DefaultDatasets.Basic.karaoke_validation_dataset(sample_rate, sample_duration),
-                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len)],
+                dataset=DefaultDatasets.Basic.mcc_validation_dataset(sample_rate, sample_duration),
+                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len, enable_punctuation=enable_punctuation), MCCMetadataTextTransform("Vocal")],
                 batch_transforms=[AddConditionsTransform(conditions)],
-                batch_size=batch_size,
+                batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                 shuffle_buffer_size=None
             )

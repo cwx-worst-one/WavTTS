@@ -22,7 +22,7 @@ def run_wer_metrics(output_dir, device='cuda'):
     for idx, generated_output_fp in enumerate(generated_output_fps):
         wav = torch.tensor(load_wav(str(generated_output_fp))).to(device)
         wavs_batch = wav.unsqueeze(0) # convert to batch format
-        asr_lyrics, _ = wav2lyrics(wavs_batch)
+        asr_lyrics, _ = wav2lyrics(wavs_batch, sr=24000, device_id=torch.cuda.current_device())
         metadata_fp = str(generated_output_fp).replace('generated.wav', 'metadata.json')
         with open(metadata_fp, 'r') as f:
             metadata = json.load(f)

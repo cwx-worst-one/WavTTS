@@ -7,13 +7,13 @@ from dataclasses import dataclass
 import math
 import random
 import numpy as np
+from typing import Tuple
 
 from recipes.musiclm.transforms.audio import (
     NormalizeAudioToFloat32,
     SetAudioDimensions,
     ToTensor,
     ReadMP3,
-    crop_1d,
     NormalizeAudio
 )
 from recipes.musiclm.transforms.base import TransformBase
@@ -26,19 +26,23 @@ class LyricsSegmentTransforms(TransformBase):
     def __init__(
         self,
         sample_rate: int,
-        sample_duration: int,
+        sample_duration: list,
         audio_format: str,
         audio_keys: dict,
         max_num_segments = 10,
         shuffle_segments: bool = True,
         url2index = None,
-        handler: Callable = wds.ignore_and_continue,
+        handler: Callable = wds.warn_and_continue,
     ) -> None:
         super().__init__()
         self.sample_rate = sample_rate
         self.audio_format = audio_format
         self.audio_keys = audio_keys
-        self.sample_duration = sample_duration
+        self.url2index = url2index
+        if not isinstance(sample_duration, list):
+            self.sample_duration = [sample_duration]
+        else:
+            self.sample_duration = list(sorted(sample_duration))
         self.handler = handler
         self.max_num_segments = max_num_segments
         self.shuffle_segments = shuffle_segments
@@ -47,49 +51,49 @@ class LyricsSegmentTransforms(TransformBase):
             self.read_mp3 = lambda x: x
         else:
             self.read_mp3 = ReadMP3BytesIO(self.sample_rate, self.audio_format, fast=(self.audio_format=='mp3'))
-        self.to_tensor = ToTensor()
-        self.audio_dim = SetAudioDimensions()
-        self.normalize_audio_fp32 = NormalizeAudioToFloat32()
-        self.url2index = url2index
-        self.normalize_audio = NormalizeAudio()
         self.base_transform = Compose(
             [
                 self.read_mp3,
-                self.to_tensor,
-                self.audio_dim, 
-                self.normalize_audio_fp32,
+                ToTensor(),
+                SetAudioDimensions(), 
+                NormalizeAudioToFloat32(),
             ]
         )
+        self.normalize_audio = NormalizeAudio()
 
     def process_segment(self, segment, audio_wavs):
-        audio_duration = audio_wavs['target_audio'].shape[-1] // self.sample_rate
-        target_duration = self.sample_duration
-        if segment.end > audio_duration + 2:
+        audio_duration = audio_wavs['target_audio'].shape[-1] / self.sample_rate
+        if segment.end > audio_duration:
             return None
-
-        cropped_segments = { name: crop_audio_to_segment(segment, audio, self.sample_rate, target_duration) for name, audio in audio_wavs.items() }
+        cropped_segments = { name: crop_pad_audio_to_segment(segment, audio, self.sample_rate) for name, audio in audio_wavs.items() }
         lyrics_text = segment.text.strip()
         cropped_segments['lyrics'] = lyrics_text
         return cropped_segments
 
-    # def has_valid_lyrics(self, index_data):
-    #     if 'lyrics' not in index_data:
-    #         return False
-    #     utterances = index_data['lyrics']['utterances']
-    #     confidences = []
-    #     for utterance in utterances:
-    #         # some lyrics may not have confidence (force alignment). return True anyways
-    #         if 'additions' not in utterance: return True
-    #         confidence = float(utterance["additions"]["confidence"])
-    #         confidences.append(confidence)
-    #     if len(confidences) == 0:
-    #         return False
-    #     print('Condfidence mean', np.array(confidences).mean(), confidences)
-    #     return np.array(confidences).mean()
-    
-    def __call__(self, x: Dict[str, torch.Tensor]) -> Generator:
+    def extract_metadata_and_utterances(self, index_data):
+        if 'metadata' in index_data:
+            metadata = index_data['metadata']
+        else:
+            metadata = index_data
+        # Hiphop has format metadata: {..., lyrics: []}, THe rest has format { metadata: {}, lyrics: []}
+        if 'lyrics' in metadata:
+            lyrics = metadata['lyrics']
+        elif 'lyrics' in index_data:
+            lyrics = index_data['lyrics']
+        else:
+            lyrics = None
 
-        # Extract audio Wavs
+        utterances = None
+        if lyrics and 'utterances' in lyrics:
+            # v1 (asr, no punctuation)
+            utterances = lyrics['utterances']
+        elif lyrics and 'result' in lyrics:
+            # v2 (asr + punctuation)
+            utterances = lyrics['result'][0]['utterances']
+
+        return metadata, utterances
+
+    def extract_audio_wavs(self, x:Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         cached_wavs = {}
         audio_wavs = {}
         for name, audio_key in self.audio_keys.items():
@@ -98,13 +102,11 @@ class LyricsSegmentTransforms(TransformBase):
             else:
                 try:
                     audio = self.base_transform(x[audio_key])[0, :]
-                    cached_wavs[audio_key] = audio
-                    assert len(audio.shape) == 1, 'Invalid audio shape'
                 except Exception as e:
-                    print(f"[MP3 decoding error] - {name} - {self.url2index} - {e}")
-                    self._update_stats(skipped=True)
-                    self.handler(e)
-                    return
+                    raise Exception(f"[MP3 decoding error] - {name} - {self.url2index} - {e}")
+                cached_wavs[audio_key] = audio
+                assert len(audio.shape) == 1, 'Invalid audio shape'
+                assert audio.shape[0] > self.sample_rate
             audio_wavs[name] = audio
         del cached_wavs
 
@@ -117,15 +119,39 @@ class LyricsSegmentTransforms(TransformBase):
         target_audio = audio_wavs['target_audio']
         for name, audio_wav in audio_wavs.items():
             audio_wavs[name] = self.normalize_audio(audio_wav, target_audio)
+        return audio_wavs
 
-        # Extract segment information
-        # extract lyrics
-        index_data = x['__index_data__']
-        if 'lyrics' not in index_data:
+
+    def __call__(self, x: Dict[str, torch.Tensor]) -> Generator:
+        # 1. filter lyrics and metadata. 2. extract audio 2b. transform audio 3. clip audio to metadata 4. transform segment
+        try:
+            index_data = x['__index_data__']
+            metadata, lyrics = self.extract_metadata_and_utterances(index_data)
+        except Exception as e:
+            self._update_stats(skipped=True)
+            self.handler(e)
+            return
+        if not (is_valid_lyrics(lyrics) and is_valid_metadata(metadata)):
             self._update_stats(skipped=True)
             return
-        lyrics_json = index_data['lyrics']['utterances']
-        segments: List[Segment] = lyrics_to_segments(lyrics_json, maximum_clipped_length=self.sample_duration)
+
+        try:
+            audio_wavs = self.extract_audio_wavs(x)
+            # Extract segment information
+        except Exception as e:
+            self._update_stats(skipped=True)
+            self.handler(e)
+            return
+        
+        fixed_duration = len(self.sample_duration) == 1 # if only one duration is provided. Fix it to that duration
+        if self.shuffle_segments and len(lyrics) > 4: # shuffle lyrics start times
+            lyrics = lyrics[random.randint(0, 3):]
+        segments: List[Segment] = lyrics_to_segments(
+            lyrics, 
+            fixed_duration=fixed_duration,
+            min_duration=self.sample_duration[0] * 3 / 4,
+            max_duration=self.sample_duration[-1]
+        )
         if self.shuffle_segments:
             random.shuffle(segments)
         segment_count = 0
@@ -134,26 +160,34 @@ class LyricsSegmentTransforms(TransformBase):
         for segment in segments:
             item = self.process_segment(segment, audio_wavs)
             if item is None: continue
-            if 'metadata' in index_data:
-                item['metadata'] = index_data['metadata']
+            item['metadata'] = metadata
             yield item
             segment_count += 1
             if self.max_num_segments and segment_count >= self.max_num_segments:
                 break
         self._update_stats(segment_count == 0)
 
-def crop_audio_to_segment(segment, audio, sample_rate, target_duration):
+def crop_pad_audio_to_segment(segment, audio, sample_rate, target_duration=None):
     sample_start = int(segment.start*sample_rate)
-    target_samples = int(target_duration*sample_rate)
+    if target_duration is None:
+        target_samples = int(segment.duration*sample_rate)
+    else:
+        target_samples = int(target_duration*sample_rate)
     assert len(audio.shape) == 1, 'Invalid audio shape'
-    return pad_to_seq_length(audio[sample_start:], target_samples, audio.dtype)
+    return crop_pad_to_seq_length(audio[sample_start:], target_samples, audio.dtype)
 
-def pad_to_seq_length(seq, seq_len, dtype, padding_value=0):
-    pad_x = torch.full((seq_len,), fill_value=padding_value, dtype=dtype)
-    pad_x[:seq.size(0)] = seq[:seq_len]
+def crop_pad_to_seq_length(seq: torch.Tensor, target_seq_len, dtype=None, padding_value=0, start=0):
+    *dims, input_seq_len = seq.shape
+    dtype = seq.dtype if dtype is None else dtype
+    pad_x = torch.full((*dims, target_seq_len), fill_value=padding_value, dtype=dtype, device=seq.device)
+    seq_slice = seq[..., start:start+target_seq_len]
+    pad_x[..., :seq_slice.shape[-1]] = seq_slice
     return pad_x
 
-# Segment clipping
+def random_crop_pad_to_seq_length(seq: torch.Tensor, target_seq_len, dtype=None, padding_value=0):
+    *dims, input_seq_len = seq.shape
+    start_idx = random.randint(0, max(0, input_seq_len - target_seq_len))
+    return crop_pad_to_seq_length(seq, target_seq_len=target_seq_len, dtype=dtype, padding_value=padding_value, start=start_idx)
 
 @dataclass
 class Segment():
@@ -182,12 +216,12 @@ class Segment():
     def has_valid_time(self):
         return self.start >= 0
 
-def lyrics_to_segments(lyrics, maximum_clipped_length=10, minimum_voice_duration=3, 
+def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
                        new_line_token=" <n> ", fixed_duration=True, min_confidence=0.7):
     if not lyrics: return []
     if 'start_time' not in lyrics[0]:
         # convert force alignment lyrics to line format
-        lyrics = word_format_to_line_format(lyrics)
+        lyrics = force_aligned_word_format_to_line_format(lyrics)
         
     segments = []
     segment = None
@@ -209,10 +243,10 @@ def lyrics_to_segments(lyrics, maximum_clipped_length=10, minimum_voice_duration
             continue
             
         # Case #1: overflow. Append segment. Create new
-        if segment and (current_segment.end - segment.start > maximum_clipped_length):
+        if segment and (current_segment.end - segment.start > max_duration):
             if fixed_duration:
                 # append words from current segment.
-                target_end_time = segment.start + maximum_clipped_length
+                target_end_time = segment.start + max_duration
                 extended_segment, _ = _words_to_segment(current_diction['words'], segment.start, target_end_time)
                 if extended_segment:
                     segment.end = extended_segment.end
@@ -220,22 +254,22 @@ def lyrics_to_segments(lyrics, maximum_clipped_length=10, minimum_voice_duration
                     segment.duration += extended_segment.duration                    
                 segment.end = target_end_time
             else:
-                segment.end = min(segment.start + maximum_clipped_length, current_segment.start)
+                segment.end = min(segment.start + max_duration, current_segment.start)
 
             
-            if segment.duration > minimum_voice_duration:
+            if segment.duration >= min_duration:
                 segments.append(segment)
 
             segment = None
         
         # Break long segments into multiple segments
-        if current_segment and current_segment.duration > maximum_clipped_length:
+        if current_segment and current_segment.duration > max_duration:
             cached_index = 0
-            for i in range(math.ceil(current_segment.duration / maximum_clipped_length)):
-                start = current_segment.start + i * maximum_clipped_length
-                end = current_segment.start + (i+1) * maximum_clipped_length
+            for i in range(math.ceil(current_segment.duration / max_duration)):
+                start = current_segment.start + i * max_duration
+                end = current_segment.start + (i+1) * max_duration
                 clipped_segment, cached_index = _words_to_segment(current_diction['words'], start, end, cached_index)
-                if clipped_segment and clipped_segment.duration <= maximum_clipped_length and clipped_segment.duration > minimum_voice_duration:
+                if clipped_segment and clipped_segment.duration <= max_duration and clipped_segment.duration >= min_duration:
                     segments.append(clipped_segment)
 
             # reset everything
@@ -282,7 +316,7 @@ def _strip_non_words(words):
         words.pop(0)
     return words
 
-def word_format_to_line_format(lyrics):
+def force_aligned_word_format_to_line_format(lyrics):
     words = lyrics[0]['words'].copy()
     words.append({ 'text': '\n' }) # dummy placeholder
     lines = []
@@ -304,3 +338,75 @@ def word_format_to_line_format(lyrics):
             current_line.append(word_json)
     return lines
 
+# Filters
+
+def is_audio_metrics_good(audio_metrics: Dict[str, Any]) -> Tuple[bool, str]:
+    # Clipping
+    clip = audio_metrics.get("clipping", {})
+    if clip.get("rate", 0) >= 5e-5:
+        return False
+    for ch in ["left", "right"]:
+        if clip.get(f"peak_rate_{ch}", 0) >= 0.05:
+            return False
+    # Loudness
+    loudness = audio_metrics.get("loudness", {})
+    if (
+        loudness.get("integrated_loudness", -7) > -5
+        or loudness.get("max_mom_loud", -7) >= 0
+        or loudness.get("max_short_term_loud", -7) >= 0
+    ):
+        return False
+    # RMS stats
+    rms_stats = audio_metrics.get("rms_stats", {})
+    if rms_stats.get("peak", 0) > 3:
+        return False
+    for ch in ["left", "right"]:
+        if (
+            rms_stats.get(f"{ch}_total", -10) > -5
+            or rms_stats.get(f"{ch}_total", -10) < -40
+            or rms_stats.get(f"normed_std_{ch}", -10) < -19.5
+        ):
+            return False
+    # Cutoff frequency
+    cutoff_freq = audio_metrics.get("cutoff_frequency", {})
+    for ch in ["left", "right"]:
+        if (
+            cutoff_freq.get(f"rel_{ch}", 48000) < 15000
+            and cutoff_freq.get(f"rel_{ch}_conf", 0) > 0.6
+            and cutoff_freq.get(f"band_std_{ch}", 10) < 5
+        ):
+            return False
+    # Phase
+    phase = audio_metrics.get("phase_check", {})
+    if (
+        phase.get("has_phase_issue", False)
+        or abs(phase.get("rms_downmix_diff", 0.1)) > 3
+    ):
+        return False
+    return True
+
+def is_valid_metadata(metadata):
+#     if metadata['meta_song_language'] != 'en' or metadata['final_language'] != 'English': 
+    if 'final_language' in metadata and metadata['final_language'] != 'English': 
+        # print('Invalid', metadata['meta_song_language'], metadata['final_language'])
+        return False
+    valid_audio_metrics = is_audio_metrics_good(metadata.get('audio_metrics', {}))
+    if not valid_audio_metrics: 
+        # print('Invalid', metadata['audio_metrics'].keys())
+        return False
+    return True
+
+
+def is_valid_lyrics(lyrics, confidence_threshold=0.7):
+    if lyrics is None: 
+        return False
+    confidences = []
+    for utterance in lyrics:
+        # some lyrics may not have confidence (force alignment). return True anyways
+        if 'additions' not in utterance: return True
+        confidence = float(utterance["additions"]["confidence"])
+        confidences.append(confidence)
+    if len(confidences) == 0:
+        return False
+    # print('Condfidence mean', np.array(confidences).mean(), confidences)
+    return np.array(confidences).mean() > confidence_threshold

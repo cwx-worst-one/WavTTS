@@ -2,18 +2,21 @@ import json
 from pathlib import Path
 from string import punctuation
 
-def normalize_text(text, remove_newlines=True):
+def normalize_text(text, enable_punctuation=False):
     text = text.lower()
     text = text.replace("&", " and ")
     text = text.replace("/", " ")    
     text = text.replace("-", " ")
-    text = text.replace("\n", " <n> ") # remove new lines
-    if remove_newlines:
-        text = text.replace(" <n> ", " ") # remove new lines
+    text = text.replace(".", "\n")
+    text = text.replace("!", "\n")
     nlp_punctuation = punctuation.replace("'", "") # allow single quotes (') for contractions
     text = text.translate(str.maketrans("", "", nlp_punctuation))
-    text = " ".join(text.split(" ")) # remove spaces
-    return text
+    if enable_punctuation:
+        text = text.replace("\n", " <n> ") # remove new lines
+    else:
+        text = text.replace("\n", " ") # remove new lines
+    text = " ".join(text.split()) # remove spaces
+    return text.strip()
 
 def concat_metadata_list(existimg_metadata, metadata):
     if existimg_metadata is None:

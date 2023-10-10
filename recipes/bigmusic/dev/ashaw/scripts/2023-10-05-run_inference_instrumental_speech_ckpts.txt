@@ -1,0 +1,2 @@
+/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_mulan_tagging/groupB_300k_baseline/checkpoints/step=144000-tr_loss=2.7782-val_loss_0=4.8652.ckpt
+/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_mulan_tagging/groupB_300k_instrumental_speech/checkpoints/step=144000-tr_loss=4.0531-val_loss_0=4.7613.ckpt

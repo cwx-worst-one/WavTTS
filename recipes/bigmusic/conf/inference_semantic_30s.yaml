@@ -62,6 +62,8 @@ predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_fr
     batch_size: !ref <run_opts[batch_size]>
     run_combinations: !ref <extra_params[run_combinations]>
     lyrics_max_seq_len: !ref <extra_params[lyrics_max_seq_len]>
+    enable_punctuation: False
+    use_mulan_v2_genres: False
 
 pl_datamodule: !new:recipes.bigmusic.datasets.lyrics.LyricsDataModule
     predict_dataset: !ref <predict_dataset>

@@ -25,15 +25,13 @@ else
     echo "Warning: Could not find existing huggingface cache. Set TRANSFORMERS_CACHE=/cache/path to avoid download errors."
 fi
 
-# Diffusion
-pip3 install ./recipes/soundstream/torch-museval
-
 sudo apt update
 sudo apt install espeak ffmpeg zip -y
 pip3 install -qr ./recipes/bigmusic/requirements.txt
 pip3 install -qr ./recipes/diffusion/requirements.txt
 
+# Diffusion
 pip3 install ./recipes/soundstream/torch-museval
-pip3 install --no-deps fsspec==2023.6.0
+
 
 sh launch.sh $@

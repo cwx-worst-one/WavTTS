@@ -14,59 +14,45 @@ from recipes.bigmusic.utils.format_utils import normalize_text
 from transformers import Wav2Vec2PhonemeCTCTokenizer
 from recipes.musiclm.utils.dist import local_zero_first
 import random
+from recipes.bigmusic.datasets.mix import rewrite_metadata
+from functools import partial
 
 def pad_crop(sequence, seq_len, dtype, padding_value=0):
     item_pad = torch.full((seq_len,), fill_value=padding_value, dtype=dtype)
     item_pad[:len(sequence)] = torch.as_tensor(sequence[:seq_len])
     return item_pad
 
-class MCCInstrumentalBatchTransform():
-    "Converts musiclm dataloader to work with bigmusic models"
+
+class RenameAudioKeyTransform():
+    "Converts mcc dataloaders to work with bigmusic models"
     def __call__(self, item):
+        if 'text' in item:
+            item['lyrics'] = item.pop('text')
+
         wavs = item.pop('audio')
-        if len(wavs.shape) == 3:
-            wavs = wavs.squeeze(1)
+        if len(wavs.shape) == 2:
+            wavs = wavs.squeeze(0)
         return { **item, 'style_audio': wavs, 'target_audio': wavs }
-    
 
 class MCCMetadataTextTransform():
-    def _mcc_metadata_to_string(self, item, type="Vocal"):
-        metadata = item['metadata']
-        mood = metadata.get('final_mood')
-        genre = metadata.get('final_genre')
-        gender = metadata.get('merge_aed')
-        text = ""
-        if type == "Vocal":
-            text = "A "
-            if mood is not None and mood != 'nan':
-                text += mood.lower() + " "
-            if genre is not None and genre != 'nan':
-                text += genre.lower() + " "
-            text += "song"
-            if gender is not None and gender != 'nan':
-                if 'Female' in gender:
-                    text += " with female vocal"
-                elif 'Male' in gender:
-                    text += " with male vocal"
-            text += "."
-        elif type == "Instrumental":
-            text = ""
-            if mood is not None and mood != 'nan':
-                text += mood.lower() + " "
-            if genre is not None and genre != 'nan':
-                text += genre.lower() + " "
-            text += "music."
-        return text
+    def __init__(self, metadata_type="Vocal"):
+        self.metadata_type = metadata_type
 
-    def __call__(self, item):
-        metadata_string = self._mcc_metadata_to_string(item)
+    def _call_once(self, item):
+        metadata_string = rewrite_metadata(item.get('metadata', {}), type=self.metadata_type)
         return {
             **item, 'style_text': metadata_string
         }
 
-MCC_MOOD = [ 'nan', 'Happy', 'Chil', 'Cute', 'Sweet', 'Romantic', 'Excited', 'Dynamic', 'Lonely', 'Sorrow', 'Angry', 'Tense' ]
-MCC_GENRE = [ 'nan', 'Rock', 'Pop', 'EDM', 'R&B', 'Country', 'Jazz', 'Reggae', 'Blues', 'Trap Rap', 'Metal', 'New Age' ]
-MCC_VOICE = [ 'nan', 'Female', 'Male' ]
+    def __call__(self, item):
+        if isinstance(item, list): # perform batch transform
+            return [self._call_once(i) for i in item]
+        return self._call_once(item)
+
+
+MCC_MOOD = ['Angry', 'Chill', 'Cute', 'Dynamic', 'Excited', 'Happy', 'Lonely', 'Romantic', 'Sorrow', 'Sweet', 'Tense', 'nan']
+MCC_GENRE = ['Blues', 'Country', 'EDM', 'Jazz', 'Metal', 'New Age', 'Pop', 'R&B', 'Reggae', 'Rock', 'Trap Rap', 'nan']
+MCC_VOICE = ['Female', 'Male', 'nan']
 
 class RandomGenreTextTransform(MCCMetadataTextTransform):
     "Randomly samples genre, mood, vocals. This is for non-MCC datasets where we don't have metadata"
@@ -79,27 +65,22 @@ class RandomGenreTextTransform(MCCMetadataTextTransform):
                 
             }
         }
-        metadata_string = self._mcc_metadata_to_string(metadata_item)
+        metadata_string = rewrite_metadata(metadata_item, type=self.metadata_type)
         return {
             **item, 'style_text': metadata_string
         }
 
-class MetadataT5Transform(MCCMetadataTextTransform):
+class StyleTextT5Transform():
     def __init__(self, max_seq_len: int=50):
+        super().__init__()
         self.text_tokenizer = T5Tokenizer.from_pretrained('t5-small')
         self.max_seq_len = max_seq_len
 
     def __call__(self, item):
-        if 'style_text' in item:
-            metadata_string = item['style_text']
-        elif 'metadata' in item:
-            metadata_string = self._mcc_metadata_to_string(item)
-        else:
-            # Could not encode metadata. Return original item
-            return item
+        metadata_string = item['style_text']
         style_tokens = torch.LongTensor(self.text_tokenizer.encode(metadata_string, padding='max_length', max_length=self.max_seq_len))
         return {
-            **item, 'style_tokens': style_tokens, 'style_text': metadata_string
+            **item, 'style_tokens': style_tokens
         }
 
 # Segment Transforms
@@ -133,14 +114,15 @@ class LyricsTokenTransform():
         return LyricsTokenTransform(cmu_tokenizer, cmu_tokenizer.pad_id, lyrics_max_seq_len, **kwargs)
 
     @classmethod
-    def init_espeak_tokenizer(cls, lyrics_max_seq_len, **kwargs):
+    def init_espeak_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=False, **kwargs):
+        normalization_fn = partial(normalize_text, enable_punctuation=enable_punctuation)
         with local_zero_first():
             espeak_tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-cv-ft")
             espeak_tokenizer._add_tokens(["<n>"])
         import logging, phonemizer
         # To silence espeak logging warnings: "WARNING - words count mismatch on 100.0% of the lines"
         phonemizer.logger.get_logger().setLevel(logging.ERROR)
-        return LyricsTokenTransform(espeak_tokenizer, espeak_tokenizer.pad_token_id, lyrics_max_seq_len, **kwargs)
+        return LyricsTokenTransform(espeak_tokenizer, espeak_tokenizer.pad_token_id, lyrics_max_seq_len, normalization_fn=normalization_fn, **kwargs)
 
 
 class AddConditionsTransform():

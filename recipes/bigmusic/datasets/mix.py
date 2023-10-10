@@ -57,7 +57,7 @@ def ffmpeg_read_audio(audio_bin, sample_rate=24000):
     seg_bin, err = ffmpeg.input("pipe:").output("pipe:", loglevel="error", format="s16le", ar=sample_rate).run(input=audio_bin, quiet=True)
     return (np.frombuffer(seg_bin, dtype="int16") / 32768.0).astype(np.float32)
 
-def rewrite_metadata(metadata, type="Vocal"):        
+def rewrite_metadata(metadata, type="Vocal"):
     mood = metadata.get('final_mood')
     genre = metadata.get('final_genre')
     gender = metadata.get('merge_aed')
@@ -82,6 +82,8 @@ def rewrite_metadata(metadata, type="Vocal"):
         if genre is not None and genre != 'nan':
             text += genre.lower() + " "
         text += "music."
+    elif type == "Speech":
+        text = "Speech."
     return text
 
 def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:

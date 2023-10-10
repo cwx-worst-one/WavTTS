@@ -48,6 +48,7 @@ def save_batch_outputs(outputs, batch, output_dir, sample_rate, sample_round=0, 
     categories = batch.get('category')
     style_audio = batch.get('style_audio')
     vocal_audio = batch.get('vocal_audio')
+    indexes = batch.get('index')
     metadatas = outputs.get('metadata')
     wavs = outputs['generated_audio']
     
@@ -62,7 +63,10 @@ def save_batch_outputs(outputs, batch, output_dir, sample_rate, sample_round=0, 
         lyrics_str = lyrics[i] if 'lyrics_tokens' in conditions else None
         lyrics_normalized_str = lyrics_normalized_text[i] if 'lyrics_tokens' in conditions and lyrics_normalized_text else None
         style_text = prompts[i] if 'style_text' in conditions else None
-        file_name = f"{absolute_idx:03d}_{format_lyrics_and_style(style_text, lyrics_str)}"
+        if indexes is not None:
+            file_name = indexes[i]
+        else:
+            file_name = f"{absolute_idx:03d}_{format_lyrics_and_style(style_text, lyrics_str)}"
         wav_fp = os.path.join(wav_dir, f"{file_name}.generated.wav")
         print(f"[Saving] {wav_fp}")
         save_wav(wav.cpu().float(), wav_fp, sr=sample_rate)
@@ -106,7 +110,7 @@ def default_format_video_text(metadata):
     style_text = metadata['style_text']
     return f'{index}: {style_text}\n\n\n' + '\n\n'.join(lyrics_list)
 
-def save_video(input_results_dir, output_video_dir, format_video_text_fn=default_format_video_text):
+def save_video(input_results_dir, output_video_dir, format_video_text_fn=default_format_video_text, remove_segments=True):
     colors = ["green", "blue", "brown"]
     output_video_dir = Path(output_video_dir)
     output_video_dir_tmp = output_video_dir/'tmp'
@@ -131,5 +135,6 @@ def save_video(input_results_dir, output_video_dir, format_video_text_fn=default
     cmd_concat = f"cd {output_video_dir_tmp} && find *.mp4 | sed 's:\ :\\\ :g'| sed 's/^/file /' > fl.txt; ffmpeg -f concat -i fl.txt -c copy output.mp4; rm fl.txt"
     os.system(cmd_concat)
     (output_video_dir_tmp/"output.mp4").rename(video_output_fp)
-    shutil.rmtree(output_video_dir_tmp)
+    if remove_segments:
+        shutil.rmtree(output_video_dir_tmp)
     return video_output_fp
