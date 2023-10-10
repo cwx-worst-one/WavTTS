@@ -4,6 +4,7 @@ import torch
 import webdataset as wds
 from torch.utils.data import IterableDataset
 
+from samantha.dataio.parquet.parquet_dataset import ParquetDataset
 from samantha.dataio.webdataset import ra_wds
 from samantha.dataio.webdataset.extension import IndexedWebDataset
 
@@ -51,7 +52,10 @@ class WebPipeline(IterableDataset):
         pipeline: List[Union[str, Dict]],
     ):
         super().__init__()
-        if isinstance(dataset, (wds.WebDataset, IndexedWebDataset, ra_wds.WebDataset)):
+        if isinstance(
+            dataset,
+            (wds.WebDataset, IndexedWebDataset, ra_wds.WebDataset, ParquetDataset),
+        ):
             dataset = dataset
         else:
             dataset = wds.FluidWrapper(dataset)

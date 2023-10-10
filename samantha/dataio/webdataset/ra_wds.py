@@ -1,28 +1,13 @@
 import re
 import tarfile
 
-import braceexpand
 from webdataset import filters, shardlists, warn_and_continue
 from webdataset.compat import FluidInterface
 from webdataset.pipeline import DataPipeline
 from webdataset.tariterators import meta_prefix, meta_suffix
 
+from samantha.dataio.utils import expand_urls
 from samantha.dataio.webdataset.extension import group_by_keys, url_opener_ra
-from samantha.utils.hdfs_helper import glob_files
-
-
-def expand_urls(urls):
-    if isinstance(urls, str):
-        if "*" in urls:
-            return glob_files(urls)
-        else:
-            urllist = urls.split("::")
-            result = []
-            for url in urllist:
-                result.extend(braceexpand.braceexpand(url))
-            return result
-    else:
-        return list(urls)
 
 
 def tar_file_iterator(fileobj, skip_meta=r"__[^/]*__($|/)", handler=warn_and_continue):

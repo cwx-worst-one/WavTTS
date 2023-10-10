@@ -1,15 +1,35 @@
 """ data utils. """
-
+import logging
 import os
+import re
 import subprocess
+from itertools import chain
 
+import braceexpand
 from bytedance.easycycle import get_dataset_collection_info
 from lightning_fabric.utilities.cloud_io import get_filesystem
 from lightning_fabric.utilities.exceptions import MisconfigurationException
 from pyarrow.parquet import ParquetFile
+from tqdm import tqdm
 
 from samantha.dataio import remote_io
-from samantha.dataio.webdataset.ra_wds import expand_urls
+from samantha.utils.hdfs_helper import glob_files
+
+logger = logging.getLogger(__name__)
+
+
+def expand_urls(urls):
+    if isinstance(urls, str):
+        if "*" in urls:
+            return glob_files(urls)
+        else:
+            urllist = urls.split("::")
+            result = []
+            for url in urllist:
+                result.extend(braceexpand.braceexpand(url))
+            return result
+    else:
+        return list(urls)
 
 
 @remote_io.remote_load(0)
@@ -155,16 +175,99 @@ def parse_data_urls(data_id=None, data_urls=None, use_url_lst=False):
     return __expand_paths(data_urls)
 
 
-def parquet_reader(url, fs=None):
+def parquet_reader(url, fs=None, columns=None):
     if fs is None:
         fs = get_filesystem(url)
     parquet_file = ParquetFile(url, filesystem=fs)
     row_group_num = parquet_file.num_row_groups
     row_groups = list(range(row_group_num))
     for group_no, row_group in enumerate(row_groups):
-        group_data = parquet_file.read_row_group(row_group)
+        group_data = parquet_file.read_row_group(row_group, columns=columns)
         group_datas = group_data.to_pandas()
         for row in group_datas.iterrows():
             item = row[1].to_dict()
             yield group_no, item
     parquet_file.close()
+
+
+def parse_data_urls_2(data_id=None, data_urls=None):
+    r"""Glob input urls (list of dict), each key indicates one feature or index,
+    and produce corresponding samples (list of dict), each dict represent one
+    shard parquet.
+
+    .. example::
+
+        >>> data_urls = [{"index": "hdfs://index_1/*.parquet", "data": "hdfs://data/*.parquet", "feat1": "hdfs://feat1/*.parquet", ...}, ...]  # noqa
+        >>> output = parse_data_urls_2(data_urls=data_urls)
+        >>> output
+        >>> [
+        >>>   {"index": "hdfs://index_1/shard_0.parquet", "data": "hdfs://data/shard_0.parquet", "feat1": "hdfs://feat1/shard_0.parquet"}, # noqa
+        >>>   {"index": "hdfs://index_1/shard_1.parquet", "data": "hdfs://data/shard_1.parquet", "feat1": "hdfs://feat1/shard_1.parquet"}, # noqa
+        >>>   ...
+        >>> ]
+
+
+    Args:
+        urls(List[Dict[str, str]]): input urls
+
+    Returns:
+        List[Dict[str, str]]
+
+    """
+    if data_id is not None and data_urls is not None:
+        raise MisconfigurationException(
+            f"Combination of parameters {data_id=} and {data_urls=} should be mutually "
+            f"exclusive."
+        )
+    if data_id is None and data_urls is None:
+        raise MisconfigurationException("User must specify either data_id or data_urls")
+
+    if data_id is not None:
+        os.environ["DatasetID"] = str(data_id)
+        data_urls = get_dataset_collection_info(data_id)
+
+    data = {}
+    columns = set(chain.from_iterable(url.keys() for url in data_urls))
+
+    if "index" not in columns:
+        raise ValueError(f"Data must contain key 'index', but only got {columns=}")
+    fs = None
+    for url in tqdm(data_urls, desc="parse_urls"):
+        cur_data = {}
+        index = url["index"]
+        if fs is None:
+            fs = get_filesystem(index)
+        index_version = re.findall(r".*(index_\d).*", index)[0]
+        ARNOLD_BASE_DIR = os.getenv("ARNOLD_BASE_DIR", "")
+
+        # record unique common utterance
+        utterances = None
+        for k, v in url.items():
+            if k not in columns:
+                logger.warning(f"drop feature={k}, cause some datasets do not have it")
+                continue
+            prefix = re.split(
+                r"\*", v.removeprefix(ARNOLD_BASE_DIR).replace("//", "/")
+            )[0]
+            feats = {
+                ele.removeprefix(prefix).replace(f".{index_version}", ""): ele
+                for ele in fs.glob(v)
+            }
+            cur_data[k] = feats
+
+            if utterances is None:
+                utterances = set(feats.keys())
+            else:
+                utterances.intersection_update(feats.keys())
+
+        for k, v in cur_data.items():
+            drop_utt = set(v.keys()).difference(utterances)
+            for du in drop_utt:
+                del v[du]
+
+            if k not in data:
+                data[k] = list(v.values())
+            else:
+                data[k].extend(list(v.values()))
+
+    return fs, [dict(zip(columns, item)) for item in zip(*[data[k] for k in columns])]
