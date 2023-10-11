@@ -1,7 +1,7 @@
-import copy
 import io
 import json
 import re
+from copy import deepcopy
 from typing import Any, Callable, Dict, Iterable
 
 import librosa
@@ -50,10 +50,11 @@ class _ParquetSample:
                     if e["uttid"] in common_utt:
                         ordered_utt.append(e["uttid"])
                 cache = {name: {} for name in readers}
-                exhausted_reader = set()
                 for utt in ordered_utt:
+                    if utt not in common_utt:
+                        continue
                     try:
-                        sample = copy.deepcopy(src_url)
+                        sample = deepcopy(src_url)
                         sample.update({"__key__": utt, "uttid": utt})
 
                         for name, rit in reader_iters.items():
@@ -64,10 +65,10 @@ class _ParquetSample:
                                     while cur_sample["uttid"] != utt:
                                         cur_utt = cur_sample["uttid"]
                                         if cur_utt in common_utt:
-                                            cache[name][cur_utt] = cur_sample
+                                            cache[name][cur_utt] = deepcopy(cur_sample)
                                         _, cur_sample = next(rit)
                                 except StopIteration:
-                                    exhausted_reader.add(name)
+                                    pass
 
                             if name == "data":
                                 audio_bin = cur_sample["audio"]
@@ -83,16 +84,12 @@ class _ParquetSample:
                             sample.update(cur_sample)
                         yield sample
 
-                        for name in exhausted_reader:
-                            reader_iters.pop(name)
-
                     except Exception as exn:
                         if hasattr(exn, "args"):
                             exn.args = exn.args + (json.dumps(src_url), f"{utt=}")
-                        if handler(exn):
-                            continue
-                        else:
-                            break
+                        handler(exn)
+                        break  # drop this file incase infinite loop
+                    common_utt.remove(utt)
             except Exception as exn:  # pragma: no cover
                 exn.args = exn.args + (json.dumps(src_url),)
                 if handler(exn):
