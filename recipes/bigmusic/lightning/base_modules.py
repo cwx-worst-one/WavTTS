@@ -5,12 +5,13 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 from pytorch_lightning.profilers import PassThroughProfiler
-from s3a.providers.ctiga.models import gpt
+from samantha.models.ctiga import gpt
 from tqdm.auto import tqdm
 
 from samantha.utils.hparams import DotDict
 from recipes.musiclm.inference.utils import sample
 from recipes.bigmusic.lightning.embedding_modules import TokenEmbedder, BaseEmbedder
+from samantha.utils.model_metric import ModelMetric
 
 
 class BaseModule(pl.LightningModule):
@@ -40,6 +41,12 @@ class BaseModule(pl.LightningModule):
     #     self.log_dict(pl.utilities.grad_norm(self, norm_type=2), sync_dist=True)
 
     def setup(self, stage: str) -> None:
+        # mfu metric
+        self.metric = ModelMetric(
+            precision=self.trainer.precision,
+            model_obj_or_objs=self.model,
+        )
+
         if stage == "fit" and not self.requires:
             self.load_required_modules()
 
@@ -79,10 +86,28 @@ class BaseModule(pl.LightningModule):
     def profiler(self):
         return getattr(self.trainer, "profiler") or PassThroughProfiler()
 
-    def _shared_step(self, batch):
-        with torch.autocast(device_type="cuda", enabled=False):
+    def _shared_step(self, batch, update_mfu=False):
+        with self.profiler.profile(f"bigmusic.prepare_training_inputs{self.trainer.global_step}"):
             input_ids, target_ids = self.prepare_training_inputs(batch)
-        logits = self.model(**input_ids)
+
+        if update_mfu:
+            if "inputs_embeds" in input_ids:
+                b, t, _ = input_ids["inputs_embeds"].shape
+            
+                self.metric.update(
+                    num_tokens=b * t,
+                    stage=self.trainer.state.stage,
+                    model_kwargs={"batch_size": b, "seq_len": t}
+                )
+                if self.trainer.global_step % self.trainer.log_every_n_steps == 0:
+                    self.log_dict(
+                        self.metric.compute(self.trainer.global_step),
+                        prog_bar=True,
+                        sync_dist=True,
+                    )
+
+        with self.profiler.profile(f"bigmusic.forward.step{self.trainer.global_step}"):
+            logits = self.model(**input_ids)
         if isinstance(logits, dict):
             logits = logits["logits"]
         elif isinstance(logits, tuple):
@@ -93,7 +118,7 @@ class BaseModule(pl.LightningModule):
         return loss, accu
 
     def training_step(self, batch, batch_idx):
-        loss, accu = self._shared_step(batch)
+        loss, accu = self._shared_step(batch, update_mfu=True)
         self.log_dict({"tr_loss": loss, "accu": accu}, prog_bar=True, sync_dist=True)
         return loss
 
@@ -161,8 +186,10 @@ class BaseContinuousEmbedModule(BaseModule):
         delete_embedding_module(self.model)
         self.input_embedders = input_embedders
         self.target_embedder = target_embedder
-        self.input_embedders.apply(self.model._init_weights)
-        self.target_embedder.apply(self.model._init_weights)
+        # _init_weights is executed inside GPTLMHeadModel init
+        if not isinstance(self.model, gpt.GPTLMHeadModel):
+            self.input_embedders.apply(self.model._init_weights)
+            self.target_embedder.apply(self.model._init_weights)
         self.use_cross_attn = self.extra_params.get("use_cross_attn", False)
 
     def infer_batch_size(self, batch):

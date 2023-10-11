@@ -391,6 +391,7 @@ def _init_weights(
         for name, p in module.named_parameters():
             if name in ["out_proj.weight", "fc2.weight"]:
                 # Special Scaled Initialization --> There are 2 Layer Norms per Transformer Block
+                print(f"rescale_prenorm_residual {name}")
                 nn.init.normal_(
                     p, mean=0.0, std=initializer_range / math.sqrt(2 * n_layer)
                 )
@@ -485,6 +486,9 @@ class GPTModel(GPTPreTrainedModel):
                 _init_weights,
                 n_layer=config.num_hidden_layers,
                 initializer_range=config.initializer_range,
+                rescale_prenorm_residual=getattr(
+                    config, "rescale_prenorm_residual", True
+                ),
             )
         )
         self.tie_weights()
@@ -801,6 +805,9 @@ class GPTLMHeadModel(GPTPreTrainedModel):
                 _init_weights,
                 n_layer=config.num_hidden_layers,
                 initializer_range=config.initializer_range,
+                rescale_prenorm_residual=getattr(
+                    config, "rescale_prenorm_residual", True
+                ),
             )
         )
         self.tie_weights()
@@ -850,6 +857,7 @@ class GPTLMHeadModel(GPTPreTrainedModel):
             attention_mask=attention_mask,
             return_attn_probs=return_attn_probs,
         )
+
         if return_attn_probs:
             hidden_states, all_attn_probs = outs
         else:

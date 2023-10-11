@@ -15,6 +15,29 @@ import torchaudio
 from samantha.utils.hparams import DotDict
 
 
+noises = None
+noise_idx = 0
+
+
+def init_gumbel_noise(t, max_length=1000, seed=1995):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+
+    assert (len(t.shape) == 3 and t.shape[1] == 1) or len(t.shape) == 2, f"input t={t.shape}"
+    if len(t.shape) == 3:
+        b,_,d = t.shape
+    else:
+        b,d = t.shape
+    noises = torch.zeros(b, max_length, d).uniform_(0, 1).to(t.device)
+    print(f"=======init_gumbel_noise======= noises={noises.shape} {noises.mean()} {noises.max()}\n")
+    for i in range(50,60,1):
+        print(f"{noises[0,i,:].mean()} {noises[0,i,:].max()}\n")
+    return noises
+
+
+
 def load_config(hparams_file: str, overrides=None):
     # Load hyperparameter file with command-line overrides
     with open(hparams_file, "r", encoding="utf-8") as fin:
@@ -144,13 +167,28 @@ def log(t, eps=1e-5):
     return torch.log(t + eps)
 
 
-def gumbel_noise(t):
-    noise = torch.zeros_like(t).uniform_(0, 1)
+def gumbel_noise(t, fixed_noise):
+    if fixed_noise:
+        global noises
+        global noise_idx
+        if noises == None:
+            noises = init_gumbel_noise(t)
+        # assert len(noises.shape) == 3 and noises.shape[0] == t.shape[0] and noises.shape[2] == t.shape[2] and t.shape[1] == 1 
+        if noise_idx < noises.shape[1]:
+            if len(t.shape) == 3:
+                noise = noises[:,noise_idx:noise_idx+1,:]
+            else:
+                noise = noises[:,noise_idx,:]
+            noise_idx += 1
+        if  noise_idx >= noises.shape[1]:
+            noise_idx = 0
+    else:
+        noise = torch.zeros_like(t).uniform_(0, 1)
     return -log(-log(noise))
 
 
-def gumbel_sample(t: torch.Tensor, temperature=1.0, dim=-1):
-    return ((t / temperature) + gumbel_noise(t)).argmax(dim=dim)
+def gumbel_sample(t: torch.Tensor, temperature=1.0, dim=-1, fixed_noise=True):
+    return ((t / temperature) + gumbel_noise(t, fixed_noise=fixed_noise)).argmax(dim=dim)
 
 
 def top_k(logits, thresh=0.95):
