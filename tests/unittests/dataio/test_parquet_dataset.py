@@ -20,6 +20,7 @@ def test_parquet_dataset():
         assert "__data_url__" in item
         assert "__wvae_1.0_url__" in item
         assert item["__dataset_name__"] == "dataset"
+        assert item["src_sample_rate"] == 24000
         cnt += 1
         break
     assert cnt == 1

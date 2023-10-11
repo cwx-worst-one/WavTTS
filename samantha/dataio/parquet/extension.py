@@ -1,8 +1,10 @@
 import copy
+import io
 import json
 import re
 from typing import Any, Callable, Dict, Iterable
 
+import librosa
 from lightning_fabric.utilities.cloud_io import get_filesystem
 from pyarrow.parquet import ParquetFile
 from webdataset import warn_and_continue
@@ -57,7 +59,13 @@ class _ParquetSample:
                             while cur_sample["uttid"] != utt:
                                 _, cur_sample = next(rit)
                             if name == "data":
-                                cur_sample = {"wav": cur_sample["audio"]}
+                                audio_bin = cur_sample["audio"]
+                                cur_sample = {
+                                    "wav": audio_bin,
+                                    "src_sample_rate": librosa.get_samplerate(
+                                        io.BytesIO(audio_bin)
+                                    ),
+                                }
                             elif name == "index":
                                 cur_sample.pop("row_group_no", None)
                                 cur_sample.pop("data_file", None)
