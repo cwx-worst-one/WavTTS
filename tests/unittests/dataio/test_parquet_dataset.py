@@ -14,8 +14,12 @@ def test_parquet_dataset():
     ]
     ds = ParquetDataset(data_urls=urls, resampled=False)
     dl = torch.utils.data.DataLoader(ds, num_workers=2, batch_size=None)
+    cnt = 0
     for item in dl:
         assert "__index_url__" in item
         assert "__data_url__" in item
         assert "__wvae_1.0_url__" in item
+        assert item["__dataset_name__"] == "dataset"
+        cnt += 1
         break
+    assert cnt == 1

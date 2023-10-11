@@ -1,9 +1,10 @@
 """ data utils. """
+import json
 import logging
 import os
 import re
 import subprocess
-from itertools import chain
+from collections import Counter
 
 import braceexpand
 from bytedance.easycycle import get_dataset_collection_info
@@ -178,7 +179,9 @@ def parse_data_urls(data_id=None, data_urls=None, use_url_lst=False):
 def parquet_reader(url, fs=None, columns=None):
     if fs is None:
         fs = get_filesystem(url)
-    parquet_file = ParquetFile(url, filesystem=fs)
+
+    stream = fs.open(url, skip_instance_cache=True)
+    parquet_file = ParquetFile(stream)
     row_group_num = parquet_file.num_row_groups
     row_groups = list(range(row_group_num))
     for group_no, row_group in enumerate(row_groups):
@@ -188,9 +191,10 @@ def parquet_reader(url, fs=None, columns=None):
             item = row[1].to_dict()
             yield group_no, item
     parquet_file.close()
+    stream.close()
 
 
-def parse_data_urls_2(data_id=None, data_urls=None):
+def resolve_data_urls(data_id=None, data_urls=None):
     r"""Glob input urls (list of dict), each key indicates one feature or index,
     and produce corresponding samples (list of dict), each dict represent one
     shard parquet.
@@ -198,7 +202,7 @@ def parse_data_urls_2(data_id=None, data_urls=None):
     .. example::
 
         >>> data_urls = [{"index": "hdfs://index_1/*.parquet", "data": "hdfs://data/*.parquet", "feat1": "hdfs://feat1/*.parquet", ...}, ...]  # noqa
-        >>> output = parse_data_urls_2(data_urls=data_urls)
+        >>> output = resolve_data_urls(data_urls=data_urls)
         >>> output
         >>> [
         >>>   {"index": "hdfs://index_1/shard_0.parquet", "data": "hdfs://data/shard_0.parquet", "feat1": "hdfs://feat1/shard_0.parquet"}, # noqa
@@ -226,48 +230,68 @@ def parse_data_urls_2(data_id=None, data_urls=None):
         os.environ["DatasetID"] = str(data_id)
         data_urls = get_dataset_collection_info(data_id)
 
-    data = {}
-    columns = set(chain.from_iterable(url.keys() for url in data_urls))
+    columns = None
+    for url in data_urls:
+        if columns is None:
+            columns = set(url.keys())
+        else:
+            columns.intersection_update(url.keys())
 
     if "index" not in columns:
-        raise ValueError(f"Data must contain key 'index', but only got {columns=}")
-    fs = None
+        raise ValueError(
+            f"Data must contain key 'index', but only got {columns=},"
+            f" all data_urls: {json.dumps(data_urls, indent=2)}"
+        )
+
+    # recode data repeat time, avoiding glob files repetitive
+    frequency = Counter(url["index"] for url in data_urls)
+
+    fs, resolved_url_dict, resolved_urls = None, {}, set()
     for url in tqdm(data_urls, desc="parse_urls"):
-        cur_data = {}
         index = url["index"]
+        if index in resolved_urls:
+            continue
         if fs is None:
             fs = get_filesystem(index)
+
         index_version = re.findall(r".*(index_\d).*", index)[0]
         ARNOLD_BASE_DIR = os.getenv("ARNOLD_BASE_DIR", "")
 
         # record unique common utterance
-        utterances = None
-        for k, v in url.items():
-            if k not in columns:
-                logger.warning(f"drop feature={k}, cause some datasets do not have it")
+        utterances, cur_data = None, {}
+        for name, pattern in url.items():
+            if name not in columns:
+                logger.warning(
+                    f"drop feature={name}, cause some datasets do not have it"
+                )
                 continue
-            prefix = re.split(
-                r"\*", v.removeprefix(ARNOLD_BASE_DIR).replace("//", "/")
-            )[0]
-            feats = {
+            pattern = pattern.removeprefix(ARNOLD_BASE_DIR)
+            prefix = re.split(r"\*", pattern.replace("//", "/"))[0]
+            files = {
                 ele.removeprefix(prefix).replace(f".{index_version}", ""): ele
-                for ele in fs.glob(v)
+                for ele in fs.glob(pattern)
             }
-            cur_data[k] = feats
+            cur_data[name] = files
 
             if utterances is None:
-                utterances = set(feats.keys())
+                utterances = set(files.keys())
             else:
-                utterances.intersection_update(feats.keys())
+                utterances.intersection_update(files.keys())
 
-        for k, v in cur_data.items():
-            drop_utt = set(v.keys()).difference(utterances)
+        # cur_data: Dict[col_name, Dict[uttid, file]]
+        for name, file_dict in cur_data.items():
+            drop_utt = set(file_dict.keys()).difference(utterances)
             for du in drop_utt:
-                del v[du]
+                del file_dict[du]
 
-            if k not in data:
-                data[k] = list(v.values())
+            cur_files = list(file_dict.values()) * frequency[index]
+            if name not in resolved_url_dict:
+                resolved_url_dict[name] = cur_files
             else:
-                data[k].extend(list(v.values()))
+                resolved_url_dict[name].extend(cur_files)
+        resolved_urls.add(index)
 
-    return fs, [dict(zip(columns, item)) for item in zip(*[data[k] for k in columns])]
+    return fs, [
+        dict(zip(columns, item))
+        for item in zip(*[resolved_url_dict[k] for k in columns])
+    ]

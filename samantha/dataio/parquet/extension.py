@@ -1,104 +1,108 @@
+import copy
 import json
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
+import re
+from typing import Any, Callable, Dict, Iterable
 
-from webdataset import filters, shardlists, warn_and_continue
-from webdataset.compat import FluidInterface
-from webdataset.pipeline import DataPipeline
+from lightning_fabric.utilities.cloud_io import get_filesystem
+from pyarrow.parquet import ParquetFile
+from webdataset import warn_and_continue
 
 from samantha.dataio.utils import parquet_reader
-from samantha.utils.hdfs_helper import hopen
+
+DATASET_NAME_KEY = "__dataset_name__"
 
 
-def indexed_parquet_samples(
-    sources: Iterable[Dict[str, Any]],
-    data2idx: Dict[str, str],
-    handler: Callable[[Exception], bool] = warn_and_continue,
-) -> Iterable[Dict[str, Any]]:
-    for src in sources:
-        url = src["url"]
-        idx = data2idx[url]
-        try:
-            data_reader = parquet_reader(url)
-            idx_reader = parquet_reader(idx)
-            for data, idx in zip(data_reader, idx_reader):
-                try:
-                    _, data = data  # drop the group no
-                    _, idx = idx  # drop the group no
-                    assert idx["uttid"] == data["uttid"]
-                    if "meta" in idx:
-                        idx["meta"] = json.loads(idx["meta"])
-                    sample = data
-                    sample["__url__"] = url
-                    sample["__key__"] = idx["uttid"]
-                    sample["__index_data__"] = idx
-                    yield sample
-                except Exception as exn:  # pragma: no cover
-                    if hasattr(exn, "args") and len(exn.args) > 0:
-                        exn.args = (exn.args[0] + " @ " + url + "&" + idx,) + exn.args[
-                            1:
-                        ]
-                    if handler(exn):
-                        continue
-                    else:
-                        break
-        except Exception as exn:  # pragma: no cover
-            exn.args = exn.args + (src.get("url"))
-            if handler(exn):
-                continue
-            else:
-                break
-
-
-def resolve_data2idx(data2idx: Union[Dict[str, str], List[Tuple[str, str]], str]):
-    if isinstance(data2idx, list):
-        urls = [x[0] for x in data2idx]
-        data2idx = dict(data2idx)
-    elif isinstance(data2idx, dict):
-        urls = list(data2idx.keys())
-    elif isinstance(data2idx, str):
-        data2idx = {}
-        urls = []
-        with hopen(data2idx, "r") as f:
-            for line in f:
-                if type(line) == bytes:
-                    line = line.decode("utf-8")
-                ary = line.strip().split("\t")
-                data2idx[ary[0]] = ary[1]
-                urls.append(ary[0])
-    else:
-        raise ValueError("data2idx must be a dict or a list of tuples or a string")
-    return data2idx, urls
-
-
-class IndexedParquetDataset(DataPipeline, FluidInterface):
+class _ParquetSample:
     def __init__(
-        self,
-        data2idx: Union[Dict[str, str], List[Tuple[str, str]], str],
-        handler: Callable[[Exception], bool] = warn_and_continue,
-        resampled: bool = False,
-        shardshuffle: Optional[Any] = None,
-        detshuffle: bool = False,
-        nodesplitter=shardlists.single_node_only,
-        **kwargs,
+        self, filesystem=None, handler: Callable[[Exception], bool] = warn_and_continue
     ):
-        super().__init__()
-        data2idx, urls = resolve_data2idx(data2idx)
-        self.data2idx = data2idx
-        if resampled:
-            self.append(shardlists.ResampledShards(urls))
-        else:
-            self.append(shardlists.SimpleShardList(urls))
-            self.append(nodesplitter)
-            self.append(shardlists.split_by_worker)
-            if shardshuffle is True:
-                shardshuffle = 100
-            if shardshuffle is not None:
-                if detshuffle:
-                    self.append(filters.detshuffle(shardshuffle))
+        self.filesystem = filesystem
+        self.handler = handler
+
+    def __call__(self, sources: Iterable[Dict[str, Any]]):
+        handler = self.handler
+        filesystem = self.filesystem
+        for src in sources:
+            src_url = {f"__{k}_url__": v for k, v in src.items()}
+            # parse dataset name from path
+            dataset_name = re.findall(r"/([^/]+)/index_\d+/", src["index"])
+            if not dataset_name:
+                src_url[DATASET_NAME_KEY] = None
+            else:
+                src_url[DATASET_NAME_KEY] = dataset_name[0]
+            readers = {
+                name: _ParquetReader(url, fs=filesystem) for name, url in src.items()
+            }
+            reader_iters = {name: iter(reader) for name, reader in readers.items()}
+            try:
+                common_utt = set(
+                    e["uttid"]
+                    for v in src.values()
+                    for _, e in parquet_reader(v, columns=["uttid"], fs=filesystem)
+                )
+
+                ordered_utt = []
+                for _, e in parquet_reader(
+                    src["index"], columns=["uttid"], fs=filesystem
+                ):
+                    if e["uttid"] in common_utt:
+                        ordered_utt.append(e["uttid"])
+
+                for utt in ordered_utt:
+                    try:
+                        sample = copy.deepcopy(src_url)
+                        sample.update({"__key__": utt, "uttid": utt})
+                        for name, rit in reader_iters.items():
+                            _, cur_sample = next(rit)
+                            while cur_sample["uttid"] != utt:
+                                _, cur_sample = next(rit)
+                            if name == "data":
+                                cur_sample = {"wav": cur_sample["audio"]}
+                            elif name == "index":
+                                cur_sample.pop("row_group_no", None)
+                                cur_sample.pop("data_file", None)
+                            sample.update(cur_sample)
+                        yield sample
+                    except Exception as exn:
+                        if hasattr(exn, "args") and len(exn.args) > 0:
+                            exn.args = (
+                                exn.args[0] + " @ " + json.dumps(src_url) + "&" + utt,
+                            ) + exn.args[1:]
+                        if handler(exn):
+                            continue
+                        else:
+                            break
+            except Exception as exn:  # pragma: no cover
+                exn.args = exn.args + (json.dumps(src_url),)
+                if handler(exn):
+                    continue
                 else:
-                    self.append(filters.shuffle(shardshuffle))
-        self.append(
-            filters.pipelinefilter(indexed_parquet_samples)(
-                data2idx=data2idx, handler=handler
+                    break
+            finally:
+                for reader in readers.values():
+                    reader.close()
+
+
+class _ParquetReader:
+    def __init__(self, url, fs=None, columns=None):
+        if fs is None:
+            fs = get_filesystem(url)
+        self.stream = fs.open(url, skip_instance_cache=True)
+        self.parquet_file = ParquetFile(self.stream)
+        self.columns = columns
+
+    def __iter__(self):
+        row_group_num = self.parquet_file.num_row_groups
+        row_groups = list(range(row_group_num))
+        for group_no, row_group in enumerate(row_groups):
+            group_data = self.parquet_file.read_row_group(
+                row_group, columns=self.columns
             )
-        )
+            group_datas = group_data.to_pandas()
+            for row in group_datas.iterrows():
+                item = row[1].to_dict()
+                yield group_no, item
+
+    def close(self):
+        self.parquet_file.close()
+        self.stream.close()
