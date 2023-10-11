@@ -1,7 +1,7 @@
 #!/bin/bash -ex
 
 
-# pip 
+# pip
 sudo pip3 install -U bytedance.easycycle==0.0.1.post29
 
 # suppress excessive logs
@@ -57,12 +57,22 @@ echo "ARNOLD OUTPUT    :   ${ARNOLD_OUTPUT}"
 
 export OMP_NUM_THREADS=8
 
-# set up nccl relevant env, for more detail,
-# please refer https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html
-export NCCL_IB_DISABLE=0
-export NCCL_IB_GID_INDEX=3
-export NCCL_IB_HCA=${ARNOLD_RDMA_DEVICE}
-export NCCL_SOCKET_IFNAME=eth0
+if [[ "$ARNOLD_DEVICE_TYPE" == *A100* ]]; then
+  IB_HCA=mlx5
+else
+  IB_HCA=$ARNOLD_RDMA_DEVICE:1
+fi
+
+if [ "$ARNOLD_RDMA_DEVICE" != "" ]; then
+   export NCCL_IB_DISABLE=${NCCL_IB_DISABLE:=0}
+   export NCCL_IB_HCA=${NCCL_IB_HCA:=$IB_HCA}
+   export NCCL_IB_GID_INDEX=${NCCL_IB_GID_INDEX:=3}
+   export NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME:=eth0}
+else
+   export NCCL_IB_DISABLE=${NCCL_IB_DISABLE:=1}
+   export NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME:=eth0}
+fi
+
 export NCCL_DEBUG=WARN
 
 # patch triton
