@@ -218,6 +218,7 @@ def resolve_data_urls(data_id=None, data_urls=None):
         List[Dict[str, str]]
 
     """
+
     if data_id is not None and data_urls is not None:
         raise MisconfigurationException(
             f"Combination of parameters {data_id=} and {data_urls=} should be mutually "

@@ -49,15 +49,26 @@ class _ParquetSample:
                 ):
                     if e["uttid"] in common_utt:
                         ordered_utt.append(e["uttid"])
-
+                cache = {name: {} for name in readers}
+                exhausted_reader = set()
                 for utt in ordered_utt:
                     try:
                         sample = copy.deepcopy(src_url)
                         sample.update({"__key__": utt, "uttid": utt})
+
                         for name, rit in reader_iters.items():
-                            _, cur_sample = next(rit)
-                            while cur_sample["uttid"] != utt:
-                                _, cur_sample = next(rit)
+                            cur_sample = cache[name].pop(utt, None)
+                            if cur_sample is None:
+                                try:
+                                    _, cur_sample = next(rit)
+                                    while cur_sample["uttid"] != utt:
+                                        cur_utt = cur_sample["uttid"]
+                                        if cur_utt in common_utt:
+                                            cache[name][cur_utt] = cur_sample
+                                        _, cur_sample = next(rit)
+                                except StopIteration:
+                                    exhausted_reader.add(name)
+
                             if name == "data":
                                 audio_bin = cur_sample["audio"]
                                 cur_sample = {
@@ -71,11 +82,13 @@ class _ParquetSample:
                                 cur_sample.pop("data_file", None)
                             sample.update(cur_sample)
                         yield sample
+
+                        for name in exhausted_reader:
+                            reader_iters.pop(name)
+
                     except Exception as exn:
-                        if hasattr(exn, "args") and len(exn.args) > 0:
-                            exn.args = (
-                                exn.args[0] + " @ " + json.dumps(src_url) + "&" + utt,
-                            ) + exn.args[1:]
+                        if hasattr(exn, "args"):
+                            exn.args = exn.args + (json.dumps(src_url), f"{utt=}")
                         if handler(exn):
                             continue
                         else:
