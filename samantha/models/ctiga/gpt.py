@@ -182,6 +182,7 @@ def create_mlp_cls(config, layer_idx=None, process_group=None, device=None, dtyp
                 activation=activation,
                 bias1=mlp_fc1_bias,
                 bias2=mlp_fc2_bias,
+                multiple_of=getattr(config, "multiple_of", 256),
                 **factory_kwargs,
             )
         else:

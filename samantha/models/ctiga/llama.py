@@ -477,6 +477,29 @@ def byteformer_llama_config_to_gpt_config(
     )
 
 
+def flash_llama_config_to_gpt_config(
+    flash_llama_config,
+    use_flash_attn=True,
+    fused_bias_fc=True,
+    fused_mlp=False,
+    fused_dropout_add_ln=True,
+    residual_in_fp32=True,
+    flashattn_version=2,
+    **kwargs,
+):
+    return llama_config_to_gpt2_config(
+        flash_llama_config,
+        use_flash_attn=use_flash_attn,
+        fused_bias_fc=fused_bias_fc,
+        fused_mlp=fused_mlp,
+        fused_dropout_add_ln=fused_dropout_add_ln,
+        residual_in_fp32=residual_in_fp32,
+        rotary_emb_compat="default",
+        flashattn_version=flashattn_version,
+        **kwargs,
+    )
+
+
 def gpt2_config_to_llama_config(gpt2_config: GPT2Config):
     return LlamaConfig(
         vocab_size=gpt2_config.vocab_size,

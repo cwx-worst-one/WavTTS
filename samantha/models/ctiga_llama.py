@@ -2,10 +2,15 @@ import collections
 from typing import Callable, OrderedDict
 
 import torch
-from s3a.providers.ctiga.models.gpt import GPTLMHeadModel
-from s3a.providers.ctiga.models.llama import remap_state_dict_huggingface_llama
 from transformers import GPT2Config
 
+from samantha.models.ctiga.gpt import GPTLMHeadModel
+from samantha.models.ctiga.llama import (
+    flash_llama_config_to_gpt_config,
+    remap_state_dict_huggingface_llama,
+)
+
+from .flash_llama import LlamaForCausalLM as FlashLLama
 from .sparse_llama import LLaMa as SparseLLama
 
 
@@ -21,6 +26,25 @@ def get_n_inner_dim(n_embd: int, multiple_of=256):
     n_inner = int(2 * n_inner / 3)
     N = multiple_of
     return ((n_inner - 1) // N) * N + N
+
+
+def create_ctiga_from_flash_llama(
+    orig_model_obj: FlashLLama, multiple_of: int = 32
+) -> GPTLMHeadModel:
+    args = orig_model_obj.config
+    ctiga_state_dict = remap_state_dict_huggingface_llama(
+        orig_model_obj.state_dict(),
+        args.num_hidden_layers,
+        args.num_attention_heads,
+        args.hidden_size,
+    )
+
+    kwargs = {"multiple_of": multiple_of}
+    if hasattr(args, "num_logits"):
+        kwargs["num_logits"] = getattr(args, "num_logits")
+    ctiga_model_obj = GPTLMHeadModel(flash_llama_config_to_gpt_config(args, **kwargs))
+    ctiga_model_obj.load_state_dict(ctiga_state_dict, strict=False)
+    return ctiga_model_obj
 
 
 def create_ctiga_from_sparse_llama(orig_model_obj: SparseLLama) -> GPTLMHeadModel:
