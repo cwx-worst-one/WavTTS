@@ -53,8 +53,8 @@ def save_batch_outputs(outputs, batch, output_dir, sample_rate, sample_round=0, 
     wavs = outputs['generated_audio']
     
     for i, wav in enumerate(wavs):
-        if categories is not None:
-            wav_dir = os.path.join(output_dir, categories[i])
+        if categories is not None and categories[i]:
+            wav_dir = os.path.join(output_dir, str(categories[i]))
         else:
             wav_dir = output_dir
         os.makedirs(wav_dir, exist_ok=True)

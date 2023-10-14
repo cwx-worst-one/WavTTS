@@ -171,7 +171,7 @@ def gumbel_noise(t, fixed_noise):
     if fixed_noise:
         global noises
         global noise_idx
-        if noises == None:
+        if noises == None or t.shape[0] != noises.shape[0]:
             noises = init_gumbel_noise(t)
         # assert len(noises.shape) == 3 and noises.shape[0] == t.shape[0] and noises.shape[2] == t.shape[2] and t.shape[1] == 1 
         if noise_idx < noises.shape[1]:

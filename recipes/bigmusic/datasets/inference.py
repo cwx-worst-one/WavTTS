@@ -23,6 +23,7 @@ def prompt_path_to_items(prompt_path):
             prompts = json.load(f)
     elif prompt_path.suffix == '.csv':
         df = pd.read_csv(prompt_path)
+        df = df.dropna(axis='columns')
         prompts = df.to_dict('list')
     elif prompt_path.suffix == '.txt':
         with open(prompt_path, "r") as fp:
