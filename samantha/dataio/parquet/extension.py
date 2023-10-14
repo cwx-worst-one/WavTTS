@@ -32,11 +32,14 @@ class _ParquetSample:
                 src_url[DATASET_NAME_KEY] = None
             else:
                 src_url[DATASET_NAME_KEY] = dataset_name[0]
-            readers = {
-                name: _ParquetReader(url, fs=filesystem) for name, url in src.items()
-            }
-            reader_iters = {name: iter(reader) for name, reader in readers.items()}
+
+            readers = None
             try:
+                readers = {
+                    name: _ParquetReader(url, fs=filesystem)
+                    for name, url in src.items()
+                }
+                reader_iters = {name: iter(reader) for name, reader in readers.items()}
                 common_utt = set(
                     e["uttid"]
                     for v in src.values()
@@ -97,6 +100,8 @@ class _ParquetSample:
                 else:
                     break
             finally:
+                if readers is None:
+                    continue
                 for reader in readers.values():
                     reader.close()
 
