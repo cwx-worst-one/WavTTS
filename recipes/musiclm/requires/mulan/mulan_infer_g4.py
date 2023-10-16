@@ -817,6 +817,9 @@ def mulan_inference(
         emb = model.encode_text(text)
 
     if music is not None:
+        # music needs to be in 2D: [b, t]
+        if len(music.shape) == 3:
+            music = music.squeeze(1)
         # print(f"mulan_inference: wav shape is {music.shape}")
         music_encoder = model.music_encoder
         music = music.unfold(1, 24000 * 10, 24000 * shift_seconds)  # [b, n, t]

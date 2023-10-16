@@ -19,9 +19,6 @@ from webdataset.pipeline import DataPipeline
 import logging, phonemizer
 from recipes.bigmusic.datasets.tokenizers.phoneme import MAX_PHONE_LEN
 from recipes.bigmusic.utils.format_utils import normalize_text
-from recipes.datasets.mcc.mix import (
-    DataModule
-)
 
 from recipes.musiclm.utils.dist import local_zero_first
 from recipes.musiclm.transforms.audio import (
@@ -744,7 +741,7 @@ class BillboardDataset(WebPipeline):
 class DataModule(pl.LightningDataModule):
     def __init__(
         self,
-        shuffle_buffer_size: int,
+        shuffle_buffer_size: int = 0,   # unused
         num_workers: int = 4,
         pin_memory: bool = True,
         train_dataset=None,
@@ -753,7 +750,6 @@ class DataModule(pl.LightningDataModule):
         collate_fn: Optional[Callable] = None,
     ):
         super().__init__()
-        self.shuffle_buffer_size = shuffle_buffer_size
         self.train_dataset = train_dataset
         self.validation_dataset = validation_dataset
         self.predict_dataset = predict_dataset
@@ -762,11 +758,8 @@ class DataModule(pl.LightningDataModule):
         self.collate_fn = collate_fn
 
     def train_dataloader(self):
-        train_dataset_batched = DataPipeline(
-            self.train_dataset, wds.shuffle(self.shuffle_buffer_size)
-        )
         return DataLoader(
-            train_dataset_batched,
+            self.train_dataset,
             batch_size=None,
             num_workers=self.num_workers,
             collate_fn=self.collate_fn,
@@ -899,7 +892,10 @@ class MixWebDataModule(DataModule):
             # MultiIterableDataset(
             #     datasets=[mcc_vocal, mcc_instrumental], weights=[5, 1]                
             # ),
-            pipeline=[{"compose": [self.bucketize]}],
+            pipeline=[{"compose": [
+                wds.shuffle(shuffle_buffer_size),
+                self.bucketize,
+            ]}],
         )
 
         validation_dataset = WebPipeline(
@@ -1021,7 +1017,10 @@ class SFTWebDataModule(DataModule):
 
         train_dataset = WebPipeline(            
             MultiIterableDataset(datasets=datasets, weights=weights),
-            pipeline=[{"compose": [self.bucketize]}],
+            pipeline=[{"compose": [
+                wds.shuffle(shuffle_buffer_size),
+                self.bucketize,
+            ]}],
         )
    
         datasets = [
@@ -1129,7 +1128,10 @@ class TTSWebDataModule(DataModule):
             MultiIterableDataset(
                 datasets=[librilight, libritts], 
                 weights=[50, 1]),   # natural weight 100:1
-            pipeline=[{"compose": [self.bucketize]}],
+            pipeline=[{"compose": [
+                wds.shuffle(shuffle_buffer_size),
+                self.bucketize,
+            ]}],
         )
         validation_dataset = WebPipeline(
             LibriTTSDataset(

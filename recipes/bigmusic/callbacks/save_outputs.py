@@ -103,12 +103,16 @@ class SaveVideoCallback(pl.Callback):
         save_video(output_dir, output_dir)
 
 def default_format_video_text(metadata):
-    lyrics = metadata['lyrics']
     index = metadata['index']['absolute_idx']
-    lyrics = lyrics.encode('ascii', 'ignore').decode('ascii') # TODO: utf-8
-    lyrics_list = textwrap.wrap(lyrics, 40, break_long_words=False)
     style_text = metadata['style_text']
-    return f'{index}: {style_text}\n\n\n' + '\n\n'.join(lyrics_list)
+    style_text = '\n\n'.join(textwrap.wrap(style_text, 40, break_long_words=False))
+    video_text = f'{index}: {style_text}\n\n\n'
+    lyrics = metadata.get('lyrics')
+    if lyrics is not None:
+        lyrics = lyrics.encode('ascii', 'ignore').decode('ascii') # TODO: utf-8
+        lyrics_list = textwrap.wrap(lyrics, 40, break_long_words=False)
+        video_text += '\n\n'.join(lyrics_list)
+    return video_text
 
 def save_video(input_results_dir, output_video_dir, format_video_text_fn=default_format_video_text, remove_segments=True):
     colors = ["green", "blue", "brown"]

@@ -170,6 +170,7 @@ class MCCTransforms(TransformBase):
         overlap_vocal_threshold: float = 0.1,
         audio_metrics_filtered: bool = False,
         ar_filtering: Optional[ARFiltering] = None,
+        text_type: Optional[str] = None,
         max_num_crops: Optional[int] = None,    # if None, auto set based on audio length
         crop_step_size: Optional[int] = None,   # if None, auto set based on n_samples
     ) -> None:
@@ -187,6 +188,7 @@ class MCCTransforms(TransformBase):
         self.overlap_vocal_threshold = overlap_vocal_threshold
         self.audio_metrics_filtered = audio_metrics_filtered
         self.ar_filtering = ar_filtering
+        self.text_type = text_type
         self.max_num_crops = max_num_crops
         if crop_step_size is None:
             crop_step_size = self.n_samples // 2
@@ -360,6 +362,24 @@ class MCCTransforms(TransformBase):
                     window_ids.append(wid)
             return audio, window_ids, num_windows
 
+    def get_text(self, metadata):
+        if self.text_type is None:
+            return None
+
+        if self.text_type == "mixed":
+            text_type = "long" if random.random() <= 0.5 else "short"
+        else:
+            text_type = self.text_type
+        if text_type == "long":
+            # Both Pond5 and SSTK have DESCRIPTION
+            return metadata["DESCRIPTION"]
+        else:
+            if "KEYWORDS" in metadata:
+                ary = metadata["KEYWORDS"].split(",")
+            else:
+                ary = metadata["TAGS"].split(",")
+            return ", ".join([x.strip() for x in ary])
+
     def __call__(self, x: Dict[str, Any]) -> Generator:
         is_good, message = self.is_metadata_good(x["__index_data__"])
         if not is_good:
@@ -378,7 +398,7 @@ class MCCTransforms(TransformBase):
             print(f"[MP3 decoding error] {e}")
             self._update_stats(skipped=True, message="MP3 Decoding Error")
             return
-        if audio.size(1) < self.n_samples * 0.95:
+        if audio.size(1) < self.n_samples * 0.8:
             self._update_stats(skipped=True, message="Audio Too Short")
             return
         else:            
@@ -415,7 +435,8 @@ class MCCTransforms(TransformBase):
                 "metadata": x["__index_data__"],
                 "url": x["__url__"],
                 "sample_start_pos": st_sample,
-                "sample_rate": self.sample_rate
+                "sample_rate": self.sample_rate,
+                "text": self.get_text(x["__index_data__"]),
             }
             yield output
             num_crops += 1

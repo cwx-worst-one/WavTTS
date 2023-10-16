@@ -26,12 +26,15 @@ def run_wer_metrics(output_dir, device='cuda'):
         metadata_fp = str(generated_output_fp).replace('generated.wav', 'metadata.json')
         with open(metadata_fp, 'r') as f:
             metadata = json.load(f)
-        a = normalize_text(metadata['lyrics']) # actual transcript
+        # actual transcript
+        lyrics = metadata.get('lyrics')
+        a = '' if lyrics is None else normalize_text(lyrics)
         g = normalize_text(asr_lyrics[0]) # greedy transcript
         edits = edit_distance(a, g)
-        ins = round(edits.ins / len(a), 3)
-        subs = round(edits.subs / len(a), 3)
-        dels = round(edits.dels / len(a), 3)
+        denom = 1.0 if len(a) == 0 else len(a)
+        ins = round(edits.ins / denom, 3)
+        subs = round(edits.subs / denom, 3)
+        dels = round(edits.dels / denom, 3)
         wer = sum([ins, subs, dels])
         wer_metadata = {
             'ins': ins,
@@ -75,7 +78,7 @@ class WERMetricsBatchCallback(pl.Callback):
         dataloader_idx: int = 0,
     ) -> None:
         wavs = outputs['generated_audio_tensor']
-        lyrics = batch['lyrics']
+        lyrics = batch.get('lyrics')
         wer_results, wer_metadatas = WERMetricsBatchCallback.calculate_batch_wer(wavs, lyrics)
         self.batched_wer_results.extend(wer_results)
         outputs['metadata'] = concat_metadata_list(outputs.get('metadata'), wer_metadatas)
@@ -85,13 +88,17 @@ class WERMetricsBatchCallback(pl.Callback):
         wer_results = []
         wer_metadatas = []
         asr_lyrics, _ = wav2lyrics(wavs)
-        actual_transcript = [normalize_text(l) for l in lyrics]
+        if lyrics is None:
+            actual_transcript = ["" for _ in asr_lyrics]
+        else:
+            actual_transcript = [normalize_text(l) for l in lyrics]
         greedy_transcript = [normalize_text(l) for l in asr_lyrics]
         for j, (a, g) in enumerate(zip(actual_transcript, greedy_transcript)):
             edits = edit_distance(a, g)
-            ins = round(edits.ins / len(a), 3)
-            subs = round(edits.subs / len(a), 3)
-            dels = round(edits.dels / len(a), 3)
+            denom = 1.0 if len(a) == 0 else len(a)
+            ins = round(edits.ins / denom, 3)
+            subs = round(edits.subs / denom, 3)
+            dels = round(edits.dels / denom, 3)
             wer = sum([ins, subs, dels])
             wer_metadata = {
                 'ins': ins,

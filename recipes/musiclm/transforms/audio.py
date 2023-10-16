@@ -93,13 +93,13 @@ def get_random_idx(n_samples: int):
 
 
 def crop_1d(audio: torch.Tensor, start_idx: int, n_samples: int):
-    if audio.shape[1] == n_samples:
+    if audio.shape[-1] == n_samples:
         return audio
 
-    if (start_idx + n_samples) > audio.shape[1]:
+    if (start_idx + n_samples) > audio.shape[-1]:
         raise IndexError(
             f"The number of samples needed({start_idx + n_samples}) to crop exceeds the"
-            f" max_samples({audio.shape[1]}) in the audio"
+            f" max_samples({audio.shape[-1]}) in the audio"
         )
     return audio[..., start_idx : start_idx + n_samples]
 

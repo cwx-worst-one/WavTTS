@@ -22,12 +22,7 @@ from recipes.musiclm.lightning.modules import MaskedCrossEntropy
 from recipes.musiclm.transforms.audio import to_energy
 from collections import defaultdict
 from itertools import zip_longest
-
-# from recipes.umm.models.bestrq import BestRQMelCTC
-from recipes.umm.modules.lit_module import (
-    BestRQMelCTC,
-    Stage3,
-)
+from torchaudio.functional import loudness
 
 
 DEFAULT_REWARDS = {"mulan_sim": 1.0, "wer": 1.0}
@@ -74,8 +69,12 @@ class SemanticModule(BaseContinuousEmbedModule):
             extra_params=extra_params,
         )
         self.save_hyperparameters()
+        self.log_counter = 0
 
     def prepare_inputs_embeddings(self, batch):
+        if self.log_counter < 1:
+            print(batch)
+            self.log_counter += 1
         conditions = batch['conditions'].split(',')
         batch_size = self.infer_batch_size(batch)
         with_sos=True
@@ -145,6 +144,8 @@ class SemanticRLModule(SemanticModule):
         else:
             raise ValueError(f"Unsupported decoder type: {decoder_type}")
         self.val_outputs = dict()
+        self.positive_qualitative_emb = None
+        self.negative_qualitative_emb = None
 
     def _shared_step(self, batch, mode):
         wavs_gt = batch["target_audio"]
@@ -194,6 +195,7 @@ class SemanticRLModule(SemanticModule):
             "batch_size": B,
             "beam_size": beam,
             "lyrics": batch.get("lyrics"),
+            "style_text": batch.get("style_text"),
         })
         # Compute sequence probs
         seq_logits = self.model(**model_inputs)
@@ -379,51 +381,44 @@ class SemanticRLModule(SemanticModule):
         b = items["batch_size"]
         beam = items["beam_size"]
         if reward_type == "mulan_sim":
-            if self.extra_params.use_non_vocal_mulan:
-                sampled_mulan_embeds = self.requires["non_vocal_mulan_infer_fn"](
-                    model=self.requires["non_vocal_mulan"],
-                    music=sampled_audio.squeeze(1),
-                    device=sampled_audio.device,
-                )
-                mulan_embeds = self.requires["non_vocal_mulan_infer_fn"](
-                    model=self.requires["non_vocal_mulan"],
-                    music=target_audio.squeeze(1),
-                    device=target_audio.device,
-                )
-            else:
-                sampled_mulan_embeds = self.input_embedders["mulan"].embed(
+            if "sampled_mulan_embeds" not in items:
+                items["sampled_mulan_embeds"] = self.input_embedders["mulan"].embed(
                     self.requires,
                     sampled_audio.squeeze(1),
                     data_type="music",
                 ).squeeze(1)
-                mulan_embeds = self.input_embedders["mulan"].embed(
-                    self.requires,
-                    target_audio.squeeze(1),
-                    data_type="music",
-                ).squeeze(1)
+            mulan_embeds = self.input_embedders["mulan"].embed(
+                self.requires,
+                target_audio.squeeze(1),
+                data_type="music",
+            ).squeeze(1)
             # (b, d) --> (b * beam, d)
             mulan_embeds = mulan_embeds.repeat(1, beam).reshape(b * beam, -1)
             # Compute cosine similarity, we want to maximize this
-            return F.cosine_similarity(sampled_mulan_embeds, mulan_embeds)
+            return F.cosine_similarity(items["sampled_mulan_embeds"], mulan_embeds)
         elif reward_type == "wer":
-            eos_index_list = items["eos_index_list"]
-            lyrics, _ = wav2lyrics(
-                sampled_audio,
-                sample_lengths=None if len(eos_index_list) == 0 else eos_index_list,
-                sr=self.extra_params.sample_rate,
-                device_id=self.local_rank,
-                do_itn=self.extra_params.use_itn_asr,
-            )
+            assert items["lyrics"] is not None
+            if "sampled_lyrics" not in items:
+                eos_index_list = items["eos_index_list"]
+                items["sampled_lyrics"], _ = wav2lyrics(
+                    sampled_audio,
+                    sample_lengths=None if len(eos_index_list) == 0 else eos_index_list,
+                    sr=self.extra_params.sample_rate,
+                    device_id=self.local_rank,
+                    do_itn=self.extra_params.use_itn_asr,
+                )
+            sampled_lyrics = items["sampled_lyrics"]
+            ref_lyrics = items["lyrics"]
             wer = torch.zeros(b * beam).to(sampled_audio.device)
-            if len(lyrics) != sampled_audio.size(0):
+            if len(sampled_lyrics) != sampled_audio.size(0):
                 # This sometimes happens, not sure why
-                print(f"lyrics: len={len(lyrics)} (expected {sampled_audio.size(0)}), content={lyrics}")
+                print(f"lyrics: len={len(sampled_lyrics)} (expected {sampled_audio.size(0)}), content={sampled_lyrics}")
             else:
                 for i in range(b):
-                    ref = remove_punc_case("" if items["lyrics"] is None else items["lyrics"][i])
+                    ref = remove_punc_case(ref_lyrics[i])
                     for j in range(beam):
                         idx = i * beam + j
-                        hyp = remove_punc_case(lyrics[idx])
+                        hyp = remove_punc_case(sampled_lyrics[idx])
                         if ref != "" and hyp != "":
                             # Cap WER at 100% for more stable range
                             wer[idx] = min(1.0, edit_distance(ref, hyp).edits() / len(ref))
@@ -438,6 +433,99 @@ class SemanticRLModule(SemanticModule):
             neg_rel_std = -1 * energy.std(dim=-1) / energy.mean(dim=-1)
             # Clip relative std to maintain loss scale
             return torch.clamp(neg_rel_std, min=-1, max=0)
+        elif reward_type == "style_text_sim":
+            assert items["style_text"] is not None
+            if "sampled_mulan_embeds" not in items:
+                items["sampled_mulan_embeds"] = self.input_embedders["mulan"].embed(
+                    self.requires,
+                    sampled_audio.squeeze(1),
+                    data_type="music",
+                ).squeeze(1)
+            mulan_embeds = self.input_embedders["mulan"].embed(
+                self.requires,
+                items["style_text"],
+                data_type="text",
+            ).squeeze(1)
+            # (b, d) --> (b * beam, d)
+            mulan_embeds = mulan_embeds.repeat(1, beam).reshape(b * beam, -1)
+            # Compute cosine similarity, we want to maximize this
+            return F.cosine_similarity(items["sampled_mulan_embeds"], mulan_embeds)
+        elif reward_type == "loudness_sim":
+            sampled_loudness = loudness(
+                sampled_audio.cpu(), sample_rate=self.extra_params.sample_rate
+            )
+            target_loudness = loudness(
+                target_audio.cpu(), sample_rate=self.extra_params.sample_rate
+            )
+            # (b,) --> (b * beam,)
+            target_loudness = target_loudness.reshape(b, 1).repeat(1, beam).reshape(b * beam)
+            # loudness is in LKFS (dB scale), so we use sigmoid to measure the difference
+            # With sigmoid, a difference of 1dB is considered relatively small, while a
+            # difference of 3dB is considered large.
+            loudness_diff = torch.sigmoid(target_loudness - sampled_loudness)
+            # We normalize the range to (0, 1) to be consistent with other rewards
+            loudness_diff = (2 * loudness_diff - 1).abs().to(sampled_audio.device)
+            # Sometimes loudness function returns NaN, in which case we just assign
+            # a hardcoded reward of 1dB loudness difference.
+            loudness_diff[torch.isnan(loudness_diff)] = 0.4621
+            # 1 - loudness_diff is loudness similarity, we want to maximize this
+            return 1 - loudness_diff
+        elif reward_type == "qualitative_sim":
+            qualitative_reward = 0
+            if "sampled_mulan_embeds" not in items:
+                items["sampled_mulan_embeds"] = self.input_embedders["mulan"].embed(
+                    self.requires,
+                    sampled_audio.squeeze(1),
+                    data_type="music",
+                ).squeeze(1)
+            if self.extra_params.positive_phrase is not None:
+                if self.positive_qualitative_emb is None:
+                    self.positive_qualitative_emb = self.input_embedders["mulan"].embed(
+                        self.requires,
+                        [self.extra_params.positive_phrase],
+                        data_type="text",
+                    ).squeeze(1)
+                qualitative_reward += F.cosine_similarity(
+                    items["sampled_mulan_embeds"],
+                    self.positive_qualitative_emb.expand(b * beam, -1),
+                )
+            if self.extra_params.negative_phrase is not None:
+                if self.negative_qualitative_emb is None:
+                    self.negative_qualitative_emb = self.input_embedders["mulan"].embed(
+                        self.requires,
+                        [self.extra_params.negative_phrase],
+                        data_type="text",
+                    ).squeeze(1)
+                qualitative_reward -= F.cosine_similarity(
+                    items["sampled_mulan_embeds"],
+                    self.negative_qualitative_emb.expand(b * beam, -1),
+                )
+            return qualitative_reward
+        elif reward_type == "nonvocal":
+            if "sampled_lyrics" not in items:
+                eos_index_list = items["eos_index_list"]
+                items["sampled_lyrics"], _ = wav2lyrics(
+                    sampled_audio,
+                    sample_lengths=None if len(eos_index_list) == 0 else eos_index_list,
+                    sr=self.extra_params.sample_rate,
+                    device_id=self.local_rank,
+                    do_itn=self.extra_params.use_itn_asr,
+                )
+            sampled_lyrics = items["sampled_lyrics"]
+            num_words = torch.zeros(b * beam).to(sampled_audio.device)
+            if len(sampled_lyrics) != sampled_audio.size(0):
+                # This sometimes happens, not sure why
+                print(f"lyrics: len={len(sampled_lyrics)} (expected {sampled_audio.size(0)}), content={sampled_lyrics}")
+            else:
+                for i in range(len(num_words)):
+                    hyp = remove_punc_case(sampled_lyrics[i])
+                    num_words[i] = len(hyp.split())
+                # Use tanh to keep the range between (0, 1) and make the penalty
+                # increase exponentially with the number of words. We divide the
+                # number of words by 4 to make the range less extreme.
+                num_words = torch.tanh(num_words / 4)
+            # Return negative number of words, we want to maximize this
+            return -1 * num_words
         else:
             raise ValueError(f"Unknown reward type: {reward_type}")
 

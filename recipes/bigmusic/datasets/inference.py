@@ -48,12 +48,25 @@ def rewrite_mcc_tags_to_mulan_tags(style_text):
     print('Rewriting', style_text, rewrite)
     return rewrite
 
-def inference_dataset_from_prompt(prompt_path, conditions="style_text,lyrics_tokens", batch_size=8, max_items=16, lyrics_max_seq_len=400, run_combinations=False, enable_punctuation=False, use_mulan_v2_genres=False):
+def inference_dataset_from_prompt(
+    prompt_path,
+    conditions="style_text,lyrics_tokens",
+    batch_size=8,
+    max_items=16,
+    lyrics_max_seq_len=400,
+    run_combinations=False,
+    enable_punctuation=False,
+    use_mulan_v2_genres=False,
+):
     prompts = prompt_path_to_items(prompt_path)
     if 'text_category' in prompts: # fix csv formatting
         prompts['category'] = prompts.pop('text_category')
+    elif 'category' in prompts:
+        prompts['category'] = prompts.pop('category')
     if 'text_prompt' in prompts: # fix csv formatting
         prompts['style_text'] = prompts.pop('text_prompt')
+    elif 'text' in prompts:
+        prompts['style_text'] = prompts.pop('text')
     if 'style_audio' in prompts:
         prompts['style_audio'] = [load_wav(wav_path) for wav_path in prompts['style_audio']]
     if 'vocal_audio' in prompts:

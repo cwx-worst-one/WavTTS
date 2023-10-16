@@ -105,9 +105,9 @@ class Wav2Lyrics:
             )
 
     def resample(self, audio_bytes, sample_rate: int):
-        logger.warning(
-            f"The audio is resampled from {sample_rate}hz to {self._sample_rate}hz"
-        )
+        #logger.warning(
+        #    f"The audio is resampled from {sample_rate}hz to {self._sample_rate}hz"
+        #)
         resampled_bytes = normalize_audio(
             audio_bytes=audio_bytes, sample_rate=self._sample_rate, format="wav"
         )
@@ -197,7 +197,7 @@ class Wav2Lyrics:
 
 def wav2lyrics(
     wav_batch,
-    sr,
+    sr=24000,
     sample_lengths=None,
     device_id=None,
     do_itn=False,  # only valid for the first call
