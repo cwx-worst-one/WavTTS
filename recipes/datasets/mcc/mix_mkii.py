@@ -1,19 +1,12 @@
+import json
 import math
 import random
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Generator,
-    Iterable,
-    List,
-    Tuple,
-    Union,
-)
+from typing import Any, Callable, Dict, Generator, Iterable, List, Tuple, Union
 
 import pytorch_lightning as pl
 import torch
 import webdataset as wds
+from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from torchaudio.transforms import Resample
 from torchaudio_augmentations import Compose
@@ -22,9 +15,11 @@ from webdataset import WebDataset
 from webdataset.pipeline import DataPipeline
 
 from recipes.datasets.mcc import INDEX
+from recipes.datasets.mcc.mix import BaseTransforms
 from recipes.musiclm.transforms.audio import FastNormalizeAudio, LoudnessCheck
 from samantha.dataio.batching import BucketBatcher
 from samantha.dataio.dataset import MultiIterableDataset
+from samantha.dataio.parquet import ParquetDataset
 from samantha.dataio.webdataset.extension import IndexedWebDataset
 from samantha.dataio.webdataset.pipeline import WebPipeline
 from samantha.transforms.audio import (
@@ -34,9 +29,6 @@ from samantha.transforms.audio import (
     ToTensor,
 )
 from samantha.utils.webdataset import return_self
-from recipes.datasets.mcc.mix import BaseTransforms
-from torch.nn.utils.rnn import pad_sequence
-
 
 TASKS = {
     "understanding": [
@@ -46,6 +38,10 @@ TASKS = {
         ["Describe the music"],
         ["Transcribe the lyrics of this song"],
         ["Transcribe this speech to text"],
+        ["What is the beat of this music"],
+        ["What are the chords of this music"],
+        ["What are the key and mode of this music"],
+        ["What is the structure of this music"],
     ],
     "generation": [
         ["Generate an instrumental piece of music with the keywords of"],
@@ -59,7 +55,7 @@ TASKS = {
         ["Add accompaniment to this vocal"],
         ["Remove vocal from this song"],
         ["Remove accompaniment from this song"],
-    ]
+    ],
 }
 
 
@@ -121,9 +117,11 @@ def collate_fn(batch: List[torch.Tensor]):
                 index.append(None)
             mono_map.append(index)
         else:
-            padded_audio = homo_random_pad(torch.cat([item["input_audio"], item["target_audio"]], dim=0))
-            input_audio = padded_audio[:item["input_audio"].size(0)]
-            target_audio = padded_audio[-item["target_audio"].size(0):]
+            padded_audio = homo_random_pad(
+                torch.cat([item["input_audio"], item["target_audio"]], dim=0)
+            )
+            input_audio = padded_audio[: item["input_audio"].size(0)]
+            target_audio = padded_audio[-item["target_audio"].size(0) :]
             if item["input_text"] is not None:
                 homo_text.append(item["input_text"])
                 homo_text_length.append(item["input_text"].size(-1))
@@ -152,7 +150,7 @@ def collate_fn(batch: List[torch.Tensor]):
     if len(homo_map) > 0:
         homo_text = pad_sequence(homo_text, batch_first=True, padding_value=0)
         homo_audio = torch.stack(homo_audio, dim=0)
-    
+
     return {
         "mono_text": mono_text,
         "homo_text": homo_text,
@@ -384,87 +382,79 @@ class MCCVocalTransforms(MCCTransforms):
             self._update_stats(skipped=True, message="Too short")
             return
 
-        selected_task = torch.multinomial(torch.FloatTensor([1, 0, 0, 1, 1, 1, 1, 1]), 1).item()
+        selected_task = torch.multinomial(
+            torch.FloatTensor([1, 0, 0, 1, 1, 1, 1, 1]), 1
+        ).item()
         if selected_task == 0:
             task_type = "understanding"
             task_id = 0
-            duration = (
-                random.randint(self.min_duration, self.max_duration) * self.sample_rate
+            duration = random.randint(
+                self.min_duration * self.sample_rate,
+                self.max_duration * self.sample_rate,
             )
             start = random.randint(0, audio.size(-1) - duration)
             input_audio = audio[:, start : start + duration]
             target_audio = None
             input_raw_text = TASKS[task_type][task_id][0]
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_raw_text = str(metadata["final_genre"])
             target_text = self.tokenizer(
-                target_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                target_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             audio_length = input_audio.shape[-1]
         elif selected_task == 1:
             task_type = "understanding"
             task_id = 1
-            duration = (
-                random.randint(self.min_duration, self.max_duration) * self.sample_rate
+            duration = random.randint(
+                self.min_duration * self.sample_rate,
+                self.max_duration * self.sample_rate,
             )
             start = random.randint(0, audio.size(-1) - duration)
             input_audio = audio[:, start : start + duration]
             target_audio = None
             input_raw_text = TASKS[task_type][task_id][0]
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_raw_text = str(metadata["final_mood"])
             target_text = self.tokenizer(
-                target_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                target_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             audio_length = input_audio.shape[-1]
         elif selected_task == 2:
             task_type = "understanding"
             task_id = 2
-            duration = (
-                random.randint(self.min_duration, self.max_duration) * self.sample_rate
+            duration = random.randint(
+                self.min_duration * self.sample_rate,
+                self.max_duration * self.sample_rate,
             )
             start = random.randint(0, audio.size(-1) - duration)
             input_audio = audio[:, start : start + duration]
             target_audio = None
             input_raw_text = TASKS[task_type][task_id][0]
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_raw_text = str(metadata["final_theme"])
             target_text = self.tokenizer(
-                target_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                target_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             audio_length = input_audio.shape[-1]
         elif selected_task == 3:
             task_type = "understanding"
             task_id = 3
-            duration = (
-                random.randint(self.min_duration, self.max_duration) * self.sample_rate
+            duration = random.randint(
+                self.min_duration * self.sample_rate,
+                self.max_duration * self.sample_rate,
             )
             start = random.randint(0, audio.size(-1) - duration)
             input_audio = audio[:, start : start + duration]
             target_audio = None
             input_raw_text = TASKS[task_type][task_id][0]
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_list = [
                 str(metadata["final_genre"]),
@@ -475,9 +465,7 @@ class MCCVocalTransforms(MCCTransforms):
             random.shuffle(target_list)
             target_raw_text = ", ".join(target_list)
             target_text = self.tokenizer(
-                target_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                target_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             audio_length = input_audio.shape[-1]
         elif selected_task == 4:
@@ -494,26 +482,23 @@ class MCCVocalTransforms(MCCTransforms):
                     skipped=True, message="Lyrics timestamp out of range"
                 )
                 return
-            input_audio = audio[:, start : end]
+            input_audio = audio[:, start:end]
             target_audio = None
             input_raw_text = TASKS[task_type][task_id][0]
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_raw_text = '"' + str(selected_utterance["text"]) + '"'
             target_text = self.tokenizer(
-                target_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                target_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             audio_length = input_audio.shape[-1]
         elif selected_task == 5:
             task_type = "generation"
             task_id = 1
-            duration = (
-                random.randint(self.min_duration, self.max_duration) * self.sample_rate
+            duration = random.randint(
+                self.min_duration * self.sample_rate,
+                self.max_duration * self.sample_rate,
             )
             start = random.randint(0, audio.size(-1) - duration)
             input_audio = None
@@ -528,9 +513,7 @@ class MCCVocalTransforms(MCCTransforms):
             keywords = TASKS[task_type][task_id][0] + " " + ", ".join(keywords)
             input_raw_text = keywords
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_raw_text = ""
             target_text = None
@@ -550,12 +533,16 @@ class MCCVocalTransforms(MCCTransforms):
                 )
                 return
             input_audio = None
-            target_audio = audio[:, start : end]
-            input_raw_text = TASKS[task_type][task_id][0] + " " + '"' + str(selected_utterance["text"]) + '"'
+            target_audio = audio[:, start:end]
+            input_raw_text = (
+                TASKS[task_type][task_id][0]
+                + " "
+                + '"'
+                + str(selected_utterance["text"])
+                + '"'
+            )
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_raw_text = ""
             target_text = None
@@ -575,7 +562,7 @@ class MCCVocalTransforms(MCCTransforms):
                 )
                 return
             input_audio = None
-            target_audio = audio[:, start : end]
+            target_audio = audio[:, start:end]
             keywords = [
                 str(metadata["final_genre"]),
                 # str(metadata["final_mood"]),
@@ -584,12 +571,16 @@ class MCCVocalTransforms(MCCTransforms):
             ]
             random.shuffle(keywords)
             keywords = TASKS[task_type][task_id][0] + " " + ", ".join(keywords)
-            lyrics = TASKS[task_type][task_id][1] + " " + '"' + selected_utterance["text"] + '"'
+            lyrics = (
+                TASKS[task_type][task_id][1]
+                + " "
+                + '"'
+                + selected_utterance["text"]
+                + '"'
+            )
             input_raw_text = keywords + ", " + lyrics
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_raw_text = ""
             target_text = None
@@ -600,15 +591,13 @@ class MCCVocalTransforms(MCCTransforms):
             + (0 if target_text is None else target_text.shape[-1])
         )
         if total_length > self.max_length:
-            self._update_stats(
-                skipped=True, message="Total length too large"
-            )
+            self._update_stats(skipped=True, message="Total length too large")
             return
         debug = (
-            f'input_raw_text: {input_raw_text} | '
-            + f'input_audio: {0 if input_audio is None else input_audio.size()} | '
-            + f'target_raw_text: {target_raw_text} | '
-            + f'target_audio: {0 if target_audio is None else target_audio.size()}'
+            f"input_raw_text: {input_raw_text} | "
+            + f"input_audio: {0 if input_audio is None else input_audio.size()} | "
+            + f"target_raw_text: {target_raw_text} | "
+            + f"target_audio: {0 if target_audio is None else target_audio.size()}"
         )
         output_dict = {
             "input_text": input_text,
@@ -618,7 +607,7 @@ class MCCVocalTransforms(MCCTransforms):
             "audio_length": audio_length,
             "task_type": task_type,
             "task_id": task_id,
-            "debug": debug
+            "debug": debug,
         }
         yield output_dict
         self._update_stats(skipped=False)
@@ -679,88 +668,78 @@ class MCCInstrumentalTransforms(MCCTransforms):
         if audio.size(-1) < self.max_duration * self.sample_rate:
             self._update_stats(skipped=True, message="Too short")
             return
-        
+
         selected_task = torch.multinomial(torch.FloatTensor([1, 0, 0, 1, 1]), 1).item()
         if selected_task == 0:
             task_type = "understanding"
             task_id = 0
-            duration = (
-                random.randint(self.min_duration, self.max_duration) * self.sample_rate
+            duration = random.randint(
+                self.min_duration * self.sample_rate,
+                self.max_duration * self.sample_rate,
             )
             start = random.randint(0, audio.size(-1) - duration)
             input_audio = audio[:, start : start + duration]
             target_audio = None
             input_raw_text = TASKS[task_type][task_id][0]
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_raw_text = str(metadata["final_genre"])
             target_text = self.tokenizer(
-                target_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                target_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             audio_length = input_audio.shape[-1]
         elif selected_task == 1:
             task_type = "understanding"
             task_id = 1
-            duration = (
-                random.randint(self.min_duration, self.max_duration) * self.sample_rate
+            duration = random.randint(
+                self.min_duration * self.sample_rate,
+                self.max_duration * self.sample_rate,
             )
             start = random.randint(0, audio.size(-1) - duration)
             input_audio = audio[:, start : start + duration]
             target_audio = None
             input_raw_text = TASKS[task_type][task_id][0]
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_raw_text = str(metadata["final_mood"])
             target_text = self.tokenizer(
-                target_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                target_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             audio_length = input_audio.shape[-1]
         elif selected_task == 2:
             task_type = "understanding"
             task_id = 2
-            duration = (
-                random.randint(self.min_duration, self.max_duration) * self.sample_rate
+            duration = random.randint(
+                self.min_duration * self.sample_rate,
+                self.max_duration * self.sample_rate,
             )
             start = random.randint(0, audio.size(-1) - duration)
             input_audio = audio[:, start : start + duration]
             target_audio = None
             input_raw_text = TASKS[task_type][task_id][0]
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_raw_text = str(metadata["final_theme"])
             target_text = self.tokenizer(
-                target_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                target_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             audio_length = input_audio.shape[-1]
         elif selected_task == 3:
             task_type = "understanding"
             task_id = 3
-            duration = (
-                random.randint(self.min_duration, self.max_duration) * self.sample_rate
+            duration = random.randint(
+                self.min_duration * self.sample_rate,
+                self.max_duration * self.sample_rate,
             )
             start = random.randint(0, audio.size(-1) - duration)
             input_audio = audio[:, start : start + duration]
             target_audio = None
             input_raw_text = TASKS[task_type][task_id][0]
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_list = [
                 str(metadata["final_genre"]),
@@ -771,16 +750,15 @@ class MCCInstrumentalTransforms(MCCTransforms):
             random.shuffle(target_list)
             target_raw_text = ", ".join(target_list)
             target_text = self.tokenizer(
-                target_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                target_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             audio_length = input_audio.shape[-1]
         elif selected_task == 4:
             task_type = "generation"
             task_id = 0
-            duration = (
-                random.randint(self.min_duration, self.max_duration) * self.sample_rate
+            duration = random.randint(
+                self.min_duration * self.sample_rate,
+                self.max_duration * self.sample_rate,
             )
             start = random.randint(0, audio.size(-1) - duration)
             input_audio = None
@@ -794,9 +772,7 @@ class MCCInstrumentalTransforms(MCCTransforms):
             random.shuffle(keywords)
             input_raw_text = TASKS[task_type][task_id][0] + " " + ", ".join(keywords)
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_raw_text = ""
             target_text = None
@@ -807,15 +783,13 @@ class MCCInstrumentalTransforms(MCCTransforms):
             + (0 if target_text is None else target_text.shape[-1])
         )
         if total_length > self.max_length:
-            self._update_stats(
-                skipped=True, message="Total length too large"
-            )
+            self._update_stats(skipped=True, message="Total length too large")
             return
         debug = (
-            f'input_raw_text: {input_raw_text} | '
-            + f'input_audio: {0 if input_audio is None else input_audio.size()} | '
-            + f'target_raw_text: {target_raw_text} | '
-            + f'target_audio: {0 if target_audio is None else target_audio.size()}'
+            f"input_raw_text: {input_raw_text} | "
+            + f"input_audio: {0 if input_audio is None else input_audio.size()} | "
+            + f"target_raw_text: {target_raw_text} | "
+            + f"target_audio: {0 if target_audio is None else target_audio.size()}"
         )
         output_dict = {
             "input_text": input_text,
@@ -901,9 +875,7 @@ class KaraokeTransforms(BaseTransforms):
             target_audio = full
             input_raw_text = TASKS[task_type][task_id][0]
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_raw_text = ""
             target_text = None
@@ -915,9 +887,7 @@ class KaraokeTransforms(BaseTransforms):
             target_audio = full
             input_raw_text = TASKS[task_type][task_id][0]
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_raw_text = ""
             target_text = None
@@ -929,9 +899,7 @@ class KaraokeTransforms(BaseTransforms):
             target_audio = acc
             input_raw_text = TASKS[task_type][task_id][0]
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_raw_text = ""
             target_text = None
@@ -943,9 +911,7 @@ class KaraokeTransforms(BaseTransforms):
             target_audio = vocal
             input_raw_text = TASKS[task_type][task_id][0]
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_raw_text = ""
             target_text = None
@@ -956,15 +922,757 @@ class KaraokeTransforms(BaseTransforms):
             + (0 if target_text is None else target_text.shape[-1])
         )
         if total_length > self.max_length:
-            self._update_stats(
-                skipped=True, message="Total length too large"
-            )
+            self._update_stats(skipped=True, message="Total length too large")
             return
         debug = (
-            f'input_raw_text: {input_raw_text} | '
-            + f'input_audio: {0 if input_audio is None else input_audio.size()} | '
-            + f'target_raw_text: {target_raw_text} | '
-            + f'target_audio: {0 if target_audio is None else target_audio.size()}'
+            f"input_raw_text: {input_raw_text} | "
+            + f"input_audio: {0 if input_audio is None else input_audio.size()} | "
+            + f"target_raw_text: {target_raw_text} | "
+            + f"target_audio: {0 if target_audio is None else target_audio.size()}"
+        )
+
+        output_dict = {
+            "input_text": input_text,
+            "target_text": target_text,
+            "input_audio": input_audio,
+            "target_audio": target_audio,
+            "audio_length": audio_length,
+            "task_type": task_type,
+            "task_id": task_id,
+            "debug": debug,
+        }
+        yield output_dict
+        self._update_stats(skipped=False)
+
+
+class MIRBeatTransforms(BaseTransforms):
+    name = "MIRBeatTransforms"
+    data_sample_rate = 16000
+
+    def __init__(
+        self,
+        sample_rate: int = 24000,
+        min_duration: float = 10,
+        max_duration: float = 120,
+        normalize_audio: bool = False,
+        tokenizer=None,
+        frame_rate: int = 25,
+        max_length: int = 2048,
+    ):
+        print(f"[{self.name}] initializing...")
+        super().__init__()
+        self.sample_rate = sample_rate
+        self.min_duration = min_duration
+        self.max_duration = max_duration
+        self.tokenizer = tokenizer
+        self.frame_rate = frame_rate
+        self.max_length = max_length
+        base_transforms = []
+        base_transforms += [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
+        if self.data_sample_rate != sample_rate:
+            base_transforms.append(Resample(self.data_sample_rate, sample_rate))
+        if normalize_audio:
+            base_transforms.append(FastNormalizeAudio())
+        self.base_transform = Compose(base_transforms)
+        print(f"[{self.name}] initialized.")
+
+    def __call__(self, item: Dict[str, Any]) -> Generator:
+        try:
+            audio = self.base_transform(item["audio.npy"])
+        except Exception as e:
+            self._update_stats(skipped=True, message=f"Error loading audio: {e}")
+            return
+        if audio.size(-1) < self.min_duration * self.sample_rate:
+            self._update_stats(skipped=True, message="Too short")
+            return
+        if audio.size(-1) > self.max_duration * self.sample_rate:
+            self._update_stats(skipped=True, message="Too long")
+            return
+
+        beats = [time[0] for time in item["beats.pickle"]]
+        beat_str = ", ".join([f"{b:.2f}" for b in beats])
+        tempo = int(
+            round(
+                (len(beats) - 1)
+                / (item["beats.pickle"][-1][0] - item["beats.pickle"][0][0])
+                * 60
+            )
+        )
+
+        task_type = "understanding"
+        task_id = 6
+        input_audio = audio
+        target_audio = None
+        input_raw_text = TASKS[task_type][task_id][0]
+        input_text = self.tokenizer(
+            input_raw_text, add_special_tokens=False, return_tensors="pt"
+        )["input_ids"].squeeze(dim=0)
+        target_raw_text = f"tempo is {tempo}, beat timestamps are {beat_str}"
+        target_text = self.tokenizer(
+            target_raw_text, add_special_tokens=False, return_tensors="pt"
+        )["input_ids"].squeeze(dim=0)
+        audio_length = input_audio.shape[-1]
+
+        total_length = (
+            math.ceil(audio_length / self.sample_rate * self.frame_rate)
+            + (0 if input_text is None else input_text.shape[-1])
+            + (0 if target_text is None else target_text.shape[-1])
+        )
+        if total_length > self.max_length:
+            self._update_stats(skipped=True, message="Total length too large")
+            return
+        debug = (
+            f"input_raw_text: {input_raw_text} | "
+            + f"input_audio: {0 if input_audio is None else input_audio.size()} | "
+            + f"target_raw_text: {target_raw_text} | "
+            + f"target_audio: {0 if target_audio is None else target_audio.size()}"
+        )
+
+        output_dict = {
+            "input_text": input_text,
+            "target_text": target_text,
+            "input_audio": input_audio,
+            "target_audio": target_audio,
+            "audio_length": audio_length,
+            "task_type": task_type,
+            "task_id": task_id,
+            "debug": debug,
+        }
+        yield output_dict
+        self._update_stats(skipped=False)
+
+
+class MIRChordTransforms(BaseTransforms):
+    name = "MIRChordTransforms"
+    data_sample_rate = 24000
+
+    def __init__(
+        self,
+        sample_rate: int = 24000,
+        min_duration: float = 10,
+        max_duration: float = 120,
+        normalize_audio: bool = False,
+        tokenizer=None,
+        frame_rate: int = 25,
+        max_length: int = 2048,
+    ):
+        print(f"[{self.name}] initializing...")
+        super().__init__()
+        self.sample_rate = sample_rate
+        self.min_duration = min_duration
+        self.max_duration = max_duration
+        self.tokenizer = tokenizer
+        self.frame_rate = frame_rate
+        self.max_length = max_length
+        base_transforms = []
+        base_transforms += [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
+        if self.data_sample_rate != sample_rate:
+            base_transforms.append(Resample(self.data_sample_rate, sample_rate))
+        if normalize_audio:
+            base_transforms.append(FastNormalizeAudio())
+        self.base_transform = Compose(base_transforms)
+        print(f"[{self.name}] initialized.")
+
+    def __call__(self, item: Dict[str, Any]) -> Generator:
+        chords = item.get("chords.pickle", None)
+        intervals = item.get("intervals.pickle", None)
+        if (chords is None) or (intervals is None):
+            self._update_stats(skipped=True, message="No Chords or Intervals")
+            return
+        if len(chords) != len(intervals):
+            self._update_stats(
+                skipped=True, message="Chords and Intervals are not matched"
+            )
+            return
+        starts = [int(t[0] * self.sample_rate) for t in intervals]
+        ends = [int(t[1] * self.sample_rate) for t in intervals]
+
+        try:
+            audio = self.base_transform(item["audio.npy"])
+        except Exception as e:
+            self._update_stats(skipped=True, message=f"Error loading audio: {e}")
+            return
+        if audio.size(-1) < self.min_duration * self.sample_rate:
+            self._update_stats(skipped=True, message="Too short")
+            return
+
+        sampled_duration = random.randint(
+            self.min_duration * self.sample_rate, self.max_duration * self.sample_rate
+        )
+        sampled_start = random.randint(0, audio.size(-1) - sampled_duration)
+        sampled_end = sampled_start + sampled_duration
+
+        selected_start_i, selected_start = min(
+            enumerate(starts), key=lambda x: abs(sampled_start - x[1])
+        )
+        selected_end_i, selected_end = min(
+            enumerate(ends[selected_start_i:]), key=lambda x: abs(sampled_end - x[1])
+        )
+        selected_end_i = selected_end_i + selected_start_i
+
+        input_audio = audio[:, selected_start:selected_end]
+        if input_audio.size(-1) < self.min_duration * self.sample_rate:
+            self._update_stats(
+                skipped=True, message="Too short after random chunk selection"
+            )
+            return
+        if input_audio.size(-1) > self.max_duration * self.sample_rate:
+            self._update_stats(
+                skipped=True, message="Too long after random chunk selection"
+            )
+            return
+
+        task_type = "understanding"
+        task_id = 7
+
+        chord_str = []
+        shift = selected_start
+        for i in range(selected_start_i, selected_end_i + 1):
+            chord_str.append(
+                f"{chords[i]}, {((starts[i] - shift) / self.sample_rate):.2f}, {((ends[i] - shift) / self.sample_rate):.2f}"
+            )
+        chord_str = ", ".join(chord_str)
+
+        target_audio = None
+        input_raw_text = TASKS[task_type][task_id][0]
+        input_text = self.tokenizer(
+            input_raw_text, add_special_tokens=False, return_tensors="pt"
+        )["input_ids"].squeeze(dim=0)
+        target_raw_text = f"chords and intervals are {chord_str}"
+        target_text = self.tokenizer(
+            target_raw_text, add_special_tokens=False, return_tensors="pt"
+        )["input_ids"].squeeze(dim=0)
+        audio_length = input_audio.shape[-1]
+
+        total_length = (
+            math.ceil(audio_length / self.sample_rate * self.frame_rate)
+            + (0 if input_text is None else input_text.shape[-1])
+            + (0 if target_text is None else target_text.shape[-1])
+        )
+        if total_length > self.max_length:
+            self._update_stats(skipped=True, message="Total length too large")
+            return
+        debug = (
+            f"input_raw_text: {input_raw_text} | "
+            + f"input_audio: {0 if input_audio is None else input_audio.size()} | "
+            + f"target_raw_text: {target_raw_text} | "
+            + f"target_audio: {0 if target_audio is None else target_audio.size()}"
+        )
+
+        output_dict = {
+            "input_text": input_text,
+            "target_text": target_text,
+            "input_audio": input_audio,
+            "target_audio": target_audio,
+            "audio_length": audio_length,
+            "task_type": task_type,
+            "task_id": task_id,
+            "debug": debug,
+        }
+        yield output_dict
+        self._update_stats(skipped=False)
+
+
+class MIRKeyTransforms(BaseTransforms):
+    name = "MIRKeyTransforms"
+    data_sample_rate = 16000
+
+    def __init__(
+        self,
+        sample_rate: int = 24000,
+        min_duration: float = 10,
+        max_duration: float = 120,
+        normalize_audio: bool = False,
+        tokenizer=None,
+        frame_rate: int = 25,
+        max_length: int = 2048,
+    ):
+        print(f"[{self.name}] initializing...")
+        super().__init__()
+        self.sample_rate = sample_rate
+        self.min_duration = min_duration
+        self.max_duration = max_duration
+        self.tokenizer = tokenizer
+        self.frame_rate = frame_rate
+        self.max_length = max_length
+        base_transforms = []
+        base_transforms += [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
+        if self.data_sample_rate != sample_rate:
+            base_transforms.append(Resample(self.data_sample_rate, sample_rate))
+        if normalize_audio:
+            base_transforms.append(FastNormalizeAudio())
+        self.base_transform = Compose(base_transforms)
+        self.mode2name = {
+            1: "Major/Ionian",
+            2: "Dorian",
+            3: "Phrygian",
+            4: "Lydian",
+            5: "Mixolydian",
+            6: "Minor/Aeolian",
+            7: "Locrian",
+        }
+        self.key2name = {
+            1: "C",
+            2: "C#",
+            3: "D",
+            4: "D#",
+            5: "E",
+            6: "F",
+            7: "F#",
+            8: "G",
+            9: "G#",
+            10: "A",
+            11: "A#",
+            12: "B",
+        }
+        print(f"[{self.name}] initialized.")
+
+    def filter_intervals(self, intervals):
+        start_time = float(intervals[1][0])
+        end_time = float(intervals[1][1])
+        delta = end_time - start_time
+        if self.min_duration > delta:
+            return False
+        if self.max_duration < delta:
+            return False
+        return True
+
+    def __call__(self, item: Dict[str, Any]) -> Generator:
+        keys = item.get("keys.pickle", None)
+        intervals = item.get("intervals.pickle", None)
+        if (
+            (keys is None)
+            or (intervals is None)
+            or (len(keys) == 0)
+            or (len(intervals) == 0)
+        ):
+            self._update_stats(skipped=True, message="No keys or Intervals")
+            return
+        if len(keys) != len(intervals):
+            self._update_stats(
+                skipped=True, message="Keys and Intervals are not matched"
+            )
+            return
+        merged = []
+        for key, interval in zip(keys, intervals):
+            merged.append((key, interval))
+        random.shuffle(merged)
+        selected_key = merged[0]
+        if self.min_duration > float(selected_key[1][1]) - float(selected_key[1][0]):
+            self._update_stats(skipped=True, message="Too short")
+            return
+        if self.max_duration < float(selected_key[1][1]) - float(selected_key[1][0]):
+            duration = random.uniform(self.min_duration, self.max_duration)
+            start = random.uniform(
+                float(selected_key[1][0]),
+                float(selected_key[1][1]) - float(selected_key[1][0]) - duration,
+            )
+            selected_key[1][0] = start
+            selected_key[1][1] = start + duration
+        key_name = self.key2name.get(selected_key[0][0], None)
+        mode_name = self.mode2name.get(selected_key[0][1], None)
+        if (key_name is None) or (mode_name is None):
+            self._update_stats(skipped=True, message="Invalid key or mode")
+            return
+        key_str = f"{key_name} {mode_name}"
+
+        try:
+            audio = self.base_transform(item["audio.npy"])
+        except Exception as e:
+            self._update_stats(skipped=True, message=f"Error loading audio: {e}")
+            return
+
+        task_type = "understanding"
+        task_id = 8
+
+        input_audio = audio[
+            :,
+            int(selected_key[1][0] * self.sample_rate) : int(
+                selected_key[1][1] * self.sample_rate
+            ),
+        ]
+        target_audio = None
+        input_raw_text = TASKS[task_type][task_id][0]
+        input_text = self.tokenizer(
+            input_raw_text, add_special_tokens=False, return_tensors="pt"
+        )["input_ids"].squeeze(dim=0)
+        target_raw_text = f"key and mode are {key_str}"
+        target_text = self.tokenizer(
+            target_raw_text, add_special_tokens=False, return_tensors="pt"
+        )["input_ids"].squeeze(dim=0)
+        audio_length = input_audio.shape[-1]
+
+        total_length = (
+            math.ceil(audio_length / self.sample_rate * self.frame_rate)
+            + (0 if input_text is None else input_text.shape[-1])
+            + (0 if target_text is None else target_text.shape[-1])
+        )
+        if total_length > self.max_length:
+            self._update_stats(skipped=True, message="Total length too large")
+            return
+        debug = (
+            f"input_raw_text: {input_raw_text} | "
+            + f"input_audio: {0 if input_audio is None else input_audio.size()} | "
+            + f"target_raw_text: {target_raw_text} | "
+            + f"target_audio: {0 if target_audio is None else target_audio.size()}"
+        )
+
+        output_dict = {
+            "input_text": input_text,
+            "target_text": target_text,
+            "input_audio": input_audio,
+            "target_audio": target_audio,
+            "audio_length": audio_length,
+            "task_type": task_type,
+            "task_id": task_id,
+            "debug": debug,
+        }
+        yield output_dict
+        self._update_stats(skipped=False)
+
+
+class MIRStructureTransforms(BaseTransforms):
+    name = "MIRStructureTransforms"
+    data_sample_rate = 24000
+
+    def __init__(
+        self,
+        sample_rate: int = 24000,
+        min_duration: float = 10,
+        max_duration: float = 120,
+        normalize_audio: bool = False,
+        tokenizer=None,
+        frame_rate: int = 25,
+        max_length: int = 2048,
+    ):
+        print(f"[{self.name}] initializing...")
+        super().__init__()
+        self.sample_rate = sample_rate
+        self.min_duration = min_duration
+        self.max_duration = max_duration
+        self.tokenizer = tokenizer
+        self.frame_rate = frame_rate
+        self.max_length = max_length
+        base_transforms = []
+        base_transforms += [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
+        if self.data_sample_rate != sample_rate:
+            base_transforms.append(Resample(self.data_sample_rate, sample_rate))
+        if normalize_audio:
+            base_transforms.append(FastNormalizeAudio())
+        self.base_transform = Compose(base_transforms)
+        print(f"[{self.name}] initialized.")
+
+        self.seg_map = {
+            "silence": "silence",
+            "end": "end",
+            "build": "verse",
+            "fadein": "intro",
+            "opening": "intro",
+            "stutter": "chorus",
+            "slow": "verse",
+            "drumroll": "inst",
+            "synth": "inst",
+            "closing": "outro",
+            "interlude": "inst",
+            "mantra": "verse",
+            "fade-out": "outro",
+            "out": "outro",
+            "guitar": "inst",
+            "head": "inst",
+            "loop": "inst",
+        }
+
+        self.substr_map = {
+            "other": "other",
+            "pre-chorus-and-chorus": "chorus",
+            "verse-and-chorus": "chorus",
+            "intro": "intro",
+            "verse": "verse",
+            "prechorus": "verse",
+            "refrain": "chorus",
+            "pre-chorus": "verse",
+            "chorus": "chorus",
+            "bridge": "bridge",
+            "outro": "outro",
+            "fadeout": "outro",
+            "ending": "outro",
+            "fadein": "intro",
+            "inst": "inst",
+            "solo": "inst",
+            "break": "inst",
+            "trans": "bridge",
+            "gtr": "inst",
+            "section": "verse",
+            "riff": "inst",
+            "rap": "verse",
+            "coda": "outro",
+            "interlude": "inst",
+            "lead-in": "inst",
+            "theme": "chorus",
+            "development": "verse",
+            "variation": "bridge",
+            "impro": "inst",
+            "guitar": "inst",
+            "spoken": "inst",
+            "trumpet": "inst",
+            "applause": "inst",
+            "voice": "inst",
+            "stage": "inst",
+            "banjo": "inst",
+            "crowd": "inst",
+            "pause": "inst",
+            "tag": "inst",
+        }
+
+    def convert_structure_label(self, label):
+        label = label.lower()
+        for s in self.substr_map:
+            if s in label:
+                return self.substr_map[s]
+        if label in self.seg_map:
+            return self.seg_map[label]
+        else:
+            return "unknown"
+
+    def __call__(self, item: Dict[str, Any]) -> Generator:
+        task_type = "understanding"
+        task_id = 9
+        segments = item.get("labels.pickle", None)
+        intervals = item.get("intervals.pickle", None)
+        if (segments is None) or (intervals is None):
+            self._update_stats(skipped=True, message="No Segments or Intervals")
+            return
+        if len(segments) != len(intervals):
+            self._update_stats(
+                skipped=True, message="Segments and Intervals are not matched"
+            )
+            return
+        segments = [self.convert_structure_label(label) for label in segments]
+
+        try:
+            audio = self.base_transform(item["audio.npy"])
+        except Exception as e:
+            self._update_stats(skipped=True, message=f"Error loading audio: {e}")
+            return
+        if audio.size(-1) < self.min_duration * self.sample_rate:
+            self._update_stats(skipped=True, message="Too short")
+            return
+
+        if audio.size(-1) < self.max_duration * self.sample_rate:
+            input_audio = audio
+            structure_str = []
+            for segment, interval in zip(segments, intervals):
+                structure_str.append(f"{segment}, {interval[0]:.2f}, {interval[1]:.2f}")
+            structure_str = ", ".join(structure_str)
+        else:
+            starts = [int(t[0] * self.sample_rate) for t in intervals]
+            ends = [int(t[1] * self.sample_rate) for t in intervals]
+            sampled_duration = random.randint(
+                self.min_duration * self.sample_rate,
+                self.max_duration * self.sample_rate,
+            )
+            sampled_start = random.randint(0, audio.size(-1) - sampled_duration)
+            sampled_end = sampled_start + sampled_duration
+
+            selected_start_i, selected_start = min(
+                enumerate(starts), key=lambda x: abs(sampled_start - x[1])
+            )
+            selected_end_i, selected_end = min(
+                enumerate(ends[selected_start_i:]),
+                key=lambda x: abs(sampled_end - x[1]),
+            )
+            selected_end_i = selected_end_i + selected_start_i
+
+            input_audio = audio[:, selected_start:selected_end]
+            if input_audio.size(-1) < self.min_duration * self.sample_rate:
+                self._update_stats(
+                    skipped=True, message="Too short after random chunk selection"
+                )
+                return
+            if input_audio.size(-1) > self.max_duration * self.sample_rate:
+                self._update_stats(
+                    skipped=True, message="Too long after random chunk selection"
+                )
+                return
+            shift = selected_start
+            structure_str = []
+            for i in range(selected_start_i, selected_end_i + 1):
+                structure_str.append(
+                    f"{segments[i]}, {((starts[i] - shift) / self.sample_rate):.2f}, {((ends[i] - shift) / self.sample_rate):.2f}"
+                )
+            structure_str = ", ".join(structure_str)
+
+        target_audio = None
+        input_raw_text = TASKS[task_type][task_id][0]
+        input_text = self.tokenizer(
+            input_raw_text, add_special_tokens=False, return_tensors="pt"
+        )["input_ids"].squeeze(dim=0)
+        target_raw_text = f"segements and intervals are {structure_str}"
+        target_text = self.tokenizer(
+            target_raw_text, add_special_tokens=False, return_tensors="pt"
+        )["input_ids"].squeeze(dim=0)
+        audio_length = input_audio.shape[-1]
+
+        total_length = (
+            math.ceil(audio_length / self.sample_rate * self.frame_rate)
+            + (0 if input_text is None else input_text.shape[-1])
+            + (0 if target_text is None else target_text.shape[-1])
+        )
+        if total_length > self.max_length:
+            self._update_stats(skipped=True, message="Total length too large")
+            return
+        debug = (
+            f"input_raw_text: {input_raw_text} | "
+            + f"input_audio: {0 if input_audio is None else input_audio.size()} | "
+            + f"target_raw_text: {target_raw_text} | "
+            + f"target_audio: {0 if target_audio is None else target_audio.size()}"
+        )
+
+        output_dict = {
+            "input_text": input_text,
+            "target_text": target_text,
+            "input_audio": input_audio,
+            "target_audio": target_audio,
+            "audio_length": audio_length,
+            "task_type": task_type,
+            "task_id": task_id,
+            "debug": debug,
+        }
+        yield output_dict
+        self._update_stats(skipped=False)
+
+
+class AudioTextPairTransforms(BaseTransforms):
+    name = "AudioTextPairTransforms"
+    data_sample_rate = 24000
+
+    def __init__(
+        self,
+        sample_rate: int = 24000,
+        min_duration: float = 10,
+        max_duration: float = 120,
+        normalize_audio: bool = False,
+        tokenizer=None,
+        frame_rate: int = 25,
+        max_length: int = 2048,
+    ):
+        print(f"[{self.name}] initializing...")
+        super().__init__()
+        self.sample_rate = sample_rate
+        self.min_duration = min_duration
+        self.max_duration = max_duration
+        self.tokenizer = tokenizer
+        self.frame_rate = frame_rate
+        self.max_length = max_length
+        base_transforms = []
+        base_transforms += [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
+        if self.data_sample_rate != sample_rate:
+            base_transforms.append(Resample(self.data_sample_rate, sample_rate))
+        if normalize_audio:
+            base_transforms.append(FastNormalizeAudio())
+        self.base_transform = Compose(base_transforms)
+        print(f"[{self.name}] initialized.")
+
+    def _clean_text(self, text):
+        texts = text.strip().split("\n")
+        effective_text = list()
+        for txt in texts:
+            try:
+                effective_text.append(txt.split(":")[1].strip())
+            except:
+                effective_text.append("")
+        random.shuffle(effective_text)
+        result_text = ", ".join(effective_text[:5])
+        return result_text
+
+    def _get_text(self, item):
+        meta = json.loads(item["meta"])
+        name = item["__dataset_name__"]
+        if name in [
+            "music_Smcc_Mvocal_Len_Tgpt_N1802k",
+            "music_Smcc_Mvocal_Len_Tgpt_N621k",
+        ]:
+            if meta["gpt_text"].startswith("Unknown"):
+                return None
+            text = self._clean_text(meta["gpt_text"])
+        elif name in [
+            "music_Severynoise_Mvocal_Len_N100k",
+            "music_Severynoise_Mnonvocal_Len_N64k",
+        ]:
+            text_list = [
+                meta["meta_song_author_name"],
+                meta["meta_song_title"],
+                meta["genre"],
+            ]
+            random.shuffle(text_list)
+            text = ", ".join(text_list)
+            return text
+        elif name == "music_Smcc_Mnonvocal_Len_Tgpt_N27m":
+            if random.random() < 0.5 or len(meta["g4"]) == 0:
+                text = random.choice(meta["n2m"])
+            else:
+                tags = [v for v in meta["g4"].values()]
+                filtered_tags = []
+                random.shuffle(tags)
+                for tag in tags:
+                    if random.random() < 0.8:
+                        filtered_tags.append(tag)
+                text = ", ".join(filtered_tags)
+        elif name == "music_Saudioset_Mmix_Lmix_N1951k":
+            text = meta["tags"]
+        return text
+
+    def __call__(self, item: Dict[str, Any]) -> Generator:
+        try:
+            wav = torch.frombuffer(item["wav"], dtype=torch.int16)
+            audio = self.base_transform(wav)
+        except Exception as e:
+            self._update_stats(skipped=True, message=f"Error loading audio: {e}")
+            return
+        if audio.size(-1) < self.min_duration * self.sample_rate:
+            self._update_stats(skipped=True, message="Too short")
+            return
+        if audio.size(-1) > self.max_duration * self.sample_rate:
+            duration = random.randint(
+                self.min_duration * self.sample_rate,
+                self.max_duration * self.sample_rate,
+            )
+            start = random.randint(0, audio.size(-1) - duration)
+            audio = audio[:, start : start + duration]
+        try:
+            text = self._get_text(item)
+        except Exception as e:
+            self._update_stats(skipped=True, message=f"Error loading text: {e}")
+            return
+
+        task_type = "understanding"
+        task_id = 3
+
+        input_audio = audio
+        target_audio = None
+        input_raw_text = TASKS[task_type][task_id][0]
+        input_text = self.tokenizer(
+            input_raw_text, add_special_tokens=False, return_tensors="pt"
+        )["input_ids"].squeeze(dim=0)
+        target_raw_text = text
+        target_text = self.tokenizer(
+            target_raw_text, add_special_tokens=False, return_tensors="pt"
+        )["input_ids"].squeeze(dim=0)
+        audio_length = input_audio.shape[-1]
+
+        total_length = (
+            math.ceil(audio_length / self.sample_rate * self.frame_rate)
+            + (0 if input_text is None else input_text.shape[-1])
+            + (0 if target_text is None else target_text.shape[-1])
+        )
+        if total_length > self.max_length:
+            self._update_stats(skipped=True, message="Total length too large")
+            return
+        debug = (
+            f"input_raw_text: {input_raw_text} | "
+            + f"input_audio: {0 if input_audio is None else input_audio.size()} | "
+            + f"target_raw_text: {target_raw_text} | "
+            + f"target_audio: {0 if target_audio is None else target_audio.size()}"
         )
 
         output_dict = {
@@ -989,8 +1697,8 @@ class LibriLightASRTransforms(BaseTransforms):
         self,
         sample_rate: int = 24000,
         audio_key: str = "audio.npy",
-        min_duration: int = 5,
-        max_duration: int = 30,
+        min_duration: float = 5,
+        max_duration: float = 30,
         normalize_audio: bool = False,
         tokenizer=None,
         frame_rate: int = 25,
@@ -1046,40 +1754,38 @@ class LibriLightASRTransforms(BaseTransforms):
         start = int(float(selected_utterance["start_time"]) * self.sample_rate)
         end = int(float(selected_utterance["end_time"]) * self.sample_rate)
         if end > audio.size(-1):
-            self._update_stats(
-                skipped=True, message="Lyrics timestamp out of range"
-            )
+            self._update_stats(skipped=True, message="Lyrics timestamp out of range")
             return
 
         selected_task = torch.multinomial(torch.FloatTensor([1, 1]), 1).item()
         if selected_task == 0:
             task_type = "understanding"
             task_id = 5
-            input_audio = audio[:, start : end]
+            input_audio = audio[:, start:end]
             target_audio = None
             input_raw_text = TASKS[task_type][task_id][0]
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_raw_text = '"' + str(selected_utterance["text"]) + '"'
             target_text = self.tokenizer(
-                target_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                target_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             audio_length = input_audio.shape[-1]
         elif selected_task == 1:
             task_type = "generation"
             task_id = 4
             input_audio = None
-            target_audio = audio[:, start : end]
-            input_raw_text = TASKS[task_type][task_id][0] + " " + '"' + str(selected_utterance["text"]) + '"'
+            target_audio = audio[:, start:end]
+            input_raw_text = (
+                TASKS[task_type][task_id][0]
+                + " "
+                + '"'
+                + str(selected_utterance["text"])
+                + '"'
+            )
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_raw_text = ""
             target_text = None
@@ -1090,15 +1796,13 @@ class LibriLightASRTransforms(BaseTransforms):
             + (0 if target_text is None else target_text.shape[-1])
         )
         if total_length > self.max_length:
-            self._update_stats(
-                skipped=True, message="Total length too large"
-            )
+            self._update_stats(skipped=True, message="Total length too large")
             return
         debug = (
-            f'input_raw_text: {input_raw_text} | '
-            + f'input_audio: {0 if input_audio is None else input_audio.size()} | '
-            + f'target_raw_text: {target_raw_text} | '
-            + f'target_audio: {0 if target_audio is None else target_audio.size()}'
+            f"input_raw_text: {input_raw_text} | "
+            + f"input_audio: {0 if input_audio is None else input_audio.size()} | "
+            + f"target_raw_text: {target_raw_text} | "
+            + f"target_audio: {0 if target_audio is None else target_audio.size()}"
         )
 
         output_dict = {
@@ -1123,8 +1827,8 @@ class LibriTTSTransforms(BaseTransforms):
         self,
         sample_rate: int = 24000,
         audio_key: str = "audio.npy",
-        min_duration: int = 5,
-        max_duration: int = 30,
+        min_duration: float = 5,
+        max_duration: float = 30,
         normalize_audio: bool = False,
         tokenizer=None,
         frame_rate: int = 25,
@@ -1153,7 +1857,7 @@ class LibriTTSTransforms(BaseTransforms):
         if audio.size(-1) > self.max_duration * self.sample_rate:
             self._update_stats(skipped=True, message="Audio too long")
             return
-        
+
         selected_task = torch.multinomial(torch.FloatTensor([1, 1]), 1).item()
         if selected_task == 0:
             task_type = "understanding"
@@ -1162,15 +1866,11 @@ class LibriTTSTransforms(BaseTransforms):
             target_audio = None
             input_raw_text = TASKS[task_type][task_id][0]
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_raw_text = '"' + item["normalized_text.txt"] + '"'
             target_text = self.tokenizer(
-                target_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                target_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             audio_length = input_audio.shape[-1]
         elif selected_task == 1:
@@ -1178,11 +1878,15 @@ class LibriTTSTransforms(BaseTransforms):
             task_id = 4
             input_audio = None
             target_audio = audio
-            input_raw_text = TASKS[task_type][task_id][0] + " " +  '"' + item["normalized_text.txt"] + '"'
+            input_raw_text = (
+                TASKS[task_type][task_id][0]
+                + " "
+                + '"'
+                + item["normalized_text.txt"]
+                + '"'
+            )
             input_text = self.tokenizer(
-                input_raw_text,
-                add_special_tokens=False,
-                return_tensors="pt",
+                input_raw_text, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].squeeze(dim=0)
             target_raw_text = ""
             target_text = None
@@ -1193,15 +1897,13 @@ class LibriTTSTransforms(BaseTransforms):
             + (0 if target_text is None else target_text.shape[-1])
         )
         if total_length > self.max_length:
-            self._update_stats(
-                skipped=True, message="Total length too large"
-            )
+            self._update_stats(skipped=True, message="Total length too large")
             return
         debug = (
-            f'input_raw_text: {input_raw_text} | '
-            + f'input_audio: {0 if input_audio is None else input_audio.size()} | '
-            + f'target_raw_text: {target_raw_text} | '
-            + f'target_audio: {0 if target_audio is None else target_audio.size()}'
+            f"input_raw_text: {input_raw_text} | "
+            + f"input_audio: {0 if input_audio is None else input_audio.size()} | "
+            + f"target_raw_text: {target_raw_text} | "
+            + f"target_audio: {0 if target_audio is None else target_audio.size()}"
         )
 
         output_dict = {
@@ -1407,8 +2109,8 @@ class KaraokeDataset(WebPipeline):
         self,
         url2index: str = "hdfs:///home/byte_speech_sv/data/karaoke_for_singsong_npy/url2idx.txt",
         sample_rate: int = 24000,
-        min_duration: int = 0,
-        max_duration: int = 30,
+        min_duration: float = 1,
+        max_duration: float = 30,
         normalize_audio: bool = False,
         tokenizer=None,
         frame_rate: int = 25,
@@ -1432,6 +2134,171 @@ class KaraokeDataset(WebPipeline):
         print(f"[{self.name}] initialized.")
 
 
+class MIRBeatDataset(WebPipeline):
+    name = "MIRBeat"
+    data_sample_rate = 16000
+
+    def __init__(
+        self,
+        url2index: str,
+        sample_rate: int = 24000,
+        min_duration: float = 1,
+        max_duration: float = 30,
+        normalize_audio: bool = False,
+        tokenizer=None,
+        frame_rate: int = 25,
+        max_length: int = 2048,
+        **kwargs,
+    ):
+        print(f"[{self.name}] initializing...")
+        transforms = MIRBeatTransforms(
+            sample_rate=sample_rate,
+            min_duration=min_duration,
+            max_duration=max_duration,
+            normalize_audio=normalize_audio,
+            tokenizer=tokenizer,
+            frame_rate=frame_rate,
+            max_length=max_length,
+        )
+        preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
+        dataset = WebDataset(urls=url2index, **kwargs)
+        pipeline = ["decode", {"compose": [preprocessor.train_buffer_preprocessor]}]
+        super().__init__(dataset, pipeline)
+        print(f"[{self.name}] initialized.")
+
+
+class MIRChordDataset(WebPipeline):
+    name = "MIRChord"
+    data_sample_rate = 24000
+
+    def __init__(
+        self,
+        url2index: str,
+        sample_rate: int = 24000,
+        min_duration: float = 1,
+        max_duration: float = 30,
+        normalize_audio: bool = False,
+        tokenizer=None,
+        frame_rate: int = 25,
+        max_length: int = 2048,
+        **kwargs,
+    ):
+        print(f"[{self.name}] initializing...")
+        transforms = MIRChordTransforms(
+            sample_rate=sample_rate,
+            min_duration=min_duration,
+            max_duration=max_duration,
+            normalize_audio=normalize_audio,
+            tokenizer=tokenizer,
+            frame_rate=frame_rate,
+            max_length=max_length,
+        )
+        preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
+        dataset = WebDataset(urls=url2index, **kwargs)
+        pipeline = ["decode", {"compose": [preprocessor.train_buffer_preprocessor]}]
+        super().__init__(dataset, pipeline)
+        print(f"[{self.name}] initialized.")
+
+
+class MIRKeyDataset(WebPipeline):
+    name = "MIRKey"
+    data_sample_rate = 16000
+
+    def __init__(
+        self,
+        url2index: str,
+        sample_rate: int = 24000,
+        min_duration: float = 1,
+        max_duration: float = 30,
+        normalize_audio: bool = False,
+        tokenizer=None,
+        frame_rate: int = 25,
+        max_length: int = 2048,
+        **kwargs,
+    ):
+        print(f"[{self.name}] initializing...")
+        transforms = MIRKeyTransforms(
+            sample_rate=sample_rate,
+            min_duration=min_duration,
+            max_duration=max_duration,
+            normalize_audio=normalize_audio,
+            tokenizer=tokenizer,
+            frame_rate=frame_rate,
+            max_length=max_length,
+        )
+        preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
+        dataset = WebDataset(urls=url2index, **kwargs)
+        pipeline = ["decode", {"compose": [preprocessor.train_buffer_preprocessor]}]
+        super().__init__(dataset, pipeline)
+        print(f"[{self.name}] initialized.")
+
+
+class MIRStructureDataset(WebPipeline):
+    name = "MIRStructure"
+    data_sample_rate = 24000
+
+    def __init__(
+        self,
+        url2index: str,
+        sample_rate: int = 24000,
+        min_duration: float = 1,
+        max_duration: float = 30,
+        normalize_audio: bool = False,
+        tokenizer=None,
+        frame_rate: int = 25,
+        max_length: int = 2048,
+        **kwargs,
+    ):
+        print(f"[{self.name}] initializing...")
+        transforms = MIRStructureTransforms(
+            sample_rate=sample_rate,
+            min_duration=min_duration,
+            max_duration=max_duration,
+            normalize_audio=normalize_audio,
+            tokenizer=tokenizer,
+            frame_rate=frame_rate,
+            max_length=max_length,
+        )
+        preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
+        dataset = WebDataset(urls=url2index, **kwargs)
+        pipeline = ["decode", {"compose": [preprocessor.train_buffer_preprocessor]}]
+        super().__init__(dataset, pipeline)
+        print(f"[{self.name}] initialized.")
+
+
+class AudioTextPairDataset(WebPipeline):
+    name = "AudioTextPair"
+    data_sample_rate = 24000
+
+    def __init__(
+        self,
+        data_id: int,
+        sample_rate: int = 24000,
+        min_duration: float = 1,
+        max_duration: float = 30,
+        normalize_audio: bool = False,
+        tokenizer=None,
+        frame_rate: int = 25,
+        max_length: int = 2048,
+        **kwargs,
+    ):
+        print(f"[{self.name}] initializing...")
+        transforms = AudioTextPairTransforms(
+            sample_rate=sample_rate,
+            min_duration=min_duration,
+            max_duration=max_duration,
+            normalize_audio=normalize_audio,
+            tokenizer=tokenizer,
+            frame_rate=frame_rate,
+            max_length=max_length,
+        )
+        preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
+        dataset = ParquetDataset(data_id=data_id, **kwargs)
+        pipeline = [{"compose": [preprocessor.train_buffer_preprocessor]}]
+        super().__init__(dataset, pipeline)
+        print(f"[{self.name}] initialized.")
+
+
 class LibriLightASRDataset(WebPipeline):
     name = "LibriLightASR"
 
@@ -1440,8 +2307,8 @@ class LibriLightASRDataset(WebPipeline):
         url2index: str = "hdfs:///home/byte_speech_sv/data/speech/librilight_asr_npy/url2idx.txt",
         sample_rate: int = 24000,
         audio_key: str = "audio.npy",
-        min_duration: int = 5,
-        max_duration: int = 30,
+        min_duration: float = 5,
+        max_duration: float = 30,
         normalize_audio: bool = False,
         tokenizer=None,
         frame_rate: int = 25,
@@ -1475,8 +2342,8 @@ class LibriTTSDataset(WebPipeline):
         urls: str = "pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/speech/libritts/24000hz/test-clean/00000.tar",
         sample_rate: int = 24000,
         audio_key: str = "audio.npy",
-        min_duration: int = 0,
-        max_duration: int = 30,
+        min_duration: float = 1,
+        max_duration: float = 30,
         normalize_audio: bool = False,
         tokenizer=None,
         frame_rate: int = 25,
@@ -1506,8 +2373,8 @@ class DataModule(pl.LightningDataModule):
         self,
         sample_rate: int,
         batch_size: int,
-        min_duration: int = 10,
-        max_duration: int = 120,
+        min_duration: float = 10,
+        max_duration: float = 120,
         normalize_audio: bool = False,
         shuffle_buffer_size: int = 10,
         num_workers: int = 4,
@@ -1599,7 +2466,9 @@ class DataModule(pl.LightningDataModule):
                 use_pipe=use_pipe,
                 handler=wds.warn_and_continue,
             )
-            datasets.append(DataPipeline(mcc_instrumental, wds.shuffle(shuffle_buffer_size)))
+            datasets.append(
+                DataPipeline(mcc_instrumental, wds.shuffle(shuffle_buffer_size))
+            )
         if weights[3] > 0:
             karaoke = KaraokeDataset(
                 sample_rate=sample_rate,
@@ -1638,6 +2507,217 @@ class DataModule(pl.LightningDataModule):
             pipeline=[{"compose": [self.bucketize]}],
         )
         self.validation_dataset = [libritts]
+
+    def train_dataloader(self):
+        return DataLoader(
+            self.train_dataset,
+            batch_size=None,
+            num_workers=self.num_workers,
+            collate_fn=self.collate_fn,
+        )
+
+    def val_dataloader(self):
+        return [
+            DataLoader(
+                val,
+                batch_size=None,
+                num_workers=self.num_workers,
+                collate_fn=self.collate_fn,
+            )
+            for val in self.validation_dataset
+        ]
+
+    def bucketize(self, iterator: Iterable):
+        for item in iterator:
+            batch = self.batcher.collate_batch(item)
+            if batch is not None:
+                yield batch
+
+
+class MIRDataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        sample_rate: int,
+        batch_size: int,
+        min_duration: float = 10,
+        max_duration: float = 120,
+        normalize_audio: bool = False,
+        shuffle_buffer_size: int = 10,
+        num_workers: int = 4,
+        pin_memory: bool = True,
+        collate_fn: Callable = collate_fn,
+        weights: List[int] = [1, 1, 1, 1],
+        region: str = "CN",
+        tokenizer: str = "bert-base-multilingual-cased",
+        frame_rate: int = 25,
+        max_length: int = 2048,
+        dynamic_batch: bool = True,
+    ):
+        super().__init__()
+        self.tokenizer = BertTokenizer.from_pretrained(tokenizer)
+        self.num_workers = num_workers
+        self.shuffle_buffer_size = shuffle_buffer_size
+        self.pin_memory = pin_memory
+        self.collate_fn = collate_fn
+        self.frame_rate = frame_rate
+        self.max_length = max_length
+        buckets_samples = []
+        sec = min_duration
+        while sec <= max_duration:
+            buckets_samples.append(sec)
+            sec += math.ceil(sec * 0.1)
+        if buckets_samples[-1] < max_duration:
+            buckets_samples.append(max_duration)
+        print(f"[Buckets] {len(buckets_samples)} {str(buckets_samples)}")
+        buckets_samples = [x * sample_rate for x in buckets_samples]
+        if dynamic_batch:
+            self.batcher = BucketBatcher(
+                buckets=buckets_samples,
+                dynamic_batch=True,
+                maximum_bucket_size=batch_size,
+                length_fn=lambda x: x["audio_length"],
+            )
+        else:
+            self.batcher = BucketBatcher(
+                buckets=buckets_samples,
+                dynamic_batch=False,
+                batch_size=batch_size,
+                length_fn=lambda x: x["audio_length"],
+            )
+        datasets = []
+        if weights[0] > 0:
+            beat = MIRBeatDataset(
+                url2index=INDEX[region]["Beat"],
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                max_length=max_length,
+                resampled=True,
+                shardshuffle=True,
+                handler=wds.warn_and_continue,
+            )
+            datasets.append(DataPipeline(beat, wds.shuffle(shuffle_buffer_size)))
+        if weights[1] > 0:
+            chord = MIRChordDataset(
+                url2index=INDEX[region]["Chord"],
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                max_length=max_length,
+                resampled=True,
+                shardshuffle=True,
+                handler=wds.warn_and_continue,
+            )
+            datasets.append(DataPipeline(chord, wds.shuffle(shuffle_buffer_size)))
+        if weights[2] > 0:
+            key = MIRKeyDataset(
+                url2index=INDEX[region]["Key"],
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                max_length=max_length,
+                resampled=True,
+                shardshuffle=True,
+                handler=wds.warn_and_continue,
+            )
+            datasets.append(DataPipeline(key, wds.shuffle(shuffle_buffer_size)))
+        if weights[3] > 0:
+            structure = MIRStructureDataset(
+                url2index=INDEX[region]["Structure"],
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                max_length=max_length,
+                resampled=True,
+                shardshuffle=True,
+                handler=wds.warn_and_continue,
+            )
+            datasets.append(DataPipeline(structure, wds.shuffle(shuffle_buffer_size)))
+        weights = [i for i in weights if i != 0]
+        self.train_dataset = DataPipeline(
+            MultiIterableDataset(
+                datasets=datasets, weights=[i for i in weights if i != 0]
+            ),
+            self.bucketize,
+        )
+
+        beat_val = WebPipeline(
+            MIRBeatDataset(
+                url2index=INDEX[region]["Beat-Val"],
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                max_length=max_length,
+                resampled=False,
+                nodesplitter=return_self,
+                handler=wds.warn_and_continue,
+            ),
+            pipeline=[{"compose": [self.bucketize]}],
+        )
+        chord_val = WebPipeline(
+            MIRChordDataset(
+                url2index=INDEX[region]["Chord-Val"],
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                max_length=max_length,
+                resampled=False,
+                nodesplitter=return_self,
+                handler=wds.warn_and_continue,
+            ),
+            pipeline=[{"compose": [self.bucketize]}],
+        )
+        key_val = WebPipeline(
+            MIRKeyDataset(
+                url2index=INDEX[region]["Key-Val"],
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                max_length=max_length,
+                resampled=False,
+                nodesplitter=return_self,
+                handler=wds.warn_and_continue,
+            ),
+            pipeline=[{"compose": [self.bucketize]}],
+        )
+        structure_val = WebPipeline(
+            MIRStructureDataset(
+                url2index=INDEX[region]["Structure-Val"],
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                max_length=max_length,
+                resampled=False,
+                nodesplitter=return_self,
+                handler=wds.warn_and_continue,
+            ),
+            pipeline=[{"compose": [self.bucketize]}],
+        )
+        self.validation_dataset = [beat_val, chord_val, key_val, structure_val]
 
     def train_dataloader(self):
         return DataLoader(

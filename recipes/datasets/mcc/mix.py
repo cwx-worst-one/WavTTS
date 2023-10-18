@@ -603,7 +603,6 @@ class LibriLightASRTransforms(BaseTransforms):
         return True
 
     def __call__(self, item: Dict[str, Any]) -> Generator:
-        audio = self.base_transform(item[self.audio_key])
         utterances = item.get("__index_data__", None)
         if utterances is None or len(utterances) == 0:
             self._update_stats(skipped=True, message="No utterances")
@@ -684,7 +683,11 @@ class LibriTTSTransforms(BaseTransforms):
         self.base_transform = Compose(base_transforms)
 
     def __call__(self, item: Dict[str, Any]) -> Generator:
-        audio = self.base_transform(item[self.audio_key])
+        try:
+            audio = self.base_transform(item[self.audio_key])
+        except Exception as e:
+            self._update_stats(skipped=True, message=f"Error loading audio: {e}")
+            return
         if audio.size(-1) < self.min_duration * self.sample_rate:
             self._update_stats(skipped=True, message="Audio too short")
             return
@@ -746,7 +749,11 @@ class SpeechZhTransforms(BaseTransforms):
         self.base_transform = Compose(base_transforms)
 
     def __call__(self, item: Dict[str, Any]) -> Generator:
-        audio = self.base_transform(item[self.audio_key])
+        try:
+            audio = self.base_transform(item[self.audio_key])
+        except Exception as e:
+            self._update_stats(skipped=True, message=f"Error loading audio: {e}")
+            return
         if audio.size(-1) < self.min_duration * self.sample_rate:
             self._update_stats(skipped=True, message="Audio too short")
             return
@@ -923,8 +930,11 @@ class VocalZhTransforms(BaseTransforms):
         if utterances is None or len(utterances) == 0:
             self._update_stats(skipped=True, message="No utterances")
             return
-
         filtered_utterances = list(filter(self.filter_lyrics, utterances))
+        if len(filtered_utterances) == 0:
+            self._update_stats(skipped=True, message="No utterances after filtering")
+            return
+
         random.shuffle(filtered_utterances)
         if self.max_num_crops is not None and self.max_num_crops > 0:
             filtered_utterances = filtered_utterances[: self.max_num_crops]
@@ -1489,213 +1499,217 @@ class SpeechZhDataset(WebPipeline):
 class DataModule(pl.LightningDataModule):
     def __init__(
         self,
-        shuffle_buffer_size: int,
+        sample_rate: int = 24000,
+        batch_size: int = 30 * 24000 * 2,
+        min_duration: int = 2,
+        max_duration: int = 30,
+        max_num_crops: int = 3,
+        normalize_audio: bool = False,
+        shuffle_buffer_size: int = 10,
         num_workers: int = 4,
         pin_memory: bool = True,
-        train_dataset=None,
-        validation_dataset=None,
-        predict_dataset=None,
-        collate_fn: Optional[Callable] = None,
+        collate_fn: Optional[Callable] = collate_fn,
+        weights: List[int] = [1, 1, 1],
+        region: str = "CN",
+        use_pipe: bool = False,
+        tokenizer: str = None,
+        frame_rate: int = 25,
     ):
         super().__init__()
-        self.shuffle_buffer_size = shuffle_buffer_size
-        self.train_dataset = train_dataset
-        self.validation_dataset = validation_dataset
-        self.predict_dataset = predict_dataset
+        if tokenizer is not None:
+            self.tokenizer = BertTokenizer.from_pretrained(tokenizer)
+        else:
+            self.tokenizer = None
+            collate_fn = collate_audio_text
         self.num_workers = num_workers
+        self.shuffle_buffer_size = shuffle_buffer_size
         self.pin_memory = pin_memory
         self.collate_fn = collate_fn
+        self.frame_rate = frame_rate
+        assert batch_size >= min_duration * sample_rate
+        buckets_samples = []
+        sec = min_duration
+        while sec <= max_duration:
+            buckets_samples.append(sec)
+            sec += math.ceil(sec * 0.1)
+        if buckets_samples[-1] < max_duration:
+            buckets_samples.append(max_duration)
+        print(f"[Buckets] {len(buckets_samples)} {str(buckets_samples)}")
+        buckets_samples = [x * sample_rate for x in buckets_samples]
+        self.batcher = BucketBatcher(
+            buckets=buckets_samples,
+            dynamic_batch=True,
+            maximum_bucket_size=batch_size,
+            length_fn=lambda x: x["audio"].size(-1),
+        )
+        datasets = []
+        if weights[0] > 0:
+            vocal_zh = VocalZhDataset(
+                url2index=[
+                    INDEX[region]["MCCVocal-Zh-A"],
+                    INDEX[region]["MCCVocal-Zh-B"],
+                    INDEX[region]["MCCVocal-Zh-C"],
+                    INDEX[region]["HotGalaxy"],
+                    INDEX[region]["Soda"],
+                ],
+                weights=[1, 4, 80, 50, 50],
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                max_num_crops=max_num_crops,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                resampled=True,
+                shardshuffle=True,
+                use_pipe=use_pipe,
+                handler=wds.warn_and_continue,
+            )
+            vocal_en = MCCVocalDataset(
+                url2index=INDEX[region]["MCCVocal"],
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                max_num_crops=max_num_crops,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                resampled=True,
+                shardshuffle=True,
+                use_pipe=use_pipe,
+                handler=wds.warn_and_continue,
+            )
+            datasets.append(
+                DataPipeline(
+                    MultiIterableDataset(
+                        datasets=[vocal_zh, vocal_en], weights=[1, 1]
+                    ),
+                    wds.shuffle(shuffle_buffer_size),
+                )
+            )
+        if weights[1] > 0:
+            speech_zh = SpeechZhDataset(
+                url2index=[
+                    INDEX[region]["FanqieShort"],
+                    INDEX[region]["FanqieLong"],
+                    INDEX[region]["XimalayaShort"],
+                    INDEX[region]["XimalayaLong"],
+                    INDEX[region]["XiaoyuzhouShort"],
+                    INDEX[region]["XiaoyuzhouLong"],
+                ],
+                weights=[20, 20, 6, 3, 6, 3],
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                resampled=True,
+                shardshuffle=True,
+                use_pipe=use_pipe,
+                handler=wds.warn_and_continue,
+            )
+            speech_en = LibriLightASRDataset(
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                max_num_crops=max_num_crops,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                resampled=True,
+                shardshuffle=True,
+                use_pipe=use_pipe,
+                handler=wds.warn_and_continue,
+            )
+            datasets.append(
+                DataPipeline(
+                    MultiIterableDataset(
+                        datasets=[speech_zh, speech_en], weights=[1, 1]
+                    ),
+                    wds.shuffle(shuffle_buffer_size),
+                )
+            )
+        if weights[2] > 0:
+            mcc_instrumental = MCCInstrumentalDataset(
+                url2index=INDEX[region]["MCCInstrumental"],
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                max_num_crops=max_num_crops,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                resampled=True,
+                shardshuffle=True,
+                use_pipe=use_pipe,
+                handler=wds.warn_and_continue,
+            )
+            datasets.append(
+                DataPipeline(mcc_instrumental, wds.shuffle(shuffle_buffer_size))
+            )
+        weights = [i for i in weights if i != 0]
+        self.train_dataset = DataPipeline(
+            MultiIterableDataset(
+                datasets=datasets, weights=[i for i in weights if i != 0]
+            ),
+            self.bucketize,
+        )
+
+        karaoke = WebPipeline(
+            KaraokeDataset(
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                normalize_audio=False,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                resampled=False,
+                use_pipe=use_pipe,
+                nodesplitter=return_self,
+                handler=wds.warn_and_continue,
+            ),
+            pipeline=[{"compose": [self.bucketize]}],
+        )
+        libritts = WebPipeline(
+            LibriTTSDataset(
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                resampled=False,
+                nodesplitter=return_self,
+                handler=wds.warn_and_continue,
+            ),
+            pipeline=[{"compose": [self.bucketize]}],
+        )
+        self.validation_dataset = [karaoke, libritts]
 
     def train_dataloader(self):
-        train_dataset_batched = DataPipeline(
-            self.train_dataset, wds.shuffle(self.shuffle_buffer_size)
-        )
         return DataLoader(
-            train_dataset_batched,
+            self.train_dataset,
             batch_size=None,
             num_workers=self.num_workers,
             collate_fn=self.collate_fn,
         )
 
     def val_dataloader(self):
-        if isinstance(self.validation_dataset, list):
-            return [
-                DataLoader(
-                    val,
-                    batch_size=None,
-                    num_workers=self.num_workers,
-                    collate_fn=self.collate_fn,
-                )
-                for val in self.validation_dataset
-            ]
-        else:
-            return DataLoader(
-                self.validation_dataset,
+        return [
+            DataLoader(
+                val,
                 batch_size=None,
                 num_workers=self.num_workers,
                 collate_fn=self.collate_fn,
             )
-
-    def predict_dataloader(self):
-        return DataLoader(
-            self.predict_dataset,
-            batch_size=None,
-            num_workers=self.num_workers,
-            collate_fn=self.collate_fn,
-        )
-
-
-class VocalWebDataModule(DataModule):
-    def __init__(
-        self,
-        sample_rate: int = 24000,
-        batch_size: int = 2,
-        buckets_in_sec: List[int] = [
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            8,
-            9,
-            10,
-            12,
-            14,
-            16,
-            18,
-            20,
-            22,
-            24,
-            26,
-            28,
-            30,
-        ],
-        shuffle_buffer_size: int = 10,
-        num_workers: int = 4,
-        pin_memory: bool = True,
-        collate_fn: Optional[Callable] = collate_fn,
-        weights: Tuple[int, int] = (1, 1),
-        region: str = "US",
-        use_pipe: bool = False,
-        val_resampled: bool = False,
-    ):
-        buckets_samples = list(map(lambda i: i * sample_rate, buckets_in_sec))
-        self.batcher = BucketBatcher(
-            buckets=buckets_samples,
-            dynamic_batch=False,
-            batch_size=batch_size,
-            length_fn=lambda x: x["audio"].shape[-1],
-        )
-        if region == "US":
-            mcc_vocal_index = (
-                "/mnt/bn/audio-diffusion/data/vocal_mcc_npy/lyrics_npy_url2idx.txt"
-            )
-            mcc_vocal_val_index = (
-                "/mnt/bn/audio-diffusion/data/vocal_mcc_npy/lyrics_npy_url2idx_val.txt"
-            )
-        elif region == "CN":
-            mcc_vocal_index = "recipes/datasets/mcc/mcc60m_index.txt"
-            mcc_vocal_val_index = "recipes/datasets/mcc/mcc60m_index_val.txt"
-        else:
-            raise KeyError(f"Wrong region: {region}")
-        mcc_vocal = MCCVocalDataset(
-            url2index=mcc_vocal_index,
-            sample_rate=sample_rate,
-            resampled=True,
-            shardshuffle=True,
-            min_duration=buckets_in_sec[0],
-            max_duration=buckets_in_sec[-1],
-            use_pipe=use_pipe,
-            handler=wds.warn_and_continue,
-        )
-        libritts = LibriTTSDataset(
-            urls="pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/speech/libritts/24000hz/train-clean-360/{00000..00007}.tar",
-            sample_rate=sample_rate,
-            resampled=True,
-            shardshuffle=True,
-            min_duration=buckets_in_sec[0],
-            max_duration=buckets_in_sec[-1],
-            handler=wds.warn_and_continue,
-        )
-        train_dataset = WebPipeline(
-            MultiIterableDataset(datasets=[mcc_vocal, libritts], weights=weights),
-            pipeline=[{"compose": [self.bucketize]}],
-        )
-        if val_resampled:
-            validation_dataset = [
-                WebPipeline(
-                    MCCVocalDataset(
-                        url2index=mcc_vocal_val_index,
-                        sample_rate=sample_rate,
-                        resampled=True,
-                        min_duration=buckets_in_sec[0],
-                        max_duration=buckets_in_sec[-1],
-                        use_pipe=use_pipe,
-                        handler=wds.warn_and_continue,
-                    ),
-                    pipeline=[{"compose": [self.bucketize]}],
-                ),
-                WebPipeline(
-                    LibriTTSDataset(
-                        urls="pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/speech/libritts/24000hz/test-clean/00000.tar",
-                        sample_rate=sample_rate,
-                        resampled=True,
-                        min_duration=buckets_in_sec[0],
-                        max_duration=buckets_in_sec[-1],
-                        handler=wds.warn_and_continue,
-                    ),
-                    pipeline=[{"compose": [self.bucketize]}],
-                ),
-            ]
-        else:
-            validation_dataset = [
-                WebPipeline(
-                    MCCVocalDataset(
-                        url2index=mcc_vocal_val_index,
-                        sample_rate=sample_rate,
-                        nodesplitter=return_self,
-                        min_duration=buckets_in_sec[0],
-                        max_duration=buckets_in_sec[-1],
-                        use_pipe=use_pipe,
-                        handler=wds.warn_and_continue,
-                    ),
-                    pipeline=[{"compose": [self.bucketize]}],
-                ),
-                WebPipeline(
-                    LibriTTSDataset(
-                        urls="pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/speech/libritts/24000hz/test-clean/00000.tar",
-                        sample_rate=sample_rate,
-                        nodesplitter=return_self,
-                        min_duration=buckets_in_sec[0],
-                        max_duration=buckets_in_sec[-1],
-                        handler=wds.warn_and_continue,
-                    ),
-                    pipeline=[{"compose": [self.bucketize]}],
-                ),
-            ]
-
-        super().__init__(
-            shuffle_buffer_size=shuffle_buffer_size,
-            num_workers=num_workers,
-            pin_memory=pin_memory,
-            train_dataset=train_dataset,
-            validation_dataset=validation_dataset,
-            predict_dataset=train_dataset,  # TODO
-            collate_fn=collate_fn,
-        )
+            for val in self.validation_dataset
+        ]
 
     def bucketize(self, iterator: Iterable):
         for item in iterator:
-            if isinstance(item, Iterable):
-                for i in item:
-                    batch = self.batcher.collate_batch(i)
-                    if batch is not None:
-                        yield batch
-            else:
-                batch = self.batcher.collate_batch(item)
-                if batch is not None:
-                    yield batch
+            batch = self.batcher.collate_batch(item)
+            if batch is not None:
+                yield batch
 
 
 class MixWebDataModule(pl.LightningDataModule):
@@ -2377,7 +2391,7 @@ class SodaDataModule(pl.LightningDataModule):
                 yield batch
 
 
-class MixLangVocalWebDataModule(pl.LightningDataModule):
+class MixLangDataModule(pl.LightningDataModule):
     def __init__(
         self,
         sample_rate: int = 24000,
@@ -2390,7 +2404,7 @@ class MixLangVocalWebDataModule(pl.LightningDataModule):
         num_workers: int = 4,
         pin_memory: bool = True,
         collate_fn: Optional[Callable] = collate_fn,
-        weights: List[int] = [1, 1],
+        weights: List[int] = [1, 1, 1],
         region: str = "CN",
         use_pipe: bool = False,
         tokenizer: str = None,
@@ -2398,12 +2412,11 @@ class MixLangVocalWebDataModule(pl.LightningDataModule):
     ):
         super().__init__()
         if tokenizer == "wordpiece":
-            self.tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
-        elif tokenizer == "phoneme":
-            self.tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained(
-                "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
+            self.tokenizer = BertTokenizer.from_pretrained(
+                "bert-base-multilingual-cased"
             )
-            phonemizer.logger.get_logger().setLevel(logging.ERROR)
+        elif tokenizer == "tts_chinese_frontend_model":
+            self.tokenizer = tokenizer
         else:
             self.tokenizer = None
             collate_fn = collate_audio_text
@@ -2430,15 +2443,9 @@ class MixLangVocalWebDataModule(pl.LightningDataModule):
         )
         datasets = []
         if weights[0] > 0:
-            zh = VocalZhDataset(
-                url2index=[
-                    INDEX[region]["MCCVocal-Zh-A"],
-                    INDEX[region]["MCCVocal-Zh-B"],
-                    INDEX[region]["MCCVocal-Zh-C"],
-                    INDEX[region]["HotGalaxy"],
-                    INDEX[region]["Soda"],
-                ],
-                weights=[1, 4, 80, 50, 50],
+            vocal = VocalZhDataset(
+                url2index=[INDEX[region]["Soda"], INDEX[region]["MCCVocal-En-500k"]],
+                weights=[1, 1],
                 sample_rate=sample_rate,
                 min_duration=min_duration,
                 max_duration=max_duration,
@@ -2451,10 +2458,30 @@ class MixLangVocalWebDataModule(pl.LightningDataModule):
                 use_pipe=use_pipe,
                 handler=wds.warn_and_continue,
             )
-            datasets.append(DataPipeline(zh, wds.shuffle(shuffle_buffer_size)))
+            datasets.append(DataPipeline(vocal, wds.shuffle(shuffle_buffer_size)))
         if weights[1] > 0:
-            mcc_vocal = MCCVocalDataset(
-                url2index=INDEX[region]["MCCVocal"],
+            speech_zh = SpeechZhDataset(
+                url2index=[
+                    INDEX[region]["FanqieShort"],
+                    INDEX[region]["FanqieLong"],
+                    INDEX[region]["XimalayaShort"],
+                    INDEX[region]["XimalayaLong"],
+                    INDEX[region]["XiaoyuzhouShort"],
+                    INDEX[region]["XiaoyuzhouLong"],
+                ],
+                weights=[20, 20, 6, 3, 6, 3],
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                resampled=True,
+                shardshuffle=True,
+                use_pipe=use_pipe,
+                handler=wds.warn_and_continue,
+            )
+            speech_en = LibriLightASRDataset(
                 sample_rate=sample_rate,
                 min_duration=min_duration,
                 max_duration=max_duration,
@@ -2467,7 +2494,32 @@ class MixLangVocalWebDataModule(pl.LightningDataModule):
                 use_pipe=use_pipe,
                 handler=wds.warn_and_continue,
             )
-            datasets.append(DataPipeline(mcc_vocal, wds.shuffle(shuffle_buffer_size)))
+            datasets.append(
+                DataPipeline(
+                    MultiIterableDataset(
+                        datasets=[speech_zh, speech_en], weights=[1, 1]
+                    ),
+                    wds.shuffle(shuffle_buffer_size),
+                )
+            )
+        if weights[2] > 0:
+            mcc_instrumental = MCCInstrumentalDataset(
+                url2index=INDEX[region]["MCCInstrumental"],
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                max_num_crops=max_num_crops,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                resampled=True,
+                shardshuffle=True,
+                use_pipe=use_pipe,
+                handler=wds.warn_and_continue,
+            )
+            datasets.append(
+                DataPipeline(mcc_instrumental, wds.shuffle(shuffle_buffer_size))
+            )
         weights = [i for i in weights if i != 0]
         self.train_dataset = DataPipeline(
             MultiIterableDataset(

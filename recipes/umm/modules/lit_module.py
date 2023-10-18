@@ -18,6 +18,8 @@ from recipes.umm.modules.criterion_vocoder import (
 )
 from samantha.dataio.webdataset import ShardWriter
 from samantha.utils.hparams import DotDict
+from s3a.providers.ctiga.models import gpt
+from s3a.providers.ctiga.utils.generation import InferenceParams
 
 
 def log(t, eps=1e-5):
@@ -1112,17 +1114,19 @@ class Stage3(Stage2):
                 loss_dict["loss"]
                 + loss_dict["loss_chroma"] * self.model.config.w_loss_chroma
             )
-        loss_dict["loss_vq"] = output_dict["vq_loss"]
-        loss_dict["loss"] = (
-            loss_dict["loss"] + output_dict["vq_loss"] * self.model.config.w_loss_vq
-        )
+        if output_dict["vq_loss"] is not None:
+            loss_dict["loss_vq"] = output_dict["vq_loss"]
+            loss_dict["loss"] = (
+                loss_dict["loss"] + output_dict["vq_loss"] * self.model.config.w_loss_vq
+            )
         code_rate = self.get_code_rate(output_dict["vq_ids"])
         quant_rate = self.get_quant_rate(
-            output_dict["vq_ids"], self.model.config.vq_codebook_size
+            output_dict["vq_ids"].long(), self.model.config.vq_codebook_size
         )
         loss_dict["aux/code_rate"] = code_rate
         loss_dict["aux/quant_rate"] = quant_rate
-        loss_dict["aux/entropy"] = self.model.vq.embedding.entropy()
+        if getattr(self.model.vq, "entropy", None) is not None:
+            loss_dict["aux/entropy"] = self.model.vq.entropy()
         loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
         loss_dict["aux/num_mel_frames"] = mel.size(0) * mel.size(1)
         loss_dict["aux/mel_mean"] = mel.mean()
@@ -1132,7 +1136,8 @@ class Stage3(Stage2):
         loss_dict["aux/noise_scale"] = output_dict.get("noise_scale", 0)
         if self.model.config.add_chroma:
             loss_dict["aux/w_loss_chroma"] = self.model.config.w_loss_chroma
-        loss_dict["aux/w_loss_vq"] = self.model.config.w_loss_vq
+        if output_dict["vq_loss"] is not None:
+            loss_dict["aux/w_loss_vq"] = self.model.config.w_loss_vq
         return loss_dict
 
     def get_code_rate(self, target_tokens):
@@ -2570,7 +2575,10 @@ class UnifiedDecoder(pl.LightningModule):
         token_seq, token_length, target_length = self.prepare_feature(batch)
         input_seq = token_seq[:, :-1]
         target_seq = token_seq[:, 1:]
-        logits = self.model(input_ids=input_seq)["logits"]
+        if isinstance(self.model, gpt.GPTLMHeadModel):
+            logits = self.model(input_ids=input_seq)[0]
+        else:
+            logits = self.model(input_ids=input_seq)["logits"]
         loss_mask = torch.zeros_like(target_seq)
         for i, (tok_len, tar_len) in enumerate(zip(token_length, target_length)):
             loss_mask[i, tok_len - tar_len - 1 : tok_len - 1] = 1
@@ -2706,19 +2714,34 @@ class UnifiedDecoder(pl.LightningModule):
 
     @torch.no_grad()
     def predict(self, input_ids, temperature=1.0, sample_mode="gumbel"):
-        assert input_ids.size(0) == 1, "Only support batch size 1."
+        b, t = input_ids.size()
+        assert b == 1, "Only support batch size 1."
         output_samples = None
-        past_key_values = None
-        pbar = tqdm(range(self.extra_params.max_length - input_ids.size(1)))
+        if isinstance(self.model, gpt.GPTLMHeadModel):
+            inference_params = InferenceParams(
+                max_sequence_len=self.extra_params.max_length, max_batch_size=b
+            )
+        else:
+            past_key_values = None
+        pbar = tqdm(range(self.extra_params.max_length - t))
         for _ in pbar:
             pbar.set_description(
-                f"[UnifiedMirModel] {self.extra_params.max_length} - {input_ids.size(1)}"
+                f"[UnifiedMirModel] {self.extra_params.max_length} - {t}"
             )
-            model_output = self.model(
-                input_ids, past_key_values=past_key_values, use_cache=True
-            )
-            past_key_values = model_output["past_key_values"]
-            logits = model_output["logits"]
+            if isinstance(self.model, gpt.GPTLMHeadModel):
+                logits = self.model(
+                    input_ids,
+                    inference_params=inference_params,
+                    position_ids=None,
+                    last_token_only=False,
+                ).logits
+                inference_params.sequence_len_offset += input_ids.size(1)
+            else:
+                model_output = self.model(
+                    input_ids, past_key_values=past_key_values, use_cache=True
+                )
+                past_key_values = model_output["past_key_values"]
+                logits = model_output["logits"]
             predict_logits = logits[:, -1:]
             samples = sample(predict_logits, temp=temperature, mode=sample_mode)
             input_ids = samples

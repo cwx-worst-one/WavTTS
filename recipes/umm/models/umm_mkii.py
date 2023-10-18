@@ -5,7 +5,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
-from einops import rearrange
+from einops import rearrange, reduce, pack, unpack
 from torch import Tensor, int32, nn
 from torch.nn import functional as F
 from torch.nn.utils import weight_norm
@@ -569,34 +569,26 @@ class EMAVectorQuantizer(nn.Module):
 
         return z_q, min_encoding_indices, loss
 
+    @torch.no_grad()
+    def entropy(self):
+        return self.embedding.entropy()
 
-class VectorQuantizer(nn.Module):
-    """
-    Improved version over vector quantiser, with the dynamic initialisation
-    for these unoptimised "dead" points.
-    num_embed: number of codebook entry
-    embed_dim: dimensionality of codebook entry
-    beta: weight for the commitment loss
-    distance: distance for looking up the closest code
-    anchor: anchor sampled methods
-    first_batch: if true, the offline version of our model
-    contras_loss: if true, use the contras_loss to further improve the performance
-    """
 
+class ClusteredVectorQuantizer(nn.Module):
     def __init__(
         self,
-        num_embed,
-        embed_dim,
-        beta,
+        codebook_size,
+        codebook_dim,
+        beta=0.25,
         distance="cos",
         anchor="probrandom",
         first_batch=False,
-        contras_loss=False,
+        contras_loss=True,
     ):
         super().__init__()
 
-        self.num_embed = num_embed
-        self.embed_dim = embed_dim
+        self.codebook_size = codebook_size
+        self.codebook_dim = codebook_dim
         self.beta = beta
         self.distance = distance
         self.anchor = anchor
@@ -605,18 +597,13 @@ class VectorQuantizer(nn.Module):
         self.decay = 0.99
         self.init = False
 
-        self.pool = FeaturePool(self.num_embed, self.embed_dim)
-        self.embedding = nn.Embedding(self.num_embed, self.embed_dim)
-        self.embedding.weight.data.uniform_(-1.0 / self.num_embed, 1.0 / self.num_embed)
-        self.register_buffer("embed_prob", torch.zeros(self.num_embed))
+        self.pool = FeaturePool(self.codebook_size, self.codebook_dim)
+        self.embedding = nn.Embedding(self.codebook_size, self.codebook_dim)
+        self.embedding.weight.data.uniform_(-1.0 / self.codebook_size, 1.0 / self.codebook_size)
+        self.register_buffer("embed_prob", torch.zeros(self.codebook_size))
 
-    def forward(self, z, temp=None, rescale_logits=False, return_logits=False):
-        assert temp is None or temp == 1.0, "Only for interface compatible with Gumbel"
-        assert rescale_logits == False, "Only for interface compatible with Gumbel"
-        assert return_logits == False, "Only for interface compatible with Gumbel"
-        # reshape z -> (batch, height, width, channel) and flatten
-        z = rearrange(z, "b c h w -> b h w c").contiguous()
-        z_flattened = z.view(-1, self.embed_dim)
+    def forward(self, z):
+        z_flattened = rearrange(z, "b t d -> (b t) d")
 
         # clculate the distance
         if self.distance == "l2":
@@ -646,7 +633,7 @@ class VectorQuantizer(nn.Module):
         # look up the closest point for the indices
         encoding_indices = indices[:, -1]
         encodings = torch.zeros(
-            encoding_indices.unsqueeze(1).shape[0], self.num_embed, device=z.device
+            encoding_indices.unsqueeze(1).shape[0], self.codebook_size, device=z.device
         )
         encodings.scatter_(1, encoding_indices.unsqueeze(1), 1)
 
@@ -658,15 +645,9 @@ class VectorQuantizer(nn.Module):
         )
         # preserve gradients
         z_q = z + (z_q - z).detach()
-        # reshape back to match original input shape
-        z_q = rearrange(z_q, "b h w c -> b c h w").contiguous()
-        # count
-        import pdb
 
-        pdb.set_trace()
+        # count
         avg_probs = torch.mean(encodings, dim=0)
-        perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
-        min_encodings = encodings
 
         # online clustered reinitialisation for unoptimized points
         if self.training:
@@ -689,11 +670,11 @@ class VectorQuantizer(nn.Module):
                 # decay parameter based on the average usage
                 decay = (
                     torch.exp(
-                        -(self.embed_prob * self.num_embed * 10) / (1 - self.decay)
+                        -(self.embed_prob * self.codebook_size * 10) / (1 - self.decay)
                         - 1e-3
                     )
                     .unsqueeze(1)
-                    .repeat(1, self.embed_dim)
+                    .repeat(1, self.codebook_dim)
                 )
                 self.embedding.weight.data = (
                     self.embedding.weight.data * (1 - decay) + random_feat * decay
@@ -704,7 +685,7 @@ class VectorQuantizer(nn.Module):
             if self.contras_loss:
                 sort_distance, indices = d.sort(dim=0)
                 dis_pos = sort_distance[
-                    -max(1, int(sort_distance.size(0) / self.num_embed)) :, :
+                    -max(1, int(sort_distance.size(0) / self.codebook_size)) :, :
                 ].mean(dim=0, keepdim=True)
                 dis_neg = sort_distance[: int(sort_distance.size(0) * 1 / 2), :]
                 dis = torch.cat([dis_pos, dis_neg], dim=0).t() / 0.07
@@ -714,7 +695,17 @@ class VectorQuantizer(nn.Module):
                 )
                 loss += contra_loss
 
-        return z_q, loss, (perplexity, min_encodings, encoding_indices)
+        encoding_indices = rearrange(
+            encoding_indices, "(b t) -> b t", t=z.size(1)
+        )
+
+        return z_q, encoding_indices, loss
+
+    @torch.no_grad()
+    def entropy(self):
+        p = self.embed_prob / self.embed_prob.sum()
+        entropy = -torch.sum(p * torch.log(p + 1e-10))
+        return entropy
 
 
 class FeaturePool:
@@ -775,9 +766,22 @@ def round_ste(z: Tensor) -> Tensor:
     return z + (zhat - z).detach()
 
 
-class FiniteScalarQuantization(nn.Module):
-    def __init__(self, levels: List[int]):
+class FiniteScalarQuantizer(nn.Module):
+    def __init__(self, codebook_size):
         super().__init__()
+        _recommended_levels = {
+            256: [8, 6, 5],
+            1024: [8, 5, 5, 5],
+            4096: [7, 5, 5, 5, 5],
+            16384: [8, 8, 8, 6, 5],
+            32768: [8, 8, 8, 8, 8],
+            65536: [8, 8, 8, 5, 5, 8],
+        }
+        if codebook_size not in _recommended_levels:
+            raise KeyError(
+                f"{codebook_size} is not in one of the recommended FiniteScalarQuantizer levels"
+            )
+        levels = _recommended_levels[codebook_size]
         _levels = torch.tensor(levels, dtype=int32)
         self.register_buffer("_levels", _levels)
 
@@ -826,49 +830,6 @@ class FiniteScalarQuantization(nn.Module):
         indices = indices.unsqueeze(-1)
         codes_non_centered = (indices // self._basis) % self._levels
         return self._scale_and_shift_inverse(codes_non_centered)
-
-
-class FiniteScalarQuantizer(nn.Module):
-
-    """Finite Scalar Vector Quantizer.
-
-    Args:
-        dimension (int): Dimension of the codebooks.
-        bins (int): Codebook size.
-    """
-
-    _recommended_levels = {
-        256: [8, 6, 5],
-        1024: [8, 5, 5, 5],
-        4096: [7, 5, 5, 5, 5],
-        16384: [8, 8, 8, 6, 5],
-        65536: [8, 8, 8, 5, 5, 8],
-    }
-
-    def __init__(self, bins: int = 1024):
-        super().__init__()
-        n_q = 1
-        self.max_n_q = n_q
-        self.n_q = 1
-        self.bins = bins
-        self.levels = self.get_recommended_levels(self.bins)
-        self.vq = FiniteScalarQuantization(self.levels)
-
-    @staticmethod
-    def get_recommended_levels(bins: int) -> List[int]:
-        if bins not in FiniteScalarQuantizer._recommended_levels:
-            raise KeyError(
-                f"{bins} is not in one of the recommended FiniteScalarQuantizer levels"
-            )
-        return FiniteScalarQuantizer._recommended_levels[bins]
-
-    @property
-    def n_levels(self) -> int:
-        return len(self.levels)
-
-    def forward(self, x: torch.Tensor) -> Tuple[Tensor, Tensor]:
-        quantize, indices = self.vq(x)
-        return quantize, indices
 
 
 class RandomProjectionQuantizer(nn.Module):
@@ -976,6 +937,101 @@ class RandomProjectionQuantizer(nn.Module):
         codes = torch.argmin(distances, dim=-1).transpose(0, 1)
         # [batch_size, codebook_num]
         return codes
+
+
+# helper functions
+
+def exists(v):
+    return v is not None
+
+def default(*args):
+    for arg in args:
+        if exists(arg):
+            return arg() if callable(arg) else arg
+    return None
+
+def pack_one(t, pattern):
+    return pack([t], pattern)
+
+def unpack_one(t, ps, pattern):
+    return unpack(t, ps, pattern)[0]
+
+# entropy
+
+def log(t, eps = 1e-20):
+    return t.clamp(min = eps).log()
+
+def binary_entropy(prob):
+    return -prob * log(prob) - (1 - prob) * log(1 - prob)
+
+class LookupFreeQuantizer(nn.Module):
+    def __init__(
+        self,
+        codebook_size,
+        entropy_loss_weight = 0.1,
+        diversity_gamma = 2.5,
+        straight_through_activation = nn.Tanh()
+    ):
+        super().__init__()
+        assert math.log2(codebook_size).is_integer()
+        self.codebook_dim = int(math.log2(codebook_size))
+        self.activation = straight_through_activation
+        self.diversity_gamma = diversity_gamma
+        self.entropy_loss_weight = entropy_loss_weight
+        self.register_buffer('mask', 2 ** torch.arange(self.codebook_dim - 1, -1, -1))
+        self.register_buffer('zero', torch.zeros(1,), persistent = False)
+
+    def indices_to_codes(self, indices):
+        # indices to codes, which are bits of either -1 or 1
+        bits = ((indices[..., None].int() & self.mask) != 0).float()
+        codes = bits * 2 - 1
+        return codes
+
+    def forward(self, x, inv_temperature = 1.0):
+        """
+        einstein notation
+        b - batch
+        n - sequence (or flattened spatial dimensions)
+        d - feature dimension, which is also log2(codebook size)
+        """
+        # quantize by eq 3.
+
+        ones = torch.ones_like(x)
+        quantized = torch.where(x > 0, ones, -ones)
+
+        # use straight-through gradients with tanh (or custom activation fn) if training
+
+        if self.training:
+            x = self.activation(x * inv_temperature)
+            x = x - x.detach() + quantized
+        else:
+            x = quantized
+
+        # calculate indices
+
+        indices = reduce((x > 0).int() * self.mask.int(), 'b n d -> b n', 'sum')
+
+        # entropy aux loss
+
+        if self.training:
+            prob = (x * inv_temperature).sigmoid()
+
+            bit_entropy = binary_entropy(prob).mean()
+
+            avg_prob = reduce(prob, 'b n d -> b d', 'mean')
+            codebook_entropy = binary_entropy(avg_prob).mean()
+
+            # 1. entropy will be nudged to be low for each bit, so each scalar commits to one latent binary bit or the other
+            # 2. codebook entropy will be nudged to be high, to encourage all codes to be uniformly used
+
+            entropy_aux_loss = bit_entropy - self.diversity_gamma * codebook_entropy
+        else:
+            # if not training, just return dummy 0
+            entropy_aux_loss = self.zero
+
+        entropy_aux_loss = entropy_aux_loss * self.entropy_loss_weight
+
+        return x, indices, entropy_aux_loss
 
 
 class LlamaRMSNorm(nn.Module):
@@ -1496,6 +1552,26 @@ class Transpose(nn.Module):
 class Stage3(Stage2):
     def __init__(self, config):
         super().__init__(config)
+        if config.get("vq_type", None) == "CVQ":
+            self.vq = ClusteredVectorQuantizer(
+                codebook_size=config.vq_codebook_size,
+                codebook_dim=config.vq_codebook_dim,
+                distance=config.get("vq_distance", "cos"),
+            )
+        elif config.get("vq_type", None) == "FSQ":
+            self.vq = FiniteScalarQuantizer(
+                codebook_size=config.vq_codebook_size,
+            )
+        elif config.get("vq_type", None) == "LFQ":
+            self.vq = LookupFreeQuantizer(
+                codebook_size=config.vq_codebook_size,
+            )
+        else:
+            self.vq = EMAVectorQuantizer(
+                codebook_size=config.vq_codebook_size,
+                codebook_dim=config.vq_codebook_dim,
+                decay=config.vq_decay,
+            )
         if config.get("vq_proj_norm", None) == "bn":
             self.vq_proj_in = nn.Sequential(
                 Transpose(),
@@ -1523,11 +1599,6 @@ class Stage3(Stage2):
             self.vq_proj_out = nn.Linear(
                 config.vq_codebook_dim, config.hidden_size, bias=False
             )
-        self.vq = EMAVectorQuantizer(
-            codebook_size=config.vq_codebook_size,
-            codebook_dim=config.vq_codebook_dim,
-            decay=config.vq_decay,
-        )
         if config.get("vq_proj_noise", 0) > 0:
             self.register_buffer("cnt", torch.FloatTensor([0]))
 
@@ -1547,7 +1618,11 @@ class Stage3(Stage2):
                         hidden_states + torch.randn_like(hidden_states) * noise_scale
                     )
                     self.cnt.add_(1)
-                vq_embs, vq_ids, vq_loss = self.vq(hidden_states)
+                if self.config.get("vq_type", None) == "FSQ":
+                    vq_embs, vq_ids = self.vq(hidden_states)
+                    vq_loss = None
+                else:
+                    vq_embs, vq_ids, vq_loss = self.vq(hidden_states)
                 hidden_states = self.vq_proj_out(vq_embs)
             hidden_states = layer(
                 hidden_states, position_embeddings=position_embeddings
