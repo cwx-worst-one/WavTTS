@@ -7,6 +7,7 @@ import subprocess
 from collections import Counter
 
 import braceexpand
+import numpy as np
 from bytedance.easycycle import get_dataset_collection_info
 from lightning_fabric.utilities.cloud_io import get_filesystem
 from lightning_fabric.utilities.exceptions import MisconfigurationException
@@ -176,20 +177,48 @@ def parse_data_urls(data_id=None, data_urls=None, use_url_lst=False):
     return __expand_paths(data_urls)
 
 
-def parquet_reader(url, fs=None, columns=None):
+def parquet_reader(url, fs=None, columns=None, sample_limit=None, meta=None):
     if fs is None:
         fs = get_filesystem(url)
 
     stream = fs.open(url, skip_instance_cache=True)
     parquet_file = ParquetFile(stream)
-    row_group_num = parquet_file.num_row_groups
-    row_groups = list(range(row_group_num))
-    for group_no, row_group in enumerate(row_groups):
-        group_data = parquet_file.read_row_group(row_group, columns=columns)
-        group_datas = group_data.to_pandas()
-        for row in group_datas.iterrows():
-            item = row[1].to_dict()
-            yield group_no, item
+
+    # meta: {url: [num_row_group, [unvisit_row_group_list]]}
+    # could be empty at beginning
+    if meta is None:
+        raise ValueError("user must provide meta")
+
+    # cache num_row_group to save io
+    if url not in meta:
+        meta_data = parquet_file.metadata
+        meta[url] = [(meta_data.num_row_groups, meta_data.num_rows), []]
+    num_row_groups = meta[url][0][0]
+
+    if sample_limit is None:
+        for row_group in range(num_row_groups):
+            group_data = parquet_file.read_row_group(row_group, columns=columns)
+            group_datas = group_data.to_pandas()
+            for row in group_datas.iterrows():
+                item = row[1].to_dict()
+                yield row_group, item
+    else:
+        if 0 < sample_limit <= 1:
+            sample_limit = int(meta[url][0][1] * sample_limit)
+        while sample_limit > 0:
+            if not meta[url][1]:
+                meta[url][1] = list(range(num_row_groups))
+            row_group = np.random.choice(meta[url][1])
+            meta[url][1].remove(row_group)
+
+            group_data = parquet_file.read_row_group(row_group, columns=columns)
+            group_datas = group_data.to_pandas()
+            for row in group_datas.iterrows():
+                item = row[1].to_dict()
+                sample_limit -= 1
+                if sample_limit <= 0:
+                    break
+                yield row_group, item
     parquet_file.close()
     stream.close()
 

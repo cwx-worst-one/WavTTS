@@ -2,7 +2,7 @@ import io
 import json
 import re
 from copy import deepcopy
-from typing import Any, Callable, Dict, Iterable
+from typing import Any, Callable, Dict, Iterable, Union
 
 import librosa
 from lightning_fabric.utilities.cloud_io import get_filesystem
@@ -16,10 +16,15 @@ DATASET_NAME_KEY = "__dataset_name__"
 
 class _ParquetSample:
     def __init__(
-        self, filesystem=None, handler: Callable[[Exception], bool] = warn_and_continue
+        self,
+        filesystem=None,
+        handler: Callable[[Exception], bool] = warn_and_continue,
+        sample_limit_per_file: Union[int, float] = None,
     ):
         self.filesystem = filesystem
         self.handler = handler
+        self.sample_limit_per_file = sample_limit_per_file
+        self.meta = {}
 
     def __call__(self, sources: Iterable[Dict[str, Any]]):
         handler = self.handler
@@ -35,24 +40,54 @@ class _ParquetSample:
 
             readers = None
             try:
+                # get common uttid from all parquet(data/index/feat)
+                common_utt = None
+                utt2group_no = {}
+                for name, url in src.items():
+                    utt2group_no[name] = {}
+                    cur_utt = set()
+                    for group_no, e in parquet_reader(
+                        url, columns=["uttid"], fs=filesystem, meta=self.meta
+                    ):
+                        uttid = e["uttid"]
+                        cur_utt.add(uttid)
+                        utt2group_no[name][uttid] = group_no
+                    if common_utt is None:
+                        common_utt = cur_utt
+                    else:
+                        common_utt.intersection_update(cur_utt)
+
+                # get ordered uttid from index parquet
+                utt_sampler = parquet_reader(
+                    src["index"],
+                    columns=["uttid"],
+                    fs=filesystem,
+                    sample_limit=self.sample_limit_per_file,
+                    meta=self.meta,
+                )
+                ordered_utt = [
+                    e["uttid"] for _, e in utt_sampler if e["uttid"] in common_utt
+                ]
+
+                # limit common uttid, compute row groups for each parquet
+                common_utt = set(ordered_utt)
+                row_groups = {}
+                for name in src:
+                    row_groups[name] = sorted(
+                        set(utt2group_no[name][uttid] for uttid in common_utt)
+                    )
+
+                # create readers based on row_groups for each parquet
                 readers = {
-                    name: _ParquetReader(url, fs=filesystem)
+                    name: _ParquetReader(
+                        url, fs=filesystem, row_groups=row_groups[name]
+                    )
                     for name, url in src.items()
                 }
                 reader_iters = {name: iter(reader) for name, reader in readers.items()}
-                common_utt = set(
-                    e["uttid"]
-                    for v in src.values()
-                    for _, e in parquet_reader(v, columns=["uttid"], fs=filesystem)
-                )
-
-                ordered_utt = []
-                for _, e in parquet_reader(
-                    src["index"], columns=["uttid"], fs=filesystem
-                ):
-                    if e["uttid"] in common_utt:
-                        ordered_utt.append(e["uttid"])
                 cache = {name: {} for name in readers}
+
+                # read data and combine to sample
                 for utt in ordered_utt:
                     if utt not in common_utt:
                         continue
@@ -107,24 +142,26 @@ class _ParquetSample:
 
 
 class _ParquetReader:
-    def __init__(self, url, fs=None, columns=None):
+    def __init__(self, url, fs=None, columns=None, row_groups=None):
         if fs is None:
             fs = get_filesystem(url)
         self.stream = fs.open(url, skip_instance_cache=True)
         self.parquet_file = ParquetFile(self.stream)
         self.columns = columns
+        if row_groups:
+            self.row_groups = row_groups
+        else:
+            self.row_groups = list(range(self.parquet_file.num_row_groups))
 
     def __iter__(self):
-        row_group_num = self.parquet_file.num_row_groups
-        row_groups = list(range(row_group_num))
-        for group_no, row_group in enumerate(row_groups):
+        for row_group in self.row_groups:
             group_data = self.parquet_file.read_row_group(
                 row_group, columns=self.columns
             )
             group_datas = group_data.to_pandas()
             for row in group_datas.iterrows():
                 item = row[1].to_dict()
-                yield group_no, item
+                yield row_group, item
 
     def close(self):
         self.parquet_file.close()

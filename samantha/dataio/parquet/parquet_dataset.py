@@ -22,6 +22,7 @@ class ParquetDataset(DataPipeline, FluidInterface):
         shardshuffle: Optional[Any] = None,
         detshuffle: bool = False,
         nodesplitter=shardlists.single_node_only,
+        sample_limit_per_file: int = None,
         **kwargs,
     ):
         super().__init__()
@@ -47,7 +48,7 @@ class ParquetDataset(DataPipeline, FluidInterface):
 
         # To fix conflicts between filesystem and multiprocessing, use empty filesystem.
         # Real filesystem will be assigned in __iter__()
-        self._pq_sample = _ParquetSample(None, handler)
+        self._pq_sample = _ParquetSample(None, handler, sample_limit_per_file)
         self.append(self._pq_sample)
         self._url_fetched = False
 
