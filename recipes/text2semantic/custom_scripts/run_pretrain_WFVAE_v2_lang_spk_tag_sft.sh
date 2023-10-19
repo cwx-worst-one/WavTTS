@@ -4,10 +4,10 @@ hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/panjunjie.jeff
 bash launch.sh fit \
         --config recipes/text2semantic/conf/llama/vae_llama_ctiga_wds_lang_spk_tag.yaml \
         --run_opts.data_id 234 \
-        --run_opts.hdfs_path $hdfs_path \
+        --run_opts.hdfs_path hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/huangzhiying.92/exp/samantha_bigtts_merge20231008/text2semantic/sft_WFVAE_v2_labv3_punc_data_id234_bt14000_16A100_accu5_byteT5_scr0.0_freezeTrue_langFalse_test \
         --run_opts.log_dir ./logs \
-        --run_opts.log_name ${log_name} \
-        --run_opts.version ${version} \
+        --run_opts.log_name sft_WFVAE_v2_labv3_punc \
+        --run_opts.version data_id234_bt14000_16A100_accu5_byteT5_scr0.0_freezeTrue_langFalse_test \
         --run_opts.batch_total_tokens 14000 \
         --run_opts.text_encoder_type byte-T5-base \
         --run_opts.text_encoder_path resource/models/byte-T5-base \
@@ -15,20 +15,21 @@ bash launch.sh fit \
         --run_opts.strategy ddp_find_unused_parameters_true \
         --run_opts.wds2tag recipes/text2semantic/datasets/urls_lst/wds2tag.data_id234.json \
         --run_opts.spk_cfg_rate 0.0 \
-        --run_opts.use_lang_id False
+        --run_opts.use_lang_id False \
+        --ckpt_path hdfs://haruna/home/hcache/centralize_lq/gpt_java/speech/user/huangzhiying.92/exp/samantha_bigtts_merge20231008/text2semantic/pretrain_WFVAE_v2_labv3_punc_data_id192_bt14000_16A100_accu5_byteT5_scr0.15_freezeTrue_langFalse/checkpoints/last.ckpt
 
 ### infer
 hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/panjunjie.jeff/resource ./resource;
 bash launch.sh predict \
         -c recipes/text2semantic/conf/llama/inference_wvae_icl_lang_spk_tag.yaml \
-        --run_opts.meta_lst $metalst \
-        --run_opts.ckpt_path $ar_ckpt_path \
-        --run_opts.output_dir $out_wav_dir \
+        --run_opts.meta_lst /mnt/bn/huangzhiying-nas-speech2speech-volume1/code/bigtts_testset/temp_en/meta.lst.conversation_20 \
+        --run_opts.ckpt_path hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/huangzhiying.92/exp/samantha_bigtts_merge20231008/text2semantic/sft_WFVAE_v2_labv3_punc_data_id234_bt14000_16A100_accu5_byteT5_scr0.0_freezeTrue_langFalse_20231016/checkpoints/last.ckpt \
+        --run_opts.output_dir /mnt/bn/huangzhiying-nas-speech2speech-volume1/exp/samantha_bigtts_merge20231008/text2semantic/sft_WFVAE_v2_labv3_punc_data_id234_bt14000_16A100_accu5_byteT5_scr0.0_freezeTrue_langFalse_20231016/infer/test \
         --run_opts.wvae_encoder hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wangxin.colin/ckpts/wvae_1.0/wavevae_encoder_%d.pt \
         --run_opts.wvae_decoder hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wangxin.colin/ckpts/wvae_1.0/wavevae_decoder_%d.pt \
         --run_opts.ar_model_name "VAET2SLangSpkModule" \
-        --run_opts.infer_spk_name $infer_spk_name \
-        --run_opts.tag_id $tag_id \
+        --run_opts.infer_spk_name duibiao/sarah_conversation \
+        --run_opts.tag_id 3 \
         --run_opts.tokenizer_type byte-T5-base \
         --run_opts.bpe_dir resource/models/byte-T5-base
 '''
