@@ -1,19 +1,16 @@
+import json
 import logging
-import math
 import pickle
 import sys
 import os 
-import random
 
 import numpy as np
 import torch
-import webdataset as wds
 from torch.utils.data import IterableDataset
-from transformers import LlamaTokenizer, T5Tokenizer, AutoTokenizer
+from transformers import T5Tokenizer, AutoTokenizer
 
 from samantha.dataio.batching import BucketBatcher
-from samantha.dataio.webdataset.ra_wds import WebDataset
-from samantha.utils.hparams import DotDict
+from samantha.dataio.parquet import ParquetDataset
 
 from recipes.text2semantic.utils.remote_io import load_json
 from transformers import LlamaTokenizer
@@ -21,13 +18,11 @@ from zhon.hanzi import punctuation
 import string
 punctuation_all = punctuation + string.punctuation
 
-import traceback
 
 from recipes.text2semantic.datasets.frontend import phone_to_int, tone_to_int, phonetone_to_int
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)
-
 
 
 class HiddenPrints:
@@ -40,9 +35,9 @@ class HiddenPrints:
         sys.stdout = self._original_stdout
 
 
-class ContinuousTTSLangSpkDataset(IterableDataset):
+class ContinuousTTSLangSpkSerDataset(IterableDataset):
     def __init__(self,
-        wds_urls,
+        data_id,
         drop_last=False,
         batcher_config=None,
         use_lang_id=False,
@@ -56,7 +51,7 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
         max_length=4096,
         use_bpe=False,
         use_extra_tag=False,
-        wds2tag=None,
+        spk2tag=None,
         tokenizer_type="llama",
         use_foreigner_data=True,
         use_lang_cfg=False,
@@ -65,14 +60,13 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
         lang_cfg_rate=0.0,
         ):
 
-        self.wds = (
-            WebDataset(
-                urls=wds_urls,
+        self.dataset = (
+            ParquetDataset(
+                data_id=int(data_id),
                 resampled=True,
-                skip_instance_cache=True,
             )
-            .decode()
             .shuffle(2048)
+            .map(self.process_meta)
             .map(self.get_text_wavid)
         )
 
@@ -124,7 +118,7 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
         self.use_lang_cfg = use_lang_cfg
 
         if self.use_extra_tag:
-            self.tag_dict = load_json(wds2tag)
+            self.tag_dict = load_json(spk2tag)
 
         if self.use_bpe:
             logger.info(f'##### Using BPE #####')
@@ -147,20 +141,35 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
         self.lang_cfg_rate = lang_cfg_rate
         assert 0 <= self.lang_cfg_rate <= 1
 
+    def process_meta(self, sample):
+        meta_obj = json.loads(sample["meta"])
+        while not isinstance(meta_obj, dict):
+            meta_obj = json.loads(meta_obj)
+        item = {}
+        item["labels"] = str(meta_obj.get("labels", ""))
+        item["speaker_name"] = str(meta_obj.get("speaker_id", ""))
+        item["snr"] = str(meta_obj.get("snr", "10.0"))
+        item["mos"] = str(meta_obj.get("mos", "5.0"))
+        item["rms_stats_rms_max"] = "-1"
+        item["speaker_similarity_min"] = "1.0"
+        sample.update(item)
+        return sample
+
     def get_text_wavid(self, sample):
 
         bn = pickle.loads(sample["bns"])
         text = sample["text"]
-        lab = sample["labels"]
+        labels = sample["labels"]
         utt_id = sample["__key__"]
-        url = sample["__url__"]
+        url = sample["__data_url__"]
+        wav = np.frombuffer(sample["wav"][44:], dtype=np.int16) / 32768.0
+        wav = wav.astype(np.float32)
 
         data_dict = dict()
 
         if len(bn.shape) == 3 and bn.shape[0] == 1:
             bn = bn[0]
 
-        labels = lab.decode()
         if labels is None:
             return None
         labels = list(filter(lambda x: x != "", labels.split('\n')))
@@ -179,7 +188,17 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
             else:
                 raise NotImplementedError
         if self.use_extra_tag:
-            tag_id = int(self.tag_dict.get(url, 0))
+            dataset_name = sample.get("dataset_name")
+            speaker_name = sample.get("speaker_name")
+            if not dataset_name or not speaker_name:
+                logger.warning(f"{utt_id}: No speaker name")
+                spk_key = 'default'
+            else:
+                dataset_name = dataset_name
+                speaker_name = speaker_name
+                spk_key = '/'.join([dataset_name, speaker_name])
+            
+            tag_id = int(self.tag_dict.get(spk_key, 0))
             if tag_id == 0:
                 logger.warning(f"Warning: no tag id found for {url}")
         else:
@@ -201,7 +220,7 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
             if self.get_lang_by_tacolab:
                 lang_key = self.get_lang(labels)
             else:
-                lang_key = self.get_lang_by_text(text)
+                lang_key = self.get_lang_by_text(text.encode("utf-8"))
             if self.en_foreigner_list:
                 speaker_name = sample.get("speaker_name")
                 if speaker_name:
@@ -231,8 +250,8 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
                 # print(f"{utt_id}: No speaker name")
                 spk_id = self.spk2id["default"]
             else:
-                dataset_name = dataset_name.decode()
-                speaker_name = speaker_name.decode()
+                dataset_name = dataset_name
+                speaker_name = speaker_name
                 spk_key = '/'.join([dataset_name, speaker_name])
                 if spk_key in self.spk2id:
                     spk_id = self.spk2id[spk_key]
@@ -264,12 +283,13 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
             "lang_seq": lang_seq,
             "spk_seq": spk_seq,
             "bpe_seq": bpe_seq,
-            "tag_id": tag_id
+            "tag_id": tag_id,
+            "wav":  wav
             })
         return data_dict
 
     def __iter__(self):
-        for item in self.wds:
+        for item in self.dataset:
             batch = self.batcher.collate_batch(item)
             if batch:
                 yield batch
@@ -373,6 +393,7 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
             phones = []
             tones = []
             phonetones = []
+
             if lang == 'zh':
                 assert len(tacolab[0].split('\t')) == 7, (len(tacolab[0].split('\t')), tacolab[0])
                 if tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit':
@@ -524,6 +545,7 @@ class ContinuousCollator(object):
         text_lens = []
         bn_lens = []
         bpe_lens = []
+        wav_lens = []
         # utt_ids = []
         # tag_ids = []
         for x in results:
@@ -533,6 +555,7 @@ class ContinuousCollator(object):
             else:
                 bpe_lens = None
             bn_lens.append(x["bn"].shape[0])
+            wav_lens.append(x["wav"].shape[0])
             # bpe_lens.append(x["bpe_seq"].shape[0])
             # utt_ids.append(x["utt_id"])
             # if x["tag_id"] is not None:
@@ -540,11 +563,13 @@ class ContinuousCollator(object):
 
         max_text_len = max(text_lens)
         max_bn_len = max(bn_lens)
+        max_wav_len = max(wav_lens)
         if self.use_bpe:
             max_bpe_len = max(bpe_lens)
 
         text_lens = torch.from_numpy(np.asarray(text_lens))
         bn_lens = torch.from_numpy(np.asarray(bn_lens))
+        wav_lens = torch.from_numpy(np.asarray(wav_lens))
         if self.use_bpe:
             bpe_lens = torch.from_numpy(np.asarray(bpe_lens))
 
@@ -553,6 +578,7 @@ class ContinuousCollator(object):
         ret_dict["text_lens"] = text_lens
         ret_dict["bn_lens"] = bn_lens
         ret_dict["bpe_lens"] = bpe_lens
+        ret_dict["wav_lens"] = wav_lens / max_wav_len
         # ret_dict["utt_id"] = utt_ids
         # if len(tag_ids) > 0:
         #     ret_dict["tag_id"] = np.asarray(tag_ids)
@@ -601,6 +627,13 @@ class ContinuousCollator(object):
                             mode="constant",
                             constant_values=self.pad,
                         )
+                elif k == "wav":
+                    v = np.pad(
+                        v,
+                        (0, max_wav_len - v.shape[0]),
+                        mode="constant",
+                        constant_values=self.pad,
+                    )
                 elif k not in ["utt_id", "tag_id"]:
                     v = np.pad(
                         v,
@@ -612,7 +645,9 @@ class ContinuousCollator(object):
 
         for k in ret_dict.keys():
             if k == "bn":
-                ret_dict[k] = np.stack(ret_dict[k], axis=0) 
+                ret_dict[k] = np.stack(ret_dict[k], axis=0)
+            elif k == "wav":
+                ret_dict[k] = np.stack(ret_dict[k], axis=0)
             elif k != "utt_id":
                 if ret_dict[k] is not None:
                     ret_dict[k] = np.asarray(ret_dict[k])
@@ -633,36 +668,25 @@ class ContinuousCollator(object):
 
 
 if __name__ == "__main__":
-    # pass
-    # import torch
-    # import torch.distributed as dist
-    # import torch.utils.data
 
-    # dist.init_process_group(backend="nccl")
-    # urls = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/huangzhiying.92/data/bigtts/WFVAE_v2_labv3_punc/11labs/*/chunk*/*.tar hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/huangzhiying.92/data/bigtts/WFVAE_v2_labv3_punc/duibiao/*/chunk*/*.tar"
-    # urls = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/chenyuanzhe/WFVAE_v2_fixtrim/librilight/chunk*/*.tar"
-    urls = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/panjunjie.jeff/data/bigtts/WFVAE_v2_labv3_punc/duibiao/jason_conversation_update/chunk-*/00000.tar hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/huangzhiying.92/data/bigtts/WFVAE_v2_labv3_punc/duibiao/maomao_audiobook/chunk-*/00000.tar hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/huangzhiying.92/data/bigtts/WFVAE_v2_labv3_punc/duibiao/*/chunk*/*.tar"
-    # urls = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/huangzhiying.92/data/bigtts/WFVAE_v2_labv3_punc/duibiao/Tim_normal/chunk*/*.tar"
-
-    from samantha.dataio.utils import parse_data_urls
-    wds_urls = parse_data_urls(data_urls=urls)
     batcher_config = {
         "buckets": list(range(0, 6000, 100)),  # [0, 100, 200 ... 4000] 4000以上的可以先丢掉
         "dynamic_batch": True,
         "maximum_bucket_size": 200,
         "length_fn": "lambda x: x[\"stop_token\"].shape[0]" # seq.shape
     }
-    dataset = ContinuousTTSLangSpkDataset(wds_urls, 
+
+    dataset = ContinuousTTSLangSpkSerDataset(data_id=254, 
                                 batcher_config=batcher_config,
                                 drop_last=False,
-                                use_lang_id=True,
+                                use_lang_id=False,
                                 lang2id="recipes/text2semantic/datasets/dict/lang2id.json",
                                 use_spk_id=True,
                                 spk2id="recipes/text2semantic/datasets/dict/spk2id.json",
                                 input_type='2dim',
-                                use_code_switch_data=False,
-                                use_lang_cfg=True,
-                                spk_cfg_rate=0.15,
+                                use_code_switch_data=True,
+                                use_extra_tag=True,
+                                spk2tag="recipes/text2semantic/datasets/dict/spk2tag.json",
                                 )
 
     collector = ContinuousCollator(tokenizer_pad=0)

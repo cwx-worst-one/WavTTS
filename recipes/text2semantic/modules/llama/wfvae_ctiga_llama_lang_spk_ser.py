@@ -89,7 +89,10 @@ class ModelArgs:
     n_layers_gr: int = 1
     gr_dim: int = 256
 
-class VAELLaMaLangSpk(LLaMa):
+    # ser_tag
+    ser_tag_vocab_size: int = 100
+
+class VAELLaMaLangSpkSer(LLaMa):
     def __init__(
         self,
         params: ModelArgs,
@@ -105,7 +108,8 @@ class VAELLaMaLangSpk(LLaMa):
         attn_type="mha",
         use_lang_grloss=False,
         input_type='2dim',
-        apply_id_to_fullseq=False,
+        use_ser_tag=False,
+        use_ser_tag_loss=False,
     ):
         super().__init__(params, provider)
         self.params = params
@@ -135,6 +139,10 @@ class VAELLaMaLangSpk(LLaMa):
         logger.info(f"use_lang_grloss: {self.use_lang_grloss}")
         self.input_type = input_type
         logger.info(f"input_type: {self.input_type}")
+        self.use_ser_tag = use_ser_tag
+        logger.info(f"use_ser_tag: {self.use_ser_tag}")
+        self.use_ser_tag_loss = use_ser_tag_loss
+        logger.info(f"use_ser_tag_loss: {self.use_ser_tag_loss}")
 
         if self.input_type == '2dim':
             self.tok_embeddings = FrontendEmbedding(
@@ -210,6 +218,12 @@ class VAELLaMaLangSpk(LLaMa):
                 self.lang_output.append(nn.Linear(params.gr_dim, params.lang_vocab_size, bias=False))
                 self.lang_output = nn.Sequential(*self.lang_output)
 
+        if self.use_ser_tag:
+            self.ser_tag_embeddings = nn.Embedding(params.ser_tag_vocab_size, params.dim)
+
+        if self.use_ser_tag_loss:
+            self.ser_tag_output = nn.Linear(params.dim, params.ser_tag_vocab_size, bias=False)
+
         self.init_weight_and_load_state(state_dict_path)
 
 
@@ -232,6 +246,7 @@ class VAELLaMaLangSpk(LLaMa):
         bpe_seqs=None,
         bpe_lens=None,
         tag_ids=None,
+        ser_tags=None,
     ):
 
         bsz = text_lens.shape[0]
@@ -270,6 +285,9 @@ class VAELLaMaLangSpk(LLaMa):
             assert tag_ids is not None
             cond = self.tag_embeddings(tag_ids).unsqueeze(1)
 
+        if self.use_ser_tag:
+            ser_tag_embeds = self.ser_tag_embeddings(ser_tags)
+
         attn_weights = None
         if use_cache:
             assert bsz == 1
@@ -282,6 +300,8 @@ class VAELLaMaLangSpk(LLaMa):
             elif self.input_type == '1dim':
                 token_in_h = self.tok_embeddings(frontend_inputs['phonetone'])
             if self.use_spk_id and self.spk_type == "concat":
+                seqlen += 1
+            if self.use_ser_tag:
                 seqlen += 1
             h = torch.zeros([bsz, seqlen, bn_in_h.shape[-1]], device=bn_in_h.device)
 
@@ -322,20 +342,37 @@ class VAELLaMaLangSpk(LLaMa):
                     if self.spk_type == "concat":
                         # add spk embds
                         h[i, text_lens[i]:text_lens[i]+1, :] = spk_embeds[i]
-                        # insert bn embeds
-                        h[i, text_lens[i]+1:text_lens[i]+1+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
+                        if self.use_ser_tag:
+                            # insert bn embeds
+                            h[i, text_lens[i]+1:text_lens[i]+2, :] = ser_tag_embeds[i]
+                            h[i, text_lens[i]+2:text_lens[i]+2+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
+                        else:
+                            # insert bn embeds
+                            h[i, text_lens[i]+1:text_lens[i]+1+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
                     elif self.spk_type == "add":
-                        h[i, text_lens[i]:text_lens[i]+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
+                        if self.use_ser_tag:
+                            h[i, text_lens[i]:text_lens[i]+1, :] = ser_tag_embeds[i]
+                        else:
+                            h[i, text_lens[i]:text_lens[i]+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
+
             else:
                 for i in range(bsz):
                     h[i, :text_lens[i], :] = token_in_h[i, :text_lens[i], :]
                     if self.spk_type == "concat":
                         # add spk embds
                         h[i, text_lens[i]:text_lens[i]+1, :] = spk_embeds[i]
-                        # insert bn embeds
-                        h[i, text_lens[i]+1:text_lens[i]+1+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
+                        if self.use_ser_tag:
+                            # insert bn embeds
+                            h[i, text_lens[i]+1:text_lens[i]+2, :] = ser_tag_embeds[i]
+                            h[i, text_lens[i]+2:text_lens[i]+2+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
+                        else:
+                            # insert bn embeds
+                            h[i, text_lens[i]+1:text_lens[i]+1+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
                     elif self.spk_type == "add":
-                        h[i, text_lens[i]:text_lens[i]+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
+                        if self.use_ser_tag:
+                            h[i, text_lens[i]:text_lens[i]+1, :] = ser_tag_embeds[i]
+                        else:
+                            h[i, text_lens[i]:text_lens[i]+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
 
         h = super().forward(h, seqlen, start_pos, inference_params, cond=cond)
 
@@ -347,6 +384,11 @@ class VAELLaMaLangSpk(LLaMa):
         h_output = self.h_output(h)
         stop_token= self.stop_token_head(h)
 
+        if self.use_ser_tag_loss:
+            ser_tag_output = self.ser_tag_output(h)
+        else:
+            ser_tag_output = None
+
         output_dict = {
             "logits": output.float() if output is not None else None,
             "dense": h_output.float(), 
@@ -354,6 +396,7 @@ class VAELLaMaLangSpk(LLaMa):
             "bn_in_z": bn_in_z,
             "attn_weights": attn_weights,
             "lang_output": lang_output.float() if lang_output is not None else None,
+            "ser_tag_logits": ser_tag_output.float() if ser_tag_output is not None else None,
         }
 
         return output_dict

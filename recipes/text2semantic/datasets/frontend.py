@@ -60,3 +60,11 @@ tone_to_int = dict()
 for i, tone in enumerate(all_tones):
     if tone not in tone_to_int:
         tone_to_int[tone] = i + offset
+
+
+phonetone_to_int = dict()
+index = 0
+for i, phone in enumerate(all_phones):
+    for j, tone in enumerate(all_tones):
+        phonetone_to_int[phone + '_' + tone] = index + offset
+        index += 1

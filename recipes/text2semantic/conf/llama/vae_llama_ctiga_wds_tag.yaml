@@ -55,6 +55,7 @@ run_opts:
     use_ctc_loss: False
     use_url_lst: True
     freeze_text_encoder: False
+    spk_type: 'add'
     
 llama_config: !new:recipes.text2semantic.modules.llama.wfvae_ctiga_llama_lang_spk.ModelArgs
     dim: 1024
@@ -126,6 +127,7 @@ model_cls: !name:recipes.text2semantic.modules.llama.wfvae_ctiga_llama_lang_spk.
     use_extra_tag: !ref <run_opts[use_extra_tag]>
     use_phoneme_loss: !ref <run_opts[use_phoneme_loss]>
     attn_type: mha
+    spk_type: !ref <run_opts[spk_type]>
 
 # training module configuration
 #optimizer_cls: !name:torch.optim.AdamW
@@ -139,8 +141,8 @@ _steps_per_epoch: !apply:operator.length_hint [!ref <train_dataloader>]
 _world_size: !apply:samantha.utils.envs.getenv_int ["WORLD_SIZE", 1]
 scheduler_cls: !name:recipes.bark.lr_schedulers.musiclm_lr_scheduler.WarmupCosine
     init_lr: !ref <run_opts[learning_rate]>
-    warmup_steps: 2000
     cycle_steps: 400000
+    warmup_steps: 2000
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
 # lightning model setting
@@ -158,6 +160,7 @@ pl_module: !new:recipes.text2semantic.lit_modules.llama.lit_vae_t2s_ctiga_lang_s
     use_phoneme_loss: !ref <run_opts[use_phoneme_loss]>
     use_ctc_loss: !ref <run_opts[use_ctc_loss]>
     freeze_text_encoder: !ref <run_opts[freeze_text_encoder]>
+    spk_type: !ref <run_opts[spk_type]>
     resume_ckpt_path: !ref <run_opts[resume_ckpt_path]>
 
 logger:

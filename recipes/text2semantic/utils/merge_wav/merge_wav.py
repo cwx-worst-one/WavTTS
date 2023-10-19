@@ -29,7 +29,7 @@ out_wav_dir = sys.argv[2]
 
 os.makedirs(out_wav_dir, exist_ok=True)
 
-sil_600ms = np.zeros(7200)
+sil_600ms = np.zeros(12000)
 in_wav_names = os.listdir(in_wav_dir)
 
 utt2wav_paths = dict()
@@ -61,7 +61,7 @@ for utt in tqdm(utt2wav_paths.keys()):
      
      for wav_path in wav_paths:
           wav, sr = librosa.load(wav_path, sr=None)
-          # wav = trim_silence(wav)
+          wav = trim_silence(wav)
 
           # out_wav_path = os.path.join(out_wav_dir, wav_path.split('/')[-1])
           # wav_save_orgamp(out_wav_path, sr, wav)

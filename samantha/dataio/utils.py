@@ -154,7 +154,7 @@ def parse_data_urls(data_id=None, data_urls=None, use_url_lst=False):
     if data_id is not None:
         os.environ["DatasetID"] = str(data_id)
         path_list = get_dataset_collection_info(data_id)
-        paths = [v["data"] for v in path_list]
+        paths = [v["data"].replace("\n", " ") for v in path_list]
         data_urls = __expand_paths(paths)
         if path_list[0]["index"]:
             idx_paths = [v["index"] for v in path_list]

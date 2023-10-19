@@ -16,7 +16,7 @@ from zhon.hanzi import punctuation
 import string
 punctuation_all = punctuation + string.punctuation
 from recipes.text2semantic.lit_modules.lit_infer import BigTTSWVAEInfer
-from recipes.text2semantic.datasets.frontend import phone_to_int, tone_to_int
+from recipes.text2semantic.datasets.frontend import phone_to_int, tone_to_int, phonetone_to_int
 from recipes.text2semantic.scripts.infer_utils import (
     load_torch_script,
     setup_seed,
@@ -64,6 +64,8 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
         get_lang_by_tacolab=False,
         save_tacolab=False,
         tag_id=0,
+        use_offline_tacolab=False,
+        input_type='2dim',
     ):
         super().__init__(
                 ar_model_name=ar_model_name,
@@ -93,6 +95,7 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
                 tokenizer_type=tokenizer_type,
                 max_length=max_length)
 
+        self.wvae_decoder = wvae_decoder
         self.phone_to_int = phone_to_int
         self.tone_to_int = tone_to_int
         self.infer_spk_name = infer_spk_name
@@ -100,6 +103,13 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
         self.save_tacolab = save_tacolab
         self.tag_id = tag_id
         self.use_prompt = use_prompt
+        self.use_offline_tacolab = use_offline_tacolab
+        if self.use_offline_tacolab:
+            assert self.infer_tacolab_dir != "", (self.infer_tacolab_dir)
+            if not self.use_spk_id:
+                assert self.prompt_tacolab_dir != "", (self.prompt_tacolab_dir)
+        self.phonetone_to_int = phonetone_to_int
+        self.input_type = input_type
 
     def get_lang(self, tacolab):
         if len(tacolab[0].split('\t')) != 5:
@@ -115,131 +125,6 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             lang = 'en'
         return lang
 
-    def convert_v3_to_v1(self, tacolab):
-        tacolab_v1 = []
-        # en, zh
-        if tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword' or tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit':
-            tacolab = tacolab[1:]
-        for x in tacolab:
-            x_split = x.split('\t')
-            if len(x_split) == 7:
-                phone, tone, ws, pw, stype, word, _ = x_split
-            elif len(x_split) == 6:
-                phone, tone, ws, pw, stype, word = x_split
-            else:
-                print("Wrong tacolab", x_split)
-                return None
-            tacolab_v1.append('\t'.join([phone, tone, '0.0 0.0 0.0 1.0', ws, pw]))
-        return tacolab_v1
-
-    def convert_tacolab_to_text_id(self, tacolab):
-        try:
-            lang = self.get_lang(tacolab)
-            phone_ids = []
-            tone_ids = []
-            phones = []
-            tones = []
-            if lang == 'zh':
-                assert len(tacolab[0].split('\t')) == 7, (len(tacolab[0].split('\t')), tacolab[0])
-                if tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit':
-                    tacolab = tacolab[1:]
-                for i in range(len(tacolab)):
-                    x = tacolab[i]
-                    if i != 0 and x.split('\t')[0] == 'sil':
-                        continue
-                    x_split = x.split('\t')
-                    phone, tone, ws, pw, stype, word, unit = x_split
-                    assert phone in self.phone_to_int, f"{phone} not in phone set"
-                    assert tone in self.tone_to_int, f"{tone} not in tone set"
-
-                    phone_ids.append(self.phone_to_int[phone])
-                    tone_ids.append(self.tone_to_int[tone])
-                    phones.append(phone)
-                    tones.append(tone)
-                    if phone[:2] == "C0":
-                        if unit in ['S', 'E']:
-                            phone_ids.append(self.phone_to_int["syl_sep"])
-                            tone_ids.append(self.tone_to_int["syl_sep"])
-                            phones.append("syl_sep")
-                            tones.append("syl_sep")
-                            if ws in ["S", "E"]:
-                                phone_ids.append(self.phone_to_int["zh_word_sep"])
-                                tone_ids.append(self.tone_to_int["zh_word_sep"])
-                                phones.append("zh_word_sep")
-                                tones.append("zh_word_sep")
-                    elif phone[:2] == "E0":
-                        if pw != "0":
-                            phone_ids.append(self.phone_to_int["en_word_sep"])
-                            tone_ids.append(self.tone_to_int["en_word_sep"])
-                            phones.append("en_word_sep")
-                            tones.append("en_word_sep")
-            elif lang == 'zh_en':
-                assert len(tacolab[0].split('\t')) == 7 or len(tacolab[0].split('\t')) == 6, (len(tacolab[0].split('\t')), tacolab[0])
-                if tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit' or tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword':
-                    tacolab = tacolab[1:]
-                for i in range(len(tacolab)):
-                    x = tacolab[i]
-                    if i != 0 and x.split('\t')[0] == 'sil':
-                        continue
-                    x_split = x.split('\t')
-                    if len(x_split) == 7:
-                        phone, tone, ws, pw, stype, word, unit = x_split
-                    elif len(x_split) == 6:
-                        phone, tone, ws, pw, stype, word = x_split
-                    else:
-                        print("Wrong tacolab", x_split)
-                        return None
-
-                    assert phone in self.phone_to_int, f"{phone} not in phone set"
-                    assert tone in self.tone_to_int, f"{tone} not in tone set"
-
-                    phone_ids.append(self.phone_to_int[phone])
-                    tone_ids.append(self.tone_to_int[tone])
-                    phones.append(phone)
-                    tones.append(tone)
-                    if phone[:2] == "C0":
-                        if unit in ['S', 'E']:
-                            phone_ids.append(self.phone_to_int["syl_sep"])
-                            tone_ids.append(self.tone_to_int["syl_sep"])
-                            phones.append("syl_sep")
-                            tones.append("syl_sep")
-                            if ws in ["S", "E"]:
-                                phone_ids.append(self.phone_to_int["zh_word_sep"])
-                                tone_ids.append(self.tone_to_int["zh_word_sep"])
-                                phones.append("zh_word_sep")
-                                tones.append("zh_word_sep")
-                    elif phone[:2] == "E0":
-                        if pw != "0":
-                            phone_ids.append(self.phone_to_int["en_word_sep"])
-                            tone_ids.append(self.tone_to_int["en_word_sep"])
-                            phones.append("en_word_sep")
-                            tones.append("en_word_sep")
-            elif lang == 'en':
-                if len(tacolab[0].split('\t')) != 5:
-                    tacolab = self.convert_v3_to_v1(tacolab)
-                for i in range(len(tacolab)):
-                    x = tacolab[i]
-                    if i != 0 and x.split('\t')[0] == 'sil':
-                        continue
-                    x_split = x.split('\t')
-                    phone, tone, _, ws, pw = x.split('\t')
-                    assert phone in self.phone_to_int, f"{phone} not in phone set"
-                    assert tone in self.tone_to_int, f"{tone} not in tone set"
-                    phone_ids.append(self.phone_to_int[phone])
-                    tone_ids.append(self.tone_to_int[tone])
-                    phones.append(phone)
-                    tones.append(tone)
-                    if pw != "0":
-                        phone_ids.append(self.phone_to_int["en_word_sep"])
-                        tone_ids.append(self.tone_to_int["en_word_sep"])
-                        phones.append("en_word_sep")
-                        tones.append("en_word_sep")
-            phone_ids, tone_ids = np.array(phone_ids), np.array(tone_ids)
-            return np.stack([phone_ids, tone_ids]), phones, tones
-        except Exception as e:
-            logger.info(e)
-            return None
-
     def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: int = 0) -> Any:
         setup_seed(self.hparams.seed)
         sample = self.encode(batch)
@@ -250,8 +135,8 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
         output_dir = f"{self.hparams.output_dir}"
         os.makedirs(output_dir, exist_ok=True)
         output_path = f"{output_dir}/{utt_ids[0]}.wav"
-        # if os.path.exists(output_path):
-        #     return
+#        if os.path.exists(output_path):
+#            return
         z_outputs, _ = self.ar_model.predict(sample, None)
         generated_wav = self._decode(z_outputs)
         generated_wav *= (32767) / max(0.01, max(torch.abs(generated_wav)))
@@ -260,9 +145,11 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             24000,
             generated_wav.cpu().numpy().astype(np.int16),
         )
+        # return generated_wav.cpu().numpy()
 
     def encode(self, sample):
         device = f"cuda:{self.trainer.local_rank}"
+        # device = "cuda:0"
         data_dict = dict()
 
         if len(sample) == 5:
@@ -298,6 +185,9 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             wav = F.pad(wav, (0, (wav.size(-1) // 600 + 1) * 600 - wav.size(-1), 0, 0, 0, 0), value=0.)
             # wav = torch.stack([wav]).unsqueeze(1)
             spec = spectrogram_torch(wav.squeeze(1), 2048, 24000, 300, 1200)
+            # print("wav: ", wav.shape, wav)
+            # print("spec: ", spec.shape, spec)
+            # exit()
             _, m, logs = self.wvae_encoder(wav, spec)
             m = m.transpose(2, 1)
             logs = logs.transpose(2, 1)
@@ -308,17 +198,28 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
 
         # get text_id
         if not self.use_prompt:
-            infer_tacolab = self.generate_tacolabels_engine(infer_text)
-            if infer_tacolab is None:
-                return None
+            if self.use_offline_tacolab:
+                infer_utt = uttid
+                infer_tacolab_path = os.path.join(self.infer_tacolab_dir, infer_utt + '.lab')
+                if not os.path.exists(infer_tacolab_path):
+                    print("infer_tacolab_path not exists, skip", infer_tacolab_path)
+                    return None
+                with open(infer_tacolab_path, 'r', encoding="utf-8") as f:
+                    infer_tacolab = f.read()
+            else:
+                infer_tacolab = self.generate_tacolabels_engine(infer_text)
+                if infer_tacolab is None:
+                    return None
+                infer_tacolab = infer_tacolab.decode()
+
             if self.save_tacolab:
                 save_infer_tacolab_dir = os.path.join(self.hparams.output_dir, '../infer_tacolab')
                 os.makedirs(save_infer_tacolab_dir, exist_ok=True)
                 infer_tacolab_path = os.path.join(save_infer_tacolab_dir, uttid + '.lab')
                 with open(infer_tacolab_path, 'w', encoding='utf-8') as f_w:
-                    f_w.write(infer_tacolab.decode())
+                    f_w.write(infer_tacolab)
 
-            tacolab = infer_tacolab.decode()
+            tacolab = infer_tacolab
             tacolab_list = list(filter(lambda x: x != "", tacolab.split('\n')))
             text_id_phones_tones = self.convert_tacolab_to_text_id(tacolab_list)
 
@@ -326,39 +227,83 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
                 logger.warning(f"{uttid} convert_tacolab_to_text_id failed ...")
                 return None
             else:
-                text_id, phones, tones = text_id_phones_tones
+                if self.input_type == '2dim':
+                    text_id, phones, tones = text_id_phones_tones
+                elif self.input_type == '1dim':
+                    text_id, phones, tones, phonetone_ids, phonetones = text_id_phones_tones
+                    # print("phonetone_ids: ", phonetone_ids)
+                else:
+                    raise NotImplementedError
         else:
-            prompt_tacolab = self.generate_tacolabels_engine(prompt_text)
-            infer_tacolab = self.generate_tacolabels_engine(infer_text)
+            if self.use_offline_tacolab:
+                prompt_utt = prompt_wav_path.split('/')[-1][:-4]
+                infer_utt = uttid
+                prompt_tacolab_path = os.path.join(self.prompt_tacolab_dir, prompt_utt + '.lab')
+                infer_tacolab_path = os.path.join(self.infer_tacolab_dir, infer_utt + '.lab')
+                if not os.path.exists(prompt_tacolab_path) or not os.path.exists(infer_tacolab_path):
+                    print("prompt_tacolab_path or infer_tacolab_path not exists, skip", prompt_tacolab_path, infer_tacolab_path)
+                    return None
+                with open(prompt_tacolab_path, 'r', encoding="utf-8") as f:
+                    prompt_tacolab = f.read()
+                with open(infer_tacolab_path, 'r', encoding="utf-8") as f:
+                    infer_tacolab = f.read()
+            else:
+                prompt_tacolab = self.generate_tacolabels_engine(prompt_text)
+                infer_tacolab = self.generate_tacolabels_engine(infer_text)
 
-            if prompt_tacolab is None or infer_tacolab is None:
-                return None
+                if prompt_tacolab is None or infer_tacolab is None:
+                    return None
+                prompt_tacolab = prompt_tacolab.decode()
+                infer_tacolab = infer_tacolab.decode()
 
             if self.save_tacolab:
                 save_prompt_tacolab_dir = os.path.join(self.hparams.output_dir, '../prompt_tacolab')
                 os.makedirs(save_prompt_tacolab_dir, exist_ok=True)
                 prompt_tacolab_path = os.path.join(save_prompt_tacolab_dir, uttid + '.lab')
                 with open(prompt_tacolab_path, 'w', encoding='utf-8') as f_w:
-                    f_w.write(prompt_tacolab.decode())
+                    f_w.write(prompt_tacolab)
 
                 save_infer_tacolab_dir = os.path.join(self.hparams.output_dir, '../infer_tacolab')
                 os.makedirs(save_infer_tacolab_dir, exist_ok=True)
                 infer_tacolab_path = os.path.join(save_infer_tacolab_dir, uttid + '.lab')
                 with open(infer_tacolab_path, 'w', encoding='utf-8') as f_w:
-                    f_w.write(infer_tacolab.decode())
+                    f_w.write(infer_tacolab)
 
-            tacolab = prompt_tacolab.decode().strip('\n') + '\n' + infer_tacolab.decode()
-            tacolab_list = list(filter(lambda x: x != "", tacolab.split('\n')))
-            text_id_phones_tones = self.convert_tacolab_to_text_id(tacolab_list)
+            # tacolab = prompt_tacolab.strip('\n') + '\n' + infer_tacolab
+            prompt_tacolab_list = list(filter(lambda x: x != "", prompt_tacolab.split('\n')))
+            infer_tacolab_list = list(filter(lambda x: x != "", infer_tacolab.split('\n')))
+            prompt_text_id_phones_tones = self.convert_tacolab_to_text_id(prompt_tacolab_list)
+            infer_text_id_phones_tones = self.convert_tacolab_to_text_id(infer_tacolab_list)
 
-            if text_id_phones_tones is None:
+            if prompt_text_id_phones_tones is None or infer_text_id_phones_tones is None:
                 logger.warning(f"{uttid} convert_tacolab_to_text_id failed ...")
                 return None
             else:
-                text_id, phones, tones = text_id_phones_tones
+                if self.input_type == '2dim':
+                    prompt_text_id, prompt_phones, prompt_tones = prompt_text_id_phones_tones
+                    infer_text_id,  infer_phones,  infer_tones =  infer_text_id_phones_tones
+                    text_id = np.concatenate([prompt_text_id, infer_text_id], axis=-1)
+                    phones = prompt_phones + infer_phones
+                    tones = prompt_tones + infer_tones
+                elif self.input_type == '1dim':
+                    prompt_text_id, prompt_phones, prompt_tones, prompt_phonetone_ids, prompt_phonetones = prompt_text_id_phones_tones
+                    infer_text_id, infer_phones, infer_tones, infer_phonetone_ids, infer_phonetones = infer_text_id_phones_tones
+                    text_id = np.concatenate([prompt_text_id, infer_text_id], axis=-1)
+                    phonetone_ids = np.concatenate([prompt_phonetone_ids, infer_phonetone_ids], axis=-1)
+                    phones = prompt_phones + infer_phones
+                    tones = prompt_tones + infer_tones
+                    phonetones = prompt_phonetones + infer_phonetones
+                    # print("phonetone_ids: ", phonetone_ids)
+                else:
+                    raise NotImplementedError
 
         # pad eos
         text_id = np.concatenate([text_id, np.ones([text_id.shape[0], 1])], axis=-1)
+
+        data_dict["phonetone"] = None
+        if self.input_type == '1dim':
+            data_dict["phonetone"] = np.concatenate([phonetone_ids, np.ones([1])], axis=0)
+            data_dict["phonetone"] = torch.from_numpy(data_dict["phonetone"]).long().unsqueeze(0).to(device)
 
         if self.use_lang_id:
             if not self.use_prompt:
@@ -373,18 +318,16 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
                 infer_lang_id += 1
             else:
                 if self.get_lang_by_tacolab:
-                    prompt_lang_key = self.get_lang(prompt_tacolab)
+                    prompt_lang_key = self.get_lang(prompt_tacolab.split('\n'))
                 else:
                     prompt_lang_key = self.get_lang_by_text(prompt_text)
                 if prompt_lang_key == None:
                     logger.info(f"{prompt_text}: Wrong lang_key")
                     return None
                 prompt_lang_id = self.lang2id[prompt_lang_key]
-                prompt_lang_id += 1
-                lang_seq = np.asarray([prompt_lang_id] * bn.shape[0])
 
                 if self.get_lang_by_tacolab:
-                    infer_lang_key = self.get_lang(infer_tacolab)
+                    infer_lang_key = self.get_lang(infer_tacolab.split('\n'))
                 else:
                     infer_lang_key = self.get_lang_by_text(infer_text)
 
@@ -392,7 +335,10 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
                     logger.info(f"{infer_text}: Wrong lang_key")
                     return None
                 infer_lang_id = self.lang2id[infer_lang_key]
+
+                prompt_lang_id += 1
                 infer_lang_id += 1
+                lang_seq = np.asarray([prompt_lang_id] * bn.shape[0])
 
         if self.use_spk_id:
             prompt_spk_id = 1 # dummy
@@ -411,8 +357,11 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
         data_dict["phone"] = torch.from_numpy(text_id[0, :]).long().unsqueeze(0).to(device)
         data_dict["tone"] = torch.from_numpy(text_id[1, :]).long().unsqueeze(0).to(device)
 
-        data_dict['lang_seq'] = torch.tensor(lang_seq).long().to(device).unsqueeze(0)
-        data_dict['infer_lang_id'] = infer_lang_id
+        data_dict['lang_seq'] = None
+        data_dict['infer_lang_id'] = None
+        if self.use_lang_id:
+            data_dict['lang_seq'] = torch.tensor(lang_seq).long().to(device).unsqueeze(0)
+            data_dict['infer_lang_id'] = infer_lang_id
         data_dict['uttid'] = [uttid]
 
         data_dict['spk_seq'] = None
@@ -447,9 +396,163 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
         tacolab = None
         if lang_key in ['zh', 'zh_en']:
             tacolab = generate_tacolabels_from_textstr_punc(text_str, "Chinese_v3_punc")
-            # tacolab = 'phn\ttone\tws\tpwpp\tsentype\tword\tunit' + '\n' + tacolab.decode()
         elif lang_key in ['en']:
             tacolab = generate_tacolabels_from_textstr_punc(text_str, "English_v3_punc")
-            # tacolab = 'phn\ttone\tws\tpwpp\tsentype\tword' + '\n' + tacolab.decode()
 
         return tacolab
+
+    def convert_v3_to_v1(self, tacolab):
+        tacolab_v1 = []
+        # en, zh
+        if tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword' or tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit':
+            tacolab = tacolab[1:]
+        for x in tacolab:
+            x_split = x.split('\t')
+            if len(x_split) == 7:
+                phone, tone, ws, pw, stype, word, _ = x_split
+            elif len(x_split) == 6:
+                phone, tone, ws, pw, stype, word = x_split
+            else:
+                print("Wrong tacolab", x_split)
+                return None
+            tacolab_v1.append('\t'.join([phone, tone, '0.0 0.0 0.0 1.0', ws, pw]))
+        return tacolab_v1
+
+    def convert_tacolab_to_text_id(self, tacolab):
+        try:
+            lang = self.get_lang(tacolab)
+            phone_ids = []
+            tone_ids = []
+            phonetone_ids = []
+            phones = []
+            tones = []
+            phonetones = []
+            if lang == 'zh':
+                assert len(tacolab[0].split('\t')) == 7, (len(tacolab[0].split('\t')), tacolab[0])
+                if tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit':
+                    tacolab = tacolab[1:]
+                for i in range(len(tacolab)):
+                    x = tacolab[i]
+                    if i != 0 and x.split('\t')[0] == 'sil':
+                        continue
+                    x_split = x.split('\t')
+                    phone, tone, ws, pw, stype, word, unit = x_split
+                    assert phone in self.phone_to_int, f"{phone} not in phone set"
+                    assert tone in self.tone_to_int, f"{tone} not in tone set"
+                    assert phone + '_' + tone in self.phonetone_to_int, f"{phone + '_' + tone} not in phonetone set"
+
+                    phone_ids.append(self.phone_to_int[phone])
+                    tone_ids.append(self.tone_to_int[tone])
+                    phonetone_ids.append(self.phonetone_to_int[phone + '_' + tone])
+                    phones.append(phone)
+                    tones.append(tone)
+                    phonetones.append(phone + '_' + tone)
+                    if phone[:2] == "C0":
+                        if unit in ['S', 'E']:
+                            phone_ids.append(self.phone_to_int["syl_sep"])
+                            tone_ids.append(self.tone_to_int["syl_sep"])
+                            phonetone_ids.append(self.phonetone_to_int["syl_sep_syl_sep"])
+                            phones.append("syl_sep")
+                            tones.append("syl_sep")
+                            phonetones.append("syl_sep_syl_sep")
+                            if ws in ["S", "E"]:
+                                phone_ids.append(self.phone_to_int["zh_word_sep"])
+                                tone_ids.append(self.tone_to_int["zh_word_sep"])
+                                phonetone_ids.append(self.phonetone_to_int["zh_word_sep_zh_word_sep"])
+                                phones.append("zh_word_sep")
+                                tones.append("zh_word_sep")
+                                phonetones.append("zh_word_sep_zh_word_sep")
+                    elif phone[:2] == "E0":
+                        if pw != "0":
+                            phone_ids.append(self.phone_to_int["en_word_sep"])
+                            tone_ids.append(self.tone_to_int["en_word_sep"])
+                            phonetone_ids.append(self.phonetone_to_int["en_word_sep_en_word_sep"])
+                            phones.append("en_word_sep")
+                            tones.append("en_word_sep")
+                            phonetones.append("en_word_sep_en_word_sep")
+            elif lang == 'zh_en':
+                assert len(tacolab[0].split('\t')) == 7 or len(tacolab[0].split('\t')) == 6, (len(tacolab[0].split('\t')), tacolab[0])
+                if tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit' or tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword':
+                    tacolab = tacolab[1:]
+                for i in range(len(tacolab)):
+                    x = tacolab[i]
+                    if i != 0 and x.split('\t')[0] == 'sil':
+                        continue
+                    x_split = x.split('\t')
+                    if len(x_split) == 7:
+                        phone, tone, ws, pw, stype, word, unit = x_split
+                    elif len(x_split) == 6:
+                        phone, tone, ws, pw, stype, word = x_split
+                    else:
+                        print("Wrong tacolab", x_split)
+                        return None
+
+                    assert phone in self.phone_to_int, f"{phone} not in phone set"
+                    assert tone in self.tone_to_int, f"{tone} not in tone set"
+                    assert phone + '_' + tone in self.phonetone_to_int, f"{phone + '_' + tone} not in phonetone set"
+
+                    phone_ids.append(self.phone_to_int[phone])
+                    tone_ids.append(self.tone_to_int[tone])
+                    phonetone_ids.append(self.phonetone_to_int[phone + '_' + tone])
+                    phones.append(phone)
+                    tones.append(tone)
+                    phonetones.append(phone + '_' + tone)
+                    if phone[:2] == "C0":
+                        if unit in ['S', 'E']:
+                            phone_ids.append(self.phone_to_int["syl_sep"])
+                            tone_ids.append(self.tone_to_int["syl_sep"])
+                            phonetone_ids.append(self.phonetone_to_int["syl_sep_syl_sep"])
+                            phones.append("syl_sep")
+                            tones.append("syl_sep")
+                            phonetones.append("syl_sep_syl_sep")
+                            if ws in ["S", "E"]:
+                                phone_ids.append(self.phone_to_int["zh_word_sep"])
+                                tone_ids.append(self.tone_to_int["zh_word_sep"])
+                                phonetone_ids.append(self.phonetone_to_int["zh_word_sep_zh_word_sep"])
+                                phones.append("zh_word_sep")
+                                tones.append("zh_word_sep")
+                                phonetones.append("zh_word_sep_zh_word_sep")
+                    elif phone[:2] == "E0":
+                        if pw != "0":
+                            phone_ids.append(self.phone_to_int["en_word_sep"])
+                            tone_ids.append(self.tone_to_int["en_word_sep"])
+                            phonetone_ids.append(self.phonetone_to_int["en_word_sep_en_word_sep"])
+                            phones.append("en_word_sep")
+                            tones.append("en_word_sep")
+                            phonetones.append("en_word_sep_en_word_sep")
+            elif lang == 'en':
+                if len(tacolab[0].split('\t')) != 5:
+                    tacolab = self.convert_v3_to_v1(tacolab)
+                for i in range(len(tacolab)):
+                    x = tacolab[i]
+                    if i != 0 and x.split('\t')[0] == 'sil':
+                        continue
+                    x_split = x.split('\t')
+                    phone, tone, _, ws, pw = x.split('\t')
+                    assert phone in self.phone_to_int, f"{phone} not in phone set"
+                    assert tone in self.tone_to_int, f"{tone} not in tone set"
+                    assert phone + '_' + tone in self.phonetone_to_int, f"{phone + '_' + tone} not in phonetone set"
+                    phone_ids.append(self.phone_to_int[phone])
+                    tone_ids.append(self.tone_to_int[tone])
+                    phonetone_ids.append(self.phonetone_to_int[phone + '_' + tone])
+                    phones.append(phone)
+                    tones.append(tone)
+                    phonetones.append(phone + '_' + tone)
+                    if pw != "0":
+                        phone_ids.append(self.phone_to_int["en_word_sep"])
+                        tone_ids.append(self.tone_to_int["en_word_sep"])
+                        phonetone_ids.append(self.phonetone_to_int["en_word_sep_en_word_sep"])
+                        phones.append("en_word_sep")
+                        tones.append("en_word_sep")
+                        phonetones.append("en_word_sep_en_word_sep")
+            phone_ids, tone_ids = np.array(phone_ids), np.array(tone_ids)
+            phonetone_ids = np.asarray(phonetone_ids)
+            if self.input_type == '2dim':
+                return np.stack([phone_ids, tone_ids]), phones, tones
+            elif self.input_type == '1dim':
+                return np.stack([phone_ids, tone_ids]), phones, tones, phonetone_ids, phonetones
+            else:
+                raise NotImplementedError
+        except Exception as e:
+            print(e)
+            return None

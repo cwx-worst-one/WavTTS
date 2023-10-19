@@ -21,14 +21,18 @@ run_opts:
     lang_tokens_num: 0
     lang2id: 'recipes/text2semantic/datasets/dict/lang2id.json'
     max_length: 8000
-    use_spk_id: False
-    spk_tokens_num: 0
+    use_spk_id: True
+    spk_tokens_num: 16384
     spk2id: 'recipes/text2semantic/datasets/dict/spk2id.json'
-    infer_spk_name: ''
+    infer_spk_name: null
     get_lang_by_tacolab: False
     save_tacolab: False
+    use_bpe: True
+    tokenizer_type: 'flan-T5-large'
+    tag_id: 3
+    bpe_dir: 'resource/models/flan-T5-large'
     use_prompt: False
-    use_offline_tacolab: False
+    input_type: '2dim'
 
 predict_dataset: !new:recipes.text2semantic.datasets.meta_based_dataset.MetaBasedDataset
     meta_lst: !ref <run_opts[meta_lst]>
@@ -61,8 +65,12 @@ pl_module: !new:recipes.text2semantic.lit_modules.lit_infer_lang_spk.BigTTSWVAEI
     infer_spk_name: !ref <run_opts[infer_spk_name]>
     get_lang_by_tacolab: !ref <run_opts[get_lang_by_tacolab]>
     save_tacolab: !ref <run_opts[save_tacolab]>
+    use_bpe: !ref <run_opts[use_bpe]>
+    bpe_dir: !ref <run_opts[bpe_dir]>
+    tokenizer_type: !ref <run_opts[tokenizer_type]>
+    tag_id: !ref <run_opts[tag_id]>
     use_prompt: !ref <run_opts[use_prompt]>
-    use_offline_tacolab: !ref <run_opts[use_offline_tacolab]>
+    input_type: !ref <run_opts[input_type]>
 
 trainer: !new:pytorch_lightning.Trainer
     accelerator: "auto"
