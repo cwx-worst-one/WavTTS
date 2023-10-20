@@ -40,16 +40,18 @@ set -x
 stage=1
 batch_total_tokens=14000
 mode=debug  # train or debug
-data_id=254
+data_id=278
 spk_cfg_rate=0.0
 freeze_text_encoder=True
 use_lang_id=False
+use_ser_tag=True
+use_ser_tag_loss=True
 train_ckpt_path=
 
 . /opt/tiger/samantha/scripts/parse_options.sh
 
 if [ $mode == "debug" ]; then
-    work_dir=/mnt/bn/huangzhiying-nas-speech2speech-volume1/code/samantha_bigtts_merge20231008_del
+    work_dir=/mnt/bn/huangzhiying-nas-speech2speech-volume1/code/samantha_bigtts_emotion
 fi
 
 if [ $mode == "train" ]; then
@@ -58,8 +60,8 @@ fi
 
 if [ ${stage} -eq 1 ];then
     log_name=pretrain_WFVAE_v2_labv3_punc
-    version=data_id${data_id}_bt${batch_total_tokens}_16A100_accu5_scr${spk_cfg_rate}_serTrue_serlossTrue
-    hdfs_path=hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/huangzhiying.92/exp/samantha_bigtts_merge20231008_del/text2semantic/${log_name}_${version}
+    version=data_id${data_id}_bt${batch_total_tokens}_16A100_accu5_scr${spk_cfg_rate}_ser${use_ser_tag}_serloss${use_ser_tag_loss}
+    hdfs_path=hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/huangzhiying.92/exp/samantha_bigtts_emotion/text2semantic/${log_name}_${version}
 
     cd $work_dir
 
@@ -81,11 +83,12 @@ if [ ${stage} -eq 1 ];then
                 --run_opts.text_encoder_path resource/models/byte-T5-base \
                 --run_opts.freeze_text_encoder ${freeze_text_encoder} \
                 --run_opts.strategy ddp_find_unused_parameters_true \
-                --run_opts.spk2tag recipes/text2semantic/datasets/dict/spk2tag.json \
+                --run_opts.spk2tag recipes/text2semantic/datasets/dict/spk2tag.parquet.json \
+                --run_opts.spk2id recipes/text2semantic/datasets/dict/spk2id.parquet.json \
                 --run_opts.spk_cfg_rate ${spk_cfg_rate} \
                 --run_opts.use_lang_id ${use_lang_id} \
-                --run_opts.use_ser_tag True \
-                --run_opts.use_ser_tag_loss True"
+                --run_opts.use_ser_tag ${use_ser_tag} \
+                --run_opts.use_ser_tag_loss ${use_ser_tag_loss}"
 
     if hdfs dfs -test -e ${train_ckpt_path}; then
         bash launch.sh fit \

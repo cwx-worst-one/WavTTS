@@ -196,11 +196,16 @@ class ContinuousTTSLangSpkSerDataset(IterableDataset):
             else:
                 dataset_name = dataset_name
                 speaker_name = speaker_name
-                spk_key = '/'.join([dataset_name, speaker_name])
+                if dataset_name in ['tts_Lmand_Sfanqie_F5.1_D0-10_P1', 'fanqie_filter_v51_gt10s', 
+                                    'tts_Lmand_Sximalaya_F6.1_D10-100_P1', 'tts_Lmand_Sximalaya_F6.1_D0-10_P1', 
+                                    'tts_Lmand_Sxiaoyuzhou_F6.1_D10-100_P1', 'tts_Lmand_Sxiaoyuzhou_F6.1_D0-10_P1']:
+                    spk_key = dataset_name
+                else:
+                    spk_key = '/'.join([dataset_name, speaker_name])
             
             tag_id = int(self.tag_dict.get(spk_key, 0))
             if tag_id == 0:
-                logger.warning(f"Warning: no tag id found for {url}")
+                logger.warning(f"Warning: no tag id found for {url} {spk_key}")
         else:
             tag_id = None
 
