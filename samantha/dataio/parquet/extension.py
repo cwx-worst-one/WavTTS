@@ -17,18 +17,15 @@ DATASET_NAME_KEY = "__dataset_name__"
 class _ParquetSample:
     def __init__(
         self,
-        filesystem=None,
         handler: Callable[[Exception], bool] = warn_and_continue,
         sample_limit_per_file: Union[int, float] = None,
     ):
-        self.filesystem = filesystem
         self.handler = handler
         self.sample_limit_per_file = sample_limit_per_file
         self.meta = {}
 
     def __call__(self, sources: Iterable[Dict[str, Any]]):
         handler = self.handler
-        filesystem = self.filesystem
         for src in sources:
             src_url = {f"__{k}_url__": v for k, v in src.items()}
             # parse dataset name from path
@@ -40,6 +37,7 @@ class _ParquetSample:
 
             readers = None
             try:
+                filesystem = get_filesystem(src["index"])
                 # get common uttid from all parquet(data/index/feat)
                 common_utt = None
                 utt2group_no = {}

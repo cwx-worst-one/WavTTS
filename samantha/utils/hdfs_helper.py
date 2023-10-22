@@ -313,7 +313,14 @@ def hdfs_ls(hdfs_path: str):
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True
     )
     (out, err) = proc.communicate()
-    err = err.decode()
+    try:
+        if isinstance(err, bytes):
+            err = err.decode()
+        if not isinstance(err, str):
+            err = str(err)
+    except Exception as exn:
+        err = ""
+        logger.warning("failed to convert error message", exc_info=exn)
 
     if proc.returncode != 0:
         errmsg = (
@@ -398,6 +405,22 @@ def glob_files(pattern: str):
     if ishdfs(pattern):
         return hdfs_ls(pattern)
     return glob.glob(pattern)
+
+
+def fast_glob_files(pattern):
+    r"""List all files which names match the pattern.
+
+    Note: this function assume pattern like hdfs://partition1=*/partition2=*/*.suffix
+
+    Args:
+        pattern: file name pattern
+
+    Returns:
+        List: file paths match the pattern
+    """
+    prefix, suffix = os.path.dirname(pattern), os.path.basename(pattern)
+    end = suffix.split(".")[-1]
+    return [item for item in hdfs_ls(prefix) if item.endswith(end[-1])]
 
 
 def walk_one(path: str):

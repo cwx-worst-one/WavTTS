@@ -15,7 +15,7 @@ from pyarrow.parquet import ParquetFile
 from tqdm import tqdm
 
 from samantha.dataio import remote_io
-from samantha.utils.hdfs_helper import glob_files
+from samantha.utils.hdfs_helper import fast_glob_files
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 def expand_urls(urls):
     if isinstance(urls, str):
         if "*" in urls:
-            return glob_files(urls)
+            return fast_glob_files(urls)
         else:
             urllist = urls.split("::")
             result = []
@@ -276,13 +276,11 @@ def resolve_data_urls(data_id=None, data_urls=None):
     # recode data repeat time, avoiding glob files repetitive
     frequency = Counter(url["index"] for url in data_urls)
 
-    fs, resolved_url_dict, resolved_urls = None, {}, set()
+    resolved_url_dict, resolved_urls = {}, set()
     for url in tqdm(data_urls, desc="parse_urls"):
         index = url["index"]
         if index in resolved_urls:
             continue
-        if fs is None:
-            fs = get_filesystem(index)
 
         index_version = re.findall(r".*(index_\d).*", index)[0]
         ARNOLD_BASE_DIR = os.getenv("ARNOLD_BASE_DIR", "")
@@ -302,11 +300,13 @@ def resolve_data_urls(data_id=None, data_urls=None):
                     f"drop feature={name}, cause some datasets do not have it"
                 )
                 continue
-            pattern = pattern.removeprefix(ARNOLD_BASE_DIR)
-            prefix = re.split(r"\*", pattern.replace("//", "/"))[0]
+            prefix = re.split(
+                r"\*", pattern.removeprefix(ARNOLD_BASE_DIR).replace("//", "/")
+            )[0]
+            prefix = f"{ARNOLD_BASE_DIR}{prefix}"
             files = {
                 ele.removeprefix(prefix).replace(f".{index_version}", ""): ele
-                for ele in fs.glob(pattern)
+                for ele in fast_glob_files(pattern)
             }
             cur_data[name] = files
 
@@ -328,7 +328,7 @@ def resolve_data_urls(data_id=None, data_urls=None):
                 resolved_url_dict[name].extend(cur_files)
         resolved_urls.add(index)
 
-    return fs, [
+    return [
         dict(zip(columns, item))
         for item in zip(*[resolved_url_dict[k] for k in columns])
     ]

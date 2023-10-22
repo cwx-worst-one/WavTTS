@@ -8,9 +8,7 @@ sudo pip3 install -U bytedance.easycycle==0.0.1.post29
 export BYTED_TORCH_C10D_LOG_LEVEL=ERROR
 
 # setting hdfs envs
-# filesystem will glob nothing if this env be set
-# export LD_LIBRARY_PATH=/opt/tiger/native_libhdfs/lib/native:$LD_LIBRARY_PATH
-
+export LD_LIBRARY_PATH=/opt/tiger/native_libhdfs/lib/native:$LD_LIBRARY_PATH
 export ARNOLD_HDFS_NATIVE=1
 export ARNOLD_HDFS_CELER=1
 export INFSEC_HADOOP_ENABLED=1

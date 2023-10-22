@@ -28,9 +28,7 @@ class ParquetDataset(DataPipeline, FluidInterface):
         super().__init__()
         self.data_id = data_id
         self.data_urls = data_urls
-        # To fix conflicts between filesystem and multiprocessing, use empty url.
-        # Real url list will be globed and assigned in __iter__()
-        urls = []
+        urls = resolve_data_urls(data_id=self.data_id, data_urls=self.data_urls)
 
         if resampled:
             self.append(ResampledShards(urls))
@@ -46,16 +44,4 @@ class ParquetDataset(DataPipeline, FluidInterface):
                 else:
                     self.append(filters.shuffle(shardshuffle))
 
-        # To fix conflicts between filesystem and multiprocessing, use empty filesystem.
-        # Real filesystem will be assigned in __iter__()
-        self._pq_sample = _ParquetSample(None, handler, sample_limit_per_file)
-        self.append(self._pq_sample)
-        self._url_fetched = False
-
-    def __iter__(self):
-        if not self._url_fetched:
-            fs, urls = resolve_data_urls(data_id=self.data_id, data_urls=self.data_urls)
-            self.stage(0).urls = urls
-            self._pq_sample.filesystem = fs
-            self._url_fetched = True
-        return super().__iter__()
+        self.append(_ParquetSample(handler, sample_limit_per_file))
