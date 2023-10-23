@@ -25,10 +25,10 @@ extra_params:
 run_opts:
     fast_dev_run: False
     cache_dir: .module_cache/umm
-    hdfs_log_dir: "hdfs:///home/byte_speech_sv/zongyu.yin/logs"
-    log_dir: logs
+    hdfs_log_dir: "hdfs://home/byte_speech_sv/zhuc/logs"
+    log_dir: /mnt/bn/jcong5/zhuc/logs
     log_name: umm
-    version: !ref umm_stage3_dw20-3-2_<extra_params[tokenizer]>_vq<config[vq_codebook_size]>x<config[vq_codebook_dim]>-layer<config[vq_layer_idx]>
+    version: !ref umm_stage3_dw20-3-2_<extra_params[tokenizer]>_vq<config[vq_codebook_size]>x<config[vq_codebook_dim]>
     precision: "32"
     num_workers: 4
     accelerator: auto
@@ -54,7 +54,7 @@ pl_datamodule: !new:recipes.datasets.mcc.mix.MixWebDataModule
     batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <extra_params[sample_rate]>
     num_workers: !ref <run_opts[num_workers]>
     region: "CN"
-    weights: [20, 3, 2]
+    weights: [1, 100, 1]
     max_num_crops: null
     min_duration: 2
     max_duration: 30
@@ -86,13 +86,13 @@ config: !new:recipes.umm.models.config.UMMConfig
     hop_length: !ref <extra_params[hop_length]>
     hidden_size: 1024
     intermediate_size: 4096
-    num_hidden_layers: 24
+    num_pre_layers: 12
+    num_post_layers: 12
     num_attention_heads: 8
     max_source_positions: 750
     add_vq: True
     vq_codebook_size: 32768
     vq_codebook_dim: 32
-    vq_layer_idx: 12
     vq_decay: 0.99
     w_loss_mel: 1.0
     w_loss_chroma: 1.0

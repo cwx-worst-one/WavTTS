@@ -89,6 +89,15 @@ class ConformerFeedForward(nn.Module):
         hidden_states = self.output_dropout(hidden_states)
         return hidden_states
 
+    def get_flops(self, b, t):
+        def linear_flops(m):
+            return m.weight.shape[0] * m.weight.shape[1] * 2
+
+        return b * t * (
+            linear_flops(self.intermediate_dense) +
+            linear_flops(self.output_dense)
+        )
+
 
 class ConformerConvolutionModule(nn.Module):
     def __init__(self, config):
@@ -148,6 +157,16 @@ class ConformerConvolutionModule(nn.Module):
         hidden_states = self.dropout(hidden_states)
         hidden_states = hidden_states.transpose(1, 2)
         return hidden_states
+
+    def get_flops(self, n, l):
+        def conv1d_flops(m):
+            return m.weight.shape[0] * m.weight.shape[1] * m.weight.shape[2] / m.groups * 2
+
+        return n * l * (
+            conv1d_flops(self.pointwise_conv1) +
+            conv1d_flops(self.depthwise_conv) +
+            conv1d_flops(self.pointwise_conv2)
+        )
 
 
 class ConformerSelfAttention(nn.Module):
@@ -239,6 +258,17 @@ class ConformerSelfAttention(nn.Module):
         )
 
         return hidden_states
+
+    def get_flops(self, b, t):
+        def linear_flops(m):
+            return m.weight.shape[0] * m.weight.shape[1] * 2
+
+        return b * t * (
+            linear_flops(self.linear_q) +
+            linear_flops(self.linear_k) +
+            linear_flops(self.linear_v) +
+            linear_flops(self.linear_out)
+        ) + b * t * t * self.head_size * 2 + b * t * self.head_size * t * 2
 
 
 class MHA(nn.Module):
@@ -344,6 +374,14 @@ class ConformerEncoderLayer(nn.Module):
         hidden_states = self.final_layer_norm(hidden_states)
 
         return hidden_states
+
+    def get_flops(self, b, t):
+        return (
+            self.ffn1.get_flops(b, t) +
+            self.self_attn.get_flops(b, t) +
+            self.conv_module.get_flops(b, t) +
+            self.ffn2.get_flops(b, t)
+        )
 
 
 class ConformerEncoder(nn.Module):
@@ -462,16 +500,27 @@ class AudioEncoder(nn.Module):
         x = self.conformer_layer(x)
         return x
 
+    def get_flops(self, b, t):
+        return self.conformer_layer.get_flops(b, t / 4)
+
 
 class EMAEmbedding(nn.Module):
-    def __init__(self, codebook_size, codebook_dim, decay=0.99, eps=1e-5):
+    def __init__(self, codebook_size, codebook_dim, decay=0.99, eps=1e-5, learnable=False, orthonormal_init=False):
         super().__init__()
         self.decay = decay
         self.eps = eps
+        self.learnable = learnable
 
         weight = torch.randn(codebook_size, codebook_dim, dtype=torch.float32)
+        if orthonormal_init:
+            weight = torch.qr(weight)[0]
+            std = weight.std(dim=1).unsqueeze(1)
+            weight = weight / std
         weight[0] = 0.0
-        self.register_buffer("weight", weight)
+        if not learnable:
+            self.register_buffer("weight", weight)
+        else:
+            self.register_parameter("weight", nn.Parameter(weight))
         self.register_buffer("cluster_size", torch.zeros(codebook_size) + 8)
         self.register_buffer("embed_avg", weight.clone())
         self.update = True
@@ -481,11 +530,11 @@ class EMAEmbedding(nn.Module):
 
     def cluster_size_ema_update(self, new_cluster_size):
         self.cluster_size.data.mul_(self.decay).add_(
-            new_cluster_size, alpha=1 - self.decay
+            new_cluster_size.data, alpha=1 - self.decay
         )
 
     def embed_avg_ema_update(self, new_embed_avg):
-        self.embed_avg.data.mul_(self.decay).add_(new_embed_avg, alpha=1 - self.decay)
+        self.embed_avg.data.mul_(self.decay).add_(new_embed_avg.data, alpha=1 - self.decay)
 
     def weight_update(self, num_tokens):
         n = self.cluster_size.sum()
@@ -493,16 +542,51 @@ class EMAEmbedding(nn.Module):
             (self.cluster_size + self.eps) / (n + num_tokens * self.eps) * n
         )
         embed_normalized = self.embed_avg / smoothed_cluster_size.unsqueeze(1)
-        self.weight.data.copy_(embed_normalized)
-        # make sure the greedy algorithm to get best estimation
-        self.weight.data[0] = 0.0
-        self.embed_avg[0] = 0.0
+        self.weight.data.copy_(embed_normalized.data)
+        if not self.learnable:
+            # make sure the greedy algorithm to get best estimation
+            self.weight.data[0] = 0.0
+            self.embed_avg[0] = 0.0
 
     @torch.no_grad()
     def entropy(self):
         p = self.cluster_size / self.cluster_size.sum()
+        p = p.clamp(1e-9)
         entropy = (-p * p.log()).sum()
         return entropy
+
+    @torch.no_grad()
+    def remap_weight(self, thres=2):
+        cs = self.cluster_size.data
+        avg_w = self.embed_avg.data
+        w = self.weight.data
+        # ranking
+        topk_res = torch.topk(cs[1:], k=cs.shape[-1] - 1) # 大到小
+        indices = topk_res.indices + 1
+        # remap
+        new_cs = torch.zeros_like(cs)
+        new_avg_w = torch.zeros_like(avg_w)
+        new_w = torch.zeros_like(w)
+        cnt = 0
+        for j, ind in enumerate(indices):
+            cs_tmp = cs[ind]
+            if cs_tmp < thres:
+                print(cs_tmp, j)
+                new_w[j + 1] = w[indices[cnt]]
+                new_avg_w[j + 1] = w[indices[cnt]] * cs[indices[cnt]] / 2
+                new_cs[j + 1] = cs[indices[cnt]] / 2
+                cnt += 1
+            else:
+                new_w[j + 1] = w[ind]
+                new_avg_w[j + 1] = avg_w[ind]
+                new_cs[j + 1] = cs[ind]
+        if i == 0:
+            new_cs[0] = 8
+        else:
+            new_cs[0] = cs[0]
+        self.cluster_size.data.copy_(new_cs.data)
+        self.embed_avg.data.copy_(new_avg_w.data)
+        self.weight.data.copy_(new_w.data)
 
 
 class EMAVectorQuantizer(nn.Module):
@@ -517,7 +601,7 @@ class EMAVectorQuantizer(nn.Module):
         # ema for dist
         self.dist = dist
         self.embedding = EMAEmbedding(
-            self.codebook_size, self.codebook_dim, decay=decay
+            self.codebook_size, self.codebook_dim, decay=decay, learnable=False
         )
         self.same_index_shape = same_index_shape
 
@@ -570,6 +654,88 @@ class EMAVectorQuantizer(nn.Module):
         return z_q, min_encoding_indices, loss
 
     @torch.no_grad()
+    def entropy(self):
+        return self.embedding.entropy()
+
+
+class EMAVectorQuantizerEntropy(nn.Module):
+
+    def __init__(
+        self, codebook_size, codebook_dim, same_index_shape=True, decay=0.99, dist=True
+    ):
+        super().__init__()
+        self.codebook_size = codebook_size
+        self.codebook_dim = codebook_dim
+        self.decay = decay
+        self.dist = dist
+        self.same_index_shape = same_index_shape
+        self.embedding = EMAEmbedding(
+            self.codebook_size, self.codebook_dim, decay=decay, learnable=True
+        )
+
+    def forward(self, z, e_scale=1.0):
+        z_flattened = rearrange(z, "b t d -> (b t) d")
+        d = (
+            torch.sum(z_flattened**2, dim=1, keepdim=True)
+            + torch.sum(self.embedding.weight**2, dim=1)
+            - 2
+            * torch.einsum(
+                "bd,dn->bn", z_flattened, rearrange(self.embedding.weight, "n d -> d n")
+            )
+        )
+        min_encoding_indices = torch.argmin(d, dim=1)  # [b*h]
+        z_q = self.embedding(min_encoding_indices).view(z.shape)  # [b*h, c] -> [b, h, c]
+        # EMA update
+        if self.training and self.embedding.update:
+            one_hot = F.one_hot(min_encoding_indices, self.codebook_size).type(z.dtype)  # [b*h, k]
+            # EMA cluster size
+            one_hot_sum = one_hot.sum(0)  # [k]
+            if self.dist:
+                torch.distributed.all_reduce(one_hot_sum)
+            self.embedding.cluster_size_ema_update(one_hot_sum)
+            # EMA embedding average
+            embed_sum = (one_hot.transpose(0, 1) @ z_flattened)  # [k, b*h] * [b*h, c] = [k, c]
+            if self.dist:
+                torch.distributed.all_reduce(embed_sum)
+            self.embedding.embed_avg_ema_update(embed_sum)
+            # normalize embed_avg and update weight
+            self.embedding.weight_update(self.codebook_size)
+
+        loss = torch.mean((z_q.detach() - z) ** 2) + e_scale * self.entropy_loss(-d, loss_type='softmax')
+        # preserve gradients
+        z_q = z + (z_q - z).detach()
+
+        if self.same_index_shape:
+            min_encoding_indices = rearrange(
+                min_encoding_indices, "(b t) -> b t", t=z.size(1)
+            )
+
+        return z_q, min_encoding_indices, loss
+
+    def entropy_loss(self, affinity, loss_type="softmax", temperature=0.7, eps=1e-10):
+        # affinity: [b, t, d_n]
+        flat_affinity = affinity.reshape(-1, affinity.shape[-1])  # [b, t, d_n] -> [b*t, d_n]
+        flat_affinity = flat_affinity / temperature
+        probs = flat_affinity.softmax(dim=-1)  # [b*t, d_n]
+        log_probs = (probs + eps).log()  # [b*t, d_n]
+        if loss_type == "softmax":
+            target_probs = probs
+        elif loss_type == "argmax":
+            codes = flat_affinity.argmax(dim=-1)  # [b*t]
+            onehots = F.one_hot(codes, flat_affinity.shape[-1]).float()  # [b*t, d_n]
+            onehots = probs - (probs - onehots).detach()  # [b*t, d_n]
+            target_probs = onehots  # [b*t, d_n]
+        else:
+            raise ValueError("Entropy loss {} not supported".format(loss_type))
+        avg_probs = torch.mean(target_probs, dim=0)  # [b*t, d_n] -> [d_n]
+        avg_entropy = -torch.sum(avg_probs * (avg_probs + eps).log())  # [d_n] -> []
+        sample_entropy = -torch.mean(
+            torch.sum(target_probs * log_probs, dim=-1)
+        )  # [b*t, d_n] * [b*t, d_n] -> [b*t] -> []
+        loss = 0.1 * (sample_entropy - 2.5 * avg_entropy)
+
+        return loss
+
     def entropy(self):
         return self.embedding.entropy()
 
@@ -1431,15 +1597,22 @@ class Stage1(Base):
     def forward(self, input_dict):
         masked_feature = input_dict["masked_mel"]
         masked_indices = input_dict["masked_indices"]
+        flops = 0
 
+        flops += self.audio_encoder.get_flops(*masked_feature.shape[0:2])
         encoded_masked_feature = self.audio_encoder(masked_feature)
         hidden_states = self.encoder_input_dropout(encoded_masked_feature)
         position_embeddings = self.embed_positions(hidden_states)
         for layer in self.encoder_layers:
+            flops += layer.get_flops(*hidden_states.shape[0:2])
             hidden_states = layer(
                 hidden_states, position_embeddings=position_embeddings
             )
 
+        flops += (
+            hidden_states.shape[0] * hidden_states.shape[1] *
+            self.rq_head.weight.shape[0] * self.rq_head.weight.shape[1] * 2
+        )
         logits = self.rq_head(hidden_states)
         logits = rearrange(
             logits, "b t (d c) -> b t d c", c=self.config.rq_codebook_num
@@ -1458,6 +1631,7 @@ class Stage1(Base):
             "rq_masked_logits": masked_logits,
             "rq_target": target,
             "rq_masked_target": masked_target,
+            "flops": flops * 3  # extra 2x for backward.
         }
         return output_dict
 
@@ -1566,6 +1740,12 @@ class Stage3(Stage2):
             self.vq = LookupFreeQuantizer(
                 codebook_size=config.vq_codebook_size,
             )
+        elif config.get("vq_type", None) == "EMAEntropy":
+            self.vq = EMAVectorQuantizerEntropy(
+                codebook_size=config.vq_codebook_size,
+                codebook_dim=config.vq_codebook_dim,
+                decay=config.vq_decay,
+            )
         else:
             self.vq = EMAVectorQuantizer(
                 codebook_size=config.vq_codebook_size,
@@ -1575,22 +1755,22 @@ class Stage3(Stage2):
         if config.get("vq_proj_norm", None) == "bn":
             self.vq_proj_in = nn.Sequential(
                 Transpose(),
-                WNConv1d(config.hidden_size, config.vq_codebook_dim, kernel_size=1),
+                WNConv1d(config.hidden_size, config.vq_codebook_dim, kernel_size=1) if config.hidden_size != config.vq_codebook_dim else nn.Identity(),
                 nn.BatchNorm1d(config.vq_codebook_dim, affine=False, momentum=0.05),
                 Transpose(),
             )
             self.vq_proj_out = nn.Sequential(
                 Transpose(),
-                WNConv1d(config.vq_codebook_dim, config.hidden_size, kernel_size=1),
+                WNConv1d(config.vq_codebook_dim, config.hidden_size, kernel_size=1) if config.vq_codebook_dim != config.hidden_size else nn.Identity(),
                 Transpose(),
             )
         elif config.get("vq_proj_norm", None) == "ln":
             self.vq_proj_in = nn.Sequential(
-                nn.Linear(config.hidden_size, config.vq_codebook_dim, bias=False),
+                nn.Linear(config.hidden_size, config.vq_codebook_dim, bias=False) if config.hidden_size != config.vq_codebook_dim else nn.Identity(),
                 nn.LayerNorm(config.vq_codebook_dim, elementwise_affine=False),
             )
             self.vq_proj_out = nn.Sequential(
-                nn.Linear(config.vq_codebook_dim, config.hidden_size, bias=False)
+                nn.Linear(config.vq_codebook_dim, config.hidden_size, bias=False) if config.vq_codebook_dim != config.hidden_size else nn.Identity(),
             )
         else:
             self.vq_proj_in = nn.Linear(
@@ -1621,6 +1801,8 @@ class Stage3(Stage2):
                 if self.config.get("vq_type", None) == "FSQ":
                     vq_embs, vq_ids = self.vq(hidden_states)
                     vq_loss = None
+                elif self.config.get("vq_type", None) == "EMAEntropy":
+                    vq_embs, vq_ids, vq_loss = self.vq(hidden_states, e_scale=1.0 if self.cnt < 30_000 else 0.0)
                 else:
                     vq_embs, vq_ids, vq_loss = self.vq(hidden_states)
                 hidden_states = self.vq_proj_out(vq_embs)

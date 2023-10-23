@@ -25,6 +25,7 @@ class UMMConfig(PretrainedConfig):
         # vector quantizer
         add_vq=False,
         use_ema_vq=True,
+        vq_type='EMA', # EMA, EMAEntropy
         vq_layer_idx=12,
         vq_codebook_size=32768,
         vq_codebook_dim=256,
@@ -104,6 +105,7 @@ class UMMConfig(PretrainedConfig):
         # vector quantizer
         self.add_vq = add_vq
         self.use_ema_vq = use_ema_vq
+        self.vq_type = vq_type
         self.vq_layer_idx = vq_layer_idx
         self.vq_codebook_size = vq_codebook_size
         self.vq_codebook_dim = vq_codebook_dim

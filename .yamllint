@@ -26,3 +26,5 @@ ignore: |
   recipes/text2semantic
   recipes/mir_benchmark
   recipes/musicfm
+  recipes/s3prl
+  recipes/umm

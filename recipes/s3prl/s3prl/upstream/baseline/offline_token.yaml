@@ -1,0 +1,5 @@
+offline:
+  use_lookup: true
+  vocab_size: 16384
+  input_dim: 512
+  down_rate: 1

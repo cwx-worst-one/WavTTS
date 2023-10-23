@@ -91,7 +91,7 @@ scripts/weekly_test/Dolphin*.md
 
 # data directory
 assets/
-data/
+# data/
 video/
 
 # log directory
@@ -102,3 +102,9 @@ cruise_logs/
 .history/
 
 span.log
+
+
+durator
+durator2
+recipes/voicebox/testset
+events.*

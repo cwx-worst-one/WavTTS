@@ -1,6 +1,8 @@
+import io
 import random
 from typing import Callable, List, Optional, Union
 
+import librosa
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -23,6 +25,9 @@ def fp32_to_int16(audio: torch.Tensor) -> torch.Tensor:
 def to_tensor(x: np.ndarray):
     if torch.is_tensor(x):
         return x
+    if isinstance(x, bytes):
+        x, _ = librosa.load(io.BytesIO(x), sr=None)
+
     return torch.from_numpy(x)
 
 

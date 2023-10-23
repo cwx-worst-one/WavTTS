@@ -2,6 +2,7 @@ import random
 from typing import Optional, Union
 
 import pytorch_lightning as pl
+import time
 import torch
 import torch.nn.functional as F
 from pytorch_lightning.profilers import PassThroughProfiler
@@ -18,8 +19,8 @@ from recipes.umm.modules.criterion_vocoder import (
 )
 from samantha.dataio.webdataset import ShardWriter
 from samantha.utils.hparams import DotDict
-from s3a.providers.ctiga.models import gpt
-from s3a.providers.ctiga.utils.generation import InferenceParams
+from samantha.models.ctiga import gpt
+from samantha.utils.ctiga.inference_params import InferenceParams
 
 
 def log(t, eps=1e-5):
@@ -697,6 +698,8 @@ class Stage0(pl.LightningModule):
         self.extra_params = DotDict(extra_params)
         self.requires = {}
         self.val_outputs = dict()
+        self.flops = 0
+        self.ts_before_forward = 0
 
         if checkpointing:
             self.model.gradient_checkpointing_enable()
@@ -772,7 +775,17 @@ class Stage0(pl.LightningModule):
         return getattr(self.trainer, "profiler") or PassThroughProfiler()
 
     def training_step(self, batch, batch_idx):
+        # Not quite accurate, time used by optimizer is also counted.
+        elapsed = time.time() - self.ts_before_forward
+        mfu = self.flops / elapsed / 312e12
+        self.ts_before_forward = time.time()
+
         loss_dict = self._shared_step(batch)
+        if "flops" in loss_dict:
+            self.flops = loss_dict["flops"]
+            del loss_dict["flops"]
+            loss_dict.update({"training/mfu" : mfu})
+        loss_dict["training/loss"] = loss_dict["loss"]
         self.log_dict(loss_dict, prog_bar=True, sync_dist=True)
         return loss_dict["loss"]
 
@@ -938,6 +951,7 @@ class Stage1(Stage0):
         loss_dict = self.criterion(rq_masked_logits, rq_masked_target)
         accu = (rq_masked_logits.argmax(1) == rq_masked_target).float().mean()
         loss_dict["accu"] = accu
+        loss_dict["flops"] = output_dict["flops"]
         # target_tokens: [batch, time, codebook_idx]
         code_rate = self.get_code_rate(output_dict["rq_target"].transpose(1, 2))
         quant_rate = 0
@@ -1105,6 +1119,7 @@ class Stage3(Stage2):
             recon_mel=output_dict["mel_out"],
             mel=mel,
         )
+        loss_dict["bs"] = text_ids.shape[0]
         loss_dict["loss"] = (
             loss_dict["loss_mel"] * self.model.config.w_loss_mel
             + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
@@ -1214,6 +1229,60 @@ class ASR(Stage0):
         loss_dict["aux/mel_std"] = mel.std()
         loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
         return loss_dict
+
+
+class Stage3Improved(Stage3):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+
+    def on_train_batch_start(self, batch, batch_idx):
+        if self.trainer.global_step >= 20_000:
+            if not hasattr(self.model.vq_proj_in, '__len__'):
+                return
+            if len(self.model.vq_proj_in) < 3:
+                return
+            module = self.model.vq_proj_in[2]
+            if isinstance(module, (torch.nn.BatchNorm1d, torch.nn.SyncBatchNorm)):
+                module.eval()
+                if self.trainer.global_step % 1000 == 0:
+                    print(module.running_mean)
+        return
+
+    def configure_optimizers(self):
+        params_group = []
+        normal_params = []
+        special_params = []
+        for name, params in self.model.named_parameters():
+            if 'vq.embedding.weight' in name:
+                print("Key {} use zero WD".format(name))
+                special_params.append(params)
+            else:
+                normal_params.append(params)
+        params_group.append({"params": special_params, "weight_decay": 0.0})
+        params_group.append({"params": normal_params})
+        optimizer = self.hparams.optimizer_cls(params_group)
+        scheduler = self.hparams.scheduler_cls(optimizer)
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
+        }
 
 
 class Stage2Vocoder(Stage0):
