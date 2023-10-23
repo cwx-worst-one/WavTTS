@@ -9,17 +9,21 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
 
 extra_params:
-    num_rounds: 1
+    beam_size: 1    # set to 4 if using reranker
     prompt_path: "/mnt/bn/audio-diffusion/data/mixture_prompts/suno100.csv"
     inference_conditions: style_text,lyrics_tokens # style_text|style_audio,lyrics_tokens,vocal_audio|vocal_text,chroma
     max_items: null
     run_combinations: False
+    use_reranker: False
 
     output_dir: ./generated_output/conditional
 
     # Semantic model
     semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
     semantic_ckpt: "/mnt/bn/lyrics-to-song/qq/logs/semantic_model_mulan_text_07B/varlen30_tag3_bs12_07B_6w_v1/checkpoints/step=234000-val_accu_0=21.02.ckpt"
+
+    # Used for reranker, only loaded if use_reranker=True
+    mulan_ckpt: "/mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=014000-median_rank_1=160-kaggle.ckpt"
 
     ar_params:
         coarse_duration: 10
@@ -49,7 +53,7 @@ run_opts:
     accelerator: auto
     strategy: auto
     cache_dir: .module_cache/musiclm
-    batch_size: 28
+    batch_size: 28  # set to 4 if using reranker
     num_workers: 8
 
 ################################################################################
@@ -75,7 +79,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
     required_modules:
         bestrq_modules:
             bestrq:
-                hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
+                hpath: /mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/umm_stage3_music_chroma_vq32768x32/step=0030000.ckpt
                 initializer: !name:recipes.umm.requires.model_initializer.init_stage3
                     cache_dir: !ref <run_opts[cache_dir]>
         diffusion_modules:
@@ -88,7 +92,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                 initializer: !name:recipes.diffusion.inference_from_text_lyrics2song.init_sampler
                     cache_dir: !ref <run_opts[cache_dir]>
             vocoder:
-                hpath: hdfs://harunava/home/byte_speech_sv/weitsung.lu/soundstream/dac_vae_125hz_24k_v2_part2/checkpoints/soundstream-step=374999-val_sdr=12.9557.ckpt
+                hpath: /mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/soundstream-step=374999-val_sdr=12.9557.ckpt
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                     cache_dir: !ref <run_opts[cache_dir]>
         ar_modules:
@@ -104,6 +108,27 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                 hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
                 initializer: !name:recipes.musiclm.requires.model_initializer.init_soundstream_decoder
                     cache_dir: !ref <run_opts[cache_dir]>
+        reranker:
+            hpath:
+                rewards:
+                    style_text: 1.0
+                    qualitative: 1.0
+                    wer: 1.0
+                    #chord: 4.0
+                required_modules:
+                    mulan:
+                        hpath: !ref <extra_params[mulan_ckpt]>
+                        initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
+                            version: "g4"
+                    #chord:
+                    #    hpath: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/semi-sup-chord_epoch=103-step=56300.ckpt"
+                    #    initializer: !name:recipes.chord.requires.model_initializer.init_chord
+                    #chord_lms:
+                    #    hpath:
+                    #        default: "/mnt/bn/audio-diffusion/ducle/data/billboard_v1_chords_allsegs_genre_prefix/default/lm.arpa"
+                    #    initializer: !name:recipes.chord.requires.model_initializer.init_chord_lms
+            initializer: !name:recipes.bigmusic.utils.reranker.init_reranker
+                cache_dir: !ref <run_opts[cache_dir]>
 
 # separating out additional_callbacks so auto_eval can disable metrics
 additional_callbacks:

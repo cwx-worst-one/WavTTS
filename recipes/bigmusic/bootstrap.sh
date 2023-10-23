@@ -34,4 +34,6 @@ pip3 install -qr ./recipes/diffusion/requirements.txt
 pip3 install ./recipes/soundstream/torch-museval
 
 
+MAX_ORDER=10 pip3 install https://github.com/kpu/kenlm/archive/master.zip
+
 sh launch.sh $@

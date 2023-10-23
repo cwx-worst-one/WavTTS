@@ -3,7 +3,10 @@ import math
 import random
 import sys
 from string import punctuation
-from zhon.hanzi import punctuation as punctuation_zh
+try:
+    from zhon.hanzi import punctuation as punctuation_zh
+except:
+    print("[WARNING] Failed to import zhon.hanzi.punctuation")
 from typing import (
     Any,
     Callable,
@@ -28,7 +31,10 @@ from webdataset import WebDataset
 from webdataset.pipeline import DataPipeline
 
 from recipes.datasets.mcc import INDEX
-from recipes.datasets.mcc.sami_tokenizer import convert_labels_to_text_id
+try:
+    from recipes.datasets.mcc.sami_tokenizer import convert_labels_to_text_id
+except:
+    print("[WARNING] Failed to import convert_labels_to_text_id")
 from recipes.musiclm.transforms.audio import FastNormalizeAudio, LoudnessCheck
 from samantha.dataio.batching import BucketBatcher
 from samantha.dataio.dataset import MultiIterableDataset

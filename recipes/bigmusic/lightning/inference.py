@@ -48,6 +48,12 @@ class SemanticInferenceModule(pl.LightningModule):
             self.decoding_params = DotDict({ **self.extra_params, **extra_params['ar_params'] })
         else:
             raise ValueError(f"Unhandled type: {self.extra_params.token2wav_type}")
+
+        if self.extra_params.use_reranker:
+            if self.extra_params.beam_size <= 1:
+                print(f"[WARNING] use_reranker=True but beam_size={self.extra_params.beam_size}")
+            required_modules.update({"reranker": self.hparams.required_modules["reranker"]})
+
         self.load_required_modules(required_modules)
 
     def load_required_modules(self, required_modules):
@@ -61,11 +67,24 @@ class SemanticInferenceModule(pl.LightningModule):
         self.semantic_module.load_required_modules()
 
     def predict_step(self, batch, batch_idx=0, dataloader_idx=0):
-        semantic_samples = self.semantic_module.predict(batch, self.extra_params)
+        semantic_samples = self.semantic_module.predict(
+            batch,
+            self.extra_params,
+            beam=self.extra_params.beam_size,
+        )
         semantic_samples, eos_index_list = process_eos_indexes(semantic_samples, self.semantic_module, self.extra_params.sample_rate)
-        raw_wav_output = self.decoding_fn(self.requires, semantic_samples, self.decoding_params).detach().cpu()
+        raw_wav_output = self.decoding_fn(self.requires, semantic_samples, self.decoding_params)
         assert len(raw_wav_output.shape) == 2, "Wavs must be 2 sim [b, seq_len]"
+
+        if self.extra_params.use_reranker:
+            raw_wav_output, eos_index_list, _ = self.requires["reranker"].rerank(
+                raw_wav_output,
+                eos_index_list,
+                batch,
+                self.extra_params,
+            )
         
+        raw_wav_output = raw_wav_output.detach().cpu()
         wavs = truncate_wav_to_eos(raw_wav_output, eos_index_list)
         return { 
             'generated_audio': wavs,

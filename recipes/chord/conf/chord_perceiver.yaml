@@ -1,0 +1,230 @@
+---
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 0
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+ckpt_path: "hdfs://harunava/home/byte_speech_sv/amy/log/chord_perceiver/0.1/checkpoints/epoch=17-step=7200.ckpt"
+
+# running parameters
+run_opts:
+  fast_dev_run: False
+  tensorboard_dir: 'hdfs://harunava/home/byte_speech_sv/amy/log/'
+  log_name: 'chord_perceiver'
+  version: '0.1'
+  precision: 32
+  accelerator: 'auto'
+  num_workers: 4
+  pin_memory: True
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+train_params:
+  learning_rate: 0.001
+  max_epochs: -1
+  batch_size: 64
+  shuffle_buffer: 1000
+  scheduler_patience: 10
+  scheduler_decay_factor: 0.8
+  devices: 'auto'
+  num_iter: 100
+
+val_params:
+  num_sanity_val_steps: 2
+  batch_size: 1
+
+################################################################################
+##########                    TASK CONFIGURATION                  ##########
+################################################################################
+
+audio:
+  sampling_rate: 16000       # sampling rate for audio
+  sample_len: 12.0           # duration in sec for input  #{24 or 6}
+  sample_hop: 1              # hop len in sec for input
+  hop_length: 500            # hop length to calculate spectrogram
+  n_fft: 2048                # number of fft to calculate spectrogram
+  augmentation: False        # {true, false} use data augmentation
+  input_feature: "hcqt"      # input feature type {mel, hcqt}
+  do_time_augmentation: True  # use time stretching augmentation
+  do_cqt_augmentation: True
+  pitch_shift: False
+  semitone_scale: 1
+
+################################################################################
+##########             DATASET/DATALOADING CONFIGURATION              ##########
+################################################################################
+
+preprocessor: !new:recipes.chord.preprocess.common.ChordPreprocessor
+  - !ref <audio[sample_len]>
+  - !ref <audio[sampling_rate]>
+  - !ref <audio[hop_length]>
+  - !ref <model_params[chord_pool]>
+  - !ref <model_params[resnet_pools]>
+
+input_url: [
+  "pipe: hdfs dfs -cat \
+    hdfs://harunava/home/byte_speech_sv/data/webdataset/chord/billboard_chord/train/shards-{0000..0016}.tar",
+  "pipe: hdfs dfs -cat \
+    hdfs://harunava/home/byte_speech_sv/data/webdataset/chord/isophonic_chord/train/shards-{0000..0004}.tar",
+  "pipe: hdfs dfs -cat \
+    hdfs://harunava/home/byte_speech_sv/data/webdataset/chord/leadsheet_chord/train/shards-{0000..0022}.tar",
+  "pipe: hdfs dfs -cat \
+    hdfs://harunava/home/byte_speech_sv/data/webdataset/chord/rwc_chord/train/shards-{0000..0002}.tar",
+  "pipe: hdfs dfs -cat \
+    hdfs://harunava/home/byte_speech_sv/data/webdataset/chord/uspop_chord/train/shards-{0000..0005}.tar",
+  "pipe: hdfs dfs -cat \
+    hdfs://harunava/home/byte_speech_sv/data/webdataset/chord/leadsheet_chord/validation/shards-{0000..0005}.tar"
+]
+urls: !apply:recipes.beat.utils.concatenate_dataset.concatenate_dataset [!ref <input_url>]
+train_dataset: !new:webdataset.WebDataset
+  urls: !ref <urls>
+  resampled: True
+
+train_transformed: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
+  wds_dataset: !ref <train_dataset>
+  pipeline:
+    - !name:webdataset.WebDataset.shuffle
+      - !ref <train_params[shuffle_buffer]>
+    - !name:webdataset.WebDataset.decode
+    - !name:webdataset.WebDataset.compose
+      - !name:recipes.chord.preprocess.common.ChordPreprocessor.train_batch_preprocess
+        - !ref <preprocessor>
+    - !name:webdataset.WebDataset.shuffle
+      - !ref <train_params[shuffle_buffer]>
+    - !name:webdataset.WebDataset.to_tuple ["audio chord_root chord_triad chord_note chord_ignore"]
+    - !name:webdataset.WebDataset.batched
+      - !ref <train_params[batch_size]>
+    - !name:webdataset.WebDataset.with_epoch
+      - !ref <train_params[num_iter]>
+
+val_dataset: !new:webdataset.WebDataset
+  urls: "pipe: hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/data/webdataset/chord/jaychou_chord/validation/*.tar"
+val_transformed: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
+  wds_dataset: !ref <validation_dataset>
+  pipeline:
+    - !name:webdataset.WebDataset.decode
+    - !name:webdataset.WebDataset.map
+      - !name:recipes.chord.preprocess.common.ChordPreprocessor.val_preprocess
+        - !ref <preprocessor>
+    - !name:webdataset.WebDataset.to_tuple ["audio chord_root chord_triad chord_note chord_ignore"]
+    - !name:webdataset.WebDataset.batched [1]
+
+test_dataset: !new:webdataset.WebDataset
+  urls: "pipe: hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/data/webdataset/vocal_beat/*_vocal_beat/test/*.tar"
+test_transformed: !apply:samantha.utils.webdataset.apply_webdataset_pipeline
+  wds_dataset: !ref <test_dataset>
+  pipeline:
+    - !name:webdataset.WebDataset.decode
+    - !name:webdataset.WebDataset.map
+      - !name:recipes.beat.preprocess.common.BeatPreprocessor.val_preprocess
+        - !ref <preprocessor>
+    - !name:webdataset.WebDataset.to_tuple ["audio.npy beats.pickle tempo_label orig_beats dataset.txt"]
+    - !name:webdataset.WebDataset.batched [1]
+
+# dataloader configuration
+train_dataloader: !new:torch.utils.data.DataLoader
+  dataset: !ref <train_transformed>
+  shuffle: False
+  batch_size: null
+  num_workers: !ref <run_opts[num_workers]>
+  pin_memory: !ref <run_opts[pin_memory]>
+  persistent_workers: True
+
+val_dataloader: !new:torch.utils.data.DataLoader
+  dataset: !ref <val_transformed>
+  shuffle: False
+  batch_size: null
+  num_workers: !ref <run_opts[num_workers]>
+  pin_memory: !ref <run_opts[pin_memory]>
+  persistent_workers: True
+
+# datamodule configuration
+pl_datamodule: !new:recipes.chord.pl_modules.pl_datamodule.ChordDataModule
+  train_dataloader: !ref <train_dataloader>
+  val_dataloader: !ref <val_dataloader>
+  test_dataloader: !ref <test_dataloader>
+
+################################################################################
+##########                      MODEL CONFIGURATION                   ##########
+################################################################################
+
+model_params:
+  n_layers: 5
+  spec_dim: 128
+  temporal_dim: 64
+  temporal_heads: 4
+  spec_heads: 4
+  resnet_pools: [[2, 2], [2, 1]]
+  freq_pool_size: 4
+  time_pool_size: 2
+  num_fct: 4
+  chord_pool: [2]
+  n_channel: 128
+
+perceiver_model_stage: !new:recipes.beat.models.perceiver.BeatPerceiverModelStage
+  sample_rate: !ref <audio[sampling_rate]>
+  sample_len: !ref <audio[sample_len]>
+  hop_len: !ref <audio[hop_length]>
+  n_layers: !ref <model_params[n_layers]>
+  spec_dim: !ref <model_params[spec_dim]>
+  temporal_dim: !ref <model_params[temporal_dim]>
+  temporal_heads: !ref <model_params[temporal_heads]>
+  resnet_pools: !ref <model_params[resnet_pools]>
+  n_fft: !ref <audio[n_fft]>
+  semitone_scale: !ref <audio[semitone_scale]>
+  freq_pool_size: !ref <model_params[freq_pool_size]>
+  time_pool_size: !ref <model_params[time_pool_size]>
+  num_fct: !ref <model_params[num_fct]>
+
+chord_classifier_stage: !new:recipes.chord.models.classifier.ChordPerceiverClassifierStage
+  n_channel: !ref <model_params[n_channel]>
+  chord_pool: !ref <model_params[chord_pool]>
+
+model: !new:samantha.stage.BaseModel
+  input_names: [audio, aug_hop_size]
+  output_names: [chord_root, chord_triad]
+  stages:
+    - !ref <perceiver_model_stage>
+    - !ref <chord_classifier_stage>
+
+pl_module: !new:recipes.chord.pl_modules.pl_module.LitChord
+  model: !ref <model>
+  lr: !ref <train_params[learning_rate]>
+  scheduler_patience: !ref <train_params[scheduler_patience]>
+  scheduler_decay_factor: !ref <train_params[scheduler_decay_factor]>
+  hop_length: !ref <audio[hop_length]>
+  sample_rate: !ref <audio[sampling_rate]>
+  sample_len: !ref <audio[sample_len]>
+  chord_pool: !ref <model_params[chord_pool]>
+  resnet_pools: !ref <model_params[resnet_pools]>
+  do_cqt_augmentation: !ref <audio[do_cqt_augmentation]>
+  do_tempo_loss: !ref <train_params[do_tempo_loss]>
+  f_measure_threshold: !ref <post_processing_params[f_measure_threshold]>
+  use_tempo_prior: !ref <post_processing_params[use_tempo_prior]>
+
+################################################################################
+##########                     TRAINER CONFIGURATION                  ##########
+################################################################################
+
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+  save_dir: !ref <run_opts[tensorboard_dir]>
+  name: !ref <run_opts[log_name]>
+  version: !ref <run_opts[version]>
+
+trainer: !new:pytorch_lightning.Trainer
+  fast_dev_run: !ref <run_opts[fast_dev_run]>
+  num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+  logger: !ref <logger>
+  accelerator: !ref <run_opts[accelerator]>
+  devices: !ref <train_params[devices]>
+  precision: !ref <run_opts[precision]>
+  num_sanity_val_steps: !ref <val_params[num_sanity_val_steps]>
+  max_epochs: !ref <train_params[max_epochs]>
+  callbacks:
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      every_n_epochs: 1
+      mode: "max"
+      monitor: major_minor

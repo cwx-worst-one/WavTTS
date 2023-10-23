@@ -202,7 +202,13 @@ class ARVSampler(nn.Module):
         return pred_emb
         # return torch.cat(output_emb, dim=-1)
 
-def init_sampler(checkpoint_path, local_rank, cache_dir, duration=30):
+def init_sampler(
+    checkpoint_path,
+    local_rank,
+    cache_dir,
+    duration=30,
+    sequence_length=None,   # for backward compat
+):
     device = torch.device(f"cuda:{local_rank}")
     sampler = ARVSampler(32, duration, 1)
     sampler.set_device(device)

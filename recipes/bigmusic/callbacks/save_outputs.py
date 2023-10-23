@@ -110,8 +110,15 @@ def default_format_video_text(metadata):
     lyrics = metadata.get('lyrics')
     if lyrics is not None:
         lyrics = lyrics.encode('ascii', 'ignore').decode('ascii') # TODO: utf-8
-        lyrics_list = textwrap.wrap(lyrics, 40, break_long_words=False)
-        video_text += '\n\n'.join(lyrics_list)
+        # Respect natural linebreaks
+        lyrics = lyrics.split("\n")
+        lyrics_list = []
+        for x in lyrics:
+            for y in textwrap.wrap(x, 40, break_long_words=False):
+                lyrics_list.append(y)
+                lyrics_list.append("\n")
+            lyrics_list.append("\n")
+        video_text += ''.join(lyrics_list)
     return video_text
 
 def save_video(input_results_dir, output_video_dir, format_video_text_fn=default_format_video_text, remove_segments=True):

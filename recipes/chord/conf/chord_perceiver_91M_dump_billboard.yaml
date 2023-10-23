@@ -1,0 +1,133 @@
+---
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 0
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+ckpt_path: 
+
+# running parameters
+run_opts:
+  fast_dev_run: False
+  precision: 32
+  accelerator: 'auto'
+  num_workers: 8
+  pin_memory: True
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+train_params:
+  learning_rate: 0.001
+  scheduler_patience: 10
+  scheduler_decay_factor: 0.8
+  devices: 'auto'
+
+################################################################################
+##########                    TASK CONFIGURATION                  ##########
+################################################################################
+
+audio:
+  sampling_rate: 16000       # sampling rate for audio
+  sample_len: 12.0           # duration in sec for input  #{24 or 6}
+  sample_hop: 1              # hop len in sec for input
+  hop_length: 500            # hop length to calculate spectrogram
+  n_fft: 2048                # number of fft to calculate spectrogram
+  input_feature: "hcqt"      # input feature type {mel, hcqt}
+  do_cqt_augmentation: True
+  semitone_scale: 1
+
+################################################################################
+##########             DATASET/DATALOADING CONFIGURATION              ##########
+################################################################################
+
+# datamodule configuration
+pl_datamodule: !new:recipes.bigmusic.datasets.mix.SFTBilloardWebDataModule
+  sample_rate: !ref <audio[sampling_rate]>
+  batch_size: 48
+  shuffle_buffer_size: 0
+  num_workers: !ref <run_opts[num_workers]>
+  pin_memory: True
+  buckets_in_sec: [20, 25, 30]
+  use_dynamic_batch: False
+  include_intro: True
+  max_seg_per_track: 3
+  use_pipe: False
+  resampled: False
+  shardshuffle: True
+
+################################################################################
+##########                      MODEL CONFIGURATION                   ##########
+################################################################################
+
+model_params:
+  n_layers: 6
+  spec_dim: 256
+  temporal_dim: 256
+  temporal_heads: 8
+  spec_heads: 8
+  resnet_pools: [[2, 2], [2, 1]]
+  freq_pool_size: 4
+  time_pool_size: 2
+  num_fct: 8
+  chord_pool: [2]
+  n_channel: 2048
+
+perceiver_model_stage: !new:recipes.beat.models.perceiver.BeatPerceiverModelStage
+  sample_rate: !ref <audio[sampling_rate]>
+  sample_len: !ref <audio[sample_len]>
+  hop_len: !ref <audio[hop_length]>
+  n_layers: !ref <model_params[n_layers]>
+  spec_dim: !ref <model_params[spec_dim]>
+  temporal_dim: !ref <model_params[temporal_dim]>
+  temporal_heads: !ref <model_params[temporal_heads]>
+  resnet_pools: !ref <model_params[resnet_pools]>
+  n_fft: !ref <audio[n_fft]>
+  semitone_scale: !ref <audio[semitone_scale]>
+  freq_pool_size: !ref <model_params[freq_pool_size]>
+  time_pool_size: !ref <model_params[time_pool_size]>
+  num_fct: !ref <model_params[num_fct]>
+
+chord_classifier_stage: !new:recipes.chord.models.classifier.ChordPerceiverClassifierStage
+  n_channel: !ref <model_params[n_channel]>
+  chord_pool: !ref <model_params[chord_pool]>
+
+model: !new:samantha.core.BaseModel
+  input_names: [audio, aug_hop_size]
+  output_names: [chord_root, chord_triad]
+  stages:
+    - !ref <perceiver_model_stage>
+    - !ref <chord_classifier_stage>
+
+pl_module: !new:recipes.chord.pl_modules.pl_module.LitChord
+  model: !ref <model>
+  lr: !ref <train_params[learning_rate]>
+  scheduler_patience: !ref <train_params[scheduler_patience]>
+  scheduler_decay_factor: !ref <train_params[scheduler_decay_factor]>
+  hop_length: !ref <audio[hop_length]>
+  sample_rate: !ref <audio[sampling_rate]>
+  sample_len: !ref <audio[sample_len]>
+  chord_pool: !ref <model_params[chord_pool]>
+  resnet_pools: !ref <model_params[resnet_pools]>
+  pretrain_path: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/semi-sup-chord_epoch=103-step=56300.ckpt"
+
+################################################################################
+##########                     TRAINER CONFIGURATION                  ##########
+################################################################################
+
+prediction_writer: !new:recipes.chord.pl_modules.callbacks.prediction_writer.ChordSequenceWriter
+    output_dir: "/mnt/bn/audio-diffusion/ducle/data/billboard_v1_chords"
+    write_genre_prefix: False
+
+callbacks:
+  - !ref <prediction_writer>
+
+trainer: !new:pytorch_lightning.Trainer
+  fast_dev_run: !ref <run_opts[fast_dev_run]>
+  num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+  accelerator: !ref <run_opts[accelerator]>
+  devices: !ref <train_params[devices]>
+  precision: !ref <run_opts[precision]>
+  callbacks: !ref <callbacks>

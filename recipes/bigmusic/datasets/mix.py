@@ -81,6 +81,32 @@ def rewrite_metadata(metadata, type="Vocal"):
         text += "music."
     elif type == "Speech":
         text = "Speech."
+    elif type == "mir_tags":
+        # NOTE: randomly shuffle to diversify prompt
+        random.shuffle(metadata["genres"])
+        random.shuffle(metadata["vocals"]) 
+
+        def multiple_choices_text_processor(text: List[str]) -> str:
+            if len(text) > 1:
+                text = ", ".join(text[:-1]) + f" and {text[-1]}"
+            elif len(text) == 1:
+                text = text[0]
+            else:
+                text = ""
+            return text.lower()
+
+        # example: 'rock, pop and blues'
+        genre_text = multiple_choices_text_processor(metadata["genres"])
+        genre_text = genre_text.replace("_", " ") # rnb_soul -> rnb soul
+        if mood is not None and mood != 'nan':
+            genre_text = f"{mood.lower()} {genre_text}"
+
+        gender = {
+            "gender_male": "male",
+            "gender_female": "female",
+        }
+        vocal_gender_text = multiple_choices_text_processor([gender.get(v, "") for v in metadata["vocals"] if "gender_" in v])
+        text = f"""A {genre_text} song with {vocal_gender_text} vocal."""
     return text
 
 def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -563,6 +589,11 @@ class MCCVocalDataset(MCCInstrumentalDataset):
                 continue
             segments = group_utterances(utterances, self.min_duration, self.max_duration, 
                                         time_in_sec=False, include_intro=self.include_intro)
+            min_duration_sec = 10
+            segments = [s for s in segments if s[1] - s[0] >= min_duration_sec]
+
+            index_data = item["__index_data__"]
+            metadata = index_data["metadata"]
             if len(segments) < 1:
                 continue
             if self.segment_method == "first":
@@ -571,14 +602,18 @@ class MCCVocalDataset(MCCInstrumentalDataset):
                 random.shuffle(segments)
                 segments = segments[:self.max_seg_per_track]
             for segment in segments:
-                if segment[1] - segment[0] < 1:
-                    print("short segment")
-                    continue
                 start = int(segment[0] * self.sample_rate)
                 end = int(segment[1] * self.sample_rate)
+
+                if audio.ndim == 1:
+                    audio = audio.unsqueeze(dim=0)
+                
                 clip = audio[:, start:end]
                 if clip.shape[-1] < self.sample_rate * self.min_duration // 2:
                     print('audio too short', clip.shape)
+                    continue
+
+                if clip.shape[0] == 0 or clip.shape[1] == 0:
                     continue
 
                 # TODO!!!!!
@@ -703,6 +738,8 @@ class BillboardDataset(WebPipeline):
             # TODO: Segmenting
             segments = group_utterances(utterances, self.min_duration, self.max_duration,
                                         time_in_sec=False, include_intro=self.include_intro)
+            min_duration_sec = 15
+            segments = [s for s in segments if s[1] - s[0] >= min_duration_sec]
             if len(segments) < 1:
                 continue
             if self.segment_method == "first":
@@ -710,14 +747,27 @@ class BillboardDataset(WebPipeline):
             elif self.max_seg_per_track > 0:
                 random.shuffle(segments)
                 segments = segments[:self.max_seg_per_track]
-            for segment in segments:                
+
+            for segment in segments:
                 start = int(segment[0] * self.sample_rate)
                 end = int(segment[1] * self.sample_rate)
+
+                if audio.ndim == 1:
+                    audio = audio.unsqueeze(dim=0)
+
                 clip = audio[:, start:end]
+                if clip.shape[0] == 0 or clip.shape[1] == 0:
+                    continue
+
                 normalized_text = normalize_text(segment[2])
                 phoneme_tokens = self.phoneme_tokenizer(normalized_text)["input_ids"]
 
                 style_metadata = select_tag_metadata_from_timestamps(item["__index_data__"], start, end)
+
+                # skip when no genre detected
+                if len(style_metadata["genres"]) == 0:
+                    continue
+
                 style_text = rewrite_metadata(style_metadata, type="mir_tags")
 
                 song_id = item["__key__"]
@@ -935,10 +985,12 @@ class MixWebDataModule(DataModule):
                 yield batch
 
 
-class SFTWebDataModule(DataModule):
+class WebDataModule(DataModule):
     def __init__(
         self,
-        weights: Optional[List[float]] = None,
+        train_dataset,
+        validation_dataset,
+        predict_dataset,
         sample_rate: int = 24000,
         batch_size: int = 2,
         buckets_in_sec: List[int] = [20, 25, 30],
@@ -947,11 +999,6 @@ class SFTWebDataModule(DataModule):
         pin_memory: bool = True,
         collate_fn: Optional[Callable] = collate_fn,
         use_dynamic_batch: str = False,
-        segment_method: str = "random",
-        segment_max_phone_len: int = 400,
-        include_intro: bool = False,
-        max_seg_per_track: int = 3,
-        use_pipe: bool = False,
     ):    
         buckets_samples = list(map(lambda i: i * sample_rate, buckets_in_sec))
         maximum_bucket_size = batch_size * sample_rate * buckets_in_sec[-1]
@@ -969,6 +1016,42 @@ class SFTWebDataModule(DataModule):
                 batch_size=batch_size,
                 length_fn=lambda x: x["audio"].shape[-1],  
             )
+        super().__init__(
+            shuffle_buffer_size=shuffle_buffer_size,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            train_dataset=train_dataset,
+            validation_dataset=validation_dataset,
+            predict_dataset=predict_dataset,
+            collate_fn=collate_fn,
+        )
+
+    def bucketize(self, iterator: Iterable):
+        for item in iterator:
+            batch = self.batcher.collate_batch(item)
+            if batch is not None:
+                yield batch
+
+
+
+class SFTWebDataModule(WebDataModule):
+    def __init__(
+        self,
+        weights: Optional[List[float]] = None,
+        sample_rate: int = 24000,
+        batch_size: int = 2,
+        buckets_in_sec: List[int] = [20, 25, 30],
+        shuffle_buffer_size: int = 10,
+        num_workers: int = 4,
+        pin_memory: bool = True,
+        collate_fn: Optional[Callable] = collate_fn,
+        use_dynamic_batch: str = False,
+        segment_method: str = "random",
+        segment_max_phone_len: int = 400,
+        include_intro: bool = False,
+        max_seg_per_track: int = 3,
+        use_pipe: bool = False,
+    ):    
         mcc1m_groupA_url2index_list = [
             "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-blues.txt",
             "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-childhood.txt",
@@ -1025,7 +1108,7 @@ class SFTWebDataModule(DataModule):
    
         datasets = [
             BillboardDataset(
-                url2index="hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/billboard/test/url2index.txt",
+                url2index="hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/billboard_mss/test/mss_url2idx.txt",
                 max_seg_per_track=1,
                 use_pipe=False,
                 resampled=False,
@@ -1054,21 +1137,184 @@ class SFTWebDataModule(DataModule):
             # TODO (qq) change it to MTAT
             pipeline=[{"compose": [self.bucketize]}],
         )
+            
+        predict_dataset = train_dataset
         super().__init__(
+            train_dataset=train_dataset,
+            validation_dataset=validation_dataset,
+            predict_dataset=predict_dataset,
             shuffle_buffer_size=shuffle_buffer_size,
             num_workers=num_workers,
             pin_memory=pin_memory,
-            train_dataset=train_dataset,
-            validation_dataset=validation_dataset,
-            predict_dataset=train_dataset,
             collate_fn=collate_fn,
         )
 
-    def bucketize(self, iterator: Iterable):
-        for item in iterator:
-            batch = self.batcher.collate_batch(item)
-            if batch is not None:
-                yield batch
+
+class SFTMCCVocalWebDataModule(WebDataModule):
+    def __init__(
+        self,
+        sample_rate: int = 24000,
+        batch_size: int = 2,
+        buckets_in_sec: List[int] = [20, 25, 30],
+        shuffle_buffer_size: int = 10,
+        num_workers: int = 4,
+        pin_memory: bool = True,
+        collate_fn: Optional[Callable] = collate_fn,
+        use_dynamic_batch: str = False,
+        segment_method: str = "random",
+        segment_max_phone_len: int = 400,
+        include_intro: bool = False,
+        max_seg_per_track: int = 3,
+        use_pipe: bool = False,
+    ):
+
+        mcc1m_groupA_url2index_list = [
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-blues.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-childhood.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-classical.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-country.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-devotional.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-easy-listening.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-electronic.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-folk.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-hip-hop-rap.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-jazz.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-metal.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-pop.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-r-b-soul.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-reggae.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-rock.txt",
+            "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc1m_vocalA/vocal-A-soundtrack.txt",
+        ]
+        datasets = [
+            MCCVocalDataset(
+                url2index=url2index,
+                sample_rate=sample_rate,
+                resampled=True,
+                shardshuffle=True,
+                min_duration=buckets_in_sec[0],
+                max_duration=buckets_in_sec[-1],
+                segment_method=segment_method,
+                segment_max_phone_len=segment_max_phone_len,
+                include_intro=include_intro,
+                max_seg_per_track=max_seg_per_track,
+                use_pipe=use_pipe,
+                handler=wds.warn_and_continue,
+            ) for url2index in mcc1m_groupA_url2index_list
+        ]
+        mcc1m_groupA_url2index_weights = [1/16] * len(mcc1m_groupA_url2index_list)
+        assert len(mcc1m_groupA_url2index_weights) == len(datasets)
+
+        train_dataset = WebPipeline(            
+            MultiIterableDataset(datasets=datasets, weights=mcc1m_groupA_url2index_weights),
+            pipeline=[{"compose": [self.bucketize]}],
+        )
+   
+        validation_dataset = MCCVocalDataset(
+            url2index="/mnt/bn/audio-diffusion/data/vocal_mcc_npy/pop_url2idx_val.txt",
+            sample_rate=sample_rate,
+            resampled=False,
+            nodesplitter=return_self,
+            min_duration=buckets_in_sec[0],
+            max_duration=buckets_in_sec[-1],
+            segment_method=segment_method,
+            segment_max_phone_len=segment_max_phone_len,
+            include_intro=include_intro,
+            max_seg_per_track=1,
+            use_pipe=False,
+            handler=wds.warn_and_continue,
+        )
+        validation_dataset = WebPipeline(      
+            validation_dataset,
+            # TODO (qq) change it to MTAT
+            pipeline=[{"compose": [self.bucketize]}],
+        )
+        
+        predict_dataset = train_dataset
+        super().__init__(
+            train_dataset=train_dataset,
+            validation_dataset=validation_dataset,
+            predict_dataset=predict_dataset,
+            shuffle_buffer_size=shuffle_buffer_size,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            collate_fn=collate_fn,
+        )
+
+class SFTBilloardWebDataModule(WebDataModule):
+    def __init__(
+        self,
+        sample_rate: int = 24000,
+        batch_size: int = 2,
+        buckets_in_sec: List[int] = [20, 25, 30],
+        shuffle_buffer_size: int = 10,
+        num_workers: int = 4,
+        pin_memory: bool = True,
+        collate_fn: Optional[Callable] = collate_fn,
+        use_dynamic_batch: str = False,
+        segment_method: str = "random",
+        segment_max_phone_len: int = 400,
+        include_intro: bool = False,
+        max_seg_per_track: int = 3,
+        use_pipe: bool = False,
+        resampled: bool = True,
+        shardshuffle: bool = True,
+    ):
+        train_dataset = BillboardDataset(
+            url2index='hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/billboard_mss/train/mss_url2idx.txt',
+            sample_rate=sample_rate,
+            resampled=resampled,
+            shardshuffle=shardshuffle,
+            segment_method=segment_method,
+            segment_max_phone_len=segment_max_phone_len,
+            include_intro=include_intro,
+            max_seg_per_track=max_seg_per_track,
+            use_pipe=use_pipe,
+            handler=wds.warn_and_continue,
+        )
+
+        train_dataset = WebPipeline(            
+            train_dataset,
+            pipeline=[{"compose": [
+                wds.shuffle(shuffle_buffer_size),
+                self.bucketize,
+            ]}],
+        )
+   
+        val_tar = "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/billboard_mss/test/tars/00000.tar"
+        val_idx = "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/billboard_mss/test/indexes/00000.idx_merge.60"
+        validation_dataset = BillboardDataset(
+            url2index={val_tar: val_idx},
+            sample_rate=sample_rate,
+            segment_method=segment_method,
+            segment_max_phone_len=segment_max_phone_len,
+            include_intro=include_intro,
+            max_seg_per_track=1,
+            use_pipe=use_pipe,
+            resampled=False,
+            nodesplitter=return_self,
+            handler=wds.warn_and_continue,                
+        )
+
+        validation_dataset = WebPipeline(      
+            validation_dataset,
+            pipeline=[{"compose": [self.bucketize]}],
+        )
+        
+        predict_dataset = train_dataset
+        super().__init__(
+            train_dataset=train_dataset,
+            validation_dataset=validation_dataset,
+            predict_dataset=predict_dataset,
+            sample_rate=sample_rate,
+            batch_size=batch_size,
+            buckets_in_sec=buckets_in_sec,
+            shuffle_buffer_size=shuffle_buffer_size,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            collate_fn=collate_fn,
+            use_dynamic_batch=use_dynamic_batch,
+        )
 
 
 class TTSWebDataModule(DataModule):

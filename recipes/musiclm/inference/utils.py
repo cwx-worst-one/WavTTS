@@ -187,7 +187,7 @@ def gumbel_noise(t, fixed_noise):
     return -log(-log(noise))
 
 
-def gumbel_sample(t: torch.Tensor, temperature=1.0, dim=-1, fixed_noise=True):
+def gumbel_sample(t: torch.Tensor, temperature=1.0, dim=-1, fixed_noise=False):
     return ((t / temperature) + gumbel_noise(t, fixed_noise=fixed_noise)).argmax(dim=dim)
 
 

@@ -1,7 +1,15 @@
 import pytorch_lightning as pl
 from typing import Any
-from recipes.bigmusic.utils.format_utils import concat_metadata_list, update_json, normalize_text
-from recipes.bigmusic.utils.metrics_asr import wav2lyrics, edit_distance
+from recipes.bigmusic.utils.format_utils import (
+    concat_metadata_list,
+    update_json,
+    normalize_text,
+)
+from recipes.bigmusic.utils.metrics_asr import (
+    wav2lyrics,
+    edit_distance,
+    remove_punc_case,
+)
 import torch
 from recipes.musiclm.inference.utils import load_wav
 import json
@@ -22,14 +30,19 @@ def run_wer_metrics(output_dir, device='cuda'):
     for idx, generated_output_fp in enumerate(generated_output_fps):
         wav = torch.tensor(load_wav(str(generated_output_fp))).to(device)
         wavs_batch = wav.unsqueeze(0) # convert to batch format
-        asr_lyrics, _ = wav2lyrics(wavs_batch, sr=24000, device_id=torch.cuda.current_device())
+        asr_lyrics, _ = wav2lyrics(
+            wavs_batch,
+            sr=24000,
+            device_id=torch.cuda.current_device(),
+            do_itn=True,
+        )
         metadata_fp = str(generated_output_fp).replace('generated.wav', 'metadata.json')
         with open(metadata_fp, 'r') as f:
             metadata = json.load(f)
         # actual transcript
         lyrics = metadata.get('lyrics')
-        a = '' if lyrics is None else normalize_text(lyrics)
-        g = normalize_text(asr_lyrics[0]) # greedy transcript
+        a = '' if lyrics is None else normalize_text(remove_punc_case(lyrics))
+        g = normalize_text(remove_punc_case(asr_lyrics[0])) # greedy transcript
         edits = edit_distance(a, g)
         denom = 1.0 if len(a) == 0 else len(a)
         ins = round(edits.ins / denom, 3)

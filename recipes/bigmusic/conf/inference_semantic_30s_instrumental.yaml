@@ -9,16 +9,20 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
 
 extra_params:
-    num_rounds: 1
+    beam_size: 1    # set to 4 if using reranker
     prompt_path: "/mnt/bn/audio-diffusion/data/musiclm_text_prompt/text_prompt_collection_2.0_20230817.csv"
     inference_conditions: style_text # style_text|style_audio,lyrics_tokens,vocal_audio|vocal_text,chroma
     max_items: null
+    use_reranker: False
 
     output_dir: ./generated_output/conditional
 
     # Semantic model
     semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
-    semantic_ckpt: null
+    semantic_ckpt: "/mnt/bn/audio-diffusion/ducle/logs/semantic_model_instrumental_07B/sstk_eval_rl2.0_short_umm+mix_mulan_110_no_ce_loss/checkpoints/step=005000.ckpt"
+
+    # Used for reranker, only loaded if use_reranker=True
+    mulan_ckpt: "/mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=024600-kaggle.ckpt"
 
     ar_params:
         coarse_duration: 10
@@ -47,7 +51,7 @@ run_opts:
     accelerator: auto
     strategy: auto
     cache_dir: .module_cache/musiclm
-    batch_size: 28
+    batch_size: 28  # set to 4 if using reranker
     num_workers: 8
 
 ################################################################################
@@ -98,6 +102,19 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                 hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
                 initializer: !name:recipes.musiclm.requires.model_initializer.init_soundstream_decoder
                     cache_dir: !ref <run_opts[cache_dir]>
+        reranker:
+            hpath:
+                rewards:
+                    style_text: 1.0
+                    qualitative: 1.0
+                    nonvocal: 1.0
+                required_modules:
+                    mulan:
+                        hpath: !ref <extra_params[mulan_ckpt]>
+                        initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
+                            version: "g4"
+            initializer: !name:recipes.bigmusic.utils.reranker.init_reranker
+                cache_dir: !ref <run_opts[cache_dir]>
 
 # separating out additional_callbacks so auto_eval can disable metrics
 additional_callbacks:

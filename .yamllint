@@ -28,3 +28,5 @@ ignore: |
   recipes/musicfm
   recipes/s3prl
   recipes/umm
+  recipes/beat
+  recipes/chord

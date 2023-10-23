@@ -33,11 +33,15 @@ extra_params:
     add_ref_to_beam: False
     ce_weight: 0.1
     seq_weight: 10
-    use_non_vocal_mulan: False
     use_itn_asr: True
+    positive_phrase: "cd quality, catchy, memorable"
+    negative_phrase: "noisy, boring, forgettable"
     rewards:
         "mulan_sim": 1.0
         "wer": 1.0
+        "style_text_sim": 1.0
+        "loudness_sim": 1.0
+        "qualitative_sim": 1.0
     # Logging params
     log_num_val_samples: 10
     log_num_val_beam_samples: 1
