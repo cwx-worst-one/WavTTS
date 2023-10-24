@@ -55,7 +55,7 @@ echo "ARNOLD OUTPUT    :   ${ARNOLD_OUTPUT}"
 
 export OMP_NUM_THREADS=8
 
-if [[ "$ARNOLD_DEVICE_TYPE" == *A100* ]]; then
+if [ "${ARNOLD_DEVICE_TYPE#*A100*}" != "$ARNOLD_DEVICE_TYPE" ]; then
   IB_HCA=mlx5
 else
   IB_HCA=$ARNOLD_RDMA_DEVICE:1
@@ -70,6 +70,9 @@ else
    export NCCL_IB_DISABLE=${NCCL_IB_DISABLE:=1}
    export NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME:=eth0}
 fi
+
+echo "IB_HCA    :   ${IB_HCA}"
+echo "NCCL_IB_DISABLE    :   ${NCCL_IB_DISABLE}"
 
 export NCCL_DEBUG=WARN
 
