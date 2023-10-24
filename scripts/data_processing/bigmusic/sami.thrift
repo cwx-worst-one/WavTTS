@@ -1,0 +1,52 @@
+include "base.thrift"
+
+namespace go lab.sami
+namespace py lab.sami
+
+typedef string Priority
+
+// High 有实时性要求
+const Priority High = "high"
+// Middle 一般的离线任务，允许一定延迟执行
+const  Priority Middle = "middle"
+// Low 低优先级，例如刷库
+const Priority Low = "low"
+
+struct InvokeRequest {
+    1: required string access_key,      // user access key, 用户的凭证
+    2: required string method,          // method namespace, 方法命名空间
+    3: optional string payload,         // json payload, 文本数据
+    4: optional binary data,            // binary data, 二进制数据
+    5: required string version = "v4",  // version, 协议版本，用户无需指定
+
+    6: optional string task_id = "",    // task id, 客户端可设置task id，需要使用uuid保证唯一性
+    7: optional bool is_offline = false,// is offline, 指定请求任务是否为离线任务，若为true则会进行离线调度
+    8: optional string token = "",      // token http改造加入，内部调用不鉴权不使用此字段，对外鉴权时会用到
+
+    51: optional Priority priority,      // 当为离线任务时，需要指定任务优先级，如果不指定，默认为middle
+    52: optional string batch_task_id,   // 批量任务的task_id
+    53: optional i64 batch_index,        // 批量任务的批次, 必须从0开始
+    54: optional list<InvokeRequest> batch_req, // 批量请求体
+    55: optional bool need_detail,       // 如果是true，会返回未完成的子task_id
+
+    255: required base.Base Base,
+}
+
+struct InvokeResponse {
+    1: required string task_id,         // task id, 本次调用的全局唯一识别码，提交工单必须附加
+    2: optional string payload,         // returned payload, 返回的文本数据
+    3: optional binary data,            // returned binary data, 返回的二进制数据
+    4: optional string state,           // state, 离线任务执行状态
+    10: optional i64 success,            // 批量任务的成功数
+    11: optional i64 failed,            // 批量任务的失败数
+    12: optional i64 unfinished,        // 批量任务的未完成数
+    13: optional list<string> unfinished_task, // 批量任务的未完成具体任务
+    14: optional list<string> failed_task, // 批量任务失败的任务
+    20: optional i64 total,            // 批量任务的总数
+
+    255: required base.BaseResp BaseResp,
+}
+
+service SamiService {
+    InvokeResponse Invoke(1: InvokeRequest req)
+}
