@@ -482,7 +482,8 @@ class MelSpectrogram(nn.Module):
             Tensor: Mel frequency spectrogram of size (..., ``n_mels``, time).
         """
         specgram, x_phase = self.spectrogram(x)
-        mel_specgram = self.mel_scale(specgram)
+        # calling contiguous fun to make torchscript work correctly
+        mel_specgram = self.mel_scale(specgram.contiguous())
         if self.return_phase:
             return mel_specgram, x_phase
         return mel_specgram
