@@ -66,6 +66,7 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
         tag_id=0,
         use_offline_tacolab=False,
         input_type='2dim',
+        **kwargs
     ):
         super().__init__(
                 ar_model_name=ar_model_name,
@@ -93,7 +94,8 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
                 bpe_tokens_num=bpe_tokens_num,
                 bpe_dir=bpe_dir,
                 tokenizer_type=tokenizer_type,
-                max_length=max_length)
+                max_length=max_length,
+                **kwargs)
 
         self.wvae_decoder = wvae_decoder
         self.phone_to_int = phone_to_int
@@ -131,25 +133,28 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
         if sample is None:
             print("encode failed", batch)
             return
-        utt_ids = sample['uttid']
-        output_dir = f"{self.hparams.output_dir}"
-        os.makedirs(output_dir, exist_ok=True)
-        output_path = f"{output_dir}/{utt_ids[0]}.wav"
-#        if os.path.exists(output_path):
-#            return
+
         z_outputs, _ = self.ar_model.predict(sample, None)
         generated_wav = self._decode(z_outputs)
         generated_wav *= (32767) / max(0.01, max(torch.abs(generated_wav)))
-        write(
-            output_path,
-            24000,
-            generated_wav.cpu().numpy().astype(np.int16),
-        )
-        # return generated_wav.cpu().numpy()
+
+        if self.infer_mode == 'offline':
+            utt_ids = sample['uttid']
+            output_dir = f"{self.hparams.output_dir}"
+            os.makedirs(output_dir, exist_ok=True)
+            output_path = f"{output_dir}/{utt_ids[0]}.wav"
+    #        if os.path.exists(output_path):
+    #            return
+            write(
+                output_path,
+                24000,
+                generated_wav.cpu().numpy().astype(np.int16),
+            )
+        else:
+            return generated_wav.cpu().numpy()
 
     def encode(self, sample):
-        device = f"cuda:{self.trainer.local_rank}"
-        # device = "cuda:0"
+        device = self.get_device()
         data_dict = dict()
 
         if len(sample) == 5:

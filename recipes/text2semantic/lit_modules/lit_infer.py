@@ -69,7 +69,8 @@ class BigTTSWVAEInfer(LightningModule):
         bpe_tokens_num=0,
         bpe_dir='',
         tokenizer_type='',
-        max_length=4096
+        max_length=4096,
+        infer_mode='offline',  # online, offline
     ):
         super().__init__()
         assert (text2id_version == 'v1' and tacolab_version == 'oldv1') \
@@ -129,16 +130,27 @@ class BigTTSWVAEInfer(LightningModule):
         self.trim_generated_wav = trim_generated_wav
         self.scale_generated_wav = scale_generated_wav
 
+        # The setup function will be called automatically by the lightning framework in the offline mode,
+        # we should manually call it in the online mode.
+        self.wvae_encoder = None
+        self.wvae_decoder = None
+        if infer_mode == 'online':
+            self.setup('predict')
+
     def setup(self, stage):
         if stage == "predict":
+            rank = 0
+            if self.infer_mode == 'offline':
+                rank = self.trainer.local_rank
+
             self.wvae_encoder = load_torch_script(
                 model_path=self.hparams.wvae_encoder,
-                rank=self.trainer.local_rank,
+                rank=rank,
                 cache_dir=self.hparams.module_cache,
             )
             self.wvae_decoder = load_torch_script(
                 model_path=self.hparams.wvae_decoder,
-                rank=self.trainer.local_rank,
+                rank=rank,
                 cache_dir=self.hparams.module_cache,
             )
 
@@ -150,23 +162,26 @@ class BigTTSWVAEInfer(LightningModule):
     def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: int = 0) -> Any:
         setup_seed(self.hparams.seed)
         sample, prompt_wav, prompt_wav_max = self.encode(batch)
-        utt_ids = sample[-1]
         z_outputs, _ = self.ar_model.predict(sample, None)
         generated_wav = self._decode(z_outputs)
-        output_dir = f"{self.hparams.output_dir}"
-        os.makedirs(output_dir, exist_ok=True)
-
         generated_wav = generated_wav.cpu().numpy()
         if self.trim_generated_wav:
             generated_wav = trim_silence(generated_wav)
         if self.scale_generated_wav:
             generated_wav *= min(0.99, prompt_wav_max) / max(0.01, np.max(np.abs(generated_wav)))
-        save_wav(generated_wav, f"{output_dir}/{utt_ids[0]}.wav", 24000)
-        if self.save_prompt:
-            save_wav(np.concatenate((prompt_wav, generated_wav), axis=0), f"{output_dir}/prompt-{utt_ids[0]}.wav", 24000)
+
+        if self.infer_mode == 'offline':
+            output_dir = f"{self.hparams.output_dir}"
+            os.makedirs(output_dir, exist_ok=True)
+            utt_ids = sample[-1]
+            save_wav(generated_wav, f"{output_dir}/{utt_ids[0]}.wav", 24000)
+            if self.save_prompt:
+                save_wav(np.concatenate((prompt_wav, generated_wav), axis=0), f"{output_dir}/prompt-{utt_ids[0]}.wav", 24000)
+        else:
+            return generated_wav
 
     def encode(self, sample):
-        device = f"cuda:{self.trainer.local_rank}"
+        device = self.get_device()
 
         prompt_wav_max = None
         prompt_wav = None
@@ -258,8 +273,8 @@ class BigTTSWVAEInfer(LightningModule):
 
             # text_id = np.concatenate([text_id, [self.tokenizer.sep], bpe_id])
             text_id = np.concatenate([
-                bpe_id, 
-                [self.tokenizer.sep], 
+                bpe_id,
+                [self.tokenizer.sep],
                 text_id])
 
         if self.use_lang_id:
@@ -345,9 +360,7 @@ class BigTTSWVAEInfer(LightningModule):
                         break
                 len_en_word += 1
                 continue
-            else: # blank or digit
-                # if not (text[i] == " " or text[i].isdigit()):
-                #     return None
+            else:
                 i += 1
 
         lang = 'en'
@@ -356,6 +369,11 @@ class BigTTSWVAEInfer(LightningModule):
 
         return lang
 
+    def get_device(self):
+        if self.infer_mode == 'offline':
+            return f"cuda:{self.trainer.local_rank}"
+        else:
+            return "cuda:0"
 
 
 # if __name__ == "__main__":
