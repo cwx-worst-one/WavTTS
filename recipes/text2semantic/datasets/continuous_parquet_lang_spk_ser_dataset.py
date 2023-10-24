@@ -199,6 +199,8 @@ class ContinuousTTSLangSpkSerDataset(IterableDataset):
                 spk_key = '/'.join([dataset_name, speaker_name])
                 if spk_key not in self.tag_dict.keys():
                     spk_key = dataset_name
+                    if spk_key not in self.tag_dict.keys():
+                        spk_key = 'default'
             tag_id = int(self.tag_dict.get(spk_key, 0))
             if tag_id == 0:
                 logger.warning(f"Warning: no tag id found for {url} {spk_key}")
