@@ -1,10 +1,10 @@
 ARG REGION
 
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.cu118.e820 as Aliyun_VA
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.cu118.e820 as US-East
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.cu118.e820 as US-East-Red
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.cu118.e820 as Aliyun_SG
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.cu118.e820 as China-North-LF
+FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u2.cu118-1 as Aliyun_VA
+FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u2.cu118-1 as US-East
+FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u2.cu118-1 as US-East-Red
+FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u2.cu118-1 as Aliyun_SG
+FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u2.cu118-1 as China-North-LF
 
 ENV LD_LIBRARY_PATH /opt/tiger/native_libhdfs/lib/native:$LD_LIBRARY_PATH
 ENV ARNOLD_HDFS_NATIVE 1
@@ -134,15 +134,14 @@ RUN pip3 install \
         zhon==1.1.5
 
 ARG CRUISE_VERSION=1.0.0.1985
-# FIXME: We'd better use a panther built with v2.1.0 image.
-ARG PANTHER_VERSION=1.7.9.28
+ARG PANTHER_VERSION=1.7.9.61
 ARG FALCONCLAW_VERSION=1.0.5.129
 ARG ONNX_VERSION=1.0.0.22
 ARG OPENFST_VERSION=1.0.0.8
 ARG ASR_EVAL_TOOL_VERSION=1.0.0.87
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.95
 ARG S3A_VERSION=1.0.0.41
-ARG DATALOADER_VERSION=1.0.0.143
+ARG DATALOADER_VERSION=1.0.0.154
 
 # 2. install falconclaw && panther && dataloader
 RUN \
@@ -171,6 +170,7 @@ RUN \
     pip3 install \
         --no-cache-dir \
         byted_dataloader*cp39*.whl && \
+    strip -g /usr/local/lib/python3.9/dist-packages/openfst_python/*.so* && \
     rm -rf /tmp/* /root/.cache
 
 # install s3a
@@ -183,7 +183,7 @@ RUN pip3 uninstall -y s3a \
 
 # install mariana related dependencies && lego
 RUN pip3 install --no-cache-dir bytedfeather==0.2.0 rich==13.3.5 sentencepiece==0.1.99 && \
-    pip3 install --no-cache-dir https://luban-source.byted.org/repository/scm/data.aml.lego_ops_th21_cu118_cudnn860_abi0_sdist_1.0.0.8.tar.gz
+    pip3 install --no-cache-dir https://luban-source.byted.org/repository/scm/data.aml.lego_ops_th21_cu118_cudnn860_abi0_sdist_1.0.0.19.tar.gz
 
 # 3. install asr_eval_tool
 RUN \
