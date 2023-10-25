@@ -4,13 +4,9 @@ import random
 from functools import lru_cache
 from scipy.io import wavfile
 
-from recipes.text2semantic.lit_modules.lit_infer import BigTTSWVAEInfer
-from recipes.text2semantic.scripts.infer_utils import load_torch_script
-from recipes.serving.utils.sami_service_client import invoke_tts
+from recipes.text2semantic.lit_modules.lit_infer_lang_spk import BigTTSWVAEInferLangSpk
 
-import torchaudio
 import io
-import re
 import logging
 from bytedance import easycycle
 import uuid
@@ -23,13 +19,14 @@ input_sample_rate = 24000
 
 
 meta_lst = "/mnt/bn/jdy-lq-3/AudioGPT/repo/bigtts_testset/inner_testset_zh/meta.lst.prompt1_rand200"
-ckpt_path = "hdfs://haruna/home/hcache/centralize_lq/gpt_java/speech/user/jiadongya/text2semantic/SFT_ENZHv3_llama700M_bt20000_8A100_accu1_CrossByT5Add/checkpoints/epoch=00-step=400000-kl_loss=0.41.ckpt"
-wvae_decoder_path = "/mnt/bn/lxx-nas-lq/models/bigtts/wavevae_decoder.pt"
+ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/huangzhiying.92/exp/samantha_bigtts_wvae_sft_tobe_merge/text2semantic/sft_WFVAE_v2_labv3_punc_data_id307_bt14000_16A100_accu5_byteT5_scr0.0_freezeTrue_langFalse/checkpoints/epoch=00-step=98500-kl_loss=0.12.ckpt"
+wvae_decoder_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wangxin.colin/ckpts/wvae_1.0/wavevae_decoder_%d.pt"
+wvae_encoder_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wangxin.colin/ckpts/wvae_1.0/wavevae_encoder_%d.pt"
 output_dir = "taozi_outputs"
-bpe_dir = "/mnt/bn/jdy-lq-3/AudioGPT/pretrainedLLM_ckpt/byt5-base"
-spk2id = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/jiadongya/dict/spk_en_zh_id43_mergetaozi.json"
-#spk_name = duibiao/maomao_conversation
-spk_name = "duibiao/taozi_1700"
+#bpe_dir = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/panjunjie.jeff/resource/models/byte-T5-base"
+bpe_dir = "resource/models/byte-T5-base"
+spk2id = "recipes/text2semantic/datasets/dict/spk2id.json"
+spk_name = "duibiao/sinong_conversation"
 
 
 def preload_models():
@@ -39,19 +36,20 @@ def preload_models():
 @lru_cache(maxsize=2)
 def load_cached_models():
     logging.info("========== start loading model ==========")
-    wvae_decoder = load_torch_script(wvae_decoder_path, 0, None)
-    pl_module = BigTTSWVAEInfer(
-        ar_model_name="VAET2SModule",
+    pl_module = BigTTSWVAEInferLangSpk(
+        ar_model_name="VAET2SLangSpkModule",
         ckpt_path=ckpt_path,
-        wvae_encoder=None,
-        wvae_decoder=wvae_decoder,
+        wvae_encoder=wvae_encoder_path,
+        wvae_decoder=wvae_decoder_path,
         output_dir=None,
         tokenizer_type='byte-T5-base',
         use_bpe=True,
         bpe_dir=bpe_dir,
         use_spk_id=True,
         spk2id=spk2id,
-        infer_spk_name=spk_name
+        infer_spk_name=spk_name,
+        tag_id=3,
+        infer_mode='online'
     )
 
     pl_module.to(device).eval()
@@ -75,7 +73,7 @@ def api_main(
     pl_module = preload_models()
 
     # predict
-    pl_module.infer_spk_name = speaker_name_mapping(timbre_name)
+    pl_module.infer_spk_name = timbre_name
 
     uttid = uuid.uuid4().hex
     gen_wav = pl_module.predict_step((uttid, text), batch_idx=1)
@@ -86,14 +84,6 @@ def api_main(
     prompt_wav_url = None
     generated_wav_url = upload_wav_to_tos(uttid, output_wav)
     return gen_response(output_wav, prompt_wav_url, text, generated_wav_url)
-
-
-def speaker_name_mapping(speaker_name):
-    if speaker_name == "taozi_multi_style_wvae":
-        return "duibiao/taozi_1700"
-    elif speaker_name == "maomao_conversation_wvae":
-        return "duibiao/maomao_conversation"
-    return speaker_name
 
 
 def setup_seed(seed):

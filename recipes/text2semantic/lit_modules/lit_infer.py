@@ -82,8 +82,11 @@ class BigTTSWVAEInfer(LightningModule):
                 (text2id_version, tacolab_version)
 
         self.save_hyperparameters()
+        logging.info(f"start load ar model, {ckpt_path}")
         self.ar_model = model_loader(ar_model_name, ckpt_path).eval()
+        logging.info(f"load ar model success")
         self.text2id = TextToTacolabID(text2id_path, text2id_version=text2id_version, use_sy=use_sy, tacolab_version=tacolab_version)
+
         self.tokenizer = PhoneTokenizerWithAudioTokens(
             phone_token_num=phone_tokens_num, speaker_token_num=speaker_tokens_num, bpe_tokens_num=bpe_tokens_num, lang_tokens_num=lang_tokens_num
         )
@@ -134,8 +137,11 @@ class BigTTSWVAEInfer(LightningModule):
         # we should manually call it in the online mode.
         self.wvae_encoder = None
         self.wvae_decoder = None
+        self.infer_mode = infer_mode
         if infer_mode == 'online':
+            logging.info("start load wvae encoder and decoder")
             self.setup('predict')
+            logging.info("load wvae encoder and decoder success")
 
     def setup(self, stage):
         if stage == "predict":
@@ -143,11 +149,13 @@ class BigTTSWVAEInfer(LightningModule):
             if self.infer_mode == 'offline':
                 rank = self.trainer.local_rank
 
+            logging.info(f"load wvae_encoder from: {self.hparams.wvae_encoder}")
             self.wvae_encoder = load_torch_script(
                 model_path=self.hparams.wvae_encoder,
                 rank=rank,
                 cache_dir=self.hparams.module_cache,
             )
+            logging.info(f"load wvae_decoder from: {self.hparams.wvae_decoder}")
             self.wvae_decoder = load_torch_script(
                 model_path=self.hparams.wvae_decoder,
                 rank=rank,
@@ -165,12 +173,12 @@ class BigTTSWVAEInfer(LightningModule):
         z_outputs, _ = self.ar_model.predict(sample, None)
         generated_wav = self._decode(z_outputs)
         generated_wav = generated_wav.cpu().numpy()
-        if self.trim_generated_wav:
-            generated_wav = trim_silence(generated_wav)
-        if self.scale_generated_wav:
-            generated_wav *= min(0.99, prompt_wav_max) / max(0.01, np.max(np.abs(generated_wav)))
 
         if self.infer_mode == 'offline':
+            if self.trim_generated_wav:
+                generated_wav = trim_silence(generated_wav)
+            if self.scale_generated_wav:
+                generated_wav *= min(0.99, prompt_wav_max) / max(0.01, np.max(np.abs(generated_wav)))
             output_dir = f"{self.hparams.output_dir}"
             os.makedirs(output_dir, exist_ok=True)
             utt_ids = sample[-1]

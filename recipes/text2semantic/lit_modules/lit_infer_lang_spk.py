@@ -14,6 +14,7 @@ from recipes.text2semantic.scripts.infer_utils import (
 from scipy.io.wavfile import read
 from zhon.hanzi import punctuation
 import string
+
 punctuation_all = punctuation + string.punctuation
 from recipes.text2semantic.lit_modules.lit_infer import BigTTSWVAEInfer
 from recipes.text2semantic.datasets.frontend import phone_to_int, tone_to_int, phonetone_to_int
@@ -33,71 +34,70 @@ logger = logging.getLogger(__name__)
 
 class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
     def __init__(
-        self,
-        ar_model_name,
-        ckpt_path,
-        wvae_encoder,
-        wvae_decoder,
-        output_dir,
-        phone_tokens_num=7370,
-        text2id_path="recipes/valle/datasets/dict/metaid_to_textid.json",
-        module_cache=".module_cache",
-        seed=1996,
-        tacolab_version='oldv1', # oldv1, newv3, newv3_punc
-        text2id_version='v1',
-        prompt_tacolab_dir="",
-        infer_tacolab_dir="",
-        use_sy=False,
-        use_lang_id=False,
-        lang_tokens_num=0,
-        lang2id=None,
-        use_bpe=False,
-        bpe_tokens_num=0,
-        bpe_dir='',
-        tokenizer_type='',
-        max_length=4096,
-        use_spk_id=False,
-        use_prompt=False,
-        spk_tokens_num=8192,
-        spk2id='',
-        infer_spk_name='',
-        get_lang_by_tacolab=False,
-        save_tacolab=False,
-        tag_id=0,
-        use_offline_tacolab=False,
-        input_type='2dim',
-        **kwargs
+            self,
+            ar_model_name,
+            ckpt_path,
+            wvae_encoder,
+            wvae_decoder,
+            output_dir,
+            phone_tokens_num=7370,
+            text2id_path="recipes/valle/datasets/dict/metaid_to_textid.json",
+            module_cache=".module_cache",
+            seed=1996,
+            tacolab_version='oldv1',  # oldv1, newv3, newv3_punc
+            text2id_version='v1',
+            prompt_tacolab_dir="",
+            infer_tacolab_dir="",
+            use_sy=False,
+            use_lang_id=False,
+            lang_tokens_num=0,
+            lang2id=None,
+            use_bpe=False,
+            bpe_tokens_num=0,
+            bpe_dir='',
+            tokenizer_type='',
+            max_length=4096,
+            use_spk_id=False,
+            use_prompt=False,
+            spk_tokens_num=8192,
+            spk2id='',
+            infer_spk_name='',
+            get_lang_by_tacolab=False,
+            save_tacolab=False,
+            tag_id=0,
+            use_offline_tacolab=False,
+            input_type='2dim',
+            **kwargs
     ):
         super().__init__(
-                ar_model_name=ar_model_name,
-                ckpt_path=ckpt_path,
-                wvae_encoder=wvae_encoder,
-                wvae_decoder=wvae_decoder,
-                output_dir=output_dir,
-                phone_tokens_num=phone_tokens_num,
-                speaker_tokens_num=spk_tokens_num,
-                text2id_path=text2id_path,
-                module_cache=module_cache,
-                seed=seed,
-                tacolab_version=tacolab_version, # oldv1, newv3, newv3_punc
-                text2id_version=text2id_version,
-                prompt_tacolab_dir=prompt_tacolab_dir,
-                infer_tacolab_dir=infer_tacolab_dir,
-                use_sy=use_sy,
-                use_lang_id=use_lang_id,
-                lang_tokens_num=lang_tokens_num,
-                lang2id=lang2id,
-                use_spk_id=use_spk_id,
-                spk2id=spk2id,
-                spkname=infer_spk_name,
-                use_bpe=use_bpe,
-                bpe_tokens_num=bpe_tokens_num,
-                bpe_dir=bpe_dir,
-                tokenizer_type=tokenizer_type,
-                max_length=max_length,
-                **kwargs)
+            ar_model_name=ar_model_name,
+            ckpt_path=ckpt_path,
+            wvae_encoder=wvae_encoder,
+            wvae_decoder=wvae_decoder,
+            output_dir=output_dir,
+            phone_tokens_num=phone_tokens_num,
+            speaker_tokens_num=spk_tokens_num,
+            text2id_path=text2id_path,
+            module_cache=module_cache,
+            seed=seed,
+            tacolab_version=tacolab_version,  # oldv1, newv3, newv3_punc
+            text2id_version=text2id_version,
+            prompt_tacolab_dir=prompt_tacolab_dir,
+            infer_tacolab_dir=infer_tacolab_dir,
+            use_sy=use_sy,
+            use_lang_id=use_lang_id,
+            lang_tokens_num=lang_tokens_num,
+            lang2id=lang2id,
+            use_spk_id=use_spk_id,
+            spk2id=spk2id,
+            spkname=infer_spk_name,
+            use_bpe=use_bpe,
+            bpe_tokens_num=bpe_tokens_num,
+            bpe_dir=bpe_dir,
+            tokenizer_type=tokenizer_type,
+            max_length=max_length,
+            **kwargs)
 
-        self.wvae_decoder = wvae_decoder
         self.phone_to_int = phone_to_int
         self.tone_to_int = tone_to_int
         self.infer_spk_name = infer_spk_name
@@ -112,10 +112,12 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
                 assert self.prompt_tacolab_dir != "", (self.prompt_tacolab_dir)
         self.phonetone_to_int = phonetone_to_int
         self.input_type = input_type
+        logging.info("========== init success ==========")
 
     def get_lang(self, tacolab):
         if len(tacolab[0].split('\t')) != 5:
-            if tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword' or tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit':
+            if tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword' or tacolab[
+                0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit':
                 tacolab = tacolab[1:]
         prefix_phn_list = [x.split('\t')[0][:2] for x in tacolab]
         if 'C0' in prefix_phn_list:
@@ -136,15 +138,15 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
 
         z_outputs, _ = self.ar_model.predict(sample, None)
         generated_wav = self._decode(z_outputs)
-        generated_wav *= (32767) / max(0.01, max(torch.abs(generated_wav)))
 
         if self.infer_mode == 'offline':
             utt_ids = sample['uttid']
             output_dir = f"{self.hparams.output_dir}"
             os.makedirs(output_dir, exist_ok=True)
             output_path = f"{output_dir}/{utt_ids[0]}.wav"
-    #        if os.path.exists(output_path):
-    #            return
+            #        if os.path.exists(output_path):
+            #            return
+            generated_wav *= (32767) / max(0.01, max(torch.abs(generated_wav)))
             write(
                 output_path,
                 24000,
@@ -158,9 +160,9 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
         data_dict = dict()
 
         if len(sample) == 5:
-            uttid, prompt_text, prompt_wav_path, infer_text, spk = sample 
+            uttid, prompt_text, prompt_wav_path, infer_text, spk = sample
         elif len(sample) == 4:
-            uttid, prompt_text, prompt_wav_path, infer_text = sample 
+            uttid, prompt_text, prompt_wav_path, infer_text = sample
             spk = None
         elif len(sample) == 2:
             uttid, infer_text = sample
@@ -246,7 +248,8 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
                 prompt_tacolab_path = os.path.join(self.prompt_tacolab_dir, prompt_utt + '.lab')
                 infer_tacolab_path = os.path.join(self.infer_tacolab_dir, infer_utt + '.lab')
                 if not os.path.exists(prompt_tacolab_path) or not os.path.exists(infer_tacolab_path):
-                    print("prompt_tacolab_path or infer_tacolab_path not exists, skip", prompt_tacolab_path, infer_tacolab_path)
+                    print("prompt_tacolab_path or infer_tacolab_path not exists, skip", prompt_tacolab_path,
+                          infer_tacolab_path)
                     return None
                 with open(prompt_tacolab_path, 'r', encoding="utf-8") as f:
                     prompt_tacolab = f.read()
@@ -286,7 +289,7 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             else:
                 if self.input_type == '2dim':
                     prompt_text_id, prompt_phones, prompt_tones = prompt_text_id_phones_tones
-                    infer_text_id,  infer_phones,  infer_tones =  infer_text_id_phones_tones
+                    infer_text_id, infer_phones, infer_tones = infer_text_id_phones_tones
                     text_id = np.concatenate([prompt_text_id, infer_text_id], axis=-1)
                     phones = prompt_phones + infer_phones
                     tones = prompt_tones + infer_tones
@@ -312,7 +315,7 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
 
         if self.use_lang_id:
             if not self.use_prompt:
-                prompt_lang_id = 1 # dummy
+                prompt_lang_id = 1  # dummy
                 lang_seq = np.asarray([prompt_lang_id] * bn.shape[0])
 
                 infer_lang_key = self.get_lang_by_text(infer_text)
@@ -346,7 +349,7 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
                 lang_seq = np.asarray([prompt_lang_id] * bn.shape[0])
 
         if self.use_spk_id:
-            prompt_spk_id = 1 # dummy
+            prompt_spk_id = 1  # dummy
             spk_seq = np.asarray([prompt_spk_id] * bn.shape[0])
 
             infer_spk_key = self.infer_spk_name if self.infer_spk_name is not None else spk
@@ -374,16 +377,16 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
         if self.use_spk_id:
             data_dict['spk_seq'] = torch.tensor(spk_seq).long().to(device).unsqueeze(0)
             data_dict['infer_spk_id'] = infer_spk_id
-        
+
         # bpe_id
         if self.use_bpe:
             data_dict['bpe_seq'] = torch.from_numpy(
                 np.asarray(
                     self.bpe_tokenizer(
-                        infer_text, 
-                        truncation=True, 
+                        infer_text,
+                        truncation=True,
                         max_length=self.max_length,
-            ).input_ids)).unsqueeze(0).to(device)
+                    ).input_ids)).unsqueeze(0).to(device)
             data_dict['bpe_lens'] = torch.tensor([data_dict['bpe_seq'].shape[1]]).long().to(device)
         else:
             data_dict['bpe_seq'] = None
@@ -409,7 +412,8 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
     def convert_v3_to_v1(self, tacolab):
         tacolab_v1 = []
         # en, zh
-        if tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword' or tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit':
+        if tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword' or tacolab[
+            0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit':
             tacolab = tacolab[1:]
         for x in tacolab:
             x_split = x.split('\t')
@@ -476,8 +480,10 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
                             tones.append("en_word_sep")
                             phonetones.append("en_word_sep_en_word_sep")
             elif lang == 'zh_en':
-                assert len(tacolab[0].split('\t')) == 7 or len(tacolab[0].split('\t')) == 6, (len(tacolab[0].split('\t')), tacolab[0])
-                if tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit' or tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword':
+                assert len(tacolab[0].split('\t')) == 7 or len(tacolab[0].split('\t')) == 6, (
+                len(tacolab[0].split('\t')), tacolab[0])
+                if tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit' or tacolab[
+                    0] == 'phn\ttone\tws\tpwpp\tsentype\tword':
                     tacolab = tacolab[1:]
                 for i in range(len(tacolab)):
                     x = tacolab[i]
