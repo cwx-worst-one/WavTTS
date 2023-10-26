@@ -1,5 +1,6 @@
 from hyperpyyaml import load_hyperpyyaml
 
+import logging
 import importlib
 from recipes.serving.utils.py_logging import init_logging_config
 from recipes.serving.handler import Handler
@@ -46,13 +47,23 @@ class DotDict(dict):
             self[key] = value
 
 
-def setup_app(app: str, handler: Handler = DefaultHandler):
-    init_logging_config()
-    
+def get_model_configs():
+    with open("recipes/text2semantic/conf/llama/inference_wvae_icl_lang_spk_tag_deploy.yaml", "r", encoding="utf-8") as f:
+        configs = load_hyperpyyaml(f)
+    return DotDict(configs)
+
+
+def get_server_configs(app):
     with open(f"recipes/serving/apps/{app}/config.yaml", "r", encoding="utf-8") as f:
         configs = load_hyperpyyaml(f)
+    return DotDict(configs)
 
-    configs = DotDict(configs)
+
+def setup_app(app: str, handler: Handler = DefaultHandler):
+    init_logging_config()
+    logging.info("***** setup app *****")
+
+    configs = get_server_configs(app)
 
     func_path_str = configs.repo.func_path
     func_path = importlib.import_module(func_path_str)
@@ -66,4 +77,5 @@ def setup_app(app: str, handler: Handler = DefaultHandler):
     handler.outputs = configs.outputs
     handler.app_name = app
 
+    logging.info("***** setup app success *****")
     return api_main, preload_models

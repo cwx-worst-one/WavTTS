@@ -1,3 +1,4 @@
+import os
 import euler
 import logging
 import atexit
@@ -9,30 +10,29 @@ from recipes.serving.utils.setup import setup_app
 from recipes.serving.utils.const import STATUS_CODE_SERVER_FAILED_INVOKE
 
 
-PSM = "seed.speech.bigtts_sinong_conversation"
-PORT = 8888
+psm = os.getenv("SERVER_PSM")
+cluster = os.getenv("SERVER_CLUSTER", "default")
+port = os.getenv("SERVER_PORT", 8888)
+app = os.getenv("SERVER_APP", "BigTTS")
 handler_map = {}
 
 
-def register_by_cli(psm, port):
+def register_service(psm, port):
     import subprocess
     result = subprocess.run(['/opt/tiger/consul_deploy/bin/go/sd', 'up', psm, str(port), '--dual-stack',
-                             '--tags', '{"env":"prod","weight":"10", "cluster":"default"}'],
+                             '--tags', '{"env":"prod","weight":"10", "cluster":"'+cluster+'"}'],
                             capture_output=True, text=True)
     logging.info(f'sd up output: {result.stdout}')
 
-
 def exit_handler():
     import subprocess
-    subprocess.run(['/opt/tiger/consul_deploy/bin/go/sd', 'down', PSM, str(PORT)], capture_output=True, text=True)
-    logging.info(f"deregister {PSM} {PORT}")
+    subprocess.run(['/opt/tiger/consul_deploy/bin/go/sd', 'down', psm, str(port)], capture_output=True, text=True)
+    logging.info(f"deregister {psm} {cluster} {port}")
 
 
-# 注册 exit_handler() 函数
 atexit.register(exit_handler)
 
 
-# Load non-forksafe models here
 def load_handler_contexts():
     method = 'load_context'
     for name, handler_cls in handler_map.items():
@@ -43,8 +43,8 @@ def load_handler_contexts():
 
 server = euler.Server(Service, post_fork_callback=load_handler_contexts)
 
-register_by_cli(PSM, PORT)
-logging.info("=========== register sd success ===========")
+register_service(psm, port)
+logging.info("***** register service success *****")
 
 
 @server.register('Invoke')
@@ -60,14 +60,11 @@ def Invoke(ctx, req: InvokeRequest):
         logging.info(
             f'calling {model_id} invoke request: len(data)={len(req.data) if req.data else 0}, req_payload={(req.payload if len(req.payload) < 100 else req.payload[:100] + "...}") if req.payload is not None else "None"}), req_meta_data={req.meta_data}')
         handler = handler_map[model_id]
-        resp:InvokeResponse = handler(req)(ctx=ctx)
+        resp: InvokeResponse = handler(req)(ctx=ctx)
         logging.info(
             f'{model_id} invoke response: len(data)={len(resp.data) if len(resp.data) == 0 else 0}, resp_payload={(resp.payload if len(resp.payload) < 100 else resp.payload[:100] + "...}") if resp.payload is not None else "None"}, status_code={resp.status_code}, status_text={resp.status_text}')
         return resp
 
 
-
-app = "BigTTS"
 handler_map[app] = DefaultHandler
 setup_app(app, DefaultHandler)
-

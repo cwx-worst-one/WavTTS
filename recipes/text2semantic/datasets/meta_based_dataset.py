@@ -8,6 +8,9 @@ class MetaBasedDataset(Dataset):
 
     def _parse_meta(self, meta_lst):
         meta = []
+        if meta_lst is None or meta_lst == '':
+            return meta
+
         with open(meta_lst, "r", encoding="utf8") as f:
             for line in f:
                 if len(line.strip().split("|")) == 5:

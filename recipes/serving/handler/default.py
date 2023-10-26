@@ -28,7 +28,7 @@ class DefaultHandler(Handler):
         super().__init__(req)
 
     def __call__(self, ctx, audios=None) -> InvokeResponse:
-        logging.info("======== invoke =========")
+        logging.info("***** invoke *****")
         start_time = time.time()
         if not DefaultHandler.api_main or not DefaultHandler.preload_models:
             logging.warnning(

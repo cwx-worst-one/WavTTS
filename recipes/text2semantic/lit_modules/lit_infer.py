@@ -73,6 +73,7 @@ class BigTTSWVAEInfer(LightningModule):
         infer_mode='offline',  # online, offline
     ):
         super().__init__()
+        logging.info(f"***** infer mode: {infer_mode} *****")
         assert (text2id_version == 'v1' and tacolab_version == 'oldv1') \
             or (text2id_version == 'v1' and tacolab_version == 'newv3') \
             or (text2id_version == 'v2' and tacolab_version == 'newv3') \
