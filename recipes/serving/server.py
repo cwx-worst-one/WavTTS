@@ -9,7 +9,7 @@ from recipes.serving.utils.setup import setup_app
 from recipes.serving.utils.const import STATUS_CODE_SERVER_FAILED_INVOKE
 
 
-PSM = "seed.speech.bigtts_demo"
+PSM = "seed.speech.bigtts_sinong_conversation"
 PORT = 8888
 handler_map = {}
 

@@ -153,6 +153,7 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
                 generated_wav.cpu().numpy().astype(np.int16),
             )
         else:
+            generated_wav *= 0.95 / max(0.01, max(torch.abs(generated_wav)))
             return generated_wav.cpu().numpy()
 
     def encode(self, sample):

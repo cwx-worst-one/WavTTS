@@ -393,7 +393,7 @@ class VAET2SLangSpkModule(pl.LightningModule):
         z_list = []
 
 #        max_step = text_lens[0] * 10 - bn_lens[0]
-        max_step = 4000
+        max_step = 6000
         
         with torch.autocast(device_type="cuda", enabled=True):
             for i in tqdm(range(max_step)):

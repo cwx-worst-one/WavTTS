@@ -106,6 +106,7 @@ class VAELLaMaLangSpk(LLaMa):
         use_lang_grloss=False,
         input_type='2dim',
         apply_id_to_fullseq=False,
+        use_spk_grloss=False,
     ):
         super().__init__(params, provider)
         self.params = params
