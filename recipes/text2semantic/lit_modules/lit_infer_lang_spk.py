@@ -112,7 +112,7 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
                 assert self.prompt_tacolab_dir != "", (self.prompt_tacolab_dir)
         self.phonetone_to_int = phonetone_to_int
         self.input_type = input_type
-        logging.info("========== init success ==========")
+        logging.info("init inference module success")
 
     def get_lang(self, tacolab):
         if len(tacolab[0].split('\t')) != 5:

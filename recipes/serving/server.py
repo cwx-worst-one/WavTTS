@@ -1,4 +1,5 @@
 import os
+import sys
 import euler
 import logging
 import atexit
@@ -22,12 +23,12 @@ def register_service(psm, port):
     result = subprocess.run(['/opt/tiger/consul_deploy/bin/go/sd', 'up', psm, str(port), '--dual-stack',
                              '--tags', '{"env":"prod","weight":"10", "cluster":"'+cluster+'"}'],
                             capture_output=True, text=True)
-    logging.info(f'sd up output: {result.stdout}')
+    logging.info(f'register service: {result.stdout}')
 
 def exit_handler():
     import subprocess
     subprocess.run(['/opt/tiger/consul_deploy/bin/go/sd', 'down', psm, str(port)], capture_output=True, text=True)
-    logging.info(f"deregister {psm} {cluster} {port}")
+    logging.info(f"***** deregister {psm} {cluster} {port} *****")
 
 
 atexit.register(exit_handler)
@@ -37,14 +38,12 @@ def load_handler_contexts():
     method = 'load_context'
     for name, handler_cls in handler_map.items():
         if hasattr(handler_cls, method) and callable(getattr(handler_cls, method)):
-            logging.info(f'{name}: load_context')
+            logging.info(f'***** {name}: load_context *****')
             getattr(handler_cls, method)()
+            register_service(psm, port)
 
 
 server = euler.Server(Service, post_fork_callback=load_handler_contexts)
-
-register_service(psm, port)
-logging.info("***** register service success *****")
 
 
 @server.register('Invoke')
@@ -66,5 +65,11 @@ def Invoke(ctx, req: InvokeRequest):
         return resp
 
 
-handler_map[app] = DefaultHandler
-setup_app(app, DefaultHandler)
+if __name__ == '__main__':
+    handler_map[app] = DefaultHandler
+    setup_app(app, DefaultHandler)
+
+    workers_count = int(sys.argv[1])
+    threads_count = int(sys.argv[2])
+    server.run(f'tcp://[::]:{port}', workers_count=workers_count,
+               threads_count=threads_count)
