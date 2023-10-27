@@ -197,9 +197,9 @@ class ContinuousTTSLangSpkSerDataset(IterableDataset):
                 dataset_name = dataset_name
                 speaker_name = speaker_name
                 spk_key = '/'.join([dataset_name, speaker_name])
-                if spk_key not in self.tag_dict.keys():
+                if spk_key not in self.tag_dict:
                     spk_key = dataset_name
-                    if spk_key not in self.tag_dict.keys():
+                    if spk_key not in self.tag_dict:
                         spk_key = 'default'
             tag_id = int(self.tag_dict.get(spk_key, 0))
             if tag_id == 0:
@@ -262,8 +262,12 @@ class ContinuousTTSLangSpkSerDataset(IterableDataset):
                         if np.random.rand() < self.spk_cfg_rate:
                             spk_id = self.spk2id["default"]
                 else:
-                    logger.warning(f"{utt_id}: speaker {spk_key} not in dict, will use default spkID")
-                    spk_id = self.spk2id["default"]
+                    spk_key = dataset_name
+                    if spk_key not in self.spk2id:
+                        logger.warning(f"{utt_id}: speaker {spk_key} not in dict, will use default spkID")
+                        spk_id = self.spk2id["default"]
+                    else:
+                        spk_id = self.spk2id[spk_key]
             spk_id += 1
             spk_seq = np.asarray([spk_id] * bn.shape[0])
 
