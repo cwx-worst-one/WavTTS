@@ -132,6 +132,14 @@ class AddConditionsTransform():
     def __call__(self, item):
         return { **item, 'conditions': self.conditions }
 
+class RandomConditionsTransform():
+    def __init__(self, conditions):
+        self.conditions = conditions
+
+    def __call__(self, item):
+        random_condition = random.choice(self.conditions)
+        return { **item, 'conditions': random_condition }
+
 class AddMulanVocalTagTransform():
     # Mix mulan requires 'vocal' tag for vocal music generation
     def __call__(self, item):

@@ -7,6 +7,7 @@ from recipes.musiclm.inference.utils import load_wav
 import json
 from pathlib import Path
 import numpy as np
+from collections import defaultdict
 
 class MCSMetricsCallback(pl.Callback):
     def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
@@ -18,7 +19,7 @@ class MCSMetricsCallback(pl.Callback):
 def run_mcs_metrics(requires, output_dir, device='cuda', sample_rate=24000):
     output_dir = Path(output_dir)
     generated_output_fps = list(output_dir.glob('**/*.generated.wav'))
-    mcs_totals = []
+    category2mcs = defaultdict(list)
     mulan_max_duration = 10 * sample_rate
     def _load_audio_tensor(audio_path):
         wav_tensor = torch.tensor(load_wav(str(audio_path), sr=sample_rate)).to(device)
@@ -47,12 +48,18 @@ def run_mcs_metrics(requires, output_dir, device='cuda', sample_rate=24000):
             requires, wav_gen, data_type='music'
         ).to(device)
         mcs = torch.nn.functional.cosine_similarity(gt_emb, audio_emb).cpu().item()
-        mcs_totals.append(mcs)
         update_json(metadata_fp, { 'mcs': round(mcs, 3)})
         
-    metrics_fp = output_dir/'metrics.json'
-    avg_mcs = round(float(np.array(mcs_totals).mean(axis=0)), 3)
-    update_json(metrics_fp, { 'mcs': avg_mcs })
+        # update total metrics
+        category_dir = generated_output_fp.parent.resolve()
+        if category_dir != output_dir.resolve(): # ignore category if there are none
+            category2mcs[category_dir].append(mcs)
+        category2mcs[output_dir].append(mcs) # append to base directory to calculate total wer
+        
+    for dir_path, mcs_totals in category2mcs.items():
+        metrics_fp = dir_path/'metrics.json'
+        avg_mcs = round(float(np.array(mcs_totals).mean(axis=0)), 3)
+        update_json(metrics_fp, { 'mcs': avg_mcs })
 
 
 

@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 from pytorch_lightning.profilers import PassThroughProfiler
 from samantha.models.ctiga import gpt
+from samantha.utils.ctiga.inference_params import InferenceParams
 from tqdm.auto import tqdm
 
 from samantha.utils.hparams import DotDict
@@ -279,21 +280,40 @@ class BaseContinuousEmbedModule(BaseModule):
             rl_model_input = _init_model_input()
         
         output_tokens = None
-        past_key_values = None
+        if isinstance(self.model, gpt.GPTLMHeadModel):
+            inference_params = InferenceParams(
+                max_sequence_len=4000, max_batch_size=batch_size
+            )
+        else:
+            past_key_values = None
         pbar = tqdm(range(num_tokens))
+
         for i in pbar:
             pbar.set_description(f"{tqdm_name} [0 - {num_tokens}]")
-            model_output = self.model(
-                **model_input, 
-                past_key_values=past_key_values, 
-                use_cache=True
-            )
-            past_key_values = model_output["past_key_values"]
-            logits = model_output["logits"]
-            logits = logits[:, -1:, :] # only predicting on last logit.
 
-            predict_token = self.sample_logits(i, logits, temperature, sample_mode)
-            predict_token_emb = self.target_embedder.embedder(predict_token)
+            if isinstance(self.model, gpt.GPTLMHeadModel):
+                logits = self.model(
+                    **model_input,
+                    inference_params=inference_params,
+                    position_ids=None,
+                    last_token_only=False,
+                ).logits
+                inference_params.sequence_len_offset += model_input['inputs_embeds'].size(1)
+                logits = logits[:, -1:, :] # only predicting on last logit.
+                predict_token = self.sample_logits(i, logits, temperature, sample_mode)
+                predict_token_emb = self.target_embedder.embedder(predict_token)
+            else:
+                model_output = self.model(
+                    **model_input,
+                    past_key_values=past_key_values, use_cache=True
+                )
+                past_key_values = model_output["past_key_values"]
+                logits = model_output["logits"]
+
+                logits = logits[:, -1:, :] # only predicting on last logit.
+                predict_token = self.sample_logits(i, logits, temperature, sample_mode)
+                predict_token_emb = self.target_embedder.embedder(predict_token)
+
             model_input['inputs_embeds'] = predict_token_emb
             if rl_training and i < num_tokens - 1:
                 rl_model_input["inputs_embeds"] = torch.cat(

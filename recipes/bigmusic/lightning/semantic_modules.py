@@ -45,8 +45,9 @@ class SemanticModule(BaseContinuousEmbedModule):
         lyrics_vocab_size = extra_params['lyrics_codebook_size']
         mulan_embed_dim = extra_params['mulan_embed_dim']
         semantic_codebook_size = extra_params['semantic_codebook_size']
+        mulan_OTF_tag_type = extra_params.get('mulan_tag_type', 'mulan_genres')
         embedder_dict = {
-            'mulan': MulanTagEmbedder(input_dim=mulan_embed_dim, embedding_dim=hidden_size, add_sos=True),
+            'mulan': MulanTagEmbedder(input_dim=mulan_embed_dim, embedding_dim=hidden_size, add_sos=True, mulan_tag_type=mulan_OTF_tag_type),
             'lyrics_tokens': LyricsTokenEmbedder(vocab_size=lyrics_vocab_size, embedding_dim=hidden_size, add_sos=True),
         }
         input_embedders = nn.ModuleDict(embedder_dict)
@@ -88,7 +89,7 @@ class SemanticModule(BaseContinuousEmbedModule):
             embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_audio'].to(self.device), with_sos=with_sos, data_type='music')
             inputs_embeds.append(embeds)
         elif 'style_tag' in conditions: # using Mulan for on-the-fly MIR tagging
-            embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_audio'].to(self.device), with_sos=with_sos, data_type='tag')
+            embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_audio'].to(self.device), mcc_style_text=batch.get('style_text'), with_sos=with_sos, data_type='tag')
             inputs_embeds.append(embeds)
         else:
             # adding SOS token no matter what so that all parameters get used
@@ -105,6 +106,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         frame_rate = self.extra_params.semantic_frame_rate
         num_tokens = hp.duration * frame_rate
         temperature = hp.semantic_temperature
+        sample_mode = hp.sample_mode
 
         inputs_embeds = self.prepare_inputs_embeddings(batch)
         return super().predict(
@@ -112,6 +114,7 @@ class SemanticModule(BaseContinuousEmbedModule):
             num_tokens,
             temperature=temperature,
             beam=beam,
+            sample_mode=sample_mode,
             ref_samples=ref_samples,
         )
 

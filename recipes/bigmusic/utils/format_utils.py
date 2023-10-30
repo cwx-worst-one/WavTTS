@@ -1,14 +1,18 @@
 import json
 from pathlib import Path
 from string import punctuation
+import re
 
-def normalize_text(text, enable_punctuation=False):
-    text = text.lower()
+def normalize_text(text, enable_punctuation=False, lowercase=False):
+    if lowercase:
+        text = text.lower()
     text = text.replace("&", " and ")
     text = text.replace("/", " ")    
     text = text.replace("-", " ")
     text = text.replace(".", "\n")
     text = text.replace("!", "\n")
+    text = text.replace("?", "\n")
+    text = re.sub(r'\n\s*\n', '\n', text) # remove double new lines
     nlp_punctuation = punctuation.replace("'", "") # allow single quotes (') for contractions
     text = text.translate(str.maketrans("", "", nlp_punctuation))
     if enable_punctuation:

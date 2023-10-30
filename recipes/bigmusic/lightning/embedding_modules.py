@@ -189,15 +189,20 @@ class MulanEmbedder(ContinuousEmbedder):
         return mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
 
 class MulanTagEmbedder(ContinuousEmbedder):
-    def __init__(self, data_type='music', input_dim=512, embedding_dim=1024, max_audio_length=10*24000, min_audio_length=10*24000, add_sos=False):
+    def __init__(
+            self, data_type='music', input_dim=512, embedding_dim=1024, max_audio_length=10*24000, min_audio_length=10*24000, add_sos=False, 
+            mulan_tag_type="mulan_genres", use_mcc_gender=True
+        ):
         super().__init__(input_dim, embedding_dim, add_sos)
+
         self.data_type = data_type
         self.max_audio_length = max_audio_length # 10s * 24k sample rate
         self.min_audio_length = min_audio_length # 10s * 24k sample rate
         self.resize_transform = RandomResizedCrop(max_audio_length)
-        self.mulan_tagger = MulanTagger()
+        self.mulan_tagger = MulanTagger(mulan_tag_type)
+        self.use_mcc_gender = use_mcc_gender
 
-    def get_embeds(self, requires, input_audio, data_type=None):
+    def get_embeds(self, requires, input_audio, mcc_style_text=None, data_type=None):
         # Text
         if data_type == "text":
             mulan_embeds = get_mulan_embeds(requires, input_audio, data_type)
@@ -217,6 +222,14 @@ class MulanTagEmbedder(ContinuousEmbedder):
                 input_audio = input_audio[..., :self.max_audio_length]
             mulan_audio_embeds = get_mulan_embeds(requires, input_audio, "music")
             metadata = self.mulan_tagger.get_tags(requires, audio_embeds=mulan_audio_embeds)
+            if self.use_mcc_gender and mcc_style_text:
+                for m, mcc_style in zip(metadata, mcc_style_text):
+                    if ' female' in mcc_style.lower():
+                        m['gender'] = 'Female'
+                    elif ' male' in mcc_style.lower():
+                        m['gender'] = 'Male'
+                    else:
+                        m['gender'] = None
             style_text = [self.mulan_tagger.tag_to_style_text(m) for m in metadata]
             mulan_text_embeds = get_mulan_embeds(requires, style_text, "text")
             return mulan_text_embeds[:, None, :] # bs x d -> bs x seq_len x d

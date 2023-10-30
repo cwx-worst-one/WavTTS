@@ -30,24 +30,6 @@ def prompt_path_to_items(prompt_path):
             prompts = [{ "style_text": line.strip() } for line in fp.readlines()]
     return prompts
 
-def rewrite_mcc_tags_to_mulan_tags(style_text):
-    genre_map = {
-        # Mood map
-        "Cute": "Cute/Playful",
-        "Dynamic": "Dynamic/Energetic",
-        "Sorrow": "Sorrow/Sad",
-        "Angry": "Angry/Aggressive",
-        "Tense": "Thrilling/Suspenseful/Tense",
-        "Sweet": "Calm/Relaxing", # "Dreamy/Ethereal"
-        # Genre map
-        "Trap Rap": "Hip Hop"
-    }
-    rewrite = style_text
-    for k,v in genre_map.items():
-        rewrite = rewrite.replace(k.lower(), v.lower())
-    print('Rewriting', style_text, rewrite)
-    return rewrite
-
 def inference_dataset_from_prompt(
     prompt_path,
     conditions="style_text,lyrics_tokens",
@@ -56,7 +38,6 @@ def inference_dataset_from_prompt(
     lyrics_max_seq_len=400,
     run_combinations=False,
     enable_punctuation=False,
-    use_mulan_v2_genres=False,
 ):
     prompts = prompt_path_to_items(prompt_path)
     if 'text_category' in prompts: # fix csv formatting
@@ -71,8 +52,6 @@ def inference_dataset_from_prompt(
         prompts['style_audio'] = [load_wav(wav_path) for wav_path in prompts['style_audio']]
     if 'vocal_audio' in prompts:
         prompts['vocal_audio'] = [load_wav(wav_path) for wav_path in prompts['vocal_audio']]
-    if use_mulan_v2_genres and 'style_text' in prompts:
-        prompts['style_text'] = [rewrite_mcc_tags_to_mulan_tags(style_text) for style_text in prompts['style_text']]
     if run_combinations:
         lyrics_prompt_pairs = itertools.product(*list(prompts.values()))
     else:

@@ -61,9 +61,10 @@ def sample(predict_logits, temp, thresh=0.9, mode="naive", return_probs=False):
         samples = dist.sample()
         if return_probs:
             sample_probs = torch.gather(probs, -1, samples.unsqueeze(1)).squeeze(1)
-    elif mode == "gumbel":
+    elif mode == "gumbel" or mode == "gumbel_fixed_noise":
         predict_logits = top_k(predict_logits, thresh=thresh)
-        samples = gumbel_sample(predict_logits, temp)
+        fixed_noise = mode == "gumbel_fixed_noise"
+        samples = gumbel_sample(predict_logits, temp, fixed_noise=fixed_noise)
         if return_probs:
             probs = (predict_logits / temp).softmax(dim=-1)
             sample_probs = torch.gather(probs, -1, samples.unsqueeze(1)).squeeze(1)

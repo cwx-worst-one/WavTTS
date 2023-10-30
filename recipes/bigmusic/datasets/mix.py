@@ -60,12 +60,12 @@ def rewrite_metadata(metadata, type="Vocal"):
     gender = metadata.get('merge_aed')
     text = ""
     if type == "Vocal":
-        text = "A "
-        if mood is not None and mood != 'nan':
-            text += mood.lower() + " "
-        if genre is not None and genre != 'nan':
-            text += genre.lower() + " "
-        text += "song"
+        text = "A"
+        if mood is not None and mood != 'nan' and mood.strip():
+            text += " " + mood.lower()
+        if genre is not None and genre != 'nan' and genre.strip():
+            text += " " + genre.lower()
+        text += " song"
         if gender is not None and gender != 'nan':
             if 'Female' in gender:
                 text += " with female vocal"
@@ -74,9 +74,9 @@ def rewrite_metadata(metadata, type="Vocal"):
         text += "."
     elif type == "Instrumental":
         text = ""
-        if mood is not None and mood != 'nan':
+        if mood is not None and mood != 'nan' and mood.strip():
             text += mood.lower() + " "
-        if genre is not None and genre != 'nan':
+        if genre is not None and genre != 'nan' and genre.strip():
             text += genre.lower() + " "
         text += "music."
     elif type == "Speech":

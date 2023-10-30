@@ -23,7 +23,8 @@ text_pool_1_toplevel = [
     'Rock',
     'Sound Effect',
     'Sound Track',
-    'World Music'
+    'World Music',
+    'Trap Rap'
 ]
 
 
@@ -97,28 +98,29 @@ text_pool_1_subgenre = [
 ]
 
 text_pool_2 = [
-    'Angry/Aggressive',
-    'Calm/Relaxing',
+    'Angry',
+    'Relaxing',
     'Chill',
-    'Cute/Playful',
-    'Dreamy/Ethereal',
-    'Dynamic/Energetic',
+    'Cute',
+    'Dreamy',
+    'Dynamic',
     'Excited',
     'Funny',
-    'Groovy/Funky',
+    'Funky',
     'Happy',
     'Healing',
-    'Inspirational/Hopeful',
+    'Inspirational',
     'Miss',
     'Mysterious',
     'No Mood',
-    'Nostalgic/Memory',
+    'Memory',
     'Romantic',
-    'Sentimental/Melancholic/Lonely',
-    'Shocking/magnificent/epic',
-    'Sorrow/Sad',
-    'Thrilling/Suspenseful/Tense',
-    'Weird'
+    'Lonely',
+    'Shocking',
+    'Sorrow',
+    'Sweet'
+    'Tense',
+    'Weird',
 ]
 
 text_pool_3 = [
@@ -159,23 +161,34 @@ text_pool_3 = [
 
 text_pool_4 = ["Female", "Male"]
 
+
+MCC_MOOD = ['Angry', 'Chill', 'Cute', 'Dynamic', 'Excited', 'Happy', 'Lonely', 'Romantic', 'Sorrow', 'Sweet', 'Tense', 'No Mood']
+MCC_GENRE = ['Blues', 'Country', 'EDM', 'Jazz', 'Metal', 'New Age', 'Pop', 'R&B', 'Reggae', 'Rock', 'Trap Rap']
+MCC_VOICE = ['Female', 'Male']
+
 class MulanTagger:
-    def __init__(self, include_subgenres=True):
+    def __init__(self, mulan_tag_type="mulan_genres"):
         self._tag2embed = None
-        self.include_subgeners = include_subgenres
-        if include_subgenres:
+        if mulan_tag_type == "mulan_genres":
+            self._tag2text_pool = {
+                "genre": text_pool_1_toplevel, 
+                "mood": text_pool_2, 
+                "gender": text_pool_4
+            }
+        elif mulan_tag_type == "mulan_subgenres":
             self._tag2text_pool = {
                 "genre": text_pool_1_subgenre, 
                 "mood": text_pool_2, 
                 "gender": text_pool_4
             }
-        else:
+        elif mulan_tag_type == "mcc_genres":
             self._tag2text_pool = {
-                "genre": text_pool_1_toplevel, 
-                "mood": text_pool_2, 
-                # "instrument": text_pool_3, # skip instruments for now
-                "gender": text_pool_4
+                "genre": MCC_GENRE, 
+                "mood": MCC_MOOD, 
+                "gender": MCC_VOICE
             }
+        else:
+            raise ValueError(f"Unhandled tag_type: {mulan_tag_type}")
 
     def get_tag_embeds(self, requires):
         # TODO: (AS) move this out of inner function. Currently here to remove circular dependency

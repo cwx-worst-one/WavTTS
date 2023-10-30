@@ -15,6 +15,9 @@ from recipes.musiclm.inference.utils import load_wav
 import json
 from pathlib import Path
 import numpy as np
+from string import punctuation
+from recipes.bigmusic.utils.format_utils import normalize_text
+from collections import defaultdict
 
 class WERMetricsCallback(pl.Callback):
     def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
@@ -26,7 +29,7 @@ def run_wer_metrics(output_dir, device='cuda'):
     generated_output_fps = list(output_dir.glob('**/*.generated.wav'))
     if len(generated_output_fps) == 0:
         return
-    wer_totals = []
+    category2wer = defaultdict(list)
     for idx, generated_output_fp in enumerate(generated_output_fps):
         wav = torch.tensor(load_wav(str(generated_output_fp))).to(device)
         wavs_batch = wav.unsqueeze(0) # convert to batch format
@@ -58,17 +61,23 @@ def run_wer_metrics(output_dir, device='cuda'):
             'actual_transcript': a
         }
         update_json(metadata_fp, { 'wer': wer_metadata })
-        wer_totals.append([wer, ins, subs, dels])
+
+        # update total metrics
+        category_dir = generated_output_fp.parent.resolve()
+        if category_dir != output_dir.resolve(): # ignore category if there are none
+            category2wer[str(category_dir)].append([wer, ins, subs, dels])
+        category2wer[str(output_dir)].append([wer, ins, subs, dels]) # append to base directory to calculate total wer
         
-    metrics_fp = output_dir/'metrics.json'
-    wer, ins, subs, dels = np.array(wer_totals).mean(axis=0)
-    wer_metadata = {
-        'wer': round(wer, 3),
-        'ins': round(ins, 3),
-        'subs': round(subs, 3),
-        'dels': round(dels, 3),
-    }
-    update_json(metrics_fp, { 'wer': wer_metadata })
+    for dir_path, wers in category2wer.items():
+        metrics_fp = Path(dir_path)/'metrics.json'
+        wer, ins, subs, dels = np.array(wers).mean(axis=0)
+        wer_metadata = {
+            'wer': round(wer, 3),
+            'ins': round(ins, 3),
+            'subs': round(subs, 3),
+            'dels': round(dels, 3),
+        }
+        update_json(metrics_fp, { 'wer': wer_metadata })
 
 
 

@@ -22,7 +22,7 @@ try:
     pypetrel.set_log_level(5)
     PYPETREL_LIB_FOUND = True
 except ImportError as e:
-    logger.error("`pypetrel` library was not found in PYTHONPATH", e)
+    logger.error(f"`pypetrel` library was not found in PYTHONPATH {e}")
 
 
 def normalize_audio(

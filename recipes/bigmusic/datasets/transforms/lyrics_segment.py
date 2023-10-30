@@ -8,13 +8,14 @@ import math
 import random
 import numpy as np
 from typing import Tuple
+from string import punctuation, whitespace
 
 from recipes.musiclm.transforms.audio import (
     NormalizeAudioToFloat32,
     SetAudioDimensions,
     ToTensor,
     ReadMP3,
-    NormalizeAudio
+    FastNormalizeAudio
 )
 from recipes.musiclm.transforms.base import TransformBase
 
@@ -59,7 +60,7 @@ class LyricsSegmentTransforms(TransformBase):
                 NormalizeAudioToFloat32(),
             ]
         )
-        self.normalize_audio = NormalizeAudio()
+        self.normalize_audio = FastNormalizeAudio()
 
     def process_segment(self, segment, audio_wavs):
         audio_duration = audio_wavs['target_audio'].shape[-1] / self.sample_rate
@@ -69,29 +70,6 @@ class LyricsSegmentTransforms(TransformBase):
         lyrics_text = segment.text.strip()
         cropped_segments['lyrics'] = lyrics_text
         return cropped_segments
-
-    def extract_metadata_and_utterances(self, index_data):
-        if 'metadata' in index_data:
-            metadata = index_data['metadata']
-        else:
-            metadata = index_data
-        # Hiphop has format metadata: {..., lyrics: []}, THe rest has format { metadata: {}, lyrics: []}
-        if 'lyrics' in metadata:
-            lyrics = metadata['lyrics']
-        elif 'lyrics' in index_data:
-            lyrics = index_data['lyrics']
-        else:
-            lyrics = None
-
-        utterances = None
-        if lyrics and 'utterances' in lyrics:
-            # v1 (asr, no punctuation)
-            utterances = lyrics['utterances']
-        elif lyrics and 'result' in lyrics:
-            # v2 (asr + punctuation)
-            utterances = lyrics['result'][0]['utterances']
-
-        return metadata, utterances
 
     def extract_audio_wavs(self, x:Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         cached_wavs = {}
@@ -126,7 +104,7 @@ class LyricsSegmentTransforms(TransformBase):
         # 1. filter lyrics and metadata. 2. extract audio 2b. transform audio 3. clip audio to metadata 4. transform segment
         try:
             index_data = x['__index_data__']
-            metadata, lyrics = self.extract_metadata_and_utterances(index_data)
+            metadata, lyrics = extract_metadata_and_utterances(index_data)
         except Exception as e:
             self._update_stats(skipped=True)
             self.handler(e)
@@ -135,6 +113,21 @@ class LyricsSegmentTransforms(TransformBase):
             self._update_stats(skipped=True)
             return
 
+        fixed_duration = len(self.sample_duration) == 1 # if only one duration is provided. Fix it to that duration
+        if self.shuffle_segments and len(lyrics) > 4: # shuffle lyrics start times
+            lyrics = lyrics[random.randint(0, 2):]
+        segments: List[Segment] = lyrics_to_segments(
+            lyrics, 
+            fixed_duration=fixed_duration,
+            min_duration=self.sample_duration[0] * 3 / 4,
+            max_duration=self.sample_duration[-1],
+            randomize_duration_lengths=self.shuffle_segments
+        )
+        if self.shuffle_segments:
+            random.shuffle(segments)
+        segment_count = 0
+
+        if len(segments) == 0: return
         try:
             audio_wavs = self.extract_audio_wavs(x)
             # Extract segment information
@@ -143,19 +136,6 @@ class LyricsSegmentTransforms(TransformBase):
             self.handler(e)
             return
         
-        fixed_duration = len(self.sample_duration) == 1 # if only one duration is provided. Fix it to that duration
-        if self.shuffle_segments and len(lyrics) > 4: # shuffle lyrics start times
-            lyrics = lyrics[random.randint(0, 3):]
-        segments: List[Segment] = lyrics_to_segments(
-            lyrics, 
-            fixed_duration=fixed_duration,
-            min_duration=self.sample_duration[0] * 3 / 4,
-            max_duration=self.sample_duration[-1]
-        )
-        if self.shuffle_segments:
-            random.shuffle(segments)
-        segment_count = 0
-
         # Output clips
         for segment in segments:
             item = self.process_segment(segment, audio_wavs)
@@ -167,6 +147,29 @@ class LyricsSegmentTransforms(TransformBase):
                 break
         self._update_stats(segment_count == 0)
 
+def extract_metadata_and_utterances(index_data):
+    if 'metadata' in index_data:
+        metadata = index_data['metadata']
+    else:
+        metadata = index_data
+    # Hiphop has format metadata: {..., lyrics: []}, THe rest has format { metadata: {}, lyrics: []}
+    if 'lyrics' in metadata:
+        lyrics = metadata['lyrics']
+    elif 'lyrics' in index_data:
+        lyrics = index_data['lyrics']
+    else:
+        lyrics = None
+
+    utterances = None
+    if lyrics and 'utterances' in lyrics:
+        # v1 (asr, no punctuation)
+        utterances = lyrics['utterances']
+    elif lyrics and 'result' in lyrics:
+        # v2 (asr + punctuation)
+        utterances = lyrics['result'][0]['utterances']
+
+    return metadata, utterances
+    
 def crop_pad_audio_to_segment(segment, audio, sample_rate, target_duration=None):
     sample_start = int(segment.start*sample_rate)
     if target_duration is None:
@@ -209,6 +212,8 @@ class Segment():
         text = json_dict['text']
         if 'additions' in json_dict:
             confidence = float(json_dict['additions']['confidence'])
+        elif 'confidence' in json_dict:
+            confidence = float(json_dict['confidence'])
         else:
             confidence = 1
         return Segment(start, end, text, duration, confidence)
@@ -217,7 +222,7 @@ class Segment():
         return self.start >= 0
 
 def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
-                       new_line_token=" <n> ", fixed_duration=True, min_confidence=0.7):
+                       new_line_token="\n", fixed_duration=True, min_confidence=0.8, randomize_duration_lengths=False):
     if not lyrics: return []
     if 'start_time' not in lyrics[0]:
         # convert force alignment lyrics to line format
@@ -232,18 +237,14 @@ def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
         'text': 'STOP_PLACEHOLDER', 
         'words': [],
     })
+    target_duration_length = max_duration
     for i, current_diction in enumerate(lyrics):
         current_segment = Segment.from_dict(current_diction)
         if len(current_segment.text.strip()) == 0: continue
         if current_segment.start < 0: continue
-        if current_segment.confidence < min_confidence:
-            # low confidence segment. skip and reset
-            segment = None
-            current_segment = None
-            continue
             
         # Case #1: overflow. Append segment. Create new
-        if segment and (current_segment.end - segment.start > max_duration):
+        if segment and (current_segment.end - segment.start > target_duration_length):
             if fixed_duration:
                 # append words from current segment.
                 target_end_time = segment.start + max_duration
@@ -261,6 +262,12 @@ def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
                 segments.append(segment)
 
             segment = None
+
+        if current_segment.confidence < min_confidence:
+            # low confidence segment. skip and reset
+            segment = None
+            current_segment = None
+            continue
         
         # Break long segments into multiple segments
         if current_segment and current_segment.duration > max_duration:
@@ -278,13 +285,17 @@ def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
 
         if segment is None:
             segment = current_segment
+            if randomize_duration_lengths:
+                target_duration_length = random.randint(int(min_duration), int(max_duration))
         else:
             segment.end += current_segment.end
             segment.text = segment.text + new_line_token + current_segment.text
             segment.duration += current_segment.duration
     return segments
 
+punctuation_whitespace = set(punctuation + whitespace)
 def _words_to_segment(words, start_time, end_time, start_index=0):
+    def is_word(word): return word.text not in punctuation_whitespace
     segment = None
     end_index = start_index
     idx = 0
@@ -292,16 +303,19 @@ def _words_to_segment(words, start_time, end_time, start_index=0):
     for idx, word in enumerate(words[start_index:]):
         word = Segment.from_dict(word)
         end_index = start_index + idx
-        if word.start >= 0 and word.start < start_time: # keep words < 0 as those are punctuation
-            continue
-        if word.end > end_time:
-            break
+        if is_word(word):
+            if word.start >= 0 and word.start < start_time: # skip words less than start time
+                continue
+            if word.end > end_time:
+                break
+        else: # keep punctuation
+            pass
 
         if segment:
             if word.has_valid_time():
                 segment.end = word.end
                 segment.duration = segment.end - segment.start
-            segment.text += word.text
+            segment.text += word.text # need to append space 
         elif segment is None and word.has_valid_time():
             segment = word
     return segment, end_index-1
@@ -392,21 +406,26 @@ def is_valid_metadata(metadata):
         return False
     valid_audio_metrics = is_audio_metrics_good(metadata.get('audio_metrics', {}))
     if not valid_audio_metrics: 
-        # print('Invalid', metadata['audio_metrics'].keys())
+        # print('Invalid metrics', metadata['audio_metrics'].keys())
         return False
     return True
 
 
-def is_valid_lyrics(lyrics, confidence_threshold=0.7):
+def is_valid_lyrics(lyrics, confidence_threshold=0.8):
     if lyrics is None: 
         return False
     confidences = []
     for utterance in lyrics:
-        # some lyrics may not have confidence (force alignment). return True anyways
-        if 'additions' not in utterance: return True
-        confidence = float(utterance["additions"]["confidence"])
+        if 'confidence' in utterance:
+            confidence = float(utterance["confidence"])
+        elif 'additions' not in utterance:
+            confidence = float(utterance["additions"]["confidence"])
+        else:
+            # some lyrics may not have confidence (force alignment). return True
+            return True
+        if confidence == 0:
+            continue
         confidences.append(confidence)
     if len(confidences) == 0:
         return False
-    # print('Condfidence mean', np.array(confidences).mean(), confidences)
     return np.array(confidences).mean() > confidence_threshold
