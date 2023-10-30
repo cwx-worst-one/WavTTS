@@ -1,0 +1,7 @@
+{
+  "bos_token": "[CLS]",
+  "eos_token": "[EOS]",
+  "pad_token": "[PAD]",
+  "sep_token": "[SEP]",
+  "tokenizer_class": "PreTrainedTokenizerFast"
+}

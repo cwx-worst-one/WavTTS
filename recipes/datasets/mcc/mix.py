@@ -26,7 +26,7 @@ import webdataset as wds
 from torch.utils.data import DataLoader
 from torchaudio.transforms import Resample
 from torchaudio_augmentations import Compose
-from transformers import BertTokenizer, Wav2Vec2PhonemeCTCTokenizer
+from transformers import BertTokenizer, Wav2Vec2PhonemeCTCTokenizer, AutoTokenizer
 from webdataset import WebDataset
 from webdataset.pipeline import DataPipeline
 
@@ -2096,6 +2096,8 @@ class ParquetDataModule(pl.LightningDataModule):
                 "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
             )
             phonemizer.logger.get_logger().setLevel(logging.ERROR)
+        elif tokenizer == 'seed':
+            self.tokenizer = AutoTokenizer.from_pretrained("recipes/umm/tokenizer_bbpe64k-0303")
         else:
             self.tokenizer = None
         self.frame_rate = frame_rate

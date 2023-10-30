@@ -14,6 +14,12 @@ from transformers.utils import ModelOutput
 
 from recipes.umm.transforms.chroma import ChromaSpectrogram
 from recipes.umm.transforms.speech import SpeechTransform
+from samantha.utils.hparams import DotDict
+
+from mariana.models.audio.usm_encoder import UsmEncoder
+from mariana.data.audio.transforms import KaldiFbank, CMVN
+from mariana.models.audio.infer_utils import PantherInfer, replace_with_panther_conformer_layer
+from mariana.models.audio.misc import rnnt_transpose
 
 
 def WNConv1d(*args, **kwargs):
@@ -603,12 +609,9 @@ class EMAVectorQuantizer(nn.Module):
         )
         self.same_index_shape = same_index_shape
 
-    def forward(self, z, mask=None):
-        if self.training:
-            if mask is None:
-                mask = torch.ones([z.shape[0], z.shape[1]])
-            mask = mask.float().to(z.device)
+    def forward(self, z):
         z_flattened = rearrange(z, "b t d -> (b t) d")
+
         d = (
             torch.sum(z_flattened**2, dim=1, keepdim=True)
             + torch.sum(self.embedding.weight**2, dim=1)
@@ -617,35 +620,41 @@ class EMAVectorQuantizer(nn.Module):
                 "bd,dn->bn", z_flattened, rearrange(self.embedding.weight, "n d -> d n")
             )
         )
-        min_encoding_indices = torch.argmin(d, dim=1)  # [b*t]
-        z_q = self.embedding(min_encoding_indices).view(z.shape)  # [b*t, c] -> [b, t, c]
-        # EMA update
+
+        min_encoding_indices = torch.argmin(d, dim=1)  # [b*h]
+        z_q = self.embedding(min_encoding_indices).view(
+            z.shape
+        )  # [b*h, c] -> [b, h, c]
+
+        # EMA updating, use for
         if self.training and self.embedding.update:
-            one_hot = F.one_hot(min_encoding_indices, self.codebook_size).float().to(z.device)  # [b*t, k]
-            one_hot = one_hot * mask.reshape(-1).unsqueeze(1)
+            one_hot = F.one_hot(min_encoding_indices, self.codebook_size).type(
+                z.dtype
+            )  # [b*h, k]
             # EMA cluster size
             one_hot_sum = one_hot.sum(0)  # [k]
             if self.dist:
                 torch.distributed.all_reduce(one_hot_sum)
             self.embedding.cluster_size_ema_update(one_hot_sum)
             # EMA embedding average
-            # [k, b*t] * [b*t, c] = [k, c]
-            embed_sum = (one_hot.transpose(0, 1) @ z_flattened)
+            embed_sum = (
+                one_hot.transpose(0, 1) @ z_flattened
+            )  # [k, b*h] * [b*h, c] = [k, c]
             if self.dist:
                 torch.distributed.all_reduce(embed_sum)
             self.embedding.embed_avg_ema_update(embed_sum)
             # normalize embed_avg and update weight
             self.embedding.weight_update(self.codebook_size)
-        if self.training:
-            loss = (((z_q.detach() - z) ** 2) * mask.unsqueeze(2)).sum() / self.codebook_dim / mask.sum()
-        else:
-            loss = torch.mean((z_q.detach() - z) ** 2)
+
+        loss = torch.mean((z_q.detach() - z) ** 2)
         # preserve gradients
         z_q = z + (z_q - z).detach()
+
         if self.same_index_shape:
             min_encoding_indices = rearrange(
                 min_encoding_indices, "(b t) -> b t", t=z.size(1)
             )
+
         return z_q, min_encoding_indices, loss
 
     @torch.no_grad()
@@ -668,11 +677,7 @@ class EMAVectorQuantizerEntropy(nn.Module):
             self.codebook_size, self.codebook_dim, decay=decay, learnable=True
         )
 
-    def forward(self, z, mask=None, e_scale=1.0):
-        if self.training:
-            if mask is None:
-                mask = torch.ones([z.shape[0], z.shape[1]])
-            mask = mask.float().to(z.device)
+    def forward(self, z, e_scale=1.0):
         z_flattened = rearrange(z, "b t d -> (b t) d")
         d = (
             torch.sum(z_flattened**2, dim=1, keepdim=True)
@@ -682,42 +687,36 @@ class EMAVectorQuantizerEntropy(nn.Module):
                 "bd,dn->bn", z_flattened, rearrange(self.embedding.weight, "n d -> d n")
             )
         )
-        min_encoding_indices = torch.argmin(d, dim=1)  # [b*t]
-        z_q = self.embedding(min_encoding_indices).view(z.shape)  # [b*t, c] -> [b, t, c]
+        min_encoding_indices = torch.argmin(d, dim=1)  # [b*h]
+        z_q = self.embedding(min_encoding_indices).view(z.shape)  # [b*h, c] -> [b, h, c]
         # EMA update
         if self.training and self.embedding.update:
-            one_hot = F.one_hot(min_encoding_indices, self.codebook_size).float().to(z.device)  # [b*t, k]
-            one_hot = one_hot * mask.reshape(-1).unsqueeze(1)
+            one_hot = F.one_hot(min_encoding_indices, self.codebook_size).type(z.dtype)  # [b*h, k]
             # EMA cluster size
             one_hot_sum = one_hot.sum(0)  # [k]
             if self.dist:
                 torch.distributed.all_reduce(one_hot_sum)
             self.embedding.cluster_size_ema_update(one_hot_sum)
             # EMA embedding average
-            # [k, b*t] * [b*t, c] = [k, c]
-            embed_sum = (one_hot.transpose(0, 1) @ z_flattened)
+            embed_sum = (one_hot.transpose(0, 1) @ z_flattened)  # [k, b*h] * [b*h, c] = [k, c]
             if self.dist:
                 torch.distributed.all_reduce(embed_sum)
             self.embedding.embed_avg_ema_update(embed_sum)
             # normalize embed_avg and update weight
             self.embedding.weight_update(self.codebook_size)
-        if self.training:
-            loss = (((z_q.detach() - z) ** 2) * mask.unsqueeze(2)).sum() / self.codebook_dim / mask.sum()
-            entropy_loss = self.entropy_loss(-d, mask=mask)
-            loss = loss + e_scale * entropy_loss
-        else:
-            loss = torch.mean((z_q.detach() - z) ** 2)
+
+        loss = torch.mean((z_q.detach() - z) ** 2) + e_scale * self.entropy_loss(-d, loss_type='softmax')
         # preserve gradients
         z_q = z + (z_q - z).detach()
+
         if self.same_index_shape:
             min_encoding_indices = rearrange(
                 min_encoding_indices, "(b t) -> b t", t=z.size(1)
             )
+
         return z_q, min_encoding_indices, loss
 
-    def entropy_loss(self, affinity, loss_type="softmax", temperature=0.7, eps=1e-10, mask=None):
-        # mask: [b, t]
-        mask_flatten = mask.reshape(-1, 1)
+    def entropy_loss(self, affinity, loss_type="softmax", temperature=0.7, eps=1e-10):
         # affinity: [b, t, d_n]
         flat_affinity = affinity.reshape(-1, affinity.shape[-1])  # [b, t, d_n] -> [b*t, d_n]
         flat_affinity = flat_affinity / temperature
@@ -732,18 +731,13 @@ class EMAVectorQuantizerEntropy(nn.Module):
             target_probs = onehots  # [b*t, d_n]
         else:
             raise ValueError("Entropy loss {} not supported".format(loss_type))
-        '''
         avg_probs = torch.mean(target_probs, dim=0)  # [b*t, d_n] -> [d_n]
         avg_entropy = -torch.sum(avg_probs * (avg_probs + eps).log())  # [d_n] -> []
         sample_entropy = -torch.mean(
             torch.sum(target_probs * log_probs, dim=-1)
         )  # [b*t, d_n] * [b*t, d_n] -> [b*t] -> []
         loss = 0.1 * (sample_entropy - 2.5 * avg_entropy)
-        '''
-        avg_probs = (target_probs * mask_flatten).sum(dim=0) / mask_flatten.sum()  # [b*t, d_n] -> [d_n]
-        avg_entropy = -torch.sum(avg_probs * (avg_probs + eps).log())  # [d_n] -> []
-        sample_entropy = -(torch.sum(target_probs * log_probs, dim=-1) * mask.reshape(-1)).sum() / mask.sum()  # [b*t, d_n] * [b*t, d_n] -> [b*t] -> []
-        loss = 0.1 * (sample_entropy - 2.5 * avg_entropy)
+
         return loss
 
     def entropy(self):
@@ -1516,4 +1510,265 @@ class Stage3(Stage2):
             hidden_states = layer(
                 hidden_states, position_embeddings=position_embeddings
             )
+        return vq_ids
+
+
+class USMStage2(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.audio_transform = SpeechTransform(
+            sample_rate=config.sample_rate,
+            n_mels=config.n_mels,
+            n_fft=config.n_fft,
+            win_length=config.win_length,
+            hop_length=config.hop_length,
+            f_min=0,
+            f_max=config.sample_rate // 2,
+        )
+        if config.feature_cmvn is not None:
+            self.audio_transform.load_from_checkpoint(config.feature_cmvn)
+        self.fbank_fn = KaldiFbank(dither=0.0, out_numpy=False, device='cuda')
+        self.cmvn_fn = CMVN(key="fbank",
+                            cmvn_mean=np.load('recipes/datasets/mcc/usm_mean.npy'),
+                            cmvn_var=np.load('recipes/datasets/mcc/usm_var.npy'))
+        # model define
+        usm_config = DotDict(config.usm_config)
+        self.audio_encoder = UsmEncoder(usm_config.network)
+        self.mel_head = Conv2dUpsampling(config.hidden_size, config.n_mels)
+        self.ctc_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        if config.add_chroma:
+            self.chroma_transform = ChromaSpectrogram(
+                sample_rate=config.sample_rate,
+                n_fft=config.n_fft,
+                win_length=config.win_length,
+                hop_length=config.hop_length,
+                n_chroma=config.n_chroma,
+                normalized=False,
+            )
+            self.chroma_head = Conv2dUpsampling(config.hidden_size, config.n_chroma)
+
+    def forward(self, input_dict, return_hidden_states=False):
+        feature = input_dict["fbank"]
+        src_mask = input_dict["src_mask"]
+        ### one forward ###
+        # hidden_states = self.audio_encoder(feature, src_mask, is_training=self.training)
+        ### Let's do it step by step ###
+        # copy from `mariana.models.audio.usm_encoder.py`
+        # copy from `mariana.models.audio.conformer.py`
+        front_end_out, backbone_mask, frontend_shape = self.audio_encoder.frontend(feature, src_mask)
+        conformers = self.audio_encoder.acoustic_backbone_module
+        all_hidden_states = []
+        conformer_input = conformers.pos_enc(front_end_out)
+        if backbone_mask is None:
+            conformer_mask = None
+        else:
+            conformer_mask = backbone_mask.unsqueeze(1)
+        attn_weights = None
+        for i, layer in enumerate(conformers.encoders):
+            conformer_input, conformer_mask = layer(
+                [conformer_input, conformer_mask], is_training=self.training
+            )
+            if return_hidden_states and not conformers.normalize_before:
+                all_hidden_states.append(conformer_input)
+        if isinstance(conformer_input, (tuple, list)):
+            conformer_input = conformer_input[0]
+        if conformers.normalize_before:
+            conformer_input = conformers.after_norm(conformer_input)
+            if return_hidden_states:
+                all_hidden_states.append(conformer_input)
+        # return conformer_input
+        with torch.cuda.amp.autocast(enabled=False):
+            hidden_states = conformer_input
+            mel_out = self.mel_head(hidden_states)
+            ctc_out = self.ctc_head(hidden_states)
+            output_dict = {"mel_out": mel_out, "ctc_out": ctc_out}
+            if self.config.add_chroma:
+                chroma_out = self.chroma_head(hidden_states)
+                output_dict.update(chroma_out=chroma_out)
+            if return_hidden_states:
+                all_hidden_states = [h[0] if isinstance(h, (list, tuple)) else h for h in all_hidden_states]
+                output_dict["hidden_states"] = all_hidden_states
+        return output_dict
+
+    @torch.no_grad()
+    def extract_features(self, wavs, dtype=torch.float32):
+        is_amp = (dtype in [torch.float16, torch.bfloat16])
+        input_dict = self.preprocessing(wavs)
+        with torch.cuda.amp.autocast(enabled=is_amp, dtype=dtype):
+            out_dict = self.forward(input_dict, return_hidden_states=True)
+        return out_dict["hidden_states"]
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def preprocessing(self, x):
+        assert x.dtype == torch.float32
+        normalize = self.config.feature_cmvn is not None
+        mel = self.audio_transform(x, normalize=normalize)
+        input_dict = {"mel": mel}
+        # kaldif fbank setting, 400 for 25ms, 160 for 10ms
+        x_pad = F.pad(x, ((400 - 160) // 2, (400 - 160) // 2), mode='reflect')
+        fbank = self.fbank_fn({"waveform": x_pad.unsqueeze(1) * 32768.0})["fbank"]
+        input_dict["fbank"] = fbank
+        input_dict["src_mask"] = torch.ones_like(fbank[:, :, 0])
+        input_dict = self.cmvn_fn(input_dict)
+        if self.config.add_chroma:
+            chroma = self.chroma_transform(x)[:, :, :-1].transpose(1, 2)
+            chroma = F.normalize(chroma, p=2, dim=-1)
+            input_dict.update(chroma=chroma)
+        return input_dict
+
+
+class USMStage3(USMStage2):
+    def __init__(self, config):
+        super().__init__(config)
+        if config.get("vq_type", None) == "CVQ":
+            self.vq = ClusteredVectorQuantizer(
+                codebook_size=config.vq_codebook_size,
+                codebook_dim=config.vq_codebook_dim,
+                distance=config.get("vq_distance", "cos"),
+            )
+        elif config.get("vq_type", None) == "FSQ":
+            self.vq = FiniteScalarQuantizer(
+                codebook_size=config.vq_codebook_size,
+            )
+        elif config.get("vq_type", None) == "LFQ":
+            self.vq = LookupFreeQuantizer(
+                codebook_size=config.vq_codebook_size,
+            )
+        elif config.get("vq_type", None) == "EMAEntropy":
+            self.vq = EMAVectorQuantizerEntropy(
+                codebook_size=config.vq_codebook_size,
+                codebook_dim=config.vq_codebook_dim,
+                decay=config.vq_decay,
+            )
+        else:
+            self.vq = EMAVectorQuantizer(
+                codebook_size=config.vq_codebook_size,
+                codebook_dim=config.vq_codebook_dim,
+                decay=config.vq_decay,
+            )
+        if config.get("vq_proj_norm", None) == "bn":
+            self.vq_proj_in = nn.Sequential(
+                Transpose(),
+                WNConv1d(config.hidden_size, config.vq_codebook_dim, kernel_size=1) if config.hidden_size != config.vq_codebook_dim else nn.Identity(),
+                nn.BatchNorm1d(config.vq_codebook_dim, affine=False, momentum=0.05),
+                Transpose(),
+            )
+            self.vq_proj_out = nn.Sequential(
+                Transpose(),
+                WNConv1d(config.vq_codebook_dim, config.hidden_size, kernel_size=1) if config.vq_codebook_dim != config.hidden_size else nn.Identity(),
+                Transpose(),
+            )
+        elif config.get("vq_proj_norm", None) == "ln":
+            self.vq_proj_in = nn.Sequential(
+                nn.Linear(config.hidden_size, config.vq_codebook_dim, bias=False) if config.hidden_size != config.vq_codebook_dim else nn.Identity(),
+                nn.LayerNorm(config.vq_codebook_dim, elementwise_affine=False),
+            )
+            self.vq_proj_out = nn.Sequential(
+                nn.Linear(config.vq_codebook_dim, config.hidden_size, bias=False) if config.vq_codebook_dim != config.hidden_size else nn.Identity(),
+            )
+        else:
+            self.vq_proj_in = nn.Linear(
+                config.hidden_size, config.vq_codebook_dim, bias=False
+            )
+            self.vq_proj_out = nn.Linear(
+                config.vq_codebook_dim, config.hidden_size, bias=False
+            )
+        if config.get("vq_proj_noise", 0) > 0:
+            self.register_buffer("cnt", torch.FloatTensor([0]))
+
+    def forward(self, input_dict, return_hidden_states=False, return_vq_ids=False):
+        feature = input_dict["fbank"]
+        src_mask = input_dict["src_mask"]
+        ### one forward ###
+        # hidden_states = self.audio_encoder(feature, src_mask, is_training=self.training)
+        ### Let's do it step by step ###
+        # copy from `mariana.models.audio.usm_encoder.py`
+        # copy from `mariana.models.audio.conformer.py`
+        front_end_out, backbone_mask, frontend_shape = self.audio_encoder.frontend(feature, src_mask)
+        conformers = self.audio_encoder.acoustic_backbone_module
+        all_hidden_states = []
+        conformer_input = conformers.pos_enc(front_end_out)
+        if backbone_mask is None:
+            conformer_mask = None
+        else:
+            conformer_mask = backbone_mask.unsqueeze(1)
+        attn_weights = None
+        for i, layer in enumerate(conformers.encoders):
+            if i == self.config.vq_layer_idx:
+                with torch.cuda.amp.autocast(enabled=False):
+                    vq_inputs = conformer_input[0] if isinstance(conformer_input, (list, tuple)) else conformer_input
+                    vq_inputs = self.vq_proj_in(vq_inputs)
+                    if self.config.get("vq_proj_noise", 0) > 0:
+                        noise_scale = (self.config.vq_proj_noise - self.cnt).clamp(
+                            0
+                        ) / self.config.vq_proj_noise
+                        vq_inputs = (
+                            vq_inputs + torch.randn_like(vq_inputs) * noise_scale
+                        )
+                        self.cnt.add_(1)
+                    if self.config.get("vq_type", None) == "FSQ":
+                        vq_embs, vq_ids = self.vq(vq_inputs)
+                        vq_loss = None
+                    elif self.config.get("vq_type", None) == "EMAEntropy":
+                        vq_embs, vq_ids, vq_loss = self.vq(vq_inputs, e_scale=1.0 if self.cnt < 30_000 else 0.0)
+                    else:
+                        vq_embs, vq_ids, vq_loss = self.vq(vq_inputs)
+                    if return_vq_ids:
+                        return vq_ids
+                    vq_inputs = self.vq_proj_out(vq_embs)
+                    conformer_input = (vq_inputs,) + conformer_input[1:] if isinstance(conformer_input, (list, tuple)) else vq_inputs
+                    conformer_input, conformer_mask = layer(
+                        [conformer_input, conformer_mask], is_training=self.training
+                    )
+            else:
+                conformer_input, conformer_mask = layer(
+                    [conformer_input, conformer_mask], is_training=self.training
+                )
+            if return_hidden_states and not conformers.normalize_before:
+                all_hidden_states.append(conformer_input)
+        if isinstance(conformer_input, (list, tuple)):
+            conformer_input = conformer_input[0]
+        if conformers.normalize_before:
+            conformer_input = conformers.after_norm(conformer_input)
+            if return_hidden_states:
+                all_hidden_states.append(conformer_input)
+        # return conformer_input
+        hidden_states = conformer_input
+        with torch.cuda.amp.autocast(enabled=False):
+            mel_out = self.mel_head(hidden_states)
+            ctc_out = self.ctc_head(hidden_states)
+            output_dict = {
+                "mel_out": mel_out,
+                "ctc_out": ctc_out,
+                "vq_ids": vq_ids,
+                "vq_loss": vq_loss,
+            }
+            if self.config.get("vq_proj_noise", False):
+                output_dict.update(noise_scale=noise_scale)
+            if self.config.add_chroma:
+                chroma_out = self.chroma_head(hidden_states)
+                output_dict.update(chroma_out=chroma_out)
+        if return_hidden_states:
+            all_hidden_states = [h[0] if isinstance(h, (list, tuple)) else h for h in all_hidden_states]
+            output_dict["hidden_states"] = all_hidden_states
+        return output_dict
+
+    @torch.no_grad()
+    def extrature_features(self, wavs, dtype=torch.float32):
+        if dtype in [torch.float16, torch.bfloat16]:
+            is_amp = True
+        input_dict = self.preprocessing(wavs)
+        with torch.cuda.amp.autocast(enabled=is_amp, dtype=dtype):
+            out_dict = self.forward(input_dict, return_hidden_states=True)
+        return out_dict["hidden_states"]
+
+    @torch.no_grad()
+    def wav2token(self, wav):
+        if dtype in [torch.float16, torch.bfloat16]:
+            is_amp = True
+        input_dict = self.preprocessing(wavs)
+        with torch.cuda.amp.autocast(enabled=is_amp, dtype=dtype):
+            vq_ids = self.forward(input_dict, return_vq_ids=True)
         return vq_ids

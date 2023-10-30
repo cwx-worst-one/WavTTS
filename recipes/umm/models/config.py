@@ -74,6 +74,7 @@ class UMMConfig(PretrainedConfig):
         add_chroma=True,
         interfere_audio=False,
         mix_prob=0.2,
+        usm_config=None,
         **kwargs,
     ):
         super().__init__(
@@ -93,6 +94,7 @@ class UMMConfig(PretrainedConfig):
         self.feature_encoder_padding = feature_encoder_padding
         self.feature_cmvn = feature_cmvn
         assert feature_encoder_kernel == 5 and feature_encoder_padding == 2
+        self.usm_config = usm_config
 
         # random quantizer
         self.rq_codebook_size = rq_codebook_size
