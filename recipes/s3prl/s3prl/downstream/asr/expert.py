@@ -272,7 +272,7 @@ class DownstreamExpert(nn.Module):
         """
         log_probs, log_probs_len = self._get_log_probs(features)
         device = features[0].device
-        labels = [torch.IntTensor(l) for l in labels]
+        labels = [torch.IntTensor(l.int()) for l in labels]
         labels_len = torch.IntTensor([len(label) for label in labels]).to(device=device)
         labels = pad_sequence(
             labels,

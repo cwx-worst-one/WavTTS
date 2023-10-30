@@ -1,4 +1,4 @@
 offline:
   use_lookup: false
-  input_dim: 1024
-  down_rate: 1
+  input_dim: 1536
+  downsample_rate: 1

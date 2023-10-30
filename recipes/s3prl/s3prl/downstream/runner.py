@@ -94,6 +94,7 @@ class Runner():
         self.featurizer = self._get_featurizer()
         self.downstream = self._get_downstream()
         self.all_entries = [self.upstream, self.featurizer, self.downstream]
+        # self.all_entries = [self.upstream, self.downstream]
         print('upstream_trainable: ', self.args.upstream_trainable)
 
 
@@ -184,10 +185,9 @@ class Runner():
     def _get_downstream(self):
         expert = importlib.import_module(f"s3prl.downstream.{self.args.downstream}.expert")
         Downstream = getattr(expert, "DownstreamExpert")
-
         model = Downstream(
-            upstream_dim = self.args.input_dim,
-            upstream_rate = self.args.down_rate,
+            upstream_dim = self.upstream.model.input_dim,
+            upstream_rate = self.upstream.model.downsample_rate,
             **self.config,
             **vars(self.args)
         ).to(self.args.device)
@@ -226,6 +226,7 @@ class Runner():
 
 
     def train(self):
+        print('*'*50, 'train', '*'*50)
         # trainable parameters and train/eval mode
         trainable_models = []
         trainable_paras = []
@@ -292,19 +293,16 @@ class Runner():
                     global_step = pbar.n + 1
 
                     # wavs = [torch.FloatTensor(wav).to(self.args.device) for wav in wavs]
-
-                    features = torch.FloatTensor(bns).to(self.args.device)
+                    features = [torch.FloatTensor(bn).to(self.args.device) for bn in bns]
 
                     with torch.cuda.amp.autocast(enabled=amp):
-                        # if self.upstream.trainable:
-                        #     features = self.upstream.model(wavs)
-                        # else:
-                        #     with torch.no_grad():
-                        #         features = self.upstream.model(wavs)
-                        # features = self.featurizer.model(wavs, features)
+                        features = self.upstream.model(features)
 
-                        # if specaug:
-                        #     features, _ = specaug(features)
+                        if len(features[0].shape) == 3:
+                            features = self.featurizer.model(features)
+
+                        if specaug:
+                            features, _ = specaug(features)
 
                         loss = self.downstream.model(
                             train_split,
@@ -434,6 +432,7 @@ class Runner():
 
     def evaluate(self, split=None, logger=None, global_step=0):
         """evaluate function will always be called on a single process even during distributed training"""
+        print('*'*50, 'evaluate', '*'*50)
 
         # When this member function is called directly by command line
         not_during_training = split is None and logger is None and global_step == 0
@@ -464,14 +463,16 @@ class Runner():
 
         batch_ids = []
         records = defaultdict(list)
-        for batch_id, (wavs, *others) in enumerate(tqdm(dataloader, dynamic_ncols=True, desc=split, total=evaluate_steps)):
+        for batch_id, (bns, *others) in enumerate(tqdm(dataloader, dynamic_ncols=True, desc=split, total=evaluate_steps)):
             if batch_id > evaluate_steps:
                 break
 
-            wavs = [torch.FloatTensor(wav).to(self.args.device) for wav in wavs]
+            features = [torch.FloatTensor(bn).to(self.args.device) for bn in bns]
             with torch.no_grad():
-                features = self.upstream.model(wavs)
-                features = self.featurizer.model(wavs, features)
+                features = self.upstream.model(features)
+                # features = self.featurizer.model(wavs, features)
+                if len(features[0].shape) == 3:
+                    features = self.featurizer.model(features)
                 self.downstream.model(
                     split,
                     features, *others,
@@ -507,6 +508,7 @@ class Runner():
         return [] if type(save_names) is not list else save_names
 
     def inference(self):
+        print('*'*50, 'inference', '*'*50)
         filepath = Path(self.args.evaluate_split)
         assert filepath.is_file(), filepath
         filename = filepath.stem

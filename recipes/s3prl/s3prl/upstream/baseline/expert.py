@@ -8,6 +8,7 @@
 
 
 import yaml
+import torch
 from torch import nn 
 from torch.nn.utils.rnn import pad_sequence
 
@@ -33,20 +34,15 @@ class UpstreamExpert(UpstreamBase):
         with open(model_config, "r") as file:
             self.config = yaml.load(file, Loader=yaml.FullLoader)
 
+        assert "offline" in self.config
+
         if "offline" in self.config:
             if self.config['offline']['use_lookup']:
                 self.lookup_emb = nn.Embedding(
                     self.config['offline']['vocab_size'], self.config['offline']['input_dim'])
-        elif "kaldi" in self.config:
-            self.extracter, self.output_dim, frame_shift = get_extracter(self.config)
-            self.downsample_rate = round(frame_shift * SAMPLE_RATE / 1000)
-        else:
-            self.extracter, self.output_dim, _ = get_preprocessor(
-                self.config, process_input_only=True
-            )
-            self.downsample_rate = round(
-                self.config.get("hop_ms", 10) * SAMPLE_RATE / 1000
-            )
+            self.downsample_rate = self.config['offline']['downsample_rate']
+            self.input_dim = self.config['offline']['input_dim']
+    
 
     def _extractor_forward(self, wavs):
         feats = []
@@ -56,6 +52,9 @@ class UpstreamExpert(UpstreamBase):
 
     def get_downsample_rates(self, key: str) -> int:
         return self.downsample_rate
+
+    def get_input_dim(self) -> int:
+        return self.input_dim
 
     def _preprocessor_forward(self, wavs):
         wav_lengths = [len(wav) for wav in wavs]
@@ -72,20 +71,25 @@ class UpstreamExpert(UpstreamBase):
         return feats
 
     def forward(self, x):
+        assert "offline" in self.config
         if "offline" in self.config:  
             if self.config['offline']['use_lookup']:
-                feats = self.lookup_emb(x)
+                x = [xi.to(dtype=torch.int)+1 for xi in x]  # shift 1 (0 as padding value)
+                feats_len = [xi.shape[0] for xi in x]
+                padded_x = pad_sequence(x, batch_first=True)
+                padded_feats = self.lookup_emb(padded_x)
+                return [f[:l] for f, l in zip(padded_feats, feats_len)]
+                # feature = [f[:l] for f, l in zip(paired_feature, feature_len)]
             else:
-                feats = x
-        elif "kaldi" in self.config:
-            wavs = x
-            feats = self._extractor_forward(wavs)
-        else:
-            wavs = x
-            feats = self._preprocessor_forward(wavs)
-
-        padded_feats = pad_sequence(feats, batch_first=True)
-        return {
-            "last_hidden_state": padded_feats,
-            "hidden_states": [padded_feats],
-        }
+                feats = [xi for xi in x]
+                return feats
+                
+                feats_len = [feat.shape[0] for feat in feats]
+                padded_feats = pad_sequence(feats, batch_first=True)
+                return [f[:l] for f, l in zip(padded_feats, feats_len)]
+        
+        
+        # return {
+        #     "last_hidden_state": padded_feats,
+        #     "hidden_states": [padded_feats],
+        # }

@@ -32,6 +32,11 @@ def offline_token(*args, **kwargs):
     return baseline_local(*args, **kwargs)
 
 
+def offline_bn(*args, **kwargs):
+    kwargs["model_config"] = os.path.join(os.path.dirname(__file__), "offline_bn.yaml")
+    return baseline_local(*args, **kwargs)
+
+
 def baseline(*args, **kwargs):
     """
     Baseline feature - Fbank, or Mel-scale spectrogram

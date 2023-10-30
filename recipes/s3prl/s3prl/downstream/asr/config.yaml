@@ -3,7 +3,7 @@ runner:
   gradient_clipping: 1
   gradient_accumulate_steps: 1
   log_step: 100
-  eval_step: 2000
+  eval_step: 5000
   save_step: 500
   max_keep: 1
   eval_dataloaders:
@@ -50,7 +50,7 @@ downstream_expert:
     libri_root: '/mnt/bn/cyz-lq-nas/s3prl_datasets/LibriSpeech'
     bucket_file: './data/librispeech/len_for_bucket'
     dict_path: "./downstream/asr/char.dict"
-    bn_root: '/tmp/LibriSpeech'
+    offline_root: '/mnt/bn/cyz-lq-nas/s3prl_gendir/LibriSpeech/fix/ASR_usm_sft'
 
     zero_infinity: True
 

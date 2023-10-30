@@ -25,6 +25,7 @@ from torch.utils.data.dataset import Dataset
 import torchaudio
 #-------------#
 from .dictionary import Dictionary
+import numpy as np
 
 SAMPLE_RATE = 16000
 HALF_BATCHSIZE_TIME = 2000
@@ -35,13 +36,17 @@ HALF_BATCHSIZE_TIME = 2000
 ####################
 class SequenceDataset(Dataset):
     
-    def __init__(self, split, bucket_size, dictionary, libri_root, bucket_file, **kwargs):
+    def __init__(self, split, bucket_size, dictionary, libri_root, bucket_file, 
+                offline_root, **kwargs):
         super(SequenceDataset, self).__init__()
         
         self.dictionary = dictionary
         self.libri_root = libri_root
         self.sample_rate = SAMPLE_RATE
         self.split_sets = kwargs[split]
+
+        self.offline_root = offline_root
+        print('***** offline_root:  ', self.offline_root)
 
         # Read table for bucketing
         assert os.path.isdir(bucket_file), 'Please first run `python3 preprocess/generate_len_for_bucket.py -h` to get bucket file.'
@@ -113,6 +118,21 @@ class SequenceDataset(Dataset):
         assert sr == self.sample_rate, f'Sample rate mismatch: real {sr}, config {self.sample_rate}'
         return wav.view(-1)
 
+    def _load_offline_feature(self, wav_path):
+        feats = np.load(os.path.join(self.offline_root, wav_path+'.npy'))
+        # T = np.random.randint(50, 101)
+        # feats = np.ones([T])
+        if len(feats.shape) == 2 and feats.shape[0] == 1:
+            feats = feats[0]
+        if len(feats.shape) == 3 and feats.shape[0] == 1:
+            feats = feats[0]
+        if len(feats.shape) == 4 and feats.shape[0] == 1:
+            feats = feats[0]
+        if len(feats.shape) == 3:
+            feats = feats[-1::-6][:3]
+        # print(feats, '  ', feats.shape, '  ', os.path.join(self.offline_root, wav_path+'.npy'))
+        return feats
+
     def _load_transcript(self, x_list):
         """Load the transcripts for Librispeech"""
         def process_trans(transcript):
@@ -155,8 +175,9 @@ class SequenceDataset(Dataset):
 
     def __getitem__(self, index):
         # Load acoustic feature and pad
-        wav_batch = [self._load_wav(x_file).numpy() for x_file in self.X[index]]
-        label_batch = [self.Y[self._parse_x_name(x_file)].numpy() for x_file in self.X[index]]
+        # wav_batch = [self._load_wav(x_file).numpy() for x_file in self.X[index]]
+        wav_batch = [self._load_offline_feature(x_file) for x_file in self.X[index]]
+        label_batch = [self.Y[self._parse_x_name(x_file)] for x_file in self.X[index]]
         filename_batch = [Path(x_file).stem for x_file in self.X[index]]
         return wav_batch, label_batch, filename_batch # bucketing, return ((wavs, labels))
 
