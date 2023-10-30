@@ -483,6 +483,16 @@ class Conv2dSubsampling(nn.Module):
         x = self.linear(x)
         return x
 
+    def get_flops(self, b, t, d):
+        t_downsample_1 = (t - self.conv[0].kernel_size[0] + 2 * self.conv[0].kernel_size[0]) // self.conv[0].stride[0] + 1
+        d_downsample_1 = (d - self.conv[0].kernel_size[1] + 2 * self.conv[0].kernel_size[1]) // self.conv[0].stride[1] + 1
+        t_downsample_2 = (t_downsample_1 - self.conv[3].kernel_size[0] + 2 * self.conv[3].kernel_size[0]) // self.conv[3].stride[0] + 1
+        d_downsample_2 = (d_downsample_1 - self.conv[3].kernel_size[1] + 2 * self.conv[3].kernel_size[1]) // self.conv[3].stride[1] + 1
+
+        flops1 = 2 * b * self.conv[0].in_channels * self.conv[0].out_channels * self.conv[0].kernel_size[0] * self.conv[0].kernel_size[1] * t_downsample_1 * d_downsample_1
+        flops2 = 2 * b * self.conv[3].in_channels * self.conv[3].out_channels * self.conv[3].kernel_size[0] * self.conv[3].kernel_size[1] * t_downsample_2 * d_downsample_2
+        return flops1 + flops2
+
 
 class AudioEncoder(nn.Module):
     def __init__(self, config):
@@ -500,8 +510,8 @@ class AudioEncoder(nn.Module):
         x = self.conformer_layer(x)
         return x
 
-    def get_flops(self, b, t):
-        return self.conformer_layer.get_flops(b, t / 4)
+    def get_flops(self, b, t, d):
+        return self.feature_encoder.get_flops(b, t, d) + self.conformer_layer.get_flops(b, t)
 
 
 class EMAEmbedding(nn.Module):

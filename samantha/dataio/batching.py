@@ -1,6 +1,6 @@
 """bucket process module"""
 import logging
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,7 @@ class BucketBatcher:
         batch_size: int = None,
         length_fn: Callable = len,
         bucket_skip_warning_num: int = 10000,
+        bsz_evaluator: Optional[Callable] = None,
     ):
         if buckets is None:
             buckets = [2**31]
@@ -61,6 +62,7 @@ class BucketBatcher:
         self.bucket_size = [0 for _ in range(self.bucket_num)]
         self.bucket_max_size = [0 for _ in range(self.bucket_num)]
         self.throw_num = 0
+        self.bsz_evaluator = bsz_evaluator or (lambda x, y: x * y)
 
     def find_bucket(self, data_item):
         """find a suitable bucket and push to bucket."""
@@ -136,7 +138,7 @@ class BucketBatcher:
         bsz = len(self.bucket_list[bucket_idx]) + 1
 
         if self.dynamic_batch:
-            total_size = bsz * max_batch_size
+            total_size = self.bsz_evaluator(bsz, max_batch_size)
 
             if total_size == self.maximum_bucket_size:
                 self.push_bucket(data_item, size, bucket_idx)

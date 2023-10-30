@@ -2082,6 +2082,7 @@ class ParquetDataModule(pl.LightningDataModule):
         small: bool = False,
         tokenizer: str = None,
         frame_rate: int = 25,
+        bsz_evaluator: Optional[str] = None,
     ):
         super().__init__()
         self.num_workers = num_workers
@@ -2111,11 +2112,14 @@ class ParquetDataModule(pl.LightningDataModule):
             buckets_samples.append(max_duration)
         print(f"[Buckets] {len(buckets_samples)} {str(buckets_samples)}")
         buckets_samples = [x * sample_rate for x in buckets_samples]
+        if bsz_evaluator:
+            bsz_evaluator = eval(bsz_evaluator)
         self.batcher = BucketBatcher(
             buckets=buckets_samples,
             dynamic_batch=True,
             maximum_bucket_size=batch_size,
             length_fn=lambda x: x["audio"].size(-1),
+            bsz_evaluator=bsz_evaluator,
         )
         datasets = []
         bigtts = BigTTSDataset(
@@ -2150,6 +2154,8 @@ class ParquetDataModule(pl.LightningDataModule):
             batch_size=None,
             num_workers=self.num_workers,
             collate_fn=self.collate_fn,
+            prefetch_factor=16,
+            pin_memory=True
         )
 
 

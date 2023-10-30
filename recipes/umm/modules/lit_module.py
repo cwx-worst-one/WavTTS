@@ -4,6 +4,7 @@ from typing import Optional, Union
 import pytorch_lightning as pl
 import time
 import torch
+import torch.distributed
 import torch.nn.functional as F
 from pytorch_lightning.profilers import PassThroughProfiler
 from torch.nn.utils.rnn import pad_sequence
@@ -700,6 +701,7 @@ class Stage0(pl.LightningModule):
         self.val_outputs = dict()
         self.flops = 0
         self.ts_before_forward = 0
+        self.cached_log_dict = dict()
 
         if checkpointing:
             self.model.gradient_checkpointing_enable()
@@ -777,16 +779,40 @@ class Stage0(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         # Not quite accurate, time used by optimizer is also counted.
         elapsed = time.time() - self.ts_before_forward
-        mfu = self.flops / elapsed / 312e12
-        self.ts_before_forward = time.time()
+        mfu = self.flops / elapsed / 312e12  # FIXME: Non-A100 devices.
+        self.log_dict_cached({
+            "training/mfu" : mfu,
+            # FIXME: The below two should really be "max" or "use rank 0".
+            "training/mem_gb" : torch.cuda.max_memory_allocated() / 2**30,
+            "training/malloc_retries" : torch.cuda.memory_stats()["num_alloc_retries"],
+        })
 
+        # This makes sure we don't lose any log items added after forward pass.
+        #
+        # As a bonus, since by the time we reach here, the previous pass is
+        # guaranteed to complete, so we won't need to wait on CUDA computation
+        # synchronously.
+        #
+        # We defer actual logging operation to overlap it with CUDA computation.
+        prev_log_dict, pending_deletion = self.flush_log_dict()
+
+        self.ts_before_forward = time.time()
         loss_dict = self._shared_step(batch)
+
+        # Overlap these operations with CUDA computation.
+        for i in batch.keys():
+            batch[i] = None
+        self.log_dict(prev_log_dict, prog_bar=True, sync_dist=False, rank_zero_only=True)
+        del pending_deletion
+        del prev_log_dict
+
         if "flops" in loss_dict:
             self.flops = loss_dict["flops"]
             del loss_dict["flops"]
-            loss_dict.update({"training/mfu" : mfu})
+
         loss_dict["training/loss"] = loss_dict["loss"]
-        self.log_dict(loss_dict, prog_bar=True, sync_dist=True)
+        self.log_dict_cached(loss_dict)
+
         return loss_dict["loss"]
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
@@ -839,6 +865,7 @@ class Stage0(pl.LightningModule):
         return nuc
 
     def get_quant_rate(self, quant_index, quant_token_num):
+        """Deprecated in favor of `get_quant_rates`."""
         one_hot = torch.nn.functional.one_hot(
             quant_index.reshape(-1), quant_token_num
         ).sum(dim=0)
@@ -846,6 +873,16 @@ class Stage0(pl.LightningModule):
         one_hot = one_hot.sum(dim=0).clamp(0, 1)
         quant_rate = one_hot.sum() / quant_token_num
         return quant_rate
+
+    def get_quant_rates(self, quant_indices, quant_token_num):
+        one_hots = []
+        for index in quant_indices:
+            one_hot = torch.nn.functional.one_hot(
+                index.reshape(-1), quant_token_num
+            ).sum(dim=0)
+            one_hots.append(one_hot)
+        one_hots = self.all_gather(torch.stack(one_hots))
+        return one_hots.sum(dim=0).clamp(0, 1).sum() / quant_token_num
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
@@ -865,6 +902,49 @@ class Stage0(pl.LightningModule):
             raise ValueError(f"Unknown data type: {data_type}")
         return mulan_embeds
 
+    def log_dict_cached(self, kvs):
+        """Save `kvs` into cached log dict. The dict is flushed after each
+        forward pass."""
+        self.cached_log_dict.update({
+            k : v if v is not torch.Tensor else v.detach()
+            for k, v in kvs.items()
+        })
+
+    def flush_log_dict(self):
+        orig_keys = []
+        cpu_values = []
+        cuda_values = []
+
+        # Move all non-CUDA tensor in one go.
+        for k, v in self.cached_log_dict.items():
+            if v is not torch.Tensor:
+                orig_keys.append(k)
+                cpu_values.append(v)
+            elif not v.is_cuda:
+                orig_keys.append(k)
+                cpu_values.append(v.item())
+            else:
+                assert v.is_cuda
+
+        for k, v in self.cached_log_dict.items():
+            if v is torch.Tensor and v.is_cuda:
+                orig_keys.append(k)
+                if len(v.size()) == 0:
+                    v = torch.unsqueeze(v.float(), 0)
+                cuda_values.append(v)
+
+        values = torch.cat(
+            [torch.tensor(cpu_values, dtype=torch.float, device='cuda')] + cuda_values
+        )
+        # Support different collectives is just a matter of gathering metrics
+        # to rank 0 and reducing them locally.
+        torch.distributed.reduce(values, 0, op=torch.distributed.ReduceOp.AVG)
+
+        res_dict = {orig_keys[i] : values[i] for i in range(len(values))}
+        self.cached_log_dict.clear()
+
+        return res_dict, [orig_keys, cpu_values, cuda_values, values]
+
 
 class Stage1(Stage0):
     def __init__(
@@ -876,6 +956,7 @@ class Stage1(Stage0):
         required_modules=None,
         checkpointing=False,
         extra_params=None,
+        seqlen_align=1,
     ):
         super().__init__(
             model_cls=model_cls,
@@ -886,6 +967,7 @@ class Stage1(Stage0):
             checkpointing=checkpointing,
             extra_params=extra_params,
         )
+        self.seqlen_align=seqlen_align
 
     @torch.no_grad()
     def masking(self, x):
@@ -926,6 +1008,11 @@ class Stage1(Stage0):
         mel = self.preprocessing(wav)["mel"]
         masked_audio, masked_indices = self.masking(wav)
         masked_mel = self.preprocessing(masked_audio)["mel"]
+        seqlen = mel.shape[1]
+        if seqlen % self.seqlen_align != 0:
+            pad_len = (seqlen + self.seqlen_align - 1) // self.seqlen_align * self.seqlen_align
+            mel = torch.nn.functional.pad(mel, [0, 0, 0, pad_len - seqlen])
+            masked_mel = torch.nn.functional.pad(masked_mel, [0, 0, 0, pad_len - seqlen])
         return {"masked_mel": masked_mel, "masked_indices": masked_indices, "mel": mel}
 
     def get_code_rate(self, target_tokens):
@@ -953,14 +1040,13 @@ class Stage1(Stage0):
         loss_dict["accu"] = accu
         loss_dict["flops"] = output_dict["flops"]
         # target_tokens: [batch, time, codebook_idx]
-        code_rate = self.get_code_rate(output_dict["rq_target"].transpose(1, 2))
-        quant_rate = 0
-        for i in range(self.model.config.rq_codebook_num):
-            quant_rate += self.get_quant_rate(
-                output_dict["rq_target"][:, :, i], self.model.config.rq_codebook_size
-            )
-        quant_rate = quant_rate / self.model.config.rq_codebook_num
-        loss_dict["aux/code_rate"] = code_rate
+        if self.trainer.global_step % 100 == 0:
+            code_rate = self.get_code_rate(output_dict["rq_target"].transpose(1, 2))
+            loss_dict["aux/code_rate"] = code_rate
+        quant_rate = self.get_quant_rates(
+            [output_dict["rq_target"][:, :, i] for i in range(self.model.config.rq_codebook_num)],
+            self.model.config.rq_codebook_size
+        ) / self.model.config.rq_codebook_num
         loss_dict["aux/quant_rate"] = quant_rate
 
         mel = input_dict["mel"]
@@ -1134,11 +1220,12 @@ class Stage3(Stage2):
             loss_dict["loss"] = (
                 loss_dict["loss"] + output_dict["vq_loss"] * self.model.config.w_loss_vq
             )
-        code_rate = self.get_code_rate(output_dict["vq_ids"])
+        if self.trainer.global_step % 100 == 0:
+            code_rate = self.get_code_rate(output_dict["vq_ids"])
+            loss_dict["aux/code_rate"] = code_rate
         quant_rate = self.get_quant_rate(
             output_dict["vq_ids"].long(), self.model.config.vq_codebook_size
         )
-        loss_dict["aux/code_rate"] = code_rate
         loss_dict["aux/quant_rate"] = quant_rate
         if getattr(self.model.vq, "entropy", None) is not None:
             loss_dict["aux/entropy"] = self.model.vq.entropy()
@@ -1730,11 +1817,12 @@ class UMMBase(pl.LightningModule):
             loss_dict["loss"] = (
                 loss_dict["loss"] + output_dict["vq_loss"] * self.model.config.w_loss_vq
             )
-            code_rate = self.get_code_rate(output_dict["vq_ids"])
+            if self.trainer.global_step % 100 == 0:
+                code_rate = self.get_code_rate(output_dict["vq_ids"])
+                loss_dict["aux/code_rate"] = code_rate
             quant_rate = self.get_quant_rate(
                 output_dict["vq_ids"], self.model.config.vq_codebook_size
             )
-            loss_dict["aux/code_rate"] = code_rate
             loss_dict["aux/quant_rate"] = quant_rate
             loss_dict["aux/entropy"] = self.model.vq.embedding.entropy()
             loss_dict["aux/w_loss_vq"] = self.model.config.w_loss_vq
@@ -1939,11 +2027,12 @@ class Stage3AR(Stage3):
                 loss_dict["loss"]
                 + loss_dict["loss_chroma"] * self.model.config.w_loss_chroma
             )
-        code_rate = self.get_code_rate(output_dict["vq_ids"])
+        if self.trainer.global_step % 100 == 0:
+            code_rate = self.get_code_rate(output_dict["vq_ids"])
+            loss_dict["aux/code_rate"] = code_rate
         quant_rate = self.get_quant_rate(
             output_dict["vq_ids"], self.model.config.vq_codebook_size
         )
-        loss_dict["aux/code_rate"] = code_rate
         loss_dict["aux/quant_rate"] = quant_rate
         loss_dict["aux/entropy"] = self.model.vq.embedding.entropy()
         loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
@@ -2012,11 +2101,12 @@ class UMMASR(UMMBase):
             loss_dict["loss"] = (
                 loss_dict["loss"] + output_dict["vq_loss"] * self.model.config.w_loss_vq
             )
-            code_rate = self.get_code_rate(output_dict["vq_ids"])
+            if self.trainer.global_step % 100 == 0:
+                code_rate = self.get_code_rate(output_dict["vq_ids"])
+                loss_dict["aux/code_rate"] = code_rate
             quant_rate = self.get_quant_rate(
                 output_dict["vq_ids"], self.model.config.vq_codebook_size
             )
-            loss_dict["aux/code_rate"] = code_rate
             loss_dict["aux/quant_rate"] = quant_rate
             loss_dict["aux/entropy"] = self.model.vq.embedding.entropy()
             loss_dict["aux/w_loss_vq"] = self.model.config.w_loss_vq
