@@ -1569,8 +1569,9 @@ class USMStage2(nn.Module):
             conformer_input, conformer_mask = layer(
                 [conformer_input, conformer_mask], is_training=self.training
             )
-            if return_hidden_states and not conformers.normalize_before:
-                all_hidden_states.append(conformer_input)
+            if return_hidden_states:
+                if i != len(conformers.encoders) - 1 or not conformers.normalize_before:
+                    all_hidden_states.append(conformer_input)
         if isinstance(conformer_input, (tuple, list)):
             conformer_input = conformer_input[0]
         if conformers.normalize_before:
@@ -1726,8 +1727,9 @@ class USMStage3(USMStage2):
                 conformer_input, conformer_mask = layer(
                     [conformer_input, conformer_mask], is_training=self.training
                 )
-            if return_hidden_states and not conformers.normalize_before:
-                all_hidden_states.append(conformer_input)
+            if return_hidden_states:
+                if i != len(conformers.encoders) - 1 or not conformers.normalize_before:
+                    all_hidden_states.append(conformer_input)
         if isinstance(conformer_input, (list, tuple)):
             conformer_input = conformer_input[0]
         if conformers.normalize_before:
@@ -1754,15 +1756,6 @@ class USMStage3(USMStage2):
             all_hidden_states = [h[0] if isinstance(h, (list, tuple)) else h for h in all_hidden_states]
             output_dict["hidden_states"] = all_hidden_states
         return output_dict
-
-    @torch.no_grad()
-    def extrature_features(self, wavs, dtype=torch.float32):
-        if dtype in [torch.float16, torch.bfloat16]:
-            is_amp = True
-        input_dict = self.preprocessing(wavs)
-        with torch.cuda.amp.autocast(enabled=is_amp, dtype=dtype):
-            out_dict = self.forward(input_dict, return_hidden_states=True)
-        return out_dict["hidden_states"]
 
     @torch.no_grad()
     def wav2token(self, wav):
