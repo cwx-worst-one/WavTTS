@@ -17,6 +17,7 @@ from recipes.bigmusic.utils.rewards import (
     loudness_reward,
     chord_reward,
     nonvocal_reward,
+    structure_reward,
 )
 import torch
 from tqdm.auto import tqdm
@@ -506,6 +507,13 @@ class SemanticRLModule(SemanticModule):
                 self.requires["chord_lms"],
                 sampled_audio,
                 chord_lm_keys=chord_lm_keys,
+                sample_rate=self.extra_params.sample_rate,
+                device=sampled_audio.device,
+            )
+        elif reward_type == "structure":
+            return structure_reward(
+                self.requires["structure"],
+                sampled_audio,
                 sample_rate=self.extra_params.sample_rate,
                 device=sampled_audio.device,
             )

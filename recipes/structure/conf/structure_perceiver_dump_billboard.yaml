@@ -1,0 +1,122 @@
+---
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 0
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+ckpt_path:
+
+# running parameters
+run_opts:
+  fast_dev_run: False
+  precision: 32
+  accelerator: 'auto'
+  num_workers: 1
+  pin_memory: True
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+train_params:
+  learning_rate: 0.0005
+  scheduler_patience: 10
+  scheduler_decay_factor: 0.9
+  devices: 'auto'
+
+################################################################################
+##########                    TASK CONFIGURATION                  ##########
+################################################################################
+
+audio:
+  sampling_rate: 16000       # sampling rate for audio
+  sample_len: 36.0           # duration in sec for input  #{24 or 6}
+  n_fft: 1024                # number of fft to calculate spectrogram
+  hop_length: 512            # hop length to calculate spectrogram
+  input_feature: "hcqt"      # input feature type {mel, hcqt}
+  semitone_scale: 1
+  sample_hop: 9
+
+labels:
+  label_hop: 0.192
+  enable_short: True
+  n_boundary: 2
+  n_function: 7
+  alpha: 0.9
+
+Postprosessing:
+  n_top_bound: 14            # number of top probabilities for boundary
+  n_top_chobound: 7          # number of top probabilities for chorus boundary
+  n_top_choseg: 3            # number of top probabilities for chorus segment
+
+################################################################################
+##########             DATASET/DATALOADING CONFIGURATION              ##########
+################################################################################
+
+# datamodule configuration
+pl_datamodule: !new:recipes.bigmusic.datasets.mix.SFTBilloardWebDataModule
+  sample_rate: !ref <audio[sampling_rate]>
+  batch_size: 48
+  shuffle_buffer_size: 0
+  num_workers: !ref <run_opts[num_workers]>
+  pin_memory: True
+  buckets_in_sec: [20, 25, 30]
+  use_dynamic_batch: False
+  include_intro: True
+  max_seg_per_track: 3
+  use_pipe: False
+  resampled: False
+  shardshuffle: True
+
+################################################################################
+##########                      MODEL CONFIGURATION                   ##########
+################################################################################
+
+model_params:
+  n_layers: 5                # number of layers for specTNT
+  spec_dim: 96               # number of spectral dimension for specTNT
+  spec_heads: 4              # number of spectral head for specTNT
+  temporal_dim: 128          # number of temporal dimension for specTNT
+  temporal_heads: 8
+  resnet_pools: [[2, 3], [2, 1], [1, 2]]
+  chord_pool: [2]
+
+model: !apply:recipes.structure.models.get_models.get_specTNT
+  sample_len: !ref <audio[sample_len]>
+  sample_rate: !ref <audio[sampling_rate]>
+  resnet_pool_sizes: !ref <model_params[resnet_pools]>
+  n_fft: !ref <audio[n_fft]>
+  depth: !ref <model_params[n_layers]>
+  temporal_dim: !ref <model_params[temporal_dim]>
+  temporal_heads: !ref <model_params[temporal_heads]>
+  spec_dim: !ref <model_params[spec_dim]>
+  spec_heads: !ref <model_params[spec_heads]>
+  n_boundary: !ref <labels[n_boundary]>
+  n_function: !ref <labels[n_function]>
+
+pl_module: !new:recipes.structure.pl_modules.pl_module.LitStructure
+  model: !ref <model>
+  lr: !ref <train_params[learning_rate]>
+  scheduler_patience: !ref <train_params[scheduler_patience]>
+  scheduler_decay_factor: !ref <train_params[scheduler_decay_factor]>
+  n_top_bound: !ref <Postprosessing[n_top_bound]>
+  pretrain_path: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/structure_epoch=185-step=93000.ckpt"
+
+################################################################################
+##########                     TRAINER CONFIGURATION                  ##########
+################################################################################
+prediction_writer: !new:recipes.structure.pl_modules.callbacks.prediction_writer.StructureSequenceWriter
+    output_dir: null
+
+callbacks:
+  - !ref <prediction_writer>
+
+trainer: !new:pytorch_lightning.Trainer
+  fast_dev_run: !ref <run_opts[fast_dev_run]>
+  num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+  strategy: "ddp_find_unused_parameters_true"
+  accelerator: !ref <run_opts[accelerator]>
+  devices: !ref <train_params[devices]>
+  precision: !ref <run_opts[precision]>
+  callbacks: !ref <callbacks>

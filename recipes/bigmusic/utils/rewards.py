@@ -175,5 +175,69 @@ def chord_reward(
         for key in chord_lm_keys[i]:
             score = chord_lms[key].score(chord_seq_str, eos=False)
             scores.append(10.0 ** (score / len(chord_seq)))
-        chord_rewards[i] = np.mean(scores)
+        # Cap score at 0.25 to prevent very common chords from dominating
+        # Apply a smoothing function to increase score gap between chords
+        chord_rewards[i] = min(np.mean(scores) * 4, 1.0) ** 1.5
     return chord_rewards
+
+
+def dedup(lst):
+    lst_dedup = []
+    for x in lst:
+        if len(lst_dedup) == 0 or lst_dedup[-1] != x:
+            lst_dedup.append(x)
+    return lst_dedup
+
+
+STRUCTURE_TO_SCORE = {
+    "intro-verse": 0.5,
+    "intro-chorus": 0.5,
+    "verse": 0.5,
+    "chorus": 0.5,
+    "verse-chorus": 1.0,
+    "bridge-chorus": 1.0,
+    "chorus-verse": 1.0,
+}
+
+
+@torch.no_grad()
+def structure_reward(
+    structure_model,
+    sampled_audio,
+    sample_rate,
+    device,
+):
+    if sample_rate != structure_model._sampling_rate:
+        resampled_audio = resample(
+            sampled_audio,
+            orig_freq=sample_rate,
+            new_freq=structure_model._sampling_rate,
+        )
+    else:
+        resampled_audio = sampled_audio
+    all_structure_labels = structure_model.predict_step(
+        batch=(resampled_audio,),
+        batch_idx=0,
+    )
+    filtered_structure_labels = []
+    for structure_labels in all_structure_labels:
+        structure_labels = [x for x in structure_labels if x["funct_name"] != "silence"]
+        durations = {}
+        total_dur = 0.0
+        for x in structure_labels:
+            if x["funct_name"] not in durations:
+                durations[x["funct_name"]] = 0.0
+            duration = x["interval"][1] - x["interval"][0]
+            durations[x["funct_name"]] += duration
+            total_dur += duration
+        structure_labels = dedup([x["funct_name"] for x in structure_labels])
+        # Only keep sections whose length is at least 30% of the total duration
+        # TODO: don't hardcode this threshold, make it configurable
+        structure_labels = [x for x in structure_labels if durations[x] / total_dur >= 0.3]
+        filtered_structure_labels.append(structure_labels)
+    structure_rewards = torch.zeros(sampled_audio.size(0)).to(device)
+    for i, structure_labels in enumerate(filtered_structure_labels):
+        structure_str = "-".join(structure_labels)
+        if structure_str in STRUCTURE_TO_SCORE:
+            structure_rewards[i] = STRUCTURE_TO_SCORE[structure_str]
+    return structure_rewards

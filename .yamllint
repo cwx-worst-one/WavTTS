@@ -30,3 +30,4 @@ ignore: |
   recipes/umm
   recipes/beat
   recipes/chord
+  recipes/structure

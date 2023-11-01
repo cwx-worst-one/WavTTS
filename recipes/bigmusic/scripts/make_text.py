@@ -1,25 +1,24 @@
 import argparse
+import json
 import textwrap
 
 
 def parse_data(input_fname):
-    lyrics = []
-    prompt = None
-    wer = None
-    in_lyrics = False
-    with open(args.input_fname, "r") as f:
-        for line in f:
-            if line.startswith("Lyrics:"):
-                in_lyrics = True
-                line = line.replace("Lyrics:", "").strip()
-            if line.startswith("Prompt:"):
-                in_lyrics = False
-                prompt = line.replace("Prompt:", "").strip()
-            if line.startswith("WER:"):
-                wer = 100 * float(line.replace("WER:", "").strip())
-            if in_lyrics:
-                lyrics.append(line.strip())
-    return lyrics, prompt, wer
+    data = json.load(open(input_fname, "r"))
+    lyrics = data["lyrics"].split("\n")
+    ly_list = []
+    for x in lyrics:
+        for y in textwrap.wrap(x, 42, break_long_words=False):
+            ly_list.append(y)
+            ly_list.append("\n")
+        ly_list.append("\n")
+    lyrics = "".join(ly_list)
+    style_text = '\n'.join(
+        textwrap.wrap(
+            data["style_text"], 42, break_long_words=False
+        )
+    )
+    return lyrics, style_text, data["index"]["absolute_idx"]
 
 
 if __name__ == "__main__":
@@ -29,11 +28,8 @@ if __name__ == "__main__":
     parser.add_argument("output_fname")
     args = parser.parse_args()
 
-    lyrics, prompt, wer = parse_data(args.input_fname)
-    ly_list = []
-    for x in lyrics:
-        ly_list.extend(textwrap.wrap(x, 40, break_long_words=False))
-    ly_str = "\n".join(ly_list)
+    lyrics, prompt, idx = parse_data(args.input_fname)
+    # lyrics is already wrapped
     with open(args.output_fname, "w") as fw:
-        to_write = f"{args.title} (CER={wer:.2f})\n\n" + f"Prompt: {prompt}\n\n" + f"{ly_str}"
+        to_write = f"{args.title}\n{idx}: {prompt}\n\n\n" + f"{lyrics}"
         fw.write(f"{to_write}\n")

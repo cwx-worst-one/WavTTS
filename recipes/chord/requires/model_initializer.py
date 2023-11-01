@@ -67,8 +67,7 @@ def init_chord(hpath, local_rank, cache_dir=None):
             output_names=["chord_root", "chord_triad"],
             stages=[perceiver_model_stage, chord_classifier_stage],
         )
-        chord_model = LitChord.load_from_checkpoint(
-            local_path,
+        chord_model = LitChord(
             model=model,
             lr=0.001,
             scheduler_patience=10,
@@ -78,7 +77,7 @@ def init_chord(hpath, local_rank, cache_dir=None):
             sample_len=12.0,
             chord_pool=[2],
             resnet_pools=[[2, 2], [2, 1]],
-            strict=False,
+            pretrain_path=local_path,
         ).to(device).eval()
         return {"chord": chord_model}
 

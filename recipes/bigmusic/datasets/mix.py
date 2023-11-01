@@ -764,6 +764,9 @@ class BillboardDataset(WebPipeline):
 
                 style_metadata = select_tag_metadata_from_timestamps(item["__index_data__"], start, end)
 
+                # skip if lyrics is too short
+                if len(phoneme_tokens) < 5:
+                    continue
                 # skip when no genre detected
                 if len(style_metadata["genres"]) == 0:
                     continue

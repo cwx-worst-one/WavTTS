@@ -7,6 +7,7 @@ from recipes.bigmusic.utils.rewards import (
     wer_reward,
     chord_reward,
     nonvocal_reward,
+    structure_reward,
 )
 
 
@@ -32,6 +33,8 @@ class Reranker:
         if "style_text" in rewards or "qualitative" in rewards:
             assert "mulan" in self.requires
             assert "mulan_infer_fn" in self.requires
+        if "structure" in rewards:
+            assert "structure" in self.requires
         if "chord" in rewards:
             assert "chord" in self.requires
             assert "chord_lms" in self.requires
@@ -99,6 +102,13 @@ class Reranker:
                 print(f"lyrics: len={len(lyrics_hyp)} (expected {len(sampled_audio)}), content={lyrics_hyp}")
                 return 0
             return nonvocal_reward(lyrics_hyp, device=sampled_audio.device)
+        elif rw_type == "structure":
+            return structure_reward(
+                self.requires["structure"],
+                sampled_audio,
+                sample_rate=extra_params.sample_rate,
+                device=sampled_audio.device,
+            )
         elif rw_type == "chord":
             # TODO: enable genre-specific chord LM
             return chord_reward(

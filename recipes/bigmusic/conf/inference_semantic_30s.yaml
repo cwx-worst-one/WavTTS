@@ -24,6 +24,7 @@ extra_params:
 
     # Used for reranker, only loaded if use_reranker=True
     mulan_ckpt: "/mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=014000-median_rank_1=160-kaggle.ckpt"
+    structure_ckpt: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/structure_epoch=185-step=93000.ckpt"
 
     ar_params:
         coarse_duration: 10
@@ -113,12 +114,16 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                     style_text: 1.0
                     qualitative: 1.0
                     wer: 1.0
+                    #structure: 1.0
                     #chord: 4.0
                 required_modules:
                     mulan:
                         hpath: !ref <extra_params[mulan_ckpt]>
                         initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                             version: "g4"
+                    #structure:
+                    #    hpath: !ref <extra_params[structure_ckpt]>
+                    #    initializer: !name:recipes.structure.requires.model_initializer.init_structure
                     #chord:
                     #    hpath: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/semi-sup-chord_epoch=103-step=56300.ckpt"
                     #    initializer: !name:recipes.chord.requires.model_initializer.init_chord

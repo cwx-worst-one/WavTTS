@@ -17,9 +17,10 @@ accum=1
 readarray fnames < $file_list
 for fname in "${fnames[@]}"; do
     basename=`echo "$fname" | sed -e "s/.generated.wav//"`
+    basename1=`echo "$basename" | sed -e "s/\//_/g"`
 
-    text="$output_dir/${basename}.txt"
-    video="$output_dir/${basename}.mp4"
+    text="$output_dir/${basename1}.txt"
+    video="$output_dir/${basename1}.mp4"
     python3 /root/workspace/samantha/recipes/bigmusic/scripts/make_text_highlight.py $input_dir/${basename}.metadata.json $text
     color=${arr[$((${accum}%3))]}
     ((accum += 1))
