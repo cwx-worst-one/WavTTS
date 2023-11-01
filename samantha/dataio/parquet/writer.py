@@ -14,16 +14,26 @@ PLACEHOLDER = "__placeholder__"
 class ParquetWriter:
     r"""A writer that writes data to a parquet file."""
 
-    def __init__(self, filename, row_group_size=64, need_row_group_no=False):
+    def __init__(
+        self,
+        filename,
+        row_group_size=64,
+        need_row_group_no=False,
+        filesystem=None,
+        verbose=False,
+    ):
         self.filename = filename
         self.writer = None
         self.scheme = None
         self.total = 0
-        self.fs = get_filesystem(self.filename)
+        self.fs = filesystem or get_filesystem(self.filename)
+        self.verbose = verbose
         self.row_group_size = row_group_size
         self.tb = []
         self.need_row_group_no = need_row_group_no
         self.row_group_no = 0
+        self.count = 0
+        self._tik = time.perf_counter()
 
     def write(self, item):
         r"""Write an item to parquet."""
@@ -48,16 +58,34 @@ class ParquetWriter:
             item.update({"row_group_no": self.row_group_no})
         return item
 
-    def close(self):
-        r"""Close the stream."""
+    def write_last(self):
+        if self.writer is not None and self.tb:
+            tb = pyarrow.Table.from_pylist(self.tb)
+            self.writer.write_table(tb)
+            self.count += len(self.tb)
+            self.total += len(self.tb)
+            self.tb = []
+            return self.total
+
+    def finish(self):
         if self.writer is not None:
-            if self.tb:
-                tb = pyarrow.Table.from_pylist(self.tb)
-                self.writer.write_table(tb)
-                self.total += len(self.tb)
-                self.tb = []
             self.writer.close()
             self.writer = None
+
+        if self.verbose and self.filename and self.fs.exists(self.filename):
+            elapsed = time.perf_counter() - self._tik
+            size = self.fs.size(self.filename)
+            tp = (size / (1 << 30)) / elapsed
+            size = size / (1 << 30)
+            logger.info(
+                f"{self.filename}|grp_no={self.row_group_no}{size:4.1f}GB|{self.count / 1024:.0f}k|"  # noqa
+                f"{self.total / 1024:.0f}k|{elapsed / 3600:.4f}h|{tp:.4f}GB/s|"
+            )
+
+    def close(self):
+        r"""Close the stream."""
+        self.write_last()
+        self.finish()
         return self.total
 
     def __enter__(self):

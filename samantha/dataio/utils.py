@@ -177,7 +177,9 @@ def parse_data_urls(data_id=None, data_urls=None, use_url_lst=False):
     return __expand_paths(data_urls)
 
 
-def parquet_reader(url, fs=None, columns=None, sample_limit=None, meta=None):
+def parquet_reader(
+    url, fs=None, columns=None, sample_limit=None, meta=None, need_group_no=True
+):
     if fs is None:
         fs = get_filesystem(url)
 
@@ -187,7 +189,7 @@ def parquet_reader(url, fs=None, columns=None, sample_limit=None, meta=None):
     # meta: {url: [num_row_group, [unvisit_row_group_list]]}
     # could be empty at beginning
     if meta is None:
-        raise ValueError("user must provide meta")
+        meta = {}
 
     # cache num_row_group to save io
     if url not in meta:
@@ -201,7 +203,10 @@ def parquet_reader(url, fs=None, columns=None, sample_limit=None, meta=None):
             group_datas = group_data.to_pandas()
             for row in group_datas.iterrows():
                 item = row[1].to_dict()
-                yield row_group, item
+                if need_group_no:
+                    yield row_group, item
+                else:
+                    yield item
     else:
         if 0 < sample_limit <= 1:
             sample_limit = int(meta[url][0][1] * sample_limit)
@@ -218,7 +223,10 @@ def parquet_reader(url, fs=None, columns=None, sample_limit=None, meta=None):
                 sample_limit -= 1
                 if sample_limit <= 0:
                     break
-                yield row_group, item
+                if need_group_no:
+                    yield row_group, item
+                else:
+                    yield item
     parquet_file.close()
     stream.close()
 

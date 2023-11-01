@@ -5,6 +5,7 @@ import time
 from typing import Any, Callable, List, Optional, Tuple
 
 import webdataset as wds
+from lightning_fabric.utilities.cloud_io import get_filesystem
 from pyarrow.fs import FileSystem
 
 from samantha.utils.hdfs_helper import ishdfs
@@ -189,3 +190,82 @@ class IndexShardWriter(ShardWriter):
         key = obj["__key__"].strip()
         self.index.append((key, index))
         return super().write(obj)
+
+
+class Writer:
+    r"""Like webdataset.ShardWriter but support HDFS too.
+
+    Create a Shard Writer.
+
+    Args:
+        pattern (str): output file pattern, either be local pattern or
+            remote hdfs pattern. eg.: ``hdfs://haruna/<path>/%05d.tar``.
+        maxcount (int): maximum number of records per shard.
+        maxsize (float): maximum size of each shard.
+        post (Callable): post process function to each shard file.
+        start_shard (int): start number of shard.
+        **kw: other options passed to :class:`TarWriter <wds.TarWriter>`.
+    """
+
+    def __init__(self, output_filename: str, filesystem=None, **kw):
+        self.kw = kw
+        self.tarstream = None
+        self.stream = None
+        self.total = 0
+        self.count = 0
+        self.size = 0
+        self.fname = output_filename
+        self._tik = time.perf_counter()
+        self._total_size = 0
+        if filesystem is None:
+            self.fs = get_filesystem(output_filename)
+        else:
+            self.fs = filesystem
+        self.stream = self.fs.open(output_filename, mode="wb")
+        self.tarstream = wds.TarWriter(self.stream, **self.kw)
+
+    def write(self, obj: Any):
+        r"""Write a sample.
+
+        Args:
+            obj (Any): sample to be written
+        """
+        size = self.tarstream.write(obj)
+        self.count += 1
+        self.total += 1
+        self.size += size
+
+    def finish(self):
+        """Finish all writing (use close instead)."""
+
+        if self.fname and self.fs.exists(self.fname):
+            elapsed = time.perf_counter() - self._tik
+            self._total_size += self.size
+            tp = (self._total_size / (1 << 30)) / elapsed
+            size = self.size / (1 << 30)
+            logger.info(
+                f"{self.fname}|{size:4.1f}GB|{self.count / 1024:.0f}k|"
+                f"{self.total / 1024:.0f}k|{elapsed / 3600:.4f}h|{tp:.4f}GB/s|"
+            )
+
+        if self.tarstream is not None:
+            self.tarstream.close()
+            assert self.fname is not None
+            self.tarstream = None
+        self.stream.close()
+        self.stream = None
+
+    def close(self):
+        """Close the stream."""
+        self.finish()
+        del self.tarstream
+        del self.count
+        del self.size
+
+    def __enter__(self):
+        """Enter context."""
+        return self
+
+    def __exit__(self, *args, **kw):
+        """Exit context."""
+        self.close()

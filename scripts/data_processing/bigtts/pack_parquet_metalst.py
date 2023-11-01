@@ -14,6 +14,7 @@ import numpy as np
 from scipy.io.wavfile import write
 
 from samantha.dataio.parquet.writer import ShardWriter
+from samantha.utils.watch import elapsed_time
 
 # for randomizing manager server port
 multiprocessing.util.abstract_sockets_supported = False
@@ -43,6 +44,8 @@ def process_one(q1, q2, min_dur, max_dur, sr):
         key = f"{data['speaker_id']}-{data['uttid']}"
         try:
             wav = ffmpeg_read_audio(audio, sr)
+            if wav.size == 0:
+                continue
         except Exception as e:
             logger.warning(f"ffmpeg error with msg {e}")
             continue
@@ -68,7 +71,7 @@ def process_one(q1, q2, min_dur, max_dur, sr):
                 "uttid": key,
                 "audio": bytes_io.read(),
                 "text": text,
-                "meta": json.dumps(meta),
+                "meta": json.dumps(meta, ensure_ascii=False),
             }
             q2.put((meta["duration"], oitem))
 
@@ -94,19 +97,22 @@ PLACEHOLDER = "__placeholder__"
 
 
 class Consumer:
-    def __init__(self, output_pattern, min_dur, max_dur, verbose=False):
+    def __init__(
+        self, output_pattern, min_dur, max_dur, verbose=False, row_group_size=64
+    ):
         self.min_dur = min_dur
         self.max_dur = max_dur
         self.verbose = verbose
         self._prefix = output_pattern.split(PLACEHOLDER)[0]
         self.data_writer = ShardWriter(
-            output_pattern=output_pattern.replace(PLACEHOLDER, "data"), maxcount=2048
+            output_pattern=output_pattern.replace(PLACEHOLDER, "data"),
+            maxcount=2048,
+            row_group_size=row_group_size,
         )
         self.meta_writer = ShardWriter(
-            output_pattern=output_pattern.replace(PLACEHOLDER, "index_1").replace(
-                ".parquet", ".index_1.parquet"
-            ),
+            output_pattern=output_pattern.replace(PLACEHOLDER, "index_1"),
             maxcount=2048,
+            row_group_size=row_group_size,
             need_row_group_no=True,
         )
 
@@ -132,75 +138,78 @@ class Consumer:
         return f"Consumer(min_dur={self.min_dur}, max_dur={self.max_dur})"
 
 
+@elapsed_time
 def main(args, M):
 
     part = args.base_part + int(os.getenv("ARNOLD_ID", 0))
+    for idx, meta_file in enumerate(args.meta_files):
+        part_name = f"{part+idx:05d}"
+        if args.part_names is not None:
+            assert len(args.part_names) == len(args.meta_files)
+            part_name = args.part_names[idx]
+        minumal_dur, maximal_dur = sys.maxsize, -1
+        consumers = []
+        for basename in args.basenames:
+            duration = None
+            for item in basename.split("_"):
+                if item.startswith("D"):
+                    duration = item[1:]
+            if duration is None:
+                min_dur, max_dur = -1, 10000000
+            else:
+                assert "-" in duration
+                min_dur, max_dur = [int(e) for e in duration.split("_")]
+            minumal_dur = min(min_dur, minumal_dur)
+            maximal_dur = max(max_dur, maximal_dur)
+            output_pattern = f"{args.basedir}/{basename}/{PLACEHOLDER}/part={part_name}/shard-%05d.parquet"  # noqa
+            consumers.append(
+                Consumer(
+                    output_pattern=output_pattern,
+                    min_dur=min_dur,
+                    max_dur=max_dur,
+                    row_group_size=args.row_group_size,
+                )
+            )
 
-    minumal_dur, maximal_dur = sys.maxsize, -1
-    consumers = []
-    for basename in args.basenames:
-        duration = None
-        for item in basename.split("_"):
-            if item.startswith("D"):
-                duration = item[1:]
-        if duration is None:
-            min_dur, max_dur = -1, 10000000
-        else:
-            assert "-" in duration
-            min_dur, max_dur = [int(e) for e in duration.split("_")]
-        minumal_dur = min(min_dur, minumal_dur)
-        maximal_dur = max(max_dur, maximal_dur)
-        output_pattern = f"{args.basedir}/ds={basename}/{PLACEHOLDER}/part={part:05d}/shard-%05d.parquet"  # noqa
-        consumers.append(
-            Consumer(output_pattern=output_pattern, min_dur=min_dur, max_dur=max_dur)
-        )
+        q1 = M.Queue(5120)
+        q2 = M.Queue(5120)
 
-    q1 = M.Queue(5120)
-    q2 = M.Queue(5120)
+        r_pool = Pool(args.num_reader)
 
-    r_pool = Pool(args.num_reader)
-    if args.meta_file is not None:
-        meta_file = args.meta_file
-    elif args.meta_dir is not None:
-        all_metas = os.listdir(args.meta_dir)
-        meta_file = os.path.join(args.meta_dir, all_metas[part], "wds2meta.json")
-    else:
-        raise ValueError(f"No meta provided, args={args}")
+        with open(meta_file, "r", encoding="utf-8") as fi:
+            for line in fi:
+                key, text, wav_path, lab_path = line.strip().split("|")
 
-    with open(meta_file, "r", encoding="utf-8") as fi:
-        for line in fi:
-            key, text, wav_path, lab_path = line.strip().split("|")
+                r_pool.apply_async(func=r, args=(q1, key, text, wav_path, lab_path))
 
-            r_pool.apply_async(func=r, args=(q1, key, text, wav_path, lab_path))
+        num_processor = args.num_processor
+        process_pool = Pool(num_processor)
+        for _ in range(num_processor):
+            process_pool.apply_async(
+                func=process_one, args=(q1, q2, minumal_dur, maximal_dur, 24_000)
+            )
 
-    num_processor = args.num_processor
-    process_pool = Pool(num_processor)
-    for _ in range(num_processor):
-        process_pool.apply_async(
-            func=process_one, args=(q1, q2, minumal_dur, maximal_dur, 24_000)
-        )
+        while True:
+            try:
+                item = q2.get(timeout=20)
+                if item is None:
+                    continue
+                for consumer in consumers:
+                    consumer.write(item)
+            except Exception as e:
+                logger.warning(f"finished with exception [{e}]")
+                break
 
-    while True:
-        try:
-            item = q2.get(timeout=60)
-            if item is None:
-                continue
-            for consumer in consumers:
-                consumer.write(item)
-        except Exception as e:
-            logger.warning(f"finished with exception [{e}]")
-            break
+        for _ in range(num_processor):
+            q1.put(None)
 
-    for _ in range(num_processor):
-        q1.put(None)
+        process_pool.close()
+        r_pool.close()
+        r_pool.join()
+        process_pool.join()
 
-    process_pool.close()
-    r_pool.close()
-    r_pool.join()
-    process_pool.join()
-
-    for consumer in consumers:
-        consumer.close()
+        for consumer in consumers:
+            consumer.close()
 
 
 if __name__ == "__main__":
@@ -218,12 +227,12 @@ if __name__ == "__main__":
         default=uuid.uuid4().hex,
         type=str,
         nargs="+",
-        help="basename: tts_语言_S来源_Ffilter版本_D时长_P批次",
+        help="basename: tts_L语言_S来源_Ffilter版本_D时长_P批次",
     )
+    parser.add_argument("--part_names", type=str, nargs="+", default=None)
 
     parser.add_argument("--base_part", default=0, type=int, help="base part")
-    parser.add_argument("--meta_file", default=None, type=str)
-    parser.add_argument("--meta_dir", default=None, type=str)
+    parser.add_argument("--meta_files", default=None, type=str, nargs="+")
     parser.add_argument(
         "--num_reader",
         default=10,
@@ -236,10 +245,7 @@ if __name__ == "__main__":
         type=int,
         help="number of process to processing samples",
     )
+    parser.add_argument("--row_group_size", default=64, type=int)
     args = parser.parse_args()
-    logger.info(f"Launching with {args=}")
-
-    st = time.time()
     with Manager() as M:
         main(args, M)
-    logger.info(f"Time Cost(gen_wav): {time.time() - st:.2f}s")

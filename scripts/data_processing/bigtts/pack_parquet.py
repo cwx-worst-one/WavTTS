@@ -16,6 +16,7 @@ from tqdm import tqdm
 
 from samantha.dataio.parquet.writer import ShardWriter
 from samantha.dataio.webdataset.ra_wds import WebDataset
+from samantha.utils.watch import elapsed_time
 
 # for randomizing manager server port
 multiprocessing.util.abstract_sockets_supported = False
@@ -77,7 +78,7 @@ def process_one(q1, q2, min_dur, max_dur, sr):
                     "uttid": idx,
                     "audio": bytes_io.read(),
                     "text": text,
-                    "meta": json.dumps(meta),
+                    "meta": json.dumps(meta, ensure_ascii=False),
                 }
                 q2.put((et - st, oitem))
 
@@ -99,6 +100,7 @@ def r(q1, wds_path, json_path):
 PLACEHOLDER = "__placeholder__"
 
 
+@elapsed_time
 class Consumer:
     def __init__(self, output_pattern, min_dur, max_dur, verbose=False):
         self.min_dur = min_dur
@@ -157,7 +159,7 @@ def main(args, M):
         minumal_dur = min(min_dur, minumal_dur)
         maximal_dur = max(max_dur, maximal_dur)
         output_pattern = (
-            f"{args.basedir}/ds={basename}/{PLACEHOLDER}/"
+            f"{args.basedir}/{basename}/{PLACEHOLDER}/"
             f"part={part:05d}/shard-%05d.parquet"
         )
         consumers.append(
@@ -245,8 +247,6 @@ if __name__ == "__main__":
         help="number of process to processing samples",
     )
     args = parser.parse_args()
-    logger.info(f"Launching with {args=}")
-    st = time.time()
+
     with Manager() as M:
         main(args, M)
-    logger.info(f"Time Cost(gen_wav): {time.time() - st:.2f}s")

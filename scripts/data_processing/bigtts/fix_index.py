@@ -40,18 +40,19 @@ def index_parquet_writer(q, fs):
 def read(q, url, PREFIX, fs, partitions, index_version):
     index = []
     path = url.replace(
-        f"/data/{partitions[0]}=", f"/index_{index_version}/{partitions[0]}="
-    ).replace(".parquet", f".index_{index_version}.parquet")
+        f"/index_{index_version}/{partitions[0]}=",
+        f"/index_{index_version}_new/{partitions[0]}=",
+    )
     for group_no, item in parquet_reader(url, fs=fs):
-        duration = len(item["audio"]) / 2 / 24000
         meta = json.loads(item["meta"])
-        meta.update({"duration": duration})
+        while not isinstance(meta, dict):
+            meta = json.loads(meta)
         meta_item = {
             "uttid": item["uttid"],
             "text": item["text"],
             "meta": json.dumps(meta),
             "row_group_no": group_no,
-            "data_file": url.replace(PREFIX, "/".join([".."] * (1 + len(partitions)))),
+            "data_file": "../../" + "/".join(item["data_file"].split("/")[-3:]),
         }
         index.append(meta_item)
     q.put((index, path))
@@ -68,22 +69,26 @@ def get_index_version(path, fs):
 
 def main(args):
 
-    ROOT_PATH = get_dataset_info(args.dataset_id)
+    ROOT_PATH = args.root_path
+    if ROOT_PATH is None:
+        ROOT_PATH = get_dataset_info(args.dataset_id)
     filesystem = get_filesystem(ROOT_PATH)
+    if filesystem.exists(f"{ROOT_PATH}/index_{args.index_version}_bak"):
+        return
     partitions, suffix = get_partition(ROOT_PATH, filesystem)
-    new_version = get_index_version(ROOT_PATH, filesystem) + 1
 
-    url_pattern = f"{ROOT_PATH}/data/{'/'.join(['*'] * len(partitions))}/*.{suffix}"
-    logger.info(f"{url_pattern=}, {new_version=}")
+    url_pattern = f"{ROOT_PATH}/index_{args.index_version}/{'/'.join(['*'] * len(partitions))}/*.{suffix}"
+    logger.info(f"{url_pattern=}, {args.index_version=}")
     urls = filesystem.glob(url_pattern)
+    logger.info(f"{len(urls)=}")
     r_pool = Pool(args.num_reader)
     w_pool = Pool(args.num_writer)
 
-    q = Manager().Queue(10240)
+    q = Manager().Queue(128)
     for url in urls:
         r_pool.apply_async(
             func=read,
-            args=(q, url, ROOT_PATH, filesystem, partitions, new_version),
+            args=(q, url, ROOT_PATH, filesystem, partitions, args.index_version),
             error_callback=lambda x: logger.error(x),
         )
     for _ in range(args.num_writer):
@@ -100,18 +105,22 @@ def main(args):
 
     w_pool.close()
     w_pool.join()
-
-    easycycle.register_dataset_version(
-        dataset_id=args.dataset_id,
-        version_num=new_version,
-        creator_username="wangxin.colin",
+    filesystem.mv(
+        f"{ROOT_PATH}/index_{args.index_version}",
+        f"{ROOT_PATH}/index_{args.index_version}_bak",
+    )
+    filesystem.mv(
+        f"{ROOT_PATH}/index_{args.index_version}_new",
+        f"{ROOT_PATH}/index_{args.index_version}",
     )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_id", type=str, required=True)
+    parser.add_argument("--dataset_id", type=str, default=None)
+    parser.add_argument("--root_path", type=str, default=None)
     parser.add_argument("--num_reader", type=int, default=10)
     parser.add_argument("--num_writer", type=int, default=10)
+    parser.add_argument("--index_version", type=int, default=1)
     args = parser.parse_args()
     main(args)

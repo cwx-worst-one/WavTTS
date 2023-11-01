@@ -1,5 +1,5 @@
-import os
 import multiprocessing as mp
+import os
 
 
 def count_one(idx):

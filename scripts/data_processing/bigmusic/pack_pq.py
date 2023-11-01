@@ -1,14 +1,14 @@
 import argparse
-from io import BytesIO
 import json
 import multiprocessing as mp
 import os
+from io import BytesIO
 
 from scipy.io.wavfile import write
 from tqdm import tqdm
 
-from samantha.dataio.webdataset.extension import IndexedWebDataset
 from samantha.dataio.parquet.writer import IndexShardWriter
+from samantha.dataio.webdataset.extension import IndexedWebDataset
 
 
 def worker(q, args, part):
@@ -24,14 +24,18 @@ def worker(q, args, part):
             npy = sample["audio.npy"]
             uttid = sample["__key__"]
             meta = sample["__index_data__"]
-            duration = len(npy) / 24000 # seconds
+            duration = len(npy) / 24000  # seconds
             meta["duration"] = duration
             # convert to wav
             io = BytesIO()
             write(io, 24000, npy)
             wav = io.getvalue()
             data_dict = {"uttid": uttid, "audio": wav}
-            item_dict = {"uttid": uttid, "meta": json.dumps(meta, ensure_ascii=False), "text": ""}
+            item_dict = {
+                "uttid": uttid,
+                "meta": json.dumps(meta, ensure_ascii=False),
+                "text": "",
+            }
             writer.write(data_dict, item_dict)
             t.update()
     writer.close()

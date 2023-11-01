@@ -1,0 +1,123 @@
+import io
+import os
+import pickle
+
+import torch
+
+from samantha.dataio.parquet import ParquetWriter
+from samantha.utils.hdfs_helper import get
+from scripts.data_processing.audio import (
+    spk_embed_utils,
+    ss_utils,
+    umm_tokenizer,
+    wvae_mel_utils,
+    wvae_utils,
+)
+
+
+class Consumer:
+    def __init__(self, output_url, filesystem, feature_type, target_sample_rate, **kwargs):
+        self.writer = ParquetWriter(output_url, verbose=True, filesystem=filesystem)
+        self.feature_type = feature_type
+        self.feature_name = feature_name_mapping(feature_type)
+        self.target_sample_rate = target_sample_rate
+        self.kwargs = kwargs
+
+    def write(self, uttid, feature, dataset_name):
+        item = {
+            "uttid": uttid,
+            self.feature_name: pickle.dumps(feature),
+            "dataset_name": str(dataset_name),
+        }
+        self.writer.write(item)
+
+    def close(self):
+        self.writer.close()
+
+    def consume(self, uttids, model, batch, device, dataset_name):
+        for uttid, feature in zip(
+            uttids,
+            process_batch(self.feature_type)(
+                model, batch, device, self.target_sample_rate
+            ),
+        ):
+            self.write(uttid=uttid, feature=feature, dataset_name=dataset_name)
+
+    def preprocess(self, audio_bin):
+        return preprocess_audio(self.feature_type)(
+            audio_bin=io.BytesIO(audio_bin), sample_rate=self.target_sample_rate, **self.kwargs
+        )
+
+
+def preprocess_audio(feature_type):
+    if feature_type == "soundstream":
+        return ss_utils.preprocess_audio
+    elif feature_type == "wavevae":
+        return wvae_utils.preprocess_audio
+    elif feature_type == "wavevae_mel":
+        return wvae_mel_utils.preprocess_audio
+    elif feature_type == "speaker_embed":
+        return spk_embed_utils.preprocess_audio
+    elif feature_type == "umm_tokenizer":
+        return umm_tokenizer.preprocess_audio
+    else:
+        raise ValueError(f"{feature_type=} is not support for preprocess_audio.")
+
+
+def process_batch(feature_type):
+    if feature_type == "soundstream":
+        return ss_utils.process_batch
+    elif feature_type == "wavevae":
+        return wvae_utils.process_batch
+    elif feature_type == "wavevae_mel":
+        return wvae_mel_utils.process_batch
+    elif feature_type == "speaker_embed":
+        return spk_embed_utils.process_batch
+    elif feature_type == "umm_tokenizer":
+        return umm_tokenizer.process_batch
+    else:
+        raise ValueError(f"{feature_type=} is not support for process_batch.")
+
+
+def model_path_patten(feature_type, feature_version):
+    if feature_type == "soundstream":
+        return ss_utils.model_path_patten(feature_version)
+    elif feature_type == "wavevae":
+        return wvae_utils.model_path_patten(feature_version)
+    elif feature_type == "wavevae_mel":
+        return wvae_mel_utils.model_path_patten(feature_version)
+    elif feature_type == "speaker_embed":
+        return None
+    elif feature_type == "umm_tokenizer":
+        return umm_tokenizer.model_path_patten(feature_version)
+    else:
+        raise ValueError(f"{feature_type=} is not support for model_path_patten.")
+
+
+def feature_name_mapping(feature_type):
+    if feature_type == "soundstream":
+        return "ss"
+    if feature_type in ["wavevae", "wavevae_mel"]:
+        return "bns"
+    if feature_type == "speaker_embed":
+        return "spk_emb"
+    if feature_type == "umm_tokenizer":
+        return "umm_token"
+
+
+def _load_torch_script_model(model_path, device):
+    if model_path is None:
+        return None
+    local_model_path = os.path.basename(model_path)
+    if os.path.exists(local_model_path):
+        os.remove(local_model_path)
+    get(model_path, local_model_path)
+    model = torch.jit.load(local_model_path).eval().to(device)
+    return model
+
+
+def load_model(feature_type):
+    if feature_type in ["soundstream", "wavevae", "wavevae_mel", "umm_tokenizer"]:
+        return _load_torch_script_model
+    elif feature_type in ["speaker_embed"]:
+        return spk_embed_utils.load_model
