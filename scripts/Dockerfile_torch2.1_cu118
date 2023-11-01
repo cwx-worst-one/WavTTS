@@ -1,10 +1,10 @@
 ARG REGION
 
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u3.cu118 as Aliyun_VA
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u3.cu118 as US-East
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u3.cu118 as US-East-Red
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u3.cu118 as Aliyun_SG
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u3.cu118 as China-North-LF
+FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u4.cu118 as Aliyun_VA
+FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u4.cu118 as US-East
+FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u4.cu118 as US-East-Red
+FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u4.cu118 as Aliyun_SG
+FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u4.cu118 as China-North-LF
 
 ENV LD_LIBRARY_PATH /opt/tiger/native_libhdfs/lib/native:$LD_LIBRARY_PATH
 ENV ARNOLD_HDFS_NATIVE 1
