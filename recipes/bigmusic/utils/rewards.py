@@ -190,10 +190,10 @@ def dedup(lst):
 
 
 STRUCTURE_TO_SCORE = {
-    "intro-verse": 0.5,
-    "intro-chorus": 0.5,
     "verse": 0.5,
     "chorus": 0.5,
+    "intro-verse": 0.75,
+    "intro-chorus": 0.75,
     "verse-chorus": 1.0,
     "bridge-chorus": 1.0,
     "chorus-verse": 1.0,
