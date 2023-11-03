@@ -4,7 +4,7 @@
 ##########                       BASIC CONFIGURATION                  ##########
 ################################################################################
 
-ckpt_path: 'last'
+ckpt_path: last
 
 seed: 1995
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
@@ -14,7 +14,7 @@ extra_params:
     sample_rate: 24000
     duration: [15, 20, 25, 30]
     lyrics_codebook_size: 400
-    lyrics_max_seq_len: 400
+    lyrics_max_seq_len: null # batching is based off of lyrics + umm lengths. No need to set max length anymore
     semantic_codebook_size: 32_768
     semantic_frame_rate: 25
     mulan_embed_dim: 512
@@ -27,18 +27,18 @@ extra_params:
 run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
-    log_name: semantic_model_dataset_v4_baseline
+    log_name: semantic_model_dataset_v2_baseline
     version: v0
     cache_dir: .module_cache/musiclm
-    precision: "16"
+    precision: "bf16-mixed"
     num_workers: 8
     accelerator: auto
     max_steps: 200000
-    batch_size: 20
-    learning_rate: 4.0e-4
+    batch_size: 12
+    learning_rate: 3.0e-4
     warmup_steps: 2000
-    cycle_steps: 80000
-    weight_decay: 0.01
+    cycle_steps: 60000
+    weight_decay: 0.05
     shuffle_buffer: 0
     gradient_clip_val: 1.0
 
@@ -56,46 +56,26 @@ pl_datamodule: !apply:recipes.bigmusic.datasets.lyrics.LyricsDataModule.from_dat
     pin_memory: True
     dataset_types: !ref <extra_params[dataset_types]>
 
-model_config: !new:transformers.GPT2Config
+model_config: !new:transformers.LlamaConfig
     vocab_size: 1 # placeholder. Embedding table gets removed on load
-    max_position_embeddings: 0
-    use_cache: False
-    n_positions: 0  # No absolute position embedding
-    num_logits: !ref <extra_params[semantic_codebook_size]> + 2 # +2 for EOS
-    n_embd: !ref <extra_params[hidden_size]>
-    n_layer: 24
-    n_head: 12
-    n_inner: 4352
-    use_rms_norm: True
-    activation_function: "swiglu"
-    resid_pdrop: 0.0
-    embd_pdrop: 0.0
-    attn_pdrop: 0.0
-    layer_norm_epsilon: 1e-6
+    hidden_size: !ref <extra_params[hidden_size]>
+    intermediate_size: 4128
+    num_hidden_layers: 24
+    num_attention_heads: 12
+    hidden_act: "silu"
+    max_position_embeddings: 4096 # hardcoded long sequence length for positional encoder
     initializer_range: 0.02
-    rescale_prenorm_residual: False
-    rms_norm: True
-    rotary_emb_fraction: 1.0
-    rotary_emb_interleaved: True
-    rotary_emb_compat: "default" #"byteformer"
-    tie_word_embeddings: False
-    qkv_proj_bias: False
-    out_proj_bias: False
-    mlp_fc1_bias: False
-    mlp_fc2_bias: False
-    use_flash_attn: True
-    fused_bias_fc: True
-    fused_mlp: False
-    fused_dropout_add_ln: True
-    residual_in_fp32: True
+    rms_norm_eps: 1e-6
+    use_cache: False
+    num_logits: !ref <extra_params[semantic_codebook_size]> + 2 # +2 for EOS
 
-model_cls: !name:samantha.models.ctiga.gpt.GPTLMHeadModel
+model_cls: !name:samantha.models.flash_llama.LlamaForCausalLM
     config: !ref <model_config>
 
 optimizer_cls: !name:torch.optim.AdamW
     lr: !ref <run_opts[learning_rate]>
     weight_decay: !ref <run_opts[weight_decay]>
-    betas: [0.9, 0.96]
+    betas: [0.9, 0.98]
     eps: 0.00000001
 
 scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupCosine
@@ -104,7 +84,7 @@ scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupC
     cycle_steps: !ref <run_opts[cycle_steps]>
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
-pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
+pl_module: !new:recipes.bigmusic.lightning.semantic_varlen_modules.SemanticModuleVarlen
     checkpointing: False
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
@@ -142,7 +122,7 @@ callbacks:
       save_last: False
       monitor: val_accu_0
       mode: max
-      filename: "{step:06d}-{tr_loss:.4f}-{val_accu_0:.2f}"
+      filename: "{step:06d}-{train_loss:.4f}-{val_accu_0:.2f}"
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
       save_top_k: 0
       save_last: True
@@ -155,18 +135,10 @@ callbacks:
       save_top_k: 10
       every_n_train_steps: 8000
       mode: max
-      filename: "{step:06d}-{tr_loss:.4f}-{val_loss_0:.4f}"
+      filename: "{step:06d}-{train_loss:.4f}-{val_loss_0:.4f}"
 
 plugins:
     - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
-
-# profiler: !new:pytorch_lightning.profilers.PyTorchProfiler
-#     schedule: !apply:torch.profiler.schedule
-#         wait: 0
-#         warmup: 50
-#         active: 10
-#         repeat: 1
-#         skip_first: 100
 
 trainer: !new:pytorch_lightning.Trainer
     strategy: "ddp_find_unused_parameters_false"
@@ -187,4 +159,3 @@ trainer: !new:pytorch_lightning.Trainer
     num_sanity_val_steps: 0  # skip validation sanity checks so we don't run into hdfs file close errors
     callbacks: !ref <callbacks>
     plugins: !ref <plugins>
-    # profiler: !ref <profiler>

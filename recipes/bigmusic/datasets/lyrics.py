@@ -11,6 +11,7 @@ from recipes.bigmusic.datasets.transforms.lyrics import (
     RandomConditionsTransform,
     AddConditionsTransform,
     RenameAudioKeyTransform,
+    SemanticTokenLengthTransform
 )
 from recipes.bigmusic.datasets.transforms.lyrics_segment import LyricsSegmentTransforms, crop_pad_to_seq_length
 from recipes.musiclm.preprocess import WebDatasetBufferPreprocessor
@@ -28,6 +29,7 @@ from samantha.dataio.batching import BucketBatcher
 from recipes.bigmusic.datasets.index_lists import INDEX
 from samantha.utils.hdfs_tools import hdfs_open, hdfs_loadtxt
 from recipes.datasets.mcc.mix import LibriLightASRDataset, LibriTTSDataset
+from functools import partial
 class LyricsDataset(WebPipeline):
     def __init__(
         self,
@@ -175,14 +177,28 @@ class LyricsBucketBatcher(BucketBatcher):
     def __call__(self, it):
         for item in it:
             batch = self.collate_batch(item)
-            if batch is not None:
+            if batch is not None and len(batch):
                 yield self.collate_fn(batch)
 
-def default_bucket_batcher_fn(sample_rate, sample_duration, batch_size):
+def default_bucket_batcher_length_fn(item, sample_rate=24000, semantic_frame_rate=25):
+    if 'target_tokens_length' in item:
+        target_seq_length = item['target_tokens_length'] # value returned from SemanticTokenLengthTransform
+    else:
+        target_seq_length = int(item['target_audio'].shape[-1] / sample_rate * semantic_frame_rate) # fallback case
+
+    if 'lyrics_tokens_length' in item:
+        input_seq_length = item['lyrics_tokens_length']
+    elif 'lyrics_tokens' in item:
+        input_seq_length = len(item['lyrics_tokens']) # fallback case
+    else:
+        input_seq_length = 0 # instrumental case
+    return target_seq_length + input_seq_length
+
+def default_bucket_batcher_fn(sample_rate, sample_duration, batch_size, semantic_frame_rate=25, lyrics_frame_rate=14):
     sample_duration = sample_duration if isinstance(sample_duration, (list, tuple)) else [sample_duration]
-    buckets_samples = [d*sample_rate for d in sample_duration]
-    length_fn = lambda x: x["target_audio"].shape[-1]
-    return LyricsBucketBatcher(buckets=buckets_samples, batch_size=batch_size, dynamic_batch=False, length_fn=length_fn)
+    buckets_samples = [d * semantic_frame_rate + d * lyrics_frame_rate for d in sample_duration]
+    length_fn = partial(default_bucket_batcher_length_fn, sample_rate=sample_rate, semantic_frame_rate=semantic_frame_rate)
+    return LyricsBucketBatcher(buckets=buckets_samples, maximum_bucket_size=buckets_samples[-1] * batch_size, dynamic_batch=True, length_fn=length_fn)
     
 def default_batch_fn(batch_size, collation_fn=dictionary_collate):
     return wds.batched(batch_size, collation_fn=collation_fn)
@@ -373,7 +389,7 @@ class DefaultDatasets():
             ds = DefaultDatasets.Basic.mcc60m_lossless_dataset(sample_rate, sample_duration=sample_duration, index_list=index_list, infer_weights=infer_weights)
             ds_batched = transform_dataset(
                 dataset=ds,
-                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len, enable_punctuation=enable_punctuation), MCCMetadataTextTransform("Vocal")],
+                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len, enable_punctuation=enable_punctuation), SemanticTokenLengthTransform(), MCCMetadataTextTransform("Vocal")],
                 batch_transforms=batch_transforms,
                 batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                 shuffle_buffer_size=shuffle_buffer_size
@@ -393,7 +409,7 @@ class DefaultDatasets():
         ):
             instrumental_ds_batched = transform_dataset(
                 dataset=DefaultDatasets.Basic.mcc40m_lossless_dataset(sample_rate, sample_duration, index_list),
-                segment_transforms=[RenameAudioKeyTransform(), MCCMetadataTextTransform("Instrumental")],
+                segment_transforms=[RenameAudioKeyTransform(), SemanticTokenLengthTransform(), MCCMetadataTextTransform("Instrumental")],
                 batch_transforms=[AddConditionsTransform(style_conditions)],
                 batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                 shuffle_buffer_size=shuffle_buffer_size
@@ -411,7 +427,7 @@ class DefaultDatasets():
         ):
             speech_ds_batched = transform_dataset(
                 dataset=DefaultDatasets.Basic.speech_dataset(sample_rate=sample_rate, sample_duration=sample_duration),
-                segment_transforms=[RenameAudioKeyTransform(), LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len, enable_punctuation=enable_punctuation), MCCMetadataTextTransform("Speech")],
+                segment_transforms=[RenameAudioKeyTransform(), SemanticTokenLengthTransform(), LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len, enable_punctuation=enable_punctuation), MCCMetadataTextTransform("Speech")],
                 batch_transforms=[AddConditionsTransform(style_conditions)],
                 batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                 shuffle_buffer_size=shuffle_buffer_size
@@ -422,7 +438,7 @@ class DefaultDatasets():
         def default_validation_dataset(sample_rate, sample_duration, batch_size, lyrics_max_seq_len, url2index, style_conditions="style_text,lyrics_tokens", enable_punctuation=False):
             return transform_dataset(
                 dataset=DefaultDatasets.Basic.mcc_validation_dataset(sample_rate, sample_duration, url2index=url2index),
-                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len, enable_punctuation=enable_punctuation), MCCMetadataTextTransform("Vocal")],
+                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len, enable_punctuation=enable_punctuation), SemanticTokenLengthTransform(), MCCMetadataTextTransform("Vocal")],
                 batch_transforms=[AddConditionsTransform(style_conditions)],
                 batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                 shuffle_buffer_size=None
@@ -455,11 +471,47 @@ DATASET_CONFIGS = {
             "infer_weights": True
         }
     },
-    "mcc60m_2M_vocal_style_text": {
+    "mcc60m_vocalB_style_mixed_text_audio": {
+        "init_fn": DefaultDatasets.Batched.default_batched_vocal_dataset,
+        "extra_args": {
+            "index_list": INDEX["US"]["MCCVocalB"],
+            "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
+            "enable_punctuation": True,
+            "infer_weights": True
+        }
+    },
+    "mcc60m_2M_vocal_mixed_text_audio": {
         "init_fn": DefaultDatasets.Batched.default_batched_vocal_dataset,
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalB_2M"],
-            "style_conditions": "style_text,lyrics_tokens",
+            "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
+            "enable_punctuation": True,
+            "infer_weights": False # already balanced
+        }
+    },
+    "mcc60m_1M_vocal_mixed_text_audio": {
+        "init_fn": DefaultDatasets.Batched.default_batched_vocal_dataset,
+        "extra_args": {
+            "index_list": INDEX["US"]["MCCVocalB_1M"],
+            "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
+            "enable_punctuation": True,
+            "infer_weights": False # already balanced
+        }
+    },
+    "mcc60m_500k_vocal_mixed_text_audio": {
+        "init_fn": DefaultDatasets.Batched.default_batched_vocal_dataset,
+        "extra_args": {
+            "index_list": INDEX["US"]["MCCVocalB_500k"],
+            "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
+            "enable_punctuation": True,
+            "infer_weights": False # already balanced
+        }
+    },
+    "mcc60m_300k_vocal_mixed_text_audio": {
+        "init_fn": DefaultDatasets.Batched.default_batched_vocal_dataset,
+        "extra_args": {
+            "index_list": INDEX["US"]["MCCVocalB_300k"],
+            "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
             "enable_punctuation": True,
             "infer_weights": False # already balanced
         }
@@ -470,15 +522,6 @@ DATASET_CONFIGS = {
             "index_list": INDEX["US"]["MCCVocalB_300k"],
             "style_conditions": "style_text,lyrics_tokens",
             "enable_punctuation": True,
-            "infer_weights": False # already balanced
-        }
-    },
-    "mcc60m_300k_vocal_style_text_no_punctuation": {
-        "init_fn": DefaultDatasets.Batched.default_batched_vocal_dataset,
-        "extra_args": {
-            "index_list": INDEX["US"]["MCCVocalB_300k"],
-            "style_conditions": "style_text,lyrics_tokens",
-            "enable_punctuation": False,
             "infer_weights": False # already balanced
         }
     },
@@ -496,6 +539,15 @@ DATASET_CONFIGS = {
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocal"],
             "style_conditions": ["style_tag,lyrics_tokens","style_audio,lyrics_tokens"],
+            "enable_punctuation": True,
+            "infer_weights": True
+        }
+    },
+    "mcc60m_vocal_style_mixed_text_tag_audio": {
+        "init_fn": DefaultDatasets.Batched.default_batched_vocal_dataset,
+        "extra_args": {
+            "index_list": INDEX["US"]["MCCVocal"],
+            "style_conditions": ["style_text,lyrics_tokens","style_tag,lyrics_tokens","style_audio,lyrics_tokens"],
             "enable_punctuation": True,
             "infer_weights": True
         }

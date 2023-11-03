@@ -13,6 +13,7 @@ from scipy.io.wavfile import write
 from hyperpyyaml import load_hyperpyyaml
 import torchaudio
 from samantha.utils.hparams import DotDict
+from torch.nn import functional as F
 
 
 noises = None
@@ -56,6 +57,14 @@ def load_model(pl_module, ckpt_path: str, device: str):
 def sample(predict_logits, temp, thresh=0.9, mode="naive", return_probs=False):
     if mode == "naive":
         predict_logits = predict_logits / (temp)
+        probs = predict_logits.softmax(dim=-1)
+        dist = torch.distributions.categorical.Categorical(probs=probs)
+        samples = dist.sample()
+        if return_probs:
+            sample_probs = torch.gather(probs, -1, samples.unsqueeze(1)).squeeze(1)
+    if mode == "top_p":
+        predict_logits = predict_logits / (temp)
+        predict_logits = top_p_logits(predict_logits, thresh)
         probs = predict_logits.softmax(dim=-1)
         dist = torch.distributions.categorical.Categorical(probs=probs)
         samples = dist.sample()
@@ -199,3 +208,17 @@ def top_k(logits, thresh=0.95):
     probs = torch.full_like(logits, float("-inf"))
     probs.scatter_(-1, ind, val)
     return probs
+
+def top_p_logits(logits, p):
+    probs = F.softmax(logits, dim=-1)
+    sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+    cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+    sorted_indices_to_remove = cumulative_probs > p
+    # Shift the indices to the right to keep also the first token above the threshold
+    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+    sorted_indices_to_remove[..., 0] = 0
+    indices_to_remove = torch.zeros_like(logits, dtype=sorted_indices_to_remove.dtype).scatter_(
+            dim=-1, index=sorted_indices, src=sorted_indices_to_remove )
+    out = logits.clone()
+    out[indices_to_remove] = -float('Inf')
+    return out

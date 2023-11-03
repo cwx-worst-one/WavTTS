@@ -12,9 +12,9 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 
 extra_params:
     sample_rate: 24000
-    duration: [15, 20, 25, 30]
+    duration: [40, 60, 80, 100, 120]
     lyrics_codebook_size: 400
-    lyrics_max_seq_len: 400
+    lyrics_max_seq_len: null # batching is based off of lyrics + umm lengths. No need to set max length anymore
     semantic_codebook_size: 32_768
     semantic_frame_rate: 25
     mulan_embed_dim: 512
@@ -22,6 +22,7 @@ extra_params:
     dataset_types: mcc60m_vocal_style_text
     semantic_type: bestrq
     pretrained_path: null # for loading state dicts
+    enable_punctuation: True
 
 # running parameters
 run_opts:
@@ -33,12 +34,12 @@ run_opts:
     precision: "16"
     num_workers: 8
     accelerator: auto
-    max_steps: 200000
-    batch_size: 20
-    learning_rate: 4.0e-4
+    max_steps: 250000
+    batch_size: 4
+    learning_rate: 1.0e-4
     warmup_steps: 2000
-    cycle_steps: 80000
-    weight_decay: 0.01
+    cycle_steps: 60000
+    weight_decay: 0.05
     shuffle_buffer: 0
     gradient_clip_val: 1.0
 
@@ -95,7 +96,7 @@ model_cls: !name:samantha.models.ctiga.gpt.GPTLMHeadModel
 optimizer_cls: !name:torch.optim.AdamW
     lr: !ref <run_opts[learning_rate]>
     weight_decay: !ref <run_opts[weight_decay]>
-    betas: [0.9, 0.96]
+    betas: [0.9, 0.98]
     eps: 0.00000001
 
 scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupCosine
@@ -104,7 +105,7 @@ scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupC
     cycle_steps: !ref <run_opts[cycle_steps]>
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
-pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
+pl_module: !new:recipes.bigmusic.lightning.semantic_varlen_modules.SemanticModuleVarlen
     checkpointing: False
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>

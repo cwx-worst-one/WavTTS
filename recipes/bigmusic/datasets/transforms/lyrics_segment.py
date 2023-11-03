@@ -114,14 +114,17 @@ class LyricsSegmentTransforms(TransformBase):
             return
 
         fixed_duration = len(self.sample_duration) == 1 # if only one duration is provided. Fix it to that duration
-        if self.shuffle_segments and len(lyrics) > 4: # shuffle lyrics start times
-            lyrics = lyrics[random.randint(0, 2):]
+        shuffle_start = self.shuffle_segments and len(lyrics) > 8
+        shuffle_lengths = self.shuffle_segments and max(self.sample_duration) < 90 # do not shuffle for 2min training
+        include_intro = True # max(self.sample_duration) > 90 # include intro for 2 min training
         segments: List[Segment] = lyrics_to_segments(
             lyrics, 
             fixed_duration=fixed_duration,
-            min_duration=self.sample_duration[0] * 3 / 4,
-            max_duration=self.sample_duration[-1],
-            randomize_duration_lengths=self.shuffle_segments
+            min_duration=min(self.sample_duration),
+            max_duration=max(self.sample_duration),
+            shuffle_start=shuffle_start,
+            shuffle_lengths=shuffle_lengths,
+            include_intro=include_intro
         )
         if self.shuffle_segments:
             random.shuffle(segments)
@@ -222,12 +225,13 @@ class Segment():
         return self.start >= 0
 
 def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
-                       new_line_token="\n", fixed_duration=True, min_confidence=0.8, randomize_duration_lengths=False):
+                       new_line_token="\n", fixed_duration=True, min_confidence=0.75, 
+                       shuffle_start=False, shuffle_lengths=False, include_intro=False
+    ):
     if not lyrics: return []
     if 'start_time' not in lyrics[0]:
         # convert force alignment lyrics to line format
         lyrics = force_aligned_word_format_to_line_format(lyrics)
-        
     segments = []
     segment = None
 
@@ -237,39 +241,43 @@ def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
         'text': 'STOP_PLACEHOLDER', 
         'words': [],
     })
+
+    start_idx = random.randint(0, 2) if shuffle_start else 0
     target_duration_length = max_duration
-    for i, current_diction in enumerate(lyrics):
+    for i in range(start_idx, len(lyrics)):
+        current_diction = lyrics[i]
         current_segment = Segment.from_dict(current_diction)
-        if len(current_segment.text.strip()) == 0: continue
-        if current_segment.start < 0: continue
-            
+        if len(current_segment.text.strip()) == 0: continue # instrumental
+        if current_segment.start < 0 or (segment and current_segment.start < segment.end):
+            segment = None
+            continue
+        
         # Case #1: overflow. Append segment. Create new
-        if segment and (current_segment.end - segment.start > target_duration_length):
+        if segment and (current_segment.end - segment.start) > target_duration_length:
             if fixed_duration:
                 # append words from current segment.
-                target_end_time = segment.start + max_duration
+                target_end_time = segment.start + target_duration_length
                 extended_segment, _ = _words_to_segment(current_diction['words'], segment.start, target_end_time)
                 if extended_segment:
                     segment.end = extended_segment.end
                     segment.text += new_line_token + extended_segment.text
                     segment.duration += extended_segment.duration                    
                 segment.end = target_end_time
+                segment.duration = segment.end - segment.start
             else:
-                segment.end = min(segment.start + max_duration, current_segment.start)
+                segment.end = max(segment.end, min(segment.start + target_duration_length, current_segment.start))
+                segment.duration = segment.end - segment.start
 
-            
-            if segment.duration >= min_duration:
+            if (segment.duration >= min_duration):
                 segments.append(segment)
-
             segment = None
 
         if current_segment.confidence < min_confidence:
             # low confidence segment. skip and reset
             segment = None
-            current_segment = None
             continue
         
-        # Break long segments into multiple segments
+        # # Break long segments into multiple segments
         if current_segment and current_segment.duration > max_duration:
             cached_index = 0
             for i in range(math.ceil(current_segment.duration / max_duration)):
@@ -281,16 +289,25 @@ def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
 
             # reset everything
             segment = None
-            current_segment = None
+            continue
 
+        # Create new segment
         if segment is None:
             segment = current_segment
-            if randomize_duration_lengths:
+            if shuffle_lengths and random.randint(0, 1) > 0:
                 target_duration_length = random.randint(int(min_duration), int(max_duration))
-        else:
-            segment.end += current_segment.end
+            else:
+                target_duration_length = max_duration
+
+            # Set start to beginning of last segment to include instrumental sections
+            previous_end_time = 0 if i == 0 else Segment.from_dict(lyrics[i-1]).end
+            if include_intro and segment.end - previous_end_time <= target_duration_length:
+                segment.start = previous_end_time
+                segment.duration = segment.end - segment.start
+        else: # append to existing segment
+            segment.end = current_segment.end
             segment.text = segment.text + new_line_token + current_segment.text
-            segment.duration += current_segment.duration
+            segment.duration = segment.end - segment.start
     return segments
 
 punctuation_whitespace = set(punctuation + whitespace)

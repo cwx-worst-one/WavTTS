@@ -4,6 +4,8 @@ from recipes.musiclm.utils.dist import local_zero_first
 from recipes.diffusion.utils.utils import download_checkpoint
 from recipes.diffusion.models.tnt_mulan_free import TNTDiffusionNetwork
 
+VOCODER_HZ = 125
+
 def load_ema_checkpoint(checkpoint_path, model):
     ckpt = torch.load(checkpoint_path, map_location="cpu")
 
@@ -100,7 +102,9 @@ def run_diffusion(requires, samples, params):
     pred_emb = pred_emb.float()
     # torch.interpolate causes OOM for large batch sizes > 24. chunking to batch of 8 instead.
     # If you see this error, lower batch size: "RuntimeError: Expected output.numel() <= std::numeric_limits<int32_t>::max() to be true, but got false."
-    wavs_g = torch.cat([vocoder.decode(c).detach() for c in torch.split(pred_emb, 8)])
+    duration = pred_emb.shape[-1] // VOCODER_HZ
+    batch_chunks = 8 if duration < 60 else 2
+    wavs_g = torch.cat([vocoder.decode(c).detach() for c in torch.split(pred_emb, batch_chunks)])
     # wavs_g = vocoder.decode(pred_emb.float()).detach()
 
     # For bigmusic: [bs, c, seq] -> [bs, seq] 

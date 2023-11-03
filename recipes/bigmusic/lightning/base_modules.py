@@ -265,6 +265,7 @@ class BaseContinuousEmbedModule(BaseModule):
         # (b, s, d) --> (b * beam, s, d)
         inputs_embeds = inputs_embeds.repeat(1, beam, 1).reshape(batch_size * beam, seq_len, -1)
         sos_embeds = self.target_embedder.get_sos_embed(batch_size * beam)
+        batch_size, seq_len, _ = inputs_embeds.size() # recalculate batch size
 
         def _init_model_input():
             if self.use_cross_attn:
@@ -281,8 +282,9 @@ class BaseContinuousEmbedModule(BaseModule):
         
         output_tokens = None
         if isinstance(self.model, gpt.GPTLMHeadModel):
+            gpt_max_seq_len = 4000 if num_tokens < 2500 else 8000
             inference_params = InferenceParams(
-                max_sequence_len=4000, max_batch_size=batch_size
+                max_sequence_len=gpt_max_seq_len, max_batch_size=batch_size
             )
         else:
             past_key_values = None

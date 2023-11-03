@@ -102,24 +102,48 @@ class SaveVideoCallback(pl.Callback):
         output_dir = pl_module.extra_params.output_dir
         save_video(output_dir, output_dir)
 
-def default_format_video_text(metadata):
+def format_video_text(metadata, max_width=50):
     index = metadata['index']['absolute_idx']
     style_text = metadata['style_text']
-    style_text = '\n\n'.join(textwrap.wrap(style_text, 40, break_long_words=False))
-    video_text = f'{index}: {style_text}\n\n\n'
+    style_text = '\n'.join(textwrap.wrap(style_text, max_width, break_long_words=False))
+    video_text = f'{index}: {style_text}\n\n'
+
     lyrics = metadata.get('lyrics')
     if lyrics is not None:
         lyrics = lyrics.encode('ascii', 'ignore').decode('ascii') # TODO: utf-8
         # Respect natural linebreaks
         lyrics = lyrics.split("\n")
+
         lyrics_list = []
         for x in lyrics:
-            for y in textwrap.wrap(x, 40, break_long_words=False):
+            for wrap_idx, y in enumerate(textwrap.wrap(x, max_width, break_long_words=False)):
+                if wrap_idx > 0:
+                    lyrics_list.append("\t")
                 lyrics_list.append(y)
                 lyrics_list.append("\n")
-            lyrics_list.append("\n")
         video_text += ''.join(lyrics_list)
     return video_text
+
+def default_format_video_text(metadata):
+    # short text
+    fontsize, max_width, line_spacing = 26, 50, 14
+    video_text = format_video_text(metadata, max_width)
+    num_lines = len(video_text.split("\n"))
+    if num_lines < 18:
+        return video_text, fontsize, line_spacing
+    
+    # long text
+    fontsize, max_width, line_spacing = 20, 60, 6
+    video_text = format_video_text(metadata, max_width)
+    num_lines = len(video_text.split("\n"))
+    if num_lines < 36:
+        return video_text, fontsize, line_spacing
+    
+    # really long text
+    fontsize, max_width, line_spacing = 16, 80, 4
+    video_text = format_video_text(metadata, max_width)
+    num_lines = len(video_text.split("\n"))
+    return video_text, fontsize, line_spacing
 
 def save_video(input_results_dir, output_video_dir, format_video_text_fn=default_format_video_text, remove_segments=True):
     colors = ["green", "blue", "brown"]
@@ -136,9 +160,10 @@ def save_video(input_results_dir, output_video_dir, format_video_text_fn=default
         with open(metadata_fp, 'r') as f:
             metadata = json.load(f)
         with open(output_text_fp, 'w') as f:
-            f.write(format_video_text_fn(metadata))
+            video_text, fontsize, line_spacing = format_video_text_fn(metadata)
+            f.write(video_text)
         color = colors[idx % len(colors)]
-        cmd = f'ffmpeg -y -f lavfi -i color=c={color}:s=800x800:d=0.5 -i {audio_fp} -c:a aac -vf "drawtext=fontsize=30:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:textfile={output_text_fp}" {output_video_fp}'
+        cmd = f'ffmpeg -y -f lavfi -i color=c={color}:s=800x800:d=0.5 -i {audio_fp} -c:a aac -vf "drawtext=fontsize={fontsize}:line_spacing={line_spacing}:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:textfile={output_text_fp}" {output_video_fp}'
         os.system(cmd)
 
     # concat output videos

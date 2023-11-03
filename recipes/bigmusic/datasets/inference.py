@@ -38,6 +38,7 @@ def inference_dataset_from_prompt(
     lyrics_max_seq_len=400,
     run_combinations=False,
     enable_punctuation=False,
+    dataset_mode="truncate_length"
 ):
     prompts = prompt_path_to_items(prompt_path)
     if 'text_category' in prompts: # fix csv formatting
@@ -57,8 +58,9 @@ def inference_dataset_from_prompt(
     else:
         lyrics_prompt_pairs = zip(*list(prompts.values()))
 
+
     if 'lyrics_tokens' in conditions:
-        segment_transforms = [LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len=lyrics_max_seq_len, truncate_long_lyrics=True, enable_punctuation=enable_punctuation)]
+        segment_transforms = [LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len=lyrics_max_seq_len, dataset_mode=dataset_mode, enable_punctuation=enable_punctuation)]
         if 'style_text' not in prompts: # style text not provided. must generate own
             if 'metadata' in prompts:
                 print('WARNING: style_text not provided. Using metadata to generate style prompt')

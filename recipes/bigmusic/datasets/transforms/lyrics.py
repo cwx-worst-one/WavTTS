@@ -84,34 +84,51 @@ class StyleTextT5Transform():
         }
 
 # Segment Transforms
+class SemanticTokenLengthTransform():
+    def __init__(self, sample_rate=24000, semantic_frame_rate=25):
+        self.sample_rate = sample_rate
+        self.semantic_frame_rate = semantic_frame_rate
+
+    def __call__(self, item):
+        target_audio = item['target_audio']
+        audio_length = target_audio.shape[-1]
+        seq_length = audio_length * self.semantic_frame_rate // self.sample_rate
+        return { **item, 'target_tokens_length': seq_length }
+
 class LyricsTokenTransform():
-    def __init__(self, lyrics_tokenizer, pad_id, lyrics_max_seq_len: int, normalization_fn=normalize_text, truncate_long_lyrics: bool = False, handler: Callable = wds.ignore_and_continue):
+    def __init__(self, lyrics_tokenizer, pad_id, lyrics_max_seq_len:int=None, normalization_fn=normalize_text, dataset_mode: str = "fixed_length", handler: Callable = wds.ignore_and_continue):
         self.lyrics_tokenizer = lyrics_tokenizer
         self.lyrics_max_seq_len = lyrics_max_seq_len
         self.pad_id = pad_id
-        self.truncate_long_lyrics = truncate_long_lyrics
+        if lyrics_max_seq_len is None: # no max sequence - switch to variable length mode
+            dataset_mode = "variable_length"
+        assert dataset_mode in ["fixed_length", "variable_length", "truncate_length"], "Unsupported overflow mode. Must be drop or truncate"
+        self.dataset_mode = dataset_mode
         self.normalization_fn = normalization_fn
         self.handler = handler
-
+    
     def __call__(self, item):
         try:
             lyrics_text = item['lyrics']
             if self.normalization_fn:
                 lyrics_text = self.normalization_fn(lyrics_text)
-            lyrics_tokens = self.lyrics_tokenizer(lyrics_text)['input_ids']
-            if not self.truncate_long_lyrics and (len(lyrics_tokens) > self.lyrics_max_seq_len):
-                return None
+            token_dict = self.lyrics_tokenizer(lyrics_text, return_tensors='pt', padding=False, return_length=True)
+            input_ids = token_dict['input_ids'].squeeze(0)
+            lyrics_length = token_dict['length'].squeeze(0).item() # return int item instead of tensor
         except Exception as e:
             self.handler(e)
             return None
         
-        lyrics_tokens = pad_crop(torch.tensor(lyrics_tokens), self.lyrics_max_seq_len, torch.int, padding_value=self.pad_id)
-        return { **item, 'lyrics_tokens': lyrics_tokens, 'lyrics_normalized_text': lyrics_text }
-
-    @classmethod
-    def init_cmu_tokenizer(cls, lyrics_max_seq_len, allow_unknown=False, **kwargs):
-        cmu_tokenizer = CMUPhonemeTokenizer(allow_unknown=allow_unknown)
-        return LyricsTokenTransform(cmu_tokenizer, cmu_tokenizer.pad_id, lyrics_max_seq_len, **kwargs)
+        if self.dataset_mode == "variable_length": # return length
+            return { **item, 'lyrics_tokens': input_ids, 'lyrics_normalized_text': lyrics_text, 'lyrics_tokens_length': lyrics_length }
+        # drop overflowed tokens
+        if self.dataset_mode == "fixed_length" and lyrics_length > self.lyrics_max_seq_len:
+            return None
+        
+        # for truncate and drop, pad/crop tensor.
+        input_ids = pad_crop(input_ids, self.lyrics_max_seq_len, torch.int, padding_value=self.pad_id)
+        lyrics_length = self.lyrics_max_seq_len
+        return { **item, 'lyrics_tokens': input_ids, 'lyrics_normalized_text': lyrics_text, 'lyrics_tokens_length': lyrics_length }
 
     @classmethod
     def init_espeak_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=False, **kwargs):

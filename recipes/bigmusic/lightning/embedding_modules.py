@@ -106,10 +106,14 @@ class ContinuousEmbedder(BaseEmbedder):
         # override to return embedding function
         raise NotImplementedError()
 
-    def get_sos_embed(self, batch_size):
+    def get_sos_token(self, batch_size):
         assert self.sos_id is not None, "Error getting sos id. Must initialize embedder with add_sos=True"
         device = next(self.parameters()).device
         sos_ids = torch.full(size=(batch_size, 1), fill_value=self.sos_id, dtype=torch.long, device=device)
+        return sos_ids
+
+    def get_sos_embed(self, batch_size):
+        sos_ids = self.get_sos_token(batch_size)
         return self.projection(self.embedder(sos_ids))
 
     def embed(self, requires, batch, with_sos=False, **kwargs):
@@ -251,8 +255,8 @@ class MulanTokenEmbedder(TokenEmbedder):
         return mulan_tokens
 
 class LyricsTokenEmbedder(TokenEmbedder):
-    def __init__(self, vocab_size, embedding_dim, add_sos=False):
-        super().__init__(vocab_size, embedding_dim, add_sos=add_sos)
+    def __init__(self, vocab_size, embedding_dim, add_sos=False, add_eos=False):
+        super().__init__(vocab_size, embedding_dim, add_sos=add_sos, add_eos=add_eos)
     # TODO: (AS) add padding_idx
     def get_tokens(self, requires, input):
         return input

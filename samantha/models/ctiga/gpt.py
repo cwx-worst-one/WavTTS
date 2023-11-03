@@ -837,6 +837,7 @@ class GPTLMHeadModel(GPTPreTrainedModel):
         inference_params=None,
         last_token_only=False,
         return_attn_probs=False,
+        output_hidden_states=False,
     ):
         """
         inference_params: for generation. Adapted from Megatron-LM (and Apex)
@@ -877,12 +878,13 @@ class GPTLMHeadModel(GPTPreTrainedModel):
             lm_logits = rearrange(
                 lm_logits, "(n b) ... d -> b ... (n d)", b=hidden_states.shape[0]
             )
+        return_dict = {"logits": lm_logits}
         if return_attn_probs:
-            CausalLMOutput = namedtuple("CausalLMOutput", ["logits", "attn_probs"])
-            return CausalLMOutput(logits=lm_logits, attn_probs=all_attn_probs)
-        else:
-            CausalLMOutput = namedtuple("CausalLMOutput", ["logits"])
-            return CausalLMOutput(logits=lm_logits)
+            return_dict["attn_probs"] = all_attn_probs
+        if output_hidden_states:
+            return_dict["hidden_states"] = hidden_states
+        CausalLMOutput = namedtuple("CausalLMOutput", list(return_dict.keys()))
+        return CausalLMOutput(**return_dict)
 
     def load_state_dict(self, state_dict: Dict, strict=True):
         # Remapping from our checkpoints that used a different ordering of layers in the block

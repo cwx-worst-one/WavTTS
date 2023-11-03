@@ -133,7 +133,7 @@ class Wav2Lyrics:
     ) -> Dict[str, Union[List[str], torch.Tensor]]:
         if len(wav_batch.shape) == 2:
             wav_batch = wav_batch.unsqueeze(1)
-        wav_batch = wav_batch.cpu()
+        wav_batch = wav_batch.float().cpu()
         if sample_lengths is not None:
             for i in range(len(wav_batch)):
                 wav_batch[i, ..., sample_lengths[i]:] = 0
