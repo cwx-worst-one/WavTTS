@@ -40,8 +40,8 @@ class WarmupCosine(_LRScheduler):
             self.min_lrs = list(min_lr)
 
         # TODO: fix hyper bugs
-        self.init_lrs = [eval(lr) if type(lr) == str else lr for lr in self.init_lrs]
-        self.min_lrs = [eval(lr) if type(lr) == str else lr for lr in self.min_lrs]
+        self.init_lrs = [eval(lr) if type(lr) is str else lr for lr in self.init_lrs]
+        self.min_lrs = [eval(lr) if type(lr) is str else lr for lr in self.min_lrs]
 
         self.warmup_steps = warmup_steps
         self.cycle_steps = cycle_steps

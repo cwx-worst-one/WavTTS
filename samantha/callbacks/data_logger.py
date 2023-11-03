@@ -66,7 +66,7 @@ class DataUsageLogger(pl.Callback):
             for idx in range(len(batch[k])):
                 if len(batch[k]):
                     data = batch[k][idx]
-                    if type(data) == torch.Tensor:
+                    if type(data) is torch.Tensor:
                         data = data.cpu()
                     d[idx][k] = data
         return d

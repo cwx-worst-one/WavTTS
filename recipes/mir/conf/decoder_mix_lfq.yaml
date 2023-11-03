@@ -1,0 +1,171 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+ckpt_path: null
+
+seed: 555
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+extra_params:
+    sample_rate: 24000
+    frame_rate: 25
+    n_mels: 128
+    n_chroma: 12
+    n_fft: 2048
+    win_length: 2048
+    hop_length: 240
+    max_length: 3072
+    tokenizer: "bert-base-uncased"
+    vocab_size_text: 30522
+    vocab_size_audio: 131072
+    text_sos_id: !ref <extra_params[vocab_size_text]> + <extra_params[vocab_size_audio]>
+    audio_sos_id: !ref <extra_params[vocab_size_text]> + <extra_params[vocab_size_audio]> + 1
+    break_id: !ref <extra_params[vocab_size_text]> + <extra_params[vocab_size_audio]> + 2
+    eos_id: !ref <extra_params[vocab_size_text]> + <extra_params[vocab_size_audio]> + 3
+    dynamic_batch: True
+
+# running parameters
+run_opts:
+    fast_dev_run: False
+    cache_dir: .module_cache/umm_mir
+    hdfs_log_dir: "hdfs:///home/byte_speech_sv/zongyu.yin/logs"
+    log_dir: logs
+    log_name: umm_mir
+    version: !ref decoder_mix_lfq-<extra_params[vocab_size_audio]>_<extra_params[tokenizer]>-<extra_params[vocab_size_text]>
+    precision: "bf16-mixed"
+    num_workers: 4
+    accelerator: auto
+    warmup_steps: 2000
+    max_steps: 1000000
+    val_check_interval: 5000
+    ckpt_interval: 10000
+    batch_size: 2
+    learning_rate: 5.0e-4
+    cycle_steps: 30000
+    weight_decay: 0.1
+    shuffle_buffer: 50
+    gradient_clip_val: 1.0
+    checkpointing: False
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+pl_datamodule: !new:recipes.mir.datasets.mix.DataModule
+    sample_rate: !ref <extra_params[sample_rate]>
+    batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <extra_params[sample_rate]>
+    min_duration: 5
+    max_duration: 120
+    normalize_audio: False
+    shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+    num_workers: !ref <run_opts[num_workers]>
+    weights: [1, 1, 1, 1, 1, 1, 1, 1, 1]
+    region: "CN"
+    tokenizer: !ref <extra_params[tokenizer]>
+    frame_rate: !ref <extra_params[frame_rate]>
+    max_length: !ref <extra_params[max_length]>
+    dynamic_batch: !ref <extra_params[dynamic_batch]>
+
+optimizer_cls: !name:torch.optim.AdamW
+    lr: !ref <run_opts[learning_rate]>
+    weight_decay: !ref <run_opts[weight_decay]>
+    betas: [0.9, 0.96]
+    eps: 0.00000001
+
+scheduler_cls: !name:recipes.mir.modules.lr_scheduler.WarmupCosine
+    init_lr: !ref <run_opts[learning_rate]>
+    warmup_steps: !ref <run_opts[warmup_steps]>
+    cycle_steps: !ref <run_opts[cycle_steps]>
+    min_lr: !ref <run_opts[learning_rate]> * 0.1
+
+config: !new:transformers.GPT2Config
+    vocab_size: !ref <extra_params[vocab_size_text]> + <extra_params[vocab_size_audio]> + 4
+    max_position_embeddings: 0
+    n_positions: 0
+    use_cache: False
+    n_embd: 1024
+    n_layer: 12
+    n_head: 8
+    n_inner: 4096
+    activation_function: "swiglu"
+    resid_pdrop: 0.0
+    embd_pdrop: 0.0
+    attn_pdrop: 0.0
+    layer_norm_epsilon: 1e-6
+    initializer_range: 0.02
+    rescale_prenorm_residual: False
+    rms_norm: True
+    rotary_emb_fraction: 1.0
+    rotary_emb_interleaved: True
+    rotary_emb_compat: "default"
+    tie_word_embeddings: False
+    qkv_proj_bias: False
+    out_proj_bias: False
+    mlp_fc1_bias: False
+    mlp_fc2_bias: False
+    use_flash_attn: True
+    fused_bias_fc: True
+    fused_mlp: False
+    fused_dropout_add_ln: True
+    residual_in_fp32: True
+
+model_cls: !name:samantha.models.ctiga.gpt.GPTLMHeadModel
+    config: !ref <config>
+
+pl_module: !new:recipes.mir.modules.lit_module.UnifiedDecoder
+    model_cls: !ref <model_cls>
+    optimizer_cls: !ref <optimizer_cls>
+    scheduler_cls: !ref <scheduler_cls>
+    criterion_cls: !name:recipes.mir.modules.criterion.MaskedCrossEntropy
+    required_modules:
+        stage3:
+            ckpt_path: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage3_full_dw1-1-1_bert-base-multilingual-cased_lfq131072x17-layer12/checkpoints/step=710000.ckpt"
+            init_fn: !name:recipes.mir.requires.model_initializer.init_stage3
+            cache_dir: !ref <run_opts[cache_dir]>
+    checkpointing: !ref <run_opts[checkpointing]>
+    extra_params: !ref <extra_params>
+
+logger:
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[log_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
+
+callbacks:
+    - !new:samantha.callbacks.HDFSModelCheckpoint
+      dirpath: !ref <run_opts[log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+      hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+      monitor: step
+      save_top_k: 500
+      every_n_train_steps: !ref <run_opts[ckpt_interval]>
+      mode: max
+      filename: "{step:07d}"
+    - !new:pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: 'step'
+
+plugins:
+    - !new:samantha.plugins.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    strategy: "ddp_find_unused_parameters_false"
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: "auto"
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    log_every_n_steps: 100
+    max_steps: !ref <run_opts[max_steps]>
+    precision: !ref <run_opts[precision]>
+    accumulate_grad_batches: 1
+    gradient_clip_val: !ref <run_opts[gradient_clip_val]>
+    val_check_interval: !ref <run_opts[val_check_interval]>
+    check_val_every_n_epoch: null
+    num_sanity_val_steps: 2
+    callbacks: !ref <callbacks>
+    plugins: !ref <plugins>

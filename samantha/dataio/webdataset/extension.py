@@ -77,22 +77,22 @@ def group_by_keys(
 
 
 def resolve_url2index(url2index: Union[str, Dict[str, str]]) -> Dict[str, str]:
-    if type(url2index) == str:  # Load mapping from file
+    if type(url2index) is str:  # Load mapping from file
         url2index_map = {}
         with hopen(url2index, "r") as f:
             for line in f:
-                if type(line) == bytes:
+                if type(line) is bytes:
                     line = line.decode("utf-8")
                 ary = line.strip().split("\t")
                 url2index_map[ary[0]] = ary[1]
         return url2index_map
     else:
-        assert type(url2index) == dict
+        assert type(url2index) is dict
         return url2index
 
 
 def parse_index(line: Union[str, bytes]) -> Dict[str, Any]:
-    if type(line) == bytes:
+    if type(line) is bytes:
         line = line.decode("utf-8")
     ary = line.strip().split("\t")
     index = {"prefix": ary[0], "found": False}

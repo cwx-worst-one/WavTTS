@@ -18,6 +18,13 @@ from recipes.umm.transforms.chroma import ChromaSpectrogram
 from recipes.umm.transforms.speech import SpeechTransform
 from recipes.umm.models.rmvpe import RMVPE
 
+@dataclass
+class UMMResult:
+    hidden_states: torch.Tensor
+    vq_ids: torch.Tensor
+    vq_hidden_states: torch.Tensor
+    vq_loss: Optional[torch.Tensor] = None
+
 
 def f0_normalize(f0):
     _f0 = f0.clone()
@@ -1910,6 +1917,27 @@ class Stage3(Stage2):
             output_dict.update(chroma_out=chroma_out)
         return output_dict
 
+    def forward_layers(
+        self, audio_embedding: torch.Tensor, layer_idx: int
+    ) -> UMMResult:
+        hidden_states = self.encoder_input_dropout(audio_embedding)
+        position_embeddings = self.embed_positions(hidden_states)
+
+        for i, layer in enumerate(self.encoder_layers):
+            if i == layer_idx:
+                pre_vq_in = self.vq_proj_in(hidden_states)
+                vq_embs, vq_ids, vq_loss = self.vq(pre_vq_in)
+                return UMMResult(
+                    hidden_states=hidden_states,
+                    vq_ids=vq_ids,
+                    vq_hidden_states=vq_embs,
+                    vq_loss=vq_loss,
+                )
+
+            hidden_states = layer(
+                hidden_states, position_embeddings=position_embeddings
+            )
+
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
     def wav2token(self, wav):
@@ -1930,6 +1958,19 @@ class Stage3(Stage2):
             )
         return vq_ids
 
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def wav2audio_embed(self, wav):
+        if wav.dim() == 3:
+            wav = wav.squeeze(dim=1)
+        wav = self.pad_audio(wav.float())
+        feature = self.preprocessing(wav)["mel"]
+        encoded_feature = self.audio_encoder(feature)
+        return encoded_feature
+
+    def wav2hidden_states(self, audio: torch.Tensor, layer_idx: int) -> UMMResult:
+        audio_embedding = self.wav2audio_embed(audio)
+        return self.forward_layers(audio_embedding, layer_idx)
 
 class Stage3AR(Stage3):
     def __init__(self, config):

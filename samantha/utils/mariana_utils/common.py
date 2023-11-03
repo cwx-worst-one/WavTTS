@@ -7,9 +7,10 @@ import tempfile
 import yaml
 from cruise import CruiseConfig
 from cruise.utilities.hdfs_io import hcopy, hexists, hglob, hisdir, hopen
-from mariana.data.gpt.tokenization import CasterTokenizer
 from rich import print as rprint
 from transformers import AutoTokenizer
+
+from mariana.data.gpt.tokenization import CasterTokenizer
 
 DefaultGenerationConfig = {
     "is_encoder_decoder": False,

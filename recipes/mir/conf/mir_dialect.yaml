@@ -1,0 +1,99 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+ckpt_path: null
+
+seed: 1995
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+extra_params:
+    sample_rate: 24000
+
+# running parameters
+run_opts:
+    fast_dev_run: False
+    cache_dir: .module_cache/umm_mir
+    hdfs_log_dir: "hdfs:///home/byte_speech_sv/janne.spijkervet/logs"
+    log_dir: logs
+    log_name: umm_mir_continuous_dialect
+    version: baseline
+    precision: "32-true"
+    num_workers: 4
+    accelerator: auto
+    max_steps: -1
+    max_epochs: 4
+    val_check_interval: 1000
+    ckpt_interval: 1000
+    batch_size: 64
+    learning_rate: 1.0e-4
+    shuffle_buffer: 50
+    gradient_clip_val: 1.0
+    checkpointing: False
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+pl_datamodule: !new:recipes.mir.datasets.single.DialectDataModule
+    batch_size: !ref <run_opts[batch_size]>
+    shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+    num_workers: !ref <run_opts[num_workers]>
+
+
+config: !new:recipes.mir.modules.mir.dialect.DialectConfig
+    model_name: umm-zh-stage3-layer12
+    duration: 30
+    finetune_foundation: False
+    n_embd_head: 64
+    learning_rate: !ref <run_opts[learning_rate]>
+    scheduler_patience: 20
+    scheduler_decay_factor: 0.5
+
+pl_module: !new:recipes.mir.modules.mir.dialect.Dialect
+    config: !ref <config>
+
+logger:
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[log_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
+
+callbacks:
+    - !new:samantha.callbacks.HDFSModelCheckpoint
+      dirpath: !ref <run_opts[log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+      hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+      monitor: step
+      save_top_k: 500
+      every_n_train_steps: !ref <run_opts[ckpt_interval]>
+      mode: max
+      filename: "{step:07d}"
+    - !new:pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: 'step'
+
+plugins:
+    - !new:samantha.plugins.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    strategy: "ddp_find_unused_parameters_false"
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: "auto"
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    log_every_n_steps: 100
+    max_steps: !ref <run_opts[max_steps]>
+    max_epochs: !ref <run_opts[max_epochs]>
+    precision: !ref <run_opts[precision]>
+    accumulate_grad_batches: 1
+    gradient_clip_val: !ref <run_opts[gradient_clip_val]>
+    val_check_interval: !ref <run_opts[val_check_interval]>
+    check_val_every_n_epoch: null
+    num_sanity_val_steps: 2
+    # callbacks: !ref <callbacks>
+    plugins: !ref <plugins>

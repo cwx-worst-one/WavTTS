@@ -132,6 +132,25 @@ def init_mulan(hpath, local_rank, cache_dir=None):
             }
 
 
+def init_stage1(hpath, local_rank, cache_dir=None):
+    from recipes.umm.modules.lit_module import Stage1
+
+    if cache_dir is not None:
+        os.makedirs(cache_dir, exist_ok=True)
+
+    device = torch.device(f"cuda:{local_rank}")
+    with local_zero_first():
+        if hpath.startswith("hdfs://"):
+            local_path = f"{cache_dir}/{os.path.basename(hpath)}"
+            if not os.path.exists(local_path):
+                if not hh.get(hpath, local_path):
+                    raise ConnectionError(f"Cannot retrieve file from {hpath}.")
+        else:
+            local_path = hpath
+        model = Stage1.load_from_checkpoint(local_path).to(device).eval()
+        return {"Stage1": model}
+
+
 def init_stage2(hpath, local_rank, cache_dir=None):
     from recipes.umm.modules.lit_module import Stage2
 
@@ -162,8 +181,10 @@ def init_stage3(hpath, local_rank, cache_dir=None):
         if hpath.startswith("hdfs://"):
             local_path = f"{cache_dir}/{os.path.basename(hpath)}"
             if not os.path.exists(local_path):
-                if not hh.get(hpath, local_path):
-                    raise ConnectionError(f"Cannot retrieve file from {hpath}.")
+                hh.get(hpath, local_path)
+                print("FIXME: hh.get always returns non-zero exit code")
+                # if not hh.get(hpath, local_path):
+                #     raise ConnectionError(f"Cannot retrieve file from {hpath}.")
         else:
             local_path = hpath
         model = Stage3.load_from_checkpoint(local_path).to(device).eval()

@@ -2,6 +2,17 @@
 
 cd $(dirname $0)/../../
 
+# set Arnold region when on Merlin instance
+# it is done automatically on Arnold
+if [ "$ARNOLD_WORKSPACE_SERVER" == "https://workspace-us.byted.org" ]; then
+	echo "Setting ARNOLD_REGION=US"
+	export ARNOLD_REGION="US"
+elif [ "$ARNOLD_WORKSPACE_SERVER" == "https://workspace.byted.org" ]; then
+	echo "Setting ARNOLD_REGION=CN"
+	export ARNOLD_REGION="CN"
+fi
+
+
 # Fix for broken mirrors "E: The repository 'http://mirrors.byted.org/debian bullseye-updates Release' no longer has a Release file."
 if ! sudo apt update ; then
     echo "Updating apt failed. Removing broken mirrors"

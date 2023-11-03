@@ -10,6 +10,7 @@ from typing import IO, Any, AnyStr, List
 import torch
 
 HDFS_BIN = "hdfs"
+ARNOLD_REGION = os.getenv("ARNOLD_REGION", None)
 
 
 class hdfs_open:

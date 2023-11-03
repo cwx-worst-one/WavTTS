@@ -13,8 +13,9 @@ from cruise.data_module import DistributedCruiseDataLoader
 from cruise.data_module.gpu_wrapper import GPUPrefetcher
 from cruise.utilities import DIST_ENV
 from cruise.utilities.hdfs_io import hcopy, hglob
-from mariana.data.gpt.tokenization import CasterTokenizer
 from transformers import AutoTokenizer
+
+from mariana.data.gpt.tokenization import CasterTokenizer
 
 
 class UtteranceTextProcessor:

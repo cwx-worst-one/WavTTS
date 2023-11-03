@@ -176,7 +176,6 @@ class BaseStage(nn.Module):
         return data
 
     def _prepare_opts(self, serialize_opt: Dict) -> Optional[SerializeOptions]:
-
         if serialize_opt is None:
             return SerializeOptions()
 

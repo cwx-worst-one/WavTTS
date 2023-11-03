@@ -148,7 +148,7 @@ class AudioChunker(AudioEditor):
                     torch.stack(
                         [
                             audio[
-                                chan, int(i * hop_size) : int(i * hop_size + len_chunk),
+                                chan, int(i * hop_size) : int(i * hop_size + len_chunk)
                             ]
                             for i in range(num_chunks)
                         ]
