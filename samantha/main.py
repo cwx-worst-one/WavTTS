@@ -6,7 +6,10 @@ Use `python3 -m samantha.main -h` for usage help.
 import logging
 import sys
 
-from cruise import CruiseTrainer
+try:
+    from cruise import CruiseTrainer
+except Exception:
+    CruiseTrainer = None
 from hyperpyyaml import load_hyperpyyaml
 from pytorch_lightning import Trainer
 
@@ -75,7 +78,7 @@ def main():
     pl_module = cfg.pl_module
     if isinstance(trainer, Trainer):
         extra_params = _get_extra_action_params(run_opts, cfg, action)
-    elif isinstance(trainer, CruiseTrainer):
+    elif CruiseTrainer is not None and isinstance(trainer, CruiseTrainer):
         extra_params = {}
     else:
         raise ("Unsupported trainer type.")
@@ -127,7 +130,7 @@ def main():
         # Save hparams_file to "config.yaml" in experiment directory
         if isinstance(trainer, Trainer):
             log_dir = trainer.log_dir
-        elif isinstance(trainer, CruiseTrainer):
+        elif CruiseTrainer is not None and isinstance(trainer, CruiseTrainer):
             log_dir = trainer.default_root_dir
 
         create_experiment_directory(

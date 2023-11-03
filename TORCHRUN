@@ -1,0 +1,95 @@
+#!/bin/bash
+
+USER_ENV=`whoami`
+
+echo "=== Arnold torch distributed launch script ==="
+echo "=== contact: haibin.lin@bytedance.com ==="
+
+set -x
+
+if [[ "$ARNOLD_ROLE" == "server" ]]; then
+  byteps_launch
+  exit
+fi
+
+if [[ "$USE_CRUISE_ELASTICRUN" == "1" ]]; then
+  master_addr=$MASTER_ADDR
+  master_port=$MASTER_PORT
+  nnodes=$NUM_NODES
+  node_rank=$NODE_RANK
+
+  echo "=== Cruise Elastic Training ==="
+  echo "=== contact: zhihaobai@bytedance.com ==="
+  echo "Elastic Training Info: Master address: ${master_addr}:${master_port}"
+  echo "Elastic Training Info: Rank ${node_rank} in ${nnodes} nodes"
+fi
+
+if [[ "$ARNOLD_TRIAL_ID" == "" && "$ARNOLD_WORKSPACE_ID" == "" ]]; then
+  nnodes=1
+  node_rank=0
+  trial_id=12345
+  NCCL_IB_DISABLE=1
+  nproc_per_node=${nproc_per_node:=$(nvidia-smi --list-gpus | wc -l)}
+else
+  master_addr=${master_addr:=$ARNOLD_WORKER_0_HOST}
+  master_port=${master_port:=$(echo "$ARNOLD_WORKER_0_PORT" | cut -d "," -f 1)}
+  additional_args="--rdzv_endpoint=${master_addr}:${master_port}"
+  use_rdzv=1
+fi
+
+nproc_per_node="${nproc_per_node:=$ARNOLD_WORKER_GPU}"
+nnodes="${nnodes:=$ARNOLD_WORKER_NUM}"
+node_rank="${node_rank:=$ARNOLD_ID}"
+trial_id="${trial_id:=$ARNOLD_TRIAL_ID}"
+
+if [[ "$nnodes" == "1" && "$use_rdzv" != "1" ]]; then
+  additional_args="$additional_args --standalone"
+fi
+
+if [[ "$ARNOLD_DEVICE_TYPE" == *A100* ]]; then
+  IB_HCA=mlx5
+else
+  IB_HCA=$ARNOLD_RDMA_DEVICE:1
+fi
+
+if [ "$ARNOLD_RDMA_DEVICE" != "" ]; then
+   export NCCL_IB_DISABLE=${NCCL_IB_DISABLE:=0}
+   export NCCL_IB_HCA=${NCCL_IB_HCA:=$IB_HCA}
+   export NCCL_IB_GID_INDEX=${NCCL_IB_GID_INDEX:=3}
+   export NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME:=eth0}
+else
+   export NCCL_IB_DISABLE=${NCCL_IB_DISABLE:=1}
+   export NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME:=eth0}
+fi
+
+# setup tensorboard server if applicable
+if [[ "$TENSORBOARD_LOGDIR" != "" ]]; then
+  tensorboard_default_port="${ARNOLD_TENSORBOARD_CURRENT_PORT:=6006}"
+  tensorboard_port="${TENSORBOARD_PORT:=$tensorboard_default_port}"
+  nohup tensorboard --logdir=${TENSORBOARD_LOGDIR} --port=$tensorboard_port --bind_all > tensorboard.log 2>&1 &
+fi
+
+# for Ascend NPU
+export HCCL_IF_IP=`hostname -i`
+export HCCL_WHITELIST_DISABLE=1
+export HCCL_EXEC_TIMEOUT=${CRS_NCCL_TIMEOUT_SECOND:=120}
+
+# for best NCCL performance
+# LF Aliyun
+# For ARNOLD_SORT_IP=1, set it when submitting trials
+if [[ "$ARNOLD_QUOTA_POOL" == "third_party" ]]; then
+    export NCCL_IB_QPS_PER_CONNECTION=${NCCL_IB_QPS_PER_CONNECTION:=6}
+fi
+
+start_time="$(date +%FT%T)"
+torchrun \
+  --node_rank=$node_rank \
+  --nproc_per_node=$nproc_per_node \
+  --nnodes=$nnodes \
+  $additional_args $@
+ret=$?
+
+# print start time and check for OOM
+echo "start_time: $start_time"
+LC_ALL=C dmesg --time-format=iso | awk -v start="$start_time"  '$0 >= start' | grep memory
+exit $ret

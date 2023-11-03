@@ -21,6 +21,12 @@ class ModelMetric(Metric):
             be the model object.
     """
 
+    THEORETICAL_MAPPING = {
+        "NVIDIA H100": {32: 67e12, 16: 988e12, 64: 34e12},
+        "NVIDIA H800": {32: 67e12, 16: 988e12, 64: 1e12},
+        "NVIDIA A100": {32: 19.5e12, 16: 312e12, 64: 9.7e12},
+    }
+
     def __init__(
         self,
         precision: Union[int, str],
@@ -42,6 +48,16 @@ class ModelMetric(Metric):
                     f"Model `{model_name}`[{cls_name}] is not supported for "
                     "flops calculation, disable model metric calculation."
                 )
+        device_name = torch.cuda.get_device_properties(0).name
+        if device_name in self.THEORETICAL_MAPPING:
+            self._theoretical = self.THEORETICAL_MAPPING[device_name]
+        else:
+            rank_zero_warn(
+                f"MFU calculation not support for current device {device_name}"
+            )
+            self._theoretical = None
+            self.metric_available = False
+
         if not self.metric_available:
             return
         self.add_state("num_tokens", default=torch.tensor(0.0), dist_reduce_fx="sum")
@@ -108,13 +124,13 @@ class ModelMetric(Metric):
             float: theoretical peak throughput
 
         """
-
+        eps = 1e-8
         if self.precision in (32, "32", "32-true"):
-            return 19.5e12
+            return self._theoretical.get(32, eps)
         if self.precision in (16, "16", "16-mixed", "bf16", "bf16-mixed"):
-            return 312e12
+            return self._theoretical.get(16, eps)
         if self.precision in (64, "64", "64-true"):
-            return 9.7e12
+            return self._theoretical.get(64, eps)
         rank_zero_warn(
             f"Unsupported precision `{self.precision}`, flops_theoretical set to 1."
         )

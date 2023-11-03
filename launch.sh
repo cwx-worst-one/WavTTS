@@ -76,16 +76,12 @@ echo "NCCL_IB_DISABLE    :   ${NCCL_IB_DISABLE}"
 
 export NCCL_DEBUG=WARN
 
-# patch triton
-sudo cp samantha/utils/patches/matmul.py /usr/local/lib/python3.9/dist-packages/triton/ops/blocksparse/ || echo
-sudo cp samantha/utils/patches/matmul.py /home/tiger/.local/lib/python3.9/site-packages/triton/ops/blocksparse/ || echo
-
 # initiate actions using main.py
 # check if TORCHRUN is available
 if [ -x "$(command -v TORCHRUN)" ]; then
     CMD="TORCHRUN"
 else
-    CMD="python3"
+    CMD="./TORCHRUN"
 fi
 
 echo "Use launcher: ${CMD}"
