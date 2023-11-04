@@ -1,3 +1,0 @@
-/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_mulan_tagging/mulan_110_style_audio_mulan_tag/checkpoints/step=136000-tr_loss=4.7436-val_loss_0=4.8205.ckpt
-/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_mulan_tagging/mulan_110_style_mixed_mulan_tag/checkpoints/step=136000-tr_loss=4.7727-val_loss_0=4.8327.ckpt
-/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_mulan_tagging/mulan_160_mulan_tag/checkpoints/step=136000-tr_loss=4.8577-val_loss_0=4.8478.ckpt

@@ -6,6 +6,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Dict, Tuple, Any
 import argparse
+import numpy as np
 
 def is_audio_metrics_good(audio_metrics: Dict[str, Any]) -> Tuple[bool, str]:
     # Clipping
@@ -63,18 +64,52 @@ def is_valid_metadata(metadata):
         return False
     return True
 
-def is_valid_lyrics(lyrics):
-    utterances = lyrics.get('utterances', [])
-    if utterances == None or len(utterances) < 5:
-#         print('Invalid Utterances:', len(utterances))
+def is_valid_lyrics(lyrics, confidence_threshold=0.8):
+    if lyrics is None: 
         return False
-    return True
+    confidences = []
+    for utterance in lyrics:
+        if 'confidence' in utterance:
+            confidence = float(utterance["confidence"])
+        elif 'additions' not in utterance:
+            confidence = float(utterance["additions"]["confidence"])
+        else:
+            # some lyrics may not have confidence (force alignment). return True
+            return True
+        if confidence == 0:
+            continue
+        confidences.append(confidence)
+    if len(confidences) == 0:
+        return False
+    return np.array(confidences).mean() > confidence_threshold
 
+def extract_metadata_and_utterances(index_data):
+    if 'metadata' in index_data:
+        metadata = index_data['metadata']
+    else:
+        metadata = index_data
+    # Hiphop has format metadata: {..., lyrics: []}, THe rest has format { metadata: {}, lyrics: []}
+    if 'lyrics' in metadata:
+        lyrics = metadata['lyrics']
+    elif 'lyrics' in index_data:
+        lyrics = index_data['lyrics']
+    else:
+        lyrics = None
+
+    utterances = None
+    if lyrics and 'utterances' in lyrics:
+        # v1 (asr, no punctuation)
+        utterances = lyrics['utterances']
+    elif lyrics and 'result' in lyrics:
+        # v2 (asr + punctuation)
+        utterances = lyrics['result'][0]['utterances']
+
+    return metadata, lyrics, utterances
 
 def run_genres(genre_splits, label="B", target_size=1_000_000):
-    index_dir = Path('/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc60m_lossless/indexes_vocal_merge')
-    index_downloaded_dir = Path('/mnt/bn/lyrics-to-song/ashaw/data/mcc/indexes_vocal_merge_downloaded')
-    output_dir = Path(f"/mnt/bn/lyrics-to-song/ashaw/data/mcc/vocal_{label}_extended/{target_size}/indexes")
+    index_dir = Path('/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/url2idx')
+    index_downloaded_dir = Path('/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/indexes_vocal_merge_downloaded')
+    output_dir = Path(f"/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_{label}/{target_size}/indexes")
     output_dir.mkdir(exist_ok=True, parents=True)
     index_list_fps = list(index_dir.glob(f'vocal-{label}-*.txt'))
 
@@ -128,7 +163,7 @@ def run_genres(genre_splits, label="B", target_size=1_000_000):
         for idx, (tar_fp, meta_index_fp_str) in pbar:
             meta_index_fp = Path(meta_index_fp_str)
 
-            dir_genre = str(meta_index_fp).split('genre=')[1].split('/')[0]
+            dir_genre = str(meta_index_fp.stem).replace(f'vocal-{label}-', '').split('_shard')[0]
             if dir_genre not in dir2final_genre: 
                 print('dir_genre not in supported', dir_genre)
                 continue
@@ -153,25 +188,17 @@ def run_genres(genre_splits, label="B", target_size=1_000_000):
                 meta_json = json.loads(meta_str)
                 
                 # Hiphop has format metadata: {..., lyrics: []}, THe rest has format { metadata: {}, lyrics: []}
-                if 'metadata' in meta_json:
-                    metadata = meta_json['metadata']
-                else:
-                    metadata = meta_json
-                    
-                if 'lyrics' in metadata:
-                    lyrics = metadata['lyrics']
-                elif 'lyrics' in meta_json:
-                    lyrics = meta_json['lyrics']
-                else:
-                    print('No lyrics found')
+                metadata, lyrics, utterances = extract_metadata_and_utterances(meta_json)
                 song_final_genre = metadata['final_genre']
                 song_final_genre = song_final_genre.split(',')[0].split('/')[0]
                 if song_final_genre != target_final_genre: 
                     print('Final genre does not equal', song_final_genre, target_final_genre)
                     continue
                 if not is_valid_metadata(metadata): 
+                    # print('Invalid metadata')
                     continue
-                if not is_valid_lyrics(lyrics):
+                if not is_valid_lyrics(utterances):
+                    # print('Invalid lyrics')
                     continue
                 final_genres.append(target_final_genre)
                 meta_str = json.dumps({ 'metadata': metadata, 'lyrics': lyrics })
@@ -189,6 +216,8 @@ def run_genres(genre_splits, label="B", target_size=1_000_000):
                 f.writelines(lines)
             with open(output_url2idx, 'a') as f:
                 f.write(f'{tar_fp}\t{str(output_fp)}\n')
+    print('Final genre count:', final_genre_count)
+    print('Total songs', sum(final_genre_count.values()))
 
         
 if __name__ == "__main__":
@@ -205,7 +234,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     run_genres(args.genres, args.label, args.target_size)
 
-# mlx worker launch --gpu 0 -- python3 recipes/bigmusic/dev/ashaw/scripts/process_1m_vocalB.py --target_size 2000000
+# mlx worker launch --gpu 0 -- python3 recipes/bigmusic/dev/ashaw/scripts/process_1m_vocalB.py --target_size 2400000 # balances out to 2 million
 # mlx worker launch --gpu 0 -- python3 recipes/bigmusic/dev/ashaw/scripts/process_1m_vocalB.py --target_size 1000000
 # mlx worker launch --gpu 0 -- python3 recipes/bigmusic/dev/ashaw/scripts/process_1m_vocalB.py --target_size 500000
 # mlx worker launch --gpu 0 -- python3 recipes/bigmusic/dev/ashaw/scripts/process_1m_vocalB.py --target_size 300000
