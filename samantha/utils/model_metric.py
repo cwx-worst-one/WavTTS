@@ -24,7 +24,7 @@ class ModelMetric(Metric):
     THEORETICAL_MAPPING = {
         "NVIDIA H100": {32: 67e12, 16: 988e12, 64: 34e12},
         "NVIDIA H800": {32: 67e12, 16: 988e12, 64: 1e12},
-        "NVIDIA A100": {32: 19.5e12, 16: 312e12, 64: 9.7e12},
+        "NVIDIA A100-SXM4-80GB": {32: 19.5e12, 16: 312e12, 64: 9.7e12},
     }
 
     def __init__(
