@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 from collections import Counter
+from multiprocessing.pool import ThreadPool
 
 import braceexpand
 import numpy as np
@@ -137,9 +138,15 @@ def sort_data_sources(file_list):
 def __expand_paths(path_lst):
     if path_lst is None:
         return None
-    paths = []
-    for lst in path_lst:
-        paths.extend(expand_urls(lst))
+    paths, futures = [], []
+    freq = Counter(path_lst)
+    pool = ThreadPool(20)
+    for lst in freq:
+        futures.append(pool.apply_async(func=expand_urls, args=(lst,)))
+    pool.close()
+    pool.join()
+    for future, lst in zip(futures, freq):
+        paths.extend(future.get() * freq[lst])
     return paths
 
 
