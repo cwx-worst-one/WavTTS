@@ -3,13 +3,19 @@ import os
 
 
 def count_one(idx):
-    result = os.popen(f"hdfs dfs -cat {idx}").read().split("\n")
+    if idx.startswith("hdfs://"):
+        result = os.popen(f"hdfs dfs -cat {idx}").read().split("\n")
+    else:
+        result = open(idx, "r").read().split("\n")
     return len(result)
 
 
 if __name__ == "__main__":
-    path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/kaiping/2023-09-20/url2index.txt"
-    result = os.popen(f"hdfs dfs -cat {path}").read().split("\n")
+    path = "/mnt/bn/audio-diffusion/data/mcc_pgc_600k/gpt_url2idx.txt"
+    if path.startswith("hdfs://"):
+        result = os.popen(f"hdfs dfs -cat {path}").read().split("\n")
+    else:
+        result = open(path, "r").read().split("\n")
     result = [r for r in result if r]
     print(len(result))
 

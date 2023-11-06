@@ -196,6 +196,7 @@ class IndexShardWriter:
         maxcount (int): max number of rows in each parquet file.
         row_group_size (int): number of rows in each row group.
         need_row_group_no (bool): whether to add row_group_no to each row.
+        feats (list): list of features to be written to individual folders.
     """
 
     def __init__(
@@ -206,6 +207,7 @@ class IndexShardWriter:
         filename_pattern="shard-%05d.parquet",
         maxcount=2048,
         row_group_size=64,
+        feats=None,
     ):
         self.output_root = output_root
         self.partitions = partitions
@@ -225,8 +227,19 @@ class IndexShardWriter:
         self.idx_writer = ShardWriter(
             self.idx_pattern, maxcount, row_group_size, need_row_group_no=True
         )
+        self.feat_writers = {}
+        if feats is None:
+            feats = []
+        for feat in feats:
+            feat_pattern = os.path.join(
+                output_root, feat, partition_path, filename_pattern
+            )
+            writer = ShardWriter(
+                feat_pattern, maxcount, row_group_size, need_row_group_no=False
+            )
+            self.feat_writers[feat] = writer
 
-    def write(self, data_item: dict, idx_item: dict):
+    def write(self, data_item: dict, idx_item: dict, feat_items: dict = None):
         r"""Write an item to shards."""
         self.data_writer.write(data_item)
         cd_path = "/".join([".."] * (len(self.partitions) + 1))
@@ -234,11 +247,16 @@ class IndexShardWriter:
             {"data_file": self.data_writer.filename.replace(self.output_root, cd_path)}
         )
         self.idx_writer.write(idx_item)
+        if feat_items is not None:
+            for feat, item in feat_items.items():
+                self.feat_writers[feat].write(item)
 
     def close(self):
         r"""Close the stream."""
         self.data_writer.close()
         self.idx_writer.close()
+        for writer in self.feat_writers.values():
+            writer.close()
 
     def __repr__(self):
         return (
