@@ -15,6 +15,7 @@ from pytorch_lightning import Trainer
 
 from samantha.utils.benchmark import benchmark_model
 from samantha.utils.experiment import create_experiment_directory
+from samantha.utils.hdfs_helper import exists
 from samantha.utils.hdfs_tools import hdfs_open
 from samantha.utils.hparams import DotDict
 from samantha.utils.parser import parse_arguments
@@ -102,6 +103,10 @@ def main():
             return
 
         fn = getattr(trainer, action)
+        ckpt_path = extra_params.get("ckpt_path", None)
+        if ckpt_path is not None and not exists(ckpt_path):
+            extra_params.pop("ckpt_path", None)
+
         fn(model=pl_module, datamodule=pl_datamodule, **extra_params)
     else:
         # need to post to sail
