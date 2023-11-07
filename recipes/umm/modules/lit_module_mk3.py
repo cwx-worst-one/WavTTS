@@ -54,7 +54,6 @@ class Stage0(pl.LightningModule):
                 pretrained["ckpt_path"], self.local_rank, pretrained["cache_dir"]
             )["state_dict"]
             print(f'Loading pretrained model from {pretrained["ckpt_path"]}')
-            self.modify_state_dict(state_dict)
             missing_keys, unexpected_keys = self.load_state_dict(
                 state_dict=state_dict, strict=False
             )
@@ -63,23 +62,6 @@ class Stage0(pl.LightningModule):
             del state_dict
             torch.cuda.empty_cache()
 
-    def modify_state_dict(self, state_dict):
-        for k in list(state_dict.keys()):
-            if k.startswith("model.encoder_pre_layers"):
-                k_i = int(k.split(".")[2])
-                k_suffix = ".".join(k.split(".")[3:])
-                k_new = f"model.encoder_layers.{k_i}.{k_suffix}"
-                state_dict[k_new] = state_dict[k]
-                print(f"[MSD] {k} -> {k_new}")
-                del state_dict[k]
-            elif k.startswith("model.encoder_post_layers"):
-                k_i = int(k.split(".")[2]) + 12
-                k_suffix = ".".join(k.split(".")[3:])
-                k_new = f"model.encoder_layers.{k_i}.{k_suffix}"
-                state_dict[k_new] = state_dict[k]
-                print(f"[MSD] {k} -> {k_new}")
-                del state_dict[k]
-        return
 
     def forward(self, x: torch.Tensor) -> None:
         raise NotImplementedError()
@@ -94,14 +76,14 @@ class Stage0(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         # Not quite accurate, time used by optimizer is also counted.
         elapsed = time.time() - self.ts_before_forward
-        mfu = self.flops / elapsed / 312e12
+        # mfu = self.flops / elapsed / 312e12
         self.ts_before_forward = time.time()
 
         loss_dict = self._shared_step(batch)
-        if "flops" in loss_dict:
-            self.flops = loss_dict["flops"]
-            del loss_dict["flops"]
-            loss_dict.update({"training/mfu" : mfu})
+        # if "flops" in loss_dict:
+        #     self.flops = loss_dict["flops"]
+        #     del loss_dict["flops"]
+        #     loss_dict.update({"training/mfu" : mfu})
         loss_dict["training/loss"] = loss_dict["loss"]
         loss_dict["aux/bsz"] = batch["audio"].shape[0]
         self.log_dict(loss_dict, prog_bar=True, sync_dist=True)
@@ -463,7 +445,6 @@ class Stage3(Stage2):
         return code_rate
 
     @torch.no_grad()
-    @torch.cuda.amp.autocast(enabled=False)
     def wav2token(self, wav):
         return self.model.wav2token(wav)
 
@@ -546,7 +527,7 @@ class USMStage2(Stage0):
     def extract_features(self, wav, dtype=torch.float32):
         # wav: 16k hz, shape=[b, t]
         # pad wav to multiple 32 frames
-        pad_len = wav.shape[-1]  % (self.extra_params.hop_length * 32)
+        pad_len = wav.shape[-1] % (self.extra_params.hop_length * 32)
         if pad_len != 0:
             pad_len = self.extra_params.hop_length * 32 - pad_len
         wav = F.pad(wav, (0, pad_len))
@@ -630,16 +611,26 @@ class USMStage3(USMStage2):
         return loss_dict
 
     def on_train_batch_start(self, batch, batch_idx):
-        if self.trainer.global_step >= 20_000:
-            if not hasattr(self.model.vq_proj_in, '__len__'):
-                return
-            if len(self.model.vq_proj_in) < 3:
-                return
-            module = self.model.vq_proj_in[2]
-            if isinstance(module, (torch.nn.BatchNorm1d, torch.nn.SyncBatchNorm)):
-                module.eval()
-            if self.trainer.global_step % 1000 == 0:
-                print(module.running_mean)
+        # Disable all BN except VQ
+        def bn_fix(m):
+            if isinstance(m, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.SyncBatchNorm)):
+                m.eval()
+        self.model.apply(bn_fix)
+        # Enable VQ BN
+        def bn_enable(m):
+            if isinstance(m, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.SyncBatchNorm)):
+                m.train()
+        if self.trainer.global_step < 20_000:
+            self.model.vq_proj_in.apply(bn_enable)
+        # Reamp
+        try:
+            if self.extra_params.vq_remap:
+                if self.trainer.global_step >= 1 and self.trainer.global_step <= 10_000:
+                    if self.trainer.global_step % 1000 == 0:
+                        print("Remaping VQ Embedding")
+                        self.model.vq.embedding.remap_weight()
+        except:
+            pass
         return
 
     def configure_optimizers(self):
@@ -675,5 +666,11 @@ class USMStage3(USMStage2):
         return code_rate
 
     @torch.no_grad()
-    def wav2token(self, wav):
-        return self.model.wav2token(wav)
+    def wav2token(self, wav, dtype=torch.float32):
+        # wav: 16k hz, shape=[b, t]
+        # pad wav to multiple 32 frames
+        pad_len = wav.shape[-1] % (self.extra_params.hop_length * 32)
+        if pad_len != 0:
+            pad_len = self.extra_params.hop_length * 32 - pad_len
+        wav = F.pad(wav, (0, pad_len))
+        return self.model.wav2token(wav, dtype=dtype)

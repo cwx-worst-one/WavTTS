@@ -8,6 +8,8 @@
 import json
 from pathlib import Path
 from os.path import join as path_join
+import numpy as np
+import os
 
 import torchaudio
 from torch.utils.data import Dataset
@@ -17,9 +19,13 @@ SAMPLE_RATE = 16000
 
 
 class IEMOCAPDataset(Dataset):
-    def __init__(self, data_dir, meta_path, pre_load=True):
+    def __init__(self, data_dir, meta_path, offline_root, layer, pre_load=True):
         self.data_dir = data_dir
         self.pre_load = pre_load
+
+        self.offline_root = offline_root
+        self.layer = layer
+
         with open(meta_path, 'r') as f:
             self.data = json.load(f)
         self.class_dict = self.data['labels']
@@ -37,10 +43,26 @@ class IEMOCAPDataset(Dataset):
         wav = self.resampler(wav).squeeze(0)
         return wav
 
+    def _load_offline_feature(self, wav_path):
+        feats = np.load(os.path.join(self.offline_root, wav_path+'.npy'))
+        # T = np.random.randint(50, 101)
+        # feats = np.ones([T])
+        if len(feats.shape) == 2 and feats.shape[0] == 1:
+            feats = feats[0]
+        if len(feats.shape) == 3 and feats.shape[0] == 1:
+            feats = feats[0]
+        if len(feats.shape) == 4 and feats.shape[0] == 1:
+            feats = feats[0]
+        if len(feats.shape) == 3 and self.layer is not None:
+            feats = feats[self.layer]
+        # print(feats, '  ', feats.shape, '  ', os.path.join(self.offline_root, wav_path+'.npy'))
+        return feats
+
     def _load_all(self):
         wavforms = []
         for info in self.meta_data:
-            wav = self._load_wav(info['path'])
+            # wav = self._load_wav(info['path'])
+            wav = self._load_offline_feature(info['path'])
             wavforms.append(wav)
         return wavforms
 
@@ -50,8 +72,10 @@ class IEMOCAPDataset(Dataset):
         if self.pre_load:
             wav = self.wavs[idx]
         else:
-            wav = self._load_wav(self.meta_data[idx]['path'])
-        return wav.numpy(), label, Path(self.meta_data[idx]['path']).stem
+        #     wav = self._load_wav(self.meta_data[idx]['path'])
+            wav = self._load_offline_feature(self.meta_data[idx]['path'])
+        # return wav.numpy(), label, Path(self.meta_data[idx]['path']).stem
+        return wav, label, Path(self.meta_data[idx]['path']).stem
 
     def __len__(self):
         return len(self.meta_data)

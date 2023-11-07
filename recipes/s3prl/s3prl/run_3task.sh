@@ -1,13 +1,8 @@
 
-# mode=$1
-# offline_root=$2
-# layer=$3
-# exp_name=$4
-
-mode=bn
-offline_root=/mnt/bn/cyz-lq-nas/s3prl_gendir/1.4.1
-layer=0
-exp_name=1.4.1_beforevq
+mode=$1
+offline_root=$2
+layer=$3
+exp_name=$4
 
 
 if [ "$mode" = "bn" ]; then

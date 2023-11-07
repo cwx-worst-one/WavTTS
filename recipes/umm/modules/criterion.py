@@ -438,3 +438,59 @@ class SoundStormLoss(nn.Module):
         loss_dict["accu"] = accu
 
         return loss_dict
+
+
+class CTCPitchMelLoss(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.ctc_loss_fn = nn.CTCLoss(
+            blank=config.ctc_blank_id,
+            reduction=config.ctc_loss_reduction,
+            zero_infinity=config.ctc_zero_infinity,
+        )
+        self.mel_loss_fn = STFTLoss()
+        self.config = config
+
+    def forward(self, ctc_logits, text_ids, recon_mel, mel, recon_f0, f0, recon_vuv, vuv):
+        loss_dict = {}
+        # Mel
+        recon_mel = recon_mel.contiguous().float()
+        mel = mel.contiguous().float()
+        mel_loss = self.mel_loss_fn.float()(recon_mel, mel)
+        loss_dict["loss_mel"] = mel_loss["stft_loss"]
+
+        # F0
+        recon_f0 = recon_f0.contiguous().float()
+        f0 = f0.contiguous().float()
+        f0_loss =  (torch.abs(recon_f0 - f0) * vuv).sum() / (torch.sum(vuv) + 1)
+        loss_dict["f0_loss"] = f0_loss
+
+        # vuv
+        recon_vuv = recon_vuv.contiguous().float()
+        vuv = vuv.contiguous().float()
+        vuv_loss = F.binary_cross_entropy_with_logits(recon_vuv, vuv)
+        loss_dict["vuv_loss"] = vuv_loss
+
+        # CTC
+        ctc_logits = ctc_logits.contiguous().float()
+        input_lengths = torch.full(
+            (ctc_logits.size(0),), ctc_logits.size(1), dtype=torch.long
+        )
+        labels_mask = text_ids > 0
+        target_lengths = labels_mask.sum(-1)
+        flattened_targets = text_ids.masked_select(labels_mask)
+
+        # CTCLoss doesn't support fp16
+        log_probs = F.log_softmax(ctc_logits, dim=-1, dtype=torch.float32).transpose(
+            0, 1
+        )  # [N, T, C] -> [T, N, C]
+
+        with torch.backends.cudnn.flags(enabled=False):
+            ctc_loss = self.ctc_loss_fn(
+                log_probs, flattened_targets, input_lengths, target_lengths
+            )
+        loss_dict["loss_ctc"] = ctc_loss
+
+        return loss_dict
+
+

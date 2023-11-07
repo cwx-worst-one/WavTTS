@@ -1123,26 +1123,17 @@ class BigTTSTransforms(BaseTransforms):
     def __call__(self, item: Dict[str, Any]) -> Generator:
         try:
             output_dict = {}
-            text = normalize_text(item["text"])
+            text = self.remove_punc(normalize_text(item["text"]))
             if self.tokenizer is not None and callable(self.tokenizer):
                 encoded_text = self.tokenizer(
                     text,
                     add_special_tokens=False,
-                    # padding="longest",
                     return_tensors="pt",
                 )
                 token = encoded_text["input_ids"].squeeze(dim=0)
                 if token.size(-1) == 0:
                     self._update_stats(skipped=True, message="Token zero length")
                     return
-                '''
-                elif (
-                        token.size(-1)
-                        > math.floor(audio.size(-1) / self.sample_rate) * self.frame_rate
-                ):
-                    self._update_stats(skipped=True, message="Token too long")
-                    return
-                '''
                 output_dict.update(token=token)
             audio = self.base_transform(item[self.audio_key])
             audio = self.do_resample(item["src_sample_rate"], audio)
@@ -1154,6 +1145,10 @@ class BigTTSTransforms(BaseTransforms):
             if audio.size(-1) > self.max_duration * self.sample_rate:
                 self._update_stats(skipped=True, message="Audio too long")
                 return
+            if self.tokenizer is not None and callable(self.tokenizer):
+                if (token.size(-1) > math.floor(audio.size(-1) / self.sample_rate) * self.frame_rate):
+                    self._update_stats(skipped=True, message="Token too long")
+                    return
             output_dict.update({"audio": audio, "text": text, "tag": "vocal"})
             yield output_dict
             self._update_stats(skipped=False)
@@ -1188,14 +1183,7 @@ class BigTTSDataset(WebPipeline):
             **kwargs,
     ):
         print(f"[{self.name}] initializing...")
-        # if url_pattern is None:
-        #     urls = parse_data_urls(data_id=data_id)
-        # else:
-        #     urls = parse_data_urls(data_urls=url_pattern)
-        # dataset = ra_wds.WebDataset(urls=urls, **kwargs)
-
         dataset = ParquetDataset(data_id=data_id, data_urls=url_pattern, **kwargs)
-
         transforms = BigTTSTransforms(
             sample_rate=sample_rate,
             audio_key=audio_key,

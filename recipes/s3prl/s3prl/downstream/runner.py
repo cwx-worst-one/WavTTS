@@ -185,9 +185,13 @@ class Runner():
     def _get_downstream(self):
         expert = importlib.import_module(f"s3prl.downstream.{self.args.downstream}.expert")
         Downstream = getattr(expert, "DownstreamExpert")
+        if self.args.offline_root is not None:
+            self.config['downstream_expert']['datarc']['offline_root'] = self.args.offline_root
+            print('set offline_root: ', self.config['downstream_expert']['datarc']['offline_root'])
         model = Downstream(
             upstream_dim = self.upstream.model.input_dim,
             upstream_rate = self.upstream.model.downsample_rate,
+            layer = self.args.upstream_layer_selection,
             **self.config,
             **vars(self.args)
         ).to(self.args.device)

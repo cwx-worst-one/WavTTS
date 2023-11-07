@@ -21,7 +21,7 @@ class DownstreamExpert(nn.Module):
     eg. downstream forward, metric computation, contents to log
     """
 
-    def __init__(self, upstream_dim, downstream_expert, expdir, **kwargs):
+    def __init__(self, upstream_dim, layer, downstream_expert, expdir, **kwargs):
         super(DownstreamExpert, self).__init__()
         self.upstream_dim = upstream_dim
         self.datarc = downstream_expert['datarc']
@@ -29,6 +29,7 @@ class DownstreamExpert(nn.Module):
 
         DATA_ROOT = self.datarc['root']
         meta_data = self.datarc["meta_data"]
+        self.layer = layer
 
         self.fold = self.datarc.get('test_fold') or kwargs.get("downstream_variant")
         if self.fold is None:
@@ -44,14 +45,14 @@ class DownstreamExpert(nn.Module):
             meta_data, self.fold.replace('fold', 'Session'), 'test_meta_data.json')
         print(f'[Expert] - Testing path: {test_path}')
         
-        dataset = IEMOCAPDataset(DATA_ROOT, train_path, self.datarc['pre_load'])
+        dataset = IEMOCAPDataset(DATA_ROOT, train_path, self.datarc['offline_root'], self.layer, self.datarc['pre_load'])
         trainlen = int((1 - self.datarc['valid_ratio']) * len(dataset))
         lengths = [trainlen, len(dataset) - trainlen]
         
         torch.manual_seed(0)
         self.train_dataset, self.dev_dataset = random_split(dataset, lengths)
 
-        self.test_dataset = IEMOCAPDataset(DATA_ROOT, test_path, self.datarc['pre_load'])
+        self.test_dataset = IEMOCAPDataset(DATA_ROOT, test_path, self.datarc['offline_root'], self.layer, self.datarc['pre_load'])
 
         model_cls = eval(self.modelrc['select'])
         model_conf = self.modelrc.get(self.modelrc['select'], {})

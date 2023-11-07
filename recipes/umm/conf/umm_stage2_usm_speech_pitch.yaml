@@ -28,16 +28,15 @@ run_opts:
     hdfs_log_dir: "hdfs://haruna/home/byte_speech_sv/user/litang/umm_ar/usm_25hz"
     log_dir: logs
     log_name: usm_umm
-    version: !ref usm_stage3_<extra_params[tokenizer]>_chroma<extra_params[n_chroma]>_vq<config[vq_codebook_size]>x<config[vq_codebook_dim]>_<config[vq_type]>_fixlayer
+    version: !ref usm_stage2_<extra_params[tokenizer]>_chroma<extra_params[n_chroma]>
     precision: "bf16-mixed"
     num_workers: 3
     accelerator: auto
-    warmup_steps: 2000
     max_steps: 1000000
     val_check_interval: 5000
     ckpt_interval: 5000
     batch_size: 1
-    learning_rate: 2.0e-5
+    learning_rate: 1.0e-4
     cycle_steps: 30000
     weight_decay: 0.1
     shuffle_buffer: 8000
@@ -48,9 +47,10 @@ run_opts:
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
-pl_datamodule: !new:recipes.datasets.mcc.mix.ParquetDataModule
+pl_datamodule: !new:recipes.datasets.mcc.mix_cyz.ParquetDataModule
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
     sample_rate: !ref <extra_params[sample_rate]>
+    hop_length: !ref <extra_params[hop_length]>
     batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <extra_params[sample_rate]>
     num_workers: !ref <run_opts[num_workers]>
     region: "CN"
@@ -63,17 +63,16 @@ pl_datamodule: !new:recipes.datasets.mcc.mix.ParquetDataModule
     tokenizer: !ref <extra_params[tokenizer]>
     frame_rate: !ref <extra_params[frame_rate]>
 
-optimizer_cls: !name:deepspeed.ops.adam.FusedAdam #torch.optim.AdamW
+optimizer_cls: !name:torch.optim.AdamW
     lr: !ref <run_opts[learning_rate]>
     weight_decay: !ref <run_opts[weight_decay]>
     betas: [0.9, 0.96] # TODO
     eps: 0.00000001
 
-scheduler_cls: !name:recipes.umm.modules.lr_scheduler.WarmupCosine
+scheduler_cls: !name:recipes.umm.modules.lr_scheduler.DecayCosine
     init_lr: !ref <run_opts[learning_rate]>
-    warmup_steps: !ref <run_opts[warmup_steps]>
     cycle_steps: !ref <run_opts[cycle_steps]>
-    min_lr: !ref <run_opts[learning_rate]> * 0.1
+    min_lr: !ref <run_opts[learning_rate]> / 2
 
 usm_config:
   network:
@@ -88,9 +87,9 @@ usm_config:
     conformer_attention_heads: 16
     conformer_linear_units: 6144
     conformer_num_blocks: 32
-    conformer_dropout_rate: 0.0
-    conformer_positional_dropout_rate: 0.0
-    conformer_attention_dropout_rate: 0.0
+    conformer_dropout_rate: 0.1
+    conformer_positional_dropout_rate: 0.1
+    conformer_attention_dropout_rate: 0.1
     conformer_positionwise_layer_type: 'linear'
     conformer_activation_fn: 'gelu'
     conformer_positionwise_conv_kernel_size: 1
@@ -106,7 +105,7 @@ usm_config:
     conformer_weight_scale: 1.0
     conformer_half_pooling: 0
     backbone_memory_size: 1536
-    dropout: 0.0
+    dropout: 0.1
     flash_attn: true
 
 config: !new:recipes.umm.models.config.UMMConfig
@@ -119,16 +118,12 @@ config: !new:recipes.umm.models.config.UMMConfig
     win_length: !ref <extra_params[win_length]>
     hop_length: !ref <extra_params[hop_length]>
     hidden_size: 1536
-    add_vq: True
-    vq_proj_norm: "bn"
-    vq_proj_noise: 10000
-    vq_type: "EMAEntropy"
+    add_vq: False
     vq_codebook_size: 16384
     vq_codebook_dim: 32
-    vq_layer_idx: 24
     vq_decay: 0.99
-    w_loss_mel: 1.0
-    w_loss_chroma: 1.0
+    w_loss_mel: 1.0    
+    w_loss_f0: 1.0
     w_loss_vq: 1.0
     w_loss_ctc: 1.0
     tokenizer: !ref <extra_params[tokenizer]>
@@ -136,22 +131,21 @@ config: !new:recipes.umm.models.config.UMMConfig
     vocab_size: 30523
     ctc_blank_id: 30522
     usm_config: !ref <usm_config>
-    fix_layers: true
 
-model_cls: !name:recipes.umm.models.umm_mk3.USMStage3
+model_cls: !name:recipes.umm.models.umm_cyz.USMStage2
     config: !ref <config>
 
-pl_module: !new:recipes.umm.modules.lit_module_mk3.USMStage3
+pl_module: !new:recipes.umm.modules.lit_module_cyz.USMStage2
     checkpointing: !ref <run_opts[checkpointing]>
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
-    criterion_cls: !name:recipes.umm.modules.criterion.UMMLoss
+    criterion_cls: !name:recipes.umm.modules.criterion.CTCPitchMelLoss
         config: !ref <config>
     extra_params: !ref <extra_params>
     required_modules:
         pretrained:
-            ckpt_path: "hdfs://haruna/home/byte_speech_sv/user/litang/umm_ar/usm_25hz/usm_umm/default/checkpoints/step=050000.ckpt"
+            ckpt_path: /mnt/bn/cyz-lq-nas/model_cache/usm/usm_stage1.ckpt
             init_fn: !name:recipes.umm.requires.model_initializer.init_pretrained
             cache_dir: !ref <run_opts[cache_dir]>
 
@@ -203,5 +197,6 @@ trainer: !new:pytorch_lightning.Trainer
     num_sanity_val_steps: 2
     limit_val_batches: 1
     sync_batchnorm: True
+    benchmark: False
     callbacks: !ref <callbacks>
     plugins: !ref <plugins>

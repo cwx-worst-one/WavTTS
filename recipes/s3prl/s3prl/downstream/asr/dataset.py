@@ -36,7 +36,7 @@ HALF_BATCHSIZE_TIME = 2000
 ####################
 class SequenceDataset(Dataset):
     
-    def __init__(self, split, bucket_size, dictionary, libri_root, bucket_file, 
+    def __init__(self, split, bucket_size, dictionary, layer, libri_root, bucket_file, 
                 offline_root, **kwargs):
         super(SequenceDataset, self).__init__()
         
@@ -44,6 +44,8 @@ class SequenceDataset(Dataset):
         self.libri_root = libri_root
         self.sample_rate = SAMPLE_RATE
         self.split_sets = kwargs[split]
+        self.layer = layer
+        print('*'*50, 'layer: ', self.layer, '*'*50)
 
         self.offline_root = offline_root
         print('***** offline_root:  ', self.offline_root)
@@ -128,8 +130,8 @@ class SequenceDataset(Dataset):
             feats = feats[0]
         if len(feats.shape) == 4 and feats.shape[0] == 1:
             feats = feats[0]
-        if len(feats.shape) == 3:
-            feats = feats[-1::-6][:3]
+        if len(feats.shape) == 3 and self.layer is not None:
+            feats = feats[self.layer]
         # print(feats, '  ', feats.shape, '  ', os.path.join(self.offline_root, wav_path+'.npy'))
         return feats
 

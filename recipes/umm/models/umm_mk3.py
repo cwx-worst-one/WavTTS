@@ -14,6 +14,8 @@ from transformers.utils import ModelOutput
 
 from recipes.umm.transforms.chroma import ChromaSpectrogram
 from recipes.umm.transforms.speech import SpeechTransform
+from recipes.umm.vocoder.ctiga_llama import CtigaLLaMa
+from recipes.umm.vocoder.llama_v100 import ModelArgs
 from samantha.utils.hparams import DotDict
 
 from mariana.models.audio.usm_encoder import UsmEncoder
@@ -26,432 +28,21 @@ def WNConv1d(*args, **kwargs):
     return weight_norm(nn.Conv1d(*args, **kwargs))
 
 
-@dataclass
-class ConformerEncoderOutput(ModelOutput):
-    last_hidden_state: torch.FloatTensor = None
-    hidden_states: Optional[Tuple[torch.FloatTensor]] = None
-
-
-class ConformerRotaryPositionalEmbedding(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        dim = config.hidden_size // config.num_attention_heads
-        base = config.rotary_embedding_base
-
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
-        self.register_buffer("inv_freq", inv_freq)
-        self.cached_sequence_length = 0
-        self.cached_rotary_positional_embedding = None
-
-    def _set_cos_sin_cache(self, sequence_length):
-        self.cached_sequence_length = sequence_length
-        time_stamps = torch.arange(
-            sequence_length, device=self.inv_freq.device, dtype=torch.float32
-        )
-        freqs = torch.einsum("i,j->ij", time_stamps, self.inv_freq)
-        embeddings = torch.cat((freqs, freqs), dim=-1)
-        cos_embeddings = embeddings.cos()[:, None, None, :]
-        sin_embeddings = embeddings.sin()[:, None, None, :]
-        self.cached_rotary_positional_embedding = torch.stack(
-            [cos_embeddings, sin_embeddings]
-        )
-
-    def forward(self, hidden_states):
-        sequence_length = hidden_states.shape[1]
-        if (
-            sequence_length > self.cached_sequence_length
-            or self.cached_rotary_positional_embedding is None
-        ):
-            self._set_cos_sin_cache(sequence_length)
-        return self.cached_rotary_positional_embedding[:, -sequence_length:].to(
-            dtype=hidden_states.dtype
-        )
-
-
-class ConformerFeedForward(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.intermediate_dropout = nn.Dropout(config.activation_dropout)
-
-        self.intermediate_dense = nn.Linear(
-            config.hidden_size, config.intermediate_size
-        )
-        if isinstance(config.hidden_act, str):
-            self.intermediate_act_fn = ACT2FN[config.hidden_act]
-        else:
-            self.intermediate_act_fn = config.hidden_act
-
-        self.output_dense = nn.Linear(config.intermediate_size, config.hidden_size)
-        self.output_dropout = nn.Dropout(config.hidden_dropout)
-
-    def forward(self, hidden_states):
-        hidden_states = self.intermediate_dense(hidden_states)
-        hidden_states = self.intermediate_act_fn(hidden_states)
-        hidden_states = self.intermediate_dropout(hidden_states)
-
-        hidden_states = self.output_dense(hidden_states)
-        hidden_states = self.output_dropout(hidden_states)
-        return hidden_states
-
-    def get_flops(self, b, t):
-        def linear_flops(m):
-            return m.weight.shape[0] * m.weight.shape[1] * 2
-
-        return b * t * (
-            linear_flops(self.intermediate_dense) +
-            linear_flops(self.output_dense)
-        )
-
-
-class ConformerConvolutionModule(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        if (config.conv_depthwise_kernel_size - 1) % 2 == 1:
-            raise ValueError(
-                "`config.conv_depthwise_kernel_size` should be a odd number for 'SAME' padding"
-            )
-        self.layer_norm = nn.LayerNorm(config.hidden_size)
-        self.pointwise_conv1 = torch.nn.Conv1d(
-            config.hidden_size,
-            2 * config.hidden_size,
-            kernel_size=1,
-            stride=1,
-            padding=0,
-            bias=False,
-        )
-        self.glu = torch.nn.GLU(dim=1)
-        self.depthwise_conv = torch.nn.Conv1d(
-            config.hidden_size,
-            config.hidden_size,
-            config.conv_depthwise_kernel_size,
-            stride=1,
-            padding=(config.conv_depthwise_kernel_size - 1) // 2,
-            groups=config.hidden_size,
-            bias=False,
-        )
-        self.batch_norm = torch.nn.BatchNorm1d(config.hidden_size)
-        self.activation = ACT2FN[config.hidden_act]
-        self.pointwise_conv2 = torch.nn.Conv1d(
-            config.hidden_size,
-            config.hidden_size,
-            kernel_size=1,
-            stride=1,
-            padding=0,
-            bias=False,
-        )
-        self.dropout = torch.nn.Dropout(config.conformer_conv_dropout)
-
-    def forward(self, hidden_states):
-        hidden_states = self.layer_norm(hidden_states)
-        # exchange the temporal dimension and the feature dimension
-        hidden_states = hidden_states.transpose(1, 2)
-
-        # GLU mechanism
-        # => (batch, 2*channel, dim)
-        hidden_states = self.pointwise_conv1(hidden_states)
-        # => (batch, channel, dim)
-        hidden_states = self.glu(hidden_states)
-
-        # 1D Depthwise Conv
-        hidden_states = self.depthwise_conv(hidden_states)
-        hidden_states = self.batch_norm(hidden_states)
-        hidden_states = self.activation(hidden_states)
-
-        hidden_states = self.pointwise_conv2(hidden_states)
-        hidden_states = self.dropout(hidden_states)
-        hidden_states = hidden_states.transpose(1, 2)
-        return hidden_states
-
-    def get_flops(self, n, l):
-        def conv1d_flops(m):
-            return m.weight.shape[0] * m.weight.shape[1] * m.weight.shape[2] / m.groups * 2
-
-        return n * l * (
-            conv1d_flops(self.pointwise_conv1) +
-            conv1d_flops(self.depthwise_conv) +
-            conv1d_flops(self.pointwise_conv2)
-        )
-
-
-class ConformerSelfAttention(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-
-        self.head_size = config.hidden_size // config.num_attention_heads
-        self.num_heads = config.num_attention_heads
-
-        self.linear_q = nn.Linear(config.hidden_size, config.hidden_size)
-        self.linear_k = nn.Linear(config.hidden_size, config.hidden_size)
-        self.linear_v = nn.Linear(config.hidden_size, config.hidden_size)
-        self.linear_out = nn.Linear(config.hidden_size, config.hidden_size)
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        position_embeddings: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        # self-attention mechanism
-        batch_size, sequence_length, hidden_size = hidden_states.size()
-
-        # make sure query/key states can be != value states
-        query_key_states = hidden_states
-        value_states = hidden_states
-
-        if position_embeddings is not None:
-            query_key_states = self._apply_rotary_embedding(
-                query_key_states, position_embeddings
-            )
-
-        # project query_key_states and value_states
-        query = self.linear_q(query_key_states).view(
-            batch_size, -1, self.num_heads, self.head_size
-        )
-        key = self.linear_k(query_key_states).view(
-            batch_size, -1, self.num_heads, self.head_size
-        )
-        value = self.linear_v(value_states).view(
-            batch_size, -1, self.num_heads, self.head_size
-        )
-
-        # => (batch, head, time1, d_k)
-        query = query.transpose(1, 2)
-        key = key.transpose(1, 2)
-        value = value.transpose(1, 2)
-
-        with torch.backends.cuda.sdp_kernel(
-            enable_math=True, enable_flash=True, enable_mem_efficient=True
-        ):
-            hidden_states = F.scaled_dot_product_attention(
-                query.float(),
-                key.float(),
-                value.float(),
-                attn_mask=None,
-                dropout_p=0.0,
-                is_causal=False,
-            )
-        # => (batch, time1, hidden_size)
-        hidden_states = hidden_states.transpose(1, 2).reshape(
-            batch_size, -1, self.num_heads * self.head_size
-        )
-        hidden_states = self.linear_out(hidden_states)
-
-        return hidden_states
-
-    def _apply_rotary_embedding(self, hidden_states, position_embeddings):
-        batch_size, sequence_length, hidden_size = hidden_states.size()
-        hidden_states = hidden_states.view(
-            batch_size, sequence_length, self.num_heads, self.head_size
-        )
-
-        cos = position_embeddings[0, :sequence_length, ...]
-        sin = position_embeddings[1, :sequence_length, ...]
-
-        # rotate hidden_states with rotary embeddings
-        hidden_states = hidden_states.transpose(0, 1)
-        rotated_states_begin = hidden_states[..., : self.head_size // 2]
-        rotated_states_end = hidden_states[..., self.head_size // 2 :]
-        rotated_states = torch.cat(
-            (-rotated_states_end, rotated_states_begin),
-            dim=rotated_states_begin.ndim - 1,
-        )
-        hidden_states = (hidden_states * cos) + (rotated_states * sin)
-        hidden_states = hidden_states.transpose(0, 1)
-
-        hidden_states = hidden_states.view(
-            batch_size, sequence_length, self.num_heads * self.head_size
-        )
-
-        return hidden_states
-
-    def get_flops(self, b, t):
-        def linear_flops(m):
-            return m.weight.shape[0] * m.weight.shape[1] * 2
-
-        return b * t * (
-            linear_flops(self.linear_q) +
-            linear_flops(self.linear_k) +
-            linear_flops(self.linear_v) +
-            linear_flops(self.linear_out)
-        ) + b * t * t * self.head_size * 2 + b * t * self.head_size * t * 2
-
-
-class MHA(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.head_size = config.hidden_size // config.num_attention_heads
-        self.num_heads = config.num_attention_heads
-
-        self.linear_q = nn.Linear(config.hidden_size, config.hidden_size)
-        self.linear_k = nn.Linear(config.hidden_size, config.hidden_size)
-        self.linear_v = nn.Linear(config.hidden_size, config.hidden_size)
-        self.linear_out = nn.Linear(config.hidden_size, config.hidden_size)
-
-    def forward(
-        self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
-    ) -> torch.Tensor:
-        batch_size, sequence_length, hidden_size = q.size()
-
-        query = self.linear_q(q).view(batch_size, -1, self.num_heads, self.head_size)
-        key = self.linear_k(k).view(batch_size, -1, self.num_heads, self.head_size)
-        value = self.linear_v(v).view(batch_size, -1, self.num_heads, self.head_size)
-
-        # => (batch, head, time1, d_k)
-        query = query.transpose(1, 2)
-        key = key.transpose(1, 2)
-        value = value.transpose(1, 2)
-
-        with torch.backends.cuda.sdp_kernel(
-            enable_math=True, enable_flash=True, enable_mem_efficient=True
-        ):
-            hidden_states = F.scaled_dot_product_attention(
-                query.float(),
-                key.float(),
-                value.float(),
-                attn_mask=None,
-                dropout_p=0.0,
-                is_causal=False,
-            )
-        # => (batch, time1, hidden_size)
-        hidden_states = hidden_states.transpose(1, 2).reshape(
-            batch_size, -1, self.num_heads * self.head_size
-        )
-        hidden_states = self.linear_out(hidden_states)
-
-        return hidden_states
-
-
-class ConformerEncoderLayer(nn.Module):
-    """Conformer block based on https://arxiv.org/abs/2005.08100."""
-
-    def __init__(self, config):
-        super().__init__()
-        embed_dim = config.hidden_size
-        dropout = config.attention_dropout
-
-        # Feed-forward 1
-        self.ffn1_layer_norm = nn.LayerNorm(embed_dim)
-        self.ffn1 = ConformerFeedForward(config)
-
-        # Self-Attention
-        self.self_attn_layer_norm = nn.LayerNorm(embed_dim)
-        self.self_attn_dropout = torch.nn.Dropout(dropout)
-        self.self_attn = ConformerSelfAttention(config)
-
-        # Conformer Convolution
-        self.conv_module = ConformerConvolutionModule(config)
-
-        # Feed-forward 2
-        self.ffn2_layer_norm = nn.LayerNorm(embed_dim)
-        self.ffn2 = ConformerFeedForward(config)
-        self.final_layer_norm = nn.LayerNorm(embed_dim)
-
-    def forward(
-        self, hidden_states, position_embeddings: Optional[torch.Tensor] = None
-    ):
-        hidden_states = hidden_states
-
-        # 1. Feed-Forward 1 layer
-        residual = hidden_states
-        hidden_states = self.ffn1_layer_norm(hidden_states)
-        hidden_states = self.ffn1(hidden_states)
-        hidden_states = hidden_states * 0.5 + residual
-        residual = hidden_states
-
-        # 2. Self-Attention layer
-        hidden_states = self.self_attn_layer_norm(hidden_states)
-        hidden_states = self.self_attn(
-            hidden_states=hidden_states, position_embeddings=position_embeddings
-        )
-        hidden_states = self.self_attn_dropout(hidden_states)
-        hidden_states = hidden_states + residual
-
-        # 3. Convolutional Layer
-        residual = hidden_states
-        hidden_states = self.conv_module(hidden_states)
-        hidden_states = residual + hidden_states
-
-        # 4. Feed-Forward 2 Layer
-        residual = hidden_states
-        hidden_states = self.ffn2_layer_norm(hidden_states)
-        hidden_states = self.ffn2(hidden_states)
-        hidden_states = hidden_states * 0.5 + residual
-        hidden_states = self.final_layer_norm(hidden_states)
-
-        return hidden_states
-
-    def get_flops(self, b, t):
-        return (
-            self.ffn1.get_flops(b, t) +
-            self.self_attn.get_flops(b, t) +
-            self.conv_module.get_flops(b, t) +
-            self.ffn2.get_flops(b, t)
-        )
-
-
-class ConformerEncoder(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-
-        self.embed_positions = ConformerRotaryPositionalEmbedding(config)
-
-        self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        self.dropout = nn.Dropout(config.hidden_dropout)
-        self.layers = nn.ModuleList(
-            [ConformerEncoderLayer(config) for _ in range(config.num_hidden_layers)]
-        )
-        self.gradient_checkpointing = False
-
-    def forward(self, hidden_states, output_hidden_states=False):
-        all_hidden_states = () if output_hidden_states else None
-        hidden_states = self.dropout(hidden_states)
-        position_embeddings = self.embed_positions(hidden_states)
-
-        for i, layer in enumerate(self.layers):
-            if output_hidden_states:
-                all_hidden_states = all_hidden_states + (hidden_states,)
-
-            if self.gradient_checkpointing and self.training:
-                # create gradient checkpointing function
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        return module(*inputs)
-
-                    return custom_forward
-
-                layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(layer), hidden_states, position_embeddings
-                )
-            else:
-                layer_outputs = layer(
-                    hidden_states, position_embeddings=position_embeddings
-                )
-            hidden_states = layer_outputs
-
-        hidden_states = self.layer_norm(hidden_states)
-        if output_hidden_states:
-            all_hidden_states = all_hidden_states + (hidden_states,)
-
-        return ConformerEncoderOutput(
-            last_hidden_state=hidden_states, hidden_states=all_hidden_states
-        )
-
-
 class Conv2dUpsampling(nn.Module):
-    def __init__(self, input_dim, output_dim):
+    def __init__(self, input_dim, output_dim, use_bn=True):
         super().__init__()
         self.conv = nn.Sequential(
             # [1, 1, 750, 1024]
             nn.Conv2d(1, 64, 7, 1, 3),
-            torch.nn.BatchNorm2d(64),
+            torch.nn.BatchNorm2d(64) if use_bn else nn.Identity(),
             nn.ReLU(),
             # [1, 64, 750, 1024]
             nn.ConvTranspose2d(64, 8, 6, 2, 2),
-            torch.nn.BatchNorm2d(8),
+            torch.nn.BatchNorm2d(8) if use_bn else nn.Identity(),
             nn.ReLU(),
             # [1, 8, 1500, 2048]
             nn.ConvTranspose2d(8, 1, 6, 2, 2),
-            torch.nn.BatchNorm2d(1),
+            torch.nn.BatchNorm2d(1) if use_bn else nn.Identity(),
             nn.ReLU(),
             # [1, 1, 3000, 4096]
         )
@@ -467,14 +58,14 @@ class Conv2dUpsampling(nn.Module):
 
 
 class Conv2dSubsampling(nn.Module):
-    def __init__(self, input_dim, output_dim, kernel, padding):
+    def __init__(self, input_dim, output_dim, kernel, padding, use_bn=True):
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(1, 256, kernel, 2, padding),
-            nn.BatchNorm2d(256),
+            nn.BatchNorm2d(256) if use_bn else nn.Identity(),
             nn.ReLU(),
             nn.Conv2d(256, 256, kernel, 2, padding),
-            nn.BatchNorm2d(256),
+            nn.BatchNorm2d(256) if use_bn else nn.Identity(),
             nn.ReLU(),
         )
         self.linear = nn.Linear(input_dim * 64, output_dim)
@@ -496,12 +87,11 @@ class AudioEncoder(nn.Module):
             config.hidden_size,
             config.feature_encoder_kernel,
             config.feature_encoder_padding,
+            use_bn=False,
         )
-        self.conformer_layer = ConformerEncoderLayer(config)
 
     def forward(self, x):
         x = self.feature_encoder(x)
-        x = self.conformer_layer(x)
         return x
 
     def get_flops(self, b, t):
@@ -560,37 +150,42 @@ class EMAEmbedding(nn.Module):
         return entropy
 
     @torch.no_grad()
-    def remap_weight(self, thres=2):
+    def remap_weight(self, thres=None):
+        torch.distributed.barrier()
         cs = self.cluster_size.data
         avg_w = self.embed_avg.data
         w = self.weight.data
         # ranking
         topk_res = torch.topk(cs[1:], k=cs.shape[-1] - 1) # 大到小
         indices = topk_res.indices + 1
+        if thres is None:
+            one_of_three_index = min(len(indices) - len(indices) // 3, len(indices) - 1)
+            thres = max(0.01, topk_res.values[one_of_three_index])
         # remap
-        new_cs = torch.zeros_like(cs)
-        new_avg_w = torch.zeros_like(avg_w)
-        new_w = torch.zeros_like(w)
+        new_cs = torch.zeros_like(cs.data)
+        new_avg_w = torch.zeros_like(avg_w.data)
+        new_w = torch.zeros_like(w.data)
         cnt = 0
+        print("Thres: ", thres)
         for j, ind in enumerate(indices):
             cs_tmp = cs[ind]
-            if cs_tmp < thres:
+            if cs_tmp <= thres:
                 print(cs_tmp, j)
-                new_w[j + 1] = w[indices[cnt]]
-                new_avg_w[j + 1] = w[indices[cnt]] * cs[indices[cnt]] / 2
-                new_cs[j + 1] = cs[indices[cnt]] / 2
+                new_w[j + 1] = w[indices[cnt]].data
+                new_avg_w[j + 1] = (w[indices[cnt]] * cs[indices[cnt]] / 2).data
+                new_cs[j + 1] = (cs[indices[cnt]] / 2).data
                 cnt += 1
+                cnt = cnt % len(indices)
             else:
-                new_w[j + 1] = w[ind]
-                new_avg_w[j + 1] = avg_w[ind]
-                new_cs[j + 1] = cs[ind]
-        if i == 0:
-            new_cs[0] = 8
-        else:
-            new_cs[0] = cs[0]
+                new_w[j + 1] = w[ind].data
+                new_avg_w[j + 1] = avg_w[ind].data
+                new_cs[j + 1] = cs[ind].data
+        new_cs[0] = cs[0].data
+        print("Thres: ", thres)
         self.cluster_size.data.copy_(new_cs.data)
         self.embed_avg.data.copy_(new_avg_w.data)
         self.weight.data.copy_(new_w.data)
+        torch.distributed.barrier()
 
 
 class EMAVectorQuantizer(nn.Module):
@@ -1193,11 +788,6 @@ class Base(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.audio_encoder = AudioEncoder(config)
-        self.embed_positions = ConformerRotaryPositionalEmbedding(config)
-        self.encoder_input_dropout = nn.Dropout(config.hidden_dropout)
-        self.encoder_layers = nn.ModuleList(
-            [ConformerEncoderLayer(config) for _ in range(config.num_hidden_layers)]
-        )
         self.audio_transform = SpeechTransform(
             sample_rate=config.sample_rate,
             n_mels=config.n_mels,
@@ -1243,26 +833,20 @@ class Stage1(Base):
             config.rq_codebook_size * config.rq_codebook_num,
             bias=False,
         )
+        gpt_config = ModelArgs(
+            dim=config.hidden_size,
+            n_layers=config.num_pre_layers + config.num_post_layers,
+            n_heads=config.num_attention_heads,
+            out_dim=config.hidden_size,
+        )
+        self.gpt = CtigaLLaMa(gpt_config)
 
     def forward(self, input_dict):
         masked_feature = input_dict["masked_mel"]
         masked_indices = input_dict["masked_indices"]
-        flops = 0
 
-        flops += self.audio_encoder.get_flops(*masked_feature.shape[0:2])
-        encoded_masked_feature = self.audio_encoder(masked_feature)
-        hidden_states = self.encoder_input_dropout(encoded_masked_feature)
-        position_embeddings = self.embed_positions(hidden_states)
-        for layer in self.encoder_layers:
-            flops += layer.get_flops(*hidden_states.shape[0:2])
-            hidden_states = layer(
-                hidden_states, position_embeddings=position_embeddings
-            )
-
-        flops += (
-            hidden_states.shape[0] * hidden_states.shape[1] *
-            self.rq_head.weight.shape[0] * self.rq_head.weight.shape[1] * 2
-        )
+        hidden_states = self.audio_encoder(masked_feature)
+        hidden_states = self.gpt(hidden_states)
         logits = self.rq_head(hidden_states)
         logits = rearrange(
             logits, "b t (d c) -> b t d c", c=self.config.rq_codebook_num
@@ -1281,7 +865,7 @@ class Stage1(Base):
             "rq_masked_logits": masked_logits,
             "rq_target": target,
             "rq_masked_target": masked_target,
-            "flops": flops * 3  # extra 2x for backward.
+            "flops": 0,
         }
         return output_dict
 
@@ -1319,7 +903,14 @@ class Stage1(Base):
 class Stage2(Base):
     def __init__(self, config):
         super().__init__(config)
-        self.mel_head = Conv2dUpsampling(config.hidden_size, config.n_mels)
+        gpt_config = ModelArgs(
+            dim=config.hidden_size,
+            n_layers=config.num_hidden_layers,
+            n_heads=config.num_attention_heads,
+            out_dim=config.hidden_size,
+        )
+        self.gpt = CtigaLLaMa(gpt_config)
+        self.mel_head = Conv2dUpsampling(config.hidden_size, config.n_mels, use_bn=False)
         self.ctc_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         if config.add_chroma:
             self.chroma_transform = ChromaSpectrogram(
@@ -1330,7 +921,7 @@ class Stage2(Base):
                 n_chroma=config.n_chroma,
                 normalized=False,
             )
-            self.chroma_head = Conv2dUpsampling(config.hidden_size, config.n_chroma)
+            self.chroma_head = Conv2dUpsampling(config.hidden_size, config.n_chroma, use_bn=False)
 
     def forward(self, input_dict):
         feature = (
@@ -1339,13 +930,7 @@ class Stage2(Base):
             else input_dict["mel"]
         )
         audio_feature = self.audio_encoder(feature)
-        hidden_states = self.encoder_input_dropout(audio_feature)
-        position_embeddings = self.embed_positions(hidden_states)
-        for layer in self.encoder_layers:
-            hidden_states = layer(
-                hidden_states, position_embeddings=position_embeddings
-            )
-
+        hidden_states = self.gpt(audio_feature)
         mel_out = self.mel_head(hidden_states)
         ctc_out = self.ctc_head(hidden_states)
         output_dict = {"mel_out": mel_out, "ctc_out": ctc_out}
@@ -1567,7 +1152,7 @@ class USMStage2(nn.Module):
         attn_weights = None
         for i, layer in enumerate(conformers.encoders):
             conformer_input, conformer_mask = layer(
-                [conformer_input, conformer_mask], is_training=self.training
+                [conformer_input, conformer_mask], is_training=True
             )
             if return_hidden_states:
                 if i != len(conformers.encoders) - 1 or not conformers.normalize_before:
@@ -1679,6 +1264,23 @@ class USMStage3(USMStage2):
         if config.get("vq_proj_noise", 0) > 0:
             self.register_buffer("cnt", torch.FloatTensor([0]))
 
+        if config.get("fix_layers", False):
+            self.layer_to_fix = self.fix_parameters_and_bn()
+        else:
+            self.layer_to_fix = None
+
+    def fix_parameters_and_bn(self):
+        conformers = self.audio_encoder.acoustic_backbone_module
+        layer_to_fix = []
+        for i, layer in enumerate(conformers.encoders):
+            if i == self.config.vq_layer_idx:
+                break
+            else:
+                for p in layer.parameters():
+                    p.requires_grad = False
+                layer_to_fix.append(layer)
+        return layer_to_fix
+
     def forward(self, input_dict, return_hidden_states=False, return_vq_ids=False):
         feature = input_dict["fbank"]
         src_mask = input_dict["src_mask"]
@@ -1721,11 +1323,11 @@ class USMStage3(USMStage2):
                     vq_inputs = self.vq_proj_out(vq_embs)
                     conformer_input = (vq_inputs,) + conformer_input[1:] if isinstance(conformer_input, (list, tuple)) else vq_inputs
                     conformer_input, conformer_mask = layer(
-                        [conformer_input, conformer_mask], is_training=self.training
+                        [conformer_input, conformer_mask], is_training=True
                     )
             else:
                 conformer_input, conformer_mask = layer(
-                    [conformer_input, conformer_mask], is_training=self.training
+                    [conformer_input, conformer_mask], is_training=True
                 )
             if return_hidden_states:
                 if i != len(conformers.encoders) - 1 or not conformers.normalize_before:
@@ -1758,10 +1360,9 @@ class USMStage3(USMStage2):
         return output_dict
 
     @torch.no_grad()
-    def wav2token(self, wav):
-        if dtype in [torch.float16, torch.bfloat16]:
-            is_amp = True
-        input_dict = self.preprocessing(wavs)
+    def wav2token(self, wav, dtype=torch.float32):
+        is_amp = (dtype in [torch.float16, torch.bfloat16])
+        input_dict = self.preprocessing(wav)
         with torch.cuda.amp.autocast(enabled=is_amp, dtype=dtype):
             vq_ids = self.forward(input_dict, return_vq_ids=True)
         return vq_ids

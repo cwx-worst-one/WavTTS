@@ -45,7 +45,7 @@ class DownstreamExpert(nn.Module):
     """
 
     def __init__(
-        self, upstream_dim, upstream_rate, downstream_expert, expdir, **kwargs
+        self, upstream_dim, upstream_rate, layer, downstream_expert, expdir, **kwargs
     ):
         """
         Args:
@@ -80,6 +80,7 @@ class DownstreamExpert(nn.Module):
         self.datarc = downstream_expert["datarc"]
         self.modelrc = downstream_expert["modelrc"]
         self.expdir = expdir
+        self.layer = layer
 
         self.dictionary = Dictionary.load(
             self.datarc.get("dict_path", str(Path(__file__).parent / "char.dict"))
@@ -129,7 +130,7 @@ class DownstreamExpert(nn.Module):
             setattr(
                 self,
                 f"{split}_dataset",
-                SequenceDataset(split, batch_size, self.dictionary, **self.datarc),
+                SequenceDataset(split, batch_size, self.dictionary, self.layer, **self.datarc),
             )
 
         if split == "train":

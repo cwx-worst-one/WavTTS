@@ -68,6 +68,7 @@ def get_downstream_args():
     parser.add_argument('--upstream_feature_normalize', action='store_true', help='Specify whether to normalize hidden features before weighted sum')
     parser.add_argument('--upstream_model_name', default="model.pt", help='The name of the model file in the HuggingFace Hub repo.')
     parser.add_argument('--upstream_revision', help="The commit hash of the specified HuggingFace Repository")
+    parser.add_argument('--offline_root', default=None)
 
     # experiment directory, choose one to specify
     # expname uses the default root directory: result/downstream

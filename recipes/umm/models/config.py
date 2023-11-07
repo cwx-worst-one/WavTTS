@@ -36,6 +36,7 @@ class UMMConfig(PretrainedConfig):
         vq_proj_norm=None,
         vq_proj_noise=0,
         w_loss_vq=1,
+        fix_layers=False,
         # shared encoder
         hidden_size=1024,
         num_hidden_layers=24,
@@ -75,6 +76,7 @@ class UMMConfig(PretrainedConfig):
         interfere_audio=False,
         mix_prob=0.2,
         usm_config=None,
+        vocoder_config=None,
         **kwargs,
     ):
         super().__init__(
@@ -95,6 +97,7 @@ class UMMConfig(PretrainedConfig):
         self.feature_cmvn = feature_cmvn
         assert feature_encoder_kernel == 5 and feature_encoder_padding == 2
         self.usm_config = usm_config
+        self.vocoder_config = vocoder_config
 
         # random quantizer
         self.rq_codebook_size = rq_codebook_size
@@ -118,6 +121,7 @@ class UMMConfig(PretrainedConfig):
         self.vq_proj_norm = vq_proj_norm
         self.vq_proj_noise = vq_proj_noise
         self.w_loss_vq = w_loss_vq
+        self.fix_layers = fix_layers
 
         # shared encoder
         self.hidden_size = hidden_size

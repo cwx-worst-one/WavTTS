@@ -45,7 +45,7 @@ class DownstreamExpert(nn.Module):
         and wav1 is in torch.FloatTensor
     """
 
-    def __init__(self, upstream_dim, downstream_expert, expdir, **kwargs):
+    def __init__(self, upstream_dim, layer, downstream_expert, expdir, **kwargs):
         super(DownstreamExpert, self).__init__()
         # config
         self.upstream_dim = upstream_dim
@@ -53,6 +53,8 @@ class DownstreamExpert(nn.Module):
         self.datarc = downstream_expert['datarc']
         self.modelrc = downstream_expert['modelrc']
         self.expdir = expdir
+
+        self.layer = layer
 
         # dataset
         train_file_path = Path(self.datarc['file_path']) / "dev" / "wav"
@@ -64,20 +66,26 @@ class DownstreamExpert(nn.Module):
             "key_list": ["Voxceleb1"],
             "meta_data": self.datarc['train_meta_data'],
             "max_timestep": self.datarc["max_timestep"],
+            "offline_root": self.datarc["offline_root"],
+            "layer": self.layer
         }
         self.train_dataset = SpeakerVerifi_train(**train_config)
 
         dev_config = {
             "vad_config": self.datarc['vad_config'],
             "file_path": train_file_path, 
-            "meta_data": self.datarc['dev_meta_data']
+            "meta_data": self.datarc['dev_meta_data'],
+            "offline_root": self.datarc["offline_root"],
+            "layer": self.layer
         }        
         self.dev_dataset = SpeakerVerifi_test(**dev_config)
 
         test_config = {
             "vad_config": self.datarc['vad_config'],
             "file_path": test_file_path, 
-            "meta_data": self.datarc['test_meta_data']
+            "meta_data": self.datarc['test_meta_data'],
+            "offline_root": self.datarc["offline_root"],
+            "layer": self.layer
         }
         self.test_dataset = SpeakerVerifi_test(**test_config)
 
@@ -256,10 +264,15 @@ class DownstreamExpert(nn.Module):
             print(f'sv-voxceleb1/{mode}-loss: {loss}')
 
         elif mode in ['dev', 'test']:
-            trials = self.test_dataset.pair_table
+            if mode == 'test':
+                trials = self.test_dataset.pair_table
+            else:
+                trials = self.dev_dataset.pair_table
             labels = []
             scores = []
             for label, name1, name2 in trials:
+                if name1 not in records or name2 not in records:
+                    continue
                 labels.append(label)
                 score = self.score_fn(records[name1], records[name2]).numpy()
                 scores.append(score)

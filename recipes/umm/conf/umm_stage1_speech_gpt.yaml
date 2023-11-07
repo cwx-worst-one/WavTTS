@@ -11,33 +11,32 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
 
 extra_params:
-    sample_rate: 16000
+    sample_rate: 24000
     frame_rate: 25
-    n_mels: 80
-    n_chroma: 50
+    n_mels: 128
     n_fft: 2048
     win_length: 2048
-    hop_length: 160
-    feature_cmvn: "recipes/datasets/mcc/BigTTS_data_id=225_usm.stats.pt"
-    tokenizer: "wordpiece"
+    hop_length: 240
+    feature_cmvn: "recipes/datasets/mcc/BigTTS_data_id=207.stats.pt"
+    tokenizer: null
 
 # running parameters
 run_opts:
     fast_dev_run: False
     cache_dir: .module_cache/umm
-    hdfs_log_dir: "hdfs://haruna/home/byte_speech_sv/user/litang/umm_ar/usm_25hz"
+    hdfs_log_dir: "hdfs://haruna/home/byte_speech_sv/user/litang/umm_ar/25hz/logs"
     log_dir: logs
-    log_name: usm_umm
-    version: !ref usm_stage3_<extra_params[tokenizer]>_chroma<extra_params[n_chroma]>_vq<config[vq_codebook_size]>x<config[vq_codebook_dim]>_<config[vq_type]>_fixlayer
+    log_name: umm
+    version: !ref umm_stage1_gpt_rq<config[rq_codebook_size]>x<config[rq_codebook_dim]>x<config[rq_codebook_num]>
     precision: "bf16-mixed"
     num_workers: 3
     accelerator: auto
     warmup_steps: 2000
     max_steps: 1000000
     val_check_interval: 5000
-    ckpt_interval: 5000
-    batch_size: 1
-    learning_rate: 2.0e-5
+    ckpt_interval: 10000
+    batch_size: 10
+    learning_rate: 3.0e-4
     cycle_steps: 30000
     weight_decay: 0.1
     shuffle_buffer: 8000
@@ -54,7 +53,7 @@ pl_datamodule: !new:recipes.datasets.mcc.mix.ParquetDataModule
     batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <extra_params[sample_rate]>
     num_workers: !ref <run_opts[num_workers]>
     region: "CN"
-    weights: [1, 20, 1]
+    weights: [20, 3, 2]
     max_num_crops: null
     min_duration: 1
     max_duration: 90
@@ -62,8 +61,10 @@ pl_datamodule: !new:recipes.datasets.mcc.mix.ParquetDataModule
     use_pipe: False
     tokenizer: !ref <extra_params[tokenizer]>
     frame_rate: !ref <extra_params[frame_rate]>
+    collate_fn: !name:recipes.datasets.mcc.mix.collate_audio
+    data_id: 207
 
-optimizer_cls: !name:deepspeed.ops.adam.FusedAdam #torch.optim.AdamW
+optimizer_cls: !name:torch.optim.AdamW
     lr: !ref <run_opts[learning_rate]>
     weight_decay: !ref <run_opts[weight_decay]>
     betas: [0.9, 0.96] # TODO
@@ -75,57 +76,29 @@ scheduler_cls: !name:recipes.umm.modules.lr_scheduler.WarmupCosine
     cycle_steps: !ref <run_opts[cycle_steps]>
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
-usm_config:
-  network:
-    # front_end
-    front_end_type: 'Conv2dPooling'
-    front_end_conv0_ch: 256
-    front_end_conv1_ch: 256
-    front_end_padding: 1
-    downsampling_size: 4
-    acoustic_backbone_type: 'ConformerBackbone'
-    conformer_normalize_before: True
-    conformer_attention_heads: 16
-    conformer_linear_units: 6144
-    conformer_num_blocks: 32
-    conformer_dropout_rate: 0.0
-    conformer_positional_dropout_rate: 0.0
-    conformer_attention_dropout_rate: 0.0
-    conformer_positionwise_layer_type: 'linear'
-    conformer_activation_fn: 'gelu'
-    conformer_positionwise_conv_kernel_size: 1
-    conformer_macaron_style: 1
-    conformer_pos_enc_layer_type: 'fix_rel_pos'
-    conformer_selfattention_layer_type: 'rel_selfattn'
-    conformer_layer_order: 'mhsa_before_conv'
-    conformer_use_cnn_module: 1
-    conformer_cnn_module: 'ConvolutionModule'
-    conformer_cnn_module_kernel: '5'
-    conformer_cnn_norm_type: 'layer_norm'
-    conformer_layernorm_interval: 0
-    conformer_weight_scale: 1.0
-    conformer_half_pooling: 0
-    backbone_memory_size: 1536
-    dropout: 0.0
-    flash_attn: true
-
 config: !new:recipes.umm.models.config.UMMConfig
     feature_cmvn: !ref <extra_params[feature_cmvn]>
     sample_rate: !ref <extra_params[sample_rate]>
     n_mels: !ref <extra_params[n_mels]>
-    add_chroma: True
-    n_chroma: !ref <extra_params[n_chroma]>
     n_fft: !ref <extra_params[n_fft]>
     win_length: !ref <extra_params[win_length]>
     hop_length: !ref <extra_params[hop_length]>
-    hidden_size: 1536
-    add_vq: True
-    vq_proj_norm: "bn"
-    vq_proj_noise: 10000
-    vq_type: "EMAEntropy"
-    vq_codebook_size: 16384
+    hidden_size: 1024
+    intermediate_size: 4096
+    num_pre_layers: 18
+    num_post_layers: 18
+    num_attention_heads: 8
+    max_source_positions: 750
+    mask_hop: 0.4
+    mask_prob: 0.2
+    rq_codebook_dim: 16
+    rq_codebook_size: 4096
+    rq_codebook_num: 8
+    rq_input_layernorm: False
+    add_vq: False
+    vq_layer_idx: 12
+    vq_codebook_size: 32768
     vq_codebook_dim: 32
-    vq_layer_idx: 24
     vq_decay: 0.99
     w_loss_mel: 1.0
     w_loss_chroma: 1.0
@@ -135,25 +108,17 @@ config: !new:recipes.umm.models.config.UMMConfig
     frame_rate: !ref <extra_params[frame_rate]>
     vocab_size: 30523
     ctc_blank_id: 30522
-    usm_config: !ref <usm_config>
-    fix_layers: true
 
-model_cls: !name:recipes.umm.models.umm_mk3.USMStage3
+model_cls: !name:recipes.umm.models.umm_mk3.Stage1
     config: !ref <config>
 
-pl_module: !new:recipes.umm.modules.lit_module_mk3.USMStage3
+pl_module: !new:recipes.umm.modules.lit_module_mk3.Stage1
     checkpointing: !ref <run_opts[checkpointing]>
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
-    criterion_cls: !name:recipes.umm.modules.criterion.UMMLoss
-        config: !ref <config>
+    criterion_cls: !name:recipes.umm.modules.criterion.MaskedCrossEntropy
     extra_params: !ref <extra_params>
-    required_modules:
-        pretrained:
-            ckpt_path: "hdfs://haruna/home/byte_speech_sv/user/litang/umm_ar/usm_25hz/usm_umm/default/checkpoints/step=050000.ckpt"
-            init_fn: !name:recipes.umm.requires.model_initializer.init_pretrained
-            cache_dir: !ref <run_opts[cache_dir]>
 
 logger:
     - !new:pytorch_lightning.loggers.wandb.WandbLogger
@@ -178,7 +143,7 @@ callbacks:
       filename: "{step:06d}"
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: 'step'
-    - !new:recipes.umm.callbacks.log_spectrogram.LogSpectrogram
+    - !new:recipes.umm.callbacks.log_spectrogram.LogMaskedMelSpectrogram
       n_examples: 3
 
 plugins:
