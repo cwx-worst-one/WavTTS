@@ -20,6 +20,7 @@ from samantha.utils.distributed import is_global_zero
 from samantha.utils.watch import elapsed_time
 from scripts.data_processing.audio.utils import (
     Consumer,
+    download_model,
     feature_name_mapping,
     load_model,
     model_path_patten,
@@ -48,12 +49,16 @@ def packing_callback(package_id, dest_dir, status="success"):
 
 
 class Worker:
-    def __init__(self, model_path_pattern, local_rank, feature_type, **kwargs) -> None:
+    def __init__(
+        self, model_path_pattern, local_rank, feature_type, ckpt_path, **kwargs
+    ) -> None:
         self.device = f"cuda:{local_rank}"
         self.local_rank = local_rank
         self.model_path = None
         if model_path_pattern:
             self.model_path = model_path_pattern % local_rank
+        elif ckpt_path:
+            self.model_path = ckpt_path
         self.data_urls = []
         self.output_urls = []
         self.ckpt_urls = []
@@ -84,9 +89,9 @@ def run(
     if not worker.data_urls:
         return
     device = worker.device
-    model = worker.load_model()
-
+    torch.cuda.set_device(device)
     local_rank = worker.local_rank
+    model = worker.load_model()
     prefix = f"[{local_rank=} {processor_idx=}]"
     logger.info(f"{prefix} {len(worker.data_urls)=}")
     for data_url, output_url, ckpt_url in zip(
@@ -114,7 +119,7 @@ def run(
             total_audio_dur = 0
             st = time.perf_counter()
             for data_item in parquet_reader(data_url, fs, need_group_no=False):
-                wav, audio_dur = consumer.preprocess(data_item["audio"])
+                wav, audio_dur = consumer.preprocess(data_item["audio"], device)
                 if wav is None:
                     continue
                 total_audio_dur += audio_dur
@@ -198,6 +203,7 @@ def main(args):
                     model_path_pattern=model_path_patten(feature_type, feature_version),
                     local_rank=local_rank,
                     feature_type=feature_type,
+                    ckpt_path=args.ckpt_path,
                     trim=not args.not_trim,
                 )
                 for _ in range(n_worker)
@@ -213,7 +219,7 @@ def main(args):
                     args=(
                         worker,
                         i,
-                        24000,
+                        args.target_sr,
                         filesystem,
                         dataset_name,
                         feature_type,
@@ -246,7 +252,10 @@ if __name__ == "__main__":
     parser.add_argument("--package_id", type=str, default=None)
     parser.add_argument("--num_processor", type=int, default=1)
     parser.add_argument("--not_trim", action="store_true", default=False)
+    parser.add_argument("--ckpt_path", type=str, default=None)
+    parser.add_argument("--target_sr", type=int, default=24000)
     args = parser.parse_args()
     backend = "nccl" if torch.cuda.is_available() else "mpi"
     dist.init_process_group(backend=backend)
+    args.ckpt_path = download_model(args.ckpt_path)
     main(args)

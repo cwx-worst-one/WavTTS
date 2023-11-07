@@ -5,10 +5,12 @@ import pickle
 import torch
 
 from samantha.dataio.parquet import ParquetWriter
-from samantha.utils.hdfs_helper import get
+from samantha.utils.distributed import rank_zero_first
+from samantha.utils.hdfs_helper import get, ishdfs
 from scripts.data_processing.audio import (
     spk_embed_utils,
     ss_utils,
+    umm_token,
     umm_tokenizer,
     wvae_mel_utils,
     wvae_utils,
@@ -16,12 +18,15 @@ from scripts.data_processing.audio import (
 
 
 class Consumer:
-    def __init__(self, output_url, filesystem, feature_type, target_sample_rate, **kwargs):
+    def __init__(
+        self, output_url, filesystem, feature_type, target_sample_rate, **kwargs
+    ):
         self.writer = ParquetWriter(output_url, verbose=True, filesystem=filesystem)
         self.feature_type = feature_type
         self.feature_name = feature_name_mapping(feature_type)
         self.target_sample_rate = target_sample_rate
         self.kwargs = kwargs
+        self.resampler = {}
 
     def write(self, uttid, feature, dataset_name):
         item = {
@@ -43,9 +48,13 @@ class Consumer:
         ):
             self.write(uttid=uttid, feature=feature, dataset_name=dataset_name)
 
-    def preprocess(self, audio_bin):
+    def preprocess(self, audio_bin, device):
         return preprocess_audio(self.feature_type)(
-            audio_bin=io.BytesIO(audio_bin), sample_rate=self.target_sample_rate, **self.kwargs
+            audio_bin=io.BytesIO(audio_bin),
+            sample_rate=self.target_sample_rate,
+            resampler=self.resampler,
+            device=device,
+            **self.kwargs,
         )
 
 
@@ -60,6 +69,8 @@ def preprocess_audio(feature_type):
         return spk_embed_utils.preprocess_audio
     elif feature_type == "umm_tokenizer":
         return umm_tokenizer.preprocess_audio
+    elif feature_type == "umm_token":
+        return umm_token.preprocess_audio
     else:
         raise ValueError(f"{feature_type=} is not support for preprocess_audio.")
 
@@ -75,6 +86,8 @@ def process_batch(feature_type):
         return spk_embed_utils.process_batch
     elif feature_type == "umm_tokenizer":
         return umm_tokenizer.process_batch
+    elif feature_type == "umm_token":
+        return umm_token.process_batch
     else:
         raise ValueError(f"{feature_type=} is not support for process_batch.")
 
@@ -86,7 +99,7 @@ def model_path_patten(feature_type, feature_version):
         return wvae_utils.model_path_patten(feature_version)
     elif feature_type == "wavevae_mel":
         return wvae_mel_utils.model_path_patten(feature_version)
-    elif feature_type == "speaker_embed":
+    elif feature_type in ["speaker_embed", "umm_token"]:
         return None
     elif feature_type == "umm_tokenizer":
         return umm_tokenizer.model_path_patten(feature_version)
@@ -101,7 +114,7 @@ def feature_name_mapping(feature_type):
         return "bns"
     if feature_type == "speaker_embed":
         return "spk_emb"
-    if feature_type == "umm_tokenizer":
+    if feature_type in ["umm_tokenizer", "umm_token"]:
         return "umm_token"
 
 
@@ -121,3 +134,17 @@ def load_model(feature_type):
         return _load_torch_script_model
     elif feature_type in ["speaker_embed"]:
         return spk_embed_utils.load_model
+    elif feature_type in ["umm_token"]:
+        return umm_token.load_model
+
+
+def download_model(ckpt_path):
+    if ckpt_path is None:
+        return None
+    if not ishdfs(ckpt_path):
+        return ckpt_path
+    local_path = os.path.basename(ckpt_path)
+    with rank_zero_first(is_global=False):
+        if not os.path.exists(local_path):
+            get(ckpt_path, local_path)
+    return local_path

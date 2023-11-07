@@ -6,11 +6,10 @@ import torch.backends.cudnn
 import torch.nn.functional as F
 from torchaudio.transforms import Resample
 
+from recipes.umm.modules.lit_module_mk3 import USMStage3
+
 
 def preprocess_audio(audio_bin, sample_rate, resampler, device, *_, **__):
-    hop_length, frame_rate = 150, 40
-    rate = int(sample_rate / frame_rate)
-
     wav, sr = librosa.load(audio_bin, sr=None)
     audio_dur = wav.shape[-1] / float(sr)
     if len(wav.shape) == 2 and wav.shape[-1] == 2:
@@ -26,25 +25,23 @@ def preprocess_audio(audio_bin, sample_rate, resampler, device, *_, **__):
             resampler[sr] = Resample(orig_freq=sr, new_freq=sample_rate).to(device)
         wav = resampler[sr](wav)
 
-    pad_len = wav.shape[-1] % (hop_length * 4)
-    if pad_len != 0:
-        pad_len = hop_length * 4 - pad_len
-    wav = F.pad(wav, (0, pad_len))
-    if wav.size(-1) % rate > 0:
-        wav = F.pad(wav, (0, rate - (wav.size(-1) % rate)), "constant", 0)
+    size = wav.numel()
+    pad_len = 5120 - size % 5120
+    if pad_len > 0:
+        wav = F.pad(wav, (0, pad_len), mode="constant", value=0.0)
     return wav, audio_dur
 
 
 @torch.no_grad()
 def process_batch(model, batch, device, *_, **__):
-    torch.backends.cuda.matmul.allow_tf32 = False
-    torch.backends.cudnn.allow_tf32 = False
     if not batch:
         yield from batch
 
     for wav in batch:
-        yield model(wav.to(device)).squeeze().cpu().numpy()
+        yield model.wav2token(wav, dtype=torch.bfloat16).cpu().squeeze().numpy()
 
 
-def model_path_patten(feature_version):
-    return f"hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wangxin.colin/ckpts/umm_tokenizer_{feature_version}/umm_tokenizer_%d.pt"  # noqa
+def load_model(device, model_path, *_, **__):
+    return (
+        USMStage3.load_from_checkpoint(model_path).eval().to(device)
+    )
