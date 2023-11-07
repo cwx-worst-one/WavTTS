@@ -39,6 +39,8 @@ training_params:
     min_volume_threshold: 0.05
     loudness_ratio_threshold: 0.2
     sample_buffer_size: 10
+    # set to mcc40m_instrumental_unfiltered,mcc60m_vocal_unfiltered for training both vocal + instrumental
+    dataset_types: mcc60m_vocal_unfiltered
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -52,8 +54,7 @@ pl_datamodule: !apply:recipes.bigmusic.datasets.lyrics.LyricsDataModule.from_dat
     shuffle_buffer_size: !ref <training_params[sample_buffer_size]>
     num_workers: !ref <training_params[train_num_workers]>
     pin_memory: True
-    dataset_type: wav_only
-
+    dataset_types: !ref <extra_params[dataset_types]>
 
 # training module configuration
 optimizer_cls: !name:torch.optim.AdamW

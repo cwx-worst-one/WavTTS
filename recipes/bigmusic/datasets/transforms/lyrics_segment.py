@@ -33,6 +33,8 @@ class LyricsSegmentTransforms(TransformBase):
         max_num_segments = 10,
         shuffle_segments: bool = True,
         url2index = None,
+        min_song_confidence: int=0.8,
+        min_segment_confidence: int=0.75,
         handler: Callable = wds.warn_and_continue,
     ) -> None:
         super().__init__()
@@ -47,6 +49,8 @@ class LyricsSegmentTransforms(TransformBase):
         self.handler = handler
         self.max_num_segments = max_num_segments
         self.shuffle_segments = shuffle_segments
+        self.min_song_confidence = min_song_confidence
+        self.min_segment_confidence = min_segment_confidence
 
         if self.audio_format == 'npy':
             self.read_mp3 = lambda x: x
@@ -109,13 +113,13 @@ class LyricsSegmentTransforms(TransformBase):
             self._update_stats(skipped=True)
             self.handler(e)
             return
-        if not (is_valid_lyrics(lyrics) and is_valid_metadata(metadata)):
+        if not (is_valid_lyrics(lyrics, confidence_threshold=self.min_song_confidence) and is_valid_metadata(metadata)):
             self._update_stats(skipped=True)
             return
 
         fixed_duration = len(self.sample_duration) == 1 # if only one duration is provided. Fix it to that duration
         shuffle_start = self.shuffle_segments and len(lyrics) > 8
-        shuffle_lengths = self.shuffle_segments and max(self.sample_duration) < 90 # do not shuffle for 2min training
+        shuffle_lengths = self.shuffle_segments
         include_intro = True # max(self.sample_duration) > 90 # include intro for 2 min training
         segments: List[Segment] = lyrics_to_segments(
             lyrics, 
@@ -124,6 +128,7 @@ class LyricsSegmentTransforms(TransformBase):
             max_duration=max(self.sample_duration),
             shuffle_start=shuffle_start,
             shuffle_lengths=shuffle_lengths,
+            min_confidence=self.min_segment_confidence,
             include_intro=include_intro
         )
         if self.shuffle_segments:

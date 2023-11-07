@@ -133,14 +133,20 @@ def default_format_video_text(metadata):
         return video_text, fontsize, line_spacing
     
     # long text
-    fontsize, max_width, line_spacing = 20, 60, 6
+    fontsize, max_width, line_spacing = 20, 60, 4
     video_text = format_video_text(metadata, max_width)
     num_lines = len(video_text.split("\n"))
     if num_lines < 36:
         return video_text, fontsize, line_spacing
     
     # really long text
-    fontsize, max_width, line_spacing = 16, 80, 4
+    fontsize, max_width, line_spacing = 16, 80, 2
+    video_text = format_video_text(metadata, max_width)
+    num_lines = len(video_text.split("\n"))
+    if num_lines < 44:
+        return video_text, fontsize, line_spacing
+    
+    fontsize, max_width, line_spacing = 11, 90, 0
     video_text = format_video_text(metadata, max_width)
     num_lines = len(video_text.split("\n"))
     return video_text, fontsize, line_spacing
@@ -152,6 +158,7 @@ def save_video(input_results_dir, output_video_dir, format_video_text_fn=default
     output_video_dir_tmp.mkdir(exist_ok=True, parents=True)
     generated_output_fps = list(Path(input_results_dir).glob('**/*.generated.wav*'))
     for idx, generated_output_fp in enumerate(generated_output_fps):
+        if generated_output_fp.suffix not in ['.wav', '.mp3']: continue
         audio_fp = generated_output_fp
         metadata_fp = str(generated_output_fp).replace('generated.wav.mp3', 'metadata.json').replace('generated.wav', 'metadata.json')
         

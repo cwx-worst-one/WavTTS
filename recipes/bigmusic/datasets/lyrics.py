@@ -40,6 +40,8 @@ class LyricsDataset(WebPipeline):
         audio_format: str = "mp3",
         max_num_segments: int = 10,
         shuffle_segments: bool = True,
+        min_song_confidence: int=0.8,
+        min_segment_confidence: int=0.8,
         resampled: bool =True,
         shardshuffle: bool =True,
         handler: Callable = wds.warn_and_continue,
@@ -59,6 +61,8 @@ class LyricsDataset(WebPipeline):
             audio_format=audio_format,
             max_num_segments=max_num_segments,
             shuffle_segments=shuffle_segments,
+            min_song_confidence=min_song_confidence,
+            min_segment_confidence=min_segment_confidence,
             url2index=url2index,
             handler=handler
         )
@@ -183,8 +187,10 @@ class LyricsBucketBatcher(BucketBatcher):
 def default_bucket_batcher_length_fn(item, sample_rate=24000, semantic_frame_rate=25):
     if 'target_tokens_length' in item:
         target_seq_length = item['target_tokens_length'] # value returned from SemanticTokenLengthTransform
-    else:
+    elif 'target_audio' in item:
         target_seq_length = int(item['target_audio'].shape[-1] / sample_rate * semantic_frame_rate) # fallback case
+    else:
+        raise ValueError("Batched item must target audio to determine length function")
 
     if 'lyrics_tokens_length' in item:
         input_seq_length = item['lyrics_tokens_length']
@@ -236,7 +242,7 @@ def infer_dataset_weights(index_lists):
 class DefaultDatasets():
     class Basic:
         @staticmethod
-        def mcc60m_lossless_dataset(sample_rate, sample_duration, index_list=INDEX["US"]["MCCVocal"], infer_weights=True):
+        def mcc60m_lossless_dataset(sample_rate, sample_duration, index_list=INDEX["US"]["MCCVocal"], infer_weights=True, **kwargs):
             datasets = [
                 LyricsDataset(
                     url2index=url2index,
@@ -244,6 +250,7 @@ class DefaultDatasets():
                     sample_duration=sample_duration,
                     audio_keys={ 'style_audio': 'audio.npy', 'target_audio': 'audio.npy'},
                     audio_format='npy',
+                    **kwargs
                 )
                 for url2index in index_list
             ]
@@ -444,6 +451,32 @@ class DefaultDatasets():
                 shuffle_buffer_size=None
             )
         
+        # Coarse/Diffusion model training
+        @staticmethod
+        def unfiltered_batched_vocal_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, index_list, min_song_confidence=0.0, min_segment_confidence=0.0):
+            vocal_dataset = DefaultDatasets.Basic.mcc60m_lossless_dataset(
+                sample_rate, sample_duration, index_list,
+                min_segment_confidence=min_segment_confidence,
+                min_song_confidence=min_song_confidence
+            )
+            return transform_dataset(
+                dataset=vocal_dataset,
+                segment_transforms=[],
+                batch_transforms=[],
+                batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
+                shuffle_buffer_size=shuffle_buffer_size
+            )
+        
+        @staticmethod
+        def unfiltered_batched_instrumental_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, index_list):
+            return transform_dataset(
+                dataset=DefaultDatasets.Basic.mcc40m_lossless_dataset(sample_rate, sample_duration, index_list),
+                segment_transforms=[RenameAudioKeyTransform()],
+                batch_transforms=[],
+                batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
+                shuffle_buffer_size=shuffle_buffer_size
+            )
+
         @staticmethod
         def mcc9m(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, enable_punctuation=False, style_conditions="style_tag,lyrics_tokens"):
             index_list = INDEX["US"]["MCC1M_EN_GT"]
@@ -571,6 +604,21 @@ DATASET_CONFIGS = {
         "extra_args": {
             "enable_punctuation": False, # disable newline tokenization since we don't group utterances
             "style_conditions": "style_text,lyrics_tokens", # does not support style_tag
+        }
+    },
+    # Unfiltered datasets - for coarse/diffusion training
+    "mcc40m_instrumental_unfiltered": {
+        "init_fn": DefaultDatasets.Batched.unfiltered_batched_instrumental_dataset,
+        "extra_args": {
+            "index_list": INDEX["US"]["MCCInstrumental"],
+        }
+    },
+    "mcc60m_vocal_unfiltered": {
+        "init_fn": DefaultDatasets.Batched.unfiltered_batched_vocal_dataset,
+        "extra_args": {
+            "index_list": INDEX["US"]["MCCVocal"],
+            "min_song_confidence": 0.0,
+            "min_segment_confidence": 0.0
         }
     },
     # Validation datasets
