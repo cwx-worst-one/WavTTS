@@ -10,8 +10,11 @@ def normalize_text(text, enable_punctuation=False, lowercase=False):
     text = text.replace("/", " ")    
     text = text.replace("-", " ")
     text = text.replace(".", "\n")
+    text = text.replace("。", "\n")
     text = text.replace("!", "\n")
+    text = text.replace("！", "\n")
     text = text.replace("?", "\n")
+    text = text.replace("？", "\n")
     text = re.sub(r'\n\s*\n', '\n', text) # remove double new lines
     nlp_punctuation = punctuation.replace("'", "") # allow single quotes (') for contractions
     text = text.translate(str.maketrans("", "", nlp_punctuation))

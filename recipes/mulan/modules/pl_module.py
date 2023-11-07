@@ -14,7 +14,10 @@ from recipes.mulan.modules.gather import GatherLayer
 from recipes.mulan.modules.llama_model import LlamaConfig
 from recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr import WarmupCosine
 from samantha.utils.model_metric import ModelMetric
-
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("--device_id", type=int, default=0)
+parser.add_argument("--model_version", type=str, default="chinese")
 
 class LitMuLanModule(pl.LightningModule):
     def __init__(
@@ -350,3 +353,39 @@ class LitMuLanModule(pl.LightningModule):
             output = [torch.zeros_like(tensor) for _ in range(dist.get_world_size())]
             dist.all_gather(output, tensor)
             return output
+
+def load_mulan_model(args):
+    device_id = args.device_id
+    from recipes.audio_lm.requires.model_initializer import init_mulan
+    if args.model_version == "mulan_chinese":
+        mulan_model = init_mulan(
+            args.ckpt_path, device_id, cache_dir=None, version="chinese"
+        )
+    elif args.model_version == "llama_lora":
+        mulan_model = init_mulan(
+            args.ckpt_path, device_id, cache_dir=None, version="llama-lora"
+        )
+    else:
+        mulan_model = init_mulan(
+            args.ckpt_path, device_id, cache_dir=None, version="g4"
+        )            
+    mulan_model["mulan"].eval()
+    assert mulan_model["mulan"].training is False
+    return mulan_model
+
+
+import argparse
+
+def main():
+    parser = argparse.ArgumentParser(description="Load Mulan model")
+    parser.add_argument("--device_id", type=int, default=0, help="")
+    parser.add_argument("--model_version", type=str, default="mulan_chinese", choices=["mulan_chinese", "llama_lora", "g4"], help="Model version")
+    parser.add_argument("--ckpt_path", type=str, required=True, help="Path to model checkpoint")
+
+    args = parser.parse_args()
+
+    mulan_model = load_mulan_model(args)
+
+if __name__ == "__main__":
+    main()
+

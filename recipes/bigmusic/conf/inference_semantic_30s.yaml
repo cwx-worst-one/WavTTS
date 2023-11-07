@@ -45,7 +45,7 @@ extra_params:
     duration: 30 # 30
     lyrics_max_seq_len: 400 # TODO: switch to 400 for 30s
     semantic_temperature: 1.0
-    sample_mode: "gumbel"
+    sample_mode: "top_p"
     token2wav_type: diffusion
 
 run_opts:

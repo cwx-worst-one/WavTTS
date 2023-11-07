@@ -42,44 +42,48 @@ def format_lyrics_and_style(style_text, lyrics=None):
 
 def save_batch_outputs(outputs, batch, output_dir, sample_rate, sample_round=0, index_offset=0):
     conditions = batch['conditions']
+    index = batch.get('index')
     lyrics = batch.get('lyrics')
     lyrics_normalized_text = batch.get('lyrics_normalized_text')
     prompts = batch.get('style_text')
     categories = batch.get('category')
     style_audio = batch.get('style_audio')
-    vocal_audio = batch.get('vocal_audio')
-    indexes = batch.get('index')
+    vocal_audio = batch.get('vocal_audio')    
     metadatas = outputs.get('metadata')
     wavs = outputs['generated_audio']
     
     for i, wav in enumerate(wavs):
+        ii = i if sample_round == 0 else i // sample_round
         if categories is not None and categories[i]:
-            wav_dir = os.path.join(output_dir, str(categories[i]))
+            wav_dir = os.path.join(output_dir, categories[ii])
         else:
             wav_dir = output_dir
         os.makedirs(wav_dir, exist_ok=True)
         file_name = ""
         absolute_idx =  i + index_offset
-        lyrics_str = lyrics[i] if 'lyrics_tokens' in conditions else None
-        lyrics_normalized_str = lyrics_normalized_text[i] if 'lyrics_tokens' in conditions and lyrics_normalized_text else None
-        style_text = prompts[i] if 'style_text' in conditions else None
-        if indexes is not None:
-            file_name = indexes[i]
-        else:
+        lyrics_str = lyrics[ii] if 'lyrics_tokens' in conditions else None
+        lyrics_normalized_str = lyrics_normalized_text[i] if 'lyrics_tokens' in conditions and lyrics_normalized_text else None        
+        style_text = prompts[ii] if 'style_text' in conditions else None
+        if index is None:
             file_name = f"{absolute_idx:03d}_{format_lyrics_and_style(style_text, lyrics_str)}"
+        else:
+            file_name = index[ii]            
+        if sample_round > 0:
+            file_name += ("_r" + str(i % sample_round))
+            
         wav_fp = os.path.join(wav_dir, f"{file_name}.generated.wav")
         print(f"[Saving] {wav_fp}")
         save_wav(wav.cpu().float(), wav_fp, sr=sample_rate)
         if style_audio is not None:
             input_wav_fp = os.path.join(wav_dir, f"{file_name}.style_audio.wav")
-            save_wav(style_audio[i].cpu().float(), input_wav_fp, sr=sample_rate)
+            save_wav(style_audio[ii].cpu().float(), input_wav_fp, sr=sample_rate)
 
         if vocal_audio is not None:
             input_vocals_fp = os.path.join(wav_dir, f"{file_name}.vocal_audio.wav")
-            save_wav(vocal_audio[i].cpu().float(), input_vocals_fp, sr=sample_rate)
+            save_wav(vocal_audio[ii].cpu().float(), input_vocals_fp, sr=sample_rate)
 
         meta_fp = os.path.join(wav_dir, f"{file_name}.metadata.json")
-        metadata = metadatas[i] if metadatas is not None else {}
+        metadata = metadatas[ii] if metadatas is not None else {}
         metadata = {
             **metadata,
             'lyrics': lyrics_str,
@@ -89,11 +93,11 @@ def save_batch_outputs(outputs, batch, output_dir, sample_rate, sample_round=0, 
             'index': {
                 'round': sample_round,
                 'absolute_idx': absolute_idx,
-                'batch_idx': i
+                'batch_idx': ii
             }
         }
         print('Saving metadata', metadata)
-        with open(meta_fp, 'w') as f:
+        with open(meta_fp, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, indent=2)
 
 
@@ -110,7 +114,6 @@ def format_video_text(metadata, max_width=50):
 
     lyrics = metadata.get('lyrics')
     if lyrics is not None:
-        lyrics = lyrics.encode('ascii', 'ignore').decode('ascii') # TODO: utf-8
         # Respect natural linebreaks
         lyrics = lyrics.split("\n")
 
@@ -166,11 +169,12 @@ def save_video(input_results_dir, output_video_dir, format_video_text_fn=default
         output_text_fp = output_video_dir_tmp/generated_output_fp.with_suffix('.txt').name
         with open(metadata_fp, 'r') as f:
             metadata = json.load(f)
-        with open(output_text_fp, 'w') as f:
+        with open(output_text_fp, 'w', encoding='utf-8') as f:
             video_text, fontsize, line_spacing = format_video_text_fn(metadata)
             f.write(video_text)
         color = colors[idx % len(colors)]
-        cmd = f'ffmpeg -y -f lavfi -i color=c={color}:s=800x800:d=0.5 -i {audio_fp} -c:a aac -vf "drawtext=fontsize={fontsize}:line_spacing={line_spacing}:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:textfile={output_text_fp}" {output_video_fp}'
+        fontfile = "/usr/share/fonts/truetype/arphic/ukai.ttc"
+        cmd = f'ffmpeg -y -f lavfi -i color=c={color}:s=800x800:d=0.5 -i {audio_fp} -c:a aac -vf "drawtext=fontfile={fontfile}:fontsize={fontsize}:line_spacing={line_spacing}:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:textfile={output_text_fp}" {output_video_fp}'
         os.system(cmd)
 
     # concat output videos

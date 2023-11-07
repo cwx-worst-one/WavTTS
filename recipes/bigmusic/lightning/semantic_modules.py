@@ -19,6 +19,7 @@ from recipes.bigmusic.utils.rewards import (
     nonvocal_reward,
     structure_reward,
 )
+import numpy as np
 import torch
 from tqdm.auto import tqdm
 import torch.nn as nn
@@ -90,7 +91,7 @@ class SemanticModule(BaseContinuousEmbedModule):
             embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_audio'].to(self.device), with_sos=with_sos, data_type='music')
             inputs_embeds.append(embeds)
         elif 'style_tag' in conditions: # using Mulan for on-the-fly MIR tagging
-            embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_audio'].to(self.device), mcc_style_text=batch.get('style_text'), with_sos=with_sos, data_type='tag')
+            embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_audio'].to(self.device), mcc_style_text=batch.get('style_text'), with_sos=with_sos, data_type='tag')   
             inputs_embeds.append(embeds)
         else:
             # adding SOS token no matter what so that all parameters get used

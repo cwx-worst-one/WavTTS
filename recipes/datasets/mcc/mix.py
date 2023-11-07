@@ -2822,3 +2822,179 @@ class MixLangDataModule(pl.LightningDataModule):
             batch = self.batcher.collate_batch(item)
             if batch is not None:
                 yield batch
+
+
+class MusicCollectorDataset(WebPipeline):
+    name = "MusicCollector"
+    data_sample_rate = 24000
+
+    def __init__(
+        self,
+        url2index: Union[List[str], str] = None,
+        weights: List[float] = None,
+        sample_rate: int = 24000,
+        audio_key: str = "audio.npy",
+        min_duration: int = 2,
+        max_duration: int = 30,
+        min_volume_threshold: float = 0.05,
+        loudness_ratio_threshold: float = 0.2,
+        lyrics_confidence: float = 0.7,
+        normalize_audio: bool = False,
+        max_num_crops: int = None,
+        tokenizer=None,
+        frame_rate: int = 25,
+        **kwargs,
+    ):
+        print(f"[{self.name}] initializing...")
+        transforms = VocalZhTransforms(
+            sample_rate=sample_rate,
+            audio_key=audio_key,
+            min_duration=min_duration,
+            max_duration=max_duration,
+            min_volume_threshold=min_volume_threshold,
+            loudness_ratio_threshold=loudness_ratio_threshold,
+            lyrics_confidence=lyrics_confidence,
+            normalize_audio=normalize_audio,
+            max_num_crops=max_num_crops,
+            tokenizer=tokenizer,
+            frame_rate=frame_rate,
+        )
+        preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
+        print(f"[{self.name}] MultiIterableDataset constructing...")
+        if isinstance(url2index, list):
+            dataset = MultiIterableDataset(
+                datasets=[
+                    IndexedWebDataset(url2index=url, **kwargs) for url in url2index
+                ],
+                weights=weights,
+            )
+        else:
+            dataset = IndexedWebDataset(url2index=url2index, **kwargs)
+        print(f"[{self.name}] MultiIterableDataset constructed.")
+        pipeline = ["decode", {"compose": [preprocessor.train_buffer_preprocessor]}]
+        super().__init__(dataset, pipeline)
+        print(f"[{self.name}] initialized.")
+
+class MusicCollectorWebDataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        sample_rate: int = 24000,
+        batch_size: int = 30 * 24000 * 2,
+        min_duration: int = 2,
+        max_duration: int = 30,
+        max_num_crops: int = 3,
+        normalize_audio: bool = False,
+        shuffle_buffer_size: int = 10,
+        num_workers: int = 4,
+        pin_memory: bool = True,
+        collate_fn: Optional[Callable] = collate_fn,
+        weights: List[int] = [1],
+        use_pipe: bool = False,
+        tokenizer: str = None,
+        frame_rate: int = 25,
+    ):
+        super().__init__()
+        if tokenizer == "wordpiece":
+            self.tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
+        elif tokenizer == "phoneme":
+            self.tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained(
+                "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
+            )
+            phonemizer.logger.get_logger().setLevel(logging.ERROR)
+        else:
+            self.tokenizer = None
+            collate_fn = collate_audio_text
+        self.num_workers = num_workers
+        self.shuffle_buffer_size = shuffle_buffer_size
+        self.pin_memory = pin_memory
+        self.collate_fn = collate_fn
+        self.frame_rate = frame_rate
+        assert batch_size >= min_duration * sample_rate
+        buckets_samples = []
+        sec = min_duration
+        while sec <= max_duration:
+            buckets_samples.append(sec)
+            sec += math.ceil(sec * 0.1)
+        if buckets_samples[-1] < max_duration:
+            buckets_samples.append(max_duration)
+        print(f"[Buckets] {len(buckets_samples)} {str(buckets_samples)}")
+        buckets_samples = [x * sample_rate for x in buckets_samples]
+        self.batcher = BucketBatcher(
+            buckets=buckets_samples,
+            dynamic_batch=True,
+            maximum_bucket_size=batch_size,
+            length_fn=lambda x: x["audio"].size(-1),
+        )
+        datasets = []
+
+
+        url2index = "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/1CIaSnLlv5FgE0V1ZFkWAU/url2index.txt"
+        sample_rate = 24000
+        mc_vocal = MusicCollectorWebDataModule(
+            url2index=url2index,
+            sample_rate=sample_rate,
+            min_duration=min_duration,
+            max_duration=max_duration,
+            max_num_crops=max_num_crops,
+            normalize_audio=normalize_audio,
+            tokenizer=self.tokenizer,
+            frame_rate=self.frame_rate,
+            resampled=True,
+            shardshuffle=True,
+            use_pipe=use_pipe,
+            handler=wds.warn_and_continue,
+        )
+
+        datasets.append(DataPipeline(mc_vocal, wds.shuffle(shuffle_buffer_size)))
+        weights = [i for i in weights if i != 0]
+        self.train_dataset = DataPipeline(
+            MultiIterableDataset(
+                datasets=datasets, weights=[i for i in weights if i != 0]
+            ),
+            self.bucketize,
+        )
+
+        valid_url2index = "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/1CIaSnLlv5FgE0V1ZFkWAU/url2index.txt"
+        valid_pipeline = WebPipeline(
+            MusicCollectorWebDataModule(
+                url2index=valid_url2index,
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                max_num_crops=max_num_crops,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                resampled=True,
+                shardshuffle=True,
+                use_pipe=use_pipe,
+                handler=wds.warn_and_continue,
+            ),
+            pipeline=[{"compose": [self.bucketize]}],
+        )
+        self.validation_dataset = [valid_pipeline]
+
+    def train_dataloader(self):
+        return DataLoader(
+            self.train_dataset,
+            batch_size=None,
+            num_workers=self.num_workers,
+            collate_fn=self.collate_fn,
+        )
+
+    def val_dataloader(self):
+        return [
+            DataLoader(
+                val,
+                batch_size=None,
+                num_workers=self.num_workers,
+                collate_fn=self.collate_fn,
+            )
+            for val in self.validation_dataset
+        ]
+
+    def bucketize(self, iterator: Iterable):
+        for item in iterator:
+            batch = self.batcher.collate_batch(item)
+            if batch is not None:
+                yield batch

@@ -3,6 +3,7 @@ import torch
 from recipes.musiclm.utils.dist import local_zero_first
 from recipes.diffusion.utils.utils import download_checkpoint
 from recipes.diffusion.models.tnt_mulan_free import TNTDiffusionNetwork
+from recipes.diffusion.models.tnt_gru import TNTDiffusionNetwork as ZhTNTDiffusionNetwork
 
 VOCODER_HZ = 125
 
@@ -50,15 +51,14 @@ def load_ema_checkpoint(checkpoint_path, model):
     model.load_state_dict(new_state_dict)
     return model
 
-def init_diffusion(checkpoint_path, local_rank, cache_dir):
+def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False):
     with local_zero_first():
         if cache_dir is not None:
             os.makedirs(cache_dir, exist_ok=True)
         device = torch.device(f"cuda:{local_rank}")
         local_path = download_checkpoint(checkpoint_path, cache_dir)
-        diffusion_model = load_ema_checkpoint(
-            local_path,
-            TNTDiffusionNetwork(
+        if is_zh_token:
+            diffusion_network = ZhTNTDiffusionNetwork(
                 input_dim=32,
                 feature_dim=1024,
                 context_dim=1,
@@ -68,7 +68,22 @@ def init_diffusion(checkpoint_path, local_rank, cache_dir):
                 dropout=0,
                 semantic_cfg_prob=0.10,
                 use_checkpoint=False
-            ),
+            )
+        else:
+            diffusion_network = TNTDiffusionNetwork(
+                input_dim=32,
+                feature_dim=1024,
+                context_dim=1,
+                depth=16,
+                segment_size=32,
+                segment_stride=32,
+                dropout=0,
+                semantic_cfg_prob=0.10,
+                use_checkpoint=False
+            )            
+        diffusion_model = load_ema_checkpoint(
+            local_path,
+            diffusion_network,
         )
         diffusion_model.eval().to(device)
         return { "diffusion": diffusion_model }

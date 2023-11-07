@@ -1,7 +1,7 @@
 INDEX = {
     "CN": {
         "HotGalaxy": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/kaiping/2023-09-26_phoneme/url2index.txt",
-        "Soda": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/soda/2023-09-26_phoneme/url2index.txt",
+        "Soda": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/soda/2023-10-11_phoneme/url2index.txt",
         "FanqieShort": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/fanqie_filter_v51_0_10s/url2idx.txt",
         "FanqieLong": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/fanqie_filter_v51_gt10s/url2idx.txt",
         "XimalayaShort": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/xmly_filter_v6_0_10s_20230903/url2idx.txt",
@@ -520,6 +520,46 @@ INDEX = {
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_merge/nonvocal-B-trap-rap.txt",
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_merge/nonvocal-B-world-music.txt",
         ],
+        "MusicCollector": {
+            "Shania Twain": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/artist/5e4Dhzv426EvQe3aDb64jL/url2index.txt",
+            "Michael Jackson": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/artist/3fMbdgg4jU18AjLCKBhRSm/url2index.txt",
+            "Elvis Presley": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/artist/43ZHCT0cAZBISjO8DG9PnE/url2index.txt",
+            "Taylor Swift": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/06HL4z0CvFAxyc27GXpf02/url2index.txt",
+            "The Beatles": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/3WrFJ7ztbogyGnTHbHJFl2/url2index.txt",
+            "Queen": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/1dfeR4HaWDbWqFHLkxsg1d/url2index.txt",
+            "Drake": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/3TVXtAsR1Inumwj472S9r4/url2index.txt",
+            "Cardi B": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/4kYSro6naA4h99UJvo89HB/url2index.txt",
+            "Frank Sinatra": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/1Mxqyy3pSjf8kZZL4QVxS0/url2index.txt",
+            "Ella Fitzgerald": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/5V0MlUE1Bft0mbLlND7FJz/url2index.txt",
+            "Bob Marley": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/2QsynagSdAqZj3U9HgDzjD/url2index.txt",
+            "Beyonce": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/6vWDO969PvNqNYHIOW5v0m/url2index.txt",
+            "Rihanna": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/5pKCCKE2ajJHZ9KAiaK11H/url2index.txt",
+            "Stevie Wonder": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/7guDJrEfX3qb6FEbdPA5qi/url2index.txt",
+            "Justin Bieber": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/1uNFoZAHBGtllmzznpCI3s/url2index.txt",
+            "Bruno Mars": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/0du5cEVh5yTK9QJze8zA0C/url2index.txt",
+            "Eminem": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/7dGJo4pcD2V6oG8kP0tJRR/url2index.txt",
+            "Celine Dion": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/4S9EykWXhStSc15wEx8QFK/url2index.txt",
+
+            "Mandarin": [
+                "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/1VDEf4vANEPRlrXVken86a/20231016/url2index.txt",
+                "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/6lwGzJlgeqR9kaSKNciTrG/20231016/url2index.txt",
+                "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/5aOlxZxJjNQi1obV1PYvnX/20231016/url2index.txt",
+            ],
+            "Cantonese": [
+                "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/3MCgSkmtn1zSgPqU47DnjN/url2index.txt",
+                "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/5wcIMnhe5fa1IuSul2Q349/url2index.txt",
+                "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/6CTJ9XM4SWTtKUnc86bAeI/url2index.txt",
+                "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/1CIaSnLlv5FgE0V1ZFkWAU/url2index.txt",
+            ],
+            "Hokkien": [
+                "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/2aEnd29rL9iNbBWe1m3yTG/url2index.txt",
+                "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/3Rk9ZuSiVMJCu5Ydb6Ld8h/url2index.txt",
+                "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/6o6nSAPkXng4Amd2uoAlWH/url2index.txt",
+            ],
+            "Opera": [
+                "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/youtube_sft/playlist/7hdZihwjxWJpZA2GxHqLE4/url2index.txt",
+            ]
+        },
         "Beat": [
             "hdfs://harunava/home/byte_speech_sv/data/webdataset/beat/ballroom_beat/train/shards-0000.tar",
             "hdfs://harunava/home/byte_speech_sv/data/webdataset/beat/beatles_beat/train/shards-0000.tar",

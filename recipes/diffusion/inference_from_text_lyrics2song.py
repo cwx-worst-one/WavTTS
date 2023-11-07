@@ -249,12 +249,12 @@ if __name__ == '__main__':
     parser.add_argument(
         '--samples_per_prompt',
         type=int,
-        default=4,
+        default=1,
     )
     parser.add_argument(
         '--input_prompt_path', 
         type=str, 
-        default='/mnt/bn/audio-diffusion/data/mixture_prompts/suno100.csv',
+        default="",
     )
     parser.add_argument(
         '--output_dir_path', 
@@ -262,9 +262,9 @@ if __name__ == '__main__':
         default='lyrics2song_test'
     )
     parser.add_argument(
-        '--input_source',
+        '--input_lang',
         type=str,
-        default='semantic'
+        default='zh_phone', # [en, zh_phone, zh_wp]
     )
     parser.add_argument(
         '--device',
@@ -279,47 +279,47 @@ if __name__ == '__main__':
     parser.add_argument(
         '--mulan_model_path',
         type=str,
-        default='hdfs://harunava/home/byte_speech_sv/weitsung.lu/lyrics2song_30s_ckpts/mulan-step=014000-median_rank_1=160-kaggle.ckpt'
+        default='hdfs://haruna/home/byte_speech_sv/jingsong.gao/mulan_ckpt/mulan-step=014000-median_rank_1=160-kaggle_minimal.ckpt'
     )
     parser.add_argument(
         '--lyrics_max_seq_len',
         type=int,
-        default=1000,
+        default=400,
     )
     parser.add_argument(
         '--duration',
         type=int,
-        default=120,
+        default=30,
     )
     parser.add_argument(
         '--semantic_model_path',
         type=str,
-        default= '/mnt/bn/audio-diffusion/qq/logs/semantic_model_mulan_text_07B_2min/varlen2min_tag3_bs12_07B_intro_8w/checkpoints/step=036000-val_accu_0=18.82.ckpt'
+        default='hdfs:///home/byte_speech_sv/zongyu.yin/logs/decoder_07B_zh30s/wp100_hot_soda_bs14w1/checkpoints/step=274000-val_accu_0=12.63.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_0',
         type=str,
-        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_120s_finetune/checkpoints/last.ckpt'
+        default='hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_16/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_1',
         type=str,
-        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_120s_finetune/checkpoints/last.ckpt'
+        default='hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_16/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_2',
         type=str,
-        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_120s_finetune/checkpoints/last.ckpt'
+        default='hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_16/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_3',
         type=str,
-        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_120s_finetune/checkpoints/last.ckpt'
+        default='hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_16/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--vocoder_model_path',
         type=str,
-        default='hdfs://harunava/home/byte_speech_sv/weitsung.lu/soundstream/dac_vae_125hz_24k_v2_part2/checkpoints/soundstream-step=374999-val_sdr=12.9557.ckpt'
+        default='hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/soundstream-step=374999-val_sdr=12.9557.ckpt'
     )
 
     args = parser.parse_args()
@@ -363,7 +363,10 @@ if __name__ == '__main__':
     for key, remote_path in diffusion_model_path.items():
         ckpt_name = Path(remote_path).name
         if ckpt_name not in diffusion_checkpoint_paths:
-            diffusion_checkpoint_paths[ckpt_name] = init_diffusion(diffusion_model_path[key], local_rank, cache_dir=asset_path)['diffusion']
+            is_zh_token= True if args.input_lang=='zh_phone' else False
+            diffusion_checkpoint_paths[ckpt_name] = init_diffusion(
+                diffusion_model_path[key], local_rank, cache_dir=asset_path,
+                is_zh_token=is_zh_token)['diffusion']
         diffusion_model[key] = diffusion_checkpoint_paths[ckpt_name]
 
     
@@ -378,38 +381,28 @@ if __name__ == '__main__':
     lyrics_max_seq_len = semantic_module.extra_params.get("lyrics_max_seq_len", args.lyrics_max_seq_len)
 
     prompt_path = args.input_prompt_path
-    if prompt_path is None:
+    if prompt_path == "":
         # [Example] Input prompt use case 
-        style_prompt_metadata = [
-            {
-                "final_mood": 'Chill',
-                "final_genre": 'Dream Pop',
-                'merge_aed': 'Female'
-            },
-            {
-                "final_mood": 'relax',
-                "final_genre": 'HipPop',
-                'merge_aed': 'Male'
-            },
-            {
-                "final_mood": '',
-                "final_genre": 'Acoustic country',
-                'merge_aed': 'Male'
-            },
-        ]
+        index = ["s0001", "s0002"]
+        category = ["none", "none"]
+        style_text = ["大陆流行 开心 男声", "摇滚 平静 男声"]
         lyrics = [
-            "won't you talk to me texas, let me hear them drawl, i spent my last five dollars on this one long distance call won't you talk to me texas i got these homesick blues tell me i can come on home to you",
-            "it may be factual it may be cool ungain love everybody plays the fool how can you help it when the music starts to play and your ability to reason is swept away oh heaven",
-            " i see the crystal raindrops fall and the beauty of it all is when the sun comes shining through to make those rainbows in my mind when i think of you sometime and i wanna spend some time with you"
+            "阳光彩虹小白马 滴滴哒滴滴哒",            
+            "没有什么能够阻挡 你对自由地向往"
             ]
-        prompts = { 'metadata': style_prompt_metadata, 'lyrics': lyrics }
-        inference_dataset = inference_dataset_from_prompt(prompts, conditions="style_text,lyrics_tokens", batch_size=batch_size, lyrics_max_seq_len=lyrics_max_seq_len)
-    else:
-        inference_dataset = inference_dataset_from_prompt(prompt_path, conditions="style_text,lyrics_tokens", batch_size=batch_size, lyrics_max_seq_len=lyrics_max_seq_len)
+
+        prompt_path = { 'index': index, 'category': category, 'style_text': style_text, 'lyrics': lyrics }
+    inference_dataset = inference_dataset_from_prompt(
+        prompt_path,
+        conditions="style_text,lyrics_tokens",
+        batch_size=batch_size,
+        lyrics_max_seq_len=lyrics_max_seq_len,
+        lang=args.input_lang,
+        max_items=100)
 
     # inference
     start_time = time()
-    diffusion_params = vars(args)
+    diffusion_params = vars(args)  
     total_items = 0
     with torch.no_grad():
         for batch_idx, batch in enumerate(inference_dataset):
@@ -417,7 +410,15 @@ if __name__ == '__main__':
 
             # Process the input lyrics and style prompt
             hp = DotDict({ "duration": duration, "semantic_temperature": 1 })
-            semantic_samples = semantic_module.predict(batch, hp)
+            
+            # semantic_samples = semantic_module.predict(batch, hp)
+            inputs_embeds = semantic_module.prepare_inputs_embeddings(
+                batch={
+                    'conditions': "style_text,lyrics_tokens", 
+                    'lyrics_tokens': batch['lyrics_tokens'],
+                    'style_text': batch['style_text']})
+            inputs_embeds = repeat(inputs_embeds, 'b n d -> (b s) n d', s=args.samples_per_prompt)
+            semantic_samples = semantic_module.super_predict(inputs_embeds, 750, 1.0)
 
             semantic_samples, eos_index_list = process_eos_indexes(semantic_samples, semantic_module, sample_rate=sample_rate)
             diffusion_start = time()
@@ -427,8 +428,10 @@ if __name__ == '__main__':
 
             outputs = { "generated_audio": wavs }
             output_dir = args.output_dir_path
-            save_batch_outputs(outputs, batch, output_dir=output_dir, sample_rate=sample_rate, index_offset=total_items)
-            total_items += len(wavs)
+            save_batch_outputs(
+                outputs, batch, output_dir=output_dir, sample_rate=sample_rate, 
+                sample_round=args.samples_per_prompt, index_offset=total_items)
+            total_items += len(wavs)    
     save_video(output_dir, output_dir)
 
-    print(f'Inference RTF: {(time() - start_time)/(len(prompts)*10)}')
+    print(f'Inference RTF: {(time() - start_time)/(len(prompts)*duration)}')

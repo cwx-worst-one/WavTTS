@@ -12,6 +12,9 @@ fi
 # For ASR wer
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/tiger/pypetrel/pypetrel/lib/
 export PYTHONPATH="${PYTHONPATH}:/opt/tiger/pypetrel/pypetrel"
+# For sami_tts_api
+export LD_LIBRARY_PATH=/opt/tiger/sami_engine_cleaned/libs:$LD_LIBRARY_PATH 
+
 if ! grep -q "version:1.0.0.129" /opt/tiger/pypetrel/current_revision; then
     rm -rf /opt/tiger/pypetrel
     cp -r /mnt/bn/audio-diffusion/ashaw/bvc/pypetrel.1.0.0.129 /opt/tiger/pypetrel
@@ -27,6 +30,7 @@ fi
 
 sudo apt update
 sudo apt install espeak ffmpeg zip -y
+sudo apt install fonts-arphic-ukai
 pip3 install -qr ./recipes/bigmusic/requirements.txt
 pip3 install -qr ./recipes/diffusion/requirements.txt
 

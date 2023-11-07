@@ -98,6 +98,7 @@ video/
 log/
 logs/
 cruise_logs/
+lyrics2song_test/
 
 .history/
 

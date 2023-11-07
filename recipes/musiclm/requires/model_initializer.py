@@ -59,6 +59,12 @@ def init_mulan(hpath, local_rank, cache_dir=None, version="149", prefix=""):
             mulan_inference,
         )
         mulan_rvq_indexs = None
+    elif version in ["Chinese"]:
+        from .mulan.mulan_infer_chinese import(
+            create_mulan_model,
+            mulan_inference,
+            mulan_rvq_indexs,
+        )
     else:
         raise KeyError(f"Not a valid mulan version. {version}")
     if cache_dir is not None:

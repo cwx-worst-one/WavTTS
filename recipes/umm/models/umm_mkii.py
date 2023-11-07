@@ -1717,7 +1717,7 @@ class Stage2(Base):
         normalize = self.config.feature_cmvn is not None
         mel = self.audio_transform(x, normalize=normalize)
         input_dict = {"mel": mel}
-        if self.config.interfere_audio:
+        if self.config.get("interfere_audio", None):
             x_interfered = self.interfere_audio(x)
             mel_interfered = self.audio_transform(x_interfered, normalize=normalize)
             input_dict.update(mel_interfered=mel_interfered)

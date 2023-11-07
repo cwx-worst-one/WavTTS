@@ -37,14 +37,13 @@ def inference_dataset_from_prompt(
     max_items=16,
     lyrics_max_seq_len=400,
     run_combinations=False,
-    enable_punctuation=False,
+    enable_punctuation=True,
+    lang='en',
     dataset_mode="truncate_length"
 ):
     prompts = prompt_path_to_items(prompt_path)
     if 'text_category' in prompts: # fix csv formatting
         prompts['category'] = prompts.pop('text_category')
-    elif 'category' in prompts:
-        prompts['category'] = prompts.pop('category')
     if 'text_prompt' in prompts: # fix csv formatting
         prompts['style_text'] = prompts.pop('text_prompt')
     elif 'text' in prompts:
@@ -60,7 +59,13 @@ def inference_dataset_from_prompt(
 
 
     if 'lyrics_tokens' in conditions:
-        segment_transforms = [LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len=lyrics_max_seq_len, dataset_mode=dataset_mode, enable_punctuation=enable_punctuation)]
+        if lang == 'en':
+            segment_transforms = [LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len=lyrics_max_seq_len, dataset_mode=dataset_mode, enable_punctuation=enable_punctuation)]
+        elif lang == 'zh_wp':
+            segment_transforms = [LyricsTokenTransform.init_zh_tokenizer(lyrics_max_seq_len=lyrics_max_seq_len, dataset_mode=dataset_mode, enable_punctuation=enable_punctuation)]
+        elif lang == 'zh_phone':
+            segment_transforms = [LyricsTokenTransform.init_zh_phoneme_tokenizer(lyrics_max_seq_len=lyrics_max_seq_len, dataset_mode=dataset_mode, enable_punctuation=enable_punctuation)]
+
         if 'style_text' not in prompts: # style text not provided. must generate own
             if 'metadata' in prompts:
                 print('WARNING: style_text not provided. Using metadata to generate style prompt')
@@ -74,7 +79,7 @@ def inference_dataset_from_prompt(
             segment_transforms.append(StyleTextT5Transform())
     else: # instrumental use case
         segment_transforms = []
-
+    
     item_keys = list(prompts.keys())
     items = []
     for idx, pair in enumerate(lyrics_prompt_pairs):
