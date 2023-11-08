@@ -18,6 +18,9 @@ from recipes.bigmusic.lightning.semantic_modules import process_eos_indexes, tru
 import json
 from pathlib import Path
 import numpy as np
+from samantha.models.flash_llama import LlamaPreTrainedModel
+from samantha.models.ctiga import gpt
+
 
 class SemanticInferenceModule(pl.LightningModule):
     def __init__(
@@ -55,6 +58,14 @@ class SemanticInferenceModule(pl.LightningModule):
             required_modules.update({"reranker": self.hparams.required_modules["reranker"]})
 
         self.load_required_modules(required_modules)
+
+
+    def setup(self, stage: str) -> None:
+        if isinstance(self.semantic_module.model, gpt.GPTLMHeadModel) and ('32' in self.trainer.precision):
+            raise Exception(f"Invalid precision for cTIGA model {self.trainer.precision}. Please set --run_opts.precision 16")
+        if isinstance(self.semantic_module.model, LlamaPreTrainedModel) and ('16' in self.trainer.precision):
+            raise Exception(f"Invalid precision for flash llama model {self.trainer.precision}. Please set --run_opts.precision 32")
+
 
     def load_required_modules(self, required_modules):
         for name, item in required_modules.items():
