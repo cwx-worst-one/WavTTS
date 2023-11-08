@@ -25,6 +25,7 @@ class ModelMetric(Metric):
         "NVIDIA H100": {32: 67e12, 16: 988e12, 64: 34e12},
         "NVIDIA H800": {32: 67e12, 16: 988e12, 64: 1e12},
         "NVIDIA A100-SXM4-80GB": {32: 19.5e12, 16: 312e12, 64: 9.7e12},
+        "NVIDIA A800-SXM4-80GB": {32: 19.5e12, 16: 312e12, 64: 9.7e12},
     }
 
     def __init__(
@@ -48,7 +49,7 @@ class ModelMetric(Metric):
                     f"Model `{model_name}`[{cls_name}] is not supported for "
                     "flops calculation, disable model metric calculation."
                 )
-        device_name = torch.cuda.get_device_properties(0).name
+        device_name = torch.cuda.get_device_name(0)
         if device_name in self.THEORETICAL_MAPPING:
             self._theoretical = self.THEORETICAL_MAPPING[device_name]
         else:
