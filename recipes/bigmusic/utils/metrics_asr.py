@@ -8,7 +8,7 @@ from typing import List, Dict, Optional, Union
 import torch
 
 from logging import getLogger
-
+from torchaudio.functional import resample
 
 from dataclasses import dataclass
 
@@ -72,7 +72,9 @@ class Wav2Lyrics:
         model_path: str = "/mnt/bn/audio-diffusion/ashaw/models/asr/en_us_lyric",
         itn_model_path: str = "/mnt/bn/audio-diffusion/ashaw/models/asr/en_us_lyric_with_itn_v2",
         do_itn: bool = False,
+        resampling_method: str = "ffmpeg",  # ffmpeg|torchaudio
     ):
+        self.resampling_method = resampling_method
         self.verify_dependencies()
 
         if not pypetrel.is_engine_initialized():
@@ -104,7 +106,7 @@ class Wav2Lyrics:
                 "Could not find env var: CUDA_VISIBLE_DEVICES. Setting default to 0"
             )
 
-    def resample(self, audio_bytes, sample_rate: int):
+    def resample_ffmpeg(self, audio_bytes, sample_rate: int):
         #logger.warning(
         #    f"The audio is resampled from {sample_rate}hz to {self._sample_rate}hz"
         #)
@@ -112,6 +114,15 @@ class Wav2Lyrics:
             audio_bytes=audio_bytes, sample_rate=self._sample_rate, format="wav"
         )
         return resampled_bytes
+
+    def resample_torchaudio(self, audio, sample_rate: int):
+        if sample_rate != self._sample_rate:
+            audio = resample(
+                audio,
+                orig_freq=sample_rate,
+                new_freq=self._sample_rate,
+            )
+        return audio
 
     def __call__(
         self,
@@ -122,10 +133,12 @@ class Wav2Lyrics:
     ) -> Dict[str, Union[List[str], torch.Tensor]]:
         if len(wav_batch.shape) == 2:
             wav_batch = wav_batch.unsqueeze(1)
-        wav_batch = wav_batch.cpu()
+        wav_batch = wav_batch.float().cpu()
         if sample_lengths is not None:
+            # In some cases sample_lengths may be 0 which will cause ASR to crash.
+            # We use a lower-bound of 1 second here to avoid crash.
             wav_batch = [
-                wav_batch[i, ..., : sample_lengths[i]]
+                wav_batch[i, ..., : max(sample_lengths[i], sample_rate)]
                 for i in range(len(sample_lengths))
             ]
 
@@ -150,11 +163,20 @@ class Wav2Lyrics:
                         has_next = False
                         break
 
-                    byte_io = io.BytesIO()
-                    torchaudio.save(byte_io, wav, sample_rate, format="wav")
-                    byte_io.seek(0)
-                    wav_bytes = byte_io.read()
-                    wav_bytes_resampled = self.resample(wav_bytes, sample_rate)
+                    if self.resampling_method == "ffmpeg":
+                        byte_io = io.BytesIO()
+                        torchaudio.save(byte_io, wav, sample_rate, format="wav")
+                        byte_io.seek(0)
+                        wav_bytes = byte_io.read()
+                        wav_bytes_resampled = self.resample_ffmpeg(wav_bytes, sample_rate)
+                    elif self.resampling_method == "torchaudio":
+                        wav = self.resample_torchaudio(wav, sample_rate)
+                        byte_io = io.BytesIO()
+                        torchaudio.save(byte_io, wav, sample_rate, format="wav")
+                        byte_io.seek(0)
+                        wav_bytes_resampled = byte_io.read()
+                    else:
+                        raise ValueError(f"Unknown resampling method: {self.resampling_method}")
 
                     wav_input = pypetrel.asr.ASREngineInput()
                     wav_input.set_waveform(wav_bytes_resampled)
@@ -201,6 +223,7 @@ def wav2lyrics(
     sample_lengths=None,
     device_id=None,
     do_itn=False,  # only valid for the first call
+    resampling_method="ffmpeg", # ffmpeg|torchaudio
 ):
     """
     As transcription jobs can fail and the order is not preserved,
@@ -211,7 +234,10 @@ def wav2lyrics(
     sr: sample rate
     """
 
-    wav2lyrics_module = Wav2Lyrics(do_itn=do_itn)
+    wav2lyrics_module = Wav2Lyrics(
+        do_itn=do_itn,
+        resampling_method=resampling_method,
+    )
     outputs = wav2lyrics_module(
         wav_batch, sample_rate=sr, sample_lengths=sample_lengths, device_id=device_id
     )

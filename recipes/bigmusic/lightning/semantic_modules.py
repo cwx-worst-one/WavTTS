@@ -412,6 +412,7 @@ class SemanticRLModule(SemanticModule):
                     sr=self.extra_params.sample_rate,
                     device_id=self.local_rank,
                     do_itn=self.extra_params.use_itn_asr,
+                    resampling_method="torchaudio",
                 )
             sampled_lyrics = items["sampled_lyrics"]
             if len(sampled_lyrics) != sampled_audio.size(0):
@@ -483,6 +484,7 @@ class SemanticRLModule(SemanticModule):
                     sr=self.extra_params.sample_rate,
                     device_id=self.local_rank,
                     do_itn=self.extra_params.use_itn_asr,
+                    resampling_method="torchaudio",
                 )
             sampled_lyrics = items["sampled_lyrics"]
             if len(sampled_lyrics) != sampled_audio.size(0):
