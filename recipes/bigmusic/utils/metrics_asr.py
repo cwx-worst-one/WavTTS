@@ -8,7 +8,6 @@ from typing import List, Dict, Optional, Union
 import torch
 
 from logging import getLogger
-from torchaudio.functional import resample
 
 
 from dataclasses import dataclass
@@ -105,24 +104,14 @@ class Wav2Lyrics:
                 "Could not find env var: CUDA_VISIBLE_DEVICES. Setting default to 0"
             )
 
-    def resample(self, audio, sample_rate: int):
-        if sample_rate != self._sample_rate:
-            audio = resample(
-                audio,
-                orig_freq=sample_rate,
-                new_freq=self._sample_rate,
-            )
-        return audio
-
-    def resample_bytes(self, audio_bytes, sample_rate: int):
+    def resample(self, audio_bytes, sample_rate: int):
         #logger.warning(
         #    f"The audio is resampled from {sample_rate}hz to {self._sample_rate}hz"
         #)
-        if sample_rate != self._sample_rate:
-            audio_bytes = normalize_audio(
-                audio_bytes=audio_bytes, sample_rate=self._sample_rate, format="wav"
-            )
-        return audio_bytes
+        resampled_bytes = normalize_audio(
+            audio_bytes=audio_bytes, sample_rate=self._sample_rate, format="wav"
+        )
+        return resampled_bytes
 
     def __call__(
         self,
@@ -133,10 +122,12 @@ class Wav2Lyrics:
     ) -> Dict[str, Union[List[str], torch.Tensor]]:
         if len(wav_batch.shape) == 2:
             wav_batch = wav_batch.unsqueeze(1)
-        wav_batch = wav_batch.float().cpu()
+        wav_batch = wav_batch.cpu()
         if sample_lengths is not None:
-            for i in range(len(wav_batch)):
-                wav_batch[i, ..., sample_lengths[i]:] = 0
+            wav_batch = [
+                wav_batch[i, ..., : sample_lengths[i]]
+                for i in range(len(sample_lengths))
+            ]
 
         prev_flag = os.environ.get("CUDA_VISIBLE_DEVICES")
         if device_id is not None:
@@ -158,15 +149,15 @@ class Wav2Lyrics:
                     if wav is None:
                         has_next = False
                         break
-                    wav = self.resample(wav, sample_rate)
+
                     byte_io = io.BytesIO()
                     torchaudio.save(byte_io, wav, sample_rate, format="wav")
                     byte_io.seek(0)
                     wav_bytes = byte_io.read()
-                    #wav_bytes_resampled = self.resample_bytes(wav_bytes, sample_rate)
+                    wav_bytes_resampled = self.resample(wav_bytes, sample_rate)
 
                     wav_input = pypetrel.asr.ASREngineInput()
-                    wav_input.set_waveform(wav_bytes)
+                    wav_input.set_waveform(wav_bytes_resampled)
                     wav_input.set_finish(True)
                     wav_input.set_sample_rate(self._sample_rate)
                     asr_input = pypetrel.asr.Input()
