@@ -22,10 +22,10 @@ class ModelMetric(Metric):
     """
 
     THEORETICAL_MAPPING = {
-        "NVIDIA H100": {32: 67e12, 16: 988e12, 64: 34e12},
-        "NVIDIA H800": {32: 67e12, 16: 988e12, 64: 1e12},
-        "NVIDIA A100-SXM4-80GB": {32: 19.5e12, 16: 312e12, 64: 9.7e12},
-        "NVIDIA A800-SXM4-80GB": {32: 19.5e12, 16: 312e12, 64: 9.7e12},
+        "H100": {32: 67e12, 16: 988e12, 64: 34e12},
+        "H800": {32: 67e12, 16: 988e12, 64: 1e12},
+        "A100": {32: 19.5e12, 16: 312e12, 64: 9.7e12},
+        "A800": {32: 19.5e12, 16: 312e12, 64: 9.7e12},
     }
 
     def __init__(
@@ -50,8 +50,14 @@ class ModelMetric(Metric):
                     "flops calculation, disable model metric calculation."
                 )
         device_name = torch.cuda.get_device_name(0)
-        if device_name in self.THEORETICAL_MAPPING:
-            self._theoretical = self.THEORETICAL_MAPPING[device_name]
+        if "A100" in device_name:
+            self._theoretical = self.THEORETICAL_MAPPING["A100"]
+        elif "A800" in device_name:
+            self._theoretical = self.THEORETICAL_MAPPING["A800"]
+        elif "H100" in device_name:
+            self._theoretical = self.THEORETICAL_MAPPING["H100"]
+        elif "H800" in device_name:
+            self._theoretical = self.THEORETICAL_MAPPING["H800"]
         else:
             rank_zero_warn(
                 f"MFU calculation not support for current device {device_name}"
