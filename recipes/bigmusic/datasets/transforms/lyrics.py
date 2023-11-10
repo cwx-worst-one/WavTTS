@@ -85,12 +85,13 @@ class StyleTextT5Transform():
 
 # Segment Transforms
 class SemanticTokenLengthTransform():
-    def __init__(self, sample_rate=24000, semantic_frame_rate=25):
+    def __init__(self, sample_rate=24000, semantic_frame_rate=25, audio_key="target_audio"):
         self.sample_rate = sample_rate
         self.semantic_frame_rate = semantic_frame_rate
+        self.audio_key = audio_key
 
     def __call__(self, item):
-        target_audio = item['target_audio']
+        target_audio = item[self.audio_key]
         audio_length = target_audio.shape[-1]
         seq_length = audio_length * self.semantic_frame_rate // self.sample_rate
         return { **item, 'target_tokens_length': seq_length }

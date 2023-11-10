@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Generator, Optional, Tuple
+from typing import Any, Dict, List, Generator, Optional, Tuple, Union
 import io
 import torch
 import random
@@ -156,7 +156,7 @@ class MusicLMTransforms(TransformBase):
 class MCCTransforms(TransformBase):
     def __init__(
         self,
-        n_samples: int,
+        n_samples: Union[int, List[int]],
         sample_rate: int,
         audio_key: str = "mp3",
         normalize_audio: bool = True,
@@ -171,11 +171,11 @@ class MCCTransforms(TransformBase):
         audio_metrics_filtered: bool = False,
         ar_filtering: Optional[ARFiltering] = None,
         text_type: Optional[str] = None,
-        max_num_crops: Optional[int] = None,    # if None, auto set based on audio length
-        crop_step_size: Optional[int] = None,   # if None, auto set based on n_samples
+        max_num_crops: Optional[Union[int, List[int]]] = None,    # if None, auto set based on audio length
+        crop_step_size: Optional[Union[int, List[int]]] = None,   # if None, auto set based on n_samples
     ) -> None:
         super().__init__()
-        self.n_samples = n_samples
+        self.n_samples = n_samples if isinstance(n_samples, (list, tuple)) else [n_samples]
         self.sample_rate = sample_rate
         self.audio_key = audio_key
         self.min_volume_threshold = min_volume_threshold
@@ -189,17 +189,25 @@ class MCCTransforms(TransformBase):
         self.audio_metrics_filtered = audio_metrics_filtered
         self.ar_filtering = ar_filtering
         self.text_type = text_type
+
+        if max_num_crops is None:
+            max_num_crops = [None] * len(self.n_samples)
+        elif not isinstance(max_num_crops, (list, tuple)):
+            max_num_crops = [max_num_crops]
+        assert len(max_num_crops) == len(self.n_samples)
         self.max_num_crops = max_num_crops
+
         if crop_step_size is None:
-            crop_step_size = self.n_samples // 2
-        assert crop_step_size <= self.n_samples
+            crop_step_size = [n // 2 for n in self.n_samples]
+        elif not isinstance(crop_step_size, (list, tuple)):
+            crop_step_size = [crop_step_size]
+        assert len(crop_step_size) == len(self.n_samples)
         self.crop_step_size = crop_step_size
-        self.crop_wing_span = self.n_samples // self.crop_step_size
 
         self.is_loud = LoudnessCheck(
             self.sample_rate,
             self.min_volume_threshold,
-            self.loudness_ratio_threshold
+            self.loudness_ratio_threshold,
         )
         self.read_mp3 = ReadMP3(self.sample_rate)
 
@@ -214,9 +222,6 @@ class MCCTransforms(TransformBase):
         if normalize_audio:
             base_transforms.append(NormalizeAudio())
         self.base_transform = Compose(base_transforms)
-
-        self.random_pad = RandomPad(n_samples=n_samples)
-        self.random_crop = RandomResizedCrop(n_samples=n_samples)
 
     def is_metadata_good(self, metadata: Dict[str, Any]) -> Tuple[bool, str]:
         # Apply AED filtering if applicable
@@ -316,9 +321,9 @@ class MCCTransforms(TransformBase):
                 return True
         return False
 
-    def get_window_ids(self, audio, x):
+    def get_window_ids(self, audio, x, n_samples, crop_step_size):
         metadata = x["__index_data__"]
-        num_windows = 1 + (audio.size(1) - self.n_samples) // self.crop_step_size
+        num_windows = 1 + (audio.size(1) - n_samples) // crop_step_size
         window_ids = list(range(num_windows))
         if self.ar_filtering is None:
             return audio, window_ids, num_windows
@@ -344,9 +349,9 @@ class MCCTransforms(TransformBase):
             sp = ar_data_quality["semantic_probs"]
             num_segments = len(sd)
             audio = audio[..., :segment_config["max_duration"] * self.sample_rate]
-            num_windows = 1 + (audio.size(1) - self.n_samples) // self.crop_step_size
-            window_length_sec = self.n_samples // self.sample_rate
-            window_step_sec = self.crop_step_size // self.sample_rate
+            num_windows = 1 + (audio.size(1) - n_samples) // crop_step_size
+            window_length_sec = n_samples // self.sample_rate
+            window_step_sec = crop_step_size // self.sample_rate
             window_ids = []
             for wid in range(num_windows):
                 window_start_sec = wid * window_step_sec
@@ -398,26 +403,36 @@ class MCCTransforms(TransformBase):
             print(f"[MP3 decoding error] {e}")
             self._update_stats(skipped=True, message="MP3 Decoding Error")
             return
-        if audio.size(1) < self.n_samples * 0.8:
+
+        # Choose n_samples at random
+        candidates = [
+            (n, m, c) for n, m, c in zip(
+                self.n_samples, self.max_num_crops, self.crop_step_size
+            ) if audio.size(1) >= n * 0.8
+        ]
+        if len(candidates) == 0:
             self._update_stats(skipped=True, message="Audio Too Short")
             return
-        else:            
-            audio = self.random_pad(audio)
+        random.shuffle(candidates)
+        n_samples, max_num_crops, crop_step_size = candidates[0]
+        crop_wing_span = n_samples // crop_step_size
+        audio = RandomPad(n_samples=n_samples)(audio)
         
         # Determine possible crop starting points
-        audio, window_ids, num_windows = self.get_window_ids(audio, x)
+        audio, window_ids, num_windows = self.get_window_ids(
+            audio, x, n_samples=n_samples, crop_step_size=crop_step_size
+        )
         random.shuffle(window_ids)
         # Return up to max_num_crops
-        max_num_crops = self.max_num_crops
         if max_num_crops is None:
-            max_num_crops = max(1, audio.size(1) // self.n_samples)
+            max_num_crops = max(1, audio.size(1) // n_samples)
         num_crops = 0
         taboo = set()
         for wid in window_ids:
             if wid in taboo:
                 continue
-            st_sample = wid * self.crop_step_size
-            en_sample = st_sample + self.n_samples
+            st_sample = wid * crop_step_size
+            en_sample = st_sample + n_samples
             has_vocal = self.contains_vocal(
                 vocal_segments,
                 st_sample / self.sample_rate,
@@ -444,8 +459,8 @@ class MCCTransforms(TransformBase):
                 break
             # Avoid overlapping segments
             for overlapped_wid in range(
-                max(0, wid - self.crop_wing_span + 1),
-                min(num_windows, wid + self.crop_wing_span),
+                max(0, wid - crop_wing_span + 1),
+                min(num_windows, wid + crop_wing_span),
             ):
                 taboo.add(overlapped_wid)
         if num_crops == 0:

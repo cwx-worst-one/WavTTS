@@ -54,6 +54,7 @@ run_opts:
 
 pl_datamodule: !new:recipes.bigmusic.datasets.instrumental.InstrumentalWebDataModule
     dataset_name: "MCC40M_US"
+    val_split: "SSTK_EVAL_US"
     sample_rate: !ref <extra_params[sample_rate]>
     duration: !ref <extra_params[duration]>
     batch_size: !ref <run_opts[batch_size]>

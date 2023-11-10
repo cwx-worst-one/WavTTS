@@ -332,3 +332,26 @@ class SoundstreamTokenEmbedder(TokenEmbedder):
         )
         soundstream_ids = torch.reshape(soundstream_ids, [b, -1])
         return soundstream_ids
+
+
+class DurationEmbedder(nn.Module):
+    def __init__(self, durations, embedding_dim):
+        super().__init__()
+        durations = durations if isinstance(durations, (list, tuple)) else [durations]
+        durations = [int(d) for d in durations]
+        self.duration2id = {durations[i]: i for i in range(len(durations))}
+        self.embedding_dim = embedding_dim
+        self.embedder = nn.Embedding(len(durations) + 1, embedding_dim)
+
+    def embed(self, duration, batch_size):
+        duration = int(duration)
+        duration_id = self.duration2id[duration]
+        device = next(self.parameters()).device
+        duration_ids = torch.LongTensor([duration_id] * batch_size).to(device)
+        return self.embedder(duration_ids).unsqueeze(1)
+
+    def empty_embed(self, batch_size):
+        empty_id = len(self.duration2id)
+        device = next(self.parameters()).device
+        empty_ids = torch.LongTensor([empty_id] * batch_size).to(device)
+        return self.embedder(empty_ids).unsqueeze(1)

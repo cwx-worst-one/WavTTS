@@ -5,7 +5,8 @@ from recipes.bigmusic.lightning.embedding_modules import (
     LyricsTokenEmbedder,
     WavToVecTokenEmbedder,
     BestRQTokenEmbedder, 
-    MulanTagEmbedder
+    MulanTagEmbedder,
+    DurationEmbedder,
 )
 import torch
 from tqdm.auto import tqdm
@@ -14,6 +15,7 @@ import torch.nn.functional as F
 from collections import defaultdict
 from samantha.models.ctiga import gpt
 from samantha.utils.ctiga.inference_params import InferenceParams
+
 
 class SemanticModuleVarlen(BaseContinuousEmbedModule):
     def __init__(
@@ -32,10 +34,29 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
         mulan_embed_dim = extra_params['mulan_embed_dim']
         semantic_codebook_size = extra_params['semantic_codebook_size']
         mulan_OTF_tag_type = extra_params.get('mulan_tag_type', 'mulan_genres')
-        embedder_dict = {
-            'mulan': MulanTagEmbedder(input_dim=mulan_embed_dim, embedding_dim=hidden_size, add_sos=True, mulan_tag_type=mulan_OTF_tag_type),
-            'lyrics_tokens': LyricsTokenEmbedder(vocab_size=lyrics_vocab_size, embedding_dim=hidden_size, add_sos=True, add_eos=False),
-        }
+        embedder_dict = {}
+        for emb_type in extra_params.get("input_embedders", ["mulan", "lyrics_tokens"]):
+            if emb_type == "mulan":
+                embedder_dict[emb_type] = MulanTagEmbedder(
+                    input_dim=mulan_embed_dim,
+                    embedding_dim=hidden_size,
+                    add_sos=True,
+                    mulan_tag_type=mulan_OTF_tag_type,
+                )
+            elif emb_type == "lyrics_tokens":
+                embedder_dict[emb_type] = LyricsTokenEmbedder(
+                    vocab_size=lyrics_vocab_size,
+                    embedding_dim=hidden_size,
+                    add_sos=True,
+                    add_eos=False,
+                )
+            elif emb_type == "duration":
+                embedder_dict[emb_type] = DurationEmbedder(
+                    durations=extra_params["duration"],
+                    embedding_dim=hidden_size,
+                )
+            else:
+                raise ValueError(f"Unknown emb type: {emb_type}")
         input_embedders = nn.ModuleDict(embedder_dict)
         semantic_type = extra_params.get('semantic_type', 'wav2vec')
         if semantic_type  == 'wav2vec':
@@ -58,25 +79,35 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
         )
         self.save_hyperparameters()
 
-        self.lm_input_head = nn.Linear(hidden_size, lyrics_vocab_size+2, bias=False)
-
-    def prepare_mulan_inputs(self, batch):
+        prediction_dict = {}
+        for pred_type in extra_params.get("prediction_heads", ["input"]):
+            if pred_type == "input":
+                prediction_dict[pred_type] = nn.Linear(
+                    hidden_size,
+                    lyrics_vocab_size + 2,
+                    bias=False,
+                )
+            else:
+                raise ValueError(f"Unknown pred type: {pred_type}")
+        self.prediction_heads = nn.ModuleDict(prediction_dict)
+    
+    def prepare_mulan_inputs(self, batch, mulan_embedder):
         conditions = batch['conditions'].split(',')
         batch_size = self.infer_batch_size(batch)
 
         # Mulan
         if 'style_text' in conditions:
-            mulan_embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_text'], with_sos=True, data_type='text')
+            mulan_embeds = mulan_embedder.embed(self.requires, batch['style_text'], with_sos=True, data_type='text')
         elif 'style_audio' in conditions:
-            mulan_embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_audio'].to(self.device), with_sos=True, data_type='music')
+            mulan_embeds = mulan_embedder.embed(self.requires, batch['style_audio'].to(self.device), with_sos=True, data_type='music')
         elif 'style_tag' in conditions: # using Mulan for on-the-fly MIR tagging
-            mulan_embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_audio'].to(self.device), with_sos=True, data_type='tag')
+            mulan_embeds = mulan_embedder.embed(self.requires, batch['style_audio'].to(self.device), with_sos=True, data_type='tag')
         else: # adding SOS token no matter what so that all parameters get used
-            mulan_embeds = self.input_embedders['mulan'].get_sos_embed(batch_size)
+            mulan_embeds = mulan_embedder.get_sos_embed(batch_size)
         
         batch_size, seq_len, emb_dim = mulan_embeds.shape
         # for now, create dummy token ids. we won't be predicting them anyways
-        token_ids = torch.zeros((batch_size, seq_len), device=mulan_embeds.device)
+        token_ids = torch.zeros((batch_size, seq_len)).long().to(mulan_embeds.device)
         batch_seq_lengths = torch.zeros((batch_size), device=mulan_embeds.device) + seq_len
 
         return {
@@ -85,7 +116,7 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
             'token_seq_lengths': batch_seq_lengths
         }
 
-    def prepare_lyrics_inputs(self, batch, add_eos=False):
+    def prepare_lyrics_inputs(self, batch, lyrics_embedder, add_eos=False):
         conditions = batch['conditions'].split(',')
         batch_size = self.infer_batch_size(batch)
 
@@ -94,10 +125,9 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
             lyrics_tokens = batch['lyrics_tokens'].to(self.device)
             lyrics_lengths = batch['lyrics_tokens_length'].to(self.device)
         else:
-            lyrics_tokens = torch.zeros((batch_size, 0), device=self.device)
-            lyrics_lengths = torch.zeros((batch_size, 1), device=self.device)
+            lyrics_tokens = torch.zeros((batch_size, 0)).long().to(self.device)
+            lyrics_lengths = torch.zeros((batch_size), device=self.device)
 
-        lyrics_embedder: LyricsTokenEmbedder = self.input_embedders['lyrics_tokens']
         if add_eos:
             lyrics_tokens = lyrics_embedder.tokenize(token_ids=lyrics_tokens, with_sos=False)
             # add sos and eos id
@@ -122,6 +152,27 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
             'token_seq_lengths': lyrics_lengths
         }
 
+    def prepare_duration_inputs(self, batch, duration_embedder):
+        conditions = batch['conditions'].split(',')
+        batch_size = self.infer_batch_size(batch)
+
+        if 'duration' in conditions:
+            duration = batch["duration"]
+            duration_embeds = duration_embedder.embed(duration, batch_size)
+        else:
+            duration_embeds = duration_embedder.empty_embed(batch_size)
+        
+        batch_size, seq_len, _ = duration_embeds.shape
+        # for now, create dummy token ids. we won't be predicting them anyways
+        token_ids = torch.zeros((batch_size, seq_len)).long().to(self.device)
+        batch_seq_lengths = torch.zeros((batch_size), device=self.device) + seq_len
+
+        return {
+            "token_embeds": duration_embeds,
+            "token_ids": token_ids,
+            "token_seq_lengths": batch_seq_lengths,
+        }
+
     def prepare_target_inputs(self, batch):
         # Prepare target ids
         target_lengths = batch['target_tokens_length'].to(self.device)
@@ -143,17 +194,26 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
         }
 
     def prepare_training_inputs(self, batch):
-        mulan_inputs = self.prepare_mulan_inputs(batch)
-        lyrics_inputs = self.prepare_lyrics_inputs(batch)
+        training_inputs = []
+        for emb_type, embedder in self.input_embedders.items():
+            if emb_type == "mulan":
+                emb_inputs = self.prepare_mulan_inputs(batch, embedder)
+            elif emb_type == "lyrics_tokens":
+                emb_inputs = self.prepare_lyrics_inputs(batch, embedder)
+            elif emb_type == "duration":
+                emb_inputs = self.prepare_duration_inputs(batch, embedder)
+            else:
+                raise ValueError(f"Unknown emb type: {emb_type}")
+            training_inputs.append(emb_inputs)
         target_inputs = self.prepare_target_inputs(batch)
 
-        # zip inputs and concate
-        token_ids = zip(*[i['token_ids'] for i in [mulan_inputs, lyrics_inputs, target_inputs]])
+        # zip inputs and concat
+        token_ids = zip(*[i['token_ids'] for i in training_inputs + [target_inputs]])
         token_ids = [torch.cat(t, dim=0) for t in token_ids]
-        token_embeds = zip(*[i['token_embeds'] for i in [mulan_inputs, lyrics_inputs, target_inputs]])
+        token_embeds = zip(*[i['token_embeds'] for i in training_inputs + [target_inputs]])
         token_embeds = [torch.cat(t, dim=0) for t in token_embeds]
-        input_seq_lengths = mulan_inputs['token_seq_lengths'] + lyrics_inputs['token_seq_lengths']
-        total_seq_lengths = mulan_inputs['token_seq_lengths'] + lyrics_inputs['token_seq_lengths'] + target_inputs['token_seq_lengths']
+        input_seq_lengths = torch.vstack([i['token_seq_lengths'] for i in training_inputs]).sum(dim=0)
+        total_seq_lengths = input_seq_lengths + target_inputs['token_seq_lengths']
 
         # Padding step
         token_ids_pad = pad_sequence(token_ids, batch_first=True, padding_value=0).long()
@@ -177,7 +237,6 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
 
         token_embeds = training_inputs['token_embeds'][:, :-1]
         token_ids = training_inputs['token_ids'][:, 1:]
-        input_loss_mask = training_inputs['input_loss_mask'][:, 1:]
         target_loss_mask = training_inputs['target_loss_mask'][:, 1:]
         
         with self.profiler.profile(f"bigmusic.forward.step{self.trainer.global_step}"):
@@ -194,21 +253,32 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
         target_loss = self.criterion(target_logits, target_ids, mask=target_loss_mask)
         target_accu = (target_logits.argmax(dim=-1) == token_ids)[target_loss_mask].float().mean() * 100
 
-        inputs_logits = self.lm_input_head(last_hidden_state)
-        inputs_ids = token_ids * input_loss_mask.long() # offset by one
-
-        inputs_loss = self.criterion(inputs_logits, inputs_ids, mask=input_loss_mask)
-        inputs_accu = (inputs_logits.argmax(dim=-1) == inputs_ids)[input_loss_mask].float().mean() * 100
-
-        # del training_inputs
-        return inputs_loss + target_loss, {
+        loss = target_loss
+        results_dict = {
             'loss': (target_loss).item(),
             'accu': (target_accu).mean().item(),
-            'input_loss': inputs_loss.item(),
-            'input_accu': inputs_accu.item(),
             'target_loss': target_loss.item(),
             'target_accu': target_accu.item()
         }
+
+        for pred_type, pred_head in self.prediction_heads.items():
+            if pred_type == "input":
+                input_loss_mask = training_inputs['input_loss_mask'][:, 1:]
+                inputs_logits = pred_head(last_hidden_state)
+                inputs_ids = token_ids * input_loss_mask.long() # offset by one
+                pred_loss = self.criterion(inputs_logits, inputs_ids, mask=input_loss_mask)
+                inputs_accu = (inputs_logits.argmax(dim=-1) == inputs_ids)[input_loss_mask].float().mean() * 100
+                pred_dict = {
+                    'input_loss': pred_loss.item(),
+                    'input_accu': inputs_accu.item(),
+                }
+            else:
+                raise ValueError(f"Unknown pred type: {pred_type}")
+            loss += pred_loss
+            results_dict.update(pred_dict)
+
+        # del training_inputs
+        return loss, results_dict
     
     def training_step(self, batch, batch_idx):
         loss, results_dict = self._shared_step(batch, update_mfu=True)

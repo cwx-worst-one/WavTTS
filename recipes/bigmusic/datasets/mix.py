@@ -1506,6 +1506,7 @@ class DataModule(pl.LightningDataModule):
         validation_dataset=None,
         predict_dataset=None,
         collate_fn: Optional[Callable] = None,
+        do_shuffle: bool = True,    # set to False if shuffling is already done at dataset level
     ):
         super().__init__()
         self.shuffle_buffer_size = shuffle_buffer_size
@@ -1515,13 +1516,17 @@ class DataModule(pl.LightningDataModule):
         self.num_workers = num_workers
         self.pin_memory = pin_memory
         self.collate_fn = collate_fn
+        self.do_shuffle = do_shuffle
 
     def train_dataloader(self):
-        train_dataset_batched = DataPipeline(
-            self.train_dataset, wds.shuffle(self.shuffle_buffer_size)
-        )
+        if self.do_shuffle:
+            train_dataset = DataPipeline(
+                self.train_dataset, wds.shuffle(self.shuffle_buffer_size)
+            )
+        else:
+            train_dataset = self.train_dataset
         return DataLoader(
-            train_dataset_batched,
+            train_dataset,
             batch_size=None,
             num_workers=self.num_workers,
             collate_fn=self.collate_fn,
@@ -2003,6 +2008,7 @@ class WebDataModule(DataModule):
         pin_memory: bool = True,
         collate_fn: Optional[Callable] = collate_fn,
         use_dynamic_batch: str = False,
+        do_shuffle: bool = True,
     ):    
         buckets_samples = list(map(lambda i: i * sample_rate, buckets_in_sec))
         maximum_bucket_size = batch_size * sample_rate * buckets_in_sec[-1]
@@ -2028,6 +2034,7 @@ class WebDataModule(DataModule):
             validation_dataset=validation_dataset,
             predict_dataset=predict_dataset,
             collate_fn=collate_fn,
+            do_shuffle=do_shuffle,
         )
 
     def bucketize(self, iterator: Iterable):
@@ -2199,6 +2206,7 @@ class SFTBilloardWebDataModule(WebDataModule):
             pin_memory=pin_memory,
             collate_fn=collate_fn,
             use_dynamic_batch=use_dynamic_batch,
+            do_shuffle=False,
         )
 
 

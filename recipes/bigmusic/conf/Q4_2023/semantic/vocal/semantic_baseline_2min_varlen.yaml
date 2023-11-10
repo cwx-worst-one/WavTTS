@@ -23,6 +23,8 @@ extra_params:
     semantic_type: bestrq
     pretrained_path: null # for loading state dicts
     enable_punctuation: True
+    input_embedders: ["mulan", "lyrics_tokens"]
+    prediction_heads: ["input"]
 
 # running parameters
 run_opts:

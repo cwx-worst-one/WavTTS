@@ -1,4 +1,4 @@
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Union
 import torch
 import os
 from functools import partial
@@ -141,7 +141,7 @@ class MCC40MDataset(WebPipeline):
         self,
         url2index: str,
         sample_rate: int,
-        duration: float,
+        duration: Union[float, List[float]],
         audio_key: str = "mp3",
         normalize_audio: bool = True,
         min_volume_threshold: float = 0.05,
@@ -155,8 +155,8 @@ class MCC40MDataset(WebPipeline):
         audio_metrics_filtered: bool = True,
         ar_filtering: Optional[ARFiltering] = None,
         text_type: Optional[str] = None,
-        max_num_crops: Optional[int] = None,
-        crop_step_size: Optional[int] = None,
+        max_num_crops: Optional[Union[int, List[int]]] = None,
+        crop_step_size: Optional[Union[int, List[int]]] = None,
         additional_transforms: Optional[List] = None,
         handler: Callable = wds.warn_and_continue,
         **kwargs,
@@ -167,8 +167,13 @@ class MCC40MDataset(WebPipeline):
             **kwargs,
         )
 
+        if isinstance(duration, (list, tuple)):
+            n_samples = [int(d * sample_rate) for d in duration]
+        else:
+            n_samples = int(duration * sample_rate)
+
         audio_transforms = MCCTransforms(
-            n_samples=int(duration * sample_rate),
+            n_samples=n_samples,
             sample_rate=sample_rate,
             audio_key=audio_key,
             normalize_audio=normalize_audio,
@@ -204,7 +209,7 @@ class WrappedMCC40MDataset(MultiIterableDataset):
         self,
         url2index_list: list,
         sample_rate: int,
-        duration: float,
+        duration: Union[float, List[float]],
         audio_key: str = "mp3",
         normalize_audio: bool = True,
         min_volume_threshold: float = 0.05,
@@ -218,8 +223,8 @@ class WrappedMCC40MDataset(MultiIterableDataset):
         audio_metrics_filtered: bool = True,
         ar_filtering: Optional[ARFiltering] = None,
         text_type: Optional[str] = None,
-        max_num_crops: Optional[int] = None,
-        crop_step_size: Optional[int] = None,
+        max_num_crops: Optional[Union[int, List[int]]] = None,
+        crop_step_size: Optional[Union[int, List[int]]] = None,
         additional_transforms: Optional[List] = None,
         handler: Callable = wds.warn_and_continue,
         num_samples: int = -1,

@@ -189,6 +189,8 @@ def default_bucket_batcher_length_fn(item, sample_rate=24000, semantic_frame_rat
         target_seq_length = item['target_tokens_length'] # value returned from SemanticTokenLengthTransform
     elif 'target_audio' in item:
         target_seq_length = int(item['target_audio'].shape[-1] / sample_rate * semantic_frame_rate) # fallback case
+    elif 'audio' in item:
+        target_seq_length = int(item['audio'].shape[-1] / sample_rate * semantic_frame_rate) # fallback case
     else:
         raise ValueError("Batched item must target audio to determine length function")
 

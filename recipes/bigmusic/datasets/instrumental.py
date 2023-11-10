@@ -1,9 +1,11 @@
 import torch
 import webdataset as wds
+from functools import partial
 
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
-from torch.utils.data import default_collate
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 from torchaudio_augmentations import Compose
+from recipes.bigmusic.datasets.lyrics import default_bucket_batcher_fn
+from recipes.bigmusic.datasets.transforms.lyrics import SemanticTokenLengthTransform
 from recipes.bigmusic.datasets.mix import DataModule
 from recipes.musiclm.datasets.mcc import WrappedMCC40MDataset
 from recipes.musiclm.datasets.karaoke import KaraokeDataset
@@ -12,16 +14,17 @@ from samantha.dataio.webdataset.pipeline import WebPipeline
 from samantha.utils.webdataset import return_self
 
 
-def collate_fn(batch):
+def collate_fn(batch, sample_rate=24000):
     batch["target_audio"] = batch["audio"]
     del batch["audio"]
+    batch["duration"] = batch["target_audio"].shape[-1] // sample_rate
     if "text" in batch:
         batch["style_text"] = batch["text"]
-        batch["conditions"] = "style_text"
+        batch["conditions"] = "style_text,duration"
         del batch["text"]
     else:
         batch["style_audio"] = batch["target_audio"]
-        batch["conditions"] = "style_audio"
+        batch["conditions"] = "style_audio,duration"
     return batch
 
 
@@ -29,14 +32,14 @@ class InstrumentalWebDataModule(DataModule):
     def __init__(
         self,
         dataset_name: str = "MCC40M_US",
-        val_split: str = "KARAOKE",
+        val_split: str = "SSTK_EVAL_US",
         sample_rate: int = 24000,
-        duration: float = 30.0,
+        duration: Union[float, List[float]] = 30.0,
         batch_size: int = 16,
         shuffle_buffer_size: int = 64,
         num_workers: int = 6,
         pin_memory: bool = True,
-        collate_fn: Optional[Callable] = collate_fn,
+        collate_fn: Callable = collate_fn,
         normalize_audio: bool = True,
         min_volume_threshold: float = 0.05,
         loudness_ratio_threshold: float = 0.2,
@@ -47,8 +50,8 @@ class InstrumentalWebDataModule(DataModule):
         overlap_vocal_threshold: float = 0.1,
         audio_metrics_filtered: bool = True,
         text_type: Optional[str] = None,
-        max_num_crops: Optional[int] = 3,
-        crop_step_size: Optional[float] = 10.0,
+        max_num_crops: Optional[Union[int, List[int]]] = 3,
+        crop_step_size: Optional[Union[float, List[float]]] = 10.0,
         use_pipe: bool = False,
         seed: int = 555,
     ):
@@ -85,6 +88,11 @@ class InstrumentalWebDataModule(DataModule):
         else:
             raise NotImplementedError(f"Unknown dataset: {dataset_name}")
 
+        if isinstance(crop_step_size, (list, tuple)):
+            crop_step_size = [int(c * sample_rate) for c in crop_step_size]
+        else:
+            crop_step_size = int(crop_step_size * sample_rate)
+
         dataset = WrappedMCC40MDataset(
             url2index_list=[x[0] for x in urls_and_weights],
             weights=[x[1] for x in urls_and_weights],
@@ -102,7 +110,7 @@ class InstrumentalWebDataModule(DataModule):
             audio_metrics_filtered=audio_metrics_filtered,
             text_type=text_type,
             max_num_crops=max_num_crops,
-            crop_step_size=int(crop_step_size * sample_rate),
+            crop_step_size=crop_step_size,
             resampled=True,
             shardshuffle=True,
             use_pipe=use_pipe,
@@ -115,27 +123,13 @@ class InstrumentalWebDataModule(DataModule):
             dataset,
             pipeline=[{"compose": [
                 wds_to_dict(*train_keys),
+                wds.map(SemanticTokenLengthTransform(sample_rate=sample_rate, audio_key="audio")),
                 wds.shuffle(shuffle_buffer_size),
-                wds.batched(batch_size, collation_fn=default_collate),
+                default_bucket_batcher_fn(sample_rate, duration, batch_size, lyrics_frame_rate=0),
             ]}],
         )
 
-        if val_split == "KARAOKE":
-            karaoke = KaraokeDataset(
-                urls="pipe:hdfs dfs -cat hdfs://harunava/home/byte_speech_sv/data/karaoke_for_singsong/shards-0131.tar",
-                nodesplitter=return_self,
-                sample_rate=sample_rate,
-                duration=duration,
-                min_volume_threshold=min_volume_threshold,
-            )
-            validation_dataset = WebPipeline(
-                karaoke,
-                pipeline=[{"compose": [
-                    wds_to_dict("audio"),
-                    wds.batched(batch_size, collation_fn=default_collate),
-                ]}],
-            )
-        elif val_split == "SSTK_EVAL_US":
+        if val_split == "SSTK_EVAL_US":
             sstk = WrappedMCC40MDataset(
                 url2index_list=["hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/shutterstock/val_url2idx_tag.txt"],
                 weights=[1.0],
@@ -153,7 +147,7 @@ class InstrumentalWebDataModule(DataModule):
                 audio_metrics_filtered=audio_metrics_filtered,
                 text_type=text_type,
                 max_num_crops=max_num_crops,
-                crop_step_size=int(crop_step_size * sample_rate),
+                crop_step_size=crop_step_size,
                 resampled=False,
                 shardshuffle=False,
                 use_pipe=use_pipe,
@@ -164,7 +158,8 @@ class InstrumentalWebDataModule(DataModule):
                 sstk,
                 pipeline=[{"compose": [
                     wds_to_dict(*train_keys),
-                    wds.batched(batch_size, collation_fn=default_collate),
+                    wds.map(SemanticTokenLengthTransform(sample_rate=sample_rate, audio_key="audio")),
+                    default_bucket_batcher_fn(sample_rate, duration, batch_size, lyrics_frame_rate=0),
                 ]}],
             )
         else:
@@ -177,6 +172,7 @@ class InstrumentalWebDataModule(DataModule):
             train_dataset=train_dataset,
             validation_dataset=validation_dataset,
             predict_dataset=train_dataset,  # TODO
-            collate_fn=collate_fn,
+            collate_fn=partial(collate_fn, sample_rate=sample_rate),
+            do_shuffle=False,
         )
         
