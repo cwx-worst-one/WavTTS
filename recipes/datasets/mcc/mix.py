@@ -83,6 +83,37 @@ def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
         # "tag": tag,
     }
 
+def collate_mss_audio_and_token_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
+    '''
+    Randomly pad MSS audios (full mix, instrumental, vocal) and corresponding tokens.
+    
+    @hanoihantrakul 11/10/2023
+    To ensure the 3 tracks are randomly padded in the same places, the easiest way to do this
+    is to stack the audio as (3, len_in_samples), apply RandomPad() and then unstack the audio.
+    '''
+    max_length = max([x["audio"].shape[-1] for x in batch])
+    random_pad = RandomPad(n_samples=max_length)
+
+    audio, vocal_audio, inst_audio, token = [], [], [], []  # Ignore `text` and `tag` keys
+    for x in batch:
+        # e.g. x["audio"].shape, x["inst_audio"].shape, x["vocal_audio"].shape are all (1, 54000)
+        audio_stacked = torch.cat((x["audio"], x["vocal_audio"], x["inst_audio"]))
+        assert audio_stacked.size() == (3, x["audio"].size(-1))
+        audio_stacked = random_pad(audio_stacked) # like padding a 3 channel audio i.e (3, 54000)
+        audio.append(audio_stacked[0])
+        vocal_audio.append(audio_stacked[1])
+        inst_audio.append(audio_stacked[2])
+        token.append(x.get("token", torch.zeros(0).long()))
+       
+    return {
+        "audio": torch.stack(audio, dim=0),
+        "vocal_audio": torch.stack(vocal_audio, dim=0),
+        "inst_audio": torch.stack(inst_audio, dim=0),
+        "token": torch.nn.utils.rnn.pad_sequence(
+            token, batch_first=True, padding_value=0
+        ),
+    }
+
 
 def collate_audio_text(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
     max_length = max([x["audio"].shape[-1] for x in batch])
@@ -472,6 +503,332 @@ class MCCInstrumentalTransforms(MCCTransforms):
             yield output_dict
             self._update_stats(skipped=False)
 
+
+class MSSTransforms(BaseTransforms):
+    """
+    MSS data consists of the full mix, vocal mix and instrumental mix as well as
+    the lyrics and utterances found in the vocal.
+    
+    In this transform, the vocal utterances start and end time have to be checked and filtered
+    to ensure the model sees complete vocal utterances and no "half sentences".
+
+    MSSTransforms() follows a overlapping logic to MCCVocalTransforms():
+        - Access the lyrics and utterances
+        - Filter the utterances and check start and end times
+        - Extract the same patch of audio from full mix, instrumental and vocal track
+        - Tokenize the full English text
+        - Pack data into an output_dict
+    
+    Args:
+        min_duration (float): Minumum audio clip length (after cropping according to a detected utterance)
+        max_duration (float): Maximum audio clip length (after cropping according to a detected utterance)
+        lyrics_confidence (float): Minimum confidence to determine if lyric should be included in training
+        frame_rate (int): Frame rate of the tokenizer. Used to align start and end times with audio
+        tokenizer: When available, this is normally the "wordpiece" tokenizer BertTokenizer.from_pretrained("bert-large-uncased")
+
+    Yields:
+        output_dict:
+            "audio": clip of full audio corresponding to a detected utterance. Kept the `audio` name to make reusing other parts of DataModule() code easier
+            "inst_audio": clip of MSS instrumental corresponding to a detected utterance
+            "vocal_audio": clip of MSS vocal corresponding to a detected utterance
+            "tag": mss tag for task ID
+            "utterance_text": text of detected utterance
+            "token": language model tokens of the detected utterance
+    """
+    name = "MSSTransforms"
+    data_sample_rate = 24000
+
+    def __init__(
+        self,
+        sample_rate: int = 24000,
+        min_duration: float = 5,
+        max_duration: float = 30,
+        lyrics_confidence: float = 0.8,
+        max_num_crops: int = None,
+        tokenizer=None,
+        frame_rate: int = 25,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+        self.sample_rate = sample_rate
+        self.min_duration = min_duration
+        self.max_duration = max_duration
+        self.lyrics_confidence = lyrics_confidence
+        self.max_num_crops = max_num_crops
+        self.tokenizer = tokenizer
+        self.frame_rate = frame_rate
+        # Compose default audio transforms
+        base_transforms = [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
+        if self.data_sample_rate != sample_rate:
+            base_transforms.append(Resample(self.data_sample_rate, sample_rate))
+        self.base_transform = Compose(base_transforms)
+    
+    def filter_lyrics(self, utterance):
+        """
+        @hanoihantrakul 11/7/2023
+        This is a method copy pasted from MCCVocalTransforms(). 
+        Unfortunately, inheritance is tricky because the nested keys changes per dataset. 
+        """
+        start_time = float(utterance["start_time"]) / 1000
+        end_time = float(utterance["end_time"]) / 1000
+        delta = end_time - start_time
+        confidence = float(utterance['additions']["confidence"]) # different from MCCVocalTransforms()
+        if self.min_duration > delta:
+            return False
+        if self.max_duration < delta:
+            return False
+        if confidence < self.lyrics_confidence:
+            return False
+        if len(str(utterance["text"]).strip()) == 0:
+            return False
+        return True
+
+    def _get_lyrics(self, item):
+        '''Every HDFS dataset has a specific set of nested keys to access the root `lyrics` key.'''
+        return item["__index_data__"].get("lyrics", None)
+        
+    def _try_to_extract_utterances(self, lyrics):
+        '''Contains dataset-specific logic for accessing utterances nested under the root `lyrics` key'''
+        utterances = lyrics.get("utterances", None)
+        if utterances is None or len(utterances) == 0:
+            self._update_stats(skipped=True, message="No utterances")
+            return
+        return utterances
+    
+    def _get_utterance_start_end_idxs(self, selected_utterance):
+        '''Utterance start and end time expressed in audio samples.'''
+        start = int(
+                float(selected_utterance["start_time"]) / 1000 * self.sample_rate
+            )
+        end = int(float(selected_utterance["end_time"]) / 1000 * self.sample_rate)
+        return start, end
+
+    def _try_to_tokenize_text(self, text):
+        '''Tokenize the text. Skip sample if no tokens were produced.'''
+        assert self.tokenizer is not None
+        encoded_text = self.tokenizer(
+            text,
+            add_special_tokens=False,
+            # padding="longest",
+            return_tensors="pt",
+        )
+        token = encoded_text["input_ids"].squeeze(dim=0)
+        if token.size(-1) == 0:
+            self._update_stats(skipped=True, message="Token zero length")
+            return
+        else:
+            return token
+
+    def _token_is_longer_than_audio_clip_bounds(self, token, clip):
+        '''Check if the tokens extend beyond the bounds of the audio clip.'''
+        return token.size(-1) > math.floor(clip.size(-1) / self.sample_rate) * self.frame_rate
+
+    def _ensure_lengths_are_consistent(self, audio_dict, tolerance_in_samples=100):
+        '''The instrumental and vocal MSS tracks are often ~64 samples longer than the full mix.'''
+        # The three tracks should be similar lengths to begin with
+        assert audio_dict['inst'].size(-1) - audio_dict['full'].size(-1) < tolerance_in_samples
+        assert audio_dict['vocal'].size(-1) - audio_dict['full'].size(-1) < tolerance_in_samples
+
+        # Trim to shortest length
+        shortest_len = min(v.size(-1) for v in audio_dict.values())
+        audio_dict = {k: v[:, :shortest_len] for k,v in audio_dict.items()}
+        assert audio_dict['full'].size() == audio_dict['inst'].size()
+        assert audio_dict['full'].size() == audio_dict['vocal'].size()
+        assert audio_dict['inst'].size() == audio_dict['vocal'].size()
+        return audio_dict
+
+    def __call__(self, item: Dict[str, Any]) -> Generator:
+        # Find the lyrics key
+        lyrics = self._get_lyrics(item)
+        if lyrics is None:
+            self._update_stats(skipped=True, message="No lyrics")
+            return
+
+        # Find utterances from the lyrics
+        utterances = self._try_to_extract_utterances(lyrics)
+        filtered_utterances = list(filter(self.filter_lyrics, utterances))
+        if len(filtered_utterances) == 0:
+            self._update_stats(skipped=True, message="No utterances after filtering")
+            return
+        random.shuffle(filtered_utterances)
+
+        # Impose an upper limit of how many contiguous (i.e. highly correlated and low diversity) 
+        # utterances can be included in the dataset
+        if self.max_num_crops is not None and self.max_num_crops > 0:
+            filtered_utterances = filtered_utterances[: self.max_num_crops]
+        
+        # Load audio
+        try:
+            _audio_dict = {
+                'full' : self.base_transform(item['audio.npy']),
+                'inst' : self.base_transform(item['acc.npy']),
+                'vocal' : self.base_transform(item['vocal.npy'])
+            }
+            _audio_dict = self._ensure_lengths_are_consistent(_audio_dict)
+        except Exception as e:
+            self._update_stats(skipped=True, message=f"Error loading audio: {e}")
+            return
+        
+        # Use filtered utterances to extract audio
+        for selected_utterance in filtered_utterances:
+            start_idx, end_idx = self._get_utterance_start_end_idxs(selected_utterance)
+            if end_idx > _audio_dict['full'].size(-1):
+                self._update_stats(
+                    skipped=True, message="Lyrics timestamp out of range"
+                )
+                return
+            
+            # Use utterance start and end idx to extract corresponding patch of audio
+            output_dict = {
+                "audio": _audio_dict['full'][:, start_idx:end_idx],
+                "inst_audio": _audio_dict['inst'][:, start_idx:end_idx],
+                "vocal_audio": _audio_dict['vocal'][:, start_idx:end_idx],
+                "tag": "mss",
+                }
+            # Tokenize the text associated with this patch of audio
+            utterance_text = normalize_text(str(selected_utterance["text"]))
+            output_dict.update(utterance_text=utterance_text)
+            if self.tokenizer is not None:
+                token = self._try_to_tokenize_text(utterance_text)
+                clip = output_dict['vocal_audio']
+                if self._token_is_longer_than_audio_clip_bounds(token, clip):
+                    self._update_stats(skipped=True, message="Token too long")
+                    return
+                else:
+                    output_dict.update(token=token)
+                    
+            self._update_stats(skipped=False)
+            yield output_dict
+            
+
+class MSSTransformsV2(MSSTransforms, MCCTransforms):
+    """
+    This Transform is very similar to MSSTransforms() with the addition of 
+    metadata and audio_metrics filtering logic from MCCTransforms().
+
+    @hanoihantrakul 11/10/2023
+    Rather than combine this all into one MSSTransforms, it was much easier to
+    create and test a new class MSSTransformsV2. 
+    """
+    name = "MSSTransformsV2"
+    data_sample_rate = 24000
+
+    def __init__(
+        self,
+        sample_rate: int = 24000,
+        min_duration: float = 5,
+        max_duration: float = 30,
+        lyrics_confidence: float = 0.8,
+        max_num_crops: int = None,
+        tokenizer=None,
+        frame_rate: int = 25,
+        **kwargs
+    ):
+        MSSTransforms.__init__(
+            self,
+            sample_rate=sample_rate,
+            min_duration=min_duration,
+            max_duration=max_duration,
+            lyrics_confidence=lyrics_confidence,
+            max_num_crops=max_num_crops,
+            tokenizer=tokenizer,
+            frame_rate=frame_rate,
+            **kwargs
+            )
+        # Configure MCCTransforms() with settings default for MSS dataset.
+        # These are near identical to settings for MCCVocalTransforms(MCCTransforms)
+        MCCTransforms.__init__(
+            self,
+            sample_rate=sample_rate,
+            audio_key='audio.npy',
+            min_duration=min_duration,
+            max_duration=max_duration,
+            min_volume_threshold=0.05,
+            loudness_ratio_threshold=0.2,
+            lyrics_confidence=lyrics_confidence,
+            normalize_audio=False,
+            aed_filtered=False,
+            audio_metrics_filtered=True, 
+            avoid_sound_effect=True, # although MSS dataset shouldn't contain this, it is a safety check
+            exclude_licenses=[], # MSS data doesn't contain this key
+            max_num_crops=max_num_crops,
+            tokenizer=tokenizer,
+            frame_rate=frame_rate,
+        )
+
+    def __call__(self, item: Dict[str, Any]) -> Generator:
+        # Check metadata and audio metrics. New logic compared to MSSTransforms()
+        is_good, message = self.is_metadata_good(item["__index_data__"])
+        if not is_good:
+            self._update_stats(skipped=True, message=message)
+            return
+
+        # TODO: @hanoihantrakul, the code below is copy/pasted from MSSTransforms().__call__(). Refactor to reuse.
+        # Find the lyrics key
+        lyrics = self._get_lyrics(item)
+        if lyrics is None:
+            self._update_stats(skipped=True, message="No lyrics")
+            return
+
+        # Find utterances from the lyrics
+        utterances = self._try_to_extract_utterances(lyrics)
+        filtered_utterances = list(filter(self.filter_lyrics, utterances))
+        if len(filtered_utterances) == 0:
+            self._update_stats(skipped=True, message="No utterances after filtering")
+            return
+        random.shuffle(filtered_utterances)
+
+        # Impose an upper limit of how many contiguous (i.e. highly correlated and low diversity) 
+        # utterances can be included in the dataset
+        if self.max_num_crops is not None and self.max_num_crops > 0:
+            filtered_utterances = filtered_utterances[: self.max_num_crops]
+        
+        # Load audio
+        try:
+            _audio_dict = {
+                'full' : self.base_transform(item['audio.npy']),
+                'inst' : self.base_transform(item['acc.npy']),
+                'vocal' : self.base_transform(item['vocal.npy'])
+            }
+            _audio_dict = self._ensure_lengths_are_consistent(_audio_dict)
+        except Exception as e:
+            self._update_stats(skipped=True, message=f"Error loading audio: {e}")
+            return
+        
+        # Use filtered utterances to extract audio
+        for selected_utterance in filtered_utterances:
+            start_idx, end_idx = self._get_utterance_start_end_idxs(selected_utterance)
+            if end_idx > _audio_dict['full'].size(-1):
+                self._update_stats(
+                    skipped=True, message="Lyrics timestamp out of range"
+                )
+                return
+            
+            # Use utterance start and end idx to extract corresponding patch of audio
+            output_dict = {
+                "audio": _audio_dict['full'][:, start_idx:end_idx],
+                "inst_audio": _audio_dict['inst'][:, start_idx:end_idx],
+                "vocal_audio": _audio_dict['vocal'][:, start_idx:end_idx],
+                "tag": "mss",
+                }
+            # Tokenize the text associated with this patch of audio
+            utterance_text = normalize_text(str(selected_utterance["text"]))
+            output_dict.update(utterance_text=utterance_text)
+            if self.tokenizer is not None:
+                token = self._try_to_tokenize_text(utterance_text)
+                clip = output_dict['vocal_audio']
+                if self._token_is_longer_than_audio_clip_bounds(token, clip):
+                    self._update_stats(skipped=True, message="Token too long")
+                    return
+                else:
+                    output_dict.update(token=token)
+                    
+            self._update_stats(skipped=False)
+            yield output_dict        
+    
+
+
+        
 
 class KaraokeTransforms(BaseTransforms):
     name = "KaraokeTransforms"
@@ -1501,6 +1858,63 @@ class KaraokeDataset(WebPipeline):
         print(f"[{self.name}] initialized.")
 
 
+class MSSDataset(WebPipeline):
+    '''Dataset object wrapping the MSSTransforms.'''
+    name = "MSSDataset"
+    data_sample_rate = 24000
+
+    def __init__(
+        self,
+        url2index: Union[List[str], str] = [
+            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc_vocal_A_1m_mss/url2idx_v1/url2index/vocal-A-blues_url2index.txt",
+            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc_vocal_A_1m_mss/url2idx_v1/url2index/vocal-A-childhood_url2index.txt",
+            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc_vocal_A_1m_mss/url2idx_v1/url2index/vocal-A-classical_url2index.txt",
+            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc_vocal_A_1m_mss/url2idx_v1/url2index/vocal-A-country_url2index.txt",
+            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc_vocal_A_1m_mss/url2idx_v1/url2index/vocal-A-devotional_url2index.txt",
+            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc_vocal_A_1m_mss/url2idx_v1/url2index/vocal-A-easy-listening_url2index.txt",
+            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc_vocal_A_1m_mss/url2idx_v1/url2index/vocal-A-electronic_url2index.txt",
+            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc_vocal_A_1m_mss/url2idx_v1/url2index/vocal-A-folk_url2index.txt",
+            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc_vocal_A_1m_mss/url2idx_v1/url2index/vocal-A-hip-hop-rap_url2index.txt",
+            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc_vocal_A_1m_mss/url2idx_v1/url2index/vocal-A-jazz_url2index.txt",
+            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc_vocal_A_1m_mss/url2idx_v1/url2index/vocal-A-metal_url2index.txt",
+            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc_vocal_A_1m_mss/url2idx_v1/url2index/vocal-A-pop_url2index.txt",
+            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc_vocal_A_1m_mss/url2idx_v1/url2index/vocal-A-pop_url2index_l1out.txt",
+            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc_vocal_A_1m_mss/url2idx_v1/url2index/vocal-A-r-b-soul_url2index.txt",
+            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc_vocal_A_1m_mss/url2idx_v1/url2index/vocal-A-reggae_url2index.txt",
+            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc_vocal_A_1m_mss/url2idx_v1/url2index/vocal-A-rock_url2index.txt",
+            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc_vocal_A_1m_mss/url2idx_v1/url2index/vocal-A-soundtrack_url2index.txt",
+        ], # Prepared by Weituo Hao using MSS system developed by Wei-Tsung Lu
+        sample_rate: int = 24000,
+        min_duration: float = 5,
+        max_duration: float = 30,
+        lyrics_confidence: float = 0.8,
+        max_num_crops: int = None,
+        frame_rate: int = 25,
+        tokenizer=None,
+        **kwargs,
+    ):
+        print(f"[{self.name}] initializing...")
+        transforms = MSSTransformsV2(
+            sample_rate=sample_rate,
+            min_duration=min_duration,
+            max_duration=max_duration,
+            lyrics_confidence=lyrics_confidence,
+            max_num_crops=max_num_crops,
+            frame_rate=frame_rate,
+            tokenizer=tokenizer
+        )
+        preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
+        # Need to parse multiple url2index files using MultiIterableDataset()
+        dataset = MultiIterableDataset(
+            datasets=[
+                IndexedWebDataset(url2index=url, **kwargs) for url in url2index
+            ]
+        )
+        pipeline = ["decode", {"compose": [preprocessor.train_buffer_preprocessor]}]
+        super().__init__(dataset, pipeline)
+        print(f"[{self.name}] initialized.")
+    
+
 class DouyinMusicDataset(WebPipeline):
     name = "DouyinMusic"
     data_sample_rate = 24000
@@ -2049,6 +2463,127 @@ class MixWebDataModule(pl.LightningDataModule):
             batch = self.batcher.collate_batch(item)
             if batch is not None:
                 yield batch
+
+class MSSDataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        sample_rate: int = 24000,
+        batch_size: int = 2,
+        min_duration: int = 5,
+        max_duration: int = 30,
+        max_num_crops: int = None,
+        shuffle_buffer_size: int = 10,
+        num_workers: int = 4,
+        pin_memory: bool = True,
+        collate_fn: Optional[Callable] = collate_mss_audio_and_token_fn,
+        tokenizer: str = None,
+        frame_rate: int = 25,
+    ):
+        super().__init__()
+        self.num_workers = num_workers
+        self.shuffle_buffer_size = shuffle_buffer_size
+        self.pin_memory = pin_memory
+        self.collate_fn = collate_fn
+
+        self.tokenizer = self._prepare_tokenizer(tokenizer)
+        self.frame_rate = frame_rate
+        self.batcher = self._prepare_bucket_batcher(sample_rate, batch_size, min_duration, max_duration)
+        
+        # Define the Train Dataset
+        mss_dataset = MSSDataset(
+            sample_rate=sample_rate,
+            min_duration=min_duration,
+            max_duration=max_duration,
+            max_num_crops=max_num_crops,
+            frame_rate=frame_rate,
+            tokenizer=tokenizer,
+            handler=wds.warn_and_continue
+        )
+        self.train_dataset = DataPipeline(mss_dataset, self.bucketize)
+
+        # Define the Validation dataset
+        # @hanoihantrakul 11/9/2023
+        # Note: we define a dummy dataset. This is not used during training but self.validation_dataset must exist. 
+        dummy_dataset = WebPipeline(
+            KaraokeDataset(
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                normalize_audio=False,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                resampled=False,
+                use_pipe=False,
+                nodesplitter=return_self,
+                handler=wds.warn_and_continue,
+            ),
+            pipeline=[{"compose": [self.bucketize]}],
+        )
+        self.validation_dataset = DataPipeline(dummy_dataset, self.bucketize)
+
+    def _prepare_bucket_batcher(self, sample_rate, batch_size, min_duration, max_duration):
+        '''
+        The BucketBatcher() object tries to make sure all samples in a batch are of 
+        roughly equal length to minimize the need to zeropad shorter sequences and waste
+        compute resources. 
+
+        This logic was copied from MixWebDataModule(). 
+        '''
+        # `batch_size` here is not well named. It should really be called `batch_max_length`
+        assert batch_size >= min_duration * sample_rate
+        buckets_samples = []
+        sec = min_duration
+        while sec <= max_duration:
+            buckets_samples.append(sec)
+            sec += math.ceil(sec * 0.1)
+        if buckets_samples[-1] < max_duration:
+            buckets_samples.append(max_duration)
+        print(f"[Buckets] {len(buckets_samples)} {str(buckets_samples)}")
+        buckets_samples = [x * sample_rate for x in buckets_samples]
+        bucket_batcher = BucketBatcher(
+            buckets=buckets_samples,
+            dynamic_batch=True,
+            maximum_bucket_size=batch_size,
+            length_fn=lambda x: x["audio"].size(-1),
+        )
+        return bucket_batcher
+
+    def _prepare_tokenizer(self, tokenizer):
+        '''Initialize tokenizer based on config.'''
+        if tokenizer == "wordpiece":
+            return BertTokenizer.from_pretrained("bert-large-uncased")
+        elif tokenizer == "phoneme":
+            phonemizer.logger.get_logger().setLevel(logging.ERROR)
+            return Wav2Vec2PhonemeCTCTokenizer.from_pretrained(
+                "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
+            )
+        else:
+            return None
+
+    def train_dataloader(self):
+        return DataLoader(
+            self.train_dataset,
+            batch_size=None,
+            num_workers=self.num_workers,
+            collate_fn=self.collate_fn,
+        )
+
+    def val_dataloader(self):
+        return [
+            DataLoader(
+                val,
+                batch_size=None,
+                num_workers=self.num_workers,
+                collate_fn=self.collate_fn,
+            )
+            for val in self.validation_dataset
+        ]
+
+    def bucketize(self, iterator: Iterable):
+        for item in iterator:
+            batch = self.batcher.collate_batch(item)
+            if batch is not None:
+                yield batch 
 
 
 class ParquetDataModule(pl.LightningDataModule):
@@ -3002,3 +3537,5 @@ class MusicCollectorWebDataModule(pl.LightningDataModule):
             batch = self.batcher.collate_batch(item)
             if batch is not None:
                 yield batch
+
+
