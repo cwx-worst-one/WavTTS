@@ -7,7 +7,7 @@ assert torch.cuda.is_available()
 from tqdm import tqdm
 import os
 
-from recipes.umm.modules.lit_module_mk3 import USMStage3
+from recipes.umm.modules.lit_module_cyz import USMStage3
 import torch.nn.functional as F
 import numpy as np
 import librosa
@@ -21,8 +21,9 @@ from samantha.transforms.audio import (
 
 torch.set_float32_matmul_precision('high')
 
+
 @torch.no_grad()
-def wav2vqbn(model, wav):
+def weighted_sum_vqbn(model, wav):
     dtype = torch.bfloat16
     is_amp = (dtype in [torch.float16, torch.bfloat16])
     input_dict = model.preprocessing(wav)
@@ -39,10 +40,11 @@ def wav2vqbn(model, wav):
         else:
             conformer_mask = backbone_mask.unsqueeze(1)
         attn_weights = None
+        hidden_states_list = []
         for i, layer in enumerate(conformers.encoders):
             if i == model.config.vq_layer_idx:
                 with torch.cuda.amp.autocast(enabled=False):
-                    vq_inputs = conformer_input[0] if isinstance(conformer_input, (list, tuple)) else conformer_input
+                    vq_inputs = model._weighted_sum(hidden_states_list)
                     before_vq = vq_inputs
                     vq_inputs = model.vq_proj_in(vq_inputs)
                     if model.config.get("vq_type", None) == "FSQ":
@@ -52,21 +54,15 @@ def wav2vqbn(model, wav):
                         vq_embs, vq_ids, vq_loss = model.vq(vq_inputs, e_scale=1.0 if model.cnt < 30_000 else 0.0)
                     else:
                         vq_embs, vq_ids, vq_loss = model.vq(vq_inputs)
-                    # if return_vq_ids:
-                    #     return vq_ids
+                    
                     vq_inputs = model.vq_proj_out(vq_embs)
                     return {'before_vq': before_vq, 'after_vq': vq_inputs}
-
-                    # conformer_input = (vq_inputs,) + conformer_input[1:] if isinstance(conformer_input, (list, tuple)) else vq_inputs
-                    # conformer_input, conformer_mask = layer(
-                    #     [conformer_input, conformer_mask], is_training=True
-                    # )
-            else:
+            elif i < model.config.vq_layer_idx:
                 conformer_input, conformer_mask = layer(
                     [conformer_input, conformer_mask], is_training=True
                 )
-        
-        return conformer_input
+                hidden_states_list.append(conformer_input[0] if isinstance(conformer_input, (list, tuple)) else conformer_input)
+
 
 
 
@@ -93,7 +89,7 @@ class AudioDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         audio, sr = librosa.load(self.file_list[index], mono=True, sr=None)
         if sr != 16000:
-            audio = librosa.resample(audio, sr, 16000)
+            audio = librosa.resample(audio, orig_sr=sr, target_sr=16000)
         # tokens = self.umm_model.wav2token(audio).cpu().to(torch.int).numpy()
         # 保存为npy格式
         target_path = os.path.join(self.target_dir, os.path.relpath(self.file_list[index], start=self.root_dir)) + '.npy'
@@ -120,7 +116,12 @@ def evaluate(dataloader, usm_model):
             pad_len = usm_model.extra_params.hop_length * 32 - pad_len
         audio = F.pad(audio, (0, pad_len))
 
-        vqbn = wav2vqbn(usm_model.model, audio)
+        token = usm_model.wav2token(audio, dtype=torch.bfloat16).cpu().to(torch.int).numpy()
+
+        import pdb  
+        pdb.set_trace()
+
+        vqbn = weighted_sum_vqbn(usm_model.model, audio)
 
         features = torch.cat([vqbn['before_vq'], vqbn['after_vq']], 0).cpu().numpy() 
         
@@ -131,21 +132,23 @@ def evaluate(dataloader, usm_model):
 
 if __name__ == "__main__":
 
-    # ckpt_path = '/mnt/bn/cyz-lq-nas/model_cache/usm/1.4.ckpt'
-    ckpt_path = '/mnt/bn/cyz-lq-nas/model_cache/usm/1.4.1.ckpt'
+    ckpt_path = '/mnt/bn/cyz-lq-nas/model_cache/usm/stage3_v1.6.1.ckpt'
     usm_model = USMStage3.load_from_checkpoint(ckpt_path).eval().cuda()
 
     # dataset_list = ['LibriSpeech', 'Vox1', 'IEMOCAP']
-    # dataset_list = ['LibriSpeech', 'IEMOCAP']
-    dataset_list = ['vcc2020']
+    dataset_list = ['LibriSpeech', 'IEMOCAP']
+    # dataset_list = ['vcc2020']
     # dataset_name = 'IEMOCAP'
 
     for dataset_name in dataset_list:
-        root_dir = os.path.join('/mnt/bn/cyz-lq-nas/s3prl_datasets', dataset_name)
-        # target_dir = os.path.join('/mnt/bn/cyz-lq-nas/s3prl_gendir/usm_stage3_wordpiece_chroma50_vq16384x32_EMAEntropy_60k_vqbn', dataset_name)
-        # target_dir = os.path.join('/mnt/bn/cyz-lq-nas/s3prl_gendir/pl_asr_2B_ft_test', dataset_name)
-        # target_dir = os.path.join('/mnt/bn/cyz-lq-nas/s3prl_gendir/v1.5_stage3_45k_vqbn', dataset_name)
-        target_dir = os.path.join('/mnt/bn/cyz-lq-nas/s3prl_gendir/1.4.1', dataset_name)
+        # root_dir = os.path.join('/mnt/bn/cyz-lq-nas/s3prl_datasets', dataset_name)
+        # # target_dir = os.path.join('/mnt/bn/cyz-lq-nas/s3prl_gendir/usm_stage3_wordpiece_chroma50_vq16384x32_EMAEntropy_60k_vqbn', dataset_name)
+        # # target_dir = os.path.join('/mnt/bn/cyz-lq-nas/s3prl_gendir/pl_asr_2B_ft_test', dataset_name)
+        # # target_dir = os.path.join('/mnt/bn/cyz-lq-nas/s3prl_gendir/v1.5_stage3_45k_vqbn', dataset_name)
+        # target_dir = os.path.join('/mnt/bn/cyz-lq-nas/s3prl_gendir/stage3_v1.6.1', dataset_name)
+
+        root_dir = os.path.join('/mnt/bn/cyz-lq-nas/test/input')
+        target_dir = os.path.join('/mnt/bn/cyz-lq-nas/test/v1.6.0_output')
 
         dataset = AudioDataset(root_dir=root_dir, target_dir=target_dir) # modify
         dataloader = DataLoader(dataset, num_workers=12)

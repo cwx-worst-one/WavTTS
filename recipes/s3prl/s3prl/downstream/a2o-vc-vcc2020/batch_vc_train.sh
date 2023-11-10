@@ -6,18 +6,20 @@
 #   Copyright    [ Copyright(c), Toda Lab, Nagoya University, Japan ]
 # *********************************************************************************************
 
-upstream=$1
-config=$2
-tag=$3
-part=$4
+upstream=offline_bn
+config=downstream/a2o-vc-vcc2020/config.yaml
+tag=1.4.1_beforevq_taco
+part=task1_all
+offline_root=/mnt/bn/cyz-lq-nas/s3prl_gendir/1.4.1
+layer=0
 
 set -e
 
 # check arguments
-if [ $# != 4 ]; then
-    echo "Usage: $0 <upstream> <config> <tag> <part>"
-    exit 1
-fi
+# if [ $# != 4 ]; then
+#     echo "Usage: $0 <upstream> <config> <tag> <part>"
+#     exit 1
+# fi
 
 if [ ${part} == "task1_female" ]; then
     trgspks=("TEF1" "TEF2")
@@ -31,6 +33,8 @@ elif [ ${part} == "task2_ger" ]; then
     trgspks=("TGF1" "TGM1")
 elif [ ${part} == "task2_man" ]; then
     trgspks=("TMF1" "TMM1")
+elif [ ${part} == "task1_all_task2_man" ]; then
+    trgspks=("TEF1" "TEF2" "TEM1" "TEM2" "TMF1" "TMM1")
 else
     echo "Invalid part specification  Please specify from the following choices:"
     echo "task1_female, task1_male, task1_all, task2_fin, task2_ger, task2_man"
@@ -42,17 +46,22 @@ echo "Script starting time: $(date +%T)"
 pids=() # initialize pids
 for trgspk in "${trgspks[@]}"; do
 (
+    echo $trgspk
     expname=a2o_vc_vcc2020_${tag}_${trgspk}_${upstream}
-    expdir=result/downstream/${expname}
+    expdir=result/vc/${expname}
     mkdir -p ${expdir}
-    python run_downstream.py -m train \
+    python3 run_downstream.py -m train \
         --config ${config} \
         -n ${expname} \
         -u ${upstream} \
         -d a2o-vc-vcc2020 \
+        --offline_root $offline_root/vcc2020 \
+        -l $layer \
+        --expdir ${expdir} \
         -o "config.downstream_expert.trgspk='${trgspk}'" \
-        > ${expdir}/train.log 2>&1
-) &
+        > ${expdir}/train.log 2>&1 &
+)
+
 pids+=($!) # store background pids
 done
 i=0; for pid in "${pids[@]}"; do wait ${pid} || ((i++)); done

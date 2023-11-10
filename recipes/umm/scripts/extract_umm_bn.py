@@ -42,7 +42,7 @@ def wav2bn(model, wav, L):
 
 @torch.no_grad()
 @torch.cuda.amp.autocast(enabled=False)
-def wav2allbn(model, wav):
+def wav2allbn(model, wav, use_layer=None):
     if wav.dim() == 3:
         wav = wav.squeeze(dim=1)
     wav = model.pad_audio(wav.float())
@@ -55,6 +55,8 @@ def wav2allbn(model, wav):
         hidden_states = layer(
             hidden_states, position_embeddings=position_embeddings
         )
+        if use_layer is not None and i not in use_layer:
+            continue
         hidden_states_list.append(hidden_states)
     if len(hidden_states.shape) == 3:
         return torch.cat(hidden_states_list, dim=0)
@@ -132,7 +134,7 @@ class AudioDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         audio, sr = librosa.load(self.file_list[index], mono=True, sr=None)
         if sr != 24000:
-            audio = librosa.resample(audio, sr, 24000)
+            audio = librosa.resample(audio, orig_sr=sr, target_sr=24000)
         audio = self.base_transform(audio)
         # tokens = self.umm_model.wav2token(audio).cpu().to(torch.int).numpy()
         # 保存为npy格式
@@ -154,8 +156,8 @@ def evaluate(dataloader, umm_model):
     for i, (audio, target_path) in tqdm(enumerate(dataloader)):
         audio = audio.to("cuda")
         # bn = wav2bn_stage3(umm_model, audio, L=24).cpu().numpy()  # modify
-        # bn = wav2allbn(umm_model, audio).cpu().numpy() 
-        bn = wav2vqbn(umm_model, audio).cpu().numpy()  # modify
+        bn = wav2allbn(umm_model, audio, use_layer=[11, 17, 23]).cpu().numpy() 
+        # bn = wav2vqbn(umm_model, audio).cpu().numpy()  # modify
         # print(tokens, '   ', target_path)
         np.save(target_path[0], bn)
         
@@ -163,14 +165,20 @@ def evaluate(dataloader, umm_model):
 
 if __name__ == "__main__":
 
-    ckpt_path = "/mnt/bn/cyz-lq-nas/model_cache/umm/litang_v0.1_vq32768_50k.ckpt"  #modify
+    ckpt_path = "/mnt/bn/cyz-lq-nas/model_cache/umm/umm_stage1_v1.2_30k.ckpt"  #modify
     umm_model = Stage3.load_from_checkpoint(ckpt_path).model.to("cuda").eval()  # modify
     umm_model.config.interfere_audio = False
 
-    dataset = AudioDataset(root_dir='/mnt/bn/cyz-lq-nas/s3prl_datasets/LibriSpeech', 
-                    target_dir='/mnt/bn/cyz-lq-nas/s3prl_gendir/LibriSpeech/vqbn/litang_v0.1_50k_vqbn') # modify
-    dataloader = DataLoader(dataset, num_workers=12)
+    dataset_list = ['LibriSpeech', 'IEMOCAP']
+    # dataset_list = ['vcc2020']
+    # dataset_name = 'LibriSpeech'
 
-
-    print(ckpt_path)
-    eval_out_libritts = evaluate(dataloader, umm_model)
+    for dataset_name in dataset_list:
+        root_dir = os.path.join('/mnt/bn/cyz-lq-nas/s3prl_datasets', dataset_name)
+        target_dir = os.path.join('/mnt/bn/cyz-lq-nas/s3prl_gendir/umm/umm_stage1_v1.2_30k.ckpt_b11e23i6', dataset_name)
+        dataset = AudioDataset(root_dir=root_dir, target_dir=target_dir) # modify
+        dataloader = DataLoader(dataset, num_workers=12)
+        print(ckpt_path)
+        print(dataset_name)
+        print(target_dir)
+        evaluate(dataloader, umm_model)

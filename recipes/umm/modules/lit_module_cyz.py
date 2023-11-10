@@ -278,3 +278,149 @@ class USMStage2(Stage0):
             pad_len = self.extra_params.hop_length * 32 - pad_len
         wav = F.pad(wav, (0, pad_len))
         return self.model.extract_features(wav, dtype=dtype)
+
+
+class USMStage3(USMStage2):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+
+    def _shared_step(self, batch):
+        input_dict = self.prepare_feature(batch) # fbank, mel, chroma
+        input_dict.update(text_ids=batch["token"]) # text_ids
+        output_dict = self.model(input_dict)
+
+        mel = input_dict["mel"]
+        text_ids = input_dict["text_ids"]
+        f0 = input_dict["f0"]
+        vuv = input_dict["vuv"]
+
+
+        loss_dict = self.criterion(
+            ctc_logits=output_dict["ctc_out"],
+            text_ids=text_ids,
+            recon_mel=output_dict["mel_out"],
+            mel=mel,
+            recon_f0=output_dict["f0_out"].squeeze(-1),
+            f0=f0,
+            recon_vuv=output_dict["vuv_out"].squeeze(-1),
+            vuv=vuv,
+        )
+
+        loss_dict["loss"] = (
+            loss_dict["loss_mel"] * self.model.config.w_loss_mel
+            + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
+        )
+        loss_dict["loss"] = (
+            loss_dict["loss"]
+            + (loss_dict["f0_loss"]+loss_dict["vuv_loss"]) * self.model.config.w_loss_f0
+        )
+
+        loss_dict["bs"] = text_ids.shape[0]
+
+        if output_dict["vq_loss"] is not None:
+            loss_dict["loss_vq"] = output_dict["vq_loss"]
+            loss_dict["loss"] = (
+                loss_dict["loss"] + output_dict["vq_loss"] * self.model.config.w_loss_vq
+            )
+        if self.trainer.global_step % 100 == 0:
+            code_rate = self.get_code_rate(output_dict["vq_ids"])
+            loss_dict["aux/code_rate"] = code_rate
+        quant_rate = self.get_quant_rate(
+            output_dict["vq_ids"].long(), self.model.config.vq_codebook_size
+        )
+        loss_dict["aux/quant_rate"] = quant_rate
+        if getattr(self.model.vq, "entropy", None) is not None:
+            loss_dict["aux/entropy"] = self.model.vq.entropy()
+        loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
+        loss_dict["aux/num_mel_frames"] = mel.size(0) * mel.size(1)
+        loss_dict["aux/mel_mean"] = mel.mean()
+        loss_dict["aux/mel_std"] = mel.std()
+        loss_dict["aux/w_loss_mel"] = self.model.config.w_loss_mel
+        loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
+        loss_dict["aux/w_loss_f0"] = self.model.config.w_loss_f0
+        loss_dict["aux/noise_scale"] = output_dict.get("noise_scale", 0)
+        if output_dict["vq_loss"] is not None:
+            loss_dict["aux/w_loss_vq"] = self.model.config.w_loss_vq
+        return loss_dict
+
+    def on_train_batch_start(self, batch, batch_idx):
+        # Disable all BN except VQ
+        def bn_fix(m):
+            if isinstance(m, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.SyncBatchNorm)):
+                m.eval()
+        self.model.apply(bn_fix)
+        # Enable VQ BN
+        def bn_enable(m):
+            if isinstance(m, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.SyncBatchNorm)):
+                m.train()
+        if self.trainer.global_step < 20_000:
+            self.model.vq_proj_in.apply(bn_enable)
+        # Reamp
+        try:
+            if self.extra_params.vq_remap:
+                if self.trainer.global_step >= 1 and self.trainer.global_step <= 10_000:
+                    if self.trainer.global_step % 1000 == 0:
+                        print("Remaping VQ Embedding")
+                        self.model.vq.embedding.remap_weight()
+        except:
+            pass
+        return
+
+    def configure_optimizers(self):
+        params_group = []
+        normal_params = []
+        special_params = []
+        for name, params in self.model.named_parameters():
+            if 'vq.embedding.weight' in name:
+                print("Key {} use zero WD".format(name))
+                special_params.append(params)
+            else:
+                normal_params.append(params)
+        params_group.append({"params": special_params, "weight_decay": 0.0})
+        params_group.append({"params": normal_params})
+        optimizer = self.hparams.optimizer_cls(params_group)
+        scheduler = self.hparams.scheduler_cls(optimizer)
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
+        }
+
+    def get_code_rate(self, target_tokens):
+        code_rate = (
+            sum(
+                [
+                    len(target_tokens[i, :].unique())
+                    for i in range(target_tokens.size(0))
+                ]
+            )
+            / target_tokens.size(0)
+            / target_tokens.size(1)
+        )
+        return code_rate
+
+    @torch.no_grad()
+    def wav2token(self, wav, dtype=torch.float32):
+        # wav: 16k hz, shape=[b, t]
+        # pad wav to multiple 32 frames
+        pad_len = wav.shape[-1] % (self.extra_params.hop_length * 32)
+        if pad_len != 0:
+            pad_len = self.extra_params.hop_length * 32 - pad_len
+        wav = F.pad(wav, (0, pad_len))
+        return self.model.wav2token(wav, dtype=dtype)

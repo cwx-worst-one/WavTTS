@@ -226,11 +226,13 @@ class Stage1(Stage0):
         mel = self.preprocessing(wav)["mel"]
         masked_audio, masked_indices = self.masking(wav)
         masked_mel = self.preprocessing(masked_audio)["mel"]
+        '''
         seqlen = mel.shape[1]
         if seqlen % 32 != 0:
             pad_len = (seqlen + 31) // 32 * 32
             mel = torch.nn.functional.pad(mel, [0, 0, 0, pad_len - seqlen])
             masked_mel = torch.nn.functional.pad(masked_mel, [0, 0, 0, pad_len - seqlen])
+        '''
         return {"masked_mel": masked_mel, "masked_indices": masked_indices, "mel": mel}
 
     def get_code_rate(self, target_tokens):

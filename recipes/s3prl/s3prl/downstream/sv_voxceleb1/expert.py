@@ -45,7 +45,7 @@ class DownstreamExpert(nn.Module):
         and wav1 is in torch.FloatTensor
     """
 
-    def __init__(self, upstream_dim, layer, downstream_expert, expdir, **kwargs):
+    def __init__(self, upstream_dim, upstream_sr, layer, downstream_expert, expdir, **kwargs):
         super(DownstreamExpert, self).__init__()
         # config
         self.upstream_dim = upstream_dim

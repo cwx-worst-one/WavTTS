@@ -55,6 +55,7 @@ class UMMConfig(PretrainedConfig):
         max_source_positions=750,
         conv_depthwise_kernel_size=31,
         conformer_conv_dropout=0.1,
+        use_bn=True,
         # vocoder
         add_vocoder=False,
         upsample_rates=[5, 4, 4, 3, 2, 2],
@@ -138,6 +139,7 @@ class UMMConfig(PretrainedConfig):
         self.rotary_embedding_base = rotary_embedding_base
         self.conv_depthwise_kernel_size = conv_depthwise_kernel_size
         self.conformer_conv_dropout = conformer_conv_dropout
+        self.use_bn = use_bn
 
         # vocoder
         self.add_vocoder = add_vocoder
@@ -179,3 +181,4 @@ class UMMConfig(PretrainedConfig):
             return self.__getattribute__(name)
         else:
             return default
+

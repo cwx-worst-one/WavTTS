@@ -16,6 +16,53 @@ from recipes.umm.models.vocoder import BigVGAN
 from recipes.umm.models.vq import EMAVectorQuantizer
 from recipes.umm.transforms.chroma import ChromaSpectrogram
 from recipes.umm.transforms.speech import SpeechTransform
+from recipes.umm.models.rmvpe import RMVPE
+
+
+def f0_normalize(f0):
+    _f0 = f0.clone()
+    f0 = torch.log1p(f0)
+    f0_mean = torch.mean(f0[_f0!=0])
+    f0_std = torch.std(f0[_f0!=0])
+    f0_std = torch.where(f0_std == 0, torch.ones_like(f0_std), f0_std)
+    f0[_f0!=0] = (f0[_f0!=0] - f0_mean) / f0_std
+    return f0
+
+
+def get_vuv(f0):
+    vuv = f0.clone()
+    vuv[vuv!=0] = 1
+    return vuv
+
+
+def conv_flops(module, input_shape):
+    output_shape = input_shape
+    output_shape[1] = module.out_channels
+    dims = len(input_shape) - 2
+    flops = input_shape[0] * module.in_channels * module.out_channels
+    for i in range(dims):
+        new_kernel_size = module.dilation[i] * (module.kernel_size[i] - 1) + 1
+        flops *= new_kernel_size
+        output_shape[2 + i] = (
+            input_shape[2 + i] + 2 * module.padding[i] - new_kernel_size
+        ) // module.stride[i] + 1
+        flops *= output_shape[2 + i]
+    return 2 * flops, output_shape
+
+
+def conv_transpose_flops(module, input_shape):
+    output_shape = input_shape
+    output_shape[1] = module.out_channels
+    dims = len(input_shape) - 2
+    flops = input_shape[0] * module.in_channels * module.out_channels
+    for i in range(dims):
+        new_kernel_size = module.dilation[i] * (module.kernel_size[i] - 1) + 1
+        flops *= new_kernel_size
+        output_shape[2 + i] = (
+            (input_shape[2 + i] - 1) * module.stride[i] + module.output_padding[i] - 2 * module.padding[i] + new_kernel_size
+        )
+        flops *= input_shape[2 + i]
+    return 2 * flops, output_shape
 
 
 def WNConv1d(*args, **kwargs):
@@ -125,7 +172,7 @@ class ConformerConvolutionModule(nn.Module):
             groups=config.hidden_size,
             bias=False,
         )
-        self.batch_norm = torch.nn.BatchNorm1d(config.hidden_size)
+        self.batch_norm = torch.nn.BatchNorm1d(config.hidden_size) if config.get("use_bn", True) else nn.Sequential(Transpose(), nn.LayerNorm(config.hidden_size), Transpose())
         self.activation = ACT2FN[config.hidden_act]
         self.pointwise_conv2 = torch.nn.Conv1d(
             config.hidden_size,
@@ -434,20 +481,20 @@ class ConformerEncoder(nn.Module):
 
 
 class Conv2dUpsampling(nn.Module):
-    def __init__(self, input_dim, output_dim):
+    def __init__(self, input_dim, output_dim, use_bn=True):
         super().__init__()
         self.conv = nn.Sequential(
             # [1, 1, 750, 1024]
             nn.Conv2d(1, 64, 7, 1, 3),
-            torch.nn.BatchNorm2d(64),
+            torch.nn.BatchNorm2d(64) if use_bn else nn.Identity(),
             nn.ReLU(),
             # [1, 64, 750, 1024]
             nn.ConvTranspose2d(64, 8, 6, 2, 2),
-            torch.nn.BatchNorm2d(8),
+            torch.nn.BatchNorm2d(8) if use_bn else nn.Identity(),
             nn.ReLU(),
             # [1, 8, 1500, 2048]
             nn.ConvTranspose2d(8, 1, 6, 2, 2),
-            torch.nn.BatchNorm2d(1),
+            torch.nn.BatchNorm2d(1) if use_bn else nn.Identity(),
             nn.ReLU(),
             # [1, 1, 3000, 4096]
         )
@@ -461,16 +508,22 @@ class Conv2dUpsampling(nn.Module):
         x = self.linear(x)
         return x
 
+    def get_flops(self, b, t, d):
+        flops1, out_shape1 = conv_flops(self.conv[0], [b, 1, t, d])
+        flops2, out_shape2 = conv_transpose_flops(self.conv[3], out_shape1)
+        flops3, _ = conv_transpose_flops(self.conv[6], out_shape2)
+        return flops1 + flops2 + flops3
+
 
 class Conv2dSubsampling(nn.Module):
-    def __init__(self, input_dim, output_dim, kernel, padding):
+    def __init__(self, input_dim, output_dim, kernel, padding, use_bn=True):
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(1, 256, kernel, 2, padding),
-            nn.BatchNorm2d(256),
+            nn.BatchNorm2d(256) if use_bn else nn.Identity(),
             nn.ReLU(),
             nn.Conv2d(256, 256, kernel, 2, padding),
-            nn.BatchNorm2d(256),
+            nn.BatchNorm2d(256) if use_bn else nn.Identity(),
             nn.ReLU(),
         )
         self.linear = nn.Linear(input_dim * 64, output_dim)
@@ -484,13 +537,8 @@ class Conv2dSubsampling(nn.Module):
         return x
 
     def get_flops(self, b, t, d):
-        t_downsample_1 = (t - self.conv[0].kernel_size[0] + 2 * self.conv[0].kernel_size[0]) // self.conv[0].stride[0] + 1
-        d_downsample_1 = (d - self.conv[0].kernel_size[1] + 2 * self.conv[0].kernel_size[1]) // self.conv[0].stride[1] + 1
-        t_downsample_2 = (t_downsample_1 - self.conv[3].kernel_size[0] + 2 * self.conv[3].kernel_size[0]) // self.conv[3].stride[0] + 1
-        d_downsample_2 = (d_downsample_1 - self.conv[3].kernel_size[1] + 2 * self.conv[3].kernel_size[1]) // self.conv[3].stride[1] + 1
-
-        flops1 = 2 * b * self.conv[0].in_channels * self.conv[0].out_channels * self.conv[0].kernel_size[0] * self.conv[0].kernel_size[1] * t_downsample_1 * d_downsample_1
-        flops2 = 2 * b * self.conv[3].in_channels * self.conv[3].out_channels * self.conv[3].kernel_size[0] * self.conv[3].kernel_size[1] * t_downsample_2 * d_downsample_2
+        flops1, out_shape1 = conv_flops(self.conv[0], [b, 1, t, d])
+        flops2, _ = conv_flops(self.conv[3], out_shape1)
         return flops1 + flops2
 
 
@@ -502,6 +550,7 @@ class AudioEncoder(nn.Module):
             config.hidden_size,
             config.feature_encoder_kernel,
             config.feature_encoder_padding,
+            use_bn=config.get("use_bn", True),
         )
         self.conformer_layer = ConformerEncoderLayer(config)
 
@@ -1607,18 +1656,15 @@ class Stage1(Base):
     def forward(self, input_dict):
         masked_feature = input_dict["masked_mel"]
         masked_indices = input_dict["masked_indices"]
-        flops = 0
-
-        flops += self.audio_encoder.get_flops(*masked_feature.shape[0:2])
+        flops = self.audio_encoder.get_flops(*masked_feature.shape)
         encoded_masked_feature = self.audio_encoder(masked_feature)
         hidden_states = self.encoder_input_dropout(encoded_masked_feature)
         position_embeddings = self.embed_positions(hidden_states)
+        flops += self.encoder_layers[0].get_flops(*hidden_states.shape[0:2]) * len(self.encoder_layers)
         for layer in self.encoder_layers:
-            flops += layer.get_flops(*hidden_states.shape[0:2])
             hidden_states = layer(
                 hidden_states, position_embeddings=position_embeddings
             )
-
         flops += (
             hidden_states.shape[0] * hidden_states.shape[1] *
             self.rq_head.weight.shape[0] * self.rq_head.weight.shape[1] * 2
@@ -1676,7 +1722,7 @@ class Stage1(Base):
 class Stage2(Base):
     def __init__(self, config):
         super().__init__(config)
-        self.mel_head = Conv2dUpsampling(config.hidden_size, config.n_mels)
+        self.mel_head = Conv2dUpsampling(config.hidden_size, config.n_mels, use_bn=config.get("use_bn", True))
         self.ctc_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         if config.add_chroma:
             self.chroma_transform = ChromaSpectrogram(
@@ -1687,7 +1733,13 @@ class Stage2(Base):
                 n_chroma=config.n_chroma,
                 normalized=False,
             )
-            self.chroma_head = Conv2dUpsampling(config.hidden_size, config.n_chroma)
+            self.chroma_head = Conv2dUpsampling(config.hidden_size, config.n_chroma, use_bn=config.get("use_bn", True))
+        if config.get("add_pitch", False):
+            #  must be sr=16000, hop_length=160
+            hop_length = config.hop_length * 16000 // config.sample_rate
+            print('RMVPE hop_length (on 16k):', hop_length)
+            self.rmvpe = RMVPE(hop_length=hop_length)
+            self.f0_vuv_head = Conv2dUpsampling(config.hidden_size, 2)
 
     def forward(self, input_dict):
         feature = (
@@ -1695,20 +1747,31 @@ class Stage2(Base):
             if self.config.interfere_audio
             else input_dict["mel"]
         )
+        flops = self.audio_encoder.get_flops(*feature.shape)
         audio_feature = self.audio_encoder(feature)
         hidden_states = self.encoder_input_dropout(audio_feature)
         position_embeddings = self.embed_positions(hidden_states)
+        flops += self.encoder_layers[0].get_flops(*hidden_states.shape[0:2]) * len(self.encoder_layers)
         for layer in self.encoder_layers:
             hidden_states = layer(
                 hidden_states, position_embeddings=position_embeddings
             )
-
+        flops += self.mel_head.get_flops(*hidden_states.shape)
         mel_out = self.mel_head(hidden_states)
+        flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
         ctc_out = self.ctc_head(hidden_states)
-        output_dict = {"mel_out": mel_out, "ctc_out": ctc_out}
+        output_dict = {
+            "mel_out": mel_out,
+            "ctc_out": ctc_out,
+            "flops": flops * 3  # extra 2x for backward.
+        }
         if self.config.add_chroma:
             chroma_out = self.chroma_head(hidden_states)
             output_dict.update(chroma_out=chroma_out)
+        if self.config.get("add_pitch", False):
+            f0_vuv_out = self.f0_vuv_head(hidden_states)
+            output_dict.update(f0_out=f0_vuv_out[:,:,0:1])
+            output_dict.update(vuv_out=f0_vuv_out[:,:,1:])
         return output_dict
 
     @torch.no_grad()
@@ -1725,6 +1788,14 @@ class Stage2(Base):
             chroma = self.chroma_transform(x)[:, :, :-1].transpose(1, 2)
             chroma = F.normalize(chroma, p=2, dim=-1)
             input_dict.update(chroma=chroma)
+        if self.config.get("add_pitch", False):
+            f0 = self.rmvpe.batch_infer(
+                x, self.config.sample_rate, thred=0.03, use_viterbi=False)
+            f0 = f0[:, :-1]
+            vuv = get_vuv(f0)
+            f0 = f0_normalize(f0)
+            input_dict.update(f0=f0, vuv=vuv)
+
         return input_dict
 
 
@@ -1794,9 +1865,11 @@ class Stage3(Stage2):
 
     def forward(self, input_dict):
         feature = input_dict["mel"]
+        flops = self.audio_encoder.get_flops(*feature.shape)
         audio_feature = self.audio_encoder(feature)
         hidden_states = self.encoder_input_dropout(audio_feature)
         position_embeddings = self.embed_positions(hidden_states)
+        flops += self.encoder_layers[0].get_flops(*hidden_states.shape[0:2]) * len(self.encoder_layers)
         for i, layer in enumerate(self.encoder_layers):
             if i == self.config.vq_layer_idx:
                 hidden_states = self.vq_proj_in(hidden_states)
@@ -1819,14 +1892,16 @@ class Stage3(Stage2):
             hidden_states = layer(
                 hidden_states, position_embeddings=position_embeddings
             )
-
+        flops += self.mel_head.get_flops(*hidden_states.shape)
         mel_out = self.mel_head(hidden_states)
+        flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
         ctc_out = self.ctc_head(hidden_states)
         output_dict = {
             "mel_out": mel_out,
             "ctc_out": ctc_out,
             "vq_ids": vq_ids,
             "vq_loss": vq_loss,
+            "flops": flops * 3  # extra 2x for backward.
         }
         if self.config.get("vq_proj_noise", False):
             output_dict.update(noise_scale=noise_scale)

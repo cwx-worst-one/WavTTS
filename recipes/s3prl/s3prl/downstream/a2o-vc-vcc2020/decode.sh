@@ -16,6 +16,7 @@ if [ $# != 3 ]; then
     exit 1
 fi
 
+echo $outdir
 voc_name=$(basename ${voc_dir} | cut -d"_" -f 1)
 voc_checkpoint="$(find "${voc_dir}" -name "*.pkl" -print0 | xargs -0 ls -t | head -n 1)"
 voc_conf="$(find "${voc_dir}" -name "config.yml" -print0 | xargs -0 ls -t | head -n 1)"
@@ -47,7 +48,7 @@ echo "successfully finished decoding."
 
 # evaluation
 echo "Evaluation start."
-python downstream/a2o-vc-vcc2020/evaluate.py \
+python3 downstream/a2o-vc-vcc2020/evaluate.py \
     --wavdir ${wav_dir} \
     --data_root downstream/a2o-vc-vcc2020/data \
     --trgspk ${trgspk}

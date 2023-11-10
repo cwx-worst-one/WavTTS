@@ -702,9 +702,17 @@ class Stage0(pl.LightningModule):
         self.flops = 0
         self.ts_before_forward = 0
         self.cached_log_dict = dict()
-
         if checkpointing:
             self.model.gradient_checkpointing_enable()
+        device_name = torch.cuda.get_device_name()
+        if 'A100' in device_name or 'A800' in device_name:
+            self.device_FLOPS = 312e12
+        elif 'H100' in device_name or 'H800' in device_name:
+            self.device_FLOPS = 989e12
+        elif 'V100' in device_name:
+            self.device_FLOPS = 125e12
+        else:
+            raise RuntimeError('unknow cuda device name: ', device_name)
 
     def setup(self, stage: str) -> None:
         if self.global_rank == 0:
@@ -729,24 +737,15 @@ class Stage0(pl.LightningModule):
             )
             print(f"[Missing] {missing_keys}")
             print(f"[Unexpected] {unexpected_keys}")
-        # if self.model.config.tokenizer in [
-        #     "tts_english_frontend_model",
-        #     "tts_chinese_frontend_model",
-        # ]:
-        #     versions = {
-        #         "tts_english_frontend_model": "34.0",
-        #         "tts_chinese_frontend_model": "42.0",
-        #     }
-        #     self.fe_version = versions[self.model.config.tokenizer]
-        #     self.fe_task = self.model.config.tokenizer
-        #     print(
-        #         f"Loading sami_tts_api: version - {self.fe_task}, task - {self.fe_version}"
-        #     )
-        #     self.fe = init_sami_tts_api(
-        #         fe_version=self.fe_version, fe_task=self.fe_task
-        #     )
-        #     self.tokenizer = SamiTokenizer(fe=self.fe, fe_task=self.fe_task)
-        #     print(f"sami_tts_api loaded.")
+
+        if "rmvpe" in self.hparams.required_modules:
+            rmvpe = self.hparams.required_modules["rmvpe"]
+            if rmvpe["ckpt_path"].strip() != "":
+                state_dict = rmvpe["init_fn"](
+                    rmvpe["ckpt_path"], self.local_rank, rmvpe["cache_dir"]
+                )["state_dict"]
+                print(f'Loading rmvpe model from {rmvpe["ckpt_path"]}')
+                self.model.rmvpe.load_and_eval(state_dict)
 
     def modify_state_dict(self, state_dict):
         for k in list(state_dict.keys()):
@@ -779,7 +778,7 @@ class Stage0(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         # Not quite accurate, time used by optimizer is also counted.
         elapsed = time.time() - self.ts_before_forward
-        mfu = self.flops / elapsed / 312e12  # FIXME: Non-A100 devices.
+        mfu = self.flops / elapsed / self.device_FLOPS
         self.log_dict_cached({
             "training/mfu" : mfu,
             # FIXME: The below two should really be "max" or "use rank 0".
@@ -1093,17 +1092,7 @@ class Stage2(Stage0):
         input_dict = {}
         audio = batch["audio"].squeeze(dim=1).float()
         audio = self.pad_audio(audio)
-        if hasattr(self, "tokenizer"):
-            encoded_text = self.tokenizer(
-                batch["text"],
-                add_special_tokens=False,
-                padding="longest",
-                return_tensors="pt",
-            )
-            text_ids = encoded_text["input_ids"].to(audio.device)
-            input_dict.update(text_ids=text_ids)
-        else:
-            input_dict.update(text_ids=batch["token"])
+        input_dict.update(text_ids=batch["token"])
         feature = self.preprocessing(audio)
         input_dict.update(feature)
         return input_dict
@@ -1115,16 +1104,28 @@ class Stage2(Stage0):
         mel = input_dict["mel"]
         text_ids = input_dict["text_ids"]
 
-        loss_dict = self.criterion(
-            ctc_logits=output_dict["ctc_out"],
-            text_ids=text_ids,
-            recon_chroma=output_dict["chroma_out"]
-            if self.model.config.add_chroma
-            else None,
-            chroma=input_dict["chroma"] if self.model.config.add_chroma else None,
-            recon_mel=output_dict["mel_out"],
-            mel=mel,
-        )
+        if self.model.config.get("add_pitch", False):
+            loss_dict = self.criterion(
+                ctc_logits=output_dict["ctc_out"],
+                text_ids=text_ids,
+                recon_mel=output_dict["mel_out"],
+                mel=mel,
+                recon_f0=output_dict["f0_out"].squeeze(-1),
+                f0=input_dict["f0"],
+                recon_vuv=output_dict["vuv_out"].squeeze(-1),
+                vuv=input_dict["vuv"],
+            )
+        else:
+            loss_dict = self.criterion(
+                ctc_logits=output_dict["ctc_out"],
+                text_ids=text_ids,
+                recon_chroma=output_dict["chroma_out"]
+                if self.model.config.add_chroma
+                else None,
+                chroma=input_dict["chroma"] if self.model.config.add_chroma else None,
+                recon_mel=output_dict["mel_out"],
+                mel=mel,
+            )
         loss_dict["loss"] = (
             loss_dict["loss_mel"] * self.model.config.w_loss_mel
             + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
@@ -1133,6 +1134,11 @@ class Stage2(Stage0):
             loss_dict["loss"] = (
                 loss_dict["loss"]
                 + loss_dict["loss_chroma"] * self.model.config.w_loss_chroma
+            )
+        if self.model.config.get("add_pitch", False):
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + (loss_dict["f0_loss"]+loss_dict["vuv_loss"]) * self.model.config.w_loss_pitch
             )
 
         loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
@@ -1143,6 +1149,10 @@ class Stage2(Stage0):
         loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
         if self.model.config.add_chroma:
             loss_dict["aux/w_loss_chroma"] = self.model.config.w_loss_chroma
+        if self.model.config.get("add_pitch", False):
+            loss_dict["aux/w_loss_pitch"] = self.model.config.w_loss_pitch
+
+        loss_dict["flops"] = output_dict["flops"]
         return loss_dict
 
     @torch.no_grad()
@@ -1240,6 +1250,7 @@ class Stage3(Stage2):
             loss_dict["aux/w_loss_chroma"] = self.model.config.w_loss_chroma
         if output_dict["vq_loss"] is not None:
             loss_dict["aux/w_loss_vq"] = self.model.config.w_loss_vq
+        loss_dict["flops"] = output_dict["flops"]
         return loss_dict
 
     def get_code_rate(self, target_tokens):

@@ -18,7 +18,7 @@ from samantha.transforms.audio import (
     ToTensor,
 )
 
-
+torch.set_float32_matmul_precision('high')
 
 
 class AudioDataset(torch.utils.data.Dataset):
@@ -44,7 +44,7 @@ class AudioDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         audio, sr = librosa.load(self.file_list[index], mono=True, sr=None)
         if sr != 16000:
-            audio = librosa.resample(audio, sr, 16000)
+            audio = librosa.resample(audio, orig_sr=sr, target_sr=16000)
         # tokens = self.umm_model.wav2token(audio).cpu().to(torch.int).numpy()
         # 保存为npy格式
         target_path = os.path.join(self.target_dir, os.path.relpath(self.file_list[index], start=self.root_dir)) + '.npy'
@@ -67,7 +67,7 @@ def evaluate(dataloader, model):
         if audio.shape[1] > 16000*60:
             continue
         features = model.extract_features(audio, dtype=torch.bfloat16)
-        features = features[27::] #### !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        # features = features[27::2] #### !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         features = torch.cat(features, 0).cpu().numpy() 
         # features = features[31].cpu().numpy() 
         # print(tokens, '   ', target_path)
@@ -77,22 +77,28 @@ def evaluate(dataloader, model):
 
 if __name__ == "__main__":
 
-    ckpt_path = '/mnt/bn/cyz-lq-nas/model_cache/usm/pl_asr_2B_ft.ckpt'
+    ckpt_path = '/mnt/bn/cyz-lq-nas/model_cache/usm/v1.6.0_stage2_30k.ckpt'
     # ckpt_path = '/mnt/bn/cyz-lq-nas/model_cache/usm/usm_stage2.ckpt'
     model = USMStage2.load_from_checkpoint(ckpt_path).eval().cuda()
 
     # dataset_list = ['LibriSpeech', 'Vox1', 'IEMOCAP']
-    dataset_name = 'IEMOCAP'
+    dataset_list = ['LibriSpeech', 'IEMOCAP']
+    # dataset_name = 'LibriSpeech'
 
-    root_dir = os.path.join('/mnt/bn/cyz-lq-nas/s3prl_datasets', dataset_name)
-    target_dir = os.path.join('/mnt/bn/cyz-lq-nas/s3prl_gendir/USM_pl_asr_2B_ft_b27e31i1', dataset_name)
+    for dataset_name in dataset_list:
+        # root_dir = os.path.join('/mnt/bn/cyz-lq-nas/s3prl_datasets', dataset_name)
+        # target_dir = os.path.join('/mnt/bn/cyz-lq-nas/s3prl_gendir/USM_v1.5_stage3_b27e31i2', dataset_name)
+
+        root_dir = os.path.join('/mnt/bn/cyz-lq-nas/test/input')
+        target_dir = os.path.join('/mnt/bn/cyz-lq-nas/test/v1.6.0_output')
+        dataset = AudioDataset(root_dir=root_dir, target_dir=target_dir) # modify
+        dataloader = DataLoader(dataset, num_workers=12)
+        print(ckpt_path)
+        print(dataset_name)
+        evaluate(dataloader, model)
+
 
     # root_dir = os.path.join('/mnt/bn/cyz-lq-nas/s3prl_datasets', dataset_name)
     # target_dir = os.path.join('/mnt/bn/cyz-lq-nas/s3prl_gendir/USM_stage2_b27e31i1', dataset_name)
 
-    dataset = AudioDataset(root_dir=root_dir, target_dir=target_dir) # modify
-    dataloader = DataLoader(dataset, num_workers=12)
-
-    print(ckpt_path)
-    print(dataset_name)
-    evaluate(dataloader, model)
+    

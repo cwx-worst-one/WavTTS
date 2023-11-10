@@ -26,7 +26,7 @@ from .utils import make_non_pad_mask
 from .utils import read_hdf5, write_hdf5
 from .utils import logmelspc_to_linearspc, griffin_lim
 
-FS = 16000
+# FS = 16000
 
 class Loss(nn.Module):
     """
@@ -60,7 +60,7 @@ class Loss(nn.Module):
         return loss
 
 class DownstreamExpert(nn.Module):
-    def __init__(self, upstream_dim, upstream_rate, downstream_expert, expdir, **kwargs):
+    def __init__(self, upstream_dim, upstream_rate, upstream_sr, layer, downstream_expert, expdir, **kwargs):
         super(DownstreamExpert, self).__init__()
         
         # basic settings
@@ -71,7 +71,9 @@ class DownstreamExpert(nn.Module):
         self.modelrc = downstream_expert['modelrc']
         self.acoustic_feature_dim = self.datarc["fbank_config"]["n_mels"]
         self.fs = self.datarc["fbank_config"]["fs"]
-        self.resample_ratio = self.fs / self.datarc["fbank_config"]["n_shift"] * upstream_rate / FS
+        self.resample_ratio = self.fs / self.datarc["fbank_config"]["n_shift"] * upstream_rate / upstream_sr
+        # self.resample_ratio = upstream_rate
+        self.layer = layer
         print('[Downstream] - resample_ratio: ' + str(self.resample_ratio))
 
         # load datasets
@@ -89,7 +91,7 @@ class DownstreamExpert(nn.Module):
             scaler.scale_ = read_hdf5(stats_path, "scale")
         else:
             print("[Stats] - " + str(stats_path) + " does not exist. Calculating statistics...")
-            self.train_dataset = VCC2020Dataset('train', self.trgspk, **self.datarc)
+            self.train_dataset = VCC2020Dataset('train', self.trgspk, layer=self.layer, **self.datarc)
             for _, _, lmspc, _ in self.train_dataset:
                 scaler.partial_fit(lmspc)
             write_hdf5(stats_path, "mean", scaler.mean_.astype(np.float32))
@@ -112,13 +114,13 @@ class DownstreamExpert(nn.Module):
     def get_dataloader(self, split):
         if split == 'train':
             if self.train_dataset is None:
-                self.train_dataset = VCC2020Dataset('train', self.trgspk, **self.datarc)
+                self.train_dataset = VCC2020Dataset('train', self.trgspk, layer=self.layer, **self.datarc)
             return self._get_train_dataloader(self.train_dataset)            
         elif split == 'dev':
-            self.dev_dataset = VCC2020Dataset('dev', self.trgspk, **self.datarc)
+            self.dev_dataset = VCC2020Dataset('dev', self.trgspk, layer=self.layer, **self.datarc)
             return self._get_eval_dataloader(self.dev_dataset)
         elif split == 'test':
-            self.test_dataset = VCC2020Dataset('test', self.trgspk, **self.datarc)
+            self.test_dataset = VCC2020Dataset('test', self.trgspk, layer=self.layer, **self.datarc)
             return self._get_eval_dataloader(self.test_dataset)
         elif split == 'custom_test':
             from .dataset import CustomDataset
@@ -171,14 +173,16 @@ class DownstreamExpert(nn.Module):
             return 0.0 # return dummy value
         else:
             if split in ["dev", "test"]:
-                predicted_features, predicted_feature_lengths = self.model(input_features, input_feature_lengths)
+                predicted_features, predicted_feature_lengths = self.model(input_features, input_feature_lengths,
+                    acoustic_features_padded.to(device), acoustic_feature_lengths, teacher_forcing=False)
                 # save the unnormalized features for dev and test sets
                 records["predicted_features"] += predicted_features.cpu().numpy().tolist()
                 records["feature_lengths"] += predicted_feature_lengths.cpu().numpy().tolist()
                 records["wav_paths"] += wav_paths
                 records["wavs"] += wavs
             else:
-                predicted_features, predicted_feature_lengths = self.model(input_features, input_feature_lengths, acoustic_features_padded.to(device))
+                predicted_features, predicted_feature_lengths = self.model(input_features, input_feature_lengths, 
+                        acoustic_features_padded.to(device), acoustic_feature_lengths, teacher_forcing=True)
 
             # loss calculation (masking and normalization are done inside)
             loss = self.objective(predicted_features,

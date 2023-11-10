@@ -45,7 +45,7 @@ class DownstreamExpert(nn.Module):
     """
 
     def __init__(
-        self, upstream_dim, upstream_rate, layer, downstream_expert, expdir, **kwargs
+        self, upstream_dim, upstream_rate, upstream_sr, layer, downstream_expert, expdir, **kwargs
     ):
         """
         Args:

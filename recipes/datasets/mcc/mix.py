@@ -1183,7 +1183,7 @@ class BigTTSDataset(WebPipeline):
             **kwargs,
     ):
         print(f"[{self.name}] initializing...")
-        dataset = ParquetDataset(data_id=data_id, data_urls=url_pattern, **kwargs)
+        dataset = ParquetDataset(data_id=data_id, data_urls=url_pattern, sample_limit_per_file=0.5, **kwargs)
         transforms = BigTTSTransforms(
             sample_rate=sample_rate,
             audio_key=audio_key,
@@ -1876,6 +1876,8 @@ class MixWebDataModule(pl.LightningDataModule):
 
         if tokenizer == "wordpiece":
             self.tokenizer = BertTokenizer.from_pretrained("bert-large-uncased")
+        elif tokenizer == "wordpiece_multilingual":
+            self.tokenizer = BertTokenizer.from_pretrained("bert-base-multilingual-uncased")
         elif tokenizer == "phoneme":
             self.tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained(
                 "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
@@ -2080,6 +2082,8 @@ class ParquetDataModule(pl.LightningDataModule):
 
         if tokenizer == "wordpiece":
             self.tokenizer = BertTokenizer.from_pretrained("bert-large-uncased")
+        elif tokenizer == "wordpiece_multilingual":
+            self.tokenizer = BertTokenizer.from_pretrained("bert-base-multilingual-uncased")
         elif tokenizer == "phoneme":
             self.tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained(
                 "facebook/wav2vec2-xlsr-53-espeak-cv-ft"

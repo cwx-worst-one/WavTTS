@@ -5,15 +5,17 @@
 # exp_name=$4
 
 mode=bn
-offline_root=/mnt/bn/cyz-lq-nas/s3prl_gendir/1.4.1
+offline_root=/mnt/bn/cyz-lq-nas/s3prl_gendir/stage3_v1.6.1
 layer=0
-exp_name=1.4.1_beforevq
+exp_name=stage3_v1.6.1_beforevq
+type=offline_bn
 
 
 if [ "$mode" = "bn" ]; then
-CUDA_VISIBLE_DEVICES=0 python3 run_downstream.py -m train -u offline_bn -d asr --offline_root $offline_root/LibriSpeech -l $layer -n ASR_$exp_name &
-CUDA_VISIBLE_DEVICES=1 python3 run_downstream.py -m train -u offline_bn -d sv_voxceleb1 --offline_root $offline_root/Vox1 -l $layer -n ASV_$exp_name &
-CUDA_VISIBLE_DEVICES=2 python3 run_downstream.py -m train -u offline_bn -d emotion --offline_root $offline_root/IEMOCAP -l $layer -n EmoC_$exp_name
+CUDA_VISIBLE_DEVICES=0 python3 run_downstream.py -m train -u $type -d asr --offline_root $offline_root/LibriSpeech -l $layer -n ASR_$exp_name &
+# CUDA_VISIBLE_DEVICES=1 python3 run_downstream.py -m train -u $type -d sv_voxceleb1 --offline_root $offline_root/Vox1 -l $layer -n ASV_$exp_name &
+CUDA_VISIBLE_DEVICES=1 python3 run_downstream.py -m train -u $type -d emotion --offline_root $offline_root/IEMOCAP -l $layer -n EmoC_$exp_name
+
 fi
 
 

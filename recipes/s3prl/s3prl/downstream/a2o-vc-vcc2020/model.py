@@ -24,6 +24,49 @@ def encoder_init(m):
     if isinstance(m, torch.nn.Conv1d):
         torch.nn.init.xavier_uniform_(m.weight, torch.nn.init.calculate_gain("relu"))
 
+
+class CNNEncoder(torch.nn.Module):
+    def __init__(self, idim, econv_layers=1, econv_chans=512, econv_filts=5
+         , use_residual=True):
+        super(CNNEncoder, self).__init__()
+        self.idim = idim
+        self.use_residual = use_residual
+        self.input_layer = torch.nn.Linear(idim, econv_chans)
+        self.convs = torch.nn.ModuleList()
+        for i in range(econv_layers):
+            ichans = econv_chans
+            self.convs += [
+                torch.nn.Sequential(
+                    torch.nn.Conv1d(
+                        ichans,
+                        econv_chans,
+                        econv_filts,
+                        stride=1,
+                        padding=(econv_filts - 1) // 2,
+                        bias=False,
+                    ),
+                    torch.nn.ReLU(),
+                )
+            ]
+
+    def forward(self, xs):
+        """Calculate forward propagation.
+        Args:
+            xs (Tensor): Batch of the padded acoustic feature sequence (B, Lmax, idim)
+        """
+        xs = self.input_layer(xs).transpose(1, 2)
+
+        if self.convs is not None:
+            for i in range(len(self.convs)):
+                if self.use_residual:
+                    xs = xs + self.convs[i](xs)
+                else:
+                    xs = self.convs[i](xs)
+        xs = xs.transpose(1, 2)
+
+        return xs
+
+
 class Taco2Encoder(torch.nn.Module):
     """Encoder module of the Tacotron2 TTS model.
 
@@ -309,6 +352,8 @@ class Model(nn.Module):
                 torch.nn.Linear(input_dim, hidden_dim),
                 torch.nn.ReLU()
             )
+        elif encoder_type == "cnn":
+            self.encoder = CNNEncoder(input_dim, econv_chans=hidden_dim)
         else:
             raise ValueError("Encoder type not supported.")
         
@@ -354,29 +399,36 @@ class Model(nn.Module):
     def normalize(self, x):
         return (x - self.target_mean) / self.target_scale
 
-    def forward(self, features, lens, targets = None):
+    def forward(self, features, lens, targets, target_lens, teacher_forcing=False):
         """Calculate forward propagation.
             Args:
             features: Batch of the sequences of input features (B, Lmax, idim).
             targets: Batch of the sequences of padded target features (B, Lmax, odim).
         """
         B = features.shape[0]
-        
+
         # resample the input features according to resample_ratio
         features = features.permute(0, 2, 1)
         resampled_features = F.interpolate(features, scale_factor = self.resample_ratio)
         resampled_features = resampled_features.permute(0, 2, 1)
         lens = lens * self.resample_ratio
+        if targets is not None:
+            if targets.shape[1] <= resampled_features.shape[1]:
+                lens = target_lens
+                resampled_features = resampled_features[:,:targets.shape[1],:]
+            else:
+                lens = [min(resampled_features.shape[1], x) for x in target_lens]
+                targets = targets[:, :resampled_features.shape[1], :]
 
         # encoder
         if self.encoder_type == "taco2":
             encoder_states, lens = self.encoder(resampled_features, lens) # (B, Lmax, hidden_dim)
-        elif self.encoder_type == "ffn":
+        elif self.encoder_type == "ffn" or self.encoder_type == "cnn":
             encoder_states = self.encoder(resampled_features) # (B, Lmax, hidden_dim)
         
         # decoder: LSTMP layers & projection
         if self.ar:
-            if targets is not None:
+            if teacher_forcing:
                 targets = targets.transpose(0, 1) # (Lmax, B, output_dim)
             predicted_list = []
 
@@ -395,7 +447,7 @@ class Model(nn.Module):
                     lstmp_input = concat if i == 0 else z_list[i-1]
                     z_list[i], c_list[i] = lstmp(lstmp_input, z_list[i], c_list[i])
                 predicted_list += [self.proj(z_list[-1]).view(B, self.output_dim, -1)] # projection is done here to ensure output dim
-                prev_out = targets[t] if targets is not None else predicted_list[-1].squeeze(-1) # targets not None = teacher-forcing
+                prev_out = targets[t] if teacher_forcing else predicted_list[-1].squeeze(-1) # targets not None = teacher-forcing
                 prev_out = self.normalize(prev_out) # apply normalization
             predicted = torch.cat(predicted_list, dim=2)
             predicted = predicted.transpose(1, 2)  # (B, hidden_dim, Lmax) -> (B, Lmax, hidden_dim)

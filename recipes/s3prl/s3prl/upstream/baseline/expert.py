@@ -42,6 +42,7 @@ class UpstreamExpert(UpstreamBase):
                     self.config['offline']['vocab_size'], self.config['offline']['input_dim'])
             self.downsample_rate = self.config['offline']['downsample_rate']
             self.input_dim = self.config['offline']['input_dim']
+            self.sr = self.config['offline']['sr']
     
 
     def _extractor_forward(self, wavs):

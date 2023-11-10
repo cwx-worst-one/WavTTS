@@ -190,6 +190,7 @@ class Runner():
             print('set offline_root: ', self.config['downstream_expert']['datarc']['offline_root'])
         model = Downstream(
             upstream_dim = self.upstream.model.input_dim,
+            upstream_sr = self.upstream.model.sr,
             upstream_rate = self.upstream.model.downsample_rate,
             layer = self.args.upstream_layer_selection,
             **self.config,
