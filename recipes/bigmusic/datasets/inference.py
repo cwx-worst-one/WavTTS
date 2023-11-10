@@ -8,7 +8,13 @@ from pathlib import Path
 from torch.utils.data import Dataset
 from samantha.dataio.webdataset.pipeline import WebPipeline
 from recipes.bigmusic.datasets.lyrics import transform_dataset, default_batch_fn
-from recipes.bigmusic.datasets.transforms.lyrics import LyricsTokenTransform, AddConditionsTransform, StyleTextT5Transform, MCCMetadataTextTransform
+from recipes.bigmusic.datasets.transforms.lyrics import (
+    LyricsTokenTransform,
+    AddConditionsTransform,
+    StyleTextT5Transform,
+    MCCMetadataTextTransform,
+    AddDurationTransform,
+)
 from recipes.musiclm.inference.utils import load_wav
 
 default_prompt_path = Path(__file__).absolute().parent/'inference_prompts/default.json'
@@ -39,7 +45,8 @@ def inference_dataset_from_prompt(
     run_combinations=False,
     enable_punctuation=True,
     lang='en',
-    dataset_mode="truncate_length"
+    dataset_mode="truncate_length",
+    extra_params=None,
 ):
     prompts = prompt_path_to_items(prompt_path)
     if 'text_category' in prompts: # fix csv formatting
@@ -79,6 +86,10 @@ def inference_dataset_from_prompt(
             segment_transforms.append(StyleTextT5Transform())
     else: # instrumental use case
         segment_transforms = []
+
+    batch_transforms=[AddConditionsTransform(conditions)]
+    if 'duration' in conditions:
+        batch_transforms.append(AddDurationTransform(extra_params.duration))
     
     item_keys = list(prompts.keys())
     items = []
@@ -87,7 +98,11 @@ def inference_dataset_from_prompt(
             break
         item = { key:value for key,value in zip(item_keys,pair) }
         items.append(item)
-    batch_transforms=[AddConditionsTransform(conditions)]
     dataset = WebPipeline(items, pipeline=[])
     batch_fn = default_batch_fn(batch_size)
-    return transform_dataset(dataset, segment_transforms=segment_transforms, batch_transforms=batch_transforms, batch_fn=batch_fn)
+    return transform_dataset(
+        dataset,
+        segment_transforms=segment_transforms,
+        batch_transforms=batch_transforms,
+        batch_fn=batch_fn,
+    )

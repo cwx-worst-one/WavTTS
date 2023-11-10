@@ -173,6 +173,20 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
             "token_seq_lengths": batch_seq_lengths,
         }
 
+    def prepare_model_inputs(self, batch):
+        model_inputs = []
+        for emb_type, embedder in self.input_embedders.items():
+            if emb_type == "mulan":
+                emb_inputs = self.prepare_mulan_inputs(batch, embedder)
+            elif emb_type == "lyrics_tokens":
+                emb_inputs = self.prepare_lyrics_inputs(batch, embedder)
+            elif emb_type == "duration":
+                emb_inputs = self.prepare_duration_inputs(batch, embedder)
+            else:
+                raise ValueError(f"Unknown emb type: {emb_type}")
+            model_inputs.append(emb_inputs)
+        return model_inputs
+
     def prepare_target_inputs(self, batch):
         # Prepare target ids
         target_lengths = batch['target_tokens_length'].to(self.device)
@@ -194,25 +208,15 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
         }
 
     def prepare_training_inputs(self, batch):
-        training_inputs = []
-        for emb_type, embedder in self.input_embedders.items():
-            if emb_type == "mulan":
-                emb_inputs = self.prepare_mulan_inputs(batch, embedder)
-            elif emb_type == "lyrics_tokens":
-                emb_inputs = self.prepare_lyrics_inputs(batch, embedder)
-            elif emb_type == "duration":
-                emb_inputs = self.prepare_duration_inputs(batch, embedder)
-            else:
-                raise ValueError(f"Unknown emb type: {emb_type}")
-            training_inputs.append(emb_inputs)
+        model_inputs = self.prepare_model_inputs(batch)
         target_inputs = self.prepare_target_inputs(batch)
 
         # zip inputs and concat
-        token_ids = zip(*[i['token_ids'] for i in training_inputs + [target_inputs]])
+        token_ids = zip(*[i['token_ids'] for i in model_inputs + [target_inputs]])
         token_ids = [torch.cat(t, dim=0) for t in token_ids]
-        token_embeds = zip(*[i['token_embeds'] for i in training_inputs + [target_inputs]])
+        token_embeds = zip(*[i['token_embeds'] for i in model_inputs + [target_inputs]])
         token_embeds = [torch.cat(t, dim=0) for t in token_embeds]
-        input_seq_lengths = torch.vstack([i['token_seq_lengths'] for i in training_inputs]).sum(dim=0)
+        input_seq_lengths = torch.vstack([i['token_seq_lengths'] for i in model_inputs]).sum(dim=0)
         total_seq_lengths = input_seq_lengths + target_inputs['token_seq_lengths']
 
         # Padding step
@@ -317,7 +321,7 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
         frame_rate = self.extra_params.semantic_frame_rate
         num_tokens = hp.duration * frame_rate
         temperature = hp.semantic_temperature
-        predict_lyrics = hp.predict_lyrics
+        predict_lyrics = hp.get("predict_lyrics", False)
 
         return self._predict(
             batch,
@@ -352,16 +356,13 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
             new_lens = [len(s) for s in new_seqs]
             batch['lyrics_tokens'] = pad_sequence(new_seqs, batch_first=True)
             batch['lyrics_tokens_length'] = torch.tensor(new_lens, device=self.device)
-                
 
-
-        mulan_inputs = self.prepare_mulan_inputs(batch)
-        lyrics_inputs = self.prepare_lyrics_inputs(batch, add_eos=False)
+        model_inputs = self.prepare_model_inputs(batch)
 
         # zip inputs and concat
-        token_embeds = zip(*[i['token_embeds'] for i in [mulan_inputs, lyrics_inputs]])
+        token_embeds = zip(*[i['token_embeds'] for i in model_inputs])
         token_embeds = [torch.cat(t, dim=0) for t in token_embeds]
-        input_seq_lengths = mulan_inputs['token_seq_lengths'] + lyrics_inputs['token_seq_lengths']
+        input_seq_lengths = torch.vstack([i['token_seq_lengths'] for i in model_inputs]).sum(dim=0)
 
         # pad front
         token_embeds_reversed = [embeds.flip(dims=(0,)) for embeds in token_embeds]

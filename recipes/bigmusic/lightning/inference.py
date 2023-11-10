@@ -37,7 +37,11 @@ class SemanticInferenceModule(pl.LightningModule):
         module = importlib.import_module('.'.join(module_paths))
         semantic_class = getattr(module, cls_name)
 
-        self.semantic_module = semantic_class.load_from_checkpoint(self.extra_params.semantic_ckpt).eval()
+        self.semantic_module = semantic_class.load_from_checkpoint(
+            self.extra_params.semantic_ckpt,
+            # pay attention to the logs to make sure the model is loaded correctly
+            strict=False,
+        ).eval()
         self.requires = {}
         
         required_modules = {}

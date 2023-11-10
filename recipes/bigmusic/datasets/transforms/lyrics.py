@@ -224,3 +224,12 @@ class VocalChromaTransform():
         cropped_vocals = item['vocal_audio']
         vocal_chroma = VocalChromaTransform.get_chromagram(cropped_vocals.numpy(), self.sample_rate, max_len=int(self.sample_duration*6))
         return { **item, 'vocal_chroma': vocal_chroma }
+
+
+class AddDurationTransform():
+    def __init__(self, duration):
+        assert isinstance(duration, int)
+        self.duration = duration
+
+    def __call__(self, item):
+        return { **item, 'duration': self.duration }
