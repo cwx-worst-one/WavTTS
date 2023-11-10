@@ -19,7 +19,7 @@ extra_params:
     semantic_frame_rate: 25
     mulan_embed_dim: 512
     hidden_size: 1536
-    dataset_types: mcc60m_vocal_style_text
+    dataset_types: mcc60m_vocalB_style_mixed_text_audio_2m
     semantic_type: bestrq
     pretrained_path: null # for loading state dicts
     enable_punctuation: True

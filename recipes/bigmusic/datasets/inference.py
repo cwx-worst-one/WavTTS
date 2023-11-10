@@ -60,7 +60,7 @@ def inference_dataset_from_prompt(
 
     if 'lyrics_tokens' in conditions:
         if lang == 'en':
-            segment_transforms = [LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len=lyrics_max_seq_len, dataset_mode=dataset_mode, enable_punctuation=enable_punctuation)]
+            segment_transforms = [LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len=lyrics_max_seq_len, dataset_mode=dataset_mode, enable_punctuation=enable_punctuation, validate_ascii=True)]
         elif lang == 'zh_wp':
             segment_transforms = [LyricsTokenTransform.init_zh_tokenizer(lyrics_max_seq_len=lyrics_max_seq_len, dataset_mode=dataset_mode, enable_punctuation=enable_punctuation)]
         elif lang == 'zh_phone':

@@ -29,8 +29,7 @@ else
 fi
 
 sudo apt update
-sudo apt install espeak ffmpeg zip -y
-sudo apt install fonts-arphic-ukai
+sudo apt install espeak ffmpeg zip fonts-arphic-ukai -y
 pip3 install -qr ./recipes/bigmusic/requirements.txt
 pip3 install -qr ./recipes/diffusion/requirements.txt
 

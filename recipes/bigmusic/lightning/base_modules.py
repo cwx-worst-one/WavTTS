@@ -227,8 +227,8 @@ class BaseContinuousEmbedModule(BaseModule):
             return model_inputs, target_ids
 
     # Prediction code
-    def sample_logits(self, i, logits, temp, mode):
-        return sample(logits, temp=temp, mode=mode)
+    def sample_logits(self, i, logits, temp, mode, thresh=0.9):
+        return sample(logits, temp=temp, mode=mode, thresh=thresh)
 
     @torch.no_grad()
     def predict(

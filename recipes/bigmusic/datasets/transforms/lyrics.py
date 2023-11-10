@@ -165,15 +165,18 @@ class LyricsTokenTransform():
         return LyricsTokenTransform(zh_phoneme_tokenizer, 0, lyrics_max_seq_len, lang='zh_phone', normalization_fn=normalization_fn, **kwargs)
 
     @classmethod
-    def init_espeak_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=False, **kwargs):
-        normalization_fn = partial(normalize_text, enable_punctuation=enable_punctuation)
+    def init_espeak_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=False, validate_ascii=False, **kwargs):
+        def _normalize_text(text: str):
+            if validate_ascii: 
+                assert text.isascii(), f"Error tokenizing non-ascii lyrics: {text}"
+            return normalize_text(text, enable_punctuation=enable_punctuation)
         with local_zero_first():
             espeak_tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-cv-ft")
             espeak_tokenizer._add_tokens(["<n>"])
         import logging, phonemizer
         # To silence espeak logging warnings: "WARNING - words count mismatch on 100.0% of the lines"
         phonemizer.logger.get_logger().setLevel(logging.ERROR)
-        return LyricsTokenTransform(espeak_tokenizer, espeak_tokenizer.pad_token_id, lyrics_max_seq_len, normalization_fn=normalization_fn, **kwargs)
+        return LyricsTokenTransform(espeak_tokenizer, espeak_tokenizer.pad_token_id, lyrics_max_seq_len, normalization_fn=_normalize_text, **kwargs)
 
 
 class AddConditionsTransform():

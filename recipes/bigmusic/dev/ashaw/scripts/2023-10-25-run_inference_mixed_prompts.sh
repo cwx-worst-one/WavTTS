@@ -14,12 +14,6 @@ python3 -m samantha.main predict -c recipes/bigmusic/conf/inference_semantic_30s
     --extra_params.prompt_path /mnt/bn/audio-diffusion/data/bigmusic_text_prompts/vocal_prompts_20231018_mixed135.csv \
     --predict_dataset.enable_punctuation True
 
-python3 -m samantha.main predict -c recipes/bigmusic/conf/inference_semantic_30s.yaml \
-    --extra_params.semantic_ckpt /mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_dataset_v4_baseline/mcc60m_vocal_style_mixed_text_audio_warmstart/checkpoints/last.ckpt \
-    --extra_params.output_dir assets/generated_outputs_mixed_prompts/mcc60m_vocal_style_mixed_text_audio_warmstart \
-    --extra_params.prompt_path /mnt/bn/audio-diffusion/data/bigmusic_text_prompts/vocal_prompts_20231018_mixed135.csv \
-    --predict_dataset.enable_punctuation True
-
 # # bf16 test
 python3 -m samantha.main predict -c recipes/bigmusic/conf/inference_semantic_30s.yaml \
     --extra_params.semantic_ckpt /mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_dataset_v4_baseline/mcc60m_vocal_style_mixed_text_audio_warmstart/checkpoints/last.ckpt \
