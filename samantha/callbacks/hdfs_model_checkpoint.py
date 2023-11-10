@@ -15,6 +15,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.types import STEP_OUTPUT
 
+from samantha.utils.common import get_git_revision_hash
 from samantha.utils.envs import getenv_bool
 from samantha.utils.hdfs_tools import hdfs_mkdir, hdfs_put
 
@@ -95,13 +96,7 @@ class HDFSModelCheckpoint(ModelCheckpoint):
         ckpt_type = os.getenv("CheckpointType", None)
         infer_type = os.getenv("InferType", None)
         packed_model = os.getenv("PackedModel", None)
-        if (
-            model_name is None
-            or model_arch is None
-            or ckpt_type is None
-            or infer_type is None
-            or packed_model is None
-        ):
+        if model_name is None or model_arch is None or ckpt_type is None:
             self.should_sync_platform = False
             logger.warning(
                 f"Will not sync model checkpoints to platform cause some of those env "
@@ -113,19 +108,19 @@ class HDFSModelCheckpoint(ModelCheckpoint):
                 f"  PackedModel={packed_model}"
             )
             return None
-        wandb_run_id = "null"
-        pool = multiprocessing.Pool(1)
-        project = "null"
-        for _logger in trainer.loggers:
-            if isinstance(_logger, WandbLogger):
-                project = _logger.name
-                name = _logger.experiment.name
-                wandb_run_id = pool.apply(
-                    easycycle.register_evaluation_wandb,
-                    kwds={"project": project, "name": name},
-                )
-                break
-        pool.close()
+        wandb_run_id, project = "", ""
+        if infer_type is not None or packed_model is not None:
+            pool = multiprocessing.Pool(1)
+            for _logger in trainer.loggers:
+                if isinstance(_logger, WandbLogger):
+                    project = _logger.name
+                    name = _logger.experiment.name
+                    wandb_run_id = pool.apply(
+                        easycycle.register_evaluation_wandb,
+                        kwds={"project": project, "name": name},
+                    )
+                    break
+            pool.close()
         req = easycycle.RegisterRawModelReq()
         req.name = model_name
         req.model_type = os.getenv("ModelType", "Common")
@@ -133,13 +128,14 @@ class HDFSModelCheckpoint(ModelCheckpoint):
         req.ckpt_type = ckpt_type
         req.infer_type = infer_type
         req.train_task_params = easycycle.TrainTaskParams(
-            task_marking=packed_model,
+            task_marking=packed_model or "",
             train_task_id=os.getenv("ARNOLD_TRIAL_ID", "null"),
             train_dataset_id=os.getenv("DatasetID", "null"),
             train_task_type="MERLIN" if os.getenv("MERLIN_JOB_ID", None) else "ARNOLD",
             wandb_run_id=wandb_run_id,
             wandb_project_name=project,
             merlin_job_id=os.getenv("MERLIN_JOB_ID", "null"),
+            commit_id=get_git_revision_hash(),
         )
         req.owner = os.getenv("ARNOLD_TRIAL_OWNER", "samantha")
         easycycle.register_raw_model(req)
