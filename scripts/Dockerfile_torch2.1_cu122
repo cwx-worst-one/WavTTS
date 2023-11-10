@@ -252,5 +252,4 @@ RUN pip3 install \
     langchain \
     backoff \
     pyzstd \
-    ray[serve] \
     accelerate
