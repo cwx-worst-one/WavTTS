@@ -89,7 +89,7 @@ def inference_dataset_from_prompt(
 
     batch_transforms=[AddConditionsTransform(conditions)]
     if 'duration' in conditions:
-        batch_transforms.append(AddDurationTransform(extra_params.duration))
+        batch_transforms.append(AddDurationTransform(extra_params["duration"]))
     
     item_keys = list(prompts.keys())
     items = []
