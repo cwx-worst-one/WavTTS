@@ -19,7 +19,7 @@ extra_params:
     mulan_embed_dim: 512
     hidden_size: 1536
     semantic_type: bestrq
-    pretrained_path: null # for loading state dicts
+    pretrained_path: null
     input_embedders: ["mulan", "duration"]
     prediction_heads: []
 
@@ -28,23 +28,25 @@ run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
     log_name: semantic_model_instrumental_07B
-    version: mcc40m_vad_2min_varlen
+    version: sstk-eval_sft_2min_varlen
     cache_dir: .module_cache/musiclm
     precision: "16"
     num_workers: 8
     accelerator: auto
-    max_steps: 250000
+    max_steps: 20000
     batch_size: 6
-    learning_rate: 1.0e-3
+    learning_rate: 0.00002
     warmup_steps: 2000
-    cycle_steps: 200000
+    cycle_steps: 20000
     weight_decay: 0.05
     shuffle_buffer: 64
     gradient_clip_val: 1.0
-    val_check_interval: 4000
+    val_check_interval: 2000
     min_length_ratio: [0.9, 0.9, 0.9, 0.92, 0.92, 0.94, 0.95]
     normalize_audio: True
     avoid_vocal: True
+    max_vocal_threshold: 0.8
+    text_type: "short"
     max_num_crops: [3, 3, 2, 2, 1, 1, 1]
     crop_step_size: [10, 15, 20, 25, 30, 35, 40]
     use_pipe: False
@@ -54,7 +56,7 @@ run_opts:
 ################################################################################
 
 pl_datamodule: !new:recipes.bigmusic.datasets.instrumental.InstrumentalWebDataModule
-    dataset_name: "MCC40M_US"
+    dataset_name: "SSTK_EVAL_US"
     val_split: "SSTK_EVAL_US"
     sample_rate: !ref <extra_params[sample_rate]>
     duration: !ref <extra_params[duration]>
@@ -64,7 +66,11 @@ pl_datamodule: !new:recipes.bigmusic.datasets.instrumental.InstrumentalWebDataMo
     pin_memory: True
     min_length_ratio: !ref <run_opts[min_length_ratio]>
     normalize_audio: !ref <run_opts[normalize_audio]>
+    aed_filtered: False
+    avoid_sound_effect: False
     avoid_vocal: !ref <run_opts[avoid_vocal]>
+    max_vocal_threshold: !ref <run_opts[max_vocal_threshold]>
+    text_type: !ref <run_opts[text_type]>
     max_num_crops: !ref <run_opts[max_num_crops]>
     crop_step_size: !ref <run_opts[crop_step_size]>
     use_pipe: !ref <run_opts[use_pipe]>
@@ -180,6 +186,6 @@ trainer: !new:pytorch_lightning.Trainer
     gradient_clip_val: !ref <run_opts[gradient_clip_val]>
     val_check_interval: !ref <run_opts[val_check_interval]>
     check_val_every_n_epoch: null
-    num_sanity_val_steps: 2  # skip validation sanity checks so we don't run into hdfs file close errors
+    num_sanity_val_steps: 0  # skip validation sanity checks so we don't run into hdfs file close errors
     callbacks: !ref <callbacks>
     plugins: !ref <plugins>

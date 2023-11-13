@@ -159,6 +159,7 @@ class MCCTransforms(TransformBase):
         n_samples: Union[int, List[int]],
         sample_rate: int,
         audio_key: str = "mp3",
+        min_length_ratio: float = 0.8,
         normalize_audio: bool = True,
         min_volume_threshold: float = 0.05,
         loudness_ratio_threshold: float = 0.2,
@@ -189,6 +190,11 @@ class MCCTransforms(TransformBase):
         self.audio_metrics_filtered = audio_metrics_filtered
         self.ar_filtering = ar_filtering
         self.text_type = text_type
+
+        if not isinstance(min_length_ratio, (list, tuple)):
+            min_length_ratio = [min_length_ratio] * len(self.n_samples)
+        assert len(min_length_ratio) == len(self.n_samples)
+        self.min_length_ratio = min_length_ratio
 
         if max_num_crops is None:
             max_num_crops = [None] * len(self.n_samples)
@@ -406,9 +412,12 @@ class MCCTransforms(TransformBase):
 
         # Choose n_samples at random
         candidates = [
-            (n, m, c) for n, m, c in zip(
-                self.n_samples, self.max_num_crops, self.crop_step_size
-            ) if audio.size(1) >= n * 0.8
+            (n, m, c) for n, m, c, l in zip(
+                self.n_samples,
+                self.max_num_crops,
+                self.crop_step_size,
+                self.min_length_ratio,
+            ) if audio.size(1) >= n * l
         ]
         if len(candidates) == 0:
             self._update_stats(skipped=True, message="Audio Too Short")
