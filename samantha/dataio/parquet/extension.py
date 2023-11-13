@@ -1,6 +1,8 @@
 import io
 import json
+import logging
 import re
+import sys
 from copy import deepcopy
 from typing import Any, Callable, Dict, Iterable, List, Optional, Union
 
@@ -12,6 +14,7 @@ from webdataset import warn_and_continue
 from samantha.dataio.utils import parquet_reader
 
 DATASET_NAME_KEY = "__dataset_name__"
+logger = logging.getLogger(__name__)
 
 
 class _ParquetSample:
@@ -25,6 +28,14 @@ class _ParquetSample:
         self.sample_limit_per_file = sample_limit_per_file
         self.extra_fields_in_data = extra_fields_in_data
         self.meta = {}
+
+    def get_mem_usage(self, cache):
+        size = 0
+        for values in cache.values():
+            for value in values.values():
+                for v in value.values():
+                    size += sys.getsizeof(v)
+        return size
 
     def __call__(self, sources: Iterable[Dict[str, Any]]):
         handler = self.handler
@@ -43,6 +54,7 @@ class _ParquetSample:
                 # get common uttid from all parquet(data/index/feat)
                 common_utt = None
                 utt2group_no = {}
+                raw_ordered_uttid = []
                 for name, url in src.items():
                     utt2group_no[name] = {}
                     cur_utt = set()
@@ -50,6 +62,8 @@ class _ParquetSample:
                         url, columns=["uttid"], fs=filesystem, meta=self.meta
                     ):
                         uttid = e["uttid"]
+                        if name == "index":
+                            raw_ordered_uttid.append(uttid)
                         cur_utt.add(uttid)
                         utt2group_no[name][uttid] = group_no
                     if common_utt is None:
@@ -71,6 +85,9 @@ class _ParquetSample:
 
                 # limit common uttid, compute row groups for each parquet
                 common_utt = set(ordered_utt)
+                ordered_utt = [
+                    uttid for uttid in raw_ordered_uttid if uttid in common_utt
+                ]
                 row_groups = {}
                 for name in src:
                     row_groups[name] = sorted(
@@ -107,7 +124,9 @@ class _ParquetSample:
                                         _, cur_sample = next(rit)
                                 except StopIteration:
                                     pass
-
+                            # Moniter memory usage
+                            # mem = self.get_mem_usage(cache)
+                            # logger.info(f"Cache = {mem / 1024 / 1024:.2f} MB")
                             if name == "data":
                                 audio_bin = cur_sample["audio"]
                                 extra_fields = {}
