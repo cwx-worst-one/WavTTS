@@ -2,7 +2,7 @@ import io
 import json
 import re
 from copy import deepcopy
-from typing import Any, Callable, Dict, Iterable, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Union
 
 import librosa
 from lightning_fabric.utilities.cloud_io import get_filesystem
@@ -19,9 +19,11 @@ class _ParquetSample:
         self,
         handler: Callable[[Exception], bool] = warn_and_continue,
         sample_limit_per_file: Union[int, float] = None,
+        extra_fields_in_data: Optional[List[str]] = None,
     ):
         self.handler = handler
         self.sample_limit_per_file = sample_limit_per_file
+        self.extra_fields_in_data = extra_fields_in_data
         self.meta = {}
 
     def __call__(self, sources: Iterable[Dict[str, Any]]):
@@ -108,11 +110,20 @@ class _ParquetSample:
 
                             if name == "data":
                                 audio_bin = cur_sample["audio"]
+                                extra_fields = {}
+                                if self.extra_fields_in_data:
+                                    for field in self.extra_fields_in_data:
+                                        if field in cur_sample:
+                                            extra_fields[field] = cur_sample.get(
+                                                field, None
+                                            )
                                 cur_sample = {
                                     "wav": audio_bin,
                                     "src_sample_rate": librosa.get_samplerate(
                                         io.BytesIO(audio_bin)
                                     ),
+                                    # extra fields in data, possible vocal/acc for mss
+                                    **extra_fields,
                                 }
                             elif name == "index":
                                 cur_sample.pop("row_group_no", None)

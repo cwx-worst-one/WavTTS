@@ -30,9 +30,8 @@ def try_get_field_and_rename(meta, new_key, possible_keys):
 
 def worker(args, part, idxes):
     sr = args.sr
-    feats = ["mss"] if args.mss else None
     writer = IndexShardWriter(
-        args.output, partitions=[f"part={part:05d}"], row_group_size=2, feats=feats
+        args.output, partitions=[f"part={part:05d}"], row_group_size=2, maxcount=256
     )
     t = tqdm()
     for idx in idxes:
@@ -41,15 +40,15 @@ def worker(args, part, idxes):
         for sample in dataset:
             uttid = sample["__key__"]
             meta = sample["__index_data__"]
-            data_dict = {"uttid": uttid}
-            item_dict = {"uttid": uttid, "text": ""}
+            data_dict = {}
             # if metadata in meta, lift it
             if "metadata" in meta:
                 metadata = meta["metadata"]
                 for key, value in metadata.items():
                     if key in meta:
-                        continue
-                    meta[key] = value
+                        meta[f"metadata.{key}"] = value
+                    else:
+                        meta[key] = value
                 del meta["metadata"]
             if args.mss:
                 # try get full from full.npy or audio.npy
@@ -63,15 +62,13 @@ def worker(args, part, idxes):
                 meta["duration"] = len(full) / sr # seconds
 
                 # add vocal/acc to mss feat
-                mss_dict = {"uttid": uttid}
                 for key in ["vocal", "acc"]:
                     npy = sample[f"{key}.npy"]
                     # convert to wav
                     io = BytesIO()
                     write(io, sr, npy)
                     wav = io.getvalue()
-                    mss_dict[key] = wav
-                feat_dict = {"mss": mss_dict}
+                    data_dict[key] = wav
             else:
                 npy = sample["audio.npy"]
                 if len(npy.shape) == 2:
@@ -81,14 +78,12 @@ def worker(args, part, idxes):
                 wav = io.getvalue()
                 data_dict["audio"] = wav
                 meta["duration"] = len(npy) / sr # seconds
-                feat_dict = None
             # try get genre, theme, mood, language
             try_get_field_and_rename(meta, "genre", ["genre", "first_genre", "merge_genre", "genres"])
             try_get_field_and_rename(meta, "theme", ["theme", "merge_theme"])
             try_get_field_and_rename(meta, "mood", ["mood", "merge_mood"])
             try_get_field_and_rename(meta, "language", ["language", "merge_language", "final_language", "meta_song_language"])
-            item_dict["meta"] = json.dumps(meta, ensure_ascii=False)
-            writer.write(data_dict, item_dict, feat_dict)
+            writer.write(uttid, data=data_dict, meta=meta, text="")
             t.update()
     writer.close()
     print(f"Worker {part} finished, total {t.n} samples")

@@ -1,8 +1,21 @@
+import functools
 import logging
 import os
 import time
+import warnings
 
 import pyarrow
+
+try:
+    import simplejson as json
+
+    dump_fn = functools.partial(json.dumps, ensure_ascii=False, ignore_nan=True)
+except ImportError:
+    import json
+
+    dump_fn = functools.partial(json.dumps, ensure_ascii=False)
+    warnings.warn("simplejson not installed, potential NaN issue in IndexShardWriter.")
+
 from lightning_fabric.utilities.cloud_io import get_filesystem
 from pyarrow.parquet import ParquetWriter as _ParquetWriter
 
@@ -207,7 +220,6 @@ class IndexShardWriter:
         filename_pattern="shard-%05d.parquet",
         maxcount=2048,
         row_group_size=64,
-        feats=None,
     ):
         self.output_root = output_root
         self.partitions = partitions
@@ -227,36 +239,24 @@ class IndexShardWriter:
         self.idx_writer = ShardWriter(
             self.idx_pattern, maxcount, row_group_size, need_row_group_no=True
         )
-        self.feat_writers = {}
-        if feats is None:
-            feats = []
-        for feat in feats:
-            feat_pattern = os.path.join(
-                output_root, feat, partition_path, filename_pattern
-            )
-            writer = ShardWriter(
-                feat_pattern, maxcount, row_group_size, need_row_group_no=False
-            )
-            self.feat_writers[feat] = writer
 
-    def write(self, data_item: dict, idx_item: dict, feat_items: dict = None):
+    def write(self, uttid: str, *, data: dict, meta: dict, text: str = ""):
         r"""Write an item to shards."""
-        self.data_writer.write(data_item)
+        data_dict = {"uttid": uttid, **data}
+        self.data_writer.write(data_dict)
         cd_path = "/".join([".."] * (len(self.partitions) + 1))
-        idx_item.update(
-            {"data_file": self.data_writer.filename.replace(self.output_root, cd_path)}
-        )
-        self.idx_writer.write(idx_item)
-        if feat_items is not None:
-            for feat, item in feat_items.items():
-                self.feat_writers[feat].write(item)
+        meta_dict = {
+            "uttid": uttid,
+            "meta": dump_fn(meta),
+            "text": text,
+            "data_file": self.data_writer.filename.replace(self.output_root, cd_path),
+        }
+        self.idx_writer.write(meta_dict)
 
     def close(self):
         r"""Close the stream."""
         self.data_writer.close()
         self.idx_writer.close()
-        for writer in self.feat_writers.values():
-            writer.close()
 
     def __repr__(self):
         return (

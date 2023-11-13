@@ -23,6 +23,7 @@ class ParquetDataset(DataPipeline, FluidInterface):
         detshuffle: bool = False,
         nodesplitter=shardlists.single_node_only,
         sample_limit_per_file: int = None,
+        extra_fields_in_data: Optional[List[str]] = None,
         **kwargs,
     ):
         super().__init__()
@@ -44,4 +45,6 @@ class ParquetDataset(DataPipeline, FluidInterface):
                 else:
                     self.append(filters.shuffle(shardshuffle))
 
-        self.append(_ParquetSample(handler, sample_limit_per_file))
+        self.append(
+            _ParquetSample(handler, sample_limit_per_file, extra_fields_in_data)
+        )
