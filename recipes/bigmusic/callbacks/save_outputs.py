@@ -25,6 +25,9 @@ class SaveOutputsCallback(pl.Callback):
         sample_rate = pl_module.extra_params.sample_rate
         save_batch_outputs(outputs, batch, output_dir=output_dir, sample_rate=sample_rate, sample_round=dataloader_idx, index_offset=self.total_items)
         self.total_items += outputs['generated_audio_tensor'].shape[0]
+
+        with open(Path(output_dir)/'inference_params.json', 'w') as f:
+            json.dump(pl_module.extra_params, f, indent=2)
     
 def format_lyrics_and_style(style_text, lyrics=None):
     if style_text is None and lyrics is None: # gt case
@@ -159,11 +162,16 @@ def save_video(input_results_dir, output_video_dir, format_video_text_fn=default
     output_video_dir = Path(output_video_dir)
     output_video_dir_tmp = output_video_dir/'tmp'
     output_video_dir_tmp.mkdir(exist_ok=True, parents=True)
-    generated_output_fps = list(Path(input_results_dir).glob('**/*.generated.wav*'))
+
+    generated_output_fps = list(Path(input_results_dir).glob('**/*.generated.wav'))
+
+    mp3_fps = list(Path(input_results_dir).glob('**/*.generated.wav.mp3'))
+    if len(mp3_fps) > 0 and len(generated_output_fps) == 0:
+        raise Exception('Save video does not support mp3 outputs. Encoding to video causes artifacts')
+
     for idx, generated_output_fp in enumerate(generated_output_fps):
-        if generated_output_fp.suffix not in ['.wav', '.mp3']: continue
         audio_fp = generated_output_fp
-        metadata_fp = str(generated_output_fp).replace('generated.wav.mp3', 'metadata.json').replace('generated.wav', 'metadata.json')
+        metadata_fp = str(generated_output_fp).replace('generated.wav', 'metadata.json')
         
         output_video_fp = output_video_dir_tmp/generated_output_fp.with_suffix('.mp4').name
         output_text_fp = output_video_dir_tmp/generated_output_fp.with_suffix('.txt').name

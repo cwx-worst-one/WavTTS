@@ -79,8 +79,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         if self.log_counter < 1:
             print(batch)
             self.log_counter += 1
-
-        if type(batch["conditions"] == list):
+        if type(batch["conditions"]) == list:
             assert len(set(list(map(tuple, batch["conditions"])))) == 1, "Make sure that all conditions in the batch are the same"
             conditions = batch['conditions'][0].split(',')
         else:

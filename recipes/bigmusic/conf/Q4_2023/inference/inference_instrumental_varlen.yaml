@@ -19,10 +19,11 @@ extra_params:
 
     # Semantic model
     semantic_cls_path: recipes.bigmusic.lightning.semantic_varlen_modules.SemanticModuleVarlen
-    semantic_ckpt: "/mnt/bn/audio-diffusion/ducle/logs/semantic_model_instrumental_07B/mcc40m_vad_2min_varlen_lowpri/checkpoints/last.ckpt"
+    semantic_ckpt: "/mnt/bn/audio-diffusion/ducle/logs/semantic_model_instrumental_07B/mcc40m_vad_2min_varlen_aws/checkpoints/step=210000.ckpt"
+    mulan_ckpt: infer_from_semantic_ckpt
 
     # Used for reranker, only loaded if use_reranker=True
-    mulan_ckpt: "/mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt"
+    mulan_rewards_ckpt: "/mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt"
 
     diffusion_params:
         num_chunks: 1
@@ -64,11 +65,6 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
     semantic_cls_path: !ref <extra_params[semantic_cls_path]>
     extra_params: !ref <extra_params>
     required_modules:
-        bestrq_modules:
-            bestrq:
-                hpath: /mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/umm_stage3_music_chroma_vq32768x32/step=0030000.ckpt
-                initializer: !name:recipes.umm.requires.model_initializer.init_stage3
-                    cache_dir: !ref <run_opts[cache_dir]>
         diffusion_modules:
             diffusion:
                 hpath: /mnt/bn/audio-diffusion/wtl/diffusion/model_14_120s_finetune/checkpoints/last.ckpt
@@ -104,7 +100,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                     nonvocal: 1.0
                 required_modules:
                     mulan:
-                        hpath: !ref <extra_params[mulan_ckpt]>
+                        hpath: !ref <extra_params[mulan_rewards_ckpt]>
                         initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                             version: "g4"
             initializer: !name:recipes.bigmusic.utils.reranker.init_reranker

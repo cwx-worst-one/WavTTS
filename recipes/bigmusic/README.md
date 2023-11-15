@@ -25,6 +25,25 @@ To disable this and save only the outputs, set `--additional_callbacks []`
 
 See `recipes/bigmusic/scripts/run_inference_semantic.sh` for latest baseline inference commands 
 
+#### Baseline models:
+`
+Mulan 110: /mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt
+Diffusion 30s: /mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last-minimal.ckpt
+Diffusion 2min: /mnt/bn/audio-diffusion/wtl/diffusion/model_14_120s_finetune/checkpoints/last-minimal.ckpt
+Vocoder: /mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/soundstream-step=374999-val_sdr=12.9557-minimal.ckpt
+UMM: /mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/umm_stage3_music_chroma_vq32768x32/step=0030000-minimal.ckpt
+`
+
+`
+30s:
+Q3: /mnt/bn/lyrics-to-song/baseline_models/q3/20231102-online-demo/varlen30_tag3_bs12_07B_6w_v1/checkpoints/step=234000-val_accu_0=21.02.ckpt
+Q4: /mnt/bn/lyrics-to-song/baseline_models/q4/20231102-new-baseline-mixed-ctiga-196k/checkpoints/step=196000-tr_loss=3.9746-val_accu_0=24.90.ckpt
+
+2-Minutes: 
+GroupB: /mnt/bn/lyrics-to-song/baseline_models/q4/20231106-2min_varlen/checkpoints/step=216000-tr_loss=0.0000-val_accu_0=17.27.ckpt
+GroupA Finetune: /mnt/bn/lyrics-to-song/baseline_models/q4/20231106-2min_varlen_groupA/checkpoints/step=016000-tr_loss=0.0000-val_loss_0=4.1951.ckpt
+`
+
 ### Inference CSV lists (aka prompt_paths)
 
 Master [Doc](https://bytedance.us.feishu.cn/sheets/DjQCskPkJhkpy5t1BU7ua7vUsje?sheet=bYaKbY)

@@ -22,9 +22,10 @@ extra_params:
     # Semantic model
     semantic_cls_path: recipes.bigmusic.lightning.semantic_varlen_modules.SemanticModuleVarlen
     semantic_ckpt: "/mnt/bn/lyrics-to-song/baseline_models/q4/20231106-2min_varlen/checkpoints/step=184000-tr_loss=0.0000-val_loss_0=4.2460.ckpt"
+    mulan_ckpt: infer_from_semantic_ckpt
 
     # Used for reranker, only loaded if use_reranker=True
-    mulan_ckpt: "/mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt"
+    mulan_rewards_ckpt: "/mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt"
 
     ar_params:
         coarse_duration: 10
@@ -43,7 +44,7 @@ extra_params:
     # Model Settings
     sample_rate: 24000
     duration: 120 # 30
-    semantic_temperature: 1.0
+    semantic_temperature: 1.05
     sample_mode: "top_p"
     token2wav_type: diffusion
 
@@ -77,14 +78,9 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
     semantic_cls_path: !ref <extra_params[semantic_cls_path]>
     extra_params: !ref <extra_params>
     required_modules:
-        bestrq_modules:
-            bestrq:
-                hpath: /mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/umm_stage3_music_chroma_vq32768x32/step=0030000.ckpt
-                initializer: !name:recipes.umm.requires.model_initializer.init_stage3
-                    cache_dir: !ref <run_opts[cache_dir]>
         diffusion_modules:
             diffusion:
-                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/model_14_120s_finetune/checkpoints/last.ckpt
+                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/model_14_120s_finetune/checkpoints/last-minimal.ckpt
                 initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
                     cache_dir: !ref <run_opts[cache_dir]>
             sampler:
@@ -93,7 +89,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                     cache_dir: !ref <run_opts[cache_dir]>
                     duration: 120
             vocoder:
-                hpath: /mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/soundstream-step=374999-val_sdr=12.9557.ckpt
+                hpath: /mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/soundstream-step=374999-val_sdr=12.9557-minimal.ckpt
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                     cache_dir: !ref <run_opts[cache_dir]>
         ar_modules:
@@ -112,13 +108,13 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
         reranker:
             hpath:
                 rewards:
-                    style_text: 2.0
+                    style_text: 3.0
                     qualitative: 1.0
                     wer: 1.0
                     #chord: 4.0
                 required_modules:
                     mulan:
-                        hpath: !ref <extra_params[mulan_ckpt]>
+                        hpath: !ref <extra_params[mulan_rewards_ckpt]>
                         initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                             version: "g4"
                     #chord:

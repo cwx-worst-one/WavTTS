@@ -14,6 +14,7 @@ import torch.functional
 import importlib
 from recipes.bigmusic.utils.model_initializer import run_2ar
 from itertools import zip_longest
+from recipes.bigmusic.lightning.base_modules import BaseModule
 from recipes.bigmusic.lightning.semantic_modules import process_eos_indexes, truncate_wav_to_eos
 import json
 from pathlib import Path
@@ -37,10 +38,10 @@ class SemanticInferenceModule(pl.LightningModule):
         module = importlib.import_module('.'.join(module_paths))
         semantic_class = getattr(module, cls_name)
 
-        self.semantic_module = semantic_class.load_from_checkpoint(
+        self.semantic_module: BaseModule = semantic_class.load_from_checkpoint(
             self.extra_params.semantic_ckpt,
             # pay attention to the logs to make sure the model is loaded correctly
-            strict=False,
+            strict=True,
         ).eval()
         self.requires = {}
         
@@ -70,7 +71,6 @@ class SemanticInferenceModule(pl.LightningModule):
         if isinstance(self.semantic_module.model, LlamaPreTrainedModel) and ('16' in self.trainer.precision):
             raise Exception(f"Invalid precision for flash llama model {self.trainer.precision}. Please set --run_opts.precision 32")
 
-
     def load_required_modules(self, required_modules):
         for name, item in required_modules.items():
             if isinstance(item, (list, tuple)):
@@ -79,7 +79,11 @@ class SemanticInferenceModule(pl.LightningModule):
                 hpath = item['hpath']
                 initializer = item['initializer']
             self.requires.update(initializer(hpath, local_rank=self.local_rank))
-        self.semantic_module.load_required_modules()
+            
+        # set semantic mulan ckpt if passed in
+        if self.extra_params.get('mulan_ckpt', None) and self.extra_params.mulan_ckpt != 'infer_from_semantic_ckpt':
+            self.semantic_module.hparams.required_modules['mulan']['hpath'] = self.extra_params.mulan_ckpt
+        self.semantic_module.load_required_modules(ignore=('bestrq',))
 
     def predict_step(self, batch, batch_idx=0, dataloader_idx=0):
         semantic_samples = self.semantic_module.predict(

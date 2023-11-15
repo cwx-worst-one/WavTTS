@@ -71,7 +71,7 @@ def is_valid_lyrics(lyrics, confidence_threshold=0.8):
     for utterance in lyrics:
         if 'confidence' in utterance:
             confidence = float(utterance["confidence"])
-        elif 'additions' not in utterance:
+        elif 'additions' in utterance:
             confidence = float(utterance["additions"]["confidence"])
         else:
             # some lyrics may not have confidence (force alignment). return True
