@@ -32,7 +32,7 @@ from recipes.datasets.mcc.mix import (
     DataModule
 )
 from recipes.datasets.mcc.sami_tokenizer import convert_labels_to_text_id, get_line_break_id
-
+from recipes.bigmusic.utils.format_utils import rewrite_metadata
 from recipes.musiclm.utils.dist import local_zero_first
 from recipes.musiclm.transforms.audio import (
     FastNormalizeAudio,
@@ -68,61 +68,6 @@ def pad_crop(sequence, seq_len, dtype, padding_value=0):
 def ffmpeg_read_audio(audio_bin, sample_rate=24000):
     seg_bin, err = ffmpeg.input("pipe:").output("pipe:", loglevel="error", format="s16le", ar=sample_rate).run(input=audio_bin, quiet=True)
     return (np.frombuffer(seg_bin, dtype="int16") / 32768.0).astype(np.float32)
-
-def rewrite_metadata(metadata, type="Vocal"):
-    mood = metadata.get('final_mood')
-    genre = metadata.get('final_genre')
-    gender = metadata.get('merge_aed')
-    text = ""
-    if type == "Vocal":
-        text = "A"
-        if mood is not None and mood != 'nan' and mood.strip():
-            text += " " + mood.lower()
-        if genre is not None and genre != 'nan' and genre.strip():
-            text += " " + genre.lower()
-        text += " song"
-        if gender is not None and gender != 'nan':
-            if 'Female' in gender:
-                text += " with female vocal"
-            elif 'Male' in gender:
-                text += " with male vocal"
-        text += "."
-    elif type == "Instrumental":
-        text = ""
-        if mood is not None and mood != 'nan' and mood.strip():
-            text += mood.lower() + " "
-        if genre is not None and genre != 'nan' and genre.strip():
-            text += genre.lower() + " "
-        text += "music."
-    elif type == "Speech":
-        text = "Speech."
-    elif type == "mir_tags":
-        # NOTE: randomly shuffle to diversify prompt
-        random.shuffle(metadata["genres"])
-        random.shuffle(metadata["vocals"]) 
-
-        def multiple_choices_text_processor(text: List[str]) -> str:
-            if len(text) > 1:
-                text = ", ".join(text[:-1]) + f" and {text[-1]}"
-            elif len(text) == 1:
-                text = text[0]
-            else:
-                text = ""
-            return text.lower()
-
-        # example: 'rock, pop and blues'
-        genre_text = multiple_choices_text_processor(metadata["genres"])
-        genre_text = genre_text.replace("_", " ") # rnb_soul -> rnb soul
-        if mood is not None and mood != 'nan':
-            genre_text = f"{mood.lower()} {genre_text}"
-
-        gender = {
-            "gender_male": "male",
-            "gender_female": "female",
-        }
-        vocal_gender_text = multiple_choices_text_processor([gender.get(v, "") for v in metadata["vocals"] if "gender_" in v])
-        text = f"""A {genre_text} song with {vocal_gender_text} vocal."""
-    return text
 
 def select_tag_metadata_from_timestamps(index_data, start: int, end: int) -> Dict[str, List[str]]:
     mir_tags = index_data.get("tags")
@@ -727,7 +672,7 @@ class BillboardDataset(WebPipeline):
             self.phoneme_tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-cv-ft")
         # To silence espeak logging warnings: "WARNING - words count mismatch on 100.0% of the lines". Must be set after tokenizer is initialized
         phonemizer.logger.get_logger().setLevel(logging.ERROR)
-        self.phonemizer._add_tokens(["<n>"])        
+        self.phoneme_tokenizer._add_tokens(["<n>"])        
 
         self.sample_rate = sample_rate
         self.audio_key = audio_key

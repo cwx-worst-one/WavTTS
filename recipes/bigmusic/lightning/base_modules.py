@@ -6,8 +6,10 @@ import torch
 import torch.nn as nn
 from pytorch_lightning.profilers import PassThroughProfiler
 from samantha.models.ctiga import gpt
+from samantha.models.ctiga.gpt import _init_weights
 from samantha.utils.ctiga.inference_params import InferenceParams
 from tqdm.auto import tqdm
+from functools import partial
 
 from samantha.utils.hparams import DotDict
 from recipes.musiclm.inference.utils import sample
@@ -187,8 +189,11 @@ class BaseContinuousEmbedModule(BaseModule):
         delete_embedding_module(self.model)
         self.input_embedders = input_embedders
         self.target_embedder = target_embedder
-        # _init_weights is executed inside GPTLMHeadModel init
-        if not isinstance(self.model, gpt.GPTLMHeadModel):
+        if isinstance(self.model, gpt.GPTLMHeadModel):
+            init_weights_fn = partial(_init_weights, n_layer=self.model.config.num_hidden_layers)
+            self.input_embedders.apply(init_weights_fn)
+            self.target_embedder.apply(init_weights_fn)
+        else:
             self.input_embedders.apply(self.model._init_weights)
             self.target_embedder.apply(self.model._init_weights)
         self.use_cross_attn = self.extra_params.get("use_cross_attn", False)

@@ -34,7 +34,6 @@ extra_params:
     add_ref_to_beam: False
     ce_weight: 0.1
     seq_weight: 10
-    use_itn_asr: True
     positive_phrase: "cd quality, catchy, memorable"
     negative_phrase: "noisy, boring, forgettable"
     rewards:
@@ -158,6 +157,9 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticRLModule
             hpath: !ref <run_opts[vocoder_ckpt]>
             initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                 cache_dir: !ref <run_opts[cache_dir]>
+        asr:
+            hpath: en_punc
+            initializer: !name:recipes.bigmusic.utils.metrics_asr.init_asr
 
 logger:
     - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger

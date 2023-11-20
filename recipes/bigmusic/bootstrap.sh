@@ -26,9 +26,18 @@ export PYTHONPATH="${PYTHONPATH}:/opt/tiger/pypetrel/pypetrel"
 # For sami_tts_api
 export LD_LIBRARY_PATH=/opt/tiger/sami_engine_cleaned/libs:$LD_LIBRARY_PATH 
 
-if ! grep -q "version:1.0.0.129" /opt/tiger/pypetrel/current_revision; then
+if ! grep -q "version:1.0.0.129-dev" /opt/tiger/pypetrel/current_revision; then
+    cd /opt/tiger
     rm -rf /opt/tiger/pypetrel
-    cp -r /mnt/bn/audio-diffusion/ashaw/bvc/pypetrel.1.0.0.129 /opt/tiger/pypetrel
+    if [ -d "/mnt/bn/audio-diffusion/ashaw/bvc/pypetrel.1.0.0.129-dev" ]; then
+        echo "Copying ASR model pypetrel from audio-diffusion bytenas"
+        cp -r /mnt/bn/audio-diffusion/ashaw/bvc/pypetrel.1.0.0.129-dev /opt/tiger/pypetrel
+    else
+        echo "Downloading ASR model: pypetrel"
+        hdfs dfs -get /home/byte_speech_sv/andrew.shaw/data/asr/pypetrel.1.0.0.129-dev.tar .
+        tar -xvf pypetrel.1.0.0.129-dev.tar
+    fi
+    cd -
 fi
 
 # For huggingface blocking our IP
@@ -44,8 +53,6 @@ sudo apt install espeak ffmpeg zip fonts-arphic-ukai -y
 pip3 install -qr ./recipes/bigmusic/requirements.txt
 pip3 install -qr ./recipes/diffusion/requirements.txt
 
-# Diffusion
-pip3 install ./recipes/soundstream/torch-museval
 
 
 MAX_ORDER=10 pip3 install https://github.com/kpu/kenlm/archive/master.zip

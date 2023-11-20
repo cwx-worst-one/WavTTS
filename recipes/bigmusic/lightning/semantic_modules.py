@@ -9,7 +9,7 @@ from recipes.bigmusic.lightning.embedding_modules import (
     MulanTagEmbedder,
     get_mulan_embeds,
 )
-from recipes.bigmusic.utils.metrics_asr import wav2lyrics
+from recipes.bigmusic.utils.metrics_asr import asr_transcribe_lyrics
 from recipes.bigmusic.utils.rewards import (
     mulan_audio_reward,
     mulan_text_reward,
@@ -411,13 +411,11 @@ class SemanticRLModule(SemanticModule):
             assert items["lyrics"] is not None
             if "sampled_lyrics" not in items:
                 eos_index_list = items["eos_index_list"]
-                items["sampled_lyrics"], _ = wav2lyrics(
+                items["sampled_lyrics"] = asr_transcribe_lyrics(
+                    self.requires,
                     sampled_audio,
-                    sample_lengths=None if len(eos_index_list) == 0 else eos_index_list,
-                    sr=self.extra_params.sample_rate,
-                    device_id=self.local_rank,
-                    do_itn=self.extra_params.use_itn_asr,
-                    resampling_method="torchaudio",
+                    sample_rate=self.extra_params.sample_rate,
+                    sample_lengths=None if len(eos_index_list) == 0 else eos_index_list
                 )
             sampled_lyrics = items["sampled_lyrics"]
             if len(sampled_lyrics) != sampled_audio.size(0):
@@ -483,13 +481,11 @@ class SemanticRLModule(SemanticModule):
         elif reward_type == "nonvocal":
             if "sampled_lyrics" not in items:
                 eos_index_list = items["eos_index_list"]
-                items["sampled_lyrics"], _ = wav2lyrics(
+                items["sampled_lyrics"] = asr_transcribe_lyrics(
+                    self.requires,
                     sampled_audio,
-                    sample_lengths=None if len(eos_index_list) == 0 else eos_index_list,
-                    sr=self.extra_params.sample_rate,
-                    device_id=self.local_rank,
-                    do_itn=self.extra_params.use_itn_asr,
-                    resampling_method="torchaudio",
+                    sample_rate=self.extra_params.sample_rate,
+                    sample_lengths=None if len(eos_index_list) == 0 else eos_index_list
                 )
             sampled_lyrics = items["sampled_lyrics"]
             if len(sampled_lyrics) != sampled_audio.size(0):

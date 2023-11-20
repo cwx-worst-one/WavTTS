@@ -62,6 +62,11 @@ def normalize_audio(
         raise Exception("execute ffmpeg fail: %s" % err_msg.decode())
     return out
 
+ASR_MODEL_PATHS = {
+    "en": "/opt/tiger/pypetrel/models/en_us_lyric",
+    "en_punc": "/opt/tiger/pypetrel/models/en_us_lyric_with_itn_v2",
+    "zh": "/opt/tiger/pypetrel/models/sami_zh_cn_lyric"
+}
 
 class Wav2Lyrics:
     _sample_rate = 16000
@@ -69,17 +74,14 @@ class Wav2Lyrics:
 
     def __init__(
         self,
-        model_path: str = "/mnt/bn/audio-diffusion/ashaw/models/asr/en_us_lyric",
-        itn_model_path: str = "/mnt/bn/audio-diffusion/ashaw/models/asr/en_us_lyric_with_itn_v2",
-        do_itn: bool = False,
-        resampling_method: str = "ffmpeg",  # ffmpeg|torchaudio
+        model_name: str = "en_punc",
+        device_id = None,
     ):
-        self.resampling_method = resampling_method
         self.verify_dependencies()
+        self.device_id = device_id
+        self.model_path = ASR_MODEL_PATHS[model_name]
 
-        if not pypetrel.is_engine_initialized():
-            model_path = itn_model_path if do_itn else model_path
-            pypetrel.initialize_engine(model_path)
+        
 
     def verify_dependencies(self):
         if not PYPETREL_LIB_FOUND:
@@ -106,51 +108,40 @@ class Wav2Lyrics:
                 "Could not find env var: CUDA_VISIBLE_DEVICES. Setting default to 0"
             )
 
-    def resample_ffmpeg(self, audio_bytes, sample_rate: int):
-        #logger.warning(
-        #    f"The audio is resampled from {sample_rate}hz to {self._sample_rate}hz"
-        #)
-        resampled_bytes = normalize_audio(
-            audio_bytes=audio_bytes, sample_rate=self._sample_rate, format="wav"
-        )
-        return resampled_bytes
-
-    def resample_torchaudio(self, audio, sample_rate: int):
-        if sample_rate != self._sample_rate:
-            audio = resample(
-                audio,
-                orig_freq=sample_rate,
-                new_freq=self._sample_rate,
-            )
-        return audio
-
     def __call__(
         self,
         wav_batch: torch.Tensor,
         sample_rate: int,
         sample_lengths: Optional[int] = None,
-        device_id: Optional[int] = None,
     ) -> Dict[str, Union[List[str], torch.Tensor]]:
+        if not pypetrel.is_engine_initialized():
+            pypetrel.initialize_engine(self.model_path)
+
         if len(wav_batch.shape) == 2:
             wav_batch = wav_batch.unsqueeze(1)
         wav_batch = wav_batch.float().cpu()
-        if sample_lengths is not None:
-            # In some cases sample_lengths may be 0 which will cause ASR to crash.
-            # We use a lower-bound of 1 second here to avoid crash.
-            wav_batch = [
-                wav_batch[i, ..., : max(sample_lengths[i], sample_rate)]
-                for i in range(len(sample_lengths))
-            ]
+        wav_bytes_batch = []
+        for idx, wav in enumerate(wav_batch):
+            if sample_lengths is not None:
+                # In some cases sample_lengths may be 0 which will cause ASR to crash.
+                # We use a lower-bound of 1 second here to avoid crash.
+                wav = wav[..., : max(sample_lengths[idx], sample_rate)]
+
+            byte_io = io.BytesIO()
+            torchaudio.save(byte_io, wav, sample_rate, format="wav", encoding="PCM_S", bits_per_sample=16)
+            byte_io.seek(0)
+            wav_bytes_resampled = byte_io.read()
+            wav_bytes_batch.append(wav_bytes_resampled)
 
         prev_flag = os.environ.get("CUDA_VISIBLE_DEVICES")
-        if device_id is not None:
-            os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+        if self.device_id is not None:
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(self.device_id).split(':')[-1]
 
         if not PYPETREL_LIB_FOUND:
-            return ["" for _ in range(len(wav_batch))], wav_batch
+            return ["" for _ in range(len(wav_bytes_batch))], wav_bytes_batch
 
-        num = len(wav_batch)
-        wav_iter = iter(wav_batch)
+        num = len(wav_bytes_batch)
+        wav_iter = iter(wav_bytes_batch)
         out = {"indices": [], "lyrics": []}
         with pypetrel.asr.OfflineRecognizer(num) as recognizer:
             recognizing_idx = 0
@@ -163,25 +154,10 @@ class Wav2Lyrics:
                         has_next = False
                         break
 
-                    if self.resampling_method == "ffmpeg":
-                        byte_io = io.BytesIO()
-                        torchaudio.save(byte_io, wav, sample_rate, format="wav")
-                        byte_io.seek(0)
-                        wav_bytes = byte_io.read()
-                        wav_bytes_resampled = self.resample_ffmpeg(wav_bytes, sample_rate)
-                    elif self.resampling_method == "torchaudio":
-                        wav = self.resample_torchaudio(wav, sample_rate)
-                        byte_io = io.BytesIO()
-                        torchaudio.save(byte_io, wav, sample_rate, format="wav")
-                        byte_io.seek(0)
-                        wav_bytes_resampled = byte_io.read()
-                    else:
-                        raise ValueError(f"Unknown resampling method: {self.resampling_method}")
-
                     wav_input = pypetrel.asr.ASREngineInput()
                     wav_input.set_waveform(wav_bytes_resampled)
                     wav_input.set_finish(True)
-                    wav_input.set_sample_rate(self._sample_rate)
+                    wav_input.set_sample_rate(self._sample_rate) # "target sample rate". Must be set to 16k. Model will resample anyways
                     asr_input = pypetrel.asr.Input()
                     asr_input.set_asr_input(wav_input)
 
@@ -208,7 +184,7 @@ class Wav2Lyrics:
             for _, lyrics, wav in sorted(zip(out["indices"], out["lyrics"], out["wav"]))
         ]
         lyrics, wavs = zip(*lyrics_wavs)
-        if device_id is not None:
+        if self.device_id is not None:
             if prev_flag is None:
                 del os.environ["CUDA_VISIBLE_DEVICES"]
             else:
@@ -217,14 +193,14 @@ class Wav2Lyrics:
         return {"lyrics": lyrics, "audio": wavs}
 
 
-def wav2lyrics(
-    wav_batch,
-    sr=24000,
-    sample_lengths=None,
-    device_id=None,
-    do_itn=False,  # only valid for the first call
-    resampling_method="ffmpeg", # ffmpeg|torchaudio
-):
+def init_asr(hpath, local_rank, cache_dir=None):
+    wav2lyrics_module = Wav2Lyrics(
+        model_name=hpath,
+        device_id=local_rank
+    )
+    return { 'asr': wav2lyrics_module }
+
+def asr_transcribe_lyrics(requires, wav_batch, sample_rate, sample_lengths=None):
     """
     As transcription jobs can fail and the order is not preserved,
     this function returns a dictionary contains lyrics and a corresponding wav tensor.
@@ -233,16 +209,7 @@ def wav2lyrics(
     sample_lengths: length of each audio sample in batch
     sr: sample rate
     """
-
-    wav2lyrics_module = Wav2Lyrics(
-        do_itn=do_itn,
-        resampling_method=resampling_method,
-    )
-    outputs = wav2lyrics_module(
-        wav_batch, sample_rate=sr, sample_lengths=sample_lengths, device_id=device_id
-    )
-    return outputs["lyrics"], outputs["audio"]
-
+    return requires['asr'](wav_batch, sample_rate=sample_rate, sample_lengths=sample_lengths)['lyrics']
 
 @dataclass
 class EditOps:

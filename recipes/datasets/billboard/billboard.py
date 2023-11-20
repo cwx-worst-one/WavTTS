@@ -203,7 +203,7 @@ from recipes.bigmusic.datasets.transforms.lyrics_segment import (
     lyrics_to_segments,
 )
 from recipes.bigmusic.datasets.transforms.lyrics import LyricsTokenTransform
-from recipes.bigmusic.datasets.mix import rewrite_metadata
+from recipes.bigmusic.utils.format_utils import rewrite_metadata
 
 
 class BillboardTransform:

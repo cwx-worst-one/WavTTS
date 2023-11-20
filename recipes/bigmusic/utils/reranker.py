@@ -1,7 +1,7 @@
 import torch
 
 from recipes.bigmusic.utils.format_utils import normalize_text
-from recipes.bigmusic.utils.metrics_asr import wav2lyrics
+from recipes.bigmusic.utils.metrics_asr import asr_transcribe_lyrics
 from recipes.bigmusic.utils.rewards import (
     mulan_text_reward,
     wer_reward,
@@ -73,12 +73,11 @@ class Reranker:
             )[0]
             return positive_reward - negative_reward
         elif rw_type == "wer":
-            lyrics_hyp, _ = wav2lyrics(
+            lyrics_hyp = asr_transcribe_lyrics(
+                self.requires,
                 sampled_audio,
                 sample_lengths=None if len(eos_index_list) == 0 else eos_index_list,
-                sr=extra_params.sample_rate,
-                device_id=self.local_rank,
-                do_itn=True,
+                sample_rate=extra_params.sample_rate
             )
             if len(lyrics_hyp) != len(sampled_audio):
                 # This sometimes happens, not sure why
@@ -90,12 +89,11 @@ class Reranker:
                 device=sampled_audio.device,
             )
         elif rw_type == "nonvocal":
-            lyrics_hyp, _ = wav2lyrics(
+            lyrics_hyp = asr_transcribe_lyrics(
+                self.requires,
                 sampled_audio,
                 sample_lengths=None if len(eos_index_list) == 0 else eos_index_list,
-                sr=extra_params.sample_rate,
-                device_id=self.local_rank,
-                do_itn=True,
+                sample_rate=extra_params.sample_rate
             )
             if len(lyrics_hyp) != len(sampled_audio):
                 # This sometimes happens, not sure why

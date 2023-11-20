@@ -3,7 +3,6 @@ from typing import Any, Dict, List, Generator, Optional, Callable
 import io
 import torch
 import webdataset as wds
-from torchaudio_augmentations import Compose
 from dataclasses import dataclass
 import math
 import librosa
@@ -14,7 +13,7 @@ from recipes.bigmusic.utils.format_utils import normalize_text
 from transformers import Wav2Vec2PhonemeCTCTokenizer
 from recipes.musiclm.utils.dist import local_zero_first
 import random
-from recipes.bigmusic.datasets.mix import rewrite_metadata
+from recipes.bigmusic.utils.format_utils import rewrite_metadata
 from functools import partial
 
 def pad_crop(sequence, seq_len, dtype, padding_value=0):
