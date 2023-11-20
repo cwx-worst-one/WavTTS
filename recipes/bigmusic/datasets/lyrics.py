@@ -586,6 +586,33 @@ DATASET_CONFIGS = {
             "infer_weights": False # already balanced
         }
     },
+    "mcc60m_200k_vocal_mixed_text_audio": {
+        "init_fn": DefaultDatasets.Batched.default_batched_vocal_dataset,
+        "extra_args": {
+            "index_list": INDEX["US"]["MCCVocalB_200k"],
+            "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
+            "enable_punctuation": True,
+            "infer_weights": False # already balanced
+        }
+    },
+    "mcc60m_150k_vocal_mixed_text_audio": {
+        "init_fn": DefaultDatasets.Batched.default_batched_vocal_dataset,
+        "extra_args": {
+            "index_list": INDEX["US"]["MCCVocalB_150k"],
+            "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
+            "enable_punctuation": True,
+            "infer_weights": False # already balanced
+        }
+    },
+    "mcc60m_100k_vocal_mixed_text_audio": {
+        "init_fn": DefaultDatasets.Batched.default_batched_vocal_dataset,
+        "extra_args": {
+            "index_list": INDEX["US"]["MCCVocalB_100k"],
+            "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
+            "enable_punctuation": True,
+            "infer_weights": False # already balanced
+        }
+    },
     "mcc40m_instrumental_style_text": {
         "init_fn": DefaultDatasets.Batched.default_batched_instrumental_dataset,
         "extra_args": {
