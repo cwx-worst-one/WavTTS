@@ -59,6 +59,8 @@ def inference_dataset_from_prompt(
         prompts['style_audio'] = [load_wav(wav_path) for wav_path in prompts['style_audio']]
     if 'vocal_audio' in prompts:
         prompts['vocal_audio'] = [load_wav(wav_path) for wav_path in prompts['vocal_audio']]
+    if 'structure' in prompts:
+        prompts['structure'] = [json.loads(x) for x in prompts['structure']]
     if run_combinations:
         lyrics_prompt_pairs = itertools.product(*list(prompts.values()))
     else:

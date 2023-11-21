@@ -9,12 +9,13 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
 
 extra_params:
-    beam_size: 1    # set to 4 if using reranker
-    prompt_path: "/mnt/bn/audio-diffusion/data/mixture_prompts/suno100.csv"
+    beam_size: 4    # set to 4 if using reranker
+    samples_to_save: 1
+    prompt_path: "/mnt/bn/audio-diffusion/data/bigmusic_text_prompts/vocal_prompts_20231018_mixed135.csv"
     inference_conditions: style_text,lyrics_tokens # style_text|style_audio,lyrics_tokens,vocal_audio|vocal_text,chroma
     max_items: null
     run_combinations: False
-    use_reranker: False
+    use_reranker: True
 
     output_dir: ./generated_output/conditional
 
@@ -84,7 +85,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                     cache_dir: !ref <run_opts[cache_dir]>
         diffusion_modules:
             diffusion:
-                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last.ckpt
+                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last-minimal.ckpt
                 initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
                     cache_dir: !ref <run_opts[cache_dir]>
             sampler:
@@ -92,7 +93,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                 initializer: !name:recipes.diffusion.inference_from_text_lyrics2song.init_sampler
                     cache_dir: !ref <run_opts[cache_dir]>
             vocoder:
-                hpath: /mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/soundstream-step=374999-val_sdr=12.9557.ckpt
+                hpath: /mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/soundstream-step=374999-val_sdr=12.9557-minimal.ckpt
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                     cache_dir: !ref <run_opts[cache_dir]>
         ar_modules:
@@ -141,6 +142,8 @@ additional_callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
 callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
+      beam_size: !ref <extra_params[beam_size]>
+      samples_to_save: !ref <extra_params[samples_to_save]>
 
 trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>

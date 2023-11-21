@@ -156,11 +156,15 @@ def pad_collate_tensor_fn(batch, *, collate_fn_map):
      batch = [crop_pad_to_seq_length(x, max_length, x.dtype, padding_value=0) for x in batch]
      return collate_tensor_fn(batch, collate_fn_map=collate_fn_map)
 
+def collate_list_fn(batch, *, collate_fn_map):
+    return batch
+
 def dictionary_collate(batch):
     """Fixes pytorch's default collate which cannot handle dictionaries or null fields."""
     lyrics_collate_fn_map = {
         **default_collate_fn_map,
-        torch.Tensor: pad_collate_tensor_fn
+        torch.Tensor: pad_collate_tensor_fn,
+        list: collate_list_fn,
     }
     def remove_invalid_fields(item):
         def invalid_field(field): return field is None or isinstance(field, dict)

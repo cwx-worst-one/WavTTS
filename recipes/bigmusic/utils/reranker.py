@@ -8,6 +8,7 @@ from recipes.bigmusic.utils.rewards import (
     chord_reward,
     nonvocal_reward,
     structure_reward,
+    chorus_sim_reward,
 )
 
 
@@ -41,10 +42,15 @@ class Reranker:
 
     def compute_rewards(self, sampled_audio, eos_index_list, batch, extra_params):
         rewards = torch.zeros(len(sampled_audio)).to(sampled_audio.device)
+        rewards_breakdown = [{} for _ in range(len(sampled_audio))]
         for rw_type, rw_weight in self.rewards.items():
+            if rw_weight == 0:
+                continue
             rw = self._get_reward(rw_type, sampled_audio, eos_index_list, batch, extra_params)
             rewards += rw_weight * rw
-        return rewards
+            for i in range(len(sampled_audio)):
+                rewards_breakdown[i][rw_type] = rw[i].item()
+        return rewards, rewards_breakdown
 
     def _get_reward(self, rw_type, sampled_audio, eos_index_list, batch, extra_params):
         if rw_type == "style_text":
@@ -107,6 +113,13 @@ class Reranker:
                 sample_rate=extra_params.sample_rate,
                 device=sampled_audio.device,
             )
+        elif rw_type == "chorus_sim":
+            return chorus_sim_reward(
+                sampled_audio,
+                [[x for x in y if x[0] == "chorus"] for y in batch["structure"]],
+                sample_rate=extra_params.sample_rate,
+                device=sampled_audio.device,
+            )
         elif rw_type == "chord":
             # TODO: enable genre-specific chord LM
             return chord_reward(
@@ -121,22 +134,30 @@ class Reranker:
             raise ValueError(f"Unknown reward type: {rw_type}")
 
     def rerank(self, sampled_audio, eos_index_list, batch, extra_params):
-        rewards = self.compute_rewards(sampled_audio, eos_index_list, batch, extra_params)
+        rewards, rewards_breakdown = self.compute_rewards(
+            sampled_audio, eos_index_list, batch, extra_params
+        )
         beam = extra_params.beam_size
         assert len(sampled_audio) % beam == 0
         bsz = len(sampled_audio) // beam
         rewards = rewards.reshape(bsz, beam)
-        indices = rewards.argmax(dim=-1).cpu().tolist()
+        indices = rewards.argsort(dim=-1, descending=True).cpu().flatten().tolist()
         reranked_sampled_audio = []
         reranked_eos_index_list = []
+        reranked_rewards_breakdown = []
         for i in range(len(indices)):
-            idx = i * beam + indices[i]
+            idx = i // beam + indices[i]
             reranked_sampled_audio.append(sampled_audio[idx])
             if len(eos_index_list) > 0:
                 reranked_eos_index_list.append(eos_index_list[idx])
+            reranked_rewards_breakdown.append(rewards_breakdown[idx])
         reranked_sampled_audio = torch.vstack(reranked_sampled_audio)
         reranked_eos_index_list = torch.hstack(reranked_eos_index_list)
-        return reranked_sampled_audio, reranked_eos_index_list, rewards
+        return (
+            reranked_sampled_audio,
+            reranked_eos_index_list,
+            reranked_rewards_breakdown,
+        )
 
 
 def init_reranker(hpath, local_rank, cache_dir):

@@ -8,9 +8,11 @@ import shutil
 from recipes.musiclm.inference.utils import slugify, save_wav, generate_hash, format_name, load_wav
 
 class SaveOutputsCallback(pl.Callback):
-    def __init__(self):
+    def __init__(self, beam_size=1, samples_to_save=1):
         super().__init__()
         self.total_items = 0
+        self.beam_size = beam_size
+        self.samples_to_save = samples_to_save
 
     def on_predict_batch_end(
         self,
@@ -23,8 +25,18 @@ class SaveOutputsCallback(pl.Callback):
     ) -> None:
         output_dir = pl_module.extra_params.output_dir
         sample_rate = pl_module.extra_params.sample_rate
-        save_batch_outputs(outputs, batch, output_dir=output_dir, sample_rate=sample_rate, sample_round=dataloader_idx, index_offset=self.total_items)
-        self.total_items += outputs['generated_audio_tensor'].shape[0]
+        save_batch_outputs(
+            outputs,
+            batch,
+            output_dir=output_dir,
+            sample_rate=sample_rate,
+            sample_round=dataloader_idx,
+            index_offset=self.total_items,
+            beam_size=self.beam_size,
+            samples_to_save=self.samples_to_save,
+        )
+        num_items = outputs['generated_audio_tensor'].shape[0] // self.beam_size
+        self.total_items += num_items
 
         with open(Path(output_dir)/'inference_params.json', 'w') as f:
             json.dump(pl_module.extra_params, f, indent=2)
@@ -43,36 +55,53 @@ def format_lyrics_and_style(style_text, lyrics=None):
     name_formatted = text_formated[:32] + "_" + lyrics_formated[:96] + "_" + text_encoded[:4]
     return name_formatted
 
-def save_batch_outputs(outputs, batch, output_dir, sample_rate, sample_round=0, index_offset=0):
+def save_batch_outputs(
+    outputs,
+    batch,
+    output_dir,
+    sample_rate,
+    sample_round=0,
+    index_offset=0,
+    beam_size=1,
+    samples_to_save=1,
+):
     conditions = batch['conditions']
     index = batch.get('index')
     lyrics = batch.get('lyrics')
     lyrics_normalized_text = batch.get('lyrics_normalized_text')
     prompts = batch.get('style_text')
+    structures = batch.get('structure')
     categories = batch.get('category')
     style_audio = batch.get('style_audio')
-    vocal_audio = batch.get('vocal_audio')    
+    vocal_audio = batch.get('vocal_audio')   
     metadatas = outputs.get('metadata')
     wavs = outputs['generated_audio']
     
     for i, wav in enumerate(wavs):
-        ii = i if sample_round == 0 else i // sample_round
-        if categories is not None and categories[i]:
+        prompt_idx = i // beam_size
+        beam_idx = i % beam_size
+        if beam_idx >= samples_to_save:
+            continue
+        ii = prompt_idx if sample_round == 0 else prompt_idx // sample_round
+        if categories is not None and categories[prompt_idx]:
             wav_dir = os.path.join(output_dir, categories[ii])
         else:
             wav_dir = output_dir
         os.makedirs(wav_dir, exist_ok=True)
         file_name = ""
-        absolute_idx =  i + index_offset
+        absolute_idx =  prompt_idx + index_offset
         lyrics_str = lyrics[ii] if 'lyrics_tokens' in conditions else None
-        lyrics_normalized_str = lyrics_normalized_text[i] if 'lyrics_tokens' in conditions and lyrics_normalized_text else None        
+        lyrics_normalized_str = lyrics_normalized_text[ii] if 'lyrics_tokens' in conditions and lyrics_normalized_text else None        
         style_text = prompts[ii] if 'style_text' in conditions else None
+        structure = structures[ii] if 'structure' in conditions else None
         if index is None:
             file_name = f"{absolute_idx:03d}_{format_lyrics_and_style(style_text, lyrics_str)}"
         else:
-            file_name = index[ii]            
+            file_name = index[ii]
         if sample_round > 0:
-            file_name += ("_r" + str(i % sample_round))
+            file_name += ("_r" + str(prompt_idx % sample_round))
+        if samples_to_save > 1 and beam_size > 1:
+            file_name += f".{beam_idx}"
             
         wav_fp = os.path.join(wav_dir, f"{file_name}.generated.wav")
         print(f"[Saving] {wav_fp}")
@@ -92,11 +121,13 @@ def save_batch_outputs(outputs, batch, output_dir, sample_rate, sample_round=0, 
             'lyrics': lyrics_str,
             'lyrics_normalized_text': lyrics_normalized_str,
             'style_text': style_text,
+            'structure': structure,
             'conditions': conditions,
             'index': {
                 'round': sample_round,
                 'absolute_idx': absolute_idx,
-                'batch_idx': ii
+                'batch_idx': ii,
+                'beam_idx': beam_idx,
             }
         }
         print('Saving metadata', metadata)

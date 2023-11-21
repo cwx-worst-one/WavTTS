@@ -10,6 +10,7 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 
 extra_params:
     beam_size: 4    # set to 4 if using reranker
+    samples_to_save: 1
     prompt_path: "/mnt/bn/audio-diffusion/data/bigmusic_text_prompts/vocal_prompts_20231031_mixed35_2min.csv"
     inference_conditions: style_text,lyrics_tokens # style_text|style_audio,lyrics_tokens,vocal_audio|vocal_text,chroma
     max_items: null
@@ -137,6 +138,8 @@ additional_callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
 callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
+      beam_size: !ref <extra_params[beam_size]>
+      samples_to_save: !ref <extra_params[samples_to_save]>
 
 trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>

@@ -355,3 +355,54 @@ class DurationEmbedder(nn.Module):
         device = next(self.parameters()).device
         empty_ids = torch.LongTensor([empty_id] * batch_size).to(device)
         return self.embedder(empty_ids).unsqueeze(1)
+
+
+class StructureEmbedder(nn.Module):
+    def __init__(
+        self,
+        durations,
+        embedding_dim,
+        structure_labels,
+        granularity_in_secs=0.5,
+    ):
+        super().__init__()
+        durations = durations if isinstance(durations, (list, tuple)) else [durations]
+        self.max_duration = int(durations[-1])
+        self.embedding_dim = embedding_dim
+        self.granularity_in_secs = granularity_in_secs
+        self.max_seq_len = round(self.max_duration / self.granularity_in_secs)
+        self.pad_id = 0
+        self.random_id = 1
+        self.default_id = 2
+        self.label_ids = {}
+        for i, label in enumerate(structure_labels):
+            assert label not in self.label_ids, f"Duplicate structure: {label}"
+            self.label_ids[label] = 3 + i
+        self.embedder = nn.Embedding(3 + len(self.label_ids), embedding_dim)
+        self.logged = 0
+
+    def time_to_index(self, time):
+        return round(time / self.granularity_in_secs)
+
+    def embed(self, batch_structure_labels, target_duration):
+        device = next(self.parameters()).device
+        structure_ids = torch.full(
+            (len(batch_structure_labels), self.max_seq_len), self.pad_id
+        ).long().to(device)
+        target_seq_len = round(target_duration / self.granularity_in_secs)
+        for i, structure_labels in enumerate(batch_structure_labels):
+            if structure_labels is None:    # This means no specification, just do whatever
+                structure_ids[i, :target_seq_len] = self.random_id
+                continue
+            structure_labels = [x for x in structure_labels if x[0] in self.label_ids]
+            structure_ids[i, :target_seq_len] = self.default_id
+            for name, start, end in structure_labels:
+                section_id = self.label_ids[name]
+                start = min(target_seq_len, max(0, self.time_to_index(start)))
+                end = min(target_seq_len, max(0, self.time_to_index(end)))
+                structure_ids[i, start:end] = section_id
+        if self.logged < 5:
+            print(f"target_duration: {target_duration}, target_seq_len: {target_seq_len}")
+            print(f"structure_labels: {batch_structure_labels}, structure_ids: {structure_ids}")
+            self.logged += 1
+        return self.embedder(structure_ids)

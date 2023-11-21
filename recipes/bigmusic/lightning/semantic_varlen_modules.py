@@ -4,10 +4,12 @@ from recipes.bigmusic.lightning.base_modules import BaseContinuousEmbedModule
 from recipes.bigmusic.lightning.embedding_modules import (
     LyricsTokenEmbedder,
     WavToVecTokenEmbedder,
-    BestRQTokenEmbedder, 
+    BestRQTokenEmbedder,
     MulanTagEmbedder,
     DurationEmbedder,
+    StructureEmbedder,
 )
+import numpy as np
 import torch
 from tqdm.auto import tqdm
 import torch.nn as nn
@@ -15,6 +17,7 @@ import torch.nn.functional as F
 from collections import defaultdict
 from samantha.models.ctiga import gpt
 from samantha.utils.ctiga.inference_params import InferenceParams
+from torchaudio.functional import resample
 
 
 class SemanticModuleVarlen(BaseContinuousEmbedModule):
@@ -54,6 +57,13 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
                 embedder_dict[emb_type] = DurationEmbedder(
                     durations=extra_params["duration"],
                     embedding_dim=hidden_size,
+                )
+            elif emb_type == "structure":
+                embedder_dict[emb_type] = StructureEmbedder(
+                    durations=extra_params["duration"],
+                    embedding_dim=hidden_size,
+                    structure_labels=extra_params["structure_labels"],
+                    granularity_in_secs=extra_params["granularity_in_secs"],
                 )
             else:
                 raise ValueError(f"Unknown emb type: {emb_type}")
@@ -173,6 +183,35 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
             "token_seq_lengths": batch_seq_lengths,
         }
 
+    def prepare_structure_inputs(self, batch, structure_embedder):
+        batch_size = self.infer_batch_size(batch)
+        structure_labels = batch["structure"]
+        assert batch_size == len(structure_labels)
+        # Dropout if needed
+        if self.training and self.extra_params.structure_dropout > 0:
+            dropout = self.extra_params.structure_dropout
+            all_keep = [x >= dropout for x in np.random.rand(batch_size)]
+            for i, keep in enumerate(all_keep):
+                if not keep:
+                    structure_labels[i] = None
+
+        if "duration" in batch:
+            target_duration = batch["duration"]
+        else:
+            target_duration = batch["target_audio"].shape[-1] // self.extra_params.sample_rate
+
+        structure_embeds = structure_embedder.embed(structure_labels, target_duration)
+        batch_size, seq_len, _ = structure_embeds.shape
+        # for now, create dummy token ids. we won't be predicting them anyways
+        token_ids = torch.zeros((batch_size, seq_len)).long().to(self.device)
+        batch_seq_lengths = torch.zeros((batch_size), device=self.device) + seq_len
+
+        return {
+            "token_embeds": structure_embeds,
+            "token_ids": token_ids,
+            "token_seq_lengths": batch_seq_lengths,
+        }
+
     def prepare_model_inputs(self, batch):
         model_inputs = []
         for emb_type, embedder in self.input_embedders.items():
@@ -182,6 +221,8 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
                 emb_inputs = self.prepare_lyrics_inputs(batch, embedder)
             elif emb_type == "duration":
                 emb_inputs = self.prepare_duration_inputs(batch, embedder)
+            elif emb_type == "structure":
+                emb_inputs = self.prepare_structure_inputs(batch, embedder)
             else:
                 raise ValueError(f"Unknown emb type: {emb_type}")
             model_inputs.append(emb_inputs)

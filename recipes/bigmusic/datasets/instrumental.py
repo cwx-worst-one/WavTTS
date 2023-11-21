@@ -53,6 +53,8 @@ class InstrumentalWebDataModule(DataModule):
         text_type: Optional[str] = None,
         max_num_crops: Optional[Union[int, List[int]]] = 3,
         crop_step_size: Optional[Union[float, List[float]]] = 10.0,
+        additional_transforms: Optional[List] = None,
+        keys=["audio", "text", "structure"],
         use_pipe: bool = False,
         seed: int = 555,
     ):
@@ -113,18 +115,16 @@ class InstrumentalWebDataModule(DataModule):
             text_type=text_type,
             max_num_crops=max_num_crops,
             crop_step_size=crop_step_size,
+            additional_transforms=additional_transforms,
             resampled=True,
             shardshuffle=True,
             use_pipe=use_pipe,
             seed=seed,
         )
-        train_keys = ["audio"]
-        if text_type is not None:
-            train_keys.append("text")
         train_dataset = WebPipeline(
             dataset,
             pipeline=[{"compose": [
-                wds_to_dict(*train_keys),
+                wds_to_dict(*keys),
                 wds.map(SemanticTokenLengthTransform(sample_rate=sample_rate, audio_key="audio")),
                 wds.shuffle(shuffle_buffer_size),
                 default_bucket_batcher_fn(sample_rate, duration, batch_size, lyrics_frame_rate=0),
@@ -151,6 +151,7 @@ class InstrumentalWebDataModule(DataModule):
                 text_type=text_type,
                 max_num_crops=max_num_crops,
                 crop_step_size=crop_step_size,
+                additional_transforms=additional_transforms,
                 resampled=False,
                 shardshuffle=False,
                 use_pipe=use_pipe,
@@ -160,7 +161,7 @@ class InstrumentalWebDataModule(DataModule):
             validation_dataset = WebPipeline(
                 sstk,
                 pipeline=[{"compose": [
-                    wds_to_dict(*train_keys),
+                    wds_to_dict(*keys),
                     wds.map(SemanticTokenLengthTransform(sample_rate=sample_rate, audio_key="audio")),
                     default_bucket_batcher_fn(sample_rate, duration, batch_size, lyrics_frame_rate=0),
                 ]}],

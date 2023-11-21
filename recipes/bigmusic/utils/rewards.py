@@ -1,6 +1,8 @@
 import numpy as np
+import math
 import torch
 import torch.nn.functional as F
+from recipes.bigmusic.datasets.transforms.structure import ChorusDetectionTransform
 from recipes.bigmusic.utils.metrics_asr import (
     edit_distance,
     remove_punc_case,
@@ -111,8 +113,7 @@ def nonvocal_reward(sampled_lyrics, device):
     # increase exponentially with the number of words. We divide the
     # number of words by 4 to make the range less extreme.
     num_words = torch.tanh(num_words / 4)
-    # Return negative number of words, we want to maximize this
-    return -1 * num_words
+    return 1 - num_words
 
 
 @torch.no_grad()
@@ -181,14 +182,6 @@ def chord_reward(
     return chord_rewards
 
 
-def dedup(lst):
-    lst_dedup = []
-    for x in lst:
-        if len(lst_dedup) == 0 or lst_dedup[-1] != x:
-            lst_dedup.append(x)
-    return lst_dedup
-
-
 STRUCTURE_TO_SCORE = {
     "verse": 0.5,
     "chorus": 0.5,
@@ -207,6 +200,13 @@ def structure_reward(
     sample_rate,
     device,
 ):
+    def dedup(lst):
+        lst_dedup = []
+        for x in lst:
+            if len(lst_dedup) == 0 or lst_dedup[-1] != x:
+                lst_dedup.append(x)
+        return lst_dedup
+
     if sample_rate != structure_model._sampling_rate:
         resampled_audio = resample(
             sampled_audio,
@@ -241,3 +241,52 @@ def structure_reward(
         if structure_str in STRUCTURE_TO_SCORE:
             structure_rewards[i] = STRUCTURE_TO_SCORE[structure_str]
     return structure_rewards
+
+
+@torch.no_grad()
+def chorus_sim_reward(
+    sampled_audio,
+    ref_choruses,
+    sample_rate,
+    device,
+):
+    def _get_reward(hyps, refs):
+        if refs is None:
+            return 1.0
+        if len(refs) == 0:
+            return 1 - math.tanh(len(hyps))
+        rewards = []
+        matched_hyps = set()
+        for i, (ref_name, ref_st, ref_en) in enumerate(refs):
+            max_reward = 0.0
+            matched_j = None
+            for j, (hyp_name, hyp_st, hyp_en) in enumerate(hyps):
+                if ref_name != hyp_name or j in matched_hyps:
+                    continue
+                overlap = max(0, min(hyp_en, ref_en) - max(hyp_st, ref_st))
+                if overlap > 0:
+                    distance = (abs(ref_st - hyp_st) + abs(ref_en - hyp_en)) / 2
+                    # Normalize between [0, 1]
+                    reward = 1 - math.tanh(distance / 10)
+                    if reward > max_reward:
+                        max_reward = reward
+                        matched_j = j
+            rewards.append(max_reward)
+            if matched_j is not None:
+                matched_hyps.add(matched_j)
+        # Insertions will reduce reward
+        denom = len(refs) + len(hyps) - len(matched_hyps)
+        return np.sum(rewards) / denom
+
+    _, beam = _infer_batch_beam(sampled_audio, ref_choruses)
+    # TODO: make params configurable
+    chorus_detection = ChorusDetectionTransform()
+    hyp_choruses = [chorus_detection.find_chorus(audio) for audio in sampled_audio]
+
+    chorus_sim_rewards = torch.zeros(sampled_audio.size(0)).to(device)
+    for i, hyps in enumerate(hyp_choruses):
+        refs = ref_choruses[i // beam]
+        reward = _get_reward(hyps, refs)
+        chorus_sim_rewards[i] = reward
+        print(f"refs: {refs}, hyps: {hyps}, reward: {reward}")
+    return chorus_sim_rewards

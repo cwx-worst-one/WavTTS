@@ -373,14 +373,9 @@ class MCCTransforms(TransformBase):
                     window_ids.append(wid)
             return audio, window_ids, num_windows
 
-    def get_text(self, metadata):
-        if self.text_type is None:
-            return None
-
-        if self.text_type == "mixed":
+    def get_text(self, metadata, text_type):
+        if text_type == "mixed":
             text_type = "long" if random.random() <= 0.5 else "short"
-        else:
-            text_type = self.text_type
         if text_type == "long":
             # Both Pond5 and SSTK have DESCRIPTION
             return metadata["DESCRIPTION"]
@@ -460,8 +455,9 @@ class MCCTransforms(TransformBase):
                 "url": x["__url__"],
                 "sample_start_pos": st_sample,
                 "sample_rate": self.sample_rate,
-                "text": self.get_text(x["__index_data__"]),
             }
+            if self.text_type is not None:
+                output["text"] = self.get_text(x["__index_data__"], self.text_type)
             yield output
             num_crops += 1
             if num_crops >= max_num_crops:

@@ -91,24 +91,32 @@ class SemanticInferenceModule(pl.LightningModule):
             self.extra_params,
             beam=self.extra_params.beam_size,
         )
-        semantic_samples, eos_index_list = process_eos_indexes(semantic_samples, self.semantic_module, self.extra_params.sample_rate)
+        semantic_samples, eos_index_list = process_eos_indexes(
+            semantic_samples,
+            self.semantic_module,
+            self.extra_params.sample_rate,
+        )
         raw_wav_output = self.decoding_fn(self.requires, semantic_samples, self.decoding_params)
         assert len(raw_wav_output.shape) == 2, "Wavs must be 2 sim [b, seq_len]"
+        raw_wav_output = raw_wav_output[..., :self.extra_params.duration * self.extra_params.sample_rate]
 
+        outputs = {}
         if self.extra_params.use_reranker:
-            raw_wav_output, eos_index_list, _ = self.requires["reranker"].rerank(
+            raw_wav_output, eos_index_list, rewards_breakdown = self.requires["reranker"].rerank(
                 raw_wav_output,
                 eos_index_list,
                 batch,
                 self.extra_params,
             )
+            outputs["metadata"] = [{"rewards": x} for x in rewards_breakdown]
         
         raw_wav_output = raw_wav_output.detach().cpu()
         wavs = truncate_wav_to_eos(raw_wav_output, eos_index_list)
-        return { 
+        outputs.update({ 
             'generated_audio': wavs,
-            'generated_audio_tensor': raw_wav_output
-        }
+            'generated_audio_tensor': raw_wav_output,
+        })
+        return outputs
 
 
 class GTInferenceModule(pl.LightningModule):
