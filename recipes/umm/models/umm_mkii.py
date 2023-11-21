@@ -5,18 +5,18 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
-from einops import rearrange, reduce, pack, unpack
+from einops import pack, rearrange, reduce, unpack
 from torch import Tensor, int32, nn
 from torch.nn import functional as F
 from torch.nn.utils import weight_norm
 from transformers.activations import ACT2FN
 from transformers.utils import ModelOutput
 
+from recipes.umm.models.rmvpe import RMVPE
 from recipes.umm.models.vocoder import BigVGAN
 from recipes.umm.models.vq import EMAVectorQuantizer
 from recipes.umm.transforms.chroma import ChromaSpectrogram
 from recipes.umm.transforms.speech import SpeechTransform
-from recipes.umm.models.rmvpe import RMVPE
 
 @dataclass
 class UMMResult:
@@ -29,16 +29,16 @@ class UMMResult:
 def f0_normalize(f0):
     _f0 = f0.clone()
     f0 = torch.log1p(f0)
-    f0_mean = torch.mean(f0[_f0!=0])
-    f0_std = torch.std(f0[_f0!=0])
+    f0_mean = torch.mean(f0[_f0 != 0])
+    f0_std = torch.std(f0[_f0 != 0])
     f0_std = torch.where(f0_std == 0, torch.ones_like(f0_std), f0_std)
-    f0[_f0!=0] = (f0[_f0!=0] - f0_mean) / f0_std
+    f0[_f0 != 0] = (f0[_f0 != 0] - f0_mean) / f0_std
     return f0
 
 
 def get_vuv(f0):
     vuv = f0.clone()
-    vuv[vuv!=0] = 1
+    vuv[vuv != 0] = 1
     return vuv
 
 
@@ -66,7 +66,10 @@ def conv_transpose_flops(module, input_shape):
         new_kernel_size = module.dilation[i] * (module.kernel_size[i] - 1) + 1
         flops *= new_kernel_size
         output_shape[2 + i] = (
-            (input_shape[2 + i] - 1) * module.stride[i] + module.output_padding[i] - 2 * module.padding[i] + new_kernel_size
+            (input_shape[2 + i] - 1) * module.stride[i]
+            + module.output_padding[i]
+            - 2 * module.padding[i]
+            + new_kernel_size
         )
         flops *= input_shape[2 + i]
     return 2 * flops, output_shape
@@ -147,9 +150,10 @@ class ConformerFeedForward(nn.Module):
         def linear_flops(m):
             return m.weight.shape[0] * m.weight.shape[1] * 2
 
-        return b * t * (
-            linear_flops(self.intermediate_dense) +
-            linear_flops(self.output_dense)
+        return (
+            b
+            * t
+            * (linear_flops(self.intermediate_dense) + linear_flops(self.output_dense))
         )
 
 
@@ -179,7 +183,13 @@ class ConformerConvolutionModule(nn.Module):
             groups=config.hidden_size,
             bias=False,
         )
-        self.batch_norm = torch.nn.BatchNorm1d(config.hidden_size) if config.get("use_bn", True) else nn.Sequential(Transpose(), nn.LayerNorm(config.hidden_size), Transpose())
+        self.batch_norm = (
+            torch.nn.BatchNorm1d(config.hidden_size)
+            if config.get("use_bn", True)
+            else nn.Sequential(
+                Transpose(), nn.LayerNorm(config.hidden_size), Transpose()
+            )
+        )
         self.activation = ACT2FN[config.hidden_act]
         self.pointwise_conv2 = torch.nn.Conv1d(
             config.hidden_size,
@@ -214,12 +224,18 @@ class ConformerConvolutionModule(nn.Module):
 
     def get_flops(self, n, l):
         def conv1d_flops(m):
-            return m.weight.shape[0] * m.weight.shape[1] * m.weight.shape[2] / m.groups * 2
+            return (
+                m.weight.shape[0] * m.weight.shape[1] * m.weight.shape[2] / m.groups * 2
+            )
 
-        return n * l * (
-            conv1d_flops(self.pointwise_conv1) +
-            conv1d_flops(self.depthwise_conv) +
-            conv1d_flops(self.pointwise_conv2)
+        return (
+            n
+            * l
+            * (
+                conv1d_flops(self.pointwise_conv1)
+                + conv1d_flops(self.depthwise_conv)
+                + conv1d_flops(self.pointwise_conv2)
+            )
         )
 
 
@@ -317,12 +333,18 @@ class ConformerSelfAttention(nn.Module):
         def linear_flops(m):
             return m.weight.shape[0] * m.weight.shape[1] * 2
 
-        return b * t * (
-            linear_flops(self.linear_q) +
-            linear_flops(self.linear_k) +
-            linear_flops(self.linear_v) +
-            linear_flops(self.linear_out)
-        ) + b * t * t * self.head_size * 2 + b * t * self.head_size * t * 2
+        return (
+            b
+            * t
+            * (
+                linear_flops(self.linear_q)
+                + linear_flops(self.linear_k)
+                + linear_flops(self.linear_v)
+                + linear_flops(self.linear_out)
+            )
+            + b * t * t * self.head_size * 2
+            + b * t * self.head_size * t * 2
+        )
 
 
 class ConformerEncoderLayer(nn.Module):
@@ -386,10 +408,10 @@ class ConformerEncoderLayer(nn.Module):
 
     def get_flops(self, b, t):
         return (
-            self.ffn1.get_flops(b, t) +
-            self.self_attn.get_flops(b, t) +
-            self.conv_module.get_flops(b, t) +
-            self.ffn2.get_flops(b, t)
+            self.ffn1.get_flops(b, t)
+            + self.self_attn.get_flops(b, t)
+            + self.conv_module.get_flops(b, t)
+            + self.ffn2.get_flops(b, t)
         )
 
 
@@ -522,11 +544,21 @@ class AudioEncoder(nn.Module):
         return x
 
     def get_flops(self, b, t, d):
-        return self.feature_encoder.get_flops(b, t, d) + self.conformer_layer.get_flops(b, t)
+        return self.feature_encoder.get_flops(b, t, d) + self.conformer_layer.get_flops(
+            b, t
+        )
 
 
 class EMAEmbedding(nn.Module):
-    def __init__(self, codebook_size, codebook_dim, decay=0.99, eps=1e-5, learnable=False, orthonormal_init=False):
+    def __init__(
+        self,
+        codebook_size,
+        codebook_dim,
+        decay=0.99,
+        eps=1e-5,
+        learnable=False,
+        orthonormal_init=False,
+    ):
         super().__init__()
         self.decay = decay
         self.eps = eps
@@ -555,7 +587,9 @@ class EMAEmbedding(nn.Module):
         )
 
     def embed_avg_ema_update(self, new_embed_avg):
-        self.embed_avg.data.mul_(self.decay).add_(new_embed_avg.data, alpha=1 - self.decay)
+        self.embed_avg.data.mul_(self.decay).add_(
+            new_embed_avg.data, alpha=1 - self.decay
+        )
 
     def weight_update(self, num_tokens):
         n = self.cluster_size.sum()
@@ -582,7 +616,7 @@ class EMAEmbedding(nn.Module):
         avg_w = self.embed_avg.data
         w = self.weight.data
         # ranking
-        topk_res = torch.topk(cs[1:], k=cs.shape[-1] - 1) # 大到小
+        topk_res = torch.topk(cs[1:], k=cs.shape[-1] - 1)  # 大到小
         indices = topk_res.indices + 1
         # remap
         new_cs = torch.zeros_like(cs)
@@ -680,7 +714,6 @@ class EMAVectorQuantizer(nn.Module):
 
 
 class EMAVectorQuantizerEntropy(nn.Module):
-
     def __init__(
         self, codebook_size, codebook_dim, same_index_shape=True, decay=0.99, dist=True
     ):
@@ -705,24 +738,32 @@ class EMAVectorQuantizerEntropy(nn.Module):
             )
         )
         min_encoding_indices = torch.argmin(d, dim=1)  # [b*h]
-        z_q = self.embedding(min_encoding_indices).view(z.shape)  # [b*h, c] -> [b, h, c]
+        z_q = self.embedding(min_encoding_indices).view(
+            z.shape
+        )  # [b*h, c] -> [b, h, c]
         # EMA update
         if self.training and self.embedding.update:
-            one_hot = F.one_hot(min_encoding_indices, self.codebook_size).type(z.dtype)  # [b*h, k]
+            one_hot = F.one_hot(min_encoding_indices, self.codebook_size).type(
+                z.dtype
+            )  # [b*h, k]
             # EMA cluster size
             one_hot_sum = one_hot.sum(0)  # [k]
             if self.dist:
                 torch.distributed.all_reduce(one_hot_sum)
             self.embedding.cluster_size_ema_update(one_hot_sum)
             # EMA embedding average
-            embed_sum = (one_hot.transpose(0, 1) @ z_flattened)  # [k, b*h] * [b*h, c] = [k, c]
+            embed_sum = (
+                one_hot.transpose(0, 1) @ z_flattened
+            )  # [k, b*h] * [b*h, c] = [k, c]
             if self.dist:
                 torch.distributed.all_reduce(embed_sum)
             self.embedding.embed_avg_ema_update(embed_sum)
             # normalize embed_avg and update weight
             self.embedding.weight_update(self.codebook_size)
 
-        loss = torch.mean((z_q.detach() - z) ** 2) + e_scale * self.entropy_loss(-d, loss_type='softmax')
+        loss = torch.mean((z_q.detach() - z) ** 2) + e_scale * self.entropy_loss(
+            -d, loss_type="softmax"
+        )
         # preserve gradients
         z_q = z + (z_q - z).detach()
 
@@ -735,7 +776,9 @@ class EMAVectorQuantizerEntropy(nn.Module):
 
     def entropy_loss(self, affinity, loss_type="softmax", temperature=0.7, eps=1e-10):
         # affinity: [b, t, d_n]
-        flat_affinity = affinity.reshape(-1, affinity.shape[-1])  # [b, t, d_n] -> [b*t, d_n]
+        flat_affinity = affinity.reshape(
+            -1, affinity.shape[-1]
+        )  # [b, t, d_n] -> [b*t, d_n]
         flat_affinity = flat_affinity / temperature
         probs = flat_affinity.softmax(dim=-1)  # [b*t, d_n]
         log_probs = (probs + eps).log()  # [b*t, d_n]
@@ -786,7 +829,9 @@ class ClusteredVectorQuantizer(nn.Module):
 
         self.pool = FeaturePool(self.codebook_size, self.codebook_dim)
         self.embedding = nn.Embedding(self.codebook_size, self.codebook_dim)
-        self.embedding.weight.data.uniform_(-1.0 / self.codebook_size, 1.0 / self.codebook_size)
+        self.embedding.weight.data.uniform_(
+            -1.0 / self.codebook_size, 1.0 / self.codebook_size
+        )
         self.register_buffer("embed_prob", torch.zeros(self.codebook_size))
 
     def forward(self, z):
@@ -882,9 +927,7 @@ class ClusteredVectorQuantizer(nn.Module):
                 )
                 loss += contra_loss
 
-        encoding_indices = rearrange(
-            encoding_indices, "(b t) -> b t", t=z.size(1)
-        )
+        encoding_indices = rearrange(encoding_indices, "(b t) -> b t", t=z.size(1))
 
         return z_q, encoding_indices, loss
 
@@ -1125,21 +1168,22 @@ class RandomProjectionQuantizer(nn.Module):
         # [batch_size, codebook_num]
         return codes
 
-# entropy
 
-def log(t, eps = 1e-20):
-    return t.clamp(min = eps).log()
+def log(t, eps=1e-20):
+    return t.clamp(min=eps).log()
+
 
 def binary_entropy(prob):
     return -prob * log(prob) - (1 - prob) * log(1 - prob)
+
 
 class LookupFreeQuantizer(nn.Module):
     def __init__(
         self,
         codebook_size,
-        entropy_loss_weight = 0.1,
-        diversity_gamma = 2.5,
-        straight_through_activation = nn.Tanh()
+        entropy_loss_weight=0.1,
+        diversity_gamma=2.5,
+        straight_through_activation=nn.Tanh(),
     ):
         super().__init__()
         assert math.log2(codebook_size).is_integer()
@@ -1147,8 +1191,8 @@ class LookupFreeQuantizer(nn.Module):
         self.activation = straight_through_activation
         self.diversity_gamma = diversity_gamma
         self.entropy_loss_weight = entropy_loss_weight
-        self.register_buffer('mask', 2 ** torch.arange(self.codebook_dim - 1, -1, -1))
-        self.register_buffer('zero', torch.zeros(1,), persistent = False)
+        self.register_buffer("mask", 2 ** torch.arange(self.codebook_dim - 1, -1, -1))
+        self.register_buffer("zero", torch.zeros(1), persistent=False)
 
     def indices_to_codes(self, indices):
         # indices to codes, which are bits of either -1 or 1
@@ -1156,7 +1200,7 @@ class LookupFreeQuantizer(nn.Module):
         codes = bits * 2 - 1
         return codes
 
-    def forward(self, x, inv_temperature = 1.0):
+    def forward(self, x, inv_temperature=1.0):
         """
         einstein notation
         b - batch
@@ -1178,7 +1222,7 @@ class LookupFreeQuantizer(nn.Module):
 
         # calculate indices
 
-        indices = reduce((x > 0).int() * self.mask.int(), 'b n d -> b n', 'sum')
+        indices = reduce((x > 0).int() * self.mask.int(), "b n d -> b n", "sum")
 
         # entropy aux loss
 
@@ -1187,7 +1231,7 @@ class LookupFreeQuantizer(nn.Module):
 
             bit_entropy = binary_entropy(prob).mean()
 
-            avg_prob = reduce(prob, 'b n d -> b d', 'mean')
+            avg_prob = reduce(prob, "b n d -> b d", "mean")
             codebook_entropy = binary_entropy(avg_prob).mean()
 
             # 1. entropy will be nudged to be low for each bit, so each scalar commits to one latent binary bit or the other
@@ -1294,14 +1338,19 @@ class Stage1(Base):
         encoded_masked_feature = self.audio_encoder(masked_feature)
         hidden_states = self.encoder_input_dropout(encoded_masked_feature)
         position_embeddings = self.embed_positions(hidden_states)
-        flops += self.encoder_layers[0].get_flops(*hidden_states.shape[0:2]) * len(self.encoder_layers)
+        flops += self.encoder_layers[0].get_flops(*hidden_states.shape[0:2]) * len(
+            self.encoder_layers
+        )
         for layer in self.encoder_layers:
             hidden_states = layer(
                 hidden_states, position_embeddings=position_embeddings
             )
         flops += (
-            hidden_states.shape[0] * hidden_states.shape[1] *
-            self.rq_head.weight.shape[0] * self.rq_head.weight.shape[1] * 2
+            hidden_states.shape[0]
+            * hidden_states.shape[1]
+            * self.rq_head.weight.shape[0]
+            * self.rq_head.weight.shape[1]
+            * 2
         )
         logits = self.rq_head(hidden_states)
         logits = rearrange(
@@ -1321,7 +1370,7 @@ class Stage1(Base):
             "rq_masked_logits": masked_logits,
             "rq_target": target,
             "rq_masked_target": masked_target,
-            "flops": flops * 3  # extra 2x for backward.
+            "flops": flops * 3,  # extra 2x for backward.
         }
         return output_dict
 
@@ -1356,7 +1405,9 @@ class Stage1(Base):
 class Stage2(Base):
     def __init__(self, config):
         super().__init__(config)
-        self.mel_head = Conv2dUpsampling(config.hidden_size, config.n_mels, use_bn=config.get("use_bn", True))
+        self.mel_head = Conv2dUpsampling(
+            config.hidden_size, config.n_mels, use_bn=config.get("use_bn", True)
+        )
         self.ctc_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         if config.add_chroma:
             self.chroma_transform = ChromaSpectrogram(
@@ -1367,11 +1418,13 @@ class Stage2(Base):
                 n_chroma=config.n_chroma,
                 normalized=False,
             )
-            self.chroma_head = Conv2dUpsampling(config.hidden_size, config.n_chroma, use_bn=config.get("use_bn", True))
+            self.chroma_head = Conv2dUpsampling(
+                config.hidden_size, config.n_chroma, use_bn=config.get("use_bn", True)
+            )
         if config.get("add_pitch", False):
             #  must be sr=16000, hop_length=160
             hop_length = config.hop_length * 16000 // config.sample_rate
-            print('RMVPE hop_length (on 16k):', hop_length)
+            print("RMVPE hop_length (on 16k):", hop_length)
             self.rmvpe = RMVPE(hop_length=hop_length)
             self.f0_vuv_head = Conv2dUpsampling(config.hidden_size, 2)
 
@@ -1385,7 +1438,9 @@ class Stage2(Base):
         audio_feature = self.audio_encoder(feature)
         hidden_states = self.encoder_input_dropout(audio_feature)
         position_embeddings = self.embed_positions(hidden_states)
-        flops += self.encoder_layers[0].get_flops(*hidden_states.shape[0:2]) * len(self.encoder_layers)
+        flops += self.encoder_layers[0].get_flops(*hidden_states.shape[0:2]) * len(
+            self.encoder_layers
+        )
         for layer in self.encoder_layers:
             hidden_states = layer(
                 hidden_states, position_embeddings=position_embeddings
@@ -1397,15 +1452,15 @@ class Stage2(Base):
         output_dict = {
             "mel_out": mel_out,
             "ctc_out": ctc_out,
-            "flops": flops * 3  # extra 2x for backward.
+            "flops": flops * 3,  # extra 2x for backward.
         }
         if self.config.add_chroma:
             chroma_out = self.chroma_head(hidden_states)
             output_dict.update(chroma_out=chroma_out)
         if self.config.get("add_pitch", False):
             f0_vuv_out = self.f0_vuv_head(hidden_states)
-            output_dict.update(f0_out=f0_vuv_out[:,:,0:1])
-            output_dict.update(vuv_out=f0_vuv_out[:,:,1:])
+            output_dict.update(f0_out=f0_vuv_out[:, :, 0:1])
+            output_dict.update(vuv_out=f0_vuv_out[:, :, 1:])
         return output_dict
 
     @torch.no_grad()
@@ -1424,10 +1479,175 @@ class Stage2(Base):
             input_dict.update(chroma=chroma)
         if self.config.get("add_pitch", False):
             f0 = self.rmvpe.batch_infer(
-                x, self.config.sample_rate, thred=0.03, use_viterbi=False)
+                x, self.config.sample_rate, thred=0.03, use_viterbi=False
+            )
             f0 = f0[:, :-1]
             vuv = get_vuv(f0)
             f0 = f0_normalize(f0)
+            input_dict.update(f0=f0, vuv=vuv)
+
+        return input_dict
+
+
+class Stage2MSS(Stage2):
+    """
+    Stage 2 Model definition with 2 additional heads for MSS vocal and MSS instrumental.
+    """
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.mel_head = Conv2dUpsampling(
+            config.hidden_size, config.n_mels, use_bn=config.get("use_bn", True)
+        )
+        self.mel_head_vocal = Conv2dUpsampling(
+            config.hidden_size, config.n_mels, use_bn=config.get("use_bn", True)
+        )
+        self.mel_head_inst = Conv2dUpsampling(
+            config.hidden_size, config.n_mels, use_bn=config.get("use_bn", True)
+        )
+        self.ctc_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        if config.add_chroma:
+            self.chroma_transform = ChromaSpectrogram(
+                sample_rate=config.sample_rate,
+                n_fft=config.n_fft,
+                win_length=config.win_length,
+                hop_length=config.hop_length,
+                n_chroma=config.n_chroma,
+                normalized=False,
+            )
+            self.chroma_head = Conv2dUpsampling(
+                config.hidden_size, config.n_chroma, use_bn=config.get("use_bn", True)
+            )
+        if config.get("add_pitch", False):
+            #  must be sr=16000, hop_length=160
+            hop_length = config.hop_length * 16000 // config.sample_rate
+            print("RMVPE hop_length (on 16k):", hop_length)
+            self.rmvpe = RMVPE(hop_length=hop_length)
+            self.f0_vuv_head = Conv2dUpsampling(config.hidden_size, 2)
+
+    def forward(self, input_dict):
+        """
+        @hanoihantrakul 11/10/2023:
+        It was too much work to refactor the logic to Stage2().forward() so I mostly
+        copy-pasted here with 2 additional mel heads.
+        """
+        feature = (
+            input_dict["mel_interfered"]
+            if self.config.interfere_audio
+            else input_dict["mel"]
+        )
+        # Audio Encoder
+        flops = self.audio_encoder.get_flops(*feature.shape)
+        audio_feature = self.audio_encoder(feature)
+        hidden_states = self.encoder_input_dropout(audio_feature)
+
+        # Positional Embedding
+        position_embeddings = self.embed_positions(hidden_states)
+
+        # Encoder Layers
+        flops += self.encoder_layers[0].get_flops(*hidden_states.shape[0:2]) * len(
+            self.encoder_layers
+        )
+        for layer in self.encoder_layers:
+            hidden_states = layer(
+                hidden_states, position_embeddings=position_embeddings
+            )
+
+        # Mel Full Audio Head
+        flops += self.mel_head.get_flops(*hidden_states.shape)
+        mel_out = self.mel_head(hidden_states)
+
+        # Mel Vocal Head
+        flops += self.mel_head_vocal.get_flops(*hidden_states.shape)
+        mel_vocal_out = self.mel_head_vocal(hidden_states)
+
+        # Mel Instrumental Head
+        flops += self.mel_head_inst.get_flops(*hidden_states.shape)
+        mel_inst_out = self.mel_head_inst(hidden_states)
+
+        # CTC Head
+        flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
+        ctc_out = self.ctc_head(hidden_states)
+
+        output_dict = {
+            "mel_out": mel_out,
+            "mel_vocal_out": mel_vocal_out,
+            "mel_inst_out": mel_inst_out,
+            "ctc_out": ctc_out,
+            "flops": flops * 3,  # extra 2x for backward.
+        }
+
+        # Chroma Head
+        if self.config.add_chroma:
+            chroma_out = self.chroma_head(hidden_states)
+            output_dict.update(chroma_out=chroma_out)
+
+        # Pitch Head
+        if self.config.get("add_pitch", False):
+            f0_vuv_out = self.f0_vuv_head(hidden_states)
+            output_dict.update(f0_out=f0_vuv_out[:, :, 0:1])
+            output_dict.update(vuv_out=f0_vuv_out[:, :, 1:])
+        return output_dict
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def preprocessing(self, audio_dict):
+        """
+        Arguments()
+            audio_dict:
+                `audio`: full mix should be routed to normal mel spectrogram, chroma and pitch.
+                `audio_vocal`: routed to a vocal mel spectrogram
+                `audio_inst`: routed to a instruemtnal mel spectrogram
+
+        Returns:
+            input_dict:
+                "mel": mel spectrogram of audio full mix
+                "mel_vocal" : mel spectrogram of audio vocals
+                "mel_inst" : mel spectrogram of audio instrumental
+                "chroma" : chroma spectrogram of audio full mix
+        """
+
+        def _interfere_audio_handler(audio):
+            """Not used in UMM training."""
+            audio_interfered = self.interfere_audio(audio)
+            mel_interfered = self.audio_transform(audio_interfered, normalize=normalize)
+            return mel_interfered
+
+        def _add_chroma_handler(audio):
+            chroma = self.chroma_transform(audio)[:, :, :-1].transpose(1, 2)
+            chroma = F.normalize(chroma, p=2, dim=-1)
+            return chroma
+
+        def _add_pitch_handler(audio):
+            """Not used in UMM training."""
+            f0 = self.rmvpe.batch_infer(
+                audio, self.config.sample_rate, thred=0.03, use_viterbi=False
+            )
+            f0 = f0[:, :-1]
+            vuv = get_vuv(f0)
+            f0 = f0_normalize(f0)
+            return f0, vuv
+
+        normalize = self.config.feature_cmvn is not None
+        input_dict = {
+            "mel": self.audio_transform(audio_dict["audio"], normalize=normalize),
+            "mel_vocal": self.audio_transform(
+                audio_dict["audio_vocal"], normalize=normalize
+            ),
+            "mel_inst": self.audio_transform(
+                audio_dict["audio_inst"], normalize=normalize
+            ),
+        }
+        if self.config.get("interfere_audio", None):
+            # "interfere_audio" is a historical flag and should be assumed to be False by default.
+            input_dict.update(
+                mel_interfered=_interfere_audio_handler(audio_dict["audio"])
+            )
+        if self.config.add_chroma:
+            input_dict.update(chroma=_add_chroma_handler(audio_dict["audio"]))
+        if self.config.get("add_pitch", False):
+            # "add_pitch" is from TTS team and should be assumed to be False by default.
+            f0, vuv = _add_pitch_handler(audio_dict["audio"])
             input_dict.update(f0=f0, vuv=vuv)
 
         return input_dict
@@ -1448,13 +1668,9 @@ class Stage3(Stage2):
                 distance=config.get("vq_distance", "cos"),
             )
         elif config.get("vq_type", None) == "FSQ":
-            self.vq = FiniteScalarQuantizer(
-                codebook_size=config.vq_codebook_size,
-            )
+            self.vq = FiniteScalarQuantizer(codebook_size=config.vq_codebook_size)
         elif config.get("vq_type", None) == "LFQ":
-            self.vq = LookupFreeQuantizer(
-                codebook_size=config.vq_codebook_size,
-            )
+            self.vq = LookupFreeQuantizer(codebook_size=config.vq_codebook_size)
         elif config.get("vq_type", None) == "EMAEntropy":
             self.vq = EMAVectorQuantizerEntropy(
                 codebook_size=config.vq_codebook_size,
@@ -1470,22 +1686,30 @@ class Stage3(Stage2):
         if config.get("vq_proj_norm", None) == "bn":
             self.vq_proj_in = nn.Sequential(
                 Transpose(),
-                WNConv1d(config.hidden_size, config.vq_codebook_dim, kernel_size=1) if config.hidden_size != config.vq_codebook_dim else nn.Identity(),
+                WNConv1d(config.hidden_size, config.vq_codebook_dim, kernel_size=1)
+                if config.hidden_size != config.vq_codebook_dim
+                else nn.Identity(),
                 nn.BatchNorm1d(config.vq_codebook_dim, affine=False, momentum=0.05),
                 Transpose(),
             )
             self.vq_proj_out = nn.Sequential(
                 Transpose(),
-                WNConv1d(config.vq_codebook_dim, config.hidden_size, kernel_size=1) if config.vq_codebook_dim != config.hidden_size else nn.Identity(),
+                WNConv1d(config.vq_codebook_dim, config.hidden_size, kernel_size=1)
+                if config.vq_codebook_dim != config.hidden_size
+                else nn.Identity(),
                 Transpose(),
             )
         elif config.get("vq_proj_norm", None) == "ln":
             self.vq_proj_in = nn.Sequential(
-                nn.Linear(config.hidden_size, config.vq_codebook_dim, bias=False) if config.hidden_size != config.vq_codebook_dim else nn.Identity(),
+                nn.Linear(config.hidden_size, config.vq_codebook_dim, bias=False)
+                if config.hidden_size != config.vq_codebook_dim
+                else nn.Identity(),
                 nn.LayerNorm(config.vq_codebook_dim, elementwise_affine=False),
             )
             self.vq_proj_out = nn.Sequential(
-                nn.Linear(config.vq_codebook_dim, config.hidden_size, bias=False) if config.vq_codebook_dim != config.hidden_size else nn.Identity(),
+                nn.Linear(config.vq_codebook_dim, config.hidden_size, bias=False)
+                if config.vq_codebook_dim != config.hidden_size
+                else nn.Identity()
             )
         else:
             self.vq_proj_in = nn.Linear(
@@ -1503,7 +1727,9 @@ class Stage3(Stage2):
         audio_feature = self.audio_encoder(feature)
         hidden_states = self.encoder_input_dropout(audio_feature)
         position_embeddings = self.embed_positions(hidden_states)
-        flops += self.encoder_layers[0].get_flops(*hidden_states.shape[0:2]) * len(self.encoder_layers)
+        flops += self.encoder_layers[0].get_flops(*hidden_states.shape[0:2]) * len(
+            self.encoder_layers
+        )
         for i, layer in enumerate(self.encoder_layers):
             if i == self.config.vq_layer_idx:
                 hidden_states = self.vq_proj_in(hidden_states)
@@ -1519,7 +1745,9 @@ class Stage3(Stage2):
                     vq_embs, vq_ids = self.vq(hidden_states)
                     vq_loss = None
                 elif self.config.get("vq_type", None) == "EMAEntropy":
-                    vq_embs, vq_ids, vq_loss = self.vq(hidden_states, e_scale=1.0 if self.cnt < 30_000 else 0.0)
+                    vq_embs, vq_ids, vq_loss = self.vq(
+                        hidden_states, e_scale=1.0 if self.cnt < 30_000 else 0.0
+                    )
                 else:
                     vq_embs, vq_ids, vq_loss = self.vq(hidden_states)
                 hidden_states = self.vq_proj_out(vq_embs)
@@ -1535,7 +1763,7 @@ class Stage3(Stage2):
             "ctc_out": ctc_out,
             "vq_ids": vq_ids,
             "vq_loss": vq_loss,
-            "flops": flops * 3  # extra 2x for backward.
+            "flops": flops * 3,  # extra 2x for backward.
         }
         if self.config.get("vq_proj_noise", False):
             output_dict.update(noise_scale=noise_scale)

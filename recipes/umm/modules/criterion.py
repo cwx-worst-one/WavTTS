@@ -255,13 +255,111 @@ class UMMLoss(nn.Module):
         log_probs = F.log_softmax(ctc_logits, dim=-1, dtype=torch.float32).transpose(
             0, 1
         )  # [N, T, C] -> [T, N, C]
-
         with torch.backends.cudnn.flags(enabled=False):
             ctc_loss = self.ctc_loss_fn(
                 log_probs, flattened_targets, input_lengths, target_lengths
             )
         loss_dict["loss_ctc"] = ctc_loss
 
+        return loss_dict
+
+
+class UMMLossV2(nn.Module):
+    """Refactored version of UMMLoss() for UMM Stage2 training with 2 MSS heads."""
+
+    def __init__(self, config):
+        super().__init__(self, config)
+        self.ctc_loss_fn = nn.CTCLoss(
+            blank=config.ctc_blank_id,
+            reduction=config.ctc_loss_reduction,
+            zero_infinity=config.ctc_zero_infinity,
+        )
+        self.mel_loss_fn = STFTLoss()
+        if config.add_chroma:
+            self.chroma_loss_fn = STFTLoss()
+        self.config = config
+
+    def compute_spectrogram_loss(self, recon_spec, gt_spec, loss_fn):
+        """Compute generalized spectrogram loss."""
+        recon_spec = recon_spec.contiguous().float()
+        gt_spec = gt_spec.contiguous().float()
+        loss_spec = loss_fn.float()(recon_spec, gt_spec)
+        return loss_spec["stft_loss"]
+
+    def compute_mel_loss(self, recon_mel, mel):
+        """Compute mel spectrogram loss."""
+        return self.compute_spectrogram_loss(recon_mel, mel, self.mel_loss_fn)
+
+    def compute_chroma_loss(self, recon_chroma, chroma):
+        """Compute chroma spectrogram loss."""
+        return self.compute_spectrogram_loss(recon_chroma, chroma, self.chroma_loss_fn)
+
+    def compute_ctc_loss(self, ctc_logits, text_ids):
+        """Compute CTC loss."""
+        ctc_logits = ctc_logits.contiguous().float()
+        input_lengths = torch.full(
+            (ctc_logits.size(0),), ctc_logits.size(1), dtype=torch.long
+        )
+        labels_mask = text_ids > 0
+        target_lengths = labels_mask.sum(-1)
+        flattened_targets = text_ids.masked_select(labels_mask)
+
+        # CTCLoss doesn't support fp16
+        log_probs = F.log_softmax(ctc_logits, dim=-1, dtype=torch.float32).transpose(
+            0, 1
+        )  # [N, T, C] -> [T, N, C]
+
+        with torch.backends.cudnn.flags(enabled=False):
+            ctc_loss = self.ctc_loss_fn(
+                log_probs, flattened_targets, input_lengths, target_lengths
+            )
+        return ctc_loss
+
+    @torch.cuda.amp.autocast(enabled=False)
+    def forward(self, ctc_logits, text_ids, recon_mel, mel, recon_chroma, chroma):
+        loss_dict = {
+            "loss_mel": self.compute_mel_loss(recon_mel, mel),
+            "loss_ctc": self.compute_ctc_loss(ctc_logits, text_ids),
+        }
+        if self.config.add_chroma:
+            loss_dict.update(loss_chroma=self.compute_chroma_loss(recon_chroma, chroma))
+        return loss_dict
+
+
+class UMMLossMSS(UMMLossV2):
+    """Identical to UMMLoss() but with 2 additional losses for MSS vocal and instrumental mel reconstruction."""
+
+    def __init__(self, config):
+        super().__init__(self, config)
+        self.mel_vocal_loss_fn = STFTLoss()
+        self.mel_inst_loss_fn = STFTLoss()
+
+    @torch.cuda.amp.autocast(enabled=False)
+    def forward(
+        self,
+        ctc_logits,
+        text_ids,
+        recon_mel,
+        mel,
+        recon_chroma,
+        chroma,
+        recon_mel_vocal,
+        mel_vocal,
+        recon_mel_inst,
+        mel_inst,
+    ):
+        loss_dict = {
+            "loss_mel": self.compute_spectroam_loss(recon_mel, mel, self.mel_loss_fn),
+            "loss_mel_vocal": self.compute_spectroam_loss(
+                recon_mel_vocal, mel_vocal, self.mel_vocal_loss_fn
+            ),
+            "loss_mel_inst": self.compute_spectroam_loss(
+                recon_mel_inst, mel_inst, self.mel_inst_loss_fn
+            ),
+            "loss_ctc": self.compute_ctc_loss(ctc_logits, text_ids),
+        }
+        if self.config.add_chroma:
+            loss_dict.update(loss_chroma=self.compute_chroma_loss(recon_chroma, chroma))
         return loss_dict
 
 
@@ -451,7 +549,9 @@ class CTCPitchMelLoss(nn.Module):
         self.mel_loss_fn = STFTLoss()
         self.config = config
 
-    def forward(self, ctc_logits, text_ids, recon_mel, mel, recon_f0, f0, recon_vuv, vuv):
+    def forward(
+        self, ctc_logits, text_ids, recon_mel, mel, recon_f0, f0, recon_vuv, vuv
+    ):
         loss_dict = {}
         # Mel
         recon_mel = recon_mel.contiguous().float()
@@ -462,7 +562,7 @@ class CTCPitchMelLoss(nn.Module):
         # F0
         recon_f0 = recon_f0.contiguous().float()
         f0 = f0.contiguous().float()
-        f0_loss =  (torch.abs(recon_f0 - f0) * vuv).sum() / (torch.sum(vuv) + 1)
+        f0_loss = (torch.abs(recon_f0 - f0) * vuv).sum() / (torch.sum(vuv) + 1)
         loss_dict["f0_loss"] = f0_loss
 
         # vuv
@@ -492,5 +592,3 @@ class CTCPitchMelLoss(nn.Module):
         loss_dict["loss_ctc"] = ctc_loss
 
         return loss_dict
-
-

@@ -1,8 +1,8 @@
 import random
+import time
 from typing import Optional, Union
 
 import pytorch_lightning as pl
-import time
 import torch
 import torch.distributed
 import torch.nn.functional as F
@@ -19,9 +19,9 @@ from recipes.umm.modules.criterion_vocoder import (
     generator_loss,
 )
 from samantha.dataio.webdataset import ShardWriter
-from samantha.utils.hparams import DotDict
 from samantha.models.ctiga import gpt
 from samantha.utils.ctiga.inference_params import InferenceParams
+from samantha.utils.hparams import DotDict
 
 
 def log(t, eps=1e-5):
@@ -705,14 +705,14 @@ class Stage0(pl.LightningModule):
         if checkpointing:
             self.model.gradient_checkpointing_enable()
         device_name = torch.cuda.get_device_name()
-        if 'A100' in device_name or 'A800' in device_name:
+        if "A100" in device_name or "A800" in device_name:
             self.device_FLOPS = 312e12
-        elif 'H100' in device_name or 'H800' in device_name:
+        elif "H100" in device_name or "H800" in device_name:
             self.device_FLOPS = 989e12
-        elif 'V100' in device_name:
+        elif "V100" in device_name:
             self.device_FLOPS = 125e12
         else:
-            raise RuntimeError('unknow cuda device name: ', device_name)
+            raise RuntimeError("unknow cuda device name: ", device_name)
 
     def setup(self, stage: str) -> None:
         if self.global_rank == 0:
@@ -779,12 +779,16 @@ class Stage0(pl.LightningModule):
         # Not quite accurate, time used by optimizer is also counted.
         elapsed = time.time() - self.ts_before_forward
         mfu = self.flops / elapsed / self.device_FLOPS
-        self.log_dict_cached({
-            "training/mfu" : mfu,
-            # FIXME: The below two should really be "max" or "use rank 0".
-            "training/mem_gb" : torch.cuda.max_memory_allocated() / 2**30,
-            "training/malloc_retries" : torch.cuda.memory_stats()["num_alloc_retries"],
-        })
+        self.log_dict_cached(
+            {
+                "training/mfu": mfu,
+                # FIXME: The below two should really be "max" or "use rank 0".
+                "training/mem_gb": torch.cuda.max_memory_allocated() / 2**30,
+                "training/malloc_retries": torch.cuda.memory_stats()[
+                    "num_alloc_retries"
+                ],
+            }
+        )
 
         # This makes sure we don't lose any log items added after forward pass.
         #
@@ -801,7 +805,9 @@ class Stage0(pl.LightningModule):
         # Overlap these operations with CUDA computation.
         for i in batch.keys():
             batch[i] = None
-        self.log_dict(prev_log_dict, prog_bar=True, sync_dist=False, rank_zero_only=True)
+        self.log_dict(
+            prev_log_dict, prog_bar=True, sync_dist=False, rank_zero_only=True
+        )
         del pending_deletion
         del prev_log_dict
 
@@ -904,10 +910,9 @@ class Stage0(pl.LightningModule):
     def log_dict_cached(self, kvs):
         """Save `kvs` into cached log dict. The dict is flushed after each
         forward pass."""
-        self.cached_log_dict.update({
-            k : v if v is not torch.Tensor else v.detach()
-            for k, v in kvs.items()
-        })
+        self.cached_log_dict.update(
+            {k: v if v is not torch.Tensor else v.detach() for k, v in kvs.items()}
+        )
 
     def flush_log_dict(self):
         orig_keys = []
@@ -933,13 +938,13 @@ class Stage0(pl.LightningModule):
                 cuda_values.append(v)
 
         values = torch.cat(
-            [torch.tensor(cpu_values, dtype=torch.float, device='cuda')] + cuda_values
+            [torch.tensor(cpu_values, dtype=torch.float, device="cuda")] + cuda_values
         )
         # Support different collectives is just a matter of gathering metrics
         # to rank 0 and reducing them locally.
         torch.distributed.reduce(values, 0, op=torch.distributed.ReduceOp.AVG)
 
-        res_dict = {orig_keys[i] : values[i] for i in range(len(values))}
+        res_dict = {orig_keys[i]: values[i] for i in range(len(values))}
         self.cached_log_dict.clear()
 
         return res_dict, [orig_keys, cpu_values, cuda_values, values]
@@ -966,7 +971,7 @@ class Stage1(Stage0):
             checkpointing=checkpointing,
             extra_params=extra_params,
         )
-        self.seqlen_align=seqlen_align
+        self.seqlen_align = seqlen_align
 
     @torch.no_grad()
     def masking(self, x):
@@ -1009,9 +1014,15 @@ class Stage1(Stage0):
         masked_mel = self.preprocessing(masked_audio)["mel"]
         seqlen = mel.shape[1]
         if seqlen % self.seqlen_align != 0:
-            pad_len = (seqlen + self.seqlen_align - 1) // self.seqlen_align * self.seqlen_align
+            pad_len = (
+                (seqlen + self.seqlen_align - 1)
+                // self.seqlen_align
+                * self.seqlen_align
+            )
             mel = torch.nn.functional.pad(mel, [0, 0, 0, pad_len - seqlen])
-            masked_mel = torch.nn.functional.pad(masked_mel, [0, 0, 0, pad_len - seqlen])
+            masked_mel = torch.nn.functional.pad(
+                masked_mel, [0, 0, 0, pad_len - seqlen]
+            )
         return {"masked_mel": masked_mel, "masked_indices": masked_indices, "mel": mel}
 
     def get_code_rate(self, target_tokens):
@@ -1042,10 +1053,16 @@ class Stage1(Stage0):
         if self.trainer.global_step % 100 == 0:
             code_rate = self.get_code_rate(output_dict["rq_target"].transpose(1, 2))
             loss_dict["aux/code_rate"] = code_rate
-        quant_rate = self.get_quant_rates(
-            [output_dict["rq_target"][:, :, i] for i in range(self.model.config.rq_codebook_num)],
-            self.model.config.rq_codebook_size
-        ) / self.model.config.rq_codebook_num
+        quant_rate = (
+            self.get_quant_rates(
+                [
+                    output_dict["rq_target"][:, :, i]
+                    for i in range(self.model.config.rq_codebook_num)
+                ],
+                self.model.config.rq_codebook_size,
+            )
+            / self.model.config.rq_codebook_num
+        )
         loss_dict["aux/quant_rate"] = quant_rate
 
         mel = input_dict["mel"]
@@ -1138,7 +1155,8 @@ class Stage2(Stage0):
         if self.model.config.get("add_pitch", False):
             loss_dict["loss"] = (
                 loss_dict["loss"]
-                + (loss_dict["f0_loss"]+loss_dict["vuv_loss"]) * self.model.config.w_loss_pitch
+                + (loss_dict["f0_loss"] + loss_dict["vuv_loss"])
+                * self.model.config.w_loss_pitch
             )
 
         loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
@@ -1164,6 +1182,149 @@ class Stage2(Stage0):
                 "Reconstructed": output_dict["mel_out"].transpose(1, 2),
                 "Original": input_dict["mel"].transpose(1, 2),
             }
+        }
+        if self.model.config.add_chroma:
+            out.update(
+                {
+                    "chroma": {
+                        "Reconstructed": output_dict["chroma_out"].transpose(1, 2),
+                        "Original": input_dict["chroma"].transpose(1, 2),
+                    }
+                }
+            )
+        return out
+
+
+class Stage2MSS(Stage2):
+    """Class for Stage 2 training with 2 new heads for processing MSS vocal and MSS instrumental."""
+
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def prepare_feature(self, batch):
+        # Prepare tokens
+        input_dict = {"text_ids": batch["token"]}
+
+        # Prepare MSS audio tracks
+        _audio_dict = {k: batch[k] for k in ["audio", "audio_vocal", "audio_inst"]}
+        _audio_dict = {k: v.squeeze(dim=1).float() for k, v in _audio_dict.items()}
+        _audio_dict = {k: self.pad_audio(v) for k, v in _audio_dict.items()}
+        """
+        @hanoihantrakul 10/10/2023
+        Problem: Superclass Stage0.preprocessing() assumes 1 fixed audio argument `x`, but there are 3 audio tracks. 
+        Solution: Pass in a single dict instead of audio directly. Then handle dict in self.model.preprocessing()
+        """
+        preprocessed_feats = self.preprocessing(_audio_dict)
+        input_dict.update(preprocessed_feats)
+        return input_dict
+
+    def _shared_step(self, batch):
+        """Compute losses."""
+        input_dict = self.prepare_feature(batch)
+        output_dict = self.model(input_dict)
+
+        mel = input_dict["mel"]
+        mel_vocal = input_dict["mel_vocal"]
+        mel_inst = input_dict["mel_inst"]
+        text_ids = input_dict["text_ids"]
+
+        if self.model.config.get(
+            "add_pitch", False
+        ):  # "add_pitch" is False by default for UMM training.
+            loss_dict = self.criterion(
+                ctc_logits=output_dict["ctc_out"],
+                text_ids=text_ids,
+                recon_mel=output_dict["mel_out"],
+                mel=mel,
+                recon_f0=output_dict["f0_out"].squeeze(-1),
+                f0=input_dict["f0"],
+                recon_vuv=output_dict["vuv_out"].squeeze(-1),
+                vuv=input_dict["vuv"],
+            )
+        else:
+            loss_dict = self.criterion(
+                ctc_logits=output_dict["ctc_out"],
+                text_ids=text_ids,
+                recon_chroma=output_dict["chroma_out"]
+                if self.model.config.add_chroma
+                else None,
+                chroma=input_dict["chroma"] if self.model.config.add_chroma else None,
+                recon_mel=output_dict["mel_out"],
+                mel=mel,
+                recon_mel_vocal=output_dict["mel_vocal_out"],
+                mel_vocal=mel_vocal,
+                recon_mel_inst=output_dict["mel_inst_out"],
+                mel_inst=mel_inst,
+            )
+        loss_dict["loss"] = (
+            loss_dict["loss_mel"] * self.model.config.w_loss_mel
+            + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
+            + loss_dict["loss_mel_vocal"] * self.model.config.w_loss_mel_vocal
+            + loss_dict["loss_mel_inst"] * self.model.config.w_loss_mel_inst
+        )
+        if self.model.config.add_chroma:
+            loss_dict["loss"] += (
+                loss_dict["loss_chroma"] * self.model.config.w_loss_chroma
+            )
+        if self.model.config.get(
+            "add_pitch", False
+        ):  # "add_pitch" is False by default for UMM training.
+            loss_dict["loss"] += (
+                loss_dict["f0_loss"] + loss_dict["vuv_loss"]
+            ) * self.model.config.w_loss_pitch
+
+        # Add additional loss-related statistics.
+        loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
+        loss_dict["aux/num_mel_frames"] = mel.size(0) * mel.size(1)
+        loss_dict["aux/mel_mean"] = mel.mean()
+        loss_dict["aux/mel_std"] = mel.std()
+        loss_dict["aux/w_loss_mel"] = self.model.config.w_loss_mel
+        loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
+        if self.model.config.add_chroma:
+            loss_dict["aux/w_loss_chroma"] = self.model.config.w_loss_chroma
+        if self.model.config.get("add_pitch", False):
+            loss_dict["aux/w_loss_pitch"] = self.model.config.w_loss_pitch
+
+        loss_dict["flops"] = output_dict["flops"]
+        return loss_dict
+
+    @torch.no_grad()
+    def get_spec(self, batch):
+        """Return expected shapes of output tensors."""
+        input_dict = self.prepare_feature(batch)
+        output_dict = self.model(input_dict)
+        out = {
+            "mel": {
+                "Reconstructed": output_dict["mel_out"].transpose(1, 2),
+                "Original": input_dict["mel"].transpose(1, 2),
+            },
+            "mel_vocal": {
+                "Reconstructed": output_dict["mel_vocal_out"].transpose(1, 2),
+                "Original": input_dict["mel_vocal"].transpose(1, 2),
+            },
+            "mel_inst": {
+                "Reconstructed": output_dict["mel_inst_out"].transpose(1, 2),
+                "Original": input_dict["mel_inst"].transpose(1, 2),
+            },
         }
         if self.model.config.add_chroma:
             out.update(
@@ -1352,7 +1513,7 @@ class Stage3Improved(Stage3):
 
     def on_train_batch_start(self, batch, batch_idx):
         if self.trainer.global_step >= 20_000:
-            if not hasattr(self.model.vq_proj_in, '__len__'):
+            if not hasattr(self.model.vq_proj_in, "__len__"):
                 return
             if len(self.model.vq_proj_in) < 3:
                 return
@@ -1368,7 +1529,7 @@ class Stage3Improved(Stage3):
         normal_params = []
         special_params = []
         for name, params in self.model.named_parameters():
-            if 'vq.embedding.weight' in name:
+            if "vq.embedding.weight" in name:
                 print("Key {} use zero WD".format(name))
                 special_params.append(params)
             else:
