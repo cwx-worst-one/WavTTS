@@ -268,7 +268,7 @@ class UMMLossV2(nn.Module):
     """Refactored version of UMMLoss() for UMM Stage2 training with 2 MSS heads."""
 
     def __init__(self, config):
-        super().__init__(self, config)
+        super().__init__()
         self.ctc_loss_fn = nn.CTCLoss(
             blank=config.ctc_blank_id,
             reduction=config.ctc_loss_reduction,
@@ -330,7 +330,7 @@ class UMMLossMSS(UMMLossV2):
     """Identical to UMMLoss() but with 2 additional losses for MSS vocal and instrumental mel reconstruction."""
 
     def __init__(self, config):
-        super().__init__(self, config)
+        super().__init__(config)
         self.mel_vocal_loss_fn = STFTLoss()
         self.mel_inst_loss_fn = STFTLoss()
 
@@ -349,11 +349,11 @@ class UMMLossMSS(UMMLossV2):
         mel_inst,
     ):
         loss_dict = {
-            "loss_mel": self.compute_spectroam_loss(recon_mel, mel, self.mel_loss_fn),
-            "loss_mel_vocal": self.compute_spectroam_loss(
+            "loss_mel": self.compute_spectrogram_loss(recon_mel, mel, self.mel_loss_fn),
+            "loss_mel_vocal": self.compute_spectrogram_loss(
                 recon_mel_vocal, mel_vocal, self.mel_vocal_loss_fn
             ),
-            "loss_mel_inst": self.compute_spectroam_loss(
+            "loss_mel_inst": self.compute_spectrogram_loss(
                 recon_mel_inst, mel_inst, self.mel_inst_loss_fn
             ),
             "loss_ctc": self.compute_ctc_loss(ctc_logits, text_ids),

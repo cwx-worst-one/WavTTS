@@ -1223,7 +1223,6 @@ class Stage2MSS(Stage2):
     def prepare_feature(self, batch):
         # Prepare tokens
         input_dict = {"text_ids": batch["token"]}
-
         # Prepare MSS audio tracks
         _audio_dict = {k: batch[k] for k in ["audio", "audio_vocal", "audio_inst"]}
         _audio_dict = {k: v.squeeze(dim=1).float() for k, v in _audio_dict.items()}
@@ -1237,73 +1236,95 @@ class Stage2MSS(Stage2):
         input_dict.update(preprocessed_feats)
         return input_dict
 
+    def _compute_reconstruction_losses(self, input_dict, output_dict) -> dict:
+        """Compute Core Reconstruction losses based on Mel and CTC."""
+        recon_loss_dict = {}
+
+        # "add_pitch" is False by default for UMM training.
+        if self.model.config.get("add_pitch", False):  
+            recon_loss_dict.update(
+                self.criterion(
+                    ctc_logits=output_dict["ctc_out"],
+                    text_ids=input_dict["text_ids"],
+                    recon_mel=output_dict["mel_out"],
+                    mel=input_dict["mel"],
+                    recon_f0=output_dict["f0_out"].squeeze(-1),
+                    f0=input_dict["f0"],
+                    recon_vuv=output_dict["vuv_out"].squeeze(-1),
+                    vuv=input_dict["vuv"],
+                )
+            )
+        else:
+            recon_loss_dict.update(
+                self.criterion(
+                    ctc_logits=output_dict["ctc_out"],
+                    text_ids=input_dict["text_ids"],
+                    recon_chroma=output_dict["chroma_out"]
+                    if self.model.config.add_chroma
+                    else None,
+                    chroma=input_dict["chroma"]
+                    if self.model.config.add_chroma
+                    else None,
+                    recon_mel=output_dict["mel_out"],
+                    mel=input_dict["mel"],
+                    recon_mel_vocal=output_dict["mel_vocal_out"],
+                    mel_vocal=input_dict["mel_vocal"],
+                    recon_mel_inst=output_dict["mel_inst_out"],
+                    mel_inst=input_dict["mel_inst"],
+                )
+            )
+        return recon_loss_dict
+
+    def _compute_aux_losses_and_stats(self, input_dict) -> dict:
+        """Compute Auxillary losses and statistics."""
+        mel, text_ids = input_dict["mel"], input_dict["text_ids"]
+
+        aux_loss_dict = {}
+        aux_loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
+        aux_loss_dict["aux/num_mel_frames"] = mel.size(0) * mel.size(1)
+        aux_loss_dict["aux/mel_mean"] = mel.mean()
+        aux_loss_dict["aux/mel_std"] = mel.std()
+        aux_loss_dict["aux/w_loss_mel"] = self.model.config.w_loss_mel
+        aux_loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
+        if self.model.config.add_chroma:
+            aux_loss_dict["aux/w_loss_chroma"] = self.model.config.w_loss_chroma
+        if self.model.config.get("add_pitch", False):
+            aux_loss_dict["aux/w_loss_pitch"] = self.model.config.w_loss_pitch
+        return aux_loss_dict
+
     def _shared_step(self, batch):
         """Compute losses."""
         input_dict = self.prepare_feature(batch)
         output_dict = self.model(input_dict)
 
-        mel = input_dict["mel"]
-        mel_vocal = input_dict["mel_vocal"]
-        mel_inst = input_dict["mel_inst"]
-        text_ids = input_dict["text_ids"]
+        # Setup loss dict
+        loss_dict = {}
 
-        if self.model.config.get(
-            "add_pitch", False
-        ):  # "add_pitch" is False by default for UMM training.
-            loss_dict = self.criterion(
-                ctc_logits=output_dict["ctc_out"],
-                text_ids=text_ids,
-                recon_mel=output_dict["mel_out"],
-                mel=mel,
-                recon_f0=output_dict["f0_out"].squeeze(-1),
-                f0=input_dict["f0"],
-                recon_vuv=output_dict["vuv_out"].squeeze(-1),
-                vuv=input_dict["vuv"],
-            )
-        else:
-            loss_dict = self.criterion(
-                ctc_logits=output_dict["ctc_out"],
-                text_ids=text_ids,
-                recon_chroma=output_dict["chroma_out"]
-                if self.model.config.add_chroma
-                else None,
-                chroma=input_dict["chroma"] if self.model.config.add_chroma else None,
-                recon_mel=output_dict["mel_out"],
-                mel=mel,
-                recon_mel_vocal=output_dict["mel_vocal_out"],
-                mel_vocal=mel_vocal,
-                recon_mel_inst=output_dict["mel_inst_out"],
-                mel_inst=mel_inst,
-            )
+        # Weighted Mel spectrogram loss and CTC loss
+        loss_dict.update(self._compute_reconstruction_losses(input_dict, output_dict))
         loss_dict["loss"] = (
             loss_dict["loss_mel"] * self.model.config.w_loss_mel
             + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
             + loss_dict["loss_mel_vocal"] * self.model.config.w_loss_mel_vocal
             + loss_dict["loss_mel_inst"] * self.model.config.w_loss_mel_inst
         )
+
+        # Add Chroma loss to main loss
         if self.model.config.add_chroma:
             loss_dict["loss"] += (
                 loss_dict["loss_chroma"] * self.model.config.w_loss_chroma
             )
-        if self.model.config.get(
-            "add_pitch", False
-        ):  # "add_pitch" is False by default for UMM training.
+
+        # Add Pitch loss to main loss (False by default in UMM training)
+        if self.model.config.get("add_pitch", False):
             loss_dict["loss"] += (
                 loss_dict["f0_loss"] + loss_dict["vuv_loss"]
             ) * self.model.config.w_loss_pitch
 
         # Add additional loss-related statistics.
-        loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
-        loss_dict["aux/num_mel_frames"] = mel.size(0) * mel.size(1)
-        loss_dict["aux/mel_mean"] = mel.mean()
-        loss_dict["aux/mel_std"] = mel.std()
-        loss_dict["aux/w_loss_mel"] = self.model.config.w_loss_mel
-        loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
-        if self.model.config.add_chroma:
-            loss_dict["aux/w_loss_chroma"] = self.model.config.w_loss_chroma
-        if self.model.config.get("add_pitch", False):
-            loss_dict["aux/w_loss_pitch"] = self.model.config.w_loss_pitch
+        loss_dict.update(self._compute_aux_losses_and_stats(input_dict))
 
+        # Copy over flops information
         loss_dict["flops"] = output_dict["flops"]
         return loss_dict
 
@@ -1542,6 +1563,96 @@ class Stage3Improved(Stage3):
             "optimizer": optimizer,
             "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
         }
+
+
+class Stage3MSS(Stage3Improved, Stage2MSS):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+
+    def _compute_vq_aux_losses_and_stats(self, output_dict) -> dict:
+        """Compute auxillary losses and statistics related to Vector Quantization."""
+        vq_aux_losses = {}
+
+        if self.trainer.global_step % 100 == 0:
+            code_rate = self.get_code_rate(output_dict["vq_ids"])
+            vq_aux_losses["aux/code_rate"] = code_rate
+
+        vq_aux_losses["aux/quant_rate"] = self.get_quant_rate(
+            output_dict["vq_ids"].long(), self.model.config.vq_codebook_size
+        )
+        if getattr(self.model.vq, "entropy", None) is not None:
+            vq_aux_losses["aux/entropy"] = self.model.vq.entropy()
+
+        if output_dict["vq_loss"] is not None:
+            vq_aux_losses["aux/w_loss_vq"] = self.model.config.w_loss_vq
+
+        vq_aux_losses["aux/noise_scale"] = output_dict.get("noise_scale", 0)
+
+        return vq_aux_losses
+
+    def _shared_step(self, batch):
+        """Compute losses."""
+        input_dict = self.prepare_feature(batch)
+        output_dict = self.model(input_dict)
+
+        # Setup loss dict
+        loss_dict = {}
+
+        # Weighted Mel spectrogram loss and CTC loss
+        loss_dict.update(self._compute_reconstruction_losses(input_dict, output_dict))
+        loss_dict["loss"] = (
+            loss_dict["loss_mel"] * self.model.config.w_loss_mel
+            + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
+            + loss_dict["loss_mel_vocal"] * self.model.config.w_loss_mel_vocal
+            + loss_dict["loss_mel_inst"] * self.model.config.w_loss_mel_inst
+        )
+
+        # Compute batch size
+        loss_dict["bs"] = input_dict["text_ids"].shape[0]
+
+        # Add Chroma loss to main loss
+        if self.model.config.add_chroma:
+            loss_dict["loss"] += (
+                loss_dict["loss_chroma"] * self.model.config.w_loss_chroma
+            )
+
+        # Add Pitch loss to main loss (False by default in UMM training)
+        if self.model.config.get("add_pitch", False):
+            loss_dict["loss"] += (
+                loss_dict["f0_loss"] + loss_dict["vuv_loss"]
+            ) * self.model.config.w_loss_pitch
+
+        # Add VQ loss to main loss
+        if output_dict["vq_loss"] is not None:
+            loss_dict["loss_vq"] = output_dict["vq_loss"]
+            loss_dict["loss"] += output_dict["vq_loss"] * self.model.config.w_loss_vq
+
+        # VQ auxillary losses
+        loss_dict.update(self._compute_vq_aux_losses_and_stats(output_dict))
+
+        # Add additional loss-related statistics
+        loss_dict.update(self._compute_aux_losses_and_stats(input_dict))
+
+        # Copy over flops information
+        loss_dict["flops"] = output_dict["flops"]
+        return loss_dict
 
 
 class Stage2Vocoder(Stage0):
