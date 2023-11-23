@@ -155,7 +155,7 @@ class Wav2Lyrics:
                         break
 
                     wav_input = pypetrel.asr.ASREngineInput()
-                    wav_input.set_waveform(wav_bytes_resampled)
+                    wav_input.set_waveform(wav)
                     wav_input.set_finish(True)
                     wav_input.set_sample_rate(self._sample_rate) # "target sample rate". Must be set to 16k. Model will resample anyways
                     asr_input = pypetrel.asr.Input()
