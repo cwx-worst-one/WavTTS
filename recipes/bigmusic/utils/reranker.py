@@ -146,7 +146,7 @@ class Reranker:
         reranked_eos_index_list = []
         reranked_rewards_breakdown = []
         for i in range(len(indices)):
-            idx = i // beam + indices[i]
+            idx = (i // beam) * beam + indices[i]
             reranked_sampled_audio.append(sampled_audio[idx])
             if len(eos_index_list) > 0:
                 reranked_eos_index_list.append(eos_index_list[idx])
