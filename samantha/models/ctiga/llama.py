@@ -26,11 +26,12 @@ def remap_state_dict_ctiga_llama_to_hf(state_dict, n_layers, n_heads, n_embd):
     mapped_state_dict = OrderedDict()
     # word_embeddings
     # embed_tokens -> embeddings.word_embeddings
-    update_state_dict(
-        mapped_state_dict,
-        "model.embed_tokens.weight",
-        state_dict.pop("transformer.embeddings.word_embeddings.weight"),
-    )
+    if "transformer.embeddings.word_embeddings.weight" in state_dict:
+        update_state_dict(
+            mapped_state_dict,
+            "model.embed_tokens.weight",
+            state_dict.pop("transformer.embeddings.word_embeddings.weight"),
+        )
     # norm -> ln_f
     update_state_dict(
         mapped_state_dict,

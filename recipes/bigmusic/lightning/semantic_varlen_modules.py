@@ -151,10 +151,13 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
             lyrics_lengths = lyrics_lengths + 1 # +1 for sos
 
         # embed
-        lyrics_embeds = lyrics_embedder.embed(token_ids=lyrics_tokens, with_sos=False)
+        lyrics_embeds = lyrics_embedder.embed(token_ids=lyrics_tokens, with_sos=False).to(self.device)
         # unpad 
-        lyrics_tokens = unpad_sequence(lyrics_tokens, lyrics_lengths, batch_first=True)
-        lyrics_embeds = unpad_sequence(lyrics_embeds, lyrics_lengths, batch_first=True)
+        lyrics_tokens = unpad_sequence(lyrics_tokens.to("cpu"), lyrics_lengths.to("cpu"), batch_first=True)
+        lyrics_embeds = unpad_sequence(lyrics_embeds.to("cpu"), lyrics_lengths.to("cpu"), batch_first=True)
+
+        lyrics_tokens = [ l.to(self.device) for l in lyrics_tokens ]
+        lyrics_embeds = [ l.to(self.device) for l in lyrics_embeds ]
         # save
         return {
             'token_embeds': lyrics_embeds,

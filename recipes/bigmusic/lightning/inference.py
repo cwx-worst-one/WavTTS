@@ -1,4 +1,5 @@
 import os
+from pydoc import classname
 
 import numpy as np
 import pytorch_lightning as pl
@@ -43,6 +44,8 @@ class SemanticInferenceModule(pl.LightningModule):
             # pay attention to the logs to make sure the model is loaded correctly
             strict=True,
         ).eval()
+        if cls_name == "SemanticModuleVarlenXperf" or cls_name == "SemanticModuleXperf":
+            self.semantic_module.replace_ctiga_to_xperf()
         self.requires = {}
         
         required_modules = {}
