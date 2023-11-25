@@ -37,7 +37,7 @@ RUN apt update && \
         clang-format \
         libsndfile1 ffmpeg tmux \
         git-lfs python3-tk \
-        libsndfile-dev sox && \
+        libsndfile-dev sox libsox-dev && \
     cd /tmp && \
     wget \
         https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/cuda-keyring_1.1-1_all.deb && \
