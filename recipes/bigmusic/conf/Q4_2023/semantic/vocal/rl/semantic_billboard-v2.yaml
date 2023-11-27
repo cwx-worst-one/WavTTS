@@ -4,7 +4,7 @@
 ##########                       BASIC CONFIGURATION                  ##########
 ################################################################################
 
-ckpt_path: 'last'
+ckpt_path: null
 
 seed: 1995
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
@@ -12,68 +12,83 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 
 extra_params:
     sample_rate: 24000
-    duration: [30, 45, 60, 75, 90, 105, 120]
+    duration: 30
     lyrics_codebook_size: 400
     semantic_codebook_size: 32_768
     semantic_frame_rate: 25
+    semantic_type: bestrq
     mulan_embed_dim: 512
     hidden_size: 1536
-    semantic_type: bestrq
-    pretrained_path: null
-    input_embedders: ["mulan", "duration"]
-    prediction_heads: []
+    intermediate_size: 4352
+    num_hidden_layers: 24
+    num_attention_heads: 12
+    pretrained_path: "/mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/semantic_model_sft/billboard_v2_sft/checkpoints/step=011000-tr_loss=4.4822-val_accu_0=18.76.ckpt"
+    # Inference params
+    semantic_temperature: 1.0
+    sample_mode: "top_p"
+    beam_size: 2
+    decoder_type: "diffusion"
+    diffusion_steps: 10
+    bf16_portion: 0.0
+    # RL training params
+    add_ref_to_beam: False
+    ce_weight: 0.1
+    seq_weight: 10
+    positive_phrase: "cd quality, catchy, memorable"
+    negative_phrase: "noisy, boring, forgettable"
+    use_chord_eos: False
+    rewards:
+        "mulan_sim": 1.0
+        "wer": 1.0
+        "style_text_sim": 1.0
+        "loudness_sim": 1.0
+        "qualitative_sim": 1.0
+        "chord": 1.0
+        "structure": 1.0
+    # Logging params
+    log_num_val_samples: 10
+    log_num_val_beam_samples: 1
 
 # running parameters
 run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
-    log_name: semantic_model_instrumental_07B
-    version: sstk-eval_sft_2min_varlen
+    log_name: semantic_model_mulan_rlhf_ctiga
+    version: billboard-v2_rl3.0
     cache_dir: .module_cache/musiclm
-    precision: "16"
-    num_workers: 8
+    precision: "16-mixed"
+    num_workers: 4
     accelerator: auto
-    max_steps: 10000
-    batch_size: 6
-    learning_rate: 0.00002
-    warmup_steps: 1000
-    cycle_steps: 10000
-    weight_decay: 0.05
-    shuffle_buffer: 64
+    max_steps: 5000
+    val_check_interval: 250
+    batch_size: 3
+    learning_rate: 1.0e-6
+    warmup_steps: 100
+    cycle_steps: 5000
+    weight_decay: 0.01
+    shuffle_buffer: 16
     gradient_clip_val: 1.0
-    val_check_interval: 1000
-    min_length_ratio: [0.9, 0.9, 0.9, 0.92, 0.92, 0.94, 0.95]
-    normalize_audio: True
-    avoid_vocal: True
-    max_vocal_threshold: 0.8
-    text_type: "short"
-    max_num_crops: [3, 3, 2, 2, 1, 1, 1]
-    crop_step_size: [10, 15, 20, 25, 30, 35, 40]
-    use_pipe: False
+    buckets_in_sec: [15, 20, 25, 30] # TODO: Tune for CPU usage and diversity
+    # Supporting models
+    mulan_ckpt: "/mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt"
+    bestrq_ckpt: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/umm_stage3_music_chroma_vq32768x32/step=0030000.ckpt"
+    diffusion_ckpt: "/mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last-minimal.ckpt"
+    vocoder_ckpt: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/soundstream-step=374999-val_sdr=12.9557-minimal.ckpt"
+    chord_ckpt: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/semi-sup-chord_epoch=103-step=56300.ckpt"
+    chord_lms:
+        default: "/mnt/bn/audio-diffusion/ducle/data/mcc60m_groupA1m_chords/genre_specific/train.arpa"
+    structure_ckpt: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/structure90M_epoch=203-step=102000.ckpt"
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
-pl_datamodule: !new:recipes.bigmusic.datasets.instrumental.InstrumentalWebDataModule
-    dataset_name: "SSTK_EVAL_US"
-    val_split: "SSTK_EVAL_US"
-    sample_rate: !ref <extra_params[sample_rate]>
-    duration: !ref <extra_params[duration]>
+pl_datamodule: !new:recipes.datasets.billboard.BillboardLyricsDataModule
     batch_size: !ref <run_opts[batch_size]>
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+    buckets_sec: !ref <run_opts[buckets_in_sec]>
     num_workers: !ref <run_opts[num_workers]>
     pin_memory: True
-    min_length_ratio: !ref <run_opts[min_length_ratio]>
-    normalize_audio: !ref <run_opts[normalize_audio]>
-    aed_filtered: False
-    avoid_sound_effect: False
-    avoid_vocal: !ref <run_opts[avoid_vocal]>
-    max_vocal_threshold: !ref <run_opts[max_vocal_threshold]>
-    text_type: !ref <run_opts[text_type]>
-    max_num_crops: !ref <run_opts[max_num_crops]>
-    crop_step_size: !ref <run_opts[crop_step_size]>
-    use_pipe: !ref <run_opts[use_pipe]>
 
 model_config: !new:transformers.GPT2Config
     vocab_size: 1 # placeholder. Embedding table gets removed on load
@@ -82,9 +97,9 @@ model_config: !new:transformers.GPT2Config
     n_positions: 0  # No absolute position embedding
     num_logits: !ref <extra_params[semantic_codebook_size]> + 2 # +2 for EOS
     n_embd: !ref <extra_params[hidden_size]>
-    n_layer: 24
-    n_head: 12
-    n_inner: 4352
+    n_layer: !ref <extra_params[num_hidden_layers]>
+    n_head: !ref <extra_params[num_attention_heads]>
+    n_inner: !ref <extra_params[intermediate_size]>
     use_rms_norm: True
     activation_function: "swiglu"
     resid_pdrop: 0.0
@@ -114,7 +129,7 @@ model_cls: !name:samantha.models.ctiga.gpt.GPTLMHeadModel
 optimizer_cls: !name:torch.optim.AdamW
     lr: !ref <run_opts[learning_rate]>
     weight_decay: !ref <run_opts[weight_decay]>
-    betas: [0.9, 0.98]
+    betas: [0.9, 0.96]
     eps: 0.00000001
 
 scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupCosine
@@ -123,25 +138,51 @@ scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupC
     cycle_steps: !ref <run_opts[cycle_steps]>
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
-pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
+pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticRLModule
     checkpointing: False
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
-    criterion_cls: !name:recipes.musiclm.lightning.modules.MaskedCrossEntropy
     extra_params: !ref <extra_params>
     required_modules:
+        bestrq:
+            hpath: !ref <run_opts[bestrq_ckpt]>
+            initializer: !name:recipes.umm.requires.model_initializer.init_stage3
+                cache_dir: !ref <run_opts[cache_dir]>
         mulan:
-            # Mulan mix - 110
-            hpath: /mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=024600-kaggle.ckpt
+            hpath: !ref <run_opts[mulan_ckpt]>
             initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                 cache_dir: !ref <run_opts[cache_dir]>
                 version: "g4"
-        bestrq:
-            # US UMM-chroma stage 3
-            hpath: /mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/umm_stage3_music_chroma_vq32768x32/step=0030000.ckpt
-            initializer: !name:recipes.umm.requires.model_initializer.init_stage3
+        sampler:
+            hpath: null
+            initializer: !name:recipes.diffusion.inference_from_text_lyrics2song.init_sampler
                 cache_dir: !ref <run_opts[cache_dir]>
+                duration: !ref <extra_params[duration]>
+        diffusion:
+            hpath: !ref <run_opts[diffusion_ckpt]>
+            initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
+                cache_dir: !ref <run_opts[cache_dir]>
+        vocoder:
+            hpath: !ref <run_opts[vocoder_ckpt]>
+            initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
+                cache_dir: !ref <run_opts[cache_dir]>
+        chord:
+            hpath: !ref <run_opts[chord_ckpt]>
+            initializer: !name:recipes.chord.requires.model_initializer.init_chord
+                cache_dir: !ref <run_opts[cache_dir]>
+        chord_lms:
+            hpath: !ref <run_opts[chord_lms]>
+            initializer: !name:recipes.chord.requires.model_initializer.init_chord_lms
+                cache_dir: !ref <run_opts[cache_dir]>
+        structure:
+            hpath: !ref <run_opts[structure_ckpt]>
+            initializer: !name:recipes.structure.requires.model_initializer.init_structure_90M
+                cache_dir: !ref <run_opts[cache_dir]>
+                n_top_bound: 14
+        asr:
+            hpath: en_punc
+            initializer: !name:recipes.bigmusic.utils.metrics_asr.init_asr
 
 logger:
     - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
@@ -154,16 +195,17 @@ logger:
     #  project: !ref <run_opts[log_name]>
     #  name: !ref <run_opts[version]>
 
+
 # log_gradient_scaler: !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
-      monitor: step
       save_top_k: 10
       save_last: True
-      every_n_train_steps: !ref <run_opts[val_check_interval]>
+      monitor: step
       mode: max
       filename: "{step:06d}"
+      every_n_train_steps: !ref <run_opts[val_check_interval]>
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: 'step'
 
@@ -179,13 +221,14 @@ trainer: !new:pytorch_lightning.Trainer
     num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
     deterministic: False
     enable_model_summary: True
-    log_every_n_steps: 200
+    log_every_n_steps: 10
     max_steps: !ref <run_opts[max_steps]>
     precision: !ref <run_opts[precision]>
     accumulate_grad_batches: 1
     gradient_clip_val: !ref <run_opts[gradient_clip_val]>
     val_check_interval: !ref <run_opts[val_check_interval]>
+    limit_val_batches: 10
     check_val_every_n_epoch: null
-    num_sanity_val_steps: 0  # skip validation sanity checks so we don't run into hdfs file close errors
+    num_sanity_val_steps: 2
     callbacks: !ref <callbacks>
     plugins: !ref <plugins>

@@ -9,6 +9,7 @@ from recipes.bigmusic.utils.rewards import (
     nonvocal_reward,
     structure_reward,
     chorus_sim_reward,
+    chorus_presence_reward,
 )
 
 
@@ -116,7 +117,13 @@ class Reranker:
         elif rw_type == "chorus_sim":
             return chorus_sim_reward(
                 sampled_audio,
-                [[x for x in y if x[0] == "chorus"] for y in batch["structure"]],
+                batch["structure"],
+                sample_rate=extra_params.sample_rate,
+                device=sampled_audio.device,
+            )
+        elif rw_type == "chorus_presence":
+            return chorus_presence_reward(
+                sampled_audio,
                 sample_rate=extra_params.sample_rate,
                 device=sampled_audio.device,
             )

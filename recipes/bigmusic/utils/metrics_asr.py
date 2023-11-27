@@ -257,4 +257,6 @@ def edit_distance(seq1, seq2):
 
 
 def remove_punc_case(text):
-    return re.sub("[.,!?]", "", text).lower()
+    text = text.replace("<n>", "")
+    text = re.sub("[.,!?]", "", text).lower()
+    return " ".join(text.split())

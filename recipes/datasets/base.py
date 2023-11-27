@@ -44,6 +44,9 @@ class DataResult:
             return default_val
         return getattr(self, name)
 
+    def __contains__(self, name):
+        return hasattr(self, name)
+
     def __getitem__(self, name: str):
         return getattr(self, name)
 

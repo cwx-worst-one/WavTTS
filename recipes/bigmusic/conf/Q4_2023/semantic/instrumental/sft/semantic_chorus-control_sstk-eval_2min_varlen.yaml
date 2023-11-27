@@ -20,15 +20,23 @@ extra_params:
     hidden_size: 1536
     semantic_type: bestrq
     pretrained_path: null
-    input_embedders: ["mulan", "duration"]
+    input_embedders: ["mulan", "duration", "structure"]
     prediction_heads: []
+    # For chorus detection
+    structure_labels: ["chorus"]
+    structure_dropout: 0.1
+    volume_quantile: 0.7
+    contrast_db: 3
+    left_ctx: 5
+    right_ctx: 5
+    granularity_in_secs: 0.5
 
 # running parameters
 run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
     log_name: semantic_model_instrumental_07B
-    version: sstk-eval_sft_2min_varlen
+    version: sstk-eval_sft_chorus-control_2min_varlen
     cache_dir: .module_cache/musiclm
     precision: "16"
     num_workers: 8
@@ -55,6 +63,15 @@ run_opts:
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
+additional_transforms:
+    - !new:recipes.bigmusic.datasets.transforms.structure.ChorusDetectionTransform
+      sample_rate: !ref <extra_params[sample_rate]>
+      volume_quantile: !ref <extra_params[volume_quantile]>
+      contrast_db: !ref <extra_params[contrast_db]>
+      left_ctx: !ref <extra_params[left_ctx]>
+      right_ctx: !ref <extra_params[right_ctx]>
+      granularity_in_secs: !ref <extra_params[granularity_in_secs]>
+
 pl_datamodule: !new:recipes.bigmusic.datasets.instrumental.InstrumentalWebDataModule
     dataset_name: "SSTK_EVAL_US"
     val_split: "SSTK_EVAL_US"
@@ -73,6 +90,7 @@ pl_datamodule: !new:recipes.bigmusic.datasets.instrumental.InstrumentalWebDataMo
     text_type: !ref <run_opts[text_type]>
     max_num_crops: !ref <run_opts[max_num_crops]>
     crop_step_size: !ref <run_opts[crop_step_size]>
+    additional_transforms: !ref <additional_transforms>
     use_pipe: !ref <run_opts[use_pipe]>
 
 model_config: !new:transformers.GPT2Config

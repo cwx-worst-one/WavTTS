@@ -26,6 +26,11 @@ extra_params:
     # Used for reranker, only loaded if use_reranker=True
     mulan_rewards_ckpt: "/mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt"
 
+    rewards:
+        style_text: 1.0
+        qualitative: 1.0
+        nonvocal: 1.0
+
     diffusion_params:
         num_chunks: 1
         diffusion_steps: 25
@@ -95,15 +100,15 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                     cache_dir: !ref <run_opts[cache_dir]>
         reranker:
             hpath:
-                rewards:
-                    style_text: 1.0
-                    qualitative: 1.0
-                    nonvocal: 1.0
+                rewards: !ref <extra_params[rewards]>
                 required_modules:
                     mulan:
                         hpath: !ref <extra_params[mulan_rewards_ckpt]>
                         initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                             version: "g4"
+                    asr:
+                        hpath: en_punc
+                        initializer: !name:recipes.bigmusic.utils.metrics_asr.init_asr
             initializer: !name:recipes.bigmusic.utils.reranker.init_reranker
                 cache_dir: !ref <run_opts[cache_dir]>
 

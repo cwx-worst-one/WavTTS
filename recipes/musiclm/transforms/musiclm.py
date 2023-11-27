@@ -379,12 +379,20 @@ class MCCTransforms(TransformBase):
         if text_type == "long":
             # Both Pond5 and SSTK have DESCRIPTION
             return metadata["DESCRIPTION"]
-        else:
+        elif text_type == "short":
             if "KEYWORDS" in metadata:
                 ary = metadata["KEYWORDS"].split(",")
             else:
                 ary = metadata["TAGS"].split(",")
             return ", ".join([x.strip() for x in ary])
+        elif text_type == "mcc":
+            tags = []
+            for key in ["top_level_genre", "sub_genre", "mood", "scenario", "instrument"]:
+                ary = metadata["mcc_annotation"].get(key, "").split(",")
+                tags.extend([x.strip() for x in ary if len(x.strip()) > 0])
+            return ", ".join(tags)
+        else:
+            raise ValueError(f"Unknown text type: {text_type}")
 
     def __call__(self, x: Dict[str, Any]) -> Generator:
         is_good, message = self.is_metadata_good(x["__index_data__"])

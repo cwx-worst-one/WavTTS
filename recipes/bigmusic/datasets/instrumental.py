@@ -88,6 +88,10 @@ class InstrumentalWebDataModule(DataModule):
             urls_and_weights = [
                 ("hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/shutterstock/all_url2idx_tag.txt", 1.0),
             ]
+        elif dataset_name == "SSTK+MCC_EVAL_US":
+            urls_and_weights = [
+                ("hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/shutterstock/all_url2idx_tag_mcc.txt", 1.0),
+            ]
         else:
             raise NotImplementedError(f"Unknown dataset: {dataset_name}")
 

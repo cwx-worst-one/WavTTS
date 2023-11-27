@@ -7,6 +7,8 @@ from recipes.bigmusic.lightning.embedding_modules import (
     SpeakerEmbedder,
     BestRQTokenEmbedder, 
     MulanTagEmbedder,
+    DurationEmbedder,
+    StructureEmbedder,
     get_mulan_embeds,
 )
 from recipes.bigmusic.utils.metrics_asr import asr_transcribe_lyrics
@@ -18,6 +20,8 @@ from recipes.bigmusic.utils.rewards import (
     chord_reward,
     nonvocal_reward,
     structure_reward,
+    chorus_sim_reward,
+    chorus_presence_reward,
 )
 import numpy as np
 import torch
@@ -48,10 +52,36 @@ class SemanticModule(BaseContinuousEmbedModule):
         mulan_embed_dim = extra_params['mulan_embed_dim']
         semantic_codebook_size = extra_params['semantic_codebook_size']
         mulan_OTF_tag_type = extra_params.get('mulan_tag_type', 'mulan_genres')
-        embedder_dict = {
-            'mulan': MulanTagEmbedder(input_dim=mulan_embed_dim, embedding_dim=hidden_size, add_sos=True, mulan_tag_type=mulan_OTF_tag_type),
-            'lyrics_tokens': LyricsTokenEmbedder(vocab_size=lyrics_vocab_size, embedding_dim=hidden_size, add_sos=True),
-        }
+        embedder_dict = {}
+        for emb_type in extra_params.get("input_embedders", ["mulan", "lyrics_tokens"]):
+            if emb_type == "mulan":
+                embedder_dict[emb_type] = MulanTagEmbedder(
+                    input_dim=mulan_embed_dim,
+                    embedding_dim=hidden_size,
+                    add_sos=True,
+                    mulan_tag_type=mulan_OTF_tag_type,
+                )
+            elif emb_type == "lyrics_tokens":
+                embedder_dict[emb_type] = LyricsTokenEmbedder(
+                    vocab_size=lyrics_vocab_size,
+                    embedding_dim=hidden_size,
+                    add_sos=True,
+                    add_eos=False,
+                )
+            elif emb_type == "duration":
+                embedder_dict[emb_type] = DurationEmbedder(
+                    durations=extra_params["duration"],
+                    embedding_dim=hidden_size,
+                )
+            elif emb_type == "structure":
+                embedder_dict[emb_type] = StructureEmbedder(
+                    durations=extra_params["duration"],
+                    embedding_dim=hidden_size,
+                    structure_labels=extra_params["structure_labels"],
+                    granularity_in_secs=extra_params["granularity_in_secs"],
+                )
+            else:
+                raise ValueError(f"Unknown emb type: {emb_type}")
         input_embedders = nn.ModuleDict(embedder_dict)
         semantic_type = extra_params.get('semantic_type', 'wav2vec')
         if semantic_type  == 'wav2vec':
@@ -75,37 +105,95 @@ class SemanticModule(BaseContinuousEmbedModule):
         self.save_hyperparameters()
         self.log_counter = 0
 
+    def prepare_mulan_inputs(self, batch, mulan_embedder):
+        batch_size = self.infer_batch_size(batch)
+        conditions = self.infer_conditions(batch)
+        if 'style_text' in conditions:
+            embeds = mulan_embedder.embed(
+                self.requires,
+                batch['style_text'],
+                with_sos=True,
+                data_type='text',
+            )
+        elif 'style_audio' in conditions:
+            embeds = mulan_embedder.embed(
+                self.requires,
+                batch['style_audio'].to(self.device),
+                with_sos=True,
+                data_type='music',
+            )
+        elif 'style_tag' in conditions: # using Mulan for on-the-fly MIR tagging
+            embeds = mulan_embedder.embed(
+                self.requires,
+                batch['style_audio'].to(self.device),
+                mcc_style_text=batch.get('style_text'),
+                with_sos=True,
+                data_type='tag',
+            )
+        else:
+            # adding SOS token no matter what so that all parameters get used
+            embeds = mulan_embedder.get_sos_embed(batch_size)
+        return embeds
+
+    def prepare_lyrics_inputs(self, batch, lyrics_embedder):
+        batch_size = self.infer_batch_size(batch)
+        conditions = self.infer_conditions(batch)
+        if 'lyrics_tokens' in conditions:
+            embeds = lyrics_embedder.embed(
+                self.requires,
+                batch['lyrics_tokens'].to(self.device),
+                with_sos=True,
+            )
+        else:
+            embeds = lyrics_embedder.get_sos_embed(batch_size)
+        return embeds
+
+    def prepare_duration_inputs(self, batch, duration_embedder):
+        batch_size = self.infer_batch_size(batch)
+        conditions = self.infer_conditions(batch)
+        if 'duration' in conditions:
+            embeds = duration_embedder.embed(batch["duration"], batch_size)
+        else:
+            embeds = duration_embedder.empty_embed(batch_size)
+        return embeds
+
+    def prepare_structure_inputs(self, batch, structure_embedder):
+        batch_size = self.infer_batch_size(batch)
+        structure_labels = batch["structure"]
+        assert batch_size == len(structure_labels)
+        # Dropout if needed
+        if self.training and self.extra_params.structure_dropout > 0:
+            dropout = self.extra_params.structure_dropout
+            all_keep = [x >= dropout for x in np.random.rand(batch_size)]
+            for i, keep in enumerate(all_keep):
+                if not keep:
+                    structure_labels[i] = None
+        # Find target duration
+        if "duration" in batch:
+            target_duration = batch["duration"]
+        else:
+            target_duration = batch["target_audio"].shape[-1] // self.extra_params.sample_rate
+        embeds = structure_embedder.embed(structure_labels, target_duration)
+        return embeds
+
     def prepare_inputs_embeddings(self, batch):
         if self.log_counter < 1:
             print(batch)
             self.log_counter += 1
-        if type(batch["conditions"]) == list:
-            assert len(set(list(map(tuple, batch["conditions"])))) == 1, "Make sure that all conditions in the batch are the same"
-            conditions = batch['conditions'][0].split(',')
-        else:
-            conditions = batch['conditions'].split(',')
 
-        batch_size = self.infer_batch_size(batch)
-        with_sos=True
-        # convert inputs to conditions
         inputs_embeds = []
-        if 'style_text' in conditions:
-            embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_text'], with_sos=with_sos, data_type='text')
-            inputs_embeds.append(embeds)
-        elif 'style_audio' in conditions:
-            embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_audio'].to(self.device), with_sos=with_sos, data_type='music')
-            inputs_embeds.append(embeds)
-        elif 'style_tag' in conditions: # using Mulan for on-the-fly MIR tagging
-            embeds = self.input_embedders['mulan'].embed(self.requires, batch['style_audio'].to(self.device), mcc_style_text=batch.get('style_text'), with_sos=with_sos, data_type='tag')   
-            inputs_embeds.append(embeds)
-        else:
-            # adding SOS token no matter what so that all parameters get used
-            inputs_embeds.append(self.input_embedders['mulan'].get_sos_embed(batch_size))
-        if 'lyrics_tokens' in conditions:
-            embeds = self.input_embedders['lyrics_tokens'].embed(self.requires, batch['lyrics_tokens'].to(self.device), with_sos=with_sos)
-            inputs_embeds.append(embeds)
-        else:
-            inputs_embeds.append(self.input_embedders['lyrics_tokens'].get_sos_embed(batch_size))
+        for emb_type, embedder in self.input_embedders.items():
+            if emb_type == "mulan":
+                emb_inputs = self.prepare_mulan_inputs(batch, embedder)
+            elif emb_type == "lyrics_tokens":
+                emb_inputs = self.prepare_lyrics_inputs(batch, embedder)
+            elif emb_type == "duration":
+                emb_inputs = self.prepare_duration_inputs(batch, embedder)
+            elif emb_type == "structure":
+                emb_inputs = self.prepare_structure_inputs(batch, embedder)
+            else:
+                raise ValueError(f"Unknown emb type: {emb_type}")
+            inputs_embeds.append(emb_inputs)
         return torch.cat(inputs_embeds, dim=1)
 
     @torch.no_grad()
@@ -182,22 +270,27 @@ class SemanticRLModule(SemanticModule):
         ref_samples = None
         if self.extra_params.add_ref_to_beam and mode == "training":
             ref_samples = target_ids
-        num_tokens = self.extra_params.duration * self.extra_params.semantic_frame_rate
-        with torch.autocast(device_type="cuda", enabled=False):
-            sampled_semantic_tokens, model_inputs = self.super_predict(
-                inputs_embeds=inputs_embeds.float(),
-                num_tokens=num_tokens,
-                temperature=self.extra_params.semantic_temperature,
-                sample_mode=self.extra_params.sample_mode,
-                beam=beam,
-                ref_samples=ref_samples,
-                rl_training=True,
-            )
-            sampled_semantic_tokens_processed, eos_index_list = process_eos_indexes(
-                sampled_semantic_tokens,
-                self,
-                sample_rate=self.extra_params.sample_rate,
-            )
+        if "duration" in batch:
+            duration = batch["duration"]
+        elif isinstance(self.extra_params.duration, (list, tuple)):
+            duration = self.extra_params.duration[-1]
+        else:
+            duration = self.extra_params.duration
+        num_tokens = duration * self.extra_params.semantic_frame_rate
+        sampled_semantic_tokens, model_inputs = self.super_predict(
+            inputs_embeds=inputs_embeds,
+            num_tokens=num_tokens,
+            temperature=self.extra_params.semantic_temperature,
+            sample_mode=self.extra_params.sample_mode,
+            beam=beam,
+            ref_samples=ref_samples,
+            rl_training=True,
+        )
+        sampled_semantic_tokens_processed, eos_index_list = process_eos_indexes(
+            sampled_semantic_tokens,
+            self,
+            sample_rate=self.extra_params.sample_rate,
+        )
         # Compute rewards
         rewards, sampled_audio, reward_breakdown = self.get_reward({
             "sampled_semantic_tokens": sampled_semantic_tokens_processed,
@@ -205,9 +298,7 @@ class SemanticRLModule(SemanticModule):
             "target_audio": wavs_gt,
             "batch_size": B,
             "beam_size": beam,
-            "lyrics": batch.get("lyrics"),
-            "style_text": batch.get("style_text"),
-            "style_metadata": batch.get("style_metadata"),
+            "batch": batch,
         })
         # Compute sequence probs
         seq_logits = self.model(**model_inputs)
@@ -343,6 +434,7 @@ class SemanticRLModule(SemanticModule):
 
     @torch.no_grad()
     def run_diffusion(self, items):
+        VOCODER_HZ = 125
         sampler = self.requires["sampler"]
         diffusion = self.requires["diffusion"]
         vocoder = self.requires["vocoder"]
@@ -360,12 +452,14 @@ class SemanticRLModule(SemanticModule):
             show_progress=False,
             angle_schedule="linear",
             schdeule_slope=2.5,
-            classifier_free_guidance=3.0,
+            classifier_free_guidance=2.5,
         ).detach().float()
         # torch.interpolate causes OOM for large batch sizes > 24. chunking to batch of 8 instead.
         # If you see this error, lower batch size:
         # RuntimeError: Expected output.numel() <= std::numeric_limits<int32_t>::max() to be true, but got false.
-        wavs = torch.cat([vocoder.decode(c).detach() for c in torch.split(pred_emb, 8)])
+        duration = pred_emb.shape[-1] // VOCODER_HZ
+        batch_chunks = max(1, 240 // duration)
+        wavs = torch.cat([vocoder.decode(c).detach() for c in torch.split(pred_emb, batch_chunks)])
         # Zero out samples after <eos>
         if len(eos_index_list) > 0:
             for i in range(len(eos_index_list)):
@@ -376,7 +470,11 @@ class SemanticRLModule(SemanticModule):
     def get_reward(self, items):
         b = items["batch_size"]
         beam = items["beam_size"]
+        batch = items["batch"]
         sampled_audio = self.decoder_fn(items).float()
+        if "duration" in batch:
+            max_samples = batch["duration"] * self.extra_params.sample_rate
+            sampled_audio = sampled_audio[..., :max_samples]
         items["sampled_audio"] = sampled_audio
         reward = 0.0
         reward_breakdown = {}
@@ -392,6 +490,7 @@ class SemanticRLModule(SemanticModule):
         target_audio = items["target_audio"]
         b = items["batch_size"]
         beam = items["beam_size"]
+        batch = items["batch"]
         if reward_type == "mulan_sim":
             (
                 mulan_sim,
@@ -408,7 +507,6 @@ class SemanticRLModule(SemanticModule):
             )
             return mulan_sim
         elif reward_type == "wer":
-            assert items["lyrics"] is not None
             if "sampled_lyrics" not in items:
                 eos_index_list = items["eos_index_list"]
                 items["sampled_lyrics"] = asr_transcribe_lyrics(
@@ -422,7 +520,11 @@ class SemanticRLModule(SemanticModule):
                 # This sometimes happens, not sure why
                 print(f"lyrics: len={len(sampled_lyrics)} (expected {sampled_audio.size(0)}), content={sampled_lyrics}")
                 return 0
-            return wer_reward(sampled_lyrics, items["lyrics"], sampled_audio.device)
+            return wer_reward(
+                sampled_lyrics,
+                batch["lyrics"] if "lyrics" in batch else batch["lyrics_text"],
+                sampled_audio.device,
+            )
         elif reward_type == "style_text_sim":
             (
                 style_text_sim,
@@ -432,7 +534,7 @@ class SemanticRLModule(SemanticModule):
                 self.requires["mulan_infer_fn"],
                 self.requires["mulan"],
                 sampled_audio.squeeze(1),
-                items["style_text"],
+                batch["style_text"],
                 device=sampled_audio.device,
                 sampled_embeds=items.get("sampled_mulan_embeds"),
                 target_embeds=items.get("style_text_embeds"),
@@ -497,8 +599,10 @@ class SemanticRLModule(SemanticModule):
             # Use genre-specific chord LM if possible, otherwise fall back to default LM
             chord_lm_keys = []
             for i in range(sampled_audio.size(0)):
-                if items["style_metadata"] is not None:
-                    genres = items["style_metadata"][i // beam].get("genres", [])
+                style_metadata = batch.get("style_metadata")
+                genres = []
+                if style_metadata is not None:
+                    genres = style_metadata[i // beam].get("genres", [])
                     genres = ["_".join(g.lower().split()) for g in genres]
                     genres = [g for g in genres if g in self.requires["chord_lms"]]
                 if len(genres) == 0 and "default" in self.requires["chord_lms"]:
@@ -517,6 +621,19 @@ class SemanticRLModule(SemanticModule):
         elif reward_type == "structure":
             return structure_reward(
                 self.requires["structure"],
+                sampled_audio,
+                sample_rate=self.extra_params.sample_rate,
+                device=sampled_audio.device,
+            )
+        elif reward_type == "chorus_sim":
+            return chorus_sim_reward(
+                sampled_audio,
+                batch["structure"],
+                sample_rate=self.extra_params.sample_rate,
+                device=sampled_audio.device,
+            )
+        elif reward_type == "chorus_presence":
+            return chorus_presence_reward(
                 sampled_audio,
                 sample_rate=self.extra_params.sample_rate,
                 device=sampled_audio.device,

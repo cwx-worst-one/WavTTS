@@ -53,8 +53,7 @@ sudo apt install espeak ffmpeg zip fonts-arphic-ukai -y
 pip3 install -qr ./recipes/bigmusic/requirements.txt
 pip3 install -qr ./recipes/diffusion/requirements.txt
 
-
-
+pip3 install recipes/soundstream/torch-museval
 MAX_ORDER=10 pip3 install https://github.com/kpu/kenlm/archive/master.zip
 
 sh launch.sh $@

@@ -111,6 +111,9 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                         hpath: !ref <extra_params[mulan_ckpt]>
                         initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                             version: "g4"
+                    asr:
+                        hpath: en_punc
+                        initializer: !name:recipes.bigmusic.utils.metrics_asr.init_asr
             initializer: !name:recipes.bigmusic.utils.reranker.init_reranker
                 cache_dir: !ref <run_opts[cache_dir]>
 

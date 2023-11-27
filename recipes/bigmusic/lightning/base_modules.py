@@ -202,6 +202,16 @@ class BaseContinuousEmbedModule(BaseModule):
         batch_size = [len(t) for t in batch.values() if torch.is_tensor(t) or isinstance(t, list)][0]
         return batch_size
 
+    def infer_conditions(self, batch):
+        if type(batch["conditions"]) == list:
+            assert (
+                len(set(list(map(tuple, batch["conditions"])))) == 1
+            ), "Make sure that all conditions in the batch are the same"
+            conditions = batch['conditions'][0].split(',')
+        else:
+            conditions = batch['conditions'].split(',')
+        return conditions
+
     def prepare_inputs_embeddings(self, batch):
         raise NotImplementedError()
 

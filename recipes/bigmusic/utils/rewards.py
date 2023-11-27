@@ -99,8 +99,8 @@ def wer_reward(
             elif (ref == "" and hyp != "") or (ref != "" and hyp == ""):
                 # Default to 100% WER
                 wer[idx] = 1.0
-    # Return negative WER as reward (higher is better)
-    return -1 * wer
+    # Return inverse WER as reward (higher is better)
+    return 1 - wer
 
 
 @torch.no_grad()
@@ -188,7 +188,6 @@ STRUCTURE_TO_SCORE = {
     "intro-verse": 0.75,
     "intro-chorus": 0.75,
     "verse-chorus": 1.0,
-    "bridge-chorus": 1.0,
     "chorus-verse": 1.0,
 }
 
@@ -221,19 +220,10 @@ def structure_reward(
     )
     filtered_structure_labels = []
     for structure_labels in all_structure_labels:
-        structure_labels = [x for x in structure_labels if x["funct_name"] != "silence"]
-        durations = {}
-        total_dur = 0.0
-        for x in structure_labels:
-            if x["funct_name"] not in durations:
-                durations[x["funct_name"]] = 0.0
-            duration = x["interval"][1] - x["interval"][0]
-            durations[x["funct_name"]] += duration
-            total_dur += duration
+        structure_labels = [
+            x for x in structure_labels if x["funct_name"] in {"intro", "verse", "chorus"}
+        ]
         structure_labels = dedup([x["funct_name"] for x in structure_labels])
-        # Only keep sections whose length is at least 30% of the total duration
-        # TODO: don't hardcode this threshold, make it configurable
-        structure_labels = [x for x in structure_labels if durations[x] / total_dur >= 0.3]
         filtered_structure_labels.append(structure_labels)
     structure_rewards = torch.zeros(sampled_audio.size(0)).to(device)
     for i, structure_labels in enumerate(filtered_structure_labels):
@@ -249,6 +239,7 @@ def chorus_sim_reward(
     ref_choruses,
     sample_rate,
     device,
+    debug=False,
 ):
     def _get_reward(hyps, refs):
         if refs is None:
@@ -280,13 +271,28 @@ def chorus_sim_reward(
 
     _, beam = _infer_batch_beam(sampled_audio, ref_choruses)
     # TODO: make params configurable
-    chorus_detection = ChorusDetectionTransform()
+    chorus_detection = ChorusDetectionTransform(sample_rate=sample_rate)
     hyp_choruses = [chorus_detection.find_chorus(audio) for audio in sampled_audio]
 
     chorus_sim_rewards = torch.zeros(sampled_audio.size(0)).to(device)
     for i, hyps in enumerate(hyp_choruses):
         refs = ref_choruses[i // beam]
+        if refs is not None:
+            refs = [x for x in refs if x[0] == "chorus"]
         reward = _get_reward(hyps, refs)
         chorus_sim_rewards[i] = reward
-        print(f"refs: {refs}, hyps: {hyps}, reward: {reward}")
+        if debug:
+            print(f"refs: {refs}, hyps: {hyps}, reward: {reward}")
     return chorus_sim_rewards
+
+
+@torch.no_grad()
+def chorus_presence_reward(sampled_audio, sample_rate, device):
+    # TODO: make params configurable
+    chorus_detection = ChorusDetectionTransform(sample_rate=sample_rate)
+    hyp_choruses = [chorus_detection.find_chorus(audio) for audio in sampled_audio]
+    chorus_presence_rewards = torch.zeros(sampled_audio.size(0)).to(device)
+    for i, hyps in enumerate(hyp_choruses):
+        if len(hyps) > 0:
+            chorus_presence_rewards[i] = 1
+    return chorus_presence_rewards
