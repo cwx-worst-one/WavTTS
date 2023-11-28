@@ -4,3 +4,11 @@ bytedeuler
 bytedunicorn
 bytedtos
 bytedance.easycycle
+torch_complex==0.4.3
+encodec==0.1.1
+rotary_embedding_torch
+nnAudio
+simplejson
+jsonschema
+phonemizer
+confusables

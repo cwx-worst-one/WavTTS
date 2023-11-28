@@ -14,7 +14,7 @@ from recipes.serving.utils.const import STATUS_CODE_SERVER_FAILED_INVOKE
 psm = os.getenv("SERVER_PSM")
 cluster = os.getenv("SERVER_CLUSTER", "default")
 port = os.getenv("SERVER_PORT", 8888)
-app = os.getenv("SERVER_APP", "BigTTS")
+app = os.getenv("SERVER_APP", "Lyrics2Song")
 handler_map = {}
 
 

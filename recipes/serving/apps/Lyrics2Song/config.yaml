@@ -1,0 +1,46 @@
+---
+
+################################################################################
+##########                      APP CONFIGURATION                    ##########
+################################################################################
+
+submodule_name: 'bigmusic'
+
+repo:
+  func_path: 'recipes.serving.handler.music'
+  preload_model_func_name: 'preload_models'
+
+inputs:
+  -
+    source: 'payload'
+    type: 'str'
+    name: 'lyrics'
+  -
+    source: 'payload'
+    type: 'str'
+    name: 'mood'
+  -
+    source: 'payload'
+    type: 'str'
+    name: 'genre'
+  -
+    source: 'payload'
+    type: 'str'
+    name: 'gender'
+
+outputs:
+  -
+    destination: 'data'
+    name: 'audio'
+  -
+    destination: 'payload'
+    name: 'sample_rate'
+    type: 'int'
+  -
+    destination: 'payload'
+    name: 'urls'
+    type: 'str'
+  -
+    destination: 'payload'
+    name: 'message'
+    type: 'str'

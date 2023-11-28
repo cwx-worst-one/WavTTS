@@ -1,39 +1,28 @@
-import os
-from pydoc import classname
-
-import numpy as np
 import pytorch_lightning as pl
-import torch
-import torchaudio
 
 from samantha.utils.hparams import DotDict
-from typing import Any
-from recipes.musiclm.inference.utils import slugify, save_wav, generate_hash, format_name, load_wav
 from recipes.diffusion.models.diffusion_model.utils import run_diffusion
 from recipes.bigmusic.lightning.embedding_modules import get_bestrq_umm_tokens
-import torch.functional
 import importlib
 from recipes.bigmusic.utils.model_initializer import run_2ar
-from itertools import zip_longest
 from recipes.bigmusic.lightning.base_modules import BaseModule
 from recipes.bigmusic.lightning.semantic_modules import process_eos_indexes, truncate_wav_to_eos
-import json
-from pathlib import Path
-import numpy as np
 from samantha.models.flash_llama import LlamaPreTrainedModel
 from samantha.models.ctiga import gpt
+import logging
 
 
 class SemanticInferenceModule(pl.LightningModule):
     def __init__(
-        self,
-        semantic_cls_path,
-        required_modules,
-        extra_params=None,
+            self,
+            semantic_cls_path,
+            required_modules,
+            extra_params=None,
     ):
         super().__init__()
         self.save_hyperparameters()
         self.extra_params = DotDict(extra_params)
+        logging.info(f"extra params: {self.extra_params}")
 
         *module_paths, cls_name = semantic_cls_path.split('.')
         module = importlib.import_module('.'.join(module_paths))
@@ -47,19 +36,20 @@ class SemanticInferenceModule(pl.LightningModule):
         if cls_name == "SemanticModuleVarlenXperf" or cls_name == "SemanticModuleXperf":
             self.semantic_module.replace_ctiga_to_xperf()
         self.requires = {}
-        
+
         required_modules = {}
         if self.extra_params.token2wav_type == 'diffusion':
             self.decoding_fn = run_diffusion
             required_modules.update(self.hparams.required_modules['diffusion_modules'])
-            self.decoding_params = DotDict({ **self.extra_params, **extra_params['diffusion_params'] })
+            self.decoding_params = DotDict({**self.extra_params, **extra_params['diffusion_params']})
         elif self.extra_params.token2wav_type == 'ar':
             self.decoding_fn = run_2ar
             required_modules.update(self.hparams.required_modules['ar_modules'])
-            self.decoding_params = DotDict({ **self.extra_params, **extra_params['ar_params'] })
+            self.decoding_params = DotDict({**self.extra_params, **extra_params['ar_params']})
         else:
             raise ValueError(f"Unhandled type: {self.extra_params.token2wav_type}")
 
+        logging.info(f"use reranker: {self.extra_params.use_reranker}")
         if self.extra_params.use_reranker:
             if self.extra_params.beam_size <= 1:
                 print(f"[WARNING] use_reranker=True but beam_size={self.extra_params.beam_size}")
@@ -67,12 +57,13 @@ class SemanticInferenceModule(pl.LightningModule):
 
         self.load_required_modules(required_modules)
 
-
     def setup(self, stage: str) -> None:
         if isinstance(self.semantic_module.model, gpt.GPTLMHeadModel) and ('32' in self.trainer.precision):
-            raise Exception(f"Invalid precision for cTIGA model {self.trainer.precision}. Please set --run_opts.precision 16")
+            raise Exception(
+                f"Invalid precision for cTIGA model {self.trainer.precision}. Please set --run_opts.precision 16")
         if isinstance(self.semantic_module.model, LlamaPreTrainedModel) and ('16' in self.trainer.precision):
-            raise Exception(f"Invalid precision for flash llama model {self.trainer.precision}. Please set --run_opts.precision 32")
+            raise Exception(
+                f"Invalid precision for flash llama model {self.trainer.precision}. Please set --run_opts.precision 32")
 
     def load_required_modules(self, required_modules):
         for name, item in required_modules.items():
@@ -124,24 +115,24 @@ class SemanticInferenceModule(pl.LightningModule):
 
 class GTInferenceModule(pl.LightningModule):
     def __init__(
-        self,
-        required_modules,
-        extra_params=None,
+            self,
+            required_modules,
+            extra_params=None,
     ):
         super().__init__()
         self.save_hyperparameters()
         self.extra_params = DotDict(extra_params)
         self.requires = {}
-        
+
         required_modules = {}
         if self.extra_params.token2wav_type == 'diffusion':
             self.decoding_fn = run_diffusion
             required_modules.update(self.hparams.required_modules['diffusion_modules'])
-            self.decoding_params = DotDict({ **self.extra_params, **extra_params['diffusion_params'] })
+            self.decoding_params = DotDict({**self.extra_params, **extra_params['diffusion_params']})
         elif self.extra_params.token2wav_type == 'ar':
             self.decoding_fn = run_2ar
             required_modules.update(self.hparams.required_modules['ar_modules'])
-            self.decoding_params = DotDict({ **self.extra_params, **extra_params['ar_params'] })
+            self.decoding_params = DotDict({**self.extra_params, **extra_params['ar_params']})
         else:
             raise ValueError(f"Unhandled type: {self.extra_params.token2wav_type}")
 
@@ -162,10 +153,10 @@ class GTInferenceModule(pl.LightningModule):
             self.requires.update(initializer(hpath, local_rank=self.local_rank))
 
     def predict_step(self, batch, batch_idx=0, dataloader_idx=0):
-        batch['target_audio'] = batch['style_audio'] # prepare_inputs expects target_audio key
+        batch['target_audio'] = batch['style_audio']  # prepare_inputs expects target_audio key
         semantic_samples = self.encoding_fn(self.requires, batch['target_audio'])
-        wavs = self.decoding_fn(self.requires, semantic_samples, self.decoding_params) # 
-        return { 
+        wavs = self.decoding_fn(self.requires, semantic_samples, self.decoding_params)  #
+        return {
             'generated_audio': wavs,
             'generated_audio_tensor': wavs
         }

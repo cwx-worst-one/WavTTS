@@ -9,26 +9,23 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
 
 extra_params:
-    beam_size: 4    # set to 4 if using reranker
-    samples_to_save: 1
-    prompt_path: "/mnt/bn/audio-diffusion/data/bigmusic_text_prompts/vocal_prompts_20231031_mixed35_2min.csv"
+    beam_size: 1    # set to 4 if using reranker
+#    prompt_path: "/mnt/bn/audio-diffusion/data/mixture_prompts/suno100.csv"
+    prompt_path: {}
     inference_conditions: style_text,lyrics_tokens # style_text|style_audio,lyrics_tokens,vocal_audio|vocal_text,chroma
     max_items: null
     run_combinations: False
-    use_reranker: True
-    predict_lyrics: False
-    lyrics_max_seq_len: null
-    dataset_mode: variable_length
+    use_reranker: False
 
-    output_dir: ./assets/generated_outputs_2m
+    output_dir: ./generated_output/conditional
 
     # Semantic model
-    semantic_cls_path: recipes.bigmusic.lightning.semantic_varlen_modules.SemanticModuleVarlen
-    semantic_ckpt: "/mnt/bn/lyrics-to-song/baseline_models/q4/20231106-2min_varlen/checkpoints/step=184000-tr_loss=0.0000-val_loss_0=4.2460.ckpt"
-    mulan_ckpt: infer_from_semantic_ckpt
+    semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
+    semantic_ckpt: "hdfs://harunava/home/byte_speech_sv/user/lixingxing.cs/models/bigmusic/semantic_model_mulan_text_07B/step=234000-val_accu_0=21.02.ckpt"
 
     # Used for reranker, only loaded if use_reranker=True
-    mulan_rewards_ckpt: "/mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt"
+    mulan_ckpt: "hdfs://harunava/home/byte_speech_sv/user/lixingxing.cs/models/bigmusic/mulan/mulan-step=014000-median_rank_1=160-kaggle.ckpt"
+    structure_ckpt: "hdfs://harunava/home/byte_speech_sv/user/lixingxing.cs/models/bigmusic/diffusion/structure_epoch=185-step=93000.ckpt"
 
     ar_params:
         coarse_duration: 10
@@ -46,62 +43,66 @@ extra_params:
 
     # Model Settings
     sample_rate: 24000
-    duration: 120 # 30
-    semantic_temperature: 1.05
-    sample_mode: "top_p"
+    duration: 30 # 30
+    lyrics_max_seq_len: 400 # TODO: switch to 400 for 30s
+    semantic_temperature: 1.0
+    sample_mode: "gumbel"
     token2wav_type: diffusion
 
 run_opts:
     fast_dev_run: False
-    precision: 16
+    precision: 32
     accelerator: auto
     strategy: auto
     cache_dir: .module_cache/musiclm
-    batch_size: 1  # varlength can only do batch size of 1
+    batch_size: 28  # set to 4 if using reranker
     num_workers: 8
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
-predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_from_prompt
-    prompt_path: !ref <extra_params[prompt_path]>
-    conditions: !ref <extra_params[inference_conditions]>
-    max_items: !ref <extra_params[max_items]>
-    batch_size: !ref <run_opts[batch_size]>
-    run_combinations: !ref <extra_params[run_combinations]>
-    lyrics_max_seq_len: !ref <extra_params[lyrics_max_seq_len]>
-    dataset_mode: !ref <extra_params[dataset_mode]>
-    enable_punctuation: True
-
-pl_datamodule: !new:recipes.bigmusic.datasets.lyrics.LyricsDataModule
-    predict_dataset: !ref <predict_dataset>
-    num_workers: 0
+#predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_from_prompt
+#    prompt_path: !ref <extra_params[prompt_path]>
+#    conditions: !ref <extra_params[inference_conditions]>
+#    max_items: !ref <extra_params[max_items]>
+#    batch_size: !ref <run_opts[batch_size]>
+#    run_combinations: !ref <extra_params[run_combinations]>
+#    lyrics_max_seq_len: !ref <extra_params[lyrics_max_seq_len]>
+#    enable_punctuation: False
+#
+#pl_datamodule: !new:recipes.bigmusic.datasets.lyrics.LyricsDataModule
+#    predict_dataset: !ref <predict_dataset>
+#    num_workers: 0
 
 pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
     semantic_cls_path: !ref <extra_params[semantic_cls_path]>
     extra_params: !ref <extra_params>
     required_modules:
+        bestrq_modules:
+            bestrq:
+                hpath: hdfs://harunava/home/byte_speech_sv/user/lixingxing.cs/models/bigmusic/umm/umm_stage3_music_chroma_vq32768x32/step=0030000.ckpt
+                initializer: !name:recipes.umm.requires.model_initializer.init_stage3
+                    cache_dir: !ref <run_opts[cache_dir]>
         diffusion_modules:
             diffusion:
-                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/model_14_120s_finetune/checkpoints/last-minimal.ckpt
+                hpath: hdfs://harunava/home/byte_speech_sv/user/lixingxing.cs/models/bigmusic/diffusion/last.ckpt
                 initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
                     cache_dir: !ref <run_opts[cache_dir]>
             sampler:
                 hpath: null
                 initializer: !name:recipes.diffusion.inference_from_text_lyrics2song.init_sampler
                     cache_dir: !ref <run_opts[cache_dir]>
-                    duration: 120
             vocoder:
-                hpath: /mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/soundstream-step=374999-val_sdr=12.9557-minimal.ckpt
+                hpath: hdfs://harunava/home/byte_speech_sv/user/lixingxing.cs/models/bigmusic/diffusion/soundstream-step=374999-val_sdr=12.9557.ckpt
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                     cache_dir: !ref <run_opts[cache_dir]>
         ar_modules:
             coarse:
-                hpath: /mnt/bn/audio-diffusion/jt/model_archive/vocalmusic/coarse_flash_llama_wav2vec/bestrq_chroma_coarse_0.7b/checkpoints/step=295000-val_accu_0=17.92.ckpt
+                hpath: hdfs://harunava/home/byte_speech_sv/user/lixingxing.cs/models/bigmusic/coarse_flash_llama_wav2vec/bestrq_chroma_coarse_0.7b/step=295000-val_accu_0=17.92.ckpt
                 initializer: !name:recipes.bigmusic.utils.model_initializer.init_coarse
                     cache_dir: !ref <run_opts[cache_dir]>
             fine:
-                hpath: /mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/fine/fine_mcc_mix/fixed_posemb_v1/checkpoints/step=206000-val_accu_0=10.44.ckpt
+                hpath: hdfs://harunava/home/byte_speech_sv/user/lixingxing.cs/models/bigmusic/fine/fine_mcc_mix/fixed_posemb_v1/step=206000-val_accu_0=10.44.ckpt
                 initializer: !name:recipes.bigmusic.utils.model_initializer.init_fine
                     cache_dir: !ref <run_opts[cache_dir]>
             soundstream_dec:
@@ -111,18 +112,19 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
         reranker:
             hpath:
                 rewards:
-                    style_text: 3.0
+                    style_text: 1.0
                     qualitative: 1.0
                     wer: 1.0
+                    #structure: 1.0
                     #chord: 4.0
                 required_modules:
                     mulan:
-                        hpath: !ref <extra_params[mulan_rewards_ckpt]>
+                        hpath: !ref <extra_params[mulan_ckpt]>
                         initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                             version: "g4"
-                    asr:
-                        hpath: en_punc
-                        initializer: !name:recipes.bigmusic.utils.metrics_asr.init_asr
+                    #structure:
+                    #    hpath: !ref <extra_params[structure_ckpt]>
+                    #    initializer: !name:recipes.structure.requires.model_initializer.init_structure
                     #chord:
                     #    hpath: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/semi-sup-chord_epoch=103-step=56300.ckpt"
                     #    initializer: !name:recipes.chord.requires.model_initializer.init_chord
@@ -140,8 +142,6 @@ additional_callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
 callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
-      beam_size: !ref <extra_params[beam_size]>
-      samples_to_save: !ref <extra_params[samples_to_save]>
 
 trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>

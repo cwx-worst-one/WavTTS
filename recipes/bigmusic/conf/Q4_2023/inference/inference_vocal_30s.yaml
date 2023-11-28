@@ -9,7 +9,7 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
 
 extra_params:
-    beam_size: 4    # set to 4 if using reranker
+    beam_size: 4 # set to 4 if using reranker, 1 without reranker
     samples_to_save: 1
     prompt_path: "/mnt/bn/audio-diffusion/data/bigmusic_text_prompts/vocal_prompts_20231018_mixed135.csv"
     inference_conditions: style_text,lyrics_tokens # style_text|style_audio,lyrics_tokens,vocal_audio|vocal_text,chroma
@@ -56,7 +56,7 @@ run_opts:
     accelerator: auto
     strategy: auto
     cache_dir: .module_cache/musiclm
-    batch_size: 28  # set to 4 if using reranker
+    batch_size: 4  # set to 4 if using reranker, 28 without reranker
     num_workers: 8
 
 ################################################################################

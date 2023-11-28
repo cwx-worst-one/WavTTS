@@ -47,8 +47,15 @@ class DotDict(dict):
             self[key] = value
 
 
-def get_model_configs():
-    with open("recipes/text2semantic/conf/llama/inference_wvae_icl_lang_spk_tag_deploy.yaml", "r", encoding="utf-8") as f:
+def get_model_configs(app):
+    model_config_path = ''
+    if app == 'BigTTS':
+        model_config_path = 'recipes/text2semantic/conf/llama/inference_wvae_icl_lang_spk_tag_deploy.yaml'
+    elif app == 'Lyrics2Song':
+        model_config_path = 'recipes/bigmusic/conf/Q4_2023/inference/inference_vocal_2m_deploy.yaml'
+
+    logging.info(f"model_config_path: {model_config_path}")
+    with open(model_config_path, "r", encoding="utf-8") as f:
         configs = load_hyperpyyaml(f)
     return DotDict(configs)
 

@@ -4,6 +4,7 @@ import random
 from functools import lru_cache
 from scipy.io import wavfile
 
+import os
 import io
 import sys
 import logging
@@ -25,7 +26,8 @@ def preload_models():
 def load_cached_models():
     logging.info("***** start loading model *****")
     try:
-        configs = get_model_configs()
+        app = os.getenv("SERVER_APP", "BigTTS")
+        configs = get_model_configs(app)
     except Exception as err:
         logging.error(err)
         sys.exit(0)
