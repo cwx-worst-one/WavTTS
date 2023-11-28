@@ -1,0 +1,191 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 1234
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+# running parameters
+log_dir: logs
+ckpt_path: null
+
+run_opts:
+    fast_dev_run: False
+    tensorboard_dir: !ref <log_dir>
+    log_name: "waveformvae25hz"
+    version: "32dim"
+    strategy: ddp_find_unused_parameters_true # deepspeed_stage_2_offload, ddp_find_unused_parameters_false
+    precision: 32
+    log_every_n_steps: 100
+    num_steps: 6000000
+    save_every_n_train_steps: 2000
+    val_check_interval: 2000
+    val_output_samples_dir: "generated_samples"
+    batch_size: 32
+    num_workers: 8
+    learning_rate: 0.0001
+    n_step_save: 2000
+    segment_length: 14400   # 0.6s
+    token_dims: 32
+
+training_params:
+    sample_rate: 24000
+    filter_length: 2048
+    n_mel_channels: 80
+    hop_length: 320
+    win_length: 1280
+    mel_fmin: 0.0
+    mel_fmax: null
+    segment_length: !ref <run_opts[segment_length]>
+    train_batch_size: !ref <run_opts[batch_size]>
+    train_num_workers: !ref <run_opts[num_workers]>
+    val_batch_size: !ref <run_opts[batch_size]>
+    val_num_workers: !ref <run_opts[num_workers]>
+    learning_rate: !ref <run_opts[learning_rate]>
+    betas:
+        - 0.8
+        - 0.99
+    eps: 1e-9
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+# dataloader configuration
+train_dataset: !new:recipes.waveformvae.dataset.train.WDSDataset
+    meta_paths: ['tar_list.txt', 'tar_list_cn.txt']
+    hp:
+        mel_win: 15
+        hop_size: 960
+        sample_rate: !ref <training_params[sample_rate]>
+
+train_dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <train_dataset>
+    batch_size: !ref <training_params[train_batch_size]>
+    num_workers: !ref <training_params[train_num_workers]>
+    collate_fn: !name:recipes.waveformvae.dataset.train.collate_fn
+    drop_last: True
+    pin_memory: True
+    # worker_init_fn: !name:recipes.waveformvae.dataset.train.seed_worker
+    # shuffle: False
+
+# datamodule configuration
+pl_datamodule: !new:recipes.waveformvae.modules.pl_datamodule.WaveformVAEDataModule
+    train_dataloader: !ref <train_dataloader>
+
+# training module configuration
+optimizer_g_cls: !name:torch.optim.AdamW
+    lr: !ref <training_params[learning_rate]>
+    betas: !ref <training_params[betas]>
+    eps: !ref <training_params[eps]>
+
+optimizer_d_cls: !name:torch.optim.AdamW
+    lr: !ref <training_params[learning_rate]>
+    betas: !ref <training_params[betas]>
+    eps: !ref <training_params[eps]>
+
+# TODO: calculate last_epoch from ckpt
+# scheduler_g_cls: !name:torch.optim.lr_scheduler.ExponentialLR
+#     gamma: 0.999875
+#     last_epoch: -1
+
+# scheduler_d_cls: !name:torch.optim.lr_scheduler.ExponentialLR
+#     gamma: 0.999875
+#     last_epoch: -1
+
+scheduler_g_cls: !name:torch.optim.lr_scheduler.MultiStepLR
+    gamma: 0.5
+    milestones:
+        - 500000
+        - 1000000
+        - 2000000
+
+scheduler_d_cls: !name:torch.optim.lr_scheduler.MultiStepLR
+    gamma: 0.5
+    milestones:
+        - 500000
+        - 1000000
+        - 2000000
+
+pl_module: !new:recipes.waveformvae.modules.pl_module.WaveformVAEModule
+    generator: !new:recipes.waveformvae.models.waveformvae25hz.WaveformVAE
+        sd_channels: !ref <run_opts[token_dims]>
+        spec_channels: !ref <training_params[filter_length]> // 2 + 1
+        hidden_channels: 256
+        resblock: "1"
+        resblock_kernel_sizes: [3, 7, 11]
+        resblock_dilation_sizes: [[1, 3, 5], [1, 3, 5], [1, 3, 5]]
+        downsample_rates: [2, 2, 3, 4, 4, 5]
+        downsample_initial_channel: 16
+        segment_size: !ref <training_params[segment_length]>
+    discriminator: !new:recipes.waveformvae.models.waveformvae25hz.MultiPeriodDiscriminator
+        use_spectral_norm: False
+        ifmbd: True
+    optimizer_g_cls: !ref <optimizer_g_cls>
+    optimizer_d_cls: !ref <optimizer_d_cls>
+    scheduler_g_cls: !ref <scheduler_g_cls>
+    scheduler_d_cls: !ref <scheduler_d_cls>
+    data_cls:
+        filter_length: !ref <training_params[filter_length]>
+        n_mel_channels: !ref <training_params[n_mel_channels]>
+        sampling_rate: !ref <training_params[sample_rate]>
+        hop_length: !ref <training_params[hop_length]>
+        win_length: !ref <training_params[win_length]>
+        mel_fmin: !ref <training_params[mel_fmin]>
+        mel_fmax: !ref <training_params[mel_fmax]>
+    train_cls:
+        c_stft: 10.0
+        c_mel: 45.0
+        c_kl: 1.0
+        c_fm: 1.0
+        c_gen: 1.0
+        train_mode: "G_and_D"   # ["G_and_D", "D_and_G"]
+        discriminator_train_start_steps: 100000
+    val_output_samples_dir: !ref <run_opts[val_output_samples_dir]>
+
+
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[tensorboard_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+
+checkpoint: !new:pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: 'aux/step'
+    mode: max
+    save_top_k: 200
+    save_on_train_epoch_end: True
+    every_n_train_steps: !ref <run_opts[save_every_n_train_steps]>
+    save_last: True
+    filename: "{epoch:02d}-{step}"
+    verbose: True
+
+lr_monitor: !new:pytorch_lightning.callbacks.LearningRateMonitor
+    logging_interval: step
+
+plugins:
+    - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    num_sanity_val_steps: 0
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    accelerator: auto
+    devices: auto
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False  # warning: setting to True can cause slowdowns
+    strategy: !ref <run_opts[strategy]>
+    enable_model_summary: True
+    max_steps: !ref <run_opts[num_steps]>
+    val_check_interval: !ref <run_opts[val_check_interval]>
+    precision: !ref <run_opts[precision]>
+    log_every_n_steps: !ref <run_opts[log_every_n_steps]>
+    use_distributed_sampler: False
+    sync_batchnorm: True
+    logger: !ref <logger>
+    callbacks:
+        - !ref <checkpoint>
+        - !ref <lr_monitor>
+    plugins: !ref <plugins>
+    benchmark: True
+    # accumulate_grad_batches: 1
