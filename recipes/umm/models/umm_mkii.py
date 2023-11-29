@@ -1649,6 +1649,9 @@ class Stage2MSS(Stage2):
                 "mel_vocal" : mel spectrogram of audio vocals
                 "mel_inst" : mel spectrogram of audio instrumental
                 "chroma" : chroma spectrogram of audio full mix
+
+        @hanoihantrakul 11-25-2023
+        The logic of this code should be read in conjunction with `lit_module.Stage2MSS().prepare_feature()`
         """
 
         def _interfere_audio_handler(audio):
@@ -1839,18 +1842,20 @@ class Stage3(Stage2):
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
-    def wav2token(self, wav):
+    def _prepare_wav(self, wav):
+        """Check audio dimensions and pad."""
         if wav.dim() == 3:
             wav = wav.squeeze(dim=1)
-        wav = self.pad_audio(wav.float())
-        feature = self.preprocessing(wav)["mel"]
-        audio_feature = self.audio_encoder(feature)
-        hidden_states = self.encoder_input_dropout(audio_feature)
-        position_embeddings = self.embed_positions(hidden_states)
+        return self.pad_audio(wav.float())
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def _get_vq_ids(self, hidden_states, position_embeddings):
+        """Apply Vector Quantization and only get the ID's."""
         for i, layer in enumerate(self.encoder_layers):
             if i == self.config.vq_layer_idx:
                 hidden_states = self.vq_proj_in(hidden_states)
-                vq_embs, vq_ids, vq_loss = self.vq(hidden_states)
+                _, vq_ids, _ = self.vq(hidden_states)
                 return vq_ids
             hidden_states = layer(
                 hidden_states, position_embeddings=position_embeddings
@@ -1859,20 +1864,32 @@ class Stage3(Stage2):
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
+    def wav2token(self, wav):
+        """Convert audio file to tokens (after Vector Quantization)."""
+        wav = self._prepare_wav(wav)
+        feature = self.preprocessing(wav)["mel"]
+        audio_feature = self.audio_encoder(feature)
+        hidden_states = self.encoder_input_dropout(audio_feature)
+        position_embeddings = self.embed_positions(hidden_states)
+        vq_ids = self._get_vq_ids(hidden_states, position_embeddings)
+        return vq_ids
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
     def wav2audio_embed(self, wav):
-        if wav.dim() == 3:
-            wav = wav.squeeze(dim=1)
-        wav = self.pad_audio(wav.float())
+        """Convert audio file to mel spectrogram embeddings."""
+        wav = self._prepare_wav(wav)
         feature = self.preprocessing(wav)["mel"]
         encoded_feature = self.audio_encoder(feature)
         return encoded_feature
 
     def wav2hidden_states(self, audio: torch.Tensor, layer_idx: int) -> UMMResult:
+        """Convert audio file to hidden states (before Vector Quantization)."""
         audio_embedding = self.wav2audio_embed(audio)
         return self.forward_layers(audio_embedding, layer_idx)
 
 
-class Stage3MSS(Stage3, Stage2MSS):
+class Stage3MSS(Stage2MSS, Stage3):
     """
     Stage3 UMM Model configured to receive Stage2 UMM checkpoint.
 
@@ -1880,6 +1897,10 @@ class Stage3MSS(Stage3, Stage2MSS):
     In writing this class, it was easiest to inherit from both Stage3() and Stage2MSS().
     - Stage3() contains configuration for different VQ options in the __init__() method.
     - Stage2MSS() contains configuration for the 2 mel heads that are kept during Stage3 training.
+
+    @hanoihantrakul 11/25/2023
+    - Stage2MSS() should be inherited first so that order-of-resolution `self.preprocessing()`
+    calls the methods from Stage2MSS (which process 3 audio inputs) and not Stage3.
     """
 
     def __init__(self, config):
@@ -1972,3 +1993,25 @@ class Stage3MSS(Stage3, Stage2MSS):
                 f0_out=f0_vuv_out[:, :, 0:1], vuv_out=f0_vuv_out[:, :, 1:]
             )
         return output_dict
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def wav2token(self, wav):
+        """
+        Convert audio files to tokens.
+
+        @hanoihantrakul 25-11-2023
+        Training a downstream decoder ontop of Stage3MSS requires this method to be called on a mixture of audio datasets.
+        By default, these downstream decoder datasets have one audio input (full mix),
+        whereas the Stage3MSS model expected 3 audio inputs (full mix, instrumental and vocal).
+        The easiest way to modify Stage3MSS behavior was to explicitly call Stage3().preprocessing
+        (which expects 1 audio input) instead of the inherited default Stage2MSS().preprocessing function (which expects 3 audio inputs).
+        """
+        wav = self._prepare_wav(wav)
+        # Using super() like this is unpythonic, but it was the fastest way to favor experimentation speed.
+        feature = super(Stage3, self).preprocessing(wav)["mel"]
+        audio_feature = self.audio_encoder(feature)
+        hidden_states = self.encoder_input_dropout(audio_feature)
+        position_embeddings = self.embed_positions(hidden_states)
+        vq_ids = self._get_vq_ids(hidden_states, position_embeddings)
+        return vq_ids

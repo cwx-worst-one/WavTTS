@@ -170,7 +170,22 @@ def init_stage2(hpath, local_rank, cache_dir=None):
         return {"Stage2": model}
 
 
+def _ensure_ckpt_is_local(target_path, cache_dir):
+    """If the ckpt path is on HDFS then download it to a local cache, otherwise use the filepath directly."""
+    if target_path.startswith("hdfs://"):
+        local_path = f"{cache_dir}/{os.path.basename(target_path)}"
+        if not os.path.exists(local_path):
+            hh.get(target_path, local_path)
+            assert os.path.exists(
+                local_path
+            ), f"Could not retrieve file from {target_path}."
+        return local_path
+    else:
+        return target_path
+
+
 def init_stage3(hpath, local_rank, cache_dir=None):
+    """Init function for standard Stage3 UMM backbone."""
     from recipes.umm.modules.lit_module import Stage3
 
     if cache_dir is not None:
@@ -178,16 +193,26 @@ def init_stage3(hpath, local_rank, cache_dir=None):
 
     device = torch.device(f"cuda:{local_rank}")
     with local_zero_first():
-        if hpath.startswith("hdfs://"):
-            local_path = f"{cache_dir}/{os.path.basename(hpath)}"
-            if not os.path.exists(local_path):
-                hh.get(hpath, local_path)
-                print("FIXME: hh.get always returns non-zero exit code")
-                # if not hh.get(hpath, local_path):
-                #     raise ConnectionError(f"Cannot retrieve file from {hpath}.")
-        else:
-            local_path = hpath
+        local_path = _ensure_ckpt_is_local(hpath, cache_dir)
         model = Stage3.load_from_checkpoint(local_path).to(device).eval()
+        return {"Stage3": model}
+
+
+def init_stage3_mss(hpath, local_rank, cache_dir=None):
+    """Init function for Stage3 UMM backbone trained with MSS task."""
+    from recipes.umm.modules.lit_module import Stage3MSS
+
+    if cache_dir is not None:
+        os.makedirs(cache_dir, exist_ok=True)
+
+    device = torch.device(f"cuda:{local_rank}")
+    with local_zero_first():
+        local_path = _ensure_ckpt_is_local(hpath, cache_dir)
+        model = Stage3MSS.load_from_checkpoint(local_path).to(device).eval()
+        """
+        @hanoihantrakul 11-25-2023
+        This should really be `{"Stage3MSS": model}, but it simplifies experimentation to keep the same name for downstream tasks.
+        """
         return {"Stage3": model}
 
 
