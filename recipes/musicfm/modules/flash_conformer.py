@@ -703,29 +703,24 @@ class Wav2Vec2ConformerSelfAttention(nn.Module):
         # self-attention mechanism
         batch_size, sequence_length, hidden_size = hidden_states.size()
 
-        # make sure query/key states can be != value states
-        query_key_states = hidden_states
-        value_states = hidden_states
+        # project query_key_states and value_states
+        query = self.linear_q(hidden_states)
+        key = self.linear_k(hidden_states)
+        value = self.linear_v(hidden_states)
 
         if self.position_embeddings_type == "rotary":
             if relative_position_embeddings is None:
                 raise ValueError(
                     "`relative_position_embeddings` has to be defined when `self.position_embeddings_type == 'rotary'"
                 )
-            query_key_states = self._apply_rotary_embedding(
-                query_key_states, relative_position_embeddings
-            )
+            query = self._apply_rotary_embedding(query, relative_position_embeddings)
+            key = self._apply_rotary_embedding(key, relative_position_embeddings)
+            # value is kept as-is.
 
-        # project query_key_states and value_states
-        query = self.linear_q(query_key_states).view(
-            batch_size, -1, self.num_heads, self.head_size
-        )
-        key = self.linear_k(query_key_states).view(
-            batch_size, -1, self.num_heads, self.head_size
-        )
-        value = self.linear_v(value_states).view(
-            batch_size, -1, self.num_heads, self.head_size
-        )
+        # => (b, t, h, d)
+        query = query.view(batch_size, -1, self.num_heads, self.head_size)
+        key = query.view(batch_size, -1, self.num_heads, self.head_size)
+        value = value.view(batch_size, -1, self.num_heads, self.head_size)
 
         # => (batch, head, time1, d_k)
         query = query.transpose(1, 2)
