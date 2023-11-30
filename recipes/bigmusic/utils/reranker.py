@@ -3,6 +3,7 @@ import torch
 from recipes.bigmusic.utils.format_utils import normalize_text
 from recipes.bigmusic.utils.metrics_asr import asr_transcribe_lyrics
 from recipes.bigmusic.utils.rewards import (
+    mulan_audio_reward,
     mulan_text_reward,
     wer_reward,
     chord_reward,
@@ -32,7 +33,7 @@ class Reranker:
                     cache_dir=cache_dir,
                 )
             )
-        if "style_text" in rewards or "qualitative" in rewards:
+        if any([x in rewards for x in ["style_audio", "style_text", "qualitative"]]):
             assert "mulan" in self.requires
             assert "mulan_infer_fn" in self.requires
         if "structure" in rewards:
@@ -54,7 +55,15 @@ class Reranker:
         return rewards, rewards_breakdown
 
     def _get_reward(self, rw_type, sampled_audio, eos_index_list, batch, extra_params):
-        if rw_type == "style_text":
+        if rw_type == "style_audio":
+            return mulan_audio_reward(
+                self.requires["mulan_infer_fn"],
+                self.requires["mulan"],
+                sampled_audio,
+                batch["style_audio"],
+                device=sampled_audio.device,
+            )[0]
+        elif rw_type == "style_text":
             return mulan_text_reward(
                 self.requires["mulan_infer_fn"],
                 self.requires["mulan"],

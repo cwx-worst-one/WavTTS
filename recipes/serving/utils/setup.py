@@ -53,6 +53,10 @@ def get_model_configs(app):
         model_config_path = 'recipes/text2semantic/conf/llama/inference_wvae_icl_lang_spk_tag_deploy.yaml'
     elif app == 'Lyrics2Song':
         model_config_path = 'recipes/bigmusic/conf/Q4_2023/inference/inference_vocal_2m_deploy.yaml'
+    elif app == 'Instrumental':
+        model_config_path = 'recipes/bigmusic/conf/Q4_2023/inference/inference_instrumental_varlen_structure_deploy.yaml'
+    else:
+        raise ValueError(f"Unknown app: {app}")
 
     logging.info(f"model_config_path: {model_config_path}")
     with open(model_config_path, "r", encoding="utf-8") as f:

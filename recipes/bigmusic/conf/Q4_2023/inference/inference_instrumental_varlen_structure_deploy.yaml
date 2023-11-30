@@ -26,7 +26,6 @@ extra_params:
     mulan_ckpt: "/mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt"
 
     rewards:
-        style_audio: 0.0
         style_text: 1.0
         qualitative: 1.0
         nonvocal: 1.0
@@ -57,16 +56,16 @@ run_opts:
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
-predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_from_prompt
-    prompt_path: !ref <extra_params[prompt_path]>
-    conditions: !ref <extra_params[inference_conditions]>
-    max_items: !ref <extra_params[max_items]>
-    batch_size: !ref <run_opts[batch_size]>
-    extra_params: !ref <extra_params>
+#predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_from_prompt
+#    prompt_path: !ref <extra_params[prompt_path]>
+#    conditions: !ref <extra_params[inference_conditions]>
+#    max_items: !ref <extra_params[max_items]>
+#    batch_size: !ref <run_opts[batch_size]>
+#    extra_params: !ref <extra_params>
 
-pl_datamodule: !new:recipes.bigmusic.datasets.lyrics.LyricsDataModule
-    predict_dataset: !ref <predict_dataset>
-    num_workers: 0
+#pl_datamodule: !new:recipes.bigmusic.datasets.lyrics.LyricsDataModule
+#    predict_dataset: !ref <predict_dataset>
+#    num_workers: 0
 
 pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
     semantic_cls_path: !ref <extra_params[semantic_cls_path]>
@@ -91,19 +90,6 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                 hpath: /mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/soundstream-step=374999-val_sdr=12.9557-minimal.ckpt
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                     cache_dir: !ref <run_opts[cache_dir]>
-        ar_modules:
-            coarse:
-                hpath: /mnt/bn/audio-diffusion/jt/model_archive/vocalmusic/coarse_flash_llama_wav2vec/bestrq_chroma_coarse_0.7b/checkpoints/step=295000-val_accu_0=17.92.ckpt
-                initializer: !name:recipes.bigmusic.utils.model_initializer.init_coarse
-                    cache_dir: !ref <run_opts[cache_dir]>
-            fine:
-                hpath: /mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/fine/fine_mcc_mix/fixed_posemb_v1/checkpoints/step=206000-val_accu_0=10.44.ckpt
-                initializer: !name:recipes.bigmusic.utils.model_initializer.init_fine
-                    cache_dir: !ref <run_opts[cache_dir]>
-            soundstream_dec:
-                hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
-                initializer: !name:recipes.musiclm.requires.model_initializer.init_soundstream_decoder
-                    cache_dir: !ref <run_opts[cache_dir]>
         reranker:
             hpath:
                 rewards: !ref <extra_params[rewards]>
@@ -118,16 +104,6 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
             initializer: !name:recipes.bigmusic.utils.reranker.init_reranker
                 cache_dir: !ref <run_opts[cache_dir]>
 
-# separating out additional_callbacks so auto_eval can disable metrics
-additional_callbacks:
-    - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
-    - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
-    - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
-callbacks:
-    - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
-      beam_size: !ref <extra_params[beam_size]>
-      samples_to_save: !ref <extra_params[samples_to_save]>
-
 trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>
     accelerator: !ref <run_opts[accelerator]>
@@ -137,4 +113,4 @@ trainer: !new:pytorch_lightning.Trainer
     enable_model_summary: True
     strategy: !ref <run_opts[strategy]>
     precision: !ref <run_opts[precision]>
-    callbacks: !apply:operator.add [!ref <additional_callbacks>, !ref <callbacks>]
+    callbacks: []

@@ -5,9 +5,14 @@ import librosa
 import torch
 import pandas as pd
 from pathlib import Path
+from functools import partial
 from torch.utils.data import Dataset
 from samantha.dataio.webdataset.pipeline import WebPipeline
-from recipes.bigmusic.datasets.lyrics import transform_dataset, default_batch_fn
+from recipes.bigmusic.datasets.lyrics import (
+    transform_dataset,
+    default_batch_fn,
+    dictionary_collate,
+)
 from recipes.bigmusic.datasets.transforms.lyrics import (
     LyricsTokenTransform,
     AddConditionsTransform,
@@ -49,6 +54,8 @@ def inference_dataset_from_prompt(
     extra_params=None,
 ):
     prompts = prompt_path_to_items(prompt_path)
+    if 'index' in prompts:
+        prompts['index'] = [str(x) for x in prompts['index']]
     if 'text_category' in prompts: # fix csv formatting
         prompts['category'] = prompts.pop('text_category')
     if 'text_prompt' in prompts: # fix csv formatting
@@ -60,7 +67,7 @@ def inference_dataset_from_prompt(
     if 'vocal_audio' in prompts:
         prompts['vocal_audio'] = [load_wav(wav_path) for wav_path in prompts['vocal_audio']]
     if 'structure' in prompts:
-        prompts['structure'] = [json.loads(x) for x in prompts['structure']]
+        prompts['structure'] = [None if x == "random" else json.loads(x) for x in prompts['structure']]
     if run_combinations:
         lyrics_prompt_pairs = itertools.product(*list(prompts.values()))
     else:
@@ -101,7 +108,10 @@ def inference_dataset_from_prompt(
         item = { key:value for key,value in zip(item_keys,pair) }
         items.append(item)
     dataset = WebPipeline(items, pipeline=[])
-    batch_fn = default_batch_fn(batch_size)
+    batch_fn = default_batch_fn(
+        batch_size,
+        collation_fn=partial(dictionary_collate, remove_invalid=False),
+    )
     return transform_dataset(
         dataset,
         segment_transforms=segment_transforms,

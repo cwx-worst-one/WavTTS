@@ -807,7 +807,7 @@ def create_mulan_model(ckpt_path, device):
 
 @torch.no_grad()
 def mulan_inference(
-    model, text=None, music=None, device="cpu", avg=True, shift_seconds=1
+    model, text=None, music=None, device="cpu", avg=True, shift_seconds=5
 ):
     assert (text is not None) ^ (
         music is not None

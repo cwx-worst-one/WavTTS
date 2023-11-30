@@ -156,20 +156,22 @@ def pad_collate_tensor_fn(batch, *, collate_fn_map):
      batch = [crop_pad_to_seq_length(x, max_length, x.dtype, padding_value=0) for x in batch]
      return collate_tensor_fn(batch, collate_fn_map=collate_fn_map)
 
-def collate_list_fn(batch, *, collate_fn_map):
+def simple_collate_fn(batch, *, collate_fn_map):
     return batch
 
-def dictionary_collate(batch):
+def dictionary_collate(batch, remove_invalid=True):
     """Fixes pytorch's default collate which cannot handle dictionaries or null fields."""
     lyrics_collate_fn_map = {
         **default_collate_fn_map,
         torch.Tensor: pad_collate_tensor_fn,
-        list: collate_list_fn,
+        list: simple_collate_fn,
+        type(None): simple_collate_fn,
     }
-    def remove_invalid_fields(item):
-        def invalid_field(field): return field is None or isinstance(field, dict)
-        return { k:v for k,v in item.items() if not invalid_field(v)}
-    batch = [remove_invalid_fields(item) for item in batch]
+    if remove_invalid:
+        def remove_invalid_fields(item):
+            def invalid_field(field): return field is None or isinstance(field, dict)
+            return { k:v for k,v in item.items() if not invalid_field(v)}
+        batch = [remove_invalid_fields(item) for item in batch]
     return collate(batch, collate_fn_map=lyrics_collate_fn_map)
 
 class LyricsBucketBatcher(BucketBatcher):

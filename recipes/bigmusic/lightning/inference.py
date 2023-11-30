@@ -77,7 +77,9 @@ class SemanticInferenceModule(pl.LightningModule):
         # set semantic mulan ckpt if passed in
         if self.extra_params.get('mulan_ckpt', None) and self.extra_params.mulan_ckpt != 'infer_from_semantic_ckpt':
             self.semantic_module.hparams.required_modules['mulan']['hpath'] = self.extra_params.mulan_ckpt
-        self.semantic_module.load_required_modules(ignore=('bestrq',))
+        self.semantic_module.load_required_modules(
+            ignore=('bestrq', 'sampler', 'diffusion', 'vocoder', 'chord', 'chord_lms', 'structure', 'asr')
+        )
 
     def predict_step(self, batch, batch_idx=0, dataloader_idx=0):
         semantic_samples = self.semantic_module.predict(
@@ -92,7 +94,11 @@ class SemanticInferenceModule(pl.LightningModule):
         )
         raw_wav_output = self.decoding_fn(self.requires, semantic_samples, self.decoding_params)
         assert len(raw_wav_output.shape) == 2, "Wavs must be 2 sim [b, seq_len]"
-        raw_wav_output = raw_wav_output[..., :self.extra_params.duration * self.extra_params.sample_rate]
+        if "duration" in batch:
+            duration = batch["duration"]
+        else:
+            duration = self.extra_params.duration
+        raw_wav_output = raw_wav_output[..., :duration * self.extra_params.sample_rate]
 
         outputs = {}
         if self.extra_params.use_reranker:

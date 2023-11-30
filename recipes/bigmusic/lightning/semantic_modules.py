@@ -199,7 +199,8 @@ class SemanticModule(BaseContinuousEmbedModule):
     @torch.no_grad()
     def predict(self, batch, hp, beam=1, ref_samples=None):
         frame_rate = self.extra_params.semantic_frame_rate
-        num_tokens = hp.duration * frame_rate
+        duration = batch["duration"] if "duration" in batch else hp.duration
+        num_tokens = duration * frame_rate
         temperature = hp.semantic_temperature
         sample_mode = hp.sample_mode
 
