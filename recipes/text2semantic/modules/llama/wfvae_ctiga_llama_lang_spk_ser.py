@@ -160,31 +160,12 @@ class VAELLaMaLangSpkSer(LLaMa):
         if self.use_lang_id:
             self.lang_embeddings = nn.Embedding(params.lang_vocab_size, params.dim)
         if self.use_spk_id:
-            self.spk_embeddings = nn.Embedding(params.spk_vocab_size, params.dim)
+            if self.spk_type == 'cln':
+                self.spk_embeddings = nn.Embedding(params.spk_vocab_size, params.dim * 2)
+            else:
+                self.spk_embeddings = nn.Embedding(params.spk_vocab_size, params.dim)
         if self.use_extra_tag:
             self.tag_embeddings = nn.Embedding(params.tag_vocab_size, params.dim * 2)
-        
-        if self.text_encoder_type in ["flan-T5-large", "byte-T5-base"]:
-            logger.info(f"Using text encoder: {self.text_encoder_type}, {self.text_encoder_path}")
-            assert self.text_encoder_path != ""
-            self.text_encoder = T5EncoderModel.from_pretrained(self.text_encoder_path)
-            self.text_linear = nn.Linear(self.text_encoder.config.d_model, self.params.dim, bias=False)
-            if self.attn_type == "mha":
-                self.cross_attention = nn.MultiheadAttention(
-                    embed_dim=params.dim, 
-                    num_heads=params.cross_attention_n_heads,
-                    batch_first=True,
-                    bias=False
-                )
-                self.positional_encoding = PositionalEncoding(
-                        params.dim, 
-                        dropout=params.pos_pdrop, 
-                        maxlen=params.max_seq_len)
-                logger.info(f"Created positional_encoding with maxlen: {params.max_seq_len}")
-            else:
-                raise NotImplementedError
-        else:
-            self.text_encoder = None
         
         self.stop_token_head = nn.Linear(params.dim, 2, bias=False)
         if self.use_phoneme_loss:
@@ -225,6 +206,29 @@ class VAELLaMaLangSpkSer(LLaMa):
             self.ser_tag_output = nn.Linear(params.dim, params.ser_tag_vocab_size, bias=False)
 
         self.init_weight_and_load_state(state_dict_path)
+
+        # load pretrained_models after [ self.init_weight_and_load_state ], especially when you want to freeze these parameters
+        if self.text_encoder_type in ["flan-T5-large", "byte-T5-base"]:
+            logger.info(f"Using text encoder: {self.text_encoder_type}, {self.text_encoder_path}")
+            assert self.text_encoder_path != ""
+            self.text_encoder = T5EncoderModel.from_pretrained(self.text_encoder_path)
+            self.text_linear = nn.Linear(self.text_encoder.config.d_model, self.params.dim, bias=False)
+            if self.attn_type == "mha":
+                self.cross_attention = nn.MultiheadAttention(
+                    embed_dim=params.dim, 
+                    num_heads=params.cross_attention_n_heads,
+                    batch_first=True,
+                    bias=False
+                )
+                self.positional_encoding = PositionalEncoding(
+                        params.dim, 
+                        dropout=params.pos_pdrop, 
+                        maxlen=params.max_seq_len)
+                logger.info(f"Created positional_encoding with maxlen: {params.max_seq_len}")
+            else:
+                raise NotImplementedError
+        else:
+            self.text_encoder = None
 
 
     def _repara(self, stats):
@@ -273,7 +277,7 @@ class VAELLaMaLangSpkSer(LLaMa):
                 bn_in_h[i, :bn_lens[i], :] += lang_embeds[i, :bn_lens[i], :]
 
         if self.use_spk_id:
-            if self.spk_type == "concat" and not use_cache:
+            if (self.spk_type == "concat" and not use_cache) or self.spk_type == "cln":
                 spk_embeds = self.spk_embeddings(spk_seqs[:, 0:1])
             elif self.spk_type == "add":
                 spk_embeds = self.spk_embeddings(spk_seqs)
@@ -284,6 +288,10 @@ class VAELLaMaLangSpkSer(LLaMa):
         if self.use_extra_tag:
             assert tag_ids is not None
             cond = self.tag_embeddings(tag_ids).unsqueeze(1)
+
+        if self.use_spk_id and self.spk_type == 'cln':
+            assert spk_embeds is not None
+            cond = spk_embeds if cond is None else (cond + spk_embeds)
 
         if self.use_ser_tag:
             ser_tag_embeds = self.ser_tag_embeddings(ser_tags)
@@ -339,38 +347,55 @@ class VAELLaMaLangSpkSer(LLaMa):
                 for i in range(bsz):
                     # add phone embeds and attended-bpe embeds
                     h[i, :text_lens[i], :] = token_in_h[i, :text_lens[i], :] + attn_bpe_in_h[i, :text_lens[i], :]
-                    if self.spk_type == "concat":
-                        # add spk embds
-                        h[i, text_lens[i]:text_lens[i]+1, :] = spk_embeds[i]
-                        if self.use_ser_tag:
-                            # insert bn embeds
-                            h[i, text_lens[i]+1:text_lens[i]+2, :] = ser_tag_embeds[i]
-                            h[i, text_lens[i]+2:text_lens[i]+2+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
-                        else:
-                            # insert bn embeds
-                            h[i, text_lens[i]+1:text_lens[i]+1+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
-                    elif self.spk_type == "add":
+                    if self.use_spk_id:
+                        if self.spk_type == "concat":
+                            # add spk embds
+                            h[i, text_lens[i]:text_lens[i]+1, :] = spk_embeds[i]
+                            if self.use_ser_tag:
+                                # insert bn embeds
+                                h[i, text_lens[i]+1:text_lens[i]+2, :] = ser_tag_embeds[i]
+                                h[i, text_lens[i]+2:text_lens[i]+2+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
+                            else:
+                                # insert bn embeds
+                                h[i, text_lens[i]+1:text_lens[i]+1+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
+                        elif self.spk_type == "add" or self.spk_type == "cln":
+                            if self.use_ser_tag:
+                                h[i, text_lens[i]:text_lens[i]+1, :] = ser_tag_embeds[i]
+                                h[i, text_lens[i]+1:text_lens[i]+1+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
+                            else:
+                                h[i, text_lens[i]:text_lens[i]+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
+                            
+                    else:
                         if self.use_ser_tag:
                             h[i, text_lens[i]:text_lens[i]+1, :] = ser_tag_embeds[i]
+                            h[i, text_lens[i]+1:text_lens[i]+1+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
                         else:
                             h[i, text_lens[i]:text_lens[i]+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
 
             else:
                 for i in range(bsz):
                     h[i, :text_lens[i], :] = token_in_h[i, :text_lens[i], :]
-                    if self.spk_type == "concat":
-                        # add spk embds
-                        h[i, text_lens[i]:text_lens[i]+1, :] = spk_embeds[i]
-                        if self.use_ser_tag:
-                            # insert bn embeds
-                            h[i, text_lens[i]+1:text_lens[i]+2, :] = ser_tag_embeds[i]
-                            h[i, text_lens[i]+2:text_lens[i]+2+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
-                        else:
-                            # insert bn embeds
-                            h[i, text_lens[i]+1:text_lens[i]+1+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
-                    elif self.spk_type == "add":
+                    if self.use_spk_id:
+                        if self.spk_type == "concat":
+                            # add spk embds
+                            h[i, text_lens[i]:text_lens[i]+1, :] = spk_embeds[i]
+                            if self.use_ser_tag:
+                                # insert bn embeds
+                                h[i, text_lens[i]+1:text_lens[i]+2, :] = ser_tag_embeds[i]
+                                h[i, text_lens[i]+2:text_lens[i]+2+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
+                            else:
+                                # insert bn embeds
+                                h[i, text_lens[i]+1:text_lens[i]+1+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
+                        elif self.spk_type == "add" or self.spk_type == "cln":
+                            if self.use_ser_tag:
+                                h[i, text_lens[i]:text_lens[i]+1, :] = ser_tag_embeds[i]
+                                h[i, text_lens[i]+1:text_lens[i]+1+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
+                            else:
+                                h[i, text_lens[i]:text_lens[i]+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
+                    else:
                         if self.use_ser_tag:
                             h[i, text_lens[i]:text_lens[i]+1, :] = ser_tag_embeds[i]
+                            h[i, text_lens[i]+1:text_lens[i]+1+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
                         else:
                             h[i, text_lens[i]:text_lens[i]+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
 

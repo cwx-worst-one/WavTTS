@@ -20,6 +20,7 @@ from ..scripts.infer_utils import (
 )
 from .llama.lit_vae_t2s_ctiga import VAET2SModule
 from .llama.lit_vae_t2s_ctiga_lang_spk import VAET2SLangSpkModule
+from .llama.lit_vae_t2s_ctiga_lang_spk_ser import VAET2SLangSpkSerModule
 from ..utils.remote_io import load_json
 from transformers import LlamaTokenizer, T5Tokenizer, AutoTokenizer
 from zhon.hanzi import punctuation
@@ -34,6 +35,8 @@ def model_loader(name, ckpt_path):
         return VAET2SModule.load_from_checkpoint(checkpoint_path=ckpt_path).eval()
     elif name == "VAET2SLangSpkModule":
         return VAET2SLangSpkModule.load_from_checkpoint(checkpoint_path=ckpt_path).eval()
+    elif name == "VAET2SLangSpkSerModule":
+        return VAET2SLangSpkSerModule.load_from_checkpoint(checkpoint_path=ckpt_path).eval()
     else:
         raise ValueError(f"{name} is not supported.")
 

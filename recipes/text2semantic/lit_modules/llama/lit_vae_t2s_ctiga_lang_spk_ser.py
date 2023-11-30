@@ -455,7 +455,7 @@ class VAET2SLangSpkSerModule(pl.LightningModule):
         text_lens, bn_lens = batch["text_lens"], batch["bn_lens"]
         lang_seq, infer_lang_id = batch["lang_seq"], batch["infer_lang_id"]
         spk_seq, infer_spk_id = batch["spk_seq"], batch["infer_spk_id"]
-        if self.use_spk_id and self.spk_type == "concat":
+        if self.use_spk_id and (self.spk_type == "concat" or self.spk_type == "cln"):
             spk_seq = torch.from_numpy(np.asarray([infer_spk_id]))
             spk_seq = spk_seq.unsqueeze(0)
             spk_seq = spk_seq.to(bns.device)
@@ -541,7 +541,7 @@ class VAET2SLangSpkSerModule(pl.LightningModule):
                     lang_seq = lang_id
 
                 spk_seq = None
-                if self.use_spk_id and self.spk_type == "add":
+                if self.use_spk_id and (self.spk_type == "add" or self.spk_type == "cln"):
                     spk_id = torch.from_numpy(np.asarray([infer_spk_id]))
                     spk_id = spk_id.unsqueeze(0)
                     spk_id = spk_id.to(pred_dense.device)
