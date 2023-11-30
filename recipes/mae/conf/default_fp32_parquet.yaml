@@ -1,0 +1,124 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 2023
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+# running parameters
+log_dir: /mnt/bn/mm-data/projects/mulan/mae_xuchen #!apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+#resume_checkpoint: 'mutmae-step=060000-loss_1=5-sf.ckpt'
+run_opts:
+    fast_dev_run: False
+    tensorboard_dir: !ref <log_dir>
+    log_name: MuT_MAE
+    log_every_n_steps: 10
+    version: mut_large
+    precision: 32
+    num_workers: 4
+    accelerator: auto
+    strategy: ddp #ddp_find_unused_parameters_false
+    num_steps: 60000000
+    val_check_interval: 800
+    batch_size: 16
+    sample_buffer_size: 600
+    val_batch_size: 160
+    emb_dim: 513
+    learning_rate: 5.e-5
+    weight_decay: 5.e-4
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+en_600k_dataset: !new:recipes.mae.dataset.600k_parquet.CMDataset
+    name: "en_600k"
+    mode: "train"
+    tokenizer_name: bert
+    resampled: True
+
+train_datasets:
+    en600: !ref <en_600k_dataset>
+
+selected_dataset_names: [en600]
+weights: [0.5]
+train_dataset: !new:samantha.dataio.dataset.MultiIterableDataset
+    datasets: !apply:recipes.mae.dataset.utils.select_datasets
+        - !ref <train_datasets>
+        - !ref <selected_dataset_names>
+    weights: !ref <weights>
+    num_samples: 10_000_000
+    seed: !ref <seed>
+
+
+
+kaggle_val_0: !new:recipes.mae.dataset.val.TextMusicDataset
+    path: data/kaggle
+    csv_name: kaggle_val_meta.csv
+    text_key: text
+
+kaggle_val_1: !new:recipes.mae.dataset.val.TextMusicDataset
+    path: data/kaggle
+    csv_name: kaggle_val_meta.csv
+    text_key: aspect_list
+
+
+val_dataset: [!ref <kaggle_val_0>, !ref <kaggle_val_1>]
+
+# datamodule configuration
+pl_datamodule: !new:recipes.mae.modules.pl_datamodule.MuLanDataModule
+    train_dataset: !ref <train_dataset>
+    batch_size: !ref <run_opts[batch_size]>
+    sample_buffer_size: !ref <run_opts[sample_buffer_size]>
+    val_dataset: !ref <val_dataset>
+    val_batch_size: !ref <run_opts[val_batch_size]>
+
+pl_module: !new:recipes.mae.modules.pl_module.LitMutMAEModule
+    emb_dim: !ref <run_opts[emb_dim]>
+    lr: !ref <run_opts[learning_rate]>
+    weight_decay: !ref <run_opts[weight_decay]>
+
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[tensorboard_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+
+callbacks:
+    - !new:pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: step
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      save_top_k: 5
+      monitor: loss_0
+      mode: min
+      filename: mutmae-{step:06d}-{loss_0:.0f}-kaggle
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      save_top_k: 5
+      monitor: loss_1
+      mode: min
+      filename: mutmae-{step:06d}-{loss_1:.0f}-sf
+    - !new:recipes.mae.modules.ema.EMA
+      decay: 0.999
+
+plugins:
+    - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: auto
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: True
+    strategy: !ref <run_opts[strategy]>
+    enable_model_summary: True
+    max_steps: !ref <run_opts[num_steps]>
+    val_check_interval: !ref <run_opts[val_check_interval]>
+    #resume_from_checkpoint: !ref <resume_checkpoint>
+    use_distributed_sampler: False
+    logger: !ref <logger>
+    log_every_n_steps: !ref <run_opts[log_every_n_steps]>
+    precision: !ref <run_opts[precision]>
+    callbacks: !ref <callbacks>
+    plugins: !ref <plugins>
+    # gradient_clip_val: 1

@@ -3,11 +3,10 @@
 cd $(dirname $0)/../../
 echo "work dir: $(pwd)"
 
-pip3 install -q --upgrade pip -i https://bytedpypi.byted.org/simple
 pip3 install -q -r recipes/mulan/requirements.txt
 pip3 install -U --pre triton -i https://bytedpypi.byted.org/simple
-pip3 install -i https://bytedpypi.byted.org/simple http://luban-source.byted.org/repository/scm/data.aml.cruise_1.0.0.1260.tar.gz
 pip3 install peft bitsandbytes
+pip3 install -U fsspec==2023.9.1
 export 'PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512'
 
 # Download mae ckpt
@@ -43,12 +42,12 @@ then
     tar -xzf data/kaggle/kaggle_val_mul.tar.gz -C data/kaggle
     rm data/kaggle/kaggle_val_mul.tar.gz
 
-    echo "Download QQ validation set"
-    mkdir -p data/qq
-    hdfs dfs -get $hdfs_base/validation/qq_val.tar.gz data/qq
-    echo "Unzip validation set"
-    tar -xzf data/qq/qq_val.tar.gz -C data/qq
-    rm data/qq/qq_val.tar.gz
+    # echo "Download QQ validation set"
+    # mkdir -p data/qq
+    # hdfs dfs -get $hdfs_base/validation/qq_val.tar.gz data/qq
+    # echo "Unzip validation set"
+    # tar -xzf data/qq/qq_val.tar.gz -C data/qq
+    # rm data/qq/qq_val.tar.gz
 else
     echo "Validation set exists, skip download"
 fi

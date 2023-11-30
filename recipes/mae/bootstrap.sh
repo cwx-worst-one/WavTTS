@@ -5,9 +5,9 @@ echo "work dir: $(pwd)"
 
 #sh .codebase/pipelines/install_dependencies.sh
 
-pip3 install -q --upgrade pip -i https://bytedpypi.byted.org/simple
 pip3 install -q -r recipes/mulan/requirements.txt
 pip3 install -U --pre triton -i https://bytedpypi.byted.org/simple
+pip3 install peft bitsandbytes
 
 export 'PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512'
 mkdir -p check
