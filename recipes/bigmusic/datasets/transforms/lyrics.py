@@ -171,7 +171,7 @@ class LyricsTokenTransform():
             return normalize_text(text, enable_punctuation=enable_punctuation)
         with local_zero_first():
             espeak_tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-cv-ft")
-            espeak_tokenizer._add_tokens(["<n>"])
+            espeak_tokenizer._add_tokens(["<n>", "<verse>", "<chorus>", "<intro>", "<bridge>", "<inst>"])
         import logging, phonemizer
         # To silence espeak logging warnings: "WARNING - words count mismatch on 100.0% of the lines"
         phonemizer.logger.get_logger().setLevel(logging.ERROR)

@@ -141,7 +141,7 @@ def run_genres(genre_splits, label="B", target_size=1_000_000):
     }
 
     valid_final_genres = set(dir2final_genre.values())
-    num_songs_per_genre = round(target_size // len(valid_final_genres), -3)
+    num_songs_per_genre = round(target_size // len(valid_final_genres), -2)
     # num_songs_per_genre = 62000
 
     if genre_splits is not None:
@@ -240,5 +240,7 @@ if __name__ == "__main__":
 # mlx worker launch --gpu 0 -- python3 recipes/bigmusic/dev/ashaw/scripts/process_1m_vocalB.py --target_size 300000
 # mlx worker launch --gpu 0 -- python3 recipes/bigmusic/dev/ashaw/scripts/process_1m_vocalB.py --target_size 100000
 
+    # mlx worker launch --gpu 0 -- python3 recipes/bigmusic/dev/ashaw/scripts/process_1m_vocalB.py --target_size 50000
+    # mlx worker launch --gpu 0 -- python3 recipes/bigmusic/dev/ashaw/scripts/process_1m_vocalB.py --target_size 25000
 
 # mlx worker launch --gpu 0 -- python3 recipes/bigmusic/dev/ashaw/scripts/process_1m_vocalB.py --target_size 2000000 --label A

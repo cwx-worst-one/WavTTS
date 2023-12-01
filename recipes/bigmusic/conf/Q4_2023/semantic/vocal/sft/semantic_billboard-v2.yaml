@@ -21,26 +21,26 @@ extra_params:
     intermediate_size: 4352
     num_hidden_layers: 24
     num_attention_heads: 12
-    pretrained_path: /mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/semantic_vocal/saved_checkpoints/semantic_model_dataset_v4_baseline/mcc60m_1M_vocal_mixed_text_audio/step=196000-tr_loss=4.0754-val_accu_0=24.33.ckpt
+    pretrained_path: /mnt/bn/lyrics-to-song/baseline_models/q4/20231102-new-baseline-mixed-ctiga-196k/checkpoints/step=196000-tr_loss=3.9746-val_accu_0=24.90.ckpt
 
 # running parameters
 run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
-    log_name: semantic_model_mulan_text_07B_sft
-    version: billboard-ablation-js
+    log_name: semantic_model_dataset_v4_baseline
+    version: billboard_baseline_v0
     cache_dir: .module_cache/musiclm
     precision: "16-mixed"
     num_workers: 8
     accelerator: auto
-    max_steps: 1000000
+    max_steps: 20000
     val_check_interval: 1000
     batch_size: 20
     learning_rate: 3.0e-4
     warmup_steps: 2000
     cycle_steps: 4500 # Recommended to be 3 epochs (1500 steps / epoch)
     weight_decay: 0.01
-    shuffle_buffer: 50   # 100
+    shuffle_buffer: 20   # 100
     gradient_clip_val: 1.0
     buckets_in_sec: [15, 20, 25, 30] # TODO: Tune for CPU usage and diversity
 
@@ -139,19 +139,24 @@ logger:
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
-      save_top_k: 20
-      save_last: True
+      save_top_k: 3
+      save_last: False
       monitor: val_accu_0
       mode: max
-      filename: "{step:06d}-{val_accu_0:.2f}"
-    # - !new:recipes.bigmusic.callbacks.data_logger.BigMusicDataUsageLogger
-    #   save_dir: /mnt/bn/audio-diffusion/qq/data_usage_logs
-    #   save_every_n_iter: 5000
-    # - !new:recipes.bigmusic.callbacks.data_logger.BigMusicAudioDataLogger
-    #   sample_rate: !ref <extra_params[sample_rate]>
-    #   check_interval: !ref <run_opts[val_check_interval]>
-    #   examples_per_batch: 8
-
+      filename: "{step:06d}-{tr_loss:.4f}-{val_accu_0:.2f}"
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      save_top_k: 0
+      save_last: True
+      monitor: step
+      every_n_train_steps: 1000
+      mode: max
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      monitor: step
+      save_last: False
+      save_top_k: 10
+      every_n_train_steps: 4000
+      mode: max
+      filename: "{step:06d}-{tr_loss:.4f}-{val_loss_0:.4f}"
 plugins:
     - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
 

@@ -3,6 +3,7 @@ from typing import Any
 from recipes.bigmusic.lightning.embedding_modules import get_mulan_embeds
 from recipes.bigmusic.utils.format_utils import concat_metadata_list, update_json
 import torch
+from recipes.bigmusic.datasets.transforms.lyrics_segment import crop_pad_to_seq_length, random_crop_pad_to_seq_length
 from recipes.musiclm.inference.utils import load_wav
 import json
 from pathlib import Path
@@ -20,10 +21,12 @@ def run_mcs_metrics(requires, output_dir, device='cuda', sample_rate=24000):
     output_dir = Path(output_dir)
     generated_output_fps = list(output_dir.glob('**/*.generated.wav'))
     category2mcs = defaultdict(list)
-    mulan_max_duration = 10 * sample_rate
+    mulan_min_duration = 10 * sample_rate
     def _load_audio_tensor(audio_path):
         wav_tensor = torch.tensor(load_wav(str(audio_path), sr=sample_rate)).to(device)
-        return wav_tensor[:mulan_max_duration].unsqueeze(0)
+        if wav_tensor.shape[-1] < mulan_min_duration:
+            wav_tensor = crop_pad_to_seq_length(wav_tensor, mulan_min_duration)
+        return wav_tensor.unsqueeze(0)
     for idx, generated_output_fp in enumerate(generated_output_fps):
         metadata_fp = str(generated_output_fp).replace('generated.wav', 'metadata.json')
         with open(metadata_fp, 'r') as f:
@@ -41,9 +44,6 @@ def run_mcs_metrics(requires, output_dir, device='cuda', sample_rate=24000):
                 requires, wav_style, data_type='music'
             ).to(device)
         wav_gen = _load_audio_tensor(generated_output_fp)
-        if wav_gen.shape[-1] < mulan_max_duration:
-            print('Warning: generated audio too short. Cannot calculate MCS score')
-            continue
         audio_emb = get_mulan_embeds(
             requires, wav_gen, data_type='music'
         ).to(device)

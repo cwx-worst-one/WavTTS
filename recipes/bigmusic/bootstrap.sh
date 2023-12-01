@@ -44,6 +44,9 @@ fi
 if [ -d "/mnt/bn/audio-diffusion/.module_cache" ]; then
     echo "Found existing cache. Setting huggingface cache to /mnt/bn/audio-diffusion/.module_cache"
     export TRANSFORMERS_CACHE=/mnt/bn/audio-diffusion/.module_cache
+elif [ "$ARNOLD_REGION" == "CN" ]; then
+    export http_proxy="http://sys-proxy-rd-relay.byted.org:8118"
+    export https_proxy="http://sys-proxy-rd-relay.byted.org:8118"
 else
     echo "Warning: Could not find existing huggingface cache. Set TRANSFORMERS_CACHE=/cache/path to avoid download errors."
 fi

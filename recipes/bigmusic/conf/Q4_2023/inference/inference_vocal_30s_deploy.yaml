@@ -44,7 +44,8 @@ extra_params:
     sample_rate: 24000
     duration: 30 # 30
     lyrics_max_seq_len: 400
-    semantic_temperature: 1.05
+    semantic_temperature: 1.0
+    sample_thresh: 0.95
     sample_mode: "top_p"
     token2wav_type: diffusion
 

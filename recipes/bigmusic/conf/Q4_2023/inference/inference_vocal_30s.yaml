@@ -48,6 +48,7 @@ extra_params:
     lyrics_max_seq_len: 400
     semantic_temperature: 1.0
     sample_mode: "top_p"
+    sample_thresh: 0.95
     token2wav_type: diffusion
 
 run_opts:
@@ -70,6 +71,16 @@ predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_fr
     run_combinations: !ref <extra_params[run_combinations]>
     lyrics_max_seq_len: !ref <extra_params[lyrics_max_seq_len]>
     enable_punctuation: True
+
+## For running results on GroupA validation set:
+# predict_dataset: !apply:recipes.bigmusic.datasets.lyrics.DefaultDatasets.Batched.default_validation_dataset
+#     sample_rate: !ref <extra_params[sample_rate]>
+#     sample_duration: !ref <extra_params[duration]>
+#     batch_size: !ref <run_opts[batch_size]>
+#     lyrics_max_seq_len: !ref <extra_params[lyrics_max_seq_len]>
+#     url2index: /mnt/bn/audio-diffusion/weituo/groupA-genrebalanced-val-url2idx.txt
+#     style_conditions: style_text,lyrics_tokens
+#     enable_punctuation: True
 
 pl_datamodule: !new:recipes.bigmusic.datasets.lyrics.LyricsDataModule
     predict_dataset: !ref <predict_dataset>

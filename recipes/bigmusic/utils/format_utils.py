@@ -74,6 +74,7 @@ def normalize_text(text, enable_punctuation=False, lowercase=False):
     text = text.replace("？", "\n")
     text = re.sub(r'\n\s*\n', '\n', text) # remove double new lines
     nlp_punctuation = punctuation.replace("'", "") # allow single quotes (') for contractions
+    nlp_punctuation = punctuation.replace("<", "").replace(">", "") # allow <> for special tokens
     text = text.translate(str.maketrans("", "", nlp_punctuation))
     if enable_punctuation:
         text = text.replace("\n", " <n> ") # remove new lines

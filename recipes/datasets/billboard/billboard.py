@@ -401,6 +401,7 @@ class BillboardDataModule(WebDataModuleBase):
             resampled=True,
             shardshuffle=True,
             use_pipe=False,
+            handler=wds.warn_and_continue
         )
         test_dataset = IndexedWebDataset(
             url2index=data_bucket(
@@ -410,6 +411,7 @@ class BillboardDataModule(WebDataModuleBase):
             shardshuffle=False,
             nodesplitter=return_self,
             use_pipe=False,
+            handler=wds.warn_and_continue
         )
 
         train_dataset = train_dataset.decode().compose(transform)
@@ -487,21 +489,25 @@ class BillboardLyricsDataModule(WebDataModuleBase):
         )
 
         train_dataset = IndexedWebDataset(
-            url2index=data_bucket(
-                "music/billboard_hot200_v2/24000hz/train/20231026_genre/url2index.txt"
-            ),
+            url2index="/mnt/bn/audio-diffusion/ashaw/webdataset/billboard_v2/url2index_train.txt", # has 98/2 train/test split
+            # url2index=data_bucket(
+            #     "music/billboard_hot200_v2/24000hz/train/20231026_genre/url2index.txt" # 90/1 train/test split
+            # ),
             resampled=True,
             shardshuffle=True,
             use_pipe=False,
+            handler=wds.warn_and_continue
         )
         test_dataset = IndexedWebDataset(
-            url2index=data_bucket(
-                "music/billboard_hot200_v2/24000hz/test/20231026_genre/url2index.txt"
-            ),
+            url2index="/mnt/bn/audio-diffusion/ashaw/webdataset/billboard_v2/url2index_test.txt",
+            # url2index=data_bucket(
+            #     "music/billboard_hot200_v2/24000hz/test/20231026_genre/url2index.txt"
+            # ),
             resampled=False,
             shardshuffle=False,
             nodesplitter=return_self,
             use_pipe=False,
+            handler=wds.warn_and_continue
         )
 
         train_dataset = train_dataset.decode().compose(transform)
@@ -539,6 +545,7 @@ class BillboardArtistGenderDataModule(WebDataModuleBase):
             resampled=True,
             shardshuffle=True,
             use_pipe=False,
+            handler=wds.warn_and_continue
         )
         train_dataset_female = IndexedWebDataset(
             url2index=data_bucket(
@@ -547,6 +554,7 @@ class BillboardArtistGenderDataModule(WebDataModuleBase):
             resampled=True,
             shardshuffle=True,
             use_pipe=False,
+            handler=wds.warn_and_continue
         )
 
         test_dataset_male = IndexedWebDataset(
@@ -557,6 +565,7 @@ class BillboardArtistGenderDataModule(WebDataModuleBase):
             shardshuffle=False,
             nodesplitter=return_self,
             use_pipe=False,
+            handler=wds.warn_and_continue
         )
         test_dataset_female = IndexedWebDataset(
             url2index=data_bucket(
@@ -566,6 +575,7 @@ class BillboardArtistGenderDataModule(WebDataModuleBase):
             shardshuffle=False,
             nodesplitter=return_self,
             use_pipe=False,
+            handler=wds.warn_and_continue
         )
 
         train_dataset = wds.DataPipeline(

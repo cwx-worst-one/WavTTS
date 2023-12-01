@@ -7,17 +7,20 @@ from dataclasses import dataclass
 import math
 import random
 import numpy as np
+import json
 from typing import Tuple
 from string import punctuation, whitespace
-
-from recipes.musiclm.transforms.audio import (
+from samantha.transforms.audio import (
     NormalizeAudioToFloat32,
     SetAudioDimensions,
     ToTensor,
+)
+from recipes.musiclm.transforms.audio import (
     ReadMP3,
     FastNormalizeAudio
 )
 from recipes.musiclm.transforms.base import TransformBase
+from recipes.bigmusic.datasets.transforms.lyrics_section_alignment import get_section_aligned_text, merge_intervals
 
 class ReadMP3BytesIO(ReadMP3):
     def __call__(self, mp3: bytes) -> np.ndarray:
@@ -66,12 +69,17 @@ class LyricsSegmentTransforms(TransformBase):
         )
         self.normalize_audio = FastNormalizeAudio()
 
-    def process_segment(self, segment, audio_wavs):
+    def process_segment(self, segment, audio_wavs, metadata):
         audio_duration = audio_wavs['target_audio'].shape[-1] / self.sample_rate
         if segment.end > audio_duration:
             return None
         cropped_segments = { name: crop_pad_audio_to_segment(segment, audio, self.sample_rate) for name, audio in audio_wavs.items() }
-        lyrics_text = segment.text.strip()
+        if 'music_structure' in metadata:
+            music_structures = merge_intervals(metadata['music_structure'][0])
+            lyrics_text = get_section_aligned_text(segment, music_structures)
+        else:
+            lyrics_text = segment.text.strip()
+        if lyrics_text is None: return None
         cropped_segments['lyrics'] = lyrics_text
         return cropped_segments
 
@@ -107,8 +115,7 @@ class LyricsSegmentTransforms(TransformBase):
     def __call__(self, x: Dict[str, torch.Tensor]) -> Generator:
         # 1. filter lyrics and metadata. 2. extract audio 2b. transform audio 3. clip audio to metadata 4. transform segment
         try:
-            index_data = x['__index_data__']
-            metadata, lyrics = extract_metadata_and_utterances(index_data)
+            metadata, lyrics = extract_metadata_and_utterances(x)
         except Exception as e:
             self._update_stats(skipped=True)
             self.handler(e)
@@ -146,7 +153,12 @@ class LyricsSegmentTransforms(TransformBase):
         
         # Output clips
         for segment in segments:
-            item = self.process_segment(segment, audio_wavs)
+            try:
+                item = self.process_segment(segment, audio_wavs, metadata)
+            except Exception as e:
+                print('Exception in process_segment', e)
+                self.handler(e)
+                continue
             if item is None: continue
             item['metadata'] = metadata
             yield item
@@ -155,16 +167,24 @@ class LyricsSegmentTransforms(TransformBase):
                 break
         self._update_stats(segment_count == 0)
 
-def extract_metadata_and_utterances(index_data):
-    if 'metadata' in index_data:
-        metadata = index_data['metadata']
-    else:
+def extract_metadata_and_utterances(item):
+    # webdataset case
+    if '__index_data__' in item:
+        index_data = item['__index_data__']
+        if 'metadata' in index_data:
+            metadata = index_data['metadata']
+        else:
+            metadata = index_data
+    # parquet case
+    elif 'meta' in item:
+        index_data = json.loads(item['meta'])
         metadata = index_data
+
     # Hiphop has format metadata: {..., lyrics: []}, THe rest has format { metadata: {}, lyrics: []}
     if 'lyrics' in metadata:
-        lyrics = metadata['lyrics']
+        lyrics = metadata.pop('lyrics')
     elif 'lyrics' in index_data:
-        lyrics = index_data['lyrics']
+        lyrics = index_data.pop('lyrics')
     else:
         lyrics = None
 
@@ -207,6 +227,7 @@ class Segment():
     text: str
     duration: float
     confidence: float
+    words: [str]
         
     @classmethod
     def from_dict(cls, json_dict):
@@ -224,13 +245,33 @@ class Segment():
             confidence = float(json_dict['confidence'])
         else:
             confidence = 1
-        return Segment(start, end, text, duration, confidence)
+        words = json_dict['words']
+        return Segment(start, end, text, duration, confidence, words)
+
+    @classmethod
+    def from_word_dict(cls, json_dict):
+        start = json_dict['start_time']/1000.0
+        end = json_dict['end_time']/1000.0
+        duration = end - start
+        if json_dict['start_time'] == -2:
+            start = -2
+            end = -2
+            duration = 0
+        text = json_dict['text']
+        if 'additions' in json_dict:
+            confidence = float(json_dict['additions']['confidence'])
+        elif 'confidence' in json_dict:
+            confidence = float(json_dict['confidence'])
+        else:
+            confidence = 1
+        words = [json_dict] # for words, we set it to itself
+        return Segment(start, end, text, duration, confidence, words)
 
     def has_valid_time(self):
         return self.start >= 0
 
 def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
-                       new_line_token="\n", fixed_duration=True, min_confidence=0.75, 
+                       new_line_token=". ", fixed_duration=True, min_confidence=0.75, 
                        shuffle_start=False, shuffle_lengths=False, include_intro=False
     ):
     if not lyrics: return []
@@ -248,7 +289,10 @@ def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
     })
 
     start_idx = random.randint(0, 2) if shuffle_start else 0
-    target_duration_length = max_duration
+    if shuffle_lengths and random.randint(0, 3) > 0:
+        target_duration_length = random.randint(int(min_duration), int(max_duration))
+    else:
+        target_duration_length = max_duration
     for i in range(start_idx, len(lyrics)):
         current_diction = lyrics[i]
         current_segment = Segment.from_dict(current_diction)
@@ -266,6 +310,7 @@ def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
                 if extended_segment:
                     segment.end = extended_segment.end
                     segment.text += new_line_token + extended_segment.text
+                    segment.words += extended_segment.words
                     segment.duration += extended_segment.duration                    
                 segment.end = target_end_time
                 segment.duration = segment.end - segment.start
@@ -299,7 +344,7 @@ def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
         # Create new segment
         if segment is None:
             segment = current_segment
-            if shuffle_lengths and random.randint(0, 1) > 0:
+            if shuffle_lengths and random.randint(0, 3) > 0:
                 target_duration_length = random.randint(int(min_duration), int(max_duration))
             else:
                 target_duration_length = max_duration
@@ -312,6 +357,7 @@ def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
         else: # append to existing segment
             segment.end = current_segment.end
             segment.text = segment.text + new_line_token + current_segment.text
+            segment.words += current_segment.words
             segment.duration = segment.end - segment.start
     return segments
 
@@ -323,23 +369,24 @@ def _words_to_segment(words, start_time, end_time, start_index=0):
     idx = 0
 
     for idx, word in enumerate(words[start_index:]):
-        word = Segment.from_dict(word)
+        word_segment = Segment.from_word_dict(word)
         end_index = start_index + idx
-        if is_word(word):
-            if word.start >= 0 and word.start < start_time: # skip words less than start time
+        if is_word(word_segment):
+            if word_segment.start >= 0 and word_segment.start < start_time: # skip words less than start time
                 continue
-            if word.end > end_time:
+            if word_segment.end > end_time:
                 break
         else: # keep punctuation
             pass
 
         if segment:
-            if word.has_valid_time():
-                segment.end = word.end
+            if word_segment.has_valid_time():
+                segment.end = word_segment.end
                 segment.duration = segment.end - segment.start
-            segment.text += word.text # need to append space 
-        elif segment is None and word.has_valid_time():
-            segment = word
+            segment.text += word_segment.text # need to append space 
+            segment.words += word_segment.words
+        elif segment is None and word_segment.has_valid_time():
+            segment = word_segment
     return segment, end_index-1
 
 # Converts word format (outputs from force alignment), to line-by-line format

@@ -252,6 +252,7 @@ class BaseContinuousEmbedModule(BaseModule):
         num_tokens,
         temperature=1,
         sample_mode="gumbel",
+        sample_thresh=0.9,
         tqdm_name=None,
         beam=1,
         ref_samples=None,
@@ -317,7 +318,7 @@ class BaseContinuousEmbedModule(BaseModule):
                 ).logits
                 inference_params.sequence_len_offset += model_input['inputs_embeds'].size(1)
                 logits = logits[:, -1:, :] # only predicting on last logit.
-                predict_token = self.sample_logits(i, logits, temperature, sample_mode)
+                predict_token = self.sample_logits(i, logits, temperature, sample_mode, sample_thresh)
                 predict_token_emb = self.target_embedder.embedder(predict_token)
             else:
                 model_output = self.model(
@@ -328,7 +329,7 @@ class BaseContinuousEmbedModule(BaseModule):
                 logits = model_output["logits"]
 
                 logits = logits[:, -1:, :] # only predicting on last logit.
-                predict_token = self.sample_logits(i, logits, temperature, sample_mode)
+                predict_token = self.sample_logits(i, logits, temperature, sample_mode, sample_thresh)
                 predict_token_emb = self.target_embedder.embedder(predict_token)
 
             model_input['inputs_embeds'] = predict_token_emb
@@ -360,7 +361,10 @@ class BaseContinuousEmbedModule(BaseModule):
             return output_tokens
 
     @torch.no_grad()
-    def predict_slice(self, inputs_embeds, input_framerate, output_framerate, target_duration, slice_duration, stride_duration, temperature=1, sample_mode="gumbel", tqdm_name=None):
+    def predict_slice(
+        self, inputs_embeds, input_framerate, output_framerate, target_duration, slice_duration, stride_duration, 
+        temperature=1, sample_mode="gumbel", sample_thresh=0.9, tqdm_name=None
+    ):
         tqdm_name = self.__class__.__name__ if tqdm_name is None else tqdm_name
         batch_size = inputs_embeds.size(0)
         sos_embeds = self.target_embedder.get_sos_embed(batch_size)
@@ -417,7 +421,7 @@ class BaseContinuousEmbedModule(BaseModule):
                 logits = logits[:, -1:, :] # only predicting on last logit.
 
                 # Sample logits
-                predict_token = self.sample_logits(i, logits, temperature, sample_mode)
+                predict_token = self.sample_logits(i, logits, temperature, sample_mode, sample_thresh)
                 predict_embed = self.target_embedder.embedder(predict_token)
 
                 # Update model input selection.

@@ -194,15 +194,13 @@ class MulanEmbedder(ContinuousEmbedder):
 
 class MulanTagEmbedder(ContinuousEmbedder):
     def __init__(
-            self, data_type='music', input_dim=512, embedding_dim=1024, max_audio_length=10*24000, min_audio_length=10*24000, add_sos=False, 
+            self, data_type='music', input_dim=512, embedding_dim=1024, min_audio_length=10*24000, add_sos=False, 
             mulan_tag_type="mulan_genres", use_mcc_gender=True
         ):
         super().__init__(input_dim, embedding_dim, add_sos)
 
         self.data_type = data_type
-        self.max_audio_length = max_audio_length # 10s * 24k sample rate
         self.min_audio_length = min_audio_length # 10s * 24k sample rate
-        self.resize_transform = RandomResizedCrop(max_audio_length)
         self.mulan_tagger = MulanTagger(mulan_tag_type)
         self.use_mcc_gender = use_mcc_gender
 
@@ -218,10 +216,6 @@ class MulanTagEmbedder(ContinuousEmbedder):
             mulan_embeds = get_mulan_embeds(requires, input_audio, data_type)
             return mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
         elif data_type == "tag":
-            if self.training:
-                input_audio = self.resize_transform(input_audio)
-            else:
-                input_audio = input_audio[..., :self.max_audio_length]
             mulan_audio_embeds = get_mulan_embeds(requires, input_audio, "music")
             metadata = self.mulan_tagger.get_tags(requires, audio_embeds=mulan_audio_embeds)
             if self.use_mcc_gender and mcc_style_text:

@@ -203,6 +203,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         num_tokens = duration * frame_rate
         temperature = hp.semantic_temperature
         sample_mode = hp.sample_mode
+        sample_thresh = hp.get('sample_thresh', 0.9)
 
         inputs_embeds = self.prepare_inputs_embeddings(batch)
         return super().predict(
@@ -211,6 +212,7 @@ class SemanticModule(BaseContinuousEmbedModule):
             temperature=temperature,
             beam=beam,
             sample_mode=sample_mode,
+            sample_thresh=sample_thresh,
             ref_samples=ref_samples,
         )
 

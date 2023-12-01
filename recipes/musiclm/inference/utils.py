@@ -60,27 +60,22 @@ def sample(predict_logits, temp, thresh=0.9, mode="naive", return_probs=False):
         probs = predict_logits.softmax(dim=-1)
         dist = torch.distributions.categorical.Categorical(probs=probs)
         samples = dist.sample()
-        if return_probs:
-            sample_probs = torch.gather(probs, -1, samples.unsqueeze(1)).squeeze(1)
-    if mode == "top_p":
+    elif mode == "top_p":
         predict_logits = predict_logits / (temp)
         predict_logits = top_p_logits(predict_logits, thresh)
         probs = predict_logits.softmax(dim=-1)
         dist = torch.distributions.categorical.Categorical(probs=probs)
         samples = dist.sample()
-        if return_probs:
-            sample_probs = torch.gather(probs, -1, samples.unsqueeze(1)).squeeze(1)
     elif mode == "gumbel" or mode == "gumbel_fixed_noise":
         predict_logits = top_k(predict_logits, thresh=thresh)
         fixed_noise = mode == "gumbel_fixed_noise"
         samples = gumbel_sample(predict_logits, temp, fixed_noise=fixed_noise)
-        if return_probs:
-            probs = (predict_logits / temp).softmax(dim=-1)
-            sample_probs = torch.gather(probs, -1, samples.unsqueeze(1)).squeeze(1)
+        probs = (predict_logits / temp).softmax(dim=-1)
     else:
         raise NotImplementedError()
 
     if return_probs:
+        sample_probs = torch.gather(probs, -1, samples.unsqueeze(1)).squeeze(1)
         return samples, sample_probs
     else:
         return samples

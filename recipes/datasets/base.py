@@ -17,6 +17,7 @@ from samantha.dataio.batching import BucketBatcher
 from samantha.transforms.audio import (
     NormalizeAudioToFloat32,
     RandomPad,
+    Pad,
     SetAudioDimensions,
     ToTensor,
 )
@@ -228,6 +229,7 @@ class WebDataModuleBase(LightningDataModuleBase):
         batch_size_valid: Optional[int] = None,
         batch_size_test: Optional[int] = None,
         epoch_size: Optional[int] = None,
+        padding_strategy: str = 'pad'
     ):
         super().__init__(
             batch_size=batch_size,
@@ -243,6 +245,7 @@ class WebDataModuleBase(LightningDataModuleBase):
         self.batch_size_valid = batch_size_valid
         self.batch_size_test = batch_size_test
         self.epoch_size = epoch_size
+        self.padding_strategy = padding_strategy
 
         if self.batch_size_valid is None:
             self.batch_size_valid = self.batch_size
@@ -265,9 +268,9 @@ class WebDataModuleBase(LightningDataModuleBase):
                         max_length = max(
                             [self.batcher.length_fn(item) for item in batch]
                         )
-                        random_pad = RandomPad(max_length)
+                        pad_fn = RandomPad(max_length) if self.padding_strategy == 'random_pad' else Pad(max_length)
                         for idx in range(len(batch)):
-                            batch[idx][audio_attr] = random_pad(batch[idx][audio_attr])
+                            batch[idx][audio_attr] = pad_fn(batch[idx][audio_attr])
                 yield batch
 
     def DataLoader(

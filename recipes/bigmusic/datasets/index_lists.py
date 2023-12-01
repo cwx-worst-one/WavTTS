@@ -196,6 +196,9 @@ INDEX = {
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/url2idx/vocal-B-trance.txt",
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/url2idx/vocal-B-trap-rap.txt"
         ],
+        "MCCVocalB_10k": vocalB_dataset_study(10000),
+        "MCCVocalB_25k": vocalB_dataset_study(25000),
+        "MCCVocalB_50k": vocalB_dataset_study(50000),
         "MCCVocalB_100k": vocalB_dataset_study(100000),
         "MCCVocalB_150k": vocalB_dataset_study(150000),
         "MCCVocalB_200k": vocalB_dataset_study(200000),
@@ -203,6 +206,7 @@ INDEX = {
         "MCCVocalB_500k": vocalB_dataset_study(500000),
         "MCCVocalB_1M": vocalB_dataset_study(1000000),
         "MCCVocalB_2M": vocalB_dataset_study(2000000),
+        "MCCVocalA_1M_Parquet": 93,
         "MCCInstrumental": [
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_merge/nonvocal-A-alternative-rock+indie-pop+sertanejo+trap-rap.txt",
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_merge/nonvocal-A-blues+childhood+country+devotional+k-pop+soundtrack+trance+world-music.txt",
@@ -230,11 +234,8 @@ INDEX = {
         "MCC1M_EN_GT": "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/mcc9m.tar_to_index.tsv", # 1m with ground truth lyrics
         "RESSO": "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/resso.tar_to_index.tsv", # IMPORTANT: must set audio_format=m4a
         "RESSO_MSS": "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/resso_mss.tar_to_index.tsv",
-        "KARAOKE_TRAIN": "/mnt/bn/audio-diffusion/ashaw/webdataset/indexes_with_meta/karaoke_train.tar_to_index.tsv",
-        "KARAOKE_VALID": "/mnt/bn/audio-diffusion/ashaw/webdataset/indexes_with_meta/karaoke_valid.tar_to_index.tsv",
-        "MCC60M_VALID_LABEL1": "/mnt/bn/audio-diffusion/data/mcc60_slices/val_from_group_1.tsv",
-        "MCC60M_VALID_LABEL3": "/mnt/bn/audio-diffusion/data/mcc60_slices/val_from_group_3.tsv",
-        "MCC60M_VALID_LABEL4": "/mnt/bn/audio-diffusion/data/mcc60_slices/val_from_group_4.tsv",
+        "KARAOKE_TRAIN": "/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/indexes_with_meta/karaoke_train.tar_to_index.tsv",
+        "KARAOKE_VALID": "/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/indexes_with_meta/karaoke_valid.tar_to_index.tsv",
         "MCC60M_VALID_GROUPA": "/mnt/bn/audio-diffusion/weituo/groupA-genrebalanced-val-url2idx.txt", # 480 songs - 24 songs x 20 genres
         "LIBRILIGHT": "hdfs://harunava/home/byte_speech_sv/data/speech/librilight_asr_npy/url2idx.txt",
         "LIBRITTS": "pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/speech/libritts/24000hz/train-clean-360/{00000..00007}.tar",
