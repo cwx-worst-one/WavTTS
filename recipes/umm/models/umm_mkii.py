@@ -117,7 +117,7 @@ class ConformerRotaryPositionalEmbedding(nn.Module):
             or self.cached_rotary_positional_embedding is None
         ):
             self._set_cos_sin_cache(sequence_length)
-        return self.cached_rotary_positional_embedding[:, :sequence_length].to(
+        return self.cached_rotary_positional_embedding[:, -sequence_length:].to(
             dtype=hidden_states.dtype
         )
 
@@ -260,20 +260,25 @@ class ConformerSelfAttention(nn.Module):
         # self-attention mechanism
         batch_size, sequence_length, hidden_size = hidden_states.size()
 
-        # project query_key_states and value_states
-        query = self.linear_q(hidden_states)
-        key = self.linear_k(hidden_states)
-        value = self.linear_v(hidden_states)
+        # make sure query/key states can be != value states
+        query_key_states = hidden_states
+        value_states = hidden_states
 
         if position_embeddings is not None:
-            query = self._apply_rotary_embedding(query, position_embeddings)
-            key = self._apply_rotary_embedding(key, position_embeddings)
-            # value is kept as-is.
+            query_key_states = self._apply_rotary_embedding(
+                query_key_states, position_embeddings
+            )
 
-        # => (b, t, h, d)
-        query = query.view(batch_size, -1, self.num_heads, self.head_size)
-        key = key.view(batch_size, -1, self.num_heads, self.head_size)
-        value = value.view(batch_size, -1, self.num_heads, self.head_size)
+        # project query_key_states and value_states
+        query = self.linear_q(query_key_states).view(
+            batch_size, -1, self.num_heads, self.head_size
+        )
+        key = self.linear_k(query_key_states).view(
+            batch_size, -1, self.num_heads, self.head_size
+        )
+        value = self.linear_v(value_states).view(
+            batch_size, -1, self.num_heads, self.head_size
+        )
 
         # => (batch, head, time1, d_k)
         query = query.transpose(1, 2)
