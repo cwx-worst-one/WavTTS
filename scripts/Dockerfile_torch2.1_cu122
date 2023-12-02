@@ -8,12 +8,14 @@ FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as US-East-Red
 FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as Aliyun_SG
 FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as China-North-LF
 
+ENV TORCH_CUDNN_V8_API_LRU_CACHE_LIMIT 100000
+ENV PYTORCH_CUDA_ALLOC_CONF expandable_segments:True
+
 ENV LD_LIBRARY_PATH /opt/tiger/native_libhdfs/lib/native:$LD_LIBRARY_PATH
 ENV ARNOLD_HDFS_NATIVE 1
 ENV ARNOLD_HDFS_CELER 1
 ENV INFSEC_HADOOP_ENABLED 1
 ENV CPP_HDFS_CONF /opt/tiger/arnold/hdfs_client/conf/celer_us/core-site.xml:/opt/tiger/arnold/hdfs_client/conf/celer_us/hdfs-site.xml
-ENV TORCH_CUDNN_V8_API_LRU_CACHE_LIMIT 100000
 
 FROM ${REGION}
 LABEL maintainer="Gao Lu <gaolu.e820@bytedance.com>"
