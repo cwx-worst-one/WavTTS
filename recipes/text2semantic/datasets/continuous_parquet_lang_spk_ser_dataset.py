@@ -204,10 +204,13 @@ class ContinuousTTSLangSpkSerDataset(IterableDataset):
             dataset_name = sample.get("dataset_name")
             speaker_name = sample.get("speaker_name")
             if dataset_name:
-                if speaker_name:
-                    spk_key = '/'.join([dataset_name, speaker_name])
-                else:
+                if dataset_name in self.tag_dict:
                     spk_key = dataset_name
+                else:
+                    if speaker_name:
+                        spk_key = '/'.join([dataset_name, speaker_name])
+                    else:
+                        spk_key = dataset_name
             else:
                 if speaker_name:
                     spk_key = speaker_name
@@ -265,10 +268,13 @@ class ContinuousTTSLangSpkSerDataset(IterableDataset):
             dataset_name = sample.get("dataset_name")
             speaker_name = sample.get("speaker_name")
             if dataset_name:
-                if speaker_name:
-                    spk_key = '/'.join([dataset_name, speaker_name])
-                else:
+                if dataset_name in self.spk2id:
                     spk_key = dataset_name
+                else:
+                    if speaker_name:
+                        spk_key = '/'.join([dataset_name, speaker_name])
+                    else:
+                        spk_key = dataset_name
             else:
                 if speaker_name:
                     spk_key = speaker_name
