@@ -98,7 +98,7 @@ class ModelArgs:
     ref_enc_dim: int = 512
     ref_enc_bn_dim: int = 1024
 
-class VAELLaMaLangSpkSer(LLaMa):
+class VAELLaMaLangSpkSerAli(LLaMa):
     def __init__(
         self,
         params: ModelArgs,
@@ -173,8 +173,31 @@ class VAELLaMaLangSpkSer(LLaMa):
                 self.spk_embeddings = nn.Embedding(params.spk_vocab_size, params.dim * 2)
             else:
                 self.spk_embeddings = nn.Embedding(params.spk_vocab_size, params.dim)
+
         if self.use_extra_tag:
             self.tag_embeddings = nn.Embedding(params.tag_vocab_size, params.dim * 2)
+        
+        if self.text_encoder_type in ["flan-T5-large", "byte-T5-base"]:
+            logger.info(f"Using text encoder: {self.text_encoder_type}, {self.text_encoder_path}")
+            assert self.text_encoder_path != ""
+            self.text_encoder = T5EncoderModel.from_pretrained(self.text_encoder_path)
+            self.text_linear = nn.Linear(self.text_encoder.config.d_model, self.params.dim, bias=False)
+            if self.attn_type == "mha":
+                self.cross_attention = nn.MultiheadAttention(
+                    embed_dim=params.dim, 
+                    num_heads=params.cross_attention_n_heads,
+                    batch_first=True,
+                    bias=False
+                )
+                self.positional_encoding = PositionalEncoding(
+                        params.dim, 
+                        dropout=params.pos_pdrop, 
+                        maxlen=params.max_seq_len)
+                logger.info(f"Created positional_encoding with maxlen: {params.max_seq_len}")
+            else:
+                raise NotImplementedError
+        else:
+            self.text_encoder = None
         
         self.stop_token_head = nn.Linear(params.dim, 2, bias=False)
         if self.use_phoneme_loss:
@@ -225,29 +248,6 @@ class VAELLaMaLangSpkSer(LLaMa):
 
         self.init_weight_and_load_state(state_dict_path)
 
-        # load pretrained_models after [ self.init_weight_and_load_state ], especially when you want to freeze these parameters
-        if self.text_encoder_type in ["flan-T5-large", "byte-T5-base"]:
-            logger.info(f"Using text encoder: {self.text_encoder_type}, {self.text_encoder_path}")
-            assert self.text_encoder_path != ""
-            self.text_encoder = T5EncoderModel.from_pretrained(self.text_encoder_path)
-            self.text_linear = nn.Linear(self.text_encoder.config.d_model, self.params.dim, bias=False)
-            if self.attn_type == "mha":
-                self.cross_attention = nn.MultiheadAttention(
-                    embed_dim=params.dim, 
-                    num_heads=params.cross_attention_n_heads,
-                    batch_first=True,
-                    bias=False
-                )
-                self.positional_encoding = PositionalEncoding(
-                        params.dim, 
-                        dropout=params.pos_pdrop, 
-                        maxlen=params.max_seq_len)
-                logger.info(f"Created positional_encoding with maxlen: {params.max_seq_len}")
-            else:
-                raise NotImplementedError
-        else:
-            self.text_encoder = None
-
 
     def _repara(self, stats):
         m, logs = torch.split(stats, self.params.out_dim, dim=-1)
@@ -271,6 +271,10 @@ class VAELLaMaLangSpkSer(LLaMa):
         ser_tags=None,
         crop_bn=None,
         spk_embd_masks=None,
+        # prompt_frontend_inputs=None,
+        prompt_bns=None,
+        # prompt_text_lens=None,
+        prompt_bn_lens=None,
     ):
 
         if self.use_ref_enc and crop_bn is not None:
@@ -282,11 +286,17 @@ class VAELLaMaLangSpkSer(LLaMa):
             self.prompt_cond = None
 
         bsz = text_lens.shape[0]
-        seqlen = max(text_lens + bn_lens)
+        # if prompt_bn_lens is not None:
+        seqlen = max(prompt_bn_lens + text_lens + bn_lens)
+        # else:
+        #     seqlen = max(text_lens + bn_lens)
 
         if bns.shape[1] > 0:  # 正常训练和带prompt推理都应该走这个
             bn_in_z = self._repara(bns)
+            # logger.info(f"bn_in_z: {bn_in_z.shape}, {bn_in_z}")
             bn_in_h = self.prenet(bn_in_z)
+            # logger.info(f"bn_in_h: {bn_in_h.shape}, {bn_in_h}")
+
             if self.use_lang_grloss:
                 bn_in_h_rev = self.gradient_rev(bn_in_h)
                 lang_output = self.lang_output(bn_in_h_rev)
@@ -299,13 +309,24 @@ class VAELLaMaLangSpkSer(LLaMa):
             )  # noprompt 推理用的占位符, T为0所以等于没有任何内容
             lang_output = None
 
+        if prompt_bns.shape[1] > 0:
+            prompt_bn_in_z = self._repara(prompt_bns).type_as(bn_in_z)
+            # logger.info(f"prompt_bn_in_z: {prompt_bn_in_z.shape}, {prompt_bn_in_z}")
+            prompt_bn_in_h = self.prenet(prompt_bn_in_z)
+            # logger.info(f"prompt_bn_in_h: {prompt_bn_in_h.shape}, {prompt_bn_in_h}")
+        else:
+            prompt_bn_in_z = torch.zeros([1, 0, self.params.out_dim]).to(prompt_bns.device)
+            prompt_bn_in_h = torch.zeros([1, 0, self.params.dim]).to(
+                prompt_bns.device
+            )  # noprompt 推理用的占位符, T为0所以等于没有任何内容
+
         if self.use_lang_id:
             lang_embeds = self.lang_embeddings(lang_seqs)
             for i in range(bsz):
                 bn_in_h[i, :bn_lens[i], :] += lang_embeds[i, :bn_lens[i], :]
 
         if self.use_spk_id and spk_seqs is not None:
-            if (self.spk_type == "concat" and not use_cache) or self.spk_type == "cln":
+            if self.spk_type == "concat" and not use_cache:
                 spk_embeds = self.spk_embeddings(spk_seqs[:, 0:1])
             elif self.spk_type == "add":
                 spk_embeds = self.spk_embeddings(spk_seqs)
@@ -327,11 +348,21 @@ class VAELLaMaLangSpkSer(LLaMa):
             cond = self.tag_embeddings(tag_ids).unsqueeze(1)
 
         if self.use_spk_id and self.spk_type == 'cln' and spk_seqs is not None:
-            assert spk_embeds is not None
-            cond = spk_embeds if cond is None else (cond + spk_embeds)
+            if cond is None:
+                cond = spk_embeds
+            else:
+                cond = cond + spk_embeds                
 
         if self.use_ser_tag:
             ser_tag_embeds = self.ser_tag_embeddings(ser_tags)
+
+        shift = spk_shift = ser_tag_shift = 0
+        if self.use_spk_id and self.spk_type == "concat" and spk_seqs is not None:
+            shift += 1
+            spk_shift = 1
+        if self.use_ser_tag:
+            shift += 1
+            ser_tag_shift = 1
 
         attn_weights = None
         if use_cache:
@@ -344,10 +375,7 @@ class VAELLaMaLangSpkSer(LLaMa):
                 token_in_h = self.tok_embeddings(frontend_inputs)
             elif self.input_type == '1dim':
                 token_in_h = self.tok_embeddings(frontend_inputs['phonetone'])
-            if self.use_spk_id and self.spk_type == "concat":
-                seqlen += 1
-            if self.use_ser_tag:
-                seqlen += 1
+            seqlen += shift
             h = torch.zeros([bsz, seqlen, bn_in_h.shape[-1]], device=bn_in_h.device)
 
             if self.text_encoder is not None:
@@ -383,58 +411,42 @@ class VAELLaMaLangSpkSer(LLaMa):
                 # 6. add attened text_in_h into the phone part of token_in_h
                 for i in range(bsz):
                     # add phone embeds and attended-bpe embeds
-                    h[i, :text_lens[i], :] = token_in_h[i, :text_lens[i], :] + attn_bpe_in_h[i, :text_lens[i], :]
-                    if self.use_spk_id:
-                        if self.spk_type == "concat":
-                            # add spk embds
-                            h[i, text_lens[i]:text_lens[i]+1, :] = spk_embeds[i]
-                            if self.use_ser_tag:
-                                # insert bn embeds
-                                h[i, text_lens[i]+1:text_lens[i]+2, :] = ser_tag_embeds[i]
-                                h[i, text_lens[i]+2:text_lens[i]+2+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
-                            else:
-                                # insert bn embeds
-                                h[i, text_lens[i]+1:text_lens[i]+1+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
-                        elif self.spk_type == "add" or self.spk_type == "cln":
-                            if self.use_ser_tag:
-                                h[i, text_lens[i]:text_lens[i]+1, :] = ser_tag_embeds[i]
-                                h[i, text_lens[i]+1:text_lens[i]+1+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
-                            else:
-                                h[i, text_lens[i]:text_lens[i]+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
-                            
+                    if prompt_bn_lens[i] > 0:
+                        h[i, :prompt_bn_lens[i], :] = prompt_bn_in_h[i, :prompt_bn_lens[i], :]
+                        h[i, prompt_bn_lens[i]:prompt_bn_lens[i] + text_lens[i], :] = token_in_h[i, :text_lens[i], :] + attn_bpe_in_h[i, :text_lens[i], :]
                     else:
-                        if self.use_ser_tag:
-                            h[i, text_lens[i]:text_lens[i]+1, :] = ser_tag_embeds[i]
-                            h[i, text_lens[i]+1:text_lens[i]+1+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
-                        else:
-                            h[i, text_lens[i]:text_lens[i]+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
-
+                        h[i, :text_lens[i], :] = token_in_h[i, :text_lens[i], :] + attn_bpe_in_h[i, :text_lens[i], :]
             else:
                 for i in range(bsz):
-                    h[i, :text_lens[i], :] = token_in_h[i, :text_lens[i], :]
-                    if self.use_spk_id:
-                        if self.spk_type == "concat":
-                            # add spk embds
-                            h[i, text_lens[i]:text_lens[i]+1, :] = spk_embeds[i]
-                            if self.use_ser_tag:
-                                # insert bn embeds
-                                h[i, text_lens[i]+1:text_lens[i]+2, :] = ser_tag_embeds[i]
-                                h[i, text_lens[i]+2:text_lens[i]+2+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
-                            else:
-                                # insert bn embeds
-                                h[i, text_lens[i]+1:text_lens[i]+1+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
-                        elif self.spk_type == "add" or self.spk_type == "cln":
-                            if self.use_ser_tag:
-                                h[i, text_lens[i]:text_lens[i]+1, :] = ser_tag_embeds[i]
-                                h[i, text_lens[i]+1:text_lens[i]+1+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
-                            else:
-                                h[i, text_lens[i]:text_lens[i]+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
+                    if prompt_bn_lens[i] > 0:
+                        h[i, :prompt_bn_lens[i], :] = prompt_bn_in_h[i, :prompt_bn_lens[i], :]
+                        h[i, prompt_bn_lens[i]:prompt_bn_lens[i] + text_lens[i], :] = token_in_h[i, :text_lens[i], :]
                     else:
-                        if self.use_ser_tag:
-                            h[i, text_lens[i]:text_lens[i]+1, :] = ser_tag_embeds[i]
-                            h[i, text_lens[i]+1:text_lens[i]+1+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
-                        else:
-                            h[i, text_lens[i]:text_lens[i]+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
+                        h[i, :text_lens[i], :] = token_in_h[i, :text_lens[i], :]
+
+            for i in range(bsz):
+                if spk_shift > 0:
+                    if prompt_bn_lens[i] > 0:
+                        h[i, prompt_bn_lens[i] + text_lens[i]:
+                            prompt_bn_lens[i] + text_lens[i]+spk_shift, :] = spk_embeds[i]
+                    else:
+                        h[i, text_lens[i]:
+                            text_lens[i]+spk_shift, :] = spk_embeds[i]
+                
+                if ser_tag_shift > 0:
+                    if prompt_bn_lens[i] > 0:
+                        h[i, prompt_bn_lens[i] + text_lens[i]+spk_shift:
+                            prompt_bn_lens[i] + text_lens[i]+spk_shift+ser_tag_shift, :] = ser_tag_embeds[i]
+                    else:
+                        h[i, text_lens[i]+spk_shift:
+                            text_lens[i]+spk_shift+ser_tag_shift, :] = ser_tag_embeds[i]
+
+                if prompt_bn_lens[i] > 0:
+                    h[i, prompt_bn_lens[i] + text_lens[i]+spk_shift+ser_tag_shift:
+                        prompt_bn_lens[i] + text_lens[i]+spk_shift+ser_tag_shift+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
+                else:
+                    h[i, text_lens[i]+spk_shift+ser_tag_shift:
+                        text_lens[i]+spk_shift+ser_tag_shift+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
 
         h = super().forward(h, seqlen, start_pos, inference_params, cond=cond)
 

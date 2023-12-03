@@ -58,6 +58,8 @@ class ContinuousTTSLangSpkSerDataset(IterableDataset):
         input_type='2dim',
         spk_cfg_rate=0.0,
         lang_cfg_rate=0.0,
+        use_sp=True,
+        refenc_cfg_rate=0.0,
         ):
 
         self.dataset = (
@@ -141,6 +143,12 @@ class ContinuousTTSLangSpkSerDataset(IterableDataset):
         self.lang_cfg_rate = lang_cfg_rate
         assert 0 <= self.lang_cfg_rate <= 1
 
+        # use_sp
+        self.use_sp = use_sp
+
+        self.refenc_cfg_rate = refenc_cfg_rate
+        assert 0 <= self.refenc_cfg_rate <= 1
+
     def process_meta(self, sample):
         meta_obj = json.loads(sample["meta"])
         while not isinstance(meta_obj, dict):
@@ -174,10 +182,15 @@ class ContinuousTTSLangSpkSerDataset(IterableDataset):
             return None
         labels = list(filter(lambda x: x != "", labels.split('\n')))
 
+        if not self.use_sp:
+            labels = self.remove_replace_sp(labels, utt_id)
+            if labels is None:
+                return None
+
         # text_id, [text_len]
         text_id_phones_tones = self.convert_tacolab_to_text_id(labels, url)
         if text_id_phones_tones is None:
-            logger.warning(f"{utt_id} convert_tacolab_to_text_id failed ...")
+            logger.warning(f"{url} {utt_id}: convert_tacolab_to_text_id failed, {labels}")
             return None
         else:
             if self.input_type == '2dim':
@@ -190,20 +203,22 @@ class ContinuousTTSLangSpkSerDataset(IterableDataset):
         if self.use_extra_tag:
             dataset_name = sample.get("dataset_name")
             speaker_name = sample.get("speaker_name")
-            if not dataset_name or not speaker_name:
-                logger.warning(f"{utt_id}: No speaker name")
-                spk_key = 'default'
-            else:
-                dataset_name = dataset_name
-                speaker_name = speaker_name
-                spk_key = '/'.join([dataset_name, speaker_name])
-                if spk_key not in self.tag_dict:
+            if dataset_name:
+                if speaker_name:
+                    spk_key = '/'.join([dataset_name, speaker_name])
+                else:
                     spk_key = dataset_name
-                    if spk_key not in self.tag_dict:
-                        spk_key = 'default'
-            tag_id = int(self.tag_dict.get(spk_key, 0))
-            if tag_id == 0:
-                logger.warning(f"Warning: no tag id found for {url} {spk_key}")
+            else:
+                if speaker_name:
+                    spk_key = speaker_name
+                else:
+                    logger.warning(f"{url} {utt_id}: No speaker name or No dataset name, use 'default' as spk_key")
+                    spk_key = 'default'
+            if spk_key not in self.tag_dict:
+                logger.warning(f"{utt_id} {spk_key}: spk_key not in spk2tag, use 'default' as spk_key")
+                spk_key = 'default'
+
+            tag_id = self.tag_dict[spk_key]
         else:
             tag_id = None
 
@@ -249,27 +264,38 @@ class ContinuousTTSLangSpkSerDataset(IterableDataset):
         if self.use_spk_id:
             dataset_name = sample.get("dataset_name")
             speaker_name = sample.get("speaker_name")
-            if not dataset_name or not speaker_name:
-                # print(f"{utt_id}: No speaker name")
-                spk_id = self.spk2id["default"]
-            else:
-                dataset_name = dataset_name
-                speaker_name = speaker_name
-                spk_key = '/'.join([dataset_name, speaker_name])
-                if spk_key in self.spk2id:
-                    spk_id = self.spk2id[spk_key]
-                    if self.spk_cfg_rate > 0:
-                        if np.random.rand() < self.spk_cfg_rate:
-                            spk_id = self.spk2id["default"]
+            if dataset_name:
+                if speaker_name:
+                    spk_key = '/'.join([dataset_name, speaker_name])
                 else:
                     spk_key = dataset_name
-                    if spk_key not in self.spk2id:
-                        logger.warning(f"{utt_id}: speaker {spk_key} not in dict, will use default spkID")
-                        spk_id = self.spk2id["default"]
-                    else:
-                        spk_id = self.spk2id[spk_key]
+            else:
+                if speaker_name:
+                    spk_key = speaker_name
+                else:
+                    logger.warning(f"{url} {utt_id}: No speaker name or No dataset name, use 'default' as spk_key")
+                    spk_key = 'default'
+            if spk_key not in self.spk2id:
+                logger.warning(f"{utt_id} {spk_key}: spk_key not in spk2id, use 'default' as spk_key")
+                spk_key = 'default'
+            
+            # spk_cfg
+            if spk_key != 'default':
+                if self.spk_cfg_rate > 0:
+                    if np.random.rand() < self.spk_cfg_rate:
+                        spk_key = 'default'
+
+            spk_id = self.spk2id[spk_key]
             spk_id += 1
             spk_seq = np.asarray([spk_id] * bn.shape[0])
+
+        spk_embd_mask = 1
+        if self.refenc_cfg_rate > 0:
+            if spk_key == 'default':
+                spk_embd_mask = 0
+            else:
+                if np.random.rand() < self.refenc_cfg_rate:
+                    spk_embd_mask = 0
 
         # stop_token
         stop_token = np.zeros([text_id.shape[1] + bn.shape[0]])
@@ -291,7 +317,8 @@ class ContinuousTTSLangSpkSerDataset(IterableDataset):
             "spk_seq": spk_seq,
             "bpe_seq": bpe_seq,
             "tag_id": tag_id,
-            "wav":  wav
+            "wav":  wav,
+            "spk_embd_mask": spk_embd_mask,
             })
         return data_dict
 
@@ -390,6 +417,38 @@ class ContinuousTTSLangSpkSerDataset(IterableDataset):
         else:
             lang = 'en'
         return lang
+
+    def remove_replace_sp(self, labels, utt_id):
+        new_labels = []
+        for label in labels:
+            if len(label.split('\t')) == 7:
+                phone, tone, ws, pw, stype, word, unit = label.split('\t')
+                if phone == 'sp':
+                    if word == '':
+                        pass
+                    else:
+                        assert word in punctuation_all, (word)
+                        phone = word
+                new_label = '\t'.join([phone, tone, ws, pw, stype, word, unit])
+            elif len(label.split('\t')) == 6:
+                phone, tone, ws, pw, stype, word = label.split('\t')
+                if phone == 'sp':
+                    if word == '':
+                        pass
+                    else:
+                        assert word in punctuation_all, (word)
+                        phone = word
+                new_label = '\t'.join([phone, tone, ws, pw, stype, word])
+            elif len(label.split('\t')) == 5:
+                # if label.split('\t')[0] == 'sp':
+                print(f"labels: {utt_id} \n{labels}")
+                new_label = label
+            else:
+                logger.warning(f"{utt_id} labels wrong format, {labels}, skip")
+                return None
+            new_labels.append(new_label)
+
+        return new_labels
 
     def convert_tacolab_to_text_id(self, tacolab, url):
         try:
@@ -533,11 +592,13 @@ class ContinuousTTSLangSpkSerDataset(IterableDataset):
 
 
 class ContinuousCollator(object):
-    def __init__(self, tokenizer_pad, block_sparse=False, use_bpe=False, use_extra_tag=False):
+    def __init__(self, tokenizer_pad, block_sparse=False, use_bpe=False, use_extra_tag=False, min_crop_ratio=0.15, max_crop_ratio=0.6):
         self.pad = tokenizer_pad
         self.block_sparse = block_sparse
         self.use_bpe = use_bpe
         self.use_extra_tag = use_extra_tag
+        self.min_crop_ratio = min_crop_ratio
+        self.max_crop_ratio = max_crop_ratio
 
     def __call__(self, batches):
         results = []
@@ -553,6 +614,7 @@ class ContinuousCollator(object):
         bn_lens = []
         bpe_lens = []
         wav_lens = []
+        spk_embd_masks = []
         # utt_ids = []
         # tag_ids = []
         for x in results:
@@ -563,6 +625,7 @@ class ContinuousCollator(object):
                 bpe_lens = None
             bn_lens.append(x["bn"].shape[0])
             wav_lens.append(x["wav"].shape[0])
+            spk_embd_masks.append(x["spk_embd_mask"])
             # bpe_lens.append(x["bpe_seq"].shape[0])
             # utt_ids.append(x["utt_id"])
             # if x["tag_id"] is not None:
@@ -586,9 +649,15 @@ class ContinuousCollator(object):
         ret_dict["bn_lens"] = bn_lens
         ret_dict["bpe_lens"] = bpe_lens
         ret_dict["wav_lens"] = wav_lens / max_wav_len
+        ret_dict["spk_embd_masks"] = spk_embd_masks
         # ret_dict["utt_id"] = utt_ids
         # if len(tag_ids) > 0:
         #     ret_dict["tag_id"] = np.asarray(tag_ids)
+
+        min_crop_len = int(self.min_crop_ratio * min(bn_lens))
+        max_crop_len = int(self.max_crop_ratio * min(bn_lens))
+        crop_len = np.random.randint(min_crop_len, max_crop_len)
+        crop_bns = []
 
         # length padding
         for x in results:
@@ -599,6 +668,8 @@ class ContinuousCollator(object):
                 if k == "__key__":
                     continue
                 if k == "bn":
+                    crop_begin = np.random.randint(0, v.shape[0] - crop_len)
+                    crop_bns.append(v[crop_begin:crop_begin + crop_len])
                     v = np.pad(
                         v,
                         ((0, max_bn_len - v.shape[0]), (0, 0)),
@@ -641,7 +712,7 @@ class ContinuousCollator(object):
                         mode="constant",
                         constant_values=self.pad,
                     )
-                elif k not in ["utt_id", "tag_id"]:
+                elif k not in ["utt_id", "tag_id", "spk_embd_mask"]:
                     v = np.pad(
                         v,
                         (0, max_text_len - v.shape[0]),
@@ -666,6 +737,8 @@ class ContinuousCollator(object):
                 except Exception:
                     print("ret_dict[k]: ", ret_dict[k])
 
+        ret_dict["crop_bn"] = torch.from_numpy(np.stack(crop_bns, axis=0))
+
         to_long_list = ["phone", "tone", "stop_token", "lang_seq", "spk_seq", "bpe_seq", "tag_id", "phonetone"]
         for x in to_long_list:
             if x in ret_dict:
@@ -683,17 +756,19 @@ if __name__ == "__main__":
         "length_fn": "lambda x: x[\"stop_token\"].shape[0]" # seq.shape
     }
 
-    dataset = ContinuousTTSLangSpkSerDataset(data_id=254, 
+    dataset = ContinuousTTSLangSpkSerDataset(data_id=373, 
                                 batcher_config=batcher_config,
                                 drop_last=False,
                                 use_lang_id=False,
                                 lang2id="recipes/text2semantic/datasets/dict/lang2id.json",
                                 use_spk_id=True,
-                                spk2id="recipes/text2semantic/datasets/dict/spk2id.json",
+                                spk2id="recipes/text2semantic/datasets/dict/spk2id.parquet.json",
                                 input_type='2dim',
                                 use_code_switch_data=True,
                                 use_extra_tag=True,
-                                spk2tag="recipes/text2semantic/datasets/dict/spk2tag.json",
+                                spk2tag="recipes/text2semantic/datasets/dict/spk2tag.parquet.json",
+                                use_sp=False,
+                                refenc_cfg_rate=0.0,
                                 )
 
     collector = ContinuousCollator(tokenizer_pad=0)

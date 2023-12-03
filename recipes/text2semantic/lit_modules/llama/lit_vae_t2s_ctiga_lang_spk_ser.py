@@ -51,6 +51,7 @@ class VAET2SLangSpkSerModule(pl.LightningModule):
         input_type='2dim',
         use_ser_tag=False,
         use_ser_tag_loss=False,
+        use_ref_enc=False,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -78,6 +79,8 @@ class VAET2SLangSpkSerModule(pl.LightningModule):
         logger.info(f"use_ser_tag: {use_ser_tag}")
         self.use_ser_tag_loss = use_ser_tag_loss
         logger.info(f"use_ser_tag_loss: {use_ser_tag_loss}")
+        self.use_ref_enc = use_ref_enc
+        logger.info(f"use_ref_enc: {use_ref_enc}")
 
         if checkpointing:
             self.model.gradient_checkpointing_enable()
@@ -168,7 +171,9 @@ class VAET2SLangSpkSerModule(pl.LightningModule):
                 bpe_seqs=batch.get("bpe_seq"),
                 bpe_lens=batch.get("bpe_lens"),
                 tag_ids=batch.get("tag_id"),
-                ser_tags=ser_tags
+                ser_tags=ser_tags,
+                crop_bn=batch.get("crop_bn"),
+                spk_embd_masks=batch.get("spk_embd_masks"),
             )
             pred_stop_token = ret_dict["stop_token"]
             pred_dense = ret_dict["dense"]
@@ -455,7 +460,7 @@ class VAET2SLangSpkSerModule(pl.LightningModule):
         text_lens, bn_lens = batch["text_lens"], batch["bn_lens"]
         lang_seq, infer_lang_id = batch["lang_seq"], batch["infer_lang_id"]
         spk_seq, infer_spk_id = batch["spk_seq"], batch["infer_spk_id"]
-        if self.use_spk_id and (self.spk_type == "concat" or self.spk_type == "cln"):
+        if self.use_spk_id and (self.spk_type == "concat" or self.spk_type == "cln") and spk_seq is not None:
             spk_seq = torch.from_numpy(np.asarray([infer_spk_id]))
             spk_seq = spk_seq.unsqueeze(0)
             spk_seq = spk_seq.to(bns.device)
@@ -480,8 +485,8 @@ class VAET2SLangSpkSerModule(pl.LightningModule):
         semantic_outputs = []
         z_list = []
 
-#        max_step = text_lens[0] * 10 - bn_lens[0]
-        max_step = 4000
+        max_step_ = text_lens[0] * 10 - bn_lens[0]
+        max_step = 6000
         
         with torch.autocast(device_type="cuda", enabled=True):
             for i in tqdm(range(max_step)):
@@ -497,7 +502,8 @@ class VAET2SLangSpkSerModule(pl.LightningModule):
                         spk_seqs=spk_seq,
                         bpe_seqs=batch.get("bpe_seq", None),
                         bpe_lens=batch.get("bpe_lens", None),
-                        tag_ids=batch.get("tag_id", None)
+                        tag_ids=batch.get("tag_id", None),
+                        crop_bn=batch.get("bn", None),
                         )
                     input_len = text_lens[0] + bn_lens[0]
                     if self.use_spk_id and self.spk_type == "concat":
@@ -514,14 +520,15 @@ class VAET2SLangSpkSerModule(pl.LightningModule):
                         spk_seqs=spk_seq,
                         bpe_seqs=batch.get("bpe_seq", None),
                         bpe_lens=batch.get("bpe_lens", None),
-                        tag_ids=batch.get("tag_id", None)
+                        tag_ids=batch.get("tag_id", None),
+                        crop_bn=batch.get("bn", None),
                         )
                     input_len = 1
                     z_list.append(model_outputs['bn_in_z'])
 
                 pred_stop_token = model_outputs["stop_token"][:, -1, :]
                 samples = torch.argmax(pred_stop_token)
-                if i > 10 and samples.item() == 1:
+                if (i > 10 and samples.item() == 1) or (i == max_step_):
                     break
 
                 pred_dense = model_outputs["dense"][:, -1:, :]

@@ -432,7 +432,7 @@ class LLaMa(nn.Module):
                 module.weight, mean=0.0, std=0.02 / math.sqrt(2 * self.n_layers)
             )
             if hasattr(module, "bias") and module.bias is not None:
-                module.bias.zero_()
+                torch.nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(
                 module.weight, mean=0.0, std=0.02 / math.sqrt(2 * self.n_layers)

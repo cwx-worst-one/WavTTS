@@ -60,6 +60,8 @@ run_opts:
     input_type: '2dim'
     spk_cfg_rate: 0.0
     lang_cfg_rate: 0.0
+    copy_text_bn: False
+    copy_cfg_rate: 0.0
     
 llama_config: !new:recipes.text2semantic.modules.llama.wfvae_ctiga_llama_lang_spk.ModelArgs
     dim: 1536
@@ -108,6 +110,8 @@ train_dataset: !new:recipes.text2semantic.datasets.continuous_wds_lang_spk_datas
     input_type: !ref <run_opts[input_type]>
     spk_cfg_rate: !ref <run_opts[spk_cfg_rate]>
     lang_cfg_rate: !ref <run_opts[lang_cfg_rate]>
+    copy_text_bn: !ref <run_opts[copy_text_bn]>
+    copy_cfg_rate: !ref <run_opts[copy_cfg_rate]>
 
 collator: !new:recipes.text2semantic.datasets.continuous_wds_lang_spk_dataset.ContinuousCollator
     tokenizer_pad: 0

@@ -33,6 +33,9 @@ run_opts:
     bpe_dir: 'resource/models/flan-T5-large'
     use_prompt: False
     input_type: '2dim'
+    use_ref_enc: False
+    use_sp: True
+    module_cache: ".module_cache"
 
 predict_dataset: !new:recipes.text2semantic.datasets.meta_based_dataset.MetaBasedDataset
     meta_lst: !ref <run_opts[meta_lst]>
@@ -71,6 +74,9 @@ pl_module: !new:recipes.text2semantic.lit_modules.lit_infer_lang_spk.BigTTSWVAEI
     tag_id: !ref <run_opts[tag_id]>
     use_prompt: !ref <run_opts[use_prompt]>
     input_type: !ref <run_opts[input_type]>
+    use_ref_enc: !ref <run_opts[use_ref_enc]>
+    use_sp: !ref <run_opts[use_sp]>
+    module_cache: !ref <run_opts[module_cache]>
 
 trainer: !new:pytorch_lightning.Trainer
     accelerator: "auto"

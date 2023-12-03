@@ -28,7 +28,7 @@ from recipes.text2semantic.scripts.infer_utils import (
 )
 from scipy.io.wavfile import write
 from recipes.text2semantic.utils.remote_io import load_json
-from recipes.text2semantic.datasets.sami_tacolabel import generate_tacolabels_from_textstr_punc
+from recipes.text2semantic.datasets.sami_tacolabel import generate_tacolabels_from_textstr_punc, split_text_engine
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,9 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             input_type='2dim',
             use_ref_enc=False,
             use_sp=True,
+            max_paragraph_phoneme_size_zh=240,
+            max_paragraph_phoneme_size_en=240,
+            sil_interval=0.3,
             **kwargs
     ):
         super().__init__(
@@ -117,6 +120,9 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
         self.input_type = input_type
         self.use_ref_enc = use_ref_enc
         self.use_sp = use_sp
+        self.max_paragraph_phoneme_size_zh = max_paragraph_phoneme_size_zh
+        self.max_paragraph_phoneme_size_en = max_paragraph_phoneme_size_en
+        self.sil_interval = sil_interval # 300ms
         logging.info("init inference module success")
 
     def get_lang(self, tacolab):
@@ -141,16 +147,17 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             print("encode failed", batch)
             return
 
-        z_outputs, _ = self.ar_model.predict(sample, None)
+        utt_ids = sample['uttid']
+        output_dir = f"{self.hparams.output_dir}"
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = f"{output_dir}/{utt_ids[0]}.wav"
+        if os.path.exists(output_path):
+            return
+
+        z_outputs, _ = self.ar_model.predict_streaming(sample, self.bpe_tokenizer)
         generated_wav = self._decode(z_outputs)
 
         if self.infer_mode == 'offline':
-            utt_ids = sample['uttid']
-            output_dir = f"{self.hparams.output_dir}"
-            os.makedirs(output_dir, exist_ok=True)
-            output_path = f"{output_dir}/{utt_ids[0]}.wav"
-            # if os.path.exists(output_path):
-            #     return
             generated_wav *= (32767) / max(0.01, max(torch.abs(generated_wav)))
             write(
                 output_path,
@@ -176,6 +183,8 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
         else:
             raise NotImplementedError(sample)
 
+        infer_texts = self.split_text(infer_text)
+
         if not self.use_prompt:
             bn = np.zeros([0, 32])
             bn = torch.from_numpy(bn)
@@ -186,12 +195,12 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             if len(wav.shape) == 2 and wav.shape[-1] == 2:
                 wav = wav[:, 0]
             wav = wav / 32767.0
-            wav *= 1.0 / max(0.01, np.max(np.abs(wav)))
-            if sr != 24_000:
-                wav = librosa.core.resample(wav, sr, 24_000)
+            # wav *= 1.0 / max(0.01, np.max(np.abs(wav)))
+            # if sr != 24_000:
+            #     wav = librosa.core.resample(wav, sr, 24_000)
             # wav = wav * 0.99 / max(0.01, np.max(np.abs(wav)))
             # wav = trim_prompt_silence(wav)
-            wav = trim_silence(wav)
+            # wav = trim_silence(wav)
             wav = torch.from_numpy(wav).float()
             wav = wav.to(device)
             wav = torch.stack([wav]).unsqueeze(1).float()
@@ -229,37 +238,40 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
                 with open(infer_tacolab_path, 'r', encoding="utf-8") as f:
                     infer_tacolab = f.read()
             else:
-                infer_tacolab = self.generate_tacolabels_engine(infer_text)
-                if infer_tacolab is None:
-                    return None
-                infer_tacolab = infer_tacolab.decode()
+                text_ids = []
+                for infer_text in infer_texts:
+                    infer_tacolab = self.generate_tacolabels_engine(infer_text)
+                    if infer_tacolab is None:
+                        return None
+                    infer_tacolab = infer_tacolab.decode()
 
-            if self.save_tacolab:
-                save_infer_tacolab_dir = os.path.join(self.hparams.output_dir, '../infer_tacolab')
-                os.makedirs(save_infer_tacolab_dir, exist_ok=True)
-                infer_tacolab_path = os.path.join(save_infer_tacolab_dir, uttid + '.lab')
-                with open(infer_tacolab_path, 'w', encoding='utf-8') as f_w:
-                    f_w.write(infer_tacolab)
+                    if self.save_tacolab:
+                        save_infer_tacolab_dir = os.path.join(self.hparams.output_dir, '../infer_tacolab')
+                        os.makedirs(save_infer_tacolab_dir, exist_ok=True)
+                        infer_tacolab_path = os.path.join(save_infer_tacolab_dir, uttid + '.lab')
+                        with open(infer_tacolab_path, 'w', encoding='utf-8') as f_w:
+                            f_w.write(infer_tacolab)
 
-            tacolab = infer_tacolab
-            tacolab_list = list(filter(lambda x: x != "", tacolab.split('\n')))
-            if not self.use_sp:
-                tacolab_list = self.remove_replace_sp(tacolab_list, uttid)
-                if tacolab_list is None:
-                    return None
-            text_id_phones_tones = self.convert_tacolab_to_text_id(tacolab_list)
+                    tacolab = infer_tacolab
+                    tacolab_list = list(filter(lambda x: x != "", tacolab.split('\n')))
+                    if not self.use_sp:
+                        tacolab_list = self.remove_replace_sp(tacolab_list, uttid)
+                        if tacolab_list is None:
+                            return None
+                    text_id_phones_tones = self.convert_tacolab_to_text_id(tacolab_list)
 
-            if text_id_phones_tones is None:
-                logger.warning(f"{uttid} convert_tacolab_to_text_id failed ...")
-                return None
-            else:
-                if self.input_type == '2dim':
-                    text_id, phones, tones = text_id_phones_tones
-                elif self.input_type == '1dim':
-                    text_id, phones, tones, phonetone_ids, phonetones = text_id_phones_tones
-                    # print("phonetone_ids: ", phonetone_ids)
-                else:
-                    raise NotImplementedError
+                    if text_id_phones_tones is None:
+                        logger.warning(f"{uttid} convert_tacolab_to_text_id failed ...")
+                        return None
+                    else:
+                        if self.input_type == '2dim':
+                            text_id, phones, tones = text_id_phones_tones
+                        elif self.input_type == '1dim':
+                            text_id, phones, tones, phonetone_ids, phonetones = text_id_phones_tones
+                            # print("phonetone_ids: ", phonetone_ids)
+                        else:
+                            raise NotImplementedError
+                    text_ids.append(text_id)
         else:
             if self.use_offline_tacolab:
                 prompt_utt = prompt_wav_path.split('/')[-1][:-4]
@@ -332,7 +344,8 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
                     raise NotImplementedError
 
         # pad eos
-        text_id = np.concatenate([text_id, np.ones([text_id.shape[0], 1])], axis=-1)
+        for i in range(len(text_ids)):
+            text_ids[i] = np.concatenate([text_ids[i], np.ones([text_ids[i].shape[0], 1])], axis=-1)
 
         data_dict["phonetone"] = None
         if self.input_type == '1dim':
@@ -386,10 +399,21 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             infer_spk_id += 1
 
         data_dict['bn'] = bn.unsqueeze(0).to(device).to(device)
-        data_dict['text_lens'] = torch.tensor([text_id.shape[1]]).long().to(device)
+        text_lenses = []
+        for text_id in text_ids:
+            text_lenses.append(text_id.shape[1])
+        data_dict['text_lenses'] = text_lenses
+        # data_dict['text_lens'] = torch.tensor([text_id.shape[1]]).long().to(device)
         data_dict['bn_lens'] = torch.tensor([bn.shape[0]]).long().to(device)
-        data_dict["phone"] = torch.from_numpy(text_id[0, :]).long().unsqueeze(0).to(device)
-        data_dict["tone"] = torch.from_numpy(text_id[1, :]).long().unsqueeze(0).to(device)
+        phones = []
+        tones = []
+        for text_id in text_ids:
+            phones.append(text_id[0, :])
+            tones.append(text_id[1, :])
+        data_dict["phones"] = phones
+        data_dict["tones"] = tones
+        # data_dict["phone"] = torch.from_numpy(text_id[0, :]).long().unsqueeze(0).to(device)
+        # data_dict["tone"] = torch.from_numpy(text_id[1, :]).long().unsqueeze(0).to(device)
 
         data_dict['lang_seq'] = None
         data_dict['infer_lang_id'] = None
@@ -404,21 +428,23 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             data_dict['spk_seq'] = torch.tensor(spk_seq).long().to(device).unsqueeze(0)
             data_dict['infer_spk_id'] = infer_spk_id
 
-        # bpe_id
-        if self.use_bpe:
-            data_dict['bpe_seq'] = torch.from_numpy(
-                np.asarray(
-                    self.bpe_tokenizer(
-                        infer_text,
-                        truncation=True,
-                        max_length=self.max_length,
-                    ).input_ids)).unsqueeze(0).to(device)
-            data_dict['bpe_lens'] = torch.tensor([data_dict['bpe_seq'].shape[1]]).long().to(device)
-        else:
-            data_dict['bpe_seq'] = None
+        # # bpe_id
+        # if self.use_bpe:
+        #     data_dict['bpe_seq'] = torch.from_numpy(
+        #         np.asarray(
+        #             self.bpe_tokenizer(
+        #                 infer_text,
+        #                 truncation=True,
+        #                 max_length=self.max_length,
+        #             ).input_ids)).unsqueeze(0).to(device)
+        #     data_dict['bpe_lens'] = torch.tensor([data_dict['bpe_seq'].shape[1]]).long().to(device)
+        # else:
+        #     data_dict['bpe_seq'] = None
 
         data_dict['tag_id'] = torch.from_numpy(
             np.asarray([int(self.tag_id)])).long().to(device)
+
+        data_dict["infer_texts"] = infer_texts
 
         return data_dict
 
@@ -625,3 +651,14 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             new_labels.append(new_label)
 
         return new_labels
+
+    def split_text(self, text):
+        lang = self.get_lang_by_text_infer(text)
+        if lang == 'zh':
+            return split_text_engine(text, 'Chinese_v3_punc', max_paragraph_phoneme_size=self.max_paragraph_phoneme_size_zh)
+        elif lang == 'en':
+            return split_text_engine(text, 'English_v3_punc', max_paragraph_phoneme_size=self.max_paragraph_phoneme_size_en)
+        elif lang == 'zh_en':
+            return split_text_engine(text, 'Chinese_v3_punc', max_paragraph_phoneme_size=self.max_paragraph_phoneme_size_zh)
+        else:
+            raise NotImplementedError

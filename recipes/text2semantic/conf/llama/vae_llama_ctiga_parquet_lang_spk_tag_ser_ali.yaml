@@ -65,8 +65,9 @@ run_opts:
     use_ref_enc: False
     use_sp: True
     refenc_cfg_rate: 0.0
+    split_cfg_rate: 0.0
 
-llama_config: !new:recipes.text2semantic.modules.llama.wfvae_ctiga_llama_lang_spk_ser.ModelArgs
+llama_config: !new:recipes.text2semantic.modules.llama.wfvae_ctiga_llama_lang_spk_ser_ali.ModelArgs
     dim: 1536
     n_layers: 30
     n_heads: 24
@@ -88,7 +89,7 @@ llama_config: !new:recipes.text2semantic.modules.llama.wfvae_ctiga_llama_lang_sp
     ser_tag_vocab_size: 100
     use_ref_enc: !ref <run_opts[use_ref_enc]>
 
-train_dataset: !new:recipes.text2semantic.datasets.continuous_parquet_lang_spk_ser_dataset.ContinuousTTSLangSpkSerDataset
+train_dataset: !new:recipes.text2semantic.datasets.continuous_parquet_lang_spk_ser_ali_dataset.ContinuousTTSLangSpkSerAliDataset
     data_id: !ref <run_opts[data_id]>
     drop_last: False
     batcher_config:
@@ -114,8 +115,9 @@ train_dataset: !new:recipes.text2semantic.datasets.continuous_parquet_lang_spk_s
     lang_cfg_rate: !ref <run_opts[lang_cfg_rate]>
     use_sp: !ref <run_opts[use_sp]>
     refenc_cfg_rate: !ref <run_opts[refenc_cfg_rate]>
+    split_cfg_rate: !ref <run_opts[split_cfg_rate]>
 
-collator: !new:recipes.text2semantic.datasets.continuous_parquet_lang_spk_ser_dataset.ContinuousCollator
+collator: !new:recipes.text2semantic.datasets.continuous_parquet_lang_spk_ser_ali_dataset.ContinuousCollator
     tokenizer_pad: 0
     use_bpe: !ref <run_opts[use_bpe]>
     use_extra_tag: !ref <run_opts[use_extra_tag]>
@@ -134,7 +136,7 @@ pl_datamodule: !new:recipes.text2semantic.lit_modules.DataModule
 
 # model configuration
 # model_cls: !name:recipes.text2semantic.modules.continuous_vae_llama_ctiga.LLaMa
-model_cls: !name:recipes.text2semantic.modules.llama.wfvae_ctiga_llama_lang_spk_ser.VAELLaMaLangSpkSer
+model_cls: !name:recipes.text2semantic.modules.llama.wfvae_ctiga_llama_lang_spk_ser_ali.VAELLaMaLangSpkSerAli
     params: !ref <llama_config>
     provider: ctiga
     use_lang_id: !ref <run_opts[use_lang_id]>
@@ -166,7 +168,7 @@ scheduler_cls: !name:recipes.bark.lr_schedulers.musiclm_lr_scheduler.WarmupCosin
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
 # lightning model setting
-pl_module: !new:recipes.text2semantic.lit_modules.llama.lit_vae_t2s_ctiga_lang_spk_ser.VAET2SLangSpkSerModule
+pl_module: !new:recipes.text2semantic.lit_modules.llama.lit_vae_t2s_ctiga_lang_spk_ser_ali.VAET2SLangSpkSerAliModule
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>

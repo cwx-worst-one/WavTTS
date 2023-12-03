@@ -1,3 +1,4 @@
+from cgitb import text
 import logging
 from multiprocessing.sharedctypes import Value
 import os
@@ -17,7 +18,7 @@ import string
 
 punctuation_all = punctuation + string.punctuation
 from recipes.text2semantic.lit_modules.lit_infer import BigTTSWVAEInfer
-from recipes.text2semantic.datasets.frontend import phone_to_int, tone_to_int, phonetone_to_int
+from recipes.text2semantic.datasets.frontend2 import phone_to_int, tone_to_int, phonetone_to_int
 from recipes.text2semantic.scripts.infer_utils import (
     load_torch_script,
     setup_seed,
@@ -32,8 +33,9 @@ from recipes.text2semantic.datasets.sami_tacolabel import generate_tacolabels_fr
 
 logger = logging.getLogger(__name__)
 
+punctuation_for_split = ["sp", "pau", "，", "：", "；", "～", "､", "、", "〜", "…", "﹔", "！", "？", "｡", "。", "!", ",", ".", ":", ";", "?", "~", "......", "...", "……", "--", "——"]
 
-class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
+class BigTTSWVAEInferLangSpkAli(BigTTSWVAEInfer):
     def __init__(
             self,
             ar_model_name,
@@ -141,16 +143,17 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             print("encode failed", batch)
             return
 
+        utt_ids = sample['uttid']
+        output_dir = f"{self.hparams.output_dir}"
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = f"{output_dir}/{utt_ids[0]}.wav"
+        if os.path.exists(output_path):
+            return
+
         z_outputs, _ = self.ar_model.predict(sample, None)
         generated_wav = self._decode(z_outputs)
 
         if self.infer_mode == 'offline':
-            utt_ids = sample['uttid']
-            output_dir = f"{self.hparams.output_dir}"
-            os.makedirs(output_dir, exist_ok=True)
-            output_path = f"{output_dir}/{utt_ids[0]}.wav"
-            # if os.path.exists(output_path):
-            #     return
             generated_wav *= (32767) / max(0.01, max(torch.abs(generated_wav)))
             write(
                 output_path,
@@ -243,23 +246,57 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
 
             tacolab = infer_tacolab
             tacolab_list = list(filter(lambda x: x != "", tacolab.split('\n')))
-            if not self.use_sp:
-                tacolab_list = self.remove_replace_sp(tacolab_list, uttid)
-                if tacolab_list is None:
-                    return None
-            text_id_phones_tones = self.convert_tacolab_to_text_id(tacolab_list)
 
-            if text_id_phones_tones is None:
-                logger.warning(f"{uttid} convert_tacolab_to_text_id failed ...")
-                return None
-            else:
-                if self.input_type == '2dim':
-                    text_id, phones, tones = text_id_phones_tones
-                elif self.input_type == '1dim':
-                    text_id, phones, tones, phonetone_ids, phonetones = text_id_phones_tones
-                    # print("phonetone_ids: ", phonetone_ids)
+            tacolab_lists = []
+            for tacolab in tacolab_list:
+                phone = tacolab.split('\t')[0]
+                if phone in punctuation_for_split:
+                    tacolab_lists[-1].append(tacolab)
+                    tacolab_lists.append([])
                 else:
-                    raise NotImplementedError
+                    if len(tacolab_lists) == 0:
+                        tacolab_lists.append([])
+                    tacolab_lists[-1].append(tacolab)
+            if tacolab_lists[-1] == []:
+                tacolab_lists = tacolab_lists[:-1]
+            # print(f"infer_text: {infer_text}")
+            # for tacolab_list in tacolab_lists:
+            #     print(tacolab_list)
+            # exit()
+
+            text_id_phones_toneses = []
+            text_ids = []
+            phoneses = []
+            toneses = []
+            phonetone_idses = []
+            phonetoneses = []
+            for tacolab_list in tacolab_lists:
+                if not self.use_sp:
+                    tacolab_list = self.remove_replace_sp(tacolab_list, uttid)
+                    if tacolab_list is None:
+                        return None
+                text_id_phones_tones = self.convert_tacolab_to_text_id(tacolab_list)
+                text_id_phones_toneses.append(text_id_phones_tones)
+
+                if text_id_phones_tones is None:
+                    logger.warning(f"{uttid} convert_tacolab_to_text_id failed ...")
+                    return None
+                else:
+                    if self.input_type == '2dim':
+                        text_id, phones, tones = text_id_phones_tones
+                        text_ids.append(text_id)
+                        phoneses.append(phones)
+                        toneses.append(tones)
+                    elif self.input_type == '1dim':
+                        text_id, phones, tones, phonetone_ids, phonetones = text_id_phones_tones
+                        # print("phonetone_ids: ", phonetone_ids)
+                        text_ids.append(text_id)
+                        phoneses.append(phones)
+                        toneses.append(tones)
+                        phonetone_idses.append(phonetone_ids)
+                        phonetoneses.append(phonetones)
+                    else:
+                        raise NotImplementedError
         else:
             if self.use_offline_tacolab:
                 prompt_utt = prompt_wav_path.split('/')[-1][:-4]
@@ -332,12 +369,15 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
                     raise NotImplementedError
 
         # pad eos
-        text_id = np.concatenate([text_id, np.ones([text_id.shape[0], 1])], axis=-1)
+        for i in range(len(text_ids)):
+            text_id = text_ids[i]
+            text_id = np.concatenate([np.ones([text_id.shape[0], 1]) * 2, text_id, np.ones([text_id.shape[0], 1])], axis=-1)
+            text_ids[i] = text_id
 
         data_dict["phonetone"] = None
-        if self.input_type == '1dim':
-            data_dict["phonetone"] = np.concatenate([phonetone_ids, np.ones([1])], axis=0)
-            data_dict["phonetone"] = torch.from_numpy(data_dict["phonetone"]).long().unsqueeze(0).to(device)
+        # if self.input_type == '1dim':
+        #     data_dict["phonetone"] = np.concatenate([phonetone_ids, np.ones([1])], axis=0)
+        #     data_dict["phonetone"] = torch.from_numpy(data_dict["phonetone"]).long().unsqueeze(0).to(device)
 
         if self.use_lang_id:
             if not self.use_prompt:
@@ -386,10 +426,21 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             infer_spk_id += 1
 
         data_dict['bn'] = bn.unsqueeze(0).to(device).to(device)
-        data_dict['text_lens'] = torch.tensor([text_id.shape[1]]).long().to(device)
+        text_lenses = []
+        for text_id in text_ids:
+            text_lenses.append(text_id.shape[1])
+        data_dict['text_lenses'] = text_lenses
+        # data_dict['text_lens'] = torch.tensor([text_id.shape[1]]).long().to(device)
         data_dict['bn_lens'] = torch.tensor([bn.shape[0]]).long().to(device)
-        data_dict["phone"] = torch.from_numpy(text_id[0, :]).long().unsqueeze(0).to(device)
-        data_dict["tone"] = torch.from_numpy(text_id[1, :]).long().unsqueeze(0).to(device)
+        phones = []
+        tones = []
+        for text_id in text_ids:
+            phones.append(text_id[0, :])
+            tones.append(text_id[1, :])
+        data_dict["phones"] = phones
+        data_dict["tones"] = tones
+        # data_dict["phone"] = torch.from_numpy(text_id[0, :]).long().unsqueeze(0).to(device)
+        # data_dict["tone"] = torch.from_numpy(text_id[1, :]).long().unsqueeze(0).to(device)
 
         data_dict['lang_seq'] = None
         data_dict['infer_lang_id'] = None

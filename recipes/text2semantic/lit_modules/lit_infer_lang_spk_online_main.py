@@ -28,7 +28,7 @@ from recipes.text2semantic.scripts.infer_utils import (
 )
 from scipy.io.wavfile import write
 from recipes.text2semantic.utils.remote_io import load_json
-from recipes.text2semantic.datasets.sami_tacolabel import generate_tacolabels_from_textstr_punc
+from recipes.text2semantic.datasets.sami_tacolabel import generate_tacolabels_from_textstr_punc, split_text_engine
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,9 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             input_type='2dim',
             use_ref_enc=False,
             use_sp=True,
+            max_paragraph_phoneme_size_zh=240,
+            max_paragraph_phoneme_size_en=240,
+            sil_interval=0.3,
             **kwargs
     ):
         super().__init__(
@@ -117,6 +120,10 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
         self.input_type = input_type
         self.use_ref_enc = use_ref_enc
         self.use_sp = use_sp
+        self.max_paragraph_phoneme_size_zh = max_paragraph_phoneme_size_zh
+        self.max_paragraph_phoneme_size_en = max_paragraph_phoneme_size_en
+        self.sil_interval = sil_interval # 300ms
+        self.wvae_decoder = wvae_decoder
         logging.info("init inference module success")
 
     def get_lang(self, tacolab):
@@ -134,28 +141,47 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             lang = 'en'
         return lang
 
+    @torch.no_grad()
     def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: int = 0) -> Any:
-        setup_seed(self.hparams.seed)
-        sample = self.encode(batch)
-        if sample is None:
-            print("encode failed", batch)
-            return
+        # setup_seed(self.hparams.seed)
+        infer_texts = self.split_text(batch[1])
+        logger.info(f"infer_texts: {len(infer_texts)}, {infer_texts}")
 
-        z_outputs, _ = self.ar_model.predict(sample, None)
-        generated_wav = self._decode(z_outputs)
+        device = self.get_device()
+        sil_interval_by_sample = torch.from_numpy(np.zeros(int(self.sil_interval * 24000))).to(device)
 
-        if self.infer_mode == 'offline':
+        generated_wav_all = None
+        i = 0
+        for i in range(len(infer_texts)):
+            logger.info(f"part {i}")
+            batch[1] = infer_texts[i]
+            sample = self.encode(batch)
+            if sample is None:
+                print("encode failed", batch)
+                return
+
             utt_ids = sample['uttid']
             output_dir = f"{self.hparams.output_dir}"
             os.makedirs(output_dir, exist_ok=True)
             output_path = f"{output_dir}/{utt_ids[0]}.wav"
             # if os.path.exists(output_path):
             #     return
+
+            z_outputs, _ = self.ar_model.predict(sample, None)
+            generated_wav = self._decode(z_outputs)
+            generated_wav *= 1.0 / max(0.01, max(torch.abs(generated_wav)))
+            if generated_wav_all is None:
+                generated_wav_all = generated_wav
+            else:
+                generated_wav_all = torch.cat([generated_wav_all, sil_interval_by_sample, generated_wav], axis=0)
+        generated_wav = generated_wav_all
+
+        if self.infer_mode == 'offline':
             generated_wav *= (32767) / max(0.01, max(torch.abs(generated_wav)))
             write(
                 output_path,
                 24000,
-                generated_wav.cpu().numpy().astype(np.int16),
+                generated_wav.detach().cpu().numpy().astype(np.int16),
             )
         else:
             generated_wav *= 0.95 / max(0.01, max(torch.abs(generated_wav)))
@@ -625,3 +651,44 @@ class BigTTSWVAEInferLangSpk(BigTTSWVAEInfer):
             new_labels.append(new_label)
 
         return new_labels
+
+    def split_text(self, text):
+        lang = self.get_lang_by_text_infer(text)
+        if lang == 'zh':
+            return split_text_engine(text, 'Chinese_v3_punc', max_paragraph_phoneme_size=self.max_paragraph_phoneme_size_zh)
+        elif lang == 'en':
+            return split_text_engine(text, 'English_v3_punc', max_paragraph_phoneme_size=self.max_paragraph_phoneme_size_en)
+        elif lang == 'zh_en':
+            return split_text_engine(text, 'Chinese_v3_punc', max_paragraph_phoneme_size=self.max_paragraph_phoneme_size_zh)
+        else:
+            raise NotImplementedError
+
+if __name__ == "__main__":
+    wvae_decoder = load_torch_script(
+            model_path="/mnt/bn/huangzhiying-nas-speech2speech-volume1/code/samantha_bigtts_ref_enc/.module_cache/wavevae_decoder_0.pt",
+            rank=0,
+            cache_dir="./"
+        )
+    inferer = BigTTSWVAEInferLangSpk(
+        wvae_decoder=wvae_decoder,
+        wvae_encoder="",
+        ar_model_name="VAET2SLangSpkModule",
+        ckpt_path="/mnt/bn/huangzhiying-nas-speech2speech-volume1/code/samantha_bigtts_ref_enc/epoch=00-step=118500-kl_loss=0.16.ckpt",
+        output_dir="temp_wav_sophie_conv_1019",
+        tacolab_version="newv3_punc",
+        text2id_version="v3",
+        use_bpe=True,
+        bpe_dir="./resource/models/byte-T5-base",
+        use_spk_id=True,
+        spk2id="recipes/text2semantic/datasets/dict/spk2id.json",
+        infer_spk_name="duibiao/sophie_conv_1019",
+        tag_id=3,
+        tokenizer_type="byte-T5-base",
+        use_sp=True,
+    )
+
+    # sample = ['000', "四."]
+
+    for i in range(60):
+        sample = [f"001_{i}", "1. I think ..."]
+        inferer.predict_step(sample, 0)

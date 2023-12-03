@@ -47,7 +47,7 @@ train_ckpt_path=
 . /opt/tiger/samantha/scripts/parse_options.sh
 
 if [ $mode == "debug" ]; then
-    work_dir=/mnt/bn/huangzhiying-nas-speech2speech-volume1/code/samantha_bigtts_merge20231008
+    work_dir=/mnt/bn/huangzhiying-nas-speech2speech-volume1/code/samantha_bigtts_ref_enc
 fi
 
 if [ $mode == "train" ]; then
@@ -158,65 +158,65 @@ if [ ${stage} -eq 2 ];then
 fi
 
 
-# infer seed1996
+# icl
 if [ ${stage} -eq 3 ];then
     hdfs_path=hdfs://haruna/home/hcache/centralize_lq/gpt_java/speech/user/huangzhiying.92/exp/samantha_bigtts_merge20231008/text2semantic/pretrain_WFVAE_v2_labv3_punc_data_id192_bt14000_16A100_accu5_byteT5_scr0.15_freezeTrue_langFalse
-    local_path=/mnt/bn/huangzhiying-nas-speech2speech-volume1/exp/samantha_bigtts_merge20231008/text2semantic/pretrain_WFVAE_v2_labv3_punc_data_id192_bt14000_16A100_accu5_byteT5_scr0.15_freezeTrue_langFalse
-    ar_ckpt_path=$hdfs_path/checkpoints/epoch=00-step=65000-kl_loss=0.66.ckpt
-    step=`echo $ar_ckpt_path | awk -F"/" '{print $NF}' | cut -d "-" -f 2 | cut -d "=" -f 2`
-    tag_id=2
-    for pair in temp_en-test20231013;do
-        cd $work_dir
-        if [[ ! -d ./resource ]]; then
-            hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/panjunjie.jeff/resource ./resource
-        fi
+    local_path=/mnt/bn/huangzhiying-nas-speech2speech-volume1/exp/samantha_bigtts_ref_enc/text2semantic/pretrain_WFVAE_v2_labv3_punc_data_id192_bt14000_16A100_accu5_byteT5_scr0.15_freezeTrue_langFalse
+    ar_ckpt_paths=`hdfs dfs -ls $hdfs_path/checkpoints/ | awk '{print $8}' | grep -E '85000'`
+    for ar_ckpt_path in $ar_ckpt_paths;do
+        step=`echo $ar_ckpt_path | awk -F"/" '{print $NF}' | cut -d "-" -f 2 | cut -d "=" -f 2`
+        tag_id=3
+        for pair in icl_testset_fighting-zh_better_studio;do
+            cd $work_dir
+            if [[ ! -d ./resource ]]; then
+                hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/panjunjie.jeff/resource ./resource
+            fi
 
-        testspk=`echo $pair | cut -d "-" -f 1`
-        testset=`echo $pair | cut -d "-" -f 2`
+            testspk=`echo $pair | cut -d "-" -f 1`
+            testset=`echo $pair | cut -d "-" -f 2`
 
-        lang='en'
-        if [ $testspk == "inner_testset_zh" -o $testspk == "out_testset_zh" -o $testspk == "temp" -o $testspk == "cross_lingual_en_zh" -o $testspk == "inner_testset_en2zh" -o $testspk == "out_testset_en2zh" -o $testspk == "201_zh2en" ]; then
-            lang='zh'
-        fi
+            lang='en'
+            if [ $pair == "icl_testset_fighting-zh_better_studio" ]; then
+                lang='zh'
+            fi
 
-        cal_asv='FALSE'
-        # if [ $testspk == "temp" ]; then
-        #     cal_asv='False'
-        # fi
+            cal_asv='FALSE'
 
-        metalst=/mnt/bn/huangzhiying-nas-speech2speech-volume1/code/bigtts_testset/${testspk}/meta.lst.${testset}
-        out_wav_dir=$local_path/infer/${pair}/step${step}_tag_id${tag_id}/wav
-        # [ -d $out_wav_dir ] && continue
+            metalst=/mnt/bn/huangzhiying-nas-speech2speech-volume1/code/bigtts_testset/${testspk}/meta.lst.${testset}
+            out_wav_dir=$local_path/infer/${pair}/step${step}_tag_id${tag_id}/wav
 
-        bash launch.sh predict \
-            -c recipes/text2semantic/conf/llama/inference_wvae_icl_lang_spk_tag.yaml \
-            --run_opts.meta_lst $metalst \
-            --run_opts.ckpt_path $ar_ckpt_path \
-            --run_opts.output_dir $out_wav_dir \
-            --run_opts.wvae_encoder hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wangxin.colin/ckpts/wvae/wavevae_encoder_%d.pt \
-            --run_opts.wvae_decoder hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wangxin.colin/ckpts/wvae/wavevae_decoder_%d.pt \
-            --run_opts.ar_model_name 'VAET2SLangSpkModule' \
-            --run_opts.infer_spk_name 'default' \
-            --run_opts.tag_id $tag_id \
-            --run_opts.tokenizer_type byte-T5-base \
-            --run_opts.bpe_dir resource/models/byte-T5-base \
-            --run_opts.use_prompt True
+            bash launch.sh predict \
+                -c recipes/text2semantic/conf/llama/inference_wvae_icl_lang_spk_tag.yaml \
+                --run_opts.meta_lst $metalst \
+                --run_opts.ckpt_path $ar_ckpt_path \
+                --run_opts.output_dir $out_wav_dir \
+                --run_opts.wvae_encoder hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wangxin.colin/ckpts/wvae_1.0/wavevae_encoder_%d.pt \
+                --run_opts.wvae_decoder hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wangxin.colin/ckpts/wvae_1.0/wavevae_decoder_%d.pt \
+                --run_opts.ar_model_name 'VAET2SLangSpkModule' \
+                --run_opts.tag_id $tag_id \
+                --run_opts.tokenizer_type byte-T5-base \
+                --run_opts.bpe_dir resource/models/byte-T5-base \
+                --run_opts.use_prompt True \
+                --run_opts.use_spk_id False
 
-        # asr_type=internal
-        # metalst=/mnt/bn/huangzhiying-nas-speech2speech-volume1/code/bigtts_testset/${testspk}/meta.lst.${testset}
-        # python3 /mnt/bn/huangzhiying-nas-speech2speech-volume1/code/bigtts-eval/utils/get_wav_res_ref_text.py $metalst ${out_wav_dir} ${out_wav_dir}/../wav_res_ref_text
-        # bigtts_eval_dir=/mnt/bn/huangzhiying-nas-speech2speech-volume1/code/bigtts-eval
-        # bash /mnt/bn/huangzhiying-nas-speech2speech-volume1/code/bigtts-eval/run-eval_parse.sh \
-        #                                                 --bigtts_eval_dir $bigtts_eval_dir \
-        #                                                 --asr_type $asr_type \
-        #                                                 --infile ${out_wav_dir}/../wav_res_ref_text \
-        #                                                 --outdir ${out_wav_dir}/../ \
-        #                                                 --lang $lang \
-        #                                                 --cal_asv $cal_asv
-        # python3 /mnt/bn/huangzhiying-nas-speech2speech-volume1/code/bigtts-eval/analyse/analyse_wer_listentest_single.py \
-        #                                                 analyse \
-        #                                                 ${out_wav_dir}/../wav_res_ref_text.wer \
-        #                                                 ${out_wav_dir}/.. \
-        #                                                 $lang
+            python3 recipes/text2semantic/utils/analysis_pitch.py $out_wav_dir $out_wav_dir/../pitch.txt &> $out_wav_dir/../pitch.log
+            cp $metalst $out_wav_dir/../
+            asr_type=internal
+            metalst=/mnt/bn/huangzhiying-nas-speech2speech-volume1/code/bigtts_testset/${testspk}/meta.lst.${testset}
+            python3 /mnt/bn/huangzhiying-nas-speech2speech-volume1/code/bigtts-eval/utils/get_wav_res_ref_text.py $metalst ${out_wav_dir} ${out_wav_dir}/../wav_res_ref_text
+            bigtts_eval_dir=/mnt/bn/huangzhiying-nas-speech2speech-volume1/code/bigtts-eval
+            bash /mnt/bn/huangzhiying-nas-speech2speech-volume1/code/bigtts-eval/run-eval_parse.sh \
+                                                            --bigtts_eval_dir $bigtts_eval_dir \
+                                                            --asr_type $asr_type \
+                                                            --infile ${out_wav_dir}/../wav_res_ref_text \
+                                                            --outdir ${out_wav_dir}/../ \
+                                                            --lang $lang \
+                                                            --cal_asv $cal_asv
+            python3 /mnt/bn/huangzhiying-nas-speech2speech-volume1/code/bigtts-eval/analyse/analyse_wer_listentest_single.py \
+                                                            analyse \
+                                                            ${out_wav_dir}/../wav_res_ref_text.wer \
+                                                            ${out_wav_dir}/.. \
+                                                            $lang
+        done
     done
 fi

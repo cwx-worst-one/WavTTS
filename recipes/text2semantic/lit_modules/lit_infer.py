@@ -21,6 +21,7 @@ from ..scripts.infer_utils import (
 from .llama.lit_vae_t2s_ctiga import VAET2SModule
 from .llama.lit_vae_t2s_ctiga_lang_spk import VAET2SLangSpkModule
 from .llama.lit_vae_t2s_ctiga_lang_spk_ser import VAET2SLangSpkSerModule
+from .llama.lit_vae_t2s_ctiga_lang_spk_ser_ali import VAET2SLangSpkSerAliModule
 from ..utils.remote_io import load_json
 from transformers import LlamaTokenizer, T5Tokenizer, AutoTokenizer
 from zhon.hanzi import punctuation
@@ -35,8 +36,11 @@ def model_loader(name, ckpt_path):
         return VAET2SModule.load_from_checkpoint(checkpoint_path=ckpt_path).eval()
     elif name == "VAET2SLangSpkModule":
         return VAET2SLangSpkModule.load_from_checkpoint(checkpoint_path=ckpt_path).eval()
+        # return VAET2SLangSpkModule.load_from_checkpoint(checkpoint_path=ckpt_path).to("cuda:0").eval()
     elif name == "VAET2SLangSpkSerModule":
         return VAET2SLangSpkSerModule.load_from_checkpoint(checkpoint_path=ckpt_path).eval()
+    elif name == "VAET2SLangSpkSerAliModule":
+        return VAET2SLangSpkSerAliModule.load_from_checkpoint(checkpoint_path=ckpt_path).eval()
     else:
         raise ValueError(f"{name} is not supported.")
 
@@ -381,9 +385,51 @@ class BigTTSWVAEInfer(LightningModule):
 
         return lang
 
+    def get_lang_by_text_infer(self, text):
+        text = text.replace('\'', '')
+        # en, zh
+        len_en_word = 0
+        len_zh_char = 0
+        i = 0
+        while i < len(text):
+            x = text[i]
+            if x in punctuation_all: # punc
+                i += 1
+                continue
+            elif u'\u4e00' <= x <= u'\u9fff': # zh
+                len_zh_char += 1
+                i += 1
+            elif self.is_english_spanish_char(x): # en with little spanish
+                i += 1
+                if i >= len(text):
+                    len_en_word += 1
+                    break
+                while self.is_english_spanish_char(text[i]):
+                    i += 1
+                    if i >= len(text):
+                        break
+                len_en_word += 1
+                continue
+            else:
+                i += 1
+
+        if len_zh_char > 0:
+            if len_en_word > 0:
+                lang = 'zh_en'
+            else:
+                lang = 'zh'
+        else:
+            if len_en_word > 0:
+                lang = 'en'
+            else:
+                raise NotImplementedError
+
+        return lang
+
     def get_device(self):
         if self.infer_mode == 'offline':
             return f"cuda:{self.trainer.local_rank}"
+            # return "cuda:0"
         else:
             return "cuda:0"
 

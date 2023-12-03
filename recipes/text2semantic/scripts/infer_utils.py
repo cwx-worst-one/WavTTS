@@ -8,6 +8,7 @@ import torch
 import samantha.utils.hdfs_helper as hh
 from samantha.utils.distributed import rank_zero_first
 from scipy.io.wavfile import write
+from librosa.filters import mel as librosa_mel_fn
 
 
 def save_wav(audio, output_file, sr=24000):
@@ -77,6 +78,65 @@ def spectrogram_torch(y, n_fft, sampling_rate, hop_size, win_size, center=False)
         return_complex=False,
     )
     spec = torch.sqrt(spec.pow(2).sum(-1) + 1e-6)
+    return spec
+
+
+def dynamic_range_compression_torch(x, C=1, clip_val=1e-5):
+    """
+    PARAMS
+    ------
+    C: compression factor
+    """
+    return torch.log(torch.clamp(x, min=clip_val) * C)
+
+
+def spectral_normalize_torch(magnitudes):
+    output = dynamic_range_compression_torch(magnitudes)
+    return output
+
+
+def mel_spectrogram_torch(
+    y, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax, center=False
+):
+    if torch.min(y) < -1.0:
+        print("min value is ", torch.min(y))
+    if torch.max(y) > 1.0:
+        print("max value is ", torch.max(y))
+
+    mel = librosa_mel_fn(sampling_rate, n_fft, num_mels, fmin, fmax)
+    mel_basis = torch.from_numpy(mel).to(dtype=y.dtype, device=y.device)
+    hann_window = torch.hann_window(win_size).to(dtype=y.dtype, device=y.device)
+
+    y = torch.nn.functional.pad(
+        y.unsqueeze(1),
+        (int((n_fft - hop_size) / 2), int((n_fft - hop_size) / 2)),
+        mode="reflect",
+    )
+    y = y.squeeze(1)
+
+    # torch 1.8 compatable. stft could support half type
+    old_type = y.dtype
+    y = y.float()
+    spec = torch.view_as_real(
+        torch.stft(
+            y,
+            n_fft,
+            hop_length=hop_size,
+            win_length=win_size,
+            window=hann_window,
+            center=center,
+            pad_mode="reflect",
+            normalized=False,
+            onesided=True,
+            return_complex=True,
+        )
+    )
+    spec = spec.to(old_type)
+    spec = torch.sqrt(spec.pow(2).sum(-1) + 1e-6)
+
+    spec = torch.matmul(mel_basis, spec)
+    spec = spectral_normalize_torch(spec)
+
     return spec
 
 

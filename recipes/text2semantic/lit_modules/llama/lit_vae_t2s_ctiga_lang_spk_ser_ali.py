@@ -14,6 +14,7 @@ from recipes.bark.lit_modules.sample import sample
 from s3a.providers.ctiga.utils.generation import InferenceParams
 from samantha.utils.model_metric import ModelMetric
 import logging
+from speechbrain.nnet.activations import Softmax as log_softmax
 
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ def sequence_mask(seq_lens, max_len=None, device='cpu'):
     mask = mask.float()
     return mask
 
-class VAET2SLangSpkModule(pl.LightningModule):
+class VAET2SLangSpkSerAliModule(pl.LightningModule):
 
     def __init__(
         self,
@@ -48,7 +49,9 @@ class VAET2SLangSpkModule(pl.LightningModule):
         resume_ckpt_path=None,
         use_lang_grloss=False,
         input_type='2dim',
-        apply_id_to_fullseq=False,
+        use_ser_tag=False,
+        use_ser_tag_loss=False,
+        use_ref_enc=False,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -72,6 +75,12 @@ class VAET2SLangSpkModule(pl.LightningModule):
         logger.info(f"use_lang_grloss: {use_lang_grloss}")
         self.input_type = input_type
         logger.info(f"input_type: {input_type}")
+        self.use_ser_tag = use_ser_tag
+        logger.info(f"use_ser_tag: {use_ser_tag}")
+        self.use_ser_tag_loss = use_ser_tag_loss
+        logger.info(f"use_ser_tag_loss: {use_ser_tag_loss}")
+        self.use_ref_enc = use_ref_enc
+        logger.info(f"use_ref_enc: {use_ref_enc}")
 
         if checkpointing:
             self.model.gradient_checkpointing_enable()
@@ -117,24 +126,59 @@ class VAET2SLangSpkModule(pl.LightningModule):
                         "phonetone": batch["phonetone"],
                         }
 
+                # prompt_frontend_inputs = {
+                #         "prompt_phone": batch["prompt_phone"],
+                #         "prompt_tone": batch["prompt_tone"],
+                #         "prompt_phonetone": None,
+                #         }
+
                 bns, stop_tokens = batch["bn"], batch["stop_token"]
                 text_lens, bn_lens = batch["text_lens"], batch["bn_lens"]
                 max_text_len = max(text_lens)
 
-                if self.use_spk_id and self.spk_type == "concat":
-                    seq_lens = text_lens + 1 + bn_lens
-                    seq_len = max(seq_lens)
-                    text_spk_lens = text_lens + 1
+                prompt_bns = batch["prompt_bn"]
+                # logger.info(f"bns: {bns.shape}, {bns}")
+                # logger.info(f"prompt_bns: {prompt_bns.shape}, {prompt_bns}")
+                prompt_bn_lens = batch["prompt_bn_lens"]
+                # prompt_text_lens, prompt_bn_lens = batch["prompt_text_lens"], batch["prompt_bn_lens"]
+                # if prompt_text_lens is not None:
+                #     max_prompt_text_len = max(prompt_text_lens)
+                # logger.info(f"bns: {bns.shape}, stop_tokens: {stop_tokens.shape}")
+                # logger.info(f"text_lens: {text_lens}, bn_lens: {bn_lens}")
+                # logger.info(f"max_text_len: {max_text_len}")
+                # logger.info(f"prompt_bns: {prompt_bns.shape}, prompt_bn_lens: {prompt_bn_lens}")
+                if self.use_ser_tag:
+                    ser_tags, _ = self.get_ser_tags(batch["wav"], batch["wav_lens"])
                 else:
-                    seq_lens = text_lens + bn_lens
-                    seq_len = max(seq_lens)
-                    text_spk_lens = text_lens
+                    ser_tags = None
+
+                shift = spk_shift = ser_tag_shift = 0
+                if self.use_spk_id and self.spk_type == "concat":
+                    shift += 1
+                    spk_shift = 1
+                if self.use_ser_tag:
+                    shift += 1
+                    ser_tag_shift = 1
+
+                # if prompt_bn_lens is not None:
+                seq_lens = prompt_bn_lens + text_lens + shift + bn_lens
+                # logger.info(f"seq_lens: {seq_lens}")
+                # else:
+                #     seq_lens = text_lens + shift + bn_lens
+                seq_len = max(seq_lens)
+                # logger.info(f"seq_len: {seq_len}")
+                # if prompt_bn_lens is not None:
+                nobn_lens = prompt_bn_lens + text_lens + shift
+                # logger.info(f"nobn_lens: {nobn_lens}")
+                # else:
+                #     nobn_lens = text_lens + shift
 
                 loss_mask = sequence_mask(seq_lens, device="cuda")
                 text_loss_mask = sequence_mask(text_lens, device="cuda")
-                text_spk_loss_mask = sequence_mask(text_spk_lens, device="cuda")
-                pad_text_spk_loss_mask = F.pad(text_spk_loss_mask, (0, seq_len - text_spk_loss_mask.shape[1]), "constant", 0)
-                z_loss_mask = loss_mask - pad_text_spk_loss_mask
+                nobn_loss_mask = sequence_mask(nobn_lens, device="cuda")
+                pad_nobn_loss_mask = F.pad(nobn_loss_mask, (0, seq_len - nobn_loss_mask.shape[1]), "constant", 0)
+                z_loss_mask = loss_mask - pad_nobn_loss_mask
+                # logger.info(f"loss_mask: {loss_mask.shape}, text_loss_mask: {text_loss_mask.shape}, nobn_loss_mask: {nobn_loss_mask.shape}, pad_nobn_loss_mask: {pad_nobn_loss_mask.shape}, z_loss_mask: {z_loss_mask.shape}")
 
         with self.profiler.profile("[LightningModule]CoarseModule.model_forward"):
             ret_dict = self.model(frontend_inputs, bns, 
@@ -143,22 +187,34 @@ class VAET2SLangSpkModule(pl.LightningModule):
                 spk_seqs=batch["spk_seq"],
                 bpe_seqs=batch.get("bpe_seq"),
                 bpe_lens=batch.get("bpe_lens"),
-                tag_ids=batch.get("tag_id")
+                tag_ids=batch.get("tag_id"),
+                ser_tags=ser_tags,
+                crop_bn=batch.get("crop_bn"),
+                spk_embd_masks=batch.get("spk_embd_masks"),
+                # prompt_frontend_inputs=prompt_frontend_inputs,
+                prompt_bns=prompt_bns,
+                # prompt_text_lens=prompt_text_lens,
+                prompt_bn_lens=prompt_bn_lens,
             )
             pred_stop_token = ret_dict["stop_token"]
             pred_dense = ret_dict["dense"]
             attn_weights = ret_dict["attn_weights"]
 
+        # logger.info(f"pred_stop_token1: {pred_stop_token.shape}")
+        # logger.info(f"pred_dense1: {pred_dense.shape}")
         pred_stop_token = pred_stop_token[:, 0:seq_len - 1, :]
         pred_dense = pred_dense[:, 0:seq_len - 1, :]
+        # logger.info(f"pred_stop_token2: {pred_stop_token.shape}")
+        # logger.info(f"pred_dense2: {pred_dense.shape}")
 
         bsz, bn_t, bn_c = bns.shape
         targets_dense = []
         for i in range(bsz):
             targets_dense.append(
-                F.pad(bns[i, :bn_lens[i], :], (0, 0, text_spk_lens[i], seq_len-(bn_lens[i]+text_spk_lens[i])), "constant", 0)
+                F.pad(bns[i, :bn_lens[i], :], (0, 0, nobn_lens[i], seq_len-(bn_lens[i]+nobn_lens[i])), "constant", 0)
             )
         targets_dense = torch.stack(targets_dense)[:, 1:seq_len, :]
+        # logger.info(f"targets_dense: {targets_dense.shape}")
 
         target_m, target_logs = torch.split(targets_dense, bn_c//2, dim=-1)
         pred_m, pred_logs = torch.split(pred_dense, bn_c//2, dim=-1)
@@ -168,10 +224,13 @@ class VAET2SLangSpkModule(pl.LightningModule):
             target_m.detach(), target_logs.detach(), z_mask=z_loss_mask[:, 1:])
 
         # stop_token_loss
-        if self.spk_type == "concat":
-            target_stop_token = stop_tokens[:, :seq_len]
-        else:
+        if shift == 0:
             target_stop_token = stop_tokens[:, 1:seq_len]
+        elif shift == 1:
+            target_stop_token = stop_tokens[:, :seq_len]
+        elif shift > 1:
+            target_stop_token = torch.cat((stop_tokens[:, 0:shift - 1], stop_tokens[:, :seq_len]), dim=-1)
+        # logger.info(f"target_stop_token: {target_stop_token.shape}")
         stop_token_loss = self.logits_criterion(pred_stop_token.float(), target_stop_token, mask=z_loss_mask[:, 1:])
         stop_token_accu = ((pred_stop_token.argmax(dim=-1) == target_stop_token).float() * z_loss_mask[:, 1:]).sum() / z_loss_mask[:, 1:].sum() * 100
 
@@ -185,9 +244,17 @@ class VAET2SLangSpkModule(pl.LightningModule):
         if self.use_phoneme_loss:
             # pred_logits = ret_dict["logits"][:, :max_text_len, :]
             # phoneme_loss = self.logits_criterion(pred_logits.float(), targets_logits, mask=text_loss_mask)
-            pred_logits = ret_dict["logits"][:, :max_text_len - 1, :]
+            pred_logits = []
+            for i in range(bsz):
+                pred_logits.append(
+                    F.pad(ret_dict["logits"][i, prompt_bn_lens[i]:prompt_bn_lens[i]+text_lens[i], :], (0, 0, 0, max_text_len-text_lens[i]), "constant", 0)
+                )
+            pred_logits = torch.stack(pred_logits)[:, :max_text_len - 1, :]
+            # logger.info(f"pred_logits: {pred_logits.shape}")
             targets_logits = targets_logits[:, 1:]
+            # logger.info(f"targets_logits: {targets_logits.shape}")
             text_loss_mask = text_loss_mask[:, 1:]
+            # logger.info(f"text_loss_mask: {text_loss_mask.shape}")
             phoneme_loss = self.logits_criterion(pred_logits.float(), targets_logits, mask=text_loss_mask)
             phoneme_accu = ((pred_logits.argmax(dim=-1) == targets_logits).float() * text_loss_mask).sum() / text_loss_mask.sum() * 100
         else:
@@ -200,6 +267,22 @@ class VAET2SLangSpkModule(pl.LightningModule):
         else:
             ctc_loss = torch.tensor(0.)
 
+        # ser_tag loss
+        if self.use_ser_tag_loss:
+            pred_ser_tag_logits = []
+            for i in range(bsz):
+                pred_ser_tag_logits.append(
+                    ret_dict["ser_tag_logits"][i, text_lens[i] + spk_shift + ser_tag_shift - 1 - 1, :] # 1: for output shift, 1: for index (begin with 0)
+                )
+            pred_ser_tag_logits = torch.stack(pred_ser_tag_logits)
+            targets_ser_tag_logits = ser_tags
+
+            ser_tag_loss = self.logits_criterion(pred_ser_tag_logits.float(), targets_ser_tag_logits)
+            ser_tag_accu = ((pred_ser_tag_logits.argmax(dim=-1) == targets_ser_tag_logits).float()).sum() / targets_ser_tag_logits.shape[0] * 100
+        else:
+            ser_tag_loss = torch.tensor(0.)
+            ser_tag_accu = torch.tensor(0.)
+
         # lang_grloss
         if self.use_lang_grloss:
             lang_loss_mask = sequence_mask(bn_lens, device="cuda")
@@ -211,7 +294,7 @@ class VAET2SLangSpkModule(pl.LightningModule):
             lang_token_loss = torch.tensor(0.)
             lang_token_accu = torch.tensor(0.)
 
-        total_loss = ctc_loss + kl_loss + stop_token_loss * self.stop_token_loss_weight + phoneme_loss + lang_token_loss
+        total_loss = ctc_loss + kl_loss + stop_token_loss * self.stop_token_loss_weight + phoneme_loss + lang_token_loss + ser_tag_loss
 
         batch_tokens= bsz * seq_len
 
@@ -230,6 +313,8 @@ class VAET2SLangSpkModule(pl.LightningModule):
                 "training/loss": total_loss.item(),
                 "lang_token_loss": lang_token_loss.item(),
                 "lang_token_accu": lang_token_accu.item(),
+                "ser_tag_loss": ser_tag_loss.item(),
+                "ser_tag_accu": ser_tag_accu.item(),
             },
             prog_bar=True,
             sync_dist=True
@@ -362,166 +447,76 @@ class VAET2SLangSpkModule(pl.LightningModule):
         return output
 
     @torch.no_grad()
-    def inference_from_text(self, batch, tokenizer):
-        bns = batch["bn"]
-        text_lens, bn_lens = batch["text_lens"], batch["bn_lens"]
-        lang_seq, infer_lang_id = batch["lang_seq"], batch["infer_lang_id"]
-        spk_seq, infer_spk_id = batch["spk_seq"], batch["infer_spk_id"]
-        if self.use_spk_id and self.spk_type == "concat" and spk_seq is not None:
-            spk_seq = torch.from_numpy(np.asarray([infer_spk_id]))
-            spk_seq = spk_seq.unsqueeze(0)
-            spk_seq = spk_seq.to(bns.device)
+    def get_ser_tags(self, wavs, wav_lens):
+        # wav2vec2
+        raw_outputs = self.requires["wav2vec2"].forward(wavs)
 
-        frontend_inputs = {
-                "phone": batch["phone"],
-                "tone": batch["tone"],
-                "phonetone": batch["phonetone"],
-                }
+        # avg_pool
+        outputs = []
+        for snt_id in range(raw_outputs.shape[0]):
+            actual_size = int(torch.round(wav_lens[snt_id] * raw_outputs.shape[1]))
+            outputs.append(
+                torch.mean(raw_outputs[snt_id, 0:actual_size, ...], dim=0)
+            )
+        outputs = torch.stack(outputs)
+        outputs = outputs.view(outputs.shape[0], -1)
 
-        b = bns.shape[0]
-        
-        # llama style inference
-        self.model.params.use_cache = True
-        start_pos = 0
-        
-        inference_params = InferenceParams(
-            max_sequence_len=8000, 
-            max_batch_size=b,
-            fused_ft_kernel=False
-        )
-        semantic_outputs = []
-        z_list = []
+        # output_mlp
+        out_tag_orig = self.requires["output_mlp"].forward(outputs)
+        out_deg_orig = self.requires["output_deg"].forward(outputs)
 
-        max_step_ = text_lens[0] * 10 - bn_lens[0]
-        max_step = 6000
-        
-        with torch.autocast(device_type="cuda", enabled=True):
-            for i in tqdm(range(max_step)):
-                if i == 0:
-                    model_outputs = self.model(
-                        frontend_inputs,
-                        bns,
-                        text_lens,
-                        bn_lens,
-                        start_pos=start_pos,
-                        inference_params=inference_params,
-                        lang_seqs=lang_seq,
-                        spk_seqs=spk_seq,
-                        bpe_seqs=batch.get("bpe_seq", None),
-                        bpe_lens=batch.get("bpe_lens", None),
-                        tag_ids=batch.get("tag_id", None)
-                        )
-                    input_len = text_lens[0] + bn_lens[0]
-                    if self.use_spk_id and self.spk_type == "concat":
-                        input_len += 1
-                else:
-                    model_outputs = self.model(frontend_inputs,
-                        bns,
-                        text_lens,
-                        bn_lens,
-                        start_pos=start_pos,
-                        use_cache=True,
-                        inference_params=inference_params,
-                        lang_seqs=lang_seq,
-                        spk_seqs=spk_seq,
-                        bpe_seqs=batch.get("bpe_seq", None),
-                        bpe_lens=batch.get("bpe_lens", None),
-                        tag_ids=batch.get("tag_id", None)
-                        )
-                    input_len = 1
-                    z_list.append(model_outputs['bn_in_z'])
+        classifier = log_softmax(apply_log=True)
+        out_tag = classifier(out_tag_orig).exp()
+        out_deg = classifier(out_deg_orig).exp()
 
-                pred_stop_token = model_outputs["stop_token"][:, -1, :]
-                samples = torch.argmax(pred_stop_token)
-                if (i > 10 and samples.item() == 1) or (i == max_step_):
-                    break
+        ser_tags = torch.argmax(out_tag, dim=-1)
+        ser_degrees = torch.argmax(out_deg, dim=-1)
 
-                pred_dense = model_outputs["dense"][:, -1:, :]
-
-                start_pos += input_len
-                inference_params.sequence_len_offset = start_pos
-
-                # next infer
-                semantic_outputs.append(pred_dense)
-                bns = pred_dense
-                bn_lens[0] = 1
-
-                if self.use_lang_id:
-                    lang_id = torch.from_numpy(np.asarray([infer_lang_id]))
-                    lang_id = lang_id.unsqueeze(0)
-                    lang_id = lang_id.to(pred_dense.device)
-                    lang_seq = lang_id
-
-                spk_seq = None
-                if self.use_spk_id and self.spk_type == "add":
-                    spk_id = torch.from_numpy(np.asarray([infer_spk_id]))
-                    spk_id = spk_id.unsqueeze(0)
-                    spk_id = spk_id.to(pred_dense.device)
-                    spk_seq = spk_id
-
-        z_outputs = torch.cat(z_list, dim=1) # [b, t, c]
-        semantic_outputs = torch.cat(semantic_outputs, dim=1) # [b, t, c]
-        self.model.params.use_cache = False
-        return z_outputs, semantic_outputs
+        return ser_tags, ser_degrees
 
     @torch.no_grad()
-    def inference_from_text_streaming(self, batch, bpe_tokenizer):
-        bns = batch["bn"]
-        bn_lens = batch["bn_lens"]
-        lang_seq, infer_lang_id = batch["lang_seq"], batch["infer_lang_id"]
+    def softmax(self, x):
+        e_x = np.exp(x - np.max(x))  # subtract max(x) for numerical stability
+        return e_x / e_x.sum()
 
-        infer_texts = batch["infer_texts"]
+    @torch.no_grad()
+    def inference_from_text(self, batch, tokenizer):
+        text_lenses = batch["text_lenses"]
+        lang_seq, infer_lang_id = batch["lang_seq"], batch["infer_lang_id"]
         phones = batch["phones"]
         tones = batch["tones"]
-        text_lenses = batch["text_lenses"]
 
         z_outputs_all = None
         semantic_outputs_all = None
 
-        prompt_phone = None
-        prompt_tone = None
-        prompt_text = None
-        prompt_text_lens = None
-        prompt_bns = None
         for split in range(len(text_lenses)):
             print(f"split: {split}")
+            bns = batch["bn"]
+            bn_lens = torch.tensor([bns.shape[1]]).long().to(bns.device)
             spk_seq, infer_spk_id = batch["spk_seq"], batch["infer_spk_id"]
             if self.use_spk_id and self.spk_type == "concat" and spk_seq is not None:
                 spk_seq = torch.from_numpy(np.asarray([infer_spk_id]))
                 spk_seq = spk_seq.unsqueeze(0)
                 spk_seq = spk_seq.to(bns.device)
 
-            infer_phone = torch.from_numpy(phones[split]).long().unsqueeze(0).to(bns.device)
-            infer_tone = torch.from_numpy(tones[split]).long().unsqueeze(0).to(bns.device)
-            infer_text = infer_texts[split]
-            infer_text_lens = torch.tensor([text_lenses[split]]).long().to(bns.device)
-
             if split == 0:
-                phone = infer_phone
-                tone = infer_tone
-                text = infer_text
-                text_lens = infer_text_lens
+                prompt_bns = torch.from_numpy(np.zeros([1, 0, 64])).to(bns.device)
             else:
-                phone = torch.cat([prompt_phone[:, 1:-1], infer_phone], dim=1)
-                tone = torch.cat([prompt_tone[:, 1:-1], infer_tone], dim=1)
-                text = prompt_text + infer_text
-                text_lens = prompt_text_lens + infer_text_lens - 1 - 1
-                bns = prompt_bns
-            bn_lens = torch.tensor([bns.shape[1]]).long().to(bns.device)
+                prompt_bns = semantic_outputs
+            prompt_bn_lens = torch.tensor([prompt_bns.shape[1]]).long().to(bns.device)
 
-            bpe_seq = torch.from_numpy(
-                    np.asarray(
-                        bpe_tokenizer(
-                            text,
-                            truncation=True,
-                            max_length=8000,
-                        ).input_ids)).unsqueeze(0).to(bns.device)
-            bpe_len = torch.tensor([bpe_seq.shape[1]]).long().to(bns.device)
+            text_lens = torch.tensor([text_lenses[split]]).long().to(bns.device)
+            phone = torch.from_numpy(phones[split]).long().unsqueeze(0).to(bns.device)
+            tone = torch.from_numpy(tones[split]).long().unsqueeze(0).to(bns.device)
+
+            # print("text_lens: ", text_lens)
+            # print("phone: ", phone)
+            # print("tone: ", tone)
 
             frontend_inputs = {
                     "phone": phone,
                     "tone": tone,
-                    "phonetone": None,
+                    "phonetone": batch["phonetone"],
                     }
             b = bns.shape[0]
             
@@ -536,6 +531,12 @@ class VAET2SLangSpkModule(pl.LightningModule):
             )
             semantic_outputs = []
             z_list = []
+
+            # if prompt_bns is not None:
+            #     print("prompt_bns: ", prompt_bns.shape, prompt_bns)
+            # else:
+            #     print("prompt_bns: ", prompt_bns)
+            # print("prompt_bn_lens: ", prompt_bn_lens)
 
             max_step_ = text_lens[0] * 10 - bn_lens[0]
             max_step = 6000
@@ -552,11 +553,14 @@ class VAET2SLangSpkModule(pl.LightningModule):
                             inference_params=inference_params,
                             lang_seqs=lang_seq,
                             spk_seqs=spk_seq,
-                            bpe_seqs=bpe_seq,
-                            bpe_lens=bpe_len,
-                            tag_ids=batch.get("tag_id", None)
+                            bpe_seqs=batch.get("bpe_seq", None),
+                            bpe_lens=batch.get("bpe_lens", None),
+                            tag_ids=batch.get("tag_id", None),
+                            crop_bn=batch.get("bn", None),
+                            prompt_bns=prompt_bns,
+                            prompt_bn_lens=prompt_bn_lens,
                             )
-                        input_len = text_lens[0] + bn_lens[0]
+                        input_len = prompt_bn_lens[0] + text_lens[0] + bn_lens[0]
                         if self.use_spk_id and self.spk_type == "concat":
                             input_len += 1
                     else:
@@ -569,9 +573,12 @@ class VAET2SLangSpkModule(pl.LightningModule):
                             inference_params=inference_params,
                             lang_seqs=lang_seq,
                             spk_seqs=spk_seq,
-                            bpe_seqs=bpe_seq,
-                            bpe_lens=bpe_len,
-                            tag_ids=batch.get("tag_id", None)
+                            bpe_seqs=batch.get("bpe_seq", None),
+                            bpe_lens=batch.get("bpe_lens", None),
+                            tag_ids=batch.get("tag_id", None),
+                            crop_bn=batch.get("bn", None),
+                            prompt_bns=prompt_bns,
+                            prompt_bn_lens=prompt_bn_lens,
                             )
                         input_len = 1
                         z_list.append(model_outputs['bn_in_z'])
@@ -618,18 +625,11 @@ class VAET2SLangSpkModule(pl.LightningModule):
             else:
                 semantic_outputs_all = torch.cat([semantic_outputs_all, semantic_outputs], dim=1)
 
-            bns = semantic_outputs
-            prompt_text = infer_text
-            prompt_phone = infer_phone
-            prompt_tone = infer_tone
-            prompt_text = infer_text
-            prompt_text_lens = infer_text_lens
-            prompt_bns = semantic_outputs
-
+            # print("semantic_outputs_all: ", semantic_outputs_all.shape, semantic_outputs_all)
         return z_outputs_all, semantic_outputs_all
 
     predict = inference_from_text
-    predict_streaming = inference_from_text_streaming
+
 
 
 

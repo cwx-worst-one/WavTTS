@@ -1,15 +1,17 @@
 ---
-# "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/huangzhiying.92/exp/samantha_bigtts_ref_enc/text2semantic/sft_WFVAE_v2_labv3_punc_data_id590_bt14000_16A100_accu5_byteT5_scr0.0_freezeTrue_langFalse/checkpoints/epoch=00-step=95000-kl_loss=0.12.ckpt"
+
 run_opts:
     precision: 32
     strategy: ddp
-    ar_model_name: VAET2SLangSpkModule
-    ar_ckpt_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/huangzhiying.92/exp/samantha_bigtts_ref_enc/text2semantic/sft_WFVAE_v2_labv3_punc_data_id590_bt14000_16A100_accu5_byteT5_scr0.0_freezeTrue_langFalse/checkpoints/epoch=00-step=95000-kl_loss=0.12.ckpt"
-    output_dir: 'taozi_outputs'
-    meta_lst: ''
+    ar_model_name: VAET2SStopLangv2MultidimModule
+    ar_ckpt_path: epoch=00-step=55000-kl_loss=0.82.ckpt
+    output_dir: output_wavs
+    meta_lst: testset/inner/inner_long_en_meta.lst
     num_workers: 4
-    wvae_encoder: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wangxin.colin/ckpts/wvae_1.0/wavevae_encoder_%d.pt
-    wvae_decoder: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wangxin.colin/ckpts/wvae_1.0/wavevae_decoder_%d.pt
+    wvae_encoder: hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/user/wangxin.colin/ckpts/wvae/wavevae_encoder_%d.pt # for va
+    wvae_decoder: hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/user/wangxin.colin/ckpts/wvae/wavevae_decoder_%d.pt # for va
+    # wvae_encoder: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wangxin.colin/ckpts/wvae/wavevae_encoder_%d.pt # for cn
+    # wvae_decoder: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wangxin.colin/ckpts/wvae/wavevae_decoder_%d.pt # for cn
     fast_dev_run: False
     seed: 1996
     prompt_tacolab_dir: ""
@@ -22,16 +24,18 @@ run_opts:
     use_spk_id: True
     spk_tokens_num: 16384
     spk2id: 'recipes/text2semantic/datasets/dict/spk2id.json'
-    infer_spk_name: 'duibiao/sinong_conversation'
+    infer_spk_name: null
     get_lang_by_tacolab: False
     save_tacolab: False
     use_bpe: True
-    tokenizer_type: 'byte-T5-base'
+    tokenizer_type: 'flan-T5-large'
     tag_id: 3
-    bpe_dir: 'resource/models/byte-T5-base'
+    bpe_dir: 'resource/models/flan-T5-large'
     use_prompt: False
     input_type: '2dim'
-    infer_mode: 'online'
+    use_ref_enc: False
+    use_sp: True
+    module_cache: ".module_cache"
 
 predict_dataset: !new:recipes.text2semantic.datasets.meta_based_dataset.MetaBasedDataset
     meta_lst: !ref <run_opts[meta_lst]>
@@ -45,9 +49,9 @@ dataloader: !new:torch.utils.data.DataLoader
 pl_datamodule: !new:recipes.text2semantic.lit_modules.lit_data.DataModule
     predict_dataloader: !ref <dataloader>
 
-pl_module: !new:recipes.text2semantic.lit_modules.lit_infer_lang_spk.BigTTSWVAEInferLangSpk
+pl_module: !new:recipes.text2semantic.lit_modules.lit_infer_lang_spk_ali.BigTTSWVAEInferLangSpkAli
     ar_model_name: !ref <run_opts[ar_model_name]>
-    ckpt_path: !ref <run_opts[ar_ckpt_path]>
+    ckpt_path: !ref <run_opts[ckpt_path]>
     wvae_encoder: !ref <run_opts[wvae_encoder]>
     wvae_decoder: !ref <run_opts[wvae_decoder]>
     output_dir: !ref <run_opts[output_dir]>
@@ -70,7 +74,9 @@ pl_module: !new:recipes.text2semantic.lit_modules.lit_infer_lang_spk.BigTTSWVAEI
     tag_id: !ref <run_opts[tag_id]>
     use_prompt: !ref <run_opts[use_prompt]>
     input_type: !ref <run_opts[input_type]>
-    infer_mode: !ref <run_opts[infer_mode]>
+    use_ref_enc: !ref <run_opts[use_ref_enc]>
+    use_sp: !ref <run_opts[use_sp]>
+    module_cache: !ref <run_opts[module_cache]>
 
 trainer: !new:pytorch_lightning.Trainer
     accelerator: "auto"

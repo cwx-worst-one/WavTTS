@@ -258,7 +258,7 @@ class VAELLaMaLangSpk(LLaMa):
             for i in range(bsz):
                 bn_in_h[i, :bn_lens[i], :] += lang_embeds[i, :bn_lens[i], :]
 
-        if self.use_spk_id:
+        if self.use_spk_id and spk_seqs is not None:
             if self.spk_type == "concat" and not use_cache:
                 spk_embeds = self.spk_embeddings(spk_seqs[:, 0:1])
             elif self.spk_type == "add":
@@ -282,7 +282,7 @@ class VAELLaMaLangSpk(LLaMa):
                 token_in_h = self.tok_embeddings(frontend_inputs)
             elif self.input_type == '1dim':
                 token_in_h = self.tok_embeddings(frontend_inputs['phonetone'])
-            if self.use_spk_id and self.spk_type == "concat":
+            if self.use_spk_id and self.spk_type == "concat" and spk_seqs is not None:
                 seqlen += 1
             h = torch.zeros([bsz, seqlen, bn_in_h.shape[-1]], device=bn_in_h.device)
 
@@ -320,22 +320,22 @@ class VAELLaMaLangSpk(LLaMa):
                 for i in range(bsz):
                     # add phone embeds and attended-bpe embeds
                     h[i, :text_lens[i], :] = token_in_h[i, :text_lens[i], :] + attn_bpe_in_h[i, :text_lens[i], :]
-                    if self.spk_type == "concat":
+                    if self.spk_type == "concat" and spk_seqs is not None:
                         # add spk embds
                         h[i, text_lens[i]:text_lens[i]+1, :] = spk_embeds[i]
                         # insert bn embeds
                         h[i, text_lens[i]+1:text_lens[i]+1+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
-                    elif self.spk_type == "add":
+                    elif self.spk_type == "add" and spk_seqs is not None:
                         h[i, text_lens[i]:text_lens[i]+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
             else:
                 for i in range(bsz):
                     h[i, :text_lens[i], :] = token_in_h[i, :text_lens[i], :]
-                    if self.spk_type == "concat":
+                    if self.spk_type == "concat" and spk_seqs is not None:
                         # add spk embds
                         h[i, text_lens[i]:text_lens[i]+1, :] = spk_embeds[i]
                         # insert bn embeds
                         h[i, text_lens[i]+1:text_lens[i]+1+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
-                    elif self.spk_type == "add":
+                    elif self.spk_type == "add" and spk_seqs is not None:
                         h[i, text_lens[i]:text_lens[i]+bn_lens[i], :] = bn_in_h[i, :bn_lens[i], :]
 
         h = super().forward(h, seqlen, start_pos, inference_params, cond=cond)
