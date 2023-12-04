@@ -1,11 +1,8 @@
 ---
-# @hanoihantrakul 11/21/2023
-# Stage3MSS is similar to Stage3 Training but:
-# - uses MSS data composed of full mix, MSS vocal and MSS instrumental
-# - additional 2 heads for vocal mel and instrumental mel reconstruction
-# For understanding purposes, it is better to compare this YAML with umm_stage2_mss.yaml
-# By the time I wrote this code, umm_stage3.yaml arealdy had outdated parameters.
-
+# @hanoihantrakul 12/1/2023
+# Near identical to `umm_stage3_mss` but with two changes:
+# 1.) Directly train stage 3 with no stage 1 or stage 2 steps.
+# 2.) Apply LFQ Vector Quanization during training.
 ################################################################################
 ##########                       BASIC CONFIGURATION                  ##########
 ################################################################################
@@ -30,11 +27,11 @@ extra_params:
 # running parameters
 run_opts:
     fast_dev_run: False
-    cache_dir: .module_cache/umm
+    cache_dir: .module_cache/umm_mss
     hdfs_log_dir: "hdfs:///home/byte_speech_sv/hanoi.hantrakul/logs"
     log_dir: logs
     log_name: umm_mss
-    version: !ref umm_stage3_<extra_params[tokenizer]>
+    version: !ref umm_stage3_<extra_params[tokenizer]>_<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>
     precision: "32"
     num_workers: 4
     accelerator: auto
@@ -92,12 +89,13 @@ config: !new:recipes.umm.models.config.UMMConfig
     num_attention_heads: 8
     max_source_positions: !ref <extra_params[frame_rate]> * <pl_datamodule[max_duration]>
     add_vq: True
-    vq_type: "EMAEntropy"
-    vq_proj_norm: "bn"
-    vq_proj_noise: 10000
+    vq_type: "LFQ"
     vq_codebook_size: 32768
-    vq_codebook_dim: 32
+    vq_codebook_dim: 15
+    vq_layer_idx: 12
     vq_decay: 0.99
+    vq_proj_norm: "bn"
+    vq_proj_noise: 0 # non-zero value only makes sense for EMA VQ
     w_loss_mel: 1.0
     w_loss_chroma: 1.0
     w_loss_mel_vocal: 1.0
@@ -122,11 +120,6 @@ pl_module: !new:recipes.umm.modules.lit_module.Stage3MSS
     criterion_cls: !name:recipes.umm.modules.criterion.UMMLossMSS
         config: !ref <config>
     extra_params: !ref <extra_params>
-    required_modules:
-        pretrained:
-            ckpt_path: "hdfs:///home/byte_speech_sv/zongyu.yin/logs/umm_mss/umm_stage2_bert-large-uncased/checkpoints/step=0025000.ckpt"
-            init_fn: !name:recipes.umm.requires.model_initializer.init_pretrained
-            cache_dir: !ref <run_opts[cache_dir]>
 
 logger:
     - !new:pytorch_lightning.loggers.wandb.WandbLogger
