@@ -960,7 +960,6 @@ class Stage1(Stage0):
         required_modules=None,
         checkpointing=False,
         extra_params=None,
-        seqlen_align=1,
     ):
         super().__init__(
             model_cls=model_cls,
@@ -971,7 +970,6 @@ class Stage1(Stage0):
             checkpointing=checkpointing,
             extra_params=extra_params,
         )
-        self.seqlen_align = seqlen_align
 
     @torch.no_grad()
     def masking(self, x):
@@ -1012,17 +1010,6 @@ class Stage1(Stage0):
         mel = self.preprocessing(wav)["mel"]
         masked_audio, masked_indices = self.masking(wav)
         masked_mel = self.preprocessing(masked_audio)["mel"]
-        seqlen = mel.shape[1]
-        if seqlen % self.seqlen_align != 0:
-            pad_len = (
-                (seqlen + self.seqlen_align - 1)
-                // self.seqlen_align
-                * self.seqlen_align
-            )
-            mel = torch.nn.functional.pad(mel, [0, 0, 0, pad_len - seqlen])
-            masked_mel = torch.nn.functional.pad(
-                masked_mel, [0, 0, 0, pad_len - seqlen]
-            )
         return {"masked_mel": masked_mel, "masked_indices": masked_indices, "mel": mel}
 
     def get_code_rate(self, target_tokens):
@@ -1229,7 +1216,7 @@ class Stage2MSS(Stage2):
         _audio_dict = {k: self.pad_audio(v) for k, v in _audio_dict.items()}
         """
         @hanoihantrakul 10/10/2023
-        Problem: Superclass Stage0.preprocessing() assumes 1 fixed audio argument `x`, but there are 3 audio tracks. 
+        Problem: Superclass Stage0.preprocessing() assumes 1 fixed audio argument `x`, but there are 3 audio tracks.
         Solution: Pass in a single dict instead of audio directly. Then handle dict in self.model.preprocessing()
         """
         preprocessed_feats = self.preprocessing(_audio_dict)
@@ -1241,7 +1228,7 @@ class Stage2MSS(Stage2):
         recon_loss_dict = {}
 
         # "add_pitch" is False by default for UMM training.
-        if self.model.config.get("add_pitch", False):  
+        if self.model.config.get("add_pitch", False):
             recon_loss_dict.update(
                 self.criterion(
                     ctc_logits=output_dict["ctc_out"],

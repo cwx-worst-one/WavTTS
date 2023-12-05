@@ -70,7 +70,7 @@ class UMMConfig(PretrainedConfig):
         # CTC
         vocab_size=30522 + 1,
         ctc_loss_reduction="mean",
-        ctc_zero_infinity=False,
+        ctc_zero_infinity=True,
         ctc_blank_id=30522,
         w_loss_ctc=1,
         add_chroma=True,
@@ -181,4 +181,3 @@ class UMMConfig(PretrainedConfig):
             return self.__getattribute__(name)
         else:
             return default
-
