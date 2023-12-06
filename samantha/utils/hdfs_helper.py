@@ -183,7 +183,7 @@ def get(hdfs_path: str, local_path: str, overwrite: bool = False) -> bool:
         overwrite (bool): overwrite the local file or not
     """
 
-    if not isfile(hdfs_path):
+    if not exists(hdfs_path):
         raise ValueError(f"{hdfs_path} does not exist.")
     if os.path.exists(local_path):
         if overwrite:

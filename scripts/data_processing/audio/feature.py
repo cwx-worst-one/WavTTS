@@ -5,7 +5,7 @@ import multiprocessing
 import os
 import time
 import warnings
-from multiprocessing.pool import Pool
+from multiprocessing.pool import Pool, ThreadPool
 
 import numpy as np
 import requests
@@ -141,17 +141,28 @@ def run(
             logger.warning(f"{prefix_info} Error: {data_url=}", exc_info=e)
 
 
+def check_url(filesystem, data_url, output_url, ckpt_url, force_update):
+    return (
+        (force_update or not filesystem.exists(ckpt_url))
+        and filesystem.exists(data_url)
+    ), (data_url, output_url, ckpt_url)
+
+
 def generate_work_urls(
     ROOT_PATH, feature_type, feature_version, filesystem, force_update
 ):
 
+    num_nodes = int(os.getenv("ARNOLD_WORKER_NUM", 1))
+    nproc_per_node = int(os.getenv("ARNOLD_WORKER_GPU", 1))
+    global_rank = int(os.getenv("RANK", 0))
     partitions, suffix = get_partition(ROOT_PATH, filesystem)
     url_pattern = f"{ROOT_PATH}/data/{'/'.join(['*'] * len(partitions))}/*.{suffix}"
     urls = filesystem.glob(url_pattern)
-
+    thread_pool = ThreadPool(100)
     remain_urls = []
+    rets = []
     ARNOLD_BASE_DIR = os.getenv("ARNOLD_BASE_DIR", "")
-    for url in tqdm.tqdm(urls):
+    for url in urls:
         data_url = os.path.join(ARNOLD_BASE_DIR, url.lstrip("/"))
         output_url = data_url.replace(
             os.path.join(ROOT_PATH, "data"),
@@ -161,16 +172,21 @@ def generate_work_urls(
         output_dn = os.path.dirname(output_url)
         ckpt_url = f"{output_dn}/SUCCESS/{output_bn}"
         assert data_url != output_url, f"{data_url=} -- {output_url=}"
-        if (force_update or not filesystem.exists(ckpt_url)) and (
-            filesystem.exists(data_url)
-        ):
-            remain_urls.append((data_url, output_url, ckpt_url))
+        rets.append(
+            thread_pool.apply_async(
+                func=check_url,
+                args=(filesystem, data_url, output_url, ckpt_url, force_update),
+            )
+        )
+    thread_pool.close()
+    for ret in tqdm.tqdm(rets, desc=f"{global_rank=}"):
+        flag, url = ret.get()
+        if flag:
+            remain_urls.append(url)
         else:
-            logger.info(f"skipping file {output_url}")
+            logger.info(f"skipping file {url[1]}")
+    thread_pool.join()
 
-    num_nodes = int(os.getenv("ARNOLD_WORKER_NUM", 1))
-    nproc_per_node = int(os.getenv("ARNOLD_WORKER_GPU", 1))
-    global_rank = int(os.getenv("RANK", 0))
     dist.barrier()
     logger.info(f"[{global_rank=}] {num_nodes=} {nproc_per_node=} reaching the barrier")
     work_urls = np.array_split(remain_urls, num_nodes * nproc_per_node)[global_rank]

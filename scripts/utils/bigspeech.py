@@ -15,6 +15,7 @@ def get_dataset_name(dataset_id):
 
 def get_partition(path, fs):
     partitions, suffix = [], None
+    path = f"{path}/data"
     while path is not None:
         for item in fs.listdir(path):
             if item["type"] == "directory":

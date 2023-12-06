@@ -1,21 +1,25 @@
-from re import T
-
 import librosa
 import numpy as np
 import torch
 import torch.nn.functional as F
 from librosa.filters import mel as librosa_mel_fn
+from torchaudio.transforms import Resample
 
 
-def preprocess_audio(audio_bin, sample_rate, trim=True, *_, **__):
+def preprocess_audio(audio_bin, sample_rate, resampler, device, trim=True, *_, **__):
     wav, sr = librosa.load(audio_bin, sr=None)
+    if wav.size == 0:
+        return None, None
     audio_dur = wav.shape[0] / float(sr)
     if len(wav.shape) == 2 and wav.shape[-1] == 2:
         wav = wav[:, 0]
-    wav *= 1.0 / max(0.01, np.max(np.abs(wav)))
+    wav = torch.as_tensor(wav, dtype=torch.float32, device=device)
     if sr != sample_rate:
-        print("convert sr ...")
-        wav = librosa.core.resample(wav, sr, sample_rate)
+        if sr not in resampler:
+            resampler[sr] = Resample(orig_freq=sr, new_freq=sample_rate).to(device)
+        wav = resampler[sr](wav)
+    wav = wav.cpu().numpy()
+    wav *= 1.0 / max(0.01, np.max(np.abs(wav)))
     if trim:
         wav = trim_silence(wav)
     wav = torch.from_numpy(wav).float()

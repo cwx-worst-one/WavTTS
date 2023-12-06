@@ -11,6 +11,8 @@ from samantha.dataio.webdataset.writer import Writer
 
 def preprocess_audio(audio_bin, sample_rate, *_, **__):
     wav, sr = librosa.load(audio_bin, sr=None)
+    if wav.size == 0:
+        return None, None
     audio_dur = wav.shape[0] / float(sr)
     if len(wav.shape) == 2 and wav.shape[-1] == 2:
         wav = wav[:, 0]

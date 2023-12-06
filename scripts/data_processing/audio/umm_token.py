@@ -11,6 +11,8 @@ from recipes.umm.modules.lit_module_mk3 import USMStage3
 
 def preprocess_audio(audio_bin, sample_rate, resampler, device, *_, **__):
     wav, sr = librosa.load(audio_bin, sr=None)
+    if wav.size == 0:
+        return None, None
     audio_dur = wav.shape[-1] / float(sr)
     if len(wav.shape) == 2 and wav.shape[-1] == 2:
         wav = wav[:, 0]
@@ -42,6 +44,4 @@ def process_batch(model, batch, device, *_, **__):
 
 
 def load_model(device, model_path, *_, **__):
-    return (
-        USMStage3.load_from_checkpoint(model_path).eval().to(device)
-    )
+    return USMStage3.load_from_checkpoint(model_path).eval().to(device)

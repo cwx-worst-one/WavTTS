@@ -5,19 +5,25 @@ import librosa
 import numpy as np
 import torch
 import torch.nn.functional as F
+from torchaudio.transforms import Resample
 
 from samantha.dataio.webdataset.writer import Writer
 
 
-def preprocess_audio(audio_bin, sample_rate, *_, **__):
+def preprocess_audio(audio_bin, sample_rate, resampler, device, *_, **__):
     wav, sr = librosa.load(audio_bin, sr=None)
+    if wav.size == 0:
+        return None, None
     audio_dur = wav.shape[-1] / float(sr)
     if len(wav.shape) == 2 and wav.shape[-1] == 2:
         wav = wav[:, 0]
-    wav *= 1.0 / max(0.01, np.max(np.abs(wav)))
+    wav = torch.as_tensor(wav, dtype=torch.float32, device=device)
     if sr != sample_rate:
-        print("convert sr ...")
-        wav = librosa.core.resample(wav, sr, sample_rate)
+        if sr not in resampler:
+            resampler[sr] = Resample(orig_freq=sr, new_freq=sample_rate).to(device)
+        wav = resampler[sr](wav)
+    wav = wav.cpu().numpy()
+    wav *= 1.0 / max(0.01, np.max(np.abs(wav)))
     wav = torch.from_numpy(trim_silence(wav)).float()
     wav = torch.stack([wav]).unsqueeze(1).float()
     wav = F.pad(
