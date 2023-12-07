@@ -8,6 +8,7 @@ from samantha.dataio.parquet import ParquetWriter
 from samantha.utils.distributed import rank_zero_first
 from samantha.utils.hdfs_helper import get, ishdfs
 from scripts.data_processing.audio import (
+    byt5,
     ser,
     spk_embed_utils,
     ss_utils,
@@ -21,12 +22,13 @@ from scripts.data_processing.audio import (
 
 class Consumer:
     def __init__(
-        self, output_url, filesystem, feature_type, target_sample_rate, **kwargs
+        self, output_url, filesystem, feature_type, target_sample_rate, domain, **kwargs
     ):
         self.writer = ParquetWriter(output_url, verbose=True, filesystem=filesystem)
         self.feature_type = feature_type
         self.feature_name = feature_name_mapping(feature_type)
         self.target_sample_rate = target_sample_rate
+        self.domain = domain
         self.kwargs = kwargs
         self.resampler = {}
 
@@ -58,14 +60,26 @@ class Consumer:
         ):
             self.write(uttid=uttid, feature=feature, dataset_name=dataset_name)
 
-    def preprocess(self, audio_bin, device):
-        return preprocess_audio(self.feature_type)(
-            audio_bin=io.BytesIO(audio_bin),
-            sample_rate=self.target_sample_rate,
-            resampler=self.resampler,
-            device=device,
-            **self.kwargs,
-        )
+    def preprocess(self, item, device):
+        if self.domain == "data":
+            return preprocess_audio(self.feature_type)(
+                audio_bin=io.BytesIO(item["audio"]),
+                sample_rate=self.target_sample_rate,
+                resampler=self.resampler,
+                device=device,
+                **self.kwargs,
+            )
+        else:
+            return preprocess_index(self.feature_type)(
+                index_item=item, device=device, **self.kwargs
+            )
+
+
+def preprocess_index(feature_type):
+    if feature_type == "byt5":
+        return byt5.preprocess_index
+    else:
+        raise ValueError(f"{feature_type=} is not support for preprocess_index.")
 
 
 def preprocess_audio(feature_type):
@@ -106,6 +120,8 @@ def process_batch(feature_type):
         return umm_token.process_batch
     elif feature_type == "ser":
         return ser.process_batch
+    elif feature_type == "byt5":
+        return byt5.process_batch
     else:
         raise ValueError(f"{feature_type=} is not support for process_batch.")
 
@@ -117,7 +133,7 @@ def model_path_patten(feature_type, feature_version):
         return wvae_utils.model_path_patten(feature_version)
     elif feature_type == "wavevae_mel":
         return wvae_mel_utils.model_path_patten(feature_version)
-    elif feature_type in ["speaker_embed", "umm_token", "ser"]:
+    elif feature_type in ["speaker_embed", "umm_token", "ser", "byt5"]:
         return None
     elif feature_type == "wavevae_mel_token":
         return wvae_mel_token.model_path_patten(feature_version)
@@ -140,6 +156,8 @@ def feature_name_mapping(feature_type):
         return "umm_token"
     if feature_type in ["ser"]:
         return ["emo_tag", "emo_deg", "emo_emb"]
+    if feature_type in ["byt5"]:
+        return "byt5"
 
 
 def _load_torch_script_model(model_path, device):
@@ -168,6 +186,8 @@ def load_model(feature_type):
         return umm_token.load_model
     elif feature_type in ["ser"]:
         return ser.load_model
+    elif feature_type in ["byt5"]:
+        return byt5.load_model
 
 
 def download_model(ckpt_path):

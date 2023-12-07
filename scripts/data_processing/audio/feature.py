@@ -85,6 +85,7 @@ def run(
     dataset_name,
     feature_type,
     batch_size=128,
+    domain="data",
 ):
     if not worker.data_urls:
         return
@@ -113,17 +114,19 @@ def run(
                 filesystem=fs,
                 feature_type=feature_type,
                 target_sample_rate=sample_rate,
+                domain=domain,
                 **worker.kwargs,
             )
             uttids, batch = [], []
-            total_audio_dur = 0
+            # duration for audio, character count for text
+            total_count = 0
             st = time.perf_counter()
             for data_item in parquet_reader(data_url, fs, need_group_no=False):
-                wav, audio_dur = consumer.preprocess(data_item["audio"], device)
-                if wav is None:
+                x, count = consumer.preprocess(data_item, device)
+                if x is None:
                     continue
-                total_audio_dur += audio_dur
-                batch.append(wav)
+                total_count += count
+                batch.append(x)
                 uttids.append(data_item["uttid"])
                 if len(batch) < batch_size:
                     continue
@@ -135,7 +138,7 @@ def run(
             consumer.close()
             fs.touch(ckpt_url)
             ed = time.perf_counter()
-            rtf = (ed - st) / (1e-5 + total_audio_dur)
+            rtf = (ed - st) / (1e-5 + total_count)
             logger.info(f"{prefix_info} {rtf=:.4f}")
         except Exception as e:
             logger.warning(f"{prefix_info} Error: {data_url=}", exc_info=e)
@@ -149,14 +152,20 @@ def check_url(filesystem, data_url, output_url, ckpt_url, force_update):
 
 
 def generate_work_urls(
-    ROOT_PATH, feature_type, feature_version, filesystem, force_update
+    ROOT_PATH, feature_type, feature_version, filesystem, force_update, index_version
 ):
 
     num_nodes = int(os.getenv("ARNOLD_WORKER_NUM", 1))
     nproc_per_node = int(os.getenv("ARNOLD_WORKER_GPU", 1))
     global_rank = int(os.getenv("RANK", 0))
     partitions, suffix = get_partition(ROOT_PATH, filesystem)
-    url_pattern = f"{ROOT_PATH}/data/{'/'.join(['*'] * len(partitions))}/*.{suffix}"
+    domain = "data"
+    feature_domain = ""
+    if index_version is not None:
+        domain = f"index_{index_version}"
+        feature_domain = domain
+
+    url_pattern = f"{ROOT_PATH}/{domain}/{'/'.join(['*'] * len(partitions))}/*.{suffix}"
     urls = filesystem.glob(url_pattern)
     thread_pool = ThreadPool(100)
     remain_urls = []
@@ -165,8 +174,10 @@ def generate_work_urls(
     for url in urls:
         data_url = os.path.join(ARNOLD_BASE_DIR, url.lstrip("/"))
         output_url = data_url.replace(
-            os.path.join(ROOT_PATH, "data"),
-            os.path.join(ROOT_PATH, f"features/{feature_type}_{feature_version}"),
+            os.path.join(ROOT_PATH, domain),
+            os.path.join(
+                ROOT_PATH, f"features/{feature_domain}/{feature_type}_{feature_version}"
+            ),
         )
         output_bn = os.path.basename(output_url)
         output_dn = os.path.dirname(output_url)
@@ -210,7 +221,12 @@ def main(args):
             filesystem = get_filesystem(ROOT_PATH)
 
             work_urls = generate_work_urls(
-                ROOT_PATH, feature_type, feature_version, filesystem, args.force
+                ROOT_PATH,
+                feature_type,
+                feature_version,
+                filesystem,
+                args.force,
+                args.index_version,
             )
 
             n_worker = args.num_processor
@@ -228,6 +244,7 @@ def main(args):
             for i, (data_url, output_url, ckpt_url) in enumerate(work_urls):
                 workers[i % n_worker].en_task(data_url, output_url, ckpt_url)
 
+            domain = ("data" if args.index_version is None else "index",)
             pool = Pool(n_worker)
             for i, worker in enumerate(workers):
                 pool.apply_async(
@@ -240,6 +257,7 @@ def main(args):
                         dataset_name,
                         feature_type,
                         args.batch_size,
+                        domain,
                     ),
                 )
 
@@ -252,8 +270,12 @@ def main(args):
             if args.package_id:
                 dist.barrier()
                 if is_global_zero():
+                    feature_domain = ""
+                    if args.index_version is not None:
+                        domain = f"index_{args.index_version}"
+                        feature_domain = domain
                     feature_dst_dir = os.path.join(
-                        ROOT_PATH, f"features/{feature_type}_{feature_version}"
+                        ROOT_PATH, f"features/{feature_domain}/{feature_type}_{feature_version}"
                     )
                     packing_callback(args.package_id, feature_dst_dir)
 
@@ -262,7 +284,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_ids", nargs="+", type=str, required=True)
     parser.add_argument("--features", nargs="+", type=str, default="wavevae_1.0")
-    parser.add_argument("--feature_names", nargs="+", type=str, default="bns")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--force", action="store_true", default=False)
     parser.add_argument("--package_id", type=str, default=None)
@@ -270,6 +291,7 @@ if __name__ == "__main__":
     parser.add_argument("--not_trim", action="store_true", default=False)
     parser.add_argument("--ckpt_path", type=str, default=None)
     parser.add_argument("--target_sr", type=int, default=24000)
+    parser.add_argument("--index_version", type=int, default=None)
     args = parser.parse_args()
     backend = "nccl" if torch.cuda.is_available() else "mpi"
     dist.init_process_group(backend=backend)
