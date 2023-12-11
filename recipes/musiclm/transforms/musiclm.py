@@ -4,18 +4,21 @@ import torch
 import random
 import pickle
 import os
+import json
 import numpy as np
 from torchaudio_augmentations import Compose
 import subprocess
 import pickle
 
-from recipes.musiclm.transforms.audio import (
-    NormalizeAudio,
+from samantha.transforms.audio import (
     NormalizeAudioToFloat32,
-    RandomPad,
-    RandomResizedCrop,
     SetAudioDimensions,
     ToTensor,
+)
+from recipes.musiclm.transforms.audio import (
+    NormalizeAudio,
+    RandomPad,
+    RandomResizedCrop,
     LoudnessCheck,
     ReadMP3,
 )
@@ -377,13 +380,21 @@ class MCCTransforms(TransformBase):
         if text_type == "mixed":
             text_type = "long" if random.random() <= 0.5 else "short"
         if text_type == "long":
-            # Both Pond5 and SSTK have DESCRIPTION
-            return metadata["DESCRIPTION"]
-        elif text_type == "short":
-            if "KEYWORDS" in metadata:
-                ary = metadata["KEYWORDS"].split(",")
+            if "description" in metadata:
+                return metadata["description"]
+            elif "DESCRIPTION" in metadata:
+                return metadata["DESCRIPTION"]
             else:
+                raise ValueError(f"Can't find any long text: {metadata.keys()}")
+        elif text_type == "short":
+            if "keywords" in metadata:
+                ary = metadata["keywords"].split(",")
+            elif "KEYWORDS" in metadata:
+                ary = metadata["KEYWORDS"].split(",")
+            elif "TAGS" in metadata:
                 ary = metadata["TAGS"].split(",")
+            else:
+                raise ValueError(f"Can't find any short text: {metadata.keys()}")
             return ", ".join([x.strip() for x in ary])
         elif text_type == "mcc":
             tags = []
@@ -394,7 +405,19 @@ class MCCTransforms(TransformBase):
         else:
             raise ValueError(f"Unknown text type: {text_type}")
 
+    def maybe_convert_parquet(self, x: Dict[str, Any]):
+        if "__index_data__" in x:   # WebDataset, nothing to do
+            return x
+        x[self.audio_key] = x["wav"]
+        del x["wav"]
+        x["__index_data__"] = json.loads(x["meta"])
+        del x["meta"]
+        x["__url__"] = x["__data_url__"]
+        del x["__data_url__"]
+        return x
+
     def __call__(self, x: Dict[str, Any]) -> Generator:
+        x = self.maybe_convert_parquet(x)
         is_good, message = self.is_metadata_good(x["__index_data__"])
         if not is_good:
             self._update_stats(skipped=True, message=message)

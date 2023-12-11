@@ -9,6 +9,7 @@ import webdataset as wds
 from torch.utils.data import Dataset
 from recipes.musiclm.transforms.musiclm import MCCTransforms, PGCTransforms, ARFiltering
 from recipes.musiclm.preprocess import WebDatasetBufferPreprocessor
+from samantha.dataio.parquet import ParquetDataset
 from samantha.dataio.webdataset.extension import IndexedWebDataset
 from samantha.dataio.webdataset.pipeline import WebPipeline
 from samantha.utils.datastructures import select_keys
@@ -139,7 +140,7 @@ class MCC40MDataset(WebPipeline):
 
     def __init__(
         self,
-        url2index: str,
+        url2index: Union[str, int],
         sample_rate: int,
         duration: Union[float, List[float]],
         audio_key: str = "mp3",
@@ -162,11 +163,11 @@ class MCC40MDataset(WebPipeline):
         handler: Callable = wds.warn_and_continue,
         **kwargs,
     ):
-        dataset = IndexedWebDataset(
-            url2index=url2index,
-            handler=handler,
-            **kwargs,
-        )
+        is_parquet = isinstance(url2index, int)
+        if is_parquet:
+            dataset = ParquetDataset(data_id=url2index, **kwargs)
+        else:
+            dataset = IndexedWebDataset(url2index=url2index, handler=handler, **kwargs)
 
         if isinstance(duration, (list, tuple)):
             n_samples = [int(d * sample_rate) for d in duration]
@@ -198,10 +199,12 @@ class MCC40MDataset(WebPipeline):
             transforms=audio_transforms,
         )
         additional_transforms = [wds.map(t) for t in additional_transforms] if additional_transforms else []
-        pipeline=[
-            "decode",
-            {"compose": [preprocessor.train_buffer_preprocessor, *additional_transforms]},
-        ]
+        pipeline = []
+        if not is_parquet:
+            pipeline.append("decode")
+        pipeline.append(
+            {"compose": [preprocessor.train_buffer_preprocessor, *additional_transforms]}
+        )
         super().__init__(dataset, pipeline)
 
 
