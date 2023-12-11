@@ -1,0 +1,1 @@
+from .utils import hash_trick, length_to_mask

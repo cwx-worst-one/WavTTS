@@ -1,24 +1,24 @@
 def vocalB_dataset_study(dataset_size):
+    # was /mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_B/
     return [
-        f"/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-blues.txt",
-        f"/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-childhood.txt",
-        f"/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-classical.txt",
-        f"/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-country.txt",
-        f"/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-devotional.txt",
-        f"/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-easy-listening.txt",
-        f"/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-electronic.txt",
-        f"/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-folk.txt",
-        f"/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-hip-hop-rap.txt",
-        f"/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-jazz.txt",
-        f"/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-metal.txt",
-        f"/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-new-age.txt",
-        f"/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-pop.txt",
-        f"/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-r-b-soul.txt",
-        f"/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-reggae.txt",
-        f"/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-rock.txt",
-        f"/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-soundtrack.txt",
-        f"/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-trap-rap.txt",
-          
+        f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-blues.txt",
+        f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-childhood.txt",
+        f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-classical.txt",
+        f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-country.txt",
+        f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-devotional.txt",
+        f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-easy-listening.txt",
+        f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-electronic.txt",
+        f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-folk.txt",
+        f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-hip-hop-rap.txt",
+        f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-jazz.txt",
+        f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-metal.txt",
+        f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-new-age.txt",
+        f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-pop.txt",
+        f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-r-b-soul.txt",
+        f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-reggae.txt",
+        f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-rock.txt",
+        f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-soundtrack.txt",
+        f"hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/vocal_B/{dataset_size}/vocal-B-trap-rap.txt",     
     ]
 
 INDEX = {
@@ -242,7 +242,8 @@ INDEX = {
         "RESSO_MSS": "/mnt/bn/audio-diffusion/ashaw/webdataset/index_lists/resso_mss.tar_to_index.tsv",
         "KARAOKE_TRAIN": "/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/indexes_with_meta/karaoke_train.tar_to_index.tsv",
         "KARAOKE_VALID": "/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/indexes_with_meta/karaoke_valid.tar_to_index.tsv",
-        "MCC60M_VALID_GROUPA": "/mnt/bn/audio-diffusion/weituo/groupA-genrebalanced-val-url2idx.txt", # 480 songs - 24 songs x 20 genres
+        # "MCC60M_VALID_GROUPA": "/mnt/bn/audio-diffusion/weituo/groupA-genrebalanced-val-url2idx.txt", # 480 songs - 24 songs x 20 genres
+        "MCC60M_VALID_GROUPA": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/groupA-genrebalanced-val/groupA-genrebalanced-val-url2idx.txt",
         "LIBRILIGHT": "hdfs://harunava/home/byte_speech_sv/data/speech/librilight_asr_npy/url2idx.txt",
         "LIBRITTS": "pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/speech/libritts/24000hz/train-clean-360/{00000..00007}.tar",
         "LIBRITTS_VALID": "pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/speech/libritts/24000hz/test-clean/00000.tar"

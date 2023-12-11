@@ -56,14 +56,16 @@ class ConformerConvModule(nn.Module):
         self,
         n_embd: int,
         activation_fn: Activation,
-        causal: bool,
+        is_causal: bool,
         expansion_factor: int,
         kernel_size: int,
         dropout: float,
     ):
         super().__init__()
         inner_dim = n_embd * expansion_factor
-        padding = calc_same_padding(kernel_size) if not causal else (kernel_size - 1, 0)
+        padding = (
+            calc_same_padding(kernel_size) if not is_causal else (kernel_size - 1, 0)
+        )
 
         self.net = nn.Sequential(
             nn.LayerNorm(n_embd),
@@ -73,7 +75,7 @@ class ConformerConvModule(nn.Module):
             DepthWiseConv1d(
                 inner_dim, inner_dim, kernel_size=kernel_size, padding=padding
             ),
-            nn.BatchNorm1d(inner_dim) if not causal else nn.Identity(),
+            nn.BatchNorm1d(inner_dim) if not is_causal else nn.Identity(),
             Swish(),
             nn.Conv1d(inner_dim, n_embd, 1),
             Rearrange("b c n -> b n c"),
@@ -95,14 +97,14 @@ class ConformerBlock(nn.Module):
             config.n_embd,
             config.n_head,
             dropout=config.attn_dropout,
-            causal=config.causal,
+            is_causal=config.is_causal,
             use_rotary_embeddings=config.use_rotary_embeddings,
             **config.attention_kwargs,
         )
         self.conv = ConformerConvModule(
             n_embd=config.n_embd,
             activation_fn=config.activation_fn,
-            causal=config.conv_causal,
+            is_causal=config.conv_causal,
             expansion_factor=config.conv_expansion_factor,
             kernel_size=config.conv_kernel_size,
             dropout=config.conv_dropout,

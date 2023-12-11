@@ -1,10 +1,15 @@
+import logging
 import os
 import shutil
+import time
 from typing import Dict
 
 from hyperpyyaml import resolve_references
+from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
 from samantha.utils.hdfs_helper import ishdfs, put
+
+logger = logging.getLogger()
 
 
 def create_experiment_directory(
@@ -33,6 +38,25 @@ def create_experiment_directory(
         if ishdfs(hparams_save_path):
             put(local_path, hparams_save_path)
         else:
-            shutil.copy(local_path, hparams_save_path)
+            if not os.path.exists(hparams_save_path):
+                shutil.copy(local_path, hparams_save_path)
     finally:
         os.remove(local_path)
+
+
+@rank_zero_only
+def save_dummy_model(trainer, pl_module, check_load_ckpt: bool = False):
+    out_fp = os.path.join("model.ckpt")
+    trainer.strategy.connect(pl_module)
+
+    module_name = pl_module.__class__.__name__
+
+    logger.info(f"({module_name}) Saving model checkpoint to: {out_fp}")
+    trainer.save_checkpoint(out_fp)
+
+    if check_load_ckpt:
+        logger.info(f"({module_name}) Loading model checkpoint from: {out_fp}")
+        tik = time.perf_counter()
+        pl_module.load_from_checkpoint(out_fp)
+        tok = time.perf_counter()
+        logger.info(f"({module_name}) It took {tok - tik} to load the model checkpoint")

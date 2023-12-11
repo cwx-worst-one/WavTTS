@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
+from julius.resample import ResampleFrac
 from torch import Tensor
 from torch.nn.functional import pad
 from torchaudio.functional.functional import _get_spec_norms
@@ -522,3 +523,19 @@ class LoudnessCheck:
         if ratio < self.loudness_ratio_threshold:
             return False
         return True
+
+
+class ResampleAudio:
+    def __init__(self, src_sample_rate: int, target_sample_rate: int):
+        self._src_sample_rate = src_sample_rate
+        self._target_sample_rate = target_sample_rate
+        self.resample_fn = ResampleFrac(self._src_sample_rate, self._target_sample_rate)
+
+    @property
+    def sample_rate(self):
+        return self._target_sample_rate
+
+    def __call__(self, x: torch.Tensor):
+        if self._src_sample_rate == self._target_sample_rate:
+            return x
+        return self.resample_fn(x)

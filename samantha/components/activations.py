@@ -1,6 +1,7 @@
 # Copied from https://github.com/mlcommons/training_results_v1.1/blob/main/NVIDIA/benchmarks/bert/implementations/pytorch/model/layers/activations.py # noqa
 import math
 from enum import Enum
+from functools import partial
 from typing import Optional
 
 import torch
@@ -161,7 +162,8 @@ def build_activation(activation: Optional[Activation]):
     return {
         Activation.ReLU: nn.ReLU,
         Activation.SiLU: nn.SiLU,
-        Activation.GeLU: NewGeLU,
+        # Activation.GeLU: NewGeLU, # TODO MEMORY FOOTPRINT!!!
+        Activation.GeLU: partial(nn.GELU, approximate="tanh"),
         Activation.GLU: GLU,
         Activation.LeakyReLU: nn.LeakyReLU,
     }[activation]()

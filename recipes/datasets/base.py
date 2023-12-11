@@ -58,6 +58,19 @@ class DataResult:
         for field in fields(self):
             yield getattr(self, field.name)
 
+    def keys(self):
+        return [field.name for field in fields(self)]
+
+
+def PaddingStrategy(padding_strategy: str, n_samples: int) -> Union[Pad, RandomPad]:
+    if padding_strategy == "pad":
+        return Pad(n_samples=n_samples)
+    elif padding_strategy == "random_pad":
+        return RandomPad(n_samples=n_samples)
+    else:
+        raise NotImplementedError("Choose between [pad, random_pad]")
+
+
 def collate_batch_dataclass(batch) -> DataResult:
     class_keys = vars(batch[0]).keys()
     init_args = {k: [] for k in class_keys}
@@ -229,7 +242,7 @@ class WebDataModuleBase(LightningDataModuleBase):
         batch_size_valid: Optional[int] = None,
         batch_size_test: Optional[int] = None,
         epoch_size: Optional[int] = None,
-        padding_strategy: str = 'pad'
+        padding_strategy: str = "pad"
     ):
         super().__init__(
             batch_size=batch_size,
@@ -260,7 +273,7 @@ class WebDataModuleBase(LightningDataModuleBase):
             batch = self.batcher.collate_batch(item)
             if batch is not None:
                 # TODO: this can be more elegant
-                for audio_attr in ["input_audio", "target_audio"]:
+                for audio_attr in ["audio", "input_audio", "target_audio"]:
                     if (
                         hasattr(batch[0], audio_attr)
                         and batch[0][audio_attr] is not None
@@ -268,9 +281,12 @@ class WebDataModuleBase(LightningDataModuleBase):
                         max_length = max(
                             [self.batcher.length_fn(item) for item in batch]
                         )
-                        pad_fn = RandomPad(max_length) if self.padding_strategy == 'random_pad' else Pad(max_length)
+                        pad_fn = PaddingStrategy(self.padding_strategy, n_samples=max_length)
                         for idx in range(len(batch)):
-                            batch[idx][audio_attr] = pad_fn(batch[idx][audio_attr])
+                            audio = batch[idx].get(audio_attr)
+                            padded_audio = pad_fn(audio)
+                            batch[idx][audio_attr] = padded_audio
+                            batch[idx]["input_length"] = audio.shape[-1]
                 yield batch
 
     def DataLoader(

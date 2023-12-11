@@ -1,0 +1,264 @@
+from collections import OrderedDict
+from dataclasses import dataclass
+from typing import Any, Optional
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torchmetrics
+
+from recipes.datasets.mir.music_sft import MusicSFTDataResult
+from recipes.datasets.mir.taxonomies.music_sft_en import MusicSFTTokenizerEN
+from recipes.mi1.models.tagging import MI1_MusicTaggingConfig, MI1_MusicTaggingResult
+from recipes.mi1.models.tokenizers import UMMTokenizer
+from samantha.models.base import DefaultTrainingBaseModule, LossDict
+
+
+@dataclass
+class MI1_MusicTaggingMusicSFTResult:
+    logits: torch.Tensor
+    hidden_states: torch.Tensor
+    loss: Optional[LossDict] = None
+
+class MI1_MusicTaggingMusicSFT(DefaultTrainingBaseModule):
+
+    def __init__(
+        self,
+        config: MI1_MusicTaggingConfig,
+        tag_tokenizer: MusicSFTTokenizerEN,
+        audio_tokenizer: Optional[UMMTokenizer] = None,
+    ) -> None:
+        super().__init__(ignore_hparams=["audio_tokenizer"])
+        self.config = config
+        self.tag_tokenizer = tag_tokenizer
+        self.audio_tokenizer = audio_tokenizer
+
+        if audio_tokenizer:
+            self.audio_tokenizer_identifier = self.audio_tokenizer.identifier
+
+        tag_head = nn.Sequential(
+            nn.Linear(self.config.n_embd, len(self.tag_tokenizer)),
+        )
+
+        self.heads = nn.ModuleDict(
+            {
+                "tag": tag_head,
+            }
+        )
+
+        ## Metrics
+        self.roc_auc = torchmetrics.AUROC(
+            task="multilabel",
+            num_labels=len(self.tag_tokenizer),
+            average="macro",
+            thresholds=None,
+        )
+        self.pr_auc = torchmetrics.AveragePrecision(
+            task="multilabel",
+            num_labels=len(self.tag_tokenizer),
+            average="macro",
+            thresholds=None,
+        )
+
+    def forward(self, hidden_states: torch.Tensor, apply_sigmoid: bool = True) -> MI1_MusicTaggingMusicSFTResult:
+        # [b, t, n_embd]
+        hidden_states = hidden_states.mean(dim=1)
+        logits = self.heads.tag(hidden_states)
+
+        if apply_sigmoid:
+            logits = logits.sigmoid()
+
+        return MI1_MusicTaggingMusicSFTResult(logits=logits, hidden_states=hidden_states)
+
+    def loss(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+    ) -> LossDict:
+        loss = F.binary_cross_entropy_with_logits(logits, targets.float())
+        return {"loss": loss}
+
+    def step(self, batch: MusicSFTDataResult, return_loss: bool) -> MI1_MusicTaggingMusicSFTResult:
+        result = self.audio_tokenizer.forward(batch.audio)
+        result = self.forward(result.hidden_states, apply_sigmoid=False)
+        if return_loss:
+            result.loss = self.loss(result.logits, batch.tag_ids)
+        return result
+
+    def validation_step(self, batch: MusicSFTDataResult, batch_idx: int) -> torch.Tensor:
+        result = self.step(batch, return_loss=True)
+        self.log_step(result.loss, tag="valid", prog_bar=True, rank_zero_only=True)
+
+        self.roc_auc(result.logits, batch.tag_ids)
+        self.pr_auc(result.logits, batch.tag_ids)
+        self.log(
+            "valid/roc_auc", self.roc_auc, prog_bar=True, on_step=False, on_epoch=True
+        )
+        self.log(
+            "valid/pr_auc", self.pr_auc, prog_bar=True, on_step=False, on_epoch=True
+        )
+        return result.loss["loss"]
+
+    def on_test_start(self) -> None:
+        self.roc_auc.reset()
+        self.pr_auc.reset()
+
+    def test_step(self, batch: MusicSFTDataResult, batch_idx: int) -> torch.Tensor:
+        result = self.step(batch, return_loss=True)
+        self.roc_auc(result.logits, batch.tag_ids)
+        self.pr_auc(result.logits, batch.tag_ids)
+        self.log("test/roc_auc", self.roc_auc, on_step=True, on_epoch=True)
+        self.log("test/pr_auc", self.pr_auc, on_step=True, on_epoch=True)
+        return result.loss["loss"]
+
+    def configure_optimizers(self) -> Any:
+        optimizer = torch.optim.AdamW(
+            self.parameters(),  # TODO optimizers for foundation/head models
+            lr=self.config.learning_rate,
+            weight_decay=self.config.weight_decay,
+            betas=self.config.betas,
+            fused=False,
+        )
+        return {
+            "optimizer": optimizer,
+        }
+
+    def logits_to_tag_tokens(self, logits: torch.Tensor, topk: int) -> torch.Tensor:
+        _, valid_tags_indices = torch.topk(logits, k=topk)
+        return valid_tags_indices
+
+    @torch.no_grad()
+    def predict_tags(self, hidden_states: torch.Tensor, topk: int) -> MI1_MusicTaggingResult:
+        result = self.forward(hidden_states)
+        valid_tags_indices = self.logits_to_tag_tokens(result.logits, topk=topk)
+        tag_names = self.tag_tokenizer.decode(valid_tags_indices)
+        tag_probs = result.logits.softmax(dim=-1)
+        return MI1_MusicTaggingResult(
+            logits=result.logits,
+            hidden_states=result.hidden_states,
+            tag_ids=valid_tags_indices,
+            tag_names=tag_names,
+            tag_probabilities=tag_probs,
+        )
+
+
+class MI1_MusicClassificationMusicSFT(DefaultTrainingBaseModule):
+
+    def __init__(
+        self,
+        config: MI1_MusicTaggingConfig,
+        tag_tokenizer: MusicSFTTokenizerEN,
+        audio_tokenizer: Optional[UMMTokenizer] = None,
+    ) -> None:
+        super().__init__(ignore_hparams=["audio_tokenizer"])
+        self.config = config
+        self.tag_tokenizer = tag_tokenizer
+        self.audio_tokenizer = audio_tokenizer
+        self._n_classes = len(tag_tokenizer)
+
+        if audio_tokenizer:
+            self.audio_tokenizer_identifier = self.audio_tokenizer.identifier
+
+        ## Metrics
+        self.accuracy = torchmetrics.Accuracy(
+            task="multiclass",
+            num_classes=self.n_classes,
+            average="macro",
+
+        )
+
+        head = nn.Sequential(
+            nn.Linear(self.config.n_embd, self.n_classes),
+        )
+
+        self.heads = nn.ModuleDict(
+            {
+                self.config.head_name: head,
+            }
+        )
+
+    @property
+    def n_classes(self) -> int:
+        return self._n_classes
+
+    def forward(self, hidden_states: torch.Tensor) -> MI1_MusicTaggingMusicSFTResult:
+        # [b, t, n_embd]
+        hidden_states = hidden_states.mean(dim=1)
+        logits = self.heads[self.config.head_name](hidden_states)
+        return MI1_MusicTaggingMusicSFTResult(logits=logits, hidden_states=hidden_states)
+
+    def loss(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+    ) -> LossDict:
+        loss = F.cross_entropy(logits, targets)
+        return {"loss": loss}
+
+    def step(self, batch: MusicSFTDataResult, return_loss: bool) -> MI1_MusicTaggingMusicSFTResult:
+        result = self.audio_tokenizer.forward(batch.audio)
+        result = self.forward(result.hidden_states)
+
+        # result = self.forward(batch.hidden_states)
+
+        if return_loss:
+            result.loss = self.loss(result.logits, batch.tag_ids)
+        return result
+
+    def training_step(self, batch: MusicSFTDataResult, batch_idx: int) -> torch.Tensor:
+        result = self.step(batch, return_loss=True)
+        self.log_step(result.loss, tag="train", prog_bar=True, rank_zero_only=True)
+
+        self.accuracy(result.logits, batch.tag_ids)
+        self.log(
+            "train/accuracy", self.accuracy, prog_bar=True, on_step=False, on_epoch=True
+        )
+        return result.loss["loss"]
+
+    def validation_step(self, batch: MusicSFTDataResult, batch_idx: int) -> torch.Tensor:
+        result = self.step(batch, return_loss=True)
+        self.log_step(result.loss, tag="valid", prog_bar=True, rank_zero_only=True)
+
+        self.accuracy(result.logits, batch.tag_ids)
+        self.log(
+            "valid/accuracy", self.accuracy, prog_bar=True, on_step=False, on_epoch=True
+        )
+        return result.loss["loss"]
+
+    def on_test_start(self) -> None:
+        self.accuracy.reset()
+
+    def test_step(self, batch: MusicSFTDataResult, batch_idx: int) -> torch.Tensor:
+        result = self.step(batch, return_loss=True)
+        self.accuracy(result.logits, batch.tag_ids)
+        self.log("test/accuracy", self.accuracy, on_step=True, on_epoch=True)
+        return result.loss["loss"]
+
+    def configure_optimizers(self) -> Any:
+        optimizer = torch.optim.AdamW(
+            self.parameters(),  # TODO optimizers for foundation/head models
+            lr=self.config.learning_rate,
+            weight_decay=self.config.weight_decay,
+            betas=self.config.betas,
+            fused=False,
+        )
+        return {
+            "optimizer": optimizer,
+        }
+
+    def logits_to_tag_tokens(self, logits: torch.Tensor) -> torch.Tensor:
+        return logits.argmax(dim=-1)
+
+    @torch.no_grad()
+    def predict_tags(self, hidden_states: torch.Tensor) -> MI1_MusicTaggingResult:
+        result = self.forward(hidden_states)
+        valid_tags_indices = self.logits_to_tag_tokens(result.logits)
+        tag_names = self.tag_tokenizer.decode_batch(valid_tags_indices)
+        tag_probs = result.logits.softmax(dim=-1)
+        return MI1_MusicTaggingResult(
+            logits=result.logits,
+            hidden_states=result.hidden_states,
+            tag_ids=valid_tags_indices,
+            tag_names=tag_names,
+            tag_probabilities=tag_probs,
+        )

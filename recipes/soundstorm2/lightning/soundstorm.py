@@ -103,7 +103,7 @@ class SoundStorm(pl.LightningModule):
             n_layer=config.n_layer,
             n_head=config.n_head,
             use_rotary_embeddings=True,
-            causal=False,
+            is_causal=False,
             attention_kwargs=config.attention_kwargs,
         )
         self.audio_embedding = nn.ModuleList(

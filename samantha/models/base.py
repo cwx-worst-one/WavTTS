@@ -1,15 +1,23 @@
+import os
 from abc import abstractmethod, abstractproperty
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from functools import cached_property
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
+from uuid import uuid4
 
+import numpy as np
 import torch
 import torch.nn as nn
 from pytorch_lightning import LightningModule
 from pytorch_lightning.utilities.types import STEP_OUTPUT
 from tqdm import tqdm
 
+from recipes.datasets.base import LightningDataModuleBase
 from samantha.components.attention import MultiHeadAttention, SeerAttention
+from samantha.dataio.webdataset.writer import IndexShardWriter
+from samantha.utils.logger import RankedLogger
+
+logger = RankedLogger(__name__)
 
 
 class BaseModel(nn.Module):
@@ -87,9 +95,9 @@ class ModelIdentifier(NamedTuple):
 
 
 class LightningModuleBase(LightningModule):
-    def __init__(self):
+    def __init__(self, ignore_hparams: List[str] = []):
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters(ignore=ignore_hparams)
 
     @property
     @torch.jit.unused
@@ -191,6 +199,94 @@ class LightningModuleBase(LightningModule):
     def preprocess_step(self, *args, **kwargs) -> torch.Tensor:
         pass
 
+    @abstractmethod
+    def get_inputs(self, batch: Any):
+        pass
+
+    def preprocess_dataloader(
+        self, data_loader, directory: str, rank: int, padding_strategy: str
+    ):
+        pattern = os.path.join(directory, str(rank), "%05d.tar")
+
+        # TODO retain shard variety -> audio is larger, around ~400 tracks per 8GB
+        # mel take up much less space, so I'm setting a manual maxcount instead
+
+        # maxsize = (1 << 32) * 2  # 8GiB, maximum size of each shard
+        maxcount = 1000
+        writer = IndexShardWriter(pattern, maxcount=maxcount)
+
+        logger.info(f"Writing shards to: {pattern}")
+
+        audio_key = "audio"
+
+        for batch_idx, batch in enumerate(tqdm(data_loader)):
+            batch_keys = list(batch.keys())
+
+            batch_size = batch[audio_key].shape[0]
+
+            batch.audio = batch.audio.to(self.device)
+            inputs = self.get_inputs(batch)
+
+            # write to new items
+            batch_keys.remove(audio_key)
+            for idx in range(batch_size):
+                obj = {}
+                index = {}
+
+                # write new index
+                for k in batch_keys:
+                    if batch[k] is not None:
+                        if type(batch[k]) == str:
+                            index[k] = batch[k]
+                        else:
+                            index[k] = batch[k][idx]
+
+                # write new tar
+                for k, v in asdict(inputs).items():
+                    numpy_key = f"{k}.npy"
+                    if type(v) == torch.Tensor:
+                        if v.ndim:
+                            obj[numpy_key] = v[idx].detach().cpu().numpy()
+                        else:
+                            # scalars
+                            obj[numpy_key] = np.array([v.item()])
+
+                unique_id = str(uuid4())
+                obj["__key__"] = unique_id
+                writer.write(obj, index)
+        writer.close()
+
+    def preprocess_save_fp(self, pl_datamodule, root_dir: str):
+        return os.path.join(
+            root_dir, f"{pl_datamodule.__class__.__name__}_{self.__class__.__name__}"
+        )
+
+    def preprocess(
+        self, pl_datamodule: LightningDataModuleBase, root_dir: str, rank: int
+    ):
+        fp = self.preprocess_save_fp(pl_datamodule, root_dir)
+        pl_datamodule.setup(stage="fit")
+        self = self.to("cuda")
+
+        self.preprocess_dataloader(
+            pl_datamodule.train_dataloader(),
+            f"{fp}/train",
+            rank,
+            pl_datamodule.padding_strategy,
+        )
+        self.preprocess_dataloader(
+            pl_datamodule.val_dataloader(),
+            f"{fp}/validation",
+            rank,
+            pl_datamodule.padding_strategy,
+        )  # TODO: check if this does all validation?
+        self.preprocess_dataloader(
+            pl_datamodule.test_dataloader(),
+            f"{fp}/test",
+            rank,
+            pl_datamodule.padding_strategy,
+        )
+
 
 @dataclass
 class TrainingResultBase:
@@ -236,7 +332,7 @@ class DefaultTrainingBaseModule(LightningModuleBase):
         return self.step(batch, return_loss=False)
 
 
-class GenerativeBaseModule(LightningModuleBase):
+class GenerativeBaseModule(DefaultTrainingBaseModule):
     def __init__(self):
         super().__init__()
 

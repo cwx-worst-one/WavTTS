@@ -234,9 +234,12 @@ class BaseContinuousEmbedModule(BaseModule):
         raise NotImplementedError()
 
     def prepare_training_inputs(self, batch, return_all=False):
-        target_ids = self.target_embedder.tokenize(self.requires, batch['target_audio'], with_sos=False, with_eos=False)
+        targets = self.target_embedder.tokenize(self.requires, batch['target_audio'], with_sos=False, with_eos=False)
+        target_ids = targets["vq_ids"]
+        target_hidden_states = targets["hidden_states"]
+
         batch_size = target_ids.size(0)
-        inputs_embeds = self.prepare_inputs_embeddings(batch)
+        inputs_embeds = self.prepare_inputs_embeddings(batch, target_hidden_states)
         sos_embeds = self.target_embedder.get_sos_embed(batch_size)
         target_embeds = self.target_embedder.embed(token_ids=target_ids, with_sos=False, with_eos=False)
         if self.target_embedder.eos_id is not None:
@@ -329,12 +332,18 @@ class BaseContinuousEmbedModule(BaseModule):
             pbar.set_description(f"{tqdm_name} [0 - {num_tokens}]")
 
             if isinstance(self.model, gpt.GPTLMHeadModel):
+                # to enable inference without a trainer, we simply cast the inputs to the expected model type
+                # which is either torch.float16 or torch.bfloat16
+                model_input["inputs_embeds"] = model_input["inputs_embeds"].to(self.model.lm_head.weight.dtype)
                 logits = self.model(
                     **model_input,
                     inference_params=inference_params,
                     position_ids=None,
                     last_token_only=False,
                 ).logits
+                # cast back to full precision
+                logits = logits.float()
+
                 inference_params.sequence_len_offset += model_input['inputs_embeds'].size(1)
                 logits = logits[:, -1:, :] # only predicting on last logit.
                 predict_token = self.sample_logits(

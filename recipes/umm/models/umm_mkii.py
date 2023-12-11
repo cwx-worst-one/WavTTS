@@ -1873,13 +1873,19 @@ class Stage3(Stage2):
         """Apply Vector Quantization and only get the ID's."""
         for i, layer in enumerate(self.encoder_layers):
             if i == self.config.vq_layer_idx:
-                hidden_states = self.vq_proj_in(hidden_states)
-                _, vq_ids, _ = self.vq(hidden_states)
-                return vq_ids
+                vq_hidden_states = self.vq_proj_in(hidden_states)
+                _, vq_ids, _ = self.vq(vq_hidden_states)
+                return {
+                    "vq_ids": vq_ids,
+                    "hidden_states": hidden_states,
+                }
             hidden_states = layer(
                 hidden_states, position_embeddings=position_embeddings
             )
-        return vq_ids
+        return {
+            "vq_ids": vq_ids,
+            "hidden_states": hidden_states,
+        }
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
@@ -1890,8 +1896,8 @@ class Stage3(Stage2):
         audio_feature = self.audio_encoder(feature)
         hidden_states = self.encoder_input_dropout(audio_feature)
         position_embeddings = self.embed_positions(hidden_states)
-        vq_ids = self._get_vq_ids(hidden_states, position_embeddings)
-        return vq_ids
+        result = self._get_vq_ids(hidden_states, position_embeddings)
+        return result
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)

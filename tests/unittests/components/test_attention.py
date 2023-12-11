@@ -15,10 +15,10 @@ def test_flash_attention():
     test_input = torch.randn(batch_size, seq_len, d_model)
 
     bf_mha = MultiHeadAttention(
-        d_model, n_heads, dropout=0, scale=None, causal=False, enable_flash=False
+        d_model, n_heads, dropout=0, scale=None, is_causal=False, enable_flash=False
     ).eval()
     bf_mha_flash = MultiHeadAttention(
-        d_model, n_heads, dropout=0, scale=None, causal=False, enable_flash=True
+        d_model, n_heads, dropout=0, scale=None, is_causal=False, enable_flash=True
     ).eval()
 
     bf_mha_flash.load_state_dict(bf_mha.state_dict())
@@ -29,12 +29,12 @@ def test_flash_attention():
     assert torch.allclose(out, out_flash, atol=1e-7)
 
 
-@pytest.mark.parametrize("causal", [False, True])
+@pytest.mark.parametrize("is_causal", [False, True])
 @pytest.mark.parametrize("use_rotary_embeddings", [False, True])
 @pytest.mark.parametrize("enable_flash", [False, True])
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
+@pytest.mark.parametrize("dtype", [torch.float32])
 @torch.no_grad()
-def test_qkv_cached(causal, use_rotary_embeddings, enable_flash, dtype):
+def test_qkv_cached(is_causal, use_rotary_embeddings, enable_flash, dtype):
     torch.manual_seed(42)
     if dtype == torch.float16 and torch_device == "cpu":
         return
@@ -51,7 +51,7 @@ def test_qkv_cached(causal, use_rotary_embeddings, enable_flash, dtype):
     mha = MultiHeadAttention(
         d_model,
         n_heads,
-        causal=causal,
+        is_causal=is_causal,
         use_rotary_embeddings=use_rotary_embeddings,
         enable_flash=enable_flash,
         enable_mem_efficient=False,

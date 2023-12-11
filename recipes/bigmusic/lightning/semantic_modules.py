@@ -13,6 +13,7 @@ from recipes.bigmusic.lightning.embedding_modules import (
     StructureEmbedder,
     IntensityEmbedder,
     get_mulan_embeds,
+    M1TagEmbedder,
 )
 from recipes.bigmusic.utils.metrics_asr import asr_transcribe_lyrics
 from recipes.bigmusic.utils.rewards import (
@@ -38,6 +39,7 @@ from recipes.musiclm.lightning.modules import MaskedCrossEntropy
 from recipes.musiclm.transforms.audio import to_energy
 from collections import defaultdict
 from itertools import zip_longest
+from typing import Optional
 
 # from recipes.umm.models.bestrq import BestRQMelCTC
 from recipes.umm.modules.lit_module import (
@@ -74,7 +76,13 @@ class SemanticModule(BaseContinuousEmbedModule):
         use_mcc_gender = extra_params.get("use_mcc_gender", False)
         embedder_dict = {}
         for emb_type in extra_params.get("input_embedders", ["mulan", "lyrics_tokens"]):
-            if emb_type == "mulan":                
+            if emb_type == "m1_tag":
+                embedder_dict[emb_type] = M1TagEmbedder(
+                    topk=5, # TODO make hyperparam?
+                    embedding_dim=hidden_size,
+                    add_sos=True,
+                )
+            elif emb_type == "mulan":                
                 embedder_dict[emb_type] = MulanTagEmbedder(
                     input_dim=mulan_embed_dim,
                     embedding_dim=hidden_size,
@@ -185,6 +193,15 @@ class SemanticModule(BaseContinuousEmbedModule):
             target_duration = None
         return target_duration
 
+    def prepare_m1_tag_inputs(self, batch, m1_tag_embedder, hidden_states):
+        embeds = m1_tag_embedder.embed(
+            self.requires,
+            hidden_states,
+            with_sos=True,
+        )
+        return embeds
+
+
     def prepare_mulan_inputs(self, batch, mulan_embedder):
         batch_size = self.infer_batch_size(batch)
         conditions = self.infer_conditions(batch)
@@ -293,17 +310,24 @@ class SemanticModule(BaseContinuousEmbedModule):
         embeds = intensity_embedder.embed(intensity_labels, target_duration)
         return embeds
 
-    def prepare_inputs_embeddings(self, batch):
-        return self._prepare_inputs_embeddings(batch, self.input_embedders.items())
+    def prepare_inputs_embeddings(self, batch, hidden_states = None):
+        return self._prepare_inputs_embeddings(batch, self.input_embedders.items(), hidden_states)
 
-    def _prepare_inputs_embeddings(self, batch, input_embedders):
+    def _prepare_inputs_embeddings(self, batch, input_embedders, hidden_states = None):
         if self.log_counter < 1:
             print(batch)
             self.log_counter += 1
 
         inputs_embeds = []
+<<<<<<< HEAD
         for emb_type, embedder in input_embedders:
             if (emb_type == "mulan") or (emb_type == "mulan_categorical"):
+=======
+        for emb_type, embedder in input_embedders.items():
+            if emb_type == "m1_tag":
+                emb_inputs = self.prepare_m1_tag_inputs(batch, embedder, hidden_states)
+            if emb_type == "mulan":
+>>>>>>> 2d02658b1 (feat: m-1 prototype)
                 emb_inputs = self.prepare_mulan_inputs(batch, embedder)
             elif emb_type == 'tag_categorical':
                 emb_inputs = self.prepare_categorical_inputs(batch, embedder)

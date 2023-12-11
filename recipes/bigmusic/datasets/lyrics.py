@@ -139,6 +139,8 @@ class LyricsDataModule(pl.LightningDataModule):
         for dataset_type in dataset_types:
             dataset_config = DATASET_CONFIGS[dataset_type]
             init_fn = dataset_config['init_fn']
+
+            dataset_config["extra_args"].update(kwargs)
             dataset = init_fn(
                 sample_rate=sample_rate, 
                 sample_duration=sample_duration, 
@@ -265,7 +267,7 @@ def infer_dataset_weights(index_lists):
 class DefaultDatasets():
     class Basic:
         @staticmethod
-        def mcc60m_lossless_dataset(sample_rate, sample_duration, index_list=INDEX["US"]["MCCVocalB"], infer_weights=True, **kwargs):
+        def mcc60m_lossless_dataset(sample_rate, sample_duration, index_list=INDEX["US"]["MCCVocalB"], infer_weights=True, max_num_segments: Optional[int] = 10, **kwargs):
             datasets = [
                 LyricsDataset(
                     url2index=url2index,
@@ -273,6 +275,7 @@ class DefaultDatasets():
                     sample_duration=sample_duration,
                     audio_keys={ 'style_audio': 'audio.npy', 'target_audio': 'audio.npy'},
                     audio_format='npy',
+                    max_num_segments=max_num_segments,
                     **kwargs
                 )
                 for url2index in index_list
@@ -418,7 +421,8 @@ class DefaultDatasets():
             index_list,
             # transform params
             enable_punctuation=True, style_conditions="style_tag,lyrics_tokens", infer_weights=False,
-            min_song_confidence=0.8, min_segment_confidence=0.8
+            min_song_confidence=0.8, min_segment_confidence=0.75,
+            **kwargs
         ):
             if isinstance(style_conditions, list): # multiple style conditions - for mixed style training. In that case, use random conditioning
                 batch_transforms = [RandomConditionsTransform(style_conditions)]
@@ -426,7 +430,7 @@ class DefaultDatasets():
                 batch_transforms = [AddConditionsTransform(style_conditions)]
             ds = DefaultDatasets.Basic.mcc60m_lossless_dataset(
                 sample_rate, sample_duration=sample_duration, index_list=index_list, infer_weights=infer_weights,
-                min_song_confidence=min_song_confidence, min_segment_confidence=min_segment_confidence
+                min_song_confidence=min_song_confidence, min_segment_confidence=min_segment_confidence, max_num_segments=max_num_segments, **kwargs,
             )
             ds_batched = transform_dataset(
                 dataset=ds,

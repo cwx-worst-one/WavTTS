@@ -2,34 +2,39 @@ import json
 import logging
 import os
 import random
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Union
 
+import numpy as np
 import pandas as pd
 import torch
 import webdataset as wds
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
+from recipes.bigmusic.datasets.transforms.lyrics import LyricsTokenTransform
+from recipes.bigmusic.datasets.transforms.lyrics_segment import (
+    crop_pad_audio_to_segment,
+    lyrics_to_segments,
+)
+from recipes.bigmusic.utils.format_utils import rewrite_metadata
 from recipes.datasets.base import (
     BaseAudioTransform,
+    DataResult,
+    PaddingStrategy,
     WebDataModuleBase,
     _load_waveform,
-    resample,
     audio_batcher,
-    DataResult,
+    resample,
 )
+from recipes.datasets.filters import Filters, WordLengthFilter, TokenLengthFilter
 from samantha.dataio.data_bucket import data_bucket
-from samantha.dataio.dataset import MultiIterableDataset
-from samantha.utils.webdataset import return_self
 from samantha.dataio.webdataset.extension import IndexedWebDataset
 from samantha.dataio.webdataset.writer import IndexShardWriter
-from samantha.transforms.audio import (
-    RandomPad,
-    RandomResizedCrop,
-)
-
-SAMPLE_RATE = 44100
+from samantha.transforms.audio import RandomResizedCrop, ResampleAudio
+from samantha.transforms.tokenizers.phoneme import LyricPhonemeTokenizer, MAX_PHONE_LEN
+from samantha.utils.webdataset import return_self
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +191,7 @@ class BillboardHot200Dataset(Dataset):
 
 @dataclass
 class BillboardDataResult(DataResult):
-    target_audio: torch.Tensor
+    audio: torch.Tensor
     metadata: Union[List[dict], dict]
     shard: str
     key: str
@@ -196,43 +201,46 @@ class BillboardDataResult(DataResult):
     style_text: Optional[str] = None
     lyrics_text: Optional[str] = None
     lyrics_tokens: Optional[torch.Tensor] = None
-
-
-from recipes.bigmusic.datasets.transforms.lyrics_segment import (
-    crop_pad_audio_to_segment,
-    lyrics_to_segments,
-)
-from recipes.bigmusic.datasets.transforms.lyrics import LyricsTokenTransform
-from recipes.bigmusic.utils.format_utils import rewrite_metadata
-
+    target_audio: Optional[torch.Tensor] = None
+    input_length: Optional[int] = None
 
 class BillboardTransform:
     def __init__(
         self,
-        sample_rate: int,
+        src_sample_rate: int,
+        target_sample_rate: int,
         duration: Optional[float] = None,
+        padding_strategy: str = "pad"
     ):
-        self.sample_rate = sample_rate
-        self.duration = duration
+        self._src_sample_rate = src_sample_rate
+        self._target_sample_rate = target_sample_rate
+        self._duration = duration
+        self._padding_strategy = padding_strategy
 
         self.base_transform = BaseAudioTransform()
+        self.resample = ResampleAudio(self._src_sample_rate, self._target_sample_rate)
 
-        if self.duration is not None:
-            self.random_pad = RandomPad(self.n_audio_samples)
+        if self.crop_required():
+            self.pad = PaddingStrategy(self._padding_strategy, self.n_audio_samples)
             self.random_crop = RandomResizedCrop(self.n_audio_samples)
-
+    
     @property
     def n_audio_samples(self) -> int:
-        return int(self.duration * self.sample_rate)
+        return int(self._duration * self._target_sample_rate)
+
+    def crop_required(self) -> bool:
+        return self._duration is not None
 
     def __call__(self, items) -> Iterator[BillboardDataResult]:
         for item in items:
             audio = item["audio.npy"]
             index = item["__index_data__"]
-            audio = self.base_transform(audio)
 
-            if self.duration is not None:
-                audio = self.random_pad(audio)
+            audio = self.base_transform(audio)
+            audio = self.resample(audio)
+
+            if self.crop_required():
+                audio = self.pad(audio)
                 audio = self.random_crop(audio)
 
             metadata = index["metadata"]
@@ -240,6 +248,7 @@ class BillboardTransform:
             shard = item["__url__"]
             key = item["__key__"]
             yield BillboardDataResult(
+                audio=audio,
                 target_audio=audio,
                 metadata=metadata,
                 shard=shard,
@@ -247,26 +256,33 @@ class BillboardTransform:
             )
 
 
-from collections import Counter
-
-
 class BillboardLyricsTransform:
     def __init__(
         self,
-        sample_rate: int,
+        src_sample_rate: int,
+        target_sample_rate: int,
         min_duration: int,
         max_duration: int,
+        min_words: int,
+        max_words: int,
+        lyric_tokenizer: LyricPhonemeTokenizer
     ):
-        self.sample_rate = sample_rate
-        self.min_duration = min_duration
-        self.max_duration = max_duration
+        self._src_sample_rate = src_sample_rate
+        self._target_sample_rate = target_sample_rate
+        self._min_duration = min_duration
+        self._max_duration = max_duration
 
+        self.lyric_tokenizer = lyric_tokenizer
         self.base_transform = BaseAudioTransform()
-        self.tokenizer = LyricsTokenTransform.init_espeak_tokenizer(
-            lyrics_max_seq_len=400, enable_punctuation=True
+        self.resample = ResampleAudio(self._src_sample_rate, self._target_sample_rate)
+
+        self.filters = BillboardLyricsFilters(
+            min_words=min_words,
+            max_words=max_words,
         )
 
-    def billboard_to_compat_style_text(self, index: dict) -> str:
+    @staticmethod
+    def billboard_to_compat_style_text(index: dict) -> str:
         meta_dict = {}
 
         ## METADATA
@@ -285,13 +301,16 @@ class BillboardLyricsTransform:
         style_text = rewrite_metadata(meta_dict)
         return style_text
 
-    def billboard_to_compat_lyrics(self, index: dict) -> List[Any]:
+    @staticmethod
+    def billboard_to_compat_lyrics(index: dict, min_duration: int, max_duration: int) -> List[Any]:
         utterances = index["lyrics"]["result"][0]["utterances"]
+
+        # TODO: Verify this
         segments = lyrics_to_segments(
             utterances,
             fixed_duration=False,
-            min_duration=self.min_duration,
-            max_duration=self.max_duration,
+            min_duration=min_duration,
+            max_duration=max_duration,
             shuffle_start=True,
             shuffle_lengths=True,
             include_intro=True,
@@ -307,105 +326,65 @@ class BillboardLyricsTransform:
             metadata = index["metadata"]
 
             style_text = self.billboard_to_compat_style_text(index)
-            segments = self.billboard_to_compat_lyrics(index)
+            segments = self.billboard_to_compat_lyrics(index, self._min_duration, self._max_duration)
 
             for segment in segments:
-                clip = crop_pad_audio_to_segment(segment, audio[0], self.sample_rate)
+                audio = self.resample(audio)
+                clip = crop_pad_audio_to_segment(segment, audio[0], self._target_sample_rate)
                 clip = clip.unsqueeze(dim=0)
-
-                lyrics_dict = self.tokenizer({"lyrics": segment.text})
-                if lyrics_dict is None:
-                    continue
+                
+                lyrics_dict = self.lyric_tokenizer(segment.text)
 
                 shard = item["__url__"]
                 key = item["__key__"]
-                yield BillboardDataResult(
+
+                data_result = BillboardDataResult(
+                    audio=clip,
                     target_audio=clip,
                     metadata=metadata,
                     shard=shard,
                     key=key,
                     conditions="style_text,lyrics_tokens",
                     style_text=style_text,
-                    lyrics_text=lyrics_dict["lyrics_normalized_text"],
-                    lyrics_tokens=lyrics_dict["lyrics_tokens"],
+                    lyrics_text=lyrics_dict["normalized_text"][0], # returns batched output
+                    lyrics_tokens=lyrics_dict["token_ids"][0], # returns batched output
                 )
+                if self.filters(data_result):
+                    continue
+                
+                yield data_result
 
 
-class BillboardArtistGenderTransform(BillboardTransform):
-    _artist_gender_fp = "recipes/datasets/billboard/artist_gender.csv"
-    _artist_gender_idx = {
-        "male": 0,
-        "female": 1,
-    }
-    _num_classes = len(_artist_gender_idx)
+class BillboardDataModule(WebDataModuleBase):
+    _data_sample_rate: int = 24000
 
     def __init__(
         self,
         sample_rate: int,
-        duration: Optional[float] = None,
-    ):
-        super().__init__(sample_rate=sample_rate, duration=duration)
-        df = pd.read_csv(self._artist_gender_fp)
-        df.musicbrainz_artist_gender = df.musicbrainz_artist_gender.str.strip()
-
-        self.artist_gender = dict(
-            zip(df.spotify_primary_artist_name, df.musicbrainz_artist_gender)
-        )
-
-    def __call__(self, items) -> Iterator[BillboardDataResult]:
-        for item in items:
-            audio = item["audio.npy"]
-            index = item["__index_data__"]
-            audio = self.base_transform(audio)
-
-            if self.duration is not None:
-                audio = self.random_pad(audio)
-                audio = self.random_crop(audio)
-
-            metadata = index["metadata"]
-
-            primary_artist_name = metadata["spotify_primary_artist_name"]
-
-            artist_gender = self.artist_gender[primary_artist_name]
-            artist_gender_label = torch.tensor(self._artist_gender_idx[artist_gender])
-
-            shard = item["__url__"]
-            key = item["__key__"]
-            yield BillboardDataResult(
-                target_audio=audio,
-                artist_gender=artist_gender,
-                artist_gender_label=artist_gender_label,
-                metadata=metadata,
-                shard=shard,
-                key=key,
-            )
-
-
-class BillboardDataModule(WebDataModuleBase):
-    _sample_rate: int = 24000
-
-    def __init__(
-        self,
         batch_size: int,
         shuffle_buffer_size: int,
         num_workers: int,
         pin_memory: bool,
+        resampled: bool = True,
+        shardshuffle: bool = True,
         duration: Optional[float] = None,
+        padding_strategy: str = "pad",
     ):
-        transform = BillboardTransform(self._sample_rate, duration)
+        self._sample_rate = sample_rate
+        transform = BillboardTransform(self._data_sample_rate, self.sample_rate, duration, padding_strategy)
 
         train_dataset = IndexedWebDataset(
             url2index=data_bucket(
-                "music/billboard_hot200_v2/24000hz/train/url2index.txt"
+                "data/music/billboard_hot200_v2/24000hz/train/url2index.txt"
             ),
-            resampled=True,
-            shardshuffle=True,
+            resampled=resampled,
+            shardshuffle=shardshuffle,
             use_pipe=False,
             handler=wds.warn_and_continue
         )
         test_dataset = IndexedWebDataset(
             url2index=data_bucket(
-                "music/billboard_hot200_v2/24000hz/test/url2index.txt"
+                "data/music/billboard_hot200_v2/24000hz/test/url2index.txt"
             ),
             resampled=False,
             shardshuffle=False,
@@ -425,8 +404,11 @@ class BillboardDataModule(WebDataModuleBase):
             predict_dataset=train_dataset,
             num_workers=num_workers,
             pin_memory=pin_memory,
-            # batcher=batcher,
         )
+
+    @property
+    def sample_rate(self) -> int:
+        return self._sample_rate
 
     @staticmethod
     def create_webdataset(
@@ -470,39 +452,79 @@ class BillboardDataModule(WebDataModuleBase):
         writer.close()
 
 
+class BillboardLyricsFilters(Filters):
+
+    def __init__(self, min_words: int, max_words: int, max_phoneme_len: int = MAX_PHONE_LEN):
+        super().__init__()
+        self.word_len_filter = WordLengthFilter(enabled=True, min_words=min_words, max_words=max_words)
+        self.phoneme_len_filter = TokenLengthFilter(enabled=True, min_tokens=5, max_tokens=max_phoneme_len)
+
+    def __call__(self, item: BillboardDataResult) -> bool:
+        if self.word_len_filter(item["lyrics_text"]):
+            return True
+        
+        if self.phoneme_len_filter(item["lyrics_tokens"]):
+            return True
+        return False
+
 class BillboardLyricsDataModule(WebDataModuleBase):
-    _sample_rate: int = 24000
+    _data_sample_rate = 24000
 
     def __init__(
         self,
+        sample_rate: int,
         batch_size: int,
         shuffle_buffer_size: int,
-        buckets_sec: List[int],
-        num_workers: int,
-        pin_memory: bool,
+        min_seconds: float,
+        max_seconds: float,
+        min_words: int,
+        max_words: int,
+        lyric_tokenizer: LyricPhonemeTokenizer,
+        resampled: bool = True,
+        shardshuffle: bool = True,
+        num_workers: int = 8,
+        pin_memory: bool = True,
+        epoch_size: Optional[int] = None,
+        bucket_interval: float = 1.0,
+        padding_strategy: str = "pad",
     ):
-        batcher = audio_batcher(self._sample_rate, batch_size, buckets_sec, length_fn=lambda x: x.target_audio.shape[-1])
-        transform = BillboardLyricsTransform(
+        self._sample_rate = sample_rate
+        self._min_seconds = min_seconds
+        self._max_seconds= max_seconds
+        self._bucket_interval = bucket_interval
+
+        batcher = audio_batcher(
             self._sample_rate,
-            min_duration=buckets_sec[0],
-            max_duration=buckets_sec[-1],
+            batch_size,
+            self.buckets_sec,
+            length_fn=lambda x: x.audio.shape[-1],
+        )
+
+        transform = BillboardLyricsTransform(
+            src_sample_rate=self._data_sample_rate,
+            target_sample_rate=self._sample_rate,
+            min_duration=self.buckets_sec[0],
+            max_duration=self.buckets_sec[-1],
+            min_words=min_words,
+            max_words=max_words,
+            lyric_tokenizer=lyric_tokenizer,
         )
 
         train_dataset = IndexedWebDataset(
-            url2index="/mnt/bn/audio-diffusion/ashaw/webdataset/billboard_v2/url2index_train.txt", # has 98/2 train/test split
-            # url2index=data_bucket(
-            #     "music/billboard_hot200_v2/24000hz/train/20231026_genre/url2index.txt" # 90/1 train/test split
-            # ),
-            resampled=True,
-            shardshuffle=True,
+            # url2index="/mnt/bn/audio-diffusion/ashaw/webdataset/billboard_v2/url2index_train.txt", # has 98/2 train/test split
+            url2index=data_bucket(
+                "data/music/billboard_hot200_v2/24000hz/train/20231026_genre/url2index.txt" # 90/1 train/test split
+            ),
+            resampled=resampled,
+            shardshuffle=shardshuffle,
             use_pipe=False,
             handler=wds.warn_and_continue
         )
         test_dataset = IndexedWebDataset(
-            url2index="/mnt/bn/audio-diffusion/ashaw/webdataset/billboard_v2/url2index_test.txt",
-            # url2index=data_bucket(
-            #     "music/billboard_hot200_v2/24000hz/test/20231026_genre/url2index.txt"
-            # ),
+            # url2index="/mnt/bn/audio-diffusion/ashaw/webdataset/billboard_v2/url2index_test.txt",
+            url2index=data_bucket(
+                "data/music/billboard_hot200_v2/24000hz/test/20231026_genre/url2index.txt"
+            ),
             resampled=False,
             shardshuffle=False,
             nodesplitter=return_self,
@@ -522,82 +544,10 @@ class BillboardLyricsDataModule(WebDataModuleBase):
             num_workers=num_workers,
             pin_memory=pin_memory,
             batcher=batcher,
+            epoch_size=epoch_size,
+            padding_strategy=padding_strategy,
         )
 
-
-class BillboardArtistGenderDataModule(WebDataModuleBase):
-    _sample_rate: int = 24000
-    
-    def __init__(
-        self,
-        duration: float,
-        batch_size: int,
-        shuffle_buffer_size: int,
-        num_workers: int,
-        pin_memory: bool,
-    ):
-        transform = BillboardArtistGenderTransform(self._sample_rate, duration)
-
-        train_dataset_male = IndexedWebDataset(
-            url2index=data_bucket(
-                "music/billboard_hot200_v2/24000hz/train/filtered/artist_gender/male/url2index.txt"
-            ),
-            resampled=True,
-            shardshuffle=True,
-            use_pipe=False,
-            handler=wds.warn_and_continue
-        )
-        train_dataset_female = IndexedWebDataset(
-            url2index=data_bucket(
-                "music/billboard_hot200_v2/24000hz/train/filtered/artist_gender/female/url2index.txt"
-            ),
-            resampled=True,
-            shardshuffle=True,
-            use_pipe=False,
-            handler=wds.warn_and_continue
-        )
-
-        test_dataset_male = IndexedWebDataset(
-            url2index=data_bucket(
-                "music/billboard_hot200_v2/24000hz/test/filtered/artist_gender/male/url2index.txt"
-            ),
-            resampled=False,
-            shardshuffle=False,
-            nodesplitter=return_self,
-            use_pipe=False,
-            handler=wds.warn_and_continue
-        )
-        test_dataset_female = IndexedWebDataset(
-            url2index=data_bucket(
-                "music/billboard_hot200_v2/24000hz/test/filtered/artist_gender/female/url2index.txt"
-            ),
-            resampled=False,
-            shardshuffle=False,
-            nodesplitter=return_self,
-            use_pipe=False,
-            handler=wds.warn_and_continue
-        )
-
-        train_dataset = wds.DataPipeline(
-            MultiIterableDataset(
-                [train_dataset_male, train_dataset_female], weights=[0.3, 0.7]
-            ),
-            wds.decode(),
-            transform,
-        )
-        test_dataset = wds.DataPipeline(
-            MultiIterableDataset([test_dataset_male, test_dataset_female]),
-            wds.decode(),
-            transform,
-        )
-
-        super().__init__(
-            train_dataset=train_dataset,
-            batch_size=batch_size,
-            shuffle_buffer_size=shuffle_buffer_size,
-            validation_dataset=test_dataset,
-            test_dataset=test_dataset,
-            predict_dataset=test_dataset,
-            num_workers=num_workers,
-            pin_memory=pin_memory,
-        )
+    @property
+    def buckets_sec(self):
+        return list(np.arange(self._min_seconds, self._max_seconds, self._bucket_interval))

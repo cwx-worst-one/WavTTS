@@ -30,7 +30,7 @@ class LlamaConfig:
     initializer_range: float = 0.02
     activation_fn: Activation = Activation.SiLU
     attention_kwargs: Optional[dict] = field(default_factory=dict)
-    causal: bool = True
+    is_causal: bool = True
     use_rotary_embeddings: bool = True
 
     @classmethod
@@ -55,7 +55,7 @@ class LlamaBlock(nn.Module):
             d_model=config.n_embd,
             n_heads=config.n_head,
             bias=config.attn_bias,
-            causal=config.causal,
+            is_causal=config.is_causal,
             use_rotary_embeddings=config.use_rotary_embeddings,
             **config.attention_kwargs,
         )

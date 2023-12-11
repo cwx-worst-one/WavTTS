@@ -2,7 +2,6 @@
 
 Use `python3 -m samantha.main -h` for usage help.
 """
-
 import logging
 import sys
 
@@ -14,7 +13,7 @@ from hyperpyyaml import load_hyperpyyaml
 from pytorch_lightning import Trainer
 
 from samantha.utils.benchmark import benchmark_model
-from samantha.utils.experiment import create_experiment_directory
+from samantha.utils.experiment import create_experiment_directory, save_dummy_model
 from samantha.utils.hdfs_helper import exists
 from samantha.utils.hdfs_tools import hdfs_open
 from samantha.utils.hparams import DotDict
@@ -37,6 +36,7 @@ def _get_extra_action_params(run_opts, cfg, action):
         "predict": {"ckpt_path": None, "return_predictions": None},
         "export": {"ckpt_path": None},
         "benchmark": {},
+        "save": {},
     }
     assert action in action_extra_params, f"Invalid action: {action}"
     extra_params = {
@@ -102,13 +102,22 @@ def main():
             benchmark_model(trainer, pl_module, pl_datamodule, run_opts.output_dir)
             return
 
+        if action == "save":
+            save_dummy_model(trainer, pl_module)
+            return
+
         fn = getattr(trainer, action)
         ckpt_path = extra_params.get("ckpt_path", None)
         special_keywords = [None, "best", "last", "hpc"]
         if ckpt_path not in special_keywords and not exists(ckpt_path):
             extra_params.pop("ckpt_path", None)
 
-        fn(model=pl_module, datamodule=pl_datamodule, **extra_params)
+        metrics = fn(model=pl_module, datamodule=pl_datamodule, **extra_params)
+
+        # Optionally, also report the test results:
+        if action != "test" and cfg.get("report_test"):
+            metrics = trainer.test(model=pl_module, datamodule=pl_datamodule)
+            logger.info(f"Metrics:\n{metrics}")
     else:
         # need to post to sail
         logger.info("Results will be posted to sail.")

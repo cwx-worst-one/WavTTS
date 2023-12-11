@@ -68,8 +68,7 @@ def get_t5_embeds(requires, x):
 @torch.no_grad()
 def get_bestrq_umm_tokens(requires, batch):
     lit_module = requires['Stage3']
-    vq_ids = lit_module.wav2token(batch)
-    return vq_ids
+    return lit_module.wav2token(batch)
 
 @torch.no_grad()
 def get_bestrq_mkii_tokens(requires, batch):
@@ -588,3 +587,17 @@ class IntensityEmbedder(nn.Module):
             print(f"intensity_labels: {batch_intensity_labels}, intensity_ids: {intensity_ids}")
             self.logged += 1
         return self.embedder(intensity_ids)
+
+class M1TagEmbedder(ContinuousEmbedder):
+    def __init__(self, topk: int, embedding_dim: int, add_sos = True):
+        self.topk = topk
+
+        from recipes.datasets.mir.taxonomies.music_sft_en import MusicSFTTokenizerEN
+        tag_tokenizer = MusicSFTTokenizerEN()
+        vocab_size = len(tag_tokenizer)
+        super().__init__(vocab_size, embedding_dim, add_sos)
+        print("Initialized M1TagEmbedder...")
+    
+    def get_tokens(self, requires, hidden_states):
+        result = requires["m1_tagging"].predict_tags(hidden_states, topk=self.topk)
+        return result.tag_ids

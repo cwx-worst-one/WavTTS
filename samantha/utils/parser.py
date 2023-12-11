@@ -52,6 +52,7 @@ def parse_arguments(arg_list=None):
         "predict": "Run inference on your data (no labels).",
         "export": "Export stage graph and params.",
         "benchmark": "Benchmark tensor throughput of a lightning module",
+        "save": "Save a model",
     }
     parser.add_argument(
         "action",

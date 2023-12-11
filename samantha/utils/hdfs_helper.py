@@ -373,7 +373,7 @@ def hdfs_getsize(hdfs_path: str):
             raise HdfsException(errmsg)
         return []
     elif err:
-        logger.debug("stderr:\n" + err)
+        logger.debug("stderr:\n" + err.decode())
 
     out = out.decode().strip()
     return int(out)

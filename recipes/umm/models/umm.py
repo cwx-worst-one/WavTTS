@@ -402,10 +402,9 @@ class ConformerEncoder(nn.Module):
 
             if self.config.vq_layer_idx == i:
                 vq_states, vq_ids, vq_loss, vq_emb = vq(hidden_states)
-                hidden_states = vq_states
                 return ConformerEncoderOutput(
                     last_hidden_state=None,
-                    hidden_states=None,
+                    hidden_states=hidden_states,
                     vq_states=vq_states,
                     vq_ids=vq_ids,
                     vq_loss=vq_loss,
@@ -803,6 +802,10 @@ class FineTunedModel(BaseModel):
         encoded_feature = self.audio_encoder(feature)
         vq = self.vq if self.config.add_vq else None
         shared_encoder_output = self.shared_encoder(encoded_feature, vq=vq)
+
+        # just to make sure the hidden_state is not changed in-place anywhere,
+        # we clone it and send it a clean hidden_state the output_dict
+        last_hidden_state = shared_encoder_output["last_hidden_state"].clone()
         hidden_state = shared_encoder_output["last_hidden_state"]
 
         logits = self.ctc_head(hidden_state)
@@ -813,6 +816,7 @@ class FineTunedModel(BaseModel):
             recon_wav = self.vocoder(hidden_state.transpose(1, 2)).squeeze(1)
 
         output_dict = {
+            "hidden_states": last_hidden_state,
             "ctc_out": logits,
             "mel_out": recon_feature,
             "chroma_out": recon_chroma
@@ -838,9 +842,9 @@ class FineTunedModel(BaseModel):
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
-    def preprocessing(self, x):
+    def preprocessing(self, x, mel: Optional[torch.Tensor] = None):
         normalize = self.config.feature_cmvn is not None
-        mel = self.audio_transform(x, normalize=normalize)
+        mel = self.audio_transform(x, mel=mel, normalize=normalize)
         input_dict = {"mel": mel}
         if self.config.get("add_chroma", False):
             chroma = self.chroma_transform(x)[:, :, :-1].transpose(1, 2)
@@ -855,19 +859,26 @@ class FineTunedModel(BaseModel):
         shared_encoder_output = self.shared_encoder.forward_to_vq(
             encoded_feature, vq=self.vq
         )
-        vq_ids = shared_encoder_output["vq_ids"]
-        return vq_ids
+        return shared_encoder_output
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
-    def wav2embed(self, wav):
-        if wav.dim() == 3:
-            wav = wav.squeeze(dim=1)
-        wav = self.pad_audio(wav.float())
-        feature = self.preprocessing(wav)["mel"]
+    def wav2embed(self, wav, mel: Optional[torch.Tensor] = None):
+        if mel is None or mel[0] is None:
+            if wav.dim() == 3:
+                wav = wav.squeeze(dim=1)
+            wav = self.pad_audio(wav.float())
+        feature = self.preprocessing(wav, mel=mel)["mel"]
         encoded_feature = self.audio_encoder(feature)
         return encoded_feature
 
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def wav2token_alloutputs(self, wav, mel: Optional[torch.Tensor] = None) -> ConformerEncoderOutput:
+        encoded_feature = self.wav2embed(wav, mel=mel)
+        return self.shared_encoder.forward_to_vq(
+            encoded_feature, vq=self.vq
+        )
 
 class FineTunedVocoder(BaseModel):
     def __init__(self, config):

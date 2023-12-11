@@ -133,6 +133,14 @@ def hdfs_get(hdfs_path: str, local_path: str):
     )
 
 
+def hdfs_get_cache(hdfs_path: str, cache_dir: str = ".cache"):
+    cache_fp = os.path.join(cache_dir, hdfs_path.replace("hdfs://", ""))
+    if not os.path.exists(cache_fp):
+        os.makedirs(os.path.dirname(cache_fp), exist_ok=True)
+        hdfs_get(hdfs_path, cache_fp)
+    return cache_fp
+
+
 def hdfs_rm(hdfs_path: str):
     if hdfs_path.startswith("hdfs://"):
         subprocess.call("{} dfs -rm -r {}".format(HDFS_BIN, hdfs_path), shell=True)
@@ -212,6 +220,20 @@ def hdfs_exists(hdfs_path: str):
 
 def hdfs_loadtxt(hdfs_path: str):
     return hdfs_open(hdfs_path, "r").read().splitlines()
+
+
+def hdfs_loadtxt_cache(hdfs_path: str, cache_dir: str = ".cache"):
+    cache_fp = os.path.join(cache_dir, hdfs_path)
+
+    if os.path.exists(cache_fp):
+        with open(cache_fp, "r") as f:
+            contents = f.read()
+    else:
+        contents = hdfs_open(hdfs_path, "r").read()
+        os.makedirs(os.path.dirname(cache_fp), exist_ok=True)
+        with open(cache_fp, "w") as f:
+            f.write(contents)
+    return contents.splitlines()
 
 
 def hdfs_glob(hdfs_path: str):

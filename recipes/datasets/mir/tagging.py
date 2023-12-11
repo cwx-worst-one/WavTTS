@@ -1,39 +1,50 @@
-import os
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Iterable, List
 
 import numpy as np
 import torch
-import logging
+import webdataset as wds
 
-from recipes.datasets.mir.base import (
-    BaseAudioTransform,
-    WebDataModuleBase,
-    MIRDataModuleBase,
-)
-from samantha.utils.hdfs_helper import hdfs_ls
-from samantha.transforms.audio import RandomPad, RandomResizedCrop
+from recipes.datasets.base import BaseAudioTransform, WebDataModuleBase, DataResult
+from samantha.transforms.audio import Pad, RandomResizedCrop
+from samantha.utils.logger import RankedLogger
+from samantha.utils.webdataset import return_self
 
-
-logger = logging.getLogger(__name__)
+logger = RankedLogger()
 
 from dataclasses import dataclass
 
 import numpy as np
 import torch
+
+from recipes.datasets.mir.base import MIRDataModuleBase
 
 
 @dataclass
-class TaggingDataResult:
+class TaggingDataResult(DataResult):
     audio: torch.Tensor
+    input_length: int
     tag: torch.Tensor
+    tag_names: List[str]
     shard: str
     key: str
 
 
 class TaggingDataModule(MIRDataModuleBase):
-    _root = "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/mir_benchmark/tagging/mtat_tagging_24kHz/"
     _splits = ["train", "validation", "test"]
+
+    _directories = {
+        "train": [
+            "tagging/mtat_tagging_24kHz/train",
+        ],
+        "validation": [
+            "tagging/mtat_tagging_24kHz/validation",
+        ],
+        "test": [
+            "tagging/mtat_tagging_24kHz/test",
+        ],
+    }
+
     _sample_rate = 24000
 
     _tag_names = np.array(
@@ -92,22 +103,20 @@ class TaggingDataModule(MIRDataModuleBase):
     )
     _tag_names.flags.writeable = False
 
-    def __init__(self, split: str, duration: int, resample: bool):
+    def __init__(self, split: str, duration: int, resampled: bool, shardshuffle: bool, nodesplitter = wds.shardlists.single_node_only):
         super().__init__(
             split=split,
-            resample=resample,
+            resampled=resampled,
+            shardshuffle=shardshuffle,
+            nodesplitter=nodesplitter,
         )
 
         self.duration = duration
         self.audio_transform = BaseAudioTransform()
 
         self.duration_samples = int(self._sample_rate * self.duration)
-        self.audio_pad = RandomPad(self.duration_samples)
+        self.audio_pad = Pad(self.duration_samples)
         self.audio_crop = RandomResizedCrop(self.duration_samples)
-
-    @property
-    def shard_urls(self):
-        return hdfs_ls(os.path.join(self._root, self.split))
 
     @property
     def tag_names(self):
@@ -126,13 +135,18 @@ class TaggingDataModule(MIRDataModuleBase):
     def transform(self, items: Iterable[Any]) -> Iterable[TaggingDataResult]:
         for item in items:
             audio = self.audio_transform(item["audio.npy"])
+            input_length = audio.shape[1]
+
             tag = torch.tensor(item["tag_binary.npy"], dtype=torch.long)
-            shard = item["__url__"]
-            key = item["__key__"]
+            tag_names = self.tag_indices_to_names(tag)
+
 
             audio = self.audio_pad(audio)
             audio = self.audio_crop(audio)
-            yield TaggingDataResult(audio=audio, tag=tag, shard=shard, key=key)
+            
+            shard = item["__url__"]
+            key = item["__key__"]
+            yield TaggingDataResult(audio=audio, input_length=input_length, tag=tag, tag_names=tag_names, shard=shard, key=key)
 
 
 class CombinedTaggingDataModule(WebDataModuleBase):
@@ -141,26 +155,30 @@ class CombinedTaggingDataModule(WebDataModuleBase):
         duration: int,
         batch_size: int,
         shuffle_buffer_size: int,
+        resampled: bool,
+        shardshuffle: bool,
         num_workers: int = 8,
         pin_memory: bool = True,
     ):
         train_dataset = TaggingDataModule(
-            split="train", duration=duration, resample=True
+            split="train", duration=duration, resampled=resampled, shardshuffle=shardshuffle,
         )
         validation_dataset = TaggingDataModule(
-            split="validation", duration=duration, resample=False
+            split="validation", duration=duration, resampled=False, shardshuffle=False, nodesplitter=return_self,
         )
         test_dataset = TaggingDataModule(
-            split="test", duration=duration, resample=False
+            split="test", duration=duration, resampled=False, shardshuffle=False, nodesplitter=return_self,
         )
         predict_dataset = test_dataset
         super().__init__(
             batch_size=batch_size,
             shuffle_buffer_size=shuffle_buffer_size,
-            train_dataset=train_dataset,
-            validation_dataset=validation_dataset,
-            test_dataset=test_dataset,
-            predict_dataset=predict_dataset,
+            train_dataset=train_dataset.dataset,
+            validation_dataset=validation_dataset.dataset,
+            test_dataset=test_dataset.dataset,
+            predict_dataset=predict_dataset.dataset,
             num_workers=num_workers,
             pin_memory=pin_memory,
+            batch_size_valid=1,
+            batch_size_test=1
         )

@@ -47,7 +47,7 @@ class GPT2Block(nn.Module):
         self.attn = MultiHeadAttention(
             d_model=config.n_embd,
             n_heads=config.n_head,
-            causal=True,
+            is_causal=True,
             dropout=config.attn_pdrop,
             **config.attention_kwargs,
         )
@@ -85,7 +85,7 @@ if _is_blocksparse_available:
                 block_size=block_size,
                 d_model=config.n_embd,
                 n_heads=config.n_head,
-                causal=True,
+                is_causal=True,
                 **config.attention_kwargs,
             )
 

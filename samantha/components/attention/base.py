@@ -1,12 +1,27 @@
 import math
+from logging import getLogger
 from typing import Any, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import einsum, rearrange
+from torch.backends.cuda import flash_sdp_enabled
 
-from ..positional_embedding.rotary import RotaryEmbedding, SeerEmbedding
+from samantha.components.positional_embedding.rotary import (
+    RotaryEmbedding,
+    SeerEmbedding,
+)
+
+logger = getLogger(__name__)
+
+try:
+    from flash_attn import flash_attn_func, flash_attn_qkvpacked_func
+
+    _flash_attn_installed = True
+except ImportError as e:
+    _flash_attn_installed = False
+    print(e)
 
 
 def scaled_dot_product(
@@ -39,6 +54,7 @@ def scaled_dot_product(
         score = score.masked_fill(causal_mask, -torch.finfo(score.dtype).max)
 
     attention = score.float().softmax(dim=-1).type_as(q)
+
     attention = F.dropout(attention, p=dropout_p)
 
     score = einsum(
@@ -49,6 +65,50 @@ def scaled_dot_product(
     return score, attention
 
 
+def flash_scaled_dot_product(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    is_causal: bool,
+    dropout_p: float,
+    use_cache: bool,
+    enable_flash: bool,
+    enable_mem_efficient: bool,
+    enable_math: bool,
+):
+    if is_causal and use_cache:
+        i = q.shape[2]
+        j = k.shape[2]
+        attn_mask = torch.ones(i, j, dtype=torch.bool, device=q.device).tril(j - i)
+        is_causal = False
+
+        if enable_flash or enable_mem_efficient:
+            logger.warning(
+                "The flash/memefficient kernels do not work with causal and use_cache. Setting `enable_math=True`"
+            )
+            enable_math = True
+    else:
+        attn_mask = None
+
+    # TODO: no flash kernels for V100? :(
+    with torch.backends.cuda.sdp_kernel(
+        enable_flash=enable_flash,
+        enable_mem_efficient=enable_mem_efficient,
+        enable_math=enable_math,
+    ):
+        if not flash_sdp_enabled():
+            logger.warning("The flash attention kernel is not enabled")
+
+        return torch.nn.functional.scaled_dot_product_attention(
+            q.float(),
+            k.float(),
+            v.float(),
+            attn_mask=attn_mask,
+            dropout_p=dropout_p,
+            is_causal=is_causal,
+        )
+
+
 class MultiHeadAttention(nn.Module):
     def __init__(
         self,
@@ -57,11 +117,12 @@ class MultiHeadAttention(nn.Module):
         dropout: float = 0.0,
         bias: bool = True,
         scale: Optional[float] = None,
-        causal: bool = False,
+        is_causal: bool = False,
         use_rotary_embeddings: bool = False,
         d_k: Optional[int] = None,
-        enable_flash: bool = True,
-        enable_mem_efficient: bool = True,
+        enable_flash: bool = False,
+        enable_mem_efficient: bool = False,
+        enable_math: bool = True,
         max_seq_len: Optional[int] = None,
     ) -> None:
         super().__init__()
@@ -75,14 +136,16 @@ class MultiHeadAttention(nn.Module):
             self.d_k = d_model // n_heads
 
         self.dropout_p = dropout
-        self.causal = causal
-        self.enable_flash = enable_flash
-        self.enable_mem_efficient = enable_mem_efficient
+        self.is_causal = is_causal
 
         if (enable_flash or enable_mem_efficient) and not hasattr(
             torch.nn.functional, "scaled_dot_product_attention"
         ):
             raise ImportError("Flash Attention requires PyTorch >= 2.0")
+
+        self.enable_flash = enable_flash
+        self.enable_mem_efficient = enable_mem_efficient
+        self.enable_math = enable_math
 
         self.rotary_embeddings = (
             RotaryEmbedding(self.d_k, max_seq_len) if use_rotary_embeddings else None
@@ -189,34 +252,22 @@ class MultiHeadAttention(nn.Module):
         """
         dropout_p = self.dropout_p if self.training else 0
         attention = None
-        if self.enable_flash or self.enable_mem_efficient:
-            if self.causal and self._use_cache:
-                i = q.shape[2]
-                j = k.shape[2]
-                attn_mask = torch.ones(i, j, dtype=torch.bool, device=q.device).tril(
-                    j - i
-                )
-                is_causal = False
-            else:
-                is_causal = self.causal
-                attn_mask = None
 
-            with torch.backends.cuda.sdp_kernel(
+        if self.enable_flash or self.enable_mem_efficient or self.enable_math:
+            score = flash_scaled_dot_product(
+                q,
+                k,
+                v,
+                is_causal=self.is_causal,
+                dropout_p=dropout_p,
+                use_cache=self._use_cache,
                 enable_flash=self.enable_flash,
-                enable_math=True,
                 enable_mem_efficient=self.enable_mem_efficient,
-            ):
-                score = torch.nn.functional.scaled_dot_product_attention(
-                    q.float(),
-                    k.float(),
-                    v.float(),
-                    attn_mask=attn_mask,
-                    dropout_p=dropout_p,
-                    is_causal=is_causal,
-                ).type_as(q)
+                enable_math=self.enable_math,
+            )
         else:
             score, attention = scaled_dot_product(
-                q, k, v, scale=self.scale, dropout_p=dropout_p, is_causal=self.causal
+                q, k, v, scale=self.scale, dropout_p=dropout_p, is_causal=self.is_causal
             )
         score = rearrange(score, "b n_heads s d_k -> b s (n_heads d_k)")
         if return_attention:
