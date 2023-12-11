@@ -1,14 +1,13 @@
 ---
-# @hanoihantrakul 11/25/2023
-# Decoder training for `decoder_mix_mss.yaml` is identical to `decoder_mix_base.yaml`
-# except the decoder uses the Stage3 UMM backbone trained with an MSS task.
-# See `recipes/umm/conf/umm_stage3_mss.yaml` for details of this model.
+# @hanoihantrakul 12/12/2023
+# Decoder training for `decoder_mix_mss_direct_stage3.yaml` is identical to `decoder_mix_mss.yaml`
+# except the decoder uses the Direct-To-Stage3 UMM backbone checkpoint.
 
 ################################################################################
 ##########                       BASIC CONFIGURATION                  ##########
 ################################################################################
 
-ckpt_path: null
+kpt_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>/checkpoints/last.ckpt
 
 seed: 555
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
@@ -36,7 +35,7 @@ extra_params:
 run_opts:
     fast_dev_run: False
     cache_dir: .module_cache/umm_mir
-    hdfs_log_dir: "hdfs:///home/byte_speech_sv/zongyu.yin/logs"
+    hdfs_log_dir: "hdfs:///home/byte_speech_sv/hanoi.hantrakul/logs"
     log_dir: logs
     log_name: umm_mir
     version: !ref decoder_mix_mss_direct_stage3-<extra_params[vocab_size_audio]>_<extra_params[tokenizer]>-<extra_params[vocab_size_text]>
@@ -127,7 +126,7 @@ pl_module: !new:recipes.mir.modules.lit_module.UnifiedDecoder
     criterion_cls: !name:recipes.mir.modules.criterion.MaskedCrossEntropy
     required_modules:
         stage3:
-            ckpt_path: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm_mss/umm_stage3_bert-large-uncased/checkpoints/step=0107500.ckpt"
+            ckpt_path: "hdfs://haruna/home/byte_speech_sv/hanoi.hantrakul/logs/umm_mss/umm_stage3_bert-large-uncased_LFQ32768x15/checkpoints/step=0055000.ckpt"
             init_fn: !name:recipes.umm.requires.model_initializer.init_stage3_mss
             cache_dir: !ref <run_opts[cache_dir]>
     checkpointing: !ref <run_opts[checkpointing]>
@@ -148,6 +147,7 @@ callbacks:
       every_n_train_steps: !ref <run_opts[ckpt_interval]>
       mode: max
       filename: "{step:07d}"
+      save_last: True
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: 'step'
 
