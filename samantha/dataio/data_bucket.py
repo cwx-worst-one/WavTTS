@@ -25,7 +25,7 @@ class ByteNASDataBucket(DataBucketBase):
 
 class HDFSDataBucket(DataBucketBase):
     _root: Dict[str, str] = {
-        "US": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data",
+        "US": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/js",
         "CN": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/js",
     }
 
