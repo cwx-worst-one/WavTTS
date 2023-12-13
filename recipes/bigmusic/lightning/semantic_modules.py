@@ -482,6 +482,9 @@ class SemanticRLModule(SemanticModule):
         reward = 0.0
         reward_breakdown = {}
         for rw_type, rw_weight in self.extra_params.rewards.items():
+            if rw_type == "style_sim":
+                conditions = self.infer_conditions(batch)
+                rw_type = "style_text_sim" if "style_text" in conditions else "mulan_sim"
             rw = self._get_reward(items, rw_type).reshape(b, beam)
             reward += rw_weight * rw
             reward_breakdown[rw_type] = rw

@@ -24,7 +24,7 @@ extra_params:
     prediction_heads: []
     # For chorus detection
     structure_labels: ["chorus"]
-    structure_dropout: 0.1
+    structure_dropout: 0.2
     volume_quantile: 0.7
     contrast_db: 3
     left_ctx: 5
@@ -44,9 +44,8 @@ extra_params:
     positive_phrase: "cd quality, catchy, memorable"
     negative_phrase: "noisy, boring, forgettable"
     rewards:
-        "mulan_sim": 1.0
+        "style_sim": 1.0
         #"nonvocal": 1.0
-        #"style_text_sim": 1.0
         "loudness_sim": 1.0
         "qualitative_sim": 1.0
         "chorus_sim": 1.0
@@ -73,11 +72,16 @@ run_opts:
     shuffle_buffer: 16
     gradient_clip_val: 1.0
     val_check_interval: 250
-    min_length_ratio: [0.9, 0.9, 0.9, 0.92, 0.92, 0.94, 0.95]
+    min_length_ratio: 0.95
     normalize_audio: True
+    aed_filtered: True
     avoid_vocal: True
+    max_vocal_threshold: 0.8
+    overlap_vocal_threshold: 0.1
+    text_type: null
     max_num_crops: [3, 3, 2, 2, 1, 1, 1]
     crop_step_size: [10, 15, 20, 25, 30, 35, 40]
+    mixed_ratio: 0.5
     use_pipe: False
     diffusion_ckpt: "/mnt/bn/audio-diffusion/wtl/diffusion/model_14_120s_finetune/checkpoints/last.ckpt"
     vocoder_ckpt: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/soundstream-step=374999-val_sdr=12.9557.ckpt"
@@ -106,10 +110,15 @@ pl_datamodule: !new:recipes.bigmusic.datasets.instrumental.InstrumentalWebDataMo
     pin_memory: True
     min_length_ratio: !ref <run_opts[min_length_ratio]>
     normalize_audio: !ref <run_opts[normalize_audio]>
+    aed_filtered: !ref <run_opts[aed_filtered]>
     avoid_vocal: !ref <run_opts[avoid_vocal]>
+    max_vocal_threshold: !ref <run_opts[max_vocal_threshold]>
+    overlap_vocal_threshold: !ref <run_opts[overlap_vocal_threshold]>
+    text_type: !ref <run_opts[text_type]>
     max_num_crops: !ref <run_opts[max_num_crops]>
     crop_step_size: !ref <run_opts[crop_step_size]>
     additional_transforms: !ref <additional_transforms>
+    mixed_ratio: !ref <run_opts[mixed_ratio]>
     use_pipe: !ref <run_opts[use_pipe]>
 
 model_config: !new:transformers.GPT2Config
@@ -233,8 +242,9 @@ trainer: !new:pytorch_lightning.Trainer
     precision: !ref <run_opts[precision]>
     accumulate_grad_batches: 1
     gradient_clip_val: !ref <run_opts[gradient_clip_val]>
-    val_check_interval: !ref <run_opts[val_check_interval]> * 4
+    val_check_interval: !ref <run_opts[val_check_interval]> * 2
     check_val_every_n_epoch: null
     num_sanity_val_steps: 1
+    limit_val_batches: 10
     callbacks: !ref <callbacks>
     plugins: !ref <plugins>

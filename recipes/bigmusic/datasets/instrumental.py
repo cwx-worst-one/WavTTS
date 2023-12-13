@@ -1,4 +1,5 @@
 import torch
+import random
 import webdataset as wds
 from functools import partial
 
@@ -14,17 +15,17 @@ from samantha.dataio.webdataset.pipeline import WebPipeline
 from samantha.utils.webdataset import return_self
 
 
-def collate_fn(batch, sample_rate=24000):
+def collate_fn(batch, sample_rate=24000, mixed_ratio=0.0):
     batch["target_audio"] = batch["audio"]
     del batch["audio"]
     batch["duration"] = batch["target_audio"].shape[-1] // sample_rate
-    if "text" in batch:
+    if "text" not in batch or (mixed_ratio > 0 and random.random() < mixed_ratio):
+        batch["style_audio"] = batch["target_audio"]
+        batch["conditions"] = "style_audio,duration"
+    else:
         batch["style_text"] = batch["text"]
         batch["conditions"] = "style_text,duration"
         del batch["text"]
-    else:
-        batch["style_audio"] = batch["target_audio"]
-        batch["conditions"] = "style_audio,duration"
     return batch
 
 
@@ -55,12 +56,13 @@ class InstrumentalWebDataModule(DataModule):
         crop_step_size: Optional[Union[float, List[float]]] = 10.0,
         additional_transforms: Optional[List] = None,
         keys=["audio", "text", "structure"],
+        mixed_ratio: float = 0.0,
         use_pipe: bool = False,
         seed: int = 555,
     ):
         if dataset_name == "MCC40M_US":
             hdfs_dir = "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_merge"
-            urls_and_weights = [
+            train_urls_and_weights = [
                 (f"{hdfs_dir}/nonvocal-A-alternative-rock+indie-pop+sertanejo+trap-rap.txt", 0.33),
                 (f"{hdfs_dir}/nonvocal-A-blues+childhood+country+devotional+k-pop+soundtrack+trance+world-music.txt", 0.66),
                 (f"{hdfs_dir}/nonvocal-A-classical.txt", 1.33),
@@ -85,15 +87,15 @@ class InstrumentalWebDataModule(DataModule):
                 (f"{hdfs_dir}/nonvocal-B-rock.txt", 0.66),
             ]
         elif dataset_name == "SSTK_EVAL_US":
-            urls_and_weights = [
+            train_urls_and_weights = [
                 ("hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/shutterstock/all_url2idx_tag.txt", 1.0),
             ]
         elif dataset_name == "SSTK+MCC_EVAL_US":
-            urls_and_weights = [
+            train_urls_and_weights = [
                 ("hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/shutterstock/all_url2idx_tag_mcc.txt", 1.0),
             ]
         elif dataset_name == "SSTK_US":
-            urls_and_weights = [(105, 1.0)]
+            train_urls_and_weights = [(106, 1.0)]
         else:
             raise NotImplementedError(f"Unknown dataset: {dataset_name}")
 
@@ -102,9 +104,9 @@ class InstrumentalWebDataModule(DataModule):
         else:
             crop_step_size = int(crop_step_size * sample_rate)
 
-        dataset = WrappedMCC40MDataset(
-            url2index_list=[x[0] for x in urls_and_weights],
-            weights=[x[1] for x in urls_and_weights],
+        train_dataset = WrappedMCC40MDataset(
+            url2index_list=[x[0] for x in train_urls_and_weights],
+            weights=[x[1] for x in train_urls_and_weights],
             sample_rate=sample_rate,
             duration=duration,
             audio_key="audio.npy",
@@ -128,7 +130,7 @@ class InstrumentalWebDataModule(DataModule):
             seed=seed,
         )
         train_dataset = WebPipeline(
-            dataset,
+            train_dataset,
             pipeline=[{"compose": [
                 wds_to_dict(*keys),
                 wds.map(SemanticTokenLengthTransform(sample_rate=sample_rate, audio_key="audio")),
@@ -138,42 +140,48 @@ class InstrumentalWebDataModule(DataModule):
         )
 
         if val_split == "SSTK_EVAL_US":
-            sstk = WrappedMCC40MDataset(
-                url2index_list=["hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/shutterstock/val_url2idx_tag.txt"],
-                weights=[1.0],
-                sample_rate=sample_rate,
-                duration=duration,
-                audio_key="audio.npy",
-                min_length_ratio=min_length_ratio,
-                normalize_audio=normalize_audio,
-                min_volume_threshold=min_volume_threshold,
-                loudness_ratio_threshold=loudness_ratio_threshold,
-                aed_filtered=aed_filtered,
-                avoid_sound_effect=avoid_sound_effect,
-                avoid_vocal=avoid_vocal,
-                max_vocal_threshold=max_vocal_threshold,
-                overlap_vocal_threshold=overlap_vocal_threshold,
-                audio_metrics_filtered=audio_metrics_filtered,
-                text_type=text_type,
-                max_num_crops=max_num_crops,
-                crop_step_size=crop_step_size,
-                additional_transforms=additional_transforms,
-                resampled=False,
-                shardshuffle=False,
-                use_pipe=use_pipe,
-                seed=seed,
-                nodesplitter=return_self,
-            )
-            validation_dataset = WebPipeline(
-                sstk,
-                pipeline=[{"compose": [
-                    wds_to_dict(*keys),
-                    wds.map(SemanticTokenLengthTransform(sample_rate=sample_rate, audio_key="audio")),
-                    default_bucket_batcher_fn(sample_rate, duration, batch_size, lyrics_frame_rate=0),
-                ]}],
-            )
+            val_urls_and_weights = [
+                ("hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/shutterstock/val_url2idx_tag.txt", 1.0),
+            ]
+        elif val_split == "SSTK_US":
+            val_urls_and_weights = [(107, 1.0)]
         else:
             raise NotImplementedError(f"Unknown val split: {val_split}")
+
+        validation_dataset = WrappedMCC40MDataset(
+            url2index_list=[x[0] for x in val_urls_and_weights],
+            weights=[x[1] for x in val_urls_and_weights],
+            sample_rate=sample_rate,
+            duration=duration,
+            audio_key="audio.npy",
+            min_length_ratio=min_length_ratio,
+            normalize_audio=normalize_audio,
+            min_volume_threshold=min_volume_threshold,
+            loudness_ratio_threshold=loudness_ratio_threshold,
+            aed_filtered=aed_filtered,
+            avoid_sound_effect=avoid_sound_effect,
+            avoid_vocal=avoid_vocal,
+            max_vocal_threshold=max_vocal_threshold,
+            overlap_vocal_threshold=overlap_vocal_threshold,
+            audio_metrics_filtered=audio_metrics_filtered,
+            text_type=text_type,
+            max_num_crops=max_num_crops,
+            crop_step_size=crop_step_size,
+            additional_transforms=additional_transforms,
+            resampled=False,
+            shardshuffle=False,
+            use_pipe=use_pipe,
+            seed=seed,
+            nodesplitter=return_self,
+        )
+        validation_dataset = WebPipeline(
+            validation_dataset,
+            pipeline=[{"compose": [
+                wds_to_dict(*keys),
+                wds.map(SemanticTokenLengthTransform(sample_rate=sample_rate, audio_key="audio")),
+                default_bucket_batcher_fn(sample_rate, duration, batch_size, lyrics_frame_rate=0),
+            ]}],
+        )
 
         super().__init__(
             shuffle_buffer_size=shuffle_buffer_size,
@@ -182,7 +190,7 @@ class InstrumentalWebDataModule(DataModule):
             train_dataset=train_dataset,
             validation_dataset=validation_dataset,
             predict_dataset=train_dataset,  # TODO
-            collate_fn=partial(collate_fn, sample_rate=sample_rate),
+            collate_fn=partial(collate_fn, sample_rate=sample_rate, mixed_ratio=mixed_ratio),
             do_shuffle=False,
         )
         
