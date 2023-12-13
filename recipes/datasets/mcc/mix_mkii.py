@@ -192,41 +192,6 @@ class MixTransforms(BaseTransforms):
             text = text.replace(punc, "")
         return text
 
-    def filter_lyrics(self, utterance):
-        start_time = float(utterance["start_time"]) / 1000
-        end_time = float(utterance["end_time"]) / 1000
-        delta = end_time - start_time
-        if "confidence" in utterance:
-            confidence = float(utterance["confidence"])
-            if confidence < 0.8:
-                return False
-        if self.min_duration > delta:
-            return False
-        if self.max_duration < delta:
-            return False
-        if "normalized_text" in utterance:
-            if len(str(utterance["normalized_text"]).strip()) == 0:
-                return False
-        else:
-            if len(str(utterance["text"]).strip()) == 0:
-                return False
-        return True
-
-    def get_text(self, item):
-        name = item["__dataset_name__"]
-        meta = json.loads(item["meta"])
-        if re.match("music_.*_Mvocal_.*", name):
-            if "lyrics_gt" in meta:
-                utterances = meta["lyrics_gt"]
-            else:
-                utterances = meta["lyrics"]["result"][0]["utterances"]
-            filtered_utterances = list(filter(self.filter_lyrics, utterances))
-            return filtered_utterances
-        elif re.match("music_.*_Mnonvocal_.*", name):
-            return ""
-        else:
-            return item["text"]
-
     def get_audio(self, item):
         name = item["__dataset_name__"]
         if re.match("music_.*", name):
@@ -248,104 +213,31 @@ class MixTransforms(BaseTransforms):
         return token, text
 
     def __call__(self, item: Dict[str, Any]) -> Generator:
-        try:
-            text = self.get_text(item)
-        except Exception as e:
-            self._update_stats(skipped=True, message=f"Error loading text: {e}")
-            return
+        text = item["text"]
         try:
             audio = self.get_audio(item)
         except Exception as e:
             self._update_stats(skipped=True, message=f"Error loading audio: {e}")
             return
-        # Vocal music
-        if isinstance(text, list):
-            random.shuffle(text)
-            if self.max_num_crops is not None and self.max_num_crops > 0:
-                text = text[: self.max_num_crops]
-            for utterance in text:
-                output_dict = {}
-                start = int(float(utterance["start_time"]) / 1000 * self.sample_rate)
-                end = int(float(utterance["end_time"]) / 1000 * self.sample_rate)
-                if end > audio.size(-1):
-                    continue
-                clip = audio[:, start:end]
-                output_dict.update(audio=clip)
-                if self.tokenizer is not None and callable(self.tokenizer):
-                    if "normalized_text" in utterance:
-                        token, normalized_text = self.get_text_token(
-                            utterance["normalized_text"]
-                        )
-                    else:
-                        token, normalized_text = self.get_text_token(utterance["text"])
-                    if token.size(-1) == 0:
-                        self._update_stats(skipped=True, message="Token zero length")
-                        return
-                    if (
-                        token.size(-1)
-                        > math.floor(audio.size(-1) / self.sample_rate)
-                        * self.frame_rate
-                    ):
-                        self._update_stats(skipped=True, message="Token too long")
-                        return
-                    output_dict.update(token=token)
-                    output_dict.update(text=normalized_text)
-                yield output_dict
-                self._update_stats(skipped=False)
-        # Instrumental music
-        elif text == "":
-            if audio.size(-1) < self.min_duration * self.sample_rate:
-                self._update_stats(skipped=True, message="Instrumental music too short")
+        if audio.size(-1) < self.min_duration * self.sample_rate:
+            self._update_stats(skipped=True, message="Audio too short")
+            return
+        if audio.size(-1) > self.max_duration * self.sample_rate:
+            self._update_stats(skipped=True, message="Audio too long")
+            return
+        output_dict = {"audio": audio}
+        if self.tokenizer is not None and callable(self.tokenizer):
+            token, normalized_text = self.get_text_token(text)
+            if (
+                token.size(-1)
+                > math.floor(audio.size(-1) / self.sample_rate) * self.frame_rate
+            ):
+                self._update_stats(skipped=True, message="Token too long")
                 return
-
-            if self.max_num_crops is not None:
-                max_num_crops = self.max_num_crops
-            else:
-                max_num_crops = math.ceil(
-                    audio.size(-1)
-                    / ((self.max_duration + self.min_duration) / 2 * self.sample_rate)
-                )
-
-            durations = []
-            starts = []
-            for _ in range(max_num_crops):
-                duration = random.randint(
-                    int(self.min_duration * self.sample_rate),
-                    int(min(audio.size(-1), self.max_duration * self.sample_rate)),
-                )
-                durations.append(duration)
-                starts.append(random.randint(0, audio.size(-1) - duration))
-
-            for i in range(max_num_crops):
-                output_dict = {}
-                clip = audio[:, starts[i] : starts[i] + durations[i]]
-                output_dict.update(audio=clip, text="")
-                yield output_dict
-                self._update_stats(skipped=False)
-        # Speech
-        else:
-            if audio.size(-1) < self.min_duration * self.sample_rate:
-                self._update_stats(skipped=True, message="Speech too short")
-                return
-            if audio.size(-1) > self.max_duration * self.sample_rate:
-                self._update_stats(skipped=True, message="Speech too long")
-                return
-            output_dict = {"audio": audio}
-            if self.tokenizer is not None and callable(self.tokenizer):
-                token, normalized_text = self.get_text_token(text)
-                if token.size(-1) == 0:
-                    self._update_stats(skipped=True, message="Token zero length")
-                    return
-                if (
-                    token.size(-1)
-                    > math.floor(audio.size(-1) / self.sample_rate) * self.frame_rate
-                ):
-                    self._update_stats(skipped=True, message="Token too long")
-                    return
-                output_dict.update(token=token)
-                output_dict.update(text=normalized_text)
-            yield output_dict
-            self._update_stats(skipped=False)
+            output_dict.update(token=token)
+            output_dict.update(text=normalized_text)
+        yield output_dict
+        self._update_stats(skipped=False)
 
 
 class MixDataset(WebPipeline):
@@ -386,6 +278,8 @@ class MixDataset(WebPipeline):
 class MixDataModule(pl.LightningDataModule):
     def __init__(
         self,
+        data_ids,
+        data_weights,
         sample_rate: int = 24000,
         batch_size: int = 2,
         min_duration: int = 5,
@@ -399,7 +293,6 @@ class MixDataModule(pl.LightningDataModule):
         tokenizer: str = None,
         frame_rate: int = 25,
         bsz_evaluator: Optional[str] = None,
-        remove_instrumental: bool = False,
     ):
         super().__init__()
         self.num_workers = num_workers
@@ -432,44 +325,28 @@ class MixDataModule(pl.LightningDataModule):
         )
 
         def get_dataset(id):
-            return DataPipeline(
-                MixDataset(
-                    data_id=id,
-                    sample_rate=sample_rate,
-                    min_duration=min_duration,
-                    max_duration=max_duration,
-                    max_num_crops=max_num_crops,
-                    normalize_audio=normalize_audio,
-                    tokenizer=self.tokenizer,
-                    frame_rate=self.frame_rate,
-                    resampled=True,
-                    shardshuffle=True,
-                    handler=wds.warn_and_continue,
-                ),
-                wds.shuffle(shuffle_buffer_size),
+            return MixDataset(
+                data_id=id,
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                max_num_crops=max_num_crops,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                resampled=True,
+                shardshuffle=True,
+                handler=wds.warn_and_continue,
             )
-
-        vocal_zh = get_dataset(455)
-        vocal_en = get_dataset(452)
-        speech = get_dataset(207)
-        if not remove_instrumental:
-            non_vocal = get_dataset(453)
-            self.train_dataset = DataPipeline(
-                MultiIterableDataset(
-                    datasets=[speech, vocal_zh, vocal_en, non_vocal],
-                    weights=[2, 1, 1, 1],
-                ),
-                wds.shuffle(shuffle_buffer_size),
-                self.bucketize,
-            )
-        else:
-            self.train_dataset = DataPipeline(
-                MultiIterableDataset(
-                    datasets=[speech, vocal_zh, vocal_en], weights=[2, 1, 1]
-                ),
-                wds.shuffle(shuffle_buffer_size),
-                self.bucketize,
-            )
+        datasets = [get_dataset(id) for id in data_ids]
+        self.train_dataset = DataPipeline(
+            MultiIterableDataset(
+                datasets=datasets,
+                weights=data_weights,
+            ),
+            wds.shuffle(shuffle_buffer_size),
+            self.bucketize,
+        )
 
     def train_dataloader(self):
         return DataLoader(
