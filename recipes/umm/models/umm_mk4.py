@@ -32,20 +32,13 @@ from easydict import EasyDict
 INPUT_SEQ_LEN_ALIGNMENT = 32
 
 
-def pad_btd_to(input, align):
-    seqlen = input.shape[1]
-    if seqlen % align != 0:
-        pad_len = ((seqlen + align - 1) // align * align)
-        input = torch.nn.functional.pad(input, [0, 0, 0, pad_len - seqlen])
-    return input
-
-
-def pad_bt_to(input, align):
-    seqlen = input.shape[1]
-    if seqlen % align != 0:
-        pad_len = ((seqlen + align - 1) // align * align)
-        input = torch.nn.functional.pad(input, [0, pad_len - seqlen])
-    return input
+def pad_btd_to(inputs, align):
+    seqlen = inputs.shape[1]
+    pad_len = (align - seqlen % align) % align
+    inputs = torch.nn.functional.pad(inputs, [0, 0, 0, pad_len])
+    mask = torch.ones_like(inputs[:, :, 0]).float()
+    mask[:, seqlen:] = 0
+    return inputs, mask.float()
 
 
 class AudioEncoder(nn.Module):
@@ -148,39 +141,8 @@ class Base(nn.Module):
     @torch.cuda.amp.autocast(enabled=False)
     def pad_audio(self, x):
         rate = int(self.config.sample_rate / self.config.frame_rate)
-        if x.size(-1) % rate > 0:
-            return F.pad(x, (0, rate - (x.size(-1) % rate)), "constant", 0)
-        else:
-            return x
-
-    @torch.no_grad()
-    @torch.cuda.amp.autocast(enabled=False)
-    def interfere_audio(self, wav_batch):
-        interfered_batch = wav_batch.clone()
-        b, t = interfered_batch.size()
-        primary_indices = np.random.binomial(
-            size=b, n=1, p=self.config.mix_prob
-        ).astype(bool)
-        for primary_i, to_mix in enumerate(primary_indices):
-            if to_mix:
-                r = ((torch.rand(1) * 10 - 5) / 10)[0].to(wav_batch)
-                secondary_i = np.random.randint(b)
-                sampled_duration = np.random.randint(1, math.floor(t / 2))
-                primary_start = np.random.randint(0, t - sampled_duration)
-                secondary_start = np.random.randint(0, t - sampled_duration)
-                primary_clip = wav_batch[
-                    primary_i, primary_start : primary_start + sampled_duration
-                ]
-                secondary_clip = wav_batch[
-                    secondary_i, secondary_start : secondary_start + sampled_duration
-                ]
-                scale = (wav_batch[primary_i].square().mean()) / (
-                    (wav_batch[secondary_i].square().mean() * torch.pow(10, r) + 1.0e-5)
-                ).sqrt()
-                interfered_batch[
-                    primary_i, primary_start : primary_start + sampled_duration
-                ] = (primary_clip + scale * secondary_clip)
-        return interfered_batch
+        pad_len = (rate - x.shape[-1] % rate) % rate
+        return F.pad(x, (0, pad_len))
 
 
 class Stage1(Base):
@@ -213,6 +175,8 @@ class Stage1(Base):
         flops += self.audio_encoder.get_flops(*masked_feature.shape)
         encoded_masked_feature = self.audio_encoder(masked_feature)
         hidden_states = self.encoder_input_dropout(encoded_masked_feature)
+        seqlen = hidden_states.shape[1]
+        hidden_states, conformer_mask = pad_btd_to(hidden_states, INPUT_SEQ_LEN_ALIGNMENT // 4)
 
         audio_input_shape = list(hidden_states.shape)
         audio_encoder_flops, _, _ = self.encoder_layers[0].calc_flops(audio_input_shape)
@@ -220,9 +184,11 @@ class Stage1(Base):
 
         # Returns: (hidden_states, pos_emb)
         pos_emb = self.pos_enc(hidden_states)[1]
-        for _, m in enumerate(self.encoder_layers):
+        for _, layer in enumerate(self.encoder_layers):
             # Returns: ((hidden_states, pos_emb), mask)
-            hidden_states = m(((hidden_states, pos_emb), None), is_training=True)[0][0]
+            hidden_states = layer(((hidden_states, pos_emb), conformer_mask), is_training=True)[0][0]
+        # Slice
+        hidden_states = hidden_states[:, 0:seqlen, :]
 
         flops += (
             hidden_states.shape[0] * hidden_states.shape[1] *
@@ -264,6 +230,7 @@ class Stage1(Base):
         return feature
 
     @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
     def get_rq_target(self, feature):
         rq_input = rearrange(self._subsample(feature), "b t d -> (b t) d")
         if self.config.rq_input_layernorm:
@@ -277,8 +244,29 @@ class Stage1(Base):
     def preprocessing(self, x):
         normalize = self.config.feature_cmvn is not None
         mel = self.audio_transform(x, normalize=normalize)
-        mel = pad_btd_to(mel, INPUT_SEQ_LEN_ALIGNMENT)
         return {"mel": mel}
+
+    @torch.no_grad()
+    def extract_features(self, wav):
+        x = self.pad_audio(wav)
+        input_dict = self.preprocessing(x)
+        mel = input_dict["mel"]
+
+        hidden_states = self.audio_encoder(mel)
+        hidden_states = self.encoder_input_dropout(hidden_states)
+        seqlen = hidden_states.shape[1]
+        hidden_states, conformer_mask = pad_btd_to(hidden_states, INPUT_SEQ_LEN_ALIGNMENT // 4)
+
+        hidden_states_list = []
+        # Returns: (hidden_states, pos_emb)
+        pos_emb = self.pos_enc(hidden_states)[1]
+        for _, layer in enumerate(self.encoder_layers):
+            # Returns: ((hidden_states, pos_emb), mask)
+            hidden_states = layer(((hidden_states, pos_emb), conformer_mask), is_training=True)[0][0]
+            hidden_states_list.append(hidden_states)
+        # Slice
+        hidden_states_list = [h[:, 0:seqlen, :] for h in hidden_states_list]
+        return hidden_states_list
 
 
 class Stage2(Base):
@@ -308,14 +296,12 @@ class Stage2(Base):
             self.f0_vuv_head = Conv2dUpsampling(config.hidden_size, 2)
 
     def forward(self, input_dict):
-        feature = (
-            input_dict["mel_interfered"]
-            if self.config.interfere_audio
-            else input_dict["mel"]
-        )
+        feature = input_dict["mel"]
         flops = self.audio_encoder.get_flops(*feature.shape)
         audio_feature = self.audio_encoder(feature)
         hidden_states = self.encoder_input_dropout(audio_feature)
+        seqlen = hidden_states.shape[1]
+        hidden_states, conformer_mask = pad_btd_to(hidden_states, INPUT_SEQ_LEN_ALIGNMENT // 4)
 
         audio_input_shape = list(hidden_states.shape)
         audio_encoder_flops, _, _ = self.encoder_layers[0].calc_flops(audio_input_shape)
@@ -323,9 +309,11 @@ class Stage2(Base):
 
         # Returns: (hidden_states, pos_emb)
         pos_emb = self.pos_enc(hidden_states)[1]
-        for _, m in enumerate(self.encoder_layers):
+        for _, layer in enumerate(self.encoder_layers):
             # Returns: ((hidden_states, pos_emb), mask)
-            hidden_states = m(((hidden_states, pos_emb), None), is_training=True)[0][0]
+            hidden_states = layer(((hidden_states, pos_emb), conformer_mask), is_training=True)[0][0]
+        # Slice
+        hidden_states = hidden_states[:, 0:seqlen, :]
 
         flops += self.mel_head.get_flops(*hidden_states.shape)
         mel_out = self.mel_head(hidden_states)
@@ -347,22 +335,16 @@ class Stage2(Base):
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
-    def preprocessing(self, x):
+    def preprocessing(self, x, only_mel=False):
         normalize = self.config.feature_cmvn is not None
         mel = self.audio_transform(x, normalize=normalize)
-        mel = pad_btd_to(mel, INPUT_SEQ_LEN_ALIGNMENT)
         input_dict = {"mel": mel}
-        if self.config.get("interfere_audio", None):
-            x_interfered = self.interfere_audio(x)
-            mel_interfered = self.audio_transform(x_interfered, normalize=normalize)
-            mel_interfered = pad_btd_to(mel_interfered, INPUT_SEQ_LEN_ALIGNMENT)
-            input_dict.update(mel_interfered=mel_interfered)
+        if only_mel:
+            return input_dict
         if self.config.add_chroma:
             chroma = self.chroma_transform(x)[:, :, :-1].transpose(1, 2)
             chroma = F.normalize(chroma, p=2, dim=-1)
-            # FIXME: Not sure if it's BTD or BT
-            chroma = pad_btd_to(chroma, INPUT_SEQ_LEN_ALIGNMENT)
-            input_dict.update(chroma=chroma)
+            input_dict["chroma"] = chroma
         if self.config.get("add_pitch", False):
             f0 = self.rmvpe.batch_infer(
                 x, self.config.sample_rate, thred=0.03, use_viterbi=False
@@ -370,10 +352,7 @@ class Stage2(Base):
             f0 = f0[:, :-1]
             vuv = get_vuv(f0)
             f0 = f0_normalize(f0)
-            f0 = pad_bt_to(f0, INPUT_SEQ_LEN_ALIGNMENT)
-            vuv = pad_bt_to(vuv, INPUT_SEQ_LEN_ALIGNMENT)
             input_dict.update(f0=f0, vuv=vuv)
-
         return input_dict
 
 
@@ -440,11 +419,13 @@ class Stage3(Stage2):
         if config.get("vq_proj_noise", 0) > 0:
             self.register_buffer("cnt", torch.FloatTensor([0]))
 
-    def forward(self, input_dict):
+    def forward(self, input_dict, return_ids=False):
         feature = input_dict["mel"]
         flops = self.audio_encoder.get_flops(*feature.shape)
         audio_feature = self.audio_encoder(feature)
         hidden_states = self.encoder_input_dropout(audio_feature)
+        seqlen = hidden_states.shape[1]
+        hidden_states, conformer_mask = pad_btd_to(hidden_states, INPUT_SEQ_LEN_ALIGNMENT // 4)
 
         audio_input_shape = list(hidden_states.shape)
         audio_encoder_flops, _, _ = self.encoder_layers[0].calc_flops(audio_input_shape)
@@ -452,8 +433,10 @@ class Stage3(Stage2):
 
         # Returns: (hidden_states, pos_emb)
         pos_emb = self.pos_enc(hidden_states)[1]
-        for i, m in enumerate(self.encoder_layers):
+        for i, layer in enumerate(self.encoder_layers):
             if i == self.config.vq_layer_idx:
+                # Slice
+                hidden_states = hidden_states[:, 0:seqlen, :]
                 hidden_states = self.vq_proj_in(hidden_states)
                 if self.config.get("vq_proj_noise", 0) > 0:
                     noise_scale = (self.config.vq_proj_noise - self.cnt).clamp(
@@ -472,10 +455,16 @@ class Stage3(Stage2):
                     )
                 else:
                     vq_embs, vq_ids, vq_loss = self.vq(hidden_states)
+                if return_ids:
+                    return vq_ids
                 hidden_states = self.vq_proj_out(vq_embs)
+                # Pad
+                hidden_states, _ = pad_btd_to(hidden_states, INPUT_SEQ_LEN_ALIGNMENT // 4)
 
             # Returns: ((hidden_states, pos_emb), mask)
-            hidden_states = m(((hidden_states, pos_emb), None), is_training=True)[0][0]
+            hidden_states = layer(((hidden_states, pos_emb), conformer_mask), is_training=True)[0][0]
+        # Slice
+        hidden_states = hidden_states[:, 0:seqlen, :]
 
         flops += self.mel_head.get_flops(*hidden_states.shape)
         mel_out = self.mel_head(hidden_states)
@@ -495,78 +484,11 @@ class Stage3(Stage2):
             output_dict.update(chroma_out=chroma_out)
         return output_dict
 
-    def forward_layers(
-        self, audio_embedding: torch.Tensor, layer_idx: int
-    ) -> UMMResult:
-        hidden_states = self.encoder_input_dropout(audio_embedding)
-
-        # Returns: (hidden_states, pos_emb)
-        pos_emb = self.pos_enc(hidden_states)[1]
-        for i, m in enumerate(self.encoder_layers):
-            if i == layer_idx:
-                pre_vq_in = self.vq_proj_in(hidden_states)
-                vq_embs, vq_ids, vq_loss = self.vq(pre_vq_in)
-                return UMMResult(
-                    hidden_states=hidden_states,
-                    vq_ids=vq_ids,
-                    vq_hidden_states=vq_embs,
-                    vq_loss=vq_loss,
-                )
-
-            # Returns: ((hidden_states, pos_emb), mask)
-            hidden_states = m(((hidden_states, pos_emb), None), is_training=True)[0][0]
-
-
-    @torch.no_grad()
-    @torch.cuda.amp.autocast(enabled=False)
-    def _prepare_wav(self, wav):
-        """Check audio dimensions and pad."""
-        if wav.dim() == 3:
-            wav = wav.squeeze(dim=1)
-        return self.pad_audio(wav.float())
-
-    @torch.no_grad()
-    @torch.cuda.amp.autocast(enabled=False)
-    def _get_vq_ids(self, hidden_states, position_embeddings):
-        """Apply Vector Quantization and only get the ID's."""
-
-        for i, layer in enumerate(self.encoder_layers):
-            if i == self.config.vq_layer_idx:
-                hidden_states = self.vq_proj_in(hidden_states)
-                _, vq_ids, _ = self.vq(hidden_states)
-                return vq_ids
-
-            # Returns: ((hidden_states, pos_emb), mask)
-            hidden_states = layer(
-                ((hidden_states, position_embeddings), None),
-                is_training=True
-            )[0][0]
-
-        return vq_ids
-
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
     def wav2token(self, wav):
         """Convert audio file to tokens (after Vector Quantization)."""
-        wav = self._prepare_wav(wav)
-        feature = self.preprocessing(wav)["mel"]
-        audio_feature = self.audio_encoder(feature)
-        hidden_states = self.encoder_input_dropout(audio_feature)
-        # Returns: (hidden_states, pos_emb)
-        position_embeddings = self.pos_enc(hidden_states)[1]
-        vq_ids = self._get_vq_ids(hidden_states, position_embeddings)
+        x = self.pad_audio(wav)
+        input_dict = self.preprocessing(x, only_mel=True)
+        vq_ids = self.forward(input_dict, return_ids=True)
         return vq_ids
-
-    @torch.no_grad()
-    @torch.cuda.amp.autocast(enabled=False)
-    def wav2audio_embed(self, wav):
-        """Convert audio file to mel spectrogram embeddings."""
-        wav = self._prepare_wav(wav)
-        feature = self.preprocessing(wav)["mel"]
-        encoded_feature = self.audio_encoder(feature)
-        return encoded_feature
-
-    def wav2hidden_states(self, audio: torch.Tensor, layer_idx: int) -> UMMResult:
-        """Convert audio file to hidden states (before Vector Quantization)."""
-        audio_embedding = self.wav2audio_embed(audio)
-        return self.forward_layers(audio_embedding, layer_idx)

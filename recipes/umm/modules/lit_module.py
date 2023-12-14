@@ -990,6 +990,9 @@ class Stage1(Stage0):
         time_domain_masked_indices = torch.nonzero(
             start_indices.repeat_interleave(self.model.config.len_masking_raw, dim=1)
         )
+        mel_domain_masked_indices = torch.nonzero(
+            start_indices.repeat_interleave(self.model.config.len_masking_token * 4, dim=1)
+        )
         token_domain_masked_indices = torch.nonzero(
             start_indices.repeat_interleave(self.model.config.len_masking_token, dim=1)
         )
@@ -1000,17 +1003,24 @@ class Stage1(Stage0):
             * 0.1
         )  # 0 mean 0.1 std
         mx[tuple(time_domain_masked_indices.t())] = masking_noise
-        return mx, token_domain_masked_indices
+        return mx, token_domain_masked_indices, mel_domain_masked_indices
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
     def prepare_feature(self, batch):
         wav = batch["audio"].squeeze(dim=1).float()
         wav = self.pad_audio(wav)
-        mel = self.preprocessing(wav)["mel"]
-        masked_audio, masked_indices = self.masking(wav)
-        masked_mel = self.preprocessing(masked_audio)["mel"]
-        return {"masked_mel": masked_mel, "masked_indices": masked_indices, "mel": mel}
+        input_dict = self.preprocessing(wav)
+        mel = input_dict["mel"]
+        masked_audio, masked_indices, masked_mel_indices = self.masking(wav)
+        if self.model.config.get("mask_mel", False):
+            masked_mel = mel.clone()
+            mel_noise = 0.1 * torch.randn([len(masked_mel_indices), mel.shape[-1]], dtype=masked_mel.dtype, device=masked_mel.device)
+            masked_mel[tuple(masked_mel_indices.t())] = mel_noise
+        else:
+            masked_mel = self.preprocessing(masked_audio)["mel"]
+        input_dict.update({"masked_mel": masked_mel, "masked_indices": masked_indices})
+        return input_dict
 
     def get_code_rate(self, target_tokens):
         code_rate = (

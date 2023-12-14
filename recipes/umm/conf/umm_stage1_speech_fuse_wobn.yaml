@@ -27,7 +27,7 @@ run_opts:
     hdfs_log_dir: "hdfs://haruna/home/byte_speech_sv/user/litang/umm_ar/25hz/logs"
     log_dir: logs
     log_name: umm
-    version: !ref umm_stage1_rq<config[rq_codebook_size]>x<config[rq_codebook_dim]>x<config[rq_codebook_num]>_id<pl_datamodule[data_id]>_wobn
+    version: !ref umm_stage1_rq<config[rq_codebook_size]>x<config[rq_codebook_dim]>x<config[rq_codebook_num]>_id<pl_datamodule[data_id]>_fuse
     precision: "16-mixed"
     num_workers: 4
     accelerator: auto
@@ -35,7 +35,7 @@ run_opts:
     max_steps: 10000000
     val_check_interval: 0
     ckpt_interval: 5000
-    batch_size: 7
+    batch_size: 12
     learning_rate: 3.0e-4
     cycle_steps: 200000
     weight_decay: 0.1
@@ -64,7 +64,7 @@ pl_datamodule: !new:recipes.datasets.mcc.mix.ParquetDataModule
     collate_fn: !name:recipes.datasets.mcc.mix.collate_audio
     data_id: 207
 
-optimizer_cls: !name:deepspeed.ops.adam.FusedAdam
+optimizer_cls: !name:torch.optim.AdamW
     lr: !ref <run_opts[learning_rate]>
     weight_decay: !ref <run_opts[weight_decay]>
     betas: [0.9, 0.96] # TODO

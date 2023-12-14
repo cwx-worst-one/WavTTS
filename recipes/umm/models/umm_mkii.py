@@ -89,6 +89,7 @@ class ConformerEncoderOutput(ModelOutput):
 class ConformerRotaryPositionalEmbedding(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.config = config
         dim = config.hidden_size // config.num_attention_heads
         base = config.rotary_embedding_base
 
@@ -96,30 +97,42 @@ class ConformerRotaryPositionalEmbedding(nn.Module):
         self.register_buffer("inv_freq", inv_freq)
         self.cached_sequence_length = 0
         self.cached_rotary_positional_embedding = None
+        if config.get('rope_enhance_pos', -1) > 0:
+            self._set_cos_sin_cache(config.rope_enhance_pos)
 
     def _set_cos_sin_cache(self, sequence_length):
-        self.cached_sequence_length = sequence_length
-        time_stamps = torch.arange(
-            sequence_length, device=self.inv_freq.device, dtype=torch.float32
-        )
-        freqs = torch.einsum("i,j->ij", time_stamps, self.inv_freq)
-        embeddings = torch.cat((freqs, freqs), dim=-1)
-        cos_embeddings = embeddings.cos()[:, None, None, :]
-        sin_embeddings = embeddings.sin()[:, None, None, :]
-        self.cached_rotary_positional_embedding = torch.stack(
-            [cos_embeddings, sin_embeddings]
-        )
+        with torch.cuda.amp.autocast(enabled=False):
+            self.cached_sequence_length = sequence_length
+            time_stamps = torch.arange(
+                sequence_length, device=self.inv_freq.device, dtype=torch.float32
+            )
+            freqs = torch.einsum("i,j->ij", time_stamps, self.inv_freq)
+            embeddings = torch.cat((freqs, freqs), dim=-1)
+            cos_embeddings = embeddings.cos()[:, None, None, :]
+            sin_embeddings = embeddings.sin()[:, None, None, :]
+            self.cached_rotary_positional_embedding = torch.stack(
+                [cos_embeddings, sin_embeddings]
+            )
 
     def forward(self, hidden_states):
-        sequence_length = hidden_states.shape[1]
+        batch, sequence_length, _ = hidden_states.shape
         if (
             sequence_length > self.cached_sequence_length
             or self.cached_rotary_positional_embedding is None
         ):
             self._set_cos_sin_cache(sequence_length)
-        return self.cached_rotary_positional_embedding[:, -sequence_length:].to(
-            dtype=hidden_states.dtype
-        )
+        if self.cached_rotary_positional_embedding.device != hidden_states.device:
+            self.cached_rotary_positional_embedding = self.cached_rotary_positional_embedding.to(hidden_states.device)
+        # position augmentation
+        if self.config.get('rope_enhance_pos', -1) > 0:
+            if not self.training:
+                return self.cached_rotary_positional_embedding[:, 0:sequence_length]
+            beg_idx = torch.randint(size=[batch,], low=0, high=self.cached_sequence_length - sequence_length + 1)
+            return torch.cat([self.cached_rotary_positional_embedding[:, idx: idx + sequence_length] for idx in beg_idx], dim=2)
+        elif self.config.get('rope_enhance_pos', -1) == 0:
+            return self.cached_rotary_positional_embedding[:, 0:sequence_length]
+        else:
+            return self.cached_rotary_positional_embedding[:, -sequence_length:]
 
 
 class ConformerFeedForward(nn.Module):
@@ -304,6 +317,7 @@ class ConformerSelfAttention(nn.Module):
 
         return hidden_states
 
+    @torch.cuda.amp.autocast(enabled=False)
     def _apply_rotary_embedding(self, hidden_states, position_embeddings):
         batch_size, sequence_length, hidden_size = hidden_states.size()
         hidden_states = hidden_states.view(
@@ -466,21 +480,21 @@ class ConformerEncoder(nn.Module):
 
 
 class Conv2dUpsampling(nn.Module):
-    def __init__(self, input_dim, output_dim, use_bn=True):
+    def __init__(self, input_dim, output_dim, use_bn=True, act_fn=nn.ReLU):
         super().__init__()
         self.conv = nn.Sequential(
             # [1, 1, 750, 1024]
             nn.Conv2d(1, 64, 7, 1, 3),
             torch.nn.BatchNorm2d(64) if use_bn else nn.Identity(),
-            nn.ReLU(),
+            act_fn(),
             # [1, 64, 750, 1024]
             nn.ConvTranspose2d(64, 8, 6, 2, 2),
             torch.nn.BatchNorm2d(8) if use_bn else nn.Identity(),
-            nn.ReLU(),
+            act_fn(),
             # [1, 8, 1500, 2048]
             nn.ConvTranspose2d(8, 1, 6, 2, 2),
             torch.nn.BatchNorm2d(1) if use_bn else nn.Identity(),
-            nn.ReLU(),
+            act_fn(),
             # [1, 1, 3000, 4096]
         )
         self.linear = nn.Linear(input_dim * 4, output_dim)
@@ -501,15 +515,15 @@ class Conv2dUpsampling(nn.Module):
 
 
 class Conv2dSubsampling(nn.Module):
-    def __init__(self, input_dim, output_dim, kernel, padding, use_bn=True):
+    def __init__(self, input_dim, output_dim, kernel, padding, use_bn=True, act_fn=nn.ReLU):
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(1, 256, kernel, 2, padding),
             nn.BatchNorm2d(256) if use_bn else nn.Identity(),
-            nn.ReLU(),
+            act_fn(),
             nn.Conv2d(256, 256, kernel, 2, padding),
             nn.BatchNorm2d(256) if use_bn else nn.Identity(),
-            nn.ReLU(),
+            act_fn(),
         )
         self.linear = nn.Linear(input_dim * 64, output_dim)
 
@@ -530,6 +544,7 @@ class Conv2dSubsampling(nn.Module):
 class AudioEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.config = config
         self.feature_encoder = Conv2dSubsampling(
             config.num_channels,
             config.hidden_size,
@@ -537,7 +552,7 @@ class AudioEncoder(nn.Module):
             config.feature_encoder_padding,
             use_bn=config.get("use_bn", True),
         )
-        self.conformer_layer = ConformerEncoderLayer(config)
+        self.conformer_layer = ConformerEncoderLayer(config) if config.get("first_conformer", True) else nn.Identity()
 
     def forward(self, x):
         x = self.feature_encoder(x)
@@ -545,9 +560,10 @@ class AudioEncoder(nn.Module):
         return x
 
     def get_flops(self, b, t, d):
-        return self.feature_encoder.get_flops(b, t, d) + self.conformer_layer.get_flops(
-            b, t
-        )
+        if self.config.get("first_conformer", True):
+            return self.feature_encoder.get_flops(b, t, d) + self.conformer_layer.get_flops(b, t)
+        else:
+            return self.feature_encoder.get_flops(b, t, d)
 
 
 class EMAEmbedding(nn.Module):

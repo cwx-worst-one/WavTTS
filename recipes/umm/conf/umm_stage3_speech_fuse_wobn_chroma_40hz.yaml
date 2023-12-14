@@ -28,7 +28,7 @@ run_opts:
     hdfs_log_dir: "hdfs://haruna/home/byte_speech_sv/user/litang/umm_ar/40hz/logs"
     log_dir: logs
     log_name: umm
-    version: !ref umm_stage3_<extra_params[tokenizer]>_chroma<extra_params[n_chroma]>_vq<config[vq_codebook_size]>x<config[vq_codebook_dim]>_<config[vq_type]>_id<pl_datamodule[data_id]>_wobn
+    version: !ref umm_stage3_<extra_params[tokenizer]>_chroma<extra_params[n_chroma]>_vq<config[vq_codebook_size]>x<config[vq_codebook_dim]>_<config[vq_type]>_id<pl_datamodule[data_id]>_fuse
     precision: "32"
     num_workers: 3
     accelerator: auto
