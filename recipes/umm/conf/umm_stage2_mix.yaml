@@ -1,0 +1,163 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+ckpt_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>/checkpoints/last.ckpt
+
+seed: 555
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+extra_params:
+    sample_rate: 24000
+    frame_rate: 25
+    n_mels: 128
+    n_chroma: 12
+    n_fft: 2048
+    win_length: 2048
+    hop_length: 240
+    feature_cmvn: "recipes/datasets/mcc/MixDataModule_SpeechTransform.stats.pt"
+    tokenizer: "bert-base-multilingual-uncased"
+
+# running parameters
+run_opts:
+    fast_dev_run: False
+    cache_dir: .module_cache/umm
+    hdfs_log_dir: "hdfs:///home/byte_speech_sv/zongyu.yin/logs"
+    log_dir: logs
+    log_name: umm_mix
+    version: !ref umm_stage2_<extra_params[tokenizer]>
+    precision: "16-mixed"
+    num_workers: 4
+    accelerator: auto
+    warmup_steps: 2000
+    max_steps: 10000000
+    val_check_interval: 0
+    ckpt_interval: 5000
+    batch_size: 4
+    learning_rate: 1.0e-4
+    cycle_steps: 200000
+    weight_decay: 0.1
+    shuffle_buffer: 50
+    gradient_clip_val: 1.0
+    checkpointing: False
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+pl_datamodule: !new:recipes.datasets.mcc.mix_mkii.MixDataModule
+    shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+    sample_rate: !ref <extra_params[sample_rate]>
+    batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <extra_params[sample_rate]>
+    num_workers: !ref <run_opts[num_workers]>
+    max_num_crops: null
+    min_duration: 1
+    max_duration: 90
+    normalize_audio: False
+    tokenizer: !ref <extra_params[tokenizer]>
+    frame_rate: !ref <extra_params[frame_rate]>
+
+optimizer_cls: !name:torch.optim.AdamW
+    lr: !ref <run_opts[learning_rate]>
+    weight_decay: !ref <run_opts[weight_decay]>
+    betas: [0.9, 0.96]
+    eps: 0.00000001
+
+scheduler_cls: !name:recipes.umm.modules.lr_scheduler.WarmupCosine
+    init_lr: !ref <run_opts[learning_rate]>
+    warmup_steps: !ref <run_opts[warmup_steps]>
+    cycle_steps: !ref <run_opts[cycle_steps]>
+    min_lr: !ref <run_opts[learning_rate]> * 0.1
+
+config: !new:recipes.umm.models.config.UMMConfig
+    feature_cmvn: !ref <extra_params[feature_cmvn]>
+    sample_rate: !ref <extra_params[sample_rate]>
+    n_mels: !ref <extra_params[n_mels]>
+    add_chroma: True
+    n_chroma: !ref <extra_params[n_chroma]>
+    n_fft: !ref <extra_params[n_fft]>
+    win_length: !ref <extra_params[win_length]>
+    hop_length: !ref <extra_params[hop_length]>
+    hidden_size: 1024
+    intermediate_size: 4096
+    num_hidden_layers: 24
+    num_attention_heads: 8
+    max_source_positions: 2500
+    add_vq: False
+    vq_codebook_size: 32768
+    vq_codebook_dim: 32
+    vq_layer_idx: 12
+    vq_decay: 0.99
+    w_loss_mel: 1.0
+    w_loss_chroma: 1.0
+    w_loss_vq: 1.0
+    w_loss_ctc: 1.0
+    tokenizer: !ref <extra_params[tokenizer]>
+    frame_rate: !ref <extra_params[frame_rate]>
+    vocab_size: 105880
+    ctc_blank_id: 105879
+    ctc_zero_infinity: True
+    use_bn: False
+
+model_cls: !name:recipes.umm.models.umm_mkii.Stage2
+    config: !ref <config>
+
+pl_module: !new:recipes.umm.modules.lit_module.Stage2
+    checkpointing: !ref <run_opts[checkpointing]>
+    model_cls: !ref <model_cls>
+    optimizer_cls: !ref <optimizer_cls>
+    scheduler_cls: !ref <scheduler_cls>
+    criterion_cls: !name:recipes.umm.modules.criterion.UMMLoss
+        config: !ref <config>
+    extra_params: !ref <extra_params>
+    required_modules:
+        pretrained:
+            ckpt_path: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm_mix/umm_stage1_rq4096x16x8/checkpoints/step=0100000.ckpt"
+            init_fn: !name:recipes.umm.requires.model_initializer.init_pretrained
+            cache_dir: !ref <run_opts[cache_dir]>
+
+logger:
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[log_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
+
+callbacks:
+    - !new:samantha.callbacks.HDFSModelCheckpoint
+      hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+      monitor: step
+      save_top_k: 500
+      every_n_train_steps: !ref <run_opts[ckpt_interval]>
+      mode: max
+      filename: "{step:07d}"
+      save_last: True
+    - !new:pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: 'step'
+
+plugins:
+    - !new:samantha.plugins.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    strategy: "ddp_find_unused_parameters_false"
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: "auto"
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    log_every_n_steps: 100
+    max_steps: !ref <run_opts[max_steps]>
+    precision: !ref <run_opts[precision]>
+    accumulate_grad_batches: 1
+    gradient_clip_val: !ref <run_opts[gradient_clip_val]>
+    val_check_interval: !ref <run_opts[val_check_interval]>
+    check_val_every_n_epoch: null
+    num_sanity_val_steps: 0
+    sync_batchnorm: True
+    benchmark: False
+    callbacks: !ref <callbacks>
+    plugins: !ref <plugins>
