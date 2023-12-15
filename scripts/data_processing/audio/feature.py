@@ -237,6 +237,7 @@ def main(args):
                     feature_type=feature_type,
                     ckpt_path=args.ckpt_path,
                     trim=not args.not_trim,
+                    freq=args.freq,
                 )
                 for _ in range(n_worker)
             ]
@@ -244,7 +245,7 @@ def main(args):
             for i, (data_url, output_url, ckpt_url) in enumerate(work_urls):
                 workers[i % n_worker].en_task(data_url, output_url, ckpt_url)
 
-            domain = ("data" if args.index_version is None else "index",)
+            domain = "data" if args.index_version is None else "index"
             pool = Pool(n_worker)
             for i, worker in enumerate(workers):
                 pool.apply_async(
@@ -275,7 +276,8 @@ def main(args):
                         domain = f"index_{args.index_version}"
                         feature_domain = domain
                     feature_dst_dir = os.path.join(
-                        ROOT_PATH, f"features/{feature_domain}/{feature_type}_{feature_version}"
+                        ROOT_PATH,
+                        f"features/{feature_domain}/{feature_type}_{feature_version}",
                     )
                     packing_callback(args.package_id, feature_dst_dir)
 
@@ -292,6 +294,7 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt_path", type=str, default=None)
     parser.add_argument("--target_sr", type=int, default=24000)
     parser.add_argument("--index_version", type=int, default=None)
+    parser.add_argument("--freq", type=int, default=40)
     args = parser.parse_args()
     backend = "nccl" if torch.cuda.is_available() else "mpi"
     dist.init_process_group(backend=backend)

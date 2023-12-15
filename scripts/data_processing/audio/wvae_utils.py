@@ -10,7 +10,7 @@ from torchaudio.transforms import Resample
 from samantha.dataio.webdataset.writer import Writer
 
 
-def preprocess_audio(audio_bin, sample_rate, resampler, device, *_, **__):
+def preprocess_audio(audio_bin, sample_rate, resampler, device, freq=40, *_, **__):
     wav, sr = librosa.load(audio_bin, sr=None)
     if wav.size == 0:
         return None, None
@@ -26,8 +26,11 @@ def preprocess_audio(audio_bin, sample_rate, resampler, device, *_, **__):
     wav *= 1.0 / max(0.01, np.max(np.abs(wav)))
     wav = torch.from_numpy(trim_silence(wav)).float()
     wav = torch.stack([wav]).unsqueeze(1).float()
+    pad_mod = sample_rate // freq
     wav = F.pad(
-        wav, (0, (wav.size(-1) // 600 + 1) * 600 - wav.size(-1), 0, 0, 0, 0), value=0.0
+        wav,
+        (0, (wav.size(-1) // pad_mod + 1) * pad_mod - wav.size(-1), 0, 0, 0, 0),
+        value=0.0,
     )
     return wav, audio_dur
 
@@ -84,7 +87,14 @@ def trim_silence(wav):
 
 
 def process_batch(
-    model, batch, device, sample_rate, n_fft=2048, hop_length=300, win_length=1200
+    model,
+    batch,
+    device,
+    sample_rate,
+    n_fft=2048,
+    hop_length=300,
+    win_length=1200,
+    freq=40,
 ):
     if not batch:
         yield from batch
@@ -105,10 +115,11 @@ def process_batch(
         batch_wav.squeeze(1), n_fft, sample_rate, hop_length, win_length
     )
     _, batch_m, batch_logs = model(batch_wav.to(device), batch_spec.to(device))
+    pad_mod = sample_rate // freq
     for i, ilen in enumerate(length):
         m, logs = (
-            batch_m[i : i + 1, :, : ilen // 600],
-            batch_logs[i : i + 1, :, : ilen // 600],
+            batch_m[i : i + 1, :, : ilen // pad_mod],
+            batch_logs[i : i + 1, :, : ilen // pad_mod],
         )
         m = m[0].permute(1, 0)
         logs = logs[0].permute(1, 0)
