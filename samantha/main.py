@@ -104,7 +104,8 @@ def main():
 
         fn = getattr(trainer, action)
         ckpt_path = extra_params.get("ckpt_path", None)
-        if ckpt_path is not None and not exists(ckpt_path):
+        special_keywords = [None, "best", "last", "hpc"]
+        if ckpt_path not in special_keywords and not exists(ckpt_path):
             extra_params.pop("ckpt_path", None)
 
         fn(model=pl_module, datamodule=pl_datamodule, **extra_params)
