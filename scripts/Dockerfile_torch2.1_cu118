@@ -6,22 +6,28 @@ FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu118 as US-East-Red
 FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu118 as Aliyun_SG
 FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu118 as China-North-LF
 
-ENV TORCH_CUDNN_V8_API_LRU_CACHE_LIMIT 100000
-ENV PYTORCH_CUDA_ALLOC_CONF expandable_segments:True
-
-ENV LD_LIBRARY_PATH /opt/tiger/native_libhdfs/lib/native:$LD_LIBRARY_PATH
-ENV ARNOLD_HDFS_NATIVE 1
-ENV ARNOLD_HDFS_CELER 1
-ENV INFSEC_HADOOP_ENABLED 1
-ENV CPP_HDFS_CONF /opt/tiger/arnold/hdfs_client/conf/celer_us/core-site.xml:/opt/tiger/arnold/hdfs_client/conf/celer_us/hdfs-site.xml
-
 FROM ${REGION}
+
 LABEL maintainer="Gao Lu <gaolu.e820@bytedance.com>"
 
 ARG http_proxy="http://sys-proxy-rd-relay.byted.org:8118"
 ARG https_proxy="http://sys-proxy-rd-relay.byted.org:8118"
 ARG no_proxy="byted.org"
+
+ENV TORCH_CUDNN_V8_API_LRU_CACHE_LIMIT 100000
+ENV PYTORCH_CUDA_ALLOC_CONF expandable_segments:True
+
 ENV DEBIAN_FRONTEND noninteractive
+ENV LD_LIBRARY_PATH /opt/tiger/native_libhdfs/lib/native:/usr/local/cuda/compat:$LD_LIBRARY_PATH
+ENV ARNOLD_HDFS_NATIVE 1
+ENV ARNOLD_HDFS_CELER 1
+ENV INFSEC_HADOOP_ENABLED 1
+ENV CPP_HDFS_CONF /opt/tiger/arnold/hdfs_client/conf/celer_us/core-site.xml:/opt/tiger/arnold/hdfs_client/conf/celer_us/hdfs-site.xml
+
+ENV ARNOLD_SORT_IP 1
+ENV NCCL_IB_QPS_PER_CONNECTION 5
+ENV NCCL_IB_TIMEOUT 23
+
 
 RUN pip3 uninstall -y pytorch-triton
 
@@ -34,13 +40,28 @@ RUN apt update && \
         openmpi-bin \
         openssh-client \
         openssh-server \
-        netbase patchelf \
-        git vim krb5-user \
+        netbase \
+        patchelf \
+        git \
+        vim \
+        krb5-user \
         libcairo2-dev \
         clang-format \
-        libsndfile1 ffmpeg tmux \
-        git-lfs python3-tk \
-        libsndfile-dev sox libsox-dev && \
+        libsndfile1 \
+        ffmpeg \
+        tmux \
+        git-lfs \
+        python3-tk \
+        libsndfile-dev \
+        apt-transport-https \
+        libpam-krb5 \
+        screen \
+        zip \
+        espeak \
+        espeak-ng \
+        fonts-arphic-ukai \
+        sox \
+        libsox-dev && \
     cd /tmp && \
     wget \
         https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/cuda-keyring_1.1-1_all.deb && \
@@ -230,27 +251,50 @@ RUN pip3 uninstall -y pyarrow && pip3 install --no-cache-dir fsspec==2023.6.0 py
     pip3 install --no-cache-dir ruamel.yaml==0.17.24
 
 RUN pip3 install \
-    --no-cache-dir \
-    --index-url https://bytedpypi.byted.org/simple \
-    ffmpeg-python \
-    jsonschema \
-    attrs==23.1.0 \
-    nltk \
-    fire \
-    mypy \
-    lz4 \
-    bytedredis \
-    rouge \
-    pexpect \
-    bytedlaplace \
-    blobfile \
-    langdetect \
-    openai \
-    tiktoken \
-    langchain \
-    backoff \
-    pyzstd \
-    accelerate
+        --no-cache-dir \
+        --index-url https://bytedpypi.byted.org/simple \
+        ffmpeg-python \
+        jsonschema \
+        attrs==23.1.0 \
+        nltk \
+        fire \
+        mypy \
+        lz4 \
+        bytedredis \
+        rouge \
+        pexpect \
+        bytedlaplace \
+        blobfile \
+        langdetect \
+        openai \
+        tiktoken \
+        langchain \
+        backoff \
+        pyzstd \
+        accelerate && \
+    pip3 install \
+        --no-cache-dir \
+        --index-url https://bytedpypi.byted.org/simple \
+        easydict \
+        sacrebleu \
+        editdistance \
+        torch_complex \
+        omegaconf \
+        pyvad \
+        peft \
+        ipython \
+        phonemizer \
+        pyworld \
+        Path \
+        coqpit \
+        trainer \
+        pot \
+        rotary_embedding_torch \
+        vector_quantize_pytorch \
+        jiwer \
+        mir_eval \
+        soft-moe-pytorch \
+        tensorflow_io
 
 ################### AWS #########################
 ARG EFA_INSTALLER_VERSION=1.27.0

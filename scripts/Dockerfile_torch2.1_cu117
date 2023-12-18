@@ -1,27 +1,31 @@
 ARG REGION
 
 FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.post1 as Aliyun_VA
-ENV LD_LIBRARY_PATH /opt/tiger/native_libhdfs/lib/native:$LD_LIBRARY_PATH
-ENV ARNOLD_HDFS_NATIVE 1
-ENV ARNOLD_HDFS_CELER 1
-ENV INFSEC_HADOOP_ENABLED 1
-ENV CPP_HDFS_CONF /opt/tiger/arnold/hdfs_client/conf/celer_us/core-site.xml:/opt/tiger/arnold/hdfs_client/conf/celer_us/hdfs-site.xml
-
 FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.post1 as US-East
-
 FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.post1 as US-East-Red
-
 FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.post1 as Aliyun_SG
-
 FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.post1 as China-North-LF
 
 FROM ${REGION}
+
 LABEL maintainer="liyong.0517 <liyong.0517@bytedance.com>"
 
 ARG http_proxy="http://sys-proxy-rd-relay.byted.org:8118"
 ARG https_proxy="http://sys-proxy-rd-relay.byted.org:8118"
 ARG no_proxy="byted.org"
+
+
 ENV DEBIAN_FRONTEND noninteractive
+ENV LD_LIBRARY_PATH /opt/tiger/native_libhdfs/lib/native:/usr/local/cuda/compat:$LD_LIBRARY_PATH
+ENV ARNOLD_HDFS_NATIVE 1
+ENV ARNOLD_HDFS_CELER 1
+ENV INFSEC_HADOOP_ENABLED 1
+ENV CPP_HDFS_CONF /opt/tiger/arnold/hdfs_client/conf/celer_us/core-site.xml:/opt/tiger/arnold/hdfs_client/conf/celer_us/hdfs-site.xml
+
+ENV ARNOLD_SORT_IP 1
+ENV NCCL_IB_QPS_PER_CONNECTION 5
+ENV NCCL_IB_TIMEOUT 23
+
 
 RUN pip3 uninstall -y pytorch-triton
 
@@ -34,13 +38,28 @@ RUN apt update && \
         openmpi-bin \
         openssh-client \
         openssh-server \
-        netbase patchelf \
-        git vim krb5-user \
+        netbase \
+        patchelf \
+        git \
+        vim \
+        krb5-user \
         libcairo2-dev \
         clang-format \
-        libsndfile1 ffmpeg tmux \
-        git-lfs python3-tk \
-        libsndfile-dev sox && \
+        libsndfile1 \
+        ffmpeg \
+        tmux \
+        git-lfs \
+        python3-tk \
+        libsndfile-dev \
+        apt-transport-https \
+        libpam-krb5 \
+        screen \
+        zip \
+        espeak \
+        espeak-ng \
+        fonts-arphic-ukai \
+        sox \
+        libsox-dev && \
     cd /tmp && \
     wget \
         https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/cuda-keyring_1.1-1_all.deb && \
@@ -95,7 +114,7 @@ RUN pip3 install \
         deepspeed==0.8.3 \
         h5py==3.8.0 \
         pydub==0.25.1 \
-        bytedance.easycycle==0.0.1.post6 \
+        bytedance.easycycle==1.1.0.post7 \
 		librosa==0.9.2 \
         torchlibrosa==0.1.0 && \
     pip3 install \
@@ -122,7 +141,7 @@ RUN pip3 install \
         matplotlib==3.7.1 \
         webrtcvad==2.0.10 \
         openpyxl==3.1.2 \
-        transformers==4.28.1 \
+        transformers==4.35.0 \
         colorednoise==2.1.0 \
         torch_stft==0.1.4 \
         jieba==0.42.1 \
@@ -226,27 +245,48 @@ ADD ./scripts/krb5.conf /etc/krb5.conf
 RUN pip3 uninstall -y pyarrow && pip3 install --no-cache-dir fsspec==2023.6.0 pyarrow==12.0.0 && \
     pip3 install --no-cache-dir ruamel.yaml==0.17.24
 
-RUN pip3 install --no-cache-dir --upgrade pip  bytedance-easycycle -i https://bytedpypi.byted.org/simple
-
 RUN pip3 install \
-    --no-cache-dir \
-    --index-url https://bytedpypi.byted.org/simple \
-    ffmpeg-python \
-    jsonschema \
-    attrs==23.1.0 \
-    nltk \
-    fire \
-    mypy \
-    lz4 \
-    bytedredis \
-    rouge \
-    pexpect \
-    bytedlaplace \
-    blobfile \
-    langdetect \
-    openai \
-    tiktoken \
-    langchain \
-    backoff \
-    pyzstd \
-    accelerate
+        --no-cache-dir \
+        --index-url https://bytedpypi.byted.org/simple \
+        ffmpeg-python \
+        jsonschema \
+        attrs==23.1.0 \
+        nltk \
+        fire \
+        mypy \
+        lz4 \
+        bytedredis \
+        rouge \
+        pexpect \
+        bytedlaplace \
+        blobfile \
+        langdetect \
+        openai \
+        tiktoken \
+        langchain \
+        backoff \
+        pyzstd \
+        accelerate && \
+    pip3 install \
+        --no-cache-dir \
+        --index-url https://bytedpypi.byted.org/simple \
+        easydict \
+        sacrebleu \
+        editdistance \
+        torch_complex \
+        omegaconf \
+        pyvad \
+        peft \
+        ipython \
+        phonemizer \
+        pyworld \
+        Path \
+        coqpit \
+        trainer \
+        pot \
+        rotary_embedding_torch \
+        vector_quantize_pytorch \
+        jiwer \
+        mir_eval \
+        soft-moe-pytorch \
+        tensorflow_io
