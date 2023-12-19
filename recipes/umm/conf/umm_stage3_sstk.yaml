@@ -36,7 +36,7 @@ run_opts:
     max_steps: 10000000
     val_check_interval: 5000
     ckpt_interval: 10000
-    batch_size: 2
+    batch_size: 4
     learning_rate: 1.0e-4
     cycle_steps: 100000
     weight_decay: 0.1
@@ -122,7 +122,7 @@ pl_module: !new:recipes.umm.modules.lit_module.Stage3
     extra_params: !ref <extra_params>
     required_modules:
         pretrained:
-            ckpt_path: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm_sstk/umm_stage2_bert-base-multilingual-uncased_only_sstk_wo_ctc/checkpoints/step=0060000.ckpt"
+            ckpt_path: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm_sstk/umm_stage2_None_only_sstk_wo_ctc/checkpoints/step=0060000.ckpt"
             init_fn: !name:recipes.umm.requires.model_initializer.init_pretrained
             cache_dir: !ref <run_opts[cache_dir]>
 
