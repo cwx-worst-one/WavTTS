@@ -821,8 +821,25 @@ class Stage0(pl.LightningModule):
         return loss_dict["loss"]
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
-        # Dummy function for triggering callbacks
-        return
+        loss_dict = self._shared_step(batch)
+        if dataloader_idx not in self.val_outputs:
+            self.val_outputs[dataloader_idx] = []
+        self.val_outputs[dataloader_idx].append(loss_dict)
+
+    def on_validation_epoch_end(self):
+        for dataloader_idx, outputs in self.val_outputs.items():
+            val_loss_dict = {}
+            for loss in outputs:
+                for k, v in loss.items():
+                    k = f"val_{dataloader_idx}/{k}"
+                    if k not in val_loss_dict:
+                        val_loss_dict[k] = v
+                    else:
+                        val_loss_dict[k] = val_loss_dict[k] + v
+            for k, v in val_loss_dict.items():
+                val_loss_dict[k] = v / len(outputs)
+            self.log_dict(val_loss_dict, prog_bar=True, sync_dist=True)
+            self.val_outputs[dataloader_idx] = []
 
     def configure_optimizers(self):
         optimizer = self.hparams.optimizer_cls(self.model.parameters())
@@ -1106,7 +1123,8 @@ class Stage2(Stage0):
         input_dict = {}
         audio = batch["audio"].squeeze(dim=1).float()
         audio = self.pad_audio(audio)
-        input_dict.update(text_ids=batch["token"])
+        if self.model.config.get("add_ctc", True):
+            input_dict.update(text_ids=batch["token"])
         feature = self.preprocessing(audio)
         input_dict.update(feature)
         return input_dict
@@ -1116,7 +1134,8 @@ class Stage2(Stage0):
         output_dict = self.model(input_dict)
 
         mel = input_dict["mel"]
-        text_ids = input_dict["text_ids"]
+        if self.model.config.get("add_ctc", True):
+            text_ids = input_dict["text_ids"]
 
         if self.model.config.get("add_pitch", False):
             loss_dict = self.criterion(
@@ -1130,20 +1149,38 @@ class Stage2(Stage0):
                 vuv=input_dict["vuv"],
             )
         else:
-            loss_dict = self.criterion(
-                ctc_logits=output_dict["ctc_out"],
-                text_ids=text_ids,
-                recon_chroma=output_dict["chroma_out"]
-                if self.model.config.add_chroma
-                else None,
-                chroma=input_dict["chroma"] if self.model.config.add_chroma else None,
-                recon_mel=output_dict["mel_out"],
-                mel=mel,
+            if self.model.config.get("add_ctc", True):
+                loss_dict = self.criterion(
+                    ctc_logits=output_dict["ctc_out"],
+                    text_ids=text_ids,
+                    recon_chroma=output_dict["chroma_out"]
+                    if self.model.config.add_chroma
+                    else None,
+                    chroma=input_dict["chroma"]
+                    if self.model.config.add_chroma
+                    else None,
+                    recon_mel=output_dict["mel_out"],
+                    mel=mel,
+                )
+            else:
+                loss_dict = self.criterion(
+                    ctc_logits=None,
+                    text_ids=None,
+                    recon_chroma=output_dict["chroma_out"]
+                    if self.model.config.add_chroma
+                    else None,
+                    chroma=input_dict["chroma"]
+                    if self.model.config.add_chroma
+                    else None,
+                    recon_mel=output_dict["mel_out"],
+                    mel=mel,
+                )
+        loss_dict["loss"] = loss_dict["loss_mel"] * self.model.config.w_loss_mel
+        if self.model.config.get("add_ctc", True):
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
             )
-        loss_dict["loss"] = (
-            loss_dict["loss_mel"] * self.model.config.w_loss_mel
-            + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
-        )
         if self.model.config.add_chroma:
             loss_dict["loss"] = (
                 loss_dict["loss"]
@@ -1155,13 +1192,14 @@ class Stage2(Stage0):
                 + (loss_dict["f0_loss"] + loss_dict["vuv_loss"])
                 * self.model.config.w_loss_pitch
             )
-
-        loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
+        if self.model.config.get("add_ctc", True):
+            loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
         loss_dict["aux/num_mel_frames"] = mel.size(0) * mel.size(1)
         loss_dict["aux/mel_mean"] = mel.mean()
         loss_dict["aux/mel_std"] = mel.std()
         loss_dict["aux/w_loss_mel"] = self.model.config.w_loss_mel
-        loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
+        if self.model.config.get("add_ctc", True):
+            loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
         if self.model.config.add_chroma:
             loss_dict["aux/w_loss_chroma"] = self.model.config.w_loss_chroma
         if self.model.config.get("add_pitch", False):
@@ -1382,23 +1420,36 @@ class Stage3(Stage2):
         output_dict = self.model(input_dict)
 
         mel = input_dict["mel"]
-        text_ids = input_dict["text_ids"]
-
-        loss_dict = self.criterion(
-            ctc_logits=output_dict["ctc_out"],
-            text_ids=text_ids,
-            recon_chroma=output_dict["chroma_out"]
-            if self.model.config.add_chroma
-            else None,
-            chroma=input_dict["chroma"] if self.model.config.add_chroma else None,
-            recon_mel=output_dict["mel_out"],
-            mel=mel,
-        )
-        loss_dict["bs"] = text_ids.shape[0]
-        loss_dict["loss"] = (
-            loss_dict["loss_mel"] * self.model.config.w_loss_mel
-            + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
-        )
+        if self.model.config.get("add_ctc", True):
+            text_ids = input_dict["text_ids"]
+            loss_dict = self.criterion(
+                ctc_logits=output_dict["ctc_out"],
+                text_ids=text_ids,
+                recon_chroma=output_dict["chroma_out"]
+                if self.model.config.add_chroma
+                else None,
+                chroma=input_dict["chroma"] if self.model.config.add_chroma else None,
+                recon_mel=output_dict["mel_out"],
+                mel=mel,
+            )
+        else:
+            loss_dict = self.criterion(
+                ctc_logits=None,
+                text_ids=None,
+                recon_chroma=output_dict["chroma_out"]
+                if self.model.config.add_chroma
+                else None,
+                chroma=input_dict["chroma"] if self.model.config.add_chroma else None,
+                recon_mel=output_dict["mel_out"],
+                mel=mel,
+            )
+        loss_dict["bs"] = mel.shape[0]
+        loss_dict["loss"] = loss_dict["loss_mel"] * self.model.config.w_loss_mel
+        if self.model.config.get("add_ctc", True):
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
+            )
         if self.model.config.add_chroma:
             loss_dict["loss"] = (
                 loss_dict["loss"]
@@ -1418,12 +1469,14 @@ class Stage3(Stage2):
         loss_dict["aux/quant_rate"] = quant_rate
         if getattr(self.model.vq, "entropy", None) is not None:
             loss_dict["aux/entropy"] = self.model.vq.entropy()
-        loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
+        if self.model.config.get("add_ctc", True):
+            loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
         loss_dict["aux/num_mel_frames"] = mel.size(0) * mel.size(1)
         loss_dict["aux/mel_mean"] = mel.mean()
         loss_dict["aux/mel_std"] = mel.std()
         loss_dict["aux/w_loss_mel"] = self.model.config.w_loss_mel
-        loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
+        if self.model.config.get("add_ctc", True):
+            loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
         loss_dict["aux/noise_scale"] = output_dict.get("noise_scale", 0)
         if self.model.config.add_chroma:
             loss_dict["aux/w_loss_chroma"] = self.model.config.w_loss_chroma

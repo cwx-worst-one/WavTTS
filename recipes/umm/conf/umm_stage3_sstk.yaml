@@ -28,17 +28,17 @@ run_opts:
     hdfs_log_dir: "hdfs:///home/byte_speech_sv/zongyu.yin/logs"
     log_dir: logs
     log_name: umm_sstk
-    version: !ref umm_stage2_<extra_params[tokenizer]>_only_sstk_wo_ctc
-    precision: "16-mixed"
+    version: !ref umm_stage3_<extra_params[tokenizer]>_<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>_only_sstk_wo_ctc
+    precision: "32"
     num_workers: 4
     accelerator: auto
     warmup_steps: 2000
     max_steps: 10000000
     val_check_interval: 5000
     ckpt_interval: 10000
-    batch_size: 4
+    batch_size: 2
     learning_rate: 1.0e-4
-    cycle_steps: 50000
+    cycle_steps: 100000
     weight_decay: 0.1
     shuffle_buffer: 8000
     gradient_clip_val: 1.0
@@ -89,8 +89,11 @@ config: !new:recipes.umm.models.config.UMMConfig
     intermediate_size: 4096
     num_hidden_layers: 24
     num_attention_heads: 8
-    max_source_positions: 2500
-    add_vq: False
+    max_source_positions: !ref <extra_params[frame_rate]> * <pl_datamodule[max_duration]>
+    add_vq: True
+    vq_type: "EMAVQ"
+    vq_proj_norm: "bn"
+    vq_proj_noise: 10000
     vq_codebook_size: 32768
     vq_codebook_dim: 32
     vq_layer_idx: 12
@@ -106,10 +109,10 @@ config: !new:recipes.umm.models.config.UMMConfig
     ctc_zero_infinity: True
     use_bn: False
 
-model_cls: !name:recipes.umm.models.umm_mkii.Stage2
+model_cls: !name:recipes.umm.models.umm_mkii.Stage3
     config: !ref <config>
 
-pl_module: !new:recipes.umm.modules.lit_module.Stage2
+pl_module: !new:recipes.umm.modules.lit_module.Stage3
     checkpointing: !ref <run_opts[checkpointing]>
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
@@ -119,7 +122,7 @@ pl_module: !new:recipes.umm.modules.lit_module.Stage2
     extra_params: !ref <extra_params>
     required_modules:
         pretrained:
-            ckpt_path: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm_sstk/umm_stage1_rq4096x16x8_only_sstk/checkpoints/step=0100000.ckpt"
+            ckpt_path: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm_sstk/umm_stage2_bert-base-multilingual-uncased_only_sstk_wo_ctc/checkpoints/step=0060000.ckpt"
             init_fn: !name:recipes.umm.requires.model_initializer.init_pretrained
             cache_dir: !ref <run_opts[cache_dir]>
 

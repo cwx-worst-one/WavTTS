@@ -1425,7 +1425,8 @@ class Stage2(Base):
         self.mel_head = Conv2dUpsampling(
             config.hidden_size, config.n_mels, use_bn=config.get("use_bn", True)
         )
-        self.ctc_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        if config.get("add_ctc", True):
+            self.ctc_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         if config.add_chroma:
             self.chroma_transform = ChromaSpectrogram(
                 sample_rate=config.sample_rate,
@@ -1464,13 +1465,14 @@ class Stage2(Base):
             )
         flops += self.mel_head.get_flops(*hidden_states.shape)
         mel_out = self.mel_head(hidden_states)
-        flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
-        ctc_out = self.ctc_head(hidden_states)
         output_dict = {
             "mel_out": mel_out,
-            "ctc_out": ctc_out,
             "flops": flops * 3,  # extra 2x for backward.
         }
+        if self.config.get("add_ctc", True):
+            flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
+            ctc_out = self.ctc_head(hidden_states)
+            output_dict.update(ctc_out=ctc_out)
         if self.config.add_chroma:
             chroma_out = self.chroma_head(hidden_states)
             output_dict.update(chroma_out=chroma_out)
@@ -1819,15 +1821,16 @@ class Stage3(Stage2):
             )
         flops += self.mel_head.get_flops(*hidden_states.shape)
         mel_out = self.mel_head(hidden_states)
-        flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
-        ctc_out = self.ctc_head(hidden_states)
         output_dict = {
             "mel_out": mel_out,
-            "ctc_out": ctc_out,
             "vq_ids": vq_ids,
             "vq_loss": vq_loss,
             "flops": flops * 3,  # extra 2x for backward.
         }
+        if self.config.get("add_ctc", True):
+            flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
+            ctc_out = self.ctc_head(hidden_states)
+            output_dict.update(ctc_out=ctc_out)
         if self.config.get("vq_proj_noise", False):
             output_dict.update(noise_scale=noise_scale)
         if self.config.add_chroma:

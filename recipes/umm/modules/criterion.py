@@ -241,25 +241,25 @@ class UMMLoss(nn.Module):
             chroma = chroma.contiguous().float()
             chroma_loss = self.chroma_loss_fn.float()(recon_chroma, chroma)
             loss_dict["loss_chroma"] = chroma_loss["stft_loss"]
-
-        # CTC
-        ctc_logits = ctc_logits.contiguous().float()
-        input_lengths = torch.full(
-            (ctc_logits.size(0),), ctc_logits.size(1), dtype=torch.long
-        )
-        labels_mask = text_ids > 0
-        target_lengths = labels_mask.sum(-1)
-        flattened_targets = text_ids.masked_select(labels_mask)
-
-        # CTCLoss doesn't support fp16
-        log_probs = F.log_softmax(ctc_logits, dim=-1, dtype=torch.float32).transpose(
-            0, 1
-        )  # [N, T, C] -> [T, N, C]
-        with torch.backends.cudnn.flags(enabled=False):
-            ctc_loss = self.ctc_loss_fn(
-                log_probs, flattened_targets, input_lengths, target_lengths
+        if self.config.get("add_ctc", True):
+            # CTC
+            ctc_logits = ctc_logits.contiguous().float()
+            input_lengths = torch.full(
+                (ctc_logits.size(0),), ctc_logits.size(1), dtype=torch.long
             )
-        loss_dict["loss_ctc"] = ctc_loss
+            labels_mask = text_ids > 0
+            target_lengths = labels_mask.sum(-1)
+            flattened_targets = text_ids.masked_select(labels_mask)
+
+            # CTCLoss doesn't support fp16
+            log_probs = F.log_softmax(ctc_logits, dim=-1, dtype=torch.float32).transpose(
+                0, 1
+            )  # [N, T, C] -> [T, N, C]
+            with torch.backends.cudnn.flags(enabled=False):
+                ctc_loss = self.ctc_loss_fn(
+                    log_probs, flattened_targets, input_lengths, target_lengths
+                )
+            loss_dict["loss_ctc"] = ctc_loss
 
         return loss_dict
 

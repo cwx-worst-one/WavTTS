@@ -17,7 +17,7 @@ extra_params:
     n_fft: 2048
     win_length: 2048
     hop_length: 240
-    feature_cmvn: "recipes/datasets/mcc/data_ids=794+207.stats.pt"
+    feature_cmvn: "recipes/datasets/mcc/data_ids=794.stats.pt"
     tokenizer: null
 
 # running parameters
@@ -27,7 +27,7 @@ run_opts:
     hdfs_log_dir: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs"
     log_dir: logs
     log_name: umm_sstk
-    version: !ref umm_stage1_rq<config[rq_codebook_size]>x<config[rq_codebook_dim]>x<config[rq_codebook_num]>
+    version: !ref umm_stage1_rq<config[rq_codebook_size]>x<config[rq_codebook_dim]>x<config[rq_codebook_num]>_only_sstk
     precision: "16-mixed"
     num_workers: 4
     accelerator: auto
@@ -48,8 +48,8 @@ run_opts:
 ################################################################################
 
 pl_datamodule: !new:recipes.datasets.mcc.mix_mkii.MixDataModule
-    data_ids: [794, 207]
-    data_weights: [1, 1]
+    data_ids: [794]
+    data_weights: [1]
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
     sample_rate: !ref <extra_params[sample_rate]>
     batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <extra_params[sample_rate]>

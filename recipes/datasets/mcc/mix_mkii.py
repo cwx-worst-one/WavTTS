@@ -33,6 +33,7 @@ from samantha.transforms.audio import (
     SetAudioDimensions,
     ToTensor,
 )
+from samantha.utils.webdataset import return_self
 
 logger = logging.getLogger(__name__)
 
@@ -280,6 +281,7 @@ class MixDataModule(pl.LightningDataModule):
         self,
         data_ids,
         data_weights,
+        val_data_id: int = 793,
         sample_rate: int = 24000,
         batch_size: int = 2,
         min_duration: int = 5,
@@ -338,13 +340,32 @@ class MixDataModule(pl.LightningDataModule):
                 shardshuffle=True,
                 handler=wds.warn_and_continue,
             )
+
         datasets = [get_dataset(id) for id in data_ids]
-        self.train_dataset = DataPipeline(
-            MultiIterableDataset(
-                datasets=datasets,
-                weights=data_weights,
+        if len(datasets) > 1:
+            self.train_dataset = DataPipeline(
+                MultiIterableDataset(datasets=datasets, weights=data_weights),
+                wds.shuffle(shuffle_buffer_size),
+                self.bucketize,
+            )
+        else:
+            self.train_dataset = DataPipeline(
+                datasets[0], wds.shuffle(shuffle_buffer_size), self.bucketize
+            )
+        self.validation_dataset = DataPipeline(
+            MixDataset(
+                data_id=val_data_id,
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                max_num_crops=max_num_crops,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                resampled=False,
+                nodesplitter=return_self,
+                handler=wds.warn_and_continue,
             ),
-            wds.shuffle(shuffle_buffer_size),
             self.bucketize,
         )
 
@@ -356,6 +377,14 @@ class MixDataModule(pl.LightningDataModule):
             collate_fn=self.collate_fn,
             prefetch_factor=16,
             pin_memory=True,
+        )
+
+    def val_dataloader(self):
+        return DataLoader(
+            self.validation_dataset,
+            batch_size=None,
+            num_workers=self.num_workers,
+            collate_fn=self.collate_fn,
         )
 
     def bucketize(self, iterator: Iterable):
