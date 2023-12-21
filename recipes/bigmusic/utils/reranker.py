@@ -14,6 +14,17 @@ from recipes.bigmusic.utils.rewards import (
 )
 
 
+def infer_conditions(self, batch):
+    if type(batch["conditions"]) == list:
+        assert (
+            len(set(list(map(tuple, batch["conditions"])))) == 1
+        ), "Make sure that all conditions in the batch are the same"
+        conditions = batch['conditions'][0].split(',')
+    else:
+        conditions = batch['conditions'].split(',')
+    return conditions
+
+
 class Reranker:
     def __init__(
         self,
@@ -33,7 +44,7 @@ class Reranker:
                     cache_dir=cache_dir,
                 )
             )
-        if any([x in rewards for x in ["style_audio", "style_text", "qualitative"]]):
+        if any([x in rewards for x in ["style_audio", "style_text", "qualitative", "style_sim"]]):
             assert "mulan" in self.requires
             assert "mulan_infer_fn" in self.requires
         if "structure" in rewards:
@@ -48,6 +59,9 @@ class Reranker:
         for rw_type, rw_weight in self.rewards.items():
             if rw_weight == 0:
                 continue
+            if rw_type == "style_sim":
+                conditions = infer_conditions(batch)
+                rw_type = "style_text" if "style_text" in conditions else "style_audio"
             rw = self._get_reward(rw_type, sampled_audio, eos_index_list, batch, extra_params)
             rewards += rw_weight * rw
             for i in range(len(sampled_audio)):
