@@ -149,6 +149,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
 additional_callbacks:
     - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
     - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
+    - !new:recipes.bigmusic.callbacks.save_outputs.NormVolumeCallback
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
 callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback

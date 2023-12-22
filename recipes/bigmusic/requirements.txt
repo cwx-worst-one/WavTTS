@@ -10,3 +10,4 @@ mir_eval~=0.7.0
 Cython>=0.29.32
 madmom>=0.16.1
 bytedance-easycycle
+ffmpeg-normalize

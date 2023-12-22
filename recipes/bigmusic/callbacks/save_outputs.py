@@ -140,6 +140,18 @@ class SaveVideoCallback(pl.Callback):
         output_dir = pl_module.extra_params.output_dir
         save_video(output_dir, output_dir)
 
+
+class NormVolumeCallback(pl.Callback):
+    def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
+        output_dir = pl_module.extra_params.output_dir
+        sample_rate = pl_module.extra_params.sample_rate
+        generated_output_fps = list(Path(output_dir).glob('**/*.generated.wav'))
+        for idx, generated_output_fp in enumerate(generated_output_fps):
+            print ("normalize volume for: ",  generated_output_fp)
+            command = "ffmpeg-normalize '%s' -t %d -ext wav -ar %d -o '%s' -f" % (generated_output_fp, -16, sample_rate, generated_output_fp)
+            os.system(command)
+
+
 def format_video_text(metadata, max_width=50):
     index = metadata['index']['absolute_idx']
     style_text = metadata['style_text']
@@ -213,12 +225,12 @@ def save_video(input_results_dir, output_video_dir, format_video_text_fn=default
             f.write(video_text)
         color = colors[idx % len(colors)]
         fontfile = "/usr/share/fonts/truetype/arphic/ukai.ttc"
-        cmd = f'ffmpeg -y -f lavfi -i color=c={color}:s=800x800:d=0.5 -i {audio_fp} -c:a aac -vf "drawtext=fontfile={fontfile}:fontsize={fontsize}:line_spacing={line_spacing}:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:textfile={output_text_fp}" {output_video_fp}'
+        cmd = f'ffmpeg -y -v 0 -f lavfi -i color=c={color}:s=800x800:d=0.5 -i {audio_fp} -c:a aac -vf "drawtext=fontfile={fontfile}:fontsize={fontsize}:line_spacing={line_spacing}:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:textfile={output_text_fp}" {output_video_fp} -v 0'
         os.system(cmd)
 
     # concat output videos
     video_output_fp = output_video_dir/f"vocal_music_demo.mp4"
-    cmd_concat = f"cd {output_video_dir_tmp} && find *.mp4 | sed 's:\ :\\\ :g'| sed 's/^/file /' > fl.txt; ffmpeg -f concat -i fl.txt -c copy output.mp4; rm fl.txt"
+    cmd_concat = f"cd {output_video_dir_tmp} && find *.mp4 | sed 's:\ :\\\ :g'| sed 's/^/file /' > fl.txt; ffmpeg -v 0 -f concat -i fl.txt -c copy output.mp4; rm fl.txt"
     os.system(cmd_concat)
     (output_video_dir_tmp/"output.mp4").rename(video_output_fp)
     if remove_segments:
