@@ -44,12 +44,18 @@ def pad_btd_to(inputs, align):
 class AudioEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
+        act_fn = config.get('act_fn', 'relu')
+        if act_fn == 'relu':
+            act_fn=torch.nn.ReLU
+        else:
+            act_fn=torch.nn.GELU
         self.feature_encoder = Conv2dSubsampling(
             config.num_channels,
             config.hidden_size,
             config.feature_encoder_kernel,
             config.feature_encoder_padding,
             use_bn=config.get("use_bn", True),
+            act_fn=act_fn,
         )
 
     def forward(self, x):
@@ -272,8 +278,13 @@ class Stage1(Base):
 class Stage2(Base):
     def __init__(self, config):
         super().__init__(config)
+        act_fn = config.get('act_fn', 'relu')
+        if act_fn == 'relu':
+            act_fn = torch.nn.ReLU
+        else:
+            act_fn = torch.nn.GELU
         self.mel_head = Conv2dUpsampling(
-            config.hidden_size, config.n_mels, use_bn=config.get("use_bn", True)
+            config.hidden_size, config.n_mels, use_bn=config.get("use_bn", True), act_fn=act_fn
         )
         self.ctc_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         if config.add_chroma:
@@ -286,14 +297,14 @@ class Stage2(Base):
                 normalized=False,
             )
             self.chroma_head = Conv2dUpsampling(
-                config.hidden_size, config.n_chroma, use_bn=config.get("use_bn", True)
+                config.hidden_size, config.n_chroma, use_bn=config.get("use_bn", True), act_fn=act_fn
             )
         if config.get("add_pitch", False):
             #  must be sr=16000, hop_length=160
             hop_length = config.hop_length * 16000 // config.sample_rate
             print("RMVPE hop_length (on 16k):", hop_length)
             self.rmvpe = RMVPE(hop_length=hop_length)
-            self.f0_vuv_head = Conv2dUpsampling(config.hidden_size, 2)
+            self.f0_vuv_head = Conv2dUpsampling(config.hidden_size, 2, act_fn=act_fn)
 
     def forward(self, input_dict):
         feature = input_dict["mel"]
@@ -482,6 +493,10 @@ class Stage3(Stage2):
         if self.config.add_chroma:
             chroma_out = self.chroma_head(hidden_states)
             output_dict.update(chroma_out=chroma_out)
+        if self.config.get("add_pitch", False):
+            f0_vuv_out = self.f0_vuv_head(hidden_states)
+            output_dict.update(f0_out=f0_vuv_out[:, :, 0:1])
+            output_dict.update(vuv_out=f0_vuv_out[:, :, 1:])
         return output_dict
 
     @torch.no_grad()
