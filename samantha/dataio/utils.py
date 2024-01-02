@@ -347,3 +347,8 @@ def resolve_data_urls(data_id=None, data_urls=None):
         dict(zip(columns, item))
         for item in zip(*[resolved_url_dict[k] for k in columns])
     ]
+
+
+def resolve_data_sources(data_id=None, data_urls=None):
+    data_path = parse_data_urls(data_id, data_urls)
+    return sort_data_sources(data_path)

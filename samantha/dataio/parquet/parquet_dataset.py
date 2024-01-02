@@ -5,11 +5,21 @@ from webdataset import filters, shardlists, warn_and_continue
 from webdataset.compat import FluidInterface
 from webdataset.pipeline import DataPipeline
 
-from samantha.dataio.parquet.extension import _ParquetSample
+from samantha.dataio.parquet.extension import setup_sampler
 from samantha.dataio.parquet.shardlists import ResampledShards, SimpleShardList
 from samantha.dataio.utils import resolve_data_urls
 
 logger = logging.getLogger(__name__)
+
+
+class YieldList:
+    def __init__(self):
+        pass
+
+    def __call__(self, item):
+        # yield item list & dataset state
+        if item is not None:
+            return [item], (None, None)
 
 
 class ParquetDataset(DataPipeline, FluidInterface):
@@ -24,6 +34,7 @@ class ParquetDataset(DataPipeline, FluidInterface):
         nodesplitter=shardlists.single_node_only,
         sample_limit_per_file: int = None,
         extra_fields_in_data: Optional[List[str]] = None,
+        sample_config: Optional[Any] = None,
         **kwargs,
     ):
         super().__init__()
@@ -46,5 +57,23 @@ class ParquetDataset(DataPipeline, FluidInterface):
                     self.append(filters.shuffle(shardshuffle))
 
         self.append(
-            _ParquetSample(handler, sample_limit_per_file, extra_fields_in_data)
+            setup_sampler(
+                handler, sample_limit_per_file, extra_fields_in_data, sample_config
+            )
         )
+
+        sample_shuffle_buffer_size = kwargs.get("sample_shuffle_buffer_size", 0)
+        if sample_shuffle_buffer_size > 1:
+            self.append(filters.shuffle(sample_shuffle_buffer_size))
+
+        item_transform = kwargs.get("item_transform")
+        if item_transform is not None:
+            self.map(item_transform)
+
+        yield_list = kwargs.get("yield_list", False)
+        if yield_list:
+            yield_list_func = YieldList()
+            self.map(yield_list_func)
+
+    def load_state_dict(self, dataset_state):
+        pass
