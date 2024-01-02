@@ -260,6 +260,7 @@ def main(args):
                         args.batch_size,
                         domain,
                     ),
+                    error_callback=lambda exc: logger.error("fatal error", exc_info=exc),
                 )
 
             pool.close()
