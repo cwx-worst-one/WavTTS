@@ -85,16 +85,13 @@ class Base(nn.Module):
             'conformer_activation_fn': 'gelu',
             'conformer_positionwise_conv_kernel_size': 1,
             'conformer_macaron_style': 1,
-            'conformer_pos_enc_layer_type': 'rope',
-            'conformer_selfattention_layer_type': 'rope_selfattn',
+            'conformer_pos_enc_layer_type': '',  # Not actually used.
+            'conformer_selfattention_layer_type':  config.get('attn_type', 'rope_selfattn'),
             'conformer_layer_order': 'mhsa_before_conv',
             'conformer_use_cnn_module': 1,
             'conformer_cnn_module': 'ConvolutionModule',
             'conformer_cnn_module_kernel': str(config.conv_depthwise_kernel_size),
             'conformer_cnn_norm_type': 'layer_norm',
-            'conformer_layernorm_interval': 0,
-            'conformer_weight_scale': 1.0,
-            'conformer_half_pooling': 0,
             'backbone_memory_size': config.hidden_size,
             'dropout': 0.1,
             "squeeze_mem": True,
@@ -104,7 +101,10 @@ class Base(nn.Module):
         self.encoder_layers = nn.Sequential(*[
             ConformerLayer(conformer_config, None, i) for i in range(config.num_hidden_layers)
         ])
-        self.pos_enc = RotaryPositionalEncoding(config.hidden_size / config.num_attention_heads)
+        self.pos_enc = RotaryPositionalEncoding(
+            config.hidden_size / config.num_attention_heads,
+            variant_type = config.get('early_rope_variant', 0)
+        )
 
         self.audio_transform = SpeechTransform(
             sample_rate=config.sample_rate,
