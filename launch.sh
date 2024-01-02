@@ -24,6 +24,7 @@ else
     wget http://luban-source.byted.org/repository/scm/data.aml.cruise_1.0.0.$OVERRIDE_CRUISE_VERSION.tar.gz;
     tar -xf data.aml.cruise*.tar.gz;
     export PYTHONPATH=/opt/tiger/cruise:$PYTHONPATH
+    cd $CUR_DIR
 fi
 
 export MASTER_PORT=${METIS_WORKER_0_PORT}

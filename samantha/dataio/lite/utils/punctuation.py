@@ -45,4 +45,4 @@ zh_stops = (
 
 #: A string containing all Chinese punctuation.
 zh_punctuation = zh_non_stops + zh_stops
-punctuation_all = zh_punctuation + string.punctuation
+punctuation_all = list(zh_punctuation + string.punctuation)

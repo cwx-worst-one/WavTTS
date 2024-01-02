@@ -1,4 +1,4 @@
-from punctuation import punctuation_all
+from .punctuation import punctuation_all
 
 # phones
 # silence symbol
