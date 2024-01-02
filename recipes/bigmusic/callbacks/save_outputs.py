@@ -154,8 +154,10 @@ class NormVolumeCallback(pl.Callback):
 
 def format_video_text(metadata, max_width=50):
     index = metadata['index']['absolute_idx']
-    style_text = metadata['style_text']
-    style_text = '\n'.join(textwrap.wrap(style_text, max_width, break_long_words=False))
+    style_text = ""
+    if metadata.get("style_text") is not None:
+        style_text = metadata.get('style_text')
+        style_text = '\n'.join(textwrap.wrap(style_text, max_width, break_long_words=False))
     video_text = f'{index}: {style_text}\n\n'
 
     lyrics = metadata.get('lyrics')

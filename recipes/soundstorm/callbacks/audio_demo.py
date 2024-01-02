@@ -48,7 +48,6 @@ class AudioDemo(pl.Callback):
             "maskgit",
             "maskgit",
         ]
-        guidance_scale = 4.0
 
         sampled_t = None
         if module.hparams.audio_prompting:
@@ -59,9 +58,9 @@ class AudioDemo(pl.Callback):
             max_seq_len=audio_tokens.shape[2],
             iterations=iterations,
             score_strategies=score_strategies,
-            temperatures=[0.95] * len(iterations),
+            temperatures=[1.0] * len(iterations),
             sampled_t=sampled_t,
-            guidance_scale=guidance_scale,
+            guidance_scale=None,
         )
 
         with torch.no_grad():

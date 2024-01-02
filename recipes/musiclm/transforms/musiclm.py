@@ -402,6 +402,18 @@ class MCCTransforms(TransformBase):
                 ary = metadata["mcc_annotation"].get(key, "").split(",")
                 tags.extend([x.strip() for x in ary if len(x.strip()) > 0])
             return ", ".join(tags)
+        elif text_type in {"sstk_concat", "sstk_random"}:
+            text_fields = []
+            for key in ["title", "description", "keywords", "genres", "instruments"]:
+                v = metadata.get(key)
+                if v is None or v == "\\N":
+                    continue
+                text_fields.append(v)
+            random.shuffle(text_fields)
+            if text_type == "sstk_concat":
+                return ". ".join(text_fields)
+            else:
+                return text_fields[0] if len(text_fields) > 0 else ""
         else:
             raise ValueError(f"Unknown text type: {text_type}")
 

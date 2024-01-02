@@ -14,6 +14,7 @@ from tqdm import tqdm
 from recipes.musiclm.lightning.audio_model import SoundStreamModel
 from recipes.musiclm.lightning.modules import SemanticModule
 from recipes.musiclm.lightning.semantic_model import SemanticModel
+from recipes.umm.requires.model_initializer import init_stage3
 from recipes.musiclm.requires.model_initializer import (
     init_mulan,
     init_mulan_centers,
@@ -27,7 +28,6 @@ from recipes.soundstorm.lightning.masking_scheme import (
     cosine_schedule,
 )
 from samantha.components.attention.base import MultiHeadAttention
-from samantha.models.conformer import Conformer, ConformerConfig  # noqa
 from samantha.models.llama import LlamaConfig, LlamaModel
 from samantha.utils.hparams import DotDict
 
@@ -245,33 +245,27 @@ class SoundStorm(pl.LightningModule):
         frontend_n_head: int = 4,
         frontend_rope: bool = True,
         attention_kwargs: dict = {},
+        semantic_ckpt: str = "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/umm_stage3_music_chroma_vq32768x32/step=0030000.ckpt",
     ):
         super().__init__()
         self.save_hyperparameters()
 
-        self.semantic_model = SemanticModel().eval()
-        self.semantic_model.freeze()
+        print(f"Loading semantic model from {semantic_ckpt}")
+        self.semantic_model = init_stage3(semantic_ckpt, self.local_rank)["Stage3"]
+        self.semantic_model_frame_rate = 25
+        self.semantic_model_codebook_size = 32768
         self.audio_model = SoundStreamModel(sample_rate).eval()
         self.audio_model.freeze()
 
         self.semantic_to_audio_rate = (
-            self.audio_model.frame_rate // self.semantic_model.frame_rate
+            self.audio_model.frame_rate // self.semantic_model_frame_rate
         )
 
         self.n_quantizers = self.audio_model.num_quantizers
         self.out_dim = self.audio_model.codebook_size
         self.mask_token_id = self.audio_model.codebook_size
-        self.semantic_uncond_token_id = self.semantic_model.codebook_size
+        self.semantic_uncond_token_id = self.semantic_model_codebook_size
 
-        # self.config = ConformerConfig(
-        #     n_embd=n_embd,
-        #     n_layer=n_layer,
-        #     n_head=n_head,
-        #     conv_kernel_size=conv_kernel_size,
-        #     use_rotary_embeddings=True,
-        #     causal=False,
-        #     attention_kwargs=attention_kwargs,
-        # )
         self.config = LlamaConfig(
             n_embd=n_embd,
             n_layer=n_layer,
@@ -281,7 +275,7 @@ class SoundStorm(pl.LightningModule):
             attention_kwargs=attention_kwargs,
         )
         self.semantic_embedding = nn.Embedding(
-            self.semantic_model.codebook_size + 1, self.hparams.n_embd
+            self.semantic_model_codebook_size + 1, self.hparams.n_embd
         )
         self.audio_embedding = nn.ModuleList(
             [
@@ -290,7 +284,6 @@ class SoundStorm(pl.LightningModule):
             ]
         )
 
-        # self.transformer = Conformer(self.config)
         self.transformer = LlamaModel(self.config)
         self.heads = nn.ModuleList(
             [
@@ -308,7 +301,7 @@ class SoundStorm(pl.LightningModule):
                 max_seq_len=self.n_quantizers + 1,
             )
 
-        self.apply(self._init_weights)
+        #self.apply(self._init_weights)
 
     def _init_weights(self, module: nn.Module) -> None:
         """Reinitialize selected weights subject to the OpenAI GPT-2 Paper
@@ -351,10 +344,12 @@ class SoundStorm(pl.LightningModule):
         return audio_embs
 
     def prepare_inputs(self, batch: Tuple[torch.Tensor]) -> Tuple[torch.Tensor]:
-        audio = batch[0]
+        self.audio_model = self.audio_model.eval()
+        self.semantic_model = self.semantic_model.eval()
+        audio = batch["target_audio"]
         with torch.no_grad():
             audio_tokens = self.audio_model(audio)
-            semantic_tokens = self.semantic_model(audio)
+            semantic_tokens = self.semantic_model.wav2token(audio)
         return semantic_tokens, audio_tokens, audio
 
     def forward(

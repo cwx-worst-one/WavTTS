@@ -68,11 +68,13 @@ def inference_dataset_from_prompt(
         prompts['vocal_audio'] = [load_wav(wav_path) for wav_path in prompts['vocal_audio']]
     if 'structure' in prompts:
         prompts['structure'] = [None if x == "random" else json.loads(x) for x in prompts['structure']]
+    elif 'structure' in conditions:
+        # Use random structure by default
+        prompts['structure'] = [None] * len(prompts[next(iter(prompts.keys()))])
     if run_combinations:
         lyrics_prompt_pairs = itertools.product(*list(prompts.values()))
     else:
         lyrics_prompt_pairs = zip(*list(prompts.values()))
-
 
     if 'lyrics_tokens' in conditions:
         if lang == 'en':
@@ -82,7 +84,8 @@ def inference_dataset_from_prompt(
         elif lang == 'zh_phone':
             segment_transforms = [LyricsTokenTransform.init_zh_phoneme_tokenizer(lyrics_max_seq_len=lyrics_max_seq_len, dataset_mode=dataset_mode, enable_punctuation=enable_punctuation)]
 
-        if 'style_text' not in prompts: # style text not provided. must generate own
+        if 'style_text' in conditions and 'style_text' not in prompts:
+            # style text not provided. must generate own
             if 'metadata' in prompts:
                 print('WARNING: style_text not provided. Using metadata to generate style prompt')
                 # mcc metadata provided. use rewrite method

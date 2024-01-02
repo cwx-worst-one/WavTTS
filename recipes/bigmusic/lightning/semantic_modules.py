@@ -507,6 +507,7 @@ class SemanticRLModule(SemanticModule):
                 self.requires["mulan"],
                 sampled_audio.squeeze(1),
                 target_audio.squeeze(1),
+                sample_rate=self.extra_params.sample_rate,
                 device=sampled_audio.device,
                 sampled_embeds=items.get("sampled_mulan_embeds"),
                 target_embeds=items.get("target_mulan_embeds"),

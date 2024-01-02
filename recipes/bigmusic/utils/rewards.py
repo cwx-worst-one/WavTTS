@@ -3,6 +3,7 @@ import math
 import torch
 import torch.nn.functional as F
 from recipes.bigmusic.datasets.transforms.structure import ChorusDetectionTransform
+from recipes.bigmusic.datasets.transforms.lyrics_segment import crop_pad_to_seq_length
 from recipes.bigmusic.utils.metrics_asr import (
     edit_distance,
     remove_punc_case,
@@ -23,12 +24,17 @@ def mulan_audio_reward(
     mulan_model,
     sampled_audio,  # (batch_size * beam, T)
     target_audio,   # (batch_size, T)
+    sample_rate,
     device,
     sampled_embeds=None,    # (batch_size * beam, D)
     target_embeds=None,     # (batch_size, D)
     shift_seconds=5,
 ):
+    # TODO: don't hardcode min length
+    min_audio_length = 10 * sample_rate
     if sampled_embeds is None:
+        if sampled_audio.shape[-1] < min_audio_length:
+            sampled_audio = crop_pad_to_seq_length(sampled_audio, min_audio_length)
         sampled_embeds = mulan_infer_fn(
             model=mulan_model,
             music=sampled_audio.float(),
@@ -36,6 +42,8 @@ def mulan_audio_reward(
             shift_seconds=shift_seconds,
         )
     if target_embeds is None:
+        if target_audio.shape[-1] < min_audio_length:
+            target_audio = crop_pad_to_seq_length(target_audio, min_audio_length)
         target_embeds = mulan_infer_fn(
             model=mulan_model,
             music=target_audio.float(),

@@ -2,6 +2,7 @@ import pytorch_lightning as pl
 
 from samantha.utils.hparams import DotDict
 from recipes.diffusion.models.diffusion_model.utils import run_diffusion
+from recipes.soundstorm.lightning.utils import run_soundstorm
 from recipes.bigmusic.lightning.embedding_modules import get_bestrq_umm_tokens
 import importlib
 from recipes.bigmusic.utils.model_initializer import run_2ar
@@ -14,10 +15,10 @@ import logging
 
 class SemanticInferenceModule(pl.LightningModule):
     def __init__(
-            self,
-            semantic_cls_path,
-            required_modules,
-            extra_params=None,
+        self,
+        semantic_cls_path,
+        required_modules,
+        extra_params=None,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -46,6 +47,10 @@ class SemanticInferenceModule(pl.LightningModule):
             self.decoding_fn = run_2ar
             required_modules.update(self.hparams.required_modules['ar_modules'])
             self.decoding_params = DotDict({**self.extra_params, **extra_params['ar_params']})
+        elif self.extra_params.token2wav_type == 'soundstorm':
+            self.decoding_fn = run_soundstorm
+            required_modules.update(self.hparams.required_modules['soundstorm_modules'])
+            self.decoding_params = DotDict({**self.extra_params, **extra_params['soundstorm_params']})
         else:
             raise ValueError(f"Unhandled type: {self.extra_params.token2wav_type}")
 

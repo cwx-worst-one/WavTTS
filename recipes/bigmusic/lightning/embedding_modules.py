@@ -210,8 +210,10 @@ class MulanTagEmbedder(ContinuousEmbedder):
             mulan_embeds = get_mulan_embeds(requires, input_audio, data_type)
             return mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
         # Audio
-        if self.training or input_audio.shape[-1] < self.min_audio_length:
+        if self.training:
             input_audio = random_crop_pad_to_seq_length(input_audio, self.min_audio_length)
+        if input_audio.shape[-1] < self.min_audio_length:
+            input_audio = crop_pad_to_seq_length(input_audio, self.min_audio_length)
         if data_type == "music":
             mulan_embeds = get_mulan_embeds(requires, input_audio, data_type)
             return mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d

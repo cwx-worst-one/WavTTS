@@ -75,6 +75,7 @@ class Reranker:
                 self.requires["mulan"],
                 sampled_audio,
                 batch["style_audio"],
+                sample_rate=extra_params.sample_rate,
                 device=sampled_audio.device,
             )[0]
         elif rw_type == "style_text":
@@ -107,7 +108,7 @@ class Reranker:
                 self.requires,
                 sampled_audio,
                 sample_lengths=None if len(eos_index_list) == 0 else eos_index_list,
-                sample_rate=extra_params.sample_rate
+                sample_rate=extra_params.sample_rate,
             )
             if len(lyrics_hyp) != len(sampled_audio):
                 # This sometimes happens, not sure why
@@ -123,7 +124,7 @@ class Reranker:
                 self.requires,
                 sampled_audio,
                 sample_lengths=None if len(eos_index_list) == 0 else eos_index_list,
-                sample_rate=extra_params.sample_rate
+                sample_rate=extra_params.sample_rate,
             )
             if len(lyrics_hyp) != len(sampled_audio):
                 # This sometimes happens, not sure why
