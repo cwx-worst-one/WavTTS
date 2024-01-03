@@ -64,12 +64,14 @@ RUN apt update && \
         sox \
         libsox-dev && \
     cd /tmp && \
-    wget \
-        https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/cuda-keyring_1.1-1_all.deb && \
-    dpkg -i cuda-keyring_1.1-1_all.deb && \
-    rm -f cuda-keyring_1.1-1_all.deb && \
+    wget https://developer.download.nvidia.com/compute/cuda/repos/debian11/x86_64/cuda-keyring_1.1-1_all.deb && \
+    dpkg -i cuda-keyring_1.1-1_all.deb && rm -f cuda-keyring_1.1-1_all.deb && \
     apt update && \
-    apt install -y cuda-nsight-systems-12-1 && \
+    apt install -y cuda-nsight-compute-12-2 \
+                   cuda-nsight-systems-12-2 \
+                   libcudnn8=8.9.7.29-1+cuda12.2 \
+                   libcudnn8-dev=8.9.7.29-1+cuda12.2 && \
+    rm -f /usr/lib/x86_64-linux-gnu/libcudnn_*static.a && \
     rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install \
@@ -159,7 +161,7 @@ RUN pip3 install \
         zhon==1.1.5
 
 ARG CRUISE_VERSION=1.0.0.2007
-ARG PANTHER_VERSION=1.7.11.97
+ARG PANTHER_VERSION=1.7.13.17
 ARG FALCONCLAW_VERSION=1.0.5.129
 ARG ONNX_VERSION=1.0.0.22
 ARG OPENFST_VERSION=1.0.0.8
