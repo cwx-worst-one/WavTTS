@@ -297,7 +297,7 @@ def resolve_data_urls(data_id=None, data_urls=None):
         if index in resolved_urls:
             continue
 
-        index_version = re.findall(r".*(index_\d).*", index)[0]
+        index_version = re.findall(r".*(index_\d+).*", index)[0]
         ARNOLD_BASE_DIR = os.getenv("ARNOLD_BASE_DIR", "")
         if not ARNOLD_BASE_DIR.startswith("hdfs://"):
             # maybe on merlin devbox, use RUNTIME_IDC_NAME instead
