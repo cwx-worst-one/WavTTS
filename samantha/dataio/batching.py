@@ -1,12 +1,10 @@
 import logging
 from typing import Callable, Dict, List, Optional
 
-from cruise.data_module.lite.batcher import BaseBatcher
-
 logger = logging.getLogger(__name__)
 
 
-class SimpleBatcher(BaseBatcher):
+class SimpleBatcher:
     """
     batch num bucket schedule.
     collate batch data depending on data item num.
@@ -44,7 +42,7 @@ class SimpleBatcher(BaseBatcher):
         self.data_buffer = []
 
 
-class BucketBatcher(BaseBatcher):
+class BucketBatcher:
     r"""Separate samples into different buckets according its size calculated by
     ``length_fn``, and collate batches from each bucket once their size satisfied
     the ``maximum_bucket_size`` when ``dynamic_batch`` is on, ``batch_size`` when off.
@@ -77,7 +75,6 @@ class BucketBatcher(BaseBatcher):
         bucket_skip_warning_num: int = 10000,
         bsz_evaluator: Optional[Callable] = None,
     ):
-        super().__init__()
         if buckets is None:
             buckets = [2**31]
 
@@ -220,7 +217,7 @@ class BucketBatcher(BaseBatcher):
             self.bucket_max_size[bucket_idx] = 0
 
 
-class TaggedBucketBatcher(BaseBatcher):
+class TaggedBucketBatcher:
     def __init__(
         self,
         buckets: Dict[str, List[int]],
@@ -229,7 +226,6 @@ class TaggedBucketBatcher(BaseBatcher):
         length_fn: Callable = len,
         bucket_skip_warning_num: int = 10000,
     ):
-        super().__init__()
         self.buckets = buckets
         self.batch_size = batch_size
         self.tag_fn = tag_fn
