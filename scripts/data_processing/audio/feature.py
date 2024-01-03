@@ -97,6 +97,7 @@ def run(
     model = worker.load_model()
     prefix = f"[{local_rank=} {processor_idx=}]"
     logger.info(f"{prefix} {len(worker.data_urls)=}")
+    local_totol_count, local_elapsed = 0, 0
     for data_url, output_url, ckpt_url in zip(
         worker.data_urls, worker.output_urls, worker.ckpt_urls
     ):
@@ -141,7 +142,11 @@ def run(
             fs.touch(ckpt_url)
             ed = time.perf_counter()
             rtf = (ed - st) / (1e-5 + total_count)
-            logger.info(f"{prefix_info} {rtf=:.4f}")
+            local_totol_count += total_count
+            local_elapsed += (ed - st)
+            consumed = str(datetime.timedelta(seconds=local_totol_count))
+            elapsed = str(datetime.timedelta(seconds=local_elapsed))
+            logger.info(f"{prefix_info} {rtf=:.4f}, {consumed=}, {elapsed=}")
         except Exception as e:
             logger.warning(f"{prefix_info} Error: {data_url=}", exc_info=e)
 
