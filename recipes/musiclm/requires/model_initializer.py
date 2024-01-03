@@ -74,6 +74,12 @@ def _init_cached_mulan(hpath, local_rank, cache_dir=None, version="149", prefix=
             mulan_inference,
             mulan_rvq_indexs,
         )
+    elif version in ["sstkmae"]:
+        from .mulan.mulan_infer_sstk_mae import(
+            create_mulan_model,
+            mulan_inference,
+            mulan_rvq_indexs,
+        )
     else:
         raise KeyError(f"Not a valid mulan version. {version}")
     if cache_dir is not None:
