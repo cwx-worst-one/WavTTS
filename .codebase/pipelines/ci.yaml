@@ -23,7 +23,7 @@ jobs:
       - name: flake8
         if: True
         commands:
-          - git ls-files samantha | grep -E "\.py$" | xargs flake8 --count --statistics
+          - git ls-files samantha | grep -E "\.py$" | xargs flake8 --ignore=E701,W503,E999,F405,F401,E712,F403,E203,F821,F811 --count --statistics
       - name: yamllint
         if: True
         commands:

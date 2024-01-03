@@ -2,9 +2,9 @@ from typing import Dict
 
 import torch
 
-from recipes.umm.models.umm_mkii import UMMResult
-from recipes.umm.requires.model_initializer import init_stage3
 from samantha.models.base import LightningModuleBase
+from samantha.models.umm.model_initializer import init_stage3
+from samantha.models.umm.umm_mkii import UMMResult
 from samantha.utils.hdfs_tools import ARNOLD_REGION
 
 

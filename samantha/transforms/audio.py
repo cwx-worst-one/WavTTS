@@ -487,3 +487,38 @@ class MelSpectrogram(nn.Module):
         if self.return_phase:
             return mel_specgram, x_phase
         return mel_specgram
+
+
+class FastNormalizeAudio(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+
+    def forward(
+        self, x, norm_tensor: Optional[torch.Tensor] = None, eps=1e-8
+    ) -> torch.Tensor:
+        if norm_tensor is None:
+            denom = x.abs().max().clamp_min_(eps).expand_as(x)
+        else:
+            denom = norm_tensor.abs().max().clamp_min_(eps).expand_as(x)
+        return torch.div(x, denom)
+
+
+class LoudnessCheck:
+    def __init__(
+        self,
+        sample_rate: int,
+        threshold: float = 0.05,
+        loudness_ratio_threshold: float = 0.5,
+    ):
+        self.sample_rate = sample_rate
+        self.threshold = threshold
+        self.loudness_ratio_threshold = loudness_ratio_threshold
+
+    def __call__(self, audio: torch.Tensor) -> bool:
+        window_size = int(self.sample_rate * 0.1)
+        energy = to_energy(audio, window_size)
+        ratio = torch.sum(energy > self.threshold) / energy.size(1)
+
+        if ratio < self.loudness_ratio_threshold:
+            return False
+        return True
