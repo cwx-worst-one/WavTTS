@@ -15,6 +15,7 @@ from samantha.utils.hparams import DotDict
 from recipes.musiclm.inference.utils import sample
 from recipes.bigmusic.lightning.embedding_modules import TokenEmbedder, BaseEmbedder
 from samantha.utils.model_metric import ModelMetric
+from collections import defaultdict
 
 
 class BaseModule(pl.LightningModule):
@@ -117,38 +118,42 @@ class BaseModule(pl.LightningModule):
             logits = logits[0]
         x = logits[:, -target_ids.size(1):, :]
         loss = self.criterion(x, target_ids)        
-        accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100        
-        return loss, accu
+        accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
+        # measure accuracy of first 10 tokens as a measurement for style
+        accu_seq_25 = (x.argmax(dim=-1)[..., :25] == target_ids[..., :25]).float().mean() * 100
+        result_dict = {
+            'loss': loss.item(),
+            'accu': accu.item(),
+            'accu_seq_25': accu_seq_25.item()
+        }
+        return loss, result_dict
 
     def training_step(self, batch, batch_idx):
-        loss, accu = self._shared_step(batch, update_mfu=True)
-        self.log_dict({"tr_loss": loss, "accu": accu}, prog_bar=True, sync_dist=True)
+        loss, result_dict = self._shared_step(batch, update_mfu=True)
+        log_dict = { 'tr_' + key: value for key, value in result_dict.items() }
+        self.log_dict(log_dict, prog_bar=True, sync_dist=True)
         return loss
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
-        loss, accu = self._shared_step(batch)
+        loss, result_dict = self._shared_step(batch)
         if dataloader_idx not in self.val_outputs:
             self.val_outputs[dataloader_idx] = []
-        self.val_outputs[dataloader_idx].append((loss, accu))
+        self.val_outputs[dataloader_idx].append(result_dict)
 
     def predict_step(self, batch, batch_idx):
         pass
 
     def on_validation_epoch_end(self):
-        for dataloader_idx, outputs in self.val_outputs.items():
-            loss = 0
-            accu = 0
-            for l, a in outputs:
-                loss += l
-                accu += a
-            loss /= len(outputs)
-            accu /= len(outputs)
+        for dataloader_idx, results_list in self.val_outputs.items():
+            accum = defaultdict(list)
+            for result_dict in results_list:
+                for k, v in result_dict.items():
+                    accum[k].append(v)
+            
+            log_dict = { f'val_{k}_{str(dataloader_idx)}': torch.tensor(v).mean().item() for k,v in accum.items()}
 
             self.log_dict(
-                {
-                    f"val_loss_{dataloader_idx}": loss,
-                    f"val_accu_{dataloader_idx}": accu,
-                },
+                log_dict,
                 prog_bar=True,
                 sync_dist=True,
             )
@@ -156,16 +161,17 @@ class BaseModule(pl.LightningModule):
 
     def configure_optimizers(self):
         if isinstance(self.model, gpt.GPTLMHeadModel):
-            optimizer = self.hparams.optimizer_cls(self.parameters())
-        else:
-            params = []
-            for name, p in self.named_parameters():
-                if "bias" in name or "layernorm" in name or "ln_" in name:
-                    print(f"Skip weight decay: {name}")
-                    params.append({"params": [p], "weight_decay": 0.0})
-                else:
-                    params.append({"params": [p]})
-            optimizer = self.hparams.optimizer_cls(params)
+            special_keywords = ["bias", "norm1", "norm2", "embedder.weight"]
+        else: # flash llama special keywords
+            special_keywords = ["bias", "layernorm", "ln_", "embedder.weight"]
+        params = []
+        for name, p in self.named_parameters():
+            if any([s in name for s in special_keywords]):
+                print(f"Skip weight decay: {name}")
+                params.append({"params": [p], "weight_decay": 0.0})
+            else:
+                params.append({"params": [p]})
+        optimizer = self.hparams.optimizer_cls(params)
         scheduler = self.hparams.scheduler_cls(optimizer)
         return {
             "optimizer": optimizer,
@@ -190,7 +196,15 @@ class BaseContinuousEmbedModule(BaseModule):
         self.input_embedders = input_embedders
         self.target_embedder = target_embedder
         if isinstance(self.model, gpt.GPTLMHeadModel):
-            init_weights_fn = partial(_init_weights, n_layer=self.model.config.num_hidden_layers)
+            config = self.model.config
+            init_weights_fn = partial(
+                _init_weights,
+                n_layer=config.num_hidden_layers,
+                initializer_range=config.initializer_range,
+                rescale_prenorm_residual=getattr(
+                    config, "rescale_prenorm_residual", True
+                ),
+            )
             self.input_embedders.apply(init_weights_fn)
             self.target_embedder.apply(init_weights_fn)
         else:

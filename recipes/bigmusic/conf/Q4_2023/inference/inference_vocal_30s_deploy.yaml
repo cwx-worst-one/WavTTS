@@ -55,7 +55,7 @@ run_opts:
     accelerator: auto
     strategy: auto
     cache_dir: .module_cache/musiclm
-    batch_size: 4  # set to 4 if using reranker, 28 without reranker
+    batch_size: 8  # set to 8 if using reranker, 40 without reranker
     num_workers: 8
 
 ################################################################################

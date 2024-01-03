@@ -416,7 +416,7 @@ class DefaultDatasets():
             index_list,
             # transform params
             enable_punctuation=False, style_conditions="style_tag,lyrics_tokens", infer_weights=False,
-            min_song_confidence=0.8, min_segment_confidence=0.75
+            min_song_confidence=0.8, min_segment_confidence=0.8
         ):
             if isinstance(style_conditions, list): # multiple style conditions - for mixed style training. In that case, use random conditioning
                 batch_transforms = [RandomConditionsTransform(style_conditions)]
@@ -445,7 +445,7 @@ class DefaultDatasets():
             index_list,
             # transform params
             enable_punctuation=False, style_conditions="style_tag,lyrics_tokens",
-            min_song_confidence=0.8, min_segment_confidence=0.75
+            min_song_confidence=0.8, min_segment_confidence=0.8
         ):
             if isinstance(style_conditions, list): # multiple style conditions - for mixed style training. In that case, use random conditioning
                 batch_transforms = [RandomConditionsTransform(style_conditions)]

@@ -10,6 +10,8 @@ import numpy as np
 import json
 from typing import Tuple
 from string import punctuation, whitespace
+import traceback
+import re
 from samantha.transforms.audio import (
     NormalizeAudioToFloat32,
     SetAudioDimensions,
@@ -37,10 +39,10 @@ class LyricsSegmentTransforms(TransformBase):
         shuffle_segments: bool = True,
         url2index = None,
         min_song_confidence: int=0.8,
-        min_segment_confidence: int=0.75,
+        min_segment_confidence: int=0.8,
         handler: Callable = wds.warn_and_continue,
     ) -> None:
-        super().__init__()
+        super().__init__(log_interval=500)
         self.sample_rate = sample_rate
         self.audio_format = audio_format
         self.audio_keys = audio_keys
@@ -117,11 +119,13 @@ class LyricsSegmentTransforms(TransformBase):
         try:
             metadata, lyrics = extract_metadata_and_utterances(x)
         except Exception as e:
-            self._update_stats(skipped=True)
+            self._update_stats(skipped=True, message="Error extracting metadata")
             self.handler(e)
             return
-        if not (is_valid_lyrics(lyrics, confidence_threshold=self.min_song_confidence) and is_valid_metadata(metadata)):
-            self._update_stats(skipped=True)
+        
+        is_invalid, reason = is_invalid_song(metadata, lyrics, confidence_threshold=self.min_song_confidence)
+        if is_invalid:
+            self._update_stats(skipped=True, message=reason)
             return
 
         fixed_duration = len(self.sample_duration) == 1 # if only one duration is provided. Fix it to that duration
@@ -142,12 +146,14 @@ class LyricsSegmentTransforms(TransformBase):
             random.shuffle(segments)
         segment_count = 0
 
-        if len(segments) == 0: return
+        if len(segments) == 0: 
+            self._update_stats(skipped=True, message="Filter low confident segments. 0 segments above threshold")
+            return
         try:
             audio_wavs = self.extract_audio_wavs(x)
             # Extract segment information
         except Exception as e:
-            self._update_stats(skipped=True)
+            self._update_stats(skipped=True, message="Error extracting audio.")
             self.handler(e)
             return
         
@@ -165,7 +171,10 @@ class LyricsSegmentTransforms(TransformBase):
             segment_count += 1
             if self.max_num_segments and segment_count >= self.max_num_segments:
                 break
-        self._update_stats(segment_count == 0)
+        if segment_count == 0:
+            self._update_stats(skipped=True, message="Error processing segments. 0 segments processed")
+        else:
+            self._update_stats(skipped=False)
 
 def extract_metadata_and_utterances(item):
     # webdataset case
@@ -179,6 +188,8 @@ def extract_metadata_and_utterances(item):
     elif 'meta' in item:
         index_data = json.loads(item['meta'])
         metadata = index_data
+    else:
+        raise Exception('Unable to locate metadata')
 
     # Hiphop has format metadata: {..., lyrics: []}, THe rest has format { metadata: {}, lyrics: []}
     if 'lyrics' in metadata:
@@ -422,7 +433,6 @@ def force_aligned_word_format_to_line_format(lyrics):
     return lines
 
 # Filters
-
 def is_audio_metrics_good(audio_metrics: Dict[str, Any]) -> Tuple[bool, str]:
     # Clipping
     clip = audio_metrics.get("clipping", {})
@@ -469,13 +479,10 @@ def is_audio_metrics_good(audio_metrics: Dict[str, Any]) -> Tuple[bool, str]:
     return True
 
 def is_valid_metadata(metadata):
-#     if metadata['meta_song_language'] != 'en' or metadata['final_language'] != 'English': 
     if 'final_language' in metadata and metadata['final_language'] != 'English': 
-        # print('Invalid', metadata['meta_song_language'], metadata['final_language'])
         return False
     valid_audio_metrics = is_audio_metrics_good(metadata.get('audio_metrics', {}))
     if not valid_audio_metrics: 
-        # print('Invalid metrics', metadata['audio_metrics'].keys())
         return False
     return True
 
@@ -498,3 +505,82 @@ def is_valid_lyrics(lyrics, confidence_threshold=0.8):
     if len(confidences) == 0:
         return False
     return np.array(confidences).mean() > confidence_threshold
+
+def is_invalid_song(metadata, lyrics, confidence_threshold):
+    # Metadata filtering
+    if 'final_language' in metadata and metadata['final_language'] != 'English': 
+        return True, "Filter invalid final_language"
+    
+    if not is_audio_metrics_good(metadata.get('audio_metrics', {})): 
+        return True, "Filter invalid audio metrics"
+    
+    # Lyrics filtering
+    if lyrics is None or len(lyrics) == 0:
+        return True, "Filter invalid lyrics. None found"
+    
+    # Song title filtering
+    if not is_valid_song_name(metadata):
+        return True, "Filter live/instrumental song names."
+
+    if not is_valid_lyrics(lyrics, confidence_threshold=confidence_threshold):
+        return True, "Filter low confidence lyrics."
+    
+    
+    return False, "Passed filters"
+
+
+def is_valid_song_name(metadata):
+    song_name = metadata['meta_song_title']
+    album_name = metadata['meta_album_title']
+    if not album_name: album_name = ''
+    full_name = (str(song_name) + ' ' + str(album_name)).lower()
+    if is_live(full_name): return False
+    if is_instrumental(full_name): return False
+    # if is_remix(full_name): return False # let's keep remixes for now
+    return True
+
+def is_live(song_name):
+    if re.search(r'\(live\b', song_name):
+        return True
+    if re.search(r'- live\b', song_name):
+        return True
+    if re.search(r'\/ live\b', song_name):
+        return True
+    if re.search(r'\blive at ', song_name):
+        return True
+    if re.search(r'\blive from ', song_name):
+        return True
+    if 'recorded live ' in song_name:
+        return True
+    if ' live radio ' in song_name:
+        return True
+    if ' live lounge' in song_name:
+        return True
+    if ' live sets' in song_name:
+        return True
+    if ' live session' in song_name:
+        return True
+    if ' live performance' in song_name:
+        return True
+    if 'concert' in song_name:
+        return True
+    # chinese
+    if '现场' in song_name: # live
+        return True
+    if '音乐会' in song_name: # concert
+        return True
+    return False
+
+def is_instrumental(song_name):
+    if 'instrumental' in song_name:
+        return True
+    return False
+
+def is_remix(song_name):
+    if 'remix' in song_name:
+        return True
+    if re.search(r'\bmix\b', song_name):
+        return True
+    if '混音' in song_name: # remix
+        return True
+    return False

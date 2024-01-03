@@ -296,17 +296,21 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
             last_hidden_state = model_output['hidden_states'][-1]
         elif isinstance(model_output, tuple):
             target_logits, last_hidden_state = model_output
-        # target_logits = model_output['logits']
         target_ids = token_ids * target_loss_mask.long() # set non-target ids to 0 to avoid OOB
         target_loss = self.criterion(target_logits, target_ids, mask=target_loss_mask)
-        target_accu = (target_logits.argmax(dim=-1) == token_ids)[target_loss_mask].float().mean() * 100
+        target_accu = (target_logits.argmax(dim=-1) == target_ids)[target_loss_mask].float().mean() * 100
+        # measure accuracy of first 25 tokens as a measurement for style
+        target_mask_cumsum = torch.cumsum(target_loss_mask, dim=-1)
+        target_loss_mask_seq_25 = (target_mask_cumsum <= 26) & (target_mask_cumsum > 1) & target_loss_mask # first 25 tokens after eos
+        target_accu_seq_25 = (target_logits.argmax(dim=-1) == target_ids)[target_loss_mask_seq_25].float().mean() * 100
 
         loss = target_loss
         results_dict = {
             'loss': (target_loss).item(),
             'accu': (target_accu).mean().item(),
-            'target_loss': target_loss.item(),
-            'target_accu': target_accu.item()
+            'tgt_loss': target_loss.item(),
+            'tgt_accu': target_accu.item(),
+            'tgt_accu_seq_25': target_accu_seq_25.item()
         }
 
         for pred_type, pred_head in self.prediction_heads.items():
@@ -317,8 +321,8 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
                 pred_loss = self.criterion(inputs_logits, inputs_ids, mask=input_loss_mask)
                 inputs_accu = (inputs_logits.argmax(dim=-1) == inputs_ids)[input_loss_mask].float().mean() * 100
                 pred_dict = {
-                    'input_loss': pred_loss.item(),
-                    'input_accu': inputs_accu.item(),
+                    'inp_loss': pred_loss.item(),
+                    'inp_accu': inputs_accu.item(),
                 }
             else:
                 raise ValueError(f"Unknown pred type: {pred_type}")
@@ -330,7 +334,7 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
     
     def training_step(self, batch, batch_idx):
         loss, results_dict = self._shared_step(batch, update_mfu=True)
-        log_dict = { 'train_' + key: value for key, value in results_dict.items() }
+        log_dict = { 'tr_' + key: value for key, value in results_dict.items() }
         self.log_dict(log_dict, prog_bar=True, sync_dist=True)
         return loss
 

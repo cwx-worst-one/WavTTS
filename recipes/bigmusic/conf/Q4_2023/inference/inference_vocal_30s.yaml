@@ -16,6 +16,7 @@ extra_params:
     max_items: null
     run_combinations: False
     use_reranker: True
+    dataset_mode: truncate_length
 
     output_dir: ./generated_output/conditional
 
@@ -57,11 +58,11 @@ run_opts:
     accelerator: auto
     strategy: auto
     cache_dir: .module_cache/musiclm
-    batch_size: 4  # set to 4 if using reranker, 28 without reranker
+    batch_size: 8  # set to 8 if using reranker, 40 without reranker
     num_workers: 8
 
 ################################################################################
-##########                    TRAINING CONFIGURATION                  ##########
+##########                    INFERENCE CONFIGURATION                  ##########
 ################################################################################
 predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_from_prompt
     prompt_path: !ref <extra_params[prompt_path]>
@@ -70,6 +71,7 @@ predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_fr
     batch_size: !ref <run_opts[batch_size]>
     run_combinations: !ref <extra_params[run_combinations]>
     lyrics_max_seq_len: !ref <extra_params[lyrics_max_seq_len]>
+    dataset_mode: !ref <extra_params[dataset_mode]>
     enable_punctuation: True
 
 ## For running results on GroupA validation set:

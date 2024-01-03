@@ -13,7 +13,7 @@ try:
 except:
     BestRQ = None
 from recipes.musiclm.models.compat.semantic_model import SSLFrontend
-
+from functools import lru_cache
 from ..utils.dist import local_zero_first
 
 
@@ -27,8 +27,11 @@ def load_torch_script_module(module_path, device):
     module = torch.jit.load(module_path, map_location=device).to(device).eval()
     return module
 
-
 def init_mulan(hpath, local_rank, cache_dir=None, version="149", prefix=""):
+    return _init_cached_mulan(hpath, local_rank, cache_dir, version, prefix)
+
+@lru_cache() # cache initialization so we don't load multiple mulan's (e.g. during inference with semantic and reranker modules)
+def _init_cached_mulan(hpath, local_rank, cache_dir=None, version="149", prefix=""):
     if version in ["149"]:
         from .mulan.mulan_infer_149 import (
             create_mulan_model,

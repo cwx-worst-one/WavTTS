@@ -14,16 +14,17 @@ extra_params:
     sample_rate: 24000
     duration: [15, 20, 25, 30]
     lyrics_codebook_size: 400
-    lyrics_max_seq_len: 400
+    lyrics_max_seq_len: null # batching is based off of lyrics + umm lengths. No need to set max length anymore
     semantic_codebook_size: 32_768
     semantic_frame_rate: 25
     mulan_embed_dim: 512
     hidden_size: 1536
     dataset_types: mcc60m_vocal_style_text
-    valid_dataset_type: mcc60m_groupA
     semantic_type: bestrq
-    input_embedders: ["mulan", "lyrics_tokens"]
     pretrained_path: null # for loading state dicts
+    enable_punctuation: True
+    input_embedders: ["mulan", "lyrics_tokens"]
+    prediction_heads: ["input"]
 
 # running parameters
 run_opts:
@@ -57,7 +58,6 @@ pl_datamodule: !apply:recipes.bigmusic.datasets.lyrics.LyricsDataModule.from_dat
     num_workers: !ref <run_opts[num_workers]>
     pin_memory: True
     dataset_types: !ref <extra_params[dataset_types]>
-    valid_dataset_type: !ref <extra_params[valid_dataset_type]>
 
 model_config: !new:transformers.GPT2Config
     vocab_size: 1 # placeholder. Embedding table gets removed on load
@@ -98,7 +98,7 @@ model_cls: !name:samantha.models.ctiga.gpt.GPTLMHeadModel
 optimizer_cls: !name:torch.optim.AdamW
     lr: !ref <run_opts[learning_rate]>
     weight_decay: !ref <run_opts[weight_decay]>
-    betas: [0.9, 0.96]
+    betas: [0.9, 0.98]
     eps: 0.00000001
 
 scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupCosine
@@ -107,7 +107,7 @@ scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupC
     cycle_steps: !ref <run_opts[cycle_steps]>
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
-pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
+pl_module: !new:recipes.bigmusic.lightning.semantic_varlen_modules.SemanticModuleVarlen
     checkpointing: False
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
@@ -144,7 +144,7 @@ callbacks:
       save_last: False
       monitor: val_accu_0
       mode: max
-      filename: "{step:06d}-{tr_loss:.4f}-{val_accu_0:.2f}"
+      filename: "{step:06d}-{train_loss:.4f}-{val_accu_0:.2f}"
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
       save_top_k: 0
       save_last: True
@@ -157,7 +157,7 @@ callbacks:
       save_top_k: 10
       every_n_train_steps: 8000
       mode: max
-      filename: "{step:06d}-{tr_loss:.4f}-{val_loss_0:.4f}"
+      filename: "{step:06d}-{train_loss:.4f}-{val_loss_0:.4f}"
 
 plugins:
     - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
