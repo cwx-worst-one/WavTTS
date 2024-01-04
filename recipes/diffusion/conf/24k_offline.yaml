@@ -1,0 +1,177 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 43
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+# running parameters
+asset_dir: recipes/diffusion/assets
+ckpt_path: null #/mnt/bn/audio-diffusion/wtl/diffusion/model_18_part2/checkpoints/last.ckpt
+
+run_opts:
+    fast_dev_run: False
+    log_dir: ./logs
+    log_name: "diffusion_offline"
+    version: "model_20_24k"
+    tensorboard_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+    strategy: ddp_find_unused_parameters_false #!new:pytorch_lightning.strategies.ddp.DDPStrategy static_graph: True
+    precision: 32
+    limit_val_batches: 5
+    log_every_n_steps: 100
+    num_steps: 6000000
+    save_every_n_train_steps: 5000
+    val_check_interval: 6000000
+    val_output_samples_dir: generated_samples #"/mnt/bn/audio-diffusion/wtl/diffusion/model_18_formal/generated_samples"
+    flops_fn: !apply:os.getenv ["flops_fn", "custom"]
+    profiler: "simple"
+    online_feature: False
+
+training_params:
+    pretrained_path: null #hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_18_fast/last-EMA.ckpt
+    diffusion_sample_rate: 24000
+    tokenizer_smaple_rate: 24000
+    noise_range: [0, 1.0]
+    dataloader_batch_size: 1
+    dataloader_num_workers: 12 # a100:6; h800:12
+    dataloader_duration: 60
+    train_batch_size: 4
+    val_batch_size: 2
+    gradient_clip_val: 1.0
+    learning_rate: 0.00008
+    weight_decay: 0.005
+    vc: False
+    voice_clone_random_start: True
+    voice_clone_duration: 6
+    duration: 30
+    sample_pool_size: 16
+    min_volume_threshold: 0.05
+    loudness_ratio_threshold: 0.2
+    shuffle_buffer_size: 10
+    use_lora: False
+    train_data_id: 910
+    val_data_id: 911
+    prefetch_factor: 2
+    
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+pl_datamodule: !new:recipes.diffusion.dataset.parquet_dataset.OfflineFeatureParquetDataModule
+    train_data_id: !ref <training_params[train_data_id]>
+    valid_data_id: !ref <training_params[val_data_id]>
+    train_batch_size: !ref <training_params[dataloader_batch_size]>
+    valid_batch_size: !ref <training_params[val_batch_size]>
+    shuffle_buffer_size: !ref <training_params[shuffle_buffer_size]>
+    num_workers: !ref <training_params[dataloader_num_workers]>
+    prefetch_factor: !ref <training_params[prefetch_factor]>
+    dataset_samplerate: !ref <training_params[diffusion_sample_rate]>
+    pin_memory: True
+    resampled: True
+
+# training module configuration
+optimizer_cls: !name:torch.optim.AdamW
+    lr: !ref <training_params[learning_rate]>
+    weight_decay: !ref <training_params[weight_decay]>
+
+scheduler_cls: !name:torch.optim.lr_scheduler.LambdaLR
+    lr_lambda: !name:recipes.diffusion.utils.lr_schedulers.lr_lambda
+        warmup_steps: 0
+        decay_factor: 0.9
+        decay_interval: 200000
+
+pl_module: !new:recipes.diffusion.modules.pl_module.DiffusionModule
+    seed: !ref <seed>
+    diffusion_model: !new:recipes.diffusion.models.tnt_v2.TNTDiffusionNetwork
+        input_dim: 32
+        feature_dim: 1024
+        context_dim: 1
+        depth: 16
+        segment_size: 32
+        segment_stride: 32
+        unet: True
+        dropout: 0
+        semantic_cfg_prob: 0.1
+        use_checkpoint: False
+        vc: !ref <training_params[vc]>
+        vc_cfg_prob: 0.1
+        lora: !ref <training_params[use_lora]>
+    lora: !ref <training_params[use_lora]>
+    target_dim: 32
+    num_chunks: 1
+    duration: !ref <training_params[duration]>
+    noise_range: !ref <training_params[noise_range]>
+    tokenizer_sample_rate: !ref <training_params[tokenizer_smaple_rate]>
+    diffusion_sample_rate: !ref <training_params[diffusion_sample_rate]>
+    sample_pool_size: !ref <training_params[sample_pool_size]>
+    train_batch_size: !ref <training_params[train_batch_size]>
+    val_batch_size: !ref <training_params[val_batch_size]>
+    vc: !ref <training_params[vc]>
+    optimizer_cls: !ref <optimizer_cls>
+    scheduler_cls: !ref <scheduler_cls>
+    pretrained_path: !ref <training_params[pretrained_path]>
+    required_modules:
+        # tokenizer_model:
+        #     hpath: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/semantic/step=0030000.ckpt
+        #     initializer: !name:recipes.umm.requires.model_initializer.init_stage3
+        #         cache_dir: !ref <asset_dir> 
+        vocoder_model:
+            hpath: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/soundstream-step=374999-val_sdr=12.9557.ckpt
+            initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
+                cache_dir: !ref <asset_dir>
+                sample_rate: !ref <training_params[diffusion_sample_rate]>
+    val_output_samples_dir: !ref <run_opts[val_output_samples_dir]>
+    flops_fn: !ref <run_opts[flops_fn]>
+    online_feature: !ref <run_opts[online_feature]>
+
+logger: 
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+        save_dir: !ref <run_opts[tensorboard_dir]>
+        project: !ref <run_opts[log_name]>
+        name: !ref <run_opts[version]>
+
+
+checkpoint: !new:recipes.diffusion.utils.callbacks.EMAModelCheckpoint
+    monitor: step
+    mode: max
+    save_top_k: 5
+    every_n_train_steps: !ref <run_opts[save_every_n_train_steps]>
+    save_last: True
+    filename: diffusion-{step:06d}
+
+lr_monitor: !new:pytorch_lightning.callbacks.LearningRateMonitor
+    logging_interval: step
+
+plugins:
+    - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    num_sanity_val_steps: 0
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    accelerator: auto
+    devices: auto
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False  # warning: setting to True can cause slowdowns
+    strategy: !ref <run_opts[strategy]>
+    enable_model_summary: True
+    max_steps: !ref <run_opts[num_steps]>
+    limit_val_batches: !ref <run_opts[limit_val_batches]>
+    val_check_interval: !ref <run_opts[val_check_interval]>
+    precision: !ref <run_opts[precision]>
+    log_every_n_steps: !ref <run_opts[log_every_n_steps]>
+    use_distributed_sampler: False
+    sync_batchnorm: True
+    logger: !ref <logger>
+    gradient_clip_val: !ref <training_params[gradient_clip_val]>
+    callbacks:
+        - !ref <checkpoint>
+        - !ref <lr_monitor>
+        - !new:recipes.diffusion.utils.ema.EMA
+          decay: 0.999
+        - !new:samantha.callbacks.timer.Timer
+    plugins: !ref <plugins>
+    profiler: !ref <run_opts[profiler]>
+
+# recipes/diffusion/bootstrap.sh fit -c recipes/diffusion/conf/mcc60m_bestrq.yaml --run_opts.version mcc60m_bestrq_v1 --log_dir /mnt/bn/lyrics-to-song/ashaw/logs/diffusion

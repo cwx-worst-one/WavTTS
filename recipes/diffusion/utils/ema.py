@@ -121,8 +121,7 @@ class EMA(Callback):
         connector = trainer._checkpoint_connector
         # Replace connector._ckpt_path with below to avoid calling into lightning's protected API
         ckpt_path = trainer.ckpt_path
-
-        if ckpt_path and checkpoint_callback is not None and 'NeMo' in type(checkpoint_callback).__name__:
+        if ckpt_path and checkpoint_callback is not None and 'EMA' in type(checkpoint_callback).__name__:
             ext = checkpoint_callback.FILE_EXTENSION
             if ckpt_path.endswith(f'-EMA{ext}'):
                 rank_zero_info(
@@ -139,7 +138,7 @@ class EMA(Callback):
                 del ema_state_dict
                 rank_zero_info("EMA state has been restored.")
             else:
-                raise MisconfigurationException(
+                rank_zero_info(
                     "Unable to find the associated EMA weights when re-loading, "
                     f"training will start with new EMA weights. Expected them to be at: {ema_path}",
                 )

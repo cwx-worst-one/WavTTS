@@ -25,10 +25,10 @@ extra_params:
     # Inference params
     semantic_temperature: 1.0
     sample_mode: "gumbel"
-    beam_size: 2
+    beam_size: 2 # should set 2
     decoder_type: "diffusion"
-    diffusion_steps: 10
-    bf16_portion: 1.0
+    diffusion_steps: 20
+    bf16_portion: 0
     # RL training params
     add_ref_to_beam: False
     ce_weight: 0.1
@@ -36,6 +36,7 @@ extra_params:
     positive_phrase: "cd quality, catchy, memorable"
     negative_phrase: "noisy, boring, forgettable"
     rewards:
+        "aq": 1.0
         "mulan_sim": 1.0
         "wer": 1.0
         "style_text_sim": 1.0
@@ -48,15 +49,15 @@ extra_params:
 # running parameters
 run_opts:
     fast_dev_run: False
-    log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+    log_dir: /mnt/bn/audio-diffusion/wtl/semantic/
     log_name: semantic_model_mulan_rlhf
-    version: v0
+    version: v5
     cache_dir: .module_cache/musiclm
     precision: "bf16-mixed"
     num_workers: 4
     accelerator: auto
     max_steps: 1000000
-    batch_size: 4
+    batch_size: 2
     learning_rate: 1.0e-6
     warmup_steps: 100
     cycle_steps: 10000
@@ -72,6 +73,7 @@ run_opts:
     bestrq_ckpt: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/umm_stage3_music_chroma_vq32768x32/step=0030000.ckpt"
     diffusion_ckpt: "/mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last.ckpt"
     vocoder_ckpt: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/soundstream-step=374999-val_sdr=12.9557.ckpt"
+    aq_ckpt: "/mnt/bn/audio-diffusion/wtl/aq/aq/model_0/checkpoints/aq-step=106908-val_loss=0.426495.ckpt"
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -191,7 +193,7 @@ trainer: !new:pytorch_lightning.Trainer
     num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
     deterministic: False
     enable_model_summary: True
-    log_every_n_steps: 25
+    log_every_n_steps: 1
     max_steps: !ref <run_opts[max_steps]>
     precision: !ref <run_opts[precision]>
     accumulate_grad_batches: 1

@@ -55,7 +55,8 @@ class ARVSampler(nn.Module):
         self.in_channels = in_channels
         self.num_splits = num_splits
         self.split_length = length // num_splits
-    
+    def set_length(self, length):
+        self.length = length
     def set_device(self, device: torch.device):
         self.device = device
 

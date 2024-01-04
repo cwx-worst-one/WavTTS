@@ -1,21 +1,17 @@
 import os
 import math
 import torch
+import torchaudio
 import soundfile as sf
 import pytorch_lightning as pl
 from collections import OrderedDict
-from einops import rearrange, repeat
-from recipes.musiclm.requires.mulan.mulan_infer_g4 import (
-    mulan_inference
-)
+from einops import repeat
 from recipes.diffusion.models.semantic_model.utils import (
     init_wav2vec, 
     init_bestrq,
-    init_semantic_centers,
     w2v_bert_tokenization
 )
-from recipes.diffusion.models.mulan_model.utils import init_mulan, init_mulan_centers, mulan_inference_wrapper
-from recipes.diffusion.models.vocoder_model.utils import init_vocoder, init_vocoder_yongye
+from recipes.diffusion.models.vocoder_model.utils import init_vocoder
 from recipes.diffusion.models.dualpath_net import DualPathDiffusionNetwork
 from recipes.diffusion.models.tnt_mulan_free import TNTDiffusionNetwork
 from recipes.diffusion.models.diffusion_mulan_free import ARVSampler
@@ -55,6 +51,8 @@ class DiffusionModule(pl.LightningModule):
         )
         # custom recorder for training step due to GAN training
         self.current_step = 0
+        # self.resampler = torchaudio.transforms.Resample(44100, sample_rate)
+    
     
     def on_fit_start(self):
         # init required models
@@ -74,6 +72,7 @@ class DiffusionModule(pl.LightningModule):
 
         # set torch seed for randomness
         torch.manual_seed(self.hparams.seed + self.global_rank)
+        # self.resampler = self.resampler.to(self.device)
     
     def _divide_params_group(self, model):
         no_decay = [
@@ -107,19 +106,6 @@ class DiffusionModule(pl.LightningModule):
         )
         scheduler = self.hparams.scheduler_cls(optimizer)
         return [optimizer], [scheduler]
-
-    @torch.no_grad()
-    def get_semantic_embs(self, x):
-        # input x has shape (b, c, t)
-        self.semantic_model["ssl_frontend"].eval()
-        self.semantic_model["semantic"].eval()
-        b, _, t = x.size()
-        feats, feat_mask = self.semantic_model["ssl_frontend"](
-            x[:, 0], torch.LongTensor([t]).repeat([b]).to(x.device)
-        )
-        w2v_embeds, _ = self.semantic_model["semantic"](feats, feat_mask)
-
-        return w2v_embeds.detach()
 
     @torch.no_grad()
     def get_semantic_tokens(self, x):
@@ -166,6 +152,10 @@ class DiffusionModule(pl.LightningModule):
         elif 'target_audio' in batch:
             batch['audio'] = batch['target_audio'][:, None, :] # bs, seq_len -> bs, ch1, seq_len
 
+        # batch['audio'] = batch['audio'].mean(dim=1, keepdim=True)
+        # batch['audio'] = self.resampler(batch['audio'].float())
+        
+
         with torch.autocast(device_type="cuda", enabled=False):
             # context
             semantic_tokens = self.get_semantic_tokens(batch['audio'].float())
@@ -181,14 +171,14 @@ class DiffusionModule(pl.LightningModule):
             t = torch.rand(size=[b, 1, self.hparams.num_chunks], device=self.device, dtype=vocoder_embs.dtype)
             t = (lower_bound - upper_bound) * t + upper_bound
         
-            t = repeat(t, 'b 1 n -> b 1 (n l)', l=self.hparams.chunk_length)
+            t = repeat(t, 'b 1 n -> b 1 (n l)', l=l)
 
             angles = math.pi /2. * t
             alphas, deltas = torch.cos(angles), torch.sin(angles)
         
             xt = alphas * vocoder_embs + deltas * et
             vt = alphas * et - deltas * vocoder_embs
-        
+   
         vt_pred = self.model(
             xt, 
             t, 
@@ -196,13 +186,7 @@ class DiffusionModule(pl.LightningModule):
         )
 
         with torch.autocast(device_type="cuda", enabled=False):
-            # min-SNR-gamma weighting
-            # snr = (alphas/(deltas + 1e-8))**2
-            # snr_mg = torch.min(snr, torch.ones_like(snr) * 5)
-            # w = snr_mg / (snr + 1)
-            # w = repeat(w, 'b 1 n -> b d n', d=xt.shape[1])
             unweighted_loss = self.loss_function(vt_pred.float(), vt.float())
-            # loss = torch.mean(w*unweighted_loss)
             loss = torch.mean(unweighted_loss)
 
         self.log_dict(
@@ -224,17 +208,33 @@ class DiffusionModule(pl.LightningModule):
         os.makedirs(
             f"{self.hparams.val_output_samples_dir}/{self.current_step}", exist_ok=True
         )
+        os.makedirs(
+            f"{self.hparams.val_output_samples_dir}/{self.current_step}/{self.local_rank}", exist_ok=True
+        )
+        
         self.val_output_dict = {}
         return
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
         with torch.autocast(device_type="cuda", enabled=False):
             if type(batch) is list:
                 batch = {'audio': batch[0]}
             elif 'target_audio' in batch:
                 batch['audio'] = batch['target_audio'][:, None, :] # bs, seq_len -> bs, ch1, seq_len
+            
+            # batch['audio'] = batch['audio'].mean(dim=1, keepdim=True)
+            # batch['audio'] = self.resampler(batch['audio'].float())
             # context
             semantic_tokens = self.get_semantic_tokens(batch['audio'].float())
+            if semantic_tokens.shape[1] < self.hparams.chunk_length:
+                pad_len = self.hparams.chunk_length - semantic_tokens.shape[1]
+                semantic_tokens = torch.cat(
+                    [
+                        semantic_tokens,
+                        torch.ones((semantic_tokens.shape[0], pad_len), device=self.device).long()
+                    ], 
+                    dim=1
+                )
 
             # diffusion sampling
             pred_emb = self.sampler(
@@ -242,7 +242,7 @@ class DiffusionModule(pl.LightningModule):
                 semantic_context=semantic_tokens,
                 num_items=semantic_tokens.shape[0], # batch size: how many samples to generate
                 num_chunks=self.hparams.num_chunks,
-                num_steps=20, # diffusion steps
+                num_steps=25, # diffusion steps
                 bf16_portion=0.0,
                 start=None,
                 show_progress=False,
@@ -255,13 +255,14 @@ class DiffusionModule(pl.LightningModule):
 
         # save the output wavs
         for idx, (gt, wav) in enumerate(zip(batch['audio'], wavs_g)):
+            num_files = len(os.listdir(f"{self.hparams.val_output_samples_dir}/{self.current_step}/{self.local_rank}")) // 2
             sf.write(
-                f"{self.hparams.val_output_samples_dir}/{self.current_step}/{idx}.wav",
+                f"{self.hparams.val_output_samples_dir}/{self.current_step}/{self.local_rank}/{num_files}.wav",
                 wav.cpu().numpy().T,
                 self.hparams.sample_rate,
             )
             sf.write(
-                f"{self.hparams.val_output_samples_dir}/{self.current_step}/{idx}.gt.wav",
+                f"{self.hparams.val_output_samples_dir}/{self.current_step}/{self.local_rank}/{num_files}_gt.wav",
                 gt.cpu().numpy().T,
                 self.hparams.sample_rate,
             )

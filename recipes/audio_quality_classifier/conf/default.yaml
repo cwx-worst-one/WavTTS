@@ -14,17 +14,17 @@ run_opts:
     fast_dev_run: False
     tensorboard_dir: !ref <log_dir>
     log_name: "aq"
-    version: "0.1"
+    version: "stage_1_test"
     precision: 32
     log_every_n_steps: 10
-    max_epochs: 100
+    max_epochs: 400
     batch_size: 4
-    num_workers: 4
+    num_workers: 1
     val_batch_size: 8
     val_num_workers: 4
 
 training_params:
-    learning_rate: 0.0005
+    learning_rate: 0.00001
     weight_decay: 0.005
 
 ################################################################################
@@ -32,30 +32,30 @@ training_params:
 ################################################################################
 
 # dataloader configuration
-train_dataset: !new:recipes.audio_quality_classifier.dataset.dataset.RewardDataset3
-    asset_path: "aq_dataset"
+train_dataset: !new:recipes.audio_quality_classifier.dataset.dataset.RewardDataset4
+    asset_path: "/mnt/bn/audio-diffusion/wtl/aq/aq_mos/*"
     data_slice: [0, 0.8]
 
 
-val_dataset: !new:recipes.audio_quality_classifier.dataset.dataset.RewardDataset3
-    asset_path: "aq_dataset"
+val_dataset: !new:recipes.audio_quality_classifier.dataset.dataset.RewardDataset4
+    asset_path: "/mnt/bn/audio-diffusion/wtl/aq/aq_mos/*"
     data_slice: [0.8, 1.0]
 
 train_dataloader: !new:torch.utils.data.DataLoader
     dataset: !ref <train_dataset>
     batch_size: !ref <run_opts[batch_size]>
     num_workers: !ref <run_opts[num_workers]>
-    shuffle: False
+    shuffle: True
     drop_last: True
     pin_memory: True
-    collate_fn: !name:recipes.audio_quality_classifier.dataset.dataset.collate3
+    collate_fn: !name:recipes.audio_quality_classifier.dataset.dataset.collate2
 
 val_dataloader: !new:torch.utils.data.DataLoader
     dataset: !ref <val_dataset>
     batch_size: !ref <run_opts[val_batch_size]>
     num_workers: !ref <run_opts[val_num_workers]>
     pin_memory: True
-    collate_fn: !name:recipes.audio_quality_classifier.dataset.dataset.collate3
+    collate_fn: !name:recipes.audio_quality_classifier.dataset.dataset.collate2
 
 # datamodule configuration
 pl_datamodule: !new:recipes.audio_quality_classifier.modules.pl_datamodule.AudioQualityClassifierDataModule
@@ -68,9 +68,10 @@ optimizer_cls: !name:torch.optim.AdamW
     weight_decay: !ref <training_params[weight_decay]>
 
 pl_module: !new:recipes.audio_quality_classifier.modules.pl_module.AudioQualityClassifierModule
+    seed: !ref <seed>
     model: !new:recipes.audio_quality_classifier.models.discriminator.MultiScaleSTFTDiscriminator
         filters: 48
-    pretrained_model_path: "soundstream-step=374999-val_sdr=12.9557.ckpt"
+    pretrained_model_path: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/soundstream-step=374999-val_sdr=12.9557.ckpt"
     optimizer_cls: !ref <optimizer_cls>
 
 logger: !new:pytorch_lightning.loggers.TensorBoardLogger
@@ -97,6 +98,7 @@ trainer: !new:pytorch_lightning.Trainer
     enable_model_summary: True
     max_epochs: !ref <run_opts[max_epochs]>
     precision: !ref <run_opts[precision]>
+    num_sanity_val_steps: 0
     log_every_n_steps: !ref <run_opts[log_every_n_steps]>
     logger: !ref <logger>
     callbacks:

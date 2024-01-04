@@ -8,8 +8,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 from pytorch_lightning.profilers import PassThroughProfiler
-from s3a.providers.ctiga.models import gpt
-from s3a.providers.ctiga.utils.generation import InferenceParams
+# from s3a.providers.ctiga.models import gpt
+# from s3a.providers.ctiga.utils.generation import InferenceParams
 from tqdm.auto import tqdm
 
 from recipes.musiclm.models.compat.semantic_model import w2v_bert_tokenization
@@ -158,17 +158,17 @@ class BaseModule(pl.LightningModule):
             self.val_outputs[dataloader_idx] = []
 
     def configure_optimizers(self):
-        if isinstance(self.model, gpt.GPTLMHeadModel):
-            optimizer = self.hparams.optimizer_cls(self.model.parameters())
-        else:
-            params = []
-            for name, p in self.model.named_parameters():
-                if "bias" in name or "layernorm" in name or "ln_" in name:
-                    print(f"Skip weight decay: {name}")
-                    params.append({"params": [p], "weight_decay": 0.0})
-                else:
-                    params.append({"params": [p]})
-            optimizer = self.hparams.optimizer_cls(params)
+        # if isinstance(self.model, gpt.GPTLMHeadModel):
+        #     optimizer = self.hparams.optimizer_cls(self.model.parameters())
+        # else:
+        params = []
+        for name, p in self.model.named_parameters():
+            if "bias" in name or "layernorm" in name or "ln_" in name:
+                print(f"Skip weight decay: {name}")
+                params.append({"params": [p], "weight_decay": 0.0})
+            else:
+                params.append({"params": [p]})
+        optimizer = self.hparams.optimizer_cls(params)
         scheduler = self.hparams.scheduler_cls(optimizer)
         return {
             "optimizer": optimizer,
@@ -402,8 +402,8 @@ class SemanticModule(BaseModule):
 
     @torch.no_grad()
     def predict(self, mulan_ids, hp):
-        if isinstance(self.model, gpt.GPTLMHeadModel):
-            self.model.config.use_flash_attn = False
+        # if isinstance(self.model, gpt.GPTLMHeadModel):
+            # self.model.config.use_flash_attn = False
         device = mulan_ids.device
         b, _ = mulan_ids.size()
         mulan_ids = (
@@ -447,32 +447,32 @@ class SemanticModule(BaseModule):
                     [mulan_ids, sos_ids, prefix_semantic_samples], dim=1
                 )
             gen_length = cur_end - cur_beg - cache_len
-            if isinstance(self.model, gpt.GPTLMHeadModel):
-                max_sequence_len = (
-                    hp.mulan_num_rvq + hp.wav2vec_frame_rate * hp.semantic_duration
-                )
-                inference_params = InferenceParams(
-                    max_sequence_len=max_sequence_len, max_batch_size=b
-                )
-            else:
-                past_key_values = None
+            # if isinstance(self.model, gpt.GPTLMHeadModel):
+            #     max_sequence_len = (
+            #         hp.mulan_num_rvq + hp.wav2vec_frame_rate * hp.semantic_duration
+            #     )
+            #     inference_params = InferenceParams(
+            #         max_sequence_len=max_sequence_len, max_batch_size=b
+            #     )
+            # else:
+            past_key_values = None
             pbar = tqdm(range(gen_length))
             for _ in pbar:
                 pbar.set_description(f"Semantic [{cur_beg} - {cur_end}]")
-                if isinstance(self.model, gpt.GPTLMHeadModel):
-                    logits = self.model(
-                        input_ids,
-                        inference_params=inference_params,
-                        position_ids=None,
-                        last_token_only=False,
-                    ).logits
-                    inference_params.sequence_len_offset += input_ids.size(1)
-                else:
-                    model_output = self.model(
-                        input_ids, past_key_values=past_key_values, use_cache=True
-                    )
-                    past_key_values = model_output["past_key_values"]
-                    logits = model_output["logits"]
+                # if isinstance(self.model, gpt.GPTLMHeadModel):
+                #     logits = self.model(
+                #         input_ids,
+                #         inference_params=inference_params,
+                #         position_ids=None,
+                #         last_token_only=False,
+                #     ).logits
+                #     inference_params.sequence_len_offset += input_ids.size(1)
+                # else:
+                model_output = self.model(
+                    input_ids, past_key_values=past_key_values, use_cache=True
+                )
+                past_key_values = model_output["past_key_values"]
+                logits = model_output["logits"]
                 predict_logits = logits[:, -1:, : hp.wav2vec_codebook_size]
                 samples = sample(
                     predict_logits, temp=hp.semantic_temperature, mode=hp.sample_mode
@@ -1160,8 +1160,8 @@ class CoarseModule(BaseModule):
 
     @torch.no_grad()
     def predict(self, semantic_samples, hp):
-        if isinstance(self.model, gpt.GPTLMHeadModel):
-            self.model.config.use_flash_attn = False
+        # if isinstance(self.model, gpt.GPTLMHeadModel):
+        #     self.model.config.use_flash_attn = False
         device = semantic_samples.device
         b = semantic_samples.size(0)
         num_coarse = hp.num_coarse
@@ -1206,35 +1206,35 @@ class CoarseModule(BaseModule):
                     [semantic_slice, sos_ids, prefix_coarse_samples], dim=1
                 )
             gen_length = cur_end - cur_beg - cache_len
-            if isinstance(self.model, gpt.GPTLMHeadModel):
-                max_sequence_len = (
-                    hp.wav2vec_frame_rate * hp.semantic_duration
-                    + hp.duration * soundstream_frame_rate * num_coarse
-                )
-                inference_params = InferenceParams(
-                    max_sequence_len=max_sequence_len, max_batch_size=b
-                )
-            else:
-                past_key_values = None
+            # if isinstance(self.model, gpt.GPTLM'HeadModel):
+            #     max_sequence_len = (
+            #         hp.wav2vec_frame_rate * hp.semantic_duration
+            #         + hp.duration * soundstream_frame_rate * num_coarse
+            #     )
+            #     inference_params = InferenceParams(
+            #         max_sequence_len=max_sequen'ce_len, max_batch_size=b
+            #     )
+            # else:
+            past_key_values = None
             pbar = tqdm(range(gen_length))
             for i in pbar:
                 pbar.set_description(
                     f"Coarse [{cur_beg} - {cur_end}] [{semantic_beg} - {semantic_end}]"
                 )
-                if isinstance(self.model, gpt.GPTLMHeadModel):
-                    logits = self.model(
-                        input_ids,
-                        inference_params=inference_params,
-                        position_ids=None,
-                        last_token_only=False,
-                    ).logits
-                    inference_params.sequence_len_offset += input_ids.size(1)
-                else:
-                    model_output = self.model(
-                        input_ids, past_key_values=past_key_values, use_cache=True
-                    )
-                    past_key_values = model_output["past_key_values"]
-                    logits = model_output["logits"]
+                # if isinstance(self.model, gpt.GPTLMHeadModel):
+                #     logits = self.model(
+                #         input_ids,
+                #         inference_params=inference_params,
+                #         position_ids=None,
+                #         last_token_only=False,
+                #     ).logits
+                #     inference_params.sequence_len_offset += input_ids.size(1)
+                # else:
+                model_output = self.model(
+                    input_ids, past_key_values=past_key_values, use_cache=True
+                )
+                past_key_values = model_output["past_key_values"]
+                logits = model_output["logits"]
                 layer_idx = i % num_coarse
                 predict_logits = logits[
                     :,

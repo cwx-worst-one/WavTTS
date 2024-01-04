@@ -8,37 +8,48 @@ seed: 2023
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 
 # running parameters
-log_dir: /mnt/bn/audio-diffusion/wtl
 asset_dir: recipes/diffusion/assets
-checkpoint_path: /mnt/bn/audio-diffusion/wtl/diffusion/model_14_fix_rot/checkpoints/last.ckpt
+ckpt_path: null
 
 run_opts:
     fast_dev_run: False
-    tensorboard_dir: !ref <log_dir>
+    log_dir: /mnt/bn/audio-diffusion/wtl
+    tensorboard_dir: !ref <run_opts[log_dir]> #!apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
     log_name: "diffusion"
-    version: "model_14_30s_finetune"
+    version: "model_19"
     strategy: ddp_find_unused_parameters_false #!new:pytorch_lightning.strategies.ddp.DDPStrategy static_graph: True
     precision: 32
-    log_every_n_steps: 10
+    limit_val_batches: 5
+    log_every_n_steps: 100
     num_steps: 6000000
-    save_every_n_train_steps: 1000
-    val_check_interval: 1000
-    val_output_samples_dir: "/mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/generated_samples"
+    save_every_n_train_steps: 2000
+    val_check_interval: 2000
+    val_output_samples_dir: "/mnt/bn/audio-diffusion/wtl/diffusion/model_19/generated_samples"
+    flops_fn: !apply:os.getenv ["flops_fn", "custom"]
+    profiler: "simple"
 
 training_params:
-    sample_rate: 24000
+    pretrained_path: null
+    diffusion_sample_rate: 24000
+    tokenizer_smaple_rate: 24000
     noise_range: [0, 1.0]
-    train_batch_size: 8
-    train_num_workers: 8
-    val_batch_size: 8
-    val_num_workers: 4
+    dataloader_batch_size: 5
+    dataloader_num_workers: 6
+    dataloader_duration: 30
+    train_batch_size: 16
+    val_batch_size: 2
     gradient_clip_val: 1.0
     learning_rate: 0.00008
     weight_decay: 0.005
+    vc: False
+    voice_clone_random_start: True
+    voice_clone_duration: 6
     duration: 30
+    sample_pool_size: 0
     min_volume_threshold: 0.05
     loudness_ratio_threshold: 0.2
-    sample_buffer_size: 10
+    shuffle_buffer_size: 10
+    use_lora: False
     # set to mcc40m_instrumental_unfiltered,mcc60m_vocal_unfiltered for training both vocal + instrumental
     dataset_types: mcc60m_vocal_unfiltered
 
@@ -48,13 +59,13 @@ training_params:
 
 # dataloader configuration
 pl_datamodule: !apply:recipes.bigmusic.datasets.lyrics.LyricsDataModule.from_dataset_type
-    batch_size: !ref <training_params[train_batch_size]>
-    sample_rate: !ref <training_params[sample_rate]>
-    sample_duration: !ref <training_params[duration]>
-    shuffle_buffer_size: !ref <training_params[sample_buffer_size]>
-    num_workers: !ref <training_params[train_num_workers]>
+    batch_size: !ref <training_params[dataloader_batch_size]>
+    sample_rate: !ref <training_params[diffusion_sample_rate]>
+    sample_duration: [15, 20, 25, 30]
+    shuffle_buffer_size: !ref <training_params[shuffle_buffer_size]>
+    num_workers: !ref <training_params[dataloader_num_workers]>
     pin_memory: True
-    dataset_types: !ref <extra_params[dataset_types]>
+    dataset_types: !ref <training_params[dataset_types]>
 
 # training module configuration
 optimizer_cls: !name:torch.optim.AdamW
@@ -67,41 +78,60 @@ scheduler_cls: !name:torch.optim.lr_scheduler.LambdaLR
         decay_factor: 0.9
         decay_interval: 200000
 
-pl_module: !apply:recipes.diffusion.modules.pl_module_mulan_free.DiffusionModule.load_from_checkpoint
-    checkpoint_path: !ref <checkpoint_path>
-# pl_module: !new:recipes.diffusion.modules.pl_module_mulan_free.DiffusionModule
-#     seed: !ref <seed>
-    diffusion_model: !new:recipes.diffusion.models.tnt_mulan_free.TNTDiffusionNetwork
+pl_module: !new:recipes.diffusion.modules.pl_module.DiffusionModule
+    seed: !ref <seed>
+    diffusion_model: !new:recipes.diffusion.models.tnt_v2.TNTDiffusionNetwork
         input_dim: 32
         feature_dim: 1024
-        context_dim: 1
+        context_dim: 32
         depth: 16
         segment_size: 32
         segment_stride: 32
+        unet: False
         dropout: 0
-        semantic_cfg_prob: 0.25
+        semantic_cfg_prob: 0.1
         use_checkpoint: False
+        vc: !ref <training_params[vc]>
+        vc_cfg_prob: 0.1
+        lora: !ref <training_params[use_lora]>
+    lora: !ref <training_params[use_lora]>
     target_dim: 32
     num_chunks: 1
-    chunk_length: 3750
+    duration: !ref <training_params[duration]>
     noise_range: !ref <training_params[noise_range]>
-    sample_rate: !ref <training_params[sample_rate]>
-    asset_dir: !ref <asset_dir>
-    model_name: model
+    tokenizer_sample_rate: !ref <training_params[tokenizer_smaple_rate]>
+    diffusion_sample_rate: !ref <training_params[diffusion_sample_rate]>
+    sample_pool_size: !ref <training_params[sample_pool_size]>
+    train_batch_size: !ref <training_params[train_batch_size]>
+    val_batch_size: !ref <training_params[val_batch_size]>
+    vc: !ref <training_params[vc]>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
-    semantic_model:
-        model_path: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
-    vocoder_model:
-        model_path: hdfs://harunava/home/byte_speech_sv/weitsung.lu/soundstream/dac_vae_125hz_24k_v2_part2/checkpoints/soundstream-step=374999-val_sdr=12.9557.ckpt
+    pretrained_path: !ref <training_params[pretrained_path]>
+    required_modules:
+        tokenizer_model:
+            hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
+            initializer: !name:recipes.umm.requires.model_initializer.init_stage3
+                cache_dir: !ref <asset_dir> 
+        vocoder_model:
+            hpath: hdfs://harunava/home/byte_speech_sv/weitsung.lu/soundstream/dac_vae_125hz_24k_v2_part2/checkpoints/soundstream-step=374999-val_sdr=12.9557.ckpt
+            initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
+                cache_dir: !ref <asset_dir>
+                sample_rate: !ref <training_params[diffusion_sample_rate]>
     val_output_samples_dir: !ref <run_opts[val_output_samples_dir]>
+    flops_fn: !ref <run_opts[flops_fn]>
 
-logger: !new:pytorch_lightning.loggers.TensorBoardLogger
-    save_dir: !ref <run_opts[tensorboard_dir]>
-    name: !ref <run_opts[log_name]>
-    version: !ref <run_opts[version]>
+logger: 
+    - !new:pytorch_lightning.loggers.TensorBoardLogger
+        save_dir: !ref <run_opts[tensorboard_dir]>
+        name: !ref <run_opts[log_name]>
+        version: !ref <run_opts[version]>
+    # - !new:pytorch_lightning.loggers.wandb.WandbLogger
+    #     save_dir: !ref <run_opts[tensorboard_dir]>
+    #     project: !ref <run_opts[log_name]>
+    #     name: !ref <run_opts[version]>
 
-checkpoint: !new:pytorch_lightning.callbacks.ModelCheckpoint
+checkpoint: !new:recipes.diffusion.utils.callbacks.EMAModelCheckpoint
     monitor: step
     mode: max
     save_top_k: 5
@@ -125,6 +155,7 @@ trainer: !new:pytorch_lightning.Trainer
     strategy: !ref <run_opts[strategy]>
     enable_model_summary: True
     max_steps: !ref <run_opts[num_steps]>
+    limit_val_batches: !ref <run_opts[limit_val_batches]>
     val_check_interval: !ref <run_opts[val_check_interval]>
     precision: !ref <run_opts[precision]>
     log_every_n_steps: !ref <run_opts[log_every_n_steps]>
@@ -141,3 +172,4 @@ trainer: !new:pytorch_lightning.Trainer
 
 
 # recipes/diffusion/bootstrap.sh fit -c recipes/diffusion/conf/mcc60m_bestrq.yaml --run_opts.version mcc60m_bestrq_v1 --log_dir /mnt/bn/lyrics-to-song/ashaw/logs/diffusion
+

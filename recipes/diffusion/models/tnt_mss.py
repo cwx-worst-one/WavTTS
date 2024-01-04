@@ -95,11 +95,11 @@ class Attention(nn.Module):
         context = default(context, x)
         k, v = self.to_kv(context).chunk(2, dim = -1)
 
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=self.heads), (q, k, v))
+
         if rotary_emb is not None: 
             q = rotary_emb.rotate_queries_or_keys(q)
             k = rotary_emb.rotate_queries_or_keys(k)
-
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=self.heads), (q, k, v))
 
         out = F.scaled_dot_product_attention(
                 query=q,
@@ -199,7 +199,6 @@ class TNTBlocks(nn.Module):
             coarse_head_dim,
             depth=1, 
             dropout=0,
-            semantic_cfg_prob=0.1,
             use_checkpoint=False
         ):
         super().__init__()
@@ -233,6 +232,16 @@ class TNTBlocks(nn.Module):
                         ff_dropout=dropout,
                         use_checkpoint=False,
                     ),
+                    TransformerBlock(
+                        dim=fine_dim, 
+                        heads=fine_heads, 
+                        dim_head=fine_head_dim,
+                        depth=1,
+                        attn_dropout=dropout,
+                        ff_dropout=dropout,
+                        use_checkpoint=False,
+                        context=True,
+                    ),
                     get_cts, 
                     TransformerBlock(
                         dim=fine_dim, 
@@ -250,12 +259,16 @@ class TNTBlocks(nn.Module):
     def forward(self, 
         x, 
         time_emb, 
+        context_emb, 
     ):
         # input shape: b, d, fine_len, course_len
         # apply transformer on dim1 first and then dim2
         # output shape: B, output_size, dim1, dim2
         b, d, lf, lc = x.shape
-        
+
+        # concat at dim1
+        coarse_context = context_emb
+
         time_emb = torch.mean(rearrange(time_emb, 'b d lf lc-> (b lc) lf d'), axis=1, keepdim=True)
         
         fine_emb = rearrange(x, 'b d lf lc -> (b lc) lf d')
@@ -264,12 +277,14 @@ class TNTBlocks(nn.Module):
         fine_emb = fine_emb + cts
         coarse_emb = 0
 
-        for idx, (fine_to_coarse, coarse_transformer, get_cts, fine_transformer) in enumerate(self.layers):
+        for idx, (fine_to_coarse, coarse_transformer, context_cross_attn, get_cts, fine_transformer) in enumerate(self.layers):
             coarse_emb_residual = fine_to_coarse(fine_emb[:, 0:1])
             coarse_emb_residual = rearrange(coarse_emb_residual, '(b t) d -> b t d', b=b)
             coarse_emb = coarse_emb + coarse_emb_residual
             coarse_emb = coarse_transformer(coarse_emb, rotary_emb=self.coarse_rotary_embedding)
- 
+            # context cross-attn
+            coarse_emb = context_cross_attn(coarse_emb, context=coarse_context, rotary_emb=self.coarse_rotary_embedding)
+
             cts = get_cts(coarse_emb)
             cts = F.pad(cts, (0, 0, 0, lf), value=0)
             fine_emb = fine_emb + cts
@@ -285,18 +300,20 @@ class TNTBlocks(nn.Module):
 class TNTDiffusionNetwork(nn.Module):
     def __init__(self,
             input_dim=256,
+            output_dim=128,
             feature_dim=1024,
             context_dim=512,
             depth=8,
             segment_size=64,
             segment_stride=32,
             dropout=0,
-            semantic_cfg_prob=0.1,
+            cfg_prob=0.1,
             use_checkpoint=False,
         ):
         super().__init__()
 
         self.input_dim = input_dim
+        self.output_dim = output_dim
         self.feature_dim = feature_dim
         self.context_dim = context_dim
 
@@ -323,7 +340,7 @@ class TNTDiffusionNetwork(nn.Module):
                 Linear(context_dim, feature_dim),
             )
 
-        self.semantic_context_embed = nn.Sequential(
+        self.context_embed = nn.Sequential(
             emb_first_layer,
             nn.GELU(approximate='tanh'),
             Linear(feature_dim, feature_dim),
@@ -334,35 +351,33 @@ class TNTDiffusionNetwork(nn.Module):
         )
 
         # DPT model
-        self.semantic_cfg_prob = semantic_cfg_prob
-        # null embedding for cfg
-        self.semantic_null_embedding = nn.Parameter(torch.randn(context_dim))
-
         self.blocks = TNTBlocks(
             input_dim=feature_dim,
             context_dim=context_dim,
             fine_dim=feature_dim,
-            fine_heads=12,
-            fine_head_dim=int(feature_dim / 12),
+            fine_heads=8,
+            fine_head_dim=int(feature_dim / 8),
             coarse_dim=feature_dim,
-            coarse_heads=12,
-            coarse_head_dim=int(feature_dim / 12),
+            coarse_heads=8,
+            coarse_head_dim=int(feature_dim / 8),
             depth=depth,
             dropout=dropout,
-            semantic_cfg_prob=semantic_cfg_prob,
             use_checkpoint=use_checkpoint,
         )
-        
+    
         self.output = nn.Sequential(
-            nn.Conv1d(self.feature_dim, self.input_dim, 1, bias=False)
+            nn.Conv1d(self.feature_dim, self.output_dim, 1, bias=False)
         )
+        self.cfg_prob = cfg_prob
+        # null embedding for cfg
+        self.context_null_embedding = nn.Parameter(torch.randn(feature_dim))
 
     def forward(
         self, 
         x, 
         timesteps=None, 
-        semantic_context=None, 
-        semantic_force_cfg=None,
+        context=None, 
+        force_cfg=None,
     ):
         batch_size, input_dim, seq_length = x.shape
         if timesteps.ndim != 3:
@@ -380,39 +395,36 @@ class TNTDiffusionNetwork(nn.Module):
         t_emb = self.time_embed(t_emb)
     
         # context embedding
-        semantic_context_emb = self.semantic_context_embed(semantic_context.detach())
+        context_emb = self.context_embed(context.detach())
 
         # get mask for cfg
-        b = semantic_context_emb.shape[0]
-        semantic_cfg_prob = self.semantic_cfg_prob if semantic_force_cfg is None else semantic_force_cfg
-        semantic_prob_keep_mask = prob_mask_like((b, 1, 1), 1. - semantic_cfg_prob, device=x.device)
+        cfg_prob = self.cfg_prob if force_cfg is None else force_cfg
+        prob_keep_mask = prob_mask_like((batch_size, 1, 1), 1. - cfg_prob, device=x.device)
 
         # get null embeddings for semantic context
-        semantic_null_coarse_emb = repeat(self.semantic_null_embedding, 'd -> b l d', b=b, l=semantic_context_emb.shape[1])
-        semantic_context_emb = torch.where(
-            semantic_prob_keep_mask,
-            semantic_context_emb,
-            semantic_null_coarse_emb
+        null_context_emb = repeat(self.context_null_embedding, 'd -> b l d', b=batch_size, l=context_emb.shape[1])
+        context_emb = torch.where(
+            prob_keep_mask,
+            context_emb,
+            null_context_emb
         )
-        semantic_context_emb = rearrange(semantic_context_emb, 'b l d -> b d l')
-        semantic_context_emb = repeat(semantic_context_emb, 'b d l -> b d (u l)', u=5)
-
+    
         t_emb = self.dpp.unfold(rearrange(t_emb, 'b t d -> b d t'))
 
         # split the encoder output into overlapped, longer segments
         x = self.input_map(x) 
-        x = x + semantic_context_emb
         x = self.dpp.unfold(x)
         out = self.blocks(
             x, 
             time_emb=t_emb, 
+            context_emb=context_emb
         ).view(batch_size, self.feature_dim, self.segment_size, -1)  # b, d, lf, lc      
 
         # overlap-and-add of the outputs
         out = self.dpp.fold(out)  # B, N, T
         out = self.output(out)
 
-        out = out.view(batch_size, input_dim, seq_length)
+        out = out.view(batch_size, self.output_dim, seq_length)
 
         return out
 
@@ -502,19 +514,22 @@ class DualPathProcessing(nn.Module):
         return x
 
 if __name__ == '__main__':
+    torch.manual_seed(0)
     model = TNTDiffusionNetwork(
-        input_dim=16,
-        feature_dim=512,
-        context_dim=1,
+        input_dim=256,
+        feature_dim=256,
+        context_dim=128,
         depth=2,
-        segment_size=64,
-        segment_stride=64,
+        segment_size=32,
+        segment_stride=32,
         dropout=0,
         use_checkpoint=True
-    )
+    ).to('cuda')
     # for k, v in model.named_parameters():
     #     print(k)
-    xt = torch.randn(2, 16, 1250)
-    t = torch.randn(2, 1, 1250)
-    semantic = torch.ones(2, 250).long()
-    out = model(xt, t, semantic_context=semantic)
+    xt = torch.randn(16, 256, 1176).to('cuda')
+    t = torch.randn(16, 1, 1176).to('cuda')
+    context = torch.randn(16, 1176, 128).to('cuda')
+    for i in range(10000):
+        out = model(xt, t, context=context)
+        assert 1==2

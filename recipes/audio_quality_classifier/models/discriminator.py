@@ -198,7 +198,7 @@ class MultiScaleSTFTDiscriminator(nn.Module):
         # Remove DC offset
         x = x - x.mean(dim=-1, keepdims=True)
         # Peak normalize the volume of input audio
-        x = 0.8 * x / (x.abs().max(dim=-1, keepdim=True)[0] + 1e-9)
+        # x = 0.8 * x / (x.abs().max(dim=-1, keepdim=True)[0] + 1e-9)
         return x
 
     def forward(

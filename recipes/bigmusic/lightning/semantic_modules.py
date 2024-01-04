@@ -34,6 +34,16 @@ from recipes.musiclm.transforms.audio import to_energy
 from collections import defaultdict
 from itertools import zip_longest
 
+# from recipes.umm.models.bestrq import BestRQMelCTC
+from recipes.umm.modules.lit_module import (
+    BestRQMelCTC,
+    Stage3,
+)
+
+from recipes.audio_quality_classifier.models.audio_quality_model.utils import aq_classifier_inference
+
+DEFAULT_REWARDS = {"mulan_sim": 1.0, "wer": 1.0}
+
 
 class SemanticModule(BaseContinuousEmbedModule):
     def __init__(

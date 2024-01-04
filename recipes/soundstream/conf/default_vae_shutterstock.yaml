@@ -1,0 +1,160 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 43
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+ckpt_path: null
+
+# running parameters
+run_opts:
+    fast_dev_run: False
+    log_dir: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl
+    tensorboard_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+    log_name: "vocoder"
+    version: "model_7_24k_shutterstock"
+    strategy: ddp_find_unused_parameters_true #!new:pytorch_lightning.strategies.ddp.DDPStrategy static_graph: True
+    precision: 32
+    log_every_n_steps: 100
+    limit_val_batches: 200
+    num_steps: 6000000
+    val_check_interval: 5000
+    val_output_samples_dir: generated_samples #"/mnt/bn/audio-diffusion/wtl/vocoder/model_5_44.1k/generated_samples"
+    adapt_hopper: True
+
+training_params:
+    n_channels: 1
+    sample_rate: 24000
+    dataloader_batch_size: 4
+    dataloader_num_workers: 12
+    dataloader_duration: 4.0
+    dataloader_prefetch_factor: 2
+    shuffle_buffer_size: 10
+    train_batch_size: 8
+    valid_batch_size: 1
+    train_sample_pool_size: 64
+    train_sample_length: 24000 # 40 frame, 0.38 sec 
+    learning_rate: 0.00005
+    weight_decay: 0.005
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+# datamodule configuration
+# pl_datamodule: !new:recipes.datasets.billboard_hot200.BillboardDataModule
+#     url2index: hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/music/billboard_hot200_v2/44100hz/train/url2index.txt
+#     duration: !ref <training_params[dataloader_duration]>
+#     sample_rate: !ref <training_params[sample_rate]>
+#     batch_size: !ref <training_params[dataloader_batch_size]>
+#     shuffle_buffer_size: !ref <training_params[shuffle_buffer_size]>
+#     num_workers: !ref <training_params[dataloader_num_workers]>
+pl_datamodule: !new:recipes.diffusion.dataset.parquet_dataset.ParquetDataModule
+    train_data_id: 794
+    valid_data_id: 793
+    train_batch_size: !ref <training_params[dataloader_batch_size]>
+    valid_batch_size: !ref <training_params[valid_batch_size]>
+    shuffle_buffer_size: !ref <training_params[shuffle_buffer_size]>
+    num_workers: !ref <training_params[dataloader_num_workers]>
+    dataset_samplerate: !ref <training_params[sample_rate]>
+    audio_duration: !ref <training_params[dataloader_duration]>
+    prefetch_factor: !ref <training_params[dataloader_prefetch_factor]>
+
+# training module configuration
+optimizer_cls: !name:torch.optim.AdamW
+    lr: !ref <training_params[learning_rate]>
+    weight_decay: !ref <training_params[weight_decay]>
+    betas: (0.8, 0.9)
+
+gen_lr_scheduler_cls: !name:torch.optim.lr_scheduler.LambdaLR
+    lr_lambda: !name:recipes.soundstream.utils.lr_schedulers.lr_lambda 
+        warmup_steps: 0
+        decay_factor: 0.999996
+        decay_interval: 1
+    
+dis_lr_scheduler_cls: !name:torch.optim.lr_scheduler.LambdaLR
+    lr_lambda: !name:recipes.soundstream.utils.lr_schedulers.lr_lambda 
+        warmup_steps: 0
+        decay_factor: 0.999996
+        decay_interval: 1
+
+pl_module: !new:recipes.soundstream.modules.pl_module_vae.VocoderModule
+    seed: !ref <seed>
+    generator: !new:recipes.soundstream.models.vqgan.VQGAN_KL_new
+        n_channels: !ref <training_params[n_channels]>
+        latent_dim: 32
+        downsample_rates: [2, 3, 4, 8]
+        upsample_rates:  [8, 4, 3 ,2]
+        encoder_base_dim: 96
+        decoder_base_dim: 2560
+        adapt_hopper: !ref <run_opts[adapt_hopper]>
+    discriminator: !new:recipes.soundstream.models.modules.discriminator.MultiScaleSTFTDiscriminator
+        in_channels: !ref <training_params[n_channels]>
+        filters: 48
+        adapt_hopper: False
+    generator_warmup_steps: 10000
+    lambda_generator_loss: 1.0
+    n_channels: !ref <training_params[n_channels]>
+    sample_rate: !ref <training_params[sample_rate]>
+    sample_pool_size: !ref <training_params[train_sample_pool_size]>
+    sample_length: !ref <training_params[train_sample_length]>
+    train_batch_size: !ref <training_params[train_batch_size]>
+    valid_batch_size: !ref <training_params[valid_batch_size]>
+    val_output_samples_dir: !ref <run_opts[val_output_samples_dir]>
+    optimizer_cls: !ref <optimizer_cls>
+    gen_lr_scheduler_cls: !ref <gen_lr_scheduler_cls>
+    dis_lr_scheduler_cls: !ref <dis_lr_scheduler_cls>
+    precision: !ref <run_opts[precision]>
+
+logger: 
+    # - !new:pytorch_lightning.loggers.TensorBoardLogger
+    #     save_dir: !ref <run_opts[tensorboard_dir]>
+    #     name: !ref <run_opts[log_name]>
+    #     version: !ref <run_opts[version]>
+    !new:pytorch_lightning.loggers.wandb.WandbLogger
+        save_dir: !ref <run_opts[tensorboard_dir]>
+        project: !ref <run_opts[log_name]>
+        name: !ref <run_opts[version]>
+        # version: !ref <run_opts[version]>
+
+checkpoint: !new:recipes.diffusion.utils.callbacks.EMAModelCheckpoint
+    monitor: val_sdr
+    mode: max
+    save_top_k: 5
+    save_last: True
+    filename: soundstream-{step:06d}-{val_sdr:.4f}
+
+
+lr_monitor: !new:pytorch_lightning.callbacks.LearningRateMonitor
+    logging_interval: step
+
+plugins:
+    - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    num_sanity_val_steps: 0
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    accelerator: auto
+    devices: auto
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False  # warning: setting to True can cause slowdowns
+    strategy: !ref <run_opts[strategy]>
+    enable_model_summary: True
+    max_steps: !ref <run_opts[num_steps]>
+    limit_val_batches: !ref <run_opts[limit_val_batches]>
+    val_check_interval: !ref <run_opts[val_check_interval]>
+    precision: !ref <run_opts[precision]>
+    log_every_n_steps: !ref <run_opts[log_every_n_steps]>
+    use_distributed_sampler: False
+    sync_batchnorm: True
+    logger: !ref <logger>
+    callbacks:
+        - !ref <checkpoint>
+        - !ref <lr_monitor>
+        - !new:recipes.diffusion.utils.ema.EMA
+            decay: 0.999
+            cpu_offload: False
+
+    plugins: !ref <plugins>

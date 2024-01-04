@@ -21,8 +21,8 @@ def init_audio_quality_classifier(checkpoint_path, local_rank, cache_dir):
             new_dict[new_key] = state_dict[key]
 
         model.load_state_dict(new_dict, strict=True)
+        model.to(device)
         model.eval()
-
 
         return { "classifier": model }
 

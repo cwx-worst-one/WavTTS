@@ -16,15 +16,24 @@ def get_padding(kernel_size, dilation=1):
     return int((kernel_size * dilation - dilation) / 2)
 
 class ResidualUnit(nn.Module):
-    def __init__(self, dim: int = 16, dilation: int = 1):
+    def __init__(self, dim: int = 16, dilation: int = 1, adapt_hopper: bool = True):
         super().__init__()
         pad = ((7 - 1) * dilation) // 2
-        self.block = nn.Sequential(
-            Snake1d(dim),
-            WNConv1d(dim, dim, kernel_size=7, dilation=dilation, padding=pad),
-            Snake1d(dim),
-            WNConv1d(dim, dim, kernel_size=1),
-        )
+        if adapt_hopper:
+            self.block = nn.Sequential(
+                Snake1d(dim),
+                nn.ConstantPad1d(padding=pad, value=0),
+                WNConv1d(dim, dim, kernel_size=7, dilation=dilation),
+                Snake1d(dim),
+                WNConv1d(dim, dim, kernel_size=1),
+            )
+        else:
+            self.block = nn.Sequential(
+                Snake1d(dim),
+                WNConv1d(dim, dim, kernel_size=7, dilation=dilation, padding=pad),
+                Snake1d(dim),
+                WNConv1d(dim, dim, kernel_size=1),
+            )
 
     def forward(self, x):
         return x + self.block(x)

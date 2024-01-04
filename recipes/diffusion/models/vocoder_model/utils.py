@@ -49,32 +49,60 @@ def load_ema_checkpoint(checkpoint_path, model):
     model.load_state_dict(new_state_dict)
     return model
 
-def init_vocoder(checkpoint_path, local_rank, cache_dir=None):
+def init_vocoder(checkpoint_path, local_rank, cache_dir=None, sample_rate=24000, adapt_hopper=False):
     with local_zero_first():
         if cache_dir is not None:
             os.makedirs(cache_dir, exist_ok=True)
         device = torch.device(f"cuda:{local_rank}")
         local_path = download_checkpoint(checkpoint_path, cache_dir)
-        # hard code for old ckpt
-        vocoder_model = VQGAN_KL_new(
-            latent_dim=32,
-            downsample_rates=[2, 3, 4, 8],
-            upsample_rates=[8, 4, 3, 2],
-            encoder_base_dim=96,
-            decoder_base_dim=2560,
-        )
-
-        try: 
-            vocoder_model = load_ema_checkpoint(local_path, vocoder_model).eval().to(device)
-
-        except Exception as ex: 
-            print(f"EMA loading failed: {ex}, trying non-EMA load")
-            vocoder_model_pl = VocoderModule.load_from_checkpoint(
-                local_path,
-                generator=vocoder_model,
-                discriminator=None,
-                strict=False,
+    
+        if sample_rate == 24000:
+            vocoder_model = VQGAN_KL_new(
+                latent_dim=32,
+                downsample_rates=[2, 3, 4, 8],
+                upsample_rates=[8, 4, 3, 2],
+                encoder_base_dim=96,
+                decoder_base_dim=2560,
+                adapt_hopper=adapt_hopper
             )
+            try: 
+                vocoder_model = load_ema_checkpoint(local_path, vocoder_model).eval().to(device)
+
+            except Exception as ex: 
+                print(f"EMA loading failed: {ex}, trying non-EMA load")
+                vocoder_model_pl = VocoderModule.load_from_checkpoint(
+                    local_path,
+                    generator=vocoder_model,
+                    discriminator=None,
+                    n_channels=None,
+                    sample_pool_size=None,
+                    batch_size=None,
+                    sample_length=None,
+                    strict=False,
+                )
+                vocoder_model = vocoder_model_pl.generator.eval().to(device)
+        elif sample_rate == 44100:
+            vocoder_model = VQGAN_KL_new(
+                n_channels=2,
+                latent_dim=128,
+                downsample_rates=[2, 3, 5, 10],
+                upsample_rates=[10, 5, 3, 2],
+                encoder_base_dim=96,
+                decoder_base_dim=2560,
+                adapt_hopper=adapt_hopper,
+            )
+            vocoder_model_pl = VocoderModule.load_from_checkpoint(
+                    local_path,
+                    strict=False,
+                    generator=vocoder_model,
+                    discriminator=None,
+                    n_channels=None,
+                    sample_pool_size=None,
+                    train_batch_size=None,
+                    valid_batch_size=None,
+                    sample_length=None,
+
+                )
             vocoder_model = vocoder_model_pl.generator.eval().to(device)
 
         return {

@@ -46,21 +46,57 @@ def get_2d_padding(
     )
 
 class MPD(nn.Module):
-    def __init__(self, period):
+    def __init__(
+        self, 
+        period,
+        in_channels: int = 1,
+        adapt_hopper: bool = True,
+    ):
         super().__init__()
         self.period = period
-        self.convs = nn.ModuleList(
-            [
-                WNConv2d(1, 32, (5, 1), (3, 1), padding=(2, 0)),
-                WNConv2d(32, 128, (5, 1), (3, 1), padding=(2, 0)),
-                WNConv2d(128, 512, (5, 1), (3, 1), padding=(2, 0)),
-                WNConv2d(512, 1024, (5, 1), (3, 1), padding=(2, 0)),
-                WNConv2d(1024, 1024, (5, 1), 1, padding=(2, 0)),
-            ]
-        )
-        self.conv_post = WNConv2d(
-            1024, 1, kernel_size=(3, 1), padding=(1, 0), act=False
-        )
+        if adapt_hopper:
+            self.convs = nn.ModuleList(
+                [
+                    nn.Sequential(
+                        nn.ConstantPad2d(padding=(0, 0, 2, 2), value=0),
+                        WNConv2d(in_channels, 32, (5, 1), (3, 1)),
+                    ),
+                    nn.Sequential(
+                        nn.ConstantPad2d(padding=(0, 0, 2, 2), value=0),
+                        WNConv2d(32, 128, (5, 1), (3, 1)),
+                    ),
+                    nn.Sequential(
+                        nn.ConstantPad2d(padding=(0, 0, 2, 2), value=0),
+                        WNConv2d(128, 512, (5, 1), (3, 1)),
+                    ),
+                    nn.Sequential(
+                        nn.ConstantPad2d(padding=(0, 0, 2, 2), value=0),
+                        WNConv2d(512, 1024, (5, 1), (3, 1)),
+                    ),
+                    nn.Sequential(
+                        nn.ConstantPad2d(padding=(0, 0, 2, 2), value=0),
+                        WNConv2d(1024, 1024, (5, 1), 1),
+                    ),
+                ]
+            )
+
+            self.conv_post = nn.Sequential(
+                nn.ConstantPad2d(padding=(0, 0, 1, 1), value=0),
+                WNConv2d(1024, 1, kernel_size=(3, 1), act=False),
+            )
+        else:
+            self.convs = nn.ModuleList(
+                [
+                    WNConv2d(in_channels, 32, (5, 1), (3, 1), padding=(2, 0)),
+                    WNConv2d(32, 128, (5, 1), (3, 1), padding=(2, 0)),
+                    WNConv2d(128, 512, (5, 1), (3, 1), padding=(2, 0)),
+                    WNConv2d(512, 1024, (5, 1), (3, 1), padding=(2, 0)),
+                    WNConv2d(1024, 1024, (5, 1), 1, padding=(2, 0)),
+                ]
+            )
+            self.conv_post = WNConv2d(
+                1024, 1, kernel_size=(3, 1), padding=(1, 0), act=False
+            )
 
         dicts = {
             2: {"subbands": 2, "taps": 62, "cutoff_ratio": 0.26699457, "beta": 9.0},
@@ -73,8 +109,10 @@ class MPD(nn.Module):
 
     def forward(self, x):
         fmap = []
+        b, c, t = x.shape
+        x = rearrange(x, "b c t -> (b c) 1 t")
         x = self.pqmf(x)  # [B, D, T]
-        x = x.transpose(1, 2).unsqueeze(1)  # [B, 1, T, D]
+        x = rearrange(x, "(b c) d t -> b c d t", c=c)
 
         for layer in self.convs:
             x = layer(x)
@@ -90,10 +128,12 @@ BANDS = [(0.0, 0.1), (0.1, 0.25), (0.25, 0.5), (0.5, 0.75), (0.75, 1.0)]
 class MRD(nn.Module):
     def __init__(
         self,
-        filters: int,
-        win_length: int,
+        in_channels: int = 1,
+        filters: int = 48, 
+        win_length: int = 512,
         hop_factor: float = 0.25,
         bands: list = BANDS,
+        adapt_hopper: bool = True,
     ):
         """Complex multi-band spectrogram discriminator.
         Parameters
@@ -123,17 +163,49 @@ class MRD(nn.Module):
         bands = [(int(b[0] * n_fft), int(b[1] * n_fft)) for b in bands]
         self.bands = bands
 
-        convs = lambda: nn.ModuleList(
-            [
-                WNConv2d(2, filters, (3, 9), (1, 1), padding=(1, 4)),
-                WNConv2d(filters, filters, (3, 9), (1, 2), padding=(1, 4)),
-                WNConv2d(filters, filters, (3, 9), (1, 2), padding=(1, 4)),
-                WNConv2d(filters, filters, (3, 9), (1, 2), padding=(1, 4)),
-                WNConv2d(filters, filters, (3, 3), (1, 1), padding=(1, 1)),
-            ]
-        )
+        if adapt_hopper:
+            convs = lambda: nn.ModuleList(
+                [
+                    nn.Sequential(
+                        nn.ConstantPad2d(padding=(4, 4, 1, 1), value=0),
+                        WNConv2d(2*in_channels, filters, (3, 9), (1, 1)),
+                    ),
+                    nn.Sequential(
+                        nn.ConstantPad2d(padding=(4, 4, 1, 1), value=0),
+                        WNConv2d(filters, filters, (3, 9), (1, 2)),
+                    ),
+                    nn.Sequential(
+                        nn.ConstantPad2d(padding=(4, 4, 1, 1), value=0),
+                        WNConv2d(filters, filters, (3, 9), (1, 2)),
+                    ),
+                    nn.Sequential(
+                        nn.ConstantPad2d(padding=(4, 4, 1, 1), value=0),
+                        WNConv2d(filters, filters, (3, 9), (1, 2)),
+                    ),
+                    nn.Sequential(
+                        nn.ConstantPad2d(padding=(1, 1, 1, 1), value=0),
+                        WNConv2d(filters, filters, (3, 3), (1, 1)),
+                    ),
+                ]
+            )
+        else:
+            convs = lambda: nn.ModuleList(
+                [
+                    WNConv2d(2*in_channels, filters, (3, 9), (1, 1), padding=(1, 4)),
+                    WNConv2d(filters, filters, (3, 9), (1, 2), padding=(1, 4)),
+                    WNConv2d(filters, filters, (3, 9), (1, 2), padding=(1, 4)),
+                    WNConv2d(filters, filters, (3, 9), (1, 2), padding=(1, 4)),
+                    WNConv2d(filters, filters, (3, 3), (1, 1), padding=(1, 1)),
+                ]
+            )
         self.band_convs = nn.ModuleList([convs() for _ in range(len(self.bands))])
-        self.conv_post = WNConv2d(filters, 1, (3, 3), (1, 1), padding=(1, 1), act=False)
+        if adapt_hopper:
+            self.conv_post = nn.Sequential(
+                nn.ConstantPad2d(padding=(1, 1, 1, 1), value=0),
+                WNConv2d(filters, 1, (3, 3), (1, 1), act=False),
+            )
+        else:
+            self.conv_post = WNConv2d(filters, 1, (3, 3), (1, 1), padding=(1, 1), act=False)
 
     def forward(self, x):
         with torch.autocast(device_type="cuda", enabled=False):
@@ -179,6 +251,7 @@ class MultiScaleSTFTDiscriminator(nn.Module):
         n_ffts: tp.List[int] = [2048, 512, 128],
         hop_lengths: tp.List[int] = [512, 128, 32],
         win_lengths: tp.List[int] = [1024, 256, 64],
+        adapt_hopper: bool = True,
         **kwargs,
     ):
         super().__init__()
@@ -186,13 +259,15 @@ class MultiScaleSTFTDiscriminator(nn.Module):
         self.mrds = nn.ModuleList(
             [
                 MRD(
-                    filters,
+                    in_channels=in_channels,
+                    filters=filters,
                     win_length=win_lengths[i],
+                    adapt_hopper=adapt_hopper,
                 )
                 for i in range(len(n_ffts))
             ]
         )
-        self.mpds = nn.ModuleList([MPD(p) for p in periods])
+        self.mpds = nn.ModuleList([MPD(p, in_channels, adapt_hopper) for p in periods])
 
     def preprocess(self, x):
         # Remove DC offset

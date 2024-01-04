@@ -2,6 +2,9 @@
 
 cd $(dirname $0)/../../
 echo "work dir: $(pwd)"
+export http_proxy=http://sys-proxy-rd-relay.byted.org:8118
+export https_proxy=http://sys-proxy-rd-relay.byted.org:8118
+# export TRANSFORMERS_CACHE=/mnt/bn/audio-diffusion/.module_cache
 
 # Do something before lauching the main program
 # e.g. Download some data, install some extra packages, etc.

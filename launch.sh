@@ -47,6 +47,8 @@ export OMP_NUM_THREADS=8
 
 if [ "${ARNOLD_DEVICE_TYPE#*A100*}" != "$ARNOLD_DEVICE_TYPE" ]; then
   IB_HCA=mlx5
+elif [ "${ARNOLD_DEVICE_TYPE#*H800*}" != "$ARNOLD_DEVICE_TYPE" ]; then
+  IB_HCA=mlx5
 else
   IB_HCA=$ARNOLD_RDMA_DEVICE:1
 fi

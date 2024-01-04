@@ -2,11 +2,26 @@ import os
 import glob
 import random
 import torch
-from torch.utils.data import Dataset
+import pandas as pd
 import numpy as np
 import soundfile as sf
+from torch.utils.data import Dataset
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+def audio_loader(path, source):
+    if source == 'mos':
+        audio = torch.from_numpy(sf.read(path)[0]).float()[None, ]
+        if len(audio.shape) == 3:
+            audio = audio.mean(-1, keepdim=False)
+
+    elif source == 'hq':
+        audio = torch.from_numpy(sf.read(path)[0].T).mean(0, True).float()
+
+    elif source == 'lq':
+        audio = torch.tensor((np.load(path) / 32768.0).astype("float32"))
+
+    return audio
 
 class RewardDataset(Dataset):
     def __init__(
@@ -74,7 +89,7 @@ class RewardDataset2(Dataset):
         # read prompt from txt
         data = [] 
         
-        audio_paths = glob.glob(f'{asset_path}/*.pt')
+        audio_paths = glob.glob(f'{asset_path}/*.wav')
         random.seed(0)
         random.shuffle(audio_paths)
         start = int(len(audio_paths)*data_slice[0])
@@ -82,17 +97,22 @@ class RewardDataset2(Dataset):
 
         data_dict = {}
         for audio_path in audio_paths[start:end]:
-            _, score = os.path.basename(audio_path)[:-3].split('_')
-            audio = torch.from_numpy(torch.load(audio_path)).float()
+            _, score = os.path.basename(audio_path)[:-4].split('_')
+            if score == 'nan':
+                continue
+            # audio = torch.from_numpy(torch.load(audio_path)).float()
+            audio = torch.from_numpy(sf.read(audio_path)[0]).float()
             # data.append((audio, float(score)))
             if float(score) not in data_dict:
                 data_dict[float(score)] = [audio]
             else:
                 data_dict[float(score)].append(audio)
 
+
         self.data_dict = data_dict
         self.keys = list(data_dict.keys())
         self.num_data = end - start
+        self.cnt = 0
 
     def __len__(self):
         return self.num_data
@@ -100,10 +120,11 @@ class RewardDataset2(Dataset):
     def __getitem__(self, idx):
 
         # random choose audio from key
-        score_idx = idx % len(self.keys)
+        score_idx = self.cnt % len(self.keys)
         score = self.keys[score_idx]
         audio_idx = torch.randint(0, len(self.data_dict[score]), (1,)).item()
-       
+        self.cnt += 1
+
         return self.data_dict[score][audio_idx], score
 
 class RewardDataset3(Dataset):
@@ -120,6 +141,9 @@ class RewardDataset3(Dataset):
         
         h_audio_paths = glob.glob(f'{asset_path}/high_quality/*.wav')
         l_audio_paths = glob.glob(f'{asset_path}/low_quality/*.npy')
+        df = pd.read_csv(f'{asset_path}/dirty_kaggle.csv')
+        music_ids = df['music_id'].to_list()
+        l_audio_paths = [i for i in l_audio_paths if os.path.basename(i)[:-4] in music_ids]
 
         random.seed(0)
         random.shuffle(h_audio_paths)
@@ -152,25 +176,86 @@ class RewardDataset3(Dataset):
         l_audio = torch.tensor((np.load(self.l_audio_paths[l_audio_idx]) / 32768.0).astype("float32"))
 
         # random sample 4 second each
-        start = torch.randint(0, h_audio.shape[1] - 4*24000, (1,)).item()
-        h_audio = h_audio[:, start:start+3*24000].squeeze(0)
-        start = torch.randint(0, l_audio.shape[1] - 4*24000, (1,)).item()
-        l_audio = l_audio[:, start:start+3*24000].squeeze(0)
+        start = torch.randint(0, h_audio.shape[-1] - 4*24000, (1,)).item()
+        h_audio = h_audio[:, start:start+3*24000]
+        start = torch.randint(0, l_audio.shape[-1] - 4*24000, (1,)).item()
+        l_audio = l_audio[:, start:start+3*24000]
 
         return h_audio, l_audio
+
+class RewardDataset4(Dataset):
+    def __init__(
+        self, 
+        asset_path,
+        audio_duration=2,
+        data_slice=[0, 1]
+    ):
+        self.audio_duration = audio_duration
+        self._prepare_data(asset_path, data_slice=data_slice)
+
+    def _prepare_data(self, asset_path, data_slice):
+        # read prompt from txt
+        data = [] 
+        
+        audio_paths = glob.glob(f'{asset_path}/*.wav')
+        random.seed(0)
+        random.shuffle(audio_paths)
+        start = int(len(audio_paths)*data_slice[0])
+        end = int(len(audio_paths)*data_slice[1])
+
+        data_dict = {}
+        for audio_path in audio_paths[start:end]:
+            _, score = os.path.basename(audio_path)[:-4].split('_')
+            if score == 'nan':
+                continue
+            if float(score) not in data_dict:
+                data_dict[float(score)] = [('mos', audio_path)]
+            else:
+                data_dict[float(score)].append(('mos', audio_path))
+        
+        self.data_dict = data_dict
+        self.keys = list(data_dict.keys())
+        self.num_data = end - start
+        self.cnt = 0
+
+    def __len__(self):
+        return self.num_data
+
+    def __getitem__(self, idx):
+        # random choose audio from key
+        score_idx = self.cnt % len(self.keys)
+        score = self.keys[score_idx]
+
+        sampling = True
+        while sampling:
+            audio_idx = torch.randint(0, len(self.data_dict[score]), (1,)).item()
+            source, path = self.data_dict[score][audio_idx]
+            audio = audio_loader(path, source)
+            
+            if audio.shape[-1] <= 0.5 * self.audio_duration*24000:
+                continue
+            else:
+                if audio.shape[-1] < self.audio_duration*24000:
+                    audio = torch.nn.functional.pad(audio, (0, self.audio_duration*24000 - audio.shape[-1]))
+                start = torch.randint(0, audio.shape[-1] - self.audio_duration*24000 + 1, (1,)).item()
+                audio = audio[:, start:start+self.audio_duration*24000]
+                sampling = False
+        self.cnt += 1
+
+        return audio, score
 
 def collate(batch):
 
     return batch
 
 def collate2(batch):
-
     data_dict = {}
-    for sample in batch:    
-        data_dict[sample[1]] = sample[0]
+    for sample in batch: 
+        if sample is not None:  
+            data_dict[sample[1]] = sample[0]
 
     # sort data dict based on key value
-    data_dict = {k: v for k, v in sorted(data_dict.items(), key=lambda item: item[0])}
+    data_dict = {k: v for k, v in sorted(data_dict.items(), key=lambda item: item[0], reverse=True)}
     audio_tensor = torch.stack(list(data_dict.values()))
 
     N = len(audio_tensor) - 1
@@ -178,8 +263,10 @@ def collate2(batch):
     for i in range(N + 1):
         for j in range(i + 1, N + 1):
             pairs.append(torch.tensor([i, j]))
-
-    pairs = torch.stack(pairs)
+    try:
+        pairs = torch.stack(pairs)
+    except:
+        print(data_dict.keys(), len(batch))
     return {
         'text': ['audio' for _ in range(len(audio_tensor))],
         'audio': audio_tensor,
@@ -205,12 +292,15 @@ def collate3(batch):
     }
 
 if __name__ == '__main__':
-    dataset = RewardDataset3(asset_path='aq_dataset')
+    dataset = RewardDataset4(asset_path='aq_mos')
+    # for i in range(10):
+    #     dataset.__getitem__(i)
+    # assert 1==2
 
 
     from torch.utils.data import DataLoader
 
-    loader = DataLoader(dataset, batch_size=5, num_workers=1, shuffle=False, collate_fn=collate3)
+    loader = DataLoader(dataset, batch_size=5, num_workers=1, shuffle=False, collate_fn=collate2)
 
     for i, d in enumerate(loader):
         print(d['audio'].shape)

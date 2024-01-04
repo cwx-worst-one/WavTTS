@@ -1,32 +1,12 @@
-import copy
-import math
-import numpy as np
 import torch
-from torch import nn, einsum
+from torch import nn
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 from rotary_embedding_torch import RotaryEmbedding
 from torch.utils.checkpoint import checkpoint
-
-from typing import Optional, Tuple
-from torch.autograd import Variable
 from torch.nn import functional as F
-from torch.nn.modules.module import Module
-from torch.nn.modules.container import ModuleList
-from torch.nn.init import xavier_uniform_
-from torch.nn.modules.dropout import Dropout
-from torch.nn.modules.linear import Linear
-from torch.nn.modules.rnn import LSTM
-from torch.nn.utils import weight_norm, remove_weight_norm
 
-from recipes.diffusion.models.nn import (
-    avg_pool_nd, 
-    conv_nd, 
-    linear, 
-    normalization, 
-    timestep_embedding, 
-    zero_module,
-)
+from recipes.diffusion.models.lora import LoRALinearLayer
 
 def exists(val):
     return val is not None
@@ -74,7 +54,8 @@ class Attention(nn.Module):
         context_dim=None, 
         heads=8, 
         dim_head=64, 
-        dropout = 0.
+        dropout = 0.,
+        lora=False,
     ):
         super().__init__()
         inner_dim = dim_head * heads
@@ -89,48 +70,67 @@ class Attention(nn.Module):
         self.dropout_p = dropout
         self.dropout = nn.Dropout(dropout)
         self.to_out = nn.Linear(inner_dim, query_dim)
+        self.lora = lora
+        if lora:
+            self.to_q_lora = LoRALinearLayer(query_dim, inner_dim, rank=8)
+            self.to_k_lora = LoRALinearLayer(context_dim, inner_dim, rank=8)
+            self.to_v_lora = LoRALinearLayer(context_dim, inner_dim, rank=8)
+            self.to_out_lora = LoRALinearLayer(inner_dim, query_dim, rank=8)
 
-    def forward(self, x, context=None, rotary_emb=None, is_causal=False):
+    def forward(self, x, context=None, rotary_emb=None, is_causal=False, attn_mask=None):
         q = self.to_q(x)
         context = default(context, x)
         k, v = self.to_kv(context).chunk(2, dim = -1)
+
+        if self.lora:
+            q = q + 1.0 * self.to_q_lora(x)
+            k = k + 1.0 * self.to_k_lora(context)
+            v = v + 1.0 * self.to_v_lora(context)
+
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=self.heads), (q, k, v))
 
         if rotary_emb is not None: 
             q = rotary_emb.rotate_queries_or_keys(q)
             k = rotary_emb.rotate_queries_or_keys(k)
 
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=self.heads), (q, k, v))
-
         out = F.scaled_dot_product_attention(
                 query=q,
                 key=k,
                 value=v,
-                attn_mask=None,
+                attn_mask=attn_mask,
                 dropout_p=self.dropout_p,
                 is_causal=is_causal,
             )
 
         out = rearrange(out, "b h n d -> b n (h d)")
 
-        return self.to_out(out)
+        if self.lora:
+            out_lora = 1.0 * self.to_out_lora(out)
+
+        out = self.to_out(out)
+        
+        if self.lora:
+            out = out + out_lora
+
+        return out
 
 class TransformerBlock(nn.Module):
     def __init__(
         self,  
-        dim, 
+        dim,
         heads, 
         dim_head,
         depth=1,
         attn_dropout=0., 
         ff_dropout=0.,   
         use_checkpoint=False,
-        context=False
+        context=False,
+        lora=False,
     ):
         super(TransformerBlock, self).__init__()
 
         layers = nn.ModuleList([])
         for _ in range(depth):
-            
             layer = nn.ModuleDict(
                     {
                         'norm_0': RMSNorm(dim),
@@ -138,7 +138,8 @@ class TransformerBlock(nn.Module):
                             query_dim=dim, 
                             heads=heads, 
                             dim_head=dim_head, 
-                            dropout=attn_dropout
+                            dropout=attn_dropout,
+                            lora=lora
                         ),
                         'norm_1': RMSNorm(dim),
                         'ff': FeedForward(dim=dim, dropout=ff_dropout)
@@ -152,7 +153,7 @@ class TransformerBlock(nn.Module):
         self.use_checkpoint = use_checkpoint
         self.context = context
     
-    def _forward_checkpoint(self, x, context=None, rotary_emb=None, is_causal=False):
+    def _forward_checkpoint(self, x, context=None, rotary_emb=None, is_causal=False, attn_mask=None):
         for idx, transformer in enumerate(self.layers):
             x = checkpoint(
                 transformer['attn'], 
@@ -160,6 +161,7 @@ class TransformerBlock(nn.Module):
                 checkpoint(transformer['norm_context'], context, use_reentrant=False) if self.context else None,
                 rotary_emb, 
                 is_causal,
+                attn_mask,
                 use_reentrant=False
             ) + x
 
@@ -171,22 +173,23 @@ class TransformerBlock(nn.Module):
 
         return x
 
-    def _forward(self, x, context=None, rotary_emb=None, is_causal=False):
+    def _forward(self, x, context=None, rotary_emb=None, is_causal=False, attn_mask=None):
         for idx, transformer in enumerate(self.layers):
             x = transformer['attn'](
                 transformer['norm_0'](x), 
                 transformer['norm_context'](context) if self.context else None, 
                 rotary_emb,
-                is_causal
+                is_causal,
+                attn_mask
             ) + x
             x = transformer['ff'](transformer['norm_1'](x)) + x
         return x
     
-    def forward(self, x, context=None, rotary_emb=None, is_causal=False):
+    def forward(self, x, context=None, rotary_emb=None, is_causal=False, attn_mask=None):
         if self.use_checkpoint:
-            return self._forward_checkpoint(x, context, rotary_emb, is_causal) 
+            return self._forward_checkpoint(x, context, rotary_emb, is_causal, attn_mask)
         else:
-            return self._forward(x, context, rotary_emb, is_causal)
+            return self._forward(x, context, rotary_emb, is_causal, attn_mask)
 
 # dual-path blocks
 class TNTBlocks(nn.Module):
@@ -200,36 +203,64 @@ class TNTBlocks(nn.Module):
             coarse_heads,
             coarse_head_dim,
             depth=1, 
+            unet=False,
+            unet_stages=[4,8,4], # up, middle, down
             dropout=0,
-            mulan_cfg_prob=0.1,
-            use_checkpoint=False
+            semantic_cfg_prob=0.1,
+            vc_cfg_prob=None,
+            vc=False,
+            use_checkpoint=False,
+            lora=False,
         ):
         super().__init__()
-        self.mulan_cfg_prob = mulan_cfg_prob
+        self.unet = unet
+        self.unet_stages = unet_stages
+        self.semantic_cfg_prob = semantic_cfg_prob
+        self.vc_cfg_prob = vc_cfg_prob
+        self.vc = vc
 
         # null embedding for cfg
-        self.mulan_null_embedding = nn.Parameter(torch.randn(input_dim))
+        self.semantic_null_embedding = nn.Parameter(torch.randn(input_dim))
+        if vc:
+            self.vc_null_embedding = nn.Parameter(torch.randn(input_dim))
+            # sep embedding for different condition
+            self.sep_embedding = nn.Parameter(torch.randn(input_dim))
 
         self.fine_rotary_embedding = RotaryEmbedding(dim=fine_head_dim)
         self.coarse_rotary_embedding = RotaryEmbedding(dim=coarse_head_dim)
 
         layers = nn.ModuleList()
         for i in range(depth):
-            get_cts = nn.Sequential(
-                RMSNorm(coarse_dim),
-                nn.Linear(coarse_dim, fine_dim),
-                Rearrange('b t (n d) -> (b t) n d', n=1)
-            )
-
             fine_to_coarse = nn.Sequential(
                 RMSNorm(fine_dim),
                 Rearrange('... n d -> ... (n d)'),
                 nn.Linear(fine_dim, coarse_dim),
             )
 
+            get_cts = nn.Sequential(
+                RMSNorm(coarse_dim),
+                nn.Linear(coarse_dim, fine_dim),
+                Rearrange('b t (n d) -> (b t) n d', n=1)
+            )
+            if self.unet and i >= sum(self.unet_stages[:2]):
+                unet_bridge = nn.Linear(2 * fine_dim, fine_dim)
+            else:
+                unet_bridge = None
+
             layers.append(
                 nn.ModuleList([
                     fine_to_coarse,
+                    TransformerBlock(
+                        dim=coarse_dim, 
+                        heads=coarse_heads, 
+                        dim_head=coarse_head_dim,
+                        depth=1,
+                        attn_dropout=dropout,
+                        ff_dropout=dropout,
+                        use_checkpoint=use_checkpoint,
+                        context=True,
+                        lora=lora,
+                    ),
                     TransformerBlock(
                         dim=coarse_dim, 
                         heads=coarse_heads,
@@ -237,19 +268,10 @@ class TNTBlocks(nn.Module):
                         depth=1,
                         attn_dropout=dropout,
                         ff_dropout=dropout,
-                        use_checkpoint=False,
-                    ),
-                    TransformerBlock(
-                        dim=fine_dim, 
-                        heads=fine_heads, 
-                        dim_head=fine_head_dim,
-                        depth=1,
-                        attn_dropout=dropout,
-                        ff_dropout=dropout,
-                        use_checkpoint=False,
-                        context=True,
+                        use_checkpoint=use_checkpoint,
                     ),
                     get_cts, 
+                    unet_bridge,
                     TransformerBlock(
                         dim=fine_dim, 
                         heads=fine_heads, 
@@ -261,13 +283,16 @@ class TNTBlocks(nn.Module):
                     ),
                 ]
             ))
+        self.depth = depth
         self.layers = layers
 
     def forward(self, 
         x, 
         time_emb, 
-        mulan_context_emb, 
-        mulan_force_cfg=None,
+        semantic_context_emb, 
+        semantic_force_cfg=None,
+        vc_context_emb=None,
+        vc_force_cfg=None,
         is_causal=False,
     ):
         # input shape: b, d, fine_len, course_len
@@ -275,38 +300,75 @@ class TNTBlocks(nn.Module):
         # output shape: B, output_size, dim1, dim2
         b, d, lf, lc = x.shape
 
+        coarse_context = []
         # get mask for cfg
-        mulan_cfg_prob = self.mulan_cfg_prob if mulan_force_cfg is None else mulan_force_cfg
-        mulan_prob_keep_mask = prob_mask_like((b, 1, 1), 1. - mulan_cfg_prob, device=x.device)
-
-        # get null embeddings for mulan context
-        mulan_null_coarse_emb = repeat(self.mulan_null_embedding, 'd -> b l d', b=b, l=mulan_context_emb.shape[1])
-        mulan_context_emb = torch.where(
-            mulan_prob_keep_mask,
-            mulan_context_emb,
-            mulan_null_coarse_emb
+        semantic_cfg_prob = self.semantic_cfg_prob if semantic_force_cfg is None else semantic_force_cfg
+        semantic_prob_keep_mask = prob_mask_like((b, 1, 1), 1. - semantic_cfg_prob, device=x.device)
+        # get null embeddings for semantic context
+        semantic_null_coarse_emb = repeat(self.semantic_null_embedding, 'd -> b l d', b=b, l=semantic_context_emb.shape[1])
+        semantic_context_emb = torch.where(
+            semantic_prob_keep_mask,
+            semantic_context_emb,
+            semantic_null_coarse_emb
         )
+        coarse_context.append(semantic_context_emb)
+        # vc context
+        if self.vc:
+            vc_cfg_prob = self.vc_cfg_prob if vc_force_cfg is None else vc_force_cfg
+            vc_prob_keep_mask = prob_mask_like((b, 1, 1), 1. - vc_cfg_prob, device=x.device)
+            vc_null_coarse_emb = repeat(self.vc_null_embedding, 'd -> b l d', b=b, l=vc_context_emb.shape[1])
+            vc_context_emb = torch.where(
+                vc_prob_keep_mask,
+                vc_context_emb,
+                vc_null_coarse_emb
+            )
+            sep_embedding = repeat(self.sep_embedding, 'd -> b l d', b=b, l=1)
+            coarse_context.append(sep_embedding)
+            coarse_context.append(vc_context_emb)
+
         # concat at dim1
-        coarse_context = mulan_context_emb
+        coarse_context = torch.cat(coarse_context, dim=1)
+
         time_emb = torch.mean(rearrange(time_emb, 'b d lf lc-> (b lc) lf d'), axis=1, keepdim=True)
         fine_emb = rearrange(x, 'b d lf lc -> (b lc) lf d')
-        fine_emb = F.pad(fine_emb, (0, 0, 0, 1), value=0) # pad class token to the last positions for causal masking
+        fine_emb = F.pad(fine_emb, (0, 0, 0, 1), value=0) # pad class token to the first positions
         cts = F.pad(time_emb, (0, 0, lf, 0), value=0)
         fine_emb = fine_emb + cts
         coarse_emb = 0
-        
-        for idx, (fine_to_coarse, coarse_transformer, context_cross_attn, get_cts, fine_transformer) in enumerate(self.layers):
+
+        if self.unet:
+            unet_cache = []
+        for idx, (fine_to_coarse, context_cross_attn, coarse_transformer, get_cts, unet_bridge, fine_transformer) in enumerate(self.layers):
             coarse_emb_residual = fine_to_coarse(fine_emb[:, -1:])
             coarse_emb_residual = rearrange(coarse_emb_residual, '(b t) d -> b t d', b=b)
             coarse_emb = coarse_emb + coarse_emb_residual
-            coarse_emb = coarse_transformer(coarse_emb, rotary_emb=self.coarse_rotary_embedding, is_causal=is_causal)
             # context cross-attn
             coarse_emb = context_cross_attn(coarse_emb, context=coarse_context, rotary_emb=self.coarse_rotary_embedding)
+            # coarse transformer
+            coarse_emb = coarse_transformer(coarse_emb, rotary_emb=self.coarse_rotary_embedding, is_causal=is_causal)
 
             cts = get_cts(coarse_emb)
             cts = F.pad(cts, (0, 0, lf, 0), value=0)
             fine_emb = fine_emb + cts
-            fine_emb = fine_transformer(fine_emb, rotary_emb=self.fine_rotary_embedding)
+
+            if self.unet and idx >= sum(self.unet_stages[:2]):
+                fine_emb = unet_bridge(torch.cat([fine_emb, unet_cache.pop(-1)], dim=-1))
+
+            # causal mask exclude cls token
+            if is_causal:
+                l = fine_emb.shape[1]
+                fine_attn_mask = torch.zeros(l, l, dtype=fine_emb.dtype)
+                temp_mask = torch.ones(l, l, dtype=torch.bool).tril(diagonal=0)
+                fine_attn_mask.masked_fill_(temp_mask.logical_not(), float("-inf"))
+                fine_attn_mask[:, -1] = 0
+                fine_attn_mask = fine_attn_mask.to(fine_emb.device)
+            else:
+                fine_attn_mask = None
+
+            # fine transformer
+            fine_emb = fine_transformer(fine_emb, rotary_emb=self.fine_rotary_embedding, attn_mask=fine_attn_mask)
+            if self.unet and idx < self.unet_stages[0]:
+                unet_cache.append(fine_emb)
         
         # remove cts and reshape
         output = fine_emb[:, :-1]
@@ -318,20 +380,23 @@ class TNTBlocks(nn.Module):
 class TNTDiffusionNetwork(nn.Module):
     def __init__(self,
             input_dim=256,
-            latent_dim=32,
             feature_dim=1024,
             context_dim=512,
             depth=8,
             segment_size=64,
             segment_stride=32,
+            unet=False,
             dropout=0,
-            mulan_cfg_prob=0.1,
+            semantic_cfg_prob=0.1,
             use_checkpoint=False,
+            vc=False,
+            vc_cfg_prob=None,
+            lora=False,
+            consistency=False,
         ):
         super().__init__()
-
+        self.depth = depth
         self.input_dim = input_dim
-        self.latent_dim = latent_dim
         self.feature_dim = feature_dim
         self.context_dim = context_dim
 
@@ -344,15 +409,39 @@ class TNTDiffusionNetwork(nn.Module):
             RMSNorm(256),
             nn.Linear(256, feature_dim),
             nn.GELU(approximate='tanh'),
-            Linear(feature_dim, feature_dim),
+            nn.Linear(feature_dim, feature_dim),
         )
-
-        self.mulan_context_embed = nn.Sequential(
-            nn.Embedding(1024, feature_dim),
-            RMSNorm(context_dim),
-            nn.GELU(approximate='tanh'),
-            Linear(feature_dim, feature_dim),
-        )
+        if consistency:
+            self.guidance_embed = nn.Sequential(
+                RMSNorm(1),
+                nn.Linear(1, feature_dim),
+                nn.GELU(approximate='tanh'),
+                nn.Linear(feature_dim, feature_dim),
+            )
+        
+        self.context_dropout = nn.Dropout1d(p=0.05)
+        if context_dim == 1:
+            self.semantic_context_embed = nn.Sequential(
+                nn.Embedding(32_768, feature_dim),
+                RMSNorm(context_dim),
+                nn.GELU(approximate='tanh'),
+                nn.Linear(feature_dim, feature_dim),
+            )
+        else:
+            self.semantic_context_embed = nn.Sequential(
+                RMSNorm(context_dim),
+                nn.Linear(context_dim, feature_dim),
+                nn.GELU(approximate='tanh'),
+                nn.Linear(feature_dim, feature_dim),
+            )
+        self.vc = vc
+        if vc:
+            self.vc_context_embed = nn.Sequential(
+                RMSNorm(32),
+                nn.Linear(32, feature_dim),
+                nn.GELU(approximate='tanh'),
+                nn.Linear(feature_dim, feature_dim),
+            )
         # bottleneck
         self.input_map = nn.Sequential(
             nn.Conv1d(self.input_dim, self.feature_dim, 1, bias=False),
@@ -363,28 +452,35 @@ class TNTDiffusionNetwork(nn.Module):
             input_dim=feature_dim,
             context_dim=context_dim,
             fine_dim=feature_dim,
-            fine_heads=12,
-            fine_head_dim=int(feature_dim / 12),
+            fine_heads=8,
+            fine_head_dim=int(feature_dim / 8),
             coarse_dim=feature_dim,
-            coarse_heads=12,
-            coarse_head_dim=int(feature_dim / 12),
+            coarse_heads=8,
+            coarse_head_dim=int(feature_dim / 8),
             depth=depth,
+            unet=unet,
             dropout=dropout,
-            mulan_cfg_prob=mulan_cfg_prob,
+            semantic_cfg_prob=semantic_cfg_prob,
+            vc_cfg_prob=vc_cfg_prob,
+            vc=vc,
             use_checkpoint=use_checkpoint,
+            lora=lora,
         )
         
         self.output = nn.Sequential(
-            nn.Conv1d(self.feature_dim, self.latent_dim, 1, bias=False)
+            nn.Conv1d(self.feature_dim, self.input_dim, 1, bias=False)
         )
 
     def forward(
         self, 
         x, 
         timesteps=None, 
-        mulan_context=None,
-        mulan_force_cfg=None,
+        semantic_context=None, 
+        semantic_force_cfg=None,
+        vc_context=None,
+        vc_force_cfg=None,
         is_causal=False,
+        guidance_scale=None,
     ):
         batch_size, input_dim, seq_length = x.shape
         if timesteps.ndim != 3:
@@ -400,9 +496,18 @@ class TNTDiffusionNetwork(nn.Module):
         t_emb = (torch.sin((1.0-timesteps.view(batch_size, seq_length, 1))*omega) / so) * t_start_emb\
             + (torch.sin(timesteps.view(batch_size, seq_length, 1)*omega) / so) * t_end_emb
         t_emb = self.time_embed(t_emb)
+        if exists(guidance_scale):
+            guidance_emb = self.guidance_embed(guidance_scale)
+            t_emb = t_emb + guidance_emb
     
         # context embedding
-        mulan_context_emb = self.mulan_context_embed(mulan_context.detach())
+        semantic_context_emb = self.semantic_context_embed(semantic_context)
+        # drop some context 
+        semantic_context_emb = self.context_dropout(semantic_context_emb)
+        if self.vc:
+            vc_context_emb = self.vc_context_embed(vc_context)
+        else:
+            vc_context_emb = None
         
         t_emb = self.dpp.unfold(rearrange(t_emb, 'b t d -> b d t'))
 
@@ -412,8 +517,10 @@ class TNTDiffusionNetwork(nn.Module):
         out = self.blocks(
             x, 
             time_emb=t_emb, 
-            mulan_context_emb=mulan_context_emb,
-            mulan_force_cfg=mulan_force_cfg,
+            semantic_context_emb=semantic_context_emb,
+            semantic_force_cfg=semantic_force_cfg,
+            vc_context_emb=vc_context_emb,
+            vc_force_cfg=vc_force_cfg,
             is_causal=is_causal,
         ).view(batch_size, self.feature_dim, self.segment_size, -1)  # b, d, lf, lc      
 
@@ -421,7 +528,7 @@ class TNTDiffusionNetwork(nn.Module):
         out = self.dpp.fold(out)  # B, N, T
         out = self.output(out)
 
-        out = out.view(batch_size, self.latent_dim, seq_length)
+        out = out.view(batch_size, input_dim, seq_length)
 
         return out
 
@@ -496,6 +603,7 @@ class DualPathProcessing(nn.Module):
         # x is (batch, chan, chunk_size, n_chunks)
         batch, chan, chunk_size, n_chunks = x.size()
         to_unfold = rearrange(x, 'b c l1 l2 -> b (c l1) l2')
+        
         x = torch.nn.functional.fold(
             to_unfold,
             (output_size, 1),
@@ -503,27 +611,36 @@ class DualPathProcessing(nn.Module):
             padding=(0, 0),
             stride=(self.stride, 1),
         ).squeeze(-1)
-        x[:, :, self.stride:-self.stride] /= 2
+
         if self.pad_len != 0:
             x = x[..., :-self.pad_len] # remove padding
 
         return x
 
 if __name__ == '__main__':
+    torch.manual_seed(0)
     model = TNTDiffusionNetwork(
-        input_dim=16,
-        latent_dim=16,
-        feature_dim=512,
+        input_dim=32,
+        feature_dim=32,
         context_dim=1,
-        depth=2,
-        segment_size=64,
+        depth=16,
+        segment_size=32,
         segment_stride=32,
+        unet=True,
         dropout=0,
-        use_checkpoint=True
-    )
+        semantic_cfg_prob=0.1,
+        vc_cfg_prob=0.1,
+        vc=True,
+        use_checkpoint=True,
+        consistency=True,
+    ).to('cuda')
     # for k, v in model.named_parameters():
     #     print(k)
-    xt = torch.randn(2, 16, 1250)
-    t = torch.randn(2, 1, 1250)
-    semantic = torch.ones(2, 12).long()
-    out = model(xt, t, mulan_context=semantic, is_causal=True)
+    xt = torch.randn(16, 32, 3750).to('cuda')
+    t = torch.randn(16, 1, 3750).to('cuda')
+    semantic = torch.ones(16, 750).long().to('cuda')
+    vc = torch.randn(16, 1, 32).float().to('cuda')
+    guidance_scale = torch.rand(16, 1, 1).float().to('cuda')
+    
+    out = model(xt, t, semantic_context=semantic, vc_context=vc, guidance_scale=guidance_scale)
+    print(out.shape)

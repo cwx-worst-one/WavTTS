@@ -8,6 +8,23 @@ import torch.distributed as dist
 from torch import Tensor
 
 
+def get_global_rank() -> int:
+    return int(os.environ.get("RANK", 0))
+
+
+def get_local_rank() -> int:
+    return int(os.environ.get("LOCAL_RANK", 0))
+
+
+def get_node_rank() -> int:
+    group_rank = os.environ.get("GROUP_RANK", 0)
+    return int(os.environ.get("NODE_RANK", group_rank))
+
+
+def get_world_size() -> int:
+    return int(os.environ.get("WORLD_SIZE", 0))
+
+
 def is_local_zero():
     local_rank = os.getenv("LOCAL_RANK", None)
     return local_rank is None or local_rank == "0"

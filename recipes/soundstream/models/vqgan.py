@@ -178,16 +178,20 @@ class VQGAN_KL(nn.Module):
 class VQGAN_KL_new(nn.Module):
     def __init__(
             self,
-            latent_dim,
-            downsample_rates,
-            upsample_rates,
-            encoder_base_dim,
-            decoder_base_dim,
+            n_channels=1,
+            latent_dim=128,
+            downsample_rates=[2, 3, 7, 10],
+            upsample_rates=[10, 7, 3 ,2],
+            encoder_base_dim=96,
+            decoder_base_dim=2560,
+            adapt_hopper=True,
         ):
         super().__init__()
         self.encoder = Encoder_new(
+            n_channels=n_channels,
             d_model=encoder_base_dim,
             strides=downsample_rates,
+            adapt_hopper=adapt_hopper,
         )
 
         self.mean_logvar_conv = nn.Conv1d(self.encoder.enc_dim, latent_dim*2, 1)
@@ -196,7 +200,8 @@ class VQGAN_KL_new(nn.Module):
             input_channel=latent_dim,
             channels=decoder_base_dim,
             rates=upsample_rates,
-            d_out=1,
+            d_out=n_channels,
+            adapt_hopper=adapt_hopper,
         )
    
     def forward(self, x,  deterministic=False):
@@ -346,13 +351,15 @@ if __name__ == "__main__":
     #     init_cluster_size=32,
     # )
     model = VQGAN_KL_new(
-        latent_dim=32,
-        downsample_rates=[2, 3, 4, 8],
-        upsample_rates=[8, 4, 3 ,2],
+        n_channels=1,
+        latent_dim=128,
+        downsample_rates=[2, 3, 7, 10],
+        upsample_rates=[10, 7, 3 ,2],
         encoder_base_dim=64,
         decoder_base_dim=64,
     )
-    x = torch.randn(size=[2, 1, 24000*5])
+    # 44100= 2*2*3*3*5*5*7*7
+    x = torch.randn(size=[2, 1, int(25200)])
     decoder_out, kl_loss, std_mean = model(x)
     print(
         f"Input shape: {x.shape}\ndecoder_out shape: {decoder_out.shape}\nkl_loss shape: {kl_loss.shape}\nstd_mean shape: {std_mean.shape}"

@@ -9,9 +9,9 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
 
 extra_params:
-    prompt_path: "/mnt/bn/audio-diffusion/data/google_prompts/text_prompt_collection_20230728.csv"
-    output_dir: generated_output/text_prompt_collection_20230728
-    model_dir: recipes/diffusion/assets
+    prompt_path: "/mnt/bn/audio-diffusion/data/musiclm_text_prompt/text_prompt_collection_2.0_20230817.csv"
+    output_dir: "/mnt/bn/audio-diffusion/ducle/generated_output/text_prompt_collection_2.0_20230817"
+    model_dir: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/"
 
     rl_finetuned_semantic: False
     semantic_ckpt: "/mnt/bn/audio-diffusion/ducle/logs/semantic_flash_llama/mcc40m_filtered_705m/checkpoints/step=081000-tr_loss=2.4451-val_loss_0=2.8561.ckpt"

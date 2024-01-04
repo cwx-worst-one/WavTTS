@@ -1,0 +1,106 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 0
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+checkpoint_path: /opt/tiger/arnold_experiment/samantha/logs/aq/stage_1_test/checkpoints/aq-step=011700-val_loss=0.005967.ckpt
+
+# running parameters
+log_dir: logs
+run_opts:
+    fast_dev_run: False
+    tensorboard_dir: !ref <log_dir>
+    log_name: "aq"
+    version: "stage_2"
+    precision: 32
+    log_every_n_steps: 10
+    max_epochs: 100
+    batch_size: 5
+    num_workers: 4
+    val_batch_size: 5
+    val_num_workers: 4
+
+training_params:
+    learning_rate: 0.00001
+    weight_decay: 0.005
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+# dataloader configuration
+train_dataset: !new:recipes.audio_quality_classifier.dataset.dataset.RewardDataset4
+    asset_path: "aq_mos"
+    data_slice: [0, 0.8]
+
+
+val_dataset: !new:recipes.audio_quality_classifier.dataset.dataset.RewardDataset4
+    asset_path: "aq_mos"
+    data_slice: [0.8, 0.9]
+
+train_dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <train_dataset>
+    batch_size: !ref <run_opts[batch_size]>
+    num_workers: !ref <run_opts[num_workers]>
+    shuffle: False
+    drop_last: True
+    pin_memory: True
+    collate_fn: !name:recipes.audio_quality_classifier.dataset.dataset.collate2
+
+val_dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <val_dataset>
+    batch_size: !ref <run_opts[val_batch_size]>
+    num_workers: !ref <run_opts[val_num_workers]>
+    pin_memory: True
+    collate_fn: !name:recipes.audio_quality_classifier.dataset.dataset.collate2
+
+# datamodule configuration
+pl_datamodule: !new:recipes.audio_quality_classifier.modules.pl_datamodule.AudioQualityClassifierDataModule
+    train_dataloader: !ref <train_dataloader>
+    val_dataloader: !ref <val_dataloader>
+
+# training module configuration
+optimizer_cls: !name:torch.optim.AdamW
+    lr: !ref <training_params[learning_rate]>
+    weight_decay: !ref <training_params[weight_decay]>
+
+pl_module: !apply:recipes.audio_quality_classifier.modules.pl_module.AudioQualityClassifierModule.load_from_checkpoint
+    checkpoint_path: !ref <checkpoint_path>
+# pl_module: !new:recipes.audio_quality_classifier.modules.pl_module.AudioQualityClassifierModule
+    model: !new:recipes.audio_quality_classifier.models.discriminator.MultiScaleSTFTDiscriminator
+        filters: 48
+    pretrained_model_path: "soundstream-step=374999-val_sdr=12.9557.ckpt"
+    optimizer_cls: !ref <optimizer_cls>
+
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[tensorboard_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+
+checkpoint: !new:pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: val_loss
+    mode: min
+    save_last: True
+    save_top_k: 5
+    filename: aq-{step:06d}-{val_loss:.06f}
+
+lr_monitor: !new:pytorch_lightning.callbacks.LearningRateMonitor
+    logging_interval: step
+
+trainer: !new:pytorch_lightning.Trainer
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    accelerator: auto
+    devices: auto
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False  # warning: setting to True can cause slowdowns
+    enable_model_summary: True
+    max_epochs: !ref <run_opts[max_epochs]>
+    precision: !ref <run_opts[precision]>
+    log_every_n_steps: !ref <run_opts[log_every_n_steps]>
+    logger: !ref <logger>
+    callbacks:
+        - !ref <checkpoint>
+        - !ref <lr_monitor>

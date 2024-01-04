@@ -77,7 +77,7 @@ from collections import OrderedDict
 import glob
 
 model = init_audio_quality_classifier(
-    '/opt/tiger/arnold_experiment/samantha/logs/aq/0.1/checkpoints/aq-step=002184-val_loss=0.086357.ckpt',
+    '/opt/tiger/arnold_experiment/samantha/logs/aq/stage_2/checkpoints/aq-step=002400-val_loss=0.381703.ckpt',
     0,
     None
 )
@@ -89,5 +89,6 @@ audio_paths = sorted(glob.glob(f'{data_path}/*.wav'))
 for audio_path in audio_paths:
     audio, sr = sf.read(audio_path)
     audio = torch.tensor(audio).unsqueeze(0).unsqueeze(0)
+    print(audio.shape)
     output = aq_classifier_inference(model, audio, None)
     print(os.path.basename(audio_path), output)

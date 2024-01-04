@@ -2,12 +2,13 @@ import torch
 from torch import nn 
 from collections import OrderedDict
 import pytorch_lightning as pl
-
+from pytorch_lightning.utilities.rank_zero import rank_zero_info
 
 
 
 class AudioQualityClassifierModule(pl.LightningModule):
     def __init__(self, 
+        seed,
         model, 
         pretrained_model_path,
         optimizer_cls, 
@@ -21,11 +22,13 @@ class AudioQualityClassifierModule(pl.LightningModule):
         self.model = model
         # freeze part of the model
         for i, (k, param) in enumerate(self.model.named_parameters()):
-
             if 'mrds' in k and k.split('.')[3] in ['0', '1', '2', '3']:
                 param.requires_grad = False
             if "mpds" in k and k.split('.')[3] in ['0', '1', '2', '3']:
                 param.requires_grad = False
+    def setup(self, stage: str) -> None:
+        # set torch seed for randomness
+        torch.manual_seed(self.hparams.seed + self.global_rank)
     
     def load_pretrained_model(self, model, pretrained_model_path):
         state_dict = torch.load(pretrained_model_path)["state_dict"]
@@ -47,19 +50,8 @@ class AudioQualityClassifierModule(pl.LightningModule):
         raise NotImplementedError
 
     def training_step(self, batch, batch_idx):
-        wavs = batch["audio"].unsqueeze(1)
-        # text = batch["text"]
+        wavs = batch["audio"]
         pairs = batch["pairs"]
-        # has_vocal=False
-        # with torch.autocast(device_type="cuda", enabled=False):
-        #     input_ids, target_ids = self.prepare_feature(wavs.float(), text=text, has_vocal=has_vocal)
-        # # exclude_time = time.perf_counter() - t
-        # logits = self.model(**input_ids)
-        # if isinstance(logits, dict):
-        #     logits = logits["logits"]
-        # elif isinstance(logits, tuple):
-        #     logits = logits[0]
-
 
         logits, _ = self.model(wavs)
 
@@ -88,7 +80,7 @@ class AudioQualityClassifierModule(pl.LightningModule):
  
 
     def validation_step(self, batch, batch_idx):
-        wavs = batch["audio"].unsqueeze(1)
+        wavs = batch["audio"]
         pairs = batch["pairs"]
 
 

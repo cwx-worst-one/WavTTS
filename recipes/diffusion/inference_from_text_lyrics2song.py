@@ -16,7 +16,7 @@ from einops import rearrange, repeat
 import numpy as np
 import torchaudio
 from recipes.diffusion.utils.utils import download_checkpoint
-from recipes.bigmusic.lightning.semantic_modules import SemanticModule, process_eos_indexes, truncate_wav_to_eos
+from recipes.bigmusic.lightning.semantic_modules import SemanticRLModule, process_eos_indexes, truncate_wav_to_eos
 from recipes.musiclm.requires.mulan.mulan_infer_g4 import (
     create_mulan_model,
     mulan_inference,
@@ -244,7 +244,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--batch_size',
         type=int,
-        default=2,
+        default=3,
     )
     parser.add_argument(
         '--samples_per_prompt',
@@ -254,17 +254,17 @@ if __name__ == '__main__':
     parser.add_argument(
         '--input_prompt_path', 
         type=str, 
-        default="",
+        default="/mnt/bn/audio-diffusion/data/mixture_prompts/suno100.csv",
     )
     parser.add_argument(
         '--output_dir_path', 
         type=str, 
-        default='lyrics2song_test'
+        default='offline_recons'
     )
     parser.add_argument(
         '--input_lang',
         type=str,
-        default='zh_phone', # [en, zh_phone, zh_wp]
+        default='en', # [en, zh_phone, zh_wp]
     )
     parser.add_argument(
         '--device',
@@ -279,7 +279,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--mulan_model_path',
         type=str,
-        default='hdfs://haruna/home/byte_speech_sv/jingsong.gao/mulan_ckpt/mulan-step=014000-median_rank_1=160-kaggle_minimal.ckpt'
+        default='/mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=014000-median_rank_1=160-kaggle.ckpt'
     )
     parser.add_argument(
         '--lyrics_max_seq_len',
@@ -294,32 +294,32 @@ if __name__ == '__main__':
     parser.add_argument(
         '--semantic_model_path',
         type=str,
-        default='hdfs:///home/byte_speech_sv/zongyu.yin/logs/decoder_07B_zh30s/wp100_hot_soda_bs14w1/checkpoints/step=274000-val_accu_0=12.63.ckpt'
+        default='/mnt/bn/audio-diffusion/ducle/logs/semantic_model_mulan_rlhf/30s_4x2_billboard_sft_text+loudness+qualitativepair+genrechordv2-weight4_sim_v3/checkpoints/step=003500.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_0',
         type=str,
-        default='hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_16/checkpoints/last.ckpt'
+        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_1',
         type=str,
-        default='hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_16/checkpoints/last.ckpt'
+        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_2',
         type=str,
-        default='hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_16/checkpoints/last.ckpt'
+        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--diffusion_model_path_2_3',
         type=str,
-        default='hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_16/checkpoints/last.ckpt'
+        default='/mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last.ckpt'
     )
     parser.add_argument(
         '--vocoder_model_path',
         type=str,
-        default='hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/soundstream-step=374999-val_sdr=12.9557.ckpt'
+        default='/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/soundstream-step=374999-val_sdr=12.9557.ckpt'
     )
 
     args = parser.parse_args()
@@ -348,7 +348,7 @@ if __name__ == '__main__':
 
     # Semantic model
     semantic_model_path = download_checkpoint(REMOTE_PATHS['semantic_model_path'], cache_dir=asset_path)
-    semantic_module = SemanticModule.load_from_checkpoint(semantic_model_path).to(device).eval()
+    semantic_module = SemanticRLModule.load_from_checkpoint(semantic_model_path).to(device).eval()
     semantic_module.requires = { "mulan_infer_fn": mulan_inference, "mulan": mulan_model }
 
     # diffusion
@@ -398,40 +398,49 @@ if __name__ == '__main__':
         batch_size=batch_size,
         lyrics_max_seq_len=lyrics_max_seq_len,
         lang=args.input_lang,
-        max_items=100)
+        max_items=16)
 
     # inference
     start_time = time()
     diffusion_params = vars(args)  
     total_items = 0
+    # get all files in a folder
+    sample_paths = sorted(glob.glob(f'offline/*.npy'))
+    import soundfile as sf
     with torch.no_grad():
-        for batch_idx, batch in enumerate(inference_dataset):
+        for batch_idx, batch in enumerate(sample_paths[:10]):
             print(f"generating {batch_idx}")
+            semantic_samples = torch.from_numpy(np.load(sample_paths[batch_idx])).to(device)
 
             # Process the input lyrics and style prompt
-            hp = DotDict({ "duration": duration, "semantic_temperature": 1 })
+            # hp = DotDict({ "duration": duration, "semantic_temperature": 1 , 'sample_mode': "gumble"})
             
             # semantic_samples = semantic_module.predict(batch, hp)
-            inputs_embeds = semantic_module.prepare_inputs_embeddings(
-                batch={
-                    'conditions': "style_text,lyrics_tokens", 
-                    'lyrics_tokens': batch['lyrics_tokens'],
-                    'style_text': batch['style_text']})
-            inputs_embeds = repeat(inputs_embeds, 'b n d -> (b s) n d', s=args.samples_per_prompt)
-            semantic_samples = semantic_module.super_predict(inputs_embeds, 750, 1.0)
+            # inputs_embeds = semantic_module.prepare_inputs_embeddings(
+            #     batch={
+            #         'conditions': "style_text,lyrics_tokens", 
+            #         'lyrics_tokens': batch['lyrics_tokens'],
+            #         'style_text': batch['style_text']})
+            # inputs_embeds = repeat(inputs_embeds, 'b n d -> (b s) n d', s=args.samples_per_prompt)
+            # semantic_samples = semantic_module.super_predict(inputs_embeds, 750, 1.0)
+            # torch.save(semantic_samples, f'semantic_samples/{batch_idx}.pt')
 
-            semantic_samples, eos_index_list = process_eos_indexes(semantic_samples, semantic_module, sample_rate=sample_rate)
+            # semantic_samples, eos_index_list = process_eos_indexes(semantic_samples, semantic_module, sample_rate=sample_rate)
+           
             diffusion_start = time()
             wavs_g = run_diffusion(requires, semantic_samples, params=diffusion_params)
+            for idx, wav in enumerate(wavs_g):
+                base_name = os.path.basename(sample_paths[batch_idx])
+                sf.write(f'{args.output_dir_path}/{base_name}_{idx}.wav', wav.cpu().numpy().T, sample_rate)
             print('d ', time() - diffusion_start)
-            wavs = truncate_wav_to_eos(wavs_g, eos_index_list)
+            # wavs = truncate_wav_to_eos(wavs_g, eos_index_list)
 
-            outputs = { "generated_audio": wavs }
-            output_dir = args.output_dir_path
-            save_batch_outputs(
-                outputs, batch, output_dir=output_dir, sample_rate=sample_rate, 
-                sample_round=args.samples_per_prompt, index_offset=total_items)
-            total_items += len(wavs)    
+            # outputs = { "generated_audio": wavs }
+            # output_dir = args.output_dir_path
+            # save_batch_outputs(
+            #     outputs, batch, output_dir=output_dir, sample_rate=sample_rate, 
+            #     sample_round=args.samples_per_prompt, index_offset=total_items)
+            # total_items += len(wavs)    
     save_video(output_dir, output_dir)
 
     print(f'Inference RTF: {(time() - start_time)/(len(prompts)*duration)}')
