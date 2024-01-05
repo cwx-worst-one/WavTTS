@@ -289,47 +289,24 @@ def resolve_data_urls(data_id=None, data_urls=None):
         )
 
     # recode data repeat time, avoiding glob files repetitive
-    frequency = Counter(url["index"] for url in data_urls)
+    frequency, uniqed_data_urls = uniq_data_urls(data_urls)
 
-    resolved_url_dict, resolved_urls = {}, set()
-    for url in tqdm(data_urls, desc="parse_urls"):
-        index = url["index"]
-        if index in resolved_urls:
-            continue
+    tpool = ThreadPool(20)
+    rets = []
 
-        index_version = re.findall(r".*(index_\d+).*", index)[0]
-        ARNOLD_BASE_DIR = os.getenv("ARNOLD_BASE_DIR", "")
-        if not ARNOLD_BASE_DIR.startswith("hdfs://"):
-            # maybe on merlin devbox, use RUNTIME_IDC_NAME instead
-            RUNTIME_IDC_NAME = os.getenv("RUNTIME_IDC_NAME", "")
-            if RUNTIME_IDC_NAME == "maliva":
-                ARNOLD_BASE_DIR = "hdfs://harunava"
-            else:
-                ARNOLD_BASE_DIR = "hdfs://haruna"
+    for url in uniqed_data_urls:
+        rets.append(
+            tpool.apply_async(
+                func=_resolve_one_url,
+                args=(url, columns),
+                error_callback=lambda exc: logger.error("error on parse", exc_info=exc),
+            )
+        )
+    tpool.close()
 
-        # record unique common utterance
-        utterances, cur_data = None, {}
-        for name, pattern in url.items():
-            if name not in columns:
-                logger.warning(
-                    f"drop feature={name}, cause some datasets do not have it"
-                )
-                continue
-            prefix = re.split(
-                r"\*", pattern.removeprefix(ARNOLD_BASE_DIR).replace("//", "/")
-            )[0]
-            prefix = f"{ARNOLD_BASE_DIR}{prefix}"
-            files = {
-                ele.removeprefix(prefix).replace(f".{index_version}", ""): ele
-                for ele in fast_glob_files(pattern)
-            }
-            cur_data[name] = files
-
-            if utterances is None:
-                utterances = set(files.keys())
-            else:
-                utterances.intersection_update(files.keys())
-
+    resolved_url_dict = {}
+    for ret in tqdm(rets, desc="parse urls"):
+        index, cur_data, utterances = ret.get()
         # cur_data: Dict[col_name, Dict[uttid, file]]
         for name, file_dict in cur_data.items():
             drop_utt = set(file_dict.keys()).difference(utterances)
@@ -341,12 +318,60 @@ def resolve_data_urls(data_id=None, data_urls=None):
                 resolved_url_dict[name] = cur_files
             else:
                 resolved_url_dict[name].extend(cur_files)
-        resolved_urls.add(index)
+    tpool.join()
 
     return [
         dict(zip(columns, item))
         for item in zip(*[resolved_url_dict[k] for k in columns])
     ]
+
+
+def uniq_data_urls(data_urls):
+    frequency = Counter(url["index"] for url in data_urls)
+    uniqed_data_urls, memory = [], set()
+    for url in data_urls:
+        index = url["index"]
+        if index in memory:
+            continue
+        uniqed_data_urls.append(url)
+        memory.add(index)
+    return frequency, uniqed_data_urls
+
+
+def _resolve_one_url(url, columns):
+    index = url["index"]
+
+    index_version = re.findall(r".*(index_\d+).*", index)[0]
+    ARNOLD_BASE_DIR = os.getenv("ARNOLD_BASE_DIR", "")
+    if not ARNOLD_BASE_DIR.startswith("hdfs://"):
+        # maybe on merlin devbox, use RUNTIME_IDC_NAME instead
+        RUNTIME_IDC_NAME = os.getenv("RUNTIME_IDC_NAME", "")
+        if RUNTIME_IDC_NAME == "maliva":
+            ARNOLD_BASE_DIR = "hdfs://harunava"
+        else:
+            ARNOLD_BASE_DIR = "hdfs://haruna"
+
+    # record unique common utterance
+    utterances, cur_data = None, {}
+    for name, pattern in url.items():
+        if name not in columns:
+            logger.warning(f"drop feature={name}, cause some datasets do not have it")
+            continue
+        prefix = re.split(
+            r"\*", pattern.removeprefix(ARNOLD_BASE_DIR).replace("//", "/")
+        )[0]
+        prefix = f"{ARNOLD_BASE_DIR}{prefix}"
+        files = {
+            ele.removeprefix(prefix).replace(f".{index_version}", ""): ele
+            for ele in fast_glob_files(pattern)
+        }
+        cur_data[name] = files
+
+        if utterances is None:
+            utterances = set(files.keys())
+        else:
+            utterances.intersection_update(files.keys())
+    return index, cur_data, utterances
 
 
 def resolve_data_sources(data_id=None, data_urls=None):
