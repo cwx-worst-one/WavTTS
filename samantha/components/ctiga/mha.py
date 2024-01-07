@@ -12,7 +12,26 @@ from pytorch_lightning.utilities.rank_zero import rank_zero_warn
 from samantha.utils.ctiga.blockmask import convert_blockmask
 from samantha.utils.ctiga.padding import pad_input, unpad_input
 
-# torch.set_printoptions(threshold=5)
+try:
+    # flash_attn_2_3
+    from .ops.flash_attn_2_3_interface import (
+        flash_attn_kvpacked_func as flash_attn_2_3_kvpacked_func,
+    )
+    from .ops.flash_attn_2_3_interface import (
+        flash_attn_qkvpacked_func as flash_attn_2_3_qkvpacked_func,
+    )
+    from .ops.flash_attn_2_3_interface import (
+        flash_attn_varlen_kvpacked_func as flash_attn_2_3_varlen_kvpacked_func,
+    )
+    from .ops.flash_attn_2_3_interface import (
+        flash_attn_varlen_qkvpacked_func as flash_attn_2_3_varlen_qkvpacked_func,
+    )
+except ImportError:
+    flash_attn_2_3_kvpacked_func = None
+    flash_attn_2_3_qkvpacked_func = None
+    flash_attn_2_3_varlen_kvpacked_func = None
+    flash_attn_2_3_varlen_qkvpacked_func = None
+
 try:
     # flash_attn_2
     from .ops.flash_attn_2_interface import (
@@ -437,6 +456,222 @@ class FlashCrossAttentionV2(nn.Module):
             )
 
 
+class FlashSelfAttentionV2_3(nn.Module):
+    """Implement the scaled dot product attention with softmax.
+    Arguments
+    ---------
+        softmax_scale: The temperature to use for the softmax attention.
+                      (default: 1/sqrt(d_keys) where d_keys is computed at
+                      runtime)
+        attention_dropout: The dropout rate to apply to the attention
+                           (default: 0.0)
+    """
+
+    def __init__(
+        self,
+        causal=False,
+        softmax_scale=None,
+        attention_dropout=0.0,
+        window_size=[-1, -1],
+        window_type=0,
+    ):
+        super().__init__()
+        assert (
+            flash_attn_2_3_varlen_qkvpacked_func is not None
+        ), "FlashAttention is not installed"
+        assert (
+            flash_attn_2_3_qkvpacked_func is not None
+        ), "FlashAttention v2.3 is not installed"
+        self.causal = causal
+        self.softmax_scale = softmax_scale
+        self.drop = nn.Dropout(attention_dropout)
+
+        self.window_type = window_type
+        if window_type == 1:
+            assert (
+                window_size[0] == -1 and window_size[1] >= 1
+            ), "use blockwise window mask only support [-1, x>=1] now"
+        self.window_size = window_size
+
+    def forward(
+        self,
+        qkv,
+        causal: Optional[bool],
+        cu_seqlens: Optional[torch.Tensor],
+        max_seqlen: Optional[int],
+        return_attn_probs: bool,
+        use_window_mask: bool,
+    ):
+        """Implements the multihead softmax attention.
+        Arguments
+        ---------
+            qkv: The tensor containing the query, key, and value.
+                If cu_seqlens is None and max_seqlen is None, then qkv has shape (B, S, 3, H, D).
+                If cu_seqlens is not None and max_seqlen is not None, then qkv has shape
+                (total, 3, H, D), where total is the sum of the sequence lengths in the batch.
+            causal: if passed, will override self.causal
+            cu_seqlens: (batch_size + 1,), dtype torch.int32. The cumulative sequence lengths
+                of the sequences in the batch, used to index into qkv.
+            max_seqlen: int. Maximum sequence length in the batch.
+        Returns:
+        --------
+            out: (total, H, D) if cu_seqlens is not None and max_seqlen is not None,
+                else (B, S, H, D).
+        """
+        assert qkv.dtype in [torch.float16, torch.bfloat16]
+        assert qkv.is_cuda
+        causal = self.causal if causal is None else causal
+        if use_window_mask:
+            if causal:
+                window_size = [-1, 0]
+                window_type = 0
+            else:
+                window_size = self.window_size
+                window_type = self.window_type
+        else:
+            if causal:
+                window_size = [-1, 0]
+            else:
+                window_size = [-1, -1]
+            window_type = 0
+
+        unpadded = cu_seqlens is not None
+        if unpadded:
+            assert cu_seqlens.dtype == torch.int32
+            assert max_seqlen is not None
+            assert isinstance(max_seqlen, int)
+            return flash_attn_2_3_varlen_qkvpacked_func(
+                qkv,
+                cu_seqlens,
+                max_seqlen,
+                self.drop.p if self.training else 0.0,
+                softmax_scale=self.softmax_scale,
+                causal=causal,
+                window_size=window_size,
+                window_type=window_type,
+                return_attn_probs=return_attn_probs,
+            )
+        else:
+            return flash_attn_2_3_qkvpacked_func(
+                qkv,
+                self.drop.p if self.training else 0.0,
+                softmax_scale=self.softmax_scale,
+                causal=causal,
+                window_size=window_size,
+                window_type=window_type,
+                return_attn_probs=return_attn_probs,
+            )
+
+
+class FlashCrossAttentionV2_3(nn.Module):
+    """Implement the scaled dot product attention with softmax.
+    Arguments
+    ---------
+        softmax_scale: The temperature to use for the softmax attention.
+                      (default: 1/sqrt(d_keys) where d_keys is computed at
+                      runtime)
+        attention_dropout: The dropout rate to apply to the attention
+                           (default: 0.0)
+    """
+
+    def __init__(
+        self,
+        causal=False,
+        softmax_scale=None,
+        attention_dropout=0.0,
+        window_size=(-1, -1),
+        window_type=0,
+    ):
+        super().__init__()
+        assert (
+            flash_attn_varlen_kvpacked_func is not None
+        ), "FlashAttention is not installed"
+        assert flash_attn_kvpacked_func is not None, "FlashAttention is not installed"
+        self.causal = causal
+        self.softmax_scale = softmax_scale
+        self.drop = nn.Dropout(attention_dropout)
+
+        self.window_type = window_type
+        if window_type == 1:
+            assert (
+                window_size[0] == -1 and window_size[1] >= 1
+            ), "use blockwise window mask only support [-1, x>=1] now"
+        self.window_size = window_size
+
+    def forward(
+        self,
+        q,
+        kv,
+        causal: Optional[bool],
+        cu_seqlens: Optional[torch.Tensor],
+        max_seqlen: Optional[int],
+        cu_seqlens_k: Optional[torch.Tensor],
+        max_seqlen_k: Optional[int],
+        return_attn_probs: bool,
+        use_window_mask: bool,
+    ):
+        """Implements the multihead softmax attention.
+        Arguments
+        ---------
+            q: The tensor containing the query. (B, Sq, H, D)
+            kv: The tensor containing the key and value. (B, Sk, 2, H_k, D)
+            causal: if passed, will override self.causal
+            cu_seqlens: (batch_size + 1,), dtype torch.int32. The cumulative sequence lengths
+                of the sequences in the batch, used to index into q.
+            max_seqlen: int. Maximum sequence length in the batch of q.
+            cu_seqlens_k: (batch_size + 1,), dtype torch.int32. The cumulative sequence lengths
+                of the sequences in the batch, used to index into kv.
+            max_seqlen_k: int. Maximum sequence length in the batch of k and v.
+        """
+        assert q.dtype in [torch.float16, torch.bfloat16]
+        assert q.is_cuda and kv.is_cuda
+        causal = self.causal if causal is None else causal
+        if use_window_mask:
+            window_size = [-1, 0] if causal else self.window_size
+            window_type = 0 if causal else self.window_type
+        else:
+            window_size = [-1, 0] if causal else [-1, -1]
+            window_type = 0
+
+        unpadded = cu_seqlens is not None
+        if unpadded:
+            assert cu_seqlens.dtype == torch.int32
+            assert max_seqlen is not None
+            assert isinstance(max_seqlen, int)
+            assert cu_seqlens_k is not None
+            assert cu_seqlens_k.dtype == torch.int32
+            assert max_seqlen_k is not None
+            assert isinstance(max_seqlen, int)
+            return flash_attn_2_3_varlen_kvpacked_func(
+                q,
+                kv,
+                cu_seqlens,
+                cu_seqlens_k,
+                max_seqlen,
+                max_seqlen_k,
+                self.drop.p if self.training else 0.0,
+                softmax_scale=self.softmax_scale,
+                causal=causal,
+                window_size=window_size,
+                window_type=window_type,
+                return_attn_probs=return_attn_probs,
+            )
+        else:
+            batch_size = q.shape[0]
+            # seqlen_k = kv.shape[1]
+            assert kv.shape[0] == batch_size and kv.shape[4] == q.shape[3]
+            return flash_attn_2_3_kvpacked_func(
+                q,
+                kv,
+                self.drop.p if self.training else 0.0,
+                causal=causal,
+                window_size=window_size,
+                window_type=window_type,
+                softmax_scale=self.softmax_scale,
+                return_attn_probs=return_attn_probs,
+            )
+
+
 class SelfAttention(nn.Module):
     """Implement the scaled dot product attention with softmax.
     Arguments
@@ -769,6 +1004,19 @@ def _update_kv_cache(kv, inference_params, layer_idx):
         return kv
 
 
+fa_selfattn_cls = {
+    1: FlashSelfAttention,
+    2: FlashSelfAttentionV2,
+    2.3: FlashSelfAttentionV2_3,
+}
+
+fa_crossattn_cls = {
+    1: FlashCrossAttention,
+    2: FlashCrossAttentionV2,
+    2.3: FlashCrossAttentionV2_3,
+}
+
+
 class MHA(nn.Module):
     """Multi-head self-attention and cross-attention"""
 
@@ -796,6 +1044,8 @@ class MHA(nn.Module):
         blocksparse=False,
         blockmask=None,
         version=2,
+        window_size=[-1, -1],  # no mask
+        window_type=0,
         device=None,
         dtype=None,
     ) -> None:
@@ -804,7 +1054,7 @@ class MHA(nn.Module):
             performance reason: for post-norm architecture, returning the input allows us
             to fuse the backward of nn.Linear with the residual connection.
         """
-        assert version in [1, 2]
+        assert version in [1, 2, 2.3]
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
         self.version = version
@@ -852,8 +1102,25 @@ class MHA(nn.Module):
             "softmax_scale": softmax_scale,
             "attention_dropout": dropout,
         }
+        inner_cross_attn_cls_args = {
+            "causal": causal,
+            "softmax_scale": softmax_scale,
+            "attention_dropout": dropout,
+        }
+
+        self.window_size = window_size
+        self.window_type = window_type
+        if version == 2.3 and use_flash_attn:
+            inner_attn_cls_args.update(
+                {"window_size": self.window_size, "window_type": self.window_type}
+            )
+            inner_cross_attn_cls_args.update(
+                {"window_size": self.window_size, "window_type": self.window_type}
+            )
         if blocksparse:
-            assert version == 1, "enable blocksparse only supoort version==1"
+            assert (
+                version == 1 and use_flash_attn
+            ), "enable blocksparse only supoort version==1"
             inner_attn_cls = (
                 FlashBlocksparseSelfAttention
                 if use_flash_attn
@@ -863,15 +1130,13 @@ class MHA(nn.Module):
             inner_attn_cls_args["blockmask"] = blockmask
         else:
             inner_attn_cls = (
-                (FlashSelfAttention if version == 1 else FlashSelfAttentionV2)
-                if use_flash_attn
-                else SelfAttention
+                fa_selfattn_cls[version] if use_flash_attn else SelfAttention
             )
+
         inner_cross_attn_cls = (
-            (FlashCrossAttention if version == 1 else FlashCrossAttentionV2)
-            if use_flash_attn
-            else CrossAttention
+            fa_crossattn_cls[version] if use_flash_attn else CrossAttention
         )
+
         if not self.cross_attn:
             if not self.return_residual:
                 self.Wqkv = linear_cls(
@@ -913,9 +1178,7 @@ class MHA(nn.Module):
                     groups=2 * embed_dim,
                 )
         self.inner_attn = inner_attn_cls(**inner_attn_cls_args)
-        self.inner_cross_attn = inner_cross_attn_cls(
-            causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout
-        )
+        self.inner_cross_attn = inner_cross_attn_cls(**inner_cross_attn_cls_args)
         self.out_proj = linear_cls(
             embed_dim, embed_dim, bias=out_proj_bias, **factory_kwargs
         )
@@ -974,11 +1237,14 @@ class MHA(nn.Module):
         max_seqlen: Optional[int] = None,
         return_attn_probs=False,
         key_padding_mask=None,
+        use_window_mask=False,
     ):
         if self.use_flash_attn:
             input_args = (qkv, causal, cu_seqlens, max_seqlen)
-            if self.version == 2:
+            if self.version in [2, 2.3]:
                 input_args += (return_attn_probs,)
+            if self.version in [2.3]:
+                input_args += (use_window_mask,)
         else:
             input_args = (qkv, causal, key_padding_mask)
         return input_args
@@ -993,7 +1259,8 @@ class MHA(nn.Module):
         cu_seqlens_k: Optional[torch.Tensor] = None,
         max_seqlen_k: Optional[int] = None,
         return_attn_probs: bool = False,
-        key_padding_mask=None,
+        key_padding_mask: Optional[torch.Tensor] = None,
+        use_window_mask: bool = False,
     ):
         if self.use_flash_attn:
             input_args = (
@@ -1005,8 +1272,10 @@ class MHA(nn.Module):
                 cu_seqlens_k,
                 max_seqlen_k,
             )
-            if self.version == 2:
+            if self.version in [2, 2.3]:
                 input_args += (return_attn_probs,)
+            if self.version in [2.3]:
+                input_args += (use_window_mask,)
         else:
             input_args = (q, kv, causal, key_padding_mask)
         return input_args
@@ -1063,6 +1332,17 @@ class MHA(nn.Module):
                 assert not self.use_flash_attn
 
         if inference_params is not None:
+            if self.version == 2.3 and self.use_flash_attn:
+                # if self.cross_attn:
+                #     raise NotImplementedError("no support crossattn generation in flashattn 2.3 now")
+                if not (
+                    self.window_type == 0
+                    and self.window_size[0] <= -1
+                    and self.window_size[1] <= 0
+                ):
+                    raise NotImplementedError(
+                        "no support causal or no_causal&no_mask generation in flashattn 2.3 now"
+                    )
             assert key_padding_mask is None
             assert cu_seqlens is None and max_seqlen is None
             assert not self.dwconv
@@ -1110,6 +1390,7 @@ class MHA(nn.Module):
                     max_seqlen=max_seqlen,
                     return_attn_probs=return_attn_probs,
                     key_padding_mask=key_padding_mask,
+                    use_window_mask=True,
                 )
 
                 if not self.checkpointing:
@@ -1141,8 +1422,11 @@ class MHA(nn.Module):
                     causal = (
                         None if inference_params.sequence_len_offset == 0 else False
                     )
-                    input_args = self._get_inner_cross_attn_args(q, kv, causal=causal)
+                    input_args = self._get_inner_cross_attn_args(
+                        q, kv, causal=causal, use_window_mask=False
+                    )
                     context = self.inner_cross_attn(*input_args)
+
                     if isinstance(context, (tuple, list)):
                         assert len(context) == 1
                         context = context[0]
@@ -1211,6 +1495,7 @@ class MHA(nn.Module):
                     max_seqlen_k=kwargs.get("max_seqlen_k", None),
                     return_attn_probs=return_attn_probs,
                     key_padding_mask=key_padding_mask,
+                    use_window_mask=True,
                 )
                 if not self.checkpointing:
                     attn_outs = self.inner_cross_attn(*input_args)
@@ -1228,7 +1513,9 @@ class MHA(nn.Module):
                     context = attn_outs[0]
             else:
                 kv = self._update_kv_cache(kv)
-                input_args = self._get_inner_cross_attn_args(q, kv, causal=False)
+                input_args = self._get_inner_cross_attn_args(
+                    q, kv, causal=False, use_window_mask=False
+                )
                 context = self.inner_cross_attn(*input_args)
                 if isinstance(context, (tuple, list)):
                     assert len(context) == 1

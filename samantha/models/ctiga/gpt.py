@@ -21,6 +21,7 @@ from samantha.components.ctiga.embedding import GPT2Embeddings, ParallelGPT2Embe
 from samantha.components.ctiga.mha import MHA, ParallelMHA
 from samantha.components.ctiga.mlp import FusedMLP, GatedMlp, Mlp, ParallelFusedMLP
 from samantha.utils.ctiga.inference_params import InferenceParams
+from samantha.utils.ctiga.localmask import ELEMWISE_WINDOW_MASK, WINDOW_MASK_TYPES
 from samantha.utils.ctiga.padding import pad_input, unpad_input
 from samantha.utils.ctiga.pretrained import state_dict_from_pretrained
 from samantha.utils.distributed import all_gather_raw, sync_shared_params
@@ -68,7 +69,7 @@ def create_mixer_cls(
 ):
     factory_kwargs = {"device": device, "dtype": dtype}
     flashattn_version = getattr(config, "flashattn_version", 2)
-    assert flashattn_version in [1, 2]
+    assert flashattn_version in [1, 2, 2.3]
     head_dim = getattr(
         config, "head_dim", config.hidden_size // config.num_attention_heads
     )
@@ -91,6 +92,27 @@ def create_mixer_cls(
     blocksparse = getattr(config, "blocksparse", False)
     blockmask = getattr(config, "blockmask", None)
     grad_checkpointing = getattr(config, "grad_checkpointing", False)
+
+    use_window_mask = getattr(config, "use_window_mask", False)
+    window_size = getattr(config, "window_size", [-1, -1])
+    window_type = getattr(config, "window_type", ELEMWISE_WINDOW_MASK)
+    if flashattn_version == 2.3:
+        assert (
+            use_flash_attn and process_group is None
+        ), "flashattn_2.3 only support use_flash_attn=True and process_group is None"
+        assert not (
+            causal and use_window_mask
+        ), "don't support causal=True and use_window_mask=True meanwhile"
+        if use_window_mask and not causal:
+            assert window_type in WINDOW_MASK_TYPES and len(window_size) == 2
+        elif not use_window_mask and causal:
+            window_size = [-1, 0]
+            window_type = ELEMWISE_WINDOW_MASK
+        else:
+            window_size = [-1, -1]
+            window_type = ELEMWISE_WINDOW_MASK
+        window_type = WINDOW_MASK_TYPES[window_type]
+
     if blocksparse:
         assert (
             isinstance(blockmask, List) and len(blockmask) == config.num_hidden_layers
@@ -129,6 +151,8 @@ def create_mixer_cls(
         checkpointing=grad_checkpointing,
         blocksparse=blocksparse,
         blockmask=blockmask[layer_idx] if blocksparse else None,
+        window_size=window_size,
+        window_type=window_type,
         version=flashattn_version,
         **serial_kwargs,
         **parallel_kwargs,
@@ -877,6 +901,11 @@ class GPTLMHeadModel(GPTPreTrainedModel):
         """
         assert (inputs_embeds is None) ^ (input_ids is None)
         if return_attn_probs:
+            use_flash_attn = getattr(self.config, "use_flash_attn", False)
+            fa_version = getattr(self.config, "flashattn_version", 2)
+            assert use_flash_attn and fa_version in [
+                2
+            ], "return_attn_probs=True only support in this ctiga version 2"
             assert (
                 inference_params is None and self.training
             ), "only support return_attn_probs=True in training"

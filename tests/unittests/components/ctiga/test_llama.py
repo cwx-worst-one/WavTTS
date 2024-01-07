@@ -1,18 +1,21 @@
-from cgitb import enable
-import functools
 import pytest
-import random
-import copy
 import torch
-# import torch.nn.functional as F
 import pytorch_lightning as pl
-from samantha.models.ctiga.gpt import GPTLMHeadModel
-from samantha.models.flash_llama import LlamaForCausalLM
-from transformers import LlamaConfig
-from samantha.models.ctiga.llama import remap_state_dict_huggingface_llama, flash_llama_config_to_gpt_config
-from samantha.models.ctiga_llama import create_ctiga_from_flash_llama
+
+skip_test = False
+try:
+    from samantha.models.ctiga.gpt import GPTLMHeadModel
+    from samantha.models.flash_llama import LlamaForCausalLM
+    from transformers import LlamaConfig
+    from samantha.models.ctiga.llama import remap_state_dict_huggingface_llama, flash_llama_config_to_gpt_config
+    from samantha.models.ctiga_llama import create_ctiga_from_flash_llama
+except Exception:
+    skip_test = True
 
 pl.seed_everything(0)
+
+has_cuda = torch.cuda.is_available()
+
 
 @pytest.mark.skip
 @pytest.mark.parametrize("num_hidden_layers", [1, 8, 24])

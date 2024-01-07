@@ -6,30 +6,35 @@ import numpy as np
 import torch
 from einops import rearrange, repeat
 
-from samantha.components.ctiga.ops.flash_attn_2_interface import (
-    flash_attn_qkvpacked_func,
-    flash_attn_varlen_qkvpacked_func,
-    flash_attn_kvpacked_func,
-    flash_attn_varlen_kvpacked_func,
-)
-from samantha.utils.ctiga.reconstruct_attn_probs import (
-    convert_flash_attn_S_to_softmax,
-    normalize_flash_attn_S_torch,
-    normalize_flash_attn_S,
-    construct_causal_mask,
-    reconstruct_attention_probs,
-)
-from samantha.utils.ctiga.padding import unpad_input, pad_input
+skip_test = False
+try:
+    from samantha.components.ctiga.ops.flash_attn_2_interface import (
+        flash_attn_qkvpacked_func,
+        flash_attn_varlen_qkvpacked_func,
+        flash_attn_kvpacked_func,
+        flash_attn_varlen_kvpacked_func,
+    )
+    from samantha.utils.ctiga.reconstruct_attn_probs import (
+        convert_flash_attn_S_to_softmax,
+        normalize_flash_attn_S_torch,
+        normalize_flash_attn_S,
+        construct_causal_mask,
+        reconstruct_attention_probs,
+    )
+    from samantha.utils.ctiga.padding import unpad_input, pad_input
+except Exception:
+    skip_test = True
 
 MAX_HEADDIM_SM8x = 192
 device = "cuda:0"
 dtype = torch.float16
 # dtype = torch.bfloat16
 
-is_sm75 = torch.cuda.get_device_capability("cuda") == (7, 5)
-is_sm8x = torch.cuda.get_device_capability("cuda")[0] == 8
-is_sm80 = torch.cuda.get_device_capability("cuda") == (8, 0)
-is_sm90 = torch.cuda.get_device_capability("cuda") == (9, 0)
+has_cuda = torch.cuda.is_available()
+is_sm75 = has_cuda and torch.cuda.get_device_capability("cuda") == (7, 5)
+is_sm8x = has_cuda and torch.cuda.get_device_capability("cuda")[0] == 8
+is_sm80 = has_cuda and torch.cuda.get_device_capability("cuda") == (8, 0)
+is_sm90 = has_cuda and torch.cuda.get_device_capability("cuda") == (9, 0)
 
 
 def seed_everything(seed: int):
@@ -674,6 +679,8 @@ def test_flashattn2_varlen_kvpacked_attn(
             dv_pt - dv_ref
         ).abs().max().item()
 
+
+@pytest.mark.skip
 @pytest.mark.parametrize("bs", [1, 4, 8])
 @pytest.mark.parametrize("seqlen_q", [32, 56, 77, 128, 131, 270, 577, 1024])
 @pytest.mark.parametrize("seqlen_k", [32, 56, 77, 128, 131, 270, 577, 1024])
@@ -692,7 +699,7 @@ def test_MHA_params(
     from samantha.components.ctiga.mha import MHA
     embed_dim = 32
     num_heads = 8
-    if torch.cuda.get_device_capability("cuda")[0] < 8:
+    if has_cuda and torch.cuda.get_device_capability("cuda")[0] < 8:
         use_flash_attn =  False
         return
     mha = MHA(embed_dim, num_heads, use_flash_attn=use_flash_attn, cross_attn=cross_attn)

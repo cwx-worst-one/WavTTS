@@ -16,8 +16,10 @@ import torch.nn.functional as F
 from samantha.components.ctiga.mha import (
     FlashCrossAttention,
     FlashCrossAttentionV2,
+    FlashCrossAttentionV2_3,
     FlashSelfAttention,
     FlashSelfAttentionV2,
+    FlashSelfAttentionV2_3,
 )
 
 # from samantha.components.ctiga.ops.fused_dense import FusedDense
@@ -1423,8 +1425,10 @@ MODULE_HOOK_MAPPING = {
     # ctiga
     FlashSelfAttention: _flash_self_attenion_forward_hook,
     FlashSelfAttentionV2: _flash_self_attenion_forward_hook,
+    FlashSelfAttentionV2_3: _flash_self_attenion_forward_hook,
     FlashCrossAttention: _flash_cross_attenion_forward_hook,
     FlashCrossAttentionV2: _flash_cross_attenion_forward_hook,
+    FlashCrossAttentionV2_3: _flash_cross_attenion_forward_hook,
     # FusedDense: _flash_fused_dense_forward_hook,
     DropoutAddLayerNorm: _flash_layernorm_forward_hook,
     DropoutAddRMSNorm: _flash_rmsnorm_forward_hook,

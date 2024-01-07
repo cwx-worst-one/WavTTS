@@ -71,7 +71,7 @@ class Block(nn.Module):
         This is for performance reason: for post-norm architecture, returning the input allows us
         to fuse the backward of nn.Linear with the residual connection.
         """
-        assert version in [1, 2]
+        assert version in [1, 2, 2.3]
         super().__init__()
         self.version = version
         self.prenorm = prenorm

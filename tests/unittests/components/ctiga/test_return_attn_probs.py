@@ -1,4 +1,3 @@
-from cgitb import enable
 import functools
 import pytest
 import random
@@ -6,14 +5,20 @@ import copy
 import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from samantha.models.ctiga.gpt import GPTLMHeadModel, GPTModel,GPT2Config
-from samantha.components.ctiga.block import Block
-from samantha.components.ctiga.mha import MHA
-from samantha.components.ctiga.mlp import GatedMlp
-from samantha.components.ctiga.ops.rms_norm import RMSNorm
-from samantha.utils.ctiga.padding import unpad_input, pad_input
-from samantha.utils.ctiga.reconstruct_attn_probs import reconstruct_attention_probs
 
+skip_test = False
+try:
+    from samantha.models.ctiga.gpt import GPTLMHeadModel, GPTModel,GPT2Config
+    from samantha.components.ctiga.block import Block
+    from samantha.components.ctiga.mha import MHA
+    from samantha.components.ctiga.mlp import GatedMlp
+    from samantha.components.ctiga.ops.rms_norm import RMSNorm
+    from samantha.utils.ctiga.padding import unpad_input, pad_input
+    from samantha.utils.ctiga.reconstruct_attn_probs import reconstruct_attention_probs
+except Exception:
+    skip_test = True
+
+has_cuda = torch.cuda.is_available()
 pl.seed_everything(0)
 
 device = "cuda:0"
