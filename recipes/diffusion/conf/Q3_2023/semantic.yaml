@@ -10,7 +10,7 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 # running parameters
 log_dir: /mnt/bn/audio-diffusion/wtl
 asset_dir: recipes/diffusion/assets
-ckpt_path: null  #/mnt/bn/audio-diffusion/wtl/diffusion/vc/checkpoints/last.ckpt 
+ckpt_path: null  #/mnt/bn/audio-diffusion/wtl/diffusion/vc/checkpoints/last.ckpt
 
 run_opts:
     fast_dev_run: False
@@ -48,11 +48,9 @@ training_params:
     loudness_ratio_threshold: 0.2
     shuffle_buffer_size: 10
     use_lora: False
-    buckets_in_sec: [20, 25, 30]    
+    buckets_in_sec: [20, 25, 30]
     use_dynamic_batch: False
     exclude_licenses: ["C"]
-
-    
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -119,7 +117,7 @@ pl_module: !new:recipes.diffusion.modules.pl_module_semantic.DiffusionModule
         tokenizer_model:
             hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
             initializer: !name:recipes.umm.requires.model_initializer.init_stage3
-                cache_dir: !ref <asset_dir> 
+                cache_dir: !ref <asset_dir>
         vocoder_model:
             hpath: hdfs://harunava/home/byte_speech_sv/weitsung.lu/soundstream/dac_vae_125hz_24k_v2_part2/checkpoints/soundstream-step=374999-val_sdr=12.9557.ckpt
             initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder

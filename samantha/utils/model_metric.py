@@ -7,6 +7,7 @@ from torchmetrics import Metric
 from torchmetrics.utilities import rank_zero_warn
 
 from .flops_calculator import retrieve_calculator
+from .flops_profiler import FlopsProfiler
 
 
 class ModelMetric(Metric):
@@ -89,6 +90,12 @@ class ModelMetric(Metric):
             return
         if self.last_time == 0:
             self.last_time = time.perf_counter()
+            if self.has_multi_model:
+                for model_name, flops_fn in self.flops_fn.items():
+                    if isinstance(flops_fn, FlopsProfiler):
+                        flops_fn.start_profile()
+            else:
+                self.flops_fn["model"].start_profile()
             return
 
         cur_time = time.perf_counter()
@@ -102,9 +109,25 @@ class ModelMetric(Metric):
         if self.has_multi_model:
             for model_name, flops_fn in self.flops_fn.items():
                 kwargs = model_kwargs[model_name]
-                self.delta_flops += flops_fn(**kwargs)
+                if isinstance(flops_fn, FlopsProfiler):
+                    assert flops_fn.started
+                    cur_step_flops = flops_fn.get_total_flops() * 3
+                    self.delta_flops += cur_step_flops
+                    # flops_fn.end_profile()
+                    flops_fn.stop_profile()
+                    flops_fn.start_profile()
+                else:
+                    self.delta_flops += flops_fn(**kwargs)
         else:
-            self.delta_flops += self.flops_fn["model"](**model_kwargs)
+            if isinstance(self.flops_fn["model"], FlopsProfiler):
+                assert self.flops_fn["model"].started
+                cur_step_flops = self.flops_fn["model"].get_total_flops() * 3
+                self.delta_flops += cur_step_flops
+                # self.flops_fn["model"].end_profile()
+                self.flops_fn["model"].stop_profile()
+                self.flops_fn["model"].start_profile()
+            else:
+                self.delta_flops += self.flops_fn["model"](**model_kwargs)
         self.last_time = cur_time
 
     def compute(self, step):

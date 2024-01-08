@@ -2,10 +2,11 @@
     FLOPS(Floating Point Operations Per Second):每秒浮点运算次数，是一个衡量硬件速度的指标，维基百科介绍如下
     FLOPs(Floating Point Operations):浮点运算次数，用来衡量模型计算复杂度
 """
+import collections
 import functools
 import time
+
 import torch
-import collections
 
 enable_tf32 = False
 
@@ -670,7 +671,7 @@ PEAK_TFLOPS_LIST = {
         torch.bfloat16: 312,
         torch.int8: 624,
         torch.double: 9.7,
-    },  # https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf
+    },  # https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf  # noqa: E501
     "V100": {
         torch.float32: 15.7,
         torch.float16: 125,
@@ -863,7 +864,7 @@ if __name__ == "__main__":
     """
     print("********* TEST SEMANTIC AR MODEL **********")
     from recipes.bigmusic.lightning.semantic_modules import SemanticModule
-    from samantha.models.flash_llama import LlamaRotaryEmbedding, LlamaRMSNorm
+    from samantha.models.flash_llama import LlamaRMSNorm, LlamaRotaryEmbedding
 
     # semantic_model_dir = (
     #     "/mnt/bn/yyf-merlin-nfs/assets/bigmusic/bigmusic_lyrics2song/0.7B"
@@ -872,7 +873,7 @@ if __name__ == "__main__":
     semantic_module = (
         SemanticModule.load_from_checkpoint(
             # f"{model_dir}/last_semantic_ar.ckpt"
-            "/mnt/bn/lyrics-to-song/qq/logs/semantic_model_mulan_text_07B/varlen30_tag3_bs12_07B_6w_v1/checkpoints/step=094000-val_accu_0=20.53.ckpt"
+            "/mnt/bn/lyrics-to-song/qq/logs/semantic_model_mulan_text_07B/varlen30_tag3_bs12_07B_6w_v1/checkpoints/step=094000-val_accu_0=20.53.ckpt"  # noqa: E501
         )
         .to(device)
         .eval()
@@ -899,7 +900,7 @@ if __name__ == "__main__":
     #             semantic_module.model,
     #             kwargs=dict(
     #                 inputs_embeds=torch.randn(bs,1,dim,device=device,dtype=dtype),
-    #                 past_key_values=[(torch.randn(bs,12,seqlen+step,128,device=device,dtype=dtype),torch.randn(bs,12,seqlen+step,128,device=device,dtype=dtype)) for _ in range(24)],
+    #                 past_key_values=[(torch.randn(bs,12,seqlen+step,128,device=device,dtype=dtype),torch.randn(bs,12,seqlen+step,128,device=device,dtype=dtype)) for _ in range(24)],  # noqa: E501
     #                 use_cache=True
     #             ),ignore_modules=ignore_modules,warm_up=1,detailed=False
     #         )

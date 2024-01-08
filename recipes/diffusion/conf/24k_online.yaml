@@ -53,7 +53,7 @@ training_params:
     use_lora: False
     train_data_id: 794
     val_data_id: 793
-    
+
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -117,7 +117,7 @@ pl_module: !new:recipes.diffusion.modules.pl_module.DiffusionModule
         tokenizer_model:
             hpath: hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm_sstk/umm_stage3_None_EMAVQ32768x32_only_sstk_wo_ctc/checkpoints/step=0400000.ckpt
             initializer: !name:recipes.umm.requires.model_initializer.init_stage3
-                cache_dir: !ref <asset_dir> 
+                cache_dir: !ref <asset_dir>
         vocoder_model:
             hpath: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/soundstream-step=1210000-val_sdr=11.2069-EMA.ckpt
             initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
@@ -127,11 +127,11 @@ pl_module: !new:recipes.diffusion.modules.pl_module.DiffusionModule
     flops_fn: !ref <run_opts[flops_fn]>
     online_feature: !ref <run_opts[online_feature]>
 
-logger: 
+logger:
     - !new:pytorch_lightning.loggers.wandb.WandbLogger
-        save_dir: !ref <run_opts[tensorboard_dir]>
-        project: !ref <run_opts[log_name]>
-        name: !ref <run_opts[version]>
+      save_dir: !ref <run_opts[tensorboard_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
 
 
 checkpoint: !new:recipes.diffusion.utils.callbacks.EMAModelCheckpoint
@@ -176,4 +176,3 @@ trainer: !new:pytorch_lightning.Trainer
     profiler: !ref <run_opts[profiler]>
 
 # recipes/diffusion/bootstrap.sh fit -c recipes/diffusion/conf/mcc60m_bestrq.yaml --run_opts.version mcc60m_bestrq_v1 --log_dir /mnt/bn/lyrics-to-song/ashaw/logs/diffusion
-

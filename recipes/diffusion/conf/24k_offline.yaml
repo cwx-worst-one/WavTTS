@@ -53,7 +53,7 @@ training_params:
     train_data_id: 910
     val_data_id: 911
     prefetch_factor: 2
-    
+
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -116,7 +116,7 @@ pl_module: !new:recipes.diffusion.modules.pl_module.DiffusionModule
         # tokenizer_model:
         #     hpath: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/semantic/step=0030000.ckpt
         #     initializer: !name:recipes.umm.requires.model_initializer.init_stage3
-        #         cache_dir: !ref <asset_dir> 
+        #         cache_dir: !ref <asset_dir>
         vocoder_model:
             hpath: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/soundstream-step=374999-val_sdr=12.9557.ckpt
             initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
@@ -126,11 +126,11 @@ pl_module: !new:recipes.diffusion.modules.pl_module.DiffusionModule
     flops_fn: !ref <run_opts[flops_fn]>
     online_feature: !ref <run_opts[online_feature]>
 
-logger: 
+logger:
     - !new:pytorch_lightning.loggers.wandb.WandbLogger
-        save_dir: !ref <run_opts[tensorboard_dir]>
-        project: !ref <run_opts[log_name]>
-        name: !ref <run_opts[version]>
+      save_dir: !ref <run_opts[tensorboard_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
 
 
 checkpoint: !new:recipes.diffusion.utils.callbacks.EMAModelCheckpoint

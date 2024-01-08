@@ -130,15 +130,14 @@ def _convert_to_yaml(overrides):
 
     yaml_string = ""
 
-    """
-    overrides can have 2 formats:
-    ['--experiment_id=7171714039348379655', '--ckpt_path=hdfs://haruna/home/byte_arnold_lq/lab/sami/ai_models/tasks/3174942/trials/10708937/output/logs/sample_project/0.1/checkpoints/epoch=1-step=780.ckpt']  # noqa: E501
-    or
-    ['--experiment_id', '7171714039348379655', '--ckpt_path', 'hdfs://haruna/home/byte_arnold_lq/lab/sami/ai_models/tasks/3174942/trials/10708937/output/logs/sample_project/0.1/checkpoints/epoch=1-step=780.ckpt']  # noqa: E501
-    --ckpt_path could be an HDFS path like below:
-    hdfs://haruna/home/byte_arnold_lq/lab/sami/ai_models/tasks/3174942/trials/10708937/output/logs/sample_project/0.1/checkpoints/epoch=1-step=780.ckpt  # noqa: E501
-    which has '=' in it. We have to do some maneuver
-    """
+    # overrides can have 2 formats:
+    # ['--experiment_id=7171714039348379655', '--ckpt_path=hdfs://haruna/home/byte_arnold_lq/lab/sami/ai_models/tasks/3174942/trials/10708937/output/logs/sample_project/0.1/checkpoints/epoch=1-step=780.ckpt']  # noqa: E501,W505
+    # or
+    # ['--experiment_id', '7171714039348379655', '--ckpt_path', 'hdfs://haruna/home/byte_arnold_lq/lab/sami/ai_models/tasks/3174942/trials/10708937/output/logs/sample_project/0.1/checkpoints/epoch=1-step=780.ckpt']  # noqa: E501,W505
+    # --ckpt_path could be an HDFS path like below:
+    # hdfs://haruna/home/byte_arnold_lq/lab/sami/ai_models/tasks/3174942/trials/10708937/output/logs/sample_project/0.1/checkpoints/epoch=1-step=780.ckpt  # noqa: E501,W505
+    # which has '=' in it. We have to do some maneuver
+
     for arg in overrides:
         if "=" not in arg:
             if arg.startswith("--"):

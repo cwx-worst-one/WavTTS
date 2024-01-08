@@ -290,6 +290,8 @@ def create_block(config, layer_idx=None, process_group=None, device=None, dtype=
             sequence_parallel=sequence_parallel and process_group is not None,
             mark_shared_params=process_group is not None,
             version=flashattn_verison,
+            device=device,
+            dtype=dtype,
         )
     else:
         assert prenorm
@@ -462,6 +464,19 @@ class GPTModel(GPTPreTrainedModel):
             ]
         )
 
+        self.use_unet_style_skip_connect = getattr(
+            config, "use_unet_style_skip_connect", False
+        )
+
+        if self.use_unet_style_skip_connect:
+            self.skip_combiner = nn.ModuleList(
+                [
+                    nn.Linear(config.hidden_size * 2, config.hidden_size)
+                    for _ in range(config.num_hidden_layers // 2 - 1)
+                ]
+            )
+        self.num_hidden_layers = config.num_hidden_layers
+
         self.fused_dropout_add_ln = getattr(config, "fused_dropout_add_ln", False)
         if self.fused_dropout_add_ln:
             if (not self.parallel_block and dropout_add_layer_norm is None) or (
@@ -587,7 +602,10 @@ class GPTModel(GPTPreTrainedModel):
             ), "only support return_attn_probs=True in training"
             all_attn_probs = []
 
-        for layer in self.layers:
+        if self.use_unet_style_skip_connect:
+            skip_connects = []
+
+        for i, layer in enumerate(self.layers):
             if self.gradient_checkpointing and self.training:
 
                 def create_custom_forward(module):
@@ -676,6 +694,18 @@ class GPTModel(GPTPreTrainedModel):
             if cond is not None:
                 scln_scale, scln_bias = cond.chunk(2, dim=-1)
                 hidden_states = scln_scale * hidden_states + scln_bias
+
+            if self.use_unet_style_skip_connect:
+                if i < self.num_hidden_layers // 2 - 1:  # [0,1,2]
+                    skip_connects.append(hidden_states)
+                elif (
+                    i >= self.num_hidden_layers // 2 and i < self.num_hidden_layers - 1
+                ):  # [4,5,6,7]
+                    skip_connect = skip_connects.pop()
+                    hidden_states = torch.cat([hidden_states, skip_connect], dim=-1)
+                    hidden_states = self.skip_combiner[i - self.num_hidden_layers // 2](
+                        hidden_states
+                    )
 
         if attention_mask is not None:
             hidden_states = pad_input(hidden_states, indices, batch, seqlen)

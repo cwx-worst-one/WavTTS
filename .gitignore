@@ -109,3 +109,8 @@ durator
 durator2
 recipes/voicebox/testset
 events.*
+
+recipes/text2semantic/custom_scripts/run.sh
+*.log
+resource/
+*.ckpt

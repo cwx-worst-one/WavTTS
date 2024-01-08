@@ -57,7 +57,7 @@ pl_datamodule: !new:recipes.datasets.billboard_hot200.BillboardHot200WebDataModu
     shuffle_buffer_size: !ref <training_params[sample_buffer_size]>
     num_workers: !ref <training_params[train_num_workers]>
     pin_memory: True
-    
+
 # training module configuration
 optimizer_cls: !name:torch.optim.AdamW
     lr: !ref <training_params[learning_rate]>

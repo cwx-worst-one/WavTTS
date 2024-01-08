@@ -62,7 +62,7 @@ pl_datamodule: !new:recipes.diffusion.dataset.mss.MSSDataModule
         batch_size: !ref <training_params[dataloader_batch_size]>
         resampled: True
         sample_buffer_size: !ref <training_params[sample_buffer_size]>
-    
+
 # training module configuration
 optimizer_cls: !name:torch.optim.AdamW
     lr: !ref <training_params[learning_rate]>

@@ -1335,7 +1335,7 @@ def _flash_cross_attenion_forward_hook(
 ):
     flops = 0
     n_input = len(input)
-    assert n_input >= 7
+    assert n_input >= 7, f"n_input error ({n_input}< 7)"
     q, kv, causal, cu_seqlens, max_seqlen, cu_seqlens_k, max_seqlen_k = input[:7]
     assert q.ndim + 1 == kv.ndim and q.ndim in [3, 4]
     if q.ndim == 3:  # unpad

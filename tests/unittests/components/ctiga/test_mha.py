@@ -673,3 +673,33 @@ def test_flashattn2_varlen_kvpacked_attn(
         assert (dv - dv_ref).abs().max().item() <= 2 * (
             dv_pt - dv_ref
         ).abs().max().item()
+
+@pytest.mark.parametrize("bs", [1, 4, 8])
+@pytest.mark.parametrize("seqlen_q", [32, 56, 77, 128, 131, 270, 577, 1024])
+@pytest.mark.parametrize("seqlen_k", [32, 56, 77, 128, 131, 270, 577, 1024])
+@pytest.mark.parametrize("causal", [None, True, False])
+@pytest.mark.parametrize("use_flash_attn", [True, False])
+@pytest.mark.parametrize("cross_attn", [True, False])
+def test_MHA_params(
+    bs,
+    seqlen_q,
+    seqlen_k,
+    causal,
+    use_flash_attn,
+    cross_attn,
+):
+    seed_everything(0)
+    from samantha.components.ctiga.mha import MHA
+    embed_dim = 32
+    num_heads = 8
+    if torch.cuda.get_device_capability("cuda")[0] < 8:
+        use_flash_attn =  False
+        return
+    mha = MHA(embed_dim, num_heads, use_flash_attn=use_flash_attn, cross_attn=cross_attn)
+    mha = mha.to(device=device)
+    x = torch.randn(bs, seqlen_q, num_heads*4, device=device, dtype=dtype)
+    x_kv = torch.randn(bs, seqlen_k, num_heads*4, device=device, dtype=dtype) if cross_attn else None
+    with torch.autocast(device_type="cuda", dtype=dtype):
+        y = mha(x, x_kv, causal=causal)
+
+    y[0].sum().backward()

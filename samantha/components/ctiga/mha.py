@@ -1,6 +1,7 @@
 # Copyright (c) 2022, Tri Dao.
 import math
 from functools import partial
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -93,7 +94,13 @@ class FlashSelfAttention(nn.Module):
         self.drop = nn.Dropout(attention_dropout)
         self.triton = triton
 
-    def forward(self, qkv, causal=None, cu_seqlens=None, max_seqlen=None):
+    def forward(
+        self,
+        qkv,
+        causal: Optional[bool],
+        cu_seqlens: Optional[torch.Tensor],
+        max_seqlen: Optional[int],
+    ):
         """Implements the multihead softmax attention.
         Arguments
         ---------
@@ -187,11 +194,11 @@ class FlashCrossAttention(nn.Module):
         self,
         q,
         kv,
-        causal=None,
-        cu_seqlens=None,
-        max_seqlen=None,
-        cu_seqlens_k=None,
-        max_seqlen_k=None,
+        causal: Optional[bool],
+        cu_seqlens: Optional[torch.Tensor],
+        max_seqlen: Optional[int],
+        cu_seqlens_k: Optional[torch.Tensor],
+        max_seqlen_k: Optional[int],
     ):
         """Implements the multihead softmax attention.
         Arguments
@@ -299,10 +306,10 @@ class FlashSelfAttentionV2(nn.Module):
     def forward(
         self,
         qkv,
-        causal=None,
-        cu_seqlens=None,
-        max_seqlen=None,
-        return_attn_probs=False,
+        causal: Optional[bool],
+        cu_seqlens: Optional[torch.Tensor],
+        max_seqlen: Optional[int],
+        return_attn_probs: bool,
     ):
         """Implements the multihead softmax attention.
         Arguments
@@ -372,12 +379,12 @@ class FlashCrossAttentionV2(nn.Module):
         self,
         q,
         kv,
-        causal=None,
-        cu_seqlens=None,
-        max_seqlen=None,
-        cu_seqlens_k=None,
-        max_seqlen_k=None,
-        return_attn_probs=False,
+        causal: Optional[bool],
+        cu_seqlens: Optional[torch.Tensor],
+        max_seqlen: Optional[int],
+        cu_seqlens_k: Optional[torch.Tensor],
+        max_seqlen_k: Optional[int],
+        return_attn_probs: bool,
     ):
         """Implements the multihead softmax attention.
         Arguments
@@ -959,6 +966,51 @@ class MHA(nn.Module):
         ), "Generation requires layer_idx in the constructor"
         return _update_kv_cache(kv, inference_params, self.layer_idx)
 
+    def _get_inner_attn_args(
+        self,
+        qkv,
+        causal: Optional[bool] = None,
+        cu_seqlens: Optional[torch.Tensor] = None,
+        max_seqlen: Optional[int] = None,
+        return_attn_probs=False,
+        key_padding_mask=None,
+    ):
+        if self.use_flash_attn:
+            input_args = (qkv, causal, cu_seqlens, max_seqlen)
+            if self.version == 2:
+                input_args += (return_attn_probs,)
+        else:
+            input_args = (qkv, causal, key_padding_mask)
+        return input_args
+
+    def _get_inner_cross_attn_args(
+        self,
+        q,
+        kv,
+        causal: Optional[bool] = None,
+        cu_seqlens: Optional[torch.Tensor] = None,
+        max_seqlen: Optional[int] = None,
+        cu_seqlens_k: Optional[torch.Tensor] = None,
+        max_seqlen_k: Optional[int] = None,
+        return_attn_probs: bool = False,
+        key_padding_mask=None,
+    ):
+        if self.use_flash_attn:
+            input_args = (
+                q,
+                kv,
+                causal,
+                cu_seqlens,
+                max_seqlen,
+                cu_seqlens_k,
+                max_seqlen_k,
+            )
+            if self.version == 2:
+                input_args += (return_attn_probs,)
+        else:
+            input_args = (q, kv, causal, key_padding_mask)
+        return input_args
+
     def forward(
         self,
         x,
@@ -1050,16 +1102,21 @@ class MHA(nn.Module):
                     qkv = self.rotary_emb(qkv)
                     if not is_pad:
                         qkv, _, _, _ = unpad_input(qkv, key_padding_mask)
+
+                input_args = self._get_inner_attn_args(
+                    qkv,
+                    causal=kwargs.get("causal", None),
+                    cu_seqlens=cu_seqlens,
+                    max_seqlen=max_seqlen,
+                    return_attn_probs=return_attn_probs,
+                    key_padding_mask=key_padding_mask,
+                )
+
                 if not self.checkpointing:
-                    attn_outs = self.inner_attn(
-                        qkv, return_attn_probs=return_attn_probs, **kwargs
-                    )
+                    attn_outs = self.inner_attn(*input_args)
                 else:
                     attn_outs = torch.utils.checkpoint.checkpoint(
-                        self.inner_attn,
-                        qkv,
-                        return_attn_probs=return_attn_probs,
-                        **kwargs,
+                        self.inner_attn, *input_args
                     )
 
                 if return_attn_probs:
@@ -1084,7 +1141,8 @@ class MHA(nn.Module):
                     causal = (
                         None if inference_params.sequence_len_offset == 0 else False
                     )
-                    context = self.inner_cross_attn(q, kv, causal=causal)
+                    input_args = self._get_inner_cross_attn_args(q, kv, causal=causal)
+                    context = self.inner_cross_attn(*input_args)
                     if isinstance(context, (tuple, list)):
                         assert len(context) == 1
                         context = context[0]
@@ -1143,17 +1201,22 @@ class MHA(nn.Module):
                     "b d s -> b s d",
                 ).contiguous()
             if inference_params is None:
+                input_args = self._get_inner_cross_attn_args(
+                    q,
+                    kv,
+                    causal=kwargs.get("causal", None),
+                    cu_seqlens=cu_seqlens,
+                    max_seqlen=max_seqlen,
+                    cu_seqlens_k=kwargs.get("cu_seqlens_k", None),
+                    max_seqlen_k=kwargs.get("max_seqlen_k", None),
+                    return_attn_probs=return_attn_probs,
+                    key_padding_mask=key_padding_mask,
+                )
                 if not self.checkpointing:
-                    attn_outs = self.inner_cross_attn(
-                        q, kv, return_attn_probs=return_attn_probs, **kwargs
-                    )
+                    attn_outs = self.inner_cross_attn(*input_args)
                 else:
                     attn_outs = torch.utils.checkpoint.checkpoint(
-                        self.inner_cross_attn,
-                        q,
-                        kv,
-                        return_attn_probs=return_attn_probs,
-                        **kwargs,
+                        self.inner_cross_attn, *input_args
                     )
 
                 if return_attn_probs:
@@ -1165,7 +1228,8 @@ class MHA(nn.Module):
                     context = attn_outs[0]
             else:
                 kv = self._update_kv_cache(kv)
-                context = self.inner_cross_attn(q, kv, causal=False)
+                input_args = self._get_inner_cross_attn_args(q, kv, causal=False)
+                context = self.inner_cross_attn(*input_args)
                 if isinstance(context, (tuple, list)):
                     assert len(context) == 1
                     context = context[0]
@@ -1268,6 +1332,51 @@ class ParallelMHA(nn.Module):
             **factory_kwargs,
         )
 
+    def _get_inner_attn_args(
+        self,
+        qkv,
+        causal=None,
+        cu_seqlens=None,
+        max_seqlen=None,
+        return_attn_probs=False,
+        key_padding_mask=None,
+    ):
+        if self.use_flash_attn:
+            input_args = (qkv, causal, cu_seqlens, max_seqlen)
+            if self.version == 2:
+                input_args += (return_attn_probs,)
+        else:
+            input_args = (qkv, causal, key_padding_mask)
+        return input_args
+
+    def _get_inner_cross_attn_args(
+        self,
+        q,
+        kv,
+        causal: Optional[bool] = None,
+        cu_seqlens: Optional[torch.Tensor] = None,
+        max_seqlen: Optional[int] = None,
+        cu_seqlens_k: Optional[torch.Tensor] = None,
+        max_seqlen_k: Optional[int] = None,
+        return_attn_probs: bool = False,
+        key_padding_mask=None,
+    ):
+        if self.use_flash_attn:
+            input_args = (
+                q,
+                kv,
+                causal,
+                cu_seqlens,
+                max_seqlen,
+                cu_seqlens_k,
+                max_seqlen_k,
+            )
+            if self.version == 2:
+                input_args += (return_attn_probs,)
+        else:
+            input_args = (q, kv, causal, key_padding_mask)
+        return input_args
+
     def forward(self, x, seqlen=None, inference_params=None, **kwargs):
         """
         Arguments:
@@ -1292,11 +1401,19 @@ class ParallelMHA(nn.Module):
         if inference_params is None:
             if self.rotary_emb_dim > 0:
                 qkv = self.rotary_emb(qkv)
+                input_args = self._get_inner_attn_args(
+                    qkv,
+                    causal=kwargs.get("causal", None),
+                    cu_seqlens=kwargs.get("cu_seqlens", None),
+                    max_seqlen=kwargs.get("max_seqlen", None),
+                    return_attn_probs=kwargs.get("return_attn_probs", False),
+                    key_padding_mask=kwargs.get("key_padding_mask", None),
+                )
             if not self.checkpointing:
-                context = self.inner_attn(qkv, **kwargs)
+                context = self.inner_attn(*input_args)
             else:
                 context = torch.utils.checkpoint.checkpoint(
-                    self.inner_attn, qkv, **kwargs
+                    self.inner_attn, *input_args
                 )
         else:
             if (
@@ -1314,7 +1431,8 @@ class ParallelMHA(nn.Module):
                 # If we're processing the prompt, causal=None (use self.causal).
                 # If we're decoding, then causal=False.
                 causal = None if inference_params.sequence_len_offset == 0 else False
-                context = self.inner_cross_attn(q, kv, causal=causal)
+                input_args = self._get_inner_cross_attn_args(q, kv, causal=causal)
+                context = self.inner_cross_attn(*input_args)
             else:
                 assert inference_params.fused_ft_kernel
                 assert ft_attention is not None

@@ -12,9 +12,9 @@ from .mha import MHA
 from .mlp import Mlp
 
 try:
-    from .ops.layer_norm import dropout_add_layer_norm
+    from .ops.layer_norm import DropoutAddLayerNorm, dropout_add_layer_norm
 except ImportError:
-    dropout_add_layer_norm = None
+    DropoutAddLayerNorm, dropout_add_layer_norm = None, None
 
 try:
     from .ops.layer_norm import dropout_add_layer_norm_parallel_residual
@@ -22,9 +22,9 @@ except ImportError:
     dropout_add_layer_norm_parallel_residual = None
 
 try:
-    from .ops.rms_norm import RMSNorm, dropout_add_rms_norm
+    from .ops.rms_norm import DropoutAddRMSNorm, RMSNorm, dropout_add_rms_norm
 except ImportError:
-    RMSNorm, dropout_add_rms_norm = None, None
+    DropoutAddLayerNorm, RMSNorm, dropout_add_rms_norm = None, None, None
 
 try:
     from .ops.rms_norm import dropout_add_rms_norm_parallel_residual
@@ -51,6 +51,8 @@ class Block(nn.Module):
         sequence_parallel=False,
         mark_shared_params=False,
         version=2,
+        device=None,
+        dtype=None,
     ):
         """
         For prenorm=True, this Block has a slightly different structure compared to a regular
@@ -109,6 +111,47 @@ class Block(nn.Module):
                 self.dropout1, nn.Dropout
             ), (type(self.norm1), type(self.dropout1))
 
+            if isinstance(self.norm1, RMSNorm):
+                self.norm1 = DropoutAddRMSNorm(
+                    dim,
+                    prenorm=self.prenorm,
+                    p=resid_dropout1,
+                    eps=self.norm1.eps,
+                    residual_in_fp32=residual_in_fp32,
+                    device=device,
+                    dtype=dtype,
+                )
+            else:
+                self.norm1 = DropoutAddLayerNorm(
+                    dim,
+                    prenorm=self.prenorm,
+                    p=resid_dropout1,
+                    eps=self.norm1.eps,
+                    residual_in_fp32=residual_in_fp32,
+                    device=device,
+                    dtype=dtype,
+                )
+
+            if isinstance(self.norm2, RMSNorm):
+                self.norm2 = DropoutAddRMSNorm(
+                    dim,
+                    prenorm=self.prenorm,
+                    p=resid_dropout2,
+                    eps=self.norm2.eps,
+                    residual_in_fp32=residual_in_fp32,
+                    device=device,
+                    dtype=dtype,
+                )
+            else:
+                self.norm2 = DropoutAddLayerNorm(
+                    dim,
+                    prenorm=self.prenorm,
+                    p=resid_dropout2,
+                    eps=self.norm2.eps,
+                    residual_in_fp32=residual_in_fp32,
+                    device=device,
+                    dtype=dtype,
+                )
         # TD [2023-01-07]: TODO: During training, if sequence_parallel is False and dropout != 0.0,
         # then the input to each worker in the tensor parallel group will be different.
         # This would produce wrong outputs? Somehow we'd need to sync the RNG state across workers.
@@ -186,17 +229,7 @@ class Block(nn.Module):
                         )
                 else:
                     rowscale1 = None
-                hidden_states, residual = fused_add_norm_fn(
-                    hidden_states,
-                    residual,
-                    self.norm1.weight,
-                    self.norm1.bias,
-                    self.dropout1.p if self.training else 0.0,
-                    self.norm1.eps,
-                    rowscale=rowscale1,
-                    prenorm=True,
-                    residual_in_fp32=self.residual_in_fp32,
-                )
+                hidden_states, residual = self.norm1(hidden_states, residual)
             if mixer_kwargs is None:
                 mixer_kwargs = {}
             if mixer_subset is not None:
@@ -243,17 +276,7 @@ class Block(nn.Module):
                             )
                     else:
                         rowscale2 = None
-                    hidden_states, residual = fused_add_norm_fn(
-                        hidden_states,
-                        residual,
-                        self.norm2.weight,
-                        self.norm2.bias,
-                        self.dropout2.p if self.training else 0.0,
-                        self.norm2.eps,
-                        rowscale=rowscale2,
-                        prenorm=True,
-                        residual_in_fp32=self.residual_in_fp32,
-                    )
+                    hidden_states, residual = self.norm2(hidden_states, residual)
                 hidden_states = self.mlp(hidden_states)
             block_outs = (hidden_states, residual)
             if return_attn_probs:

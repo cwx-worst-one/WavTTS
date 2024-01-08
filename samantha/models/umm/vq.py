@@ -543,7 +543,6 @@ class EuclideanCodebook(nn.Module):
             quantize = batched_embedding(embed_ind, embed)
 
         if self.training and self.ema_update:
-
             if self.affine_param:
                 flatten = (flatten - self.batch_mean) * (
                     codebook_std / batch_std
@@ -979,7 +978,6 @@ class VectorQuantize(nn.Module):
         # one step in-place update
 
         if should_inplace_optimize and self.training:
-
             if exists(mask):
                 loss = F.mse_loss(quantize, x.detach(), reduction="none")
 

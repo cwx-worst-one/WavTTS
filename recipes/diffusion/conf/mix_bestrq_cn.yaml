@@ -128,7 +128,7 @@ pl_module: !new:recipes.diffusion.modules.pl_module.DiffusionModule
         tokenizer_model:
             hpath: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/semantic/step=0030000.ckpt
             initializer: !name:recipes.umm.requires.model_initializer.init_stage3
-                cache_dir: !ref <asset_dir> 
+                cache_dir: !ref <asset_dir>
         vocoder_model:
             hpath: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/soundstream-step=374999-val_sdr=12.9557.ckpt
             initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
@@ -137,11 +137,11 @@ pl_module: !new:recipes.diffusion.modules.pl_module.DiffusionModule
     val_output_samples_dir: !ref <run_opts[val_output_samples_dir]>
     flops_fn: !ref <run_opts[flops_fn]>
 
-logger: 
+logger:
     - !new:pytorch_lightning.loggers.TensorBoardLogger
-        save_dir: !ref <run_opts[tensorboard_dir]>
-        name: !ref <run_opts[log_name]>
-        version: !ref <run_opts[version]>
+      save_dir: !ref <run_opts[tensorboard_dir]>
+      name: !ref <run_opts[log_name]>
+      version: !ref <run_opts[version]>
     # - !new:pytorch_lightning.loggers.wandb.WandbLogger
     #     save_dir: !ref <run_opts[tensorboard_dir]>
     #     project: !ref <run_opts[log_name]>
@@ -192,4 +192,3 @@ trainer: !new:pytorch_lightning.Trainer
 
 
 # recipes/diffusion/bootstrap.sh fit -c recipes/diffusion/conf/mcc60m_bestrq.yaml --run_opts.version mcc60m_bestrq_v1 --log_dir /mnt/bn/lyrics-to-song/ashaw/logs/diffusion
-

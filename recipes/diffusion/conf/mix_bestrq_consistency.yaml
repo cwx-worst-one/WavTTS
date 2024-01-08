@@ -123,7 +123,7 @@ pl_module: !new:recipes.diffusion.modules.pl_module_consistency.DiffusionModule
         tokenizer_model:
             hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
             initializer: !name:recipes.umm.requires.model_initializer.init_stage3
-                cache_dir: !ref <asset_dir> 
+                cache_dir: !ref <asset_dir>
         vocoder_model:
             hpath: hdfs://harunava/home/byte_speech_sv/weitsung.lu/soundstream/dac_vae_125hz_24k_v2_part2/checkpoints/soundstream-step=374999-val_sdr=12.9557.ckpt
             initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
