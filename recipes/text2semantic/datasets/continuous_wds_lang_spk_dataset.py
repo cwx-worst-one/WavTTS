@@ -1,33 +1,31 @@
 import logging
 import math
+import os
 import pickle
-import sys
-import os 
 import random
+import string
+import sys
+import traceback
+from collections import defaultdict
 
 import numpy as np
 import torch
 import webdataset as wds
 from torch.utils.data import IterableDataset
-from transformers import LlamaTokenizer, T5Tokenizer, AutoTokenizer
+from transformers import AutoTokenizer, LlamaTokenizer, T5Tokenizer
 
+from recipes.text2semantic.datasets.frontend import (
+    phone_to_int,
+    phonetone_to_int,
+    tone_to_int,
+)
+from recipes.text2semantic.utils.remote_io import load_json
 from samantha.dataio.batching import BucketBatcher
+from samantha.dataio.lite.utils.punctuation import punctuation_all
 from samantha.dataio.webdataset.ra_wds import WebDataset
 from samantha.utils.hparams import DotDict
 
-from recipes.text2semantic.utils.remote_io import load_json
-from transformers import LlamaTokenizer
-from zhon.hanzi import punctuation
-import string
-punctuation_all = punctuation + string.punctuation
-
-import traceback
-
-from recipes.text2semantic.datasets.frontend import phone_to_int, tone_to_int, phonetone_to_int
-from collections import defaultdict
-
 logger = logging.getLogger(__name__)
-
 
 
 class HiddenPrints:
@@ -41,7 +39,8 @@ class HiddenPrints:
 
 
 class ContinuousTTSLangSpkDataset(IterableDataset):
-    def __init__(self,
+    def __init__(
+        self,
         wds_urls,
         drop_last=False,
         batcher_config=None,
@@ -52,7 +51,7 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
         use_code_switch_data=True,
         get_lang_by_tacolab=False,
         en_foreigner_list=None,
-        bpe_dir=None, 
+        bpe_dir=None,
         max_length=4096,
         use_bpe=False,
         use_extra_tag=False,
@@ -64,15 +63,10 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
         spk_cfg_rate=0.0,
         lang_cfg_rate=0.0,
         copy_text_bn=False,
-        copy_cfg_rate=0.0
-        ):
-
+        copy_cfg_rate=0.0,
+    ):
         self.wds = (
-            WebDataset(
-                urls=wds_urls,
-                resampled=True,
-                skip_instance_cache=True,
-            )
+            WebDataset(urls=wds_urls, resampled=True, skip_instance_cache=True)
             .decode()
             .shuffle(2048)
             .map(self.get_text_wavid)
@@ -109,7 +103,7 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
         self.phone_to_int = phone_to_int
         self.tone_to_int = tone_to_int
         self.phonetone_to_int = phonetone_to_int
-            
+
         logger.info(f"{self.phone_to_int=}, {self.tone_to_int=}")
         logger.info(f"{self.phonetone_to_int=}")
 
@@ -119,7 +113,9 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
 
         self.en_foreigner_list = None
         if en_foreigner_list:
-            self.en_foreigner_list = [x.strip() for x in open(en_foreigner_list).readlines()]
+            self.en_foreigner_list = [
+                x.strip() for x in open(en_foreigner_list).readlines()
+            ]
         self.use_foreigner_data = use_foreigner_data
         if not self.use_foreigner_data:
             assert self.en_foreigner_list != None
@@ -140,7 +136,7 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
                 raise NotImplementedError
         else:
             self.bpe_tokenizer = None
-        
+
         self.input_type = input_type
 
         # cfg
@@ -153,7 +149,10 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
         self.copy_cfg_rate = copy_cfg_rate
 
     def get_text_wavid(self, sample):
-
+        if not all(
+            key in sample for key in ["bns", "text", "labels", "__key__", "__url__"]
+        ):
+            return None
         bn = pickle.loads(sample["bns"])
         text = sample["text"]
         lab = sample["labels"]
@@ -173,8 +172,14 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
         # len(labels) / 3: syllable_sep, word_segment
         # 100: 5900
         # 100: 冗余
-        if self.copy_text_bn and (len(labels) + bn.shape[0] + (len(labels) / 3) < int((self.max_length - 100 - 100) / 2)) and \
-            (self.copy_cfg_rate > 0 and np.random.rand() < self.copy_cfg_rate):
+        if (
+            self.copy_text_bn
+            and (
+                len(labels) + bn.shape[0] + (len(labels) / 3)
+                < int((self.max_length - 100 - 100) / 2)
+            )
+            and (self.copy_cfg_rate > 0 and np.random.rand() < self.copy_cfg_rate)
+        ):
             try:
                 # bn
                 bn = np.concatenate((bn, bn), axis=0)
@@ -187,12 +192,17 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
                     text = text + text
 
                 # labels
-                if labels[0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit' or labels[0] == 'phn\ttone\tws\tpwpp\tsentype\tword':
+                if (
+                    labels[0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit'
+                    or labels[0] == 'phn\ttone\tws\tpwpp\tsentype\tword'
+                ):
                     labels = labels + labels[1:]
                 else:
                     labels = labels + labels
             except Exception:
-                print(f"utt_id: {utt_id}, bn: {bn.shape}, text: {text}, labels: {labels}")
+                print(
+                    f"utt_id: {utt_id}, bn: {bn.shape}, text: {text}, labels: {labels}"
+                )
                 return None
 
         # text_id, [text_len]
@@ -223,10 +233,12 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
 
         data_dict["phonetone"] = None
         if self.input_type == '1dim':
-            data_dict["phonetone"] = np.concatenate([phonetone_ids, np.ones([1])], axis=0)
+            data_dict["phonetone"] = np.concatenate(
+                [phonetone_ids, np.ones([1])], axis=0
+            )
 
         # lang seq
-        lang_seq = None        
+        lang_seq = None
         if self.use_lang_id:
             if self.get_lang_by_tacolab:
                 lang_key = self.get_lang(labels)
@@ -235,7 +247,10 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
             if self.en_foreigner_list:
                 speaker_name = sample.get("speaker_name")
                 if speaker_name:
-                    if speaker_name.decode() in self.en_foreigner_list and lang_key == 'en':
+                    if (
+                        speaker_name.decode() in self.en_foreigner_list
+                        and lang_key == 'en'
+                    ):
                         lang_key = 'en_foreigner'
                         if not self.use_foreigner_data:
                             print(f"{utt_id}, {text}: Wrong data, Foreigner data.")
@@ -253,7 +268,7 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
             lang_seq = np.asarray([lang_id] * bn.shape[0])
 
         # spk_seq
-        spk_seq = None        
+        spk_seq = None
         if self.use_spk_id:
             dataset_name = sample.get("dataset_name")
             speaker_name = sample.get("speaker_name")
@@ -270,7 +285,9 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
                         if np.random.rand() < self.spk_cfg_rate:
                             spk_id = self.spk2id["default"]
                 else:
-                    logger.warning(f"{utt_id}: speaker {spk_key} not in dict, will use default spkID")
+                    logger.warning(
+                        f"{utt_id}: speaker {spk_key} not in dict, will use default spkID"
+                    )
                     spk_id = self.spk2id["default"]
             spk_id += 1
             spk_seq = np.asarray([spk_id] * bn.shape[0])
@@ -278,24 +295,28 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
         # stop_token
         stop_token = np.zeros([text_id.shape[1] + bn.shape[0]])
         stop_token[-1] = 1
-    
+
         # bpe_id
         if self.use_bpe:
-            bpe_seq = np.asarray(self.bpe_tokenizer(
-                text, truncation=True, max_length=self.max_length,
-            ).input_ids)
+            bpe_seq = np.asarray(
+                self.bpe_tokenizer(
+                    text, truncation=True, max_length=self.max_length
+                ).input_ids
+            )
         else:
             bpe_seq = None
 
-        data_dict.update({
-            "stop_token": stop_token,
-            "bn": bn,
-            "utt_id": utt_id,
-            "lang_seq": lang_seq,
-            "spk_seq": spk_seq,
-            "bpe_seq": bpe_seq,
-            "tag_id": tag_id
-            })
+        data_dict.update(
+            {
+                "stop_token": stop_token,
+                "bn": bn,
+                "utt_id": utt_id,
+                "lang_seq": lang_seq,
+                "spk_seq": spk_seq,
+                "bpe_seq": bpe_seq,
+                "tag_id": tag_id,
+            }
+        )
         return data_dict
 
     def __iter__(self):
@@ -310,7 +331,10 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
     def convert_v3_to_v1(self, tacolab, url):
         tacolab_v1 = []
         # en, zh
-        if tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword' or tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit':
+        if (
+            tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword'
+            or tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit'
+        ):
             tacolab = tacolab[1:]
         for x in tacolab:
             x_split = x.split('\t')
@@ -325,14 +349,35 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
         return tacolab_v1
 
     def is_english_char(self, char):
-        if (u'\u0041'<= char <= u'\u005a') or (u'\u0061'<= char <= u'\u007a'):
+        if (u'\u0041' <= char <= u'\u005a') or (u'\u0061' <= char <= u'\u007a'):
             return True
         else:
             return False
 
     def is_english_spanish_char(self, char):
-        special_Spanish_chars_list = ['á', 'é', 'í', 'ó', 'ú', 'Á', 'É', 'Í', 'Ó', 'Ú', 'ñ', 'Ñ', '¡', '¿', 'ü', 'Ü']
-        if (u'\u0041'<= char <= u'\u005a') or (u'\u0061'<= char <= u'\u007a') or char in special_Spanish_chars_list:
+        special_Spanish_chars_list = [
+            'á',
+            'é',
+            'í',
+            'ó',
+            'ú',
+            'Á',
+            'É',
+            'Í',
+            'Ó',
+            'Ú',
+            'ñ',
+            'Ñ',
+            '¡',
+            '¿',
+            'ü',
+            'Ü',
+        ]
+        if (
+            (u'\u0041' <= char <= u'\u005a')
+            or (u'\u0061' <= char <= u'\u007a')
+            or char in special_Spanish_chars_list
+        ):
             return True
         else:
             return False
@@ -345,13 +390,13 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
         i = 0
         while i < len(text):
             x = text[i]
-            if x in punctuation_all: # punc
+            if x in punctuation_all:  # punc
                 i += 1
                 continue
-            elif u'\u4e00' <= x <= u'\u9fff': # zh
+            elif u'\u4e00' <= x <= u'\u9fff':  # zh
                 len_zh_char += 1
                 i += 1
-            elif self.is_english_spanish_char(x): # en
+            elif self.is_english_spanish_char(x):  # en
                 i += 1
                 if i >= len(text):
                     len_en_word += 1
@@ -362,7 +407,7 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
                         break
                 len_en_word += 1
                 continue
-            else: # blank
+            else:  # blank
                 if not (text[i] == " " or text[i].isdigit()):
                     print("text[i]: ", text[i])
                     return None
@@ -382,7 +427,10 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
 
     def get_lang(self, tacolab):
         if len(tacolab[0].split('\t')) != 5:
-            if tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword' or tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit':
+            if (
+                tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword'
+                or tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit'
+            ):
                 tacolab = tacolab[1:]
         prefix_phn_list = [x.split('\t')[0][:2] for x in tacolab]
         if 'C0' in prefix_phn_list:
@@ -404,7 +452,10 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
             tones = []
             phonetones = []
             if lang == 'zh':
-                assert len(tacolab[0].split('\t')) == 7, (len(tacolab[0].split('\t')), tacolab[0])
+                assert len(tacolab[0].split('\t')) == 7, (
+                    len(tacolab[0].split('\t')),
+                    tacolab[0],
+                )
                 if tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit':
                     tacolab = tacolab[1:]
                 for i in range(len(tacolab)):
@@ -415,7 +466,9 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
                     phone, tone, ws, pw, stype, word, unit = x_split
                     assert phone in self.phone_to_int, f"{phone} not in phone set"
                     assert tone in self.tone_to_int, f"{tone} not in tone set"
-                    assert phone + '_' + tone in self.phonetone_to_int, f"{phone + '_' + tone} not in phonetone set"
+                    assert (
+                        phone + '_' + tone in self.phonetone_to_int
+                    ), f"{phone + '_' + tone} not in phonetone set"
 
                     phone_ids.append(self.phone_to_int[phone])
                     tone_ids.append(self.tone_to_int[tone])
@@ -427,14 +480,18 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
                         if unit in ['S', 'E']:
                             phone_ids.append(self.phone_to_int["syl_sep"])
                             tone_ids.append(self.tone_to_int["syl_sep"])
-                            phonetone_ids.append(self.phonetone_to_int["syl_sep_syl_sep"])
+                            phonetone_ids.append(
+                                self.phonetone_to_int["syl_sep_syl_sep"]
+                            )
                             phones.append("syl_sep")
                             tones.append("syl_sep")
                             phonetones.append("syl_sep_syl_sep")
                             if ws in ["S", "E"]:
                                 phone_ids.append(self.phone_to_int["zh_word_sep"])
                                 tone_ids.append(self.tone_to_int["zh_word_sep"])
-                                phonetone_ids.append(self.phonetone_to_int["zh_word_sep_zh_word_sep"])
+                                phonetone_ids.append(
+                                    self.phonetone_to_int["zh_word_sep_zh_word_sep"]
+                                )
                                 phones.append("zh_word_sep")
                                 tones.append("zh_word_sep")
                                 phonetones.append("zh_word_sep_zh_word_sep")
@@ -442,13 +499,20 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
                         if pw != "0":
                             phone_ids.append(self.phone_to_int["en_word_sep"])
                             tone_ids.append(self.tone_to_int["en_word_sep"])
-                            phonetone_ids.append(self.phonetone_to_int["en_word_sep_en_word_sep"])
+                            phonetone_ids.append(
+                                self.phonetone_to_int["en_word_sep_en_word_sep"]
+                            )
                             phones.append("en_word_sep")
                             tones.append("en_word_sep")
                             phonetones.append("en_word_sep_en_word_sep")
             elif lang == 'zh_en':
-                assert len(tacolab[0].split('\t')) == 7 or len(tacolab[0].split('\t')) == 6, (len(tacolab[0].split('\t')), tacolab[0])
-                if tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit' or tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword':
+                assert (
+                    len(tacolab[0].split('\t')) == 7 or len(tacolab[0].split('\t')) == 6
+                ), (len(tacolab[0].split('\t')), tacolab[0])
+                if (
+                    tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword\tunit'
+                    or tacolab[0] == 'phn\ttone\tws\tpwpp\tsentype\tword'
+                ):
                     tacolab = tacolab[1:]
                 for i in range(len(tacolab)):
                     x = tacolab[i]
@@ -465,7 +529,9 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
 
                     assert phone in self.phone_to_int, f"{phone} not in phone set"
                     assert tone in self.tone_to_int, f"{tone} not in tone set"
-                    assert phone + '_' + tone in self.phonetone_to_int, f"{phone + '_' + tone} not in phonetone set"
+                    assert (
+                        phone + '_' + tone in self.phonetone_to_int
+                    ), f"{phone + '_' + tone} not in phonetone set"
 
                     phone_ids.append(self.phone_to_int[phone])
                     tone_ids.append(self.tone_to_int[tone])
@@ -477,14 +543,18 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
                         if unit in ['S', 'E']:
                             phone_ids.append(self.phone_to_int["syl_sep"])
                             tone_ids.append(self.tone_to_int["syl_sep"])
-                            phonetone_ids.append(self.phonetone_to_int["syl_sep_syl_sep"])
+                            phonetone_ids.append(
+                                self.phonetone_to_int["syl_sep_syl_sep"]
+                            )
                             phones.append("syl_sep")
                             tones.append("syl_sep")
                             phonetones.append("syl_sep_syl_sep")
                             if ws in ["S", "E"]:
                                 phone_ids.append(self.phone_to_int["zh_word_sep"])
                                 tone_ids.append(self.tone_to_int["zh_word_sep"])
-                                phonetone_ids.append(self.phonetone_to_int["zh_word_sep_zh_word_sep"])
+                                phonetone_ids.append(
+                                    self.phonetone_to_int["zh_word_sep_zh_word_sep"]
+                                )
                                 phones.append("zh_word_sep")
                                 tones.append("zh_word_sep")
                                 phonetones.append("zh_word_sep_zh_word_sep")
@@ -492,7 +562,9 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
                         if pw != "0":
                             phone_ids.append(self.phone_to_int["en_word_sep"])
                             tone_ids.append(self.tone_to_int["en_word_sep"])
-                            phonetone_ids.append(self.phonetone_to_int["en_word_sep_en_word_sep"])
+                            phonetone_ids.append(
+                                self.phonetone_to_int["en_word_sep_en_word_sep"]
+                            )
                             phones.append("en_word_sep")
                             tones.append("en_word_sep")
                             phonetones.append("en_word_sep_en_word_sep")
@@ -507,7 +579,9 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
                     phone, tone, _, ws, pw = x.split('\t')
                     assert phone in self.phone_to_int, f"{phone} not in phone set"
                     assert tone in self.tone_to_int, f"{tone} not in tone set"
-                    assert phone + '_' + tone in self.phonetone_to_int, f"{phone + '_' + tone} not in phonetone set"
+                    assert (
+                        phone + '_' + tone in self.phonetone_to_int
+                    ), f"{phone + '_' + tone} not in phonetone set"
                     phone_ids.append(self.phone_to_int[phone])
                     tone_ids.append(self.tone_to_int[tone])
                     phonetone_ids.append(self.phonetone_to_int[phone + '_' + tone])
@@ -517,7 +591,9 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
                     if pw != "0":
                         phone_ids.append(self.phone_to_int["en_word_sep"])
                         tone_ids.append(self.tone_to_int["en_word_sep"])
-                        phonetone_ids.append(self.phonetone_to_int["en_word_sep_en_word_sep"])
+                        phonetone_ids.append(
+                            self.phonetone_to_int["en_word_sep_en_word_sep"]
+                        )
                         phones.append("en_word_sep")
                         tones.append("en_word_sep")
                         phonetones.append("en_word_sep_en_word_sep")
@@ -526,7 +602,13 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
             if self.input_type == '2dim':
                 return np.stack([phone_ids, tone_ids]), phones, tones
             elif self.input_type == '1dim':
-                return np.stack([phone_ids, tone_ids]), phones, tones, phonetone_ids, phonetones
+                return (
+                    np.stack([phone_ids, tone_ids]),
+                    phones,
+                    tones,
+                    phonetone_ids,
+                    phonetones,
+                )
             else:
                 raise NotImplementedError
         except Exception as e:
@@ -535,7 +617,9 @@ class ContinuousTTSLangSpkDataset(IterableDataset):
 
 
 class ContinuousCollator(object):
-    def __init__(self, tokenizer_pad, block_sparse=False, use_bpe=False, use_extra_tag=False):
+    def __init__(
+        self, tokenizer_pad, block_sparse=False, use_bpe=False, use_extra_tag=False
+    ):
         self.pad = tokenizer_pad
         self.block_sparse = block_sparse
         self.use_bpe = use_bpe
@@ -642,7 +726,7 @@ class ContinuousCollator(object):
 
         for k in ret_dict.keys():
             if k == "bn":
-                ret_dict[k] = np.stack(ret_dict[k], axis=0) 
+                ret_dict[k] = np.stack(ret_dict[k], axis=0)
             elif k != "utt_id":
                 if ret_dict[k] is not None:
                     ret_dict[k] = np.asarray(ret_dict[k])
@@ -654,7 +738,16 @@ class ContinuousCollator(object):
                 except Exception:
                     print("ret_dict[k]: ", ret_dict[k])
 
-        to_long_list = ["phone", "tone", "stop_token", "lang_seq", "spk_seq", "bpe_seq", "tag_id", "phonetone"]
+        to_long_list = [
+            "phone",
+            "tone",
+            "stop_token",
+            "lang_seq",
+            "spk_seq",
+            "bpe_seq",
+            "tag_id",
+            "phonetone",
+        ]
         for x in to_long_list:
             if x in ret_dict:
                 if ret_dict[x] is not None:
@@ -664,36 +757,40 @@ class ContinuousCollator(object):
 
 if __name__ == "__main__":
     from samantha.dataio.utils import parse_data_urls
+
     wds_urls = parse_data_urls(data_id=399)
     batcher_config = {
         "buckets": list(range(0, 6000, 100)),  # [0, 100, 200 ... 4000] 4000以上的可以先丢掉
         "dynamic_batch": True,
         "maximum_bucket_size": 14000,
-        "length_fn": "lambda x: x[\"stop_token\"].shape[0]" # seq.shape
+        "length_fn": "lambda x: x[\"stop_token\"].shape[0]",  # seq.shape
     }
-    dataset = ContinuousTTSLangSpkDataset(wds_urls, 
-                                batcher_config=batcher_config,
-                                drop_last=False,
-                                use_lang_id=False,
-                                lang2id="recipes/text2semantic/datasets/dict/lang2id.json",
-                                use_spk_id=True,
-                                spk2id="recipes/text2semantic/datasets/dict/spk2id.json",
-                                input_type='2dim',
-                                use_code_switch_data=True,
-                                use_lang_cfg=False,
-                                spk_cfg_rate=0.0,
-                                copy_text_bn=True,
-                                wds2tag='recipes/text2semantic/datasets/urls_lst/wds2tag.data_id385.json',
-                                bpe_dir='resource/models/byte-T5-base',
-                                max_length=6000,
-                                use_bpe=True,
-                                use_extra_tag=True,
-                                tokenizer_type='byte-T5-base',
-                                copy_cfg_rate=0.15,
-                                )
+    dataset = ContinuousTTSLangSpkDataset(
+        wds_urls,
+        batcher_config=batcher_config,
+        drop_last=False,
+        use_lang_id=False,
+        lang2id="recipes/text2semantic/datasets/dict/lang2id.json",
+        use_spk_id=True,
+        spk2id="recipes/text2semantic/datasets/dict/spk2id.json",
+        input_type='2dim',
+        use_code_switch_data=True,
+        use_lang_cfg=False,
+        spk_cfg_rate=0.0,
+        copy_text_bn=True,
+        wds2tag='recipes/text2semantic/datasets/urls_lst/wds2tag.data_id385.json',
+        bpe_dir='resource/models/byte-T5-base',
+        max_length=6000,
+        use_bpe=True,
+        use_extra_tag=True,
+        tokenizer_type='byte-T5-base',
+        copy_cfg_rate=0.15,
+    )
 
     collector = ContinuousCollator(tokenizer_pad=0)
-    dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=None, collate_fn=collector)
+    dataloader = torch.utils.data.DataLoader(
+        dataset=dataset, batch_size=None, collate_fn=collector
+    )
     import tqdm
 
     # for item in tqdm.tqdm(dataset):
