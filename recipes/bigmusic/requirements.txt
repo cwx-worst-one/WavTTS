@@ -1,7 +1,7 @@
 --index-url https://bytedpypi.byted.org/simple
 torch_complex
 rotary_embedding_torch
-transformers
+transformers==4.30.2
 phonemizer
 ffmpeg
 confusables
@@ -11,3 +11,4 @@ Cython>=0.29.32
 madmom>=0.16.1
 bytedance-easycycle
 ffmpeg-normalize
+thop

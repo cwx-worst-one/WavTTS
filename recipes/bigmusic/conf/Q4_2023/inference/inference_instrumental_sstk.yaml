@@ -14,7 +14,7 @@ extra_params:
     prompt_path: "/mnt/bn/audio-diffusion/data/bigmusic_text_prompts/instrumental_prompts_20231030_subset150.csv"
     inference_conditions: style_text,duration,structure
     max_items: null
-    use_reranker: False
+    use_reranker: True
 
     output_dir: sstk_out
 

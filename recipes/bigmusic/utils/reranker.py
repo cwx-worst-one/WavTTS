@@ -14,7 +14,7 @@ from recipes.bigmusic.utils.rewards import (
 )
 
 
-def infer_conditions(self, batch):
+def infer_conditions(batch):
     if type(batch["conditions"]) == list:
         assert (
             len(set(list(map(tuple, batch["conditions"])))) == 1

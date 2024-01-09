@@ -163,7 +163,7 @@ def run_diffusion(requires, samples, params):
     # torch.interpolate causes OOM for large batch sizes > 24. chunking to batch of 8 instead.
     # If you see this error, lower batch size: "RuntimeError: Expected output.numel() <= std::numeric_limits<int32_t>::max() to be true, but got false."
     duration = pred_emb.shape[-1] // VOCODER_HZ
-    batch_chunks = 8 if duration < 60 else 1
+    batch_chunks = 4 if duration < 60 else 1
     wavs_g = torch.cat([vocoder.decode(c).detach() for c in torch.split(pred_emb, batch_chunks)])
     # wavs_g = vocoder.decode(pred_emb.float()).detach()
 

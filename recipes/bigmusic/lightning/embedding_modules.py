@@ -34,10 +34,13 @@ def get_soundstream_tokens(requires, x):
     return output
 
 @torch.no_grad()
-def get_mulan_embeds(requires, x, data_type="music"):
+def get_mulan_embeds(requires, x, data_type="music", average=True):
     if data_type == "music":
         mulan_embeds = requires["mulan_infer_fn"](
-            model=requires["mulan"], music=x.float(), device=x.device
+            model=requires["mulan"],
+            music=x.float(),
+            device=x.device,
+            avg=average,
         )
     elif data_type == "text":
         # x should be a list of strings
@@ -194,8 +197,16 @@ class MulanEmbedder(ContinuousEmbedder):
 
 class MulanTagEmbedder(ContinuousEmbedder):
     def __init__(
-            self, data_type='music', input_dim=512, embedding_dim=1024, min_audio_length=10*24000, add_sos=False, 
-            mulan_tag_type="mulan_genres", use_mcc_gender=True
+            self,
+            data_type='music',
+            input_dim=512,
+            embedding_dim=1024,
+            min_audio_length=10*24000,
+            add_sos=False,
+            mulan_tag_type="mulan_genres",
+            use_mcc_gender=True,
+            mulan_crop=True,
+            mulan_average=True,
         ):
         super().__init__(input_dim, embedding_dim, add_sos)
 
@@ -203,20 +214,43 @@ class MulanTagEmbedder(ContinuousEmbedder):
         self.min_audio_length = min_audio_length # 10s * 24k sample rate
         self.mulan_tagger = MulanTagger(mulan_tag_type)
         self.use_mcc_gender = use_mcc_gender
+        self.mulan_crop = mulan_crop
+        self.mulan_average = mulan_average
 
-    def get_embeds(self, requires, input_audio, mcc_style_text=None, data_type=None):
+    def get_embeds(
+        self,
+        requires,
+        input_audio,
+        mcc_style_text=None,
+        data_type=None,
+        target_samples_length=None,
+    ):
         # Text
         if data_type == "text":
             mulan_embeds = get_mulan_embeds(requires, input_audio, data_type)
-            return mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
+            mulan_embeds = mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
+            if not self.mulan_crop and not self.mulan_average:
+                assert target_samples_length is not None
+                # TODO: don't hardcode shift length
+                shift_length = self.min_audio_length // 2
+                prefix_length = 1 + (target_samples_length - self.min_audio_length) // shift_length
+                mulan_embeds = mulan_embeds.expand(-1, prefix_length, -1)
+            return mulan_embeds
         # Audio
-        if self.training:
+        if self.training and self.mulan_crop:
             input_audio = random_crop_pad_to_seq_length(input_audio, self.min_audio_length)
+        if not self.training and not self.mulan_crop and not self.mulan_average:
+            assert target_samples_length is not None
+            input_audio = random_crop_pad_to_seq_length(input_audio, target_samples_length)
         if input_audio.shape[-1] < self.min_audio_length:
             input_audio = crop_pad_to_seq_length(input_audio, self.min_audio_length)
         if data_type == "music":
-            mulan_embeds = get_mulan_embeds(requires, input_audio, data_type)
-            return mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
+            mulan_embeds = get_mulan_embeds(
+                requires, input_audio, data_type, average=self.mulan_average
+            )
+            if mulan_embeds.dim() == 2:
+                mulan_embeds = mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
+            return mulan_embeds
         elif data_type == "tag":
             mulan_audio_embeds = get_mulan_embeds(requires, input_audio, "music")
             metadata = self.mulan_tagger.get_tags(requires, audio_embeds=mulan_audio_embeds)

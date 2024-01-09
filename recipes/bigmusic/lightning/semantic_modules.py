@@ -56,22 +56,25 @@ class SemanticModule(BaseContinuousEmbedModule):
         checkpointing=False,
         extra_params=None,
     ):
-        
         hidden_size = extra_params['hidden_size']
-        lyrics_vocab_size = extra_params['lyrics_codebook_size']
-        mulan_embed_dim = extra_params['mulan_embed_dim']
         semantic_codebook_size = extra_params['semantic_codebook_size']
-        mulan_OTF_tag_type = extra_params.get('mulan_tag_type', 'mulan_genres')
         embedder_dict = {}
         for emb_type in extra_params.get("input_embedders", ["mulan", "lyrics_tokens"]):
             if emb_type == "mulan":
+                mulan_embed_dim = extra_params['mulan_embed_dim']
+                mulan_OTF_tag_type = extra_params.get('mulan_tag_type', 'mulan_genres')
+                mulan_crop = extra_params.get('mulan_crop', True)
+                mulan_average = extra_params.get('mulan_average', True)
                 embedder_dict[emb_type] = MulanTagEmbedder(
                     input_dim=mulan_embed_dim,
                     embedding_dim=hidden_size,
                     add_sos=True,
                     mulan_tag_type=mulan_OTF_tag_type,
+                    mulan_crop=mulan_crop,
+                    mulan_average=mulan_average,
                 )
             elif emb_type == "lyrics_tokens":
+                lyrics_vocab_size = extra_params['lyrics_codebook_size']
                 embedder_dict[emb_type] = LyricsTokenEmbedder(
                     vocab_size=lyrics_vocab_size,
                     embedding_dim=hidden_size,
@@ -114,16 +117,27 @@ class SemanticModule(BaseContinuousEmbedModule):
         )
         self.save_hyperparameters()
         self.log_counter = 0
+        self.mulan_counter = 0
+
+    def infer_target_duration(self, batch):
+        if "duration" in batch:
+            target_duration = batch["duration"]
+        else:
+            target_duration = batch["target_audio"].shape[-1] // self.extra_params.sample_rate
+        return target_duration
 
     def prepare_mulan_inputs(self, batch, mulan_embedder):
         batch_size = self.infer_batch_size(batch)
         conditions = self.infer_conditions(batch)
+        target_duration = self.infer_target_duration(batch)
+        target_samples_length = target_duration * self.extra_params.sample_rate
         if 'style_text' in conditions:
             embeds = mulan_embedder.embed(
                 self.requires,
                 batch['style_text'],
                 with_sos=True,
                 data_type='text',
+                target_samples_length=target_samples_length,
             )
         elif 'style_audio' in conditions:
             embeds = mulan_embedder.embed(
@@ -131,6 +145,7 @@ class SemanticModule(BaseContinuousEmbedModule):
                 batch['style_audio'].to(self.device),
                 with_sos=True,
                 data_type='music',
+                target_samples_length=target_samples_length,
             )
         elif 'style_tag' in conditions: # using Mulan for on-the-fly MIR tagging
             embeds = mulan_embedder.embed(
@@ -139,10 +154,14 @@ class SemanticModule(BaseContinuousEmbedModule):
                 mcc_style_text=batch.get('style_text'),
                 with_sos=True,
                 data_type='tag',
+                target_samples_length=target_samples_length,
             )
         else:
             # adding SOS token no matter what so that all parameters get used
             embeds = mulan_embedder.get_sos_embed(batch_size)
+        if self.mulan_counter < 10:
+            print(f"target_duration: {target_duration}, mulan_emb: {embeds.shape}")
+            self.mulan_counter += 1
         return embeds
 
     def prepare_lyrics_inputs(self, batch, lyrics_embedder):
@@ -179,10 +198,7 @@ class SemanticModule(BaseContinuousEmbedModule):
                 if not keep:
                     structure_labels[i] = None
         # Find target duration
-        if "duration" in batch:
-            target_duration = batch["duration"]
-        else:
-            target_duration = batch["target_audio"].shape[-1] // self.extra_params.sample_rate
+        target_duration = self.infer_target_duration(batch)
         embeds = structure_embedder.embed(structure_labels, target_duration)
         return embeds
 
@@ -461,8 +477,8 @@ class SemanticRLModule(SemanticModule):
             num_chunks=1,
             num_steps=self.extra_params.diffusion_steps,
             bf16_portion=self.extra_params.bf16_portion,
-            start=None,
-            show_progress=False,
+            #start=None,
+            #show_progress=False,
             angle_schedule="linear",
             schdeule_slope=2.5,
             classifier_free_guidance=2.5,
