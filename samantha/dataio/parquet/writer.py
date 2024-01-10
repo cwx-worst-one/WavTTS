@@ -227,11 +227,8 @@ class IndexShardWriter:
         self.data_pattern = os.path.join(
             output_root, "data", partition_path, filename_pattern
         )
-        idx_pattern = filename_pattern.replace(
-            ".parquet", f".index_{idx_version}.parquet"
-        )
         self.idx_pattern = os.path.join(
-            output_root, f"index_{idx_version}", partition_path, idx_pattern
+            output_root, f"index_{idx_version}", partition_path, filename_pattern
         )
         self.data_writer = ShardWriter(
             self.data_pattern, maxcount, row_group_size, need_row_group_no=False
