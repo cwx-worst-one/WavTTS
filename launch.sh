@@ -1,6 +1,8 @@
 #!/bin/bash
 set -x  # for better debug view
 
+source scripts/setup_cuda_compat.sh
+
 CUR_DIR=$(cd $(dirname $0); pwd)
 cd $CUR_DIR
 
