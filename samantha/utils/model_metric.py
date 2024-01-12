@@ -95,7 +95,8 @@ class ModelMetric(Metric):
                     if isinstance(flops_fn, FlopsProfiler):
                         flops_fn.start_profile()
             else:
-                self.flops_fn["model"].start_profile()
+                if isinstance(self.flops_fn["model"], FlopsProfiler):
+                    self.flops_fn["model"].start_profile()
             return
 
         cur_time = time.perf_counter()
