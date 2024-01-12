@@ -246,7 +246,9 @@ class SemanticModule(BaseContinuousEmbedModule):
         temperature = hp.semantic_temperature
         sample_mode = hp.sample_mode
         sample_thresh = hp.get('sample_thresh', 0.9)
-
+        exclude_ids = None
+        if hp.get("exclude_eos", False) and self.target_embedder.eos_id is not None:
+            exclude_ids = [self.target_embedder.eos_id]
         inputs_embeds = self.prepare_inputs_embeddings(batch)
         return super().predict(
             inputs_embeds,
@@ -256,6 +258,7 @@ class SemanticModule(BaseContinuousEmbedModule):
             sample_mode=sample_mode,
             sample_thresh=sample_thresh,
             ref_samples=ref_samples,
+            exclude_ids=exclude_ids,
         )
 
     @torch.no_grad()

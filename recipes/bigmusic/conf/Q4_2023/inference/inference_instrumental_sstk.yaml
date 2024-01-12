@@ -53,6 +53,7 @@ extra_params:
     sample_mode: "gumbel"
     sample_thresh: 0.95
     token2wav_type: "diffusion" # diffusion|soundstorm
+    exclude_eos: True
 
 run_opts:
     fast_dev_run: False

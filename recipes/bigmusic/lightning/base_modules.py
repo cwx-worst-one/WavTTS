@@ -256,8 +256,8 @@ class BaseContinuousEmbedModule(BaseModule):
             return model_inputs, target_ids
 
     # Prediction code
-    def sample_logits(self, i, logits, temp, mode, thresh=0.9):
-        return sample(logits, temp=temp, mode=mode, thresh=thresh)
+    def sample_logits(self, i, logits, temp, mode, thresh=0.9, exclude_ids=None):
+        return sample(logits, temp=temp, mode=mode, thresh=thresh, exclude_ids=exclude_ids)
 
     @torch.no_grad()
     def predict(
@@ -271,6 +271,7 @@ class BaseContinuousEmbedModule(BaseModule):
         beam=1,
         ref_samples=None,
         rl_training=False,
+        exclude_ids=None,
     ):
         """
         Input:
@@ -332,7 +333,9 @@ class BaseContinuousEmbedModule(BaseModule):
                 ).logits
                 inference_params.sequence_len_offset += model_input['inputs_embeds'].size(1)
                 logits = logits[:, -1:, :] # only predicting on last logit.
-                predict_token = self.sample_logits(i, logits, temperature, sample_mode, sample_thresh)
+                predict_token = self.sample_logits(
+                    i, logits, temperature, sample_mode, sample_thresh, exclude_ids
+                )
                 predict_token_emb = self.target_embedder.embedder(predict_token)
             else:
                 model_output = self.model(
@@ -343,7 +346,9 @@ class BaseContinuousEmbedModule(BaseModule):
                 logits = model_output["logits"]
 
                 logits = logits[:, -1:, :] # only predicting on last logit.
-                predict_token = self.sample_logits(i, logits, temperature, sample_mode, sample_thresh)
+                predict_token = self.sample_logits(
+                    i, logits, temperature, sample_mode, sample_thresh, exclude_ids
+                )
                 predict_token_emb = self.target_embedder.embedder(predict_token)
 
             model_input['inputs_embeds'] = predict_token_emb

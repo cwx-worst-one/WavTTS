@@ -54,7 +54,17 @@ def load_model(pl_module, ckpt_path: str, device: str):
     return pl_module.to(device)
 
 
-def sample(predict_logits, temp, thresh=0.9, mode="naive", return_probs=False):
+def sample(
+    predict_logits,
+    temp,
+    thresh=0.9,
+    mode="naive",
+    return_probs=False,
+    exclude_ids=None,
+):
+    if exclude_ids is not None:
+        for i in exclude_ids:
+            predict_logits[..., i] = float("-inf")
     if mode == "naive":
         predict_logits = predict_logits / (temp)
         probs = predict_logits.softmax(dim=-1)
