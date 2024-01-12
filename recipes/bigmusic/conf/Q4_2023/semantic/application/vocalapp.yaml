@@ -1,0 +1,198 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+ckpt_path: null
+
+seed: 1995
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+extra_params:
+    sample_rate: 24000
+    lyrics_codebook_size: 400
+    semantic_codebook_size: 32_768
+    semantic_frame_rate: 25
+    semantic_type: bestrq
+    mulan_embed_dim: 512
+    hidden_size: 1536
+    intermediate_size: 4128
+    num_hidden_layers: 24
+    num_attention_heads: 12
+    pretrained_path: null
+    input_embedders: ["mulan", "lyrics_tokens", "vocal_audio"] # for singsong switch to ["mulan", "vocal_audio", "acc_audio"]
+    app_type: vclone #or singsong singsong_inverse, singsong_inverse_vc
+    voice_clone_duration: -1
+    singsong_predict_type: BGM # or FULL
+    tokenizer: "phoneme" # or wordpiece
+    parquet_dataset_ids: [96]  # groupA: 96, karaoke: 95, karaoke val: 94
+    parquet_dataset_weights: [1]
+
+
+# running parameters
+run_opts:
+    fast_dev_run: False
+    log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+    log_name: semantic_model_mulan_text_07B
+    version: v0
+    cache_dir: .module_cache/musiclm
+    precision: "bf16-mixed"
+    num_workers: 5
+    accelerator: auto
+    max_steps: 1000000
+    val_check_interval: 1000
+    batch_size: 12
+    learning_rate: 3.0e-4
+    warmup_steps: 2000
+    cycle_steps: 30000
+    weight_decay: 0.05
+    shuffle_buffer: 80   # 100
+    gradient_clip_val: 1.0
+    buckets_in_sec: [26, 28, 30]  #[20,25,30]
+    # buckets_in_sec: [16,18, 20,22,24,28]
+    use_dynamic_batch: False
+    max_seg_per_track: -1
+    exclude_licenses: ["C"]
+    segment_max_phone_len: 400
+    region: US  # groupA, groupA-Ka, groupA-Ka, Ka # not used actually
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+collate_fn: !apply:recipes.bigmusic.datasets.mix.get_collate_fn
+    - !ref <extra_params[app_type]>
+
+pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalAppZhWebDataModule
+    sample_rate: !ref <extra_params[sample_rate]>
+    batch_size: !ref <run_opts[batch_size]>
+    voice_clone_duration: !ref <extra_params[voice_clone_duration]>
+    app_type: !ref <extra_params[app_type]>
+    vocal_key: 'vocal'
+    style_key: 'acc'
+    singsong_predict_type: !ref <extra_params[singsong_predict_type]>
+    tokenizer: !ref <extra_params[tokenizer]>
+    frame_rate: !ref <extra_params[semantic_frame_rate]>
+    parquet_dataset_ids: !ref <extra_params[parquet_dataset_ids]>
+    parquet_dataset_weights: !ref <extra_params[parquet_dataset_weights]>
+    shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+    num_workers: !ref <run_opts[num_workers]>
+    pin_memory: True
+    buckets_in_sec: !ref <run_opts[buckets_in_sec]>
+    use_dynamic_batch: !ref <run_opts[use_dynamic_batch]>
+    segment_max_phone_len: !ref <run_opts[segment_max_phone_len]>
+    segment_method: "random"
+    max_seg_per_track: !ref <run_opts[max_seg_per_track]>
+    include_intro: False
+    region: !ref <run_opts[region]>
+    collate_fn: !ref <collate_fn>
+
+model_config: !new:transformers.LlamaConfig
+    vocab_size: 1 # placeholder. Embedding table gets removed on load
+    hidden_size: !ref <extra_params[hidden_size]>
+    intermediate_size: !ref <extra_params[intermediate_size]>
+    num_hidden_layers: !ref <extra_params[num_hidden_layers]>
+    num_attention_heads: !ref <extra_params[num_attention_heads]>
+    hidden_act: "silu"
+    max_position_embeddings: 4096
+    initializer_range: 0.02
+    rms_norm_eps: 1e-6
+    use_cache: False
+    num_logits: !ref <extra_params[semantic_codebook_size]> + 2 # +2 for EOS
+
+model_cls: !name:samantha.models.flash_llama.LlamaForCausalLM
+    config: !ref <model_config>
+
+optimizer_cls: !name:torch.optim.AdamW
+    lr: !ref <run_opts[learning_rate]>
+    weight_decay: !ref <run_opts[weight_decay]>
+    betas: [0.9, 0.96]
+    eps: 0.00000001
+
+scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupCosine
+    init_lr: !ref <run_opts[learning_rate]>
+    warmup_steps: !ref <run_opts[warmup_steps]>
+    cycle_steps: !ref <run_opts[cycle_steps]>
+    min_lr: !ref <run_opts[learning_rate]> * 0.1
+
+pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
+    checkpointing: False
+    model_cls: !ref <model_cls>
+    optimizer_cls: !ref <optimizer_cls>
+    scheduler_cls: !ref <scheduler_cls>
+    criterion_cls: !name:recipes.musiclm.lightning.modules.MaskedCrossEntropy
+    extra_params: !ref <extra_params>
+    required_modules:
+        bestrq:
+            # US UMM-chroma stage 3
+            hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
+            initializer: !name:recipes.umm.requires.model_initializer.init_stage3
+                cache_dir: !ref <run_opts[cache_dir]>
+        # mulan:
+        #     # hpath: /mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=014000-median_rank_1=160-kaggle.ckpt
+        #     hpath: /mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=024600-kaggle.ckpt   #110
+        #     initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
+        #         cache_dir: !ref <run_opts[cache_dir]>
+        #         version: "g4"
+
+logger:
+    - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
+      save_dir: !ref <run_opts[log_dir]>
+      name: !ref <run_opts[log_name]>
+      version: !ref <run_opts[version]>
+      default_hp_metric: False
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[log_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
+
+
+# log_gradient_scaler: !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
+
+callbacks:
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      save_top_k: 20
+      save_last: True
+      monitor: val_accu_0
+      mode: max
+      filename: "{step:06d}-{val_accu_0:.2f}"
+    # TODO, how to set the validation callbacks based on the application type?
+    # - !new:pytorch_lightning.callbacks.ModelCheckpoint
+    #   save_top_k: 20
+    #   save_last: True
+    #   monitor: val_accu_1
+    #   mode: max
+    #   filename: "{step:06d}-{val_accu_1:.2f}"
+
+    # - !new:recipes.bigmusic.callbacks.data_logger.BigMusicDataUsageLogger
+    #   save_dir: /mnt/bn/audio-diffusion/qq/data_usage_logs
+    #   save_every_n_iter: 5000
+    # - !new:recipes.bigmusic.callbacks.data_logger.BigMusicAudioDataLogger
+    #   sample_rate: !ref <extra_params[sample_rate]>
+    #   check_interval: !ref <run_opts[val_check_interval]>
+    #   examples_per_batch: 8
+
+plugins:
+    - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    strategy: "ddp_find_unused_parameters_false"
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: 'auto'
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    log_every_n_steps: 500
+    max_steps: !ref <run_opts[max_steps]>
+    precision: !ref <run_opts[precision]>
+    accumulate_grad_batches: 1
+    gradient_clip_val: !ref <run_opts[gradient_clip_val]>
+    val_check_interval: !ref <run_opts[val_check_interval]>
+    check_val_every_n_epoch: null
+    num_sanity_val_steps: 2  # skip validation sanity checks so we don't run into hdfs file close errors
+    callbacks: !ref <callbacks>
+    plugins: !ref <plugins>

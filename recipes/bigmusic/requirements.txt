@@ -4,6 +4,7 @@ rotary_embedding_torch
 transformers==4.30.2
 phonemizer
 ffmpeg
+bytedeuler
 confusables
 fsspec>=2023.9.1 # fix use_pipe=False for parquet files
 mir_eval~=0.7.0

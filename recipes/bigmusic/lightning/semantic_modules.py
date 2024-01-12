@@ -1,6 +1,5 @@
 from recipes.bigmusic.lightning.base_modules import BaseContinuousEmbedModule
 from recipes.bigmusic.lightning.embedding_modules import (
-    MulanEmbedder,
     LyricsTokenEmbedder,
     WavToVecTokenEmbedder,
     MetadataT5TokenEmbedder,
@@ -94,6 +93,13 @@ class SemanticModule(BaseContinuousEmbedModule):
                     structure_labels=extra_params["structure_labels"],
                     granularity_in_secs=extra_params["granularity_in_secs"],
                 )
+            elif emb_type in ["acc_audio", "vocal_audio"]:
+                embedder_dict[emb_type] = BestRQTokenEmbedder(
+                    vocab_size=semantic_codebook_size, 
+                    embedding_dim=hidden_size, 
+                    add_sos=True,
+                    add_eos=False
+                )
             elif emb_type == "intensity":
                 embedder_dict[emb_type] = IntensityEmbedder(
                     decimals=extra_params["intensity_decimals"],
@@ -102,6 +108,7 @@ class SemanticModule(BaseContinuousEmbedModule):
             else:
                 raise ValueError(f"Unknown emb type: {emb_type}")
         input_embedders = nn.ModuleDict(embedder_dict)
+
         semantic_type = extra_params.get('semantic_type', 'wav2vec')
         if semantic_type  == 'wav2vec':
             target_embedder = WavToVecTokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=True, add_eos=True)
@@ -207,6 +214,24 @@ class SemanticModule(BaseContinuousEmbedModule):
         target_duration = self.infer_target_duration(batch)
         embeds = structure_embedder.embed(structure_labels, target_duration)
         return embeds
+    
+    def prepare_acc_audio_inputs(self, batch, acc_embedder: BestRQTokenEmbedder):
+        conditions = self.infer_conditions(batch)
+        batch_size = self.infer_batch_size(batch)
+        if "acc_audio" in conditions:
+            embeds = acc_embedder.embed(self.requires, batch['acc_audio'], with_sos=True)
+        else:
+            embeds = acc_embedder.get_sos_embed(batch_size)
+        return embeds
+
+    def prepare_vocal_audio_inputs(self, batch, vocal_embedder: BestRQTokenEmbedder):
+        conditions = self.infer_conditions(batch)
+        batch_size = self.infer_batch_size(batch)
+        if "vocal_audio" in conditions: 
+            embeds = vocal_embedder.embed(self.requires, batch['vocal_audio'], with_sos=True)
+        else:
+            embeds = vocal_embedder.get_sos_embed(batch_size)
+        return embeds
 
     def prepare_intensity_inputs(self, batch, intensity_embedder):
         batch_size = self.infer_batch_size(batch)
@@ -231,12 +256,18 @@ class SemanticModule(BaseContinuousEmbedModule):
                 emb_inputs = self.prepare_duration_inputs(batch, embedder)
             elif emb_type == "structure":
                 emb_inputs = self.prepare_structure_inputs(batch, embedder)
+            elif emb_type == "acc_audio":
+                emb_inputs = self.prepare_acc_audio_inputs(batch, embedder)
+            elif emb_type == "vocal_audio":
+                emb_inputs = self.prepare_vocal_audio_inputs(batch, embedder)
             elif emb_type == "intensity":
                 emb_inputs = self.prepare_intensity_inputs(batch, embedder)
             else:
                 raise ValueError(f"Unknown emb type: {emb_type}")
             inputs_embeds.append(emb_inputs)
+
         return torch.cat(inputs_embeds, dim=1)
+
 
     @torch.no_grad()
     def predict(self, batch, hp, beam=1, ref_samples=None):
@@ -264,6 +295,7 @@ class SemanticModule(BaseContinuousEmbedModule):
     @torch.no_grad()
     def super_predict(self, inputs_embeds, num_tokens, temperature, **kwargs):
         return super().predict(inputs_embeds, num_tokens, temperature, **kwargs)
+
 
 
 class SemanticRLModule(SemanticModule):

@@ -24,6 +24,12 @@ from recipes.bigmusic.datasets.transforms.structure import (
     IntensityTransform,
 )
 from recipes.musiclm.inference.utils import load_wav
+from samantha.transforms.audio import (
+    SetAudioDimensions,
+    ToTensor,
+)
+from recipes.musiclm.transforms.audio import FastNormalizeAudio
+from torchaudio_augmentations import Compose
 
 default_prompt_path = Path(__file__).absolute().parent/'inference_prompts/default.json'
 
@@ -66,9 +72,10 @@ def inference_dataset_from_prompt(
     elif 'text' in prompts:
         prompts['style_text'] = prompts.pop('text')
     if 'style_audio' in prompts:
-        prompts['style_audio'] = [load_wav(wav_path) for wav_path in prompts['style_audio']]
+        prompts['style_audio'] = load_and_normalize_wavs(prompts['style_audio'])
     if 'vocal_audio' in prompts:
-        prompts['vocal_audio'] = [load_wav(wav_path) for wav_path in prompts['vocal_audio']]
+        additional_transforms = [voice_clone_transform(extra_params)] if extra_params.get('app_type') == 'vclone' else []
+        prompts['vocal_audio'] = load_and_normalize_wavs(prompts['vocal_audio'], additional_transforms)
     if 'structure' in prompts:
         prompts['structure'] = [None if x == "random" else json.loads(x) for x in prompts['structure']]
     elif 'structure' in conditions:
@@ -139,6 +146,7 @@ def inference_dataset_from_prompt(
             break
         item = { key:value for key,value in zip(item_keys,pair) }
         items.append(item)
+
     dataset = WebPipeline(items, pipeline=[])
     batch_fn = default_batch_fn(
         batch_size,
@@ -150,3 +158,13 @@ def inference_dataset_from_prompt(
         batch_transforms=batch_transforms,
         batch_fn=batch_fn,
     )
+
+def load_and_normalize_wavs(wav_paths, additional_transforms=()):
+    audio_transforms = Compose([ToTensor(), SetAudioDimensions(), FastNormalizeAudio(), *additional_transforms])
+    wavs = [audio_transforms(load_wav(wav_path)) for wav_path in wav_paths]
+    return wavs
+
+def voice_clone_transform(extra_params):
+    sample_rate = extra_params['sample_rate']
+    voice_clone_duration = extra_params.get('voice_clone_duration', -1)
+    return lambda vocal_audio: vocal_audio[:, :(voice_clone_duration * sample_rate)]

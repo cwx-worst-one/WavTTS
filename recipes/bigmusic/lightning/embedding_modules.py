@@ -4,7 +4,7 @@ from recipes.musiclm.models.compat.semantic_model import w2v_bert_tokenization
 from abc import abstractmethod
 from recipes.musiclm.transforms.audio import RandomResizedCrop
 from recipes.bigmusic.utils.mulan_tag import MulanTagger
-from recipes.bigmusic.datasets.transforms.lyrics_segment import crop_pad_to_seq_length, random_crop_pad_to_seq_length
+from recipes.bigmusic.datasets.transforms.lyrics_segment import random_crop_pad_to_seq_length
 
 # Functions
 @torch.no_grad()
