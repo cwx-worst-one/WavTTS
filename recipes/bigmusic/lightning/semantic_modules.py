@@ -9,6 +9,7 @@ from recipes.bigmusic.lightning.embedding_modules import (
     MulanTagEmbedder,
     DurationEmbedder,
     StructureEmbedder,
+    IntensityEmbedder,
     get_mulan_embeds,
 )
 from recipes.bigmusic.utils.metrics_asr import asr_transcribe_lyrics
@@ -92,6 +93,11 @@ class SemanticModule(BaseContinuousEmbedModule):
                     embedding_dim=hidden_size,
                     structure_labels=extra_params["structure_labels"],
                     granularity_in_secs=extra_params["granularity_in_secs"],
+                )
+            elif emb_type == "intensity":
+                embedder_dict[emb_type] = IntensityEmbedder(
+                    decimals=extra_params["intensity_decimals"],
+                    embedding_dim=hidden_size,
                 )
             else:
                 raise ValueError(f"Unknown emb type: {emb_type}")
@@ -191,15 +197,23 @@ class SemanticModule(BaseContinuousEmbedModule):
         structure_labels = batch["structure"]
         assert batch_size == len(structure_labels)
         # Dropout if needed
-        if self.training and self.extra_params.structure_dropout > 0:
-            dropout = self.extra_params.structure_dropout
-            all_keep = [x >= dropout for x in np.random.rand(batch_size)]
+        structure_dropout = self.extra_params.get("structure_dropout", 0.0)
+        if self.training and structure_dropout > 0:
+            all_keep = [x >= structure_dropout for x in np.random.rand(batch_size)]
             for i, keep in enumerate(all_keep):
                 if not keep:
                     structure_labels[i] = None
         # Find target duration
         target_duration = self.infer_target_duration(batch)
         embeds = structure_embedder.embed(structure_labels, target_duration)
+        return embeds
+
+    def prepare_intensity_inputs(self, batch, intensity_embedder):
+        batch_size = self.infer_batch_size(batch)
+        intensity_labels = batch["intensity"]
+        assert batch_size == len(intensity_labels)
+        target_duration = self.infer_target_duration(batch)
+        embeds = intensity_embedder.embed(intensity_labels, target_duration)
         return embeds
 
     def prepare_inputs_embeddings(self, batch):
@@ -217,6 +231,8 @@ class SemanticModule(BaseContinuousEmbedModule):
                 emb_inputs = self.prepare_duration_inputs(batch, embedder)
             elif emb_type == "structure":
                 emb_inputs = self.prepare_structure_inputs(batch, embedder)
+            elif emb_type == "intensity":
+                emb_inputs = self.prepare_intensity_inputs(batch, embedder)
             else:
                 raise ValueError(f"Unknown emb type: {emb_type}")
             inputs_embeds.append(emb_inputs)

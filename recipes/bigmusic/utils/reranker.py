@@ -11,6 +11,7 @@ from recipes.bigmusic.utils.rewards import (
     structure_reward,
     chorus_sim_reward,
     chorus_presence_reward,
+    loudness_reward,
 )
 
 
@@ -87,19 +88,26 @@ class Reranker:
                 device=sampled_audio.device,
             )[0]
         elif rw_type == "qualitative":
-            # TODO: make phrase configurable
+            positive_phrase = extra_params.get(
+                "positive_phrase",
+                "cd quality, catchy, memorable",
+            )
             positive_reward = mulan_text_reward(
                 self.requires["mulan_infer_fn"],
                 self.requires["mulan"],
                 sampled_audio,
-                ["cd quality, catchy, memorable"],
+                [positive_phrase],
                 device=sampled_audio.device,
             )[0]
+            negative_phrase = extra_params.get(
+                "negative_phrase",
+                "noisy, boring, forgettable",
+            )
             negative_reward = mulan_text_reward(
                 self.requires["mulan_infer_fn"],
                 self.requires["mulan"],
                 sampled_audio,
-                ["noisy, boring, forgettable"],
+                [negative_phrase],
                 device=sampled_audio.device,
             )[0]
             return positive_reward - negative_reward
@@ -159,6 +167,13 @@ class Reranker:
                 sampled_audio,
                 [["default"]] * len(sampled_audio),
                 extra_params.sample_rate,
+                device=sampled_audio.device,
+            )
+        elif rw_type == "loudness_sim":
+            return loudness_reward(
+                sampled_audio,
+                batch["style_audio"],
+                sample_rate=extra_params.sample_rate,
                 device=sampled_audio.device,
             )
         else:

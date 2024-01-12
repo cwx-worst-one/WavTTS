@@ -129,7 +129,7 @@ class BaseModule(pl.LightningModule):
         return loss, result_dict
 
     def training_step(self, batch, batch_idx):
-        loss, result_dict = self._shared_step(batch, update_mfu=True)
+        loss, result_dict = self._shared_step(batch, update_mfu=False)
         log_dict = { 'tr_' + key: value for key, value in result_dict.items() }
         self.log_dict(log_dict, prog_bar=True, sync_dist=True)
         return loss

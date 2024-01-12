@@ -131,9 +131,13 @@ def loudness_reward(
     sample_rate,
     device,
 ):
+    if sampled_audio.dim() == 2:
+        sampled_audio = sampled_audio.unsqueeze(1)
+    if target_audio.dim() == 2:
+        target_audio = target_audio.unsqueeze(1)
     batch_size, beam = _infer_batch_beam(sampled_audio, target_audio)
-    sampled_loudness = loudness(sampled_audio.cpu(), sample_rate=sample_rate)
-    target_loudness = loudness(target_audio.cpu(), sample_rate=sample_rate)
+    sampled_loudness = loudness(sampled_audio.float().cpu(), sample_rate=sample_rate)
+    target_loudness = loudness(target_audio.float().cpu(), sample_rate=sample_rate)
     # (batch_size,) --> (batch_size * beam,)
     target_loudness = target_loudness.reshape(batch_size, 1).repeat(1, beam).reshape(batch_size * beam)
     # loudness is in LKFS (dB scale), so we use sigmoid to measure the difference

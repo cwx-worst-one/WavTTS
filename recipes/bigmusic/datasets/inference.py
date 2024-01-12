@@ -20,6 +20,9 @@ from recipes.bigmusic.datasets.transforms.lyrics import (
     MCCMetadataTextTransform,
     AddDurationTransform,
 )
+from recipes.bigmusic.datasets.transforms.structure import (
+    IntensityTransform,
+)
 from recipes.musiclm.inference.utils import load_wav
 
 default_prompt_path = Path(__file__).absolute().parent/'inference_prompts/default.json'
@@ -76,13 +79,33 @@ def inference_dataset_from_prompt(
     else:
         lyrics_prompt_pairs = zip(*list(prompts.values()))
 
+    segment_transforms = []
     if 'lyrics_tokens' in conditions:
         if lang == 'en':
-            segment_transforms = [LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len=lyrics_max_seq_len, dataset_mode=dataset_mode, enable_punctuation=enable_punctuation, validate_ascii=True)]
+            segment_transforms.append(
+                LyricsTokenTransform.init_espeak_tokenizer(
+                    lyrics_max_seq_len=lyrics_max_seq_len,
+                    dataset_mode=dataset_mode,
+                    enable_punctuation=enable_punctuation,
+                    validate_ascii=True,
+                )
+            )
         elif lang == 'zh_wp':
-            segment_transforms = [LyricsTokenTransform.init_zh_tokenizer(lyrics_max_seq_len=lyrics_max_seq_len, dataset_mode=dataset_mode, enable_punctuation=enable_punctuation)]
+            segment_transforms.append(
+                LyricsTokenTransform.init_zh_tokenizer(
+                    lyrics_max_seq_len=lyrics_max_seq_len,
+                    dataset_mode=dataset_mode,
+                    enable_punctuation=enable_punctuation,
+                )
+            )
         elif lang == 'zh_phone':
-            segment_transforms = [LyricsTokenTransform.init_zh_phoneme_tokenizer(lyrics_max_seq_len=lyrics_max_seq_len, dataset_mode=dataset_mode, enable_punctuation=enable_punctuation)]
+            segment_transforms.append(
+                LyricsTokenTransform.init_zh_phoneme_tokenizer(
+                    lyrics_max_seq_len=lyrics_max_seq_len,
+                    dataset_mode=dataset_mode,
+                    enable_punctuation=enable_punctuation,
+                )
+            )
 
         if 'style_text' in conditions and 'style_text' not in prompts:
             # style text not provided. must generate own
@@ -96,8 +119,14 @@ def inference_dataset_from_prompt(
         if 'style_tokens' in conditions: # t5 case: add t5 tokenizer
             # TODO: (AS) pass max_seq_len parameter to transform
             segment_transforms.append(StyleTextT5Transform())
-    else: # instrumental use case
-        segment_transforms = []
+    if 'intensity' in conditions:
+        # TODO: don't hardcode sample rate
+        segment_transforms.append(
+            IntensityTransform(
+                audio_key="style_audio",
+                sample_rate=24000,
+            )
+        )
 
     batch_transforms=[AddConditionsTransform(conditions)]
     if 'duration' in conditions:

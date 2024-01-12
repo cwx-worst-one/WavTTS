@@ -55,7 +55,7 @@ class InstrumentalWebDataModule(DataModule):
         max_num_crops: Optional[Union[int, List[int]]] = 3,
         crop_step_size: Optional[Union[float, List[float]]] = 10.0,
         additional_transforms: Optional[List] = None,
-        keys=["audio", "text", "structure"],
+        keys=["audio", "text", "structure", "intensity"],
         mixed_ratio: float = 0.0,
         use_pipe: bool = False,
         seed: int = 555,

@@ -434,3 +434,36 @@ class StructureEmbedder(nn.Module):
             print(f"structure_labels: {batch_structure_labels}, structure_ids: {structure_ids}")
             self.logged += 1
         return self.embedder(structure_ids)
+
+
+class IntensityEmbedder(nn.Module):
+    def __init__(self, decimals, embedding_dim):
+        super().__init__()
+        self.decimals = decimals
+        self.multiplier = 10 ** self.decimals
+        self.intensity_vocab_size = self.multiplier + 1
+        self.embedder = nn.Embedding(self.intensity_vocab_size, embedding_dim)
+        self.logged = 0
+
+    def embed(self, batch_intensity_labels, target_duration):
+        device = next(self.parameters()).device
+        if batch_intensity_labels.shape[1] > target_duration:
+            # Just use the first segment
+            batch_intensity_labels = batch_intensity_labels[..., :target_duration]
+        elif batch_intensity_labels.shape[1] < target_duration:
+            # Just repeat first and last intensity
+            pad = target_duration - batch_intensity_labels.shape[1]
+            lpad = pad // 2
+            rpad = pad - lpad
+            tmp = torch.zeros(len(batch_intensity_labels), target_duration).to(device)
+            tmp[..., :lpad] = batch_intensity_labels[..., 0:1]
+            tmp[..., -rpad:] = batch_intensity_labels[..., -1:]
+            tmp[..., lpad:lpad + batch_intensity_labels.shape[1]] = batch_intensity_labels
+            batch_intensity_labels = tmp
+        intensity_ids = torch.clamp(batch_intensity_labels, min=0.0, max=1.0)
+        intensity_ids = torch.round(intensity_ids * self.multiplier).long().to(device)
+        if self.logged < 5:
+            print(f"target_duration: {target_duration}, intensity_labels: {batch_intensity_labels.shape}, intensity_ids: {intensity_ids.shape}")
+            print(f"intensity_labels: {batch_intensity_labels}, intensity_ids: {intensity_ids}")
+            self.logged += 1
+        return self.embedder(intensity_ids)

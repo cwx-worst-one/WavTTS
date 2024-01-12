@@ -9,10 +9,10 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
 
 extra_params:
-    beam_size: 1    # set to 1 if not using reranker
+    beam_size: 8    # set to 1 if not using reranker
     samples_to_save: 1
     prompt_path: "/mnt/bn/audio-diffusion/data/bigmusic_text_prompts/instrumental_prompts_20231030_subset150.csv"
-    inference_conditions: style_text,duration,structure
+    inference_conditions: style_text,duration
     max_items: null
     use_reranker: True
 
@@ -20,17 +20,19 @@ extra_params:
 
     # Semantic model
     semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
-    semantic_ckpt: "/mnt/bn/audio-diffusion/ducle/logs/semantic_model_instrumental_07B/sstk_vad_chorus-control_sstk-random_sstk-mulan+sstk-umm-nospeech-400k_2m-varlen/checkpoints/step=248000.ckpt"
-    mulan_ckpt: "/mnt/bn/audio-diffusion/xuchen/mulan/models/mulan-step=014800-kaggle.ckpt"
-    mulan_version: "sstk"
+    semantic_ckpt: "/mnt/bn/audio-diffusion/ducle/logs/semantic_model_instrumental_07B/sstk_vad-unnorm_sstk-random_sstk-mulan-mae-no-crop+sstk-umm-nospeech-400k_larger_3m/checkpoints/step=248000.ckpt"
+    mulan_ckpt: "/mnt/bn/audio-diffusion/xuchen/mulan/models/mae-mulan-step=07800-kaggle.ckpt"
+    mulan_version: "sstkmae"
 
+    # For re-ranking
     rewards:
         style_text: 1.0
         qualitative: 1.0
-        nonvocal: 1.0
+    positive_phrase: "high quality, catchy, memorable"
+    negative_phrase: "noisy, boring, forgettable"
 
     diffusion_params:
-        window_length: 10 # in second
+        window_length: 30 # in second
         vocoder_hz: 125
         semantic_hz: 25
         outpainting_overlap: 0.5 #[0, 1]
@@ -48,7 +50,8 @@ extra_params:
     sample_rate: 24000
     duration: 30 # 30|45|60|75|90|105|120
     semantic_temperature: 1.0
-    sample_mode: "top_p"
+    sample_mode: "gumbel"
+    sample_thresh: 0.95
     token2wav_type: "diffusion" # diffusion|soundstorm
 
 run_opts:
@@ -57,7 +60,7 @@ run_opts:
     accelerator: auto
     strategy: auto
     cache_dir: .module_cache/musiclm
-    batch_size: 4  # set to 28 if not using reranker
+    batch_size: 1  # set to 28 if not using reranker
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -84,7 +87,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                     cache_dir: !ref <run_opts[cache_dir]>
         diffusion_modules:
             diffusion:
-                hpath: /mnt/bn/audio-diffusion/wtl/diffusion-step=580000-EMA.ckpt
+                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/24k_v1/diffusion-step=870000-EMA.ckpt
                 initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
                     cache_dir: !ref <run_opts[cache_dir]>
                     sstk: True
@@ -111,17 +114,17 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                         hpath: !ref <extra_params[mulan_ckpt]>
                         initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                             version: !ref <extra_params[mulan_version]>
-                    asr:
-                        hpath: en_punc
-                        initializer: !name:recipes.bigmusic.utils.metrics_asr.init_asr
+                    #asr:
+                    #    hpath: en_punc
+                    #    initializer: !name:recipes.bigmusic.utils.metrics_asr.init_asr
             initializer: !name:recipes.bigmusic.utils.reranker.init_reranker
                 cache_dir: !ref <run_opts[cache_dir]>
 
 # separating out additional_callbacks so auto_eval can disable metrics
 additional_callbacks:
-    - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
+    #- !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
     - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
-    - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
+    #- !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
 callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
       beam_size: !ref <extra_params[beam_size]>

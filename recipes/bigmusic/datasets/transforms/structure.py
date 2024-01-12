@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from torchaudio.functional import loudness
+from recipes.musiclm.transforms.audio import to_energy
 
 
 class ChorusDetectionTransform:
@@ -125,4 +126,27 @@ class ChorusDetectionTransform:
 
     def __call__(self, item):
         item["structure"] = self.find_chorus(item[self.audio_key])
+        return item
+
+
+class IntensityTransform:
+    def __init__(
+        self,
+        audio_key="audio",
+        sample_rate=24000,
+        debug=False,
+    ):
+        self.audio_key = audio_key
+        self.sample_rate = sample_rate
+        self.debug = debug
+
+    def get_intensity(self, audio):
+        if not isinstance(audio, torch.Tensor):
+            audio = torch.from_numpy(audio)
+        return to_energy(audio.float(), window_size=self.sample_rate)[0]
+
+    def __call__(self, item):
+        if self.audio_key not in item:
+            raise ValueError(f"Intensity transform needs reference audio at {self.audio_key}")
+        item["intensity"] = self.get_intensity(item[self.audio_key])
         return item
