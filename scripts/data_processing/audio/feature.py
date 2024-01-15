@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 import argparse
+import datetime
 import logging
 import multiprocessing
 import os
@@ -17,6 +18,7 @@ from lightning_fabric.utilities.cloud_io import get_filesystem
 
 from samantha.dataio.utils import parquet_reader
 from samantha.utils.distributed import is_global_zero
+from samantha.utils.envs import getenv_int
 from samantha.utils.watch import elapsed_time
 from scripts.data_processing.audio.utils import (
     Consumer,
@@ -260,7 +262,9 @@ def main(args):
                         args.batch_size,
                         domain,
                     ),
-                    error_callback=lambda exc: logger.error("fatal error", exc_info=exc),
+                    error_callback=lambda exc: logger.error(
+                        "fatal error", exc_info=exc
+                    ),
                 )
 
             pool.close()
@@ -298,6 +302,9 @@ if __name__ == "__main__":
     parser.add_argument("--freq", type=int, default=40)
     args = parser.parse_args()
     backend = "nccl" if torch.cuda.is_available() else "mpi"
-    dist.init_process_group(backend=backend)
+    dist.init_process_group(
+        backend=backend,
+        timeout=datetime.timedelta(seconds=getenv_int("NCCL_TIMEOUT", 1800)),
+    )
     args.ckpt_path = download_model(args.ckpt_path)
     main(args)
