@@ -116,7 +116,7 @@ class ConformerRotaryPositionalEmbedding(nn.Module):
             or self.cached_rotary_positional_embedding is None
         ):
             self._set_cos_sin_cache(sequence_length)
-        return self.cached_rotary_positional_embedding[:, -sequence_length:].to(
+        return self.cached_rotary_positional_embedding[:, 0:sequence_length].to(
             dtype=hidden_states.dtype
         )
 
@@ -309,7 +309,6 @@ class ConformerSelfAttention(nn.Module):
         hidden_states = hidden_states.view(
             batch_size, sequence_length, self.num_heads, self.head_size
         )
-
         cos = position_embeddings[0, :sequence_length, ...]
         sin = position_embeddings[1, :sequence_length, ...]
 
@@ -1764,6 +1763,21 @@ class Stage3(Stage2):
         if config.get("vq_proj_noise", 0) > 0:
             self.register_buffer("cnt", torch.FloatTensor([0]))
 
+        if config.get("add_weighted_sum", False):
+            self.weights = nn.Parameter(torch.zeros(self.config.vq_layer_idx))
+
+    def _weighted_sum(self, feature):
+        assert self.config.vq_layer_idx == len(feature)
+        stacked_feature = torch.stack(feature, dim=0)
+
+        _, *origin_shape = stacked_feature.shape
+        stacked_feature = stacked_feature.view(self.config.vq_layer_idx, -1)
+        norm_weights = F.softmax(self.weights, dim=-1)
+        weighted_feature = (norm_weights.unsqueeze(-1) * stacked_feature).sum(dim=0)
+        weighted_feature = weighted_feature.view(*origin_shape)
+
+        return weighted_feature
+
     def forward(self, input_dict):
         feature = input_dict["mel"]
         flops = self.audio_encoder.get_flops(*feature.shape)
@@ -1773,8 +1787,11 @@ class Stage3(Stage2):
         flops += self.encoder_layers[0].get_flops(*hidden_states.shape[0:2]) * len(
             self.encoder_layers
         )
+        hidden_states_list = []
         for i, layer in enumerate(self.encoder_layers):
             if i == self.config.vq_layer_idx:
+                if self.config.get("add_weighted_sum", False):
+                    hidden_states = self._weighted_sum(hidden_states_list)
                 hidden_states = self.vq_proj_in(hidden_states)
                 if self.config.get("vq_proj_noise", 0) > 0:
                     noise_scale = (self.config.vq_proj_noise - self.cnt).clamp(
@@ -1797,6 +1814,9 @@ class Stage3(Stage2):
             hidden_states = layer(
                 hidden_states, position_embeddings=position_embeddings
             )
+            if i < self.config.vq_layer_idx:
+                hidden_states_list.append(hidden_states)
+        # downstream tasks
         flops += self.mel_head.get_flops(*hidden_states.shape)
         mel_out = self.mel_head(hidden_states)
         flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
@@ -1813,6 +1833,10 @@ class Stage3(Stage2):
         if self.config.add_chroma:
             chroma_out = self.chroma_head(hidden_states)
             output_dict.update(chroma_out=chroma_out)
+        if self.config.get("add_pitch", False):
+            f0_vuv_out = self.f0_vuv_head(hidden_states)
+            output_dict.update(vuv_out=f0_vuv_out[:, :, 1:])
+            output_dict.update(vuv_out=f0_vuv_out[:, :, 1:])
         return output_dict
 
     def forward_layers(

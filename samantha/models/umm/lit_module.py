@@ -1371,17 +1371,28 @@ class Stage3(Stage2):
         mel = input_dict["mel"]
         text_ids = input_dict["text_ids"]
 
-        loss_dict = self.criterion(
-            ctc_logits=output_dict["ctc_out"],
-            text_ids=text_ids,
-            recon_chroma=output_dict["chroma_out"]
-            if self.model.config.add_chroma
-            else None,
-            chroma=input_dict["chroma"] if self.model.config.add_chroma else None,
-            recon_mel=output_dict["mel_out"],
-            mel=mel,
-        )
-
+        if self.model.config.get("add_pitch", False):
+            loss_dict = self.criterion(
+                ctc_logits=output_dict["ctc_out"],
+                text_ids=text_ids,
+                recon_mel=output_dict["mel_out"],
+                mel=mel,
+                recon_f0=output_dict["f0_out"].squeeze(-1),
+                f0=input_dict["f0"],
+                recon_vuv=output_dict["vuv_out"].squeeze(-1),
+                vuv=input_dict["vuv"],
+            )
+        else:
+            loss_dict = self.criterion(
+                ctc_logits=output_dict["ctc_out"],
+                text_ids=text_ids,
+                recon_chroma=output_dict["chroma_out"]
+                if self.model.config.add_chroma
+                else None,
+                chroma=input_dict["chroma"] if self.model.config.add_chroma else None,
+                recon_mel=output_dict["mel_out"],
+                mel=mel,
+            )
         loss_dict["bs"] = text_ids.shape[0]
         loss_dict["loss"] = (
             loss_dict["loss_mel"] * self.model.config.w_loss_mel
@@ -1391,6 +1402,12 @@ class Stage3(Stage2):
             loss_dict["loss"] = (
                 loss_dict["loss"]
                 + loss_dict["loss_chroma"] * self.model.config.w_loss_chroma
+            )
+        if self.model.config.get("add_pitch", False):
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + (loss_dict["f0_loss"] + loss_dict["vuv_loss"])
+                * self.model.config.w_loss_pitch
             )
         if output_dict["vq_loss"] is not None:
             loss_dict["loss_vq"] = output_dict["vq_loss"]
@@ -1415,6 +1432,8 @@ class Stage3(Stage2):
         loss_dict["aux/noise_scale"] = output_dict.get("noise_scale", 0)
         if self.model.config.add_chroma:
             loss_dict["aux/w_loss_chroma"] = self.model.config.w_loss_chroma
+        if self.model.config.get("add_pitch", False):
+            loss_dict["aux/w_loss_pitch"] = self.model.config.w_loss_pitch
         if output_dict["vq_loss"] is not None:
             loss_dict["aux/w_loss_vq"] = self.model.config.w_loss_vq
         loss_dict["flops"] = output_dict["flops"]
