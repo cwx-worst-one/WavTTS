@@ -204,7 +204,7 @@ class TNTBlocks(nn.Module):
             coarse_head_dim,
             depth=1, 
             unet=False,
-            unet_stages=[4,8,4], # up, middle, down
+            unet_stages=[6,8,6], # up, middle, down
             dropout=0,
             semantic_cfg_prob=0.1,
             vc_cfg_prob=None,
@@ -386,6 +386,7 @@ class TNTDiffusionNetwork(nn.Module):
             segment_size=64,
             segment_stride=32,
             unet=False,
+            unet_stages=[4,8,4],
             dropout=0,
             semantic_cfg_prob=0.1,
             use_checkpoint=False,
@@ -459,6 +460,7 @@ class TNTDiffusionNetwork(nn.Module):
             coarse_head_dim=int(feature_dim / 8),
             depth=depth,
             unet=unet,
+            unet_stages=unet_stages,
             dropout=dropout,
             semantic_cfg_prob=semantic_cfg_prob,
             vc_cfg_prob=vc_cfg_prob,

@@ -217,9 +217,9 @@ def init_sampler(
     sequence_length=None,   # for backward compat
 ):
     device = torch.device(f"cuda:{local_rank}")
-    print(params['window_length'], params['vocoder_hz'])
+
     sampler = Sampler(
-        in_channels=32, 
+        in_channels=params['latent_dim'], 
         window_length=params['window_length'], 
         vocoder_hz=params['vocoder_hz'],
         semantic_hz=params['semantic_hz'],

@@ -11,7 +11,7 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 extra_params:
     beam_size: 8    # set to 1 if not using reranker
     samples_to_save: 1
-    prompt_path: "/mnt/bn/audio-diffusion/data/bigmusic_text_prompts/instrumental_prompts_20231030_subset150.csv"
+    prompt_path: "/mnt/bn/audio-diffusion/data/bigmusic_text_prompts/instrumental_prompts_20231030_subset150+duration.csv"
     inference_conditions: style_text,duration
     max_items: null
     use_reranker: True
@@ -33,8 +33,9 @@ extra_params:
 
     diffusion_params:
         window_length: 30 # in second
-        vocoder_hz: 125
+        vocoder_hz: 147 # 125 for 24k
         semantic_hz: 25
+        latent_dim: 128 # 32 for 24k
         outpainting_overlap: 0.5 #[0, 1]
         diffusion_steps: 25
         schedule_slope: 2.5
@@ -47,7 +48,7 @@ extra_params:
         temperatures: [0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95]
 
     # Model Settings
-    sample_rate: 24000
+    sample_rate: 44100
     duration: 30 # 30|45|60|75|90|105|120
     semantic_temperature: 1.0
     sample_mode: "gumbel"
@@ -88,19 +89,21 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                     cache_dir: !ref <run_opts[cache_dir]>
         diffusion_modules:
             diffusion:
-                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/24k_v1/diffusion-step=870000-EMA.ckpt
+                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/44.1k_mono_v0/diffusion-step=380000-EMA.ckpt
                 initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
                     cache_dir: !ref <run_opts[cache_dir]>
                     sstk: True
+                    sample_rate: !ref <extra_params[sample_rate]>
             sampler:
                 hpath: null
                 initializer: !name:recipes.diffusion.models.diffusion_sampler.init_sampler
                     cache_dir: !ref <run_opts[cache_dir]>
                     params: !ref <extra_params[diffusion_params]>
             vocoder:
-                hpath: /mnt/bn/audio-diffusion/wtl/soundstream-step=1210000-val_sdr=11.2069-EMA.ckpt
+                hpath: /mnt/bn/audio-diffusion/wtl/vocoder/sstk/44.1k_mono_v0/soundstream-step=860000-val_sdr=15.8616-EMA.ckpt
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                     cache_dir: !ref <run_opts[cache_dir]>
+                    sample_rate: !ref <extra_params[sample_rate]>
                     adapt_hopper: True
         soundstorm_modules:
             soundstorm:

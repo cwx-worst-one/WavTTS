@@ -83,7 +83,7 @@ def init_vocoder(checkpoint_path, local_rank, cache_dir=None, sample_rate=24000,
                 vocoder_model = vocoder_model_pl.generator.eval().to(device)
         elif sample_rate == 44100:
             vocoder_model = VQGAN_KL_new(
-                n_channels=2,
+                n_channels=1,
                 latent_dim=128,
                 downsample_rates=[2, 3, 5, 10],
                 upsample_rates=[10, 5, 3, 2],

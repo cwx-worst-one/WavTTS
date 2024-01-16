@@ -54,25 +54,41 @@ def load_ema_checkpoint(checkpoint_path, model):
     model.load_state_dict(new_state_dict)
     return model
 
-def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, sstk=False):
+def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, sstk=False, sample_rate=24000):
     with local_zero_first():
         if cache_dir is not None:
             os.makedirs(cache_dir, exist_ok=True)
         device = torch.device(f"cuda:{local_rank}")
         local_path = download_checkpoint(checkpoint_path, cache_dir)
         if sstk:
-            diffusion_network = TNTDiffusionNetworkV2(
-                    input_dim=32,
-                    feature_dim=1024,
-                    context_dim=1,
-                    depth=16,
-                    segment_size=32,
-                    segment_stride=32,
-                    unet=True,
-                    dropout=0,
-                    semantic_cfg_prob=0.10,
-                    use_checkpoint=False
-                )
+            if sample_rate == 24000:
+                diffusion_network = TNTDiffusionNetworkV2(
+                        input_dim=32,
+                        feature_dim=1024,
+                        context_dim=1,
+                        depth=16,
+                        segment_size=32,
+                        segment_stride=32,
+                        unet=True,
+                        unet_stages=[4,8,4],
+                        dropout=0,
+                        semantic_cfg_prob=0.10,
+                        use_checkpoint=False
+                    )
+            elif sample_rate ==  44100:
+                diffusion_network = TNTDiffusionNetworkV2(
+                        input_dim=128,
+                        feature_dim=1024,
+                        context_dim=1,
+                        depth=20,
+                        segment_size=64,
+                        segment_stride=64,
+                        unet=True,
+                        unet_stages=[6,8,6],
+                        dropout=0,
+                        semantic_cfg_prob=0.10,
+                        use_checkpoint=False
+                    )
             diffusion_model = DiffusionModule.load_from_checkpoint(
                 checkpoint_path=local_path,
                 diffusion_model=diffusion_network
