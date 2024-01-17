@@ -135,8 +135,10 @@ class SemanticModule(BaseContinuousEmbedModule):
     def infer_target_duration(self, batch):
         if "duration" in batch:
             target_duration = batch["duration"]
-        else:
+        elif "target_audio" in batch:
             target_duration = batch["target_audio"].shape[-1] // self.extra_params.sample_rate
+        else:
+            target_duration = None
         return target_duration
 
     def prepare_mulan_inputs(self, batch, mulan_embedder):
