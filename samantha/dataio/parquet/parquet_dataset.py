@@ -12,14 +12,14 @@ from samantha.dataio.utils import resolve_data_urls
 logger = logging.getLogger(__name__)
 
 
-class YieldList:
+class YieldState:
     def __init__(self):
         pass
 
     def __call__(self, item):
-        # yield item list & dataset state
+        # now yield None to adapt cruise lite dataloader
         if item is not None:
-            return [item], (None, None)
+            return item, (None, None)
 
 
 class ParquetDataset(DataPipeline, FluidInterface):
@@ -70,10 +70,14 @@ class ParquetDataset(DataPipeline, FluidInterface):
         if item_transform is not None:
             self.map(item_transform)
 
-        yield_list = kwargs.get("yield_list", False)
-        if yield_list:
-            yield_list_func = YieldList()
-            self.map(yield_list_func)
+        batch_size = kwargs.get("batch_size_in_worker")
+        if batch_size is not None:
+            self.append(filters.batched(batchsize=batch_size, collation_fn=None))
+
+        yield_state = kwargs.get("yield_state", False)
+        if yield_state:
+            yield_state_func = YieldState()
+            self.map(yield_state_func)
 
     def load_state_dict(self, dataset_state):
         pass
