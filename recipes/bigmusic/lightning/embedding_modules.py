@@ -445,23 +445,32 @@ class IntensityEmbedder(nn.Module):
         self.embedder = nn.Embedding(self.intensity_vocab_size, embedding_dim)
         self.logged = 0
 
+    def quantize(self, batch_intensity_labels):
+        device = next(self.parameters()).device
+        intensity_ids = torch.clamp(batch_intensity_labels, min=0.0, max=1.0)
+        intensity_ids = torch.round(intensity_ids * self.multiplier).long().to(device)
+        return intensity_ids
+
+    def unquantize(self, batch_intensity_ids):
+        device = next(self.parameters()).device
+        intensity_labels = (batch_intensity_ids / self.multiplier).float().to(device)
+        return intensity_labels
+
     def embed(self, batch_intensity_labels, target_duration):
         device = next(self.parameters()).device
         if batch_intensity_labels.shape[1] > target_duration:
             # Just use the first segment
             batch_intensity_labels = batch_intensity_labels[..., :target_duration]
         elif batch_intensity_labels.shape[1] < target_duration:
-            # Just repeat first and last intensity
-            pad = target_duration - batch_intensity_labels.shape[1]
-            lpad = pad // 2
-            rpad = pad - lpad
+            # Just repeat the intensity curve
             tmp = torch.zeros(len(batch_intensity_labels), target_duration).to(device)
-            tmp[..., :lpad] = batch_intensity_labels[..., 0:1]
-            tmp[..., -rpad:] = batch_intensity_labels[..., -1:]
-            tmp[..., lpad:lpad + batch_intensity_labels.shape[1]] = batch_intensity_labels
+            st = 0
+            while st < target_duration:
+                length = min(batch_intensity_labels.shape[1], target_duration - st)
+                tmp[..., st:st + length] = batch_intensity_labels[..., :length]
+                st += length
             batch_intensity_labels = tmp
-        intensity_ids = torch.clamp(batch_intensity_labels, min=0.0, max=1.0)
-        intensity_ids = torch.round(intensity_ids * self.multiplier).long().to(device)
+        intensity_ids = self.quantize(batch_intensity_labels)
         if self.logged < 5:
             print(f"target_duration: {target_duration}, intensity_labels: {batch_intensity_labels.shape}, intensity_ids: {intensity_ids.shape}")
             print(f"intensity_labels: {batch_intensity_labels}, intensity_ids: {intensity_ids}")

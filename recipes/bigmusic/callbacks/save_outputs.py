@@ -8,11 +8,19 @@ import shutil
 from recipes.musiclm.inference.utils import slugify, save_wav, generate_hash, format_name, load_wav
 
 class SaveOutputsCallback(pl.Callback):
-    def __init__(self, beam_size=1, samples_to_save=1):
+    def __init__(
+        self,
+        beam_size=1,
+        samples_to_save=1,
+        save_style_audio=True,
+        save_mp3=False,
+    ):
         super().__init__()
         self.total_items = 0
         self.beam_size = beam_size
         self.samples_to_save = samples_to_save
+        self.save_style_audio = save_style_audio
+        self.save_mp3 = save_mp3
 
     def on_predict_batch_end(
         self,
@@ -34,6 +42,8 @@ class SaveOutputsCallback(pl.Callback):
             index_offset=self.total_items,
             beam_size=self.beam_size,
             samples_to_save=self.samples_to_save,
+            save_style_audio=self.save_style_audio,
+            save_mp3=self.save_mp3,
         )
         num_items = outputs['generated_audio_tensor'].shape[0] // self.beam_size
         self.total_items += num_items
@@ -64,6 +74,8 @@ def save_batch_outputs(
     index_offset=0,
     beam_size=1,
     samples_to_save=1,
+    save_style_audio=True,
+    save_mp3=False,
 ):
     conditions = batch['conditions']
     index = batch.get('index')
@@ -105,14 +117,14 @@ def save_batch_outputs(
             
         wav_fp = os.path.join(wav_dir, f"{file_name}.generated.wav")
         print(f"[Saving] {wav_fp}")
-        save_wav(wav.cpu().float(), wav_fp, sr=sample_rate)
-        if style_audio is not None:
+        save_wav(wav.cpu().float(), wav_fp, sr=sample_rate, save_mp3=save_mp3)
+        if save_style_audio and style_audio is not None:
             input_wav_fp = os.path.join(wav_dir, f"{file_name}.style_audio.wav")
-            save_wav(style_audio[ii].cpu().float(), input_wav_fp, sr=sample_rate)
+            save_wav(style_audio[ii].cpu().float(), input_wav_fp, sr=sample_rate, save_mp3=save_mp3)
 
         if vocal_audio is not None:
             input_vocals_fp = os.path.join(wav_dir, f"{file_name}.vocal_audio.wav")
-            save_wav(vocal_audio[ii].cpu().float(), input_vocals_fp, sr=sample_rate)
+            save_wav(vocal_audio[ii].cpu().float(), input_vocals_fp, sr=sample_rate, save_mp3=save_mp3)
 
         meta_fp = os.path.join(wav_dir, f"{file_name}.metadata.json")
         metadata = metadatas[ii] if metadatas is not None else {}

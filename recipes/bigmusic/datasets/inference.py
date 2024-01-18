@@ -160,7 +160,7 @@ def inference_dataset_from_prompt(
     )
 
 def load_and_normalize_wavs(wav_paths, additional_transforms=()):
-    audio_transforms = Compose([ToTensor(), SetAudioDimensions(), FastNormalizeAudio(), *additional_transforms])
+    audio_transforms = Compose([ToTensor(), SetAudioDimensions(), *additional_transforms])
     wavs = [audio_transforms(load_wav(wav_path)) for wav_path in wav_paths]
     return wavs
 

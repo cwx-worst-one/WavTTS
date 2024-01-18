@@ -28,6 +28,8 @@ import torch
 from tqdm.auto import tqdm
 import torch.nn as nn
 import torch.nn.functional as F
+from samantha.models.ctiga import gpt
+from samantha.utils.ctiga.inference_params import InferenceParams
 from samantha.utils.hparams import DotDict
 from recipes.musiclm.lightning.modules import MaskedCrossEntropy
 from recipes.musiclm.transforms.audio import to_energy
@@ -131,6 +133,24 @@ class SemanticModule(BaseContinuousEmbedModule):
         self.save_hyperparameters()
         self.log_counter = 0
         self.mulan_counter = 0
+
+        prediction_dict = {}
+        prediction_weights = {}
+        prediction_heads = extra_params.get("prediction_heads", {})
+        if isinstance(prediction_heads, list):  # backward compat
+            prediction_heads = {x: 1.0 for x in prediction_heads}
+        for pred_type, pred_wt in prediction_heads.items():
+            prediction_weights[pred_type] = pred_wt
+            if pred_type == "intensity":
+                prediction_dict[pred_type] = nn.Linear(
+                    hidden_size,
+                    self.input_embedders["intensity"].intensity_vocab_size,
+                    bias=False,
+                )
+            else:
+                raise ValueError(f"Unknown pred type: {pred_type}")
+        self.prediction_heads = nn.ModuleDict(prediction_dict)
+        self.prediction_weights = prediction_weights
 
     def infer_target_duration(self, batch):
         if "duration" in batch:
@@ -237,6 +257,13 @@ class SemanticModule(BaseContinuousEmbedModule):
 
     def prepare_intensity_inputs(self, batch, intensity_embedder):
         batch_size = self.infer_batch_size(batch)
+        if "intensity" not in batch:    # Predict intensity if it's not available
+            assert not self.training, "intensity should be provided in training!"
+            batch["intensity"] = self._predict_intensity(
+                batch,
+                intensity_embedder,
+                self.prediction_heads["intensity"],
+            )
         intensity_labels = batch["intensity"]
         assert batch_size == len(intensity_labels)
         target_duration = self.infer_target_duration(batch)
@@ -244,12 +271,15 @@ class SemanticModule(BaseContinuousEmbedModule):
         return embeds
 
     def prepare_inputs_embeddings(self, batch):
+        return self._prepare_inputs_embeddings(batch, self.input_embedders.items())
+
+    def _prepare_inputs_embeddings(self, batch, input_embedders):
         if self.log_counter < 1:
             print(batch)
             self.log_counter += 1
 
         inputs_embeds = []
-        for emb_type, embedder in self.input_embedders.items():
+        for emb_type, embedder in input_embedders:
             if emb_type == "mulan":
                 emb_inputs = self.prepare_mulan_inputs(batch, embedder)
             elif emb_type == "lyrics_tokens":
@@ -270,11 +300,131 @@ class SemanticModule(BaseContinuousEmbedModule):
 
         return torch.cat(inputs_embeds, dim=1)
 
+    def _shared_step(self, batch, update_mfu=False):
+        with self.profiler.profile(f"bigmusic.prepare_training_inputs{self.trainer.global_step}"):
+            input_ids, target_ids = self.prepare_training_inputs(batch)
+
+        if update_mfu:
+            if "inputs_embeds" in input_ids:
+                b, t, _ = input_ids["inputs_embeds"].shape
+                self.metric.update(
+                    num_tokens=b * t,
+                    stage=self.trainer.state.stage,
+                    model_kwargs={"batch_size": b, "seq_len": t}
+                )
+                if self.trainer.global_step % self.trainer.log_every_n_steps == 0:
+                    self.log_dict(
+                        self.metric.compute(self.trainer.global_step),
+                        prog_bar=True,
+                        sync_dist=True,
+                    )
+
+        with self.profiler.profile(f"bigmusic.forward.step{self.trainer.global_step}"):
+            model_output = self.model(**input_ids, output_hidden_states=True)
+        if isinstance(model_output, dict):
+            logits = model_output["logits"]
+            last_hidden_state = model_output['hidden_states'][-1]
+        elif isinstance(model_output, tuple):
+            logits, last_hidden_state = model_output
+        target_length = target_ids.size(1)
+        target_logits = logits[:, -target_length:, :]
+        loss = self.criterion(target_logits, target_ids)
+        accu = (target_logits.argmax(dim=-1) == target_ids).float().mean() * 100
+        # measure accuracy of first 10 tokens as a measurement for style
+        accu_seq_25 = (target_logits.argmax(dim=-1)[..., :25] == target_ids[..., :25]).float().mean() * 100
+        result_dict = {
+            'loss': loss.item(),
+            'accu': accu.item(),
+            'accu_seq_25': accu_seq_25.item()
+        }
+
+        for pred_type, pred_head in self.prediction_heads.items():
+            pred_wt = self.prediction_weights[pred_type]
+            if pred_type == "intensity":
+                # NOTE: we assume intensity is the last input
+                target_intensity = self.input_embedders["intensity"].quantize(batch["intensity"])
+                intensity_length = target_intensity.shape[1]
+                # Offset by one
+                st = last_hidden_state.shape[1] - target_length - intensity_length - 1
+                intensity_embed = last_hidden_state[:, st:st + intensity_length, :]
+                intensity_logits = pred_head(intensity_embed)
+                pred_loss = self.criterion(intensity_logits, target_intensity)
+                pred_accu = (intensity_logits.argmax(dim=-1) == target_intensity).float().mean() * 100
+                pred_dict = {
+                    "intensity_loss": pred_loss.item(),
+                    "intensity_accu": pred_accu.item(),
+                }
+            else:
+                raise ValueError(f"Unknown pred type: {pred_type}")
+            loss += pred_loss * pred_wt
+            result_dict.update(pred_dict)
+
+        return loss, result_dict
+
+    @torch.no_grad()
+    def _predict_intensity(
+        self,
+        batch,
+        intensity_embedder,
+        intensity_head,
+        tqdm_name="Intensity Prediction",
+    ):
+        target_duration = self.infer_target_duration(batch)
+        input_embedders = list(self.input_embedders.items())
+        assert (
+            input_embedders[-1][0] == "intensity"
+        ), f"intensity must be the last input embedder, got {input_embedders[-1][0]}"
+
+        inputs_embeds = self._prepare_inputs_embeddings(batch, input_embedders[:-1])
+        batch_size, seq_len, _ = inputs_embeds.size()
+        model_input = {"inputs_embeds": inputs_embeds}
+
+        output_tokens = None
+        if isinstance(self.model, gpt.GPTLMHeadModel):
+            gpt_max_seq_len = 4000 if target_duration < 2500 else 8000
+            inference_params = InferenceParams(
+                max_sequence_len=4000, max_batch_size=batch_size
+            )
+        else:
+            past_key_values = None
+        pbar = tqdm(range(target_duration))
+        previous_inputs_embeds = model_input["inputs_embeds"]
+        for i in pbar:
+            pbar.set_description(f"{tqdm_name} [0 - {target_duration}]")
+
+            if isinstance(self.model, gpt.GPTLMHeadModel):
+                model_output = self.model(
+                    **model_input,
+                    inference_params=inference_params,
+                    position_ids=None,
+                    last_token_only=False,
+                    output_hidden_states=True
+                )
+                last_hidden_state = model_output.hidden_states
+                inference_params.sequence_len_offset += model_input['inputs_embeds'].size(1)
+            else:
+                model_output = self.model(
+                    **model_input,
+                    past_key_values=past_key_values,
+                    use_cache=True,
+                )
+                past_key_values = model_output["past_key_values"]
+                last_hidden_state = model_output['hidden_states'][-1]
+
+            target_logits = intensity_head(last_hidden_state[:, -1:]) # only predict for last logit
+            predict_token = self.sample_logits(i, target_logits, 1.0, "top_p")
+            predict_token_emb = intensity_embedder.embedder(predict_token)
+            model_input = {"inputs_embeds": predict_token_emb}
+            previous_inputs_embeds = torch.cat([previous_inputs_embeds, predict_token_emb], dim=1)
+            output_tokens = torch.cat([output_tokens, predict_token], dim=1) if output_tokens is not None else predict_token
+        return intensity_embedder.unquantize(output_tokens)
 
     @torch.no_grad()
     def predict(self, batch, hp, beam=1, ref_samples=None):
         frame_rate = self.extra_params.semantic_frame_rate
-        duration = batch["duration"] if "duration" in batch else hp.duration
+        if "duration" not in batch:
+            batch["duration"] = hp.duration
+        duration = batch["duration"]
         num_tokens = duration * frame_rate
         temperature = hp.semantic_temperature
         sample_mode = hp.sample_mode

@@ -21,7 +21,8 @@ extra_params:
     semantic_type: bestrq
     pretrained_path: null # for loading state dicts
     input_embedders: ["mulan", "duration", "intensity"]
-    prediction_heads: []
+    prediction_heads:
+        intensity: 1.0
     # How to extract MuLan embedding
     mulan_crop: True
     mulan_average: True

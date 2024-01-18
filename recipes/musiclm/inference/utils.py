@@ -14,6 +14,7 @@ from hyperpyyaml import load_hyperpyyaml
 import torchaudio
 from samantha.utils.hparams import DotDict
 from torch.nn import functional as F
+import subprocess
 
 
 noises = None
@@ -155,10 +156,17 @@ def dump_wav(audio, sr=24000):
     return handle.read()
 
 
-def save_wav(audio, output_file, sr=24000):
+def save_wav(audio, output_file, sr=24000, save_mp3=False):
     if audio.dim() == 1:
         audio = audio.unsqueeze(0)
     torchaudio.save(output_file, audio, sr)
+    if save_mp3:
+        output_file_mp3 = output_file.replace(".wav", ".mp3")
+        subprocess.run(
+            f"ffmpeg -i {output_file} -ar {sr} -ac 1 -b:a 320k {output_file_mp3}",
+            shell=True,
+        )
+        os.remove(output_file)
 
 
 def load_wav(path, sr=24000):

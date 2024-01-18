@@ -11,6 +11,8 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 extra_params:
     beam_size: 8    # set to 1 if not using reranker
     samples_to_save: 1
+    save_style_audio: True
+    save_mp3: True
     prompt_path: "/mnt/bn/audio-diffusion/data/bigmusic_text_prompts/instrumental_prompts_20231030_subset150+duration.csv"
     inference_conditions: style_text,duration
     max_items: null
@@ -90,6 +92,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
         diffusion_modules:
             diffusion:
                 hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/44.1k_mono_v0/diffusion-step=380000-EMA.ckpt
+                #hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/24k_v1/diffusion-step=870000-EMA.ckpt
                 initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
                     cache_dir: !ref <run_opts[cache_dir]>
                     sstk: True
@@ -101,6 +104,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                     params: !ref <extra_params[diffusion_params]>
             vocoder:
                 hpath: /mnt/bn/audio-diffusion/wtl/vocoder/sstk/44.1k_mono_v0/soundstream-step=860000-val_sdr=15.8616-EMA.ckpt
+                #hpath: /mnt/bn/audio-diffusion/wtl/soundstream-step=1210000-val_sdr=11.2069-EMA.ckpt
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                     cache_dir: !ref <run_opts[cache_dir]>
                     sample_rate: !ref <extra_params[sample_rate]>
@@ -125,14 +129,16 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                 cache_dir: !ref <run_opts[cache_dir]>
 
 # separating out additional_callbacks so auto_eval can disable metrics
-additional_callbacks:
-    #- !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
-    - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
-    #- !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
+#additional_callbacks:
+#   - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
+#   - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
+#   - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
 callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
       beam_size: !ref <extra_params[beam_size]>
       samples_to_save: !ref <extra_params[samples_to_save]>
+      save_style_audio: !ref <extra_params[save_style_audio]>
+      save_mp3: !ref <extra_params[save_mp3]>
 
 trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>
@@ -143,4 +149,5 @@ trainer: !new:pytorch_lightning.Trainer
     enable_model_summary: True
     strategy: !ref <run_opts[strategy]>
     precision: !ref <run_opts[precision]>
-    callbacks: !apply:operator.add [!ref <additional_callbacks>, !ref <callbacks>]
+    #callbacks: !apply:operator.add [!ref <additional_callbacks>, !ref <callbacks>]
+    callbacks: !ref <callbacks>
