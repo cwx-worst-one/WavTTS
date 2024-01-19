@@ -48,6 +48,26 @@ class MCCMetadataTextTransform():
             return [self._call_once(i) for i in item]
         return self._call_once(item)
 
+class SSTKMetadataTextTransform():
+    def _call_once(self, item):
+        metadata = item.get('metadata', {})
+        text_fields = []
+        for key in ["title", "description", "keywords", "genres", "instruments"]:
+            v = metadata.get(key)
+            if v is None or v == "\\N":
+                continue
+            text_fields.append(v)
+        random.shuffle(text_fields)
+        metadata_string = text_fields[0] if len(text_fields) > 0 else ""
+        return {
+            **item, 'style_text': metadata_string
+        }
+
+    def __call__(self, item):
+        if isinstance(item, list): # perform batch transform
+            return [self._call_once(i) for i in item]
+        return self._call_once(item)
+
 
 MCC_MOOD = ['Angry', 'Chill', 'Cute', 'Dynamic', 'Excited', 'Happy', 'Lonely', 'Romantic', 'Sorrow', 'Sweet', 'Tense', 'nan']
 MCC_GENRE = ['Blues', 'Country', 'EDM', 'Jazz', 'Metal', 'New Age', 'Pop', 'R&B', 'Reggae', 'Rock', 'Trap Rap', 'nan']

@@ -10,7 +10,7 @@ import numpy as np
 import json
 from typing import Tuple
 from string import punctuation, whitespace
-import traceback
+from copy import deepcopy
 import re
 from samantha.transforms.audio import (
     NormalizeAudioToFloat32,
@@ -58,12 +58,13 @@ class LyricsSegmentTransforms(TransformBase):
         self.min_segment_confidence = min_segment_confidence
 
         if self.audio_format == 'npy':
-            self.read_mp3 = lambda x: x
+            read_mp3 = lambda x: x
         else:
-            self.read_mp3 = ReadMP3BytesIO(self.sample_rate, self.audio_format, fast=(self.audio_format=='mp3'))
+            read_mp3 = ReadMP3BytesIO(self.sample_rate, self.audio_format, fast=(self.audio_format=='mp3'))
+
         self.base_transform = Compose(
             [
-                self.read_mp3,
+                read_mp3,
                 ToTensor(),
                 SetAudioDimensions(), 
                 NormalizeAudioToFloat32(),
@@ -256,7 +257,7 @@ class Segment():
             confidence = float(json_dict['confidence'])
         else:
             confidence = 1
-        words = json_dict['words']
+        words = deepcopy(json_dict['words'])
         return Segment(start, end, text, duration, confidence, words)
 
     @classmethod
@@ -275,7 +276,7 @@ class Segment():
             confidence = float(json_dict['confidence'])
         else:
             confidence = 1
-        words = [json_dict] # for words, we set it to itself
+        words = deepcopy([json_dict]) # for words, we set it to itself
         return Segment(start, end, text, duration, confidence, words)
 
     def has_valid_time(self):
@@ -300,7 +301,7 @@ def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
     })
 
     start_idx = random.randint(0, 2) if shuffle_start else 0
-    if shuffle_lengths and random.randint(0, 3) > 0:
+    if shuffle_lengths and random.randint(0, 3) > 0 and not fixed_duration:
         target_duration_length = random.randint(int(min_duration), int(max_duration))
     else:
         target_duration_length = max_duration
@@ -345,7 +346,13 @@ def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
                 start = current_segment.start + i * max_duration
                 end = current_segment.start + (i+1) * max_duration
                 clipped_segment, cached_index = _words_to_segment(current_diction['words'], start, end, cached_index)
-                if clipped_segment and clipped_segment.duration <= max_duration and clipped_segment.duration >= min_duration:
+                if clipped_segment is None: 
+                    continue
+                if fixed_duration and clipped_segment.duration <= max_duration:
+                    clipped_segment.end = clipped_segment.start + max_duration
+                    clipped_segment.duration = max_duration
+                    segments.append(clipped_segment)
+                elif clipped_segment.duration <= max_duration and clipped_segment.duration >= min_duration:
                     segments.append(clipped_segment)
 
             # reset everything
@@ -391,12 +398,12 @@ def _words_to_segment(words, start_time, end_time, start_index=0):
             pass
 
         if segment:
-            if word_segment.has_valid_time():
+            if word_segment.has_valid_time() and word_segment.start >= start_time:
                 segment.end = word_segment.end
                 segment.duration = segment.end - segment.start
             segment.text += word_segment.text # need to append space 
             segment.words += word_segment.words
-        elif segment is None and word_segment.has_valid_time():
+        elif segment is None and word_segment.has_valid_time() and word_segment.start >= start_time:
             segment = word_segment
     return segment, end_index-1
 
@@ -530,6 +537,7 @@ def is_invalid_song(metadata, lyrics, confidence_threshold):
 
 
 def is_valid_song_name(metadata):
+    if 'meta_song_title' not in metadata: return True
     song_name = metadata['meta_song_title']
     album_name = metadata['meta_album_title']
     if not album_name: album_name = ''

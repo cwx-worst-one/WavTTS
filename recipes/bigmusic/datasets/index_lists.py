@@ -113,6 +113,10 @@ INDEX = {
             "en": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/douyin_music/dialect=en/url2index.txt",
             "zh": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/douyin_music/dialect=zh/url2index.txt",
         },
+        "MCCVocalB_2M": 1229, # 1229 - MCC GroupB + MSS
+        "CD_Baby": 1199, # 187 - 2M full dataset
+        "SodaTest": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/kaiping/2023-09-20/val_url2index.txt",
+        "MCC60M_VALID_GROUPA": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/groupA-genrebalanced-val/groupA-genrebalanced-val-url2idx.txt", # 480 songs - 24 songs x 20 genres
     },
     "US": {
         "MCCVocal-Zh-A": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc60m_chinese/2023-09-24_repartition/type=A/lang=chinese/url2index.txt",
@@ -207,6 +211,8 @@ INDEX = {
         "MCCVocalB_1M": vocalB_dataset_study(1000000),
         "MCCVocalB_2M": vocalB_dataset_study(2000000),
         "MCCVocalA_1M_Parquet": 93,
+        "SSTK_Vocal": 110,
+        "CD_Baby": 115, # 115 = 250k subset
         "MCCInstrumental": [
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_merge/nonvocal-A-alternative-rock+indie-pop+sertanejo+trap-rap.txt",
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_merge/nonvocal-A-blues+childhood+country+devotional+k-pop+soundtrack+trance+world-music.txt",

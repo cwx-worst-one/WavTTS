@@ -6,8 +6,8 @@ import random
 from typing import List
 
 def rewrite_metadata(metadata, type="Vocal"):
-    mood = metadata.get('final_mood')
-    genre = metadata.get('final_genre')
+    mood = metadata.get('final_mood', metadata.get('merge_mood'))
+    genre = metadata.get('final_genre', metadata.get('merge_genre'))
     gender = metadata.get('merge_aed')
     text = ""
     if type == "Vocal":

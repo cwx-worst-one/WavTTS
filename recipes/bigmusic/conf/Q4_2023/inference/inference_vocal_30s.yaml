@@ -36,6 +36,7 @@ extra_params:
         fine_stride: 3
         coarse_temperature: 0.9
         fine_temperature: 0.8
+        ar_sample_mode: gumbel
     diffusion_params:
         num_chunks: 1
         diffusion_steps: 25

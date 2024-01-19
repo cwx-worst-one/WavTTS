@@ -5,9 +5,8 @@ import webdataset as wds
 import pytorch_lightning as pl
 from recipes.bigmusic.datasets.transforms.lyrics import (
     LyricsTokenTransform, 
-    VocalChromaTransform, 
     MCCMetadataTextTransform, 
-    StyleTextT5Transform, 
+    SSTKMetadataTextTransform,
     RandomConditionsTransform,
     AddConditionsTransform,
     RenameAudioKeyTransform,
@@ -24,7 +23,6 @@ from recipes.musiclm.datamodules.webdataset import return_self
 from torch.utils.data import default_collate
 from torch.utils.data._utils.collate import collate, collate_tensor_fn, default_collate_fn_map
 from recipes.musiclm.datasets.mcc import WrappedMCC40MDataset
-from recipes.datasets.mcc.mix import MCCInstrumentalDataset
 from samantha.dataio.batching import BucketBatcher
 from recipes.bigmusic.datasets.index_lists import INDEX
 from samantha.utils.hdfs_tools import hdfs_open, hdfs_loadtxt
@@ -128,7 +126,7 @@ class LyricsDataModule(pl.LightningDataModule):
         pin_memory: bool = True,
         dataset_types: str = 'mcc60m_vocal_style_text',
         dataset_weights = None,
-        valid_dataset_type: str = 'mcc60m_groupA',
+        valid_dataset_type: str = 'val_mcc60m_groupA',
     ):
         # convert to list of durations
         sample_duration = sample_duration if isinstance(sample_duration, (list, tuple)) else [sample_duration]
@@ -142,7 +140,11 @@ class LyricsDataModule(pl.LightningDataModule):
             dataset_config = DATASET_CONFIGS[dataset_type]
             init_fn = dataset_config['init_fn']
             dataset = init_fn(
-                sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, 
+                sample_rate=sample_rate, 
+                sample_duration=sample_duration, 
+                batch_size=batch_size, 
+                shuffle_buffer_size=shuffle_buffer_size, 
+                lyrics_max_seq_len=lyrics_max_seq_len, 
                 **dataset_config['extra_args']
             )
             datasets.append(dataset)
@@ -283,13 +285,13 @@ class DefaultDatasets():
             )
 
         @staticmethod
-        def vocalA_parquet_dataset(sample_rate, sample_duration, index_list=INDEX["US"]["MCCVocalA_1M_Parquet"], **kwargs):
+        def vocal_parquet_dataset(sample_rate, sample_duration, index_list=INDEX["US"]["MCCVocalA_1M_Parquet"], audio_format='npy', **kwargs):
             return LyricsDataset(
                 url2index=index_list,
                 sample_rate=sample_rate,
                 sample_duration=sample_duration,
                 audio_keys={ 'style_audio': 'wav', 'target_audio': 'wav'},
-                audio_format='npy',
+                audio_format=audio_format,
                 **kwargs
             )
         
@@ -415,7 +417,7 @@ class DefaultDatasets():
             # index path
             index_list,
             # transform params
-            enable_punctuation=False, style_conditions="style_tag,lyrics_tokens", infer_weights=False,
+            enable_punctuation=True, style_conditions="style_tag,lyrics_tokens", infer_weights=False,
             min_song_confidence=0.8, min_segment_confidence=0.8
         ):
             if isinstance(style_conditions, list): # multiple style conditions - for mixed style training. In that case, use random conditioning
@@ -428,7 +430,7 @@ class DefaultDatasets():
             )
             ds_batched = transform_dataset(
                 dataset=ds,
-                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len, enable_punctuation=enable_punctuation), SemanticTokenLengthTransform(), MCCMetadataTextTransform("Vocal")],
+                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len, enable_punctuation=enable_punctuation), SemanticTokenLengthTransform(sample_rate=sample_rate), MCCMetadataTextTransform("Vocal")],
                 batch_transforms=batch_transforms,
                 batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                 shuffle_buffer_size=shuffle_buffer_size
@@ -436,7 +438,7 @@ class DefaultDatasets():
             return ds_batched
         
         @staticmethod
-        def batched_vocalA_parquet_dataset(
+        def batched_vocal_parquet_dataset(
             # dataset params
             sample_rate, sample_duration,
             # batching params
@@ -444,26 +446,34 @@ class DefaultDatasets():
             # index path
             index_list,
             # transform params
-            enable_punctuation=False, style_conditions="style_tag,lyrics_tokens",
-            min_song_confidence=0.8, min_segment_confidence=0.8
+            enable_punctuation=True, style_conditions="style_tag,lyrics_tokens",
+            min_song_confidence=0.8, min_segment_confidence=0.8,
+            audio_format='npy',
+            metadata_transform_type='mcc'
+            
         ):
             if isinstance(style_conditions, list): # multiple style conditions - for mixed style training. In that case, use random conditioning
                 batch_transforms = [RandomConditionsTransform(style_conditions)]
             else:
                 batch_transforms = [AddConditionsTransform(style_conditions)]
-            ds = DefaultDatasets.Basic.vocalA_parquet_dataset(
+            ds = DefaultDatasets.Basic.vocal_parquet_dataset(
                 sample_rate, sample_duration=sample_duration, index_list=index_list,
-                min_song_confidence=min_song_confidence, min_segment_confidence=min_segment_confidence
+                min_song_confidence=min_song_confidence, min_segment_confidence=min_segment_confidence,
+                audio_format=audio_format
             )
+            if metadata_transform_type == "sstk":
+                metadata_tfm = SSTKMetadataTextTransform()
+            elif metadata_transform_type == "mcc":
+                metadata_tfm = MCCMetadataTextTransform("Vocal")
             ds_batched = transform_dataset(
                 dataset=ds,
-                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len, enable_punctuation=enable_punctuation), SemanticTokenLengthTransform(), MCCMetadataTextTransform("Vocal")],
+                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len, enable_punctuation=enable_punctuation), SemanticTokenLengthTransform(sample_rate=sample_rate), metadata_tfm],
                 batch_transforms=batch_transforms,
                 batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                 shuffle_buffer_size=shuffle_buffer_size
             )
             return ds_batched
-        
+
         @staticmethod
         def default_batched_instrumental_dataset(
             # dataset params
@@ -477,7 +487,7 @@ class DefaultDatasets():
         ):
             instrumental_ds_batched = transform_dataset(
                 dataset=DefaultDatasets.Basic.mcc40m_lossless_dataset(sample_rate, sample_duration, index_list),
-                segment_transforms=[RenameAudioKeyTransform(), SemanticTokenLengthTransform(), MCCMetadataTextTransform("Instrumental")],
+                segment_transforms=[RenameAudioKeyTransform(), SemanticTokenLengthTransform(sample_rate=sample_rate), MCCMetadataTextTransform("Instrumental")],
                 batch_transforms=[AddConditionsTransform(style_conditions)],
                 batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                 shuffle_buffer_size=shuffle_buffer_size
@@ -495,7 +505,7 @@ class DefaultDatasets():
         ):
             speech_ds_batched = transform_dataset(
                 dataset=DefaultDatasets.Basic.speech_dataset(sample_rate=sample_rate, sample_duration=sample_duration),
-                segment_transforms=[RenameAudioKeyTransform(), SemanticTokenLengthTransform(), LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len, enable_punctuation=enable_punctuation), MCCMetadataTextTransform("Speech")],
+                segment_transforms=[RenameAudioKeyTransform(), SemanticTokenLengthTransform(sample_rate=sample_rate), LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len, enable_punctuation=enable_punctuation), MCCMetadataTextTransform("Speech")],
                 batch_transforms=[AddConditionsTransform(style_conditions)],
                 batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                 shuffle_buffer_size=shuffle_buffer_size
@@ -503,10 +513,10 @@ class DefaultDatasets():
             return speech_ds_batched
         
         @staticmethod
-        def default_validation_dataset(sample_rate, sample_duration, batch_size, lyrics_max_seq_len, url2index, style_conditions="style_text,lyrics_tokens", enable_punctuation=False):
+        def default_validation_dataset(sample_rate, sample_duration, batch_size, lyrics_max_seq_len, url2index, style_conditions="style_text,lyrics_tokens", enable_punctuation=True):
             return transform_dataset(
                 dataset=DefaultDatasets.Basic.mcc_validation_dataset(sample_rate, sample_duration, url2index=url2index),
-                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len, enable_punctuation=enable_punctuation), SemanticTokenLengthTransform(), MCCMetadataTextTransform("Vocal")],
+                segment_transforms=[LyricsTokenTransform.init_espeak_tokenizer(lyrics_max_seq_len, enable_punctuation=enable_punctuation), SemanticTokenLengthTransform(sample_rate=sample_rate), MCCMetadataTextTransform("Vocal")],
                 batch_transforms=[AddConditionsTransform(style_conditions)],
                 batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                 shuffle_buffer_size=None
@@ -539,7 +549,17 @@ class DefaultDatasets():
             )
 
         @staticmethod
-        def mcc9m(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, enable_punctuation=False, style_conditions="style_tag,lyrics_tokens"):
+        def unfiltered_batched_validation_dataset(sample_rate, sample_duration, batch_size, lyrics_max_seq_len, url2index):
+            return transform_dataset(
+                dataset=DefaultDatasets.Basic.mcc_validation_dataset(sample_rate, sample_duration, url2index=url2index),
+                segment_transforms=[],
+                batch_transforms=[],
+                batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
+                shuffle_buffer_size=None
+            )
+        
+        @staticmethod
+        def mcc9m(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, enable_punctuation=True, style_conditions="style_tag,lyrics_tokens"):
             index_list = INDEX["US"]["MCC1M_EN_GT"]
             return DefaultDatasets.Batched.default_batched_vocal_dataset(
                 sample_rate, sample_duration, batch_size, shuffle_buffer_size, 
@@ -552,7 +572,6 @@ DATASET_CONFIGS = {
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalA"] + INDEX["US"]["MCCVocalB"],
             "style_conditions": "style_text,lyrics_tokens",
-            "enable_punctuation": True,
             "infer_weights": True
         }
     },
@@ -561,7 +580,6 @@ DATASET_CONFIGS = {
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalB"],
             "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
-            "enable_punctuation": True,
             "infer_weights": True
         }
     },
@@ -570,7 +588,6 @@ DATASET_CONFIGS = {
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalB"],
             "style_conditions": ["style_tag,lyrics_tokens","style_audio,lyrics_tokens"],
-            "enable_punctuation": True,
             "infer_weights": True
         }
     },
@@ -579,7 +596,6 @@ DATASET_CONFIGS = {
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalB"],
             "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
-            "enable_punctuation": True,
             "infer_weights": True,
             "min_song_confidence": 0.8,
             "min_segment_confidence": 0.75 # lowering segment confidence, for longer segments
@@ -590,18 +606,45 @@ DATASET_CONFIGS = {
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalA"],
             "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
-            "enable_punctuation": True,
             "infer_weights": True
         }
     },
     "mcc60m_vocalA_parquet_style_mixed_text_audio": {
-        "init_fn": DefaultDatasets.Batched.batched_vocalA_parquet_dataset,
+        "init_fn": DefaultDatasets.Batched.batched_vocal_parquet_dataset,
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalA_1M_Parquet"],
             "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
-            "enable_punctuation": True,
             "min_song_confidence": 0.8,
             "min_segment_confidence": 0.75 # lowering segment confidence, for longer segments
+        }
+    },
+    "cd_baby": {
+        "init_fn": DefaultDatasets.Batched.batched_vocal_parquet_dataset,
+        "extra_args": {
+            "index_list": INDEX["US"]["CD_Baby"],
+            "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
+            "min_song_confidence": 0.7, # already filtered
+            "min_segment_confidence": 0.75 # lowering segment confidence, for longer segments
+        }
+    },
+    "cd_baby_cn": {
+        "init_fn": DefaultDatasets.Batched.batched_vocal_parquet_dataset,
+        "extra_args": {
+            "index_list": INDEX["CN"]["CD_Baby"],
+            "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
+            "min_song_confidence": 0.7, # already filtered
+            "min_segment_confidence": 0.75 # lowering segment confidence, for longer segments
+        }
+    },
+    "sstk_vocal": {
+        "init_fn": DefaultDatasets.Batched.batched_vocal_parquet_dataset,
+        "extra_args": {
+            "index_list": INDEX["US"]["SSTK_Vocal"],
+            "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
+            "min_song_confidence": 0.75,
+            "min_segment_confidence": 0.75, # lowering segment confidence, for longer segments
+            "audio_format": "wav",
+            "metadata_transform_type": "sstk"
         }
     },
     "mcc60m_vocalA_style_mixed_text_audio_2m": {
@@ -609,7 +652,6 @@ DATASET_CONFIGS = {
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalA"],
             "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
-            "enable_punctuation": True,
             "infer_weights": True,
             "min_song_confidence": 0.8,
             "min_segment_confidence": 0.5 # lowering segment confidence, for longer segments
@@ -620,8 +662,14 @@ DATASET_CONFIGS = {
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalB_2M"],
             "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
-            "enable_punctuation": True,
             "infer_weights": False # already balanced
+        }
+    },
+    "mcc60m_2M_vocal_mixed_text_audio_CN": {
+        "init_fn": DefaultDatasets.Batched.batched_vocal_parquet_dataset,
+        "extra_args": {
+            "index_list": INDEX["CN"]["MCCVocalB_2M"],
+            "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
         }
     },
     "mcc60m_1M_vocal_mixed_text_audio": {
@@ -629,7 +677,6 @@ DATASET_CONFIGS = {
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalB_1M"],
             "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
-            "enable_punctuation": True,
             "infer_weights": False # already balanced
         }
     },
@@ -638,7 +685,6 @@ DATASET_CONFIGS = {
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalB_500k"],
             "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
-            "enable_punctuation": True,
             "infer_weights": False # already balanced
         }
     },
@@ -647,7 +693,6 @@ DATASET_CONFIGS = {
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalB_300k"],
             "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
-            "enable_punctuation": True,
             "infer_weights": False # already balanced
         }
     },
@@ -656,7 +701,6 @@ DATASET_CONFIGS = {
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalB_200k"],
             "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
-            "enable_punctuation": True,
             "infer_weights": False # already balanced
         }
     },
@@ -665,7 +709,6 @@ DATASET_CONFIGS = {
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalB_150k"],
             "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
-            "enable_punctuation": True,
             "infer_weights": False # already balanced
         }
     },
@@ -674,7 +717,6 @@ DATASET_CONFIGS = {
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalB_100k"],
             "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
-            "enable_punctuation": True,
             "infer_weights": False # already balanced
         }
     },
@@ -683,7 +725,6 @@ DATASET_CONFIGS = {
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalB_50k"],
             "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
-            "enable_punctuation": True,
             "infer_weights": False # already balanced
         }
     },
@@ -692,7 +733,6 @@ DATASET_CONFIGS = {
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalB_25k"],
             "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
-            "enable_punctuation": True,
             "infer_weights": False # already balanced
         }
     },
@@ -701,7 +741,6 @@ DATASET_CONFIGS = {
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalB_10k"],
             "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
-            "enable_punctuation": True,
             "infer_weights": False # already balanced
         }
     },
@@ -736,18 +775,37 @@ DATASET_CONFIGS = {
     "mcc60m_vocal_unfiltered": {
         "init_fn": DefaultDatasets.Batched.unfiltered_batched_vocal_dataset,
         "extra_args": {
-            "index_list": INDEX["US"]["MCCVocalA"] + INDEX["US"]["MCCVocalB"],
+            "index_list": INDEX["US"]["MCCVocalB"],
             "min_song_confidence": 0.0,
             "min_segment_confidence": 0.0
         }
     },
+    "val_vocal_unfiltered": {
+        "init_fn": DefaultDatasets.Batched.unfiltered_batched_validation_dataset,
+        "extra_args": {
+            "url2index": INDEX["US"]["MCC60M_VALID_GROUPA"],
+        }
+    },
     # Validation datasets
-    "mcc60m_groupA": {
+    "val_mcc60m_groupA": {
         "init_fn": DefaultDatasets.Batched.default_validation_dataset,
         "extra_args": {
             "url2index": INDEX["US"]["MCC60M_VALID_GROUPA"],
             "style_conditions": "style_text,lyrics_tokens",
-            "enable_punctuation": True
+        }
+    },
+    "val_mcc60m_groupA_cn": {
+        "init_fn": DefaultDatasets.Batched.default_validation_dataset,
+        "extra_args": {
+            "url2index": INDEX["CN"]["MCC60M_VALID_GROUPA"],
+            "style_conditions": "style_text,lyrics_tokens",
+        }
+    },
+    "val_cn_soda": {
+        "init_fn": DefaultDatasets.Batched.default_validation_dataset,
+        "extra_args": {
+            "url2index": INDEX["CN"]["SodaTest"],
+            "style_conditions": "style_tag,lyrics_tokens",
         }
     },
 }

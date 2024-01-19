@@ -5,3 +5,4 @@ fsspec==2023.6.0
 ruamel.yaml==0.17.28
 pyloudnorm
 phonemizer
+thop

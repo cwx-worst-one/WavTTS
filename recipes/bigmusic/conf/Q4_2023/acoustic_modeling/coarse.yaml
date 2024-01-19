@@ -4,7 +4,7 @@
 ##########                       BASIC CONFIGURATION                  ##########
 ################################################################################
 
-ckpt_path: 'last'
+ckpt_path: null
 
 seed: 1995
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
@@ -12,51 +12,45 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 
 extra_params:
     sample_rate: 24000
-    duration: [15, 20, 25, 30]
-    lyrics_codebook_size: 400
-    lyrics_max_seq_len: 400
+    duration: 10
     semantic_codebook_size: 32_768
     semantic_frame_rate: 25
-    mulan_embed_dim: 512
+    soundstream_codebook_size: 1024
+    soundstream_frame_rate: 50
     hidden_size: 1536
-    dataset_types: mcc60m_vocal_style_text
-    valid_dataset_type: val_mcc60m_groupA
+    num_coarse: 4
     semantic_type: bestrq
-    input_embedders: ["mulan", "lyrics_tokens"]
-    pretrained_path: null # for loading state dicts
+    dataset_types: mcc60m_vocal_unfiltered
+    valid_dataset_type: val_vocal_unfiltered
 
 # running parameters
 run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
-    # hdfs_log_dir: "hdfs:///home/byte_speech_sv/andrew.shaw/logs"
-    log_name: semantic_model_dataset_v4_baseline
-    version: v0
+    log_name: coarse_vocal
+    version: coarse_umm_en_v0
     cache_dir: .module_cache/musiclm
     precision: "16"
     num_workers: 8
     accelerator: auto
     max_steps: 200000
-    batch_size: 20
-    learning_rate: 4.0e-4
-    warmup_steps: 2000
-    cycle_steps: 80000
+    batch_size: 10
+    learning_rate: 3.0e-4
+    warmup_steps: 10000
+    cycle_steps: 50000
     weight_decay: 0.1
     shuffle_buffer: 0
     gradient_clip_val: 1.0
-    val_check_interval: 4000
-    save_interval: 8000
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
-
 pl_datamodule: !apply:recipes.bigmusic.datasets.lyrics.LyricsDataModule.from_dataset_type
     batch_size: !ref <run_opts[batch_size]>
     sample_rate: !ref <extra_params[sample_rate]>
     sample_duration: !ref <extra_params[duration]>
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
-    lyrics_max_seq_len: !ref <extra_params[lyrics_max_seq_len]>
+    lyrics_max_seq_len: 0
     num_workers: !ref <run_opts[num_workers]>
     pin_memory: True
     dataset_types: !ref <extra_params[dataset_types]>
@@ -67,7 +61,7 @@ model_config: !new:transformers.GPT2Config
     max_position_embeddings: 0
     use_cache: False
     n_positions: 0  # No absolute position embedding
-    num_logits: !ref <extra_params[semantic_codebook_size]> + 2 # +2 for EOS
+    num_logits: !ref <extra_params[soundstream_codebook_size]> * <extra_params[num_coarse]> + 2 # +2 for EOS
     n_embd: !ref <extra_params[hidden_size]>
     n_layer: 24
     n_head: 12
@@ -110,7 +104,7 @@ scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupC
     cycle_steps: !ref <run_opts[cycle_steps]>
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
-pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
+pl_module: !new:recipes.bigmusic.lightning.acoustic_modules.CoarseModule
     checkpointing: False
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
@@ -118,13 +112,12 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
     criterion_cls: !name:recipes.musiclm.lightning.modules.MaskedCrossEntropy
     extra_params: !ref <extra_params>
     required_modules:
-        mulan:
-            hpath: hdfs:///home/byte_speech_sv/jingsong.gao/mulan_ckpt/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt # mulan 110
-            initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
-                cache_dir: !ref <run_opts[cache_dir]>
-                version: "g4"
+        soundstream:
+            - hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
+            - !name:recipes.musiclm.requires.model_initializer.init_soundstream
+              cache_dir: !ref <run_opts[cache_dir]>
         bestrq:
-            hpath: hdfs:///home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
+            hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
             initializer: !name:recipes.umm.requires.model_initializer.init_stage3
                 cache_dir: !ref <run_opts[cache_dir]>
 
@@ -143,50 +136,17 @@ logger:
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
-      save_top_k: 3
-      save_last: False
+      save_top_k: 10
       monitor: val_accu_0
       mode: max
-      filename: "{step:06d}-{tr_loss:.4f}-{val_accu_0:.2f}"
-    - !new:pytorch_lightning.callbacks.ModelCheckpoint
-      save_top_k: 0
       save_last: True
-      monitor: step
-      every_n_train_steps: 1000
-      mode: max
-    - !new:pytorch_lightning.callbacks.ModelCheckpoint
-      monitor: step
-      save_last: False
-      save_top_k: 10
-      every_n_train_steps: !ref <run_opts[save_interval]>
-      mode: max
-      filename: "{step:06d}-{tr_loss:.4f}-{val_loss_0:.4f}"
-    # - !new:samantha.callbacks.HDFSModelCheckpoint
-    #   hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
-    #   save_top_k: 3
-    #   save_last: False
-    #   monitor: val_accu_0
-    #   mode: max
-    #   filename: "{step:06d}-{tr_loss:.4f}-{val_accu_0:.2f}"
-    # - !new:samantha.callbacks.HDFSModelCheckpoint
-    #   hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
-    #   monitor: step
-    #   save_top_k: 10
-    #   save_last: False
-    #   every_n_train_steps: 8000
-    #   mode: max
-    #   filename: "{step:06d}-{tr_loss:.4f}-{val_loss_0:.4f}"
+      filename: "{step:06d}-{val_accu_0:.2f}"
+    # - !new:pytorch_lightning.callbacks.LearningRateMonitor
+    #   logging_interval: 'step'
+    # - !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
 
 plugins:
     - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
-
-# profiler: !new:pytorch_lightning.profilers.PyTorchProfiler
-#     schedule: !apply:torch.profiler.schedule
-#         wait: 0
-#         warmup: 50
-#         active: 10
-#         repeat: 1
-#         skip_first: 100
 
 trainer: !new:pytorch_lightning.Trainer
     strategy: "ddp_find_unused_parameters_false"
@@ -202,9 +162,11 @@ trainer: !new:pytorch_lightning.Trainer
     precision: !ref <run_opts[precision]>
     accumulate_grad_batches: 1
     gradient_clip_val: !ref <run_opts[gradient_clip_val]>
-    val_check_interval: !ref <run_opts[val_check_interval]>
+    val_check_interval: 5000
     check_val_every_n_epoch: null
-    num_sanity_val_steps: 0  # skip validation sanity checks so we don't run into hdfs file close errors
+    num_sanity_val_steps: 0
     callbacks: !ref <callbacks>
     plugins: !ref <plugins>
-    # profiler: !ref <profiler>
+
+
+# mlx worker launch --type a100-80g -- python3 -m samantha.main fit --config recipes/bigmusic/conf/acoustic_modeling/fine_flash_llama_karaoke_and_playlist.yaml --ckpt_path /mnt/bn/audio-diffusion/ckpts/musiclm/fine_flash_llama/karaoke_and_playlist/checkpoints/last.ckpt

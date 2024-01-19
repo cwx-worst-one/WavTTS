@@ -152,7 +152,6 @@ class GTInferenceModule(pl.LightningModule):
             self.encoding_fn = get_bestrq_umm_tokens
 
         self.load_required_modules(required_modules)
-        self.wer = []
 
     def load_required_modules(self, required_modules):
         for name, item in required_modules.items():

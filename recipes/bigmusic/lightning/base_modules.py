@@ -11,8 +11,10 @@ from samantha.utils.ctiga.inference_params import InferenceParams
 from tqdm.auto import tqdm
 from functools import partial
 
+from recipes.musiclm.utils.dist import local_zero_first
 from samantha.utils.hparams import DotDict
 from recipes.musiclm.inference.utils import sample
+from recipes.diffusion.utils.utils import download_checkpoint
 from recipes.bigmusic.lightning.embedding_modules import TokenEmbedder, BaseEmbedder
 from samantha.utils.model_metric import ModelMetric
 from collections import defaultdict
@@ -60,6 +62,8 @@ class BaseModule(pl.LightningModule):
 
     def load_from_pretrained(self, pretrained_path=None):
         print('Loading pre-trained model from checkpoint', pretrained_path)
+        with local_zero_first():
+            pretrained_path = download_checkpoint(pretrained_path, cache_dir=self.extra_params.get('cache_dir', '.pretrain_cache'))
         state_dict = torch.load(
             pretrained_path, map_location=torch.device("cpu")
         )['state_dict']
@@ -424,7 +428,13 @@ class BaseContinuousEmbedModule(BaseModule):
             else:
                 model_input = { "inputs_embeds": torch.cat([input_slice, sos_embeds, prefix_slice], dim=1) }
 
-            past_key_values = None
+            if isinstance(self.model, gpt.GPTLMHeadModel):
+                gpt_max_seq_len = 8000
+                inference_params = InferenceParams(
+                    max_sequence_len=gpt_max_seq_len, max_batch_size=batch_size
+                )
+            else:
+                past_key_values = None
             num_tokens = output_end - prefix_end
             pbar = tqdm(range(num_tokens))
             for i in pbar:
@@ -432,20 +442,32 @@ class BaseContinuousEmbedModule(BaseModule):
                     f"{tqdm_name} [{output_beg} - {output_end}] [{input_beg} - {input_end}]"
                 )
 
-                # Get predictions
-                model_output = self.model(
-                    **model_input, past_key_values=past_key_values, use_cache=True
-                )
-                logits = model_output["logits"]
-                logits = logits[:, -1:, :] # only predicting on last logit.
+                if isinstance(self.model, gpt.GPTLMHeadModel):
+                    logits = self.model(
+                        **model_input,
+                        inference_params=inference_params,
+                        position_ids=None,
+                        last_token_only=False,
+                    ).logits
+                    inference_params.sequence_len_offset += model_input['inputs_embeds'].size(1)
+                    logits = logits[:, -1:, :] # only predicting on last logit.
+                    predict_token = self.sample_logits(i, logits, temperature, sample_mode, sample_thresh)
+                    predict_embed = self.target_embedder.embedder(predict_token)
+                else:
+                    model_output = self.model(
+                        **model_input,
+                        past_key_values=past_key_values, use_cache=True
+                    )
+                    past_key_values = model_output["past_key_values"]
+                    logits = model_output["logits"]
 
-                # Sample logits
-                predict_token = self.sample_logits(i, logits, temperature, sample_mode, sample_thresh)
-                predict_embed = self.target_embedder.embedder(predict_token)
+                    logits = logits[:, -1:, :] # only predicting on last logit.
+                    predict_token = self.sample_logits(i, logits, temperature, sample_mode, sample_thresh)
+                    predict_embed = self.target_embedder.embedder(predict_token)
 
                 # Update model input selection.
                 model_input["inputs_embeds"] = predict_embed
-                past_key_values = model_output["past_key_values"]
+                # past_key_values = model_output["past_key_values"]
 
                 # Save outputs
                 output_embeds = torch.cat([output_embeds, predict_embed], dim=1) if output_embeds is not None else predict_embed

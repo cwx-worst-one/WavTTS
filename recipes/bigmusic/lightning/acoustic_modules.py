@@ -63,7 +63,7 @@ class FineModule(BaseContinuousEmbedModule):
         target_embeds = self.target_embedder.embed(token_ids=fine_ids)[:, :-1, :]
         return { "inputs_embeds": torch.cat([inputs_embeds, sos_embeds, target_embeds], dim=1) }, fine_ids
 
-    def sample_logits(self, i, logits, temp, mode):
+    def sample_logits(self, i, logits, temp, mode, thresh=0.9):
         soundstream_codebook_size = self.extra_params.soundstream_codebook_size
         num_fine = self.extra_params.num_fine
 
@@ -76,7 +76,7 @@ class FineModule(BaseContinuousEmbedModule):
             * soundstream_codebook_size,
         ]
         samples = sample(
-            predict_logits, temp=temp, mode=mode
+            predict_logits, temp=temp, mode=mode, thresh=thresh
         )
         samples = samples + layer_idx * soundstream_codebook_size
         return samples
@@ -98,7 +98,7 @@ class FineModule(BaseContinuousEmbedModule):
         stride_duration = hp.fine_stride
 
         temperature = hp.fine_temperature
-        sample_mode = hp.sample_mode
+        sample_mode = hp.get('ar_sample_mode', hp.sample_mode)
 
         fine_samples = self.predict_slice(input_embeds, input_framerate, output_framerate, target_duration, slice_duration, stride_duration, temperature=temperature, sample_mode=sample_mode)
         batch_size = coarse_samples.size(0)
@@ -153,7 +153,7 @@ class CoarseModule(BaseContinuousEmbedModule):
         # convert inputs to conditions
         return self.input_embedders['semantic'].embed(self.requires, batch['target_audio'], with_sos=False)
     
-    def sample_logits(self, i, logits, temp, mode):
+    def sample_logits(self, i, logits, temp, mode, thresh=0.9):
         soundstream_codebook_size = self.extra_params.soundstream_codebook_size
         num_coarse = self.extra_params.num_coarse
 
@@ -166,7 +166,7 @@ class CoarseModule(BaseContinuousEmbedModule):
             * soundstream_codebook_size,
         ]
         samples = sample(
-            predict_logits, temp=temp, mode=mode
+            predict_logits, temp=temp, mode=mode, thresh=thresh
         )
         samples = samples + layer_idx * soundstream_codebook_size
         return samples
@@ -186,7 +186,7 @@ class CoarseModule(BaseContinuousEmbedModule):
         stride_duration = hp.coarse_stride
 
         temperature = hp.coarse_temperature
-        sample_mode = hp.sample_mode
+        sample_mode = hp.get('ar_sample_mode', hp.sample_mode)
 
         coarse_samples = self.predict_slice(input_embeds, input_framerate, output_framerate, target_duration, slice_duration, stride_duration, temperature=temperature, sample_mode=sample_mode)
         return coarse_samples
