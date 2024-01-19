@@ -26,17 +26,14 @@ export PYTHONPATH="${PYTHONPATH}:/opt/tiger/pypetrel/pypetrel"
 # For sami_tts_api
 export LD_LIBRARY_PATH=/opt/tiger/sami_engine_cleaned/libs:$LD_LIBRARY_PATH 
 
-if ! grep -q "version:1.0.0.129-dev" /opt/tiger/pypetrel/current_revision; then
+# Instructions on how to prepare library - https://bytedance.sg.larkoffice.com/docx/LRBCdwjcboV9eZxETqGlN7w9gMc
+PYPETREL_VERSION="1.0.0.129-dev2"
+if ! grep -q "version:$PYPETREL_VERSION" /opt/tiger/pypetrel/current_revision; then
     cd /opt/tiger
     rm -rf /opt/tiger/pypetrel
-    if [ -d "/mnt/bn/audio-diffusion/ashaw/bvc/pypetrel.1.0.0.129-dev" ]; then
-        echo "Copying ASR model pypetrel from audio-diffusion bytenas"
-        cp -r /mnt/bn/audio-diffusion/ashaw/bvc/pypetrel.1.0.0.129-dev /opt/tiger/pypetrel
-    else
-        echo "Downloading ASR model: pypetrel"
-        hdfs dfs -get /home/byte_speech_sv/andrew.shaw/data/asr/pypetrel.1.0.0.129-dev.tar .
-        tar -xvf pypetrel.1.0.0.129-dev.tar
-    fi
+    echo "Downloading ASR model: pypetrel"
+    hdfs dfs -get /home/byte_speech_sv/andrew.shaw/data/asr/pypetrel.$PYPETREL_VERSION.tar .
+    tar -xvf pypetrel.$PYPETREL_VERSION.tar
     cd -
 fi
 

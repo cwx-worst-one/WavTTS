@@ -21,9 +21,13 @@ from recipes.bigmusic.utils.format_utils import normalize_text
 from collections import defaultdict
 
 class WERMetricsCallback(pl.Callback):
+    def __init__(self, asr_model_path='en_punc'):
+        super().__init__()
+        self.asr_model_path = asr_model_path
+
     def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
         output_dir = pl_module.extra_params.output_dir
-        run_wer_metrics(output_dir, device = pl_module.device)
+        run_wer_metrics(output_dir, asr_model_path=self.asr_model_path, device = pl_module.device)
 
 def run_wer_metrics(output_dir, asr_model_path='en_punc', device='cuda'):
     output_dir = Path(output_dir)
