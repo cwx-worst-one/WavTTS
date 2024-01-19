@@ -119,14 +119,14 @@ scheduler_cls: !name:samantha.optim.lr_scheduler.warmup_cosine_lr.WarmupCosine
     cycle_steps: !ref <run_opts[cycle_steps]>
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
-pl_module: !new:apps.bigtts.umm.ar.lit_semantic_modules.SemanticModule_Valle
+pl_module: !new:apps.bigtts.umm.ar.semantic_modules.SemanticModule_Valle
     checkpointing: False
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
     criterion_cls: !name:samantha.criterion.masked_loss.MaskedCrossEntropyV2
     extra_params: !ref <extra_params>
-    # required_modules: 
+    # required_modules:
         # bestrq:
             # US UMM-chroma stage 3
             # hpath: hdfs://haruna/home/byte_speech_sv/zhuo.chen1/umm/log/umm/umm_stage3_dw20-3-2_wordpiece_vq16384x32_ll_data182/checkpoints/step=040000.ckpt

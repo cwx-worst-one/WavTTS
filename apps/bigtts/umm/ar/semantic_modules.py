@@ -8,8 +8,6 @@ from samantha.components.embedder import (BestRQTokenEmbedder,
                                           LyricsTokenEmbedder,
                                           WavToVecTokenEmbedder)
 
-DEFAULT_REWARDS = {"mulan_sim": 1.0, "wer": 1.0}
-
 
 def sequence_mask(seq_lens, max_len=None, device='cpu'):
     b = seq_lens.shape[0]
@@ -230,6 +228,7 @@ class SemanticModule_Valle(BaseContinuousEmbedModule):
         inputs_embeds = self.prepare_inputs_embeddings(batch)
         target_embeds = self.target_embedder.embed(self.requires, batch['audio_prompt'].to(self.device), with_sos=False, with_eos=False)
         print(f"target_embeds: {target_embeds}")
+
         return super().predict(
             inputs_embeds,
             target_embeds,

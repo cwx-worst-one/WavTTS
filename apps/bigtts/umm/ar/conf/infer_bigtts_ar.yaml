@@ -1,0 +1,53 @@
+---
+
+run_opts:
+    precision: 32
+    strategy: ddp
+    num_workers: 4
+    seed: 1996
+    meta_lst: ""
+    umm_ckpt_path: ""
+    semantic_model_path: ""
+    output_path: ""
+    src_lang: "zh"
+    tgt_lang: "zh"
+    temperature: 0.9
+    thresh: 0.9
+    mode: "naive"
+    max_blank_length: 5
+    step_out_blank: False
+
+predict_dataset: !new:apps.bigtts.umm.ar.data.bigtts_test.ICLMetaDataset
+    meta_lst: !ref <run_opts[meta_lst]>
+
+dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <predict_dataset>
+    num_workers: !ref <run_opts[num_workers]>
+    batch_size: null
+    drop_last: False
+
+pl_datamodule: !new:apps.bigtts.umm.ar.data.lit_data.DataModule
+    predict_dataloader: !ref <dataloader>
+
+pl_module: !new:apps.bigtts.umm.ar.infer.pl_module_bigtts_ar.SemanticInference
+    seed: !ref <run_opts[seed]>
+    umm_ckpt_path: !ref <run_opts[umm_ckpt_path]>
+    semantic_model_path: !ref <run_opts[semantic_model_path]>
+    output_path: !ref <run_opts[output_path]>
+    src_lang: !ref <run_opts[src_lang]>
+    tgt_lang: !ref <run_opts[tgt_lang]>
+    temperature: !ref <run_opts[temperature]>
+    thresh: !ref <run_opts[thresh]>
+    mode: !ref <run_opts[mode]>
+    max_blank_length: !ref <run_opts[max_blank_length]>
+    step_out_blank: !ref <run_opts[step_out_blank]>
+
+trainer: !new:pytorch_lightning.Trainer
+    accelerator: "auto"
+    devices: "auto"
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    strategy: !ref <run_opts[strategy]>
+    precision: !ref <run_opts[precision]>
+    max_epochs: 1
