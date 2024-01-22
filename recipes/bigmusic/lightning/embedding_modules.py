@@ -437,12 +437,13 @@ class StructureEmbedder(nn.Module):
 
 
 class IntensityEmbedder(nn.Module):
-    def __init__(self, decimals, embedding_dim):
+    def __init__(self, decimals, embedding_dim, intensity_hz=1):
         super().__init__()
         self.decimals = decimals
         self.multiplier = 10 ** self.decimals
         self.intensity_vocab_size = self.multiplier + 1
         self.embedder = nn.Embedding(self.intensity_vocab_size, embedding_dim)
+        self.intensity_hz = intensity_hz
         self.logged = 0
 
     def quantize(self, batch_intensity_labels):
@@ -457,16 +458,17 @@ class IntensityEmbedder(nn.Module):
         return intensity_labels
 
     def embed(self, batch_intensity_labels, target_duration):
+        target_length = int(target_duration * self.intensity_hz)
         device = next(self.parameters()).device
-        if batch_intensity_labels.shape[1] > target_duration:
+        if batch_intensity_labels.shape[1] > target_length:
             # Just use the first segment
-            batch_intensity_labels = batch_intensity_labels[..., :target_duration]
-        elif batch_intensity_labels.shape[1] < target_duration:
+            batch_intensity_labels = batch_intensity_labels[..., :target_length]
+        elif batch_intensity_labels.shape[1] < target_length:
             # Just repeat the intensity curve
-            tmp = torch.zeros(len(batch_intensity_labels), target_duration).to(device)
+            tmp = torch.zeros(len(batch_intensity_labels), target_length).to(device)
             st = 0
-            while st < target_duration:
-                length = min(batch_intensity_labels.shape[1], target_duration - st)
+            while st < target_length:
+                length = min(batch_intensity_labels.shape[1], target_length - st)
                 tmp[..., st:st + length] = batch_intensity_labels[..., :length]
                 st += length
             batch_intensity_labels = tmp

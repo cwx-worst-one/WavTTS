@@ -12,7 +12,7 @@ extra_params:
     beam_size: 8    # set to 1 if not using reranker
     samples_to_save: 1
     save_style_audio: True
-    save_mp3: True
+    save_mp3: False
     prompt_path: "/mnt/bn/audio-diffusion/data/bigmusic_text_prompts/instrumental_prompts_20231030_subset150+duration.csv"
     inference_conditions: style_text,duration
     max_items: null
@@ -22,8 +22,8 @@ extra_params:
 
     # Semantic model
     semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
-    semantic_ckpt: "/mnt/bn/audio-diffusion/ducle/logs/semantic_model_instrumental_07B/sstk_vad-unnorm_sstk-random_sstk-mulan-mae-no-crop+sstk-umm-nospeech-400k_larger_3m/checkpoints/step=248000.ckpt"
-    mulan_ckpt: "/mnt/bn/audio-diffusion/xuchen/mulan/models/mae-mulan-step=07800-kaggle.ckpt"
+    semantic_ckpt: "/mnt/bn/audio-diffusion/ducle/logs/semantic_model_instrumental_07B/sstk_vad-unnorm_intensity-control-2dec_sstk-random_sstk-mulan-mae-v2+sstk-umm-nospeech-400k_largerr_3m/checkpoints/step=308000.ckpt"
+    mulan_ckpt: "/mnt/bn/audio-diffusion/weituo/sstk_mulan/mulan-step=005000-median_rank_1=83-kaggle.ckpt"
     mulan_version: "sstkmae"
 
     # For re-ranking
@@ -35,12 +35,12 @@ extra_params:
 
     diffusion_params:
         window_length: 30 # in second
-        vocoder_hz: 147 # 125 for 24k
+        vocoder_hz: 125 # 147 for 44.1k
         semantic_hz: 25
-        latent_dim: 128 # 32 for 24k
+        latent_dim: 32 # 128 for 44.1k
         outpainting_overlap: 0.5 #[0, 1]
-        diffusion_steps: 25
-        schedule_slope: 2.5
+        diffusion_steps: 50
+        schedule_slope: 4.0
         guidance_scale: 2.5
         bf16_portion: 0.0
 
@@ -50,11 +50,11 @@ extra_params:
         temperatures: [0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95]
 
     # Model Settings
-    sample_rate: 44100
+    sample_rate: 24000  # 44100
     duration: 30 # 30|45|60|75|90|105|120
     semantic_temperature: 1.0
-    sample_mode: "gumbel"
-    sample_thresh: 0.95
+    sample_mode: "top_k"
+    sample_thresh: 0.99
     token2wav_type: "diffusion" # diffusion|soundstorm
     exclude_eos: True
 
@@ -91,8 +91,8 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                     cache_dir: !ref <run_opts[cache_dir]>
         diffusion_modules:
             diffusion:
-                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/44.1k_mono_v0/diffusion-step=380000-EMA.ckpt
-                #hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/24k_v1/diffusion-step=870000-EMA.ckpt
+                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/24k_v1/diffusion-step=870000-EMA.ckpt
+                #hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/44.1k_mono_v1/diffusion-step=470000-EMA.ckpt
                 initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
                     cache_dir: !ref <run_opts[cache_dir]>
                     sstk: True
@@ -103,8 +103,8 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                     cache_dir: !ref <run_opts[cache_dir]>
                     params: !ref <extra_params[diffusion_params]>
             vocoder:
-                hpath: /mnt/bn/audio-diffusion/wtl/vocoder/sstk/44.1k_mono_v0/soundstream-step=860000-val_sdr=15.8616-EMA.ckpt
-                #hpath: /mnt/bn/audio-diffusion/wtl/soundstream-step=1210000-val_sdr=11.2069-EMA.ckpt
+                hpath: /mnt/bn/audio-diffusion/wtl/soundstream-step=1210000-val_sdr=11.2069-EMA.ckpt
+                #hpath: /mnt/bn/audio-diffusion/wtl/vocoder/sstk/44.1k_mono_v1/soundstream-step=1410000-val_sdr=16.7701-EMA.ckpt
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                     cache_dir: !ref <run_opts[cache_dir]>
                     sample_rate: !ref <extra_params[sample_rate]>

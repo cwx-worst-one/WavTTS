@@ -134,16 +134,23 @@ class IntensityTransform:
         self,
         audio_key="audio",
         sample_rate=24000,
+        calculation_mode="max",
+        intensity_hz=1,
         debug=False,
     ):
         self.audio_key = audio_key
-        self.sample_rate = sample_rate
+        self.window_size = sample_rate // intensity_hz
+        self.calculation_mode = calculation_mode
         self.debug = debug
 
     def get_intensity(self, audio):
         if not isinstance(audio, torch.Tensor):
             audio = torch.from_numpy(audio)
-        return to_energy(audio.float(), window_size=self.sample_rate)[0]
+        return to_energy(
+            audio.float(),
+            window_size=self.window_size,
+            calculation_mode=self.calculation_mode,
+        )[0]
 
     def __call__(self, item):
         if self.audio_key not in item:

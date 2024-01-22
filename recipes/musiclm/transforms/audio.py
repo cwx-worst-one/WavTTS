@@ -50,11 +50,21 @@ def rms(x: torch.Tensor, kernel_size: int = 1000) -> torch.Tensor:
     return torch.sqrt(avg_pool1d(x**2, kernel_size=kernel_size, stride=1))
 
 
-def to_energy(audio, window_size):
+def to_energy(audio, window_size, calculation_mode="max"):
     if audio.dim() == 1:
         audio = audio.unsqueeze(0)
     frames = audio.unfold(1, window_size, window_size)
-    return torch.max(torch.abs(frames), dim=-1)[0]
+    if calculation_mode == "max":
+        fn = lambda x: torch.max(x, dim=-1)[0]
+    elif calculation_mode == "mean":
+        fn = lambda x: torch.mean(x, dim=-1)
+    elif calculation_mode == "median":
+        fn = lambda x: torch.median(x, dim=-1)[0]
+    elif calculation_mode == "min":
+        fn = lambda x: torch.min(x, dim=-1)[0]
+    else:
+        raise ValueError(f"Unknown calculation mode: {calculation_mode}")
+    return fn(torch.abs(frames))
 
 
 class Identity:

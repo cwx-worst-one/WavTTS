@@ -71,16 +71,21 @@ def sample(
         probs = predict_logits.softmax(dim=-1)
         dist = torch.distributions.categorical.Categorical(probs=probs)
         samples = dist.sample()
-    elif mode == "top_p":
+    elif mode == "top_p" or mode == "top_k":
         predict_logits = predict_logits / (temp)
-        predict_logits = top_p_logits(predict_logits, thresh)
+        if mode == "top_p":
+            predict_logits = top_p_logits(predict_logits, thresh)
+        else:
+            predict_logits = top_k(predict_logits, thresh=thresh)
         probs = predict_logits.softmax(dim=-1)
         dist = torch.distributions.categorical.Categorical(probs=probs)
         samples = dist.sample()
     elif mode == "gumbel" or mode == "gumbel_fixed_noise":
         predict_logits = top_k(predict_logits, thresh=thresh)
         fixed_noise = mode == "gumbel_fixed_noise"
-        samples = gumbel_sample(predict_logits, temp, fixed_noise=fixed_noise)
+        samples = gumbel_sample(
+            predict_logits, temp, fixed_noise=fixed_noise, exclude_ids=exclude_ids
+        )
         probs = (predict_logits / temp).softmax(dim=-1)
     else:
         raise NotImplementedError()
@@ -210,8 +215,18 @@ def gumbel_noise(t, fixed_noise):
     return -log(-log(noise))
 
 
-def gumbel_sample(t: torch.Tensor, temperature=1.0, dim=-1, fixed_noise=False):
-    return ((t / temperature) + gumbel_noise(t, fixed_noise=fixed_noise)).argmax(dim=dim)
+def gumbel_sample(
+    t: torch.Tensor,
+    temperature=1.0,
+    dim=-1,
+    fixed_noise=False,
+    exclude_ids=None,
+):
+    gumbel_dist = (t / temperature) + gumbel_noise(t, fixed_noise=fixed_noise)
+    if exclude_ids is not None:
+        for i in exclude_ids:
+            gumbel_dist[..., i] = float("-inf")
+    return gumbel_dist.argmax(dim=dim)
 
 
 def top_k(logits, thresh=0.95):

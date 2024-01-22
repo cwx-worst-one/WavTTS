@@ -106,6 +106,7 @@ class SemanticModule(BaseContinuousEmbedModule):
                 embedder_dict[emb_type] = IntensityEmbedder(
                     decimals=extra_params["intensity_decimals"],
                     embedding_dim=hidden_size,
+                    intensity_hz=extra_params.get("intensity_hz", 1),
                 )
             else:
                 raise ValueError(f"Unknown emb type: {emb_type}")
@@ -370,6 +371,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         tqdm_name="Intensity Prediction",
     ):
         target_duration = self.infer_target_duration(batch)
+        target_length = int(target_duration * intensity_embedder.intensity_hz)
         input_embedders = list(self.input_embedders.items())
         assert (
             input_embedders[-1][0] == "intensity"
@@ -381,16 +383,16 @@ class SemanticModule(BaseContinuousEmbedModule):
 
         output_tokens = None
         if isinstance(self.model, gpt.GPTLMHeadModel):
-            gpt_max_seq_len = 4000 if target_duration < 2500 else 8000
+            gpt_max_seq_len = 4000 if target_length < 2500 else 8000
             inference_params = InferenceParams(
                 max_sequence_len=4000, max_batch_size=batch_size
             )
         else:
             past_key_values = None
-        pbar = tqdm(range(target_duration))
+        pbar = tqdm(range(target_length))
         previous_inputs_embeds = model_input["inputs_embeds"]
         for i in pbar:
-            pbar.set_description(f"{tqdm_name} [0 - {target_duration}]")
+            pbar.set_description(f"{tqdm_name} [0 - {target_length}]")
 
             if isinstance(self.model, gpt.GPTLMHeadModel):
                 model_output = self.model(
@@ -432,6 +434,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         exclude_ids = None
         if hp.get("exclude_eos", False) and self.target_embedder.eos_id is not None:
             exclude_ids = [self.target_embedder.eos_id]
+            print(f"exclude_ids: {exclude_ids}")
         inputs_embeds = self.prepare_inputs_embeddings(batch)
         return super().predict(
             inputs_embeds,
