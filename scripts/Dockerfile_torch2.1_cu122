@@ -16,6 +16,9 @@ ARG no_proxy="byted.org"
 
 ENV TORCH_CUDNN_V8_API_LRU_CACHE_LIMIT 100000
 ENV PYTORCH_CUDA_ALLOC_CONF expandable_segments:True
+ENV CUBLASLT_WORKSPACE_SIZE 32768
+# Temporary solution, more investigation needed.
+ENV NCCL_PROTO ^128
 
 ENV DEBIAN_FRONTEND noninteractive
 ENV LD_LIBRARY_PATH /opt/tiger/native_libhdfs/lib/native:$LD_LIBRARY_PATH
@@ -344,6 +347,9 @@ RUN cd $HOME \
     && rm -fr aws-efa-installer $HOME/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz
 
 ## INSTALL AWS-OFI-NCCL PLUGIN
+#
+# The plugin is NOT enabled by default. You need to add `/opt/amazon/efa/lib` to
+# LD_LIBRARY_PATH yourself.
 RUN git clone "https://github.com/aws/aws-ofi-nccl.git" /opt/aws-ofi-nccl \
     && cd /opt/aws-ofi-nccl \
     && git checkout ${AWS_OFI_NCCL_VERSION} \
@@ -354,11 +360,9 @@ RUN git clone "https://github.com/aws/aws-ofi-nccl.git" /opt/aws-ofi-nccl \
        --with-mpi=/opt/amazon/openmpi/ \
        --enable-platform-aws \
     && make && make install \
-    && rm -fr /opt/aws-ofi-nccl
+    && rm -fr /opt/aws-ofi-nccl \
+    && rm -rf /etc/ld.so.conf.d/efa.conf && ldconfig
 
-RUN printf "%s\n" >> /home/tiger/.bashrc \
-"system_cuda_lib_version=\$(realpath /usr/lib/x86_64-linux-gnu/libcuda.so | sed 's=/usr/lib/x86_64-linux-gnu/libcuda.so.\([^.]*\).*=\1=')" \
-"compat_cuda_lib_version=\$(realpath /usr/local/cuda/compat/libcuda.so | sed 's=/usr/local/cuda.*/libcuda.so.\([^.]*\).*=\1=')" \
-"if [ \${system_cuda_lib_version} -lt \${compat_cuda_lib_version} ]; then" \
-"    export LD_LIBRARY_PATH=/usr/local/cuda/compat:\$LD_LIBRARY_PATH" \
-"fi"
+# Samantha-specific settings.
+COPY ./scripts/samantha.bashrc /etc/samantha.bashrc
+ENV BASH_ENV=/etc/samantha.bashrc
