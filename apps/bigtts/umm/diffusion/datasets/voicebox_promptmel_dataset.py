@@ -1,28 +1,23 @@
 import json
 import logging
+import math
 import os
 import pickle
 import random
 import sys
 
+import librosa
 import numpy as np
 import torch
 from torch.utils.data import IterableDataset
 from torchaudio.transforms import Resample
 
-from .utils import (
-    Masking,
-    PhoneToId,
-    collate_1d,
-    collate_2d,
-    get_duration_frames_wds,
-)
-
-from .meldataset import mel_spectrogram, mel_spectrogram_unimelgan
 from samantha.dataio.batching import BucketBatcher
 from samantha.dataio.parquet import ParquetDataset
 from samantha.dataio.webdataset.ra_wds import WebDataset
-import librosa
+
+from .meldataset import mel_spectrogram, mel_spectrogram_unimelgan
+from .utils import Masking, PhoneToId, collate_1d, collate_2d, get_duration_frames_wds
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +26,7 @@ def trim_silence(wav):
     Trim leading and trailing silence
     """
     # These params are separate and tunable per dataset.
-    
+
     origin_wav_len = len(wav)
     wav = np.pad(wav, (5400, 5400))
 
@@ -48,7 +43,7 @@ def trim_silence(wav):
 
     head_trim_nums = 5400 - start_idx
     tail_trim_nums = stop_idx - 5400 - origin_wav_len
-    
+
     return trimmed, head_trim_nums, tail_trim_nums
 
 def sequence_mask(seq_lens, max_len=None, device='cpu'):
@@ -114,7 +109,7 @@ class VoiceBoxDataset(IterableDataset):
         self.hop_ms = mel_config['hop_size'] / mel_config['sampling_rate']
 
         self.mask_use_alignment = mask_use_alignment
-        self.masking = Masking(p_drop_x=mask_p_drop_x, 
+        self.masking = Masking(p_drop_x=mask_p_drop_x,
                 p_drop_audio_frames=p_drop_audio_frames,
                 padding_value=mel_padding)
 
@@ -269,6 +264,7 @@ class VoiceBoxParquetDataset(IterableDataset):
         bn_config=None,
         mel_vocoder_type="hifigan",
         use_phone_lang=False,
+        token_type="umm"
     ):
         self.wds = (
             ParquetDataset(data_id=data_id, resampled=True)
@@ -276,11 +272,11 @@ class VoiceBoxParquetDataset(IterableDataset):
             .map(self.process)
         )
 
+        self.max_length = max_length
         self.max_wav_len = int(max_length * 24000)
         self.phone2id = PhoneToId()
 
         self.wav_amp_aug = wav_amp_aug
-        self.token_spec_aug = token_spec_aug
 
         self.pipelines = []
         self.drop_last = drop_last
@@ -289,6 +285,7 @@ class VoiceBoxParquetDataset(IterableDataset):
         self.mel_norm_mean = mel_norm_mean
         self.mel_norm_std = mel_norm_std
         self.umm_hop_size = umm_hop_size
+        self.umm_hz = 24000 // umm_hop_size
 
         self.use_text = use_text
         self.text_drop_rate = text_drop_rate
@@ -296,6 +293,8 @@ class VoiceBoxParquetDataset(IterableDataset):
         self.use_bn = use_bn
         self.bn_config = bn_config
         self.mel_vocoder_type = mel_vocoder_type
+        self.token_type = token_type
+        assert token_type in ["umm", "zvq"]
 
         self.use_phone_lang = use_phone_lang
 
@@ -305,15 +304,16 @@ class VoiceBoxParquetDataset(IterableDataset):
         self.audio_resampler = {}
 
         self.hop_ms = mel_config['hop_size'] / mel_config['sampling_rate']
-        self.masking = Masking(p_drop_x=mask_p_drop_x, 
+        self.masking = Masking(p_drop_x=mask_p_drop_x,
                 p_drop_audio_frames=p_drop_audio_frames,
-                padding_value=mel_padding)
+                padding_value=mel_padding if not self.use_bn else bn_config["bn_padding"])
         self.mask_use_alignment = mask_use_alignment
 
         if self.use_bn:
-            self.silence_bn_stats = torch.from_numpy(np.load(bn_config["silence_bn_path"]))
-            m, logs = torch.split(self.silence_bn_stats, self.silence_bn_stats.shape[1] // 2, dim=-1)
-            self.silence_bn = m + torch.randn_like(m) * torch.exp(logs)
+            self.bn_hz = 24000 // bn_config["hop_size"]
+            lcm_umm_bn = math.lcm(self.umm_hz, self.bn_hz)
+            self.lcm_umm_factor = lcm_umm_bn // self.umm_hz
+            self.lcm_bn_factor = lcm_umm_bn // self.bn_hz
 
     def get_duration_wds(self, utt_id, alignments, phonemes, mel_len):
         if alignments is not None and len(alignments) > 0:
@@ -343,109 +343,86 @@ class VoiceBoxParquetDataset(IterableDataset):
             meta_obj = json.loads(meta_obj)
         return meta_obj
 
-    def get_bn(self, sample, wav):
+    def get_bn(self, sample):
         bn = pickle.loads(sample["bns"])
         bn = torch.from_numpy(bn)
-        bn_stats = bn
         out_dim = bn.shape[1] // 2
         m, logs = torch.split(bn, out_dim, dim=-1)
         bn = m + torch.randn_like(m) * torch.exp(logs)
-
-        # Hotfix to align bn length with original wav length.
-        if self.bn_config['pad_trim']:
-            trimmed, head_trim_nums, tail_trim_nums = trim_silence(wav)
-            head_trim_frames = head_trim_nums // self.bn_config['hop_size']
-            total = (tail_trim_nums + head_trim_nums) // self.bn_config['hop_size']
-            tail_trim_frames = total - head_trim_frames
-
-            if head_trim_frames > 0:
-                bn = bn[head_trim_frames:, :]
-                bn_stats = bn_stats[head_trim_frames:, :]
-            else:
-                pad_value = self.silence_bn[:-head_trim_frames, :]
-                bn = torch.cat([pad_value, bn], dim=0)
-
-                bn_stats_pad_value = self.silence_bn_stats[:-head_trim_frames, :]
-                bn_stats = torch.cat([bn_stats_pad_value, bn_stats], dim=0)
-
-            if tail_trim_frames > 0:
-                bn = bn[:-tail_trim_frames, :]
-                bn_stats = bn_stats[:-tail_trim_frames, :]
-            else:
-                pad_value = torch.randn([-tail_trim_frames, bn.shape[1]])
-                pad_value = self.silence_bn[:-tail_trim_frames, :]
-                bn = torch.cat([bn, pad_value], dim=0)
-
-                bn_stats_pad_value = self.silence_bn_stats[:-tail_trim_frames, :]
-                bn_stats = torch.cat([bn_stats, bn_stats_pad_value], dim=0)
-
-        return bn, bn_stats
+        return bn
 
     def process(self, sample):
         # load wav
         meta_obj = self.get_meta_obj(sample)
-        wav = np.frombuffer(sample["wav"][44:], dtype=np.int16)
-        if wav.dtype == np.int16:
-            wav = wav / 32768.0
-        elif wav.dtype == np.int32:
-            wav = wav / 2_147_483_648.0
-        elif wav.dtype in [np.float32, np.float64]:
-            wav = wav
-        else:
-            raise Exception("Not support data type: {}".format(wav.dtype))
-        if len(wav.shape) >= 2:
-            wav = wav[0]
-
-        wav = wav.astype(np.float32)
-        wav = torch.FloatTensor(wav)
-
-        if sample["src_sample_rate"] != self.mel_config['sampling_rate']:
-            src_sr = sample["src_sample_rate"]
-            if src_sr not in self.audio_resampler.keys():
-                self.audio_resampler[src_sr] = Resample(orig_freq=src_sr, new_freq=self.mel_config['sampling_rate'])
-            wav = self.audio_resampler[src_sr](wav)
-
-        if wav.shape[0] > self.max_wav_len or wav.shape[0] < 12000: 
-            return None
-
-        scale = max(0.001, torch.max(torch.abs(wav)))
-        wav = wav / scale * 0.95
-        if self.wav_amp_aug is not None and self.wav_amp_aug["use"]:
-            wav_aug_scale = np.random.rand() * (self.wav_amp_aug["max"] - self.wav_amp_aug["min"]) + self.wav_amp_aug["min"]
-            wav = wav * wav_aug_scale
+        data_dict = dict()
+        data_dict["token"] = torch.as_tensor(pickle.loads(sample[f"{self.token_type}_token"]), dtype=torch.long)
 
         if self.use_bn:
-            bn, bn_stats = self.get_bn(sample, wav)
-            if abs(len(wav) // self.bn_config['hop_size'] - bn.shape[0]) > 3:
-                logger.info("skip because bn...")
+            bn = self.get_bn(sample)
+            assert bn.shape[1] == 64
+            if bn.shape[0] < self.bn_hz * 0.5:
                 return None
 
-        # handle umm & mel length
-        crop_wav_len = wav.shape[0] % self.wav_divide
-        max_wav_len = wav.shape[0] - crop_wav_len 
-        #if crop_wav_len > 0:
-        #    wav = torch.nn.functional.pad(wav, (0, self.wav_divide - crop_wav_len), "constant", 0)
-        #max_wav_len = wav.shape[0]
-        max_mel_len = max_wav_len // self.mel_config["hop_size"]
-        max_umm_len = max_wav_len // self.umm_hop_size
+            if self.bn_hz == self.umm_hz:
+                max_bn_len = min(bn.shape[0], data_dict["token"].shape[0])
+                max_umm_len = max_bn_len
+            else:
+                # align BN with UMM
+                if (bn.shape[0] / self.bn_hz) < (data_dict["token"].shape[0] / self.umm_hz):
+                    max_lcm_len = int(bn.shape[0] * self.lcm_bn_factor)
+                else:
+                    max_lcm_len = int(data_dict["token"].shape[0] * self.lcm_umm_factor)
+                max_lcm_len = max_lcm_len - (max_lcm_len % (self.lcm_umm_factor*self.lcm_bn_factor))
 
-        if self.mel_vocoder_type == "unimelgan":
-            mel = mel_spectrogram_unimelgan(wav.unsqueeze(0), **self.mel_config).squeeze(0)
+                max_bn_len = max_lcm_len // self.lcm_bn_factor
+                max_umm_len = max_lcm_len // self.lcm_umm_factor
+
+            data_dict["bn"] = bn[:max_bn_len, :]
+            data_dict["bn"] = (data_dict["bn"] - self.bn_config['bn_norm_mean']) / self.bn_config['bn_norm_std']
         else:
-            mel = mel_spectrogram(wav.unsqueeze(0), **self.mel_config).squeeze(0)
+            wav = np.frombuffer(sample["wav"][44:], dtype=np.int16)
+            if wav.dtype == np.int16:
+                wav = wav / 32768.0
+            elif wav.dtype == np.int32:
+                wav = wav / 2_147_483_648.0
+            elif wav.dtype in [np.float32, np.float64]:
+                wav = wav
+            else:
+                raise Exception("Not support data type: {}".format(wav.dtype))
+            if len(wav.shape) >= 2:
+                wav = wav[0]
 
-        mel = (mel - self.mel_norm_mean) / self.mel_norm_std
+            wav = wav.astype(np.float32)
+            wav = torch.FloatTensor(wav)
 
-        data_dict = dict()
-        data_dict["token"] = torch.as_tensor(pickle.loads(sample["umm_token"])[:max_umm_len], dtype=torch.long)
+            if sample["src_sample_rate"] != self.mel_config['sampling_rate']:
+                src_sr = sample["src_sample_rate"]
+                if src_sr not in self.audio_resampler.keys():
+                    self.audio_resampler[src_sr] = Resample(orig_freq=src_sr, new_freq=self.mel_config['sampling_rate'])
+                wav = self.audio_resampler[src_sr](wav)
 
-        if self.token_spec_aug is not None and self.token_spec_aug["use"]:
-            aug_scale = np.random.rand() * (self.token_spec_aug["max"] - self.token_spec_aug["min"]) + self.token_spec_aug["min"]
-            aug_window_len = int(aug_scale * len(data_dict["token"]))
-            if aug_window_len > 0:
-                aug_window_start = np.random.randint(len(data_dict["token"]) - aug_window_len)
-                data_dict["token"][aug_window_start:aug_window_start+aug_window_len] = self.token_spec_aug["pad"]
+            if wav.shape[0] > self.max_wav_len or wav.shape[0] < 12000:
+                return None
 
+            scale = max(0.001, torch.max(torch.abs(wav)))
+            wav = wav / scale * 0.95
+            if self.wav_amp_aug is not None and self.wav_amp_aug["use"]:
+                wav_aug_scale = np.random.rand() * (self.wav_amp_aug["max"] - self.wav_amp_aug["min"]) + self.wav_amp_aug["min"]
+                wav = wav * wav_aug_scale
+
+            # handle umm & mel length
+            crop_wav_len = wav.shape[0] % self.wav_divide
+            max_wav_len = wav.shape[0] - crop_wav_len
+            max_mel_len = max_wav_len // self.mel_config["hop_size"]
+            max_umm_len = max_wav_len // self.umm_hop_size
+
+            if self.mel_vocoder_type == "unimelgan":
+                mel = mel_spectrogram_unimelgan(wav.unsqueeze(0), **self.mel_config).squeeze(0)
+            else:
+                mel = mel_spectrogram(wav.unsqueeze(0), **self.mel_config).squeeze(0)
+
+            mel = (mel - self.mel_norm_mean) / self.mel_norm_std
+            data_dict['mel'] = mel.transpose(1, 0)
 
         # load phone seq & duration
         text = sample["text"]
@@ -495,36 +472,22 @@ class VoiceBoxParquetDataset(IterableDataset):
                 data_dict["lang"] = text_id[3, :]
 
         data_dict['utt_id'] = utt_id
-        data_dict['mel'] = mel.transpose(1, 0)
         data_dict["lab"] = labels
+        data_dict["text"] = text
+        data_dict["token"] = data_dict["token"][:max_umm_len]
 
         # masking.
-        data_dict = self.masking.masking(data_dict) # update ctx & ctx_mask
-        data_dict['mel_ctx'] = data_dict['mel_ctx'].transpose(0, 1)[:, :max_mel_len]
-        data_dict['mel'] = data_dict['mel'].transpose(0, 1)[:, :max_mel_len]
-        data_dict["text"] = text
-        data_dict['mel_ctx_mask'] = data_dict['mel_ctx_mask'][:max_mel_len]
-
-        if (data_dict["mel"].shape[1] / data_dict["token"].shape[0]) != (self.umm_hop_size / self.mel_config["hop_size"]):
-            print("wrong shape")
-            return None
-
         if self.use_bn:
             # mask bn.
-            bn = (bn - self.bn_config['bn_norm_mean']) / self.bn_config['bn_norm_std']
-            bn = bn[:max_mel_len, :] # [T, C]
-            #bn_ctx = torch.randn_like(bn)
-            bn_ctx = torch.ones_like(bn) * self.bn_config["bn_padding"]
-            nomask_idx = ~data_dict['mel_ctx_mask']
-            bn_ctx[nomask_idx] = bn[nomask_idx]
-            data_dict['bn_ctx'] = bn_ctx.transpose(0, 1)
-            data_dict['bn'] = bn.transpose(0, 1) 
-            data_dict['bn_ctx_mask'] = data_dict['mel_ctx_mask']
-            # norm bn_stats
-            num_c = bn_stats.shape[1] // 2
-            bn_stats[:,:num_c] = (bn_stats[:,:num_c] - self.bn_config['bn_norm_mean']) / self.bn_config['bn_norm_std']
-            bn_stats[:,num_c:] = torch.log(torch.sqrt(torch.exp(bn_stats[:, num_c:])**2 / self.bn_config['bn_norm_std']**2))
-            data_dict['bn_stats'] = bn_stats.transpose(0, 1)
+            data_dict = self.masking.masking(data_dict, "bn") # update ctx & ctx_mask
+            data_dict['bn'] = data_dict["bn"].transpose(0, 1)
+            data_dict['bn_ctx'] = data_dict["bn_ctx"].transpose(0, 1)
+            data_dict['bn_ctx_mask'] = data_dict["ctx_mask"]
+        else:
+            data_dict = self.masking.masking(data_dict, "mel") # update ctx & ctx_mask
+            data_dict['mel_ctx'] = data_dict['mel_ctx'].transpose(0, 1)[:, :max_mel_len]
+            data_dict['mel'] = data_dict['mel'].transpose(0, 1)[:, :max_mel_len]
+            data_dict['mel_ctx_mask'] = data_dict['ctx_mask'][:max_mel_len]
 
         return data_dict
 
@@ -539,25 +502,26 @@ class VoiceBoxParquetDataset(IterableDataset):
 
 
 class VoiceBoxCollator(object):
-    def __init__(self, 
-            tokenizer_pad, 
+    def __init__(self,
+            tokenizer_pad,
+            mel_config=None,
             mel_padding=-2,
-            mel_config=None, 
             max_crop_second=30.0,
-            mel_to_umm=None,
+            bn_config=None,
             bn_padding=-5,
+            use_bn=True
             ):
         self.tokenizer_pad = tokenizer_pad
 
-        self.mel_config = mel_config
-        self.mel_hz = mel_config["sampling_rate"] // mel_config["hop_size"]
-        self.mel_padding = mel_padding
-        self.bn_padding = bn_padding
-        self.max_crop_second = max_crop_second
-        self.max_crop_mel_len = int(max_crop_second * self.mel_hz)
+        self.use_bn = use_bn
+        if use_bn:
+            self.feat_hz = mel_config["sampling_rate"] // bn_config["hop_size"]
+            self.feat_padding = bn_padding
+        else:
+            self.feat_hz = mel_config["sampling_rate"] // mel_config["hop_size"]
+            self.feat_padding = mel_padding
 
-        self.mel_to_umm = mel_to_umm
-
+        self.max_crop_len = int(max_crop_second * self.feat_hz)
 
     def __call__(self, batches):
         results = []
@@ -568,77 +532,51 @@ class VoiceBoxCollator(object):
             return None
         ret_dict = {}
 
-        mel_lens = [b['mel'].shape[1] for b in batches]
-        max_mel_len = max(mel_lens)
-        min_mel_len = min(mel_lens)
         token_lens = [b['token'].shape[0] for b in batches]
         max_token_len = max(token_lens)
-
-        mels = collate_2d(
-            [b['mel'] for b in batches], 
-            pad_idx=self.mel_padding,
-            max_len=max_mel_len)
-
-        mel_ctx = collate_2d(
-            [b['mel_ctx'] for b in batches], 
-            pad_idx=self.mel_padding,
-            max_len=max_mel_len)
-
-        mel_ctx_mask = collate_1d(
-            [b['mel_ctx_mask'] for b in batches], 
-            pad_idx=0.0, 
-            max_len=max_mel_len)
-
-        if 'bn' in batches[0].keys():
-            # pad bn
-            bn_lens = [b['bn'].shape[1] for b in batches]
-            max_bn_len = max(bn_lens)
-
-            bns = collate_2d(
-                [b['bn'] for b in batches], 
-                pad_idx=self.bn_padding,
-                max_len=max_bn_len)
-
-            bn_ctx = collate_2d(
-                [b['bn_ctx'] for b in batches], 
-                pad_idx=self.bn_padding,
-                max_len=max_bn_len)
-
-            bn_stats = collate_2d(
-                [b['bn_stats'] for b in batches], 
-                pad_idx=0,
-                max_len=max_bn_len
-            )
-
-            bn_ctx_mask = collate_1d(
-                [b['mel_ctx_mask'] for b in batches], 
-                pad_idx=0.0, 
-                max_len=max_bn_len)
-
-            ret_dict["bn"] = bns.transpose(1, 2)  # [B, T, C]
-            ret_dict["bn_ctx"] = bn_ctx.transpose(1, 2)
-            ret_dict["bn_lens"] = torch.from_numpy(np.array(mel_lens))
-            ret_dict["bn_mask"] = sequence_mask(
-                seq_lens=ret_dict["bn_lens"], 
-                max_len=ret_dict["bn"].shape[1])
-            ret_dict["bn_ctx_mask"] = bn_ctx_mask
-            ret_dict["bn_stats"] = bn_stats.transpose(1, 2)
-        # wav = collate_1d(
-        #     [b['wav'] for b in batches],
-        #     pad_idx=0.0,
-        #     max_len=max_wav_len)
-
         token = collate_1d(
             [b["token"] for b in batches],
             pad_idx=self.tokenizer_pad,
             max_len=max_token_len
         )
+        ret_dict['token'] = token
+        ret_dict["token_mask"] = sequence_mask(torch.from_numpy(np.array(token_lens)),
+                                               max_len=ret_dict["token"].shape[1])
+
+        # pad bn/mel
+        if self.use_bn:
+            feat_name = "bn"
+        else:
+            feat_name = "mel"
+
+        feat_lens = [b[feat_name].shape[1] for b in batches]
+        max_feat_len = max(feat_lens)
+        min_feat_len = min(feat_lens)
+
+        feats = collate_2d(
+            [b[feat_name] for b in batches],
+            pad_idx=self.feat_padding,
+            max_len=max_feat_len)
+
+        feat_ctx = collate_2d(
+            [b[f'{feat_name}_ctx'] for b in batches],
+            pad_idx=self.feat_padding,
+            max_len=max_feat_len)
+
+        feat_ctx_mask = collate_1d(
+            [b[f'{feat_name}_ctx_mask'] for b in batches],
+            pad_idx=0.0,
+            max_len=max_feat_len)
+
+        ret_dict[feat_name] = feats.transpose(1, 2)  # [B, T, C]
+        ret_dict[f"{feat_name}_ctx"] = feat_ctx.transpose(1, 2)
+        ret_dict[f"{feat_name}_lens"] = torch.from_numpy(np.array(feat_lens))
+        ret_dict[f"{feat_name}_mask"] = sequence_mask(
+            seq_lens=ret_dict[f"{feat_name}_lens"],
+            max_len=max_feat_len)
+        ret_dict[f"{feat_name}_ctx_mask"] = feat_ctx_mask
 
         utt_ids = [b['utt_id'] for b in batches]
-        ret_dict["mel"] = mels.transpose(1, 2)  # [B, T, C]
-        ret_dict["mel_lens"] = torch.from_numpy(np.array(mel_lens))
-        ret_dict["mel_mask"] = sequence_mask(ret_dict["mel_lens"], 
-                max_len=ret_dict["mel"].shape[1])
 
         if "phone" in batches[0]:
             text_lens = [b['phone'].shape[0] for b in batches]
@@ -646,40 +584,28 @@ class VoiceBoxCollator(object):
             phones = collate_1d([torch.LongTensor(b['phone']) for b in batches], pad_idx=0, max_len=max_text_len)
             tones = collate_1d([torch.LongTensor(b['tone']) for b in batches], pad_idx=0, max_len=max_text_len)
             word_segs = collate_1d([torch.LongTensor(b['word_seg']) for b in batches], pad_idx=0, max_len=max_text_len)
-            ret_dict["phone"] = phones  
+            ret_dict["phone"] = phones
             ret_dict["tone"] = tones
             ret_dict['word_seg'] = word_segs
             ret_dict['text_lens'] = torch.from_numpy(np.array(text_lens))
-            ret_dict["text_mask"] = sequence_mask(ret_dict["text_lens"], 
+            ret_dict["text_mask"] = sequence_mask(ret_dict["text_lens"],
                                     max_len=max_text_len)
             ret_dict["text_mel_mask"] = sequence_mask(
-                ret_dict["mel_lens"] + ret_dict['text_lens'], 
-                max_len=torch.max(ret_dict["mel_lens"] + ret_dict['text_lens']))
+                ret_dict[f"{feat_name}_lens"] + ret_dict['text_lens'],
+                max_len=torch.max(ret_dict[f"{feat_name}_lens"] + ret_dict['text_lens']))
             if "lang" in batches[0]:
                 ret_dict["lang"] = collate_1d([torch.LongTensor(b['lang']) for b in batches], pad_idx=0, max_len=max_text_len)
 
-        ret_dict['token'] = token
-        ret_dict["token_mask"] = sequence_mask(torch.from_numpy(np.array(token_lens)),
-                  max_len=ret_dict["token"].shape[1])
-        # ret_dict['wav'] = wav
-
-        ret_dict['utt_ids'] = utt_ids
-        ret_dict['mel_ctx'] = mel_ctx.transpose(1, 2)  # [B, T, C]
-        ret_dict['mel_ctx_mask'] = mel_ctx_mask
-
-        crop_len = max(self.mel_hz, np.random.rand() * min_mel_len)
-        crop_len = min(self.max_crop_mel_len , crop_len)
-        crop_len = int(crop_len)
-        start_point = random.randint(0,  max(min_mel_len - crop_len - 1, 0))
-        ret_dict["prompt_mel"] = ret_dict["mel"][:, start_point:start_point+crop_len, :].transpose(1, 2)
-        if "bn" in ret_dict.keys():
-            ret_dict["prompt_bn"] = ret_dict["bn"][:, start_point:start_point+crop_len, :].transpose(1, 2)
+        crop_len = max(self.feat_hz, np.random.rand() * min_feat_len)
+        crop_len = int(min(self.max_crop_len , crop_len))
+        start_point = random.randint(0,  max(min_feat_len - crop_len - 1, 0))
+        ret_dict[f"prompt_{feat_name}"] = ret_dict[feat_name][:, start_point:start_point+crop_len, :].transpose(1, 2)
 
         return ret_dict
 
 
 if __name__ == "__main__":
-    batcher_config = { 
+    batcher_config = {
         "buckets": list(range(40, 2500, 60)),  # [0, 100, 200 ... 4000] 4000以上的可以先丢掉
         "dynamic_batch": True,
         "maximum_bucket_size": 17500,
@@ -701,12 +627,12 @@ if __name__ == "__main__":
         "bn_norm_std": 15,
         "bn_norm_mean": 0,
         "bn_padding": -2,
-        "silence_bn_path": "tasks/bigtts/umm/diffusion/silence_wvae/v3_40hz/silence_wvae.npy"
+        "silence_bn_path": "apps/bigtts/umm/diffusion/silence_wvae/v3_40hz/silence_wvae.npy"
     }
 
-    dataset = VoiceBoxParquetDataset(data_id=531, 
-                              batcher_config=batcher_config, 
-                              mel_config=mel_config, 
+    dataset = VoiceBoxParquetDataset(data_id=531,
+                              batcher_config=batcher_config,
+                              mel_config=mel_config,
                               max_length=60,
                               drop_last=False,
                               use_text=True,
@@ -726,7 +652,7 @@ if __name__ == "__main__":
         if sample["mel"].min() < mel_min:
             mel_min = sample["mel"].min()
         if sample["mel"].max() > mel_max:
-            mel_max = sample["mel"].max() 
+            mel_max = sample["mel"].max()
         if i > 1000:
             break
     print(mel_min, mel_max)

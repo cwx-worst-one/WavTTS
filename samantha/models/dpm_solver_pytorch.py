@@ -490,7 +490,7 @@ class DPM_Solver:
             return self.noise_schedule.inverse_lambda(logSNR_steps)
         elif skip_type == "time_uniform":
             if self.noise_schedule.schedule == "cosine":
-                print(t_T, t_0, N + 1)
+                # print(t_T, t_0, N + 1)
                 return torch.linspace(t_T, t_0, N + 1).to(device)
             else:
                 return torch.linspace(t_T, t_0, N + 1).to(device)

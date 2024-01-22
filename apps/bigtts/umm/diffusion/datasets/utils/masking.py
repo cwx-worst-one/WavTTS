@@ -13,13 +13,13 @@ class Masking(DataBlock):
         Note: only one segment is dropped in one utt
     """
 
-    def __init__(self, 
-                 p_drop_x=0.3, 
-                 p_drop_l=0.2, 
-                 p_drop_audio_frames=(0.7, 1.0), 
+    def __init__(self,
+                 p_drop_x=0.3,
+                 p_drop_l=0.2,
+                 p_drop_audio_frames=(0.7, 1.0),
                  p_drop_from_0_audio_frame = None,
                  st_drop_audio_frame = 0,
-                 p_drop_duration_frames=(0.1, 1.0), 
+                 p_drop_duration_frames=(0.1, 1.0),
                  p_drop_from_0_duration_frame = None,
                  st_drop_duration_frame = 0,
                  p_conditional_drop=0.0,
@@ -30,7 +30,7 @@ class Masking(DataBlock):
         args:
             p_drop_x: the probability of dropping the whole audio sequence
             p_drop_l: the probability of dropping the whole duration sequence
-            p_conditional_drop: the probability of dropping the whole (audio sequence, per-frame phone transcription) or (duration sequence, phone sequence) 
+            p_conditional_drop: the probability of dropping the whole (audio sequence, per-frame phone transcription) or (duration sequence, phone sequence)
             p_drop_audio_frames: the range of the proportion of dropped audio frames
             p_drop_from_0_audio_frame: the probability of dropping from the 0th audio frame
             st_drop_audio_frame: the start frame of the dropped segment other than the 0th frame
@@ -71,7 +71,7 @@ class Masking(DataBlock):
                 example = self.next_input()
         except StopIteration:
             return
-    
+
     def _mask_audio_frames(self, x, l=None):
         """
         Takes in a feature for 1 utterance and mask the audio frames
@@ -107,7 +107,7 @@ class Masking(DataBlock):
 
         x_ctx_mask = torch.concatenate((torch.zeros((drop_start), dtype=bool), torch.ones((num_frames_drop), dtype=bool), torch.zeros((num_frames-drop_start-num_frames_drop), dtype=bool)), axis=0) # true for dropped frames
         return x_ctx, x_ctx_mask
-    
+
     def _mask_duration_frames(self, l):
         """
         Takes in a feature for 1 utterance and mask the duration frames
@@ -128,27 +128,22 @@ class Masking(DataBlock):
         l_ctx_mask = np.concatenate((np.zeros((drop_start), dtype=bool), np.ones((num_frames_drop), dtype=bool), np.zeros((num_frames-drop_start-num_frames_drop), dtype=bool)), axis=0) # true for dropped frames
         return l_ctx, l_ctx_mask
 
-    def masking(self, example):
+    def masking(self, example, mask_feature="mel"):
         """
         Takes in an example and mask the audio frames or duration frames
         """
-        if 'mel' not in example and 'duration' not in example:
-            raise ValueError("Masking requires either feature or duration in the example")
-        
+
+        assert mask_feature in ["mel", "bn"]
+
         if np.random.rand() < self._p_conditional_drop:
             # drop all the conditonal inputs of the voicebox model
-            if 'mel' in example:
+            if mask_feature in example:
                 # drop audio, alignment, and codec if it exists
-                example['mel_ctx'] = np.zeros_like(example['mel'])
-                example['mel_ctx_mask'] = np.ones((example['mel'].shape[0]), dtype=bool)
-                if 'alignment' in example:
-                    example['alignment'] = np.zeros_like(example['alignment'])
-                if 'codec' in example:
-                    example['codec'] = np.zeros_like(example['codec'])
-            
-        else:        
-            if 'mel' in example:
-                x = example['mel']
+                example[f'{mask_feature}_ctx'] = np.zeros_like(example[mask_feature])
+                example[f'ctx_mask'] = np.ones((example[mask_feature].shape[0]), dtype=bool)
+        else:
+            if mask_feature in example:
+                x = example[mask_feature]
                 if np.random.rand() > self._p_drop_x:
                     if self.mask_use_alignment:
                         x_ctx, x_ctx_mask = self._mask_audio_frames(x, example.get('duration_ori', None))
@@ -157,9 +152,9 @@ class Masking(DataBlock):
                 else:
                     x_ctx = torch.ones_like(x) * self.padding_value
                     x_ctx_mask = torch.ones((x.shape[0]), dtype=bool) # true for dropped frames
-                example['mel_ctx'] = x_ctx
-                example['mel_ctx_mask'] = x_ctx_mask
-            
+                example[f'{mask_feature}_ctx'] = x_ctx
+                example[f'ctx_mask'] = x_ctx_mask
+
         return example
 
 
@@ -184,13 +179,13 @@ class Masking(DataBlock):
 #         Note: only one segment is dropped in one utt
 #     """
 
-#     def __init__(self, 
-#                     p_drop_x=0.3, 
-#                     p_drop_l=0.2, 
-#                     p_drop_audio_frames=(0.7, 1.0), 
+#     def __init__(self,
+#                     p_drop_x=0.3,
+#                     p_drop_l=0.2,
+#                     p_drop_audio_frames=(0.7, 1.0),
 #                     p_drop_from_0_audio_frame = None,
 #                     st_drop_audio_frame = 0,
-#                     p_drop_duration_frames=(0.1, 1.0), 
+#                     p_drop_duration_frames=(0.1, 1.0),
 #                     p_drop_from_0_duration_frame = None,
 #                     st_drop_duration_frame = 0,
 #                     p_conditional_drop=0.0,
@@ -200,7 +195,7 @@ class Masking(DataBlock):
 #         args:
 #             p_drop_x: the probability of dropping the whole audio sequence
 #             p_drop_l: the probability of dropping the whole duration sequence
-#             p_conditional_drop: the probability of dropping the whole (audio sequence, per-frame phone transcription) or (duration sequence, phone sequence) 
+#             p_conditional_drop: the probability of dropping the whole (audio sequence, per-frame phone transcription) or (duration sequence, phone sequence)
 #             p_drop_audio_frames: the range of the proportion of dropped audio frames
 #             p_drop_from_0_audio_frame: the probability of dropping from the 0th audio frame
 #             st_drop_audio_frame: the start frame of the dropped segment other than the 0th frame
@@ -240,7 +235,7 @@ class Masking(DataBlock):
 #                 example = self.next_input()
 #         except StopIteration:
 #             return
-    
+
 #     def _mask_audio_frames(self, x, l=None):
 #         """
 #         Takes in a feature for 1 utterance and mask the audio frames
@@ -259,7 +254,7 @@ class Masking(DataBlock):
 #                 num_frames_drop = np.random.randint(int(num_frames*self._p_drop_audio_frames[0]), int(num_frames*self._p_drop_audio_frames[1]))
 #                 total_frames = x.shape[0]
 #                 ctx_frames = min(self._min_ctx_frame, total_frames//2) # 至少保留一半的帧
-#                 if total_frames - num_frames_drop < ctx_frames:  
+#                 if total_frames - num_frames_drop < ctx_frames:
 #                     num_frames_drop = total_frames - ctx_frames
 
 #                 if num_frames-num_frames_drop > self._st_drop_audio_frame:
@@ -281,7 +276,7 @@ class Masking(DataBlock):
 #         x_ctx = torch.concatenate((x[:drop_start, :], torch.zeros((num_frames_drop, x.shape[1]), dtype=x.dtype).to(x.device), x[drop_start+num_frames_drop:, :]), axis=0)
 #         x_ctx_mask = torch.concatenate((torch.zeros((drop_start), dtype=bool), torch.ones((num_frames_drop), dtype=bool), torch.zeros((num_frames-drop_start-num_frames_drop), dtype=bool)), axis=0) # true for dropped frames
 #         return x_ctx, x_ctx_mask, drop_start, num_frames_drop
-    
+
 
 #     def masking(self, example):
 #         """
@@ -289,7 +284,7 @@ class Masking(DataBlock):
 #         """
 #         if 'mel' not in example and 'duration' not in example:
 #             raise ValueError("Masking requires either feature or duration in the example")
-        
+
 #         if np.random.rand() < self._p_conditional_drop:
 #             # drop all the conditonal inputs of the voicebox model
 #             if 'mel' in example:
@@ -300,14 +295,14 @@ class Masking(DataBlock):
 #                     example['alignment'] = np.zeros_like(example['alignment'])
 #                 if 'codec' in example:
 #                     example['codec'] = np.zeros_like(example['codec'])
-            
+
 #             # TODO
 #             # if 'duration' in example:
 #             #     # drop duration and phone_sequence
 #             #     example['duration_ctx'] = np.zeros_like(example['duration'])
 #             #     example['duration_ctx_mask'] = np.ones((example['duration'].shape[0]), dtype=bool)
 #             #     example['phone_sequence'] = np.zeros_like(example['phone_sequence'])
-#         else:        
+#         else:
 #             if 'mel' in example:
 #                 x = example['mel']
 #                 x_ctx = torch.zeros_like(x)
@@ -320,7 +315,7 @@ class Masking(DataBlock):
 #                 example['mel_ctx_mask'] = x_ctx_mask
 #                 example['drop_start'] = drop_start
 #                 example['num_frames_drop'] = num_frames_drop
-            
+
 #             # TODO
 #             # if 'duration' in example:
 #             #     l = example['duration']

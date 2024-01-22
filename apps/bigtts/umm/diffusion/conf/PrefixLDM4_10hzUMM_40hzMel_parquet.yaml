@@ -45,7 +45,7 @@ model_config: !new:samantha.models.llama_ldm.ModelArgs
     out_channels: 100
     prompt_mel_dim: 100
     n_token: 16390 # 0~16383, pad:16384
-    token_upscales: [1]
+    token_upscales: [2, 2]
     token_downscales: [1]
     llama_provider: ctiga
     target: !ref <run_opts[target]>
@@ -82,7 +82,7 @@ train_dataset: !new:apps.bigtts.umm.diffusion.datasets.voicebox_promptmel_datase
         buckets: !apply:eval ["list(range(40, 2500, 60))"]
         dynamic_batch: True
         maximum_bucket_size: !ref <run_opts[batch_total_tokens]>
-        length_fn: !apply:eval ["lambda x: x[\"mel\"].shape[1]"]  # seq.shape
+        length_fn: !apply:eval ["lambda x: x[\"bn\"].shape[1]"] # seq.shape
     mel_config: !ref <mel_config>
     max_length: 60
     mel_norm_mean: -2.5
@@ -92,14 +92,17 @@ train_dataset: !new:apps.bigtts.umm.diffusion.datasets.voicebox_promptmel_datase
     use_bn: True
     bn_config: !ref <bn_config>
     mask_use_alignment: False
+    umm_hop_size: 2400
+    wav_divide: 4800
 
 collator: !new:apps.bigtts.umm.diffusion.datasets.voicebox_promptmel_dataset.VoiceBoxCollator
     tokenizer_pad: 16384
     mel_config: !ref <mel_config>
     mel_padding: -5
     max_crop_second: 30
-    mel_to_umm: [1, 1]
+    bn_config: !ref <bn_config>
     bn_padding: !ref <bn_config[bn_padding]>
+    use_bn: True
 
 # dataloader configuration
 train_dataloader: !new:torch.utils.data.DataLoader

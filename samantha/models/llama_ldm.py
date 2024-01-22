@@ -261,6 +261,7 @@ class ModelArgs:
     bias: bool = False
     use_unet_style_skip_connect: bool = False
     target_type: str = "velocity"
+    use_prompt: bool = True
 
     min_t: float = 0.0
     max_t: float = 1.0
@@ -274,6 +275,7 @@ class LlamaDiffusion(nn.Module):
         self.min_t = hp.min_t if hasattr(hp, "min_t") else 0
         self.max_t = hp.max_t if hasattr(hp, "max_t") else 1
         self.target_type = hp.target_type if hasattr(hp, "target_type") else "velocity"
+        self.use_prompt = hp.use_prompt if hasattr(hp, "use_prompt") else True
 
         self.act_fn = nn.GELU()
         self.bias = hp.bias
@@ -307,32 +309,28 @@ class LlamaDiffusion(nn.Module):
                 )
 
         # token.
-        if hp.use_token_vector:
-            self.umm_pad_vector = nn.Parameter(
-                torch.FloatTensor(1, hp.token_vector_dim)
-            )
-            self.token_embedding = nn.Linear(
-                hp.token_vector_dim, hp.token_embed_dim, bias=False
-            )
-        else:
-            self.token_embedding = nn.Embedding(hp.n_token, hp.token_embed_dim)
-
+        self.token_embedding = nn.Embedding(hp.n_token, hp.token_embed_dim)
         self.token_prenet = self.create_token_prenet(hp)
-
-        # speaker-embedding
-        self.prompt_encoder = nn.Sequential(
-            ECAPA_TDNN_GN(hp.prompt_mel_dim, hp.spk_e_dim, hp.spk_embed_dim),
-            nn.Softsign(),
-        )
 
         # time-embedding
         self.time_embedding = TimeEmbedding(hp.time_embed_dim, bias=self.bias)
 
-        self.local_cond_project = nn.Linear(
-            hp.out_channels + hp.token_hidden_dim + hp.spk_embed_dim,
-            hp.local_cond_dim,
-            bias=self.bias,
-        )
+        if self.use_prompt:
+            # global speaker-embedding
+            self.prompt_encoder = nn.Sequential(
+                ECAPA_TDNN_GN(hp.prompt_mel_dim, hp.spk_e_dim, hp.spk_embed_dim),
+                nn.Softsign(),
+            )
+
+            self.local_cond_project = nn.Linear(
+                hp.out_channels + hp.token_hidden_dim + hp.spk_embed_dim,
+                hp.local_cond_dim,
+                bias=self.bias,
+            )
+        else:
+            self.local_cond_project = nn.Linear(
+                hp.token_hidden_dim, hp.local_cond_dim, bias=self.bias
+            )
 
         # backbone
         llama_config = LLamaArgs(
@@ -413,7 +411,7 @@ class LlamaDiffusion(nn.Module):
         if self.hp.use_textprefix:
             text_embed = self.frontend_embed(inputs["frontend"])  # [B, T, 1024]
             text_lens = inputs["text_lens"]
-        mel_lens = inputs["mel_lens"]
+        feat_lens = inputs["mel_lens"] if "mel_lens" in inputs else inputs["bn_lens"]
 
         B, device = inputs["token"].size(0), inputs["token"].device
 
@@ -425,13 +423,16 @@ class LlamaDiffusion(nn.Module):
         token_embed = token_embed.transpose(1, 2)  # B, T, C
 
         # speaker embedding
-        prompt_feature = f"prompt_{self.hp.prompt_feature}"
-        spk_emb = self.prompt_encoder(inputs[prompt_feature])
-        spk_emb = spk_emb.unsqueeze(1).expand(-1, token_embed.shape[1], -1)
+        if self.use_prompt:
+            prompt_feature = f"prompt_{self.hp.prompt_feature}"
+            spk_emb = self.prompt_encoder(inputs[prompt_feature])
+            spk_emb = spk_emb.unsqueeze(1).expand(-1, token_embed.shape[1], -1)
 
-        # local conditioning.
-        ctx_feature = f"{self.hp.ctx_feature}_ctx"
-        local_cond = torch.cat([token_embed, inputs[ctx_feature], spk_emb], dim=-1)
+            # local conditioning.
+            ctx_feature = f"{self.hp.ctx_feature}_ctx"
+            local_cond = torch.cat([token_embed, inputs[ctx_feature], spk_emb], dim=-1)
+        else:
+            local_cond = token_embed
         local_cond = self.local_cond_project(local_cond)
 
         # diffusion target
@@ -462,26 +463,41 @@ class LlamaDiffusion(nn.Module):
 
         # concat prefix-text.
         if self.hp.use_textprefix:
-            x_noisy_wtext = (
-                torch.ones(
-                    [B, inputs["text_mel_mask"].shape[1], x_noisy.shape[-1]],
-                    device=device,
-                )
-                * self.hp.x_padding_value
+            T = inputs["text_mel_mask"].shape[1]
+            C = x_noisy.shape[-1]
+            x_noisy_wtext = torch.full(
+                [B, T, C], self.hp.x_padding_value, device=device, dtype=x_noisy.dtype
             )
+
             x_noisy_wtext = alphas * x_noisy_wtext + betas * torch.randn_like(
                 x_noisy_wtext
             )
-            for i in range(B):
-                x_noisy_wtext[i, : text_lens[i], :] = text_embed[i, : text_lens[i], :]
-                x_noisy_wtext[
-                    i, text_lens[i] : text_lens[i] + mel_lens[i], :
-                ] = x_noisy[i, : mel_lens[i], :]
+
+            T_text = text_embed.shape[1]
+            T_feat = x_noisy.shape[1]
+            indics_x = torch.arange(T, device=device)[None, :]
+            mask_x = (indics_x < text_lens[:, None]) & (indics_x < T_text)
+            mask_text = (
+                torch.arange(text_embed.shape[1], device=device)[None, :]
+                < text_lens[:, None]
+            )
+            x_noisy_wtext[mask_x] = text_embed[mask_text].to(dtype=x_noisy_wtext.dtype)
+
+            mask_x = (
+                (text_lens[:, None] <= indics_x)
+                & (indics_x < (text_lens + feat_lens)[:, None])
+                & (indics_x - text_lens[:, None] < T_feat)
+            )
+            mask_noisy = (
+                torch.arange(T_feat, device=device)[None, :] < feat_lens[:, None]
+            )
+            x_noisy_wtext[mask_x] = x_noisy[mask_noisy].to(dtype=x_noisy_wtext.dtype)
+
             encoder_input = x_noisy_wtext
             seq_mask = inputs["text_mel_mask"]
         else:
             encoder_input = x_noisy
-            seq_mask = inputs["mel_mask"]
+            seq_mask = inputs[f"{self.hp.prompt_feature}_mask"]
 
         pred_v = self.encoder(
             encoder_input, encoder_input.shape[1], attention_mask=seq_mask
@@ -489,13 +505,21 @@ class LlamaDiffusion(nn.Module):
 
         if self.hp.use_textprefix:
             pred_v_wotext = torch.zeros(B, x.shape[1], pred_v.shape[-1], device=device)
-            for i in range(B):
-                pred_v_wotext[i, : mel_lens[i], :] = pred_v[
-                    i, text_lens[i] : text_lens[i] + mel_lens[i], :
-                ]
+
+            T0 = x.shape[1]
+            T1 = pred_v.shape[1]
+            indics0 = torch.arange(T0, device=device)[None, :]
+            indics1 = torch.arange(T1, device=device)[None, :]
+
+            mask0 = (indics0 < feat_lens[:, None]) & (
+                (text_lens[:, None] + indics0) < T1
+            )
+            mask1 = (text_lens[:, None] <= indics1) & (
+                indics1 < (text_lens[:, None] + feat_lens[:, None])
+            )
+            pred_v_wotext[mask0] = pred_v[mask1].to(dtype=pred_v_wotext.dtype)
+
             pred_v = pred_v_wotext
-        else:
-            pred_v = pred_v
 
         pred_v = self.postnet(pred_v)
 
@@ -517,7 +541,10 @@ class LlamaDiffusion(nn.Module):
             x = torch.cat([text_embed, x], dim=1)
 
         pred_v = self.encoder(x, x.shape[1])
-        pred_v = pred_v[:, text_embed.shape[1] :, :]
+
+        if self.hp.use_textprefix:
+            pred_v = pred_v[:, text_embed.shape[1] :, :]
+
         pred_v = self.postnet(pred_v)
 
         if self.target_type == "velocity":
@@ -529,40 +556,33 @@ class LlamaDiffusion(nn.Module):
             raise NotImplementedError
         return pred
 
-    def ddim_sample(
-        self,
-        timesteps,
-        local_cond,
-        text_embed,
-        text_cfg_w=1.0,
-        null_text_embed=None,
-        eta=0.0,
-    ):
+    def ddim_sample(self, timesteps, local_cond, text_embed, text_cfg_w=1.0, eta=0.0):
         t = timesteps
         batch_size, device, frm_len = (
             local_cond.size(0),
             local_cond.device,
             local_cond.size(1),
         )
-        x = torch.randn([batch_size, frm_len, self.hp.out_channels], device=device)
+        x = torch.randn([1, frm_len, self.hp.out_channels], device=device)
 
         if t > 20:
             sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device)
         else:
             sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device) ** 2
-        sigmas = repeat(sigmas, "i -> i b", b=batch_size)
+            # sigmas = torch.linspace(self.max_t, self.min_t, t+1, device=device) ** 0.5
+        sigmas = repeat(sigmas, "i -> i b", b=1)
         sigmas_batch = extend_dim(sigmas, dim=x.ndim)
         alphas, betas = self.get_alpha_beta(sigmas_batch)
 
         for i in tqdm(range(t)):
             if self.target_type == "velocity":
-                if text_cfg_w > 1 and null_text_embed is not None:
-                    v_pred = self._forward(
-                        x, local_cond, text_embed, timesteps=sigmas[i]
-                    )
-                    v_pred_uncond = self._forward(
-                        x, local_cond, null_text_embed, timesteps=sigmas[i]
-                    )
+                if text_cfg_w != 1:
+                    v_pred, v_pred_uncond = self._forward(
+                        x,
+                        local_cond,
+                        text_embed,
+                        timesteps=sigmas[i].expand(batch_size, -1),
+                    ).chunk(2)
                     v_pred = text_cfg_w * v_pred + (1 - text_cfg_w) * v_pred_uncond
                 else:
                     v_pred = self._forward(
@@ -597,21 +617,28 @@ class LlamaDiffusion(nn.Module):
             else:
                 x = alphas[i + 1] * x_pred + betas[i + 1] * noise_pred
 
-        return x.transpose(1, 2)
+        return x
 
-    def dpmsolver_sample(self, timesteps, local_cond, text_embed):
+    def dpmsolver_sample(self, timesteps, local_cond, text_embed, text_cfg_w=1.0):
         batch_size, device, frm_len = (
             local_cond.size(0),
             local_cond.device,
             local_cond.size(1),
         )
-        x = torch.randn([batch_size, frm_len, self.hp.out_channels], device=device)
+        x = torch.randn([1, frm_len, self.hp.out_channels], device=device)
         noise_schedule = NoiseScheduleVP(schedule="cosine")
 
         def my_wrapper(fn):
             def wrapped(x, t, **kwargs):
-                # out = fn(x, time=t, **kwargs)
-                out = fn(x, timesteps=t, **kwargs)
+                if text_cfg_w > 1:
+                    out, uncond_out = fn(
+                        x.expand(batch_size, -1, -1),
+                        timesteps=t.expand(batch_size),
+                        **kwargs,
+                    ).chunk(2)
+                    out = text_cfg_w * out + (1 - text_cfg_w) * uncond_out
+                else:
+                    out = fn(x, timesteps=t, **kwargs)
                 return out
 
             return wrapped
@@ -622,27 +649,107 @@ class LlamaDiffusion(nn.Module):
             model_type="v",
             model_kwargs={"local_cond": local_cond, "text_embed": text_embed},
         )
-        dpm_solver = DPM_Solver(model_fn, noise_schedule)
+        dpm_solver = DPM_Solver(
+            model_fn, noise_schedule, predict_x0=True
+        )  # dpmsolver++
+        # dpm_solver = DPM_Solver(model_fn, noise_schedule)
         x = dpm_solver.sample(
             x,
-            t_end=0.008,
+            t_end=0.001,
             steps=timesteps,
             order=2,
-            skip_type="time_uniform",
+            skip_type="logSNR",
             method="multistep",
         )
-        return x.transpose(1, 2)
+        return x
+
+    def plms_sample(self, timesteps, local_cond, text_embed, text_cfg_w=1.0):
+        t = timesteps
+        batch_size, device, frm_len = (
+            local_cond.size(0),
+            local_cond.device,
+            local_cond.size(1),
+        )
+        x = torch.randn([1, frm_len, self.hp.out_channels], device=device)
+        if t > 20:
+            sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device)
+        else:
+            sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device) ** 2
+            # sigmas = torch.linspace(self.max_t, self.min_t, t+1, device=device)
+        sigmas = repeat(sigmas, "i -> i b", b=1)
+        sigmas_batch = extend_dim(sigmas, dim=x.ndim)
+        alphas, betas = self.get_alpha_beta(sigmas_batch)
+
+        pred_list = []
+        for i in tqdm(range(t)):
+            if text_cfg_w > 1:
+                pred, pred_uncond = self._forward(
+                    x,
+                    local_cond,
+                    text_embed,
+                    timesteps=sigmas[i].expand(batch_size, -1),
+                ).chunk(2)
+                pred = text_cfg_w * pred + (1 - text_cfg_w) * pred_uncond
+            else:
+                pred = self._forward(x, local_cond, text_embed, timesteps=sigmas[i])
+
+            if self.target_type == "velocity":
+                x_pred = alphas[i] * x - betas[i] * pred
+                noise_pred = betas[i] * x + alphas[i] * pred
+            elif self.target_type == "noise":
+                x_pred = (x - betas[i] * pred) / alphas[i]
+                noise_pred = pred
+            else:
+                raise NotImplementedError
+
+            if len(pred_list) == 0:
+                x_noisy = alphas[i + 1] * x_pred + betas[i + 1] * noise_pred
+                if text_cfg_w > 1:
+                    pred_prev, pred_prev_uncond = self._forward(
+                        x_noisy,
+                        local_cond,
+                        text_embed,
+                        timesteps=sigmas[i + 1].expand(batch_size, -1),
+                    ).chunk(2)
+                    pred_prev = (
+                        text_cfg_w * pred_prev + (1 - text_cfg_w) * pred_prev_uncond
+                    )
+                else:
+                    pred_prev = self._forward(
+                        x_noisy, local_cond, text_embed, timesteps=sigmas[i + 1]
+                    )
+                pred_prime = (pred + pred_prev) / 2
+            elif len(pred_list) == 1:
+                pred_prime = (3 * pred - pred_list[-1]) / 2
+            elif len(pred_list) == 2:
+                pred_prime = (23 * pred - 16 * pred_list[-1] + 5 * pred_list[-2]) / 12
+            elif len(pred_list) >= 3:
+                pred_prime = (
+                    55 * pred
+                    - 59 * pred_list[-1]
+                    + 37 * pred_list[-2]
+                    - 9 * pred_list[-3]
+                ) / 24
+
+            if self.target_type == "velocity":
+                x_pred_prime = alphas[i] * x - betas[i] * pred_prime
+                noise_pred_prime = betas[i] * x + alphas[i] * pred_prime
+            elif self.target_type == "noise":
+                x_pred_prime = (x - betas[i] * pred_prime) / alphas[i]
+                noise_pred_prime = pred
+            else:
+                raise NotImplementedError
+
+            x = alphas[i + 1] * x_pred_prime + betas[i + 1] * noise_pred_prime
+            pred_list.append(pred)
+        return x
 
     @torch.no_grad()
     def inference(self, inputs, timesteps=20, sampler="ddim", text_cfg_w=1.0, **kwargs):
         if self.hp.use_textprefix:
             text_embed = self.frontend_embed(inputs["frontend"])  # [B, T, 1024]
-            if text_cfg_w > 1:
-                null_text_embed = self.frontend_embed(
-                    inputs["null_frontend"]
-                )  # [B, T, 1024]
-            else:
-                null_text_embed = None
+        else:
+            text_embed = None
 
         # B, device = inputs["token"].size(0), inputs["token"].device
 
@@ -653,31 +760,35 @@ class LlamaDiffusion(nn.Module):
             token_embed = layer(token_embed)
         token_embed = token_embed.transpose(1, 2)  # B, T, C
 
-        # speaker embedding
-        prompt_feature = f"prompt_{self.hp.prompt_feature}"
-        spk_emb = self.prompt_encoder(inputs[prompt_feature])
-        spk_emb = spk_emb.unsqueeze(1).expand(-1, token_embed.shape[1], -1)
+        if self.use_prompt:
+            # speaker embedding
+            prompt_feature = f"prompt_{self.hp.prompt_feature}"
+            spk_emb = self.prompt_encoder(inputs[prompt_feature])
+            spk_emb = spk_emb.unsqueeze(1).expand(-1, token_embed.shape[1], -1)
 
-        # local conditioning.
-        ctx_feature = f"{self.hp.ctx_feature}_ctx"
-        local_cond = torch.cat([token_embed, inputs[ctx_feature], spk_emb], dim=-1)
+            # local conditioning.
+            ctx_feature = f"{self.hp.ctx_feature}_ctx"
+            local_cond = torch.cat([token_embed, inputs[ctx_feature], spk_emb], dim=-1)
+        else:
+            local_cond = token_embed
         local_cond = self.local_cond_project(local_cond)
 
         if sampler == "ddim":
             x = self.ddim_sample(
-                timesteps,
-                local_cond,
-                text_embed,
-                text_cfg_w=text_cfg_w,
-                null_text_embed=null_text_embed,
-                **kwargs,
+                timesteps, local_cond, text_embed, text_cfg_w=text_cfg_w, **kwargs
             )
         elif sampler == "dpmsolver":
-            x = self.dpmsolver_sample(timesteps, local_cond, text_embed, **kwargs)
+            x = self.dpmsolver_sample(
+                timesteps, local_cond, text_embed, text_cfg_w=text_cfg_w, **kwargs
+            )
+        elif sampler == "plms":
+            x = self.plms_sample(
+                timesteps, local_cond, text_embed, text_cfg_w=text_cfg_w, **kwargs
+            )
         else:
             raise NotImplementedError
 
-        return x
+        return x.transpose(1, 2)
 
 
 if __name__ == "__main__":

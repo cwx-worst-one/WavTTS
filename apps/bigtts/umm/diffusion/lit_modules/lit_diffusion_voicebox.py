@@ -103,11 +103,18 @@ class VoiceBoxModule(pl.LightningModule):
         if "umm_codebook" in self.requires:
             batch["token"] = self.get_umm_embedding(batch["token"])
 
-        ref = batch["mel"]
-        mel_len = batch["mel_lens"]
-        bsz, seqlen = ref.shape[0], ref.shape[1]
+        if "mel" in batch:
+            ref = batch["mel"]
+            feat_len = batch["mel_lens"]
+            loss_mask = batch["mel_ctx_mask"]
+        else:
+            ref = batch["bn"]
+            feat_len = batch["bn_lens"]
+            loss_mask = batch["bn_ctx_mask"]
 
-        batch_tokens = torch.sum(mel_len).item()
+        bsz, seqlen = ref.shape[0], ref.shape[1]
+        batch_tokens = torch.sum(feat_len).item()
+
         self.model_metric.num_tokens += batch_tokens
         if self.trainer.global_step % self.trainer.log_every_n_steps == 0:
             self.model_metric.update(
@@ -122,7 +129,7 @@ class VoiceBoxModule(pl.LightningModule):
             loss_dict = {}
             loss = 0
             for loss_type, loss_func in self.criterion_dict.items():
-                tmp_loss = loss_func(pred, target, batch["mel_ctx_mask"])
+                tmp_loss = loss_func(pred, target, loss_mask)
                 loss_dict[loss_type] = tmp_loss.item()
                 loss += tmp_loss
 

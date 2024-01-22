@@ -26,7 +26,7 @@ def collate_2d(values,
     res = values[0].new(len(values), values[0].shape[0], size).fill_(pad_idx)
 
     def copy_tensor(src, dst):
-        assert dst.numel() == src.numel()
+        assert dst.numel() == src.numel(), "{} {}".format(src.shape, dst.shape)
         if shift_right:
             dst[1:] = src[:-1]
         else:
