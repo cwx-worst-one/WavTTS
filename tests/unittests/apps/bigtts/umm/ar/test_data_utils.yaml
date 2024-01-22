@@ -1,0 +1,30 @@
+################################################################################
+##########                   DATAMODULE CONFIGURATION                 ##########
+################################################################################
+
+# item_transform: !new:apps.bigtts.umm.ar.data.transform.BigTTSTransforms
+#     sample_rate: 24000
+#     umm_token_freq: 25
+#     audio_key: wav
+#     token_key: umm_token
+#     min_duration: 2
+#     max_duration: 60
+#     normalize_audio: false
+#     tokenizer: sami
+#     phone2id: !new:samantha.dataio.lite.utils.phone_to_id.PhoneToId
+#     phone_tone_wordseg_dict: !apply:torch.load
+#     - apps/bigtts/umm/ar/data/fronted_v3_2_dict.pyt
+#     log_interval: 10000
+
+# batch_transform: !new:apps.bigtts.umm.ar.data.collate.BigMusicCollator
+#     token_key: umm_token
+
+buckets: !apply:apps.bigtts.umm.ar.data.utils.gen_duration_buckets
+    min_duration: 2
+    max_duration: 60
+    sample_rate: 25
+
+tokenizer: !apply:apps.bigtts.umm.ar.data.utils.init_tokenizer
+    name: sami
+
+normalize_text: !name:apps.bigtts.umm.ar.data.utils.normalize_text

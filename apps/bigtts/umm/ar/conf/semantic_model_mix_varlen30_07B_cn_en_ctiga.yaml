@@ -32,11 +32,13 @@ run_opts:
     version: v0
     cache_dir: .module_cache/musiclm
     precision: "16"
-    num_workers: 8
     accelerator: auto
     max_steps: 1000000
     val_check_interval: 5000
     batch_size: 12
+    num_workers: 8
+    batch_size_in_worker: 16
+    prefetch_factor: 32
     learning_rate: 3.0e-4
     warmup_steps: 2000
     cycle_steps: 30000
@@ -49,27 +51,74 @@ run_opts:
     umm_token_freq: 40
     dataset_type: 2 # AUDIO = 1 UMM_TOKEN = 2
     target_token_key: umm_token
+    target_audio_key: wav
+    min_duration: 2
+    max_duration: 30
+
+################################################################################
+##########                   DATAMODULE CONFIGURATION                 ##########
+################################################################################
+
+item_transform: !new:samantha.dataio.lite.compose.Compose
+    transforms:
+        - !new:apps.bigtts.umm.ar.data.transform.BigTTSTransforms
+            sample_rate: !ref <extra_params[sample_rate]>
+            umm_token_freq: !ref <run_opts[umm_token_freq]>
+            audio_key: !ref <run_opts[target_audio_key]>
+            token_key: !ref <run_opts[target_token_key]>
+            min_duration: !ref <run_opts[min_duration]>
+            max_duration: !ref <run_opts[max_duration]>
+            normalize_audio: False
+            tokenizer: sami
+            phone2id: !new:samantha.dataio.lite.utils.phone_to_id.PhoneToId
+            phone_tone_wordseg_dict: !apply:torch.load
+                - apps/bigtts/umm/ar/data/fronted_v3_2_dict.pyt
+            log_interval: 10000
+
+batch_transform: !new:samantha.dataio.lite.compose.BatchCompose
+    transforms:
+        - !new:apps.bigtts.umm.ar.data.collate.BigMusicCollator
+            token_key: !ref <run_opts[target_token_key]>
+
+train_dataset: !new:samantha.dataio.parquet.parquet_dataset.ParquetDataset
+    data_id: !ref <run_opts[data_id]>
+    resampled: True
+    shardshuffle: True
+    sample_shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+    item_transform: !ref <item_transform>
+    batch_size_in_worker: !ref <run_opts[batch_size_in_worker]>
+    yield_state: True
+
+bucket_batcher: !new:samantha.dataio.batching.BucketBatcher
+    buckets: !apply:apps.bigtts.umm.ar.data.utils.gen_duration_buckets
+        min_duration: !ref <run_opts[min_duration]>
+        max_duration: !ref <run_opts[max_duration]>
+        sample_rate: !ref <run_opts[umm_token_freq]>
+    dynamic_batch: True
+    maximum_bucket_size: !ref <run_opts[batch_size]> * <run_opts[max_duration]> * <run_opts[umm_token_freq]>
+    length_fn: !new:functools.partial
+        - !apply:eval ["lambda k, x: x.get(k).size(-1)"]  # seq.shape
+        - !ref <run_opts[target_token_key]>
+
+# dataloader configuration
+train_dataloader: !new:cruise.data_module.lite.dataloader.LiteCruiseDataLoader
+    dataset: !ref <train_dataset>
+    batcher: !ref <bucket_batcher>
+    batch_transform: !ref <batch_transform>
+    num_workers: !ref <run_opts[num_workers]>
+    pin_memory: True
+    drop_last: False
+    prefetch_factor: !ref <run_opts[prefetch_factor]>
+    persistent_workers: False
+
+# datamodule configuration
+pl_datamodule: !new:samantha.dataio.lite.lite_datamodule.LiteDataModule
+    train_dataloader: !ref <train_dataloader>
+    val_dataloader: [] # skip_validation=true
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
-
-pl_datamodule: !new:apps.bigtts.umm.ar.data.mix.MixWebDataModule
-    sample_rate: !ref <extra_params[sample_rate]>
-    shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
-    num_workers: !ref <run_opts[num_workers]>
-    normalize_audio: False
-    tokenizer: sami
-    min_duration: 2
-    max_duration: 30
-    weights: [0, 1, 0] # vocal, speech, instrumental
-    batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <run_opts[umm_token_freq]>
-    region: !ref <run_opts[region]>
-    dataset_type: !ref <run_opts[dataset_type]>
-    data_id: !ref <run_opts[data_id]>
-    umm_token_freq: !ref <run_opts[umm_token_freq]>
-    target_token_key: !ref <run_opts[target_token_key]>
-    skip_validation: True
 
 model_config: !new:transformers.GPT2Config
     vocab_size: 1 # placeholder. Embedding table gets removed on load
@@ -126,7 +175,7 @@ pl_module: !new:apps.bigtts.umm.ar.semantic_modules.SemanticModule_Valle
     scheduler_cls: !ref <scheduler_cls>
     criterion_cls: !name:samantha.criterion.masked_loss.MaskedCrossEntropyV2
     extra_params: !ref <extra_params>
-    # required_modules:
+    # required_modules: 
         # bestrq:
             # US UMM-chroma stage 3
             # hpath: hdfs://haruna/home/byte_speech_sv/zhuo.chen1/umm/log/umm/umm_stage3_dw20-3-2_wordpiece_vq16384x32_ll_data182/checkpoints/step=040000.ckpt

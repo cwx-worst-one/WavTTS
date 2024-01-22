@@ -26,7 +26,7 @@ dataloader: !new:torch.utils.data.DataLoader
     batch_size: null
     drop_last: False
 
-pl_datamodule: !new:apps.bigtts.umm.ar.data.lit_data.DataModule
+pl_datamodule: !new:samantha.dataio.lite.lite_datamodule.LiteDataModule
     predict_dataloader: !ref <dataloader>
 
 pl_module: !new:apps.bigtts.umm.ar.infer.pl_module_bigtts_ar.SemanticInference
