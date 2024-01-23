@@ -72,6 +72,8 @@ __pycache__
 *.onnx
 *.wav
 *.jsonl
+*.zip
+*.bin
 
 # logs
 /**/cruise_logs
