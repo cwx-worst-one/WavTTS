@@ -12,6 +12,7 @@ from recipes.bigmusic.utils.rewards import (
     chorus_sim_reward,
     chorus_presence_reward,
     loudness_reward,
+    audio_metrics_reward,
 )
 
 
@@ -173,6 +174,12 @@ class Reranker:
             return loudness_reward(
                 sampled_audio,
                 batch["style_audio"],
+                sample_rate=extra_params.sample_rate,
+                device=sampled_audio.device,
+            )
+        elif rw_type == "audio_metrics":
+            return audio_metrics_reward(
+                sampled_audio,
                 sample_rate=extra_params.sample_rate,
                 device=sampled_audio.device,
             )

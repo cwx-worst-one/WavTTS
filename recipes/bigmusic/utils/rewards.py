@@ -8,7 +8,21 @@ from recipes.bigmusic.utils.metrics_asr import (
     edit_distance,
     remove_punc_case,
 )
+from recipes.musiclm.inference.utils import dump_wav
 from torchaudio.functional import loudness, resample
+
+import json
+import euler
+euler.install_thrift_import_hook()
+import base_thrift
+import sami_thrift
+
+CLIENT = euler.Client(
+    sami_thrift.SamiService,
+    target="sd://lab.sami.gateway?cluster=release_thrift",
+    timeout=1200,
+)
+ACCESS_KEY = "ATUBJrWuzl"
 
 
 def _infer_batch_beam(sampled, ref):
@@ -308,3 +322,102 @@ def chorus_presence_reward(sampled_audio, sample_rate, device):
         if len(hyps) > 0:
             chorus_presence_rewards[i] = 1
     return chorus_presence_rewards
+
+
+def get_audio_metrics(audio_bytes):
+    payload = json.dumps(
+        {
+            "extra": {
+                "cutoff_freq": True,
+                "phase_check": True,
+                "rms_stats": True,
+                "clipping": True,
+                "loudness": True,
+            }
+        }
+    )
+    request = sami_thrift.InvokeRequest(
+        Base=base_thrift.Base(),
+        access_key=ACCESS_KEY,
+        method="AudioMetrics",
+        payload=payload,
+        data=audio_bytes,
+        version="v4",
+    )
+    try:
+        response = CLIENT.Invoke(request)
+        metric = json.loads(response.payload)
+    except Exception as ex:
+        print(f"AudioMetrics exception: {ex}, payload: {payload}")
+        metric = {}
+    return metric
+
+
+def get_audio_metrics_score(metrics):
+    # Clipping
+    def _clip_score(clip):
+        if clip.get("rate", 0) >= 5e-5:
+            return 0
+        for ch in ["left", "right"]:
+            if clip.get(f"peak_rate_{ch}", 0) >= 0.05:
+                return 0
+        return 1
+    # Loudness
+    def _loudness_score(loudness):
+        if (
+            loudness.get("integrated_loudness", -7) > -5
+            or loudness.get("max_mom_loud", -7) >= 0
+            or loudness.get("max_short_term_loud", -7) >= 0
+        ):
+            return 0
+        return 1
+    # RMS stats
+    def _rms_score(rms_stats):
+        if rms_stats.get("peak", 0) > 3:
+            return 0
+        for ch in ["left", "right"]:
+            if (
+                rms_stats.get(f"{ch}_total", -10) > -5
+                or rms_stats.get(f"{ch}_total", -10) < -40
+                or rms_stats.get(f"normed_std_{ch}", -10) < -19.5
+            ):
+                return 0
+        return 1
+    # Cutoff frequency
+    def _cutoff_freq_score(cutoff_freq):
+        for ch in ["left", "right"]:
+            if (
+                cutoff_freq.get(f"rel_{ch}", 48000) < 15000
+                and cutoff_freq.get(f"rel_{ch}_conf", 0) > 0.6
+                and cutoff_freq.get(f"band_std_{ch}", 10) < 5
+            ):
+                return 0
+        return 1
+    # Phase
+    def _phase_score(phase):
+        if (
+            phase.get("has_phase_issue", False)
+            or abs(phase.get("rms_downmix_diff", 0.1)) > 3
+        ):
+            return 0
+        return 1
+    score = 0.0
+    score += _clip_score(metrics.get("clipping", {}))
+    score += _loudness_score(metrics.get("loudness", {}))
+    score += _rms_score(metrics.get("rms_stats", {}))
+    score += _cutoff_freq_score(metrics.get("cutoff_frequency", {}))
+    score += _phase_score(metrics.get("phase_check", {}))
+    return score / 5
+
+
+@torch.no_grad()
+def audio_metrics_reward(sampled_audio, sample_rate, device):
+    rewards = torch.zeros(sampled_audio.size(0)).to(device)
+    sampled_audio = sampled_audio.float().cpu().numpy()
+    for i in range(len(sampled_audio)):
+        audio_bytes = dump_wav(sampled_audio[i], sr=sample_rate)
+        metrics = get_audio_metrics(audio_bytes)
+        if len(metrics) == 0:
+            continue
+        rewards[i] = get_audio_metrics_score(metrics)
+    return rewards

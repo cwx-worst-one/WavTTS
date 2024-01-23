@@ -127,7 +127,7 @@ def save_batch_outputs(
             save_wav(vocal_audio[ii].cpu().float(), input_vocals_fp, sr=sample_rate, save_mp3=save_mp3)
 
         meta_fp = os.path.join(wav_dir, f"{file_name}.metadata.json")
-        metadata = metadatas[ii] if metadatas is not None else {}
+        metadata = metadatas[i] if metadatas is not None else {}
         metadata = {
             **metadata,
             'lyrics': lyrics_str,
