@@ -1,10 +1,13 @@
 from recipes.bigmusic.lightning.base_modules import BaseContinuousEmbedModule
 from recipes.bigmusic.lightning.embedding_modules import (
+    MulanEmbedder,
     LyricsTokenEmbedder,
+    TagCategoricalEmbedder,
     WavToVecTokenEmbedder,
     MetadataT5TokenEmbedder,
     SpeakerEmbedder,
     BestRQTokenEmbedder, 
+    MulanTagCategoricalEmbedder,
     MulanTagEmbedder,
     DurationEmbedder,
     StructureEmbedder,
@@ -60,13 +63,18 @@ class SemanticModule(BaseContinuousEmbedModule):
     ):
         hidden_size = extra_params['hidden_size']
         semantic_codebook_size = extra_params['semantic_codebook_size']
+        lyrics_vocab_size = extra_params.get('lyrics_codebook_size', 0)        
+        tag_embed_dim = extra_params.get('tag_embed_dim', 0)
+        tag_taxonomy_lang = extra_params.get('tag_taxonomy_lang', 'Zh')
+        tag_dropout_rate = extra_params.get('tag_dropout_rate', 0)
+        mulan_embed_dim = extra_params.get('mulan_embed_dim', 0)
+        mulan_OTF_tag_type = extra_params.get('mulan_tag_type', 'mulan_genres')
+        mulan_crop = extra_params.get('mulan_crop', True)
+        mulan_average = extra_params.get('mulan_average', True)
+        use_mcc_gender = extra_params.get("use_mcc_gender", False)
         embedder_dict = {}
         for emb_type in extra_params.get("input_embedders", ["mulan", "lyrics_tokens"]):
-            if emb_type == "mulan":
-                mulan_embed_dim = extra_params['mulan_embed_dim']
-                mulan_OTF_tag_type = extra_params.get('mulan_tag_type', 'mulan_genres')
-                mulan_crop = extra_params.get('mulan_crop', True)
-                mulan_average = extra_params.get('mulan_average', True)
+            if emb_type == "mulan":                
                 embedder_dict[emb_type] = MulanTagEmbedder(
                     input_dim=mulan_embed_dim,
                     embedding_dim=hidden_size,
@@ -75,8 +83,23 @@ class SemanticModule(BaseContinuousEmbedModule):
                     mulan_crop=mulan_crop,
                     mulan_average=mulan_average,
                 )
+            elif emb_type == "mulan_categorical":
+                embedder_dict[emb_type] = MulanTagCategoricalEmbedder(
+                    input_dim=mulan_embed_dim,
+                    embedding_dim=hidden_size,
+                    add_sos=True,
+                    mulan_tag_type=mulan_OTF_tag_type,
+                    dropout=tag_dropout_rate,
+                    use_mcc_gender=use_mcc_gender,
+                )
+            elif emb_type == "tag_categorical":
+                embedder_dict[emb_type] = TagCategoricalEmbedder(
+                    input_dim=tag_embed_dim,
+                    embedding_dim=hidden_size,
+                    add_sos=True,                    
+                    lang=tag_taxonomy_lang,
+                )
             elif emb_type == "lyrics_tokens":
-                lyrics_vocab_size = extra_params['lyrics_codebook_size']
                 embedder_dict[emb_type] = LyricsTokenEmbedder(
                     vocab_size=lyrics_vocab_size,
                     embedding_dim=hidden_size,
@@ -190,7 +213,6 @@ class SemanticModule(BaseContinuousEmbedModule):
                 mcc_style_text=batch.get('style_text'),
                 with_sos=True,
                 data_type='tag',
-                target_samples_length=target_samples_length,
             )
         else:
             # adding SOS token no matter what so that all parameters get used
@@ -281,8 +303,10 @@ class SemanticModule(BaseContinuousEmbedModule):
 
         inputs_embeds = []
         for emb_type, embedder in input_embedders:
-            if emb_type == "mulan":
+            if (emb_type == "mulan") or (emb_type == "mulan_categorical"):
                 emb_inputs = self.prepare_mulan_inputs(batch, embedder)
+            elif emb_type == 'tag_categorical':
+                emb_inputs = self.prepare_categorical_inputs(batch, embedder)
             elif emb_type == "lyrics_tokens":
                 emb_inputs = self.prepare_lyrics_inputs(batch, embedder)
             elif emb_type == "duration":

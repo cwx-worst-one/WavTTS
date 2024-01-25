@@ -9,6 +9,8 @@ cd $CUR_DIR
 # suppress excessive logs
 export BYTED_TORCH_C10D_LOG_LEVEL=ERROR
 
+# arnold env: can speed up communication among nodes
+export ARNOLD_SORT_IP=1
 if [ "$SETUP_MUSIC" == "1" ]
 then
     bash setup_music.sh

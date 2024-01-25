@@ -116,3 +116,5 @@ recipes/text2semantic/custom_scripts/run.sh
 *.log
 resource/
 *.ckpt
+*.csv
+*.ipynb

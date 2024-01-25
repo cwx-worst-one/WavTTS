@@ -1,10 +1,12 @@
+import random
 import torch
 import torch.nn as nn
 from recipes.musiclm.models.compat.semantic_model import w2v_bert_tokenization
 from abc import abstractmethod
 from recipes.musiclm.transforms.audio import RandomResizedCrop
-from recipes.bigmusic.utils.mulan_tag import MulanTagger
-from recipes.bigmusic.datasets.transforms.lyrics_segment import random_crop_pad_to_seq_length, crop_pad_to_seq_length
+from recipes.bigmusic.utils.mulan_tag import NONE_LABEL, MulanTagger
+from recipes.bigmusic.datasets.transforms.lyrics_segment import crop_pad_to_seq_length, random_crop_pad_to_seq_length
+from recipes.bigmusic.datasets.mir_data_util import get_mir_vocab
 
 # Functions
 @torch.no_grad()
@@ -177,6 +179,44 @@ class TokenEmbedder(BaseEmbedder):
         token_ids = self.tokenize(requires, batch, token_ids, with_sos, with_eos)
         return self.embedder(token_ids)
 
+
+class TagCategoricalEmbedder(ContinuousEmbedder):
+    def __init__(
+            self, input_dim=512, embedding_dim=1024, add_sos=False, lang='Zh'
+        ):
+        super().__init__(input_dim, embedding_dim, add_sos)
+
+        self.id2vocab, self.vocab2id = get_mir_vocab(lang)
+        self.category_embedder = nn.Embedding(len(self.id2vocab), input_dim, device=next(self.parameters()).device)
+        # TODO (QQ) Add dropout here to support CFG.
+
+    def get_embeds(self, requires, style_texts, category_separator="|"):
+        genre_ids, mood_ids, scene_ids, gender_ids, lang_ids = [], [], [], [], []
+        for style_text in style_texts:
+            # Replace ZH comma by the default category_separator
+            style_tag_list = style_text.replace("，", category_separator).split(category_separator)
+            if len(style_text) != 5:
+                style_tag_list = [None] * 5                
+            for label, label_list in zip(
+                style_tag_list, [genre_ids, mood_ids, scene_ids, gender_ids, lang_ids]):
+                label = label.strip() if label else label
+                # Support missing label to use placeholder ID.
+                if (not label) or (label not in self.vocab2id):
+                    label = NONE_LABEL 
+                label_list.append(self.vocab2id[label])
+
+
+        device = next(self.parameters()).device
+        genre_emb = self.category_embedder(torch.as_tensor(genre_ids).to(device))
+        mood_emb = self.category_embedder(torch.as_tensor(mood_ids).to(device))
+        scene_emb = self.category_embedder(torch.as_tensor(scene_ids).to(device))
+        gender_emb = self.category_embedder(torch.as_tensor(gender_ids).to(device))
+        lang_emb = self.category_embedder(torch.as_tensor(lang_ids).to(device))
+
+        tag_embs = torch.stack([genre_emb, mood_emb, scene_emb, gender_emb, lang_emb], dim=1)
+        return tag_embs
+
+
 class MulanEmbedder(ContinuousEmbedder):
     def __init__(self, data_type='music', input_dim=512, embedding_dim=1024, max_audio_length=10*24000, add_sos=False):
         super().__init__(input_dim, embedding_dim, add_sos)
@@ -184,15 +224,15 @@ class MulanEmbedder(ContinuousEmbedder):
         self.max_audio_length = max_audio_length # 10s * 24k sample rate
         self.resize_transform = RandomResizedCrop(max_audio_length) 
 
-    def get_embeds(self, requires, input_audio, data_type=None):
+    def get_embeds(self, requires, input_audio_or_text, data_type=None):
         if data_type is None:
             data_type = self.data_type
         if data_type == 'music':
             if self.training:
-                input_audio = self.resize_transform(input_audio)
+                input_audio_or_text = self.resize_transform(input_audio_or_text)
             else:
-                input_audio = input_audio[..., :self.max_audio_length]
-        mulan_embeds = get_mulan_embeds(requires, input_audio, data_type)
+                input_audio_or_text = input_audio_or_text[..., :self.max_audio_length]
+        mulan_embeds = get_mulan_embeds(requires, input_audio_or_text, data_type)
         return mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
 
 class MulanTagEmbedder(ContinuousEmbedder):
@@ -220,14 +260,14 @@ class MulanTagEmbedder(ContinuousEmbedder):
     def get_embeds(
         self,
         requires,
-        input_audio,
+        input_audio_or_text,
         mcc_style_text=None,
         data_type=None,
         target_samples_length=None,
     ):
         # Text
         if data_type == "text":
-            mulan_embeds = get_mulan_embeds(requires, input_audio, data_type)
+            mulan_embeds = get_mulan_embeds(requires, input_audio_or_text, data_type)
             mulan_embeds = mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
             if not self.mulan_crop and not self.mulan_average:
                 assert target_samples_length is not None
@@ -238,21 +278,23 @@ class MulanTagEmbedder(ContinuousEmbedder):
             return mulan_embeds
         # Audio
         if self.training and self.mulan_crop:
-            input_audio = random_crop_pad_to_seq_length(input_audio, self.min_audio_length)
+            input_audio_or_text = random_crop_pad_to_seq_length(input_audio_or_text, self.min_audio_length)
         if not self.training and not self.mulan_crop and not self.mulan_average:
             assert target_samples_length is not None
-            input_audio = random_crop_pad_to_seq_length(input_audio, target_samples_length)
-        if input_audio.shape[-1] < self.min_audio_length:
-            input_audio = crop_pad_to_seq_length(input_audio, self.min_audio_length)
+            input_audio_or_text = random_crop_pad_to_seq_length(input_audio_or_text, target_samples_length)
+        if input_audio_or_text.shape[-1] < self.min_audio_length:
+            input_audio_or_text = crop_pad_to_seq_length(input_audio_or_text, self.min_audio_length)
+        ## Audio embed
         if data_type == "music":
             mulan_embeds = get_mulan_embeds(
-                requires, input_audio, data_type, average=self.mulan_average
+                requires, input_audio_or_text, data_type, average=self.mulan_average
             )
             if mulan_embeds.dim() == 2:
                 mulan_embeds = mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
             return mulan_embeds
-        elif data_type == "tag":
-            mulan_audio_embeds = get_mulan_embeds(requires, input_audio, "music")
+        ## Tag embed   
+        if data_type == "tag":
+            mulan_audio_embeds = get_mulan_embeds(requires, input_audio_or_text, "music")
             metadata = self.mulan_tagger.get_tags(requires, audio_embeds=mulan_audio_embeds)
             if self.use_mcc_gender and mcc_style_text:
                 for m, mcc_style in zip(metadata, mcc_style_text):
@@ -265,6 +307,74 @@ class MulanTagEmbedder(ContinuousEmbedder):
             style_text = [self.mulan_tagger.tag_to_style_text(m) for m in metadata]
             mulan_text_embeds = get_mulan_embeds(requires, style_text, "text")
             return mulan_text_embeds[:, None, :] # bs x d -> bs x seq_len x d
+
+
+class MulanTagCategoricalEmbedder(ContinuousEmbedder):
+    def __init__(
+            self, 
+            data_type='music', 
+            input_dim=512, 
+            embedding_dim=1024, 
+            min_audio_length=10*24000, 
+            add_sos=False, 
+            mulan_tag_type="mulan_genres", 
+            use_mcc_gender=True, 
+            dropout=0,
+        ):
+        super().__init__(input_dim, embedding_dim, add_sos)
+
+        self.data_type = data_type
+        self.min_audio_length = min_audio_length # 10s * 24k sample rate
+        self.mulan_tagger = MulanTagger(mulan_tag_type)
+        self.category_embedder = nn.Embedding(len(self.mulan_tagger.id2vocab), input_dim, device=next(self.parameters()).device)
+        self.use_mcc_gender = use_mcc_gender
+        self.dropout = dropout
+
+    def get_embeds(
+        self, 
+        requires, 
+        input_audio_or_text, 
+        category_separator="|", 
+        mcc_style_text=None, 
+        data_type=None):
+        # Text (inference)        
+        if data_type == "text":            
+            # input_audio_or_text = list of strings (inference) "Genre|Mood|Gender|Voice|Lang"
+            genre_ids, mood_ids, gender_ids, voice_ids, lang_ids = [], [], [], [], []
+            for style_text in input_audio_or_text:
+                # Replace ZH comma by the default category_separator
+                style_text = style_text.replace("，", category_separator)
+                # print(style_text)
+                for label, label_list in zip(
+                    style_text.split(category_separator), [genre_ids, mood_ids, gender_ids, voice_ids, lang_ids]):
+                    label = label.strip()
+                    # Support missing label to use placeholder ID.
+                    label = self.mulan_tagger.none_label if not label else label
+                    label_list.append(self.mulan_tagger.vocab2id[label])
+
+        elif data_type == 'tag':
+            if self.training:
+                input_audio_or_text = random_crop_pad_to_seq_length(input_audio_or_text, self.min_audio_length)
+            else:
+                input_audio_or_text = crop_pad_to_seq_length(input_audio_or_text, self.min_audio_length)            
+            # input_audio_or_text = list of audio (training)
+            mulan_audio_embeds = get_mulan_embeds(requires, input_audio_or_text, "music")
+            metadata_list = self.mulan_tagger.get_tags(requires, audio_embeds=mulan_audio_embeds)
+            genre_ids, mood_ids, gender_ids, voice_ids, lang_ids = [], [], [], [], []
+            for metadata in metadata_list:                
+                for label, label_list in zip(
+                    [metadata['genre'], metadata['mood'], metadata['gender'], metadata['voice'], metadata['lang']], 
+                    [genre_ids, mood_ids, gender_ids, voice_ids, lang_ids]):
+                    # Add tag drop out to use placeholder ID.
+                    label = self.mulan_tagger.none_label if random.random() < self.dropout else label
+                    label_list.append(self.mulan_tagger.vocab2id[label])
+
+        device = next(self.parameters()).device
+
+        tag_ids = list(zip(genre_ids, mood_ids, gender_ids, voice_ids, lang_ids))         
+        tag_embs= self.category_embedder(torch.as_tensor(tag_ids).to(device))        
+        return tag_embs
+
 
 class MulanTokenEmbedder(TokenEmbedder):
     def __init__(self, data_type='music', num_rvq=12, codebook_size=1024, embedding_dim=1024, add_sos=False):

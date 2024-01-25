@@ -59,6 +59,9 @@ class SemanticInferenceModule(pl.LightningModule):
             if self.extra_params.beam_size <= 1:
                 print(f"[WARNING] use_reranker=True but beam_size={self.extra_params.beam_size}")
             required_modules.update({"reranker": self.hparams.required_modules["reranker"]})
+        
+        if self.extra_params.get("mixv2", False)
+            required_modules.update(self.hparams.required_modules['bestrq_modules'])
 
         self.load_required_modules(required_modules)
 
@@ -97,6 +100,9 @@ class SemanticInferenceModule(pl.LightningModule):
             self.semantic_module,
             self.extra_params.sample_rate,
         )
+        # TODO (QQ) use semantic_samples embedding as context input for decoding fn
+        if self.extra_params.get("mixv2", False):
+            semantic_samples = self.requires["Stage3"].model.vq.embedding(semantic_samples)
         raw_wav_output = self.decoding_fn(self.requires, semantic_samples, self.decoding_params)
         assert len(raw_wav_output.shape) == 2, "Wavs must be 2 sim [b, seq_len]"
         if "duration" in batch:
@@ -134,7 +140,6 @@ class GTInferenceModule(pl.LightningModule):
         self.save_hyperparameters()
         self.extra_params = DotDict(extra_params)
         self.requires = {}
-
         required_modules = {}
         if self.extra_params.token2wav_type == 'diffusion':
             self.decoding_fn = run_diffusion

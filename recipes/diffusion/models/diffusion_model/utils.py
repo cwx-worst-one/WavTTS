@@ -54,12 +54,31 @@ def load_ema_checkpoint(checkpoint_path, model):
     model.load_state_dict(new_state_dict)
     return model
 
-def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, sstk=False, sample_rate=24000):
+def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, sstk=False, mixv2=False, sample_rate=24000):
+    # TODO (weitsung) read the model version from ckpt, remove the arguments: is_zh_token, sstk, mixv2.
     with local_zero_first():
         if cache_dir is not None:
             os.makedirs(cache_dir, exist_ok=True)
         device = torch.device(f"cuda:{local_rank}")
         local_path = download_checkpoint(checkpoint_path, cache_dir)
+        if mixv2:
+            diffusion_model = DiffusionModule.load_from_checkpoint(
+                checkpoint_path=local_path,
+                diffusion_model=TNTDiffusionNetworkV2(
+                    input_dim=32,
+                    feature_dim=1024,
+                    context_dim=32,
+                    depth=20,
+                    segment_size=32,
+                    segment_stride=32,
+                    unet=True,
+                    dropout=0,
+                    semantic_cfg_prob=0.1,
+                    use_checkpoint=False,        
+                    vc=False,
+                    vc_cfg_prob=0.1,
+                    lora=False,
+                )
         if sstk:
             if sample_rate == 24000:
                 diffusion_network = TNTDiffusionNetworkV2(

@@ -12,6 +12,12 @@ elif [ "$ARNOLD_WORKSPACE_SERVER" == "https://workspace.byted.org" ]; then
 	export ARNOLD_REGION="CN"
 fi
 
+# setting hdfs envs
+export LD_LIBRARY_PATH=/opt/tiger/native_libhdfs/lib/native:$LD_LIBRARY_PATH
+export ARNOLD_HDFS_NATIVE=1
+export ARNOLD_HDFS_CELER=1
+export INFSEC_HADOOP_ENABLED=1
+export CPP_HDFS_CONF=/opt/tiger/arnold/hdfs_client/conf/celer_us/core-site.xml:/opt/tiger/arnold/hdfs_client/conf/celer_us/hdfs-site.xml
 
 # Fix for broken mirrors "E: The repository 'http://mirrors.byted.org/debian bullseye-updates Release' no longer has a Release file."
 if ! sudo apt update ; then

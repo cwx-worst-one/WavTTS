@@ -4,6 +4,31 @@ from string import punctuation
 import re
 import random
 from typing import List
+from recipes.bigmusic.datasets.mir_data_util import chinese_genre1_vocab, chinese_genre2_vocab, chinese_scene_vocab
+
+
+def rewrite_playlist_labels(label1, label2):
+    genre = ""
+    mood = ""
+    scene = ""
+    gender = ""
+    lang = "普通话"
+    if label1 == "中文场景":
+        scene = label2        
+    elif label1 == "中文心情":
+        mood = label2
+    elif label1 in chinese_genre1_vocab:        
+        if label1 in {"金属", "儿童音乐", "宗教"}:
+            genre = label1
+        else:
+            if label2 in chinese_genre2_vocab:
+                genre = label2
+            if genre == "粤语流行":
+                lang = "粤语"
+    else:
+        print("Missing playlist metadata")    
+    return "|".join([genre, mood, scene, gender, lang])
+
 
 def rewrite_metadata(metadata, type="Vocal"):
     mood = metadata.get('final_mood', metadata.get('merge_mood'))
@@ -74,6 +99,8 @@ def normalize_text(text, enable_punctuation=False, lowercase=False):
     text = text.replace("？", "\n")
     text = re.sub(r'\n\s*\n', '\n', text) # remove double new lines
     nlp_punctuation = punctuation.replace("'", "") # allow single quotes (') for contractions
+    nlp_punctuation = nlp_punctuation.replace("[", "") # allow brackets for structure tags
+    nlp_punctuation = nlp_punctuation.replace("]", "") # allow brackets for structure tags    
     nlp_punctuation = punctuation.replace("<", "").replace(">", "") # allow <> for special tokens
     text = text.translate(str.maketrans("", "", nlp_punctuation))
     if enable_punctuation:

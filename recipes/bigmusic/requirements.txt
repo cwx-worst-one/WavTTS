@@ -13,3 +13,4 @@ madmom>=0.16.1
 bytedance-easycycle
 ffmpeg-normalize
 thop
+colorednoise
