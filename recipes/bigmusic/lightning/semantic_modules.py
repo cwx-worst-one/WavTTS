@@ -5,14 +5,12 @@ from recipes.bigmusic.lightning.embedding_modules import (
     TagCategoricalEmbedder,
     WavToVecTokenEmbedder,
     MetadataT5TokenEmbedder,
-    SpeakerEmbedder,
     BestRQTokenEmbedder, 
     MulanTagCategoricalEmbedder,
     MulanTagEmbedder,
     DurationEmbedder,
     StructureEmbedder,
     IntensityEmbedder,
-    get_mulan_embeds,
     M1TagEmbedder,
 )
 from recipes.bigmusic.utils.metrics_asr import asr_transcribe_lyrics
@@ -193,10 +191,13 @@ class SemanticModule(BaseContinuousEmbedModule):
             target_duration = None
         return target_duration
 
-    def prepare_m1_tag_inputs(self, batch, m1_tag_embedder, hidden_states):
+    def prepare_m1_tag_inputs(self, batch, m1_tag_embedder):
+        # TODO: handle prediction case. Use target embdder to extract info from style_audio
+        assert 'target_hidden_states' in batch, "m1 requires target_hidden_states to predict categories"
+        target_hidden_states = batch['target_hidden_states']
         embeds = m1_tag_embedder.embed(
             self.requires,
-            hidden_states,
+            target_hidden_states,
             with_sos=True,
         )
         return embeds
@@ -310,27 +311,20 @@ class SemanticModule(BaseContinuousEmbedModule):
         embeds = intensity_embedder.embed(intensity_labels, target_duration)
         return embeds
 
-    def prepare_inputs_embeddings(self, batch, hidden_states = None):
-        return self._prepare_inputs_embeddings(batch, self.input_embedders.items(), hidden_states)
+    def prepare_inputs_embeddings(self, batch):
+        return self._prepare_inputs_embeddings(batch, self.input_embedders.items())
 
-    def _prepare_inputs_embeddings(self, batch, input_embedders, hidden_states = None):
+    def _prepare_inputs_embeddings(self, batch, input_embedders):
         if self.log_counter < 1:
             print(batch)
             self.log_counter += 1
 
         inputs_embeds = []
-<<<<<<< HEAD
         for emb_type, embedder in input_embedders:
             if (emb_type == "mulan") or (emb_type == "mulan_categorical"):
-=======
-        for emb_type, embedder in input_embedders.items():
-            if emb_type == "m1_tag":
-                emb_inputs = self.prepare_m1_tag_inputs(batch, embedder, hidden_states)
-            if emb_type == "mulan":
->>>>>>> 2d02658b1 (feat: m-1 prototype)
                 emb_inputs = self.prepare_mulan_inputs(batch, embedder)
-            elif emb_type == 'tag_categorical':
-                emb_inputs = self.prepare_categorical_inputs(batch, embedder)
+            elif emb_type == "m1_tag":
+                emb_inputs = self.prepare_m1_tag_inputs(batch, embedder)
             elif emb_type == "lyrics_tokens":
                 emb_inputs = self.prepare_lyrics_inputs(batch, embedder)
             elif emb_type == "duration":

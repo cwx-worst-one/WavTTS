@@ -140,7 +140,6 @@ class LyricsDataModule(pl.LightningDataModule):
             dataset_config = DATASET_CONFIGS[dataset_type]
             init_fn = dataset_config['init_fn']
 
-            dataset_config["extra_args"].update(kwargs)
             dataset = init_fn(
                 sample_rate=sample_rate, 
                 sample_duration=sample_duration, 
@@ -421,7 +420,7 @@ class DefaultDatasets():
             index_list,
             # transform params
             enable_punctuation=True, style_conditions="style_tag,lyrics_tokens", infer_weights=False,
-            min_song_confidence=0.8, min_segment_confidence=0.75,
+            min_song_confidence=0.8, min_segment_confidence=0.8,
             **kwargs
         ):
             if isinstance(style_conditions, list): # multiple style conditions - for mixed style training. In that case, use random conditioning
@@ -430,7 +429,7 @@ class DefaultDatasets():
                 batch_transforms = [AddConditionsTransform(style_conditions)]
             ds = DefaultDatasets.Basic.mcc60m_lossless_dataset(
                 sample_rate, sample_duration=sample_duration, index_list=index_list, infer_weights=infer_weights,
-                min_song_confidence=min_song_confidence, min_segment_confidence=min_segment_confidence, max_num_segments=max_num_segments, **kwargs,
+                min_song_confidence=min_song_confidence, min_segment_confidence=min_segment_confidence, **kwargs,
             )
             ds_batched = transform_dataset(
                 dataset=ds,

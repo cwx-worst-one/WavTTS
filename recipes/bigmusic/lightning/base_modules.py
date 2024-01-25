@@ -236,10 +236,11 @@ class BaseContinuousEmbedModule(BaseModule):
     def prepare_training_inputs(self, batch, return_all=False):
         targets = self.target_embedder.tokenize(self.requires, batch['target_audio'], with_sos=False, with_eos=False)
         target_ids = targets["vq_ids"]
-        target_hidden_states = targets["hidden_states"]
+        batch['target_ids'] = target_ids
+        batch['target_hidden_states'] = targets["hidden_states"]
 
         batch_size = target_ids.size(0)
-        inputs_embeds = self.prepare_inputs_embeddings(batch, target_hidden_states)
+        inputs_embeds = self.prepare_inputs_embeddings(batch)
         sos_embeds = self.target_embedder.get_sos_embed(batch_size)
         target_embeds = self.target_embedder.embed(token_ids=target_ids, with_sos=False, with_eos=False)
         if self.target_embedder.eos_id is not None:
