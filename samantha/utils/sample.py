@@ -78,12 +78,12 @@ def sample(predict_logits, temp, mode="naive", device="cuda:0"):
     predict_logits = predict_logits.float()
     if mode == "naive":
         predict_logits = predict_logits / temp
-        predict_logits = top_k(predict_logits, thres=0.9)
+        predict_logits = top_k(predict_logits, thresh=0.9)
         probs = predict_logits.softmax(dim=1)  # [b, d]
         dist = torch.distributions.categorical.Categorical(probs=probs)
         samples = dist.sample().unsqueeze(1).to(device)
     elif mode == "gumbel":
-        predict_logits = top_k(predict_logits, thres=0.9)
+        predict_logits = top_k(predict_logits, thresh=0.9)
         samples = gumbel_sample(predict_logits, temp, fixed_noise=False).unsqueeze(
             dim=1
         )

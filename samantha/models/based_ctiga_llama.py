@@ -483,8 +483,10 @@ class LLaMa(nn.Module):
                 fused_dropout_add_ln=cuda_cc > 7.0,
                 residual_in_fp32=True,
                 checkpointing=params.checkpointing,
-                causal=params.causal,
-                use_unet_style_skip_connect=params.use_unet_style_skip_connect,
+                causal=getattr(params, "causal", True),
+                use_unet_style_skip_connect=getattr(
+                    params, "use_unet_style_skip_connect", False
+                ),
             )
             layers = GPTModel(ctiga_config)
             del layers.embeddings.word_embeddings

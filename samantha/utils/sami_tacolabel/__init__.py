@@ -36,6 +36,7 @@ from samantha.utils.sami_tacolabel.tacofrontend import (
     generate_tacolabels_from_text,
     generate_tacolabels_from_textstr,
     generate_tacolabels_from_textstr_punc,
+    split_text_engine,
 )
 
 __all__ = [
@@ -69,4 +70,6 @@ __all__ = [
     "enc_taco_label_no_bytes",
     "enc_taco_label",
     "generate_tacolabels_from_textstr",
+    "generate_tacolabels_from_textstr_punc",
+    "split_text_engine",
 ]
