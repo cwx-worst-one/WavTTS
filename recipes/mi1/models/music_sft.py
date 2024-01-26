@@ -249,6 +249,7 @@ class MI1_MusicClassificationMusicSFT(DefaultTrainingBaseModule):
     def logits_to_tag_tokens(self, logits: torch.Tensor) -> torch.Tensor:
         return logits.argmax(dim=-1)
 
+
     @torch.no_grad()
     def predict_tags(self, hidden_states: torch.Tensor) -> MI1_MusicTaggingResult:
         result = self.forward(hidden_states)
@@ -257,6 +258,25 @@ class MI1_MusicClassificationMusicSFT(DefaultTrainingBaseModule):
         tag_probs = result.logits.softmax(dim=-1)
         return MI1_MusicTaggingResult(
             logits=result.logits,
+            hidden_states=result.hidden_states,
+            tag_ids=valid_tags_indices,
+            tag_names=tag_names,
+            tag_probabilities=tag_probs,
+        )
+
+    @torch.no_grad()
+    def predict_tags_full_audio(self, hidden_states: torch.Tensor):
+        # hidden_states contains a batch of audios from the same song
+        # we take the average of the batch logits in order to get our final prediction
+        result = self.forward(hidden_states)
+        
+        audio_avg_logits = result.logits.mean(dim=0, keepdim=True)
+
+        valid_tags_indices = self.logits_to_tag_tokens(audio_avg_logits)
+        tag_names = self.tag_tokenizer.decode_batch(valid_tags_indices)
+        tag_probs = audio_avg_logits.softmax(dim=-1)
+        return MI1_MusicTaggingResult(
+            logits=audio_avg_logits,
             hidden_states=result.hidden_states,
             tag_ids=valid_tags_indices,
             tag_names=tag_names,

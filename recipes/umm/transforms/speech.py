@@ -39,6 +39,9 @@ class ModelInputTransform(nn.Module):
         self.std += new_std
 
     def load_from_checkpoint(self, fp: str, verify: bool = True):
+        if os.environ.get("BYTED_RAY_CLUSTER", "") != "":
+            # special fix for ray env
+            fp = os.path.join(os.path.dirname(__file__), "../../../", fp)
         if os.path.exists(fp):
             self.load_state_dict(torch.load(fp))
             # if verify:
