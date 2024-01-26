@@ -26,7 +26,10 @@ try:
     from .ops.flash_attn_2_3_interface import (
         flash_attn_varlen_qkvpacked_func as flash_attn_2_3_varlen_qkvpacked_func,
     )
-except ImportError:
+except Exception as e:
+    rank_zero_warn(
+        f"Failed to import flash attn related modules with error message {e}"
+    )
     flash_attn_2_3_kvpacked_func = None
     flash_attn_2_3_qkvpacked_func = None
     flash_attn_2_3_varlen_kvpacked_func = None
@@ -40,7 +43,7 @@ try:
         flash_attn_varlen_kvpacked_func,
         flash_attn_varlen_qkvpacked_func,
     )
-except ImportError as e:
+except Exception as e:
     rank_zero_warn(
         f"Failed to import flash attn2 related modules with error message {e}"
     )
@@ -55,7 +58,7 @@ try:
         flash_attn_unpadded_kvpacked_func,
         flash_attn_unpadded_qkvpacked_func,
     )
-except ImportError as e:
+except Exception as e:
     rank_zero_warn(
         f"Failed to import flash attn related modules with error message {e}"
     )
@@ -65,23 +68,35 @@ except ImportError as e:
 
 try:
     from .ops.fused_dense import ColumnParallelLinear, FusedDense, RowParallelLinear
-except ImportError:
+except Exception as e:
+    rank_zero_warn(
+        f"Failed to import flash attn related modules with error message {e}"
+    )
     FusedDense, ColumnParallelLinear, RowParallelLinear = None, None, None
 
 try:
     from .rotary import RotaryEmbedding
-except ImportError:
+except Exception as e:
+    rank_zero_warn(
+        f"Failed to import flash attn related modules with error message {e}"
+    )
     RotaryEmbedding = None
 
 try:
     import ft_attention
-except ImportError:
+except Exception as e:
+    rank_zero_warn(
+        f"Failed to import flash attn related modules with error message {e}"
+    )
     ft_attention = None
 
 
 try:
     from .ops.flash_blocksparse_attn_interface import flash_blocksparse_attn_func
-except ImportError:
+except Exception as e:
+    rank_zero_warn(
+        f"Failed to import flash attn related modules with error message {e}"
+    )
     flash_blocksparse_attn_func = None
 
 
