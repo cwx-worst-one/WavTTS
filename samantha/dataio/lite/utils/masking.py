@@ -196,28 +196,22 @@ class WavMasking(DataBlock):
         )  # true for dropped frames
         return l_ctx, l_ctx_mask
 
-    def masking(self, example):
+    def masking(self, example, mask_feature="mel"):
         """
         Takes in an example and mask the audio frames or duration frames
         """
-        if "mel" not in example and "duration" not in example:
-            raise ValueError(
-                "Masking requires either feature or duration in the example"
-            )
+        assert mask_feature in ["mel", "bn"]
         if np.random.rand() < self._p_conditional_drop:
             # drop all the conditonal inputs of the voicebox model
-            if "mel" in example:
+            if mask_feature in example:
                 # drop audio, alignment, and codec if it exists
-                example["mel_ctx"] = np.zeros_like(example["mel"])
-                example["mel_ctx_mask"] = np.ones((example["mel"].shape[0]), dtype=bool)
-                if "alignment" in example:
-                    example["alignment"] = np.zeros_like(example["alignment"])
-                if "codec" in example:
-                    example["codec"] = np.zeros_like(example["codec"])
-
+                example[f"{mask_feature}_ctx"] = np.zeros_like(example[mask_feature])
+                example["ctx_mask"] = np.ones(
+                    (example[mask_feature].shape[0]), dtype=bool
+                )
         else:
-            if "mel" in example:
-                x = example["mel"]
+            if mask_feature in example:
+                x = example[mask_feature]
                 if np.random.rand() > self._p_drop_x:
                     if self.mask_use_alignment:
                         x_ctx, x_ctx_mask = self._mask_audio_frames(
@@ -230,50 +224,7 @@ class WavMasking(DataBlock):
                     x_ctx_mask = torch.ones(
                         (x.shape[0]), dtype=bool
                     )  # true for dropped frames
-                example["mel_ctx"] = x_ctx
-                example["mel_ctx_mask"] = x_ctx_mask
-
-        return example
-
-    def masking_wvae(self, example):
-        """
-        Takes in an example and mask the audio frames or duration frames
-        """
-        if "bn" not in example and "duration" not in example:
-            raise ValueError(
-                "Masking requires either feature or duration in the example"
-            )
-        if np.random.rand() < self._p_conditional_drop:
-            # drop all the conditonal inputs of the voicebox model
-            if "bn" in example:
-                # drop audio, alignment, and codec if it exists
-                example["bn_ctx"] = np.zeros_like(example["mel"])
-                example["mel_ctx_mask"] = np.ones((example["mel"].shape[0]), dtype=bool)
-                if "alignment" in example:
-                    example["alignment"] = np.zeros_like(example["alignment"])
-                if "codec" in example:
-                    example["codec"] = np.zeros_like(example["codec"])
-
-        else:
-            if "bn" in example:
-                x = example["bn"]
-                if np.random.rand() > self._p_drop_x:
-                    if self.mask_use_alignment:
-                        _, x_ctx_mask = self._mask_audio_frames(
-                            x, example.get("duration_ori", None)
-                        )
-                    else:
-                        _, x_ctx_mask = self._mask_audio_frames(x)
-                else:
-                    # x_ctx = torch.ones_like(x) * self.padding_value
-                    x_ctx_mask = torch.ones(
-                        (x.shape[0]), dtype=bool
-                    )  # true for dropped frames
-
-                bn_ctx = torch.randn_like(x)
-                nomask_idx = ~x_ctx_mask
-                bn_ctx[nomask_idx] = x[nomask_idx]
-                example["bn_ctx"] = bn_ctx
-                example["bn_ctx_mask"] = x_ctx_mask
+                example[f"{mask_feature}_ctx"] = x_ctx
+                example["ctx_mask"] = x_ctx_mask
 
         return example

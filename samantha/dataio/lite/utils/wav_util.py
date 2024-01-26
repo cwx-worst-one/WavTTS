@@ -5,8 +5,9 @@ import pickle
 import librosa
 import numpy as np
 import torch
+from torchaudio.transforms import Resample
 
-from .mel import mel_spectrogram
+from .mel import mel_spectrogram, mel_spectrogram_unimelgan
 from .phone_to_id import PhoneToId, get_duration_frames_wds
 
 logger = logging.getLogger(__name__)
@@ -62,9 +63,16 @@ def get_duration_wds(alignments, phonemes, mel_len, hop_ms):
     return duration_frames
 
 
-def get_text_duration(
-    sample, meta_obj, acoustic_len, hop_ms, mask_use_alignment, use_text
-):
+def get_text_info(
+    sample,
+    meta_obj,
+    acoustic_len,
+    hop_ms,
+    mask_use_alignment,
+    use_text,
+    text_drop_rate,
+    use_phone_lang,
+):  # sourcery skip: extract-method
     # load phone seq & duration
     text = sample["text"]
     lab = meta_obj.get("labels", "")
@@ -102,10 +110,13 @@ def get_text_duration(
 
     if use_text:
         text_id = np.concatenate([text_id, np.ones([text_id.shape[0], 1])], axis=-1)
+        if text_drop_rate > 0 and np.random.rand() <= text_drop_rate:
+            text_id[:, :] = 1
         data_dict["phone"] = text_id[0, :]
         data_dict["tone"] = text_id[1, :]
         data_dict["word_seg"] = text_id[2, :]
-
+        if use_phone_lang:
+            data_dict["lang"] = text_id[3, :]
     data_dict["utt_id"] = utt_id
     data_dict["lab"] = labels
     data_dict["text"] = text
@@ -115,25 +126,29 @@ def get_text_duration(
 def get_bn(sample):
     bn = pickle.loads(sample["bns"])
     bn = torch.from_numpy(bn)
-    bn_stats = bn
     out_dim = bn.shape[1] // 2
     m, logs = torch.split(bn, out_dim, dim=-1)
     bn = m + torch.randn_like(m) * torch.exp(logs)
-    return bn, bn_stats
+    return bn
 
 
-def get_wav(sample, max_wav_len, audio_resampler, wav_amp_aug):
+def get_wav(sample, max_wav_len, audio_resampler, wav_amp_aug, mel_config):
     # sourcery skip: raise-specific-error
     wav, _ = librosa.load(io.BytesIO(sample["wav"]), sr=None)
     if len(wav.shape) >= 2:
         wav = wav[0]
-    if wav.shape[0] > max_wav_len or wav.shape[0] < 12000:
-        return None
 
     wav = wav.astype(np.float32)
     wav = torch.FloatTensor(wav)
-    if audio_resampler is not None:
-        wav = audio_resampler(wav)
+    if sample["src_sample_rate"] != mel_config["sampling_rate"]:
+        src_sr = sample["src_sample_rate"]
+        if src_sr not in audio_resampler.keys():
+            audio_resampler[src_sr] = Resample(
+                orig_freq=src_sr, new_freq=mel_config["sampling_rate"]
+            )
+        wav = audio_resampler[src_sr](wav)
+    if wav.shape[0] > max_wav_len or wav.shape[0] < 12000:
+        return None
     scale = max(0.001, torch.max(torch.abs(wav)))
     wav = wav / scale * 0.95
     if wav_amp_aug is not None and wav_amp_aug["use"]:
@@ -145,16 +160,22 @@ def get_wav(sample, max_wav_len, audio_resampler, wav_amp_aug):
     return wav
 
 
-def get_mel(wav, wav_divide, mel_config, umm_hop_size, mel_norm_mean, mel_norm_std):
-    # handle umm & mel length
+def get_mel(
+    wav,
+    wav_divide,
+    mel_config,
+    umm_hop_size,
+    mel_norm_mean,
+    mel_norm_std,
+    mel_vocoder_type,
+):
     crop_wav_len = wav.shape[0] % wav_divide
     max_wav_len = wav.shape[0] - crop_wav_len
-    # if crop_wav_len > 0:
-    #    wav = torch.nn.functional.pad(
-    #       wav, (0, self.wav_divide - crop_wav_len), "constant", 0)
-    # max_wav_len = wav.shape[0]
     max_mel_len = max_wav_len // mel_config["hop_size"]
     max_umm_len = max_wav_len // umm_hop_size
-    mel = mel_spectrogram(wav.unsqueeze(0), **mel_config).squeeze(0)
+    if mel_vocoder_type == "unimelgan":
+        mel = mel_spectrogram_unimelgan(wav.unsqueeze(0), **mel_config).squeeze(0)
+    else:
+        mel = mel_spectrogram(wav.unsqueeze(0), **mel_config).squeeze(0)
     mel = (mel - mel_norm_mean) / mel_norm_std
     return mel, max_mel_len, max_umm_len

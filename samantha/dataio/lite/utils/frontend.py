@@ -166,7 +166,7 @@ ZH_vowel = [
 
 sep_strs = ["zh_word_sep", "en_word_sep", "syl_sep"]
 wordseg_strs = ["B", "E", "M", "S"]  # Begin, End, Middle, Single.
-
+lang_strs = ["others", "zh", "en", "jp"]
 all_phones = (
     sil_punc_symbols + EN_consonant + EN_vowel + ZH_consonant + ZH_vowel + sep_strs
 )
@@ -192,3 +192,8 @@ wordseg_to_int = dict()
 for i, wordseg in enumerate(wordseg_strs):
     if wordseg not in wordseg_to_int:
         wordseg_to_int[wordseg] = i + offset
+
+lang_to_int = dict()
+for i, lang in enumerate(lang_strs):
+    if lang not in lang_to_int:
+        lang_to_int[lang] = i + offset

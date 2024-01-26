@@ -9,7 +9,7 @@ from recipes.text2semantic.datasets.sami_tacolabel import (
     generate_tacolabels_from_textstr_punc,
 )
 
-from .utils import PhoneToId
+from samantha.dataio.lite.utils.phone_to_id import PhoneToId
 
 
 class MetaBasedDataset(Dataset):

@@ -27,7 +27,7 @@ dataloader: !new:torch.utils.data.DataLoader
     batch_size: null
     drop_last: False
 
-pl_datamodule: !new:apps.bigtts.umm.diffusion.lit_modules.DataModule
+pl_datamodule: !new:samantha.dataio.lite.lite_datamodule.LiteDataModule
     predict_dataloader: !ref <dataloader>
 
 bn_config: # 40hz wvae 3.1

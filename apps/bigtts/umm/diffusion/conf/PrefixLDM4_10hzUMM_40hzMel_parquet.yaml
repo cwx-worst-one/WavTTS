@@ -75,14 +75,7 @@ bn_config: # 40hz wvae 3.1
     pad_trim: True
     silence_bn_path: apps/bigtts/umm/diffusion/silence_wvae/v3_40hz/silence_wvae.npy
 
-train_dataset: !new:apps.bigtts.umm.diffusion.datasets.voicebox_promptmel_dataset.VoiceBoxParquetDataset
-    data_id: !ref <run_opts[data_id]>
-    drop_last: False
-    batcher_config:
-        buckets: !apply:eval ["list(range(40, 2500, 60))"]
-        dynamic_batch: True
-        maximum_bucket_size: !ref <run_opts[batch_total_tokens]>
-        length_fn: !apply:eval ["lambda x: x[\"bn\"].shape[1]"] # seq.shape
+item_transform: !new:apps.bigtts.umm.diffusion.datasets.voicebox_transform.VoiceBoxTransform
     mel_config: !ref <mel_config>
     max_length: 60
     mel_norm_mean: -2.5
@@ -95,7 +88,10 @@ train_dataset: !new:apps.bigtts.umm.diffusion.datasets.voicebox_promptmel_datase
     umm_hop_size: 2400
     wav_divide: 4800
 
-collator: !new:apps.bigtts.umm.diffusion.datasets.voicebox_promptmel_dataset.VoiceBoxCollator
+item_composer: !new:samantha.dataio.lite.compose.Compose
+    transforms: [!ref <item_transform>]
+
+collator: !new:apps.bigtts.umm.diffusion.datasets.voicebox_collator.VoiceBoxCollator
     tokenizer_pad: 16384
     mel_config: !ref <mel_config>
     mel_padding: -5
@@ -104,16 +100,39 @@ collator: !new:apps.bigtts.umm.diffusion.datasets.voicebox_promptmel_dataset.Voi
     bn_padding: !ref <bn_config[bn_padding]>
     use_bn: True
 
+collator_composer: !new:samantha.dataio.lite.compose.BatchCompose
+    transforms: [!ref <collator>]
+
+parquet_dataset: !new:samantha.dataio.parquet.parquet_dataset.ParquetDataset
+    data_id: !ref <run_opts[data_id]>
+    resampled: True
+    sample_shuffle_buffer_size: 2048
+    item_transform: !ref <item_composer>
+    batch_size_in_worker: 32
+    yield_state: True
+
+batcher: !new:samantha.dataio.batching.BucketBatcher
+    buckets: !apply:eval ["list(range(40, 2500, 60))"]
+    dynamic_batch: True
+    maximum_bucket_size: !ref <run_opts[batch_total_tokens]>
+    length_fn: !apply:eval ["lambda x: x[\"bn\"].shape[1]"]  # seq.shape
+
+train_dataset: !new:cruise.data_module.lite.batch_dataset.BatchDataset
+    dataset: !ref <parquet_dataset>
+    batch_transform: !ref <collator_composer>
+    batcher: !ref <batcher>
+    drop_last: False
+
 # dataloader configuration
-train_dataloader: !new:torch.utils.data.DataLoader
+train_dataloader: !new:cruise.data_module.lite.dataloader.LiteCruiseDataLoader
     dataset: !ref <train_dataset>
     num_workers: !ref <run_opts[num_workers]>
-    batch_size: null
-    collate_fn: !ref <collator>
     pin_memory: True
+    prefetch_factor: 32
+    batch_prefetch_factor: 32
 
 # datamodule configuration
-pl_datamodule: !new:apps.bigtts.umm.diffusion.lit_modules.DataModule
+pl_datamodule: !new:samantha.dataio.lite.lite_datamodule.LiteDataModule
     train_dataloader: !ref <train_dataloader>
 
 model_cls: !name:samantha.models.llama_ldm.LlamaDiffusion
@@ -183,7 +202,7 @@ trainer: !new:pytorch_lightning.Trainer
     strategy: !ref <run_opts[strategy]>
     max_epochs: !ref <run_opts[num_epochs]>
     precision: !ref <run_opts[precision]>
-    profiler: !ref <run_opts[profiler]>
+    # profiler: !ref <run_opts[profiler]>
     callbacks: !ref <callbacks>
     gradient_clip_val: 0.2
     benchmark: false

@@ -3,7 +3,6 @@ import os
 from functools import partial
 from typing import Any
 
-import librosa
 import numpy as np
 import scipy.signal
 import soundfile as sf
@@ -12,7 +11,7 @@ import torch.nn.functional as F
 from pytorch_lightning import LightningModule
 from torchaudio.functional import resample
 
-from ..datasets.meldataset import mel_spectrogram
+from samantha.dataio.lite.utils.mel import mel_spectrogram
 from .infer_utils import load_torch_script, save_wav, set_seed
 from .lit_diffusion_voicebox import VoiceBoxModule as pl_module
 from .wvae import Wave, mel_spectrogram_torch, spectrogram_torch
@@ -27,6 +26,7 @@ def load_wav(fn, sr):
         wav = scipy.signal.resample(wav, int(len(wav) * sr / sample_rate))
     return wav, sr
 
+
 def prepare_diffusion_model(diffusion_ckpt_path, device):
     model = pl_module.load_from_checkpoint(
         diffusion_ckpt_path, device=torch.device(device)
@@ -34,67 +34,81 @@ def prepare_diffusion_model(diffusion_ckpt_path, device):
     model.eval()
     return model
 
+
 def prepare_zvq(zvq_ckpt_path, device):
     rank = int(device[-1])
     model = load_torch_script(zvq_ckpt_path, rank, "/opt/tiger")
     return model
 
+
 def prepare_umm(umm_ckpt_path, device):
     rank = int(device[-1])
     from recipes.umm.requires.model_initializer import init_stage3
+
     token_model = init_stage3(umm_ckpt_path, rank, "./")["Stage3"].eval()
     return token_model
 
+
 def prepare_ummv2(umm_ckpt_path, device):
-    rank = int(device[-1])
     from recipes.umm.modules.lit_module_mk3 import Stage3
+
     model = Stage3.load_from_checkpoint(umm_ckpt_path).eval().to(device)
     return model
 
+
 def prepare_usm(usm_ckpt_path, device):
     from recipes.umm.modules.lit_module_mk3 import USMStage3
+
     model = USMStage3.load_from_checkpoint(usm_ckpt_path).eval().to(device)
     return model
+
 
 def prepare_umm_codebook(umm_codebook_path, device):
     codebook = torch.load(umm_codebook_path).to(device)
     return codebook
 
+
 def prepare_mel_transform(mel_config):
-    mel_transform = partial(mel_spectrogram,
-            n_fft=mel_config['n_fft'], # 2048,
-            num_mels=mel_config['num_mels'], # 80,
-            hop_size=mel_config["hop_size"],
-            win_size=mel_config["win_size"],
-            sampling_rate=24000,
-            fmin=0, fmax=12000
-            )
+    mel_transform = partial(
+        mel_spectrogram,
+        n_fft=mel_config["n_fft"],  # 2048,
+        num_mels=mel_config["num_mels"],  # 80,
+        hop_size=mel_config["hop_size"],
+        win_size=mel_config["win_size"],
+        sampling_rate=24000,
+        fmin=0,
+        fmax=12000,
+    )
     return mel_transform
+
 
 def prepare_vocoder(vocoder_ckpt_path, device):
     vocoder = torch.jit.load(vocoder_ckpt_path, map_location=device).eval()
     return vocoder
 
+
 def prepare_spec_transform_for_zvq():
-    spec = partial(spectrogram_torch,
-            n_fft=2048,
-            sampling_rate=24000,
-            hop_size=300,
-            win_size=1200)
+    spec = partial(
+        spectrogram_torch, n_fft=2048, sampling_rate=24000, hop_size=300, win_size=1200
+    )
     return spec
+
 
 def prepare_mel_transform_for_zvq():
-    spec = partial(mel_spectrogram_torch,
-            n_fft=2048,
-            num_mels=80,
-            sampling_rate=24000,
-            hop_size=300,
-            win_size=1200,
-            fmin=0.0,
-            fmax=None)
+    spec = partial(
+        mel_spectrogram_torch,
+        n_fft=2048,
+        num_mels=80,
+        sampling_rate=24000,
+        hop_size=300,
+        win_size=1200,
+        fmin=0.0,
+        fmax=None,
+    )
     return spec
 
-class MelNorm():
+
+class MelNorm:
     def __init__(self, mean, std):
         self.mean = mean
         self.std = std
@@ -119,7 +133,7 @@ class DiffusionU2SInfer(LightningModule):
         mel_config,
         seed=1996,
         save_prompt=False,
-        umm_type="UMM", # UMM or USM
+        umm_type="UMM",  # UMM or USM
         umm_codebook_path=None,
         diffusion_precision="bf16",
         diffusion_nfe=10,
@@ -157,27 +171,25 @@ class DiffusionU2SInfer(LightningModule):
 
         self.bn_config = bn_config
         if self.use_wvae_vocoder:
-            self.bn_norm = MelNorm(
-                bn_config["bn_norm_mean"], bn_config["bn_norm_std"])
+            self.bn_norm = MelNorm(bn_config["bn_norm_mean"], bn_config["bn_norm_std"])
         else:
             self.mel_norm = MelNorm(
-                mel_config["mel_norm_mean"], mel_config["mel_norm_std"])
+                mel_config["mel_norm_mean"], mel_config["mel_norm_std"]
+            )
 
-        self.mel_norm = MelNorm(
-            mel_config["mel_norm_mean"], mel_config["mel_norm_std"])
-        self.mel_mask_value = mel_config["mel_mask_value"] # -5
+        self.mel_norm = MelNorm(mel_config["mel_norm_mean"], mel_config["mel_norm_std"])
+        self.mel_mask_value = mel_config["mel_mask_value"]  # -5
 
         os.makedirs(output_dir, exist_ok=True)
-
 
     # align wav for umm & mel feature length.
     def align_wav(self, wav, sampling_rate, umm_frame_rate, mel_frame_rate):
         umm_hop = sampling_rate // umm_frame_rate
         mel_hop = sampling_rate // mel_frame_rate * 4
-        align_block_len = abs(umm_hop*mel_hop) // math.gcd(umm_hop, mel_hop)
+        align_block_len = abs(umm_hop * mel_hop) // math.gcd(umm_hop, mel_hop)
         crop_wav_len = wav.shape[1] % align_block_len
         if crop_wav_len > 0:
-            wav = F.pad(wav, (0, align_block_len-crop_wav_len), "constant", 0)
+            wav = F.pad(wav, (0, align_block_len - crop_wav_len), "constant", 0)
         return wav
 
     def align_wav2(self, wav, wav_divide, sampling_rate, umm_frame_rate, umm_add_len):
@@ -185,7 +197,7 @@ class DiffusionU2SInfer(LightningModule):
         wav_add_len = umm_add_len * umm_hop
         crop_wav_len = (wav_add_len + wav.shape[1]) % wav_divide
         if crop_wav_len > 0:
-            wav = F.pad(wav, (0, wav_divide-crop_wav_len), "constant", 0)
+            wav = F.pad(wav, (0, wav_divide - crop_wav_len), "constant", 0)
         return wav
 
     def prepare_features(self, batch):
@@ -211,10 +223,17 @@ class DiffusionU2SInfer(LightningModule):
             scale = max(0.001, torch.max(torch.abs(wav)))
             wav = wav / scale * 0.95
             wav = wav.to(device)
-            syn_wav = self.align_wav(wav, self.mel_config["sampling_rate"], self.umm_frame_rate, self.mel_frame_rate)
+            syn_wav = self.align_wav(
+                wav,
+                self.mel_config["sampling_rate"],
+                self.umm_frame_rate,
+                self.mel_frame_rate,
+            )
             if self.umm_type == "USM":
                 token_len = syn_wav.shape[1] // 960
-                syn_umm_token = self.umm.wav2token(resample(syn_wav, 24000, 16000), dtype=torch.bfloat16)
+                syn_umm_token = self.umm.wav2token(
+                    resample(syn_wav, 24000, 16000), dtype=torch.bfloat16
+                )
                 syn_umm_token = syn_umm_token[:, :token_len]
             elif self.umm_type == "UMM":
                 syn_umm_token = self.umm.wav2token(syn_wav)
@@ -241,15 +260,32 @@ class DiffusionU2SInfer(LightningModule):
         wav = wav / scale * 0.95
         wav = wav.to(device)
         if self.infer_type == "diffusion-vocoder":
-            prompt_wav = self.align_wav(wav, self.mel_config["sampling_rate"], self.umm_frame_rate, self.mel_frame_rate)
+            prompt_wav = self.align_wav(
+                wav,
+                self.mel_config["sampling_rate"],
+                self.umm_frame_rate,
+                self.mel_frame_rate,
+            )
         elif self.infer_type == "ar-diffusion-vocoder":
-            wav_divide = 4800 if (self.umm_frame_rate==25 and self.mel_frame_rate==40) else 600
-            prompt_wav = self.align_wav2(wav, wav_divide, self.mel_config["sampling_rate"], self.umm_frame_rate, syn_umm_token.shape[1])
+            wav_divide = (
+                4800
+                if (self.umm_frame_rate == 25 and self.mel_frame_rate == 40)
+                else 600
+            )
+            prompt_wav = self.align_wav2(
+                wav,
+                wav_divide,
+                self.mel_config["sampling_rate"],
+                self.umm_frame_rate,
+                syn_umm_token.shape[1],
+            )
         inputs["scale"] = scale.item()
 
         if self.umm_type == "USM":
             token_len = prompt_wav.shape[1] // 960
-            prompt_umm_token = self.umm.wav2token(resample(prompt_wav, 24000, 16000), dtype=torch.bfloat16)
+            prompt_umm_token = self.umm.wav2token(
+                resample(prompt_wav, 24000, 16000), dtype=torch.bfloat16
+            )
             prompt_umm_token = prompt_umm_token[:, :token_len]
         elif self.umm_type == "UMM":
             prompt_umm_token = self.umm.wav2token(prompt_wav)
@@ -259,7 +295,9 @@ class DiffusionU2SInfer(LightningModule):
         elif self.umm_type == "ZVQ":
             prompt_spec = self.zvq_spec(prompt_wav)
             prompt_mel = self.zvq_mel(prompt_wav)
-            prompt_umm_token = self.umm(prompt_wav.unsqueeze(1), prompt_spec, prompt_mel)
+            prompt_umm_token = self.umm(
+                prompt_wav.unsqueeze(1), prompt_spec, prompt_mel
+            )
         else:
             raise NotImplementedError
 
@@ -267,10 +305,10 @@ class DiffusionU2SInfer(LightningModule):
         text_id = torch.cat([prompt_text_id, syn_text_id[:, 1:]], dim=-1)
         text_id = F.pad(text_id, (0, 1), "constant", 1)
         inputs["frontend"] = {
-                "phone": text_id[0:1, :].to(device),
-                "tone": text_id[1:2, :].to(device),
-                "word_seg": text_id[2:3, :].to(device),
-            }
+            "phone": text_id[0:1, :].to(device),
+            "tone": text_id[1:2, :].to(device),
+            "word_seg": text_id[2:3, :].to(device),
+        }
         if self.use_phone_lang:
             inputs["frontend"]["lang"] = text_id[3:4, :].to(device)
 
@@ -284,16 +322,26 @@ class DiffusionU2SInfer(LightningModule):
                 m, logs = torch.split(crop_bn, 64, dim=-1)
                 crop_bn = m + torch.randn_like(m) * torch.exp(logs)
                 crop_bn = self.bn_norm.norm_mel(crop_bn)
-                inputs["prompt_bn"] = crop_bn.transpose(1, 2) # [B,C,T]
-                inputs["bn_ctx"] = torch.ones([1, mel_len, crop_bn.shape[2]], device=device) * self.bn_config['bn_padding']
-                inputs["bn_ctx"][:, :inputs["prompt_bn"].shape[-1], :] = inputs["prompt_bn"].transpose(1, 2)
+                inputs["prompt_bn"] = crop_bn.transpose(1, 2)  # [B,C,T]
+                inputs["bn_ctx"] = (
+                    torch.ones([1, mel_len, crop_bn.shape[2]], device=device)
+                    * self.bn_config["bn_padding"]
+                )
+                inputs["bn_ctx"][:, : inputs["prompt_bn"].shape[-1], :] = inputs[
+                    "prompt_bn"
+                ].transpose(1, 2)
                 inputs["prompt_length"] = inputs["prompt_bn"].shape[-1]
             else:
                 prompt_mel = self.mel_transform(prompt_wav)
                 prompt_mel = self.mel_norm.norm_mel(prompt_mel)
                 inputs["prompt_mel"] = prompt_mel
-                inputs["mel_ctx"] = torch.ones([1, mel_len, self.mel_config["num_mels"]], device=device) * self.mel_mask_value
-                inputs["mel_ctx"][:, :inputs["prompt_mel"].shape[-1],] = inputs["prompt_mel"].transpose(1, 2)
+                inputs["mel_ctx"] = (
+                    torch.ones([1, mel_len, self.mel_config["num_mels"]], device=device)
+                    * self.mel_mask_value
+                )
+                inputs["mel_ctx"][:, : inputs["prompt_mel"].shape[-1]] = inputs[
+                    "prompt_mel"
+                ].transpose(1, 2)
                 inputs["prompt_length"] = inputs["prompt_mel"].shape[-1]
         else:
             raise NotImplementedError
@@ -343,12 +391,14 @@ class DiffusionU2SInfer(LightningModule):
             else:
                 raise NotImplementedError
             with torch.autocast(device_type="cuda", dtype=dtype, enabled=True):
-                out_mel = self.model.inference(inputs,
-                        self.diffusion_nfe,
-                        self.diffusion_sampler,
-                        text_cfg_w=self.text_cfg_w)
+                out_mel = self.model.inference(
+                    inputs,
+                    self.diffusion_nfe,
+                    self.diffusion_sampler,
+                    text_cfg_w=self.text_cfg_w,
+                )
             if self.infer_type in ["ar-diffusion-vocoder", "diffusion-vocoder"]:
-                out_mel = out_mel[:, :, inputs["prompt_length"]:]
+                out_mel = out_mel[:, :, inputs["prompt_length"] :]
             out_mel = out_mel.float()
             if self.use_wvae_vocoder:
                 z = out_mel
@@ -366,7 +416,7 @@ class DiffusionU2SInfer(LightningModule):
             if self.save_prompt:
                 prompt_wav = inputs["gt_wav"]
                 audio = np.concatenate([prompt_wav, np.ones([10]), audio])
-            output_path = os.path.join(self.output_dir, inputs["uttid"]+".wav")
+            output_path = os.path.join(self.output_dir, inputs["uttid"] + ".wav")
             save_wav(audio, output_path)
 
     def wvae_reconstruct(self, batch):
@@ -380,9 +430,8 @@ class DiffusionU2SInfer(LightningModule):
         wav = wav.to(device)
 
         reconstruct_wav = self.wvae.reconstruct(wav)
-        output_path = os.path.join(self.output_dir, uttid+".wav")
+        output_path = os.path.join(self.output_dir, uttid + ".wav")
         save_wav(reconstruct_wav.cpu().numpy(), output_path)
-
 
     def setup(self, stage):
         device = f"cuda:{self.trainer.local_rank}"
@@ -400,22 +449,24 @@ class DiffusionU2SInfer(LightningModule):
 
         if self.use_wvae_vocoder:
             self.wvae_encoder = load_torch_script(
-                model_path=self.bn_config['wvae_encoder_path'],
+                model_path=self.bn_config["wvae_encoder_path"],
                 rank=self.trainer.local_rank,
-                cache_dir=self.bn_config['wvae_cache_dir']
+                cache_dir=self.bn_config["wvae_cache_dir"],
             )
             self.wvae_decoder = load_torch_script(
-                model_path=self.bn_config['wvae_decoder_path'],
+                model_path=self.bn_config["wvae_decoder_path"],
                 rank=self.trainer.local_rank,
-                cache_dir=self.bn_config['wvae_cache_dir']
+                cache_dir=self.bn_config["wvae_cache_dir"],
             )
-            self.wvae = Wave(self.wvae_encoder, self.wvae_decoder,
-                version=self.bn_config['wvae_version'],
-                hop_size=self.bn_config['wvae_encoder_hop_size'],
-                win_size=self.bn_config['wvae_encoder_win_size'])
+            self.wvae = Wave(
+                self.wvae_encoder,
+                self.wvae_decoder,
+                version=self.bn_config["wvae_version"],
+                hop_size=self.bn_config["wvae_encoder_hop_size"],
+                win_size=self.bn_config["wvae_encoder_win_size"],
+            )
         else:
             self.vocoder = prepare_vocoder(self.vocoder_ckpt_path, device)
-
 
         if self.umm_codebook_path is not None:
             self.umm_codebook = prepare_umm_codebook(self.umm_codebook_path, device)

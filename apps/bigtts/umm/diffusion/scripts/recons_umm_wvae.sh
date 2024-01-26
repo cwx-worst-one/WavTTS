@@ -69,3 +69,17 @@ bash launch.sh predict \
 	#--pl_module.umm_codebook_path /mnt/bn/jdy-lq-2/bigtts-nar/pretrain_model/UMM/V0.3.codebook \
 
 bash apps/bigtts/umm/diffusion/scripts/eval.sh $meta_lst $out_dir $lang
+
+# use example:
+# export diffusion_ckpt_path=hdfs://haruna/home/byte_data_seed/lf_lq/speech/checkpoints/user/wangbo.zero/voicebox/logdir/PrefixLDM4_300M_8H800_setting0_40hzWVAE_zvqv2_textDrop0.25_Norm2/checkpoints/epoch=00-step=65000-loss=0.55.ckpt
+# export exp=PrefixLDM4_300M_8H800_setting0_40hzWVAE_zvqv2_textDrop0.25_Norm2
+# export ckpt=epoch=00-step=65000-loss=0.55.ckpt
+# export step=60000
+
+# export out_dir=/opt/tiger/samantha/output
+# export umm_ckpt_path=/mnt/bn/jdy-lq-2/bigtts-nar/pretrain_model/zvq/v2/wave2quantizedz_%d.pt
+# export umm_type=ZVQ
+# export umm_frame_rate=10
+# export lang=zh
+
+# bash -x apps/bigtts/umm/diffusion/scripts/recons_umm_wvae.sh

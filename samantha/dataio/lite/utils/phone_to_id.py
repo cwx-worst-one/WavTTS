@@ -2,7 +2,7 @@ import logging
 
 import numpy as np
 
-from .frontend import phone_to_int, tone_to_int, wordseg_to_int
+from .frontend import lang_to_int, phone_to_int, tone_to_int, wordseg_to_int
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,7 @@ class PhoneToId:
         self.phone_to_int = phone_to_int
         self.tone_to_int = tone_to_int
         self.wordseg_to_int = wordseg_to_int
+        self.lang_to_int = lang_to_int
 
     def convert_v3_to_v1(self, tacolab):
         tacolab_v1 = []
@@ -35,8 +36,10 @@ class PhoneToId:
                 phone, tone, ws, pw, stype, word, _ = x_split
             elif len(x_split) == 6:
                 phone, tone, ws, pw, stype, word = x_split
+            elif len(x_split) == 8:
+                phone, tone, ws, pw, stype, word, _, _ = x_split
             else:
-                print("Wrong tacolab", x_split)
+                logger.error(f"convert_v3_to_v1: Wrong tacolab {x_split}")
                 return None
             tacolab_v1.append("\t".join([phone, tone, "0.0 0.0 0.0 1.0", ws, pw, word]))
         return tacolab_v1
@@ -68,6 +71,7 @@ class PhoneToId:
             wordseg_ids = []
             wordsegs = []
             alignments = []
+            lang_ids = []
 
             head_type_dict = {
                 "phn\ttone\tws\tpwpp\tsentype\tword": 0,
@@ -120,6 +124,12 @@ class PhoneToId:
                     wordseg_ids.append(self.wordseg_to_int[ws])
                     if head_type == 2 or head_type == 3:
                         alignments.append(float(alignment))
+                    if phone[:2] == "C0":
+                        lang_ids.append(self.lang_to_int["zh"])
+                    elif phone[:2] == "E0":
+                        lang_ids.append(self.lang_to_int["en"])
+                    else:
+                        lang_ids.append(self.lang_to_int["others"])
             elif lang == "en" or lang == "zh_en":
                 # import pdb
                 if "phn\ttone\tws\tpwpp\tsentype\tword" in tacolab[0]:
@@ -176,13 +186,18 @@ class PhoneToId:
                             else:
                                 wordsegs.append("E")
                     wordseg_ids.append(self.wordseg_to_int[wordsegs[-1]])
-
+                    if phone[:2] == "C0":
+                        lang_ids.append(self.lang_to_int["zh"])
+                    elif phone[:2] == "E0":
+                        lang_ids.append(self.lang_to_int["en"])
+                    else:
+                        lang_ids.append(self.lang_to_int["others"])
             phone_ids, tone_ids = np.array(phone_ids), np.array(tone_ids)
             wordseg_ids = np.array(wordseg_ids)
             alignments = np.array(alignments)
 
             return (
-                np.stack([phone_ids, tone_ids, wordseg_ids]),
+                np.stack([phone_ids, tone_ids, wordseg_ids, lang_ids]),
                 phones,
                 tones,
                 wordsegs,
@@ -202,6 +217,7 @@ class PhoneToId:
         tones = []
         wordseg_ids = []
         wordsegs = []
+        lang_ids = []
 
         if lang == "zh":
             assert len(tacolab[0].split("\t")) == 7, (
@@ -224,6 +240,12 @@ class PhoneToId:
                 phones.append(phone)
                 tones.append(tone)
                 wordseg_ids.append(self.wordseg_to_int[ws])
+                if phone[:2] == "C0":
+                    lang_ids.append(self.lang_to_int["zh"])
+                elif phone[:2] == "E0":
+                    lang_ids.append(self.lang_to_int["en"])
+                else:
+                    lang_ids.append(self.lang_to_int["others"])
         elif lang == "en" or lang == "zh_en":
             assert (
                 len(tacolab[0].split("\t")) == 7 or len(tacolab[0].split("\t")) == 6
@@ -244,8 +266,12 @@ class PhoneToId:
                     phone, tone, ws, pw, stype, word, unit = x_split
                 elif len(x_split) == 6:
                     phone, tone, ws, pw, stype, word = x_split
+                elif len(x_split) == 8:
+                    phone, tone, ws, pw, stype, word, _, _ = x_split
                 else:
-                    print("Wrong tacolab", x_split)
+                    logger.error(
+                        f"convert_tacolab_to_text_id_infer:Wrong tacolab {x_split}"
+                    )
                     return None
                 assert phone in self.phone_to_int, f"{phone} not in phone set"
                 assert tone in self.tone_to_int, f"{tone} not in tone set"
@@ -268,11 +294,22 @@ class PhoneToId:
                         else:
                             wordsegs.append("E")
                 wordseg_ids.append(self.wordseg_to_int[wordsegs[-1]])
+                if phone[:2] == "C0":
+                    lang_ids.append(self.lang_to_int["zh"])
+                elif phone[:2] == "E0":
+                    lang_ids.append(self.lang_to_int["en"])
+                else:
+                    lang_ids.append(self.lang_to_int["others"])
 
         phone_ids, tone_ids = np.array(phone_ids), np.array(tone_ids)
         wordseg_ids = np.array(wordseg_ids)
 
-        return np.stack([phone_ids, tone_ids, wordseg_ids]), phones, tones, wordsegs
+        return (
+            np.stack([phone_ids, tone_ids, wordseg_ids, lang_ids]),
+            phones,
+            tones,
+            wordsegs,
+        )
 
 
 def get_duration_frames(durations, phonemes, hop_ms):
