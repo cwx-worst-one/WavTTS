@@ -10,6 +10,7 @@ from tqdm import tqdm
 euler.install_thrift_import_hook()
 import os
 
+from samantha.dataio.lite.utils.punctuation import punctuation_all
 from samantha.utils.sami_tacolabel.tacofrontend.server.base_thrift import Base
 from samantha.utils.sami_tacolabel.tacofrontend.server.sami_thrift import (
     SAMI,
@@ -275,6 +276,13 @@ def generate_tacolabels_from_textstr_punc(text: str, language="Chinese_v3_punc")
     return lab_data
 
 
+def text_all_punc(text):
+    for x in text:
+        if x not in punctuation_all:
+            return False
+    return True
+
+
 def split_text_engine(
     text: str, language="Chinese_v3_punc", max_paragraph_phoneme_size=240
 ):
@@ -292,8 +300,14 @@ def split_text_engine(
         print(
             f"file_id {file_id} failed to get results. Status: {invoke_response}(`speaker` represents language)"
         )
-    # return texts
-    return [t for t in texts if len(t) > 0]
+    texts = [t for t in texts if len(t) > 0]
+    # punc
+    new_texts = []
+    for text in texts:
+        if not text_all_punc(text):
+            new_texts.append(text)
+    texts = new_texts
+    return texts
 
 
 if __name__ == "__main__":
