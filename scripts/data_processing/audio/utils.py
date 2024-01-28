@@ -1,12 +1,14 @@
 import io
+import logging
 import os
 import pickle
+from multiprocessing import Pool
 
 import torch
 
 from samantha.dataio.parquet import ParquetWriter
 from samantha.utils.distributed import rank_zero_first
-from samantha.utils.hdfs_helper import get, ishdfs
+from samantha.utils.hdfs_helper import get, hdfs_ls, isdir, ishdfs
 from scripts.data_processing.audio import (
     byt5,
     ser,
@@ -18,6 +20,8 @@ from scripts.data_processing.audio import (
     wvae_mel_utils,
     wvae_utils,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class Consumer:
@@ -58,6 +62,8 @@ class Consumer:
                 model, batch, device, self.target_sample_rate
             ),
         ):
+            if feature is None:
+                continue
             self.write(uttid=uttid, feature=feature, dataset_name=dataset_name)
 
     def preprocess(self, item, device):
@@ -198,5 +204,28 @@ def download_model(ckpt_path):
     local_path = os.path.basename(ckpt_path)
     with rank_zero_first(is_global=False):
         if not os.path.exists(local_path):
-            get(ckpt_path, local_path)
+            multi_get(ckpt_path, local_path)
     return local_path
+
+
+def multi_get(ckpt_path, local_path):
+    pool = Pool(20)
+
+    def inner_fn(ckpt_path, local_path):
+        if not isdir(ckpt_path):
+            pool.apply_async(
+                func=get,
+                args=(ckpt_path, local_path),
+                error_callback=lambda exn: logger.error(
+                    "error on download model", exc_info=exn
+                ),
+            )
+            return
+        os.makedirs(local_path, exist_ok=True)
+        for item in hdfs_ls(ckpt_path):
+            local_path_inner = os.path.join(local_path, os.path.basename(item))
+            inner_fn(item, local_path_inner)
+
+    inner_fn(ckpt_path=ckpt_path, local_path=local_path)
+    pool.close()
+    pool.join()

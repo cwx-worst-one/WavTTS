@@ -143,7 +143,7 @@ def run(
             ed = time.perf_counter()
             rtf = (ed - st) / (1e-5 + total_count)
             local_totol_count += total_count
-            local_elapsed += (ed - st)
+            local_elapsed += ed - st
             consumed = str(datetime.timedelta(seconds=local_totol_count))
             elapsed = str(datetime.timedelta(seconds=local_elapsed))
             logger.info(f"{prefix_info} {rtf=:.4f}, {consumed=}, {elapsed=}")
@@ -309,7 +309,7 @@ if __name__ == "__main__":
     backend = "nccl" if torch.cuda.is_available() else "mpi"
     dist.init_process_group(
         backend=backend,
-        timeout=datetime.timedelta(seconds=getenv_int("NCCL_TIMEOUT", 1800)),
+        timeout=datetime.timedelta(seconds=getenv_int("NCCL_TIMEOUT", 3600)),
     )
     args.ckpt_path = download_model(args.ckpt_path)
     main(args)
