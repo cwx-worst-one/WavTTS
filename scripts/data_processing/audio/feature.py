@@ -9,7 +9,6 @@ import warnings
 from multiprocessing.pool import Pool, ThreadPool
 
 import numpy as np
-import requests
 import torch
 import torch.distributed as dist
 import tqdm
@@ -29,26 +28,13 @@ from scripts.data_processing.audio.utils import (
     process_after_downloading,
 )
 from scripts.data_processing.bigtts.gen_duration import get_partition
-from scripts.utils.bigspeech import get_dataset_name
+from scripts.utils.bigspeech import get_dataset_name, packing_callback
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
 
 logger = logging.getLogger(__name__)
 multiprocessing.set_start_method("spawn", force=True)
-
-
-def packing_callback(package_id, dest_dir, status="success"):
-    domains = {"US": "bigspeech.byteintl.net", "CN": "bigspeech.bytedance.net"}
-    region = os.environ.get("ARNOLD_REGION")
-    logger.info(f"{region=}")
-    url = f"https://{domains[region]}/platform/api/v3/data/dataset_collection/packed_callback"  # noqa
-    data = {"packaging_id": package_id, "status": status, "dest_dir": dest_dir}
-    logger.info(f"{data=}")
-    response = requests.post(url, json=data)
-    if response.status_code != 200:
-        raise ConnectionError(f"request failed {response=}")
-    logger.info(f"callback successed {response=}")
 
 
 class Worker:
