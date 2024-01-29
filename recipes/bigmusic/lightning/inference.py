@@ -60,7 +60,7 @@ class SemanticInferenceModule(pl.LightningModule):
                 print(f"[WARNING] use_reranker=True but beam_size={self.extra_params.beam_size}")
             required_modules.update({"reranker": self.hparams.required_modules["reranker"]})
         
-        if self.extra_params.get("mixv2", False)
+        if self.extra_params.get("mixv2", False):
             required_modules.update(self.hparams.required_modules['bestrq_modules'])
 
         self.load_required_modules(required_modules)

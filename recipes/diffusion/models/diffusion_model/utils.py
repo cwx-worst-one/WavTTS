@@ -79,6 +79,7 @@ def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, ss
                     vc_cfg_prob=0.1,
                     lora=False,
                 )
+            ).model
         if sstk:
             if sample_rate == 24000:
                 diffusion_network = TNTDiffusionNetworkV2(
