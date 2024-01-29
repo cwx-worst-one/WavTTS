@@ -19,6 +19,7 @@ from scripts.data_processing.audio import (
     wvae_mel_token,
     wvae_mel_utils,
     wvae_utils,
+    noisy_token,
 )
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,8 @@ def preprocess_audio(feature_type):
         return umm_token.preprocess_audio
     elif feature_type == "ser":
         return ser.preprocess_audio
+    elif feature_type == "noisy_token":
+        return noisy_token.preprocess_audio
     else:
         raise ValueError(f"{feature_type=} is not support for preprocess_audio.")
 
@@ -128,6 +131,8 @@ def process_batch(feature_type):
         return ser.process_batch
     elif feature_type == "byt5":
         return byt5.process_batch
+    elif feature_type == "noisy_token":
+        return noisy_token.process_batch
     else:
         raise ValueError(f"{feature_type=} is not support for process_batch.")
 
@@ -139,7 +144,7 @@ def model_path_patten(feature_type, feature_version):
         return wvae_utils.model_path_patten(feature_version)
     elif feature_type == "wavevae_mel":
         return wvae_mel_utils.model_path_patten(feature_version)
-    elif feature_type in ["speaker_embed", "umm_token", "ser", "byt5"]:
+    elif feature_type in ["speaker_embed", "umm_token", "ser", "byt5", "noisy_token"]:
         return None
     elif feature_type == "wavevae_mel_token":
         return wvae_mel_token.model_path_patten(feature_version)
@@ -164,6 +169,8 @@ def feature_name_mapping(feature_type):
         return ["emo_tag", "emo_deg", "emo_emb"]
     if feature_type in ["byt5"]:
         return "byt5"
+    if feature_type in ["noisy_token"]:
+        return ["noisy_wav", "noisy_bns", "noisy_umm_token", "noisy_meta"]
 
 
 def _load_torch_script_model(model_path, device):
@@ -194,6 +201,8 @@ def load_model(feature_type):
         return ser.load_model
     elif feature_type in ["byt5"]:
         return byt5.load_model
+    elif feature_type in ["noisy_token"]:
+        return noisy_token.load_model
 
 
 def download_model(ckpt_path):
@@ -229,3 +238,13 @@ def multi_get(ckpt_path, local_path):
     inner_fn(ckpt_path=ckpt_path, local_path=local_path)
     pool.close()
     pool.join()
+
+
+def dummy_process_after_downloading(*_, **__):
+    return {}
+
+
+def process_after_downloading(feature_type):
+    if feature_type in ["noisy_token"]:
+        return noisy_token.process_after_downloading
+    return dummy_process_after_downloading

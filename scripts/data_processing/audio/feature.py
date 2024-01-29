@@ -26,6 +26,7 @@ from scripts.data_processing.audio.utils import (
     feature_name_mapping,
     load_model,
     model_path_patten,
+    process_after_downloading,
 )
 from scripts.data_processing.bigtts.gen_duration import get_partition
 from scripts.utils.bigspeech import get_dataset_name
@@ -144,7 +145,7 @@ def run(
             rtf = (ed - st) / (1e-5 + total_count)
             local_totol_count += total_count
             local_elapsed += ed - st
-            consumed = str(datetime.timedelta(seconds=local_totol_count))
+            consumed = f"{local_totol_count / 3600: .4f}H"
             elapsed = str(datetime.timedelta(seconds=local_elapsed))
             logger.info(f"{prefix_info} {rtf=:.4f}, {consumed=}, {elapsed=}")
         except Exception as e:
@@ -219,6 +220,9 @@ def main(args):
             "_".join(feature.split("_")[:-1]),
             feature.split("_")[-1],
         )
+
+        extra_kwargs = process_after_downloading(feature_type)(args.ckpt_path)
+
         for dataset_id in args.dataset_ids:
             logger.info(
                 f"[{local_rank=}] processing {dataset_id}-{feature}-{feature_name_mapping(feature_type)}"
@@ -245,6 +249,7 @@ def main(args):
                     ckpt_path=args.ckpt_path,
                     trim=not args.not_trim,
                     freq=args.freq,
+                    **extra_kwargs,
                 )
                 for _ in range(n_worker)
             ]

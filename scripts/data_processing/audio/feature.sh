@@ -15,7 +15,7 @@ COMMIT=${SAMANTHA_COMMIT:-$(git rev-parse --short HEAD)}
 
 branch_name=$(git branch --show-current)
 git fetch -q --all
-git fetch --unshallow
+git fetch --unshallow || echo "on a complete repository"
 
 git checkout $COMMIT
 

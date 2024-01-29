@@ -159,7 +159,7 @@ def process_batch(
         yield from batch
     length = [e.shape[-1] for e in batch]
     max_length = max(length)
-    padding_length = np.arange(4, 64, 4)
+    padding_length = np.arange(4, 64, 4) * sample_rate
     for candidate in padding_length:
         if max_length <= candidate:
             max_length = candidate

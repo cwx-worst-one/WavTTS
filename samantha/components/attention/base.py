@@ -15,14 +15,6 @@ from samantha.components.positional_embedding.rotary import (
 
 logger = getLogger(__name__)
 
-try:
-    from flash_attn import flash_attn_func, flash_attn_qkvpacked_func
-
-    _flash_attn_installed = True
-except ImportError as e:
-    _flash_attn_installed = False
-    print(e)
-
 
 def scaled_dot_product(
     q: torch.Tensor,
@@ -84,7 +76,8 @@ def flash_scaled_dot_product(
 
         if enable_flash or enable_mem_efficient:
             logger.warning(
-                "The flash/memefficient kernels do not work with causal and use_cache. Setting `enable_math=True`"
+                "The flash/memefficient kernels do not work with causal and use_cache. "
+                "Setting `enable_math=True`"
             )
             enable_math = True
     else:
