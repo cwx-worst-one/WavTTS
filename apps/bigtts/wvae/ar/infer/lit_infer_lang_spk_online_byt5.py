@@ -17,12 +17,10 @@ from samantha.utils.sami_tacolabel import (
     generate_tacolabels_from_textstr_punc,
     split_text_engine,
 )
+from samantha.dataio.lite.utils.punctuation import punctuation_all
 from scipy.io.wavfile import read, write
-from zhon.hanzi import punctuation
 
 from samantha.utils.infer_utils import setup_seed, spectrogram_torch, trim_silence
-
-punctuation_all = punctuation + string.punctuation
 
 logger = logging.getLogger(__name__)
 

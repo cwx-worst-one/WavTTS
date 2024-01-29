@@ -65,9 +65,76 @@ run_opts:
     use_ref_enc: False
     use_sp: True
     refenc_cfg_rate: 0.0
+    shuffle_buffer: 2048
 
-# llama_config: !new:apps.bigtts.wvae.ar.train_byt5.wfvae_ctiga_llama_lang_spk_ser.ModelArgs
-llama_config: !new:samantha.models.wfvae_ctiga_llama.VAELLaMaModelArgs
+################################################################################
+##########                   DATAMODULE CONFIGURATION                 ##########
+################################################################################
+
+# item_transform configuration
+item_transform: !new:apps.bigtts.wvae.ar.data.transform.ContinuousTTSLangSpkSerTransform
+    use_lang_id: !ref <run_opts[use_lang_id]>
+    lang2id: !ref <run_opts[lang2id]>
+    use_spk_id: !ref <run_opts[use_spk_id]>
+    spk2id: !ref <run_opts[spk2id]>
+    use_code_switch_data: !ref <run_opts[use_code_switch_data]>
+    get_lang_by_tacolab: !ref <run_opts[get_lang_by_tacolab]>
+    en_foreigner_list: !ref <run_opts[en_foreigner_list]>
+    bpe_dir: !ref <run_opts[text_encoder_path]>
+    max_length: !ref <run_opts[max_len]>
+    use_bpe: !ref <run_opts[use_bpe]>
+    use_extra_tag: !ref <run_opts[use_extra_tag]>
+    spk2tag: !ref <run_opts[spk2tag]>
+    tokenizer_type: !ref <run_opts[text_encoder_type]>
+    input_type: !ref <run_opts[input_type]>
+    spk_cfg_rate: !ref <run_opts[spk_cfg_rate]>
+    lang_cfg_rate: !ref <run_opts[lang_cfg_rate]>
+    use_sp: !ref <run_opts[use_sp]>
+    refenc_cfg_rate: !ref <run_opts[refenc_cfg_rate]>
+
+# batch_transform configuration
+batch_transform: !new:samantha.dataio.lite.compose.BatchCompose
+    transforms:
+        - !new:apps.bigtts.wvae.ar.data.collate.ContinuousCollator
+            tokenizer_pad: 0
+            use_bpe: !ref <run_opts[use_bpe]>
+            use_extra_tag: !ref <run_opts[use_extra_tag]>
+
+# dataset configuration
+train_dataset: !new:samantha.dataio.parquet.parquet_dataset.ParquetDataset
+    data_id: !ref <run_opts[data_id]>
+    resampled: True
+    # shardshuffle: True
+    sample_shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+    item_transform: !ref <item_transform>
+    batch_size_in_worker: 16
+    yield_state: True
+
+# batcher configuration
+bucket_batcher: !new:samantha.dataio.batching.BucketBatcher
+    buckets: !apply:eval ["list(range(0, 6000, 100))"]  # [0, 100, 200 ... 4000] 4000以上的可以先丢掉
+    dynamic_batch: True
+    maximum_bucket_size: !ref <run_opts[batch_total_tokens]>
+    length_fn: !apply:eval ["lambda x: x[\"stop_token\"].shape[0]"]  # seq.shape
+
+# dataloader configuration
+train_dataloader: !new:cruise.data_module.lite.dataloader.LiteCruiseDataLoader
+    dataset: !ref <train_dataset>
+    batcher: !ref <bucket_batcher>
+    batch_transform: !ref <batch_transform>
+    num_workers: !ref <run_opts[num_workers]>
+    pin_memory: True
+    drop_last: False
+    prefetch_factor: 32
+    persistent_workers: False
+
+# datamodule configuration
+pl_datamodule: !new:samantha.dataio.lite.lite_datamodule.LiteDataModule
+    train_dataloader: !ref <train_dataloader>
+    val_dataloader: [] # skip_validation=true
+
+
+llama_config: !new:.samantha.models.wfvae_ctiga_llama.VAELLaMaModelArgs
     dim: 1536
     n_layers: 30
     n_heads: 24
@@ -89,52 +156,7 @@ llama_config: !new:samantha.models.wfvae_ctiga_llama.VAELLaMaModelArgs
     ser_tag_vocab_size: 100
     use_ref_enc: !ref <run_opts[use_ref_enc]>
 
-train_dataset: !new:apps.bigtts.wvae.ar.data.continuous_parquet_lang_spk_ser_dataset.ContinuousTTSLangSpkSerDataset
-    data_id: !ref <run_opts[data_id]>
-    drop_last: False
-    batcher_config:
-        buckets: !apply:eval ["list(range(0, 6000, 100))"]  # [0, 100, 200 ... 4000] 4000以上的可以先丢掉
-        dynamic_batch: True
-        maximum_bucket_size: !ref <run_opts[batch_total_tokens]>
-        length_fn: !apply:eval ["lambda x: x[\"stop_token\"].shape[0]"]  # seq.shape
-    use_lang_id: !ref <run_opts[use_lang_id]>
-    lang2id: !ref <run_opts[lang2id]>
-    use_spk_id: !ref <run_opts[use_spk_id]>
-    spk2id: !ref <run_opts[spk2id]>
-    use_code_switch_data: !ref <run_opts[use_code_switch_data]>
-    get_lang_by_tacolab: !ref <run_opts[get_lang_by_tacolab]>
-    en_foreigner_list: !ref <run_opts[en_foreigner_list]>
-    bpe_dir: !ref <run_opts[text_encoder_path]>
-    max_length: !ref <run_opts[max_len]>
-    use_bpe: !ref <run_opts[use_bpe]>
-    use_extra_tag: !ref <run_opts[use_extra_tag]>
-    spk2tag: !ref <run_opts[spk2tag]>
-    tokenizer_type: !ref <run_opts[text_encoder_type]>
-    input_type: !ref <run_opts[input_type]>
-    spk_cfg_rate: !ref <run_opts[spk_cfg_rate]>
-    lang_cfg_rate: !ref <run_opts[lang_cfg_rate]>
-    use_sp: !ref <run_opts[use_sp]>
-    refenc_cfg_rate: !ref <run_opts[refenc_cfg_rate]>
-
-collator: !new:apps.bigtts.wvae.ar.data.continuous_parquet_lang_spk_ser_dataset.ContinuousCollator
-    tokenizer_pad: 0
-    use_bpe: !ref <run_opts[use_bpe]>
-    use_extra_tag: !ref <run_opts[use_extra_tag]>
-
-# dataloader configuration
-train_dataloader: !new:torch.utils.data.DataLoader
-    dataset: !ref <train_dataset>
-    num_workers: !ref <run_opts[num_workers]>
-    batch_size: null
-    collate_fn: !ref <collator>
-    pin_memory: True
-
-# datamodule configuration
-pl_datamodule: !new:apps.bigtts.wvae.ar.data.lit_data.DataModule
-    train_dataloader: !ref <train_dataloader>
-
 # model configuration
-# model_cls: !name:recipes.text2semantic.modules.continuous_vae_llama_ctiga.LLaMa
 model_cls: !name:samantha.models.wfvae_ctiga_llama.VAELLaMaLangSpkSer
     params: !ref <llama_config>
     provider: ctiga

@@ -40,17 +40,21 @@ run_opts:
     max_paragraph_phoneme_size_en: 240
     sil_interval: 0.3
 
+################################################################################
+##########                   DATAMODULE CONFIGURATION                 ##########
+################################################################################
+
 predict_dataset: !new:apps.bigtts.wvae.ar.data.meta_based_dataset.MetaBasedDataset
     meta_lst: !ref <run_opts[meta_lst]>
 
-dataloader: !new:torch.utils.data.DataLoader
+predict_dataloader: !new:torch.utils.data.DataLoader
     dataset: !ref <predict_dataset>
     num_workers: !ref <run_opts[num_workers]>
     batch_size: null
     drop_last: False
 
-pl_datamodule: !new:apps.bigtts.wvae.ar.data.lit_data.DataModule
-    predict_dataloader: !ref <dataloader>
+pl_datamodule: !new:samantha.dataio.lite.lite_datamodule.LiteDataModule
+    predict_dataloader: !ref <predict_dataloader>
 
 pl_module: !new:apps.bigtts.wvae.ar.infer.lit_infer_lang_spk_online_byt5.BigTTSWVAEInferLangSpk
     ar_model_name: !ref <run_opts[ar_model_name]>
