@@ -33,6 +33,7 @@ extra_params:
     positive_phrase: "high quality, catchy, memorable"
     negative_phrase: "noisy, boring, forgettable"
 
+    diffusion_version: 'sstk_v2'
     diffusion_params:
         window_length: 30 # in second
         vocoder_hz: 125 # 147 for 44.1k
@@ -97,6 +98,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                     cache_dir: !ref <run_opts[cache_dir]>
                     sstk: True
                     sample_rate: !ref <extra_params[sample_rate]>
+                    version: !ref <extra_params[diffusion_version]>
             sampler:
                 hpath: null
                 initializer: !name:recipes.diffusion.models.diffusion_sampler.init_sampler

@@ -1,4 +1,5 @@
 import os
+from urllib.parse import non_hierarchical
 import torch
 from recipes.musiclm.utils.dist import local_zero_first
 from recipes.diffusion.utils.utils import download_checkpoint
@@ -54,7 +55,7 @@ def load_ema_checkpoint(checkpoint_path, model):
     model.load_state_dict(new_state_dict)
     return model
 
-def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, sstk=False, mixv2=False, sample_rate=24000):
+def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, sstk=False, mixv2=False, sample_rate=24000, version=None):
     # TODO (weitsung) read the model version from ckpt, remove the arguments: is_zh_token, sstk, mixv2.
     with local_zero_first():
         if cache_dir is not None:
@@ -82,19 +83,34 @@ def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, ss
             ).model
         if sstk:
             if sample_rate == 24000:
-                diffusion_network = TNTDiffusionNetworkV2(
-                        input_dim=32,
-                        feature_dim=1024,
-                        context_dim=1,
-                        depth=20,
-                        segment_size=32,
-                        segment_stride=32,
-                        unet=False,
-                        unet_stages=[6,8,6],
-                        dropout=0,
-                        semantic_cfg_prob=0.10,
-                        use_checkpoint=False
-                    )
+                if version == 'sstk_v1':
+                    diffusion_network = TNTDiffusionNetworkV2(
+                            input_dim=32,
+                            feature_dim=1024,
+                            context_dim=1,
+                            depth=16,
+                            segment_size=32,
+                            segment_stride=32,
+                            unet=True,
+                            unet_stages=[4,8,4],
+                            dropout=0,
+                            semantic_cfg_prob=0.10,
+                            use_checkpoint=False
+                        )
+                elif version == 'sstk_v2':
+                    diffusion_network = TNTDiffusionNetworkV2(
+                            input_dim=32,
+                            feature_dim=1024,
+                            context_dim=1,
+                            depth=20,
+                            segment_size=32,
+                            segment_stride=32,
+                            unet=False,
+                            unet_stages=[6,8,6],
+                            dropout=0,
+                            semantic_cfg_prob=0.10,
+                            use_checkpoint=False
+                        )
             elif sample_rate ==  44100:
                 diffusion_network = TNTDiffusionNetworkV2(
                         input_dim=128,
