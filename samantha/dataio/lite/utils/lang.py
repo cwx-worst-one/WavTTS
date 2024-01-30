@@ -72,10 +72,10 @@ def get_lang_by_text(text, detail=False):
         else:
             i += 1
 
-    lang = (LangID.EN.value,)
+    lang = LangID.EN.value
     if zh_char_cnt > en_word_cnt:
-        lang = (LangID.ZH.value,)
+        lang = LangID.ZH.value
     # TODO: japan
     if detail:
-        lang += (zh_char_cnt, en_word_cnt)
+        lang = (lang, zh_char_cnt, en_word_cnt)
     return lang
