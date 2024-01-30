@@ -3,7 +3,7 @@
 # General Public License version 3.
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
 import torch
@@ -16,6 +16,7 @@ from triton.ops.blocksparse import matmul as sparse_matmul
 from triton.ops.blocksparse import softmax as sparse_softmax
 
 from samantha.models.ctiga.gpt import GPTModel
+from samantha.utils.ctiga.localmask import ELEMWISE_WINDOW_MASK
 from samantha.utils.cuda import get_compute_capability
 
 __all__ = ["LLaMa"]
@@ -58,7 +59,9 @@ class ModelArgs:
     multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
     norm_eps: float = 1e-6
     causal: bool = True
-
+    use_window_mask: bool = False
+    window_size: list = field(default_factory=lambda: [-1, -1])
+    window_type: str = "elemwise"  # elemwise, blockwise
     max_batch_size: int = 32
     max_seq_len: int = 2048
     attn_pdrop: float = 0.1
@@ -484,6 +487,9 @@ class LLaMa(nn.Module):
                 residual_in_fp32=True,
                 checkpointing=params.checkpointing,
                 causal=getattr(params, "causal", True),
+                use_window_mask=getattr(params, "use_window_mask", False),
+                window_size=getattr(params, "window_size", [-1, -1]),
+                window_type=getattr(params, "window_type", ELEMWISE_WINDOW_MASK),
                 use_unet_style_skip_connect=getattr(
                     params, "use_unet_style_skip_connect", False
                 ),

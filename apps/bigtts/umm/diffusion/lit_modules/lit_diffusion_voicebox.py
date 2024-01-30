@@ -140,15 +140,6 @@ class VoiceBoxModule(pl.LightningModule):
 
         return loss
 
-    def on_before_optimizer_step(self, optimizer):
-        grad_norm = 0.0
-        for name, p in self.model.named_parameters():
-            if p.grad is not None:
-                grad_norm += p.grad.data.norm(2)
-        self.log_dict(
-            {"training/grad_2_norm": grad_norm}, sync_dist=True, prog_bar=True
-        )
-
     def log_mel(self, mels, t):
         for name, mel in mels.items():
             mel = mel.transpose(0, 1).cpu().detach().numpy()

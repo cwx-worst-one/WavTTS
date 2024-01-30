@@ -70,7 +70,7 @@ class LyricPhonemeTokenizer(Wav2VecPhonemeTokenizer):
     def __call__(
         self, text: Union[List[str], str], device: Optional[torch.device] = None
     ) -> torch.Tensor:
-        if type(text) == str:
+        if isinstance(text, str):
             text = [text]
 
         normalized_text = list(

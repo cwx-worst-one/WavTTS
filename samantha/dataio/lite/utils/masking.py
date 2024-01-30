@@ -24,6 +24,7 @@ class WavMasking(DataBlock):
         st_drop_audio_frame=0,
         p_drop_duration_frames=(0.1, 1.0),
         p_drop_from_0_duration_frame=None,
+        p_drop_from_end_frame=None,
         st_drop_duration_frame=0,
         p_conditional_drop=0.0,
         padding_value=0.0,
@@ -56,6 +57,7 @@ class WavMasking(DataBlock):
         self._st_drop_audio_frame = st_drop_audio_frame
         self._p_drop_duration_frames = p_drop_duration_frames
         self._p_drop_from_0_duration_frame = p_drop_from_0_duration_frame
+        self._p_drop_from_end_frame = p_drop_from_end_frame
         self._st_drop_duration_frame = st_drop_duration_frame
         self._p_conditional_drop = p_conditional_drop
         self.padding_value = padding_value
@@ -95,11 +97,22 @@ class WavMasking(DataBlock):
             self._p_drop_from_0_audio_frame is not None
             and np.random.rand() < self._p_drop_from_0_audio_frame
         ):
+            # Drop from the begining
             drop_start = 0
             num_frames_drop = np.random.randint(
                 int(num_frames * self._p_drop_audio_frames[0]),
                 int(num_frames * self._p_drop_audio_frames[1]),
             )
+        elif (
+            self._p_drop_from_end_frame is not None
+            and np.random.rand() < self._p_drop_from_end_frame
+        ):
+            # Drop from the end
+            num_frames_drop = np.random.randint(
+                int(num_frames * self._p_drop_audio_frames[0]),
+                int(num_frames * self._p_drop_audio_frames[1]),
+            )
+            drop_start = num_frames - num_frames_drop
         else:
             assert (
                 num_frames - int(num_frames * self._p_drop_audio_frames[0])

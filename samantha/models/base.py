@@ -236,7 +236,7 @@ class LightningModuleBase(LightningModule):
                 # write new index
                 for k in batch_keys:
                     if batch[k] is not None:
-                        if type(batch[k]) == str:
+                        if isinstance(batch[k], str):
                             index[k] = batch[k]
                         else:
                             index[k] = batch[k][idx]
@@ -244,7 +244,7 @@ class LightningModuleBase(LightningModule):
                 # write new tar
                 for k, v in asdict(inputs).items():
                     numpy_key = f"{k}.npy"
-                    if type(v) == torch.Tensor:
+                    if isinstance(v, torch.Tensor):
                         if v.ndim:
                             obj[numpy_key] = v[idx].detach().cpu().numpy()
                         else:

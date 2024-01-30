@@ -105,6 +105,7 @@ class FlopsProfiler(object):
         assert ds_engine is None, "No support ds_engine now."
         self.recompute_fwd_factor = recompute_fwd_factor
         self.started = False
+        self.hook_registered = False
         self.func_patched = False
 
     def start_profile(self, ignore_list=None):
@@ -119,8 +120,10 @@ class FlopsProfiler(object):
         """
         # logger.info("Flops profiler started")
         self.reset_profile()
-        _patch_functionals()
-        _patch_tensor_methods()
+        if not self.func_patched:
+            _patch_functionals()
+            _patch_tensor_methods()
+            self.func_patched = True
 
         def register_module_hooks(module, ignore_list):
             if ignore_list and type(module) in ignore_list:
@@ -170,9 +173,10 @@ class FlopsProfiler(object):
                     end_time_hook
                 )
 
-        self.model.apply(partial(register_module_hooks, ignore_list=ignore_list))
+        if not self.hook_registered:
+            self.model.apply(partial(register_module_hooks, ignore_list=ignore_list))
+            self.hook_registered = True
         self.started = True
-        self.func_patched = True
 
     def stop_profile(self):
         """Stop profiling.
@@ -201,7 +205,9 @@ class FlopsProfiler(object):
                 module.__end_time_hook_handle__.remove()
                 del module.__end_time_hook_handle__
 
-        self.model.apply(remove_profile_attrs)
+        if self.hook_registered:
+            self.model.apply(remove_profile_attrs)
+            self.hook_registered = False
 
     def reset_profile(self):
         """Resets the profiling.

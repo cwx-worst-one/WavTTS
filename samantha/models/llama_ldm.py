@@ -97,6 +97,7 @@ class FrontendEmbedding(nn.Module):
         return self.out_linear(emb)
 
 
+# TODO: remove it if useless
 class DurationEmbedding(nn.Module):
     def __init__(self, duration_embed_dim, out_dim, padding_idx=0, n_duration=300):
         super().__init__()
@@ -210,6 +211,36 @@ class TimeEmbedding(nn.Module):
         return time_features
 
 
+class PreNet(nn.Module):
+    def __init__(self, in_dim, out_dim, conv_kernel=7, conv_padding=3):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv1d(in_dim, out_dim, kernel_size=conv_kernel, padding=conv_padding),
+            nn.GELU(),
+            RMSNorm(out_dim, feat_dim=1),
+            nn.Conv1d(out_dim, out_dim, kernel_size=conv_kernel, padding=conv_padding),
+        )
+
+    def forward(self, inputs):
+        return self.net(inputs.transpose(1, 2)).transpose(1, 2)
+
+
+class ResPostNet(nn.Module):
+    def __init__(self, in_dim, out_dim, conv_kernel, conv_padding):
+        super().__init__()
+        self.linear = nn.Linear(in_dim, out_dim, bias=False)
+        self.net = nn.Sequential(
+            nn.Conv1d(out_dim, out_dim, kernel_size=conv_kernel, padding=conv_padding),
+            nn.GELU(),
+            RMSNorm(out_dim, feat_dim=1),
+            nn.Conv1d(out_dim, out_dim, kernel_size=conv_kernel, padding=conv_padding),
+        )
+
+    def forward(self, inputs):
+        x = self.linear(inputs)
+        return self.net(x.transpose(1, 2)).transpose(1, 2) + x
+
+
 @dataclass
 class ModelArgs:
     # frontend
@@ -235,11 +266,20 @@ class ModelArgs:
     use_token_vector: bool = False
     token_vector_dim: int = 32
 
+    local_cond_project_type: str = "linear"  # conv
+    local_cond_conv_kernel: int = 9
+    local_cond_conv_padding: int = 4
+
     # llama
     encoder_dim: int = 1536
     encoder_n_layers: int = 24
     encoder_n_heads: int = 24
     out_channels: int = 80
+    max_seq_len: int = 8192
+    causal: bool = False
+    use_window_mask: bool = False
+    window_size: list = field(default_factory=lambda: [-1, -1])
+    window_type: str = "elemwise"  # elemwise, blockwise
 
     # speaker encoder
     prompt_mel_dim: int = 80
@@ -248,6 +288,8 @@ class ModelArgs:
     prompt_loss_weight: float = 0.2  # deprecated
 
     llama_provider: str = "ctiga"
+    postnet_type: str = "linear"  # conv
+    postnet_kernel: int = 3
 
     # features ["mel", "bn"]
     target: str = "mel"
@@ -321,24 +363,40 @@ class LlamaDiffusion(nn.Module):
                 ECAPA_TDNN_GN(hp.prompt_mel_dim, hp.spk_e_dim, hp.spk_embed_dim),
                 nn.Softsign(),
             )
+            local_cond_in_channels = (
+                hp.out_channels + hp.token_hidden_dim + hp.spk_embed_dim
+            )
 
+        else:
+            local_cond_in_channels = hp.token_hidden_dim
+
+        if hp.local_cond_project_type == "linear":
             self.local_cond_project = nn.Linear(
-                hp.out_channels + hp.token_hidden_dim + hp.spk_embed_dim,
+                local_cond_in_channels, hp.local_cond_dim, bias=self.bias
+            )
+        elif hp.local_cond_project_type == "conv":
+            self.local_cond_project = PreNet(
+                local_cond_in_channels,
                 hp.local_cond_dim,
-                bias=self.bias,
+                hp.local_cond_conv_kernel,
+                hp.local_cond_conv_padding,
             )
         else:
-            self.local_cond_project = nn.Linear(
-                hp.token_hidden_dim, hp.local_cond_dim, bias=self.bias
-            )
+            raise NotImplementedError
+
+        if not hasattr(hp, "window_size"):
+            hp.window_size = [-1, -1]
 
         # backbone
         llama_config = LLamaArgs(
             dim=hp.encoder_dim,
             n_layers=hp.encoder_n_layers,
             n_heads=hp.encoder_n_heads,
-            causal=False,
-            max_seq_len=8192,  # TODO: should from config, not hardcode.
+            causal=hp.causal,
+            max_seq_len=hp.max_seq_len,
+            use_window_mask=hp.use_window_mask,
+            window_size=hp.window_size,
+            window_type=hp.window_type,
             use_unet_style_skip_connect=hp.use_unet_style_skip_connect,
         )
 
@@ -350,7 +408,15 @@ class LlamaDiffusion(nn.Module):
             hp.time_embed_dim + hp.local_cond_dim, hp.encoder_dim, bias=self.bias
         )
 
-        self.postnet = nn.Linear(hp.encoder_dim, hp.out_channels, bias=False)
+        if hp.postnet_type == "linear":
+            self.postnet = nn.Linear(hp.encoder_dim, hp.out_channels, bias=False)
+        elif hp.postnet_type == "conv":
+            self.postnet = ResPostNet(
+                hp.encoder_dim,
+                hp.out_channels,
+                hp.postnet_kernel,
+                hp.postnet_kernel // 2,
+            )
 
         self.sigma_distribution = UniformDistribution(vmin=self.min_t, vmax=self.max_t)
 
@@ -453,8 +519,6 @@ class LlamaDiffusion(nn.Module):
             target = alphas * noise - betas * x
         elif self.target_type == "x0":
             target = x
-        elif self.target_type == "noise":
-            target - noise
 
         # concat condition.
         x_noisy = self.x_prenet(x_noisy) + self.prenet(
@@ -531,11 +595,14 @@ class LlamaDiffusion(nn.Module):
 
         return pred.transpose(1, 2), target.transpose(1, 2)
 
-    def _forward(self, x, local_cond, text_embed, timesteps, alphas=None, betas=None):
+    def _forward(self, x, local_cond, text_embed, timesteps):
         residual = x
         time_emb = self.time_embedding(timesteps)
         time_emb = time_emb.unsqueeze(1).expand(-1, local_cond.shape[1], -1)
         x = self.x_prenet(x) + self.prenet(torch.cat([time_emb, local_cond], dim=-1))
+
+        # When CFG is enabled, text_embed has a batch size of 2
+        x = x.expand(text_embed.shape[0], -1, -1)
 
         if self.hp.use_textprefix:
             x = torch.cat([text_embed, x], dim=1)
@@ -550,56 +617,79 @@ class LlamaDiffusion(nn.Module):
         if self.target_type == "velocity":
             if self.hp.use_unet_style_skip_connect:
                 pred = pred_v + residual
-        elif self.target_type == "x0":
-            pred = betas * residual + alphas * pred_v
         else:
             raise NotImplementedError
         return pred
 
-    def ddim_sample(self, timesteps, local_cond, text_embed, text_cfg_w=1.0, eta=0.0):
+    def clear_cache(self, t, total_frame=None):
+        if total_frame is None:
+            self.cached_noise = None
+        else:
+            self.cached_noise = torch.randn([1, total_frame, self.hp.out_channels])
+        self.cached_v = dict([(i, None) for i in range(t)])
+
+    def ddim_sample(
+        self,
+        timesteps,
+        local_cond,
+        text_embed,
+        text_cfg_w=1.0,
+        inpaint_x=None,
+        use_cache=False,
+        cached_v_len=None,
+        eta=0.0,
+    ):
         t = timesteps
-        batch_size, device, frm_len = (
-            local_cond.size(0),
-            local_cond.device,
-            local_cond.size(1),
-        )
-        x = torch.randn([1, frm_len, self.hp.out_channels], device=device)
+        _, device, frm_len = (local_cond.size(0), local_cond.device, local_cond.size(1))
+        if use_cache:
+            assert self.cached_noise is not None
+            if self.cached_noise is not None:
+                x = self.cached_noise[:, :frm_len, :].to(device)
+        else:
+            x = torch.randn([1, frm_len, self.hp.out_channels], device=device)
 
         if t > 20:
             sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device)
         else:
             sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device) ** 2
-            # sigmas = torch.linspace(self.max_t, self.min_t, t+1, device=device) ** 0.5
         sigmas = repeat(sigmas, "i -> i b", b=1)
         sigmas_batch = extend_dim(sigmas, dim=x.ndim)
         alphas, betas = self.get_alpha_beta(sigmas_batch)
 
-        for i in tqdm(range(t)):
+        for i in range(t):
             if self.target_type == "velocity":
                 if text_cfg_w != 1:
                     v_pred, v_pred_uncond = self._forward(
-                        x,
-                        local_cond,
-                        text_embed,
-                        timesteps=sigmas[i].expand(batch_size, -1),
+                        x, local_cond, text_embed, timesteps=sigmas[i]
                     ).chunk(2)
                     v_pred = text_cfg_w * v_pred + (1 - text_cfg_w) * v_pred_uncond
                 else:
                     v_pred = self._forward(
                         x, local_cond, text_embed, timesteps=sigmas[i]
                     )
+
+                # TODO: 只是模拟cache过程
+                if use_cache:
+                    if self.cached_v[i] is not None:
+                        cached_v_len = (
+                            self.cached_v[i].shape[1]
+                            if cached_v_len is None
+                            else cached_v_len
+                        )
+                        v_pred[:, :cached_v_len, :] = self.cached_v[i][
+                            :, :cached_v_len, :
+                        ]
+                    self.cached_v[i] = v_pred
+
                 x_pred = alphas[i] * x - betas[i] * v_pred
                 noise_pred = betas[i] * x + alphas[i] * v_pred
-            elif self.target_type == "x0":
-                x_pred = self._forward(
-                    x,
-                    local_cond,
-                    text_embed,
-                    timesteps=sigmas[i],
-                    alphas=alphas[i],
-                    betas=betas[i],
-                )
-                noise_pred = (x - alphas[i] * x_pred) / betas[i]
+
+                # disable
+                if inpaint_x is not None:
+                    x_pred[:, : inpaint_x.shape[1], :] = inpaint_x
+                    noise_pred[:, : inpaint_x.shape[1], :] = (
+                        x[:, : inpaint_x.shape[1], :] - alphas[i] * inpaint_x
+                    ) / betas[i]
 
             if eta > 0:
                 sigma = (
@@ -619,7 +709,9 @@ class LlamaDiffusion(nn.Module):
 
         return x
 
-    def dpmsolver_sample(self, timesteps, local_cond, text_embed, text_cfg_w=1.0):
+    def dpmsolver_sample(
+        self, timesteps, local_cond, text_embed, text_cfg_w=1.0, inpaint_x=None
+    ):
         batch_size, device, frm_len = (
             local_cond.size(0),
             local_cond.device,
@@ -826,7 +918,7 @@ if __name__ == "__main__":
     inputs["text_mel_mask"] = text_mel_mask
     inputs["text_lens"] = text_lens
     inputs["mel_lens"] = mel_len
-    from samantha.criterion.masked_loss import MaskedMAELoss, MaskedMSELoss
+    from samantha.criterion.masked_loss import MaskedMAELoss
 
     loss_funcs = MaskedMAELoss()
     with torch.autocast(device_type="cuda", enabled=True):
