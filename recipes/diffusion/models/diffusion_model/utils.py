@@ -86,11 +86,11 @@ def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, ss
                         input_dim=32,
                         feature_dim=1024,
                         context_dim=1,
-                        depth=16,
+                        depth=20,
                         segment_size=32,
                         segment_stride=32,
-                        unet=True,
-                        unet_stages=[4,8,4],
+                        unet=False,
+                        unet_stages=[6,8,6],
                         dropout=0,
                         semantic_cfg_prob=0.10,
                         use_checkpoint=False
@@ -111,7 +111,8 @@ def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, ss
                     )
             diffusion_model = DiffusionModule.load_from_checkpoint(
                 checkpoint_path=local_path,
-                diffusion_model=diffusion_network
+                diffusion_model=diffusion_network,
+                strict=False
             ).model
         else:
             if is_zh_token:

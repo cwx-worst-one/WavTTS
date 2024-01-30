@@ -22,7 +22,7 @@ extra_params:
 
     # Semantic model
     semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
-    semantic_ckpt: "/mnt/bn/audio-diffusion/ducle/logs/semantic_model_instrumental_07B/sstk_vad-unnorm_intensity-control-2dec_sstk-random_sstk-mulan-mae-v2+sstk-umm-nospeech-400k_largerr_3m/checkpoints/step=308000.ckpt"
+    semantic_ckpt: "/mnt/bn/audio-diffusion/ducle/logs/semantic_model_instrumental_07B/sstk_vad-unnorm_intensity-control-2dec_sstk-random_sstk-mulan-mae-v2+sstk-umm-nospeech-400k_largerr_3m/checkpoints/step=400000.ckpt"
     mulan_ckpt: "/mnt/bn/audio-diffusion/weituo/sstk_mulan/mulan-step=005000-median_rank_1=83-kaggle.ckpt"
     mulan_version: "sstkmae"
 
@@ -91,7 +91,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                     cache_dir: !ref <run_opts[cache_dir]>
         diffusion_modules:
             diffusion:
-                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/24k_v1/diffusion-step=870000-EMA.ckpt
+                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/24k_v2/diffusion-step=600000-EMA.ckpt
                 #hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/44.1k_mono_v1/diffusion-step=470000-EMA.ckpt
                 initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
                     cache_dir: !ref <run_opts[cache_dir]>
@@ -103,7 +103,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                     cache_dir: !ref <run_opts[cache_dir]>
                     params: !ref <extra_params[diffusion_params]>
             vocoder:
-                hpath: /mnt/bn/audio-diffusion/wtl/soundstream-step=1210000-val_sdr=11.2069-EMA.ckpt
+                hpath: /mnt/bn/audio-diffusion/wtl/vocoder/sstk/24k_v1/soundstream-step=1240000-val_sdr=12.5666-EMA.ckpt
                 #hpath: /mnt/bn/audio-diffusion/wtl/vocoder/sstk/44.1k_mono_v1/soundstream-step=1410000-val_sdr=16.7701-EMA.ckpt
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                     cache_dir: !ref <run_opts[cache_dir]>
