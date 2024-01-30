@@ -43,11 +43,13 @@ class Timer(Callback):
     @rank_zero_only
     def log_timer(self, pl_module, interval=1.0):
         record = {k: v / interval for k, v in self.record.items()}
+        step_time = sum(record.values())
         time_dict = {
             "timer/data": round(record["data"], 3),
             "timer/fwd": round(record["fwd"], 3),
             "timer/bwd": round(record["bwd"], 3),
             "timer/opt": round(record["opt"], 3),
+            "timer/step": round(step_time, 3),
         }
 
         pl_module.log_dict(time_dict, prog_bar=True)
