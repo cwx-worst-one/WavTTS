@@ -859,7 +859,7 @@ class FineTunedModel(BaseModel):
         shared_encoder_output = self.shared_encoder.forward_to_vq(
             encoded_feature, vq=self.vq
         )
-        return shared_encoder_output
+        return shared_encoder_output['vq_ids']
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)

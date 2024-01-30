@@ -1897,7 +1897,7 @@ class Stage3(Stage2):
         hidden_states = self.encoder_input_dropout(audio_feature)
         position_embeddings = self.embed_positions(hidden_states)
         result = self._get_vq_ids(hidden_states, position_embeddings)
-        return result
+        return result['vq_ids']
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
@@ -2039,4 +2039,4 @@ class Stage3MSS(Stage2MSS, Stage3):
         hidden_states = self.encoder_input_dropout(audio_feature)
         position_embeddings = self.embed_positions(hidden_states)
         vq_ids = self._get_vq_ids(hidden_states, position_embeddings)
-        return vq_ids
+        return vq_ids['vq_ids']
