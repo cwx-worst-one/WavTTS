@@ -1,19 +1,19 @@
 import logging
 import os
-import string
 from typing import Any
 
 import librosa
 import numpy as np
 import torch
 import torch.nn.functional as F
+from pytorch_lightning import LightningModule
+from transformers import AutoTokenizer, LlamaTokenizer, T5EncoderModel, T5Tokenizer
+
 from apps.bigtts.wvae.ar.data.dataset import PhoneTokenizerWithAudioTokens
 from apps.bigtts.wvae.ar.data.text_converter import TextToTacolabID
 from apps.bigtts.wvae.ar.infer.lit_vae_t2s_ctiga_lang_spk import VAET2SLangSpkModule
-from pytorch_lightning import LightningModule
-from transformers import AutoTokenizer, LlamaTokenizer, T5EncoderModel, T5Tokenizer
-from zhon.hanzi import punctuation
-
+from samantha.dataio.lite.utils.lang import get_lang_by_text as _get_lang_by_text
+from samantha.dataio.lite.utils.punctuation import punctuation_all
 from samantha.dataio.remote_io import load_json
 from samantha.utils.infer_utils import (
     load_torch_script,
@@ -23,8 +23,6 @@ from samantha.utils.infer_utils import (
     trim_prompt_silence,
     trim_silence,
 )
-
-punctuation_all = punctuation + string.punctuation
 
 logger = logging.getLogger(__name__)
 
@@ -384,109 +382,19 @@ class BigTTSWVAEInfer(LightningModule):
             prompt_wav_max,
         )
 
-    def is_english_char(self, char):
-        if ("\u0041" <= char <= "\u005a") or ("\u0061" <= char <= "\u007a"):
-            return True
-        else:
-            return False
-
-    def is_english_spanish_char(self, char):
-        special_Spanish_chars_list = [
-            "á",
-            "é",
-            "í",
-            "ó",
-            "ú",
-            "Á",
-            "É",
-            "Í",
-            "Ó",
-            "Ú",
-            "ñ",
-            "Ñ",
-            "¡",
-            "¿",
-            "ü",
-            "Ü",
-        ]
-        if (
-            ("\u0041" <= char <= "\u005a")
-            or ("\u0061" <= char <= "\u007a")
-            or char in special_Spanish_chars_list
-        ):
-            return True
-        else:
-            return False
-
     def get_lang_by_text(self, text):
-        text = text.replace("'", "")
-        # en, zh
-        len_en_word = 0
-        len_zh_char = 0
-        i = 0
-        while i < len(text):
-            x = text[i]
-            if x in punctuation_all:  # punc
-                i += 1
-                continue
-            elif "\u4e00" <= x <= "\u9fff":  # zh
-                len_zh_char += 1
-                i += 1
-            elif self.is_english_spanish_char(x):  # en with little spanish
-                i += 1
-                if i >= len(text):
-                    len_en_word += 1
-                    break
-                while self.is_english_spanish_char(text[i]):
-                    i += 1
-                    if i >= len(text):
-                        break
-                len_en_word += 1
-                continue
-            else:
-                i += 1
-
-        lang = "en"
-        if len_zh_char > len_en_word:
-            lang = "zh"
-
-        return lang
+        return _get_lang_by_text(text)
 
     def get_lang_by_text_infer(self, text):
-        text = text.replace("'", "")
-        # en, zh
-        len_en_word = 0
-        len_zh_char = 0
-        i = 0
-        while i < len(text):
-            x = text[i]
-            if x in punctuation_all:  # punc
-                i += 1
-                continue
-            elif "\u4e00" <= x <= "\u9fff":  # zh
-                len_zh_char += 1
-                i += 1
-            elif self.is_english_spanish_char(x):  # en with little spanish
-                i += 1
-                if i >= len(text):
-                    len_en_word += 1
-                    break
-                while self.is_english_spanish_char(text[i]):
-                    i += 1
-                    if i >= len(text):
-                        break
-                len_en_word += 1
-                continue
-            else:
-                i += 1
+        _, zh_char_cnt, en_word_cnt = _get_lang_by_text(text, detail=True)
 
-        if len_zh_char > 0:
-            if len_en_word > 0:
+        if zh_char_cnt > 0:
+            if en_word_cnt > 0:
                 lang = "zh_en"
             else:
                 lang = "zh"
         else:
-            if len_en_word > 0:
+            if en_word_cnt > 0:
                 lang = "en"
             else:
                 raise NotImplementedError

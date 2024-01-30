@@ -1,16 +1,18 @@
 import logging
 import pickle
+from typing import Any, Callable, Dict, List, Optional
+
 import numpy as np
-from typing import Callable, Dict, Any, Optional, List
 
 from apps.bigtts.wvae.ar.data.frontend import (
     phone_to_int,
-    tone_to_int,
     phonetone_to_int,
+    tone_to_int,
 )
 from samantha.dataio.lite.transform import ItemTransformBase
-from samantha.dataio.lite.utils.punctuation import punctuation_all
+from samantha.dataio.lite.utils.lang import is_chinese_char, is_english_spanish_char
 from samantha.dataio.lite.utils.parquet import get_meta_obj
+from samantha.dataio.lite.utils.punctuation import punctuation_all
 from samantha.dataio.remote_io import load_json
 
 logger = logging.getLogger(__name__)
@@ -41,6 +43,7 @@ class ContinuousTTSLangSpkSerTransform(ItemTransformBase):
         use_sp=True,
         refenc_cfg_rate=0.0,
     ):
+        super().__init__()
         self.max_length = max_length
         self.use_bpe = use_bpe
         self.use_extra_tag = use_extra_tag
@@ -329,64 +332,30 @@ class ContinuousTTSLangSpkSerTransform(ItemTransformBase):
             tacolab_v1.append("\t".join([phone, tone, "0.0 0.0 0.0 1.0", ws, pw]))
         return tacolab_v1
 
-    def is_english_char(self, char):
-        if ("\u0041" <= char <= "\u005a") or ("\u0061" <= char <= "\u007a"):
-            return True
-        else:
-            return False
-
-    def is_english_spanish_char(self, char):
-        special_Spanish_chars_list = [
-            "á",
-            "é",
-            "í",
-            "ó",
-            "ú",
-            "Á",
-            "É",
-            "Í",
-            "Ó",
-            "Ú",
-            "ñ",
-            "Ñ",
-            "¡",
-            "¿",
-            "ü",
-            "Ü",
-        ]
-        if (
-            ("\u0041" <= char <= "\u005a")
-            or ("\u0061" <= char <= "\u007a")
-            or char in special_Spanish_chars_list
-        ):
-            return True
-        else:
-            return False
-
     def get_lang_by_text(self, text):
         text = text.replace("'", "")
         # en, zh
-        len_en_word = 0
-        len_zh_char = 0
+        en_word_cnt = 0
+        zh_char_cnt = 0
         i = 0
         while i < len(text):
             x = text[i]
             if x in punctuation_all:  # punc
                 i += 1
                 continue
-            elif "\u4e00" <= x <= "\u9fff":  # zh
-                len_zh_char += 1
+            elif is_chinese_char(x):  # zh
+                zh_char_cnt += 1
                 i += 1
-            elif self.is_english_spanish_char(x):  # en
+            elif is_english_spanish_char(x):  # en with little spanish
                 i += 1
                 if i >= len(text):
-                    len_en_word += 1
+                    en_word_cnt += 1
                     break
-                while self.is_english_spanish_char(text[i]):
+                while is_english_spanish_char(text[i]):
                     i += 1
                     if i >= len(text):
                         break
-                len_en_word += 1
+                en_word_cnt += 1
                 continue
             else:  # blank
                 if not (text[i] == " " or text[i].isdigit()):
@@ -395,11 +364,11 @@ class ContinuousTTSLangSpkSerTransform(ItemTransformBase):
                 i += 1
 
         lang = "en"
-        if len_zh_char > len_en_word:
+        if zh_char_cnt > en_word_cnt:
             lang = "zh"
 
         if not self.use_code_switch_data:
-            if not (len_zh_char == 0 or len_en_word == 0):
+            if not (zh_char_cnt == 0 or en_word_cnt == 0):
                 if self.use_lang_cfg:
                     return "default"
                 else:
