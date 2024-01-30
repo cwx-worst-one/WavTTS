@@ -9,10 +9,16 @@ def test_torch_allow_tf32():
     # temporally switch on to run the test
     torch.backends.__allow_nonbracketed_mutation_flag = True
 
+    allow_matmul = torch.backends.cuda.matmul.allow_tf32
+    allow_cudnn = torch.backends.cudnn.allow_tf32
     with torch_allow_tf32(enable_matmul=False, enable_cudnn=False):
         assert not torch.backends.cuda.matmul.allow_tf32
         assert not torch.backends.cudnn.allow_tf32
+    assert torch.backends.cuda.matmul.allow_tf32 == allow_matmul
+    assert torch.backends.cudnn.allow_tf32 == allow_cudnn
 
     with torch_allow_tf32(enable_matmul=True, enable_cudnn=True):
         assert torch.backends.cuda.matmul.allow_tf32
         assert torch.backends.cudnn.allow_tf32
+    assert torch.backends.cuda.matmul.allow_tf32 == allow_matmul
+    assert torch.backends.cudnn.allow_tf32 == allow_cudnn
