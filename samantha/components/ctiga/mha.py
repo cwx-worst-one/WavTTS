@@ -1019,16 +1019,18 @@ def _update_kv_cache(kv, inference_params, layer_idx):
         return kv
 
 
+FLASHATTN_VERSIONS = ["1", "2", "2.3"]
+
 fa_selfattn_cls = {
-    1: FlashSelfAttention,
-    2: FlashSelfAttentionV2,
-    2.3: FlashSelfAttentionV2_3,
+    "1": FlashSelfAttention,
+    "2": FlashSelfAttentionV2,
+    "2.3": FlashSelfAttentionV2_3,
 }
 
 fa_crossattn_cls = {
-    1: FlashCrossAttention,
-    2: FlashCrossAttentionV2,
-    2.3: FlashCrossAttentionV2_3,
+    "1": FlashCrossAttention,
+    "2": FlashCrossAttentionV2,
+    "2.3": FlashCrossAttentionV2_3,
 }
 
 
@@ -1058,7 +1060,7 @@ class MHA(nn.Module):
         checkpointing=False,
         blocksparse=False,
         blockmask=None,
-        version=2,
+        version="2",
         window_size=[-1, -1],  # no mask
         window_type=0,
         device=None,
@@ -1069,7 +1071,9 @@ class MHA(nn.Module):
             performance reason: for post-norm architecture, returning the input allows us
             to fuse the backward of nn.Linear with the residual connection.
         """
-        assert version in [1, 2, 2.3]
+        assert isinstance(version, (str, int, float))
+        version = str(version)
+        assert version in FLASHATTN_VERSIONS
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
         self.version = version
@@ -1125,7 +1129,7 @@ class MHA(nn.Module):
 
         self.window_size = window_size
         self.window_type = window_type
-        if version == 2.3 and use_flash_attn:
+        if self.version == "2.3" and use_flash_attn:
             inner_attn_cls_args.update(
                 {"window_size": self.window_size, "window_type": self.window_type}
             )
@@ -1134,7 +1138,7 @@ class MHA(nn.Module):
             )
         if blocksparse:
             assert (
-                version == 1 and use_flash_attn
+                self.version == "1" and use_flash_attn
             ), "enable blocksparse only supoort version==1"
             inner_attn_cls = (
                 FlashBlocksparseSelfAttention
@@ -1256,9 +1260,9 @@ class MHA(nn.Module):
     ):
         if self.use_flash_attn:
             input_args = (qkv, causal, cu_seqlens, max_seqlen)
-            if self.version in [2, 2.3]:
+            if self.version in ["2", "2.3"]:
                 input_args += (return_attn_probs,)
-            if self.version in [2.3]:
+            if self.version in ["2.3"]:
                 input_args += (use_window_mask,)
         else:
             input_args = (qkv, causal, key_padding_mask)
@@ -1287,9 +1291,9 @@ class MHA(nn.Module):
                 cu_seqlens_k,
                 max_seqlen_k,
             )
-            if self.version in [2, 2.3]:
+            if self.version in ["2", "2.3"]:
                 input_args += (return_attn_probs,)
-            if self.version in [2.3]:
+            if self.version in ["2.3"]:
                 input_args += (use_window_mask,)
         else:
             input_args = (q, kv, causal, key_padding_mask)
@@ -1567,11 +1571,13 @@ class ParallelMHA(nn.Module):
         use_flash_attn=False,
         checkpointing=False,
         sequence_parallel=True,
-        version=1,
+        version="1",
         device=None,
         dtype=None,
     ) -> None:
-        assert version in [1, 2]
+        assert isinstance(version, (str, int, float))
+        version = str(version)
+        assert version in ["1", "2"]
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
         self.version = version
@@ -1610,12 +1616,12 @@ class ParallelMHA(nn.Module):
             **factory_kwargs,
         )
         inner_attn_cls = (
-            (FlashSelfAttention if version == 1 else FlashSelfAttentionV2)
+            (FlashSelfAttention if version == "1" else FlashSelfAttentionV2)
             if use_flash_attn
             else SelfAttention
         )
         inner_cross_attn_cls = (
-            (FlashCrossAttention if version == 1 else FlashCrossAttentionV2)
+            (FlashCrossAttention if version == "1" else FlashCrossAttentionV2)
             if use_flash_attn
             else CrossAttention
         )
@@ -1645,7 +1651,7 @@ class ParallelMHA(nn.Module):
     ):
         if self.use_flash_attn:
             input_args = (qkv, causal, cu_seqlens, max_seqlen)
-            if self.version == 2:
+            if self.version == "2":
                 input_args += (return_attn_probs,)
         else:
             input_args = (qkv, causal, key_padding_mask)

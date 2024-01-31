@@ -18,7 +18,7 @@ from transformers import GPT2Config
 from samantha.components.activations import sqrelu_fwd
 from samantha.components.ctiga.block import Block, ParallelBlock
 from samantha.components.ctiga.embedding import GPT2Embeddings, ParallelGPT2Embeddings
-from samantha.components.ctiga.mha import MHA, ParallelMHA
+from samantha.components.ctiga.mha import FLASHATTN_VERSIONS, MHA, ParallelMHA
 from samantha.components.ctiga.mlp import FusedMLP, GatedMlp, Mlp, ParallelFusedMLP
 from samantha.utils.ctiga.inference_params import InferenceParams
 from samantha.utils.ctiga.localmask import ELEMWISE_WINDOW_MASK, WINDOW_MASK_TYPES
@@ -69,7 +69,10 @@ def create_mixer_cls(
 ):
     factory_kwargs = {"device": device, "dtype": dtype}
     flashattn_version = getattr(config, "flashattn_version", 2)
-    assert flashattn_version in [1, 2, 2.3]
+    if isinstance(flashattn_version, (int, float)):
+        flashattn_version = str(flashattn_version)
+    assert flashattn_version in FLASHATTN_VERSIONS
+
     head_dim = getattr(
         config, "head_dim", config.hidden_size // config.num_attention_heads
     )
@@ -96,7 +99,7 @@ def create_mixer_cls(
     use_window_mask = getattr(config, "use_window_mask", False)
     window_size = getattr(config, "window_size", [-1, -1])
     window_type = getattr(config, "window_type", ELEMWISE_WINDOW_MASK)
-    if flashattn_version == 2.3:
+    if flashattn_version == "2.3":
         assert (
             use_flash_attn and process_group is None
         ), "flashattn_2.3 only support use_flash_attn=True and process_group is None"
@@ -115,7 +118,7 @@ def create_mixer_cls(
     else:
         assert (
             not use_window_mask
-        ), f"only support use_window_mask=True in flashattn_version=2.3 now, but got {flashattn_verison}"
+        ), f"only support use_window_mask=True in flashattn_version=2.3 now, but got {flashattn_version}"
 
     if blocksparse:
         assert (
@@ -284,7 +287,11 @@ def create_mlp_cls(config, layer_idx=None, process_group=None, device=None, dtyp
 def create_block(config, layer_idx=None, process_group=None, device=None, dtype=None):
     factory_kwargs = {"device": device, "dtype": dtype}
     sequence_parallel = getattr(config, "sequence_parallel", True)
-    flashattn_verison = getattr(config, "flashattn_version", 2)
+    flashattn_version = getattr(config, "flashattn_version", 2)
+    if isinstance(flashattn_version, (int, float)):
+        flashattn_version = str(flashattn_version)
+    assert flashattn_version in FLASHATTN_VERSIONS
+
     mixer_cls = create_mixer_cls(
         config, layer_idx, process_group=process_group, **factory_kwargs
     )
@@ -317,7 +324,7 @@ def create_block(config, layer_idx=None, process_group=None, device=None, dtype=
             residual_in_fp32=residual_in_fp32,
             sequence_parallel=sequence_parallel and process_group is not None,
             mark_shared_params=process_group is not None,
-            version=flashattn_verison,
+            version=flashattn_version,
             device=device,
             dtype=dtype,
         )
@@ -335,7 +342,7 @@ def create_block(config, layer_idx=None, process_group=None, device=None, dtype=
             residual_in_fp32=residual_in_fp32,
             sequence_parallel=sequence_parallel and process_group is not None,
             mark_shared_params=process_group is not None,
-            version=flashattn_verison,
+            version=flashattn_version,
         )
     block.layer_idx = layer_idx
     return block
@@ -907,9 +914,11 @@ class GPTLMHeadModel(GPTPreTrainedModel):
         if return_attn_probs:
             use_flash_attn = getattr(self.config, "use_flash_attn", False)
             fa_version = getattr(self.config, "flashattn_version", 2)
-            assert use_flash_attn and fa_version in [
-                2
-            ], "return_attn_probs=True only support in this ctiga version 2"
+            if isinstance(fa_version, (int, float)):
+                fa_version = str(fa_version)
+            assert (
+                use_flash_attn and fa_version == "2"
+            ), "return_attn_probs=True only support in this ctiga version 2"
             assert (
                 inference_params is None and self.training
             ), "only support return_attn_probs=True in training"

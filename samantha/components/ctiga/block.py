@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch import Tensor
 from torchvision.ops import StochasticDepth
 
-from .mha import MHA
+from .mha import FLASHATTN_VERSIONS, MHA
 from .mlp import Mlp
 
 try:
@@ -50,7 +50,7 @@ class Block(nn.Module):
         residual_in_fp32=False,
         sequence_parallel=False,
         mark_shared_params=False,
-        version=2,
+        version="2",
         device=None,
         dtype=None,
     ):
@@ -71,7 +71,9 @@ class Block(nn.Module):
         This is for performance reason: for post-norm architecture, returning the input allows us
         to fuse the backward of nn.Linear with the residual connection.
         """
-        assert version in [1, 2, 2.3]
+        assert isinstance(version, (int, float, str))
+        version = str(version)
+        assert version in FLASHATTN_VERSIONS
         super().__init__()
         self.version = version
         self.prenorm = prenorm
@@ -88,7 +90,7 @@ class Block(nn.Module):
         self.dropout1 = dropout_cls(resid_dropout1)
 
         self.drop_path1 = (
-            StochasticDepth(drop_path1, mode="row") if self.version == 1 else None
+            StochasticDepth(drop_path1, mode="row") if self.version == "1" else None
         )
 
         self.norm1 = norm_cls(dim)
@@ -96,7 +98,7 @@ class Block(nn.Module):
         if not isinstance(self.mlp, nn.Identity):
             self.dropout2 = dropout_cls(resid_dropout2)
             self.drop_path2 = (
-                StochasticDepth(drop_path2, mode="row") if self.version == 1 else None
+                StochasticDepth(drop_path2, mode="row") if self.version == "1" else None
             )
             self.norm2 = norm_cls(dim)
 
@@ -404,7 +406,7 @@ class ParallelBlock(nn.Module):
         residual_in_fp32=False,
         sequence_parallel=False,
         mark_shared_params=False,
-        version=1,
+        version="1",
     ):
         """
         This Block has a slightly different structure compared to a regular
@@ -416,7 +418,9 @@ class ParallelBlock(nn.Module):
         This is for performance reasons, as we can fuse the dropout, add and LayerNorm.
         The residual needs to be provided (except for the very first block).
         """
-        assert version in [1, 2]
+        assert isinstance(version, (int, float, str))
+        version = str(version)
+        assert version in FLASHATTN_VERSIONS
         super().__init__()
         self.version = version
         self.tied_norm = tied_norm
