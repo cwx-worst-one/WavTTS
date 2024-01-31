@@ -145,7 +145,17 @@ class SemanticModule(BaseContinuousEmbedModule):
         if semantic_type  == 'wav2vec':
             target_embedder = WavToVecTokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=True, add_eos=True)
         elif semantic_type == 'bestrq':
-            target_embedder = BestRQTokenEmbedder(vocab_size=semantic_codebook_size, embedding_dim=hidden_size, add_sos=True, add_eos=True)
+            chunk_size = extra_params.get("semantic_chunk_size", None)
+            if chunk_size is not None:
+                chunk_size = extra_params["sample_rate"] * chunk_size
+            print(f"BestRQ: chunk_size={chunk_size}")
+            target_embedder = BestRQTokenEmbedder(
+                vocab_size=semantic_codebook_size,
+                embedding_dim=hidden_size,
+                add_sos=True,
+                add_eos=True,
+                chunk_size=chunk_size,
+            )
         else:
             raise NotImplementedError
 
@@ -257,7 +267,8 @@ class SemanticModule(BaseContinuousEmbedModule):
         batch_size = self.infer_batch_size(batch)
         conditions = self.infer_conditions(batch)
         if 'duration' in conditions:
-            embeds = duration_embedder.embed(batch["duration"], batch_size)
+            duration = self.infer_target_duration(batch)
+            embeds = duration_embedder.embed(duration, batch_size)
         else:
             embeds = duration_embedder.empty_embed(batch_size)
         return embeds
@@ -298,13 +309,6 @@ class SemanticModule(BaseContinuousEmbedModule):
 
     def prepare_intensity_inputs(self, batch, intensity_embedder):
         batch_size = self.infer_batch_size(batch)
-        if "intensity" not in batch:    # Predict intensity if it's not available
-            assert not self.training, "intensity should be provided in training!"
-            batch["intensity"] = self._predict_intensity(
-                batch,
-                intensity_embedder,
-                self.prediction_heads["intensity"],
-            )
         intensity_labels = batch["intensity"]
         assert batch_size == len(intensity_labels)
         target_duration = self.infer_target_duration(batch)
@@ -410,6 +414,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         batch,
         intensity_embedder,
         intensity_head,
+        intensity_temperature=1.0,
         tqdm_name="Intensity Prediction",
     ):
         target_duration = self.infer_target_duration(batch)
@@ -456,7 +461,7 @@ class SemanticModule(BaseContinuousEmbedModule):
                 last_hidden_state = model_output['hidden_states'][-1]
 
             target_logits = intensity_head(last_hidden_state[:, -1:]) # only predict for last logit
-            predict_token = self.sample_logits(i, target_logits, 1.0, "top_p")
+            predict_token = self.sample_logits(i, target_logits, intensity_temperature, "top_p")
             predict_token_emb = intensity_embedder.embedder(predict_token)
             model_input = {"inputs_embeds": predict_token_emb}
             previous_inputs_embeds = torch.cat([previous_inputs_embeds, predict_token_emb], dim=1)
@@ -477,6 +482,17 @@ class SemanticModule(BaseContinuousEmbedModule):
         if hp.get("exclude_eos", False) and self.target_embedder.eos_id is not None:
             exclude_ids = [self.target_embedder.eos_id]
             print(f"exclude_ids: {exclude_ids}")
+        
+        # Predict intensity if it's not available
+        if "intensity" in self.input_embedders and "intensity" not in batch:
+            assert not self.training, "intensity should be provided in training!"
+            batch["intensity"] = self._predict_intensity(
+                batch,
+                self.input_embedders["intensity"],
+                self.prediction_heads["intensity"],
+                hp.get("intensity_temperature", 1.0),
+            )
+
         inputs_embeds = self.prepare_inputs_embeddings(batch)
         return super().predict(
             inputs_embeds,

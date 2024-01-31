@@ -110,23 +110,24 @@ def save_batch_outputs(
             file_name = f"{absolute_idx:03d}_{format_lyrics_and_style(style_text, lyrics_str)}"
         else:
             file_name = index[ii]
+        wav_file_name = file_name
         if sample_round > 0:
-            file_name += ("_r" + str(prompt_idx % sample_round))
+            wav_file_name += ("_r" + str(prompt_idx % sample_round))
         if samples_to_save > 1 and beam_size > 1:
-            file_name += f".{beam_idx}"
+            wav_file_name += f".{beam_idx}"
             
-        wav_fp = os.path.join(wav_dir, f"{file_name}.generated.wav")
+        wav_fp = os.path.join(wav_dir, f"{wav_file_name}.generated.wav")
         print(f"[Saving] {wav_fp}")
         save_wav(wav.cpu().float(), wav_fp, sr=sample_rate, save_mp3=save_mp3)
-        if save_style_audio and style_audio is not None:
+        if save_style_audio and style_audio is not None and beam_idx == 0:
             input_wav_fp = os.path.join(wav_dir, f"{file_name}.style_audio.wav")
             save_wav(style_audio[ii].cpu().float(), input_wav_fp, sr=sample_rate, save_mp3=save_mp3)
 
-        if vocal_audio is not None:
+        if vocal_audio is not None and beam_idx == 0:
             input_vocals_fp = os.path.join(wav_dir, f"{file_name}.vocal_audio.wav")
             save_wav(vocal_audio[ii].cpu().float(), input_vocals_fp, sr=sample_rate, save_mp3=save_mp3)
 
-        meta_fp = os.path.join(wav_dir, f"{file_name}.metadata.json")
+        meta_fp = os.path.join(wav_dir, f"{wav_file_name}.metadata.json")
         metadata = metadatas[i] if metadatas is not None else {}
         metadata = {
             **metadata,

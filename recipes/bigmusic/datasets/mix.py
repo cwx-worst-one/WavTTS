@@ -1506,6 +1506,7 @@ class DataModule(pl.LightningDataModule):
         predict_dataset=None,
         collate_fn: Optional[Callable] = None,
         do_shuffle: bool = True,    # set to False if shuffling is already done at dataset level
+        prefetch_factor: Optional[int] = None,  # PyTorch default
     ):
         super().__init__()
         self.shuffle_buffer_size = shuffle_buffer_size
@@ -1516,6 +1517,7 @@ class DataModule(pl.LightningDataModule):
         self.pin_memory = pin_memory
         self.collate_fn = collate_fn
         self.do_shuffle = do_shuffle
+        self.prefetch_factor = prefetch_factor
 
     def train_dataloader(self):
         if self.do_shuffle:
@@ -1529,6 +1531,7 @@ class DataModule(pl.LightningDataModule):
             batch_size=None,
             num_workers=self.num_workers,
             collate_fn=self.collate_fn,
+            prefetch_factor=self.prefetch_factor,
         )
 
     def val_dataloader(self):
@@ -1539,6 +1542,7 @@ class DataModule(pl.LightningDataModule):
                     batch_size=None,
                     num_workers=self.num_workers,
                     collate_fn=self.collate_fn,
+                    prefetch_factor=self.prefetch_factor,
                 )
                 for val in self.validation_dataset
             ]
@@ -1548,6 +1552,7 @@ class DataModule(pl.LightningDataModule):
                 batch_size=None,
                 num_workers=self.num_workers,
                 collate_fn=self.collate_fn,
+                prefetch_factor=self.prefetch_factor,
             )
 
     def predict_dataloader(self):
@@ -1556,6 +1561,7 @@ class DataModule(pl.LightningDataModule):
             batch_size=None,
             num_workers=self.num_workers,
             collate_fn=self.collate_fn,
+            prefetch_factor=self.prefetch_factor,
         )
 
 

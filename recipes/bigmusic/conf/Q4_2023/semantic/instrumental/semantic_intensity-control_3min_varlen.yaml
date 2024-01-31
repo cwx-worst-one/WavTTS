@@ -23,12 +23,14 @@ extra_params:
     input_embedders: ["mulan", "duration", "intensity"]
     prediction_heads:
         intensity: 1.0
+    # How to extract UMM tokens
+    semantic_chunk_size: 30
     # How to extract MuLan embedding
     mulan_crop: True
     mulan_average: True
     # For intensity control
     intensity_decimals: 2
-    intensity_calculation: "max"
+    intensity_calculation: "mean"
     intensity_hz: 1
 
 # running parameters

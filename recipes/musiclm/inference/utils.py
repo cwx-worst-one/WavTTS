@@ -168,7 +168,7 @@ def save_wav(audio, output_file, sr=24000, save_mp3=False):
     if save_mp3:
         output_file_mp3 = output_file.replace(".wav", ".mp3")
         subprocess.run(
-            f"ffmpeg -i {output_file} -ar {sr} -ac 1 -b:a 320k {output_file_mp3}",
+            f"ffmpeg -y -i {output_file} -ar {sr} -ac 1 -b:a 320k {output_file_mp3}",
             shell=True,
         )
         os.remove(output_file)

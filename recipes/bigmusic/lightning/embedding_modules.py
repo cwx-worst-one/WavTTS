@@ -66,9 +66,25 @@ def get_t5_embeds(requires, x):
     return requires['t5'](input_ids=x)['last_hidden_state']
 
 @torch.no_grad()
-def get_bestrq_umm_tokens(requires, batch):
+def get_bestrq_umm_tokens(requires, batch, chunk_size=None):
     lit_module = requires['Stage3']
-    return lit_module.wav2token(batch)
+    if chunk_size is None or batch.shape[-1] <= chunk_size:
+        vq_ids = lit_module.wav2token(batch)
+    else:
+        if batch.dim() == 3:
+            batch = batch.squeeze(1)
+        batch_size = batch.shape[0]
+        batch_chunked = batch.unfold(-1, chunk_size, chunk_size)
+        num_chunks = batch_chunked.shape[1]
+        vq_ids = lit_module.wav2token(batch_chunked.reshape(batch_size * num_chunks, 1, chunk_size))
+        vq_ids = vq_ids.reshape(batch_size, -1)
+        # Compute leftover
+        if num_chunks * chunk_size < batch.shape[-1]:
+            samples_per_token = num_chunks * chunk_size // vq_ids.shape[-1]
+            leftover_tokens = (batch.shape[-1] - num_chunks * chunk_size) // samples_per_token
+            vq_ids_leftover = lit_module.wav2token(batch[..., -chunk_size:].unsqueeze(1))
+            vq_ids = torch.cat([vq_ids, vq_ids_leftover[..., -leftover_tokens:]], dim=-1)
+    return vq_ids
 
 @torch.no_grad()
 def get_bestrq_mkii_tokens(requires, batch):
@@ -422,11 +438,19 @@ class WavToVecTokenEmbedder(TokenEmbedder):
     
 
 class BestRQTokenEmbedder(TokenEmbedder):
-    def __init__(self, vocab_size=32_768, embedding_dim=1024, add_sos=False, add_eos=False):
+    def __init__(
+            self,
+            vocab_size=32_768,
+            embedding_dim=1024,
+            add_sos=False,
+            add_eos=False,
+            chunk_size=None,
+        ):
         super().__init__(vocab_size, embedding_dim, add_sos, add_eos)
+        self.chunk_size = chunk_size
 
     def get_tokens(self, requires, input_audio):
-        return get_bestrq_umm_tokens(requires, input_audio)
+        return get_bestrq_umm_tokens(requires, input_audio, self.chunk_size)
 
 class BestRQMKIITokenEmbedder(TokenEmbedder):
     def __init__(self, vocab_size=65_536, embedding_dim=1024, add_sos=False, add_eos=False):

@@ -59,6 +59,7 @@ class InstrumentalWebDataModule(DataModule):
         mixed_ratio: float = 0.0,
         use_pipe: bool = False,
         seed: int = 555,
+        prefetch_factor: Optional[int] = None,
     ):
         if dataset_name == "MCC40M_US":
             hdfs_dir = "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_merge"
@@ -190,7 +191,12 @@ class InstrumentalWebDataModule(DataModule):
             train_dataset=train_dataset,
             validation_dataset=validation_dataset,
             predict_dataset=train_dataset,  # TODO
-            collate_fn=partial(collate_fn, sample_rate=sample_rate, mixed_ratio=mixed_ratio),
+            collate_fn=partial(
+                collate_fn,
+                sample_rate=sample_rate,
+                mixed_ratio=mixed_ratio,
+            ),
             do_shuffle=False,
+            prefetch_factor=prefetch_factor,
         )
         

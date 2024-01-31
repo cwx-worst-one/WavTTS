@@ -76,6 +76,8 @@ def inference_dataset_from_prompt(
     if 'vocal_audio' in prompts:
         additional_transforms = [voice_clone_transform(extra_params)] if extra_params.get('app_type') == 'vclone' else []
         prompts['vocal_audio'] = load_and_normalize_wavs(prompts['vocal_audio'], additional_transforms)
+    if 'intensity_audio' in prompts:
+        prompts['intensity_audio'] = load_and_normalize_wavs(prompts['intensity_audio'])
     if 'structure' in prompts:
         prompts['structure'] = [None if x == "random" else json.loads(x) for x in prompts['structure']]
     elif 'structure' in conditions:
@@ -127,11 +129,12 @@ def inference_dataset_from_prompt(
             # TODO: (AS) pass max_seq_len parameter to transform
             segment_transforms.append(StyleTextT5Transform())
     if 'intensity' in conditions:
-        # TODO: don't hardcode sample rate
         segment_transforms.append(
             IntensityTransform(
-                audio_key="style_audio",
-                sample_rate=24000,
+                audio_key="intensity_audio" if "intensity_audio" in prompts else "style_audio",
+                sample_rate=extra_params["sample_rate"],
+                calculation_mode=extra_params.get("intensity_calculation", "max"),
+                intensity_hz=extra_params.get("intensity_hz", 1),
             )
         )
 

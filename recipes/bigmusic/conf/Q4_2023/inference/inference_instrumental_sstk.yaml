@@ -30,8 +30,14 @@ extra_params:
     rewards:
         style_text: 1.0
         qualitative: 1.0
+        audio_metrics: 1.0
     positive_phrase: "high quality, catchy, memorable"
     negative_phrase: "noisy, boring, forgettable"
+
+    # For intensity calculation
+    intensity_calculation: "max"
+    intensity_hz: 1
+    intensity_temperature: 1.0
 
     diffusion_version: 'sstk_v2'
     diffusion_params:
