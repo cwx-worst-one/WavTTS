@@ -29,7 +29,3 @@ def load_model(device, model_path, *_, **__):
         "tokenizer": AutoTokenizer.from_pretrained(model_path),
         "encoder": T5EncoderModel.from_pretrained(model_path).to(device),
     }
-
-
-def model_path_patten(feature_version):
-    return f"hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wangxin.colin/ckpts/byte_t5_{feature_version}"

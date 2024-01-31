@@ -128,12 +128,17 @@ def run(
             consumer.close()
             fs.touch(ckpt_url)
             ed = time.perf_counter()
-            rtf = (ed - st) / (1e-5 + total_count)
             local_totol_count += total_count
             local_elapsed += ed - st
-            consumed = f"{local_totol_count / 3600: .4f}H"
             elapsed = str(datetime.timedelta(seconds=local_elapsed))
-            logger.info(f"{prefix_info} {rtf=:.4f}, {consumed=}, {elapsed=}")
+            if domain == "index":
+                consumed = local_totol_count / (1 << 30)
+                speed = total_count / (ed - st)
+                logger.info(f"{prefix_info} {speed=:.4f} char/s, {consumed=:.4f} G chars, {elapsed=}")
+            else:
+                rtf = (ed - st) / (1e-5 + total_count)
+                consumed = local_totol_count / 3600
+                logger.info(f"{prefix_info} {rtf=:.4f}, {consumed=:.4f}H, {elapsed=}")
         except Exception as e:
             logger.warning(f"{prefix_info} Error: {data_url=}", exc_info=e)
 

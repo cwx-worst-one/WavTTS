@@ -20,6 +20,7 @@ from scripts.data_processing.audio import (
     wvae_mel_utils,
     wvae_utils,
     noisy_token,
+    llm_emb,
 )
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,8 @@ class Consumer:
 def preprocess_index(feature_type):
     if feature_type == "byt5":
         return byt5.preprocess_index
+    elif feature_type == "llm_emb":
+        return llm_emb.preprocess_index
     else:
         raise ValueError(f"{feature_type=} is not support for preprocess_index.")
 
@@ -131,6 +134,8 @@ def process_batch(feature_type):
         return ser.process_batch
     elif feature_type == "byt5":
         return byt5.process_batch
+    elif feature_type == "llm_emb":
+        return llm_emb.process_batch
     elif feature_type == "noisy_token":
         return noisy_token.process_batch
     else:
@@ -144,7 +149,7 @@ def model_path_patten(feature_type, feature_version):
         return wvae_utils.model_path_patten(feature_version)
     elif feature_type == "wavevae_mel":
         return wvae_mel_utils.model_path_patten(feature_version)
-    elif feature_type in ["speaker_embed", "umm_token", "ser", "byt5", "noisy_token"]:
+    elif feature_type in ["speaker_embed", "umm_token", "ser", "byt5", "noisy_token", "llm_emb"]:
         return None
     elif feature_type == "wavevae_mel_token":
         return wvae_mel_token.model_path_patten(feature_version)
@@ -169,6 +174,8 @@ def feature_name_mapping(feature_type):
         return ["emo_tag", "emo_deg", "emo_emb"]
     if feature_type in ["byt5"]:
         return "byt5"
+    if feature_type in ["llm_emb"]:
+        return "llm_emb"
     if feature_type in ["noisy_token"]:
         return ["noisy_wav", "noisy_bns", "noisy_umm_token", "noisy_meta"]
 
@@ -201,6 +208,8 @@ def load_model(feature_type):
         return ser.load_model
     elif feature_type in ["byt5"]:
         return byt5.load_model
+    elif feature_type in ["llm_emb"]:
+        return llm_emb.load_model
     elif feature_type in ["noisy_token"]:
         return noisy_token.load_model
 
