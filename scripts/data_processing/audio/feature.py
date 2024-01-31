@@ -94,7 +94,7 @@ def run(
         tqdm.tqdm(
             zip(worker.data_urls, worker.output_urls, worker.ckpt_urls),
             total=len(worker.data_urls),
-            desc=device,
+            desc=f"{device}-{processor_idx}",
         )
     ):
         prefix_info = f"{prefix} [{idx}/{len(worker.data_urls)}]"
