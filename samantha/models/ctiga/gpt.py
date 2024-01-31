@@ -112,6 +112,10 @@ def create_mixer_cls(
             window_size = [-1, -1]
             window_type = ELEMWISE_WINDOW_MASK
         window_type = WINDOW_MASK_TYPES[window_type]
+    else:
+        assert (
+            not use_window_mask
+        ), f"only support use_window_mask=True in flashattn_version=2.3 now, but got {flashattn_verison}"
 
     if blocksparse:
         assert (
