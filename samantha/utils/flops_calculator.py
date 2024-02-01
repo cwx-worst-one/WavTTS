@@ -38,12 +38,15 @@ def retrieve_calculator(model_obj):
             model_obj.config.vocab_size,
         )
     if isinstance(model_obj, GPTPreTrainedModel):
+        vocab_size = (
+            getattr(model_obj.config, "num_logits", None) or model_obj.config.vocab_size
+        )
         return partial(
             llama_calculator,
             model_obj.config.n_layer,
             model_obj.config.n_embd,
             model_obj.config.n_inner,
-            model_obj.config.vocab_size,
+            vocab_size,
         )
     if isinstance(model_obj, SparseLLama):
         config = model_obj.params
