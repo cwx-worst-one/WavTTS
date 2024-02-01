@@ -162,7 +162,7 @@ callbacks:
       filename: "{step:06d}"
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: 'step'
-    - !new:recipes.umm.callbacks.log_spectrogram.LogSpectrogram
+    - !new:samantha.models.umm.callbacks.log_spectrogram.LogSpectrogram
       n_examples: 3
 
 plugins:

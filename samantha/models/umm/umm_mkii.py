@@ -88,6 +88,7 @@ class ConformerEncoderOutput(ModelOutput):
 class ConformerRotaryPositionalEmbedding(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.config = config
         dim = config.hidden_size // config.num_attention_heads
         base = config.rotary_embedding_base
 
@@ -95,30 +96,56 @@ class ConformerRotaryPositionalEmbedding(nn.Module):
         self.register_buffer("inv_freq", inv_freq)
         self.cached_sequence_length = 0
         self.cached_rotary_positional_embedding = None
+        if config.get("rope_enhance_pos", -1) > 0:
+            self._set_cos_sin_cache(config.rope_enhance_pos)
 
     def _set_cos_sin_cache(self, sequence_length):
-        self.cached_sequence_length = sequence_length
-        time_stamps = torch.arange(
-            sequence_length, device=self.inv_freq.device, dtype=torch.float32
-        )
-        freqs = torch.einsum("i,j->ij", time_stamps, self.inv_freq)
-        embeddings = torch.cat((freqs, freqs), dim=-1)
-        cos_embeddings = embeddings.cos()[:, None, None, :]
-        sin_embeddings = embeddings.sin()[:, None, None, :]
-        self.cached_rotary_positional_embedding = torch.stack(
-            [cos_embeddings, sin_embeddings]
-        )
+        with torch.cuda.amp.autocast(enabled=False):
+            self.cached_sequence_length = sequence_length
+            time_stamps = torch.arange(
+                sequence_length, device=self.inv_freq.device, dtype=torch.float32
+            )
+            freqs = torch.einsum("i,j->ij", time_stamps, self.inv_freq)
+            embeddings = torch.cat((freqs, freqs), dim=-1)
+            cos_embeddings = embeddings.cos()[:, None, None, :]
+            sin_embeddings = embeddings.sin()[:, None, None, :]
+            self.cached_rotary_positional_embedding = torch.stack(
+                [cos_embeddings, sin_embeddings]
+            )
 
     def forward(self, hidden_states):
-        sequence_length = hidden_states.shape[1]
+        batch, sequence_length, _ = hidden_states.shape
         if (
             sequence_length > self.cached_sequence_length
             or self.cached_rotary_positional_embedding is None
         ):
             self._set_cos_sin_cache(sequence_length)
-        return self.cached_rotary_positional_embedding[:, 0:sequence_length].to(
-            dtype=hidden_states.dtype
-        )
+        if self.cached_rotary_positional_embedding.device != hidden_states.device:
+            self.cached_rotary_positional_embedding = (
+                self.cached_rotary_positional_embedding.to(hidden_states.device)
+            )
+        # position augmentation
+        if self.config.get("rope_enhance_pos", -1) > 0:
+            if not self.training:
+                return self.cached_rotary_positional_embedding[:, 0:sequence_length]
+            beg_idx = torch.randint(
+                size=[batch],
+                low=0,
+                high=self.cached_sequence_length - sequence_length + 1,
+            )
+            return torch.cat(
+                [
+                    self.cached_rotary_positional_embedding[
+                        :, idx : idx + sequence_length
+                    ]
+                    for idx in beg_idx
+                ],
+                dim=2,
+            )
+        elif self.config.get("rope_enhance_pos", -1) == 0:
+            return self.cached_rotary_positional_embedding[:, 0:sequence_length]
+        else:
+            return self.cached_rotary_positional_embedding[:, -sequence_length:]
 
 
 class ConformerFeedForward(nn.Module):
@@ -304,11 +331,13 @@ class ConformerSelfAttention(nn.Module):
 
         return hidden_states
 
+    @torch.cuda.amp.autocast(enabled=False)
     def _apply_rotary_embedding(self, hidden_states, position_embeddings):
         batch_size, sequence_length, hidden_size = hidden_states.size()
         hidden_states = hidden_states.view(
             batch_size, sequence_length, self.num_heads, self.head_size
         )
+
         cos = position_embeddings[0, :sequence_length, ...]
         sin = position_embeddings[1, :sequence_length, ...]
 
@@ -465,21 +494,21 @@ class ConformerEncoder(nn.Module):
 
 
 class Conv2dUpsampling(nn.Module):
-    def __init__(self, input_dim, output_dim, use_bn=True):
+    def __init__(self, input_dim, output_dim, use_bn=True, act_fn=nn.ReLU):
         super().__init__()
         self.conv = nn.Sequential(
             # [1, 1, 750, 1024]
             nn.Conv2d(1, 64, 7, 1, 3),
             torch.nn.BatchNorm2d(64) if use_bn else nn.Identity(),
-            nn.ReLU(),
+            act_fn(),
             # [1, 64, 750, 1024]
             nn.ConvTranspose2d(64, 8, 6, 2, 2),
             torch.nn.BatchNorm2d(8) if use_bn else nn.Identity(),
-            nn.ReLU(),
+            act_fn(),
             # [1, 8, 1500, 2048]
             nn.ConvTranspose2d(8, 1, 6, 2, 2),
             torch.nn.BatchNorm2d(1) if use_bn else nn.Identity(),
-            nn.ReLU(),
+            act_fn(),
             # [1, 1, 3000, 4096]
         )
         self.linear = nn.Linear(input_dim * 4, output_dim)
@@ -499,16 +528,47 @@ class Conv2dUpsampling(nn.Module):
         return flops1 + flops2 + flops3
 
 
+class Conv1dUpsampling(nn.Module):
+    def __init__(self, input_dim, output_dim, use_bn=True, act_fn=nn.ReLU):
+        super().__init__()
+        hidden_dim = input_dim * 4
+        self.conv = nn.Sequential(
+            Transpose(),
+            nn.Conv1d(input_dim, hidden_dim, kernel_size=7, padding=3),
+            act_fn(),
+            nn.ConvTranspose1d(
+                hidden_dim, hidden_dim, kernel_size=4, stride=2, padding=1
+            ),
+            act_fn(),
+            nn.ConvTranspose1d(
+                hidden_dim, hidden_dim, kernel_size=4, stride=2, padding=1
+            ),
+            act_fn(),
+            Transpose(),
+        )
+        self.linear = nn.Linear(hidden_dim, output_dim)
+
+    def forward(self, x):
+        x = self.conv(x)
+        x = self.linear(x)
+        return x
+
+    def get_flops(self, b, t, d):
+        return 0
+
+
 class Conv2dSubsampling(nn.Module):
-    def __init__(self, input_dim, output_dim, kernel, padding, use_bn=True):
+    def __init__(
+        self, input_dim, output_dim, kernel, padding, use_bn=True, act_fn=nn.ReLU
+    ):
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(1, 256, kernel, 2, padding),
             nn.BatchNorm2d(256) if use_bn else nn.Identity(),
-            nn.ReLU(),
+            act_fn(),
             nn.Conv2d(256, 256, kernel, 2, padding),
             nn.BatchNorm2d(256) if use_bn else nn.Identity(),
-            nn.ReLU(),
+            act_fn(),
         )
         self.linear = nn.Linear(input_dim * 64, output_dim)
 
@@ -529,14 +589,22 @@ class Conv2dSubsampling(nn.Module):
 class AudioEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.config = config
         self.feature_encoder = Conv2dSubsampling(
             config.num_channels,
             config.hidden_size,
             config.feature_encoder_kernel,
             config.feature_encoder_padding,
             use_bn=config.get("use_bn", True),
+            act_fn=torch.nn.ReLU
+            if config.get("act_fn", "relu") == "relu"
+            else torch.nn.GELU,
         )
-        self.conformer_layer = ConformerEncoderLayer(config)
+        self.conformer_layer = (
+            ConformerEncoderLayer(config)
+            if config.get("first_conformer", True)
+            else nn.Identity()
+        )
 
     def forward(self, x):
         x = self.feature_encoder(x)
@@ -544,9 +612,12 @@ class AudioEncoder(nn.Module):
         return x
 
     def get_flops(self, b, t, d):
-        return self.feature_encoder.get_flops(b, t, d) + self.conformer_layer.get_flops(
-            b, t
-        )
+        if self.config.get("first_conformer", True):
+            return self.feature_encoder.get_flops(
+                b, t, d
+            ) + self.conformer_layer.get_flops(b, t)
+        else:
+            return self.feature_encoder.get_flops(b, t, d)
 
 
 class EMAEmbedding(nn.Module):
@@ -764,7 +835,6 @@ class EMAVectorQuantizerEntropy(nn.Module):
         loss = torch.mean((z_q.detach() - z) ** 2) + e_scale * self.entropy_loss(
             -d, loss_type="softmax"
         )
-
         # preserve gradients
         z_q = z + (z_q - z).detach()
 
@@ -943,6 +1013,8 @@ class FeaturePool:
     """
     This class implements a feature buffer that stores previously encoded features
 
+    This buffer enables us to initialize the codebook using
+    a history of generated features
     rather than the ones produced by the latest encoders
     """
 
@@ -973,6 +1045,8 @@ class FeaturePool:
                 self.features = features[random_feat_id]
                 self.nums_features = self.pool_size
             else:
+                # if the mini-batch is not large nuough,
+                # just store it for the next update
                 num = self.nums_features + features.size(0)
                 self.features[self.nums_features : num] = features
                 self.nums_features = num
@@ -1234,6 +1308,11 @@ class LookupFreeQuantizer(nn.Module):
             avg_prob = reduce(prob, "b n d -> b d", "mean")
             codebook_entropy = binary_entropy(avg_prob).mean()
 
+            # 1. entropy will be nudged to be low for each bit, so each scalar
+            #    commits to one latent binary bit or the other
+            # 2. codebook entropy will be nudged to be high, to encourage all
+            #    codes to be uniformly used
+
             entropy_aux_loss = bit_entropy - self.diversity_gamma * codebook_entropy
         else:
             # if not training, just return dummy 0
@@ -1402,10 +1481,20 @@ class Stage1(Base):
 class Stage2(Base):
     def __init__(self, config):
         super().__init__(config)
-        self.mel_head = Conv2dUpsampling(
-            config.hidden_size, config.n_mels, use_bn=config.get("use_bn", True)
+        upsample_net = (
+            Conv2dUpsampling
+            if config.get("upsample_net", "Conv2dUpsampling") == "Conv2dUpsampling"
+            else Conv1dUpsampling
         )
-        self.ctc_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.mel_head = upsample_net(
+            config.hidden_size,
+            config.n_mels,
+            act_fn=torch.nn.ReLU
+            if config.get("act_fn", "relu") == "relu"
+            else torch.nn.GELU,
+        )
+        if config.get("add_ctc", True):
+            self.ctc_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         if config.add_chroma:
             self.chroma_transform = ChromaSpectrogram(
                 sample_rate=config.sample_rate,
@@ -1415,15 +1504,25 @@ class Stage2(Base):
                 n_chroma=config.n_chroma,
                 normalized=False,
             )
-            self.chroma_head = Conv2dUpsampling(
-                config.hidden_size, config.n_chroma, use_bn=config.get("use_bn", True)
+            self.chroma_head = upsample_net(
+                config.hidden_size,
+                config.n_chroma,
+                act_fn=torch.nn.ReLU
+                if config.get("act_fn", "relu") == "relu"
+                else torch.nn.GELU,
             )
         if config.get("add_pitch", False):
             #  must be sr=16000, hop_length=160
             hop_length = config.hop_length * 16000 // config.sample_rate
             print("RMVPE hop_length (on 16k):", hop_length)
             self.rmvpe = RMVPE(hop_length=hop_length)
-            self.f0_vuv_head = Conv2dUpsampling(config.hidden_size, 2)
+            self.f0_vuv_head = upsample_net(
+                config.hidden_size,
+                2,
+                act_fn=torch.nn.ReLU
+                if config.get("act_fn", "relu") == "relu"
+                else torch.nn.GELU,
+            )
 
     def forward(self, input_dict):
         feature = (
@@ -1444,13 +1543,11 @@ class Stage2(Base):
             )
         flops += self.mel_head.get_flops(*hidden_states.shape)
         mel_out = self.mel_head(hidden_states)
-        flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
-        ctc_out = self.ctc_head(hidden_states)
-        output_dict = {
-            "mel_out": mel_out,
-            "ctc_out": ctc_out,
-            "flops": flops * 3,  # extra 2x for backward.
-        }
+        output_dict = {"mel_out": mel_out, "flops": flops * 3}  # extra 2x for backward.
+        if self.config.get("add_ctc", True):
+            flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
+            ctc_out = self.ctc_head(hidden_states)
+            output_dict.update(ctc_out=ctc_out)
         if self.config.add_chroma:
             chroma_out = self.chroma_head(hidden_states)
             output_dict.update(chroma_out=chroma_out)
@@ -1563,12 +1660,16 @@ class Stage2MSS(Stage2):
         )
 
     def _apply_audio_frontend_encoder(self, feature):
+        """Apply encoder on original audio mel features. Different from stack of
+        `self.encoder_layers` which will later be used for VQ training"""
         self._accumulate_flops(self.audio_encoder.get_flops(*feature.shape))
         audio_feature = self.audio_encoder(feature)
         hidden_states = self.encoder_input_dropout(audio_feature)
         return hidden_states
 
     def _apply_encoder_layers(self, hidden_states, position_embeddings):
+        """Apply encoder layers. (In Stage 3 these are modified with
+        Vector Quantization)."""
         self._accumulate_flops(self._get_encoder_flops(hidden_states))
         for layer in self.encoder_layers:
             hidden_states = layer(
@@ -1592,6 +1693,8 @@ class Stage2MSS(Stage2):
             else input_dict["mel"]
         )
 
+        # Audio Encoder "Frontend" (to disambiguate it from self.encoder_layers
+        # later used in VQ training).
         hidden_states = self._apply_audio_frontend_encoder(feature)
 
         # Positional Embedding.
@@ -1682,6 +1785,8 @@ class Stage2MSS(Stage2):
             ),
         }
         if self.config.get("interfere_audio", None):
+            # "interfere_audio" is a historical flag and should be
+            # assumed to be False by default.
             input_dict.update(
                 mel_interfered=_interfere_audio_handler(audio_dict["audio"])
             )
@@ -1741,6 +1846,35 @@ class Stage3(Stage2):
                 else nn.Identity(),
                 Transpose(),
             )
+        elif config.get("vq_proj_norm", None) == "bn_down":
+            vq_down = config.get("vq_down", 1)
+            kernel_size = vq_down * 2 - 1
+            padding = (kernel_size - 1) // 2
+            self.vq_proj_in = nn.Sequential(
+                Transpose(),
+                WNConv1d(
+                    config.hidden_size,
+                    config.vq_codebook_dim,
+                    kernel_size=kernel_size,
+                    padding=padding,
+                    stride=vq_down,
+                ),
+                nn.BatchNorm1d(config.vq_codebook_dim, affine=False, momentum=0.05),
+                Transpose(),
+            )
+            self.vq_proj_out = nn.Sequential(
+                Transpose(),
+                weight_norm(
+                    nn.ConvTranspose1d(
+                        config.vq_codebook_dim,
+                        config.hidden_size,
+                        kernel_size=vq_down,
+                        padding=0,
+                        stride=vq_down,
+                    )
+                ),
+                Transpose(),
+            )
         elif config.get("vq_proj_norm", None) == "ln":
             self.vq_proj_in = nn.Sequential(
                 nn.Linear(config.hidden_size, config.vq_codebook_dim, bias=False)
@@ -1763,21 +1897,6 @@ class Stage3(Stage2):
         if config.get("vq_proj_noise", 0) > 0:
             self.register_buffer("cnt", torch.FloatTensor([0]))
 
-        if config.get("add_weighted_sum", False):
-            self.weights = nn.Parameter(torch.zeros(self.config.vq_layer_idx))
-
-    def _weighted_sum(self, feature):
-        assert self.config.vq_layer_idx == len(feature)
-        stacked_feature = torch.stack(feature, dim=0)
-
-        _, *origin_shape = stacked_feature.shape
-        stacked_feature = stacked_feature.view(self.config.vq_layer_idx, -1)
-        norm_weights = F.softmax(self.weights, dim=-1)
-        weighted_feature = (norm_weights.unsqueeze(-1) * stacked_feature).sum(dim=0)
-        weighted_feature = weighted_feature.view(*origin_shape)
-
-        return weighted_feature
-
     def forward(self, input_dict):
         feature = input_dict["mel"]
         flops = self.audio_encoder.get_flops(*feature.shape)
@@ -1787,11 +1906,9 @@ class Stage3(Stage2):
         flops += self.encoder_layers[0].get_flops(*hidden_states.shape[0:2]) * len(
             self.encoder_layers
         )
-        hidden_states_list = []
         for i, layer in enumerate(self.encoder_layers):
             if i == self.config.vq_layer_idx:
-                if self.config.get("add_weighted_sum", False):
-                    hidden_states = self._weighted_sum(hidden_states_list)
+                org_len = hidden_states.shape[1]
                 hidden_states = self.vq_proj_in(hidden_states)
                 if self.config.get("vq_proj_noise", 0) > 0:
                     noise_scale = (self.config.vq_proj_noise - self.cnt).clamp(
@@ -1811,23 +1928,22 @@ class Stage3(Stage2):
                 else:
                     vq_embs, vq_ids, vq_loss = self.vq(hidden_states)
                 hidden_states = self.vq_proj_out(vq_embs)
+                hidden_states = hidden_states[:, 0:org_len]
             hidden_states = layer(
                 hidden_states, position_embeddings=position_embeddings
             )
-            if i < self.config.vq_layer_idx:
-                hidden_states_list.append(hidden_states)
-        # downstream tasks
         flops += self.mel_head.get_flops(*hidden_states.shape)
         mel_out = self.mel_head(hidden_states)
-        flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
-        ctc_out = self.ctc_head(hidden_states)
         output_dict = {
             "mel_out": mel_out,
-            "ctc_out": ctc_out,
             "vq_ids": vq_ids,
             "vq_loss": vq_loss,
             "flops": flops * 3,  # extra 2x for backward.
         }
+        if self.config.get("add_ctc", True):
+            flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
+            ctc_out = self.ctc_head(hidden_states)
+            output_dict.update(ctc_out=ctc_out)
         if self.config.get("vq_proj_noise", False):
             output_dict.update(noise_scale=noise_scale)
         if self.config.add_chroma:
@@ -1835,7 +1951,7 @@ class Stage3(Stage2):
             output_dict.update(chroma_out=chroma_out)
         if self.config.get("add_pitch", False):
             f0_vuv_out = self.f0_vuv_head(hidden_states)
-            output_dict.update(vuv_out=f0_vuv_out[:, :, 1:])
+            output_dict.update(f0_out=f0_vuv_out[:, :, 0:1])
             output_dict.update(vuv_out=f0_vuv_out[:, :, 1:])
         return output_dict
 
@@ -1931,6 +2047,8 @@ class Stage3MSS(Stage2MSS, Stage3):
         super().__init__(config)
 
     def _apply_vq_and_encoder_layers(self, hidden_states, position_embeddings):
+        """Apply VQ. Logic copy-pasted from Stage3().forward() and
+        combined with Stage2MSS()._apply_encoder_layers."""
         self._accumulate_flops(self._get_encoder_flops(hidden_states))
 
         for i, layer in enumerate(self.encoder_layers):

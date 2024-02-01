@@ -17,7 +17,7 @@ extra_params:
     n_fft: 2048
     win_length: 2048
     hop_length: 240
-    feature_cmvn: "apps/bigtts/umm/umm/data/BigTTS_data_id=207.stats.new.pt"
+    feature_cmvn: "apps/bigtts/umm/umm/data/BigTTS_data_id=207.stats.pt"
     tokenizer: null
 
 # running parameters
@@ -144,7 +144,7 @@ callbacks:
       filename: "{step:06d}"
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: 'step'
-    - !new:recipes.umm.callbacks.log_spectrogram.LogMaskedMelSpectrogram
+    - !new:samantha.models.umm.callbacks.log_spectrogram.LogMaskedMelSpectrogram
       n_examples: 3
 
 plugins:

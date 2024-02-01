@@ -6,6 +6,7 @@ from torchaudio.transforms import Resample
 
 from samantha.models.umm.rmvpe.constants import *
 from samantha.models.umm.rmvpe.model import E2E, E2E0
+from samantha.models.umm.rmvpe.spec import MelSpectrogram
 
 
 def to_local_average_cents(salience, center=None, thred=0.03):
@@ -174,7 +175,7 @@ class RMVPE:
         self.model = model
         for p in self.model.parameters():
             p.requires_grad = False
-        self.mel_extractor = MelExtractor(
+        self.mel_extractor = MelSpectrogram(
             N_MELS, SAMPLE_RATE, WINDOW_LENGTH, hop_length, None, MEL_FMIN, MEL_FMAX
         )
         self.resample_kernel = {}

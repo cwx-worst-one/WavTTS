@@ -325,3 +325,19 @@ def init_m1_tagging(hpath, local_rank, cache_dir=None):
             local_path = hpath
         model = MI1_MusicTaggingMusicSFT.load_from_checkpoint(local_path, strict=False).to(device).eval()
         return {"m1_tagging": model}
+
+
+def init_wvae_encoder(hpath, local_rank, cache_dir=None):
+    if cache_dir is not None:
+        os.makedirs(cache_dir, exist_ok=True)
+    device = torch.device(f"cuda:{local_rank}")
+    with local_zero_first():
+        h_ss = f"{hpath}/wvae_encoder_{local_rank}.pt"
+        if hpath.startswith("hdfs://"):
+            local_path = f"{cache_dir}/wvae_encoder_{local_rank}.pt"
+            if not os.path.exists(local_path):
+                if not hh.get(h_ss, local_path):
+                    raise ConnectionError(f"Cannot retrieve file from {h_ss}.")
+        else:
+            local_path = h_ss
+    return {"wvae_encoder": load_torch_script_module(local_path, device)}
