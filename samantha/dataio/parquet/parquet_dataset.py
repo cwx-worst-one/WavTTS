@@ -43,7 +43,9 @@ class ParquetDataset(DataPipeline, FluidInterface):
         urls = resolve_data_urls(data_id=self.data_id, data_urls=self.data_urls)
 
         if resampled:
-            self.append(ResampledShards(urls))
+            self.append(
+                ResampledShards(urls, replacement=kwargs.get("replacement", False))
+            )
         else:
             self.append(SimpleShardList(urls))
             self.append(nodesplitter)

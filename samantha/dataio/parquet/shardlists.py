@@ -1,3 +1,4 @@
+import logging
 import os
 import random
 import sys
@@ -5,6 +6,8 @@ import time
 
 from torch.utils.data import IterableDataset
 from webdataset import utils
+
+logger = logging.getLogger(__name__)
 
 
 class SimpleShardList(IterableDataset):
@@ -32,15 +35,24 @@ class SimpleShardList(IterableDataset):
 
 
 class ResampledShards(IterableDataset):
-    """An iterable dataset yielding a list of urls."""
+    r"""Sample shards from the shard list.
+
+    Args:
+        urls(List): a list of dataset URLs
+        nshards(int): how many urls will be sampled
+        worker_seed(Callable): seed generation function for each worker
+        deterministic(bool): deterministic or not
+        replacement(bool): sample url with replacement or not
+    """
 
     def __init__(
-        self, urls, nshards=sys.maxsize, worker_seed=None, deterministic=False
+        self,
+        urls,
+        nshards=sys.maxsize,
+        worker_seed=None,
+        deterministic=False,
+        replacement=False,
     ):
-        """Sample shards from the shard list with replacement.
-
-        :param urls: a list of URLs as a Python list or brace notation string
-        """
         super().__init__()
         self.urls = urls
         self.nshards = nshards
@@ -49,6 +61,8 @@ class ResampledShards(IterableDataset):
         )
         self.deterministic = deterministic
         self.epoch = -1
+        self.replacement = replacement
+        self._tik = time.perf_counter()
 
     def __iter__(self):
         """Return an iterator over the shards."""
@@ -66,6 +80,28 @@ class ResampledShards(IterableDataset):
         if os.environ.get("WDS_SHOW_SEED", "0") == "1":
             print(f"# ResampledShards seed {seed}")
         self.rng = random.Random(seed)
-        for _ in range(self.nshards):
-            index = self.rng.randint(0, len(self.urls) - 1)
-            yield self.urls[index]
+        if self.replacement:
+            for _ in range(self.nshards):
+                index = self.rng.randint(0, len(self.urls) - 1)
+                yield self.urls[index]
+        else:
+            rank, world_size, worker, num_workers = utils.pytorch_worker_info()
+            url_length = len(self.urls)
+            self._tik = time.perf_counter()
+            loop = 0
+            for cursor in range(self.nshards):
+                index = cursor % url_length
+                if index == 0:
+                    loop = cursor // url_length
+                    logger.info(f"{rank=} {worker=} #{loop} shuffle")
+                    self.rng.shuffle(self.urls)
+                if self._should_stamp():
+                    progress = (index / url_length) * 100
+                    logger.info(f"{rank=} {worker=} {loop=} {progress=:.2%}")
+                yield self.urls[index]
+
+    def _should_stamp(self):
+        if time.perf_counter() - self._tik >= 1800:
+            self._tik = time.perf_counter()
+            return True
+        return False
