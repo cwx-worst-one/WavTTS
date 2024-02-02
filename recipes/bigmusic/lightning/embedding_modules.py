@@ -89,7 +89,8 @@ def get_bestrq_umm_tokens(requires, batch, chunk_size=None):
 @torch.no_grad()
 def get_bestrq_umm_outputs(requires, batch):
     lit_module = requires['Stage3']
-    return lit_module.wav2token(batch, return_hidden_states=True)
+    assert hasattr(lit_module.model, 'wav2token_alloutputs'), f"For M1 training, UMM model ({type(lit_module.model)}) version must support wav2token_alloutputs function"
+    return lit_module.model.wav2token_alloutputs(batch)
 
 @torch.no_grad()
 def get_bestrq_mkii_tokens(requires, batch):
@@ -450,12 +451,12 @@ class BestRQTokenEmbedder(TokenEmbedder):
             add_sos=False,
             add_eos=False,
             chunk_size=None,
-            store_last_hidden_state=False
+            store_hidden_states=False
         ):
         super().__init__(vocab_size, embedding_dim, add_sos, add_eos)
-        if chunk_size is not None and store_last_hidden_state:
+        if chunk_size is not None and store_hidden_states:
             raise Exception("Tokenizer currently does not support both chunking and saving last hidden state")
-        self.store_last_hidden_state = store_last_hidden_state # save hidden states for m1 classifier
+        self.store_hidden_states = store_hidden_states # save hidden states for m1 classifier
         self.last_hidden_state = None
         self.chunk_size = chunk_size
 
@@ -463,14 +464,13 @@ class BestRQTokenEmbedder(TokenEmbedder):
         return get_bestrq_umm_tokens(requires, input_audio, self.chunk_size)
 
     def get_tokens(self, requires, input_audio):
-        if self.chunk_size is not None:
+        if self.store_hidden_states:
+            results = get_bestrq_umm_outputs(requires, input_audio)
+            token_ids = results['vq_ids']
+            self.hidden_states = results['hidden_states']
+            return token_ids
+        else:
             return get_bestrq_umm_tokens(requires, input_audio, self.chunk_size)
-        
-        results = get_bestrq_umm_outputs(requires, input_audio)
-        token_ids = results['vq_ids']
-        if self.store_last_hidden_state:
-            self.last_hidden_state = results['last_hidden_state']
-        return token_ids
 
 class BestRQMKIITokenEmbedder(TokenEmbedder):
     def __init__(self, vocab_size=65_536, embedding_dim=1024, add_sos=False, add_eos=False):

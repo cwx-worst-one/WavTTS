@@ -148,14 +148,14 @@ class SemanticModule(BaseContinuousEmbedModule):
             chunk_size = extra_params.get("semantic_chunk_size", None)
             if chunk_size is not None:
                 chunk_size = extra_params["sample_rate"] * chunk_size
-            store_last_hidden_state = "m1_tag" in embedder_dict
+            store_hidden_states = "m1_tag" in embedder_dict
             target_embedder = BestRQTokenEmbedder(
                 vocab_size=semantic_codebook_size,
                 embedding_dim=hidden_size,
                 add_sos=True,
                 add_eos=True,
                 chunk_size=chunk_size,
-                store_last_hidden_state=store_last_hidden_state
+                store_hidden_states=store_hidden_states
                 
             )
         else:

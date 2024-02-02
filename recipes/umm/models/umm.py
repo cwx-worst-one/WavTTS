@@ -854,13 +854,11 @@ class FineTunedModel(BaseModel):
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
-    def wav2token(self, wav, return_hidden_states=False):
+    def wav2token(self, wav):
         encoded_feature = self.wav2embed(wav)
         shared_encoder_output = self.shared_encoder.forward_to_vq(
             encoded_feature, vq=self.vq
         )
-        if return_hidden_states:
-            return shared_encoder_output
         return shared_encoder_output['vq_ids']
 
     @torch.no_grad()
