@@ -148,13 +148,15 @@ class SemanticModule(BaseContinuousEmbedModule):
             chunk_size = extra_params.get("semantic_chunk_size", None)
             if chunk_size is not None:
                 chunk_size = extra_params["sample_rate"] * chunk_size
-            print(f"BestRQ: chunk_size={chunk_size}")
+            store_last_hidden_state = "m1_tag" in embedder_dict
             target_embedder = BestRQTokenEmbedder(
                 vocab_size=semantic_codebook_size,
                 embedding_dim=hidden_size,
                 add_sos=True,
                 add_eos=True,
                 chunk_size=chunk_size,
+                store_last_hidden_state=store_last_hidden_state
+                
             )
         else:
             raise NotImplementedError
@@ -203,8 +205,9 @@ class SemanticModule(BaseContinuousEmbedModule):
 
     def prepare_m1_tag_inputs(self, batch, m1_tag_embedder):
         # TODO: handle prediction case. Use target embdder to extract info from style_audio
-        assert 'target_hidden_states' in batch, "m1 requires target_hidden_states to predict categories"
-        target_hidden_states = batch['target_hidden_states']
+        assert isinstance(self.target_embedder, BestRQTokenEmbedder) and self.target_embedder.last_hidden_state is not None, "M1 requires target_embedder to save last_hidden_state to predict categories"
+        target_hidden_states = self.target_embedder.last_hidden_state
+        self.target_embedder.last_hidden_state = None
         embeds = m1_tag_embedder.embed(
             self.requires,
             target_hidden_states,

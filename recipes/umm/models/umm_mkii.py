@@ -1889,7 +1889,7 @@ class Stage3(Stage2):
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
-    def wav2token(self, wav):
+    def wav2token(self, wav, return_hidden_states=False):
         """Convert audio file to tokens (after Vector Quantization)."""
         wav = self._prepare_wav(wav)
         feature = self.preprocessing(wav)["mel"]
@@ -1897,6 +1897,8 @@ class Stage3(Stage2):
         hidden_states = self.encoder_input_dropout(audio_feature)
         position_embeddings = self.embed_positions(hidden_states)
         result = self._get_vq_ids(hidden_states, position_embeddings)
+        if return_hidden_states:
+            return result
         return result['vq_ids']
 
     @torch.no_grad()

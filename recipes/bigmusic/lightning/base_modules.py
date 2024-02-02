@@ -234,11 +234,7 @@ class BaseContinuousEmbedModule(BaseModule):
         raise NotImplementedError()
 
     def prepare_training_inputs(self, batch, return_all=False):
-        targets = self.target_embedder.tokenize(self.requires, batch['target_audio'], with_sos=False, with_eos=False)
-        target_ids = targets["vq_ids"]
-        batch['target_ids'] = target_ids
-        batch['target_hidden_states'] = targets["hidden_states"]
-
+        target_ids = self.target_embedder.tokenize(self.requires, batch['target_audio'], with_sos=False, with_eos=False)
         batch_size = target_ids.size(0)
         inputs_embeds = self.prepare_inputs_embeddings(batch)
         sos_embeds = self.target_embedder.get_sos_embed(batch_size)

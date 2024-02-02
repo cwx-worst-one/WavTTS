@@ -62,10 +62,10 @@ run_opts:
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
-collate_fn: !apply:recipes.bigmusic.datasets.mix.get_collate_fn
+collate_fn: !apply:recipes.bigmusic.datasets.vc_mix.get_collate_fn
     - !ref <extra_params[app_type]>
 
-pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalAppZhWebDataModule
+pl_datamodule: !new:recipes.bigmusic.datasets.vc_mix.MixVocalAppZhWebDataModule
     sample_rate: !ref <extra_params[sample_rate]>
     batch_size: !ref <run_opts[batch_size]>
     voice_clone_duration: !ref <extra_params[voice_clone_duration]>
@@ -130,12 +130,12 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
             hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
             initializer: !name:recipes.umm.requires.model_initializer.init_stage3
                 cache_dir: !ref <run_opts[cache_dir]>
-        # mulan:
-        #     # hpath: /mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=014000-median_rank_1=160-kaggle.ckpt
-        #     hpath: /mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=024600-kaggle.ckpt   #110
-        #     initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
-        #         cache_dir: !ref <run_opts[cache_dir]>
-        #         version: "g4"
+        mulan:
+            # hpath: /mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=014000-median_rank_1=160-kaggle.ckpt
+            hpath: /mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=024600-kaggle.ckpt   #110
+            initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
+                cache_dir: !ref <run_opts[cache_dir]>
+                version: "g4"
 
 logger:
     - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger

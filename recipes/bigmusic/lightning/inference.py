@@ -81,13 +81,19 @@ class SemanticInferenceModule(pl.LightningModule):
                 hpath = item['hpath']
                 initializer = item['initializer']
             self.requires.update(initializer(hpath, local_rank=self.local_rank))
-            
+         
         # set semantic mulan ckpt if passed in
         if self.extra_params.get('mulan_ckpt', None) and self.extra_params.mulan_ckpt != 'infer_from_semantic_ckpt':
             self.semantic_module.hparams.required_modules['mulan']['hpath'] = self.extra_params.mulan_ckpt
-        self.semantic_module.load_required_modules(
-            ignore=('bestrq', 'sampler', 'diffusion', 'vocoder', 'chord', 'chord_lms', 'structure', 'asr')
-        )
+        
+        if self.extra_params.get('app_type', None):
+            self.semantic_module.load_required_modules(
+                ignore=('sampler', 'diffusion', 'vocoder', 'chord', 'chord_lms', 'structure', 'asr')
+            )
+        else:
+            self.semantic_module.load_required_modules(
+                ignore=('bestrq', 'sampler', 'diffusion', 'vocoder', 'chord', 'chord_lms', 'structure', 'asr')
+            )
 
     def predict_step(self, batch, batch_idx=0, dataloader_idx=0):
         semantic_samples = self.semantic_module.predict(
