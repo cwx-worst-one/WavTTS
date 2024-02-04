@@ -19,6 +19,8 @@ ENV PYTORCH_CUDA_ALLOC_CONF expandable_segments:True
 ENV CUBLASLT_WORKSPACE_SIZE 32768
 # Temporary solution, more investigation needed.
 ENV NCCL_PROTO ^128
+# If this is not sufficient, consider optimizing your computation density.
+ENV NCCL_MAX_CTAS 8
 
 ENV DEBIAN_FRONTEND noninteractive
 ENV LD_LIBRARY_PATH /opt/tiger/native_libhdfs/lib/native:$LD_LIBRARY_PATH
