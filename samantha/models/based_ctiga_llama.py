@@ -78,6 +78,7 @@ class ModelArgs:
     phone_tokens_num: int = 200
 
     use_unet_style_skip_connect: bool = False
+    flashattn_version: str = "2"
 
 
 class RMSNorm(torch.nn.Module):
@@ -493,6 +494,7 @@ class LLaMa(nn.Module):
                 use_unet_style_skip_connect=getattr(
                     params, "use_unet_style_skip_connect", False
                 ),
+                flashattn_version=getattr(params, "flashattn_version", "2"),
             )
             layers = GPTModel(ctiga_config)
             del layers.embeddings.word_embeddings

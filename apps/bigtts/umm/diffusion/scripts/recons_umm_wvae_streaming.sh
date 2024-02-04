@@ -42,7 +42,7 @@ bash launch.sh predict \
     --run_opts.umm_ckpt_path $umm_ckpt_path \
     --run_opts.umm_frame_rate 25 \
     --run_opts.mel_frame_rate 40 \
-	--run_opts.seed 1996 \
+	--run_opts.seed ${SEED:=1996} \
 	--run_opts.num_workers 1 \
 	--predict_dataset.lang $lang \
     --run_opts.infer_type diffusion-vocoder \

@@ -62,6 +62,7 @@ model_config: !new:samantha.models.llama_ldm.ModelArgs
     window_size: [-1, 8]
     window_type: "blockwise" # elemwise, blockwise
     use_unet_style_skip_connect: !ref <run_opts[use_unet_style_skip_connect]>
+    flashattn_version: "2.3"
 
 mel_config: # 40hz iBigVGAN
     n_fft: 4096

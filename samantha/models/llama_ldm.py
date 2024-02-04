@@ -307,6 +307,7 @@ class ModelArgs:
 
     min_t: float = 0.0
     max_t: float = 1.0
+    flashattn_version: str = "2"
 
 
 class LlamaDiffusion(nn.Module):
@@ -398,6 +399,7 @@ class LlamaDiffusion(nn.Module):
             window_size=hp.window_size,
             window_type=hp.window_type,
             use_unet_style_skip_connect=hp.use_unet_style_skip_connect,
+            flashattn_version=hp.flashattn_version,
         )
 
         self.encoder = LLaMa(llama_config, hp.llama_provider)
