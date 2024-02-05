@@ -38,19 +38,28 @@ class SemanticInferenceModule(pl.LightningModule):
             self.semantic_module.replace_ctiga_to_xperf()
         self.requires = {}
 
+    def setup(self, stage: str) -> None:
+        if isinstance(self.semantic_module.model, gpt.GPTLMHeadModel) and ('32' in self.trainer.precision):
+            raise Exception(
+                f"Invalid precision for cTIGA model {self.trainer.precision}. Please set --run_opts.precision 16")
+        if isinstance(self.semantic_module.model, LlamaPreTrainedModel) and ('16' in self.trainer.precision):
+            raise Exception(
+                f"Invalid precision for flash llama model {self.trainer.precision}. Please set --run_opts.precision 32")
+        
+        # Modules must be loaded in setup function for correct local rank / multi-gpu training
         required_modules = {}
         if self.extra_params.token2wav_type == 'diffusion':
             self.decoding_fn = run_diffusion
             required_modules.update(self.hparams.required_modules['diffusion_modules'])
-            self.decoding_params = DotDict({**self.extra_params, **extra_params['diffusion_params']})
+            self.decoding_params = DotDict({**self.extra_params, **self.extra_params['diffusion_params']})
         elif self.extra_params.token2wav_type == 'ar':
             self.decoding_fn = run_2ar
             required_modules.update(self.hparams.required_modules['ar_modules'])
-            self.decoding_params = DotDict({**self.extra_params, **extra_params['ar_params']})
+            self.decoding_params = DotDict({**self.extra_params, **self.extra_params['ar_params']})
         elif self.extra_params.token2wav_type == 'soundstorm':
             self.decoding_fn = run_soundstorm
             required_modules.update(self.hparams.required_modules['soundstorm_modules'])
-            self.decoding_params = DotDict({**self.extra_params, **extra_params['soundstorm_params']})
+            self.decoding_params = DotDict({**self.extra_params, **self.extra_params['soundstorm_params']})
         else:
             raise ValueError(f"Unhandled type: {self.extra_params.token2wav_type}")
 
@@ -64,14 +73,6 @@ class SemanticInferenceModule(pl.LightningModule):
             required_modules.update(self.hparams.required_modules['bestrq_modules'])
 
         self.load_required_modules(required_modules)
-
-    def setup(self, stage: str) -> None:
-        if isinstance(self.semantic_module.model, gpt.GPTLMHeadModel) and ('32' in self.trainer.precision):
-            raise Exception(
-                f"Invalid precision for cTIGA model {self.trainer.precision}. Please set --run_opts.precision 16")
-        if isinstance(self.semantic_module.model, LlamaPreTrainedModel) and ('16' in self.trainer.precision):
-            raise Exception(
-                f"Invalid precision for flash llama model {self.trainer.precision}. Please set --run_opts.precision 32")
 
     def load_required_modules(self, required_modules):
         for name, item in required_modules.items():

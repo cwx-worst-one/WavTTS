@@ -30,6 +30,8 @@ from recipes.datasets.mcc.mix import LibriLightASRDataset, LibriTTSDataset
 from samantha.dataio.parquet import ParquetDataset
 from functools import partial
 from webdataset import filters, shardlists
+import torch.distributed as dist
+from recipes.bigmusic.datasets.utils.ddp_utils import distributed_subset
 
 class LyricsDataset(WebPipeline):
     def __init__(
@@ -112,7 +114,11 @@ class LyricsDataModule(pl.LightningDataModule):
         return DataLoader(self.validation_dataset, batch_size=None, num_workers=self.num_workers, pin_memory=self.pin_memory)
 
     def predict_dataloader(self):
-        return [DataLoader(self.predict_dataset, batch_size=None, num_workers=self.num_workers, pin_memory=self.pin_memory)]*self.predict_num_rounds
+        if dist.is_available() and torch.distributed.is_initialized() and dist.get_world_size() > 1:
+            dataset = distributed_subset(self.predict_dataset)
+        else:
+            dataset = self.predict_dataset
+        return [DataLoader(dataset, batch_size=None, num_workers=self.num_workers, pin_memory=self.pin_memory)]*self.predict_num_rounds
 
     @classmethod
     def from_dataset_type(

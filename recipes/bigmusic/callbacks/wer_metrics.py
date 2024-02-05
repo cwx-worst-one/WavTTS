@@ -26,15 +26,14 @@ class WERMetricsCallback(pl.Callback):
         self.asr_model_path = asr_model_path
 
     def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
-        output_dir = pl_module.extra_params.output_dir
-        run_wer_metrics(output_dir, asr_model_path=self.asr_model_path, device = pl_module.device)
+        if 'output_paths' in pl_module.extra_params:
+            generated_output_fps = pl_module.extra_params.output_paths
+        else:
+            output_dir = pl_module.extra_params.output_dir
+            generated_output_fps = list(Path(output_dir).glob('**/*.generated.wav'))
+        run_wer_metrics(generated_output_fps, asr_model_path=self.asr_model_path, device=pl_module.device)
 
-def run_wer_metrics(output_dir, asr_model_path='en_punc', device='cuda'):
-    output_dir = Path(output_dir)
-    generated_output_fps = list(output_dir.glob('**/*.generated.wav'))
-    if len(generated_output_fps) == 0:
-        return
-    category2wer = defaultdict(list)
+def run_wer_metrics(generated_output_fps, asr_model_path='en_punc', device='cuda'):
     asr_requires = init_asr(asr_model_path, local_rank=torch.cuda.current_device())
     for idx, generated_output_fp in enumerate(generated_output_fps):
         wav = torch.tensor(load_wav(str(generated_output_fp))).to(device)
@@ -66,20 +65,3 @@ def run_wer_metrics(output_dir, asr_model_path='en_punc', device='cuda'):
             'actual_transcript': a
         }
         update_json(metadata_fp, { 'wer': wer_metadata })
-
-        # update total metrics
-        category_dir = generated_output_fp.parent.resolve()
-        if category_dir != output_dir.resolve(): # ignore category if there are none
-            category2wer[str(category_dir)].append([wer, ins, subs, dels])
-        category2wer[str(output_dir)].append([wer, ins, subs, dels]) # append to base directory to calculate total wer
-        
-    for dir_path, wers in category2wer.items():
-        metrics_fp = Path(dir_path)/'metrics.json'
-        wer, ins, subs, dels = np.array(wers).mean(axis=0)
-        wer_metadata = {
-            'wer': round(wer, 3),
-            'ins': round(ins, 3),
-            'subs': round(subs, 3),
-            'dels': round(dels, 3),
-        }
-        update_json(metrics_fp, { 'wer': wer_metadata })

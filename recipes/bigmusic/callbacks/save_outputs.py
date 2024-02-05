@@ -6,6 +6,10 @@ import os
 import textwrap
 import shutil
 from recipes.musiclm.inference.utils import slugify, save_wav, generate_hash, format_name, load_wav
+from collections import defaultdict
+from recipes.bigmusic.utils.format_utils import update_json
+import numpy as np
+from recipes.musiclm.utils.dist import local_zero_first
 
 class SaveOutputsCallback(pl.Callback):
     def __init__(
@@ -33,7 +37,7 @@ class SaveOutputsCallback(pl.Callback):
     ) -> None:
         output_dir = pl_module.extra_params.output_dir
         sample_rate = pl_module.extra_params.sample_rate
-        save_batch_outputs(
+        output_paths = save_batch_outputs(
             outputs,
             batch,
             output_dir=output_dir,
@@ -47,9 +51,14 @@ class SaveOutputsCallback(pl.Callback):
         )
         num_items = outputs['generated_audio_tensor'].shape[0] // self.beam_size
         self.total_items += num_items
-
         with open(Path(output_dir)/'inference_params.json', 'w') as f:
             json.dump(pl_module.extra_params, f, indent=2)
+
+        # save output paths so other callbacks can run metrics on audio
+        if 'output_paths' in pl_module.extra_params:
+            pl_module.extra_params['output_paths'].extend(output_paths)
+        else:
+            pl_module.extra_params['output_paths'] = output_paths
     
 def format_lyrics_and_style(style_text, lyrics=None):
     if style_text is None and lyrics is None: # gt case
@@ -88,6 +97,8 @@ def save_batch_outputs(
     vocal_audio = batch.get('vocal_audio')   
     metadatas = outputs.get('metadata')
     wavs = outputs['generated_audio']
+
+    output_paths = []
     
     for i, wav in enumerate(wavs):
         prompt_idx = i // beam_size
@@ -147,18 +158,26 @@ def save_batch_outputs(
         with open(meta_fp, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, indent=2)
 
+        output_paths.append(wav_fp)
+    return output_paths
 
 class SaveVideoCallback(pl.Callback):
     def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
         output_dir = pl_module.extra_params.output_dir
-        save_video(output_dir, output_dir)
+        with local_zero_first():
+            if trainer.is_global_zero:
+                save_video(output_dir, output_dir)
 
 
 class NormVolumeCallback(pl.Callback):
     def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
-        output_dir = pl_module.extra_params.output_dir
         sample_rate = pl_module.extra_params.sample_rate
-        generated_output_fps = list(Path(output_dir).glob('**/*.generated.wav'))
+        if 'output_paths' in pl_module.extra_params:
+            generated_output_fps = pl_module.extra_params.output_paths
+        else:
+            output_dir = pl_module.extra_params.output_dir
+            generated_output_fps = list(Path(output_dir).glob('**/*.generated.wav'))
+
         for idx, generated_output_fp in enumerate(generated_output_fps):
             print ("normalize volume for: ",  generated_output_fp)
             command = "ffmpeg-normalize '%s' -t %d -ext wav -ar %d -o '%s' -f" % (generated_output_fp, -16, sample_rate, generated_output_fp)
@@ -251,3 +270,45 @@ def save_video(input_results_dir, output_video_dir, format_video_text_fn=default
     if remove_segments:
         shutil.rmtree(output_video_dir_tmp)
     return video_output_fp
+
+def run_average_metrics(output_dir):
+    output_dir = Path(output_dir)
+    metadata_fps = list(output_dir.glob('**/*.metadata.json'))
+    if len(metadata_fps) == 0:
+        return
+    category2wer = defaultdict(list)
+    for idx, metadata_fp in enumerate(metadata_fps):
+        with open(metadata_fp, 'r') as f:
+            metadata = json.load(f)
+
+        wer = metadata.get('wer', {})
+        wer, ins, subs, dels = [wer.get(k, 0) for k in ['wer', 'ins', 'subs', 'dels']]
+        mcs = metadata.get('mcs', 0)
+        # update total metrics
+        category_dir = metadata_fp.parent.resolve()
+        if category_dir != output_dir.resolve(): # ignore category if there are none
+            category2wer[str(category_dir)].append([wer, ins, subs, dels, mcs])
+        category2wer[str(output_dir)].append([wer, ins, subs, dels, mcs]) # append to base directory to calculate total wer
+        
+    for dir_path, values in category2wer.items():
+        metrics_fp = Path(dir_path)/'metrics.json'
+        wer, ins, subs, dels, mcs = np.array(values).mean(axis=0)
+        wer_metadata = {
+            'wer': round(wer, 3),
+            'ins': round(ins, 3),
+            'subs': round(subs, 3),
+            'dels': round(dels, 3),
+        }
+        update_json(metrics_fp, { 'wer': wer_metadata, 'mcs': round(mcs, 3) })
+
+
+class AverageMetricsCallback(pl.Callback):
+    def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
+        output_dir = pl_module.extra_params.output_dir
+        with local_zero_first():
+            if trainer.is_global_zero:
+                try:
+                    run_average_metrics(output_dir)
+                except Exception as e:
+                    print('Could not run average metrics:', e)
+

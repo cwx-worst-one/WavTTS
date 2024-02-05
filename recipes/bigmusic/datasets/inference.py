@@ -54,7 +54,7 @@ def inference_dataset_from_prompt(
     prompt_path,
     conditions="style_text,lyrics_tokens",
     batch_size=8,
-    max_items=16,
+    max_items=None,
     lyrics_max_seq_len=400,
     run_combinations=False,
     enable_punctuation=True,

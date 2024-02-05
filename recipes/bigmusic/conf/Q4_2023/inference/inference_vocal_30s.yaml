@@ -152,8 +152,9 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
 additional_callbacks:
     - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
     - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
-    - !new:recipes.bigmusic.callbacks.save_outputs.NormVolumeCallback
+    - !new:recipes.bigmusic.callbacks.save_outputs.AverageMetricsCallback
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
+    - !new:recipes.bigmusic.callbacks.save_outputs.NormVolumeCallback
 callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
       beam_size: !ref <extra_params[beam_size]>
@@ -166,6 +167,7 @@ trainer: !new:pytorch_lightning.Trainer
     num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
     deterministic: False
     enable_model_summary: True
+    use_distributed_sampler: False # for multi-gpu inference
     strategy: !ref <run_opts[strategy]>
     precision: !ref <run_opts[precision]>
-    callbacks: !apply:operator.add [!ref <additional_callbacks>, !ref <callbacks>]
+    callbacks: !apply:operator.add [!ref <callbacks>, !ref <additional_callbacks>]

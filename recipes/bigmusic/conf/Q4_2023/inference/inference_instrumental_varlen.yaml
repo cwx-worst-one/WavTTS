@@ -129,6 +129,7 @@ trainer: !new:pytorch_lightning.Trainer
     num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
     deterministic: False
     enable_model_summary: True
+    use_distributed_sampler: False
     strategy: !ref <run_opts[strategy]>
     precision: !ref <run_opts[precision]>
     callbacks: !apply:operator.add [!ref <additional_callbacks>, !ref <callbacks>]
