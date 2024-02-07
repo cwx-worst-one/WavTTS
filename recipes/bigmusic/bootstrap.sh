@@ -43,6 +43,16 @@ if ! grep -q "version:$PYPETREL_VERSION" /opt/tiger/pypetrel/current_revision; t
     cd -
 fi
 
+if [ -d "/opt/tiger/sami_tts_api" ]; then
+    echo "Downloading sami tts frontend engine"
+    cd /opt/tiger
+    hdfs dfs -get /home/byte_speech_sv/andrew.shaw/data/sami/sami_tts_api.tar .
+    tar -xvf sami_tts_api.tar
+    hdfs dfs -get /home/byte_speech_sv/andrew.shaw/data/sami/sami_engine_cleaned.tar .
+    tar -xvf sami_engine_cleaned.tar
+    cd -
+fi
+
 # For huggingface blocking our IP
 if [ -d "/mnt/bn/audio-diffusion/.module_cache" ]; then
     echo "Found existing cache. Setting huggingface cache to /mnt/bn/audio-diffusion/.module_cache"
@@ -53,6 +63,8 @@ elif [ "$ARNOLD_REGION" == "CN" ]; then
 else
     echo "Warning: Could not find existing huggingface cache. Set TRANSFORMERS_CACHE=/cache/path to avoid download errors."
 fi
+# To fix huggingface dataloading segmentation fault for phonemizer
+TOKENIZERS_PARALLELISM=false
 
 sudo apt update
 sudo apt install espeak ffmpeg zip fonts-arphic-ukai -y

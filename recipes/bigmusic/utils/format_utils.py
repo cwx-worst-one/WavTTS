@@ -57,32 +57,6 @@ def rewrite_metadata(metadata, type="Vocal"):
         text += "music."
     elif type == "Speech":
         text = "Speech."
-    elif type == "mir_tags":
-        # NOTE: randomly shuffle to diversify prompt
-        random.shuffle(metadata["genres"])
-        random.shuffle(metadata["vocals"]) 
-
-        def multiple_choices_text_processor(text: List[str]) -> str:
-            if len(text) > 1:
-                text = ", ".join(text[:-1]) + f" and {text[-1]}"
-            elif len(text) == 1:
-                text = text[0]
-            else:
-                text = ""
-            return text.lower()
-
-        # example: 'rock, pop and blues'
-        genre_text = multiple_choices_text_processor(metadata["genres"])
-        genre_text = genre_text.replace("_", " ") # rnb_soul -> rnb soul
-        if mood is not None and mood != 'nan':
-            genre_text = f"{mood.lower()} {genre_text}"
-
-        gender = {
-            "gender_male": "male",
-            "gender_female": "female",
-        }
-        vocal_gender_text = multiple_choices_text_processor([gender.get(v, "") for v in metadata["vocals"] if "gender_" in v])
-        text = f"""A {genre_text} song with {vocal_gender_text} vocal."""
     return text
 
 def normalize_text(text, enable_punctuation=False, lowercase=False):

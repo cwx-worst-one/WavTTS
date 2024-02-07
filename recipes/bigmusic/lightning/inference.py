@@ -2,6 +2,7 @@ import pytorch_lightning as pl
 
 from samantha.utils.hparams import DotDict
 from recipes.diffusion.models.diffusion_model.utils import run_diffusion
+from recipes.diffusion.utils.utils import download_checkpoint
 from recipes.soundstorm.lightning.utils import run_soundstorm
 from recipes.bigmusic.lightning.embedding_modules import get_bestrq_umm_tokens
 import importlib
@@ -11,7 +12,7 @@ from recipes.bigmusic.lightning.semantic_modules import process_eos_indexes, tru
 from samantha.models.flash_llama import LlamaPreTrainedModel
 from samantha.models.ctiga import gpt
 import logging
-
+from pathlib import Path
 
 class SemanticInferenceModule(pl.LightningModule):
     def __init__(
@@ -29,8 +30,13 @@ class SemanticInferenceModule(pl.LightningModule):
         module = importlib.import_module('.'.join(module_paths))
         semantic_class = getattr(module, cls_name)
 
+        semantic_ckpt_path = Path(self.extra_params.semantic_ckpt)
+        if not semantic_ckpt_path.exists():
+            semantic_dir = Path(self.extra_params.semantic_ckpt).parent.parent.name
+            semantic_ckpt_path = download_checkpoint(self.extra_params.semantic_ckpt, f'.module_cache/{semantic_dir}')
+
         self.semantic_module: BaseModule = semantic_class.load_from_checkpoint(
-            self.extra_params.semantic_ckpt,
+            semantic_ckpt_path,
             # pay attention to the logs to make sure the model is loaded correctly
             strict=True,
         ).eval()

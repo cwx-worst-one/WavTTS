@@ -28,75 +28,6 @@ text_pool_1_toplevel = [
 ]
 
 
-text_pool_1_subgenre = [
-    'EDM',
-    'Electronic Music',
-    'Country',
-    'Folk',
-    'Hip Hop',
-    'Pop',
-    'Rock',
-    'Metal',
-    'Punk',
-    'Jazz',
-    'Blues',
-    'R&B',
-    'Reggae',
-    'Classical Music',
-    'Latin',
-    'New Age',
-    'World Music',
-    'Devotional',
-    "Children's Music",
-    'Experimental',
-    'MC',
-    'Sound Track',
-    'Sound Effect',
-    'Acapella',
-    'Techno',
-    'Trance',
-    'House',
-    'Disco',
-    'Dubstep',
-    'Future Bass',
-    'Reggaeton',
-    'DJ',
-    'Ambient',
-    '8 Bit / Chiptune',
-    'Chillout',
-    'Bluegrass',
-    'Pop Rap',
-    'Trap Rap',
-    'Jazz Hip Hop',
-    'Hardcore Rap',
-    'Hip House',
-    'Boombap',
-    'K-Pop',
-    'Dance Pop',
-    'Easy Listening',
-    'Chinese Pop',
-    'Hard Rock',
-    'Psychedelic Rock',
-    'Instrumental Rock',
-    'Metalcore',
-    'Swing',
-    'Bebop',
-    'Big Band',
-    'Jazz Fusion',
-    'Cool Jazz',
-    'Bossa Nova',
-    'Ragtime',
-    'Funk',
-    'Soul',
-    'Symphony',
-    'Chamber Music',
-    'Baroque',
-    'Opera',
-    'Latin Pop',
-    'Tango',
-    'Samba'
-]
-
 text_pool_2 = [
     'Angry',
     'Relaxing',
@@ -200,12 +131,10 @@ text_pool_7_zh_vocal = ["女声", "男声", "童声"]
 text_pool_8_zh_vocal_timbre = ["温暖", "空灵", "低沉", "甜美", '沙哑', '高亢', '明亮', '性感', '可爱']
 text_pool_9_zh_lang = ["粤语", "闽南语", "普通话"]
 
-
-
-MCC_MOOD = ['Angry', 'Chill', 'Cute', 'Dynamic', 'Excited', 'Happy', 'Lonely', 'Romantic', 'Sorrow', 'Sweet', 'Tense', 'No Mood']
-MCC_GENRE = ['Blues', 'Country', 'EDM', 'Jazz', 'Metal', 'New Age', 'Pop', 'R&B', 'Reggae', 'Rock', 'Trap Rap']
-MCC_VOICE = ['Female', 'Male']
-
+MCC_MOOD = ['Angry', 'Chill', 'Cute', 'Dynamic', 'Excited', 'Happy', 'Romantic', 'Sorrow', 'Tense', 'Weird']
+MCC_GENRE = ['Blues', 'Childhood', 'Classical', 'Country', 'Devotional', 'Electronic', 'Experimental', 'Folk', 'Hip Hop/Rap', 'Jazz', 'Metal', 'New Age', 'Pop', 'R&B/Soul', 'Reggae', 'Rock', 'SoundTrack', 'Trap Rap']
+MCC_GENDER = ['Female', 'Male']
+MCC_LANG = ['English', 'Chinese']
 NONE_LABEL = 'None'
 
 class MulanTagger:
@@ -213,6 +142,7 @@ class MulanTagger:
         self._tag2embed = None
         self.mulan_tag_type = mulan_tag_type
         self.none_label = NONE_LABEL
+        self._all_tags = None
 
         if mulan_tag_type == "mulan_genres":
             self._tag2text_pool = {
@@ -220,17 +150,11 @@ class MulanTagger:
                 "mood": text_pool_2, 
                 "gender": text_pool_4
             }
-        elif mulan_tag_type == "mulan_subgenres":
-            self._tag2text_pool = {
-                "genre": text_pool_1_subgenre, 
-                "mood": text_pool_2, 
-                "gender": text_pool_4
-            }
         elif mulan_tag_type == "mcc_genres":
             self._tag2text_pool = {
                 "genre": MCC_GENRE, 
                 "mood": MCC_MOOD, 
-                "gender": MCC_VOICE
+                "gender": MCC_GENDER
             }
         elif mulan_tag_type == "cn_tags":
             self._tag2text_pool = {
@@ -245,9 +169,16 @@ class MulanTagger:
         
         self.id2vocab, self.vocab2id = self.get_vocab()
 
+    def get_label_id(self, label):
+        if label in ['nan', 'None', None, '']:
+            label = self.none_label
+        elif label not in self.vocab2id:
+            label = self.none_label
+        return self.vocab2id[label]
+
+
     def get_vocab(self):
-        all_values = []
-        all_values.append(NONE_LABEL)
+        all_values = [NONE_LABEL]
         for categories in self._tag2text_pool.values():
             all_values.extend(categories)
         id2vocab = { idx: value for idx, value in enumerate(all_values) }
@@ -255,7 +186,7 @@ class MulanTagger:
         return id2vocab, vocab2id
 
     def vocab_size(self):
-        return sum([len(v) for v in self._tag2text_pool.values()])
+        return len(self.id2vocab)
 
     def get_tag_embeds(self, requires):
         # TODO: (AS) move this out of inner function. Currently here to remove circular dependency

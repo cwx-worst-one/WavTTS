@@ -16,6 +16,7 @@ extra_params:
     max_items: null
     run_combinations: False
     use_reranker: False
+    dataset_mode: truncate_length
 
     output_dir: ./generated_output/conditional
 
@@ -25,9 +26,9 @@ extra_params:
     tokenizer_ckpt: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/checkpoints/step=070000.ckpt"
 
     # Diffusion
-    # En tokenizer diffusion in CN hdfs: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_14_30s_finetune/checkpoints/last.ckpt"
-    # Zh tokenizer diffusion in CN hdfs: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_16/checkpoints/last.ckpt"
-    diffusion_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_16/checkpoints/last.ckpt"
+    # En tokenizer diffusion in CN hdfs: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_14_30s_finetune/checkpoints/last-minimal.ckpt"
+    # Zh tokenizer diffusion in CN hdfs: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_16/checkpoints_minimal/last-minimal.ckpt"
+    diffusion_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_16/checkpoints_minimal/last-minimal.ckpt"
     vocoder_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/soundstream-step=374999-val_sdr=12.9557.ckpt"
     lyrics_lang: "zh_phone"     # en | zh_phone | zh_wp
     is_zh_token: True           # Set to True only if lyrics_lang is zh_phone or zh_wp. Diffusion model from recipes.diffusion.models.tnt_gru
@@ -53,9 +54,10 @@ extra_params:
     # Model Settings
     sample_rate: 24000
     duration: 30 # 30
-    lyrics_max_seq_len: 400 # TODO: switch to 400 for 30s
+    lyrics_max_seq_len: 400
     semantic_temperature: 1.0
-    sample_mode: "top_p"        # gumbel | top_p
+    sample_mode: "top_p"
+    sample_thresh: 0.9
     token2wav_type: diffusion
 
 run_opts:
@@ -77,6 +79,7 @@ predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_fr
     batch_size: !ref <run_opts[batch_size]>
     run_combinations: !ref <extra_params[run_combinations]>
     lyrics_max_seq_len: !ref <extra_params[lyrics_max_seq_len]>
+    dataset_mode: !ref <extra_params[dataset_mode]>
     lang: !ref <extra_params[lyrics_lang]>
     enable_punctuation: True
 
@@ -88,11 +91,6 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
     semantic_cls_path: !ref <extra_params[semantic_cls_path]>
     extra_params: !ref <extra_params>
     required_modules:
-        bestrq_modules:
-            bestrq:
-                hpath: !ref <extra_params[tokenizer_ckpt]>
-                initializer: !name:recipes.umm.requires.model_initializer.init_stage3
-                    cache_dir: !ref <run_opts[cache_dir]>
         diffusion_modules:
             diffusion:
                 hpath: !ref <extra_params[diffusion_ckpt]>
@@ -112,13 +110,12 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
             hpath:
                 rewards:
                     style_text: 1.0
-                    qualitative: 1.0
+                    # qualitative: 1.0
+                    qualitative_cn: 1.0 # use qualitative_cn for chinese mulan, qualitative for english mulan
                     wer: 1.0
-                    #structure: 1.0
-                    #chord: 4.0
                 required_modules:
-                    # mulan:
-                    #     hpath: !ref <extra_params[mulan_rewards_ckpt]>
+                    # mulan: # English Mulan
+                    #     hpath: hdfs:///home/byte_speech_sv/jingsong.gao/mulan_ckpt/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt
                     #     initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                     #         version: "g4"
                     mulan:
@@ -135,9 +132,10 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
 
 # separating out additional_callbacks so auto_eval can disable metrics
 additional_callbacks:
-    # - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
-    #     asr_model_path: zh
-    # - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
+    - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
+      asr_model_path: zh
+    - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
+    - !new:recipes.bigmusic.callbacks.save_outputs.NormVolumeCallback
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
 callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback

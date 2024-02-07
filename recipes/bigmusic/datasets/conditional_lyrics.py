@@ -1,5 +1,6 @@
 
 from recipes.bigmusic.datasets.lyrics import *
+from recipes.bigmusic.datasets.transforms.lyrics import StyleTextT5Transform, VocalChromaTransform
 
 class ConditionalDatasets():
         # T5 Training
@@ -8,7 +9,7 @@ class ConditionalDatasets():
             datasets = []
             weights = []
             if 'mixture' in music_types:
-                mixture_ds = DefaultDatasets.Basic.mcc60m_lossless_dataset(sample_rate, sample_duration)
+                mixture_ds = DefaultDatasets.Basic.indexed_webdataset(sample_rate, sample_duration)
                 mixture_ds_batched = transform_dataset(
                     # only mcc60 has metadata attached for converting to style_text
                     dataset=mixture_ds,

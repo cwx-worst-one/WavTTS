@@ -46,7 +46,7 @@ class Reranker:
                     cache_dir=cache_dir,
                 )
             )
-        if any([x in rewards for x in ["style_audio", "style_text", "qualitative", "style_sim"]]):
+        if any([x in rewards for x in ["style_audio", "style_text", "qualitative", "qualitative_cn", "style_sim"]]):
             assert "mulan" in self.requires
             assert "mulan_infer_fn" in self.requires
         if "structure" in rewards:
@@ -109,6 +109,23 @@ class Reranker:
                 self.requires["mulan"],
                 sampled_audio,
                 [negative_phrase],
+                device=sampled_audio.device,
+            )[0]
+            return positive_reward - negative_reward
+        elif rw_type == "qualitative_cn":
+            # TODO: make phrase configurable
+            positive_reward = mulan_text_reward(
+                self.requires["mulan_infer_fn"],
+                self.requires["mulan"],
+                sampled_audio,
+                ["CD品质，朗朗上口，令人难忘"],
+                device=sampled_audio.device,
+            )[0]
+            negative_reward = mulan_text_reward(
+                self.requires["mulan_infer_fn"],
+                self.requires["mulan"],
+                sampled_audio,
+                ["吵闹、无聊、容易忘记"],
                 device=sampled_audio.device,
             )[0]
             return positive_reward - negative_reward

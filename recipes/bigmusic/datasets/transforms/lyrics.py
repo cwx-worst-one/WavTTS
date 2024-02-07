@@ -38,7 +38,10 @@ class MCCMetadataTextTransform():
         self.metadata_type = metadata_type
 
     def _call_once(self, item):
-        metadata_string = rewrite_metadata(item.get('metadata', {}), type=self.metadata_type)
+        if self.metadata_type == 'Category':
+            metadata_string = rewrite_metadata_categories(item.get('metadata', {}))
+        else:
+            metadata_string = rewrite_metadata(item.get('metadata', {}), type=self.metadata_type)
         return {
             **item, 'style_text': metadata_string
         }
@@ -89,6 +92,14 @@ class RandomGenreTextTransform(MCCMetadataTextTransform):
             **item, 'style_text': metadata_string
         }
 
+def rewrite_metadata_categories(metadata):
+    genre = metadata.get('final_genre', 'nan').split(',')[0]
+    mood = metadata.get('final_mood', 'nan').split(',')[0]
+    gender = metadata.get('merge_aed', 'nan').split(',')[-1]
+    language = metadata.get('final_language', 'nan')
+    style_string = '|'.join([genre,mood,gender,language])
+    return style_string
+
 class StyleTextT5Transform():
     def __init__(self, max_seq_len: int=50):
         super().__init__()
@@ -116,10 +127,10 @@ class SemanticTokenLengthTransform():
         return { **item, 'target_tokens_length': seq_length }
 
 class LyricsTokenTransform():
-    def __init__(self, lyrics_tokenizer, pad_id, lyrics_max_seq_len:int=None, normalization_fn=normalize_text, dataset_mode: str = "fixed_length", lang='en', handler: Callable = wds.ignore_and_continue):
+    def __init__(self, lyrics_tokenizer, pad_id, lyrics_max_seq_len:int=None, item_key="lyrics", normalization_fn=normalize_text, dataset_mode: str = "fixed_length", handler: Callable = wds.ignore_and_continue):
         self.lyrics_tokenizer = lyrics_tokenizer
         self.lyrics_max_seq_len = lyrics_max_seq_len
-        self.lang = lang
+        self.item_key = item_key
         self.pad_id = pad_id
         if lyrics_max_seq_len is None: # no max sequence - switch to variable length mode
             dataset_mode = "variable_length"
@@ -127,21 +138,11 @@ class LyricsTokenTransform():
         self.dataset_mode = dataset_mode
         self.normalization_fn = normalization_fn
         self.handler = handler
-    
-    def tokenize_zh(self, item, lyrics_text):
-        # phoneme tokenizr has batch dim
-        lyrics_tokens = self.lyrics_tokenizer(lyrics_text)['input_ids']
-        lyrics_tokens = lyrics_tokens[0]
-        if self.dataset_mode == "fixed_length" and len(lyrics_tokens) > self.lyrics_max_seq_len:
-            return None
-        lyrics_tokens = pad_crop(torch.tensor(lyrics_tokens), self.lyrics_max_seq_len, torch.int, padding_value=self.pad_id)
-        return { **item, 'lyrics_tokens': lyrics_tokens, 'lyrics_normalized_text': lyrics_text }
-    
-    def tokenize_en(self, item, lyrics_text):
+
+    def tokenize(self, item, lyrics_text):
         token_dict = self.lyrics_tokenizer(lyrics_text, return_tensors='pt', padding=False, return_length=True)
         input_ids = token_dict['input_ids'].squeeze(0)
         lyrics_length = token_dict['length'].squeeze(0).item() # return int item instead of tensor
-
         if self.dataset_mode == "variable_length": # return length
             return { **item, 'lyrics_tokens': input_ids, 'lyrics_normalized_text': lyrics_text, 'lyrics_tokens_length': lyrics_length }
         # drop overflowed tokens
@@ -154,37 +155,41 @@ class LyricsTokenTransform():
     
     def __call__(self, item):
         try:
-            lyrics_text = item['lyrics']
+            lyrics_text = item[self.item_key]
             if self.normalization_fn:
                 lyrics_text = self.normalization_fn(lyrics_text)
-            if self.lang == "en" or self.lang == "zh_wp":
-                return self.tokenize_en(item, lyrics_text)
-            if self.lang == "zh_phone":
-                return self.tokenize_zh(item, lyrics_text)                
+            return self.tokenize(item, lyrics_text)
         except Exception as e:
             self.handler(e)
-            return None        
+            return None
 
     @classmethod
     def init_cmu_tokenizer(cls, lyrics_max_seq_len, allow_unknown=False, **kwargs):
         cmu_tokenizer = CMUPhonemeTokenizer(allow_unknown=allow_unknown)
         return LyricsTokenTransform(cmu_tokenizer, cmu_tokenizer.pad_id, lyrics_max_seq_len, **kwargs)
     @classmethod
-    def init_zh_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=True, allow_unknown=False, **kwargs):
+    def init_zh_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=True, **kwargs):
         from transformers import BertTokenizer
         normalization_fn = partial(normalize_text, enable_punctuation=enable_punctuation)
         zh_tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
         zh_tokenizer.add_special_tokens({'additional_special_tokens': [" <n> "]})
-        return LyricsTokenTransform(zh_tokenizer, zh_tokenizer.pad_token_id, lyrics_max_seq_len, lang='zh_wp', normalization_fn=normalization_fn, **kwargs)
+        return LyricsTokenTransform(zh_tokenizer, zh_tokenizer.pad_token_id, lyrics_max_seq_len, normalization_fn=normalization_fn, **kwargs)
+
     @classmethod
-    def init_zh_phoneme_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=True, allow_unknown=False, **kwargs):
+    def init_sami_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=True, **kwargs):
         from recipes.datasets.mcc.sami_tokenizer import SamiTokenizer
         normalization_fn = partial(normalize_text, enable_punctuation=enable_punctuation)
         zh_phoneme_tokenizer = SamiTokenizer()
-        return LyricsTokenTransform(zh_phoneme_tokenizer, 0, lyrics_max_seq_len, lang='zh_phone', normalization_fn=normalization_fn, **kwargs)
+        return LyricsTokenTransform(zh_phoneme_tokenizer, 0, lyrics_max_seq_len, normalization_fn=normalization_fn, **kwargs)
+    @classmethod
+    def init_sami_offline_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=True, **kwargs):
+        from recipes.datasets.mcc.sami_tokenizer import SamiOfflineTokenizer
+        normalization_fn = lambda x: x
+        zh_phoneme_tokenizer = SamiOfflineTokenizer()
+        return LyricsTokenTransform(zh_phoneme_tokenizer, 0, lyrics_max_seq_len, normalization_fn=normalization_fn, item_key="phoneme", **kwargs)
 
     @classmethod
-    def init_espeak_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=False, validate_ascii=False, **kwargs):
+    def init_espeak_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=True, validate_ascii=False, **kwargs):
         def _normalize_text(text: str):
             if validate_ascii: 
                 assert text.isascii(), f"Error tokenizing non-ascii lyrics: {text}"

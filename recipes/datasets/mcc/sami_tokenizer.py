@@ -503,9 +503,43 @@ class SamiTokenizer:
                     text_tokens.append(torch.from_numpy(text_id[0]).long())
                     text_tokens.append(get_line_break_id())
             text_tokens = np.concatenate(text_tokens, axis=0)
-            text_ids.append(torch.from_numpy(text_tokens).long())            
+            text_ids.append(torch.from_numpy(text_tokens).long())
         return {
             "input_ids": torch.nn.utils.rnn.pad_sequence(
                 text_ids, batch_first=True, padding_value=0
-            )
+            ),
+            "length": torch.tensor([len(t) for t in text_ids]).long()
+        }
+
+
+class SamiOfflineTokenizer:
+    """SamiOfflineTokenizer expects phonemes to already be extracted from the text."""
+    def __init__(
+        self,
+    ) -> None:
+        pass
+
+    def __call__(self, text_batch, line_break=" <n> ", **kwds):
+        text_ids = []
+        if isinstance(text_batch, str):
+            text_batch = [text_batch]
+
+        for sil in text_batch:
+            lines = sil.split(line_break)
+            text_tokens = []
+            for labels in lines:
+                if labels.strip() == "":
+                    text_tokens.append(get_line_break_id())
+                else:
+                    labels = list(filter(lambda x: x != "", labels.split("\n")))
+                    text_id, _, _ = convert_labels_to_text_id(labels)
+                    text_tokens.append(torch.from_numpy(text_id[0]).long())
+                    text_tokens.append(get_line_break_id())
+            text_tokens = np.concatenate(text_tokens, axis=0)
+            text_ids.append(torch.from_numpy(text_tokens).long())
+        return {
+            "input_ids": torch.nn.utils.rnn.pad_sequence(
+                text_ids, batch_first=True, padding_value=0
+            ),
+            "length": torch.tensor([len(t) for t in text_ids]).long()
         }

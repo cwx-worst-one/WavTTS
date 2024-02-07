@@ -109,7 +109,7 @@ def inference_dataset_from_prompt(
             )
         elif lang == 'zh_phone':
             segment_transforms.append(
-                LyricsTokenTransform.init_zh_phoneme_tokenizer(
+                LyricsTokenTransform.init_sami_tokenizer(
                     lyrics_max_seq_len=lyrics_max_seq_len,
                     dataset_mode=dataset_mode,
                     enable_punctuation=enable_punctuation,
@@ -121,9 +121,8 @@ def inference_dataset_from_prompt(
             if 'metadata' in prompts:
                 print('WARNING: style_text not provided. Using metadata to generate style prompt')
                 # mcc metadata provided. use rewrite method
-                segment_transforms.append(MCCMetadataTextTransform())
+                segment_transforms.append(MCCMetadataTextTransform('Vocal'))
             else:
-            #     segment_transforms.append(RandomGenreTextTransform())
                 raise Exception('Could not find style text')
         if 'style_tokens' in conditions: # t5 case: add t5 tokenizer
             # TODO: (AS) pass max_seq_len parameter to transform

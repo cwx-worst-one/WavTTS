@@ -23,17 +23,19 @@ def vocalB_dataset_study(dataset_size):
 
 INDEX = {
     "CN": {
-        "HotGalaxy": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/kaiping/2023-09-20/url2index.txt",
-        "Soda": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/soda/1m/final_url2idx.txt",
+        "HotGalaxy": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/kaiping/2023-09-26_phoneme/url2index.txt",
+        "Soda": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/soda/2023-10-11_phoneme/url2index.txt",
+        "SodaTest": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/kaiping/2023-09-20/val_url2index.txt",
         "FanqieShort": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/fanqie_filter_v51_0_10s/url2idx.txt",
         "FanqieLong": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/fanqie_filter_v51_gt10s/url2idx.txt",
         "XimalayaShort": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/xmly_filter_v6_0_10s_20230903/url2idx.txt",
         "XimalayaLong": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/xmly_filter_v6_gt10s_20230903/url2idx.txt",
         "XiaoyuzhouShort": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/xyz_filter_v6_0_10s_20230903/url2idx.txt",
         "XiaoyuzhouLong": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/xyz_filter_v6_gt10s_20230903/url2idx.txt",
-        "MCCVocal-Zh-A": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc60m_chinese/2023-09-24_repartition/type=A/lang=chinese/url2index.txt",
-        "MCCVocal-Zh-B": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc60m_chinese/2023-09-24_repartition/type=B/lang=chinese/url2index.txt",
-        "MCCVocal-Zh-C": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc60m_chinese/2023-09-24_repartition/type=C/lang=chinese/url2index.txt",
+        "MCCVocal-Zh-A": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc60m_chinese/2023-09-26_phoneme/type=A/lang=chinese/url2index.txt",
+        "MCCVocal-Zh-B": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc60m_chinese/2023-09-26_phoneme/type=B/lang=chinese/url2index.txt",
+        "MCCVocal-Zh-C": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc60m_chinese/2023-09-26_phoneme/type=C/lang=chinese/url2index.txt",
+        "MCCVocal-En-500k": "hdfs:///home/byte_speech_sv/zongyu.yin/assets/MCCVocal-En-500k.txt",
         "MCCVocal": [
             "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_vocal_merge/vocal-A-alternative-rock.txt",
             "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_vocal_merge/vocal-A-blues.txt",
@@ -115,8 +117,15 @@ INDEX = {
         },
         "MCCVocalB_2M": 1229, # 1229 - MCC GroupB + MSS
         "CD_Baby": 1199, # 187 - 2M full dataset
+        "CD_Baby_Authorized": 1373,
         "SodaTest": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/kaiping/2023-09-20/val_url2index.txt",
         "MCC60M_VALID_GROUPA": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/groupA-genrebalanced-val/groupA-genrebalanced-val-url2idx.txt", # 480 songs - 24 songs x 20 genres
+        "Mixed_QQ_ZH": 740, # 5056 shards
+        "Mixed_LowRisk_ZH": 1232, # 1135 old unsharded. Errors out. 1231 - new sharded
+        "Mixed_MCC_Vocal_ZH": 1046, # Clipped - 713. Subset = 1064 Full = 1046
+        "Mixed_MCC_GroupA_EN": 586, # 420 shards
+        "Mixed_MCC_Vocal_EN": 1048, # Clipped - 715. Subset = 1050 Full = 1048
+        "Mixed_MCC_GroupAB_EN": 1087, # 1085 - GroupB only
     },
     "US": {
         "MCCVocal-Zh-A": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc60m_chinese/2023-09-24_repartition/type=A/lang=chinese/url2index.txt",
@@ -147,6 +156,32 @@ INDEX = {
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/url2idx/vocal-A-techno.txt",
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/url2idx/vocal-A-trance.txt",
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/url2idx/vocal-A-trap-rap.txt",
+        ],        
+        "MCCVocalA_TT_POP": [
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-alternative-rock.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-blues.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-childhood.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-classical.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-country.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-devotional.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-easy-listening.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-electronic.txt",
+            # "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-experimental.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-folk.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-hip-hop-rap.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-indie-folk.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-indie-pop.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-jazz.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-metal.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-new-age.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-pop.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-r-b-soul.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-reggae.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-rock.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-soundtrack.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-techno.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-trance.txt",
+            "/mnt/bn/lyrics-to-song/ashaw/data/mcc/mcc60_lossless_asr/vocal_A/popularity_gt_lyrics_v2/vocal-A-trap-rap.txt",
         ],
         "MCCVocalB_nopunc": [
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-alternative-rock.txt",
