@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass
-from functools import reduce
+from functools import partial, reduce
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -13,7 +13,7 @@ from transformers.activations import ACT2FN
 from transformers.utils import ModelOutput
 
 from recipes.umm.models.rmvpe import RMVPE
-from recipes.umm.models.vocoder import BigVGAN
+from recipes.umm.models.voc_modules.pitch_predictor.model import ConvBlocks
 from recipes.umm.models.vq import EMAVectorQuantizer
 from recipes.umm.transforms.chroma import ChromaSpectrogram
 from recipes.umm.transforms.speech import SpeechTransform
@@ -97,7 +97,7 @@ class ConformerRotaryPositionalEmbedding(nn.Module):
         self.register_buffer("inv_freq", inv_freq)
         self.cached_sequence_length = 0
         self.cached_rotary_positional_embedding = None
-        if config.get('rope_enhance_pos', -1) > 0:
+        if config.get("rope_enhance_pos", -1) > 0:
             self._set_cos_sin_cache(config.rope_enhance_pos)
 
     def _set_cos_sin_cache(self, sequence_length):
@@ -122,14 +122,28 @@ class ConformerRotaryPositionalEmbedding(nn.Module):
         ):
             self._set_cos_sin_cache(sequence_length)
         if self.cached_rotary_positional_embedding.device != hidden_states.device:
-            self.cached_rotary_positional_embedding = self.cached_rotary_positional_embedding.to(hidden_states.device)
+            self.cached_rotary_positional_embedding = (
+                self.cached_rotary_positional_embedding.to(hidden_states.device)
+            )
         # position augmentation
-        if self.config.get('rope_enhance_pos', -1) > 0:
+        if self.config.get("rope_enhance_pos", -1) > 0:
             if not self.training:
                 return self.cached_rotary_positional_embedding[:, 0:sequence_length]
-            beg_idx = torch.randint(size=[batch,], low=0, high=self.cached_sequence_length - sequence_length + 1)
-            return torch.cat([self.cached_rotary_positional_embedding[:, idx: idx + sequence_length] for idx in beg_idx], dim=2)
-        elif self.config.get('rope_enhance_pos', -1) == 0:
+            beg_idx = torch.randint(
+                size=[batch],
+                low=0,
+                high=self.cached_sequence_length - sequence_length + 1,
+            )
+            return torch.cat(
+                [
+                    self.cached_rotary_positional_embedding[
+                        :, idx : idx + sequence_length
+                    ]
+                    for idx in beg_idx
+                ],
+                dim=2,
+            )
+        elif self.config.get("rope_enhance_pos", -1) == 0:
             return self.cached_rotary_positional_embedding[:, 0:sequence_length]
         else:
             return self.cached_rotary_positional_embedding[:, -sequence_length:]
@@ -479,6 +493,35 @@ class ConformerEncoder(nn.Module):
         )
 
 
+class Conv1dUpsampling(nn.Module):
+    def __init__(self, input_dim, output_dim, use_bn=True, act_fn=nn.ReLU):
+        super().__init__()
+        hidden_dim = input_dim * 4
+        self.conv = nn.Sequential(
+            Transpose(),
+            nn.Conv1d(input_dim, hidden_dim, kernel_size=7, padding=3),
+            act_fn(),
+            nn.ConvTranspose1d(
+                hidden_dim, hidden_dim, kernel_size=4, stride=2, padding=1
+            ),
+            act_fn(),
+            nn.ConvTranspose1d(
+                hidden_dim, hidden_dim, kernel_size=4, stride=2, padding=1
+            ),
+            act_fn(),
+            Transpose(),
+        )
+        self.linear = nn.Linear(hidden_dim, output_dim)
+
+    def forward(self, x):
+        x = self.conv(x)
+        x = self.linear(x)
+        return x
+
+    def get_flops(self, b, t, d):
+        return 0
+
+
 class Conv2dUpsampling(nn.Module):
     def __init__(self, input_dim, output_dim, use_bn=True, act_fn=nn.ReLU):
         super().__init__()
@@ -515,7 +558,9 @@ class Conv2dUpsampling(nn.Module):
 
 
 class Conv2dSubsampling(nn.Module):
-    def __init__(self, input_dim, output_dim, kernel, padding, use_bn=True, act_fn=nn.ReLU):
+    def __init__(
+        self, input_dim, output_dim, kernel, padding, use_bn=True, act_fn=nn.ReLU
+    ):
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(1, 256, kernel, 2, padding),
@@ -552,7 +597,11 @@ class AudioEncoder(nn.Module):
             config.feature_encoder_padding,
             use_bn=config.get("use_bn", True),
         )
-        self.conformer_layer = ConformerEncoderLayer(config) if config.get("first_conformer", True) else nn.Identity()
+        self.conformer_layer = (
+            ConformerEncoderLayer(config)
+            if config.get("first_conformer", True)
+            else nn.Identity()
+        )
 
     def forward(self, x):
         x = self.feature_encoder(x)
@@ -561,7 +610,9 @@ class AudioEncoder(nn.Module):
 
     def get_flops(self, b, t, d):
         if self.config.get("first_conformer", True):
-            return self.feature_encoder.get_flops(b, t, d) + self.conformer_layer.get_flops(b, t)
+            return self.feature_encoder.get_flops(
+                b, t, d
+            ) + self.conformer_layer.get_flops(b, t)
         else:
             return self.feature_encoder.get_flops(b, t, d)
 
@@ -1465,10 +1516,7 @@ class Stage2(Base):
             )
         flops += self.mel_head.get_flops(*hidden_states.shape)
         mel_out = self.mel_head(hidden_states)
-        output_dict = {
-            "mel_out": mel_out,
-            "flops": flops * 3,  # extra 2x for backward.
-        }
+        output_dict = {"mel_out": mel_out, "flops": flops * 3}  # extra 2x for backward.
         if self.config.get("add_ctc", True):
             flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
             ctc_out = self.ctc_head(hidden_states)
@@ -1506,6 +1554,103 @@ class Stage2(Base):
             input_dict.update(f0=f0, vuv=vuv)
 
         return input_dict
+
+
+class Stage2Conv(Stage2):
+    """Spike to test if training Stage2Conv first can help stabilize Stage3Conv()"""
+
+    def __init__(self, config):
+        super().__init__(config)
+        Stage3MSSConvEnc_fn = partial(
+            Stage3MSSConvEnc,
+            config.hidden_size,
+            config.hidden_size,
+            config.hidden_size,
+            stride_times=0,
+        )
+
+        self.encoder_layers = nn.ModuleList(
+            [Stage3MSSConvEnc_fn() for _ in range(config.num_hidden_layers)]
+        )
+        del self.embed_positions  # Conv-based encoder doesn't need a position embedding
+
+    def forward(self, input_dict):
+        feature = (
+            input_dict["mel_interfered"]
+            if self.config.interfere_audio
+            else input_dict["mel"]
+        )
+        # Audio frontend preprocessing
+        flops = self.audio_encoder.get_flops(*feature.shape)
+        audio_feature = self.audio_encoder(feature)
+        hidden_states = self.encoder_input_dropout(audio_feature)
+
+        # Apply main conv layers
+        for layer in self.encoder_layers:
+            hidden_states = layer(hidden_states)
+
+        # Auxiliary heads
+        flops += self.mel_head.get_flops(*hidden_states.shape)
+        mel_out = self.mel_head(hidden_states)
+        output_dict = {"mel_out": mel_out, "flops": flops * 3}  # extra 2x for backward.
+        if self.config.get("add_ctc", True):
+            flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
+            ctc_out = self.ctc_head(hidden_states)
+            output_dict.update(ctc_out=ctc_out)
+        if self.config.add_chroma:
+            chroma_out = self.chroma_head(hidden_states)
+            output_dict.update(chroma_out=chroma_out)
+        if self.config.get("add_pitch", False):
+            f0_vuv_out = self.f0_vuv_head(hidden_states)
+            output_dict.update(f0_out=f0_vuv_out[:, :, 0:1])
+            output_dict.update(vuv_out=f0_vuv_out[:, :, 1:])
+        return output_dict
+
+
+class Stage2Conv1D(Stage2Conv):
+    """
+    Spike to test if switching from Conv2D to Conv1D in recon heads will solve training stability.
+
+    @hanoihantrakul 2/2/2024: We found that this model led to stable training compared to
+    a baseline Stage2 Conformer model.
+    """
+
+    def __init__(self, config):
+        """@hanoihantrakul 31/1/2024: It was faster to delete the original Conv2D heads and replace them with Conv1D."""
+        super().__init__(config)
+
+        # Replace all Conv2DUpsampling with Conv1DUpsampling
+        # Mel Head to Conv1D
+        del self.mel_head
+        self.mel_head = self.mel_head = Conv1dUpsampling(
+            config.hidden_size,
+            config.n_mels,
+            act_fn=torch.nn.ReLU
+            if config.get("act_fn", "relu") == "relu"
+            else torch.nn.GELU,
+        )
+
+        # Chroma Head to Conv1D
+        if config.add_chroma:
+            del self.chroma_head
+            self.chroma_head = Conv1dUpsampling(
+                config.hidden_size,
+                config.n_chroma,
+                act_fn=torch.nn.ReLU
+                if config.get("act_fn", "relu") == "relu"
+                else torch.nn.GELU,
+            )
+
+        # Supervised Pitch Head to Conv1D
+        if config.get("add_pitch", False):
+            del self.f0_vuv_head
+            self.f0_vuv_head = Conv1dUpsampling(
+                config.hidden_size,
+                2,
+                act_fn=torch.nn.ReLU
+                if config.get("act_fn", "relu") == "relu"
+                else torch.nn.GELU,
+            )
 
 
 class Stage2MSS(Stage2):
@@ -1875,17 +2020,11 @@ class Stage3(Stage2):
             if i == self.config.vq_layer_idx:
                 vq_hidden_states = self.vq_proj_in(hidden_states)
                 _, vq_ids, _ = self.vq(vq_hidden_states)
-                return {
-                    "vq_ids": vq_ids,
-                    "hidden_states": hidden_states,
-                }
+                return {"vq_ids": vq_ids, "hidden_states": hidden_states}
             hidden_states = layer(
                 hidden_states, position_embeddings=position_embeddings
             )
-        return {
-            "vq_ids": vq_ids,
-            "hidden_states": hidden_states,
-        }
+        return {"vq_ids": vq_ids, "hidden_states": hidden_states}
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
@@ -1897,7 +2036,7 @@ class Stage3(Stage2):
         hidden_states = self.encoder_input_dropout(audio_feature)
         position_embeddings = self.embed_positions(hidden_states)
         result = self._get_vq_ids(hidden_states, position_embeddings)
-        return result['vq_ids']
+        return result["vq_ids"]
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
@@ -2039,4 +2178,139 @@ class Stage3MSS(Stage2MSS, Stage3):
         hidden_states = self.encoder_input_dropout(audio_feature)
         position_embeddings = self.embed_positions(hidden_states)
         vq_ids = self._get_vq_ids(hidden_states, position_embeddings)
-        return vq_ids['vq_ids']
+        return vq_ids["vq_ids"]
+
+
+class Stage3MSSConvEnc(nn.Module):
+    def __init__(
+        self, hidden_size, input_dim, output_dim, stride_times=2, *args, **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        if stride_times == 2:
+            self.proj_in1 = nn.Conv1d(input_dim, hidden_size, 5, padding=2, stride=2)
+            self.proj_in2 = nn.Conv1d(hidden_size, output_dim, 5, padding=2, stride=2)
+        else:
+            self.proj_in1 = nn.Conv1d(input_dim, hidden_size, 3, padding=1, stride=1)
+            self.proj_in2 = nn.Conv1d(hidden_size, output_dim, 3, padding=1, stride=1)
+        self.conv_stacks = ConvBlocks(
+            hidden_size,
+            hidden_size,
+            None,
+            5,
+            layers_in_block=2,
+            num_layers=8,
+            norm_type="ln",
+            dropout=0,
+            post_net_kernel=3,
+            is_BTC=False,
+        )
+        self.stride_times = stride_times
+
+    def forward(self, x, nonpadding=None):
+        if nonpadding is None:
+            nonpadding = (x.abs().sum(-1) > 0).float()[..., None]
+        nonpadding = nonpadding.transpose(1, 2)
+        x = x.transpose(1, 2)
+        x = self.proj_in1(x)
+        nonpadding = F.interpolate(nonpadding, size=x.shape[-1], mode="nearest")
+        x = x * nonpadding
+        x = self.conv_stacks(x, nonpadding)
+        x = self.proj_in2(x)
+        nonpadding = F.interpolate(nonpadding, size=x.shape[-1], mode="nearest")
+        x = x * nonpadding
+        x = x.transpose(1, 2)
+        return x
+
+
+class Stage3Conv1D(Stage2Conv1D, Stage3):
+    """
+    Spike to test if switching from Conv2D to Conv1D in recon heads will solve training stability.
+
+    @hanoihantrakul 2/4/2024: We found that the Stage2Conv1D was stable. Spiking to see if
+    Stage3Conv1D is also stable.
+
+    @hanoihantrakul 2/4/2024: TODO: this inheritance structure is becoming extremely
+    difficult to debug. Recommend refactoring stage1,2,3 code after spike is complete.
+    For example, this class requires inheriting from two related stages (Stage2Conv1D and Stage3)
+    """
+
+    def __init__(self, config):
+        super().__init__(config)
+
+    def forward(self, input_dict):
+        """Override Stage3 method and remove positional embedding."""
+        feature = input_dict["mel"]
+        flops = self.audio_encoder.get_flops(*feature.shape)
+        audio_feature = self.audio_encoder(feature)
+        hidden_states = self.encoder_input_dropout(audio_feature)
+
+        for i, layer in enumerate(self.encoder_layers):
+            # at specific layer idx, vector quantize hidden states before applying the layer
+            if i == self.config.vq_layer_idx:
+                hidden_states = self.vq_proj_in(hidden_states)
+                if self.config.get("vq_proj_noise", 0) > 0:
+                    noise_scale = (self.config.vq_proj_noise - self.cnt).clamp(
+                        0
+                    ) / self.config.vq_proj_noise
+                    hidden_states = (
+                        hidden_states + torch.randn_like(hidden_states) * noise_scale
+                    )
+                    self.cnt.add_(1)
+                if self.config.get("vq_type", None) == "FSQ":
+                    vq_embs, vq_ids = self.vq(hidden_states)
+                    vq_loss = None
+                elif self.config.get("vq_type", None) == "EMAEntropy":
+                    vq_embs, vq_ids, vq_loss = self.vq(
+                        hidden_states, e_scale=1.0 if self.cnt < 30_000 else 0.0
+                    )
+                else:
+                    vq_embs, vq_ids, vq_loss = self.vq(hidden_states)
+                hidden_states = self.vq_proj_out(vq_embs)
+            # apply layer
+            hidden_states = layer(hidden_states)
+        flops += self.mel_head.get_flops(*hidden_states.shape)
+        mel_out = self.mel_head(hidden_states)
+        output_dict = {
+            "mel_out": mel_out,
+            "vq_ids": vq_ids,
+            "vq_loss": vq_loss,
+            "flops": flops * 3,  # extra 2x for backward.
+        }
+        if self.config.get("add_ctc", True):
+            flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
+            ctc_out = self.ctc_head(hidden_states)
+            output_dict.update(ctc_out=ctc_out)
+        if self.config.get("vq_proj_noise", False):
+            output_dict.update(noise_scale=noise_scale)
+        if self.config.add_chroma:
+            chroma_out = self.chroma_head(hidden_states)
+            output_dict.update(chroma_out=chroma_out)
+        if self.config.get("add_pitch", False):
+            f0_vuv_out = self.f0_vuv_head(hidden_states)
+            output_dict.update(f0_out=f0_vuv_out[:, :, 0:1])
+            output_dict.update(vuv_out=f0_vuv_out[:, :, 1:])
+        return output_dict
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def _get_vq_ids(self, hidden_states):
+        """Override Stage3 method and remove positional embedding."""
+        for i, layer in enumerate(self.encoder_layers):
+            if i == self.config.vq_layer_idx:
+                hidden_states = self.vq_proj_in(hidden_states)
+                _, vq_ids, _ = self.vq(hidden_states)
+                return vq_ids
+            hidden_states = layer(hidden_states)
+        return vq_ids
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def wav2token(self, wav):
+        """Override Stage3 method and remove embed_positions."""
+        wav = self._prepare_wav(wav)
+        feature = self.preprocessing(wav)["mel"]
+        audio_feature = self.audio_encoder(feature)
+        hidden_states = self.encoder_input_dropout(audio_feature)
+        # position_embeddings = self.embed_positions(hidden_states)
+        vq_ids = self._get_vq_ids(hidden_states)
+        return vq_ids

@@ -1008,7 +1008,9 @@ class Stage1(Stage0):
             start_indices.repeat_interleave(self.model.config.len_masking_raw, dim=1)
         )
         mel_domain_masked_indices = torch.nonzero(
-            start_indices.repeat_interleave(self.model.config.len_masking_token * 4, dim=1)
+            start_indices.repeat_interleave(
+                self.model.config.len_masking_token * 4, dim=1
+            )
         )
         token_domain_masked_indices = torch.nonzero(
             start_indices.repeat_interleave(self.model.config.len_masking_token, dim=1)
@@ -1032,7 +1034,11 @@ class Stage1(Stage0):
         masked_audio, masked_indices, masked_mel_indices = self.masking(wav)
         if self.model.config.get("mask_mel", False):
             masked_mel = mel.clone()
-            mel_noise = 0.1 * torch.randn([len(masked_mel_indices), mel.shape[-1]], dtype=masked_mel.dtype, device=masked_mel.device)
+            mel_noise = 0.1 * torch.randn(
+                [len(masked_mel_indices), mel.shape[-1]],
+                dtype=masked_mel.dtype,
+                device=masked_mel.device,
+            )
             masked_mel[tuple(masked_mel_indices.t())] = mel_noise
         else:
             masked_mel = self.preprocessing(masked_audio)["mel"]
@@ -1178,8 +1184,7 @@ class Stage2(Stage0):
         loss_dict["loss"] = loss_dict["loss_mel"] * self.model.config.w_loss_mel
         if self.model.config.get("add_ctc", True):
             loss_dict["loss"] = (
-                loss_dict["loss"]
-                + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
+                loss_dict["loss"] + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
             )
         if self.model.config.add_chroma:
             loss_dict["loss"] = (
@@ -1394,6 +1399,96 @@ class Stage2MSS(Stage2):
         return out
 
 
+class Stage2Conv1D(Stage2):
+    """
+    Fully Convolutional 1D Stage 2 Model
+
+    @hanoihantrakul 2/6/2023:
+    - The encoder is Conv1D (instead of conformer with attention)
+    - The reconstruction heads are conv1D (instead of Conv2D).
+
+    - The init is identical to Stage2(). I just factored it out to
+      make following the models and YAML more straightforward.
+    """
+
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+
+
+class ASR(Stage0):
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def prepare_feature(self, batch):
+        audio = batch["audio"].squeeze(dim=1).float()
+        audio = self.pad_audio(audio)
+        feature = self.preprocessing(audio)
+        input_dict = {"wav": audio}
+        encoded_text = self.tokenizer(
+            batch["text"],
+            add_special_tokens=False,
+            padding="longest",
+            return_tensors="pt",
+        )
+        text_ids = encoded_text["input_ids"].to(audio.device)
+        input_dict.update(text_ids=text_ids)
+        input_dict.update(feature)
+        return input_dict
+
+    def _shared_step(self, batch):
+        input_dict = self.prepare_feature(batch)
+        output_dict = self.model(input_dict)
+
+        mel = input_dict["mel"]
+        text_ids = input_dict["text_ids"]
+
+        loss_dict = self.criterion(ctc_logits=output_dict["ctc_out"], text_ids=text_ids)
+        loss_dict["loss"] = loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
+
+        loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
+        loss_dict["aux/num_mel_frames"] = mel.size(0) * mel.size(1)
+        loss_dict["aux/mel_mean"] = mel.mean()
+        loss_dict["aux/mel_std"] = mel.std()
+        loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
+        return loss_dict
+
+
 class Stage3(Stage2):
     def __init__(
         self,
@@ -1441,7 +1536,9 @@ class Stage3(Stage2):
                     recon_chroma=output_dict["chroma_out"]
                     if self.model.config.add_chroma
                     else None,
-                    chroma=input_dict["chroma"] if self.model.config.add_chroma else None,
+                    chroma=input_dict["chroma"]
+                    if self.model.config.add_chroma
+                    else None,
                     recon_mel=output_dict["mel_out"],
                     mel=mel,
                 )
@@ -1460,8 +1557,7 @@ class Stage3(Stage2):
         loss_dict["loss"] = loss_dict["loss_mel"] * self.model.config.w_loss_mel
         if self.model.config.get("add_ctc", True):
             loss_dict["loss"] = (
-                loss_dict["loss"]
-                + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
+                loss_dict["loss"] + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
             )
         if self.model.config.add_chroma:
             loss_dict["loss"] = (
@@ -1521,63 +1617,6 @@ class Stage3(Stage2):
     @torch.cuda.amp.autocast(enabled=False)
     def wav2token(self, wav):
         return self.model.wav2token(wav)
-
-
-class ASR(Stage0):
-    def __init__(
-        self,
-        model_cls,
-        criterion_cls,
-        optimizer_cls,
-        scheduler_cls,
-        required_modules=None,
-        checkpointing=False,
-        extra_params=None,
-    ):
-        super().__init__(
-            model_cls=model_cls,
-            criterion_cls=criterion_cls,
-            optimizer_cls=optimizer_cls,
-            scheduler_cls=scheduler_cls,
-            required_modules=required_modules,
-            checkpointing=checkpointing,
-            extra_params=extra_params,
-        )
-
-    @torch.no_grad()
-    @torch.cuda.amp.autocast(enabled=False)
-    def prepare_feature(self, batch):
-        audio = batch["audio"].squeeze(dim=1).float()
-        audio = self.pad_audio(audio)
-        feature = self.preprocessing(audio)
-        input_dict = {"wav": audio}
-        encoded_text = self.tokenizer(
-            batch["text"],
-            add_special_tokens=False,
-            padding="longest",
-            return_tensors="pt",
-        )
-        text_ids = encoded_text["input_ids"].to(audio.device)
-        input_dict.update(text_ids=text_ids)
-        input_dict.update(feature)
-        return input_dict
-
-    def _shared_step(self, batch):
-        input_dict = self.prepare_feature(batch)
-        output_dict = self.model(input_dict)
-
-        mel = input_dict["mel"]
-        text_ids = input_dict["text_ids"]
-
-        loss_dict = self.criterion(ctc_logits=output_dict["ctc_out"], text_ids=text_ids)
-        loss_dict["loss"] = loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
-
-        loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
-        loss_dict["aux/num_mel_frames"] = mel.size(0) * mel.size(1)
-        loss_dict["aux/mel_mean"] = mel.mean()
-        loss_dict["aux/mel_std"] = mel.std()
-        loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
-        return loss_dict
 
 
 class Stage3Improved(Stage3):
@@ -1722,6 +1761,40 @@ class Stage3MSS(Stage3Improved, Stage2MSS):
         # Copy over flops information
         loss_dict["flops"] = output_dict["flops"]
         return loss_dict
+
+
+class Stage3Conv1D(Stage3):
+    """
+    Fully Convolutional 1D Stage 3 Model
+
+    @hanoihantrakul 2/6/2023:
+    - The encoder is Conv1D (instead of conformer with attention)
+    - The reconstruction heads are conv1D (instead of Conv2D).
+    - It was originally tested on Parquet ID 1154 to verify benefits of conv-based vs attention-based encoder.
+    - It expects a Stage2Conv1D system trained on the same data (but does not expect a Stage1Conv1D)
+
+    - The init is identical to Stage3(). I just factored it out to make intent clear.
+    """
+
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
 
 
 class Stage2Vocoder(Stage0):

@@ -216,6 +216,23 @@ def init_stage3_mss(hpath, local_rank, cache_dir=None):
         return {"Stage3": model}
 
 
+def init_stage3_conv1d(hpath, local_rank, cache_dir=None):
+    """Init function for standard Stage3 Conv UMM backbone."""
+    from recipes.umm.modules.lit_module import Stage3Conv1D
+
+    # This model replaces Stage3 UMM conformer encoder with Conv1D encoder
+    # It also replaces Stage3 UMM Conv2D reconstruction heads with Conv1D reconstruction heads.
+
+    if cache_dir is not None:
+        os.makedirs(cache_dir, exist_ok=True)
+
+    device = torch.device(f"cuda:{local_rank}")
+    with local_zero_first():
+        local_path = _ensure_ckpt_is_local(hpath, cache_dir)
+        model = Stage3Conv1D.load_from_checkpoint(local_path).to(device).eval()
+        return {"Stage3Conv1D": model}
+
+
 def init_mkii(hpath, local_rank, cache_dir=None):
     from recipes.umm.modules.lit_module import MKIIVQ
 
@@ -308,6 +325,7 @@ def init_unified_decoder(hpath, local_rank, cache_dir=None):
         model = UnifiedDecoder.load_from_checkpoint(local_path).to(device).eval()
         return {"unified_decoder": model}
 
+
 def init_m1_tagging(hpath, local_rank, cache_dir=None):
     from recipes.mi1.models.music_sft import MI1_MusicTaggingMusicSFT
 
@@ -323,7 +341,11 @@ def init_m1_tagging(hpath, local_rank, cache_dir=None):
                     raise ConnectionError(f"Cannot retrieve file from {hpath}.")
         else:
             local_path = hpath
-        model = MI1_MusicTaggingMusicSFT.load_from_checkpoint(local_path, strict=False).to(device).eval()
+        model = (
+            MI1_MusicTaggingMusicSFT.load_from_checkpoint(local_path, strict=False)
+            .to(device)
+            .eval()
+        )
         return {"m1_tagging": model}
 
 
