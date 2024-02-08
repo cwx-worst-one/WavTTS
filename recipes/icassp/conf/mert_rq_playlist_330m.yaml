@@ -1,0 +1,157 @@
+---
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+data_params:
+    length_seconds: 30
+    sample_rate: 24000
+    n_validation_samples: 10
+
+
+# training parameters
+training_params:
+    max_steps: 100000000
+    batch_size: 10 # 20 for a100-80g, 4 for v100-32g
+    valid_batch_size: 2
+    base_lr: 0.0001
+    warmup_steps: 30000
+    hold_steps: 220000
+    decay_steps: 50000
+    shuffle_buffer: 150
+
+log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+
+# running parameters
+run_opts:
+    fast_dev_run: False
+    tensorboard_dir: !ref <log_dir>
+    log_name: "MERT"
+    version: "75Hz_Playlist_330M"
+    precision: 16-mixed
+    num_workers: 10
+    accelerator: "auto"
+
+seed: 0
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+data_transforms:
+    !new:recipes.musicfm.modules.data_transform.PlaylistAudioTransforms
+    length_seconds: !ref <data_params[length_seconds]>
+    audio_sample_rate: !ref <data_params[sample_rate]>
+
+preprocessor:
+    !new:recipes.audio_diffusion.modules.preprocess.WebDatasetBufferPreprocessor
+    sample_rate: !ref <data_params[sample_rate]>
+    transforms: !ref <data_transforms>
+
+train_web_dataset: !new:webdataset.WebDataset
+    urls: "pipe:hdfs dfs -cat /home/byte_speech_sv/mulan/playlist_v5_uio/audio_shards/shards_{0000..2596}.tar"
+    resampled: True
+    shardshuffle: True
+
+validation_web_dataset: !new:webdataset.WebDataset
+    urls: "pipe:hdfs dfs -cat /home/byte_speech_sv/mulan/playlist_v5_uio/audio_shards/shards_2597.tar"
+    nodesplitter: !name:recipes.audio_diffusion.helper.return_self
+
+train_dataset:
+    !apply:samantha.utils.webdataset.apply_webdataset_pipeline
+    wds_dataset: !ref <train_web_dataset>
+    pipeline:
+        - !name:webdataset.WebDataset.decode
+        - !name:webdataset.WebDataset.compose
+          - !name:recipes.audio_diffusion.modules.preprocess.WebDatasetBufferPreprocessor.train_buffer_preprocessor
+            - !ref <preprocessor>
+        - !name:webdataset.WebDataset.to_tuple
+          - "audio"
+        - !name:webdataset.WebDataset.shuffle
+          - !ref <training_params[shuffle_buffer]>
+        - !name:webdataset.WebDataset.batched
+          - !ref <training_params[batch_size]>
+
+validation_dataset:
+    !apply:samantha.utils.webdataset.apply_webdataset_pipeline
+    wds_dataset: !ref <validation_web_dataset>
+    pipeline:
+        - !name:webdataset.WebDataset.decode
+        - !name:webdataset.WebDataset.compose
+          - !name:recipes.audio_diffusion.modules.preprocess.WebDatasetBufferPreprocessor.train_buffer_preprocessor
+            - !ref <preprocessor>
+        - !name:webdataset.WebDataset.to_tuple
+          - "audio"
+        - !name:webdataset.WebDataset.shuffle
+          - !ref <training_params[shuffle_buffer]>
+        - !name:webdataset.WebDataset.batched
+          - !ref <training_params[valid_batch_size]>
+        - !name:webdataset.WebDataset.with_epoch
+          - !ref <data_params[n_validation_samples]>
+
+pl_datamodule:
+    !new:recipes.musicfm.modules.pl_datamodule.WebDataModule
+    train_dataset: !ref <train_dataset>
+    validation_dataset: !ref <validation_dataset>
+    batch_size: !ref <training_params[batch_size]>
+    num_workers: !ref <run_opts[num_workers]>
+    pin_memory: True
+
+# model configuration
+model:
+    !new:recipes.icassp.models.mert.MERT_RQ
+    is_flash: True
+    stat_path: "/mnt/bn/audio-diffusion/pretrained_models/musicfm/playlist_classic_stats.json"
+ 
+# training module configuration
+optimizer_class: !name:torch.optim.Adam
+    lr: !ref <training_params[base_lr]>
+
+scheduler_class: !name:recipes.musicfm.modules.lr_scheduler.TriStageLRScheduler
+    base_lr: !ref <training_params[base_lr]>
+    warmup_steps: !ref <training_params[warmup_steps]>
+    hold_steps: !ref <training_params[hold_steps]>
+    decay_steps: !ref <training_params[decay_steps]>
+
+pl_module:
+    !new:recipes.musicfm.modules.pl_module.MusicFMLitModule
+    model: !ref <model>
+    optimizer_class: !ref <optimizer_class>
+    scheduler_class: !ref <scheduler_class>
+
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[tensorboard_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+
+checkpoint: !new:pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: "loss_overall/valid"
+    mode: "min"
+    save_last: True
+    save_top_k: 5
+
+lr_monitor: !new:pytorch_lightning.callbacks.LearningRateMonitor
+    logging_interval: "step"
+
+trainer: !new:pytorch_lightning.Trainer
+    strategy: "deepspeed_stage_2"
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    profiler: simple
+    devices: "auto"
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: False
+    log_every_n_steps: 20
+    max_steps: !ref <training_params[max_steps]>
+    precision: !ref <run_opts[precision]>
+    accumulate_grad_batches: 1
+    gradient_clip_val: 10.0
+    val_check_interval: 10000
+    check_val_every_n_epoch: null  # required now that we use an IterableDataset
+    callbacks:
+        - !ref <checkpoint>
+        - !ref <lr_monitor>
+

@@ -22,7 +22,8 @@ class BeatWriter(BasePredictionWriter):
         batch_idx,
         dataloader_idx,
     ):
-        output_path = os.path.join(self.output_dir, batch[-1][0]+'.txt')
-        with open(output_path, 'w') as f:
-            for line in prediction:
-               f.write(f'{str(line[0])}\t{str(line[1])}\n')
+        for i in range(len(prediction)):
+            output_path = os.path.join(self.output_dir, batch[-1][i]+'.txt')
+            with open(output_path, 'w') as f:
+                for line in prediction[i]:
+                    f.write(f'{str(line[0])}\t{str(line[1])}\n')

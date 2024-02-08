@@ -14,3 +14,4 @@ bytedance-easycycle
 ffmpeg-normalize
 thop
 colorednoise
+numpy<1.24  # for madmom

@@ -1,0 +1,86 @@
+---
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 0
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+# running parameters
+run_opts:
+  fast_dev_run: False
+  precision: 16-mixed
+  accelerator: 'auto'
+  num_workers: 20
+  pin_memory: True
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+train_params:
+  devices: 'auto'
+
+################################################################################
+##########                    TASK CONFIGURATION                  ##########
+################################################################################
+
+audio:
+  sampling_rate: 24000        # sampling rate for audio
+  sample_len: 6.0             # duration in sec for input  #{24 or 6}
+  n_timesteps: 300
+
+
+################################################################################
+##########             DATASET/DATALOADING CONFIGURATION              ##########
+################################################################################
+# datamodule configuration
+pl_datamodule: !new:recipes.beat.pl_modules.pl_datamodule.BeatDataModule
+  train_dataloader: None
+  val_dataloader: None
+  test_dataloader: None
+  sampling_rate: 24000
+
+################################################################################
+##########                      MODEL CONFIGURATION                   ##########
+################################################################################
+
+frontend: !new:recipes.mir_benchmark.models.frontend.Frontend
+  model:
+    !new:recipes.icassp.models.musicfm_25Hz.MusicFM25Hz
+    encoder_depth: 12
+    is_flash: False
+    stat_path: "/mnt/bn/audio-diffusion/pretrained_models/musicfm/playlist_classic_stats.json"
+    model_path: "/mnt/bn/audio-diffusion/pretrained_models/musicfm/icassp/musicfm_25hz_playlist_330m_520k.pt"
+  layer_ix: 12
+  is_update: True
+
+backend: !new:recipes.mir_benchmark.models.beat_probing.BeatProbingStage
+  n_channel: 1024
+  resample: !ref <audio[n_timesteps]>
+
+model: !new:samantha.core.BaseModel
+  input_names: [audio]
+  output_names: [output]
+  stages:
+      - !ref <frontend>
+      - !ref <backend>
+
+pl_module: !new:recipes.mir_benchmark.pl_modules.beat_finetune_pl.LitFinetuneBeat
+  model: !ref <model>
+  sample_len: !ref <audio[sample_len]>
+  pretrained_path: "/mnt/bn/audio-diffusion/multitask/beat_only_24sec_lr0.001/checkpoints/epoch=13-step=1400.pt"
+
+################################################################################
+##########                     TRAINER CONFIGURATION                  ##########
+################################################################################
+prediction_writer: !new:recipes.beat.pl_modules.callbacks.prediction_writer.BeatWriter
+  output_dir: null
+
+trainer: !new:pytorch_lightning.Trainer
+  strategy: "auto"
+  fast_dev_run: !ref <run_opts[fast_dev_run]>
+  num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+  accelerator: !ref <run_opts[accelerator]>
+  devices: !ref <train_params[devices]>
+  precision: !ref <run_opts[precision]>
+  callbacks: !ref <prediction_writer>

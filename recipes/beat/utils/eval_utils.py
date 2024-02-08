@@ -28,6 +28,21 @@ def merge_multiple_temporal_probs_inference(prediction, n_labels, prediction_leg
     return new_probs
 
 
+def merge_multiple_temporal_probs_inference_batch(
+    prediction, n_labels, prediction_length, sample_len, sample_hop
+):
+    bsz, num_segments = prediction.shape[:2]
+    new_probs = torch.zeros((bsz, prediction_length, n_labels)).to(prediction.device)
+    count = torch.zeros((bsz, prediction_length, n_labels)).to(prediction.device)
+    for i in range(num_segments):
+        new_probs[:, i * sample_hop : i * sample_hop + sample_len] += prediction[
+            :, i, 0:len(new_probs[0][i * sample_hop : i * sample_hop + sample_len])
+        ]
+        count[:, i * sample_hop : i * sample_hop + sample_len] += 1
+    new_probs = new_probs / count
+    return new_probs
+
+
 def evaluate_scores(dataset):
     Beat_f1_scores, Downbeat_f1_scores = [], []
     for file in os.listdir(f'../Ripple/data/beat/{dataset}_labels/'):

@@ -1,0 +1,154 @@
+---
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+data_params:
+    length_seconds: 30
+    sample_rate: 16000
+    n_validation_samples: 10
+
+
+# training parameters
+training_params:
+    max_steps: 100000000
+    batch_size: 42 # 20 for a100-80g, 4 for v100-32g
+    valid_batch_size: 2
+    base_lr: 0.0001
+    warmup_steps: 30000
+    hold_steps: 220000
+    decay_steps: 50000
+    shuffle_buffer: 150
+    num_iter: 5
+
+log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+
+# running parameters
+run_opts:
+    fast_dev_run: False
+    tensorboard_dir: !ref <log_dir>
+    log_name: "MusicFM-Vocal"
+    version: "v0"
+    precision: 16-mixed
+    num_workers: 10
+    accelerator: "auto"
+    pin_memory: True
+
+seed: 0
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+preprocessor: !new:recipes.beat.preprocess.common.BeatPreprocessor
+  target_duration_sec: !ref <data_params[length_seconds]>
+  sampling_rate: !ref <data_params[sample_rate]>
+  label_hop: 0.02
+  chunk_per_sample: 1
+
+# dataloader configuration
+train_dataset: !apply:recipes.beat.utils.dataset.get_train_dataset
+  dataset_names: ["uni_mcc_vocal", "new_galaxyark_mss"]
+  preprocessor: !ref <preprocessor>
+  shuffle_buffer: !ref <training_params[shuffle_buffer]> 
+  batch_size: !ref <training_params[batch_size]>
+  num_workers: !ref <run_opts[num_workers]>
+  num_iter: !ref <training_params[num_iter]>
+  pin_memory: !ref <run_opts[pin_memory]>
+  to_tuple: "audio.npy"
+
+validation_dataset: !apply:recipes.beat.utils.dataset.get_train_dataset
+  dataset_names: ["mcc126"]
+  preprocessor: !ref <preprocessor>
+  shuffle_buffer: !ref <training_params[shuffle_buffer]> 
+  batch_size: !ref <training_params[batch_size]>
+  num_workers: !ref <run_opts[num_workers]>
+  num_iter: 5
+  pin_memory: !ref <run_opts[pin_memory]>
+  to_tuple: "audio.npy"
+
+# validation_dataset: !apply:recipes.beat.utils.dataset.get_validation_dataset
+#   dataset_names: ["mcc126"]
+#   preprocessor: !ref <preprocessor>
+#   num_workers: !ref <run_opts[num_workers]>
+#   pin_memory: !ref <run_opts[pin_memory]>
+
+test_dataloader: !apply:recipes.beat.utils.dataset.get_validation_dataset
+  dataset_names: ["mcc32"]
+  preprocessor: !ref <preprocessor>
+  num_workers: !ref <run_opts[num_workers]>
+  pin_memory: !ref <run_opts[pin_memory]>
+
+pl_datamodule: !new:recipes.beat.pl_modules.pl_datamodule.BeatDataModule
+  train_dataloader: !ref <train_dataset>
+  val_dataloader: !ref <validation_dataset>
+  test_dataloader: !ref <test_dataloader>
+
+# pl_datamodule:
+#     !new:recipes.musicfm.modules.pl_datamodule.WebDataModule
+#     train_dataset: !ref <train_dataset>
+#     validation_dataset: !ref <validation_dataset>
+#     batch_size: !ref <training_params[batch_size]>
+#     num_workers: !ref <run_opts[num_workers]>
+#     pin_memory: !ref <run_opts[pin_memory]>
+
+# model configuration
+model:
+    !new:recipes.icassp.models.musicfm_25Hz.MusicFM25Hz
+    encoder_depth: 12
+    hop_length: 160
+    is_flash: True
+    stat_path: "/mnt/bn/audio-diffusion/pretrained_models/musicfm/vocal_classic_stats.json"
+ 
+# training module configuration
+optimizer_class: !name:torch.optim.Adam
+    lr: !ref <training_params[base_lr]>
+
+scheduler_class: !name:recipes.musicfm.modules.lr_scheduler.TriStageLRScheduler
+    base_lr: !ref <training_params[base_lr]>
+    warmup_steps: !ref <training_params[warmup_steps]>
+    hold_steps: !ref <training_params[hold_steps]>
+    decay_steps: !ref <training_params[decay_steps]>
+
+pl_module:
+    !new:recipes.musicfm.modules.pl_module.MusicFMVoxLitModule
+    model: !ref <model>
+    optimizer_class: !ref <optimizer_class>
+    scheduler_class: !ref <scheduler_class>
+
+logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[tensorboard_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+
+checkpoint: !new:pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: "loss_overall/valid"
+    mode: "min"
+    save_last: True
+    save_top_k: 5
+
+lr_monitor: !new:pytorch_lightning.callbacks.LearningRateMonitor
+    logging_interval: "step"
+
+trainer: !new:pytorch_lightning.Trainer
+    strategy: "deepspeed_stage_2"
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    profiler: simple
+    devices: "auto"
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: False
+    log_every_n_steps: 20
+    max_steps: !ref <training_params[max_steps]>
+    precision: !ref <run_opts[precision]>
+    accumulate_grad_batches: 1
+    gradient_clip_val: 10.0
+    val_check_interval: 100
+    check_val_every_n_epoch: null  # required now that we use an IterableDataset
+    callbacks:
+        - !ref <checkpoint>
+        - !ref <lr_monitor>
+
