@@ -270,71 +270,6 @@ class LogMel(nn.Module):
         mel_spec = mel_spec.to(audio.dtype)
         return mel_spec
 
-class LoadEmptyMuTWrapper(nn.Module):
-    def __init__(
-        self,
-        output_layer,  # output dim from mut is 1280
-        checkpointing=True,
-        use_flash_attn=False,
-        output_type="cls",
-        pretained_path: str = "mutmae-step=177600-loss_1=5-sf.pth",
-        num_layers: int = 32,
-    ):
-        super(LoadEmptyMuTWrapper, self).__init__()
-        mut = MuT(
-            spec_shape=(128, 1000),
-            patch_shape=(128, 2),
-            num_classes=1000,
-            sample_rate=24000,
-            dim=1280,
-            depth=num_layers,
-            heads=16,
-            dim_head=80,
-            channels=1,
-            mlp_dim=5120,
-            checkpointing=checkpointing,
-            use_flash_attn=use_flash_attn,
-            output_type=output_type,
-        )
-        # state_dict = torch.load(pretained_path, map_location="cpu")
-        # mut.load_state_dict(state_dict, strict=False)
-        mut.mlp_head = output_layer
-        self.mut = mut
-
-    def manually_to_device(self, device):
-        for k, v in self.mut.logmel_frontend["logmel"].feat_extract.items():
-            self.mut.logmel_frontend["logmel"].feat_extract[k] = v.to(device)
-
-    def forward(self, audio, spec_aug=False):
-        out = self.mut(audio, spec_aug=spec_aug)
-
-        return out
-
-
-class MuTSSTKWrapper(nn.Module):
-    def __init__(self, emb_dim: int = 128, output_type="cls", seq_len=500):
-        super(MuTSSTKWrapper, self).__init__()
-
-        self.emb_dim = emb_dim
-        if seq_len == 500:
-            mlp_head = nn.Sequential(RMSNorm(1280), nn.Linear(1280, emb_dim))
-        elif seq_len == 250:
-            mlp_head = nn.Sequential(RMSNorm(1280), nn.AvgPool2d((2, 1)), nn.Linear(1280, emb_dim))
-        else:
-            raise NotImplementedError(f"Seq len {seq_len} is not supported yet.")
-        mut = LoadEmptyMuTWrapper(
-            output_layer=mlp_head,
-            checkpointing=True,
-            use_flash_attn=True,
-            output_type=output_type,
-            pretained_path="",
-        )
-        self.mut = mut
-
-    def forward(self, audio, spec_aug=False):
-        emb = self.mut(audio, spec_aug=spec_aug)
-        emb = F.normalize(emb, p=2, dim=-1)
-        return emb
 
 class MuT(nn.Module):
     def __init__(
@@ -446,46 +381,6 @@ class MuT(nn.Module):
         return self.mlp_head(x)
 
 
-class PretrainedMuTWrapper(nn.Module):
-    def __init__(
-        self,
-        output_layer,  # output dim from mut is 1280
-        checkpointing=True,
-        use_flash_attn=False,
-        output_type="cls",
-        pretained_path: str = "mutmae-step=177600-loss_1=5-sf.pth",
-    ):
-        super(PretrainedMuTWrapper, self).__init__()
-        mut = MuT(
-            spec_shape=(128, 1000),
-            patch_shape=(128, 2),
-            num_classes=1000,
-            sample_rate=24000,
-            dim=1280,
-            depth=32,
-            heads=16,
-            dim_head=80,
-            channels=1,
-            mlp_dim=5120,
-            checkpointing=checkpointing,
-            use_flash_attn=use_flash_attn,
-            output_type=output_type,
-        )
-        # state_dict = torch.load(pretained_path, map_location='cpu')
-        # mut.load_state_dict(state_dict, strict=False)
-        mut.mlp_head = output_layer
-        self.mut = mut
-
-    def manually_to_device(self, device):
-        for k, v in self.mut.logmel_frontend["logmel"].feat_extract.items():
-            self.mut.logmel_frontend["logmel"].feat_extract[k] = v.to(device)
-
-    def forward(self, audio, spec_aug=False):
-        out = self.mut(audio, spec_aug=spec_aug)
-
-        return out
-
-
 class TextEncoder(nn.Module):
     def __init__(self, pretrained_model="bert-base-uncased", emb_dim: int = 128):
         super(TextEncoder, self).__init__()
@@ -576,39 +471,21 @@ class MusicEncoder(nn.Module):
         return music_embed
 
 
-class MuTWrapper(nn.Module):
-    def __init__(self, emb_dim: int = 128):
-        super(MuTWrapper, self).__init__()
-
-        mlp_head = nn.Sequential(RMSNorm(1280), nn.Linear(1280, emb_dim))
-        mut = PretrainedMuTWrapper(
-            output_layer=mlp_head,
-            checkpointing=True,
-            use_flash_attn=True,
-            output_type="cls",
-            pretained_path="mutmae-step=177600-loss_1=5-sf.pth",
-        )
-        self.mut = mut
-
-    def forward(self, audio, spec_aug=False):
-        emb = self.mut(audio, spec_aug=spec_aug)
-        emb = F.normalize(emb, p=2, dim=1)
-        return emb
-
 class PretrainedMuTSSTKWrapper(nn.Module):
     def __init__(
         self,
         output_layer,  # output dim from mut is 1280
+        pretrained_path,
         checkpointing=True,
         use_flash_attn=False,
         output_type="cls",
-        pretained_path: str = "/mnt/bn/audio-diffusion/xuchen/mulan/models/mutmae-step=563200-loss_0=7-kaggle.pth",
         num_layers: int = 32,
+        patch_shape=(128, 4),
     ):
         super(PretrainedMuTSSTKWrapper, self).__init__()
         mut = MuT(
             spec_shape=(128, 1000),
-            patch_shape=(128, 4), #(128, 2)
+            patch_shape=patch_shape,
             num_classes=1000,
             sample_rate=24000,
             dim=1280,
@@ -622,7 +499,7 @@ class PretrainedMuTSSTKWrapper(nn.Module):
             output_type=output_type,
         )
 
-        state_dict = torch.load(pretained_path, map_location="cpu")
+        state_dict = torch.load(pretrained_path, map_location="cpu")
         mut.load_state_dict(state_dict, strict=False)
         mut.mlp_head = output_layer
         self.mut = mut
@@ -637,7 +514,7 @@ class PretrainedMuTSSTKWrapper(nn.Module):
         return out
 
 class MuTSSTKMAEWrapper(nn.Module):
-    def __init__(self, emb_dim: int = 128, output_type="cls", seq_len=500):
+    def __init__(self, emb_dim: int = 128, output_type="cls", seq_len=500, version="v1"):
         super(MuTSSTKMAEWrapper, self).__init__()
 
         self.emb_dim = emb_dim
@@ -645,12 +522,20 @@ class MuTSSTKMAEWrapper(nn.Module):
             mlp_head = nn.Sequential(RMSNorm(1280), nn.Linear(1280, emb_dim))
         else:
             raise NotImplementedError(f"Seq len {seq_len} is not supported yet.")
+
+        if version == "v1":
+            pretrained_path = "/mnt/bn/audio-diffusion/xuchen/mulan/models/mutmae-step=563200-loss_0=7-kaggle.pth"
+            patch_shape = (128, 4)
+        else:
+            pretrained_path = "/mnt/bn/audio-diffusion/weituo/sstk_mulan/assets/mutmae-step=177600-loss_1=5-sf.pth"
+            patch_shape = (128, 2)
         mut = PretrainedMuTSSTKWrapper(
             output_layer=mlp_head,
+            pretrained_path=pretrained_path,
             checkpointing=True,
             use_flash_attn=True,
             output_type=output_type,
-            pretained_path="/mnt/bn/audio-diffusion/xuchen/mulan/models/mutmae-step=563200-loss_0=7-kaggle.pth",
+            patch_shape=patch_shape,
         )
         self.mut = mut
 
@@ -660,9 +545,8 @@ class MuTSSTKMAEWrapper(nn.Module):
         return emb
    
 
-def get_music_encoder(music_encoder="sstk", emb_dim=128):
-
-    return MuTSSTKMAEWrapper(emb_dim,)
+def get_music_encoder(music_encoder="sstk", emb_dim=128, version="v1"):
+    return MuTSSTKMAEWrapper(emb_dim, version=version)
 
 
 class LitMuLanModule(pl.LightningModule):
@@ -675,10 +559,11 @@ class LitMuLanModule(pl.LightningModule):
         lr,
         weight_decay,
         temperature,
+        version="v1",
     ):
         super().__init__()
         self.save_hyperparameters()  # save hyperparameter in ckpt
-        self.music_encoder = get_music_encoder(music_encoder, emb_dim)
+        self.music_encoder = get_music_encoder(music_encoder, emb_dim, version=version)
         self.text_encoder = get_text_encoder(text_encoder, emb_dim)
         self.spec_aug = spec_aug
         self.lr = lr
@@ -913,8 +798,12 @@ class LitMuLanModule(pl.LightningModule):
         return text_embed
 
 
-def create_mulan_model(ckpt_path, device):
-    litmodel = LitMuLanModule.load_from_checkpoint(ckpt_path)
+def create_mulan_model(ckpt_path, device, version="v1"):
+    litmodel = LitMuLanModule.load_from_checkpoint(
+        ckpt_path,
+        version=version,
+        strict=False,
+    )
 
     # audio tower
     litmodel.music_encoder.eval()

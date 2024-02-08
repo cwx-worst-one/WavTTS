@@ -13,7 +13,7 @@ try:
 except:
     BestRQ = None
 from recipes.musiclm.models.compat.semantic_model import SSLFrontend
-from functools import lru_cache
+from functools import partial, lru_cache
 from ..utils.dist import local_zero_first
 
 
@@ -74,12 +74,16 @@ def _init_cached_mulan(hpath, local_rank, cache_dir=None, version="149", prefix=
             mulan_inference,
             mulan_rvq_indexs,
         )
-    elif version in ["sstkmae"]:
+    elif version in ["sstkmae", "sstkmae_v2"]:
         from .mulan.mulan_infer_sstk_mae import(
             create_mulan_model,
             mulan_inference,
             mulan_rvq_indexs,
         )
+        if version == "sstkmae":
+            create_mulan_model = partial(create_mulan_model, version="v1")
+        else:
+            create_mulan_model = partial(create_mulan_model, version="v2")
     else:
         raise KeyError(f"Not a valid mulan version. {version}")
     if cache_dir is not None:

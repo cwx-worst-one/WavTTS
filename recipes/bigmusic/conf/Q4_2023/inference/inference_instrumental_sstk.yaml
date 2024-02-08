@@ -35,7 +35,7 @@ extra_params:
     negative_phrase: "noisy, boring, forgettable"
 
     # For intensity calculation
-    intensity_calculation: "max"
+    intensity_calculation: "mean"
     intensity_hz: 1
     intensity_temperature: 1.0
 

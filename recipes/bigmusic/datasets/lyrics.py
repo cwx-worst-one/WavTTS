@@ -239,11 +239,28 @@ def default_bucket_batcher_length_fn(item, sample_rate=24000, semantic_frame_rat
         input_seq_length = 0 # instrumental case
     return target_seq_length + input_seq_length
 
-def default_bucket_batcher_fn(sample_rate, sample_duration, batch_size, semantic_frame_rate=25, lyrics_frame_rate=14):
+def default_bucket_batcher_fn(
+    sample_rate,
+    sample_duration,
+    batch_size,
+    semantic_frame_rate=25,
+    lyrics_frame_rate=14,
+    max_duration=None,
+):
+    token_frame_rate = semantic_frame_rate + lyrics_frame_rate
     sample_duration = sample_duration if isinstance(sample_duration, (list, tuple)) else [sample_duration]
-    buckets_samples = [d * semantic_frame_rate + d * lyrics_frame_rate for d in sample_duration]
+    buckets_samples = [d * token_frame_rate for d in sample_duration]
     length_fn = partial(default_bucket_batcher_length_fn, sample_rate=sample_rate, semantic_frame_rate=semantic_frame_rate)
-    return LyricsBucketBatcher(buckets=buckets_samples, maximum_bucket_size=buckets_samples[-1] * batch_size, dynamic_batch=True, length_fn=length_fn)
+    if max_duration is None:
+        maximum_bucket_size = buckets_samples[-1] * batch_size
+    else:
+        maximum_bucket_size = max_duration * token_frame_rate * batch_size
+    return LyricsBucketBatcher(
+        buckets=buckets_samples,
+        maximum_bucket_size=maximum_bucket_size,
+        dynamic_batch=True,
+        length_fn=length_fn,
+    )
     
 def default_batch_fn(batch_size, collation_fn=dictionary_collate):
     return wds.batched(batch_size, collation_fn=collation_fn)

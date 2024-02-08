@@ -167,6 +167,7 @@ class MCCTransforms(TransformBase):
         min_volume_threshold: float = 0.05,
         loudness_ratio_threshold: float = 0.2,
         aed_filtered: bool = False,
+        sstk_filtered: Optional[str] = None,
         avoid_sound_effect: bool = False,
         exclude_licenses: List[str] = [],
         avoid_vocal: bool = False,
@@ -177,6 +178,7 @@ class MCCTransforms(TransformBase):
         text_type: Optional[str] = None,
         max_num_crops: Optional[Union[int, List[int]]] = None,    # if None, auto set based on audio length
         crop_step_size: Optional[Union[int, List[int]]] = None,   # if None, auto set based on n_samples
+        max_samples: Optional[int] = None,
     ) -> None:
         super().__init__()
         self.n_samples = n_samples if isinstance(n_samples, (list, tuple)) else [n_samples]
@@ -185,6 +187,7 @@ class MCCTransforms(TransformBase):
         self.min_volume_threshold = min_volume_threshold
         self.loudness_ratio_threshold = loudness_ratio_threshold
         self.aed_filtered = aed_filtered
+        self.sstk_filtered = sstk_filtered
         self.avoid_sound_effect = avoid_sound_effect
         self.exclude_licenses = set(exclude_licenses)
         self.avoid_vocal = avoid_vocal
@@ -193,6 +196,7 @@ class MCCTransforms(TransformBase):
         self.audio_metrics_filtered = audio_metrics_filtered
         self.ar_filtering = ar_filtering
         self.text_type = text_type
+        self.max_samples = max_samples
 
         if not isinstance(min_length_ratio, (list, tuple)):
             min_length_ratio = [min_length_ratio] * len(self.n_samples)
@@ -202,14 +206,14 @@ class MCCTransforms(TransformBase):
         if max_num_crops is None:
             max_num_crops = [None] * len(self.n_samples)
         elif not isinstance(max_num_crops, (list, tuple)):
-            max_num_crops = [max_num_crops]
+            max_num_crops = [max_num_crops] * len(self.n_samples)
         assert len(max_num_crops) == len(self.n_samples)
         self.max_num_crops = max_num_crops
 
         if crop_step_size is None:
             crop_step_size = [n // 2 for n in self.n_samples]
         elif not isinstance(crop_step_size, (list, tuple)):
-            crop_step_size = [crop_step_size]
+            crop_step_size = [crop_step_size] * len(self.n_samples)
         assert len(crop_step_size) == len(self.n_samples)
         self.crop_step_size = crop_step_size
 
@@ -236,6 +240,13 @@ class MCCTransforms(TransformBase):
         # Apply AED filtering if applicable
         if self.aed_filtered and not metadata.get("aed_filtered", False):
             return False, "Not AED Filtered"
+        # Apply SSTK filtering if applicable
+        if self.sstk_filtered is not None:
+            keywords = metadata.get("keywords", "")
+            genres = metadata.get("genres", "")
+            text = f"{keywords}, {genres}".lower()
+            if any([w in text for w in self.sstk_filtered.split(",")]):
+                return False, f"SSTK filtered ({self.sstk_filtered})"
         # Avoid sound effect if applicable
         if self.avoid_sound_effect and metadata.get("final_theme") == "Sound Effect":
             return False, "Sound Effect"
@@ -406,14 +417,16 @@ class MCCTransforms(TransformBase):
             text_fields = []
             for key in ["title", "description", "keywords", "genres", "instruments"]:
                 v = metadata.get(key)
-                if v is None or v == "\\N":
+                if v is None or v == "\\N" or len(v) == 0:
                     continue
                 text_fields.append(v)
             random.shuffle(text_fields)
-            if text_type == "sstk_concat":
+            if len(text_fields) == 0:
+                return ""
+            elif text_type == "sstk_concat":
                 return ". ".join(text_fields)
             else:
-                return text_fields[0] if len(text_fields) > 0 else ""
+                return ". ".join(text_fields[:random.randint(1, len(text_fields))])
         else:
             raise ValueError(f"Unknown text type: {text_type}")
 
@@ -455,10 +468,10 @@ class MCCTransforms(TransformBase):
                 self.max_num_crops,
                 self.crop_step_size,
                 self.min_length_ratio,
-            ) if audio.size(1) >= n * l
+            ) if audio.size(1) >= n * l and (self.max_samples is None or n <= self.max_samples)
         ]
         if len(candidates) == 0:
-            self._update_stats(skipped=True, message="Audio Too Short")
+            self._update_stats(skipped=True, message="Audio Length Not Suitable")
             return
         random.shuffle(candidates)
         n_samples, max_num_crops, crop_step_size = candidates[0]

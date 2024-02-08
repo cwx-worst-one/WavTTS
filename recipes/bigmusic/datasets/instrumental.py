@@ -46,6 +46,7 @@ class InstrumentalWebDataModule(DataModule):
         min_volume_threshold: float = 0.05,
         loudness_ratio_threshold: float = 0.2,
         aed_filtered: bool = True,
+        sstk_filtered: Optional[str] = None,
         avoid_sound_effect: bool = True,
         avoid_vocal: bool = True,
         max_vocal_threshold: float = 0.5,
@@ -57,6 +58,7 @@ class InstrumentalWebDataModule(DataModule):
         additional_transforms: Optional[List] = None,
         keys=["audio", "text", "structure", "intensity"],
         mixed_ratio: float = 0.0,
+        max_duration: Optional[int] = None,
         use_pipe: bool = False,
         seed: int = 555,
         prefetch_factor: Optional[int] = None,
@@ -97,6 +99,8 @@ class InstrumentalWebDataModule(DataModule):
             ]
         elif dataset_name == "SSTK_US":
             train_urls_and_weights = [(106, 1.0)]
+        elif dataset_name == "SSTK_US_RICH_INSTRUMENTS":
+            train_urls_and_weights = [(122, 1.0)]
         else:
             raise NotImplementedError(f"Unknown dataset: {dataset_name}")
 
@@ -116,6 +120,7 @@ class InstrumentalWebDataModule(DataModule):
             min_volume_threshold=min_volume_threshold,
             loudness_ratio_threshold=loudness_ratio_threshold,
             aed_filtered=aed_filtered,
+            sstk_filtered=sstk_filtered,
             avoid_sound_effect=avoid_sound_effect,
             avoid_vocal=avoid_vocal,
             max_vocal_threshold=max_vocal_threshold,
@@ -124,6 +129,7 @@ class InstrumentalWebDataModule(DataModule):
             text_type=text_type,
             max_num_crops=max_num_crops,
             crop_step_size=crop_step_size,
+            max_duration=max_duration,
             additional_transforms=additional_transforms,
             resampled=True,
             shardshuffle=True,
@@ -136,7 +142,9 @@ class InstrumentalWebDataModule(DataModule):
                 wds_to_dict(*keys),
                 wds.map(SemanticTokenLengthTransform(sample_rate=sample_rate, audio_key="audio")),
                 wds.shuffle(shuffle_buffer_size),
-                default_bucket_batcher_fn(sample_rate, duration, batch_size, lyrics_frame_rate=0),
+                default_bucket_batcher_fn(
+                    sample_rate, duration, batch_size, lyrics_frame_rate=0, max_duration=max_duration
+                ),
             ]}],
         )
 
@@ -160,6 +168,7 @@ class InstrumentalWebDataModule(DataModule):
             min_volume_threshold=min_volume_threshold,
             loudness_ratio_threshold=loudness_ratio_threshold,
             aed_filtered=aed_filtered,
+            sstk_filtered=sstk_filtered,
             avoid_sound_effect=avoid_sound_effect,
             avoid_vocal=avoid_vocal,
             max_vocal_threshold=max_vocal_threshold,
@@ -168,6 +177,7 @@ class InstrumentalWebDataModule(DataModule):
             text_type=text_type,
             max_num_crops=max_num_crops,
             crop_step_size=crop_step_size,
+            max_duration=max_duration,
             additional_transforms=additional_transforms,
             resampled=False,
             shardshuffle=False,
@@ -180,7 +190,9 @@ class InstrumentalWebDataModule(DataModule):
             pipeline=[{"compose": [
                 wds_to_dict(*keys),
                 wds.map(SemanticTokenLengthTransform(sample_rate=sample_rate, audio_key="audio")),
-                default_bucket_batcher_fn(sample_rate, duration, batch_size, lyrics_frame_rate=0),
+                default_bucket_batcher_fn(
+                    sample_rate, duration, batch_size, lyrics_frame_rate=0, max_duration=max_duration
+                ),
             ]}],
         )
 

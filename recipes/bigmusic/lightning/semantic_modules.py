@@ -24,6 +24,10 @@ from recipes.bigmusic.utils.rewards import (
     structure_reward,
     chorus_sim_reward,
     chorus_presence_reward,
+    audio_metrics_reward,
+    intensity_sim_reward,
+    semantic_diversity_reward,
+    semantic_diversity_sim_reward,
 )
 import numpy as np
 import torch
@@ -350,6 +354,31 @@ class SemanticModule(BaseContinuousEmbedModule):
 
         return torch.cat(inputs_embeds, dim=1)
 
+    def aux_loss(self, batch, logits, last_hidden_state, target_length):
+        aux_loss = 0
+        aux_dict = {}
+        for pred_type, pred_head in self.prediction_heads.items():
+            pred_wt = self.prediction_weights[pred_type]
+            if pred_type == "intensity":
+                # NOTE: we assume intensity is the last input
+                target_intensity = self.input_embedders["intensity"].quantize(batch["intensity"])
+                intensity_length = target_intensity.shape[1]
+                # Offset by one
+                st = last_hidden_state.shape[1] - target_length - intensity_length - 1
+                intensity_embed = last_hidden_state[:, st:st + intensity_length, :]
+                intensity_logits = pred_head(intensity_embed)
+                pred_loss = self.criterion(intensity_logits, target_intensity)
+                pred_accu = (intensity_logits.argmax(dim=-1) == target_intensity).float().mean() * 100
+                pred_dict = {
+                    "intensity_loss": pred_loss.item(),
+                    "intensity_accu": pred_accu.item(),
+                }
+            else:
+                raise ValueError(f"Unknown pred type: {pred_type}")
+            aux_loss += pred_loss * pred_wt
+            aux_dict.update(pred_dict)
+        return aux_loss, aux_dict
+
     def _shared_step(self, batch, update_mfu=False):
         with self.profiler.profile(f"bigmusic.prepare_training_inputs{self.trainer.global_step}"):
             input_ids, target_ids = self.prepare_training_inputs(batch)
@@ -387,27 +416,10 @@ class SemanticModule(BaseContinuousEmbedModule):
             'accu': accu.item(),
             'accu_seq_25': accu_seq_25.item()
         }
-
-        for pred_type, pred_head in self.prediction_heads.items():
-            pred_wt = self.prediction_weights[pred_type]
-            if pred_type == "intensity":
-                # NOTE: we assume intensity is the last input
-                target_intensity = self.input_embedders["intensity"].quantize(batch["intensity"])
-                intensity_length = target_intensity.shape[1]
-                # Offset by one
-                st = last_hidden_state.shape[1] - target_length - intensity_length - 1
-                intensity_embed = last_hidden_state[:, st:st + intensity_length, :]
-                intensity_logits = pred_head(intensity_embed)
-                pred_loss = self.criterion(intensity_logits, target_intensity)
-                pred_accu = (intensity_logits.argmax(dim=-1) == target_intensity).float().mean() * 100
-                pred_dict = {
-                    "intensity_loss": pred_loss.item(),
-                    "intensity_accu": pred_accu.item(),
-                }
-            else:
-                raise ValueError(f"Unknown pred type: {pred_type}")
-            loss += pred_loss * pred_wt
-            result_dict.update(pred_dict)
+        # Auxiliary loss
+        aux_loss, aux_dict = self.aux_loss(batch, logits, last_hidden_state, target_length)
+        loss += aux_loss
+        result_dict.update(aux_dict)
 
         return loss, result_dict
 
@@ -472,7 +484,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         return intensity_embedder.unquantize(output_tokens)
 
     @torch.no_grad()
-    def predict(self, batch, hp, beam=1, ref_samples=None):
+    def predict(self, batch, hp, beam=1, ref_samples=None, rl_training=False):
         frame_rate = self.extra_params.semantic_frame_rate
         if "duration" not in batch:
             batch["duration"] = hp.duration
@@ -496,7 +508,10 @@ class SemanticModule(BaseContinuousEmbedModule):
                 hp.get("intensity_temperature", 1.0),
             )
 
-        inputs_embeds = self.prepare_inputs_embeddings(batch)
+        if "inputs_embeds" in batch:
+            inputs_embeds = batch["inputs_embeds"]
+        else:
+            inputs_embeds = self.prepare_inputs_embeddings(batch)
         return super().predict(
             inputs_embeds,
             num_tokens,
@@ -506,6 +521,7 @@ class SemanticModule(BaseContinuousEmbedModule):
             sample_thresh=sample_thresh,
             ref_samples=ref_samples,
             exclude_ids=exclude_ids,
+            rl_training=rl_training,
         )
 
     @torch.no_grad()
@@ -552,32 +568,34 @@ class SemanticRLModule(SemanticModule):
         beam = self.extra_params.beam_size
 
         # CE loss
-        logits = self.model(**model_inputs)
-        if isinstance(logits, dict):
-            logits = logits["logits"]
-        elif isinstance(logits, tuple):
-            logits = logits[0]
-        x = logits[:, -T:, :]
-        ce_loss = self.criterion(x, target_ids)
-        accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
+        model_output = self.model(**model_inputs, output_hidden_states=True)
+        if isinstance(model_output, dict):
+            logits = model_output["logits"]
+            last_hidden_state = model_output['hidden_states'][-1]
+        elif isinstance(model_output, tuple):
+            logits, last_hidden_state = model_output
+        target_logits = logits[:, -T:, :]
+        ce_loss = self.criterion(target_logits, target_ids)
+        accu = (target_logits.argmax(dim=-1) == target_ids).float().mean() * 100
+        # Auxiliary loss (TODO: separate these losses from CE loss)
+        aux_loss, _ = self.aux_loss(batch, logits, last_hidden_state, T)
+        ce_loss += aux_loss
 
         # Sequence loss
         # Inference
+        batch["inputs_embeds"] = inputs_embeds
         ref_samples = None
         if self.extra_params.add_ref_to_beam and mode == "training":
             ref_samples = target_ids
-        if "duration" in batch:
-            duration = batch["duration"]
-        elif isinstance(self.extra_params.duration, (list, tuple)):
-            duration = self.extra_params.duration[-1]
-        else:
-            duration = self.extra_params.duration
-        num_tokens = duration * self.extra_params.semantic_frame_rate
-        sampled_semantic_tokens, model_inputs = self.super_predict(
-            inputs_embeds=inputs_embeds,
-            num_tokens=num_tokens,
-            temperature=self.extra_params.semantic_temperature,
-            sample_mode=self.extra_params.sample_mode,
+        if "duration" not in batch:
+            if isinstance(self.extra_params.duration, (list, tuple)):
+                batch["duration"] = self.extra_params.duration[-1]
+            else:
+                batch["duration"] = self.extra_params.duration
+        num_tokens = batch["duration"] * self.extra_params.semantic_frame_rate
+        sampled_semantic_tokens, model_inputs = super().predict(
+            batch,
+            self.extra_params,
             beam=beam,
             ref_samples=ref_samples,
             rl_training=True,
@@ -589,6 +607,7 @@ class SemanticRLModule(SemanticModule):
         )
         # Compute rewards
         rewards, sampled_audio, reward_breakdown = self.get_reward({
+            "target_semantic_tokens": target_ids,
             "sampled_semantic_tokens": sampled_semantic_tokens_processed,
             "eos_index_list": eos_index_list,
             "target_audio": wavs_gt,
@@ -730,7 +749,7 @@ class SemanticRLModule(SemanticModule):
 
     @torch.no_grad()
     def run_diffusion(self, items):
-        VOCODER_HZ = 125
+        diffusion_params = self.extra_params.get("diffusion_params", {})
         sampler = self.requires["sampler"]
         diffusion = self.requires["diffusion"]
         vocoder = self.requires["vocoder"]
@@ -747,15 +766,13 @@ class SemanticRLModule(SemanticModule):
             #start=None,
             #show_progress=False,
             angle_schedule="linear",
-            schdeule_slope=2.5,
-            classifier_free_guidance=2.5,
+            schdeule_slope=diffusion_params.get("schedule_slope", 2.5),
+            classifier_free_guidance=diffusion_params.get("guidance_scale", 2.5),
         ).detach().float()
         # torch.interpolate causes OOM for large batch sizes > 24. chunking to batch of 8 instead.
         # If you see this error, lower batch size:
         # RuntimeError: Expected output.numel() <= std::numeric_limits<int32_t>::max() to be true, but got false.
-        duration = pred_emb.shape[-1] // VOCODER_HZ
-        batch_chunks = max(1, 240 // duration)
-        wavs = torch.cat([vocoder.decode(c).detach() for c in torch.split(pred_emb, batch_chunks)])
+        wavs = torch.cat([vocoder.decode(c).detach() for c in torch.split(pred_emb, 1)])
         # Zero out samples after <eos>
         if len(eos_index_list) > 0:
             for i in range(len(eos_index_list)):
@@ -775,6 +792,8 @@ class SemanticRLModule(SemanticModule):
         reward = 0.0
         reward_breakdown = {}
         for rw_type, rw_weight in self.extra_params.rewards.items():
+            if rw_weight == 0:
+                continue
             if rw_type == "style_sim":
                 conditions = self.infer_conditions(batch)
                 rw_type = "style_text_sim" if "style_text" in conditions else "mulan_sim"
@@ -936,6 +955,32 @@ class SemanticRLModule(SemanticModule):
             return chorus_presence_reward(
                 sampled_audio,
                 sample_rate=self.extra_params.sample_rate,
+                device=sampled_audio.device,
+            )
+        elif reward_type == "audio_metrics":
+            return audio_metrics_reward(
+                sampled_audio,
+                sample_rate=self.extra_params.sample_rate,
+                device=sampled_audio.device,
+            )
+        elif reward_type == "intensity_sim":
+            return intensity_sim_reward(
+                sampled_audio,
+                batch["intensity"],
+                calculation_mode=self.extra_params.intensity_calculation,
+                intensity_hz=self.extra_params.intensity_hz,
+                sample_rate=self.extra_params.sample_rate,
+                device=sampled_audio.device,
+            )
+        elif reward_type == "semantic_diversity":
+            return semantic_diversity_reward(
+                items["sampled_semantic_tokens"],
+                device=sampled_audio.device,
+            )
+        elif reward_type == "semantic_diversity_sim":
+            return semantic_diversity_sim_reward(
+                items["sampled_semantic_tokens"],
+                items["target_semantic_tokens"],
                 device=sampled_audio.device,
             )
         else:

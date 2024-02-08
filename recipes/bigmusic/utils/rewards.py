@@ -2,12 +2,16 @@ import numpy as np
 import math
 import torch
 import torch.nn.functional as F
-from recipes.bigmusic.datasets.transforms.structure import ChorusDetectionTransform
+from recipes.bigmusic.datasets.transforms.structure import (
+    ChorusDetectionTransform,
+    IntensityTransform,
+)
 from recipes.bigmusic.datasets.transforms.lyrics_segment import crop_pad_to_seq_length
 from recipes.bigmusic.utils.metrics_asr import (
     edit_distance,
     remove_punc_case,
 )
+from recipes.bigmusic.lightning.embedding_modules import get_bestrq_umm_tokens
 from recipes.musiclm.inference.utils import dump_wav
 from torchaudio.functional import loudness, resample
 
@@ -412,6 +416,9 @@ def get_audio_metrics_score(metrics):
 
 @torch.no_grad()
 def audio_metrics_reward(sampled_audio, sample_rate, device):
+    # TODO: support stereo input
+    if sampled_audio.dim() == 3:
+        sampled_audio = sampled_audio.squeeze(1)
     rewards = torch.zeros(sampled_audio.size(0)).to(device)
     sampled_audio = sampled_audio.float().cpu().numpy()
     for i in range(len(sampled_audio)):
@@ -421,3 +428,47 @@ def audio_metrics_reward(sampled_audio, sample_rate, device):
             continue
         rewards[i] = get_audio_metrics_score(metrics)
     return rewards
+
+
+@torch.no_grad()
+def intensity_sim_reward(
+    sampled_audio,
+    target_intensity,
+    sample_rate,
+    device,
+    calculation_mode="mean",
+    intensity_hz=1,
+):
+    _, beam = _infer_batch_beam(sampled_audio, target_intensity)
+    intensity_transform = IntensityTransform(
+        sample_rate=sample_rate,
+        calculation_mode=calculation_mode,
+        intensity_hz=intensity_hz,
+    )
+    hyp_intensity = [intensity_transform.get_intensity(audio) for audio in sampled_audio]
+
+    intensity_sim_rewards = torch.zeros(sampled_audio.size(0)).to(device)
+    for i, hyp in enumerate(hyp_intensity):
+        ref = target_intensity[i // beam]
+        intensity_sim_rewards[i] = 1 - (ref - hyp).abs().mean()
+    return intensity_sim_rewards
+
+
+@torch.no_grad()
+def semantic_diversity_reward(umm_tokens, device):
+    semantic_diversity_rewards = torch.zeros(umm_tokens.size(0)).to(device)
+    for i in range(len(umm_tokens)):
+        semantic_diversity_rewards[i] = float(len(umm_tokens[i].unique())) / umm_tokens.shape[-1]
+    return semantic_diversity_rewards
+
+
+@torch.no_grad()
+def semantic_diversity_sim_reward(hyp_umm_tokens, ref_umm_tokens, device):
+    _, beam = _infer_batch_beam(hyp_umm_tokens, ref_umm_tokens)
+    semantic_diversity_sim_rewards = torch.zeros(hyp_umm_tokens.size(0)).to(device)
+    for i, hyp in enumerate(hyp_umm_tokens):
+        ref = ref_umm_tokens[i // beam]
+        hyp_diversity = float(len(hyp.unique())) / hyp.shape[-1]
+        ref_diversity = float(len(ref.unique())) / ref.shape[-1]
+        semantic_diversity_sim_rewards[i] = 1 - abs(hyp_diversity - ref_diversity)
+    return semantic_diversity_sim_rewards
