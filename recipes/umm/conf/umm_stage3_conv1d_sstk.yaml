@@ -137,8 +137,8 @@ pl_module: !new:recipes.umm.modules.lit_module.Stage3Conv1D
     extra_params: !ref <extra_params>
     required_modules:
         pretrained:
-            # @hanoihantrakul: 2/8/2024 Message for Duc Le - remember to update this with the desired Stage2Conv1D ckpt! This was latest one when the MR was chcecked in.
-            ckpt_path: "hdfs:///home/byte_speech_sv/hanoi.hantrakul/logs/umm_conv_sstk/umm_stage2_conv1d_sstk_no_ctc_794/checkpoints/step=0060000.ckpt"
+            # @hanoihantrakul: 2/9/2024 This is the newest model for Stage2Conv1D SSTK. Steady state mel_loss at ~0.0467, which is comparable with original UMMv1 Conformer Stage2 with ~0.0486
+            ckpt_path: "hdfs:///home/byte_speech_sv/hanoi.hantrakul/logs/umm_conv_sstk/umm_stage2_conv1d_sstk_no_ctc_794/checkpoints/step=0130000.ckpt"
             init_fn: !name:recipes.umm.requires.model_initializer.init_pretrained
             cache_dir: !ref <run_opts[cache_dir]>
 
