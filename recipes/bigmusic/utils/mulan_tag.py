@@ -1,4 +1,7 @@
 from recipes.bigmusic.utils.format_utils import rewrite_metadata
+from recipes.bigmusic.datasets.mir_data_util import chinese_genre1_vocab, chinese_mood_vocab, gender_vocab
+from recipes.bigmusic.datasets.transforms.lyrics_segment import crop_pad_to_seq_length, random_crop_pad_to_seq_length
+import torch
 
 text_pool_1_toplevel = [
     'Blues',
@@ -26,7 +29,6 @@ text_pool_1_toplevel = [
     'World Music',
     'Trap Rap'
 ]
-
 
 text_pool_2 = [
     'Angry',
@@ -142,9 +144,16 @@ class MulanTagger:
         self._tag2embed = None
         self.mulan_tag_type = mulan_tag_type
         self.none_label = NONE_LABEL
-        self._all_tags = None
 
-        if mulan_tag_type == "mulan_genres":
+        if mulan_tag_type == "cn_mir":
+            self._tag2text_pool = {
+                "genre": chinese_genre1_vocab,
+                "mood": chinese_mood_vocab,
+                "scene": [NONE_LABEL],
+                "gender": gender_vocab,
+                "lang": ["普通话"]
+            }
+        elif mulan_tag_type == "mulan_genres":
             self._tag2text_pool = {
                 "genre": text_pool_1_toplevel, 
                 "mood": text_pool_2, 
@@ -212,7 +221,7 @@ class MulanTagger:
         metadata = { "final_genre": genre, "final_mood": mood, "merge_aed": gender }
         return rewrite_metadata(metadata)
 
-    def get_tags(self, requires, audio_embeds):
+    def get_tags(self, requires, audio_embeds):        
         all_tag_embeds = self.get_tag_embeds(requires)
 
         item_metadata = [{} for _ in range(audio_embeds.shape[0])]
@@ -223,3 +232,23 @@ class MulanTagger:
             for item_idx, score in enumerate(scores):
                 item_metadata[item_idx][tag_label] = category_labels[score]
         return item_metadata
+
+    def get_tags_from_audio(self, requires, input_audio, min_audio_length=10*24000):
+        input_audio = random_crop_pad_to_seq_length(input_audio, min_audio_length)
+        input_audio = input_audio.squeeze(1)
+        audio_embeds = requires["mulan_infer_fn"](
+            model=requires["mulan"],
+            music=input_audio,
+            device=input_audio.device,
+            avg=True,
+        )
+        return self.get_tags(requires, audio_embeds)
+
+def init_mulan_tagger(hpath, local_rank, cache_dir=None, mulan_tag_type="mulan_genres"):
+    mulan_tagger = MulanTagger(mulan_tag_type=mulan_tag_type)
+    return { "mulan_tagger": mulan_tagger }
+
+def get_mulan_tags(requires, audio):
+    m1_tagger: MulanTagger = requires["mulan_tagger"]
+    preds = m1_tagger.get_tags_from_audio(requires, audio)
+    return preds

@@ -51,9 +51,107 @@ ARTIST_ID_MAP = {
     "6qzfo7jiO4OrhxrvPFPlWX": 66,
 }
 
+ARTIST_ID_MAP_V2 = {
+    # Zh droput
+    "zh_empty": 0,
+    # Zh Artist 16
+    "6681166129722824706": 1,  # 周杰伦 280	 
+    "6808079824435808257": 2,  # 陶喆	157	 
+    "6857838729394915329": 3,  # 五月天	199	 
+    "6805087443797149697": 4,  # 林俊杰	280	 
+    "6816638586171951106": 5,  # 刘德华	728	 
+    "6818415107001812994": 6,  # 张学友	571	 
+    "6815161293339641858": 7,  # 苏打绿	139	 
+    "6841752286910220289": 8,  # 孙燕姿	180	 
+    "6815165111875930113": 9,  # 邓丽君	1007	 
+    "6807327071803541505": 10, # 莫文蔚	312	 
+    "6807661018613811201": 11, # 王心凌	183	 
+    "6754918579642042369": 12, # 蔡依林	250	 
+    "6818114466299774978": 13, # 颜人中	68	 
+    "6805758982225922049": 14, # 余佳运	73	 
+    "6797991849819637762": 15, # 华晨宇	123	 
+    "6854432959231952897": 16, # Jony J	71	 
+    "6774291469118212098": 17, # VaVa毛衍七	119	 
+    "6799901283898624002": 18, # 周深	261	 
+    "6761698620967225345": 19, # G.E.M. 邓紫棋	157	 
+    "6939351367434405889": 20, # 队长	63	 
+    "6911572607473027074": 21, # 王忻辰	66	 
+    "6815146974182934529": 22, # 方大同	187	 
+    "6803170060908103682": 23, # Lil Ghost小鬼	56	 
+    "6816676362728769538": 24, # 杨宗纬	118	 
+    "6843221283203713026": 25, # 林宥嘉	164	 
+    "6817686547018549250": 26, # 李荣浩	125	 
+    "6782878109353019393": 27, # 张韶涵	189	 
+    "6810215791951087618": 28, # 蔡健雅	209	 
+    "6795468680730773505": 29, # 王以太	86	 
+    "6817693369125308417": 30, # S.H.E	171	 
+    "6910084011582834689": 31, # 单依纯	84	 
+    "6792011207390791682": 32, # Eric周兴哲	81	 
+    "6818419502233962497": 33, # 音阙诗听	205	 
+    "6815151518128293889": 34, # 李健	125	 
+    "6776144869279664130": 35, # 陈粒	142	 
+    "6817645899284482049": 36, # 毛不易	129	 
+    "6795061528409147393": 37, # 汪苏泷	239 
+    # En dropout
+    "en_empty": 0,
+}
+
+chinese_mir_genre_tag_map = {
+    # genre
+    "Rock":                                 "摇滚",
+    "Metal":                                "金属",
+    "Childhood":                            "儿童音乐",
+    "Devotional":                           "宗教",
+    "Pop, Pop Folk":                        "流行民谣",
+    "Pop, Taiwanese Pop":                   "闽南语流行",
+    "Tuhai, DJ":                            "DJ慢摇/土味remix",
+    "Hip Hop, Trap Rap":                    "陷阱说唱",
+    "Jazz, Jazz Pop":                       "流行爵士",
+    "Hip Hop, R&B Rap":                     "旋律性说唱",
+    "Classical, Funk":                      "放克音乐",
+    "Chinese Style, China-Wave":            "中国风流行音乐",
+    "Pop, Cantopop":                        "粤语流行",
+    "Pop, Contemporary Pop":                "怀旧流行",
+    "Tuhai, MC":                            "喊麦",
+    "Chinese Tradition, Traditional Chinese Folk": "传统民歌",
+    "Chinese Style, GuFeng Music":          "古风音乐",
+    "Chinese Style, Chinoiserie Rap":       "国风嘻哈",
+    "Chinese Tradition, Chinese Opera":     "中国戏曲",
+    "Classical, R&B/Soul":                  "节奏蓝调/灵魂",
+    "Tuhai, VinaHouse":                     "越南鼓",
+    "Hip Hop, Old School":                  "老派说唱",
+    "Chinese Style, Chinoiserie Electronic":   "国风电子",
+    "Pop, Chinese Pop":                     "国语流行",
+    # mood    
+    "Nostalgic/Memory":         "怀旧的/记忆",
+    "Sorrow/Sad":               "悲伤",
+    "Happy":                    "开心/快乐",
+    "Miss":                     "想念",
+    "Healing":                  "治疗",
+    "Groovy/Funky":             "律动",
+    "Dynamic/Energetic":        "动态的/精力充沛的",
+    "Cute/Playful":             "可爱/调皮",
+    "Shocking/magnificent/epic": "震撼/壮丽",
+    "Romantic":                 "浪漫",
+    "Inspirational/Hopeful":    "鼓舞人心的/希望的",
+    "Calm/Relaxing":            "平静",
+    "Excited":                  "兴奋",
+    "Dreamy/Ethereal":          "梦幻/超凡脱俗的", 
+    # scene    
+    # gender
+    "female":                   "女声",
+    'female,chorus':            "女声",
+    "male":                     "男声",
+    'male,chorus':              "男声",
+    "chorus":                   "男声",
+    # lang
+    "Mandarin":                 "普通话", 
+    "Cantonese":                "粤语", 
+    "Hokkien":                  "闽南话",
+}
 chinese_genre1_vocab = [
     "流行",     # use genre2
-    "嘻哈",     # use genre2
+    "说唱",     # use genre2。"嘻哈"
     "下沉土嗨",  # use genre2
     "国风音乐",  # use genre2
     "摇滚",     # use genre2
@@ -155,13 +253,13 @@ chinese_scene_vocab = [
     "Birthday",
 ]
 
-gender_vocab = ["Male", "Female"]
+gender_vocab = ["男声", "女声"]
 
 lang_vocab = ["普通话", "粤语", "闽南话"]
  
 NONE_LABEL = 'None'
 
-def get_mir_vocab(lang='Zh'):
+def get_mir_vocab(vocab_type='Zh'):
     all_values = []
     all_values.append(NONE_LABEL)
     for categories in [
@@ -172,3 +270,21 @@ def get_mir_vocab(lang='Zh'):
     id2vocab = { idx: value for idx, value in enumerate(all_values) }
     vocab2id = { value: idx for idx, value in enumerate(all_values) }
     return id2vocab, vocab2id
+
+def convert_m1_tag_to_style_text(m1_tags_list):    
+    style_texts = []
+    for m1_tags in m1_tags_list: 
+        genre = chinese_mir_genre_tag_map.get(m1_tags.get("genre", ""), "")
+        mood = chinese_mir_genre_tag_map.get(m1_tags.get("mood", ""), "")
+        scene = m1_tags.get("scene", "")
+        gender = chinese_mir_genre_tag_map.get(m1_tags.get("vocal_gender", ""), "")
+        lang = m1_tags.get("lang", "")
+        if not lang:
+            lang = "普通话"
+            if genre == "闽南语流行":
+                lang = "闽南话"
+            if genre == "粤语流行":
+                lang = "粤语"            
+        style_text = "|".join([genre, mood, scene, gender, lang])
+        style_texts.append(style_text)
+    return style_texts

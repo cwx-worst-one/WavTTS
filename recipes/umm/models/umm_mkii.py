@@ -2040,6 +2040,17 @@ class Stage3(Stage2):
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
+    def wav2token_alloutputs(self, wav, mel: Optional[torch.Tensor] = None):
+        wav = self._prepare_wav(wav)
+        feature = self.preprocessing(wav)["mel"]
+        audio_feature = self.audio_encoder(feature)
+        hidden_states = self.encoder_input_dropout(audio_feature)
+        position_embeddings = self.embed_positions(hidden_states)
+        result = self._get_vq_ids(hidden_states, position_embeddings)
+        return result
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
     def wav2audio_embed(self, wav):
         """Convert audio file to mel spectrogram embeddings."""
         wav = self._prepare_wav(wav)

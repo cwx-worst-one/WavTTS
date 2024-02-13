@@ -1,17 +1,26 @@
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, Dict
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchmetrics
+import numpy as np
+from pathlib import Path
 
 from recipes.datasets.mir.music_sft import MusicSFTDataResult
 from recipes.datasets.mir.taxonomies.music_sft_en import MusicSFTTokenizerEN
+from recipes.datasets.mir.taxonomies.music_sft_zh import MusicSFTTokenizerZH
 from recipes.mi1.models.tagging import MI1_MusicTaggingConfig, MI1_MusicTaggingResult
 from recipes.mi1.models.tokenizers import UMMTokenizer
 from samantha.models.base import DefaultTrainingBaseModule, LossDict
+from samantha.utils.hdfs_tools import hdfs_get
+from recipes.mi1.models.tagging import MI1_MusicTaggingResult
+from recipes.musiclm.utils.dist import local_zero_first
+import logging
+
+logger = logging.getLogger()
 
 
 @dataclass
@@ -282,3 +291,94 @@ class MI1_MusicClassificationMusicSFT(DefaultTrainingBaseModule):
             tag_names=tag_names,
             tag_probabilities=tag_probs,
         )
+
+class M1Tagger(nn.Module):
+
+    def __init__(self, load_tokenizer=False, confidence_threshold=0, cache_dir='.m1_cache', tokenizer="En"):
+        super().__init__()
+
+        self.confidence_threshold = confidence_threshold
+        logger.info("Initialising M1 models")
+        if tokenizer == "Zh":
+            with local_zero_first():
+                cache_dir = Path(cache_dir)/'zh'
+                cache_dir.mkdir(exist_ok=True, parents=True)
+                hdfs_get("hdfs://haruna/home/byte_speech_sv/janne.spijkervet/js/models/m1/m1_music_sft_genre_1_v0_umm_lr5.0e-5_precision32_2layer_mcc30k_ummcn_zh_step=0030000.ckpt", str(cache_dir/'m1_genre.ckpt'))
+                hdfs_get("hdfs://haruna/home/byte_speech_sv/janne.spijkervet/js/models/m1/m1_music_sft_mood_v0_umm_lr5.0e-5_precision32_2layer_mcc30k_ummcn_zh_step=0030000.ckpt", str(cache_dir/'m1_mood.ckpt'))
+                hdfs_get("hdfs://haruna/home/byte_speech_sv/janne.spijkervet/js/models/m1/m1_music_sft_scene_v0_umm_lr5.0e-5_precision32_2layer_mcc30k_ummcn_zh_step=0030000.ckpt", str(cache_dir/'m1_scene.ckpt'))
+                hdfs_get("hdfs://haruna/home/byte_speech_sv/janne.spijkervet/js/models/m1/m1_music_sft_vocal_gender_v0_umm_lr5.0e-5_precision32_1layer_mcc30k_ummcn_step=0030000.ckpt", str(cache_dir/'m1_vocal_gender.ckpt'))
+        elif tokenizer == "En":
+            with local_zero_first():
+                cache_dir = Path(cache_dir)/'en'
+                cache_dir.mkdir(exist_ok=True, parents=True)
+                hdfs_get("hdfs://haruna/home/byte_speech_sv/janne.spijkervet/js/models/m1/m1_music_sft_v0_umm_lr5.0e-5_precision32_1layer_mcc30k_genre_zh_step=0030000.ckpt", str(cache_dir/'m1_genre.ckpt'))
+                hdfs_get("hdfs://haruna/home/byte_speech_sv/janne.spijkervet/js/models/m1/m1_music_sft_v0_umm_lr5.0e-5_precision32_1layer_mood_zh_step=0030000.ckpt", str(cache_dir/'m1_mood.ckpt'))
+                hdfs_get("hdfs://haruna/home/byte_speech_sv/janne.spijkervet/js/models/m1/m1_music_sft_v0_umm_lr5.0e-5_precision32_1layer_scene_zh_step=0030000.ckpt", str(cache_dir/'m1_scene.ckpt'))
+                hdfs_get("hdfs://haruna/home/byte_speech_sv/janne.spijkervet/js/models/m1/m1_music_sft_vocal_v0_umm_1layer_classification_vocalgender_step=0030000.ckpt", str(cache_dir/'m1_vocal_gender.ckpt'))
+        else:
+            raise ValueError(f"Unknown audio tokenizer: {tokenizer}")
+
+        self.models = nn.ModuleDict({
+            "genre": MI1_MusicClassificationMusicSFT.load_from_checkpoint(cache_dir/"m1_genre.ckpt"),
+            "mood": MI1_MusicClassificationMusicSFT.load_from_checkpoint(cache_dir/"m1_mood.ckpt"),
+            "scene": MI1_MusicClassificationMusicSFT.load_from_checkpoint(cache_dir/"m1_scene.ckpt"),
+            "vocal_gender": MI1_MusicClassificationMusicSFT.load_from_checkpoint(cache_dir/"m1_vocal_gender.ckpt"),
+        })
+
+        self.load_tokenizer = load_tokenizer
+        # TODO (janne) Check if MIR's tokenizer ckpt is different from the one used in AR, load audio tokenizer with no_grad to recompute hidden_states
+        # TODO (janne) If same tokenizer, do not create self.audio_tokenizer
+        logger.info("Initialising M1-UMM model")
+
+        if self.load_tokenizer:
+            if tokenizer == "Zh":
+                # self.audio_tokenizer = UMMTokenizerCN().eval()
+                raise ValueError(f"Unknown audio tokenizer: {tokenizer}")
+            elif tokenizer == "En":
+                self.audio_tokenizer = UMMTokenizer().eval()
+            else:
+                raise ValueError(f"Unknown audio tokenizer: {tokenizer}")
+            self.audio_tokenizer.freeze()
+                
+        logger.info(f"M1 model vocabularies:")
+        for k in self.models:
+            logger.info(f"{k}: {self.models[k].tag_tokenizer.vocab}")
+
+        logger.info("Completed M1 model initialisation")
+
+    @torch.no_grad()
+    def get_predictions(self, hidden_states, audio: Optional[torch.Tensor] = None) -> Dict[str, MI1_MusicTaggingResult]:
+        results = {}
+
+        if self.load_tokenizer:
+            audio = audio.to(self.audio_tokenizer.device)
+            audio = audio.squeeze(dim=1)
+            hidden_states = self.audio_tokenizer(audio).hidden_states
+
+        for tag_key in self.models:
+            results[tag_key] = self.models[tag_key].predict_tags(hidden_states)
+        return results
+
+def init_m1_tagger(hpath, local_rank, cache_dir, tokenizer='En', **kwargs):
+    device = torch.device(f"cuda:{local_rank}")
+    m1_tagger = M1Tagger(hpath, cache_dir=cache_dir, tokenizer=tokenizer, **kwargs).eval().to(device)
+    return { "m1_tagger": m1_tagger }
+
+def get_m1_tags(requires, hidden_states, audio: Optional[torch.Tensor]):
+    m1_tagger: M1Tagger = requires["m1_tagger"]
+    preds = m1_tagger.get_predictions(hidden_states, audio)
+    # postprocess predictions
+    batch_size = audio.shape[0]
+    m1_tags = [{} for i in range(batch_size)]
+    for tag_key in preds:            
+        result = preds[tag_key]
+        candidate_tag_names = np.array(result.tag_names)
+        tag_name_probs = result.tag_probabilities[torch.arange(result.tag_probabilities.size(0)).unsqueeze(0), result.tag_ids].squeeze()
+        tag_name_probs = tag_name_probs.cpu()
+        for i in range(len(candidate_tag_names)):
+            if tag_name_probs[i] > m1_tagger.confidence_threshold:
+                tag = candidate_tag_names[i]
+            else:
+                tag = ""
+            m1_tags[i][tag_key] = tag
+    return m1_tags

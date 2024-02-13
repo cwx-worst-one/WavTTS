@@ -5,15 +5,15 @@ from recipes.bigmusic.lightning.embedding_modules import (
     TagCategoricalEmbedder,
     WavToVecTokenEmbedder,
     MetadataT5TokenEmbedder,
-    BestRQTokenEmbedder, 
-    MulanTagCategoricalEmbedder,
-    MulanTagEmbedder,
+    BestRQTokenEmbedder,
     DurationEmbedder,
     StructureEmbedder,
     IntensityEmbedder,
-    M1TagEmbedder,
+    SpeakerEmbedder
 )
+from recipes.bigmusic.datasets.mir_data_util import convert_m1_tag_to_style_text
 from recipes.bigmusic.utils.metrics_asr import asr_transcribe_lyrics
+from recipes.bigmusic.utils.mulan_tag import get_mulan_tags
 from recipes.bigmusic.utils.rewards import (
     mulan_audio_reward,
     mulan_text_reward,
@@ -30,6 +30,7 @@ from recipes.bigmusic.utils.rewards import (
     semantic_diversity_sim_reward,
 )
 import numpy as np
+import random
 import torch
 from tqdm.auto import tqdm
 import torch.nn as nn
@@ -42,12 +43,7 @@ from recipes.musiclm.transforms.audio import to_energy
 from collections import defaultdict
 from itertools import zip_longest
 from typing import Optional
-
-# from recipes.umm.models.bestrq import BestRQMelCTC
-from recipes.umm.modules.lit_module import (
-    BestRQMelCTC,
-    Stage3,
-)
+from recipes.mi1.models.music_sft import get_m1_tags
 
 from recipes.audio_quality_classifier.models.audio_quality_model.utils import aq_classifier_inference
 
@@ -67,48 +63,42 @@ class SemanticModule(BaseContinuousEmbedModule):
     ):
         hidden_size = extra_params['hidden_size']
         semantic_codebook_size = extra_params['semantic_codebook_size']
-        lyrics_vocab_size = extra_params.get('lyrics_codebook_size', 0)        
-        tag_embed_dim = extra_params.get('tag_embed_dim', 0)
+        lyrics_vocab_size = extra_params.get('lyrics_codebook_size', 2000)
+        speaker_vocab_size = extra_params.get('speaker_codebook_size', 10)
+        tag_embed_dim = extra_params.get('tag_embed_dim', 128)
         tag_taxonomy_lang = extra_params.get('tag_taxonomy_lang', 'Zh')
         tag_dropout_rate = extra_params.get('tag_dropout_rate', 0)
-        mulan_embed_dim = extra_params.get('mulan_embed_dim', 0)
-        mulan_OTF_tag_type = extra_params.get('mulan_tag_type', 'mulan_genres')
+        mulan_embed_dim = extra_params.get('mulan_embed_dim', 512)
         mulan_crop = extra_params.get('mulan_crop', True)
         mulan_average = extra_params.get('mulan_average', True)
-        use_mcc_gender = extra_params.get("use_mcc_gender", False)
+
+        self.prepare_input_types = extra_params.get("prepare_input_types", []) # m1_tagger, mulan_tagger
         embedder_dict = {}
+
         for emb_type in extra_params.get("input_embedders", ["mulan", "lyrics_tokens"]):
-            if emb_type == "m1_tag":
-                embedder_dict[emb_type] = M1TagEmbedder(
-                    topk=5, # TODO make hyperparam?
-                    embedding_dim=hidden_size,
-                    add_sos=True,
-                )
-            elif emb_type == "mulan":                
-                embedder_dict[emb_type] = MulanTagEmbedder(
+            if emb_type == "mulan":
+                # Support either Mulan audio or text embedding of style_text / on the fly tag
+                embedder_dict[emb_type] = MulanEmbedder(
                     input_dim=mulan_embed_dim,
                     embedding_dim=hidden_size,
                     add_sos=True,
-                    mulan_tag_type=mulan_OTF_tag_type,
                     mulan_crop=mulan_crop,
                     mulan_average=mulan_average,
                 )
-            elif emb_type == "mulan_categorical":
-                embedder_dict[emb_type] = MulanTagCategoricalEmbedder(
-                    input_dim=mulan_embed_dim,
-                    embedding_dim=hidden_size,
-                    add_sos=True,
-                    mulan_tag_type=mulan_OTF_tag_type,
-                    dropout=tag_dropout_rate,
-                    use_mcc_gender=use_mcc_gender,
-                )
             elif emb_type == "tag_categorical":
+                # Read ground truth tags from style_text
                 embedder_dict[emb_type] = TagCategoricalEmbedder(
                     input_dim=tag_embed_dim,
                     embedding_dim=hidden_size,
-                    add_sos=True,                    
-                    lang=tag_taxonomy_lang,
+                    add_sos=True,
+                    dropout=tag_dropout_rate,
+                    vocab_type=tag_taxonomy_lang,
                 )
+            elif emb_type == "speaker_id":
+                embedder_dict['speaker_id'] = SpeakerEmbedder(
+                    vocab_size=speaker_vocab_size, 
+                    embedding_dim=hidden_size, 
+                    add_sos=True)
             elif emb_type == "lyrics_tokens":
                 embedder_dict[emb_type] = LyricsTokenEmbedder(
                     vocab_size=lyrics_vocab_size,
@@ -152,7 +142,7 @@ class SemanticModule(BaseContinuousEmbedModule):
             chunk_size = extra_params.get("semantic_chunk_size", None)
             if chunk_size is not None:
                 chunk_size = extra_params["sample_rate"] * chunk_size
-            store_hidden_states = "m1_tag" in embedder_dict
+            store_hidden_states = "m1_tags" in self.prepare_input_types
             target_embedder = BestRQTokenEmbedder(
                 vocab_size=semantic_codebook_size,
                 embedding_dim=hidden_size,
@@ -207,19 +197,6 @@ class SemanticModule(BaseContinuousEmbedModule):
             target_duration = None
         return target_duration
 
-    def prepare_m1_tag_inputs(self, batch, m1_tag_embedder):
-        # TODO: handle prediction case. Use target embdder to extract info from style_audio
-        assert isinstance(self.target_embedder, BestRQTokenEmbedder) and self.target_embedder.last_hidden_state is not None, "M1 requires target_embedder to save last_hidden_state to predict categories"
-        target_hidden_states = self.target_embedder.last_hidden_state
-        self.target_embedder.last_hidden_state = None
-        embeds = m1_tag_embedder.embed(
-            self.requires,
-            target_hidden_states,
-            with_sos=True,
-        )
-        return embeds
-
-
     def prepare_mulan_inputs(self, batch, mulan_embedder):
         batch_size = self.infer_batch_size(batch)
         conditions = self.infer_conditions(batch)
@@ -230,8 +207,7 @@ class SemanticModule(BaseContinuousEmbedModule):
                 self.requires,
                 batch['style_text'],
                 with_sos=True,
-                data_type='text',
-                target_samples_length=target_samples_length,
+                data_type='text',                
             )
         elif 'style_audio' in conditions:
             embeds = mulan_embedder.embed(
@@ -296,6 +272,29 @@ class SemanticModule(BaseContinuousEmbedModule):
         embeds = structure_embedder.embed(structure_labels, target_duration)
         return embeds
     
+    def prepare_categorical_inputs(self, batch, categorical_embedder):
+        assert 'style_category' in batch
+        embeds = categorical_embedder.embed(
+            self.requires,
+            batch['style_category'],
+            with_sos=True,
+        )
+        return embeds
+
+    def prepare_speaker_inputs(self, batch, speaker_embedder):
+        batch_size = self.infer_batch_size(batch)
+        conditions = self.infer_conditions(batch)        
+        if 'speaker_id' in conditions and 'speaker_id' in batch:
+            if batch['speaker_id'].dim() == 1:
+                batch['speaker_id'] = batch['speaker_id'].unsqueeze(1)
+            embeds = speaker_embedder.embed(
+                self.requires, 
+                batch['speaker_id'].to(self.device), 
+                with_sos=True)
+        else:
+            embeds = speaker_embedder.get_sos_embed(batch_size)
+        return embeds
+
     def prepare_acc_audio_inputs(self, batch, acc_embedder: BestRQTokenEmbedder):
         conditions = self.infer_conditions(batch)
         batch_size = self.infer_batch_size(batch)
@@ -321,23 +320,42 @@ class SemanticModule(BaseContinuousEmbedModule):
         target_duration = self.infer_target_duration(batch)
         embeds = intensity_embedder.embed(intensity_labels, target_duration)
         return embeds
+    
+    def prepare_batch_inputs(self, batch):
+        """For extra batch preparation that requires GPU"""
+        if "m1_tagger" in self.prepare_input_types:
+            assert isinstance(self.target_embedder, BestRQTokenEmbedder), "m1 requires target_hidden_states to predict categories"
+            assert self.target_embedder.hidden_states is not None, "m1 requires target_hidden_states to predict categories"
+            assert 'target_audio' in batch, "m1 requires target_audio to predict categories"
+            target_audio = batch["target_audio"]
+            target_hidden_states = self.target_embedder.hidden_states
+            m1_tags = get_m1_tags(self.requires, target_hidden_states, target_audio)
+            batch["style_category"] = convert_m1_tag_to_style_text(m1_tags)
 
-    def prepare_inputs_embeddings(self, batch):
-        return self._prepare_inputs_embeddings(batch, self.input_embedders.items())
+        if "mulan_tagger" in self.prepare_input_types:
+            mulan_tags = get_mulan_tags(self.requires, batch["target_audio"])
+            batch["style_category"] = mulan_tags
+        return batch
 
-    def _prepare_inputs_embeddings(self, batch, input_embedders):
+    def prepare_inputs_embeddings(self, batch, embedder_map=None):
+        if embedder_map is None:
+            embedder_map = self.input_embedders.items()
         if self.log_counter < 1:
             print(batch)
             self.log_counter += 1
 
+        batch = self.prepare_batch_inputs(batch)
+
         inputs_embeds = []
-        for emb_type, embedder in input_embedders:
+        for emb_type, embedder in embedder_map:
             if (emb_type == "mulan") or (emb_type == "mulan_categorical"):
                 emb_inputs = self.prepare_mulan_inputs(batch, embedder)
-            elif emb_type == "m1_tag":
-                emb_inputs = self.prepare_m1_tag_inputs(batch, embedder)
+            elif emb_type == "tag_categorical":            
+                emb_inputs = self.prepare_categorical_inputs(batch, embedder)
             elif emb_type == "lyrics_tokens":
                 emb_inputs = self.prepare_lyrics_inputs(batch, embedder)
+            elif emb_type == "speaker_id":
+                emb_inputs = self.prepare_speaker_inputs(batch, embedder)
             elif emb_type == "duration":
                 emb_inputs = self.prepare_duration_inputs(batch, embedder)
             elif emb_type == "structure":
@@ -350,8 +368,7 @@ class SemanticModule(BaseContinuousEmbedModule):
                 emb_inputs = self.prepare_intensity_inputs(batch, embedder)
             else:
                 raise ValueError(f"Unknown emb type: {emb_type}")
-            inputs_embeds.append(emb_inputs)
-
+            inputs_embeds.append(emb_inputs)        
         return torch.cat(inputs_embeds, dim=1)
 
     def aux_loss(self, batch, logits, last_hidden_state, target_length):
@@ -439,7 +456,7 @@ class SemanticModule(BaseContinuousEmbedModule):
             input_embedders[-1][0] == "intensity"
         ), f"intensity must be the last input embedder, got {input_embedders[-1][0]}"
 
-        inputs_embeds = self._prepare_inputs_embeddings(batch, input_embedders[:-1])
+        inputs_embeds = self.prepare_inputs_embeddings(batch, input_embedders[:-1])
         batch_size, seq_len, _ = inputs_embeds.size()
         model_input = {"inputs_embeds": inputs_embeds}
 

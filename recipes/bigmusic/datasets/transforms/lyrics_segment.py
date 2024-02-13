@@ -376,7 +376,6 @@ def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
                 elif clipped_segment.duration <= max_duration and clipped_segment.duration >= min_duration:
                     segments.append(clipped_segment)
 
-
             # reset everything
             segment = None
             continue

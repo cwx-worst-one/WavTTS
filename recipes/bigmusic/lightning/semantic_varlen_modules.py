@@ -5,7 +5,7 @@ from recipes.bigmusic.lightning.embedding_modules import (
     LyricsTokenEmbedder,
     WavToVecTokenEmbedder,
     BestRQTokenEmbedder,
-    MulanTagEmbedder,
+    MulanEmbedder,
     DurationEmbedder,
     StructureEmbedder,
 )
@@ -36,15 +36,13 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
         lyrics_vocab_size = extra_params['lyrics_codebook_size']
         mulan_embed_dim = extra_params['mulan_embed_dim']
         semantic_codebook_size = extra_params['semantic_codebook_size']
-        mulan_OTF_tag_type = extra_params.get('mulan_tag_type', 'mulan_genres')
         embedder_dict = {}
         for emb_type in extra_params.get("input_embedders", ["mulan", "lyrics_tokens"]):
             if emb_type == "mulan":
-                embedder_dict[emb_type] = MulanTagEmbedder(
+                embedder_dict[emb_type] = MulanEmbedder(
                     input_dim=mulan_embed_dim,
                     embedding_dim=hidden_size,
                     add_sos=True,
-                    mulan_tag_type=mulan_OTF_tag_type,
                 )
             elif emb_type == "lyrics_tokens":
                 embedder_dict[emb_type] = LyricsTokenEmbedder(

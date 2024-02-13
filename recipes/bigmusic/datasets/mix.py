@@ -26,14 +26,11 @@ from recipes.bigmusic.datasets.index_lists import INDEX as BM_INDEX
 from recipes.bigmusic.datasets.lyrics import DefaultDatasets, transform_dataset
 from recipes.bigmusic.datasets.tokenizers.phoneme import MAX_PHONE_LEN
 from recipes.bigmusic.datasets.transforms.lyrics import LyricsTokenTransform, rewrite_metadata, rewrite_playlist_labels
-from recipes.bigmusic.datasets.mir_data_util import ARTIST_ID_MAP
+from recipes.bigmusic.datasets.mir_data_util import ARTIST_ID_MAP, ARTIST_ID_MAP_V2
 
 from recipes.bigmusic.utils.format_utils import normalize_text
 from recipes.datasets.mcc.mix import (
     INDEX,
-    LibriTTSDataset,
-    MCCInstrumentalDataset,
-    MCCVocalDataset,
     WebDatasetBufferPreprocessor,
     BaseTransforms,
     DataModule
@@ -73,40 +70,14 @@ def pad_crop(sequence, seq_len, dtype, padding_value=0):
     item_pad_idx[:len(sequence)] = torch.ones_like(torch.as_tensor(sequence[:seq_len]), dtype=int)
     return item_pad, item_pad_idx
 
-def ffmpeg_read_audio(audio_bin, sample_rate=24000):
-    seg_bin, err = ffmpeg.input("pipe:").output("pipe:", loglevel="error", format="s16le", ar=sample_rate).run(input=audio_bin, quiet=True)
-    return (np.frombuffer(seg_bin, dtype="int16") / 32768.0).astype(np.float32)
-
-def select_tag_metadata_from_timestamps(index_data, start: int, end: int) -> Dict[str, List[str]]:
-    mir_tags = index_data.get("tags")
-    genres = []
-    instruments = []
-    vocals = []
-    
-    if len(mir_tags["starts"]):
-        def closest_time(times, t):
-            difference = lambda times: abs(times - t)
-            return min(times, key=difference)
-
-        mir_start = closest_time(mir_tags["starts"], start)
-        mir_end = closest_time(mir_tags["ends"], end)
-        mir_start_idx = mir_tags["starts"].index(mir_start)
-        mir_end_idx = mir_tags["ends"].index(mir_end)
-
-        for idx in range(mir_start_idx, mir_end_idx + 1):
-            genres.extend(mir_tags["genre"][idx])
-            instruments.extend(mir_tags["instrument"][idx])
-            vocals.extend(mir_tags["vocal"][idx])
-    return dict(genres=genres, instruments=instruments, vocals=vocals)
-
 def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens") -> Dict[str, torch.Tensor]:
-    # TODO: (QQ) make these constants configurable.    
+    # collate_fn batches the examples based on the target_audio length.
     PHONE_PAD_ID = 0     
     max_phone_len = int(batch[0].get("max_phone_len", MAX_PHONE_LEN))
     max_length = max([x["target_audio"].shape[-1] for x in batch])
     random_pad = Pad(n_samples=max_length)
     default_lyrics_token = torch.full((max_phone_len,), PHONE_PAD_ID, dtype=torch.int)    
-    default_speaker_id = ARTIST_ID_MAP['en_empty']
+    default_speaker_id = ARTIST_ID_MAP_V2['zh_empty']
     target_audio = []   
     style_text = []    
     normalized_text = []
@@ -177,7 +148,11 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
     return batch
 
 
-def format_structure_tags(structure_tags):
+def format_music_structure_tags(structure_tags):
+    # This function converts the music_structure field in metadata into the format of [{'tag': tag, 'start_time': sec, 'end_time': sec}]
+    # The music_structure are extracted from ground truth lyrics.
+    if not structure_tags:
+        return None
     reformated_structure_tags = []
     for structure_tag in structure_tags:
         tag_text = structure_tag['tag'].lower()
@@ -193,9 +168,21 @@ def format_structure_tags(structure_tags):
     return reformated_structure_tags
 
 
-def format_utterances(utterances, time_in_sec=False, include_intro=False, min_confidence=0.2):
-    new_utterances = []
-    # Extracts necessary information: start_time_in_sec, end_time_in_sec, lyrics, phonemes.
+def format_deepchorus_structure_tags(deepchorus_tags):
+    # This function converts the deepchorus field in metadata into the format of [{'tag': tag, 'start_time': sec, 'end_time': sec}]
+    # The deepchorus tags are inferred based on the audio.
+    structure_tags = []
+    for segment in deepchorus_tags['segments']:
+        structure_tag = {"tag": segment["label"]}
+        structure_tag['start_time'] = segment["interval"][0]
+        structure_tag['end_time'] = segment["interval"][1]
+    return structure_tags
+
+
+def format_utterances(utterances, time_in_sec=False, min_confidence=0.2):
+    # This function cleans up the raw utterances data from metadata.
+    # Extracts necessary information: [start_time_in_sec, end_time_in_sec, lyrics text with additional tags, precomputed phonemes]
+    new_utterances = []    
     for i, u in enumerate(utterances):
         confidence = u.get('confidence', 1)
         if confidence < min_confidence:
@@ -219,36 +206,53 @@ def format_utterances(utterances, time_in_sec=False, include_intro=False, min_co
                 continue
         utt_end = math.ceil(utt_end)        # Round up so we don't miss the last few phonemes
         if time_in_sec:
-            new_utterances.append((utt_start, utt_end, u['text'], phone))
+            new_utterances.append([utt_start, utt_end, u['text'], phone])
         else:
             # TODO (QQ) handle ms directly instead of converting to int.
-            new_utterances.append((int(utt_start/1000), int(utt_end/1000), u['text'], phone))
+            new_utterances.append([int(utt_start/1000), int(utt_end/1000), u['text'], phone])
 
-    # Sanity check: there exists more than 1 utterance.
-    if len(new_utterances) < 1:
+
+    # Sanity check utterances
+    utterances = []
+    for i, u in enumerate(new_utterances):
+        if i > 0 and u[0] <= 0 and ":" in u[2]:
+            # Handle the case of (0, 97, '合:对的人'), (-1, 97, '合:对的人')
+            if i+1 < len(new_utterances) and u[1] > new_utterances[i+1][1]:
+                # Handle the case of swap (0, 31, '合:色即是空 空即是色'), (25, 28, '选择就是选择无所谓对与错')
+                u[0] = new_utterances[i+1][1]
+                new_utterances[i] = new_utterances[i+1]
+                new_utterances[i+1] = u            
+            else:
+                # Handle the case of (0, 25, '合:色即是空 空即是色'), (25, 28, '选择就是选择无所谓对与错')
+                u[0] = min(new_utterances[max(i-1,0)][1], u[1]-1)
+        if u[1] - u[0] > 0:
+            # Only keep utterances that are longer than 1 sec.
+            utterances.append(u)
+    # Remove duplicate utterances, retain order.
+    uniq_utt_idx = []
+    for i in range(len(utterances)-1):
+        if (utterances[i][0] == utterances[i+1][0]) and (utterances[i][1] == utterances[i+1][1]):
+            continue
+        uniq_utt_idx.append(i)
+    utterances = [utterances[i] for i in uniq_utt_idx]
+    
+    if len(utterances) < 1:
         return []
-    else:
-        utterances = new_utterances
-
-    # Sanity check: only keep utterances that are longer than 1 sec.
-    utterances = [u for u in utterances if u[1]-u[0] > 0]
 
     # Sanity check: utterances are non-overlapping.
     for i in range(len(utterances)-1):
         if utterances[i][1] > utterances[i+1][0] + 5:
-            logging.warning("utterances need to be non-overlapping")
+            # logging.warning("utterances need to be non-overlapping")
+            # TODO (QQ) need to handle time stamps of '合:色即是空 空即是色' more carefully.
+            # print([x[:3] for x in utterances])
             return []
-    
-    # Optionally include intro as the first utterance
-    if include_intro:
-        u0 = utterances[0]
-        if u0[0] > 0:            
-            utterances.insert(0, (0, u0[0], "", ""))
-
+        
     return utterances
 
 
 def extract_seg_from_utts(i, utterances, min_duration, max_duration, new_line_token, sec_start_idx=None):
+    # Given the start time (and end time), combine the utterances in the window into a segment
+    # Output is in the format [seg_start_sec, seg_end_sec, lyrics_text, precomputed_phonemes, seg_tag]
     s, cur_seg = i, []
     seg_tag = sec_start_idx[i] if sec_start_idx else "None"
     while i < len(utterances) and (utterances[i][1] - utterances[s][0] < min_duration):
@@ -261,45 +265,51 @@ def extract_seg_from_utts(i, utterances, min_duration, max_duration, new_line_to
         i = s + 1
         return (i, None)
     else:
+        # Extract a segment with target duration uniformly distributed between min/max duration.
         k = random.randint(i+1, j)
         cur_seg.extend([utterances[kk] for kk in range(i, k)])
+        seg_start = cur_seg[0][0]
+        seg_end = cur_seg[-1][1]
         lyrics_text = ""
         for kk in range(s, k):
             if sec_start_idx and (kk in sec_start_idx):
                 seg_tag = sec_start_idx[kk]
                 lyrics_text = lyrics_text + ("[" + seg_tag + "]" + ". ")                
-            lyrics_text = lyrics_text + utterances[kk][2] + ". "            
+            lyrics_text = lyrics_text + utterances[kk][2] + ". "
+        phoneme_sequence = new_line_token.join([u[3] for u in cur_seg])    
         new_seg = [
-            cur_seg[0][0], 
-            cur_seg[-1][1], 
+            seg_start, 
+            seg_end, 
             lyrics_text,  # lyrics text
-            new_line_token.join([u[3] for u in cur_seg]),   # precomputed lyrics phonemes
+            phoneme_sequence,   # precomputed lyrics phonemes
             seg_tag]
         i = k
         return (i, new_seg)
 
 
+def group_utterances_with_structure(
+    utterances, min_duration, max_duration, new_line_token=' ', structure_tags=None):
+    # Segment the full song into segments, each segment consists of multiple utterances.
+    for structure_tag in structure_tags:        
+        sec_start = int(structure_tag['start_time'])
+        sec_end = int(structure_tag['end_time'])    
+        if sec_start < 0 or sec_end < 0 or sec_start >= sec_end:
+            continue
+        sec_tag = structure_tag['tag']
+        # TODO (QQ): (find the utterances included in the section)
+    return group_utterances(utterances, min_duration, max_duration, time_in_sec=False,
+                     new_line_token=new_line_token, infer_structure_tags=True)
+    
+
 def group_utterances(utterances, min_duration, max_duration, time_in_sec=False,
-                     include_intro=False, new_line_token=' ',
-                     structure_tags=None):
+                     new_line_token=' ', infer_structure_tags=False):
+    # Segment the full song into segments, each segment consists of multiple utterances.
     utterances = format_utterances(utterances)
     if not utterances:
-        print("No utterances after formatting")
         return []
-    # TODO (QQ) support exporting entire section.
-    sec_start_idx = {}
-    if structure_tags:
-        for structure_tag in structure_tags:
-            sec_start = int(structure_tag['start_time']/1000)
-            sec_end = int(structure_tag['end_time']/1000)
-            if sec_start < 0 or sec_end < 0 or sec_start >= sec_end:
-                continue
-            sec_tag = structure_tag['tag']
-            for i, utt in enumerate(utterances):
-                if utt[0] >= sec_start:
-                    sec_start_idx[i] = sec_tag
-                    break
-    else:
+    sec_start_idx = {}        
+    if infer_structure_tags:        
+        # Infer sections based on separation of utterances.
         last_utt_end = -10
         MIN_NUM_CHAR = 3    # Minimum number of characters in an utterance to infer it's valid vocal.
         MIN_SEP_WITHIN_SEC = 4  # Max separation of two utterance to infer there is a section break.
@@ -308,14 +318,16 @@ def group_utterances(utterances, min_duration, max_duration, time_in_sec=False,
                 sec_start_idx[i] = "section"
             last_utt_end = utt[1]
 
-    segs = []    
+    segs = []
     if sec_start_idx:
+        # Extract segments starting from (inferred) starting points of sections.
         for sec_start_id, sec_tag in sec_start_idx.items():
             _, new_seg = extract_seg_from_utts(
                 sec_start_id, utterances, min_duration, max_duration, new_line_token, sec_start_idx)
             if new_seg:
                 segs.append(new_seg)
     else:
+        # Group utterances into random non-overlapping segments.
         i = 0
         while i < len(utterances):
             i, new_seg = extract_seg_from_utts(i, utterances, min_duration, max_duration, new_line_token)
@@ -330,457 +342,11 @@ def group_utterances(utterances, min_duration, max_duration, time_in_sec=False,
     return segs
 
 
-def convert_sta_words_to_asr_result(words):
-    utterances = []
-    normalized_text = ""
-    # Strip off section tags, separate utterances by new lines
-    seg_words = []
-    skip_section_tag = False
-    for word in words:
-        if "[" in word["text"]:
-            skip_section_tag = True
-        if skip_section_tag:
-            if "]" in word["text"]:
-                skip_section_tag = False
-            continue
-        if word["text"] == "\n":
-            if not seg_words:
-                continue
-            seg_start = -1
-            for sw in seg_words:
-                st = sw["start_time"]
-                if st > 0:
-                    seg_start = st
-                    break
-            seg_end = -1
-            for sw in reversed(seg_words):
-                et = sw["end_time"]
-                if et > 0:
-                    seg_end = et
-                    break
-            if seg_start > 0 and seg_end > 0:
-                seg_text = "".join([word["text"] for word in seg_words])
-                utt = {"text": seg_text, "start_time": seg_start, "end_time": seg_end, "words": seg_words}
-                utterances.append(utt)
-            seg_words = []
-        else:
-            seg_words.append(word)
-    full_text = "".join([utt["text"] for utt in utterances])
-    result = [{"utterances": utterances, "text": full_text}]
-    return result
-
-########################## English Datasets ######################
-
-
-class LibriTTSDataset(WebPipeline):
-    name = "LibriTTS"
-    data_sample_rate = 24000
-
-    def __init__(
-        self,
-        urls="pipe: hdfs dfs -cat hdfs:///home/byte_speech_sv/data/speech/libritts/24000hz/train-clean-360/{00000..00007}.tar",
-        sample_rate=24000,
-        min_duration: int = 5,
-        max_duration: int = 30,
-        handler=wds.warn_and_continue,
-        **kwargs,
-    ):
-        self.sample_rate = sample_rate
-        self.min_duration = min_duration
-        self.max_duration = max_duration  
-        self.handler = handler      
-        base_transforms = [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
-        if self.data_sample_rate != sample_rate:
-            base_transforms.append(Resample(self.data_sample_rate, sample_rate))
-        self.base_transform = Compose(base_transforms)
-        dataset = WebDataset(urls=urls, **kwargs)
-        pipeline = ["decode", {"compose": [self.transform]}]
-
-        with local_zero_first():
-            self.phoneme_tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-cv-ft")
-            self.phoneme_tokenizer._add_tokens(["<n>"])
-        phonemizer.logger.get_logger().setLevel(logging.ERROR)
-
-        super().__init__(dataset, pipeline)
-
-    def transform(self, item_yielder) -> Dict[str, Any]:
-        for item in item_yielder:
-            try:
-                audio = self.base_transform(item["audio.npy"])
-            except Exception as e:
-                self.handler(e)
-                continue
-            if audio.size(-1) < self.min_duration * self.sample_rate:
-                continue
-            if audio.size(-1) > self.max_duration * self.sample_rate:
-                continue
-            normalized_text = normalize_text(item["normalized_text.txt"])
-            phoneme_tokens = self.phoneme_tokenizer(normalized_text)["input_ids"]                                
-            yield {
-                "target_audio": audio, 
-                "normalized_text": normalized_text,
-                "lyrics_tokens": phoneme_tokens,
-                "style_text": "speech",
-                "audio_type": "speech",
-                "max_phone_len": MAX_PHONE_LEN, # TODO: (AS) remove hardcoded value
-            }       
-
-
-class LibrilightDataset(WebPipeline):
-    name = "LibrilightASR"
-    data_sample_rate = 24000
-
-    
-    def __init__(
-        self,
-        url2index: str = "hdfs://harunava/home/byte_speech_sv/data/speech/librilight_asr_npy/url2idx.txt",
-        sample_rate: int = 24000,
-        audio_key: str = "audio.npy",
-        min_duration: int = 5,
-        max_duration: int = 30,
-        normalize_audio: bool = False,
-        handler=wds.warn_and_continue,
-        **kwargs,
-    ):
-        self.sample_rate = sample_rate
-        self.min_duration = min_duration
-        self.max_duration = max_duration
-        self.audio_key = audio_key
-        self.handler = handler
-
-        base_transforms = [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
-        if self.data_sample_rate != sample_rate and self.audio_key.endswith("npy"):
-            base_transforms.append(Resample(self.data_sample_rate, sample_rate))
-        if normalize_audio:
-            base_transforms.append(FastNormalizeAudio())
-        self.base_transform = Compose(base_transforms)
-        dataset = IndexedWebDataset(url2index=url2index, handler=handler, **kwargs)
-        pipeline = ["decode", {"compose": [self.transform]}]
-
-        with local_zero_first():
-            self.phoneme_tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-cv-ft")
-            self.phoneme_tokenizer._add_tokens(["<n>"])
-        phonemizer.logger.get_logger().setLevel(logging.ERROR)
-
-        super().__init__(dataset, pipeline)
-
-    def transform(self, item_yielder) -> Dict[str, Any]:
-        for item in item_yielder:
-            try:
-                audio = self.base_transform(item[self.audio_key])
-            except Exception as e:
-                self.handler(e)
-                continue
-            utterances = item["__index_data__"]
-            if len(utterances) == 0:
-                continue
-            segments = group_utterances(utterances, self.min_duration, self.max_duration, time_in_sec=True)
-            for segment in segments:                
-                start = int(segment[0] * self.sample_rate)
-                end = int(segment[1] * self.sample_rate)
-                clip = audio[:, start:end]
-                normalized_text = normalize_text(segment[2])
-                phoneme_tokens = self.phoneme_tokenizer(normalized_text)["input_ids"]                                
-                yield {
-                    "target_audio": clip, 
-                    "normalized_text": normalized_text,
-                    "lyrics_tokens": phoneme_tokens,
-                    "style_text": "speech",
-                    "audio_type": "speech",
-                    "max_phone_len": MAX_PHONE_LEN, # TODO: (AS) remove hardcoded value
-                }               
-
-
-class MCCInstrumentalDataset(WebPipeline):
-    name = "DecoderMCCInstrumental"
-    data_sample_rate = 24000
-
-    def __init__(
-        self,
-        url2index: str = "/mnt/bn/audio-diffusion/data/non_vocal_mcc_npy.filtered+audio_metrics_good/mega_index.with_ar_scores/npy_url2idx.txt",
-        sample_rate: int = 24000,
-        audio_key: str = "audio.npy",
-        min_duration: int = 5,
-        max_duration: int = 30,
-        min_volume_threshold: float = 0.05,
-        max_style_token_seq_len: int = 16,
-        loudness_ratio_threshold: float = 0.2,
-        normalize_audio: bool = True,
-        # filtering
-        aed_filtered: bool = True,
-        audio_metrics_filtered: bool = True,
-        avoid_sound_effect: bool = True,
-        exclude_licenses: List[str] = ["C"],
-        handler=wds.warn_and_continue,
-        **kwargs,
-    ):
-        self.sample_rate = sample_rate
-        self.audio_key = audio_key
-        self.min_duration = min_duration
-        self.max_duration = max_duration
-        self.max_style_token_seq_len = max_style_token_seq_len
-        self.aed_filtered = aed_filtered
-        self.audio_metrics_filtered = audio_metrics_filtered
-        self.avoid_sound_effect = avoid_sound_effect
-        self.exclude_licenses = exclude_licenses
-        self.handler = handler
-        self.is_loud = LoudnessCheck(
-            sample_rate, min_volume_threshold, loudness_ratio_threshold
-        )
-        # self.t5_text_tokenizer = T5Tokenizer.from_pretrained('t5-small')
-        base_transforms = []
-        if audio_key == "mp3":
-            self.read_mp3 = ReadMP3(sample_rate)
-            base_transforms.append(lambda x: self.read_mp3(io.BytesIO(x)))
-        base_transforms += [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
-        if normalize_audio:
-            base_transforms.append(FastNormalizeAudio())
-            # base_transforms.append(NormalizeAudio())
-        if self.data_sample_rate != sample_rate and audio_key != "mp3":
-            base_transforms.append(Resample(self.data_sample_rate, sample_rate))
-        self.base_transform = Compose(base_transforms)
-        dataset = IndexedWebDataset(url2index=url2index, handler=handler, **kwargs)
-        pipeline = ["decode", {"compose": [self.transform]}]
-        super().__init__(dataset, pipeline)
-
-    def is_audio_metrics_good(self, audio_metrics: Dict[str, Any]) -> Tuple[bool, str]:
-        # Clipping
-        clip = audio_metrics.get("clipping", {})
-        if clip.get("rate", 0) >= 5e-5:
-            return False
-        for ch in ["left", "right"]:
-            if clip.get(f"peak_rate_{ch}", 0) >= 0.05:
-                return False
-        # Loudness
-        loudness = audio_metrics.get("loudness", {})
-        if (
-            loudness.get("integrated_loudness", -7) > -5
-            or loudness.get("max_mom_loud", -7) >= 0
-            or loudness.get("max_short_term_loud", -7) >= 0
-        ):
-            return False
-        # RMS stats
-        rms_stats = audio_metrics.get("rms_stats", {})
-        if rms_stats.get("peak", 0) > 3:
-            return False
-        for ch in ["left", "right"]:
-            if (
-                rms_stats.get(f"{ch}_total", -10) > -5
-                or rms_stats.get(f"{ch}_total", -10) < -40
-                or rms_stats.get(f"normed_std_{ch}", -10) < -19.5
-            ):
-                return False
-        # Cutoff frequency
-        cutoff_freq = audio_metrics.get("cutoff_frequency", {})
-        for ch in ["left", "right"]:
-            if (
-                cutoff_freq.get(f"rel_{ch}", 48000) < 15000
-                and cutoff_freq.get(f"rel_{ch}_conf", 0) > 0.6
-                and cutoff_freq.get(f"band_std_{ch}", 10) < 5
-            ):
-                return False
-        # Phase
-        phase = audio_metrics.get("phase_check", {})
-        if (
-            phase.get("has_phase_issue", False)
-            or abs(phase.get("rms_downmix_diff", 0.1)) > 3
-        ):
-            return False
-        return True
-
-    def is_metadata_good(self, metadata: Dict[str, Any]) -> Tuple[bool, str]:
-        if self.aed_filtered and not metadata.get("aed_filtered", False):
-            return False
-        if self.avoid_sound_effect and metadata.get("final_theme") == "Sound Effect":
-            return False
-        if len(self.exclude_licenses) > 0:
-            for license in metadata.get("license_types", []):
-                if license in self.exclude_licenses:
-                    return False
-        audio_metrics_is_good = self.is_audio_metrics_good(
-            metadata.get("audio_metrics", {})
-        )
-        if self.audio_metrics_filtered and not audio_metrics_is_good:
-            return False
-        return True
-
-    def transform(self, item_yielder) -> Dict[str, Any]:
-        for item in item_yielder:
-            style_text = rewrite_metadata(item["__index_data__"], type="Instrumental")            
-            # style_tokens = torch.LongTensor(self.t5_text_tokenizer.encode(
-            #     style_text, padding='max_length', max_length=self.max_style_token_seq_len))
-            if not self.is_metadata_good(item["__index_data__"]):
-                continue
-            try:
-                audio = self.base_transform(item[self.audio_key])
-            except Exception as e:
-                self.handler(e)
-                continue
-            if audio.size(-1) < self.max_duration * self.sample_rate:
-                continue
-            for i in range(4):            
-                duration = (
-                    random.randint(self.min_duration, self.max_duration) * self.sample_rate
-                )
-                start = random.randint(0, audio.size(-1) - duration)
-                clip = audio[:, start : start + duration]
-                if clip.dim() == 1:
-                    clip = clip.unsqueeze(0)
-                if not self.is_loud(clip):
-                    continue
-                yield {
-                    "target_audio": clip,
-                    "style_text": style_text,
-                    # "style_tokens": style_tokens,
-                    "normalized_text": "",
-                    "max_phone_len": MAX_PHONE_LEN, # TODO: (AS) remove hardcoded value
-                    }
-
-
-class MCCVocalDataset(MCCInstrumentalDataset):
-    name = "DecoderMCCVocal"    
-    def __init__(
-        self,
-        url2index: str = "/mnt/bn/audio-diffusion/data/vocal_mcc_npy/lyrics_npy_url2idx.txt",
-        sample_rate: int = 24000,
-        audio_key: str = "audio.npy",
-        min_duration: float = 5,
-        max_duration: float = 30,
-        min_volume_threshold: float = 0.05,
-        loudness_ratio_threshold: float = 0.2,
-        lyrics_confidence: float = 0.8,
-        normalize_audio: bool = True,
-        aed_filtered: bool = False,
-        audio_metrics_filtered: bool = True,
-        avoid_sound_effect: bool = True,
-        exclude_licenses: List[str] = ["C"],
-        segment_method: str = "random", # "first", "random"
-        segment_max_phone_len: int = 400,
-        include_intro: bool = False,
-        max_seg_per_track: int = -1,
-        **kwargs,
-    ):
-        with local_zero_first():
-            self.phoneme_tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-cv-ft")
-            self.phoneme_tokenizer._add_tokens(["<n>"])
-        # To silence espeak logging warnings: "WARNING - words count mismatch on 100.0% of the lines". Must be set after tokenizer is initialized
-        phonemizer.logger.get_logger().setLevel(logging.ERROR)
-
-        super().__init__(
-            url2index=url2index,
-            sample_rate=sample_rate,
-            audio_key=audio_key,
-            min_duration=min_duration,
-            max_duration=max_duration,
-            min_volume_threshold=min_volume_threshold,
-            loudness_ratio_threshold=loudness_ratio_threshold,
-            normalize_audio=normalize_audio,
-            aed_filtered=aed_filtered,
-            audio_metrics_filtered=audio_metrics_filtered,
-            avoid_sound_effect=avoid_sound_effect,
-            exclude_licenses=exclude_licenses,
-            **kwargs,
-        )
-        self.lyrics_confidence = lyrics_confidence
-        self.segment_method = segment_method
-        self.segment_max_phone_len = segment_max_phone_len
-        self.include_intro = include_intro
-        self.max_seg_per_track = max_seg_per_track
-
-    def is_confident_lyrics(self, utterance, threshold):
-        conf = 0
-        for utt in utterance:
-            conf += float(utt["additions"]["confidence"])
-        conf /= len(utterance)
-        return True if conf > threshold else False
-
-    def extract_metadata_and_utterances(self, index_data):
-        if 'metadata' in index_data:
-            metadata = index_data['metadata']
-        else:
-            metadata = index_data
-        # Hiphop has format metadata: {..., lyrics: []}, THe rest has format { metadata: {}, lyrics: []}
-        if 'lyrics' in metadata and metadata['lyrics'] is not None:
-            utterances = metadata['lyrics'].get('utterances')
-        elif 'lyrics' in index_data and index_data['lyrics'] is not None:
-            utterances = index_data['lyrics'].get('utterances')
-        else:
-            utterances = None
-
-        return metadata, utterances
-
-    def transform(self, item_yielder) -> Dict[str, Any]:
-        for item in item_yielder:
-            metadata, utterances = self.extract_metadata_and_utterances(item['__index_data__'])
-            if not self.is_metadata_good(metadata):
-                continue
-            if utterances is None:
-                continue
-
-            style_text = rewrite_metadata(metadata)
-            # style_tokens = torch.LongTensor(self.t5_text_tokenizer.encode(
-            #     style_text, padding='max_length', max_length=self.max_style_token_seq_len))
-            try:
-                audio = self.base_transform(item[self.audio_key])
-            except Exception as e:
-                self.handler(e)
-                continue
-            if audio.dim() == 1:
-                audio = audio.unsqueeze(0)
-
-            if not self.is_confident_lyrics(utterances, self.lyrics_confidence):
-                continue
-            segments = group_utterances(utterances, self.min_duration, self.max_duration, 
-                                        time_in_sec=False, include_intro=self.include_intro)
-            if len(segments) < 1:
-                continue
-            if self.segment_method == "first":
-                segments = segments[:1]
-            elif self.max_seg_per_track > 0:
-                random.shuffle(segments)
-                segments = segments[:self.max_seg_per_track]
-            for segment in segments:
-                start = int(segment[0] * self.sample_rate)
-                end = int(segment[1] * self.sample_rate)
-
-                if audio.ndim == 1:
-                    audio = audio.unsqueeze(dim=0)
-                
-                clip = audio[:, start:end]
-                if clip.shape[-1] < self.sample_rate * self.min_duration // 2:
-                    print('audio too short', clip.shape)
-                    continue
-
-                if clip.shape[0] == 0 or clip.shape[1] == 0:
-                    continue
-
-                normalized_text = normalize_text(segment[2])
-                phoneme_tokens = self.phoneme_tokenizer(normalized_text)["input_ids"]                                
-                
-                shard = self.get_shard_info(item)
-                worker_id = self.get_worker_info()
-
-                yield {
-                    "target_audio": clip, 
-                    # "style_tokens": style_tokens,
-                    "style_text": style_text,
-                    "normalized_text": normalized_text,
-                    "lyrics_tokens": phoneme_tokens,
-                    "max_phone_len": self.segment_max_phone_len,
-
-                    # DEBUG
-                    "song_id": metadata["meta_song_id"],
-                    "style_metadata": metadata,
-                    "shard": shard,
-                    "worker_id": worker_id,
-                }                
-
-
 ########################## Chinese Datasets ######################
 
 
-class VocalZhTransforms(BaseTransforms):
-    name = "VocalZhTransforms"
+class VocalTransforms(BaseTransforms):
+    name = "VocalTransforms"
     data_sample_rate = 24000
 
     def __init__(
@@ -797,12 +363,12 @@ class VocalZhTransforms(BaseTransforms):
         normalize_audio: bool = False,
         tokenizer=None,
         frame_rate: int = 25,
-        use_structure_tag: bool = False,
+        read_structure_tags: bool = False,
         segment_method: str = "random",
         max_seg_per_track: int = -1,
-        segment_max_phone_len: int = 400,
-        include_intro: bool = False,        
+        segment_max_phone_len: int = 400,   
         use_soda_gt_lyrics: bool = True,
+        infer_structure_tags: bool = False,
     ):
         super().__init__()
         self.sample_rate = sample_rate
@@ -815,13 +381,13 @@ class VocalZhTransforms(BaseTransforms):
         self.index_key = index_key  
         self.tokenizer = tokenizer
         self.frame_rate = frame_rate
-        self.use_structure_tag = use_structure_tag
+        self.infer_structure_tags = infer_structure_tags
+        self.read_structure_tags = read_structure_tags
         self.segment_method = segment_method
         self.max_seg_per_track = max_seg_per_track
         self.segment_max_phone_len = segment_max_phone_len
-        self.include_intro = include_intro
         self.use_soda_gt_lyrics = use_soda_gt_lyrics
-        self.lyrics_field = lyrics_field
+        self.lyrics_field = lyrics_field        
 
         assert self.tokenizer
         base_transforms = [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
@@ -879,9 +445,20 @@ class VocalZhTransforms(BaseTransforms):
             self._update_stats(skipped=True, message="No result")
             return
         utterances = result[0].get("utterances", None)
-        if not self.is_confident_lyrics(utterances, self.lyrics_confidence):
-            self._update_stats(skipped=True, message="Low confidence lyrics")
-            return        
+        if utterances is None or len(utterances) == 0:
+            self._update_stats(skipped=True, message="No utterances")
+            return
+
+        # Check for lyrics confidence
+        lyrics_connfidence_avg = lyrics.get("confidence_avg", None)
+        if lyrics_connfidence_avg is None:
+            if not self.is_confident_lyrics(utterances, self.lyrics_confidence):
+                self._update_stats(skipped=True, message="Low confidence lyrics utt")
+                return
+        else:
+            if lyrics_connfidence_avg < self.lyrics_confidence:
+                self._update_stats(skipped=True, message="Low confidence lyrics sta avg")
+                return
 
         if self.use_soda_gt_lyrics and "lyrics_gt" in meta:
             utterances = meta.get("lyrics_gt", None)
@@ -890,15 +467,34 @@ class VocalZhTransforms(BaseTransforms):
             self._update_stats(skipped=True, message="No utterances")
             return
 
+        # Extract structure tags
+        structure_tags = []
+        if self.read_structure_tags:
+            music_structure_tags = meta.get("music_structure", None)            
+            structure_tags = format_music_structure_tags(music_structure_tags)
+            deepchorus_tags = meta.get("deepchorus", None)            
+            structure_tags = format_deepchorus_structure_tags(deepchorus_tags)
+
         # Extract segments from utterances
         new_line_token = " <n> "
         if isinstance(self.tokenizer, BertTokenizer):
             self.tokenizer.add_special_tokens({'additional_special_tokens': [new_line_token]})
-        segments = group_utterances(utterances, self.min_duration, self.max_duration,
-                                    time_in_sec=False, include_intro=self.include_intro,
-                                    new_line_token=new_line_token)
+
+        if structure_tags:
+            segments = group_utterances_with_structure(
+                utterances, self.min_duration, self.max_duration,                                        
+                new_line_token=new_line_token,
+                structure_tags=structure_tags)
+        else:
+            segments = group_utterances(
+                utterances, self.min_duration, self.max_duration,
+                time_in_sec=False,
+                new_line_token=new_line_token,                
+                infer_structure_tags=self.infer_structure_tags)
         if len(segments) < 1:
+            self._update_stats(skipped=True, message="No valid segment")
             return
+
         if self.segment_method == "first":
             segments = segments[:1]
         if self.segment_method == "verse_chorus_section":
@@ -908,10 +504,13 @@ class VocalZhTransforms(BaseTransforms):
             segments = segments[:self.max_seg_per_track]
 
         # Get style text            
+        style_text = rewrite_metadata(meta)
+        artist_id = ARTIST_ID_MAP_V2[str(meta.get("artist_id", "zh_empty"))]
+
         if "playlist_extra" in meta:
             label1 = meta["playlist_extra"].get("label1", "")
             label2 = meta["playlist_extra"].get("label2", "")
-            style_text = rewrite_playlist_labels(label1, label2)            
+            style_text = rewrite_playlist_labels(label1, label2)
         elif "tags" in meta:
             # Try read English genre tag. Source: Q music tag, WYY tag, MCC tag.
             metadata = dict()
@@ -959,18 +558,19 @@ class VocalZhTransforms(BaseTransforms):
         self._update_stats(skipped=False)
         for segment in segments:
             if segment[1] - segment[0] < 1:
-                print("short segment")
+                self._update_stats(skipped=True, message="Skip segment less than 1 sec")
                 continue
             start = int(segment[0] * self.sample_rate)
             end = int(segment[1] * self.sample_rate)
             clip = audio[:, start:end]
-            # TODO (QQ) revert this temp change of dataloader for 1232
-            # clip = audio[:, 0:240000]
 
-            normalized_text = segment[2]
+            # At training and inference, the lyrics tokens should already contain structure tags.
+            normalized_text = normalize_text(segment[2], enable_punctuation=True)
+
             if self.tokenizer == "tts_chinese_frontend_model":
-                # TODO (QQ) Align the section tags in lyrics_text to the precomputed phoneme IDs. Also update inference.
-                lines = segment[3].split(" <n> ")                
+                # TODO (QQ) call SamiOfflineTokenizer directly.
+                # TODO (yilin)) handle the section tags and singer tags.
+                lines = segment[3].split(new_line_token)
                 text_tokens = []
                 for line in lines:
                     labels = list(
@@ -1009,15 +609,15 @@ class VocalZhTransforms(BaseTransforms):
             yield {
                 "target_audio": clip,                 
                 "style_text": style_text,
+                "artist_id": artist_id,
                 "normalized_text": normalized_text,
                 "lyrics_tokens": text_tokens,
-                "max_phone_len": self.segment_max_phone_len,
-                "meta": meta,
+                "max_phone_len": self.segment_max_phone_len,                
             }        
 
 
-class VocalZhDataset(WebPipeline):
-    name = "VocalZhDataset"
+class VocalDataset(WebPipeline):
+    name = "VocalDataset"
     data_sample_rate = 24000
 
     def __init__(
@@ -1038,14 +638,13 @@ class VocalZhDataset(WebPipeline):
         segment_method: str = "random",
         max_seg_per_track: int = -1,
         segment_max_phone_len: int = 400,
-        include_intro: bool = False,
         use_soda_gt_lyrics: bool = True,
         **kwargs,
     ):
         assert region in INDEX
         print(f"[{self.name}] initializing...")        
 
-        transforms = VocalZhTransforms(
+        transforms = VocalTransforms(
             sample_rate=sample_rate,
             audio_key=audio_key,
             min_duration=min_duration,
@@ -1057,7 +656,6 @@ class VocalZhDataset(WebPipeline):
             tokenizer=tokenizer,
             frame_rate=frame_rate,
             segment_method=segment_method,
-            include_intro=include_intro,
             max_seg_per_track=max_seg_per_track,
             segment_max_phone_len=segment_max_phone_len,
             use_soda_gt_lyrics=use_soda_gt_lyrics,
@@ -1075,7 +673,7 @@ class VocalZhDataset(WebPipeline):
             )
         else:
             if dataset_names == "SodaTest":
-                url2index = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/kaiping/2023-09-20/val_url2index.txt"
+                url2index = "hdfs://haruna/home/byte_speech_sv/data/soda_valid/val_url2index.txt"
                 dataset = IndexedWebDataset(url2index=url2index, **kwargs)
             else:
                 dataset = IndexedWebDataset(url2index=INDEX[region][dataset_names], **kwargs)
@@ -1086,8 +684,8 @@ class VocalZhDataset(WebPipeline):
         print(f"[{self.name}] initialized.")
 
 
-class VocalZhParquetDataset(WebPipeline):
-    name = "VocalZhParqueDataset"
+class VocalParquetDataset(WebPipeline):
+    name = "VocalParqueDataset"
     data_sample_rate = 24000
 
     def __init__(
@@ -1108,14 +706,15 @@ class VocalZhParquetDataset(WebPipeline):
         segment_method: str = "random",
         max_seg_per_track: int = -1,
         segment_max_phone_len: int = 400,
-        include_intro: bool = False,
         use_gt_lyrics: bool = True,
+        infer_structure_tags: bool = False,
+        read_structure_tags: bool = False,
         **kwargs,
     ):
         print(f"[{self.name}] initializing...")
         dataset = ParquetDataset(data_id=data_id, data_urls=url_pattern, **kwargs)
         
-        transforms = VocalZhTransforms(
+        transforms = VocalTransforms(
             sample_rate=sample_rate,
             audio_key=audio_key,
             index_key=index_key,
@@ -1128,362 +727,11 @@ class VocalZhParquetDataset(WebPipeline):
             tokenizer=tokenizer,
             frame_rate=frame_rate,
             segment_method=segment_method,
-            include_intro=include_intro,
             max_seg_per_track=max_seg_per_track,
             segment_max_phone_len=segment_max_phone_len,
             use_soda_gt_lyrics=use_gt_lyrics,
-        )
-        preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
-        print(f"[{self.name}] MultiIterableDataset constructing...")
-        pipeline = [{"compose": [preprocessor.train_buffer_preprocessor]}]
-        super().__init__(dataset, pipeline)
-        print(f"[{self.name}] initialized.")
-
-
-class SpeechZhTransforms(BaseTransforms):
-    name = "SpeechZhTransforms"
-    data_sample_rate = 24000
-
-    def __init__(
-        self,
-        sample_rate: int = 24000,
-        audio_key: str = "audio.npy",
-        min_duration: int = 1,
-        max_duration: int = 30,
-        normalize_audio: bool = False,
-        tokenizer=None,
-        frame_rate: int = 25,
-        segment_method: str = "random",
-        max_seg_per_track: int = -1,
-        segment_max_phone_len: int = 400,
-    ):
-        super().__init__()
-        self.sample_rate = sample_rate
-        self.min_duration = min_duration
-        self.max_duration = max_duration
-        self.audio_key = audio_key        
-        self.tokenizer = tokenizer
-        self.frame_rate = frame_rate
-        self.segment_method = segment_method
-        self.max_seg_per_track = max_seg_per_track
-        self.segment_max_phone_len = segment_max_phone_len
-
-        assert self.tokenizer
-        base_transforms = [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
-        if self.data_sample_rate != sample_rate and self.audio_key.endswith("npy"):
-            base_transforms.append(Resample(self.data_sample_rate, sample_rate))
-        if normalize_audio:
-            base_transforms.append(FastNormalizeAudio())
-        self.base_transform = Compose(base_transforms)
-
-    def __call__(self, item: Dict[str, Any]) -> Generator:
-        try:
-            audio = self.base_transform(item[self.audio_key])
-        except Exception as e:
-            self._update_stats(skipped=True, message=f"Error loading audio: {e}")
-            return
-        if audio.size(-1) < self.min_duration * self.sample_rate:
-            self._update_stats(skipped=True, message="Audio too short")
-            return
-        if audio.size(-1) > self.max_duration * self.sample_rate:
-            self._update_stats(skipped=True, message="Audio too long")
-            return
-        
-        lyrics = item["__index_data__"].get("text", None)
-        if lyrics is None:
-            self._update_stats(skipped=True, message="No lyrics")
-            return
-        
-        if self.tokenizer == "tts_chinese_frontend_model":
-            new_line_token = "\n"
-        else:
-            new_line_token = " "        
-        
-        if self.tokenizer == "tts_chinese_frontend_model":
-            labels = list(
-                filter(
-                    lambda x: x != "", item["__index_data__"]["labels"].split("\n")
-                )
-            )
-            if labels:
-                convert_result = convert_labels_to_text_id(labels)
-                if convert_result:
-                    labels, _, _ = convert_result
-                else:
-                    self._update_stats("Invalid tacolab to text id conversion", labels)
-                    return
-                text_tokens = torch.from_numpy(labels[0]).long()
-            else:
-                self._update_stats(" skip empty labels")
-                return
-        else:
-            encoded_text = self.tokenizer(
-                lyrics, 
-                add_special_tokens=False,
-                return_tensors="pt")
-            text_tokens = encoded_text["input_ids"].squeeze(dim=0)
-        if text_tokens.size(-1) == 0:
-            self._update_stats(skipped=True, message="Token zero length")
-            return
-        
-        yield {
-            "target_audio": audio,                 
-            "style_text": "语音",
-            "normalized_text": lyrics,
-            "lyrics_tokens": text_tokens,
-            "max_phone_len": self.segment_max_phone_len,
-            "meta": item["__index_data__"]
-        }
-
-
-class SpeechZhDataset(WebPipeline):
-    name = "SpeechZhDataset"
-    data_sample_rate = 24000
-
-    def __init__(
-        self,
-        region: str = "CN",
-        dataset_names: List[str] = ["FanqieShort"],
-        dataset_weights: List[float] = [1],        
-        sample_rate: int = 24000,
-        audio_key: str = "audio.npy",
-        min_duration: int = 2,
-        max_duration: int = 30,
-        normalize_audio: bool = False,
-        tokenizer=BertTokenizer.from_pretrained("bert-large-uncased"),
-        frame_rate: int = 25,
-        segment_method: str = "random",
-        max_seg_per_track: int = -1,
-        segment_max_phone_len: int = 400,
-        include_intro: bool = False,        
-        **kwargs,
-    ):
-        assert region in INDEX
-        print(f"[{self.name}] initializing...")        
-        transforms = SpeechZhTransforms(
-            sample_rate=sample_rate,
-            audio_key=audio_key,
-            min_duration=min_duration,
-            max_duration=max_duration,
-            normalize_audio=normalize_audio,            
-            tokenizer=tokenizer,
-            frame_rate=frame_rate,
-            segment_method=segment_method,
-            max_seg_per_track=max_seg_per_track,
-            segment_max_phone_len=segment_max_phone_len,
-        )
-        preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
-        print(f"[{self.name}] MultiIterableDataset constructing...")
-
-        if isinstance(dataset_names, list):            
-            url2index = [INDEX[region][dataset_name] for dataset_name in dataset_names]
-            dataset = MultiIterableDataset(
-                datasets=[
-                    IndexedWebDataset(url2index=url, **kwargs) for url in url2index
-                ],
-                weights=dataset_weights,
-            )
-        else:
-            if dataset_names == "FanqieShort":
-                # TODO (qq) sample 1 val for each dataset
-                url2index = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/kaiping/2023-09-20/val_url2index.txt"
-                dataset = IndexedWebDataset(url2index=INDEX[region][url2index], **kwargs)                
-            else:
-                dataset = IndexedWebDataset(url2index=INDEX[region][dataset_names], **kwargs)
-
-        print(f"[{self.name}] MultiIterableDataset constructed.")
-        pipeline = ["decode", {"compose": [preprocessor.train_buffer_preprocessor]}]
-        super().__init__(dataset, pipeline)
-        print(f"[{self.name}] initialized.")
-
-
-########################## Artist SFT Datasets ###################
-class VocalEnTransforms(VocalZhTransforms):
-    def __call__(self, item: Dict[str, Any]) -> Generator:
-        # Extract utterances
-        meta = item[self.index_key]
-        if isinstance(meta, str):
-            meta = json.loads(meta)
-        
-        lyrics = meta.get(self.lyrics_field, None)
-        if lyrics is None:
-            self._update_stats(skipped=True, message="No lyrics")            
-            return
-
-        result = lyrics.get("result", None)
-        # Try convert the STA result into same format as ASR utterances
-        # TODO (QQ) remove this when STA result is preprocessed into same format.
-        if not result:
-            sta_result = lyrics.get("results", None)
-            if sta_result is not None and len(sta_result) == 1:
-                utt = sta_result[0].get("utterances", None) 
-                if utt is not None and len(utt) == 1:
-                    words = utt[0].get("words", None)
-                    if words is not None:
-                        result = convert_sta_words_to_asr_result(words)
-        if result is None or len(result) != 1:
-            self._update_stats(skipped=True, message="No result")            
-            return
-        utterances = result[0].get("utterances", None)
-        if utterances is None or len(utterances) == 0:
-            self._update_stats(skipped=True, message="No utterances")
-            return
-
-        # Check for lyrics confidence
-        lyrics_connfidence_avg = lyrics.get("confidence_avg", None)
-        if lyrics_connfidence_avg is None:
-            if not self.is_confident_lyrics(utterances, self.lyrics_confidence):
-                self._update_stats(skipped=True, message="Low confidence lyrics")
-                return
-        else:
-            if lyrics_connfidence_avg < self.lyrics_confidence:
-                self._update_stats(skipped=True, message="Low confidence lyrics")
-                return
-
-        # Extract segments from utterances
-        new_line_token = " <n> "        
-        structure_tags = meta.get("music_structure", None) if self.use_structure_tag else None
-        if structure_tags:
-            structure_tags = format_structure_tags(structure_tags)
-
-        segments = group_utterances(utterances, self.min_duration, self.max_duration,
-                                    time_in_sec=False, include_intro=self.include_intro,
-                                    new_line_token=new_line_token,
-                                    structure_tags=structure_tags)
-        
-        if len(segments) < 1:
-            self._update_stats(skipped=True, message="No valid segment")
-            return
-
-        if self.segment_method == "first":
-            segments = segments[:1]
-        if self.segment_method == "verse_chorus_section":
-            segments = [s for s in segments if "chorus" in s[4].lower() or "verse" in s[4].lower() or "section" in s[4].lower()]
-        if self.max_seg_per_track > 0:
-            random.shuffle(segments)
-            segments = segments[:self.max_seg_per_track]
-
-        # Get style text
-        style_text = rewrite_metadata(meta)
-        artist_id = ARTIST_ID_MAP[meta.get("artist_id", "en_empty")]
-        
-        # Get track level audio
-        try:
-            audio = self.base_transform(item[self.audio_key])
-        except Exception as e:
-            self._update_stats(skipped=True, message=f"Error loading audio: {e}")
-            return
-
-        # Yield one example per segment
-        self._update_stats(skipped=False)
-        # print("Yield segments", meta['artist_name'])
-        for segment in segments:
-            if segment[1] - segment[0] < 1:
-                self._update_stats(skipped=True, message="Skip segment less than 1 sec")
-                continue
-            start = int(segment[0] * self.sample_rate)
-            end = int(segment[1] * self.sample_rate)
-            clip = audio[:, start:end]
-
-            # At training and inference, the lyrics tokens should already contain structure tags.
-            normalized_text = normalize_text(segment[2], enable_punctuation=True)
-            
-            if self.tokenizer == "tts_chinese_frontend_model":
-                # TODO (QQ) support structure tag when lyrics tokens are from precomputed sami phonemizer.
-                # Use sami_tokenizer.get_structure_tag_id() to get the token IDs corresponding to tags.
-                lines = segment[3].split(new_line_token)                
-                text_tokens = []
-                for line in lines:                    
-                    labels = list(
-                        filter(
-                            lambda x: x != "", line.split("\n")
-                        )
-                    )
-                    if labels:
-                        convert_result = convert_labels_to_text_id(labels)
-                        if convert_result:
-                            labels, _, _ = convert_result
-                        else:
-                            print("Invalid phone label to text id conversion", labels)
-                            continue
-                        line_phone_tokens = labels[0]
-                    else:
-                        continue
-                    text_tokens.append(line_phone_tokens)                    
-                if len(text_tokens) > 0:
-                    text_tokens = np.concatenate(text_tokens, axis=0)
-                    text_tokens = torch.from_numpy(text_tokens).long()
-                else:
-                    text_tokens = None    
-            else:                
-                text_tokens = self.tokenizer(
-                    normalized_text, 
-                    add_special_tokens=False,
-                    return_tensors="pt")["input_ids"].squeeze(dim=0)
-
-            if text_tokens is None or text_tokens.size(-1) == 0:
-                self._update_stats(skipped=True, message="Token zero length")
-                continue
-            
-            yield {
-                "target_audio": clip,
-                "style_text": style_text,
-                "artist_id": artist_id,
-                "normalized_text": normalized_text,
-                "lyrics_tokens": text_tokens,
-                "max_phone_len": self.segment_max_phone_len,
-                "meta": meta,
-            }        
-    
-
-class VocalEnParquetDataset(WebPipeline):
-    name = "VocalEnParqueDataset"
-    data_sample_rate = 24000
-
-    def __init__(
-        self,
-        data_id: int = 365,  # QQ music: 365 WYY_music: TODO
-        url_pattern: str = None,
-        sample_rate: int = 24000,
-        audio_key: str = "wav",
-        index_key: str = "meta",
-        min_duration: int = 10,
-        max_duration: int = 30,
-        min_volume_threshold: float = 0.05,
-        loudness_ratio_threshold: float = 0.2,
-        lyrics_field: str = "lyrics",
-        lyrics_confidence: float = 0.7,
-        normalize_audio: bool = False,
-        tokenizer: Any = BertTokenizer.from_pretrained("bert-base-chinese"),
-        frame_rate: int = 25,
-        use_structure_tag: str = False,
-        segment_method: str = "random",
-        max_seg_per_track: int = -1,
-        segment_max_phone_len: int = 400,
-        include_intro: bool = False,
-        **kwargs,
-    ):
-        print(f"[{self.name}] initializing...")
-        dataset = ParquetDataset(data_id=data_id, data_urls=url_pattern, **kwargs)
-        
-        transforms = VocalEnTransforms(
-            sample_rate=sample_rate,
-            audio_key=audio_key,
-            index_key=index_key,
-            min_duration=min_duration,
-            max_duration=max_duration,
-            min_volume_threshold=min_volume_threshold,
-            loudness_ratio_threshold=loudness_ratio_threshold,
-            lyrics_field=lyrics_field,
-            lyrics_confidence=lyrics_confidence,
-            normalize_audio=normalize_audio,            
-            tokenizer=tokenizer,
-            frame_rate=frame_rate,
-            use_structure_tag=use_structure_tag,
-            segment_method=segment_method,
-            include_intro=include_intro,
-            max_seg_per_track=max_seg_per_track,
-            segment_max_phone_len=segment_max_phone_len,
+            infer_structure_tags=infer_structure_tags,
+            read_structure_tags=read_structure_tags,
         )
         preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
         print(f"[{self.name}] MultiIterableDataset constructing...")
@@ -1506,7 +754,6 @@ class DataModule(pl.LightningDataModule):
         predict_dataset=None,
         collate_fn: Optional[Callable] = None,
         do_shuffle: bool = True,    # set to False if shuffling is already done at dataset level
-        prefetch_factor: Optional[int] = None,  # PyTorch default
     ):
         super().__init__()
         self.shuffle_buffer_size = shuffle_buffer_size
@@ -1517,7 +764,6 @@ class DataModule(pl.LightningDataModule):
         self.pin_memory = pin_memory
         self.collate_fn = collate_fn
         self.do_shuffle = do_shuffle
-        self.prefetch_factor = prefetch_factor
 
     def train_dataloader(self):
         if self.do_shuffle:
@@ -1531,7 +777,6 @@ class DataModule(pl.LightningDataModule):
             batch_size=None,
             num_workers=self.num_workers,
             collate_fn=self.collate_fn,
-            prefetch_factor=self.prefetch_factor,
         )
 
     def val_dataloader(self):
@@ -1542,7 +787,6 @@ class DataModule(pl.LightningDataModule):
                     batch_size=None,
                     num_workers=self.num_workers,
                     collate_fn=self.collate_fn,
-                    prefetch_factor=self.prefetch_factor,
                 )
                 for val in self.validation_dataset
             ]
@@ -1552,7 +796,6 @@ class DataModule(pl.LightningDataModule):
                 batch_size=None,
                 num_workers=self.num_workers,
                 collate_fn=self.collate_fn,
-                prefetch_factor=self.prefetch_factor,
             )
 
     def predict_dataloader(self):
@@ -1561,11 +804,10 @@ class DataModule(pl.LightningDataModule):
             batch_size=None,
             num_workers=self.num_workers,
             collate_fn=self.collate_fn,
-            prefetch_factor=self.prefetch_factor,
         )
 
 
-class MixVocalZhWebDataModule(DataModule):
+class MixVocalWebDataModule(DataModule):
     def __init__(
         self,
         sample_rate: int = 24000,
@@ -1587,7 +829,8 @@ class MixVocalZhWebDataModule(DataModule):
         lyrics_confidence: float = 0.75,
         segment_method: str = "random",
         segment_max_phone_len: int = 400,
-        include_intro: bool = False,
+        infer_structure_tags: bool = False,
+        read_structure_tags: bool = False,
         max_seg_per_track: int = -1,
         buckets_in_sec: List[int] = [
             20,
@@ -1634,7 +877,7 @@ class MixVocalZhWebDataModule(DataModule):
         wds_dataset_agg_weight = []
         if wds_dataset_names:
             wds_dataset_agg_weight = [sum(wds_dataset_weights)]
-            self.wds_vocal_datasets = [VocalZhDataset(
+            self.wds_vocal_datasets = [VocalDataset(
                 region=region,
                 dataset_names=wds_dataset_names,
                 dataset_weights=wds_dataset_weights,
@@ -1644,7 +887,6 @@ class MixVocalZhWebDataModule(DataModule):
                 segment_method=segment_method,
                 max_seg_per_track=max_seg_per_track,
                 segment_max_phone_len=segment_max_phone_len,
-                include_intro=include_intro,
                 use_soda_gt_lyrics=True,
                 lyrics_confidence=lyrics_confidence,
                 tokenizer=self.tokenizer,                
@@ -1657,7 +899,7 @@ class MixVocalZhWebDataModule(DataModule):
         if parquet_dataset_ids:
             for parquet_id in parquet_dataset_ids:
                 self.parquet_vocal_datasets.append(
-                    VocalZhParquetDataset(
+                    VocalParquetDataset(
                         data_id=parquet_id,
                         min_duration=buckets_in_sec[0],
                         max_duration=buckets_in_sec[-1],
@@ -1665,10 +907,11 @@ class MixVocalZhWebDataModule(DataModule):
                         segment_method=segment_method,
                         max_seg_per_track=max_seg_per_track,
                         segment_max_phone_len=segment_max_phone_len,
-                        include_intro=include_intro,
                         use_gt_lyrics=True,
                         lyrics_confidence=lyrics_confidence,
-                        tokenizer=self.tokenizer,                
+                        tokenizer=self.tokenizer,
+                        infer_structure_tags=infer_structure_tags,
+                        read_structure_tags=read_structure_tags,
                         resampled=True,
                         shardshuffle=True,
                         use_pipe=use_pipe,            
@@ -1682,7 +925,7 @@ class MixVocalZhWebDataModule(DataModule):
         )
 
         validation_dataset = [WebPipeline(
-            VocalZhDataset(
+            VocalDataset(
                 region=region,
                 dataset_names="SodaTest",
                 dataset_weights=1,
@@ -1692,7 +935,6 @@ class MixVocalZhWebDataModule(DataModule):
                 segment_method=segment_method,
                 max_seg_per_track=1,
                 segment_max_phone_len=segment_max_phone_len,
-                include_intro=include_intro,
                 tokenizer=self.tokenizer,                
                 use_pipe=use_pipe,
                 resampled=False,
@@ -1719,163 +961,6 @@ class MixVocalZhWebDataModule(DataModule):
                 yield batch
 
 
-class MixZhWebDataModule(DataModule):
-    def __init__(
-        self,
-        sample_rate: int = 24000,
-        batch_size: int = 2,
-        shuffle_buffer_size: int = 10,
-        num_workers: int = 4,
-        pin_memory: bool = True,
-        collate_fn: Optional[Callable] = collate_fn,        
-        use_pipe: bool = True,
-        tokenizer: str = "wordpiece",
-        frame_rate: int = 25,
-        lyrics_confidence: float = 0.8,
-        normalize_audio: bool = False,
-        region: str = "CN",
-        dataset_weights: List[int] = [1, 1, 1],
-        use_dynamic_batch: str = False,
-        segment_method: str = "random",
-        segment_max_phone_len: int = 400,
-        include_intro: bool = False,
-        max_seg_per_track: int = -1,
-        buckets_in_sec: List[int] = [
-            20,
-            25,
-            30,
-        ],
-    ):        
-        self.num_workers = num_workers
-        self.shuffle_buffer_size = shuffle_buffer_size
-        self.pin_memory = pin_memory
-        self.collate_fn = collate_fn
-
-        if tokenizer == "wordpiece":
-            self.tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
-        elif tokenizer == "tts_chinese_frontend_model":
-            self.tokenizer = "tts_chinese_frontend_model"
-        elif tokenizer == "phoneme":
-            with local_zero_first():
-                self.tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained(
-                    "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
-                )
-                self.tokenizer._add_tokens(["<n>"])
-            phonemizer.logger.get_logger().setLevel(logging.ERROR)
-        else:
-            self.tokenizer = None
-
-        buckets_samples = list(map(lambda i: i * sample_rate, buckets_in_sec))
-        maximum_bucket_size = batch_size * sample_rate * buckets_in_sec[-1]
-        if use_dynamic_batch:
-            self.batcher = BucketBatcher(
-                buckets=buckets_samples,
-                dynamic_batch=True,
-                maximum_bucket_size=maximum_bucket_size,
-                length_fn=lambda x: x["target_audio"].shape[-1],
-            )
-        else:            
-            self.batcher = BucketBatcher(
-                buckets=buckets_samples,
-                dynamic_batch=False,
-                batch_size=batch_size,
-                length_fn=lambda x: x["target_audio"].shape[-1],  
-            )
-
-        self.zh_gt_vocal_datasets = VocalZhDataset(
-            region=region,
-            dataset_names=["Soda"],
-            dataset_weights=[1],
-            min_duration=buckets_in_sec[0],
-            max_duration=buckets_in_sec[-1],
-            normalize_audio=normalize_audio,
-            segment_method=segment_method,
-            max_seg_per_track=max_seg_per_track,
-            segment_max_phone_len=segment_max_phone_len,
-            include_intro=include_intro,
-            use_soda_gt_lyrics=True,
-            lyrics_confidence=lyrics_confidence,
-            tokenizer=self.tokenizer,                
-            resampled=True,
-            shardshuffle=True,
-            use_pipe=use_pipe,
-            handler=wds.warn_and_continue
-            )        
-        self.zh_sa_vocal_datasets = VocalZhDataset(
-            region=region,
-            dataset_names=["HotGalaxy", "MCCVocal-Zh-A", "MCCVocal-Zh-B"],
-            dataset_weights=[1, 0.5, 0.2],
-            min_duration=buckets_in_sec[0],
-            max_duration=buckets_in_sec[-1],
-            normalize_audio=normalize_audio,
-            segment_method=segment_method,
-            max_seg_per_track=max_seg_per_track,
-            segment_max_phone_len=segment_max_phone_len,
-            include_intro=include_intro,
-            use_soda_gt_lyrics=False,
-            lyrics_confidence=lyrics_confidence,
-            tokenizer=self.tokenizer,                
-            resampled=True,
-            shardshuffle=True,
-            use_pipe=use_pipe,
-            handler=wds.warn_and_continue
-            )
-        self.zh_speech_datasets = SpeechZhDataset(
-            region=region,
-            dataset_names=["FanqieShort", "FanqieLong", "XimalayaShort", "XimalayaLong", "XiaoyuzhouShort", "XiaoyuzhouLong"],
-            dataset_weights=[20, 20, 6, 3, 6, 3],
-            min_duration=buckets_in_sec[0],
-            max_duration=buckets_in_sec[-1],
-            normalize_audio=normalize_audio,
-            segment_method=segment_method,
-            max_seg_per_track=max_seg_per_track,
-            segment_max_phone_len=segment_max_phone_len,
-            include_intro=include_intro,
-            tokenizer=self.tokenizer,                
-            resampled=True,
-            shardshuffle=True,
-            use_pipe=use_pipe,
-            handler=wds.warn_and_continue
-        )
-        train_dataset = WebPipeline(            
-            MultiIterableDataset(datasets=[self.zh_gt_vocal_datasets, self.zh_sa_vocal_datasets, self.zh_speech_datasets],
-                                 weights=dataset_weights),
-            pipeline=[{"compose": [self.bucketize]}],
-        )
-
-        validation_dataset = [WebPipeline(
-            VocalZhDataset(
-                region=region,
-                dataset_names="SodaTest",
-                dataset_weights=1,
-                min_duration=buckets_in_sec[0],
-                max_duration=buckets_in_sec[-1],
-                normalize_audio=normalize_audio,
-                segment_method=segment_method,
-                max_seg_per_track=1,
-                segment_max_phone_len=segment_max_phone_len,
-                include_intro=include_intro,
-                use_soda_gt_lyrics=True,
-                tokenizer=self.tokenizer,                
-                use_pipe=use_pipe,
-                resampled=False,
-                nodesplitter=return_self,                
-                handler=wds.warn_and_continue
-            ),
-            pipeline=[{"compose": [self.bucketize]}],
-        )] 
-
-        super().__init__(
-            train_dataset=train_dataset,
-            validation_dataset=validation_dataset,
-            predict_dataset=train_dataset,
-            shuffle_buffer_size=shuffle_buffer_size,
-            num_workers=num_workers,
-            pin_memory=pin_memory,
-            collate_fn=collate_fn,
-        )
-
-
 class MixLangVocalWebDataModule(DataModule):
     def __init__(
         self,
@@ -1897,7 +982,6 @@ class MixLangVocalWebDataModule(DataModule):
         lyrics_confidence: float = 0.75,
         segment_method: str = "random",
         segment_max_phone_len: int = 400,
-        include_intro: bool = False,
         max_seg_per_track: int = -1,
         buckets_in_sec: List[int] = [
             20,
@@ -1945,7 +1029,7 @@ class MixLangVocalWebDataModule(DataModule):
         if zh_parquet_dataset_ids:
             for parquet_id in zh_parquet_dataset_ids:
                 self.parquet_vocal_datasets.append(
-                    VocalZhParquetDataset(
+                    VocalParquetDataset(
                         data_id=parquet_id,
                         min_duration=buckets_in_sec[0],
                         max_duration=buckets_in_sec[-1],
@@ -1953,7 +1037,6 @@ class MixLangVocalWebDataModule(DataModule):
                         segment_method=segment_method,
                         max_seg_per_track=max_seg_per_track,
                         segment_max_phone_len=segment_max_phone_len,
-                        include_intro=include_intro,
                         use_gt_lyrics=True,
                         lyrics_confidence=lyrics_confidence,
                         tokenizer=self.tokenizer,                
@@ -1966,7 +1049,7 @@ class MixLangVocalWebDataModule(DataModule):
         if en_parquet_dataset_ids:
             for parquet_id in en_parquet_dataset_ids:
                 self.parquet_vocal_datasets.append(
-                    VocalEnParquetDataset(
+                    VocalParquetDataset(
                         data_id=parquet_id,
                         min_duration=buckets_in_sec[0],
                         max_duration=buckets_in_sec[-1],
@@ -1974,7 +1057,6 @@ class MixLangVocalWebDataModule(DataModule):
                         segment_method=segment_method,
                         max_seg_per_track=max_seg_per_track,
                         segment_max_phone_len=segment_max_phone_len,
-                        include_intro=include_intro,
                         use_gt_lyrics=True,
                         lyrics_confidence=lyrics_confidence,
                         tokenizer=self.tokenizer,                
@@ -1991,7 +1073,7 @@ class MixLangVocalWebDataModule(DataModule):
         )
 
         validation_dataset = [WebPipeline(
-            VocalZhDataset(
+            VocalDataset(
                 region='CN',
                 dataset_names="SodaTest",
                 dataset_weights=1,
@@ -2001,7 +1083,6 @@ class MixLangVocalWebDataModule(DataModule):
                 segment_method=segment_method,
                 max_seg_per_track=1,
                 segment_max_phone_len=segment_max_phone_len,
-                include_intro=include_intro,
                 tokenizer=self.tokenizer,                
                 use_pipe=use_pipe,
                 resampled=False,
@@ -2028,7 +1109,7 @@ class MixLangVocalWebDataModule(DataModule):
                 yield batch
 
 
-class SftEnWebDataModule(DataModule):
+class SftWebDataModule(DataModule):
     # This DataModule supports both Artist SFT and Lyrics SFT.
     def __init__(
         self,
@@ -2037,7 +1118,7 @@ class SftEnWebDataModule(DataModule):
         shuffle_buffer_size: int = 10,
         num_workers: int = 4,
         pin_memory: bool = True,
-        conditions: str = "speaker_id,lyrics_tokens",
+        conditions: str = "style_text,speaker_id,lyrics_tokens",
         use_pipe: bool = True,
         tokenizer: str = "phoneme",
         frame_rate: int = 25,
@@ -2046,10 +1127,9 @@ class SftEnWebDataModule(DataModule):
         use_dynamic_batch: str = False,
         lyrics_field: str = "lyrics",
         lyrics_confidence: float = 0.7,
-        use_structure_tag: bool = False,
+        read_structure_tags: bool = False,
         segment_method: str = "random",
         segment_max_phone_len: int = 400,
-        include_intro: bool = False,
         max_seg_per_track: int = -1,
         buckets_in_sec: List[int] = [
             20,
@@ -2058,6 +1138,8 @@ class SftEnWebDataModule(DataModule):
         ],
         sample_limit_per_file: int = 1000,
     ):        
+        print(conditions)
+        print(parquet_datasets)
         self.num_workers = num_workers
         self.shuffle_buffer_size = shuffle_buffer_size
         self.pin_memory = pin_memory
@@ -2102,18 +1184,17 @@ class SftEnWebDataModule(DataModule):
             for pd_id, pd_weight in pd_id_weights:
                 pdws.append(pd_weight)
                 pds.append(
-                    VocalEnParquetDataset(
+                    VocalParquetDataset(
                         data_id=pd_id,
                         min_duration=buckets_in_sec[0],
                         max_duration=buckets_in_sec[-1],
                         normalize_audio=normalize_audio,
                         lyrics_field=lyrics_field,
                         lyrics_confidence=lyrics_confidence,
-                        use_structure_tag=use_structure_tag,
+                        read_structure_tags=read_structure_tags,
                         segment_method=segment_method,
                         max_seg_per_track=max_seg_per_track,
                         segment_max_phone_len=segment_max_phone_len,
-                        include_intro=include_intro,
                         tokenizer=self.tokenizer,                
                         resampled=is_train,
                         shardshuffle=is_train,
@@ -2134,7 +1215,7 @@ class SftEnWebDataModule(DataModule):
             train_dataset=self.parquet_vocal_datasets["train"],
             validation_dataset=self.parquet_vocal_datasets["test"],
             predict_dataset=self.parquet_vocal_datasets["train"],  # TODO
-            collate_fn=collate_fn,
+            collate_fn=self.collate_fn,
         )
 
     def bucketize(self, iterator: Iterable):
@@ -2144,12 +1225,23 @@ class SftEnWebDataModule(DataModule):
                 yield batch
 
 
-class LyricsSftEnWebDataModule(SftEnWebDataModule):
+class LyricsSftWebDataModule(SftWebDataModule):
     def __init__(
         self,
         **kwargs,
     ):
         super().__init__(
             parquet_datasets={"train":[(1026, 1)], "test":[(1012, 1)]},
+            **kwargs,
+        )
+
+
+class ArtistSftWebDataModule(SftWebDataModule):
+    def __init__(
+        self,
+        **kwargs,
+    ):
+        super().__init__(
+            parquet_datasets={"train":[(1473, 1)], "test":[(1012, 1)]},
             **kwargs,
         )

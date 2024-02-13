@@ -71,6 +71,8 @@ def inference_dataset_from_prompt(
         prompts['style_text'] = prompts.pop('text_prompt')
     elif 'text' in prompts:
         prompts['style_text'] = prompts.pop('text')
+    if 'style_category' in conditions:
+        prompts['style_category'] = prompts['style_text']
     if 'style_audio' in prompts:
         prompts['style_audio'] = load_and_normalize_wavs(prompts['style_audio'])
     if 'vocal_audio' in prompts:
