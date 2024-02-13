@@ -203,6 +203,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         target_duration = self.infer_target_duration(batch)
         target_samples_length = target_duration * self.extra_params.sample_rate
         if 'style_text' in conditions:
+            assert "style_text" in batch
             embeds = mulan_embedder.embed(
                 self.requires,
                 batch['style_text'],
@@ -210,6 +211,7 @@ class SemanticModule(BaseContinuousEmbedModule):
                 data_type='text',                
             )
         elif 'style_audio' in conditions:
+            assert "style_audio" in batch
             embeds = mulan_embedder.embed(
                 self.requires,
                 batch['style_audio'].to(self.device),
@@ -340,11 +342,10 @@ class SemanticModule(BaseContinuousEmbedModule):
     def prepare_inputs_embeddings(self, batch, embedder_map=None):
         if embedder_map is None:
             embedder_map = self.input_embedders.items()
-        if self.log_counter < 1:
-            print(batch)
-            self.log_counter += 1
 
         batch = self.prepare_batch_inputs(batch)
+        if self.log_counter < 1:
+            print(batch)            
 
         inputs_embeds = []
         for emb_type, embedder in embedder_map:
@@ -368,7 +369,11 @@ class SemanticModule(BaseContinuousEmbedModule):
                 emb_inputs = self.prepare_intensity_inputs(batch, embedder)
             else:
                 raise ValueError(f"Unknown emb type: {emb_type}")
-            inputs_embeds.append(emb_inputs)        
+            if self.log_counter < 1:
+                print(f"{emb_type} emb input shame: ", emb_inputs.shape)
+            inputs_embeds.append(emb_inputs)
+
+        self.log_counter += 1
         return torch.cat(inputs_embeds, dim=1)
 
     def aux_loss(self, batch, logits, last_hidden_state, target_length):

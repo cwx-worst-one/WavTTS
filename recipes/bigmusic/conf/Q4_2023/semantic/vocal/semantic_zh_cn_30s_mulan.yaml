@@ -16,10 +16,10 @@ extra_params:
     semantic_codebook_size: 32_768
     semantic_frame_rate: 25
     semantic_type: bestrq
-    train_conditions: "style_text,lyrics_tokens"
+    train_conditions: "style_audio,speaker_id,lyrics_tokens"
     mulan_crop: True        # Crop during training
     mulan_average: True     # Average during inference
-    input_embedders: [mulan, lyrics_tokens]
+    input_embedders: [mulan, speaker_id, lyrics_tokens]
     use_mcc_gender: False
     mulan_embed_dim: 512
     hidden_size: 1536
@@ -35,7 +35,7 @@ run_opts:
     fast_dev_run: False
     log_dir: logs
     hdfs_log_dir: "hdfs:///home/byte_speech_sv/zongyu.yin/logs"
-    log_name: decoder_07B_zh30s_mulan_otf
+    log_name: decoder_07B_zh30s_lowrisk_mulan_audio
     version: v0
     cache_dir: .module_cache/bigmusic
     precision: "16"
@@ -47,20 +47,22 @@ run_opts:
     learning_rate: 3.0e-4
     warmup_steps: 2000
     cycle_steps: 30000
-    weight_decay: 0.1
-    shuffle_buffer: 50   # 100
+    weight_decay: 0.05
+    shuffle_buffer: 0   # 100
     gradient_clip_val: 1.0
-    buckets_in_sec: [15, 20, 25, 30, 32]
+    buckets_in_sec: [22, 24, 26, 28, 30]
     use_dynamic_batch: False
     max_seg_per_track: 3
     segment_method: "verse_chorus_section"
+    infer_structure_tags: True
+    read_structure_tags: False
     region: "CN"
-    lyrics_confidence: 0.8
+    lyrics_confidence: 0.1
     lyrics_tokenizer: "tts_chinese_frontend_model"
     segment_max_phone_len: 400
     wds_dataset_names: []
     wds_dataset_weights: []
-    parquet_dataset_ids: [740]
+    parquet_dataset_ids: [1498]
     parquet_dataset_weights: [1]
 
 ################################################################################
@@ -81,6 +83,8 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     region: !ref <run_opts[region]>
     conditions: !ref <extra_params[train_conditions]>
     lyrics_confidence: !ref <run_opts[lyrics_confidence]>
+    read_structure_tags: !ref <run_opts[read_structure_tags]>
+    infer_structure_tags: !ref <run_opts[infer_structure_tags]>
     segment_method: !ref <run_opts[segment_method]>
     wds_dataset_names: !ref <run_opts[wds_dataset_names]>
     wds_dataset_weights: !ref <run_opts[wds_dataset_weights]>
@@ -154,11 +158,6 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
             initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                 cache_dir: !ref <run_opts[cache_dir]>
                 version: "Chinese"
-        mulan_tagger:
-            hpath: null
-            initializer: !name:recipes.bigmusic.utils.mulan_tag.init_mulan_tagger
-                cache_dir: null
-                mulan_tag_type: cn_tags
 
 logger:
     - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
