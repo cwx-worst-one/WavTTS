@@ -65,7 +65,6 @@ class SemanticModule(BaseContinuousEmbedModule):
         semantic_codebook_size = extra_params['semantic_codebook_size']
         lyrics_vocab_size = extra_params.get('lyrics_codebook_size', 2000)
         speaker_vocab_size = extra_params.get('speaker_codebook_size', 10)
-        tag_embed_dim = extra_params.get('tag_embed_dim', 128)
         tag_taxonomy_lang = extra_params.get('tag_taxonomy_lang', 'Zh')
         tag_dropout_rate = extra_params.get('tag_dropout_rate', 0)
         mulan_embed_dim = extra_params.get('mulan_embed_dim', 512)
@@ -88,7 +87,6 @@ class SemanticModule(BaseContinuousEmbedModule):
             elif emb_type == "tag_categorical":
                 # Read ground truth tags from style_text
                 embedder_dict[emb_type] = TagCategoricalEmbedder(
-                    input_dim=tag_embed_dim,
                     embedding_dim=hidden_size,
                     add_sos=True,
                     dropout=tag_dropout_rate,

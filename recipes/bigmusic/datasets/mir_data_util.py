@@ -267,9 +267,8 @@ def get_mir_vocab(vocab_type='Zh'):
         chinese_mood_vocab, chinese_scene_vocab, 
         gender_vocab, lang_vocab]:
         all_values.extend(categories)
-    id2vocab = { idx: value for idx, value in enumerate(all_values) }
     vocab2id = { value: idx for idx, value in enumerate(all_values) }
-    return id2vocab, vocab2id
+    return vocab2id
 
 def convert_m1_tag_to_style_text(m1_tags_list):    
     style_texts = []

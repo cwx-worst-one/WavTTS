@@ -2,7 +2,7 @@ import logging
 import random
 import torch
 import torch.nn as nn
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 from recipes.musiclm.models.compat.semantic_model import w2v_bert_tokenization
 from abc import abstractmethod
 from recipes.musiclm.transforms.audio import RandomResizedCrop
@@ -205,25 +205,38 @@ class TokenEmbedder(BaseEmbedder):
         return self.embedder(token_ids)
 
 
-class TagCategoricalEmbedder(ContinuousEmbedder):
+class TagCategoricalEmbedder(TokenEmbedder):
     def __init__(
-            self, input_dim=512, embedding_dim=1024, add_sos=False, dropout=0.0, vocab_type='Zh', category_separator="|"
+            self, vocab_type='auto', max_vocab_size=128, embedding_dim=1024, add_sos=False, dropout=0.0, num_categories=5, category_separator="|"
         ):
-        super().__init__(input_dim, embedding_dim, add_sos)
-        self.id2vocab, self.vocab2id = get_mir_vocab(vocab_type)
-        self.category_embedder = nn.Embedding(len(self.id2vocab), input_dim, device=next(self.parameters()).device)
+        if vocab_type == 'auto':
+            assert max_vocab_size
+            vocab2id = { NONE_LABEL: 0 }
+            vocab_size = max_vocab_size
+        else:
+            vocab2id = get_mir_vocab(vocab_type)
+            vocab_size = len(vocab2id)
+        super().__init__(vocab_size, embedding_dim, add_sos)
+        self.vocab2id = vocab2id
+        self.vocab_type = vocab_type
         self.dropout = dropout
         self.category_separator = category_separator
+        self.num_categories = num_categories
 
     def get_tag_id(self, tag, dropout=0.0):
+        should_add_tag = tag not in self.vocab2id and len(self.vocab2id) < self.vocab_size
+        if self.training and self.vocab_type == 'auto' and should_add_tag:
+            self.vocab2id[tag] = len(self.vocab2id)
         if tag not in self.vocab2id:
+            if not self.training:
+                raise Exception(f"Inference Error: Tag {tag} not found in vocab {self.vocab2id}. Please check vocab")
             tag = NONE_LABEL
         if self.training and random.random() < dropout:
             tag = NONE_LABEL
         return self.vocab2id[tag]
 
-    def get_embeds(self, requires, style_texts):
-        tag_ids = []
+    def get_tokens(self, requires, style_texts):
+        batch_tag_ids = []
         for style_text in style_texts:
             # accepts comma separated string or ordered list/dict of category values
             if isinstance(style_text, str):
@@ -236,12 +249,19 @@ class TagCategoricalEmbedder(ContinuousEmbedder):
                 # TODO: handle use case where dictionary is not sorted
                 # style_tag_list = [v for k,v in sorted(style_text.items())]
                 style_tag_list = style_text.values()
-            if len(style_tag_list) != 5:
-                style_tag_list = [NONE_LABEL] * 5                
-            tag_ids.append([self.get_tag_id(tag, self.dropout) for tag in style_tag_list])
+            
+            tag_ids = [self.get_tag_id(tag, self.dropout) for tag in style_tag_list]
+            if self.num_categories and len(tag_ids) != self.num_categories:
+                null_ids = [self.get_tag_id(NONE_LABEL)] * self.num_categories
+                tag_ids = null_ids
+            batch_tag_ids.append(tag_ids)
+
         device = next(self.parameters()).device
-        tag_embs= self.category_embedder(torch.as_tensor(tag_ids).to(device))
-        return tag_embs
+        return torch.as_tensor(batch_tag_ids).to(device)
+    
+    # save auto-growing vocab for inference
+    def set_extra_state(self, state: Any): self.vocab2id = state['vocab']
+    def get_extra_state(self) -> Any: return { 'vocab': self.vocab2id }
 
 class MulanEmbedder(ContinuousEmbedder):
     def __init__(

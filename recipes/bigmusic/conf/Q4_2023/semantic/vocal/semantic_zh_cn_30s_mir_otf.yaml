@@ -23,7 +23,6 @@ extra_params:
     tag_taxonomy_lang: "Zh"
     use_mcc_gender: False
     mulan_embed_dim: 512
-    tag_embed_dim: 128
     hidden_size: 1536
     intermediate_size: 4352
     num_hidden_layers: 24
