@@ -62,7 +62,7 @@ extra_params:
 
 run_opts:
     fast_dev_run: False
-    precision: 16
+    precision: 16-mixed
     accelerator: auto
     strategy: auto
     cache_dir: .module_cache/musiclm

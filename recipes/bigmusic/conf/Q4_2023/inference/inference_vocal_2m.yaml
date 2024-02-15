@@ -47,13 +47,14 @@ extra_params:
     # Model Settings
     sample_rate: 24000
     duration: 120 # 30
-    semantic_temperature: 1.05
+    semantic_temperature: 1
     sample_mode: "top_p"
+    sample_thresh: 0.9
     token2wav_type: diffusion
 
 run_opts:
     fast_dev_run: False
-    precision: 16
+    precision: 16-mixed
     accelerator: auto
     strategy: auto
     cache_dir: .module_cache/musiclm

@@ -45,13 +45,13 @@ extra_params:
     duration: 30 # 30
     lyrics_max_seq_len: 400
     semantic_temperature: 1.0
-    sample_thresh: 0.95
+    sample_thresh: 0.9
     sample_mode: "top_p"
     token2wav_type: diffusion
 
 run_opts:
     fast_dev_run: False
-    precision: 16
+    precision: 16-mixed
     accelerator: auto
     strategy: auto
     cache_dir: .module_cache/musiclm

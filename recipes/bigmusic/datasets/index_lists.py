@@ -248,6 +248,8 @@ INDEX = {
         "MCCVocalA_1M_Parquet": 93,
         "SSTK_Vocal": 110,
         "CD_Baby": 115, # 115 = 250k subset
+        "Billboard-V2": ["hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/js/data/music/billboard_hot200_v2/24000hz/train/20231026_genre/url2index.txt"],
+        "Billboard-V2_VALID": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/js/data/music/billboard_hot200_v2/24000hz/test/20231026_genre/url2index.txt",
         "MCCInstrumental": [
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_merge/nonvocal-A-alternative-rock+indie-pop+sertanejo+trap-rap.txt",
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_merge/nonvocal-A-blues+childhood+country+devotional+k-pop+soundtrack+trance+world-music.txt",

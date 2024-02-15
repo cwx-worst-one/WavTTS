@@ -33,7 +33,7 @@ run_opts:
     log_name: semantic_model_dataset_v4_baseline
     version: v0
     cache_dir: .module_cache/musiclm
-    precision: "16"
+    precision: "16-mixed"
     num_workers: 8
     accelerator: auto
     max_steps: 200000

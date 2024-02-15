@@ -4,6 +4,7 @@ import pandas as pd
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
+from pathlib import Path
 from pytorch_lightning.profilers import PassThroughProfiler
 from samantha.models.ctiga import gpt
 from samantha.models.ctiga.gpt import _init_weights
@@ -63,7 +64,9 @@ class BaseModule(pl.LightningModule):
     def load_from_pretrained(self, pretrained_path=None):
         print('Loading pre-trained model from checkpoint', pretrained_path)
         with local_zero_first():
-            pretrained_path = download_checkpoint(pretrained_path, cache_dir=self.extra_params.get('cache_dir', '.pretrain_cache'))
+            cache_dir = Path(self.extra_params.get('cache_dir', '.pretrain_cache'))
+            cache_dir.mkdir(exist_ok=True, parents=True)
+            pretrained_path = download_checkpoint(pretrained_path, cache_dir=cache_dir)
         state_dict = torch.load(
             pretrained_path, map_location=torch.device("cpu")
         )['state_dict']

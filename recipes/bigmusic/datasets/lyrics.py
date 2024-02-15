@@ -7,6 +7,7 @@ from recipes.bigmusic.datasets.transforms.lyrics import (
     LyricsTokenTransform, 
     MCCMetadataTextTransform, 
     SSTKMetadataTextTransform,
+    SpotifyMetadataTextTransform,
     RandomConditionsTransform,
     AddConditionsTransform,
     RenameAudioKeyTransform,
@@ -730,6 +731,16 @@ DATASET_CONFIGS = {
             "metadata_tfm_fn": SSTKMetadataTextTransform,
         }
     },
+    "billboard_v2": {
+        "init_fn": DefaultDatasets.Batched.default_batched_vocal_dataset,
+        "extra_args": {
+            "index_list": INDEX["US"]["Billboard-V2"],
+            "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
+            "min_song_confidence": 0.75,
+            "min_segment_confidence": 0.75, # lowering segment confidence, for longer segments
+            "metadata_tfm_fn": SpotifyMetadataTextTransform,
+        }
+    },
     "mcc60m_vocalA_style_mixed_text_audio_2m": {
         "init_fn": DefaultDatasets.Batched.default_batched_vocal_dataset,
         "extra_args": {
@@ -922,6 +933,14 @@ DATASET_CONFIGS = {
         "extra_args": {
             "url2index": INDEX["US"]["MCC60M_VALID_GROUPA"],
             "style_conditions": "style_text,lyrics_tokens",
+        }
+    },
+    "val_billboard_v2": {
+        "init_fn": DefaultDatasets.Batched.default_validation_dataset,
+        "extra_args": {
+            "url2index": INDEX["US"]["Billboard-V2_VALID"],
+            "style_conditions": "style_text,lyrics_tokens",
+            "metadata_tfm_fn": SpotifyMetadataTextTransform,
         }
     },
     "val_mcc60m_groupA_cn": {

@@ -261,16 +261,14 @@ class BillboardLyricsTransform:
         self,
         src_sample_rate: int,
         target_sample_rate: int,
-        min_duration: int,
-        max_duration: int,
+        buckets_sec: List[float],
         min_words: int,
         max_words: int,
         lyric_tokenizer: LyricPhonemeTokenizer
     ):
         self._src_sample_rate = src_sample_rate
         self._target_sample_rate = target_sample_rate
-        self._min_duration = min_duration
-        self._max_duration = max_duration
+        self._buckets_sec = buckets_sec
 
         self.lyric_tokenizer = lyric_tokenizer
         self.base_transform = BaseAudioTransform()
@@ -302,15 +300,14 @@ class BillboardLyricsTransform:
         return style_text
 
     @staticmethod
-    def billboard_to_compat_lyrics(index: dict, min_duration: int, max_duration: int) -> List[Any]:
+    def billboard_to_compat_lyrics(index: dict, buckets_sec: List[float]) -> List[Any]:
         utterances = index["lyrics"]["result"][0]["utterances"]
 
         # TODO: Verify this
         segments = lyrics_to_segments(
             utterances,
             fixed_duration=False,
-            min_duration=min_duration,
-            max_duration=max_duration,
+            target_durations=buckets_sec,
             shuffle_start=True,
             shuffle_lengths=True,
             include_intro=True,
@@ -326,7 +323,7 @@ class BillboardLyricsTransform:
             metadata = index["metadata"]
 
             style_text = self.billboard_to_compat_style_text(index)
-            segments = self.billboard_to_compat_lyrics(index, self._min_duration, self._max_duration)
+            segments = self.billboard_to_compat_lyrics(index, self._buckets_sec)
 
             for segment in segments:
                 audio = self.resample(audio)
@@ -503,8 +500,7 @@ class BillboardLyricsDataModule(WebDataModuleBase):
         transform = BillboardLyricsTransform(
             src_sample_rate=self._data_sample_rate,
             target_sample_rate=self._sample_rate,
-            min_duration=self.buckets_sec[0],
-            max_duration=self.buckets_sec[-1],
+            buckets_sec=self.buckets_sec,
             min_words=min_words,
             max_words=max_words,
             lyric_tokenizer=lyric_tokenizer,

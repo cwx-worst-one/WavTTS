@@ -15,6 +15,7 @@ from recipes.musiclm.utils.dist import local_zero_first
 import random
 from recipes.bigmusic.utils.format_utils import rewrite_metadata, rewrite_playlist_labels
 from functools import partial
+from collections import Counter
 
 def pad_crop(sequence, seq_len, dtype, padding_value=0):
     item_pad = torch.full((seq_len,), fill_value=padding_value, dtype=dtype)
@@ -70,6 +71,38 @@ class SSTKMetadataTextTransform():
         if isinstance(item, list): # perform batch transform
             return [self._call_once(i) for i in item]
         return self._call_once(item)
+
+class SpotifyMetadataTextTransform():
+    def _call_once(self, item):
+        # metadata = item.get('metadata', {})
+        metadata_string = SpotifyMetadataTextTransform.billboard_to_compat_style_text(item['metadata'])
+        return {
+            **item, 'style_text': metadata_string
+        }
+
+    def __call__(self, item):
+        if isinstance(item, list): # perform batch transform
+            return [self._call_once(i) for i in item]
+        return self._call_once(item)
+
+    @staticmethod
+    def billboard_to_compat_style_text(index: dict) -> str:
+        meta_dict = {}
+
+        ## METADATA
+        meta_dict["final_mood"] = None
+        meta_dict["final_genre"] = index.get("genre")  # 'style'
+
+        vocal_tags = [l for l in index["tags"]["vocal"] for l in l]
+        vocal_tags = Counter(vocal_tags)
+
+        if vocal_tags["gender_male"] > vocal_tags["gender_female"]:
+            meta_dict["merge_aed"] = "Male"
+        else:
+            meta_dict["merge_aed"] = "Female"
+
+        style_text = rewrite_metadata(meta_dict)
+        return style_text
 
 
 MCC_MOOD = ['Angry', 'Chill', 'Cute', 'Dynamic', 'Excited', 'Happy', 'Lonely', 'Romantic', 'Sorrow', 'Sweet', 'Tense', 'nan']

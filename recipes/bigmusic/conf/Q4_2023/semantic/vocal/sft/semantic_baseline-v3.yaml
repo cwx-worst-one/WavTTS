@@ -12,60 +12,63 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 
 extra_params:
     sample_rate: 24000
+    duration: [15, 20, 25, 30]
     lyrics_codebook_size: 400
+    lyrics_max_seq_len: 400
     semantic_codebook_size: 32_768
     semantic_frame_rate: 25
-    semantic_type: bestrq
     mulan_embed_dim: 512
     hidden_size: 1536
-    intermediate_size: 4352
-    num_hidden_layers: 24
-    num_attention_heads: 12
+    dataset_types: billboard_v2,mixed_groupa_tt_pop
+    valid_dataset_type: val_billboard_v2
+    # valid_dataset_type: val_mcc60m_groupA
+    semantic_type: bestrq
+    input_embedders: ["mulan", "lyrics_tokens"]
     pretrained_path: /mnt/bn/lyrics-to-song/baseline_models/q4/20231102-new-baseline-mixed-ctiga-196k/checkpoints/step=196000-tr_loss=3.9746-val_accu_0=24.90.ckpt
+
 
 # running parameters
 run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
-    log_name: semantic_model_dataset_v4_baseline
-    version: billboard_baseline_v0
+    log_name: semantic_model_dataset_202402_baseline
+    version: sft_baseline_v0
     cache_dir: .module_cache/musiclm
     precision: "16-mixed"
     num_workers: 8
     accelerator: auto
     max_steps: 20000
-    val_check_interval: 1000
     batch_size: 20
     learning_rate: 3.0e-4
     warmup_steps: 2000
     cycle_steps: 4500 # Recommended to be 3 epochs (1500 steps / epoch)
-    weight_decay: 0.01
-    shuffle_buffer: 20   # 100
+    weight_decay: 0.1
+    shuffle_buffer: 0
     gradient_clip_val: 1.0
-    min_seconds: 15
-    max_seconds: 30
+    val_check_interval: 1000
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
-lyric_tokenizer: !new:samantha.transforms.tokenizers.phoneme.LyricPhonemeTokenizer
-
-pl_datamodule: !new:recipes.datasets.billboard.BillboardLyricsDataModule
-    sample_rate: !ref <extra_params[sample_rate]>
+pl_datamodule: !apply:recipes.bigmusic.datasets.lyrics.LyricsDataModule.from_dataset_type
     batch_size: !ref <run_opts[batch_size]>
+    sample_rate: !ref <extra_params[sample_rate]>
+    sample_duration: !ref <extra_params[duration]>
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
-    min_words: 5
-    max_words: 400
-    min_seconds: !ref <run_opts[min_seconds]>
-    max_seconds: !ref <run_opts[max_seconds]>
-    resampled: True
-    shardshuffle: True
+    lyrics_max_seq_len: !ref <extra_params[lyrics_max_seq_len]>
     num_workers: !ref <run_opts[num_workers]>
     pin_memory: True
-    padding_strategy: pad
-    lyric_tokenizer: !ref <lyric_tokenizer>
-    bucket_interval: 5
+    dataset_types: !ref <extra_params[dataset_types]>
+    valid_dataset_type: !ref <extra_params[valid_dataset_type]>
+
+# pl_datamodule: !new:recipes.datasets.billboard.BillboardLyricsDataModule
+#     sample_rate: !ref <extra_params[sample_rate]>
+#     batch_size: !ref <run_opts[batch_size]>
+#     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+#     buckets_sec: !ref <run_opts[buckets_in_sec]>
+#     num_workers: !ref <run_opts[num_workers]>
+#     pin_memory: True
 
 model_config: !new:transformers.GPT2Config
     vocab_size: 1 # placeholder. Embedding table gets removed on load
@@ -74,9 +77,9 @@ model_config: !new:transformers.GPT2Config
     n_positions: 0  # No absolute position embedding
     num_logits: !ref <extra_params[semantic_codebook_size]> + 2 # +2 for EOS
     n_embd: !ref <extra_params[hidden_size]>
-    n_layer: !ref <extra_params[num_hidden_layers]>
-    n_head: !ref <extra_params[num_attention_heads]>
-    n_inner: !ref <extra_params[intermediate_size]>
+    n_layer: 24
+    n_head: 12
+    n_inner: 4352
     use_rms_norm: True
     activation_function: "swiglu"
     resid_pdrop: 0.0
@@ -123,17 +126,17 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
     criterion_cls: !name:recipes.musiclm.lightning.modules.MaskedCrossEntropy
     extra_params: !ref <extra_params>
     required_modules:
-        bestrq:
-            # US UMM-chroma stage 3
-            hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
-            initializer: !name:recipes.umm.requires.model_initializer.init_stage3
-                cache_dir: !ref <run_opts[cache_dir]>
         # Mulan mix - 160
         mulan:
             hpath: /mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt
             initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                 cache_dir: !ref <run_opts[cache_dir]>
                 version: "g4"
+        bestrq:
+            # US UMM-chroma stage 3
+            hpath: hdfs:///home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
+            initializer: !name:recipes.umm.requires.model_initializer.init_stage3
+                cache_dir: !ref <run_opts[cache_dir]>
 
 logger:
     - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
@@ -145,7 +148,6 @@ logger:
       save_dir: !ref <run_opts[log_dir]>
       project: !ref <run_opts[log_name]>
       name: !ref <run_opts[version]>
-
 
 # log_gradient_scaler: !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
 

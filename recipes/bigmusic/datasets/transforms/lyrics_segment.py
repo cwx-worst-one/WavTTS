@@ -137,8 +137,7 @@ class LyricsSegmentTransforms(TransformBase):
         segments: List[Segment] = lyrics_to_segments(
             lyrics, 
             fixed_duration=fixed_duration,
-            min_duration=min(self.sample_duration),
-            max_duration=max(self.sample_duration),
+            target_durations=self.sample_duration,
             shuffle_start=shuffle_start,
             shuffle_lengths=shuffle_lengths,
             min_confidence=self.min_segment_confidence,
@@ -214,6 +213,11 @@ def extract_metadata_and_utterances(item):
     elif lyrics and 'result' in lyrics:
         # v2 (asr + punctuation)
         utterances = lyrics['result'][0]['utterances']
+
+    # Hacky fix: Billboard-V2 has fields stored outside metadata.
+    for k in ['tags', 'genre', 'style']:
+        if k in index_data:
+            metadata[k] = index_data[k]
 
     return metadata, utterances
     
@@ -298,7 +302,7 @@ class Segment():
     def has_valid_time(self):
         return self.start >= 0
 
-def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
+def lyrics_to_segments(lyrics, target_durations=(20,25,30),
                        new_line_token=". ", fixed_duration=True, min_confidence=0.75, 
                        shuffle_start=False, shuffle_lengths=False, include_intro=False
     ):
@@ -314,10 +318,10 @@ def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
     })
 
     start_idx = random.randint(0, 2) if shuffle_start else 0
-    if shuffle_lengths and random.randint(0, 3) > 0 and not fixed_duration:
-        target_duration_length = random.randint(int(min_duration), int(max_duration))
+    if shuffle_lengths:
+        target_duration_length = random.choice(target_durations)
     else:
-        target_duration_length = max_duration
+        target_duration_length = max(target_durations)
     for i in range(start_idx, len(lyrics)):
         current_diction = lyrics[i]
         current_segment = Segment.from_dict(current_diction)
@@ -347,7 +351,7 @@ def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
                 segment.end = max(segment.end, min(segment.start + target_duration_length, current_segment.start))
                 segment.duration = segment.end - segment.start
 
-            if (segment.duration >= min_duration):
+            if (segment.duration >= min(target_durations)):
                 segments.append(segment)
             segment = None
 
@@ -357,6 +361,8 @@ def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
             continue
         
         # # Break long segments into multiple segments
+        max_duration = max(target_durations)
+        min_duration = min(target_durations)
         if current_segment and current_segment.duration > max_duration:
             # if subwords does not exist, we can't slice. skip segment
             if 'words' not in current_diction:
@@ -383,10 +389,10 @@ def lyrics_to_segments(lyrics, min_duration=3, max_duration=10,
         # Create new segment
         if segment is None:
             segment = current_segment
-            if shuffle_lengths and random.randint(0, 3) > 0:
-                target_duration_length = random.randint(int(min_duration), int(max_duration))
+            if shuffle_lengths:
+                target_duration_length = random.choice(target_durations)
             else:
-                target_duration_length = max_duration
+                target_duration_length = max(target_durations)
 
             # Set start to beginning of last segment to include instrumental sections
             previous_end_time = 0 if i == 0 else Segment.from_dict(lyrics[i-1]).end
