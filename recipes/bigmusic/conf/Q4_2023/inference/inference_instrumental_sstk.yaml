@@ -13,8 +13,8 @@ extra_params:
     samples_to_save: 1
     save_style_audio: True
     save_mp3: False
-    prompt_path: "/mnt/bn/audio-diffusion/data/bigmusic_text_prompts/instrumental_prompts_20231030_subset150+duration.csv"
-    inference_conditions: style_text,duration
+    prompt_path: "/mnt/bn/audio-diffusion/ducle/data/prompts/bgm_eval/prompts_style_audio.test.csv"
+    inference_conditions: "style_audio,duration,intensity"
     max_items: null
     use_reranker: True
 
@@ -22,14 +22,16 @@ extra_params:
 
     # Semantic model
     semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
-    semantic_ckpt: "/mnt/bn/audio-diffusion/ducle/logs/semantic_model_instrumental_07B/sstk_vad-unnorm_intensity-control-2dec_sstk-random_sstk-mulan-mae-v2+sstk-umm-nospeech-400k_largerr_3m/checkpoints/step=400000.ckpt"
+    semantic_ckpt: "/mnt/bn/audio-diffusion/ducle/logs/semantic_model_instrumental_07B/sstk_vad-unnorm_intensity-control-2dec-mean_sstk-random_sstk-mulan-mae-v2+sstk-umm-nospeech-400k-30s_largerr_3m/checkpoints/step=328000.ckpt"
     mulan_ckpt: "/mnt/bn/audio-diffusion/weituo/sstk_mulan/mulan-step=005000-median_rank_1=83-kaggle.ckpt"
     mulan_version: "sstkmae"
 
     # For re-ranking
     rewards:
-        style_text: 1.0
+        style_text: 0.0
+        style_audio: 1.0
         qualitative: 1.0
+        loudness_sim: 1.0
         audio_metrics: 1.0
     positive_phrase: "high quality, catchy, memorable"
     negative_phrase: "noisy, boring, forgettable"
@@ -51,6 +53,8 @@ extra_params:
         guidance_scale: 2.5
         bf16_portion: 0.0
 
+    vocoder_version: '24k_to_44.1k_stereo' # this is only needed when sample_rate=44100, for 24k its bypassed
+
     soundstorm_params:
         score_strategies: ["random", "random", "random", "random", "maskgit", "maskgit", "maskgit", "maskgit", "maskgit", "maskgit", "maskgit", "maskgit"]
         iterations: [64, 64, 32, 32, 16, 16, 8, 8, 4, 4, 2, 2]
@@ -58,10 +62,11 @@ extra_params:
 
     # Model Settings
     sample_rate: 24000  # 44100
+    mono: True
     duration: 30 # 30|45|60|75|90|105|120
     semantic_temperature: 1.0
-    sample_mode: "top_k"
-    sample_thresh: 0.99
+    sample_mode: "top_p"
+    sample_thresh: 0.8
     token2wav_type: "diffusion" # diffusion|soundstorm
     exclude_eos: True
 
@@ -112,11 +117,13 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                     params: !ref <extra_params[diffusion_params]>
             vocoder:
                 hpath: /mnt/bn/audio-diffusion/wtl/vocoder/sstk/24k_v1/soundstream-step=1240000-val_sdr=12.5666-EMA.ckpt
-                #hpath: /mnt/bn/audio-diffusion/wtl/vocoder/sstk/44.1k_mono_v1/soundstream-step=1410000-val_sdr=16.7701-EMA.ckpt
+                # hpath: /mnt/bn/audio-diffusion/wtl/vocoder/sstk/24k_v1_to_44.1k_stereo/soundstream-step=1490000-val_sdr=4.9540-EMA.ckpt  # for 24k to 44.1k stereo upsample
+                # hpath: /mnt/bn/audio-diffusion/wtl/vocoder/sstk/44.1k_mono_v1/soundstream-step=1410000-val_sdr=16.7701-EMA.ckpt # for 44.1k
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                     cache_dir: !ref <run_opts[cache_dir]>
                     sample_rate: !ref <extra_params[sample_rate]>
                     adapt_hopper: True
+                    version: !ref <extra_params[vocoder_version]>
         soundstorm_modules:
             soundstorm:
                 hpath: /mnt/bn/audio-diffusion/ducle/logs/soundstorm/sstk_sstk-umm-nospeech-400k/checkpoints/step=218000-loss=0.0000.ckpt
@@ -135,6 +142,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                     #    initializer: !name:recipes.bigmusic.utils.metrics_asr.init_asr
             initializer: !name:recipes.bigmusic.utils.reranker.init_reranker
                 cache_dir: !ref <run_opts[cache_dir]>
+                sample_rate: !ref <extra_params[sample_rate]>
 
 # separating out additional_callbacks so auto_eval can disable metrics
 #additional_callbacks:

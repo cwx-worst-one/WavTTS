@@ -1,5 +1,6 @@
 import torch
 
+import torchaudio
 from recipes.bigmusic.utils.format_utils import normalize_text
 from recipes.bigmusic.utils.metrics_asr import asr_transcribe_lyrics
 from recipes.bigmusic.utils.rewards import (
@@ -34,6 +35,7 @@ class Reranker:
         required_modules,
         local_rank,
         cache_dir,
+        sample_rate=24000,
     ):
         self.rewards = rewards
         self.local_rank = local_rank
@@ -54,6 +56,9 @@ class Reranker:
         if "chord" in rewards:
             assert "chord" in self.requires
             assert "chord_lms" in self.requires
+
+        if sample_rate != 24000:
+            self.resampler = torchaudio.transforms.Resample(sample_rate, 24000).to(torch.device(f'cuda:{local_rank}'))
 
     def compute_rewards(self, sampled_audio, eos_index_list, batch, extra_params):
         rewards = torch.zeros(len(sampled_audio)).to(sampled_audio.device)
@@ -204,6 +209,12 @@ class Reranker:
             raise ValueError(f"Unknown reward type: {rw_type}")
 
     def rerank(self, sampled_audio, eos_index_list, batch, extra_params):
+        original_audio = sampled_audio.clone()
+        if extra_params.sample_rate != 24000 and getattr(self, "resampler", False):
+            sampled_audio = self.resampler(sampled_audio)
+        if not getattr(extra_params, "mono", False):
+            sampled_audio = sampled_audio.mean(1, keepdims=False)
+
         rewards, rewards_breakdown = self.compute_rewards(
             sampled_audio, eos_index_list, batch, extra_params
         )
@@ -217,11 +228,11 @@ class Reranker:
         reranked_rewards_breakdown = []
         for i in range(len(indices)):
             idx = (i // beam) * beam + indices[i]
-            reranked_sampled_audio.append(sampled_audio[idx])
+            reranked_sampled_audio.append(original_audio[idx])
             if len(eos_index_list) > 0:
                 reranked_eos_index_list.append(eos_index_list[idx])
             reranked_rewards_breakdown.append(rewards_breakdown[idx])
-        reranked_sampled_audio = torch.vstack(reranked_sampled_audio)
+        reranked_sampled_audio = torch.stack(reranked_sampled_audio)
         reranked_eos_index_list = torch.hstack(reranked_eos_index_list)
         return (
             reranked_sampled_audio,
@@ -230,11 +241,12 @@ class Reranker:
         )
 
 
-def init_reranker(hpath, local_rank, cache_dir):
+def init_reranker(hpath, local_rank, cache_dir, sample_rate=24000):
     reranker = Reranker(
         rewards=hpath["rewards"],
         required_modules=hpath["required_modules"],
         local_rank=local_rank,
         cache_dir=cache_dir,
+        sample_rate=sample_rate,
     )
     return {"reranker": reranker}

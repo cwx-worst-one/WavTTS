@@ -4,11 +4,8 @@ import time
 import pytorch_lightning as pl
 import soundfile as sf
 import torch
-
-try:
-    import torch_museval
-except Exception as e:
-    print('WARNING: torch_museval not installed. This is required if doing Soundstream training')
+import torch_museval
+import torchaudio
 
 from pytorch_lightning.utilities.rank_zero import rank_zero_info
 from recipes.soundstream.utils.losses import (
@@ -38,8 +35,11 @@ class VocoderModule(pl.LightningModule):
         discriminator,
         generator_warmup_steps: int,
         lambda_generator_loss: float,
+        kl_weight: float,
         n_channels: int,
-        sample_rate: int,
+        dataloader_samplerate: int,
+        encoder_samplerate: int,
+        decoder_samplerate: int,
         sample_pool_size: int,
         train_batch_size: int,
         valid_batch_size: int,
@@ -50,24 +50,31 @@ class VocoderModule(pl.LightningModule):
         dis_lr_scheduler_cls,
         precision=32,
         profiling_flops=True,
+        mix_training=False
     ):
         super().__init__()
         # all parameters in ctor will be saved to self.hparams
         self.save_hyperparameters(ignore=["generator", "discriminator"])
         self.generator = generator
-        # for p in generator.encoder.parameters():
-        #     p.requires_grad = False
-        # for p in generator.mean_logvar_conv.parameters():
-        #     p.requires_grad = False
-        # self.generator.encoder.eval()
-        # self.generator.mean_logvar_conv.eval()
+        if mix_training:
+            for p in generator.encoder.parameters():
+                p.requires_grad = False
+            for p in generator.mean_logvar_conv.parameters():
+                p.requires_grad = False
+            self.generator.encoder.eval()
+            self.generator.mean_logvar_conv.eval()
+
+            if dataloader_samplerate != encoder_samplerate:
+                self.enc_resampler = torchaudio.transforms.Resample(dataloader_samplerate, encoder_samplerate)
+            if dataloader_samplerate != decoder_samplerate:
+                self.dec_resampler = torchaudio.transforms.Resample(dataloader_samplerate, decoder_samplerate)
 
         self.discriminator = discriminator
 
         # stft loss
         # self.stft_criterion = MultiResolutionSTFTLoss()
         self.mel_criterion = MelSpectrogramLoss(
-            sample_rate=self.hparams.sample_rate,
+            sample_rate=decoder_samplerate,
             n_mels=[5, 10, 20, 40, 80, 160, 320],
             window_lengths=[32, 64, 128, 256, 512, 1024, 2048],
             loss_fn=torch.nn.L1Loss(),
@@ -84,7 +91,7 @@ class VocoderModule(pl.LightningModule):
 
         # sample pool for efficient training
         self.sample_pool = SamplePool(
-            data_samplerate=sample_rate,
+            data_samplerate=dataloader_samplerate,
             cache_size=sample_pool_size,
             batch_size=train_batch_size,
             length_samples=sample_length,
@@ -100,9 +107,15 @@ class VocoderModule(pl.LightningModule):
         self.init_timestamp = time.time()
         self.last_timestamp = time.time()
 
-    def on_fit_start(self):
+    def setup(self, stage: str) -> None:
         # set torch seed for randomness
         torch.manual_seed(self.hparams.seed + self.global_rank)
+
+        if getattr(self, "enc_resampler", False):
+            self.enc_resampler = self.enc_resampler.to(torch.device(f"cuda:{self.local_rank}"))
+
+        if getattr(self, "dec_resampler", False):
+            self.dec_resampler = self.dec_resampler.to(torch.device(f"cuda:{self.local_rank}"))
 
         if self.local_rank == 0:
             os.makedirs(self.hparams.val_output_samples_dir, exist_ok=True)
@@ -176,19 +189,25 @@ class VocoderModule(pl.LightningModule):
         # process batch
         batch["audio"] = self.sample_pool.process(batch["audio"])
 
-        # if self.local_rank==0:
-        #     for audio in batch["audio"]:
-        #         num_files = len(os.listdir('sanity_check'))
-        #         sf.write(f'sanity_check/{num_files}.wav', audio.cpu().numpy().T, self.hparams.sample_rate)
+        if getattr(self, "enc_resampler", False):
+            input_audio = self.enc_resampler(batch["audio"])
+            input_audio = input_audio.mean(dim=1, keepdims=True)
+        else:
+            input_audio = batch["audio"]
+
+        if getattr(self, "dec_resampler", False):
+            gt_audio = self.dec_resampler(batch["audio"])
+        else:
+            gt_audio = batch["audio"]
 
         # get optimizor and scheduler
         opt_g, opt_d = self.optimizers()
         sch_g, sch_d = self.lr_schedulers()
 
         # train discriminator
-        wavs_g, kl_loss, std_mean = self.generator(batch["audio"])
+        wavs_g, kl_loss, std_mean = self.generator(input_audio)
         self.toggle_optimizer(opt_d)
-        y_d_rs, y_d_gs, _, _ = self.discriminator(batch["audio"], wavs_g.detach())
+        y_d_rs, y_d_gs, _, _ = self.discriminator(gt_audio, wavs_g.detach())
 
         # # d logit loss
         loss_d, r_losses, g_losses = discriminator_loss(y_d_rs, y_d_gs)
@@ -211,12 +230,12 @@ class VocoderModule(pl.LightningModule):
         # train generator
         self.toggle_optimizer(opt_g)
         # mpd + mrd
-        y_d_rs, y_d_gs, fmap_rs, fmap_gs = self.discriminator(batch["audio"], wavs_g)
+        y_d_rs, y_d_gs, fmap_rs, fmap_gs = self.discriminator(gt_audio, wavs_g)
 
         # g logit loss
         loss_g, loss_g_items = generator_loss(y_d_gs)
 
-        mel_loss = self.mel_criterion(wavs_g, batch["audio"])
+        mel_loss = self.mel_criterion(wavs_g, gt_audio)
 
         # fmap loss
         fmap_loss, fmap_loss_items = feature_loss(fmap_rs, fmap_gs, dynamic=True)
@@ -227,7 +246,7 @@ class VocoderModule(pl.LightningModule):
                 self.hparams.lambda_generator_loss * loss_g
                 + 15 * mel_loss
                 + 2 * fmap_loss
-                + 3e-3 * kl_loss
+                + self.hparams.kl_weight * kl_loss
             )
             # total_loss_g = recipes/soundstream/modules/pl_module_vae.py(
             #     # 7 * sc_loss
@@ -239,7 +258,7 @@ class VocoderModule(pl.LightningModule):
                 self.hparams.lambda_generator_loss * loss_g
                 + 15 * mel_loss
                 + 2 * fmap_loss
-                + 2e-3 * kl_loss
+                + 0 * kl_loss
             )
 
         opt_g.zero_grad()
@@ -289,13 +308,26 @@ class VocoderModule(pl.LightningModule):
         self.last_timestamp = time.time()
 
     def validation_step(self, batch, batch_idx):
-        wavs_g, _, _ = self.generator(batch["audio"])
+        if getattr(self, "enc_resampler", False):
+            input_audio = self.enc_resampler(batch["audio"])
+            input_audio = input_audio.mean(dim=1, keepdims=True)
+        else:
+            input_audio = batch["audio"]
+
+        if getattr(self, "dec_resampler", False):
+            gt_audio = self.dec_resampler(batch["audio"])
+        else:
+            gt_audio = batch["audio"]
+
+        wavs_g, _, _ = self.generator(input_audio)
         # calculate SDR
         sdrs = []
-        for wav_g, wav_o in zip(wavs_g, batch["audio"]):
+        for wav_g, wav_o in zip(wavs_g, gt_audio):
             try:
                 sdr, _, _, _ = torch_museval.evaluate(
-                    wav_g.T.unsqueeze(0).detach(), wav_o.T.unsqueeze(0).detach()
+                    wav_g.T.unsqueeze(0).detach(), wav_o.T.unsqueeze(0).detach(),
+                    win=self.hparams.decoder_samplerate,
+                    hop=self.hparams.decoder_samplerate,
                 )
                 sdr = torch.nanmedian(sdr)
                 sdrs.append(sdr)
@@ -304,13 +336,13 @@ class VocoderModule(pl.LightningModule):
                 sdrs.append(torch.zeros(1))
 
         # save the reconstructed wavs
-        for meta_song_id, wav in zip(batch["meta_song_id"], batch["audio"]):
+        for meta_song_id, wav in zip(batch["meta_song_id"], gt_audio):
             file_name = (
                 f"{self.hparams.val_output_samples_dir}/origin/{meta_song_id}.wav"
             )
             if not os.path.exists(file_name):
                 try:
-                    sf.write(file_name, wav.cpu().numpy().T, self.hparams.sample_rate)
+                    sf.write(file_name, wav.cpu().numpy().T, self.hparams.decoder_samplerate)
                 except:
                     print(f"Error writing {file_name}")
                     continue
@@ -318,7 +350,7 @@ class VocoderModule(pl.LightningModule):
         for meta_song_id, wav in zip(batch["meta_song_id"], wavs_g):
             file_name = f"{self.hparams.val_output_samples_dir}/{self.current_step}/{meta_song_id}.wav"
             try:
-                sf.write(file_name, wav.cpu().numpy().T, self.hparams.sample_rate)
+                sf.write(file_name, wav.cpu().numpy().T, self.hparams.decoder_samplerate)
             except:
                 print(f"Error writing {file_name}")
                 continue

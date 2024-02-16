@@ -82,36 +82,36 @@ def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, ss
                 )
             ).model
         if sstk:
-            if sample_rate == 24000:
-                if version == 'sstk_v1':
-                    diffusion_network = TNTDiffusionNetworkV2(
-                            input_dim=32,
-                            feature_dim=1024,
-                            context_dim=1,
-                            depth=16,
-                            segment_size=32,
-                            segment_stride=32,
-                            unet=True,
-                            unet_stages=[4,8,4],
-                            dropout=0,
-                            semantic_cfg_prob=0.10,
-                            use_checkpoint=False
-                        )
-                elif version == 'sstk_v2':
-                    diffusion_network = TNTDiffusionNetworkV2(
-                            input_dim=32,
-                            feature_dim=1024,
-                            context_dim=1,
-                            depth=20,
-                            segment_size=32,
-                            segment_stride=32,
-                            unet=False,
-                            unet_stages=[6,8,6],
-                            dropout=0,
-                            semantic_cfg_prob=0.10,
-                            use_checkpoint=False
-                        )
-            elif sample_rate ==  44100:
+            # 24k models
+            if version == 'sstk_v1':
+                diffusion_network = TNTDiffusionNetworkV2(
+                        input_dim=32,
+                        feature_dim=1024,
+                        context_dim=1,
+                        depth=16,
+                        segment_size=32,
+                        segment_stride=32,
+                        unet=True,
+                        unet_stages=[4,8,4],
+                        dropout=0,
+                        semantic_cfg_prob=0.10,
+                        use_checkpoint=False
+                    )
+            elif version == 'sstk_v2':
+                diffusion_network = TNTDiffusionNetworkV2(
+                        input_dim=32,
+                        feature_dim=1024,
+                        context_dim=1,
+                        depth=20,
+                        segment_size=32,
+                        segment_stride=32,
+                        unet=False,
+                        unet_stages=[6,8,6],
+                        dropout=0,
+                        semantic_cfg_prob=0.10,
+                        use_checkpoint=False
+                    )
+            elif version == 'sstk_v3': # place holder for 44.1k model
                 diffusion_network = TNTDiffusionNetworkV2(
                         input_dim=128,
                         feature_dim=1024,

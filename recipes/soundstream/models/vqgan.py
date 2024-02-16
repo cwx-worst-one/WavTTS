@@ -238,40 +238,49 @@ class VQGAN_KL_new(nn.Module):
 class VQGAN_KL_mix(nn.Module):
     def __init__(
             self,
-            latent_dim,
-            downsample_rates,
-            upsample_rates,
-            encoder_base_dim,
-            decoder_base_dim,
+            in_channels=1,
+            out_channels=2,
+            latent_dim=128,
+            downsample_rates=[2, 3, 7, 10],
+            upsample_rates=[10, 7, 3 ,2],
+            encoder_base_dim=96,
+            decoder_base_dim=2560,
+            adapt_hopper=True,
+            ckpt_path=None,
         ):
         super().__init__()
-        self.encoder = Encoder(
-            down_rates=[2, 3, 4, 4],
-            encoder_initial_channel=16,
-            trunc_noise=False,
-            smaller_encoder=True,
-            model_type='bytewave_wn',
+        self.encoder = Encoder_new(
+            n_channels=in_channels,
+            d_model=encoder_base_dim,
+            strides=downsample_rates,
+            adapt_hopper=adapt_hopper,
         )
-        # ckpt = torch.load('assets/1000k_ckpt.pyt', map_location='cpu')
+        self.mean_logvar_conv = nn.Conv1d(self.encoder.enc_dim, latent_dim * 2, 1)
+        self.latent_drop = nn.Dropout(0.05)
+        if ckpt_path is not None:
+            ckpt = torch.load(ckpt_path, map_location='cpu')
+            new_dict = OrderedDict()
+            for key in ckpt['state_dict']:
+                if key.endswith("total_ops") or key.endswith("total_params"):
+                    continue
+                if 'encoder' in key:
+                    new_dict[key.replace('generator.encoder.', '')] = ckpt['state_dict'][key]
+            self.encoder.load_state_dict(new_dict)
 
-        # new_dict = OrderedDict()
-        # for key in ckpt['G']:
-        #     if 'encoder' in key:
-        #         new_dict[key.replace('encoder.', '')] = ckpt['G'][key]
-        # self.encoder.load_state_dict(new_dict)
-
-        self.mean_logvar_conv = nn.Conv1d(256, latent_dim * 2, 1)
-        # new_dict = OrderedDict()
-        # for key in ckpt['G']:
-        #     if 'mean_logvar_conv' in key:
-        #         new_dict[key.replace('mean_logvar_conv.', '')] = ckpt['G'][key]
-        # self.mean_logvar_conv.load_state_dict(new_dict)
+            new_dict = OrderedDict()
+            for key in ckpt['state_dict']:
+                if key.endswith("total_ops") or key.endswith("total_params"):
+                    continue
+                if 'mean_logvar_conv' in key:
+                    new_dict[key.replace('generator.mean_logvar_conv.', '')] = ckpt['state_dict'][key]
+            self.mean_logvar_conv.load_state_dict(new_dict)
 
         self.decoder = Decoder(
             input_channel=latent_dim,
             channels=decoder_base_dim,
             rates=upsample_rates,
-            d_out=1,
+            d_out=out_channels,
+            adapt_hopper=adapt_hopper,
         )
    
     def forward(self, x,  deterministic=False):
@@ -308,65 +317,39 @@ class VQGAN_KL_mix(nn.Module):
         return decoder_out
  
 if __name__ == "__main__":
-    # path = 'assets/1000k_ckpt.pyt'
-    # ckpt = torch.load(path, map_location='cpu')
-    # from collections import OrderedDict
-    # new_dict = OrderedDict()
-    # for key in ckpt:
-    #     if 'decoder' not in key:
-    #         new_dict[key] = ckpt[key]
-    # print(ckpt['G'].keys())
+
+    # model = VQGAN_KL_new(
+    #     n_channels=1,
+    #     latent_dim=128,
+    #     downsample_rates=[2, 3, 7, 10],
+    #     upsample_rates=[10, 7, 3 ,2],
+    #     encoder_base_dim=64,
+    #     decoder_base_dim=64,
+    # )
+    # # 44100= 2*2*3*3*5*5*7*7
+    # x = torch.randn(size=[2, 1, int(25200)])
+    # decoder_out, kl_loss, std_mean = model(x)
+    # print(
+    #     f"Input shape: {x.shape}\ndecoder_out shape: {decoder_out.shape}\nkl_loss shape: {kl_loss.shape}\nstd_mean shape: {std_mean.shape}"
+    # )
+    # ckpt = torch.load('soundstream-step=1240000-val_sdr=12.5666-EMA.ckpt', map_location='cpu')
+    # print(ckpt['state_dict'].keys())
 
     # assert 1==2
-    # model = VQGAN(
-    #     model_type="bytewave_wn_causal",
-    #     num_res=12,
-    #     quant_token_num=1024,
-    #     quant_token_dim=256,
-    #     quant_beta=0.25,
-    #     down_rates=[2, 2, 10, 12],
-    #     upsample_rates=[10, 6, 4, 2],
-    #     encoder_initial_channel=16,
-    #     decoder_initial_channel=768,
-    #     trunc_noise=False,
-    #     smaller_encoder=True,
-    #     init_cluster_size=32,
-    #     dist=False
-    # )
-    # x = torch.randn(size=[2, 1, 32 * 600])
-    # decoder_out, quant_loss, quant_index, encoder_out = model(x)
-    # print(
-    #     f"Input shape: {x.shape}\ndecoder_out shape: {decoder_out.shape}\nencoder_out shape: {encoder_out.shape}"
-    # )
-    # assert 1==2
-    # model = VQGAN_KL(
-    #     model_type="bytewave_wn_causal",
-    #     quant_token_dim=256,
-    #     down_rates=[2, 3, 4, 4],
-    #     upsample_rates=[4, 4, 3 ,2],
-    #     encoder_initial_channel=8,
-    #     decoder_initial_channel=768,
-    #     trunc_noise=False,
-    #     smaller_encoder=True,
-    #     init_cluster_size=32,
-    # )
     model = VQGAN_KL_new(
-        n_channels=1,
-        latent_dim=128,
-        downsample_rates=[2, 3, 7, 10],
-        upsample_rates=[10, 7, 3 ,2],
-        encoder_base_dim=64,
-        decoder_base_dim=64,
+        n_channels=2,
+        latent_dim=32,
+        downsample_rates=[10, 9, 5, 2],
+        upsample_rates= [2, 5, 9 ,10],
+        encoder_base_dim=96,
+        decoder_base_dim=2560,
+        adapt_hopper=True,
+        # ckpt_path=None,
     )
-    # 44100= 2*2*3*3*5*5*7*7
-    x = torch.randn(size=[2, 1, int(25200)])
+    # 352 = 2**5 * 11
+    x = torch.randn(size=[2, 2, int(18000)])
     decoder_out, kl_loss, std_mean = model(x)
     print(
-        f"Input shape: {x.shape}\ndecoder_out shape: {decoder_out.shape}\nkl_loss shape: {kl_loss.shape}\nstd_mean shape: {std_mean.shape}"
+        f"Input shape: {x.shape}\ndecoder_out shape: {decoder_out.shape}"
     )
 
-    # err = (decoder_out - 1).mean() + quant_loss
-    # err.backward()
-    # for name, params in model.named_parameters():
-    #     if params.grad is None:
-    #         print(name, params.shape)

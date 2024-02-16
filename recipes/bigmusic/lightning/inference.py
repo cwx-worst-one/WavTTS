@@ -117,7 +117,7 @@ class SemanticInferenceModule(pl.LightningModule):
         if self.extra_params.get("mixv2", False):
             semantic_samples = self.requires["Stage3"].model.vq.embedding(semantic_samples)
         raw_wav_output = self.decoding_fn(self.requires, semantic_samples, self.decoding_params)
-        assert len(raw_wav_output.shape) == 2, "Wavs must be 2 sim [b, seq_len]"
+        
         if "duration" in batch:
             duration = batch["duration"]
         else:

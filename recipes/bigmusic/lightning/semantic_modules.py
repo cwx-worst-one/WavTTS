@@ -1091,6 +1091,6 @@ def truncate_wav_to_eos(wavs, eos_index_list):
     truncated_wavs = []
     for i, (eos, wav) in enumerate(zip_longest(eos_index_list, wavs)):
         if eos is not None:
-            wav = wav[:eos]
+            wav = wav[..., :eos]
         truncated_wavs.append(wav)
     return truncated_wavs
