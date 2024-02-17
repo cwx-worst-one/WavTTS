@@ -53,7 +53,7 @@ extra_params:
         guidance_scale: 2.5
         bf16_portion: 0.0
 
-    vocoder_version: '24k_to_44.1k_stereo' # this is only needed when sample_rate=44100, for 24k its bypassed
+    vocoder_version: '24k_to_48k_stereo' # this is only needed when sample_rate=44100 or 48000, for 24k its bypassed
 
     soundstorm_params:
         score_strategies: ["random", "random", "random", "random", "maskgit", "maskgit", "maskgit", "maskgit", "maskgit", "maskgit", "maskgit", "maskgit"]

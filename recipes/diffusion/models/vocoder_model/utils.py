@@ -84,8 +84,8 @@ def init_vocoder(checkpoint_path, local_rank, cache_dir=None, sample_rate=24000,
                     strict=False,
                 )
                 vocoder_model = vocoder_model_pl.generator.eval().to(device)
-        elif sample_rate == 44100:
-            if version == '24k_to_44.1k_stereo':
+        elif sample_rate == 44100 or sample_rate == 48000:
+            if version == '24k_to_48k_stereo':
                 vocoder_model = VQGAN_KL_mix(
                     in_channels=1,
                     out_channels=2,
