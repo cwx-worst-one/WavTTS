@@ -259,7 +259,10 @@ lang_vocab = ["普通话", "粤语", "闽南话"]
  
 NONE_LABEL = 'None'
 
-def get_mir_vocab(vocab_type='Zh'):
+def get_categorical_vocab(vocab_type='Zh'):
+    if vocab_type=='Zh': return get_zh_mir_vocab()
+
+def get_zh_mir_vocab():
     all_values = []
     all_values.append(NONE_LABEL)
     for categories in [

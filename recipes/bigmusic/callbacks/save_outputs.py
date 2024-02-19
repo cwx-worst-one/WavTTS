@@ -99,6 +99,7 @@ def save_batch_outputs(
     lyrics = batch.get('lyrics')
     lyrics_normalized_text = batch.get('lyrics_normalized_text')
     prompts = batch.get('style_text')
+    style_categories = batch.get('style_category')
     structures = batch.get('structure')
     categories = batch.get('category')
     style_audio = batch.get('style_audio')
@@ -125,6 +126,7 @@ def save_batch_outputs(
         lyrics_str = lyrics[ii] if 'lyrics_tokens' in conditions else None
         lyrics_normalized_str = lyrics_normalized_text[ii] if 'lyrics_tokens' in conditions and lyrics_normalized_text else None        
         style_text = prompts[ii] if 'style_text' in conditions else None
+        style_category = style_categories[ii] if 'style_category' in conditions and style_categories else None
         structure = structures[ii] if 'structure' in conditions else None
         if index is None:
             file_name = f"{absolute_idx:03d}_{format_lyrics_and_style(style_text, lyrics_str)}"
@@ -158,6 +160,7 @@ def save_batch_outputs(
             'lyrics': lyrics_str,
             'lyrics_normalized_text': lyrics_normalized_str,
             'style_text': style_text,
+            'style_category': style_category,
             'structure': structure,
             'conditions': conditions,
             'index': {

@@ -39,12 +39,10 @@ class MCCMetadataTextTransform():
         self.metadata_type = metadata_type
 
     def _call_once(self, item):
-        if self.metadata_type == 'Category':
-            metadata_string = rewrite_metadata_categories(item.get('metadata', {}))
-        else:
-            metadata_string = rewrite_metadata(item.get('metadata', {}), type=self.metadata_type)
+        metadata_category = rewrite_metadata_categories(item.get('metadata', {}))
+        metadata_string = rewrite_metadata(item.get('metadata', {}), type=self.metadata_type)
         return {
-            **item, 'style_text': metadata_string
+            **item, 'style_text': metadata_string, 'style_category': metadata_category
         }
 
     def __call__(self, item):
@@ -72,10 +70,10 @@ class SSTKMetadataTextTransform():
             return [self._call_once(i) for i in item]
         return self._call_once(item)
 
-class SpotifyMetadataTextTransform():
+class BillboardV2MetadataTextTransform():
     def _call_once(self, item):
         # metadata = item.get('metadata', {})
-        metadata_string = SpotifyMetadataTextTransform.billboard_to_compat_style_text(item['metadata'])
+        metadata_string = BillboardV2MetadataTextTransform.billboard_to_compat_style_text(item['metadata'])
         return {
             **item, 'style_text': metadata_string
         }
@@ -126,12 +124,17 @@ class RandomGenreTextTransform(MCCMetadataTextTransform):
         }
 
 def rewrite_metadata_categories(metadata):
-    genre = metadata.get('final_genre', 'nan').split(',')[0]
-    mood = metadata.get('final_mood', 'nan').split(',')[0]
-    gender = metadata.get('merge_aed', 'nan').split(',')[-1]
-    language = metadata.get('final_language', 'nan')
-    style_string = '|'.join([genre,mood,gender,language])
-    return style_string
+    genre = metadata.get('final_genre', '')
+    mood = metadata.get('final_mood', '')
+    gender = metadata.get('merge_aed', '')
+    if genre == 'nan': genre = ''
+    if mood == 'nan': mood = ''
+    
+    if 'Female' in gender: gender = 'Female'
+    elif 'Male' in gender: gender = 'Male'
+    else: gender = ''
+
+    return ','.join([genre, mood, gender]).split(',')
 
 class StyleTextT5Transform():
     def __init__(self, max_seq_len: int=50):

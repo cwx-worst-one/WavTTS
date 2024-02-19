@@ -133,7 +133,7 @@ class LyricsSegmentTransforms(TransformBase):
         fixed_duration = len(self.sample_duration) == 1 # if only one duration is provided. Fix it to that duration
         shuffle_start = self.shuffle_segments and len(lyrics) > 8
         shuffle_lengths = self.shuffle_segments
-        include_intro = True # max(self.sample_duration) > 90 # include intro for 2 min training
+        include_intro_p = 0.5 # include intro for 2 min training
         segments: List[Segment] = lyrics_to_segments(
             lyrics, 
             fixed_duration=fixed_duration,
@@ -141,7 +141,7 @@ class LyricsSegmentTransforms(TransformBase):
             shuffle_start=shuffle_start,
             shuffle_lengths=shuffle_lengths,
             min_confidence=self.min_segment_confidence,
-            include_intro=include_intro
+            include_intro_p=include_intro_p
         )
         if self.shuffle_segments:
             random.shuffle(segments)
@@ -304,7 +304,7 @@ class Segment():
 
 def lyrics_to_segments(lyrics, target_durations=(20,25,30),
                        new_line_token=". ", fixed_duration=True, min_confidence=0.75, 
-                       shuffle_start=False, shuffle_lengths=False, include_intro=False
+                       shuffle_start=False, shuffle_lengths=False, include_intro_p=0.5
     ):
     if not lyrics: return []
     segments = []
@@ -395,8 +395,9 @@ def lyrics_to_segments(lyrics, target_durations=(20,25,30),
                 target_duration_length = max(target_durations)
 
             # Set start to beginning of last segment to include instrumental sections
-            previous_end_time = 0 if i == 0 else Segment.from_dict(lyrics[i-1]).end
-            if include_intro and previous_end_time and segment.end - previous_end_time <= target_duration_length:
+            previous_end_offset = 1 # offset by 1s to skip residual vocals
+            previous_end_time = 0 if i == 0 else Segment.from_dict(lyrics[i-1]).end + previous_end_offset
+            if random.random() > include_intro_p and previous_end_time and segment.end - previous_end_time <= target_duration_length:
                 segment.start = previous_end_time
                 segment.duration = segment.end - segment.start
         else: # append to existing segment

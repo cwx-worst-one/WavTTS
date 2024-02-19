@@ -5,10 +5,13 @@ import torch.nn as nn
 from typing import Dict, Optional, Any
 from recipes.musiclm.models.compat.semantic_model import w2v_bert_tokenization
 from abc import abstractmethod
+from typing import Any
+from torch.nn.utils.rnn import pad_sequence
+from torch import distributed
 from recipes.musiclm.transforms.audio import RandomResizedCrop
 from recipes.bigmusic.utils.mulan_tag import MulanTagger
 from recipes.bigmusic.datasets.transforms.lyrics_segment import crop_pad_to_seq_length, random_crop_pad_to_seq_length
-from recipes.bigmusic.datasets.mir_data_util import NONE_LABEL, get_mir_vocab
+from recipes.bigmusic.datasets.mir_data_util import NONE_LABEL, get_categorical_vocab
 
 logger = logging.getLogger()
 
@@ -207,14 +210,14 @@ class TokenEmbedder(BaseEmbedder):
 
 class TagCategoricalEmbedder(TokenEmbedder):
     def __init__(
-            self, vocab_type='auto', max_vocab_size=128, embedding_dim=1024, add_sos=False, dropout=0.0, num_categories=5, category_separator="|"
+            self, vocab_type='auto', max_vocab_size=1024, embedding_dim=1024, add_sos=False, dropout=0.0, num_categories=5, category_separator="|"
         ):
         if vocab_type == 'auto':
             assert max_vocab_size
             vocab2id = { NONE_LABEL: 0 }
             vocab_size = max_vocab_size
         else:
-            vocab2id = get_mir_vocab(vocab_type)
+            vocab2id = get_categorical_vocab(vocab_type)
             vocab_size = len(vocab2id)
         super().__init__(vocab_size, embedding_dim, add_sos)
         self.vocab2id = vocab2id
@@ -223,10 +226,27 @@ class TagCategoricalEmbedder(TokenEmbedder):
         self.category_separator = category_separator
         self.num_categories = num_categories
 
+    def sync_tags(self, batch_style_tags):
+        "For auto tags, must sync new tags across all workers first for consistent vocab2id"
+        if self.vocab_type != 'auto': return
+        if not self.training: return # do not run on validation set - to prevent deadlocks
+        if distributed.is_available() and distributed.is_initialized() and distributed.get_world_size() > 1:
+            new_tags = set([tag for style_tags in batch_style_tags for tag in style_tags])
+            new_tag_set = new_tags - set(self.vocab2id.keys())
+            world_size = distributed.get_world_size()
+            gathered_tags = [None for _ in range(world_size)]
+            distributed.all_gather_object(gathered_tags, list(new_tag_set))
+            gathered_new_tags = list(sorted(set([tag for tags in gathered_tags if tags is not None for tag in tags if tag is not None])))
+        else:
+            all_new_tags = set([tag for style_tags in batch_style_tags for tag in style_tags])
+            gathered_new_tags = all_new_tags - set(self.vocab2id.keys())
+        for new_tag in gathered_new_tags:
+            if new_tag in self.vocab2id:
+                print('Warning: tag already exists. Error.', self.vocab2id)
+            if new_tag not in self.vocab2id and len(self.vocab2id) < self.vocab_size:
+                self.vocab2id[new_tag] = len(self.vocab2id)
+
     def get_tag_id(self, tag, dropout=0.0):
-        should_add_tag = tag not in self.vocab2id and len(self.vocab2id) < self.vocab_size
-        if self.training and self.vocab_type == 'auto' and should_add_tag:
-            self.vocab2id[tag] = len(self.vocab2id)
         if tag not in self.vocab2id:
             if not self.training:
                 raise Exception(f"Inference Error: Tag {tag} not found in vocab {self.vocab2id}. Please check vocab")
@@ -236,33 +256,174 @@ class TagCategoricalEmbedder(TokenEmbedder):
         return self.vocab2id[tag]
 
     def get_tokens(self, requires, style_texts):
-        batch_tag_ids = []
+        batch_style_tags = []
         for style_text in style_texts:
             # accepts comma separated string or ordered list/dict of category values
             if isinstance(style_text, str):
                 separator = self.category_separator
                 normalized_style_text = style_text.replace("，", separator).replace(",", separator)
-                style_tag_list = normalized_style_text.split(separator)
+                style_tags = normalized_style_text.split(separator)
             elif isinstance(style_text, list):
-                style_tag_list = style_text
+                style_tags = style_text
             elif isinstance(style_text, dict):
                 # TODO: handle use case where dictionary is not sorted
                 # style_tag_list = [v for k,v in sorted(style_text.items())]
-                style_tag_list = style_text.values()
-            
-            tag_ids = [self.get_tag_id(tag, self.dropout) for tag in style_tag_list]
+                style_tags = style_text.values()
+            batch_style_tags.append(style_tags)
+
+        # for auto vocab, sync across multiple workers
+        self.sync_tags(batch_style_tags)
+
+        batch_tag_ids = []
+        for style_tags in batch_style_tags:
+            tag_ids = [self.get_tag_id(tag, self.dropout) for tag in style_tags]
             if self.num_categories and len(tag_ids) != self.num_categories:
-                null_ids = [self.get_tag_id(NONE_LABEL)] * self.num_categories
-                tag_ids = null_ids
+                tag_ids = [self.get_tag_id(NONE_LABEL)] * self.num_categories
             batch_tag_ids.append(tag_ids)
 
         device = next(self.parameters()).device
         return torch.as_tensor(batch_tag_ids).to(device)
+
+    # save auto-growing vocab for inference
+    def set_extra_state(self, state: Any): self.vocab2id = state['vocab']
+    def get_extra_state(self) -> Any: return { 'vocab': self.vocab2id }
     
+class MulanCategoricalEmbedder(BaseEmbedder):
+    def __init__(
+            self,
+            vocab_size=1024,
+            input_dim=512,
+            embedding_dim=1024,
+            min_audio_length=10*24000,
+            add_sos=False,
+            dropout=0.0
+        ):
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.sos_id = None
+        self.eos_id = None
+        self.dropout = dropout
+        if add_sos:
+            self.vocab_size = self.vocab_size + 1
+            self.sos_id = self.vocab_size - 1
+        self.embedder = nn.Embedding(self.vocab_size, input_dim)
+
+        if input_dim != embedding_dim:
+            self.projection = nn.Linear(input_dim, embedding_dim, bias=False)
+        else:
+            self.projection = nn.Identity()
+
+        self.vocab2id = { NONE_LABEL: 0 }
+        self.dropout = dropout
+        self.min_audio_length = min_audio_length # 10s * 24k sample rate
+
+    # TokenEmbedder
+    def get_sos_token(self, batch_size):
+        assert self.sos_id is not None, "Error getting sos id. Must initialize embedder with add_sos=True"
+        device = next(self.parameters()).device
+        sos_ids = torch.full(size=(batch_size, 1), fill_value=self.sos_id, dtype=torch.long, device=device)
+        return sos_ids
+
+    def get_sos_embed(self, batch_size):
+        return self.projection(self.embedder(self.get_sos_token(batch_size)))
+
+    def sync_tags(self, batch_style_tags):
+        "For auto tags, must sync new tags across all workers first for consistent vocab2id"
+        if not self.training: return # do not run on validation set - to prevent deadlocks
+        if distributed.is_available() and distributed.is_initialized() and distributed.get_world_size() > 1:
+            all_new_tags = set([tag for style_tags in batch_style_tags for tag in style_tags])
+            new_tag_set = all_new_tags - set(self.vocab2id.keys())
+            world_size = distributed.get_world_size()
+            gathered_tags = [None for _ in range(world_size)]
+            distributed.all_gather_object(gathered_tags, list(new_tag_set))
+            gathered_new_tags = list(sorted(set([tag for tags in gathered_tags if tags is not None for tag in tags if tag is not None])))
+        else:
+            all_new_tags = set([tag for style_tags in batch_style_tags for tag in style_tags])
+            gathered_new_tags = all_new_tags - set(self.vocab2id.keys())
+        for new_tag in gathered_new_tags:
+            if new_tag in self.vocab2id:
+                print('Warning: tag already exists. Error.', self.vocab2id)
+            if new_tag not in self.vocab2id and len(self.vocab2id) < self.vocab_size:
+                self.vocab2id[new_tag] = len(self.vocab2id)
+
+    def get_tag_id(self, tag, dropout=0.0):
+        if tag not in self.vocab2id:
+            if not self.training:
+                raise Exception(f"Inference Error: Tag {tag} not found in vocab {self.vocab2id}. Please check vocab")
+            tag = NONE_LABEL
+        if self.training and random.random() < dropout:
+            tag = NONE_LABEL
+        return self.vocab2id[tag]
+
+    def get_tokens(self, requires, style_texts):
+        batch_style_tags = []
+        for style_text in style_texts:
+            # accepts comma separated string or ordered list/dict of category values
+            if isinstance(style_text, str):
+                separator = self.category_separator
+                normalized_style_text = style_text.replace("，", separator).replace(",", separator)
+                style_tags = normalized_style_text.split(separator)
+            elif isinstance(style_text, list):
+                style_tags = style_text
+            elif isinstance(style_text, dict):
+                style_tags = style_text.values()
+            batch_style_tags.append(style_tags)
+
+        self.sync_tags(batch_style_tags)
+
+        batch_tag_ids = []
+        for style_tags in batch_style_tags:
+            tag_ids = [self.get_tag_id(tag, self.dropout) for tag in style_tags]
+            batch_tag_ids.append(torch.tensor(tag_ids))
+
+        batch_tag_ids = pad_sequence(batch_tag_ids, batch_first=True, padding_value=self.get_tag_id(NONE_LABEL))
+        device = next(self.parameters()).device
+        return torch.as_tensor(batch_tag_ids).to(device)
+
     # save auto-growing vocab for inference
     def set_extra_state(self, state: Any): self.vocab2id = state['vocab']
     def get_extra_state(self) -> Any: return { 'vocab': self.vocab2id }
 
+    def embed(self, requires, batch, with_sos=False, **kwargs):
+        embeds = self.get_embeds(requires, batch, **kwargs)
+        embeds = self.projection(embeds)
+        if with_sos:
+            sos_embed = self.get_sos_embed(embeds.size(0))
+            embeds = torch.cat([sos_embed, embeds], dim=1)
+        return embeds
+
+    def get_embeds(
+        self,
+        requires,
+        input_audio_or_text,
+        data_type=None,
+        target_samples_length=None,
+    ):
+        # Text
+        if data_type == "text":
+            mulan_embeds = get_mulan_embeds(requires, input_audio_or_text, data_type)
+            mulan_embeds = mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
+            self.sync_tags([]) # must call sync tags for distributed training
+            return mulan_embeds
+        if data_type == "category":
+            categorical_tokens = self.get_tokens(requires, input_audio_or_text)
+            cat_embeds = self.embedder(categorical_tokens)
+            cat_embeds = cat_embeds.mean(1)[:, None, :] # bs x cat x emb
+            return cat_embeds
+        ## Audio embed
+        if data_type == "music":
+            if self.training:
+                input_audio_or_text = random_crop_pad_to_seq_length(input_audio_or_text, self.min_audio_length)
+            if input_audio_or_text.shape[-1] < self.min_audio_length:
+                input_audio_or_text = crop_pad_to_seq_length(input_audio_or_text, self.min_audio_length)
+            mulan_embeds = get_mulan_embeds(
+                requires, input_audio_or_text, data_type
+            )
+            if mulan_embeds.dim() == 2:
+                mulan_embeds = mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
+            self.sync_tags([]) # must call sync tags for distributed training
+            return mulan_embeds
+    
 class MulanEmbedder(ContinuousEmbedder):
     def __init__(
             self,

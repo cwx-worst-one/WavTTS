@@ -310,7 +310,7 @@ class BillboardLyricsTransform:
             target_durations=buckets_sec,
             shuffle_start=True,
             shuffle_lengths=True,
-            include_intro=True,
+            include_intro_p=0.5,
         )
         return segments
 

@@ -1,6 +1,7 @@
 from recipes.bigmusic.lightning.base_modules import BaseContinuousEmbedModule
 from recipes.bigmusic.lightning.embedding_modules import (
     MulanEmbedder,
+    MulanCategoricalEmbedder,
     LyricsTokenEmbedder,
     TagCategoricalEmbedder,
     WavToVecTokenEmbedder,
@@ -92,6 +93,14 @@ class SemanticModule(BaseContinuousEmbedModule):
                     add_sos=True,
                     dropout=tag_dropout_rate,
                     vocab_type=tag_taxonomy_lang,
+                )
+            elif emb_type == "mulan_categorical":
+                # Read ground truth tags from style_text
+                embedder_dict[emb_type] = MulanCategoricalEmbedder(
+                    input_dim=mulan_embed_dim,
+                    embedding_dim=hidden_size,
+                    add_sos=True,
+                    dropout=tag_dropout_rate
                 )
             elif emb_type == "speaker_id":
                 embedder_dict['speaker_id'] = SpeakerEmbedder(
@@ -232,6 +241,13 @@ class SemanticModule(BaseContinuousEmbedModule):
                 with_sos=True,
                 data_type='music',
                 target_samples_length=target_samples_length,
+            )
+        elif 'style_category' in conditions:
+            embeds = mulan_embedder.embed(
+                self.requires,
+                batch['style_category'],
+                with_sos=True,
+                data_type='category'
             )
         elif 'style_tag' in conditions: # using Mulan for on-the-fly MIR tagging
             embeds = mulan_embedder.embed(
@@ -400,7 +416,7 @@ class SemanticModule(BaseContinuousEmbedModule):
             else:
                 raise ValueError(f"Unknown emb type: {emb_type}")
             if self.log_counter < 1:
-                print(f"{emb_type} emb input shame: ", emb_inputs.shape)
+                print(f"{emb_type} emb input shape: ", emb_inputs.shape)
             inputs_embeds.append(emb_inputs)
             en_idx = st_idx + emb_inputs.shape[1]
             batch["inputs_embeds_span"][emb_type] = (st_idx, en_idx)

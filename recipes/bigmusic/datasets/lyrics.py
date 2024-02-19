@@ -7,7 +7,7 @@ from recipes.bigmusic.datasets.transforms.lyrics import (
     LyricsTokenTransform, 
     MCCMetadataTextTransform, 
     SSTKMetadataTextTransform,
-    SpotifyMetadataTextTransform,
+    BillboardV2MetadataTextTransform,
     RandomConditionsTransform,
     AddConditionsTransform,
     RenameAudioKeyTransform,
@@ -124,7 +124,7 @@ class LyricsDataModule(pl.LightningDataModule):
         return DataLoader(self.validation_dataset, batch_size=None, num_workers=self.num_workers, pin_memory=self.pin_memory)
 
     def predict_dataloader(self):
-        if dist.is_available() and torch.distributed.is_initialized() and dist.get_world_size() > 1:
+        if dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1:
             dataset = distributed_subset(self.predict_dataset)
         else:
             dataset = self.predict_dataset
@@ -666,6 +666,14 @@ DATASET_CONFIGS = {
             "infer_weights": True
         }
     },
+    "mcc60m_vocalB_style_mixed_cat_text_audio": {
+        "init_fn": DefaultDatasets.Batched.default_batched_vocal_dataset,
+        "extra_args": {
+            "index_list": INDEX["US"]["MCCVocalB"],
+            "style_conditions": ["style_category,lyrics_tokens","style_text,lyrics_tokens","style_audio,lyrics_tokens"],
+            "infer_weights": True
+        }
+    },
     "mcc60m_vocalB_style_mixed_text_audio_2m": {
         "init_fn": DefaultDatasets.Batched.default_batched_vocal_dataset,
         "extra_args": {
@@ -738,7 +746,7 @@ DATASET_CONFIGS = {
             "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
             "min_song_confidence": 0.75,
             "min_segment_confidence": 0.75, # lowering segment confidence, for longer segments
-            "metadata_tfm_fn": SpotifyMetadataTextTransform,
+            "metadata_tfm_fn": BillboardV2MetadataTextTransform,
         }
     },
     "mcc60m_vocalA_style_mixed_text_audio_2m": {
@@ -752,13 +760,12 @@ DATASET_CONFIGS = {
         }
     },
     "mixed_groupa_tt_pop": {
-        "init_fn": DefaultDatasets.Batched.default_batched_vocal_dataset,
+        "init_fn": DefaultDatasets.Batched.batched_vocal_parquet_dataset,
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalA_TT_POP"],
             "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
-            "enable_punctuation": True,
             "min_song_confidence": 0.8,
-            "min_segment_confidence": 0.1 # lowering segment confidence, for longer segments
+            "min_segment_confidence": 0.1, # lowering segment confidence, for longer segments
         }
     },
     "mcc60m_2M_vocal_mixed_text_audio": {
@@ -935,12 +942,19 @@ DATASET_CONFIGS = {
             "style_conditions": "style_text,lyrics_tokens",
         }
     },
+    "val_mcc60m_groupA_cat": {
+        "init_fn": DefaultDatasets.Batched.default_validation_dataset,
+        "extra_args": {
+            "url2index": INDEX["US"]["MCC60M_VALID_GROUPA"],
+            "style_conditions": "style_category,lyrics_tokens",
+        }
+    },
     "val_billboard_v2": {
         "init_fn": DefaultDatasets.Batched.default_validation_dataset,
         "extra_args": {
             "url2index": INDEX["US"]["Billboard-V2_VALID"],
             "style_conditions": "style_text,lyrics_tokens",
-            "metadata_tfm_fn": SpotifyMetadataTextTransform,
+            "metadata_tfm_fn": BillboardV2MetadataTextTransform,
         }
     },
     "val_mcc60m_groupA_cn": {
