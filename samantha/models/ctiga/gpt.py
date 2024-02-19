@@ -656,7 +656,10 @@ class GPTModel(GPTPreTrainedModel):
                 if self.prenorm:
                     if not self.parallel_block:
                         layer_outs = torch.utils.checkpoint.checkpoint(
-                            create_custom_forward(layer), hidden_states, residual
+                            create_custom_forward(layer),
+                            hidden_states,
+                            residual,
+                            use_reentrant=False,
                         )
                         if return_attn_probs:
                             assert len(layer_outs) == 3
@@ -674,15 +677,20 @@ class GPTModel(GPTPreTrainedModel):
                             hidden_states,
                             hidden_states2,
                             residual,
+                            use_reentrant=False,
                         )
                 else:
                     if not self.parallel_block:
                         hidden_states = torch.utils.checkpoint.checkpoint(
-                            create_custom_forward(layer), hidden_states
+                            create_custom_forward(layer),
+                            hidden_states,
+                            use_reentrant=False,
                         )
                     else:
                         hidden_states = torch.utils.checkpoint.checkpoint(
-                            create_custom_forward(layer), hidden_states
+                            create_custom_forward(layer),
+                            hidden_states,
+                            use_reentrant=False,
                         )
 
             else:

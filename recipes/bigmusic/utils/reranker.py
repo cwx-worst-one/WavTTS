@@ -14,6 +14,7 @@ from recipes.bigmusic.utils.rewards import (
     chorus_presence_reward,
     loudness_reward,
     audio_metrics_reward,
+    semantic_diversity_reward,
 )
 
 
@@ -75,7 +76,14 @@ class Reranker:
                 rewards_breakdown[i][rw_type] = rw[i].item()
         return rewards, rewards_breakdown
 
-    def _get_reward(self, rw_type, sampled_audio, eos_index_list, batch, extra_params):
+    def _get_reward(
+        self,
+        rw_type,
+        sampled_audio,
+        eos_index_list,
+        batch,
+        extra_params,
+    ):
         if rw_type == "style_audio":
             return mulan_audio_reward(
                 self.requires["mulan_infer_fn"],
@@ -205,6 +213,11 @@ class Reranker:
                 sample_rate=extra_params.sample_rate,
                 device=sampled_audio.device,
             )
+        elif rw_type == "semantic_diversity":
+            return semantic_diversity_reward(
+                batch["sampled_semantic_tokens"],
+                device=sampled_audio.device,
+            )
         else:
             raise ValueError(f"Unknown reward type: {rw_type}")
 
@@ -226,14 +239,17 @@ class Reranker:
         reranked_sampled_audio = []
         reranked_eos_index_list = []
         reranked_rewards_breakdown = []
+        reranked_semantic_tokens = []
         for i in range(len(indices)):
             idx = (i // beam) * beam + indices[i]
             reranked_sampled_audio.append(original_audio[idx])
             if len(eos_index_list) > 0:
                 reranked_eos_index_list.append(eos_index_list[idx])
             reranked_rewards_breakdown.append(rewards_breakdown[idx])
+            reranked_semantic_tokens.append(batch["sampled_semantic_tokens"][idx])
         reranked_sampled_audio = torch.stack(reranked_sampled_audio)
         reranked_eos_index_list = torch.hstack(reranked_eos_index_list)
+        batch["sampled_semantic_tokens"] = torch.stack(reranked_semantic_tokens)
         return (
             reranked_sampled_audio,
             reranked_eos_index_list,

@@ -1,4 +1,5 @@
 import pytorch_lightning as pl
+import torch
 from typing import Any
 import json
 from pathlib import Path
@@ -11,6 +12,7 @@ from recipes.bigmusic.utils.format_utils import update_json
 import numpy as np
 from recipes.musiclm.utils.dist import local_zero_first
 
+
 class SaveOutputsCallback(pl.Callback):
     def __init__(
         self,
@@ -18,6 +20,7 @@ class SaveOutputsCallback(pl.Callback):
         samples_to_save=1,
         save_style_audio=True,
         save_mp3=False,
+        save_semantic_tokens=False,
     ):
         super().__init__()
         self.total_items = 0
@@ -25,6 +28,7 @@ class SaveOutputsCallback(pl.Callback):
         self.samples_to_save = samples_to_save
         self.save_style_audio = save_style_audio
         self.save_mp3 = save_mp3
+        self.save_semantic_tokens = save_semantic_tokens
 
     def on_predict_batch_end(
         self,
@@ -48,6 +52,7 @@ class SaveOutputsCallback(pl.Callback):
             samples_to_save=self.samples_to_save,
             save_style_audio=self.save_style_audio,
             save_mp3=self.save_mp3,
+            save_semantic_tokens=self.save_semantic_tokens,
         )
         num_items = outputs['generated_audio_tensor'].shape[0] // self.beam_size
         self.total_items += num_items
@@ -59,7 +64,8 @@ class SaveOutputsCallback(pl.Callback):
             pl_module.extra_params['output_paths'].extend(output_paths)
         else:
             pl_module.extra_params['output_paths'] = output_paths
-    
+
+
 def format_lyrics_and_style(style_text, lyrics=None):
     if style_text is None and lyrics is None: # gt case
         return ""
@@ -74,6 +80,7 @@ def format_lyrics_and_style(style_text, lyrics=None):
     name_formatted = text_formated[:32] + "_" + lyrics_formated[:96] + "_" + text_encoded[:4]
     return name_formatted
 
+
 def save_batch_outputs(
     outputs,
     batch,
@@ -85,6 +92,7 @@ def save_batch_outputs(
     samples_to_save=1,
     save_style_audio=True,
     save_mp3=False,
+    save_semantic_tokens=False,
 ):
     conditions = batch['conditions']
     index = batch.get('index')
@@ -97,6 +105,7 @@ def save_batch_outputs(
     vocal_audio = batch.get('vocal_audio')   
     metadatas = outputs.get('metadata')
     wavs = outputs['generated_audio']
+    semantic_tokens = outputs.get('generated_semantic_tokens')
 
     output_paths = []
     
@@ -137,6 +146,10 @@ def save_batch_outputs(
         if vocal_audio is not None and beam_idx == 0:
             input_vocals_fp = os.path.join(wav_dir, f"{file_name}.vocal_audio.wav")
             save_wav(vocal_audio[ii].cpu().float(), input_vocals_fp, sr=sample_rate, save_mp3=save_mp3)
+
+        if save_semantic_tokens and semantic_tokens is not None:
+            semantic_tokens_fp = os.path.join(wav_dir, f"{wav_file_name}.semantic_tokens.pt")
+            torch.save(semantic_tokens[i], semantic_tokens_fp)
 
         meta_fp = os.path.join(wav_dir, f"{wav_file_name}.metadata.json")
         metadata = metadatas[i] if metadatas is not None else {}

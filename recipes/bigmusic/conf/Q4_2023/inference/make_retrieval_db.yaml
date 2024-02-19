@@ -41,7 +41,6 @@ pl_datamodule: !new:recipes.bigmusic.datasets.instrumental.InstrumentalWebDataMo
     max_num_crops: 1
     crop_step_size: 30
     use_pipe: False
-    prefetch_factor: 1
 
 pl_module: !new:recipes.bigmusic.lightning.retrieval_modules.MusicDatabaseModule
     extra_params: !ref <extra_params>

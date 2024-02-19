@@ -103,13 +103,16 @@ class SemanticInferenceModule(pl.LightningModule):
             )
 
     def predict_step(self, batch, batch_idx=0, dataloader_idx=0):
-        semantic_samples = self.semantic_module.predict(
-            batch,
-            self.extra_params,
-            beam=self.extra_params.beam_size,
-        )
+        if "semantic_tokens" in batch:
+            raw_semantic_samples = batch["semantic_tokens"]
+        else:
+            raw_semantic_samples = self.semantic_module.predict(
+                batch,
+                self.extra_params,
+                beam=self.extra_params.beam_size,
+            )
         semantic_samples, eos_index_list = process_eos_indexes(
-            semantic_samples,
+            raw_semantic_samples,
             self.semantic_module,
             self.extra_params.sample_rate,
         )
@@ -126,6 +129,7 @@ class SemanticInferenceModule(pl.LightningModule):
 
         outputs = {}
         if self.extra_params.use_reranker:
+            batch["sampled_semantic_tokens"] = raw_semantic_samples
             raw_wav_output, eos_index_list, rewards_breakdown = self.requires["reranker"].rerank(
                 raw_wav_output,
                 eos_index_list,
@@ -133,12 +137,16 @@ class SemanticInferenceModule(pl.LightningModule):
                 self.extra_params,
             )
             outputs["metadata"] = [{"rewards": x} for x in rewards_breakdown]
+            # After re-ranking, sampled_semantic_tokens in batch will be sorted by reward
+            raw_semantic_samples = batch["sampled_semantic_tokens"]
         
         raw_wav_output = raw_wav_output.detach().cpu()
         wavs = truncate_wav_to_eos(raw_wav_output, eos_index_list)
+        raw_semantic_samples = raw_semantic_samples.detach().cpu()
         outputs.update({ 
             'generated_audio': wavs,
             'generated_audio_tensor': raw_wav_output,
+            'generated_semantic_tokens': raw_semantic_samples,
         })
         return outputs
 

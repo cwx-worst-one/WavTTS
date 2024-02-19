@@ -13,6 +13,7 @@ extra_params:
     samples_to_save: 1
     save_style_audio: True
     save_mp3: False
+    save_semantic_tokens: False
     prompt_path: "/mnt/bn/audio-diffusion/ducle/data/prompts/bgm_eval/prompts_style_audio.test.csv"
     inference_conditions: "style_audio,duration,intensity"
     max_items: null
@@ -55,19 +56,14 @@ extra_params:
 
     vocoder_version: '24k_to_48k_stereo' # this is only needed when sample_rate=44100 or 48000, for 24k its bypassed
 
-    soundstorm_params:
-        score_strategies: ["random", "random", "random", "random", "maskgit", "maskgit", "maskgit", "maskgit", "maskgit", "maskgit", "maskgit", "maskgit"]
-        iterations: [64, 64, 32, 32, 16, 16, 8, 8, 4, 4, 2, 2]
-        temperatures: [0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95]
-
     # Model Settings
-    sample_rate: 24000  # 44100
+    sample_rate: 24000  # 48000
     mono: True
     duration: 30 # 30|45|60|75|90|105|120
     semantic_temperature: 1.0
     sample_mode: "top_p"
     sample_thresh: 0.8
-    token2wav_type: "diffusion" # diffusion|soundstorm
+    token2wav_type: "diffusion"
     exclude_eos: True
 
 run_opts:
@@ -124,11 +120,6 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                     sample_rate: !ref <extra_params[sample_rate]>
                     adapt_hopper: True
                     version: !ref <extra_params[vocoder_version]>
-        soundstorm_modules:
-            soundstorm:
-                hpath: /mnt/bn/audio-diffusion/ducle/logs/soundstorm/sstk_sstk-umm-nospeech-400k/checkpoints/step=218000-loss=0.0000.ckpt
-                initializer: !name:recipes.soundstorm.lightning.utils.init_soundstorm
-                    cache_dir: !ref <run_opts[cache_dir]>
         reranker:
             hpath:
                 rewards: !ref <extra_params[rewards]>
@@ -155,6 +146,7 @@ callbacks:
       samples_to_save: !ref <extra_params[samples_to_save]>
       save_style_audio: !ref <extra_params[save_style_audio]>
       save_mp3: !ref <extra_params[save_mp3]>
+      save_semantic_tokens: !ref <extra_params[save_semantic_tokens]>
 
 trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>

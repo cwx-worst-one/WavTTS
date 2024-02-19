@@ -61,7 +61,6 @@ class InstrumentalWebDataModule(DataModule):
         max_duration: Optional[int] = None,
         use_pipe: bool = False,
         seed: int = 555,
-        prefetch_factor: Optional[int] = None,
     ):
         if dataset_name == "MCC40M_US":
             hdfs_dir = "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_merge"
@@ -100,7 +99,14 @@ class InstrumentalWebDataModule(DataModule):
         elif dataset_name == "SSTK_US":
             train_urls_and_weights = [(106, 1.0)]
         elif dataset_name == "SSTK_US_RICH_INSTRUMENTS":
-            train_urls_and_weights = [(122, 1.0)]
+            train_urls_and_weights = [
+                (124, 1.0), # no instrument label
+                (125, 1.0), # 1 instrument
+                (126, 2.0), # 2 instruments
+                (127, 3.0), # 3+ instruments
+            ]
+        elif dataset_name == "SSTK_US_GENRE_BALANCED":
+            train_urls_and_weights = [(146, 1.0)]
         else:
             raise NotImplementedError(f"Unknown dataset: {dataset_name}")
 
@@ -209,6 +215,5 @@ class InstrumentalWebDataModule(DataModule):
                 mixed_ratio=mixed_ratio,
             ),
             do_shuffle=False,
-            prefetch_factor=prefetch_factor,
         )
         

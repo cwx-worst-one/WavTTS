@@ -414,19 +414,29 @@ class MCCTransforms(TransformBase):
                 tags.extend([x.strip() for x in ary if len(x.strip()) > 0])
             return ", ".join(tags)
         elif text_type in {"sstk_concat", "sstk_random"}:
-            text_fields = []
-            for key in ["title", "description", "keywords", "genres", "instruments"]:
+            text_fields = {}
+            for key in ["description", "keywords", "genres", "instruments"]:
                 v = metadata.get(key)
-                if v is None or v == "\\N" or len(v) == 0:
+                if v is None or v == "\\N" or len(v.strip()) == 0:
                     continue
-                text_fields.append(v)
-            random.shuffle(text_fields)
+                text_fields[key] = v.strip()
             if len(text_fields) == 0:
                 return ""
-            elif text_type == "sstk_concat":
-                return ". ".join(text_fields)
+            if text_type == "sstk_random":
+                long_text_available = "description" in text_fields
+                short_text_available = any([k in text_fields for k in ["keywords", "genres", "instruments"]])
+                if long_text_available and not short_text_available:
+                    text_fields = [text_fields["description"]]
+                elif short_text_available and not long_text_available:
+                    text_fields = [text_fields[k] for k in ["keywords", "genres", "instruments"] if k in text_fields]
+                elif random.random() <= 0.5:
+                    text_fields = [text_fields["description"]]
+                else:
+                    text_fields = [text_fields[k] for k in ["keywords", "genres", "instruments"] if k in text_fields]
             else:
-                return ". ".join(text_fields[:random.randint(1, len(text_fields))])
+                text_fields = list(text_fields.values())
+            random.shuffle(text_fields)
+            return ", ".join(text_fields)
         else:
             raise ValueError(f"Unknown text type: {text_type}")
 

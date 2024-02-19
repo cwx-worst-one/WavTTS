@@ -547,3 +547,52 @@ class IntensityEmbedder(nn.Module):
             print(f"intensity_labels: {batch_intensity_labels}, intensity_ids: {intensity_ids}")
             self.logged += 1
         return self.embedder(intensity_ids)
+
+
+class BeatEmbedder(nn.Module):
+    def __init__(self, beat_labels, embedding_dim, max_duration, max_timestamp=5):
+        super().__init__()
+        self.beat2id = {}
+        for l in beat_labels:
+            self.beat2id[l] = len(self.beat2id)
+        self.eos_id = len(self.beat2id)
+        self.pad_id = self.eos_id + 1
+        # beats + <eos> + <pad>
+        self.beat_vocab_size = len(self.beat2id) + 2
+        self.embedder = nn.Embedding(self.beat_vocab_size, embedding_dim)
+        self.mean_duration = max_duration / 2
+        self.max_timestamp = max_timestamp
+        self.logged = 0
+
+    def normalize_timestamp(self, x):
+        # Per xval paper, normalize the timestamp between [-5, 5]
+        return (x - self.mean_duration) / self.mean_duration * self.max_timestamp
+
+    def embed(self, batch_beat_labels, target_duration):
+        batch_size = len(batch_beat_labels)
+        device = next(self.parameters()).device
+        # First, trim all beat labels beyond the target duration
+        # and only keep the ones we want to model
+        batch_beat_labels = [
+            [(x[0], int(x[1])) for x in y if x[0] <= target_duration and int(x[1]) in self.beat2id]
+            for y in batch_beat_labels
+        ]
+        # Find the max beat length to do padding properly
+        max_beat_length = max([len(y) for y in batch_beat_labels])
+        beat_ids = torch.full((batch_size, max_beat_length + 1), self.pad_id).long().to(device)
+        beat_timestamps = torch.zeros((batch_size, max_beat_length + 1)).float().to(device)
+        # Fill in the values, the lengths are different so need to do one-by-one
+        for i, beat_labels in enumerate(batch_beat_labels):
+            beat_ids[i, :len(beat_labels) + 1] = torch.Tensor(
+                [self.beat2id[x[1]] for x in beat_labels] + [self.eos_id]
+            ).long()
+            # For <eos>, always multiply by 1
+            beat_timestamps[i, :len(beat_labels) + 1] = torch.Tensor(
+                [self.normalize_timestamp(x[0]) for x in beat_labels] + [1.0]
+            ).float()
+        if self.logged < 5:
+            print(f"beat_labels: {batch_beat_labels}")
+            print(f"beat_ids ({beat_ids.shape}): {beat_ids}")
+            print(f"beat_timestamps ({beat_timestamps}): {beat_timestamps}")
+            self.logged += 1
+        return self.embedder(beat_ids) * beat_timestamps.unsqueeze(2), beat_ids, beat_timestamps

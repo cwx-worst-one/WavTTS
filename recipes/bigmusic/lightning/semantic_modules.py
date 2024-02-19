@@ -9,7 +9,8 @@ from recipes.bigmusic.lightning.embedding_modules import (
     DurationEmbedder,
     StructureEmbedder,
     IntensityEmbedder,
-    SpeakerEmbedder
+    SpeakerEmbedder,
+    BeatEmbedder,
 )
 from recipes.bigmusic.datasets.mir_data_util import convert_m1_tag_to_style_text
 from recipes.bigmusic.utils.metrics_asr import asr_transcribe_lyrics
@@ -129,6 +130,14 @@ class SemanticModule(BaseContinuousEmbedModule):
                     embedding_dim=hidden_size,
                     intensity_hz=extra_params.get("intensity_hz", 1),
                 )
+            elif emb_type == "beat":
+                duration = extra_params["duration"]
+                max_duration = duration[-1] if isinstance(duration, (list, tuple)) else duration
+                embedder_dict[emb_type] = BeatEmbedder(
+                    beat_labels=extra_params["beat_labels"],
+                    embedding_dim=hidden_size,
+                    max_duration=max_duration,
+                )
             else:
                 raise ValueError(f"Unknown emb type: {emb_type}")
         input_embedders = nn.ModuleDict(embedder_dict)
@@ -179,6 +188,13 @@ class SemanticModule(BaseContinuousEmbedModule):
                 prediction_dict[pred_type] = nn.Linear(
                     hidden_size,
                     self.input_embedders["intensity"].intensity_vocab_size,
+                    bias=False,
+                )
+            elif pred_type == "beat":
+                # Last dim is for magnitude, others are for beat IDs
+                prediction_dict[pred_type] = nn.Linear(
+                    hidden_size,
+                    self.input_embedders["beat"].beat_vocab_size + 1,
                     bias=False,
                 )
             else:
@@ -320,7 +336,19 @@ class SemanticModule(BaseContinuousEmbedModule):
         target_duration = self.infer_target_duration(batch)
         embeds = intensity_embedder.embed(intensity_labels, target_duration)
         return embeds
-    
+
+    def prepare_beat_inputs(self, batch, beat_embedder):
+        batch_size = self.infer_batch_size(batch)
+        if "beat" not in batch:
+            target_audio = batch["target_audio"] if "target_audio" in batch else batch["style_audio"]
+            batch["beat"] = self.requires["beat"].predict_step({"target_audio": target_audio}, 0)
+        assert batch_size == len(batch["beat"])
+        target_duration = self.infer_target_duration(batch)
+        embeds, beat_ids, beat_timestamps = beat_embedder.embed(batch["beat"], target_duration)
+        batch["beat_ids"] = beat_ids
+        batch["beat_timestamps"] = beat_timestamps
+        return embeds
+
     def prepare_batch_inputs(self, batch):
         """For extra batch preparation that requires GPU"""
         if "m1_tagger" in self.prepare_input_types:
@@ -337,16 +365,18 @@ class SemanticModule(BaseContinuousEmbedModule):
             batch["style_category"] = mulan_tags
         return batch
 
-    def prepare_inputs_embeddings(self, batch, embedder_map=None):
-        if embedder_map is None:
-            embedder_map = self.input_embedders.items()
+    def prepare_inputs_embeddings(self, batch, input_embedders=None):
+        if input_embedders is None:
+            input_embedders = self.input_embedders.items()
 
         batch = self.prepare_batch_inputs(batch)
         if self.log_counter < 1:
             print(batch)            
 
+        st_idx = 0
         inputs_embeds = []
-        for emb_type, embedder in embedder_map:
+        batch["inputs_embeds_span"] = {}
+        for emb_type, embedder in input_embedders:
             if (emb_type == "mulan") or (emb_type == "mulan_categorical"):
                 emb_inputs = self.prepare_mulan_inputs(batch, embedder)
             elif emb_type == "tag_categorical":            
@@ -365,26 +395,37 @@ class SemanticModule(BaseContinuousEmbedModule):
                 emb_inputs = self.prepare_vocal_audio_inputs(batch, embedder)
             elif emb_type == "intensity":
                 emb_inputs = self.prepare_intensity_inputs(batch, embedder)
+            elif emb_type == "beat":
+                emb_inputs = self.prepare_beat_inputs(batch, embedder)
             else:
                 raise ValueError(f"Unknown emb type: {emb_type}")
             if self.log_counter < 1:
                 print(f"{emb_type} emb input shame: ", emb_inputs.shape)
             inputs_embeds.append(emb_inputs)
+            en_idx = st_idx + emb_inputs.shape[1]
+            batch["inputs_embeds_span"][emb_type] = (st_idx, en_idx)
+            st_idx = en_idx
 
         self.log_counter += 1
         return torch.cat(inputs_embeds, dim=1)
 
     def aux_loss(self, batch, logits, last_hidden_state, target_length):
+        assert (
+            "inputs_embeds_span" in batch
+        ), f"Check `prepare_inputs_embeddings` to make sure `inputs_embeds_span` is inserted in `batch`"
         aux_loss = 0
         aux_dict = {}
         for pred_type, pred_head in self.prediction_heads.items():
+            st_idx, en_idx = batch["inputs_embeds_span"][pred_type]
             pred_wt = self.prediction_weights[pred_type]
             if pred_type == "intensity":
-                # NOTE: we assume intensity is the last input
                 target_intensity = self.input_embedders["intensity"].quantize(batch["intensity"])
                 intensity_length = target_intensity.shape[1]
+                assert (
+                    intensity_length == en_idx - st_idx
+                ), f"{intensity_length} != {en_idx} - {st_idx}"
                 # Offset by one
-                st = last_hidden_state.shape[1] - target_length - intensity_length - 1
+                st = st_idx - 1
                 intensity_embed = last_hidden_state[:, st:st + intensity_length, :]
                 intensity_logits = pred_head(intensity_embed)
                 pred_loss = self.criterion(intensity_logits, target_intensity)
@@ -392,6 +433,27 @@ class SemanticModule(BaseContinuousEmbedModule):
                 pred_dict = {
                     "intensity_loss": pred_loss.item(),
                     "intensity_accu": pred_accu.item(),
+                }
+            elif pred_type == "beat":
+                target_beat_ids = batch["beat_ids"]
+                target_timestamps = batch["beat_timestamps"]
+                assert (
+                    target_beat_ids.shape[-1] == en_idx - st_idx
+                ), f"{target_beat_ids.shape[-1]} != {en_idx} - {st_idx}"
+                # Offset by one
+                st = st_idx - 1
+                beat_embed = last_hidden_state[:, st:st + target_beat_ids.shape[-1], :]
+                beat_logits = pred_head(beat_embed)
+                beat_ids_logits = beat_logits[..., :-1]
+                beat_timestamps = beat_logits[..., -1]
+                beat_ids_loss = self.criterion(beat_ids_logits, target_beat_ids)
+                beat_ids_accu = (beat_ids_logits.argmax(dim=-1) == target_beat_ids).float().mean() * 100
+                beat_timestamps_loss = ((beat_timestamps - target_timestamps) ** 2).mean()
+                pred_loss = beat_ids_loss + beat_timestamps_loss
+                pred_dict = {
+                    "beat_ids_loss": beat_ids_loss.item(),
+                    "beat_ids_accu": beat_ids_accu.item(),
+                    "beat_timestamps_loss": beat_timestamps_loss.item(),
                 }
             else:
                 raise ValueError(f"Unknown pred type: {pred_type}")
@@ -455,11 +517,14 @@ class SemanticModule(BaseContinuousEmbedModule):
         target_duration = self.infer_target_duration(batch)
         target_length = int(target_duration * intensity_embedder.intensity_hz)
         input_embedders = list(self.input_embedders.items())
-        assert (
-            input_embedders[-1][0] == "intensity"
-        ), f"intensity must be the last input embedder, got {input_embedders[-1][0]}"
+        cutoff = None
+        for i, embedder in enumerate(input_embedders):
+            if embedder[0] == "intensity":
+                cutoff = i
+                break
+        assert cutoff is not None, "Can't find cutoff, this shouldn't happen"
 
-        inputs_embeds = self.prepare_inputs_embeddings(batch, input_embedders[:-1])
+        inputs_embeds = self.prepare_inputs_embeddings(batch, input_embedders[:cutoff])
         batch_size, seq_len, _ = inputs_embeds.size()
         model_input = {"inputs_embeds": inputs_embeds}
 
@@ -527,6 +592,9 @@ class SemanticModule(BaseContinuousEmbedModule):
                 self.prediction_heads["intensity"],
                 hp.get("intensity_temperature", 1.0),
             )
+        # Predict beat if it's not available
+        if "beat" in self.input_embedders and "style_audio" not in batch:
+            raise NotImplementedError("TODO")
 
         if "inputs_embeds" in batch:
             inputs_embeds = batch["inputs_embeds"]
@@ -547,7 +615,6 @@ class SemanticModule(BaseContinuousEmbedModule):
     @torch.no_grad()
     def super_predict(self, inputs_embeds, num_tokens, temperature, **kwargs):
         return super().predict(inputs_embeds, num_tokens, temperature, **kwargs)
-
 
 
 class SemanticRLModule(SemanticModule):

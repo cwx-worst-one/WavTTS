@@ -85,6 +85,8 @@ def inference_dataset_from_prompt(
     elif 'structure' in conditions:
         # Use random structure by default
         prompts['structure'] = [None] * len(prompts[next(iter(prompts.keys()))])
+    if 'semantic_tokens' in prompts:
+        prompts['semantic_tokens'] = [torch.load(fp) for fp in prompts['semantic_tokens']]
     if run_combinations:
         lyrics_prompt_pairs = itertools.product(*list(prompts.values()))
     else:
@@ -134,7 +136,7 @@ def inference_dataset_from_prompt(
             IntensityTransform(
                 audio_key="intensity_audio" if "intensity_audio" in prompts else "style_audio",
                 sample_rate=extra_params["sample_rate"],
-                calculation_mode=extra_params.get("intensity_calculation", "max"),
+                calculation_mode=extra_params.get("intensity_calculation", "mean"),
                 intensity_hz=extra_params.get("intensity_hz", 1),
             )
         )
