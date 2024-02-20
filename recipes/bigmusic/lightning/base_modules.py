@@ -19,6 +19,8 @@ from recipes.diffusion.utils.utils import download_checkpoint
 from recipes.bigmusic.lightning.embedding_modules import TokenEmbedder, BaseEmbedder
 from samantha.utils.model_metric import ModelMetric
 from collections import defaultdict
+from torch.nn.utils.rnn import pad_sequence, unpad_sequence
+import torch.nn.functional as F
 
 
 class BaseModule(pl.LightningModule):
@@ -99,7 +101,9 @@ class BaseModule(pl.LightningModule):
 
     def _shared_step(self, batch, update_mfu=False):
         with self.profiler.profile(f"bigmusic.prepare_training_inputs{self.trainer.global_step}"):
-            input_ids, target_ids = self.prepare_training_inputs(batch)
+            training_inputs = self.prepare_training_inputs(batch)
+            input_ids = training_inputs['model_inputs']
+            target_ids = training_inputs['target_ids']
 
         if update_mfu:
             if "inputs_embeds" in input_ids:
@@ -236,31 +240,47 @@ class BaseContinuousEmbedModule(BaseModule):
     def prepare_inputs_embeddings(self, batch):
         raise NotImplementedError()
 
-    def prepare_training_inputs(self, batch, return_all=False):
-        target_ids = self.target_embedder.tokenize(self.requires, batch['target_audio'], with_sos=False, with_eos=False)
-        batch_size = target_ids.size(0)
-        inputs_embeds = self.prepare_inputs_embeddings(batch)
-        sos_embeds = self.target_embedder.get_sos_embed(batch_size)
+    def prepare_target_inputs(self, batch):
+        # Prepare target ids
+        target_ids = self.target_embedder.tokenize(self.requires, batch['target_audio'], with_sos=False, with_eos=False).to(self.device)
+        if 'target_tokens_length' in batch:
+            target_lengths = batch['target_tokens_length'].to(self.device)
+        else: # set to default batch length. Silence will happen before EOS
+            batch_size, seq_len = target_ids.shape[:2]
+            target_lengths = torch.full((batch_size,), fill_value=seq_len, dtype=torch.long, device=self.device)
+
+        target_ids = F.pad(target_ids, (1, 1)) # pad for extra sos/eos ids
+        target_ids[:, 0] = self.target_embedder.sos_id # add SOS
+        eos_indices = (target_lengths+1).unsqueeze(1) # set last index to EOS
+        target_ids.scatter_(dim=1, index=eos_indices, value=self.target_embedder.eos_id)
+        target_lengths = target_lengths + 2 # +2 for eos and sos
+
         target_embeds = self.target_embedder.embed(token_ids=target_ids, with_sos=False, with_eos=False)
-        if self.target_embedder.eos_id is not None:
-            eos_ids = self.target_embedder.get_eos_token(batch_size)
-        else:
-            eos_ids = torch.zeros((batch_size, 0), dtype=target_ids.dtype).to(target_ids.device)
-            # targets must be offset by one if no eos id added
-            target_embeds = target_embeds[:, :-1, :]
-        if self.use_cross_attn:
-            return {
-                "inputs_embeds": torch.cat([sos_embeds, target_embeds], dim=1),
-                "encoder_hidden_states": inputs_embeds
-            }, torch.cat([target_ids, eos_ids], dim=1)
-        model_inputs = {
-            "inputs_embeds": torch.cat([inputs_embeds, sos_embeds, target_embeds], dim=1)
+        return {
+            'token_embeds': target_embeds,
+            'token_ids': target_ids,
+            'token_seq_lengths': target_lengths
         }
-        target_ids = torch.cat([target_ids, eos_ids], dim=1)
-        if return_all:
-            return model_inputs, target_ids, inputs_embeds, sos_embeds, target_embeds
+
+    def prepare_training_inputs(self, batch):
+        target_values = self.prepare_target_inputs(batch)
+        inputs_embeds = self.prepare_inputs_embeddings(batch)
+        target_embeds = target_values['token_embeds']
+        target_ids = target_values['token_ids'][:, 1:] # offset targets by one for prediction
+        if self.use_cross_attn:
+            model_inputs = {
+                "inputs_embeds": target_embeds,
+                "encoder_hidden_states": inputs_embeds
+            }
         else:
-            return model_inputs, target_ids
+            model_inputs = {
+                "inputs_embeds": torch.cat([inputs_embeds, target_embeds], dim=1)
+            }
+        return {
+            "model_inputs": model_inputs,
+            "target_ids": target_ids,
+            "inputs_embeds": inputs_embeds
+        }
 
     # Prediction code
     def sample_logits(self, i, logits, temp, mode, thresh=0.9, exclude_ids=None):

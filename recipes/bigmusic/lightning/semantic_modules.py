@@ -479,7 +479,9 @@ class SemanticModule(BaseContinuousEmbedModule):
 
     def _shared_step(self, batch, update_mfu=False):
         with self.profiler.profile(f"bigmusic.prepare_training_inputs{self.trainer.global_step}"):
-            input_ids, target_ids = self.prepare_training_inputs(batch)
+            training_inputs = self.prepare_training_inputs(batch)
+            input_ids = training_inputs['model_inputs']
+            target_ids = training_inputs['target_ids']
 
         if update_mfu:
             if "inputs_embeds" in input_ids:
@@ -666,7 +668,10 @@ class SemanticRLModule(SemanticModule):
         if wavs_gt.dim() == 2:
             wavs_gt = wavs_gt.unsqueeze(1)
         with torch.autocast(device_type="cuda", enabled=False):
-            model_inputs, target_ids, inputs_embeds, _, _ = self.prepare_training_inputs(batch, return_all=True)
+            training_inputs = self.prepare_training_inputs(batch)
+            model_inputs = training_inputs['model_inputs']
+            target_ids = training_inputs['target_ids']
+            inputs_embeds = training_inputs['inputs_embeds']
         B, T = target_ids.size()
         beam = self.extra_params.beam_size
 
