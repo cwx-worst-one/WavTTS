@@ -206,6 +206,9 @@ def format_video_text(metadata, max_width=50):
     if metadata.get("style_text") is not None:
         style_text = metadata.get('style_text')
         style_text = '\n'.join(textwrap.wrap(style_text, max_width, break_long_words=False))
+    elif metadata.get("style_category") is not None:
+        style_text = metadata.get('style_category')
+        style_text = '\n'.join(textwrap.wrap(style_text, max_width, break_long_words=False))
     video_text = f'{index}: {style_text}\n\n'
 
     lyrics = metadata.get('lyrics')

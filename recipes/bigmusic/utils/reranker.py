@@ -225,7 +225,7 @@ class Reranker:
         original_audio = sampled_audio.clone()
         if extra_params.sample_rate != 24000 and getattr(self, "resampler", False):
             sampled_audio = self.resampler(sampled_audio)
-        if not getattr(extra_params, "mono", False):
+        if len(sampled_audio.shape) == 3: # convert stereo to mono for rewards
             sampled_audio = sampled_audio.mean(1, keepdims=False)
 
         rewards, rewards_breakdown = self.compute_rewards(

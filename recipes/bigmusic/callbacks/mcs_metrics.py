@@ -38,12 +38,15 @@ def run_mcs_metrics(requires, generated_output_fps, device='cuda', sample_rate=2
             gt_emb = get_mulan_embeds(
                 requires, metadata["style_text"], data_type='text'
             ).to(device)
-        if 'style_audio' in conditions:
+        elif 'style_audio' in conditions:
             style_audio_fp = str(generated_output_fp).replace('.generated.wav', '.style_audio.wav')
             wav_style = _load_audio_tensor(style_audio_fp)
             gt_emb = get_mulan_embeds(
                 requires, wav_style, data_type='music'
             ).to(device)
+        else:
+            print('Could not calculate MCS metrics. Could not find style_text or style_audio in conditions', conditions)
+            return
         wav_gen = _load_audio_tensor(generated_output_fp)
         audio_emb = get_mulan_embeds(
             requires, wav_gen, data_type='music'

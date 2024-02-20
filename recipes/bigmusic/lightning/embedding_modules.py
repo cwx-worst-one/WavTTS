@@ -296,7 +296,8 @@ class MulanCategoricalEmbedder(BaseEmbedder):
             embedding_dim=1024,
             min_audio_length=10*24000,
             add_sos=False,
-            dropout=0.0
+            dropout=0.0,
+            category_separator="|"
         ):
         super().__init__()
         self.vocab_size = vocab_size
@@ -307,6 +308,7 @@ class MulanCategoricalEmbedder(BaseEmbedder):
             self.vocab_size = self.vocab_size + 1
             self.sos_id = self.vocab_size - 1
         self.embedder = nn.Embedding(self.vocab_size, input_dim)
+        self.category_separator = category_separator
 
         if input_dim != embedding_dim:
             self.projection = nn.Linear(input_dim, embedding_dim, bias=False)
