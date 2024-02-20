@@ -58,7 +58,6 @@ extra_params:
 
     # Model Settings
     sample_rate: 24000  # 48000
-    mono: True
     duration: 30 # 30|45|60|75|90|105|120
     semantic_temperature: 1.0
     sample_mode: "top_p"
