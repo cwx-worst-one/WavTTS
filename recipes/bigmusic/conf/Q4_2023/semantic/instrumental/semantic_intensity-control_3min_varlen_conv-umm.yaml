@@ -20,18 +20,14 @@ extra_params:
     hidden_size: 2048
     semantic_type: bestrq
     pretrained_path: null # for loading state dicts
-    input_embedders: ["mulan", "duration", "beat", "intensity"]
+    input_embedders: ["mulan", "duration", "intensity"]
     prediction_heads:
-        beat: 0.1
         intensity: 1.0
     # How to extract UMM tokens
-    semantic_chunk_size: 30
+    semantic_chunk_size: null
     # How to extract MuLan embedding
     mulan_crop: True
     mulan_average: True
-    # For beat control
-    beat_labels: [1]
-    beat_batch_size: 32
     # For intensity control
     intensity_decimals: 2
     intensity_calculation: "mean"
@@ -42,7 +38,7 @@ run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
     log_name: semantic_model_instrumental_07B
-    version: sstk_vad_beat+intensity-control_3min_varlen
+    version: sstk_vad_intensity-control_3min_varlen
     cache_dir: .module_cache/musiclm
     precision: "16"
     num_workers: 8
@@ -166,15 +162,11 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
                 cache_dir: !ref <run_opts[cache_dir]>
                 version: "sstkmae"
         bestrq:
-            # US UMM-chroma stage 3
-            hpath: /mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/umm_sstk_nospeech/step=0400000.ckpt
-            initializer: !name:recipes.umm.requires.model_initializer.init_stage3
+            # US conv UMM-chroma stage 3
+            hpath: hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/user/hanoi.hantrakul/logs/umm_conv_sstk/umm_stage3_conv1D_sstk_no_ctc_794_EMAVQ32768x32/checkpoints_for_inference/step=0850000.ckpt
+            # hpath: hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/user/hanoi.hantrakul/logs/umm_conv_sstk/umm_stage3_conv1D_sstk_no_ctc_794_EMAVQ4096x32/checkpoints_for_inference/step=0865000.ckpt
+            initializer: !name:recipes.umm.requires.model_initializer.init_stage3_conv1d
                 cache_dir: !ref <run_opts[cache_dir]>
-        beat:
-            hpath: /mnt/bn/audio-diffusion/multitask/beat_only_24sec_lr0.001/checkpoints/epoch=13-step=1400.pt
-            initializer: !name:recipes.mir_benchmark.requires.model_initializer.init_beat
-                cache_dir: !ref <run_opts[cache_dir]>
-                model_batch_size: !ref <extra_params[beat_batch_size]>
         #structure:
         #    hpath: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/structure90M_epoch=203-step=102000.ckpt"
         #    initializer: !name:recipes.structure.requires.model_initializer.init_structure_90M

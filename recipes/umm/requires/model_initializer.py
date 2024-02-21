@@ -234,7 +234,7 @@ def init_stage3_conv1d(hpath, local_rank, cache_dir=None):
     with local_zero_first():
         local_path = _ensure_ckpt_is_local(hpath, cache_dir)
         model = Stage3Conv1D.load_from_checkpoint(local_path).to(device).eval()
-        return {"Stage3Conv1D": model}
+        return {"Stage3": model}
 
 
 def init_mkii(hpath, local_rank, cache_dir=None):

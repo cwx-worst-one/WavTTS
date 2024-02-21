@@ -461,7 +461,11 @@ class SemanticModule(BaseContinuousEmbedModule):
                 beat_embed = last_hidden_state[:, st:st + target_beat_ids.shape[-1], :]
                 beat_logits = pred_head(beat_embed)
                 beat_ids_logits = beat_logits[..., :-1]
-                beat_timestamps = beat_logits[..., -1]
+                beat_timestamps = torch.clamp(
+                    beat_logits[..., -1],
+                    min=-self.input_embedders["beat"].max_timestamp,
+                    max=self.input_embedders["beat"].max_timestamp,
+                )
                 beat_ids_loss = self.criterion(beat_ids_logits, target_beat_ids)
                 beat_ids_accu = (beat_ids_logits.argmax(dim=-1) == target_beat_ids).float().mean() * 100
                 beat_timestamps_loss = ((beat_timestamps - target_timestamps) ** 2).mean()
