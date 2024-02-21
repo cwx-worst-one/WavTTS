@@ -305,7 +305,9 @@ class SemanticModule(BaseContinuousEmbedModule):
         return embeds
     
     def prepare_categorical_inputs(self, batch, categorical_embedder):
-        assert 'style_category' in batch
+        if 'style_category' not in batch:
+            assert 'style_text' in batch
+            batch["style_category"] = batch['style_text']
         embeds = categorical_embedder.embed(
             self.requires,
             batch['style_category'],

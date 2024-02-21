@@ -16,7 +16,7 @@ extra_params:
     semantic_codebook_size: 32_768
     semantic_frame_rate: 25
     semantic_type: bestrq
-    train_conditions: "style_category,speaker_id,lyrics_tokens"
+    train_conditions: "style_category,lyrics_tokens"
     # train_conditions: "mulan_tag,lyrics_tokens," # TODO: (AS) check if this is correct
     # mulan_tag_type: cn_mir
     mulan_crop: True        # Crop during training
@@ -47,14 +47,14 @@ run_opts:
     accelerator: auto
     max_steps: 100000
     val_check_interval: 1000
-    batch_size: 18
-    learning_rate: 3.0e-4
+    batch_size: 4
+    learning_rate: 1.0e-4
     warmup_steps: 2000
     cycle_steps: 30000
     weight_decay: 0.05
     shuffle_buffer: 0   # 100
     gradient_clip_val: 1.0
-    buckets_in_sec: [22, 24, 26, 28, 30]
+    buckets_in_sec: [60, 80, 100, 120]
     use_dynamic_batch: False
     max_seg_per_track: 3
     segment_method: "random"
@@ -63,10 +63,12 @@ run_opts:
     region: "CN"
     lyrics_confidence: 0.1
     lyrics_tokenizer: "tts_chinese_frontend_model"
-    segment_max_phone_len: 400
+    segment_max_phone_len: 2000
     wds_dataset_names: []
     wds_dataset_weights: []
-    parquet_dataset_ids: [1498]
+    parquet_dataset_ids: [1494]
+    # TODO (QQ) revert this temp change of dataloader for 1232
+    # parquet_dataset_ids: [1231]
     parquet_dataset_weights: [1]
 
 ################################################################################

@@ -16,13 +16,10 @@ extra_params:
     semantic_codebook_size: 32_768
     semantic_frame_rate: 25
     semantic_type: bestrq
-    train_conditions: "style_category,speaker_id,lyrics_tokens"
-    # train_conditions: "mulan_tag,lyrics_tokens," # TODO: (AS) check if this is correct
-    # mulan_tag_type: cn_mir
-    mulan_crop: True        # Crop during training
-    mulan_average: True     # Average during inference
-    prepare_input_types: ["mulan_tagger"]
+    train_conditions: "style_category,lyrics_tokens"
+    prepare_input_types: []
     input_embedders: [tag_categorical, speaker_id, lyrics_tokens]
+    tag_taxonomy_lang: 'SA'
     tag_dropout_rate: 0.25
     use_mcc_gender: False
     mulan_embed_dim: 512
@@ -39,7 +36,7 @@ run_opts:
     fast_dev_run: False
     log_dir: logs
     hdfs_log_dir: "hdfs:///home/byte_speech_sv/zongyu.yin/logs"
-    log_name: decoder_07B_zh30s_lowrisk_mulan_cat
+    log_name: decoder_07B_zh30s_lowrisk_sa_cat
     version: v0
     cache_dir: .module_cache/bigmusic
     precision: "16"
@@ -54,7 +51,7 @@ run_opts:
     weight_decay: 0.05
     shuffle_buffer: 0   # 100
     gradient_clip_val: 1.0
-    buckets_in_sec: [22, 24, 26, 28, 30]
+    buckets_in_sec: [22, 24, 26, 28, 30, 32]
     use_dynamic_batch: False
     max_seg_per_track: 3
     segment_method: "random"
@@ -64,10 +61,10 @@ run_opts:
     lyrics_confidence: 0.1
     lyrics_tokenizer: "tts_chinese_frontend_model"
     segment_max_phone_len: 400
-    wds_dataset_names: []
-    wds_dataset_weights: []
-    parquet_dataset_ids: [1498]
+    parquet_dataset_ids: [1527]
     parquet_dataset_weights: [1]
+    sinking_threshold: 0.51
+    remove_sinking: false
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -90,10 +87,12 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     read_structure_tags: !ref <run_opts[read_structure_tags]>
     infer_structure_tags: !ref <run_opts[infer_structure_tags]>
     segment_method: !ref <run_opts[segment_method]>
-    wds_dataset_names: !ref <run_opts[wds_dataset_names]>
-    wds_dataset_weights: !ref <run_opts[wds_dataset_weights]>
+    # wds_dataset_names: !ref <run_opts[wds_dataset_names]>
+    # wds_dataset_weights: !ref <run_opts[wds_dataset_weights]>
     parquet_dataset_ids: !ref <run_opts[parquet_dataset_ids]>
     parquet_dataset_weights: !ref <run_opts[parquet_dataset_weights]>
+    sinking_threshold: !ref <run_opts[sinking_threshold]>
+    remove_sinking: !ref <run_opts[remove_sinking]>
 
 model_config: !new:transformers.GPT2Config
     vocab_size: 1 # placeholder. Embedding table gets removed on load

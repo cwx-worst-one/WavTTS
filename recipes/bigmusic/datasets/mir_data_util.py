@@ -259,17 +259,118 @@ lang_vocab = ["普通话", "粤语", "闽南话"]
  
 NONE_LABEL = 'None'
 
-def get_categorical_vocab(vocab_type='Zh'):
-    if vocab_type=='Zh': return get_zh_mir_vocab()
+SA_genre20 = [
+    "Blues",
+    "Chinese Opera",
+    "Chinese Style",
+    "Chinese Tradition",
+    "Classical",
+    "Country",
+    "DJ",
+    "Easy Listening",
+    "Electronic",
+    "Folk",
+    "Hip Hop/Rap",
+    "Jazz",
+    "Latin",
+    "MC",
+    "Metal",
+    "Other genre",
+    "Pop",
+    "Punk",
+    "R&B/Soul",
+    "Reggae",
+    "Rock",
+]
+SA_mood19 = [
+    "Angry",
+    "Calm",
+    "Chill",
+    "Cute",
+    "Dynamic",
+    "Excited",
+    "Funny",
+    "Happy",
+    "Healing",
+    "Inspirational",
+    "Lonely",
+    "Miss/Memory",
+    "Mysterious",
+    "Other",
+    "Romantic",
+    "Sorrow",
+    "Sweet",
+    "Tense",
+    "Weird",
+]
+SA_theme33 = [
+    "Autumn",
+    "Bedtime",
+    "Birthday",
+    "Broke up",
+    "Cafe",
+    "Campus",
+    "Christmas",
+    "Dance",
+    "Danceable",
+    "Date",
+    "Dream",
+    "Drive",
+    "Evening",
+    "Family",
+    "Focus",
+    "Food",
+    "Friendship",
+    "Game",
+    "Halloween",
+    "Love",
+    "Meditation",
+    "Morning",
+    "Other",
+    "Party",
+    "Sport",
+    "Spring",
+    "Spring Festival",
+    "Summer",
+    "Travel",
+    "Valentine's Day",
+    "Wedding",
+    "Winter",
+    "Yoga",
+]
 
-def get_zh_mir_vocab():
+SA_lang = [
+    "Cantonese",
+    "Chinese",
+    "Chinese Dialects",
+    "English",
+]
+
+SA_sinking = [
+    "Sinking", 
+    "non-Sinking",
+]
+
+# Certain tags in the dataset should be replaced
+SA_TAGS_SPECIAL_MAP = {
+    "Нарру": "Happy",  # Confusable UTF code
+    "Miss, Memory": "Miss/Memory",  # Comma is not nice for CSV
+    "Miss,Memory": "Miss/Memory",
+    "Pop,Chinese Style": "Chinese Style",
+}
+
+def get_categorical_vocab(vocab_type='Zh'):
     all_values = []
     all_values.append(NONE_LABEL)
-    for categories in [
-        chinese_genre1_vocab, chinese_genre2_vocab, 
-        chinese_mood_vocab, chinese_scene_vocab, 
-        gender_vocab, lang_vocab]:
-        all_values.extend(categories)
+    if vocab_type == 'Zh':
+        for categories in [
+            chinese_genre1_vocab, chinese_genre2_vocab, 
+            chinese_mood_vocab, chinese_scene_vocab, 
+            gender_vocab, lang_vocab]:
+            all_values.extend(categories)
+    if vocab_type == 'SA':
+        for categories in [SA_genre20, SA_mood19, SA_theme33, SA_sinking, SA_lang]:
+            all_values.extend(categories)
     vocab2id = { value: idx for idx, value in enumerate(all_values) }
     return vocab2id
 
@@ -290,3 +391,6 @@ def convert_m1_tag_to_style_text(m1_tags_list):
         style_text = "|".join([genre, mood, scene, gender, lang])
         style_texts.append(style_text)
     return style_texts
+
+
+SA_CAT_VOCAB = get_categorical_vocab("SA")

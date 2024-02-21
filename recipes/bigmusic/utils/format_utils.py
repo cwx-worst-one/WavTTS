@@ -2,9 +2,9 @@ import json
 from pathlib import Path
 from string import punctuation
 import re
-import random
-from typing import List
-from recipes.bigmusic.datasets.mir_data_util import chinese_genre1_vocab, chinese_genre2_vocab, chinese_scene_vocab
+from typing import Dict, List, Tuple, Union
+from recipes.bigmusic.datasets.mir_data_util import chinese_genre1_vocab, chinese_genre2_vocab, SA_TAGS_SPECIAL_MAP, SA_CAT_VOCAB
+from recipes.datasets.mcc.sami_tokenizer import extract_section_tag, extract_singer_tag, add_singer_tag, add_section_tag
 
 
 def rewrite_playlist_labels(label1, label2):
@@ -59,6 +59,29 @@ def rewrite_metadata(metadata, type="Vocal"):
         text = "Speech."
     return text
 
+
+def sa_music_tagging_to_style_text(music_tagging: Dict, sinking_threshold: float) -> Tuple[str, List[str], bool]:
+    def parse_result(result: Union[List, str]) -> str:
+        if isinstance(result, str):
+            return result
+        if len(result) == 0:
+            return ""
+        return result[0]
+
+    def map_tag(tag: str) -> str:
+        """Replace certain tags in the dataset"""
+        return SA_TAGS_SPECIAL_MAP.get(tag, tag)
+
+    # The order should match `mir_data_util`
+    order = ["Genre20", "Mood", "Theme", "MusicLowQuality", "Language"]
+    sinking_prob = music_tagging["MusicLowQuality"]["Sinking"]
+    is_sinking = sinking_prob >= sinking_threshold
+    quality = "Sinking" if is_sinking else "non-Sinking"
+    tags = [quality if item == "MusicLowQuality" else map_tag(parse_result(music_tagging[item]["result"])) for item in order]
+    unfamiliar_tags = [tag for tag in tags if tag not in SA_CAT_VOCAB ]
+    return "|".join([(tag if tag in SA_CAT_VOCAB else "") for tag in tags]), unfamiliar_tags, is_sinking
+
+
 def normalize_text(text, enable_punctuation=False, lowercase=False):
     if lowercase:
         text = text.lower()
@@ -82,6 +105,17 @@ def normalize_text(text, enable_punctuation=False, lowercase=False):
         text = text.replace("\n", " ") # remove new lines
     text = " ".join(text.split()) # remove spaces
     return text.strip()
+
+def normalize_text_sami_tokenizer(text, enable_punctuation=False, lowercase=False):
+    """Normalize text with special treatment for special tokens supported by sami_tokenizer."""
+    sep = " <n> " if enable_punctuation else " "
+    lines = text.split("\n")
+    normalized_lines = []
+    for line in lines:
+        section_tag, rest_line = extract_section_tag(line)
+        singer_tag, rest_line = extract_singer_tag(rest_line)
+        normalized_lines.append(add_section_tag(section_tag, add_singer_tag(singer_tag, normalize_text(rest_line, enable_punctuation, lowercase))))
+    return sep.join(normalized_lines)
 
 def concat_metadata_list(existimg_metadata, metadata):
     if existimg_metadata is None:

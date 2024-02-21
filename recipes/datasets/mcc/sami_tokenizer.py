@@ -1,4 +1,6 @@
+import re
 import string
+from typing import Tuple, Optional, List, NamedTuple
 
 import torch
 from zhon.hanzi import punctuation
@@ -186,15 +188,44 @@ ZH_vowel = [
 
 sep_strs = ["zh_word_sep", "en_word_sep", "syl_sep"]
 
+# special tags
+# NOTE (Yilin): Adding special tags changes the vocab, which might affect the
+# compatiblity with previous models.
+# For singer<#> tags:
+# Yilin: There is no upper limit of singer number. To make
+# the tags more deterministic, I set 20 singers as the max
+# value (It is probably a bad idea to have too many singers).
+# Any sample that has a singer tag other than these should
+# be discarded.
+singer_tags = ["singer" + str(i) for i in range(20)] + ["合", "女", "男"]
+
+# NOTE: **Always update the regex pattern whenver the tags are updated**
+# Pattern: "<singer_tag>:<text>"
+# The pattern should match all the singer tags in the dataset
+# What we select eventually is a subset `singer_tags`.
+# Filtering should be done after matching.
+singer_pattern = r'^(singer\d+|男|女|合)?:\s*((?:.|\n)*)'
+
+section_tags = ['silence', 'chorus', 'verse', 'bridge', 'inst', 'outro', 'intro']
+section_pattern = r'^\[(.*?)\]\s*((?:.|\n)*)'
+
+
 all_phones = (
     sil_punc_symbols + EN_consonant + EN_vowel + ZH_consonant + ZH_vowel + sep_strs
+    # special tags
+    + singer_tags + section_tags
 )
 
-def get_line_break_id():
-    return np.array([len(all_phones) + 1000])
+# Yilin: A full stop (。) will be added by the TTS frontend. It's not
+# necessary to use the line break symbol.
+# def get_line_break_id():
+#     return np.array([len(all_phones) + 1000])
 
 ### tones
-all_tones = [str(i) for i in range(15)] + sep_strs
+all_tones = ([str(i) for i in range(15)] + sep_strs
+    # special tags
+    + singer_tags + section_tags
+)
 
 # 0 for padding, 1 for eos
 offset = 2
@@ -208,6 +239,145 @@ tone_to_int = dict()
 for i, tone in enumerate(all_tones):
     if tone not in tone_to_int:
         tone_to_int[tone] = i + offset
+
+# ------------------------------------------
+# Special tag utils
+# ------------------------------------------
+
+def _extract_prefix_tag(text: str, pattern: str) -> Tuple[Optional[str], str]:
+    match = re.search(pattern, text)
+    if match is None:
+        return None, text
+    tag, rest_text = match.group(1), match.group(2)
+    if tag is not None:
+        tag = tag.strip()
+    if rest_text is None:
+        raise ValueError("Invalid text or regex pattern.")
+    return tag, rest_text
+
+
+def extract_singer_tag(text: str) -> Tuple[Optional[str], str]:
+    """Extract the singer tag from the input text.
+    :param text: A string that might or might not contain a leading singer tag, followed by a colon.
+    :return: The singer tag (None if empty) and the rest of the text without colon and leading whitespace.
+    """
+    return _extract_prefix_tag(text, singer_pattern)
+
+
+def add_singer_tag(singer_tag: Optional[str], text: str) -> str:
+    if singer_tag:
+        return f"{singer_tag}:{text}"
+    return text
+
+
+def extract_section_tag(text: str) -> Tuple[Optional[str], str]:
+    """Extract the section tag from the input text.
+    :param text: A string that might or might not contain a leading section tag, enclosed by [].
+    :return: The section tag (None if empty) and the rest of the text without colon and leading whitespace.
+    """
+    return _extract_prefix_tag(text, section_pattern)
+
+
+def add_section_tag(section_tag: Optional[str], text: str) -> str:
+    if section_tag:
+        sep = " " if text else ""
+        return f"[{section_tag}]{sep}{text}"
+    return text
+
+# ------------------------------------------
+# Segment parsing
+# ------------------------------------------
+
+class Phrase(NamedTuple):
+    phonemes: Optional[str] = None
+    text: Optional[str] = None
+    singer_tag: Optional[str] = None
+    section_tag: Optional[str] = None
+    time_span: Optional[Tuple[int, int]] = None
+
+    @classmethod
+    def parse(
+        cls, 
+        phonemes: Optional[str] = None,
+        text: Optional[str] = None,
+        singer_tag: Optional[str] = None, 
+        section_tag: Optional[str] = None,
+        time_span: Optional[Tuple[int, int]] = None,
+    ):
+        """ Auto-detect singer tag and section tag from the given phonemes or text
+        :param singer_tag: Override the detected singer_tag by this value
+        :param section_tag: Override the detected section_tag by this value
+        """
+        def strip(text: Optional[str]) -> Optional[str]:
+            if text is None:
+                return None
+            s = text.strip()
+            if not s:
+                return None
+            return s
+
+        if phonemes is None:
+            _section_tag_p, _singer_tag_p, rest_phonemes = None, None, None
+        else:
+            _section_tag_p, rest_phonemes = extract_section_tag(phonemes)
+            _singer_tag_p, rest_phonemes = extract_singer_tag(rest_phonemes)
+
+        if text is None:
+            _section_tag_t, _singer_tag_t, rest_text = None, None, None
+        else:
+            _section_tag_t, rest_text = extract_section_tag(text)
+            _singer_tag_t, rest_text = extract_singer_tag(rest_text)
+
+        # Use extracted tags if tags are not forced
+        if section_tag is None:
+            section_tag = _section_tag_p if _section_tag_t is None else _section_tag_t
+        if singer_tag is None:
+            singer_tag = _singer_tag_p if _singer_tag_t is None else _singer_tag_t
+
+        if rest_text is not None:
+            rest_text = norm_chinese_text(rest_text).strip()
+
+        return cls(
+            phonemes=strip(rest_phonemes),
+            text=strip(rest_text),
+            singer_tag=singer_tag,
+            section_tag=section_tag,
+            time_span=time_span,
+        )
+
+    @property
+    def prefix_tags(self) -> List[Optional[str]]:
+        """Tags that should be prepended for each sentence (empty tags are filtered out)"""
+        return list(filter(None, [self.section_tag, self.singer_tag]))
+
+    @property
+    def has_utterance(self) -> bool:
+        return bool(self.phonemes or self.text)
+
+    @property
+    def start(self) -> Optional[int]:
+        return None if self.time_span is None else self.time_span[0]
+    
+    @property
+    def end(self) -> Optional[int]:
+        return None if self.time_span is None else self.time_span[1]
+
+    @property
+    def duration(self) -> Optional[int]:
+        if self.start is None or self.end is None:
+            return None
+        return self.end - self.start
+
+    def format_phonemes(self) -> str:
+        return self._format_str(self.phonemes)
+
+    def format_text(self) -> str:
+        return self._format_str(self.text)
+
+    def _format_str(self, _str) -> str:
+        if _str is None:
+            _str = ""
+        return add_section_tag(self.section_tag, add_singer_tag(self.singer_tag, _str))
 
 
 def convert_v3_to_v1(tacolab):
@@ -315,121 +485,170 @@ def get_lang_by_text(text):
     return lang
 
 
-def convert_labels_to_text_id(tacolab):
+def _get_special_tag_tokens(tag: str) -> Tuple[int, int, str, str]:
+    return phone_to_int[tag], tone_to_int[tag], tag, tag
+
+
+def convert_labels_to_text_id_zh(tacolab: List[str]) -> Tuple[List[int], List[int], List[str], List[str]]:
+    phone_ids = []
+    tone_ids = []
+    phones = []
+    tones = []
+    assert len(tacolab[0].split("\t")) == 7, (
+        len(tacolab[0].split("\t")),
+        tacolab[0],
+    )
+    if tacolab[0] == "phn\ttone\tws\tpwpp\tsentype\tword\tunit":
+        tacolab = tacolab[1:]
+    for i in range(len(tacolab)):
+        x = tacolab[i]
+
+        if i != 0 and x.split("\t")[0] == "sil":
+            continue
+
+        x_split = x.split("\t")
+        phone, tone, ws, pw, stype, word, unit = x_split
+        assert phone in phone_to_int, f"{phone} not in phone set"
+        assert tone in tone_to_int, f"{tone} not in tone set"
+
+        phone_ids.append(phone_to_int[phone])
+        tone_ids.append(tone_to_int[tone])
+        phones.append(phone)
+        tones.append(tone)
+        if phone[:2] == "C0":
+            if unit in ["S", "E"]:
+                phone_ids.append(phone_to_int["syl_sep"])
+                tone_ids.append(tone_to_int["syl_sep"])
+                phones.append("syl_sep")
+                tones.append("syl_sep")
+                if ws in ["S", "E"]:
+                    phone_ids.append(phone_to_int["zh_word_sep"])
+                    tone_ids.append(tone_to_int["zh_word_sep"])
+                    phones.append("zh_word_sep")
+                    tones.append("zh_word_sep")
+        elif phone[:2] == "E0":
+            if pw != "0":
+                phone_ids.append(phone_to_int["en_word_sep"])
+                tone_ids.append(tone_to_int["en_word_sep"])
+                phones.append("en_word_sep")
+                tones.append("en_word_sep")
+
+    return phone_ids, tone_ids, phones, tones
+
+
+def convert_labels_to_text_id_zh_en(tacolab: List[str]) -> Tuple[List[int], List[int], List[str], List[str]]:
+    phone_ids = []
+    tone_ids = []
+    phones = []
+    tones = []
+    assert (
+        len(tacolab[0].split("\t")) == 7 or len(tacolab[0].split("\t")) == 6
+    ), (len(tacolab[0].split("\t")), tacolab[0])
+    if (
+        tacolab[0] == "phn\ttone\tws\tpwpp\tsentype\tword\tunit"
+        or tacolab[0] == "phn\ttone\tws\tpwpp\tsentype\tword"
+    ):
+        tacolab = tacolab[1:]
+    for i in range(len(tacolab)):
+        x = tacolab[i]
+
+        if i != 0 and x.split("\t")[0] == "sil":
+            continue
+
+        x_split = x.split("\t")
+        if len(x_split) == 7:
+            phone, tone, ws, pw, stype, word, unit = x_split
+        elif len(x_split) == 6:
+            phone, tone, ws, pw, stype, word = x_split
+        else:
+            print("Wrong tacolab", x_split)
+            return None
+
+        assert phone in phone_to_int, f"{phone} not in phone set"
+        assert tone in tone_to_int, f"{tone} not in tone set"
+
+        phone_ids.append(phone_to_int[phone])
+        tone_ids.append(tone_to_int[tone])
+        phones.append(phone)
+        tones.append(tone)
+        if phone[:2] == "C0":
+            if unit in ["S", "E"]:
+                phone_ids.append(phone_to_int["syl_sep"])
+                tone_ids.append(tone_to_int["syl_sep"])
+                phones.append("syl_sep")
+                tones.append("syl_sep")
+                if ws in ["S", "E"]:
+                    phone_ids.append(phone_to_int["zh_word_sep"])
+                    tone_ids.append(tone_to_int["zh_word_sep"])
+                    phones.append("zh_word_sep")
+                    tones.append("zh_word_sep")
+        elif phone[:2] == "E0":
+            if pw != "0":
+                phone_ids.append(phone_to_int["en_word_sep"])
+                tone_ids.append(tone_to_int["en_word_sep"])
+                phones.append("en_word_sep")
+                tones.append("en_word_sep")
+
+    return phone_ids, tone_ids, phones, tones
+
+
+def convert_labels_to_text_id_en(tacolab: List[str]) -> Tuple[List[int], List[int], List[str], List[str]]:
+    phone_ids = []
+    tone_ids = []
+    phones = []
+    tones = []
+    if len(tacolab[0].split("\t")) != 5:
+        tacolab = convert_v3_to_v1(tacolab)
+    for i in range(len(tacolab)):
+        x = tacolab[i]
+
+        if i != 0 and x.split("\t")[0] == "sil":
+            continue
+
+        phone, tone, _, ws, pw = x.split("\t")
+        assert phone in phone_to_int, f"{phone} not in phone set"
+        assert tone in tone_to_int, f"{tone} not in tone set"
+        phone_ids.append(phone_to_int[phone])
+        tone_ids.append(tone_to_int[tone])
+        phones.append(phone)
+        tones.append(tone)
+        if pw != "0":
+            phone_ids.append(phone_to_int["en_word_sep"])
+            tone_ids.append(tone_to_int["en_word_sep"])
+            phones.append("en_word_sep")
+            tones.append("en_word_sep")
+
+    return phone_ids, tone_ids, phones, tones
+
+
+_label_conversion_fns = {
+    "zh": convert_labels_to_text_id_zh,
+    "zh_en": convert_labels_to_text_id_zh_en,
+    "en": convert_labels_to_text_id_en,
+}
+
+
+def convert_labels_to_text_id(tacolab: Optional[List[str]], prefix_tags: Optional[List[str]] = None):
     try:
-        lang = get_lang(tacolab)
-        phone_ids = []
-        tone_ids = []
-        phones = []
-        tones = []
-        if lang == "zh":
-            assert len(tacolab[0].split("\t")) == 7, (
-                len(tacolab[0].split("\t")),
-                tacolab[0],
-            )
-            if tacolab[0] == "phn\ttone\tws\tpwpp\tsentype\tword\tunit":
-                tacolab = tacolab[1:]
-            for i in range(len(tacolab)):
-                x = tacolab[i]
-                if i != 0 and x.split("\t")[0] == "sil":
-                    continue
-                x_split = x.split("\t")
-                phone, tone, ws, pw, stype, word, unit = x_split
-                assert phone in phone_to_int, f"{phone} not in phone set"
-                assert tone in tone_to_int, f"{tone} not in tone set"
+        if tacolab is not None:
+            lang = get_lang(tacolab)
+            phone_ids, tone_ids, phones, tones = _label_conversion_fns[lang](tacolab)
+        else:
+            phone_ids, tone_ids, phones, tones = [], [], [], []
 
-                phone_ids.append(phone_to_int[phone])
-                tone_ids.append(tone_to_int[tone])
-                phones.append(phone)
-                tones.append(tone)
-                if phone[:2] == "C0":
-                    if unit in ["S", "E"]:
-                        phone_ids.append(phone_to_int["syl_sep"])
-                        tone_ids.append(tone_to_int["syl_sep"])
-                        phones.append("syl_sep")
-                        tones.append("syl_sep")
-                        if ws in ["S", "E"]:
-                            phone_ids.append(phone_to_int["zh_word_sep"])
-                            tone_ids.append(tone_to_int["zh_word_sep"])
-                            phones.append("zh_word_sep")
-                            tones.append("zh_word_sep")
-                elif phone[:2] == "E0":
-                    if pw != "0":
-                        phone_ids.append(phone_to_int["en_word_sep"])
-                        tone_ids.append(tone_to_int["en_word_sep"])
-                        phones.append("en_word_sep")
-                        tones.append("en_word_sep")
-        elif lang == "zh_en":
-            assert (
-                len(tacolab[0].split("\t")) == 7 or len(tacolab[0].split("\t")) == 6
-            ), (len(tacolab[0].split("\t")), tacolab[0])
-            if (
-                tacolab[0] == "phn\ttone\tws\tpwpp\tsentype\tword\tunit"
-                or tacolab[0] == "phn\ttone\tws\tpwpp\tsentype\tword"
-            ):
-                tacolab = tacolab[1:]
-            for i in range(len(tacolab)):
-                x = tacolab[i]
-                if i != 0 and x.split("\t")[0] == "sil":
-                    continue
-                x_split = x.split("\t")
-                if len(x_split) == 7:
-                    phone, tone, ws, pw, stype, word, unit = x_split
-                elif len(x_split) == 6:
-                    phone, tone, ws, pw, stype, word = x_split
-                else:
-                    print("Wrong tacolab", x_split)
-                    return None
+        # prepend prefix tags (not very clean)
+        if prefix_tags is not None:
+            for tag in reversed(prefix_tags):
+                _phone_id, _tone_id, _phone, _tone = _get_special_tag_tokens(tag)
+                phone_ids = [_phone_id] + phone_ids
+                tone_ids = [_tone_id] + tone_ids
+                phones = [_phone] + phones
+                tones = [_tone] + tones
 
-                assert phone in phone_to_int, f"{phone} not in phone set"
-                assert tone in tone_to_int, f"{tone} not in tone set"
-
-                phone_ids.append(phone_to_int[phone])
-                tone_ids.append(tone_to_int[tone])
-                phones.append(phone)
-                tones.append(tone)
-                if phone[:2] == "C0":
-                    if unit in ["S", "E"]:
-                        phone_ids.append(phone_to_int["syl_sep"])
-                        tone_ids.append(tone_to_int["syl_sep"])
-                        phones.append("syl_sep")
-                        tones.append("syl_sep")
-                        if ws in ["S", "E"]:
-                            phone_ids.append(phone_to_int["zh_word_sep"])
-                            tone_ids.append(tone_to_int["zh_word_sep"])
-                            phones.append("zh_word_sep")
-                            tones.append("zh_word_sep")
-                elif phone[:2] == "E0":
-                    if pw != "0":
-                        phone_ids.append(phone_to_int["en_word_sep"])
-                        tone_ids.append(tone_to_int["en_word_sep"])
-                        phones.append("en_word_sep")
-                        tones.append("en_word_sep")
-        elif lang == "en":
-            if len(tacolab[0].split("\t")) != 5:
-                tacolab = convert_v3_to_v1(tacolab)
-            for i in range(len(tacolab)):
-                x = tacolab[i]
-                if i != 0 and x.split("\t")[0] == "sil":
-                    continue
-                x_split = x.split("\t")
-                phone, tone, _, ws, pw = x.split("\t")
-                assert phone in phone_to_int, f"{phone} not in phone set"
-                assert tone in tone_to_int, f"{tone} not in tone set"
-                phone_ids.append(phone_to_int[phone])
-                tone_ids.append(tone_to_int[tone])
-                phones.append(phone)
-                tones.append(tone)
-                if pw != "0":
-                    phone_ids.append(phone_to_int["en_word_sep"])
-                    tone_ids.append(tone_to_int["en_word_sep"])
-                    phones.append("en_word_sep")
-                    tones.append("en_word_sep")
-        phone_ids, tone_ids = np.array(phone_ids), np.array(tone_ids)
         return np.stack([phone_ids, tone_ids]), phones, tones
     except ValueError as ve:
         print(ve)
-        return None    
+        return None
     except Exception as e:
         print(e)
         return None
@@ -473,50 +692,9 @@ def parse_raw_text(text_filepath):
     return text_dict
 
 
-class SamiTokenizer:
-    def __init__(
-        self,
-        lib_path="/opt/tiger/sami_engine_cleaned/libs/libsami.so",
-        fe="/opt/tiger/sami_tts_api/models/tts_chinese_frontend_model__42.0.model",
-        fe_task="tts_chinese_frontend_model",
-    ) -> None:
-        self.cfg = generate_tts_config()
-        self.engine = TtsEngine(lib_path=lib_path, fe=fe)
-        self.ex = self.engine.create_fe_executor(task_type=fe_task)
-
-    def __call__(self, text_batch, line_break=" <n> ", **kwds):
-        text_ids = []
-        if isinstance(text_batch, str):
-            text_batch = [text_batch]
-        for prompt in text_batch:
-            lines = prompt.split(line_break)
-            text_tokens = []
-            for text in lines:
-                text = norm_chinese_text(text)
-                if text.strip() == "":
-                    text_tokens.append(get_line_break_id())
-                else:
-                    with contextlib.redirect_stdout(None):
-                        labels, tn = self.ex.run(text, config=self.cfg)
-                    labels = list(filter(lambda x: x != "", labels.split("\n")))
-                    text_id, _, _ = convert_labels_to_text_id(labels)
-                    text_tokens.append(torch.from_numpy(text_id[0]).long())
-                    text_tokens.append(get_line_break_id())
-            text_tokens = np.concatenate(text_tokens, axis=0)
-            text_ids.append(torch.from_numpy(text_tokens).long())
-        return {
-            "input_ids": torch.nn.utils.rnn.pad_sequence(
-                text_ids, batch_first=True, padding_value=0
-            ),
-            "length": torch.tensor([len(t) for t in text_ids]).long()
-        }
-
-
 class SamiOfflineTokenizer:
     """SamiOfflineTokenizer expects phonemes to already be extracted from the text."""
-    def __init__(
-        self,
-    ) -> None:
+    def __init__(self) -> None:
         pass
 
     def __call__(self, text_batch, line_break=" <n> ", **kwds):
@@ -527,14 +705,13 @@ class SamiOfflineTokenizer:
         for sil in text_batch:
             lines = sil.split(line_break)
             text_tokens = []
-            for labels in lines:
-                if labels.strip() == "":
-                    text_tokens.append(get_line_break_id())
-                else:
-                    labels = list(filter(lambda x: x != "", labels.split("\n")))
-                    text_id, _, _ = convert_labels_to_text_id(labels)
-                    text_tokens.append(torch.from_numpy(text_id[0]).long())
-                    text_tokens.append(get_line_break_id())
+            for phonemes in lines:
+                phrase = Phrase.parse(phonemes=phonemes)
+                if not any([phrase.phonemes, phrase.prefix_tags]):
+                    continue
+                labels = list(filter(lambda x: x != "", phrase.phonemes.split("\n"))) if phrase.phonemes else None
+                text_id, _, _ = convert_labels_to_text_id(labels, phrase.prefix_tags)
+                text_tokens.append(torch.from_numpy(text_id[0]).long())
             text_tokens = np.concatenate(text_tokens, axis=0)
             text_ids.append(torch.from_numpy(text_tokens).long())
         return {
@@ -543,3 +720,32 @@ class SamiOfflineTokenizer:
             ),
             "length": torch.tensor([len(t) for t in text_ids]).long()
         }
+
+
+class SamiTokenizer(SamiOfflineTokenizer):
+    def __init__(
+        self,
+        lib_path="/opt/tiger/sami_engine_cleaned/libs/libsami.so",
+        fe="/opt/tiger/sami_tts_api/models/tts_chinese_frontend_model__42.0.model",
+        fe_task="tts_chinese_frontend_model",
+    ) -> None:
+        super().__init__()
+        self.cfg = generate_tts_config()
+        self.engine = TtsEngine(lib_path=lib_path, fe=fe)
+        self.ex = self.engine.create_fe_executor(task_type=fe_task)
+
+    def __call__(self, text_batch, line_break=" <n> ", **kwds):
+        if isinstance(text_batch, str):
+            text_batch = [text_batch]
+        g2p_result = []
+        for text in text_batch:
+            lines = text.split(line_break)
+            with contextlib.redirect_stdout(None):
+                phrases = [Phrase.parse(text=line) for line in lines]
+                phrases = [
+                    phrase._replace(phonemes=(self.ex.run(phrase.text, config=self.cfg)[0] if phrase.text else None)) 
+                    for phrase in phrases
+                ]
+                ls = line_break.join([phrase.format_phonemes() for phrase in phrases])
+            g2p_result.append(ls)
+        return super().__call__(g2p_result, line_break, **kwds)

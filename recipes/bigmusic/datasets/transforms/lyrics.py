@@ -9,7 +9,7 @@ import librosa
 import numpy as np
 from transformers import T5Tokenizer
 from recipes.bigmusic.datasets.tokenizers.cmu_phonemes import CMUPhonemeTokenizer
-from recipes.bigmusic.utils.format_utils import normalize_text
+from recipes.bigmusic.utils.format_utils import normalize_text, normalize_text_sami_tokenizer
 from transformers import Wav2Vec2PhonemeCTCTokenizer
 from recipes.musiclm.utils.dist import local_zero_first
 import random
@@ -214,7 +214,7 @@ class LyricsTokenTransform():
     @classmethod
     def init_sami_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=True, **kwargs):
         from recipes.datasets.mcc.sami_tokenizer import SamiTokenizer
-        normalization_fn = partial(normalize_text, enable_punctuation=enable_punctuation)
+        normalization_fn = partial(normalize_text_sami_tokenizer, enable_punctuation=enable_punctuation)
         zh_phoneme_tokenizer = SamiTokenizer()
         return LyricsTokenTransform(zh_phoneme_tokenizer, 0, lyrics_max_seq_len, normalization_fn=normalization_fn, **kwargs)
     @classmethod

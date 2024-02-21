@@ -1,0 +1,229 @@
+from itertools import product
+
+import pytest
+import numpy as np
+
+from recipes.datasets.mcc.sami_tokenizer import (
+    Phrase,
+    singer_tags,
+    section_tags,
+    phone_to_int,
+    tone_to_int,
+    convert_labels_to_text_id,
+)
+
+
+MOCK_INPUT = [
+    "sil\t0\tS\t0\tO\t\tS",
+    "C0uo\t3\tS\t0\tO\t我\tS",
+    "C0c\t2\tS\t1\tO\t曾\tB",
+    "C0eng\t2\tS\t1\tO\t曾\tE",
+    "C0j\t1\tS\t0\tO\t将\tB",
+    "C0iang\t1\tS\t0\tO\t将\tE",
+    "C0n\t3\tS\t1\tO\t你\tB",
+    "C0i\t3\tS\t1\tO\t你\tE",
+    "C0ch\t1\tB\t0\tO\t春天\tB",
+    "C0uen\t1\tB\t0\tO\t春天\tE",
+    "C0t\t1\tE\t0\tO\t\tB",
+    "C0ian\t1\tE\t0\tO\t\tE",
+    "C0d\t5\tS\t1\tO\t的\tB",
+    "C0e\t5\tS\t1\tO\t的\tE",
+    "C0n\t4\tB\t0\tO\t诺言\tB",
+    "C0uo\t4\tB\t0\tO\t诺言\tE",
+    "C0ian\t2\tE\t4\tO\t\tS",
+    "。\t0\tS\t4\tO\t\tS",
+]
+
+MOCK_OUTPUT = (
+    np.array(
+        [
+            [
+                2,
+                250,
+                265,
+                263,
+                166,
+                200,
+                265,
+                263,
+                172,
+                207,
+                265,
+                263,
+                176,
+                204,
+                265,
+                263,
+                167,
+                245,
+                265,
+                182,
+                206,
+                265,
+                263,
+                168,
+                196,
+                265,
+                263,
+                176,
+                250,
+                265,
+                206,
+                265,
+                263,
+                85,
+            ],
+            [
+                2,
+                5,
+                19,
+                17,
+                4,
+                4,
+                19,
+                17,
+                3,
+                3,
+                19,
+                17,
+                5,
+                5,
+                19,
+                17,
+                3,
+                3,
+                19,
+                3,
+                3,
+                19,
+                17,
+                7,
+                7,
+                19,
+                17,
+                6,
+                6,
+                19,
+                4,
+                19,
+                17,
+                2,
+            ],
+        ]
+    ),
+    [
+        "sil",
+        "C0uo",
+        "syl_sep",
+        "zh_word_sep",
+        "C0c",
+        "C0eng",
+        "syl_sep",
+        "zh_word_sep",
+        "C0j",
+        "C0iang",
+        "syl_sep",
+        "zh_word_sep",
+        "C0n",
+        "C0i",
+        "syl_sep",
+        "zh_word_sep",
+        "C0ch",
+        "C0uen",
+        "syl_sep",
+        "C0t",
+        "C0ian",
+        "syl_sep",
+        "zh_word_sep",
+        "C0d",
+        "C0e",
+        "syl_sep",
+        "zh_word_sep",
+        "C0n",
+        "C0uo",
+        "syl_sep",
+        "C0ian",
+        "syl_sep",
+        "zh_word_sep",
+        "。",
+    ],
+    [
+        "0",
+        "3",
+        "syl_sep",
+        "zh_word_sep",
+        "2",
+        "2",
+        "syl_sep",
+        "zh_word_sep",
+        "1",
+        "1",
+        "syl_sep",
+        "zh_word_sep",
+        "3",
+        "3",
+        "syl_sep",
+        "zh_word_sep",
+        "1",
+        "1",
+        "syl_sep",
+        "1",
+        "1",
+        "syl_sep",
+        "zh_word_sep",
+        "5",
+        "5",
+        "syl_sep",
+        "zh_word_sep",
+        "4",
+        "4",
+        "syl_sep",
+        "2",
+        "syl_sep",
+        "zh_word_sep",
+        "0",
+    ],
+)
+
+
+def test_sami_tokenizer():
+    tokens, phonemes, tones = convert_labels_to_text_id(MOCK_INPUT)
+    gt_tokens, gt_phonemes, gt_tones = MOCK_OUTPUT
+    assert np.array_equal(tokens, gt_tokens)
+    assert phonemes == gt_phonemes
+    assert tones == gt_tones
+
+
+@pytest.mark.parametrize("prefix_tags", product([None] + section_tags, [None] + singer_tags))
+def test_sami_tokenizer_with_prefix_tags(prefix_tags):
+    section_tag, singer_tag = prefix_tags
+    # prepend the singer tag to the beginning of the first line
+    if section_tag and singer_tag:
+        mock_input = [f"[{section_tag}] {singer_tag}:{MOCK_INPUT[0]}"] + MOCK_INPUT[1:]
+    elif section_tag:
+        mock_input = [f"[{section_tag}] {MOCK_INPUT[0]}"] + MOCK_INPUT[1:]
+    elif singer_tag:
+        mock_input = [f"{singer_tag}:{MOCK_INPUT[0]}"] + MOCK_INPUT[1:]
+    else:
+        mock_input = MOCK_INPUT
+
+    phrase = Phrase.parse(phonemes="\n".join(mock_input))
+    tokens, phonemes, tones = convert_labels_to_text_id(phrase.phonemes.split("\n"), phrase.prefix_tags)
+    gt_tokens, gt_phonemes, gt_tones = MOCK_OUTPUT
+
+    # The singer tag should be the first token in all the parsed sequences
+    section_phone_id = phone_to_int.get(section_tag)
+    section_tone_id = tone_to_int.get(section_tag)
+    singer_phone_id = phone_to_int.get(singer_tag)
+    singer_tone_id = tone_to_int.get(singer_tag)
+
+    prepend_tokens = list(filter(None, [section_tag, singer_tag]))
+    prepend_phone_ids = list(filter(None, [section_phone_id, singer_phone_id]))
+    prepend_tone_ids = list(filter(None, [section_tone_id, singer_tone_id]))
+
+    assert np.array_equal(tokens, np.hstack([[prepend_phone_ids, prepend_tone_ids], gt_tokens]))
+    assert phonemes == prepend_tokens + gt_phonemes
+    assert tones == prepend_tokens + gt_tones
+
+
+# TODO (Yilin): Add more tests for different languages

@@ -248,7 +248,7 @@ class TagCategoricalEmbedder(TokenEmbedder):
 
     def get_tag_id(self, tag, dropout=0.0):
         if tag not in self.vocab2id:
-            if not self.training:
+            if not self.training and len(tag.strip()) > 0:  # use NONE_LABEL for empty label
                 raise Exception(f"Inference Error: Tag {tag} not found in vocab {self.vocab2id}. Please check vocab")
             tag = NONE_LABEL
         if self.training and random.random() < dropout:
@@ -258,11 +258,11 @@ class TagCategoricalEmbedder(TokenEmbedder):
     def get_tokens(self, requires, style_texts):
         batch_style_tags = []
         for style_text in style_texts:
-            # accepts comma separated string or ordered list/dict of category values
+            # Strictly separate style_text by the separator
             if isinstance(style_text, str):
                 separator = self.category_separator
-                normalized_style_text = style_text.replace("，", separator).replace(",", separator)
-                style_tags = normalized_style_text.split(separator)
+                # normalized_style_text = style_text.replace("，", separator).replace(",", separator)
+                style_tags = [t.strip() for t in style_text.split(separator)]
             elif isinstance(style_text, list):
                 style_tags = style_text
             elif isinstance(style_text, dict):
