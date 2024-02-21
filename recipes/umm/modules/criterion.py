@@ -5,6 +5,7 @@ import torchaudio
 from torch import nn
 from torch.nn import functional as F
 
+from recipes.umm.models.voc_modules.pitch_predictor import pitch_utils
 from samantha.criterion.spectral_loss import (
     MagnitudeSTFTLoss,
     MultiScaleSTFTLoss,
@@ -252,7 +253,9 @@ class UMMLoss(nn.Module):
             flattened_targets = text_ids.masked_select(labels_mask)
 
             # CTCLoss doesn't support fp16
-            log_probs = F.log_softmax(ctc_logits, dim=-1, dtype=torch.float32).transpose(
+            log_probs = F.log_softmax(
+                ctc_logits, dim=-1, dtype=torch.float32
+            ).transpose(
                 0, 1
             )  # [N, T, C] -> [T, N, C]
             with torch.backends.cudnn.flags(enabled=False):
@@ -360,6 +363,71 @@ class UMMLossMSS(UMMLossV2):
         }
         if self.config.add_chroma:
             loss_dict.update(loss_chroma=self.compute_chroma_loss(recon_chroma, chroma))
+        return loss_dict
+
+
+class UMMLossMSSPitchSupervised(UMMLossV2):
+    """Loss for Mel, CTC, Chroma, F0 and VUV."""
+
+    @torch.cuda.amp.autocast(enabled=False)
+    def forward(
+        self,
+        ctc_logits,
+        text_ids,
+        recon_mel,
+        mel,
+        recon_chroma,
+        chroma,
+        recon_f0,
+        f0,
+        recon_vuv,
+        vuv,
+    ):
+        loss_dict = {
+            "loss_mel": self.compute_spectrogram_loss(recon_mel, mel, self.mel_loss_fn),
+            "loss_ctc": self.compute_ctc_loss(ctc_logits, text_ids),
+        }
+        if self.config.add_chroma:
+            loss_dict.update(loss_chroma=self.compute_chroma_loss(recon_chroma, chroma))
+        if self.config.add_pitch:
+            loss_dict.update(f0_loss=pitch_utils.compute_f0_loss(recon_f0, f0, vuv))
+            loss_dict.update(vuv_loss=pitch_utils.compute_vuv_loss(recon_vuv, vuv))
+        return loss_dict
+
+
+class UMMLossMSSPitchSupervisedPerceptual(UMMLossV2):
+    """Loss for CTC, Chroma, F0, VUV and perceptual pitch loss."""
+
+    @torch.cuda.amp.autocast(enabled=False)
+    def forward(
+        self,
+        ctc_logits,
+        text_ids,
+        recon_chroma,
+        chroma,
+        recon_pitch_h,
+        pitch_h,
+        recon_f0,
+        f0,
+        recon_vuv,
+        vuv,
+    ):
+        loss_dict = {
+            # no mel in this configuration! Replace with perceptual loss
+            # "loss_mel": self.compute_spectrogram_loss(recon_mel, mel, self.mel_loss_fn)
+            "loss_ctc": self.compute_ctc_loss(ctc_logits, text_ids)
+        }
+        if self.config.add_chroma:
+            loss_dict.update(loss_chroma=self.compute_chroma_loss(recon_chroma, chroma))
+        if self.config.add_pitch:
+            loss_dict.update(f0_loss=pitch_utils.compute_f0_loss(recon_f0, f0, vuv))
+            loss_dict.update(vuv_loss=pitch_utils.compute_vuv_loss(recon_vuv, vuv))
+        if self.config.add_perceptual_pitch:
+            loss_dict.update(
+                perceptual_pitch_loss=pitch_utils.compute_perceptual_pitch_loss(
+                    recon_pitch_h, pitch_h
+                )
+            )
         return loss_dict
 
 

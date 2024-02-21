@@ -61,6 +61,38 @@ def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
     }
 
 
+def collate_fn_mss(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
+    audio = []
+    audio_vocal = []
+    audio_vocal_perturb = []
+    audio_inst = []
+    token = []
+    for idx in range(len(batch)):
+        audio.append(batch[idx]["audio"][0])
+        audio_vocal.append(batch[idx]["audio_vocal"][0])
+        if "audio_vocal_perturb" in batch[0]:
+            audio_vocal_perturb.append(batch[idx]["audio_vocal_perturb"][0])
+        audio_inst.append(batch[idx]["audio_inst"][0])
+        token.append(batch[idx].get("token", torch.zeros(0).long()))
+    ret = {
+        "audio": torch.nn.utils.rnn.pad_sequence(audio, batch_first=True, padding_value=0)[:, None],
+        "audio_vocal": torch.nn.utils.rnn.pad_sequence(
+            audio_vocal, batch_first=True, padding_value=0)[:, None],
+        "audio_inst": torch.nn.utils.rnn.pad_sequence(
+            audio_inst, batch_first=True, padding_value=0)[:, None],
+        "token": torch.nn.utils.rnn.pad_sequence(
+            token, batch_first=True, padding_value=0
+        ),
+    }
+    if len(audio_vocal_perturb) > 0:
+        ret.update({
+            "audio_vocal_perturb": torch.nn.utils.rnn.pad_sequence(
+                audio_vocal_perturb, batch_first=True, padding_value=0)[:, None],
+        })
+    return ret
+
+
+
 def collate_audio(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
     max_length = max([x["audio"].shape[-1] for x in batch])
     random_pad = RandomPad(n_samples=max_length)
@@ -392,3 +424,202 @@ class MixDataModule(pl.LightningDataModule):
             batch = self.batcher.collate_batch(item)
             if batch is not None:
                 yield batch
+
+
+class MixTransformsMSS(MixTransforms):
+    def __init__(self, *args, **kwargs):
+        audio_perturb = kwargs.pop('audio_perturb', False)
+        super().__init__(*args, **kwargs)
+        self.audio_perturb = audio_perturb
+        if audio_perturb:
+            from recipes.umm.utils.nansy_utils import AudioPerturb
+            self.ap = AudioPerturb()
+
+    def get_audio(self, item, key=None):
+        name = item["__dataset_name__"]
+        if re.match("music_.*", name):
+            src_sample_rate = self.data_sample_rate
+        else:
+            src_sample_rate = item["src_sample_rate"]
+        if key is None:
+            key = self.audio_key
+        audio = self.base_transform(item[key])
+        audio = self.resample(src_sample_rate, audio)
+        if self.normalize_audio:
+            audio = self.fast_normalizer(audio)
+        return audio
+
+    def __call__(self, item: Dict[str, Any]) -> Generator:
+        text = item["text"]
+        try:
+            audio = self.get_audio(item)
+        except Exception as e:
+            self._update_stats(skipped=True, message=f"Error loading audio: {e}")
+            return
+        if audio.size(-1) < self.min_duration * self.sample_rate:
+            self._update_stats(skipped=True, message="Audio too short")
+            return
+        if audio.size(-1) > self.max_duration * self.sample_rate:
+            self._update_stats(skipped=True, message="Audio too long")
+            return
+        output_dict = {"audio": audio}
+        if self.tokenizer is not None and callable(self.tokenizer):
+            token, normalized_text = self.get_text_token(text)
+            if (
+                token.size(-1)
+                > math.floor(audio.size(-1) / self.sample_rate) * self.frame_rate
+            ):
+                self._update_stats(skipped=True, message="Token too long")
+                return
+            output_dict.update(token=token)
+            output_dict.update(text=normalized_text)
+        try:
+            output_dict.update(audio_vocal=self.get_audio(item, 'vocal'))
+            output_dict.update(audio_inst=self.get_audio(item, 'acc'))
+            if self.audio_perturb:
+                if random.random() > 0.5:
+                    output_dict['audio_vocal_perturb'] = self.ap(output_dict['audio_vocal'][0])[None]
+                else:
+                    output_dict['audio_vocal_perturb'] = output_dict['audio_vocal']
+        except Exception as e:
+            self._update_stats(skipped=True, message=f"No acc or vocal in audio: {e}")
+            return
+
+        yield output_dict
+        self._update_stats(skipped=False)
+
+
+
+class MixMSSDataset(WebPipeline):
+    name = "MixMSSDataset"
+
+    def __init__(
+        self,
+        data_id: int = None,
+        url_pattern: str = None,
+        sample_rate: int = 24000,
+        audio_key: str = "wav",
+        min_duration: int = 5,
+        max_duration: int = 30,
+        normalize_audio: bool = False,
+        max_num_crops: int = None,
+        tokenizer=None,
+        frame_rate: int = 25,
+        audio_perturb=False,
+        **kwargs,
+    ):
+        print(f"[{self.name}] initializing...")
+        dataset = ParquetDataset(data_id=data_id, data_urls=url_pattern, **kwargs)
+        transforms = MixTransformsMSS(
+            sample_rate=sample_rate,
+            audio_key=audio_key,
+            min_duration=min_duration,
+            max_duration=max_duration,
+            normalize_audio=normalize_audio,
+            max_num_crops=max_num_crops,
+            tokenizer=tokenizer,
+            frame_rate=frame_rate,
+            audio_perturb=audio_perturb
+        )
+        preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
+        pipeline = [{"compose": [preprocessor.train_buffer_preprocessor]}]
+        super().__init__(dataset, pipeline)
+        print(f"[{self.name}] initialized.")
+
+
+class MixMSSDataModule(MixDataModule):
+    def __init__(
+        self,
+        data_ids,
+        data_weights,
+        val_data_id: int = 793,
+        sample_rate: int = 24000,
+        batch_size: int = 2,
+        min_duration: int = 5,
+        max_duration: int = 30,
+        max_num_crops: int = None,
+        normalize_audio: bool = False,
+        shuffle_buffer_size: int = 10,
+        num_workers: int = 4,
+        pin_memory: bool = True,
+        collate_fn: Optional[Callable] = collate_fn_mss,
+        tokenizer: str = None,
+        frame_rate: int = 25,
+        bsz_evaluator: Optional[str] = None,
+        audio_perturb=False
+    ):
+        pl.LightningDataModule.__init__(self)
+        self.num_workers = num_workers
+        self.shuffle_buffer_size = shuffle_buffer_size
+        self.pin_memory = pin_memory
+        self.collate_fn = collate_fn
+        if tokenizer is not None:
+            self.tokenizer = BertTokenizer.from_pretrained(tokenizer)
+        else:
+            self.tokenizer = None
+        self.frame_rate = frame_rate
+        assert batch_size >= min_duration * sample_rate
+        buckets_samples = []
+        sec = min_duration
+        while sec <= max_duration:
+            buckets_samples.append(sec)
+            sec += math.ceil(sec * 0.1)
+        if buckets_samples[-1] < max_duration:
+            buckets_samples.append(max_duration)
+        print(f"[Buckets] {len(buckets_samples)} {str(buckets_samples)}")
+        buckets_samples = [x * sample_rate for x in buckets_samples]
+        if bsz_evaluator:
+            bsz_evaluator = eval(bsz_evaluator)
+        self.batcher = BucketBatcher(
+            buckets=buckets_samples,
+            dynamic_batch=True,
+            maximum_bucket_size=batch_size,
+            length_fn=lambda x: x["audio"].size(-1),
+            bsz_evaluator=bsz_evaluator,
+        )
+
+        def get_dataset(id):
+            return MixMSSDataset(
+                data_id=id,
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                max_num_crops=max_num_crops,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                resampled=True,
+                shardshuffle=True,
+                handler=wds.warn_and_continue,
+                extra_fields_in_data=['vocal', 'acc'],
+                audio_perturb=audio_perturb
+            )
+
+        datasets = [get_dataset(id) for id in data_ids]
+        if len(datasets) > 1:
+            self.train_dataset = DataPipeline(
+                MultiIterableDataset(datasets=datasets, weights=data_weights),
+                wds.shuffle(shuffle_buffer_size),
+                self.bucketize,
+            )
+        else:
+            self.train_dataset = DataPipeline(
+                datasets[0], wds.shuffle(shuffle_buffer_size), self.bucketize
+            )
+        self.validation_dataset = DataPipeline(
+            MixMSSDataset(
+                data_id=val_data_id,
+                sample_rate=sample_rate,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                max_num_crops=max_num_crops,
+                normalize_audio=normalize_audio,
+                tokenizer=self.tokenizer,
+                frame_rate=self.frame_rate,
+                resampled=False,
+                nodesplitter=return_self,
+                handler=wds.warn_and_continue,
+                extra_fields_in_data=['vocal', 'acc']
+            ),
+            self.bucketize,
+        )

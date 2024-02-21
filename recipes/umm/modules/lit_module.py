@@ -1403,7 +1403,7 @@ class Stage2Conv1D(Stage2):
     """
     Fully Convolutional 1D Stage 2 Model
 
-    @hanoihantrakul 2/6/2023:
+    @hanoihantrakul 2/6/2024:
     - The encoder is Conv1D (instead of conformer with attention)
     - The reconstruction heads are conv1D (instead of Conv2D).
 
@@ -1430,6 +1430,229 @@ class Stage2Conv1D(Stage2):
             checkpointing=checkpointing,
             extra_params=extra_params,
         )
+
+
+class Stage2Conv1DPitchSupervised(Stage2):
+    """
+    Fully Convolutional 1D Stage 2 Model with Supervised Pitch Head
+
+    @hanoihantrakul 19Feb2024:
+    - Similar to Stage2Conv1D()
+    - Has an additional supervised pitch head
+    """
+
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+
+    def load_required_modules(self):
+        """Override to not require a Stage1 Pretrained model. We can train direct-to-stage2."""
+        if "rmvpe" in self.hparams.required_modules:
+            rmvpe = self.hparams.required_modules["rmvpe"]
+            if rmvpe["ckpt_path"].strip() != "":
+                state_dict = rmvpe["init_fn"](
+                    rmvpe["ckpt_path"], self.local_rank, rmvpe["cache_dir"]
+                )["state_dict"]
+                print(f'Loading rmvpe model from {rmvpe["ckpt_path"]}')
+                self.model.rmvpe.load_and_eval(state_dict)
+
+    def _shared_step(self, batch):
+        input_dict = self.prepare_feature(batch)
+        output_dict = self.model(input_dict)
+
+        mel = input_dict["mel"]
+        text_ids = input_dict["text_ids"]
+
+        # To speed up spiking, this class only supports this combination.
+        assert self.model.config.add_pitch == True
+        assert self.model.config.add_chroma == True
+        assert self.model.config.add_ctc == True
+        # Only supports criterion.UMMLossMSSPitchSupervised()
+        loss_dict = self.criterion(
+            ctc_logits=output_dict["ctc_out"],
+            text_ids=text_ids,
+            recon_mel=output_dict["mel_out"],
+            mel=mel,
+            recon_chroma=output_dict["chroma_out"],
+            chroma=input_dict["chroma"],
+            recon_f0=output_dict["f0_out"].squeeze(-1),
+            f0=input_dict["f0"],
+            recon_vuv=output_dict["vuv_out"].squeeze(-1),
+            vuv=input_dict["vuv"],
+        )
+
+        loss_dict["loss"] = loss_dict["loss_mel"] * self.model.config.w_loss_mel
+        if self.model.config.get("add_ctc", True):
+            loss_dict["loss"] = (
+                loss_dict["loss"] + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
+            )
+        if self.model.config.add_chroma:
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + loss_dict["loss_chroma"] * self.model.config.w_loss_chroma
+            )
+        if self.model.config.get("add_pitch", False):
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + (loss_dict["f0_loss"] + loss_dict["vuv_loss"])
+                * self.model.config.w_loss_pitch
+            )
+        if self.model.config.get("add_ctc", True):
+            loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
+        loss_dict["aux/num_mel_frames"] = mel.size(0) * mel.size(1)
+        loss_dict["aux/mel_mean"] = mel.mean()
+        loss_dict["aux/mel_std"] = mel.std()
+        loss_dict["aux/w_loss_mel"] = self.model.config.w_loss_mel
+        if self.model.config.get("add_ctc", True):
+            loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
+        if self.model.config.add_chroma:
+            loss_dict["aux/w_loss_chroma"] = self.model.config.w_loss_chroma
+        if self.model.config.get("add_pitch", False):
+            loss_dict["aux/w_loss_pitch"] = self.model.config.w_loss_pitch
+
+        loss_dict["flops"] = output_dict["flops"]
+        return loss_dict
+
+
+class Stage2Conv1DPitchSupervisedPerceptual(Stage2):
+    """
+    Fully Convolutional 1D Stage 2 Model with Supervised Pitch Head and Perceptual Pitch Head
+
+    @hanoihantrakul 19Feb2024:
+    - Similar to Stage2Conv1D()
+    - Has an additional supervised pitch head
+    - Has an additional perceptual pitch head
+    """
+
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+
+    def load_required_modules(self):
+        """
+        Override logic to not require a Stage1 ckpt. Just load supervised and perceptual pitch predictor.
+        """
+        if "rmvpe" in self.hparams.required_modules:
+            rmvpe = self.hparams.required_modules["rmvpe"]
+            if rmvpe["ckpt_path"].strip() != "":
+                state_dict = rmvpe["init_fn"](
+                    rmvpe["ckpt_path"], self.local_rank, rmvpe["cache_dir"]
+                )["state_dict"]
+                print(f'Loading rmvpe model from {rmvpe["ckpt_path"]}')
+                self.model.rmvpe.load_and_eval(state_dict)
+        if "pitchpdt" in self.hparams.required_modules:
+            pitchpdt_config = self.hparams.required_modules["pitchpdt"]
+            if pitchpdt_config["ckpt_path"].strip() != "":
+                state_dict = pitchpdt_config["init_fn"](
+                    pitchpdt_config["ckpt_path"],
+                    self.local_rank,
+                    pitchpdt_config["cache_dir"],
+                )["state_dict"]
+                print(f'Loading pitchpdt model from {pitchpdt_config["ckpt_path"]}')
+                self.model.pitchpdt.load_and_eval(state_dict)
+
+    def _shared_step(self, batch):
+        input_dict = self.prepare_feature(batch)
+        output_dict = self.model(input_dict)
+
+        mel = input_dict["mel"]
+        text_ids = input_dict["text_ids"]
+        # To speed up spiking only the following config is allowed
+        assert self.model.config.add_chroma == True
+        assert self.model.config.add_ctc == True
+        assert self.model.config.add_pitch == True
+        assert self.model.config.add_perceptual_pitch == True
+        # Only supports criterion.UMMLossMSSPitchSupervisedPerceptual()
+        loss_dict = self.criterion(
+            ctc_logits=output_dict["ctc_out"],
+            text_ids=text_ids,
+            recon_chroma=output_dict["chroma_out"],
+            chroma=input_dict["chroma"],
+            recon_pitch_h=output_dict["h_pred"],
+            pitch_h=output_dict["h_gt"],
+            recon_f0=output_dict["f0_out"].squeeze(-1),
+            f0=input_dict["f0"],
+            recon_vuv=output_dict["vuv_out"].squeeze(-1),
+            vuv=input_dict["vuv"],
+        )
+        # Weighed sum of losses
+        loss_dict["loss"] = 0
+
+        # no mel reconstruction loss. Replace with perceptual pitch loss.
+        # loss_dict["loss"] = loss_dict["loss_mel"] * self.model.config.w_loss_mel
+        if self.model.config.add_perceptual_pitch:
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + loss_dict["perceptual_pitch_loss"]
+                * self.model.config.w_loss_perceptual_pitch
+            )
+        if self.model.config.get("add_ctc", True):
+            loss_dict["loss"] = (
+                loss_dict["loss"] + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
+            )
+        if self.model.config.add_chroma:
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + loss_dict["loss_chroma"] * self.model.config.w_loss_chroma
+            )
+        if self.model.config.get("add_pitch", False):
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + (loss_dict["f0_loss"] + loss_dict["vuv_loss"])
+                * self.model.config.w_loss_pitch
+            )
+
+        if self.model.config.get("add_ctc", True):
+            loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
+        loss_dict["aux/num_mel_frames"] = mel.size(0) * mel.size(1)
+        loss_dict["aux/mel_mean"] = mel.mean()
+        loss_dict["aux/mel_std"] = mel.std()
+        loss_dict["aux/w_loss_mel"] = self.model.config.w_loss_mel
+        if self.model.config.get("add_ctc", True):
+            loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
+        if self.model.config.add_chroma:
+            loss_dict["aux/w_loss_chroma"] = self.model.config.w_loss_chroma
+        if self.model.config.get("add_pitch", False):
+            loss_dict["aux/w_loss_pitch"] = self.model.config.w_loss_pitch
+        if self.model.config.get("add_perceptual_pitch", False):
+            loss_dict[
+                "aux/w_loss_perceptual_pitch"
+            ] = self.model.config.w_loss_perceptual_pitch
+
+        loss_dict["flops"] = output_dict["flops"]
+        return loss_dict
 
 
 class ASR(Stage0):
@@ -1759,6 +1982,319 @@ class Stage3MSS(Stage3Improved, Stage2MSS):
         loss_dict.update(self._compute_aux_losses_and_stats(input_dict))
 
         # Copy over flops information
+        loss_dict["flops"] = output_dict["flops"]
+        return loss_dict
+
+
+class Stage3MSSPitchBaseline(Stage3):
+    """
+    @hanoihantrakul 1/18/2023: This model was created as a temporary test.
+
+    Take Zongyu's original UMMv1 Stage 2 model trained on Mix data, but
+    now use new MSS data used in UMMv2 work.
+
+    This is the baseline model, where the CTC head, Mel recon and Chroma recon
+    head remain identical to Zongyu's work. I am training 2 additional models
+    which will add a supervised pitch head and perceptual pitch head for
+    comparison with this baseline model. Take a look at:
+    - Stage3MSSPitchSupervised()
+    - Stage3MSSPitchSupervisedPerceptual()
+    It was much easier to create separate classes than introduce if statements
+    in a single class to route the flow of data.
+
+    From a high level, the only difference from Stage3() is making sure that
+    method `prepare_features()` correctly uses only the full mix audio
+    from the MSS dataset Parquet ID 1154.
+    """
+
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def prepare_feature(self, batch):
+        """
+        @hanoihantrakul 1/19/2024
+        Notes: Luckily by default, the standard UMMv1 Stage3 uses the correct "audio" key
+        to extract full mix. I keep this as a separate method to make intention clear.
+        """
+        return super().prepare_feature(batch)
+
+
+class Stage3MSSPitchSupervised(Stage3):
+    """
+    @hanoihantrakul 1/22/2023: This model was created as a temporary test.
+
+    This is identical to `Stage3MSSPitchBaseline()` but adds a supervised pitch head. This
+    is similar to the setup for a `Stage3()` class with `add_pitch=True`.
+
+    However, there is a difference. `Stage3()` with `add_pitch=True` uses a normalized f0
+    signal since this makes sense for speech. Consult with Li Tang.
+    Here, we want the supervised pitch signal to be preprocessed with log, but omit normalization.
+
+    The logic is implemented in the matching model definition umm_mkii.Stage3MSSPitchSupervised().
+    """
+
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def prepare_feature(self, batch):
+        """
+        @hanoihantrakul 1/19/2024
+        Notes: Luckily by default, the standard UMMv1 Stage3 uses the correct "audio" key
+        to extract full mix. I keep this as a separate class to make intention clear.
+        """
+        return super().prepare_feature(batch)
+
+    def _shared_step(self, batch):
+        input_dict = self.prepare_feature(batch)
+        output_dict = self.model(input_dict)
+
+        mel = input_dict["mel"]
+        text_ids = input_dict["text_ids"]
+
+        # To speed up spiking, this class only supports this combination.
+        assert self.model.config.add_pitch == True
+        assert self.model.config.add_chroma == True
+        assert self.model.config.add_ctc == True
+        # Only supports criterion.UMMLossMSSPitchSupervised()
+        loss_dict = self.criterion(
+            ctc_logits=output_dict["ctc_out"],
+            text_ids=text_ids,
+            recon_mel=output_dict["mel_out"],
+            mel=mel,
+            recon_chroma=output_dict["chroma_out"],
+            chroma=input_dict["chroma"],
+            recon_f0=output_dict["f0_out"].squeeze(-1),
+            f0=input_dict["f0"],
+            recon_vuv=output_dict["vuv_out"].squeeze(-1),
+            vuv=input_dict["vuv"],
+        )
+
+        loss_dict["bs"] = mel.shape[0]
+        loss_dict["loss"] = loss_dict["loss_mel"] * self.model.config.w_loss_mel
+        if self.model.config.get("add_ctc", True):
+            loss_dict["loss"] = (
+                loss_dict["loss"] + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
+            )
+        if self.model.config.add_chroma:
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + loss_dict["loss_chroma"] * self.model.config.w_loss_chroma
+            )
+        if self.model.config.get("add_pitch", False):
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + (loss_dict["f0_loss"] + loss_dict["vuv_loss"])
+                * self.model.config.w_loss_pitch
+            )
+        if output_dict["vq_loss"] is not None:
+            loss_dict["loss_vq"] = output_dict["vq_loss"]
+            loss_dict["loss"] = (
+                loss_dict["loss"] + output_dict["vq_loss"] * self.model.config.w_loss_vq
+            )
+        if self.trainer.global_step % 100 == 0:
+            code_rate = self.get_code_rate(output_dict["vq_ids"])
+            loss_dict["aux/code_rate"] = code_rate
+        quant_rate = self.get_quant_rate(
+            output_dict["vq_ids"].long(), self.model.config.vq_codebook_size
+        )
+        loss_dict["aux/quant_rate"] = quant_rate
+        if getattr(self.model.vq, "entropy", None) is not None:
+            loss_dict["aux/entropy"] = self.model.vq.entropy()
+        if self.model.config.get("add_ctc", True):
+            loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
+        loss_dict["aux/num_mel_frames"] = mel.size(0) * mel.size(1)
+        loss_dict["aux/mel_mean"] = mel.mean()
+        loss_dict["aux/mel_std"] = mel.std()
+        loss_dict["aux/w_loss_mel"] = self.model.config.w_loss_mel
+        if self.model.config.get("add_ctc", True):
+            loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
+        loss_dict["aux/noise_scale"] = output_dict.get("noise_scale", 0)
+        if self.model.config.add_chroma:
+            loss_dict["aux/w_loss_chroma"] = self.model.config.w_loss_chroma
+        if output_dict["vq_loss"] is not None:
+            loss_dict["aux/w_loss_vq"] = self.model.config.w_loss_vq
+        loss_dict["flops"] = output_dict["flops"]
+        return loss_dict
+
+
+class Stage3MSSPitchSupervisedPerceptual(Stage3):
+    """
+    @hanoihantrakul 1/22/2023: This model was created as a temporary test.
+
+    This is identical to `Stage3MSSPitchSupervised()` but adds a pitch perceptual loss
+    ontop of the supervised pitch head.
+    """
+
+    def __init__(
+        self,
+        model_cls,
+        criterion_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=criterion_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def prepare_feature(self, batch):
+        """
+        @hanoihantrakul 1/19/2024
+        Notes: Luckily by default, the standard UMMv1 Stage3 uses the correct "audio" key
+        to extract full mix. I keep this as a separate method to make intention clear.
+        """
+        return super().prepare_feature(batch)
+
+    def load_required_modules(self):
+        """
+        Load additional perceptual pitch predictor.
+        """
+        super().load_required_modules()
+        if "pitchpdt" in self.hparams.required_modules:
+            pitchpdt_config = self.hparams.required_modules["pitchpdt"]
+            if pitchpdt_config["ckpt_path"].strip() != "":
+                state_dict = pitchpdt_config["init_fn"](
+                    pitchpdt_config["ckpt_path"],
+                    self.local_rank,
+                    pitchpdt_config["cache_dir"],
+                )["state_dict"]
+                print(f'Loading pitchpdt model from {pitchpdt_config["ckpt_path"]}')
+                self.model.pitchpdt.load_and_eval(state_dict)
+
+    def _shared_step(self, batch):
+        input_dict = self.prepare_feature(batch)
+        output_dict = self.model(input_dict)
+
+        mel = input_dict["mel"]
+        text_ids = input_dict["text_ids"]
+        # To speed up spiking only the following config is allowed
+        assert self.model.config.add_chroma == True
+        assert self.model.config.add_ctc == True
+        assert self.model.config.add_pitch == True
+        assert self.model.config.add_perceptual_pitch == True
+        # Only supports criterion.UMMLossMSSPitchSupervisedPerceptual()
+        loss_dict = self.criterion(
+            ctc_logits=output_dict["ctc_out"],
+            text_ids=text_ids,
+            recon_chroma=output_dict["chroma_out"],
+            chroma=input_dict["chroma"],
+            recon_pitch_h=output_dict["h_pred"],
+            pitch_h=output_dict["h_gt"],
+            recon_f0=output_dict["f0_out"].squeeze(-1),
+            f0=input_dict["f0"],
+            recon_vuv=output_dict["vuv_out"].squeeze(-1),
+            vuv=input_dict["vuv"],
+        )
+
+        loss_dict["bs"] = mel.shape[0]
+
+        # Weighed sum of losses
+        loss_dict["loss"] = 0
+
+        # no mel reconstruction loss. Replace with perceptual pitch loss.
+        # loss_dict["loss"] = loss_dict["loss_mel"] * self.model.config.w_loss_mel
+        if self.model.config.add_perceptual_pitch:
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + loss_dict["perceptual_pitch_loss"]
+                * self.model.config.w_loss_perceptual_pitch
+            )
+        if self.model.config.get("add_ctc", True):
+            loss_dict["loss"] = (
+                loss_dict["loss"] + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
+            )
+        if self.model.config.add_chroma:
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + loss_dict["loss_chroma"] * self.model.config.w_loss_chroma
+            )
+        if self.model.config.get("add_pitch", False):
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + (loss_dict["f0_loss"] + loss_dict["vuv_loss"])
+                * self.model.config.w_loss_pitch
+            )
+
+        # Aux losses
+        if output_dict["vq_loss"] is not None:
+            loss_dict["loss_vq"] = output_dict["vq_loss"]
+            loss_dict["loss"] = (
+                loss_dict["loss"] + output_dict["vq_loss"] * self.model.config.w_loss_vq
+            )
+        if self.trainer.global_step % 100 == 0:
+            code_rate = self.get_code_rate(output_dict["vq_ids"])
+            loss_dict["aux/code_rate"] = code_rate
+        quant_rate = self.get_quant_rate(
+            output_dict["vq_ids"].long(), self.model.config.vq_codebook_size
+        )
+        loss_dict["aux/quant_rate"] = quant_rate
+        if getattr(self.model.vq, "entropy", None) is not None:
+            loss_dict["aux/entropy"] = self.model.vq.entropy()
+        if self.model.config.get("add_ctc", True):
+            loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
+        loss_dict["aux/num_mel_frames"] = mel.size(0) * mel.size(1)
+        loss_dict["aux/mel_mean"] = mel.mean()
+        loss_dict["aux/mel_std"] = mel.std()
+        # loss_dict["aux/w_loss_mel"] = self.model.config.w_loss_mel
+        if self.model.config.get("add_ctc", True):
+            loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
+        loss_dict["aux/noise_scale"] = output_dict.get("noise_scale", 0)
+        if self.model.config.add_chroma:
+            loss_dict["aux/w_loss_chroma"] = self.model.config.w_loss_chroma
+        if output_dict["vq_loss"] is not None:
+            loss_dict["aux/w_loss_vq"] = self.model.config.w_loss_vq
+        if self.model.config.get("add_perceptual_pitch", False):
+            loss_dict[
+                "aux/w_loss_perceptual_pitch"
+            ] = self.model.config.w_loss_perceptual_pitch
         loss_dict["flops"] = output_dict["flops"]
         return loss_dict
 

@@ -68,21 +68,25 @@ def init_pretrained(hpath, local_rank, cache_dir=None):
         return {"state_dict": state_dict}
 
 
-def init_rmvpe(hpath, local_rank, cache_dir=None):
+def init_pitch_model(hpath, local_rank, cache_dir=None):
     if cache_dir is not None:
         os.makedirs(cache_dir, exist_ok=True)
 
-    device = torch.device(f"cuda:{local_rank}")
+    _ = torch.device(f"cuda:{local_rank}")
     with local_zero_first():
-        if hpath.startswith("hdfs://"):
-            local_path = f"{cache_dir}/{os.path.basename(hpath)}"
-            if not os.path.exists(local_path):
-                if not hh.get(hpath, local_path):
-                    raise ConnectionError(f"Cannot retrieve file from {hpath}.")
-        else:
-            local_path = hpath
+        local_path = _ensure_ckpt_is_local(hpath, cache_dir)
         state_dict = torch.load(local_path, map_location=torch.device("cpu"))
         return {"state_dict": state_dict}
+
+
+def init_rmvpe(hpath, local_rank, cache_dir=None):
+    """Load state dict for RMVPE model."""
+    return init_pitch_model(hpath, local_rank, cache_dir)
+
+
+def init_perceptual_pitch_predictor(hpath, local_rank, cache_dir=None):
+    """Load state dict for UMM v2 Perceptual Pitch Model."""
+    return init_pitch_model(hpath, local_rank, cache_dir)
 
 
 def init_bestrq_mel_ctc_vq(hpath, local_rank, cache_dir=None):

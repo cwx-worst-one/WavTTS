@@ -13,10 +13,18 @@ from transformers.activations import ACT2FN
 from transformers.utils import ModelOutput
 
 from recipes.umm.models.rmvpe import RMVPE
+from recipes.umm.models.voc_modules.pitch_predictor.inference import (
+    PerceptualPitchPredictor,
+)
 from recipes.umm.models.voc_modules.pitch_predictor.model import ConvBlocks
+from recipes.umm.models.voc_modules.pitch_predictor.pitch_utils import (
+    compute_min_lengths,
+    raw_hz_to_log1p,
+)
 from recipes.umm.models.vq import EMAVectorQuantizer
 from recipes.umm.transforms.chroma import ChromaSpectrogram
 from recipes.umm.transforms.speech import SpeechTransform
+from recipes.umm.utils.mel_utils import torch_wav2spec
 
 
 @dataclass
@@ -1622,7 +1630,7 @@ class Stage2Conv1D(Stage2Conv):
         # Replace all Conv2DUpsampling with Conv1DUpsampling
         # Mel Head to Conv1D
         del self.mel_head
-        self.mel_head = self.mel_head = Conv1dUpsampling(
+        self.mel_head = Conv1dUpsampling(
             config.hidden_size,
             config.n_mels,
             act_fn=torch.nn.ReLU
@@ -1651,6 +1659,128 @@ class Stage2Conv1D(Stage2Conv):
                 if config.get("act_fn", "relu") == "relu"
                 else torch.nn.GELU,
             )
+
+
+class Stage2Conv1DPitchSupervised(Stage2Conv1D):
+    """
+    Spike to test if a Stage2Conv1D+SupervisedPitch head loss improves training.
+    """
+
+    def __init__(self, config):
+        super().__init__(config)
+
+    def preprocessing(self, x):
+        """
+        @hanoihantrakul Feb 2nd 2024:
+        Recommend refactoring this after Conv1D results are verified since it duplicates
+        Stage3MSSPitchSupervised() method.
+        """
+        normalize = self.config.feature_cmvn is not None
+        mel = self.audio_transform(x, normalize=normalize)
+        input_dict = {"mel": mel}
+        if self.config.get("interfere_audio", None):
+            x_interfered = self.interfere_audio(x)
+            mel_interfered = self.audio_transform(x_interfered, normalize=normalize)
+            input_dict.update(mel_interfered=mel_interfered)
+        if self.config.add_chroma:
+            chroma = self.chroma_transform(x)[:, :, :-1].transpose(1, 2)
+            chroma = F.normalize(chroma, p=2, dim=-1)
+            input_dict.update(chroma=chroma)
+        if self.config.get("add_pitch", False):
+            f0 = self.rmvpe.batch_infer(
+                x, self.config.sample_rate, thred=0.03, use_viterbi=False
+            )
+            f0 = f0[:, :-1]
+            vuv = get_vuv(f0)
+            # f0 = f0_normalize(f0) # do not normalize the pitch!
+            f0 = raw_hz_to_log1p(f0)
+            input_dict.update(f0=f0, vuv=vuv)
+        return input_dict
+
+
+class Stage2Conv1DPitchSupervisedPerceptual(Stage2Conv1DPitchSupervised):
+    """
+    Spike to test if a Stage2Conv1D+SupervisedPitch+PerceptualPitch improves training.
+    """
+
+    def __init__(self, config):
+        super().__init__(config)
+        if self.config.get("add_perceptual_pitch", False):
+            """Replace original mel spec reconstruction head (n_mel=128) with perceptual loss reconstruction head (n_mel=160)."""
+            # replace self.mel_head with mel head for perceptual pitch loss
+            del self.mel_head
+            # for decoding hidden states to mel spectrogram with n_mel=160 instead of n_mel=128
+            self.mel_head_full = Stage3MSSDec(
+                config, config.head_hidden_size, config.n_mels_tgt
+            )
+            # the pl_module handles loading the pretrained state_dict of perceptual pitch predictor
+            self.pitchpdt = PerceptualPitchPredictor()
+            # the pitch predictor needs mel 160 input, not the mel 128 input of default self.audio_transform()
+            self.audio_transform_for_pitchpdt = lambda x: torch_wav2spec(
+                x, num_mels=config.n_mels_tgt, sample_rate=config.sample_rate
+            )
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def preprocessing(self, x):
+        """Add logic for injecting mel 160 features."""
+        input_dict = super().preprocessing(x)
+        if self.config.add_perceptual_pitch:
+            mel_160 = self.audio_transform_for_pitchpdt(x)
+            input_dict.update(mel_160=mel_160)
+        return input_dict
+
+    def forward(self, input_dict):
+        """Need to remove logic related to n_mels=128 head, we are using only the n_mels_tgt=160 head"""
+        feature = (
+            input_dict["mel_interfered"]
+            if self.config.interfere_audio
+            else input_dict["mel"]
+        )
+        # Audio frontend preprocessing
+        flops = self.audio_encoder.get_flops(*feature.shape)
+        audio_feature = self.audio_encoder(feature)
+        hidden_states = self.encoder_input_dropout(audio_feature)
+
+        # Apply main conv layers
+        for layer in self.encoder_layers:
+            hidden_states = layer(hidden_states)
+
+        output_dict = {"flops": flops}
+        nonpadding = (feature.abs().sum(-1) > 0).float()[..., None]
+
+        if self.config.get("add_perceptual_pitch", False):
+            # get predicted hidden state from reconstructed mel spectrogram
+            mel_out_full = self.mel_head_full(
+                hidden_states, nonpadding
+            )  # mel 160, not mel 128
+            _ = self.pitchpdt.forward(mel_out_full)
+            h_pred = self.pitchpdt.get_hidden_state()  # TODO: flops calculation
+            # get reference hidden state from original data
+            _ = self.pitchpdt.forward(input_dict["mel_160"])
+            h_gt = self.pitchpdt.get_hidden_state()  # TODO: flops calculation
+            # sometimes h_gt is 1 timestep longer than h_pred
+            trim_len = compute_min_lengths(h_pred, h_gt, axis=1)
+            h_pred, h_gt = h_pred[:, :trim_len, :], h_gt[:, :trim_len, :]
+            output_dict.update(h_pred=h_pred, h_gt=h_gt, mel_out=mel_out_full)
+        else:
+            # default to normal mel 128 reconstruction
+            flops += self.mel_head.get_flops(*hidden_states.shape)
+            mel_out = self.mel_head(hidden_states)
+            output_dict.update(mel_out=mel_out)
+
+        if self.config.get("add_ctc", True):
+            flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
+            ctc_out = self.ctc_head(hidden_states)
+            output_dict.update(ctc_out=ctc_out)
+        if self.config.add_chroma:
+            chroma_out = self.chroma_head(hidden_states)
+            output_dict.update(chroma_out=chroma_out)
+        if self.config.get("add_pitch", False):
+            f0_vuv_out = self.f0_vuv_head(hidden_states)
+            output_dict.update(f0_out=f0_vuv_out[:, :, 0:1])
+            output_dict.update(vuv_out=f0_vuv_out[:, :, 1:])
+        return output_dict
 
 
 class Stage2MSS(Stage2):
@@ -2192,6 +2322,53 @@ class Stage3MSS(Stage2MSS, Stage3):
         return vq_ids["vq_ids"]
 
 
+class Stage3MSSDec(nn.Module):
+    def __init__(
+        self, config, hidden_size, output_dim, expand_times=2, *args, **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self.proj_in1 = nn.Conv1d(config.hidden_size, hidden_size, 5, padding=2)
+        self.proj_in2 = nn.Conv1d(hidden_size, hidden_size, 5, padding=2)
+        self.conv_stacks = ConvBlocks(
+            hidden_size,
+            output_dim,
+            None,
+            5,
+            layers_in_block=2,
+            num_layers=8,
+            norm_type="ln",
+            dropout=0,
+            post_net_kernel=3,
+            is_BTC=False,
+        )
+        self.expand_times = expand_times
+
+    def forward(self, x, nonpadding):
+        if nonpadding is None:
+            nonpadding = (x.abs().sum(-1) > 0).float()[..., None]
+        nonpadding = nonpadding.transpose(1, 2)
+        x = x.transpose(1, 2)
+        if self.expand_times == 2:
+            x = self.proj_in1(x) * F.interpolate(
+                nonpadding, size=x.shape[-1], mode="nearest"
+            )
+            x = F.interpolate(x, scale_factor=2, mode="nearest")
+            x = self.proj_in2(x) * F.interpolate(
+                nonpadding, size=x.shape[-1], mode="nearest"
+            )
+            x = F.interpolate(x, scale_factor=2, mode="nearest")
+        elif self.expand_times == 1:
+            x = self.proj_in1(x) * F.interpolate(
+                nonpadding, size=x.shape[-1], mode="nearest"
+            )
+            x = F.interpolate(x, scale_factor=2, mode="nearest")
+        x = self.conv_stacks(
+            x, F.interpolate(nonpadding, size=x.shape[-1], mode="nearest")
+        )
+        x = x.transpose(1, 2)
+        return x
+
+
 class Stage3MSSConvEnc(nn.Module):
     def __init__(
         self, hidden_size, input_dim, output_dim, stride_times=2, *args, **kwargs
@@ -2325,3 +2502,166 @@ class Stage3Conv1D(Stage2Conv1D, Stage3):
         # position_embeddings = self.embed_positions(hidden_states)
         vq_ids = self._get_vq_ids(hidden_states)
         return vq_ids
+
+
+class Stage3MSSPitchSupervised(Stage3):
+    """
+    Create a Stage3 model for testing the effect of adding a supervised pitch head.
+    """
+
+    def __init__(self, config):
+        super().__init__(config)
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def preprocessing(self, x):
+        """
+        @hanoihantrakul 1/22/2024:
+        Inject logic so that f0 is not normalized. Everything else identical to Stage3().
+        """
+        normalize = self.config.feature_cmvn is not None
+        mel = self.audio_transform(x, normalize=normalize)
+        input_dict = {"mel": mel}
+        if self.config.get("interfere_audio", None):
+            x_interfered = self.interfere_audio(x)
+            mel_interfered = self.audio_transform(x_interfered, normalize=normalize)
+            input_dict.update(mel_interfered=mel_interfered)
+        if self.config.add_chroma:
+            chroma = self.chroma_transform(x)[:, :, :-1].transpose(1, 2)
+            chroma = F.normalize(chroma, p=2, dim=-1)
+            input_dict.update(chroma=chroma)
+        if self.config.get("add_pitch", False):
+            f0 = self.rmvpe.batch_infer(
+                x, self.config.sample_rate, thred=0.03, use_viterbi=False
+            )
+            f0 = f0[:, :-1]
+            vuv = get_vuv(f0)
+            # f0 = f0_normalize(f0) # do not normalize the pitch!
+            f0 = raw_hz_to_log1p(f0)
+            input_dict.update(f0=f0, vuv=vuv)
+        return input_dict
+
+
+class Stage3MSSPitchSupervisedPerceptual(Stage3MSSPitchSupervised):
+    """
+    Create a Stage3 model for testing the effect of adding a supervised pitch head
+    and a perceptual pitch head. It is a quick spike to verify whether these pitch
+    losses are effective and useful for UMMv2 training on MSS data.
+
+    @hanoihantrakul 1/22/2024: This class is similar in logic to Stage3 except:
+    - There is an additional `add_perceptual_pitch=True` configuration. I assume
+    this class will only ever be used with `add_pitch=True` and `add_perceptual_pitch=True`
+    """
+
+    def __init__(self, config):
+        super().__init__(config)
+        if self.config.get("add_perceptual_pitch", False):
+            """Replace original mel spec reconstruction head (n_mel=128) with perceptual loss reconstruction head (n_mel=160)."""
+            # replace self.mel_head with mel head for perceptual pitch loss
+            del self.mel_head
+            # for decoding hidden states to mel spectrogram with n_mel=160
+            self.mel_head_full = Stage3MSSDec(
+                config, config.head_hidden_size, config.n_mels_tgt
+            )
+            # the pl_module handles loading the pretrained state_dict of perceptual pitch predictor
+            self.pitchpdt = PerceptualPitchPredictor()
+            # the pitch predictor needs mel 160 input, not the mel 128 input of self.audio_transform()
+            self.audio_transform_for_pitchpdt = lambda x: torch_wav2spec(
+                x, num_mels=config.n_mels_tgt, sample_rate=config.sample_rate
+            )
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def preprocessing(self, x):
+        """Add logic for injecting mel 160 features."""
+        input_dict = super().preprocessing(x)
+        if self.config.add_perceptual_pitch:
+            mel_160 = self.audio_transform_for_pitchpdt(x)
+            input_dict.update(mel_160=mel_160)
+        return input_dict
+
+    def forward(self, input_dict):
+        """
+        Identical to Stage3.forward() except:
+        - If `add_perceptual_pitch=True` then replace default mel head
+        - It was too complicated to re-use nicely refactored Stage2MSS(). Oh well.
+        """
+        feature = input_dict["mel"]
+        flops = self.audio_encoder.get_flops(*feature.shape)
+        audio_feature = self.audio_encoder(
+            feature
+        )  # we still need mel 128 here to create the encoder input
+        hidden_states = self.encoder_input_dropout(audio_feature)
+        position_embeddings = self.embed_positions(hidden_states)
+        flops += self.encoder_layers[0].get_flops(*hidden_states.shape[0:2]) * len(
+            self.encoder_layers
+        )
+        nonpadding = (feature.abs().sum(-1) > 0).float()[..., None]
+
+        # Vector Quantization Step
+        for i, layer in enumerate(self.encoder_layers):
+            if i == self.config.vq_layer_idx:
+                hidden_states = self.vq_proj_in(hidden_states)
+                if self.config.get("vq_proj_noise", 0) > 0:
+                    noise_scale = (self.config.vq_proj_noise - self.cnt).clamp(
+                        0
+                    ) / self.config.vq_proj_noise
+                    hidden_states = (
+                        hidden_states + torch.randn_like(hidden_states) * noise_scale
+                    )
+                    self.cnt.add_(1)
+                if self.config.get("vq_type", None) == "FSQ":
+                    vq_embs, vq_ids = self.vq(hidden_states)
+                    vq_loss = None
+                elif self.config.get("vq_type", None) == "EMAEntropy":
+                    vq_embs, vq_ids, vq_loss = self.vq(
+                        hidden_states, e_scale=1.0 if self.cnt < 30_000 else 0.0
+                    )
+                else:
+                    vq_embs, vq_ids, vq_loss = self.vq(hidden_states)
+                hidden_states = self.vq_proj_out(vq_embs)
+            hidden_states = layer(
+                hidden_states, position_embeddings=position_embeddings
+            )
+
+        output_dict = {
+            "vq_ids": vq_ids,
+            "vq_loss": vq_loss,
+            "flops": flops * 3,  # extra 2x for backward.
+        }
+
+        if self.config.get("add_perceptual_pitch", False):
+            # get predicted hidden state from reconstructed mel spectrogram
+            mel_out_full = self.mel_head_full(
+                hidden_states, nonpadding
+            )  # mel 160, not mel 128
+            _ = self.pitchpdt.forward(mel_out_full)
+            h_pred = self.pitchpdt.get_hidden_state()  # TODO: flops calculation
+            # get reference hidden state from original data
+            _ = self.pitchpdt.forward(input_dict["mel_160"])
+            h_gt = self.pitchpdt.get_hidden_state()  # TODO: flops calculation
+            # sometimes h_gt is 1 timestep longer than h_pred
+            trim_len = compute_min_lengths(h_pred, h_gt, axis=1)
+            h_pred, h_gt = h_pred[:, :trim_len, :], h_gt[:, :trim_len, :]
+            output_dict.update(h_pred=h_pred, h_gt=h_gt)
+        else:
+            # default to normal mel 128 reconstruction
+            flops += self.mel_head.get_flops(*hidden_states.shape)
+            mel_out = self.mel_head(hidden_states)
+            output_dict.update(mel_out=mel_out)
+
+        if self.config.get("add_ctc", True):
+            flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
+            ctc_out = self.ctc_head(hidden_states)
+            output_dict.update(ctc_out=ctc_out)
+        if self.config.get("vq_proj_noise", False):
+            output_dict.update(noise_scale=noise_scale)
+        if self.config.add_chroma:
+            chroma_out = self.chroma_head(hidden_states)
+            output_dict.update(chroma_out=chroma_out)
+        if self.config.get("add_pitch", False):
+            f0_vuv_out = self.f0_vuv_head(hidden_states)
+            output_dict.update(
+                f0_out=f0_vuv_out[:, :, 0:1], vuv_out=f0_vuv_out[:, :, 1:]
+            )
+        return output_dict
