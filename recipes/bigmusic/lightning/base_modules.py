@@ -265,8 +265,8 @@ class BaseContinuousEmbedModule(BaseModule):
     def prepare_training_inputs(self, batch):
         target_values = self.prepare_target_inputs(batch)
         inputs_embeds = self.prepare_inputs_embeddings(batch)
-        target_embeds = target_values['token_embeds']
-        target_ids = target_values['token_ids'][:, 1:] # offset targets by one for prediction
+        target_embeds = target_values['token_embeds'][:, :-1] # offset embeds for input
+        target_ids = target_values['token_ids'][:, 1:] # offset targets by one to skip SOS prediction
         if self.use_cross_attn:
             model_inputs = {
                 "inputs_embeds": target_embeds,
