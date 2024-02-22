@@ -1436,9 +1436,14 @@ class Stage2Conv1DPitchSupervised(Stage2):
     """
     Fully Convolutional 1D Stage 2 Model with Supervised Pitch Head
 
-    @hanoihantrakul 19Feb2024:
+    @hanoihantrakul 2:
     - Similar to Stage2Conv1D()
     - Has an additional supervised pitch head
+
+    @hanoihantrakul 2/22/2024: TODO: the method self.prepare_feature() will normalize audio based
+    on statistics passed in using `feature_cmvn`. We discovered we were using statistics from
+    the MixDataset instead of the MixMSSDataset. This is only a constant difference, and
+    should not affect the model performance.
     """
 
     def __init__(
@@ -2310,6 +2315,11 @@ class Stage3Conv1D(Stage3):
     - It expects a Stage2Conv1D system trained on the same data (but does not expect a Stage1Conv1D)
 
     - The init is identical to Stage3(). I just factored it out to make intent clear.
+
+    @hanoihantrakul 2/22/2024: TODO: the method self.prepare_feature() will normalize audio based
+    on statistics passed in using `feature_cmvn`. We discovered we were using statistics from
+    the MixDataset instead of the MixMSSDataset. This is only a constant difference, and
+    should not affect the model performance.
     """
 
     def __init__(

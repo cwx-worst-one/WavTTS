@@ -6,6 +6,15 @@
 # - umm_stage2_conv1D_ummv3.yaml (which is just umm_stage2_pitch_baseline_conv_1D.yaml) <- this file
 # - umm_stage2_conv1D_pitch_supervised_ummv3.yaml
 # - umm_stage2_conv1D_pitch_supervised_perceptual_ummv3.yaml
+#
+# @hanoihantrakul 2/22/2024
+# - We discovered that feature_cmvn: "recipes/datasets/mcc/MixDataModule_SpeechTransform.stats.pt"
+# will cause feature statistics for MixDataModule (associated with ConformerAttentionUMM) 
+# to be applied to MixMSSDataModule (associated with ConvUMM).
+# Ren Yi and myself agree that because the datasets are large, the statistics should 
+# be roughly similar, and is just a constant mean/std shift in the data.
+# To support shipping SSTK v6 model, we leave it as is. 
+
 ################################################################################
 ##########                       BASIC CONFIGURATION                  ##########
 ################################################################################

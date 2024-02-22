@@ -4,7 +4,7 @@
 # but trains on SSTK data instead of MSSv3 data and removes CTC head.
 #
 # We found that training a Stage2Conv1D and then following this with a
-# Stave3Conv1D led to stable training. Note that in this setup, this mode
+# Stave3Conv1D led to stable training. Note that in this setup, this model
 # does not load a pretrained Stage1Conv1D with BESTRQ pre-training. It
 # essentially trains "direct" on the data.
 #
@@ -12,6 +12,14 @@
 # used for training dual UMM tokenizer) and ID 794 (SSTK data)
 #
 # Note that SSTK is instrumental only, so CTC is turned off.
+#
+# @hanoihantrakul 2/22/2024
+# - We discovered that feature_cmvn: "recipes/datasets/mcc/MixDataModule_SpeechTransform.stats.pt"
+# will cause feature statistics for MixDataModule (associated with ConformerAttentionUMM) 
+# to be applied to MixMSSDataModule (associated with ConvUMM).
+# Ren Yi and myself agree that because the datasets are large, the statistics should 
+# be roughly similar, and is just a constant mean/std shift in the data.
+# To support shipping SSTK v6 model, we leave it as is. 
 
 
 ################################################################################

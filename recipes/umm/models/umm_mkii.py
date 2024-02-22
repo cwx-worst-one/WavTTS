@@ -1621,6 +1621,11 @@ class Stage2Conv1D(Stage2Conv):
 
     @hanoihantrakul 2/2/2024: We found that this model led to stable training compared to
     a baseline Stage2 Conformer model.
+
+    @hanoihantrakul 2/22/2024: TODO: the method self.preprocessing() will normalize audio based
+    on statistics passed in using `feature_cmvn`. We discovered we were using statistics from
+    the MixDataset instead of the MixMSSDataset. This is only a constant difference, and
+    should not affect the model performance.
     """
 
     def __init__(self, config):
@@ -2420,6 +2425,11 @@ class Stage3Conv1D(Stage2Conv1D, Stage3):
     @hanoihantrakul 2/4/2024: TODO: this inheritance structure is becoming extremely
     difficult to debug. Recommend refactoring stage1,2,3 code after spike is complete.
     For example, this class requires inheriting from two related stages (Stage2Conv1D and Stage3)
+
+    @hanoihantrakul 2/22/2024: TODO: the method self.preprocessing() will normalize audio based
+    on statistics passed in using `feature_cmvn`. We discovered we were using statistics from
+    the MixDataset instead of the MixMSSDataset. This is only a constant difference, and
+    should not affect the model performance.
     """
 
     def __init__(self, config):

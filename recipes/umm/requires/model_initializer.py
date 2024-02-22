@@ -24,6 +24,20 @@ def local_zero_first():
             dist.barrier()
 
 
+def ensure_hdfs_ckpt_is_local(target_path, cache_dir):
+    """If the ckpt path is on HDFS then download it to a local cache, otherwise use the filepath directly."""
+    if target_path.startswith("hdfs://"):
+        local_path = f"{cache_dir}/{os.path.basename(target_path)}"
+        if not os.path.exists(local_path):
+            hh.get(target_path, local_path)
+            assert os.path.exists(
+                local_path
+            ), f"Could not retrieve file from {target_path}."
+        return local_path
+    else:
+        return target_path
+
+
 def load_torch_script_module(module_path, device):
     module = torch.jit.load(module_path, map_location=device).to(device).eval()
     return module
@@ -35,13 +49,7 @@ def init_pretrained_bestrq(hpath, local_rank, cache_dir=None):
 
     device = torch.device(f"cuda:{local_rank}")
     with local_zero_first():
-        if hpath.startswith("hdfs://"):
-            local_path = f"{cache_dir}/{os.path.basename(hpath)}"
-            if not os.path.exists(local_path):
-                if not hh.get(hpath, local_path):
-                    raise ConnectionError(f"Cannot retrieve file from {hpath}.")
-        else:
-            local_path = hpath
+        local_path = ensure_hdfs_ckpt_is_local(hpath, cache_dir)
         state_dict = torch.load(local_path, map_location=torch.device("cpu"))[
             "state_dict"
         ]
@@ -55,13 +63,7 @@ def init_pretrained(hpath, local_rank, cache_dir=None):
 
     device = torch.device(f"cuda:{local_rank}")
     with local_zero_first():
-        if hpath.startswith("hdfs://"):
-            local_path = f"{cache_dir}/{os.path.basename(hpath)}"
-            if not os.path.exists(local_path):
-                if not hh.get(hpath, local_path):
-                    raise ConnectionError(f"Cannot retrieve file from {hpath}.")
-        else:
-            local_path = hpath
+        local_path = ensure_hdfs_ckpt_is_local(hpath, cache_dir)
         state_dict = torch.load(local_path, map_location=torch.device("cpu"))[
             "state_dict"
         ]
@@ -74,7 +76,7 @@ def init_pitch_model(hpath, local_rank, cache_dir=None):
 
     _ = torch.device(f"cuda:{local_rank}")
     with local_zero_first():
-        local_path = _ensure_ckpt_is_local(hpath, cache_dir)
+        local_path = ensure_hdfs_ckpt_is_local(hpath, cache_dir)
         state_dict = torch.load(local_path, map_location=torch.device("cpu"))
         return {"state_dict": state_dict}
 
@@ -97,13 +99,7 @@ def init_bestrq_mel_ctc_vq(hpath, local_rank, cache_dir=None):
 
     device = torch.device(f"cuda:{local_rank}")
     with local_zero_first():
-        if hpath.startswith("hdfs://"):
-            local_path = f"{cache_dir}/{os.path.basename(hpath)}"
-            if not os.path.exists(local_path):
-                if not hh.get(hpath, local_path):
-                    raise ConnectionError(f"Cannot retrieve file from {hpath}.")
-        else:
-            local_path = hpath
+        local_path = ensure_hdfs_ckpt_is_local(hpath, cache_dir)
         model = BestRQMelCTC.load_from_checkpoint(local_path).to(device).eval()
         return {"BestRQMelCTCVQ": model}
 
@@ -144,13 +140,7 @@ def init_stage1(hpath, local_rank, cache_dir=None):
 
     device = torch.device(f"cuda:{local_rank}")
     with local_zero_first():
-        if hpath.startswith("hdfs://"):
-            local_path = f"{cache_dir}/{os.path.basename(hpath)}"
-            if not os.path.exists(local_path):
-                if not hh.get(hpath, local_path):
-                    raise ConnectionError(f"Cannot retrieve file from {hpath}.")
-        else:
-            local_path = hpath
+        local_path = ensure_hdfs_ckpt_is_local(hpath, cache_dir)
         model = Stage1.load_from_checkpoint(local_path).to(device).eval()
         return {"Stage1": model}
 
@@ -163,30 +153,9 @@ def init_stage2(hpath, local_rank, cache_dir=None):
 
     device = torch.device(f"cuda:{local_rank}")
     with local_zero_first():
-        if hpath.startswith("hdfs://"):
-            local_path = f"{cache_dir}/{os.path.basename(hpath)}"
-            if not os.path.exists(local_path):
-                if not hh.get(hpath, local_path):
-                    raise ConnectionError(f"Cannot retrieve file from {hpath}.")
-        else:
-            local_path = hpath
+        local_path = ensure_hdfs_ckpt_is_local(hpath, cache_dir)
         model = Stage2.load_from_checkpoint(local_path).to(device).eval()
         return {"Stage2": model}
-
-
-def _ensure_ckpt_is_local(target_path, cache_dir):
-    """If the ckpt path is on HDFS then download it to a local cache, otherwise use the filepath directly."""
-    if target_path.startswith("hdfs://"):
-        local_path = f"{cache_dir}/{os.path.basename(target_path)}"
-        if not os.path.exists(local_path):
-            hh.get(target_path, local_path)
-            assert os.path.exists(
-                local_path
-            ), f"Could not retrieve file from {target_path}."
-        return local_path
-    else:
-        return target_path
-
 
 def init_stage3(hpath, local_rank, cache_dir=None):
     """Init function for standard Stage3 UMM backbone."""
@@ -197,7 +166,7 @@ def init_stage3(hpath, local_rank, cache_dir=None):
 
     device = torch.device(f"cuda:{local_rank}")
     with local_zero_first():
-        local_path = _ensure_ckpt_is_local(hpath, cache_dir)
+        local_path = ensure_hdfs_ckpt_is_local(hpath, cache_dir)
         model = Stage3.load_from_checkpoint(local_path).to(device).eval()
         return {"Stage3": model}
 
@@ -211,7 +180,7 @@ def init_dualumm(hpath, local_rank=None, cache_dir=None, device=None, load_requi
     if device is None:
         device = torch.device(f"cuda:{local_rank}")
     with local_zero_first():
-        local_path = _ensure_ckpt_is_local(hpath, cache_dir)
+        local_path = ensure_hdfs_ckpt_is_local(hpath, cache_dir)
         state_dict = torch.load(local_path, map_location='cpu')
         prefix = 'model.'
         model_state_dict = {
@@ -229,7 +198,7 @@ def init_dualumm(hpath, local_rank=None, cache_dir=None, device=None, load_requi
 def init_stage3_dual_voc(hpath, local_rank, cache_dir=None):
     device = torch.device(f"cuda:{local_rank}")
     with local_zero_first():
-        voc_ckpt = _ensure_ckpt_is_local(hpath, cache_dir=cache_dir)
+        voc_ckpt = ensure_hdfs_ckpt_is_local(hpath, cache_dir=cache_dir)
     state_dict = torch.load(voc_ckpt, map_location='cpu')
     prefix = 'model_gen.'
     model_state_dict = {
@@ -238,9 +207,7 @@ def init_stage3_dual_voc(hpath, local_rank, cache_dir=None):
     from recipes.umm.modules.vocoder_task import MelGANVocoder
     voc_module = MelGANVocoder(**state_dict['hyper_parameters'], save_hparams=False)
     model = voc_module.model_gen
-    model.load_state_dict(model_state_dict)
-    model.eval()
-    model.to(device)
+    model.load_state_dict(model_state_dict).to(device).eval()
     print(f'Loading vocoder model from {voc_ckpt}')
     return {"mel_vocoder": model}
 
@@ -253,7 +220,7 @@ def init_stage3_mss(hpath, local_rank, cache_dir=None):
 
     device = torch.device(f"cuda:{local_rank}")
     with local_zero_first():
-        local_path = _ensure_ckpt_is_local(hpath, cache_dir)
+        local_path = ensure_hdfs_ckpt_is_local(hpath, cache_dir)
         model = Stage3MSS.load_from_checkpoint(local_path).to(device).eval()
         """
         @hanoihantrakul 11-25-2023
@@ -274,9 +241,9 @@ def init_stage3_conv1d(hpath, local_rank, cache_dir=None):
 
     device = torch.device(f"cuda:{local_rank}")
     with local_zero_first():
-        local_path = _ensure_ckpt_is_local(hpath, cache_dir)
+        local_path = ensure_hdfs_ckpt_is_local(hpath, cache_dir)
         model = Stage3Conv1D.load_from_checkpoint(local_path).to(device).eval()
-        return {"Stage3": model}
+        return {"Stage3Conv1D": model}
 
 
 def init_mkii(hpath, local_rank, cache_dir=None):
@@ -361,13 +328,7 @@ def init_unified_decoder(hpath, local_rank, cache_dir=None):
 
     device = torch.device(f"cuda:{local_rank}")
     with local_zero_first():
-        if hpath.startswith("hdfs://"):
-            local_path = f"{cache_dir}/{os.path.basename(hpath)}"
-            if not os.path.exists(local_path):
-                if not hh.get(hpath, local_path):
-                    raise ConnectionError(f"Cannot retrieve file from {hpath}.")
-        else:
-            local_path = hpath
+        local_path = ensure_hdfs_ckpt_is_local(hpath, cache_dir)
         model = UnifiedDecoder.load_from_checkpoint(local_path).to(device).eval()
         return {"unified_decoder": model}
 
@@ -380,13 +341,7 @@ def init_m1_tagging(hpath, local_rank, cache_dir=None):
 
     device = torch.device(f"cuda:{local_rank}")
     with local_zero_first():
-        if hpath.startswith("hdfs://"):
-            local_path = f"{cache_dir}/{os.path.basename(hpath)}"
-            if not os.path.exists(local_path):
-                if not hh.get(hpath, local_path):
-                    raise ConnectionError(f"Cannot retrieve file from {hpath}.")
-        else:
-            local_path = hpath
+        local_path = ensure_hdfs_ckpt_is_local(hpath, cache_dir)
         model = (
             MI1_MusicTaggingMusicSFT.load_from_checkpoint(local_path, strict=False)
             .to(device)
