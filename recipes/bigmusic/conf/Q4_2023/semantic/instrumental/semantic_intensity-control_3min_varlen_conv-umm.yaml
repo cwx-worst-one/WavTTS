@@ -158,9 +158,11 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
     required_modules:
         mulan:
             hpath: /mnt/bn/audio-diffusion/weituo/sstk_mulan/mulan-step=005000-median_rank_1=83-kaggle.ckpt
+            # hpath: /mnt/bn/audio-diffusion/peng/clap_sstk_mulan_files/MuLan_sstk/CLAP_all_text_space_connect_large_dropout/checkpoints/mulan-step=005000-median_rank_1=61-kaggle.ckpt
             initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                 cache_dir: !ref <run_opts[cache_dir]>
                 version: "sstkmae"
+                # version: "sstkmae_v2"
         bestrq:
             # US conv UMM-chroma stage 3
             hpath: hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/user/hanoi.hantrakul/logs/umm_conv_sstk/umm_stage3_conv1D_sstk_no_ctc_794_EMAVQ32768x32/checkpoints_for_inference/step=0850000.ckpt

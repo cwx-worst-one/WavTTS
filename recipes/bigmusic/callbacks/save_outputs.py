@@ -143,7 +143,8 @@ def save_batch_outputs(
         save_wav(wav.cpu().float(), wav_fp, sr=sample_rate, save_mp3=save_mp3)
         if save_style_audio and style_audio is not None and beam_idx == 0:
             input_wav_fp = os.path.join(wav_dir, f"{file_name}.style_audio.wav")
-            save_wav(style_audio[ii].cpu().float(), input_wav_fp, sr=sample_rate, save_mp3=save_mp3)
+            # style audio is always 24kHz (for now)
+            save_wav(style_audio[ii].cpu().float(), input_wav_fp, sr=24000, save_mp3=save_mp3)
 
         if vocal_audio is not None and beam_idx == 0:
             input_vocals_fp = os.path.join(wav_dir, f"{file_name}.vocal_audio.wav")

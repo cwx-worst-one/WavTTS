@@ -25,7 +25,7 @@ extra_params:
         beat: 0.1
         intensity: 1.0
     # How to extract UMM tokens
-    semantic_chunk_size: 30
+    semantic_chunk_size: null
     # How to extract MuLan embedding
     mulan_crop: True
     mulan_average: True
@@ -162,13 +162,16 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
     required_modules:
         mulan:
             hpath: /mnt/bn/audio-diffusion/weituo/sstk_mulan/mulan-step=005000-median_rank_1=83-kaggle.ckpt
+            # hpath: /mnt/bn/audio-diffusion/peng/clap_sstk_mulan_files/MuLan_sstk/CLAP_all_text_space_connect_large_dropout/checkpoints/mulan-step=005000-median_rank_1=61-kaggle.ckpt
             initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                 cache_dir: !ref <run_opts[cache_dir]>
                 version: "sstkmae"
+                # version: "sstkmae_v2"
         bestrq:
-            # US UMM-chroma stage 3
-            hpath: /mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/umm_sstk_nospeech/step=0400000.ckpt
-            initializer: !name:recipes.umm.requires.model_initializer.init_stage3
+            # US conv UMM-chroma stage 3
+            hpath: hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/user/hanoi.hantrakul/logs/umm_conv_sstk/umm_stage3_conv1D_sstk_no_ctc_794_EMAVQ32768x32/checkpoints_for_inference/step=0850000.ckpt
+            # hpath: hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/user/hanoi.hantrakul/logs/umm_conv_sstk/umm_stage3_conv1D_sstk_no_ctc_794_EMAVQ4096x32/checkpoints_for_inference/step=0865000.ckpt
+            initializer: !name:recipes.umm.requires.model_initializer.init_stage3_conv1d
                 cache_dir: !ref <run_opts[cache_dir]>
         beat:
             hpath: /mnt/bn/audio-diffusion/multitask/beat_only_24sec_lr0.001/checkpoints/epoch=13-step=1400.pt

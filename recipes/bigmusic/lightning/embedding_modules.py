@@ -74,7 +74,12 @@ def get_t5_embeds(requires, x):
 
 @torch.no_grad()
 def get_bestrq_umm_tokens(requires, batch, chunk_size=None):
-    lit_module = requires['Stage3']
+    if 'Stage3' in requires:
+        lit_module = requires['Stage3']
+    elif 'Stage3Conv1D' in requires:
+        lit_module = requires['Stage3Conv1D']
+    else:
+        raise ValueError(f"Can't find UMM in requires")
     if chunk_size is None or batch.shape[-1] <= chunk_size:
         vq_ids = lit_module.wav2token(batch)
     else:

@@ -13,7 +13,7 @@ from pytorch_lightning.strategies import DeepSpeedStrategy
 from pytorch_lightning.utilities import rank_zero_info
 from rotary_embedding_torch import RotaryEmbedding
 from torch.utils.checkpoint import checkpoint
-from transformers import AutoModel, AutoProcessor, AutoTokenizer, AutoConfig
+from transformers import AutoModel, AutoProcessor, AutoTokenizer, AutoConfig, ClapModel
 
 # helpers
 
@@ -382,23 +382,34 @@ class MuT(nn.Module):
 
 
 class TextEncoder(nn.Module):
-    def __init__(self, pretrained_model="bert-base-uncased", emb_dim: int = 128, text_emb_dim: int=1024):
+    def __init__(
+        self,
+        pretrained_model: str = "bert-base-uncased",
+        emb_dim: int = 128,
+        text_emb_dim: int = 1024,
+    ):
         super(TextEncoder, self).__init__()
-        config = AutoConfig.from_pretrained(pretrained_model)
-        self.text_model =  AutoModel.from_config(config, add_pooling_layer=False)
-        self.text_model.gradient_checkpointing_enable()
+        if pretrained_model in {"bert-base-uncased", "bert-large-uncased"}:
+            config = AutoConfig.from_pretrained(pretrained_model)
+            self.text_model = AutoModel.from_config(config, add_pooling_layer=False)
+            self.text_model.gradient_checkpointing_enable()
+        else:
+            self.text_model = ClapModel.from_pretrained(pretrained_model)
         self.text_linear = nn.Linear(text_emb_dim, emb_dim)
         self.pretrained_model = pretrained_model
 
     def forward(self, input_ids, attention_mask, token_type_ids):
         if self.pretrained_model == "laion/larger_clap_general":
-            outputs = self.text_model(input_ids, attention_mask=attention_mask)
+            outputs = self.text_model.get_text_features(
+                input_ids, attention_mask=attention_mask
+            )
+            text_output = self.text_linear(outputs)
         else:
             outputs = self.text_model(
                 input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids
             )
-        last_hidden_state = outputs["last_hidden_state"]
-        text_output = self.text_linear(last_hidden_state[:, 0, :])
+            last_hidden_state = outputs["last_hidden_state"]
+            text_output = self.text_linear(last_hidden_state[:, 0, :])
         text_embed = F.normalize(text_output, p=2, dim=1)
         return text_embed
 
@@ -569,6 +580,7 @@ class LitMuLanModule(pl.LightningModule):
     ):
         super().__init__()
         self.save_hyperparameters()  # save hyperparameter in ckpt
+        print(f"music_encoder: {music_encoder}, text_encoder: {text_encoder}")
         self.music_encoder = get_music_encoder(music_encoder, emb_dim, version=version)
         self.text_encoder = get_text_encoder(text_encoder, emb_dim)
         self.spec_aug = spec_aug
@@ -794,7 +806,7 @@ class LitMuLanModule(pl.LightningModule):
         )
         input_ids = tokenized_text["input_ids"]
         attention_mask = tokenized_text["attention_mask"]
-        token_type_ids = tokenized_text["token_type_ids"]
+        token_type_ids = tokenized_text.get("token_type_ids", None)
         return input_ids, attention_mask, token_type_ids
 
     def encode_text(self, text):
@@ -802,7 +814,8 @@ class LitMuLanModule(pl.LightningModule):
         device = next(self.text_encoder.parameters()).device
         input_ids = input_ids.to(device)
         attention_mask = attention_mask.to(device)
-        token_type_ids = token_type_ids.to(device)
+        if token_type_ids is not None:
+            token_type_ids = token_type_ids.to(device)
         text_embed = self.text_encoder(input_ids, attention_mask, token_type_ids)
         return text_embed
 
@@ -811,7 +824,7 @@ def create_mulan_model(ckpt_path, device, version="v1"):
     litmodel = LitMuLanModule.load_from_checkpoint(
         ckpt_path,
         version=version,
-        strict=False,
+        strict=True,
     )
 
     # audio tower
@@ -827,7 +840,13 @@ def create_mulan_model(ckpt_path, device, version="v1"):
 
 @torch.no_grad()
 def mulan_inference(
-    model, text=None, music=None, device="cpu", avg=True, shift_seconds=5, normalize_text=False
+    model,
+    text=None,
+    music=None,
+    device="cpu",
+    avg=True,
+    shift_seconds=5,
+    normalize_text=False,
 ):
     assert (text is not None) ^ (
         music is not None
@@ -835,7 +854,7 @@ def mulan_inference(
 
     if text is not None:
         if normalize_text:
-            text = " ".join(text.split(','))
+            text = [" ".join(x.split(',')) for x in text]
         emb = model.encode_text(text)
 
     if music is not None:

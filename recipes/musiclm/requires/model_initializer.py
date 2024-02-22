@@ -84,6 +84,7 @@ def _init_cached_mulan(hpath, local_rank, cache_dir=None, version="149", prefix=
             create_mulan_model = partial(create_mulan_model, version="v1")
         else:
             create_mulan_model = partial(create_mulan_model, version="v2")
+            mulan_inference = partial(mulan_inference, normalize_text=True)
     else:
         raise KeyError(f"Not a valid mulan version. {version}")
     if cache_dir is not None:
