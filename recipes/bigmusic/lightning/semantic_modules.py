@@ -1174,11 +1174,18 @@ def process_eos_indexes(semantic_samples, semantic_module: SemanticModule, sampl
     eos_id = semantic_module.target_embedder.eos_id
     eos_index_list = []
     if eos_id is not None:
-        eos_padding_id = 0
+        """
+        @renyi 08/02/2024: if we set eos_padding_id to 0, the "semantic_samples == eos_padding_id" will also include the real acoustic code 0, 
+        leading to end of sentence when the real acoustic code 0 appears.
+        So we set a EOS padding id (-10000) to a placeholder which is impossibly shown in the acoustic tokens. 
+        """
+        eos_padding_id = -10000
         eos_mask = torch.cumsum(semantic_samples == eos_id, 1) > 0
         semantic_samples[eos_mask] = eos_padding_id
         token2wav_rate = int(sample_rate / semantic_frame_rate)
-        eos_index_list = ((semantic_samples == eos_padding_id).bool().cumsum(axis=1) == 0).bool().sum(axis=1) * token2wav_rate
+        eos_index_list = ((semantic_samples == eos_padding_id).bool().cumsum(axis=1) == 0).bool().sum(
+            axis=1) * token2wav_rate
+        semantic_samples[eos_mask] = 0
     return semantic_samples, eos_index_list
 
 def truncate_wav_to_eos(wavs, eos_index_list):

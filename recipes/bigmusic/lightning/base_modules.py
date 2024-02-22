@@ -1,4 +1,3 @@
-
 from typing import Optional, Tuple, Union, Mapping
 import pandas as pd
 import pytorch_lightning as pl
@@ -6,6 +5,8 @@ import torch
 import torch.nn as nn
 from pathlib import Path
 from pytorch_lightning.profilers import PassThroughProfiler
+
+from samantha.criterion.masked_loss import sequence_mask
 from samantha.models.ctiga import gpt
 from samantha.models.ctiga.gpt import _init_weights
 from samantha.utils.ctiga.inference_params import InferenceParams
@@ -128,7 +129,11 @@ class BaseModule(pl.LightningModule):
         elif isinstance(logits, tuple):
             logits = logits[0]
         x = logits[:, -target_ids.size(1):, :]
-        loss = self.criterion(x, target_ids)        
+        loss_mask = None
+        if 'target_lengths' in training_inputs:
+            loss_mask = sequence_mask(
+                training_inputs['target_lengths'], max_len=target_ids.shape[1], device=target_ids.device)
+        loss = self.criterion(x, target_ids, loss_mask)
         accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
         # measure accuracy of first 10 tokens as a measurement for style
         accu_seq_25 = (x.argmax(dim=-1)[..., :25] == target_ids[..., :25]).float().mean() * 100
@@ -266,6 +271,7 @@ class BaseContinuousEmbedModule(BaseModule):
         target_values = self.prepare_target_inputs(batch)
         inputs_embeds = self.prepare_inputs_embeddings(batch)
         target_embeds = target_values['token_embeds'][:, :-1] # offset embeds for input
+        target_lengths = target_values['token_seq_lengths'] - 1
         target_ids = target_values['token_ids'][:, 1:] # offset targets by one to skip SOS prediction
         if self.use_cross_attn:
             model_inputs = {
@@ -278,6 +284,7 @@ class BaseContinuousEmbedModule(BaseModule):
             }
         return {
             "model_inputs": model_inputs,
+            "target_lengths": target_lengths,
             "target_ids": target_ids,
             "inputs_embeds": inputs_embeds
         }
