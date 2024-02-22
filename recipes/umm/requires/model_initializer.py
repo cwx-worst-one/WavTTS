@@ -202,6 +202,48 @@ def init_stage3(hpath, local_rank, cache_dir=None):
         return {"Stage3": model}
 
 
+def init_dualumm(hpath, local_rank=None, cache_dir=None, device=None, load_required_modules_in_init=False, version='v2'):
+    if version == 'v2':
+        from recipes.umm.modules.lit_module_mkii_dual import DualUMMv2 as DualUMM
+    if cache_dir is not None:
+        os.makedirs(cache_dir, exist_ok=True)
+
+    if device is None:
+        device = torch.device(f"cuda:{local_rank}")
+    with local_zero_first():
+        local_path = _ensure_ckpt_is_local(hpath, cache_dir)
+        state_dict = torch.load(local_path, map_location='cpu')
+        prefix = 'model.'
+        model_state_dict = {
+            k[len(prefix):]: v for k, v in state_dict['state_dict'].items() if k[:len(prefix)] == prefix
+        }
+        state_dict['hyper_parameters'].update(load_required_modules_in_init=load_required_modules_in_init)
+        stage3_module = DualUMM(**state_dict['hyper_parameters'])
+        model = stage3_module.model
+        model.load_state_dict(model_state_dict)
+        model.eval()
+        model.to(device)
+        return {"Stage3": model}
+
+
+def init_stage3_dual_voc(hpath, local_rank, cache_dir=None):
+    device = torch.device(f"cuda:{local_rank}")
+    with local_zero_first():
+        voc_ckpt = _ensure_ckpt_is_local(hpath, cache_dir=cache_dir)
+    state_dict = torch.load(voc_ckpt, map_location='cpu')
+    prefix = 'model_gen.'
+    model_state_dict = {
+        k[len(prefix):]: v for k, v in state_dict['state_dict'].items() if k[:len(prefix)] == prefix
+    }
+    from recipes.umm.modules.vocoder_task import MelGANVocoder
+    voc_module = MelGANVocoder(**state_dict['hyper_parameters'], save_hparams=False)
+    model = voc_module.model_gen
+    model.load_state_dict(model_state_dict)
+    model.eval()
+    model.to(device)
+    print(f'Loading vocoder model from {voc_ckpt}')
+    return {"mel_vocoder": model}
+
 def init_stage3_mss(hpath, local_rank, cache_dir=None):
     """Init function for Stage3 UMM backbone trained with MSS task."""
     from recipes.umm.modules.lit_module import Stage3MSS

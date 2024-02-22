@@ -1262,7 +1262,7 @@ class Stage2MSS(Stage2):
     @torch.cuda.amp.autocast(enabled=False)
     def prepare_feature(self, batch):
         # Prepare tokens
-        input_dict = {"text_ids": batch["token"]}
+        input_dict = {"text_ids": batch["token"].long()}
         # Prepare MSS audio tracks
         _audio_dict = {k: batch[k] for k in ["audio", "audio_vocal", "audio_inst"]}
         _audio_dict = {k: v.squeeze(dim=1).float() for k, v in _audio_dict.items()}

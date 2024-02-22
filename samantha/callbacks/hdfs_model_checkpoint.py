@@ -79,7 +79,9 @@ class HDFSModelCheckpoint(ModelCheckpoint):
         self, trainer: "pl.Trainer", pl_module: "pl.LightningModule", stage: str
     ) -> None:
         fs = get_filesystem(self.dirpath)
-        if fs.protocol != "file":
+        if (isinstance(fs.protocol, str) and fs.protocol != "file") or (
+            isinstance(fs.protocol, tuple) and fs.protocol[0] != "file"
+        ):
             raise ValueError(
                 f"Only support local path to save checkpoints, but got {self.dirpath}."
             )

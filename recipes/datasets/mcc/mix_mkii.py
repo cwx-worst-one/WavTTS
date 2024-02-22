@@ -623,3 +623,13 @@ class MixMSSDataModule(MixDataModule):
             ),
             self.bucketize,
         )
+
+    def train_dataloader(self):
+        return DataLoader(
+            self.train_dataset,
+            batch_size=None,
+            num_workers=self.num_workers,
+            collate_fn=self.collate_fn,
+            prefetch_factor=2,
+            pin_memory=False,
+        )
