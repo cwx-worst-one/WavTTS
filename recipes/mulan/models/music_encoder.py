@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torchaudio
 from transformers import AutoModel, AutoProcessor
 
-from recipes.mae.models.mut import MuT, PretrainedMuTWrapper, PretrainedMuTWrapper25hz,RMSNorm, FreeMuTWrapper
+from recipes.mae.models.mut import MuT, PretrainedMuTWrapper, PretrainedMuTWrapper25hz,RMSNorm, FreeMuTWrapper, LoadEmptyMuTWrapper, PretrainedMuTSSTKWrapper
 from samantha.utils.flops_calculator import llama_calculator
 
 
@@ -115,6 +115,57 @@ class MuTWrapper(nn.Module):
         return flops
 
 
+class MuTSSTKMAEWrapper(nn.Module):
+    def __init__(self, emb_dim: int = 128, output_type="cls", seq_len=500):
+        super(MuTSSTKMAEWrapper, self).__init__()
+
+        self.emb_dim = emb_dim
+        if seq_len == 500:
+            mlp_head = nn.Sequential(RMSNorm(1280), nn.Linear(1280, emb_dim))
+        else:
+            raise NotImplementedError(f"Seq len {seq_len} is not supported yet.")
+        mut = PretrainedMuTSSTKWrapper(
+            output_layer=mlp_head,
+            checkpointing=True,
+            use_flash_attn=True,
+            output_type=output_type,
+            pretained_path="/mnt/bn/mm-data/projects/mulan/mae_xuchen/MuT_MAE/1212_sstk_mae_vanilla/checkpoints/mutmae-step=563200-loss_0=7-kaggle.pth",
+        )
+        self.mut = mut
+
+    def forward(self, audio, spec_aug=False):
+        emb = self.mut(audio, spec_aug=spec_aug)
+        emb = F.normalize(emb, p=2, dim=-1)
+        return emb
+    
+
+class MuTSSTKWrapper(nn.Module):
+    def __init__(self, emb_dim: int = 128, output_type="cls", seq_len=500):
+        super(MuTSSTKWrapper, self).__init__()
+
+        self.emb_dim = emb_dim
+        if seq_len == 500:
+            mlp_head = nn.Sequential(RMSNorm(1280), nn.Linear(1280, emb_dim))
+        # elif seq_len == 250:
+        #     mlp_head = nn.Sequential(RMSNorm(1280), nn.AvgPool2d((2, 1)), nn.Linear(1280, emb_dim))
+        else:
+            raise NotImplementedError(f"Seq len {seq_len} is not supported yet.")
+        mut = LoadEmptyMuTWrapper(
+            output_layer=mlp_head,
+            checkpointing=True,
+            use_flash_attn=True,
+            output_type=output_type,
+            pretained_path="",
+        )
+        self.mut = mut
+
+    def forward(self, audio, spec_aug=False):
+        emb = self.mut(audio, spec_aug=spec_aug)
+        emb = F.normalize(emb, p=2, dim=-1)
+        return emb
+    
+
+
 class DoubleMuTWrapper(nn.Module):
     def __init__(self, emb_dim: int = 2048, output_type="cls", seq_len=500):
         super(DoubleMuTWrapper, self).__init__()
@@ -138,24 +189,7 @@ class DoubleMuTWrapper(nn.Module):
         emb = self.mut(audio, spec_aug=spec_aug)
         emb = F.normalize(emb, p=2, dim=-1)
         return emb
-'''
-    def flops_fn(self, batch_size):
-        # only mut flops, ignore final projection
-        mut = self.mut.mut
-        flops = 0
-        # add mut flops
-        flops += llama_calculator(
-            mut.num_layers,
-            mut.hidden_size,
-            mut.intermediate_size,
-            0,  # no embedding layer
-            250,  # seq_len after melspec plus [CLS]
-            batch_size,
-        )
-        # add projection layer flops
-        flops += 6 * batch_size * mut.hidden_size * self.emb_dim
-        return flops
-'''
+
 
 class MuTWrapper25hz(nn.Module):
     def __init__(self, emb_dim: int = 128, output_type="cls", seq_len=250):
@@ -333,9 +367,15 @@ def get_music_encoder(music_encoder="ast", emb_dim=128, output_type="cls", seq_l
         return MusicEncoder(
             "MIT/ast-finetuned-audioset-10-10-0.4593", emb_dim, sample_rate
         )
+    elif music_encoder == "mut_mae_sstk":
+        print("using mut sstk mae")
+        return MuTSSTKMAEWrapper(emb_dim, output_type, seq_len)
     elif music_encoder == "mut":
         print("using mut 50hz")
         return MuTWrapper(emb_dim, output_type, seq_len)
+    elif music_encoder == "mut_sstk":
+        print("using mut 50hz sstk, withour pretrain ckpt")
+        return MuTSSTKWrapper(emb_dim, output_type, seq_len)
     elif music_encoder == "double-mut":
         print("using double audio")
         return DoubleMuTWrapper(emb_dim, output_type, seq_len)

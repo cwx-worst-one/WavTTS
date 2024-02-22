@@ -35,7 +35,8 @@ class TextMusicDataset(Dataset):
         self.music_feature_type = music_feature_type
         
         if tok_path is None:
-            tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
+            # tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
+            tokenizer = AutoTokenizer.from_pretrained("laion/larger_clap_general")
         else:
             tokenizer = AutoTokenizer.from_pretrained(tok_path)
             tokenizer.pad_token = tokenizer.eos_token

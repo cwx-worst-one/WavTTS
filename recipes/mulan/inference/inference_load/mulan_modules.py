@@ -11,11 +11,37 @@ from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 from pytorch_lightning.strategies import DeepSpeedStrategy
 from pytorch_lightning.utilities import rank_zero_info
-from rotary_embedding_torch import RotaryEmbedding
 from torch.utils.checkpoint import checkpoint
-from transformers import AutoModel, AutoProcessor, AutoTokenizer, AutoConfig
-
+from transformers import AutoModel, AutoProcessor, AutoTokenizer
+from recipes.mae.models.mut import LoadEmptyMuTWrapper
+from recipes.mulan.models.music_encoder import MuTSSTKWrapper
 # helpers
+
+class MuTSSTKWrapper(nn.Module):
+    def __init__(self, emb_dim: int = 128, output_type="cls", seq_len=500):
+        super(MuTSSTKWrapper, self).__init__()
+
+        self.emb_dim = emb_dim
+        if seq_len == 500:
+            mlp_head = nn.Sequential(RMSNorm(1280), nn.Linear(1280, emb_dim))
+        elif seq_len == 250:
+            mlp_head = nn.Sequential(RMSNorm(1280), nn.AvgPool2d((2, 1)), nn.Linear(1280, emb_dim))
+        else:
+            raise NotImplementedError(f"Seq len {seq_len} is not supported yet.")
+        mut = LoadEmptyMuTWrapper(
+            output_layer=mlp_head,
+            checkpointing=True,
+            use_flash_attn=True,
+            output_type=output_type,
+            pretained_path="",
+        )
+        self.mut = mut
+
+    def forward(self, audio, spec_aug=False):
+        emb = self.mut(audio, spec_aug=spec_aug)
+        emb = F.normalize(emb, p=2, dim=-1)
+        return emb
+
 
 
 def pair(t):
@@ -381,33 +407,119 @@ class MuT(nn.Module):
         return self.mlp_head(x)
 
 
+class PretrainedMuTWrapper(nn.Module):
+    def __init__(
+        self,
+        output_layer,  # output dim from mut is 1280
+        checkpointing=True,
+        use_flash_attn=False,
+        output_type="cls",
+        pretained_path: str = "mutmae-step=177600-loss_1=5-sf.pth",
+    ):
+        super(PretrainedMuTWrapper, self).__init__()
+        mut = MuT(
+            spec_shape=(128, 1000),
+            patch_shape=(128, 2),
+            num_classes=1000,
+            sample_rate=24000,
+            dim=1280,
+            depth=32,
+            heads=16,
+            dim_head=80,
+            channels=1,
+            mlp_dim=5120,
+            checkpointing=checkpointing,
+            use_flash_attn=use_flash_attn,
+            output_type=output_type,
+        )
+        # state_dict = torch.load(pretained_path, map_location='cpu')
+        # mut.load_state_dict(state_dict, strict=False)
+        mut.mlp_head = output_layer
+        self.mut = mut
+
+    def manually_to_device(self, device):
+        for k, v in self.mut.logmel_frontend["logmel"].feat_extract.items():
+            self.mut.logmel_frontend["logmel"].feat_extract[k] = v.to(device)
+
+    def forward(self, audio, spec_aug=False):
+        out = self.mut(audio, spec_aug=spec_aug)
+
+        return out
+
+
 class TextEncoder(nn.Module):
-    def __init__(self, pretrained_model="bert-base-uncased", emb_dim: int = 128, text_emb_dim: int=1024):
+    def __init__(
+        self,
+        pretrained_model="bert-base-uncased",
+        emb_dim: int = 128,
+        output_type="cls",
+    ):
         super(TextEncoder, self).__init__()
-        config = AutoConfig.from_pretrained(pretrained_model)
-        self.text_model =  AutoModel.from_config(config, add_pooling_layer=False)
+        self.emb_dim = emb_dim
+        self.output_type = output_type
+        self.text_model = AutoModel.from_pretrained(
+            pretrained_model, add_pooling_layer=False
+        )
         self.text_model.gradient_checkpointing_enable()
-        self.text_linear = nn.Linear(text_emb_dim, emb_dim)
-        self.pretrained_model = pretrained_model
+        if pretrained_model == "bert-large-uncased":
+            input_dim = 1024
+        elif pretrained_model == "bert-base-multilingual-cased":
+            input_dim = 768
+        elif pretrained_model == "bert-base-chinese":
+            input_dim = 768
+        self.text_linear = nn.Linear(input_dim, emb_dim)
 
     def forward(self, input_ids, attention_mask, token_type_ids):
-        if self.pretrained_model == "laion/larger_clap_general":
-            outputs = self.text_model(input_ids, attention_mask=attention_mask)
+        outputs = self.text_model(
+            input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids
+        )
+        last_hidden_state = outputs["last_hidden_state"]
+        if self.output_type == "cls":
+            text_output = last_hidden_state[:, 0, :]
         else:
-            outputs = self.text_model(
-                input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids
-            )
+            text_output = last_hidden_state
+        text_output = self.text_linear(text_output)
+        text_embed = F.normalize(text_output, p=2, dim=-1)
+        return text_embed
+
+
+class TextEncoderBak(nn.Module):
+    def __init__(self, pretrained_model="bert-base-uncased", emb_dim: int = 128):
+        super(TextEncoder, self).__init__()
+        self.text_model = AutoModel.from_pretrained(
+            pretrained_model, add_pooling_layer=False
+        )
+        self.text_model.gradient_checkpointing_enable()
+        self.text_linear = nn.Linear(1024, emb_dim)
+
+    def forward(self, input_ids, attention_mask, token_type_ids):
+        outputs = self.text_model(
+            input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids
+        )
         last_hidden_state = outputs["last_hidden_state"]
         text_output = self.text_linear(last_hidden_state[:, 0, :])
         text_embed = F.normalize(text_output, p=2, dim=1)
         return text_embed
 
 
-def get_text_encoder(text_encoder="bert", emb_dim=128):
+def get_text_encoder(
+    text_encoder="bert", emb_dim=128, output_type="cls", model_path=None
+):
+    if text_encoder == "bert":
+        return TextEncoder("bert-large-uncased", emb_dim, output_type)
+    elif text_encoder == "multilingual":
+        return TextEncoder("bert-base-multilingual-cased", emb_dim, output_type)
+    elif text_encoder == "chinese":
+        return TextEncoder("bert-base-chinese", emb_dim, output_type)
+    else:
+        raise NotImplementedError
+
+
+def get_text_encoder_bak(text_encoder="bert", emb_dim=128):
     if text_encoder == "bert":
         return TextEncoder("bert-large-uncased", emb_dim)
-    elif text_encoder == "clap":
-        return TextEncoder("laion/larger_clap_general", emb_dim, text_emb_dim=512)
+    if text_encoder == "bert":
+        return TextEncoder("bert-large-uncased", emb_dim)
     else:
         raise NotImplementedError
 
@@ -415,9 +527,8 @@ def get_text_encoder(text_encoder="bert", emb_dim=128):
 class MusicEncoder(nn.Module):
     def __init__(self, pretrained_model, emb_dim: int = 128, sample_rate: int = 24000):
         super(MusicEncoder, self).__init__()
-        config = AutoConfig.from_pretrained(pretrained_model)
-        processor = AutoProcessor.from_config(config)
-        music_model =  AutoModel.from_config(config)
+        processor = AutoProcessor.from_pretrained(pretrained_model)
+        music_model = AutoModel.from_pretrained(pretrained_model)
         self.feat_extract = {  # Use a dict to avoid auto convert fp16
             "mel": torchaudio.transforms.MelSpectrogram(
                 sample_rate=sample_rate,
@@ -477,71 +588,44 @@ class MusicEncoder(nn.Module):
         return music_embed
 
 
-class PretrainedMuTSSTKWrapper(nn.Module):
-    def __init__(
-        self,
-        output_layer,  # output dim from mut is 1280
-        pretrained_path,
-        checkpointing=True,
-        use_flash_attn=False,
-        output_type="cls",
-        num_layers: int = 32,
-        patch_shape=(128, 4),
-    ):
-        super(PretrainedMuTSSTKWrapper, self).__init__()
-        mut = MuT(
-            spec_shape=(128, 1000),
-            patch_shape=patch_shape,
-            num_classes=1000,
-            sample_rate=24000,
-            dim=1280,
-            depth=32, #32
-            heads=16,
-            dim_head=80,
-            channels=1,
-            mlp_dim=5120,
-            checkpointing=True,
-            use_flash_attn=False,
-            output_type=output_type,
-        )
+class MuTWrapper(nn.Module):
+    def __init__(self, emb_dim: int = 128):
+        super(MuTWrapper, self).__init__()
 
-        state_dict = torch.load(pretrained_path, map_location="cpu")
-        mut.load_state_dict(state_dict, strict=False)
-        mut.mlp_head = output_layer
+        mlp_head = nn.Sequential(RMSNorm(1280), nn.Linear(1280, emb_dim))
+        mut = PretrainedMuTWrapper(
+            output_layer=mlp_head,
+            checkpointing=True,
+            use_flash_attn=True,
+            output_type="cls",
+            pretained_path="mutmae-step=177600-loss_1=5-sf.pth",
+        )
         self.mut = mut
 
-    def manually_to_device(self, device):
-        for k, v in self.mut.logmel_frontend["logmel"].feat_extract.items():
-            self.mut.logmel_frontend["logmel"].feat_extract[k] = v.to(device)
-
     def forward(self, audio, spec_aug=False):
-        out = self.mut(audio, spec_aug=spec_aug)
+        emb = self.mut(audio, spec_aug=spec_aug)
+        emb = F.normalize(emb, p=2, dim=1)
+        return emb
 
-        return out
 
-class MuTSSTKMAEWrapper(nn.Module):
-    def __init__(self, emb_dim: int = 128, output_type="cls", seq_len=500, version="v1"):
-        super(MuTSSTKMAEWrapper, self).__init__()
+
+class MuTSSTKWrapper(nn.Module):
+    def __init__(self, emb_dim: int = 128, output_type="cls", seq_len=500):
+        super(MuTSSTKWrapper, self).__init__()
 
         self.emb_dim = emb_dim
         if seq_len == 500:
             mlp_head = nn.Sequential(RMSNorm(1280), nn.Linear(1280, emb_dim))
+        elif seq_len == 250:
+            mlp_head = nn.Sequential(RMSNorm(1280), nn.AvgPool2d((2, 1)), nn.Linear(1280, emb_dim))
         else:
             raise NotImplementedError(f"Seq len {seq_len} is not supported yet.")
-
-        if version == "v1":
-            pretrained_path = "/mnt/bn/audio-diffusion/xuchen/mulan/models/mutmae-step=563200-loss_0=7-kaggle.pth"
-            patch_shape = (128, 4)
-        else:
-            pretrained_path = "/mnt/bn/audio-diffusion/weituo/sstk_mulan/assets/mutmae-step=177600-loss_1=5-sf.pth"
-            patch_shape = (128, 2)
-        mut = PretrainedMuTSSTKWrapper(
+        mut = LoadEmptyMuTWrapper(
             output_layer=mlp_head,
-            pretrained_path=pretrained_path,
             checkpointing=True,
             use_flash_attn=True,
             output_type=output_type,
-            patch_shape=patch_shape,
+            pretained_path="",
         )
         self.mut = mut
 
@@ -549,10 +633,21 @@ class MuTSSTKMAEWrapper(nn.Module):
         emb = self.mut(audio, spec_aug=spec_aug)
         emb = F.normalize(emb, p=2, dim=-1)
         return emb
-   
 
-def get_music_encoder(music_encoder="sstk", emb_dim=128, version="v1"):
-    return MuTSSTKMAEWrapper(emb_dim, version=version)
+
+def get_music_encoder(music_encoder="mut_sstk", emb_dim=128):
+    sample_rate = 24000
+    if music_encoder == "ast":
+        return MusicEncoder(
+            "MIT/ast-finetuned-audioset-10-10-0.4593", emb_dim, sample_rate
+        )
+    elif music_encoder == "mut":
+        return MuTWrapper(emb_dim)
+    elif music_encoder == "mut_sstk":
+        print("using mut 50hz sstk, withour pretrain ckpt")
+        return MuTSSTKWrapper(emb_dim,)
+    else:
+        raise NotImplementedError
 
 
 class LitMuLanModule(pl.LightningModule):
@@ -565,11 +660,10 @@ class LitMuLanModule(pl.LightningModule):
         lr,
         weight_decay,
         temperature,
-        version="v1",
     ):
         super().__init__()
         self.save_hyperparameters()  # save hyperparameter in ckpt
-        self.music_encoder = get_music_encoder(music_encoder, emb_dim, version=version)
+        self.music_encoder = get_music_encoder(music_encoder, emb_dim)
         self.text_encoder = get_text_encoder(text_encoder, emb_dim)
         self.spec_aug = spec_aug
         self.lr = lr
@@ -584,10 +678,7 @@ class LitMuLanModule(pl.LightningModule):
         # Validation outputs
         self.val_outputs = dict()
 
-        if text_encoder == 'clap':
-            self.tokenizer = AutoTokenizer.from_pretrained("laion/larger_clap_general")
-        else:
-            self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
+        self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
 
     def on_fit_start(self):
         self.music_encoder.mut.manually_to_device(self.device)
@@ -807,12 +898,8 @@ class LitMuLanModule(pl.LightningModule):
         return text_embed
 
 
-def create_mulan_model(ckpt_path, device, version="v1"):
-    litmodel = LitMuLanModule.load_from_checkpoint(
-        ckpt_path,
-        version=version,
-        strict=False,
-    )
+def create_mulan_model(ckpt_path, device):
+    litmodel = LitMuLanModule.load_from_checkpoint(ckpt_path)
 
     # audio tower
     litmodel.music_encoder.eval()
@@ -827,21 +914,16 @@ def create_mulan_model(ckpt_path, device, version="v1"):
 
 @torch.no_grad()
 def mulan_inference(
-    model, text=None, music=None, device="cpu", avg=True, shift_seconds=5, normalize_text=False
+    model, text=None, music=None, device="cpu", avg=True, shift_seconds=1
 ):
     assert (text is not None) ^ (
         music is not None
     ), "text inputs and music input can only select one"
 
     if text is not None:
-        if normalize_text:
-            text = " ".join(text.split(','))
         emb = model.encode_text(text)
 
     if music is not None:
-        # music needs to be in 2D: [b, t]
-        if len(music.shape) == 3:
-            music = music.squeeze(1)
         # print(f"mulan_inference: wav shape is {music.shape}")
         music_encoder = model.music_encoder
         music = music.unfold(1, 24000 * 10, 24000 * shift_seconds)  # [b, n, t]

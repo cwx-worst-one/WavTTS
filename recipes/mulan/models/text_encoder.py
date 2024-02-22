@@ -6,7 +6,7 @@ import tenacity
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import AutoModel, LlamaModel, LlamaForCausalLM, BitsAndBytesConfig
+from transformers import AutoModel, LlamaModel, LlamaForCausalLM, BitsAndBytesConfig, ClapModel
 from peft import LoraConfig, get_peft_model, TaskType
 
 from samantha.utils.flops_calculator import bert_calculator
@@ -38,7 +38,6 @@ def load_t5_train(t5_path):
     from transformers.models.t5.modeling_t5 import T5EncoderModel
     model = T5EncoderModel.from_pretrained(t5_path)
     return model
-
 
 @tenacity.retry(
     stop=(tenacity.stop_after_delay(100) | tenacity.stop_after_attempt(3)), reraise=True
@@ -475,6 +474,27 @@ class MultiLoraLLamaTextEncoder(nn.Module):
         text_embed = F.normalize(text_output, p=2, dim=-1)
         return text_embed
 
+class ClapEncoder(nn.Module):
+    def __init__(self, pretrained_model="laion/clap-htsat-unfused", emb_dim: int = 128, output_type="cls"):
+        super(ClapEncoder, self).__init__()
+        self.emb_dim = emb_dim
+        self.text_model = ClapModel.from_pretrained(pretrained_model)
+        self.text_linear = nn.Linear(512, emb_dim)
+        self.output_type = output_type
+
+    def _infer(self, input_ids, attention_mask):
+        outputs = self.text_model.get_text_features(input_ids, attention_mask=attention_mask)
+        return outputs
+
+    def forward(self, input_ids, attention_mask, token_type_ids=None):
+        text_output = self._infer(input_ids=input_ids, attention_mask=attention_mask)
+        text_output = self.text_linear(text_output)
+        text_embed = F.normalize(text_output, p=2, dim=-1)
+        return text_embed
+
+    def manually_to_device(self, device):
+        self.text_model.to(device)
+
 
 def get_text_encoder(text_encoder="bert", emb_dim=128, output_type="cls", model_path=None):
     if text_encoder == "bert":
@@ -496,5 +516,7 @@ def get_text_encoder(text_encoder="bert", emb_dim=128, output_type="cls", model_
         return T5TextEncoder(model_path, emb_dim=emb_dim)
     elif text_encoder == "t5-finetune":
         return FinetuneT5TextEncoder(model_path, emb_dim=emb_dim)
+    elif text_encoder == "clap":
+        return ClapEncoder("laion/larger_clap_general", emb_dim=emb_dim)
     else:
         raise NotImplementedError

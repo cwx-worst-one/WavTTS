@@ -1,0 +1,157 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 2023
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+# running parameters
+log_dir: /mnt/bn/mm-data/projects/mulan/sstk_mulan_xuchen
+
+run_opts:
+    fast_dev_run: False
+    tensorboard_dir: !ref <log_dir>
+    log_name: MuLan_sstk
+    log_every_n_steps: 10
+    version: sstk_parquet_test
+    precision: 16
+    num_workers: 4
+    accelerator: auto
+    strategy: ddp_find_unused_parameters_false
+    enable_activation_ckpt: True
+    num_steps: 100000
+    val_check_interval: 1000
+    batch_size: 72
+    # sample_buffer_size: 600
+    shuffle_buffer: 600
+    val_batch_size: 128
+    spec_aug: False
+    text_encoder: bert
+    music_encoder: mut
+    emb_dim: 512
+    learning_rate: 4.e-5
+    weight_decay: 5.e-4
+    temperature: 0.1  # temperature in Multiview Coding loss
+    min_volume_threshold: 0.05
+    loudness_ratio_threshold: 0.2
+    use_supcontrast: False
+    use_flatclr: False
+    gather_batches: True
+
+extra_params:
+    sample_rate: 24000
+    duration: 10
+    wav2vec_codebook_size: 1024
+    wav2vec_frame_rate: 25
+    mulan_codebook_size: 1024
+    mulan_num_rvq: 12
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+
+sstk_dataset: !new:recipes.mulan.dataset.sstk_parquet.SSTKDataset
+    name: "sstk"
+    mode: "train"
+    tokenizer_name: !ref <run_opts[text_encoder]>
+    resampled: True
+
+train_datasets:
+    sstk: !ref <sstk_dataset>
+
+
+selected_dataset_names: [sstk]
+weights: [0.5]
+
+train_dataset: !new:samantha.dataio.dataset.MultiIterableDataset
+    datasets: !apply:recipes.mulan.dataset.utils.select_datasets
+        - !ref <train_datasets>
+        - !ref <selected_dataset_names>
+    weights: !ref <weights>
+    num_samples: 10_000_000
+    seed: !ref <seed>
+
+
+kaggle_val_0: !new:recipes.mulan.dataset.val.TextMusicDataset
+    path: data/kaggle
+    csv_name: kaggle_val_meta.csv
+    text_key: text
+
+kaggle_val_1: !new:recipes.mulan.dataset.val.TextMusicDataset
+    path: data/kaggle
+    csv_name: kaggle_val_meta.csv
+    text_key: aspect_list
+
+
+val_dataset: [!ref <kaggle_val_0>, !ref <kaggle_val_1>]
+
+
+
+pl_datamodule: !new:recipes.mulan.modules.pl_datamodule.MuLanMMEDataModule
+    train_dataset: !ref <train_dataset>
+    val_dataset: !ref <val_dataset>
+    batch_size: !ref <run_opts[batch_size]>
+    shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+    num_workers: !ref <run_opts[num_workers]>
+    pin_memory: True
+
+pl_module: !new:recipes.mulan.modules.pl_module.LitMuLanModule
+    music_encoder: !ref <run_opts[music_encoder]>
+    text_encoder: !ref <run_opts[text_encoder]>
+    emb_dim: !ref <run_opts[emb_dim]>
+    spec_aug: !ref <run_opts[spec_aug]>
+    lr: !ref <run_opts[learning_rate]>
+    weight_decay: !ref <run_opts[weight_decay]>
+    temperature: !ref <run_opts[temperature]>
+    use_supcontrast: !ref <run_opts[use_supcontrast]>
+    use_flatclr: !ref <run_opts[use_flatclr]>
+    gather_batches: !ref <run_opts[gather_batches]>
+
+logger:
+    - !new:pytorch_lightning.loggers.TensorBoardLogger
+      save_dir: !ref <run_opts[tensorboard_dir]>
+      name: !ref <run_opts[log_name]>
+      version: !ref <run_opts[version]>
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <log_dir>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
+
+callbacks:
+    - !new:pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: step
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      save_top_k: 5
+      monitor: median_rank_0
+      mode: min
+      filename: mulan-{step:06d}-{median_rank_0:.0f}-kaggle
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      save_top_k: 20
+      monitor: median_rank_0
+      mode: max
+      filename: mulan-{step:06d}-{median_rank_1:.0f}-kaggle
+    - !new:recipes.mulan.modules.ema.EMA
+      decay: 0.999
+
+plugins:
+    - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: auto
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: True
+    strategy: !ref <run_opts[strategy]>
+    enable_model_summary: True
+    max_steps: !ref <run_opts[num_steps]>
+    val_check_interval: !ref <run_opts[val_check_interval]>
+    use_distributed_sampler: False
+    logger: !ref <logger>
+    log_every_n_steps: !ref <run_opts[log_every_n_steps]>
+    precision: !ref <run_opts[precision]>
+    callbacks: !ref <callbacks>
+    plugins: !ref <plugins>
