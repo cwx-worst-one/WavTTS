@@ -280,10 +280,11 @@ class TagCategoricalEmbedder(TokenEmbedder):
         self.sync_tags(batch_style_tags)
 
         batch_tag_ids = []
-        for style_tags in batch_style_tags:
-            tag_ids = [self.get_tag_id(tag, self.dropout) for tag in style_tags]
-            if self.num_categories and len(tag_ids) != self.num_categories:
+        for style_tags in batch_style_tags:            
+            if self.num_categories and len(style_tags) != self.num_categories:
                 tag_ids = [self.get_tag_id(NONE_LABEL)] * self.num_categories
+            else:
+                tag_ids = [self.get_tag_id(tag, self.dropout) for tag in style_tags]
             batch_tag_ids.append(tag_ids)
 
         device = next(self.parameters()).device

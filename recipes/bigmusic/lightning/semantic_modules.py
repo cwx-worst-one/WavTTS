@@ -324,7 +324,7 @@ class SemanticModule(BaseContinuousEmbedModule):
             embeds = speaker_embedder.embed(
                 self.requires, 
                 batch['speaker_id'].to(self.device), 
-                with_sos=True)
+                with_sos=False)     # This ensures only one frame is used for speaker ID or placeholder
         else:
             embeds = speaker_embedder.get_sos_embed(batch_size)
         return embeds

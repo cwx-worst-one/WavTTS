@@ -93,7 +93,66 @@ ARTIST_ID_MAP_V2 = {
     "6817645899284482049": 36, # 毛不易	129	 
     "6795061528409147393": 37, # 汪苏泷	239 
     # En dropout
-    "en_empty": 0,
+    "en_empty": 50,
+    '6705198980290091009' : 51,   #    Frank Sinatra    1844
+    '6693699473027127298' : 52,   #    Ella Fitzgerald    1583
+    '6683719970804733953' : 53,   #    Elvis Presley    1010
+    '6781886425395628034' : 54,   #    Lil Nas X    25
+    '6696193284760410114' : 55,   #    Dua Lipa    59
+    '6728012888994220034' : 56,   #    Nicki Minaj    248
+    '6696207516872742914' : 57,   #    Céline Dion    381
+    '6698575526623188994' : 58,   #    Demi Lovato    168
+    '6886747810603993089' : 59,   #    Olivia Rodrigo    46
+    '6887898290780637186' : 60,   #    Miley Cyrus    168
+    '6816644483610839041' : 61,   #    Imagine Dragons    128
+    '6815513435095189505' : 62,   #    Kanye West    343
+    '6815163859960072194' : 63,   #    Eminem    341
+    '6781886475391731713' : 64,   #    Drake    413
+    '6759681496765696002' : 65,   #    Lana Del Rey    151
+    '6698575504477263873' : 66,   #    Coldplay    172
+    '6856639593832253442' : 67,   #    Stevie Wonder    426
+    '6798610658091862017' : 68,   #    Lil Baby    316
+    '6834041359557462018' : 69,   #    Bob Dylan    1053
+    '6698575291008161793' : 70,   #    Charli XCX    138
+    '6679720590640683009' : 71,   #    Maroon 5    123
+    '6792447992432429057' : 72,   #    Pop Smoke    114
+    '6691744684106061825' : 73,   #    Justin Bieber    155
+    '6873470890248505345' : 74,   #    Shania Twain    129
+    '6816722136460167169' : 75,   #    Beyoncé    219
+    '6698575458008569858' : 76,   #    Bruno Mars    64
+    '6683719711886153730' : 77,   #    Lady Gaga    157
+    '6999682166288287746' : 78,   #    Taylor Swift    240
+    '6807925639811696642' : 79,   #    The Weeknd    170
+    '6707563235899365378' : 80,   #    Bob Marley & The Wailers    314
+    '6699033012245370881' : 81,   #    Selena Gomez    134
+    '6702330119991597058' : 82,   #    Rihanna    159
+    '6790270596862183426' : 83,   #    Queen    279
+    '6937767713892730882' : 84,   #    Jon Batiste    105
+    '6808401506824357889' : 85,   #    Bad Bunny    222
+    '6816931983969486849' : 86,   #    Ed Sheeran    180
+    '6698575554284623874' : 87,   #    Sam Smith    132
+    '6817978846541776898' : 88,   #    Michael Jackson    267
+    '6715159620823816194' : 89,   #    Doja Cat    77
+    '6691308064122869762' : 90,   #    Luke Combs    83
+    '6698579714027558914' : 91,   #    Charlie Puth    63
+    '6698575972590950401' : 92,   #    Ariana Grande    155
+    '6696211211471558657' : 93,   #    T-Pain    408
+    '6691305168102758402' : 94,   #    Post Malone    110
+    '6691297211898140673' : 95,   #    Kane Brown    80
+    '6789842187606558722' : 96,   #    John Legend    248
+    '6698575430993057793' : 97,   #    Lizzo    49
+    '6823967124738803713' : 98,   #    The Beatles    188
+    '6696197177665918978' : 99,   #    Fifth Harmony    55
+    '6807313077516634113' : 100,   #    The Kid LAROI    88
+    '6824713158125422593' : 101,   #    Daniel Caesar    63
+    '6779401946852755457' : 102,   #    Sia    234
+    '6898603714542569474' : 103,   #    Alec Benjamin    64
+    '6698576944671234050' : 104,   #    Cardi B    81
+    '6876461055883610114' : 105,   #    JVKE    31
+    '6824322210665072641' : 106,   #    SZA    78
+    '6730479131982563329' : 107,   #    Joji    85
+    '7058136012715509762' : 108,   #    Steve Lacy    58
+    '6838473905233987586' : 109,   #    Harry Styles    35    
 }
 
 chinese_mir_genre_tag_map = {
@@ -259,6 +318,104 @@ lang_vocab = ["普通话", "粤语", "闽南话"]
  
 NONE_LABEL = 'None'
 
+chinese_to_SA_mapping = {
+    "流行":     "Pop",     # use genre2
+    "说唱":     "Hip Hop/Rap",     # use genre2。"嘻哈"
+    "下沉土嗨":  "DJ",  # use genre2
+    "国风音乐":  "Chinese Style",  # use genre2
+    "摇滚":     "Rock",     # use genre2
+    "古典":     "Classical",     # use genre2
+    "爵士":     "Jazz",     # use genre2
+    "中国传统":  "Chinese Tradition",  # use genre2
+    "金属":     "Metal", 
+    "儿童音乐":  "Other genre",
+    "宗教":     "Other genre",
+    "流行民谣":  "Folk",
+    "闽南语流行": "None",   # Remove this category
+    "DJ慢摇/土味remix": "DJ",
+    "陷阱说唱":     "Hip Hop/Rap",
+    "流行爵士":     "Jazz",
+    "旋律性说唱":   "Hip Hop/Rap",
+    "放克音乐":     "R&B/Soul",
+    "中国风流行音乐": "Chinese Style",
+    "粤语流行":     "Pop",
+    "怀旧流行":     "Pop",
+    "喊麦":         "MC",
+    "传统民歌":     "Chinese Tradition",
+    "古风音乐":     "Chinese Style",
+    "国风嘻哈":     "Hip Hop/Rap",
+    "中国戏曲":     "Chinese Tradition",
+    "节奏蓝调/灵魂": "R&B/Soul",
+    "越南鼓":   "Electronic",
+    "老派说唱": "Hip Hop/Rap",
+    "国风电子": "Electronic",
+    "国语流行": "Pop", 
+    "怀旧的/记忆":   "Miss",
+    "悲伤":         "Sorrow",
+    "开心/快乐":     "Happy",
+    "想念":         "Miss",
+    "治疗":         "Healing",
+    "律动":         "Dynamic",
+    "动态的/精力充沛的": "Dynamic",
+    "可爱/调皮":    "Cute",
+    "震撼/壮丽":    "Inspirational",
+    "浪漫":         "Romantic",
+    "鼓舞人心的/希望的": "Inspirational",
+    "平静":         "Calm",
+    "兴奋":         "Excited",
+    "梦幻/超凡脱俗的": "Mysterious",
+    "Evening":      "Evening",
+    "Danceable":    "Danceable",
+    "Relaxation":   "Cafe",
+    "Marketplace":  "Campus",
+    "Running":      "Sport",
+    "Wake up":      "Morning",
+    "Game":         "Game",
+    "Restaurants":  "Cafe",
+    "Beauty/Fashion": "Dance",
+    "Campus":       "Campus",
+    "Family time":  "Family",
+    "Rainy Day":    "Broke up",
+    "Graduation":   "Campus",
+    "Party":        "Party",
+    "Coffee Shop":  "Cafe",
+    "Babies":       "Family",
+    "Landscape/Scenery": "Travel",
+    "Date":          "Date",
+    "Prank":        "Halloween",
+    "Meditation":   "Meditation",
+    "Food":         "Food",
+    "Theater / Concert hall": "Wedding",
+    "Commute":      "Drive",
+    "Sport":        "Sport",
+    "National's Day": "Sport",
+    "Roadtrip":     "Drive",
+    "Morning":      "Morning",
+    "Children":     "Family",
+    "Summer":       "Summer",
+    "Autumn":       "Autumn",
+    "Focus":        "Focus",
+    "Valentine's day": "Valentine's day",
+    "Flirt":        "Date",
+    "Mid-autumn Festival": "Family",
+    "Entertainment": "Game",
+    "Lounge":       "Cafe",
+    "Spring Festival": "Spring Festival",
+    "Winter":       "Winter",
+    "Sunny Day":    "Spring",
+    "Nightclub":    "Dance",
+    "Anime":        "Game",
+    "Spring":       "Spring",
+    "Qi Xi":        "Valentine's day",
+    "Universe":     "Focus",
+    "Wedding":      "Wedding",
+    "Beach":        "Summer",
+    "Vlog/DailyLife": "Travel",
+    "Pet/Animals":  "Family",
+    "Birthday":     "Birthday",
+    "普通话":        "Chinese", 
+    "粤语":          "Cantonese",
+}
 SA_genre20 = [
     "Blues",
     "Chinese Opera",

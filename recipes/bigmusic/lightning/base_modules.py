@@ -76,7 +76,7 @@ class BaseModule(pl.LightningModule):
         model_state_dict = self.state_dict()
         for k in state_dict:
             if k in model_state_dict:
-                if state_dict[k].shape != model_state_dict[k].shape:
+                if isinstance(state_dict[k], torch.Tensor) and state_dict[k].shape != model_state_dict[k].shape:
                     print(f"Skip loading parameter: {k}, "
                                 f"required shape: {model_state_dict[k].shape}, "
                                 f"loaded shape: {state_dict[k].shape}")

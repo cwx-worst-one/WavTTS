@@ -3,8 +3,8 @@ from pathlib import Path
 from string import punctuation
 import re
 from typing import Dict, List, Tuple, Union
-from recipes.bigmusic.datasets.mir_data_util import chinese_genre1_vocab, chinese_genre2_vocab, SA_TAGS_SPECIAL_MAP, SA_CAT_VOCAB
-from recipes.datasets.mcc.sami_tokenizer import extract_section_tag, extract_singer_tag, add_singer_tag, add_section_tag
+from recipes.bigmusic.datasets.mir_data_util import chinese_genre1_vocab, chinese_genre2_vocab, SA_TAGS_SPECIAL_MAP, SA_CAT_VOCAB, chinese_to_SA_mapping
+from recipes.datasets.mcc.sami_tokenizer import Phrase
 
 
 def rewrite_playlist_labels(label1, label2):
@@ -26,8 +26,14 @@ def rewrite_playlist_labels(label1, label2):
             if genre == "粤语流行":
                 lang = "粤语"
     else:
-        print("Missing playlist metadata")    
-    return "|".join([genre, mood, scene, gender, lang])
+        print("Missing playlist metadata")
+    # TODO: (QQ) use SA sinking / language tags / voice.
+    genre = chinese_to_SA_mapping.get(genre, "")
+    mood = chinese_to_SA_mapping.get(mood, "")
+    scene = chinese_to_SA_mapping.get(scene, "")
+    sinking = "Sinking" if (genre == "DJ" or genre == "MC") else "non-Sinking"
+    lang = chinese_to_SA_mapping.get(lang, "")
+    return "|".join([genre, mood, scene, sinking, lang])
 
 
 def rewrite_metadata(metadata, type="Vocal"):
@@ -112,10 +118,10 @@ def normalize_text_sami_tokenizer(text, enable_punctuation=False, lowercase=Fals
     lines = text.split("\n")
     normalized_lines = []
     for line in lines:
-        section_tag, rest_line = extract_section_tag(line)
-        singer_tag, rest_line = extract_singer_tag(rest_line)
-        normalized_lines.append(add_section_tag(section_tag, add_singer_tag(singer_tag, normalize_text(rest_line, enable_punctuation, lowercase))))
-    return sep.join(normalized_lines)
+        phrase = Phrase.parse(text=line)
+        normalized_text = normalize_text(phrase.text, enable_punctuation, lowercase) if phrase.text else ""
+        normalized_lines.append(phrase._replace(text=normalized_text).format_text())
+    return sep.join([l for l in normalized_lines if l])  # remove empty lines
 
 def concat_metadata_list(existimg_metadata, metadata):
     if existimg_metadata is None:
@@ -133,3 +139,47 @@ def update_json(metadata_fp, updates):
     metadata = { **metadata, **updates }
     with open(metadata_fp, 'w') as f:
         json.dump(metadata, f, indent=2)
+
+
+def reformat_zh_text_input(text: str) -> str:
+    """Reformat zh text input into the internal phrase format
+    Input format:
+    [section-name-1]
+    (singer#:|男:|女:|合:|<empty>)this is sentence 1
+    (singer#:|男:|女:|合:|<empty>)this is sentence 2
+    ...
+    [section-name-2]
+    ...
+
+    What the function does is essentially inserting the section tag into
+    the beginning of each sentence.
+    """
+    def phrases_valid(phrases: List[Phrase]) -> bool:
+        return (
+            len(phrases) > 0 and 
+            (not any(phrase.section_tag and phrase.text for phrase in phrases)) and 
+            phrases[0].section_tag
+        )
+
+    def group_phrases_by_sections(phrases: List[Phrase]) -> List[List[Phrase]]:
+        """The output is a list of phrase groups. The first phrase in each group only has a section tag."""
+        tag_ind = [idx for idx, phrase in enumerate(phrases) if phrase.section_tag]  # tag_ind[0] == 0
+        return [phrases[start: end] for start, end in zip(tag_ind, tag_ind[1:] + [len(phrases)])]
+
+    def insert_section_tags(phrase_groups: List[List[Phrase]]) -> List[Phrase]:
+        """For each group, tuck the sectoin tag into each phrase."""
+        phrases = []
+        for group in phrase_groups:
+            if len(group) == 1:
+                phrases.extend(group)
+            else:
+                phrases.extend(
+                    [phrase._replace(section_tag=group[0].section_tag) for phrase in group[1:]]
+                )
+        return phrases
+
+    phrases = [Phrase.parse(text=line) for line in text.split("\n")]
+    if not phrases_valid(phrases):
+        raise ValueError("Invalid lyrics format")
+    phrases = insert_section_tags(group_phrases_by_sections(phrases))
+    return "\n".join([phrase.format_text() for phrase in phrases])

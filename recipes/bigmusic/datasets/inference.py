@@ -3,10 +3,12 @@ import os
 import json
 import librosa
 import torch
+from typing import List, Optional
 import pandas as pd
 from pathlib import Path
 from functools import partial
 from torch.utils.data import Dataset
+from recipes.bigmusic.utils.format_utils import reformat_zh_text_input
 from samantha.dataio.webdataset.pipeline import WebPipeline
 from recipes.bigmusic.datasets.lyrics import (
     transform_dataset,
@@ -43,7 +45,13 @@ def prompt_path_to_items(prompt_path):
             prompts = json.load(f)
     elif prompt_path.suffix == '.csv':
         df = pd.read_csv(prompt_path)
-        df = df.dropna(axis='columns')
+        # NOTE: Please make sure the numerical columns are always filled.
+        # Remove columns that only contain na. Columns can be partially filled.
+        # The caller is responsible for data validation.
+        df = df.dropna(axis='columns', how='all')
+        # For string columns, replace na with ""
+        str_cols = df.select_dtypes(include='object').columns
+        df[str_cols] = df[str_cols].fillna("")
         prompts = df.to_dict('list')
     elif prompt_path.suffix == '.txt':
         with open(prompt_path, "r") as fp:
@@ -87,6 +95,11 @@ def inference_dataset_from_prompt(
         prompts['structure'] = [None] * len(prompts[next(iter(prompts.keys()))])
     if 'semantic_tokens' in prompts:
         prompts['semantic_tokens'] = [torch.load(fp) for fp in prompts['semantic_tokens']]
+    # Reformat "user_lyrics" (the more user-friendly format) and override "lyrics"
+    if 'user_lyrics' in prompts:
+        user_lyrics = prompts.pop("user_lyrics")
+        prompts["lyrics"] = process_user_lyrics(prompts.get("lyrics"), user_lyrics)
+
     if run_combinations:
         lyrics_prompt_pairs = itertools.product(*list(prompts.values()))
     else:
@@ -174,3 +187,16 @@ def voice_clone_transform(extra_params):
     sample_rate = extra_params['sample_rate']
     voice_clone_duration = extra_params.get('voice_clone_duration', -1)
     return lambda vocal_audio: vocal_audio[:, :(voice_clone_duration * sample_rate)]
+
+def process_user_lyrics(lyrics_list: Optional[List[str]], user_lyrics_list: List[str]) -> List[str]:
+    """For each sample (row), overwrite lyrics with reformatted user lyrics if the user lyrics is non-empty."""
+    n_pieces = len(user_lyrics_list)
+    if lyrics_list is None:
+        lyrics_list = [""] * n_pieces
+    out_lyrics_list = []
+    for og_lyrics, user_lyrics in zip(lyrics_list, user_lyrics_list):
+        if user_lyrics.strip():
+            out_lyrics_list.append(reformat_zh_text_input(user_lyrics))
+        else:
+            out_lyrics_list.append(og_lyrics)
+    return out_lyrics_list
