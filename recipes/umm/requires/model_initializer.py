@@ -207,7 +207,8 @@ def init_stage3_dual_voc(hpath, local_rank, cache_dir=None):
     from recipes.umm.modules.vocoder_task import MelGANVocoder
     voc_module = MelGANVocoder(**state_dict['hyper_parameters'], save_hparams=False)
     model = voc_module.model_gen
-    model.load_state_dict(model_state_dict).to(device).eval()
+    model.load_state_dict(model_state_dict)
+    model.to(device).eval()
     print(f'Loading vocoder model from {voc_ckpt}')
     return {"mel_vocoder": model}
 

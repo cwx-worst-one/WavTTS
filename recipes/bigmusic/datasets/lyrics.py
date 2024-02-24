@@ -50,6 +50,7 @@ class LyricsDataset(WebPipeline):
         shardshuffle: bool =True,
         handler: Callable = wds.warn_and_continue,
         nodesplitter: Any = shardlists.single_node_only,
+        extra_fields_in_data=None
     ):
         segment_transforms = LyricsSegmentTransforms(
             sample_rate=sample_rate,
@@ -73,7 +74,8 @@ class LyricsDataset(WebPipeline):
                 handler=handler,
                 resampled=resampled,
                 shardshuffle=shardshuffle,
-                nodesplitter=nodesplitter
+                nodesplitter=nodesplitter,
+                extra_fields_in_data=extra_fields_in_data
             )
             pipeline = [{"compose": [preprocessor.train_buffer_preprocessor]}]
         elif isinstance(url2index, list):
@@ -168,19 +170,25 @@ class LyricsDataModule(pl.LightningDataModule):
 
         if len(datasets) > 1:
             train_dataset = MultiIterableDataset(
-                datasets, 
+                datasets,
                 num_samples=10_000_000, seed=2023,
                 weights=dataset_weights
             )
         else:
             train_dataset = datasets[0]
-        
+
         # initialize validation dataset
         valid_dataset_config = DATASET_CONFIGS[valid_dataset_type]
-        valid_dataset = valid_dataset_config['init_fn'](
-            sample_rate, sample_duration, batch_size, lyrics_max_seq_len,
-            **valid_dataset_config['extra_args']
-        )
+        try:
+            valid_dataset = valid_dataset_config['init_fn'](
+                sample_rate, sample_duration, batch_size, lyrics_max_seq_len,
+                **valid_dataset_config['extra_args']
+            )
+        except:
+            valid_dataset = valid_dataset_config['init_fn'](
+                sample_rate, sample_duration, batch_size, None, lyrics_max_seq_len,
+                **valid_dataset_config['extra_args']
+            )
         return LyricsDataModule(train_dataset=train_dataset, validation_dataset=valid_dataset, num_workers=num_workers, pin_memory=pin_memory)
 
 def pad_collate_tensor_fn(batch, *, collate_fn_map):
@@ -320,12 +328,15 @@ class DefaultDatasets():
             )
 
         @staticmethod
-        def vocal_parquet_dataset(sample_rate, sample_duration, index_list=INDEX["US"]["MCCVocalA_1M_Parquet"], audio_format='npy', **kwargs):
+        def vocal_parquet_dataset(sample_rate, sample_duration, index_list=INDEX["US"]["MCCVocalA_1M_Parquet"],
+                                  audio_format='npy', audio_keys=None, **kwargs):
+            if audio_keys is None:
+                audio_keys = {'style_audio': 'wav', 'target_audio': 'wav'}
             return LyricsDataset(
                 url2index=index_list,
                 sample_rate=sample_rate,
                 sample_duration=sample_duration,
-                audio_keys={ 'style_audio': 'wav', 'target_audio': 'wav'},
+                audio_keys=audio_keys,
                 audio_format=audio_format,
                 **kwargs
             )
@@ -504,7 +515,8 @@ class DefaultDatasets():
             tokenizer_init_fn=LyricsTokenTransform.init_espeak_tokenizer,
             min_song_confidence=0.8, min_segment_confidence=0.8,
             audio_format='npy',
-            
+            extra_fields_in_data=None,
+            audio_keys=None
         ):
             if isinstance(style_conditions, list): # multiple style conditions - for mixed style training. In that case, use random conditioning
                 batch_transforms = [RandomConditionsTransform(style_conditions)]
@@ -513,7 +525,7 @@ class DefaultDatasets():
             ds = DefaultDatasets.Basic.vocal_parquet_dataset(
                 sample_rate, sample_duration=sample_duration, index_list=index_list,
                 min_song_confidence=min_song_confidence, min_segment_confidence=min_segment_confidence,
-                audio_format=audio_format
+                audio_format=audio_format, extra_fields_in_data=extra_fields_in_data, audio_keys=audio_keys
             )
             ds_batched = transform_dataset(
                 dataset=ds,
@@ -773,22 +785,40 @@ DATASET_CONFIGS = {
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalB_2M"],
             "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
-            "infer_weights": False # already balanced
+            "infer_weights": False  # already balanced
         }
     },
     "mcc60m_2M_vocal_mixed_text_audio_CN": {
         "init_fn": DefaultDatasets.Batched.batched_vocal_parquet_dataset,
         "extra_args": {
             "index_list": INDEX["CN"]["MCCVocalB_2M"],
-            "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
+            "style_conditions": ["style_text,lyrics_tokens", "style_audio,lyrics_tokens"],
+        }
+    },
+    "mcc60m_2M_vocal_mixed_text_audio_CN_mss": {
+        "init_fn": DefaultDatasets.Batched.batched_vocal_parquet_dataset,
+        "extra_args": {
+            "index_list": INDEX["CN"]["MCCVocalB_2M"],
+            "style_conditions": ["style_text,lyrics_tokens", "style_audio,lyrics_tokens"],
+            "extra_fields_in_data": ['vocal', 'acc'],
+            "audio_keys": {'style_audio': 'wav', 'target_audio': 'wav', 'audio_vocal': 'vocal', 'audio_acc': 'acc'}
+        }
+    },
+    "mcc60m_2M_vocal_mixed_text_audio_CN_mss_inference": {
+        "init_fn": DefaultDatasets.Batched.batched_vocal_parquet_dataset,
+        "extra_args": {
+            "index_list": INDEX["CN"]["MCCVocalB_2M"],
+            "style_conditions": ["style_text,lyrics_tokens"],
+            "extra_fields_in_data": ['vocal', 'acc'],
+            "audio_keys": {'style_audio': 'wav', 'target_audio': 'wav', 'audio_vocal': 'vocal', 'audio_acc': 'acc'},
         }
     },
     "mcc60m_1M_vocal_mixed_text_audio": {
         "init_fn": DefaultDatasets.Batched.default_batched_vocal_dataset,
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalB_1M"],
-            "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
-            "infer_weights": False # already balanced
+            "style_conditions": ["style_text,lyrics_tokens", "style_audio,lyrics_tokens"],
+            "infer_weights": False  # already balanced
         }
     },
     "mcc60m_500k_vocal_mixed_text_audio": {

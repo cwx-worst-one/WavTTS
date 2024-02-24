@@ -73,7 +73,7 @@ def get_t5_embeds(requires, x):
     return requires['t5'](input_ids=x)['last_hidden_state']
 
 @torch.no_grad()
-def get_bestrq_umm_tokens(requires, batch, chunk_size=None):
+def get_bestrq_umm_tokens(requires, batch, chunk_size=None, **kwargs):
     if 'Stage3' in requires:
         lit_module = requires['Stage3']
     elif 'Stage3Conv1D' in requires:
@@ -81,20 +81,20 @@ def get_bestrq_umm_tokens(requires, batch, chunk_size=None):
     else:
         raise ValueError(f"Can't find UMM in requires")
     if chunk_size is None or batch.shape[-1] <= chunk_size:
-        vq_ids = lit_module.wav2token(batch)
+        vq_ids = lit_module.wav2token(batch, **kwargs)
     else:
         if batch.dim() == 3:
             batch = batch.squeeze(1)
         batch_size = batch.shape[0]
         batch_chunked = batch.unfold(-1, chunk_size, chunk_size)
         num_chunks = batch_chunked.shape[1]
-        vq_ids = lit_module.wav2token(batch_chunked.reshape(batch_size * num_chunks, 1, chunk_size))
+        vq_ids = lit_module.wav2token(batch_chunked.reshape(batch_size * num_chunks, 1, chunk_size), **kwargs)
         vq_ids = vq_ids.reshape(batch_size, -1)
         # Compute leftover
         if num_chunks * chunk_size < batch.shape[-1]:
             samples_per_token = num_chunks * chunk_size // vq_ids.shape[-1]
             leftover_tokens = (batch.shape[-1] - num_chunks * chunk_size) // samples_per_token
-            vq_ids_leftover = lit_module.wav2token(batch[..., -chunk_size:].unsqueeze(1))
+            vq_ids_leftover = lit_module.wav2token(batch[..., -chunk_size:].unsqueeze(1), **kwargs)
             vq_ids = torch.cat([vq_ids, vq_ids_leftover[..., -leftover_tokens:]], dim=-1)
     return vq_ids
 
@@ -178,7 +178,7 @@ class TokenEmbedder(BaseEmbedder):
         self.embedder = nn.Embedding(self.vocab_size, embedding_dim, **kwargs)
 
     @abstractmethod
-    def get_tokens(self, requires, batch):
+    def get_tokens(self, requires, batch, **kwargs):
         raise NotImplementedError()
 
     def get_sos_token(self, batch_size):
@@ -199,9 +199,9 @@ class TokenEmbedder(BaseEmbedder):
     def get_eos_embed(self, batch_size):
         return self.embedder(self.get_eos_token(batch_size))    
 
-    def tokenize(self, requires=None, batch=None, token_ids=None, with_sos=False, with_eos=False):
+    def tokenize(self, requires=None, batch=None, token_ids=None, with_sos=False, with_eos=False, **kwargs):
         if token_ids is None:
-            token_ids = self.get_tokens(requires, batch)
+            token_ids = self.get_tokens(requires, batch, **kwargs)
         if with_sos:
             token_ids = torch.cat([self.get_sos_token(token_ids.size(0)), token_ids], dim=1)
         if with_eos:
@@ -548,14 +548,14 @@ class BestRQTokenEmbedder(TokenEmbedder):
         self.last_hidden_state = None
         self.chunk_size = chunk_size
 
-    def get_tokens(self, requires, input_audio):
+    def get_tokens(self, requires, input_audio, **kwargs):
         if self.store_hidden_states:
-            results = get_bestrq_umm_outputs(requires, input_audio)
+            results = get_bestrq_umm_outputs(requires, input_audio, **kwargs)
             token_ids = results['vq_ids']
             self.hidden_states = results['hidden_states']
             return token_ids
         else:
-            return get_bestrq_umm_tokens(requires, input_audio, self.chunk_size)
+            return get_bestrq_umm_tokens(requires, input_audio, self.chunk_size, **kwargs)
 
 class BestRQMKIITokenEmbedder(TokenEmbedder):
     def __init__(self, vocab_size=65_536, embedding_dim=1024, add_sos=False, add_eos=False):

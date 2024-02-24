@@ -86,6 +86,8 @@ class LyricsSegmentTransforms(TransformBase):
         if lyrics_text is None: return None
         cropped_segments['lyrics'] = lyrics_text
         cropped_segments['phoneme'] = segment.phoneme
+        if cropped_segments['phoneme'] is None:
+            cropped_segments['phoneme'] = ''
         return cropped_segments
 
     def extract_audio_wavs(self, x:Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -307,8 +309,12 @@ class Segment():
     
     def __repr__(self) -> str:
         return f"[{self.start} - {self.end}] ({self.duration}) - {self.text}"
-    
+
     def __add__(self, other: 'Segment', new_line_token=". "):
+        if self.phoneme is None:
+            self.phoneme = ''
+        if other.phoneme is None:
+            other.phoneme = ''
         return Segment(
             start=self.start,
             end=other.end,

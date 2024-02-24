@@ -1,3 +1,5 @@
+from functools import partial
+
 import pytorch_lightning as pl
 
 from samantha.utils.hparams import DotDict
@@ -62,6 +64,12 @@ class SemanticInferenceModule(pl.LightningModule):
             self.decoding_fn = run_2ar
             required_modules.update(self.hparams.required_modules['ar_modules'])
             self.decoding_params = DotDict({**self.extra_params, **self.extra_params['ar_params']})
+        elif 'dualumm' in self.extra_params.token2wav_type:
+            from recipes.umm.modules.lit_module_mkii_dual import run_dualMSS_decode
+            self.decoding_fn = partial(
+                run_dualMSS_decode, token_type=self.extra_params.token2wav_type.replace("dualumm_", ""))
+            required_modules.update(self.hparams.required_modules['dualumm_modules'])
+            self.decoding_params = DotDict({**self.extra_params})
         elif self.extra_params.token2wav_type == 'soundstorm':
             self.decoding_fn = run_soundstorm
             required_modules.update(self.hparams.required_modules['soundstorm_modules'])
@@ -74,11 +82,13 @@ class SemanticInferenceModule(pl.LightningModule):
             if self.extra_params.beam_size <= 1:
                 print(f"[WARNING] use_reranker=True but beam_size={self.extra_params.beam_size}")
             required_modules.update({"reranker": self.hparams.required_modules["reranker"]})
-        
+
         if self.extra_params.get("mixv2", False):
             required_modules.update(self.hparams.required_modules['bestrq_modules'])
 
         self.load_required_modules(required_modules)
+        if 'dualumm' in self.extra_params.token2wav_type:
+            self.requires['umm'] = self.semantic_module.requires['Stage3']
 
     def load_required_modules(self, required_modules):
         for name, item in required_modules.items():
@@ -92,7 +102,7 @@ class SemanticInferenceModule(pl.LightningModule):
         # set semantic mulan ckpt if passed in
         if self.extra_params.get('mulan_ckpt', None) and self.extra_params.mulan_ckpt != 'infer_from_semantic_ckpt':
             self.semantic_module.hparams.required_modules['mulan']['hpath'] = self.extra_params.mulan_ckpt
-        
+
         if self.extra_params.get('app_type', None):
             self.semantic_module.load_required_modules(
                 ignore=('sampler', 'diffusion', 'vocoder', 'chord', 'chord_lms', 'structure', 'asr')
@@ -143,7 +153,82 @@ class SemanticInferenceModule(pl.LightningModule):
         raw_wav_output = raw_wav_output.detach().cpu()
         wavs = truncate_wav_to_eos(raw_wav_output, eos_index_list)
         raw_semantic_samples = raw_semantic_samples.detach().cpu()
-        outputs.update({ 
+        outputs.update({
+            'generated_audio': wavs,
+            'generated_audio_tensor': raw_wav_output,
+            'generated_semantic_tokens': raw_semantic_samples,
+        })
+        return outputs
+
+
+class SemanticInferenceModuleDualUMMFull(SemanticInferenceModule):
+    def load_required_modules(self, required_modules):
+        for name, item in required_modules.items():
+            if isinstance(item, (list, tuple)):
+                hpath, initializer = item
+            elif isinstance(item, dict):
+                hpath = item['hpath']
+                initializer = item['initializer']
+            self.requires.update(initializer(hpath, local_rank=self.local_rank))
+
+        # set semantic mulan ckpt if passed in
+        if self.extra_params.get('mulan_ckpt', None) and self.extra_params.mulan_ckpt != 'infer_from_semantic_ckpt':
+            self.semantic_module.hparams.required_modules['mulan']['hpath'] = self.extra_params.mulan_ckpt
+
+        for k, v in self.semantic_module.hparams.required_modules.items():
+            fn_partial = v['initializer']
+            _, _, (f, fn_args, fn_kwargs, n) = fn_partial.__reduce__()
+            fn_kwargs.update({'cache_dir': self.extra_params.cache_dir})
+            fn_partial.__setstate__((f, fn_args, fn_kwargs, n))
+
+        self.semantic_module.load_required_modules(
+            ignore=('sampler', 'diffusion', 'vocoder', 'chord', 'chord_lms', 'structure', 'asr')
+        )
+
+
+    def predict_step(self, batch, batch_idx=0, dataloader_idx=0):
+        if "semantic_tokens" in batch:
+            raw_semantic_samples = batch["semantic_tokens"]
+        else:
+            raw_semantic_samples = self.semantic_module.predict(
+                batch,
+                self.extra_params,
+                beam=self.extra_params.beam_size,
+            )
+        semantic_samples, eos_index_list = process_eos_indexes(
+            raw_semantic_samples,
+            self.semantic_module,
+            self.extra_params.sample_rate,
+        )
+        # TODO (QQ) use semantic_samples embedding as context input for decoding fn
+        if self.extra_params.get("mixv2", False):
+            semantic_samples = self.requires["Stage3"].model.vq.embedding(semantic_samples)
+        self.decoding_params.update({'batch': batch})
+        raw_wav_output = self.decoding_fn(self.requires, semantic_samples, self.decoding_params)
+
+        duration = self.extra_params.duration
+        raw_wav_output = raw_wav_output[..., :duration * self.extra_params.sample_rate]
+
+        outputs = {}
+        if self.extra_params.use_reranker:
+            batch["sampled_semantic_tokens"] = raw_semantic_samples
+            raw_wav_output, eos_index_list, rewards_breakdown = self.requires["reranker"].rerank(
+                raw_wav_output,
+                eos_index_list,
+                batch,
+                self.extra_params,
+            )
+            outputs["metadata"] = [{"rewards": x} for x in rewards_breakdown]
+            # After re-ranking, sampled_semantic_tokens in batch will be sorted by reward
+            raw_semantic_samples = batch["sampled_semantic_tokens"]
+
+        # DualUMM full track has double token length, so the actual generated audio length should be halved.
+        eos_index_list = eos_index_list // 2
+
+        raw_wav_output = raw_wav_output.detach().cpu()
+        wavs = truncate_wav_to_eos(raw_wav_output, eos_index_list)
+        raw_semantic_samples = raw_semantic_samples.detach().cpu()
+        outputs.update({
             'generated_audio': wavs,
             'generated_audio_tensor': raw_wav_output,
             'generated_semantic_tokens': raw_semantic_samples,
