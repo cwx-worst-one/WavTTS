@@ -35,7 +35,8 @@ extra_params:
 run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
-    log_name: semantic_model_mulan_text_07B
+    hdfs_log_dir: "hdfs:///home/byte_speech_sv/vibertthio/logs"
+    log_name: semantic_model_singsong_07B
     version: v0
     cache_dir: .module_cache/musiclm
     precision: "bf16-mixed"
@@ -158,6 +159,16 @@ callbacks:
       monitor: val_accu_0
       mode: max
       filename: "{step:06d}-{val_accu_0:.2f}"
+    - !new:samantha.callbacks.HDFSModelCheckpoint
+      hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+      monitor: step
+      save_top_k: 20
+      save_last: True
+      every_n_train_steps: !ref <run_opts[val_check_interval]>
+      mode: max
+      filename: "{step:06d}-{val_accu_0:.2f}"
+    - !new:pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: 'step'
     # TODO, how to set the validation callbacks based on the application type?
     # - !new:pytorch_lightning.callbacks.ModelCheckpoint
     #   save_top_k: 20

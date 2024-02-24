@@ -31,7 +31,7 @@ from recipes.datasets.mcc.mix import (
     BaseTransforms,
     DataModule
 )
-from recipes.datasets.mcc.sami_tokenizer import convert_labels_to_text_id, get_line_break_id
+from recipes.datasets.mcc.sami_tokenizer import convert_labels_to_text_id
 from recipes.bigmusic.utils.format_utils import rewrite_metadata
 from recipes.musiclm.utils.dist import local_zero_first
 from recipes.musiclm.transforms.audio import (
@@ -60,7 +60,6 @@ from samantha.utils.webdataset import return_self
 from transformers import Wav2Vec2PhonemeCTCTokenizer
 import functools
 MAX_STYLE_LEN = 16
-LINE_BREAK_PHONE_TOKEN = get_line_break_id()
 
 def pad_crop(sequence, seq_len, dtype, padding_value=0):
     # in item_pad_idx, 0 indicates the values are padded.
@@ -483,14 +482,16 @@ def vpp_collate_fn(batch: List[torch.Tensor], app_type: str) -> Dict[str, torch.
         style_text.append(style_label)     
         
         style_text_tokens, _ = pad_crop(
-            torch.tensor(batch[idx].get("style_tokens", default_style_token.detach().clone())), 
+            batch[idx].get("style_tokens", default_style_token.detach().clone()),
+            # torch.tensor(batch[idx].get("style_tokens", default_style_token.detach().clone())), 
             MAX_STYLE_LEN, torch.int, STYLE_PAD_ID)
         style_tokens.append(style_text_tokens)
 
         normalized_text.append(batch[idx]["normalized_text"])
         
         phoneme_tokens, _ = pad_crop(
-            torch.tensor(batch[idx].get("lyrics_tokens", default_lyrics_token.detach().clone())), 
+            batch[idx].get("lyrics_tokens", default_lyrics_token.detach().clone()),
+            # torch.tensor(batch[idx].get("lyrics_tokens", default_lyrics_token.detach().clone())), 
             max_phone_len, torch.int, PHONE_PAD_ID)
         lyrics_tokens.append(phoneme_tokens)
         
@@ -2061,18 +2062,22 @@ class VocalAppZhTransforms(BaseTransforms):
             if lyrics is None:
                 self._update_stats(skipped=True, message="No lyrics")
                 return
-
-            result = lyrics.get('result', None)
-            if result is None or len(result) != 1:
-                self._update_stats(skipped=True, message="No result")
-                return
-            utterances = result[0].get("utterances", None)
+            
+            if "utterances" in lyrics:
+                utterances = lyrics.get('utterances', None)
+            else:
+                result = lyrics.get('result', None)
+                if result is None or len(result) != 1:
+                    self._update_stats(skipped=True, message="No result")
+                    return
+                utterances = result[0].get("utterances", None)
 
             # utterances = lyrics.get('utterances', None)
             # print(lyrics.keys())
-            if not self.is_confident_lyrics(utterances, self.lyrics_confidence):
-                self._update_stats(skipped=True, message="Low confidence lyrics")
-                return            
+            
+            # if not self.is_confident_lyrics(utterances, self.lyrics_confidence):
+            #     self._update_stats(skipped=True, message="Low confidence lyrics")
+            #     return            
         if utterances is None or len(utterances) == 0:
             self._update_stats(skipped=True, message="No utterances")
             return
@@ -2226,7 +2231,6 @@ class VocalAppZhTransforms(BaseTransforms):
                     else:
                         continue
                     text_tokens.append(line_phone_tokens)
-                    text_tokens.append(LINE_BREAK_PHONE_TOKEN)
                     if i == vp_len - 1:
                         text_tokens.append(VP_END_PHONE_TOKEN)                    
                 if len(text_tokens) > 0:
@@ -2535,7 +2539,6 @@ class VocalZhTransforms(BaseTransforms):
                     else:
                         continue
                     text_tokens.append(line_phone_tokens)
-                    text_tokens.append(LINE_BREAK_PHONE_TOKEN)                    
                 if len(text_tokens) > 0:
                     if len(text_tokens) == 1: 
                         print(text_tokens)
@@ -4056,53 +4059,54 @@ class MixVocalAppZhWebDataModule(DataModule):
         #     pipeline=[{"compose": [self.bucketize]}],
         # )] 
 
-        karaoke_val_index = "/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/indexes_with_meta/karaoke_valid.tar_to_index.tsv"
-        validation_dataset_ka = WebPipeline(
-            SingsongDataset(
-                url2index=karaoke_val_index,
-                audio_map_keys={ 'acc_audio': 'acc.mp3', 'target_audio': 'full.mp3', 'vocal_audio': 'vocal.mp3' },
-                sample_rate=sample_rate,
-                audio_key = "mp3",
-                audio_format = "mp3",
-                resampled=False,
-                nodesplitter=return_self,
-                min_duration=buckets_in_sec[0],
-                max_duration=buckets_in_sec[-1],
-                segment_method=segment_method,
-                segment_max_phone_len=segment_max_phone_len,
-                include_intro=include_intro,
-                max_seg_per_track=1,
-                exclude_licenses=["B", "C"],
-                use_pipe=False,
-                voice_clone_duration=voice_clone_duration,
-                voice_clone_random_start=False,
-                app_type=app_type,
-                predict_mode=singsong_predict_type,
-                handler=wds.ignore_and_continue,                
-            ),
-            pipeline=[{"compose": [self.bucketize]}],
-        )
-        validation_dataset = [validation_dataset_ka]
-
-        # karaoke_val = WebPipeline(VppParquetDataset(
-        #     data_id=94,
-        #     min_duration=buckets_in_sec[0],
-        #     max_duration=buckets_in_sec[-1],
-        #     normalize_audio=normalize_audio,
-        #     segment_method=segment_method,
-        #     max_seg_per_track=max_seg_per_track,
-        #     segment_max_phone_len=segment_max_phone_len,
-        #     include_intro=include_intro,
-        #     use_gt_lyrics=True,
-        #     tokenizer=self.tokenizer,                
-        #     resampled=True,
-        #     shardshuffle=True,
-        #     use_pipe=use_pipe,            
-        #     handler=wds.warn_and_continue                        
+        # karaoke_val_index = "/mnt/bn/audio-diffusion/ashaw/webdataset/karaoke/indexes_with_meta/karaoke_valid.tar_to_index.tsv"
+        # validation_dataset_ka = WebPipeline(
+        #     SingsongDataset(
+        #         url2index=karaoke_val_index,
+        #         audio_map_keys={ 'acc_audio': 'acc.mp3', 'target_audio': 'full.mp3', 'vocal_audio': 'vocal.mp3' },
+        #         sample_rate=sample_rate,
+        #         audio_key = "mp3",
+        #         audio_format = "mp3",
+        #         resampled=False,
+        #         nodesplitter=return_self,
+        #         min_duration=buckets_in_sec[0],
+        #         max_duration=buckets_in_sec[-1],
+        #         segment_method=segment_method,
+        #         segment_max_phone_len=segment_max_phone_len,
+        #         include_intro=include_intro,
+        #         max_seg_per_track=1,
+        #         exclude_licenses=["B", "C"],
+        #         use_pipe=False,
+        #         voice_clone_duration=voice_clone_duration,
+        #         voice_clone_random_start=False,
+        #         app_type=app_type,
+        #         predict_mode=singsong_predict_type,
+        #         handler=wds.ignore_and_continue,                
         #     ),
         #     pipeline=[{"compose": [self.bucketize]}],
         # )
-        # validation_dataset = [karaoke_val]
+        # validation_dataset = [validation_dataset_ka]
+
+        karaoke_val = WebPipeline(VppParquetDataset(
+            data_id=94,
+            min_duration=buckets_in_sec[0],
+            max_duration=buckets_in_sec[-1],
+            normalize_audio=normalize_audio,
+            segment_method=segment_method,
+            max_seg_per_track=max_seg_per_track,
+            segment_max_phone_len=segment_max_phone_len,
+            include_intro=include_intro,
+            use_gt_lyrics=True,
+            tokenizer=self.tokenizer,                
+            resampled=False,
+            nodesplitter=return_self,
+            shardshuffle=True,
+            use_pipe=use_pipe,            
+            handler=wds.warn_and_continue                        
+            ),
+            pipeline=[{"compose": [self.bucketize]}],
+        )
+        validation_dataset = [karaoke_val]
 
 
         super().__init__(

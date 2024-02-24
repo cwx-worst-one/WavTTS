@@ -439,7 +439,7 @@ class SemanticModule(BaseContinuousEmbedModule):
 
         batch = self.prepare_batch_inputs(batch)
         if self.log_counter < 1:
-            print(batch)            
+            print(batch)
 
         st_idx = 0
         inputs_embeds = []
@@ -461,6 +461,8 @@ class SemanticModule(BaseContinuousEmbedModule):
                 emb_inputs = self.prepare_structure_inputs(batch, embedder)
             elif emb_type == "acc_audio":
                 emb_inputs = self.prepare_acc_audio_inputs(batch, embedder)
+            elif emb_type == "vocal_audio":
+                emb_inputs = self.prepare_vocal_audio_inputs(batch, embedder)
             elif emb_type == "intensity":
                 emb_inputs = self.prepare_intensity_inputs(batch, embedder)
             elif emb_type == "beat":
