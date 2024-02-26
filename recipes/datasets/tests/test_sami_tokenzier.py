@@ -1,10 +1,14 @@
 from itertools import product
+from lib2to3.pgen2.tokenize import tokenize
 
 import pytest
 import numpy as np
 
 from recipes.datasets.mcc.sami_tokenizer import (
     Phrase,
+    SamiOfflineTokenizer,
+    SamiTokenizerError,
+    move_out_section_tags,
     singer_tags,
     section_tags,
     phone_to_int,
@@ -13,7 +17,7 @@ from recipes.datasets.mcc.sami_tokenizer import (
 )
 
 
-MOCK_INPUT = [
+PHONE_MOCK_INPUT = [
     "sil\t0\tS\t0\tO\t\tS",
     "C0uo\t3\tS\t0\tO\t我\tS",
     "C0c\t2\tS\t1\tO\t曾\tB",
@@ -34,7 +38,7 @@ MOCK_INPUT = [
     "。\t0\tS\t4\tO\t\tS",
 ]
 
-MOCK_OUTPUT = (
+PHONE_MOCK_OUTPUT = (
     np.array(
         [
             [
@@ -187,29 +191,32 @@ MOCK_OUTPUT = (
 
 
 def test_sami_tokenizer():
-    tokens, phonemes, tones = convert_labels_to_text_id(MOCK_INPUT)
-    gt_tokens, gt_phonemes, gt_tones = MOCK_OUTPUT
+    tokens, phonemes, tones = convert_labels_to_text_id(PHONE_MOCK_INPUT)
+    gt_tokens, gt_phonemes, gt_tones = PHONE_MOCK_OUTPUT
     assert np.array_equal(tokens, gt_tokens)
     assert phonemes == gt_phonemes
     assert tones == gt_tones
 
 
+def _get_mock_phrase(section_tag, singer_tag):
+    # prepend the singer tag to the beginning of the first line
+    if section_tag and singer_tag:
+        mock_input = [f"[{section_tag}] {singer_tag}:{PHONE_MOCK_INPUT[0]}"] + PHONE_MOCK_INPUT[1:]
+    elif section_tag:
+        mock_input = [f"[{section_tag}] {PHONE_MOCK_INPUT[0]}"] + PHONE_MOCK_INPUT[1:]
+    elif singer_tag:
+        mock_input = [f"{singer_tag}:{PHONE_MOCK_INPUT[0]}"] + PHONE_MOCK_INPUT[1:]
+    else:
+        mock_input = PHONE_MOCK_INPUT
+    return Phrase.parse(phonemes="\n".join(mock_input))
+
+
 @pytest.mark.parametrize("prefix_tags", product([None] + section_tags, [None] + singer_tags))
 def test_sami_tokenizer_with_prefix_tags(prefix_tags):
     section_tag, singer_tag = prefix_tags
-    # prepend the singer tag to the beginning of the first line
-    if section_tag and singer_tag:
-        mock_input = [f"[{section_tag}] {singer_tag}:{MOCK_INPUT[0]}"] + MOCK_INPUT[1:]
-    elif section_tag:
-        mock_input = [f"[{section_tag}] {MOCK_INPUT[0]}"] + MOCK_INPUT[1:]
-    elif singer_tag:
-        mock_input = [f"{singer_tag}:{MOCK_INPUT[0]}"] + MOCK_INPUT[1:]
-    else:
-        mock_input = MOCK_INPUT
-
-    phrase = Phrase.parse(phonemes="\n".join(mock_input))
+    phrase = _get_mock_phrase(section_tag, singer_tag)
     tokens, phonemes, tones = convert_labels_to_text_id(phrase.phonemes.split("\n"), phrase.prefix_tags)
-    gt_tokens, gt_phonemes, gt_tones = MOCK_OUTPUT
+    gt_tokens, gt_phonemes, gt_tones = PHONE_MOCK_OUTPUT
 
     # The singer tag should be the first token in all the parsed sequences
     section_phone_id = phone_to_int.get(section_tag)
@@ -226,4 +233,135 @@ def test_sami_tokenizer_with_prefix_tags(prefix_tags):
     assert tones == prepend_tokens + gt_tones
 
 
-# TODO (Yilin): Add more tests for different languages
+def test_tokenize_phrase():
+    section_tag = "verse"
+    singer_tag = "合"
+    phrase = _get_mock_phrase(section_tag, singer_tag)
+
+    section_phone_id = phone_to_int.get(section_tag)
+    singer_phone_id = phone_to_int.get(singer_tag)
+
+    prepend_phone_ids = [section_phone_id, singer_phone_id]
+
+    gt_tokens, _, _ = PHONE_MOCK_OUTPUT
+
+    tokenizer = SamiOfflineTokenizer()
+    assert np.array_equal(tokenizer.tokenize_phrase(phrase), np.concatenate([prepend_phone_ids, gt_tokens[0]]))
+
+
+def test_tokenize_phrase_invalid_inputs():
+    tokenizer = SamiOfflineTokenizer()
+
+    with pytest.raises(SamiTokenizerError):
+        tokenizer.tokenize_phrase(Phrase.parse(""))  # empty phrase
+
+    with pytest.raises(SamiTokenizerError):
+        tokenizer.tokenize_phrase(Phrase.parse("[verse] abc"))  # invalid phoneme label
+
+
+REFORMAT_CASES = [
+    {
+        "in": [
+            "[intro]",
+            "[verse] 你好",
+            "[verse] 我好",
+            "[inst]",
+            "[chorus] 大家好",
+        ],
+        "out": [
+            "[intro]",
+            "[verse]",
+            "你好",
+            "我好",
+            "[inst]",
+            "[chorus]",
+            "大家好",
+        ],
+        "desc": "regular case",
+    },
+    {
+        "in": [
+            "没有",
+            "[verse] 你好",
+            "[verse] 我好",
+            "很好",
+            "[chorus] 真好"
+        ],
+        "out": [
+            "没有",
+            "[verse]",
+            "你好",
+            "我好",
+            "很好",
+            "[chorus]",
+            "真好"
+        ],
+        "desc": "first and middle phrases have no section tag",
+    },
+    {
+        "in": [
+            "没有",
+            "无",
+            "空",
+        ],
+        "out": [
+            "没有",
+            "无",
+            "空",
+        ],
+        "desc": "no section tag at all",
+    },
+    {
+        "in": [
+            "[verse] 没有",
+            "无",
+            "空",
+        ],
+        "out": [
+            "[verse]",
+            "没有",
+            "无",
+            "空",
+        ],
+        "desc": "only first phrase has section tag",
+    },
+    {
+        "in": [
+            "[intro]",
+            "[verse]",
+            "你好",
+            "我好",
+            "[inst]",
+            "[chorus]",
+            "大家好",
+        ],
+        "out": [
+            "[intro]",
+            "[verse]",
+            "你好",
+            "我好",
+            "[inst]",
+            "[chorus]",
+            "大家好",
+        ],
+        "desc": "no change",
+    },
+]
+
+@pytest.mark.parametrize(
+    "test_data",
+    REFORMAT_CASES,
+    ids=[d["desc"] for d in REFORMAT_CASES],
+)
+def test_move_out_section_tags(test_data):
+
+
+    in_phrases = [Phrase.parse(text=line) for line in test_data["in"]]
+    out_phrases = [Phrase.parse(text=line) for line in test_data["out"]]
+
+    print("in:", in_phrases)
+    print("out:", move_out_section_tags(in_phrases))
+    assert move_out_section_tags(in_phrases) == out_phrases
+
+
+# TODO (Yilin) Test SamiTokenizer

@@ -25,6 +25,7 @@ from recipes.bigmusic.datasets.transforms.lyrics import (
 from recipes.bigmusic.datasets.transforms.structure import (
     IntensityTransform,
 )
+from recipes.datasets.mcc.sami_tokenizer import Phrase, move_out_section_tags
 from recipes.musiclm.inference.utils import load_wav
 from samantha.transforms.audio import (
     SetAudioDimensions,
@@ -95,10 +96,12 @@ def inference_dataset_from_prompt(
         prompts['structure'] = [None] * len(prompts[next(iter(prompts.keys()))])
     if 'semantic_tokens' in prompts:
         prompts['semantic_tokens'] = [torch.load(fp) for fp in prompts['semantic_tokens']]
-    # Reformat "user_lyrics" (the more user-friendly format) and override "lyrics"
-    if 'user_lyrics' in prompts:
-        user_lyrics = prompts.pop("user_lyrics")
-        prompts["lyrics"] = process_user_lyrics(prompts.get("lyrics"), user_lyrics)
+    if 'lyrics' in prompts:
+        prompts['lyrics'] = process_lyrics(prompts['lyrics'])
+    # (Removed) Reformat "user_lyrics" (the more user-friendly format) and override "lyrics"
+    # if 'user_lyrics' in prompts:
+    #     user_lyrics = prompts.pop("user_lyrics")
+    #     prompts["lyrics"] = process_user_lyrics(prompts.get("lyrics"), user_lyrics)
 
     if run_combinations:
         lyrics_prompt_pairs = itertools.product(*list(prompts.values()))
@@ -187,6 +190,13 @@ def voice_clone_transform(extra_params):
     sample_rate = extra_params['sample_rate']
     voice_clone_duration = extra_params.get('voice_clone_duration', -1)
     return lambda vocal_audio: vocal_audio[:, :(voice_clone_duration * sample_rate)]
+
+def process_lyrics(lyrics_list: List[str]) -> List[str]:
+    """Move in-line leading section tags out as single lines."""
+    def process_one_piece(lyrics: str) -> str:
+        phrases = move_out_section_tags([Phrase.parse(text=line) for line in lyrics.split('\n')])
+        return '\n'.join([phrase.format_text() for phrase in phrases])
+    return [process_one_piece(lyrics) for lyrics in lyrics_list]
 
 def process_user_lyrics(lyrics_list: Optional[List[str]], user_lyrics_list: List[str]) -> List[str]:
     """For each sample (row), overwrite lyrics with reformatted user lyrics if the user lyrics is non-empty."""

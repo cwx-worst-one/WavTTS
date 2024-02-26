@@ -1,6 +1,6 @@
 import re
 import string
-from typing import Tuple, Optional, List, NamedTuple
+from typing import Dict, Tuple, Optional, List, NamedTuple, Union
 
 import torch
 from zhon.hanzi import punctuation
@@ -20,6 +20,11 @@ except Exception as e:
 
 import contextlib
 import json
+
+
+class SamiTokenizerError(ValueError):
+    pass
+
 
 ### phones
 # silence symbol
@@ -252,7 +257,7 @@ def _extract_prefix_tag(text: str, pattern: str) -> Tuple[Optional[str], str]:
     if tag is not None:
         tag = tag.strip()
     if rest_text is None:
-        raise ValueError("Invalid text or regex pattern.")
+        raise SamiTokenizerError("Invalid text or regex pattern.")
     return tag, rest_text
 
 
@@ -346,8 +351,7 @@ class Phrase(NamedTuple):
         )
 
     @property
-    def prefix_tags(self) -> List[Optional[str]]:
-        """Tags that should be prepended for each sentence (empty tags are filtered out)"""
+    def prefix_tags(self) -> List[str]:
         return list(filter(None, [self.section_tag, self.singer_tag]))
 
     @property
@@ -378,6 +382,20 @@ class Phrase(NamedTuple):
         if _str is None:
             _str = ""
         return add_section_tag(self.section_tag, add_singer_tag(self.singer_tag, _str))
+
+
+def move_out_section_tags(phrases: List[Phrase]) -> List[Phrase]:
+    """Move section tags out of phrases as single phrases
+    This function reformats a list of phrases to a format where section tags
+    only appear once at the top of each section.
+    """
+    out_phrases = []
+    for prev_phrase, phrase in zip([None] + phrases, phrases):
+        if phrase.section_tag and (prev_phrase is None or phrase.section_tag != prev_phrase.section_tag):
+            out_phrases.append(Phrase(section_tag=phrase.section_tag))
+        if phrase.has_utterance:
+            out_phrases.append(phrase._replace(section_tag=None))
+    return out_phrases
 
 
 def convert_v3_to_v1(tacolab):
@@ -644,14 +662,9 @@ def convert_labels_to_text_id(tacolab: Optional[List[str]], prefix_tags: Optiona
                 tone_ids = [_tone_id] + tone_ids
                 phones = [_phone] + phones
                 tones = [_tone] + tones
-
         return np.stack([phone_ids, tone_ids]), phones, tones
-    except ValueError as ve:
-        print(ve)
-        return None
     except Exception as e:
-        print(e)
-        return None
+        raise SamiTokenizerError(f"Error converting labels to text id: {e}")
 
 
 def is_chinese_char(ch):
@@ -697,23 +710,32 @@ class SamiOfflineTokenizer:
     def __init__(self) -> None:
         pass
 
-    def __call__(self, text_batch, line_break=" <n> ", **kwds):
-        text_ids = []
+    def __call__(self, text_batch: Union[str, List[str]], line_break=" <n> ", **kwds) -> Dict[str, torch.Tensor]:
+        """Tokenize a text batch (phoneme). Lines separated by line_break."""
         if isinstance(text_batch, str):
             text_batch = [text_batch]
+        phrase_batch = [
+            [Phrase.parse(phonemes=phonemes) for phonemes in sil.split(line_break)]
+            for sil in text_batch
+        ]
+        return self.tokenize_phrase_batch(phrase_batch)
 
-        for sil in text_batch:
-            lines = sil.split(line_break)
-            text_tokens = []
-            for phonemes in lines:
-                phrase = Phrase.parse(phonemes=phonemes)
-                if not any([phrase.phonemes, phrase.prefix_tags]):
-                    continue
-                labels = list(filter(lambda x: x != "", phrase.phonemes.split("\n"))) if phrase.phonemes else None
-                text_id, _, _ = convert_labels_to_text_id(labels, phrase.prefix_tags)
-                text_tokens.append(torch.from_numpy(text_id[0]).long())
-            text_tokens = np.concatenate(text_tokens, axis=0)
-            text_ids.append(torch.from_numpy(text_tokens).long())
+    def tokenize_phrase(self, phrase: Phrase) -> np.ndarray:
+        """Tokenize a phrase. Each phrase must have phonemes or prefix_tags or both."""
+        if not any([phrase.phonemes, phrase.prefix_tags]):
+            raise SamiTokenizerError("Empty tokenization result")
+        labels = list(filter(lambda x: x != "", phrase.phonemes.split("\n"))) if phrase.phonemes else None
+        text_id, _, _ = convert_labels_to_text_id(labels, phrase.prefix_tags)
+        return text_id[0]  # only takes phone_ids
+
+    def tokenize_phrases(self, phrases: List[Phrase]) -> np.ndarray:
+        """Tokenize multiple phrases and concatenate the result into an ndarray."""
+        text_tokens = [self.tokenize_phrase(phrase) for phrase in phrases]
+        return np.concatenate(text_tokens, axis=0)
+
+    def tokenize_phrase_batch(self, batch: List[List[Phrase]]) -> Dict[str, torch.Tensor]:
+        """Tokenize a batch of phrase data."""
+        text_ids = [torch.from_numpy(self.tokenize_phrases(_phrases)).long() for _phrases in batch]
         return {
             "input_ids": torch.nn.utils.rnn.pad_sequence(
                 text_ids, batch_first=True, padding_value=0
@@ -723,6 +745,7 @@ class SamiOfflineTokenizer:
 
 
 class SamiTokenizer(SamiOfflineTokenizer):
+    """SamiTokenizer is based on SamiOfflineTokenizer with an extra phoneme generation feature."""
     def __init__(
         self,
         lib_path="/opt/tiger/sami_engine_cleaned/libs/libsami.so",
@@ -734,18 +757,38 @@ class SamiTokenizer(SamiOfflineTokenizer):
         self.engine = TtsEngine(lib_path=lib_path, fe=fe)
         self.ex = self.engine.create_fe_executor(task_type=fe_task)
 
-    def __call__(self, text_batch, line_break=" <n> ", **kwds):
+    def __call__(self, text_batch: Union[str, List[str]], line_break=" <n> ", **kwds) -> Dict[str, torch.Tensor]:
+        """Tokenize a text batch. Lines separated by line_break. Phoneme will be generated internally."""
         if isinstance(text_batch, str):
-            text_batch = [text_batch]
-        g2p_result = []
-        for text in text_batch:
-            lines = text.split(line_break)
+            text_batch = [text_batch] 
+        phrase_batch = [
+            [Phrase.parse(text=text) for text in sil.split(line_break)]
+            for sil in text_batch
+        ]
+        return self.tokenize_phrase_batch(phrase_batch)
+
+    def tokenize_phrase(self, phrase: Phrase) -> Optional[np.ndarray]:
+        """Tokenize a phrase. Phoneme will be generated internally."""
+        return super().tokenize_phrase(self.fill_phonemes(phrase))
+    
+    def tokenize_phrases(self, phrases: List[Phrase]) -> np.ndarray:
+        """Tokenize multiple phrases and concatenate the result into an ndarray. Phoneme will be generated internally."""
+        return super().tokenize_phrases([self.fill_phonemes(phrase) for phrase in phrases])
+
+    def tokenize_phrase_batch(self, batch: List[List[Phrase]]) -> Dict[str, torch.Tensor]:
+        """Tokenize a batch of phrase data. Phoneme will be generated internally."""
+        batch = [[self.fill_phonemes(phrase) for phrase in phrases] for phrases in batch]
+        return super().tokenize_phrase_batch(batch)
+
+    def fill_phonemes(self, phrase: Phrase) -> Phrase:
+        """
+        If the phrase
+        - does not have phonemes but has text: phonemes will be generated internally
+        - has phonemes: return the same phrase
+        - has neither phonemes nor text: return the same phrase
+        """
+        if phrase.text and not phrase.phonemes:
             with contextlib.redirect_stdout(None):
-                phrases = [Phrase.parse(text=line) for line in lines]
-                phrases = [
-                    phrase._replace(phonemes=(self.ex.run(phrase.text, config=self.cfg)[0] if phrase.text else None)) 
-                    for phrase in phrases
-                ]
-                ls = line_break.join([phrase.format_phonemes() for phrase in phrases])
-            g2p_result.append(ls)
-        return super().__call__(g2p_result, line_break, **kwds)
+                phonemes = self.ex.run(phrase.text, config=self.cfg)[0]
+            return phrase._replace(phonemes=phonemes)
+        return phrase
