@@ -4,6 +4,7 @@ from recipes.bigmusic.lightning.embedding_modules import (
     MulanCategoricalEmbedder,
     LyricsTokenEmbedder,
     TagCategoricalEmbedder,
+    LeadsheetTokenEmbedderV2,
     WavToVecTokenEmbedder,
     MetadataT5TokenEmbedder,
     BestRQTokenEmbedder,
@@ -128,6 +129,13 @@ class SemanticModule(BaseContinuousEmbedModule):
                     structure_labels=extra_params["structure_labels"],
                     granularity_in_secs=extra_params["granularity_in_secs"],
                 )
+            elif emb_type == "leadsheet_tokens":
+                leadsheet_vocab_size = extra_params['leadsheet_codebook_size']
+                embedder_dict[emb_type] = LeadsheetTokenEmbedderV2(
+                    vocab_size=leadsheet_vocab_size,
+                    embedding_dim=hidden_size,
+                    add_sos=True
+                )
             elif emb_type in ["acc_audio", "vocal_audio"]:
                 embedder_dict[emb_type] = BestRQTokenEmbedder(
                     vocab_size=semantic_codebook_size, 
@@ -135,6 +143,9 @@ class SemanticModule(BaseContinuousEmbedModule):
                     add_sos=True,
                     add_eos=False
                 )
+            elif emb_type in ["prefix_audio"]:
+                # Here we use ground truth audio as prefix, will use target_embedder as embedder
+                embedder_dict[emb_type] = None
             elif emb_type == "intensity":
                 embedder_dict[emb_type] = IntensityEmbedder(
                     decimals=extra_params["intensity_decimals"],
@@ -280,6 +291,15 @@ class SemanticModule(BaseContinuousEmbedModule):
             embeds = lyrics_embedder.get_sos_embed(batch_size)
         return embeds
 
+    def prepare_leadsheet_inputs(self, batch, embedder):
+        batch_size = self.infer_batch_size(batch)
+        conditions = self.infer_conditions(batch)
+        if 'leadsheet_tokens' in conditions:
+            embeds = embedder.embed(self.requires, batch['leadsheet_tokens'].to(
+                self.device), batch['leadsheet_tokens_coff'].to(self.device), with_sos=True)
+        else:
+            embeds = embedder.get_sos_embed(batch_size)
+        return embeds
     def prepare_duration_inputs(self, batch, duration_embedder):
         batch_size = self.infer_batch_size(batch)
         conditions = self.infer_conditions(batch)
@@ -349,6 +369,19 @@ class SemanticModule(BaseContinuousEmbedModule):
             embeds = vocal_embedder.get_sos_embed(batch_size)
         return embeds
 
+    def prepare_prefix_audio_inputs(self, batch):
+        # The prefix_audio inputs is for audio continuation
+        # extract embedding from known audio using target embedder, and let model predict the rest
+        # So we want SOS token from target embedder before audio embedding
+        # And skip adding SOS token in model predict
+        conditions = self.infer_conditions(batch)
+        batch_size = self.infer_batch_size(batch)
+        if "prefix_audio" in conditions: 
+            embeds = self.target_embedder.embed(self.requires, batch['prefix_audio'], with_sos=True)
+        else:
+            embeds = self.target_embedder.get_sos_embed(batch_size)
+        return embeds
+
     def prepare_intensity_inputs(self, batch, intensity_embedder):
         batch_size = self.infer_batch_size(batch)
         intensity_labels = batch["intensity"]
@@ -405,18 +438,20 @@ class SemanticModule(BaseContinuousEmbedModule):
                 emb_inputs = self.prepare_lyrics_inputs(batch, embedder)
             elif emb_type == "speaker_id":
                 emb_inputs = self.prepare_speaker_inputs(batch, embedder)
+            elif emb_type == "leadsheet_tokens":
+                emb_inputs = self.prepare_leadsheet_inputs(batch, embedder)
             elif emb_type == "duration":
                 emb_inputs = self.prepare_duration_inputs(batch, embedder)
             elif emb_type == "structure":
                 emb_inputs = self.prepare_structure_inputs(batch, embedder)
             elif emb_type == "acc_audio":
                 emb_inputs = self.prepare_acc_audio_inputs(batch, embedder)
-            elif emb_type == "vocal_audio":
-                emb_inputs = self.prepare_vocal_audio_inputs(batch, embedder)
             elif emb_type == "intensity":
                 emb_inputs = self.prepare_intensity_inputs(batch, embedder)
             elif emb_type == "beat":
                 emb_inputs = self.prepare_beat_inputs(batch, embedder)
+            elif emb_type == "prefix_audio":
+                emb_inputs = self.prepare_prefix_audio_inputs(batch)
             else:
                 raise ValueError(f"Unknown emb type: {emb_type}")
             if self.log_counter < 1:
@@ -604,6 +639,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         temperature = hp.semantic_temperature
         sample_mode = hp.sample_mode
         sample_thresh = hp.get('sample_thresh', 0.9)
+        skip_sos = hp.get('skip_sos', False)
         exclude_ids = None
         if hp.get("exclude_eos", False) and self.target_embedder.eos_id is not None:
             exclude_ids = [self.target_embedder.eos_id]
@@ -636,6 +672,7 @@ class SemanticModule(BaseContinuousEmbedModule):
             ref_samples=ref_samples,
             exclude_ids=exclude_ids,
             rl_training=rl_training,
+            skip_sos=skip_sos,
         )
 
     @torch.no_grad()

@@ -6,6 +6,11 @@ from pathlib import Path
 import os
 import textwrap
 import shutil
+import numpy as np
+import glob
+import tqdm
+import librosa
+import soundfile
 from recipes.musiclm.inference.utils import slugify, save_wav, generate_hash, format_name, load_wav
 from collections import defaultdict
 from recipes.bigmusic.utils.format_utils import update_json
@@ -104,6 +109,7 @@ def save_batch_outputs(
     categories = batch.get('category')
     style_audio = batch.get('style_audio')
     vocal_audio = batch.get('vocal_audio')   
+    target_audio = batch.get('target_audio')  
     metadatas = outputs.get('metadata')
     wavs = outputs['generated_audio']
     semantic_tokens = outputs.get('generated_semantic_tokens')
@@ -149,6 +155,10 @@ def save_batch_outputs(
         if vocal_audio is not None and beam_idx == 0:
             input_vocals_fp = os.path.join(wav_dir, f"{file_name}.vocal_audio.wav")
             save_wav(vocal_audio[ii].cpu().float(), input_vocals_fp, sr=sample_rate, save_mp3=save_mp3)
+
+        if target_audio is not None and beam_idx == 0:
+            target_audio_fp = os.path.join(wav_dir, f"{file_name}.target_audio.wav")
+            save_wav(target_audio[ii].cpu().float(), target_audio_fp, sr=sample_rate, save_mp3=save_mp3)
 
         if save_semantic_tokens and semantic_tokens is not None:
             semantic_tokens_fp = os.path.join(wav_dir, f"{wav_file_name}.semantic_tokens.pt")
@@ -333,3 +343,55 @@ class AverageMetricsCallback(pl.Callback):
                 except Exception as e:
                     print('Could not run average metrics:', e)
 
+
+class MergeFullSongCallback(pl.Callback):
+    def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
+        infer_tag = pl_module.extra_params.infer_tag
+        input_txt_dir = pl_module.extra_params.input_txt_pattern
+        sample_rate = pl_module.extra_params.sample_rate
+        predict_dir = pl_module.extra_params.output_dir
+        merge_full_song(input_txt_dir, sample_rate, predict_dir, infer_tag)
+
+def merge_full_song(input_txt_dir, sample_rate, predict_dir, infer_tag="", save_slice=False):
+    print("Saving Fullsong:", input_txt_dir, sample_rate, predict_dir, infer_tag)
+    demo_dir = os.path.join(predict_dir, "full_song_demo")
+    sliced_demo = os.path.join(predict_dir, "sliced_demo")
+    os.makedirs(demo_dir, exist_ok=True)
+    os.makedirs(sliced_demo, exist_ok=True)
+    if infer_tag == "":
+        infer_tag = os.path.basename(predict_dir)
+
+    data_dict = {}
+    for txt in glob.glob(f"{input_txt_dir}/*.txt"):
+        txt_basename = os.path.basename(txt)
+        wav_basename = txt_basename.replace(".txt", ".generated.wav")
+        wav = os.path.join(predict_dir, wav_basename)
+        slice_uttid = os.path.basename(txt).rstrip(".txt")
+        slice_uttid = slice_uttid.replace("test_", "")
+
+        if os.path.exists(wav):
+            frame = open(txt).readlines()
+            frame = np.sum([int(x.strip().split("\t")[2]) for x in frame])
+            duration = frame * 0.0125
+            nsample = int(duration * sample_rate)
+            y, _ = librosa.load(wav, sr=sample_rate, mono=True, duration=duration)
+            save_path = f"{sliced_demo}/{slice_uttid}_slice_{infer_tag}.wav"
+            soundfile.write(save_path, y, sample_rate, "PCM_16")
+        else:
+            frame = int(open(txt).readlines()[0].split("\t")[2])
+            nsample = int(sample_rate * frame * 0.0125)
+            y = np.zeros([nsample])
+
+        song_uttid = slice_uttid[:-3]
+        if song_uttid not in data_dict:
+            data_dict[song_uttid] = []
+        data_dict[song_uttid].append(y)
+
+    for uttid, audio in data_dict.items():
+        audio = np.concatenate(audio, axis=0)
+        save_path = f"{demo_dir}/{uttid}_{infer_tag}.wav"
+        if len(audio) > 0:
+            print("Generated Fullsong in:", save_path)
+            soundfile.write(save_path, audio, sample_rate, "PCM_16")
+        else:
+            print("Empty Fullsong, please check input:", save_path, input_txt_dir, infer_tag, sample_rate, predict_dir)

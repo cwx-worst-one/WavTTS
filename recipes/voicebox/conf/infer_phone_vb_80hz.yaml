@@ -1,0 +1,50 @@
+---
+run_opts:
+    precision: 32
+    strategy: ddp
+    ckpt_path: None
+    output_dir: None
+    meta_lst: /mnt/bn/cyz-lq-nas/project/samantha/recipes/voicebox/testset/icl_fighting/meta.lst.different.text
+    num_workers: 4
+    seed: 1996
+
+predict_dataset:
+    !new:recipes.voicebox.datasets.meta_based_dataset.MetaBasedDataset
+    meta_lst: !ref <run_opts[meta_lst]>
+
+dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <predict_dataset>
+    num_workers: !ref <run_opts[num_workers]>
+    batch_size: null
+    drop_last: False
+
+pl_datamodule: !new:recipes.text2semantic.lit_modules.lit_data.DataModule
+    predict_dataloader: !ref <dataloader>
+
+pl_module: !new:recipes.voicebox.lit_modules.lit_infer_phone_vb.VoiceBoxInfer
+    ckpt_path: !ref <run_opts[ckpt_path]>
+    vocoder_ckpt_path: "/mnt/bn/jdy-lq-2/bigtts-nar/pretrain_model/80hz_ibigvgan/ibigvgan80_420k.pt"
+    output_dir: !ref <run_opts[output_dir]>
+    seed: !ref <run_opts[seed]>
+    inference_type: "fake_zero_shot"
+    mel_config:
+        n_fft: 2048
+        num_mels: 80
+        hop_size: 300
+        win_size: 1200
+        fmin: 0
+        fmax: 12000
+        sampling_rate: 24000
+    mel_norm_mean: -4.5
+    mel_norm_std: 7.0
+    mel_padding: -5
+
+trainer: !new:pytorch_lightning.Trainer
+    accelerator: "auto"
+    devices: "auto"
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    strategy: !ref <run_opts[strategy]>
+    precision: !ref <run_opts[precision]>
+    max_epochs: 1

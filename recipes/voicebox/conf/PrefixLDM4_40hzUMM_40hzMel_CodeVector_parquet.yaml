@@ -1,0 +1,196 @@
+---
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 1996
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+run_opts:
+    log_dir: logs
+    hdfs_path: None
+    fast_dev_run: False
+    tensorboard_dir: !ref <run_opts[log_dir]>
+    log_name: semantic
+    version: 1.0
+    precision: bf16
+    accelerator: auto
+    strategy: ddp_find_unused_parameters_false # deepspeed_stage_2_offload, ddp_find_unused_parameters_false
+    cache_dir: ./.cache_dir
+    profiler: simple
+    flash_attn: null
+    num_epochs: 100
+    batch_size: 16
+    num_workers: 8
+    learning_rate: 0.0001
+    weight_decay: 0.001
+    checkpointing: False
+    n_step_save: 10000
+    batch_total_tokens: 25000
+    urls: null
+    data_id: null
+    accumulate_grad_batches: 1
+    resume_ckpt_path: null
+    use_url_lst: False
+    target: mel
+    prompt_feature: mel
+    ctx_feature: mel
+    use_unet_style_skip_connect: true
+
+model_config: !new:recipes.voicebox.diffusion_modules.llama_ldm.ModelArgs
+    in_channels: 100
+    out_channels: 100
+    prompt_mel_dim: 100
+    n_token: 16390 # 0~16383, pad:16384
+    token_upscales: [1]
+    token_downscales: [1]
+    time_embed_dim: 1024
+    llama_provider: ctiga
+    target: !ref <run_opts[target]>
+    prompt_feature: !ref <run_opts[prompt_feature]>
+    ctx_feature: !ref <run_opts[ctx_feature]>
+    local_cond_dim: 256
+    encoder_dim: 1536
+    encoder_n_layers: 24
+    encoder_n_heads: 24
+    use_unet_style_skip_connect: !ref <run_opts[use_unet_style_skip_connect]>
+
+mel_config: # 40hz iBigVGAN
+    n_fft: 4096
+    num_mels: 100
+    hop_size: 600
+    win_size: 2400
+    fmin: 0
+    fmax: 12000
+    sampling_rate: 24000
+
+bn_config: # 40hz wvae 3.1
+    hop_size: 600
+    bn_norm_std: 15
+    bn_norm_mean: 0
+    bn_padding: -2
+    silence_bn_path: recipes/voicebox/vocoder/silence_wvae/v3_40hz/silence_wvae.npy
+
+train_dataset:
+    !new:recipes.voicebox.datasets.voicebox_promptmel_dataset.VoiceBoxParquetDataset
+    data_id: !ref <run_opts[data_id]>
+    drop_last: False
+    batcher_config:
+        buckets: !apply:eval ["list(range(40, 2500, 60))"]
+        dynamic_batch: True
+        maximum_bucket_size: !ref <run_opts[batch_total_tokens]>
+        length_fn: !apply:eval ['lambda x: x["mel"].shape[1]'] # seq.shape
+    mel_config: !ref <mel_config>
+    max_length: 60
+    mel_norm_mean: -2.5
+    mel_norm_std: 6
+    mel_padding: -5
+    use_text: True
+    use_bn: True
+    bn_config: !ref <bn_config>
+
+collator:
+    !new:recipes.voicebox.datasets.voicebox_promptmel_dataset.VoiceBoxCollator
+    tokenizer_pad: 16384
+    mel_config: !ref <mel_config>
+    mel_padding: -5
+    max_crop_second: 30
+    mel_to_umm: [1, 1]
+    bn_padding: !ref <bn_config[bn_padding]>
+
+# dataloader configuration
+train_dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <train_dataset>
+    num_workers: !ref <run_opts[num_workers]>
+    batch_size: null
+    collate_fn: !ref <collator>
+    pin_memory: True
+
+# datamodule configuration
+pl_datamodule: !new:recipes.voicebox.lit_modules.DataModule
+    train_dataloader: !ref <train_dataloader>
+
+model_cls: !name:recipes.voicebox.diffusion_modules.llama_ldm.LlamaDiffusion
+    hp: !ref <model_config>
+
+optimizer_cls: !name:deepspeed.ops.adam.FusedAdam
+    lr: !ref <run_opts[learning_rate]>
+    weight_decay: !ref <run_opts[weight_decay]>
+    betas: [0.9, 0.95]
+    eps: 0.0000001
+
+_steps_per_epoch: !apply:operator.length_hint [!ref <train_dataloader>]
+_world_size: !apply:samantha.utils.envs.getenv_int ["WORLD_SIZE", 1]
+scheduler_cls:
+    !name:recipes.bark.lr_schedulers.musiclm_lr_scheduler.WarmupCosine
+    init_lr: !ref <run_opts[learning_rate]>
+    warmup_steps: 1000
+    cycle_steps: 200000
+    min_lr: !ref <run_opts[learning_rate]> * 0.1
+
+# lightning model setting
+pl_module:
+    !new:recipes.voicebox.lit_modules.lit_diffusion_voicebox.VoiceBoxModule
+    model_cls: !ref <model_cls>
+    optimizer_cls: !ref <optimizer_cls>
+    scheduler_cls: !ref <scheduler_cls>
+    criterion_cls: !name:recipes.voicebox.modules.loss.MaskedMAELoss
+    checkpointing: !ref <run_opts[checkpointing]>
+    resume_ckpt_path: !ref <run_opts[resume_ckpt_path]>
+    required_modules:
+        umm_codebook:
+            !name:recipes.voicebox.utils.initializer.create_umm_codebook
+            ckpt_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/checkpoints/user/jiadongya/pretrain_model/UMM/V0.3.codebook
+
+logger:
+    - !new:pytorch_lightning.loggers.TensorBoardLogger
+      save_dir: !ref <run_opts[tensorboard_dir]>
+      name: !ref <run_opts[log_name]>
+      version: !ref <run_opts[version]>
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[tensorboard_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
+
+callbacks:
+    - !new:samantha.callbacks.HDFSModelCheckpoint
+      hdfs_path: !ref <run_opts[hdfs_path]>
+      every_n_train_steps: !ref <run_opts[n_step_save]>
+      mode: min
+      save_last: True
+      save_top_k: 20
+      save_on_train_epoch_end: True
+      verbose: True
+      monitor: loss
+      filename: "{epoch:02d}-{step}-{loss:.2f}"
+    - !new:pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: "step"
+    - !new:samantha.callbacks.timer.Timer
+
+plugins:
+    - !new:samantha.plugins.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: "auto"
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False # warning: setting to True can cause slowdowns
+    enable_model_summary: True
+    log_every_n_steps: 100
+    strategy: !ref <run_opts[strategy]>
+    max_epochs: !ref <run_opts[num_epochs]>
+    precision: !ref <run_opts[precision]>
+    profiler: !ref <run_opts[profiler]>
+    callbacks: !ref <callbacks>
+    gradient_clip_val: 0.2
+    benchmark: false
+    accumulate_grad_batches: !ref <run_opts[accumulate_grad_batches]>
+    plugins: !ref <plugins>
+    sync_batchnorm: True
+
+ckpt_path: null

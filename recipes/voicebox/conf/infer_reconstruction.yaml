@@ -1,0 +1,60 @@
+---
+
+run_opts:
+    precision: 32
+    strategy: ddp
+    ckpt_path: ""
+    output_dir: output_wavs
+    meta_lst: ""
+    num_workers: 4
+    seed: 1996
+    diffusion_ckpt_path: ""
+    umm_ckpt_path: ""
+    vocoder_ckpt_path: ""
+    umm_frame_rate: 25
+    mel_frame_rate: 80
+    infer_type: crop_prompt
+
+predict_dataset: !new:recipes.voicebox.datasets.meta_based_dataset.MetaBasedUnit2WavDataset
+    meta_lst: !ref <run_opts[meta_lst]>
+
+dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <predict_dataset>
+    num_workers: !ref <run_opts[num_workers]>
+    batch_size: null
+    drop_last: False
+
+pl_datamodule: !new:recipes.text2semantic.lit_modules.lit_data.DataModule
+    predict_dataloader: !ref <dataloader>
+
+pl_module: !new:recipes.voicebox.lit_modules.lit_diffusion_reconstruct.DiffusionU2SInfer
+    diffusion_ckpt_path: !ref <run_opts[diffusion_ckpt_path]>
+    umm_ckpt_path: !ref <run_opts[umm_ckpt_path]>
+    vocoder_ckpt_path: !ref <run_opts[vocoder_ckpt_path]>
+    output_dir: !ref <run_opts[output_dir]>
+    infer_type: !ref <run_opts[infer_type]>
+    umm_frame_rate: !ref <run_opts[umm_frame_rate]>
+    mel_frame_rate: !ref <run_opts[mel_frame_rate]>
+    mel_config: # ibigvgan config.
+        n_fft: 2048
+        num_mels: 80
+        hop_size: 300
+        win_size: 1024
+        fmin: 0
+        fmax: 12000
+        sampling_rate: 24000
+        mel_norm_mean: -4.5
+        mel_norm_std: 7
+        mel_mask_value: -5
+
+    seed: !ref <run_opts[seed]>
+
+trainer: !new:pytorch_lightning.Trainer
+    accelerator: "auto"
+    devices: "auto"
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    strategy: !ref <run_opts[strategy]>
+    precision: !ref <run_opts[precision]>
+    max_epochs: 1

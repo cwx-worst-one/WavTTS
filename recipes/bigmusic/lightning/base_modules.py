@@ -317,6 +317,7 @@ class BaseContinuousEmbedModule(BaseModule):
         ref_samples=None,
         rl_training=False,
         exclude_ids=None,
+        skip_sos=False,
     ):
         """
         Input:
@@ -345,12 +346,18 @@ class BaseContinuousEmbedModule(BaseModule):
 
         def _init_model_input():
             if self.use_cross_attn:
+                if skip_sos:
+                    raise NotImplementedError
                 return { 
                     "inputs_embeds": sos_embeds,
                     "encoder_hidden_states": inputs_embeds
                 }
             else:
-                return { "inputs_embeds": torch.cat([inputs_embeds, sos_embeds], dim=1) }
+                if skip_sos:
+                    # If already have sos embedding in prefix prompt, we can skip it
+                    return { "inputs_embeds": torch.cat([inputs_embeds,], dim=1) }
+                else:
+                    return { "inputs_embeds": torch.cat([inputs_embeds, sos_embeds], dim=1) }
 
         model_input = _init_model_input()
         if rl_training:

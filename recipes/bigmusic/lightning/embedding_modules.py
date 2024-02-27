@@ -509,6 +509,27 @@ class MulanTokenEmbedder(TokenEmbedder):
         )
         return mulan_tokens
 
+class LeadsheetTokenEmbedderV2(TokenEmbedder):
+    def embed(self, requires=None, input_tokens=None, token_wise_multiplication=None, token_ids=None, with_sos=False, with_eos=False):
+        # token_wise_multiplication is the scaling factor to each embedding of token, 1.0 means no change, 0.0 means disable
+        # Here we set (scaling factor) == (float time in second) as the representaion of time tokens
+        token_ids = self.tokenize(requires, input_tokens, token_ids, with_sos, with_eos)
+        embedding = self.embedder(token_ids)
+        if with_sos:
+            sos_token = self.get_sos_token(token_wise_multiplication.size(0))
+            sos_coff = torch.ones_like(sos_token).float() # for sos toke, we simply set token_wise_multiplication=1.0 (not scaling)
+            token_wise_multiplication = torch.cat([sos_coff, token_wise_multiplication], dim=1)
+        if with_eos:
+            eos_coff = self.get_sos_token(token_wise_multiplication.size(0))
+            eos_coff = torch.ones_like(eos_coff).float() # for eos toke, we simply set token_wise_multiplication=1.0 (not scaling)
+            token_wise_multiplication = torch.cat([token_wise_multiplication, eos_coff], dim=1)
+        token_wise_multiplication = token_wise_multiplication.unsqueeze(-1)
+        embedding = embedding * token_wise_multiplication
+        return embedding
+
+    def get_tokens(self, requires, input):
+        return input
+        
 class LyricsTokenEmbedder(TokenEmbedder):
     def __init__(self, vocab_size, embedding_dim, add_sos=False, add_eos=False):
         super().__init__(vocab_size, embedding_dim, add_sos=add_sos, add_eos=add_eos)
