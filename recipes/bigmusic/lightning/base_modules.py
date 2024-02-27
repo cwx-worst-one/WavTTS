@@ -75,14 +75,25 @@ class BaseModule(pl.LightningModule):
         )['state_dict']
         model_state_dict = self.state_dict()
         for k in state_dict:
-            if k in model_state_dict:
-                if isinstance(state_dict[k], torch.Tensor) and state_dict[k].shape != model_state_dict[k].shape:
-                    print(f"Skip loading parameter: {k}, "
-                                f"required shape: {model_state_dict[k].shape}, "
-                                f"loaded shape: {state_dict[k].shape}")
-                    state_dict[k] = model_state_dict[k]
-            else:
+            if k not in model_state_dict:
                 print(f"Dropping parameter {k}")
+                continue
+            # skip checking over non-tensor items. i.e. embedding_modules->set_extra_state
+            if not torch.is_tensor(state_dict[k]): continue
+
+            if state_dict[k].shape != model_state_dict[k].shape:
+                # special case for embedder weights
+                if k.endswith('embedder.weight') and state_dict[k].shape[1:] == model_state_dict[k].shape[1:]:
+                    print(f"Embedding module found with different vocab sizes. Copying subset of weights",
+                           k, state_dict[k].shape[0], model_state_dict[k].shape[0])
+                    min_vocab_size = min(state_dict[k].shape[0], model_state_dict[k].shape[0])
+                    model_state_dict[k][:min_vocab_size] = state_dict[k][:min_vocab_size]
+                    state_dict[k] = model_state_dict[k]
+                else:
+                    print(f"Skip loading parameter: {k}, "
+                            f"required shape: {model_state_dict[k].shape}, "
+                            f"loaded shape: {state_dict[k].shape}")
+                    state_dict[k] = model_state_dict[k]
 
         self.load_state_dict(state_dict, strict=False)
 

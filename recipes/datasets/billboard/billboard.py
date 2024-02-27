@@ -303,14 +303,10 @@ class BillboardLyricsTransform:
     def billboard_to_compat_lyrics(index: dict, buckets_sec: List[float]) -> List[Any]:
         utterances = index["lyrics"]["result"][0]["utterances"]
 
-        # TODO: Verify this
         segments = lyrics_to_segments(
             utterances,
-            fixed_duration=False,
             target_durations=buckets_sec,
             shuffle_start=True,
-            shuffle_lengths=True,
-            include_intro_p=0.5,
         )
         return segments
 

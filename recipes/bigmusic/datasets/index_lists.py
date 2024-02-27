@@ -126,6 +126,16 @@ INDEX = {
         "Mixed_MCC_GroupA_EN": 586, # 420 shards
         "Mixed_MCC_Vocal_EN": 1048, # Clipped - 715. Subset = 1050 Full = 1048
         "Mixed_MCC_GroupAB_EN": 1087, # 1085 - GroupB only
+        "SpotifySFT_Artist16": 1640, # Finetune on 16 artists, 3404 samples
+        "SpotifySFT_Artist6": 1624, # Finetune on 6 artists, 2687 samples
+        "SpotifySFT_Pop400": 1517, # Pop songs 409
+        "SpotifySFT_BillboardV2": 1610, # 1523, # 100k billboard
+        "SpotifySFT_GroupA_TTPop": 1620,
+        "MCCVocalA_DeepChorus": 1576,
+        # "SpotifySFT": 1506, # BigMusic_SFT_Bill_19325
+        # "SpotifySFT": 1504, # bigmusic_genre40655 from 1M group A
+        # "SpotifySFT": 1495, # genre19981 from 1M group A
+        "MCC_Vocal": 475,
     },
     "US": {
         "MCCVocal-Zh-A": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc60m_chinese/2023-09-24_repartition/type=A/lang=chinese/url2index.txt",

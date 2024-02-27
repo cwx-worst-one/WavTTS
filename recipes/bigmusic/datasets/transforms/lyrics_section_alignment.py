@@ -1,3 +1,6 @@
+from deprecated import deprecated
+from collections import Counter
+from recipes.bigmusic.datasets.transforms.lyrics_segment_gt import concat_segment
 
 # Section alignment algorithm
 def get_valid_words(segment):
@@ -58,6 +61,8 @@ def merge_intervals(music_structures):
     merged_structures.append(last_structure)
     return merged_structures
 
+
+@deprecated(version='0', reason="Use music_structure_to_section_segments, which splits segments by sections instead of words")
 def get_section_aligned_text(segment, section_labels):
     # Algorithm: 
     # 1. Given structure label array, find sections overlapping with segment start and end
@@ -90,3 +95,42 @@ def get_section_aligned_text(segment, section_labels):
         section_name = insertion_index['section_name']
         segment_text = segment_text[:index] + f' <{section_name}> ' + segment_text[index:]
     return segment_text
+
+
+
+# V1
+def is_valid_musical_structure(music_structure):
+    counts = Counter([section['funct_name'] for section in music_structure])
+    return counts['chorus'] > 1
+
+def find_largest_overlap(section_labels, segment):
+    def get_overlap(a, b):
+        return max(0, min(a[1], b[1]) - max(a[0], b[0]))
+    
+    overlap_to_section_idx = []
+    for idx, section in enumerate(section_labels):
+        overlap = get_overlap(section['interval'], (segment.start, segment.end))
+        overlap_to_section_idx.append((overlap, idx))
+    return sorted(overlap_to_section_idx, reverse=True)[0][1]
+
+def music_structure_to_section_segments(metadata, segments, target_durations):
+    music_structure = merge_intervals(metadata['music_structure'][0])
+    if not is_valid_musical_structure(music_structure): return None
+    for idx, segment in enumerate(segments):
+        if len(segment.text.strip()) == 0: continue
+        section_idx = find_largest_overlap(music_structure, segment)
+        section = music_structure[section_idx]
+        if 'segments' in section:
+            section['segments'].append(segment)
+        else:
+            section['segments'] = [segment]
+
+    section_segments = []
+    for section in music_structure:
+        if 'segments' not in section: continue
+        segments = section['segments']
+        section_name = section['funct_name']
+        segment_joined = concat_segment(segments, target_duration=max(target_durations))
+        segment_joined.text = f'<{section_name}> {segment_joined.text}'
+        section_segments.append(segment_joined)
+    return section_segments

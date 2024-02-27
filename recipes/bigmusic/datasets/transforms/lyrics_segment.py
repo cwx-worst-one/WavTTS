@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Generator, Optional, Callable
+from typing import Any, Dict, List, Generator, Optional, Callable, Tuple
 import io
 import torch
 import webdataset as wds
@@ -8,10 +8,8 @@ import math
 import random
 import numpy as np
 import json
-from typing import Tuple
 from string import punctuation, whitespace
 from copy import deepcopy
-import re
 from samantha.transforms.audio import (
     NormalizeAudioToFloat32,
     SetAudioDimensions,
@@ -22,8 +20,14 @@ from recipes.musiclm.transforms.audio import (
     FastNormalizeAudio
 )
 from recipes.musiclm.transforms.base import TransformBase
-from recipes.bigmusic.datasets.transforms.lyrics_section_alignment import get_section_aligned_text, merge_intervals
-from recipes.bigmusic.datasets.transforms.lyrics_segment_gt import lyrics_to_section_segments
+from recipes.bigmusic.datasets.transforms.lyrics_section_alignment import music_structure_to_section_segments
+from recipes.bigmusic.datasets.transforms.lyrics_segment_gt import gt_lyrics_to_section_segments
+from recipes.bigmusic.datasets.transforms.lyrics_filters import is_invalid_song
+
+import operator
+from functools import reduce
+
+punctuation_whitespace = set(punctuation + whitespace)
 
 class ReadMP3BytesIO(ReadMP3):
     def __call__(self, mp3: bytes) -> np.ndarray:
@@ -42,6 +46,7 @@ class LyricsSegmentTransforms(TransformBase):
         min_song_confidence: int=0.8,
         min_segment_confidence: int=0.8,
         handler: Callable = wds.warn_and_continue,
+        normalize_audio: bool = False
     ) -> None:
         super().__init__(log_interval=500)
         self.sample_rate = sample_rate
@@ -57,6 +62,7 @@ class LyricsSegmentTransforms(TransformBase):
         self.shuffle_segments = shuffle_segments
         self.min_song_confidence = min_song_confidence
         self.min_segment_confidence = min_segment_confidence
+        self.normalize_audio = normalize_audio
 
         if self.audio_format == 'npy':
             read_mp3 = lambda x: x
@@ -71,19 +77,21 @@ class LyricsSegmentTransforms(TransformBase):
                 NormalizeAudioToFloat32(),
             ]
         )
-        self.normalize_audio = FastNormalizeAudio()
+        self.normalize_audio_tfm = FastNormalizeAudio()
 
-    def process_segment(self, segment, audio_wavs, metadata, process_music_structure=False):
+    def process_segment(self, segment: 'Segment', audio_wavs):
         audio_duration = audio_wavs['target_audio'].shape[-1] / self.sample_rate
-        if segment.end > audio_duration:
-            return None
-        cropped_segments = { name: crop_pad_audio_to_segment(segment, audio, self.sample_rate) for name, audio in audio_wavs.items() }
-        if 'music_structure' in metadata and process_music_structure: # TODO: (AS) enable this in config
-            music_structures = merge_intervals(metadata['music_structure'][0])
-            lyrics_text = get_section_aligned_text(segment, music_structures)
-        else:
-            lyrics_text = segment.text.strip()
+        start, end, duration = segment.get_instrumental_range()
+        sample_start = int(start*self.sample_rate)
+        target_samples = int(duration*self.sample_rate)
+        if segment.end > audio_duration or target_samples < 0:
+            raise Exception(f"Invalid segment split for segment {segment}, audio: {audio_duration}, samples: {target_samples}")
+        cropped_segments = { name: crop_pad_to_seq_length(audio[sample_start:], target_samples, audio.dtype) for name, audio in audio_wavs.items() }
+        if cropped_segments['target_audio'].sum() == 0:
+            raise Exception("Processed segment is silent, skipping segment")
+        lyrics_text = segment.text.strip()
         if lyrics_text is None: return None
+        if lyrics_text and segment.phoneme is None: return None
         cropped_segments['lyrics'] = lyrics_text
         cropped_segments['phoneme'] = segment.phoneme
         if cropped_segments['phoneme'] is None:
@@ -113,9 +121,10 @@ class LyricsSegmentTransforms(TransformBase):
             audio_wavs['target_audio'] = audio_wavs['style_audio'] + audio_wavs['vocal_audio']
         
         # Normalize wavs based on target_audio
-        target_audio = audio_wavs['target_audio']
-        for name, audio_wav in audio_wavs.items():
-            audio_wavs[name] = self.normalize_audio(audio_wav, target_audio)
+        if self.normalize_audio:
+            target_audio = audio_wavs['target_audio']
+            for name, audio_wav in audio_wavs.items():
+                audio_wavs[name] = self.normalize_audio_tfm(audio_wav, target_audio)
         return audio_wavs
 
 
@@ -133,18 +142,12 @@ class LyricsSegmentTransforms(TransformBase):
             self._update_stats(skipped=True, message=reason)
             return
 
-        fixed_duration = len(self.sample_duration) == 1 # if only one duration is provided. Fix it to that duration
-        shuffle_start = self.shuffle_segments and len(lyrics) > 8
-        shuffle_lengths = self.shuffle_segments
-        include_intro_p = 0.5 # include intro for 2 min training
-        segments: List[Segment] = lyrics_to_segments(
-            lyrics, 
-            fixed_duration=fixed_duration,
+        grouping = 'fixed_length' if len(self.sample_duration) == 1 else 'variable_length'
+        segments: List[Segment] = lyrics_to_segments(lyrics, metadata, 
             target_durations=self.sample_duration,
-            shuffle_start=shuffle_start,
-            shuffle_lengths=shuffle_lengths,
+            shuffle_start=self.shuffle_segments,
             min_confidence=self.min_segment_confidence,
-            include_intro_p=include_intro_p
+            grouping=grouping
         )
         if self.shuffle_segments:
             random.shuffle(segments)
@@ -164,7 +167,7 @@ class LyricsSegmentTransforms(TransformBase):
         # Output clips
         for segment in segments:
             try:
-                item = self.process_segment(segment, audio_wavs, metadata)
+                item = self.process_segment(segment, audio_wavs)
             except Exception as e:
                 print('Exception in process_segment', e)
                 self.handler(e)
@@ -197,6 +200,7 @@ def extract_metadata_and_utterances(item):
 
     if 'lyrics_gt' in metadata:
         lyrics = metadata.pop('lyrics_gt')
+        metadata['is_lyrics_gt'] = True
         if 'utterances' in lyrics: # For 9M gt data
             lyrics = force_aligned_word_format_to_line_format(lyrics['utterances'])
             return metadata, lyrics
@@ -224,7 +228,7 @@ def extract_metadata_and_utterances(item):
 
     return metadata, utterances
     
-def crop_pad_audio_to_segment(segment, audio, sample_rate, target_duration=None):
+def crop_pad_audio_to_segment(segment: 'Segment', audio, sample_rate, target_duration=None):
     sample_start = int(segment.start*sample_rate)
     if target_duration is None:
         target_samples = int(segment.duration*sample_rate)
@@ -254,9 +258,12 @@ class Segment():
     confidence: float
     words: List[str]
     phoneme: str
-        
+    inst_start: float = None
+    inst_end: float = None
+    target_duration: float = None
+
     @classmethod
-    def from_dict(cls, json_dict):
+    def from_utt(cls, json_dict):
         if json_dict['start_time'] is None:
             start, end = None, None
         elif json_dict['start_time'] == -2:
@@ -276,7 +283,107 @@ class Segment():
             words = []
             print('WARNING: words is None. Double check if lyrics exists', text)
         phoneme = json_dict.get('phoneme', '')
-        return Segment(start, end, text, confidence, words, phoneme)
+        return Segment(start, end, text, confidence, words, phoneme, start, end)
+
+    @classmethod
+    def from_word_segment(cls, ws: 'WordSegment'):
+        return Segment(ws.start, ws.end, ws.text, ws.confidence, ws.words, ws.phoneme, ws.inst_start, ws.inst_end)
+
+    @classmethod
+    def segments_from_utterances(cls, utterances: List['Segment']):
+        segments = [Segment.from_utt(utt) for utt in utterances]
+        Segment.update_segments_with_instrumental_timings(segments)
+        return segments
+
+    @classmethod
+    def update_segments_with_instrumental_timings(cls, segments):
+        for idx in range(len(segments)):
+            s_cur = segments[idx]
+            s_cur.inst_start = segments[idx-1].end if idx > 0 else 0
+            s_cur.inst_end = segments[idx+1].start if idx < len(segments)-1 else 10000
+            # Note: we should technically set the word timings, but ignoring that uncommon case for now
+
+    def get_instrumental_range(self):
+        if self.inst_start is None or self.inst_end is None or self.target_duration is None: 
+            return self.start, self.end, self.duration
+        
+        target_duration = self.target_duration
+        min_start = max(self.end - self.target_duration, self.inst_start) # -8 (-8, 0.)  t = 30. 0 (17, 0) t = 5, 
+        min_start = min(min_start, self.start)
+        max_start = self.start
+        random_start = random.uniform(min_start, max_start)
+        random_end = min(random_start + target_duration, self.inst_end)
+        random_end = max(self.end, random_end)
+        assert min_start >= self.inst_start and max_start <= self.start
+        assert random_end >= self.end and random_end <= self.inst_end
+        return random_start, random_end, random_end-random_start
+
+    @property
+    def duration(self):
+        if self.start is None: return None
+        return self.end - self.start
+
+    def has_valid_time(self):
+        return self.start >= 0
+    
+    def __repr__(self) -> str:
+        return f"[{self.start} - {self.end}] ({round(self.duration, 2)}, {round(self.confidence, 2)}) - {self.text}"
+    
+    def __add__(self, other: 'Segment', new_line_token=" <n> "):
+        if self.phoneme is None or other.phoneme is None:
+            phoneme = None
+        else:
+            phoneme = self.phoneme + new_line_token + other.phoneme
+        return Segment(
+            start=self.start,
+            end=other.end,
+            text=self.text + new_line_token + other.text,
+            confidence=(self.confidence + other.confidence)/2,
+            words=self.words + [WordSegment.new_line_dict()] + other.words,
+            phoneme=phoneme,
+            inst_start=self.inst_start,
+            inst_end=other.inst_end
+        )
+
+    def filter_invalid_words(self, words):
+        def is_valid(word: WordSegment):
+            if word.is_punctuation: return True
+            if word.start >= 0 and word.start > self.start: return True
+            return False
+        valid_words = [word for word in words if is_valid(word)]
+        return valid_words
+
+    def split_at(self, duration) -> Tuple['Segment', 'Segment']:
+        if self.duration <= duration: return deepcopy(self), None
+        words = [WordSegment.from_word_dict(word) for word in self.words] # TODO: set left right instrumental
+        valid_words = self.filter_invalid_words(words)
+        target_time = self.start + duration
+
+        for idx, word in enumerate(valid_words):
+            if word.end > target_time: break
+        target_segment = Segment.from_word_segment(reduce(operator.add, valid_words[:idx]))
+        remaining_segment = Segment.from_word_segment(reduce(operator.add, valid_words[idx:])) if len(valid_words[idx:]) else None
+        return target_segment, remaining_segment
+
+    def split_to_segments(self, target_duration):
+        long_segment = deepcopy(self)
+        split_segments = []
+        while long_segment.duration > target_duration:
+            target_segment, long_segment = long_segment.split_at(target_duration)
+            split_segments.append(target_segment)
+            if long_segment is None: break
+        return split_segments
+
+
+class WordSegment(Segment):
+    @staticmethod
+    def new_line_dict():
+        return {'text': " <n> ",
+        'confidence': 0.0,
+        'start_time': 0,
+        'end_time': 0,
+        'phoneme': " <n> ",
+        'normalized_text': None}
 
     @classmethod
     def from_word_dict(cls, json_dict):
@@ -295,160 +402,131 @@ class Segment():
             confidence = float(json_dict['confidence'])
         else:
             confidence = 1
-        words = deepcopy([json_dict]) # for words, we set it to itself
+        words = [json_dict] # for words, we set it to itself
         phoneme = json_dict.get('phoneme', '')
-        return Segment(start, end, text, confidence, words, phoneme)
-    
-    @property
-    def duration(self):
-        if self.start is None: return None
-        return self.end - self.start
+        return WordSegment(start, end, text, confidence, words, phoneme, start, end)
 
-    def has_valid_time(self):
-        return self.start >= 0
-    
-    def __repr__(self) -> str:
-        return f"[{self.start} - {self.end}] ({self.duration}) - {self.text}"
+    def is_punctuation(self): return self.text in punctuation_whitespace or self.text == " <n> "
 
-    def __add__(self, other: 'Segment', new_line_token=". "):
-        if self.phoneme is None:
-            self.phoneme = ''
-        if other.phoneme is None:
-            other.phoneme = ''
-        return Segment(
-            start=self.start,
-            end=other.end,
-            text=self.text + new_line_token + other.text,
-            confidence=(self.confidence + other.confidence)/2,
+    def __add__(self, other: 'WordSegment'):
+        if self.phoneme is None or other.phoneme is None:
+            phoneme = None
+        else:
+            phoneme = self.phoneme + other.phoneme
+
+        # punctuation does not have correct timings
+        if other.is_punctuation():
+            start, end = self.start, self.end
+            inst_start, inst_end = self.inst_start, self.inst_end
+        elif self.is_punctuation():
+            start, end = other.start, other.end
+            inst_start, inst_end = other.inst_start, other.inst_end
+        else:
+            start, end = self.start, other.end
+            inst_start, inst_end = self.inst_start, other.inst_end
+
+        confidences = [self.confidence, other.confidence]
+        if min(confidences) <= 0: confidence = max(confidences)
+        else: confidence = sum(confidences) / 2
+
+        if end != max(self.end, other.end): 
+            print('Invalid end', end, self.end, other.end, self, other, inst_start, inst_end)
+            raise Exception()
+        
+        return WordSegment(
+            start=start,
+            end=end,
+            text=self.text + other.text,
+            confidence=confidence,
             words=self.words + other.words,
-            phoneme=self.phoneme + " <n> " + other.phoneme
+            phoneme=phoneme,
+            inst_start=inst_start,
+            inst_end=inst_end
         )
 
-def lyrics_to_segments(lyrics, target_durations=(20,25,30),
-                       new_line_token=". ", fixed_duration=False, min_confidence=0.75, 
-                       shuffle_start=False, shuffle_lengths=False, include_intro_p=0.5
-    ):
+def lyrics_to_segments(lyrics, metadata=None, target_durations=(20,25,30), min_confidence=0.75, 
+                       shuffle_start=False, grouping='variable_length'):
     if not lyrics: return []
 
-    # for parsing ground truth lyrics
-    section_segments = lyrics_to_section_segments(lyrics, target_durations=target_durations)
-    if section_segments: return section_segments
+    segments = Segment.segments_from_utterances(lyrics)
+    if shuffle_start and len(segments) > 8:
+        start_idx = random.randint(0, 2)
+        segments = segments[start_idx:]
+    valid_segments = [s for s in segments if s.text.strip()]
 
-    segments = []
-    segment = None
+    if grouping == 'variable_length':
+        if metadata and 'is_lyrics_gt' in metadata:
+            target_segments = gt_lyrics_to_section_segments(segments, target_durations=target_durations)
+            min_confidence = 0.2
+        elif metadata and 'music_structure' in metadata:
+            target_segments = music_structure_to_section_segments(metadata, segments, target_durations=target_durations)
+            min_confidence = 0.2
+        else: 
+            target_segments = None
+        if target_segments is None:
+            target_segments = group_by_variable_length(valid_segments, target_durations)
+    elif grouping == 'fixed_length':
+        target_segments = group_by_fixed_length(valid_segments, max(target_durations))
 
-    lyrics.append({
-        'start_time': 10000*1000, 
-        'end_time': 10001*1000,
-        'text': 'STOP_PLACEHOLDER', 
-        'words': [],
-    })
+    # filter by confidence and max duration
+    def is_valid_segment(segment: Segment, min_confidence, target_durations):
+        if segment.confidence <= min_confidence: return False
+        if len(target_durations) == 1: return segment.duration <= target_durations[0]
+        inst_duration = segment.inst_end - segment.inst_start
+        return inst_duration >= min(target_durations) and segment.duration <= max(target_durations)
 
-    start_idx = random.randint(0, 2) if shuffle_start else 0
-    if shuffle_lengths:
-        target_duration_length = random.choice(target_durations)
-    else:
-        target_duration_length = max(target_durations)
-    for i in range(start_idx, len(lyrics)):
-        current_diction = lyrics[i]
-        current_segment = Segment.from_dict(current_diction)
-        if len(current_segment.text.strip()) == 0: continue # instrumental
-        if current_segment.text and current_segment.phoneme is None: # error with phoneme - usually due to non-tts supported languages - arabic, etc.
-            segment = None
+    valid_target_segments = [t for t in target_segments if is_valid_segment(t, min_confidence, target_durations)]
+
+    if len(valid_target_segments) == 0:
+        if len(target_segments)  == 0:
+            print('WARNING no segments processed. Check filters', shuffle_start, len(target_segments), len(valid_target_segments), target_segments)
+        if shuffle_start and max(target_durations) > 90:
+            # Hack to improve 2 minute long segment slicing. Try re-running again without shuffling start time
+            return lyrics_to_segments(lyrics, metadata, target_durations=target_durations, min_confidence=min_confidence, shuffle_start=False, grouping=grouping)
+    return valid_target_segments
+
+
+## Different grouping algorithms ## 
+def group_by_fixed_length(segments: List[Segment], target_duration):
+    if len(segments) == 0: return []
+    grouped_segments = []
+    base_segment: Segment = None
+    for idx, s in enumerate(segments):
+        if base_segment is None: # initial
+            base_segment = s
             continue
-        if current_segment.start is None or current_segment.start < 0 or (segment and current_segment.start < segment.end):
-            segment = None
+        if base_segment.duration > target_duration or idx == len(segments)-1: # target reached. append and reset
+            target_segment, remainder = base_segment.split_at(target_duration)
+            target_segment.end = base_segment.start + target_duration
+            grouped_segments.append(target_segment)
+            base_segment = s
+        else: # extend
+            base_segment += s
+    return grouped_segments
+
+def group_by_variable_length(segments: List[Segment], target_durations):
+    if len(segments) == 0: return []
+    grouped_segments = []
+    base_segment: Segment = None
+
+    target_duration_length = random.choice(target_durations + [max(target_durations)])
+    for idx, s in enumerate(segments):
+        if base_segment is None: # initial
+            base_segment = s
             continue
-        
-        # Case #1: overflow. Append segment. Create new
-        if segment and (current_segment.end - segment.start) > target_duration_length:
-            if fixed_duration and 'words' in current_diction:
-                # append words from current segment.
-                target_end_time = segment.start + target_duration_length
-                extended_segment, _ = _words_to_segment(current_diction['words'], segment.start, target_end_time)
-                if extended_segment:
-                    segment += extended_segment
-                segment.end = target_end_time
-            else:
-                segment.end = max(segment.end, min(segment.start + target_duration_length, current_segment.start))
+        if s.end - base_segment.start > target_duration_length:
+            base_segment.target_duration = target_duration_length # append for instrumental support
+            grouped_segments.append(base_segment)
+            base_segment = s
+            target_duration_length = random.choice(target_durations) # reset target
+        else:
+            base_segment += s
+    # add last segment
+    if base_segment.duration > target_duration_length:
+        base_segment.target_duration = target_duration_length # append for instrumental support
+        grouped_segments.append(base_segment)
+    return grouped_segments
 
-            if (segment.duration >= min(target_durations)):
-                segments.append(segment)
-            segment = None
-
-        if current_segment.confidence < min_confidence:
-            # low confidence segment. skip and reset
-            segment = None
-            continue
-        
-        # # Break long segments into multiple segments
-        max_duration = max(target_durations)
-        min_duration = min(target_durations)
-        if current_segment and current_segment.duration > max_duration:
-            # if subwords does not exist, we can't slice. skip segment
-            if 'words' not in current_diction:
-                segment = None
-                continue
-            cached_index = 0
-            for i in range(math.ceil(current_segment.duration / max_duration)):
-                start = current_segment.start + i * max_duration
-                end = current_segment.start + (i+1) * max_duration
-                clipped_segment, cached_index = _words_to_segment(current_diction['words'], start, end, cached_index)
-                if clipped_segment is None: 
-                    continue
-                if fixed_duration and clipped_segment.duration <= max_duration:
-                    clipped_segment.end = clipped_segment.start + max_duration
-                    segments.append(clipped_segment)
-                elif clipped_segment.duration <= max_duration and clipped_segment.duration >= min_duration:
-                    segments.append(clipped_segment)
-
-            # reset everything
-            segment = None
-            continue
-
-        # Create new segment
-        if segment is None:
-            segment = current_segment
-            if shuffle_lengths:
-                target_duration_length = random.choice(target_durations)
-            else:
-                target_duration_length = max(target_durations)
-
-            # Set start to beginning of last segment to include instrumental sections
-            previous_end_offset = 1 # offset by 1s to skip residual vocals
-            previous_end_time = 0 if i == 0 else Segment.from_dict(lyrics[i-1]).end + previous_end_offset
-            if random.random() > include_intro_p and previous_end_time and segment.end - previous_end_time <= target_duration_length:
-                segment.start = previous_end_time
-        else: # append to existing segment
-            segment += current_segment
-    return segments
-
-punctuation_whitespace = set(punctuation + whitespace)
-def _words_to_segment(words, start_time, end_time, start_index=0):
-    def is_word(word): return word.text not in punctuation_whitespace
-    segment = None
-    end_index = start_index
-    idx = 0
-
-    for idx, word in enumerate(words[start_index:]):
-        word_segment = Segment.from_word_dict(word)
-        end_index = start_index + idx
-        if is_word(word_segment):
-            if word_segment.start >= 0 and word_segment.start < start_time: # skip words less than start time
-                continue
-            if word_segment.end > end_time:
-                break
-        else: # keep punctuation
-            pass
-
-        if segment:
-            if word_segment.has_valid_time() and word_segment.start >= start_time:
-                segment.end = word_segment.end
-            segment.text += word_segment.text # need to append space 
-            segment.words += word_segment.words
-        elif segment is None and word_segment.has_valid_time() and word_segment.start >= start_time:
-            segment = word_segment
-    return segment, end_index-1
 
 # Converts word format (outputs from force alignment), to line-by-line format
 PAD_TIME = -2
@@ -470,10 +548,15 @@ def force_aligned_word_format_to_line_format(lyrics):
         if '\n' in lyrics:
             current_line = _strip_non_words(current_line)
             if len(current_line) == 0: continue
+
+            confidences = [w['confidence'] for w in current_line if w['text'] not in punctuation_whitespace]
+            confidence = sum(confidences) / len(confidences) if confidences else 0
             line = {
                 'start_time': current_line[0]['start_time'],
                 'end_time': current_line[-1]['end_time'],
                 'text': ''.join([w['text'] for w in current_line]),
+                'confidence': confidence,
+                'phoneme': ''.join([w.get('phoneme', '') for w in current_line]), # TODO: maybe need to set this to None
                 'words': current_line
             }
             lines.append(line)
@@ -481,150 +564,3 @@ def force_aligned_word_format_to_line_format(lyrics):
         else:
             current_line.append(word_json)
     return lines
-
-# Filters
-def is_audio_metrics_good(audio_metrics: Dict[str, Any]) -> Tuple[bool, str]:
-    # Clipping
-    clip = audio_metrics.get("clipping", {})
-    if clip.get("rate", 0) >= 5e-5:
-        return False
-    for ch in ["left", "right"]:
-        if clip.get(f"peak_rate_{ch}", 0) >= 0.05:
-            return False
-    # Loudness
-    loudness = audio_metrics.get("loudness", {})
-    if (
-        loudness.get("integrated_loudness", -7) > -5
-        or loudness.get("max_mom_loud", -7) >= 0
-        or loudness.get("max_short_term_loud", -7) >= 0
-    ):
-        return False
-    # RMS stats
-    rms_stats = audio_metrics.get("rms_stats", {})
-    if rms_stats.get("peak", 0) > 3:
-        return False
-    for ch in ["left", "right"]:
-        if (
-            rms_stats.get(f"{ch}_total", -10) > -5
-            or rms_stats.get(f"{ch}_total", -10) < -40
-            or rms_stats.get(f"normed_std_{ch}", -10) < -19.5
-        ):
-            return False
-    # Cutoff frequency
-    cutoff_freq = audio_metrics.get("cutoff_frequency", {})
-    for ch in ["left", "right"]:
-        if (
-            cutoff_freq.get(f"rel_{ch}", 48000) < 15000
-            and cutoff_freq.get(f"rel_{ch}_conf", 0) > 0.6
-            and cutoff_freq.get(f"band_std_{ch}", 10) < 5
-        ):
-            return False
-    # Phase
-    phase = audio_metrics.get("phase_check", {})
-    if (
-        phase.get("has_phase_issue", False)
-        or abs(phase.get("rms_downmix_diff", 0.1)) > 3
-    ):
-        return False
-    return True
-
-
-def is_valid_lyrics(lyrics, confidence_threshold=0.8):
-    if lyrics is None:
-        return False
-    confidences = []
-    for utterance in lyrics:
-        if 'confidence' in utterance:
-            confidence = float(utterance["confidence"])
-        elif 'additions' in utterance:
-            confidence = float(utterance["additions"]["confidence"])
-        else:
-            # some lyrics may not have confidence (force alignment). return True
-            return True
-        if confidence == 0:
-            continue
-        confidences.append(confidence)
-    if len(confidences) == 0:
-        return False
-    return np.array(confidences).mean() > confidence_threshold
-
-def is_invalid_song(metadata, lyrics, confidence_threshold):
-    # Metadata filtering
-    # (AS) TODO: figure out a better way for english and cn to coexist. However, it should have already been filtered out on dataset
-    # if 'final_language' in metadata and metadata['final_language'] != 'English': 
-    #     return True, "Filter invalid final_language"
-    
-    if not is_audio_metrics_good(metadata.get('audio_metrics', {})): 
-        return True, "Filter invalid audio metrics"
-    
-    # Lyrics filtering
-    if lyrics is None or len(lyrics) == 0:
-        return True, "Filter invalid lyrics. None found"
-    
-    # Song title filtering
-    if not is_valid_song_name(metadata):
-        return True, "Filter live/instrumental song names."
-
-    if not is_valid_lyrics(lyrics, confidence_threshold=confidence_threshold):
-        return True, "Filter low confidence lyrics."
-    
-    
-    return False, "Passed filters"
-
-
-def is_valid_song_name(metadata):
-    if 'meta_song_title' not in metadata: return True
-    song_name = metadata['meta_song_title']
-    album_name = metadata['meta_album_title']
-    if not album_name: album_name = ''
-    full_name = (str(song_name) + ' ' + str(album_name)).lower()
-    if is_live(full_name): return False
-    if is_instrumental(full_name): return False
-    # if is_remix(full_name): return False # let's keep remixes for now
-    return True
-
-def is_live(song_name):
-    if re.search(r'\(live\b', song_name):
-        return True
-    if re.search(r'- live\b', song_name):
-        return True
-    if re.search(r'\/ live\b', song_name):
-        return True
-    if re.search(r'\blive at ', song_name):
-        return True
-    if re.search(r'\blive from ', song_name):
-        return True
-    if 'recorded live ' in song_name:
-        return True
-    if ' live radio ' in song_name:
-        return True
-    if ' live lounge' in song_name:
-        return True
-    if ' live sets' in song_name:
-        return True
-    if ' live session' in song_name:
-        return True
-    if ' live performance' in song_name:
-        return True
-    if 'concert' in song_name:
-        return True
-    # chinese
-    if '现场' in song_name: # live
-        return True
-    if '音乐会' in song_name: # concert
-        return True
-    return False
-
-def is_instrumental(song_name):
-    if 'instrumental' in song_name:
-        return True
-    return False
-
-def is_remix(song_name):
-    if 'remix' in song_name:
-        return True
-    if re.search(r'\bmix\b', song_name):
-        return True
-    if '混音' in song_name: # remix
-        return True
-    return False

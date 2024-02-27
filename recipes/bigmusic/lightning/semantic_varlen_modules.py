@@ -3,6 +3,8 @@ from torch.nn.utils.rnn import pad_sequence, unpad_sequence
 from recipes.bigmusic.lightning.base_modules import BaseContinuousEmbedModule
 from recipes.bigmusic.lightning.embedding_modules import (
     LyricsTokenEmbedder,
+    MulanCategoricalEmbedder,
+    TagCategoricalEmbedder,
     WavToVecTokenEmbedder,
     BestRQTokenEmbedder,
     MulanEmbedder,
@@ -36,6 +38,8 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
         lyrics_vocab_size = extra_params['lyrics_codebook_size']
         mulan_embed_dim = extra_params['mulan_embed_dim']
         semantic_codebook_size = extra_params['semantic_codebook_size']
+        style_category_vocab_size = extra_params.get('style_category_vocab_size', 256)
+        tag_dropout_rate = extra_params.get('tag_dropout_rate', 0)
         embedder_dict = {}
         for emb_type in extra_params.get("input_embedders", ["mulan", "lyrics_tokens"]):
             if emb_type == "mulan":
@@ -43,6 +47,15 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
                     input_dim=mulan_embed_dim,
                     embedding_dim=hidden_size,
                     add_sos=True,
+                )
+            elif emb_type == "mulan_categorical":
+                # Read ground truth tags from style_text
+                embedder_dict[emb_type] = MulanCategoricalEmbedder(
+                    input_dim=mulan_embed_dim,
+                    vocab_size=style_category_vocab_size,
+                    embedding_dim=hidden_size,
+                    add_sos=True,
+                    dropout=tag_dropout_rate
                 )
             elif emb_type == "lyrics_tokens":
                 embedder_dict[emb_type] = LyricsTokenEmbedder(
@@ -108,6 +121,8 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
             mulan_embeds = mulan_embedder.embed(self.requires, batch['style_text'], with_sos=True, data_type='text')
         elif 'style_audio' in conditions:
             mulan_embeds = mulan_embedder.embed(self.requires, batch['style_audio'].to(self.device), with_sos=True, data_type='music')
+        elif 'style_category' in conditions:
+            mulan_embeds = mulan_embedder.embed(self.requires, batch['style_category'], with_sos=True, data_type='category')
         elif 'style_tag' in conditions: # using Mulan for on-the-fly MIR tagging
             mulan_embeds = mulan_embedder.embed(self.requires, batch['style_audio'].to(self.device), with_sos=True, data_type='tag')
         else: # adding SOS token no matter what so that all parameters get used
@@ -216,7 +231,7 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
     def prepare_model_inputs(self, batch):
         model_inputs = []
         for emb_type, embedder in self.input_embedders.items():
-            if emb_type == "mulan":
+            if (emb_type == "mulan") or (emb_type == "mulan_categorical"):
                 emb_inputs = self.prepare_mulan_inputs(batch, embedder)
             elif emb_type == "lyrics_tokens":
                 emb_inputs = self.prepare_lyrics_inputs(batch, embedder)

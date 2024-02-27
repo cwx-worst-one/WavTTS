@@ -4,7 +4,10 @@ import time
 import pytorch_lightning as pl
 import soundfile as sf
 import torch
-import torch_museval
+try:
+    import torch_museval
+except Exception as e:
+    print('WARNING: torch_museval not installed. This is required if doing Soundstream training')
 import torchaudio
 
 from pytorch_lightning.utilities.rank_zero import rank_zero_info

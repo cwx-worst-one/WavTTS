@@ -125,7 +125,7 @@ def save_batch_outputs(
         absolute_idx =  prompt_idx + index_offset
         lyrics_str = lyrics[ii] if 'lyrics_tokens' in conditions else None
         lyrics_normalized_str = lyrics_normalized_text[ii] if 'lyrics_tokens' in conditions and lyrics_normalized_text else None        
-        style_text = prompts[ii] if 'style_text' in conditions else None
+        style_text = prompts[ii] if prompts else None
         style_category = style_categories[ii] if 'style_category' in conditions and style_categories else None
         structure = structures[ii] if 'structure' in conditions else None
         if index is None:
@@ -168,6 +168,7 @@ def save_batch_outputs(
                 'round': sample_round,
                 'absolute_idx': absolute_idx,
                 'batch_idx': ii,
+                'csv_idx': index[ii] if index else absolute_idx,
                 'beam_idx': beam_idx,
             }
         }
@@ -202,7 +203,7 @@ class NormVolumeCallback(pl.Callback):
 
 
 def format_video_text(metadata, max_width=50):
-    index = metadata['index']['absolute_idx']
+    index = metadata['index']['csv_idx']
     style_text = ""
     if metadata.get("style_text") is not None:
         style_text = metadata.get('style_text')

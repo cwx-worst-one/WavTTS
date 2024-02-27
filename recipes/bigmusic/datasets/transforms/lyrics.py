@@ -1,6 +1,7 @@
 from importlib.metadata import metadata
 from typing import Any, Dict, List, Generator, Optional, Callable
 import io
+import json
 import torch
 import webdataset as wds
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ import random
 from recipes.bigmusic.utils.format_utils import rewrite_metadata, rewrite_playlist_labels
 from functools import partial
 from collections import Counter
+import ast
 
 def pad_crop(sequence, seq_len, dtype, padding_value=0):
     item_pad = torch.full((seq_len,), fill_value=padding_value, dtype=dtype)
@@ -101,6 +103,30 @@ class BillboardV2MetadataTextTransform():
 
         style_text = rewrite_metadata(meta_dict)
         return style_text
+
+class SpotifyMetadataTextTransform():
+    def __init__(self, max_genres=None):
+        self.max_genres = max_genres
+
+    def _call_once(self, item):
+        metadata = item.get('metadata', {})
+        genres = metadata['genres']
+        try:
+            genres = json.loads(genres)
+        except json.JSONDecodeError as e: # to fix single quote arrays
+            genres = ast.literal_eval(genres)
+        
+        if self.max_genres:
+            genres = random.sample(genres, min(len(genres), self.max_genres))
+        metadata_string = ', '.join(genres)
+        return {
+            **item, 'style_text': metadata_string, 'style_category': genres
+        }
+
+    def __call__(self, item):
+        if isinstance(item, list): # perform batch transform
+            return [self._call_once(i) for i in item]
+        return self._call_once(item)
 
 
 MCC_MOOD = ['Angry', 'Chill', 'Cute', 'Dynamic', 'Excited', 'Happy', 'Lonely', 'Romantic', 'Sorrow', 'Sweet', 'Tense', 'nan']

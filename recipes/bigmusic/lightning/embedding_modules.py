@@ -8,6 +8,7 @@ from abc import abstractmethod
 from typing import Any
 from torch.nn.utils.rnn import pad_sequence
 from torch import distributed
+from collections import defaultdict
 from recipes.musiclm.transforms.audio import RandomResizedCrop
 from recipes.bigmusic.utils.mulan_tag import MulanTagger
 from recipes.bigmusic.datasets.transforms.lyrics_segment import crop_pad_to_seq_length, random_crop_pad_to_seq_length
@@ -226,6 +227,7 @@ class TagCategoricalEmbedder(TokenEmbedder):
             vocab_size = len(vocab2id)
         super().__init__(vocab_size, embedding_dim, add_sos)
         self.vocab2id = vocab2id
+        self.vocab2count = defaultdict(int)
         self.vocab_type = vocab_type
         self.dropout = dropout
         self.category_separator = category_separator
@@ -233,19 +235,19 @@ class TagCategoricalEmbedder(TokenEmbedder):
 
     def sync_tags(self, batch_style_tags):
         "For auto tags, must sync new tags across all workers first for consistent vocab2id"
-        if self.vocab_type != 'auto': return
         if not self.training: return # do not run on validation set - to prevent deadlocks
+        all_tags = [tag for style_tags in batch_style_tags for tag in style_tags]
         if distributed.is_available() and distributed.is_initialized() and distributed.get_world_size() > 1:
-            new_tags = set([tag for style_tags in batch_style_tags for tag in style_tags])
-            new_tag_set = new_tags - set(self.vocab2id.keys())
             world_size = distributed.get_world_size()
             gathered_tags = [None for _ in range(world_size)]
-            distributed.all_gather_object(gathered_tags, list(new_tag_set))
-            gathered_new_tags = list(sorted(set([tag for tags in gathered_tags if tags is not None for tag in tags if tag is not None])))
-        else:
-            all_new_tags = set([tag for style_tags in batch_style_tags for tag in style_tags])
-            gathered_new_tags = all_new_tags - set(self.vocab2id.keys())
-        for new_tag in gathered_new_tags:
+            distributed.all_gather_object(gathered_tags, all_tags)
+            all_tags = [tag for tags in gathered_tags for tag in tags if tag is not None]
+
+        # update tag counts
+        for tag in all_tags: self.vocab2count[tag] += 1
+
+        new_tags = sorted(set(all_tags) - set(self.vocab2id.keys()))
+        for new_tag in new_tags:
             if new_tag in self.vocab2id:
                 print('Warning: tag already exists. Error.', self.vocab2id)
             if new_tag not in self.vocab2id and len(self.vocab2id) < self.vocab_size:
@@ -291,8 +293,10 @@ class TagCategoricalEmbedder(TokenEmbedder):
         return torch.as_tensor(batch_tag_ids).to(device)
 
     # save auto-growing vocab for inference
-    def set_extra_state(self, state: Any): self.vocab2id = state['vocab']
-    def get_extra_state(self) -> Any: return { 'vocab': self.vocab2id }
+    def set_extra_state(self, state: Any): 
+        self.vocab2id = state['vocab'] 
+        self.vocab2count.update(state.get('counts', {}))
+    def get_extra_state(self) -> Any: return { 'vocab': self.vocab2id, 'counts': dict(self.vocab2count) }
     
 class MulanCategoricalEmbedder(BaseEmbedder):
     def __init__(
@@ -322,6 +326,7 @@ class MulanCategoricalEmbedder(BaseEmbedder):
             self.projection = nn.Identity()
 
         self.vocab2id = { NONE_LABEL: 0 }
+        self.vocab2count = defaultdict(int)
         self.dropout = dropout
         self.min_audio_length = min_audio_length # 10s * 24k sample rate
 
@@ -338,17 +343,18 @@ class MulanCategoricalEmbedder(BaseEmbedder):
     def sync_tags(self, batch_style_tags):
         "For auto tags, must sync new tags across all workers first for consistent vocab2id"
         if not self.training: return # do not run on validation set - to prevent deadlocks
+        all_tags = [tag for style_tags in batch_style_tags for tag in style_tags]
         if distributed.is_available() and distributed.is_initialized() and distributed.get_world_size() > 1:
-            all_new_tags = set([tag for style_tags in batch_style_tags for tag in style_tags])
-            new_tag_set = all_new_tags - set(self.vocab2id.keys())
             world_size = distributed.get_world_size()
             gathered_tags = [None for _ in range(world_size)]
-            distributed.all_gather_object(gathered_tags, list(new_tag_set))
-            gathered_new_tags = list(sorted(set([tag for tags in gathered_tags if tags is not None for tag in tags if tag is not None])))
-        else:
-            all_new_tags = set([tag for style_tags in batch_style_tags for tag in style_tags])
-            gathered_new_tags = all_new_tags - set(self.vocab2id.keys())
-        for new_tag in gathered_new_tags:
+            distributed.all_gather_object(gathered_tags, all_tags)
+            all_tags = [tag for tags in gathered_tags for tag in tags if tag is not None]
+
+        # update tag counts
+        for tag in all_tags: self.vocab2count[tag] += 1
+
+        new_tags = sorted(set(all_tags) - set(self.vocab2id.keys()))
+        for new_tag in new_tags:
             if new_tag in self.vocab2id:
                 print('Warning: tag already exists. Error.', self.vocab2id)
             if new_tag not in self.vocab2id and len(self.vocab2id) < self.vocab_size:
@@ -389,8 +395,10 @@ class MulanCategoricalEmbedder(BaseEmbedder):
         return torch.as_tensor(batch_tag_ids).to(device)
 
     # save auto-growing vocab for inference
-    def set_extra_state(self, state: Any): self.vocab2id = state['vocab']
-    def get_extra_state(self) -> Any: return { 'vocab': self.vocab2id }
+    def set_extra_state(self, state: Any): 
+        self.vocab2id = state['vocab'] 
+        self.vocab2count.update(state.get('counts', {}))
+    def get_extra_state(self) -> Any: return { 'vocab': self.vocab2id, 'counts': dict(self.vocab2count) }
 
     def embed(self, requires, batch, with_sos=False, **kwargs):
         embeds = self.get_embeds(requires, batch, **kwargs)

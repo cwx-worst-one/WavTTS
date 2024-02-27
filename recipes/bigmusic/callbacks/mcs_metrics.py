@@ -34,7 +34,7 @@ def run_mcs_metrics(requires, generated_output_fps, device='cuda', sample_rate=2
             metadata = json.load(f)
         conditions = metadata['conditions']
         # Compute MCS based on wavs
-        if 'style_text' in conditions:
+        if 'style_text' in conditions or 'style_category' in conditions:
             gt_emb = get_mulan_embeds(
                 requires, metadata["style_text"], data_type='text'
             ).to(device)
