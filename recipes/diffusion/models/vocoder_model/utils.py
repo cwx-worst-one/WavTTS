@@ -57,10 +57,25 @@ def init_vocoder(checkpoint_path, local_rank, cache_dir=None, sample_rate=24000,
         local_path = download_checkpoint(checkpoint_path, cache_dir)
     
         if sample_rate == 24000:
+            if version == '24k_125hz_dim32_baseline':
+                latent_dim = 32
+                downsample_rates = [2, 3, 4, 8]
+                upsample_rates = [8, 4, 3, 2]
+            elif version == '24k_40hz_dim64_sa':
+                latent_dim = 64
+                downsample_rates = [2, 5, 6, 10]
+                upsample_rates = [10, 6, 5, 2]
+            elif version == '24k_125hz_dim64_sa':
+                latent_dim = 64
+                downsample_rates = [2, 3, 4, 8]
+                upsample_rates = [8, 4, 3, 2]
+            else:
+                raise NotImplementedError(f"unsupported vocoder version: {version}")
+
             vocoder_model = VQGAN_KL_new(
-                latent_dim=32,
-                downsample_rates=[2, 3, 4, 8],
-                upsample_rates=[8, 4, 3, 2],
+                latent_dim=latent_dim,
+                downsample_rates=downsample_rates,
+                upsample_rates=upsample_rates,
                 encoder_base_dim=96,
                 decoder_base_dim=2560,
                 adapt_hopper=adapt_hopper
@@ -106,6 +121,9 @@ def init_vocoder(checkpoint_path, local_rank, cache_dir=None, sample_rate=24000,
                     decoder_base_dim=2560,
                     adapt_hopper=adapt_hopper,
                 )
+            else:
+                raise NotImplementedError(f"unsupported vocoder version: {version}")
+
             vocoder_model_pl = VocoderModule.load_from_checkpoint(
                     local_path,
                     strict=False,
