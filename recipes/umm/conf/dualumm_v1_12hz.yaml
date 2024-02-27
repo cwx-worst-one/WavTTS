@@ -1,13 +1,17 @@
 ---
-# @renyi @hanoihantrakul 27Feb2024
+# @hanoihantrakul 27Feb2024
 #
-# For a more detailed comment, see `dualumm_v1.yaml`. This config
-# is identical to that one except for one detail:
-# - `config.use_full_input: true` = this DualUMM system uses the full mix. 
-#    This means an MSS module is not required. 
-# At the time of writing we find that it's ability to disentangle vocals
-# and instrumentals is about 85% the same quality as the `dualumm_v1.yaml`
-
+# This config is near identical to `dualumm_v1.yaml` except for one detail:
+# - The token code rate is not 25Hz, but 12Hz. Since DualUMM outputs separate
+# codes for the vocal and the instrumental, this means the code rate is 
+# 25 + 25 = 50Hz. In order to better compare with the 1st gen ConformerUMM and
+# 2nd gen ConvUMM (which are both 25Hz), we train a new model with a comparable 
+# code rate.
+#
+# @hanoihantrakul 27Feb2024
+# Implementation details: There are multiple ways to change the code rate. In 
+# this case the fastest way was to set upsample=3 and downsample=25. 
+# Remember that the mel features have a timestep of 100Hz. So 100x3/25 = 12.
 ################################################################################
 ##########                       BASIC CONFIGURATION                  ##########
 ################################################################################
@@ -26,18 +30,18 @@ extra_params:
     n_chroma: 12
     n_fft: 2048
     win_length: 2048
-    hop_length: 240
-    feature_cmvn: "recipes/datasets/mcc/MixDataModule_SpeechTransform.stats.pt"
+    hop_length: 240 # it is possible to make this 250 achieve a 12Hz code rate. But you would need to retrain a vocoder with the same hop length.
+    feature_cmvn: "recipes/datasets/mcc/MixDataModule_SpeechTransform.stats.pt" # For historical reasons, we keep this normalization. Ideally, it should be recomputed for dataset ID 1154.
     tokenizer: "bert-base-multilingual-uncased"
 
 # running parameters
 run_opts:
     fast_dev_run: False
     cache_dir: .module_cache/umm
-    hdfs_log_dir: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/renyi/samantha_ckpts"
+    hdfs_log_dir: "hdfs:///home/byte_speech_sv/hanoi.hantrakul/logs"
     log_dir: logs
-    log_name: umm_mix
-    version: !ref umm_stage3_preclipped_<extra_params[tokenizer]>_<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>
+    log_name: umm_dual_master
+    version: !ref umm_dual_v1_12hz_<extra_params[tokenizer]>_<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>
     precision: "32"
     num_workers: 4
     accelerator: auto
@@ -140,7 +144,7 @@ config: !new:recipes.umm.models.config.UMMConfig
     vocal_ref: false
     downsampling: 4
     upsampling: 1
-    use_full_input: true
+    use_full_input: false
 
 model_cls: !name:recipes.umm.models.dualumm.DualUMMv2
     config: !ref <config>

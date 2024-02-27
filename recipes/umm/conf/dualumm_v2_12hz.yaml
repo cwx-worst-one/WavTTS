@@ -1,5 +1,5 @@
 ---
-# @renyi @hanoihantrakul 27Feb2024
+# @hanoihantrakul 27Feb2024
 #
 # For a more detailed comment, see `dualumm_v1.yaml`. This config
 # is identical to that one except for one detail:
@@ -26,18 +26,18 @@ extra_params:
     n_chroma: 12
     n_fft: 2048
     win_length: 2048
-    hop_length: 240
-    feature_cmvn: "recipes/datasets/mcc/MixDataModule_SpeechTransform.stats.pt"
+    hop_length: 240 # it is possible to make this 250 achieve a 12Hz code rate. But you would need to retrain a vocoder with the same hop length.
+    feature_cmvn: "recipes/datasets/mcc/MixDataModule_SpeechTransform.stats.pt" # For historical reasons, we keep this normalization. Ideally, it should be recomputed for dataset ID 1154.
     tokenizer: "bert-base-multilingual-uncased"
 
 # running parameters
 run_opts:
     fast_dev_run: False
     cache_dir: .module_cache/umm
-    hdfs_log_dir: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/renyi/samantha_ckpts"
+    hdfs_log_dir: "hdfs:///home/byte_speech_sv/hanoi.hantrakul/logs"
     log_dir: logs
-    log_name: umm_mix
-    version: !ref umm_stage3_preclipped_<extra_params[tokenizer]>_<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>
+    log_name: umm_dual_master
+    version: !ref umm_dual_v2_12hz_<extra_params[tokenizer]>_<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>
     precision: "32"
     num_workers: 4
     accelerator: auto
@@ -138,8 +138,8 @@ config: !new:recipes.umm.models.config.UMMConfig
     conv_hidden_size: 256
     train_decoder_only: false
     vocal_ref: false
-    downsampling: 4
-    upsampling: 1
+    downsampling: 25
+    upsampling: 3
     use_full_input: true
 
 model_cls: !name:recipes.umm.models.dualumm.DualUMMv2

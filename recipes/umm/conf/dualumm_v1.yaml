@@ -1,5 +1,20 @@
 ---
-
+# @renyi @hanoihantrakul 27Feb2024
+#
+# DualUMM V1 is a 3rd generation system that separates the tokens generated for 
+# vocals and instrumentals. This is different from the 1st gen ConformerUMM and
+# 2nd gen ConvUMM, where the same tokenizer is used for both vocals and 
+# instruments. The advantage of this approach is better disentanglement between
+# vocals and instrumentals, which is critical for downstream tasks that are
+# instrument-only (e.g. SSTK model) or vocal-only (SVS) or both (lyrics2song)
+#
+# This config is the standard base config for training a DualUMM model. 
+# Special details:
+# - It requires an MSS model to separate full mix audio into vocals 
+#   and instrumentals
+# - The code rate is 25Hz. This means vocal tokens are produced at 25Hz
+#   and instrumental tokens are produced at 25Hz. A full mix is described
+#   by concat [vocal,instrumental] tokens = 50Hz.
 ################################################################################
 ##########                       BASIC CONFIGURATION                  ##########
 ################################################################################
@@ -130,8 +145,8 @@ config: !new:recipes.umm.models.config.UMMConfig
     conv_hidden_size: 256
     train_decoder_only: false
     vocal_ref: false
-    downsampling: 4
-    upsampling: 1
+    downsampling: 25
+    upsampling: 3
     use_full_input: false
 
 model_cls: !name:recipes.umm.models.dualumm.DualUMMv2
