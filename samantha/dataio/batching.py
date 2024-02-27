@@ -74,6 +74,7 @@ class BucketBatcher:
         length_fn: Callable = len,
         bucket_skip_warning_num: int = 10000,
         bsz_evaluator: Optional[Callable] = None,
+        bucket_size_fn: Optional[Callable] = None,
     ):
         if buckets is None:
             buckets = [2**31]
@@ -100,6 +101,7 @@ class BucketBatcher:
         self.bucket_max_size = [0 for _ in range(self.bucket_num)]
         self.throw_num = 0
         self.bsz_evaluator = bsz_evaluator or (lambda x, y: x * y)
+        self.bucket_size_fn = bucket_size_fn
 
     def find_bucket(self, data_item):
         """find a suitable bucket and push to bucket."""
@@ -153,6 +155,11 @@ class BucketBatcher:
             size = None
         return size
 
+    def _max_batch_size(self, bucket_idx, current_size):
+        if self.bucket_size_fn is not None:
+            return self.bucket_size_fn(self.bucket_list[bucket_idx])
+        return max(self.bucket_max_size[bucket_idx], current_size)
+
     def collate_batch(self, data_item):
         """
         push data_item to bucket_list for collate batch.
@@ -171,7 +178,7 @@ class BucketBatcher:
                 )
             return None
 
-        max_batch_size = max(self.bucket_max_size[bucket_idx], size)
+        max_batch_size = self._max_batch_size(bucket_idx, size)
         bsz = len(self.bucket_list[bucket_idx]) + 1
 
         if self.dynamic_batch:
