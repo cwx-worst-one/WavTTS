@@ -94,6 +94,7 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     parquet_dataset_weights: !ref <run_opts[parquet_dataset_weights]>
     sinking_threshold: !ref <run_opts[sinking_threshold]>
     remove_sinking: !ref <run_opts[remove_sinking]>
+    frame_rate: !ref <extra_params[semantic_frame_rate]>
 
 model_config: !new:transformers.GPT2Config
     vocab_size: 1 # placeholder. Embedding table gets removed on load

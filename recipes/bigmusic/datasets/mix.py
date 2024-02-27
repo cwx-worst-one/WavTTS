@@ -124,7 +124,7 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
             text = batch[idx].get("lyrics")
         normalized_text.append(text)
         
-        target_tokens_length.append(len(batch[idx]["lyrics_tokens"]))
+        target_tokens_length.append(batch[idx]["target_tokens_length"])
         phoneme_tokens, _ = pad_crop(
             construct("lyrics_tokens", default_lyrics_token), 
             max_phone_len, torch.int, PHONE_PAD_ID)
@@ -809,7 +809,8 @@ class VocalTransforms(BaseTransforms):
                     continue
 
             yield {
-                "target_audio": clip,                 
+                "target_audio": clip,
+                "target_tokens_length": clip.shape[-1] * self.sample_rate // self.frame_rate,
                 "style_text": style_text,
                 "artist_id": artist_id,
                 "normalized_text": normalized_text,
@@ -1108,6 +1109,7 @@ class MixVocalWebDataModule(DataModule):
                 handler=wds.warn_and_continue,
                 sinking_threshold=sinking_threshold,
                 remove_sinking=remove_sinking,
+                frame_rate=frame_rate,
                 )]
         self.parquet_vocal_datasets = []
         if parquet_dataset_ids:
@@ -1131,7 +1133,8 @@ class MixVocalWebDataModule(DataModule):
                         use_pipe=use_pipe,            
                         handler=wds.warn_and_continue,
                         sinking_threshold=sinking_threshold,
-                        remove_sinking=remove_sinking,                    
+                        remove_sinking=remove_sinking,
+                        frame_rate=frame_rate,                
                         ))
 
         train_dataset = WebPipeline(            
@@ -1160,7 +1163,8 @@ class MixVocalWebDataModule(DataModule):
                 nodesplitter=return_self,
                 handler=wds.warn_and_continue,
                 sinking_threshold=sinking_threshold,
-                remove_sinking=remove_sinking,                    
+                remove_sinking=remove_sinking,
+                frame_rate=frame_rate,              
                 ),
             pipeline=[{"compose": [self.bucketize]}],
         )] 
@@ -1268,7 +1272,8 @@ class MixLangVocalWebDataModule(DataModule):
                         use_pipe=use_pipe,            
                         handler=wds.warn_and_continue,
                         sinking_threshold=sinking_threshold,
-                        remove_sinking=remove_sinking,                       
+                        remove_sinking=remove_sinking,
+                        frame_rate=frame_rate,                   
                         ))
 
         if en_parquet_dataset_ids:
@@ -1291,6 +1296,7 @@ class MixLangVocalWebDataModule(DataModule):
                         handler=wds.warn_and_continue,
                         sinking_threshold=sinking_threshold,
                         remove_sinking=remove_sinking,
+                        frame_rate=frame_rate,
                         ))
 
         train_dataset = WebPipeline(            
@@ -1317,6 +1323,7 @@ class MixLangVocalWebDataModule(DataModule):
                 handler=wds.warn_and_continue,
                 sinking_threshold=sinking_threshold,
                 remove_sinking=remove_sinking,
+                frame_rate=frame_rate,
             ),
             pipeline=[{"compose": [self.bucketize]}],
         )] 
@@ -1435,6 +1442,7 @@ class SftWebDataModule(DataModule):
                         sample_limit_per_file=sample_limit_per_file,
                         sinking_threshold=sinking_threshold,
                         remove_sinking=remove_sinking,
+                        frame_rate=frame_rate,
                         ))
             self.parquet_vocal_datasets[split] = WebPipeline(            
                 MultiIterableDataset(datasets=pds, weights=pdws),
