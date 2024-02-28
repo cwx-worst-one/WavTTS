@@ -392,9 +392,18 @@ class SemanticModule(BaseContinuousEmbedModule):
 
     def prepare_beat_inputs(self, batch, beat_embedder):
         batch_size = self.infer_batch_size(batch)
-        if "beat" not in batch:
-            target_audio = batch["target_audio"] if "target_audio" in batch else batch["style_audio"]
-            batch["beat"] = self.requires["beat"].predict_step({"target_audio": target_audio}, 0)
+        if self.training and random.random() < self.extra_params.get("beat_dropout", 0.0):
+            batch["beat"] = [[] for _ in range(batch_size)]
+        elif "beat" not in batch:
+            target_audio = None
+            if "target_audio" in batch:
+                target_audio = batch["target_audio"]
+            elif "style_audio" in batch:
+                target_audio = batch["style_audio"]
+            if target_audio is None:
+                batch["beat"] = [[] for _ in range(batch_size)]
+            else:
+                batch["beat"] = self.requires["beat"].predict_step({"target_audio": target_audio}, 0)
         assert batch_size == len(batch["beat"])
         target_duration = self.infer_target_duration(batch)
         embeds, beat_ids, beat_timestamps = beat_embedder.embed(batch["beat"], target_duration)
@@ -654,9 +663,6 @@ class SemanticModule(BaseContinuousEmbedModule):
                 self.prediction_heads["intensity"],
                 hp.get("intensity_temperature", 1.0),
             )
-        # Predict beat if it's not available
-        if "beat" in self.input_embedders and "style_audio" not in batch:
-            raise NotImplementedError("TODO")
 
         if "inputs_embeds" in batch:
             inputs_embeds = batch["inputs_embeds"]

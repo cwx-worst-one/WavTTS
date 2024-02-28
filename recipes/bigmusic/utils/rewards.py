@@ -470,7 +470,5 @@ def semantic_diversity_sim_reward(hyp_umm_tokens, ref_umm_tokens, device):
         ref = ref_umm_tokens[i // beam]
         hyp_diversity = float(len(hyp.unique())) / hyp.shape[-1]
         ref_diversity = float(len(ref.unique())) / ref.shape[-1]
-        # Penalize too high diversity more than too low diversity
-        multiplier = 3.0 if hyp_diversity > ref_diversity else 1.0
-        semantic_diversity_sim_rewards[i] = 1 - multiplier * abs(hyp_diversity - ref_diversity)
+        semantic_diversity_sim_rewards[i] = 1 - abs(hyp_diversity - ref_diversity)
     return semantic_diversity_sim_rewards

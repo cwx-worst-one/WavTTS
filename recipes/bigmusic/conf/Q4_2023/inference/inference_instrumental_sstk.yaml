@@ -12,7 +12,7 @@ extra_params:
     beam_size: 8    # set to 1 if not using reranker
     samples_to_save: 1
     save_style_audio: True
-    save_mp3: False
+    save_mode: wav  # wav|mp3|upload
     save_semantic_tokens: False
     prompt_path: "/mnt/bn/audio-diffusion/ducle/data/prompts/bgm_eval/prompts_style_audio.test.csv"
     inference_conditions: "style_audio,duration,intensity"
@@ -144,7 +144,7 @@ callbacks:
       beam_size: !ref <extra_params[beam_size]>
       samples_to_save: !ref <extra_params[samples_to_save]>
       save_style_audio: !ref <extra_params[save_style_audio]>
-      save_mp3: !ref <extra_params[save_mp3]>
+      save_mode: !ref <extra_params[save_mode]>
       save_semantic_tokens: !ref <extra_params[save_semantic_tokens]>
 
 trainer: !new:pytorch_lightning.Trainer

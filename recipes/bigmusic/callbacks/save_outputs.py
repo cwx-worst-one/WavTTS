@@ -16,6 +16,7 @@ from collections import defaultdict
 from recipes.bigmusic.utils.format_utils import update_json
 import numpy as np
 from recipes.musiclm.utils.dist import local_zero_first
+from recipes.bigmusic.utils.upload import audio_tensor_to_bytes, upload_to_easycycle
 
 
 class SaveOutputsCallback(pl.Callback):
@@ -24,7 +25,7 @@ class SaveOutputsCallback(pl.Callback):
         beam_size=1,
         samples_to_save=1,
         save_style_audio=True,
-        save_mp3=False,
+        save_mode="wav",
         save_semantic_tokens=False,
     ):
         super().__init__()
@@ -32,7 +33,7 @@ class SaveOutputsCallback(pl.Callback):
         self.beam_size = beam_size
         self.samples_to_save = samples_to_save
         self.save_style_audio = save_style_audio
-        self.save_mp3 = save_mp3
+        self.save_mode = save_mode
         self.save_semantic_tokens = save_semantic_tokens
 
     def on_predict_batch_end(
@@ -56,7 +57,7 @@ class SaveOutputsCallback(pl.Callback):
             beam_size=self.beam_size,
             samples_to_save=self.samples_to_save,
             save_style_audio=self.save_style_audio,
-            save_mp3=self.save_mp3,
+            save_mode=self.save_mode,
             save_semantic_tokens=self.save_semantic_tokens,
         )
         num_items = outputs['generated_audio_tensor'].shape[0] // self.beam_size
@@ -69,6 +70,32 @@ class SaveOutputsCallback(pl.Callback):
             pl_module.extra_params['output_paths'].extend(output_paths)
         else:
             pl_module.extra_params['output_paths'] = output_paths
+
+    def on_predict_end(
+        self,
+        trainer: "pl.Trainer",
+        pl_module: "pl.LightningModule"
+    ) -> None:
+        if self.save_mode != "upload":
+            return
+        output_dir = pl_module.extra_params.output_dir
+        with local_zero_first():
+            if trainer.is_global_zero:
+                output_dir = Path(output_dir)
+                metadata_fps = list(output_dir.glob('**/*.metadata.json'))
+                if len(metadata_fps) == 0:
+                    return
+                index_fname = os.path.join(output_dir, "index.csv")
+                with open(index_fname, "w") as fw:
+                    fw.write("file_name,beam_id,audio_url\n")
+                    for fp in metadata_fps:
+                        with open(fp, "r") as f:
+                            metadata = json.load(f)
+                        file_name = metadata["file_name"]
+                        beam_id = metadata["index"]["beam_idx"]
+                        audio_url = metadata["audio_url"]
+                        fw.write(f"{file_name},{beam_id},{audio_url}\n")
+                print(f"Wrote index to {index_fname}")
 
 
 def format_lyrics_and_style(style_text, lyrics=None):
@@ -96,7 +123,7 @@ def save_batch_outputs(
     beam_size=1,
     samples_to_save=1,
     save_style_audio=True,
-    save_mp3=False,
+    save_mode="wav",
     save_semantic_tokens=False,
 ):
     conditions = batch['conditions']
@@ -143,31 +170,12 @@ def save_batch_outputs(
             wav_file_name += ("_r" + str(prompt_idx % sample_round))
         if samples_to_save > 1 and beam_size > 1:
             wav_file_name += f".{beam_idx}"
-            
-        wav_fp = os.path.join(wav_dir, f"{wav_file_name}.generated.wav")
-        print(f"[Saving] {wav_fp}")
-        save_wav(wav.cpu().float(), wav_fp, sr=sample_rate, save_mp3=save_mp3)
-        if save_style_audio and style_audio is not None and beam_idx == 0:
-            input_wav_fp = os.path.join(wav_dir, f"{file_name}.style_audio.wav")
-            # style audio is always 24kHz (for now)
-            save_wav(style_audio[ii].cpu().float(), input_wav_fp, sr=24000, save_mp3=save_mp3)
-
-        if vocal_audio is not None and beam_idx == 0:
-            input_vocals_fp = os.path.join(wav_dir, f"{file_name}.vocal_audio.wav")
-            save_wav(vocal_audio[ii].cpu().float(), input_vocals_fp, sr=sample_rate, save_mp3=save_mp3)
-
-        if target_audio is not None and beam_idx == 0:
-            target_audio_fp = os.path.join(wav_dir, f"{file_name}.target_audio.wav")
-            save_wav(target_audio[ii].cpu().float(), target_audio_fp, sr=sample_rate, save_mp3=save_mp3)
-
-        if save_semantic_tokens and semantic_tokens is not None:
-            semantic_tokens_fp = os.path.join(wav_dir, f"{wav_file_name}.semantic_tokens.pt")
-            torch.save(semantic_tokens[i], semantic_tokens_fp)
 
         meta_fp = os.path.join(wav_dir, f"{wav_file_name}.metadata.json")
         metadata = metadatas[i] if metadatas is not None else {}
         metadata = {
             **metadata,
+            'file_name': file_name,
             'lyrics': lyrics_str,
             'lyrics_normalized_text': lyrics_normalized_str,
             'style_text': style_text,
@@ -182,12 +190,54 @@ def save_batch_outputs(
                 'beam_idx': beam_idx,
             }
         }
+            
+        if save_mode == "upload":
+            audio_bytes = audio_tensor_to_bytes(wav.cpu().float(), sample_rate)
+            metadata["audio_url"] = upload_to_easycycle(audio_bytes, f"{wav_file_name}.generated")
+        else:
+            wav_fp = os.path.join(wav_dir, f"{wav_file_name}.generated.wav")
+            print(f"[Saving] {wav_fp}")
+            save_wav(wav.cpu().float(), wav_fp, sr=sample_rate, save_mp3=save_mode == "mp3")
+            output_paths.append(wav_fp)
+
+        if save_style_audio and style_audio is not None and beam_idx == 0:
+            # style audio is always 24kHz (for now)
+            if save_mode == "upload":
+                audio_bytes = audio_tensor_to_bytes(style_audio[ii].cpu().float(), 24000)
+                metadata["style_audio_url"] = upload_to_easycycle(audio_bytes, f"{file_name}.style_audio")
+            else:
+                input_wav_fp = os.path.join(wav_dir, f"{file_name}.style_audio.wav")
+                save_wav(style_audio[ii].cpu().float(), input_wav_fp, sr=24000, save_mp3=save_mode == "mp3")
+
+        if target_audio is not None and beam_idx == 0:
+            # target audio is always 24kHz (for now)
+            if save_mode == "upload":
+                audio_bytes = audio_tensor_to_bytes(target_audio[ii].cpu().float(), 24000)
+                metadata["target_audio_url"] = upload_to_easycycle(audio_bytes, f"{file_name}.target_audio")
+            else:
+                target_audio_fp = os.path.join(wav_dir, f"{file_name}.target_audio.wav")
+                save_wav(target_audio[ii].cpu().float(), target_audio_fp, sr=24000, save_mp3=save_mp3)
+
+        if vocal_audio is not None and beam_idx == 0:
+            # vocal audio is always 24kHz (for now)
+            if save_mode == "upload":
+                audio_bytes = audio_tensor_to_bytes(vocal_audio[ii].cpu().float(), 24000)
+                metadata["vocal_audio_url"] = upload_to_easycycle(audio_bytes, f"{file_name}.vocal_audio")
+            else:
+                input_vocals_fp = os.path.join(wav_dir, f"{file_name}.vocal_audio.wav")
+                save_wav(vocal_audio[ii].cpu().float(), input_vocals_fp, sr=24000, save_mp3=save_mode == "mp3")
+
+        if save_semantic_tokens and semantic_tokens is not None:
+            semantic_tokens_fp = os.path.join(wav_dir, f"{wav_file_name}.semantic_tokens.pt")
+            torch.save(semantic_tokens[i], semantic_tokens_fp)
+
         print('Saving metadata', metadata)
+        meta_fp = os.path.join(wav_dir, f"{wav_file_name}.metadata.json")
         with open(meta_fp, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, indent=2)
 
-        output_paths.append(wav_fp)
     return output_paths
+
 
 class SaveVideoCallback(pl.Callback):
     def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:

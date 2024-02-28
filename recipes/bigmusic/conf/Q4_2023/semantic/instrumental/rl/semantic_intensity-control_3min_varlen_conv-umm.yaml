@@ -32,26 +32,61 @@ extra_params:
     intensity_decimals: 2
     intensity_calculation: "mean"
     intensity_hz: 1
+    # Inference params
+    semantic_temperature: 1.0
+    sample_mode: "top_p"
+    sample_thresh: 0.9
+    exclude_eos: True
+    beam_size: 2
+    decoder_type: "diffusion"
+    diffusion_steps: 10
+    bf16_portion: 0.0
+    diffusion_params:
+        window_length: 30 # in second
+        vocoder_hz: 125
+        semantic_hz: 25
+        latent_dim: 32
+        outpainting_overlap: 0.5 #[0, 1]
+        diffusion_steps: !ref <extra_params[diffusion_steps]>
+        schedule_slope: 4.0
+        guidance_scale: 2.5
+        bf16_portion: !ref <extra_params[bf16_portion]>
+    # RL training params
+    add_ref_to_beam: False
+    ce_weight: 0.1
+    seq_weight: 10
+    positive_phrase: "high quality, catchy, memorable"
+    negative_phrase: "noisy, boring, forgettable"
+    rewards:
+        "mulan_sim": 2.0
+        "loudness_sim": 1.0
+        "qualitative_sim": 0.0
+        "semantic_diversity_sim": 1.0
+        "audio_metrics": 1.0
+        "intensity_sim": 2.0
+    # Logging params
+    log_num_val_samples: 5
+    log_num_val_beam_samples: 1
 
 # running parameters
 run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
     log_name: semantic_model_instrumental_07B
-    version: sstk_vad_intensity-control_3min_varlen
+    version: sstk_vad_intensity-control_3min_varlen_rl
     cache_dir: .module_cache/musiclm
     precision: "16"
-    num_workers: 10
+    num_workers: 4
     accelerator: auto
-    max_steps: 400000
+    max_steps: 2000
     batch_size: 1
-    learning_rate: 2.0e-4
-    warmup_steps: 2000
-    cycle_steps: 500000
+    learning_rate: 1.0e-5
+    warmup_steps: 100
+    cycle_steps: 4000
     weight_decay: 0.05
-    shuffle_buffer: 32
+    shuffle_buffer: 16
     gradient_clip_val: 1.0
-    val_check_interval: 4000
+    val_check_interval: 200
     min_length_ratio: 0.95
     normalize_audio: False
     aed_filtered: False
@@ -64,6 +99,8 @@ run_opts:
     crop_step_size: [10, 15, 20, 25, 30, 30, 30, 30, 30, 30, 30]
     mixed_ratio: 0.5
     use_pipe: False
+    diffusion_ckpt: "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/user/user/wtl/diffusion/24k_30s_genre_balanced_conv_umm/checkpoints/diffusion-step=540000-EMA.ckpt"
+    vocoder_ckpt: "/mnt/bn/audio-diffusion/wtl/vocoder/sstk/24k_v1/soundstream-step=1240000-val_sdr=12.5666-EMA.ckpt"
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -148,12 +185,11 @@ scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupC
     cycle_steps: !ref <run_opts[cycle_steps]>
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
-pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
+pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticRLModule
     checkpointing: False
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
-    criterion_cls: !name:recipes.musiclm.lightning.modules.MaskedCrossEntropy
     extra_params: !ref <extra_params>
     required_modules:
         mulan:
@@ -169,11 +205,24 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
             # hpath: hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/user/hanoi.hantrakul/logs/umm_conv_sstk/umm_stage3_conv1D_sstk_no_ctc_794_EMAVQ4096x32/checkpoints_for_inference/step=0865000.ckpt
             initializer: !name:recipes.umm.requires.model_initializer.init_stage3_conv1d
                 cache_dir: !ref <run_opts[cache_dir]>
-        #structure:
-        #    hpath: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/structure90M_epoch=203-step=102000.ckpt"
-        #    initializer: !name:recipes.structure.requires.model_initializer.init_structure_90M
-        #        cache_dir: !ref <run_opts[cache_dir]>
-        #        n_top_bound: 14
+        sampler:
+            hpath: null
+            initializer: !name:recipes.diffusion.models.diffusion_sampler.init_sampler
+                cache_dir: !ref <run_opts[cache_dir]>
+                params: !ref <extra_params[diffusion_params]>
+        diffusion:
+            hpath: !ref <run_opts[diffusion_ckpt]>
+            initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
+                cache_dir: !ref <run_opts[cache_dir]>
+                sstk: True
+                sample_rate: !ref <extra_params[sample_rate]>
+                version: "sstk_v2.5"
+        vocoder:
+            hpath: !ref <run_opts[vocoder_ckpt]>
+            initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
+                cache_dir: !ref <run_opts[cache_dir]>
+                sample_rate: !ref <extra_params[sample_rate]>
+                adapt_hopper: True
 
 logger:
     - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
@@ -211,14 +260,14 @@ trainer: !new:pytorch_lightning.Trainer
     num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
     deterministic: False
     enable_model_summary: True
-    log_every_n_steps: 100
+    log_every_n_steps: 10
     max_steps: !ref <run_opts[max_steps]>
     precision: !ref <run_opts[precision]>
     accumulate_grad_batches: 1
     gradient_clip_val: !ref <run_opts[gradient_clip_val]>
     val_check_interval: !ref <run_opts[val_check_interval]>
     check_val_every_n_epoch: null
-    num_sanity_val_steps: 2  # skip validation sanity checks so we don't run into hdfs file close errors
-    limit_val_batches: 50
+    num_sanity_val_steps: 1  # skip validation sanity checks so we don't run into hdfs file close errors
+    limit_val_batches: 5
     callbacks: !ref <callbacks>
     plugins: !ref <plugins>

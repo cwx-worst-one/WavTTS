@@ -10,7 +10,7 @@ fsspec>=2023.9.1 # fix use_pipe=False for parquet files
 mir_eval~=0.7.0
 Cython>=0.29.32
 madmom>=0.16.1
-bytedance-easycycle
+bytedance.easycycle
 ffmpeg-normalize
 thop
 colorednoise
