@@ -810,7 +810,7 @@ class VocalTransforms(BaseTransforms):
 
             yield {
                 "target_audio": clip,
-                "target_tokens_length": clip.shape[-1] * self.sample_rate // self.frame_rate,
+                "target_tokens_length": int(clip.shape[-1] / self.sample_rate * self.frame_rate),
                 "style_text": style_text,
                 "artist_id": artist_id,
                 "normalized_text": normalized_text,
