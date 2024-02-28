@@ -60,12 +60,14 @@ extra_params:
     sample_thresh: 0.9
     token2wav_type: diffusion
 
+    cache_dir: .module_cache/bigmusic
+
 run_opts:
     fast_dev_run: False
     precision: 16-mixed
     accelerator: auto
     strategy: auto
-    cache_dir: .module_cache/musiclm
+    cache_dir: .module_cache/bigmusic
     batch_size: 16  # set to 4 if using reranker
     num_workers: 8
 
