@@ -96,6 +96,16 @@ def init_vocoder(checkpoint_path, local_rank, cache_dir=None, sample_rate=24000,
                     decoder_base_dim=2560,
                     adapt_hopper=adapt_hopper,
                 )
+            elif version == '44.1k_sa':
+                vocoder_model = VQGAN_KL_new(
+                    n_channels=2,
+                    latent_dim=64,
+                    downsample_rates=[2, 5, 9, 10],
+                    upsample_rates=[10, 9, 5 ,2],
+                    encoder_base_dim=96,
+                    decoder_base_dim=2560,
+                    adapt_hopper=adapt_hopper,
+                )
             vocoder_model_pl = VocoderModule.load_from_checkpoint(
                     local_path,
                     strict=False,

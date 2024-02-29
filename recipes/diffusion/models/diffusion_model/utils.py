@@ -111,28 +111,14 @@ def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, ss
                     semantic_cfg_prob=0.10,
                     use_checkpoint=False
                 )
-            elif version == "sstk_v2.5":
-                diffusion_network = TNTDiffusionNetworkV2(
-                    input_dim=32,
-                    feature_dim=1024,
-                    context_dim=1,
-                    depth=20,
-                    segment_size=32,
-                    segment_stride=32,
-                    unet=True,
-                    unet_stages=[6,8,6],
-                    dropout=0,
-                    semantic_cfg_prob=0.15,
-                    use_checkpoint=False
-                )
             elif version == 'sstk_v3': # place holder for 44.1k model
                 diffusion_network = TNTDiffusionNetworkV2(
-                    input_dim=128,
+                    input_dim=64,
                     feature_dim=1024,
                     context_dim=1,
                     depth=20,
-                    segment_size=64,
-                    segment_stride=64,
+                    segment_size=8,
+                    segment_stride=8,
                     unet=True,
                     unet_stages=[6,8,6],
                     dropout=0,
@@ -211,6 +197,7 @@ def run_diffusion(requires, samples, params):
     schedule_slope = params.get('schedule_slope', 2.5)
     guidance_scale = params.get('guidance_scale', 2.5)
     bf16_portion = params.get('bf16_portion', 0.0)
+    vocoder_hz = params.get('vocoder_hz', VOCODER_HZ)
 
     pred_emb = sampler(
         model=diffusion_model,
@@ -229,7 +216,7 @@ def run_diffusion(requires, samples, params):
     pred_emb = pred_emb.float()
     # torch.interpolate causes OOM for large batch sizes > 24. chunking to batch of 8 instead.
     # If you see this error, lower batch size: "RuntimeError: Expected output.numel() <= std::numeric_limits<int32_t>::max() to be true, but got false."
-    duration = pred_emb.shape[-1] // VOCODER_HZ
+    duration = pred_emb.shape[-1] // vocoder_hz
     batch_chunks = 2 if duration < 60 else 1
     wavs_g = torch.cat([vocoder.decode(c).detach() for c in torch.split(pred_emb, batch_chunks)])
     # wavs_g = vocoder.decode(pred_emb.float()).detach()
