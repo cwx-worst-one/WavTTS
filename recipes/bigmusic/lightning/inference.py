@@ -108,10 +108,13 @@ class SemanticInferenceModule(pl.LightningModule):
         if self.extra_params.get('mulan_ckpt', None) and self.extra_params.mulan_ckpt != 'infer_from_semantic_ckpt':
             self.semantic_module.hparams.required_modules['mulan']['hpath'] = self.extra_params.mulan_ckpt
         
+        # override cache_dir with extra_params
+        cache_dir = Path(self.extra_params.get('cache_dir', '.module_cache'))
+        cache_dir.mkdir(exist_ok=True, parents=True)
         for k, v in self.semantic_module.hparams.required_modules.items():
             fn_partial = v['initializer']
             _, _, (f, fn_args, fn_kwargs, n) = fn_partial.__reduce__()
-            fn_kwargs.update({'cache_dir': self.extra_params.cache_dir})
+            fn_kwargs.update({'cache_dir': cache_dir})
             fn_partial.__setstate__((f, fn_args, fn_kwargs, n))
         
         if self.extra_params.get('app_type', None):
@@ -189,10 +192,13 @@ class SemanticInferenceModuleDualUMMFull(SemanticInferenceModule):
         if self.extra_params.get('mulan_ckpt', None) and self.extra_params.mulan_ckpt != 'infer_from_semantic_ckpt':
             self.semantic_module.hparams.required_modules['mulan']['hpath'] = self.extra_params.mulan_ckpt
 
+        # override cache_dir with extra_params
+        cache_dir = Path(self.extra_params.get('cache_dir', '.module_cache'))
+        cache_dir.mkdir(exist_ok=True, parents=True)
         for k, v in self.semantic_module.hparams.required_modules.items():
             fn_partial = v['initializer']
             _, _, (f, fn_args, fn_kwargs, n) = fn_partial.__reduce__()
-            fn_kwargs.update({'cache_dir': self.extra_params.cache_dir})
+            fn_kwargs.update({'cache_dir': cache_dir})
             fn_partial.__setstate__((f, fn_args, fn_kwargs, n))
 
         self.semantic_module.load_required_modules(
