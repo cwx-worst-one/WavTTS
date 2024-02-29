@@ -23,7 +23,7 @@ extra_params:
 
     # Semantic model
     semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
-    semantic_ckpt: "/mnt/bn/audio-diffusion/ducle/logs/semantic_model_instrumental_07B/sstk-v6-mulan72-genre-balanced-conv-umm-32k_3m/checkpoints/step=084000.ckpt"
+    semantic_ckpt: "/mnt/bn/audio-diffusion/ducle/logs/semantic_model_instrumental_07B/sstk-v6-mulan72-genre-balanced-conv-umm-32k_3m/checkpoints/step=092000.ckpt"
     mulan_ckpt: "/mnt/bn/audio-diffusion/peng/clap_sstk_mulan_files/MuLan_sstk/CLAP_genre_balanced/checkpoints/mulan-step=005000-median_rank_1=72-kaggle.ckpt"
     mulan_version: "sstkmae_v2"
 
@@ -60,7 +60,7 @@ extra_params:
     vocoder_version: '44.1k_sa'
 
     # Model Settings
-    sample_rate: 44100  # 48000
+    sample_rate: 44100  # 24000|44100
     duration: 30 # 30|45|60|75|90|105|120
     semantic_temperature: 1.0
     sample_mode: "top_p"

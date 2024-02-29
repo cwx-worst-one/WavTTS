@@ -47,6 +47,7 @@ from collections import defaultdict
 from itertools import zip_longest
 from typing import Optional
 from recipes.mi1.models.music_sft import get_m1_tags
+from torchaudio.transforms import Resample
 
 from recipes.audio_quality_classifier.models.audio_quality_model.utils import aq_classifier_inference
 
@@ -767,6 +768,12 @@ class SemanticRLModule(SemanticModule):
         self.val_outputs = dict()
         self.positive_qualitative_emb = None
         self.negative_qualitative_emb = None
+        self.resampler = None
+        if self.extra_params.get("token2wav_sample_rate", self.extra_params.sample_rate) != self.extra_params.sample_rate:
+            self.resampler = Resample(
+                orig_freq=self.extra_params.token2wav_sample_rate,
+                new_freq=self.extra_params.sample_rate,
+            )
 
     def _shared_step(self, batch, mode):
         wavs_gt = batch["target_audio"]
@@ -986,6 +993,9 @@ class SemanticRLModule(SemanticModule):
         # If you see this error, lower batch size:
         # RuntimeError: Expected output.numel() <= std::numeric_limits<int32_t>::max() to be true, but got false.
         wavs = torch.cat([vocoder.decode(c).detach() for c in torch.split(pred_emb, 1)])
+        # Resample and convert to mono if necessary
+        if self.resampler is not None:
+            wavs = self.resampler(wavs).mean(dim=1, keepdim=True)
         # Zero out samples after <eos>
         if len(eos_index_list) > 0:
             for i in range(len(eos_index_list)):

@@ -12,6 +12,7 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 
 extra_params:
     sample_rate: 24000
+    token2wav_sample_rate: 44100
     duration: [30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180]
     lyrics_codebook_size: 400
     semantic_codebook_size: 32_768
@@ -47,9 +48,9 @@ extra_params:
     bf16_portion: 0.0
     diffusion_params:
         window_length: 30 # in second
-        vocoder_hz: 125
+        vocoder_hz: 49
         semantic_hz: 25
-        latent_dim: 32
+        latent_dim: 64
         outpainting_overlap: 0.5 #[0, 1]
         diffusion_steps: !ref <extra_params[diffusion_steps]>
         schedule_slope: 4.0
@@ -103,8 +104,8 @@ run_opts:
     crop_step_size: [10, 15, 20, 25, 30, 30, 30, 30, 30, 30, 30]
     mixed_ratio: 0.5
     use_pipe: False
-    diffusion_ckpt: "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/user/user/wtl/diffusion/24k_30s_genre_balanced_conv_umm/checkpoints/diffusion-step=540000-EMA.ckpt"
-    vocoder_ckpt: "/mnt/bn/audio-diffusion/wtl/vocoder/sstk/24k_v1/soundstream-step=1240000-val_sdr=12.5666-EMA.ckpt"
+    diffusion_ckpt: "/mnt/bn/audio-diffusion/wtl/diffusion/sstk/44.1k_stereo_v0/diffusion-step=450000-EMA.ckpt"
+    vocoder_ckpt: "/mnt/bn/audio-diffusion/wtl/vocoder/sstk/44.1k_stereo_sa_v0/last-EMA.ckpt"
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -219,14 +220,15 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticRLModule
             initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
                 cache_dir: !ref <run_opts[cache_dir]>
                 sstk: True
-                sample_rate: !ref <extra_params[sample_rate]>
-                version: "sstk_v2.5"
+                sample_rate: !ref <extra_params[token2wav_sample_rate]>
+                version: "sstk_v3"
         vocoder:
             hpath: !ref <run_opts[vocoder_ckpt]>
             initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                 cache_dir: !ref <run_opts[cache_dir]>
-                sample_rate: !ref <extra_params[sample_rate]>
+                sample_rate: !ref <extra_params[token2wav_sample_rate]>
                 adapt_hopper: True
+                version: "44.1k_sa"
         beat:
             hpath: /mnt/bn/audio-diffusion/multitask/beat_only_24sec_lr0.001/checkpoints/epoch=13-step=1400.pt
             initializer: !name:recipes.mir_benchmark.requires.model_initializer.init_beat
