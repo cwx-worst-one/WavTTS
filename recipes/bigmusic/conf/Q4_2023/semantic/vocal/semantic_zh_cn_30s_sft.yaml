@@ -22,14 +22,14 @@ extra_params:
     input_embedders: [tag_categorical, speaker_id, lyrics_tokens]
     tag_taxonomy_lang: 'SA'
     tag_dropout_rate: 0     # Already sparse tags from Playlist dataset
-    mulan_embed_dim: 512
+    # mulan_embed_dim: 512
     hidden_size: 1536
     intermediate_size: 4352
     num_hidden_layers: 24
     num_attention_heads: 12
     pretrained_path: null
     tokenizer_path: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/checkpoints/step=070000.ckpt"
-    mulan_path: "hdfs://haruna/home/byte_speech_sv/mulan/cn_mulan_ckpt/mulan-step=012800-kaggle-minimal.ckpt"
+    # mulan_path: "hdfs://haruna/home/byte_speech_sv/mulan/cn_mulan_ckpt/mulan-step=012800-kaggle-minimal.ckpt"
 
 # running parameters
 run_opts:
@@ -157,16 +157,16 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
             initializer: !name:recipes.umm.requires.model_initializer.init_stage3
                 cache_dir: !ref <run_opts[cache_dir]>
         # Mulan mix - 110
-        mulan:
-            hpath: !ref <extra_params[mulan_path]>
-            initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
-                cache_dir: !ref <run_opts[cache_dir]>
-                version: "Chinese"
-        mulan_tagger:
-            hpath: null
-            initializer: !name:recipes.bigmusic.utils.mulan_tag.init_mulan_tagger
-                cache_dir: !ref <run_opts[cache_dir]>
-                mulan_tag_type: cn_mir
+        # mulan:
+        #     hpath: !ref <extra_params[mulan_path]>
+        #     initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
+        #         cache_dir: !ref <run_opts[cache_dir]>
+        #         version: "Chinese"
+        # mulan_tagger:
+        #     hpath: null
+        #     initializer: !name:recipes.bigmusic.utils.mulan_tag.init_mulan_tagger
+        #         cache_dir: !ref <run_opts[cache_dir]>
+        #         mulan_tag_type: cn_mir
 
 
 logger:
@@ -188,14 +188,14 @@ callbacks:
       monitor: val_accu_0
       mode: max
       filename: "{step:06d}-{val_accu_0:.2f}"
-    # - !new:samantha.callbacks.HDFSModelCheckpoint
-    #   hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
-    #   monitor: step
-    #   save_top_k: 20
-    #   save_last: True
-    #   every_n_train_steps: !ref <run_opts[val_check_interval]>
-    #   mode: max
-    #   filename: "{step:06d}-{val_accu_0:.2f}"
+    - !new:samantha.callbacks.HDFSModelCheckpoint
+      hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+      monitor: step
+      save_top_k: 20
+      save_last: True
+      every_n_train_steps: !ref <run_opts[val_check_interval]>
+      mode: max
+      filename: "{step:06d}-{val_accu_0:.2f}"
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: 'step'
     # - !new:recipes.bigmusic.callbacks.data_logger.BigMusicDataUsageLogger
