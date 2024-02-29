@@ -648,6 +648,8 @@ class SemanticModule(BaseContinuousEmbedModule):
         temperature = hp.semantic_temperature
         sample_mode = hp.sample_mode
         sample_thresh = hp.get('sample_thresh', 0.9)
+        use_controller_cfg = hp.get('use_controller_cfg', False)
+        controller_cfg_gamma = hp.get('controller_cfg_gamma', 1)
         skip_sos = hp.get('skip_sos', False)
         exclude_ids = None
         if hp.get("exclude_eos", False) and self.target_embedder.eos_id is not None:
@@ -668,6 +670,15 @@ class SemanticModule(BaseContinuousEmbedModule):
             inputs_embeds = batch["inputs_embeds"]
         else:
             inputs_embeds = self.prepare_inputs_embeddings(batch)
+        
+        inputs_emb_cfg = None
+        if use_controller_cfg:
+            assert len(batch['style_text']) == 1
+            assert beam == 1
+            batch['style_text'] = ['']
+            batch['style_category'] = ['']
+            inputs_emb_cfg = self.prepare_inputs_embeddings(batch)
+
         return super().predict(
             inputs_embeds,
             num_tokens,
@@ -679,6 +690,9 @@ class SemanticModule(BaseContinuousEmbedModule):
             exclude_ids=exclude_ids,
             rl_training=rl_training,
             skip_sos=skip_sos,
+            use_controller_cfg=use_controller_cfg,
+            inputs_embeds_cfg=inputs_emb_cfg,
+            controller_cfg_gamma=controller_cfg_gamma,            
         )
 
     @torch.no_grad()

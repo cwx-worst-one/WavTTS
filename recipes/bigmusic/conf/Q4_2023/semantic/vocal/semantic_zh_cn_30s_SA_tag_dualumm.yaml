@@ -4,7 +4,7 @@
 ##########                       BASIC CONFIGURATION                  ##########
 ################################################################################
 
-ckpt_path: null
+ckpt_path: 'last'
 seed: 1995
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
@@ -13,7 +13,7 @@ extra_params:
     sample_rate: 24000
     lyrics_codebook_size: 2000
     speaker_codebook_size: 100
-    semantic_codebook_size: 32_768
+    semantic_codebook_size: 16_384      # Dua-UMM
     semantic_frame_rate: 25
     semantic_type: bestrq
     train_conditions: "style_category,speaker_id,lyrics_tokens"
@@ -21,43 +21,40 @@ extra_params:
     input_embedders: [tag_categorical, speaker_id, lyrics_tokens]
     tag_taxonomy_lang: 'SA'
     tag_dropout_rate: 0.25
-    use_mcc_gender: False
-    # mulan_embed_dim: 512
     hidden_size: 1536
     intermediate_size: 4352
     num_hidden_layers: 24
     num_attention_heads: 12
-    pretrained_path: null
-    tokenizer_path: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/checkpoints/step=070000.ckpt"
-    # mulan_path: "hdfs://haruna/home/byte_speech_sv/mulan/cn_mulan_ckpt/mulan-step=012800-kaggle-minimal.ckpt"
+    pretrained_path: null # for loading state dicts
+    tokenizer_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/renyi/samantha_ckpts/umm_mix/0208_dualummv2_fullinp_1/checkpoints/step=0970000.ckpt
+    # Dual V1: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/renyi/samantha_ckpts/umm_mix/0219_dualummv1_novocadv_1/checkpoints/step=0340000.ckpt
+    # Dual V2: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/renyi/samantha_ckpts/umm_mix/0208_dualummv2_fullinp_1/checkpoints/step=0970000.ckpt
 
 # running parameters
 run_opts:
     fast_dev_run: False
     log_dir: logs
     hdfs_log_dir: "hdfs:///home/byte_speech_sv/zongyu.yin/logs"
-    log_name: decoder_07B_zh30s_lowrisk_sa_cat
+    log_name: decoder_07B_zh30s_lowrisk_sa_cat_dual
     version: v0
     cache_dir: .module_cache/bigmusic
-    precision: "16"
-    num_workers: 6
+    precision: "16-mixed"
+    num_workers: 4
     accelerator: auto
     max_steps: 100000
-    val_check_interval: 1000
-    batch_size: 18
-    learning_rate: 3.0e-4
+    batch_size: 10
+    learning_rate: 4.0e-4
     warmup_steps: 2000
     cycle_steps: 30000
-    weight_decay: 0.05
-    shuffle_buffer: 0   # 100
+    weight_decay: 0.01
+    shuffle_buffer: 0
     gradient_clip_val: 1.0
-    buckets_in_sec: [22, 24, 26, 28, 30, 32]
+    buckets_in_sec: [22, 24, 26, 28, 30]
     use_dynamic_batch: False
     max_seg_per_track: 3
     segment_method: "random"
     infer_structure_tags: False
     read_structure_tags: True
-    region: "CN"
     lyrics_confidence: 0.1
     lyrics_tokenizer: "tts_chinese_frontend_model"
     segment_max_phone_len: 400
@@ -65,6 +62,8 @@ run_opts:
     parquet_dataset_weights: [1]
     sinking_threshold: 0.51
     remove_sinking: false
+    val_check_interval: 4000
+    save_interval: 8000
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -81,19 +80,15 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     max_seg_per_track: !ref <run_opts[max_seg_per_track]>
     tokenizer: !ref <run_opts[lyrics_tokenizer]>
     segment_max_phone_len: !ref <run_opts[segment_max_phone_len]>
-    region: !ref <run_opts[region]>
     conditions: !ref <extra_params[train_conditions]>
     lyrics_confidence: !ref <run_opts[lyrics_confidence]>
     read_structure_tags: !ref <run_opts[read_structure_tags]>
     infer_structure_tags: !ref <run_opts[infer_structure_tags]>
     segment_method: !ref <run_opts[segment_method]>
-    # wds_dataset_names: !ref <run_opts[wds_dataset_names]>
-    # wds_dataset_weights: !ref <run_opts[wds_dataset_weights]>
     parquet_dataset_ids: !ref <run_opts[parquet_dataset_ids]>
     parquet_dataset_weights: !ref <run_opts[parquet_dataset_weights]>
     sinking_threshold: !ref <run_opts[sinking_threshold]>
     remove_sinking: !ref <run_opts[remove_sinking]>
-    frame_rate: !ref <extra_params[semantic_frame_rate]>
 
 model_config: !new:transformers.GPT2Config
     vocab_size: 1 # placeholder. Embedding table gets removed on load
@@ -143,7 +138,7 @@ scheduler_cls: !name:recipes.musiclm.optim.lr_scheduler.warmup_cosine_lr.WarmupC
     cycle_steps: !ref <run_opts[cycle_steps]>
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
-pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
+pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModuleDualUMMFullTrack
     checkpointing: False
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
@@ -152,22 +147,9 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
     extra_params: !ref <extra_params>
     required_modules:
         bestrq:
-            # US UMM-chroma-Zh stage 3
             hpath: !ref <extra_params[tokenizer_path]>
-            initializer: !name:recipes.umm.requires.model_initializer.init_stage3
+            initializer: !name:recipes.umm.requires.model_initializer.init_dualumm
                 cache_dir: !ref <run_opts[cache_dir]>
-        # Mulan mix - 110
-        # mulan:
-        #     hpath: !ref <extra_params[mulan_path]>
-        #     initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
-        #         cache_dir: !ref <run_opts[cache_dir]>
-        #         version: "Chinese"
-        # mulan_tagger:
-        #     hpath: null
-        #     initializer: !name:recipes.bigmusic.utils.mulan_tag.init_mulan_tagger
-        #         cache_dir: !ref <run_opts[cache_dir]>
-        #         mulan_tag_type: cn_mir
-
 
 logger:
     - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
@@ -180,14 +162,28 @@ logger:
       project: !ref <run_opts[log_name]>
       name: !ref <run_opts[version]>
 
+# log_gradient_scaler: !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
-      save_top_k: 20
-      save_last: True
+      save_top_k: 3
+      save_last: False
       monitor: val_accu_0
       mode: max
       filename: "{step:06d}-{tr_loss:.4f}-{val_accu_0:.2f}"
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      save_top_k: 0
+      save_last: True
+      monitor: step
+      every_n_train_steps: 1000
+      mode: max
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      monitor: step
+      save_last: False
+      save_top_k: 10
+      every_n_train_steps: !ref <run_opts[save_interval]>
+      mode: max
+      filename: "{step:06d}-{tr_loss:.4f}-{val_loss_0:.4f}"
     - !new:samantha.callbacks.HDFSModelCheckpoint
       hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
       monitor: step
@@ -198,16 +194,17 @@ callbacks:
       filename: "{step:06d}-{tr_loss:.4f}-{val_accu_0:.2f}"
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: 'step'
-    # - !new:recipes.bigmusic.callbacks.data_logger.BigMusicDataUsageLogger
-    #   save_dir: /mnt/bn/audio-diffusion/qq/data_usage_logs
-    #   save_every_n_iter: 5000
-    # - !new:recipes.bigmusic.callbacks.data_logger.BigMusicAudioDataLogger
-    #   sample_rate: !ref <extra_params[sample_rate]>
-    #   check_interval: !ref <run_opts[val_check_interval]>
-    #   examples_per_batch: 8
 
 plugins:
     - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
+
+# profiler: !new:pytorch_lightning.profilers.PyTorchProfiler
+#     schedule: !apply:torch.profiler.schedule
+#         wait: 0
+#         warmup: 50
+#         active: 10
+#         repeat: 1
+#         skip_first: 100
 
 trainer: !new:pytorch_lightning.Trainer
     strategy: "ddp_find_unused_parameters_false"
@@ -218,13 +215,15 @@ trainer: !new:pytorch_lightning.Trainer
     num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
     deterministic: False
     enable_model_summary: True
-    log_every_n_steps: 500
+    log_every_n_steps: 100
     max_steps: !ref <run_opts[max_steps]>
     precision: !ref <run_opts[precision]>
     accumulate_grad_batches: 1
     gradient_clip_val: !ref <run_opts[gradient_clip_val]>
     val_check_interval: !ref <run_opts[val_check_interval]>
     check_val_every_n_epoch: null
-    num_sanity_val_steps: 2  # skip validation sanity checks so we don't run into hdfs file close errors
+    limit_val_batches: 0
+    num_sanity_val_steps: 0  # skip validation sanity checks so we don't run into hdfs file close errors
     callbacks: !ref <callbacks>
     plugins: !ref <plugins>
+    # profiler: !ref <profiler>

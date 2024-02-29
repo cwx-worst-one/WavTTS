@@ -41,7 +41,7 @@ extra_params:
 
     # Used for reranker, only loaded if use_reranker=True
     # structure_ckpt: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/structure_epoch=185-step=93000.ckpt"
-    mulan_ckpt: "hdfs://haruna/home/byte_speech_sv/mulan/cn_mulan_ckpt/mulan-step=012800-kaggle-minimal.ckpt"
+    mulan_ckpt: "infer_from_semantic_ckpt"
     mulan_rewards_ckpt: "hdfs://haruna/home/byte_speech_sv/mulan/cn_mulan_ckpt/mulan-step=012800-kaggle-minimal.ckpt"
 
     diffusion_params:
@@ -59,6 +59,9 @@ extra_params:
     sample_mode: "top_p"
     sample_thresh: 0.9
     token2wav_type: diffusion
+
+    use_controller_cfg: True       # Set to True to activate style CFG.
+    controller_cfg_gamma: 1.0
 
     cache_dir: .module_cache/bigmusic
 

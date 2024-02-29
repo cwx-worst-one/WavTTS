@@ -318,6 +318,9 @@ class BaseContinuousEmbedModule(BaseModule):
         rl_training=False,
         exclude_ids=None,
         skip_sos=False,
+        use_controller_cfg=False,
+        inputs_embeds_cfg=None,
+        controller_cfg_gamma=1.0,
     ):
         """
         Input:
@@ -334,6 +337,9 @@ class BaseContinuousEmbedModule(BaseModule):
         """
         tqdm_name = self.__class__.__name__ if tqdm_name is None else tqdm_name
         batch_size, seq_len, _ = inputs_embeds.size()
+        if use_controller_cfg:
+            inputs_embeds = torch.cat([inputs_embeds, inputs_embeds_cfg], dim=0)  # cat on first-dim(batch_size) 
+            batch_size = 2 * batch_size
         if ref_samples is not None:
             assert ref_samples.size(0) == batch_size
             assert ref_samples.size(1) == num_tokens
@@ -389,12 +395,29 @@ class BaseContinuousEmbedModule(BaseModule):
                 # cast back to full precision
                 logits = logits.float()
 
+                if use_controller_cfg:
+                    logits_cfg = logits[1].unsqueeze(0)     # unconditioned path
+                    logits = controller_cfg_gamma * logits[0] + (1 - controller_cfg_gamma) * logits[1]
+                    logits = logits.unsqueeze(0)
+
                 inference_params.sequence_len_offset += model_input['inputs_embeds'].size(1)
                 logits = logits[:, -1:, :] # only predicting on last logit.
                 predict_token = self.sample_logits(
                     i, logits, temperature, sample_mode, sample_thresh, exclude_ids
                 )
                 predict_token_emb = self.target_embedder.embedder(predict_token)
+
+                if use_controller_cfg:
+                    # If unconditioned path uses the predict token history from the conditioned path.
+                    predict_token_emb = torch.cat([predict_token_emb, predict_token_emb], dim=0)
+                    
+                    # If unconditioned path always uses the predict token history from the unconditioned path.
+                    # logits_cfg = logits_cfg[:, -1:, :]
+                    # predict_token_cfg = self.sample_logits(
+                    #     i, logits_cfg, temperature, sample_mode, sample_thresh, exclude_ids)                    
+                    # predict_token_cfg_emb = self.target_embedder.embedder(predict_token_cfg)
+                    # predict_token_emb = torch.cat([predict_token_emb, predict_token_cfg_emb], dim=0)                    
+
             else:
                 model_output = self.model(
                     **model_input,

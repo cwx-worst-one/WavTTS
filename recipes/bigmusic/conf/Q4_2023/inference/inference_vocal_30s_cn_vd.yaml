@@ -1,0 +1,157 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 1995
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+extra_params:
+    beam_size: 1 # set to 4 if using reranker, 1 without reranker
+    samples_to_save: 1
+    prompt_path: ""
+    inference_conditions: style_text,style_audio,speaker_id,lyrics_tokens # style_text|style_audio,lyrics_tokens,vocal_audio|vocal_text,chroma
+    max_items: null
+    run_combinations: False
+    use_reranker: False
+    dataset_mode: truncate_length
+
+    output_dir: ./generated_output/zh
+
+    # Semantic model
+    semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
+    semantic_ckpt: ""
+
+    # Used for reranker, only loaded if use_reranker=True
+    mulan_rewards_ckpt: "hdfs:///home/byte_speech_sv/jingsong.gao/mulan_ckpt/mulan-step=024600-median_rank_1=110-kaggle.ckpt"
+    structure_ckpt: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/structure_epoch=185-step=93000.ckpt"
+
+    # Diffusion
+    diffusion_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/h800_ds1614_prompt_16xH800_0223/checkpoints/epoch=00-step=500000-loss=0.19.ckpt"
+    vocoder_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/weituo/mul_music_vocoder/vocoder/24k_dim=64_hz=40_kl=1e-6/checkpoints/soundstream-step=500000-EMA.ckpt"
+    lyrics_lang: "zh_phone" # en | zh_phone | zh_wp
+    is_zh_token: True # Set to True only if lyrics_lang is zh_phone or zh_wp. Diffusion model from recipes.diffusion.models.tnt_gru
+
+    # Tokenizer
+    tokenizer_ckpt: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/checkpoints/step=070000.ckpt"
+
+    diffusion_params:
+        infer_type: diffusion-vocoder
+        umm_ckpt_path: !ref <extra_params[tokenizer_ckpt]>
+        umm_frame_rate: 25
+        mel_frame_rate: 40         # Music vocoder 125 Hz
+        seed: !ref <seed>
+        diffusion_precision: "bf16"
+        diffusion_nfe: 10
+        diffusion_sampler: "ddim"
+        text_cfg_w: 0
+        use_wvae_vocoder: True     # Ignore voice prompt
+        umm_type: "UMM_music"
+
+        bn_config: # 40hz wvae 3.1
+            hop_size: 600
+            bn_norm_std: 15
+            bn_norm_mean: 0
+            bn_padding: -5
+            bn_dim: 64
+            wvae_encoder_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/assets/vocoder/20240112/wavevae_encoder.pt
+            wvae_decoder_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/assets/vocoder/20240112/wavevae_decoder.pt
+            wvae_version: 3.1
+            wvae_cache_dir: .module_cache
+            wvae_encoder_hop_size: 300
+            wvae_encoder_win_size: 1200
+
+        mel_config: # ibigvgan config.
+            n_fft: 4096
+            num_mels: 100
+            hop_size: 600
+            win_size: 2400
+            fmin: 0
+            fmax: 12000
+            sampling_rate: 24000
+            mel_norm_mean: -4
+            mel_norm_std: 7.5
+            mel_mask_value: -5
+
+    # Model Settings
+    sample_rate: 24000
+    duration: 30 # 30
+    lyrics_max_seq_len: 400
+    semantic_temperature: 1.0
+    sample_mode: "top_p"
+    sample_thresh: 0.9
+    token2wav_type: unified-diffusion
+
+    cache_dir: .module_cache/bigmusic
+
+run_opts:
+    fast_dev_run: False
+    precision: 16-mixed
+    accelerator: auto
+    strategy: auto
+    cache_dir: .module_cache/bigmusic
+    batch_size: 8  # set to 8 if using reranker, 40 without reranker
+    num_workers: 8
+
+################################################################################
+##########                    INFERENCE CONFIGURATION                  ##########
+################################################################################
+
+predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_from_prompt
+    prompt_path: !ref <extra_params[prompt_path]>
+    conditions: !ref <extra_params[inference_conditions]>
+    max_items: !ref <extra_params[max_items]>
+    batch_size: !ref <run_opts[batch_size]>
+    run_combinations: !ref <extra_params[run_combinations]>
+    lyrics_max_seq_len: !ref <extra_params[lyrics_max_seq_len]>
+    dataset_mode: !ref <extra_params[dataset_mode]>
+    lang: !ref <extra_params[lyrics_lang]>
+    enable_punctuation: True
+
+pl_datamodule: !new:recipes.bigmusic.datasets.lyrics.LyricsDataModule
+    predict_dataset: !ref <predict_dataset>
+    num_workers: 0
+
+pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
+    semantic_cls_path: !ref <extra_params[semantic_cls_path]>
+    extra_params: !ref <extra_params>
+    required_modules:
+        diffusion_modules:
+            diffusion:
+                hpath: !ref <extra_params[diffusion_ckpt]>
+                initializer:
+                    !name:recipes.voicebox.lit_modules.lit_diffusion_reconstruct.prepare_diffusion_model_for_bigmusic
+                    cache_dir: !ref <run_opts[cache_dir]>
+                    params: !ref <extra_params[diffusion_params]>
+        # dualumm_modules:
+        #     mel_vocoder:
+        #         hpath: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/renyi/samantha_ckpts/voc/v1/checkpoints/last.ckpt"
+        #         initializer: !name:recipes.umm.requires.model_initializer.init_stage3_dual_voc
+        #             cache_dir: !ref <run_opts[cache_dir]>
+
+# separating out additional_callbacks so auto_eval can disable metrics
+additional_callbacks:
+    # - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
+    # - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
+    - !new:recipes.bigmusic.callbacks.save_outputs.AverageMetricsCallback
+    - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
+    - !new:recipes.bigmusic.callbacks.save_outputs.NormVolumeCallback
+callbacks:
+    - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
+      beam_size: !ref <extra_params[beam_size]>
+      samples_to_save: !ref <extra_params[samples_to_save]>
+
+trainer: !new:pytorch_lightning.Trainer
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: 'auto'
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    use_distributed_sampler: False # for multi-gpu inference
+    strategy: !ref <run_opts[strategy]>
+    precision: !ref <run_opts[precision]>
+    callbacks: !apply:operator.add [!ref <callbacks>, !ref <additional_callbacks>]
+    limit_predict_batches: 20
