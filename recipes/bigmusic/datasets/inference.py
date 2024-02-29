@@ -2,12 +2,15 @@ import itertools
 import os
 import json
 import librosa
+import glob
 import torch
 from typing import List, Optional
 import pandas as pd
 from pathlib import Path
 from functools import partial
 from torch.utils.data import Dataset
+from recipes.bigmusic.datasets.svs import SVSInferTransforms, override_parameter
+from recipes.bigmusic.datasets.svs import collate_fn as future_function
 from recipes.bigmusic.utils.format_utils import reformat_zh_text_input
 from samantha.dataio.webdataset.pipeline import WebPipeline
 from recipes.bigmusic.datasets.lyrics import (
@@ -210,3 +213,42 @@ def process_user_lyrics(lyrics_list: Optional[List[str]], user_lyrics_list: List
         else:
             out_lyrics_list.append(og_lyrics)
     return out_lyrics_list
+
+
+def inference_svs_dataset_from_prompt(
+    input_txt_pattern,
+    conditions="style_text,lyrics_tokens",
+    batch_size=8,
+    style_prompt_path: str = '',
+    vocal_prompt_duration: float = 10.0,
+    pitch_shift: int = 0,
+    segment_max_phone_len = 0,
+    segment_max_leadsheet_len = 0,
+    target_spkr_name='Krista',
+    vocal_prompt_number: int = 1,
+    **kwargs,
+):
+
+    collate_fn = override_parameter(future_function, conditions=conditions)
+
+    items = []
+    for f in glob.glob(input_txt_pattern+"/*.txt", recursive=True):
+        if os.path.exists(f) and len(open(f).readlines()) > 1:
+            items.append(f)
+    segment_transforms = [SVSInferTransforms(style_prompt_path=style_prompt_path,
+                                            vocal_prompt_duration=vocal_prompt_duration,
+                                            pitch_shift=pitch_shift,
+                                            segment_max_phone_len=segment_max_phone_len,
+                                            segment_max_leadsheet_len=segment_max_leadsheet_len,
+                                            target_spkr_name=target_spkr_name,
+                                            vocal_prompt_number=vocal_prompt_number,
+                                            **kwargs,)]
+
+    dataset = WebPipeline(items, pipeline=[])
+    batch_fn = default_batch_fn(batch_size, collation_fn=collate_fn)
+    return transform_dataset(
+        dataset,
+        segment_transforms=segment_transforms,
+        batch_transforms=[],
+        batch_fn=batch_fn,
+    )

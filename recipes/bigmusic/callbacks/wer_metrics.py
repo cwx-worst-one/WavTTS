@@ -109,6 +109,8 @@ def run_relative_wer_metrics(output_dir, asr_model_path='zh', device='cuda'):
     if len(generated_output_fps) == 0:
         return
     category2wer = defaultdict(list)
+    all_pred_text = ''
+    all_label_text = ''
 
     for fp in tqdm.tqdm(generated_output_fps,
                         desc="Running relative_wer_metrics",
@@ -116,6 +118,9 @@ def run_relative_wer_metrics(output_dir, asr_model_path='zh', device='cuda'):
         asr_lyrics, lyrics, metadata_fp, generated_output_fp = relative_wer_on_single_file((fp, asr_requires))
         a = normalize_text(remove_punc_case(lyrics[0])) # greedy transcript
         g = normalize_text(remove_punc_case(asr_lyrics[0])) # greedy transcript
+
+        all_label_text += a
+        all_pred_text += g
         
         edits = edit_distance(a, g)
         denom = 1.0 if len(a) == 0 else len(a)
@@ -143,7 +148,12 @@ def run_relative_wer_metrics(output_dir, asr_model_path='zh', device='cuda'):
         
     for dir_path, wers in category2wer.items():
         metrics_fp = Path(dir_path)/'metrics.json'
-        wer, ins, subs, dels = np.array(wers).mean(axis=0)
+        edits = edit_distance(all_label_text, all_pred_text)
+        denom = 1.0 if len(all_label_text) == 0 else len(all_label_text)
+        ins = round(edits.ins / denom, 3)
+        subs = round(edits.subs / denom, 3)
+        dels = round(edits.dels / denom, 3)
+        wer = sum([ins, subs, dels])
         wer_metadata = {
             'wer': round(wer, 3),
             'ins': round(ins, 3),

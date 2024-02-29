@@ -1,16 +1,17 @@
 ---
-
 ################################################################################
 ##########                       BASIC CONFIGURATION                  ##########
 ################################################################################
 
 seed: 1995
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
-__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+__set_float32_matmul_precision:
+    !apply:torch.set_float32_matmul_precision ["high"]
 
 extra_params:
     skip_sos: True
     app_type: svs
+    exclude_ids: True
     beam_size: 1 # set to 4 if using reranker
     prompt_path: "./assets/svs/svs_prompt"
     inference_conditions: "leadsheet_tokens,prefix_audio" # style_text|style_audio,lyrics_tokens,vocal_audio|vocal_text,chroma
@@ -18,6 +19,7 @@ extra_params:
     max_items: null
     run_combinations: False
     use_reranker: False
+
 
     output_dir: ./generated_output/svs_infer_zh
 
@@ -51,7 +53,7 @@ extra_params:
         diffusion_precision: "bf16"
         diffusion_nfe: 10
         diffusion_sampler: "ddim"
-        text_cfg_w: 0
+        text_cfg_w: 0.5
         use_wvae_vocoder: True
         umm_type: "UMM_music"
 
@@ -80,12 +82,13 @@ extra_params:
             mel_norm_std: 7.5
             mel_mask_value: -5
 
+
     # Model Settings
     sample_rate: 24000
-    duration: 40 # 30
+    duration: 30 # 30
     lyrics_max_seq_len: 0 # TODO: switch to 400 for 30s
     semantic_temperature: 1.0
-    sample_mode: "gumbel"       # gumbel | top_p
+    sample_mode: "gumbel" # gumbel | top_p
     token2wav_type: unified-diffusion
     lyrics_tokenizer: "sami_tts_frontend_precompute"
     cache_dir: !ref <run_opts[cache_dir]>
@@ -95,7 +98,10 @@ extra_params:
 run_opts:
     wds_dataset_urls: []
     wds_dataset_weights: []
-    wds_validation_dataset_urls: ["hdfs://haruna/home/byte_speech_sv/zhongyi.huang/svs_dataset/24000hz/test_v2/url2index.txt"]
+    wds_validation_dataset_urls:
+        [
+            "hdfs://haruna/home/byte_speech_sv/zhongyi.huang/svs_dataset/24000hz/test_v2/url2index.txt",
+        ]
     parquet_dataset_ids: [708]
     parquet_dataset_weights: [1]
     buckets_in_sec: [1, 3, 5, 10, 15, 20, 25, 30]
@@ -106,7 +112,7 @@ run_opts:
     accelerator: auto
     strategy: auto
     cache_dir: .module_cache/bigmusic
-    batch_size: 1  # set to 4 if using reranker
+    batch_size: 1 # set to 4 if using reranker
     num_workers: 8
     shuffle_buffer: 0
     use_dynamic_batch: False
@@ -124,7 +130,9 @@ run_opts:
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
-predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_svs_dataset_from_prompt
+
+predict_dataset:
+    !apply:recipes.bigmusic.datasets.inference.inference_svs_dataset_from_prompt
     sample_rate: !ref <extra_params[sample_rate]>
     batch_size: !ref <run_opts[batch_size]>
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
@@ -187,7 +195,8 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                 required_modules:
                     mulan:
                         hpath: !ref <extra_params[mulan_ckpt]>
-                        initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
+                        initializer:
+                            !name:recipes.musiclm.requires.model_initializer.init_mulan
                             version: "g4"
                     #structure:
                     #    hpath: !ref <extra_params[structure_ckpt]>
@@ -204,22 +213,23 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
 
 # separating out additional_callbacks so auto_eval can disable metrics
 additional_callbacks:
+    # - !new:recipes.bigmusic.callbacks.wer_metrics.RelativeWERMetricsCallback
     # - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
     # - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
     - !new:recipes.bigmusic.callbacks.pitch_metrics.PitchMetricsCallback
     # - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
 callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
-    # - !new:recipes.bigmusic.callbacks.save_outputs.AudioEnhanceCallback
     - !new:recipes.bigmusic.callbacks.save_outputs.MergeFullSongCallback
 
 trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>
     accelerator: !ref <run_opts[accelerator]>
-    devices: 'auto'
+    devices: "auto"
     num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
     deterministic: False
     enable_model_summary: True
     strategy: !ref <run_opts[strategy]>
     precision: !ref <run_opts[precision]>
-    callbacks: !apply:operator.add [!ref <additional_callbacks>, !ref <callbacks>]
+    callbacks:
+        !apply:operator.add [!ref <additional_callbacks>, !ref <callbacks>]

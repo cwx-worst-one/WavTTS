@@ -1130,12 +1130,6 @@ class SVSInferTransforms(BaseTransforms):
         style_audio, sliced_notes, sliced_phones = self.prompter.warp_prompt(
             sliced_notes, sliced_phones, self.target_spkr_name, num_prompt=self.vocal_prompt_number)
 
-        # Pad leadsheet to minimun duration
-        leadsheet_duration = leadsheet[-1][3]
-        if leadsheet[-1][3] < self.min_duration:
-            leadsheet.append(("Rest", ["sil"], leadsheet_duration, self.min_duration))
-        sliced_notes, sliced_phones = split_leadsheet2note_and_phone(leadsheet)
-
         leadsheet_tokens, leadsheet_tokens_coff, note_tokens, phoneme_tokens = concat_alignment(
             self.leadsheet_tokenizer, sliced_notes, sliced_phones, pitch_shift=self.pitch_shift)
 

@@ -418,6 +418,8 @@ def merge_full_song(input_txt_dir, sample_rate, predict_dir, infer_tag="", save_
         wav = os.path.join(predict_dir, wav_basename)
         slice_uttid = os.path.basename(txt).rstrip(".txt")
         slice_uttid = slice_uttid.replace("test_", "")
+        song_uttid = slice_uttid[:-3]
+        sliceindex = int(slice_uttid[-3:])
 
         if os.path.exists(wav):
             frame = open(txt).readlines()
@@ -425,21 +427,23 @@ def merge_full_song(input_txt_dir, sample_rate, predict_dir, infer_tag="", save_
             duration = frame * 0.0125
             nsample = int(duration * sample_rate)
             y, _ = librosa.load(wav, sr=sample_rate, mono=True, duration=duration)
-            save_path = f"{sliced_demo}/{slice_uttid}_slice_{infer_tag}.wav"
+            if len(y) < nsample:
+                y = np.concatenate([y, np.zeros(nsample-len(y))], axis=0)
+            # save_path = f"{sliced_demo}/{slice_uttid}_slice_{infer_tag}.wav"
+            save_path = f"{sliced_demo}/0_{song_uttid}_{sliceindex}_{infer_tag}.wav"
             soundfile.write(save_path, y, sample_rate, "PCM_16")
         else:
             frame = int(open(txt).readlines()[0].split("\t")[2])
             nsample = int(sample_rate * frame * 0.0125)
             y = np.zeros([nsample])
 
-        song_uttid = slice_uttid[:-3]
         if song_uttid not in data_dict:
             data_dict[song_uttid] = []
         data_dict[song_uttid].append(y)
 
     for uttid, audio in data_dict.items():
         audio = np.concatenate(audio, axis=0)
-        save_path = f"{demo_dir}/{uttid}_{infer_tag}.wav"
+        save_path = f"{demo_dir}/0_{uttid}_-1_{infer_tag}.wav"
         if len(audio) > 0:
             print("Generated Fullsong in:", save_path)
             soundfile.write(save_path, audio, sample_rate, "PCM_16")
