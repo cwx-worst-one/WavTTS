@@ -113,8 +113,6 @@ config: !new:recipes.umm.models.config.UMMConfig
     hidden_size: 512
     intermediate_size: 1024
     num_hidden_layers: 12
-    num_attention_heads: 4
-    max_source_positions: !ref <extra_params[frame_rate]> * <pl_datamodule[max_duration]>
     add_vq: True
     vq_proj_norm: "bn"
     vq_proj_noise: 10000
@@ -135,7 +133,6 @@ config: !new:recipes.umm.models.config.UMMConfig
     ctc_blank_id: 105879
     ctc_zero_infinity: True
     use_bn: false
-    first_conformer: true
     hidden_dropout: 0.0
     activation_dropout: 0.0
     attention_dropout: 0.0
@@ -145,8 +142,8 @@ config: !new:recipes.umm.models.config.UMMConfig
     conv_hidden_size: 256
     train_decoder_only: false
     vocal_ref: false
-    downsampling: 25
-    upsampling: 3
+    downsampling: 4
+    upsampling: 1
     use_full_input: false
 
 model_cls: !name:recipes.umm.models.dualumm.DualUMMv2

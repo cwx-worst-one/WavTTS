@@ -1,17 +1,9 @@
 ---
-# @hanoihantrakul 27Feb2024
-#
-# This config is near identical to `dualumm_v1.yaml` except for one detail:
-# - The token code rate is not 25Hz, but 12Hz. Since DualUMM outputs separate
-# codes for the vocal and the instrumental, this means the code rate is 
-# 25 + 25 = 50Hz. In order to better compare with the 1st gen ConformerUMM and
-# 2nd gen ConvUMM (which are both 25Hz), we train a new model with a comparable 
-# code rate.
-#
 # @hanoihantrakul 29Feb2024
-# Implementation details: There are multiple ways to change the code rate. In 
-# this case the fastest way was to set upsample=3 and downsample=25. 
-# Remember that the mel features have a timestep of 100Hz. So 100x3/25 = 12.
+#
+# This config is near identical to `dualumm_v1_12hz.yaml` except for one detail:
+# - The token code rate is 10Hz, not 12Hz.
+
 ################################################################################
 ##########                       BASIC CONFIGURATION                  ##########
 ################################################################################
@@ -41,7 +33,7 @@ run_opts:
     hdfs_log_dir: "hdfs:///home/byte_speech_sv/hanoi.hantrakul/logs"
     log_dir: logs
     log_name: umm_dual_master
-    version: !ref umm_dual_v1_12hz_<extra_params[tokenizer]>_<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>
+    version: !ref umm_dual_v1_10hz_<extra_params[tokenizer]>_<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>
     precision: "32"
     num_workers: 4
     accelerator: auto
@@ -139,8 +131,8 @@ config: !new:recipes.umm.models.config.UMMConfig
     conv_hidden_size: 256
     train_decoder_only: false
     vocal_ref: false
-    downsampling: 25
-    upsampling: 3
+    downsampling: 10
+    upsampling: 1
     use_full_input: false
 
 model_cls: !name:recipes.umm.models.dualumm.DualUMMv2
