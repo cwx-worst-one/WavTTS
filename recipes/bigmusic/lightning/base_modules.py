@@ -396,10 +396,9 @@ class BaseContinuousEmbedModule(BaseModule):
                 logits = logits.float()
 
                 if use_controller_cfg:
-                    logits_cfg = logits[1].unsqueeze(0)     # unconditioned path
-                    logits = controller_cfg_gamma * logits[0] + (1 - controller_cfg_gamma) * logits[1]
-                    logits = logits.unsqueeze(0)
-
+                    logits_cfg = logits[batch_size//2:]     # unconditioned path
+                    logits = controller_cfg_gamma * logits[0:batch_size//2] + (1 - controller_cfg_gamma) * logits[batch_size//2:]
+                    
                 inference_params.sequence_len_offset += model_input['inputs_embeds'].size(1)
                 logits = logits[:, -1:, :] # only predicting on last logit.
                 predict_token = self.sample_logits(

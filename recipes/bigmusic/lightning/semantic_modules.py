@@ -44,6 +44,7 @@ from samantha.utils.hparams import DotDict
 from recipes.musiclm.lightning.modules import MaskedCrossEntropy
 from recipes.musiclm.transforms.audio import to_energy
 from collections import defaultdict
+from copy import deepcopy
 from itertools import zip_longest
 from typing import Optional
 from recipes.mi1.models.music_sft import get_m1_tags
@@ -674,11 +675,11 @@ class SemanticModule(BaseContinuousEmbedModule):
         
         inputs_emb_cfg = None
         if use_controller_cfg:
-            assert len(batch['style_text']) == 1
-            assert beam == 1
-            batch['style_text'] = ['']
-            batch['style_category'] = ['']
-            inputs_emb_cfg = self.prepare_inputs_embeddings(batch)
+            assert beam == 1    # TODO(qq) support beam > 1 with CFG.
+            batch_cfg = deepcopy(batch)
+            batch_cfg['style_text'] = [''] * len(batch['style_text'])
+            batch_cfg['style_category'] = [''] * len(batch['style_category'])
+            inputs_emb_cfg = self.prepare_inputs_embeddings(batch_cfg)
 
         return super().predict(
             inputs_embeds,
