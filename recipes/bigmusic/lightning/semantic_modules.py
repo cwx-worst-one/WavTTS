@@ -38,6 +38,8 @@ import torch
 from tqdm.auto import tqdm
 import torch.nn as nn
 import torch.nn.functional as F
+
+from samantha.criterion.masked_loss import sequence_mask
 from samantha.models.ctiga import gpt
 from samantha.utils.ctiga.inference_params import InferenceParams
 from samantha.utils.hparams import DotDict
@@ -561,10 +563,17 @@ class SemanticModule(BaseContinuousEmbedModule):
             logits, last_hidden_state = model_output
         target_length = target_ids.size(1)
         target_logits = logits[:, -target_length:, :]
-        loss = self.criterion(target_logits, target_ids)
-        accu = (target_logits.argmax(dim=-1) == target_ids).float().mean() * 100
+        loss_mask = None
+        if 'target_lengths' in training_inputs:
+            loss_mask = sequence_mask(
+                training_inputs['target_lengths'], max_len=target_ids.shape[1], device=target_ids.device)
+        loss = self.criterion(target_logits, target_ids, loss_mask)
+        if loss_mask is not None:
+            loss_mask = torch.ones_like(target_ids)
+        accu = ((target_logits.argmax(dim=-1) == target_ids).float() * loss_mask).sum() / loss_mask.sum() * 100
         # measure accuracy of first 10 tokens as a measurement for style
-        accu_seq_25 = (target_logits.argmax(dim=-1)[..., :25] == target_ids[..., :25]).float().mean() * 100
+        accu_seq_25 = ((target_logits.argmax(dim=-1)[..., :25] == target_ids[..., :25])
+                       * loss_mask[..., :25]).sum() / loss_mask[..., :25].sum() * 100
         result_dict = {
             'loss': loss.item(),
             'accu': accu.item(),
