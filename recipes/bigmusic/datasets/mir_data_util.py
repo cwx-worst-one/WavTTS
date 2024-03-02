@@ -516,6 +516,17 @@ SA_TAGS_SPECIAL_MAP = {
     "Pop,Chinese Style": "Chinese Style",
 }
 
+MACRO_STYLE_MAP = {
+    "Pop": "Pop|||non-Sinking|Chinese",
+    "Hip Hop/Rap": "Hip Hop/Rap|||non-Sinking|Chinese",
+    "Chinese Style": "Chinese Style|||non-Sinking|Chinese",
+    "Electronic": "Electronic|||non-Sinking|Chinese",
+    "DJ": "DJ|||Sinking|Chinese",
+    "Rock": "Rock|||non-Sinking|Chinese",
+    "Folk": "Folk|||non-Sinking|Chinese",
+    "R&B/Soul": "R&B/Soul|||non-Sinking|Chinese"
+}
+
 def get_categorical_vocab(vocab_type='Zh'):
     all_values = []
     all_values.append(NONE_LABEL)

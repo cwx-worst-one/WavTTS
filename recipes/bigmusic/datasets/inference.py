@@ -1,23 +1,29 @@
 import itertools
 import os
 import json
-import librosa
 import glob
 import torch
-from typing import List, Optional
+from typing import List
 import pandas as pd
 from pathlib import Path
 from functools import partial
-from torch.utils.data import Dataset
+
+from torchaudio_augmentations import Compose
+
+from samantha.dataio.webdataset.pipeline import WebPipeline
+from samantha.transforms.audio import (
+    SetAudioDimensions,
+    ToTensor,
+)
+
 from recipes.bigmusic.datasets.svs import SVSInferTransforms, override_parameter
 from recipes.bigmusic.datasets.svs import collate_fn as future_function
-from recipes.bigmusic.utils.format_utils import reformat_zh_text_input
-from samantha.dataio.webdataset.pipeline import WebPipeline
 from recipes.bigmusic.datasets.lyrics import (
     transform_dataset,
     default_batch_fn,
     dictionary_collate,
 )
+from recipes.bigmusic.datasets.mir_data_util import MACRO_STYLE_MAP
 from recipes.bigmusic.datasets.transforms.lyrics import (
     LyricsTokenTransform,
     AddConditionsTransform,
@@ -28,14 +34,8 @@ from recipes.bigmusic.datasets.transforms.lyrics import (
 from recipes.bigmusic.datasets.transforms.structure import (
     IntensityTransform,
 )
-from recipes.datasets.mcc.sami_tokenizer import Phrase, move_out_section_tags
 from recipes.musiclm.inference.utils import load_wav
-from samantha.transforms.audio import (
-    SetAudioDimensions,
-    ToTensor,
-)
-from recipes.musiclm.transforms.audio import FastNormalizeAudio
-from torchaudio_augmentations import Compose
+
 
 default_prompt_path = Path(__file__).absolute().parent/'inference_prompts/default.json'
 
@@ -99,12 +99,16 @@ def inference_dataset_from_prompt(
         prompts['structure'] = [None] * len(prompts[next(iter(prompts.keys()))])
     if 'semantic_tokens' in prompts:
         prompts['semantic_tokens'] = [torch.load(fp) for fp in prompts['semantic_tokens']]
-    if 'lyrics' in prompts:
-        prompts['lyrics'] = process_lyrics(prompts['lyrics'])
-    # (Removed) Reformat "user_lyrics" (the more user-friendly format) and override "lyrics"
-    # if 'user_lyrics' in prompts:
-    #     user_lyrics = prompts.pop("user_lyrics")
-    #     prompts["lyrics"] = process_user_lyrics(prompts.get("lyrics"), user_lyrics)
+
+    # Process lyrics and style_text
+    if 'rewrite_lyrics' in prompts:  # override lyrics with rewrite_lyrics
+        rewritten_lyrics = process_lyrics(prompts.pop('rewrite_lyrics'))
+        prompts['lyrics'] = [
+            rewritten if rewritten else original.strip()
+            for original, rewritten in zip(prompts['lyrics'], rewritten_lyrics)
+        ]
+    if 'style_text' in prompts:
+        prompts['style_text'] = process_style_text(prompts['style_text'])
 
     if run_combinations:
         lyrics_prompt_pairs = itertools.product(*list(prompts.values()))
@@ -196,24 +200,34 @@ def voice_clone_transform(extra_params):
 
 def process_lyrics(lyrics_list: List[str]) -> List[str]:
     """Move in-line leading section tags out as single lines."""
-    def process_one_piece(lyrics: str) -> str:
-        phrases = move_out_section_tags([Phrase.parse(text=line) for line in lyrics.split('\n')])
-        return '\n'.join([phrase.format_text() for phrase in phrases])
-    return [process_one_piece(lyrics) for lyrics in lyrics_list]
+    def add_section_tags_to_lyrics(text: str) -> str:
+        """Add section tags based on the number of lines.
+        This function is also a reference of the web demo's text processing.
+        """
+        intro_tag, outro_tag, verse_tag, chorus_tag = "[intro]", "[outro]", "[verse]", "[chorus]"
+        lines = text.split("\n")
+        n_lines = len(lines)
+        if n_lines in [1, 2]:  # intro + verse + outro
+            result = [intro_tag, verse_tag] + lines + [outro_tag]
+        elif n_lines in [3, 4]: # verse + outro
+            result = [verse_tag] + lines + [outro_tag]
+        elif n_lines == 6:  # verse + chorus
+            result = [verse_tag] + lines[:2] + [chorus_tag] + lines[2:]
+        else:  # verse + chorus
+            result = [verse_tag] + lines[:n_lines//2] + [chorus_tag] + lines[n_lines//2:]
+        return "\n".join(result)
 
-def process_user_lyrics(lyrics_list: Optional[List[str]], user_lyrics_list: List[str]) -> List[str]:
-    """For each sample (row), overwrite lyrics with reformatted user lyrics if the user lyrics is non-empty."""
-    n_pieces = len(user_lyrics_list)
-    if lyrics_list is None:
-        lyrics_list = [""] * n_pieces
-    out_lyrics_list = []
-    for og_lyrics, user_lyrics in zip(lyrics_list, user_lyrics_list):
-        if user_lyrics.strip():
-            out_lyrics_list.append(reformat_zh_text_input(user_lyrics))
-        else:
-            out_lyrics_list.append(og_lyrics)
-    return out_lyrics_list
+    return [add_section_tags_to_lyrics(lyrics) if lyrics.strip() else "" for lyrics in lyrics_list]
 
+def process_style_text(style_text_list: List[str]) -> List[str]:
+    """Auto-convert macro style text into separate sub-category text seaprated by '|'."""
+    def process_one(text: str) -> str:
+        separator = "|"
+        # Treat the text as formatted if there is any separator in the text
+        if separator in text:
+            return text
+        return MACRO_STYLE_MAP.get(text, MACRO_STYLE_MAP["Pop"])
+    return [process_one(text) for text in style_text_list]
 
 def inference_svs_dataset_from_prompt(
     input_txt_pattern,

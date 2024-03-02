@@ -1,7 +1,7 @@
 from cgitb import enable
 import pytest
 
-from recipes.bigmusic.utils.format_utils import normalize_text, normalize_text_sami_tokenizer, reformat_zh_text_input
+from recipes.bigmusic.utils.format_utils import normalize_text, normalize_text_sami_tokenizer
 
 def test_normalize_text():
     assert normalize_text("HELLO! WORLD?", enable_punctuation=True, lowercase=False) == "HELLO <n> WORLD <n>"
@@ -23,99 +23,3 @@ def test_normalize_text_sami_tokenizer():
     ]
     lines_no_empty_line = [l for l in lines if l]
     assert normalize_text_sami_tokenizer("\n".join(lines), enable_punctuation=True, lowercase=False) == " <n> ".join(lines_no_empty_line)
-
-
-REFORMAT_ZH_TEXT_CASES = [
-    {
-        "in": [
-            "[verse]",
-            "男:今天天气真好",
-            "女:今天心情真好",
-            "[chorus]",
-            "合:你好我也好",
-            "大家一起好",
-        ],
-        "out": [
-            "[verse] 男:今天天气真好",
-            "[verse] 女:今天心情真好",
-            "[chorus] 合:你好我也好",
-            "[chorus] 大家一起好",
-        ],
-        "desc": "regular case"
-    },
-    {
-        "in": [
-            "[intro]",
-            "[verse]",
-            "男:今天天气真好",
-            "女:今天心情真好",
-            "[chorus]",
-            "合:你好我也好",
-            "大家一起好",
-        ],
-        "out": [
-            "[intro]",
-            "[verse] 男:今天天气真好",
-            "[verse] 女:今天心情真好",
-            "[chorus] 合:你好我也好",
-            "[chorus] 大家一起好",
-        ],
-        "desc": "leading inst tag"
-    },
-    {
-        "in": [
-            "[intro]",
-            "[outro]",
-        ],
-        "out": [
-            "[intro]",
-            "[outro]",
-        ],
-        "desc": "inst tags only"
-    }
-]
-
-REFORMAT_ZH_TEXT_INVALID_CASES = [
-    {
-        "in": [
-            "男:今天天气真好",
-            "女:今天心情真好",
-            "[chorus]",
-            "合:你好我也好",
-            "大家一起好",
-        ],
-        "desc": "no leading section tag"
-    },
-    {
-        "in": [
-            "男:今天天气真好",
-            "女:今天心情真好",
-            "合:你好我也好",
-            "大家一起好",
-        ],
-        "desc": "no section tag"
-    },
-    {
-        "in": [
-        ],
-        "desc": "empty input"
-    }
-]
-
-@pytest.mark.parametrize(
-    "test_data",
-    REFORMAT_ZH_TEXT_CASES,
-    ids=[d["desc"] for d in REFORMAT_ZH_TEXT_CASES],
-)
-def test_reformat_zh_text_input(test_data):
-    assert reformat_zh_text_input("\n".join(test_data["in"])) == "\n".join(test_data["out"])
-
-
-@pytest.mark.parametrize(
-    "test_data",
-    REFORMAT_ZH_TEXT_INVALID_CASES,
-    ids=[d["desc"] for d in REFORMAT_ZH_TEXT_INVALID_CASES],
-)
-def test_reformat_zh_text_input_invalid(test_data):
-    with pytest.raises(ValueError):
-        reformat_zh_text_input("\n".join(test_data["in"]))
