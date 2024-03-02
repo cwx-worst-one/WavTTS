@@ -56,6 +56,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset_id", type=str, required=True)
     parser.add_argument("--feature", type=str, default="wavevae_1.0")
     parser.add_argument("--package_id", type=str, default=None)
+    parser.add_argument("--index_version", type=int, default=None)
     args = parser.parse_args()
 
     logger.info(f"Launch with {args=}")
