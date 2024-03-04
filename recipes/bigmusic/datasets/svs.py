@@ -4,6 +4,7 @@ import random
 from string import punctuation
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Generator
 import re
+from copy import deepcopy 
 import pytorch_lightning as pl
 import torch
 import glob
@@ -23,12 +24,16 @@ import phonemizer
 
 from recipes.bigmusic.datasets.transforms.leadsheet import (
     make_leadsheet_from_note_and_utterances,
+    make_leadsheet_from_note_and_utterances_v2,
     seq_offset,
     leadsheet_offset,
     split_leadsheet2note_and_phone,
     get_score_from_token_txt,
     concat_alignment,
     dump_leadsheet,
+)
+from recipes.bigmusic.datasets.transforms.f0 import (
+    force_align_note_phone_pipeline,
 )
 from recipes.bigmusic.datasets.transforms.prompt import Prompter
 from recipes.bigmusic.datasets.tokenizers.speaker import spkr2id
@@ -385,6 +390,8 @@ class SVSPretrainTransforms(BaseTransforms):
         leadsheet_tokenizer=LeadSheetTokenizerV2(),
         leadsheet_align_mode: str = "concat",
         extra_audio_keys=None,
+        align_method=None,
+
         **kwargs,
     ):
         self.genre_filtered = genre_filtered
@@ -429,6 +436,8 @@ class SVSPretrainTransforms(BaseTransforms):
         if self.data_sample_rate != sample_rate and audio_key != "mp3":
             base_transforms.append(Resample(self.data_sample_rate, sample_rate))
         self.base_transform = Compose(base_transforms)
+        self.align_method = align_method
+
         super().__init__()
 
     def is_confident_lyrics(self, utterance, threshold):
@@ -445,6 +454,8 @@ class SVSPretrainTransforms(BaseTransforms):
         conf /= num_utt
         return True if conf > threshold else False
 
+    def is_confident_f0(self, f0, audio_len, threshold=5):
+        return abs(f0.shape[0] - audio_len) < threshold
     def is_metadata_good(self, metadata: Dict[str, Any]) -> Tuple[bool, str]:
         if self.genre_filtered and metadata.get("final_genre") == "Hip Hop/Rap":
             return False
@@ -508,6 +519,19 @@ class SVSPretrainTransforms(BaseTransforms):
             # print("No utterances", meta['artist_name'])
             return
 
+        if self.align_method is not None:
+            if 'f0' not in item.keys():
+                self._update_stats(skipped=True, message='no F0 extraction')
+                return 
+        
+            f0_inlen_ori = np.frombuffer(item['f0'], dtype=np.float32)
+            f0_inlen = np.copy(f0_inlen_ori)
+            f0_inlen.flags.writeable = True
+            vuv_inlen = f0_inlen != 0
+
+            if not self.is_confident_f0(f0_inlen, audio.shape[-1] / self.sample_rate * 100):
+                self._update_stats(skipped=True, message='Wrong F0 extraction')
+                return 
         if audio.dim() == 1:
             audio = audio.unsqueeze(0)
             extra_audio = [a.unsqueeze(0) for a in extra_audio]
@@ -564,7 +588,8 @@ class SVSPretrainTransforms(BaseTransforms):
                 note_tokens = leadsheet_tokens_dict['note_tokens']
 
             elif self.leadsheet_align_mode == "concat":
-                sliced_notes, sliced_phones = make_leadsheet_from_note_and_utterances(
+                sliced_notes, sliced_phones = make_leadsheet_from_note_and_utterances_v2(
+                # sliced_notes, sliced_phones = make_leadsheet_from_note_and_utterances(
                     note_sequence=note_sequence,
                     phoneme_sequence=timestamped_phones,
                     align_mode=self.leadsheet_align_mode,
@@ -578,8 +603,8 @@ class SVSPretrainTransforms(BaseTransforms):
                 sliced_notes = seq_offset(sliced_notes, offset=-1*segment[0])
                 sliced_phones = seq_offset(sliced_phones, offset=-1*segment[0])
 
-                leadsheet_tokens, leadsheet_tokens_coff, note_tokens, phoneme_tokens = concat_alignment(
-                    self.leadsheet_tokenizer, sliced_notes, sliced_phones)
+                # leadsheet_tokens, leadsheet_tokens_coff, note_tokens, phoneme_tokens = concat_alignment(
+                    # self.leadsheet_tokenizer, sliced_notes, sliced_phones)
             else:
                 raise NotImplementedError
 
@@ -595,6 +620,22 @@ class SVSPretrainTransforms(BaseTransforms):
             if clip.shape[0] == 0 or clip.shape[1] == 0:
                 # print('audio shape too short', clip.shape)
                 continue
+
+            if self.align_method is not None and self.leadsheet_align_mode == "concat":
+                st, ed = round(segment[0] * 100), round(segment[1] * 100)
+                f0, vuv = torch.from_numpy(f0_inlen[st:ed]), torch.from_numpy(vuv_inlen[st:ed])
+                legalized_sliced_phones, legalized_sliced_notes, flag = force_align_note_phone_pipeline(deepcopy(sliced_phones), deepcopy(sliced_notes), vuv, f0, clip.shape[-1] / self.sample_rate, align_method=self.align_method)
+
+                if not flag:
+                    self._update_stats(skipped=True, message="Alignment Failure")
+                    return   
+            else:
+                legalized_sliced_notes, legalized_sliced_phones = sliced_notes, sliced_phones
+
+            if self.leadsheet_align_mode == "concat":
+                leadsheet_tokens, leadsheet_tokens_coff, note_tokens, phoneme_tokens = concat_alignment(
+                    self.leadsheet_tokenizer, legalized_sliced_notes, legalized_sliced_phones)
+
 
             if self.lyrics_tokenizer == "sami_tts_frontend_precompute":
                 lyrics_tokens = segment_phoneme_ids
@@ -687,6 +728,8 @@ class SVSPretrainDataset(WebPipeline):
         leadsheet_tokenizer=LeadSheetTokenizerV2(),
         handler=wds.warn_and_continue,
         extra_audio_keys=None,
+        align_method=None,
+
         **kwargs,
     ):
         if extra_audio_keys is None:
@@ -703,8 +746,8 @@ class SVSPretrainDataset(WebPipeline):
             else:
                 dataset = IndexedWebDataset(url2index=url2index, **kwargs)
         if data_id:
-            dataset = ParquetDataset(data_id=data_id, data_urls=None, extra_fields_in_data=[
-                                     'vocal', 'audio'], **kwargs)
+            extra_fields_in_data = ['vocal', 'audio', 'f0'] if align_method is not None else ['vocal', 'audio']
+            dataset = ParquetDataset(data_id=data_id, data_urls=None, extra_fields_in_data=extra_fields_in_data, **kwargs)
 
         transforms = SVSPretrainTransforms(
             sample_rate=sample_rate,
@@ -731,7 +774,9 @@ class SVSPretrainDataset(WebPipeline):
             # lyrics tokenizer
             lyrics_tokenizer=lyrics_tokenizer,
             leadsheet_tokenizer=leadsheet_tokenizer,
-            extra_audio_keys=extra_audio_keys
+            extra_audio_keys=extra_audio_keys,
+            align_method=align_method,
+  
         )
         preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
         print(f"[{self.name}] MultiIterableDataset constructing...")
@@ -1813,6 +1858,8 @@ class SVSPretrainWebDataModule(DataModule):
             25,
             30,
         ],
+        align_method=None,
+
     ):
         if extra_audio_keys is None:
             extra_audio_keys = []
@@ -1886,7 +1933,9 @@ class SVSPretrainWebDataModule(DataModule):
                 shardshuffle=True,
                 use_pipe=use_pipe,
                 handler=wds.warn_and_continue,
-                extra_audio_keys=extra_audio_keys
+                extra_audio_keys=extra_audio_keys,
+                align_method=align_method,
+
                 )]
         self.parquet_datasets = []
         if parquet_dataset_ids:
@@ -1914,6 +1963,7 @@ class SVSPretrainWebDataModule(DataModule):
                         use_pipe=use_pipe,
                         handler=wds.warn_and_continue,
                         extra_audio_keys=extra_audio_keys,
+                        align_method=align_method,
                         ))
         train_dataset = WebPipeline(
             MultiIterableDataset(datasets=self.wds_datasets + self.parquet_datasets,

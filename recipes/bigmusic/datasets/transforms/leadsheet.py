@@ -13,6 +13,50 @@ sym = sym[:-4] + ["Rest"] # extended MIDI range (128 note + rest)
 pitchid2sym = {i:s for i, s in enumerate(sym)}
 sym2pitchid = {s:i for i, s in enumerate(sym)}
 
+class PhoneType:
+    SIL = 0
+    VOWEL = 1
+    LEFT_CONS = 2  # cons before vowel
+    RIGHT_CONS = 3  # cons after vowel
+    # (for those in speech data)
+    UNK_CONS = 4  # cons don't know whether is left or right
+
+
+def is_vowel(phn):
+    # return phn in vowel_set
+    return phn in ZH_vowel or phn in EN_vowel
+
+
+def is_cons(phn):
+    # return phn in cons_set
+    return phn in ZH_consonant or phn in EN_consonant
+
+def mark_english_phone_type(itvs):
+    class PhoneTypeConnector:
+        def __init__(self, phone) -> None:
+            self.phone = phone 
+            self.phone_type = None
+
+    _itvs = [PhoneTypeConnector(i) for i in itvs.get('phone')]
+    # phonetypes = [-1] * len(itvs.get('phone')) 
+    # consonant before vowel
+    while not is_vowel(_itvs[0].phone):
+        _itvs[0].phone_type = PhoneType.LEFT_CONS
+        _itvs = _itvs[1:]
+    # consonant after vowel
+    while not is_vowel(_itvs[-1].phone):
+        _itvs[-1].phone_type = PhoneType.RIGHT_CONS
+        _itvs = _itvs[:-1]
+    # the rest should all be the SAME VOWEL
+    for v in _itvs:
+        v.phone_type = PhoneType.VOWEL
+
+    return itvs
+
+def mark_vowel_phone_type(word):
+    return [ 1 if is_vowel(i) else 0  for i  in word]
+
+
 def is_left(int):
     return (int in [1,2])
 def is_right(int):
@@ -224,6 +268,88 @@ def make_leadsheet_from_note_and_utterances(note_sequence, utterances=None, phon
         # ...
     else:
         raise NotImplementedError
+
+
+def make_leadsheet_from_note_and_utterances_v2(note_sequence, utterances=None, phoneme_sequence=None, align_mode="v1", boundaries=None):
+    if phoneme_sequence == None:
+        phoneme_sequence = extract_phoneme_sequence(utterances)
+    note_sequence = extract_note_sequence(note_sequence)
+    if align_mode == "forced":
+        matched_notes = match_vowels_to_notes(phoneme_sequence, note_sequence)
+        matched_notes = trim_unphoned(matched_notes)
+        return matched_notes
+    elif align_mode == "concat":
+        new_note_seq, new_phoneme_sequence = fetch_notes_from_phones_v3(phoneme_sequence, note_sequence)
+        return new_note_seq, new_phoneme_sequence
+    elif align_mode == "sort_by_starttime":
+        event_dict = {}
+        new_note_seq, new_phoneme_sequence = fetch_notes_from_phones_v3(phoneme_sequence, note_sequence)
+        for event in new_note_seq + new_phoneme_sequence:
+            start = event['start']
+        # ...
+    else:
+        raise NotImplementedError
+
+
+
+
+def fetch_notes_from_phones_v3(phoneme_sequence, note_sequence):
+    global_start = phoneme_sequence[0]['start']
+    global_end = phoneme_sequence[-1]['end']
+    # global_start = max(phoneme_sequence[0]['start'], note_sequence[0]['start'])
+    # global_end = min(phoneme_sequence[-1]['end'], note_sequence[-1]['end'])
+    phoneset = set(all_voiced_phones)
+    note_sequence = copy.deepcopy(note_sequence)
+    phoneme_sequence = copy.deepcopy(phoneme_sequence)
+
+    new_note_seq = []
+    for idx, note in enumerate(note_sequence):
+        if note['start'] > global_start and note['end'] < global_end:
+            note['phone'] = []
+            new_note_seq.append((note, idx))
+
+    if len(new_note_seq) == 0:
+        # phoneme and note are totally not matched
+        return [], []
+
+    start_idx, end_idx = new_note_seq[0][1], new_note_seq[-1][1]
+    if start_idx - 1 >= 0 and note_sequence[start_idx - 1]['end'] > global_start:
+        new_note_seq.insert(0, ({'start': global_start,
+                                 'end': note_sequence[start_idx - 1]['end'],
+                                 'phone': [],
+                                 'pitch':note_sequence[start_idx - 1]['pitch']
+                                 },
+                                start_idx - 1))
+    elif start_idx - 1 >= 0 and note_sequence[start_idx - 1]['end'] <= global_start:
+        new_note_seq[0][0]['start'] = global_start
+
+
+    if end_idx + 1 < len(note_sequence) and note_sequence[end_idx + 1]['start'] < global_end:
+        new_note_seq.append(({'start': note_sequence[end_idx + 1]['start'],
+                                 'end': global_end,
+                                 'phone': [],
+                                 'pitch':note_sequence[end_idx + 1]['pitch']
+                                 },
+                                end_idx + 1))
+    elif end_idx + 1 < len(note_sequence) and note_sequence[end_idx + 1]['start'] >= global_end:
+        new_note_seq[-1][0]['end'] = global_end
+
+        
+    new_phoneme_sequence = []
+    for phone in phoneme_sequence:
+        if phone['start'] >= global_start and phone['end'] <= global_end:
+            new_phones = []
+            for i in phone['phone']:
+                if i in phoneset:
+                    new_phones.append(i)
+            if len(new_phones) > 0:
+                phone['pitch'] = []
+                phone['phone'] = new_phones
+                new_phoneme_sequence.append(phone)
+    
+    
+    return [i[0] for i in new_note_seq], new_phoneme_sequence
+
 
 
 def match_vowels_to_notes_v2(phoneme_sequence, note_sequence, boundaries=[1.0, 1.0]):

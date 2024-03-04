@@ -70,6 +70,7 @@ run_opts:
     wds_dataset_weights: []
     parquet_dataset_ids: [708]
     parquet_dataset_weights: [1]
+    force_align_method: NULL
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -99,6 +100,7 @@ pl_datamodule: !new:recipes.bigmusic.datasets.svs.SVSPretrainWebDataModule
     time_format: !ref <extra_params[time_format]>
     extra_audio_keys: ["vocal"]
     semantic_frame_rate: !ref <extra_params[semantic_frame_rate]>
+    align_method: !ref <run_opts[force_align_method]>
 
 model_config: !new:transformers.GPT2Config
     vocab_size: 1 # placeholder. Embedding table gets removed on load
