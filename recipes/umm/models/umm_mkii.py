@@ -12,6 +12,7 @@ from torch.nn.utils import weight_norm
 from transformers.activations import ACT2FN
 from transformers.utils import ModelOutput
 
+from recipes.umm.models.dualumm_encoders import ConvStacksWithDownUpSampling
 from recipes.umm.models.rmvpe import RMVPE
 from recipes.umm.models.voc_modules.pitch_predictor.inference import (
     PerceptualPitchPredictor,
@@ -2512,6 +2513,174 @@ class Stage3Conv1D(Stage2Conv1D, Stage3):
         # position_embeddings = self.embed_positions(hidden_states)
         vq_ids = self._get_vq_ids(hidden_states)
         return vq_ids
+
+
+class Stage3Conv1D_v2(Stage3Conv1D):
+    """
+    Stage3Conv1D_v2 model that corrects the audio encoder to use Conv1D. Also
+    note that by the time this class was written (29Feb2024) we discovered
+    that it is possible to train direct-to-stage3. Thus, this class definition
+    expects to be trained directly without stage 1 and 2.
+
+    @hanoihantrakul 29Feb2024: We discovered that the original Stage3Conv1D
+    model was correctly using Conv1D in self.encoder_layers and self.mel_head
+    but was incorrectly using Conv2D in self.audio_encoders. In this
+    implementation I use the same self.audio_encoder definition as
+    the DualUMM model defined in `dualumm.py`
+
+    TODO: If this works @hanoihantrakul will refactor ConvUMM into
+    a standalone file.
+    """
+
+    def __init__(self, config):
+        """
+        Replace self.audio_encoder with DualUMM ConvEncoder.
+
+        @hanoihantrakul 29Feb2024:
+        - Note that the old self.audio_encoder used
+        umm_mkii.Conv2dSubsampling() with 2 sets of stride 2 i.e 4x downsampling.
+        Here we use dualumm.ConvStacksWithDownUpSampling() with identical
+        4x downsampling.
+
+        - Another difference is dualumm.ConvStacksWithDownUpSampling() targets
+        a mel 160 spectrogram, whereas umm_mkii.Conv2dSubsampling() targets a
+        mel 128 spectrogram. The reason is only because I want to use the same
+        functions developed in DualUMM.
+        """
+        super().__init__(config)
+        # Remove Conv1D based initialization.
+        del self.audio_encoder
+        self.audio_encoder = ConvStacksWithDownUpSampling(
+            config.hidden_size,
+            config.n_mels_tgt,
+            config.hidden_size,
+            downsampling=config.downsampling,
+            upsampling=config.upsampling,
+        )
+
+        # Remove mel-128 audio transform and replace with mel-160
+        del self.audio_transform
+        self.audio_transform = lambda x: torch_wav2spec(
+            x, num_mels=config.n_mels_tgt, sample_rate=config.sample_rate
+        )
+
+        # Replace all Conv2DUpsampling with Conv1DUpsampling
+        # Mel Head to Conv1D
+        del self.mel_head
+        self.mel_head = Conv1dUpsampling(
+            config.hidden_size,
+            config.n_mels_tgt,
+            act_fn=torch.nn.ReLU
+            if config.get("act_fn", "relu") == "relu"
+            else torch.nn.GELU,
+        )
+
+        # Chroma Head to Conv1D
+        if config.add_chroma:
+            del self.chroma_head
+            self.chroma_head = Conv1dUpsampling(
+                config.hidden_size,
+                config.n_chroma,
+                act_fn=torch.nn.ReLU
+                if config.get("act_fn", "relu") == "relu"
+                else torch.nn.GELU,
+            )
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def preprocessing(self, x):
+        """
+        @hanoihantrakul 3Mar2024
+        - Just change `mel = self.audio_transform(x, normalize=normalize)` to mel = self.audio_transform(x)
+        - If this works, recommend refactoring this class into a new one.
+        """
+        normalize = self.config.feature_cmvn is not None
+        mel = self.audio_transform(x)
+        input_dict = {"mel": mel}
+        if self.config.get("interfere_audio", None):
+            x_interfered = self.interfere_audio(x)
+            mel_interfered = self.audio_transform(x_interfered, normalize=normalize)
+            input_dict.update(mel_interfered=mel_interfered)
+        if self.config.add_chroma:
+            chroma = self.chroma_transform(x)[:, :, :-1].transpose(1, 2)
+            chroma = F.normalize(chroma, p=2, dim=-1)
+            input_dict.update(chroma=chroma)
+        if self.config.get("add_pitch", False):
+            f0 = self.rmvpe.batch_infer(
+                x, self.config.sample_rate, thred=0.03, use_viterbi=False
+            )
+            f0 = f0[:, :-1]
+            vuv = get_vuv(f0)
+            f0 = f0_normalize(f0)
+            input_dict.update(f0=f0, vuv=vuv)
+
+        return input_dict
+
+    def forward(self, input_dict):
+        """Override Stage3 method by removing positional embedding and adding length checks"""
+        feature = input_dict["mel"]
+        flops = self.audio_encoder.get_flops(*feature.shape)
+        audio_feature = self.audio_encoder(feature)
+        hidden_states = self.encoder_input_dropout(audio_feature)
+
+        for i, layer in enumerate(self.encoder_layers):
+            # at specific layer idx, vector quantize hidden states before applying the layer
+            if i == self.config.vq_layer_idx:
+                hidden_states = self.vq_proj_in(hidden_states)
+                if self.config.get("vq_proj_noise", 0) > 0:
+                    noise_scale = (self.config.vq_proj_noise - self.cnt).clamp(
+                        0
+                    ) / self.config.vq_proj_noise
+                    hidden_states = (
+                        hidden_states + torch.randn_like(hidden_states) * noise_scale
+                    )
+                    self.cnt.add_(1)
+                if self.config.get("vq_type", None) == "FSQ":
+                    vq_embs, vq_ids = self.vq(hidden_states)
+                    vq_loss = None
+                elif self.config.get("vq_type", None) == "EMAEntropy":
+                    vq_embs, vq_ids, vq_loss = self.vq(
+                        hidden_states, e_scale=1.0 if self.cnt < 30_000 else 0.0
+                    )
+                else:
+                    vq_embs, vq_ids, vq_loss = self.vq(hidden_states)
+                hidden_states = self.vq_proj_out(vq_embs)
+            # apply layer
+            hidden_states = layer(hidden_states)
+        flops += self.mel_head.get_flops(*hidden_states.shape)
+        mel_out = self.mel_head(hidden_states)
+
+        """
+        @hanoihantrakul 3Mar2024
+        `mel` (ground truth) can sometimes be 1 sample longer than `mel_out` (predicted)
+        - Just for this one config only, correct for this 1 sample difference.
+        - e.g. [6, 2917, 160] vs [6, 2916, 160]
+        - This will not be a problem if a compeletely new class is defined without inheritance from Stage1 and Stage2
+        """
+        trim_len = compute_min_lengths(input_dict["mel"], mel_out, axis=1)
+        input_dict["mel"] = input_dict["mel"][:, :trim_len, :]
+        mel_out = mel_out[:, :trim_len, :]
+
+        output_dict = {
+            "mel_out": mel_out,
+            "vq_ids": vq_ids,
+            "vq_loss": vq_loss,
+            "flops": flops * 3,  # extra 2x for backward.
+        }
+        if self.config.get("add_ctc", True):
+            flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
+            ctc_out = self.ctc_head(hidden_states)
+            output_dict.update(ctc_out=ctc_out)
+        if self.config.get("vq_proj_noise", False):
+            output_dict.update(noise_scale=noise_scale)
+        if self.config.add_chroma:
+            chroma_out = self.chroma_head(hidden_states)
+            output_dict.update(chroma_out=chroma_out)
+        if self.config.get("add_pitch", False):
+            f0_vuv_out = self.f0_vuv_head(hidden_states)
+            output_dict.update(f0_out=f0_vuv_out[:, :, 0:1])
+            output_dict.update(vuv_out=f0_vuv_out[:, :, 1:])
+        return output_dict
 
 
 class Stage3MSSPitchSupervised(Stage3):
