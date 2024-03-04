@@ -660,3 +660,92 @@ class CTCPitchMelLoss(nn.Module):
         loss_dict["loss_ctc"] = ctc_loss
 
         return loss_dict
+
+
+class UMMMergeLoss(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.ctc_loss_fn = nn.CTCLoss(
+            blank=config.ctc_blank_id,
+            reduction=config.ctc_loss_reduction,
+            zero_infinity=config.ctc_zero_infinity,
+        )
+        self.mel_loss_fn = STFTLoss()
+        self.chroma_loss_fn = STFTLoss()
+        self.las_loss_fn = MaskedCrossEntropy()
+        self.config = config
+
+    def forward(
+        self,
+        ctc_logits=None,
+        text_ids=None,
+        recon_mel=None,
+        mel=None,
+        recon_chroma=None,
+        chroma=None,
+        recon_f0=None,
+        f0=None,
+        recon_vuv=None,
+        vuv=None,
+        las_logits=None,
+        las_targets=None,
+    ):
+        loss_dict = {}
+
+        # Mel
+        if recon_mel is not None:
+            recon_mel = recon_mel.contiguous().float()
+            mel = mel.contiguous().float()
+            mel_loss = self.mel_loss_fn.float()(recon_mel, mel)
+            loss_dict["loss_mel"] = mel_loss["stft_loss"]
+
+        # Chroma
+        if recon_chroma is not None:
+            recon_chroma = recon_chroma.contiguous().float()
+            chroma = chroma.contiguous().float()
+            chroma_loss = self.chroma_loss_fn.float()(recon_chroma, chroma)
+            loss_dict["loss_chroma"] = chroma_loss["stft_loss"]
+
+        # F0
+        if recon_f0 is not None:
+            recon_f0 = recon_f0.contiguous().float()
+            f0 = f0.contiguous().float()
+            f0_loss = (torch.abs(recon_f0 - f0) * vuv).sum() / (torch.sum(vuv) + 1)
+            loss_dict["f0_loss"] = f0_loss
+
+        # vuv
+        if recon_vuv is not None:
+            recon_vuv = recon_vuv.contiguous().float()
+            vuv = vuv.contiguous().float()
+            vuv_loss = F.binary_cross_entropy_with_logits(recon_vuv, vuv)
+            loss_dict["vuv_loss"] = vuv_loss
+
+        # CTC
+        if ctc_logits is not None:
+            ctc_logits = ctc_logits.contiguous().float()
+            input_lengths = torch.full(
+                (ctc_logits.size(0),), ctc_logits.size(1), dtype=torch.long
+            )
+            labels_mask = text_ids > 0
+            target_lengths = labels_mask.sum(-1)
+            flattened_targets = text_ids.masked_select(labels_mask)
+            # CTCLoss doesn't support fp16
+            log_probs = F.log_softmax(ctc_logits, dim=-1, dtype=torch.float32).transpose(
+                0, 1
+            )  # [N, T, C] -> [T, N, C]
+
+            with torch.backends.cudnn.flags(enabled=False):
+                ctc_loss = self.ctc_loss_fn(
+                    log_probs, flattened_targets, input_lengths, target_lengths
+                )
+            loss_dict["loss_ctc"] = ctc_loss
+
+        # LAS
+        if las_logits is not None:
+            target_mask = (las_targets > 0).float()
+            las_loss = self.las_loss_fn(las_logits[:, 0:-1], las_targets[:, 1:], mask=target_mask[:, 1:])
+            loss_dict["loss_las"] = las_loss["loss"]
+            las_acc = (las_logits[:, 0:-1].argmax(dim=2) == las_targets[:, 1:]).float() * target_mask[:, 1:]
+            las_acc = las_acc.sum() / target_mask[:, 1:].sum()
+            loss_dict["las_acc"] = las_acc
+        return loss_dict

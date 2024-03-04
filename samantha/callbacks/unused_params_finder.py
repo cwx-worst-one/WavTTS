@@ -17,9 +17,7 @@ class UnusedParamsFinder(Callback):
 
     @rank_zero_only
     def on_after_backward(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"):
-
         if self.should_warn():
-
             unused_params = [
                 name for name, p in pl_module.named_parameters() if p.grad is None
             ]

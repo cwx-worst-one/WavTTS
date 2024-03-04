@@ -80,8 +80,15 @@ config: !new:samantha.models.umm.config.UMMConfig
     feature_cmvn: !ref <extra_params[feature_cmvn]>
     sample_rate: !ref <extra_params[sample_rate]>
     n_mels: !ref <extra_params[n_mels]>
+    add_ctc: True
+    add_mel: True
     add_chroma: False
     add_pitch: True
+    add_kl: False
+    add_las: False
+    las_size: 768
+    las_layers: 6
+    las_heads: 8
     n_chroma: !ref <extra_params[n_chroma]>
     n_fft: !ref <extra_params[n_fft]>
     win_length: !ref <extra_params[win_length]>
@@ -100,6 +107,8 @@ config: !new:samantha.models.umm.config.UMMConfig
     w_loss_pitch: 1.0
     w_loss_vq: 1.0
     w_loss_ctc: 1.0
+    w_loss_kl: 1.0
+    w_loss_las: 0.1
     tokenizer: !ref <extra_params[tokenizer]>
     frame_rate: !ref <extra_params[frame_rate]>
     vocab_size: 105880
@@ -115,7 +124,7 @@ pl_module: !new:samantha.models.umm.lit_module.Stage2
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
-    criterion_cls: !name:samantha.criterion.criterion.CTCPitchMelLoss
+    criterion_cls: !name:samantha.criterion.criterion.UMMMergeLoss
         config: !ref <config>
     extra_params: !ref <extra_params>
     required_modules:

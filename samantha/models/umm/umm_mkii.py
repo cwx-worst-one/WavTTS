@@ -13,9 +13,15 @@ from transformers.activations import ACT2FN
 from transformers.utils import ModelOutput
 
 from samantha.models.umm.chroma import ChromaSpectrogram
+from samantha.models.umm.llama_torch import (
+    LLaMa,
+    LLaMaEncoder,
+    ModelArgs,
+    ResidualBlock,
+    WeightedSum,
+)
 from samantha.models.umm.rmvpe.rmvpe import RMVPE
 from samantha.models.umm.speech import SpeechTransform
-from samantha.models.umm.vq import EMAVectorQuantizer
 
 
 @dataclass
@@ -491,6 +497,35 @@ class ConformerEncoder(nn.Module):
         return ConformerEncoderOutput(
             last_hidden_state=hidden_states, hidden_states=all_hidden_states
         )
+
+
+class Conv1dUpsampling(nn.Module):
+    def __init__(self, input_dim, output_dim, use_bn=True, act_fn=nn.ReLU):
+        super().__init__()
+        hidden_dim = input_dim * 4
+        self.conv = nn.Sequential(
+            Transpose(),
+            nn.Conv1d(input_dim, hidden_dim, kernel_size=7, padding=3),
+            act_fn(),
+            nn.ConvTranspose1d(
+                hidden_dim, hidden_dim, kernel_size=4, stride=2, padding=1
+            ),
+            act_fn(),
+            nn.ConvTranspose1d(
+                hidden_dim, hidden_dim, kernel_size=4, stride=2, padding=1
+            ),
+            act_fn(),
+            Transpose(),
+        )
+        self.linear = nn.Linear(hidden_dim, output_dim)
+
+    def forward(self, x):
+        x = self.conv(x)
+        x = self.linear(x)
+        return x
+
+    def get_flops(self, b, t, d):
+        return 0
 
 
 class Conv2dUpsampling(nn.Module):
@@ -1486,15 +1521,30 @@ class Stage2(Base):
             if config.get("upsample_net", "Conv2dUpsampling") == "Conv2dUpsampling"
             else Conv1dUpsampling
         )
-        self.mel_head = upsample_net(
-            config.hidden_size,
-            config.n_mels,
-            act_fn=torch.nn.ReLU
-            if config.get("act_fn", "relu") == "relu"
-            else torch.nn.GELU,
-        )
+        if config.get("add_mel", True):
+            self.mel_head = upsample_net(
+                config.hidden_size,
+                config.n_mels,
+                act_fn=torch.nn.ReLU
+                if config.get("act_fn", "relu") == "relu"
+                else torch.nn.GELU,
+            )
         if config.get("add_ctc", True):
             self.ctc_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        if config.get("add_las", False):
+            self.las_head = nn.Linear(config.hidden_size, config.las_size, bias=False)
+            self.las_head.weight.data.normal_(
+                mean=0, std=0.02 / math.sqrt(config.las_layers)
+            )
+            llama_config = ModelArgs(
+                dim=config.las_size,
+                n_layers=config.las_layers,
+                n_heads=config.las_heads,
+                vocab_size=config.vocab_size + 2,
+                out_dim=config.vocab_size + 2,
+                sparse=False,
+            )
+            self.las_decoder = LLaMa(llama_config)
         if config.add_chroma:
             self.chroma_transform = ChromaSpectrogram(
                 sample_rate=config.sample_rate,
@@ -1525,6 +1575,7 @@ class Stage2(Base):
             )
 
     def forward(self, input_dict):
+        output_dict = {}
         feature = (
             input_dict["mel_interfered"]
             if self.config.interfere_audio
@@ -1541,9 +1592,11 @@ class Stage2(Base):
             hidden_states = layer(
                 hidden_states, position_embeddings=position_embeddings
             )
-        flops += self.mel_head.get_flops(*hidden_states.shape)
-        mel_out = self.mel_head(hidden_states)
-        output_dict = {"mel_out": mel_out, "flops": flops * 3}  # extra 2x for backward.
+        if self.config.get("add_mel", True):
+            flops += self.mel_head.get_flops(*hidden_states.shape)
+            mel_out = self.mel_head(hidden_states)
+            output_dict["mel_out"] = mel_out
+        output_dict["flops"] = flops * 3  # extra 2x for backward.
         if self.config.get("add_ctc", True):
             flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
             ctc_out = self.ctc_head(hidden_states)
@@ -1555,6 +1608,42 @@ class Stage2(Base):
             f0_vuv_out = self.f0_vuv_head(hidden_states)
             output_dict.update(f0_out=f0_vuv_out[:, :, 0:1])
             output_dict.update(vuv_out=f0_vuv_out[:, :, 1:])
+        if self.config.get("add_las", False) and "text_ids" in input_dict:
+            _b, _t = input_dict["text_ids"].shape
+            id_lens = (input_dict["text_ids"] > 0).sum(dim=1)
+            las_input_ids = torch.zeros(
+                size=[_b, _t + 2], dtype=torch.long, device=audio_feature.device
+            )
+            las_input_ids[:, 1:-1] = input_dict["text_ids"].clone()
+            las_input_ids[:, 0] = self.config.vocab_size  # BOS
+            # EOS
+            eos_mask = torch.arange(las_input_ids.shape[1]).unsqueeze(0).to(
+                audio_feature.device
+            ) == (id_lens + 1).unsqueeze(1)
+            las_input_ids = torch.where(
+                eos_mask,
+                torch.zeros_like(las_input_ids) + self.config.vocab_size + 1,
+                las_input_ids,
+            )
+
+            las_inputs = self.las_decoder.tok_embeddings(las_input_ids)
+            las_inputs = torch.cat(
+                [self.las_head(hidden_states), las_inputs], dim=1
+            )  # [b, t1+t2, d]
+            las_outputs = self.las_decoder(las_inputs, token_input=False)
+            output_dict["las_out"] = las_outputs
+            output_dict["las_targets"] = torch.cat(
+                [
+                    torch.zeros(
+                        size=[_b, hidden_states.shape[1] + 1],  # BOS 不进 targets
+                        dtype=torch.long,
+                        device=hidden_states.device,
+                    ),
+                    las_input_ids[:, 1:],  # BOS 不进 targets
+                ],
+                dim=1,
+            )
+
         return output_dict
 
     @torch.no_grad()
@@ -1578,223 +1667,6 @@ class Stage2(Base):
             f0 = f0[:, :-1]
             vuv = get_vuv(f0)
             f0 = f0_normalize(f0)
-            input_dict.update(f0=f0, vuv=vuv)
-
-        return input_dict
-
-
-class Stage2MSS(Stage2):
-    """
-    Stage 2 Model definition with 2 additional heads for MSS vocal and MSS instrumental.
-    """
-
-    def __init__(self, config):
-        super().__init__(config)
-        self.mel_head = Conv2dUpsampling(
-            config.hidden_size, config.n_mels, use_bn=config.get("use_bn", True)
-        )
-        self.mel_head_vocal = Conv2dUpsampling(
-            config.hidden_size, config.n_mels, use_bn=config.get("use_bn", True)
-        )
-        self.mel_head_inst = Conv2dUpsampling(
-            config.hidden_size, config.n_mels, use_bn=config.get("use_bn", True)
-        )
-        self.ctc_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-        if config.add_chroma:
-            self.chroma_transform = ChromaSpectrogram(
-                sample_rate=config.sample_rate,
-                n_fft=config.n_fft,
-                win_length=config.win_length,
-                hop_length=config.hop_length,
-                n_chroma=config.n_chroma,
-                normalized=False,
-            )
-            self.chroma_head = Conv2dUpsampling(
-                config.hidden_size, config.n_chroma, use_bn=config.get("use_bn", True)
-            )
-        if config.get("add_pitch", False):
-            #  must be sr=16000, hop_length=160
-            hop_length = config.hop_length * 16000 // config.sample_rate
-            print("RMVPE hop_length (on 16k):", hop_length)
-            self.rmvpe = RMVPE(hop_length=hop_length)
-            self.f0_vuv_head = Conv2dUpsampling(config.hidden_size, 2)
-
-        self.flops_counter = 0  # Counter for accumulating flops in forward pass.
-
-    def _reset_flop_counter(self):
-        """Reset flop counter to 0 (usually every new forward pass)."""
-        self.flops_counter = 0
-
-    def _accumulate_flops(self, flops):
-        """Accumulate flops from different computations."""
-        self.flops_counter += flops
-
-    def _get_curr_flop_count(self):
-        return self.flops_counter
-
-    def _apply_task_heads(self, hidden_states):
-        """Apply all task heads to the hidden states and update flops calculation."""
-        # Mel Full Audio Head
-        self._accumulate_flops(self.mel_head.get_flops(*hidden_states.shape))
-        mel_out = self.mel_head(hidden_states)
-
-        # Mel Vocal Head
-        self._accumulate_flops(self.mel_head_vocal.get_flops(*hidden_states.shape))
-        mel_vocal_out = self.mel_head_vocal(hidden_states)
-
-        # Mel Instrumental Head
-        self._accumulate_flops(self.mel_head_inst.get_flops(*hidden_states.shape))
-        mel_inst_out = self.mel_head_inst(hidden_states)
-
-        # CTC Head
-        self._accumulate_flops(
-            2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
-        )
-        ctc_out = self.ctc_head(hidden_states)
-        return mel_out, mel_vocal_out, mel_inst_out, ctc_out
-
-    def _get_encoder_flops(self, hidden_states):
-        """Calculate total encoder flops based on hidden state dimensions."""
-        return self.encoder_layers[0].get_flops(*hidden_states.shape[0:2]) * len(
-            self.encoder_layers
-        )
-
-    def _apply_audio_frontend_encoder(self, feature):
-        """Apply encoder on original audio mel features. Different from stack of
-        `self.encoder_layers` which will later be used for VQ training"""
-        self._accumulate_flops(self.audio_encoder.get_flops(*feature.shape))
-        audio_feature = self.audio_encoder(feature)
-        hidden_states = self.encoder_input_dropout(audio_feature)
-        return hidden_states
-
-    def _apply_encoder_layers(self, hidden_states, position_embeddings):
-        """Apply encoder layers. (In Stage 3 these are modified with
-        Vector Quantization)."""
-        self._accumulate_flops(self._get_encoder_flops(hidden_states))
-        for layer in self.encoder_layers:
-            hidden_states = layer(
-                hidden_states, position_embeddings=position_embeddings
-            )
-        return hidden_states
-
-    def forward(self, input_dict):
-        """
-        @hanoihantrakul 11/21/2023:
-        Refactored logic from Stage2().forward() to make methods
-        inheritable to Stage3MSS().forward()
-        """
-        # Reset every new forward pass.
-        self._reset_flop_counter()
-
-        # Use mel features from input audio.
-        feature = (
-            input_dict["mel_interfered"]
-            if self.config.interfere_audio
-            else input_dict["mel"]
-        )
-
-        # Audio Encoder "Frontend" (to disambiguate it from self.encoder_layers
-        # later used in VQ training).
-        hidden_states = self._apply_audio_frontend_encoder(feature)
-
-        # Positional Embedding.
-        position_embeddings = self.embed_positions(hidden_states)
-
-        # Encoder Layers (which later become VQ layers in Stage3).
-        hidden_states = self._apply_encoder_layers(hidden_states, position_embeddings)
-
-        # Apply all task heads (1 CTC and 3 Mel) to hidden states.
-        mel_out, mel_vocal_out, mel_inst_out, ctc_out = self._apply_task_heads(
-            hidden_states
-        )
-
-        # Prepare output dictionary.
-        output_dict = {
-            "mel_out": mel_out,
-            "mel_vocal_out": mel_vocal_out,
-            "mel_inst_out": mel_inst_out,
-            "ctc_out": ctc_out,
-            "flops": self._get_curr_flop_count() * 3,  # extra 2x for backward.
-        }
-
-        # Apply Chroma Head
-        if self.config.add_chroma:
-            chroma_out = self.chroma_head(hidden_states)
-            output_dict.update(chroma_out=chroma_out)
-
-        # Apply Pitch Head (Not used in default UMM MSS training)
-        if self.config.get("add_pitch", False):
-            f0_vuv_out = self.f0_vuv_head(hidden_states)
-            output_dict.update(
-                f0_out=f0_vuv_out[:, :, 0:1], vuv_out=f0_vuv_out[:, :, 1:]
-            )
-        return output_dict
-
-    @torch.no_grad()
-    @torch.cuda.amp.autocast(enabled=False)
-    def preprocessing(self, audio_dict):
-        """
-        Arguments()
-            audio_dict:
-                `audio`: full mix should be routed to normal mel spectrogram,
-                chroma and pitch.
-                `audio_vocal`: routed to a vocal mel spectrogram
-                `audio_inst`: routed to a instruemtnal mel spectrogram
-
-        Returns:
-            input_dict:
-                "mel": mel spectrogram of audio full mix
-                "mel_vocal" : mel spectrogram of audio vocals
-                "mel_inst" : mel spectrogram of audio instrumental
-                "chroma" : chroma spectrogram of audio full mix
-
-        @hanoihantrakul 11-25-2023
-        The logic of this code should be read in conjunction
-        with `lit_module.Stage2MSS().prepare_feature()`
-        """
-
-        def _interfere_audio_handler(audio):
-            """Not used in UMM training."""
-            audio_interfered = self.interfere_audio(audio)
-            mel_interfered = self.audio_transform(audio_interfered, normalize=normalize)
-            return mel_interfered
-
-        def _add_chroma_handler(audio):
-            chroma = self.chroma_transform(audio)[:, :, :-1].transpose(1, 2)
-            chroma = F.normalize(chroma, p=2, dim=-1)
-            return chroma
-
-        def _add_pitch_handler(audio):
-            """Not used in UMM training."""
-            f0 = self.rmvpe.batch_infer(
-                audio, self.config.sample_rate, thred=0.03, use_viterbi=False
-            )
-            f0 = f0[:, :-1]
-            vuv = get_vuv(f0)
-            f0 = f0_normalize(f0)
-            return f0, vuv
-
-        normalize = self.config.feature_cmvn is not None
-        input_dict = {
-            "mel": self.audio_transform(audio_dict["audio"], normalize=normalize),
-            "mel_vocal": self.audio_transform(
-                audio_dict["audio_vocal"], normalize=normalize
-            ),
-            "mel_inst": self.audio_transform(
-                audio_dict["audio_inst"], normalize=normalize
-            ),
-        }
-        if self.config.get("interfere_audio", None):
-            # "interfere_audio" is a historical flag and should be
-            # assumed to be False by default.
-            input_dict.update(
-                mel_interfered=_interfere_audio_handler(audio_dict["audio"])
-            )
-        if self.config.add_chroma:
-            input_dict.update(chroma=_add_chroma_handler(audio_dict["audio"]))
-        if self.config.get("add_pitch", False):
-            # "add_pitch" is from TTS team and should be assumed to be False by default.
-            f0, vuv = _add_pitch_handler(audio_dict["audio"])
             input_dict.update(f0=f0, vuv=vuv)
 
         return input_dict
@@ -1922,8 +1794,9 @@ class Stage3(Stage2):
                     vq_embs, vq_ids = self.vq(hidden_states)
                     vq_loss = None
                 elif self.config.get("vq_type", None) == "EMAEntropy":
+                    entropy_step = self.config.get("entropy_step", 30_000)
                     vq_embs, vq_ids, vq_loss = self.vq(
-                        hidden_states, e_scale=1.0 if self.cnt < 30_000 else 0.0
+                        hidden_states, e_scale=1.0 if self.cnt < entropy_step else 0.0
                     )
                 else:
                     vq_embs, vq_ids, vq_loss = self.vq(hidden_states)
@@ -1932,14 +1805,12 @@ class Stage3(Stage2):
             hidden_states = layer(
                 hidden_states, position_embeddings=position_embeddings
             )
-        flops += self.mel_head.get_flops(*hidden_states.shape)
-        mel_out = self.mel_head(hidden_states)
-        output_dict = {
-            "mel_out": mel_out,
-            "vq_ids": vq_ids,
-            "vq_loss": vq_loss,
-            "flops": flops * 3,  # extra 2x for backward.
-        }
+        output_dict = {"vq_ids": vq_ids, "vq_loss": vq_loss}
+        if self.config.get("add_mel", True):
+            flops += self.mel_head.get_flops(*hidden_states.shape)
+            mel_out = self.mel_head(hidden_states)
+            output_dict["mel_out"] = mel_out
+        output_dict["flops"] = flops * 3  # extra 2x for backward.
         if self.config.get("add_ctc", True):
             flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
             ctc_out = self.ctc_head(hidden_states)
@@ -1953,6 +1824,41 @@ class Stage3(Stage2):
             f0_vuv_out = self.f0_vuv_head(hidden_states)
             output_dict.update(f0_out=f0_vuv_out[:, :, 0:1])
             output_dict.update(vuv_out=f0_vuv_out[:, :, 1:])
+        if self.config.get("add_las", False) and "text_ids" in input_dict:
+            _b, _t = input_dict["text_ids"].shape
+            id_lens = (input_dict["text_ids"] > 0).sum(dim=1)
+            las_input_ids = torch.zeros(
+                size=[_b, _t + 2], dtype=torch.long, device=audio_feature.device
+            )
+            las_input_ids[:, 1:-1] = input_dict["text_ids"].clone()
+            las_input_ids[:, 0] = self.config.vocab_size  # BOS
+            # EOS
+            eos_mask = torch.arange(las_input_ids.shape[1]).unsqueeze(0).to(
+                audio_feature.device
+            ) == (id_lens + 1).unsqueeze(1)
+            las_input_ids = torch.where(
+                eos_mask,
+                torch.zeros_like(las_input_ids) + self.config.vocab_size + 1,
+                las_input_ids,
+            )
+
+            las_inputs = self.las_decoder.tok_embeddings(las_input_ids)
+            las_inputs = torch.cat(
+                [self.las_head(hidden_states), las_inputs], dim=1
+            )  # [b, t1+t2, d]
+            las_outputs = self.las_decoder(las_inputs, token_input=False)
+            output_dict["las_out"] = las_outputs
+            output_dict["las_targets"] = torch.cat(
+                [
+                    torch.zeros(
+                        size=[_b, hidden_states.shape[1] + 1],  # BOS 不进 targets
+                        dtype=torch.long,
+                        device=hidden_states.device,
+                    ),
+                    las_input_ids[:, 1:],  # BOS 不进 targets
+                ],
+                dim=1,
+            )
         return output_dict
 
     def forward_layers(
@@ -2023,140 +1929,3 @@ class Stage3(Stage2):
         """Convert audio file to hidden states (before Vector Quantization)."""
         audio_embedding = self.wav2audio_embed(audio)
         return self.forward_layers(audio_embedding, layer_idx)
-
-
-class Stage3MSS(Stage2MSS, Stage3):
-    """
-    Stage3 UMM Model configured to receive Stage2 UMM checkpoint.
-
-    @hanoihantrakul 11/21/2023
-    In writing this class, it was easiest to inherit from both Stage3() and Stage2MSS().
-    - Stage3() contains configuration for different VQ options in the __init__() method.
-    - Stage2MSS() contains configuration for the 2 mel heads that are
-    kept during Stage3 training.
-
-    @hanoihantrakul 11/25/2023
-    - Stage2MSS() should be inherited first so that
-    order-of-resolution `self.preprocessing()`
-    calls the methods from Stage2MSS (which process 3 audio inputs) and not Stage3.
-    """
-
-    def __init__(self, config):
-        # Define identical model from Stage2MSS() class so weights can be loaded.
-        # Reuse VQ configuration logic from original Stage3() class.
-        super().__init__(config)
-
-    def _apply_vq_and_encoder_layers(self, hidden_states, position_embeddings):
-        """Apply VQ. Logic copy-pasted from Stage3().forward() and
-        combined with Stage2MSS()._apply_encoder_layers."""
-        self._accumulate_flops(self._get_encoder_flops(hidden_states))
-
-        for i, layer in enumerate(self.encoder_layers):
-            # Handle Vector Quanization.
-            if i == self.config.vq_layer_idx:
-                hidden_states = self.vq_proj_in(hidden_states)
-                if self.config.get("vq_proj_noise", 0) > 0:
-                    noise_scale = (self.config.vq_proj_noise - self.cnt).clamp(
-                        0
-                    ) / self.config.vq_proj_noise
-                    hidden_states = (
-                        hidden_states + torch.randn_like(hidden_states) * noise_scale
-                    )
-                    self.cnt.add_(1)
-                else:
-                    noise_scale = 0
-                if self.config.get("vq_type", None) == "FSQ":
-                    vq_embs, vq_ids = self.vq(hidden_states)
-                    vq_loss = None
-                elif self.config.get("vq_type", None) == "EMAEntropy":
-                    vq_embs, vq_ids, vq_loss = self.vq(
-                        hidden_states, e_scale=1.0 if self.cnt < 30_000 else 0.0
-                    )
-                else:
-                    vq_embs, vq_ids, vq_loss = self.vq(hidden_states)
-                hidden_states = self.vq_proj_out(vq_embs)
-            # Handle encoder layers.
-            hidden_states = layer(
-                hidden_states, position_embeddings=position_embeddings
-            )
-        return hidden_states, vq_ids, vq_loss, noise_scale
-
-    def forward(self, input_dict):
-        # Reset every new forward pass.
-        self._reset_flop_counter()
-
-        # Use mel features from input audio.
-        feature = (
-            input_dict["mel_interfered"]
-            if self.config.interfere_audio
-            else input_dict["mel"]
-        )
-
-        # Audio Encoder "Frontend" (to disambiguate it from self.encoder_layers
-        # later used in VQ training).
-        hidden_states = self._apply_audio_frontend_encoder(feature)
-
-        # Positional Embedding.
-        position_embeddings = self.embed_positions(hidden_states)
-
-        # Encoder Layers from Stage 2 are now used as part of VQ in Stage 3.
-        hidden_states, vq_ids, vq_loss, noise_scale = self._apply_vq_and_encoder_layers(
-            hidden_states, position_embeddings
-        )
-
-        # Apply all task heads (1 CTC and 3 Mel) to VQ hidden states.
-        mel_out, mel_vocal_out, mel_inst_out, ctc_out = self._apply_task_heads(
-            hidden_states
-        )
-
-        # Prepare output dictionary.
-        output_dict = {
-            "mel_out": mel_out,
-            "mel_vocal_out": mel_vocal_out,
-            "mel_inst_out": mel_inst_out,
-            "ctc_out": ctc_out,
-            "vq_ids": vq_ids,
-            "vq_loss": vq_loss,
-            "noise_scale": noise_scale,
-            "flops": self._get_curr_flop_count() * 3,  # extra 2x for backward.
-        }
-
-        # Apply Chroma Head
-        if self.config.add_chroma:
-            chroma_out = self.chroma_head(hidden_states)
-            output_dict.update(chroma_out=chroma_out)
-
-        # Apply Pitch Head (Not used in default UMM MSS training)
-        if self.config.get("add_pitch", False):
-            f0_vuv_out = self.f0_vuv_head(hidden_states)
-            output_dict.update(
-                f0_out=f0_vuv_out[:, :, 0:1], vuv_out=f0_vuv_out[:, :, 1:]
-            )
-        return output_dict
-
-    @torch.no_grad()
-    @torch.cuda.amp.autocast(enabled=False)
-    def wav2token(self, wav):
-        """
-        Convert audio files to tokens.
-
-        @hanoihantrakul 25-11-2023
-        Training a downstream decoder ontop of Stage3MSS requires this
-        method to be called on a mixture of audio datasets.
-        By default, these downstream decoder datasets have one audio input (full mix),
-        whereas the Stage3MSS model expected 3 audio inputs (full mix,
-        instrumental and vocal).
-        The easiest way to modify Stage3MSS behavior was to explicitly
-        call Stage3().preprocessing
-        (which expects 1 audio input) instead of the inherited default Stage2MSS().
-        preprocessing function (which expects 3 audio inputs).
-        """
-        wav = self._prepare_wav(wav)
-        # Using super() like this is unpythonic,
-        # but it was the fastest way to favor experimentation speed.
-        feature = super(Stage3, self).preprocessing(wav)["mel"]
-        audio_feature = self.audio_encoder(feature)
-        hidden_states = self.encoder_input_dropout(audio_feature)
-        position_embeddings = self.embed_positions(hidden_states)
-        vq_ids = self._get_vq_ids(hidden_states, position_embeddings)
-        return vq_ids
