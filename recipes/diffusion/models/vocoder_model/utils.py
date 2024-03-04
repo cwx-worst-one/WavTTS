@@ -49,7 +49,7 @@ def load_ema_checkpoint(checkpoint_path, model):
     model.load_state_dict(new_state_dict)
     return model
 
-def init_vocoder(checkpoint_path, local_rank, cache_dir=None, sample_rate=24000, adapt_hopper=False, version=None):
+def init_vocoder(checkpoint_path, local_rank, cache_dir=None, sample_rate=24000, adapt_hopper=False, version='24k_125hz_dim32_baseline'):
     with local_zero_first():
         if cache_dir is not None:
             os.makedirs(cache_dir, exist_ok=True)
