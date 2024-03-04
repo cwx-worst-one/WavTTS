@@ -111,7 +111,10 @@ def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, ss
                     semantic_cfg_prob=0.10,
                     use_checkpoint=False
                 )
-            elif version == 'sstk_v3': # place holder for 44.1k model
+            elif version in ['sstk_v3', 'sstk_v4']: # 44.1k models
+                use_unet = True
+                if version == 'sstk_v4':
+                    use_unet = False
                 diffusion_network = TNTDiffusionNetworkV2(
                     input_dim=64,
                     feature_dim=1024,
@@ -119,7 +122,7 @@ def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, ss
                     depth=20,
                     segment_size=8,
                     segment_stride=8,
-                    unet=True,
+                    unet=use_unet,
                     unet_stages=[6,8,6],
                     dropout=0,
                     semantic_cfg_prob=0.10,
