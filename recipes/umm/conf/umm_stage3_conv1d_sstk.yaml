@@ -110,7 +110,7 @@ config: !new:recipes.umm.models.config.UMMConfig
     win_length: !ref <extra_params[win_length]>
     hop_length: !ref <extra_params[hop_length]>
     hidden_size: 1024
-    intermediate_size: 4096
+    # intermediate_size: 4096 # only used in conformer architecture
     num_hidden_layers: 2 # in reality, the Conv1D system will add 2 "blocks" of Conv1D layers, as opposed to 2 "layers". We were bootstrapping the conv architecture to the previous conformer one, so haven't had time to change this detail.
     max_source_positions: !ref <extra_params[frame_rate]> * <pl_datamodule[max_duration]>
     add_vq: True

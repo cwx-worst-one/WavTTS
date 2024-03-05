@@ -1,9 +1,8 @@
 ---
 
-# @hanoihantrakul 27Feb2024
-# This YAML is near-identical to `umm_stage3_conv1d_sstk.yaml`.
-# This model skips stage2 pretraining and goes direct to stage3. 
-# It should be compared with `umm_stage3_conv1d_sstk.yaml`
+# @hanoihantrakul 5Mar2024
+# This YAML is near-identical to `umm_stage3_conv1d_v2_sstk_direct_stage3.yaml`.
+# The param count is 733M parameters for this one by changing `hidden_size=896`
 
 ################################################################################
 ##########                       BASIC CONFIGURATION                  ##########
@@ -19,12 +18,13 @@ extra_params:
     sample_rate: 24000
     frame_rate: 25
     n_mels: 128
+    n_mels_tgt: 160
     n_chroma: 12
     n_fft: 2048
     win_length: 2048
     hop_length: 240
-    feature_cmvn: "recipes/datasets/mcc/MixDataModule_SpeechTransform.stats.pt"
-    tokenizer: null # @hanoihantrakul: SSTK is all instrumental, so no tokenizer needed.
+    # feature_cmvn: "recipes/datasets/mcc/MixDataModule_SpeechTransform.stats.pt" # this config uses DualUMM mel transform (expects normalization), not the original ConformerUMM mel transform (no normalization)
+    tokenizer: null # @hanoihantrakul: SSTK is all instrumental, so no tokenizer needed. 
     parquet_id: [794] # @hanoihantrakul 2/6/2024: this is "old" SSTK data. But we want to compare this tokenizer with the old system, 
  
 
@@ -35,7 +35,7 @@ run_opts:
     hdfs_log_dir: "hdfs:///home/byte_speech_sv/hanoi.hantrakul/logs"
     log_dir: logs
     log_name: umm_conv_sstk
-    version: !ref umm_stage3_conv1D_sstk_no_ctc_794_direct_stage3<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>
+    version: !ref umm_stage3_conv1D_v2_733Mparams_sstk_no_ctc_794_direct_stage3_<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>
     precision: "32"
     num_workers: 4
     accelerator: auto
@@ -83,16 +83,17 @@ scheduler_cls: !name:recipes.umm.modules.lr_scheduler.WarmupCosine
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
 config: !new:recipes.umm.models.config.UMMConfig
-    feature_cmvn: !ref <extra_params[feature_cmvn]>
+    # feature_cmvn: !ref <extra_params[feature_cmvn]>
     sample_rate: !ref <extra_params[sample_rate]>
     n_mels: !ref <extra_params[n_mels]>
+    n_mels_tgt: !ref <extra_params[n_mels_tgt]>
     add_chroma: True
     add_ctc: False # SSTK is instrumental only
     n_chroma: !ref <extra_params[n_chroma]>
     n_fft: !ref <extra_params[n_fft]>
     win_length: !ref <extra_params[win_length]>
     hop_length: !ref <extra_params[hop_length]>
-    hidden_size: 1024
+    hidden_size: 896 #1024
     # intermediate_size: 4096 # only used in conformer architecture
     num_hidden_layers: 2 # in reality, the Conv1D system will add 2 "blocks" of Conv1D layers, as opposed to 2 "layers". We were bootstrapping the conv architecture to the previous conformer one, so haven't had time to change this detail.
     max_source_positions: !ref <extra_params[frame_rate]> * <pl_datamodule[max_duration]>
@@ -114,8 +115,10 @@ config: !new:recipes.umm.models.config.UMMConfig
     ctc_blank_id: 105879
     ctc_zero_infinity: True
     use_bn: False
+    downsampling: 4
+    upsampling: 1
 
-model_cls: !name:recipes.umm.models.umm_mkii.Stage3Conv1D
+model_cls: !name:recipes.umm.models.umm_mkii.Stage3Conv1D_v2
     config: !ref <config>
 
 pl_module: !new:recipes.umm.modules.lit_module.Stage3Conv1D
@@ -128,8 +131,7 @@ pl_module: !new:recipes.umm.modules.lit_module.Stage3Conv1D
     extra_params: !ref <extra_params>
     required_modules:
         pretrained:
-            # @hanoihantrakul 27Feb2024: This a quick hack to prevent a stage2 model from being loaded.
-            ckpt_path: ""
+            ckpt_path: "" # @hanoihantrakul 27Feb2024: This a quick hack to prevent a stage2 model from being loaded.
             #ckpt_path: "hdfs:///home/byte_speech_sv/hanoi.hantrakul/logs/umm_conv_sstk/umm_stage2_conv1d_sstk_no_ctc_794/checkpoints/step=0130000.ckpt"
             init_fn: !name:recipes.umm.requires.model_initializer.init_pretrained
             cache_dir: !ref <run_opts[cache_dir]>
