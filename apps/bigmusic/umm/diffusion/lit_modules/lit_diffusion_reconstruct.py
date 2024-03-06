@@ -448,3 +448,287 @@ class DiffusionU2SInfer(LightningModule):
 
         if self.umm_codebook_path is not None:
             self.umm_codebook = prepare_umm_codebook(self.umm_codebook_path, device)
+
+
+class ChunkInfer(DiffusionU2SInfer):
+    def __init__(
+        self,
+        diffusion_ckpt_path,
+        umm_ckpt_path,
+        vocoder_ckpt_path,
+        output_dir,
+        infer_type,
+        umm_frame_rate,
+        mel_frame_rate,
+        mel_config,
+        seed=1996,
+        save_prompt=False,
+        umm_type="UMM", # UMM or USM
+        umm_codebook_path=None,
+        diffusion_precision="bf16",
+        diffusion_nfe=10,
+        diffusion_sampler="ddim",
+        text_cfg_w=1,
+        use_wvae_vocoder=False,
+        bn_config=None,
+        use_phone_lang=False,
+        token_chunk_size=25,
+        token_chunk_overlap=0,
+        without_prefix=False,
+    ):
+        super().__init__(
+            diffusion_ckpt_path,
+            umm_ckpt_path,
+            vocoder_ckpt_path,
+            output_dir,
+            infer_type,
+            umm_frame_rate,
+            mel_frame_rate,
+            mel_config,
+            seed,
+            save_prompt,
+            umm_type,
+            umm_codebook_path,
+            diffusion_precision,
+            diffusion_nfe,
+            diffusion_sampler,
+            text_cfg_w,
+            use_wvae_vocoder,
+            bn_config,
+            use_phone_lang,
+        )
+        self.token_chunk_size = token_chunk_size
+        self.token_chunk_overlap = token_chunk_overlap
+
+        if hasattr(self.model.hp, "window_size"):
+            self.attention_window_size = self.model.hp.window_size[-1]
+        else:
+            self.attention_window_size = None
+        print(f"{self.attention_window_size=}")
+        self.without_prefix = without_prefix
+        print(f"{self.without_prefix=}")
+
+    def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: int = 0) -> Any:
+        inputs, prompt_umm_token, syn_umm_token = self.prepare_features(batch)
+        if inputs is None:
+            return
+
+        if self.diffusion_precision == "bf16":
+            dtype = torch.bfloat16
+        elif self.diffusion_precision == "fp16":
+            dtype = torch.float16
+        elif self.diffusion_precision == "fp32":
+            dtype = torch.float32
+        else:
+            raise NotImplementedError 
+
+        if not self.without_prefix:
+            inputs["token"] = prompt_umm_token
+        out_mel = None
+        device = prompt_umm_token.device
+
+        start_list = np.array(range(0, syn_umm_token.shape[1], self.token_chunk_size))
+
+        outputs = []
+
+        # To ensure reproduciable
+        if not self.without_prefix:
+            total_frame = int((prompt_umm_token.shape[1] + syn_umm_token.shape[1])/self.umm_frame_rate*self.mel_frame_rate)
+        else:
+            total_frame = int((syn_umm_token.shape[1])/self.umm_frame_rate*self.mel_frame_rate)
+        self.model.clear_cache(self.diffusion_nfe, total_frame)
+        for i, start in enumerate(start_list):
+            if i < len(start_list) - 1:
+                end = min(start_list[i+1]+self.token_chunk_overlap, syn_umm_token.shape[1])
+                if end <= syn_umm_token.shape[1]:
+                    current_overlap = self.token_chunk_overlap
+                else:
+                    end = syn_umm_token.shape[1]
+                    current_overlap = end - start_list[i+1]
+                valid_chunk_size = self.token_chunk_size
+            else:
+                end = syn_umm_token.shape[1]
+                valid_chunk_size = end - start
+                current_overlap = 0
+            valid_chunk_size = int(valid_chunk_size / self.umm_frame_rate * self.mel_frame_rate)
+            
+            if i == 0:
+                if not self.without_prefix:
+                    inputs["token"] = torch.cat([
+                        inputs["token"], 
+                        syn_umm_token[:, start:end].expand(inputs["token"].shape[0], -1)], dim=1)
+                else:
+                    inputs["token"] = syn_umm_token[:, start:end].expand(prompt_umm_token.shape[0], -1)
+            else:
+                inputs["token"] = torch.cat([
+                    inputs["token"][:, :-prev_overlap], 
+                    syn_umm_token[:, start:end].expand(inputs["token"].shape[0], -1)], dim=1)
+
+            token_len = inputs["token"].shape[1]
+            mel_len = int(token_len / self.umm_frame_rate * self.mel_frame_rate)
+
+            if out_mel is not None:
+                prompt_length += out_mel.shape[2]
+            else:
+                prompt_length = inputs["bn_ctx"].shape[1]
+            pad_len = valid_chunk_size
+            inputs["bn_ctx"] = F.pad(inputs["bn_ctx"], (0, 0, 0, pad_len), "constant", self.bn_config["bn_padding"])
+
+            if self.text_cfg_w != 1 and i == 0:
+                inputs = self.make_cfg_input(inputs)
+
+            with torch.autocast(device_type="cuda", dtype=dtype, enabled=True): 
+                out_mel = self.model.inference(inputs, 
+                        self.diffusion_nfe,
+                        self.diffusion_sampler,
+                        text_cfg_w=self.text_cfg_w,
+                        use_cache=True,
+                        cached_v_len=prompt_length)
+            if self.infer_type in ["ar-diffusion-vocoder", "diffusion-vocoder"]:
+                out_mel = out_mel[:, :, prompt_length:prompt_length+valid_chunk_size]
+            out_mel = out_mel.float() # [B, C, T]
+            outputs.append(out_mel)
+            prev_overlap = current_overlap
+
+        self.model.clear_cache(self.diffusion_nfe)
+        outputs = torch.cat(outputs, dim=-1)
+        if self.use_wvae_vocoder:
+            z = outputs
+            z = self.bn_norm.denorm_mel(z)
+            with torch.autocast(device_type="cuda", enabled=False):
+                output_wav = self.wvae.decode(z.float())
+        else:
+            out_mel = self.mel_norm.denorm_mel(out_mel)
+            out_mel = torch.clamp(out_mel, min=-8.5, max=3.5)
+            output_wav = self.vocoder(out_mel)
+
+        audio = output_wav.squeeze().cpu().numpy()
+        if self.bn_config['wav_norm']:
+            audio = audio * inputs["scale"] / 0.95
+        audio = np.clip(audio, a_min=-1, a_max=1)
+
+        if self.save_prompt:
+            prompt_wav = inputs["gt_wav"]
+            audio = np.concatenate([prompt_wav, np.ones([10]), audio])
+        output_path = os.path.join(self.output_dir, inputs["uttid"]+".wav")
+        save_wav(audio, output_path)
+
+    def align_wav_for_chunk(self, wav, sampling_rate, umm_frame_rate, mel_frame_rate, 
+            text_len):
+        umm_hop = sampling_rate // umm_frame_rate
+        mel_hop = sampling_rate // mel_frame_rate
+        current_bn_len = wav.shape[1] // mel_hop
+        # print(f"{wav.shape=}, {current_bn_len=}")
+        pad_bn_len = (current_bn_len + text_len) % self.attention_window_size
+        if pad_bn_len == 0:
+            target_bn_len = current_bn_len
+        else:
+            target_bn_len = (self.attention_window_size - pad_bn_len) + current_bn_len
+        target_umm_len = np.ceil(target_bn_len * umm_frame_rate / mel_frame_rate)
+        target_wav_len = int(target_umm_len * umm_hop)
+        pad_wav_len = target_wav_len - wav.shape[1]
+        if pad_wav_len > 0:
+            wav = F.pad(wav, (0, pad_wav_len), "constant", 0)
+        return wav, target_bn_len
+
+    def prepare_features(self, batch):
+        if self.infer_type == "ar-diffusion-vocoder":
+            prompt_text_id, syn_text_id, prompt_wav_path, syn_umm_token, uttid = batch
+        elif self.infer_type == "diffusion-vocoder":
+            uttid, prompt_wav_path, syn_wav_path, prompt_text_id, syn_text_id = batch
+        else:
+            raise NotImplementedError
+        device = f"cuda:{self.local_rank}"
+        inputs = dict()
+
+        # Text
+        if prompt_text_id is not None and  syn_text_id is not None:
+            text_id = torch.cat([prompt_text_id, syn_text_id[:, 1:]], dim=-1)
+            text_id = F.pad(text_id, (0, 1), "constant", 1)
+            inputs["frontend"] = {
+                    "phone": text_id[0:1, :].to(device),
+                    "tone": text_id[1:2, :].to(device),
+                    "word_seg": text_id[2:3, :].to(device),
+            }
+            if self.use_phone_lang:
+                inputs["frontend"]["lang"] = text_id[3:4, :].to(device)
+        else:
+            text_id = None
+        
+        # Syn
+        if self.infer_type == "diffusion-vocoder": 
+            wav, _ = librosa.load(syn_wav_path, sr=24000, mono=True) 
+            inputs["gt_wav"] = wav
+            wav = torch.FloatTensor(wav).unsqueeze(0)
+            if self.bn_config['wav_norm']:
+                scale = max(0.001, torch.max(torch.abs(wav)))
+                wav = wav / scale * 0.95
+            wav = wav.to(device)
+            #syn_wav = self.align_wav(wav, self.mel_config["sampling_rate"], self.umm_frame_rate, self.mel_frame_rate)
+            syn_wav = wav
+            syn_umm_token = self.wav2token(syn_wav)
+
+        elif self.infer_type == "ar-diffusion-vocoder":
+             syn_umm_token = syn_umm_token.unsqueeze(0)
+        else:
+            raise NotImplementedError
+        if hasattr(self,"umm_codebook"):
+            syn_umm_token = F.embedding(syn_umm_token, self.umm_codebook)
+
+        if os.path.isfile(prompt_wav_path) ^ self.model.hp.use_prompt:
+            logger.error(f"prompt wav {os.path.isfile(prompt_wav_path)}/{prompt_wav_path} mismatch with config use_prompt={self.model.hp.use_prompt}")
+
+        # Prompt
+        if os.path.isfile(prompt_wav_path):
+            wav, _ = librosa.load(prompt_wav_path, sr=24000, mono=True) 
+            inputs["gt_wav"] = wav
+            wav = torch.FloatTensor(wav).unsqueeze(0)
+            if self.bn_config['wav_norm']:
+                scale = max(0.001, torch.max(torch.abs(wav)))
+                wav = wav / scale * 0.95
+                inputs["scale"] = scale.item()
+            wav = wav.to(device)
+            
+            prompt_wav, target_bn_len = self.align_wav_for_chunk(wav, 
+                    self.mel_config["sampling_rate"], self.umm_frame_rate, self.mel_frame_rate,
+                    0 if text_id is None else text_id.shape[1])
+                    
+            prompt_umm_token = self.wav2token(prompt_wav)
+            if hasattr(self, "umm_codebook"):
+                prompt_umm_token = F.embedding(prompt_umm_token, self.umm_codebook)
+        else:
+            prompt_umm_token = None
+            prompt_wav = None
+        
+
+        if self.infer_type in ["diffusion-vocoder", "ar-diffusion-vocoder"]: 
+            #inputs["token"] = torch.cat([prompt_umm_token, syn_umm_token], dim=1)
+            #token_len = inputs["token"].shape[1]
+            #mel_len = int(token_len / self.umm_frame_rate * self.mel_frame_rate)
+
+            if self.use_wvae_vocoder:
+                
+                if len(prompt_wav.shape) == 2:
+                    prompt_wav = prompt_wav.unsqueeze(1)
+                encoder_out = self.wvae.encode(prompt_wav)
+                crop_bn, _, _ = self.wvae.sample(encoder_out, deterministic=False)
+                crop_bn = self.bn_norm.norm_mel(crop_bn)
+
+                inputs["prompt_bn"] = crop_bn[:, :, :target_bn_len]
+                inputs["prompt_length"] = target_bn_len
+                if not self.without_prefix:
+                    inputs["bn_ctx"] = inputs["prompt_bn"].transpose(1, 2)
+                else: 
+                    # inputs["bn_ctx"] = torch.ones([1,int(syn_umm_token.shape[1] / self.umm_frame_rate * self.mel_frame_rate) ,self.bn_config["bn_dim"]],device=device)*self.bn_config["bn_padding"]
+                    inputs["bn_ctx"] = torch.ones([1, 0, self.bn_config["bn_dim"]],device=device)*self.bn_config["bn_padding"]
+
+            else:
+                # TODO: mel
+                raise NotImplementedError
+
+        else:
+            raise NotImplementedError
+
+        inputs["uttid"] = uttid
+        
+        return inputs, prompt_umm_token, syn_umm_token

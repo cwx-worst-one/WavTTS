@@ -1,14 +1,14 @@
 
 import os
 import torch
-from apps.bigmusic.umm.diffusion.lit_modules import DiffusionU2SInfer
+from apps.bigmusic.umm.diffusion.lit_modules import DiffusionU2SInfer, ChunkInfer
 
 
 
 def init_diffusion(diffusion_config, local_rank=None, cache_dir=None, device=None):
     if device is None:
         device = torch.device(f"cuda:{local_rank}")
-    diffusion = DiffusionU2SInfer(**diffusion_config)
+    diffusion = (ChunkInfer if diffusion_config.get("token_chunk_size", None) else DiffusionU2SInfer)(**diffusion_config)
     # load umm model
     diffusion.setup(0)
     return { "diffusion": diffusion.to(device) }
@@ -45,7 +45,9 @@ if __name__ == "__main__":
     device = f"cuda:0"
     cache_dir = ".module_cache/"
 
-    hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_40hzSS.yaml"
+    hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_40hzSS_streaming.yaml" # streaming
+    # hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_40hzSS.yaml" # no-streaming
+
     # hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConv_125hzSS.yaml"
     syn_wav_path = "/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/voice_condition_valsets/slices/male_husky_0_slice1.wav"
     prompt_wav_path = "/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/voice_condition_valsets/conditions_6s/male_husky_0.wav"
@@ -54,9 +56,10 @@ if __name__ == "__main__":
     from samantha.utils.hparams import DotDict
     with open(hparams_file, "r", encoding="utf-8") as fin:
         params = load_hyperpyyaml(fin)
-    
+
     requires = init_diffusion(
-        params["diffusion_config"], local_rank, cache_dir)
+        params["diffusion_config"], local_rank, cache_dir, 
+    )
     
     with torch.no_grad():
         umm_token = wav2token(requires["diffusion"], syn_wav_path)

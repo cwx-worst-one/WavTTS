@@ -17,7 +17,7 @@ from recipes.musiclm.utils.dist import local_zero_first
 from pytorch_lightning.utilities.rank_zero import rank_zero_info
 from recipes.diffusion.utils.utils import download_checkpoint
 from samantha.utils.hparams import DotDict
-from s3a.providers.ctiga.utils.generation import InferenceParams
+# from s3a.providers.ctiga.utils.generation import InferenceParams
 from samantha.utils.model_metric import ModelMetric
 from samantha.utils.flops_profiler import FlopsProfiler
 from samantha.criterion.masked_loss import MaskedMAELoss, MaskedMSELoss, MaskedSSIMLoss
@@ -32,6 +32,14 @@ LOSS_DICT = {
         "ssim": MaskedSSIMLoss
         }
 
+
+def fix_flashattn_version(model_cls):
+    hp = model_cls.keywords["hp"]
+    if hp.use_window_mask and hp.flashattn_version != "2.3":
+        print("WARN: try to change flashattn_version from '2' to '2.3' when use_window_mask=True")
+        hp.flashattn_version = "2.3"
+        model_cls.keywords["hp"] = hp
+    return model_cls
 
 
 class VoiceBoxModule(pl.LightningModule):
@@ -51,9 +59,11 @@ class VoiceBoxModule(pl.LightningModule):
         val_output_samples_dir="",
         bn_config=None,
     ):
+        
         super().__init__()
         self.save_hyperparameters()
-        self.model = model_cls()
+        # fix flashattn version
+        self.model = fix_flashattn_version(model_cls)()
 
         self.criterion_dict = {}
         for criterion in criterions:
