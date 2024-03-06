@@ -67,7 +67,7 @@ run_opts:
     parquet_dataset_ids: [1665, 1662]   # [authorized, zh_artist]
     parquet_dataset_weights: [8, 2]
     sinking_threshold: 0.51
-    remove_sinking: false
+    quality_filter: True
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -95,7 +95,7 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     parquet_dataset_ids: !ref <run_opts[parquet_dataset_ids]>
     parquet_dataset_weights: !ref <run_opts[parquet_dataset_weights]>
     sinking_threshold: !ref <run_opts[sinking_threshold]>
-    remove_sinking: !ref <run_opts[remove_sinking]>
+    quality_filter: !ref <run_opts[quality_filter]>
     frame_rate: !ref <extra_params[semantic_frame_rate]>
     tag_taxonomy_lang: !ref <extra_params[tag_taxonomy_lang]>
     line_break_dropout_rate: !ref <extra_params[line_break_dropout_rate]>

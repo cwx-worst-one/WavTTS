@@ -546,7 +546,7 @@ class VocalTransforms(BaseTransforms):
         use_soda_gt_lyrics: bool = True,
         infer_structure_tags: bool = False,
         sinking_threshold: float = 0.51,
-        remove_sinking: bool = False,
+        quality_filter: bool = False,
         tag_taxonomy_lang: str = "SA",
         line_break_dropout_rate: float = 0.0,
         section_tag_dropout_rate: float = 0.0,
@@ -570,7 +570,7 @@ class VocalTransforms(BaseTransforms):
         self.use_soda_gt_lyrics = use_soda_gt_lyrics
         self.lyrics_field = lyrics_field       
         self.sinking_threshold = sinking_threshold
-        self.remove_sinking = remove_sinking
+        self.quality_filter = quality_filter
         self.tag_taxonomy_lang = tag_taxonomy_lang
         self.line_break_dropout_rate = line_break_dropout_rate
         self.section_tag_dropout_rate = section_tag_dropout_rate
@@ -724,11 +724,20 @@ class VocalTransforms(BaseTransforms):
             if music_tagging is None:
                 self._update_stats(skipped=False, message="No music_tagging field")
             cat_tags, unfamiliar_tags, is_sinking = parse_sa_music_tagging(music_tagging, self.sinking_threshold)
+            _genre_tag, _, _, _, _lang_tag = cat_tags
+            # Filter out certain languages and genres for a better data quality
+            if self.quality_filter:
+                if _genre_tag in ["", "Chinese Opera", "Other genre"]:
+                    self._update_stats(skipped=True, message=f"Filter out genre {_genre_tag}")
+                    return
+                if (_genre_tag not in ["DJ", "MC"]) and is_sinking:
+                    self._update_stats(skipped=True, message=f"Filter out genre {_genre_tag} because of sinking")
+                    return
+                if not _lang_tag:
+                    self._update_stats(skipped=True, message=f"Filter out lang {_lang_tag}")
+                    return
             if unfamiliar_tags:
                 self._update_stats(skipped=False, message=f"Detected tag(s) not in SA vocab: {unfamiliar_tags}")
-            if self.remove_sinking and is_sinking:
-                self._update_stats(skipped=True, message="Sinking music")
-                return
             style_text = "|".join(cat_tags)
             # Parse voice tag and assign it to artist_id
             gender = meta.get("gender")
@@ -851,7 +860,7 @@ class VocalDataset(WebPipeline):
         segment_max_phone_len: int = 400,
         use_soda_gt_lyrics: bool = True,
         sinking_threshold: float = 0.51,
-        remove_sinking: bool = False,
+        quality_filter: bool = False,
         tag_taxonomy_lang: str = "SA",
         line_break_dropout_rate: float = 0.0,
         section_tag_dropout_rate: float = 0.0,
@@ -876,7 +885,7 @@ class VocalDataset(WebPipeline):
             segment_max_phone_len=segment_max_phone_len,
             use_soda_gt_lyrics=use_soda_gt_lyrics,
             sinking_threshold=sinking_threshold,
-            remove_sinking=remove_sinking,
+            quality_filter=quality_filter,
             tag_taxonomy_lang=tag_taxonomy_lang,
             line_break_dropout_rate=line_break_dropout_rate,
             section_tag_dropout_rate=section_tag_dropout_rate,
@@ -931,7 +940,7 @@ class VocalParquetDataset(WebPipeline):
         infer_structure_tags: bool = False,
         read_structure_tags: bool = False,
         sinking_threshold: float = 0.51,
-        remove_sinking: bool = False,
+        quality_filter: bool = False,
         tag_taxonomy_lang: str = "SA",
         line_break_dropout_rate: float = 0.0,
         section_tag_dropout_rate: float = 0.0,
@@ -959,7 +968,7 @@ class VocalParquetDataset(WebPipeline):
             infer_structure_tags=infer_structure_tags,
             read_structure_tags=read_structure_tags,
             sinking_threshold=sinking_threshold,
-            remove_sinking=remove_sinking,
+            quality_filter=quality_filter,
             tag_taxonomy_lang=tag_taxonomy_lang,
             line_break_dropout_rate=line_break_dropout_rate,
             section_tag_dropout_rate=section_tag_dropout_rate,
@@ -1069,7 +1078,7 @@ class MixVocalWebDataModule(DataModule):
             30,
         ],
         sinking_threshold: float = 0.51,
-        remove_sinking: bool = False,
+        quality_filter: bool = False,
         tag_taxonomy_lang: str = "SA",
         line_break_dropout_rate: float = 0.0,
         section_tag_dropout_rate: float = 0.0,
@@ -1131,7 +1140,7 @@ class MixVocalWebDataModule(DataModule):
                 use_pipe=use_pipe,            
                 handler=wds.warn_and_continue,
                 sinking_threshold=sinking_threshold,
-                remove_sinking=remove_sinking,
+                quality_filter=quality_filter,
                 frame_rate=frame_rate,
                 tag_taxonomy_lang=tag_taxonomy_lang,
                 line_break_dropout_rate=line_break_dropout_rate,
@@ -1159,7 +1168,7 @@ class MixVocalWebDataModule(DataModule):
                         use_pipe=use_pipe,            
                         handler=wds.warn_and_continue,
                         sinking_threshold=sinking_threshold,
-                        remove_sinking=remove_sinking,
+                        quality_filter=quality_filter,
                         frame_rate=frame_rate,
                         tag_taxonomy_lang=tag_taxonomy_lang,  
                         line_break_dropout_rate=line_break_dropout_rate,
@@ -1192,7 +1201,7 @@ class MixVocalWebDataModule(DataModule):
                 nodesplitter=return_self,
                 handler=wds.warn_and_continue,
                 sinking_threshold=sinking_threshold,
-                remove_sinking=remove_sinking,
+                quality_filter=quality_filter,
                 frame_rate=frame_rate,
                 tag_taxonomy_lang=tag_taxonomy_lang,
                 line_break_dropout_rate=line_break_dropout_rate,
@@ -1246,7 +1255,7 @@ class MixLangVocalWebDataModule(DataModule):
             30,
         ],
         sinking_threshold: float = 0.51,
-        remove_sinking: bool = False,
+        quality_filter: bool = False,
         tag_taxonomy_lang: str = "SA",
         line_break_dropout_rate: float = 0.0,
         section_tag_dropout_rate: float = 0.0,
@@ -1307,7 +1316,7 @@ class MixLangVocalWebDataModule(DataModule):
                         use_pipe=use_pipe,            
                         handler=wds.warn_and_continue,
                         sinking_threshold=sinking_threshold,
-                        remove_sinking=remove_sinking,
+                        quality_filter=quality_filter,
                         frame_rate=frame_rate,
                         tag_taxonomy_lang=tag_taxonomy_lang,
                         line_break_dropout_rate=line_break_dropout_rate,
@@ -1333,7 +1342,7 @@ class MixLangVocalWebDataModule(DataModule):
                         use_pipe=use_pipe,            
                         handler=wds.warn_and_continue,
                         sinking_threshold=sinking_threshold,
-                        remove_sinking=remove_sinking,
+                        quality_filter=quality_filter,
                         frame_rate=frame_rate,
                         tag_taxonomy_lang=tag_taxonomy_lang,
                         line_break_dropout_rate=line_break_dropout_rate,
@@ -1363,7 +1372,7 @@ class MixLangVocalWebDataModule(DataModule):
                 nodesplitter=return_self,                
                 handler=wds.warn_and_continue,
                 sinking_threshold=sinking_threshold,
-                remove_sinking=remove_sinking,
+                quality_filter=quality_filter,
                 frame_rate=frame_rate,
                 tag_taxonomy_lang=tag_taxonomy_lang,
                 line_break_dropout_rate=line_break_dropout_rate,
@@ -1418,7 +1427,7 @@ class SftWebDataModule(DataModule):
         ],
         sample_limit_per_file: int = 1000,
         sinking_threshold: float = 0.51,
-        remove_sinking: bool = False,
+        quality_filter: bool = False,
         tag_taxonomy_lang: str = "SA",
         line_break_dropout_rate: float = 0.0,
         section_tag_dropout_rate: float = 0.0,
@@ -1488,7 +1497,7 @@ class SftWebDataModule(DataModule):
                         handler=wds.warn_and_continue,
                         sample_limit_per_file=sample_limit_per_file,
                         sinking_threshold=sinking_threshold,
-                        remove_sinking=remove_sinking,
+                        quality_filter=quality_filter,
                         frame_rate=frame_rate,
                         tag_taxonomy_lang=tag_taxonomy_lang,
                         line_break_dropout_rate=line_break_dropout_rate,

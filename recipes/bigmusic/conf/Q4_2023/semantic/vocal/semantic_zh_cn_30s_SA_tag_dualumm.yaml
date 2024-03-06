@@ -61,7 +61,7 @@ run_opts:
     parquet_dataset_ids: [1527]
     parquet_dataset_weights: [1]
     sinking_threshold: 0.51
-    remove_sinking: false
+    quality_filter: True
     val_check_interval: 4000
     save_interval: 8000
 
@@ -88,7 +88,7 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     parquet_dataset_ids: !ref <run_opts[parquet_dataset_ids]>
     parquet_dataset_weights: !ref <run_opts[parquet_dataset_weights]>
     sinking_threshold: !ref <run_opts[sinking_threshold]>
-    remove_sinking: !ref <run_opts[remove_sinking]>
+    quality_filter: !ref <run_opts[quality_filter]>
 
 model_config: !new:transformers.GPT2Config
     vocab_size: 1 # placeholder. Embedding table gets removed on load
