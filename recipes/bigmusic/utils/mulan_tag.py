@@ -1,5 +1,5 @@
 from recipes.bigmusic.utils.format_utils import rewrite_metadata
-from recipes.bigmusic.datasets.mir_data_util import chinese_genre1_vocab, chinese_mood_vocab, gender_vocab
+from recipes.bigmusic.datasets.mir_data_util import CHINESE_GENRE1_VOCAB, CHINESE_MOOD_VOCAB, GENDER_VOCAB
 from recipes.bigmusic.datasets.transforms.lyrics_segment import crop_pad_to_seq_length, random_crop_pad_to_seq_length
 import torch
 
@@ -147,10 +147,10 @@ class MulanTagger:
 
         if mulan_tag_type == "cn_mir":
             self._tag2text_pool = {
-                "genre": chinese_genre1_vocab,
-                "mood": chinese_mood_vocab,
+                "genre": CHINESE_GENRE1_VOCAB,
+                "mood": CHINESE_MOOD_VOCAB,
                 "scene": [NONE_LABEL],
-                "gender": gender_vocab,
+                "gender": GENDER_VOCAB,
                 "lang": ["普通话"]
             }
         elif mulan_tag_type == "mulan_genres":

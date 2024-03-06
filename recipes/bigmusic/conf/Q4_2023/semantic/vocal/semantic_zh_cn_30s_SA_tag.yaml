@@ -19,8 +19,10 @@ extra_params:
     train_conditions: "style_category,speaker_id,lyrics_tokens"
     prepare_input_types: []
     input_embedders: [tag_categorical, speaker_id, lyrics_tokens]
-    tag_taxonomy_lang: 'SA'
+    tag_taxonomy_lang: 'SA'  # Zh, SA
     tag_dropout_rate: 0.25
+    line_break_dropout_rate: 0
+    section_tag_dropout_rate: 0
     use_mcc_gender: False
     # mulan_embed_dim: 512
     hidden_size: 1536
@@ -94,6 +96,9 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     sinking_threshold: !ref <run_opts[sinking_threshold]>
     remove_sinking: !ref <run_opts[remove_sinking]>
     frame_rate: !ref <extra_params[semantic_frame_rate]>
+    tag_taxonomy_lang: !ref <extra_params[tag_taxonomy_lang]>
+    line_break_dropout_rate: !ref <extra_params[line_break_dropout_rate]>
+    section_tag_dropout_rate: !ref <extra_params[section_tag_dropout_rate]>
 
 model_config: !new:transformers.GPT2Config
     vocab_size: 1 # placeholder. Embedding table gets removed on load

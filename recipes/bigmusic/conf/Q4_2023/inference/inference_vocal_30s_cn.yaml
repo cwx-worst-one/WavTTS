@@ -111,6 +111,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                 hpath: !ref <extra_params[vocoder_ckpt]>
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                     cache_dir: !ref <run_opts[cache_dir]>
+                    version: "24k_125hz_dim32_baseline"
         reranker:
             hpath:
                 rewards:
@@ -139,7 +140,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
 additional_callbacks:
     - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
       asr_model_path: zh
-    - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
+    # - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback  # avoid loading mulan
     - !new:recipes.bigmusic.callbacks.save_outputs.NormVolumeCallback
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
 callbacks:

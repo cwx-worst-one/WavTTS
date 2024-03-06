@@ -1,36 +1,26 @@
 import copy
-from curses.ascii import ETB
 from dataclasses import dataclass
-import io
 import random
 import json
 import math
-from string import punctuation
 from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Tuple
-import re
 import pytorch_lightning as pl
 import torch
-import ffmpeg
 import numpy as np
 import webdataset as wds
-import random
-import os
 from functools import partial
-from transformers import T5Tokenizer
 from torch.utils.data import DataLoader
 from torchaudio.transforms import Resample
 from torchaudio_augmentations import Compose
 from transformers import BertTokenizer, Wav2Vec2PhonemeCTCTokenizer
-from webdataset import WebDataset, shardlists
+from webdataset import shardlists
 from webdataset.pipeline import DataPipeline
 import logging, phonemizer
-from recipes.bigmusic.datasets.index_lists import INDEX as BM_INDEX
-from recipes.bigmusic.datasets.lyrics import DefaultDatasets, transform_dataset
 from recipes.bigmusic.datasets.tokenizers.phoneme import MAX_PHONE_LEN
-from recipes.bigmusic.datasets.transforms.lyrics import LyricsTokenTransform, rewrite_metadata, rewrite_playlist_labels
-from recipes.bigmusic.datasets.mir_data_util import ARTIST_ID_MAP, ARTIST_ID_MAP_V2
+from recipes.bigmusic.datasets.transforms.lyrics import rewrite_metadata, rewrite_playlist_labels
+from recipes.bigmusic.datasets.mir_data_util import ARTIST_ID_MAP_V2
+from recipes.bigmusic.utils.format_utils import normalize_text, parse_sa_music_tagging, parse_voice_tag
 
-from recipes.bigmusic.utils.format_utils import normalize_text, sa_music_tagging_to_style_text
 from recipes.datasets.mcc.mix import (
     INDEX,
     WebDatasetBufferPreprocessor,
@@ -41,16 +31,13 @@ from recipes.datasets.mcc.sami_tokenizer import (
     SamiOfflineTokenizer,
     SamiTokenizerError,
     Phrase,
+    drop_out_line_breaks,
+    drop_out_section_tags,
     move_out_section_tags, 
 )
 
 from recipes.musiclm.utils.dist import local_zero_first
-from recipes.musiclm.transforms.audio import (
-    FastNormalizeAudio,
-    LoudnessCheck,
-    NormalizeAudio,
-    ReadMP3,
-)
+from recipes.musiclm.transforms.audio import FastNormalizeAudio
 from samantha.dataio.batching import BucketBatcher
 from samantha.dataio.dataset import MultiIterableDataset
 from samantha.dataio.parquet import ParquetDataset
@@ -61,7 +48,6 @@ from samantha.transforms.audio import (
     NormalizeAudioToFloat32,
     SetAudioDimensions,
     ToTensor,
-    RandomResizedCrop,
 )
 from samantha.utils.webdataset import return_self
 
@@ -561,6 +547,9 @@ class VocalTransforms(BaseTransforms):
         infer_structure_tags: bool = False,
         sinking_threshold: float = 0.51,
         remove_sinking: bool = False,
+        tag_taxonomy_lang: str = "SA",
+        line_break_dropout_rate: float = 0.0,
+        section_tag_dropout_rate: float = 0.0,
     ):
         super().__init__()
         self.sample_rate = sample_rate
@@ -581,7 +570,10 @@ class VocalTransforms(BaseTransforms):
         self.use_soda_gt_lyrics = use_soda_gt_lyrics
         self.lyrics_field = lyrics_field       
         self.sinking_threshold = sinking_threshold
-        self.remove_sinking = remove_sinking  
+        self.remove_sinking = remove_sinking
+        self.tag_taxonomy_lang = tag_taxonomy_lang
+        self.line_break_dropout_rate = line_break_dropout_rate
+        self.section_tag_dropout_rate = section_tag_dropout_rate
 
         assert self.tokenizer
         base_transforms = [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
@@ -654,7 +646,7 @@ class VocalTransforms(BaseTransforms):
             # music_structure_tags = meta.get("music_structure", None)
             deepchorus_tags = meta.get("deepchorus")
             if deepchorus_tags:
-                structure_tags = format_deepchorus_structure_tags(deepchorus_tags)  
+                structure_tags = format_deepchorus_structure_tags(deepchorus_tags)
             # elif music_structure_tags:
             #     structure_tags = format_music_structure_tags(music_structure_tags)
 
@@ -724,13 +716,26 @@ class VocalTransforms(BaseTransforms):
         style_text = rewrite_metadata(meta)
         artist_id = ARTIST_ID_MAP_V2[str(meta.get("artist_id", "zh_empty"))]
 
-        if "music_tagging" in meta:
-            style_text, unfamiliar_tags, is_sinking = sa_music_tagging_to_style_text(meta["music_tagging"], self.sinking_threshold)
+        # NOTE: The processing logic should depend on the tag_taxonomy_lang instead of the data content
+        # For now we only enforce this on "SA".
+        if self.tag_taxonomy_lang == "SA":
+            # Parse SA tags and get style_text
+            music_tagging = meta.get("music_tagging")
+            if music_tagging is None:
+                self._update_stats(skipped=False, message="No music_tagging field")
+            cat_tags, unfamiliar_tags, is_sinking = parse_sa_music_tagging(music_tagging, self.sinking_threshold)
+            if unfamiliar_tags:
+                self._update_stats(skipped=False, message=f"Detected tag(s) not in SA vocab: {unfamiliar_tags}")
             if self.remove_sinking and is_sinking:
                 self._update_stats(skipped=True, message="Sinking music")
                 return
-            if unfamiliar_tags:
-                self._update_stats(skipped=False, message=f"Detected tag(s) not in SA vocab: {unfamiliar_tags}")
+            style_text = "|".join(cat_tags)
+            # Parse voice tag and assign it to artist_id
+            gender = meta.get("gender")
+            if gender is not None:
+                voice_tag = parse_voice_tag(gender)
+                if voice_tag and (artist_id == ARTIST_ID_MAP_V2["zh_empty"]):
+                    artist_id = ARTIST_ID_MAP_V2[voice_tag]
         elif "playlist_extra" in meta:
             label1 = meta["playlist_extra"].get("label1", "")
             label2 = meta["playlist_extra"].get("label2", "")
@@ -782,8 +787,11 @@ class VocalTransforms(BaseTransforms):
         self._update_stats(skipped=False)
         for song_slice in song_slices:
             clip = song_slice.slice_audio(audio, self.sample_rate)
-            # Reformat the phrases to have single-line section tags
-            reformatted_phrases = move_out_section_tags(song_slice.phrases)
+
+            # Do not change the function order. It matters.
+            phrases = drop_out_line_breaks(song_slice.phrases, self.line_break_dropout_rate)
+            phrases = move_out_section_tags(phrases)  # Reformat the phrases to have single-line section tags
+            reformatted_phrases = drop_out_section_tags(phrases, self.section_tag_dropout_rate)
 
             # NOTE: `normalize_text` removes `:` for the singer tag.
             normalized_text = normalize_text(
@@ -844,6 +852,9 @@ class VocalDataset(WebPipeline):
         use_soda_gt_lyrics: bool = True,
         sinking_threshold: float = 0.51,
         remove_sinking: bool = False,
+        tag_taxonomy_lang: str = "SA",
+        line_break_dropout_rate: float = 0.0,
+        section_tag_dropout_rate: float = 0.0,
         **kwargs,
     ):
         assert region in INDEX
@@ -866,6 +877,9 @@ class VocalDataset(WebPipeline):
             use_soda_gt_lyrics=use_soda_gt_lyrics,
             sinking_threshold=sinking_threshold,
             remove_sinking=remove_sinking,
+            tag_taxonomy_lang=tag_taxonomy_lang,
+            line_break_dropout_rate=line_break_dropout_rate,
+            section_tag_dropout_rate=section_tag_dropout_rate,
         )
         preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
         print(f"[{self.name}] MultiIterableDataset constructing...")
@@ -918,6 +932,9 @@ class VocalParquetDataset(WebPipeline):
         read_structure_tags: bool = False,
         sinking_threshold: float = 0.51,
         remove_sinking: bool = False,
+        tag_taxonomy_lang: str = "SA",
+        line_break_dropout_rate: float = 0.0,
+        section_tag_dropout_rate: float = 0.0,
         **kwargs,
     ):
         print(f"[{self.name}] initializing...")
@@ -943,6 +960,9 @@ class VocalParquetDataset(WebPipeline):
             read_structure_tags=read_structure_tags,
             sinking_threshold=sinking_threshold,
             remove_sinking=remove_sinking,
+            tag_taxonomy_lang=tag_taxonomy_lang,
+            line_break_dropout_rate=line_break_dropout_rate,
+            section_tag_dropout_rate=section_tag_dropout_rate,
         )
         preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
         print(f"[{self.name}] MultiIterableDataset constructing...")
@@ -1050,6 +1070,9 @@ class MixVocalWebDataModule(DataModule):
         ],
         sinking_threshold: float = 0.51,
         remove_sinking: bool = False,
+        tag_taxonomy_lang: str = "SA",
+        line_break_dropout_rate: float = 0.0,
+        section_tag_dropout_rate: float = 0.0,
     ):        
         self.num_workers = num_workers
         self.shuffle_buffer_size = shuffle_buffer_size
@@ -1110,6 +1133,9 @@ class MixVocalWebDataModule(DataModule):
                 sinking_threshold=sinking_threshold,
                 remove_sinking=remove_sinking,
                 frame_rate=frame_rate,
+                tag_taxonomy_lang=tag_taxonomy_lang,
+                line_break_dropout_rate=line_break_dropout_rate,
+                section_tag_dropout_rate=section_tag_dropout_rate,
                 )]
         self.parquet_vocal_datasets = []
         if parquet_dataset_ids:
@@ -1134,7 +1160,10 @@ class MixVocalWebDataModule(DataModule):
                         handler=wds.warn_and_continue,
                         sinking_threshold=sinking_threshold,
                         remove_sinking=remove_sinking,
-                        frame_rate=frame_rate,                
+                        frame_rate=frame_rate,
+                        tag_taxonomy_lang=tag_taxonomy_lang,  
+                        line_break_dropout_rate=line_break_dropout_rate,
+                        section_tag_dropout_rate=section_tag_dropout_rate,
                         ))
 
         train_dataset = WebPipeline(            
@@ -1164,7 +1193,10 @@ class MixVocalWebDataModule(DataModule):
                 handler=wds.warn_and_continue,
                 sinking_threshold=sinking_threshold,
                 remove_sinking=remove_sinking,
-                frame_rate=frame_rate,              
+                frame_rate=frame_rate,
+                tag_taxonomy_lang=tag_taxonomy_lang,
+                line_break_dropout_rate=line_break_dropout_rate,
+                section_tag_dropout_rate=section_tag_dropout_rate,
                 ),
             pipeline=[{"compose": [self.bucketize]}],
         )] 
@@ -1215,6 +1247,9 @@ class MixLangVocalWebDataModule(DataModule):
         ],
         sinking_threshold: float = 0.51,
         remove_sinking: bool = False,
+        tag_taxonomy_lang: str = "SA",
+        line_break_dropout_rate: float = 0.0,
+        section_tag_dropout_rate: float = 0.0,
     ):        
         self.num_workers = num_workers
         self.shuffle_buffer_size = shuffle_buffer_size
@@ -1273,7 +1308,10 @@ class MixLangVocalWebDataModule(DataModule):
                         handler=wds.warn_and_continue,
                         sinking_threshold=sinking_threshold,
                         remove_sinking=remove_sinking,
-                        frame_rate=frame_rate,                   
+                        frame_rate=frame_rate,
+                        tag_taxonomy_lang=tag_taxonomy_lang,
+                        line_break_dropout_rate=line_break_dropout_rate,
+                        section_tag_dropout_rate=section_tag_dropout_rate,            
                         ))
 
         if en_parquet_dataset_ids:
@@ -1297,6 +1335,9 @@ class MixLangVocalWebDataModule(DataModule):
                         sinking_threshold=sinking_threshold,
                         remove_sinking=remove_sinking,
                         frame_rate=frame_rate,
+                        tag_taxonomy_lang=tag_taxonomy_lang,
+                        line_break_dropout_rate=line_break_dropout_rate,
+                        section_tag_dropout_rate=section_tag_dropout_rate,
                         ))
 
         train_dataset = WebPipeline(            
@@ -1324,6 +1365,9 @@ class MixLangVocalWebDataModule(DataModule):
                 sinking_threshold=sinking_threshold,
                 remove_sinking=remove_sinking,
                 frame_rate=frame_rate,
+                tag_taxonomy_lang=tag_taxonomy_lang,
+                line_break_dropout_rate=line_break_dropout_rate,
+                section_tag_dropout_rate=section_tag_dropout_rate,
             ),
             pipeline=[{"compose": [self.bucketize]}],
         )] 
@@ -1375,6 +1419,9 @@ class SftWebDataModule(DataModule):
         sample_limit_per_file: int = 1000,
         sinking_threshold: float = 0.51,
         remove_sinking: bool = False,
+        tag_taxonomy_lang: str = "SA",
+        line_break_dropout_rate: float = 0.0,
+        section_tag_dropout_rate: float = 0.0,
     ):        
         print(conditions)
         print(parquet_datasets)
@@ -1443,6 +1490,9 @@ class SftWebDataModule(DataModule):
                         sinking_threshold=sinking_threshold,
                         remove_sinking=remove_sinking,
                         frame_rate=frame_rate,
+                        tag_taxonomy_lang=tag_taxonomy_lang,
+                        line_break_dropout_rate=line_break_dropout_rate,
+                        section_tag_dropout_rate=section_tag_dropout_rate,
                         ))
             self.parquet_vocal_datasets[split] = WebPipeline(            
                 MultiIterableDataset(datasets=pds, weights=pdws),

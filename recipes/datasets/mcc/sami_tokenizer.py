@@ -1,3 +1,4 @@
+from random import Random
 import re
 import string
 from typing import Dict, Tuple, Optional, List, NamedTuple, Union
@@ -350,6 +351,67 @@ class Phrase(NamedTuple):
             time_span=time_span,
         )
 
+    @classmethod
+    def concat(cls, phrase_a, phrase_b):  # -> Phrase
+        def concat_opt_str(str_a: Optional[str], str_b: Optional[str]) -> Optional[str]:
+            if str_a is None and str_b is None:
+                return None
+            str_a = "" if str_a is None else str_a
+            str_b = "" if str_b is None else str_b
+            return str_a + str_b
+
+        def concat_opt_str_mix_lang(str_a: Optional[str], str_b: Optional[str]):
+            if ((not str_a or not str_b) or  # also handles the case when any of these is empty
+                (is_chinese_char(str_a[-1].encode('unicode_escape')) and 
+                 is_chinese_char(str_b[0].encode('unicode_escape')))):
+                return concat_opt_str(str_a, str_b)
+            return concat_opt_str(str_a, " "+str_b)  # add a space inbetween
+
+        def concat_phonemes(phone_a: Optional[str], phone_b: Optional[str]) -> Optional[str]:
+            if phone_a is None or phone_b is None:
+                return concat_opt_str(phone_a, phone_b)
+            phone_a_split = phone_a.split("\n")
+            last_label = "。\t0\tS\t4\tO\t\tS"
+            if phone_a_split[-1] == last_label:  # split guarantees the list is non-empty
+                phone_a = "\n".join(phone_a_split[:-1])  # cut out the line break
+            return phone_a + "\n" + phone_b
+
+        def concat_time_span(
+            time_span_a: Optional[Tuple[int, int]],
+            time_span_b: Optional[Tuple[int, int]]
+        ) -> Optional[Tuple[int, int]]:
+            # invalid time span is supposed to be filtered out before running this function
+            if time_span_a is None or time_span_b is None:
+                return None
+            start = min(time_span_a[0], time_span_b[0])
+            end = max(time_span_a[1], time_span_b[1])
+            return start, end
+
+        # refuse to concat if the tag does not match
+        if not cls.concatable(phrase_a, phrase_b):
+            raise SamiTokenizerError("Unable to concatenate two phrases with different prefix_tags")
+
+        return cls(
+            text=concat_opt_str_mix_lang(phrase_a.text, phrase_b.text),
+            phonemes=concat_phonemes(phrase_a.phonemes, phrase_b.phonemes),
+            singer_tag=phrase_a.singer_tag,
+            section_tag=phrase_b.section_tag,
+            time_span=concat_time_span(phrase_a.time_span, phrase_b.time_span)
+        )
+
+    @classmethod
+    def concatable(cls, phrase_a, phrase_b) -> bool:
+        def time_span_match(
+            time_span_a: Optional[Tuple[int, int]],
+            time_span_b: Optional[Tuple[int, int]]
+        ) -> bool:
+            # either both have time_span or both do not have
+            return (all(ts is None for ts in [time_span_a, time_span_b]) or 
+                    all(ts is not None for ts in [time_span_a, time_span_b]))
+
+        return ((phrase_a.prefix_tags == phrase_b.prefix_tags) and
+                time_span_match(phrase_a.time_span, phrase_b.time_span))
+
     @property
     def prefix_tags(self) -> List[str]:
         return list(filter(None, [self.section_tag, self.singer_tag]))
@@ -384,6 +446,26 @@ class Phrase(NamedTuple):
         return add_section_tag(self.section_tag, add_singer_tag(self.singer_tag, _str))
 
 
+def drop_out_line_breaks(phrases: List[Phrase], rate: float, seed: Optional[int] = None) -> List[Phrase]:
+    """Merge adjacent concatable phrases. The phrase list should NOT be reformatted by move_out_section_tags."""
+    if not (0 <= rate <= 1):
+        raise SamiTokenizerError(f"Invalid dropout rate: {rate}")
+    if len(phrases) <= 1 or rate == 0:
+        return phrases
+    mergeable_ind = [
+        idx for idx, (curr_phrase, next_phrase) in enumerate(zip(phrases, phrases[1:])) 
+        if Phrase.concatable(curr_phrase, next_phrase)
+    ]
+    if not mergeable_ind:
+        return phrases
+    rand_gen = Random(seed)
+    phrases = phrases[:]  # shallow copy a new slice, Phrase is immutable so it's fine
+    for idx in reversed(mergeable_ind):  # reverse it because the list shrinks
+        if rand_gen.random() < rate:
+            phrases[idx:idx+2] = [Phrase.concat(phrases[idx], phrases[idx+1])]
+    return phrases
+
+
 def move_out_section_tags(phrases: List[Phrase]) -> List[Phrase]:
     """Move section tags out of phrases as single phrases
     This function reformats a list of phrases to a format where section tags
@@ -396,6 +478,23 @@ def move_out_section_tags(phrases: List[Phrase]) -> List[Phrase]:
         if phrase.has_utterance:
             out_phrases.append(phrase._replace(section_tag=None))
     return out_phrases
+
+
+def drop_out_section_tags(phrases: List[Phrase], rate: float, seed: Optional[int] = None) -> List[Phrase]:
+    """Remove phrases with section tags. The phrase list SHOULD be reformatted by move_out_section_tags.
+    - The function either drops out or keep all the section tags. Partial dropout could contaminate the
+      training data by placing multiple sections under one section tag.
+    - The function does not perform dropout if the given phrases do not have utterance, because empty
+      phrases can't be tokenized.
+    """
+    if not (0 <= rate <= 1):
+        raise SamiTokenizerError(f"Invalid dropout rate: {rate}")
+    if not any(phrase.has_utterance for phrase in phrases):
+        return phrases
+    rand_gen = Random(seed)
+    if rand_gen.random() < rate:
+        return [phrase for phrase in phrases if phrase.section_tag is None]
+    return phrases
 
 
 def convert_v3_to_v1(tacolab):

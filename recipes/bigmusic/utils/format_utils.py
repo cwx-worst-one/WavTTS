@@ -2,8 +2,16 @@ import json
 from pathlib import Path
 from string import punctuation
 import re
-from typing import Dict, List, Tuple, Union
-from recipes.bigmusic.datasets.mir_data_util import chinese_genre1_vocab, chinese_genre2_vocab, SA_TAGS_SPECIAL_MAP, SA_CAT_VOCAB, chinese_to_SA_mapping
+from typing import Dict, List, Optional, Tuple, Union
+
+from recipes.bigmusic.datasets.mir_data_util import (
+    CHINESE_GENRE1_VOCAB,
+    CHINESE_GENRE2_VOCAB,
+    CHINESE_TO_SA_MAPPING,
+    SA_TAGS_SPECIAL_MAP,
+    SA_CAT_VOCAB,
+    VOICE_THRESHOLDS,
+)
 from recipes.datasets.mcc.sami_tokenizer import Phrase
 
 
@@ -17,22 +25,22 @@ def rewrite_playlist_labels(label1, label2):
         scene = label2        
     elif label1 == "中文心情":
         mood = label2
-    elif label1 in chinese_genre1_vocab:        
+    elif label1 in CHINESE_GENRE1_VOCAB:        
         if label1 in {"金属", "儿童音乐", "宗教"}:
             genre = label1
         else:
-            if label2 in chinese_genre2_vocab:
+            if label2 in CHINESE_GENRE2_VOCAB:
                 genre = label2
             if genre == "粤语流行":
                 lang = "粤语"
     else:
         print("Missing playlist metadata")
     # TODO: (QQ) use SA sinking / language tags / voice.
-    genre = chinese_to_SA_mapping.get(genre, "")
-    mood = chinese_to_SA_mapping.get(mood, "")
-    scene = chinese_to_SA_mapping.get(scene, "")
+    genre = CHINESE_TO_SA_MAPPING.get(genre, "")
+    mood = CHINESE_TO_SA_MAPPING.get(mood, "")
+    scene = CHINESE_TO_SA_MAPPING.get(scene, "")
     sinking = "Sinking" if (genre == "DJ" or genre == "MC") else "non-Sinking"
-    lang = chinese_to_SA_mapping.get(lang, "")
+    lang = CHINESE_TO_SA_MAPPING.get(lang, "")
     return "|".join([genre, mood, scene, sinking, lang])
 
 
@@ -66,7 +74,7 @@ def rewrite_metadata(metadata, type="Vocal"):
     return text
 
 
-def sa_music_tagging_to_style_text(music_tagging: Dict, sinking_threshold: float) -> Tuple[str, List[str], bool]:
+def parse_sa_music_tagging(music_tagging: Optional[Dict], sinking_threshold: float) -> Tuple[List[str], List[str], bool]:
     def parse_result(result: Union[List, str]) -> str:
         if isinstance(result, str):
             return result
@@ -80,12 +88,35 @@ def sa_music_tagging_to_style_text(music_tagging: Dict, sinking_threshold: float
 
     # The order should match `mir_data_util`
     order = ["Genre20", "Mood", "Theme", "MusicLowQuality", "Language"]
+
+    if music_tagging is None:
+        return [""] * len(order), [], False
     sinking_prob = music_tagging["MusicLowQuality"]["Sinking"]
     is_sinking = sinking_prob >= sinking_threshold
     quality = "Sinking" if is_sinking else "non-Sinking"
     tags = [quality if item == "MusicLowQuality" else map_tag(parse_result(music_tagging[item]["result"])) for item in order]
-    unfamiliar_tags = [tag for tag in tags if tag not in SA_CAT_VOCAB ]
-    return "|".join([(tag if tag in SA_CAT_VOCAB else "") for tag in tags]), unfamiliar_tags, is_sinking
+    unfamiliar_tags = {cat_name: tag for tag, cat_vocab_tags, cat_name in zip(tags, SA_CAT_VOCAB, order) if tag not in cat_vocab_tags}
+    return [(tag if tag in cat_vocab_tags else "") for tag, cat_vocab_tags in zip(tags, SA_CAT_VOCAB)], unfamiliar_tags, is_sinking
+
+
+def parse_voice_tag(voice_probs: Optional[Dict[str, float]]) -> str:
+    """Return the voice tag based on probablity thresholds. 'adult' tag is not used."""
+    if voice_probs is None:
+        return ""
+    is_child = voice_probs["child"] >= VOICE_THRESHOLDS["Child"]
+    if is_child:
+        return "Child"
+    is_female = voice_probs["female"] >= VOICE_THRESHOLDS["Female"]
+    is_male = voice_probs["male"] >= VOICE_THRESHOLDS["Male"]
+    if is_female and not is_male:
+        return "Female"
+    if is_male and not is_female:
+        return "Male"
+    if is_female and is_male:
+        if voice_probs["female"] >= voice_probs["male"]:
+            return "Female"
+        return "Male"
+    return ""
 
 
 def normalize_text(text, enable_punctuation=False, lowercase=False):

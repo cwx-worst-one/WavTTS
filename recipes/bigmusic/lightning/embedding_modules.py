@@ -216,14 +216,21 @@ class TokenEmbedder(BaseEmbedder):
 
 class TagCategoricalEmbedder(TokenEmbedder):
     def __init__(
-            self, vocab_type='auto', max_vocab_size=1024, embedding_dim=1024, add_sos=False, dropout=0.0, num_categories=5, category_separator="|"
+            self,
+            vocab_type='auto',
+            max_vocab_size=1024,
+            embedding_dim=1024,
+            add_sos=False,
+            dropout=0.0,
+            category_separator="|",
         ):
         if vocab_type == 'auto':
             assert max_vocab_size
             vocab2id = { NONE_LABEL: 0 }
             vocab_size = max_vocab_size
+            _num_categories = 5  # (the previous default value)
         else:
-            vocab2id = get_categorical_vocab(vocab_type)
+            vocab2id, _num_categories = get_categorical_vocab(vocab_type)  # infer num_categories from vocab_type
             vocab_size = len(vocab2id)
         super().__init__(vocab_size, embedding_dim, add_sos)
         self.vocab2id = vocab2id
@@ -231,7 +238,7 @@ class TagCategoricalEmbedder(TokenEmbedder):
         self.vocab_type = vocab_type
         self.dropout = dropout
         self.category_separator = category_separator
-        self.num_categories = num_categories
+        self.num_categories = _num_categories
 
     def sync_tags(self, batch_style_tags):
         "For auto tags, must sync new tags across all workers first for consistent vocab2id"

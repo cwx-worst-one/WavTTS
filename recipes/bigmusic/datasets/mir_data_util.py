@@ -1,3 +1,7 @@
+from functools import reduce
+import operator
+from typing import Dict, Tuple
+
 
 ARTIST_ID_MAP = {
     # En dropout
@@ -92,6 +96,10 @@ ARTIST_ID_MAP_V2 = {
     "6776144869279664130": 35, # 陈粒	142	 
     "6817645899284482049": 36, # 毛不易	129	 
     "6795061528409147393": 37, # 汪苏泷	239 
+    # Voice tags
+    "Child": 47,
+    "Male": 48,
+    "Female": 49,
     # En dropout
     "en_empty": 50,
     '6705198980290091009' : 51,   #    Frank Sinatra    1844
@@ -155,7 +163,7 @@ ARTIST_ID_MAP_V2 = {
     '6838473905233987586' : 109,   #    Harry Styles    35    
 }
 
-chinese_mir_genre_tag_map = {
+CHINESE_MIR_GENRE_TAG_MAP = {
     # genre
     "Rock":                                 "摇滚",
     "Metal":                                "金属",
@@ -208,7 +216,8 @@ chinese_mir_genre_tag_map = {
     "Cantonese":                "粤语", 
     "Hokkien":                  "闽南话",
 }
-chinese_genre1_vocab = [
+
+CHINESE_GENRE1_VOCAB = [
     "流行",     # use genre2
     "说唱",     # use genre2。"嘻哈"
     "下沉土嗨",  # use genre2
@@ -221,7 +230,8 @@ chinese_genre1_vocab = [
     "儿童音乐",
     "宗教",
 ]
-chinese_genre2_vocab = [
+
+CHINESE_GENRE2_VOCAB = [
     "流行民谣",
     "闽南语流行",
     "DJ慢摇/土味remix",
@@ -243,7 +253,8 @@ chinese_genre2_vocab = [
     "国风电子",
     "国语流行", 
 ]
-chinese_mood_vocab = [
+
+CHINESE_MOOD_VOCAB = [
     "怀旧的/记忆",
     "悲伤",
     "开心/快乐",
@@ -260,7 +271,7 @@ chinese_mood_vocab = [
     "梦幻/超凡脱俗的",
 ]
 
-chinese_scene_vocab = [
+CHINESE_SCENE_VOCAB = [
     "Evening",
     "Danceable",
     "Relaxation",
@@ -312,13 +323,21 @@ chinese_scene_vocab = [
     "Birthday",
 ]
 
-gender_vocab = ["男声", "女声"]
+GENDER_VOCAB = ["男声", "女声"]
 
-lang_vocab = ["普通话", "粤语", "闽南话"]
+LANG_VOCAB = ["普通话", "粤语", "闽南话"]
+
+CHINESE_CAT_VOCAB = [
+    CHINESE_GENRE1_VOCAB, CHINESE_GENRE2_VOCAB,
+    CHINESE_MOOD_VOCAB, CHINESE_SCENE_VOCAB,
+    GENDER_VOCAB, LANG_VOCAB
+]
+
+# ========================================================================
  
 NONE_LABEL = 'None'
 
-chinese_to_SA_mapping = {
+CHINESE_TO_SA_MAPPING = {
     "流行":     "Pop",     # use genre2
     "说唱":     "Hip Hop/Rap",     # use genre2。"嘻哈"
     "下沉土嗨":  "DJ",  # use genre2
@@ -416,7 +435,8 @@ chinese_to_SA_mapping = {
     "普通话":        "Chinese", 
     "粤语":          "Cantonese",
 }
-SA_genre20 = [
+
+SA_GENRE20 = [
     "Blues",
     "Chinese Opera",
     "Chinese Style",
@@ -439,7 +459,8 @@ SA_genre20 = [
     "Reggae",
     "Rock",
 ]
-SA_mood19 = [
+
+SA_MOOD19 = [
     "Angry",
     "Calm",
     "Chill",
@@ -460,7 +481,8 @@ SA_mood19 = [
     "Tense",
     "Weird",
 ]
-SA_theme33 = [
+
+SA_THEME33 = [
     "Autumn",
     "Bedtime",
     "Birthday",
@@ -496,14 +518,14 @@ SA_theme33 = [
     "Yoga",
 ]
 
-SA_lang = [
+SA_LANG = [
     "Cantonese",
     "Chinese",
     "Chinese Dialects",
     "English",
 ]
 
-SA_sinking = [
+SA_SINKING = [
     "Sinking", 
     "non-Sinking",
 ]
@@ -516,6 +538,7 @@ SA_TAGS_SPECIAL_MAP = {
     "Pop,Chinese Style": "Chinese Style",
 }
 
+
 MACRO_STYLE_MAP = {
     "Pop": "Pop|||non-Sinking|Chinese",
     "Hip Hop/Rap": "Hip Hop/Rap|||non-Sinking|Chinese",
@@ -527,28 +550,39 @@ MACRO_STYLE_MAP = {
     "R&B/Soul": "R&B/Soul|||non-Sinking|Chinese"
 }
 
-def get_categorical_vocab(vocab_type='Zh'):
-    all_values = []
-    all_values.append(NONE_LABEL)
-    if vocab_type == 'Zh':
-        for categories in [
-            chinese_genre1_vocab, chinese_genre2_vocab, 
-            chinese_mood_vocab, chinese_scene_vocab, 
-            gender_vocab, lang_vocab]:
-            all_values.extend(categories)
-    if vocab_type == 'SA':
-        for categories in [SA_genre20, SA_mood19, SA_theme33, SA_sinking, SA_lang]:
-            all_values.extend(categories)
+SA_CAT_VOCAB = [SA_GENRE20, SA_MOOD19, SA_THEME33, SA_SINKING, SA_LANG]
+
+# Call it "voice" because:
+# 1. GENDER_VOCAB has been used
+# 2. will add more tags in the future
+VOICE_THRESHOLDS = {
+    "Male": 0.6,
+    "Female": 0.65,
+    # "Adult": 0.5,  # not used
+    "Child": 0.85
+}
+
+VOICE_VOCAB = list(VOICE_THRESHOLDS.keys())
+
+_VOCAB_MAP = {
+    "Zh": CHINESE_CAT_VOCAB,
+    "SA": SA_CAT_VOCAB,
+}
+
+def get_categorical_vocab(vocab_type: str) -> Tuple[Dict[str, int], int]:
+    vocab = _VOCAB_MAP[vocab_type]
+    num_categories = len(vocab)
+    all_values = [NONE_LABEL] + reduce(operator.add, vocab)
     vocab2id = { value: idx for idx, value in enumerate(all_values) }
-    return vocab2id
+    return vocab2id, num_categories
 
 def convert_m1_tag_to_style_text(m1_tags_list):    
     style_texts = []
     for m1_tags in m1_tags_list: 
-        genre = chinese_mir_genre_tag_map.get(m1_tags.get("genre", ""), "")
-        mood = chinese_mir_genre_tag_map.get(m1_tags.get("mood", ""), "")
+        genre = CHINESE_MIR_GENRE_TAG_MAP.get(m1_tags.get("genre", ""), "")
+        mood = CHINESE_MIR_GENRE_TAG_MAP.get(m1_tags.get("mood", ""), "")
         scene = m1_tags.get("scene", "")
-        gender = chinese_mir_genre_tag_map.get(m1_tags.get("vocal_gender", ""), "")
+        gender = CHINESE_MIR_GENRE_TAG_MAP.get(m1_tags.get("vocal_gender", ""), "")
         lang = m1_tags.get("lang", "")
         if not lang:
             lang = "普通话"
@@ -559,6 +593,3 @@ def convert_m1_tag_to_style_text(m1_tags_list):
         style_text = "|".join([genre, mood, scene, gender, lang])
         style_texts.append(style_text)
     return style_texts
-
-
-SA_CAT_VOCAB = get_categorical_vocab("SA")

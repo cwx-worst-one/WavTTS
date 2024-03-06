@@ -17,11 +17,14 @@ extra_params:
     semantic_codebook_size: 32_768
     semantic_frame_rate: 25
     semantic_type: bestrq
-    train_conditions: "style_category, speaker_id, lyrics_tokens"
+    train_conditions: "style_category,speaker_id,lyrics_tokens"
     prepare_input_types: []
     input_embedders: [tag_categorical, speaker_id, lyrics_tokens]
-    tag_taxonomy_lang: 'SA'
-    tag_dropout_rate: 0     # Already sparse tags from Playlist dataset
+    tag_taxonomy_lang: 'SA'  # Zh, SA
+    tag_dropout_rate: 0.25
+    line_break_dropout_rate: 0
+    section_tag_dropout_rate: 0
+    use_mcc_gender: False
     # mulan_embed_dim: 512
     hidden_size: 1536
     intermediate_size: 4352
@@ -36,7 +39,7 @@ run_opts:
     fast_dev_run: False
     log_dir: logs
     hdfs_log_dir: "hdfs:///home/byte_speech_sv/zongyu.yin/logs"
-    log_name: decoder_07B_zh30s_playlist_artist_sft
+    log_name: decoder_07B_zh30s_sft
     version: v0
     cache_dir: .module_cache/bigmusic
     precision: "16"
@@ -61,8 +64,8 @@ run_opts:
     lyrics_confidence: 0.1
     lyrics_tokenizer: "tts_chinese_frontend_model"
     segment_max_phone_len: 400
-    parquet_dataset_ids: [1574]   # [playlist, artist]
-    parquet_dataset_weights: [1]
+    parquet_dataset_ids: [1665, 1662]   # [authorized, zh_artist]
+    parquet_dataset_weights: [8, 2]
     sinking_threshold: 0.51
     remove_sinking: false
 
@@ -94,6 +97,9 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     sinking_threshold: !ref <run_opts[sinking_threshold]>
     remove_sinking: !ref <run_opts[remove_sinking]>
     frame_rate: !ref <extra_params[semantic_frame_rate]>
+    tag_taxonomy_lang: !ref <extra_params[tag_taxonomy_lang]>
+    line_break_dropout_rate: !ref <extra_params[line_break_dropout_rate]>
+    section_tag_dropout_rate: !ref <extra_params[section_tag_dropout_rate]>
 
 model_config: !new:transformers.GPT2Config
     vocab_size: 1 # placeholder. Embedding table gets removed on load
@@ -187,7 +193,7 @@ callbacks:
       save_last: True
       monitor: val_accu_0
       mode: max
-      filename: "{step:06d}-{val_accu_0:.2f}"
+      filename: "{step:06d}-{tr_loss:.4f}-{val_accu_0:.2f}"
     - !new:samantha.callbacks.HDFSModelCheckpoint
       hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
       monitor: step
@@ -195,7 +201,7 @@ callbacks:
       save_last: True
       every_n_train_steps: !ref <run_opts[val_check_interval]>
       mode: max
-      filename: "{step:06d}-{val_accu_0:.2f}"
+      filename: "{step:06d}-{tr_loss:.4f}-{val_accu_0:.2f}"
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: 'step'
     # - !new:recipes.bigmusic.callbacks.data_logger.BigMusicDataUsageLogger

@@ -1,13 +1,15 @@
-from itertools import product
-from lib2to3.pgen2.tokenize import tokenize
+from itertools import cycle, product
 
 import pytest
+import mock
 import numpy as np
 
 from recipes.datasets.mcc.sami_tokenizer import (
     Phrase,
     SamiOfflineTokenizer,
     SamiTokenizerError,
+    drop_out_line_breaks,
+    drop_out_section_tags,
     move_out_section_tags,
     singer_tags,
     section_tags,
@@ -218,7 +220,6 @@ def test_sami_tokenizer_with_prefix_tags(prefix_tags):
     tokens, phonemes, tones = convert_labels_to_text_id(phrase.phonemes.split("\n"), phrase.prefix_tags)
     gt_tokens, gt_phonemes, gt_tones = PHONE_MOCK_OUTPUT
 
-    # The singer tag should be the first token in all the parsed sequences
     section_phone_id = phone_to_int.get(section_tag)
     section_tone_id = tone_to_int.get(section_tag)
     singer_phone_id = phone_to_int.get(singer_tag)
@@ -354,14 +355,185 @@ REFORMAT_CASES = [
     ids=[d["desc"] for d in REFORMAT_CASES],
 )
 def test_move_out_section_tags(test_data):
-
-
     in_phrases = [Phrase.parse(text=line) for line in test_data["in"]]
     out_phrases = [Phrase.parse(text=line) for line in test_data["out"]]
-
-    print("in:", in_phrases)
-    print("out:", move_out_section_tags(in_phrases))
     assert move_out_section_tags(in_phrases) == out_phrases
+
+
+PHRASE_CONCAT_CASES = [
+    {
+        "phrase_a": Phrase(
+            phonemes = "\n".join(PHONE_MOCK_INPUT),
+            text="嘻嘻嘻",
+            singer_tag="男",
+            section_tag="verse",
+            time_span=(0, 5),
+        ),
+        "phrase_b": Phrase(
+            phonemes = "\n".join(PHONE_MOCK_INPUT),
+            text="哈哈哈",
+            singer_tag="男",
+            section_tag="verse",
+            time_span=(6, 10),
+        ),
+        "out": Phrase(
+            phonemes = "\n".join(PHONE_MOCK_INPUT[:-1]+PHONE_MOCK_INPUT),
+            text="嘻嘻嘻哈哈哈",
+            singer_tag="男",
+            section_tag="verse",
+            time_span=(0, 10),
+        ),
+        "desc": "regular case"
+    },
+    {
+        "phrase_a": Phrase(
+            phonemes = "\n".join(PHONE_MOCK_INPUT),
+            text="嘻嘻嘻",
+            singer_tag="男",
+            section_tag="verse",
+            time_span=(0, 5),
+        ),
+        "phrase_b": Phrase(
+            phonemes = "\n".join(PHONE_MOCK_INPUT),
+            text="hahaha",
+            singer_tag="男",
+            section_tag="verse",
+            time_span=(6, 10),
+        ),
+        "out": Phrase(
+            phonemes = "\n".join(PHONE_MOCK_INPUT[:-1]+PHONE_MOCK_INPUT),
+            text="嘻嘻嘻 hahaha",
+            singer_tag="男",
+            section_tag="verse",
+            time_span=(0, 10),
+        ),
+        "desc": "mix lang case"
+    }
+]
+
+
+PHRASE_CONCAT_INVALID_CASES = [
+    {
+        "phrase_a": Phrase(
+            phonemes = "\n".join(PHONE_MOCK_INPUT),
+            text="嘻嘻嘻",
+            singer_tag="男",
+        ),
+        "phrase_b": Phrase(
+            phonemes = "\n".join(PHONE_MOCK_INPUT),
+            text="哈哈哈",
+            section_tag="verse",
+        ),
+        "desc": "prefix_tags do not match"
+    },
+]
+
+
+@pytest.mark.parametrize(
+    "test_data",
+    PHRASE_CONCAT_CASES,
+    ids=[d["desc"] for d in PHRASE_CONCAT_CASES],
+)
+def test_phrase_concat(test_data):
+    assert Phrase.concat(test_data["phrase_a"], test_data["phrase_b"]) == test_data["out"]
+
+
+@pytest.mark.parametrize(
+    "test_data",
+    PHRASE_CONCAT_INVALID_CASES,
+    ids=[d["desc"] for d in PHRASE_CONCAT_INVALID_CASES],
+)
+def test_phrase_concat_invalid(test_data):
+    with pytest.raises(SamiTokenizerError):
+        Phrase.concat(test_data["phrase_a"], test_data["phrase_b"])
+
+
+class MockRandom:
+    def __init__(self, seed):
+        self.iter = cycle([0.4, 0.6])
+
+    def random(self):
+        return next(self.iter)
+
+
+LINE_BREAK_DROPOUT_INPUT = [
+    Phrase(text="hello", section_tag="verse"),
+    Phrase(text="world", section_tag="verse"),
+    Phrase(text="foo", section_tag="chorus"),
+    Phrase(text="bar", section_tag="chorus"),
+]
+
+
+LINE_BREAK_DROPOUT_CASES = [
+    {
+        "rate": 0,
+        "out": LINE_BREAK_DROPOUT_INPUT,
+        "desc": "no dropout",
+    },
+    {
+        "rate": 1,
+        "out": [
+            Phrase(text="hello world", section_tag="verse"),
+            Phrase(text="foo bar", section_tag="chorus"),
+        ],
+        "desc": "all dropout",
+    },
+    {
+        "rate": 0.5,
+        "out": [
+            Phrase(text="hello", section_tag="verse"),
+            Phrase(text="world", section_tag="verse"),
+            Phrase(text="foo bar", section_tag="chorus"),
+        ],
+        "desc": "all dropout",
+    }
+]
+
+
+@pytest.mark.parametrize(
+    "test_data",
+    LINE_BREAK_DROPOUT_CASES,
+    ids=[d["desc"] for d in LINE_BREAK_DROPOUT_CASES],
+)
+def test_drop_out_line_breaks(test_data):
+    with mock.patch("recipes.datasets.mcc.sami_tokenizer.Random", MockRandom):
+        assert drop_out_line_breaks(LINE_BREAK_DROPOUT_INPUT, test_data["rate"]) == test_data["out"]
+
+
+SECTION_TAG_DROPOUT_INPUT = [
+    Phrase(section_tag="verse"),
+    Phrase(text="hello"),
+    Phrase(section_tag="chorus"),
+    Phrase(text="world"),
+]
+
+
+SECTION_TAG_DROPOUT_CASES = [
+    # it only has 2 cases
+    {
+        "rate": 0,
+        "out": SECTION_TAG_DROPOUT_INPUT,
+        "desc": "no dropout",
+    },
+    {
+        "rate": 1,
+        "out": [
+            Phrase(text="hello"),
+            Phrase(text="world"),
+        ],
+        "desc": "all dropout",
+    },
+]
+
+
+@pytest.mark.parametrize(
+    "test_data",
+    SECTION_TAG_DROPOUT_CASES,
+    ids=[d["desc"] for d in SECTION_TAG_DROPOUT_CASES],
+)
+def test_drop_out_section_tags(test_data):
+    with mock.patch("recipes.datasets.mcc.sami_tokenizer.Random", MockRandom):
+        assert drop_out_section_tags(SECTION_TAG_DROPOUT_INPUT, test_data["rate"]) == test_data["out"]
 
 
 # TODO (Yilin) Test SamiTokenizer
