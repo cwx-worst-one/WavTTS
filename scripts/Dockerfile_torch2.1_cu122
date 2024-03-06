@@ -305,6 +305,8 @@ RUN pip3 install \
         tensorflow_io \
         speechbrain
 
+# Transformer Engine
+RUN pip install git+https://github.com/NVIDIA/TransformerEngine.git@stable
 
 # INSTALL AWS RELATED LIBS
 ARG EFA_INSTALLER_VERSION=1.29.0
