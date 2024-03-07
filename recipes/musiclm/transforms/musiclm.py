@@ -260,6 +260,12 @@ class MCCTransforms(TransformBase):
             is_good, msg = self.is_audio_metrics_good(metadata.get("audio_metrics", {}))
             if not is_good:
                 return False, msg
+        # Apply SFT filtering if the data is there
+        if "filter_label" in metadata:
+            if metadata["filter_label"]["high_quality"] != "yes":
+                return False, "Not High Quality (SFT)"
+            if metadata["filter_label"]["popular_potential"] != "yes":
+                return False, "Not Popular (SFT)"
         return True, None
 
     def is_audio_metrics_good(self, audio_metrics: Dict[str, Any]) -> Tuple[bool, str]:

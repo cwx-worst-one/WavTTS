@@ -823,63 +823,72 @@ class SemanticRLModule(SemanticModule):
         ce_loss += aux_loss
 
         # Sequence loss
-        # Inference
-        batch["inputs_embeds"] = inputs_embeds
-        ref_samples = None
-        if self.extra_params.add_ref_to_beam and mode == "training":
-            ref_samples = target_ids
-        if "duration" not in batch:
-            if isinstance(self.extra_params.duration, (list, tuple)):
-                batch["duration"] = self.extra_params.duration[-1]
-            else:
-                batch["duration"] = self.extra_params.duration
-        num_tokens = batch["duration"] * self.extra_params.semantic_frame_rate
-        sampled_semantic_tokens, model_inputs = super().predict(
-            batch,
-            self.extra_params,
-            beam=beam,
-            ref_samples=ref_samples,
-            rl_training=True,
-        )
-        sampled_semantic_tokens_processed, eos_index_list = process_eos_indexes(
-            sampled_semantic_tokens,
-            self,
-            sample_rate=self.extra_params.sample_rate,
-        )
-        # Compute rewards
-        rewards, sampled_audio, reward_breakdown = self.get_reward({
-            "target_semantic_tokens": target_ids,
-            "sampled_semantic_tokens": sampled_semantic_tokens_processed,
-            "eos_index_list": eos_index_list,
-            "target_audio": wavs_gt,
-            "batch_size": B,
-            "beam_size": beam,
-            "batch": batch,
-        })
-        # Compute sequence probs
-        seq_logits = self.model(**model_inputs)
-        if isinstance(seq_logits, dict):
-            seq_logits = seq_logits["logits"]
-        elif isinstance(seq_logits, tuple):
-            seq_logits = seq_logits[0]
-        seq_probs1 = F.log_softmax(seq_logits[:, -num_tokens:, :], dim=-1)
-        seq_probs2 = torch.gather(
-            seq_probs1, -1, sampled_semantic_tokens.unsqueeze(2)
-        ).squeeze(2)    # (B * beam, T)
-        # Only add up non-eos probs
-        if len(eos_index_list) > 0:
-            token2wav_rate = self.extra_params.sample_rate // self.extra_params.semantic_frame_rate
-            seq_len = eos_index_list // token2wav_rate + 1  # need to add 1 to include <eos>
-            for i in range(len(eos_index_list)):
-                seq_probs2[i, seq_len[i]:] = 0
-            seq_probs2 = (seq_probs2.sum(dim=-1) / seq_len).reshape(B, beam)
+        if self.training and self.trainer.global_step < self.extra_params.get("ce_only_steps", 0):
+            seq_loss = 0
+            wavs_gt = None
+            sampled_audio = None
+            rewards = None
+            reward_breakdown = None
+            seq_probs3 = None
+            skip = False
         else:
-            seq_probs2 = seq_probs2.reshape(B, beam, -1).mean(dim=-1)
-        seq_probs3 = F.softmax(seq_probs2, dim=-1)
-        seq_loss = -1 * (rewards * seq_probs3).sum(dim=-1).mean()
-        skip = torch.any(torch.isnan(seq_probs1)) or torch.any(torch.isnan(seq_probs3))
-        if skip:
-            print(f"Skipped samples: {sampled_semantic_tokens}")
+            # Inference
+            batch["inputs_embeds"] = inputs_embeds
+            ref_samples = None
+            if self.extra_params.add_ref_to_beam and mode == "training":
+                ref_samples = target_ids
+            if "duration" not in batch:
+                if isinstance(self.extra_params.duration, (list, tuple)):
+                    batch["duration"] = self.extra_params.duration[-1]
+                else:
+                    batch["duration"] = self.extra_params.duration
+            num_tokens = batch["duration"] * self.extra_params.semantic_frame_rate
+            sampled_semantic_tokens, model_inputs = super().predict(
+                batch,
+                self.extra_params,
+                beam=beam,
+                ref_samples=ref_samples,
+                rl_training=True,
+            )
+            sampled_semantic_tokens_processed, eos_index_list = process_eos_indexes(
+                sampled_semantic_tokens,
+                self,
+                sample_rate=self.extra_params.sample_rate,
+            )
+            # Compute rewards
+            rewards, sampled_audio, reward_breakdown = self.get_reward({
+                "target_semantic_tokens": target_ids,
+                "sampled_semantic_tokens": sampled_semantic_tokens_processed,
+                "eos_index_list": eos_index_list,
+                "target_audio": wavs_gt,
+                "batch_size": B,
+                "beam_size": beam,
+                "batch": batch,
+            })
+            # Compute sequence probs
+            seq_logits = self.model(**model_inputs)
+            if isinstance(seq_logits, dict):
+                seq_logits = seq_logits["logits"]
+            elif isinstance(seq_logits, tuple):
+                seq_logits = seq_logits[0]
+            seq_probs1 = F.log_softmax(seq_logits[:, -num_tokens:, :], dim=-1)
+            seq_probs2 = torch.gather(
+                seq_probs1, -1, sampled_semantic_tokens.unsqueeze(2)
+            ).squeeze(2)    # (B * beam, T)
+            # Only add up non-eos probs
+            if len(eos_index_list) > 0:
+                token2wav_rate = self.extra_params.sample_rate // self.extra_params.semantic_frame_rate
+                seq_len = eos_index_list // token2wav_rate + 1  # need to add 1 to include <eos>
+                for i in range(len(eos_index_list)):
+                    seq_probs2[i, seq_len[i]:] = 0
+                seq_probs2 = (seq_probs2.sum(dim=-1) / seq_len).reshape(B, beam)
+            else:
+                seq_probs2 = seq_probs2.reshape(B, beam, -1).mean(dim=-1)
+            seq_probs3 = F.softmax(seq_probs2, dim=-1)
+            seq_loss = -1 * (rewards * seq_probs3).sum(dim=-1).mean()
+            skip = torch.any(torch.isnan(seq_probs1)) or torch.any(torch.isnan(seq_probs3))
+            if skip:
+                print(f"Skipped samples: {sampled_semantic_tokens}")
         return (
             ce_loss,
             accu,
@@ -901,19 +910,25 @@ class SemanticRLModule(SemanticModule):
             "ce_loss/train": ce_loss,
             "accuracy/train": accu,
             "seq_loss/train": seq_loss,
-            "seq_probs/train_max_mean": seq_probs.max(dim=-1).values.mean(),
-            "seq_probs/train_max_std": seq_probs.max(dim=-1).values.std(),
         }
-        for rw_type, rw in reward_breakdown.items():
+        if seq_probs is not None:
             stats.update(
                 {
-                    f"reward_{rw_type}/train_avg_mean": rw.mean(dim=-1).mean(),
-                    f"reward_{rw_type}/train_avg_std": rw.mean(dim=-1).std(),
-                    f"reward_{rw_type}/train_intra_beam_std": rw.std(dim=-1).mean(),
-                    f"reward_{rw_type}/train_max_mean": rw.max(dim=-1).values.mean(),
-                    f"reward_{rw_type}/train_max_std": rw.max(dim=-1).values.std(),
+                    "seq_probs/train_max_mean": seq_probs.max(dim=-1).values.mean(),
+                    "seq_probs/train_max_std": seq_probs.max(dim=-1).values.std(),
                 }
             )
+        if reward_breakdown is not None:
+            for rw_type, rw in reward_breakdown.items():
+                stats.update(
+                    {
+                        f"reward_{rw_type}/train_avg_mean": rw.mean(dim=-1).mean(),
+                        f"reward_{rw_type}/train_avg_std": rw.mean(dim=-1).std(),
+                        f"reward_{rw_type}/train_intra_beam_std": rw.std(dim=-1).mean(),
+                        f"reward_{rw_type}/train_max_mean": rw.max(dim=-1).values.mean(),
+                        f"reward_{rw_type}/train_max_std": rw.max(dim=-1).values.std(),
+                    }
+                )
         self.log_dict(stats, prog_bar=True, sync_dist=True)
         if skip:
             print("Skipping update due to NaN...")

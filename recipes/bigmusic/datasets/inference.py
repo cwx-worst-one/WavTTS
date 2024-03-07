@@ -72,6 +72,7 @@ def inference_dataset_from_prompt(
     enable_punctuation=True,
     lang='en',
     dataset_mode="truncate_length",
+    transform_style_text=True,
     extra_params=None,
 ):
     prompts = prompt_path_to_items(prompt_path)
@@ -107,7 +108,7 @@ def inference_dataset_from_prompt(
             rewritten if rewritten else original.strip()
             for original, rewritten in zip(prompts['lyrics'], rewritten_lyrics)
         ]
-    if 'style_text' in prompts:
+    if 'style_text' in prompts and transform_style_text:
         prompts['style_text'] = process_style_text(prompts['style_text'])
 
     if run_combinations:

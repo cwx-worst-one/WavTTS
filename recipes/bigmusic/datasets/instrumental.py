@@ -107,6 +107,8 @@ class InstrumentalWebDataModule(DataModule):
             ]
         elif dataset_name == "SSTK_US_GENRE_BALANCED":
             train_urls_and_weights = [(146, 1.0)]
+        elif dataset_name == "SSTK_US_SFT":
+            train_urls_and_weights = [(155, 1.0)]
         else:
             raise NotImplementedError(f"Unknown dataset: {dataset_name}")
 

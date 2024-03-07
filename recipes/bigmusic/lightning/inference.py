@@ -41,7 +41,7 @@ class SemanticInferenceModule(pl.LightningModule):
         self.semantic_module: BaseModule = semantic_class.load_from_checkpoint(
             semantic_ckpt_path,
             # pay attention to the logs to make sure the model is loaded correctly
-            strict=True,
+            strict=False,
         ).eval()
         if cls_name == "SemanticModuleVarlenXperf" or cls_name == "SemanticModuleXperf":
             self.semantic_module.replace_ctiga_to_xperf()
@@ -107,6 +107,10 @@ class SemanticInferenceModule(pl.LightningModule):
         # set semantic mulan ckpt if passed in
         if self.extra_params.get('mulan_ckpt', None) and self.extra_params.mulan_ckpt != 'infer_from_semantic_ckpt':
             self.semantic_module.hparams.required_modules['mulan']['hpath'] = self.extra_params.mulan_ckpt
+
+        # set beat tracking ckpt if passed in
+        if self.extra_params.get('beat_ckpt', None) and 'beat' in self.semantic_module.hparams.required_modules:
+            self.semantic_module.hparams.required_modules['beat']['hpath'] = self.extra_params.beat_ckpt
         
         # override cache_dir with extra_params
         cache_dir = Path(self.extra_params.get('cache_dir', '.module_cache'))

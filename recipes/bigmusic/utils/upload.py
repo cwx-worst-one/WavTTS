@@ -38,6 +38,6 @@ def upload_to_easycycle(data, fname, space_name=None, format="wav"):
     file_name = fname + "." + uuid.uuid4().hex + "." + format
     expires = 60 * 60 * 24 * 365 * 10   # 10 years
     url = easycycle.upload_data_and_get_public_url(
-        easycycle.Host.CN, 'wangtuo.todd', data, space_name, file_name, expires
+        easycycle.Host.US, 'wangtuo.todd', data, space_name, file_name, expires
     )
     return url
