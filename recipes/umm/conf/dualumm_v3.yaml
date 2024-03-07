@@ -3,10 +3,13 @@
 # 
 # DualUMM_v3 is near identical to DualUMM_v1 `dualumm_v1.yaml` The change lies in
 # how the adversarial losses are applied. 
-# 
-# pl_module.adv_branches: ['vocal', 'inst', 'full'] (dualumm_v1)
-# pl_module.adv_branches: ['inst', 'full'] (dualumm_v3)
-
+#
+# Note the following changes:
+# (dualumm_v1) pl_module.adv_branches: ['vocal', 'inst', 'full'] 
+# (dualumm_v3) pl_module.adv_branches: ['inst', 'full'] 
+#
+# (dualumm_v1, dualumm_v2) detach_vocal_to_full: false
+# (dualumm_v3) detach_vocal_to_full: true
 ################################################################################
 ##########                       BASIC CONFIGURATION                  ##########
 ################################################################################

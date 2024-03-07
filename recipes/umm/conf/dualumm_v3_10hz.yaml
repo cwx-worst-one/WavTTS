@@ -1,11 +1,16 @@
 ---
-# @renyi @hanoihantrakul 5March2024
+# @hanoihantrakul @renyi 7March2024
 # 
-# DualUMM_v3 is near identical to DualUMM_v1 `dualumm_v1.yaml` The change lies in
-# how the adversarial losses are applied. 
+# DualUMM_v3 is near identical to `dualumm_v1.yaml`.
+#
+# > The change lies in how the adversarial losses are applied. 
+# -pl_module.adv_branches: ['vocal', 'inst', 'full'] (dualumm_v1)
+# -pl_module.adv_branches: ['inst', 'full'] (dualumm_v3 removes adversarual gradient from vocal branch)
 # 
-# pl_module.adv_branches: ['vocal', 'inst', 'full'] (dualumm_v1)
-# pl_module.adv_branches: ['inst', 'full'] (dualumm_v3)
+# > pl_module.detach_vocal_to_full: true (otherwise adversarial gradient from full mix still flows to vocal branch)
+#
+# > UMMConfig.downsampling: 10 (to achieve 10Hz)
+
 
 ################################################################################
 ##########                       BASIC CONFIGURATION                  ##########
@@ -36,7 +41,7 @@ run_opts:
     hdfs_log_dir: "hdfs:///home/byte_speech_sv/hanoi.hantrakul/logs"
     log_dir: logs
     log_name: umm_dual_master
-    version: !ref umm_stage3_preclipped_<extra_params[tokenizer]>_<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>
+    version: !ref umm_dual_v3_10hz_corrected_vocal_grad_<extra_params[tokenizer]>_<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>
     precision: "32"
     num_workers: 4
     accelerator: auto
@@ -134,7 +139,7 @@ config: !new:recipes.umm.models.config.UMMConfig
     conv_hidden_size: 256
     train_decoder_only: false
     vocal_ref: false
-    downsampling: 4
+    downsampling: 10
     upsampling: 1
     use_full_input: false
 
@@ -151,7 +156,7 @@ pl_module: !new:recipes.umm.modules.lit_module_mkii_dual.DualUMMv2
     extra_params: !ref <extra_params>
     branches: ['vocal', 'inst', 'full']
     adv_branches: ['inst', 'full'] 
-    detach_vocal_to_full: false
+    detach_vocal_to_full: true
     required_modules:
         pretrained:
             ckpt_path: ""

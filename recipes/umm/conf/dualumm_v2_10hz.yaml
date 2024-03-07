@@ -4,6 +4,10 @@
 # This config is near identical to `dualumm_v2_12hz.yaml` except for one detail:
 # - The token code rate is 10Hz, not 12Hz.
 # - Uses use_full_input=true
+#
+# 7March2024
+# @hanoihantrakul @renyi decided that dualumm_v2 is not as good as dualumm_v1/v3
+# We are focusing on dualumm_v3.
 
 ################################################################################
 ##########                       BASIC CONFIGURATION                  ##########

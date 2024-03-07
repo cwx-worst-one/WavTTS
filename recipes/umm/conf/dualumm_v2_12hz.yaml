@@ -7,6 +7,10 @@
 #    This means an MSS module is not required. 
 # At the time of writing we find that it's ability to disentangle vocals
 # and instrumentals is about 85% the same quality as the `dualumm_v1.yaml`
+#
+# 7March2024
+# @hanoihantrakul @renyi decided that dualumm_v2 is not as good as dualumm_v1/v3
+# We are focusing on dualumm_v3.
 
 ################################################################################
 ##########                       BASIC CONFIGURATION                  ##########
