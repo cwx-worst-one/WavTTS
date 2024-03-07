@@ -39,6 +39,7 @@ from tqdm.auto import tqdm
 import torch.nn as nn
 import torch.nn.functional as F
 
+from recipes.umm.utils.mss import MSSPredictor
 from samantha.criterion.masked_loss import sequence_mask
 from samantha.models.ctiga import gpt
 from samantha.utils.ctiga.inference_params import InferenceParams
@@ -681,7 +682,7 @@ class SemanticModule(BaseContinuousEmbedModule):
             inputs_embeds = batch["inputs_embeds"]
         else:
             inputs_embeds = self.prepare_inputs_embeddings(batch)
-        
+
         inputs_emb_cfg = None
         if use_controller_cfg:
             assert beam == 1    # TODO(qq) support beam > 1 with CFG.
@@ -712,9 +713,19 @@ class SemanticModule(BaseContinuousEmbedModule):
 
 
 class SemanticModuleDualUMMFullTrack(SemanticModule):
+    def load_required_modules(self, ignore=()):
+        super().load_required_modules(ignore=list(ignore) + ['mss'])
+        if "mss" in self.hparams.required_modules:
+            mss_config = self.hparams.required_modules["mss"]
+            self.requires['mss'] = MSSPredictor(mss_config['ckpt_path'], sr=self.extra_params['sample_rate'],
+                                                cache_dir=mss_config['cache_dir']).to(f'cuda:{self.local_rank}')
+
     def prepare_target_inputs(self, batch):
         # Prepare target ids
         use_full_input = self.requires['Stage3'].config.get('use_full_input', False)
+        if not use_full_input and 'audio_vocal' not in batch:
+            batch['audio_vocal'], batch['audio_acc'] = self.requires['mss'](batch['target_audio'])
+            batch['audio_vocal'], batch['audio_acc'] = batch['audio_vocal'][:, None], batch['audio_acc'][:, None]
         target_ids_vocal = self.target_embedder.tokenize(
             self.requires,
             batch['target_audio'] if use_full_input else batch['audio_vocal'],

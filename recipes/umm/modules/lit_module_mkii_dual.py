@@ -402,10 +402,13 @@ class DualUMMv2(Stage3MSS, DualUMMUtilsMixin):
 
 
 def run_dualMSS_decode(requires, samples, params, token_type='vocal'):
-    batch = params['batch']
+    if 'batch' in params:
+        batch = params['batch']
+        prompt_audio = batch.get('audio_vocal', batch.get('style_audio'))
+    else:
+        prompt_audio = None
     vocoder = requires['mel_vocoder']
     umm_model = requires['umm']
-    prompt_audio = batch.get('audio_vocal', batch['style_audio'])
     wavs = []
     with torch.autocast(device_type="cuda", dtype=torch.float32, enabled=True):
         mels = umm_model.token2mel(samples, prompt_audio, token_type)
