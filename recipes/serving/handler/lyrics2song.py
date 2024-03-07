@@ -31,6 +31,7 @@ def torch_save_wav_to_binary(audio, sr=24000):
     buffer_.seek(0)
     return buffer_.read()
 
+
 def preload_models():
     return load_cached_models()
 
@@ -55,6 +56,7 @@ def load_cached_models():
     logging.info("***** load model success *****")
     return pl_module, extra_params, trainer
 
+
 def api_main(lyrics, mood, genre, gender):
     logging.info(f"lyrics2song request, lyrics:{lyrics} mood:{mood} genre:{genre} gender:{gender}")
 
@@ -76,7 +78,7 @@ def api_main(lyrics, mood, genre, gender):
         lyrics_max_seq_len=extra_params.lyrics_max_seq_len,
         dataset_mode=extra_params.get('dataset_mode', 'truncate_length')
     )
-    
+
     pl_datamodule = LyricsDataModule(predict_dataset=inference_dataset, num_workers=0)
     predictions = trainer.predict(pl_module, pl_datamodule)
     output_wavs = predictions[0]['generated_audio']
@@ -93,7 +95,6 @@ def api_main(lyrics, mood, genre, gender):
         urls.append(audio_url)
 
     return gen_response(b'', sr, ','.join(urls))
-
 
 
 def gen_response(audio, sr, urls):

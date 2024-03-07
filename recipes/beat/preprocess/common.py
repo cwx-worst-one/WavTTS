@@ -12,9 +12,9 @@ from samantha.dataio.preprocess import AudioLengthModifier
 from torchaudio.transforms import Resample
 
 
-if not os.path.exists('recipes/beat/conf/final_dict.json'):
-    subprocess.run(f"hdfs dfs -get hdfs://harunava/home/byte_speech_sv/amy/log/final_dict.json recipes/beat/conf/final_dict.json", shell=True)
-with open('recipes/beat/conf/final_dict.json', "r") as outfile:
+# if not os.path.exists('recipes/beat/conf/final_dict.json'):
+#     subprocess.run(f"hdfs dfs -get hdfs://harunava/home/byte_speech_sv/amy/log/final_dict.json recipes/beat/conf/final_dict.json", shell=True)
+with open('thirdparty/samantha/recipes/beat/conf/final_dict.json', "r") as outfile:
     VALID_VOCAL = json.load(outfile)
 
 def get_beats_labels(times, song_duration, dataset, hop_in_sec=0.2):

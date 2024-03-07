@@ -2,7 +2,6 @@ import os
 import sys
 import euler
 import logging
-import atexit
 euler.install_thrift_import_hook()
 
 from recipes.serving.idls.sami_app_thrift import Service, InvokeRequest, InvokeResponse
@@ -18,29 +17,12 @@ app = os.getenv("SERVER_APP", "Lyrics2Song")
 handler_map = {}
 
 
-def register_service(psm, port):
-    import subprocess
-    result = subprocess.run(['/opt/tiger/consul_deploy/bin/go/sd', 'up', psm, str(port), '--dual-stack',
-                             '--tags', '{"env":"prod","weight":"10", "cluster":"'+cluster+'"}'],
-                            capture_output=True, text=True)
-    logging.info(f'register service: {result.stdout}')
-
-def exit_handler():
-    import subprocess
-    subprocess.run(['/opt/tiger/consul_deploy/bin/go/sd', 'down', psm, str(port)], capture_output=True, text=True)
-    logging.info(f"***** deregister {psm} {cluster} {port} *****")
-
-
-atexit.register(exit_handler)
-
-
 def load_handler_contexts():
     method = 'load_context'
     for name, handler_cls in handler_map.items():
         if hasattr(handler_cls, method) and callable(getattr(handler_cls, method)):
             logging.info(f'***** {name}: load_context *****')
             getattr(handler_cls, method)()
-            register_service(psm, port)
 
 
 server = euler.Server(Service, post_fork_callback=load_handler_contexts)

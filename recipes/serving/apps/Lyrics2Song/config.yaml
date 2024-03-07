@@ -7,7 +7,7 @@
 submodule_name: 'bigmusic'
 
 repo:
-  func_path: 'recipes.serving.handler.music'
+  func_path: 'recipes.serving.handler.lyrics2song'
   preload_model_func_name: 'preload_models'
 
 inputs:

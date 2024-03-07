@@ -18,6 +18,10 @@ inputs:
   -
     source: 'payload'
     type: 'str'
+    name: 'audio_prompt'
+  -
+    source: 'payload'
+    type: 'str'
     name: 'duration'
   -
     source: 'payload'

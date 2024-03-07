@@ -16,7 +16,7 @@ from bytedance import easycycle
 import uuid
 
 device = "cuda:0"
-default_batch_size = 1
+batch_size = 1
 
 tos_url_expires = 60 * 60 * 24 * 1000
 tos_bucket = "bigspeech-platform"
@@ -62,10 +62,10 @@ def load_cached_models():
     return pl_module, extra_params, trainer
 
 
-def api_main(prompt, duration, chorus):
+def api_main(prompt, audio_prompt, duration, chorus):
     duration = int(duration)
     assert (
-        duration in {30, 45, 60, 75, 90, 105, 120}
+            duration in {30, 45, 60, 75, 90, 105, 120}
     ), f"Invalid duration: {duration}"
 
     if chorus == "random":
@@ -77,7 +77,8 @@ def api_main(prompt, duration, chorus):
             ["chorus", float(x[0]), float(x[1])] for x in chorus
         ]
 
-    logging.info(f"instrumental request, prompt:{prompt} duration:{duration} chorus:{chorus}")
+    logging.info(
+        f"instrumental request, prompt:{prompt} audio_prompt:{audio_prompt}  duration:{duration} chorus:{chorus}")
 
     start = time.time()
     pl_module, extra_params, trainer = preload_models()
@@ -85,29 +86,59 @@ def api_main(prompt, duration, chorus):
     # Override extra_params.duration, used by dataloader
     extra_params.duration = duration
 
-    prompts = {
-        'style_text': [prompt],
-        'structure': [json.dumps(chorus)],
-    }
-    inference_dataset = inference_dataset_from_prompt(
-        prompts,
-        conditions="style_text,duration,structure",
-        batch_size=1,
-        extra_params=extra_params,
-    )
-    
+    if prompt != "":
+        # for text prompt
+        extra_params.loudness_sim = 0.0
+
+        prompts = {
+            'structure': [json.dumps(chorus)] * batch_size,
+            'duration': [duration] * batch_size,
+            'style_text': [prompt] * batch_size,
+        }
+
+        inference_dataset = inference_dataset_from_prompt(
+            prompts,
+            conditions="style_text,duration",
+            batch_size=batch_size,
+            extra_params=extra_params,
+            transform_style_text=False,
+        )
+    elif audio_prompt != "":
+        # for audio prompt
+        prompts = {
+            'structure': [json.dumps(chorus)] * batch_size,
+            'duration': [duration] * batch_size,
+            'style_audio': [audio_prompt] * batch_size
+        }
+        inference_dataset = inference_dataset_from_prompt(
+            prompts,
+            conditions="style_audio,duration,intensity",
+            batch_size=batch_size,
+            extra_params=extra_params,
+            transform_style_text=True,
+        )
+    else:
+        return gen_error_response("prompt or audio prompt cannot be empty")
+
     pl_datamodule = LyricsDataModule(predict_dataset=inference_dataset, num_workers=0)
     predictions = trainer.predict(pl_module, pl_datamodule)
     output_wavs = predictions[0]['generated_audio']
 
+    # with batch_size=4 and beam_size=4, it will return 16 songs, to get the best song for each prompt, just need to select index 0, 4, 8, and 12
+    # selected_wavs = output_wavs[::4]
+    # return first 4 audios, when batch_size = 1 and beam_size = 8
+    selected_wavs = output_wavs[:4]
+
+
     sr = extra_params.sample_rate
     urls = []
-    for output_wav in output_wavs:
+
+    for output_wav in selected_wavs:
         bytes_wav = torch_save_wav_to_binary(output_wav.cpu().float(), sr)
 
         fileid = uuid.uuid4().hex
         audio_name = f"{fileid}.wav"
-        audio_url = easycycle.upload_data_and_get_public_url(easycycle.Host.US, 'lixingxing.cs', bytes_wav,
+        audio_url = easycycle.upload_data_and_get_public_url(easycycle.Host.CN, 'lixingxing.cs', bytes_wav,
                                                              tos_bucket, audio_name, tos_url_expires)
         urls.append(audio_url)
 
@@ -130,10 +161,11 @@ def convert_wav_to_bytes(audio, sr=24000):
 
 
 if __name__ == "__main__":
+    audio_prompt = "https://tosv.byted.org/obj/ies-multimedia-audio/samicore_platform/a9d87e9d-9d0d-4451-8175-5fe29311a6f2_6751581246821763074.wav"
     prompt = "EDM Disco"
     duration = "30"
     chorus = "[[0, 10], [20, 30]]"
-    #chorus = "random"
-    #chorus = "[]"
-    audio, sr, urls, err_msg = api_main(prompt, duration, chorus)
+    # chorus = "random"
+    # chorus = "[]"
+    audio, sr, urls, err_msg = api_main("", audio_prompt, duration, chorus)
     logging.info(f"inference result: {urls}")

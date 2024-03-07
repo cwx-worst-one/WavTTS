@@ -31,7 +31,7 @@ class DefaultHandler(Handler):
         logging.info("***** invoke *****")
         start_time = time.time()
         if not DefaultHandler.api_main or not DefaultHandler.preload_models:
-            logging.warnning(
+            logging.warning(
                 "default handler app {} setup failed", DefaultHandler.app_name
             )
             return super().get_resp(
@@ -40,7 +40,7 @@ class DefaultHandler(Handler):
             )
 
         if not super().parse_payload():
-            logging.warnning("parse fail")
+            logging.warning("parse fail")
             return super().get_resp()
 
         # Prepare input args
