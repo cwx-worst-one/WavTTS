@@ -54,7 +54,7 @@ run_opts:
     weight_decay: 0.05
     shuffle_buffer: 0   # 100
     gradient_clip_val: 1.0
-    buckets_in_sec: [22, 24, 26, 28, 30, 32]
+    buckets_in_sec: [22, 24, 26, 28, 30]
     use_dynamic_batch: False
     max_seg_per_track: 3
     segment_method: "random"
