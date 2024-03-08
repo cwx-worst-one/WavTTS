@@ -260,3 +260,12 @@ def remove_punc_case(text):
     text = text.replace("<n>", "")
     text = re.sub("[.,!?]", "", text).lower()
     return " ".join(text.split())
+
+
+
+def remove_space(text):
+    '''
+    incase there is space in chinese ground truth lyrics, e.g. "你是谁 我是谁"
+    '''
+    return "".join(text.split())
+    

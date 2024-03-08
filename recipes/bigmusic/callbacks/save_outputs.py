@@ -156,7 +156,8 @@ def save_batch_outputs(
         os.makedirs(wav_dir, exist_ok=True)
         file_name = ""
         absolute_idx =  prompt_idx + index_offset
-        lyrics_str = lyrics[ii] if 'lyrics_tokens' in conditions else None
+        # lyrics_str = lyrics[ii] if 'lyrics_tokens' in conditions else None
+        lyrics_str = lyrics[ii] if ('lyrics_tokens' in conditions or 'leadsheet_tokens' in conditions ) else None
         lyrics_normalized_str = lyrics_normalized_text[ii] if 'lyrics_tokens' in conditions and lyrics_normalized_text else None        
         style_text = prompts[ii] if prompts else None
         style_category = style_categories[ii] if 'style_category' in conditions and style_categories else None
@@ -216,7 +217,7 @@ def save_batch_outputs(
                 metadata["target_audio_url"] = upload_to_easycycle(audio_bytes, f"{file_name}.target_audio")
             else:
                 target_audio_fp = os.path.join(wav_dir, f"{file_name}.target_audio.wav")
-                save_wav(target_audio[ii].cpu().float(), target_audio_fp, sr=24000, save_mp3=save_mp3)
+                save_wav(target_audio[ii].cpu().float(), target_audio_fp, sr=24000, save_mp3=save_mode == "mp3")
 
         if vocal_audio is not None and beam_idx == 0:
             # vocal audio is always 24kHz (for now)

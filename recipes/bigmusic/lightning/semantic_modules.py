@@ -82,7 +82,6 @@ class SemanticModule(BaseContinuousEmbedModule):
 
         self.prepare_input_types = extra_params.get("prepare_input_types", []) # m1_tagger, mulan_tagger
         embedder_dict = {}
-
         for emb_type in extra_params.get("input_embedders", ["mulan", "lyrics_tokens"]):
             if emb_type == "mulan":
                 # Support either Mulan audio or text embedding of style_text / on the fly tag
@@ -383,6 +382,8 @@ class SemanticModule(BaseContinuousEmbedModule):
         batch_size = self.infer_batch_size(batch)
         if "prefix_audio" in conditions: 
             embeds = self.target_embedder.embed(self.requires, batch['prefix_audio'], with_sos=True)
+            #temp fixed by add sos token to makeup the gap between training and inference
+            embeds = torch.cat([self.target_embedder.get_sos_embed(batch_size), embeds], dim=1)
         else:
             embeds = self.target_embedder.get_sos_embed(batch_size)
         return embeds

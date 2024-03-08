@@ -488,7 +488,7 @@ class SVSPretrainTransforms(BaseTransforms):
         metadata = json.loads(item["meta"])
         # meta_song_id_str = str(metadata["meta_song_id"])
 
-        if 'midi' not in metadata.keys() or metadata['midi'] == None or metadata['midi'] == []:
+        if ('midi' not in metadata.keys() or metadata['midi'] == None or metadata['midi'] == []) and 'mir_service' not in metadata.keys():
             # with open(f"vocal_test/bad_metadata_{meta_song_id_str}.json", "w") as f:
             #     json.dump(metadata, f)
             self._update_stats(skipped=True, message="No MIDI transription")
@@ -497,15 +497,19 @@ class SVSPretrainTransforms(BaseTransforms):
         if not self.is_metadata_good(metadata):
             self._update_stats(skipped=True, message="bad metadata")
             return
-
-        note_sequence = metadata['midi']
+        if 'midi' in metadata.keys():
+            note_sequence = metadata['midi']
+        else:
+            note_sequence = metadata['mir_service']['vocal2midi']
+        
         if isinstance(note_sequence, dict):
-            if 'vocal' not in note_sequence.keys() or note_sequence['vocal'] == None or note_sequence['vocal'] == []:
+            if ('vocal' not in note_sequence.keys() or note_sequence['vocal'] == None or note_sequence['vocal'] == []) and \
+                    ('notes' not in note_sequence.keys() or note_sequence['notes'] == None or note_sequence['notes'] == []):
                 self._update_stats(skipped=True, message="No MIDI transription")
                 # print("No MIDI transription")
                 return
             else:
-                note_sequence = note_sequence['vocal']
+                note_sequence = note_sequence['vocal'] if 'vocal' in note_sequence.keys() else note_sequence['notes']
 
         audio = self.base_transform(item[self.audio_key])
         extra_audio = [self.base_transform(item[k]) for k in self.extra_audio_keys]
@@ -884,7 +888,17 @@ class SVSEvalTransforms(BaseTransforms):
 
     def __call__(self, item: Dict[str, Any]) -> Generator:
         assert item
-        metadata = item['__index_data__']["metadata"]
+        if '__index_data__' in item.keys():
+            metadata = item['__index_data__']["metadata"]
+            audio = item['audio.npy']
+            index = metadata["audio_fp"]
+        elif '__data_url__' in item.keys(): # parquet dataset
+            metadata = json.loads(item["meta"])
+            audio = item['wav']
+            index = metadata["uttid"]
+        else:
+            logging.ERROR("[SVSFinetuneTransforms] unsupported item keys=", item.keys())
+            raise NotImplementedError
         # metadata example:
         # {
         #     "uttid": "Todd-10001",
@@ -917,76 +931,61 @@ class SVSEvalTransforms(BaseTransforms):
         # ]
 
         # musicxml and interval is ununsed currently, drop it for simplicity
-        del metadata["musicxml"]
-        del metadata["interval"]
+        # del metadata["musicxml"]
+        # del metadata["interval"]
 
         if metadata['language'] not in self.language:
             return
 
-        meta_song_id_str = os.path.basename(metadata["audio_fp"])
-        if self.target_spkr_name != "":
-            spkr_name = self.target_spkr_name
-        else:
-            spkr_name = metadata['speaker_id'].replace("_SVS", "")
+        song_id = metadata['uttid']
+        spkr_name = metadata['speaker_id'].replace("_SVS", "")
+        # if specific target_spkr_name for training
+        if self.target_spkr_name != "" and spkr_name not in self.target_spkr_name:
+            return
+
         if self.use_empty_spkr_id:
             # if use use_empty_spkr_id as condition
             speaker_id = 0
         else:
             speaker_id = speaker2id(spkr_name)
-
-        style_text = rewrite_metadata_svs(metadata)
-        audio = self.base_transform(item[self.audio_key])
+        # print(spkr_name, self.use_empty_spkr_id)
+        audio = self.base_transform(audio)
         extra_audio = [self.base_transform(k) for k in self.extra_audio_keys]
 
-        if audio.dim() == 1:
-            audio = audio.unsqueeze(0)
-            extra_audio = [a.unsqueeze(0) for a in extra_audio]
-
+        style_text = rewrite_metadata_svs(metadata)
         audio_len = int(self.min_duration * self.sample_rate)
         audio_transform = Compose([
             Pad(audio_len),
         ])
         audio = audio_transform(audio)
-        extra_audio = [audio_transform(k) for k in self.extra_audio_keys]
-        style_audio = audio
+        extra_audio = []
 
-        lyric = metadata['lyric']
+        lyric = str(metadata['lyric'])
         normalized_text = normalize_text(lyric)
 
+
         leadsheet = metadata['score']
+        import ast
+        if isinstance(leadsheet, str):
+            leadsheet = ast.literal_eval(leadsheet)
+            leadsheet = list(map(list, leadsheet))
+        
+        if leadsheet[-1][0] == 'Rest':
+            leadsheet[-1][3] = audio.shape[1] / self.sample_rate
+
         # Pad audio and leadsheet to minimun duration
         leadsheet_duration = leadsheet[-1][3]
         if leadsheet[-1][3] < self.min_duration:
             leadsheet.append(("Rest", ["sil"], leadsheet_duration, self.min_duration))
-        sliced_notes, sliced_phones = split_leadsheet2note_and_phone(leadsheet)
 
-        # dump = True
-        # if dump == True:
-        #     import torchaudio
-        #     meta_song_id_str = os.path.basename(metadata["audio_fp"])
-        #     idx = int(meta_song_id_str.split("-")[1].replace(".wav", "")[-1])
-        #     if idx == 1:
-        #     # if speaker_id not in self.dump_cache:
-        #     #     self.dump_cache[speaker_id] = 0
-        #     # if self.dump_cache[speaker_id] < 10: # dump 10 example for every spkr would enough
-        #         # self.dump_cache[speaker_id] += 1
-        #         save_dir = os.path.join("assets/svs/svs_prompt", meta_song_id_str)
-        #         logging.info("save_dir "+save_dir)
-        #         os.makedirs(save_dir, exist_ok=True)
-        #         torchaudio.save(f"{save_dir}/audio.wav", audio.view(1, -1), 24000)
-        #         with open(f"{save_dir}/note.json", "w") as f:
-        #             json.dump(sliced_notes, f, indent=4)
-        #         with open(f"{save_dir}/phones.json", "w") as f:
-        #             json.dump(sliced_phones, f, indent=4)
-        # return 
+
+        sliced_notes, sliced_phones = split_leadsheet2note_and_phone(leadsheet)
 
         style_audio, sliced_notes, sliced_phones = self.prompter.warp_prompt(
             sliced_notes, sliced_phones, spkr_name, num_prompt=self.run_opts.get('vocal_prompt_number', 1))
 
         leadsheet_tokens, leadsheet_tokens_coff, note_tokens, phoneme_tokens = concat_alignment(
-            self.leadsheet_tokenizer, sliced_notes, sliced_phones, pitch_shift=self.pitch_shift)
-        if self.use_empty_style_audio:
-            style_audio = torch.zeros_like(style_audio)
+            self.leadsheet_tokenizer, sliced_notes, sliced_phones)
 
         if self.lyrics_tokenizer == "sami_tts_frontend_precompute":
             lyrics_tokens = phoneme_tokens
@@ -996,11 +995,11 @@ class SVSEvalTransforms(BaseTransforms):
                 add_special_tokens=False,
                 return_tensors="pt")["input_ids"].squeeze(dim=0)
 
-        metadata["pitch_shift"] = self.pitch_shift
-        metadata["note_tokens"] = note_tokens.flatten().cpu().tolist()
+        if self.use_empty_style_audio:
+            style_audio = torch.zeros_like(audio)
+
         yield {
             "audio": audio,
-            "extra_audio": extra_audio,
             "style_audio": style_audio,
             "style_text": style_text,
             "phoneme_tokens": phoneme_tokens,
@@ -1012,10 +1011,12 @@ class SVSEvalTransforms(BaseTransforms):
             "lyrics_tokens": lyrics_tokens,
             "max_phone_len": self.segment_max_phone_len,
             "max_leadsheet_len": self.segment_max_leadsheet_len,
+            "extra_audio": extra_audio,
 
             # DEBUG
-            "uttid": meta_song_id_str,
-            "index": meta_song_id_str,
+            "uttid": os.path.basename(index),
+            "index": os.path.basename(index),
+            "metadata": metadata,
         }
 
 
@@ -1831,6 +1832,7 @@ class SVSPretrainWebDataModule(DataModule):
         wds_dataset_weights: List[int] = [],
         parquet_dataset_ids: List[int] = [708],
         parquet_dataset_weights: List[int] = [1],
+        parquet_valid_data_id=None,
         extra_audio_keys=None,
         use_dynamic_batch: str = False,
         segment_method: str = "random",
@@ -1994,9 +1996,13 @@ class SVSPretrainWebDataModule(DataModule):
             ),
             pipeline=[{"compose": [self.bucketize]}],
         )]
+
+        if parquet_valid_data_id is not None:
+            wds_validation_dataset_urls = []
+
         predict_dataset = WebPipeline(
             SVSEvalDataset(
-                data_id=None,
+                data_id=parquet_valid_data_id,
                 url2index=wds_validation_dataset_urls,
                 min_duration=min_duration,
                 max_duration=buckets_in_sec[-1],
@@ -2282,7 +2288,24 @@ class SVSFinetuneWebDataModule(DataModule):
 
 
 if __name__ == "__main__":
-    # dataset = SVSPretrainWebDataModule(
+    dataset = SVSPretrainWebDataModule(
+        wds_dataset_urls=[],
+        lyrics_tokenizer="zh_wordpiece",
+        wds_validation_dataset_urls=["hdfs://haruna/home/byte_speech_sv/zhongyi.huang/svs_dataset/24000hz/test_v2/url2index.txt"],
+        parquet_dataset_ids=[1127],
+        parquet_valid_data_id=1793,
+        segment_max_phone_len= 0,
+        segment_max_leadsheet_len= 1500,
+        conditions= "style_audio,spkr_ids,leadsheet_tokens",
+        time_format= "start,duration,merge_sil,merge_rest",
+        language= ['ZH'],
+        num_workers=1,
+        batch_size=1,
+        buckets_in_sec= [1, 3, 5, 10, 15, 20, 25, 30, 32, 35, 40, 45],
+        )
+    # batch = next(dataset)
+    # print("train", batch)
+    # dataset = SVSFinetuneWebDataModule(
     #     wds_dataset_urls=[],
     #     lyrics_tokenizer="zh_wordpiece",
     #     wds_validation_dataset_urls=["hdfs://haruna/home/byte_speech_sv/zhongyi.huang/svs_dataset/24000hz/test_v2/url2index.txt"],
@@ -2293,38 +2316,21 @@ if __name__ == "__main__":
     #     conditions= "style_audio,spkr_ids,leadsheet_tokens",
     #     time_format= "start,duration,merge_sil,merge_rest",
     #     language= ['ZH'],
-    #     num_workers=1,
-    #     batch_size=1,
+    #     num_workers=2,
+    #     batch_size=2,
+    #     style_prompt_path='assets/svs/svs_prompt',
     #     buckets_in_sec= [1, 3, 5, 10, 15, 20, 25, 30, 32, 35, 40, 45],
-    #     ).train_dataloader().__iter__()
-    # batch = next(dataset)
-    # print("train", batch)
-    dataset = SVSFinetuneWebDataModule(
-        wds_dataset_urls=[],
-        lyrics_tokenizer="zh_wordpiece",
-        wds_validation_dataset_urls=["hdfs://haruna/home/byte_speech_sv/zhongyi.huang/svs_dataset/24000hz/test_v2/url2index.txt"],
-        parquet_dataset_ids=[1127],
-        boundaries=[0,1.0],
-        segment_max_phone_len= 0,
-        segment_max_leadsheet_len= 1500,
-        conditions= "style_audio,spkr_ids,leadsheet_tokens",
-        time_format= "start,duration,merge_sil,merge_rest",
-        language= ['ZH'],
-        num_workers=2,
-        batch_size=2,
-        style_prompt_path='assets/svs/svs_prompt',
-        buckets_in_sec= [1, 3, 5, 10, 15, 20, 25, 30, 32, 35, 40, 45],
-        )
+    #     )
     # batch = next(dataset.train_dataloader().__iter__())
     # print("Pretrain train", batch)
     # batch = next(dataset.predict_dataloader().__iter__())
     # print("Pretrain predict", batch)
-    dataset = SVSFinetuneWebDataModule(
-        wds_dataset_urls=[],
-        wds_validation_dataset_urls=[],
-        parquet_dataset_ids=[1272],
-        parquet_validation_dataset_ids=[1273],
-        batch_size=2, time_format='start,duration,merge_sil,merge_rest')
+    # dataset = SVSFinetuneWebDataModule(
+    #     wds_dataset_urls=[],
+    #     wds_validation_dataset_urls=[],
+    #     parquet_dataset_ids=[1272],
+    #     parquet_validation_dataset_ids=[1273],
+    #     batch_size=2, time_format='start,duration,merge_sil,merge_rest')
     batch = next(dataset.train_dataloader().__iter__())
     print("SFT train", batch)
     batch = next(dataset.validation_dataloader().__iter__())

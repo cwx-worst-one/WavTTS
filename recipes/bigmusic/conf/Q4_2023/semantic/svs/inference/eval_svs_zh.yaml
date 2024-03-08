@@ -102,6 +102,7 @@ run_opts:
         ]
     parquet_dataset_ids: [708]
     parquet_dataset_weights: [1]
+    parquet_valid_data_id: null
     buckets_in_sec: [1, 3, 5, 10, 15, 20, 25, 30]
     segment_max_phone_len: 0
     segment_max_leadsheet_len: 2500
@@ -147,6 +148,7 @@ pl_datamodule: !new:recipes.bigmusic.datasets.svs.SVSPretrainWebDataModule
     wds_dataset_weights: !ref <run_opts[wds_dataset_weights]>
     parquet_dataset_ids: !ref <run_opts[parquet_dataset_ids]>
     parquet_dataset_weights: !ref <run_opts[parquet_dataset_weights]>
+    parquet_valid_data_id: !ref <run_opts[parquet_valid_data_id]>
     wds_validation_dataset_urls: !ref <run_opts[wds_validation_dataset_urls]>
     conditions: !ref <extra_params[inference_conditions]>
     style_prompt_path: !ref <extra_params[prompt_path]>
@@ -206,7 +208,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
 # separating out additional_callbacks so auto_eval can disable metrics
 additional_callbacks:
     - !new:recipes.bigmusic.callbacks.wer_metrics.RelativeWERMetricsCallback
-    # - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
+    # - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallbackV2
     # - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
     - !new:recipes.bigmusic.callbacks.pitch_metrics.PitchMetricsCallback
     # - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback

@@ -10,6 +10,7 @@ from recipes.bigmusic.utils.metrics_asr import (
     init_asr,
     edit_distance,
     remove_punc_case,
+    remove_space,
 )
 import torch
 from recipes.musiclm.inference.utils import load_wav
@@ -67,6 +68,86 @@ def run_wer_metrics(generated_output_fps, asr_model_path='en_punc', device='cuda
         }
         update_json(metadata_fp, { 'wer': wer_metadata })
 
+class WERMetricsCallbackV2(pl.Callback):
+    def __init__(self, asr_model_path='en_punc'):
+        super().__init__()
+        self.asr_model_path = asr_model_path
+
+    def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
+        if 'output_paths' in pl_module.extra_params:
+            generated_output_fps = pl_module.extra_params.output_paths
+        else:
+            output_dir = pl_module.extra_params.output_dir
+            generated_output_fps = list(Path(output_dir).glob('**/*.generated.wav'))
+
+        language = pl_module.extra_params.lyrics_lang
+        if 'en' in language:
+            asr_model_path = 'en_punc'
+        elif 'zh' in language:
+            asr_model_path = 'zh'
+        else:
+            raise NotImplementedError
+        run_wer_metrics_svs(generated_output_fps, asr_model_path=asr_model_path, device=pl_module.device)
+
+
+def run_wer_metrics_svs(generated_output_fps, asr_model_path='en_punc', device='cuda'):
+    asr_requires = init_asr(asr_model_path, local_rank=torch.cuda.current_device())
+    category2wer = defaultdict(list)
+
+    for idx, generated_output_fp in enumerate(generated_output_fps):
+        wav = torch.tensor(load_wav(str(generated_output_fp))).to(device)
+        wavs_batch = wav.unsqueeze(0) # convert to batch format
+        asr_lyrics = asr_transcribe_lyrics(
+            asr_requires,
+            wavs_batch,
+            sample_rate=24000,
+        )
+        metadata_fp = str(generated_output_fp).replace('generated.wav', 'metadata.json')
+        with open(metadata_fp, 'r', encoding='utf-8') as f:
+            metadata = json.load(f)
+        # actual transcript
+        lyrics = metadata.get('lyrics')
+
+        if asr_model_path == 'zh':
+            lyrics = remove_space(lyrics)
+        
+        a = '' if lyrics is None else normalize_text(remove_punc_case(lyrics))
+        g = normalize_text(remove_punc_case(asr_lyrics[0])) # greedy transcript
+        edits = edit_distance(a, g)
+        denom = 1.0 if len(a) == 0 else len(a)
+        ins = round(edits.ins / denom, 3)
+        subs = round(edits.subs / denom, 3)
+        dels = round(edits.dels / denom, 3)
+        wer = sum([ins, subs, dels])
+        wer_metadata = {
+            'ins': ins,
+            'subs': subs,
+            'dels': dels,
+            'wer': wer,
+            'greedy_transcript': g,
+            'actual_transcript': a
+        }
+        if dels > 0.2:
+            print("gt trans: ", a, "asr result: ", g, "path: ",str(generated_output_fp), "might be asr model error")
+        update_json(metadata_fp, { 'wer': wer_metadata })
+        if isinstance(generated_output_fp, str):
+            import os
+            category_dir = os.path.dirname(generated_output_fp)
+        else:
+            category_dir = generated_output_fp.parent.resolve()
+        category2wer[str(category_dir)].append([wer, ins, subs, dels]) # append to base directory to calculate total wer
+        
+    for dir_path, wers in category2wer.items():
+        metrics_fp = Path(dir_path)/'metrics.json'
+        wer, ins, subs, dels = np.array(wers).mean(axis=0)
+        wer_metadata = {
+            'wer': round(wer, 3),
+            'ins': round(ins, 3),
+            'subs': round(subs, 3),
+            'dels': round(dels, 3),
+        }
+        update_json(metrics_fp, { 'wer': wer_metadata })
+        print(f"output_dir={str(category_dir)}, WER={wer_metadata}")
 
 class RelativeWERMetricsCallback(pl.Callback):
     def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
@@ -170,4 +251,5 @@ if __name__ == "__main__":
     # Add arguments for the two directory paths
     parser.add_argument("--input_dir", type=str, help="Path to the wav directory")
     args = parser.parse_args()
-    run_relative_wer_metrics(args.input_dir, asr_model_path='zh')
+    # run_relative_wer_metrics(args.input_dir, asr_model_path='zh')
+    run_wer_metrics_svs(list(Path(args.input_dir).glob('**/*.generated.wav')), asr_model_path='zh')
