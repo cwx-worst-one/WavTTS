@@ -177,10 +177,11 @@ class Stage0(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         # Not quite accurate, time used by optimizer is also counted.
         elapsed = time.time() - self.ts_before_forward
-        mfu = self.flops / elapsed / self.device_FLOPS
+        if self.flops is not None and self.flops > 0:
+            mfu = self.flops / elapsed / self.device_FLOPS
+            self.log_dict_cached({"training/mfu": mfu})
         self.log_dict_cached(
             {
-                "training/mfu": mfu,
                 # FIXME: The below two should really be "max" or "use rank 0".
                 "training/mem_gb": torch.cuda.max_memory_allocated() / 2**30,
                 "training/malloc_retries": torch.cuda.memory_stats()[
@@ -615,6 +616,8 @@ class Stage2(Stage0):
             loss_dict["aux/w_loss_kl"] = config.w_loss_kl
         if config.get("add_las", False):
             loss_dict["aux/w_loss_las"] = config.w_loss_las
+        if "flops" in output_dict:
+            loss_dict["flops"] = output_dict["flops"]
         return loss_dict
 
     @torch.no_grad()
@@ -754,6 +757,8 @@ class Stage3(Stage2):
         loss_dict["aux/noise_scale"] = output_dict.get("noise_scale", 0)
         if output_dict["vq_loss"] is not None:
             loss_dict["aux/w_loss_vq"] = self.model.config.w_loss_vq
+        if "flops" in output_dict:
+            loss_dict["flops"] = output_dict["flops"]
         return loss_dict
 
     def get_code_rate(self, target_tokens):
