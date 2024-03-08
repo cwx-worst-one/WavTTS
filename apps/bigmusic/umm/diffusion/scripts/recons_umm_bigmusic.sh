@@ -17,7 +17,9 @@ meta_lst=/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/voice_condition_vals
 # | Conformer mix  | /mnt/bn/data-storage-hl/user/zhangshuo/data/assets/umm/Stage3_Multilingua_Music-TTS_MKii/step=0330000.ckpt                                             | hdfs:///home/byte_speech_sv/zongyu.yin/logs/umm_mix/umm_stage3_preclipped_bert-base-multilingual-uncased_None32768x32/checkpoints/step=0330000.ckpt                   |
 # | Conformer ZH   | /mnt/bn/data-storage-hl/user/zhangshuo/data/assets/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/step=070000.ckpt                             | hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/checkpoints/step=070000.ckpt                                 |
 # | Conv           | /mnt/bn/data-storage-hl/user/zhangshuo/data/assets/umm/umm_stage3_pitch_baseline_conv_1D_bert-base-multilingual-uncased_None32768x32/step=0160000.ckpt | hdfs:///home/byte_speech_sv/hanoi.hantrakul/logs/umm_dual/umm_stage3_pitch_baseline_conv_1D_bert-base-multilingual-uncased_None32768x32/checkpoints/step=0160000.ckpt |
-# | Dual Conv      | /mnt/bn/data-storage-hl/user/zhangshuo/data/assets/umm/0208_dualummv2_fullinp_1/step=0970000.ckpt                                                      | hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/renyi/samantha_ckpts/umm_mix/0208_dualummv2_fullinp_1/checkpoints/step=0970000.ckpt                               |
+# | Dual Conv V2   | /mnt/bn/data-storage-hl/user/zhangshuo/data/assets/umm/0208_dualummv2_fullinp_1/step=0970000.ckpt                                                      | hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/renyi/samantha_ckpts/umm_mix/0208_dualummv2_fullinp_1/checkpoints/step=0970000.ckpt                               |
+# | Dual Conv V1   | /mnt/bn/data-storage-hl/user/zhangshuo/data/assets/umm/0131_dualummv2_noref_2/step=0580000.ckpt                                                        | hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/renyi/samantha_ckpts/umm_mix/0131_dualummv2_noref_2/checkpoints/step=0580000.ckpt                                 |
+
 
 
 
@@ -33,9 +35,13 @@ meta_lst=/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/voice_condition_vals
 # sub_dir=exp2_500k
 
 # DualConv + Music 125hz
-diffusion_ckpt_path=hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/h800_ds1609_prompt_16xH800_0223/checkpoints/epoch=00-step=430000-loss=0.36.ckpt
-cfg_path=apps/bigmusic/umm/diffusion/conf/infer_reconstruction_50hzDualConv_125hzSS.yaml
-sub_dir=exp4_430k
+# cfg_path=apps/bigmusic/umm/diffusion/conf/infer_reconstruction_50hzDualConv_125hzSS.yaml
+# diffusion_ckpt_path=hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/h800_ds1609_prompt_16xH800_0223/checkpoints/epoch=00-step=430000-loss=0.36.ckpt
+# sub_dir=exp4_430k
+# diffusion_ckpt_path=hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/h800_ds1609_drop07_0228/checkpoints/epoch=00-step=500000-loss=0.36.ckpt
+# sub_dir=exp18_500k
+# diffusion_ckpt_path=hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/h800_ds1609_drop10_0228/checkpoints/epoch=00-step=420000-loss=0.36.ckpt
+# sub_dir=exp17_420k
 
 # DualConv + Music 40hz
 # diffusion_ckpt_path=hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/h800_ds1588_prompt_16xH800_0223/checkpoints/epoch=00-step=500000-loss=0.18.ckpt
@@ -53,6 +59,16 @@ sub_dir=exp4_430k
 # cfg_path=apps/bigmusic/umm/diffusion/conf/infer_reconstruction_25hzConv_40hzSS.yaml
 # sub_dir=exp8_500k
 
+# DualConvV1 + Music 125hz
+cfg_path=apps/bigmusic/umm/diffusion/conf/infer_reconstruction_50hzDualConvV1_125hzSS.yaml
+diffusion_ckpt_path=hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/h800_ds1646_prompt_16xH800_0227/checkpoints/epoch=00-step=910000-loss=0.35.ckpt
+sub_dir=exp15_910k
+
+
+# DualConvV1 + Music 40hz
+# cfg_path=apps/bigmusic/umm/diffusion/conf/infer_reconstruction_50hzDualConvV1_40hzSS.yaml
+# diffusion_ckpt_path=hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/h800_ds1645_prompt_16xH800_0226/checkpoints/epoch=00-step=500000-loss=0.19.ckpt
+# sub_dir=exp16_500k
 
 
 
