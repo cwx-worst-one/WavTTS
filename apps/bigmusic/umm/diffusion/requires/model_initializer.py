@@ -11,14 +11,15 @@ def init_diffusion(diffusion_config, local_rank=None, cache_dir=None, device=Non
     diffusion = (ChunkInfer if diffusion_config.get("token_chunk_size", None) else DiffusionU2SInfer)(**diffusion_config)
     # load umm model
     diffusion.setup(0)
-    return { "diffusion": diffusion.to(device) }
+    return { "diffusion": diffusion.to(device) } 
 
 
 
 def token2wav(diffusion, umm_token, prompt_wav=None, uttid=""):
     batch = (None, None, prompt_wav, umm_token, uttid) 
     with torch.no_grad():
-        diffusion.predict_step(batch, batch_idx=0)
+        pure_audio_output = diffusion.predict_step(batch, batch_idx=0)
+    return pure_audio_output
 
 
 def wav2token(diffusion, syn_wav_path):
@@ -37,6 +38,15 @@ def wav2token(diffusion, syn_wav_path):
     syn_umm_token = diffusion.wav2token(syn_wav)
     return syn_umm_token
 
+@torch.no_grad()
+def run_diffusion_vocoder(requires, samples, prompt_wav=None):
+    # samples are the UMM tokens
+    diffusion = requires['diffusion']
+    output_wav = token2wav(diffusion, 
+              umm_token=samples,
+              prompt_wav=prompt_wav,
+              uttid="test")
+    return output_wav
 
 
 if __name__ == "__main__":
@@ -49,8 +59,9 @@ if __name__ == "__main__":
     hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConvV1_40hzSS.yaml" # no-streaming
 
     # hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConv_125hzSS.yaml"
-    syn_wav_path = "/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/voice_condition_valsets/slices_60/male_husky_0_slice1.wav"
-    prompt_wav_path = "/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/voice_condition_valsets/conditions_6s/male_husky_0.wav"
+    # or you can download the files from here: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/weituo/infer_files/voice_condition_valsets.zip
+    syn_wav_path = "voice_condition_valsets/reference/male_husky/male_husky_0.wav"
+    prompt_wav_path = "voice_condition_valsets/conditions_6s/male_husky_0.wav"
 
     from hyperpyyaml import load_hyperpyyaml
     from samantha.utils.hparams import DotDict
@@ -69,5 +80,3 @@ if __name__ == "__main__":
             umm_token = umm_token.squeeze(0),
             prompt_wav = prompt_wav_path,
             uttid = "test")
-
-

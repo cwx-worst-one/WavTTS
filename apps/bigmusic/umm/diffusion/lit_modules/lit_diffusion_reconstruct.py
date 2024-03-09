@@ -15,6 +15,7 @@ from samantha.dataio.lite.utils.mel import mel_spectrogram
 from apps.bigtts.umm.diffusion.lit_modules.infer_utils import set_seed, save_wav, load_torch_script
 from apps.bigtts.umm.diffusion.lit_modules.wvae import Wave, mel_spectrogram_torch, spectrogram_torch
 
+
 import logging
 logger = logging.getLogger(__name__)
 
@@ -230,7 +231,10 @@ class DiffusionU2SInfer(LightningModule):
             syn_umm_token = self.wav2token(syn_wav)
 
         elif self.infer_type == "ar-diffusion-vocoder":
-             syn_umm_token = syn_umm_token.unsqueeze(0)
+            if len(syn_umm_token.shape) == 1:
+                syn_umm_token = syn_umm_token.unsqueeze(0)
+            else:
+                syn_umm_token = syn_umm_token
         else:
             raise NotImplementedError
         if hasattr(self, "umm_codebook"):
@@ -256,9 +260,11 @@ class DiffusionU2SInfer(LightningModule):
             elif self.infer_type == "ar-diffusion-vocoder":
                 wav_divide = 4800 if (self.umm_frame_rate==25 and self.mel_frame_rate==40) else 600
                 prompt_wav = self.align_wav2(wav, wav_divide, self.mel_config["sampling_rate"], self.umm_frame_rate, syn_umm_token.shape[1])
-            prompt_umm_token = self.wav2token(prompt_wav)
-            if hasattr(self, "umm_codebook"):
-                prompt_umm_token = F.embedding(prompt_umm_token, self.umm_codebook)
+            
+            if self.umm != None:
+                prompt_umm_token = self.wav2token(prompt_wav)
+                if hasattr(self, "umm_codebook"):
+                    prompt_umm_token = F.embedding(prompt_umm_token, self.umm_codebook)
         else:
             prompt_umm_token = None
             prompt_wav = None
@@ -307,8 +313,6 @@ class DiffusionU2SInfer(LightningModule):
                     inputs["prompt_bn"] = crop_bn # [B,C,T]
                     # inputs["prompt_length"] = inputs["prompt_bn"].shape[-1]
                     # inputs["bn_ctx"][:, :inputs["prompt_bn"].shape[-1], :] = inputs["prompt_bn"].transpose(1, 2)
-
-
                 
             else:
                 prompt_mel = self.mel_transform(prompt_wav)
@@ -338,7 +342,6 @@ class DiffusionU2SInfer(LightningModule):
                 if "lang" in inputs["frontend"]:
                     inputs["frontend"]["lang"] = inputs["frontend"]["lang"].repeat(2, 1)
                     inputs["frontend"]["lang"][1, :] = 1
-
             inputs["token"] = inputs["token"].repeat(2, 1)
             if self.use_wvae_vocoder:
                 if "prompt_bn" in inputs:
@@ -370,7 +373,7 @@ class DiffusionU2SInfer(LightningModule):
             elif self.diffusion_precision == "fp32":
                 dtype = torch.float32
             else:
-                raise NotImplementedError 
+                raise NotImplementedError
             with torch.autocast(device_type="cuda", dtype=dtype, enabled=True): 
                 out_mel = self.model.inference(inputs, 
                         self.diffusion_nfe,
@@ -399,6 +402,7 @@ class DiffusionU2SInfer(LightningModule):
                 audio = np.concatenate([prompt_wav, np.ones([10]), audio])
             output_path = os.path.join(self.output_dir, inputs["uttid"]+".wav")
             save_wav(audio, output_path)
+            return torch.from_numpy(audio)
     
     def wvae_reconstruct(self, batch):
         device = f"cuda:{self.trainer.local_rank}"
@@ -418,7 +422,7 @@ class DiffusionU2SInfer(LightningModule):
 
     def setup(self, stage):
         device = f"cuda:{self.local_rank}"
-        if self.infer_type != "vocoder":
+        if self.infer_type != "vocoder" and self.umm_ckpt_path:
             if self.umm_type == "USM":
                 self.umm = prepare_usm(self.umm_ckpt_path, device)
             elif self.umm_type == "UMM":
@@ -433,6 +437,8 @@ class DiffusionU2SInfer(LightningModule):
                 self.umm = prepare_umm_dualconv(self.umm_ckpt_path, device)
             else:
                 raise NotImplementedError
+        else:
+            self.umm = None
         
         if self.use_wvae_vocoder:
             self.wvae = self.bn_config['vocoder_model'](local_rank=self.local_rank)['vocoder']
@@ -532,9 +538,10 @@ class ChunkInfer(DiffusionU2SInfer):
             raise NotImplementedError 
 
         if not self.without_prefix:
+            assert prompt_umm_token is not None
             inputs["token"] = prompt_umm_token
         out_mel = None
-        device = prompt_umm_token.device
+        device = syn_umm_token.device
 
         start_list = np.array(range(0, syn_umm_token.shape[1], self.token_chunk_size))
 
@@ -567,7 +574,7 @@ class ChunkInfer(DiffusionU2SInfer):
                         inputs["token"], 
                         syn_umm_token[:, start:end].expand(inputs["token"].shape[0], -1)], dim=1)
                 else:
-                    inputs["token"] = syn_umm_token[:, start:end].expand(prompt_umm_token.shape[0], -1)
+                    inputs["token"] = syn_umm_token[:, start:end].expand(inputs["prompt_bn"].shape[0], -1)
             else:
                 inputs["token"] = torch.cat([
                     inputs["token"][:, :-prev_overlap], 
@@ -621,6 +628,7 @@ class ChunkInfer(DiffusionU2SInfer):
             audio = np.concatenate([prompt_wav, np.ones([10]), audio])
         output_path = os.path.join(self.output_dir, inputs["uttid"]+".wav")
         save_wav(audio, output_path)
+        return torch.from_numpy(audio)
 
     def align_wav_for_chunk(self, wav, sampling_rate, umm_frame_rate, mel_frame_rate, 
             text_len):
@@ -678,7 +686,10 @@ class ChunkInfer(DiffusionU2SInfer):
             syn_umm_token = self.wav2token(syn_wav)
 
         elif self.infer_type == "ar-diffusion-vocoder":
-             syn_umm_token = syn_umm_token.unsqueeze(0)
+            if len(syn_umm_token.shape) == 1:
+                syn_umm_token = syn_umm_token.unsqueeze(0)
+            else:
+                syn_umm_token = syn_umm_token
         else:
             raise NotImplementedError
         if hasattr(self,"umm_codebook"):
@@ -701,10 +712,12 @@ class ChunkInfer(DiffusionU2SInfer):
             prompt_wav, target_bn_len = self.align_wav_for_chunk(wav, 
                     self.mel_config["sampling_rate"], self.umm_frame_rate, self.mel_frame_rate,
                     0 if text_id is None else text_id.shape[1])
-                    
-            prompt_umm_token = self.wav2token(prompt_wav)
-            if hasattr(self, "umm_codebook"):
-                prompt_umm_token = F.embedding(prompt_umm_token, self.umm_codebook)
+            if self.umm != None:     
+                prompt_umm_token = self.wav2token(prompt_wav)
+                if hasattr(self, "umm_codebook"):
+                    prompt_umm_token = F.embedding(prompt_umm_token, self.umm_codebook)
+            else:
+                prompt_umm_token = None
         else:
             prompt_umm_token = None
             prompt_wav = None

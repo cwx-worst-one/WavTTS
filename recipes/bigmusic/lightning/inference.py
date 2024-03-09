@@ -4,7 +4,8 @@ import pytorch_lightning as pl
 
 from samantha.utils.hparams import DotDict
 from recipes.diffusion.models.diffusion_model.utils import run_diffusion
-from recipes.voicebox.lit_modules.lit_diffusion_reconstruct import run_diffusion_vocoder
+# from recipes.voicebox.lit_modules.lit_diffusion_reconstruct import run_diffusion_vocoder
+from apps.bigmusic.umm.diffusion.requires.model_initializer import run_diffusion_vocoder
 from recipes.diffusion.utils.utils import download_checkpoint
 from recipes.soundstorm.lightning.utils import run_soundstorm
 from recipes.bigmusic.lightning.embedding_modules import get_bestrq_umm_tokens
@@ -41,7 +42,7 @@ class SemanticInferenceModule(pl.LightningModule):
         self.semantic_module: BaseModule = semantic_class.load_from_checkpoint(
             semantic_ckpt_path,
             # pay attention to the logs to make sure the model is loaded correctly
-            strict=False,
+            strict=True,
         ).eval()
         if cls_name == "SemanticModuleVarlenXperf" or cls_name == "SemanticModuleXperf":
             self.semantic_module.replace_ctiga_to_xperf()
@@ -58,14 +59,17 @@ class SemanticInferenceModule(pl.LightningModule):
         # Modules must be loaded in setup function for correct local rank / multi-gpu training
         required_modules = {}
         if self.extra_params.token2wav_type == 'diffusion':
+            # this is the old music token2wav
             self.decoding_fn = run_diffusion
             required_modules.update(self.hparams.required_modules['diffusion_modules'])
             self.decoding_params = DotDict({**self.extra_params, **self.extra_params['diffusion_params']})
-        elif self.extra_params.token2wav_type == 'unified-diffusion':
+        elif self.extra_params.token2wav_type == 'ar-diffusion-vocoder':
+            # this is the tts token2wav
             self.decoding_fn = run_diffusion_vocoder
             required_modules.update(self.hparams.required_modules['diffusion_modules'])
             self.decoding_params = DotDict({ **self.extra_params, **self.extra_params['diffusion_params'] })
         elif self.extra_params.token2wav_type == 'ar':
+            # this is the soundstorm token2wav
             self.decoding_fn = run_2ar
             required_modules.update(self.hparams.required_modules['ar_modules'])
             self.decoding_params = DotDict({**self.extra_params, **self.extra_params['ar_params']})
@@ -108,10 +112,11 @@ class SemanticInferenceModule(pl.LightningModule):
         if self.extra_params.get('mulan_ckpt', None) and self.extra_params.mulan_ckpt != 'infer_from_semantic_ckpt':
             self.semantic_module.hparams.required_modules['mulan']['hpath'] = self.extra_params.mulan_ckpt
 
-        # set beat tracking ckpt if passed in
-        if self.extra_params.get('beat_ckpt', None) and 'beat' in self.semantic_module.hparams.required_modules:
-            self.semantic_module.hparams.required_modules['beat']['hpath'] = self.extra_params.beat_ckpt
-        
+        # pop up mulan related modules if not used
+        for kk in ["mulan", "mulan_tagger"]:
+            if kk in self.semantic_module.hparams.required_modules:
+                self.semantic_module.hparams.required_modules.pop(kk)
+                
         # override cache_dir with extra_params
         cache_dir = Path(self.extra_params.get('cache_dir', '.module_cache'))
         cache_dir.mkdir(exist_ok=True, parents=True)
@@ -147,11 +152,12 @@ class SemanticInferenceModule(pl.LightningModule):
         # TODO (QQ) use semantic_samples embedding as context input for decoding fn
         if self.extra_params.get("mixv2", False):
             semantic_samples = self.requires["Stage3"].model.vq.embedding(semantic_samples)
-        if self.extra_params.token2wav_type == 'unified-diffusion':
-            raw_wav_output = self.decoding_fn(self.requires, semantic_samples, self.decoding_params, prompt_wav=batch["style_audio"])
+        if self.extra_params.token2wav_type == 'ar-diffusion-vocoder':
+            # TODO, check if the key is the same as SVS,
+            # SVS: style_audio, SVC, vocal_prompt
+            raw_wav_output = self.decoding_fn(self.requires, semantic_samples, prompt_wav=batch["vocal_prompt"][0])
         else:
             raw_wav_output = self.decoding_fn(self.requires, semantic_samples, self.decoding_params)
-        
         if "duration" in batch:
             duration = batch["duration"]
         else:
@@ -171,8 +177,7 @@ class SemanticInferenceModule(pl.LightningModule):
             # After re-ranking, sampled_semantic_tokens in batch will be sorted by reward
             raw_semantic_samples = batch["sampled_semantic_tokens"]
         
-        raw_wav_output = raw_wav_output.detach().cpu()
-        wavs = truncate_wav_to_eos(raw_wav_output, eos_index_list)
+        wavs = truncate_wav_to_eos([raw_wav_output], eos_index_list)
         raw_semantic_samples = raw_semantic_samples.detach().cpu()
         outputs.update({
             'generated_audio': wavs,
