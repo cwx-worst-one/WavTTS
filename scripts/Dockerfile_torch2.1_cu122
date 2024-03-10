@@ -14,7 +14,6 @@ ARG http_proxy="http://sys-proxy-rd-relay.byted.org:8118"
 ARG https_proxy="http://sys-proxy-rd-relay.byted.org:8118"
 ARG no_proxy="byted.org"
 
-ENV TORCH_CUDNN_V8_API_LRU_CACHE_LIMIT 100000
 ENV PYTORCH_CUDA_ALLOC_CONF expandable_segments:True
 ENV CUBLASLT_WORKSPACE_SIZE 32768
 # Temporary solution, more investigation needed.
