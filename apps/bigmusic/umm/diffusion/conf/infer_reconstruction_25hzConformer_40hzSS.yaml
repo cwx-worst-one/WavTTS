@@ -45,7 +45,8 @@ bn_config: # 40hz wvae 3.1
     wav_norm: False
     vocoder_model: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
         # checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/weituo/mul_music_vocoder/vocoder/24k_dim=64_hz=40_kl=1e-6/checkpoints/soundstream-step=500000-EMA.ckpt
-        checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/weituo/mul_music_vocoder/vocoder/40hz_1e-6_enfreeze_start500k/checkpoints/soundstream-step=1000000-EMA.ckpt
+        # checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/weituo/mul_music_vocoder/vocoder/40hz_1e-6_enfreeze_start500k/checkpoints/soundstream-step=1000000-EMA.ckpt
+        checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/weituo/mul_music_vocoder/vocoder/24k_dim=64_hz=40_kl=1e-6/checkpoints/soundstream-step=1000000-EMA.ckpt
         version: 24k_40hz_dim64_sa
         cache_dir: ".module_cache"
         sample_rate: !ref <mel_config[sampling_rate]>

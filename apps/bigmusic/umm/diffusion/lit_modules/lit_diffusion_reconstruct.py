@@ -187,7 +187,7 @@ class DiffusionU2SInfer(LightningModule):
             token_inst = self.umm.wav2token(wav, 'inst').squeeze()
             umm_token = torch.stack([token_vocal, token_inst], 1)
             umm_token = umm_token.reshape(-1).unsqueeze(0)
-        elif self.umm_type in ["UMM_dualconvV1"]:
+        elif self.umm_type in ["UMM_dualconvV1", "UMM_dualconvV3"]:
             from recipes.umm.utils.mss import MSSPredictor
             predictor = MSSPredictor().to(self.device)
             voc, acc = predictor(wav)
@@ -433,7 +433,7 @@ class DiffusionU2SInfer(LightningModule):
                 self.umm = prepare_umm_music(self.umm_ckpt_path, device)
             elif self.umm_type == "UMM_conv":
                 self.umm = prepare_umm_conv(self.umm_ckpt_path, device)
-            elif self.umm_type in ["UMM_dualconv", "UMM_dualconvV1"]:
+            elif self.umm_type in ["UMM_dualconv", "UMM_dualconvV1", "UMM_dualconvV3"]:
                 self.umm = prepare_umm_dualconv(self.umm_ckpt_path, device)
             else:
                 raise NotImplementedError

@@ -9,10 +9,10 @@ run_opts:
     num_workers: 4
     seed: 1996
     diffusion_ckpt_path: ""
-    umm_ckpt_path: "/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/umm/0208_dualummv2_fullinp_1/step=0970000.ckpt"
+    umm_ckpt_path: "/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/step=070000.ckpt"
     vocoder_ckpt_path: ""
-    umm_frame_rate: 50
-    mel_frame_rate: 40
+    umm_frame_rate: 25
+    mel_frame_rate: 125
     infer_type: diffusion-vocoder
     use_wvae_vocoder: True
     lang: en
@@ -44,10 +44,8 @@ bn_config: # 40hz wvae 3.1
     wvae_encoder_win_size: 1200
     wav_norm: False
     vocoder_model: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
-        # checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/weituo/mul_music_vocoder/vocoder/24k_dim=64_hz=40_kl=1e-6/checkpoints/soundstream-step=500000-EMA.ckpt
-        # checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/weituo/mul_music_vocoder/vocoder/40hz_1e-6_enfreeze_start500k/checkpoints/soundstream-step=1000000-EMA.ckpt
-        checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/weituo/mul_music_vocoder/vocoder/24k_dim=64_hz=40_kl=1e-6/checkpoints/soundstream-step=1000000-EMA.ckpt
-        version: 24k_40hz_dim64_sa
+        checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/weituo/mul_music_vocoder/vocoder/24k_dim=64_hz=125_kl=1e-6/checkpoints/soundstream-step=1000000-EMA.ckpt
+        version: 24k_125hz_dim64_sa
         cache_dir: ".module_cache"
         sample_rate: !ref <mel_config[sampling_rate]>
 
@@ -93,7 +91,7 @@ pl_module: !new:apps.bigmusic.umm.diffusion.lit_modules.lit_diffusion_reconstruc
     text_cfg_w: 0
     use_wvae_vocoder: !ref <run_opts[use_wvae_vocoder]>
     bn_config: !ref <bn_config>
-    umm_type: "UMM_dualconv"
+    umm_type: "UMM"
 
 trainer: !new:pytorch_lightning.Trainer
     accelerator: "auto"

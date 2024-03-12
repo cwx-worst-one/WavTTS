@@ -55,12 +55,15 @@ if __name__ == "__main__":
     device = f"cuda:0"
     cache_dir = ".module_cache/"
 
-    # hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_40hzSS_streaming.yaml" # streaming
-    hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConvV1_40hzSS.yaml" # no-streaming
+    # streaming
+    # hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_40hzSS_streaming.yaml" 
+    # no-streaming
+    # hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConvV1_40hzSS.yaml" 
+    hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConvV3_125hzSS.yaml"
 
     # hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConv_125hzSS.yaml"
     # or you can download the files from here: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/weituo/infer_files/voice_condition_valsets.zip
-    syn_wav_path = "voice_condition_valsets/reference/male_husky/male_husky_0.wav"
+    syn_wav_path = "voice_condition_valsets/slices/male_husky_0_slice1.wav"
     prompt_wav_path = "voice_condition_valsets/conditions_6s/male_husky_0.wav"
 
     from hyperpyyaml import load_hyperpyyaml
