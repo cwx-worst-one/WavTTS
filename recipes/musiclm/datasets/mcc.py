@@ -160,6 +160,7 @@ class MCC40MDataset(WebPipeline):
         text_type: Optional[str] = None,
         max_num_crops: Optional[Union[int, List[int]]] = None,
         crop_step_size: Optional[Union[int, List[int]]] = None,
+        melody_filtered: bool = False,
         max_duration: Optional[int] = None,
         additional_transforms: Optional[List] = None,
         handler: Callable = wds.warn_and_continue,
@@ -196,6 +197,7 @@ class MCC40MDataset(WebPipeline):
             text_type=text_type,
             max_num_crops=max_num_crops,
             crop_step_size=crop_step_size,
+            melody_filtered=melody_filtered,
             max_samples=None if max_duration is None else max_duration * sample_rate,
         )
         preprocessor = WebDatasetBufferPreprocessor(
@@ -236,6 +238,7 @@ class WrappedMCC40MDataset(MultiIterableDataset):
         text_type: Optional[str] = None,
         max_num_crops: Optional[Union[int, List[int]]] = None,
         crop_step_size: Optional[Union[int, List[int]]] = None,
+        melody_filtered: bool = False,
         additional_transforms: Optional[List] = None,
         handler: Callable = wds.warn_and_continue,
         num_samples: int = -1,
@@ -265,6 +268,7 @@ class WrappedMCC40MDataset(MultiIterableDataset):
                 text_type=text_type,
                 max_num_crops=max_num_crops,
                 crop_step_size=crop_step_size,
+                melody_filtered=melody_filtered,
                 additional_transforms=additional_transforms,
                 handler=handler,
                 **kwargs,

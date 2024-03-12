@@ -104,6 +104,8 @@ def inference_dataset_from_prompt(
         prompts['vocal_audio'] = load_and_normalize_wavs(prompts['vocal_audio'], additional_transforms)
     if 'intensity_audio' in prompts:
         prompts['intensity_audio'] = load_and_normalize_wavs(prompts['intensity_audio'])
+    if 'beat_audio' in prompts:
+        prompts['beat_audio'] = load_and_normalize_wavs(prompts['beat_audio'])
     if 'structure' in prompts:
         prompts['structure'] = [None if x == "random" else json.loads(x) for x in prompts['structure']]
     elif 'structure' in conditions:

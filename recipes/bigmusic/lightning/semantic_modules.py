@@ -402,7 +402,9 @@ class SemanticModule(BaseContinuousEmbedModule):
             batch["beat"] = [[] for _ in range(batch_size)]
         elif "beat" not in batch:
             target_audio = None
-            if "target_audio" in batch:
+            if "beat_audio" in batch:
+                target_audio = batch["beat_audio"]
+            elif "target_audio" in batch:
                 target_audio = batch["target_audio"]
             elif "style_audio" in batch:
                 target_audio = batch["style_audio"]
@@ -799,6 +801,10 @@ class SemanticRLModule(SemanticModule):
                 new_freq=self.extra_params.sample_rate,
             )
 
+    def set_requires_grad(self, requires_grad):
+        for n, p in self.named_parameters():
+            p.requires_grad = requires_grad
+
     def _shared_step(self, batch, mode):
         wavs_gt = batch["target_audio"]
         if wavs_gt.dim() == 2:
@@ -846,6 +852,7 @@ class SemanticRLModule(SemanticModule):
                 else:
                     batch["duration"] = self.extra_params.duration
             num_tokens = batch["duration"] * self.extra_params.semantic_frame_rate
+            self.set_requires_grad(False)
             sampled_semantic_tokens, model_inputs = super().predict(
                 batch,
                 self.extra_params,
@@ -868,6 +875,7 @@ class SemanticRLModule(SemanticModule):
                 "beam_size": beam,
                 "batch": batch,
             })
+            self.set_requires_grad(True)
             # Compute sequence probs
             seq_logits = self.model(**model_inputs)
             if isinstance(seq_logits, dict):

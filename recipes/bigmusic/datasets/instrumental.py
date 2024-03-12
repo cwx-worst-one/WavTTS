@@ -59,6 +59,7 @@ class InstrumentalWebDataModule(DataModule):
         keys=["audio", "text", "structure", "intensity"],
         mixed_ratio: float = 0.0,
         max_duration: Optional[int] = None,
+        melody_filtered: bool = False,
         use_pipe: bool = False,
         seed: int = 555,
     ):
@@ -138,6 +139,7 @@ class InstrumentalWebDataModule(DataModule):
             max_num_crops=max_num_crops,
             crop_step_size=crop_step_size,
             max_duration=max_duration,
+            melody_filtered=melody_filtered,
             additional_transforms=additional_transforms,
             resampled=True,
             shardshuffle=True,

@@ -9,6 +9,8 @@ import numpy as np
 from torchaudio_augmentations import Compose
 import subprocess
 import pickle
+import librosa
+from scipy.stats import entropy
 
 from samantha.transforms.audio import (
     NormalizeAudioToFloat32,
@@ -178,6 +180,7 @@ class MCCTransforms(TransformBase):
         text_type: Optional[str] = None,
         max_num_crops: Optional[Union[int, List[int]]] = None,    # if None, auto set based on audio length
         crop_step_size: Optional[Union[int, List[int]]] = None,   # if None, auto set based on n_samples
+        melody_filtered: bool = False,
         max_samples: Optional[int] = None,
     ) -> None:
         super().__init__()
@@ -196,6 +199,7 @@ class MCCTransforms(TransformBase):
         self.audio_metrics_filtered = audio_metrics_filtered
         self.ar_filtering = ar_filtering
         self.text_type = text_type
+        self.melody_filtered = melody_filtered
         self.max_samples = max_samples
 
         if not isinstance(min_length_ratio, (list, tuple)):
@@ -309,6 +313,21 @@ class MCCTransforms(TransformBase):
         if phase.get("has_phase_issue", False) or abs(phase.get("rms_downmix_diff", 0.1)) > 3:
             return False, "phase_check"
         return True, None
+
+    def is_melody_good(self, audio):
+        if len(audio.shape) == 2:
+            audio = audio.squeeze(0)
+        chroma = librosa.feature.chroma_stft(
+            y=audio.numpy(),
+            sr=self.sample_rate,
+            hop_length=self.sample_rate // 4,   # 0.25s
+        )
+        melody = chroma.argmax(axis=0)
+        probs = np.bincount(melody) / len(melody)
+        # Heuristics for now, sweep threshold carefully later
+        if probs.max() >= 0.35 or entropy(probs) <= 1.7:
+            return False
+        return True
 
     def get_vocal_data(self, metadata: Dict[str, Any]):
         thresh = 2  # hardcode 2 seconds
@@ -518,6 +537,8 @@ class MCCTransforms(TransformBase):
                 continue
             cropped_audio = audio[:, st_sample : en_sample]
             if not self.is_loud(cropped_audio):
+                continue
+            if self.melody_filtered and not self.is_melody_good(cropped_audio):
                 continue
             output = {
                 "audio": cropped_audio,
