@@ -55,16 +55,19 @@ if __name__ == "__main__":
     device = f"cuda:0"
     cache_dir = ".module_cache/"
 
-    # streaming
-    # hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_40hzSS_streaming.yaml" 
     # no-streaming
     # hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConvV1_40hzSS.yaml" 
-    hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConvV3_125hzSS.yaml"
+    # hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConvV3_125hzSS.yaml"
 
     # hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConv_125hzSS.yaml"
     # or you can download the files from here: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/weituo/infer_files/voice_condition_valsets.zip
     syn_wav_path = "voice_condition_valsets/slices/male_husky_0_slice1.wav"
     prompt_wav_path = "voice_condition_valsets/conditions_6s/male_husky_0.wav"
+
+    # streaming infer with prompt free model
+    hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS_streaming.yaml" 
+    prompt_wav_path = ""
+
 
     from hyperpyyaml import load_hyperpyyaml
     from samantha.utils.hparams import DotDict

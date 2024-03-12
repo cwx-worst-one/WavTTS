@@ -680,6 +680,7 @@ class ChunkInfer(DiffusionU2SInfer):
             if self.bn_config['wav_norm']:
                 scale = max(0.001, torch.max(torch.abs(wav)))
                 wav = wav / scale * 0.95
+                inputs["scale"] = scale.item()
             wav = wav.to(device)
             #syn_wav = self.align_wav(wav, self.mel_config["sampling_rate"], self.umm_frame_rate, self.mel_frame_rate)
             syn_wav = wav
@@ -696,7 +697,7 @@ class ChunkInfer(DiffusionU2SInfer):
             syn_umm_token = F.embedding(syn_umm_token, self.umm_codebook)
 
         if os.path.isfile(prompt_wav_path) ^ self.model.hp.use_prompt:
-            logger.error(f"prompt wav {os.path.isfile(prompt_wav_path)}/{prompt_wav_path} mismatch with config use_prompt={self.model.hp.use_prompt}")
+            logger.warning(f"prompt wav {os.path.isfile(prompt_wav_path)}/{prompt_wav_path} mismatch with config use_prompt={self.model.hp.use_prompt}")
 
         # Prompt
         if os.path.isfile(prompt_wav_path):
@@ -706,7 +707,7 @@ class ChunkInfer(DiffusionU2SInfer):
             if self.bn_config['wav_norm']:
                 scale = max(0.001, torch.max(torch.abs(wav)))
                 wav = wav / scale * 0.95
-                inputs["scale"] = scale.item()
+                # inputs["scale"] = scale.item()
             wav = wav.to(device)
             
             prompt_wav, target_bn_len = self.align_wav_for_chunk(wav, 
@@ -721,7 +722,7 @@ class ChunkInfer(DiffusionU2SInfer):
         else:
             prompt_umm_token = None
             prompt_wav = None
-        
+            target_bn_len = 6 * self.mel_frame_rate
 
         if self.infer_type in ["diffusion-vocoder", "ar-diffusion-vocoder"]: 
             #inputs["token"] = torch.cat([prompt_umm_token, syn_umm_token], dim=1)
@@ -729,21 +730,22 @@ class ChunkInfer(DiffusionU2SInfer):
             #mel_len = int(token_len / self.umm_frame_rate * self.mel_frame_rate)
 
             if self.use_wvae_vocoder:
-                
-                if len(prompt_wav.shape) == 2:
-                    prompt_wav = prompt_wav.unsqueeze(1)
-                encoder_out = self.wvae.encode(prompt_wav)
-                crop_bn, _, _ = self.wvae.sample(encoder_out, deterministic=False)
-                crop_bn = self.bn_norm.norm_mel(crop_bn)
-
-                inputs["prompt_bn"] = crop_bn[:, :, :target_bn_len]
+                if prompt_wav is None:
+                    inputs["prompt_bn"] = torch.ones([1, self.bn_config["bn_dim"],target_bn_len],device=device)*self.bn_config["bn_padding"]
+                else:
+                    if len(prompt_wav.shape) == 2:
+                        prompt_wav = prompt_wav.unsqueeze(1)
+                    encoder_out = self.wvae.encode(prompt_wav)
+                    crop_bn, _, _ = self.wvae.sample(encoder_out, deterministic=False)
+                    crop_bn = self.bn_norm.norm_mel(crop_bn)
+                    inputs["prompt_bn"] = crop_bn[:, :, :target_bn_len]
+                    
                 inputs["prompt_length"] = target_bn_len
                 if not self.without_prefix:
                     inputs["bn_ctx"] = inputs["prompt_bn"].transpose(1, 2)
                 else: 
                     # inputs["bn_ctx"] = torch.ones([1,int(syn_umm_token.shape[1] / self.umm_frame_rate * self.mel_frame_rate) ,self.bn_config["bn_dim"]],device=device)*self.bn_config["bn_padding"]
                     inputs["bn_ctx"] = torch.ones([1, 0, self.bn_config["bn_dim"]],device=device)*self.bn_config["bn_padding"]
-
             else:
                 # TODO: mel
                 raise NotImplementedError

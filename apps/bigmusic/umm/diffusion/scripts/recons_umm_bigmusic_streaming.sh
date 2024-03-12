@@ -1,8 +1,10 @@
 
 
-# bash scripts/reinstall_s3a.sh 66
+bash scripts/reinstall_s3a.sh 66
+sudo apt install -y bc
 # meta_lst=/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/voice_condition_valsets/test_wo_vc.lst
-meta_lst=/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/voice_condition_valsets/test_vc2.lst
+# meta_lst=/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/voice_condition_valsets/test_vc2.lst
+meta_lst=/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/voice_condition_valsets/test_vc2_without_prompt.lst
 # meta_lst=/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/mix_vocal/test_clip.lst
 # meta_lst=/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/mix_vocal/test.lst
 # meta_lst=/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/mix_vocal/test_no_vc.lst
@@ -12,7 +14,7 @@ meta_lst=/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/voice_condition_vals
 # dur= x/ umm_freq
 token_chunk_size=100
 token_chunk_overlap=10
-
+prompt_drop=0.0
 
 # ====== tokenizer version ====== 
 # | tokenizer type | local path                                                                                                                                             | ckpt                                                                                                                                                                  |
@@ -23,8 +25,7 @@ token_chunk_overlap=10
 # | Dual Conv      | /mnt/bn/data-storage-hl/user/zhangshuo/data/assets/umm/0208_dualummv2_fullinp_1/step=0970000.ckpt                                                      | hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/renyi/samantha_ckpts/umm_mix/0208_dualummv2_fullinp_1/checkpoints/step=0970000.ckpt                               |
 
 
-
-# # Conformer ZH + Music 125hz
+# Conformer ZH + Music 125hz
 dataset_id=1641
 exp_name="25hzUMM_125hzSS"
 chunk_size=1000 #100,500,1000
@@ -32,6 +33,13 @@ version="h800_ds${dataset_id}_prompt_16xH800_${exp_name}_streaming_chunk${chunk_
 step=200000
 loss=0.37
 cfg_name="25hzConformer_125hzSS"
+
+# prompt bn dropout
+prompt_drop=0.1
+step=520000
+loss=0.36
+version="h800_ds${dataset_id}_prompt_16xH800_${exp_name}_prompt_drop${prompt_drop}_streaming_chunk${chunk_size}_0308"
+
 
 # Conformer ZH + Music 40hz
 # dataset_id=1614
@@ -99,11 +107,24 @@ cfg_name="25hzConformer_125hzSS"
 # cfg_path=apps/bigmusic/umm/diffusion/conf/infer_reconstruction_25hzConv_40hzSS.yaml
 # sub_dir=exp8_500k
 
+nfe=10 # 4,10
+sampler="ddim" # consistency, ddim
+text_cfg_w=0
+without_prompt_bn=false
+if [ $(echo "$prompt_drop > 0.0" | bc -l ) -eq 1 ]; then
+	without_prompt_bn=true
+fi
+echo "without_prompt_bn: ${without_prompt_bn}"
+
 diffusion_ckpt_base_dir="hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion"
 diffusion_ckpt_path="${diffusion_ckpt_base_dir}/${version}/checkpoints/epoch=00-step=${step}-loss=${loss}.ckpt"
 cfg_path="apps/bigmusic/umm/diffusion/conf/infer_reconstruction_${cfg_name}_streaming.yaml"
-sub_dir=ds${dataset_id}_${exp_name}_streaming/chunk=${chunk_size}/step=${step}
-
+sub_dir=
+if [ $without_prompt_bn ]; then
+	sub_dir=ds${dataset_id}_${exp_name}_prompt_drop${prompt_drop}_streaming/chunk=${chunk_size}/sampler=${sampler}-nfe=${nfe}-text_cfg_w=${text_cfg_w}/step=${step}
+else
+	sub_dir=ds${dataset_id}_${exp_name}_streaming/chunk=${chunk_size}/sampler=${sampler}-nfe=${nfe}-cfgw=${text_cfg_w}/step=${step}
+fi
 # cleanup vocoder model in case of freq mismatch
 # rm ./.module_cache/soundstream*.ckpt
 # rm ./data/tmp/*.wav
@@ -113,10 +134,8 @@ if [ ${without_prefix} = true  ] ; then
 else
 	out_dir=/mnt/bn/data-storage-hl/user/zhangshuo/data/tmp/${sub_dir}
 fi
-echo ${out_dir}
+echo "out_dir: ${out_dir}"
 mkdir -p $out_dir
-nfe=10 # 4,10
-sampler="ddim" # consistency, ddim
 
 bash launch.sh predict \
 	-c $cfg_path \
@@ -128,7 +147,7 @@ bash launch.sh predict \
 	--predict_dataset.lang $lang \
 	--run_opts.infer_type diffusion-vocoder \
 	--bn_config.wav_norm True \
-	--pl_module.text_cfg_w 0 \
+	--pl_module.text_cfg_w ${text_cfg_w} \
 	--pl_module.token_chunk_size $token_chunk_size \
 	--pl_module.token_chunk_overlap $token_chunk_overlap \
 	--pl_module.without_prefix $without_prefix \
