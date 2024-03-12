@@ -1,20 +1,20 @@
-/ @wangxin.colin @zhangshuo.0 @jingsonggao
+/ @wangxin.colin @zhangshuo.0
 
-/.codebase @wangxin.colin @zhangshuo.0 @jingsonggao
+/.codebase @wangxin.colin @zhangshuo.0
 samantha
 
-/samantha @wangxin.colin @zhangshuo.0 @jingsonggao
+/samantha @wangxin.colin @zhangshuo.0
 
-/sami_ai @wangxin.colin @zhangshuo.0 @jingsonggao
+/sami_ai @wangxin.colin @zhangshuo.0
 
 /recipes
 
 /apps @wangxin.colin @zhangshuo.0 @huwenchao.hu @xieshuangyi
 
 /apps/bigmusic/umm/ar @andrew.shaw @qingqing.huang
-/apps/bigmusic/umm/diffusion @weitsung.lu
-/apps/bigmusic/umm/umm @qingqing.huang
-/apps/bigmusic/umm/vocoder
+/apps/bigmusic/umm/diffusion @weitsung.lu @weituohao @zhangshuo.0
+/apps/bigmusic/umm/umm @qingqing.huang @lamtharn.hantrakul @ren.yi
+/apps/bigmusic/umm/vocoder @weitsung.lu @weituohao @zhangshuo.0
 
 /apps/bigtts/umm/ar @jiawei.chen @kainan.peng
 /apps/bigtts/umm/diffusion @jiadongya @congjian.tts
