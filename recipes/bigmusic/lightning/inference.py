@@ -156,6 +156,7 @@ class SemanticInferenceModule(pl.LightningModule):
             # TODO, check if the key is the same as SVS,
             # SVS: style_audio, SVC, vocal_prompt
             raw_wav_output = self.decoding_fn(self.requires, semantic_samples, prompt_wav=batch["vocal_prompt"][0])
+            raw_wav_output = raw_wav_output.unsqueeze(0)
         else:
             raw_wav_output = self.decoding_fn(self.requires, semantic_samples, self.decoding_params)
         if "duration" in batch:
@@ -176,10 +177,9 @@ class SemanticInferenceModule(pl.LightningModule):
             outputs["metadata"] = [{"rewards": x} for x in rewards_breakdown]
             # After re-ranking, sampled_semantic_tokens in batch will be sorted by reward
             raw_semantic_samples = batch["sampled_semantic_tokens"]
-
-        # (Yilin) Temporary dimension patch
-        _raw_wav_output = [raw_wav_output] if len(raw_wav_output.shape) == 1 else raw_wav_output
-        wavs = truncate_wav_to_eos(_raw_wav_output, eos_index_list)
+        
+        raw_wav_output = raw_wav_output.detach().cpu()
+        wavs = truncate_wav_to_eos(raw_wav_output, eos_index_list)
         raw_semantic_samples = raw_semantic_samples.detach().cpu()
         outputs.update({
             'generated_audio': wavs,
