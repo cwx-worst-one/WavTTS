@@ -7,6 +7,7 @@ from typing import List
 import pandas as pd
 from pathlib import Path
 from functools import partial
+import samantha.utils.hdfs_helper as hh
 
 from torchaudio_augmentations import Compose
 
@@ -35,14 +36,24 @@ from recipes.bigmusic.datasets.transforms.structure import (
     IntensityTransform,
 )
 from recipes.musiclm.inference.utils import load_wav
-
+from recipes.musiclm.utils.dist import local_zero_first
 
 default_prompt_path = Path(__file__).absolute().parent/'inference_prompts/default.json'
 
-def prompt_path_to_items(prompt_path):
+def prompt_path_to_items(prompt_path, cache_dir='.prompt_cache'):
     if isinstance(prompt_path, dict): # prompt path is already an item list
         # Format expects { 'style_audio': [], 'style_text': [], 'lyrics': [] }
         return prompt_path
+    with local_zero_first():
+        hpath = prompt_path
+        if hpath.startswith("hdfs://"):
+            local_path = f"{cache_dir}/{os.path.basename(prompt_path)}"
+            if not os.path.exists(prompt_path):
+                if not hh.get(hpath, prompt_path):
+                    raise ConnectionError(f"Cannot retrieve file from {hpath}.")
+            else:
+                prompt_path = local_path
+
     prompt_path = Path(prompt_path)
     if prompt_path.suffix == '.json':
         with open(prompt_path, 'r') as f:
@@ -101,15 +112,16 @@ def inference_dataset_from_prompt(
     if 'semantic_tokens' in prompts:
         prompts['semantic_tokens'] = [torch.load(fp) for fp in prompts['semantic_tokens']]
 
-    # Process lyrics and style_text
-    if 'rewrite_lyrics' in prompts:  # override lyrics with rewrite_lyrics
-        rewritten_lyrics = process_lyrics(prompts.pop('rewrite_lyrics'))
-        prompts['lyrics'] = [
-            rewritten if rewritten else original.strip()
-            for original, rewritten in zip(prompts['lyrics'], rewritten_lyrics)
-        ]
-    if 'style_text' in prompts and transform_style_text:
-        prompts['style_text'] = process_style_text(prompts['style_text'])
+    if lang == 'zh_phone':
+        # Process lyrics and style_text
+        if 'rewrite_lyrics' in prompts:  # override lyrics with rewrite_lyrics
+            rewritten_lyrics = process_lyrics(prompts.pop('rewrite_lyrics'))
+            prompts['lyrics'] = [
+                rewritten if rewritten else original.strip()
+                for original, rewritten in zip(prompts['lyrics'], rewritten_lyrics)
+            ]
+        if 'style_text' in prompts and transform_style_text:
+            prompts['style_text'] = process_style_text(prompts['style_text'])
 
     if run_combinations:
         lyrics_prompt_pairs = itertools.product(*list(prompts.values()))

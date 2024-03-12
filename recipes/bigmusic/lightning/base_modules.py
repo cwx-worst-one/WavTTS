@@ -68,7 +68,6 @@ class BaseModule(pl.LightningModule):
         print('Loading pre-trained model from checkpoint', pretrained_path)
         with local_zero_first():
             cache_dir = Path(self.extra_params.get('cache_dir', '.pretrain_cache'))
-            cache_dir.mkdir(exist_ok=True, parents=True)
             pretrained_path = download_checkpoint(pretrained_path, cache_dir=cache_dir)
         state_dict = torch.load(
             pretrained_path, map_location=torch.device("cpu")
@@ -145,7 +144,7 @@ class BaseModule(pl.LightningModule):
             loss_mask = sequence_mask(
                 training_inputs['target_lengths'], max_len=target_ids.shape[1], device=target_ids.device)
         loss = self.criterion(x, target_ids, loss_mask)
-        accu = (x.argmax(dim=-1) == target_ids).float().mean() * 100
+        accu = (x.argmax(dim=-1) == target_ids)[loss_mask.bool()].float().mean() * 100
         # measure accuracy of first 10 tokens as a measurement for style
         accu_seq_25 = (x.argmax(dim=-1)[..., :25] == target_ids[..., :25]).float().mean() * 100
         result_dict = {
@@ -194,7 +193,6 @@ class BaseModule(pl.LightningModule):
         params = []
         for name, p in self.named_parameters():
             if any([s in name for s in special_keywords]):
-                print(f"Skip weight decay: {name}")
                 params.append({"params": [p], "weight_decay": 0.0})
             else:
                 params.append({"params": [p]})

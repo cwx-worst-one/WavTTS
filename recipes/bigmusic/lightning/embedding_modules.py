@@ -336,6 +336,7 @@ class MulanCategoricalEmbedder(BaseEmbedder):
         self.vocab2count = defaultdict(int)
         self.dropout = dropout
         self.min_audio_length = min_audio_length # 10s * 24k sample rate
+        self.warning_count = 0
 
     # TokenEmbedder
     def get_sos_token(self, batch_size):
@@ -363,14 +364,16 @@ class MulanCategoricalEmbedder(BaseEmbedder):
         new_tags = sorted(set(all_tags) - set(self.vocab2id.keys()))
         for new_tag in new_tags:
             if new_tag in self.vocab2id:
-                print('Warning: tag already exists. Error.', self.vocab2id)
+                logger.warn(f'Warning: tag already exists. Error. {self.vocab2id}')
             if new_tag not in self.vocab2id and len(self.vocab2id) < self.vocab_size:
                 self.vocab2id[new_tag] = len(self.vocab2id)
 
     def get_tag_id(self, tag, dropout=0.0):
         if tag not in self.vocab2id:
             if not self.training:
-                raise Exception(f"Inference Error: Tag {tag} not found in vocab {self.vocab2id}. Please check vocab")
+                logger.warn(f"Inference Error: Tag {tag} not found in vocab. Please check vocab")
+                if self.warning_count < 0: logger.warn(f"Vocab IDs: {self.vocab2id}")
+                self.warning_count += 1
             tag = NONE_LABEL
         if self.training and random.random() < dropout:
             tag = NONE_LABEL
@@ -405,6 +408,7 @@ class MulanCategoricalEmbedder(BaseEmbedder):
     def set_extra_state(self, state: Any): 
         self.vocab2id = state['vocab'] 
         self.vocab2count.update(state.get('counts', {}))
+        print('Loading Vocab counts', self.vocab2count)
     def get_extra_state(self) -> Any: return { 'vocab': self.vocab2id, 'counts': dict(self.vocab2count) }
 
     def embed(self, requires, batch, with_sos=False, **kwargs):

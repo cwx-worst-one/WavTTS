@@ -79,6 +79,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                 hpath: /mnt/bn/music-ai-unified-repo-lq/lihui/py_demo_server/lyric2song_2min/last_soundstream.ckpt
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                     cache_dir: !ref <run_opts[cache_dir]>
+                    version: 24k_125hz_dim32_baseline
         reranker:
             hpath:
                 rewards:

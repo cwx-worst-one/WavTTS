@@ -115,7 +115,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                     wer: 1.0
                 required_modules:
                     # mulan: # English Mulan
-                    #     hpath: hdfs:///home/byte_speech_sv/jingsong.gao/mulan_ckpt/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt
+                    #     hpath: hdfs:///home/byte_speech_sv/bigmusic/models/mulan/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt
                     #     initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                     #         version: "g4"
                     mulan:

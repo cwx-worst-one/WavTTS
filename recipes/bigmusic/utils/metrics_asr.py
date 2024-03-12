@@ -9,6 +9,7 @@ import torch
 
 from logging import getLogger
 from torchaudio.functional import resample
+import re
 
 from dataclasses import dataclass
 
@@ -76,10 +77,12 @@ class Wav2Lyrics:
         self,
         model_name: str = "en_punc",
         device_id = None,
+        keep_alive=True
     ):
         self.verify_dependencies()
         self.device_id = device_id
         self.model_path = ASR_MODEL_PATHS[model_name]
+        self.keep_alive = keep_alive
 
         
 
@@ -114,6 +117,13 @@ class Wav2Lyrics:
         sample_rate: int,
         sample_lengths: Optional[int] = None,
     ) -> Dict[str, Union[List[str], torch.Tensor]]:
+        if not PYPETREL_LIB_FOUND:
+            return { "lyrics": ["" for _ in range(len(wav_bytes_batch))], "audio": wav_bytes_batch }
+
+        prev_flag = os.environ.get("CUDA_VISIBLE_DEVICES")
+        if self.device_id is not None:
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(self.device_id).split(':')[-1]
+
         if not pypetrel.is_engine_initialized():
             pypetrel.initialize_engine(self.model_path)
 
@@ -133,12 +143,6 @@ class Wav2Lyrics:
             wav_bytes_resampled = byte_io.read()
             wav_bytes_batch.append(wav_bytes_resampled)
 
-        prev_flag = os.environ.get("CUDA_VISIBLE_DEVICES")
-        if self.device_id is not None:
-            os.environ["CUDA_VISIBLE_DEVICES"] = str(self.device_id).split(':')[-1]
-
-        if not PYPETREL_LIB_FOUND:
-            return ["" for _ in range(len(wav_bytes_batch))], wav_bytes_batch
 
         num = len(wav_bytes_batch)
         wav_iter = iter(wav_bytes_batch)
@@ -190,13 +194,17 @@ class Wav2Lyrics:
             else:
                 os.environ["CUDA_VISIBLE_DEVICES"] = prev_flag
 
+        if not self.keep_alive:
+            pypetrel.destroy_engine()
+
         return {"lyrics": lyrics, "audio": wavs}
 
 
-def init_asr(hpath, local_rank, cache_dir=None):
+def init_asr(hpath, local_rank, cache_dir=None, keep_alive=True):
     wav2lyrics_module = Wav2Lyrics(
         model_name=hpath,
-        device_id=local_rank
+        device_id=local_rank,
+        keep_alive=keep_alive
     )
     return { 'asr': wav2lyrics_module }
 
@@ -257,7 +265,7 @@ def edit_distance(seq1, seq2):
 
 
 def remove_punc_case(text):
-    text = text.replace("<n>", "")
+    text = re.sub(r"<\w+>", "", text) # Remove special tags: <n>, <verse>, etc
     text = re.sub("[.,!?]", "", text).lower()
     return " ".join(text.split())
 

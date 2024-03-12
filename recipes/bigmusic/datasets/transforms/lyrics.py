@@ -216,8 +216,8 @@ class LyricsTokenTransform():
         return { **item, 'lyrics_tokens': input_ids, 'lyrics_normalized_text': lyrics_text, 'lyrics_tokens_length': lyrics_length }
     
     def __call__(self, item):
+        lyrics_text = item[self.item_key]
         try:
-            lyrics_text = item[self.item_key]
             if self.normalization_fn:
                 lyrics_text = self.normalization_fn(lyrics_text)
             return self.tokenize(item, lyrics_text)

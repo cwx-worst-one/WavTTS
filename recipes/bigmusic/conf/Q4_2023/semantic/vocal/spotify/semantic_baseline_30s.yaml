@@ -23,7 +23,7 @@ extra_params:
     valid_dataset_type: val_mcc60m_groupA_cn
     semantic_type: bestrq
     input_embedders: ["mulan", "lyrics_tokens"]
-    pretrained_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/semantic/step=196000-tr_loss=3.9746-val_accu_0=24.90.ckpt # for loading state dicts
+    pretrained_path: hdfs:///home/byte_speech_sv/bigmusic/models/ar/vocal/20231102-new-baseline-mixed-ctiga-196k-step=196000-tr_loss=3.9746-val_accu_0=24.90.ckpt # for loading state dicts
 
 # running parameters
 run_opts:
@@ -119,12 +119,12 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
     extra_params: !ref <extra_params>
     required_modules:
         mulan:
-            hpath: hdfs:///home/byte_speech_sv/jingsong.gao/mulan_ckpt/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt # mulan 110
+            hpath: hdfs:///home/byte_speech_sv/bigmusic/models/mulan/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt # mulan 110
             initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                 cache_dir: !ref <run_opts[cache_dir]>
                 version: "g4"
         bestrq:
-            hpath: hdfs:///home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
+            hpath: hdfs:///home/byte_speech_sv/bigmusic/models/umm/umm_stage3_music_chroma_vq32768x32-step=0030000-minimal.ckpt
             initializer: !name:recipes.umm.requires.model_initializer.init_stage3
                 cache_dir: !ref <run_opts[cache_dir]>
 

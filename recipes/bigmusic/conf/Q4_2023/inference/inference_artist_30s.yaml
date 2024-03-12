@@ -27,13 +27,13 @@ extra_params:
     mulan_ckpt: infer_from_semantic_ckpt
 
     # Diffusion model
-    diffusion_ckpt: "/mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last-minimal.ckpt"
-    vocoder_ckpt: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/soundstream-step=374999-val_sdr=12.9557-minimal.ckpt"
+    diffusion_ckpt: "hdfs:///home/byte_speech_sv/bigmusic/models/diffusion/model_14_30s_finetune-minimal.ckpt"
+    vocoder_ckpt: "hdfs:///home/byte_speech_sv/bigmusic/models/diffusion/soundstream-step=374999-val_sdr=12.9557-minimal.ckpt"
     is_zh_token: False           # Set to True only if lyrics_lang is zh_phone or zh_wp. Diffusion model from recipes.diffusion.models.tnt_gru
     lang: 'en'
 
     # Used for reranker, only loaded if use_reranker=True
-    mulan_rewards_ckpt: "/mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt"
+    mulan_rewards_ckpt: "hdfs:///home/byte_speech_sv/bigmusic/models/mulan/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt"
     structure_ckpt: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/structure_epoch=185-step=93000.ckpt"
 
     ar_params:

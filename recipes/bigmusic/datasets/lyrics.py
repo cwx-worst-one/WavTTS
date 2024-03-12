@@ -517,7 +517,9 @@ class DefaultDatasets():
             min_song_confidence=0.8, min_segment_confidence=0.8,
             audio_format='npy',
             extra_fields_in_data=None,
-            audio_keys=None
+            shuffle_segments=False,
+            audio_keys=None,
+            **kwargs
         ):
             if isinstance(style_conditions, list): # multiple style conditions - for mixed style training. In that case, use random conditioning
                 batch_transforms = [RandomConditionsTransform(style_conditions)]
@@ -526,7 +528,7 @@ class DefaultDatasets():
             ds = DefaultDatasets.Basic.vocal_parquet_dataset(
                 sample_rate, sample_duration=sample_duration, index_list=index_list,
                 min_song_confidence=min_song_confidence, min_segment_confidence=min_segment_confidence,
-                audio_format=audio_format, extra_fields_in_data=extra_fields_in_data, audio_keys=audio_keys
+                audio_format=audio_format, extra_fields_in_data=extra_fields_in_data, audio_keys=audio_keys, shuffle_segments=shuffle_segments
             )
             ds_batched = transform_dataset(
                 dataset=ds,
@@ -653,7 +655,9 @@ class DefaultDatasets():
                 sample_rate, sample_duration, batch_size, shuffle_buffer_size, 
                 index_list, lyrics_max_seq_len, enable_punctuation=enable_punctuation, style_conditions=style_conditions
             )
-        
+import os
+def get_region(default=None):
+    return os.environ.get('ARNOLD_REGION', default)
 DATASET_CONFIGS = {
     "mcc60m_vocal_style_text": {
         "init_fn": DefaultDatasets.Batched.default_batched_vocal_dataset,
@@ -693,6 +697,17 @@ DATASET_CONFIGS = {
             "index_list": INDEX["US"]["MCCVocalB"],
             "style_conditions": ["style_category,lyrics_tokens","style_audio,lyrics_tokens"],
             "infer_weights": True
+        }
+    },
+    "mcc60m_vocalB_style_mixed_cat_audio_2m": {
+        "init_fn": DefaultDatasets.Batched.default_batched_vocal_dataset,
+        "extra_args": {
+            "index_list": INDEX["US"]["MCCVocalB"],
+            "style_conditions": ["style_category,lyrics_tokens","style_audio,lyrics_tokens"],
+            "infer_weights": True,
+            "shuffle_segments": False,
+            "min_song_confidence": 0.8,
+            "min_segment_confidence": 0.75 # lowering segment confidence, for longer segments
         }
     },
     "mcc60m_vocalB_style_mixed_text_audio_2m": {
@@ -791,10 +806,20 @@ DATASET_CONFIGS = {
             "metadata_tfm_fn": BillboardV2MetadataTextTransform,
         }
     },
+    "spotify_sft_genre3373": {
+        "init_fn": DefaultDatasets.Batched.batched_vocal_parquet_dataset,
+        "extra_args": {
+            "index_list": INDEX[get_region("CN")]["SpotifySFT_Genre3373"],
+            "style_conditions": ["style_category,lyrics_tokens"],
+            "min_song_confidence": 0.55,
+            "min_segment_confidence": 0.5, # lowering segment confidence, for longer segments
+            "metadata_tfm_fn": partial(SpotifyMetadataTextTransform, max_genres=None),
+        }
+    },
     "spotify_sft_artist16": {
         "init_fn": DefaultDatasets.Batched.batched_vocal_parquet_dataset,
         "extra_args": {
-            "index_list": INDEX["CN"]["SpotifySFT_Artist16"],
+            "index_list": INDEX[get_region("CN")]["SpotifySFT_Artist16"],
             "style_conditions": ["style_category,lyrics_tokens"],
             "min_song_confidence": 0.75,
             "min_segment_confidence": 0.75, # lowering segment confidence, for longer segments
@@ -825,7 +850,7 @@ DATASET_CONFIGS = {
     "spotify_sft_billboardv2": {
         "init_fn": DefaultDatasets.Batched.batched_vocal_parquet_dataset,
         "extra_args": {
-            "index_list": INDEX["CN"]["SpotifySFT_BillboardV2"],
+            "index_list": INDEX[get_region("CN")]["SpotifySFT_BillboardV2"],
             "style_conditions": ["style_category,lyrics_tokens","style_audio,lyrics_tokens"],
             "min_song_confidence": 0.75,
             "min_segment_confidence": 0.75, # lowering segment confidence, for longer segments
@@ -835,21 +860,46 @@ DATASET_CONFIGS = {
     "spotify_sft_groupa": {
         "init_fn": DefaultDatasets.Batched.batched_vocal_parquet_dataset,
         "extra_args": {
-            "index_list": INDEX["CN"]["SpotifySFT_GroupA_TTPop"],
+            "index_list": INDEX[get_region("CN")]["SpotifySFT_GroupA_TTPop"],
             "style_conditions": ["style_category,lyrics_tokens","style_audio,lyrics_tokens"],
             "min_song_confidence": 0.75,
             "min_segment_confidence": 0.75, # lowering segment confidence, for longer segments
             "metadata_tfm_fn": SpotifyMetadataTextTransform,
         }
     },
-    "mcc60m_vocalA_style_mixed_text_audio_2m": {
+    "spotify_sft_billboardv2_2min": {
+        "init_fn": DefaultDatasets.Batched.batched_vocal_parquet_dataset,
+        "extra_args": {
+            "index_list": INDEX[get_region("CN")]["SpotifySFT_BillboardV2"],
+            "style_conditions": ["style_category,lyrics_tokens","style_audio,lyrics_tokens"],
+            "min_song_confidence": 0.75,
+            "min_segment_confidence": 0.7, # lowering segment confidence, for longer segments
+            "shuffle_segments": False,
+            "max_num_segments": 2,
+            "metadata_tfm_fn": SpotifyMetadataTextTransform,
+        }
+    },
+    "spotify_sft_groupa_2min": {
+        "init_fn": DefaultDatasets.Batched.batched_vocal_parquet_dataset,
+        "extra_args": {
+            "index_list": INDEX[get_region("CN")]["SpotifySFT_GroupA_TTPop"],
+            "style_conditions": ["style_category,lyrics_tokens","style_audio,lyrics_tokens"],
+            "min_song_confidence": 0.75,
+            "min_segment_confidence": 0.7, # lowering segment confidence, for longer segments
+            "shuffle_segments": False,
+            "max_num_segments": 2,
+            "metadata_tfm_fn": SpotifyMetadataTextTransform,
+        }
+    },
+    "mcc60m_vocalA_style_mixed_cat_audio_2m": {
         "init_fn": DefaultDatasets.Batched.default_batched_vocal_dataset,
         "extra_args": {
             "index_list": INDEX["US"]["MCCVocalA"],
-            "style_conditions": ["style_text,lyrics_tokens","style_audio,lyrics_tokens"],
+            "style_conditions": ["style_category,lyrics_tokens","style_audio,lyrics_tokens"],
             "infer_weights": True,
-            "min_song_confidence": 0.8,
-            "min_segment_confidence": 0.5 # lowering segment confidence, for longer segments
+            "min_song_confidence": 0.75,
+            "min_segment_confidence": 0.70, # lowering segment confidence, for longer segments
+            "shuffle_segments": False,
         }
     },
     "mixed_groupa_tt_pop": {
@@ -1056,7 +1106,7 @@ DATASET_CONFIGS = {
     "val_mcc60m_groupA_cat": {
         "init_fn": DefaultDatasets.Batched.default_validation_dataset,
         "extra_args": {
-            "url2index": INDEX["US"]["MCC60M_VALID_GROUPA"],
+            "url2index": INDEX[get_region("CN")]["MCC60M_VALID_GROUPA"],
             "style_conditions": "style_category,lyrics_tokens",
         }
     },
@@ -1073,13 +1123,6 @@ DATASET_CONFIGS = {
         "extra_args": {
             "url2index": INDEX["CN"]["MCC60M_VALID_GROUPA"],
             "style_conditions": "style_text,lyrics_tokens",
-        }
-    },
-    "val_mcc60m_groupA_cat_cn": {
-        "init_fn": DefaultDatasets.Batched.default_validation_dataset,
-        "extra_args": {
-            "url2index": INDEX["CN"]["MCC60M_VALID_GROUPA"],
-            "style_conditions": "style_category,lyrics_tokens",
         }
     },
     "val_cn_soda": {

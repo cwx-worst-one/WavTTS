@@ -22,11 +22,11 @@ extra_params:
 
     # Semantic model
     semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
-    semantic_ckpt: "/mnt/bn/lyrics-to-song/baseline_models/q4/20231102-new-baseline-mixed-ctiga-196k/checkpoints/step=196000-tr_loss=3.9746-val_accu_0=24.90.ckpt"
-    mulan_ckpt: infer_from_semantic_ckpt
+    semantic_ckpt: hdfs:///home/byte_speech_sv/bigmusic/models/ar/vocal/20231102-new-baseline-mixed-ctiga-196k-step=196000-tr_loss=3.9746-val_accu_0=24.90.ckpt
+    mulan_ckpt: infer_from_semantic_ckpt # set explicit path if error loading cross-region
 
     # Used for reranker, only loaded if use_reranker=True
-    mulan_rewards_ckpt: "/mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt"
+    mulan_rewards_ckpt: "hdfs:///home/byte_speech_sv/bigmusic/models/mulan/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt"
     structure_ckpt: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/structure_epoch=185-step=93000.ckpt"
 
     ar_params:
@@ -95,7 +95,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
     required_modules:
         diffusion_modules:
             diffusion:
-                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last-minimal.ckpt
+                hpath: hdfs:///home/byte_speech_sv/bigmusic/models/diffusion/model_14_30s_finetune-minimal.ckpt
                 initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
                     cache_dir: !ref <run_opts[cache_dir]>
             sampler:
@@ -103,9 +103,10 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                 initializer: !name:recipes.diffusion.inference_from_text_lyrics2song.init_sampler
                     cache_dir: !ref <run_opts[cache_dir]>
             vocoder:
-                hpath: /mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/soundstream-step=374999-val_sdr=12.9557-minimal.ckpt
+                hpath: hdfs:///home/byte_speech_sv/bigmusic/models/diffusion/soundstream-step=374999-val_sdr=12.9557-minimal.ckpt
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                     cache_dir: !ref <run_opts[cache_dir]>
+                    version: 24k_125hz_dim32_baseline
         ar_modules:
             coarse:
                 hpath: /mnt/bn/audio-diffusion/jt/model_archive/vocalmusic/coarse_flash_llama_wav2vec/bestrq_chroma_coarse_0.7b/checkpoints/step=295000-val_accu_0=17.92.ckpt

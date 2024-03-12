@@ -79,6 +79,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                 hpath: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/soundstream-step=374999-val_sdr=12.9557.ckpt
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                     cache_dir: !ref <run_opts[cache_dir]>
+                    version: 24k_125hz_dim32_baseline
         reranker:
             hpath:
                 rewards:

@@ -8,6 +8,7 @@ from recipes.diffusion.models.diffusion_model.utils import run_diffusion
 from apps.bigmusic.umm.diffusion.requires.model_initializer import run_diffusion_vocoder
 from recipes.diffusion.utils.utils import download_checkpoint
 from recipes.soundstorm.lightning.utils import run_soundstorm
+from recipes.musiclm.utils.dist import local_zero_first
 from recipes.bigmusic.lightning.embedding_modules import get_bestrq_umm_tokens
 import importlib
 from recipes.bigmusic.utils.model_initializer import run_2ar
@@ -34,8 +35,7 @@ class SemanticInferenceModule(pl.LightningModule):
         module = importlib.import_module('.'.join(module_paths))
         semantic_class = getattr(module, cls_name)
 
-        semantic_ckpt_path = Path(self.extra_params.semantic_ckpt)
-        if not semantic_ckpt_path.exists():
+        with local_zero_first():
             semantic_dir = Path(self.extra_params.semantic_ckpt).parent.parent.name
             semantic_ckpt_path = download_checkpoint(self.extra_params.semantic_ckpt, f'.module_cache/{semantic_dir}')
 

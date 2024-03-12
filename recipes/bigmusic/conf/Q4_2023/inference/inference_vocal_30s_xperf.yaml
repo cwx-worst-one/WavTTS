@@ -74,6 +74,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                 hpath: null
                 initializer: !name:recipes.diffusion.inference_from_text_lyrics2song.init_sampler
                     cache_dir: !ref <run_opts[cache_dir]>
+                    version: 24k_125hz_dim32_baseline
             vocoder:
                 hpath: /mnt/bn/music-ai-unified-repo-lq/lihui/py_demo_server/lyric2song_base/last_soundstream.ckpt
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder

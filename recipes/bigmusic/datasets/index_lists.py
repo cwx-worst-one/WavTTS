@@ -126,11 +126,12 @@ INDEX = {
         "Mixed_MCC_GroupA_EN": 586, # 420 shards
         "Mixed_MCC_Vocal_EN": 1048, # Clipped - 715. Subset = 1050 Full = 1048
         "Mixed_MCC_GroupAB_EN": 1087, # 1085 - GroupB only
-        "SpotifySFT_Artist16": 1640, # Finetune on 16 artists, 3404 samples
+        "SpotifySFT_Artist16": 1809, # Finetune on 16 artists, 3404 samples
+        "SpotifySFT_Genre3373": 1796, # Finetune on Everynoise genres
         "SpotifySFT_Artist6": 1624, # Finetune on 6 artists, 2687 samples
         "SpotifySFT_Pop400": 1517, # Pop songs 409
-        "SpotifySFT_BillboardV2": 1610, # 1523, # 100k billboard
-        "SpotifySFT_GroupA_TTPop": 1620,
+        "SpotifySFT_BillboardV2": 1835, # 1523, # 100k billboard
+        "SpotifySFT_GroupA_TTPop": 1820, # tt pop + gt lyrics
         "MCCVocalA_DeepChorus": 1576,
         # "SpotifySFT": 1506, # BigMusic_SFT_Bill_19325
         # "SpotifySFT": 1504, # bigmusic_genre40655 from 1M group A
@@ -167,7 +168,6 @@ INDEX = {
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/url2idx/vocal-A-trance.txt",
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/url2idx/vocal-A-trap-rap.txt",
         ],        
-        "MCCVocalA_TT_POP": 123,
         "MCCVocalB_nopunc": [
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-alternative-rock.txt",
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-blues.txt",
@@ -233,6 +233,12 @@ INDEX = {
         "MCCVocalA_1M_Parquet": 93,
         "SSTK_Vocal": 110,
         "CD_Baby": 115, # 115 = 250k subset
+        "MCCVocalA_TT_POP": 123,
+        "SpotifySFT_BillboardV2": 156, # 100k billboard
+        "SpotifySFT_GroupA_TTPop": 158, # tt pop + gt lyrics
+        "SpotifySFT_Artist16": 157 , # Finetune on 16 artists, 3404 samples
+        "SpotifySFT_Genre3373": 159, # Finetune on Everynoise genres
+        "SpotifySFT_All": 160,
         "Billboard-V2": ["hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/js/data/music/billboard_hot200_v2/24000hz/train/20231026_genre/url2index.txt"],
         "Billboard-V2_VALID": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/js/data/music/billboard_hot200_v2/24000hz/test/20231026_genre/url2index.txt",
         "MCCInstrumental": [
