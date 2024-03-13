@@ -92,7 +92,7 @@ run_opts:
     infer_structure_tags: False
     read_structure_tags: True
     region: "CN"
-    lyrics_confidence: 0.1
+    lyrics_confidence: 0.8  # SA ASR confidence
     lyrics_tokenizer: "tts_chinese_frontend_model"
     segment_max_phone_len: 400
     parquet_dataset_ids: [1665, 1662]   # [authorized, zh_artist]

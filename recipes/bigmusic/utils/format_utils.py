@@ -119,6 +119,15 @@ def parse_voice_tag(voice_probs: Optional[Dict[str, float]]) -> str:
     return ""
 
 
+def parse_filter_label(filter_label: Optional[Dict[str, str]]) -> Tuple[bool, bool]:
+    """Return (high_quality, popular_potential).
+    Conservative filtering. Assume the song is high quality if it's not labeled.
+    """
+    if filter_label is None:
+        return True, True
+    return filter_label["high_quality"] == "yes", filter_label["popular_potential"] == "yes"
+
+
 def normalize_text(text, enable_punctuation=False, lowercase=False):
     if lowercase:
         text = text.lower()

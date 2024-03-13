@@ -19,7 +19,7 @@ extra_params:
     train_conditions: "style_category,speaker_id,lyrics_tokens"
     prepare_input_types: []
     input_embedders: [tag_categorical, speaker_id, lyrics_tokens]
-    tag_taxonomy_lang: 'SA'  # Zh, SA
+    tag_taxonomy_lang: "SA"  # Zh, SA
     tag_dropout_rate: 0.25
     line_break_dropout_rate: 0
     section_tag_dropout_rate: 0
@@ -60,7 +60,8 @@ run_opts:
     infer_structure_tags: False
     read_structure_tags: True
     region: "CN"
-    lyrics_confidence: 0.1
+    lyrics_field: "lyrics"
+    lyrics_confidence: 0.1  # Force Alignment confidence
     lyrics_tokenizer: "tts_chinese_frontend_model"
     segment_max_phone_len: 400
     parquet_dataset_ids: [1527]
@@ -85,6 +86,7 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     segment_max_phone_len: !ref <run_opts[segment_max_phone_len]>
     region: !ref <run_opts[region]>
     conditions: !ref <extra_params[train_conditions]>
+    lyrics_field: !ref <run_opts[lyrics_field]>
     lyrics_confidence: !ref <run_opts[lyrics_confidence]>
     read_structure_tags: !ref <run_opts[read_structure_tags]>
     infer_structure_tags: !ref <run_opts[infer_structure_tags]>

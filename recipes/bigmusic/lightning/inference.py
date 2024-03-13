@@ -176,8 +176,10 @@ class SemanticInferenceModule(pl.LightningModule):
             outputs["metadata"] = [{"rewards": x} for x in rewards_breakdown]
             # After re-ranking, sampled_semantic_tokens in batch will be sorted by reward
             raw_semantic_samples = batch["sampled_semantic_tokens"]
-        
-        wavs = truncate_wav_to_eos([raw_wav_output], eos_index_list)
+
+        # (Yilin) Temporary dimension patch
+        _raw_wav_output = [raw_wav_output] if len(raw_wav_output.shape) == 1 else raw_wav_output
+        wavs = truncate_wav_to_eos(_raw_wav_output, eos_index_list)
         raw_semantic_samples = raw_semantic_samples.detach().cpu()
         outputs.update({
             'generated_audio': wavs,
