@@ -1,6 +1,6 @@
 # Adapted from https://github.com/mlcommons/training_results_v1.1/blob/main/NVIDIA/benchmarks/bert/implementations/pytorch/fmha.py
+import flash_attn_cuda
 import torch
-import ctiga_flash_attn_cuda as flash_attn_cuda
 
 from samantha.utils.ctiga.blockmask import convert_blockmask
 

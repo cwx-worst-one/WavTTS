@@ -4,10 +4,10 @@
 # The TensorParallel linear modules are inspired by https://github.com/NVIDIA/apex/blob/master/apex/transformer/tensor_parallel/layers.py
 from functools import partial
 from typing import Optional
-import torch
 
 # import fused_dense_cuda  # from apex
-import ctiga_fused_dense_lib as fused_dense_cuda
+import fused_dense_lib as fused_dense_cuda
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor

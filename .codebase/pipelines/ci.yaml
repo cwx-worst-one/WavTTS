@@ -16,7 +16,7 @@ jobs:
           submodules: False
       - name: isort
         commands:
-          - git ls-files samantha | grep -v samantha/components/ctiga | grep -E "\.py$" | xargs isort --check-only
+          - git ls-files samantha | grep -E "\.py$" | xargs isort --check-only
       - name: black
         commands:
           - git ls-files samantha | grep -E "\.py$" | xargs black --check --diff --color

@@ -1,8 +1,9 @@
 # Copyright (c) 2023, Tri Dao.
 
 from typing import Tuple
+
+import rotary_emb
 import torch
-import ctiga_rotary_emb as rotary_emb
 from einops import rearrange, repeat
 
 
