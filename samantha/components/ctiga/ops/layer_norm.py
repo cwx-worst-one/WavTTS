@@ -1,8 +1,8 @@
 # Copyright (c) 2022, Tri Dao.
 # Adapted from https://github.com/NVIDIA/apex/blob/master/apex/contrib/layer_norm/layer_norm.py
 
-import dropout_layer_norm
 import torch
+import ctiga_dropout_layer_norm as dropout_layer_norm
 from torch.nn import init
 
 

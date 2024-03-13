@@ -1,5 +1,5 @@
-import flash_attn_cuda
 import torch
+import ctiga_flash_attn_cuda as flash_attn_cuda
 import torch.nn.functional as F
 
 

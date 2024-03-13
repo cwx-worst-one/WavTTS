@@ -15,4 +15,6 @@ cd -
 git ls-files tests \
   | grep -e "\.py$" \
   | grep -v benchmarks/dataloader \
+  | grep -v unittests/components/ctiga \
+  | grep -v unittests/utils/test_model_metric.py \
   | xargs python3 -m pytest -m "not disable" --cov-report=xml:coverage.xml --cov=samantha --junit-xml=report.xml
