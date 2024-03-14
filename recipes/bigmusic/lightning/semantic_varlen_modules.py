@@ -20,6 +20,7 @@ from collections import defaultdict
 from samantha.models.ctiga import gpt
 from samantha.utils.ctiga.inference_params import InferenceParams
 from recipes.bigmusic.lightning.semantic_modules import process_eos_indexes, truncate_wav_to_eos
+from recipes.diffusion.models.vocoder_model.utils import vocode_in_chunks
 
 # RL
 from recipes.bigmusic.utils.rewards import (
@@ -638,6 +639,10 @@ class SemanticRLModule(SemanticModuleVarlen):
                 new_freq=self.extra_params.sample_rate,
             )
 
+    def set_requires_grad(self, requires_grad):
+        for n, p in self.named_parameters():
+            p.requires_grad = requires_grad
+
     def _shared_step_rl(self, batch, training_inputs, mode):
         ##### RL #####
         beam = self.extra_params.beam_size
@@ -649,6 +654,7 @@ class SemanticRLModule(SemanticModuleVarlen):
         batch["model_inputs"] = training_inputs['model_inputs'] # needed for predict
 
         # Inference
+        self.set_requires_grad(False) # fix nested autocast bug: https://discuss.pytorch.org/t/autocast-and-torch-no-grad-unexpected-behaviour/93475/2
         sampled_semantic_tokens, model_inputs = super().predict(
             batch,
             self.extra_params,
@@ -671,6 +677,7 @@ class SemanticRLModule(SemanticModuleVarlen):
             "beam_size": beam,
             "batch": batch,
         })
+        self.set_requires_grad(True)
         # Compute sequence probs
         with self.profiler.profile(f"bigmusic.forward.step{self.trainer.global_step}"):
             seq_logits = self.model(inputs_embeds=model_inputs, output_hidden_states=False)
@@ -900,10 +907,14 @@ class SemanticRLModule(SemanticModuleVarlen):
             schdeule_slope=diffusion_params.get("schedule_slope", 2.5),
             classifier_free_guidance=diffusion_params.get("guidance_scale", 2.5),
         ).detach().float()
-        # torch.interpolate causes OOM for large batch sizes > 24. chunking to batch of 8 instead.
-        # If you see this error, lower batch size:
-        # RuntimeError: Expected output.numel() <= std::numeric_limits<int32_t>::max() to be true, but got false.
-        wavs = torch.cat([vocoder.decode(c).detach() for c in torch.split(pred_emb, 1)])
+
+        # vocoder upsample requires a lot of memory. Chunk vocode instead
+        duration = semantic_tokens.shape[-1] / self.extra_params.get('semantic_frame_rate', 25)
+        if duration >= 100:
+            wavs = vocode_in_chunks(pred_emb, vocoder, bs=1, chunk_size=4)
+        else:
+            wavs = vocode_in_chunks(pred_emb, vocoder, bs=1, chunk_size=1)
+
         # Resample and convert to mono if necessary
         if self.resampler is not None:
             wavs = self.resampler(wavs).mean(dim=1, keepdim=True)

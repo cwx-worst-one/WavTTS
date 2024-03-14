@@ -52,6 +52,7 @@ from itertools import zip_longest
 from typing import Optional
 from recipes.mi1.models.music_sft import get_m1_tags
 from torchaudio.transforms import Resample
+from recipes.diffusion.models.vocoder_model.utils import vocode_in_chunks
 
 from recipes.audio_quality_classifier.models.audio_quality_model.utils import aq_classifier_inference
 
@@ -1037,9 +1038,13 @@ class SemanticRLModule(SemanticModule):
             classifier_free_guidance=diffusion_params.get("guidance_scale", 2.5),
         ).detach().float()
         # torch.interpolate causes OOM for large batch sizes > 24. chunking to batch of 8 instead.
-        # If you see this error, lower batch size:
-        # RuntimeError: Expected output.numel() <= std::numeric_limits<int32_t>::max() to be true, but got false.
-        wavs = torch.cat([vocoder.decode(c).detach() for c in torch.split(pred_emb, 1)])
+        # vocoder upsample requires a lot of memory. Chunk vocode instead
+        duration = semantic_tokens.shape[-1] / self.extra_params.get('semantic_frame_rate', 25)
+        if duration >= 100:
+            wavs = vocode_in_chunks(pred_emb, vocoder, bs=1, chunk_size=4)
+        else:
+            wavs = vocode_in_chunks(pred_emb, vocoder, bs=1, chunk_size=1)
+
         # Resample and convert to mono if necessary
         if self.resampler is not None:
             wavs = self.resampler(wavs).mean(dim=1, keepdim=True)
