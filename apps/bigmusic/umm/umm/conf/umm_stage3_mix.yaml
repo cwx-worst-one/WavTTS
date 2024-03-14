@@ -119,7 +119,7 @@ pl_module: !new:samantha.models.umm.lit_module.Stage3Improved
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
-    criterion_cls: !name:samantha.criterion.criterion.UMMLoss
+    criterion_cls: !name:samantha.criterion.criterion.UMMMergeLoss
         config: !ref <config>
     extra_params: !ref <extra_params>
     required_modules:
