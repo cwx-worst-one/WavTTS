@@ -14,6 +14,8 @@ from recipes.bigmusic.utils.metrics_asr import (
 from recipes.bigmusic.lightning.embedding_modules import get_bestrq_umm_tokens
 from recipes.musiclm.inference.utils import dump_wav
 from torchaudio.functional import loudness, resample
+import librosa
+from scipy.stats import entropy
 
 import json
 import euler
@@ -472,3 +474,66 @@ def semantic_diversity_sim_reward(hyp_umm_tokens, ref_umm_tokens, device):
         ref_diversity = float(len(ref.unique())) / ref.shape[-1]
         semantic_diversity_sim_rewards[i] = 1 - abs(hyp_diversity - ref_diversity)
     return semantic_diversity_sim_rewards
+
+
+@torch.no_grad()
+def _chroma_stats(audio, sample_rate):
+    if len(audio.shape) == 2:
+        audio = audio.squeeze(0)
+    chroma = librosa.feature.chroma_stft(
+        y=audio.float().cpu().numpy(),
+        sr=sample_rate,
+        hop_length=sample_rate // 4,    # 0.25s
+    )
+    melody = chroma.argmax(axis=0)
+    probs = np.bincount(melody) / len(melody)
+    return probs.max(), entropy(probs)
+
+
+@torch.no_grad()
+def chroma_reward(
+    sampled_audio,
+    sample_rate,
+    device,
+    prob_thresh=0.35,
+    entropy_thresh=1.7,
+):
+    chroma_rewards = torch.zeros(len(sampled_audio)).to(device)
+    for i in range(len(sampled_audio)):
+        max_prob, prob_entropy = _chroma_stats(sampled_audio[i], sample_rate)
+        if max_prob < prob_thresh:
+            chroma_rewards[i] += 0.5
+        if prob_entropy > entropy_thresh:
+            chroma_rewards[i] += 0.5
+    return chroma_rewards
+
+
+@torch.no_grad()
+def chroma_sim_reward(
+    sampled_audio,
+    target_audio,
+    sample_rate,
+    device,
+):
+    _, beam = _infer_batch_beam(sampled_audio, target_audio)
+    ref_stats = [
+        _chroma_stats(target_audio[i], sample_rate) for i in range(len(target_audio))
+    ]
+    hyp_stats = [
+        _chroma_stats(sampled_audio[i], sample_rate) for i in range(len(sampled_audio))
+    ]
+    chroma_sim_rewards = torch.zeros(len(sampled_audio)).to(device)
+    for i in range(len(sampled_audio)):
+        hyp_max_prob, hyp_prob_entropy = hyp_stats[i]
+        ref_max_prob, ref_prob_entropy = ref_stats[i // beam]
+        # Don't penalize if generated music has more variety than reference
+        if hyp_max_prob <= ref_max_prob:
+            max_prob_diff = 0
+        else:
+            max_prob_diff = min(1.0, abs(ref_max_prob - hyp_max_prob) / ref_max_prob)
+        if hyp_prob_entropy >= ref_prob_entropy:
+            prob_entropy_diff = 0
+        else:
+            prob_entropy_diff = min(1.0, abs(ref_prob_entropy - hyp_prob_entropy) / ref_prob_entropy)
+        chroma_sim_rewards[i] = 1 - 0.5 * (max_prob_diff + prob_entropy_diff)
+    return chroma_sim_rewards

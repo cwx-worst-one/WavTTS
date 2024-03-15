@@ -41,7 +41,7 @@ class SemanticInferenceModule(pl.LightningModule):
 
         self.semantic_module: BaseModule = semantic_class.load_from_checkpoint(
             semantic_ckpt_path,
-            # pay attention to the logs to make sure the model is loaded correctly
+            # need to be False to load RL ckpts
             strict=False,
         ).eval()
         if cls_name == "SemanticModuleVarlenXperf" or cls_name == "SemanticModuleXperf":

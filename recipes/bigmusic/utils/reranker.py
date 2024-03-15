@@ -15,6 +15,7 @@ from recipes.bigmusic.utils.rewards import (
     loudness_reward,
     audio_metrics_reward,
     semantic_diversity_reward,
+    chroma_reward,
 )
 
 
@@ -216,6 +217,12 @@ class Reranker:
         elif rw_type == "semantic_diversity":
             return semantic_diversity_reward(
                 batch["sampled_semantic_tokens"],
+                device=sampled_audio.device,
+            )
+        elif rw_type == "chroma":
+            return chroma_reward(
+                sampled_audio,
+                sample_rate=extra_params.sample_rate,
                 device=sampled_audio.device,
             )
         else:

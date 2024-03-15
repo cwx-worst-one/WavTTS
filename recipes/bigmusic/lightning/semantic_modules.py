@@ -31,6 +31,8 @@ from recipes.bigmusic.utils.rewards import (
     intensity_sim_reward,
     semantic_diversity_reward,
     semantic_diversity_sim_reward,
+    chroma_reward,
+    chroma_sim_reward,
 )
 import numpy as np
 import random
@@ -1256,6 +1258,19 @@ class SemanticRLModule(SemanticModule):
             return semantic_diversity_sim_reward(
                 items["sampled_semantic_tokens"],
                 items["target_semantic_tokens"],
+                device=sampled_audio.device,
+            )
+        elif reward_type == "chroma":
+            return chroma_reward(
+                sampled_audio,
+                sample_rate=self.extra_params.sample_rate,
+                device=sampled_audio.device,
+            )
+        elif reward_type == "chroma_sim":
+            return chroma_sim_reward(
+                sampled_audio,
+                target_audio,
+                sample_rate=self.extra_params.sample_rate,
                 device=sampled_audio.device,
             )
         else:
