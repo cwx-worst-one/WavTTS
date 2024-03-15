@@ -1041,9 +1041,9 @@ class SemanticRLModule(SemanticModule):
         # vocoder upsample requires a lot of memory. Chunk vocode instead
         duration = semantic_tokens.shape[-1] / self.extra_params.get('semantic_frame_rate', 25)
         if duration >= 100:
-            wavs = vocode_in_chunks(pred_emb, vocoder, bs=1, chunk_size=4)
+            wavs = vocode_in_chunks(pred_emb, vocoder, mini_bs=1, chunk_size=4)
         else:
-            wavs = vocode_in_chunks(pred_emb, vocoder, bs=1, chunk_size=1)
+            wavs = vocode_in_chunks(pred_emb, vocoder, mini_bs=1, chunk_size=1)
 
         # Resample and convert to mono if necessary
         if self.resampler is not None:
