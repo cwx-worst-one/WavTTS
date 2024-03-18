@@ -74,60 +74,6 @@ def rewrite_metadata(metadata, type="Vocal"):
     return text
 
 
-def parse_sa_music_tagging(music_tagging: Optional[Dict], sinking_threshold: float) -> Tuple[List[str], List[str], bool]:
-    def parse_result(result: Union[List, str]) -> str:
-        if isinstance(result, str):
-            return result
-        if len(result) == 0:
-            return ""
-        return result[0]
-
-    def map_tag(tag: str) -> str:
-        """Replace certain tags in the dataset"""
-        return SA_TAGS_SPECIAL_MAP.get(tag, tag)
-
-    # The order should match `mir_data_util`
-    order = ["Genre20", "Mood", "Theme", "MusicLowQuality", "Language"]
-
-    if music_tagging is None:
-        return [""] * len(order), [], False
-    sinking_prob = music_tagging["MusicLowQuality"]["Sinking"]
-    is_sinking = sinking_prob >= sinking_threshold
-    quality = "Sinking" if is_sinking else "non-Sinking"
-    tags = [quality if item == "MusicLowQuality" else map_tag(parse_result(music_tagging[item]["result"])) for item in order]
-    unfamiliar_tags = {cat_name: tag for tag, cat_vocab_tags, cat_name in zip(tags, SA_CAT_VOCAB, order) if tag not in cat_vocab_tags}
-    return [(tag if tag in cat_vocab_tags else "") for tag, cat_vocab_tags in zip(tags, SA_CAT_VOCAB)], unfamiliar_tags, is_sinking
-
-
-def parse_voice_tag(voice_probs: Optional[Dict[str, float]]) -> str:
-    """Return the voice tag based on probablity thresholds. 'adult' tag is not used."""
-    if voice_probs is None:
-        return ""
-    is_child = voice_probs["child"] >= VOICE_THRESHOLDS["Child"]
-    if is_child:
-        return "Child"
-    is_female = voice_probs["female"] >= VOICE_THRESHOLDS["Female"]
-    is_male = voice_probs["male"] >= VOICE_THRESHOLDS["Male"]
-    if is_female and not is_male:
-        return "Female"
-    if is_male and not is_female:
-        return "Male"
-    if is_female and is_male:
-        if voice_probs["female"] >= voice_probs["male"]:
-            return "Female"
-        return "Male"
-    return ""
-
-
-def parse_filter_label(filter_label: Optional[Dict[str, str]]) -> Tuple[bool, bool]:
-    """Return (high_quality, popular_potential).
-    Conservative filtering. Assume the song is high quality if it's not labeled.
-    """
-    if filter_label is None:
-        return True, True
-    return filter_label["high_quality"] == "yes", filter_label["popular_potential"] == "yes"
-
-
 def normalize_text(text, enable_punctuation=False, lowercase=False):
     if lowercase:
         text = text.lower()

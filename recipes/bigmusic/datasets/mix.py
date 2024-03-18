@@ -1,12 +1,7 @@
-import copy
-from dataclasses import dataclass
-import random
 import json
-import math
 from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Tuple
 import pytorch_lightning as pl
 import torch
-import numpy as np
 import webdataset as wds
 from functools import partial
 from torch.utils.data import DataLoader
@@ -17,14 +12,9 @@ from webdataset import shardlists
 from webdataset.pipeline import DataPipeline
 import logging, phonemizer
 from recipes.bigmusic.datasets.tokenizers.phoneme import MAX_PHONE_LEN
-from recipes.bigmusic.datasets.transforms.lyrics import rewrite_metadata, rewrite_playlist_labels
-from recipes.bigmusic.datasets.mir_data_util import ARTIST_ID_MAP_V2
-from recipes.bigmusic.utils.format_utils import (
-    normalize_text,
-    parse_sa_music_tagging,
-    parse_voice_tag,
-    parse_filter_label,
-)
+from recipes.bigmusic.datasets.utils.zh_datasets import ZhMetaTransform
+from recipes.bigmusic.datasets.utils.zh_meta import SongSlice, ZhMetaParseError, ZhMetaTransformError
+from recipes.bigmusic.utils.format_utils import normalize_text
 
 from recipes.datasets.mcc.mix import (
     INDEX,
@@ -32,14 +22,7 @@ from recipes.datasets.mcc.mix import (
     BaseTransforms,
     DataModule
 )
-from recipes.datasets.mcc.sami_tokenizer import (
-    SamiOfflineTokenizer,
-    SamiTokenizerError,
-    Phrase,
-    drop_out_line_breaks,
-    drop_out_section_tags,
-    move_out_section_tags, 
-)
+from recipes.datasets.mcc.sami_tokenizer import SamiOfflineTokenizer, SamiTokenizerError
 
 from recipes.musiclm.utils.dist import local_zero_first
 from recipes.musiclm.transforms.audio import FastNormalizeAudio
@@ -78,7 +61,6 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
     max_length = max([x["target_audio"].shape[-1] for x in batch])
     random_pad = Pad(n_samples=max_length)
     default_lyrics_token = torch.full((max_phone_len,), PHONE_PAD_ID, dtype=torch.int)    
-    default_speaker_id = ARTIST_ID_MAP_V2['zh_empty']
     target_audio = []   
     style_text = []    
     normalized_text = []
@@ -104,7 +86,7 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
             style_label = style_label[0]
         style_text.append(style_label)
 
-        speaker_id.append(batch[idx].get("artist_id", default_speaker_id))
+        speaker_id.append(batch[idx]["artist_id"])
         
         construct = lambda key, default: \
             batch[idx][key].clone().detach() if key in batch[idx] and batch[idx][key] is not None \
@@ -152,400 +134,6 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
     return batch
 
 
-def format_music_structure_tags(structure_tags):
-    # This function converts the music_structure field in metadata into the format of [{'tag': tag, 'start_time': sec, 'end_time': sec}]
-    # The music_structure are extracted from ground truth lyrics.
-    if not structure_tags:
-        return None
-    reformated_structure_tags = []
-    for structure_tag in structure_tags:
-        tag_text = structure_tag['tag'].lower()
-        if "chorus" in tag_text:
-            structure_tag['tag'] = "chorus"
-            reformated_structure_tags.append(structure_tag)
-        if "verse" in tag_text:
-            structure_tag['tag'] = "verse"
-            reformated_structure_tags.append(structure_tag)
-        if "section" in tag_text:
-            structure_tag['tag'] = "section"
-            reformated_structure_tags.append(structure_tag)
-    return reformated_structure_tags
-
-
-def format_deepchorus_structure_tags(deepchorus_tags):
-    # This function converts the deepchorus field in metadata into the format of [{'tag': tag, 'start_time': sec, 'end_time': sec}]
-    # The deepchorus tags are inferred based on the audio.
-    structure_tags = []
-    for segment in deepchorus_tags['segments']:
-        structure_tag = {"tag": segment["label"]}
-        structure_tag['start_time'] = segment["interval"][0]
-        structure_tag['end_time'] = segment["interval"][1]
-        structure_tags.append(structure_tag)
-    return structure_tags
-
-
-def format_utterances(utterances, time_in_sec=False, min_confidence=0.2):
-    # This function cleans up the raw utterances data from metadata.
-    # Extracts necessary information: [start_time_in_sec, end_time_in_sec, lyrics text with additional tags, precomputed phonemes]
-    new_utterances = []    
-    for i, u in enumerate(utterances):
-        confidence = u.get('confidence', 1)
-        if confidence < min_confidence:
-            continue
-
-        phone = u.get('phoneme', '')        
-        phone = '' if not phone else phone
-
-        if "lyrics" in u:
-            u["text"] = u["lyrics"]
-        
-        utt_start = u.get('start_time', None)
-        if utt_start is None:
-            continue
-        utt_start = math.floor(utt_start)   # Round down so we don't miss the first few phonemes
-        utt_end = u.get('end_time', None)
-        if utt_end is None:
-            if i < (len(utterances) - 1):
-                utt_end = max(math.floor(utterances[i+1].get('start_time', 0)), utt_start+1)
-            else:
-                continue
-        utt_end = math.ceil(utt_end)        # Round up so we don't miss the last few phonemes
-        if time_in_sec:
-            new_utterances.append([utt_start, utt_end, u['text'], phone])
-        else:
-            # TODO (QQ) handle ms directly instead of converting to int.
-            new_utterances.append([math.floor(utt_start/1000), math.ceil(utt_end/1000), u['text'], phone])
-
-
-    # Sanity check utterances
-    utterances = []
-    for i, u in enumerate(new_utterances):
-        if i > 0 and u[0] <= 0 and ":" in u[2]:
-            # Handle the case of (0, 97, '合:对的人'), (-1, 97, '合:对的人')
-            if i+1 < len(new_utterances) and u[1] > new_utterances[i+1][1]:
-                # Handle the case of swap (0, 31, '合:色即是空 空即是色'), (25, 28, '选择就是选择无所谓对与错')
-                u[0] = new_utterances[i+1][1]
-                new_utterances[i] = new_utterances[i+1]
-                new_utterances[i+1] = u            
-            else:
-                # Handle the case of (0, 25, '合:色即是空 空即是色'), (25, 28, '选择就是选择无所谓对与错')
-                u[0] = min(new_utterances[max(i-1,0)][1], u[1]-1)
-        if u[1] - u[0] > 0:
-            # Only keep utterances that are longer than 1 sec.
-            utterances.append(u)
-    # Remove duplicate utterances, retain order.
-    uniq_utt_idx = []
-    for i in range(len(utterances)-1):
-        if (utterances[i][0] == utterances[i+1][0]) and (utterances[i][1] == utterances[i+1][1]):
-            continue
-        uniq_utt_idx.append(i)
-    utterances = [utterances[i] for i in uniq_utt_idx]
-    
-    if len(utterances) < 1:
-        return []
-
-    # Sanity check: utterances are non-overlapping.
-    for i in range(len(utterances)-1):
-        if utterances[i][1] > utterances[i+1][0] + 5:
-            # logging.warning("utterances need to be non-overlapping")
-            # TODO (QQ) need to handle time stamps of '合:色即是空 空即是色' more carefully.
-            # print([x[:3] for x in utterances])
-            return []
-        
-    return utterances
-
-
-def extract_seg_from_utts(i, utterances, min_duration, max_duration, new_line_token, sec_start_idx=None):
-    # Given the start time (and end time), combine the utterances in the window into a segment
-    # Output is in the format [seg_start_sec, seg_end_sec, lyrics_text, precomputed_phonemes, seg_tag]
-    s, cur_seg = i, []
-    seg_tag = sec_start_idx[i] if sec_start_idx else "None"
-    while i < len(utterances) and (utterances[i][1] - utterances[s][0] < min_duration):
-        cur_seg.append(utterances[i])
-        i += 1
-    j = i
-    while j < len(utterances) and utterances[j][1] - utterances[s][0] <= max_duration:
-        j += 1
-    if j == i:
-        i = s + 1
-        return (i, None)
-    else:
-        # Extract a segment with target duration uniformly distributed between min/max duration.
-        k = random.randint(i+1, j)
-        cur_seg.extend([utterances[kk] for kk in range(i, k)])
-        seg_start = cur_seg[0][0]
-        seg_end = cur_seg[-1][1]
-        lyrics_text = ""
-        for kk in range(s, k):
-            if sec_start_idx and (kk in sec_start_idx):
-                seg_tag = sec_start_idx[kk]
-                lyrics_text = lyrics_text + ("[" + seg_tag + "]" + ". ")                
-            lyrics_text = lyrics_text + utterances[kk][2] + ". "
-        phoneme_sequence = new_line_token.join([u[3] for u in cur_seg])    
-        new_seg = [
-            seg_start, 
-            seg_end, 
-            lyrics_text,  # lyrics text
-            phoneme_sequence,   # precomputed lyrics phonemes
-            seg_tag]
-        i = k
-        return (i, new_seg)
-
-
-@dataclass
-class SongSlice:
-    phrases: List[Phrase]
-
-    @property
-    def start(self) -> int:
-        return self.phrases[0].start
-
-    @property
-    def end(self) -> int:
-        return self.phrases[-1].end
-
-    @property
-    def duration(self) -> int:
-        return self.end - self.start
-
-    def is_time_span_valid(self, time_span: Tuple[int, int]) -> bool:
-        start, end, duration = self.start, self.end, self.duration
-        min_duration, max_duration = time_span
-        return ((min_duration <= duration <= max_duration) and 
-                start >= 0 and end >= 0 and start < end)
-
-    def slice_audio(self, audio, sample_rate: int):
-        slice_start, slice_end = self.start, self.end
-        start = int(slice_start * sample_rate)
-        end = int(slice_end * sample_rate)
-        return audio[:, start:end]
-
-
-def remove_short_inst_phrases(song_slice: SongSlice) -> Optional[SongSlice]:
-    """Remove short instrumental phrases, or verse/chorus/bridge without utterance to avoid adding unnessary section tags."""
-    phrases=[
-        p for p in song_slice.phrases
-        if p.has_utterance or (p.section_tag not in ["verse", "chorus", "bridge"] and p.duration >= 2)
-    ]
-    return SongSlice(phrases=phrases) if phrases else None
-
-
-def group_utterances_with_structure(
-    utterances: List[Dict],
-    min_duration: int,
-    max_duration: int,
-    structure_tags: Optional[Dict] = None,
-    complete_section: bool = False,
-) -> List[SongSlice]:
-    """Segment the full song into a list of SongSlice, each consists of multiple utterances."""
-    def _format_utterances(utterances: Dict) -> List[Phrase]:
-        formatted_us = format_utterances(utterances)
-        return [
-            Phrase.parse(text=nt, phonemes=phonemes, time_span=(start, end)) 
-            for start, end, nt, phonemes in formatted_us
-        ]
-
-    def get_overlap(phrase_time_span: Tuple[int, int], section_time_span: Tuple[float, float]) -> Optional[Tuple[float, float]]:
-        left_overlap = max(phrase_time_span[0], section_time_span[0])
-        right_overlap = min(phrase_time_span[1], section_time_span[1])
-        if right_overlap <= left_overlap:
-            return None
-        return (left_overlap, right_overlap)
-
-    def get_overlap_dur(phrase_time_span: Tuple[int, int], section_time_span: Tuple[float, float]) -> float:
-        overlap = get_overlap(phrase_time_span, section_time_span)
-        if overlap is None:
-            return 0
-        return overlap[1] - overlap[0]
-
-    def get_section_span(structure_tag: Dict) -> Tuple[int, int]:
-        return math.floor(structure_tag["start_time"]), math.ceil(structure_tag["end_time"])
-
-    def add_section_tag(phrase: Phrase) -> Phrase:
-        """Return a new phrase with a section tag based on the longest overlap"""
-        if not structure_tags:
-            return phrase
-        overlaps = [
-            get_overlap_dur(phrase.time_span, get_section_span(structure_tag)) 
-            for structure_tag in structure_tags
-        ]
-        if not overlaps:
-            return phrase
-        idx = int(np.argmax(overlaps))
-        return phrase._replace(section_tag=structure_tags[idx]["tag"])
-
-    def get_inst_phrases(time_span: Tuple[int, int]) -> List[Phrase]:
-        phrases = []
-        for structure_tag in structure_tags:
-            overlap = get_overlap(time_span, get_section_span(structure_tag))
-            if not overlap:
-                continue
-            phrases.append(Phrase(section_tag=structure_tag["tag"], time_span=overlap))
-        return phrases
-
-    def insert_inst_phrases(phrases: List[Phrase], song_time_span: Tuple[int, int]) -> List[Phrase]:
-        """Insert instrument phrases if a gap presents between two adjacent vocal phrases."""
-        song_start, song_end = song_time_span
-        if not phrases:
-            return get_inst_phrases(song_time_span)
-        new_phrases = []
-        for idx, (curr_phrase, next_phrase) in enumerate(zip(phrases, phrases[1:] + [None])):
-            # the gap between song start and the first phrase's start
-            if idx == 0 and curr_phrase.start - song_start > 0:  # first phrase
-                _phrases = get_inst_phrases((song_start, curr_phrase.start))
-                new_phrases.extend(_phrases)
-            # add the current phrase
-            new_phrases.append(curr_phrase)
-            # the gap between the current phrase and the next phrase
-            if idx < len(phrases) - 1 and next_phrase.start - curr_phrase.end > 0:
-                _phrases = get_inst_phrases((curr_phrase.end, next_phrase.start))
-                new_phrases.extend(_phrases)
-            # the gap between the last phrase's end and the song end
-            elif idx == len(phrases) - 1 and song_end - curr_phrase.end > 0:  # last phrase
-                _phrases = get_inst_phrases((curr_phrase.end, song_end))
-                new_phrases.extend(_phrases)
-        return new_phrases
-
-    def split_inst_phrase(phrase: Phrase, split_t: int) -> List[Phrase]:
-        # exceptions should not be possible, but just in case
-        if phrase.has_utterance:
-            raise ValueError("Invalid inst phrase.")
-        start, end = phrase.time_span
-        if split_t >= end:
-            raise ValueError("Invalid desired_t for phrase split.")
-        return [
-            Phrase(section_tag=phrase.section_tag, time_span=(start, split_t)),
-            Phrase(section_tag=phrase.section_tag, time_span=(split_t, end)),
-        ]
-
-    def get_phrase_group_dur(phrase_group: List[Phrase]) -> int:
-        if not phrase_group:
-            return 0
-        return phrase_group[-1].end - phrase_group[0].start
-
-    def get_section_start_ind(phrases: List[Phrase]) -> List[int]:
-        sec_tags = [p.section_tag for p in phrases]
-        ind = [0]
-        for idx, (curr_tag, next_tag) in enumerate(zip(sec_tags, sec_tags[1:])):
-            if next_tag != curr_tag:
-                ind.append(idx + 1)
-        return ind
-
-    def get_song_slices(phrases: List[Phrase]) -> List[SongSlice]:
-        """Group phrases into song slices (might chunk instrument phrases).
-        The logic assumes there are short overlaps (~1s) between phrases, or some phrases might
-        have gaps inbetween. Therefore, the most accurate group duration is (end - start).
-        """
-        section_start_ind = get_section_start_ind(phrases)
-        song_slices = []
-        # Start from the beginning of each section, obtain a chunk
-        for start_idx in section_start_ind:
-            phrases_in_proc = copy.deepcopy(phrases)[start_idx:]
-            # the length will grow, the last index helps insert the last group
-            idx, group = 0, []
-            while idx <= len(phrases_in_proc):
-                phrase = phrases_in_proc[idx] if idx < len(phrases_in_proc) else None
-                # add a new song slice if unable to include the current one
-                if (phrase is None) or (get_phrase_group_dur(group + [phrase]) > max_duration):
-                    if group:
-                        song_slices.append(SongSlice(phrases=group))
-                        break
-                # add phrase to group
-                if phrase.has_utterance:
-                    # Unable to chunk utterance, add directly
-                    group.append(phrase)
-                else:
-                    if get_phrase_group_dur(group + [phrase]) <= max_duration:
-                        group.append(phrase)
-                    else:
-                        # The corner case is to have an inst phrase that has a gap
-                        # between it and its previous phrase, and the phrase's start
-                        # is after the split_t. We need to handle two cases separately.
-                        _start = group[0].start if group else phrase.start
-                        split_t = math.floor(_start + max_duration)
-                        # split_t < phrase.end is always valid, otherwise it would go to the above if branch.
-                        if split_t > phrase.start:
-                            inst_phrases = split_inst_phrase(phrase, split_t)
-                            # split the current inst phrase into two, insert into the current index
-                            phrases_in_proc[idx:idx+1] = inst_phrases
-                            group.append(phrases_in_proc[idx])
-                        else:  # impossible to utilize the current phrase in the current group
-                            if group:
-                                song_slices.append(SongSlice(phrases=group))
-                                break
-                idx += 1
-        return song_slices
-
-    def get_song_slices_complete_section(phrases: List[Phrase]) -> List[SongSlice]:
-        """Group phrases into song slices, but do not split any section."""
-        if not phrases: return []
-        section_start_ind = get_section_start_ind(phrases) + [len(phrases)]
-        groups = [phrases[start: end] for start, end in zip(section_start_ind, section_start_ind[1:])]
-        song_slices = []
-        _phrases = []
-        for group in groups:
-            acc_dur = get_phrase_group_dur(_phrases)
-            group_dur = get_phrase_group_dur(group)
-            if acc_dur + group_dur <= max_duration:
-                _phrases.extend(group)
-            else:  # exceed max_duration
-                if _phrases:
-                    song_slices.append(SongSlice(phrases=_phrases))
-                if group_dur <= max_duration:
-                    _phrases = group[:]  # reset _phrases and insert, shallow copy (necessary)
-                else:
-                    _phrases = []  # the current group is too long, reset and skip
-        if _phrases and get_phrase_group_dur(_phrases) <= max_duration:  # insert the last one
-            song_slices.append(SongSlice(phrases=_phrases))
-        return song_slices
-
-    song_time_span = (math.floor(structure_tags[0]["start_time"]), math.ceil(structure_tags[-1]["end_time"]))
-    phrases = _format_utterances(utterances)
-    phrases = list(map(add_section_tag, phrases))
-    phrases = insert_inst_phrases(phrases, song_time_span)
-    return get_song_slices_complete_section(phrases) if complete_section else get_song_slices(phrases)
-
-
-def group_utterances(utterances, min_duration, max_duration, time_in_sec=False,
-                     new_line_token=' ', infer_structure_tags=False):
-    # Segment the full song into segments, each segment consists of multiple utterances.
-    utterances = format_utterances(utterances)
-    if not utterances:
-        return []
-    sec_start_idx = {}        
-    if infer_structure_tags:        
-        # Infer sections based on separation of utterances.
-        last_utt_end = -10
-        MIN_NUM_CHAR = 3    # Minimum number of characters in an utterance to infer it's valid vocal.
-        MIN_SEP_WITHIN_SEC = 4  # Max separation of two utterance to infer there is a section break.
-        for i, utt in enumerate(utterances):
-            if (utt[0] - last_utt_end >= MIN_SEP_WITHIN_SEC) and len(utt[2]) > MIN_NUM_CHAR:
-                sec_start_idx[i] = "section"
-            last_utt_end = utt[1]
-
-    segs = []
-    if sec_start_idx:
-        # Extract segments starting from (inferred) starting points of sections.
-        for sec_start_id, sec_tag in sec_start_idx.items():
-            _, new_seg = extract_seg_from_utts(
-                sec_start_id, utterances, min_duration, max_duration, new_line_token, sec_start_idx)
-            if new_seg:
-                segs.append(new_seg)
-    else:
-        # Group utterances into random non-overlapping segments.
-        i = 0
-        while i < len(utterances):
-            i, new_seg = extract_seg_from_utts(i, utterances, min_duration, max_duration, new_line_token)
-            if new_seg:
-                segs.append(new_seg)
-
-            # Move to the next vocal starting point
-            while i < len(utterances):
-                if len(utterances[i][2]) >= 2:
-                    break
-                i += 1
-    return segs
-
 
 ########################## Chinese Datasets ######################
 
@@ -556,26 +144,27 @@ class VocalTransforms(BaseTransforms):
 
     def __init__(
         self,
+        data_id: Optional[int] = None,
         sample_rate: int = 24000,
         audio_key: str = "audio.npy",
         index_key: str = "__index_data__",
         min_duration: int = 1,
         max_duration: int = 30,
-        min_volume_threshold: float = 0.05,
-        loudness_ratio_threshold: float = 0.2,
-        lyrics_field: str = "lyrics",
+        min_volume_threshold: float = 0.05,  # TODO: Remove it, not used
+        loudness_ratio_threshold: float = 0.2,  # TODO: Remove it, not used
+        lyrics_field: str = "lyrics",  # TODO: Remove it, not used
         lyrics_confidence: float = 0.8,
         normalize_audio: bool = False,
-        tokenizer=None,
+        tokenizer=None,   # TODO: Remove it, not used
         frame_rate: int = 25,
-        read_structure_tags: bool = False,
+        read_structure_tags: bool = False,  # TODO: Remove it, not used
         segment_method: str = "random",
         max_seg_per_track: int = -1,
         segment_max_phone_len: int = 400,   
-        infer_structure_tags: bool = False,
+        infer_structure_tags: bool = False,  # TODO: Remove it, not used
         sinking_threshold: float = 0.51,
-        quality_filter: bool = False,
-        tag_taxonomy_lang: str = "SA",
+        quality_filter: bool = False,  # TODO: Remove it, not used
+        tag_taxonomy_lang: str = "SA",  # TODO: Remove it, not used.
         line_break_dropout_rate: float = 0.0,
         section_tag_dropout_rate: float = 0.0,
     ):
@@ -583,28 +172,39 @@ class VocalTransforms(BaseTransforms):
         self.sample_rate = sample_rate
         self.min_duration = min_duration
         self.max_duration = max_duration
-        self.min_volume_threshold = min_volume_threshold
-        self.loudness_ratio_threshold = loudness_ratio_threshold
+        # self.min_volume_threshold = min_volume_threshold
+        # self.loudness_ratio_threshold = loudness_ratio_threshold
         self.lyrics_confidence = lyrics_confidence
         self.audio_key = audio_key
         self.index_key = index_key  
-        self.tokenizer = tokenizer
+        # self.tokenizer = tokenizer
         self.frame_rate = frame_rate
-        self.infer_structure_tags = infer_structure_tags
-        self.read_structure_tags = read_structure_tags
+        # self.infer_structure_tags = infer_structure_tags
+        # self.read_structure_tags = read_structure_tags
         self.segment_method = segment_method
         self.max_seg_per_track = max_seg_per_track
         self.segment_max_phone_len = segment_max_phone_len
         # There are two fields for lyrics: "lyrics" (ASR) and "lyrics_gt" (Original). 
         # self.yrics_field is the top priority, fall back to the other field if the field is empty.
-        self.lyrics_field = lyrics_field
+        # self.lyrics_field = lyrics_field
         self.sinking_threshold = sinking_threshold
-        self.quality_filter = quality_filter
-        self.tag_taxonomy_lang = tag_taxonomy_lang
-        self.line_break_dropout_rate = line_break_dropout_rate
-        self.section_tag_dropout_rate = section_tag_dropout_rate
+        # self.quality_filter = quality_filter
+        # self.tag_taxonomy_lang = tag_taxonomy_lang
 
-        assert self.tokenizer
+        self.meta_transform = ZhMetaTransform.from_data_id(
+            data_id,
+            sinking_threshold=sinking_threshold,
+            lyrics_confidence=self.lyrics_confidence,
+            segment_method=self.segment_method,
+            max_seg_per_track=self.max_seg_per_track,
+            duration_range=(self.min_duration, self.max_duration),
+        )
+        self.phrase_dropout = partial(
+            SongSlice.dropout,
+            line_break_dropout_rate=line_break_dropout_rate,
+            section_tag_dropout_rate=section_tag_dropout_rate,
+        )
+
         base_transforms = [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
         if self.data_sample_rate != sample_rate and self.audio_key.endswith("npy"):
             base_transforms.append(Resample(self.data_sample_rate, sample_rate))
@@ -612,241 +212,10 @@ class VocalTransforms(BaseTransforms):
             base_transforms.append(FastNormalizeAudio())
         self.base_transform = Compose(base_transforms)
 
-    def is_confident_lyrics(self, utterance, threshold):
-        conf, num_utt = 0., 0.
-        for utt in utterance:
-            if utt['text'].strip():
-                confidence_score = utt.get("confidence", 1)
-                conf += float(confidence_score)
-                num_utt += 1
-        if num_utt == 0:
-            return False
-        conf /= num_utt
-        return True if conf > threshold else False
-
     def __call__(self, item: Dict[str, Any]) -> Generator:
-        # Extract utterances
         meta = item[self.index_key]
         if isinstance(meta, str):
             meta = json.loads(meta)
-
-        # Try `self.lyrics_field`, if can't find anything, fall back to the other one
-        # Just in case the user tries to mix different data formats during training.
-        lyrics = meta.get(self.lyrics_field)
-        if lyrics is None:
-            lyrics_field = "lyrics_gt" if self.lyrics_field == "lyrics" else "lyrics"
-            lyrics = meta.get(lyrics_field)
-        else:
-            lyrics_field = self.lyrics_field
-        if lyrics is None:
-            self._update_stats(skipped=True, message="No lyrics")
-            return
-
-        # Get lyrics
-        if lyrics_field == "lyrics_gt":
-            utterances = lyrics
-        else:
-            # Typically, utterances are in the "result" field. However, if the lyrics
-            # are generated by ASR, it is possible to put the results under the "utterances" field.
-            _result = lyrics.get("result")
-            _asr_utterances = lyrics.get("utterances")
-            if (  
-                # empty or invalid result
-                ((_result is None) or 
-                (_result and len(_result) != 1))
-                and
-                # empty asr result
-                _asr_utterances is None
-                ):
-                self._update_stats(skipped=True, message="No result")
-                return
-            utterances = _result[0].get("utterances") if _result else _asr_utterances
-        if utterances is None or len(utterances) == 0:
-            self._update_stats(skipped=True, message="No utterances")
-            return
-
-        # Check lyrics confidence
-        # NOTE: The user should NOT mix datasets with both SA ASR confidence and Force Alignment confidence,
-        # since we only allow one confidence threshold.
-        if lyrics_field == "lyrics":
-            sa_asr_conf = lyrics.get("confidence")
-            force_alignment_conf = lyrics.get("confidence_avg")
-            # SA ASR confidence
-            if sa_asr_conf is not None:
-                if sa_asr_conf < self.lyrics_confidence:
-                    self._update_stats(skipped=True, message=f"Low confidence lyrics")
-                    return
-            # Force Alignment confidence
-            else:
-                if force_alignment_conf is None:
-                    if not self.is_confident_lyrics(utterances, self.lyrics_confidence):
-                        self._update_stats(skipped=True, message="Low confidence lyrics utt")
-                        return
-                else:
-                    if force_alignment_conf < self.lyrics_confidence:
-                        self._update_stats(skipped=True, message="Low confidence lyrics sta avg")
-                        return
-
-        # Extract structure tags
-        structure_tags = []
-        if self.read_structure_tags:
-            # Use deepchorus only
-            # music_structure_tags = meta.get("music_structure", None)
-            deepchorus_tags = meta.get("deepchorus")
-            if deepchorus_tags:
-                structure_tags = format_deepchorus_structure_tags(deepchorus_tags)
-            # elif music_structure_tags:
-            #     structure_tags = format_music_structure_tags(music_structure_tags)
-
-            # Allow no deepchorus tags, but still log it
-            if not structure_tags:
-                self._update_stats(skipped=False, message="No structure tags")
-
-        # Extract segments from utterances
-
-        # new_line_token = " <n> "
-        # if isinstance(self.tokenizer, BertTokenizer):
-        #     self.tokenizer.add_special_tokens({'additional_special_tokens': [new_line_token]})
-
-        # Group utterances into segment groups
-        if structure_tags:
-            song_slices = group_utterances_with_structure(
-                utterances,
-                self.min_duration,
-                self.max_duration,
-                structure_tags=structure_tags,
-                complete_section=self.max_duration >= 60,  # auto-enable complete section grouping for dur >= 1m
-            )
-        else:
-            # `group_utterance` might concatenate phonemes and use `new_line_token` as separator.
-            # Since each segment will be treated as one Phrase and inserted into one SongSlice,
-            # any separator other than "\n" is not allowed.
-            segments = group_utterances(
-                utterances, self.min_duration, self.max_duration,
-                time_in_sec=False,
-                new_line_token="\n",
-                infer_structure_tags=self.infer_structure_tags
-            )
-            song_slices = [SongSlice(phrases=[Phrase.parse(
-                phonemes=phonemes,
-                text=text,
-                time_span=(start, end)
-            )]) for start, end, text, phonemes, _ in segments]
-
-        if self.segment_method == "first":
-            song_slices = song_slices[:1]
-        if self.segment_method == "verse_chorus_section":
-            song_slices = [
-                song_slice for song_slice in song_slices 
-                if set(s.section_tag for s in song_slice.phrases).issubset(["verse", "chorus", "section"])
-            ]
-        if self.max_seg_per_track > 0:
-            random.shuffle(song_slices)
-            song_slices = song_slices[:self.max_seg_per_track]
-
-        if len(song_slices) < 1:
-            self._update_stats(skipped=True, message="No valid segment")
-            return
-
-        # Filter out invalid slices
-        n_slices_pre_filter = len(song_slices)
-        song_slices = [ss for ss in song_slices if ss.is_time_span_valid((self.min_duration, self.max_duration))]
-        song_slices = list(filter(None, map(remove_short_inst_phrases, song_slices)))
-        n_slices_post_filter = len(song_slices)
-        if n_slices_pre_filter - n_slices_post_filter > 0:
-            self._update_stats(
-                skipped=False,
-                message=f"Removed song slices: {n_slices_pre_filter-n_slices_post_filter}/{n_slices_pre_filter}"
-            )
-
-        # Filter out the whole song if there is any vocal phrase that does not have phonemes
-        if any(phrase.text and not phrase.phonemes for song_slice in song_slices for phrase in song_slice.phrases):
-            self._update_stats(skipped=True, message=f"No phoneme")
-            return
-
-        # Get style text            
-        style_text = rewrite_metadata(meta)
-        artist_id = ARTIST_ID_MAP_V2[str(meta.get("artist_id", "zh_empty"))]
-
-        # NOTE: The processing logic should depend on the tag_taxonomy_lang instead of the data content
-        # For now we only enforce this on "SA".
-        if self.tag_taxonomy_lang == "SA":
-            # Parse SA tags and get style_text
-            music_tagging = meta.get("music_tagging")
-            if music_tagging is None:
-                self._update_stats(skipped=False, message="No music_tagging field")
-            cat_tags, unfamiliar_tags, is_sinking = parse_sa_music_tagging(music_tagging, self.sinking_threshold)
-            _genre_tag, _, _, _, _lang_tag = cat_tags
-            # Filter out certain languages and genres for a better data quality
-            if self.quality_filter:
-                if _genre_tag in ["", "Chinese Opera", "Other genre"]:
-                    self._update_stats(skipped=True, message=f"Filter out genre {_genre_tag}")
-                    return
-                if (_genre_tag not in ["DJ", "MC"]) and is_sinking:
-                    self._update_stats(skipped=True, message=f"Filter out genre {_genre_tag} because of sinking")
-                    return
-                if not _lang_tag or (_lang_tag == "Chinese Dialects"):
-                    self._update_stats(skipped=True, message=f"Filter out lang {_lang_tag}")
-                    return
-                # Only filter out non-high-quality if filter_label exists
-                # popular_potential is less accurate, do not use it for now
-                high_quality, _ = parse_filter_label(meta.get("filter_label"))
-                if not high_quality:
-                    self._update_stats(skipped=True, message=f"Filter out low quality")
-                    return
-            if unfamiliar_tags:
-                self._update_stats(skipped=False, message=f"Detected tag(s) not in SA vocab: {unfamiliar_tags}")
-            # (Additional conversion) Use a certain style to differentiate 环球美音 songs from the others
-            if meta.get("source") == "环球美音":
-                # Old Taiwanese sons are more similar to Chinese Tradition than other genres
-                # Chinese Tradition is not one of the main genres we use
-                cat_tags[0] = "Chinese Tradition"
-            style_text = "|".join(cat_tags)
-            # Parse voice tag and assign it to artist_id
-            gender = meta.get("gender")
-            if gender is not None:
-                voice_tag = parse_voice_tag(gender)
-                if voice_tag and (artist_id == ARTIST_ID_MAP_V2["zh_empty"]):
-                    artist_id = ARTIST_ID_MAP_V2[voice_tag]
-        elif "playlist_extra" in meta:
-            label1 = meta["playlist_extra"].get("label1", "")
-            label2 = meta["playlist_extra"].get("label2", "")
-            style_text = rewrite_playlist_labels(label1, label2)
-        elif "tags" in meta:
-            # Try read English genre tag. Source: Q music tag, WYY tag, MCC tag.
-            metadata = dict()
-            tags = meta.get("tags")
-            if isinstance(tags, str):
-                tags = json.loads(tags)
-            if "zq" in tags and tags["zq"][0] != 'Other':
-                metadata['final_genre'] = tags["zq"][0]
-            elif "wyy" in tags:
-                metadata['final_genre'] = tags["wyy"][0]
-            elif "merge_genre" in meta:
-                mcc_genres = meta["merge_genre"]
-                # print("tag, mcc meta", tags, mcc_genres)
-                if isinstance(mcc_genres, str):
-                    mcc_genres = mcc_genres.split(',')
-                if isinstance(mcc_genres, List):
-                    random.shuffle(mcc_genres)
-                    metadata['final_genre'] = mcc_genres[0]
-            style_text = rewrite_metadata(metadata)
-        else:
-            metadata = dict()
-            if "merge_genre" in meta:
-                mcc_genres = meta["merge_genre"]
-                # print("mcc meta", mcc_genres)
-                if isinstance(mcc_genres, str):
-                    mcc_genres = mcc_genres.split(',')
-                random.shuffle(mcc_genres)
-                metadata['final_genre'] = mcc_genres[0]            
-            # Try read MCC mood tag
-            if "merge_mood" in meta:
-                mcc_moods = meta["merge_mood"]
-                # print("mcc meta", mcc_moods)
-                random.shuffle(mcc_moods)
-                metadata['final_mood'] = mcc_moods[0]
-            style_text = rewrite_metadata(metadata)
 
         # Get track level audio
         try:
@@ -855,38 +224,35 @@ class VocalTransforms(BaseTransforms):
             self._update_stats(skipped=True, message=f"Error loading audio: {e}")
             return
 
+        # Parse and transform meta
+        try:
+            _, song_slices, style_text, artist_id = self.meta_transform(meta)
+        except ZhMetaParseError as pe:
+            self._update_stats(skipped=True, message=f"ParseError: {pe}")
+            return
+        except ZhMetaTransformError as te:
+            self._update_stats(skipped=True, message=f"TransformError: {te}")
+            return
+
         # Yield one example per segment
         self._update_stats(skipped=False)
         for song_slice in song_slices:
             clip = song_slice.slice_audio(audio, self.sample_rate)
-
-            # Do not change the function order. It matters.
-            phrases = drop_out_line_breaks(song_slice.phrases, self.line_break_dropout_rate)
-            phrases = move_out_section_tags(phrases)  # Reformat the phrases to have single-line section tags
-            reformatted_phrases = drop_out_section_tags(phrases, self.section_tag_dropout_rate)
+            reformatted_phrases = self.phrase_dropout(phrases=song_slice.phrases)
 
             # NOTE: `normalize_text` removes `:` for the singer tag.
             normalized_text = normalize_text(
                 "\n".join([s.format_text() for s in reformatted_phrases]), enable_punctuation=True
             )
 
-            if self.tokenizer == "tts_chinese_frontend_model":
-                tokenizer = SamiOfflineTokenizer()
-                # If a phrase fails, skip the entire slice. Otherwise it could worsen the phoneme missing issue
-                # in the training data.
-                try:
-                    text_tokens = torch.from_numpy(tokenizer.tokenize_phrases(reformatted_phrases)).long()
-                except SamiTokenizerError as e:
-                    self._update_stats(skipped=True, message=f"Error tokenizing phrases: {e}")
-                    continue
-            else:
-                text_tokens = self.tokenizer(
-                    normalized_text, 
-                    add_special_tokens=False,
-                    return_tensors="pt")["input_ids"].squeeze(dim=0)
-                if text_tokens is None:
-                    self._update_stats(skipped=True, message="No lyrics tokens.")
-                    continue
+            tokenizer = SamiOfflineTokenizer()
+            # If a phrase fails, skip the entire slice. Otherwise it could worsen the phoneme missing issue
+            # in the training data.
+            try:
+                text_tokens = torch.from_numpy(tokenizer.tokenize_phrases(reformatted_phrases)).long()
+            except SamiTokenizerError as e:
+                self._update_stats(skipped=True, message=f"Error tokenizing phrases: {e}")
+                continue
 
             yield {
                 "target_audio": clip,
@@ -1013,6 +379,7 @@ class VocalParquetDataset(WebPipeline):
         dataset = ParquetDataset(data_id=data_id, data_urls=url_pattern, **kwargs)
         
         transforms = VocalTransforms(
+            data_id=data_id,
             sample_rate=sample_rate,
             audio_key=audio_key,
             index_key=index_key,

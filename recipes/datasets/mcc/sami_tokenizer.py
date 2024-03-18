@@ -1,4 +1,3 @@
-from random import Random
 import re
 import string
 from typing import Dict, Tuple, Optional, List, NamedTuple, Union
@@ -8,11 +7,9 @@ from zhon.hanzi import punctuation
 from confusables import confusable_characters
 
 punctuation_all = punctuation + string.punctuation
-import os
 from collections import OrderedDict
 
 import numpy as np
-from tqdm import tqdm
 
 try:
     from sami_tts_api.engine import TtsEngine, generate_tts_config
@@ -20,7 +17,6 @@ except Exception as e:
     print(f"[Warning] Failed loading sami_tts_api: {e}")
 
 import contextlib
-import json
 
 
 class SamiTokenizerError(ValueError):
@@ -299,7 +295,7 @@ class Phrase(NamedTuple):
     text: Optional[str] = None
     singer_tag: Optional[str] = None
     section_tag: Optional[str] = None
-    time_span: Optional[Tuple[int, int]] = None
+    time_span: Optional[Union[Tuple[int, int], Tuple[float, float]]] = None
 
     @classmethod
     def parse(
@@ -444,57 +440,6 @@ class Phrase(NamedTuple):
         if _str is None:
             _str = ""
         return add_section_tag(self.section_tag, add_singer_tag(self.singer_tag, _str))
-
-
-def drop_out_line_breaks(phrases: List[Phrase], rate: float, seed: Optional[int] = None) -> List[Phrase]:
-    """Merge adjacent concatable phrases. The phrase list should NOT be reformatted by move_out_section_tags."""
-    if not (0 <= rate <= 1):
-        raise SamiTokenizerError(f"Invalid dropout rate: {rate}")
-    if len(phrases) <= 1 or rate == 0:
-        return phrases
-    mergeable_ind = [
-        idx for idx, (curr_phrase, next_phrase) in enumerate(zip(phrases, phrases[1:])) 
-        if Phrase.concatable(curr_phrase, next_phrase)
-    ]
-    if not mergeable_ind:
-        return phrases
-    rand_gen = Random(seed)
-    phrases = phrases[:]  # shallow copy a new slice, Phrase is immutable so it's fine
-    for idx in reversed(mergeable_ind):  # reverse it because the list shrinks
-        if rand_gen.random() < rate:
-            phrases[idx:idx+2] = [Phrase.concat(phrases[idx], phrases[idx+1])]
-    return phrases
-
-
-def move_out_section_tags(phrases: List[Phrase]) -> List[Phrase]:
-    """Move section tags out of phrases as single phrases
-    This function reformats a list of phrases to a format where section tags
-    only appear once at the top of each section.
-    """
-    out_phrases = []
-    for prev_phrase, phrase in zip([None] + phrases, phrases):
-        if phrase.section_tag and (prev_phrase is None or phrase.section_tag != prev_phrase.section_tag):
-            out_phrases.append(Phrase(section_tag=phrase.section_tag))
-        if phrase.has_utterance:
-            out_phrases.append(phrase._replace(section_tag=None))
-    return out_phrases
-
-
-def drop_out_section_tags(phrases: List[Phrase], rate: float, seed: Optional[int] = None) -> List[Phrase]:
-    """Remove phrases with section tags. The phrase list SHOULD be reformatted by move_out_section_tags.
-    - The function either drops out or keep all the section tags. Partial dropout could contaminate the
-      training data by placing multiple sections under one section tag.
-    - The function does not perform dropout if the given phrases do not have utterance, because empty
-      phrases can't be tokenized.
-    """
-    if not (0 <= rate <= 1):
-        raise SamiTokenizerError(f"Invalid dropout rate: {rate}")
-    if not any(phrase.has_utterance for phrase in phrases):
-        return phrases
-    rand_gen = Random(seed)
-    if rand_gen.random() < rate:
-        return [phrase for phrase in phrases if phrase.section_tag is None]
-    return phrases
 
 
 def convert_v3_to_v1(tacolab):
