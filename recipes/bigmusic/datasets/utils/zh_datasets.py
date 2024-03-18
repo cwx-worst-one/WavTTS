@@ -295,17 +295,18 @@ ZH_DATASET_REGISTRY = {
         parser=ZhMetaSFTBase,
         desc="HQMY + StarNation, 20k",
     ),
-    1939: ZhDatasetEntry.new_sft_copyright_cleared(
+    1837: ZhDatasetEntry.new_sft_copyright_cleared(
         parser=ZhMetaSFTBase,
         desc="First batch authorized, 35k",
     ),
-    1943: ZhDatasetEntry.new_sft_copyright_cleared(
+    1945: ZhDatasetEntry.new_sft_copyright_cleared(
         parser=ZhMetaSFTBase,
         desc="HQMY + StarNation, 20k + First batch authorized, 35k",
     ),
-    # TODO support reading gender tag
-    # 1939: ZhDatasetEntry.new_sft_copyright_cleared(
-    #     parser=ZhMetaSFTVoiceTagAlt,
-    #     desc="ASR lyrics + phonemes + gender tagging, 35k",
-    # ),
+    # SFT, with gender tags
+    1939: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTVoiceTagAlt,
+        desc="ASR lyrics + phonemes + gender tagging, 35k",
+    ),
+
 }
