@@ -8,10 +8,7 @@ run_opts:
     meta_lst: ""
     num_workers: 4
     seed: 1996
-    # diffusion_ckpt_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/h800_ds1641_prompt_16xH800_25hzUMM_125hzSS_streaming_chunk1000_0303/checkpoints/epoch=00-step=370000-loss=0.35.ckpt"
-    # prompt dropout
-    # diffusion_ckpt_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/h800_ds1641_prompt_16xH800_25hzUMM_125hzSS_prompt_drop0.1_streaming_chunk1000_0308/checkpoints/epoch=00-step=690000-loss=0.35.ckpt"
-    diffusion_ckpt_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/h800_ds1641_prompt_16xH800_25hzUMM_125hzSS_prompt_drop0.05_streaming_chunk1000_0308/checkpoints/epoch=00-step=740000-loss=0.36.ckpt"
+    diffusion_ckpt_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/h800_ds1907_prompt_16xH800_25hzUMM_125hzSS_prompt_drop0.1_streaming_chunk1000_0315/checkpoints/epoch=00-step=550000-loss=0.35.ckpt"
     # umm_ckpt_path: "/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/step=070000.ckpt"
     umm_ckpt_path: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/checkpoints/step=070000.ckpt"
     vocoder_ckpt_path: ""
@@ -21,7 +18,7 @@ run_opts:
     use_wvae_vocoder: True
     lang: en
     streaming: True
-    token_chunk_size: 100
+    token_chunk_size: 200
     token_chunk_overlap: 10
 
 
