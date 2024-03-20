@@ -335,7 +335,7 @@ def hdfs_ls(hdfs_path: str):
             raise HdfsException(errmsg)
         return []
     elif err:
-        logger.debug("stderr:\n" + err)
+        logger.warning("stderr:\n" + err)
 
     out = out.splitlines()
     out = [elem.decode() for elem in out if elem]
