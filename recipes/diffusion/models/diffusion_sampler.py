@@ -45,6 +45,8 @@ class Sampler(nn.Module):
         vocoder_hz=None,
         semantic_hz=None,
         outpainting_overlap: int = 0,
+        version='v1',
+        latent_scale=0.2419
     ):
         super().__init__()
         self.window_length = window_length
@@ -52,6 +54,8 @@ class Sampler(nn.Module):
         self.vocoder_hz = VOCODER_HZ if vocoder_hz is None else vocoder_hz
         self.semantic_hz = SEMANTIC_HZ if semantic_hz is None else semantic_hz
         self.outpainting_hop_ratio = (1 - outpainting_overlap)
+        self.version = version
+        self.latent_scale = latent_scale
 
     
     def set_device(self, device: torch.device):
@@ -93,8 +97,8 @@ class Sampler(nn.Module):
                 current[:, :, :vc_prefix.shape[-1]] = vc_prefix
 
             if not first:
-                sigma_i[:, :, :625] = 0.0
-                current[:, :, :625] = init_emb[:, :, :625]
+                sigma_i[:, :, :-int(self.outpainting_hop_ratio*self.vocoder_hz*self.window_length)] = 0.0
+                current[:, :, :-int(self.outpainting_hop_ratio*self.vocoder_hz*self.window_length)] = init_emb[:, :, :-int(self.outpainting_hop_ratio*self.vocoder_hz*self.window_length)]
      
             if i < int(num_steps*bf16_portion):
                 enabled = True
@@ -141,7 +145,10 @@ class Sampler(nn.Module):
             sigma = sigma - angle_schedule[i]
             current = np.cos(omega) * current - np.sin(omega) * v_pred
             progress_bar.set_description(f"Sampling {i}")
-        current = clip(current)
+        if self.version == 'v1':
+            current = clip(current)
+        else:
+            current = self.latent_scale * current
         return current
 
     @torch.no_grad()
@@ -197,15 +204,23 @@ class Sampler(nn.Module):
                 first=(i==0),
             )
 
-            tmp_emb[..., 0 + (i*diffusion_hop_size):vocoder_emb_len + (i*diffusion_hop_size)] += pred_emb
-            avg_cnt[..., 0 + (i*diffusion_hop_size):vocoder_emb_len + (i*diffusion_hop_size)] += 1
-
             prev_emb = pred_emb[..., diffusion_hop_size:]
+
+            if self.version == 'v1':
+                tmp_emb[..., 0 + (i*diffusion_hop_size):vocoder_emb_len + (i*diffusion_hop_size)] += pred_emb
+                avg_cnt[..., 0 + (i*diffusion_hop_size):vocoder_emb_len + (i*diffusion_hop_size)] += 1
+            else:
+                if i > 0:
+                    pred_emb[..., :-diffusion_hop_size] = 0
+                    tmp_emb[..., 0 + (i*diffusion_hop_size):vocoder_emb_len + (i*diffusion_hop_size)] += pred_emb
+                else:
+                    tmp_emb[..., 0 + (i*diffusion_hop_size):vocoder_emb_len + (i*diffusion_hop_size)] += pred_emb
 
             new_noise = torch.randn(b, c, diffusion_hop_size, device=self.device)
             current_emb = torch.cat([prev_emb, new_noise], dim=-1)
 
-        tmp_emb /= avg_cnt
+        if self.version == 'v1':
+            tmp_emb /= avg_cnt
         pred_emb = tmp_emb
         return pred_emb
 
@@ -224,6 +239,7 @@ def init_sampler(
         vocoder_hz=params['vocoder_hz'],
         semantic_hz=params['semantic_hz'],
         outpainting_overlap=params['outpainting_overlap'],
+        version=params['sampler_version']
     )
     sampler.set_device(device)
     return { "sampler": sampler }

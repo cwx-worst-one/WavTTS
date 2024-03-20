@@ -9,15 +9,15 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
 
 extra_params:
-    beam_size: 4    # set to 1 if not using reranker
+    beam_size: 1    # set to 1 if not using reranker
     samples_to_save: 1
     save_style_audio: True
     save_mode: wav  # wav|mp3|upload
     save_semantic_tokens: False
-    prompt_path: "/mnt/bn/audio-diffusion/ducle/data/prompts/bgm_eval/prompts_style_audio.test.csv"
-    inference_conditions: "style_audio,duration,intensity"
+    prompt_path: "/mnt/bn/audio-diffusion/peng/sstk_random_30_prompts.csv"
+    inference_conditions: "style_text,duration"
     max_items: null
-    use_reranker: True
+    use_reranker: False
 
     output_dir: sstk_out
 
@@ -43,13 +43,14 @@ extra_params:
     intensity_hz: 1
     intensity_temperature: 1.0
 
-    diffusion_version: 'sstk_v4' # sstk_v2 for 24k, sstk_v3 for 44.1k
+    diffusion_version: 'sstk_v5' # sstk_v2 for 24k, sstk_v3 for 44.1k
     diffusion_params:
         window_length: 30 # in second
         vocoder_hz: 49 # 125 for 24k vocoder, 49 for '44.1k_sa' vocoder
         semantic_hz: 25
         latent_dim: 64 # 32 for 24k vocoder, 64 for '44.1k_sa' vocoder
         outpainting_overlap: 0.5 #[0, 1]
+        sampler_version: 'v2' # use v2 to pair with sstk_v5 diffusion model, otherwise use v1
         diffusion_steps: 50
         schedule_slope: 4.0
         guidance_scale: 2.5
@@ -105,7 +106,8 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
             diffusion:
                 # hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/24k_v2/diffusion-step=600000-EMA.ckpt # 24k
                 # hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/44.1k_stereo_v0/diffusion-step=450000-EMA.ckpt # 44.1k
-                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/44.1k_stereo_v1/diffusion-step=250000-EMA.ckpt
+                # hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/44.1k_stereo_v1/diffusion-step=250000-EMA.ckpt
+                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/44.1k_stereo_v2/diffusion-step=600000-EMA.ckpt
                 initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
                     cache_dir: !ref <run_opts[cache_dir]>
                     sstk: True

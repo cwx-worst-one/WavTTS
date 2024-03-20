@@ -8,6 +8,7 @@ from recipes.diffusion.models.tnt_mulan_free import TNTDiffusionNetwork
 from recipes.diffusion.models.tnt_mss import TNTDiffusionNetwork as TNTDiffusionNetworkMSS
 from recipes.diffusion.models.tnt_gru import TNTDiffusionNetwork as ZhTNTDiffusionNetwork
 from recipes.diffusion.models.tnt_v2 import TNTDiffusionNetwork as TNTDiffusionNetworkV2
+from recipes.diffusion.models.tnt_v3 import TNTDiffusionNetwork as TNTDiffusionNetworkV3
 from recipes.diffusion.modules.pl_module import DiffusionModule
 
 VOCODER_HZ = 125
@@ -83,48 +84,56 @@ def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, ss
                 )
             ).model
         if sstk:
-            # 24k models
-            if version == 'sstk_v1':
-                diffusion_network = TNTDiffusionNetworkV2(
-                    input_dim=32,
-                    feature_dim=1024,
-                    context_dim=1,
-                    depth=16,
-                    segment_size=32,
-                    segment_stride=32,
-                    unet=True,
-                    unet_stages=[4,8,4],
-                    dropout=0,
-                    semantic_cfg_prob=0.10,
-                    use_checkpoint=False
-                )
-            elif version == 'sstk_v2':
-                diffusion_network = TNTDiffusionNetworkV2(
-                    input_dim=32,
-                    feature_dim=1024,
-                    context_dim=1,
-                    depth=20,
-                    segment_size=32,
-                    segment_stride=32,
-                    unet=False,
-                    unet_stages=[6,8,6],
-                    dropout=0,
-                    semantic_cfg_prob=0.10,
-                    use_checkpoint=False
-                )
-            elif version in ['sstk_v3', 'sstk_v4']: # 44.1k models
-                use_unet = True
-                if version == 'sstk_v4':
-                    use_unet = False
-                diffusion_network = TNTDiffusionNetworkV2(
+            if version == 'sstk_v5':
+                diffusion_network = TNTDiffusionNetworkV3(
                     input_dim=64,
                     feature_dim=1024,
                     context_dim=1,
                     depth=20,
                     segment_size=8,
                     segment_stride=8,
-                    unet=use_unet,
-                    unet_stages=[6,8,6],
+                    unet=False,
+                    dropout=0,
+                    semantic_cfg_prob=0.10,
+                    use_checkpoint=False
+                )
+            else:
+                # 24k models
+                if version == 'sstk_v1':
+                    input_dim = 32
+                    depth = 16
+                    unet =True
+                    segment_size = 32
+                    segment_stride=32
+                    unet_stages=[4,8,4]
+                elif version == 'sstk_v2':
+                    input_dim = 32
+                    depth = 20
+                    unet = False
+                    segment_size = 32
+                    segment_stride = 32
+                    unet_stages = [6,8,6]
+                # 44.1k models
+                elif version in ['sstk_v3', 'sstk_v4']:
+                    input_dim = 64
+                    depth = 20
+                    if version == 'sstk_v3':
+                        unet = True
+                    else:
+                        unet = False
+                    segment_size = 8
+                    segment_stride = 8
+                    unet_stages = [6,8,6]
+
+                diffusion_network = TNTDiffusionNetworkV2(
+                    input_dim=input_dim,
+                    feature_dim=1024,
+                    context_dim=1,
+                    depth=depth,
+                    segment_size=segment_size,
+                    segment_stride=segment_stride,
+                    unet=unet,
+                    unet_stages=unet_stages,
                     dropout=0,
                     semantic_cfg_prob=0.10,
                     use_checkpoint=False
