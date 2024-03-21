@@ -623,7 +623,10 @@ class LlamaDiffusion(nn.Module):
         if total_frame is None:
             self.cached_noise = None
         else:
-            self.cached_noise = torch.randn([1, total_frame, self.hp.out_channels])
+            self.cached_noise = [
+                torch.randn([1, total_frame, self.hp.out_channels])
+                for i in range(t + 1)
+            ]
         self.cached_v = dict([(i, None) for i in range(t)])
 
     def ddim_sample(
@@ -638,11 +641,15 @@ class LlamaDiffusion(nn.Module):
         eta=0.0,
     ):
         t = timesteps
-        batch_size, device, frm_len = (local_cond.size(0), local_cond.device, local_cond.size(1))
+        batch_size, device, frm_len = (
+            local_cond.size(0),
+            local_cond.device,
+            local_cond.size(1),
+        )
         if use_cache:
             assert self.cached_noise is not None
             if self.cached_noise is not None:
-                x = self.cached_noise[:, :frm_len, :].to(device)
+                x = self.cached_noise[0][:, :frm_len, :].to(device)
         else:
             x = torch.randn([1, frm_len, self.hp.out_channels], device=device)
 
@@ -658,7 +665,10 @@ class LlamaDiffusion(nn.Module):
             if self.target_type == "velocity":
                 if text_cfg_w != 1:
                     v_pred, v_pred_uncond = self._forward(
-                        x, local_cond, text_embed, timesteps=sigmas[i].expand(batch_size, -1)
+                        x,
+                        local_cond,
+                        text_embed,
+                        timesteps=sigmas[i].expand(batch_size, -1),
                     ).chunk(2)
                     v_pred = text_cfg_w * v_pred + (1 - text_cfg_w) * v_pred_uncond
                 else:
@@ -834,6 +844,61 @@ class LlamaDiffusion(nn.Module):
             pred_list.append(pred)
         return x
 
+    def consistency_sample(
+        self,
+        timesteps,
+        local_cond,
+        text_embed,
+        text_cfg_w=1.0,
+        use_cache=False,
+        cached_v_len=None,
+    ):
+        t = timesteps
+        batch_size, device, frm_len = (
+            local_cond.size(0),
+            local_cond.device,
+            local_cond.size(1),
+        )
+
+        if use_cache:
+            x = self.cached_noise[0][:, :frm_len, :].to(device)
+        else:
+            x = torch.randn([1, frm_len, self.hp.out_channels], device=device)
+
+        if t > 20:
+            sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device)
+        else:
+            sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device) ** 2
+        sigmas = repeat(sigmas, "i -> i b", b=1)
+        sigmas_batch = extend_dim(sigmas, dim=3)
+        alphas, betas = self.get_alpha_beta(sigmas_batch)
+
+        for i in range(t):
+
+            v_pred = self._forward(x, local_cond, text_embed, timesteps=sigmas[i])
+
+            # TODO: 只是模拟cache过程
+            if use_cache:
+                if self.cached_v[i] is not None:
+                    cached_v_len = (
+                        self.cached_v[i].shape[1]
+                        if cached_v_len is None
+                        else cached_v_len
+                    )
+                    v_pred[:, :cached_v_len, :] = self.cached_v[i][:, :cached_v_len, :]
+                self.cached_v[i] = v_pred
+
+            x_pred = alphas[i] * x - betas[i] * v_pred
+
+            if use_cache:
+                noise = self.cached_noise[i + 1][:, :frm_len, :].to(device)
+            else:
+                noise = torch.randn_like(v_pred)
+
+            x = alphas[i + 1] * x_pred + betas[i + 1] * noise
+
+        return x
+
     @torch.no_grad()
     def inference(self, inputs, timesteps=20, sampler="ddim", text_cfg_w=1.0, **kwargs):
         if self.hp.use_textprefix:
@@ -852,7 +917,7 @@ class LlamaDiffusion(nn.Module):
 
         ctx_feature = f"{self.hp.ctx_feature}_ctx"
         if token_embed.shape[1] > inputs[ctx_feature].shape[1]:
-            token_embed = token_embed[:, :inputs[ctx_feature].shape[1], :]
+            token_embed = token_embed[:, : inputs[ctx_feature].shape[1], :]
         elif token_embed.shape[1] < inputs[ctx_feature].shape[1]:
             raise RuntimeError
 
@@ -878,6 +943,10 @@ class LlamaDiffusion(nn.Module):
             )
         elif sampler == "plms":
             x = self.plms_sample(
+                timesteps, local_cond, text_embed, text_cfg_w=text_cfg_w, **kwargs
+            )
+        elif sampler == "consistency":
+            x = self.consistency_sample(
                 timesteps, local_cond, text_embed, text_cfg_w=text_cfg_w, **kwargs
             )
         else:

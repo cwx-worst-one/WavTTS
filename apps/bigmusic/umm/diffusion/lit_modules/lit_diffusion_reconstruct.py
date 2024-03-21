@@ -205,9 +205,9 @@ class DiffusionU2SInfer(LightningModule):
 
     def prepare_features(self, batch):
         if self.infer_type == "ar-diffusion-vocoder":
-            prompt_text_id, syn_text_id, prompt_wav_path, syn_umm_token, uttid = batch
+            prompt_text_id, syn_text_id, prompt_wav_path, syn_umm_token, uttid = batch[:5]
         elif self.infer_type == "diffusion-vocoder":
-            uttid, prompt_wav_path, syn_wav_path, prompt_text_id, syn_text_id = batch
+            uttid, prompt_wav_path, syn_wav_path, prompt_text_id, syn_text_id = batch[:5]
         else:
             raise NotImplementedError
 
@@ -217,15 +217,21 @@ class DiffusionU2SInfer(LightningModule):
         device = f"cuda:{self.local_rank}"
         inputs = dict()
 
+        if len(batch) == 6:
+            inputs["scale"] = batch[5]
+        else:
+            inputs["scale"] = None
+
         # Syn
         if self.infer_type == "diffusion-vocoder": 
             wav, _ = librosa.load(syn_wav_path, sr=24000, mono=True) 
             inputs["gt_wav"] = wav
             wav = torch.FloatTensor(wav).unsqueeze(0)
             if self.bn_config['wav_norm']:
-                scale = max(0.001, torch.max(torch.abs(wav)).item())
-                wav = wav / scale * 0.95
-                inputs["scale"] = scale
+                if inputs["scale"]  == None:
+                    scale = max(0.001, torch.max(torch.abs(wav)).item())
+                    wav = wav / scale * 0.95
+                    inputs["scale"] = scale.item()
             wav = wav.to(device)
             syn_wav = self.align_wav(wav, self.mel_config["sampling_rate"], self.umm_frame_rate, self.mel_frame_rate)
             syn_umm_token = self.wav2token(syn_wav)
@@ -250,10 +256,6 @@ class DiffusionU2SInfer(LightningModule):
             wav, _ = librosa.load(prompt_wav_path, sr=24000, mono=True)
             inputs["gt_wav"] = wav
             wav = torch.FloatTensor(wav).unsqueeze(0)
-            if self.bn_config['wav_norm']:
-                scale = max(0.001, torch.max(torch.abs(wav)).item())
-                wav = wav / scale * 0.95
-                inputs["scale"] = scale
             wav = wav.to(device)
             if self.infer_type == "diffusion-vocoder":
                 prompt_wav = self.align_wav(wav, self.mel_config["sampling_rate"], self.umm_frame_rate, self.mel_frame_rate)
@@ -393,7 +395,7 @@ class DiffusionU2SInfer(LightningModule):
                 output_wav = self.vocoder(out_mel)
 
             audio = output_wav.squeeze().cpu().numpy()
-            if self.bn_config['wav_norm']:
+            if self.bn_config['wav_norm'] and inputs["scale"] != None:
                 audio = audio * inputs["scale"] / 0.95
             audio = np.clip(audio, a_min=-1, a_max=1)
 
@@ -619,7 +621,7 @@ class ChunkInfer(DiffusionU2SInfer):
             output_wav = self.vocoder(out_mel)
 
         audio = output_wav.squeeze().cpu().numpy()
-        if self.bn_config['wav_norm']:
+        if self.bn_config['wav_norm'] and inputs["scale"] != None:
             audio = audio * inputs["scale"] / 0.95
         audio = np.clip(audio, a_min=-1, a_max=1)
 
@@ -650,13 +652,18 @@ class ChunkInfer(DiffusionU2SInfer):
 
     def prepare_features(self, batch):
         if self.infer_type == "ar-diffusion-vocoder":
-            prompt_text_id, syn_text_id, prompt_wav_path, syn_umm_token, uttid = batch
+            prompt_text_id, syn_text_id, prompt_wav_path, syn_umm_token, uttid = batch[:5]
         elif self.infer_type == "diffusion-vocoder":
-            uttid, prompt_wav_path, syn_wav_path, prompt_text_id, syn_text_id = batch
+            uttid, prompt_wav_path, syn_wav_path, prompt_text_id, syn_text_id = batch[:5]
         else:
             raise NotImplementedError
         device = f"cuda:{self.local_rank}"
         inputs = dict()
+
+        if len(batch) == 6:
+            inputs["scale"] = batch[5]
+        else:
+            inputs["scale"] = None
 
         # Text
         if prompt_text_id is not None and  syn_text_id is not None:
@@ -678,19 +685,22 @@ class ChunkInfer(DiffusionU2SInfer):
             inputs["gt_wav"] = wav
             wav = torch.FloatTensor(wav).unsqueeze(0)
             if self.bn_config['wav_norm']:
-                scale = max(0.001, torch.max(torch.abs(wav)))
-                wav = wav / scale * 0.95
-                inputs["scale"] = scale.item()
+                if inputs["scale"]  == None:
+                    scale = max(0.001, torch.max(torch.abs(wav)))
+                    wav = wav / scale * 0.95
+                    inputs["scale"] = scale.item()
             wav = wav.to(device)
             #syn_wav = self.align_wav(wav, self.mel_config["sampling_rate"], self.umm_frame_rate, self.mel_frame_rate)
             syn_wav = wav
             syn_umm_token = self.wav2token(syn_wav)
+            # np.savetxt(f"diffusion-vocoder.syn_umm_token.txt", syn_umm_token.detach().cpu().numpy().reshape(-1,1),fmt="%d")
 
         elif self.infer_type == "ar-diffusion-vocoder":
             if len(syn_umm_token.shape) == 1:
                 syn_umm_token = syn_umm_token.unsqueeze(0)
             else:
                 syn_umm_token = syn_umm_token
+            # np.savetxt(f"ar-diffusion-vocoder.syn_umm_token.txt", syn_umm_token.detach().cpu().numpy().reshape(-1,1),fmt="%d")
         else:
             raise NotImplementedError
         if hasattr(self,"umm_codebook"):
@@ -704,10 +714,6 @@ class ChunkInfer(DiffusionU2SInfer):
             wav, _ = librosa.load(prompt_wav_path, sr=24000, mono=True) 
             inputs["gt_wav"] = wav
             wav = torch.FloatTensor(wav).unsqueeze(0)
-            if self.bn_config['wav_norm']:
-                scale = max(0.001, torch.max(torch.abs(wav)))
-                wav = wav / scale * 0.95
-                # inputs["scale"] = scale.item()
             wav = wav.to(device)
             
             prompt_wav, target_bn_len = self.align_wav_for_chunk(wav, 

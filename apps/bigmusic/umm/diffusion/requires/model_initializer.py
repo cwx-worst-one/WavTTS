@@ -2,6 +2,7 @@
 import os
 import torch
 from apps.bigmusic.umm.diffusion.lit_modules import DiffusionU2SInfer, ChunkInfer
+from apps.bigtts.umm.diffusion.lit_modules.infer_utils import save_wav
 
 
 
@@ -15,8 +16,14 @@ def init_diffusion(diffusion_config, local_rank=None, cache_dir=None, device=Non
 
 
 
-def token2wav(diffusion, umm_token, prompt_wav=None, uttid=""):
-    batch = (None, None, prompt_wav, umm_token, uttid) 
+def token2wav(diffusion, umm_token, prompt_wav_path="", prompt_wav=None, uttid="", scale=None):
+    if not os.path.isfile(prompt_wav_path) and prompt_wav != None:
+        assert isinstance(prompt_wav, torch.Tensor)
+        prompt_wav = prompt_wav.squeeze().cpu().numpy()
+        prompt_wav_path = "prompt.wav"
+        save_wav(prompt_wav, prompt_wav_path)
+
+    batch = (None, None, prompt_wav_path, umm_token, uttid, scale) 
     with torch.no_grad():
         pure_audio_output = diffusion.predict_step(batch, batch_idx=0)
     return pure_audio_output
@@ -27,24 +34,30 @@ def wav2token(diffusion, syn_wav_path):
     wav, _ = librosa.load(syn_wav_path, sr=24000, mono=True) 
     wav = torch.FloatTensor(wav).unsqueeze(0)
     if diffusion.bn_config['wav_norm']:
-        scale = max(0.001, torch.max(torch.abs(wav)).item())
+        scale = max(0.001, torch.max(torch.abs(wav)))
         wav = wav / scale * 0.95
+    else:
+        scale = None
     wav = wav.to(diffusion.device)
-    syn_wav = diffusion.align_wav(
-        wav, 
-        diffusion.mel_config["sampling_rate"], 
-        diffusion.umm_frame_rate, 
-        diffusion.mel_frame_rate)
+    if isinstance(diffusion,ChunkInfer):
+        syn_wav = wav
+    else:
+        syn_wav = diffusion.align_wav(
+            wav, 
+            diffusion.mel_config["sampling_rate"], 
+            diffusion.umm_frame_rate, 
+            diffusion.mel_frame_rate)
     syn_umm_token = diffusion.wav2token(syn_wav)
-    return syn_umm_token
+    return syn_umm_token, scale
 
 @torch.no_grad()
-def run_diffusion_vocoder(requires, samples, prompt_wav=None):
+def run_diffusion_vocoder(requires, samples, prompt_wav_path="", prompt_wav=None):
     # samples are the UMM tokens
     diffusion = requires['diffusion']
     output_wav = token2wav(diffusion, 
               umm_token=samples,
               prompt_wav=prompt_wav,
+              prompt_wav_path=prompt_wav_path,
               uttid="test")
     return output_wav
 
@@ -61,7 +74,7 @@ if __name__ == "__main__":
 
     # hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConv_125hzSS.yaml"
     # or you can download the files from here: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/weituo/infer_files/voice_condition_valsets.zip
-    syn_wav_path = "voice_condition_valsets/slices/male_husky_0_slice1.wav"
+    syn_wav_path = "/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/voice_condition_valsets/slices/male_husky_0_slice1.wav"
     prompt_wav_path = "voice_condition_valsets/conditions_6s/male_husky_0.wav"
 
     # streaming infer with prompt free model
@@ -79,10 +92,12 @@ if __name__ == "__main__":
     )
     
     with torch.no_grad():
-        umm_token = wav2token(requires["diffusion"], syn_wav_path)
+        umm_token, scale = wav2token(requires["diffusion"], syn_wav_path)
         # generate wav in output_wavs/test.wav
         token2wav(
             diffusion = requires["diffusion"], 
             umm_token = umm_token.squeeze(0),
-            prompt_wav = prompt_wav_path,
-            uttid = "test")
+            prompt_wav_path = prompt_wav_path,
+            uttid = "test",
+            scale = scale,
+        )

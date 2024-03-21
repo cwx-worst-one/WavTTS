@@ -59,9 +59,11 @@ class VoiceBoxModule(pl.LightningModule):
         val_output_samples_dir="",
         bn_config=None,
     ):
-        
+        # FIXME: load distill model
+        if resume_ckpt_path is not None:
+            resume_ckpt_path = None
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters(ignore="resume_ckpt_path")
         # fix flashattn version
         self.model = fix_flashattn_version(model_cls)()
 
@@ -103,7 +105,6 @@ class VoiceBoxModule(pl.LightningModule):
         rank_zero_info(f'Loading pre-trained model from checkpoint {pretrained_path}')
         with local_zero_first():
             local_path = download_checkpoint(pretrained_path, '.')
-
             ckpt_state_dict = torch.load(
                 local_path, map_location=torch.device("cpu")
             )['state_dict']
