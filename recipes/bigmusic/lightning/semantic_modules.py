@@ -770,6 +770,54 @@ class SemanticModuleDualUMMFullTrack(SemanticModule):
             batch["duration"] = hp.duration * 2
         return super().predict(batch, hp, beam, ref_samples, rl_training)
 
+
+class SemanticModuleDualUMMFullTrack2(SemanticModuleDualUMMFullTrack):
+    def prepare_target_inputs(self, batch):
+        # Prepare target ids
+        use_full_input = self.requires['Stage3'].config.get('use_full_input', False)
+        if not use_full_input and 'audio_vocal' not in batch:
+            batch['audio_vocal'], batch['audio_acc'] = self.requires['mss'](batch['target_audio'])
+            batch['audio_vocal'], batch['audio_acc'] = batch['audio_vocal'][:, None], batch['audio_acc'][:, None]
+        target_ids_vocal = self.target_embedder.tokenize(
+            self.requires,
+            batch['target_audio'] if use_full_input else batch['audio_vocal'],
+            with_sos=False, with_eos=False, wav_type='vocal')
+        target_ids_acc = self.target_embedder.tokenize(
+            self.requires, batch['target_audio'] if use_full_input else batch['audio_acc'],
+            with_sos=False, with_eos=False, wav_type='acc')
+        cb_size_track = self.extra_params.semantic_codebook_size // 2
+        target_ids = torch.stack([target_ids_vocal, target_ids_acc + cb_size_track], -1)
+        target_ids = torch.flatten(target_ids, 1)
+
+        if 'target_tokens_length' in batch:
+            target_lengths = batch['target_tokens_length'].to(self.device)
+            # DualUMM full track has double token length
+            target_lengths = target_lengths * 2
+        else: # set to default batch length. Silence will happen before EOS
+            batch_size, seq_len = target_ids.shape[:2]
+            target_lengths = torch.full((batch_size,), fill_value=seq_len, dtype=torch.long, device=self.device)
+        target_ids = F.pad(target_ids, (1, 1)) # pad for extra sos/eos ids
+        target_ids[:, 0] = self.target_embedder.sos_id # add SOS
+        eos_indices = (target_lengths+1).unsqueeze(1) # set last index to EOS
+        target_ids.scatter_(1, eos_indices, self.target_embedder.eos_id)
+        target_lengths = target_lengths + 2 # +2 for eos and sos
+
+        target_embeds = self.target_embedder.embed(token_ids=target_ids, with_sos=False, with_eos=False)
+        return {
+            'token_embeds': target_embeds,
+            'token_ids': target_ids,
+            'token_seq_lengths': target_lengths
+        }
+
+    @torch.no_grad()
+    def predict(self, batch, hp, beam=1, ref_samples=None, rl_training=False):
+        output_tokens = super().predict(batch, hp, beam, ref_samples, rl_training)
+        cb_size_half = self.extra_params.semantic_codebook_size // 2
+        m = (((output_tokens - cb_size_half) >= 0) & (output_tokens != self.target_embedder.eos_id)).long()
+        output_tokens = (output_tokens - cb_size_half) * m + output_tokens * (1 - m)
+        return output_tokens
+
+
 class SemanticRLModule(SemanticModule):
     def __init__(
         self,

@@ -43,11 +43,14 @@ class SongSlice:
         return ((min_duration <= duration <= max_duration) and 
                 start >= 0 and end >= 0 and start < end)
 
-    def slice_audio(self, audio, sample_rate: int):
+    def slice_audio(self, audio, sample_rate: int, extra_clip=None):
         slice_start, slice_end = self.start, self.end
         start = int(slice_start * sample_rate)
         end = int(slice_end * sample_rate)
-        return audio[:, start:end]
+        if extra_clip is not None:
+            return audio[:, start:end], [x[:, start:end] for x in extra_clip]
+        else:
+            return audio[:, start:end], None
 
     @staticmethod
     def dropout(

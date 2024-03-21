@@ -234,8 +234,8 @@ def save_batch_outputs(
 
         print('Saving metadata', metadata)
         meta_fp = os.path.join(wav_dir, f"{wav_file_name}.metadata.json")
-        with open(meta_fp, 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, indent=2)
+        with open(meta_fp, 'w') as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
 
     return output_paths
 

@@ -116,10 +116,11 @@ class SemanticInferenceModule(pl.LightningModule):
         cache_dir = Path(self.extra_params.get('cache_dir', '.module_cache'))
         cache_dir.mkdir(exist_ok=True, parents=True)
         for k, v in self.semantic_module.hparams.required_modules.items():
-            fn_partial = v['initializer']
-            _, _, (f, fn_args, fn_kwargs, n) = fn_partial.__reduce__()
-            fn_kwargs.update({'cache_dir': cache_dir})
-            fn_partial.__setstate__((f, fn_args, fn_kwargs, n))
+            if 'initializer' in v:
+                fn_partial = v['initializer']
+                _, _, (f, fn_args, fn_kwargs, n) = fn_partial.__reduce__()
+                fn_kwargs.update({'cache_dir': cache_dir})
+                fn_partial.__setstate__((f, fn_args, fn_kwargs, n))
         
         if self.extra_params.get('app_type', None):
             self.semantic_module.load_required_modules(
@@ -202,10 +203,11 @@ class SemanticInferenceModuleDualUMMFull(SemanticInferenceModule):
         cache_dir = Path(self.extra_params.get('cache_dir', '.module_cache'))
         cache_dir.mkdir(exist_ok=True, parents=True)
         for k, v in self.semantic_module.hparams.required_modules.items():
-            fn_partial = v['initializer']
-            _, _, (f, fn_args, fn_kwargs, n) = fn_partial.__reduce__()
-            fn_kwargs.update({'cache_dir': cache_dir})
-            fn_partial.__setstate__((f, fn_args, fn_kwargs, n))
+            if 'initializer' in v:
+                fn_partial = v['initializer']
+                _, _, (f, fn_args, fn_kwargs, n) = fn_partial.__reduce__()
+                fn_kwargs.update({'cache_dir': cache_dir})
+                fn_partial.__setstate__((f, fn_args, fn_kwargs, n))
 
         self.semantic_module.load_required_modules(
             ignore=('sampler', 'diffusion', 'vocoder', 'chord', 'chord_lms', 'structure', 'asr')
@@ -229,8 +231,15 @@ class SemanticInferenceModuleDualUMMFull(SemanticInferenceModule):
         # TODO (QQ) use semantic_samples embedding as context input for decoding fn
         if self.extra_params.get("mixv2", False):
             semantic_samples = self.requires["Stage3"].model.vq.embedding(semantic_samples)
-        self.decoding_params.update({'batch': batch})
-        raw_wav_output = self.decoding_fn(self.requires, semantic_samples, self.decoding_params)
+        if self.extra_params.token2wav_type == 'ar-diffusion-vocoder':
+            # TODO, check if the key is the same as SVS,
+            # SVS: style_audio, SVC, vocal_prompt
+            raw_wav_output = self.decoding_fn(
+                self.requires, semantic_samples,
+                prompt_wav=batch.get('vocal_prompt', batch.get('style_audio'))[0])
+        else:
+            self.decoding_params.update({'batch': batch})
+            raw_wav_output = self.decoding_fn(self.requires, semantic_samples, self.decoding_params)
 
         duration = self.extra_params.duration
         raw_wav_output = raw_wav_output[..., :duration * self.extra_params.sample_rate]
@@ -250,6 +259,7 @@ class SemanticInferenceModuleDualUMMFull(SemanticInferenceModule):
 
         # DualUMM full track has double token length, so the actual generated audio length should be halved.
         eos_index_list = eos_index_list // 2
+        raw_wav_output = raw_wav_output.unsqueeze(0)
 
         raw_wav_output = raw_wav_output.detach().cpu()
         wavs = truncate_wav_to_eos(raw_wav_output, eos_index_list)

@@ -124,4 +124,4 @@ def update_json(metadata_fp, updates):
         metadata = {}
     metadata = { **metadata, **updates }
     with open(metadata_fp, 'w') as f:
-        json.dump(metadata, f, indent=2)
+        json.dump(metadata, f, indent=2, ensure_ascii=False)

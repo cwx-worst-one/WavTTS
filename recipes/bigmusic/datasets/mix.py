@@ -56,17 +56,23 @@ def pad_crop(sequence, seq_len, dtype, padding_value=0):
 
 def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens") -> Dict[str, torch.Tensor]:
     # collate_fn batches the examples based on the target_audio length.
-    PHONE_PAD_ID = 0     
+    PHONE_PAD_ID = 0
     max_phone_len = int(batch[0].get("max_phone_len", MAX_PHONE_LEN))
     max_length = max([x["target_audio"].shape[-1] for x in batch])
+    if 'acc' in batch[0]:
+        max_length = max([x["acc"].shape[-1] for x in batch] + [max_length])
+    if 'vocal' in batch[0]:
+        max_length = max([x["vocal"].shape[-1] for x in batch] + [max_length])
     random_pad = Pad(n_samples=max_length)
-    default_lyrics_token = torch.full((max_phone_len,), PHONE_PAD_ID, dtype=torch.int)    
-    target_audio = []   
-    style_text = []    
+    default_lyrics_token = torch.full((max_phone_len,), PHONE_PAD_ID, dtype=torch.int)
+    target_audio = []
+    acc_audio = []
+    vocal_audio = []
+    style_text = []
     normalized_text = []
     lyrics_tokens = []
     target_tokens_length = []
-    speaker_id = []     
+    speaker_id = []
     dataset_name = []
 
     # DEBUG
@@ -99,15 +105,19 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
         
         target_tokens_length.append(batch[idx]["target_tokens_length"])
         phoneme_tokens, _ = pad_crop(
-            construct("lyrics_tokens", default_lyrics_token), 
+            construct("lyrics_tokens", default_lyrics_token),
             max_phone_len, torch.int, PHONE_PAD_ID)
         lyrics_tokens.append(phoneme_tokens)
-        
+
         style_metadata.append(batch[idx].get("style_metadata"))
         song_id.append(batch[idx].get("song_id"))
         shard.append(batch[idx].get("shard"))
         worker_id.append(batch[idx].get("worker_id"))
         dataset_name.append(batch[idx].get("dataset_name"))
+        if 'acc' in batch[idx]:
+            acc_audio.append(random_pad(batch[idx]['acc']))
+        if 'vocal' in batch[idx]:
+            vocal_audio.append(random_pad(batch[idx]['vocal']))
 
     stacked_audio = torch.stack(target_audio, dim=0)
     if stacked_audio.dim() == 3:
@@ -131,6 +141,9 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
     }
     if "style_tag" in conditions or "style_audio" in conditions:
         batch["style_audio"] = stacked_audio
+    if len(acc_audio) > 0:
+        batch['audio_acc'] = torch.stack(acc_audio, dim=0)
+        batch['audio_vocal'] = torch.stack(vocal_audio, dim=0)
     return batch
 
 
@@ -167,6 +180,7 @@ class VocalTransforms(BaseTransforms):
         tag_taxonomy_lang: str = "SA",  # TODO: Remove it, not used.
         line_break_dropout_rate: float = 0.0,
         section_tag_dropout_rate: float = 0.0,
+        extra_audio_keys=[]
     ):
         super().__init__()
         self.sample_rate = sample_rate
@@ -176,7 +190,7 @@ class VocalTransforms(BaseTransforms):
         # self.loudness_ratio_threshold = loudness_ratio_threshold
         self.lyrics_confidence = lyrics_confidence
         self.audio_key = audio_key
-        self.index_key = index_key  
+        self.index_key = index_key
         # self.tokenizer = tokenizer
         self.frame_rate = frame_rate
         # self.infer_structure_tags = infer_structure_tags
@@ -184,12 +198,13 @@ class VocalTransforms(BaseTransforms):
         self.segment_method = segment_method
         self.max_seg_per_track = max_seg_per_track
         self.segment_max_phone_len = segment_max_phone_len
-        # There are two fields for lyrics: "lyrics" (ASR) and "lyrics_gt" (Original). 
+        # There are two fields for lyrics: "lyrics" (ASR) and "lyrics_gt" (Original).
         # self.yrics_field is the top priority, fall back to the other field if the field is empty.
         # self.lyrics_field = lyrics_field
         self.sinking_threshold = sinking_threshold
         # self.quality_filter = quality_filter
         # self.tag_taxonomy_lang = tag_taxonomy_lang
+        self.extra_audio_keys = extra_audio_keys
 
         self.meta_transform = ZhMetaTransform.from_data_id(
             data_id,
@@ -220,6 +235,7 @@ class VocalTransforms(BaseTransforms):
         # Get track level audio
         try:
             audio = self.base_transform(item[self.audio_key])
+            extra_audio = [self.base_transform(item[k]) for k in self.extra_audio_keys]
         except Exception as e:
             self._update_stats(skipped=True, message=f"Error loading audio: {e}")
             return
@@ -237,7 +253,7 @@ class VocalTransforms(BaseTransforms):
         # Yield one example per segment
         self._update_stats(skipped=False)
         for song_slice in song_slices:
-            clip = song_slice.slice_audio(audio, self.sample_rate)
+            clip, extra_clip = song_slice.slice_audio(audio, self.sample_rate, extra_audio)
             reformatted_phrases = self.phrase_dropout(phrases=song_slice.phrases)
 
             # NOTE: `normalize_text` removes `:` for the singer tag.
@@ -262,7 +278,7 @@ class VocalTransforms(BaseTransforms):
                 "normalized_text": normalized_text,
                 "lyrics_tokens": text_tokens,
                 "max_phone_len": self.segment_max_phone_len,
-            }        
+            } | {k: v for k, v in zip(self.extra_audio_keys, extra_clip)}
 
 
 class VocalDataset(WebPipeline):
@@ -293,6 +309,7 @@ class VocalDataset(WebPipeline):
         tag_taxonomy_lang: str = "SA",
         line_break_dropout_rate: float = 0.0,
         section_tag_dropout_rate: float = 0.0,
+        extra_audio_keys=[],
         **kwargs,
     ):
         assert region in INDEX
@@ -318,6 +335,7 @@ class VocalDataset(WebPipeline):
             tag_taxonomy_lang=tag_taxonomy_lang,
             line_break_dropout_rate=line_break_dropout_rate,
             section_tag_dropout_rate=section_tag_dropout_rate,
+            extra_audio_keys=extra_audio_keys
         )
         preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
         print(f"[{self.name}] MultiIterableDataset constructing...")
@@ -373,10 +391,12 @@ class VocalParquetDataset(WebPipeline):
         tag_taxonomy_lang: str = "SA",
         line_break_dropout_rate: float = 0.0,
         section_tag_dropout_rate: float = 0.0,
+        extra_audio_keys=[],
         **kwargs,
     ):
         print(f"[{self.name}] initializing...")
-        dataset = ParquetDataset(data_id=data_id, data_urls=url_pattern, **kwargs)
+        dataset = ParquetDataset(data_id=data_id, data_urls=url_pattern,
+                                 extra_fields_in_data=extra_audio_keys, **kwargs)
         
         transforms = VocalTransforms(
             data_id=data_id,
@@ -402,6 +422,7 @@ class VocalParquetDataset(WebPipeline):
             tag_taxonomy_lang=tag_taxonomy_lang,
             line_break_dropout_rate=line_break_dropout_rate,
             section_tag_dropout_rate=section_tag_dropout_rate,
+            extra_audio_keys=extra_audio_keys
         )
         preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
         print(f"[{self.name}] MultiIterableDataset constructing...")
@@ -513,7 +534,8 @@ class MixVocalWebDataModule(DataModule):
         tag_taxonomy_lang: str = "SA",
         line_break_dropout_rate: float = 0.0,
         section_tag_dropout_rate: float = 0.0,
-    ):        
+        extra_audio_keys=[]
+    ):
         self.num_workers = num_workers
         self.shuffle_buffer_size = shuffle_buffer_size
         self.pin_memory = pin_memory
@@ -597,15 +619,16 @@ class MixVocalWebDataModule(DataModule):
                         read_structure_tags=read_structure_tags,
                         resampled=True,
                         shardshuffle=True,
-                        use_pipe=use_pipe,            
+                        use_pipe=use_pipe,
                         handler=wds.warn_and_continue,
                         sinking_threshold=sinking_threshold,
                         quality_filter=quality_filter,
                         frame_rate=frame_rate,
-                        tag_taxonomy_lang=tag_taxonomy_lang,  
+                        tag_taxonomy_lang=tag_taxonomy_lang,
                         line_break_dropout_rate=line_break_dropout_rate,
                         section_tag_dropout_rate=section_tag_dropout_rate,
-                        ))
+                        extra_audio_keys=extra_audio_keys
+                    ))
 
         train_dataset = WebPipeline(            
             MultiIterableDataset(datasets=self.wds_vocal_datasets + self.parquet_vocal_datasets, 
@@ -638,7 +661,8 @@ class MixVocalWebDataModule(DataModule):
                 tag_taxonomy_lang=tag_taxonomy_lang,
                 line_break_dropout_rate=line_break_dropout_rate,
                 section_tag_dropout_rate=section_tag_dropout_rate,
-                ),
+                extra_audio_keys=[]
+        ),
             pipeline=[{"compose": [self.bucketize]}],
         )] 
 
@@ -753,7 +777,7 @@ class MixLangVocalWebDataModule(DataModule):
                         frame_rate=frame_rate,
                         tag_taxonomy_lang=tag_taxonomy_lang,
                         line_break_dropout_rate=line_break_dropout_rate,
-                        section_tag_dropout_rate=section_tag_dropout_rate,            
+                        section_tag_dropout_rate=section_tag_dropout_rate,
                         ))
 
         if en_parquet_dataset_ids:

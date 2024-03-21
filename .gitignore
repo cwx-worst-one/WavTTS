@@ -118,3 +118,4 @@ resource/
 *.ckpt
 *.csv
 *.ipynb
+scripts_usr
