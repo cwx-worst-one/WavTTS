@@ -290,6 +290,10 @@ ZH_DATASET_REGISTRY = {
         parser=ZhMetaSFTBase,
         desc="Everynoise, 4k + Chinese artist, 7k",
     ),
+    1934: ZhDatasetEntry.new_sft_no_copyright(
+        parser=ZhMetaSFTBase,
+        desc="Everynoise, 4k + Chinese artist, 7k (+MSS)",
+    ),
     # SFT, releasable
     1935: ZhDatasetEntry.new_sft_copyright_cleared(
         parser=ZhMetaSFTBase,
@@ -302,6 +306,10 @@ ZH_DATASET_REGISTRY = {
     1945: ZhDatasetEntry.new_sft_copyright_cleared(
         parser=ZhMetaSFTBase,
         desc="HQMY + StarNation, 20k + First batch authorized, 35k",
+    ),
+    1976: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTBase,
+        desc="HQMY + StarNation, 20k + First batch authorized, 35k (+MSS)",
     ),
     # SFT, with gender tags
     1939: ZhDatasetEntry.new_sft_copyright_cleared(

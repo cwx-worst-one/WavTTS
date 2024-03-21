@@ -30,9 +30,7 @@ extra_params:
     num_hidden_layers: 24
     num_attention_heads: 12
     pretrained_path: null # for loading state dicts
-    tokenizer_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/renyi/samantha_ckpts/umm_mix/0208_dualummv2_fullinp_1/checkpoints/step=0970000.ckpt
-    # Dual V1: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/renyi/samantha_ckpts/umm_mix/0219_dualummv1_novocadv_1/checkpoints/step=0340000.ckpt
-    # Dual V2: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/renyi/samantha_ckpts/umm_mix/0208_dualummv2_fullinp_1/checkpoints/step=0970000.ckpt
+    tokenizer_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/renyi/samantha_ckpts/umm_mix/0219_dualummv1_novocadv_1/checkpoints/step=0710000.ckpt
 
 # running parameters
 run_opts:

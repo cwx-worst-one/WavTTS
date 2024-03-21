@@ -1,0 +1,123 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 1995
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+extra_params:
+    beam_size: 1 # set to 4 if using reranker, 1 without reranker
+    samples_to_save: 1
+    prompt_path: ""
+    inference_conditions: style_text,speaker_id,lyrics_tokens # style_text|style_audio,lyrics_tokens,vocal_audio|vocal_text,chroma
+    max_items: null
+    run_combinations: False
+    use_reranker: False
+    dataset_mode: truncate_length
+    lyrics_lang: "zh_phone"     # en | zh_phone | zh_wp
+
+    output_dir: ./generated_output/conditional
+
+    # Semantic model
+    semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModuleDualUMMFullTrackParaPrediction
+    semantic_ckpt: ""
+
+
+    # Used for reranker, only loaded if use_reranker=True
+    mulan_rewards_ckpt: "hdfs:///home/byte_speech_sv/jingsong.gao/mulan_ckpt/mulan-step=024600-median_rank_1=110-kaggle.ckpt"
+    structure_ckpt: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/structure_epoch=185-step=93000.ckpt"
+
+    diffusion_params:
+        num_chunks: 1
+        diffusion_steps: 25
+        schedule_slope: 2.5
+        guidance_scale: 2.5
+        bf16_portion: 0.0
+
+    # Model Settings
+    sample_rate: 24000
+    duration: 30 # 30
+    lyrics_max_seq_len: 400
+    semantic_temperature: 1.0
+    sample_mode: "top_p"
+    sample_thresh: 0.9
+    token2wav_type: dualumm_full        # diffusion to use voicebox
+#    token2wav_type: ar-diffusion-vocoder    #diffusion
+
+#    use_controller_cfg: True       # Set to True to activate style CFG.
+#    controller_cfg_gamma: 1.0
+
+    cache_dir: .module_cache/bigmusic
+
+run_opts:
+    fast_dev_run: False
+    precision: 16-mixed
+    accelerator: auto
+    strategy: auto
+    cache_dir: .module_cache/bigmusic
+    batch_size: 1  # set to 8 if using reranker, 40 without reranker
+    num_workers: 0
+
+token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConvV3_125hzSS.yaml
+
+################################################################################
+##########                    INFERENCE CONFIGURATION                  ##########
+################################################################################
+
+predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_from_prompt
+    prompt_path: !ref <extra_params[prompt_path]>
+    conditions: !ref <extra_params[inference_conditions]>
+    max_items: !ref <extra_params[max_items]>
+    batch_size: !ref <run_opts[batch_size]>
+    run_combinations: !ref <extra_params[run_combinations]>
+    lyrics_max_seq_len: !ref <extra_params[lyrics_max_seq_len]>
+    dataset_mode: !ref <extra_params[dataset_mode]>
+    lang: !ref <extra_params[lyrics_lang]>
+    enable_punctuation: True
+
+pl_datamodule: !new:recipes.bigmusic.datasets.lyrics.LyricsDataModule
+    predict_dataset: !ref <predict_dataset>
+    num_workers: 0
+
+pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModuleDualUMMFull
+    semantic_cls_path: !ref <extra_params[semantic_cls_path]>
+    extra_params: !ref <extra_params>
+    required_modules:
+        dualumm_modules:
+            mel_vocoder:
+                hpath: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/renyi/samantha_ckpts/voc/v1/checkpoints/vocoder_last.ckpt"
+                initializer: !name:recipes.umm.requires.model_initializer.init_stage3_dual_voc
+                    cache_dir: !ref <run_opts[cache_dir]>
+        diffusion_modules:
+            diffusion:
+                hpath: !ref <token2wav_config[diffusion_config]>
+                initializer: !name:apps.bigmusic.umm.diffusion.requires.model_initializer.init_diffusion
+                    cache_dir: !ref <run_opts[cache_dir]>
+
+# separating out additional_callbacks so auto_eval can disable metrics
+additional_callbacks:
+    # - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
+    # - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
+    - !new:recipes.bigmusic.callbacks.save_outputs.AverageMetricsCallback
+    - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
+    - !new:recipes.bigmusic.callbacks.save_outputs.NormVolumeCallback
+callbacks:
+    - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
+      beam_size: !ref <extra_params[beam_size]>
+      samples_to_save: !ref <extra_params[samples_to_save]>
+
+trainer: !new:pytorch_lightning.Trainer
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: 'auto'
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    use_distributed_sampler: False # for multi-gpu inference
+    strategy: !ref <run_opts[strategy]>
+    precision: !ref <run_opts[precision]>
+    callbacks: !apply:operator.add [!ref <callbacks>, !ref <additional_callbacks>]
+    limit_predict_batches: 20

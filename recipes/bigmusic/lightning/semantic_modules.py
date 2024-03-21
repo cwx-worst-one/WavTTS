@@ -818,6 +818,246 @@ class SemanticModuleDualUMMFullTrack2(SemanticModuleDualUMMFullTrack):
         return output_tokens
 
 
+class SemanticModuleDualUMMFullTrackParaPrediction(SemanticModuleDualUMMFullTrack):
+    def prepare_target_inputs(self, batch):
+        # Prepare target ids
+        use_full_input = self.requires['Stage3'].config.get('use_full_input', False)
+        if not use_full_input and 'audio_vocal' not in batch:
+            batch['audio_vocal'], batch['audio_acc'] = self.requires['mss'](batch['target_audio'])
+            batch['audio_vocal'], batch['audio_acc'] = batch['audio_vocal'][:, None], batch['audio_acc'][:, None]
+        target_ids_vocal = self.target_embedder.tokenize(
+            self.requires,
+            batch['target_audio'] if use_full_input else batch['audio_vocal'],
+            with_sos=False, with_eos=False, wav_type='vocal')
+        target_ids_acc = self.target_embedder.tokenize(
+            self.requires, batch['target_audio'] if use_full_input else batch['audio_acc'],
+            with_sos=False, with_eos=False, wav_type='acc')
+
+        if self.extra_params.get('mask_acc_tokens', False):
+            target_ids_acc = torch.zeros_like(target_ids_acc)
+
+        target_lengths = batch['target_tokens_length'].to(self.device)
+
+        cb_size_half = self.extra_params.semantic_codebook_size // 2
+
+        def set_sos_eos(target_ids):
+            target_ids = F.pad(target_ids, (1, 1))  # pad for extra sos/eos ids
+            target_ids[:, 0] = self.target_embedder.sos_id  # add SOS
+            eos_indices = (target_lengths + 1).unsqueeze(1)  # set last index to EOS
+            target_ids.scatter_(1, eos_indices, self.target_embedder.eos_id)
+            return target_ids
+
+        # for input
+        target_ids_vocal = set_sos_eos(target_ids_vocal)
+        target_ids_acc = set_sos_eos(target_ids_acc + cb_size_half)
+        target_ids = torch.stack([target_ids_vocal, target_ids_acc], -1)  # [B, T, 2]
+        target_embeds = self.target_embedder.embed(token_ids=target_ids[:, :, 0], with_sos=False, with_eos=False) + \
+                        self.target_embedder.embed(token_ids=target_ids[:, :, 1], with_sos=False, with_eos=False)
+        target_lengths = target_lengths + 2  # +2 for eos and sos
+
+        m = ((target_ids - cb_size_half) >= 0).long()
+        target_ids = (target_ids - cb_size_half) * m + target_ids * (1 - m)
+        return {
+            'token_embeds': target_embeds,
+            'token_ids': target_ids,
+            'token_seq_lengths': target_lengths
+        }
+
+    def _shared_step(self, batch, update_mfu=False):
+        with self.profiler.profile(f"bigmusic.prepare_training_inputs{self.trainer.global_step}"):
+            training_inputs = self.prepare_training_inputs(batch)
+            input_ids = training_inputs['model_inputs']
+            target_ids = training_inputs['target_ids']
+
+        if update_mfu:
+            if "inputs_embeds" in input_ids:
+                b, t, _ = input_ids["inputs_embeds"].shape
+                self.metric.update(
+                    num_tokens=b * t,
+                    stage=self.trainer.state.stage,
+                    model_kwargs={"batch_size": b, "seq_len": t}
+                )
+                if self.trainer.global_step % self.trainer.log_every_n_steps == 0:
+                    self.log_dict(
+                        self.metric.compute(self.trainer.global_step),
+                        prog_bar=True,
+                        sync_dist=True,
+                    )
+
+        with self.profiler.profile(f"bigmusic.forward.step{self.trainer.global_step}"):
+            model_output = self.model(**input_ids, output_hidden_states=True)
+        if isinstance(model_output, dict):
+            logits = model_output["logits"]
+            last_hidden_state = model_output['hidden_states'][-1]
+        elif isinstance(model_output, tuple):
+            logits, last_hidden_state = model_output
+        target_length = target_ids.size(1)
+        target_logits = logits[:, -target_length:, :]
+        loss_mask = None
+        if 'target_lengths' in training_inputs:
+            loss_mask = sequence_mask(
+                training_inputs['target_lengths'], max_len=target_ids.shape[1], device=target_ids.device)
+        H = target_logits.shape[-1] // 2
+        loss = self.criterion(target_logits[:, :, :H], target_ids[..., 0], loss_mask) + \
+               self.criterion(target_logits[:, :, H:], target_ids[..., 1], loss_mask)
+        loss = loss / 2
+        result_dict = {
+            'loss': loss.item(),
+        }
+        return loss, result_dict
+
+    @torch.no_grad()
+    def predict(self, batch, hp, beam=1, ref_samples=None, rl_training=False):
+        frame_rate = self.extra_params.semantic_frame_rate
+        if "duration" not in batch:
+            batch["duration"] = hp.duration
+        duration = batch["duration"]
+        num_tokens = duration * frame_rate
+        temperature = hp.semantic_temperature
+        sample_mode = hp.sample_mode
+        sample_thresh = hp.get('sample_thresh', 0.9)
+        use_controller_cfg = hp.get('use_controller_cfg', False)
+        controller_cfg_gamma = hp.get('controller_cfg_gamma', 1)
+        skip_sos = hp.get('skip_sos', False)
+        exclude_ids = None
+        if hp.get("exclude_eos", False) and self.target_embedder.eos_id is not None:
+            exclude_ids = [self.target_embedder.eos_id]
+            print(f"exclude_ids: {exclude_ids}")
+
+        # Predict intensity if it's not available
+        if "intensity" in self.input_embedders and "intensity" not in batch:
+            assert not self.training, "intensity should be provided in training!"
+            batch["intensity"] = self._predict_intensity(
+                batch,
+                self.input_embedders["intensity"],
+                self.prediction_heads["intensity"],
+                hp.get("intensity_temperature", 1.0),
+            )
+
+        if "inputs_embeds" in batch:
+            inputs_embeds = batch["inputs_embeds"]
+        else:
+            inputs_embeds = self.prepare_inputs_embeddings(batch)
+
+        inputs_emb_cfg = None
+        if use_controller_cfg:
+            assert beam == 1  # TODO(qq) support beam > 1 with CFG.
+            batch_cfg = deepcopy(batch)
+            batch_cfg['style_text'] = [''] * len(batch['style_text'])
+            batch_cfg['style_category'] = [''] * len(batch['style_category'])
+            inputs_emb_cfg = self.prepare_inputs_embeddings(batch_cfg)
+
+        inputs_embeds_cfg = inputs_emb_cfg
+        batch_size, seq_len, _ = inputs_embeds.size()
+        if use_controller_cfg:
+            inputs_embeds = torch.cat([inputs_embeds, inputs_embeds_cfg], dim=0)  # cat on first-dim(batch_size)
+            batch_size = 2 * batch_size
+        if ref_samples is not None:
+            assert ref_samples.size(0) == batch_size
+            assert ref_samples.size(1) == num_tokens
+            assert beam > 1, "Can't use beam size 1 with ref_samples!"
+            beam = beam - 1
+        # (b, s, d) --> (b * beam, s, d)
+        inputs_embeds = inputs_embeds.repeat(1, beam, 1).reshape(batch_size * beam, seq_len, -1)
+        sos_embeds = self.target_embedder.get_sos_embed(batch_size * beam)
+        batch_size, seq_len, _ = inputs_embeds.size()  # recalculate batch size
+
+        def _init_model_input():
+            if self.use_cross_attn:
+                if skip_sos:
+                    raise NotImplementedError
+                return {
+                    "inputs_embeds": sos_embeds,
+                    "encoder_hidden_states": inputs_embeds
+                }
+            else:
+                if skip_sos:
+                    # If already have sos embedding in prefix prompt, we can skip it
+                    return {"inputs_embeds": torch.cat([inputs_embeds, ], dim=1)}
+                else:
+                    return {"inputs_embeds": torch.cat([inputs_embeds, sos_embeds + sos_embeds], dim=1)}
+
+        model_input = _init_model_input()
+        if rl_training:
+            rl_model_input = _init_model_input()
+
+        output_tokens = None
+        if isinstance(self.model, gpt.GPTLMHeadModel):
+            gpt_max_seq_len = 4000 if num_tokens < 2500 else 8000
+            inference_params = InferenceParams(
+                max_sequence_len=gpt_max_seq_len, max_batch_size=batch_size
+            )
+        else:
+            past_key_values = None
+        pbar = tqdm(range(num_tokens))
+
+        for i in pbar:
+            pbar.set_description(f"[0 - {num_tokens}]")
+
+            if isinstance(self.model, gpt.GPTLMHeadModel):
+                # to enable inference without a trainer, we simply cast the inputs to the expected model type
+                # which is either torch.float16 or torch.bfloat16
+                model_input["inputs_embeds"] = model_input["inputs_embeds"].to(self.model.lm_head.weight.dtype)
+                logits = self.model(
+                    **model_input,
+                    inference_params=inference_params,
+                    position_ids=None,
+                    last_token_only=False,
+                ).logits
+                # cast back to full precision
+                logits = logits.float()
+
+                if use_controller_cfg:
+                    logits_cfg = logits[batch_size // 2:]  # unconditioned path
+                    logits = controller_cfg_gamma * logits[0:batch_size // 2] + (1 - controller_cfg_gamma) * logits[
+                                                                                                             batch_size // 2:]
+
+                inference_params.sequence_len_offset += model_input['inputs_embeds'].size(1)
+                logits = logits[:, -1:, :]  # only predicting on last logit.
+                H = logits.shape[-1] // 2
+                predict_token_voc = self.sample_logits(
+                    i, logits[:, :, :H], temperature, sample_mode, sample_thresh, exclude_ids
+                )
+                predict_token_inst = self.sample_logits(
+                    i, logits[:, :, H:], temperature, sample_mode, sample_thresh, exclude_ids
+                )
+                predict_token = torch.stack([predict_token_voc, predict_token_inst], -1)
+                predict_token_emb = self.target_embedder.embedder(predict_token_voc) + \
+                                    self.target_embedder.embedder(predict_token_inst + H)
+
+                if use_controller_cfg:
+                    # If unconditioned path uses the predict token history from the conditioned path.
+                    predict_token_emb = torch.cat([predict_token_emb, predict_token_emb], dim=0)
+
+                    # If unconditioned path always uses the predict token history from the unconditioned path.
+                    # logits_cfg = logits_cfg[:, -1:, :]
+                    # predict_token_cfg = self.sample_logits(
+                    #     i, logits_cfg, temperature, sample_mode, sample_thresh, exclude_ids)
+                    # predict_token_cfg_emb = self.target_embedder.embedder(predict_token_cfg)
+                    # predict_token_emb = torch.cat([predict_token_emb, predict_token_cfg_emb], dim=0)
+
+            else:
+                raise NotImplementedError
+
+            model_input['inputs_embeds'] = predict_token_emb
+            if rl_training and i < num_tokens - 1:
+                rl_model_input["inputs_embeds"] = torch.cat(
+                    [rl_model_input["inputs_embeds"], predict_token_emb],
+                    dim=1,
+                )
+            output_tokens = torch.cat([output_tokens, predict_token],
+                                      dim=1) if output_tokens is not None else predict_token
+        output_tokens = output_tokens.flatten(1, 2)
+        # Add ref_samples to generation beam
+        if ref_samples is not None:
+            raise NotImplementedError
+
+        if rl_training:
+            return output_tokens, rl_model_input
+        else:
+            return output_tokens
+
+
 class SemanticRLModule(SemanticModule):
     def __init__(
         self,
