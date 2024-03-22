@@ -245,13 +245,13 @@ def force_alignment_v3(asr_sliced_phones, midi_sliced_notes, vuv, f0, tail_sec):
     legalized_sliced_notes = _merge_sil_labels_notes(legalized_sliced_notes, forced_legal=True, debug_note=new_sliced_notes)
     # legalized_sliced_notes = _finetune_sliced_notes(legalized_sliced_notes)
     
-    legalized_syllables = notes_word_align_v1(legalized_sliced_notes, legalized_sliced_phones)
+    legalized_syllables, new_legalized_sliced_notes = notes_word_align_v1(legalized_sliced_notes, legalized_sliced_phones)
 
     for idx in range(1, len(legalized_syllables)):
         assert legalized_syllables[idx].get('start') == legalized_syllables[idx - 1].get('end'), "ExceptionC|illegal phones {}".format(' '.join([str(i) for i in legalized_syllables]))
     
 
-    return legalized_syllables, legalized_sliced_notes, True
+    return legalized_syllables, new_legalized_sliced_notes, True
 
 
 
@@ -483,7 +483,7 @@ def notes_word_align_v1(legalized_sliced_notes, legalized_sliced_phones):
 
     if len(syllable_list) != len(new_legalized_notes):
         raise AlignNoteException("phone: {} note: {}".format(' '.join([str(i) for i in syllable_list]), ' '.join([str(i) for i in legalized_sliced_notes])))
-    return syllable_list
+    return syllable_list, new_legalized_notes
  
 
 

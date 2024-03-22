@@ -391,6 +391,20 @@ class SemanticModule(BaseContinuousEmbedModule):
             embeds = self.target_embedder.get_sos_embed(batch_size)
         return embeds
 
+    def prepare_prefix_audio_woembedder(self, inputs_embeds, batch):
+        # this function works in inference when you need a prefix_audio as prompt, while
+        # there is no prefix_audio embedder in training
+        assert 'prefix_audio' in batch
+        emb_inputs = self.target_embedder.embed(self.requires, batch['prefix_audio'], with_sos=True)
+        if self.log_counter < 1:
+            print(f"{'prefix_audio'} emb input shape: ", emb_inputs.shape)
+        inputs_embeds.append(emb_inputs)
+        # en_idx = st_idx + emb_inputs.shape[1]
+        # batch["inputs_embeds_span"]['prefix_audio'] = (st_idx, en_idx)
+        # st_idx = en_idx
+        return inputs_embeds
+
+
     def prepare_intensity_inputs(self, batch, intensity_embedder):
         batch_size = self.infer_batch_size(batch)
         intensity_labels = batch["intensity"]
@@ -482,6 +496,9 @@ class SemanticModule(BaseContinuousEmbedModule):
             en_idx = st_idx + emb_inputs.shape[1]
             batch["inputs_embeds_span"][emb_type] = (st_idx, en_idx)
             st_idx = en_idx
+
+        if not self.training and 'prefix_audio' in self.infer_conditions(batch):
+            inputs_embeds = self.prepare_prefix_audio_woembedder(inputs_embeds, batch)
 
         self.log_counter += 1
         return torch.cat(inputs_embeds, dim=1)

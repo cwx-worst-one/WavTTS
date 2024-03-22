@@ -78,6 +78,7 @@ run_opts:
   use_empty_spkr_id: False # True if want to use 0 as all spkr_id, but keep spkr_id placeholder prefix
   use_empty_style_audio: False # True if want to use zeros-array as style_audio, but keep spkr_id placeholder prefix
   normalize_audio: False
+  leadsheet_align_mode: 'concat'
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -110,6 +111,7 @@ pl_datamodule: !new:recipes.bigmusic.datasets.svs.SVSFinetuneWebDataModule
   language: !ref <run_opts[language]>
   normalize_audio: !ref <run_opts[normalize_audio]>
   semantic_frame_rate: !ref <extra_params[semantic_frame_rate]>
+  leadsheet_align_mode: !ref <run_opts[leadsheet_align_mode]>
 
 model_config: !new:transformers.GPT2Config
   vocab_size: 1 # placeholder. Embedding table gets removed on load

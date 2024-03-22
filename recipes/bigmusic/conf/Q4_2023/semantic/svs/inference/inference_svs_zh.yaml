@@ -89,7 +89,7 @@ extra_params:
     lyrics_max_seq_len: 0 # TODO: switch to 400 for 30s
     semantic_temperature: 1.0
     sample_mode: "gumbel" # gumbel | top_p
-    token2wav_type: unified-diffusion
+    token2wav_type: ar-diffusion-vocoder
     lyrics_tokenizer: "sami_tts_frontend_precompute"
     cache_dir: !ref <run_opts[cache_dir]>
     infer_tag: ""
@@ -126,6 +126,7 @@ run_opts:
     vocal_prompt_duration: -1 # -1 for full prompt, 10.0 will fix duration to 10s(for mulan inference)
     vocal_prompt_number: 1
     input_txt_pattern: ""
+    leadsheet_align_mode: 'concat'
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -160,6 +161,7 @@ predict_dataset:
     vocal_prompt_number: !ref <run_opts[vocal_prompt_number]>
     input_txt_pattern: !ref <run_opts[input_txt_pattern]>
     time_format: !ref <extra_params[time_format]>
+    leadsheet_align_mode: !ref <run_opts[leadsheet_align_mode]>
 
 pl_datamodule: !new:recipes.bigmusic.datasets.svs.DataModule
     predict_dataset: !ref <predict_dataset>

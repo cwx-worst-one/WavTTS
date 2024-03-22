@@ -21,6 +21,7 @@ from webdataset import WebDataset
 from webdataset.pipeline import DataPipeline
 import logging
 import phonemizer
+import math
 
 from recipes.bigmusic.datasets.transforms.leadsheet import (
     make_leadsheet_from_note_and_utterances,
@@ -31,10 +32,19 @@ from recipes.bigmusic.datasets.transforms.leadsheet import (
     get_score_from_token_txt,
     concat_alignment,
     dump_leadsheet,
+    interleave_alignment
 )
 from recipes.bigmusic.datasets.transforms.f0 import (
     force_align_note_phone_pipeline,
 )
+
+
+from recipes.bigmusic.datasets.utils.zh_meta import (
+    _parse_sa_music_tagging,
+    parse_voice_tag,
+    parse_filter_label,
+)
+
 from recipes.bigmusic.datasets.transforms.prompt import Prompter
 from recipes.bigmusic.datasets.tokenizers.speaker import spkr2id
 from recipes.bigmusic.datasets.tokenizers.leadsheet import LeadSheetTokenizerV2
@@ -164,7 +174,8 @@ def group_utterances(utterances, min_duration, max_duration, time_in_sec=False, 
                 for word in words:
                     phone_start_time = float(word['start_time'])/1000.0
                     phone_end_time = float(word['end_time'])/1000.0
-                    phoneme = word['phoneme']
+                    # phoneme = word['phoneme']
+                    phoneme = word.get('phoneme', None)
                     if phoneme == None:
                         continue
                     phone_tone_ids, phones, tones = convert_labels_to_text_id(
@@ -252,7 +263,6 @@ def collate_fn(batch: List[torch.Tensor],
 
     for idx in range(len(batch)):
         assert (batch[idx] != None)
-
         uttids.append(batch[idx]['uttid'])
         audio_lengths.append(batch[idx]["audio"].shape[1])
         audio_slice = pad(batch[idx]["audio"])
@@ -391,7 +401,7 @@ class SVSPretrainTransforms(BaseTransforms):
         leadsheet_align_mode: str = "concat",
         extra_audio_keys=None,
         align_method=None,
-
+        pretrain_lyrics_mode='asr',
         **kwargs,
     ):
         self.genre_filtered = genre_filtered
@@ -437,7 +447,7 @@ class SVSPretrainTransforms(BaseTransforms):
             base_transforms.append(Resample(self.data_sample_rate, sample_rate))
         self.base_transform = Compose(base_transforms)
         self.align_method = align_method
-
+        self.lyrics_mode = pretrain_lyrics_mode
         super().__init__()
 
     def is_confident_lyrics(self, utterance, threshold):
@@ -446,6 +456,8 @@ class SVSPretrainTransforms(BaseTransforms):
             if len(utt['text']) > 0:
                 if "confidence" in utt:
                     conf += float(utt["confidence"])
+                elif 'attribute' in utt and 'confidence' in utt["attribute"]:
+                    conf += float(utt["attribute"]['confidence'])
                 else:
                     conf += 1.0 # from force-alignment
                 num_utt += 1
@@ -468,6 +480,20 @@ class SVSPretrainTransforms(BaseTransforms):
                 if license in self.exclude_licenses:
                     return False
         return True
+
+
+    def fetch_metadata_utterances(self, metadata, mode='asr'):
+        assert 'lyrics' in metadata
+        if mode == 'asr':
+            if "result" in metadata["lyrics"]:
+                utterances = metadata["lyrics"]["result"][0]["utterances"]
+            else:
+                utterances = metadata["lyrics"]["utterances"]
+        elif mode == 'gt':
+            assert 'lyrics_gt' in metadata
+            utterances = metadata["lyrics_gt"]
+        
+        return utterances
 
     def extract_metadata_and_utterances(self, index_data):
         metadata = index_data['metadata'] if 'metadata' in index_data else index_data
@@ -511,18 +537,50 @@ class SVSPretrainTransforms(BaseTransforms):
             else:
                 note_sequence = note_sequence['vocal'] if 'vocal' in note_sequence.keys() else note_sequence['notes']
 
+        if self.lyrics_mode == "gt":
+            # Parse SA tags and get style_text
+            music_tagging = metadata.get("music_tagging")
+            self.sinking_threshold = 0.51
+            if music_tagging is None:
+                self._update_stats(skipped=False, message="No music_tagging field")
+            cat_tags, unfamiliar_tags, is_sinking = _parse_sa_music_tagging(music_tagging, self.sinking_threshold)
+            _genre_tag, _, _, _, _lang_tag = cat_tags
+            # Filter out certain languages and genres for a better data quality
+            if True:
+                if _genre_tag in ["", "Chinese Opera", "Other genre"]:
+                    self._update_stats(skipped=True, message=f"Filter out genre {_genre_tag}")
+                    return
+                if (_genre_tag not in ["DJ", "MC"]) and is_sinking:
+                    self._update_stats(skipped=True, message=f"Filter out genre {_genre_tag} because of sinking")
+                    return
+                if not _lang_tag or (_lang_tag == "Chinese Dialects"):
+                    self._update_stats(skipped=True, message=f"Filter out lang {_lang_tag}")
+                    return
+                # Only filter out non-high-quality if filter_label exists
+                # popular_potential is less accurate, do not use it for now
+                # high_quality, _ = parse_filter_label(meta.get("filter_label"))
+                # if not high_quality:
+                #     self._update_stats(skipped=True, message=f"Filter out low quality")
+                #     return
+
+            if unfamiliar_tags:
+                self._update_stats(skipped=False, message=f"Detected tag(s) not in SA vocab: {unfamiliar_tags}")
+
         audio = self.base_transform(item[self.audio_key])
         extra_audio = [self.base_transform(item[k]) for k in self.extra_audio_keys]
-        utterances = metadata["lyrics"]["result"][0]["utterances"]
-        if not self.is_confident_lyrics(utterances, self.lyrics_confidence):
-            self._update_stats(skipped=True, message="Low confidence lyrics")
-            # print("Low confidence lyrics", meta['artist_name'])
-            return
+        # utterances = metadata["lyrics"]["result"][0]["utterances"]
+        utterances = self.fetch_metadata_utterances(metadata, self.lyrics_mode)
+
         if utterances is None or len(utterances) == 0:
             self._update_stats(skipped=True, message="No utterances")
             # print("No utterances", meta['artist_name'])
             return
 
+        if not self.is_confident_lyrics(utterances, self.lyrics_confidence):
+            self._update_stats(skipped=True, message="Low confidence lyrics")
+            # print("Low confidence lyrics", meta['artist_name'])
+            return
+        
         if self.align_method is not None:
             if 'f0' not in item.keys():
                 self._update_stats(skipped=True, message='no F0 extraction')
@@ -591,7 +649,7 @@ class SVSPretrainTransforms(BaseTransforms):
                 leadsheet_tokens = leadsheet_tokens_dict['leadsheet_tokens']
                 note_tokens = leadsheet_tokens_dict['note_tokens']
 
-            elif self.leadsheet_align_mode == "concat":
+            elif self.leadsheet_align_mode == "concat" or self.leadsheet_align_mode == 'interleave':
                 sliced_notes, sliced_phones = make_leadsheet_from_note_and_utterances_v2(
                 # sliced_notes, sliced_phones = make_leadsheet_from_note_and_utterances(
                     note_sequence=note_sequence,
@@ -624,8 +682,8 @@ class SVSPretrainTransforms(BaseTransforms):
             if clip.shape[0] == 0 or clip.shape[1] == 0:
                 # print('audio shape too short', clip.shape)
                 continue
-
-            if self.align_method is not None and self.leadsheet_align_mode == "concat":
+            # audio_lens = clip.shape[-1] / 24000
+            if self.align_method is not None:
                 st, ed = round(segment[0] * 100), round(segment[1] * 100)
                 f0, vuv = torch.from_numpy(f0_inlen[st:ed]), torch.from_numpy(vuv_inlen[st:ed])
                 legalized_sliced_phones, legalized_sliced_notes, flag = force_align_note_phone_pipeline(deepcopy(sliced_phones), deepcopy(sliced_notes), vuv, f0, clip.shape[-1] / self.sample_rate, align_method=self.align_method)
@@ -640,6 +698,18 @@ class SVSPretrainTransforms(BaseTransforms):
                 leadsheet_tokens, leadsheet_tokens_coff, note_tokens, phoneme_tokens = concat_alignment(
                     self.leadsheet_tokenizer, legalized_sliced_notes, legalized_sliced_phones)
 
+            elif self.leadsheet_align_mode == 'interleave':
+                if self.align_method is not None:
+                    leadsheet_tokens, leadsheet_tokens_coff, note_tokens, phoneme_tokens = interleave_alignment(
+                        self.leadsheet_tokenizer, legalized_sliced_notes, legalized_sliced_phones)
+                    # print(leadsheet_tokens.shape, audio_lens, "------leadsheet tokens lens and audio lens")
+
+                    if isinstance(leadsheet_tokens, bool):
+                        self._update_stats(skipped=True, message="Wrong Alignment Result of force align method")
+                        return
+                else:
+                    self._update_stats(skipped=True, message="Mismatch in align method and leadsheet align mode")
+                    return
 
             if self.lyrics_tokenizer == "sami_tts_frontend_precompute":
                 lyrics_tokens = segment_phoneme_ids
@@ -733,7 +803,8 @@ class SVSPretrainDataset(WebPipeline):
         handler=wds.warn_and_continue,
         extra_audio_keys=None,
         align_method=None,
-
+        leadsheet_align_mode='concat',
+        pretrain_lyrics_mode='asr',
         **kwargs,
     ):
         if extra_audio_keys is None:
@@ -780,8 +851,10 @@ class SVSPretrainDataset(WebPipeline):
             leadsheet_tokenizer=leadsheet_tokenizer,
             extra_audio_keys=extra_audio_keys,
             align_method=align_method,
-  
+            leadsheet_align_mode=leadsheet_align_mode,
+            pretrain_lyrics_mode=pretrain_lyrics_mode,
         )
+
         preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
         print(f"[{self.name}] MultiIterableDataset constructing...")
         if url2index:
@@ -984,8 +1057,16 @@ class SVSEvalTransforms(BaseTransforms):
         style_audio, sliced_notes, sliced_phones = self.prompter.warp_prompt(
             sliced_notes, sliced_phones, spkr_name, num_prompt=self.run_opts.get('vocal_prompt_number', 1))
 
-        leadsheet_tokens, leadsheet_tokens_coff, note_tokens, phoneme_tokens = concat_alignment(
-            self.leadsheet_tokenizer, sliced_notes, sliced_phones)
+        if self.leadsheet_align_mode == 'concat':
+            leadsheet_tokens, leadsheet_tokens_coff, note_tokens, phoneme_tokens = concat_alignment(
+                self.leadsheet_tokenizer, sliced_notes, sliced_phones)
+
+        elif self.leadsheet_align_mode == 'interleave':
+            leadsheet_tokens, leadsheet_tokens_coff, note_tokens, phoneme_tokens = interleave_alignment(
+                self.leadsheet_tokenizer, sliced_notes, sliced_phones)
+            if isinstance(leadsheet_tokens, bool):
+                self._update_stats(skipped=True, message="Wrong Alignment Result ")
+                return
 
         if self.lyrics_tokenizer == "sami_tts_frontend_precompute":
             lyrics_tokens = phoneme_tokens
@@ -1065,6 +1146,7 @@ class SVSEvalDataset(WebPipeline):
         language: List[str] = [],
         extra_audio_keys=None,
         run_opts: dict = {},
+        leadsheet_align_mode: str = 'concat',
         **kwargs,
     ):
         print(f"[{self.name}] initializing...")
@@ -1114,7 +1196,8 @@ class SVSEvalDataset(WebPipeline):
             # lyrics tokenizer
             lyrics_tokenizer=lyrics_tokenizer,
             leadsheet_tokenizer=leadsheet_tokenizer,
-            extra_audio_keys=extra_audio_keys
+            extra_audio_keys=extra_audio_keys,
+            leadsheet_align_mode=leadsheet_align_mode
         )
         preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
         print(f"[{self.name}] MultiIterableDataset constructing...")
@@ -1176,8 +1259,16 @@ class SVSInferTransforms(BaseTransforms):
         style_audio, sliced_notes, sliced_phones = self.prompter.warp_prompt(
             sliced_notes, sliced_phones, self.target_spkr_name, num_prompt=self.vocal_prompt_number)
 
-        leadsheet_tokens, leadsheet_tokens_coff, note_tokens, phoneme_tokens = concat_alignment(
-            self.leadsheet_tokenizer, sliced_notes, sliced_phones, pitch_shift=self.pitch_shift)
+        if self.leadsheet_align_mode == 'concat':
+            leadsheet_tokens, leadsheet_tokens_coff, note_tokens, phoneme_tokens = concat_alignment(
+                self.leadsheet_tokenizer, sliced_notes, sliced_phones, pitch_shift=self.pitch_shift)
+            
+        elif self.leadsheet_align_mode == 'interleave':
+            leadsheet_tokens, leadsheet_tokens_coff, note_tokens, phoneme_tokens = interleave_alignment(
+                self.leadsheet_tokenizer, sliced_notes, sliced_phones)
+            if isinstance(leadsheet_tokens, bool):
+                self._update_stats(skipped=True, message="Wrong Alignment Result ")
+                return
 
         normalized_text = "placeholder"
         if self.lyrics_tokenizer == "sami_tts_frontend_precompute":
@@ -1593,8 +1684,16 @@ class SVSFinetuneTransforms(BaseTransforms):
         extra_audio = [audio_transform(k) for k in self.extra_audio_keys]
 
         sliced_notes, sliced_phones = split_leadsheet2note_and_phone(leadsheet)
-        leadsheet_tokens, leadsheet_tokens_coff, note_tokens, phoneme_tokens = concat_alignment(
-            self.leadsheet_tokenizer, sliced_notes, sliced_phones)
+
+        if self.leadsheet_align_mode == 'concat':
+            leadsheet_tokens, leadsheet_tokens_coff, note_tokens, phoneme_tokens = concat_alignment(
+                self.leadsheet_tokenizer, sliced_notes, sliced_phones)
+        elif self.leadsheet_align_mode == 'interleave':
+            leadsheet_tokens, leadsheet_tokens_coff, note_tokens, phoneme_tokens = interleave_alignment(
+                self.leadsheet_tokenizer, sliced_notes, sliced_phones)
+            if isinstance(leadsheet_tokens, bool):
+                self._update_stats(skipped=True, message="Wrong Alignment Result ")
+                return
 
         if self.lyrics_tokenizer == "sami_tts_frontend_precompute":
             lyrics_tokens = phoneme_tokens
@@ -1685,6 +1784,7 @@ class SVSFinetuneDataset(WebPipeline):
         leadsheet_tokenizer=LeadSheetTokenizerV2(),
         handler=wds.warn_and_continue,
         extra_audio_keys=None,
+        leadsheet_align_mode='concat',
         **kwargs,
     ):
         print(f"[{self.name}] initializing...url2index={url2index}, data_id={data_id}")
@@ -1732,6 +1832,7 @@ class SVSFinetuneDataset(WebPipeline):
             lyrics_tokenizer=lyrics_tokenizer,
             leadsheet_tokenizer=leadsheet_tokenizer,
             extra_audio_keys=extra_audio_keys,
+            leadsheet_align_mode=leadsheet_align_mode,
         )
         preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
         print(f"[{self.name}] MultiIterableDataset constructing...")
@@ -1861,7 +1962,8 @@ class SVSPretrainWebDataModule(DataModule):
             30,
         ],
         align_method=None,
-
+        leadsheet_align_mode: str='concat',
+        pretrain_lyrics_mode: str='asr',
     ):
         if extra_audio_keys is None:
             extra_audio_keys = []
@@ -1937,7 +2039,8 @@ class SVSPretrainWebDataModule(DataModule):
                 handler=wds.warn_and_continue,
                 extra_audio_keys=extra_audio_keys,
                 align_method=align_method,
-
+                leadsheet_align_mode=leadsheet_align_mode,
+                pretrain_lyrics_mode=pretrain_lyrics_mode,
                 )]
         self.parquet_datasets = []
         if parquet_dataset_ids:
@@ -1966,6 +2069,8 @@ class SVSPretrainWebDataModule(DataModule):
                         handler=wds.warn_and_continue,
                         extra_audio_keys=extra_audio_keys,
                         align_method=align_method,
+                        leadsheet_align_mode=leadsheet_align_mode,
+                        pretrain_lyrics_mode=pretrain_lyrics_mode,
                         ))
         train_dataset = WebPipeline(
             MultiIterableDataset(datasets=self.wds_datasets + self.parquet_datasets,
@@ -1992,7 +2097,8 @@ class SVSPretrainWebDataModule(DataModule):
                 language=language,
                 nodesplitter=return_self,
                 handler=wds.warn_and_continue,
-                extra_audio_keys=extra_audio_keys
+                extra_audio_keys=extra_audio_keys,
+                leadsheet_align_mode=leadsheet_align_mode,
             ),
             pipeline=[{"compose": [self.bucketize]}],
         )]
@@ -2026,7 +2132,8 @@ class SVSPretrainWebDataModule(DataModule):
                 language=language,
                 nodesplitter=return_self,
                 handler=wds.warn_and_continue,
-                extra_audio_keys=extra_audio_keys
+                extra_audio_keys=extra_audio_keys,
+                leadsheet_align_mode=leadsheet_align_mode,
             ),
             pipeline=[{"compose": [self.bucketize]}],
         )
@@ -2093,6 +2200,7 @@ class SVSFinetuneWebDataModule(DataModule):
             25,
             30,
         ],
+        leadsheet_align_mode='concat',
     ):
         self.num_workers = num_workers
         self.shuffle_buffer_size = shuffle_buffer_size
@@ -2166,7 +2274,8 @@ class SVSFinetuneWebDataModule(DataModule):
                 resampled=True,
                 shardshuffle=True,
                 use_pipe=use_pipe,
-                handler=wds.warn_and_continue
+                handler=wds.warn_and_continue,
+                leadsheet_align_mode=leadsheet_align_mode
             )]
         self.parquet_datasets = []
         if parquet_dataset_ids:
@@ -2192,7 +2301,8 @@ class SVSFinetuneWebDataModule(DataModule):
                         resampled=True,
                         shardshuffle=True,
                         use_pipe=use_pipe,
-                        handler=wds.warn_and_continue
+                        handler=wds.warn_and_continue,
+                        leadsheet_align_mode=leadsheet_align_mode,
                     ))
         train_dataset = WebPipeline(
             MultiIterableDataset(datasets=self.wds_datasets + self.parquet_datasets,
@@ -2226,7 +2336,8 @@ class SVSFinetuneWebDataModule(DataModule):
                     use_pipe=use_pipe,
                     resampled=False,
                     nodesplitter=return_self,
-                    handler=wds.warn_and_continue
+                    handler=wds.warn_and_continue,
+                    leadsheet_align_mode=leadsheet_align_mode
                 ),
             )
         if parquet_validation_dataset_ids != []:
@@ -2253,7 +2364,8 @@ class SVSFinetuneWebDataModule(DataModule):
                     use_pipe=use_pipe,
                     resampled=False,
                     nodesplitter=return_self,
-                    handler=wds.warn_and_continue
+                    handler=wds.warn_and_continue,
+                    leadsheet_align_mode=leadsheet_align_mode
                 ),
                 )
 
@@ -2292,16 +2404,20 @@ if __name__ == "__main__":
         wds_dataset_urls=[],
         lyrics_tokenizer="zh_wordpiece",
         wds_validation_dataset_urls=["hdfs://haruna/home/byte_speech_sv/zhongyi.huang/svs_dataset/24000hz/test_v2/url2index.txt"],
-        parquet_dataset_ids=[1127],
-        parquet_valid_data_id=1793,
+        parquet_dataset_ids=[1902],
+        parquet_valid_data_id=1895,
         segment_max_phone_len= 0,
         segment_max_leadsheet_len= 1500,
         conditions= "style_audio,spkr_ids,leadsheet_tokens",
         time_format= "start,duration,merge_sil,merge_rest",
         language= ['ZH'],
-        num_workers=1,
+        num_workers=0,
         batch_size=1,
         buckets_in_sec= [1, 3, 5, 10, 15, 20, 25, 30, 32, 35, 40, 45],
+        style_prompt_path='/mnt/bn/lf-yiqinglu/code/svs_voicebox/assets/svs/svs_prompt',
+        # align_method='V3',
+        leadsheet_align_mode='interleave',
+        pretrain_lyrics_mode='gt'
         )
     # batch = next(dataset)
     # print("train", batch)
@@ -2333,7 +2449,7 @@ if __name__ == "__main__":
     #     batch_size=2, time_format='start,duration,merge_sil,merge_rest')
     batch = next(dataset.train_dataloader().__iter__())
     print("SFT train", batch)
-    batch = next(dataset.validation_dataloader().__iter__())
+    batch = next(dataset.val_dataloader()[0].__iter__())
     print("SFT val", batch)
     batch = next(dataset.predict_dataloader().__iter__())
     print("SFT predict", batch)

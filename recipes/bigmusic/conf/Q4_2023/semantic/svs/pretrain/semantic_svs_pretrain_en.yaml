@@ -73,6 +73,7 @@ run_opts:
     lyrics_confidence: 0.7
     language: ['EN'] # ['ZH', 'EN']
     force_align_method: NULL
+    leadsheet_align_mode: 'concat'
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -104,6 +105,8 @@ pl_datamodule: !new:recipes.bigmusic.datasets.svs.SVSPretrainWebDataModule
     lyrics_confidence: !ref <run_opts[lyrics_confidence]>
     semantic_frame_rate: !ref <extra_params[semantic_frame_rate]>
     align_method: !ref <run_opts[force_align_method]>
+    leadsheet_align_mode: !ref <run_opts[leadsheet_align_mode]>
+
 
 model_config: !new:transformers.GPT2Config
     vocab_size: 1 # placeholder. Embedding table gets removed on load

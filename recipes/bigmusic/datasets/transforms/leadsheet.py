@@ -278,7 +278,7 @@ def make_leadsheet_from_note_and_utterances_v2(note_sequence, utterances=None, p
         matched_notes = match_vowels_to_notes(phoneme_sequence, note_sequence)
         matched_notes = trim_unphoned(matched_notes)
         return matched_notes
-    elif align_mode == "concat":
+    elif align_mode == "concat" or align_mode == 'interleave':
         new_note_seq, new_phoneme_sequence = fetch_notes_from_phones_v3(phoneme_sequence, note_sequence)
         return new_note_seq, new_phoneme_sequence
     elif align_mode == "sort_by_starttime":
@@ -599,6 +599,38 @@ def concat_alignment(leadsheet_tokenizer, notes, phones, pitch_shift=0):
     leadsheet_tokens =  torch.cat([phoneme_timing_tokens, note_timing_tokens], 0)
     leadsheet_tokens_coff =  torch.cat([phone_tokens_coff, note_tokens_coff], 0)
     return leadsheet_tokens, leadsheet_tokens_coff, note_tokens, phoneme_tokens
+
+
+def interleave_alignment(leadsheet_tokenizer, notes, phones, pitch_shift=0):
+    notes = clean_up_leadsheet(notes)
+    phones = clean_up_leadsheet(phones)
+    
+    leadsheet, flag = merge_leadsheet(notes, phones)
+    if flag:
+        leadsheet_token_dict = leadsheet_tokenizer(leadsheet, return_dict=True, pitch_shift=pitch_shift)
+
+        leadsheet_tokens = leadsheet_token_dict['leadsheet_tokens']
+        note_tokens = leadsheet_token_dict['note_tokens']
+        phoneme_tokens = leadsheet_token_dict['phoneme_tokens']
+        leadsheet_tokens_coff = leadsheet_token_dict['token_coff']
+
+        return leadsheet_tokens, leadsheet_tokens_coff, note_tokens, phoneme_tokens
+    
+    else:
+        return False, None, None, None
+
+def merge_leadsheet(notes, phones):
+    for note_dict, phone_dict in zip(notes, phones):
+        if note_dict['start'] == phone_dict['start'] and note_dict['end'] == phone_dict['end']:
+            note_dict['phone'] = phone_dict['phone']
+            # note_dict['phoneme_ids'] = phone_dict['phoneme_ids']
+        else:
+            return [], False
+
+    return notes, True
+
+
+
 
 
 def dump_leadsheet(index, audio, sliced_notes, sliced_phones, dir="assets/debug"):

@@ -89,7 +89,7 @@ extra_params:
     lyrics_max_seq_len: 0 # TODO: switch to 400 for 30s
     semantic_temperature: 1.0
     sample_mode: "gumbel" # gumbel | top_p
-    token2wav_type: unified-diffusion
+    token2wav_type: "ar-diffusion-vocoder"
     lyrics_tokenizer: "zh_wordpiece"
     cache_dir: !ref <run_opts[cache_dir]>
 
@@ -125,7 +125,9 @@ run_opts:
     vocal_prompt_duration: -1 # -1 for full prompt, 10.0 will fix duration to 10s(for mulan inference)
     vocal_prompt_number: 1
     language: ['ZH'] # ['ZH', 'EN']
+    leadsheet_align_mode: 'concat'
 
+token2wav_config: !include:../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_40hzSS.yaml
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
@@ -159,6 +161,8 @@ pl_datamodule: !new:recipes.bigmusic.datasets.svs.SVSPretrainWebDataModule
     time_format: !ref <extra_params[time_format]>
     language: !ref <run_opts[language]>
     run_opts: !ref <run_opts>
+    leadsheet_align_mode: !ref <run_opts[leadsheet_align_mode]>
+
 
 pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
     semantic_cls_path: !ref <extra_params[semantic_cls_path]>
@@ -172,11 +176,10 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                     cache_dir: !ref <run_opts[cache_dir]>
         diffusion_modules:
             diffusion:
-                hpath: !ref <extra_params[diffusion_ckpt]>
+                hpath: !ref <token2wav_config[diffusion_config]>
                 initializer:
-                    !name:recipes.voicebox.lit_modules.lit_diffusion_reconstruct.prepare_diffusion_model_for_bigmusic
+                    !name:apps.bigmusic.umm.diffusion.requires.model_initializer.init_diffusion
                     cache_dir: !ref <run_opts[cache_dir]>
-                    params: !ref <extra_params[diffusion_params]>
 
         reranker:
             hpath:
