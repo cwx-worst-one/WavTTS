@@ -7,10 +7,10 @@ from apps.bigmusic.umm.diffusion.requires.model_initializer import init_diffusio
 
 def generation_with_config(
     params,
-    syn_wav_path = "voice_condition_valsets/slices/male_husky_0_slice1.wav",
+    syn_wav_path = "voice_condition_valsets/slices_60/male_husky_0_slice1.wav",
     prompt_wav_path = "voice_condition_valsets/conditions_6s/male_husky_0.wav",
     prompt_wav = None,
-    uttid = "test",
+    uttid = "",
     local_rank = 0,
     cache_dir = ".module_cache/",
 ):
@@ -18,6 +18,10 @@ def generation_with_config(
     requires = init_diffusion(
         params["diffusion_config"], local_rank, cache_dir, 
     )
+
+    if uttid == "":
+        diffusion_ckpt_info = params["diffusion_config"]["diffusion_ckpt_path"].split("/")
+        uttid = f"{diffusion_ckpt_info[-3]}_{diffusion_ckpt_info[-1]}"
     
     with torch.no_grad():
         umm_token, scale = wav2token(requires["diffusion"], syn_wav_path)
@@ -31,13 +35,12 @@ def generation_with_config(
             scale = scale,
         )
 
-
 def generation_with_config_file(
     hparams_file,
-    syn_wav_path = "voice_condition_valsets/slices/male_husky_0_slice1.wav",
+    syn_wav_path = "voice_condition_valsets/slices_60/male_husky_0_slice1.wav",
     prompt_wav_path = "voice_condition_valsets/conditions_6s/male_husky_0.wav",
     prompt_wav = None,
-    uttid = "test",
+    uttid = "",
     local_rank = 0,
     cache_dir = ".module_cache/",
 ):
@@ -60,7 +63,6 @@ def test_25hzConformer_125hzSS_streaming_distill():
     generation_with_config_file(
         syn_wav_path = "voice_condition_valsets/slices_60/male_husky_0_slice1.wav",
         hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS_streaming_distill.yaml",
-        uttid = "h800_ds1907_prompt_16xH800_25hzUMM_125hzSS_prompt_drop0.1_streaming_chunk1000_0315_consistency_0320_step=90000",
     )
 
 
@@ -72,7 +74,6 @@ def test_25hzConformer_125hzSS_streaming_with_wav():
     generation_with_config_file(
         syn_wav_path = "voice_condition_valsets/slices_60/male_husky_0_slice1.wav",
         hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS_streaming.yaml",
-        uttid = "h800_ds1907_prompt_16xH800_25hzUMM_125hzSS_prompt_drop0.1_streaming_chunk1000_0315_step=550000",
         prompt_wav = prompt_wav,
         prompt_wav_path = "",
     )
@@ -83,16 +84,20 @@ def test_25hzConformer_125hzSS_streaming():
     generation_with_config_file(
         syn_wav_path = "voice_condition_valsets/slices_60/male_husky_0_slice1.wav",
         hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS_streaming.yaml",
-        uttid = "h800_ds1907_prompt_16xH800_25hzUMM_125hzSS_prompt_drop0.1_streaming_chunk1000_0315_step=550000",
     )
+    
 
 @pytest.mark.skip
-def test_50hzDualConvV3_125hzSS():
+@pytest.mark.parametrize("hparams_file", [
+    "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConvV3_125hzSS.yaml", 
+    "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConvV3_125hzSS_streaming.yaml", 
+    "apps/bigmusic/umm/diffusion/conf/infer_generation_20hzDualConvV3_125hzSS_streaming.yaml"
+    ])
+def test_DualConvV3_125hzSS(hparams_file):
     generation_with_config_file(
-        hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConvV3_125hzSS.yaml",
+        hparams_file = hparams_file, 
     )
 
 
 
 
-    

@@ -154,6 +154,14 @@ class DiffusionU2SInfer(LightningModule):
         self.mel_mask_value = mel_config["mel_mask_value"] # -5
         
         os.makedirs(output_dir, exist_ok=True)
+
+        logger.info(f"DiffusionU2SInfer:")
+        logger.info(f"bn_config={self.bn_config}")
+        logger.info(f"diffusion_nfe={self.diffusion_nfe}")
+        logger.info(f"diffusion_sampler={self.diffusion_sampler}")
+        logger.info(f"text_cfg_w={self.text_cfg_w}")
+        logger.info(f"diffusion_ckpt_path={diffusion_ckpt_path}")
+
     
 
     # align wav to make sure wav length could be divided by `umm_frame_rate` and `mel_frame_rate` evenly
@@ -521,9 +529,13 @@ class ChunkInfer(DiffusionU2SInfer):
             self.attention_window_size = self.model.hp.window_size[-1]
         else:
             self.attention_window_size = None
-        print(f"{self.attention_window_size=}")
         self.without_prefix = without_prefix
-        print(f"{self.without_prefix=}")
+
+        logger.info(f"ChunkInfer:")
+        logger.info(f"token_chunk_size={self.token_chunk_size}")
+        logger.info(f"token_chunk_overlap={self.token_chunk_overlap}")
+        logger.info(f"attention_window_size={self.attention_window_size}")
+        logger.info(f"without_prefix={self.without_prefix}")
 
     def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: int = 0) -> Any:
         inputs, prompt_umm_token, syn_umm_token = self.prepare_features(batch)

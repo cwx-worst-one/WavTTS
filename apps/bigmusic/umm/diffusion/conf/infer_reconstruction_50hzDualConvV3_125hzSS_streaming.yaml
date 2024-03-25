@@ -9,14 +9,14 @@ run_opts:
     num_workers: 4
     seed: 1996
     diffusion_ckpt_path: ""
-    umm_ckpt_path: "/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/step=070000.ckpt"
+    umm_ckpt_path: "/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/umm/0219_dualummv1_novocadv_1/step=0710000.ckpt"
     vocoder_ckpt_path: ""
-    umm_frame_rate: 25
+    umm_frame_rate: 50
     mel_frame_rate: 125
     infer_type: diffusion-vocoder
     use_wvae_vocoder: True
     lang: en
-    token_chunk_size: 200
+    token_chunk_size: 400
     token_chunk_overlap: 1
     without_prefix: True
 
@@ -94,7 +94,7 @@ pl_module: !new:apps.bigmusic.umm.diffusion.lit_modules.lit_diffusion_reconstruc
     text_cfg_w: 0
     use_wvae_vocoder: !ref <run_opts[use_wvae_vocoder]>
     bn_config: !ref <bn_config>
-    umm_type: "UMM"
+    umm_type: "UMM_dualconvV3"
     token_chunk_size: !ref <run_opts[token_chunk_size]>
     token_chunk_overlap: !ref <run_opts[token_chunk_overlap]>
     without_prefix: !ref <run_opts[without_prefix]>

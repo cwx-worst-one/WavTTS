@@ -16,6 +16,9 @@ run_opts:
     infer_type: diffusion-vocoder
     use_wvae_vocoder: True
     lang: en
+    token_chunk_size: 400
+    token_chunk_overlap: 1
+    without_prefix: True
 
 predict_dataset: !new:apps.bigtts.umm.diffusion.datasets.meta_based_dataset.MetaBasedUnit2WavDataset
     meta_lst: !ref <run_opts[meta_lst]>
@@ -92,6 +95,9 @@ pl_module: !new:apps.bigmusic.umm.diffusion.lit_modules.lit_diffusion_reconstruc
     use_wvae_vocoder: !ref <run_opts[use_wvae_vocoder]>
     bn_config: !ref <bn_config>
     umm_type: "UMM_dualconv"
+    token_chunk_size: !ref <run_opts[token_chunk_size]>
+    token_chunk_overlap: !ref <run_opts[token_chunk_overlap]>
+    without_prefix: !ref <run_opts[without_prefix]>
 
 trainer: !new:pytorch_lightning.Trainer
     accelerator: "auto"

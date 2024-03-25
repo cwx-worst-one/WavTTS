@@ -8,31 +8,19 @@ run_opts:
     meta_lst: ""
     num_workers: 4
     seed: 1996
-    diffusion_ckpt_path: ""
-    umm_ckpt_path: "/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/step=070000.ckpt"
+    diffusion_ckpt_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/h800_ds1946_prompt_16xH800_20hzUMM_125hzSS_prompt_drop0.1_streaming_chunk1000_0319/checkpoints/epoch=00-step=970000-loss=0.36.ckpt"
+    umm_ckpt_path: "/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/umm/umm_dual_v3_10hz_corrected_vocal_grad_bert-base-multilingual-uncased_EMAEntropy16384x32/step=0550000.ckpt"
     vocoder_ckpt_path: ""
-    umm_frame_rate: 25
+    umm_frame_rate: 20
     mel_frame_rate: 125
-    infer_type: diffusion-vocoder
+    infer_type: ar-diffusion-vocoder
     use_wvae_vocoder: True
     lang: en
-    token_chunk_size: 200
+    streaming: True
+    token_chunk_size: 160
     token_chunk_overlap: 1
     without_prefix: True
-
-predict_dataset: !new:apps.bigtts.umm.diffusion.datasets.meta_based_dataset.MetaBasedUnit2WavDataset
-    meta_lst: !ref <run_opts[meta_lst]>
-    lang: !ref <run_opts[lang]>
-
-dataloader: !new:torch.utils.data.DataLoader
-    dataset: !ref <predict_dataset>
-    num_workers: !ref <run_opts[num_workers]>
-    batch_size: null
-    drop_last: False
-
-pl_datamodule: !new:recipes.text2semantic.lit_modules.lit_data.DataModule
-    predict_dataloader: !ref <dataloader>
-
+    
 bn_config: # 40hz wvae 3.1
     hop_size: 600
     bn_norm_std: 1
@@ -48,7 +36,7 @@ bn_config: # 40hz wvae 3.1
     wav_norm: False
     vocoder_model: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
         checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/yangyifeng.jervint/features_extraction/vc_vocoder_emb_bigmusic_v1.4/soundstream-step=374999-val_sdr=12.9557.ckpt
-        version: "24k_125hz_dim32_baseline"
+        version: 24k_125hz_dim32_baseline
         cache_dir: ".module_cache"
         sample_rate: !ref <mel_config[sampling_rate]>
 
@@ -65,20 +53,8 @@ mel_config: # ibigvgan config.
     mel_norm_std: 7.5
     mel_mask_value: -5
 
-# mel_config: # 80hz ibigvgan config.
-#     n_fft: 2048
-#     num_mels: 80
-#     hop_size: 300
-#     win_size: 1024
-#     fmin: 0
-#     fmax: 8000
-#     sampling_rate: 24000
-#     mel_norm_mean: -4.5
-#     mel_norm_std: 7
-#     mel_mask_value: -5
 
-
-pl_module: !new:apps.bigmusic.umm.diffusion.lit_modules.lit_diffusion_reconstruct.ChunkInfer
+diffusion_config:
     diffusion_ckpt_path: !ref <run_opts[diffusion_ckpt_path]>
     umm_ckpt_path: !ref <run_opts[umm_ckpt_path]>
     vocoder_ckpt_path: !ref <run_opts[vocoder_ckpt_path]>
@@ -94,17 +70,7 @@ pl_module: !new:apps.bigmusic.umm.diffusion.lit_modules.lit_diffusion_reconstruc
     text_cfg_w: 0
     use_wvae_vocoder: !ref <run_opts[use_wvae_vocoder]>
     bn_config: !ref <bn_config>
-    umm_type: "UMM"
+    umm_type: "UMM_dualconvV3"
     token_chunk_size: !ref <run_opts[token_chunk_size]>
     token_chunk_overlap: !ref <run_opts[token_chunk_overlap]>
     without_prefix: !ref <run_opts[without_prefix]>
-
-trainer: !new:pytorch_lightning.Trainer
-    accelerator: "auto"
-    devices: "auto"
-    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
-    deterministic: False
-    enable_model_summary: True
-    strategy: !ref <run_opts[strategy]>
-    precision: !ref <run_opts[precision]>
-    max_epochs: 1

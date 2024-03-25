@@ -89,9 +89,9 @@ pl_module: !new:apps.bigmusic.umm.diffusion.lit_modules.lit_diffusion_reconstruc
     mel_config: !ref <mel_config>
     seed: !ref <run_opts[seed]>
     diffusion_precision: "bf16"
-    diffusion_nfe: 10
-    diffusion_sampler: "ddim"
-    text_cfg_w: 0
+    diffusion_nfe: 4
+    diffusion_sampler: "consistency"
+    text_cfg_w: 1
     use_wvae_vocoder: !ref <run_opts[use_wvae_vocoder]>
     bn_config: !ref <bn_config>
     umm_type: "UMM"
