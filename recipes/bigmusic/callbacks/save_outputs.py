@@ -259,7 +259,7 @@ class NormVolumeCallback(pl.Callback):
 
         for idx, generated_output_fp in enumerate(generated_output_fps):
             print ("normalize volume for: ",  generated_output_fp)
-            command = "ffmpeg-normalize '%s' -t %d -ext wav -ar %d -o '%s' -f" % (generated_output_fp, -16, sample_rate, generated_output_fp)
+            command = "ffmpeg-normalize '%s' -t %d --keep-loudness-range-target -ext wav -ar %d -o '%s' -f" % (generated_output_fp, -16, sample_rate, generated_output_fp)
             os.system(command)
 
 

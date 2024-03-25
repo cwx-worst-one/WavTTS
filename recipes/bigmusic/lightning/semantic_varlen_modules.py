@@ -39,6 +39,7 @@ from recipes.bigmusic.utils.rewards import (
     semantic_diversity_sim_reward,
 )
 from torchaudio.transforms import Resample
+from recipes.musiclm.utils.dist import is_local_zero
 from recipes.musiclm.lightning.modules import MaskedCrossEntropy
 from recipes.bigmusic.utils.metrics_asr import asr_transcribe_lyrics
 
@@ -405,12 +406,14 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
         temperature = hp.semantic_temperature
         predict_lyrics = hp.get("predict_lyrics", False)
         sample_thresh = hp.get('sample_thresh', 0.9)
+        sample_mode = hp.sample_mode
 
         return self._predict(
             batch,
             num_tokens,
             temperature=temperature,
             beam=beam,
+            sample_mode=sample_mode,
             predict_lyrics=predict_lyrics,
             sample_thresh=sample_thresh,
             return_inputs_embeds=return_inputs_embeds
@@ -423,7 +426,7 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
         num_tokens,
         temperature=1,
         beam=None,
-        sample_mode="gumbel",
+        sample_mode="top_p",
         tqdm_name=None,
         return_inputs_embeds=False,
         predict_lyrics=False,
@@ -482,7 +485,7 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
             )
         else:
             past_key_values = None
-        pbar = tqdm(range(num_tokens))
+        pbar = tqdm(range(num_tokens), disable=(not is_local_zero()), miniters=int(num_tokens/100))
         previous_inputs_embeds = model_input["inputs_embeds"]
         for i in pbar:
             pbar.set_description(f"{tqdm_name} [0 - {num_tokens}]")
@@ -521,7 +524,7 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
         batch,
         num_tokens,
         temperature=1,
-        sample_mode="gumbel",
+        sample_mode="top_p",
         tqdm_name="Lyrics Prediction",
     ):
         tqdm_name = self.__class__.__name__ if tqdm_name is None else tqdm_name
@@ -655,18 +658,24 @@ class SemanticRLModule(SemanticModuleVarlen):
 
         # Inference
         self.set_requires_grad(False) # fix nested autocast bug: https://discuss.pytorch.org/t/autocast-and-torch-no-grad-unexpected-behaviour/93475/2
-        sampled_semantic_tokens, model_inputs = super().predict(
+
+        # num_tokens = sampled_semantic_tokens. shape[-1] - 1 # -1 for extra EOS.
+        frame_rate = self.extra_params.semantic_frame_rate
+        num_tokens = self.extra_params.duration * frame_rate
+        sampled_semantic_tokens, predicted_model_inputs = self._predict(
             batch,
-            self.extra_params,
+            num_tokens,
             beam=beam,
             return_inputs_embeds=True
         )
         del batch['model_inputs']
+
         sampled_semantic_tokens_processed, eos_index_list = process_eos_indexes(
             sampled_semantic_tokens,
             self,
             sample_rate=self.extra_params.sample_rate,
         )
+
         # Compute rewards
         rewards, sampled_audio, reward_breakdown = self.get_reward({
             "target_semantic_tokens": target_ids_batched,
@@ -680,13 +689,14 @@ class SemanticRLModule(SemanticModuleVarlen):
         self.set_requires_grad(True)
         # Compute sequence probs
         with self.profiler.profile(f"bigmusic.forward.step{self.trainer.global_step}"):
-            seq_logits = self.model(inputs_embeds=model_inputs, output_hidden_states=False)
+            predicted_model_inputs = predicted_model_inputs[:, :-1, :] # remove last token to offset inputs from target ids
+            seq_logits = self.model(inputs_embeds=predicted_model_inputs, output_hidden_states=False)
         if isinstance(seq_logits, dict):
             seq_logits = seq_logits["logits"]
         elif isinstance(seq_logits, tuple):
             seq_logits = seq_logits[0]
         num_tokens = sampled_semantic_tokens.shape[-1]
-        seq_probs1 = F.log_softmax(seq_logits[:, -num_tokens:, :], dim=-1)
+        seq_probs1 = F.log_softmax(seq_logits[:, -num_tokens:, :], dim=-1) # B * beam, T, Vocab
         seq_probs2 = torch.gather(
             seq_probs1, -1, sampled_semantic_tokens.unsqueeze(2)
         ).squeeze(2)    # (B * beam, T)
@@ -752,7 +762,6 @@ class SemanticRLModule(SemanticModuleVarlen):
     def _shared_step(self, batch, mode):
         with self.profiler.profile(f"bigmusic.prepare_training_inputs{self.trainer.global_step}"):
             training_inputs = self.prepare_training_inputs(batch)
-
         ##### RL #####
         (
             seq_loss,
@@ -763,7 +772,7 @@ class SemanticRLModule(SemanticModuleVarlen):
             seq_probs3,
             skip,
         ) = self._shared_step_rl(batch, training_inputs, mode)
-        
+
         ##### CE Loss #####
         (
             target_loss,
@@ -922,6 +931,8 @@ class SemanticRLModule(SemanticModuleVarlen):
         if len(eos_index_list) > 0:
             for i in range(len(eos_index_list)):
                 wavs[i, :, eos_index_list[i]:] = 0
+            # shorten to max eos
+            wavs = wavs[..., :max(eos_index_list)]
         return wavs
 
     @torch.no_grad()
@@ -954,6 +965,7 @@ class SemanticRLModule(SemanticModuleVarlen):
         b = items["batch_size"]
         beam = items["beam_size"]
         batch = items["batch"]
+        # TODO: change all reward functions truncate based on different lengths.
         if reward_type == "mulan_sim":
             (
                 mulan_sim,
@@ -968,6 +980,7 @@ class SemanticRLModule(SemanticModuleVarlen):
                 device=sampled_audio.device,
                 sampled_embeds=items.get("sampled_mulan_embeds"),
                 target_embeds=items.get("target_mulan_embeds"),
+                max_audio_duration=60,
             )
             return mulan_sim
         elif reward_type == "wer":
@@ -1107,6 +1120,17 @@ class SemanticRLModule(SemanticModuleVarlen):
                 sampled_audio,
                 sample_rate=self.extra_params.sample_rate,
                 device=sampled_audio.device,
+            )
+        elif reward_type == "intensity_sim":
+            return intensity_sim_reward(
+                sampled_audio,
+                target_intensity=None, #batch["intensity"],
+                calculation_mode=self.extra_params.intensity_calculation,
+                intensity_hz=self.extra_params.intensity_hz,
+                sample_rate=self.extra_params.sample_rate,
+                target_audio=batch["target_audio"],
+                device=sampled_audio.device,
+                resize_mode="crop"
             )
         elif reward_type == "semantic_diversity":
             return semantic_diversity_reward(

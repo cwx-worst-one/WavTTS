@@ -49,12 +49,16 @@ def mulan_audio_reward(
     sampled_embeds=None,    # (batch_size * beam, D)
     target_embeds=None,     # (batch_size, D)
     shift_seconds=5,
+    min_audio_duration=10,
+    max_audio_duration=None,
 ):
-    # TODO: don't hardcode min length
-    min_audio_length = 10 * sample_rate
+    min_audio_length = min_audio_duration * sample_rate
+    max_audio_length = max_audio_duration * sample_rate if max_audio_duration is not None else None
     if sampled_embeds is None:
         if sampled_audio.shape[-1] < min_audio_length:
             sampled_audio = crop_pad_to_seq_length(sampled_audio, min_audio_length)
+        elif max_audio_length and sampled_audio.shape[-1] > max_audio_length:
+            sampled_audio = crop_pad_to_seq_length(sampled_audio, max_audio_length)
         sampled_embeds = mulan_infer_fn(
             model=mulan_model,
             music=sampled_audio.float(),
@@ -64,6 +68,8 @@ def mulan_audio_reward(
     if target_embeds is None:
         if target_audio.shape[-1] < min_audio_length:
             target_audio = crop_pad_to_seq_length(target_audio, min_audio_length)
+        elif max_audio_length and target_audio.shape[-1] > max_audio_length:
+            target_audio = crop_pad_to_seq_length(target_audio, max_audio_length)
         target_embeds = mulan_infer_fn(
             model=mulan_model,
             music=target_audio.float(),
@@ -438,20 +444,34 @@ def intensity_sim_reward(
     target_intensity,
     sample_rate,
     device,
+    target_audio=None,
     calculation_mode="mean",
     intensity_hz=1,
+    resize_mode="resample"
 ):
-    _, beam = _infer_batch_beam(sampled_audio, target_intensity)
     intensity_transform = IntensityTransform(
         sample_rate=sample_rate,
         calculation_mode=calculation_mode,
         intensity_hz=intensity_hz,
     )
+    if target_intensity is None and target_audio is not None:
+        target_intensity = [intensity_transform.get_intensity(audio) for audio in target_audio]
+    _, beam = _infer_batch_beam(sampled_audio, target_intensity)
     hyp_intensity = [intensity_transform.get_intensity(audio) for audio in sampled_audio]
 
     intensity_sim_rewards = torch.zeros(sampled_audio.size(0)).to(device)
     for i, hyp in enumerate(hyp_intensity):
         ref = target_intensity[i // beam]
+
+        # ensure dimensions match.
+        if ref.shape[-1] != hyp.shape[-1]:
+            target_size = min(ref.shape[-1], hyp.shape[-1])
+            if resize_mode == 'resample':
+                ref = F.interpolate(ref.view(1,1,-1), size=target_size).view(-1)
+                hyp = F.interpolate(hyp.view(1,1,-1), size=target_size).view(-1)
+            elif resize_mode == 'crop':
+                ref = ref[..., :target_size]
+                hyp = hyp[..., :target_size]
         intensity_sim_rewards[i] = 1 - (ref - hyp).abs().mean()
     return intensity_sim_rewards
 

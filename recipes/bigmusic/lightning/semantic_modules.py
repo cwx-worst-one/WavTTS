@@ -1651,9 +1651,17 @@ class SemanticT5Module(BaseContinuousEmbedModule):
         return super().predict(inputs_embeds, num_tokens, temperature)
 
 def process_eos_indexes(semantic_samples, semantic_module: SemanticModule, sample_rate=24000):
+    semantic_samples = semantic_samples.clone()
     semantic_frame_rate = semantic_module.extra_params.semantic_frame_rate
     eos_id = semantic_module.target_embedder.eos_id
+    sos_id = semantic_module.target_embedder.sos_id
     eos_index_list = []
+
+    if (semantic_samples == sos_id).any():
+        # Hacky fix: sometimes model can predict SOS token. Here, we set it to EOS to discourage output. Diffusion has no concept of SOS
+        print('Found SOS in semantic tokens. Setting to 0:', semantic_samples.shape, (semantic_samples == sos_id).sum())
+        semantic_samples[semantic_samples == sos_id] = eos_id
+
     if eos_id is not None:
         """
         @renyi 08/02/2024: if we set eos_padding_id to 0, the "semantic_samples == eos_padding_id" will also include the real acoustic code 0, 

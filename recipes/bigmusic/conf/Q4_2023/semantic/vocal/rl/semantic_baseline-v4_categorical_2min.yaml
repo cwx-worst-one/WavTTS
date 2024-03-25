@@ -25,7 +25,7 @@ extra_params:
     buckets_in_sec: [40, 60, 80, 100, 120]
     style_category_vocab_size: 4096
     semantic_type: bestrq
-    tag_dropout_rate: 0.1
+    tag_dropout_rate: 0.0
     pretrained_path: hdfs:///home/byte_speech_sv/andrew.shaw/logs/semantic_model_dataset_v4_baseline/SFT_2min_deepchorus_4datasets_v3/checkpoints/step=052000-tr_loss=4.2535-val_loss_0=4.32.ckpt
     input_embedders: ["mulan_categorical", "lyrics_tokens"]
     # Inference params
@@ -44,18 +44,27 @@ extra_params:
     use_chord_eos: False
     rewards:
         "mulan_sim": 1.0
-        "wer": 0.5
-        "style_text_sim": 0.5
-        "loudness_sim": 1.0
-        "qualitative_sim": 1.0
+        "wer": 0.7
+        "style_text_sim": 0.3
+        "loudness_sim": 0.4
+        "semantic_diversity_sim": 0.5
+        # "audio_metrics": 1.0
+        # "qualitative_sim": 1.0
+        "intensity_sim": 1.0
         # "chord": 1.0
         # "chorus_presence": 0.2
+
+    # For intensity calculation
+    intensity_calculation: "mean"
+    intensity_hz: 1
+    intensity_temperature: 1.0
+
     # Logging params
     log_num_val_samples: 10
     log_num_val_beam_samples: 1
 
-    dataset_types: spotify_sft_artist16,spotify_sft_pop400,spotify_sft_billboardv2,spotify_sft_groupa
-    dataset_weights: [10, 1, 350, 700]
+    dataset_types: spotify_sft_artist16,spotify_sft_genre3373
+    dataset_weights: [1, 1]
     valid_dataset_type: val_mcc60m_groupA_cn
 
 # running parameters
@@ -67,7 +76,7 @@ run_opts:
     version: billboard-v2_rl3.0
     cache_dir: .module_cache/musiclm
     precision: "16-mixed"
-    num_workers: 4
+    num_workers: 3
     accelerator: auto
     max_steps: 5000
     val_check_interval: 50
@@ -201,7 +210,7 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_varlen_modules.SemanticRLMod
         asr:
             hpath: en_punc
             initializer: !name:recipes.bigmusic.utils.metrics_asr.init_asr
-                keep_alive: False
+                keep_alive: True
 
 logger:
     - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
