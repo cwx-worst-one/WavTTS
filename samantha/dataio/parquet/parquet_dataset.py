@@ -50,9 +50,8 @@ class ParquetDataset(DataPipeline, FluidInterface):
             self.append(SimpleShardList(urls))
             self.append(nodesplitter)
             self.append(shardlists.split_by_worker)
-            if shardshuffle is True:
+            if shardshuffle:
                 shardshuffle = 100
-            if shardshuffle is not None:
                 if detshuffle:
                     self.append(filters.detshuffle(shardshuffle))
                 else:
