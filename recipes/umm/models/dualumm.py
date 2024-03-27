@@ -6,27 +6,57 @@ from recipes.umm.models.dualumm_encoders import (
     ConvStacksWithDownUpSampling,
     MultiRefTimbreEncoder,
 )
-from recipes.umm.models.rmvpe import RMVPE
-from recipes.umm.models.umm_mkii import (
-    ClusteredVectorQuantizer,
-    EMAVectorQuantizerEntropy,
-    FiniteScalarQuantizer,
-    LookupFreeQuantizer,
-    Transpose,
-    WNConv1d,
-    get_vuv,
+from recipes.umm.models.dualumm_vector_quantizers import (
+    get_embeddings_from_vector_quantizer,
+    get_noise_scale,
+    get_vector_quantizer,
+    get_vector_quantizer_projection_layers,
 )
-from recipes.umm.models.vq import EMAVectorQuantizer
+from recipes.umm.models.rmvpe import RMVPE
+from recipes.umm.models.umm_mkii import get_vuv
 from recipes.umm.models.wenet.transformer.decoder import TransformerDecoder
 from recipes.umm.transforms.chroma import ChromaSpectrogram
 from recipes.umm.utils.mel_utils import torch_wav2spec
 
 
 class DualUMMv2(nn.Module):
+    """
+    @renyi @hanoihantrakul 27 March 2024
+    DualUMM is a 3rd generation tokenizer that has two separate branches:
+    one for vocal and one for instrumental. These branches output their
+    own respective codebooks, meaning there is a separate vocal codebook
+    and separate instrumental codebook. This is different from 1st Gen
+    ConformerUMM and 2nd Gen ConvUMM where there is a single codebook
+    for both vocal and instrumental audio.
+
+    DualUMMv2 requires the input to already be separated using an offline
+    MSS model into vocal and instrumental parts. (DualUMMv1 operates directly
+    on the full mix, but we found the performance to not be as good as the one
+    where an MSS model pre-separates the input)
+
+    From a high level perspective, DualUMMv2 introduces losses specific to
+    the vocal branch (e.g. ASR-based losses) and instrumental branch (e.g.
+    chroma spectrogram). In addition, there is a third branch which combines
+    the vector quantized values from both branches and outputs the full mix.
+    A range of additional losses (e.g. adversarial losses, Structure Similarity
+    Index SSIM loss) are imposed on this full mix. This forces more
+    information to be compressed into a single token.
+
+    Since there is a vocal token and instrumental token, remember to add these
+    two frame rates together to get the effective frame rate. e.g. if the
+    vocal codes are 10Hz and the instrumental codes are 10Hz, then the overall
+    frame rate after concatenation or interleaving of this DualUMM model is 20Hz.
+
+    As of 27 March 2024, we have verified that this model outperforms Gen1 and Gen2
+    tokenizers for tasks involving vocals and instrumentals (e.g. Lyrics2Song)
+    """
+
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.ds = config.get("downsampling", 4)
+        self.ds = config.get(
+            "downsampling", 4
+        )  # The mel features are at frame rate 100. So downsampling=4 means each branch is 25Hz.
         self.us = config.get("upsampling", 1)
         self.conv_hidden_size = config.get("conv_hidden_size", 256)
         self.encoder_layer = ConvStacksWithDownUpSampling(
@@ -46,6 +76,7 @@ class DualUMMv2(nn.Module):
         self.rmvpe = RMVPE()
 
     def init_inst_branch(self, config):
+        """Initialize the instrumental branch audio_encoder, decoders and reconstruction heads."""
         self.init_vq_layers("inst", config)
         head_hidden_size = self.conv_hidden_size
         self.decoder_inst = ConvStacksWithDownUpSampling(
@@ -74,6 +105,7 @@ class DualUMMv2(nn.Module):
         )
 
     def init_vocal_branch(self, config):
+        """Initialize the vocal branch. It has different encoders, decoders and recon heads to the instrumental branch."""
         self.init_vq_layers("vocal", config)
         head_hidden_size = self.conv_hidden_size
         self.audio_encoder_vocal = ConvStacksWithDownUpSampling(
@@ -110,6 +142,7 @@ class DualUMMv2(nn.Module):
             )
 
     def init_full_branch(self, config):
+        """Initialize the full mix branch, which only has a decoder and recon heads."""
         head_hidden_size = self.conv_hidden_size
         self.decoder_in_proj = nn.Conv1d(
             config.hidden_size * 2, config.hidden_size, 3, 1, 1
@@ -148,102 +181,65 @@ class DualUMMv2(nn.Module):
             )
 
     def init_vq_layers(self, suffix, config):
-        if config.get("vq_type", None) == "CVQ":
-            vq = ClusteredVectorQuantizer(
-                codebook_size=config.vq_codebook_size,
-                codebook_dim=config.vq_codebook_dim,
-                distance=config.get("vq_distance", "cos"),
-            )
-        elif config.get("vq_type", None) == "FSQ":
-            vq = FiniteScalarQuantizer(codebook_size=config.vq_codebook_size)
-        elif config.get("vq_type", None) == "LFQ":
-            vq = LookupFreeQuantizer(codebook_size=config.vq_codebook_size)
-        elif config.get("vq_type", None) == "EMAEntropy":
-            vq = EMAVectorQuantizerEntropy(
-                codebook_size=config.vq_codebook_size,
-                codebook_dim=config.vq_codebook_dim,
-                decay=config.vq_decay,
-            )
-        else:
-            vq = EMAVectorQuantizer(
-                codebook_size=config.vq_codebook_size,
-                codebook_dim=config.vq_codebook_dim,
-                decay=config.vq_decay,
-            )
+        """Initliaze the VQ layer."""
+        # Configure the specific type of VQ
+        vq_type = config.get("vq_type", None)
+        vq = get_vector_quantizer(vq_type, config)
         setattr(self, f"vq_{suffix}", vq)
-        if config.get("vq_proj_norm", None) == "bn":
-            vq_proj_in = nn.Sequential(
-                Transpose(),
-                WNConv1d(config.hidden_size, config.vq_codebook_dim, kernel_size=1)
-                if config.hidden_size != config.vq_codebook_dim
-                else nn.Identity(),
-                nn.BatchNorm1d(config.vq_codebook_dim, affine=False, momentum=0.05),
-                Transpose(),
-            )
-            vq_proj_out = nn.Sequential(
-                Transpose(),
-                WNConv1d(config.vq_codebook_dim, config.hidden_size, kernel_size=1)
-                if config.vq_codebook_dim != config.hidden_size
-                else nn.Identity(),
-                Transpose(),
-            )
-        elif config.get("vq_proj_norm", None) == "ln":
-            vq_proj_in = nn.Sequential(
-                nn.Linear(config.hidden_size, config.vq_codebook_dim, bias=False)
-                if config.hidden_size != config.vq_codebook_dim
-                else nn.Identity(),
-                nn.LayerNorm(config.vq_codebook_dim, elementwise_affine=False),
-            )
-            vq_proj_out = nn.Sequential(
-                nn.Linear(config.vq_codebook_dim, config.hidden_size, bias=False)
-                if config.vq_codebook_dim != config.hidden_size
-                else nn.Identity()
-            )
-        else:
-            vq_proj_in = nn.Linear(
-                config.hidden_size, config.vq_codebook_dim, bias=False
-            )
-            vq_proj_out = nn.Linear(
-                config.vq_codebook_dim, config.hidden_size, bias=False
-            )
+
+        # Configure the type of projection layer going into and out of VQ layer
+        vq_proj_norm_type = config.get("vq_proj_norm", None)
+        vq_proj_in, vq_proj_out = get_vector_quantizer_projection_layers(
+            vq_proj_norm_type, config
+        )
         setattr(self, f"vq_proj_in_{suffix}", vq_proj_in)
         setattr(self, f"vq_proj_out_{suffix}", vq_proj_out)
 
+        # Configure the noise injected into the VQ projection layer
         if config.get("vq_proj_noise", 0) > 0:
             self.register_buffer(f"cnt_{suffix}", torch.FloatTensor([0]))
 
     def forward_vq(self, hidden_states, suffix):
+        """Forward pass through the VQ layer."""
         org_len = hidden_states.shape[1]
+        # Apply projection into VQ layer
         hidden_states = getattr(self, f"vq_proj_in_{suffix}")(hidden_states)
         cnt = getattr(self, f"cnt_{suffix}")
-        if self.config.get("vq_proj_noise", 0) > 0:
-            noise_scale = (self.config.vq_proj_noise - cnt).clamp(
-                0
-            ) / self.config.vq_proj_noise
+        # Apply projection noise
+        vq_proj_noise = self.config.get("vq_proj_noise", 0)
+        if vq_proj_noise > 0:
+            noise_scale = get_noise_scale(vq_proj_noise, cnt)
             hidden_states = (
                 hidden_states + torch.randn_like(hidden_states) * noise_scale
             )
             cnt.add_(1)
+        # Apply VQ
+        # TODO(@hanoihantrakul): wrap different VQ behaviors with a consistent signature
         vq = getattr(self, f"vq_{suffix}")
-        if self.config.get("vq_type", None) == "FSQ":
+        vq_type = self.config.get("vq_type", None)
+        if vq_type == "FSQ":
             vq_embs, vq_ids = vq(hidden_states)
             vq_loss = None
-        elif self.config.get("vq_type", None) == "EMAEntropy":
+        elif vq_type == "EMAEntropy":
             vq_embs, vq_ids, vq_loss = vq(
                 hidden_states, e_scale=1.0 if cnt < 30_000 else 0.0
             )
         else:
             vq_embs, vq_ids, vq_loss = vq(hidden_states)
+        # Apply projection out of VQ layer
         hidden_states = getattr(self, f"vq_proj_out_{suffix}")(vq_embs)[:, :org_len]
         return hidden_states, vq_ids, vq_loss
 
     def forward_decoder(self, hidden_states, decoder, fea_ref=None, ref_enc=None):
-        if self.config.vocal_ref and fea_ref is not None:
+        """Helper function for forward pass through the decoder layer."""
+        if fea_ref is not None:
+            # Use the reference feature and encoder. Normally off by defaul
             hidden_states = ref_enc(hidden_states, fea_ref) + hidden_states
         hidden_states = decoder(hidden_states)
         return hidden_states
 
     def forward_inst_branch(self, input_dict):
+        """Forward pass for instrumental branch."""
         feature = input_dict["inst"]
         if self.config.get("use_full_input", False):
             feature = input_dict["full"]
@@ -273,6 +269,21 @@ class DualUMMv2(nn.Module):
         return output_dict
 
     def forward_vocal_branch(self, input_dict):
+        """Forward pass for vocal branch.
+
+        - Implementation notes @renyi @hanoihantrakul 27 Mar 2024
+        The vocal is split into two parts, a "front" and "back" part.
+        In the code these are denoted by `_f` and `_b`. A parameter in the
+        corresponding lit_module called `T_split` controls where this happens.
+
+        In practise, this feature is not used by default. You can think of the
+        vocal audio as passing through this branch "as a single file".
+
+        It was written this way to support experimentation  where timbre and content disentanglement
+        can be enforced by getting the model to predict features of the front
+        using features of the back portion (e.g. use the tone/timbre of the back, but not
+        the content).
+        """
         feature_vocal_f = feature_vocal_ref_f = input_dict["mel_vocal_f"]
         nonpadding_f = (feature_vocal_f.abs().sum(-1) > 0).float()[..., None]
         feature_vocal_b = feature_vocal_ref_b = input_dict["mel_vocal_b"]
@@ -301,18 +312,31 @@ class DualUMMv2(nn.Module):
             feature_vocal_ref_f = input_dict["mel_vocal_ref_f"]
             feature_vocal_ref_b = input_dict["mel_vocal_ref_b"]
 
-        hidden_states_vocal_f = self.forward_decoder(
-            hidden_states_vocal_f,
-            self.decoder_vocal,
-            feature_vocal_ref_b,
-            self.timbre_enc_vocal,
-        )
-        hidden_states_vocal_b = self.forward_decoder(
-            hidden_states_vocal_b,
-            self.decoder_vocal,
-            feature_vocal_ref_f,
-            self.timbre_enc_vocal,
-        )
+        use_vocal_ref = self.config.get(
+            "vocal_ref", False
+        )  # For nearly all cases this is False.
+        if use_vocal_ref:
+            # False by default
+            hidden_states_vocal_f = self.forward_decoder(
+                hidden_states_vocal_f,
+                self.decoder_vocal,
+                feature_vocal_ref_b,
+                self.timbre_enc_vocal,
+            )
+            hidden_states_vocal_b = self.forward_decoder(
+                hidden_states_vocal_b,
+                self.decoder_vocal,
+                feature_vocal_ref_f,
+                self.timbre_enc_vocal,
+            )
+        else:
+            # Normal scenario
+            hidden_states_vocal_f = self.forward_decoder(
+                hidden_states_vocal_f, self.decoder_vocal
+            )
+            hidden_states_vocal_b = self.forward_decoder(
+                hidden_states_vocal_b, self.decoder_vocal
+            )
         hidden_states_vocal = torch.cat(
             [hidden_states_vocal_f, hidden_states_vocal_b], 1
         )
@@ -364,6 +388,14 @@ class DualUMMv2(nn.Module):
     def forward_full_branch(
         self, input_dict, h_aftervq_vocal, h_aftervq_inst, h_vocal_ref
     ):
+        """Forward pass for full mix branch.
+
+        - Implementation notes @renyi @hanoihantrakul 27 Mar 2024
+        Like the vocal branch, the code is structed to handle the "front"
+        and "back" of the vocal input. This is to support experimentation
+        in the  research model. In practise, the vocal audio passes through
+        as though it was "one piece/
+        """
         feature_full = input_dict["full"]
         nonpadding = (feature_full.abs().sum(-1) > 0).float()[..., None]
         T = nonpadding.shape[1]
@@ -378,6 +410,9 @@ class DualUMMv2(nn.Module):
         hidden_states_vocal_f, hidden_states_vocal_b = h_aftervq_vocal
         T_f_hs = hidden_states_vocal_f.shape[1]
         if self.config.get("detach_vocal_to_full", False):
+            # When gradients are detached from the vocal,
+            # we hope less timbre information is encoded in vocal branch
+            # and can be controlled elsewhere
             hidden_states_vocal_f = hidden_states_vocal_f.detach()
             hidden_states_vocal_b = hidden_states_vocal_b.detach()
         hidden_states_full_f = torch.cat(
@@ -393,18 +428,32 @@ class DualUMMv2(nn.Module):
         hidden_states_full_b = self.decoder_in_proj(
             hidden_states_full_b.transpose(1, 2)
         ).transpose(1, 2)
-        hidden_states_full_f = self.forward_decoder(
-            hidden_states_full_f,
-            self.decoder_full,
-            feature_vocal_ref_b,
-            self.timbre_enc_full,
-        )
-        hidden_states_full_b = self.forward_decoder(
-            hidden_states_full_b,
-            self.decoder_full,
-            feature_vocal_ref_f,
-            self.timbre_enc_full,
-        )
+
+        # For nearly all cases this is False.
+        use_vocal_ref = self.config.get("vocal_ref", False)
+        if use_vocal_ref:
+            # False by default
+            hidden_states_full_f = self.forward_decoder(
+                hidden_states_full_f,
+                self.decoder_full,
+                feature_vocal_ref_b,
+                self.timbre_enc_full,
+            )
+            hidden_states_full_b = self.forward_decoder(
+                hidden_states_full_b,
+                self.decoder_full,
+                feature_vocal_ref_f,
+                self.timbre_enc_full,
+            )
+        else:
+            # Normal scenario
+            hidden_states_full_f = self.forward_decoder(
+                hidden_states_full_f, self.decoder_full
+            )
+            hidden_states_full_b = self.forward_decoder(
+                hidden_states_full_b, self.decoder_full
+            )
+        # Concatenate hidden states from front and back
         hidden_states_full = torch.cat([hidden_states_full_f, hidden_states_full_b], 1)
 
         # mel out
@@ -466,70 +515,81 @@ class DualUMMv2(nn.Module):
         nonpadding = (mel.abs().sum(-1) > 0).float()[..., None]
         if wav_type == "vocal":
             hidden_states = self.audio_encoder_vocal(mel, nonpadding)
-        else:
+        elif wav_type == "inst":
             hidden_states = self.audio_encoder_inst(mel, nonpadding)
-            wav_type = "inst"
+        else:
+            raise ValueError(
+                f"Please choose either 'vocal' or 'inst' as wav_type instead of {wav_type}"
+            )
         hidden_states = self.encoder_layer(hidden_states, nonpadding)
         hidden_states, vq_ids, vq_loss = self.forward_vq(hidden_states, wav_type)
         return vq_ids
 
     def token2mel(self, token, wav_ref=None, token_type="vocal"):
-        if token_type == "full":
+        """Convert tokens to a mel spectrogram."""
+
+        def _vocal_tokens_to_hidden_states_helper(token, wav_ref):
+            """Convert vocal tokens to vocal hidden states after VQ depending on presence of a vocal red"""
             if wav_ref is not None:
+                # Use the `wav_ref` as a reference timbre. Normally false.
                 wav_ref = self._prepare_wav(wav_ref)
                 mel_ref = torch_wav2spec(wav_ref)
+                return _vocal_tokens_to_hidden_states_after_vq_with_ref(token, mel_ref)
             else:
-                mel_ref = None
-            token_vocal = token[:, ::2]
-            token_inst = token[:, 1::2]
-            if isinstance(self.vq_vocal, FiniteScalarQuantizer):
-                vq_vocal = self.vq_vocal.indices_to_codes(token_vocal)
-            else:
-                vq_vocal = self.vq_vocal.embedding(token_vocal)
-            h_vocal = self.vq_proj_out_vocal(vq_vocal)
-            h_vocal = self.forward_decoder(
-                h_vocal, self.decoder_vocal, mel_ref, self.timbre_enc_vocal
-            )
-            if isinstance(self.vq_inst, FiniteScalarQuantizer):
-                vq_inst = self.vq_inst.indices_to_codes(token_inst)
-            else:
-                vq_inst = self.vq_inst.embedding(token_inst)
-            h_inst = self.vq_proj_out_inst(vq_inst)
-            h_inst = self.forward_decoder(h_inst, self.decoder_inst)
-            h = torch.cat([h_vocal, h_inst], -1)
-            h = self.decoder_in_proj(h.transpose(1, 2)).transpose(1, 2)
-            h = self.forward_decoder(
-                h, self.decoder_full, mel_ref, self.timbre_enc_full
-            )
-            mel_out = self.mel_head_full(h)
-            return mel_out
-        elif token_type == "vocal":
-            if wav_ref is not None:
-                wav_ref = self._prepare_wav(wav_ref)
-                mel_ref = torch_wav2spec(wav_ref)
-            else:
-                mel_ref = None
-            vq = self.vq_vocal
-            vq_out = self.vq_proj_out_vocal
-            mel_head = self.mel_head_vocal
-        else:
-            assert token_type == "inst"
-            vq = self.vq_inst
-            vq_out = self.vq_proj_out_inst
-            mel_head = self.mel_head_inst
-        if isinstance(vq, FiniteScalarQuantizer):
-            vq_embs = vq.indices_to_codes(token)
-        else:
-            vq_embs = vq.embedding(token)
-        hidden_states = vq_out(vq_embs)
-        if token_type == "vocal":
+                return _vocal_tokens_to_hidden_states_after_vq_no_ref(token)
+
+        def _vocal_tokens_to_hidden_states_after_vq_no_ref(token):
+            """Convert vocal tokens to vocal hidden states after VQ with no reference vocal."""
+            vq_embs = get_embeddings_from_vector_quantizer(token, self.vq_vocal)
+            hidden_states = self.vq_proj_out_vocal(vq_embs)
+            hidden_states = self.forward_decoder(hidden_states, self.decoder_vocal)
+            return hidden_states
+
+        def _vocal_tokens_to_hidden_states_after_vq_with_ref(token, mel_ref):
+            """Convert vocal tokens to vocal hidden states after VQ with a reference vocal."""
+            vq_embs = get_embeddings_from_vector_quantizer(token, self.vq_vocal)
+            hidden_states = self.vq_proj_out_vocal(vq_embs)
             hidden_states = self.forward_decoder(
                 hidden_states, self.decoder_vocal, mel_ref, self.timbre_enc_vocal
             )
-        else:
+            return hidden_states
+
+        def _instrumental_tokens_to_hidden_states_after_vq(token):
+            """Convert instrumental tokens to instrumental hidden states after VQ."""
+            vq_embs = get_embeddings_from_vector_quantizer(token, self.vq_inst)
+            hidden_states = self.vq_proj_out_inst(vq_embs)
             hidden_states = self.forward_decoder(hidden_states, self.decoder_inst)
-        mel_out = mel_head(hidden_states)
-        return mel_out
+            return hidden_states
+
+        if token_type == "vocal":
+            h_vocal = _vocal_tokens_to_hidden_states_helper(token, wav_ref)
+            return self.mel_head_vocal(h_vocal)
+        elif token_type == "inst":
+            h_inst = _instrumental_tokens_to_hidden_states_after_vq(token)
+            return self.mel_head_inst(h_inst)
+        elif token_type == "full":
+            # Handle vocal tokens
+            token_vocal = token[:, ::2]
+            h_vocal = _vocal_tokens_to_hidden_states_helper(token_vocal, wav_ref)
+            # Handle instrumental tokens
+            token_inst = token[:, 1::2]
+            h_inst = _instrumental_tokens_to_hidden_states_after_vq(token_inst)
+            # Concatenate tokens
+            h_full = torch.cat([h_vocal, h_inst], -1)
+            # Decode into a full mix
+            h_full = self.decoder_in_proj(h_full.transpose(1, 2)).transpose(1, 2)
+            if wav_ref is not None:
+                # Use the `wav_ref` as a reference timbre. Normally false.
+                wav_ref = self._prepare_wav(wav_ref)
+                mel_ref = torch_wav2spec(wav_ref)
+                h_full = self.forward_decoder(
+                    h_full, self.decoder_full, mel_ref, self.timbre_enc_full
+                )
+            else:  # Normal Scenario
+                h_full = self.forward_decoder(h_full, self.decoder_full)
+            return self.mel_head_full(h_full)
+        else:
+            raise ValueError("token_type must be one of [vocal, inst, full]")
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)

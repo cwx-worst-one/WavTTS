@@ -27,7 +27,7 @@ def weights_nonzero_speech(target):
 
 
 def build_disc(c_in=80, num_disc=3, disc_hidden_size=32, disc_hidden_size_max=256):
-    disc_norm_type = 'sn'
+    disc_norm_type = "sn"
     mel_disc = PatchGANDisc2D(
         freq_length=c_in,
         time_length=-1,
@@ -35,11 +35,14 @@ def build_disc(c_in=80, num_disc=3, disc_hidden_size=32, disc_hidden_size_max=25
         max_hidden_size=disc_hidden_size_max,
         norm_type=disc_norm_type,
         same_clip_batch=True,
-        num_layers=4, num_disc=num_disc)
+        num_layers=4,
+        num_disc=num_disc,
+    )
     return mel_disc
 
+
 class DualUMMUtilsMixin:
-    def add_pitch_loss(self, recon_f0, f0, recon_vuv, vuv, losses, postfix=''):
+    def add_pitch_loss(self, recon_f0, f0, recon_vuv, vuv, losses, postfix=""):
         # F0
         recon_f0 = recon_f0.contiguous().float()
         f0 = (f0.contiguous().float() + 1).log()
@@ -52,14 +55,18 @@ class DualUMMUtilsMixin:
         vuv_loss = F.binary_cross_entropy_with_logits(recon_vuv, vuv)
         losses[f"vuv{postfix}"] = vuv_loss
 
-    def add_mel_loss(self, mel_out, target, losses, postfix='', mel_losses={'l1': 1, 'ssim': 1}):
+    def add_mel_loss(
+        self, mel_out, target, losses, postfix="", mel_losses={"l1": 1, "ssim": 1}
+    ):
         for loss_name, lambd in mel_losses.items():
-            losses[f'{loss_name}{postfix}'] = getattr(self, f'{loss_name}_loss')(mel_out, target) * lambd
+            losses[f"{loss_name}{postfix}"] = (
+                getattr(self, f"{loss_name}_loss")(mel_out, target) * lambd
+            )
 
     def l1_loss(self, decoder_output, target, *args, **kwargs):
         # decoder_output : B x T x n_mel
         # target : B x T x n_mel
-        l1_loss = F.l1_loss(decoder_output, target, reduction='none')
+        l1_loss = F.l1_loss(decoder_output, target, reduction="none")
         weights = weights_nonzero_speech(target)
         l1_loss = (l1_loss * weights).sum() / weights.sum()
         return l1_loss
@@ -68,7 +75,7 @@ class DualUMMUtilsMixin:
         # decoder_output : B x T x n_mel
         # target : B x T x n_mel
         assert decoder_output.shape == target.shape
-        mse_loss = F.mse_loss(decoder_output, target, reduction='none')
+        mse_loss = F.mse_loss(decoder_output, target, reduction="none")
         weights = weights_nonzero_speech(target)
         mse_loss = (mse_loss * weights).sum() / weights.sum()
         return mse_loss
@@ -96,18 +103,23 @@ class DualUMMUtilsMixin:
         percep_loss = F.mse_loss(h_pred[-1], h_gt[-1])
         return percep_loss
 
-    def add_LSGAN_losses(self, p, target, ret, name='A'):
+    def add_LSGAN_losses(self, p, target, ret, name="A"):
         for i, p_i in enumerate(p):
-            ret[f'{name}{i}'] = F.mse_loss(p_i, p_i.new_ones(p_i.size()) * target)
+            ret[f"{name}{i}"] = F.mse_loss(p_i, p_i.new_ones(p_i.size()) * target)
 
     def process_tgt_mel(self, batch, max_T=None):
         target_dict = {}
         for f in self.branches:
             target_dict[f] = torch_wav2spec(
-                F.pad(batch[f'audio_{f}'.replace('audio_full', 'audio')][:, 0], [0, 1200 * 4]))[:, :max_T]
-        if 'audio_vocal_perturb' in batch:
-            target_dict['vocal_ptb'] = torch_wav2spec(
-                F.pad(batch['audio_vocal_perturb'][:, 0], [0, 1200 * 4]))[:, :max_T]
+                F.pad(
+                    batch[f"audio_{f}".replace("audio_full", "audio")][:, 0],
+                    [0, 1200 * 4],
+                )
+            )[:, :max_T]
+        if "audio_vocal_perturb" in batch:
+            target_dict["vocal_ptb"] = torch_wav2spec(
+                F.pad(batch["audio_vocal_perturb"][:, 0], [0, 1200 * 4])
+            )[:, :max_T]
         return target_dict
 
     def mel_torch2wav_np(self, m):
@@ -118,17 +130,17 @@ class DualUMMUtilsMixin:
 
 class DualUMMv2(Stage3MSS, DualUMMUtilsMixin):
     def __init__(
-            self,
-            model_cls,
-            optimizer_cls,
-            scheduler_cls,
-            disc_optimizer_cls,
-            criterion_config,
-            required_modules=None,
-            checkpointing=False,
-            extra_params=None,
-            load_required_modules_in_init=False,
-            **kwargs
+        self,
+        model_cls,
+        optimizer_cls,
+        scheduler_cls,
+        disc_optimizer_cls,
+        criterion_config,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+        load_required_modules_in_init=False,
+        **kwargs,
     ):
         super().__init__(
             model_cls=model_cls,
@@ -139,20 +151,28 @@ class DualUMMv2(Stage3MSS, DualUMMUtilsMixin):
             checkpointing=checkpointing,
             extra_params=extra_params,
         )
-        if 'branches' in kwargs:
-            self.branches = set(kwargs.pop('branches'))
+        if "branches" in kwargs:
+            self.branches = set(kwargs.pop("branches"))
         else:
-            self.branches = {'vocal'}
-        if 'adv_branches' in kwargs:
-            self.adv_branches = set(kwargs.pop('adv_branches'))
+            self.branches = {"vocal"}
+        if "adv_branches" in kwargs:
+            self.adv_branches = set(kwargs.pop("adv_branches"))
         else:
             self.adv_branches = self.branches
         self.criterion_config = self.config = config = criterion_config
-        self.mel_discs = nn.ModuleDict({
-            'full': build_disc(160, disc_hidden_size_max=config.get('disc_hidden_size_max', 256)),
-            'vocal': build_disc(160, disc_hidden_size_max=config.get('disc_hidden_size_max', 256)),
-            'inst': build_disc(160, disc_hidden_size_max=config.get('disc_hidden_size_max', 256)),
-        })
+        self.mel_discs = nn.ModuleDict(
+            {
+                "full": build_disc(
+                    160, disc_hidden_size_max=config.get("disc_hidden_size_max", 256)
+                ),
+                "vocal": build_disc(
+                    160, disc_hidden_size_max=config.get("disc_hidden_size_max", 256)
+                ),
+                "inst": build_disc(
+                    160, disc_hidden_size_max=config.get("disc_hidden_size_max", 256)
+                ),
+            }
+        )
         self.ctc_loss_fn = nn.CTCLoss(
             blank=config.ctc_blank_id,
             reduction=config.ctc_loss_reduction,
@@ -177,13 +197,24 @@ class DualUMMv2(Stage3MSS, DualUMMUtilsMixin):
             voc_ckpt = vocoder["ckpt_path"].strip()
             if voc_ckpt != "":
                 cache_dir = vocoder["cache_dir"].strip()
-                self.vocoder = init_stage3_dual_voc(voc_ckpt, self.local_rank, cache_dir)['mel_vocoder']
+                self.vocoder = init_stage3_dual_voc(
+                    voc_ckpt, self.local_rank, cache_dir
+                )["mel_vocoder"]
 
     def configure_optimizers(self):
-        params_group = []
-        if self.config.get('train_decoder_only', False):
-            skip_names = ['vq', 'audio_encoder']
-            skip_names += [f'encoder_layers.{x}.' for x in range(self.config.vq_layer_idx)]
+        """
+        DualUMM training needs to setup separate optimizers for:
+        1. Model Training
+        2. Discriminator Training
+        """
+
+        def _get_params_for_decoder_only():
+            """Handle specific case where only decoder is trained. Turn off VQ layers and Mel-160 Audio Encoder."""
+            decoder_only_params = []
+            skip_names = ["vq", "audio_encoder"]
+            skip_names += [
+                f"encoder_layers.{x}." for x in range(self.config.vq_layer_idx)
+            ]
             for name, params in self.model.named_parameters():
                 skip = False
                 for sname in skip_names:
@@ -193,25 +224,33 @@ class DualUMMv2(Stage3MSS, DualUMMUtilsMixin):
                 if skip:
                     continue
                 print("| find trainable params: ", name)
-                params_group.append(params)
+                decoder_only_params.append(params)
+            return decoder_only_params
+
+        # Append param groups to this list
+        params_group = []
+        if self.config.get("train_decoder_only", False):
+            params_group.append(_get_params_for_decoder_only())
         else:
             normal_params = []
             special_params = []
             for name, params in self.model.named_parameters():
-                if 'vq.embedding.weight' in name:
+                if "vq.embedding.weight" in name:
                     print("Key {} use zero WD".format(name))
                     special_params.append(params)
                 else:
                     normal_params.append(params)
             params_group.append({"params": special_params, "weight_decay": 0.0})
             params_group.append({"params": normal_params})
+        # Configure model optimizer and discriminator optimizer separately
         optimizer = self.hparams.optimizer_cls(params_group)
         optimizer_disc = self.hparams.disc_optimizer_cls(self.mel_discs.parameters())
         scheduler = self.hparams.scheduler_cls(optimizer)
         scheduler_disc = self.hparams.scheduler_cls(optimizer_disc)
-        return [optimizer, optimizer_disc], \
-            [{"scheduler": scheduler, "interval": "step"},
-             {"scheduler": scheduler_disc, "interval": "step"}]
+        return [optimizer, optimizer_disc], [
+            {"scheduler": scheduler, "interval": "step"},
+            {"scheduler": scheduler_disc, "interval": "step"},
+        ]
 
     def on_train_batch_start(self, batch, batch_idx):
         if self.trainer.global_step >= 20_000:
@@ -233,11 +272,11 @@ class DualUMMv2(Stage3MSS, DualUMMUtilsMixin):
 
         # prepare input/target data
         batch.update(self.prepare_feature(batch))
-        batch.update(self.process_tgt_mel(batch, batch['f0'].shape[1]))
+        batch.update(self.process_tgt_mel(batch, batch["f0"].shape[1]))
         T = batch["vocal"].shape[1]
-        ds = self.model.config.get('downsampling', 4)
+        ds = self.model.config.get("downsampling", 4)
         T_split = random.randint(T // 4, 3 * T // 4) // ds * ds
-        if 'vocal_ptb' in batch:
+        if "vocal_ptb" in batch:
             batch["mel_vocal_f"] = batch["vocal_ptb"][:, :T_split]
             batch["mel_vocal_b"] = batch["vocal_ptb"][:, T_split:]
             batch["mel_vocal_ref_f"] = batch["vocal"][:, :T_split]
@@ -255,15 +294,25 @@ class DualUMMv2(Stage3MSS, DualUMMUtilsMixin):
 
         # generator backward
         optim_g.zero_grad()
-        self.manual_backward(sum([
-            x for x in losses_gen.values()
-            if isinstance(x, torch.Tensor) and x.requires_grad and x.grad_fn is not None
-        ]))
+        self.manual_backward(
+            sum(
+                [
+                    x
+                    for x in losses_gen.values()
+                    if isinstance(x, torch.Tensor)
+                    and x.requires_grad
+                    and x.grad_fn is not None
+                ]
+            )
+        )
         clip_grad_value_(self.model.parameters(), 1.0)
         optim_g.step()
         sched_g.step(self.global_step // 2)
         self.untoggle_optimizer(optim_g)
-        output_dict = {k: (v.detach() if isinstance(v, torch.Tensor) else v) for k, v in output_dict.items()}
+        output_dict = {
+            k: (v.detach() if isinstance(v, torch.Tensor) else v)
+            for k, v in output_dict.items()
+        }
 
         #########################
         # disciminator step
@@ -277,10 +326,16 @@ class DualUMMv2(Stage3MSS, DualUMMUtilsMixin):
             optim_d.zero_grad()
 
             self.manual_backward(
-                sum([
-                    x for x in losses_disc.values()
-                    if isinstance(x, torch.Tensor) and x.requires_grad and x.grad_fn is not None
-                ]))
+                sum(
+                    [
+                        x
+                        for x in losses_disc.values()
+                        if isinstance(x, torch.Tensor)
+                        and x.requires_grad
+                        and x.grad_fn is not None
+                    ]
+                )
+            )
             clip_grad_value_(self.mel_discs.parameters(), 1.0)
             optim_d.step()
             sched_d.step(self.global_step // 2)
@@ -289,7 +344,7 @@ class DualUMMv2(Stage3MSS, DualUMMUtilsMixin):
 
         # logging
         text_ids = batch["text_ids"]
-        for t in {'vocal', 'inst'} & self.branches:
+        for t in {"vocal", "inst"} & self.branches:
             if self.trainer.global_step % 100 == 0:
                 code_rate = self.get_code_rate(output_dict[f"vq_ids_{t}"])
                 loss_dict["aux/code_rate_vocal"] = code_rate
@@ -297,10 +352,10 @@ class DualUMMv2(Stage3MSS, DualUMMUtilsMixin):
                 output_dict[f"vq_ids_{t}"].long(), self.model.config.vq_codebook_size
             )
             loss_dict[f"aux/quant_rate_{t}"] = quant_rate
-            if t == 'vocal':
+            if t == "vocal":
                 if getattr(self.model.vq_vocal, "entropy", None) is not None:
                     loss_dict[f"aux/entropy_{t}"] = self.model.vq_vocal.entropy()
-            if t == 'inst':
+            if t == "inst":
                 if getattr(self.model.vq_inst, "entropy", None) is not None:
                     loss_dict[f"aux/entropy_{t}"] = self.model.vq_inst.entropy()
         loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
@@ -314,41 +369,50 @@ class DualUMMv2(Stage3MSS, DualUMMUtilsMixin):
         output_dict = self.model(batch, self.branches)
         text_ids = batch["text_ids"]
         # pitch loss
-        w_f0vuv = self.model.config.get('w_loss_f0vuv', 0.1)
+        w_f0vuv = self.model.config.get("w_loss_f0vuv", 0.1)
         if self.model.config.add_pitch:
-            for t in {'vocal', 'full'} & self.branches:
+            for t in {"vocal", "full"} & self.branches:
                 self.add_pitch_loss(
-                    output_dict[f"f0_out_{t}"].squeeze(-1), batch["f0"],
-                    output_dict[f"vuv_out_{t}"].squeeze(-1), batch["vuv"],
-                    loss_dict, postfix=f'_{t}'
+                    output_dict[f"f0_out_{t}"].squeeze(-1),
+                    batch["f0"],
+                    output_dict[f"vuv_out_{t}"].squeeze(-1),
+                    batch["vuv"],
+                    loss_dict,
+                    postfix=f"_{t}",
                 )
-                loss_dict[f'f0_{t}'] = loss_dict[f'f0_{t}'] * w_f0vuv
-                loss_dict[f'vuv_{t}'] = loss_dict[f'vuv_{t}'] * w_f0vuv
+                loss_dict[f"f0_{t}"] = loss_dict[f"f0_{t}"] * w_f0vuv
+                loss_dict[f"vuv_{t}"] = loss_dict[f"vuv_{t}"] * w_f0vuv
         # VQ loss
-        for t in {'vocal', 'inst'} & self.branches:
+        for t in {"vocal", "inst"} & self.branches:
             if output_dict.get(f"vq_loss_{t}") is not None:
                 loss_dict[f"vq_{t}"] = output_dict[f"vq_loss_{t}"]
 
         # Mel recon loss
         for t in self.branches:
             if output_dict.get(f"mel_out_{t}") is not None:
-                self.add_mel_loss(output_dict[f"mel_out_{t}"], batch[t], loss_dict, postfix=f'_{t}')
+                self.add_mel_loss(
+                    output_dict[f"mel_out_{t}"], batch[t], loss_dict, postfix=f"_{t}"
+                )
 
         if self.model.config.add_chroma:
-            for t in {'full', 'inst'} & self.branches:
-                loss_dict[f'chroma_{t}'] = F.mse_loss(output_dict[f"chroma_out_{t}"], batch["chroma"])
+            for t in {"full", "inst"} & self.branches:
+                loss_dict[f"chroma_{t}"] = F.mse_loss(
+                    output_dict[f"chroma_out_{t}"], batch["chroma"]
+                )
         # ASR LAS loss
-        w_las = self.model.config.get('w_loss_las', 0.1)
-        for t in {'full'} & self.branches:
-            loss_dict[f'las_{t}'] = F.cross_entropy(output_dict[f'text_out_{t}'].transpose(1, 2), text_ids)
-            loss_dict[f'las_{t}'] = loss_dict[f'las_{t}'] * w_las
+        w_las = self.model.config.get("w_loss_las", 0.1)
+        for t in {"full"} & self.branches:
+            loss_dict[f"las_{t}"] = F.cross_entropy(
+                output_dict[f"text_out_{t}"].transpose(1, 2), text_ids
+            )
+            loss_dict[f"las_{t}"] = loss_dict[f"las_{t}"] * w_las
 
         if self.model.config.w_loss_adv > 0:
             losses_adv = {}
             for t in self.adv_branches:
                 o_ = self.mel_discs[t](output_dict[f"mel_out_{t}"])
-                p_, h_p_, start_frames = o_['y'], o_.get('h'), o_.get('start_frames')
-                self.add_LSGAN_losses(p_, 1, losses_adv, f'A{t}')
+                p_, h_p_, start_frames = o_["y"], o_.get("h"), o_.get("start_frames")
+                self.add_LSGAN_losses(p_, 1, losses_adv, f"A{t}")
             for k in losses_adv:
                 losses_adv[k] = losses_adv[k] * self.model.config.w_loss_adv
             loss_dict.update(losses_adv)
@@ -357,19 +421,19 @@ class DualUMMv2(Stage3MSS, DualUMMUtilsMixin):
     def training_step_disc(self, model_out, target_dict, loss_dict):
         for t in self.adv_branches:
             disc_out_real = self.mel_discs[t](target_dict[t])
-            p_real, start_frames = disc_out_real['y'], disc_out_real.get('start_frames')
-            mel_p = model_out[f'mel_out_{t}']
+            p_real, start_frames = disc_out_real["y"], disc_out_real.get("start_frames")
+            mel_p = model_out[f"mel_out_{t}"]
             disc_out_fake = self.mel_discs[t](mel_p, None, start_frames)
-            p_fake = disc_out_fake['y']
-            self.add_LSGAN_losses(p_real, 1, loss_dict, f'R{t}')
-            self.add_LSGAN_losses(p_fake, 0, loss_dict, f'F{t}')
+            p_fake = disc_out_fake["y"]
+            self.add_LSGAN_losses(p_real, 1, loss_dict, f"R{t}")
+            self.add_LSGAN_losses(p_fake, 0, loss_dict, f"F{t}")
 
     def validation_step(self, batch, batch_idx):
         if batch_idx == 0:
             # prepare input/target data
             batch.update(self.prepare_feature(batch))
-            batch.update(self.process_tgt_mel(batch, batch['f0'].shape[1]))
-            ds = self.model.config.get('downsampling', 4)
+            batch.update(self.process_tgt_mel(batch, batch["f0"].shape[1]))
+            ds = self.model.config.get("downsampling", 4)
             T_mid = batch["vocal"].shape[1] // 2 // ds * ds
             batch["mel_vocal_ref_f"] = batch["mel_vocal_f"] = batch["vocal"][:, :T_mid]
             batch["mel_vocal_ref_b"] = batch["mel_vocal_b"] = batch["vocal"][:, T_mid:]
@@ -384,10 +448,12 @@ class DualUMMv2(Stage3MSS, DualUMMUtilsMixin):
                         break
                     wav_g = self.mel_torch2wav_np(v_gt)
                     self.logger.experiment.add_audio(
-                        f'{t}_g{i:02d}', wav_g, step_cur, 24000)
+                        f"{t}_g{i:02d}", wav_g, step_cur, 24000
+                    )
                     wav_p = self.mel_torch2wav_np(v_pred)
                     self.logger.experiment.add_audio(
-                        f'{t}_p{i:02d}', wav_p, step_cur, 24000)
+                        f"{t}_p{i:02d}", wav_p, step_cur, 24000
+                    )
 
                     fig = plt.figure(figsize=(16, 8))
                     plt.pcolor(v_pred.cpu().T, vmin=-6, vmax=0.5)
@@ -401,14 +467,14 @@ class DualUMMv2(Stage3MSS, DualUMMUtilsMixin):
                     )
 
 
-def run_dualMSS_decode(requires, samples, params, token_type='vocal'):
-    if 'batch' in params:
-        batch = params['batch']
-        prompt_audio = batch.get('audio_vocal', batch.get('style_audio'))
+def run_dualMSS_decode(requires, samples, params, token_type="vocal"):
+    if "batch" in params:
+        batch = params["batch"]
+        prompt_audio = batch.get("audio_vocal", batch.get("style_audio"))
     else:
         prompt_audio = None
-    vocoder = requires['mel_vocoder']
-    umm_model = requires['umm']
+    vocoder = requires["mel_vocoder"]
+    umm_model = requires["umm"]
     wavs = []
     with torch.autocast(device_type="cuda", dtype=torch.float32, enabled=True):
         mels = umm_model.token2mel(samples, prompt_audio, token_type)
