@@ -22,12 +22,16 @@ diffusion_ckpt_path=${diffusion_ckpt_path:-"hdfs://haruna/home/byte_data_seed/lf
 
 lang=${lang:-en}  # zh, en
 token_chunk=${token_chunk:-8000}
-chunk_overlap=${chunk_overlap:-0}
+token_chunk_overlap=${token_chunk_overlap:-0}
+nfe=${nfe:-4}
+sampler=${sampler:-consistency}
+cfg=${cfg:-1}
+only_use_global_prompt=${only_use_global_prompt:-False}
 
 out_dir=${out_dir:-/mnt/bn/jdy-lq-2/bigtts-nar/output}
 meta_lst=${meta_lst:-/mnt/bn/jdy-lq-2/bigtts-nar/repo/bigtts_testset/icl_testset_2.0/${lang}/reconstruct_meta.lst}
 
-out_dir=$out_dir/$exp/icl_testset_2.0_${lang}/$step/ddim_10steps_TextCFG4_chunk${token_chunk}_overlap${chunk_overlap}_test
+out_dir=$out_dir/$exp/icl_testset_2.0_${lang}/$step/${sampler}_${nfe}steps_TextCFG${cfg}_validChunk${token_chunk}_overlap${token_chunk_overlap}_TrueGlobal
 mkdir -p $out_dir
 
 umm_ckpt_path=${umm_ckpt_path:-/mnt/bn/jdy-lq-2/bigtts-nar/pretrain_model/UMM/V0.6.2.ckpt}
@@ -48,16 +52,18 @@ bash launch.sh predict \
     --run_opts.infer_type diffusion-vocoder \
 	--pl_module.umm_type UMM \
 	--pl_module.diffusion_precision bf16 \
-	--pl_module.diffusion_nfe 10 \
-	--pl_module.diffusion_sampler ddim \
+	--pl_module.diffusion_nfe ${nfe} \
+	--pl_module.diffusion_sampler ${sampler} \
 	--pl_module.use_wvae_vocoder True \
 	--bn_config.wvae_encoder_path /mnt/bn/jdy-lq-2/bigtts-nar/pretrain_model/wvae_3.1/wavevae_encoder_z1_%d.pt \
 	--bn_config.wvae_decoder_path /mnt/bn/jdy-lq-2/bigtts-nar/pretrain_model/wvae_3.1/wavevae_decoder_z1_%d.pt \
 	--bn_config.bn_norm_std 2 \
 	--bn_config.bn_padding -5 \
-	--pl_module.text_cfg_w 4 \
+	--pl_module.text_cfg_w ${cfg} \
 	--pl_module.token_chunk_size $token_chunk \
-	--pl_module.token_chunk_overlap $chunk_overlap
+	--pl_module.token_chunk_overlap $token_chunk_overlap \
+	--pl_module.only_use_global_prompt $only_use_global_prompt
+
 
 bash apps/bigtts/umm/diffusion/scripts/eval.sh $meta_lst $out_dir $lang
 
@@ -70,7 +76,10 @@ bash apps/bigtts/umm/diffusion/scripts/eval.sh $meta_lst $out_dir $lang
 # export out_dir=/opt/tiger/samantha/output
 
 # export token_chunk=8000
-# export chunk_overlap=0
+# export token_chunk_overlap=0
 # export lang=en
+# export nfe=4
+# export sampler=consistency
+# export cfg=1
 
 # bash -x apps/bigtts/umm/diffusion/scripts/recons_umm_wvae_streaming.sh

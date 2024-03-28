@@ -153,6 +153,18 @@ class UniformDistribution(Distribution):
         return (vmax - vmin) * torch.rand(num_samples, device=device) + vmin
 
 
+class BernoulliDistribution(Distribution):
+    def __init__(self, v1, v2):
+        super().__init__()
+        self.map = torch.tensor([v1, v2]).unsqueeze(0)
+
+    def __call__(self, num_samples: int, device: torch.device = torch.device("cpu")):
+        index = (torch.rand(num_samples, device=device) > 0.5).long()
+        return self.map.repeat(num_samples, 1).to(device)[
+            torch.arange(num_samples), index
+        ]
+
+
 def extend_dim(x: Tensor, dim: int):
     # e.g. if dim = 4: shape [b] => [b, 1, 1, 1],
     return x.view(*x.shape + (1,) * (dim - x.ndim))
@@ -185,13 +197,6 @@ class TimeEmbedding(nn.Module):
     def __init__(self, modulation_features, num_layers: int = 2, bias=True):
         super().__init__()
         self.embedding = NumberEmbedder(features=modulation_features)
-        # self.mlp = (
-        #     nn.Sequential(
-        #         nn.Linear(modulation_features, modulation_features, bias=bias),
-        #         nn.GELU(),
-        #     )
-        #     * num_layers
-        # )
         self.mlp = Repeat(
             nn.Sequential(
                 nn.Linear(modulation_features, modulation_features, bias=bias),
@@ -307,7 +312,7 @@ class ModelArgs:
 
     min_t: float = 0.0
     max_t: float = 1.0
-    flashattn_version: str = "2"
+    flashattn_version: str = "2.3"
 
 
 class LlamaDiffusion(nn.Module):
@@ -627,7 +632,10 @@ class LlamaDiffusion(nn.Module):
         if total_frame is None:
             self.cached_noise = None
         else:
-            self.cached_noise = torch.randn([1, total_frame, self.hp.out_channels])
+            self.cached_noise = [
+                torch.randn([1, total_frame, self.hp.out_channels])
+                for i in range(t + 1)
+            ]
         self.cached_v = dict([(i, None) for i in range(t)])
 
     def ddim_sample(
@@ -646,7 +654,7 @@ class LlamaDiffusion(nn.Module):
         if use_cache:
             assert self.cached_noise is not None
             if self.cached_noise is not None:
-                x = self.cached_noise[:, :frm_len, :].to(device)
+                x = self.cached_noise[0][:, :frm_len, :].to(device)
         else:
             x = torch.randn([1, frm_len, self.hp.out_channels], device=device)
 
@@ -838,14 +846,67 @@ class LlamaDiffusion(nn.Module):
             pred_list.append(pred)
         return x
 
+    def consistency_sample(
+        self,
+        timesteps,
+        local_cond,
+        text_embed,
+        text_cfg_w=1.0,
+        use_cache=False,
+        cached_v_len=None,
+    ):
+        t = timesteps
+        _, device, frm_len = (local_cond.size(0), local_cond.device, local_cond.size(1))
+
+        if use_cache:
+            x = self.cached_noise[0][:, :frm_len, :].to(device)
+        else:
+            x = torch.randn([1, frm_len, self.hp.out_channels], device=device)
+
+        if t > 20:
+            sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device)
+        else:
+            sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device) ** 2
+        sigmas = repeat(sigmas, "i -> i b", b=1)
+        sigmas_batch = extend_dim(sigmas, dim=3)
+        alphas, betas = self.get_alpha_beta(sigmas_batch)
+
+        for i in range(t):
+
+            v_pred = self._forward(x, local_cond, text_embed, timesteps=sigmas[i])
+
+            # TODO: 只是模拟cache过程
+            if use_cache:
+                if self.cached_v[i] is not None:
+                    cached_v_len = (
+                        self.cached_v[i].shape[1]
+                        if cached_v_len is None
+                        else cached_v_len
+                    )
+                    v_pred[:, :cached_v_len, :] = self.cached_v[i][:, :cached_v_len, :]
+                self.cached_v[i] = v_pred
+
+            x_pred = alphas[i] * x - betas[i] * v_pred
+
+            if use_cache:
+                noise = self.cached_noise[i + 1][:, :frm_len, :].to(device)
+            else:
+                noise = torch.randn_like(v_pred)
+
+            x = alphas[i + 1] * x_pred + betas[i + 1] * noise
+
+        return x
+
     @torch.no_grad()
     def inference(self, inputs, timesteps=20, sampler="ddim", text_cfg_w=1.0, **kwargs):
+
         if self.hp.use_textprefix:
             text_embed = self.frontend_embed(inputs["frontend"])  # [B, T, 1024]
         else:
             text_embed = None
 
         # B, device = inputs["token"].size(0), inputs["token"].device
+        ctx_feature = f"{self.hp.ctx_feature}_ctx"
 
         # token encoder to align frame-rate.
         token_embed = self.token_embedding(inputs["token"])
@@ -854,6 +915,11 @@ class LlamaDiffusion(nn.Module):
             token_embed = layer(token_embed)
         token_embed = token_embed.transpose(1, 2)  # B, T, C
 
+        if token_embed.shape[1] > inputs[ctx_feature].shape[1]:
+            token_embed = token_embed[:, : inputs[ctx_feature].shape[1], :]
+        elif token_embed.shape[1] < inputs[ctx_feature].shape[1]:
+            raise ValueError("token_embed.shape[1] < inputs[ctx_feature].shape[1]")
+
         if self.use_prompt:
             # speaker embedding
             prompt_feature = f"prompt_{self.hp.prompt_feature}"
@@ -861,7 +927,6 @@ class LlamaDiffusion(nn.Module):
             spk_emb = spk_emb.unsqueeze(1).expand(-1, token_embed.shape[1], -1)
 
             # local conditioning.
-            ctx_feature = f"{self.hp.ctx_feature}_ctx"
             local_cond = torch.cat([token_embed, inputs[ctx_feature], spk_emb], dim=-1)
         else:
             local_cond = token_embed
@@ -879,10 +944,243 @@ class LlamaDiffusion(nn.Module):
             x = self.plms_sample(
                 timesteps, local_cond, text_embed, text_cfg_w=text_cfg_w, **kwargs
             )
+        elif sampler == "consistency":
+            x = self.consistency_sample(
+                timesteps, local_cond, text_embed, text_cfg_w=text_cfg_w, **kwargs
+            )
         else:
             raise NotImplementedError
 
         return x.transpose(1, 2)
+
+    def infer_one_step(self, inputs, x_noisy, t, prev_t, text_cfg_w, sampler="ddim"):
+        local_cond, text_embed, _, feat_lens, text_lens = self.compute_condition(
+            inputs, t
+        )
+
+        B, device, _ = local_cond.size(0), local_cond.device, local_cond.size(1)
+        t_batch = extend_dim(t, dim=x_noisy.ndim)
+        alphas, betas = self.get_alpha_beta(t_batch)
+        prev_t_batch = extend_dim(prev_t, dim=x_noisy.ndim)
+        prev_alphas, prev_betas = self.get_alpha_beta(prev_t_batch)
+
+        residual = x_noisy
+        time_emb = self.time_embedding(t)
+        time_emb = time_emb.unsqueeze(1).expand(-1, local_cond.shape[1], -1)
+
+        x_noisy = self.x_prenet(x_noisy) + self.prenet(
+            torch.cat([time_emb, local_cond], dim=-1)
+        )
+
+        residual = residual.repeat(2, 1, 1)
+        x_noisy = x_noisy.repeat(2, 1, 1)
+        alphas = alphas.repeat(2, 1, 1)
+        betas = betas.repeat(2, 1, 1)
+        text_lens = text_lens.repeat(2)
+        feat_lens = feat_lens.repeat(2)
+        B *= 2
+
+        # concat prefix-text.
+        if self.hp.use_textprefix:
+            T = inputs["text_mel_mask"].shape[1]
+            C = x_noisy.shape[-1]
+            x_noisy_wtext = torch.full(
+                [B, T, C], self.hp.x_padding_value, device=device, dtype=x_noisy.dtype
+            )
+            # x_noisy_wtext = alphas * x_noisy_wtext + betas * torch.randn_like(x_noisy_wtext)
+
+            T_text = text_embed.shape[1]
+            T_feat = x_noisy.shape[1]
+            indics_x = torch.arange(T, device=device)[None, :]
+            mask_x = (indics_x < text_lens[:, None]) & (indics_x < T_text)
+            mask_text = (
+                torch.arange(text_embed.shape[1], device=device)[None, :]
+                < text_lens[:, None]
+            )
+            x_noisy_wtext[mask_x] = text_embed[mask_text].to(dtype=x_noisy_wtext.dtype)
+
+            mask_x = (
+                (text_lens[:, None] <= indics_x)
+                & (indics_x < (text_lens + feat_lens)[:, None])
+                & (indics_x - text_lens[:, None] < T_feat)
+            )
+            mask_noisy = (
+                torch.arange(T_feat, device=device)[None, :] < feat_lens[:, None]
+            )
+            x_noisy_wtext[mask_x] = x_noisy[mask_noisy].to(dtype=x_noisy_wtext.dtype)
+
+            encoder_input = x_noisy_wtext
+            seq_mask = inputs["text_mel_mask"]
+        else:
+            encoder_input = x_noisy
+            seq_mask = inputs[f"{self.hp.prompt_feature}_mask"]
+
+        pred_v = self.encoder(
+            encoder_input, encoder_input.shape[1], attention_mask=seq_mask.repeat(2, 1)
+        )
+
+        if self.hp.use_textprefix:
+            pred_v_wotext = torch.zeros(
+                B, x_noisy.shape[1], pred_v.shape[-1], device=device, dtype=pred_v.dtype
+            )
+
+            T0 = x_noisy.shape[1]
+            T1 = pred_v.shape[1]
+            indics0 = torch.arange(T0, device=device)[None, :]
+            indics1 = torch.arange(T1, device=device)[None, :]
+
+            mask0 = (indics0 < feat_lens[:, None]) & (
+                (text_lens[:, None] + indics0) < T1
+            )
+            mask1 = (text_lens[:, None] <= indics1) & (
+                indics1 < (text_lens[:, None] + feat_lens[:, None])
+            )
+            pred_v_wotext[mask0] = pred_v[mask1]
+
+            pred_v = pred_v_wotext
+
+        pred_v = self.postnet(pred_v)
+
+        if self.hp.use_unet_style_skip_connect:
+            pred_v = pred_v + residual
+
+        # cfg
+        v_pred, v_pred_uncond = pred_v.chunk(2)
+
+        text_cfg_w = text_cfg_w.unsqueeze(1).unsqueeze(2)
+        v_pred = text_cfg_w * v_pred + (1 - text_cfg_w) * v_pred_uncond
+
+        B = v_pred.shape[0]
+        residual = residual[:B]
+        alphas = alphas[:B]
+        betas = betas[:B]
+
+        if sampler == "ddim":
+            x_pred = alphas * residual - betas * v_pred
+            noise_pred = betas * residual + alphas * v_pred
+            prev_x = prev_alphas * x_pred + prev_betas * noise_pred
+        else:
+            return NotImplementedError
+        return prev_x
+
+    def compute_condition(self, inputs, t):
+        if self.hp.use_textprefix:
+            text_embed = self.frontend_embed(inputs["frontend"])  # [B, T, 1024]
+            text_lens = inputs["text_lens"]
+        feat_lens = inputs["mel_lens"] if "mel_lens" in inputs else inputs["bn_lens"]
+
+        # B, device = inputs["token"].size(0), inputs["token"].device
+
+        # token encoder to align frame-rate.
+        token_embed = self.token_embedding(inputs["token"])
+        token_embed = token_embed.transpose(1, 2)
+        for layer in self.token_prenet:
+            token_embed = layer(token_embed)
+        token_embed = token_embed.transpose(1, 2)  # B, T, C
+
+        # speaker embedding
+        if self.use_prompt:
+            prompt_feature = f"prompt_{self.hp.prompt_feature}"
+            spk_emb = self.prompt_encoder(inputs[prompt_feature])
+            spk_emb = spk_emb.unsqueeze(1).expand(-1, token_embed.shape[1], -1)
+
+            # local conditioning.
+            ctx_feature = f"{self.hp.ctx_feature}_ctx"
+            local_cond = torch.cat([token_embed, inputs[ctx_feature], spk_emb], dim=-1)
+        else:
+            local_cond = token_embed
+        local_cond = self.local_cond_project(local_cond)
+
+        # time embedding
+        time_emb = self.time_embedding(t)
+        time_emb = time_emb.unsqueeze(1).expand(-1, local_cond.shape[1], -1)
+
+        return local_cond, text_embed, time_emb, feat_lens, text_lens
+
+    def pred_x0(self, inputs, x_noisy, t):
+
+        local_cond, text_embed, time_emb, feat_lens, text_lens = self.compute_condition(
+            inputs, t
+        )
+
+        B, device = x_noisy.shape[0], x_noisy.device
+        t_batch = extend_dim(t, dim=x_noisy.ndim)
+        alphas, betas = self.get_alpha_beta(t_batch)
+
+        residual = x_noisy
+
+        # concat condition.
+        x_noisy = self.x_prenet(x_noisy) + self.prenet(
+            torch.cat([time_emb, local_cond], dim=-1)
+        )
+
+        # concat prefix-text.
+        if self.hp.use_textprefix:
+            T = inputs["text_mel_mask"].shape[1]
+            C = x_noisy.shape[-1]
+            x_noisy_wtext = torch.full(
+                [B, T, C], self.hp.x_padding_value, device=device, dtype=x_noisy.dtype
+            )
+
+            # x_noisy_wtext = alphas * x_noisy_wtext + betas * torch.randn_like(x_noisy_wtext)
+
+            T_text = text_embed.shape[1]
+            T_feat = x_noisy.shape[1]
+            indics_x = torch.arange(T, device=device)[None, :]
+            mask_x = (indics_x < text_lens[:, None]) & (indics_x < T_text)
+            mask_text = (
+                torch.arange(text_embed.shape[1], device=device)[None, :]
+                < text_lens[:, None]
+            )
+            x_noisy_wtext[mask_x] = text_embed[mask_text].to(dtype=x_noisy_wtext.dtype)
+
+            mask_x = (
+                (text_lens[:, None] <= indics_x)
+                & (indics_x < (text_lens + feat_lens)[:, None])
+                & (indics_x - text_lens[:, None] < T_feat)
+            )
+            mask_noisy = (
+                torch.arange(T_feat, device=device)[None, :] < feat_lens[:, None]
+            )
+            x_noisy_wtext[mask_x] = x_noisy[mask_noisy].to(dtype=x_noisy_wtext.dtype)
+
+            encoder_input = x_noisy_wtext
+            seq_mask = inputs["text_mel_mask"]
+        else:
+            encoder_input = x_noisy
+            seq_mask = inputs[f"{self.hp.prompt_feature}_mask"]
+
+        pred_v = self.encoder(
+            encoder_input, encoder_input.shape[1], attention_mask=seq_mask
+        )
+
+        if self.hp.use_textprefix:
+            pred_v_wotext = torch.zeros(
+                B, x_noisy.shape[1], pred_v.shape[-1], device=device
+            )
+
+            T0 = x_noisy.shape[1]
+            T1 = pred_v.shape[1]
+            indics0 = torch.arange(T0, device=device)[None, :]
+            indics1 = torch.arange(T1, device=device)[None, :]
+
+            mask0 = (indics0 < feat_lens[:, None]) & (
+                (text_lens[:, None] + indics0) < T1
+            )
+            mask1 = (text_lens[:, None] <= indics1) & (
+                indics1 < (text_lens[:, None] + feat_lens[:, None])
+            )
+            pred_v_wotext[mask0] = pred_v[mask1].to(dtype=pred_v_wotext.dtype)
+
+            pred_v = pred_v_wotext
+
+        pred_v = self.postnet(pred_v)
+
+        if self.hp.use_unet_style_skip_connect:
+            pred_v = pred_v + residual
+
+        pred_x0 = alphas * residual - betas * pred_v
+        return pred_x0.transpose(1, 2)
 
 
 if __name__ == "__main__":

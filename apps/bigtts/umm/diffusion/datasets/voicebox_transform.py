@@ -3,6 +3,7 @@ import logging
 import librosa
 import math
 import pickle
+from typing import Optional
 
 import numpy as np
 import torch
@@ -27,7 +28,7 @@ class VoiceBoxTransform(ItemTransformBase):
         mel_norm_std=2.2615,
         mel_padding=-2,
         umm_hop_size=600,
-        masking=None,
+        masking: Optional["WavMasking"] = None,
         mask_use_alignment=True,
         wav_divide=2400,
         use_text=False,
@@ -87,7 +88,9 @@ class VoiceBoxTransform(ItemTransformBase):
         )
         if self.use_bn:
             bn = get_bn(item)
-            assert bn.shape[1] == 64
+            if bn.shape[1] != 64 or bn.shape[0] < self.bn_hz * 0.5:
+                return None
+
             if self.bn_hz == self.umm_hz:
                 max_bn_len = min(bn.shape[0], data_dict["token"].shape[0])
                 max_umm_len = max_bn_len
