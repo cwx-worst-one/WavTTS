@@ -1,4 +1,6 @@
+import io
 import logging
+import librosa
 import math
 import pickle
 
@@ -120,18 +122,9 @@ class VoiceBoxTransform(ItemTransformBase):
             # )
             # data_dict['mel'] = mel.transpose(1, 0)
             # acoustic_len = mel.shape[1]
-            wav = np.frombuffer(item["wav"][44:], dtype=np.int16)
-            if wav.dtype == np.int16:
-                wav = wav / 32768.0
-            elif wav.dtype == np.int32:
-                wav = wav / 2_147_483_648.0
-            elif wav.dtype in [np.float32, np.float64]:
-                wav = wav
-            else:
-                raise Exception("Not support data type: {}".format(wav.dtype))
-            if len(wav.shape) >= 2:
+            wav, _ = librosa.load(io.BytesIO(item["wav"]), sr=None, mono=False)
+            if len(wav.shape) > 1:
                 wav = wav[0]
-
             wav = wav.astype(np.float32)
             wav = torch.FloatTensor(wav)
 
