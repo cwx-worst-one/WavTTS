@@ -21,7 +21,7 @@ extra_params:
     prepare_input_types: []
     input_embedders: [tag_categorical, speaker_id, lyrics_tokens]
     tag_taxonomy_lang: 'SA'  # Zh, SA
-    tag_dropout_rate: 0
+    tag_dropout_rate: 0.05
     line_break_dropout_rate: 0
     section_tag_dropout_rate: 0
     use_mcc_gender: False
@@ -50,9 +50,9 @@ extra_params:
     use_chord_eos: False
     rewards:
         "wer": 1.0
-        "style_text_sim": 1.0
+        "mulan_sim": 1.0
         "loudness_sim": 1.0
-        "qualitative_sim": 1.0
+        # "qualitative_sim": 1.0
     # Logging params
     log_num_val_samples: 10
     log_num_val_beam_samples: 1
@@ -61,7 +61,7 @@ extra_params:
 run_opts:
     fast_dev_run: False
     log_dir: logs
-    hdfs_log_dir: "hdfs:///home/byte_speech_sv/zongyu.yin/logs"
+    hdfs_log_dir: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/yilinzhang/logs"
     log_name: decoder_07B_zh30s_rl
     version: v0
     cache_dir: .module_cache/bigmusic
@@ -92,11 +92,12 @@ run_opts:
     infer_structure_tags: False
     read_structure_tags: True
     region: "CN"
-    lyrics_confidence: 0.8  # SA ASR confidence
+    lyrics_field: "lyrics"
+    lyrics_confidence: 0.75  # SA ASR confidence
     lyrics_tokenizer: "tts_chinese_frontend_model"
     segment_max_phone_len: 400
-    parquet_dataset_ids: [1665, 1662]   # [authorized, zh_artist]
-    parquet_dataset_weights: [8, 2]
+    parquet_dataset_ids: [1932]  # everynoise : artist = 1 : 1, 10k tracks in total
+    parquet_dataset_weights: [1]
     sinking_threshold: 0.51
     quality_filter: True
 
@@ -117,6 +118,7 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     segment_max_phone_len: !ref <run_opts[segment_max_phone_len]>
     region: !ref <run_opts[region]>
     conditions: !ref <extra_params[train_conditions]>
+    lyrics_field: !ref <run_opts[lyrics_field]>
     lyrics_confidence: !ref <run_opts[lyrics_confidence]>
     read_structure_tags: !ref <run_opts[read_structure_tags]>
     infer_structure_tags: !ref <run_opts[infer_structure_tags]>
@@ -124,11 +126,12 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     parquet_dataset_ids: !ref <run_opts[parquet_dataset_ids]>
     parquet_dataset_weights: !ref <run_opts[parquet_dataset_weights]>
     sinking_threshold: !ref <run_opts[sinking_threshold]>
-    remove_sinking: !ref <run_opts[remove_sinking]>
+    quality_filter: !ref <run_opts[quality_filter]>
     frame_rate: !ref <extra_params[semantic_frame_rate]>
     tag_taxonomy_lang: !ref <extra_params[tag_taxonomy_lang]>
     line_break_dropout_rate: !ref <extra_params[line_break_dropout_rate]>
     section_tag_dropout_rate: !ref <extra_params[section_tag_dropout_rate]>
+    normalize_audio: True
 
 model_config: !new:transformers.GPT2Config
     vocab_size: 1 # placeholder. Embedding table gets removed on load
@@ -210,7 +213,7 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticRLModule
             initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                 cache_dir: !ref <run_opts[cache_dir]>
         asr:
-            hpath: zh   # zh_punc
+            hpath: zh   # en_punc
             initializer: !name:recipes.bigmusic.utils.metrics_asr.init_asr
 
 logger:

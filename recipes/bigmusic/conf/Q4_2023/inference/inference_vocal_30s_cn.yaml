@@ -28,7 +28,7 @@ extra_params:
     # Diffusion
     # En tokenizer diffusion in CN hdfs: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_14_30s_finetune/checkpoints/last-minimal.ckpt"
     # Zh tokenizer diffusion in CN hdfs: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_16/checkpoints_minimal/last-minimal.ckpt"
-    diffusion_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_16/checkpoints_minimal/last-minimal.ckpt"
+    diffusion_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_16/checkpoints/last.ckpt"
     vocoder_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/soundstream-step=374999-val_sdr=12.9557.ckpt"
     lyrics_lang: "zh_phone"     # en | zh_phone | zh_wp
     is_zh_token: True           # Set to True only if lyrics_lang is zh_phone or zh_wp. Diffusion model from recipes.diffusion.models.tnt_gru
@@ -62,6 +62,7 @@ extra_params:
 
     use_controller_cfg: True       # Set to True to activate style CFG.
     controller_cfg_gamma: 1.0
+    controller_cfg_label: "genre,lang,speaker"  # mood, scene, sinking,
 
     cache_dir: .module_cache/bigmusic
 
@@ -141,7 +142,7 @@ additional_callbacks:
     - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
       asr_model_path: zh
     # - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback  # avoid loading mulan
-    - !new:recipes.bigmusic.callbacks.save_outputs.NormVolumeCallback
+    # - !new:recipes.bigmusic.callbacks.save_outputs.NormVolumeCallback
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
 callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback

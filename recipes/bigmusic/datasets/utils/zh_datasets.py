@@ -26,8 +26,9 @@ from .zh_meta import (
     parse_structure_tags_optional,
     parse_artist_id,
     parse_source,
+    parse_filter_label,
     parse_voice_tag,
-    parse_voice_tag_alt,
+    parse_voice_tag_sa,
     # Validators
     validate_quality,
     validate_style_text_sa,
@@ -180,7 +181,7 @@ class ZhMetaSFTBase(ZhMetaBase):
 
 
 @dataclass
-class ZhMetaSFTVoiceTagAlt(ZhMetaSFTBase):
+class ZhMetaSFTVoiceTagSA(ZhMetaSFTBase):
     @classmethod
     def parse(cls, meta, sinking_threshold: float):
         style_text, unfamiliar_tags, is_sinking = parse_style_text_sa(meta, sinking_threshold)
@@ -193,9 +194,28 @@ class ZhMetaSFTVoiceTagAlt(ZhMetaSFTBase):
             is_sinking=is_sinking,
             artist_id=parse_artist_id(meta),
             source=parse_source(meta),
-            voice_tag=parse_voice_tag_alt(meta),
+            voice_tag=parse_voice_tag_sa(meta),
         )
 
+
+@dataclass
+class ZhMetaSFTFilterLabel(ZhMetaSFTBase):
+    @classmethod
+    def parse(cls, meta, sinking_threshold: float):
+        style_text, unfamiliar_tags, is_sinking = parse_style_text_sa(meta, sinking_threshold)
+        is_high_quality, is_popular_potential = parse_filter_label(meta)
+        return cls(
+            utterances=parse_utterance_lyrics(meta),
+            lyrics_confidence=parse_lyrics_confidence_sa_asr(meta),
+            structure_tags=parse_structure_tags(meta),
+            style_text=style_text,
+            unfamiliar_tags=unfamiliar_tags,
+            is_sinking=is_sinking,
+            artist_id=parse_artist_id(meta),
+            source=parse_source(meta),
+            is_high_quality=is_high_quality,
+            is_popular_potential=is_popular_potential,
+        )
 
 # ------------------------------------------
 #          Dataset-parser Mapping
@@ -269,6 +289,33 @@ ZH_DATASET_REGISTRY = {
         is_for_sft=False,
         is_validation_set=True
     ),
+    1973: ZhDatasetEntry(
+        parser=ZhMetaLowRisk,
+        desc="Chinese low risk dataset, 450k",
+        is_copyright_cleared=False,
+        is_releasable=True,
+        is_for_pretrain=True,
+        is_for_sft=False,
+        is_validation_set=True
+    ),
+    1974: ZhDatasetEntry(
+        parser=ZhMetaLowRisk,
+        desc="Chinese low risk dataset, 712k + 450k",
+        is_copyright_cleared=False,
+        is_releasable=True,
+        is_for_pretrain=True,
+        is_for_sft=False,
+        is_validation_set=True
+    ),
+    2117: ZhDatasetEntry(
+        parser=ZhMetaLowRisk,
+        desc="Chinese low risk dataset with filtering, 476k + 329k",
+        is_copyright_cleared=False,
+        is_releasable=True,
+        is_for_pretrain=True,
+        is_for_sft=False,
+        is_validation_set=True
+    ),
     1725: ZhDatasetEntry(
         parser=ZhMetaLowRiskVoiceTag,
         desc="Chinese low risk dataset with gender tag",
@@ -294,6 +341,26 @@ ZH_DATASET_REGISTRY = {
         parser=ZhMetaSFTBase,
         desc="Everynoise, 4k + Chinese artist, 7k (+MSS)",
     ),
+    2049: ZhDatasetEntry.new_sft_no_copyright(
+        parser=ZhMetaSFTBase,
+        desc="Everynoise, 4k + Chinese artist, 7k + Playlist3k5 + Artist2k",
+    ),
+    2074: ZhDatasetEntry.new_sft_no_copyright(
+        parser=ZhMetaSFTBase,
+        desc="Everynoise, 4k + Chinese artist, 7k + Playlist3k5 + Artist2k, deduplication",
+    ),
+    2115: ZhDatasetEntry.new_sft_no_copyright(
+        parser=ZhMetaSFTBase,
+        desc="200k high risk qq/wyy",
+    ),
+    2118: ZhDatasetEntry.new_sft_no_copyright(
+        parser=ZhMetaSFTBase,
+        desc="110 Billboard",
+    ),
+    2120: ZhDatasetEntry.new_sft_no_copyright(
+        parser=ZhMetaSFTBase,
+        desc="3x(Everynoise, 4k + Chinese artist, 7k + Playlist3k5 + Artist2k) + Billboard 110k + Authorized 110k",
+    ),
     # SFT, releasable
     1935: ZhDatasetEntry.new_sft_copyright_cleared(
         parser=ZhMetaSFTBase,
@@ -311,10 +378,25 @@ ZH_DATASET_REGISTRY = {
         parser=ZhMetaSFTBase,
         desc="HQMY + StarNation, 20k + First batch authorized, 35k (+MSS)",
     ),
+    2122: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTFilterLabel,
+        desc="lightweight labelling, 30k",
+    ),
+    2123: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTFilterLabel,
+        desc="lightweight labelling, high quality + popular potential, 7k",
+    ),
     # SFT, with gender tags
     1939: ZhDatasetEntry.new_sft_copyright_cleared(
-        parser=ZhMetaSFTVoiceTagAlt,
+        parser=ZhMetaSFTVoiceTagSA,
         desc="ASR lyrics + phonemes + gender tagging, 35k",
     ),
-
+    2095: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTVoiceTagSA,
+        desc="Same as 1939 (todo: remove it)"
+    ),
+    2119: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTVoiceTagSA,
+        desc="Authorized data combined, 110k",
+    ),
 }

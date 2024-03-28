@@ -1,4 +1,5 @@
 from functools import partial
+from typing import Optional
 
 import pytorch_lightning as pl
 
@@ -47,6 +48,7 @@ class SemanticInferenceModule(pl.LightningModule):
         if cls_name == "SemanticModuleVarlenXperf" or cls_name == "SemanticModuleXperf":
             self.semantic_module.replace_ctiga_to_xperf()
         self.requires = {}
+        self.predict_step_seed: Optional[int] = self.extra_params.get("predict_step_seed")
 
     def setup(self, stage: str) -> None:
         if isinstance(self.semantic_module.model, gpt.GPTLMHeadModel) and ('32' in self.trainer.precision):
@@ -116,11 +118,10 @@ class SemanticInferenceModule(pl.LightningModule):
         cache_dir = Path(self.extra_params.get('cache_dir', '.module_cache'))
         cache_dir.mkdir(exist_ok=True, parents=True)
         for k, v in self.semantic_module.hparams.required_modules.items():
-            if 'initializer' in v:
-                fn_partial = v['initializer']
-                _, _, (f, fn_args, fn_kwargs, n) = fn_partial.__reduce__()
-                fn_kwargs.update({'cache_dir': cache_dir})
-                fn_partial.__setstate__((f, fn_args, fn_kwargs, n))
+            fn_partial = v['initializer']
+            _, _, (f, fn_args, fn_kwargs, n) = fn_partial.__reduce__()
+            fn_kwargs.update({'cache_dir': cache_dir})
+            fn_partial.__setstate__((f, fn_args, fn_kwargs, n))
         
         if self.extra_params.get('app_type', None):
             self.semantic_module.load_required_modules(
@@ -132,6 +133,8 @@ class SemanticInferenceModule(pl.LightningModule):
             )
 
     def predict_step(self, batch, batch_idx=0, dataloader_idx=0):
+        if self.predict_step_seed is not None:
+            pl.seed_everything(self.predict_step_seed + batch_idx)
         if "semantic_tokens" in batch:
             raw_semantic_samples = batch["semantic_tokens"]
         else:
@@ -148,17 +151,17 @@ class SemanticInferenceModule(pl.LightningModule):
         # TODO (QQ) use semantic_samples embedding as context input for decoding fn
         if self.extra_params.get("mixv2", False):
             semantic_samples = self.requires["Stage3"].model.vq.embedding(semantic_samples)
-        if self.extra_params.token2wav_type == 'ar-diffusion-vocoder':
-            # TODO, check if the key is the same as SVS,
-            # SVS: style_audio, SVC, vocal_prompt
-            raw_wav_output = self.decoding_fn(self.requires, semantic_samples, prompt_wav=batch["vocal_prompt"][0])
-            raw_wav_output = raw_wav_output.unsqueeze(0)
-        else:
-            raw_wav_output = self.decoding_fn(self.requires, semantic_samples, self.decoding_params)
         if "duration" in batch:
             duration = batch["duration"]
         else:
-            duration = self.extra_params.duration
+            duration = self.extra_params.duration            
+        if self.extra_params.token2wav_type == 'ar-diffusion-vocoder':
+            # TODO, check if the key is the same as SVS,
+            # SVS: style_audio, SVC, vocal_prompt
+            # breakpoint()
+            raw_wav_output = self.decoding_fn(self.requires, semantic_samples, prompt_wav_path=batch.get("vocal_prompt", [""])[0])
+        else:
+            raw_wav_output = self.decoding_fn(self.requires, semantic_samples, self.decoding_params)
         raw_wav_output = raw_wav_output[..., :duration * self.extra_params.sample_rate]
 
         outputs = {}

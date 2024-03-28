@@ -254,10 +254,10 @@ class SemanticModule(BaseContinuousEmbedModule):
                 data_type='text',                
             )
         elif 'style_audio' in conditions:
-            assert "style_audio" in batch
+            assert "style_audio" in batch or "target_audio" in batch
             embeds = mulan_embedder.embed(
                 self.requires,
-                batch['style_audio'].to(self.device),
+                batch.get('style_audio', batch.get('target_audio')).to(self.device),
                 with_sos=True,
                 data_type='music',
                 target_samples_length=target_samples_length,
@@ -686,6 +686,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         sample_mode = hp.sample_mode
         sample_thresh = hp.get('sample_thresh', 0.9)
         use_controller_cfg = hp.get('use_controller_cfg', False)
+        controller_cfg_label = hp.get('controller_cfg_label', "genre")
         controller_cfg_gamma = hp.get('controller_cfg_gamma', 1)
         skip_sos = hp.get('skip_sos', False)
         exclude_ids = None
@@ -711,9 +712,23 @@ class SemanticModule(BaseContinuousEmbedModule):
         inputs_emb_cfg = None
         if use_controller_cfg:
             assert beam == 1    # TODO(qq) support beam > 1 with CFG.
-            batch_cfg = deepcopy(batch)
-            batch_cfg['style_text'] = [''] * len(batch['style_text'])
-            batch_cfg['style_category'] = [''] * len(batch['style_category'])
+            batch_cfg = deepcopy(batch)            
+            cfg_style_text = []
+            for x in batch['style_text']:
+                x = x.split('|')
+                print(x,controller_cfg_label)
+                x[0] = '' if 'genre' in controller_cfg_label else x[0]
+                x[1] = '' if 'mood' in controller_cfg_label else x[1]
+                x[2] = '' if 'scene' in controller_cfg_label else x[2]
+                x[3] = '' if 'sinking' in controller_cfg_label else x[3]
+                x[4] = '' if 'lang' in controller_cfg_label else x[4]
+                print(x)
+                cfg_style_text.append('|'.join(x))
+                print(cfg_style_text)            
+            batch_cfg['style_text'] = cfg_style_text
+            batch_cfg['style_category'] = cfg_style_text
+            if "speaker" in controller_cfg_label:                
+                batch_cfg['speaker_id'] = torch.as_tensor([0] * len(batch['style_category']))
             inputs_emb_cfg = self.prepare_inputs_embeddings(batch_cfg)
 
         return super().predict(
@@ -1677,7 +1692,9 @@ def process_eos_indexes(semantic_samples, semantic_module: SemanticModule, sampl
         semantic_samples[eos_mask] = 0
     return semantic_samples, eos_index_list
 
-def truncate_wav_to_eos(wavs, eos_index_list):
+def truncate_wav_to_eos(wavs, eos_index_list):    
+    if torch.is_tensor(wavs) and wavs.ndim == 1:
+        wavs = [wavs]
     truncated_wavs = []
     for i, (eos, wav) in enumerate(zip_longest(eos_index_list, wavs)):
         if eos is not None:

@@ -25,7 +25,7 @@ from recipes.datasets.mcc.mix import (
 from recipes.datasets.mcc.sami_tokenizer import SamiOfflineTokenizer, SamiTokenizerError
 
 from recipes.musiclm.utils.dist import local_zero_first
-from recipes.musiclm.transforms.audio import FastNormalizeAudio
+from recipes.musiclm.transforms.audio import FastNormalizeAudio, AbsNormalizeAudio
 from samantha.dataio.batching import BucketBatcher
 from samantha.dataio.dataset import MultiIterableDataset
 from samantha.dataio.parquet import ParquetDataset
@@ -80,6 +80,7 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
     song_id = []
     shard = []
     worker_id = []
+    lyrics_confidence = []
     for idx in range(len(batch)):
         audio = batch[idx]["target_audio"]
         if audio.ndim == 1:
@@ -93,6 +94,8 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
         style_text.append(style_label)
 
         speaker_id.append(batch[idx]["artist_id"])
+        _lc = batch[idx]["lyrics_confidence"]
+        lyrics_confidence.append(-1 if _lc is None else _lc)
         
         construct = lambda key, default: \
             batch[idx][key].clone().detach() if key in batch[idx] and batch[idx][key] is not None \
@@ -136,6 +139,7 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
         # DEBUG:
         "style_metadata": style_metadata,
         "song_id": song_id,
+        "lyrics_confidence": torch.as_tensor(lyrics_confidence),
         "shard": shard,
         "worker_id": worker_id,
     }
@@ -224,7 +228,8 @@ class VocalTransforms(BaseTransforms):
         if self.data_sample_rate != sample_rate and self.audio_key.endswith("npy"):
             base_transforms.append(Resample(self.data_sample_rate, sample_rate))
         if normalize_audio:
-            base_transforms.append(FastNormalizeAudio())
+            # base_transforms.append(FastNormalizeAudio())
+            base_transforms.append(AbsNormalizeAudio())
         self.base_transform = Compose(base_transforms)
 
     def __call__(self, item: Dict[str, Any]) -> Generator:
@@ -232,22 +237,22 @@ class VocalTransforms(BaseTransforms):
         if isinstance(meta, str):
             meta = json.loads(meta)
 
+        # Parse and transform meta
+        try:
+            _, song_slices, style_text, artist_id, lyrics_confidence = self.meta_transform(meta)
+        except ZhMetaParseError as pe:
+            self._update_stats(skipped=True, message=f"ParseError: {pe}")
+            return
+        except ZhMetaTransformError as te:
+            self._update_stats(skipped=True, message=f"TransformError: {te}")
+            return
+
         # Get track level audio
         try:
             audio = self.base_transform(item[self.audio_key])
             extra_audio = [self.base_transform(item[k]) for k in self.extra_audio_keys]
         except Exception as e:
             self._update_stats(skipped=True, message=f"Error loading audio: {e}")
-            return
-
-        # Parse and transform meta
-        try:
-            _, song_slices, style_text, artist_id = self.meta_transform(meta)
-        except ZhMetaParseError as pe:
-            self._update_stats(skipped=True, message=f"ParseError: {pe}")
-            return
-        except ZhMetaTransformError as te:
-            self._update_stats(skipped=True, message=f"TransformError: {te}")
             return
 
         # Yield one example per segment
@@ -269,12 +274,12 @@ class VocalTransforms(BaseTransforms):
             except SamiTokenizerError as e:
                 self._update_stats(skipped=True, message=f"Error tokenizing phrases: {e}")
                 continue
-
             yield {
                 "target_audio": clip,
                 "target_tokens_length": int(clip.shape[-1] / self.sample_rate * self.frame_rate),
                 "style_text": style_text,
                 "artist_id": artist_id,
+                "lyrics_confidence": lyrics_confidence,
                 "normalized_text": normalized_text,
                 "lyrics_tokens": text_tokens,
                 "max_phone_len": self.segment_max_phone_len,

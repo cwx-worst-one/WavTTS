@@ -206,6 +206,14 @@ class FastNormalizeAudio(nn.Module):
             denom = norm_tensor.abs().max().clamp_min_(eps).expand_as(x)
         return torch.div(x, denom)
 
+class AbsNormalizeAudio(nn.Module):
+    # This normalization is equivalent to diffusion input audio normalization.
+    def __init__(self) -> None:
+        super().__init__()
+
+    def forward(self, wav) -> torch.Tensor:
+        scale = max(0.001, torch.max(torch.abs(wav)).item())
+        return wav / scale * 0.95
 
 class SplitView(nn.Module):
     def __init__(self, views: List[Compose]) -> None:

@@ -36,7 +36,7 @@ extra_params:
 run_opts:
     fast_dev_run: False
     log_dir: logs
-    hdfs_log_dir: "hdfs:///home/byte_speech_sv/zongyu.yin/logs"
+    hdfs_log_dir: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/yilinzhang/logs"
     log_name: decoder_07B_zh30s_sft
     version: v0
     cache_dir: .module_cache/bigmusic

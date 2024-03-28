@@ -56,7 +56,7 @@ run_opts:
     buckets_in_sec: [30, 40, 50, 60]
     use_dynamic_batch: False
     max_seg_per_track: 3
-    segment_method: "first"
+    segment_method: "random"
     infer_structure_tags: False
     read_structure_tags: True
     region: "CN"
@@ -91,8 +91,6 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     read_structure_tags: !ref <run_opts[read_structure_tags]>
     infer_structure_tags: !ref <run_opts[infer_structure_tags]>
     segment_method: !ref <run_opts[segment_method]>
-    # wds_dataset_names: !ref <run_opts[wds_dataset_names]>
-    # wds_dataset_weights: !ref <run_opts[wds_dataset_weights]>
     parquet_dataset_ids: !ref <run_opts[parquet_dataset_ids]>
     parquet_dataset_weights: !ref <run_opts[parquet_dataset_weights]>
     sinking_threshold: !ref <run_opts[sinking_threshold]>
@@ -101,6 +99,7 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     tag_taxonomy_lang: !ref <extra_params[tag_taxonomy_lang]>
     line_break_dropout_rate: !ref <extra_params[line_break_dropout_rate]>
     section_tag_dropout_rate: !ref <extra_params[section_tag_dropout_rate]>
+    normalize_audio: True
 
 model_config: !new:transformers.GPT2Config
     vocab_size: 1 # placeholder. Embedding table gets removed on load

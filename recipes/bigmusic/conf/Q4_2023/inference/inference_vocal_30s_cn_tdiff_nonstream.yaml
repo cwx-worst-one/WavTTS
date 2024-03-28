@@ -78,8 +78,8 @@ run_opts:
     num_workers: 8
 
 
-# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS.yaml
-token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS_streaming.yaml
+token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS.yaml
+# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS_streaming.yaml
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -134,8 +134,8 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
 
 # separating out additional_callbacks so auto_eval can disable metrics
 additional_callbacks:
-    # - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
-    #   asr_model_path: zh
+    - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
+      asr_model_path: zh
     # - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
     - !new:recipes.bigmusic.callbacks.save_outputs.NormVolumeCallback
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback

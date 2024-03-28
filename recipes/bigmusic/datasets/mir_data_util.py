@@ -547,7 +547,8 @@ MACRO_STYLE_MAP = {
     "DJ": "DJ|||Sinking|Chinese",
     "Rock": "Rock|||non-Sinking|Chinese",
     "Folk": "Folk|||non-Sinking|Chinese",
-    "R&B/Soul": "R&B/Soul|||non-Sinking|Chinese"
+    "R&B/Soul": "R&B/Soul|||non-Sinking|Chinese",
+    "empty": "||||"
 }
 
 SA_CAT_VOCAB = [SA_GENRE20, SA_MOOD19, SA_THEME33, SA_SINKING, SA_LANG]

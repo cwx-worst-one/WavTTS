@@ -9,7 +9,6 @@ import math
 import random
 from random import Random
 import copy
-
 import numpy as np
 
 from recipes.bigmusic.datasets.mir_data_util import (
@@ -191,18 +190,15 @@ class ZhMetaBase:
         segment_method: str,
         max_seg_per_track: int,
         duration_range: Tuple[int, int]
-    ) -> Tuple[ZhMetaLogger, List[SongSlice], List[str], int]:
+    ) -> Tuple[ZhMetaLogger, List[SongSlice], List[str], int, Optional[float]]:
         self._validate(lyrics_confidence)
         _self = self._convert()
         logger, song_slices = _self._to_song_slices(segment_method, max_seg_per_track, duration_range)
-        return logger, song_slices, _self.style_text, _self.artist_id
+        return logger, song_slices, _self.style_text, _self.artist_id, _self.lyrics_confidence
 
     def _validate(self, lyrics_confidence: Optional[float]):
         """Raise ZhMetaTransformError if the data is invalid"""
-        if self.lyrics_confidence is None or lyrics_confidence is None:
-            return
-        if self.lyrics_confidence < lyrics_confidence:
-            raise ZhMetaTransformError(f"Low confidence: {lyrics_confidence}")
+        validate_confidence(lyrics_confidence, self.lyrics_confidence)
 
     def _convert(self):
         """Process the data and return a new data. No in-place operation."""
@@ -419,10 +415,8 @@ def parse_filter_label(meta: Dict) -> Tuple[bool, bool]:
 
 # ---------- voice_tag -------------
 
-def _parse_voice_tag(voice_probs: Optional[Dict[str, float]]) -> Optional[str]:
+def _parse_voice_tag(voice_probs: Dict[str, float]) -> Optional[str]:
     """Return the voice tag based on probablity thresholds. 'adult' tag is not used."""
-    if voice_probs is None:
-        return None
     is_child = voice_probs["child"] >= VOICE_THRESHOLDS["Child"]
     if is_child:
         return "Child"
@@ -439,15 +433,23 @@ def _parse_voice_tag(voice_probs: Optional[Dict[str, float]]) -> Optional[str]:
     return None
 
 
+def _parse_voice_tag_sa(sa_gender: Dict) -> Optional[str]:
+    """Solely rely on the result it provides"""
+    for tag in sa_gender["result"]:
+        if tag in ["child", "female", "male"]:
+            return tag.capitalize()
+    return None
+
+
 def parse_voice_tag(meta: Dict) -> Optional[str]:
     """meta.gender"""
     return _parse_voice_tag(_get_value(meta, "gender", "No gender tag"))
 
 
-def parse_voice_tag_alt(meta: Dict) -> Optional[str]:
+def parse_voice_tag_sa(meta: Dict) -> Optional[str]:
     """meta.gender.sa_gender"""
     get_value = partial(_get_value, msg="No gender")
-    return _parse_voice_tag(get_value(get_value(meta, "gender"), "sa_gender"))
+    return _parse_voice_tag_sa(get_value(get_value(meta, "gender"), "sa_gender"))
 
 
 # ----------- source -----------
@@ -459,8 +461,10 @@ def parse_source(meta: Dict) -> Optional[str]:
 
 
 # ------------------------------------------
-#                 Converters
+#                 TRANSFORM
 # ------------------------------------------
+
+# ---------- converters -------------
 
 # All the converters should do in-place operations on _self
 # to avoid to many copies.
@@ -477,11 +481,17 @@ def convert_voice_tag(_self):
         _self.artist_id = ARTIST_ID_MAP_V2[_self.voice_tag]
 
 
-# ------------------------------------------
-#                 TRANSFORMS
-# ------------------------------------------
-
 # ---------- validators -------------
+
+def validate_confidence(confidence_threshold: Optional[float], confidence: Optional[float]):
+    if confidence_threshold is None or confidence is None:
+        return
+    if confidence < confidence_threshold:
+        # Do not log the confidence value. The value is almost always different for each sample.
+        # Adding the specific confidence value to the log will mess up the log messages that's
+        # supposed to be aggregated and counted.
+        raise ZhMetaTransformError("Low confidence")
+
 
 def validate_style_text_sa(style_text: List[str], is_sinking: bool):
     _genre_tag, _, _, _, _lang_tag = style_text
@@ -489,7 +499,7 @@ def validate_style_text_sa(style_text: List[str], is_sinking: bool):
         raise ZhMetaTransformError(f"Filter out genre {_genre_tag}")
     if (_genre_tag not in ["DJ", "MC"]) and is_sinking:
         raise ZhMetaTransformError(f"Filter out genre {_genre_tag} because of sinking")
-    if not _lang_tag or (_lang_tag == "Chinese Dialects"):
+    if not _lang_tag or (_lang_tag == "Chinese Dialects") or (_lang_tag == "Cantonese"):
         raise ZhMetaTransformError(f"Filter out lang {_lang_tag}")
 
 

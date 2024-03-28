@@ -160,6 +160,7 @@ class DiffusionU2SInfer(LightningModule):
         logger.info(f"diffusion_nfe={self.diffusion_nfe}")
         logger.info(f"diffusion_sampler={self.diffusion_sampler}")
         logger.info(f"text_cfg_w={self.text_cfg_w}")
+        logger.info(f"use_prompt={self.model.hp.use_prompt}")
         logger.info(f"diffusion_ckpt_path={diffusion_ckpt_path}")
 
     
@@ -256,7 +257,7 @@ class DiffusionU2SInfer(LightningModule):
         
 
         if os.path.isfile(prompt_wav_path) ^ self.model.hp.use_prompt:
-            logger.error(f"prompt wav {os.path.isfile(prompt_wav_path)}/{prompt_wav_path} mismatch with config use_prompt={self.model.hp.use_prompt}")
+            logger.warning(f"prompt wav {os.path.isfile(prompt_wav_path)}/{prompt_wav_path} mismatch with config use_prompt={self.model.hp.use_prompt}")
 
         
         # Prompt
@@ -313,7 +314,10 @@ class DiffusionU2SInfer(LightningModule):
                 inputs["bn_ctx"] = torch.ones([1, mel_len, self.bn_config['bn_dim']], device=device) * self.bn_config['bn_padding']
                 inputs["prompt_length"] = 0
 
-                if prompt_wav is not None:
+                if prompt_wav is None:
+                    target_bn_len = 6 * self.mel_frame_rate
+                    inputs["prompt_bn"] = torch.ones([1, self.bn_config["bn_dim"],target_bn_len],device=device)*self.bn_config["bn_padding"]
+                else:
                     if len(prompt_wav.shape) == 2:
                         prompt_wav = prompt_wav.unsqueeze(1)
                     encoder_out = self.wvae.encode(prompt_wav)

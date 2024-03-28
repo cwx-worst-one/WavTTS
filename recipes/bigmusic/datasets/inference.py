@@ -123,6 +123,13 @@ def inference_dataset_from_prompt(
                 for original, rewritten in zip(prompts['lyrics'], rewritten_lyrics)
             ]
         if 'style_text' in prompts and transform_style_text:
+            prompts['original_style_text'] = prompts['style_text']
+            lyrics_prompts = prompts.get("prompt", [])
+            if lyrics_prompts:
+                qs = []
+                for lyrics_p, style_p in zip(lyrics_prompts, prompts['style_text']):
+                    qs.append(lyrics_p[:10] + '\n' + style_p.split('|')[0])
+                prompts['original_style_text'] = qs
             prompts['style_text'] = process_style_text(prompts['style_text'])
 
     if run_combinations:
@@ -241,7 +248,8 @@ def process_style_text(style_text_list: List[str]) -> List[str]:
         # Treat the text as formatted if there is any separator in the text
         if separator in text:
             return text
-        return MACRO_STYLE_MAP.get(text, MACRO_STYLE_MAP["Pop"])
+        # return MACRO_STYLE_MAP.get(text, MACRO_STYLE_MAP["Pop"])
+        return MACRO_STYLE_MAP.get(text, MACRO_STYLE_MAP["empty"])        
     return [process_one(text) for text in style_text_list]
 
 def inference_svs_dataset_from_prompt(
