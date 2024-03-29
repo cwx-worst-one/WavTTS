@@ -525,6 +525,8 @@ class DualUMMv2(nn.Module):
         hidden_states, vq_ids, vq_loss = self.forward_vq(hidden_states, wav_type)
         return vq_ids
 
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
     def token2mel(self, token, wav_ref=None, token_type="vocal"):
         """Convert tokens to a mel spectrogram."""
 
@@ -664,3 +666,59 @@ class DualUMMv2(nn.Module):
             input_dict.update(f0=f0, vuv=vuv)
 
         return input_dict
+
+
+class DualUMMv2Inst(DualUMMv2):
+    """
+    DualUMM adapted for Instrumental only branch.
+
+    Implementation Notes @hanoihantrakul 28 March 2024
+    You might wonder "isn't a single branch DualUMM just a regular UMM?"
+    The main difference between this implementation and a traditional ConvUMM is:
+    - the addition of GAN adversarial losses on the recon heads (main difference)
+    - the location of the VQ layer (halfway between encoders in ConvUMM
+    and after encoder in DualUMM)
+    """
+
+    def __init__(self, config):
+        """
+        @hanoihantrakul 29Mar2024 TODO: if this works, recommend refactoring a separate InstrumentalBranch() class that
+        DualUMM can inherit for vocal and instrumental branches, and this instrumental-only
+        model can call separately.
+        """
+        # Do not call parent __init__() method which would init the vocal branch. We just want to inherit the methods.
+        self.config = config
+        self.ds = config.get(
+            "downsampling", 4
+        )  # The mel features are at frame rate 100. So downsampling=4 means each branch is 25Hz.
+        self.us = config.get("upsampling", 1)
+        self.conv_hidden_size = config.get("conv_hidden_size", 256)
+        self.encoder_layer = ConvStacksWithDownUpSampling(
+            config.hidden_size, config.hidden_size, config.hidden_size
+        )
+        self.init_inst_branch(config)
+        self.chroma_transform = ChromaSpectrogram(
+            sample_rate=config.sample_rate,
+            n_fft=config.n_fft,
+            win_length=config.win_length,
+            hop_length=config.hop_length,
+            n_chroma=config.n_chroma,
+            normalized=False,
+        )
+
+    def forward(self, input_dict):
+        """Forward pass only needs to call instrumental branch."""
+        output_dict = self.forward_inst_branch(input_dict)
+        output_dict["flops"] = 0
+        return output_dict
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def token2mel(self, token):
+        """Convert tokens to a mel spectrogram."""
+        return super.token2mel(token, token_type="inst")
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def wav2token(self, wav):
+        return super.wav2token(wav, wav_type="inst")

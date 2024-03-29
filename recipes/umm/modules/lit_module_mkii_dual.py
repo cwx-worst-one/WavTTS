@@ -3,7 +3,9 @@ import os
 import random
 from copy import deepcopy
 
+import matplotlib.pyplot as plt
 import torch
+import torch.nn.functional as F
 import yaml
 from torch import nn
 from torch.nn.utils import clip_grad_value_
@@ -11,12 +13,10 @@ from torch.nn.utils import clip_grad_value_
 from recipes.umm.models.patchgan_disc2D import PatchGANDisc2D
 from recipes.umm.models.voc_modules.pitch_predictor.model import PitchPredictor
 from recipes.umm.models.voc_modules.utils import mel2wav
-from recipes.umm.modules.lit_module import Stage3MSS
-import torch.nn.functional as F
+from recipes.umm.modules.lit_module import Stage0
 from recipes.umm.requires.model_initializer import init_stage3_dual_voc
 from recipes.umm.utils.mel_utils import torch_wav2spec
 from recipes.umm.utils.ssim import ssim
-import matplotlib.pyplot as plt
 
 
 def weights_nonzero_speech(target):
@@ -128,7 +128,7 @@ class DualUMMUtilsMixin:
         return wav
 
 
-class DualUMMv2(Stage3MSS, DualUMMUtilsMixin):
+class DualUMMv2(Stage0, DualUMMUtilsMixin):
     def __init__(
         self,
         model_cls,
@@ -466,6 +466,72 @@ class DualUMMv2(Stage3MSS, DualUMMUtilsMixin):
                         f"val/{t}_g{i:02d}", fig, global_step=step_cur
                     )
 
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def prepare_feature(self, batch):
+        """
+        29 March 2024
+        Copied over from Stage3MSS.prepare_feature() so this class only needs Stage0.
+
+        @hanoihantrakul to refactor in next MR.
+        """
+        # Prepare tokens
+        input_dict = {"text_ids": batch["token"].long()}
+        # Prepare MSS audio tracks
+        _audio_dict = {k: batch[k] for k in ["audio", "audio_vocal", "audio_inst"]}
+        _audio_dict = {k: v.squeeze(dim=1).float() for k, v in _audio_dict.items()}
+        _audio_dict = {k: self.pad_audio(v) for k, v in _audio_dict.items()}
+        """
+        @hanoihantrakul 10/10/2023
+        Problem: Superclass Stage0.preprocessing() assumes 1 fixed audio argument `x`, but there are 3 audio tracks.
+        Solution: Pass in a single dict instead of audio directly. Then handle dict in self.model.preprocessing()
+        """
+        preprocessed_feats = self.preprocessing(_audio_dict)
+        input_dict.update(preprocessed_feats)
+        return input_dict
+
+    def get_code_rate(self, target_tokens):
+        """
+        29 March 2024
+        Copied over from Stage3.get_code_rate() so this class only needs Stage0.
+        @hanoihantrakul to refactor in next MR. Note that Stage3.get_code_rate()
+        replaces default Stage1.get_code_rate() in original ConformerUMM. I am
+        trying to remove this confusion.
+        @hanoihantrakul to refactor in next MR.
+        """
+        code_rate = (
+            sum(
+                [
+                    len(target_tokens[i, :].unique())
+                    for i in range(target_tokens.size(0))
+                ]
+            )
+            / target_tokens.size(0)
+            / target_tokens.size(1)
+        )
+        return code_rate
+
+    def get_quant_rate(self, quant_index, quant_token_num):
+        """
+        29 March 2024
+        Copied over from Stage3MSS, which uses `get_quant_rate`. However
+        there is also another method `get_quant_rates` which is favored and used in Stage1.
+        @hanoihantrakul to refactor and use the correct one.
+
+        Despite `get_quant_rate` being labelled as deprecated, and to use `get_quant_rates`,
+        it is clear all the implementations use `get_quant_rate`. I keep this for now
+        so that values reported to wandb do not get messed up.
+
+        @hanoihantrakul to refactor in next MR.
+        """
+        one_hot = torch.nn.functional.one_hot(
+            quant_index.reshape(-1), quant_token_num
+        ).sum(dim=0)
+        one_hot = self.all_gather(one_hot)
+        one_hot = one_hot.sum(dim=0).clamp(0, 1)
+        quant_rate = one_hot.sum() / quant_token_num
+        return quant_rate
+
 
 def run_dualMSS_decode(requires, samples, params, token_type="vocal"):
     if "batch" in params:
@@ -481,3 +547,28 @@ def run_dualMSS_decode(requires, samples, params, token_type="vocal"):
     for mel in mels:
         wavs.append(mel2wav(mel, None, vocoder))
     return torch.stack(wavs, 0)
+
+
+class DualUMMv2Inst(DualUMMv2):
+    def __init__(
+        self,
+        model_cls,
+        optimizer_cls,
+        scheduler_cls,
+        disc_optimizer_cls,
+        criterion_config,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+        load_required_modules_in_init=False,
+        **kwargs,
+    ):
+        super().__init__(
+            model_cls=model_cls,
+            criterion_cls=lambda: None,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
