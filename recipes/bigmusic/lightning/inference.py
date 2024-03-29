@@ -6,7 +6,7 @@ import pytorch_lightning as pl
 from samantha.utils.hparams import DotDict
 from recipes.diffusion.models.diffusion_model.utils import run_diffusion
 # from recipes.voicebox.lit_modules.lit_diffusion_reconstruct import run_diffusion_vocoder
-from apps.bigmusic.umm.diffusion.requires.model_initializer import run_diffusion_vocoder
+from apps.bigmusic.umm.diffusion.requires.model_initializer import run_diffusion_vocoder_batch
 from recipes.diffusion.utils.utils import download_checkpoint
 from recipes.soundstorm.lightning.utils import run_soundstorm
 from recipes.musiclm.utils.dist import local_zero_first
@@ -67,7 +67,7 @@ class SemanticInferenceModule(pl.LightningModule):
             self.decoding_params = DotDict({**self.extra_params, **self.extra_params['diffusion_params']})
         elif self.extra_params.token2wav_type == 'ar-diffusion-vocoder':
             # this is the tts token2wav
-            self.decoding_fn = run_diffusion_vocoder
+            self.decoding_fn = run_diffusion_vocoder_batch
             required_modules.update(self.hparams.required_modules['diffusion_modules'])
             self.decoding_params = DotDict({ **self.extra_params, **self.extra_params['diffusion_params'] })
         elif self.extra_params.token2wav_type == 'ar':
@@ -159,7 +159,7 @@ class SemanticInferenceModule(pl.LightningModule):
             # TODO, check if the key is the same as SVS,
             # SVS: style_audio, SVC, vocal_prompt
             # breakpoint()
-            raw_wav_output = self.decoding_fn(self.requires, semantic_samples, prompt_wav_path=batch.get("vocal_prompt", [""])[0])
+            raw_wav_output = self.decoding_fn(self.requires, semantic_samples, prompt_wav_paths=batch.get("vocal_prompt", None))
         else:
             raw_wav_output = self.decoding_fn(self.requires, semantic_samples, self.decoding_params)
         raw_wav_output = raw_wav_output[..., :duration * self.extra_params.sample_rate]

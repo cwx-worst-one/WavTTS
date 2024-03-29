@@ -74,7 +74,7 @@ run_opts:
     accelerator: auto
     strategy: auto
     cache_dir: .module_cache/bigmusic
-    batch_size: 1  # set to 4 if using reranker
+    batch_size: 4  # set to 4 if using reranker
     num_workers: 8
 
 

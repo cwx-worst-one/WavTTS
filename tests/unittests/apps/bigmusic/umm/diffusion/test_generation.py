@@ -2,7 +2,7 @@ import torch
 import pytest
 import librosa
 from hyperpyyaml import load_hyperpyyaml
-from apps.bigmusic.umm.diffusion.requires.model_initializer import init_diffusion, wav2token, token2wav
+from apps.bigmusic.umm.diffusion.requires.model_initializer import init_diffusion, wav2token, token2wav, wav2token_batch, token2wav_batch
 
 
 def generation_with_config(
@@ -19,7 +19,7 @@ def generation_with_config(
         params["diffusion_config"], local_rank, cache_dir, 
     )
 
-    if uttid == "":
+    if not uttid:
         diffusion_ckpt_info = params["diffusion_config"]["diffusion_ckpt_path"].split("/")
         uttid = f"{diffusion_ckpt_info[-3]}_{diffusion_ckpt_info[-1]}"
     
@@ -34,6 +34,38 @@ def generation_with_config(
             uttid = uttid,
             scale = scale,
         )
+
+
+def batch_generation_with_config(
+    params,
+    syn_wav_paths,
+    prompt_wav_paths = None,
+    prompt_wavs = None,
+    uttids = None,
+    local_rank = 0,
+    cache_dir = ".module_cache/",
+):
+
+    requires = init_diffusion(
+        params["diffusion_config"], local_rank, cache_dir, 
+    )
+    bs = len(syn_wav_paths)
+    if uttids is None:
+        diffusion_ckpt_info = params["diffusion_config"]["diffusion_ckpt_path"].split("/")
+        uttids = [f"{diffusion_ckpt_info[-3]}_{diffusion_ckpt_info[-1]}_{bidx}" for bidx in range(bs)]
+    
+    with torch.no_grad():
+        umm_tokens, scales = wav2token_batch(requires["diffusion"], syn_wav_paths)
+        # generate wav in output_wavs/test.wav
+        token2wav_batch(
+            diffusion = requires["diffusion"], 
+            umm_tokens = umm_tokens,
+            prompt_wav_paths = prompt_wav_paths,
+            prompt_wavs = prompt_wavs,
+            uttids = uttids,
+            scales = scales,
+        )
+
 
 def generation_with_config_file(
     hparams_file,
@@ -58,10 +90,39 @@ def generation_with_config_file(
     )
 
 
+def batch_generation_with_config_file(
+    hparams_file,
+    syn_wav_paths,
+    prompt_wav_paths = None,
+    prompt_wavs = None,
+    uttids = None,
+    local_rank = 0,
+    cache_dir = ".module_cache/",
+):
+    with open(hparams_file, "r", encoding="utf-8") as fin:
+        params = load_hyperpyyaml(fin)
+
+    batch_generation_with_config(
+        params = params,
+        syn_wav_paths = syn_wav_paths,
+        prompt_wav_paths = prompt_wav_paths,
+        prompt_wavs = prompt_wavs,
+        uttids = uttids,
+        local_rank = local_rank,
+        cache_dir = cache_dir,
+    )
+
+
 @pytest.mark.skip
 def test_25hzConformer_125hzSS_streaming_distill():
     generation_with_config_file(
         syn_wav_path = "voice_condition_valsets/slices_60/male_husky_0_slice1.wav",
+        hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS_streaming_distill.yaml",
+    )
+    batch_generation_with_config_file(
+        syn_wav_paths = [
+            "voice_condition_valsets/slices_60/male_husky_0_slice1.wav",
+        ],
         hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS_streaming_distill.yaml",
     )
 
@@ -77,6 +138,15 @@ def test_25hzConformer_125hzSS_streaming_with_wav():
         prompt_wav = prompt_wav,
         prompt_wav_path = "",
     )
+    batch_generation_with_config_file(
+        syn_wav_paths = [
+            "voice_condition_valsets/slices_60/male_husky_0_slice1.wav",
+        ],
+        hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS_streaming.yaml",
+        prompt_wavs = [prompt_wav],
+        prompt_wav_paths = None,
+    )
+
 
 
 @pytest.mark.skip
@@ -89,6 +159,13 @@ def test_25hzConformer_125hzSS(hparams_file):
         syn_wav_path = "./1min_zh_vocal/24k/1min_female_deep_0.wav",
         prompt_wav_path = "",
         hparams_file = hparams_file,
+    )
+    batch_generation_with_config_file(
+        syn_wav_paths = [
+            "voice_condition_valsets/slices_60/male_husky_0_slice1.wav",
+            "voice_condition_valsets/slices_60/male_husky_0_slice2.wav"
+        ],
+        hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS_streaming.yaml",
     )
     
 

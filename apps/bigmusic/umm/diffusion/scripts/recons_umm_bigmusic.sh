@@ -22,13 +22,25 @@ mkdir -p $out_dir
 cp $cfg_path $out_dir
 cp $0 $out_dir
 
+if [ -z $batch_size ]; then
+	echo "no environment variant 'batch_size' exsists, will use 'batch_size=1'"
+	export batch_size=1
+fi
+
+if [ -z $seed ]; then
+	echo "no environment variant 'batch_size' exsists, will use 'batch_size=1'"
+	export seed=1996
+fi
 
 bash launch.sh predict \
 	-c $cfg_path \
 	--run_opts.meta_lst $meta_lst \
 	--run_opts.output_dir $out_dir \
-	--run_opts.diffusion_ckpt_path $diffusion_ckpt_path
-
+	--run_opts.diffusion_ckpt_path $diffusion_ckpt_path \
+	--run_opts.batch_size $batch_size \
+	--run_opts.seed $seed
+	
+cp lightning_logs/version_0/config.yaml $out_dir
 echo "====== cfg_path="$cfg_path
 echo "====== meta_lst="$meta_lst
 echo "====== diffusion_ckpt_path="$diffusion_ckpt_path

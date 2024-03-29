@@ -504,8 +504,8 @@ class FlashSelfAttentionV2_3(nn.Module):
         self.window_type = window_type
         if window_type == 1:
             assert (
-                window_size[0] == -1 and window_size[1] >= 1
-            ), "use blockwise window mask only support [-1, x>=1] now"
+                window_size[1] >= 1
+            ), "use blockwise window mask only support [any, x>=1] now"
         self.window_size = window_size
 
     def forward(
@@ -609,8 +609,8 @@ class FlashCrossAttentionV2_3(nn.Module):
         self.window_type = window_type
         if window_type == 1:
             assert (
-                window_size[0] == -1 and window_size[1] >= 1
-            ), "use blockwise window mask only support [-1, x>=1] now"
+                window_size[1] >= 1
+            ), "use blockwise window mask only support [any, x>=1] now"
         self.window_size = window_size
 
     def forward(

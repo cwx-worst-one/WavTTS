@@ -619,12 +619,12 @@ class LlamaDiffusion(nn.Module):
             raise NotImplementedError
         return pred
 
-    def clear_cache(self, t, total_frame=None):
+    def clear_cache(self, t, total_frame=None, bs=1):
         if total_frame is None:
             self.cached_noise = None
         else:
             self.cached_noise = [
-                torch.randn([1, total_frame, self.hp.out_channels])
+                torch.randn([1, total_frame, self.hp.out_channels]).expand(bs, -1, -1)
                 for i in range(t + 1)
             ]
         self.cached_v = dict([(i, None) for i in range(t)])
@@ -651,7 +651,11 @@ class LlamaDiffusion(nn.Module):
             if self.cached_noise is not None:
                 x = self.cached_noise[0][:, :frm_len, :].to(device)
         else:
-            x = torch.randn([1, frm_len, self.hp.out_channels], device=device)
+            if text_cfg_w !=1:
+                # TODO: text_cfg_w>1
+                x = torch.randn([1, frm_len, self.hp.out_channels], device=device).expand(batch_size//2, -1, -1)
+            else:
+                x = torch.randn([1, frm_len, self.hp.out_channels], device=device).expand(batch_size, -1, -1)
 
         if t > 20:
             sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device)
@@ -665,7 +669,7 @@ class LlamaDiffusion(nn.Module):
             if self.target_type == "velocity":
                 if text_cfg_w != 1:
                     v_pred, v_pred_uncond = self._forward(
-                        x,
+                        x.repeat(2,1,1),
                         local_cond,
                         text_embed,
                         timesteps=sigmas[i].expand(batch_size, -1),

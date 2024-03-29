@@ -16,6 +16,10 @@ run_opts:
     infer_type: diffusion-vocoder
     use_wvae_vocoder: True
     lang: en
+    batch_size: 4
+
+seed: !ref <run_opts[seed]>
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 
 predict_dataset: !new:apps.bigtts.umm.diffusion.datasets.meta_based_dataset.MetaBasedUnit2WavDataset
     meta_lst: !ref <run_opts[meta_lst]>
@@ -24,9 +28,10 @@ predict_dataset: !new:apps.bigtts.umm.diffusion.datasets.meta_based_dataset.Meta
 dataloader: !new:torch.utils.data.DataLoader
     dataset: !ref <predict_dataset>
     num_workers: !ref <run_opts[num_workers]>
-    batch_size: null
+    batch_size: !ref <run_opts[batch_size]>
     drop_last: False
-
+    collate_fn: !apply:eval ['lambda x: x'] 
+    
 pl_datamodule: !new:recipes.text2semantic.lit_modules.lit_data.DataModule
     predict_dataloader: !ref <dataloader>
 

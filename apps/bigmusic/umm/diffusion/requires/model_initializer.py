@@ -1,6 +1,8 @@
 
 import os
 import torch
+import torch.nn.functional as F
+from typing import Optional, List, Union
 from apps.bigmusic.umm.diffusion.lit_modules import DiffusionU2SInfer, ChunkInfer
 from apps.bigtts.umm.diffusion.lit_modules.infer_utils import save_wav
 
@@ -15,15 +17,66 @@ def init_diffusion(diffusion_config, local_rank=None, cache_dir=None, device=Non
     return { "diffusion": diffusion.to(device) } 
 
 
-
-def token2wav(diffusion, umm_token, prompt_wav_path="", prompt_wav=None, uttid="", scale=None):
+def token2wav(
+    diffusion, 
+    umm_token:torch.Tensor, 
+    prompt_wav_path:str="", 
+    prompt_wav:Optional[torch.Tensor]=None, 
+    uttid:str="", 
+    scale:Optional[float]=None,
+):
     if not os.path.isfile(prompt_wav_path) and prompt_wav != None:
         assert isinstance(prompt_wav, torch.Tensor)
         prompt_wav = prompt_wav.squeeze().cpu().numpy()
         prompt_wav_path = "prompt.wav"
         save_wav(prompt_wav, prompt_wav_path)
+    batch = [(None, None,  prompt_wav_path if prompt_wav_path else None, umm_token, uttid, scale)]
+    with torch.no_grad():
+        pure_audio_output = diffusion.predict_step(batch, batch_idx=0)
+    return pure_audio_output
 
-    batch = (None, None, prompt_wav_path, umm_token, uttid, scale) 
+
+def token2wav_batch(
+    diffusion, 
+    umm_tokens:Union[List[torch.Tensor],torch.Tensor], 
+    prompt_wav_paths:Optional[List[str]]=None,
+    prompt_wavs:Optional[Union[List[torch.Tensor],torch.Tensor]]=None, 
+    uttids:Optional[List[str]]=None, 
+    scales:Optional[List[float]]=None,
+):
+    bs = len(umm_tokens)
+    if isinstance(umm_tokens, torch.Tensor):
+        assert umm_tokens.ndim == 2,f"{umm_tokens.ndim} != 2"
+        umm_tokens = umm_tokens.chunk(bs,dim=0)
+    batch = []
+    assert not (prompt_wav_paths and prompt_wavs)
+    if prompt_wav_paths is None:
+        prompt_wav_paths = [""] * bs
+        if prompt_wavs is not None:
+            assert len(prompt_wavs) == bs
+            if isinstance(prompt_wavs, torch.Tensor):
+                assert prompt_wavs.ndim == 2
+            for bidx, prompt_wav in enumerate(prompt_wavs):
+                prompt_wav = prompt_wav.squeeze().cpu().numpy()
+                prompt_wav_path = f"prompt_{bidx}.wav"
+                prompt_wav_paths[bidx] = prompt_wav_path
+                save_wav(prompt_wav, prompt_wav_path)
+    assert len(prompt_wav_paths) == bs
+        
+    if uttids is None:
+        uttids = [""] * bs
+    assert len(uttids) == bs, f"{len(uttids)} != {bs}"
+    uttids = [str(uttid if uttid else bidx) for bidx, uttid in enumerate(uttids)]
+
+    if scales is None:
+        scales = [None] * bs
+    assert len(scales) == bs
+
+    batch=[ 
+        (None,None,prompt_wav_paths[bidx],umm_tokens[bidx],uttids[bidx],scales[bidx])
+        for bidx in range(bs)
+    ]
+
     with torch.no_grad():
         pure_audio_output = diffusion.predict_step(batch, batch_idx=0)
     return pure_audio_output
@@ -42,13 +95,41 @@ def wav2token(diffusion, syn_wav_path):
     if isinstance(diffusion,ChunkInfer):
         syn_wav = wav
     else:
-        syn_wav = diffusion.align_wav(
+        syn_wav,_ = diffusion.align_wav(
             wav, 
             diffusion.mel_config["sampling_rate"], 
             diffusion.umm_frame_rate, 
             diffusion.mel_frame_rate)
     syn_umm_token = diffusion.wav2token(syn_wav)
     return syn_umm_token, scale
+
+
+def wav2token_batch(diffusion, syn_wav_paths):
+    import librosa
+    scales = [] if diffusion.bn_config['wav_norm'] else None
+    syn_wavs = []
+    syn_wavlens = []
+    for syn_wav_path in syn_wav_paths:
+        wav, _ = librosa.load(syn_wav_path, sr=24000, mono=True) 
+        wav = torch.FloatTensor(wav).unsqueeze(0)
+        if diffusion.bn_config['wav_norm']:
+            scale = max(0.001, torch.max(torch.abs(wav)))
+            wav = wav / scale * 0.95
+            scales.append(scale.item())
+        syn_wavs.append(wav)
+        syn_wavlens.append(wav.shape[-1])
+    max_len = max(syn_wavlens)
+    syn_wavs = torch.cat([F.pad(syn_wav,(0,max_len-syn_wav.shape[-1]),'constant',0 ) for syn_wav in syn_wavs],dim=0)
+    syn_wavs = syn_wavs.to(diffusion.device)
+    if not isinstance(diffusion,ChunkInfer):
+        syn_wavs = diffusion.align_wav(
+            syn_wavs, 
+            diffusion.mel_config["sampling_rate"], 
+            diffusion.umm_frame_rate, 
+            diffusion.mel_frame_rate)
+    syn_umm_tokens = diffusion.wav2token(syn_wavs)
+    return syn_umm_tokens, scales
+
 
 @torch.no_grad()
 def run_diffusion_vocoder(requires, samples, prompt_wav_path="", prompt_wav=None):
@@ -60,6 +141,21 @@ def run_diffusion_vocoder(requires, samples, prompt_wav_path="", prompt_wav=None
               prompt_wav_path=prompt_wav_path,
               uttid="test")
     return output_wav
+
+
+@torch.no_grad()
+def run_diffusion_vocoder_batch(requires, samples, prompt_wav_paths=None, prompt_wavs=None):
+    # samples are the UMM tokens
+    diffusion = requires['diffusion']
+    output_wavs = token2wav_batch(
+        diffusion, 
+        umm_tokens=samples,
+        prompt_wavs=prompt_wavs,
+        prompt_wav_paths=prompt_wav_paths,
+        uttids=None,
+        scales=None,
+    )
+    return output_wavs
 
 
 if __name__ == "__main__":
