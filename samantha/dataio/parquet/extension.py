@@ -1,12 +1,11 @@
 import io
 import json
 import logging
-import random
 import re
 import sys
+import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
-from enum import IntEnum
 from typing import Any, Callable, Dict, Iterable, List, Optional, Union
 
 import librosa
@@ -16,11 +15,11 @@ from webdataset import warn_and_continue
 
 from samantha.dataio.utils import parquet_reader
 
+from .contextual.iterator import get_iterator
+
 DATASET_NAME_KEY = "__dataset_name__"
 
 logger = logging.getLogger(__name__)
-
-feature_common_keys = {"uttid", "dataset_name"}
 
 
 def setup_sampler(
@@ -46,6 +45,7 @@ class _BaseSample:
         self.handler = handler
         self.sample_limit_per_file = sample_limit_per_file
         self.extra_fields_in_data = extra_fields_in_data
+        self.meta = {}
 
     def get_src_url(self, src: Dict):
         src_url = {f"__{k}_url__": v for k, v in src.items()}
@@ -73,17 +73,38 @@ class _BaseSample:
             if "end_time" not in item:
                 item["end_time"] = self.get_index_end_time(meta)
             if "speaker_id" not in item:
-                item["speaker_id"] = meta.get("speaker_id", "")
+                item["speaker_id"] = self.get_meta_speaker_id(meta)
         except Exception:
             return
 
+    def get_meta_speaker_id(self, meta):
+        unknown_speaker = f"unknown_speaker_{uuid.uuid4().hex[:8]}"
+        if meta is None:
+            return unknown_speaker
+        speaker_id = meta.get("speaker_id", None)
+        if speaker_id:
+            return speaker_id
+        if meta is not None and "sents" in meta and len(meta["sents"]) > 0:
+            speaker_id = meta["sents"][0].get("speaker_id", None)
+        if not speaker_id:
+            return unknown_speaker
+        return speaker_id
+
     def get_index_start_time(self, meta):
-        if meta is None or "sents" not in meta or len(meta["sents"]) <= 0:
+        if meta is None:
+            return -1
+        if "start_time" in meta:
+            return meta["start_time"]
+        if "sents" not in meta or len(meta["sents"]) <= 0:
             return -1
         return meta["sents"][0].get("start_time", -1)
 
     def get_index_end_time(self, meta):
-        if meta is None or "sents" not in meta or len(meta["sents"]) <= 0:
+        if meta is None:
+            return -1
+        if "end_time" in meta:
+            return meta["end_time"]
+        if "sents" not in meta or len(meta["sents"]) <= 0:
             return -1
         return meta["sents"][-1].get("end_time", -1)
 
@@ -124,11 +145,6 @@ class MultiFeatureCluster:
     features: dict = None
 
 
-class ContextualStrategy(IntEnum):
-    CONTINUOUS_CONTEXT = 1
-    SAME_SPEAKER = 2
-
-
 class _ContexualParquetSample(_BaseSample):
     def __init__(
         self,
@@ -138,20 +154,7 @@ class _ContexualParquetSample(_BaseSample):
         sample_config: Optional[Any] = None,
     ):
         super().__init__(handler, sample_limit_per_file, extra_fields_in_data)
-        self.meta = {}
-        if sample_config is None:
-            sample_config = {}
-        self.min_context_num = sample_config.get("min_context_num", 1)
-        self.max_context_num = sample_config.get("max_context_num", 1)
-        self.time_interval_threshold = sample_config.get("time_interval_threshold", 1)
-        self.contextual_strategy = sample_config.get(
-            "contextual_strategy", ContextualStrategy.CONTINUOUS_CONTEXT
-        )
-        if self.contextual_strategy > ContextualStrategy.SAME_SPEAKER:
-            raise ValueError(f"invalid contextual strategy: {self.contextual_strategy}")
-
-    def generate_contextual_key(self, feature_name):
-        return f"contextual_{feature_name}_list"
+        self.iterator = get_iterator(sample_config)
 
     def compose_clusters(self, clusters, sorted_parent_uttid):
         composed_parent_uttids = None
@@ -280,185 +283,6 @@ class _ContexualParquetSample(_BaseSample):
                 cache[name].pop(i, None)
         return items
 
-    def merge_contextual_sample(self, sample_items):
-        uttid = sample_items["index"][-1]["uttid"]
-        sample = {"__key__": uttid, "uttid": uttid}
-        # construct current features
-        for name, items in sample_items.items():
-            cur_item = items[-1]
-            if name == "data":
-                audio_bin = cur_item["audio"]
-                cur_item = {
-                    "wav": audio_bin,
-                    "src_sample_rate": librosa.get_samplerate(io.BytesIO(audio_bin)),
-                }
-            elif name == "index":
-                cur_item.pop("row_group_no", None)
-                cur_item.pop("data_file", None)
-            sample |= cur_item
-
-        # construct contextual features
-        for name, items in sample_items.items():
-            for cur_item in items:
-                if name == "data":
-                    audio_bin = cur_item["audio"]
-                    sample["contextual_wav_list"] = sample.get(
-                        "contextual_wav_list", []
-                    )
-                    sample["contextual_wav_list"].append(audio_bin)
-                elif name == "index":
-                    sample["contextual_uttid_list"] = sample.get(
-                        "contextual_uttid_list", []
-                    )
-                    sample["contextual_uttid_list"].append(cur_item["uttid"])
-                    sample["contextual_meta_list"] = sample.get(
-                        "contextual_meta_list", []
-                    )
-                    sample["contextual_meta_list"].append(cur_item["meta"])
-                else:
-                    for key in cur_item.keys():
-                        if key in feature_common_keys:
-                            continue
-                        new_key = self.generate_contextual_key(key)
-                        sample[new_key] = sample[new_key] if new_key in sample else []
-                        sample[new_key].append(cur_item[key])
-        return sample
-
-    def iter_contexual_sample(self, items, cluster, sample_template):
-        basis_item_cluster = cluster.features["index"]
-        sorted_uttids = [
-            item_info.uttid
-            for item_info in basis_item_cluster.item_infos
-            if cluster.parent_uttid == item_info.parent_uttid
-        ]
-        item_cnt = 0
-        for i in range(len(sorted_uttids)):
-            context_len = random.randint(self.min_context_num, self.max_context_num)
-            uttid = sorted_uttids[i]
-            sample_items = {}
-            is_valid = True
-            for name, sub_items in items.items():
-                if uttid not in sub_items:
-                    is_valid = False
-                    break
-                else:
-                    sample_items[name] = [sub_items[uttid]]
-            if not is_valid:
-                continue
-            # the context can be accepted must fit these conditions:
-            # condition1: the time interval of continous 2 items
-            #             should < time_interval_threshold
-            # condition2: max num of context should < context_len
-            # find context
-            last_start_time = sample_items["index"][0].get("start_time", -1)
-            for j in range(min(context_len, i)):
-                context_uttid = sorted_uttids[i - j - 1]
-                context_index_item = items["index"][context_uttid]
-                context_end_time = context_index_item.get("end_time", -1)
-                # check time interval
-                if (
-                    context_end_time < 0
-                    or last_start_time < 0
-                    or last_start_time - context_end_time > self.time_interval_threshold
-                ):
-                    break
-                is_context_valid = all(
-                    context_uttid in sub_items for _, sub_items in items.items()
-                )
-                if not is_context_valid:
-                    continue
-                # append context to sample items
-                for name, sub_items in items.items():
-                    sample_items[name] = [sub_items[context_uttid]] + sample_items[name]
-                last_start_time = sample_items["index"][0].get("start_time", -1)
-
-            # construct sample
-            sample = self.merge_contextual_sample(sample_items)
-            item_cnt += 1
-            if sample is not None:
-                sample.update(sample_template)
-                yield sample
-        if item_cnt != len(sorted_uttids):
-            logger.warning(
-                f"total {len(sorted_uttids)} items, but yield {item_cnt} items"
-            )
-
-    def iter_same_speaker_sample(self, items, cluster, sample_template):
-        # sourcery skip: low-code-quality
-        basis_item_cluster = cluster.features["index"]
-        basis_items = items["index"]
-        item_speakers = {
-            item_info.uttid: basis_items[item_info.uttid]["speaker_id"]
-            for item_info in basis_item_cluster.item_infos
-            if cluster.parent_uttid == item_info.parent_uttid
-        }
-        raw_sorted_uttids = [
-            item_info.uttid
-            for item_info in basis_item_cluster.item_infos
-            if cluster.parent_uttid == item_info.parent_uttid
-            and item_info.uttid in item_speakers
-        ]
-        sorted_uttids = sorted(
-            raw_sorted_uttids,
-            key=lambda x: (item_speakers[x], raw_sorted_uttids.index(x)),
-        )
-        start_pos = 0
-        item_cnt = 0
-        while start_pos < len(sorted_uttids):
-            context_len = random.randint(self.min_context_num, self.max_context_num)
-            uttid = sorted_uttids[start_pos]
-            sample_items = {
-                name: [sub_items[uttid]] for name, sub_items in items.items()
-            }
-            last_end_time = sample_items["index"][0].get("end_time", -1)
-            basis_speaker = sample_items["index"][0].get("speaker_id", "")
-
-            # the context can be accepted must fit these conditions:
-            # condition1: all item should have the same speaker
-            # condition2: the time interval of continous 2 items
-            #             should < time_interval_threshold
-            # condition3: max num of context should < context_len
-            next_start_pos = start_pos + 1
-            for j in range(context_len):
-                context_pos = start_pos + j + 1
-                if context_pos >= len(sorted_uttids):
-                    next_start_pos = context_pos
-                    break
-
-                context_uttid = sorted_uttids[context_pos]
-                context_index_item = items["index"][context_uttid]
-                context_start_time = context_index_item.get("start_time", -1)
-                context_speaker = context_index_item.get("speaker_id", "")
-                # check time interval & speaker
-                if (
-                    context_start_time < 0
-                    or last_end_time < 0
-                    or context_start_time - last_end_time > self.time_interval_threshold
-                ) or (
-                    basis_speaker == ""
-                    or context_speaker == ""
-                    or basis_speaker != context_speaker
-                ):
-                    next_start_pos = context_pos
-                    break
-                # append context to sample items
-                for name, sub_items in items.items():
-                    sample_items[name].append(sub_items[context_uttid])
-                last_end_time = sample_items["index"][-1].get("end_time", -1)
-                next_start_pos = context_pos + 1
-
-            start_pos = next_start_pos
-            # construct sample
-            sample = self.merge_contextual_sample(sample_items)
-            item_cnt += len(sample_items["index"])
-            if sample is not None:
-                sample.update(sample_template)
-                yield sample
-        if item_cnt != len(sorted_uttids):
-            logger.warning(
-                f"total {len(sorted_uttids)} items, but yield {item_cnt} items"
-            )
-
     def __call__(self, sources: Iterable[Dict[str, Any]]):
         handler = self.handler
         for src in sources:
@@ -486,17 +310,7 @@ class _ContexualParquetSample(_BaseSample):
                     try:
                         items = self.get_all_items(cache, readers, cluster)
                         sample_template = deepcopy(src_url)
-                        if (
-                            self.contextual_strategy
-                            == ContextualStrategy.CONTINUOUS_CONTEXT
-                        ):
-                            yield from self.iter_contexual_sample(
-                                items, cluster, sample_template
-                            )
-                        if self.contextual_strategy == ContextualStrategy.SAME_SPEAKER:
-                            yield from self.iter_same_speaker_sample(
-                                items, cluster, sample_template
-                            )
+                        yield from self.iterator(items, cluster, sample_template)
                     except Exception as exn:
                         # raise exn
                         if hasattr(exn, "args"):
@@ -528,7 +342,6 @@ class _ParquetSample(_BaseSample):
         sample_config: Optional[Any] = None,
     ):
         super().__init__(handler, sample_limit_per_file, extra_fields_in_data)
-        self.meta = {}
 
     def get_all_utt(self, src, filesystem):
         utt2group_no = {}
