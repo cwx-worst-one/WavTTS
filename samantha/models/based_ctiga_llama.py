@@ -54,6 +54,8 @@ class ModelArgs:
     dim: int = 512
     n_layers: int = 8
     n_heads: int = 8
+    n_kv_heads: int = None
+    mlp_extend: float = None
     vocab_size: int = 1024  # defined later by tokenizer
     out_dim: int = 1024  # maybe not same as vocab_size
     multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
@@ -464,6 +466,8 @@ class LLaMa(nn.Module):
                 n_embd=params.dim,
                 n_head=params.n_heads,
                 n_layer=params.n_layers,
+                n_kv_heads=params.n_kv_heads,
+                mlp_extend=params.mlp_extend,
                 layer_norm_epsilon=params.norm_eps,
                 attn_pdrop=params.attn_pdrop,
                 resid_pdrop=params.resid_pdrop,

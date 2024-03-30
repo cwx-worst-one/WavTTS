@@ -1041,6 +1041,7 @@ class MHA(nn.Module):
         self,
         embed_dim,
         num_heads,
+        num_heads_kv=None,
         cross_attn=False,
         qkv_proj_bias=True,
         out_proj_bias=True,
@@ -1067,6 +1068,7 @@ class MHA(nn.Module):
         dtype=None,
     ) -> None:
         """
+        num_heads_kv: can be used to toggle MQA / GQA. If None, use num_heads.
         return_residual: whether to return the input x along with the output. This is for
             performance reason: for post-norm architecture, returning the input allows us
             to fuse the backward of nn.Linear with the residual connection.
@@ -1092,6 +1094,12 @@ class MHA(nn.Module):
             self.embed_dim % num_heads == 0
         ), "self.kdim must be divisible by num_heads"
         self.head_dim = self.embed_dim // num_heads
+        self.num_heads_kv = num_heads_kv if num_heads_kv is not None else num_heads
+        assert (
+            self.num_heads % self.num_heads_kv == 0
+        ), "self.num_heads must be divisible by self.num_heads_kv"
+        qkv_dim = self.head_dim * (self.num_heads + 2 * self.num_heads_kv)
+        kv_dim = 2 * self.head_dim * self.num_heads_kv
 
         if self.rotary_emb_dim > 0:
             assert (
@@ -1159,42 +1167,43 @@ class MHA(nn.Module):
         if not self.cross_attn:
             if not self.return_residual:
                 self.Wqkv = linear_cls(
-                    embed_dim, 3 * embed_dim, bias=qkv_proj_bias, **factory_kwargs
+                    embed_dim, qkv_dim, bias=qkv_proj_bias, **factory_kwargs
                 )
             else:
                 self.Wqkv = linear_resid_cls(
-                    embed_dim, 3 * embed_dim, bias=qkv_proj_bias, **factory_kwargs
+                    embed_dim, qkv_dim, bias=qkv_proj_bias, **factory_kwargs
                 )
             if self.dwconv:
-                self.dwconv_qkv = nn.Conv1d(
-                    3 * embed_dim,
-                    3 * embed_dim,
-                    kernel_size=3,
-                    padding=2,
-                    groups=3 * embed_dim,
-                )
+                if self.num_heads_kv == self.num_heads:
+                    self.dwconv_qkv = nn.Conv1d(
+                        qkv_dim, qkv_dim, kernel_size=3, padding=2, groups=qkv_dim
+                    )
+                else:
+                    self.dwconv_q = nn.Conv1d(
+                        embed_dim, embed_dim, kernel_size=3, padding=2, groups=embed_dim
+                    )
+                    self.dwconv_kv = nn.Conv1d(
+                        kv_dim, kv_dim, kernel_size=3, padding=2, groups=kv_dim
+                    )
+
         else:
             self.Wq = linear_cls(
                 embed_dim, embed_dim, bias=qkv_proj_bias, **factory_kwargs
             )
             if not self.return_residual:
                 self.Wkv = linear_cls(
-                    embed_dim, 2 * embed_dim, bias=qkv_proj_bias, **factory_kwargs
+                    embed_dim, kv_dim, bias=qkv_proj_bias, **factory_kwargs
                 )
             else:
                 self.Wkv = linear_resid_cls(
-                    embed_dim, 2 * embed_dim, bias=qkv_proj_bias, **factory_kwargs
+                    embed_dim, kv_dim, bias=qkv_proj_bias, **factory_kwargs
                 )
             if self.dwconv:
                 self.dwconv_q = nn.Conv1d(
                     embed_dim, embed_dim, kernel_size=3, padding=2, groups=embed_dim
                 )
                 self.dwconv_kv = nn.Conv1d(
-                    2 * embed_dim,
-                    2 * embed_dim,
-                    kernel_size=3,
-                    padding=2,
-                    groups=2 * embed_dim,
+                    kv_dim, kv_dim, kernel_size=3, padding=2, groups=kv_dim
                 )
         self.inner_attn = inner_attn_cls(**inner_attn_cls_args)
         self.inner_cross_attn = inner_cross_attn_cls(**inner_cross_attn_cls_args)
@@ -1212,7 +1221,7 @@ class MHA(nn.Module):
                 batch_size,
                 max_seqlen,
                 2,
-                self.num_heads,
+                self.num_heads_kv,
                 self.head_dim,
                 dtype=dtype,
                 device=device,
@@ -1223,7 +1232,7 @@ class MHA(nn.Module):
             assert self.head_dim % packsize == 0
             k_cache = torch.empty(
                 batch_size,
-                self.num_heads,
+                self.num_heads_kv,
                 self.head_dim // packsize,
                 max_seqlen,
                 packsize,
@@ -1232,7 +1241,7 @@ class MHA(nn.Module):
             )
             v_cache = torch.empty(
                 batch_size,
-                self.num_heads,
+                self.num_heads_kv,
                 max_seqlen,
                 self.head_dim,
                 dtype=dtype,
@@ -1241,7 +1250,7 @@ class MHA(nn.Module):
             return k_cache, v_cache
 
     def _update_kv_cache(self, kv, inference_params):
-        """kv: (batch_size, seqlen, 2, nheads, head_dim) or (batch_size, 1, 2, nheads, head_dim)"""
+        """kv: (batch_size, seqlen, 2, n_kv_heads, head_dim) or (batch_size, 1, 2, n_kv_heads, head_dim)"""
         assert not self.dwconv, "Generation does not support dwconv yet"
         assert (
             self.layer_idx is not None
@@ -1378,7 +1387,7 @@ class MHA(nn.Module):
             ), "only support return_attn_probs=True used by FlashAttn2"
             assert self.training, "only support return_attn_probs=True in training now"
 
-        if not self.cross_attn:
+        if not self.cross_attn and self.num_heads_kv == self.num_heads:
             assert x_kv is None and mixer_subset is None
             if not self.return_residual:
                 qkv = self.Wqkv(x)
@@ -1483,62 +1492,144 @@ class MHA(nn.Module):
                     )
                     context = rearrange(context, "b h d -> b 1 h d")
         else:
-            if not self.return_residual:
-                q = self.Wq(x if mixer_subset is None else x[:, mixer_subset])
-                kv = self.Wkv(x_kv if x_kv is not None else x)
-            else:
-                if x_kv is not None:
-                    kv, x_kv = self.Wkv(x_kv)
+            if self.cross_attn:  # mha cross bracnh
+                if not self.return_residual:
+                    q = self.Wq(x if mixer_subset is None else x[:, mixer_subset])
+                    kv = self.Wkv(x_kv if x_kv is not None else x)
                 else:
-                    kv, x = self.Wkv(x)
-                q = self.Wq(x if mixer_subset is None else x[:, mixer_subset])
-            q = rearrange(q, "... (h d) -> ... h d", d=self.head_dim)
-            kv = rearrange(kv, "... (two h d) -> ... two h d", two=2, d=self.head_dim)
-            if self.dwconv:
-                q = rearrange(
-                    self.dwconv_q(rearrange(q, "b s d -> b d s"))[..., :-2],
-                    "b d s -> b s d",
-                ).contiguous()
+                    if x_kv is not None:
+                        kv, x_kv = self.Wkv(x_kv)
+                    else:
+                        kv, x = self.Wkv(x)
+                    q = self.Wq(x if mixer_subset is None else x[:, mixer_subset])
+                q = rearrange(q, "... (h d) -> ... h d", d=self.head_dim)
                 kv = rearrange(
-                    self.dwconv_kv(rearrange(kv, "b s d -> b d s"))[..., :-2],
-                    "b d s -> b s d",
-                ).contiguous()
-            if inference_params is None:
-                input_args = self._get_inner_cross_attn_args(
-                    q,
-                    kv,
-                    causal=kwargs.get("causal", None),
-                    cu_seqlens=cu_seqlens,
-                    max_seqlen=max_seqlen,
-                    cu_seqlens_k=kwargs.get("cu_seqlens_k", None),
-                    max_seqlen_k=kwargs.get("max_seqlen_k", None),
-                    return_attn_probs=return_attn_probs,
-                    key_padding_mask=key_padding_mask,
-                    use_window_mask=True,
+                    kv, "... (two h d) -> ... two h d", two=2, d=self.head_dim
                 )
-                if not self.checkpointing:
-                    attn_outs = self.inner_cross_attn(*input_args)
-                else:
-                    attn_outs = torch.utils.checkpoint.checkpoint(
-                        self.inner_cross_attn, *input_args
+                if self.dwconv:
+                    q = rearrange(
+                        self.dwconv_q(rearrange(q, "b s d -> b d s"))[..., :-2],
+                        "b d s -> b s d",
+                    ).contiguous()
+                    kv = rearrange(
+                        self.dwconv_kv(rearrange(kv, "b s d -> b d s"))[..., :-2],
+                        "b d s -> b s d",
+                    ).contiguous()
+                if inference_params is None:
+                    input_args = self._get_inner_cross_attn_args(
+                        q,
+                        kv,
+                        causal=kwargs.get("causal", None),
+                        cu_seqlens=cu_seqlens,
+                        max_seqlen=max_seqlen,
+                        cu_seqlens_k=kwargs.get("cu_seqlens_k", None),
+                        max_seqlen_k=kwargs.get("max_seqlen_k", None),
+                        return_attn_probs=return_attn_probs,
+                        key_padding_mask=key_padding_mask,
+                        use_window_mask=True,
                     )
+                    if not self.checkpointing:
+                        attn_outs = self.inner_cross_attn(*input_args)
+                    else:
+                        attn_outs = torch.utils.checkpoint.checkpoint(
+                            self.inner_cross_attn, *input_args
+                        )
 
-                if return_attn_probs:
-                    assert (
-                        len(attn_outs) == 4
-                    ), f"Expect 4 but got {len(attn_outs)} when return_attn_probs=True in attention"
-                    context, lse, score_cummax, dmask = attn_outs
+                    if return_attn_probs:
+                        assert (
+                            len(attn_outs) == 4
+                        ), f"Expect 4 but got {len(attn_outs)} when return_attn_probs=True in attention"
+                        context, lse, score_cummax, dmask = attn_outs
+                    else:
+                        context = attn_outs[0]
                 else:
-                    context = attn_outs[0]
-            else:
-                kv = self._update_kv_cache(kv)
-                input_args = self._get_inner_cross_attn_args(
-                    q, kv, causal=False, use_window_mask=False
+                    kv = self._update_kv_cache(kv)
+                    input_args = self._get_inner_cross_attn_args(
+                        q, kv, causal=False, use_window_mask=False
+                    )
+                    context = self.inner_cross_attn(*input_args)
+                    if isinstance(context, (tuple, list)):
+                        assert len(context) == 1
+                        context = context[0]
+            else:  # gqa branch
+                assert self.num_heads_kv != self.num_heads
+                if not self.return_residual:
+                    qkv = self.Wqkv(x)
+                else:
+                    qkv, x = self.Wqkv(x)
+                q = qkv[..., : self.num_heads * self.head_dim]
+                kv = qkv[..., self.num_heads * self.head_dim :]
+                if self.dwconv:
+                    q = rearrange(
+                        self.dwconv_q(rearrange(q, "b s d -> b d s"))[..., :-2],
+                        "b d s -> b s d",
+                    ).contiguous()
+                    kv = rearrange(
+                        self.dwconv_kv(rearrange(kv, "b s d -> b d s"))[..., :-2],
+                        "b d s -> b s d",
+                    ).contiguous()
+                q = rearrange(q, "... (h d) -> ... h d", d=self.head_dim)
+                kv = rearrange(
+                    kv, "... (two h d) -> ... two h d", two=2, d=self.head_dim
                 )
-                context = self.inner_cross_attn(*input_args)
-                if isinstance(context, (tuple, list)):
-                    assert len(context) == 1
-                    context = context[0]
+                if inference_params is None:
+                    if self.rotary_emb_dim > 0:
+                        if not is_pad:
+                            q = pad_input(
+                                q, indices, cu_seqlens.shape[0] - 1, max_seqlen
+                            )
+                            kv = pad_input(
+                                kv, indices, cu_seqlens.shape[0] - 1, max_seqlen
+                            )
+                        q, kv = self.rotary_emb(q, kv)
+                        if not is_pad:
+                            q, _, _, _ = unpad_input(q, key_padding_mask)
+                            kv, _, _, _ = unpad_input(kv, key_padding_mask)
+                    input_args = self._get_inner_cross_attn_args(
+                        q,
+                        kv,
+                        causal=kwargs.get("causal", None),
+                        cu_seqlens=cu_seqlens,
+                        max_seqlen=max_seqlen,
+                        cu_seqlens_k=cu_seqlens,
+                        max_seqlen_k=max_seqlen,
+                        return_attn_probs=return_attn_probs,
+                        key_padding_mask=key_padding_mask,
+                        use_window_mask=True,
+                    )
+                    if not self.checkpointing:
+                        attn_outs = self.inner_cross_attn(*input_args)
+                    else:
+                        attn_outs = torch.utils.checkpoint.checkpoint(
+                            self.inner_cross_attn, *input_args
+                        )
+
+                    if return_attn_probs:
+                        assert (
+                            len(attn_outs) == 4
+                        ), f"Expect 4 but got {len(attn_outs)} when return_attn_probs=True in attention"
+                        context, lse, score_cummax, dmask = attn_outs
+                    else:
+                        context = attn_outs[0]
+                else:
+                    if self.rotary_emb_dim > 0:
+                        q, kv = self.rotary_emb(
+                            q, kv, seqlen_offset=inference_params.sequence_len_offset
+                        )
+                    kv = self._update_kv_cache(kv, inference_params)
+                    # If we're processing the prompt, causal=None (use self.causal).
+                    # If we're decoding, then causal=False.
+                    causal = (
+                        None if inference_params.sequence_len_offset == 0 else False
+                    )
+                    input_args = self._get_inner_cross_attn_args(
+                        q, kv, causal=causal, use_window_mask=False
+                    )
+                    context = self.inner_cross_attn(*input_args)
+
+                    if isinstance(context, (tuple, list)):
+                        assert len(context) == 1
+                        context = context[0]
 
         out = self.out_proj(rearrange(context, "... h d -> ... (h d)"))
         outputs = (out,)

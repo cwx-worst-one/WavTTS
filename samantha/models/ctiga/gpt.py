@@ -76,6 +76,7 @@ def create_mixer_cls(
     head_dim = getattr(
         config, "head_dim", config.hidden_size // config.num_attention_heads
     )
+    n_kv_heads = getattr(config, "n_kv_heads", None)
     softmax_scale = 1.0 if not config.scale_attn_weights else head_dim ** (-0.5)
     if config.scale_attn_by_inverse_layer_idx:
         assert layer_idx is not None
@@ -144,6 +145,7 @@ def create_mixer_cls(
     mixer_cls = partial(
         mha_cls,
         num_heads=config.num_attention_heads,
+        num_heads_kv=n_kv_heads,
         qkv_proj_bias=qkv_proj_bias,
         out_proj_bias=out_proj_bias,
         dropout=config.attn_pdrop,
@@ -173,6 +175,18 @@ def create_mlp_cls(config, layer_idx=None, process_group=None, device=None, dtyp
     mlp_fc1_bias = getattr(config, "mlp_fc1_bias", True)
     mlp_fc2_bias = getattr(config, "mlp_fc2_bias", True)
     fused_mlp = getattr(config, "fused_mlp", False)
+    n_head = getattr(config, "n_head", 0)
+    n_kv_heads = getattr(config, "n_kv_heads", None)
+    mlp_extend = getattr(config, "mlp_extend", None)
+    n_inner = getattr(config, "n_inner", 0)
+    if (
+        (n_kv_heads is not None)
+        and (mlp_extend is not None)
+        and (n_head % n_kv_heads == 0)
+    ):
+        hidden_features = ((int(n_inner * mlp_extend) - 1) // 256) * 256 + 256
+    else:
+        hidden_features = n_inner
     if fused_mlp:
         assert config.activation_function in [
             "gelu_new",
@@ -209,7 +223,7 @@ def create_mlp_cls(config, layer_idx=None, process_group=None, device=None, dtyp
             )
             mlp_cls = partial(
                 GatedMlp,
-                hidden_features=config.n_inner,
+                hidden_features=hidden_features,
                 activation=activation,
                 bias1=mlp_fc1_bias,
                 bias2=mlp_fc2_bias,
@@ -231,7 +245,7 @@ def create_mlp_cls(config, layer_idx=None, process_group=None, device=None, dtyp
                 activation = partial(F.gelu, approximate=approximate)
             mlp_cls = partial(
                 Mlp,
-                hidden_features=config.n_inner,
+                hidden_features=hidden_features,
                 activation=activation,
                 bias1=mlp_fc1_bias,
                 bias2=mlp_fc2_bias,
@@ -263,7 +277,7 @@ def create_mlp_cls(config, layer_idx=None, process_group=None, device=None, dtyp
             )
             mlp_cls = partial(
                 mlp_cls,
-                hidden_features=config.n_inner,
+                hidden_features=hidden_features,
                 activation=activation,
                 checkpoint_lvl=mlp_checkpoint_lvl,
                 bias1=mlp_fc1_bias,
@@ -275,7 +289,7 @@ def create_mlp_cls(config, layer_idx=None, process_group=None, device=None, dtyp
             assert FusedDenseSqreluDense is not None
             mlp_cls = partial(
                 FusedDenseSqreluDense,
-                hidden_features=config.n_inner,
+                hidden_features=hidden_features,
                 checkpoint_lvl=mlp_checkpoint_lvl,
                 **factory_kwargs,
             )

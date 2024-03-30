@@ -1413,8 +1413,12 @@ def _flash_rotaryemb_forward_hook(flash_rotaryemb_module, input, output):
         qkv, seqlen_offset = input[0], 0
     else:
         qkv, seqlen_offset = input
-    assert qkv.ndim == 5  # b,t,3,n,h
-    b, t, _, n, h = qkv.shape
+    if qkv.ndim == 5:  # b,t,3,n,h
+        b, t, _, n, h = qkv.shape
+    elif qkv.ndim == 4:
+        b, t, n, h = qkv.shape
+    else:
+        assert False, "qkv.shape wrong"
 
     flops = b * t * n * h * 2 * 2
     flash_rotaryemb_module.__flops__ += flops

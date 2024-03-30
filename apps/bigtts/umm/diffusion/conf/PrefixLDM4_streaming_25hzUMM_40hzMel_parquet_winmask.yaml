@@ -57,6 +57,8 @@ model_config: !new:samantha.models.llama_ldm.ModelArgs
     encoder_dim: 1024
     encoder_n_layers: 24
     encoder_n_heads: 16
+    encoder_n_kv_heads: null
+    mlp_extend: null
     causal: False
     use_window_mask: True
     window_size: [-1, 8]

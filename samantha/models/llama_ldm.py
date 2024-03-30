@@ -279,6 +279,8 @@ class ModelArgs:
     encoder_dim: int = 1536
     encoder_n_layers: int = 24
     encoder_n_heads: int = 24
+    encoder_n_kv_heads: int = None
+    mlp_extend: float = None
     out_channels: int = 80
     max_seq_len: int = 8192
     causal: bool = False
@@ -398,6 +400,8 @@ class LlamaDiffusion(nn.Module):
             dim=hp.encoder_dim,
             n_layers=hp.encoder_n_layers,
             n_heads=hp.encoder_n_heads,
+            n_kv_heads=hp.encoder_n_kv_heads,
+            mlp_extend=hp.mlp_extend,
             causal=hp.causal,
             max_seq_len=hp.max_seq_len,
             use_window_mask=hp.use_window_mask,
