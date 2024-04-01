@@ -2,17 +2,11 @@ import logging
 
 import numpy as np
 
+from samantha.utils.common import is_float
+
 from .frontend import lang_to_int, phone_to_int, tone_to_int, wordseg_to_int
 
 logger = logging.getLogger(__name__)
-
-
-def is_float(s):
-    try:
-        float(s)
-        return True
-    except ValueError:
-        return False
 
 
 class PhoneToId:
