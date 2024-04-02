@@ -7,7 +7,7 @@ from multiprocessing import Manager, Pool, Process
 import numpy as np
 from pydub import AudioSegment
 
-from sami_ai.dataio.webdataset import ShardWriter
+from samantha.dataio.webdataset import ShardWriter
 
 logger = logging.getLogger(__name__)
 
