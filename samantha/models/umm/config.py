@@ -181,3 +181,96 @@ class UMMConfig(PretrainedConfig):
             return self.__getattribute__(name)
         else:
             return default
+
+
+class ConformerConfig(PretrainedConfig):
+    model_type = "Conformer"
+
+    def __init__(
+        self,
+        # audio encoder
+        num_channels=128,
+        sample_rate=24000,
+        n_fft=2048,
+        win_length=400,
+        hop_length=240,
+        feature_encoder_kernel=5,
+        feature_encoder_padding=2,
+        feature_cmvn=None,
+        # shared encoder
+        hidden_size=1024,
+        num_hidden_layers=8,
+        num_attention_heads=8,
+        intermediate_size=4096,
+        hidden_act="gelu",
+        hidden_dropout=0.1,
+        activation_dropout=0.1,
+        attention_dropout=0.1,
+        initializer_range=0.02,
+        layer_norm_eps=1e-5,
+        pad_token_id=0,
+        bos_token_id=1,
+        eos_token_id=2,
+        rotary_embedding_base=10000,
+        max_source_positions=750,
+        conv_depthwise_kernel_size=31,
+        conformer_conv_dropout=0.1,
+        use_bn=True,
+        output_size=1024,
+        rope_enhance_pos=0,
+        **kwargs,
+    ):
+        super().__init__(
+            **kwargs,
+            pad_token_id=pad_token_id,
+            bos_token_id=bos_token_id,
+            eos_token_id=eos_token_id,
+        )
+
+        # audio encoder
+        self.num_channels = num_channels
+        self.sample_rate = sample_rate
+        self.n_fft = n_fft
+        self.win_length = win_length
+        self.hop_length = hop_length
+        self.feature_encoder_kernel = feature_encoder_kernel
+        self.feature_encoder_padding = feature_encoder_padding
+        self.feature_cmvn = feature_cmvn
+        assert feature_encoder_kernel == 5 and feature_encoder_padding == 2
+
+        # shared encoder
+        self.hidden_size = hidden_size
+        self.num_hidden_layers = num_hidden_layers
+        self.intermediate_size = intermediate_size
+        self.hidden_act = hidden_act
+        self.num_attention_heads = num_attention_heads
+        self.hidden_dropout = hidden_dropout
+        self.attention_dropout = attention_dropout
+        self.activation_dropout = activation_dropout
+        self.layer_norm_eps = layer_norm_eps
+        self.initializer_range = initializer_range
+        self.max_source_positions = max_source_positions
+        self.rotary_embedding_base = rotary_embedding_base
+        self.conv_depthwise_kernel_size = conv_depthwise_kernel_size
+        self.conformer_conv_dropout = conformer_conv_dropout
+        self.use_bn = use_bn
+        self.output_size = output_size
+        self.rope_enhance_pos = rope_enhance_pos
+
+    @property
+    def rq_input_dim(self):
+        return self.num_channels * pow(self.feature_encoder_kernel, 2)
+
+    @property
+    def len_masking_raw(self):
+        return int(self.sample_rate * self.mask_hop)
+
+    @property
+    def len_masking_token(self):
+        return int(self.len_masking_raw / self.hop_length / 4)
+
+    def get(self, name, default):
+        if hasattr(self, name):
+            return self.__getattribute__(name)
+        else:
+            return default
