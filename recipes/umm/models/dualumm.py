@@ -629,13 +629,12 @@ class DualUMMv2(nn.Module):
 
         @hanoihantrakul 11-25-2023
         The logic of this code should be read in conjunction with `lit_module.Stage2MSS().prepare_feature()`
-        """
 
-        def _interfere_audio_handler(audio):
-            """Not used in UMM training."""
-            audio_interfered = self.interfere_audio(audio)
-            mel_interfered = self.audio_transform(audio_interfered, normalize=normalize)
-            return mel_interfered
+        @hanoihantrakul 2 April 2024
+        Note that DualUMMv2 defines the mel spec transform in the lit_module
+        with `process_tgt_mel()` not here in the model.preprocessing() method.
+        It is different from previous ConformerUMM and ConvUMM pipeline.
+        """
 
         def _add_chroma_handler(audio):
             chroma = self.chroma_transform(audio)[:, :, :-1].transpose(1, 2)
@@ -651,13 +650,7 @@ class DualUMMv2(nn.Module):
             vuv = get_vuv(f0)
             return f0, vuv
 
-        normalize = self.config.feature_cmvn is not None
         input_dict = {}
-        if self.config.get("interfere_audio", None):
-            # "interfere_audio" is a historical flag and should be assumed to be False by default.
-            input_dict.update(
-                mel_interfered=_interfere_audio_handler(audio_dict["audio"])
-            )
         if self.config.add_chroma:
             input_dict.update(chroma=_add_chroma_handler(audio_dict["audio_inst"]))
         if self.config.get("add_pitch", False):
@@ -672,7 +665,8 @@ class DualUMMv2Inst(DualUMMv2):
     """
     DualUMM adapted for Instrumental only branch.
 
-    Implementation Notes @hanoihantrakul 28 March 2024
+    Implementation Notes
+    @hanoihantrakul 28 March 2024
     You might wonder "isn't a single branch DualUMM just a regular UMM?"
     The main difference between this implementation and a traditional ConvUMM is:
     - the addition of GAN adversarial losses on the recon heads (main difference)
@@ -722,3 +716,28 @@ class DualUMMv2Inst(DualUMMv2):
     @torch.cuda.amp.autocast(enabled=False)
     def wav2token(self, wav):
         return super.wav2token(wav, wav_type="inst")
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def preprocessing(self, x):
+        """
+        Implementation Notes
+        2 April 2024 @hanoihantrakul
+        This method needs to be different from DualUMMv2.preprocessing() because
+        it only trains on instrumental data. The logic is closer to
+        the older ConformerUMM and ConvUMM training pipeline. I copy-pasted
+        from `umm_mkii.Stage2.preprocessing()` to accomplish this.
+
+        However, note that DualUMMv2 defines the mel spec transform in the lit_module
+        with `process_tgt_mel()` not here in the model.preprocessing() method.
+        It is different from previous ConformerUMM and ConvUMM pipeline.
+        """
+        # normalize = self.config.feature_cmvn is not None
+        # mel = self.audio_transform(x, normalize=normalize)
+        # input_dict = {"mel": mel}
+        input_dict = {}
+        if self.config.add_chroma:
+            chroma = self.chroma_transform(x)[:, :, :-1].transpose(1, 2)
+            chroma = F.normalize(chroma, p=2, dim=-1)
+            input_dict.update(chroma=chroma)
+        return input_dict
