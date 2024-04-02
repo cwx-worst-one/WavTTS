@@ -1646,3 +1646,36 @@ def get_model_profile(
         return number_to_string(flops), macs_to_string(macs), params_to_string(params)
 
     return flops, macs, params
+
+
+def conv_flops(module, input_shape):
+    output_shape = input_shape
+    output_shape[1] = module.out_channels
+    dims = len(input_shape) - 2
+    flops = input_shape[0] * module.in_channels * module.out_channels
+    for i in range(dims):
+        new_kernel_size = module.dilation[i] * (module.kernel_size[i] - 1) + 1
+        flops *= new_kernel_size
+        output_shape[2 + i] = (
+            input_shape[2 + i] + 2 * module.padding[i] - new_kernel_size
+        ) // module.stride[i] + 1
+        flops *= output_shape[2 + i]
+    return 2 * flops, output_shape
+
+
+def conv_transpose_flops(module, input_shape):
+    output_shape = input_shape
+    output_shape[1] = module.out_channels
+    dims = len(input_shape) - 2
+    flops = input_shape[0] * module.in_channels * module.out_channels
+    for i in range(dims):
+        new_kernel_size = module.dilation[i] * (module.kernel_size[i] - 1) + 1
+        flops *= new_kernel_size
+        output_shape[2 + i] = (
+            (input_shape[2 + i] - 1) * module.stride[i]
+            + module.output_padding[i]
+            - 2 * module.padding[i]
+            + new_kernel_size
+        )
+        flops *= input_shape[2 + i]
+    return 2 * flops, output_shape

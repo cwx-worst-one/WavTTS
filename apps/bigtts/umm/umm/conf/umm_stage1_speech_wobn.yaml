@@ -29,7 +29,7 @@ run_opts:
     log_name: umm
     version: !ref umm_stage1_rq<config[rq_codebook_size]>x<config[rq_codebook_dim]>x<config[rq_codebook_num]>_id<pl_datamodule[data_id]>_wobn
     precision: "16-mixed"
-    num_workers: 3
+    num_workers: 8
     accelerator: auto
     warmup_steps: 2000
     max_steps: 10000000

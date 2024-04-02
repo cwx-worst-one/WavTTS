@@ -2,46 +2,17 @@
 # This software may be used and distributed according to the terms of the GNU General Public License version 3.
 
 import math
-from audioop import bias
 from dataclasses import dataclass
-from turtle import forward
 from typing import Optional, Tuple
 
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torch.nn.utils import remove_weight_norm, weight_norm
-from triton.ops.blocksparse import matmul as sparse_matmul
-from triton.ops.blocksparse import softmax as sparse_softmax
+
+from samantha.utils.flops_profiler import conv_flops
+from samantha.utils.triton.sparse_fn import _get_sparse_fn
 
 __all__ = ["ModelArgs", "LLaMa", "LLaMaEncoder", "ResidualBlock", "WeightedSum"]
-
-sparse_fns = {}
-
-
-def _get_sparse_fn(size, device):
-    global sparse_fns
-    num_heads, train_len, _ = size
-
-    stride = 32
-    pad_len = train_len % stride
-    if pad_len != 0:
-        pad_len = stride - pad_len
-    train_len = train_len + pad_len
-
-    name = "head:{}_len:{}_device:{}".format(num_heads, train_len, device)
-    if name not in sparse_fns:
-        print('Prepare sparse function "{}"'.format(name))
-        layout, block = default_layout(train_len, num_heads)
-        qk_matmul = sparse_matmul(
-            layout, block, mode="sdd", trans_a=False, trans_b=True, device=device
-        )
-        softmax_fn = sparse_softmax(layout, block, device, is_dense=False)
-        wv_matmul = sparse_matmul(
-            layout, block, mode="dsd", trans_a=False, trans_b=False, device=device
-        )
-        sparse_fns[name] = [qk_matmul, softmax_fn, wv_matmul]
-    return sparse_fns[name], pad_len
 
 
 @dataclass
@@ -111,17 +82,6 @@ def apply_rotary_emb(
     xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3)
     xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
     return xq_out.type_as(xq), xk_out.type_as(xk)
-
-
-def default_layout(train_len, num_heads, block=32):
-    if train_len % block != 0:
-        train_len = train_len + (block - train_len % block)
-    assert train_len % block == 0
-    tq = torch.arange(train_len // block).unsqueeze(1)
-    tk = torch.arange(train_len // block).unsqueeze(0)
-    mask = (tq - tk) >= 0
-    mask = mask.unsqueeze(0).repeat(num_heads, 1, 1)
-    return mask, block
 
 
 class Attention(nn.Module):
@@ -429,23 +389,129 @@ class LambdaLayer(nn.Module):
         return self.lambd(x)
 
 
-class ResidualBlock(nn.Module):
-    def __init__(self, channel_num):
+class CausalConv1d(nn.Module):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        kernel_size,
+        stride=1,
+        padding=0,
+        dilation=1,
+        groups=1,
+        bias=True,
+        padding_mode="zeros",
+        device=None,
+        dtype=None,
+    ):
         super().__init__()
-
-        self.conv_block = nn.Sequential(
-            LayerNorm(channel_num, dim=1),
-            nn.Conv1d(channel_num, channel_num, 3, padding=1),
-            LambdaLayer(3),
-            nn.GELU(),
-            nn.Conv1d(channel_num, channel_num, 3, padding=1),
+        self.conv = nn.Conv1d(
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride=stride,
+            padding=0,
+            dilation=dilation,
+            groups=groups,
+            bias=bias,
+            padding_mode=padding_mode,
+            device=device,
+            dtype=dtype,
         )
+        self.pad_layer = nn.ConstantPad1d([2 * padding, 0], 0.0)
+        self.padding = padding
 
     def forward(self, x):
+        x = self.conv(self.pad_layer(x))
+        return x
+
+    def get_flops(self, b, c, t):
+        return conv_flops(self.conv, [b, c, t + self.padding * 2])
+
+
+class CausalConv2d(nn.Module):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        kernel_size,
+        stride=1,
+        padding=0,
+        dilation=1,
+        groups=1,
+        bias=True,
+        padding_mode="zeros",
+        device=None,
+        dtype=None,
+    ):
+        super().__init__()
+        self.conv = nn.Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride=stride,
+            padding=0,
+            dilation=dilation,
+            groups=groups,
+            bias=bias,
+            padding_mode=padding_mode,
+            device=device,
+            dtype=device,
+        )
+        if isinstance(padding, int):
+            # [N, C, H, W] = [N, C=1, T, D] in UMM
+            self.pad_layer = nn.ConstantPad1d([padding, padding, 2 * padding, 0], 0.0)
+        else:
+            raise Exception("Not supported padding {}".format(padding))
+
+        self.padding = padding
+
+    def forward(self, x):
+        x = self.conv(self.pad_layer(x))
+        return x
+
+    def get_flops(self, b, c, t, d):
+        return conv_flops(self.conv, [b, c, t + self.padding * 2, d + self.padding * 2])
+
+
+class ResidualBlock(nn.Module):
+    def __init__(self, channel_num, kernel_size=3, is_causal=False, transpose=False):
+        super().__init__()
+        self.transpose = transpose
+        self.is_causal = is_causal
+        conv_cls = CausalConv1d if is_causal else nn.Conv1d
+        self.conv_block = nn.Sequential(
+            LayerNorm(channel_num, dim=1),
+            conv_cls(
+                channel_num, channel_num, kernel_size, padding=(kernel_size - 1) // 2
+            ),
+            LambdaLayer(lambda x: x * (kernel_size**-0.5)),
+            nn.GELU(),
+            conv_cls(
+                channel_num, channel_num, kernel_size, padding=(kernel_size - 1) // 2
+            ),
+        )
+
+    def forward(self, x, position_embeddings=None):
+        if self.transpose:
+            x = x.transpose(1, 2)
         residual = x
         x = self.conv_block(x)
         x = x + residual
-        return out
+        if self.transpose:
+            x = x.transpose(1, 2)
+        return x
+
+    def get_flops(self, b, t):
+
+        if self.is_causal:
+            flops1, output_shape1 = self.conv_block[1].get_flops(b, 1, t)
+            flops2, _ = self.conv_block[4].get_flops(*output_shape1)
+        else:
+            flops1, output_shape1 = conv_flops(self.conv_block[1], [b, 1, t])
+            flops2, _ = conv_flops(self.conv_block[4], output_shape1)
+
+        return flops1 + flops2
 
 
 class WeightedSum(nn.Module):

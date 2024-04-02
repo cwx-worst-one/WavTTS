@@ -14,6 +14,7 @@ from transformers.utils import ModelOutput
 
 from samantha.models.umm.chroma import ChromaSpectrogram
 from samantha.models.umm.llama_torch import (
+    CausalConv2d,
     LLaMa,
     LLaMaEncoder,
     ModelArgs,
@@ -22,6 +23,7 @@ from samantha.models.umm.llama_torch import (
 )
 from samantha.models.umm.rmvpe.rmvpe import RMVPE
 from samantha.models.umm.speech import SpeechTransform
+from samantha.utils.flops_profiler import conv_flops, conv_transpose_flops
 
 
 @dataclass
@@ -46,39 +48,6 @@ def get_vuv(f0):
     vuv = f0.clone()
     vuv[vuv != 0] = 1
     return vuv
-
-
-def conv_flops(module, input_shape):
-    output_shape = input_shape
-    output_shape[1] = module.out_channels
-    dims = len(input_shape) - 2
-    flops = input_shape[0] * module.in_channels * module.out_channels
-    for i in range(dims):
-        new_kernel_size = module.dilation[i] * (module.kernel_size[i] - 1) + 1
-        flops *= new_kernel_size
-        output_shape[2 + i] = (
-            input_shape[2 + i] + 2 * module.padding[i] - new_kernel_size
-        ) // module.stride[i] + 1
-        flops *= output_shape[2 + i]
-    return 2 * flops, output_shape
-
-
-def conv_transpose_flops(module, input_shape):
-    output_shape = input_shape
-    output_shape[1] = module.out_channels
-    dims = len(input_shape) - 2
-    flops = input_shape[0] * module.in_channels * module.out_channels
-    for i in range(dims):
-        new_kernel_size = module.dilation[i] * (module.kernel_size[i] - 1) + 1
-        flops *= new_kernel_size
-        output_shape[2 + i] = (
-            (input_shape[2 + i] - 1) * module.stride[i]
-            + module.output_padding[i]
-            - 2 * module.padding[i]
-            + new_kernel_size
-        )
-        flops *= input_shape[2 + i]
-    return 2 * flops, output_shape
 
 
 def WNConv1d(*args, **kwargs):
@@ -594,14 +563,23 @@ class Conv1dUpsampling(nn.Module):
 
 class Conv2dSubsampling(nn.Module):
     def __init__(
-        self, input_dim, output_dim, kernel, padding, use_bn=True, act_fn=nn.ReLU
+        self,
+        input_dim,
+        output_dim,
+        kernel,
+        padding,
+        use_bn=True,
+        act_fn=nn.ReLU,
+        is_causal=False,
     ):
         super().__init__()
+        self.is_causal = is_causal
+        conv_cls = CausalConv2d if is_causal else nn.Conv2d
         self.conv = nn.Sequential(
-            nn.Conv2d(1, 256, kernel, 2, padding),
+            conv_cls(1, 256, kernel, 2, padding),
             nn.BatchNorm2d(256) if use_bn else nn.Identity(),
             act_fn(),
-            nn.Conv2d(256, 256, kernel, 2, padding),
+            conv_cls(256, 256, kernel, 2, padding),
             nn.BatchNorm2d(256) if use_bn else nn.Identity(),
             act_fn(),
         )
@@ -616,28 +594,39 @@ class Conv2dSubsampling(nn.Module):
         return x
 
     def get_flops(self, b, t, d):
-        flops1, out_shape1 = conv_flops(self.conv[0], [b, 1, t, d])
-        flops2, _ = conv_flops(self.conv[3], out_shape1)
-        return flops1 + flops2
+
+        if self.is_causal:
+            flops1, out_shape1 = self.conv[0].get_flops(b, 1, t, d)
+            flops2, out_shape2 = self.conv[3].get_flops(*out_shape1)
+        else:
+            flops1, out_shape1 = conv_flops(self.conv[0], [b, 1, t, d])
+            flops2, out_shape2 = conv_flops(self.conv[3], out_shape1)
+
+        flops3 = out_shape2[0] * out_shape2[2] * self.linear.weight.numel() * 2
+        return flops1 + flops2 + flops3
 
 
 class AudioEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
+        self.is_causal = config.get("is_causal", False)
         self.feature_encoder = Conv2dSubsampling(
             config.num_channels,
             config.hidden_size,
             config.feature_encoder_kernel,
             config.feature_encoder_padding,
             use_bn=config.get("use_bn", True),
-            act_fn=torch.nn.ReLU
-            if config.get("act_fn", "relu") == "relu"
-            else torch.nn.GELU,
+            act_fn=(
+                torch.nn.ReLU
+                if config.get("act_fn", "relu") == "relu"
+                else torch.nn.GELU
+            ),
+            is_causal=self.is_causal,
         )
         self.conformer_layer = (
             ConformerEncoderLayer(config)
-            if config.get("first_conformer", True)
+            if (config.get("first_conformer", True) and not self.is_causal)
             else nn.Identity()
         )
 
@@ -647,7 +636,7 @@ class AudioEncoder(nn.Module):
         return x
 
     def get_flops(self, b, t, d):
-        if self.config.get("first_conformer", True):
+        if self.config.get("first_conformer", True) and not self.is_causal:
             return self.feature_encoder.get_flops(
                 b, t, d
             ) + self.conformer_layer.get_flops(b, t)
@@ -1364,9 +1353,28 @@ class Base(nn.Module):
         self.audio_encoder = AudioEncoder(config)
         self.embed_positions = ConformerRotaryPositionalEmbedding(config)
         self.encoder_input_dropout = nn.Dropout(config.hidden_dropout)
-        self.encoder_layers = nn.ModuleList(
-            [ConformerEncoderLayer(config) for _ in range(config.num_hidden_layers)]
-        )
+
+        is_causal = config.get("is_causal", False)
+        if not is_causal:
+            self.encoder_layers = nn.ModuleList(
+                [ConformerEncoderLayer(config) for _ in range(config.num_hidden_layers)]
+            )
+        else:
+            self.encoder_layers = nn.ModuleList(
+                [
+                    ResidualBlock(
+                        config.hidden_size,
+                        kernel_size=5,
+                        is_causal=True,
+                        transpose=True,
+                    )
+                    for _ in range(config.num_hidden_layers // 2)
+                ]
+                + [
+                    ConformerEncoderLayer(config)
+                    for _ in range(config.num_hidden_layers // 2)
+                ]
+            )
         self.audio_transform = SpeechTransform(
             sample_rate=config.sample_rate,
             n_mels=config.n_mels,
@@ -1449,13 +1457,11 @@ class Stage1(Base):
         encoded_masked_feature = self.audio_encoder(masked_feature)
         hidden_states = self.encoder_input_dropout(encoded_masked_feature)
         position_embeddings = self.embed_positions(hidden_states)
-        flops += self.encoder_layers[0].get_flops(*hidden_states.shape[0:2]) * len(
-            self.encoder_layers
-        )
         for layer in self.encoder_layers:
             hidden_states = layer(
                 hidden_states, position_embeddings=position_embeddings
             )
+            flops += layer.get_flops(*hidden_states.shape[:2])
         flops += (
             hidden_states.shape[0]
             * hidden_states.shape[1]
@@ -1525,9 +1531,11 @@ class Stage2(Base):
             self.mel_head = upsample_net(
                 config.hidden_size,
                 config.n_mels,
-                act_fn=torch.nn.ReLU
-                if config.get("act_fn", "relu") == "relu"
-                else torch.nn.GELU,
+                act_fn=(
+                    torch.nn.ReLU
+                    if config.get("act_fn", "relu") == "relu"
+                    else torch.nn.GELU
+                ),
             )
         if config.get("add_ctc", True):
             self.ctc_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
@@ -1557,9 +1565,11 @@ class Stage2(Base):
             self.chroma_head = upsample_net(
                 config.hidden_size,
                 config.n_chroma,
-                act_fn=torch.nn.ReLU
-                if config.get("act_fn", "relu") == "relu"
-                else torch.nn.GELU,
+                act_fn=(
+                    torch.nn.ReLU
+                    if config.get("act_fn", "relu") == "relu"
+                    else torch.nn.GELU
+                ),
             )
         if config.get("add_pitch", False):
             #  must be sr=16000, hop_length=160
@@ -1569,9 +1579,11 @@ class Stage2(Base):
             self.f0_vuv_head = upsample_net(
                 config.hidden_size,
                 2,
-                act_fn=torch.nn.ReLU
-                if config.get("act_fn", "relu") == "relu"
-                else torch.nn.GELU,
+                act_fn=(
+                    torch.nn.ReLU
+                    if config.get("act_fn", "relu") == "relu"
+                    else torch.nn.GELU
+                ),
             )
 
     def forward(self, input_dict):
@@ -1705,17 +1717,21 @@ class Stage3(Stage2):
         if config.get("vq_proj_norm", None) == "bn":
             self.vq_proj_in = nn.Sequential(
                 Transpose(),
-                WNConv1d(config.hidden_size, config.vq_codebook_dim, kernel_size=1)
-                if config.hidden_size != config.vq_codebook_dim
-                else nn.Identity(),
+                (
+                    WNConv1d(config.hidden_size, config.vq_codebook_dim, kernel_size=1)
+                    if config.hidden_size != config.vq_codebook_dim
+                    else nn.Identity()
+                ),
                 nn.BatchNorm1d(config.vq_codebook_dim, affine=False, momentum=0.05),
                 Transpose(),
             )
             self.vq_proj_out = nn.Sequential(
                 Transpose(),
-                WNConv1d(config.vq_codebook_dim, config.hidden_size, kernel_size=1)
-                if config.vq_codebook_dim != config.hidden_size
-                else nn.Identity(),
+                (
+                    WNConv1d(config.vq_codebook_dim, config.hidden_size, kernel_size=1)
+                    if config.vq_codebook_dim != config.hidden_size
+                    else nn.Identity()
+                ),
                 Transpose(),
             )
         elif config.get("vq_proj_norm", None) == "bn_down":
@@ -1749,9 +1765,11 @@ class Stage3(Stage2):
             )
         elif config.get("vq_proj_norm", None) == "ln":
             self.vq_proj_in = nn.Sequential(
-                nn.Linear(config.hidden_size, config.vq_codebook_dim, bias=False)
-                if config.hidden_size != config.vq_codebook_dim
-                else nn.Identity(),
+                (
+                    nn.Linear(config.hidden_size, config.vq_codebook_dim, bias=False)
+                    if config.hidden_size != config.vq_codebook_dim
+                    else nn.Identity()
+                ),
                 nn.LayerNorm(config.vq_codebook_dim, elementwise_affine=False),
             )
             self.vq_proj_out = nn.Sequential(
