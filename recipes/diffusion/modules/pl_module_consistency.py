@@ -311,6 +311,7 @@ class DiffusionModule(pl.LightningModule):
 
         self.log_dict(
             {
+                "training/loss": loss, 
                 "train_loss": loss, 
                 "unweighted_loss": unweighted_loss,
             },

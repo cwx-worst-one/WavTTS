@@ -191,6 +191,7 @@ class DiffusionModule(pl.LightningModule):
 
         self.log_dict(
             {
+                "training/loss": loss, 
                 "train_loss": loss, 
                 "unweighted_loss": torch.mean(unweighted_loss),
                 "step": self.current_step
