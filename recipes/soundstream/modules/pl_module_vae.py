@@ -286,6 +286,7 @@ class VocoderModule(pl.LightningModule):
         self.untoggle_optimizer(opt_g)
 
         stats_dict = {
+            "training/loss": total_loss_d,
             "total_loss_d": total_loss_d,
             "total_loss_g": total_loss_g,
             "mel": mel_loss,

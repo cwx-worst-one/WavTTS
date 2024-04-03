@@ -196,6 +196,7 @@ class SoundstreamModule(pl.LightningModule):
         )
         self.log_dict(
             {
+                "training/loss": total_loss_d,
                 "total_loss_d": total_loss_d,
                 # "total_loss_g": total_loss_g,
                 "sc_loss": sc_loss,

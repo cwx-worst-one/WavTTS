@@ -177,6 +177,7 @@ class VocoderModule(pl.LightningModule):
         # log
         self.log_dict(
             {
+                "training/loss": total_loss_d,
                 "total_loss_d": total_loss_d,
                 "sc_loss": sc_loss,
                 "mag_loss": mag_loss,
