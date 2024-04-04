@@ -55,33 +55,34 @@ class STFTLoss(nn.Module):
 
 
 class MaskedCrossEntropy(nn.Module):
-    def __init__(self):
+    def __init__(self, reduction="mean", return_dict=False, **kwargs):
         super().__init__()
+        assert reduction in ["mean", "sum"], f"Invalid reduction {reduction=}"
+        self.loss_kernel = nn.CrossEntropyLoss(reduction="none", **kwargs)
+        self.reduction = torch.mean if reduction == "mean" else torch.sum
+        self.return_dict = return_dict
 
     def forward(self, logits, targets, mask=None):
-        logits = logits.contiguous().float()
-        targets = targets.contiguous()
+        D = logits.size(-1)
+        logits = logits.contiguous().float().view(-1, D)
+        targets = targets.contiguous().view(-1)
 
-        logits = logits.view(-1, logits.size(-1))
-        targets = targets.view(-1, 1)
+        loss = self.loss_kernel(logits, targets).view(-1, 1)
 
-        log_probs = F.log_softmax(logits.float(), dim=-1)
-        loss = -torch.gather(log_probs, dim=1, index=targets)
-
-        if mask is None:
-            return {"loss": loss.mean()}
-
-        mask = mask.contiguous()
-        loss = loss.view(*mask.size()) * mask
-        loss = (loss / mask.sum()).sum()
-        return {"loss": loss}
+        if mask is not None:
+            mask = mask.contiguous()
+            loss = loss.view(*mask.size()) * mask
+            loss = loss.sum(dim=-1, keepdim=True) / mask.sum(dim=-1, keepdim=True)
+        return (
+            {"loss": self.reduction(loss)} if self.return_dict else self.reduction(loss)
+        )
 
 
 class MOSTLoss(nn.Module):
     def __init__(self):
         super().__init__()
         self.rnnt_loss_fn = torchaudio.transforms.RNNTLoss()
-        self.rq_loss_fn = MaskedCrossEntropy()
+        self.rq_loss_fn = MaskedCrossEntropy(return_dict=True)
         self.stft_loss_fn = STFTLoss()
 
     def forward(
@@ -117,7 +118,7 @@ class MOSTLoss(nn.Module):
 class BestRQMelLoss(nn.Module):
     def __init__(self):
         super().__init__()
-        self.rq_loss_fn = MaskedCrossEntropy()
+        self.rq_loss_fn = MaskedCrossEntropy(return_dict=True)
         self.stft_loss_fn = STFTLoss()
 
     def forward(self, rq_logits, rq_ids, recon_feature, feature):
@@ -376,7 +377,7 @@ class Stage3ARLoss(nn.Module):
         )
         self.mel_loss_fn = STFTLoss()
         self.chroma_loss_fn = STFTLoss()
-        self.ar_loss_fn = MaskedCrossEntropy()
+        self.ar_loss_fn = MaskedCrossEntropy(return_dict=True)
 
     def forward(
         self, ctc_logits, ctc_ids, mel_out, mel, chroma_out, chroma, ar_logits, ar_ids
@@ -607,7 +608,7 @@ class UMMMergeLoss(nn.Module):
         )
         self.mel_loss_fn = STFTLoss()
         self.chroma_loss_fn = STFTLoss()
-        self.las_loss_fn = MaskedCrossEntropy()
+        self.las_loss_fn = MaskedCrossEntropy(return_dict=True)
         self.config = config
 
     def forward(

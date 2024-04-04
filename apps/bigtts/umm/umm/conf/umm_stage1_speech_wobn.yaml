@@ -119,6 +119,7 @@ pl_module: !new:samantha.models.umm.lit_module.Stage1
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
     criterion_cls: !name:samantha.criterion.criterion.MaskedCrossEntropy
+        return_dict: True
     extra_params: !ref <extra_params>
 
 logger:
