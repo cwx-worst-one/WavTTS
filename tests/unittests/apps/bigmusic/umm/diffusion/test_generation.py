@@ -202,3 +202,24 @@ def test_25hzConv_125hzSS(hparams_file):
 
 
 
+@pytest.mark.skip
+@pytest.mark.parametrize("hparams_file", [
+    "apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_49hzSS_streaming.yaml",
+    "apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_49hzSS.yaml",
+    ])
+def test_25hzConformer_49hzSS(hparams_file):
+    generation_with_config_file(
+        syn_wav_path = "./1min_zh_vocal/24k/1min_female_deep_0.wav",
+        prompt_wav_path = "",
+        hparams_file = hparams_file,
+    )
+    batch_generation_with_config_file(
+        syn_wav_paths = [
+            "voice_condition_valsets/slices_60/male_husky_0_slice1.wav",
+            "voice_condition_valsets/slices_60/male_husky_0_slice2.wav"
+        ],
+        hparams_file = hparams_file,
+    )
+
+
+

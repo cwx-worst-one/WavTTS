@@ -32,17 +32,25 @@ if [ -z $seed ]; then
 	export seed=1996
 fi
 
+if [ -z $diffusion_nfe ]; then
+	echo "no environment variant 'diffusion_nfe' exsists, will use 'diffusion_nfe=10'"
+	export diffusion_nfe=10
+fi
+
+
 bash launch.sh predict \
 	-c $cfg_path \
 	--run_opts.meta_lst $meta_lst \
 	--run_opts.output_dir $out_dir \
 	--run_opts.diffusion_ckpt_path $diffusion_ckpt_path \
 	--run_opts.batch_size $batch_size \
+	--pl_module.diffusion_nfe ${diffusion_nfe} \
 	--run_opts.seed $seed
 	
 cp lightning_logs/version_0/config.yaml $out_dir
 echo "====== cfg_path="$cfg_path
 echo "====== meta_lst="$meta_lst
 echo "====== diffusion_ckpt_path="$diffusion_ckpt_path
+echo "====== diffusion_nfe="$diffusion_nfe
 echo "====== all assets is saved in "$out_dir
 

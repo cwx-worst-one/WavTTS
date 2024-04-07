@@ -97,7 +97,8 @@ def wav2token(diffusion, syn_wav_path):
     else:
         syn_wav,_ = diffusion.align_wav(
             wav, 
-            diffusion.mel_config["sampling_rate"], 
+            diffusion.token_sample_rate, 
+            diffusion.mel_config["sampling_rate"],
             diffusion.umm_frame_rate, 
             diffusion.mel_frame_rate)
     syn_umm_token = diffusion.wav2token(syn_wav)
@@ -122,9 +123,10 @@ def wav2token_batch(diffusion, syn_wav_paths):
     syn_wavs = torch.cat([F.pad(syn_wav,(0,max_len-syn_wav.shape[-1]),'constant',0 ) for syn_wav in syn_wavs],dim=0)
     syn_wavs = syn_wavs.to(diffusion.device)
     if not isinstance(diffusion,ChunkInfer):
-        syn_wavs = diffusion.align_wav(
+        syn_wavs,_ = diffusion.align_wav(
             syn_wavs, 
-            diffusion.mel_config["sampling_rate"], 
+            diffusion.token_sample_rate,
+            diffusion.mel_config["sampling_rate"],
             diffusion.umm_frame_rate, 
             diffusion.mel_frame_rate)
     syn_umm_tokens = diffusion.wav2token(syn_wavs)

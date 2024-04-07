@@ -154,6 +154,7 @@ class DiffusionU2SInfer(LightningModule):
         self.mel_norm = MelNorm(
             mel_config["mel_norm_mean"], mel_config["mel_norm_std"])
         self.mel_mask_value = mel_config["mel_mask_value"] # -5
+        self.token_sample_rate = 24000
         
         os.makedirs(output_dir, exist_ok=True)
 
@@ -166,9 +167,9 @@ class DiffusionU2SInfer(LightningModule):
         logger.info(f"diffusion_ckpt_path={diffusion_ckpt_path}")
 
     # align wav to make sure wav length could be divided by `umm_frame_rate` and `mel_frame_rate` evenly
-    def align_wav(self, wav, sampling_rate, umm_frame_rate, mel_frame_rate):
-        umm_hop = sampling_rate // umm_frame_rate
-        mel_hop = sampling_rate // mel_frame_rate * 4
+    def align_wav(self, wav, umm_sampling_rate, mel_sampling_rate, umm_frame_rate, mel_frame_rate):
+        umm_hop = umm_sampling_rate // umm_frame_rate
+        mel_hop = mel_sampling_rate // mel_frame_rate
         align_block_len = abs(umm_hop*mel_hop) // math.gcd(umm_hop, mel_hop)
         crop_wav_len = wav.shape[1] % align_block_len
         if crop_wav_len > 0:
@@ -242,7 +243,7 @@ class DiffusionU2SInfer(LightningModule):
             syn_wavs = []
             syn_wavlens = []
             for bidx, syn_wav_path in enumerate(batched_syn_wav_path):
-                wav, _ = librosa.load(syn_wav_path, sr=24000, mono=True) 
+                wav, _ = librosa.load(syn_wav_path, sr=self.token_sample_rate, mono=True) 
                 inputs["gt_wav"].append(wav)
                 wav = torch.FloatTensor(wav).unsqueeze(0)
                 if self.bn_config['wav_norm']:
@@ -255,12 +256,14 @@ class DiffusionU2SInfer(LightningModule):
                 wav = wav.to(device)
                 syn_wav = wav
                 syn_wavs.append(syn_wav)
-                syn_wavlens.append(syn_wav.shape[-1])
+                syn_wavlen = int(syn_wav.shape[-1]*1.0*self.mel_config["sampling_rate"]/self.token_sample_rate)
+                syn_wavlens.append(syn_wavlen)
             
             batched_scale = scales
-            max_wavlen = max(syn_wavlens)
+            max_wavlen = max([syn_wav.shape[-1] for syn_wav in syn_wavs])
+
             syn_wavs = torch.cat([F.pad(syn_wav,[0,max_wavlen-syn_wav.shape[-1]],"constant",0) for syn_wav in syn_wavs],dim=0)
-            syn_wavs, _ = self.align_wav(syn_wavs, self.mel_config["sampling_rate"], self.umm_frame_rate, self.mel_frame_rate)
+            syn_wavs, _ = self.align_wav(syn_wavs, self.token_sample_rate, self.mel_config["sampling_rate"], self.umm_frame_rate, self.mel_frame_rate)
             batched_syn_umm_token = self.wav2token(syn_wavs)
             inputs["scale"] = scales
             inputs["syn_wavlen"] = syn_wavlens
@@ -308,7 +311,7 @@ class DiffusionU2SInfer(LightningModule):
                 )
             else:
                 if self.infer_type == "diffusion-vocoder":
-                    batched_prompt_wav, target_bn_len = self.align_wav(batched_prompt_wav, self.mel_config["sampling_rate"], self.umm_frame_rate, self.mel_frame_rate)
+                    batched_prompt_wav, target_bn_len = self.align_wav(batched_prompt_wav, self.token_sample_rate, self.mel_config["sampling_rate"], self.umm_frame_rate, self.mel_frame_rate)
                 elif self.infer_type == "ar-diffusion-vocoder":
                     wav_divide = 4800 if (self.umm_frame_rate==25 and self.mel_frame_rate==40) else 600
                     batched_prompt_wav, target_bn_len = self.align_wav2(batched_prompt_wav, wav_divide, self.mel_config["sampling_rate"], self.umm_frame_rate, batched_syn_umm_token.shape[1])
@@ -449,16 +452,16 @@ class DiffusionU2SInfer(LightningModule):
                 
                 output_path = os.path.join(self.output_dir, uttid+".wav")
                 if "syn_wavlen" in inputs:
-                    save_wav(audio.squeeze()[...,:inputs["syn_wavlen"][bidx]], output_path)
-                else:
-                    save_wav(audio.squeeze(), output_path)
+                    audio = audio[...,:inputs["syn_wavlen"][bidx]]
+                save_wav(audio.T, output_path, sr=self.mel_config["sampling_rate"])
+
             return torch.from_numpy(batched_audio)
     
     def wvae_reconstruct(self, batch):
         device = f"cuda:{self.trainer.local_rank}"
         for item in batch:
             uttid, prompt_wav_path, syn_wav_path, prompt_text_id, syn_text_id = item
-            wav, _ = librosa.load(syn_wav_path, sr=24000, mono=True) 
+            wav, _ = librosa.load(syn_wav_path, sr=self.mel_config["sampling_rate"], mono=not getattr(self.mel_config,"stereo", False)) 
             wav = torch.FloatTensor(wav).unsqueeze(0)
             if self.bn_config['wav_norm']:
                 scale = max(0.001, torch.max(torch.abs(wav)))
@@ -749,9 +752,8 @@ class ChunkInfer(DiffusionU2SInfer):
             
             output_path = os.path.join(self.output_dir, uttid+".wav")
             if "syn_wavlen" in inputs:
-                save_wav(audio.squeeze()[...,:inputs["syn_wavlen"][bidx]], output_path)
-            else:
-                save_wav(audio.squeeze(), output_path)
+                audio = audio[...,:inputs["syn_wavlen"][bidx]]
+            save_wav(audio.T, output_path, sr=self.mel_config["sampling_rate"])
         return torch.from_numpy(batched_audio)
 
     def align_wav_for_chunk(self, wav, sampling_rate, umm_frame_rate, mel_frame_rate, 
