@@ -80,6 +80,7 @@ class ModelArgs:
     phone_tokens_num: int = 200
 
     use_unet_style_skip_connect: bool = False
+    use_qk_norm: str = ""
     flashattn_version: str = "2"
 
 
@@ -493,6 +494,7 @@ class LLaMa(nn.Module):
                 checkpointing=params.checkpointing,
                 causal=getattr(params, "causal", True),
                 use_window_mask=getattr(params, "use_window_mask", False),
+                use_qk_norm=params.use_qk_norm,
                 window_size=getattr(params, "window_size", [-1, -1]),
                 window_type=getattr(params, "window_type", ELEMWISE_WINDOW_MASK),
                 use_unet_style_skip_connect=getattr(

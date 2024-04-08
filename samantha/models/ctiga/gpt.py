@@ -96,6 +96,7 @@ def create_mixer_cls(
     blocksparse = getattr(config, "blocksparse", False)
     blockmask = getattr(config, "blockmask", None)
     grad_checkpointing = getattr(config, "grad_checkpointing", False)
+    use_qk_norm = getattr(config, "use_qk_norm", "")
 
     use_window_mask = getattr(config, "use_window_mask", False)
     window_size = getattr(config, "window_size", [-1, -1])
@@ -160,6 +161,7 @@ def create_mixer_cls(
         checkpointing=grad_checkpointing,
         blocksparse=blocksparse,
         blockmask=blockmask[layer_idx] if blocksparse else None,
+        use_qk_norm=use_qk_norm,
         window_size=window_size,
         window_type=window_type,
         version=flashattn_version,

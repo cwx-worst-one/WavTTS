@@ -61,6 +61,7 @@ model_config: !new:samantha.models.llama_ldm.ModelArgs
     mlp_extend: null
     causal: False
     use_window_mask: True
+    use_qk_norm: ""
     window_size: [-1, 8]
     window_type: "blockwise" # elemwise, blockwise
     use_unet_style_skip_connect: !ref <run_opts[use_unet_style_skip_connect]>

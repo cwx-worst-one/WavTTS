@@ -284,6 +284,7 @@ class ModelArgs:
     out_channels: int = 80
     max_seq_len: int = 8192
     causal: bool = False
+    use_qk_norm: str = ""  # head, channel
     use_window_mask: bool = False
     window_size: list = field(default_factory=lambda: [-1, -1])
     window_type: str = "elemwise"  # elemwise, blockwise
@@ -408,6 +409,7 @@ class LlamaDiffusion(nn.Module):
             window_size=hp.window_size,
             window_type=hp.window_type,
             use_unet_style_skip_connect=hp.use_unet_style_skip_connect,
+            use_qk_norm=hp.use_qk_norm,
             flashattn_version=hp.flashattn_version,
         )
 

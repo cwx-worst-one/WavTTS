@@ -12,6 +12,8 @@ from pytorch_lightning.utilities.rank_zero import rank_zero_warn
 from samantha.utils.ctiga.blockmask import convert_blockmask
 from samantha.utils.ctiga.padding import pad_input, unpad_input
 
+from .ops.rms_norm import RMSNorm
+
 try:
     # flash_attn_2_3
     from .ops.flash_attn_2_3_interface import (
@@ -1061,6 +1063,7 @@ class MHA(nn.Module):
         checkpointing=False,
         blocksparse=False,
         blockmask=None,
+        use_qk_norm="",
         version="2",
         window_size=[-1, -1],  # no mask
         window_type=0,
@@ -1100,6 +1103,7 @@ class MHA(nn.Module):
         ), "self.num_heads must be divisible by self.num_heads_kv"
         qkv_dim = self.head_dim * (self.num_heads + 2 * self.num_heads_kv)
         kv_dim = 2 * self.head_dim * self.num_heads_kv
+        self.k_embed_dim = self.head_dim * self.num_heads_kv
 
         if self.rotary_emb_dim > 0:
             assert (
@@ -1210,6 +1214,15 @@ class MHA(nn.Module):
         self.out_proj = linear_cls(
             embed_dim, embed_dim, bias=out_proj_bias, **factory_kwargs
         )
+        self.use_qk_norm = use_qk_norm
+        if use_qk_norm == "head":
+            self.q_norm = RMSNorm(self.head_dim, eps=1e-8)
+            self.k_norm = RMSNorm(self.head_dim, eps=1e-8)
+        elif use_qk_norm == "channel":
+            self.q_norm = RMSNorm(embed_dim, eps=1e-8)
+            self.k_norm = RMSNorm(self.k_embed_dim, eps=1e-8)
+        elif use_qk_norm != "":
+            raise NotImplementedError
 
     def allocate_inference_cache(
         self, batch_size, max_seqlen, dtype=None, fused_ft_kernel=True
@@ -1398,9 +1411,30 @@ class MHA(nn.Module):
                     self.dwconv_qkv(rearrange(qkv, "b s d -> b d s"))[..., :-2],
                     "b d s -> b s d",
                 ).contiguous()
+            if self.use_qk_norm == "channel":
+                if qkv.ndim == 2:
+                    qkv[:, : self.embed_dim] = self.q_norm(qkv[:, : self.embed_dim])
+                    qkv[:, self.embed_dim : int(self.embed_dim * 2)] = self.k_norm(
+                        qkv[:, self.embed_dim : int(self.embed_dim * 2)]
+                    )
+                elif qkv.ndim == 3:
+                    qkv[:, :, : self.embed_dim] = self.q_norm(
+                        qkv[:, :, : self.embed_dim]
+                    )
+                    qkv[:, :, self.embed_dim : int(self.embed_dim * 2)] = self.k_norm(
+                        qkv[:, :, self.embed_dim : int(self.embed_dim * 2)]
+                    )
             qkv = rearrange(
                 qkv, "... (three h d) -> ... three h d", three=3, d=self.head_dim
             )
+            if self.use_qk_norm == "head":
+                if qkv.ndim == 4:
+                    qkv[:, 0] = self.q_norm(qkv[:, 0])
+                    qkv[:, 1] = self.k_norm(qkv[:, 1])
+                elif qkv.ndim == 5:
+                    qkv[:, :, 0] = self.q_norm(qkv[:, :, 0])
+                    qkv[:, :, 1] = self.k_norm(qkv[:, :, 1])
+
             if inference_params is None:
                 if self.rotary_emb_dim > 0:
                     if not is_pad:
@@ -1492,7 +1526,7 @@ class MHA(nn.Module):
                     )
                     context = rearrange(context, "b h d -> b 1 h d")
         else:
-            if self.cross_attn:  # mha cross bracnh
+            if self.cross_attn:  # mha cross branch
                 if not self.return_residual:
                     q = self.Wq(x if mixer_subset is None else x[:, mixer_subset])
                     kv = self.Wkv(x_kv if x_kv is not None else x)
@@ -1568,10 +1602,28 @@ class MHA(nn.Module):
                         self.dwconv_kv(rearrange(kv, "b s d -> b d s"))[..., :-2],
                         "b d s -> b s d",
                     ).contiguous()
+                if self.use_qk_norm == "channel":
+                    if kv.ndim == 2:
+                        q = self.q_norm(q)
+                        kv[:, : self.k_embed_dim] = self.k_norm(
+                            kv[:, : self.k_embed_dim]
+                        )
+                    elif kv.ndim == 3:
+                        q = self.q_norm(q)
+                        kv[:, :, : self.k_embed_dim] = self.k_norm(
+                            kv[:, :, : self.k_embed_dim]
+                        )
                 q = rearrange(q, "... (h d) -> ... h d", d=self.head_dim)
                 kv = rearrange(
                     kv, "... (two h d) -> ... two h d", two=2, d=self.head_dim
                 )
+                if self.use_qk_norm == "head":
+                    if kv.ndim == 4:
+                        q = self.q_norm(q)
+                        kv[:, 1] = self.k_norm(kv[:, 1])
+                    elif kv.ndim == 5:
+                        q = self.q_norm(q)
+                        kv[:, :, 1] = self.k_norm(kv[:, :, 1])
                 if inference_params is None:
                     if self.rotary_emb_dim > 0:
                         if not is_pad:
