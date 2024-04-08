@@ -1,4 +1,5 @@
 """ data utils. """
+
 import json
 import logging
 import os
@@ -9,7 +10,10 @@ from multiprocessing.pool import ThreadPool
 
 import braceexpand
 import numpy as np
-from bytedance.easycycle import get_dataset_collection_info
+from bytedance.easycycle import (
+    get_dataset_collection_info,
+    get_dataset_collection_info_v2,
+)
 from lightning_fabric.utilities.cloud_io import get_filesystem
 from lightning_fabric.utilities.exceptions import MisconfigurationException
 from pyarrow.parquet import ParquetFile
@@ -273,7 +277,7 @@ def resolve_data_urls(data_id=None, data_urls=None):
 
     if data_id is not None:
         os.environ["DatasetID"] = str(data_id)
-        data_urls = get_dataset_collection_info(data_id)
+        data_urls = get_dataset_collection_info_v2(data_id)["origin"]["paths"]
 
     columns = None
     for url in data_urls:
@@ -281,6 +285,9 @@ def resolve_data_urls(data_id=None, data_urls=None):
             columns = set(url.keys())
         else:
             columns.intersection_update(url.keys())
+
+    if "repetitions" in columns:
+        columns.remove("repetitions")
 
     if "index" not in columns:
         raise ValueError(
@@ -327,15 +334,8 @@ def resolve_data_urls(data_id=None, data_urls=None):
 
 
 def uniq_data_urls(data_urls):
-    frequency = Counter(url["index"] for url in data_urls)
-    uniqed_data_urls, memory = [], set()
-    for url in data_urls:
-        index = url["index"]
-        if index in memory:
-            continue
-        uniqed_data_urls.append(url)
-        memory.add(index)
-    return frequency, uniqed_data_urls
+    frequency = {url["index"]: int(url.pop("repetitions", 1)) for url in data_urls}
+    return frequency, data_urls
 
 
 def _resolve_one_url(url, columns):

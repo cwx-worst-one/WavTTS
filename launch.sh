@@ -16,6 +16,9 @@ then
     bash setup_music.sh
 fi
 
+# install easycycle
+pip3 install --upgrade pip  bytedance-easycycle==1.1.8 -i https://bytedpypi.byted.org/simple
+
 # setup cruise: install custom cruise version by specify env OVERRIDE_CRUISE_VERSION
 if [ -z "$OVERRIDE_CRUISE_VERSION" ]
 then
