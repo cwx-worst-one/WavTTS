@@ -1,15 +1,16 @@
 ---
 
 # @hanoihantrakul 9APR2024
-# This is a direct-stage3 model for use with QQ's Lyrics2Song CN system.
-# It is trained on ID 2247, which was a newly prepare dataset with 1:1 EN:CN vocal music.
-# Originally, I was going to train a stage2-stage3 but since it was easier for me
-# to launch this model first. I went ahead with this direct-stage3 setup while
-# I refactored the code to support stage2-stage3 training for Conv1D_v2 (which fixes
-# the Conv1D in the self.audio_encoder of the model)
+# This is a direct-stage3 ConvUMM model for use with QQ's Lyrics2Song CN system.
+# Compared to "umm_stage3_conv1d_v2_828Mparams_mixedZHEN_2247_direct_stage3.yaml"
+# the data ID is updated to 2255. 
+# 
+# It was faster to just launch this direct-stage3 model, because at the time
+# of writing I didn't have a stage2Conv1D_v2 ready. Better to launch a new job
+# and refactor code in the meantime. 
 #
-# By changing batch_size=2 and max_duration=90 to batch_size=12 and max_duration=45
-# I could increase training speed
+# Model param size is 720M params. Comparable to previous models.
+# # With `max_duration=45` and `batch_size=12` I can achieve a healthy `training/mem_gb=67.20`
 
 ################################################################################
 ##########                       BASIC CONFIGURATION                  ##########
@@ -38,11 +39,10 @@ extra_params:
 run_opts:
     fast_dev_run: False
     cache_dir: .module_cache/umm
-    hdfs_log_dir: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs/deletable"
+    hdfs_log_dir: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs"
     log_dir: logs
     log_name: umm_conv_mixedZHEN
-    version: !ref umm_stage3_conv1D_v2_828Mparams_mixedZHEN_2247_direct_stage3_<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>
-    #version: !ref umm_stage3_conv1D_v2_733Mparams_mixedZHEN_2247_<extra_params[tokenizer]>
+    version: !ref umm_stage3_conv1D_v2_2250mixedZHEN_direct_stage3_<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>
     precision: "32"
     num_workers: 4
     accelerator: auto
@@ -100,7 +100,7 @@ config: !new:recipes.umm.models.config.UMMConfig
     n_fft: !ref <extra_params[n_fft]>
     win_length: !ref <extra_params[win_length]>
     hop_length: !ref <extra_params[hop_length]>
-    hidden_size: 896 #1024
+    hidden_size: 832 #896 #1024
     # intermediate_size: 4096 # only used in conformer architecture
     num_hidden_layers: 2 # in reality, the Conv1D system will add 2 "blocks" of Conv1D layers, as opposed to 2 "layers". We were bootstrapping the conv architecture to the previous conformer one, so haven't had time to change this detail.
     max_source_positions: !ref <extra_params[frame_rate]> * <pl_datamodule[max_duration]>

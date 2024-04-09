@@ -1,0 +1,183 @@
+---
+
+# @hanoihantrakul 8 April 2024
+# - This YAML is near-identical to `umm_stage3_conv1d_v2_733M_sstk_direct_stage3.yaml`.
+# - Change to parquet ID 738 which MCC non vocal data
+# - Uses settings by @jannespijkervet based on her research model in: https://code.byted.org/seed/samantha/blob/research_model/recipes/research/legacy/conf/umm_stage3_conv1d_v2_733M_direct_stage3.yaml
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+ckpt_path: last.ckpt
+
+seed: 555
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+extra_params:
+    sample_rate: 24000
+    frame_rate: 25
+    n_mels: 128
+    n_mels_tgt: 160
+    n_chroma: 12
+    n_fft: 2048
+    win_length: 2048
+    hop_length: 240
+    # feature_cmvn: "recipes/datasets/mcc/MixDataModule_SpeechTransform.stats.pt" # this config uses DualUMM mel transform (expects normalization), not the original ConformerUMM mel transform (no normalization)
+    tokenizer: null # @hanoihantrakul: SSTK is all instrumental, so no tokenizer needed. 
+    parquet_id: [738] # 738 is MCC non-vocal # 794 is old SSTK data
+ 
+
+# running parameters
+run_opts:
+    fast_dev_run: False
+    cache_dir: .module_cache/umm
+    hdfs_log_dir: "hdfs:///home/byte_speech_sv/hanoi.hantrakul/logs"
+    log_dir: logs
+    log_name: umm_conv_mcc40_research
+    version: !ref umm_stage3_conv1D_v2_733Mparams_mcc40m_no_ctc_738_<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>
+    precision: "32"
+    num_workers: 4
+    accelerator: auto
+    warmup_steps: 2000
+    max_steps: 1000000
+    val_check_interval: 10000 # will be overrided by Trainer.limit_val_batches = 0
+    ckpt_interval: 10000
+    batch_size: 8 # 2
+    learning_rate: 1.0e-4
+    cycle_steps: 100000
+    weight_decay: 0.1
+    shuffle_buffer: 8000
+    gradient_clip_val: 1.0
+    checkpointing: False
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+pl_datamodule: !new:recipes.datasets.mcc.mix_mkii.MixDataModule
+    data_ids: !ref <extra_params[parquet_id]> 
+    data_weights: [1]
+    shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+    sample_rate: !ref <extra_params[sample_rate]>
+    batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <extra_params[sample_rate]>
+    num_workers: !ref <run_opts[num_workers]>
+    max_num_crops: null
+    min_duration: 1
+    max_duration: 25 # 90
+    normalize_audio: False
+    tokenizer: !ref <extra_params[tokenizer]>
+    frame_rate: !ref <extra_params[frame_rate]>
+    collate_fn: !name:recipes.datasets.mcc.mix.collate_audio
+
+optimizer_cls: !name:torch.optim.AdamW
+    lr: !ref <run_opts[learning_rate]>
+    weight_decay: !ref <run_opts[weight_decay]>
+    betas: [0.9, 0.96]
+    eps: 0.00000001
+
+scheduler_cls: !name:recipes.umm.modules.lr_scheduler.WarmupCosine
+    init_lr: !ref <run_opts[learning_rate]>
+    warmup_steps: !ref <run_opts[warmup_steps]>
+    cycle_steps: !ref <run_opts[cycle_steps]>
+    min_lr: !ref <run_opts[learning_rate]> * 0.1
+
+config: !new:recipes.umm.models.config.UMMConfig
+    # feature_cmvn: !ref <extra_params[feature_cmvn]>
+    sample_rate: !ref <extra_params[sample_rate]>
+    n_mels: !ref <extra_params[n_mels]>
+    n_mels_tgt: !ref <extra_params[n_mels_tgt]>
+    add_chroma: True
+    add_ctc: False # SSTK is instrumental only
+    n_chroma: !ref <extra_params[n_chroma]>
+    n_fft: !ref <extra_params[n_fft]>
+    win_length: !ref <extra_params[win_length]>
+    hop_length: !ref <extra_params[hop_length]>
+    hidden_size: 896 #1024
+    # intermediate_size: 4096 # only used in conformer architecture
+    num_hidden_layers: 2 # in reality, the Conv1D system will add 2 "blocks" of Conv1D layers, as opposed to 2 "layers". We were bootstrapping the conv architecture to the previous conformer one, so haven't had time to change this detail.
+    max_source_positions: !ref <extra_params[frame_rate]> * <pl_datamodule[max_duration]>
+    add_vq: True
+    vq_type: "EMAVQ"
+    vq_proj_norm: "bn"
+    vq_proj_noise: 10000
+    vq_codebook_size: 32768
+    vq_codebook_dim: 32
+    vq_layer_idx: 1 # in reality, this means the VQ happens between "block 1" and "block 2".
+    vq_decay: 0.99
+    w_loss_mel: 1.0
+    w_loss_chroma: 1.0
+    w_loss_vq: 1.0
+    w_loss_ctc: 1.0
+    tokenizer: !ref <extra_params[tokenizer]>
+    frame_rate: !ref <extra_params[frame_rate]>
+    vocab_size: 105880
+    ctc_blank_id: 105879
+    ctc_zero_infinity: True
+    use_bn: False
+    downsampling: 4
+    upsampling: 1
+
+model_cls: !name:recipes.umm.models.umm_mkii.Stage3Conv1D_v2
+    config: !ref <config>
+
+pl_module: !new:recipes.umm.modules.lit_module.Stage3Conv1D
+    checkpointing: !ref <run_opts[checkpointing]>
+    model_cls: !ref <model_cls>
+    optimizer_cls: !ref <optimizer_cls>
+    scheduler_cls: !ref <scheduler_cls>
+    criterion_cls: !name:recipes.umm.modules.criterion.UMMLoss
+        config: !ref <config>
+    extra_params: !ref <extra_params>
+    required_modules:
+        pretrained:
+            ckpt_path: "" # @hanoihantrakul 27Feb2024: This a quick hack to prevent a stage2 model from being loaded.
+            #ckpt_path: "hdfs:///home/byte_speech_sv/hanoi.hantrakul/logs/umm_conv_sstk/umm_stage2_conv1d_sstk_no_ctc_794/checkpoints/step=0130000.ckpt"
+            init_fn: !name:recipes.umm.requires.model_initializer.init_pretrained
+            cache_dir: !ref <run_opts[cache_dir]>
+
+logger:
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[log_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
+
+callbacks:
+    - !new:samantha.callbacks.HDFSModelCheckpoint
+      hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+      monitor: step
+      save_top_k: 500
+      every_n_train_steps: !ref <run_opts[ckpt_interval]>
+      mode: max
+      filename: "{step:07d}"
+      save_last: True
+    - !new:pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: 'step'
+
+plugins:
+    - !new:samantha.plugins.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    strategy: "ddp_find_unused_parameters_false"
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: "auto"
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    log_every_n_steps: 100
+    max_steps: !ref <run_opts[max_steps]>
+    precision: !ref <run_opts[precision]>
+    accumulate_grad_batches: 1
+    gradient_clip_val: !ref <run_opts[gradient_clip_val]>
+    val_check_interval: !ref <run_opts[val_check_interval]>
+    check_val_every_n_epoch: null
+    num_sanity_val_steps: 0
+    limit_val_batches: 0
+    limit_train_batches: 10000 # Consult Colin Wang: forces an epoch to end every 10k steps and prevent OOM
+    sync_batchnorm: True
+    benchmark: False
+    callbacks: !ref <callbacks>
+    plugins: !ref <plugins>
