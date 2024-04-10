@@ -12,7 +12,7 @@ LABEL maintainer="Gao Lu <gaolu.e820@bytedance.com>"
 
 ARG http_proxy="http://sys-proxy-rd-relay.byted.org:8118"
 ARG https_proxy="http://sys-proxy-rd-relay.byted.org:8118"
-ARG no_proxy="byted.org"
+ARG no_proxy="byted.org,anaconda.org"
 
 ENV PYTORCH_CUDA_ALLOC_CONF expandable_segments:True
 ENV CUBLASLT_WORKSPACE_SIZE 32768
@@ -173,7 +173,7 @@ ARG ASR_EVAL_TOOL_VERSION=1.0.0.123
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.58
 ARG DATALOADER_VERSION=1.0.0.160
-ARG BUMI_VERSION=1.0.0.6
+ARG BUMI_VERSION=1.0.0.12
 
 # 2. install falconclaw && panther && dataloader
 RUN \
@@ -253,11 +253,6 @@ RUN mkdir -p /var/run/sshd && \
 # 4.3 for kinit
 ADD ./scripts/krb5.conf /etc/krb5.conf
 
-# uninstall triton for issues:
-# triton was installed by xformers, but we have pytorch-triton instead.
-# howerver, uninstall triton would remove triton's lib, we must force reinstall it
-# TODO: fix it with xfromers
-
 RUN pip3 uninstall -y pyarrow && pip3 install --no-cache-dir fsspec==2023.6.0 pyarrow==12.0.0 && \
     pip3 install --no-cache-dir ruamel.yaml==0.17.24
 
@@ -312,6 +307,16 @@ RUN pip3 install \
 # flash-attn incompatable, test required.
 # RUN pip install git+https://github.com/NVIDIA/TransformerEngine.git@stable
 
+RUN pip3 install --no-cache-dir mpi4py
+
+# Triton 3.0. Triton 2.1 works poorly on H800, Triton 2.2 is better, 2.3 was ... branched at almost the same time
+# as of 2.2? Not sure what they were doing. Main branch really shines (compared to other versions).
+#
+# To make docker image stable, we currently pin to the latest commit into main branch.
+#
+# This must be the last pip package, otherwise it may get overwritten back to 2.1 when installing other packages.
+RUN pip3 install --no-cache-dir 'git+https://github.com/openai/triton.git@8e0c7b425ac149c43183de966ffa423fd46e4762#egg=triton&subdirectory=python'
+
 # INSTALL AWS RELATED LIBS
 ARG EFA_INSTALLER_VERSION=1.29.0
 ARG AWS_OFI_NCCL_VERSION=v1.7.4-aws
@@ -342,8 +347,6 @@ RUN apt update -y \
         libnl-route-3-dev \
         dkms \
     && rm -rf /var/lib/apt/lists/*
-
-RUN pip3 install --no-cache-dir mpi4py
 
 RUN cd $HOME \
     && curl -O "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz" \
