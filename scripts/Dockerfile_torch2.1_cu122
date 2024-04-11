@@ -116,6 +116,7 @@ RUN pip3 install \
         pytest-mock==3.8.2 \
         pytest-runner==6.0.0 \
         ConfigArgParse==1.5.3 \
+        pybind11==2.12.0 \
         absl-py==1.4.0 && \
     pip3 install \
         --no-cache-dir \
@@ -164,12 +165,12 @@ RUN pip3 install \
         einops==0.6.1 \
         zhon==1.1.5
 
-ARG CRUISE_VERSION=1.0.0.2403
+ARG CRUISE_VERSION=1.0.0.2602
 ARG PANTHER_VERSION=1.7.14.62
 ARG FALCONCLAW_VERSION=1.0.5.129
 ARG ONNX_VERSION=1.0.0.22
 ARG OPENFST_VERSION=1.0.0.8
-ARG ASR_EVAL_TOOL_VERSION=1.0.0.123
+ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.58
 ARG DATALOADER_VERSION=1.0.0.160
@@ -306,6 +307,17 @@ RUN pip3 install \
 # Transformer Engine
 # flash-attn incompatable, test required.
 # RUN pip install git+https://github.com/NVIDIA/TransformerEngine.git@stable
+
+# Add apex
+RUN export MAX_JOBS=32 && \
+    export http_proxy=http://bj-rd-proxy.byted.org:3128 && \
+    export https_proxy=http://bj-rd-proxy.byted.org:3128 && \
+    export no_proxy=byted.org && \
+    git clone https://github.com/NVIDIA/apex.git && \
+    cd apex && sed -i 's|check_cuda_torch_binary_vs_bare_metal(CUDA_HOME)||g' setup.py && \
+    pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation --config-settings "--build-option=--cpp_ext" --config-settings "--build-option=--cuda_ext" ./ && \
+    cd .. && \
+    rm -rf apex
 
 RUN pip3 install --no-cache-dir mpi4py
 
