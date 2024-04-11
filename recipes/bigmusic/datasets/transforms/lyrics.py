@@ -238,9 +238,13 @@ class LyricsTokenTransform():
         return LyricsTokenTransform(zh_tokenizer, zh_tokenizer.pad_token_id, lyrics_max_seq_len, normalization_fn=normalization_fn, **kwargs)
 
     @classmethod
-    def init_sami_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=True, **kwargs):
+    def init_sami_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=True, normalize_tags=True, **kwargs):
         from recipes.datasets.mcc.sami_tokenizer import SamiTokenizer
-        normalization_fn = partial(normalize_text_sami_tokenizer, enable_punctuation=enable_punctuation)
+        normalization_fn = partial(
+            normalize_text_sami_tokenizer,
+            enable_punctuation=enable_punctuation,
+            normalize_tags=normalize_tags
+        )
         zh_phoneme_tokenizer = SamiTokenizer()
         return LyricsTokenTransform(zh_phoneme_tokenizer, 0, lyrics_max_seq_len, normalization_fn=normalization_fn, **kwargs)
     @classmethod

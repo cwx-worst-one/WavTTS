@@ -5,6 +5,7 @@ from recipes.bigmusic.lightning.embedding_modules import (
     LyricsTokenEmbedder,
     TagCategoricalEmbedder,
     LeadsheetTokenEmbedderV2,
+    REMILeadsheetTokenEmbedder,
     WavToVecTokenEmbedder,
     MetadataT5TokenEmbedder,
     BestRQTokenEmbedder,
@@ -13,27 +14,32 @@ from recipes.bigmusic.lightning.embedding_modules import (
     IntensityEmbedder,
     SpeakerEmbedder,
     BeatEmbedder,
+    OffsetEmbedder,
+    AudioKeyEmbedder,
 )
 from recipes.bigmusic.datasets.mir_data_util import convert_m1_tag_to_style_text
 from recipes.bigmusic.utils.metrics_asr import asr_transcribe_lyrics
 from recipes.bigmusic.utils.mulan_tag import get_mulan_tags
-from recipes.bigmusic.utils.rewards import (
-    mulan_audio_reward,
-    mulan_text_reward,
-    wer_reward,
-    loudness_reward,
-    chord_reward,
-    nonvocal_reward,
-    structure_reward,
-    chorus_sim_reward,
-    chorus_presence_reward,
-    audio_metrics_reward,
-    intensity_sim_reward,
-    semantic_diversity_reward,
-    semantic_diversity_sim_reward,
-    chroma_reward,
-    chroma_sim_reward,
-)
+try:
+    from recipes.bigmusic.utils.rewards import (
+        mulan_audio_reward,
+        mulan_text_reward,
+        wer_reward,
+        loudness_reward,
+        chord_reward,
+        nonvocal_reward,
+        structure_reward,
+        chorus_sim_reward,
+        chorus_presence_reward,
+        audio_metrics_reward,
+        intensity_sim_reward,
+        semantic_diversity_reward,
+        semantic_diversity_sim_reward,
+        chroma_reward,
+        chroma_sim_reward,
+    )
+except Exception as e:
+    pass
 import numpy as np
 import random
 import torch
@@ -77,6 +83,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         lyrics_vocab_size = extra_params.get('lyrics_codebook_size', 2000)
         style_category_vocab_size = extra_params.get('style_category_vocab_size', 256)
         speaker_vocab_size = extra_params.get('speaker_codebook_size', 10)
+        offset_codebook_size = extra_params.get('offset_codebook_size', 512)
         tag_taxonomy_lang = extra_params.get('tag_taxonomy_lang', 'Zh')
         tag_dropout_rate = extra_params.get('tag_dropout_rate', 0)
         mulan_embed_dim = extra_params.get('mulan_embed_dim', 512)
@@ -140,6 +147,26 @@ class SemanticModule(BaseContinuousEmbedModule):
                 leadsheet_vocab_size = extra_params['leadsheet_codebook_size']
                 embedder_dict[emb_type] = LeadsheetTokenEmbedderV2(
                     vocab_size=leadsheet_vocab_size,
+                    embedding_dim=hidden_size,
+                    add_sos=True
+                )
+            elif emb_type == "remi_leadsheet_tokens":
+                remi_leadsheet_vocab_size = extra_params['remi_leadsheet_codebook_size']
+                embedder_dict[emb_type] = REMILeadsheetTokenEmbedder(
+                    vocab_size=remi_leadsheet_vocab_size,
+                    embedding_dim=hidden_size,
+                    add_sos=True
+                )
+            elif emb_type == "audio_key_token":
+                audio_key_codebook_size = extra_params['audio_key_codebook_size']
+                embedder_dict[emb_type] = AudioKeyEmbedder(
+                    vocab_size=audio_key_codebook_size,
+                    embedding_dim=hidden_size,
+                    add_sos=True
+                )
+            elif emb_type == "offset_token":
+                embedder_dict[emb_type] = OffsetEmbedder(
+                    vocab_size=offset_codebook_size,
                     embedding_dim=hidden_size,
                     add_sos=True
                 )
@@ -297,6 +324,52 @@ class SemanticModule(BaseContinuousEmbedModule):
         else:
             embeds = lyrics_embedder.get_sos_embed(batch_size)
         return embeds
+
+    def prepare_remi_leadsheet_inputs(self, batch, embedder):
+        batch_size = self.infer_batch_size(batch)
+        conditions = self.infer_conditions(batch)
+        if 'remi_leadsheet_tokens' in conditions:
+            embeds = embedder.embed(
+                self.requires,
+                batch['remi_leadsheet_tokens'].to(self.device),
+                with_sos=True,
+            )
+        else:
+            embeds = embedder.get_sos_embed(batch_size)
+        return embeds
+
+    def prepare_audio_key_inputs(self, batch, embedder):
+        batch_size = self.infer_batch_size(batch)
+        conditions = self.infer_conditions(batch)
+        if 'audio_key_token' in conditions:
+            embeds = embedder.embed(
+                self.requires,
+                batch['audio_key_token'].to(self.device),
+                with_sos=True,
+            )
+        else:
+            embeds = embedder.get_sos_embed(batch_size)
+        return embeds
+
+    def prepare_offset_inputs(self, batch, embedder):
+        batch_size = self.infer_batch_size(batch)
+        conditions = self.infer_conditions(batch)
+        if 'offset_token' in conditions:
+            if 'offset_token' in batch:
+                offset_token = batch['offset_token']
+            else:
+                offset_token = [0] * batch_size
+                offset_token = torch.as_tensor(offset_token)
+                
+            embeds = embedder.embed(
+                self.requires,
+                offset_token.to(self.device),
+                with_sos=True,
+            )
+        else:
+            embeds = embedder.get_sos_embed(batch_size)
+        return embeds
+
 
     def prepare_leadsheet_inputs(self, batch, embedder):
         batch_size = self.infer_batch_size(batch)
@@ -472,8 +545,14 @@ class SemanticModule(BaseContinuousEmbedModule):
                 emb_inputs = self.prepare_lyrics_inputs(batch, embedder)
             elif emb_type == "speaker_id":
                 emb_inputs = self.prepare_speaker_inputs(batch, embedder)
+            elif emb_type == "audio_key_token":
+                emb_inputs = self.prepare_audio_key_inputs(batch, embedder)
+            elif emb_type == "offset_token":
+                emb_inputs = self.prepare_offset_inputs(batch, embedder)
             elif emb_type == "leadsheet_tokens":
                 emb_inputs = self.prepare_leadsheet_inputs(batch, embedder)
+            elif emb_type == "remi_leadsheet_tokens":
+                emb_inputs = self.prepare_remi_leadsheet_inputs(batch, embedder)
             elif emb_type == "duration":
                 emb_inputs = self.prepare_duration_inputs(batch, embedder)
             elif emb_type == "structure":
@@ -689,6 +768,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         controller_cfg_label = hp.get('controller_cfg_label', "genre")
         controller_cfg_gamma = hp.get('controller_cfg_gamma', 1)
         skip_sos = hp.get('skip_sos', False)
+        self.extra_params.debug_index = hp.get('debug_index', None)
         exclude_ids = None
         if hp.get("exclude_eos", False) and self.target_embedder.eos_id is not None:
             exclude_ids = [self.target_embedder.eos_id]
@@ -723,15 +803,17 @@ class SemanticModule(BaseContinuousEmbedModule):
                 x[3] = '' if 'sinking' in controller_cfg_label else x[3]
                 x[4] = '' if 'lang' in controller_cfg_label else x[4]
                 print(x)
-                cfg_style_text.append('|'.join(x))
-                print(cfg_style_text)            
+                cfg_style_text.append('|'.join(x))                
             batch_cfg['style_text'] = cfg_style_text
             batch_cfg['style_category'] = cfg_style_text
             if "speaker" in controller_cfg_label:                
+                print(batch_cfg['speaker_id'])                
                 batch_cfg['speaker_id'] = torch.as_tensor([0] * len(batch['style_category']))
+                print(batch_cfg['speaker_id'])
             inputs_emb_cfg = self.prepare_inputs_embeddings(batch_cfg)
 
         return super().predict(
+            batch,
             inputs_embeds,
             num_tokens,
             temperature=temperature,
@@ -752,6 +834,111 @@ class SemanticModule(BaseContinuousEmbedModule):
         return super().predict(inputs_embeds, num_tokens, temperature, **kwargs)
 
 
+class SemanticModuleExtendedTarget(SemanticModule):
+    def prepare_target_inputs(self, batch):
+        # Prepare audio target ids
+        audio_target_ids = self.target_embedder.tokenize(self.requires, batch['target_audio'], with_sos=False, with_eos=False).to(self.device)
+        if 'target_tokens_length' in batch:
+            target_lengths = batch['target_tokens_length'].to(self.device)
+            batch_size = self.infer_batch_size(batch)
+        else: # set to default batch length. Silence will happen before EOS
+            batch_size, seq_len = audio_target_ids.shape[:2]
+            target_lengths = torch.full((batch_size,), fill_value=seq_len, dtype=torch.long, device=self.device)
+
+        # Extract remi_leadsheet_ids with sos
+        remi_leadsheet_ids = batch['remi_leadsheet_tokens'].to(self.device)
+        # Offset remi_leadsheet_ids to avoid vocab conflicts
+        offset = self.extra_params.audio_codebook_size
+        remi_leadsheet_ids = remi_leadsheet_ids + offset
+        # Concat remi_leadsheet_ids on target 
+        target_ids = torch.cat([remi_leadsheet_ids, audio_target_ids], dim=1)
+
+        # Move audio token to the end of leadsheet, and update target_lengths accordingly
+        remi_token_length = batch['remi_token_length']
+        for i in range(batch_size):
+            remi_token_offset = remi_token_length[i].item()
+            target_ids[i, remi_token_offset: remi_token_offset + len(audio_target_ids[i])] = audio_target_ids[i]
+            target_lengths[i] += remi_token_offset
+
+        target_ids = F.pad(target_ids, (1, 1)) # pad for extra sos/eos ids
+        target_ids[:, 0] = self.target_embedder.sos_id # add SOS
+        eos_indices = (target_lengths+1).unsqueeze(1) # set last index to EOS
+        target_ids.scatter_(dim=1, index=eos_indices, value=self.target_embedder.eos_id)
+        target_lengths = target_lengths + 2 # +2 for eos and sos
+
+        target_embeds = self.target_embedder.embed(token_ids=target_ids, with_sos=False, with_eos=False)
+        return {
+            'token_embeds': target_embeds,
+            'token_ids': target_ids,
+            'token_seq_lengths': target_lengths
+        }
+
+    def predict(self, batch, hp, beam=1, ref_samples=None, rl_training=False):
+        offset = self.extra_params.audio_codebook_size
+        # exp_index of first target sos of first target token
+        exp_index = self.extra_params.segment_max_leadsheet_len + 1
+        frame_rate = self.extra_params.semantic_frame_rate
+
+        # Expand generation target length
+        if "duration" not in batch:
+            batch["duration"] = hp.duration
+        duration = batch["duration"]
+        num_audio_tokens = duration * frame_rate
+        num_all_tokens = exp_index + num_audio_tokens
+        batch["duration"] = num_all_tokens//frame_rate
+
+        # Predict all target
+        output_tokens = super().predict(batch, hp, beam, ref_samples, rl_training)
+
+        # Slice first target
+        generated_leadsheet_tokens = []
+        generated_audio_tokens = []
+        max_audio_len = 0
+        eos_id = self.extra_params.leadsheet_codec.indexer["eos"] + offset
+
+        for output_token in output_tokens.clone():
+            output_token = output_token.flatten().cpu().tolist()
+            if eos_id in output_token:
+                index = output_token.index(eos_id)+1
+                leadsheet_token = np.array(output_token[:index])
+                audio_token = output_token[index:]
+                # remove OOV tokens
+                audio_token = np.array(output_token[index:])
+                audio_token = audio_token[audio_token<offset]
+                leadsheet_token = leadsheet_token[leadsheet_token>=offset]
+                leadsheet_token = leadsheet_token - offset
+                
+                generated_leadsheet_tokens.append(leadsheet_token)
+                generated_audio_tokens.append(audio_token)
+                max_audio_len = max(max_audio_len, len(audio_token))
+            else:
+                print("[Warning][SemanticModuleExtendedTarget.predict] no leadsheet EOS in the prediction, \
+                       will skip this sample")
+
+        # Pad audio token to same length
+        new_generated_audio_tokens = []
+        for i in generated_audio_tokens:
+            padlen = max_audio_len-len(i)
+            padding = [self.target_embedder.eos_id] * padlen
+            i = list(i)
+            i.extend(padding)
+            new_generated_audio_tokens.append(torch.LongTensor(i))
+        generated_audio_tokens = torch.stack(new_generated_audio_tokens).to(output_tokens.device)
+
+        # This should not happen in a well trained model, but if happen might crash infer
+        # So we in this case we use naive slicing to avoid zero-shape and raise an warning
+        if len(generated_leadsheet_tokens) == 0 or len(generated_audio_tokens) == 0:
+            generated_leadsheet_tokens = output_token[:, :exp_index]
+            generated_audio_tokens = output_token[:, exp_index:]
+            print(f"[Warning][SemanticModuleExtendedTarget.predict] no leadsheet EOS in the batch. \
+                    generated_leadsheet_tokens={len(generated_leadsheet_tokens)} \
+                    generated_audio_tokens={len(generated_audio_tokens)}")
+
+
+        batch["generated_leadsheet_tokens"] = generated_leadsheet_tokens
+        return generated_audio_tokens
+
+
 class SemanticModuleDualUMMFullTrack(SemanticModule):
     def load_required_modules(self, ignore=()):
         super().load_required_modules(ignore=list(ignore) + ['mss'])
@@ -759,10 +946,13 @@ class SemanticModuleDualUMMFullTrack(SemanticModule):
             mss_config = self.hparams.required_modules["mss"]
             self.requires['mss'] = MSSPredictor(mss_config['ckpt_path'], sr=self.extra_params['sample_rate'],
                                                 cache_dir=mss_config['cache_dir']).to(f'cuda:{self.local_rank}')
+        # self.requires['mss'] = MSSPredictor('hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/sunyakun.king/sami_models/mss-checkpoint-epoch=235-val_median_sdr_0=12.49.ckpt', sr=self.extra_params['sample_rate'],
+        #                                     cache_dir='.module_cache').to(f'cuda:{self.local_rank}')
 
     def prepare_target_inputs(self, batch):
         # Prepare target ids
         use_full_input = self.requires['Stage3'].config.get('use_full_input', False)
+        print("self.requires['Stage3'].config.get('use_full_input'", self.requires['Stage3'].config.get('use_full_input', "no"))
         if not use_full_input and 'audio_vocal' not in batch:
             batch['audio_vocal'], batch['audio_acc'] = self.requires['mss'](batch['target_audio'])
             batch['audio_vocal'], batch['audio_acc'] = batch['audio_vocal'][:, None], batch['audio_acc'][:, None]
@@ -775,6 +965,9 @@ class SemanticModuleDualUMMFullTrack(SemanticModule):
             with_sos=False, with_eos=False, wav_type='acc')
         target_ids = torch.stack([target_ids_vocal, target_ids_acc], -1)
         target_ids = torch.flatten(target_ids, 1)
+
+        tr = target_ids[0].cpu().detach().tolist()
+        open("train_id.txt", "w").write(str(tr))
 
         if 'target_tokens_length' in batch:
             target_lengths = batch['target_tokens_length'].to(self.device)

@@ -1,0 +1,103 @@
+
+CHORD_LABELS = [
+    "C:maj",
+    "C#:maj",
+    "D:maj",
+    "D#:maj",
+    "E:maj",
+    "F:maj",
+    "F#:maj",
+    "G:maj",
+    "G#:maj",
+    "A:maj",
+    "A#:maj",
+    "B:maj",
+    "C:min",
+    "C#:min",
+    "D:min",
+    "D#:min",
+    "E:min",
+    "F:min",
+    "F#:min",
+    "G:min",
+    "G#:min",
+    "A:min",
+    "A#:min",
+    "B:min",
+    "C:sus2",
+    "C#:sus2",
+    "D:sus2",
+    "D#:sus2",
+    "E:sus2",
+    "F:sus2",
+    "F#:sus2",
+    "G:sus2",
+    "G#:sus2",
+    "A:sus2",
+    "A#:sus2",
+    "B:sus2",
+    "C:sus4",
+    "C#:sus4",
+    "D:sus4",
+    "D#:sus4",
+    "E:sus4",
+    "F:sus4",
+    "F#:sus4",
+    "G:sus4",
+    "G#:sus4",
+    "A:sus4",
+    "A#:sus4",
+    "B:sus4",
+    "C:aug",
+    "C#:aug",
+    "D:aug",
+    "D#:aug",
+    "E:aug",
+    "F:aug",
+    "F#:aug",
+    "G:aug",
+    "G#:aug",
+    "A:aug",
+    "A#:aug",
+    "B:aug",
+    "C:dim",
+    "C#:dim",
+    "D:dim",
+    "D#:dim",
+    "E:dim",
+    "F:dim",
+    "F#:dim",
+    "G:dim",
+    "G#:dim",
+    "A:dim",
+    "A#:dim",
+    "B:dim",
+    "N",
+]
+
+SECTION_LABELS = ["silence", "intro", "verse", "chorus", "bridge", "inst", "outro"]
+
+BPM_DIVISIONS = [82, 96, 110, 120, 125, 132, 143]
+BPM_VALUES = [75, 89, 103, 115, 123, 128, 138, 150]
+
+STEM_LABELS = ["lyrics", "vocal", "piano", "guitar", "bass", "drums"]
+
+GENRE_TAGS = [
+    'Blues',  # 0
+    'Childhood',
+    'Classical',
+    'Country',  # 3
+    'Easy_Listening',
+    'Electronic',
+    'Experimental',
+    'Folk',  # 7
+    'Hip_Hop/Rap',
+    'Jazz',
+    'Latin',  #10
+    'Metal',
+    'New_Age',
+    'Pop',  # 13
+    'R&B/Soul',
+    'Reggae',
+    'Rock'  # 16
+ ]

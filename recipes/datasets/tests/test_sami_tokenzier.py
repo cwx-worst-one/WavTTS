@@ -256,4 +256,34 @@ def test_tokenize_phrase_invalid_inputs():
         tokenizer.tokenize_phrase(Phrase.parse("[verse] abc"))  # invalid phoneme label
 
 
+ALT_VERSE_SECTION_TAGS = [
+    "[verse]",
+    "(VERSE)",
+    "（Verse）",
+    "<Verse>",
+    "{Verse}",
+    "【verse】",
+    "《verse》",
+    "「verse」",
+]
+
+@pytest.mark.parametrize("section_tag", ALT_VERSE_SECTION_TAGS)
+def test_tag_normalization_verse(section_tag):
+    phrase = Phrase.parse(text=f"{section_tag} 我的歌词", normalize_tag=True)
+    assert phrase.section_tag == "verse"
+    assert phrase.text == "我的歌词"
+
+
+def test_tag_normalization_silent_none():
+    phrase = Phrase.parse(text=f"(no_such_section) 我的歌词", normalize_tag=True)
+    assert phrase.section_tag is None
+    assert phrase.text == "我的歌词"
+
+
+def test_parse_text():
+    phrases = Phrase.parse_text("(Verse)第一句 [CHORUS] 第二句<bridge> 第三句")
+    assert (phrases[0].text, phrases[0].section_tag) == ("第一句", "verse")
+    assert (phrases[1].text, phrases[1].section_tag) == ("第二句", "chorus")
+    assert (phrases[2].text, phrases[2].section_tag) == ("第三句", "bridge")
+
 # TODO (Yilin) Test SamiTokenizer

@@ -305,6 +305,7 @@ class BaseContinuousEmbedModule(BaseModule):
     @torch.no_grad()
     def predict(
         self,
+        batch,
         inputs_embeds,
         num_tokens,
         temperature=1,
@@ -379,6 +380,16 @@ class BaseContinuousEmbedModule(BaseModule):
 
         for i in pbar:
             pbar.set_description(f"{tqdm_name} [0 - {num_tokens}]")
+            if self.extra_params.get("debug_index") is not None and i < self.extra_params.get("debug_index"):
+                if i == 0:
+                    print("[Debug] using ground truth token n=", self.extra_params.get("debug_index"))
+                predict_token = batch["remi_leadsheet_tokens"][:, i].view(-1, 1)
+                offset = self.extra_params.audio_codebook_size
+                predict_token = predict_token + offset
+                predict_token_emb = self.target_embedder.embedder(predict_token)
+                model_input['inputs_embeds'] = predict_token_emb
+                output_tokens = torch.cat([output_tokens, predict_token], dim=1) if output_tokens is not None else predict_token
+                continue
 
             if isinstance(self.model, gpt.GPTLMHeadModel):
                 # to enable inference without a trainer, we simply cast the inputs to the expected model type

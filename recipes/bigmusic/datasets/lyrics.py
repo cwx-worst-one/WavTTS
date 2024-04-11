@@ -760,6 +760,13 @@ DATASET_CONFIGS = {
             "style_conditions": ["style_category,lyrics_tokens","style_text,lyrics_tokens","style_audio,lyrics_tokens"],
         }
     },
+    "mcc60m_GroupA_1M_vocal_MSS_CN": {
+        "init_fn": DefaultDatasets.Batched.batched_vocal_parquet_dataset,
+        "extra_args": {
+            "index_list": INDEX["CN"]["MCCVocalA_1M"],
+            "style_conditions": ["style_category,lyrics_tokens"],
+        }
+    },
     "mcc60m_groupa_deepchorus_cn": {
         "init_fn": DefaultDatasets.Batched.batched_vocal_parquet_dataset,
         "extra_args": {

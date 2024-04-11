@@ -65,6 +65,8 @@ extra_params:
 
     use_controller_cfg: True       # Set to True to activate style CFG.
     controller_cfg_gamma: 1.0
+    controller_cfg_label: "genre"  # mood, scene, sinking,
+
 
     cache_dir: .module_cache/bigmusic
 
@@ -137,7 +139,7 @@ additional_callbacks:
     # - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
     #   asr_model_path: zh
     # - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
-    - !new:recipes.bigmusic.callbacks.save_outputs.NormVolumeCallback
+    # - !new:recipes.bigmusic.callbacks.save_outputs.NormVolumeCallback
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
 callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback

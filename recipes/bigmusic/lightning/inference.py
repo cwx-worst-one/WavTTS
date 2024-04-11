@@ -185,6 +185,8 @@ class SemanticInferenceModule(pl.LightningModule):
             'generated_audio_tensor': raw_wav_output,
             'generated_semantic_tokens': raw_semantic_samples,
         })
+        if "generated_leadsheet_tokens" in batch:
+            outputs["generated_leadsheet_tokens"] = batch["generated_leadsheet_tokens"]
         return outputs
 
 

@@ -90,10 +90,10 @@ def override_parameter(func, **kwargs):
     return wrapper
 
 
-def pad_crop(sequence, seq_len, dtype, padding_value=0):
+def pad_crop(sequence, seq_len, dtype, padding_value=0, verbose=False):
     # in item_pad_idx, 0 indicates the values are padded.
     item_pad = torch.full((seq_len,), fill_value=padding_value, dtype=dtype)
-    if len(sequence) > seq_len and seq_len != 0:
+    if len(sequence) > seq_len and seq_len != 0 and verbose:
         logging.warning(
             f"[pad_crop] input sequence len{len(sequence)} > max seq_len {seq_len}, might cause quality degradation.")
     item_pad[:len(sequence)] = torch.as_tensor(sequence[:seq_len])

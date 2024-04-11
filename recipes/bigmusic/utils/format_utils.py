@@ -25,7 +25,7 @@ def rewrite_playlist_labels(label1, label2):
         scene = label2        
     elif label1 == "中文心情":
         mood = label2
-    elif label1 in CHINESE_GENRE1_VOCAB:        
+    elif label1 in CHINESE_GENRE1_VOCAB:
         if label1 in {"金属", "儿童音乐", "宗教"}:
             genre = label1
         else:
@@ -98,13 +98,13 @@ def normalize_text(text, enable_punctuation=False, lowercase=False):
     text = " ".join(text.split()) # remove spaces
     return text.strip()
 
-def normalize_text_sami_tokenizer(text, enable_punctuation=False, lowercase=False):
+def normalize_text_sami_tokenizer(text, enable_punctuation=False, lowercase=False, normalize_tags=True):
     """Normalize text with special treatment for special tokens supported by sami_tokenizer."""
     sep = " <n> " if enable_punctuation else " "
     lines = text.split("\n")
     normalized_lines = []
     for line in lines:
-        phrase = Phrase.parse(text=line)
+        phrase = Phrase.parse(text=line, normalize_tag=normalize_tags)
         normalized_text = normalize_text(phrase.text, enable_punctuation, lowercase) if phrase.text else ""
         normalized_lines.append(phrase._replace(text=normalized_text).format_text())
     return sep.join([l for l in normalized_lines if l])  # remove empty lines

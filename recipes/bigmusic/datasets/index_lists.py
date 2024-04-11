@@ -115,7 +115,8 @@ INDEX = {
             "en": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/douyin_music/dialect=en/url2index.txt",
             "zh": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/douyin_music/dialect=zh/url2index.txt",
         },
-        "MCCVocalB_2M": 1229, # 1229 - MCC GroupB + MSS
+        "MCCVocalB_2M": 1229, # 1229 - MCC GroupB 2M + MSS
+        "MCCVocalA_1M": 1838, # 1229 - MCC GroupA 1M + MSS
         "CD_Baby": 1199, # 187 - 2M full dataset
         "CD_Baby_Authorized": 1373,
         "SodaTest": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/kaiping/2023-09-20/val_url2index.txt",

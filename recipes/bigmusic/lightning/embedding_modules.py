@@ -540,7 +540,23 @@ class LeadsheetTokenEmbedderV2(TokenEmbedder):
 
     def get_tokens(self, requires, input):
         return input
-        
+
+
+class REMILeadsheetTokenEmbedder(TokenEmbedder):
+    def get_tokens(self, requires, input):
+        return input
+
+
+class OffsetEmbedder(TokenEmbedder):
+    def get_tokens(self, requires, input):
+        return input
+
+
+class AudioKeyEmbedder(TokenEmbedder):
+    def get_tokens(self, requires, input):
+        return input
+
+
 class LyricsTokenEmbedder(TokenEmbedder):
     def __init__(self, vocab_size, embedding_dim, add_sos=False, add_eos=False):
         super().__init__(vocab_size, embedding_dim, add_sos=add_sos, add_eos=add_eos)

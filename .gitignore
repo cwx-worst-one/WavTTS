@@ -117,5 +117,14 @@ recipes/text2semantic/custom_scripts/run.sh
 resource/
 *.ckpt
 *.csv
+libs/
+generated_output/
+pypetrel.1.0.0.129/
+bm_inference.pstats
+infer.sh
+recipes/bigmusic/tests/data/
+recipes/leadsheet
+.attach_*
 *.ipynb
+*.png
 scripts_usr

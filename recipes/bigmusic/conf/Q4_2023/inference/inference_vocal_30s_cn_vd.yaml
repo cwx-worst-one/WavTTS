@@ -1,12 +1,12 @@
 ---
-
 ################################################################################
 ##########                       BASIC CONFIGURATION                  ##########
 ################################################################################
 
 seed: 1995
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
-__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+__set_float32_matmul_precision:
+    !apply:torch.set_float32_matmul_precision ["high"]
 
 extra_params:
     beam_size: 1 # set to 4 if using reranker, 1 without reranker
@@ -41,13 +41,13 @@ extra_params:
         infer_type: diffusion-vocoder
         umm_ckpt_path: !ref <extra_params[tokenizer_ckpt]>
         umm_frame_rate: 25
-        mel_frame_rate: 40         # Music vocoder 125 Hz
+        mel_frame_rate: 40 # Music vocoder 125 Hz
         seed: !ref <seed>
         diffusion_precision: "bf16"
         diffusion_nfe: 10
         diffusion_sampler: "ddim"
         text_cfg_w: 0
-        use_wvae_vocoder: True     # Ignore voice prompt
+        use_wvae_vocoder: True # Ignore voice prompt
         umm_type: "UMM_music"
 
         bn_config: # 40hz wvae 3.1
@@ -92,14 +92,15 @@ run_opts:
     accelerator: auto
     strategy: auto
     cache_dir: .module_cache/bigmusic
-    batch_size: 8  # set to 8 if using reranker, 40 without reranker
+    batch_size: 8 # set to 8 if using reranker, 40 without reranker
     num_workers: 8
 
 ################################################################################
 ##########                    INFERENCE CONFIGURATION                  ##########
 ################################################################################
 
-predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_from_prompt
+predict_dataset:
+    !apply:recipes.bigmusic.datasets.inference.inference_dataset_from_prompt
     prompt_path: !ref <extra_params[prompt_path]>
     conditions: !ref <extra_params[inference_conditions]>
     max_items: !ref <extra_params[max_items]>
@@ -146,12 +147,13 @@ callbacks:
 trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>
     accelerator: !ref <run_opts[accelerator]>
-    devices: 'auto'
+    devices: "auto"
     num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
     deterministic: False
     enable_model_summary: True
     use_distributed_sampler: False # for multi-gpu inference
     strategy: !ref <run_opts[strategy]>
     precision: !ref <run_opts[precision]>
-    callbacks: !apply:operator.add [!ref <callbacks>, !ref <additional_callbacks>]
+    callbacks:
+        !apply:operator.add [!ref <callbacks>, !ref <additional_callbacks>]
     limit_predict_batches: 20

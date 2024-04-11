@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Optional, Dict, Tuple, List, TypeVar, Type
 
 from .zh_meta import (
+    DeepChorus,
     SongSlice,
     ZhMetaBase,
     ZhMetaLogger,
@@ -32,6 +33,7 @@ from .zh_meta import (
     # Validators
     validate_quality,
     validate_style_text_sa,
+    validate_deepchorus,
     # Converters
     convert_hqmy,
     convert_voice_tag,
@@ -95,7 +97,7 @@ class ZhMetaTransform:
         zh_meta = ZhMetaGeneral if dataset_entry is None else dataset_entry.parser
         return cls(zh_meta, **kwargs)
 
-    def __call__(self, meta: Dict) -> Tuple[ZhMetaLogger, List[SongSlice], List[str], int]:
+    def __call__(self, meta: Dict) -> Tuple[ZhMetaLogger, List[SongSlice], List[str], int, Optional[float], Optional[DeepChorus]]:
         """Parse the meta dict into an intermediate representation, then convert it into song slices.
         :return: (meta_logger, song_slices, style_text, artist_id)
         """
@@ -172,6 +174,7 @@ class ZhMetaSFTBase(ZhMetaBase):
     def _validate(self, lyrics_confidence: Optional[float]):
         super()._validate(lyrics_confidence)
         validate_style_text_sa(self.style_text, self.is_sinking)
+        validate_deepchorus(self.structure_tags)
 
     def _convert(self):
         _self = super()._convert()
@@ -314,6 +317,24 @@ ZH_DATASET_REGISTRY = {
         is_releasable=True,
         is_for_pretrain=True,
         is_for_sft=False,
+        is_validation_set=False
+    ),
+    2192: ZhDatasetEntry(
+        parser=ZhMetaLowRisk,
+        desc="Chinese low risk dataset with mir service(V41.join(V33))--Train set",
+        is_copyright_cleared=False,
+        is_releasable=True,
+        is_for_pretrain=True,
+        is_for_sft=False,
+        is_validation_set=True
+    ),
+    2191: ZhDatasetEntry(
+        parser=ZhMetaLowRisk,
+        desc="Chinese low risk dataset with mir service(V41.join(V33))--Test set",
+        is_copyright_cleared=False,
+        is_releasable=True,
+        is_for_pretrain=True,
+        is_for_sft=False,
         is_validation_set=True
     ),
     1725: ZhDatasetEntry(
@@ -349,9 +370,13 @@ ZH_DATASET_REGISTRY = {
         parser=ZhMetaSFTBase,
         desc="Everynoise, 4k + Chinese artist, 7k + Playlist3k5 + Artist2k, deduplication",
     ),
-    2115: ZhDatasetEntry.new_sft_no_copyright(
+    2140: ZhDatasetEntry.new_sft_no_copyright(
         parser=ZhMetaSFTBase,
-        desc="200k high risk qq/wyy",
+        desc="200k high risk qq/wyy, fix phone",
+    ),
+    2168: ZhDatasetEntry.new_sft_no_copyright(
+        parser=ZhMetaSFTBase,
+        desc="400k high risk qq/wyy",
     ),
     2118: ZhDatasetEntry.new_sft_no_copyright(
         parser=ZhMetaSFTBase,
@@ -360,6 +385,10 @@ ZH_DATASET_REGISTRY = {
     2120: ZhDatasetEntry.new_sft_no_copyright(
         parser=ZhMetaSFTBase,
         desc="3x(Everynoise, 4k + Chinese artist, 7k + Playlist3k5 + Artist2k) + Billboard 110k + Authorized 110k",
+    ),
+    2144: ZhDatasetEntry.new_sft_no_copyright(
+        parser=ZhMetaSFTBase,
+        desc="3x(Everynoise, 4k + Chinese artist, 7k + Playlist3k5 + Artist2k) + 2x High risk 200k + Billboard 110k",
     ),
     # SFT, releasable
     1935: ZhDatasetEntry.new_sft_copyright_cleared(

@@ -6,8 +6,8 @@ import torch
 from typing import List
 import pandas as pd
 from pathlib import Path
-from functools import partial
-import samantha.utils.hdfs_helper as hh
+from functools import partial, reduce
+import operator
 
 from torchaudio_augmentations import Compose
 
@@ -16,6 +16,7 @@ from samantha.transforms.audio import (
     SetAudioDimensions,
     ToTensor,
 )
+import samantha.utils.hdfs_helper as hh
 
 from recipes.bigmusic.datasets.svs import SVSInferTransforms, override_parameter
 from recipes.bigmusic.datasets.svs import collate_fn as future_function
@@ -35,10 +36,13 @@ from recipes.bigmusic.datasets.transforms.lyrics import (
 from recipes.bigmusic.datasets.transforms.structure import (
     IntensityTransform,
 )
+from recipes.datasets.mcc.sami_tokenizer import section_parens
 from recipes.musiclm.inference.utils import load_wav
 from recipes.musiclm.utils.dist import local_zero_first
 
 default_prompt_path = Path(__file__).absolute().parent/'inference_prompts/default.json'
+
+SEGMENT_TRANSFORMS = None
 
 def prompt_path_to_items(prompt_path, cache_dir='.prompt_cache'):
     if isinstance(prompt_path, dict): # prompt path is already an item list
@@ -98,6 +102,7 @@ def inference_dataset_from_prompt(
     if 'style_category' in conditions and 'style_category' not in prompts:
         prompts['style_category'] = prompts['style_text']
     if 'style_audio' in prompts:
+        prompts['vocal_prompt'] = prompts['style_audio']
         prompts['style_audio'] = load_and_normalize_wavs(prompts['style_audio'])
     if 'vocal_audio' in prompts:
         additional_transforms = [voice_clone_transform(extra_params)] if extra_params.get('app_type') == 'vclone' else []
@@ -117,11 +122,21 @@ def inference_dataset_from_prompt(
     if lang == 'zh_phone':
         # Process lyrics and style_text
         if 'rewrite_lyrics' in prompts:  # override lyrics with rewrite_lyrics
-            rewritten_lyrics = process_lyrics(prompts.pop('rewrite_lyrics'))
+            rewritten_lyrics = add_section_tags_to_lyrics(prompts.pop('rewrite_lyrics'))
             prompts['lyrics'] = [
                 rewritten if rewritten else original.strip()
                 for original, rewritten in zip(prompts['lyrics'], rewritten_lyrics)
             ]
+        # Futher process the lyrics by splitting it by section tags.
+        # The reason is to handle a long line with multiple section tags. The splitting makes each line
+        # only has one leading section tag, which can then be parsed by the lyrics parser.
+        # The left parentheses do not necessarily indicate a section tag, but we can do this because:
+        # 1. The current lyrics input does not support specical characters, including parentheses/brackets
+        # 2. It is reasonable to treat a left paren as a line break, even if it's not part of a section tag
+        # It is also possible to use regex to match all the occurances of section tags, but let's keep it
+        # simple for now.
+        prompts['lyrics'] = split_lyrics_by_section_tags(prompts['lyrics'])
+
         if 'style_text' in prompts and transform_style_text:
             prompts['original_style_text'] = prompts['style_text']
             lyrics_prompts = prompts.get("prompt", [])
@@ -137,54 +152,60 @@ def inference_dataset_from_prompt(
     else:
         lyrics_prompt_pairs = zip(*list(prompts.values()))
 
-    segment_transforms = []
-    if 'lyrics_tokens' in conditions:
-        if lang == 'en':
-            segment_transforms.append(
-                LyricsTokenTransform.init_espeak_tokenizer(
-                    lyrics_max_seq_len=lyrics_max_seq_len,
-                    dataset_mode=dataset_mode,
-                    enable_punctuation=enable_punctuation,
-                    validate_ascii=True,
+    global SEGMENT_TRANSFORMS
+    if SEGMENT_TRANSFORMS:
+        segment_transforms = SEGMENT_TRANSFORMS
+    else:
+        segment_transforms = []
+        if 'lyrics_tokens' in conditions:
+            if lang == 'en':
+                segment_transforms.append(
+                    LyricsTokenTransform.init_espeak_tokenizer(
+                        lyrics_max_seq_len=lyrics_max_seq_len,
+                        dataset_mode=dataset_mode,
+                        enable_punctuation=enable_punctuation,
+                        validate_ascii=True,
+                    )
                 )
-            )
-        elif lang == 'zh_wp':
-            segment_transforms.append(
-                LyricsTokenTransform.init_zh_tokenizer(
-                    lyrics_max_seq_len=lyrics_max_seq_len,
-                    dataset_mode=dataset_mode,
-                    enable_punctuation=enable_punctuation,
+            elif lang == 'zh_wp':
+                segment_transforms.append(
+                    LyricsTokenTransform.init_zh_tokenizer(
+                        lyrics_max_seq_len=lyrics_max_seq_len,
+                        dataset_mode=dataset_mode,
+                        enable_punctuation=enable_punctuation,
+                    )
                 )
-            )
-        elif lang == 'zh_phone':
-            segment_transforms.append(
-                LyricsTokenTransform.init_sami_tokenizer(
-                    lyrics_max_seq_len=lyrics_max_seq_len,
-                    dataset_mode=dataset_mode,
-                    enable_punctuation=enable_punctuation,
+            elif lang == 'zh_phone':
+                segment_transforms.append(
+                    LyricsTokenTransform.init_sami_tokenizer(
+                        lyrics_max_seq_len=lyrics_max_seq_len,
+                        dataset_mode=dataset_mode,
+                        enable_punctuation=enable_punctuation,
+                        normalize_tags=True,  # support all kinds of section tags
+                    )
                 )
-            )
 
-        if 'style_text' in conditions and 'style_text' not in prompts:
-            # style text not provided. must generate own
-            if 'metadata' in prompts:
-                print('WARNING: style_text not provided. Using metadata to generate style prompt')
-                # mcc metadata provided. use rewrite method
-                segment_transforms.append(MCCMetadataTextTransform('Vocal'))
-            else:
-                raise Exception('Could not find style text')
-        if 'style_tokens' in conditions: # t5 case: add t5 tokenizer
-            # TODO: (AS) pass max_seq_len parameter to transform
-            segment_transforms.append(StyleTextT5Transform())
-    if 'intensity' in conditions:
-        segment_transforms.append(
-            IntensityTransform(
-                audio_key="intensity_audio" if "intensity_audio" in prompts else "style_audio",
-                sample_rate=extra_params["sample_rate"],
-                calculation_mode=extra_params.get("intensity_calculation", "mean"),
-                intensity_hz=extra_params.get("intensity_hz", 1),
+            if 'style_text' in conditions and 'style_text' not in prompts:
+                # style text not provided. must generate own
+                if 'metadata' in prompts:
+                    print('WARNING: style_text not provided. Using metadata to generate style prompt')
+                    # mcc metadata provided. use rewrite method
+                    segment_transforms.append(MCCMetadataTextTransform('Vocal'))
+                else:
+                    raise Exception('Could not find style text')
+            if 'style_tokens' in conditions: # t5 case: add t5 tokenizer
+                # TODO: (AS) pass max_seq_len parameter to transform
+                segment_transforms.append(StyleTextT5Transform())
+        if 'intensity' in conditions:
+            segment_transforms.append(
+                IntensityTransform(
+                    audio_key="intensity_audio" if "intensity_audio" in prompts else "style_audio",
+                    sample_rate=extra_params["sample_rate"],
+                    calculation_mode=extra_params.get("intensity_calculation", "mean"),
+                    intensity_hz=extra_params.get("intensity_hz", 1),
+                )
             )
-        )
+        SEGMENT_TRANSFORMS = segment_transforms
 
     batch_transforms=[AddConditionsTransform(conditions)]
     if 'duration' in conditions:
@@ -220,7 +241,7 @@ def voice_clone_transform(extra_params):
     voice_clone_duration = extra_params.get('voice_clone_duration', -1)
     return lambda vocal_audio: vocal_audio[:, :(voice_clone_duration * sample_rate)]
 
-def process_lyrics(lyrics_list: List[str]) -> List[str]:
+def add_section_tags_to_lyrics(lyrics_list: List[str]) -> List[str]:
     """Move in-line leading section tags out as single lines."""
     def add_section_tags_to_lyrics(text: str) -> str:
         """Add section tags based on the number of lines.
@@ -240,6 +261,19 @@ def process_lyrics(lyrics_list: List[str]) -> List[str]:
         return "\n".join(result)
 
     return [add_section_tags_to_lyrics(lyrics) if lyrics.strip() else "" for lyrics in lyrics_list]
+
+def split_lyrics_by_section_tags(lyrics_list: List[str]) -> List[str]:
+    def split_text_by_parens(text: str) -> List[str]:
+        left_parens = [p[0] for p in section_parens]
+        ind = sorted(list(set([0] + [i for i, c in enumerate(text) if c in left_parens] + [len(text)])))
+        return [text[a:b] for a, b in zip(ind, ind[1:])]
+
+    def split_and_normalize_one(text: str) -> str:
+        lines = reduce(operator.add, [split_text_by_parens(line) for line in text.split("\n")])
+        # remove white spaces, remove empty lines
+        return "\n".join(list(filter(lambda l: len(l) > 0, map(lambda l: l.strip(), lines))))
+
+    return [split_and_normalize_one(text) for text in lyrics_list]
 
 def process_style_text(style_text_list: List[str]) -> List[str]:
     """Auto-convert macro style text into separate sub-category text seaprated by '|'."""

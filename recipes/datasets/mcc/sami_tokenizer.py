@@ -209,7 +209,21 @@ singer_tags = ["singer" + str(i) for i in range(20)] + ["合", "女", "男"]
 singer_pattern = r'^(singer\d+|男|女|合)?:\s*((?:.|\n)*)'
 
 section_tags = ['silence', 'chorus', 'verse', 'bridge', 'inst', 'outro', 'intro']
-section_pattern = r'^\[(.*?)\]\s*((?:.|\n)*)'
+section_parens = [
+    "[]",
+    "【】",
+    "()",
+    "（）",
+    "<>",
+    "《》",
+    "{}",
+    "「」",
+]
+section_patterns = [
+    re.compile(f'^\\{paren[0]}(.*?)\\{paren[1]}\\s*((?:.|\n)*)')
+    for paren in section_parens
+]
+section_pattern = section_patterns[0]
 
 
 all_phones = (
@@ -272,12 +286,29 @@ def add_singer_tag(singer_tag: Optional[str], text: str) -> str:
     return text
 
 
-def extract_section_tag(text: str) -> Tuple[Optional[str], str]:
+def norm_section_tag(section_tag: str) -> Optional[str]:
+    # Tag validation happens in Phrase.
+    norm_tag = section_tag.lower().strip()
+    return norm_tag if norm_tag in section_tags else None
+
+
+def extract_section_tag(text: str, normalize_tag: bool = False) -> Tuple[Optional[str], str]:
     """Extract the section tag from the input text.
-    :param text: A string that might or might not contain a leading section tag, enclosed by [].
+    :param text: A string that might or might not contain a leading section tag.
+    :param normalize_tag:
+        True:
+            1. Other parentheses in `section_parens` are also allowed.
+            2. Tag is normalized to lower case. If the normalized tag is not allowed, the tag is discarded.
+        False: The section name must be enclosed by "[]".
     :return: The section tag (None if empty) and the rest of the text without colon and leading whitespace.
     """
-    return _extract_prefix_tag(text, section_pattern)
+    if not normalize_tag:
+        return _extract_prefix_tag(text, section_pattern)
+    for _section_pattern in section_patterns:
+        tag, rest_text = _extract_prefix_tag(text, _section_pattern)
+        if tag is not None:
+            return norm_section_tag(tag), rest_text
+    return None, text
 
 
 def add_section_tag(section_tag: Optional[str], text: str) -> str:
@@ -297,6 +328,14 @@ class Phrase(NamedTuple):
     section_tag: Optional[str] = None
     time_span: Optional[Union[Tuple[int, int], Tuple[float, float]]] = None
 
+    def __post_init__(self):
+        if self.singer_tag not in [None] + singer_tags:
+            raise SamiTokenizerError(f"Invalid singer tag: {self.singer_tag}")
+        if self.section_tag not in [None] + section_tags:
+            raise SamiTokenizerError(f"Invalid section tag: {self.section_tag}")
+        if self.time_span is not None and self.time_span[0] > self.time_span[1]:
+            raise SamiTokenizerError(f"Invalid time_span: {self.time_span}")
+
     @classmethod
     def parse(
         cls, 
@@ -305,10 +344,14 @@ class Phrase(NamedTuple):
         singer_tag: Optional[str] = None, 
         section_tag: Optional[str] = None,
         time_span: Optional[Tuple[int, int]] = None,
+        normalize_tag: bool = False,
     ):
         """ Auto-detect singer tag and section tag from the given phonemes or text
         :param singer_tag: Override the detected singer_tag by this value
         :param section_tag: Override the detected section_tag by this value
+        :param normalize_tag:
+            True: Support other section format besides the strict formats (for user input)
+            False: Only parse section tags enclosed by "[]"
         """
         def strip(text: Optional[str]) -> Optional[str]:
             if text is None:
@@ -321,13 +364,13 @@ class Phrase(NamedTuple):
         if phonemes is None:
             _section_tag_p, _singer_tag_p, rest_phonemes = None, None, None
         else:
-            _section_tag_p, rest_phonemes = extract_section_tag(phonemes)
+            _section_tag_p, rest_phonemes = extract_section_tag(phonemes, normalize_tag)
             _singer_tag_p, rest_phonemes = extract_singer_tag(rest_phonemes)
 
         if text is None:
             _section_tag_t, _singer_tag_t, rest_text = None, None, None
         else:
-            _section_tag_t, rest_text = extract_section_tag(text)
+            _section_tag_t, rest_text = extract_section_tag(text, normalize_tag)
             _singer_tag_t, rest_text = extract_singer_tag(rest_text)
 
         # Use extracted tags if tags are not forced
@@ -415,6 +458,10 @@ class Phrase(NamedTuple):
     @property
     def has_utterance(self) -> bool:
         return bool(self.phonemes or self.text)
+    
+    @property
+    def is_empty(self) -> bool:
+        return not self.has_utterance and self.section_tag is None
 
     @property
     def start(self) -> Optional[int]:
@@ -803,10 +850,13 @@ class SamiTokenizer(SamiOfflineTokenizer):
 
     def __call__(self, text_batch: Union[str, List[str]], line_break=" <n> ", **kwds) -> Dict[str, torch.Tensor]:
         """Tokenize a text batch. Lines separated by line_break. Phoneme will be generated internally."""
+        def remove_empty_phrases(phrases: List[Phrase]) -> List[Phrase]:
+            return [phrase for phrase in phrases if not phrase.is_empty]
+
         if isinstance(text_batch, str):
             text_batch = [text_batch] 
         phrase_batch = [
-            [Phrase.parse(text=text) for text in sil.split(line_break)]
+            remove_empty_phrases([Phrase.parse(text=text) for text in sil.split(line_break)])
             for sil in text_batch
         ]
         return self.tokenize_phrase_batch(phrase_batch)

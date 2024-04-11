@@ -3,6 +3,7 @@ from transformers import Wav2Vec2PhonemeCTCTokenizer, PreTrainedTokenizer
 from typing import Optional
 
 MAX_PHONE_LEN = 400
+MAX_LEADSHEET_LEN = 1500
 
 
 class PhonemeTokenizer:

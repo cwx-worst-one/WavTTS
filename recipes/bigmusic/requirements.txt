@@ -17,3 +17,4 @@ colorednoise
 numpy<1.24  # for madmom
 fastdtw
 pyworld
+pretty_midi

@@ -21,6 +21,11 @@ from recipes.datasets.mcc.sami_tokenizer import Phrase
 
 
 @dataclass
+class DeepChorus:
+    tags: List
+    confidence: float
+
+@dataclass
 class SongSlice:
     phrases: List[Phrase]
 
@@ -165,7 +170,7 @@ class ZhMetaLogger:
 class ZhMetaBase:
     utterances: List
     lyrics_confidence: Optional[float]
-    structure_tags: Optional[List]
+    structure_tags: Optional[DeepChorus]
     style_text: List[str]
     artist_id: int
 
@@ -190,15 +195,16 @@ class ZhMetaBase:
         segment_method: str,
         max_seg_per_track: int,
         duration_range: Tuple[int, int]
-    ) -> Tuple[ZhMetaLogger, List[SongSlice], List[str], int, Optional[float]]:
+    ) -> Tuple[ZhMetaLogger, List[SongSlice], List[str], int, Optional[float], Optional[DeepChorus]]:
         self._validate(lyrics_confidence)
         _self = self._convert()
         logger, song_slices = _self._to_song_slices(segment_method, max_seg_per_track, duration_range)
-        return logger, song_slices, _self.style_text, _self.artist_id, _self.lyrics_confidence
+        return logger, song_slices, _self.style_text, _self.artist_id, _self.lyrics_confidence, _self.structure_tags
 
     def _validate(self, lyrics_confidence: Optional[float]):
         """Raise ZhMetaTransformError if the data is invalid"""
         validate_confidence(lyrics_confidence, self.lyrics_confidence)
+        validate_deepchorus(self.structure_tags)
 
     def _convert(self):
         """Process the data and return a new data. No in-place operation."""
@@ -222,7 +228,7 @@ class ZhMetaBase:
                 self.utterances,
                 min_duration,
                 max_duration,
-                structure_tags=self.structure_tags,
+                structure_tags=self.structure_tags.tags,
                 complete_section=max_duration >= 60,  # auto-enable complete section grouping for dur >= 1m
             )
         song_slices = take_song_slices_by_method(song_slices, segment_method)
@@ -285,8 +291,12 @@ def parse_utterance_mix(meta: Dict, lyrics_field: str) -> List:
 
 
 # ---------- structure_tags -------------
+def get_deepchorus_score(deepchorus_tags):
+    boundary = [b['start_prob'] for b in deepchorus_tags['segments']]
+    function = [f['funct_prob'] for f in deepchorus_tags['segments']]
+    return 0.7 * (sum(boundary)/len(boundary)) + 0.3 * (sum(function)/len(function))
 
-def _format_deepchorus_structure_tags(deepchorus_tags):
+def _format_deepchorus_structure_tags(deepchorus_tags: Dict) -> DeepChorus:
     # This function converts the deepchorus field in metadata into the format of [{'tag': tag, 'start_time': sec, 'end_time': sec}]
     # The deepchorus tags are inferred based on the audio.
     structure_tags = []
@@ -295,10 +305,13 @@ def _format_deepchorus_structure_tags(deepchorus_tags):
         structure_tag['start_time'] = segment["interval"][0]
         structure_tag['end_time'] = segment["interval"][1]
         structure_tags.append(structure_tag)
-    return structure_tags
+    return DeepChorus(
+        tags=structure_tags,
+        confidence=get_deepchorus_score(deepchorus_tags)
+    )
 
 
-def parse_structure_tags(meta: Dict) -> List:
+def parse_structure_tags(meta: Dict) -> DeepChorus:
     """meta.deepchorus"""
     deepchorus_tags = _get_value(meta, "deepchorus", "No structure tags")
     return _format_deepchorus_structure_tags(deepchorus_tags)
@@ -506,6 +519,13 @@ def validate_style_text_sa(style_text: List[str], is_sinking: bool):
 def validate_quality(high_quality: bool):
     if not high_quality:
         raise ZhMetaTransformError(f"Filter out low quality")
+
+
+def validate_deepchorus(deepchorus: Optional[DeepChorus]):    
+    if deepchorus is None:
+        return
+    if deepchorus.confidence < 0.45:
+        raise ZhMetaTransformError(f"Low deepchorus confidence <0.45")
 
 
 # ---------- SongSlice -------------

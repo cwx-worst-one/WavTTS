@@ -17,6 +17,7 @@ from recipes.bigmusic.utils.format_utils import update_json
 import numpy as np
 from recipes.musiclm.utils.dist import local_zero_first
 from recipes.bigmusic.utils.upload import audio_tensor_to_bytes, upload_to_easycycle
+from recipes.bigmusic.datasets.utils.symbolic_music import pretty_midi_obj_to_midi_bytes
 
 
 class SaveOutputsCallback(pl.Callback):
@@ -59,6 +60,7 @@ class SaveOutputsCallback(pl.Callback):
             save_style_audio=self.save_style_audio,
             save_mode=self.save_mode,
             save_semantic_tokens=self.save_semantic_tokens,
+            leadsheet_codec=pl_module.semantic_module.extra_params.get("leadsheet_codec"),
         )
         if isinstance(outputs['generated_audio_tensor'], list):
             outputs['generated_audio_tensor'] = outputs['generated_audio_tensor'][0]
@@ -114,6 +116,16 @@ def format_lyrics_and_style(style_text, lyrics=None):
     name_formatted = text_formated[:32] + "_" + lyrics_formated[:96] + "_" + text_encoded[:4]
     return name_formatted
 
+def save_leadsheet(file_name, leadsheet_token, leadsheet_codec):
+    try:
+        midi_obj = leadsheet_codec.decode(leadsheet_token)
+        midi_bytes = pretty_midi_obj_to_midi_bytes(midi_obj)
+        print("Saving midi:", file_name)
+        with open(file_name, "wb") as f:
+            f.write(midi_bytes)
+    except Exception as e:
+        print("Decoding fail:", e)
+    return
 
 def save_batch_outputs(
     outputs,
@@ -127,8 +139,11 @@ def save_batch_outputs(
     save_style_audio=True,
     save_mode="wav",
     save_semantic_tokens=False,
+    leadsheet_codec=None,
 ):
     conditions = batch['conditions']
+    if isinstance(conditions, list):
+        conditions = conditions[0]
     index = batch.get('index')
     lyrics = batch.get('lyrics')
     lyrics_normalized_text = batch.get('lyrics_normalized_text')
@@ -142,6 +157,7 @@ def save_batch_outputs(
     metadatas = outputs.get('metadata')
     wavs = outputs['generated_audio']
     semantic_tokens = outputs.get('generated_semantic_tokens')
+    leadsheet_tokens = outputs.get('generated_leadsheet_tokens')
 
     output_paths = []
     
@@ -164,6 +180,7 @@ def save_batch_outputs(
         style_text = prompts[ii] if prompts else None
         style_category = style_categories[ii] if 'style_category' in conditions and style_categories else None
         structure = structures[ii] if 'structure' in conditions else None
+        leadsheet_token = leadsheet_tokens[ii] if leadsheet_tokens is not None else None
         if index is None:
             file_name = f"{absolute_idx:03d}_{format_lyrics_and_style(style_text, lyrics_str)}"
         else:
@@ -193,7 +210,7 @@ def save_batch_outputs(
                 'beam_idx': beam_idx,
             }
         }
-            
+        
         if save_mode == "upload":
             audio_bytes = audio_tensor_to_bytes(wav.cpu().float(), sample_rate)
             metadata["audio_url"] = upload_to_easycycle(audio_bytes, f"{wav_file_name}.generated")
@@ -233,6 +250,10 @@ def save_batch_outputs(
         if save_semantic_tokens and semantic_tokens is not None:
             semantic_tokens_fp = os.path.join(wav_dir, f"{wav_file_name}.semantic_tokens.pt")
             torch.save(semantic_tokens[i], semantic_tokens_fp)
+
+        if leadsheet_token is not None and leadsheet_codec is not None:
+            file_name = os.path.join(wav_dir, f"{wav_file_name}.mid")
+            save_leadsheet(file_name, leadsheet_token, leadsheet_codec)
 
         print('Saving metadata', metadata)
         meta_fp = os.path.join(wav_dir, f"{wav_file_name}.metadata.json")

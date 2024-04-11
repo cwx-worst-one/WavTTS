@@ -2,6 +2,7 @@ import json
 from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Tuple
 import pytorch_lightning as pl
 import torch
+import numpy as np
 import webdataset as wds
 from functools import partial
 from torch.utils.data import DataLoader
@@ -11,7 +12,8 @@ from transformers import BertTokenizer, Wav2Vec2PhonemeCTCTokenizer
 from webdataset import shardlists
 from webdataset.pipeline import DataPipeline
 import logging, phonemizer
-from recipes.bigmusic.datasets.tokenizers.phoneme import MAX_PHONE_LEN
+from recipes.bigmusic.datasets.symbolic_music.bm_dfs_dict_builder import BMDfsDictBuilder
+from recipes.bigmusic.datasets.tokenizers.phoneme import MAX_PHONE_LEN, MAX_LEADSHEET_LEN
 from recipes.bigmusic.datasets.utils.zh_datasets import ZhMetaTransform
 from recipes.bigmusic.datasets.utils.zh_meta import SongSlice, ZhMetaParseError, ZhMetaTransformError
 from recipes.bigmusic.utils.format_utils import normalize_text
@@ -57,7 +59,9 @@ def pad_crop(sequence, seq_len, dtype, padding_value=0):
 def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens") -> Dict[str, torch.Tensor]:
     # collate_fn batches the examples based on the target_audio length.
     PHONE_PAD_ID = 0
+    LEADSHEET_PAD_ID = 0 # can be same with PHONE_PAD_ID if using different embedder
     max_phone_len = int(batch[0].get("max_phone_len", MAX_PHONE_LEN))
+    max_leadsheet_len = int(batch[0].get("max_leadsheet_len", MAX_LEADSHEET_LEN))
     max_length = max([x["target_audio"].shape[-1] for x in batch])
     if 'acc' in batch[0]:
         max_length = max([x["acc"].shape[-1] for x in batch] + [max_length])
@@ -65,15 +69,19 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
         max_length = max([x["vocal"].shape[-1] for x in batch] + [max_length])
     random_pad = Pad(n_samples=max_length)
     default_lyrics_token = torch.full((max_phone_len,), PHONE_PAD_ID, dtype=torch.int)
+    default_leadsheet_token = torch.full((max_leadsheet_len,), LEADSHEET_PAD_ID, dtype=torch.int)
     target_audio = []
     acc_audio = []
     vocal_audio = []
     style_text = []
     normalized_text = []
     lyrics_tokens = []
+    remi_leadsheet_tokens = []
     target_tokens_length = []
+    remi_token_length = []
     speaker_id = []
     dataset_name = []
+    offset_tokens = []
 
     # DEBUG
     style_metadata = []
@@ -81,6 +89,7 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
     shard = []
     worker_id = []
     lyrics_confidence = []
+    deepchorus_confidence = []
     for idx in range(len(batch)):
         audio = batch[idx]["target_audio"]
         if audio.ndim == 1:
@@ -96,6 +105,8 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
         speaker_id.append(batch[idx]["artist_id"])
         _lc = batch[idx]["lyrics_confidence"]
         lyrics_confidence.append(-1 if _lc is None else _lc)
+        _lc = batch[idx]["deepchorus_confidence"]
+        deepchorus_confidence.append(-1 if _lc is None else _lc)
         
         construct = lambda key, default: \
             batch[idx][key].clone().detach() if key in batch[idx] and batch[idx][key] is not None \
@@ -111,6 +122,15 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
             construct("lyrics_tokens", default_lyrics_token),
             max_phone_len, torch.int, PHONE_PAD_ID)
         lyrics_tokens.append(phoneme_tokens)
+        leadsheet_token = construct("remi_leadsheet_tokens", default_leadsheet_token)
+        remi_token_len = min(len(leadsheet_token), max_leadsheet_len)
+        leadsheet_token, _ = pad_crop(
+            leadsheet_token,
+            max_leadsheet_len, torch.int, LEADSHEET_PAD_ID)
+        remi_leadsheet_tokens.append(leadsheet_token)
+        remi_token_length.append(remi_token_len)
+
+        offset_tokens.append(batch[idx]["offset_token"])
 
         style_metadata.append(batch[idx].get("style_metadata"))
         song_id.append(batch[idx].get("song_id"))
@@ -131,8 +151,11 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
         "normalized_text": normalized_text,
         "lyrics": normalized_text,
         "lyrics_tokens": torch.stack(lyrics_tokens),
+        "remi_leadsheet_tokens": torch.stack(remi_leadsheet_tokens),
         "target_tokens_length": torch.as_tensor(target_tokens_length),
         "speaker_id": torch.as_tensor(speaker_id).unsqueeze(1),
+        "offset_token": torch.as_tensor(offset_tokens).unsqueeze(1),
+        "remi_token_length": torch.as_tensor(remi_token_length).unsqueeze(1),
         "conditions": conditions,
         "dataset_name": dataset_name,
 
@@ -140,6 +163,7 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
         "style_metadata": style_metadata,
         "song_id": song_id,
         "lyrics_confidence": torch.as_tensor(lyrics_confidence),
+        "deepchorus_confidence": torch.as_tensor(deepchorus_confidence),
         "shard": shard,
         "worker_id": worker_id,
     }
@@ -178,12 +202,14 @@ class VocalTransforms(BaseTransforms):
         segment_method: str = "random",
         max_seg_per_track: int = -1,
         segment_max_phone_len: int = 400,   
+        segment_max_leadsheet_len: int = 1500,
         infer_structure_tags: bool = False,  # TODO: Remove it, not used
         sinking_threshold: float = 0.51,
         quality_filter: bool = False,  # TODO: Remove it, not used
         tag_taxonomy_lang: str = "SA",  # TODO: Remove it, not used.
         line_break_dropout_rate: float = 0.0,
         section_tag_dropout_rate: float = 0.0,
+        leadsheet_codec = None,
         extra_audio_keys=[]
     ):
         super().__init__()
@@ -202,6 +228,7 @@ class VocalTransforms(BaseTransforms):
         self.segment_method = segment_method
         self.max_seg_per_track = max_seg_per_track
         self.segment_max_phone_len = segment_max_phone_len
+        self.segment_max_leadsheet_len = segment_max_leadsheet_len
         # There are two fields for lyrics: "lyrics" (ASR) and "lyrics_gt" (Original).
         # self.yrics_field is the top priority, fall back to the other field if the field is empty.
         # self.lyrics_field = lyrics_field
@@ -231,6 +258,81 @@ class VocalTransforms(BaseTransforms):
             # base_transforms.append(FastNormalizeAudio())
             base_transforms.append(AbsNormalizeAudio())
         self.base_transform = Compose(base_transforms)
+        self.leadsheet_codec = leadsheet_codec
+
+    def encode_leadsheet(self, song_slice, item):
+        # Leadsheet doesn't support song_slice start or end is None
+        if song_slice.start is None or song_slice.end is None:
+            self._update_stats(skipped=True, message=f"TransformError: Leadsheet doesn't support song_slice start or end is None")
+            return None
+
+        error_str = ""
+        # Parse track level transription
+        try:
+            builder = (
+                BMDfsDictBuilder(item)
+                .pre_load_meta()
+                .add_df_note(subsets=self.leadsheet_codec.config.stems.split(","))\
+                .add_df_beat()
+                .add_df_chord()
+                .add_key()
+                .quantize_chord_to_beat()
+            )
+            if self.leadsheet_codec.config.include_phoneme:
+                builder.add_df_lyrics()
+            if self.leadsheet_codec.config.include_section_indicator_each_bar:
+                builder.add_df_section().quantize_section_to_downbeat()
+            dfs_dict = builder.create_output()
+        except Exception as e:
+            dfs_dict = None
+            error_str = repr(e)
+
+        if dfs_dict is None:
+            self._update_stats(skipped=True, message=f"TransformError: Leadsheet parse error: {error_str}")
+            return None
+
+        # Slice transription dataframe by start and end time
+        start_sec = song_slice.start
+        end_sec = song_slice.end
+        if start_sec is not None and end_sec is not None:
+            df_note = dfs_dict["df_note"]
+            df_beat = dfs_dict["df_beat"]
+            df_chord = dfs_dict["df_chord"]
+
+            df_note = df_note[df_note["start"]>=start_sec]
+            df_note = df_note[df_note["end"]<=end_sec]
+
+            df_beat = df_beat[df_beat["time"]>=start_sec]
+            df_beat = df_beat[df_beat["time"]<=end_sec]
+
+            df_chord = df_chord[df_chord["start"]>=start_sec]
+            df_chord = df_chord[df_chord["end"]<=end_sec]
+
+            if len(df_chord) == 0 or len(df_note) == 0 or len(df_beat) == 0:
+                return None
+
+            dfs_dict["df_note"] = df_note.reset_index(drop=True, inplace=False)
+            dfs_dict["df_beat"] = df_beat.reset_index(drop=True, inplace=False)
+            dfs_dict["df_chord"] = df_chord.reset_index(drop=True, inplace=False)
+
+        # Encode leadsheet
+        try:
+            remi_leadsheet_tokens = self.leadsheet_codec.encode_leadsheet(dfs_dict)
+        except Exception as e:
+            remi_leadsheet_tokens = None
+            error_str = repr(e)
+
+        if remi_leadsheet_tokens is None:
+            self._update_stats(skipped=True, message=f"TransformError: Leadsheet parse error:{error_str}")
+            return None
+        if len(remi_leadsheet_tokens) < 10:
+            self._update_stats(skipped=True, message=f"TransformError: Leadsheet encoding of song_slice too short")
+            return None
+        if len(remi_leadsheet_tokens) > self.segment_max_leadsheet_len:
+            self._update_stats(skipped=True, message=f"TransformError: Leadsheet encoding of song_slice too long")
+            return None
+        return remi_leadsheet_tokens
+
 
     def __call__(self, item: Dict[str, Any]) -> Generator:
         meta = item[self.index_key]
@@ -239,7 +341,7 @@ class VocalTransforms(BaseTransforms):
 
         # Parse and transform meta
         try:
-            _, song_slices, style_text, artist_id, lyrics_confidence = self.meta_transform(meta)
+            _, song_slices, style_text, artist_id, lyrics_confidence, deepchorus = self.meta_transform(meta)
         except ZhMetaParseError as pe:
             self._update_stats(skipped=True, message=f"ParseError: {pe}")
             return
@@ -247,6 +349,8 @@ class VocalTransforms(BaseTransforms):
             self._update_stats(skipped=True, message=f"TransformError: {te}")
             return
 
+        use_section_tag_dropout = deepchorus is not None and deepchorus.confidence < 0.1
+        
         # Get track level audio
         try:
             audio = self.base_transform(item[self.audio_key])
@@ -260,6 +364,10 @@ class VocalTransforms(BaseTransforms):
         for song_slice in song_slices:
             clip, extra_clip = song_slice.slice_audio(audio, self.sample_rate, extra_audio)
             reformatted_phrases = self.phrase_dropout(phrases=song_slice.phrases)
+            
+            # TODO (qq) When a song's section tag is not reliable, drop out the tags.
+            # if use_section_tag_dropout:
+            #     reformatted_phrases = [phrase._replace(section_tag=None) for phrase in reformatted_phrases]
 
             # NOTE: `normalize_text` removes `:` for the singer tag.
             normalized_text = normalize_text(
@@ -274,15 +382,36 @@ class VocalTransforms(BaseTransforms):
             except SamiTokenizerError as e:
                 self._update_stats(skipped=True, message=f"Error tokenizing phrases: {e}")
                 continue
+
+            # Encode Leadsheet tokens
+            if self.leadsheet_codec != None:
+                if len(text_tokens) > self.segment_max_phone_len:
+                    self._update_stats(skipped=True, message=f"TransformError: Lyric phone seq too long")
+                    continue
+                if "mir_service" not in meta.keys():
+                    self._update_stats(skipped=True, message=f"No leadsheet transcription")
+                    continue
+                remi_leadsheet_tokens = self.encode_leadsheet(song_slice, item)
+                if remi_leadsheet_tokens is None:
+                    continue
+            else:
+                remi_leadsheet_tokens = np.array([0]) # placeholder
+            remi_leadsheet_tokens = torch.from_numpy(remi_leadsheet_tokens).long()
+            offset_token = int(song_slice.start) if song_slice.start is not None else 0
+
             yield {
                 "target_audio": clip,
                 "target_tokens_length": int(clip.shape[-1] / self.sample_rate * self.frame_rate),
                 "style_text": style_text,
                 "artist_id": artist_id,
                 "lyrics_confidence": lyrics_confidence,
+                "deepchorus_confidence": deepchorus.confidence,
                 "normalized_text": normalized_text,
                 "lyrics_tokens": text_tokens,
+                "remi_leadsheet_tokens": remi_leadsheet_tokens,
                 "max_phone_len": self.segment_max_phone_len,
+                "max_leadsheet_len": self.segment_max_leadsheet_len,
+                "offset_token": offset_token,
             } | {k: v for k, v in zip(self.extra_audio_keys, extra_clip)}
 
 
@@ -309,12 +438,14 @@ class VocalDataset(WebPipeline):
         segment_method: str = "random",
         max_seg_per_track: int = -1,
         segment_max_phone_len: int = 400,
+        segment_max_leadsheet_len: int = 1500,
         sinking_threshold: float = 0.51,
         quality_filter: bool = False,
         tag_taxonomy_lang: str = "SA",
         line_break_dropout_rate: float = 0.0,
         section_tag_dropout_rate: float = 0.0,
         extra_audio_keys=[],
+        leadsheet_codec=None,
         **kwargs,
     ):
         assert region in INDEX
@@ -335,11 +466,13 @@ class VocalDataset(WebPipeline):
             segment_method=segment_method,
             max_seg_per_track=max_seg_per_track,
             segment_max_phone_len=segment_max_phone_len,
+            segment_max_leadsheet_len=segment_max_leadsheet_len,
             sinking_threshold=sinking_threshold,
             quality_filter=quality_filter,
             tag_taxonomy_lang=tag_taxonomy_lang,
             line_break_dropout_rate=line_break_dropout_rate,
             section_tag_dropout_rate=section_tag_dropout_rate,
+            leadsheet_codec=leadsheet_codec,
             extra_audio_keys=extra_audio_keys
         )
         preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
@@ -389,6 +522,7 @@ class VocalParquetDataset(WebPipeline):
         segment_method: str = "random",
         max_seg_per_track: int = -1,
         segment_max_phone_len: int = 400,
+        segment_max_leadsheet_len: int = 1500,
         infer_structure_tags: bool = False,
         read_structure_tags: bool = False,
         sinking_threshold: float = 0.51,
@@ -397,6 +531,7 @@ class VocalParquetDataset(WebPipeline):
         line_break_dropout_rate: float = 0.0,
         section_tag_dropout_rate: float = 0.0,
         extra_audio_keys=[],
+        leadsheet_codec=None,
         **kwargs,
     ):
         print(f"[{self.name}] initializing...")
@@ -420,6 +555,7 @@ class VocalParquetDataset(WebPipeline):
             segment_method=segment_method,
             max_seg_per_track=max_seg_per_track,
             segment_max_phone_len=segment_max_phone_len,
+            segment_max_leadsheet_len=segment_max_leadsheet_len,
             infer_structure_tags=infer_structure_tags,
             read_structure_tags=read_structure_tags,
             sinking_threshold=sinking_threshold,
@@ -427,6 +563,7 @@ class VocalParquetDataset(WebPipeline):
             tag_taxonomy_lang=tag_taxonomy_lang,
             line_break_dropout_rate=line_break_dropout_rate,
             section_tag_dropout_rate=section_tag_dropout_rate,
+            leadsheet_codec=leadsheet_codec,
             extra_audio_keys=extra_audio_keys
         )
         preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
@@ -521,11 +658,13 @@ class MixVocalWebDataModule(DataModule):
         wds_dataset_weights: List[int] = [],
         parquet_dataset_ids: List[int] = [],
         parquet_dataset_weights: List[int] = [],
+        validation_parquet_dataset_ids: int = 1528,
         use_dynamic_batch: str = False,
         lyrics_field: str = "lyrics",
         lyrics_confidence: float = 0.8,
         segment_method: str = "random",
         segment_max_phone_len: int = 400,
+        segment_max_leadsheet_len: int = 1500,
         infer_structure_tags: bool = False,
         read_structure_tags: bool = False,
         max_seg_per_track: int = -1,
@@ -539,6 +678,7 @@ class MixVocalWebDataModule(DataModule):
         tag_taxonomy_lang: str = "SA",
         line_break_dropout_rate: float = 0.0,
         section_tag_dropout_rate: float = 0.0,
+        leadsheet_codec=None,
         extra_audio_keys=[]
     ):
         self.num_workers = num_workers
@@ -590,6 +730,7 @@ class MixVocalWebDataModule(DataModule):
                 segment_method=segment_method,
                 max_seg_per_track=max_seg_per_track,
                 segment_max_phone_len=segment_max_phone_len,
+                segment_max_leadsheet_len=segment_max_leadsheet_len,
                 use_soda_gt_lyrics=True,
                 lyrics_field=lyrics_field,
                 lyrics_confidence=lyrics_confidence,
@@ -604,6 +745,7 @@ class MixVocalWebDataModule(DataModule):
                 tag_taxonomy_lang=tag_taxonomy_lang,
                 line_break_dropout_rate=line_break_dropout_rate,
                 section_tag_dropout_rate=section_tag_dropout_rate,
+                leadsheet_codec=leadsheet_codec,
                 )]
         self.parquet_vocal_datasets = []
         if parquet_dataset_ids:
@@ -617,6 +759,7 @@ class MixVocalWebDataModule(DataModule):
                         segment_method=segment_method,
                         max_seg_per_track=max_seg_per_track,
                         segment_max_phone_len=segment_max_phone_len,
+                        segment_max_leadsheet_len=segment_max_leadsheet_len,
                         lyrics_field=lyrics_field,
                         lyrics_confidence=lyrics_confidence,
                         tokenizer=self.tokenizer,
@@ -632,6 +775,7 @@ class MixVocalWebDataModule(DataModule):
                         tag_taxonomy_lang=tag_taxonomy_lang,
                         line_break_dropout_rate=line_break_dropout_rate,
                         section_tag_dropout_rate=section_tag_dropout_rate,
+                        leadsheet_codec=leadsheet_codec,
                         extra_audio_keys=extra_audio_keys
                     ))
 
@@ -643,13 +787,14 @@ class MixVocalWebDataModule(DataModule):
 
         validation_dataset = [WebPipeline(
             VocalParquetDataset(
-                data_id=1528,
+                data_id=validation_parquet_dataset_ids,
                 min_duration=buckets_in_sec[0],
                 max_duration=buckets_in_sec[-1],
                 normalize_audio=normalize_audio,
                 segment_method=segment_method,
                 max_seg_per_track=1,
                 segment_max_phone_len=segment_max_phone_len,
+                segment_max_leadsheet_len=segment_max_leadsheet_len,
                 lyrics_field=lyrics_field,
                 lyrics_confidence=lyrics_confidence,
                 tokenizer=self.tokenizer,
@@ -666,6 +811,7 @@ class MixVocalWebDataModule(DataModule):
                 tag_taxonomy_lang=tag_taxonomy_lang,
                 line_break_dropout_rate=line_break_dropout_rate,
                 section_tag_dropout_rate=section_tag_dropout_rate,
+                leadsheet_codec=leadsheet_codec,
                 extra_audio_keys=[]
         ),
             pipeline=[{"compose": [self.bucketize]}],
@@ -710,6 +856,7 @@ class MixLangVocalWebDataModule(DataModule):
         lyrics_confidence: float = 0.8,
         segment_method: str = "random",
         segment_max_phone_len: int = 400,
+        segment_max_leadsheet_len: int = 1500,
         max_seg_per_track: int = -1,
         buckets_in_sec: List[int] = [
             20,
@@ -770,6 +917,7 @@ class MixLangVocalWebDataModule(DataModule):
                         segment_method=segment_method,
                         max_seg_per_track=max_seg_per_track,
                         segment_max_phone_len=segment_max_phone_len,
+                        segment_max_leadsheet_len=segment_max_leadsheet_len,
                         lyrics_field=lyrics_field,
                         lyrics_confidence=lyrics_confidence,
                         tokenizer=self.tokenizer,                
@@ -796,6 +944,7 @@ class MixLangVocalWebDataModule(DataModule):
                         segment_method=segment_method,
                         max_seg_per_track=max_seg_per_track,
                         segment_max_phone_len=segment_max_phone_len,
+                        segment_max_leadsheet_len=segment_max_leadsheet_len,
                         lyrics_field=lyrics_field,
                         lyrics_confidence=lyrics_confidence,
                         tokenizer=self.tokenizer,                
@@ -830,6 +979,7 @@ class MixLangVocalWebDataModule(DataModule):
                 segment_method=segment_method,
                 max_seg_per_track=1,
                 segment_max_phone_len=segment_max_phone_len,
+                segment_max_leadsheet_len=segment_max_leadsheet_len,
                 tokenizer=self.tokenizer,                
                 use_pipe=use_pipe,
                 resampled=False,
@@ -883,6 +1033,7 @@ class SftWebDataModule(DataModule):
         read_structure_tags: bool = False,
         segment_method: str = "random",
         segment_max_phone_len: int = 400,
+        segment_max_leadsheet_len: int = 1500,
         max_seg_per_track: int = -1,
         buckets_in_sec: List[int] = [
             20,
@@ -953,6 +1104,7 @@ class SftWebDataModule(DataModule):
                         segment_method=segment_method,
                         max_seg_per_track=max_seg_per_track,
                         segment_max_phone_len=segment_max_phone_len,
+                        segment_max_leadsheet_len=segment_max_leadsheet_len,
                         tokenizer=self.tokenizer,                
                         resampled=is_train,
                         shardshuffle=is_train,

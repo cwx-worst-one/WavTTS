@@ -10,7 +10,7 @@ def download_checkpoint(checkpoint_path, cache_dir):
         print(f'Downloading {checkpoint_path}')
         local_path.parent.mkdir(parents=True, exist_ok=True)
         # get the folder path
-        folder_path = '/'.join(local_path.parts[:-1])
+        folder_path = os.path.join(*local_path.parts[:-1])
         if '/home/' in checkpoint_path:
             os.system(f'hdfs dfs -get {checkpoint_path} {folder_path}')
         elif '/mnt/' in checkpoint_path:
