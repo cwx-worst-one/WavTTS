@@ -28,6 +28,7 @@ class SaveOutputsCallback(pl.Callback):
         save_style_audio=True,
         save_mode="wav",
         save_semantic_tokens=False,
+        save_mix_vocal_generated_audio=False,
     ):
         super().__init__()
         self.total_items = 0
@@ -36,6 +37,7 @@ class SaveOutputsCallback(pl.Callback):
         self.save_style_audio = save_style_audio
         self.save_mode = save_mode
         self.save_semantic_tokens = save_semantic_tokens
+        self.save_mix_vocal_generated_audio = save_mix_vocal_generated_audio
 
     def on_predict_batch_end(
         self,
@@ -58,6 +60,7 @@ class SaveOutputsCallback(pl.Callback):
             beam_size=self.beam_size,
             samples_to_save=self.samples_to_save,
             save_style_audio=self.save_style_audio,
+            save_mix_vocal_generated_audio=self.save_mix_vocal_generated_audio,
             save_mode=self.save_mode,
             save_semantic_tokens=self.save_semantic_tokens,
             leadsheet_codec=pl_module.semantic_module.extra_params.get("leadsheet_codec"),
@@ -85,21 +88,42 @@ class SaveOutputsCallback(pl.Callback):
         output_dir = pl_module.extra_params.output_dir
         with local_zero_first():
             if trainer.is_global_zero:
-                output_dir = Path(output_dir)
-                metadata_fps = list(output_dir.glob('**/*.metadata.json'))
-                if len(metadata_fps) == 0:
-                    return
-                index_fname = os.path.join(output_dir, "index.csv")
-                with open(index_fname, "w") as fw:
-                    fw.write("file_name,beam_id,audio_url\n")
-                    for fp in metadata_fps:
-                        with open(fp, "r") as f:
-                            metadata = json.load(f)
-                        file_name = metadata["file_name"]
-                        beam_id = metadata["index"]["beam_idx"]
-                        audio_url = metadata["audio_url"]
-                        fw.write(f"{file_name},{beam_id},{audio_url}\n")
-                print(f"Wrote index to {index_fname}")
+                summary_format = "default" if not self.save_mix_vocal_generated_audio else "singsong"
+                summarize_uploaded_results(output_dir, format=summary_format)
+
+
+def summarize_uploaded_results(output_dir, format="default"):
+    if format not in ["default", "singsong"]:
+        raise ValueError(f"Not supported format of summarying index csv: {format}")
+
+    output_dir = Path(output_dir)
+    metadata_fps = list(output_dir.glob('**/*.metadata.json'))
+    if len(metadata_fps) == 0:
+        return
+
+    index_fname = os.path.join(output_dir, "index.csv")
+    
+    with open(index_fname, "w") as fw:
+        if format == "default":
+            fw.write("file_name,beam_id,audio_url\n")
+            for fp in metadata_fps:
+                with open(fp, "r") as f:
+                    metadata = json.load(f)
+                file_name = metadata["file_name"]
+                beam_id = metadata["index"]["beam_idx"]
+                audio_url = metadata["audio_url"]
+                fw.write(f"{file_name},{beam_id},{audio_url}\n")  
+        elif format == "singsong":
+            fw.write("file_name,accomp_audio_url,vocal_audio_url,mixed_audio_url\n")
+            for fp in metadata_fps:
+                with open(fp, "r") as f:
+                    metadata = json.load(f)
+                file_name = metadata["file_name"]
+                accomp_audio_url = metadata["audio_url"]
+                vocal_audio_url = metadata["vocal_audio_url"]
+                mixed_audio_url = metadata["mixed_audio_url"]
+                fw.write(f"{file_name},{accomp_audio_url},{vocal_audio_url},{mixed_audio_url}\n")
+    print(f"Wrote index to {index_fname}")
 
 
 def format_lyrics_and_style(style_text, lyrics=None):
@@ -140,6 +164,7 @@ def save_batch_outputs(
     save_mode="wav",
     save_semantic_tokens=False,
     leadsheet_codec=None,
+    save_mix_vocal_generated_audio=False,
 ):
     conditions = batch['conditions']
     if isinstance(conditions, list):
@@ -246,6 +271,18 @@ def save_batch_outputs(
             else:
                 input_vocals_fp = os.path.join(wav_dir, f"{file_name}.vocal_audio.wav")
                 save_wav(vocal_audio[ii].cpu().float(), input_vocals_fp, sr=24000, save_mp3=save_mode == "mp3")
+        
+        if save_mix_vocal_generated_audio and vocal_audio is not None and beam_idx == 0:
+
+            mixed_audio = mix_two_audio_tensors(vocal_audio[ii].cpu().float(), wav.cpu().float())
+
+            if save_mode == "upload":
+                audio_bytes = audio_tensor_to_bytes(mixed_audio, 24000)
+                metadata["mixed_audio_url"] = upload_to_easycycle(audio_bytes, f"{file_name}.mixed_audio")
+            else:
+                input_vocals_fp = os.path.join(wav_dir, f"{file_name}.mixed_audio.wav")
+                save_wav(mixed_audio, input_vocals_fp, sr=24000, save_mp3=save_mode == "mp3")
+            
 
         if save_semantic_tokens and semantic_tokens is not None:
             semantic_tokens_fp = os.path.join(wav_dir, f"{wav_file_name}.semantic_tokens.pt")
@@ -473,3 +510,29 @@ def merge_full_song(input_txt_dir, sample_rate, predict_dir, infer_tag="", save_
             soundfile.write(save_path, audio, sample_rate, "PCM_16")
         else:
             print("Empty Fullsong, please check input:", save_path, input_txt_dir, infer_tag, sample_rate, predict_dir)
+
+
+def mix_two_audio_tensors(tensor_1, tensor_2):
+    def to_stereo(audio):
+        if audio.ndim == 1:
+            return audio.unsqueeze(0).repeat((2,1))
+        elif audio.ndim == 2:
+            return audio
+        else:
+            raise ValueError(f"Cannot handle audio data with ndim: {audio.ndim}")
+
+    tensor_1 = to_stereo(tensor_1)
+    tensor_2 = to_stereo(tensor_2)
+
+    if tensor_1.ndim != tensor_2.ndim:
+        raise ValueError(f"Cannot mix tensors with different ndims: {tensor_1.ndim} and {tensor_2.ndim}")
+
+    length = min(tensor_1.shape[-1], tensor_2.shape[-1])
+    if tensor_1.ndim == 1:
+        mixed = tensor_1[:length] + tensor_2[:length]
+        return mixed / mixed.max()
+    elif tensor_1.ndim == 2:
+        mixed = tensor_1[:,:length] + tensor_2[:,:length]
+        return mixed / mixed.max()
+    
+    raise ValueError(f"Cannot handle tensors with ndim as :{tensor_1.ndim}")

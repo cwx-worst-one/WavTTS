@@ -652,7 +652,7 @@ def transform_utts_to_song_slices_heuristic(
     new_line_token='\n',
     infer_structure_tags=False
 ) -> List[SongSlice]:
-    # Segment the full song into segments, each segment consists of multiple utterances.
+    """Segment the full song into segments, each segment consists of multiple utterances. Refactored from group_utterances"""
     utterances = _format_utterances(utterances)
     if not utterances:
         return []

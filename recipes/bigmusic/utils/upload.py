@@ -1,3 +1,4 @@
+import os
 from bytedance import easycycle
 import uuid
 import datetime
@@ -24,6 +25,10 @@ def retry(times, delay=1):
 
 
 def audio_tensor_to_bytes(audio, sr, format="wav"):
+    
+    if audio.ndim == 1:
+        audio = audio.unsqueeze(0).repeat((2,1))
+
     handle = io.BytesIO()
     torchaudio.save(handle, audio, sr, format=format)
     handle.seek(0)
@@ -37,7 +42,8 @@ def upload_to_easycycle(data, fname, space_name=None, format="wav"):
     
     file_name = fname + "." + uuid.uuid4().hex + "." + format
     expires = 60 * 60 * 24 * 365 * 10   # 10 years
+    host = easycycle.Host.CN if os.getenv("ARNOLD_REGION", "US") == "CN" else easycycle.Host.US
     url = easycycle.upload_data_and_get_public_url(
-        easycycle.Host.US, 'wangtuo.todd', data, space_name, file_name, expires
+        host, 'wangtuo.todd', data, space_name, file_name, expires
     )
     return url

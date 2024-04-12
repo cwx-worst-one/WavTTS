@@ -90,6 +90,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         mulan_crop = extra_params.get('mulan_crop', True)
         mulan_average = extra_params.get('mulan_average', True)
 
+        self.augmented_noise_gain = extra_params.get('augmented_noise_gain', 0.01)
         self.prepare_input_types = extra_params.get("prepare_input_types", []) # m1_tagger, mulan_tagger
         embedder_dict = {}
         for emb_type in extra_params.get("input_embedders", ["mulan", "lyrics_tokens"]):
@@ -431,6 +432,7 @@ class SemanticModule(BaseContinuousEmbedModule):
             embeds = speaker_embedder.get_sos_embed(batch_size)
         return embeds
 
+    # TODO: make this into a static method (vibertthio)
     def prepare_acc_audio_inputs(self, batch, acc_embedder: BestRQTokenEmbedder):
         conditions = self.infer_conditions(batch)
         batch_size = self.infer_batch_size(batch)
@@ -440,10 +442,17 @@ class SemanticModule(BaseContinuousEmbedModule):
             embeds = acc_embedder.get_sos_embed(batch_size)
         return embeds
 
+    # TODO: make this into a static method (vibertthio)
     def prepare_vocal_audio_inputs(self, batch, vocal_embedder: BestRQTokenEmbedder):
         conditions = self.infer_conditions(batch)
         batch_size = self.infer_batch_size(batch)
-        if "vocal_audio" in conditions: 
+        
+        if "noisy_vocal_audio" in conditions:
+            vocal_audio = batch['vocal_audio']
+            noise = (torch.rand_like(vocal_audio) - 0.5) * self.augmented_noise_gain
+            vocal_audio = vocal_audio + noise
+            embeds = vocal_embedder.embed(self.requires, vocal_audio, with_sos=True)
+        elif "vocal_audio" in conditions:
             embeds = vocal_embedder.embed(self.requires, batch['vocal_audio'], with_sos=True)
         else:
             embeds = vocal_embedder.get_sos_embed(batch_size)
@@ -641,12 +650,12 @@ class SemanticModule(BaseContinuousEmbedModule):
     def _shared_step(self, batch, update_mfu=False):
         with self.profiler.profile(f"bigmusic.prepare_training_inputs{self.trainer.global_step}"):
             training_inputs = self.prepare_training_inputs(batch)
-            input_ids = training_inputs['model_inputs']
-            target_ids = training_inputs['target_ids']
+            model_inputs = training_inputs['model_inputs']  # If use_cross_attn is False { "input_embedds": (B, T_input+T_target, hidden_size) }
+            target_ids = training_inputs['target_ids']  # (B, T_target)
 
         if update_mfu:
-            if "inputs_embeds" in input_ids:
-                b, t, _ = input_ids["inputs_embeds"].shape
+            if "inputs_embeds" in model_inputs:
+                b, t, _ = model_inputs["inputs_embeds"].shape
                 self.metric.update(
                     num_tokens=b * t,
                     stage=self.trainer.state.stage,
@@ -660,7 +669,7 @@ class SemanticModule(BaseContinuousEmbedModule):
                     )
 
         with self.profiler.profile(f"bigmusic.forward.step{self.trainer.global_step}"):
-            model_output = self.model(**input_ids, output_hidden_states=True)
+            model_output = self.model(**model_inputs, output_hidden_states=True)
         if isinstance(model_output, dict):
             logits = model_output["logits"]
             last_hidden_state = model_output['hidden_states'][-1]
@@ -673,7 +682,7 @@ class SemanticModule(BaseContinuousEmbedModule):
             loss_mask = sequence_mask(
                 training_inputs['target_lengths'], max_len=target_ids.shape[1], device=target_ids.device)
         loss = self.criterion(target_logits, target_ids, loss_mask)
-        if loss_mask is not None:
+        if loss_mask is None:
             loss_mask = torch.ones_like(target_ids)
         accu = ((target_logits.argmax(dim=-1) == target_ids).float() * loss_mask).sum() / loss_mask.sum() * 100
         # measure accuracy of first 10 tokens as a measurement for style

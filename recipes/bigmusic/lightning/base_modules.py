@@ -237,10 +237,12 @@ class BaseContinuousEmbedModule(BaseModule):
             self.target_embedder.apply(self.model._init_weights)
         self.use_cross_attn = self.extra_params.get("use_cross_attn", False)
 
+    # TODO: make this into a static method (vibertthio)
     def infer_batch_size(self, batch):
         batch_size = [len(t) for t in batch.values() if torch.is_tensor(t) or isinstance(t, list)][0]
         return batch_size
 
+    # TODO: make this into a static method (vibertthio)
     def infer_conditions(self, batch):
         if type(batch["conditions"]) == list:
             assert (

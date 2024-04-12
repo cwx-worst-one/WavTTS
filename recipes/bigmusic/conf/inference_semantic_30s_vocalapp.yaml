@@ -50,6 +50,11 @@ extra_params:
     sample_mode: "gumbel"
     token2wav_type: diffusion
 
+    # checkpoints
+    bestrq_ckpt_hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
+    diffusion_ckpt_hpath: /mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last.ckpt
+    vocoder_ckpt_hpath: hdfs://harunava/home/byte_speech_sv/weitsung.lu/soundstream/dac_vae_125hz_24k_v2_part2/checkpoints/soundstream-step=374999-val_sdr=12.9557.ckpt
+
 run_opts:
     fast_dev_run: False
     precision: 32
@@ -58,6 +63,9 @@ run_opts:
     cache_dir: .module_cache/musiclm
     batch_size: 8
     num_workers: 8
+
+    # callbacks
+    save_mode: wav
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -85,12 +93,12 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
     required_modules:
         bestrq_modules:
             bestrq:
-                hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
+                hpath: !ref <extra_params[bestrq_ckpt_hpath]>
                 initializer: !name:recipes.umm.requires.model_initializer.init_stage3
                     cache_dir: !ref <run_opts[cache_dir]>
         diffusion_modules:
             diffusion:
-                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/model_14_30s_finetune/checkpoints/last.ckpt
+                hpath: !ref <extra_params[diffusion_ckpt_hpath]>
                 initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
                     cache_dir: !ref <run_opts[cache_dir]>
             sampler:
@@ -98,7 +106,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                 initializer: !name:recipes.diffusion.inference_from_text_lyrics2song.init_sampler
                     cache_dir: !ref <run_opts[cache_dir]>
             vocoder:
-                hpath: hdfs://harunava/home/byte_speech_sv/weitsung.lu/soundstream/dac_vae_125hz_24k_v2_part2/checkpoints/soundstream-step=374999-val_sdr=12.9557.ckpt
+                hpath: !ref <extra_params[vocoder_ckpt_hpath]>
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                     cache_dir: !ref <run_opts[cache_dir]>
         mulan_modules:
@@ -128,6 +136,8 @@ additional_callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
 callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
+      save_mode: !ref <run_opts[save_mode]>
+      save_mix_vocal_generated_audio: True
 
 trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>
@@ -138,4 +148,5 @@ trainer: !new:pytorch_lightning.Trainer
     enable_model_summary: True
     strategy: !ref <run_opts[strategy]>
     precision: !ref <run_opts[precision]>
-    callbacks: !apply:operator.add [!ref <additional_callbacks>, !ref <callbacks>]
+    # callbacks: !apply:operator.add [!ref <additional_callbacks>, !ref <callbacks>]
+    callbacks: !ref <callbacks>

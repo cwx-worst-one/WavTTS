@@ -29,6 +29,9 @@ extra_params:
     tokenizer: "phoneme" # or wordpiece
     parquet_dataset_ids: [96]  # groupA: 96, karaoke: 95, karaoke val: 94
     parquet_dataset_weights: [1]
+    mulan_ckpt_hpath: hdfs://haruna/home/byte_speech_sv/vibertthio/checkpoints/mulan/mulan-g4-singsong-v01.ckpt
+    umm_tokenizer_ckpt_hpath: hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
+    augmented_noise_gain: 0.01
 
 
 # running parameters
@@ -57,7 +60,9 @@ run_opts:
     max_seg_per_track: -1
     exclude_licenses: ["C"]
     segment_max_phone_len: 400
-    region: US  # groupA, groupA-Ka, groupA-Ka, Ka # not used actually
+    save_top_k: 20
+    trainer_log_every_n_steps: 500
+    region: !apply:os.getenv ["BYTE_REGION", "CN"]  # groupA, groupA-Ka, groupA-Ka, Ka # not used actually
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -127,13 +132,11 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
     extra_params: !ref <extra_params>
     required_modules:
         bestrq:
-            # US UMM-chroma stage 3
-            hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0030000.ckpt
+            hpath: !ref <extra_params[umm_tokenizer_ckpt_hpath]>
             initializer: !name:recipes.umm.requires.model_initializer.init_stage3
                 cache_dir: !ref <run_opts[cache_dir]>
         mulan:
-            # hpath: /mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=014000-median_rank_1=160-kaggle.ckpt
-            hpath: /mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=024600-kaggle.ckpt   #110
+            hpath: !ref <extra_params[mulan_ckpt_hpath]>
             initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                 cache_dir: !ref <run_opts[cache_dir]>
                 version: "g4"
@@ -154,7 +157,7 @@ logger:
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
-      save_top_k: 20
+      save_top_k: !ref <run_opts[save_top_k]>
       save_last: True
       monitor: val_accu_0
       mode: max
@@ -162,7 +165,7 @@ callbacks:
     - !new:samantha.callbacks.HDFSModelCheckpoint
       hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
       monitor: step
-      save_top_k: 20
+      save_top_k: !ref <run_opts[save_top_k]>
       save_last: True
       every_n_train_steps: !ref <run_opts[val_check_interval]>
       mode: max
@@ -171,7 +174,7 @@ callbacks:
       logging_interval: 'step'
     # TODO, how to set the validation callbacks based on the application type?
     # - !new:pytorch_lightning.callbacks.ModelCheckpoint
-    #   save_top_k: 20
+    #   save_top_k: !ref <run_opts[save_top_k]
     #   save_last: True
     #   monitor: val_accu_1
     #   mode: max
@@ -197,7 +200,7 @@ trainer: !new:pytorch_lightning.Trainer
     num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
     deterministic: False
     enable_model_summary: True
-    log_every_n_steps: 500
+    log_every_n_steps: !ref <run_opts[trainer_log_every_n_steps]>
     max_steps: !ref <run_opts[max_steps]>
     precision: !ref <run_opts[precision]>
     accumulate_grad_batches: 1

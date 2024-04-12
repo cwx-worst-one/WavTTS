@@ -21,15 +21,18 @@ from webdataset.pipeline import DataPipeline
 import logging, phonemizer
 from recipes.bigmusic.datasets.tokenizers.phoneme import MAX_PHONE_LEN
 from recipes.bigmusic.utils.format_utils import normalize_text
-from recipes.bigmusic.datasets.transforms.lyrics_segment import force_aligned_word_format_to_line_format
+from recipes.bigmusic.datasets.transforms.lyrics_segment import (
+    Segment,
+    group_by_fixed_length,
+    group_by_variable_length,
+)
 from recipes.datasets.mcc.mix import (
     INDEX,
     LibriTTSDataset,
     MCCInstrumentalDataset,
     MCCVocalDataset,
     WebDatasetBufferPreprocessor,
-    BaseTransforms,
-    DataModule
+    BaseTransforms
 )
 from recipes.datasets.mcc.sami_tokenizer import convert_labels_to_text_id
 from recipes.bigmusic.utils.format_utils import rewrite_metadata
@@ -39,9 +42,6 @@ from recipes.musiclm.transforms.audio import (
     LoudnessCheck,
     NormalizeAudio,
     ReadMP3,
-    NormalizeAudioToFloat32,
-    SetAudioDimensions,
-    ToTensor,    
 )
 
 from samantha.dataio.batching import BucketBatcher
@@ -52,6 +52,7 @@ from samantha.dataio.webdataset.pipeline import WebPipeline
 from samantha.transforms.audio import (
     NormalizeAudioToFloat32,
     RandomPad,
+    Pad,
     SetAudioDimensions,
     ToTensor,
     RandomResizedCrop,
@@ -59,6 +60,7 @@ from samantha.transforms.audio import (
 from samantha.utils.webdataset import return_self
 from transformers import Wav2Vec2PhonemeCTCTokenizer
 import functools
+
 MAX_STYLE_LEN = 16
 
 def pad_crop(sequence, seq_len, dtype, padding_value=0):
@@ -126,6 +128,8 @@ def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
     song_id = []
     shard = []
     worker_id = []
+
+    
     for idx in range(len(batch)):        
         audio.append(random_pad(batch[idx]["audio"]))
         
@@ -419,17 +423,18 @@ def vpp_collate_fn(batch: List[torch.Tensor], app_type: str) -> Dict[str, torch.
     SPEAKER_PAD_ID = 0
     PHONE_PAD_ID = 0 
     STYLE_PAD_ID = 0 
-    max_phone_len = int(batch[0]["max_phone_len"])    
+    max_phone_len = int(batch[0]["max_phone_len"])
     max_length = max([x["audio"].shape[-1] for x in batch])
-    random_pad = RandomPad(n_samples=max_length)
-
-    acc_pad = random_pad
-    vocal_pad = random_pad
+    target_audio_pad = RandomPad(n_samples=max_length)
+    
+    acc_pad = target_audio_pad
+    vocal_pad = target_audio_pad
     if app_type == "singsong":
+        target_audio_pad = Pad(n_samples=max_length)
         vocal_max_length = max([x["vocal_audio"].shape[-1] for x in batch])
-        vocal_pad = RandomPad(n_samples=vocal_max_length)
+        vocal_pad = Pad(n_samples=vocal_max_length)
         acc_max_length = max([x["acc_audio"].shape[-1] for x in batch])
-        acc_pad = RandomPad(n_samples=acc_max_length)
+        acc_pad = Pad(n_samples=acc_max_length)
 
     elif app_type == "singsong_inverse":
         vocal_max_length = max([x["vocal_audio"].shape[-1] for x in batch])
@@ -458,8 +463,11 @@ def vpp_collate_fn(batch: List[torch.Tensor], app_type: str) -> Dict[str, torch.
     song_id = []
     shard = []
     worker_id = []
+    uttid = []
+    idx_seg = []
+    
     for idx in range(len(batch)):       
-        audio.append(random_pad(batch[idx]["audio"]))
+        audio.append(target_audio_pad(batch[idx]["audio"]))
 
 
         if app_type == "singsong":
@@ -483,7 +491,6 @@ def vpp_collate_fn(batch: List[torch.Tensor], app_type: str) -> Dict[str, torch.
         
         style_text_tokens, _ = pad_crop(
             batch[idx].get("style_tokens", default_style_token.detach().clone()),
-            # torch.tensor(batch[idx].get("style_tokens", default_style_token.detach().clone())), 
             MAX_STYLE_LEN, torch.int, STYLE_PAD_ID)
         style_tokens.append(style_text_tokens)
 
@@ -491,7 +498,6 @@ def vpp_collate_fn(batch: List[torch.Tensor], app_type: str) -> Dict[str, torch.
         
         phoneme_tokens, _ = pad_crop(
             batch[idx].get("lyrics_tokens", default_lyrics_token.detach().clone()),
-            # torch.tensor(batch[idx].get("lyrics_tokens", default_lyrics_token.detach().clone())), 
             max_phone_len, torch.int, PHONE_PAD_ID)
         lyrics_tokens.append(phoneme_tokens)
         
@@ -502,7 +508,10 @@ def vpp_collate_fn(batch: List[torch.Tensor], app_type: str) -> Dict[str, torch.
         song_id.append(batch[idx].get("song_id", None))
         shard.append(batch[idx].get("shard", None))
         worker_id.append(batch[idx].get("worker_id", None))
+        uttid.append(batch[idx].get("uttid", None))
+        idx_seg.append(batch[idx].get("idx_seg", None))
 
+    # TODO: Clarify the dimensions in audio, vocal_audio, and acc_audio. Squeeze here assumes certain redundant dimensions which may not be presented. (vibertthio)
     stacked_audio = torch.stack(audio, dim=0)
     if stacked_audio.dim() == 3:
         stacked_audio = stacked_audio.squeeze(1)
@@ -516,7 +525,7 @@ def vpp_collate_fn(batch: List[torch.Tensor], app_type: str) -> Dict[str, torch.
     if app_type == "vclone":
         conditions = "acc_audio,lyrics_tokens,vocal_audio"
     elif app_type == "singsong":
-        conditions = "lyrics_tokens,vocal_audio"
+        conditions = "noisy_vocal_audio"
     elif app_type == "singsong_inverse":
         conditions = "lyrics_tokens,acc_audio"
     elif app_type == "singsong_inverse_vc":
@@ -539,6 +548,8 @@ def vpp_collate_fn(batch: List[torch.Tensor], app_type: str) -> Dict[str, torch.
         "song_id": song_id,
         "shard": shard,
         "worker_id": worker_id,
+        "uttid": uttid,
+        "idx_seg": idx_seg,
     }
 
 def get_collate_fn(app_type):
@@ -552,7 +563,7 @@ def group_utterances(utterances, min_duration, max_duration, time_in_sec=False, 
     for i, u in enumerate(utterances[1:]):
         phone = u.get('phoneme', '')
         phone = phone if phone else ''
-
+        
         if "startTimeMs" in u:
             u["start_time"] = u["startTimeMs"]
             time_in_sec = False
@@ -588,35 +599,38 @@ def group_utterances(utterances, min_duration, max_duration, time_in_sec=False, 
             return []
     utterances = [u for u in utterances if u[1]-u[0] > 0]
     segs = []
-    i = 0
-    s, cur_seg = i, []        
-    while i < len(utterances):
-        if utterances[i][1] - utterances[s][0] < min_duration:
-            cur_seg.append(utterances[i])                
-            i += 1
+    close_end_index = 0
+    start_index, cur_seg = close_end_index, []        
+    while close_end_index < len(utterances):
+        if utterances[close_end_index][1] - utterances[start_index][0] < min_duration:
+            cur_seg.append(utterances[close_end_index])                
+            close_end_index += 1
         else:
-            j = i
-            while j < len(utterances) and utterances[j][1] - utterances[s][0] <= max_duration:
-                j += 1
-            if j == i:
-                i = s + 1
+            far_end_index = close_end_index
+            while far_end_index < len(utterances) and utterances[far_end_index][1] - utterances[start_index][0] <= max_duration:
+                far_end_index += 1
+            if far_end_index == close_end_index:
+                close_end_index = start_index + 1
             else:
-                k = random.randint(i+1, j)
-                cur_seg.extend([utterances[k] for k in range(i, k)])
-                segs.append([cur_seg[0][0], cur_seg[-1][1], 
-                            new_line_token.join([u[2] for u in cur_seg]),
-                            new_line_token.join([u[3] for u in cur_seg])])
-                i = k
+                end_index = random.randint(close_end_index+1, far_end_index)
+                cur_seg.extend([utterances[pos] for pos in range(close_end_index, end_index)])
+                segs.append([
+                    cur_seg[0][0],  # new start
+                    cur_seg[-1][1],  # new end
+                    new_line_token.join([u[2] for u in cur_seg]),
+                    new_line_token.join([u[3] for u in cur_seg])
+                ])
+                close_end_index = end_index
             # Move to the next vocal starting point
-            while i < len(utterances):
-                if len(utterances[i][2]) >= 2:
+            while close_end_index < len(utterances):
+                if len(utterances[close_end_index][2]) >= 2:
                     break
-                i += 1
-            if i < len(utterances):
-                s, cur_seg = i, []        
+                close_end_index += 1
+            if close_end_index < len(utterances):
+                start_index, cur_seg = close_end_index, []        
     return segs
 
-    
+
 def group_utterances_vpp(utterances, min_duration, max_duration, time_in_sec=False, include_intro=False):
     if time_in_sec:
         utterances = [(int(u['start_time']), int(u['end_time']), u['text'], u['words']) for u in utterances]            
@@ -1497,7 +1511,7 @@ class VppParquetDataset(WebPipeline):
         print(f"[{self.name}] initializing...")
         dataset = ParquetDataset(data_id=data_id, data_urls=url_pattern, extra_fields_in_data=["vocal", "acc"], **kwargs)
         
-        transforms = VocalAppZhTransforms(
+        transforms = VocalAppZhTransformsRefactored(
             sample_rate=sample_rate,
             audio_key=audio_key,
             index_key=index_key,
@@ -1525,8 +1539,6 @@ class VppParquetDataset(WebPipeline):
         pipeline = [{"compose": [preprocessor.train_buffer_preprocessor]}]
         super().__init__(dataset, pipeline)
         print(f"[{self.name}] initialized.")
-
-
 
 
 class VocalZhParquetDataset(WebPipeline):
@@ -2013,7 +2025,7 @@ class VocalAppZhTransforms(BaseTransforms):
         self.base_transform = Compose(base_transforms)
 
     def is_confident_lyrics(self, utterance, threshold):
-
+        # Compare mean of confidence of all utterances to threshold
         conf, num_utt = 0., 0.
         for utt in utterance:
             if utt['text'].strip():
@@ -2049,12 +2061,16 @@ class VocalAppZhTransforms(BaseTransforms):
     def __call__(self, item: Dict[str, Any]) -> Generator:
         # Extract utterances
         meta = item[self.index_key]
-        item['audio'] = item['wav']
+        if 'audio' not in item:
+            item['audio'] = item['wav']
 
+        # assume meta is presented as either string or dict
         if isinstance(meta, str):
             meta = json.loads(meta)
+
+        # handle 2 formats of lyrics data in meta
         if self.use_soda_gt_lyrics and "lyrics_gt" in meta:
-            lyrics_field = "lyrics_gt"            
+            lyrics_field = "lyrics_gt"
             utterances = meta.get(lyrics_field, None)
         else:
             lyrics_field = "lyrics"
@@ -2078,6 +2094,7 @@ class VocalAppZhTransforms(BaseTransforms):
             # if not self.is_confident_lyrics(utterances, self.lyrics_confidence):
             #     self._update_stats(skipped=True, message="Low confidence lyrics")
             #     return            
+
         if utterances is None or len(utterances) == 0:
             self._update_stats(skipped=True, message="No utterances")
             return
@@ -2342,6 +2359,335 @@ class VocalAppZhDataset(WebPipeline):
         print(f"[{self.name}] initialized.")
 
 
+# singsong refactor
+class VocalAppZhTransformsRefactored(BaseTransforms):
+    name = "VocalAppZhTransformsRefactored"
+    data_sample_rate = 24000
+
+    def __init__(
+        self,
+        sample_rate: int = 24000,
+        audio_key = "audio",
+        index_key = "__index_data__",
+        min_duration: int = 1,
+        max_duration: int = 30,
+        min_volume_threshold: float = 0.05,
+        loudness_ratio_threshold: float = 0.2,
+        lyrics_confidence: float = 0.5,
+        normalize_audio: bool = False,
+        tokenizer=None,
+        frame_rate: int = 25,
+        segment_method = "random",
+        max_seg_per_track: int = -1,
+        segment_max_phone_len: int = 400,
+        include_intro: bool = False,
+        use_soda_gt_lyrics: bool = True,
+        vocal_key = 'vocal',
+        style_key = 'acc',
+        voice_clone_duration: int = -1,
+        app_type = "vclone",
+        singsong_predict_type = "BGM" # FULL
+    ):
+        super().__init__()
+        self.sample_rate = sample_rate
+        self.min_duration = min_duration
+        self.max_duration = max_duration
+        self.min_volume_threshold = min_volume_threshold
+        self.loudness_ratio_threshold = loudness_ratio_threshold
+        self.lyrics_confidence = lyrics_confidence
+        self.audio_key = audio_key
+        self.index_key = index_key  
+        self.tokenizer = tokenizer
+        self.frame_rate = frame_rate
+        self.segment_method = segment_method
+        self.max_seg_per_track = max_seg_per_track
+        self.segment_max_phone_len = segment_max_phone_len
+        self.include_intro = include_intro
+        self.use_soda_gt_lyrics = use_soda_gt_lyrics
+        self.vocal_key = vocal_key
+        self.style_key = style_key
+        self.voice_clone_duration = voice_clone_duration
+        self.app_type = app_type
+        self.singsong_predict_type = singsong_predict_type
+
+
+        assert self.tokenizer
+        base_transforms = [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
+        if self.data_sample_rate != sample_rate and self.audio_key.endswith("npy"):
+            base_transforms.append(Resample(self.data_sample_rate, sample_rate))
+        if normalize_audio:
+            base_transforms.append(FastNormalizeAudio())
+        self.base_transform = Compose(base_transforms)
+
+    def is_confident_lyrics(self, utterance, threshold):
+        # Compare mean of confidence of all utterances to threshold
+        conf, num_utt = 0., 0.
+        for utt in utterance:
+            if utt['text'].strip():
+                conf += float(utt["confidence"])
+                num_utt += 1
+        if num_utt == 0:
+            return False
+        conf /= num_utt
+        return True if conf > threshold else False
+    
+    def _convert_to_msec(self, t):
+        minute, second = [int(x) for x in t.split(':')]
+        return 1000*(minute * 60 + second)
+
+    def _is_valid_lyric_line(self, line, lyric_type="krc"):
+        if lyric_type == "krc":
+            time_char = line.split(']')
+            if len(time_char) != 2:
+                return False
+            times = time_char[0][1:].split(',')
+            if len(times) != 2:
+                return False
+            return True if times[0].isdigit() and times[1].isdigit() else False
+        elif lyric_type == "lrc":
+            time_char = line.split(']')
+            if len(time_char) != 2:
+                return False
+            return True if len(time_char[0]) == 9 else False
+        else:
+            raise ValueError
+
+
+    def __call__(self, item: Dict[str, Any]) -> Generator:
+        # Extract utterances
+        meta = item[self.index_key]
+        if 'audio' not in item:
+            item['audio'] = item['wav']
+
+        # assume meta is presented as either string or dict
+        if isinstance(meta, str):
+            meta = json.loads(meta)
+
+        # handle 2 formats of lyrics data in meta
+        if self.use_soda_gt_lyrics and "lyrics_gt" in meta:
+            lyrics_field = "lyrics_gt"
+            utterances = meta.get(lyrics_field, None)
+        else:
+            lyrics_field = "lyrics"
+            lyrics = meta.get(lyrics_field, None)
+            if lyrics is None:
+                self._update_stats(skipped=True, message="No lyrics")
+                return
+            
+            if "utterances" in lyrics:
+                utterances = lyrics.get('utterances', None)
+            else:
+                result = lyrics.get('result', None)
+                if result is None or len(result) != 1:
+                    self._update_stats(skipped=True, message="No result")
+                    return
+                utterances = result[0].get("utterances", None)
+
+            # utterances = lyrics.get('utterances', None)
+            # print(lyrics.keys())
+            
+            # if not self.is_confident_lyrics(utterances, self.lyrics_confidence):
+            #     self._update_stats(skipped=True, message="Low confidence lyrics")
+            #     return            
+
+        if utterances is None or len(utterances) == 0:
+            self._update_stats(skipped=True, message="No utterances")
+            return
+
+        # Extract segments from utterances
+        new_line_token = " <n> "
+        if isinstance(self.tokenizer, BertTokenizer):
+            self.tokenizer.add_special_tokens({'additional_special_tokens': [new_line_token]})
+        
+        segments = []
+        for utterance in utterances:
+            segments.append(Segment.from_utt(utterance))
+        segments = [[seg.start, seg.end, seg.text, seg.phoneme] for seg in segments]
+        
+        # segments = group_utterances(utterances, self.min_duration, self.max_duration,
+        #                             time_in_sec=False, include_intro=self.include_intro,
+        #                             new_line_token=new_line_token)
+        vocal_segments = group_utterances(utterances, self.voice_clone_duration-1, self.voice_clone_duration,
+                                    time_in_sec=False, include_intro=self.include_intro,
+                                    new_line_token=new_line_token)
+        random.shuffle(vocal_segments)
+
+        if len(segments) < 1:
+            return
+        if self.voice_clone_duration > 0 and len(vocal_segments) < 1:
+            return
+
+        if self.segment_method == "first":
+            segments = segments[:1]
+        elif self.max_seg_per_track > 0:
+            random.shuffle(segments) # already shuffled, can't guarantee distant segment
+            segments = segments[:self.max_seg_per_track]
+
+        # Get style text
+        metadata = dict()
+        # Try read English genre tag. Source: Q music tag, WYY tag, MCC tag.
+        tags = meta.get("tags", None)
+        if tags:
+            if isinstance(tags, str):
+                tags = json.loads(tags)
+            if "zq" in tags and tags["zq"][0] != 'Other':
+                metadata['final_genre'] = tags["zq"][0]
+            elif "wyy" in tags:
+                metadata['final_genre'] = tags["wyy"][0]
+            elif "merge_genre" in meta:
+                mcc_genres = meta["merge_genre"]
+                # print("tag, mcc meta", tags, mcc_genres)
+                if isinstance(mcc_genres, str):
+                    mcc_genres = mcc_genres.split(',')
+                if isinstance(mcc_genres, List):
+                    random.shuffle(mcc_genres)
+                    metadata['final_genre'] = mcc_genres[0]
+        elif "merge_genre" in meta:
+            mcc_genres = meta["merge_genre"]
+            # print("mcc meta", mcc_genres)
+            if isinstance(mcc_genres, str):
+                mcc_genres = mcc_genres.split(',')
+            random.shuffle(mcc_genres)
+            metadata['final_genre'] = mcc_genres[0]            
+        # Try read MCC mood tag
+        if "merge_mood" in meta:
+            mcc_moods = meta["merge_mood"]
+            # print("mcc meta", mcc_moods)
+            random.shuffle(mcc_moods)
+            metadata['final_mood'] = mcc_moods[0]
+        style_text = rewrite_metadata(metadata)
+
+        # Get track level audio
+        try:
+            audio = self.base_transform(item[self.audio_key])
+            acc = self.base_transform(item[self.style_key])
+            vocal = self.base_transform(item[self.vocal_key])
+        except Exception as e:
+            self._update_stats(skipped=True, message=f"Error loading audio: {e}")
+            return
+
+        # Yield one example per segment
+        for idx_seg, segment in enumerate(segments):
+            if segment[1] - segment[0] < self.voice_clone_duration:
+                print("not long enough for voice clone")
+                continue
+            start = int(segment[0] * self.sample_rate)
+            end = int(segment[1] * self.sample_rate)
+            clip = audio[:, start:end]
+            vocal_audio = vocal[:, start: end]
+            acc_audio = acc[:, start:end]
+            other_phone = None
+            original_text = segment[2]
+            normalized_text = normalize_text(original_text, enable_punctuation=True)
+
+            # prepare vocal audio and lyrics
+            if self.app_type == 'vclone' and self.voice_clone_duration > 0:
+                # start, end, other_lyrics_pieces = self.find_nonrelevant_vocal(idx_seg, segments)
+                idx_seg = np.random.randint(len(vocal_segments))
+                vocal_seg = vocal_segments[idx_seg]
+                vocal_start, vocal_end, other_lyrics_pieces, other_phone = vocal_seg
+
+                vocal_start = int(vocal_start * self.sample_rate)
+                vocal_end = vocal_start + self.voice_clone_duration * self.sample_rate
+                vocal_audio = vocal[:, vocal_start:vocal_end]
+                vocal_lyrics = other_lyrics_pieces.strip() + "\n"
+                normalized_text = normalize_text(vocal_lyrics + original_text, enable_punctuation=True)
+                if vocal_audio.shape[-1] != self.voice_clone_duration * self.sample_rate:
+                    continue
+
+            elif self.app_type == "singsong":
+                if self.singsong_predict_type == "BGM":
+                    clip = acc[:, start:end]
+
+            elif self.app_type == "singsong_inverse":
+                clip = vocal[:, start: end]
+                if self.singsong_predict_type == "FULL":
+                    clip = audio[:, start:end]
+                
+            elif self.app_type == "singsong_inverse_vc" and self.voice_clone_duration > 0:
+                clip = vocal[:, start:end]
+                if self.singsong_predict_type == "FULL":
+                    clip = audio[:, start:end]
+
+                idx_seg = np.random.randint(len(vocal_segments))
+                vocal_seg = vocal_segments[idx_seg]
+                vocal_start, vocal_end, other_lyrics_pieces, other_phone = vocal_seg
+
+                vocal_start = int(vocal_start * self.sample_rate)
+                vocal_end = vocal_start + self.voice_clone_duration * self.sample_rate
+                vocal_audio = vocal[:, vocal_start:vocal_end]
+                vocal_lyrics = other_lyrics_pieces.strip() + "\n"
+                normalized_text = normalize_text(vocal_lyrics + original_text, enable_punctuation=True)   
+
+                if vocal_audio.shape[-1] != self.voice_clone_duration * self.sample_rate:
+                    continue             
+
+            
+            if self.tokenizer == "tts_chinese_frontend_model":
+                lines = segment[3].split(" <n> ")
+                vp_len = 0             
+                if self.app_type == "vclone" or self.app_type == "singsong_inverse_vc":
+                    vocal_lines = other_phone.split(" <n> ")
+                    lines = vocal_lines + lines
+                    vp_len = len(vocal_lines)
+                      
+                text_tokens = []
+                for i, line in enumerate(lines):
+                    labels = list(
+                        filter(
+                            lambda x: x != "", line.split("\n")
+                        )
+                    )
+                    if labels:
+                        convert_result = convert_labels_to_text_id(labels)
+                        if convert_result:
+                            labels, _, _ = convert_result
+                        else:
+                            print("Invalid phone label to text id conversion", labels)
+                            continue
+                        line_phone_tokens = labels[0]
+                    else:
+                        continue
+                    text_tokens.append(line_phone_tokens)
+                    if i == vp_len - 1:
+                        text_tokens.append(VP_END_PHONE_TOKEN)                    
+                if len(text_tokens) > 0:
+                    if len(text_tokens) == 1: 
+                        print(text_tokens)
+                    text_tokens = np.concatenate(text_tokens, axis=0)
+                    text_tokens = torch.from_numpy(text_tokens).long()
+                else:
+                    text_tokens = None    
+            else:
+                text_tokens = self.tokenizer(
+                    normalized_text, 
+                    add_special_tokens=False,
+                    return_tensors="pt")["input_ids"].squeeze(dim=0)
+            if text_tokens is None or text_tokens.size(-1) == 0:
+                self._update_stats(skipped=True, message="Token zero length")
+                continue
+            
+            
+            uttid = item['uttid']
+            # breakpoint()
+            # import torchaudio
+            # torchaudio.save(filepath=f"./tmp/{uttid}.{idx_seg}.vocal.wav", src=vocal_audio, sample_rate=24000)
+            # torchaudio.save(filepath=f"./tmp/{uttid}.{idx_seg}.acc.wav", src=acc_audio, sample_rate=24000)
+            # torchaudio.save(filepath=f"./tmp/{uttid}.{idx_seg}.mix.wav", src=acc_audio+vocal_audio, sample_rate=24000)
+            
+            # breakpoint()
+            yield {
+                "audio": clip, 
+                "vocal_audio": vocal_audio, 
+                "acc_audio": acc_audio,               
+                "style_text": style_text,
+                "normalized_text": normalized_text,
+                "lyrics_tokens": text_tokens,
+                "max_phone_len": self.segment_max_phone_len,
+                "meta": meta,
+                "uttid": uttid,
+                "idx_seg": idx_seg,
+            }
 
 
 
@@ -4088,7 +4434,8 @@ class MixVocalAppZhWebDataModule(DataModule):
         # validation_dataset = [validation_dataset_ka]
 
         karaoke_val = WebPipeline(VppParquetDataset(
-            data_id=94,
+            # data_id=94,  # i18n
+            data_id=960,  # CN
             min_duration=buckets_in_sec[0],
             max_duration=buckets_in_sec[-1],
             normalize_audio=normalize_audio,
