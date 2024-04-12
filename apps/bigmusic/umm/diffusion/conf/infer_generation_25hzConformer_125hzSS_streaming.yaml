@@ -19,7 +19,7 @@ run_opts:
     lang: en
     streaming: True
     token_chunk_size: 200
-    token_chunk_overlap: 10
+    token_chunk_overlap: 1
 
 
 bn_config: # 40hz wvae 3.1
