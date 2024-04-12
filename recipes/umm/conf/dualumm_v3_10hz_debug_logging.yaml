@@ -1,25 +1,22 @@
 ---
+# @hanoihantrakul @renyi 7March2024
+# 
+# DualUMM_v3 is near identical to `dualumm_v1.yaml`.
+#
+# > The change lies in how the adversarial losses are applied. 
+# -pl_module.adv_branches: ['vocal', 'inst', 'full'] (dualumm_v1)
+# -pl_module.adv_branches: ['inst', 'full'] (dualumm_v3 removes adversarual gradient from vocal branch)
+# 
+# > pl_module.detach_vocal_to_full: true (otherwise adversarial gradient from full mix still flows to vocal branch)
+#
+# > UMMConfig.downsampling: 10 (to achieve 10Hz)
 
-# @hanoihantrakul 8APR2024
-#
-# This is a direct-stage3 model for use with QQ's Lyrics2Song CN system.
-# It is trained on ID 2247, which was a newly prepare dataset with 1:1 EN:CN vocal music.
-# Originally, I was going to train a stage2-stage3 but since it was easier for me
-# to launch this model first. I went ahead with this direct-stage3 setup while
-# I refactored the code to support stage2-stage3 training for Conv1D_v2 (which fixes
-# the Conv1D in the self.audio_encoder of the model)
-#
-# By changing batch_size=2 and max_duration=90 to batch_size=12 and max_duration=45
-# I could increase training speed
-#
-# The bump from 733M to 828M params is because I had to re-engage CTC head. 2247 contains vocals
-# but the SSTK version does not.
 
 ################################################################################
 ##########                       BASIC CONFIGURATION                  ##########
 ################################################################################
 
-ckpt_path: last.ckpt
+ckpt_path: last
 
 seed: 555
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
@@ -34,9 +31,8 @@ extra_params:
     n_fft: 2048
     win_length: 2048
     hop_length: 240
-    # feature_cmvn: "recipes/datasets/mcc/MixDataModule_SpeechTransform.stats.pt" # this config uses DualUMM mel transform (no normalization), not the original ConformerUMM mel transform (requires normalization stats)
+    feature_cmvn: "recipes/datasets/mcc/MixDataModule_SpeechTransform.stats.pt"
     tokenizer: "bert-base-multilingual-uncased"
- 
 
 # running parameters
 run_opts:
@@ -44,31 +40,31 @@ run_opts:
     cache_dir: .module_cache/umm
     hdfs_log_dir: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs/deletable"
     log_dir: logs
-    log_name: umm_conv_mixedZHEN
-    version: !ref umm_stage3_conv1D_v2_828Mparams_mixedZHEN_2247_direct_stage3_<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>
-    #version: !ref umm_stage3_conv1D_v2_733Mparams_mixedZHEN_2247_<extra_params[tokenizer]>
+    log_name: umm_dual_deletable
+    version: !ref umm_dual_v3_10hz_deletable_<extra_params[tokenizer]>_<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>
     precision: "32"
     num_workers: 4
     accelerator: auto
     warmup_steps: 2000
-    max_steps: 1000000
-    val_check_interval: 10000 # will be overrided by Trainer.limit_val_batches = 0
-    ckpt_interval: 10000
-    batch_size: 12 # 2
+    max_steps: 10 # 1000000
+    val_check_interval: 1 # 10000 # used in conjunction with Trainer.limit_val_batches = 1
+    ckpt_interval: 5 # 10000
+    batch_size: 8 # 
     learning_rate: 1.0e-4
     cycle_steps: 100000
-    weight_decay: 0.1
-    shuffle_buffer: 8000
-    gradient_clip_val: 1.0
+    weight_decay: 0.0
+    shuffle_buffer: 800
+    gradient_clip_val: 0.0
     checkpointing: False
+    tensorboard_dir: !ref <run_opts[log_dir]>
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
 pl_datamodule: !new:recipes.datasets.mcc.mix_mkii.MixMSSDataModule
-    data_ids: [ 2247 ]
-    val_data_id: 2247
+    data_ids: [ 1154 ]
+    val_data_id: 1154
     data_weights: [ 1 ]
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
     sample_rate: !ref <extra_params[sample_rate]>
@@ -76,10 +72,11 @@ pl_datamodule: !new:recipes.datasets.mcc.mix_mkii.MixMSSDataModule
     num_workers: !ref <run_opts[num_workers]>
     max_num_crops: null
     min_duration: 1
-    max_duration: 45 # reduced from 90 so that batch size can be increased for better data parallelism on the GPU
+    max_duration: 60
     normalize_audio: False
     tokenizer: !ref <extra_params[tokenizer]>
     frame_rate: !ref <extra_params[frame_rate]>
+    audio_perturb: false
 
 optimizer_cls: !name:torch.optim.AdamW
     lr: !ref <run_opts[learning_rate]>
@@ -87,88 +84,131 @@ optimizer_cls: !name:torch.optim.AdamW
     betas: [0.9, 0.96]
     eps: 0.00000001
 
+disc_optimizer_cls: !name:torch.optim.AdamW
+    lr: !ref <run_opts[learning_rate]>
+    weight_decay: 0
+    betas: [ 0.9, 0.900 ] # TODO
+    eps: 0.00000001
+
 scheduler_cls: !name:recipes.umm.modules.lr_scheduler.WarmupCosine
     init_lr: !ref <run_opts[learning_rate]>
     warmup_steps: !ref <run_opts[warmup_steps]>
     cycle_steps: !ref <run_opts[cycle_steps]>
-    min_lr: !ref <run_opts[learning_rate]> * 0.1
+    min_lr: !ref <run_opts[learning_rate]> * 0.5
 
 config: !new:recipes.umm.models.config.UMMConfig
-    # feature_cmvn: !ref <extra_params[feature_cmvn]>
+    feature_cmvn: !ref <extra_params[feature_cmvn]>
     sample_rate: !ref <extra_params[sample_rate]>
     n_mels: !ref <extra_params[n_mels]>
     n_mels_tgt: !ref <extra_params[n_mels_tgt]>
     add_chroma: True
-    add_ctc: True
+    add_pitch: True
     n_chroma: !ref <extra_params[n_chroma]>
     n_fft: !ref <extra_params[n_fft]>
     win_length: !ref <extra_params[win_length]>
     hop_length: !ref <extra_params[hop_length]>
-    hidden_size: 896 #1024
-    # intermediate_size: 4096 # only used in conformer architecture
-    num_hidden_layers: 2 # in reality, the Conv1D system will add 2 "blocks" of Conv1D layers, as opposed to 2 "layers". We were bootstrapping the conv architecture to the previous conformer one, so haven't had time to change this detail.
-    max_source_positions: !ref <extra_params[frame_rate]> * <pl_datamodule[max_duration]>
-    add_vq: False
-    vq_type: "EMAVQ"
+    hidden_size: 512
+    intermediate_size: 1024
+    num_hidden_layers: 12
+    add_vq: True
     vq_proj_norm: "bn"
     vq_proj_noise: 10000
-    vq_codebook_size: 32768
+    vq_type: "EMAEntropy"
+    vq_codebook_size: 16384
     vq_codebook_dim: 32
-    vq_layer_idx: 1 # in reality, this means the VQ happens between "block 1" and "block 2".
     vq_decay: 0.99
+    vq_layer_idx: 6
     w_loss_mel: 1.0
     w_loss_chroma: 1.0
+    w_loss_pitch: 1.0
     w_loss_vq: 1.0
     w_loss_ctc: 1.0
+    w_loss_adv: 0.05
     tokenizer: !ref <extra_params[tokenizer]>
     frame_rate: !ref <extra_params[frame_rate]>
     vocab_size: 105880
     ctc_blank_id: 105879
     ctc_zero_infinity: True
-    use_bn: False
-    downsampling: 4
+    use_bn: false
+    hidden_dropout: 0.0
+    activation_dropout: 0.0
+    attention_dropout: 0.0
+    conformer_conv_dropout: 0.0
+    vq_warmup: false
+    mss_input: true
+    conv_hidden_size: 256
+    train_decoder_only: false
+    vocal_ref: false
+    downsampling: 10
     upsampling: 1
+    use_full_input: false
 
-model_cls: !name:recipes.umm.models.umm_mkii.Stage3Conv1D_v2
+model_cls: !name:recipes.umm.models.dualumm.DualUMMv2
     config: !ref <config>
 
-pl_module: !new:recipes.umm.modules.lit_module.Stage3Conv1D
+pl_module: !new:recipes.umm.modules.lit_module_mkii_dual.DualUMMv2
     checkpointing: !ref <run_opts[checkpointing]>
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
-    criterion_cls: !name:recipes.umm.modules.criterion.UMMLoss
-        config: !ref <config>
+    disc_optimizer_cls: !ref <disc_optimizer_cls>
+    criterion_config: !ref <config>
     extra_params: !ref <extra_params>
+    branches: ['vocal', 'inst', 'full']
+    adv_branches: ['inst', 'full'] 
+    detach_vocal_to_full: true
     required_modules:
         pretrained:
-            ckpt_path: "" # @hanoihantrakul 27Feb2024: This a quick hack to prevent a stage1 model from being loaded.
+            ckpt_path: ""
+#            ckpt_path: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm_mix/umm_stage2_bert-base-multilingual-cased/checkpoints/step=0060000.ckpt"
             init_fn: !name:recipes.umm.requires.model_initializer.init_pretrained
+            cache_dir: !ref <run_opts[cache_dir]>
+        rmvpe:
+            ckpt_path: "hdfs://haruna/home/byte_speech_sv/user/chenyuanzhe/share/rmvpe.pt"
+            init_fn: !name:recipes.umm.requires.model_initializer.init_rmvpe
+            cache_dir: !ref <run_opts[cache_dir]>
+        pitchpdt:
+            ckpt_path: ""
+#            ckpt_path: "pretrained/1120_sa_ws_gs_pitchpdt_singlec/model_ckpt_steps_300000.ckpt"
+        vocoder:
+            ckpt_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/renyi/samantha_ckpts/voc/v1/checkpoints/step=4170000.ckpt"
             cache_dir: !ref <run_opts[cache_dir]>
 
 logger:
+    - !new:pytorch_lightning.loggers.TensorBoardLogger
+        save_dir: !ref <run_opts[tensorboard_dir]>
+        name: !ref <run_opts[log_name]>
+        version: !ref <run_opts[version]>
     - !new:pytorch_lightning.loggers.wandb.WandbLogger
-      save_dir: !ref <run_opts[log_dir]>
-      project: !ref <run_opts[log_name]>
-      name: !ref <run_opts[version]>
+        save_dir: !ref <run_opts[log_dir]>
+        project: !ref <run_opts[log_name]>
+        name: !ref <run_opts[version]>
 
 callbacks:
     - !new:samantha.callbacks.HDFSModelCheckpoint
-      hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
-      monitor: step
-      save_top_k: 500
-      every_n_train_steps: !ref <run_opts[ckpt_interval]>
-      mode: max
-      filename: "{step:07d}"
-      save_last: True
+        hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+        monitor: step
+        save_top_k: 500
+        every_n_train_steps: !ref <run_opts[ckpt_interval]>
+        mode: max
+        filename: "{step:07d}"
+        save_last: True
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+        dirpath: !ref <run_opts[log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+        monitor: step
+        save_top_k: 3
+        every_n_train_steps: !ref <run_opts[ckpt_interval]>
+        mode: max
+        filename: "{step:06d}"
+        save_last: True
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
-      logging_interval: 'step'
+        logging_interval: 'step'
 
 plugins:
     - !new:samantha.plugins.LargeTorchCheckpointIO
 
 trainer: !new:pytorch_lightning.Trainer
-    strategy: "ddp_find_unused_parameters_false"
+    strategy: "ddp_find_unused_parameters_true"
     fast_dev_run: !ref <run_opts[fast_dev_run]>
     logger: !ref <logger>
     accelerator: !ref <run_opts[accelerator]>
@@ -184,8 +224,8 @@ trainer: !new:pytorch_lightning.Trainer
     val_check_interval: !ref <run_opts[val_check_interval]>
     check_val_every_n_epoch: null
     num_sanity_val_steps: 0
-    limit_val_batches: 0
-    limit_train_batches: 10000 # Consult Colin Wang: forces an epoch to end every 10k steps and prevent OOM
+    limit_val_batches: 5
+    limit_train_batches: 5000
     sync_batchnorm: True
     benchmark: False
     callbacks: !ref <callbacks>

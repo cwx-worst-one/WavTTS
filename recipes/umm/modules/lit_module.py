@@ -22,6 +22,7 @@ from samantha.dataio.webdataset import ShardWriter
 from samantha.models.ctiga import gpt
 from samantha.utils.ctiga.inference_params import InferenceParams
 from samantha.utils.hparams import DotDict
+from recipes.umm.modules import lit_module_logging_utils as logging_utils
 
 
 def log(t, eps=1e-5):
@@ -821,6 +822,30 @@ class Stage0(pl.LightningModule):
         return loss_dict["loss"]
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
+        loss_dict = self._shared_step(batch)
+
+        if batch_idx == 0:           
+            input_dict = self.prepare_feature(batch)
+            output_dict = self.model(input_dict)
+
+            # Get the instance of the wandb_logger
+            wandb_logger = logging_utils.get_wandb_logger(self.logger)
+            num_samples_to_plot = self.model.config.get('num_spectrogram_val_samples_for_plotting', 8)
+
+            # Log Mel Spectrograms
+            if "mel" in input_dict.keys():
+                gt_mel_wandb_img_list = logging_utils.get_list_of_mel_spec_plots_to_log(input_dict['mel'], num_samples_to_plot)
+                recon_mel_wandb_img_list = logging_utils.get_list_of_mel_spec_plots_to_log(output_dict['mel_out'], num_samples_to_plot)
+                wandb_logger.experiment.log({"Mel GT": gt_mel_wandb_img_list})
+                wandb_logger.experiment.log({"Mel Recon": recon_mel_wandb_img_list})
+
+            # Log Chroma 
+            if "chroma" in input_dict.keys():
+                gt_chroma_wandb_img_list = logging_utils.get_list_of_chroma_spec_plots_to_log(input_dict['chroma'], num_samples_to_plot)
+                recon_chroma_wandb_img_list = logging_utils.get_list_of_chroma_spec_plots_to_log(output_dict['chroma_out'], num_samples_to_plot)
+                wandb_logger.experiment.log({"Chroma GT": gt_chroma_wandb_img_list})
+                wandb_logger.experiment.log({"Chroma Recon": recon_chroma_wandb_img_list})
+
         loss_dict = self._shared_step(batch)
         if dataloader_idx not in self.val_outputs:
             self.val_outputs[dataloader_idx] = []

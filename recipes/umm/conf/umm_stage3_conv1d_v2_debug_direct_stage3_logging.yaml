@@ -1,8 +1,8 @@
 ---
 
-# @hanoihantrakul 7APR2024
-# This YAML is makes debugging printouts on Merlin easier to follow when launching a training job.
-# Number of training steps is reduced to 10 and validation steps is called more frequently.
+# @hanoihantrakul 5Mar2024
+# This YAML is near-identical to `umm_stage3_conv1d_v2_sstk_direct_stage3.yaml`.
+# The param count is 733M parameters for this one by changing `hidden_size=896`
 
 ################################################################################
 ##########                       BASIC CONFIGURATION                  ##########
@@ -41,9 +41,9 @@ run_opts:
     accelerator: auto
     warmup_steps: 2000
     max_steps: 10 # 1000000
-    val_check_interval: 2 # 10000 # used in conjunction with Trainer.limit_val_batches = 1
+    val_check_interval: 1 # 10000 # used in conjunction with Trainer.limit_val_batches = 1
     ckpt_interval: 5 # 10000
-    batch_size: 16 # 8 # 2
+    batch_size: 10 # 16 # 8 # 2
     learning_rate: 1.0e-4
     cycle_steps: 100000
     weight_decay: 0.1
@@ -51,14 +51,29 @@ run_opts:
     gradient_clip_val: 1.0
     checkpointing: False
     tensorboard_dir: !ref <run_opts[log_dir]> # for Ren Yi
-    num_spectrogram_val_samples_for_plotti: 8
+    num_spectrogram_val_samples_for_plotting: 8
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
+# pl_datamodule: !new:recipes.datasets.mcc.mix_mkii.MixDataModule
+#     data_ids: !ref <extra_params[parquet_id]> 
+#     data_weights: [1]
+#     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+#     sample_rate: !ref <extra_params[sample_rate]>
+#     batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <extra_params[sample_rate]>
+#     num_workers: !ref <run_opts[num_workers]>
+#     max_num_crops: null
+#     min_duration: 1
+#     max_duration: 60 # 90
+#     normalize_audio: False
+#     tokenizer: !ref <extra_params[tokenizer]>
+#     frame_rate: !ref <extra_params[frame_rate]>
+
 pl_datamodule: !new:recipes.datasets.mcc.mix_mkii.MixDataModule
-    data_ids: !ref <extra_params[parquet_id]> 
+    data_ids: [2255]
+    val_data_id: 2255
     data_weights: [1]
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
     sample_rate: !ref <extra_params[sample_rate]>
@@ -66,11 +81,26 @@ pl_datamodule: !new:recipes.datasets.mcc.mix_mkii.MixDataModule
     num_workers: !ref <run_opts[num_workers]>
     max_num_crops: null
     min_duration: 1
-    max_duration: 45 # 90
+    max_duration: 60 # 12APR2024 Hanoi and Devon Sun and I manually verified this datasert only contains audio lengths between 0-60s.
     normalize_audio: False
     tokenizer: !ref <extra_params[tokenizer]>
     frame_rate: !ref <extra_params[frame_rate]>
-    collate_fn: !name:recipes.datasets.mcc.mix.collate_audio
+
+
+# pl_datamodule: !new:recipes.datasets.mcc.mix_mkii.MixMSSDataModule
+#     data_ids: [ 1154 ]
+#     val_data_id: 1154
+#     data_weights: [ 1 ]
+#     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+#     sample_rate: !ref <extra_params[sample_rate]>
+#     batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <extra_params[sample_rate]>
+#     num_workers: !ref <run_opts[num_workers]>
+#     max_num_crops: null
+#     min_duration: 1
+#     max_duration: 90
+#     normalize_audio: False
+#     tokenizer: !ref <extra_params[tokenizer]>
+#     frame_rate: !ref <extra_params[frame_rate]>
 
 optimizer_cls: !name:torch.optim.AdamW
     lr: !ref <run_opts[learning_rate]>
