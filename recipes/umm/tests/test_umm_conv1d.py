@@ -11,15 +11,23 @@ the model won't load and the script won't run.
 """
 
 MODELS_DICT = {
-    # @hanoihantrakul: 2/6/2024 this is currently the newest model trained on ID 1154. It is a trained model for Zhang Shuo.
+    # @hanoihantrakul: 2/6/2024 this is currently the newest model trained on ID 1154. Notice how there is no `_v2` suffix. This meant the model definition still uses conv2D inside self.audio_encoder. This is not a serious issue since it is still a convolutional module and not a conformer attention module.
     "ummv3": "hdfs:///home/byte_speech_sv/hanoi.hantrakul/logs/umm_dual/umm_stage3_pitch_baseline_conv_1D_bert-base-multilingual-uncased_None32768x32/checkpoints/step=0160000.ckpt",
+
     # @hanoihantrakul: 2/22/2024 These are ConvUMM models trained on SSTK data for Duc Le.
+    # See https://code.byted.org/seed/samantha/blob/hh/master/deliver_conv2255/recipes/umm/conf/umm_stage3_conv1d_sstk.yaml 
     "sstk_vocab_size_32k": "hdfs:///home/byte_speech_sv/hanoi.hantrakul/logs/umm_conv_sstk/umm_stage3_conv1D_sstk_no_ctc_794_EMAVQ32768x32/checkpoints_for_inference/step=0850000.ckpt",
     "sstk_vocab_size_4k": "hdfs:///home/byte_speech_sv/hanoi.hantrakul/logs/umm_conv_sstk/umm_stage3_conv1D_sstk_no_ctc_794_EMAVQ4096x32/checkpoints_for_inference/step=0865000.ckpt",
+
+    # @hanoihantrakul: 15APR2024 This a ConvUMM model trained on 2255 data. The `conv1d_v2` suffix indicates a fix pointed out to Janne where self.audio_encoder should also use a Conv1D operation 
+    # Both model paths with `conv1d` or `conv1d_v2` can be loaded using the same signature.
+    # See https://code.byted.org/seed/samantha/blob/hh/master/deliver_conv2255/recipes/umm/conf/umm_stage3_conv1d_v2_2255mixedZHEN_direct_stage3.yaml
+    "2250mixedZHEN": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs/umm_conv_mixedZHEN/umm_stage3_conv1D_v2_2250mixedZHEN_direct_stage3_optim_mem_EMAVQ32768x32/checkpoints/step=0300000.ckpt"
 }
 
 
 def load_model(ckpt_path, cache_dir):
+    print(f"Downloading {ckpt_path}")
     DUMMY_RANK = 0
     token_model = init_stage3_conv1d(ckpt_path, DUMMY_RANK, cache_dir)[
         "Stage3Conv1D"
@@ -53,6 +61,7 @@ def test_ummv3_model():
 
 
 def test_sstk_model():
+    """1FEB2024 For Duc Le."""
     def test_codebook_dims_is_consistent(token_model, codebook_size, codebook_dim):
         print(f"codebook_size: {token_model.model.vq.codebook_size}")
         print(f"codebook_dim: {token_model.model.vq.codebook_dim}")
@@ -73,8 +82,15 @@ def test_sstk_model():
     token_model = load_model(ckpt_path, unique_cache_dir)
     test_codebook_dims_is_consistent(token_model, 4096, 32)
 
+def test_2255mixedZHEN_model():
+    """15APR2024 For QQ, Yiqing, Vibert and Shuo."""
+    ckpt_path = MODELS_DICT["2250mixedZHEN"]
+    unique_cache_dir = "./.2250mixedZHEN"
+    run_model(ckpt_path, unique_cache_dir)
+
 
 if __name__ == "__main__":
     """The longest amount of time is spent downloading the checkpoint. By default, just test the model you are interested in."""
     # test_ummv3_model()
-    test_sstk_model()
+    # test_sstk_model()
+    test_2255mixedZHEN_model()
