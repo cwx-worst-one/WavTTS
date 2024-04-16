@@ -497,7 +497,7 @@ class MulanEmbedder(ContinuousEmbedder):
             embedding_dim=1024,
             min_audio_length=10*24000,
             add_sos=False,
-            add_none=True,
+            add_none=False,
             mulan_crop=True,
             mulan_average=True,
             dropout=0.0,

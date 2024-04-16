@@ -504,6 +504,7 @@ def lyrics_to_segments(lyrics, metadata=None, target_durations=(20,25,30), min_c
     target_segments = []
     if song_structure and max(target_durations) <= 30: # for 30s, return section
         target_segments = group_by_section_start(song_structure, segments, max(target_durations))
+        max_misaligned = None if metadata.get('is_lyrics_gt', False) else 5
         target_segments = [get_section_aligned_segment(segment, song_structure, max_misaligned=max_misaligned) for segment in target_segments]
     elif song_structure and max(target_durations) > 30: # for 2 min, return full song + variable segments
         grouped_segments = group_by_section_start(song_structure, segments, max(target_durations))
