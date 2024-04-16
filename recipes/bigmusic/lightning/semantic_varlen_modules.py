@@ -12,6 +12,7 @@ from recipes.bigmusic.lightning.embedding_modules import (
     StructureEmbedder,
 )
 import numpy as np
+from copy import deepcopy
 import torch
 from tqdm.auto import tqdm
 import torch.nn as nn
@@ -61,6 +62,7 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
         mulan_embed_dim = extra_params['mulan_embed_dim']
         semantic_codebook_size = extra_params['semantic_codebook_size']
         style_category_vocab_size = extra_params.get('style_category_vocab_size', 256)
+        style_category_vocab_path = extra_params.get('style_category_vocab_path')
         tag_dropout_rate = extra_params.get('tag_dropout_rate', 0)
         embedder_dict = {}
         for emb_type in extra_params.get("input_embedders", ["mulan", "lyrics_tokens"]):
@@ -77,7 +79,8 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
                     vocab_size=style_category_vocab_size,
                     embedding_dim=hidden_size,
                     add_sos=True,
-                    dropout=tag_dropout_rate
+                    dropout=tag_dropout_rate,
+                    vocab_path=style_category_vocab_path
                 )
             elif emb_type == "lyrics_tokens":
                 embedder_dict[emb_type] = LyricsTokenEmbedder(
@@ -366,8 +369,17 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
 
         # del training_inputs
         return loss, results_dict
-    
+
     def training_step(self, batch, batch_idx):
+        if 'embedding_pretrain_steps' in self.extra_params:
+            embedding_pretrain_steps = self.extra_params['embedding_pretrain_steps']
+            if batch_idx < embedding_pretrain_steps:
+                for param in self.model.parameters():
+                    param.requires_grad = False
+            else:
+                for param in self.model.parameters():
+                    param.requires_grad = True
+
         loss, results_dict = self._shared_step(batch, update_mfu=True)
         log_dict = { 'tr_' + key: value for key, value in results_dict.items() }
         self.log_dict(log_dict, prog_bar=True, sync_dist=True)
@@ -406,6 +418,7 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
         temperature = hp.semantic_temperature
         predict_lyrics = hp.get("predict_lyrics", False)
         sample_thresh = hp.get('sample_thresh', 0.9)
+        controller_cfg_gamma = hp.get('controller_cfg_gamma', 1)
         sample_mode = hp.sample_mode
 
         return self._predict(
@@ -416,7 +429,8 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
             sample_mode=sample_mode,
             predict_lyrics=predict_lyrics,
             sample_thresh=sample_thresh,
-            return_inputs_embeds=return_inputs_embeds
+            return_inputs_embeds=return_inputs_embeds,
+            controller_cfg_gamma=controller_cfg_gamma
         )
 
     @torch.no_grad()
@@ -430,7 +444,8 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
         tqdm_name=None,
         return_inputs_embeds=False,
         predict_lyrics=False,
-        sample_thresh=0.9
+        sample_thresh=0.9,
+        controller_cfg_gamma=1
     ):
         tqdm_name = self.__class__.__name__ if tqdm_name is None else tqdm_name
         if predict_lyrics:
@@ -445,6 +460,18 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
             new_lens = [len(s) for s in new_seqs]
             batch['lyrics_tokens'] = pad_sequence(new_seqs, batch_first=True)
             batch['lyrics_tokens_length'] = torch.tensor(new_lens, device=self.device)
+
+        use_cfg = controller_cfg_gamma != 1
+        if use_cfg:
+            assert beam == 1    # TODO(qq) support beam > 1 with CFG.
+            batch_cfg = deepcopy(batch)
+            batch_size = self.infer_batch_size(batch)
+            batch_cfg['style_text'] = batch['style_text'] + [''] * batch_size
+            batch_cfg['style_category'] = batch['style_category'] + [''] * batch_size
+            batch_cfg['lyrics'] = batch['lyrics'] + batch['lyrics']
+            batch_cfg['lyrics_tokens'] = torch.concat([batch['lyrics_tokens'], batch['lyrics_tokens']], dim=0)
+            batch_cfg['lyrics_tokens_length'] = torch.concat([batch['lyrics_tokens_length'], batch['lyrics_tokens_length']], dim=0)
+            batch = batch_cfg
 
         if 'model_inputs' in batch:
             model_inputs = batch['model_inputs']
@@ -465,6 +492,7 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
         sos_embeds = self.target_embedder.get_sos_embed(batch_size)
         input_seq_lengths += 1
         token_embeds_pad = torch.cat([token_embeds_pad, sos_embeds], dim=1)
+        exclude_ids = [self.target_embedder.sos_id] # occationally, model may predict sos token by random chance
 
         if beam is not None:
             batch_size, seq_len, _ = token_embeds_pad.shape
@@ -476,7 +504,8 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
             "inputs_embeds": token_embeds_pad,
             # "attention_mask": attention_mask
         }
-        
+
+        exclude_ids = [self.target_embedder.sos_id]
         output_tokens = None
         if isinstance(self.model, gpt.GPTLMHeadModel):
             gpt_max_seq_len = 4000 if num_tokens < 2500 else 8000
@@ -505,13 +534,22 @@ class SemanticModuleVarlen(BaseContinuousEmbedModule):
                 )
                 past_key_values = model_output["past_key_values"]
                 logits = model_output["logits"]
-
             logits = logits[:, -1:, :] # only predicting on last logit.
-            predict_token = self.sample_logits(i, logits, temperature, sample_mode, thresh=sample_thresh)
+
+            if use_cfg:
+                logits = controller_cfg_gamma * logits[0:batch_size//2] + (1 - controller_cfg_gamma) * logits[batch_size//2:]
+                predict_token = self.sample_logits(i, logits, temperature, sample_mode, thresh=sample_thresh, exclude_ids=exclude_ids)
+                predict_token = torch.cat([predict_token, predict_token], dim=0)
+            else:
+                predict_token = self.sample_logits(i, logits, temperature, sample_mode, thresh=sample_thresh, exclude_ids=exclude_ids)
             predict_token_emb = self.target_embedder.embedder(predict_token)
             model_input = { 'inputs_embeds': predict_token_emb }
             previous_inputs_embeds = torch.cat([previous_inputs_embeds, predict_token_emb], dim=1)
             output_tokens = torch.cat([output_tokens, predict_token], dim=1) if output_tokens is not None else predict_token
+
+        if use_cfg:
+            output_tokens = output_tokens[0:batch_size//2]
+            previous_inputs_embeds = previous_inputs_embeds[0:batch_size//2]
 
         if return_inputs_embeds:
             return output_tokens, previous_inputs_embeds
@@ -660,11 +698,9 @@ class SemanticRLModule(SemanticModuleVarlen):
         self.set_requires_grad(False) # fix nested autocast bug: https://discuss.pytorch.org/t/autocast-and-torch-no-grad-unexpected-behaviour/93475/2
 
         # num_tokens = sampled_semantic_tokens. shape[-1] - 1 # -1 for extra EOS.
-        frame_rate = self.extra_params.semantic_frame_rate
-        num_tokens = self.extra_params.duration * frame_rate
-        sampled_semantic_tokens, predicted_model_inputs = self._predict(
+        sampled_semantic_tokens, predicted_model_inputs = self.predict(
             batch,
-            num_tokens,
+            self.extra_params,
             beam=beam,
             return_inputs_embeds=True
         )
@@ -762,69 +798,64 @@ class SemanticRLModule(SemanticModuleVarlen):
     def _shared_step(self, batch, mode):
         with self.profiler.profile(f"bigmusic.prepare_training_inputs{self.trainer.global_step}"):
             training_inputs = self.prepare_training_inputs(batch)
+
         ##### RL #####
-        (
-            seq_loss,
-            wavs_gt,
-            sampled_audio,
-            rewards,
-            reward_breakdown,
-            seq_probs3,
-            skip,
-        ) = self._shared_step_rl(batch, training_inputs, mode)
-
-        ##### CE Loss #####
-        (
-            target_loss,
-            target_accu,
-            inputs_loss,
-            inputs_accu
-        ) = self._shared_step_ce(batch, training_inputs, mode)
-
-        return (
-            target_loss,
-            target_accu,
-            inputs_loss,
-            inputs_accu,
-            seq_loss,
-            wavs_gt,
-            sampled_audio,
-            rewards,
-            reward_breakdown,
-            seq_probs3,
-            skip,
-        )
+        if self.training and self.trainer.global_step < self.extra_params.get("ce_only_steps", 0):
+            rl_results = None
+        else:
+            rl_results = self._shared_step_rl(batch, training_inputs, mode)
+        ce_results = self._shared_step_ce(batch, training_inputs, mode)
+        return ce_results, rl_results
 
     def training_step(self, batch, batch_idx):
-        target_loss, target_accu, input_loss, input_accu, seq_loss, _, _, _, reward_breakdown, seq_probs, skip = self._shared_step(
-            batch=batch,
-            mode="training",
-        )
-        stats = {
+        if 'embedding_pretrain_steps' in self.extra_params:
+            embedding_pretrain_steps = self.extra_params['embedding_pretrain_steps']
+            if batch_idx < embedding_pretrain_steps:
+                self.set_requires_grad(False)
+                for param in self.input_embedders["mulan_categorical"].parameters():
+                    param.requires_grad = True
+            else:
+                self.set_requires_grad(True)
+        ce_results, rl_results = self._shared_step(batch=batch, mode="training")
+        target_loss, target_accu, input_loss, input_accu = ce_results
+        
+
+        ce_stats = {
             "ce_loss/train": target_loss.item(),
             "accuracy/train": target_accu.item(),
             "input_loss/train": input_loss.item(),
             "input_accuracy/train": input_accu.item(),
-            "seq_loss/train": seq_loss.item(),
-            "seq_probs/train_max_mean": seq_probs.max(dim=-1).values.mean(),
-            "seq_probs/train_max_std": seq_probs.max(dim=-1).values.std(),
         }
-        for rw_type, rw in reward_breakdown.items():
-            stats.update(
-                {
-                    f"reward_{rw_type}/train_avg_mean": rw.mean(dim=-1).mean(),
-                    f"reward_{rw_type}/train_avg_std": rw.mean(dim=-1).std(),
-                    f"reward_{rw_type}/train_intra_beam_std": rw.std(dim=-1).mean(),
-                    f"reward_{rw_type}/train_max_mean": rw.max(dim=-1).values.mean(),
-                    f"reward_{rw_type}/train_max_std": rw.max(dim=-1).values.std(),
-                }
-            )
+
+        if rl_results is not None:
+            seq_loss, _, _, _, reward_breakdown, seq_probs, skip = rl_results
+            rl_stats = {
+                "seq_loss/train": seq_loss.item(),
+                "seq_probs/train_max_mean": seq_probs.max(dim=-1).values.mean(),
+                "seq_probs/train_max_std": seq_probs.max(dim=-1).values.std(),
+            }
+            for rw_type, rw in reward_breakdown.items():
+                rl_stats.update(
+                    {
+                        f"reward_{rw_type}/train_avg_mean": rw.mean(dim=-1).mean(),
+                        f"reward_{rw_type}/train_avg_std": rw.mean(dim=-1).std(),
+                        f"reward_{rw_type}/train_intra_beam_std": rw.std(dim=-1).mean(),
+                        f"reward_{rw_type}/train_max_mean": rw.max(dim=-1).values.mean(),
+                        f"reward_{rw_type}/train_max_std": rw.max(dim=-1).values.std(),
+                    }
+                )
+            if skip:
+                print("Skipping update due to NaN...")
+                seq_loss = 0
+            
+        else:
+            seq_loss = 0
+            rl_stats = {}
+
+        stats = { **ce_stats, **rl_stats }
         self.log_dict(stats, prog_bar=True, sync_dist=True)
         ce_weight = self.extra_params.ce_weight
         seq_weight = self.extra_params.seq_weight
-        if skip:
-            print("Skipping update due to NaN...")
-            seq_weight = 0
         return target_loss * ce_weight + input_loss + seq_loss * seq_weight
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
@@ -844,51 +875,57 @@ class SemanticRLModule(SemanticModuleVarlen):
         for dataloader_idx, outputs in self.val_outputs.items():
             prefix = f"val_{dataloader_idx}"
             stats = defaultdict(int)
-            for batch_idx, (ce_l, a, inp_l, inp_a, seq_l, wavs_gt, wavs_sampled, rewards, reward_breakdown, seq_probs, _) in enumerate(outputs):
+            for batch_idx, (ce_results, rl_results) in enumerate(outputs):
+                # ce stats
+                ce_l, a, inp_l, inp_a = ce_results
                 stats[f"ce_loss/{prefix}"] += ce_l.item()
                 stats[f"accuracy/{prefix}"] += a.item()
                 stats[f"inp_loss/{prefix}"] += inp_l.item()
                 stats[f"inp_accuracy/{prefix}"] += inp_a.item()
-                stats[f"seq_loss/{prefix}"] += seq_l.item()
-                stats[f"seq_probs/{prefix}_max_mean"] += seq_probs.max(dim=-1).values.mean()
-                stats[f"seq_probs/{prefix}_max_std"] += seq_probs.max(dim=-1).values.std()
-                for rw_type, rw in reward_breakdown.items():
-                    stats[f"reward_{rw_type}/{prefix}_avg_mean"] += rw.mean(dim=-1).mean()
-                    stats[f"reward_{rw_type}/{prefix}_avg_std"] += rw.mean(dim=-1).std()
-                    stats[f"reward_{rw_type}/{prefix}_intra_beam_std"] += rw.std(dim=-1).mean()
-                    stats[f"reward_{rw_type}/{prefix}_max_mean"] += rw.max(dim=-1).values.mean()
-                    stats[f"reward_{rw_type}/{prefix}_max_std"] += rw.max(dim=-1).values.std()
-                for i in range(len(wavs_gt)):
-                    if max_log_samples and sample_count >= max_log_samples: 
-                        break
-                    sample_count += 1
 
-                    self.logger.experiment.add_audio(
-                        f"validation/sampled_{dataloader_idx}_{batch_idx}_{i}_target",
-                        wavs_gt[i],
-                        self.global_step,
-                        sample_rate=self.extra_params.sample_rate,
-                    )
-                    # Log highest reward first
-                    indices = torch.argsort(rewards[i], descending=True).cpu().tolist()
-                    for j in range(len(indices)):
-                        idx = indices[j]
-                        if max_log_beam_samples and j >= max_log_beam_samples:
+                # rl stats
+                if rl_results is not None:
+                    seq_l, wavs_gt, wavs_sampled, rewards, reward_breakdown, seq_probs, _ = rl_results
+                    stats[f"seq_loss/{prefix}"] += seq_l.item()
+                    stats[f"seq_probs/{prefix}_max_mean"] += seq_probs.max(dim=-1).values.mean()
+                    stats[f"seq_probs/{prefix}_max_std"] += seq_probs.max(dim=-1).values.std()
+                    for rw_type, rw in reward_breakdown.items():
+                        stats[f"reward_{rw_type}/{prefix}_avg_mean"] += rw.mean(dim=-1).mean()
+                        stats[f"reward_{rw_type}/{prefix}_avg_std"] += rw.mean(dim=-1).std()
+                        stats[f"reward_{rw_type}/{prefix}_intra_beam_std"] += rw.std(dim=-1).mean()
+                        stats[f"reward_{rw_type}/{prefix}_max_mean"] += rw.max(dim=-1).values.mean()
+                        stats[f"reward_{rw_type}/{prefix}_max_std"] += rw.max(dim=-1).values.std()
+                    for i in range(len(wavs_gt)):
+                        if max_log_samples and sample_count >= max_log_samples: 
                             break
+                        sample_count += 1
+
                         self.logger.experiment.add_audio(
-                            f"validation/sampled_{dataloader_idx}_{batch_idx}_{i}_{j}",
-                            wavs_sampled[i][idx],
+                            f"validation/sampled_{dataloader_idx}_{batch_idx}_{i}_target",
+                            wavs_gt[i],
                             self.global_step,
                             sample_rate=self.extra_params.sample_rate,
                         )
-                        log_text = ""
-                        for rw_type, rw in reward_breakdown.items():
-                            log_text += f"{rw_type}={rw[i][idx].item():.2f} "
-                        self.logger.experiment.add_text(
-                            f"validation/sampled_{dataloader_idx}_{batch_idx}_{i}_{j}",
-                            log_text,
-                            self.global_step,
-                        )
+                        # Log highest reward first
+                        indices = torch.argsort(rewards[i], descending=True).cpu().tolist()
+                        for j in range(len(indices)):
+                            idx = indices[j]
+                            if max_log_beam_samples and j >= max_log_beam_samples:
+                                break
+                            self.logger.experiment.add_audio(
+                                f"validation/sampled_{dataloader_idx}_{batch_idx}_{i}_{j}",
+                                wavs_sampled[i][idx],
+                                self.global_step,
+                                sample_rate=self.extra_params.sample_rate,
+                            )
+                            log_text = ""
+                            for rw_type, rw in reward_breakdown.items():
+                                log_text += f"{rw_type}={rw[i][idx].item():.2f} "
+                            self.logger.experiment.add_text(
+                                f"validation/sampled_{dataloader_idx}_{batch_idx}_{i}_{j}",
+                                log_text,
+                                self.global_step,
+                            )
             for key in stats:
                 stats[key] /= len(outputs)
             self.log_dict(stats, prog_bar=True, sync_dist=True)
@@ -1130,7 +1167,8 @@ class SemanticRLModule(SemanticModuleVarlen):
                 sample_rate=self.extra_params.sample_rate,
                 target_audio=batch["target_audio"],
                 device=sampled_audio.device,
-                resize_mode="crop"
+                resize_mode="resample",
+                normalize=True
             )
         elif reward_type == "semantic_diversity":
             return semantic_diversity_reward(

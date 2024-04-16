@@ -27,6 +27,8 @@ extra_params:
     input_embedders: ["mulan_categorical", "lyrics_tokens"]
     pretrained_path: hdfs:///home/byte_speech_sv/andrew.shaw/checkpoints/bigmusic/baseline_2min_v8_groupA_finetune/step=032000-tr_loss=4.2450-val_loss_0=4.2409.ckpt
     prediction_heads: ["input"]
+    # style_category_vocab_path: hdfs://harunava/home/byte_speech_sv/andrew.shaw/data/bigmusic/vocab/spotify_vocab.json
+    style_category_vocab_path: null
 
 # running parameters
 run_opts:
@@ -145,9 +147,10 @@ logger:
 # log_gradient_scaler: !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
-      save_top_k: 15
       save_last: True
-      monitor: val_accu_0
+      every_n_train_steps: !ref <run_opts[val_check_interval]>
+      monitor: step
+      save_top_k: 15
       mode: max
       filename: "{step:06d}-{tr_loss:.4f}-{val_accu_0:.2f}"
     - !new:samantha.callbacks.HDFSModelCheckpoint

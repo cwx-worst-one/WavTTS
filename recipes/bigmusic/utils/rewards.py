@@ -6,7 +6,7 @@ from recipes.bigmusic.datasets.transforms.structure import (
     ChorusDetectionTransform,
     IntensityTransform,
 )
-from recipes.bigmusic.datasets.transforms.lyrics_segment import crop_pad_to_seq_length
+from recipes.bigmusic.datasets.transforms.lyrics_segment import crop_pad_to_seq_length, random_crop_pad_to_seq_length
 from recipes.bigmusic.utils.metrics_asr import (
     edit_distance,
     remove_punc_case,
@@ -58,7 +58,7 @@ def mulan_audio_reward(
         if sampled_audio.shape[-1] < min_audio_length:
             sampled_audio = crop_pad_to_seq_length(sampled_audio, min_audio_length)
         elif max_audio_length and sampled_audio.shape[-1] > max_audio_length:
-            sampled_audio = crop_pad_to_seq_length(sampled_audio, max_audio_length)
+            sampled_audio = random_crop_pad_to_seq_length(sampled_audio, max_audio_length)
         sampled_embeds = mulan_infer_fn(
             model=mulan_model,
             music=sampled_audio.float(),
@@ -69,7 +69,7 @@ def mulan_audio_reward(
         if target_audio.shape[-1] < min_audio_length:
             target_audio = crop_pad_to_seq_length(target_audio, min_audio_length)
         elif max_audio_length and target_audio.shape[-1] > max_audio_length:
-            target_audio = crop_pad_to_seq_length(target_audio, max_audio_length)
+            target_audio = random_crop_pad_to_seq_length(target_audio, max_audio_length)
         target_embeds = mulan_infer_fn(
             model=mulan_model,
             music=target_audio.float(),
@@ -437,7 +437,6 @@ def audio_metrics_reward(sampled_audio, sample_rate, device):
         rewards[i] = get_audio_metrics_score(metrics)
     return rewards
 
-
 @torch.no_grad()
 def intensity_sim_reward(
     sampled_audio,
@@ -447,19 +446,24 @@ def intensity_sim_reward(
     target_audio=None,
     calculation_mode="mean",
     intensity_hz=1,
-    resize_mode="resample"
+    resize_mode="resample",
+    normalize=False,
+
 ):
     intensity_transform = IntensityTransform(
         sample_rate=sample_rate,
         calculation_mode=calculation_mode,
         intensity_hz=intensity_hz,
+        normalize=normalize,
+        remove_silence=True
     )
     if target_intensity is None and target_audio is not None:
         target_intensity = [intensity_transform.get_intensity(audio) for audio in target_audio]
     _, beam = _infer_batch_beam(sampled_audio, target_intensity)
-    hyp_intensity = [intensity_transform.get_intensity(audio) for audio in sampled_audio]
 
     intensity_sim_rewards = torch.zeros(sampled_audio.size(0)).to(device)
+    hyp_intensity = [intensity_transform.get_intensity(audio) for audio in sampled_audio]
+
     for i, hyp in enumerate(hyp_intensity):
         ref = target_intensity[i // beam]
 

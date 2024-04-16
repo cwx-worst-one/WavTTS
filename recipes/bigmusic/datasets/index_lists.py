@@ -26,17 +26,9 @@ INDEX = {
         "HotGalaxy": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/kaiping/2023-09-26_phoneme/url2index.txt",
         "Soda": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/soda/2023-10-11_phoneme/url2index.txt",
         "SodaTest": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/kaiping/2023-09-20/val_url2index.txt",
-        "FanqieShort": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/fanqie_filter_v51_0_10s/url2idx.txt",
-        "FanqieLong": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/fanqie_filter_v51_gt10s/url2idx.txt",
-        "XimalayaShort": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/xmly_filter_v6_0_10s_20230903/url2idx.txt",
-        "XimalayaLong": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/xmly_filter_v6_gt10s_20230903/url2idx.txt",
-        "XiaoyuzhouShort": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/xyz_filter_v6_0_10s_20230903/url2idx.txt",
-        "XiaoyuzhouLong": "hdfs://haruna/home/byte_speech_sv/jingsong.gao/data/music/xyz_filter_v6_gt10s_20230903/url2idx.txt",
-        "MCCVocal-Zh-A": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc60m_chinese/2023-09-26_phoneme/type=A/lang=chinese/url2index.txt",
-        "MCCVocal-Zh-B": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc60m_chinese/2023-09-26_phoneme/type=B/lang=chinese/url2index.txt",
-        "MCCVocal-Zh-C": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc60m_chinese/2023-09-26_phoneme/type=C/lang=chinese/url2index.txt",
         "MCCVocal-En-500k": "hdfs:///home/byte_speech_sv/zongyu.yin/assets/MCCVocal-En-500k.txt",
         "MCCVocal": [
+            # TODO: delete
             "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_vocal_merge/vocal-A-alternative-rock.txt",
             "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_vocal_merge/vocal-A-blues.txt",
             "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/mcc/indexes_vocal_merge/vocal-A-childhood.txt",
@@ -129,9 +121,10 @@ INDEX = {
         "Mixed_MCC_GroupAB_EN": 1087, # 1085 - GroupB only
         "SpotifySFT_Artist16": 1809, # Finetune on 16 artists, 3404 samples
         "SpotifySFT_Genre3373": 1796, # Finetune on Everynoise genres
+        "SpotifySFT_Genre7424": 2077, # Finetune on 6 genres searched by Spotify Playlist, 1k+ songs per genre (Bochen 20240326)
         "SpotifySFT_Artist6": 1624, # Finetune on 6 artists, 2687 samples
         "SpotifySFT_Pop400": 1517, # Pop songs 409
-        "SpotifySFT_BillboardV2": 1835, # 1523, # 100k billboard
+        "SpotifySFT_BillboardV2": 2188, # 1523, # 100k billboard
         "SpotifySFT_GroupA_TTPop": 1820, # tt pop + gt lyrics
         "MCCVocalA_DeepChorus": 1576,
         # "SpotifySFT": 1506, # BigMusic_SFT_Bill_19325
@@ -140,10 +133,8 @@ INDEX = {
         "MCC_Vocal": 475,
     },
     "US": {
-        "MCCVocal-Zh-A": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc60m_chinese/2023-09-24_repartition/type=A/lang=chinese/url2index.txt",
-        "MCCVocal-Zh-B": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc60m_chinese/2023-09-24_repartition/type=B/lang=chinese/url2index.txt",
-        "MCCVocal-Zh-C": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc60m_chinese/2023-09-24_repartition/type=C/lang=chinese/url2index.txt",
-        "MCCVocalA": [
+        "MCCVocalA_Webdataset": [
+            # TODO: delete
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/url2idx/vocal-A-alternative-rock.txt",
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/url2idx/vocal-A-blues.txt",
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/url2idx/vocal-A-childhood.txt",
@@ -168,34 +159,9 @@ INDEX = {
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/url2idx/vocal-A-techno.txt",
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/url2idx/vocal-A-trance.txt",
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/url2idx/vocal-A-trap-rap.txt",
-        ],        
-        "MCCVocalB_nopunc": [
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-alternative-rock.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-blues.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-childhood.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-classical.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-country.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-devotional.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-easy-listening.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-electronic.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-experimental.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-folk.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-hip-hop-rap.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-indie-folk.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-indie-pop.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-jazz.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-metal.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-new-age.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-pop.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-r-b-soul.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-reggae.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-rock.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-soundtrack.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-techno.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-trance.txt",
-            "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/indexes_vocal_merge/vocal-B-trap-rap.txt"
         ],
-        "MCCVocalB": [
+        "MCCVocalB_Webdataset": [
+            # TODO: delete
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/url2idx/vocal-B-alternative-rock.txt",
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/url2idx/vocal-B-blues.txt",
             "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/mcc/mcc60_lossless_asr/url2idx/vocal-B-childhood.txt",
@@ -232,13 +198,15 @@ INDEX = {
         "MCCVocalB_1M": vocalB_dataset_study(1000000),
         "MCCVocalB_2M": vocalB_dataset_study(2000000),
         "MCCVocalA_1M_Parquet": 93,
+        "MCCVocalB": 173,
+        "MCCVocalA": 172,
         "SSTK_Vocal": 110,
         "CD_Baby": 115, # 115 = 250k subset
-        "MCCVocalA_TT_POP": 123,
-        "SpotifySFT_BillboardV2": 156, # 100k billboard
-        "SpotifySFT_GroupA_TTPop": 158, # tt pop + gt lyrics
+        "SpotifySFT_BillboardV2": 163, # 100k billboard
+        "SpotifySFT_GroupA_TTPop": 165, # tt pop + gt lyrics
         "SpotifySFT_Artist16": 157 , # Finetune on 16 artists, 3404 samples
         "SpotifySFT_Genre3373": 159, # Finetune on Everynoise genres
+        "SpotifySFT_Genre7424": 162, # Finetune on 6 genres searched by Spotify Playlist, 1k+ songs per genre (Bochen 20240326)
         "SpotifySFT_All": 160,
         "Billboard-V2": ["hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/js/data/music/billboard_hot200_v2/24000hz/train/20231026_genre/url2index.txt"],
         "Billboard-V2_VALID": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/js/data/music/billboard_hot200_v2/24000hz/test/20231026_genre/url2index.txt",

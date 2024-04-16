@@ -30,7 +30,7 @@ extra_params:
     input_embedders: ["mulan_categorical", "lyrics_tokens"]
     # Inference params
     semantic_temperature: 1.0
-    sample_thresh: 0.95
+    sample_thresh: 0.9
     sample_mode: "top_p"
     beam_size: 2
     decoder_type: "diffusion"
@@ -45,13 +45,13 @@ extra_params:
     use_chord_eos: False
     rewards:
         "mulan_sim": 1.0
-        "wer": 1.0
+        "wer": 0.7
         "style_text_sim": 0.1
         "loudness_sim": 0.1
-        "semantic_diversity_sim": 0.2
+        "semantic_diversity_sim": 0.1
         # "audio_metrics": 1.0
         # "qualitative_sim": 1.0
-        "intensity_sim": 0.7
+        "intensity_sim": 0.4
         # "chord": 1.0
         # "chorus_presence": 0.2
 
@@ -64,17 +64,19 @@ extra_params:
     log_num_val_samples: 10
     log_num_val_beam_samples: 1
 
-    dataset_types: spotify_sft_artist16,spotify_sft_genre3373
-    dataset_weights: [1, 1]
-    valid_dataset_type: val_mcc60m_groupA_cn
+    # dataset_types: spotify_sft_artist16,spotify_sft_genre3373
+    # dataset_weights: [1, 1]
+    dataset_types: spotify_sft_billboardv2,spotify_sft_groupa
+    dataset_weights: [1, 3]
+    valid_dataset_type: val_mcc60m_groupA_cat
 
 # running parameters
 run_opts:
     fast_dev_run: False
     log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
     hdfs_log_dir: "hdfs:///home/byte_speech_sv/andrew.shaw/logs"
-    log_name: semantic_model_dataset_v4_baseline
-    version: billboard-v2_rl3.0
+    log_name: semantic_model_2024_Q2
+    version: v0
     cache_dir: .module_cache/musiclm
     precision: "16-mixed"
     num_workers: 3
@@ -82,7 +84,7 @@ run_opts:
     max_steps: 5000
     val_check_interval: 50
     batch_size: 1 # semantic variable length module can only handle batch size of 1 for predict and RL
-    learning_rate: 1.0e-6
+    learning_rate: 3.0e-6
     warmup_steps: 100
     cycle_steps: 2000
     weight_decay: 0.1
@@ -261,7 +263,7 @@ trainer: !new:pytorch_lightning.Trainer
     log_every_n_steps: 10
     max_steps: !ref <run_opts[max_steps]>
     precision: !ref <run_opts[precision]>
-    accumulate_grad_batches: 1
+    accumulate_grad_batches: 4
     gradient_clip_val: !ref <run_opts[gradient_clip_val]>
     val_check_interval: !ref <run_opts[val_check_interval]>
     limit_val_batches: 10

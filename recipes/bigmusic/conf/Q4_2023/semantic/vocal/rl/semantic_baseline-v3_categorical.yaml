@@ -43,11 +43,11 @@ extra_params:
     use_chord_eos: False
     rewards:
         "mulan_sim": 1.0
-        "wer": 0.5
-        "style_text_sim": 0.5
-        "loudness_sim": 1.0
-        "qualitative_sim": 1.0
-        "chord": 1.0
+        "wer": 0.7
+        "style_text_sim": 0.1
+        "loudness_sim": 0.0
+        "qualitative_sim": 0.3
+        # "chord": 1.0
         "chorus_presence": 0.2
     # Logging params
     log_num_val_samples: 10
@@ -82,9 +82,9 @@ run_opts:
     bestrq_ckpt: "hdfs:///home/byte_speech_sv/bigmusic/models/umm/umm_stage3_music_chroma_vq32768x32-step=0030000-minimal.ckpt"
     diffusion_ckpt: "hdfs:///home/byte_speech_sv/bigmusic/models/diffusion/model_14_30s_finetune-minimal.ckpt"
     vocoder_ckpt: "hdfs:///home/byte_speech_sv/bigmusic/models/diffusion/soundstream-step=374999-val_sdr=12.9557-minimal.ckpt"
-    chord_ckpt: "hdfs:///home/byte_speech_sv/bigmusic/models/reranker/semi-sup-chord_epoch=103-step=56300.ckpt"
-    chord_lms:
-        default: "hdfs:///home/byte_speech_sv/bigmusic/models/reranker/mcc60m_groupA1m_chords/genre_specific/train.arpa"
+    # chord_ckpt: "hdfs:///home/byte_speech_sv/bigmusic/models/reranker/semi-sup-chord_epoch=103-step=56300.ckpt"
+    # chord_lms:
+    #     default: "hdfs:///home/byte_speech_sv/bigmusic/models/reranker/mcc60m_groupA1m_chords/genre_specific/train.arpa"
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -189,14 +189,14 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticRLModule
             initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                 cache_dir: !ref <run_opts[cache_dir]>
                 version: 24k_125hz_dim32_baseline
-        chord:
-            hpath: !ref <run_opts[chord_ckpt]>
-            initializer: !name:recipes.chord.requires.model_initializer.init_chord
-                cache_dir: !ref <run_opts[cache_dir]>
-        chord_lms:
-            hpath: !ref <run_opts[chord_lms]>
-            initializer: !name:recipes.chord.requires.model_initializer.init_chord_lms
-                cache_dir: !ref <run_opts[cache_dir]>
+        # chord:
+        #     hpath: !ref <run_opts[chord_ckpt]>
+        #     initializer: !name:recipes.chord.requires.model_initializer.init_chord
+        #         cache_dir: !ref <run_opts[cache_dir]>
+        # chord_lms:
+        #     hpath: !ref <run_opts[chord_lms]>
+        #     initializer: !name:recipes.chord.requires.model_initializer.init_chord_lms
+        #         cache_dir: !ref <run_opts[cache_dir]>
         asr:
             hpath: en_punc
             initializer: !name:recipes.bigmusic.utils.metrics_asr.init_asr

@@ -19,12 +19,12 @@ extra_params:
 
     # Semantic model
     semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
-    semantic_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/semantic/step=196000-tr_loss=3.9746-val_accu_0=24.90.ckpt"
-    mulan_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/mulan/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt"
+    semantic_ckpt: "hdfs://haruna/home/byte_speech_sv/andrew.shaw/checkpoints/bigmusic/mcc60m_vocalB_style_mixed_cat_audio_v11_rl/step=000150.ckpt"
+    mulan_ckpt: "hdfs:///home/byte_speech_sv/bigmusic/models/mulan/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt"
 
     # Used for reranker, only loaded if use_reranker=True
     mulan_rewards_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/mulan/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt"
-#    structure_ckpt: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/structure_epoch=185-step=93000.ckpt"
+#    structure_ckpt: "hdfs:///home/byte_speech_sv/bigmusic/models/reranker/structure_epoch=185-step=93000.ckpt"
 
     ar_params:
         coarse_duration: 10
@@ -68,7 +68,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
     required_modules:
         diffusion_modules:
             diffusion:
-                hpath: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_14_30s_finetune/checkpoints/last.ckpt
+                hpath: hdfs:///home/byte_speech_sv/bigmusic/models/diffusion/model_14_30s_finetune-minimal.ckpt
                 initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
                     cache_dir: !ref <run_opts[cache_dir]>
             sampler:
@@ -76,14 +76,14 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                 initializer: !name:recipes.diffusion.inference_from_text_lyrics2song.init_sampler
                     cache_dir: !ref <run_opts[cache_dir]>
             vocoder:
-                hpath: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/soundstream-step=374999-val_sdr=12.9557.ckpt
+                hpath: hdfs:///home/byte_speech_sv/bigmusic/models/diffusion/soundstream-step=374999-val_sdr=12.9557-minimal.ckpt
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                     cache_dir: !ref <run_opts[cache_dir]>
                     version: 24k_125hz_dim32_baseline
         reranker:
             hpath:
                 rewards:
-                    style_text: 2.0
+                    style_text: 1.0
                     qualitative: 1.0
                     wer: 1.0
                     #structure: 1.0
@@ -100,11 +100,11 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                     #    hpath: !ref <extra_params[structure_ckpt]>
                     #    initializer: !name:recipes.structure.requires.model_initializer.init_structure
                     #chord:
-                    #    hpath: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/semi-sup-chord_epoch=103-step=56300.ckpt"
+                    #    hpath: "hdfs:///home/byte_speech_sv/bigmusic/models/reranker/semi-sup-chord_epoch=103-step=56300.ckpt"
                     #    initializer: !name:recipes.chord.requires.model_initializer.init_chord
                     #chord_lms:
                     #    hpath:
-                    #        default: "/mnt/bn/audio-diffusion/ducle/data/billboard_v1_chords_allsegs_genre_prefix/default/lm.arpa"
+                    #        default: "hdfs:///home/byte_speech_sv/bigmusic/models/reranker/mcc60m_groupA1m_chords/genre_specific/train.arpa"
                     #    initializer: !name:recipes.chord.requires.model_initializer.init_chord_lms
             initializer: !name:recipes.bigmusic.utils.reranker.init_reranker
                 cache_dir: !ref <run_opts[cache_dir]>

@@ -103,11 +103,11 @@ def summarize_uploaded_results(output_dir, format="default"):
 
     index_fname = os.path.join(output_dir, "index.csv")
     
-    with open(index_fname, "w") as fw:
+    with open(index_fname, "w", encoding='utf-8') as fw:
         if format == "default":
             fw.write("file_name,beam_id,audio_url\n")
             for fp in metadata_fps:
-                with open(fp, "r") as f:
+                with open(fp, "r", encoding='utf-8') as f:
                     metadata = json.load(f)
                 file_name = metadata["file_name"]
                 beam_id = metadata["index"]["beam_idx"]
@@ -116,7 +116,7 @@ def summarize_uploaded_results(output_dir, format="default"):
         elif format == "singsong":
             fw.write("file_name,accomp_audio_url,vocal_audio_url,mixed_audio_url\n")
             for fp in metadata_fps:
-                with open(fp, "r") as f:
+                with open(fp, "r", encoding='utf-8') as f:
                     metadata = json.load(f)
                 file_name = metadata["file_name"]
                 accomp_audio_url = metadata["audio_url"]
@@ -294,9 +294,8 @@ def save_batch_outputs(
 
         print('Saving metadata', metadata)
         meta_fp = os.path.join(wav_dir, f"{wav_file_name}.metadata.json")
-        with open(meta_fp, 'w') as f:            
-            json.dump(metadata, f, indent=2, ensure_ascii=True)
-
+        with open(meta_fp, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
     return output_paths
 
 
@@ -319,8 +318,9 @@ class NormVolumeCallback(pl.Callback):
 
         for idx, generated_output_fp in enumerate(generated_output_fps):
             print ("normalize volume for: ",  generated_output_fp)
-            command = "ffmpeg-normalize --keep-loudness-range-target '%s' -t %d -ext wav -ar %d -o '%s' -f" % (generated_output_fp, -16, sample_rate, generated_output_fp)
+            command = "ffmpeg-normalize '%s' -t -16 --keep-loudness-range-target -c:a libmp3lame -b:a 128k -o '%s' -f" % (generated_output_fp, generated_output_fp.replace(".wav", ".mp3"))
             os.system(command)
+            os.remove(generated_output_fp)
 
 
 def format_video_text(metadata, max_width=50):
@@ -383,18 +383,17 @@ def save_video(input_results_dir, output_video_dir, format_video_text_fn=default
     output_video_dir_tmp.mkdir(exist_ok=True, parents=True)
 
     generated_output_fps = list(Path(input_results_dir).glob('**/*.generated.wav'))
-
-    mp3_fps = list(Path(input_results_dir).glob('**/*.generated.wav.mp3'))
-    if len(mp3_fps) > 0 and len(generated_output_fps) == 0:
-        raise Exception('Save video does not support mp3 outputs. Encoding to video causes artifacts')
-
+    audio_format = ".wav"
+    if len(generated_output_fps) == 0:
+        generated_output_fps = list(Path(input_results_dir).glob('**/*.generated*.mp3'))
+        audio_format = ".mp3"
     for idx, generated_output_fp in enumerate(generated_output_fps):
         audio_fp = generated_output_fp
-        metadata_fp = str(generated_output_fp).replace('generated.wav', 'metadata.json')
+        metadata_fp = str(generated_output_fp).replace('generated'+audio_format, 'metadata.json')
         
         output_video_fp = output_video_dir_tmp/generated_output_fp.with_suffix('.mp4').name
         output_text_fp = output_video_dir_tmp/generated_output_fp.with_suffix('.txt').name
-        with open(metadata_fp, 'r') as f:
+        with open(metadata_fp, 'r', encoding='utf-8') as f:
             metadata = json.load(f)
         with open(output_text_fp, 'w', encoding='utf-8') as f:
             video_text, fontsize, line_spacing = format_video_text_fn(metadata)
@@ -405,7 +404,7 @@ def save_video(input_results_dir, output_video_dir, format_video_text_fn=default
         os.system(cmd)
 
     # concat output videos
-    video_output_fp = output_video_dir/f"vocal_music_demo.mp4"
+    video_output_fp = output_video_dir/f"{output_video_dir.name}.mp4"
     cmd_concat = f"cd {output_video_dir_tmp} && find *.mp4 | sed 's:\ :\\\ :g'| sed 's/^/file /' > fl.txt; ffmpeg -v 0 -f concat -i fl.txt -c copy output.mp4; rm fl.txt"
     os.system(cmd_concat)
     (output_video_dir_tmp/"output.mp4").rename(video_output_fp)
@@ -420,7 +419,7 @@ def run_average_metrics(output_dir):
         return
     category2wer = defaultdict(list)
     for idx, metadata_fp in enumerate(metadata_fps):
-        with open(metadata_fp, 'r') as f:
+        with open(metadata_fp, 'r', encoding='utf-8') as f:
             metadata = json.load(f)
 
         wer = metadata.get('wer', {})

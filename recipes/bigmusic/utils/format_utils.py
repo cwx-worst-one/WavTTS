@@ -118,10 +118,27 @@ def concat_metadata_list(existimg_metadata, metadata):
 
 def update_json(metadata_fp, updates):
     if Path(metadata_fp).exists():
-        with open(metadata_fp, 'r') as f:
+        with open(metadata_fp, 'r', encoding='utf-8') as f:
             metadata = json.load(f)
     else:
         metadata = {}
     metadata = { **metadata, **updates }
-    with open(metadata_fp, 'w') as f:
+    with open(metadata_fp, 'w', encoding='utf-8') as f:
         json.dump(metadata, f, indent=2, ensure_ascii=False)
+
+def format_section_tags(text):
+    """Converts [Verse 1] to <verse>."""
+    patterns = {
+        r'\[Intro\s*\d*\]': '<intro>',
+        r'\[Bridge\s*\d*\]': '<bridge>',
+        r'\[Instrumental\s*\d*\]': '<inst>',
+        r'\[Inst\s*\d*\]': '<inst>',
+        r'\[Verse\s*\d*\]': '<verse>',
+        r'\[Chorus\s*\d*\]': '<chorus>',
+        r'\s*\n*\s*<(\w+)>\s*\n*\s*': r' <\g<1>> ', # removes newline from section tags to match training. "\n <chorus> \n" -> " <chorus> ""
+    }
+    case_insesitive_flag = re.I
+    for pattern, replacement in patterns.items():
+        text = re.sub(pattern, replacement, text, flags=case_insesitive_flag)
+
+    return text

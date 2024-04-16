@@ -89,6 +89,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         mulan_embed_dim = extra_params.get('mulan_embed_dim', 512)
         mulan_crop = extra_params.get('mulan_crop', True)
         mulan_average = extra_params.get('mulan_average', True)
+        style_category_vocab_path = extra_params.get('style_category_vocab_path')
 
         self.augmented_noise_gain = extra_params.get('augmented_noise_gain', 0.01)
         self.prepare_input_types = extra_params.get("prepare_input_types", []) # m1_tagger, mulan_tagger
@@ -102,6 +103,7 @@ class SemanticModule(BaseContinuousEmbedModule):
                     add_sos=True,
                     mulan_crop=mulan_crop,
                     mulan_average=mulan_average,
+                    dropout=tag_dropout_rate
                 )
             elif emb_type == "tag_categorical":
                 # Read ground truth tags from style_text
@@ -118,7 +120,8 @@ class SemanticModule(BaseContinuousEmbedModule):
                     vocab_size=style_category_vocab_size,
                     embedding_dim=hidden_size,
                     add_sos=True,
-                    dropout=tag_dropout_rate
+                    dropout=tag_dropout_rate,
+                    vocab_path=style_category_vocab_path
                 )
             elif emb_type == "speaker_id":
                 embedder_dict['speaker_id'] = SpeakerEmbedder(
@@ -304,6 +307,13 @@ class SemanticModule(BaseContinuousEmbedModule):
                 mcc_style_text=batch.get('style_text'),
                 with_sos=True,
                 data_type='tag',
+            )
+        elif 'style_none' in conditions: # using Mulan for on-the-fly MIR tagging
+            embeds = mulan_embedder.embed(
+                self.requires,
+                batch['style_text'],
+                with_sos=True,
+                data_type='none',
             )
         else:
             # adding SOS token no matter what so that all parameters get used
@@ -684,6 +694,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         loss = self.criterion(target_logits, target_ids, loss_mask)
         if loss_mask is None:
             loss_mask = torch.ones_like(target_ids)
+
         accu = ((target_logits.argmax(dim=-1) == target_ids).float() * loss_mask).sum() / loss_mask.sum() * 100
         # measure accuracy of first 10 tokens as a measurement for style
         accu_seq_25 = ((target_logits.argmax(dim=-1)[..., :25] == target_ids[..., :25])
@@ -762,6 +773,40 @@ class SemanticModule(BaseContinuousEmbedModule):
             previous_inputs_embeds = torch.cat([previous_inputs_embeds, predict_token_emb], dim=1)
             output_tokens = torch.cat([output_tokens, predict_token], dim=1) if output_tokens is not None else predict_token
         return intensity_embedder.unquantize(output_tokens)
+    
+    @torch.no_grad()
+    def prepare_cfg_batch(self, batch, hp):
+        controller_cfg_label = hp.get('controller_cfg_label', "genre")
+        batch_cfg = deepcopy(batch)
+        
+        # instrumental use case
+        if 'mulan' in self.input_embedders:
+            batch_cfg['conditions'] = ['style_none']
+            batch_size = self.infer_batch_size(batch)
+            batch_cfg['style_text'] = [''] * batch_size
+            batch_cfg['style_audio'] = [''] * batch_size
+            return batch_cfg
+        
+        # vocal use case
+        cfg_style_text = []
+        for x in batch['style_text']:
+            x = x.split('|')
+            print(x,controller_cfg_label)
+            x[0] = '' if 'genre' in controller_cfg_label else x[0]
+            x[1] = '' if 'mood' in controller_cfg_label else x[1]
+            x[2] = '' if 'scene' in controller_cfg_label else x[2]
+            x[3] = '' if 'sinking' in controller_cfg_label else x[3]
+            x[4] = '' if 'lang' in controller_cfg_label else x[4]
+            print(x)
+            cfg_style_text.append('|'.join(x))                
+        batch_cfg['style_text'] = cfg_style_text
+        batch_cfg['style_category'] = cfg_style_text
+        if "speaker" in controller_cfg_label:                
+            print(batch_cfg['speaker_id'])                
+            batch_cfg['speaker_id'] = torch.as_tensor([0] * len(batch['style_category']))
+            print(batch_cfg['speaker_id'])
+        return batch_cfg
+
 
     @torch.no_grad()
     def predict(self, batch, hp, beam=1, ref_samples=None, rl_training=False):
@@ -774,7 +819,6 @@ class SemanticModule(BaseContinuousEmbedModule):
         sample_mode = hp.sample_mode
         sample_thresh = hp.get('sample_thresh', 0.9)
         use_controller_cfg = hp.get('use_controller_cfg', False)
-        controller_cfg_label = hp.get('controller_cfg_label', "genre")
         controller_cfg_gamma = hp.get('controller_cfg_gamma', 1)
         skip_sos = hp.get('skip_sos', False)
         self.extra_params.debug_index = hp.get('debug_index', None)
@@ -801,24 +845,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         inputs_emb_cfg = None
         if use_controller_cfg:
             assert beam == 1    # TODO(qq) support beam > 1 with CFG.
-            batch_cfg = deepcopy(batch)            
-            cfg_style_text = []
-            for x in batch['style_text']:
-                x = x.split('|')
-                print(x,controller_cfg_label)
-                x[0] = '' if 'genre' in controller_cfg_label else x[0]
-                x[1] = '' if 'mood' in controller_cfg_label else x[1]
-                x[2] = '' if 'scene' in controller_cfg_label else x[2]
-                x[3] = '' if 'sinking' in controller_cfg_label else x[3]
-                x[4] = '' if 'lang' in controller_cfg_label else x[4]
-                print(x)
-                cfg_style_text.append('|'.join(x))                
-            batch_cfg['style_text'] = cfg_style_text
-            batch_cfg['style_category'] = cfg_style_text
-            if "speaker" in controller_cfg_label:                
-                print(batch_cfg['speaker_id'])                
-                batch_cfg['speaker_id'] = torch.as_tensor([0] * len(batch['style_category']))
-                print(batch_cfg['speaker_id'])
+            batch_cfg = self.prepare_cfg_batch(batch, hp)
             inputs_emb_cfg = self.prepare_inputs_embeddings(batch_cfg)
 
         return super().predict(
@@ -1377,7 +1404,8 @@ class SemanticRLModule(SemanticModule):
                 else:
                     batch["duration"] = self.extra_params.duration
             num_tokens = batch["duration"] * self.extra_params.semantic_frame_rate
-            self.set_requires_grad(False)
+
+            self.set_requires_grad(False) # fix nested autocast bug: https://discuss.pytorch.org/t/autocast-and-torch-no-grad-unexpected-behaviour/93475/2
             sampled_semantic_tokens, model_inputs = super().predict(
                 batch,
                 self.extra_params,
@@ -1438,6 +1466,14 @@ class SemanticRLModule(SemanticModule):
         )
 
     def training_step(self, batch, batch_idx):
+        if 'embedding_pretrain_steps' in self.extra_params:
+            embedding_pretrain_steps = self.extra_params['embedding_pretrain_steps']
+            if batch_idx < embedding_pretrain_steps:
+                for param in self.model.parameters():
+                    param.requires_grad = False
+            else:
+                for param in self.model.parameters():
+                    param.requires_grad = True
         ce_loss, accu, seq_loss, _, _, _, reward_breakdown, seq_probs, skip = self._shared_step(
             batch=batch,
             mode="training",
@@ -1877,7 +1913,7 @@ def process_eos_indexes(semantic_samples, semantic_module: SemanticModule, sampl
     if (semantic_samples == sos_id).any():
         # Hacky fix: sometimes model can predict SOS token. Here, we set it to EOS to discourage output. Diffusion has no concept of SOS
         print('Found SOS in semantic tokens. Setting to 0:', semantic_samples.shape, (semantic_samples == sos_id).sum())
-        semantic_samples[semantic_samples == sos_id] = eos_id
+        semantic_samples[semantic_samples == sos_id] = 0
 
     if eos_id is not None:
         """

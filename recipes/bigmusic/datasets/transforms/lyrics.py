@@ -10,7 +10,7 @@ import librosa
 import numpy as np
 from transformers import T5Tokenizer
 from recipes.bigmusic.datasets.tokenizers.cmu_phonemes import CMUPhonemeTokenizer
-from recipes.bigmusic.utils.format_utils import normalize_text, normalize_text_sami_tokenizer
+from recipes.bigmusic.utils.format_utils import normalize_text, normalize_text_sami_tokenizer, format_section_tags
 from transformers import Wav2Vec2PhonemeCTCTokenizer
 from recipes.musiclm.utils.dist import local_zero_first
 import random
@@ -105,16 +105,20 @@ class BillboardV2MetadataTextTransform():
         return style_text
 
 class SpotifyMetadataTextTransform():
-    def __init__(self, max_genres=None):
+    def __init__(self, max_genres=None, min_year=2000):
         self.max_genres = max_genres
+        self.min_year = min_year
 
     def _call_once(self, item):
         metadata = item.get('metadata', {})
         genres = metadata['genres']
-        try:
-            genres = json.loads(genres)
-        except json.JSONDecodeError as e: # to fix single quote arrays
-            genres = ast.literal_eval(genres)
+        if self.min_year is not None and 'year' in metadata and metadata['year'] < 2000:
+            return None
+        if not isinstance(genres, list):     
+            try:
+                genres = json.loads(genres)
+            except json.JSONDecodeError as e: # to fix single quote arrays
+                genres = ast.literal_eval(genres)
         
         if self.max_genres:
             genres = random.sample(genres, min(len(genres), self.max_genres))
@@ -127,7 +131,6 @@ class SpotifyMetadataTextTransform():
         if isinstance(item, list): # perform batch transform
             return [self._call_once(i) for i in item]
         return self._call_once(item)
-
 
 MCC_MOOD = ['Angry', 'Chill', 'Cute', 'Dynamic', 'Excited', 'Happy', 'Lonely', 'Romantic', 'Sorrow', 'Sweet', 'Tense', 'nan']
 MCC_GENRE = ['Blues', 'Country', 'EDM', 'Jazz', 'Metal', 'New Age', 'Pop', 'R&B', 'Reggae', 'Rock', 'Trap Rap', 'nan']
@@ -153,8 +156,9 @@ def rewrite_metadata_categories(metadata):
     genre = metadata.get('final_genre', '')
     mood = metadata.get('final_mood', '')
     gender = metadata.get('merge_aed', '')
-    if genre == 'nan': genre = ''
-    if mood == 'nan': mood = ''
+    if genre == 'nan' or genre is None: genre = ''
+    if mood == 'nan' or mood is None: mood = ''
+    if gender == 'nan' or gender is None: gender = ''
     
     if 'Female' in gender: gender = 'Female'
     elif 'Male' in gender: gender = 'Male'
@@ -259,10 +263,11 @@ class LyricsTokenTransform():
         def _normalize_text(text: str):
             if validate_ascii: 
                 assert text.isascii(), f"Error tokenizing non-ascii lyrics: {text}"
+            text = format_section_tags(text)
             return normalize_text(text, enable_punctuation=enable_punctuation)
         with local_zero_first():
             espeak_tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained("facebook/wav2vec2-xlsr-53-espeak-cv-ft")
-            espeak_tokenizer._add_tokens(["<n>", "<verse>", "<chorus>", "<intro>", "<bridge>", "<inst>"])
+            espeak_tokenizer._add_tokens(["<n>", "<verse>", "<chorus>", "<intro>", "<bridge>", "<inst>", "<silence>"])
         import logging, phonemizer
         # To silence espeak logging warnings: "WARNING - words count mismatch on 100.0% of the lines"
         phonemizer.logger.get_logger().setLevel(logging.ERROR)

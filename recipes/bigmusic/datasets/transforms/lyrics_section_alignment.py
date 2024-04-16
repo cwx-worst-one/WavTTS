@@ -77,7 +77,7 @@ def get_section_aligned_segment(segment, section_labels, max_misaligned=5):
     segment_text = segment.text
     for section in section_labels:
         sec_start_time, sec_end_time = section['interval']
-        if not has_overlap(segment.inst_start, segment.inst_end, sec_start_time, sec_end_time): 
+        if not has_overlap(segment.start, segment.end, sec_start_time, sec_end_time): 
             continue
         word_index = find_word_index(words_with_indices, sec_start_time, start_index=word_index)
         if word_index is None: # not found. insert at the end
@@ -204,14 +204,11 @@ def gt_lyrics_to_song_structure(segments):
 import random
 def song_structure_from_metadata(metadata, segments, align_section_timings=True):
     if metadata is None: return None
-    if 'is_lyrics_gt' in metadata and 'deepchorus' in metadata:
-        if random.random() < 0.5:
-            song_structure = metadata['deepchorus']['segments']
-        else:
-            song_structure = gt_lyrics_to_song_structure(segments)
-    elif 'is_lyrics_gt' in metadata:
+    if 'is_lyrics_gt' in metadata:
         # print('Lyrics gt')
         song_structure = gt_lyrics_to_song_structure(segments)
+        if len(song_structure) < 3 and 'deepchorus' in metadata:
+            song_structure = metadata['deepchorus']['segments']
     elif 'deepchorus' in metadata:
         # print('Deepchorus')
         song_structure = metadata['deepchorus']['segments']

@@ -13,6 +13,8 @@ from recipes.musiclm.transforms.audio import RandomResizedCrop
 from recipes.bigmusic.utils.mulan_tag import MulanTagger
 from recipes.bigmusic.datasets.transforms.lyrics_segment import crop_pad_to_seq_length, random_crop_pad_to_seq_length
 from recipes.bigmusic.datasets.mir_data_util import NONE_LABEL, get_categorical_vocab
+import samantha.utils.hdfs_helper as hh
+import json
 
 logger = logging.getLogger()
 
@@ -126,14 +128,22 @@ class BaseEmbedder(nn.Module):
         pass
 
 class ContinuousEmbedder(BaseEmbedder):
-    def __init__(self, input_dim, embedding_dim, add_sos=False):
+    def __init__(self, input_dim, embedding_dim, add_sos=False, add_eos=False, add_none=False):
         super().__init__()
-        self.sos_id = 0 if add_sos else None
+        self.vocab_size = 0
+        self.sos_id = None
+        self.eos_id = None
+        self.none_id = None
         if add_sos:
-            self.sos_id = 0
-            self.embedder = nn.Embedding(1, input_dim)
-        else:
-            self.sos_id = None
+            self.sos_id = self.vocab_size
+            self.vocab_size = self.vocab_size + 1
+        if add_eos:
+            self.eos_id = self.vocab_size
+            self.vocab_size = self.vocab_size + 1
+        if add_none:
+            self.none_id = self.vocab_size
+            self.vocab_size = self.vocab_size + 1
+        self.embedder = nn.Embedding(self.vocab_size, input_dim)
 
         if input_dim != embedding_dim:
             self.projection = nn.Linear(input_dim, embedding_dim, bias=False)
@@ -314,10 +324,21 @@ class MulanCategoricalEmbedder(BaseEmbedder):
             min_audio_length=10*24000,
             add_sos=False,
             dropout=0.0,
-            category_separator="|"
+            category_separator="|",
+            vocab_path=None,
         ):
         super().__init__()
-        self.vocab_size = vocab_size
+        self.none_id = 0
+        self.vocab_path = vocab_path
+        if vocab_path is not None:
+            with hh.hopen(vocab_path) as f:
+                self.vocab2id = json.load(f)
+            vocab_size = len(self.vocab2id)
+            self.vocab_size = vocab_size
+        else:
+            self.vocab2id = { NONE_LABEL: self.none_id }
+            self.vocab_size = vocab_size
+            
         self.sos_id = None
         self.eos_id = None
         self.dropout = dropout
@@ -332,7 +353,6 @@ class MulanCategoricalEmbedder(BaseEmbedder):
         else:
             self.projection = nn.Identity()
 
-        self.vocab2id = { NONE_LABEL: 0 }
         self.vocab2count = defaultdict(int)
         self.dropout = dropout
         self.min_audio_length = min_audio_length # 10s * 24k sample rate
@@ -369,11 +389,13 @@ class MulanCategoricalEmbedder(BaseEmbedder):
                 self.vocab2id[new_tag] = len(self.vocab2id)
 
     def get_tag_id(self, tag, dropout=0.0):
+        if tag == '': tag = NONE_LABEL
         if tag not in self.vocab2id:
             if not self.training:
                 logger.warn(f"Inference Error: Tag {tag} not found in vocab. Please check vocab")
                 if self.warning_count < 0: logger.warn(f"Vocab IDs: {self.vocab2id}")
                 self.warning_count += 1
+                # raise Exception('Tag not found error')
             tag = NONE_LABEL
         if self.training and random.random() < dropout:
             tag = NONE_LABEL
@@ -400,12 +422,15 @@ class MulanCategoricalEmbedder(BaseEmbedder):
             tag_ids = [self.get_tag_id(tag, self.dropout) for tag in style_tags]
             batch_tag_ids.append(torch.tensor(tag_ids))
 
-        batch_tag_ids = pad_sequence(batch_tag_ids, batch_first=True, padding_value=self.get_tag_id(NONE_LABEL))
+        batch_tag_ids = pad_sequence(batch_tag_ids, batch_first=True, padding_value=self.none_id)
         device = next(self.parameters()).device
         return torch.as_tensor(batch_tag_ids).to(device)
 
     # save auto-growing vocab for inference
     def set_extra_state(self, state: Any): 
+        if self.vocab_path is not None:
+            print('Re-using existing vocab', self.vocab2id)
+            return
         self.vocab2id = state['vocab'] 
         self.vocab2count.update(state.get('counts', {}))
         print('Loading Vocab counts', self.vocab2count)
@@ -418,6 +443,14 @@ class MulanCategoricalEmbedder(BaseEmbedder):
             sos_embed = self.get_sos_embed(embeds.size(0))
             embeds = torch.cat([sos_embed, embeds], dim=1)
         return embeds
+    
+    @staticmethod
+    def masked_mean(emb, tokens, padding_idx):
+        mask = (tokens != padding_idx)
+        denom = torch.sum(mask, -1, keepdim=True).clamp(min=1)
+        feat = torch.sum(emb * mask.unsqueeze(-1), dim=1) / denom
+        return feat
+
 
     def get_embeds(
         self,
@@ -435,7 +468,7 @@ class MulanCategoricalEmbedder(BaseEmbedder):
         if data_type == "category":
             categorical_tokens = self.get_tokens(requires, input_audio_or_text)
             cat_embeds = self.embedder(categorical_tokens)
-            cat_embeds = cat_embeds.mean(1)[:, None, :] # bs x cat x emb
+            cat_embeds = MulanCategoricalEmbedder.masked_mean(cat_embeds, categorical_tokens, self.none_id)[:, None, :] # bs x cat x emb
             return cat_embeds
         ## Audio embed
         if data_type == "music":
@@ -446,6 +479,11 @@ class MulanCategoricalEmbedder(BaseEmbedder):
             mulan_embeds = get_mulan_embeds(
                 requires, input_audio_or_text, data_type
             )
+
+            # TODO: add dropout per item not batch
+            if self.training and random.random() < self.dropout:
+                none_embeds = self.embedder(torch.tensor([self.none_id], device=mulan_embeds.device))
+                mulan_embeds[..., :] = none_embeds.squeeze(0)
             if mulan_embeds.dim() == 2:
                 mulan_embeds = mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
             self.sync_tags([]) # must call sync tags for distributed training
@@ -459,15 +497,18 @@ class MulanEmbedder(ContinuousEmbedder):
             embedding_dim=1024,
             min_audio_length=10*24000,
             add_sos=False,
+            add_none=True,
             mulan_crop=True,
             mulan_average=True,
+            dropout=0.0,
         ):
-        super().__init__(input_dim, embedding_dim, add_sos)
+        super().__init__(input_dim, embedding_dim, add_sos, add_none=add_none)
 
         self.data_type = data_type
         self.min_audio_length = min_audio_length # 10s * 24k sample rate
         self.mulan_crop = mulan_crop
         self.mulan_average = mulan_average
+        self.dropout = dropout
 
     def get_embeds(
         self,
@@ -487,6 +528,12 @@ class MulanEmbedder(ContinuousEmbedder):
                 prefix_length = 1 + (target_samples_length - self.min_audio_length) // shift_length
                 mulan_embeds = mulan_embeds.expand(-1, prefix_length, -1)
             return mulan_embeds
+        ## CFG
+        if data_type == "none":
+            bs = len(input_audio_or_text)
+            device = next(self.parameters()).device
+            mulan_embeds = self.embedder(torch.tensor([self.none_id] * bs, device=device))
+            return mulan_embeds.unsqueeze(1)
         # Audio
         if self.training and self.mulan_crop:
             input_audio_or_text = random_crop_pad_to_seq_length(input_audio_or_text, self.min_audio_length)
@@ -500,6 +547,10 @@ class MulanEmbedder(ContinuousEmbedder):
             mulan_embeds = get_mulan_embeds(
                 requires, input_audio_or_text, data_type, average=self.mulan_average
             )
+            if self.training and random.random() < self.dropout:
+                none_embeds = self.embedder(torch.tensor([self.none_id], device=mulan_embeds.device))
+                mulan_embeds[..., :] = none_embeds.squeeze(0)
+
             if mulan_embeds.dim() == 2:
                 mulan_embeds = mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
             return mulan_embeds

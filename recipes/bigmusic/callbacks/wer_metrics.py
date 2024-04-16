@@ -46,7 +46,7 @@ def run_wer_metrics(generated_output_fps, asr_model_path='en_punc', device='cuda
             sample_rate=24000,
         )
         metadata_fp = str(generated_output_fp).replace('generated.wav', 'metadata.json')
-        with open(metadata_fp, 'r') as f:
+        with open(metadata_fp, 'r', encoding='utf-8') as f:
             metadata = json.load(f)
         # actual transcript
         lyrics = metadata.get('lyrics')

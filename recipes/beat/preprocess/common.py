@@ -11,12 +11,6 @@ from torchaudio.transforms import Resample
 from samantha.dataio.preprocess import AudioLengthModifier
 from torchaudio.transforms import Resample
 
-
-# if not os.path.exists('recipes/beat/conf/final_dict.json'):
-#     subprocess.run(f"hdfs dfs -get hdfs://harunava/home/byte_speech_sv/amy/log/final_dict.json recipes/beat/conf/final_dict.json", shell=True)
-with open('thirdparty/samantha/recipes/beat/conf/final_dict.json', "r") as outfile:
-    VALID_VOCAL = json.load(outfile)
-
 def get_beats_labels(times, song_duration, dataset, hop_in_sec=0.2):
     hop_per_sec = 1 / hop_in_sec
     end_idx = np.ceil(song_duration * hop_per_sec).astype(np.int)
@@ -279,11 +273,16 @@ class BeatPreprocessor:
             target_duration_sec, sampling_rate, chunk_per_sample, *args, **kwargs
         )
 
+        if not os.path.exists('recipes/beat/conf/final_dict.json'):
+            subprocess.run(f"hdfs dfs -get hdfs://harunava/home/byte_speech_sv/amy/log/final_dict.json recipes/beat/conf/final_dict.json", shell=True)
+        with open('recipes/beat/conf/final_dict.json', "r") as outfile:
+            self.VALID_VOCAL = json.load(outfile)
+
     def train_batch_preprocess(self, batch):
         try:
             for x in batch:
                 if "license-based_mcc_mss_shard" in x["__url__"]:
-                    if not ('VALID_VOCAL' in globals() and x['__key__'] in VALID_VOCAL):
+                    if not (x['__key__'] in self.VALID_VOCAL):
                         continue
                     preprocessor = self._mcc_mss_preprocessors
                 elif 'license-based_mcc' in x['__url__']:

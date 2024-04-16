@@ -137,20 +137,43 @@ class IntensityTransform:
         calculation_mode="max",
         intensity_hz=1,
         debug=False,
+        normalize=False,
+        remove_silence=False,
     ):
         self.audio_key = audio_key
         self.window_size = sample_rate // intensity_hz
         self.calculation_mode = calculation_mode
         self.debug = debug
+        self.normalize = normalize
+        self.remove_silence = remove_silence
+
+    @staticmethod
+    def truncate_silence(tensor):
+        non_zero = torch.nonzero(tensor.view(-1))
+        if non_zero.numel() == 0: return tensor # all silence case
+        last_non_zero_index = non_zero.max().item()
+        truncated_tensor = tensor[:last_non_zero_index+1]
+        return truncated_tensor
+    
+    @staticmethod
+    def normalize_tensor(t):
+        t = t - t.min()
+        t = t / t.max()
+        return t
 
     def get_intensity(self, audio):
         if not isinstance(audio, torch.Tensor):
             audio = torch.from_numpy(audio)
-        return to_energy(
+        if self.remove_silence:
+            audio = IntensityTransform.truncate_silence(audio)
+        intensity_out = to_energy(
             audio.float(),
             window_size=self.window_size,
             calculation_mode=self.calculation_mode,
         )[0]
+        if self.normalize:
+            intensity_out = IntensityTransform.normalize_tensor(intensity_out)
+        return intensity_out
 
     def __call__(self, item):
         if self.audio_key not in item:

@@ -9,7 +9,7 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
 
 extra_params:
-    beam_size: 1    # set to 1 if not using reranker
+    beam_size: 4    # set to 1 if not using reranker
     samples_to_save: 1
     save_style_audio: True
     save_mode: wav  # wav|mp3|upload
@@ -17,7 +17,7 @@ extra_params:
     prompt_path: "/mnt/bn/audio-diffusion/peng/sstk_random_30_prompts.csv"
     inference_conditions: "style_text,duration"
     max_items: null
-    use_reranker: False
+    use_reranker: True
 
     output_dir: sstk_out
 

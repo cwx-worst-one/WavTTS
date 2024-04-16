@@ -30,7 +30,7 @@ def run_mcs_metrics(requires, generated_output_fps, device='cuda', sample_rate=2
         return wav_tensor.unsqueeze(0)
     for idx, generated_output_fp in enumerate(generated_output_fps):
         metadata_fp = str(generated_output_fp).replace('generated.wav', 'metadata.json')
-        with open(metadata_fp, 'r') as f:
+        with open(metadata_fp, 'r', encoding='utf-8') as f:
             metadata = json.load(f)
         conditions = metadata['conditions']
         # Compute MCS based on wavs

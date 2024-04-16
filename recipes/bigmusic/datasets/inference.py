@@ -60,7 +60,7 @@ def prompt_path_to_items(prompt_path, cache_dir='.prompt_cache'):
 
     prompt_path = Path(prompt_path)
     if prompt_path.suffix == '.json':
-        with open(prompt_path, 'r') as f:
+        with open(prompt_path, 'r', encoding='utf-8') as f:
             prompts = json.load(f)
     elif prompt_path.suffix == '.csv':
         df = pd.read_csv(prompt_path)
@@ -164,7 +164,7 @@ def inference_dataset_from_prompt(
                         lyrics_max_seq_len=lyrics_max_seq_len,
                         dataset_mode=dataset_mode,
                         enable_punctuation=enable_punctuation,
-                        validate_ascii=True,
+                        validate_ascii=False,
                     )
                 )
             elif lang == 'zh_wp':

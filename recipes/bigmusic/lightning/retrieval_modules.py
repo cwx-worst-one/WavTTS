@@ -35,28 +35,27 @@ class MusicDatabaseModule(pl.LightningModule):
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
         raise NotImplementedError()
 
-    def predict_step(self, batch, batch_idx):
+    def predict_step(self, batch, batch_idx, dataloader_idx=0):
         audio = batch["target_audio"]
+        style_category = batch['style_category']
         with torch.no_grad():
             mulan_embeds = self.requires["mulan_infer_fn"](
                 model=self.requires["mulan"],
                 music=audio.float(),
                 device=audio.device,
             )
-        return mulan_embeds, audio
-
-    def on_predict_batch_end(self, outputs, batch, batch_idx, dataloader_idx=0):
-        mulan_embeds, audio = outputs
         if not os.path.exists(self.extra_params.output_dir):
             os.makedirs(self.extra_params.output_dir, exist_ok=True)
         fname = f"{self.global_rank}_{dataloader_idx}_{batch_idx}"
         audio = (audio.cpu().float().numpy() * 32768.0).astype("int16")
         mulan_embeds = mulan_embeds.cpu().float().numpy()
+        with open(os.path.join(self.extra_params.output_dir, f"{fname}.style_category.json"), 'w') as f:
+            json.dump(style_category, f)
         np.save(os.path.join(self.extra_params.output_dir, f"{fname}.audio.npy"), audio)
         np.save(os.path.join(self.extra_params.output_dir, f"{fname}.mulan_embeds.npy"), mulan_embeds)
         del audio
         del mulan_embeds
-
+        # return mulan_embeds, audio # do not save outputs to prevent OOM
 
 class RetrievalModule(pl.LightningModule):
     def __init__(self, required_modules, extra_params=None):

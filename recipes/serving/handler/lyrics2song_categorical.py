@@ -15,7 +15,7 @@ from bytedance import easycycle
 import uuid
 
 device = "cuda:0"
-default_batch_size = 4
+default_batch_size = 1
 
 tos_url_expires = 60 * 60 * 24 * 1000
 tos_bucket = "bigspeech-platform"
@@ -64,7 +64,7 @@ def api_main(lyrics, mood, genre, gender):
     pl_module, extra_params, trainer = preload_models()
     logging.info(f"load model cost {time.time() - start} s")
 
-    supported_genres = ['alternative metal', 'rap', 'dance pop', 'rock', 'pop rap', 'pop', 'mellow gold', 'hard rock', 'trap', 'singer-songwriter', 'edm', 'r&b', 'Taylor Swift', 'Coldplay', 'The Weeknd', 'Elton John', 'Justin Bieber']
+    supported_genres = ['alternative metal' 'dance pop', 'rock', 'pop rap', 'pop', 'mellow gold', 'hard rock', 'trap', 'singer-songwriter', 'edm', 'r&b', 'Taylor Swift', 'Coldplay', 'The Weeknd', 'Elton John', 'Justin Bieber']
     if genre not in supported_genres:
         logging.warn(f"Genre {genre} not found in {supported_genres}")
     style_category = [genre]
@@ -85,9 +85,12 @@ def api_main(lyrics, mood, genre, gender):
     predictions = trainer.predict(pl_module, pl_datamodule)
     output_wavs = predictions[0]['generated_audio']
 
+    # beam_size=4, choose top 2
+    selected_wavs = output_wavs[:2]
+
     sr = extra_params.sample_rate
     urls = []
-    for output_wav in output_wavs:
+    for output_wav in selected_wavs:
         bytes_wav = torch_save_wav_to_binary(output_wav.cpu().float(), sr)
 
         fileid = uuid.uuid4().hex

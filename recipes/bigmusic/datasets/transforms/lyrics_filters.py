@@ -59,6 +59,8 @@ def is_valid_lyrics(metadata, lyrics, confidence_threshold=0.8):
             confidence = float(utterance["confidence"])
         elif 'additions' in utterance:
             confidence = float(utterance["additions"]["confidence"])
+        elif 'attribute' in utterance:
+            confidence = float(utterance['attribute']['confidence'])
         else:
             # some lyrics may not have confidence (force alignment). return True
             return True
