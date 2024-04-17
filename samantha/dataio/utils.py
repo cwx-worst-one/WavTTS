@@ -5,15 +5,22 @@ import logging
 import os
 import re
 import subprocess
+import warnings
 from collections import Counter
 from multiprocessing.pool import ThreadPool
 
 import braceexpand
 import numpy as np
-from bytedance.easycycle import (
-    get_dataset_collection_info,
-    get_dataset_collection_info_v2,
-)
+from bytedance.easycycle import get_dataset_collection_info
+
+try:
+    from bytedance.easycycle import get_dataset_collection_info_v2
+except Exception:
+    warnings.warn(
+        "Could not import get_dataset_collection_info_v2 from bytedance.easycycle, please upgrade your package."
+    )
+    get_dataset_collection_info_v2 = None
+
 from lightning_fabric.utilities.cloud_io import get_filesystem
 from lightning_fabric.utilities.exceptions import MisconfigurationException
 from pyarrow.parquet import ParquetFile
@@ -277,7 +284,10 @@ def resolve_data_urls(data_id=None, data_urls=None):
 
     if data_id is not None:
         os.environ["DatasetID"] = str(data_id)
-        data_urls = get_dataset_collection_info_v2(data_id)["origin"]["paths"]
+        if get_dataset_collection_info_v2 is not None:
+            data_urls = get_dataset_collection_info_v2(data_id)["origin"]["paths"]
+        else:
+            data_urls = get_dataset_collection_info(data_id)
 
     columns = None
     for url in data_urls:
@@ -334,8 +344,19 @@ def resolve_data_urls(data_id=None, data_urls=None):
 
 
 def uniq_data_urls(data_urls):
-    frequency = {url["index"]: int(url.pop("repetitions", 1)) for url in data_urls}
-    return frequency, data_urls
+    if get_dataset_collection_info_v2 is not None:
+        frequency = {url["index"]: int(url.pop("repetitions", 1)) for url in data_urls}
+        return frequency, data_urls
+    else:
+        frequency = Counter(url["index"] for url in data_urls)
+        uniqed_data_urls, memory = [], set()
+        for url in data_urls:
+            index = url["index"]
+            if index in memory:
+                continue
+            uniqed_data_urls.append(url)
+            memory.add(index)
+        return frequency, uniqed_data_urls
 
 
 def _resolve_one_url(url, columns):
