@@ -193,7 +193,8 @@ pl_module: !new:apps.bigtts.wvae.ar.lit_vae_t2s_ctiga_lang_spk_ser.VAET2SLangSpk
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
-    logits_criterion_cls: !name:samantha.criterion.masked_loss.MaskedCrossEntropy
+    logits_criterion_cls: !name:samantha.criterion.criterion.MaskedCrossEntropy
+        return_dict: False
     dense_criterion_cls: !name:samantha.criterion.masked_loss.MaskedKLLossPP
     checkpointing: !ref <run_opts[checkpointing]>
     required_modules:

@@ -1,9 +1,12 @@
+import logging
 import os
 
 from torch.utils.data import Dataset
 
 from samantha.dataio.lite.utils.lang import get_lang_by_text
 from samantha.utils.sami_tacolabel import generate_tacolabels_from_textstr_punc
+
+logger = logging.getLogger(__name__)
 
 
 def generate_tacolabels_engine(text_str):

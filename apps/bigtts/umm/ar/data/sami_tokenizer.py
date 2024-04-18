@@ -45,6 +45,8 @@ def get_lang(tacolab):
             lang = "zh_en"
         else:
             lang = "zh"
+    elif "JP" in prefix_phn_list:
+        lang = "jp"
     else:
         lang = "en"
     return lang
@@ -57,7 +59,7 @@ def convert_labels_to_text_id(tacolab):
         tone_ids = []
         phones = []
         tones = []
-        if lang == "zh":
+        if lang == "zh" or lang == "jp":
             assert len(tacolab[0].split("\t")) == 7, (
                 len(tacolab[0].split("\t")),
                 tacolab[0],
@@ -70,6 +72,10 @@ def convert_labels_to_text_id(tacolab):
                     continue
                 x_split = x.split("\t")
                 phone, tone, ws, pw, stype, word, unit = x_split
+                if phone.startswith("JP_"):
+                    phone_lang, phone = phone.split("_")
+                elif phone == "pau" or phone == "sp":
+                    phone = "jp_sp"
                 assert phone in phone_to_int, f"{phone} not in phone set"
                 assert tone in tone_to_int, f"{tone} not in tone set"
 

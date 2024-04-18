@@ -4,10 +4,17 @@ from samantha.dataio.lite.transform import CollatorBase
 from samantha.transforms.audio import RandomPad, Pad
 
 
-class BigMusicCollator(CollatorBase):
-    def __init__(self, audio_key: str = "wav", token_key: str = "umm_token"):
+class ARCollator(CollatorBase):
+    def __init__(
+        self,
+        audio_key: str = "wav",
+        token_key: str = "umm_token",
+        split_by_alignment: bool = False,
+    ):
+        super().__init__()
         self.audio_key = audio_key
         self.token_key = token_key
+        self.split_by_alignment = split_by_alignment
 
     def __call__(self, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         if len(batch) > 0 and all("audio" in x for x in batch):
@@ -67,4 +74,21 @@ class BigMusicCollator(CollatorBase):
             "lang": torch.tensor(lang),
         }
 
+        if self.split_by_alignment:
+            res.update(self._split_by_alignment(batch))
         return res
+
+    def _split_by_alignment(self, batch):
+        max_length = max([x.get("prompt_" + self.token_key).shape[-1] for x in batch])
+        zero_pad = Pad(n_samples=max_length)
+        prompt_umm_token = []
+        prompt_umm_token_length = []
+        for item in batch:
+            prompt_umm_token.append(
+                zero_pad(item.get("prompt_" + self.token_key).unsqueeze(0))
+            )
+            prompt_umm_token_length.append(item.get("prompt_" + self.token_key).numel())
+        return {
+            "prompt_ids": torch.cat(prompt_umm_token, dim=0),
+            "prompt_ids_length": torch.tensor(prompt_umm_token_length),
+        }

@@ -45,7 +45,6 @@ run_opts:
     weight_decay: 0.05
     shuffle_buffer: 20   # 100
     gradient_clip_val: 1.0
-    region: CN  # groupA, groupB, 1, 3, 4
     # offline umm token
     data_id: 319
     umm_token_freq: 40
@@ -173,7 +172,8 @@ pl_module: !new:apps.bigtts.umm.ar.semantic_modules.SemanticModule_Valle
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
-    criterion_cls: !name:samantha.criterion.masked_loss.MaskedCrossEntropyV2
+    criterion_cls: !name:samantha.criterion.criterion.MaskedCrossEntropy
+        return_dict: False
     extra_params: !ref <extra_params>
     # required_modules: 
         # bestrq:
@@ -211,11 +211,12 @@ callbacks:
     - !new:samantha.callbacks.HDFSModelCheckpoint
       dirpath: !ref <run_opts[log_dir]>/<run_opts[log_name]>/<run_opts[version]>
       hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
-      monitor: accu
+      monitor: training/accu
       save_top_k: 30
       every_n_train_steps: 10000
       mode: max
-      filename: "{step:06d}-{accu:.2f}"
+      filename: "step={step:06d}-accu={training/accu:.2f}"
+      auto_insert_metric_name: False
 
 plugins:
     - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO

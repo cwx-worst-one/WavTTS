@@ -6,6 +6,10 @@ from samantha.dataio.lite.utils.frontend import (
     wordseg_to_int,
 )
 from samantha.utils.common import is_float
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 class PhoneToId:
@@ -47,6 +51,8 @@ class PhoneToId:
                 lang = "zh_en"
             else:
                 lang = "zh"
+        elif "JP" in prefix_phn_list:
+            lang = "jp"
         else:
             lang = "en"
         return lang
@@ -69,7 +75,7 @@ class PhoneToId:
                 "phn\ttone\tws\tpwpp\tsentype\tword\tunit\talignment": 3,
             }
 
-            if lang == "zh":
+            if lang == "zh" or lang == "jp":
                 # assert tacolab[0] in head_type_dict, (len(tacolab[0].split('\t')), tacolab[0])
                 # head_type = head_type_dict[tacolab[0]]
                 # tacolab = tacolab[1:]
@@ -105,6 +111,11 @@ class PhoneToId:
                         phone, tone, ws, pw, stype, word, alignment = x_split
                     elif head_type == 3:
                         phone, tone, ws, pw, stype, word, unit, alignment = x_split
+
+                    if phone.startswith("JP_"):
+                        phone_lang, phone = phone.split("_")
+                    elif lang == "jp" and (phone == "pau" or phone == "sp"):
+                        phone = "jp_sp"
 
                     assert phone in self.phone_to_int, f"{phone} not in phone set"
                     assert tone in self.tone_to_int, f"{tone} not in tone set"
@@ -224,7 +235,7 @@ class PhoneToId:
             wordsegs = []
             alignments = []
 
-            if lang == "zh":
+            if lang == "zh" or lang == "jp":
                 assert len(tacolab[0].split("\t")) == 7, (
                     len(tacolab[0].split("\t")),
                     tacolab[0],
@@ -237,6 +248,12 @@ class PhoneToId:
                         continue
                     x_split = x.split("\t")
                     phone, tone, ws, pw, stype, word, unit = x_split
+
+                    if phone.startswith("JP_"):
+                        phone_lang, phone = phone.split("_")
+                    elif lang == "jp" and (phone == "pau" or phone == "sp"):
+                        phone = "jp_sp"
+
                     assert phone in self.phone_to_int, f"{phone} not in phone set"
                     assert tone in self.tone_to_int, f"{tone} not in tone set"
 
@@ -330,34 +347,9 @@ class PhoneToId:
                 alignments,
             )
 
-        except Exception as e:
-            print(e)
+        except Exception as exc:
+            logger.warning("error on convert_tacolab_to_text_id_infer", exc_info=exc)
             return None
-
-
-# def get_duration_frames(durations, phonemes, hop_ms):
-#     start_duration = 0
-#     accum_frames = 0
-#     phoneme_frames = []
-
-#     # remove sil in durations
-#     format_durations = []
-#     for i, item in enumerate(durations):
-#         if (i != 0 and i != len(durations) - 1)  and item[0] == "sil":
-#             continue
-#         format_durations.append(item)
-
-#     if len(format_durations) != len(phonemes):
-#         return None
-
-#     i = 0
-#     for j, phoneme in enumerate(phonemes):
-#         accum_frames_temp = int(round((format_durations[i][1] - start_duration) / hop_ms))
-#         frames = accum_frames_temp - accum_frames
-#         accum_frames = accum_frames_temp
-#         phoneme_frames.append(frames)
-#         i += 1
-#     return phoneme_frames
 
 
 def get_duration_frames_wds(alignments, phonemes, hop_ms):

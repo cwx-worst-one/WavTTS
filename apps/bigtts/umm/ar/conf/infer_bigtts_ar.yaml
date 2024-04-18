@@ -16,6 +16,8 @@ run_opts:
     mode: "naive"
     max_blank_length: 5
     step_out_blank: False
+    version: spkid_v3
+    icl_mode: "continuation"
 
 predict_dataset: !new:apps.bigtts.umm.ar.data.bigtts_test.ICLMetaDataset
     meta_lst: !ref <run_opts[meta_lst]>
@@ -41,6 +43,8 @@ pl_module: !new:apps.bigtts.umm.ar.infer.pl_module_bigtts_ar.SemanticInference
     mode: !ref <run_opts[mode]>
     max_blank_length: !ref <run_opts[max_blank_length]>
     step_out_blank: !ref <run_opts[step_out_blank]>
+    version: !ref <run_opts[version]>
+    icl_mode: !ref <run_opts[icl_mode]>
 
 trainer: !new:pytorch_lightning.Trainer
     accelerator: "auto"

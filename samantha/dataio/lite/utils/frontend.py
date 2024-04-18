@@ -167,13 +167,92 @@ ZH_vowel = [
 sep_strs = ["zh_word_sep", "en_word_sep", "syl_sep"]
 wordseg_strs = ["B", "E", "M", "S"]  # Begin, End, Middle, Single.
 lang_strs = ["others", "zh", "en", "jp"]
+
+# gobal phone add phone 1129 liuxudong
+add_sep_strs = ["jp_accent_sep", "mx_word_sep"]
+add_sil_symbols = ["jp_sp", "mx_sp"]
+add_special_symbols = ["¡", "¿"]
+GP_consonant = [
+    "B",
+    "B-Y",
+    "CH",
+    "CL",
+    "CX",
+    "D",
+    "D-Y",
+    "DC",
+    "F",
+    "FP",
+    "G",
+    "G-W",
+    "G-Y",
+    "H",
+    "J",
+    "K",
+    "K-W",
+    "K-Y",
+    "L",
+    "M",
+    "M-Y",
+    "N",
+    "N-Y",
+    "NC",
+    "NN",
+    "P",
+    "P-Y",
+    "RD",
+    "RR",
+    "RR-Y",
+    "S",
+    "SH",
+    "T",
+    "T-Y",
+    "TS",
+    "V",
+    "V-Y",
+    "X",
+    "XC",
+    "XJ",
+    "Z",
+]
+GP_vowel = [
+    "A",
+    "AI",
+    "AU",
+    "E",
+    "EI",
+    "EU",
+    "I",
+    "IU",
+    "O",
+    "OI",
+    "U",
+    "UI",
+    "UX",
+    "W",
+    "Y",
+]
+
+GP_consonant = ["ML0" + i for i in GP_consonant]
+GP_vowel = ["ML0" + i for i in GP_vowel]
+
+add_all_phones = (
+    add_sep_strs + add_sil_symbols + add_special_symbols + GP_consonant + GP_vowel
+)
+
 all_phones = (
-    sil_punc_symbols + EN_consonant + EN_vowel + ZH_consonant + ZH_vowel + sep_strs
+    sil_punc_symbols
+    + EN_consonant
+    + EN_vowel
+    + ZH_consonant
+    + ZH_vowel
+    + sep_strs
+    + add_all_phones
 )
 
 
 # tones
-all_tones = [str(i) for i in range(15)] + sep_strs
+all_tones = [str(i) for i in range(15)] + sep_strs + ["15", "16"] + add_sep_strs
 
 # 0 for padding, 1 for eos
 offset = 2
@@ -192,6 +271,13 @@ wordseg_to_int = dict()
 for i, wordseg in enumerate(wordseg_strs):
     if wordseg not in wordseg_to_int:
         wordseg_to_int[wordseg] = i + offset
+
+phonetone_to_int = dict()
+index = 0
+for i, phone in enumerate(all_phones):
+    for j, tone in enumerate(all_tones):
+        phonetone_to_int[phone + "_" + tone] = index + offset
+        index += 1
 
 lang_to_int = dict()
 for i, lang in enumerate(lang_strs):

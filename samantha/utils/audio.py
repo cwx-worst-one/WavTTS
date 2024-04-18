@@ -2,6 +2,8 @@ import random
 from typing import List, Optional, Tuple
 
 import numpy as np
+import scipy
+import soundfile as sf
 import torch
 import torch.nn as nn
 import torchaudio
@@ -57,6 +59,15 @@ def to_energy(audio, window_size):
         audio = audio.unsqueeze(0)
     frames = audio.unfold(1, window_size, window_size)
     return torch.max(torch.abs(frames), dim=-1)[0]
+
+
+def load_wav(fn, sr):
+    wav, sample_rate = sf.read(fn)
+    if len(wav.shape) > 1:
+        wav = wav[:, 0]
+    if sample_rate != sr:
+        wav = scipy.signal.resample(wav, int(len(wav) * sr / sample_rate))
+    return wav, sr
 
 
 class Identity:

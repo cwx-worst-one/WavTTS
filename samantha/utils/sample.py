@@ -70,7 +70,7 @@ def top_k(logits, thresh=0.5):
     k = max(int((1 - thresh) * num_logits), 1)
     val, ind = torch.topk(logits, k)
     probs = torch.full_like(logits, float("-inf"))
-    probs.scatter_(1, ind, val)
+    probs.scatter_(-1, ind, val)
     return probs
 
 
@@ -108,18 +108,10 @@ def top_p_logits(logits, p):
     return out
 
 
-def top_k_v2(logits, thresh=0.95):
-    num_logits = logits.shape[-1]
-    k = max(int((1 - thresh) * num_logits), 1)
-    val, ind = torch.topk(logits, k)
-    probs = torch.full_like(logits, float("-inf"))
-    probs.scatter_(-1, ind, val)
-    return probs
-
-
 def sample_v2(predict_logits, temp, thresh=0.9, mode="naive", return_probs=False):
+    sample_probs = None
     if mode == "naive":
-        predict_logits = predict_logits / (temp)
+        predict_logits = predict_logits / temp
         predict_logits = top_p_logits(predict_logits, thresh)
         probs = predict_logits.softmax(dim=-1)
         dist = torch.distributions.categorical.Categorical(probs=probs)
@@ -127,13 +119,13 @@ def sample_v2(predict_logits, temp, thresh=0.9, mode="naive", return_probs=False
         if return_probs:
             sample_probs = torch.gather(probs, -1, samples.unsqueeze(1)).squeeze(1)
     elif mode == "gumbel":
-        predict_logits = top_k_v2(predict_logits, thresh=thresh)
+        predict_logits = top_k(predict_logits, thresh=thresh)
         samples = gumbel_sample(predict_logits, temp, fixed_noise=True)
         if return_probs:
             probs = (predict_logits / temp).softmax(dim=-1)
             sample_probs = torch.gather(probs, -1, samples.unsqueeze(1)).squeeze(1)
     else:
-        raise NotImplementedError()
+        raise NotImplementedError
 
     if return_probs:
         return samples, sample_probs

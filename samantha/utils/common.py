@@ -1,4 +1,9 @@
+import random
 import subprocess
+
+import numpy as np
+import torch
+from lightning_fabric.utilities.seed import seed_everything
 
 
 def get_git_revision_hash():
@@ -11,3 +16,9 @@ def is_float(s):
         return True
     except ValueError:
         return False
+
+
+def set_seed(seed=1000):
+    random.seed(seed)
+    np.random.seed(seed + 1)
+    torch.manual_seed(seed + 2)
