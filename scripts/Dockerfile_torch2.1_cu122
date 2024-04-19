@@ -117,6 +117,9 @@ RUN pip3 install \
         pytest-runner==6.0.0 \
         ConfigArgParse==1.5.3 \
         pybind11==2.12.0 \
+        pyahocorasick \
+        lac \
+        paddlepaddle==2.5.2 \
         absl-py==1.4.0 && \
     pip3 install \
         --no-cache-dir \
@@ -166,11 +169,12 @@ RUN pip3 install \
         zhon==1.1.5
 
 ARG CRUISE_VERSION=1.0.0.2602
-ARG PANTHER_VERSION=1.7.14.62
+ARG PANTHER_VERSION=1.7.14.99
 ARG FALCONCLAW_VERSION=1.0.5.129
 ARG ONNX_VERSION=1.0.0.22
 ARG OPENFST_VERSION=1.0.0.8
 ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
+ARG SPEECH_EVALS_VERSION=1.0.0.7
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.58
 ARG DATALOADER_VERSION=1.0.0.160
@@ -236,6 +240,23 @@ RUN \
     python3 setup.py bdist_wheel && \
     pip3 install --no-cache-dir --force-reinstall dist/asr_eval_tool-$ASR_EVAL_TOOL_VERSION-py3-none-any.whl && \
     rm -rf /tmp/py_pkg.asr_eval_tool
+
+# install speech_evals
+RUN \
+    mkdir -p /tmp/py_pkg.speech_evals && \
+    cd /tmp/py_pkg.speech_evals && \
+    wget http://luban-source.byted.org/repository/scm/lab.speech.speech_evals_$SPEECH_EVALS_VERSION.tar.gz && \
+    tar -xvf lab.speech.speech_evals_$SPEECH_EVALS_VERSION.tar.gz && \
+    rm lab.speech.speech_evals_$SPEECH_EVALS_VERSION.tar.gz && \
+    cd speech_evals/lib/process/I18N_text_format && \
+    wget http://luban-source.byted.org/repository/scm/lab.speech.I18N_text_format_$I18N_TEXT_FORMAT_VERSION.tar.gz && \
+    tar -xvf lab.speech.I18N_text_format_$I18N_TEXT_FORMAT_VERSION.tar.gz && \
+    rm lab.speech.I18N_text_format_$I18N_TEXT_FORMAT_VERSION.tar.gz && \
+    touch __init__.py && \
+    cd /tmp/py_pkg.speech_evals && \
+    python3 setup.py bdist_wheel && \
+    pip3 install --no-cache-dir --force-reinstall dist/speech_evals-$SPEECH_EVALS_VERSION-py3-none-any.whl && \
+    rm -rf /tmp/py_pkg.speech_evals
 
 # install xformers
 RUN git clone https://github.com/facebookresearch/xformers.git && cd xformers && git checkout 6425fd0cacb1a6579aa2f0c4a570b737cb10e9c3 \
