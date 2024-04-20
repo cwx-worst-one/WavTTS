@@ -3,7 +3,6 @@ import subprocess
 
 import numpy as np
 import torch
-from lightning_fabric.utilities.seed import seed_everything
 
 
 def get_git_revision_hash():
