@@ -9,7 +9,7 @@ run_opts:
     num_workers: 4
     seed: 1996
     diffusion_ckpt_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/h800_ds2232_32xH800_25hzUMM_49hzSS_streaming_chunk392_0405/checkpoints/epoch=00-step=450000-loss=0.28.ckpt"
-    umm_ckpt_path: "/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/step=070000.ckpt"
+    umm_ckpt_path: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/checkpoints/step=070000.ckpt"
     vocoder_ckpt_path: ""
     umm_frame_rate: 25
     mel_frame_rate: 49

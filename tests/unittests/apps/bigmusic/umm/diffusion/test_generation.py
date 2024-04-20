@@ -2,7 +2,11 @@ import torch
 import pytest
 import librosa
 from hyperpyyaml import load_hyperpyyaml
-from apps.bigmusic.umm.diffusion.requires.model_initializer import init_diffusion, wav2token, token2wav, wav2token_batch, token2wav_batch
+# workaround for codebase CI
+try:
+    from apps.bigmusic.umm.diffusion.requires.model_initializer import init_diffusion, wav2token, token2wav, wav2token_batch, token2wav_batch
+except ImportError:
+    init_diffusion, wav2token, token2wav, wav2token_batch, token2wav_batch = None, None, None, None, None
 
 
 def generation_with_config(
@@ -215,8 +219,10 @@ def test_25hzConformer_49hzSS(hparams_file):
     )
     batch_generation_with_config_file(
         syn_wav_paths = [
-            "voice_condition_valsets/slices_60/male_husky_0_slice1.wav",
-            "voice_condition_valsets/slices_60/male_husky_0_slice2.wav"
+            "./1min_zh_vocal/24k/1min_male_bright_0.wav",
+            "./1min_zh_vocal/24k/1min_male_bright_1.wav",
+            "./1min_zh_vocal/24k/1min_male_husky_0.wav",
+            "./1min_zh_vocal/24k/1min_male_husky_2.wav",
         ],
         hparams_file = hparams_file,
     )

@@ -14,6 +14,7 @@ from .lit_diffusion_voicebox import VoiceBoxModule as pl_module
 from samantha.dataio.lite.utils.mel import mel_spectrogram
 from apps.bigtts.umm.diffusion.lit_modules.infer_utils import set_seed, save_wav, load_torch_script
 from apps.bigtts.umm.diffusion.lit_modules.wvae import Wave, mel_spectrogram_torch, spectrogram_torch
+from recipes.diffusion.models.vocoder_model.utils import vocode_in_chunks
 
 
 import logging
@@ -165,6 +166,17 @@ class DiffusionU2SInfer(LightningModule):
         logger.info(f"text_cfg_w={self.text_cfg_w}")
         logger.info(f"use_prompt={self.model.hp.use_prompt}")
         logger.info(f"diffusion_ckpt_path={diffusion_ckpt_path}")
+
+    
+    def wvae_decode(self, pred_emb):
+        pred_emb = pred_emb.float()
+        duration = pred_emb.shape[-1] // self.mel_frame_rate
+        with torch.autocast(device_type="cuda", enabled=False):
+            if duration > 30:
+                wavs_g = vocode_in_chunks(pred_emb, self.wvae, mini_bs=1, chunk_size=1)
+            else:
+                wavs_g = vocode_in_chunks(pred_emb, self.wvae, mini_bs=4, chunk_size=1)
+        return wavs_g
 
     # align wav to make sure wav length could be divided by `umm_frame_rate` and `mel_frame_rate` evenly
     def align_wav(self, wav, umm_sampling_rate, mel_sampling_rate, umm_frame_rate, mel_frame_rate):
@@ -433,8 +445,8 @@ class DiffusionU2SInfer(LightningModule):
             if self.use_wvae_vocoder:
                 z = out_mel
                 z = self.bn_norm.denorm_mel(z)
-                with torch.autocast(device_type="cuda", enabled=False):
-                    output_wavs = self.wvae.decode(z.float())
+                output_wavs = self.wvae_decode(z)
+                    
             else:
                 out_mel = self.mel_norm.denorm_mel(out_mel)
                 out_mel = torch.clamp(out_mel, min=-8.5, max=3.5)
@@ -734,8 +746,7 @@ class ChunkInfer(DiffusionU2SInfer):
         if self.use_wvae_vocoder:
             z = outputs
             z = self.bn_norm.denorm_mel(z)
-            with torch.autocast(device_type="cuda", enabled=False):
-                output_wavs = self.wvae.decode(z.float())
+            output_wavs = self.wvae_decode(z)
         else:
             out_mel = self.mel_norm.denorm_mel(out_mel)
             out_mel = torch.clamp(out_mel, min=-8.5, max=3.5)
