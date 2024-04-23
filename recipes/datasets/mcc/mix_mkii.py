@@ -231,6 +231,12 @@ class MixTransforms(BaseTransforms):
             src_sample_rate = self.data_sample_rate
         else:
             src_sample_rate = item["src_sample_rate"]
+        
+        if re.match(".*karaoke.*", name):
+            self.audio_key = 'vocal'
+        else:
+            self.audio_key = 'wav'
+
         audio = self.base_transform(item[self.audio_key])
         audio = self.resample(src_sample_rate, audio)
         if self.normalize_audio:
@@ -245,8 +251,26 @@ class MixTransforms(BaseTransforms):
         token = encoded_text["input_ids"].squeeze(dim=0)
         return token, text
 
+    def get_text(self, item):
+        name = item["__dataset_name__"]
+        if 'text' in item and item['text'] != '':
+            # the default case
+            return item['text']
+        elif re.match('.*nonvocal_.*', name):
+            # future using: if dataid has instrumental data, return '' for text
+            return ''
+        else:
+            # for karaoke data which has no 'text' but lyrics in "meta.lyrics"
+            metadata = json.loads(item["meta"])
+            text = metadata['lyrics'].get('result', [{'text':''}])[0].get('text')
+            return text
+
     def __call__(self, item: Dict[str, Any]) -> Generator:
-        text = item["text"]
+        try:
+            text = self.get_text(item)
+        except Exception as e:
+            self._update_stats(skipped=True, message=f"Error loading text: {e}")
+            return
         try:
             audio = self.get_audio(item)
         except Exception as e:
@@ -371,6 +395,7 @@ class MixDataModule(pl.LightningDataModule):
                 resampled=True,
                 shardshuffle=True,
                 handler=wds.warn_and_continue,
+                extra_fields_in_data=['vocal'],
             )
 
         datasets = [get_dataset(id) for id in data_ids]
@@ -397,6 +422,7 @@ class MixDataModule(pl.LightningDataModule):
                 resampled=False,
                 nodesplitter=return_self,
                 handler=wds.warn_and_continue,
+                extra_fields_in_data=['vocal'],
             ),
             self.bucketize,
         )
@@ -633,3 +659,4 @@ class MixMSSDataModule(MixDataModule):
             prefetch_factor=2,
             pin_memory=False,
         )
+
