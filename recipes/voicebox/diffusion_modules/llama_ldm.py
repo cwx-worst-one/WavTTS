@@ -879,7 +879,7 @@ class LlamaDiffusion(nn.Module):
 
         for i in range(t):
 
-            v_pred = self._forward(x, local_cond, text_embed, timesteps=sigmas[i])
+            v_pred = self._forward(x, local_cond, text_embed, timesteps=sigmas[i].expand(batch_size, -1))
 
             # TODO: 只是模拟cache过程
             if use_cache:
