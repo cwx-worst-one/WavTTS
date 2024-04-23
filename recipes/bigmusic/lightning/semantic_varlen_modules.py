@@ -30,6 +30,7 @@ from recipes.bigmusic.utils.rewards import (
     wer_reward,
     loudness_reward,
     chord_reward,
+    chord_prob_reward,
     nonvocal_reward,
     structure_reward,
     chorus_sim_reward,
@@ -1129,6 +1130,13 @@ class SemanticRLModule(SemanticModuleVarlen):
                 self.requires["chord_lms"],
                 sampled_audio,
                 chord_lm_keys=chord_lm_keys,
+                sample_rate=self.extra_params.sample_rate,
+                device=sampled_audio.device,
+            )
+        elif reward_type == "chord_prob":
+            return chord_prob_reward(
+                self.requires["chord"],
+                sampled_audio,
                 sample_rate=self.extra_params.sample_rate,
                 device=sampled_audio.device,
             )

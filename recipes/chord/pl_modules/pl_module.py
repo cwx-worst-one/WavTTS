@@ -196,13 +196,20 @@ class LitChord(BaseLightningModule):
                 int(self._sample_len / self._label_chord_hop / self._hop_factor)
             ).cpu().numpy() 
 
+            root_prob = np.max(root, axis=-1)               # the highest vluae is considered as probability
+            # root_prob[np.argmax(root, axis=-1)==0] = 0    # index=0 is "N" label, which should set probility to 0
+            triad_prob = np.max(triad, axis=-1)             # the highest vluae is considered as probability
+            # triad_prob[np.argmax(triad, axis=-1)==0] = 0  # index=0 is "N" label, which should set probility to 0
+            chord_prob = (root_prob + triad_prob) / 2
+            chord_prob[np.isnan(chord_prob)] = 0
+
             root = np.argmax(root, -1)
             triad = np.argmax(triad, -1)
-
             root = scipy.signal.medfilt(root, kernel_size=9)
             triad = scipy.signal.medfilt(triad, kernel_size=9)
 
             labels = []
+            i_prev = 0
             for i in range(len(root)):
                 if idx2chord[root[i]] == "N" or idx2triad[triad[i]] == "N":
                     label = "N"
@@ -212,13 +219,19 @@ class LitChord(BaseLightningModule):
 
                 if i*self._label_chord_hop >= duration:
                     break
-            
+
                 if len(labels) == 0:
-                    labels.append([i*self._label_chord_hop, (i+1)*self._label_chord_hop, label])
-                elif label == labels[-1][-1]:
+                    labels.append([i*self._label_chord_hop, (i+1)*self._label_chord_hop, label, 0])
+                elif label == labels[-1][2]:
                     labels[-1][1] = (i+1)*self._label_chord_hop
                 else:
-                    labels.append([i*self._label_chord_hop, (i+1)*self._label_chord_hop, label])
+                    prob = np.mean(chord_prob[i_prev: i])
+                    i_prev = i
+                    labels[-1][-1] = prob
+                    labels.append([i*self._label_chord_hop, (i+1)*self._label_chord_hop, label, 0])
+                if i == len(root)-1:
+                    prob = np.mean(chord_prob[i_prev:])
+                    labels[-1][-1] = prob = prob
             batch_labels.append(labels)
 
         return batch_labels

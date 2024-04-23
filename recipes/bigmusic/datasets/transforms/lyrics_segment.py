@@ -22,6 +22,7 @@ from recipes.musiclm.transforms.audio import (
 from recipes.musiclm.transforms.base import TransformBase
 from recipes.bigmusic.datasets.transforms.lyrics_section_alignment import song_structure_from_metadata, group_by_section_start, get_section_aligned_segment
 from recipes.bigmusic.datasets.transforms.lyrics_filters import is_invalid_song
+from recipes.bigmusic.datasets.transforms.mir_transforms import get_beat_chord, extract_chord_seq
 
 import operator
 from functools import reduce
@@ -96,7 +97,7 @@ class LyricsSegmentTransforms(TransformBase):
         cropped_segments['phoneme'] = segment.phoneme
         if cropped_segments['phoneme'] is None:
             cropped_segments['phoneme'] = ''
-        return cropped_segments
+        return cropped_segments, start, end
 
     def extract_audio_wavs(self, x:Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         cached_wavs = {}
@@ -164,11 +165,10 @@ class LyricsSegmentTransforms(TransformBase):
             self._update_stats(skipped=True, message="Error extracting audio.")
             self.handler(e)
             return
-        
         # Output clips
         for segment in segments:
             try:
-                item = self.process_segment(segment, audio_wavs)
+                item, audio_start, audio_end = self.process_segment(segment, audio_wavs)
             except Exception as e:
                 print('Exception in process_segment', e)
                 print(traceback.format_exc())
@@ -176,6 +176,7 @@ class LyricsSegmentTransforms(TransformBase):
                 continue
             if item is None: continue
             item['metadata'] = metadata
+            item['chord_seq'] = extract_chord_seq(metadata, audio_start, audio_end)
             yield item
             segment_count += 1
             if self.max_num_segments and segment_count >= self.max_num_segments:
@@ -241,6 +242,10 @@ def extract_metadata_and_utterances(item):
     for k in ['tags', 'genre', 'style']:
         if k in index_data:
             metadata[k] = index_data[k]
+    
+    if 'mir_service' in metadata.keys():
+        beat_chord = get_beat_chord(metadata)
+        metadata['beat_chord'] = beat_chord
 
     return metadata, utterances
     
@@ -364,7 +369,7 @@ class Segment():
         return self.start >= 0
     
     def __repr__(self) -> str:
-        return f"[{self.start} - {self.end}] ({round(self.duration, 2)}, {round(self.confidence, 2)}) - {self.text}"
+        return f"[{self.start} - {self.end}] ({round(self.duration, 2)}, {round(self.confidence, 2)}) \n{self.text}"
     
     def __add__(self, other: 'Segment', new_line_token=" <n> "):
         if self.phoneme is None or other.phoneme is None:
@@ -492,14 +497,14 @@ def lyrics_to_segments(lyrics, metadata=None, target_durations=(20,25,30), min_c
     if not lyrics: return []
     if 'duration' in metadata:
         song_duration = metadata['duration']
-        song_duration = song_duration / 1000 if song_duration and song_duration > 1000 else song_duration # change from milliseconds to seconds
+        song_duration = song_duration / 1000 if song_duration and song_duration > 5000 else song_duration # change from milliseconds to seconds
     elif 'full_duration' in metadata:
         song_duration = metadata['full_duration']
         if song_duration is not None: song_duration = song_duration/1000
     else:
         print('Warning: no duration found in metadata. Segments will not have instrumental ending')
-    segments = Segment.segments_from_utterances(lyrics, song_duration)
-    song_structure = song_structure_from_metadata(metadata, segments)
+    segments = Segment.segments_from_utterances(lyrics, song_duration)          # segments are sentences from lyrics
+    song_structure = song_structure_from_metadata(metadata, segments)           # song_structure boundaries are already aligned with sentence boundaries
 
     target_segments = []
     if song_structure and max(target_durations) <= 30: # for 30s, return section
@@ -531,7 +536,6 @@ def lyrics_to_segments(lyrics, metadata=None, target_durations=(20,25,30), min_c
 
     valid_target_segments = [t for t in target_segments if is_valid_segment(t, min_confidence, target_durations)]
 
-
     if len(valid_target_segments) == 0:
         if len(target_segments) != 0:
             print('WARNING no segments processed. Check filters', shuffle_start, len(target_segments), len(valid_target_segments), target_segments)
@@ -539,7 +543,6 @@ def lyrics_to_segments(lyrics, metadata=None, target_durations=(20,25,30), min_c
             # Hack to improve 2 minute long segment slicing. Try re-running again without shuffling start time
             return lyrics_to_segments(lyrics, metadata, target_durations=target_durations, min_confidence=min_confidence, shuffle_start=False, grouping=grouping)
     return valid_target_segments
-
 
 ## Different grouping algorithms ## 
 def group_by_fixed_length(segments: List[Segment], target_duration):

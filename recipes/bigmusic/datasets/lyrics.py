@@ -14,6 +14,7 @@ from recipes.bigmusic.datasets.transforms.lyrics import (
     RenameAudioKeyTransform,
     SemanticTokenLengthTransform
 )
+from recipes.bigmusic.datasets.transforms.mir_transforms import ChordSeqTokenTransform
 from recipes.bigmusic.datasets.transforms.lyrics_segment import LyricsSegmentTransforms, crop_pad_to_seq_length
 from recipes.musiclm.preprocess import WebDatasetBufferPreprocessor
 from samantha.dataio.webdataset.extension import IndexedWebDataset
@@ -555,6 +556,7 @@ class DefaultDatasets():
                 segment_transforms=[
                     SemanticTokenLengthTransform(), metadata_tfm_fn(),
                     tokenizer_init_fn(lyrics_max_seq_len, enable_punctuation=enable_punctuation), 
+                    ChordSeqTokenTransform(chord_max_seq_len=50),
                 ],
                 batch_transforms=batch_transforms,
                 batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
@@ -833,7 +835,7 @@ DATASET_CONFIGS = {
         "init_fn": DefaultDatasets.Batched.batched_vocal_parquet_dataset,
         "extra_args": {
             "index_list": INDEX[get_region("CN")]["SpotifySFT_Genre7424"],
-            "style_conditions": ["style_category,lyrics_tokens"],
+            "style_conditions": ["style_category,lyrics_tokens,chord_seq"],
             "min_song_confidence": 0.75,
             "min_segment_confidence": 0.7, # lowering segment confidence, for longer segments
             "metadata_tfm_fn": partial(SpotifyMetadataTextTransform, max_genres=1),

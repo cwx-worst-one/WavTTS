@@ -212,6 +212,7 @@ def song_structure_from_metadata(metadata, segments, align_section_timings=True)
     elif 'deepchorus' in metadata:
         # print('Deepchorus')
         song_structure = metadata['deepchorus']['segments']
+        # song_structure = merge_raw_song_structure_by_start_prob( metadata['deepchorus']['raw_segments'] )       # manually merge raw deepchorus results (remove weak sections, keep strong repeated sections)
     elif 'music_structure' in metadata:
         song_structure = metadata['music_structure'][0]
         song_structure = format_music_structure(song_structure)
@@ -243,3 +244,19 @@ def group_by_section_start(song_structure, segments, target_duration=None):
             structure_segments.append(structure_segment)
             existing_segments.add((structure_segment.start, structure_segment.end))
     return structure_segments
+
+
+def merge_raw_song_structure_by_start_prob(sections, threshold_same_section=0.3, threshold_new_section=0.1):
+    
+    sections_processed = []
+    sections_processed.append(sections[0])
+    for i in range(1, len(sections)):
+        if sections[i]["start_prob"] > threshold_same_section:
+            sections_processed[-1]["interval"][1] = sections[i]["interval"][0]
+            sections_processed.append(sections[i])
+        else:
+            if sections[i]["label"] != sections[i-1]["label"] and sections[i]["start_prob"] > threshold_new_section:
+                sections_processed[-1]["interval"][1] = sections[i]["interval"][0]
+                sections_processed.append(sections[i])
+    sections_processed[-1]["interval"][1] = sections[-1]["interval"][1]
+    return sections_processed

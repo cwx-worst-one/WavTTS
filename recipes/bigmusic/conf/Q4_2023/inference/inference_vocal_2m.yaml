@@ -51,6 +51,7 @@ extra_params:
     sample_mode: "top_p"
     sample_thresh: 0.9
     token2wav_type: diffusion
+    chordprob_callback: False       # if true, load chord in required_modules and run chordprob metrics in callback
 
 run_opts:
     fast_dev_run: False
@@ -97,6 +98,11 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                     cache_dir: !ref <run_opts[cache_dir]>
                     version: 24k_125hz_dim32_baseline
+        chord:
+            hpath: "hdfs:///home/byte_speech_sv/bigmusic/models/reranker/semi-sup-chord_epoch=103-step=56300.ckpt"
+            initializer: !name:recipes.chord.requires.model_initializer.init_chord
+                cache_dir: !ref <run_opts[cache_dir]>
+
         ar_modules:
             coarse:
                 hpath: /mnt/bn/audio-diffusion/jt/model_archive/vocalmusic/coarse_flash_llama_wav2vec/bestrq_chroma_coarse_0.7b/checkpoints/step=295000-val_accu_0=17.92.ckpt
@@ -139,6 +145,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
 additional_callbacks:
     - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
     - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
+    - !new:recipes.bigmusic.callbacks.chordprob_metrics.ChordProbMetricsCallback
     - !new:recipes.bigmusic.callbacks.save_outputs.AverageMetricsCallback
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
     - !new:recipes.bigmusic.callbacks.save_outputs.NormVolumeCallback

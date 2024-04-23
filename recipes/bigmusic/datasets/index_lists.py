@@ -121,7 +121,7 @@ INDEX = {
         "Mixed_MCC_GroupAB_EN": 1087, # 1085 - GroupB only
         "SpotifySFT_Artist16": 1809, # Finetune on 16 artists, 3404 samples
         "SpotifySFT_Genre3373": 1796, # Finetune on Everynoise genres
-        "SpotifySFT_Genre7424": 2077, # Finetune on 6 genres searched by Spotify Playlist, 1k+ songs per genre (Bochen 20240326)
+        # "SpotifySFT_Genre7424": 2077, # Finetune on 6 genres searched by Spotify Playlist, 1k+ songs per genre (Bochen 20240326) (NOTE: this is old one, not shuffled yet)
         "SpotifySFT_Artist6": 1624, # Finetune on 6 artists, 2687 samples
         "SpotifySFT_Pop400": 1517, # Pop songs 409
         "SpotifySFT_BillboardV2": 2188, # 1523, # 100k billboard
@@ -206,7 +206,7 @@ INDEX = {
         "SpotifySFT_GroupA_TTPop": 165, # tt pop + gt lyrics
         "SpotifySFT_Artist16": 157 , # Finetune on 16 artists, 3404 samples
         "SpotifySFT_Genre3373": 159, # Finetune on Everynoise genres
-        "SpotifySFT_Genre7424": 162, # Finetune on 6 genres searched by Spotify Playlist, 1k+ songs per genre (Bochen 20240326)
+        "SpotifySFT_Genre7424": 168, # Finetune on 6 genres searched by Spotify Playlist, 1k+ songs per genre (Bochen 20240326) (updated on 20240402, after shuffle)
         "SpotifySFT_All": 160,
         "Billboard-V2": ["hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/js/data/music/billboard_hot200_v2/24000hz/train/20231026_genre/url2index.txt"],
         "Billboard-V2_VALID": "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/js/data/music/billboard_hot200_v2/24000hz/test/20231026_genre/url2index.txt",

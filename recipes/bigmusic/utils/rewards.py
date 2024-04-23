@@ -204,7 +204,7 @@ def chord_reward(
     for i in range(len(chord_labels)):
         if len(chord_lm_keys[i]) == 0:
             continue
-        chord_seq = [x[-1] for x in chord_labels[i] if x[-1] != "N"]
+        chord_seq = [x[2] for x in chord_labels[i] if x[2] != "N"]
         # If too few chords, use lowest reward possible (0)
         if len(chord_seq) < 4 or len(set(chord_seq)) < 2:
             continue
@@ -219,6 +219,40 @@ def chord_reward(
         chord_rewards[i] = min(np.mean(scores) * 4, 1.0) ** 1.5
     return chord_rewards
 
+
+@torch.no_grad()
+def chord_prob_reward(
+    chord_model,
+    sampled_audio,
+    sample_rate,
+    device,
+):
+
+    if sample_rate != chord_model._sample_rate:
+        resampled_audio = resample(
+            sampled_audio,
+            orig_freq=sample_rate,
+            new_freq=chord_model._sample_rate,
+        )
+    else:
+        resampled_audio = sampled_audio
+
+    chord_labels = []
+    for single_sample in resampled_audio:   # split batch to run, otherwise out of memory...
+        chord_label = chord_model.predict_step(
+            batch=(single_sample[None, ...], None),
+            batch_idx=0,
+        )[0]
+    chord_labels.append(chord_label)
+
+    chord_prob_rewards = torch.zeros(sampled_audio.size(0)).to(device)
+    for i in range(len(chord_labels)):
+        assert len(chord_labels[i][0]) == 4    # make sure there is prob as the 4th item
+        probs = [x[-1] if x[2] != "N" else 0 for x in chord_labels[i]]
+        weights = [x[1]-x[0] for x in chord_labels[i]]
+        chord_prob_rewards[i] = sum(d * w for d, w in zip(probs, weights)) / sum(weights)   # weighted by the duration of each chord
+
+    return chord_prob_rewards
 
 STRUCTURE_TO_SCORE = {
     "verse": 0.5,

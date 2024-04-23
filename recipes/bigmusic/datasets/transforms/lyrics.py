@@ -112,7 +112,9 @@ class SpotifyMetadataTextTransform():
     def _call_once(self, item):
         metadata = item.get('metadata', {})
         genres = metadata['genres']
-        if self.min_year is not None and 'year' in metadata and metadata['year'] < 2000:
+        if isinstance(metadata['year'], str):
+            metadata['year'] = int(metadata['year']) if metadata['year'].isdigit() else None
+        if self.min_year is not None and 'year' in metadata and metadata['year'] and metadata['year'] < 2000:
             return None
         if not isinstance(genres, list):     
             try:

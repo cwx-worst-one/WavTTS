@@ -402,6 +402,7 @@ class MulanCategoricalEmbedder(BaseEmbedder):
         return self.vocab2id[tag]
 
     def get_tokens(self, requires, style_texts):
+        # style_text: [['Acoustic'], ['Trap'], ['EDM'], ['EDM']]
         batch_style_tags = []
         for style_text in style_texts:
             # accepts comma separated string or ordered list/dict of category values
@@ -421,8 +422,10 @@ class MulanCategoricalEmbedder(BaseEmbedder):
         for style_tags in batch_style_tags:
             tag_ids = [self.get_tag_id(tag, self.dropout) for tag in style_tags]
             batch_tag_ids.append(torch.tensor(tag_ids))
+        # batch_tag_ids: [tensor([3]), tensor([4]), tensor([2]), tensor([2])]
 
         batch_tag_ids = pad_sequence(batch_tag_ids, batch_first=True, padding_value=self.none_id)
+        # batch_tag_ids: tensor([[3], [4], [2], [2]])
         device = next(self.parameters()).device
         return torch.as_tensor(batch_tag_ids).to(device)
 
@@ -466,9 +469,9 @@ class MulanCategoricalEmbedder(BaseEmbedder):
             self.sync_tags([]) # must call sync tags for distributed training
             return mulan_embeds
         if data_type == "category":
-            categorical_tokens = self.get_tokens(requires, input_audio_or_text)
+            categorical_tokens = self.get_tokens(requires, input_audio_or_text)     # tensor([[3], [4], [2], [2]])
             cat_embeds = self.embedder(categorical_tokens)
-            cat_embeds = MulanCategoricalEmbedder.masked_mean(cat_embeds, categorical_tokens, self.none_id)[:, None, :] # bs x cat x emb
+            cat_embeds = MulanCategoricalEmbedder.masked_mean(cat_embeds, categorical_tokens, self.none_id)[:, None, :] # bs x cat x emb  e.g., torch.Size([4, 1, 512])
             return cat_embeds
         ## Audio embed
         if data_type == "music":
@@ -614,6 +617,13 @@ class LyricsTokenEmbedder(TokenEmbedder):
     # TODO: (AS) add padding_idx
     def get_tokens(self, requires, input):
         return input
+
+class ChordSeqEmbedder(TokenEmbedder):
+    def __init__(self, vocab_size, embedding_dim, add_sos=False, add_eos=False):
+        super().__init__(vocab_size, embedding_dim, add_sos=add_sos, add_eos=add_eos)
+    def get_tokens(self, requires, input):
+        return input
+
 class MetadataT5TokenEmbedder(ContinuousEmbedder):
     def __init__(self, input_dim=512, embedding_dim=1024, add_sos=False):
         super().__init__(input_dim, embedding_dim, add_sos)

@@ -96,6 +96,9 @@ class SemanticInferenceModule(pl.LightningModule):
 
         if self.extra_params.get("mixv2", False):
             required_modules.update(self.hparams.required_modules['bestrq_modules'])
+        
+        if self.extra_params.get("chordprob_callback", False):
+            required_modules.update({"chord": self.hparams.required_modules['chord']})
 
         self.load_required_modules(required_modules)
         if 'dualumm' in self.extra_params.token2wav_type:

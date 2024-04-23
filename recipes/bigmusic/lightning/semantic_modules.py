@@ -16,6 +16,7 @@ from recipes.bigmusic.lightning.embedding_modules import (
     BeatEmbedder,
     OffsetEmbedder,
     AudioKeyEmbedder,
+    ChordSeqEmbedder,
 )
 from recipes.bigmusic.datasets.mir_data_util import convert_m1_tag_to_style_text
 from recipes.bigmusic.utils.metrics_asr import asr_transcribe_lyrics
@@ -90,6 +91,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         mulan_crop = extra_params.get('mulan_crop', True)
         mulan_average = extra_params.get('mulan_average', True)
         style_category_vocab_path = extra_params.get('style_category_vocab_path')
+        chord_vocab_size = extra_params.get('chord_vocab_size', 73)  # 1 empty + 12 key * (maj, min, sus2, sus4, dim, aug)
 
         self.augmented_noise_gain = extra_params.get('augmented_noise_gain', 0.01)
         self.prepare_input_types = extra_params.get("prepare_input_types", []) # m1_tagger, mulan_tagger
@@ -131,6 +133,13 @@ class SemanticModule(BaseContinuousEmbedModule):
             elif emb_type == "lyrics_tokens":
                 embedder_dict[emb_type] = LyricsTokenEmbedder(
                     vocab_size=lyrics_vocab_size,
+                    embedding_dim=hidden_size,
+                    add_sos=True,
+                    add_eos=False,
+                )
+            elif emb_type == "chord_seq":
+                embedder_dict[emb_type] = ChordSeqEmbedder(
+                    vocab_size=chord_vocab_size, 
                     embedding_dim=hidden_size,
                     add_sos=True,
                     add_eos=False,
@@ -334,6 +343,16 @@ class SemanticModule(BaseContinuousEmbedModule):
             )
         else:
             embeds = lyrics_embedder.get_sos_embed(batch_size)
+        return embeds
+    
+    def prepare_chord_seq_inputs(self, batch, chord_seq_embedder, add_eos=False):
+        conditions = batch['conditions'].split(',')
+        batch_size = self.infer_batch_size(batch)
+        if "chord_seq" in conditions:
+            chord_seq_tokens = batch['chord_seq_tokens'].to(self.device)
+        else:
+            chord_seq_tokens = torch.zeros((batch_size,  0)).long().to(self.device)
+        embeds = chord_seq_embedder.embed(token_ids=chord_seq_tokens, with_sos=True).to(self.device)
         return embeds
 
     def prepare_remi_leadsheet_inputs(self, batch, embedder):
@@ -586,6 +605,8 @@ class SemanticModule(BaseContinuousEmbedModule):
                 emb_inputs = self.prepare_beat_inputs(batch, embedder)
             elif emb_type == "prefix_audio":
                 emb_inputs = self.prepare_prefix_audio_inputs(batch)
+            elif emb_type == "chord_seq":
+                emb_inputs = self.prepare_chord_seq_inputs(batch, embedder)
             else:
                 raise ValueError(f"Unknown emb type: {emb_type}")
             if self.log_counter < 1:

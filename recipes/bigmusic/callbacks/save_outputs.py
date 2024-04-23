@@ -425,22 +425,26 @@ def run_average_metrics(output_dir):
         wer = metadata.get('wer', {})
         wer, ins, subs, dels = [wer.get(k, 0) for k in ['wer', 'ins', 'subs', 'dels']]
         mcs = metadata.get('mcs', 0)
+        chordprob = metadata.get('chordprob', -1)
         # update total metrics
         category_dir = metadata_fp.parent.resolve()
         if category_dir != output_dir.resolve(): # ignore category if there are none
-            category2wer[str(category_dir)].append([wer, ins, subs, dels, mcs])
-        category2wer[str(output_dir)].append([wer, ins, subs, dels, mcs]) # append to base directory to calculate total wer
+            category2wer[str(category_dir)].append([wer, ins, subs, dels, mcs, chordprob])
+        category2wer[str(output_dir)].append([wer, ins, subs, dels, mcs, chordprob]) # append to base directory to calculate total wer
         
     for dir_path, values in category2wer.items():
         metrics_fp = Path(dir_path)/'metrics.json'
-        wer, ins, subs, dels, mcs = np.array(values).mean(axis=0)
+        wer, ins, subs, dels, mcs, chordprob = np.array(values).mean(axis=0)
         wer_metadata = {
             'wer': round(wer, 3),
             'ins': round(ins, 3),
             'subs': round(subs, 3),
             'dels': round(dels, 3),
         }
-        update_json(metrics_fp, { 'wer': wer_metadata, 'mcs': round(mcs, 3) })
+        if chordprob >= 0:
+            update_json(metrics_fp, { 'wer': wer_metadata, 'mcs': round(mcs, 3), 'chordprob': round(chordprob, 3) })
+        else:
+            update_json(metrics_fp, { 'wer': wer_metadata, 'mcs': round(mcs, 3) })
 
 
 class AverageMetricsCallback(pl.Callback):

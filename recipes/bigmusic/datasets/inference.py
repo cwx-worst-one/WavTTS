@@ -33,6 +33,7 @@ from recipes.bigmusic.datasets.transforms.lyrics import (
     MCCMetadataTextTransform,
     AddDurationTransform,
 )
+from recipes.bigmusic.datasets.transforms.mir_transforms import ChordSeqTokenTransform
 from recipes.bigmusic.datasets.transforms.structure import (
     IntensityTransform,
 )
@@ -118,6 +119,8 @@ def inference_dataset_from_prompt(
         prompts['structure'] = [None] * len(prompts[next(iter(prompts.keys()))])
     if 'semantic_tokens' in prompts:
         prompts['semantic_tokens'] = [torch.load(fp) for fp in prompts['semantic_tokens']]
+    if 'chord_seq' in prompts:
+        prompts['chord_seq'] = [x.split() for x in prompts['chord_seq']]    # convert "C:maj G:maj" to ["C:maj", "G:maj"]
 
     if lang == 'zh_phone':
         # Process lyrics and style_text
@@ -206,6 +209,11 @@ def inference_dataset_from_prompt(
                 )
             )
         SEGMENT_TRANSFORMS = segment_transforms
+
+    if 'chord_seq' in conditions:
+        segment_transforms.append(
+            ChordSeqTokenTransform()
+        )
 
     batch_transforms=[AddConditionsTransform(conditions)]
     if 'duration' in conditions:
