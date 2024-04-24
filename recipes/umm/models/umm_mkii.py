@@ -13,6 +13,7 @@ from transformers.activations import ACT2FN
 from transformers.utils import ModelOutput
 
 from recipes.umm.models.dualumm_encoders import ConvStacksWithDownUpSampling
+#from recipes.umm.models.dualumm_vector_quantizers import get_vq_codebook_distances
 from recipes.umm.models.rmvpe import RMVPE
 from recipes.umm.models.voc_modules.pitch_predictor.inference import (
     PerceptualPitchPredictor,
@@ -87,7 +88,6 @@ def conv_transpose_flops(module, input_shape):
 
 def WNConv1d(*args, **kwargs):
     return weight_norm(nn.Conv1d(*args, **kwargs))
-
 
 @dataclass
 class ConformerEncoderOutput(ModelOutput):
@@ -1014,6 +1014,25 @@ class ClusteredVectorQuantizer(nn.Module):
         entropy = -torch.sum(p * torch.log(p + 1e-10))
         return entropy
 
+def get_vq_codebook_distances(codebook_data):
+    """
+    Calculate pairwise codebook distance statistics for monitoring on wandb.
+    23APR2024 @hanoihantrakul copy pasted from dualumm_vector_quantizers.get_vq_codebook_distances
+    otherwise I get a cyclic import.
+    """
+
+    embeddings = codebook_data
+    pairwise_distances = torch.cdist(embeddings, embeddings, p=2)
+    min_distance = torch.min(
+        pairwise_distances
+        + torch.eye(pairwise_distances.shape[0], device=pairwise_distances.device)
+        * pairwise_distances.max()
+    )
+    return {
+        "vq_mean_distance": pairwise_distances.mean(),
+        "vq_min_distance": min_distance,
+        "vq_max_distance": pairwise_distances.max(),
+    }
 
 class FeaturePool:
     """
@@ -2643,7 +2662,10 @@ class Stage3Conv1D_v2(Stage3Conv1D):
                         hidden_states, e_scale=1.0 if self.cnt < 30_000 else 0.0
                     )
                 else:
+                    # default
                     vq_embs, vq_ids, vq_loss = self.vq(hidden_states)
+                    # calculate codebook distances by accessing the VQ's internal matrix representing the actual codebook
+                    codebook_distance_stats = get_vq_codebook_distances(self.vq.embedding.weight.data)
                 hidden_states = self.vq_proj_out(vq_embs)
             # apply layer
             hidden_states = layer(hidden_states)
@@ -2680,6 +2702,8 @@ class Stage3Conv1D_v2(Stage3Conv1D):
             f0_vuv_out = self.f0_vuv_head(hidden_states)
             output_dict.update(f0_out=f0_vuv_out[:, :, 0:1])
             output_dict.update(vuv_out=f0_vuv_out[:, :, 1:])
+        # add the codebook stats just for Stage3Conv1D_v2 models
+        output_dict.update(codebook_distance_stats)
         return output_dict
 
 

@@ -1,4 +1,5 @@
 from torch import nn
+import torch
 
 from recipes.umm.models.umm_mkii import (
     ClusteredVectorQuantizer,
@@ -85,3 +86,18 @@ def get_vector_quantizer_projection_layers(vq_proj_norm_type, config):
         vq_proj_in = nn.Linear(config.hidden_size, config.vq_codebook_dim, bias=False)
         vq_proj_out = nn.Linear(config.vq_codebook_dim, config.hidden_size, bias=False)
     return vq_proj_in, vq_proj_out
+
+def get_vq_codebook_distances(codebook_data):
+    """Calculate pairwise codebook distance statistics for monitoring on wandb."""
+    embeddings = codebook_data
+    pairwise_distances = torch.cdist(embeddings, embeddings, p=2)
+    min_distance = torch.min(
+        pairwise_distances
+        + torch.eye(pairwise_distances.shape[0], device=pairwise_distances.device)
+        * pairwise_distances.max()
+    )
+    return {
+        "vq_mean_distance": pairwise_distances.mean(),
+        "vq_min_distance": min_distance,
+        "vq_max_distance": pairwise_distances.max(),
+    }

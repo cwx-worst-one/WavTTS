@@ -2366,6 +2366,106 @@ class Stage3Conv1D(Stage3):
             checkpointing=checkpointing,
             extra_params=extra_params,
         )
+    
+    def _shared_step(self, batch):
+        """
+        23APR2024 @hanoihantrakul 
+        I isolated this from Stage3() so it does not affect past experiments. 
+        Add logic for codebook distances. 
+        """
+        input_dict = self.prepare_feature(batch)
+        output_dict = self.model(input_dict)
+
+        mel = input_dict["mel"]
+        if self.model.config.get("add_ctc", True):
+            text_ids = input_dict["text_ids"]
+            # Add Pitch loss to main loss (False by default in UMM training)
+            if self.model.config.get("add_pitch", False):
+                loss_dict = self.criterion(
+                    ctc_logits=output_dict["ctc_out"],
+                    text_ids=text_ids,
+                    recon_mel=output_dict["mel_out"],
+                    mel=mel,
+                    recon_f0=output_dict["f0_out"].squeeze(-1),
+                    f0=input_dict["f0"],
+                    recon_vuv=output_dict["vuv_out"].squeeze(-1),
+                    vuv=input_dict["vuv"],
+                )
+            else:
+                loss_dict = self.criterion(
+                    ctc_logits=output_dict["ctc_out"],
+                    text_ids=text_ids,
+                    recon_chroma=output_dict["chroma_out"]
+                    if self.model.config.add_chroma
+                    else None,
+                    chroma=input_dict["chroma"]
+                    if self.model.config.add_chroma
+                    else None,
+                    recon_mel=output_dict["mel_out"],
+                    mel=mel,
+                )
+        else:
+            loss_dict = self.criterion(
+                ctc_logits=None,
+                text_ids=None,
+                recon_chroma=output_dict["chroma_out"]
+                if self.model.config.add_chroma
+                else None,
+                chroma=input_dict["chroma"] if self.model.config.add_chroma else None,
+                recon_mel=output_dict["mel_out"],
+                mel=mel,
+            )
+        loss_dict["bs"] = mel.shape[0]
+        loss_dict["loss"] = loss_dict["loss_mel"] * self.model.config.w_loss_mel
+        if self.model.config.get("add_ctc", True):
+            loss_dict["loss"] = (
+                loss_dict["loss"] + loss_dict["loss_ctc"] * self.model.config.w_loss_ctc
+            )
+        if self.model.config.add_chroma:
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + loss_dict["loss_chroma"] * self.model.config.w_loss_chroma
+            )
+        if self.model.config.get("add_pitch", False):
+            loss_dict["loss"] = (
+                loss_dict["loss"]
+                + (loss_dict["f0_loss"] + loss_dict["vuv_loss"])
+                * self.model.config.w_loss_pitch
+            )
+        if output_dict["vq_loss"] is not None:
+            loss_dict["loss_vq"] = output_dict["vq_loss"]
+            loss_dict["loss"] = (
+                loss_dict["loss"] + output_dict["vq_loss"] * self.model.config.w_loss_vq
+            )
+        if self.trainer.global_step % 100 == 0:
+            code_rate = self.get_code_rate(output_dict["vq_ids"])
+            loss_dict["aux/code_rate"] = code_rate
+        quant_rate = self.get_quant_rate(
+            output_dict["vq_ids"].long(), self.model.config.vq_codebook_size
+        )
+        loss_dict["aux/quant_rate"] = quant_rate
+        if getattr(self.model.vq, "entropy", None) is not None:
+            loss_dict["aux/entropy"] = self.model.vq.entropy()
+        if self.model.config.get("add_ctc", True):
+            loss_dict["aux/num_text_ids"] = text_ids.size(0) * text_ids.size(1)
+        loss_dict["aux/num_mel_frames"] = mel.size(0) * mel.size(1)
+        loss_dict["aux/mel_mean"] = mel.mean()
+        loss_dict["aux/mel_std"] = mel.std()
+        loss_dict["aux/w_loss_mel"] = self.model.config.w_loss_mel
+        if self.model.config.get("add_ctc", True):
+            loss_dict["aux/w_loss_ctc"] = self.model.config.w_loss_ctc
+        loss_dict["aux/noise_scale"] = output_dict.get("noise_scale", 0)
+        if self.model.config.add_chroma:
+            loss_dict["aux/w_loss_chroma"] = self.model.config.w_loss_chroma
+        if output_dict["vq_loss"] is not None:
+            loss_dict["aux/w_loss_vq"] = self.model.config.w_loss_vq
+        loss_dict["flops"] = output_dict["flops"]
+        # Add VQ Codebook distance logic
+        if "vq_mean_distance" in output_dict.keys():
+            loss_dict["vq_mean_distance"] = output_dict["vq_mean_distance"]
+            loss_dict["vq_min_distance"] = output_dict["vq_min_distance"]
+            loss_dict["vq_max_distance"] = output_dict["vq_max_distance"]
+        return loss_dict
 
 
 class Stage2Vocoder(Stage0):

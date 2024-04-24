@@ -1,8 +1,8 @@
 ---
 
-# @hanoihantrakul 5Mar2024
-# This YAML is near-identical to `umm_stage3_conv1d_v2_sstk_direct_stage3.yaml`.
-# The param count is 733M parameters for this one by changing `hidden_size=896`
+# @hanoihantrakul 23APR2023
+# YAML file with much shorter train and validation steps to verify if 
+# printouts, graphs and spectrograms are being added to wandb logger correctly.
 
 ################################################################################
 ##########                       BASIC CONFIGURATION                  ##########
@@ -40,7 +40,7 @@ run_opts:
     num_workers: 4
     accelerator: auto
     warmup_steps: 2000
-    max_steps: 10 # 1000000
+    max_steps: 8 # 1000000
     val_check_interval: 1 # 10000 # used in conjunction with Trainer.limit_val_batches = 1
     ckpt_interval: 5 # 10000
     batch_size: 10 # 16 # 8 # 2

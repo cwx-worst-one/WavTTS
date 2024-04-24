@@ -21,10 +21,10 @@ def get_list_of_mel_spec_plots_to_log(mel_spec, num_samples_to_plot):
     return get_list_of_spectrogram_plots_to_log(mel_spec, num_samples_to_plot, title="Mel Spec")
 
 def get_list_of_chroma_spec_plots_to_log(chroma_spec, num_samples_to_plot):
-    """Get a list of Chroma Specs for logging into one window on ByteDance Merlin."""
-    return get_list_of_spectrogram_plots_to_log(chroma_spec, num_samples_to_plot, title="Chroma Spec")
+    """Get a list of Chroma Specs for logging into one window on ByteDance Merlin. Note slight difference in color vmin vmax range."""
+    return get_list_of_spectrogram_plots_to_log(chroma_spec, num_samples_to_plot, title="Chroma Spec", vmin=0, vmax=1)
 
-def get_list_of_spectrogram_plots_to_log(spectrograms, num_samples_to_plot, title):
+def get_list_of_spectrogram_plots_to_log(spectrograms, num_samples_to_plot, title, vmin=-6, vmax=0.5):
     """
     Return a list of wandb.Image() objects which can be directly logged to a wandb_logger.
 
@@ -37,7 +37,7 @@ def get_list_of_spectrogram_plots_to_log(spectrograms, num_samples_to_plot, titl
     wandb_image_list = []
     for i in range(num_samples_to_plot):
         plt.figure(figsize=(16, 8))
-        plt.pcolor(spectrograms[i].cpu().T, vmin=-6, vmax=0.5)
+        plt.pcolor(spectrograms[i].cpu().T, vmin=vmin, vmax=vmax)
         plt.title(f"{title} {i}")
         wandb_image_list.append(wandb.Image(plt))
         plt.close()
