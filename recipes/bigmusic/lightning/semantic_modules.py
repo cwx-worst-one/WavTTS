@@ -87,6 +87,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         offset_codebook_size = extra_params.get('offset_codebook_size', 512)
         tag_taxonomy_lang = extra_params.get('tag_taxonomy_lang', 'Zh')
         tag_dropout_rate = extra_params.get('tag_dropout_rate', 0)
+        mulan_add_cfg = extra_params.get('mulan_add_cfg', False)
         mulan_embed_dim = extra_params.get('mulan_embed_dim', 512)
         mulan_crop = extra_params.get('mulan_crop', True)
         mulan_average = extra_params.get('mulan_average', True)
@@ -105,7 +106,8 @@ class SemanticModule(BaseContinuousEmbedModule):
                     add_sos=True,
                     mulan_crop=mulan_crop,
                     mulan_average=mulan_average,
-                    dropout=tag_dropout_rate
+                    dropout=tag_dropout_rate,
+                    add_none=mulan_add_cfg
                 )
             elif emb_type == "tag_categorical":
                 # Read ground truth tags from style_text
@@ -123,7 +125,7 @@ class SemanticModule(BaseContinuousEmbedModule):
                     embedding_dim=hidden_size,
                     add_sos=True,
                     dropout=tag_dropout_rate,
-                    vocab_path=style_category_vocab_path
+                    vocab_path=style_category_vocab_path,
                 )
             elif emb_type == "speaker_id":
                 embedder_dict['speaker_id'] = SpeakerEmbedder(
@@ -300,6 +302,15 @@ class SemanticModule(BaseContinuousEmbedModule):
                 batch.get('style_audio', batch.get('target_audio')).to(self.device),
                 with_sos=True,
                 data_type='music',
+                target_samples_length=target_samples_length,
+            )
+        elif 'style_embedding' in conditions:
+            assert "style_embedding" in batch
+            embeds = mulan_embedder.embed(
+                self.requires,
+                batch.get('style_embedding').to(self.device),
+                with_sos=True,
+                data_type='embed',
                 target_samples_length=target_samples_length,
             )
         elif 'style_category' in conditions:
@@ -865,7 +876,6 @@ class SemanticModule(BaseContinuousEmbedModule):
 
         inputs_emb_cfg = None
         if use_controller_cfg:
-            assert beam == 1    # TODO(qq) support beam > 1 with CFG.
             batch_cfg = self.prepare_cfg_batch(batch, hp)
             inputs_emb_cfg = self.prepare_inputs_embeddings(batch_cfg)
 

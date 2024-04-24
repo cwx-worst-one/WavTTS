@@ -190,10 +190,10 @@ logger:
       name: !ref <run_opts[log_name]>
       version: !ref <run_opts[version]>
       default_hp_metric: False
-    #- !new:pytorch_lightning.loggers.wandb.WandbLogger
-    #  save_dir: !ref <run_opts[log_dir]>
-    #  project: !ref <run_opts[log_name]>
-    #  name: !ref <run_opts[version]>
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[log_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
 
 # log_gradient_scaler: !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
 

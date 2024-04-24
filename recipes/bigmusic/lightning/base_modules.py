@@ -338,9 +338,6 @@ class BaseContinuousEmbedModule(BaseModule):
         """
         tqdm_name = self.__class__.__name__ if tqdm_name is None else tqdm_name
         batch_size, seq_len, _ = inputs_embeds.size()
-        if use_controller_cfg:
-            inputs_embeds = torch.cat([inputs_embeds, inputs_embeds_cfg], dim=0)  # cat on first-dim(batch_size) 
-            batch_size = 2 * batch_size
         if ref_samples is not None:
             assert ref_samples.size(0) == batch_size
             assert ref_samples.size(1) == num_tokens
@@ -348,8 +345,12 @@ class BaseContinuousEmbedModule(BaseModule):
             beam = beam - 1
         # (b, s, d) --> (b * beam, s, d)
         inputs_embeds = inputs_embeds.repeat(1, beam, 1).reshape(batch_size * beam, seq_len, -1)
-        sos_embeds = self.target_embedder.get_sos_embed(batch_size * beam)
+
+        if use_controller_cfg:
+            inputs_embeds_cfg = inputs_embeds_cfg.repeat(1, beam, 1).reshape(batch_size * beam, seq_len, -1)
+            inputs_embeds = torch.cat([inputs_embeds, inputs_embeds_cfg], dim=0)  # cat on first-dim(batch_size) 
         batch_size, seq_len, _ = inputs_embeds.size() # recalculate batch size
+        sos_embeds = self.target_embedder.get_sos_embed(batch_size)
 
         def _init_model_input():
             if self.use_cross_attn:

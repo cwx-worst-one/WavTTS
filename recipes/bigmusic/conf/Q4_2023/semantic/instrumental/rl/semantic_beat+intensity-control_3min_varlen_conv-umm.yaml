@@ -46,16 +46,19 @@ extra_params:
     decoder_type: "diffusion"
     diffusion_steps: 20
     bf16_portion: 0.0
+    diffusion_version: 'sstk_v5' # sstk_v2 for 24k, sstk_v3 for 44.1k
     diffusion_params:
         window_length: 30 # in second
         vocoder_hz: 49
         semantic_hz: 25
         latent_dim: 64
         outpainting_overlap: 0.5 #[0, 1]
+        sampler_version: 'v2' # use v2 to pair with sstk_v5 diffusion model, otherwise use v1
         diffusion_steps: !ref <extra_params[diffusion_steps]>
         schedule_slope: 4.0
         guidance_scale: 2.5
         bf16_portion: !ref <extra_params[bf16_portion]>
+    vocoder_version: '44.1k_sa'
     # RL training params
     add_ref_to_beam: False
     ce_weight: 0.1
@@ -105,7 +108,7 @@ run_opts:
     crop_step_size: [10, 15, 20, 25, 30, 30, 30, 30, 30, 30, 30]
     mixed_ratio: 0.5
     use_pipe: False
-    diffusion_ckpt: "/mnt/bn/audio-diffusion/wtl/diffusion/sstk/44.1k_stereo_v1/diffusion-step=250000-EMA.ckpt"
+    diffusion_ckpt: "/mnt/bn/audio-diffusion/wtl/diffusion/sstk/44.1k_stereo_v2/diffusion-step=600000-EMA.ckpt"
     vocoder_ckpt: "/mnt/bn/audio-diffusion/wtl/vocoder/sstk/44.1k_stereo_sa_v1/last-EMA.ckpt"
 
 ################################################################################
@@ -223,7 +226,7 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticRLModule
                 cache_dir: !ref <run_opts[cache_dir]>
                 sstk: True
                 sample_rate: !ref <extra_params[token2wav_sample_rate]>
-                version: "sstk_v4"
+                version: !ref <extra_params[diffusion_version]>
         vocoder:
             hpath: !ref <run_opts[vocoder_ckpt]>
             initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
@@ -243,10 +246,10 @@ logger:
       name: !ref <run_opts[log_name]>
       version: !ref <run_opts[version]>
       default_hp_metric: False
-    #- !new:pytorch_lightning.loggers.wandb.WandbLogger
-    #  save_dir: !ref <run_opts[log_dir]>
-    #  project: !ref <run_opts[log_name]>
-    #  name: !ref <run_opts[version]>
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[log_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
 
 # log_gradient_scaler: !new:recipes.musiclm.callbacks.loggers.LogGradientScalerCallback
 
@@ -280,7 +283,7 @@ trainer: !new:pytorch_lightning.Trainer
     gradient_clip_val: !ref <run_opts[gradient_clip_val]>
     val_check_interval: !ref <run_opts[val_check_interval]>
     check_val_every_n_epoch: null
-    num_sanity_val_steps: 1  # skip validation sanity checks so we don't run into hdfs file close errors
+    num_sanity_val_steps: 0  # skip validation sanity checks so we don't run into hdfs file close errors
     limit_val_batches: 5
     callbacks: !ref <callbacks>
     plugins: !ref <plugins>

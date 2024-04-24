@@ -196,8 +196,6 @@ callbacks:
       every_n_train_steps: !ref <run_opts[val_check_interval]>
       mode: max
       filename: "{step:06d}"
-    - !new:pytorch_lightning.callbacks.LearningRateMonitor
-      logging_interval: 'step'
 
 plugins:
     - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
