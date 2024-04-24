@@ -121,7 +121,7 @@ INDEX = {
         "Mixed_MCC_GroupAB_EN": 1087, # 1085 - GroupB only
         "SpotifySFT_Artist16": 1809, # Finetune on 16 artists, 3404 samples
         "SpotifySFT_Genre3373": 1796, # Finetune on Everynoise genres
-        # "SpotifySFT_Genre7424": 2077, # Finetune on 6 genres searched by Spotify Playlist, 1k+ songs per genre (Bochen 20240326) (NOTE: this is old one, not shuffled yet)
+        "SpotifySFT_Genre7424": 2077, # Finetune on 6 genres searched by Spotify Playlist, 1k+ songs per genre (Bochen 20240326) (NOTE: this is old one, not shuffled yet)
         "SpotifySFT_Artist6": 1624, # Finetune on 6 artists, 2687 samples
         "SpotifySFT_Pop400": 1517, # Pop songs 409
         "SpotifySFT_BillboardV2": 2188, # 1523, # 100k billboard
