@@ -1,12 +1,21 @@
 import re
 import string
 from typing import Dict, Tuple, Optional, List, NamedTuple, Union
+from functools import partial
 
 import torch
-from zhon.hanzi import punctuation
 from confusables import confusable_characters
 
-punctuation_all = punctuation + string.punctuation
+# 以下等效替换，避免发生token偏移问题
+# from zhon.hanzi import punctuation
+# punctuation_all = punctuation + string.punctuation
+
+punctuation = ['＂', '＃', '＄', '％', '＆', '＇', '（', '）', '＊', '＋', '，', '－', '／', '：', '；', '＜', '＝', '＞', '＠', '［', '＼', '］', '＾', '＿', '｀', '｛', '｜', '｝', '～', '｟', '｠', '｢', '｣', '､', '\u3000', '、', '〃', '〈', '〉', '《', '》', '「', '」', '『', '』', '【', '】', '〔', '〕', '〖', '〗', '〘', '〙', '〚', '〛', '〜', '〝', '〞', '〟', '〰', '〾', '〿', '–', '—', '‘', '’', '‛', '“', '”', '„', '‟', '…', '‧', '﹏', '﹑', '﹔', '·', '！', '？', '｡', '。']
+string_punct = ['!', '"', '#', '$', '%', '&', "'", '(', ')', '*', '+', ',', '-', '.', '/', ':', ';', '<', '=', '>', '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|', '}', '~']
+
+punctuation_all = punctuation + string_punct
+
+import os
 from collections import OrderedDict
 
 import numpy as np
@@ -19,6 +28,15 @@ except Exception as e:
 import contextlib
 
 
+VOCAB_TYPES = ["phoneme", "phoneme+tone"]
+DEFAULT_TOKEN_TYPE = "phoneme"
+EMPTY_TONE_TOKEN = "empty_tone"
+N_TONES = 15  # number of tones in total
+TONE_SEP = "@"  # separator for phone tone merged symbol
+
+offset = 2  # 0 for padding, 1 for eos
+
+
 class SamiTokenizerError(ValueError):
     pass
 
@@ -28,7 +46,7 @@ class SamiTokenizerError(ValueError):
 sil_symbols = ["sil", "sp", "pau"]
 
 # punc
-punctuation_all = list(punctuation + string.punctuation)
+# punctuation_all = list(punctuation + string.punctuation)
 special_symbols = ["......", "...", "……", "--", "——"]
 
 # break_symbols: silence symbol + punc
@@ -188,6 +206,8 @@ ZH_vowel = [
     "C0iiir",
 ]
 
+_all_vowels = EN_vowel + ZH_vowel
+
 sep_strs = ["zh_word_sep", "en_word_sep", "syl_sep"]
 
 # special tags
@@ -231,30 +251,50 @@ all_phones = (
     # special tags
     + singer_tags + section_tags
 )
+all_tones = [str(i) for i in range(N_TONES)]
+
 
 # Yilin: A full stop (。) will be added by the TTS frontend. It's not
 # necessary to use the line break symbol.
 # def get_line_break_id():
 #     return np.array([len(all_phones) + 1000])
 
-### tones
-all_tones = ([str(i) for i in range(15)] + sep_strs
+
+def _get_phone_tone_token(phone: str, tone: str) -> str:
+    """Merge phone and tone if the phone is vowel"""
+    if phone in _all_vowels:
+        return f"{phone}{TONE_SEP}{tone}"
+    return phone
+
+
+def _merge_phone_tone_list(phonemes: List[str]) -> List[str]:
+    return [_get_phone_tone_token(phone, tone) for phone in phonemes for tone in all_tones]
+
+
+EN_vowel_tone = _merge_phone_tone_list(EN_vowel)
+ZH_vowel_tone = _merge_phone_tone_list(ZH_vowel)
+
+
+# phone tone merged tokens
+all_phonetones = (
+    sil_punc_symbols + EN_consonant + EN_vowel_tone + ZH_consonant + ZH_vowel_tone + sep_strs
     # special tags
     + singer_tags + section_tags
 )
 
-# 0 for padding, 1 for eos
-offset = 2
 
-phone_to_int = dict()
-for i, phone in enumerate(all_phones):
-    if phone not in phone_to_int:
-        phone_to_int[phone] = i + offset
+def _symbol_to_int(symbol_list: List[str], offset: int = 0) -> Dict[str, int]:
+    """Initialize a symbol-to-int dict given a symbol list"""
+    symbol_to_int_dict = {}
+    for i, symbol in enumerate(symbol_list):
+        if symbol not in symbol_to_int_dict:
+            symbol_to_int_dict[symbol] = i + offset
+    return symbol_to_int_dict
 
-tone_to_int = dict()
-for i, tone in enumerate(all_tones):
-    if tone not in tone_to_int:
-        tone_to_int[tone] = i + offset
+# Use `phone_to_int` if vocab_type is "phoneme", use `token_to_int` if vocab_type is "phoneme+tone"
+phone_to_int = _symbol_to_int(all_phones, offset)  # offset: 0, 1, phones: 2~296
+phonetone_to_int = _symbol_to_int(all_phonetones, offset)  # offset: 0, 1, phones: 2~1626
+_tone_to_int = _symbol_to_int(all_tones)  # 0~14  (only used internally)
 
 # ------------------------------------------
 # Special tag utils
@@ -345,6 +385,7 @@ class Phrase(NamedTuple):
         section_tag: Optional[str] = None,
         time_span: Optional[Tuple[int, int]] = None,
         normalize_tag: bool = False,
+        normalize_chinese: bool = True,
     ):
         """ Auto-detect singer tag and section tag from the given phonemes or text
         :param singer_tag: Override the detected singer_tag by this value
@@ -379,8 +420,8 @@ class Phrase(NamedTuple):
         if singer_tag is None:
             singer_tag = _singer_tag_p if _singer_tag_t is None else _singer_tag_t
 
-        if rest_text is not None:
-            rest_text = norm_chinese_text(rest_text).strip()
+        if normalize_chinese and rest_text is not None:
+            rest_text = norm_chinese_text(rest_text)
 
         return cls(
             phonemes=strip(rest_phonemes),
@@ -594,21 +635,35 @@ def get_lang_by_text(text):
     return lang
 
 
-def _get_special_tag_tokens(tag: str) -> Tuple[int, int, str, str]:
-    return phone_to_int[tag], tone_to_int[tag], tag, tag
+def _get_token(phoneme: str, tone: Optional[str], vocab_type: str) -> Tuple[str, int]:
+    """
+    :return: (token, token_id)
+    """
+    if vocab_type == "phoneme":
+        return phoneme, phone_to_int[phoneme]
+    elif vocab_type == "phoneme+tone":
+        _tk = _get_phone_tone_token(phoneme, tone)
+        return _tk, phonetone_to_int[_tk]
+    raise ValueError(f"Unsupported vocab_type {vocab_type}.")
 
 
-def convert_labels_to_text_id_zh(tacolab: List[str]) -> Tuple[List[int], List[int], List[str], List[str]]:
-    phone_ids = []
-    tone_ids = []
-    phones = []
-    tones = []
+def _insert_token(phone: str, tone: str, tokens: List[str], token_ids: List[int], vocab_type: str) -> None:
+    token, token_id = _get_token(phone, tone, vocab_type)
+    tokens.append(token)
+    token_ids.append(token_id)
+
+
+def convert_labels_to_text_id_zh(tacolab: List[str], vocab_type: str) -> Tuple[List[str], List[int]]:
     assert len(tacolab[0].split("\t")) == 7, (
         len(tacolab[0].split("\t")),
         tacolab[0],
     )
     if tacolab[0] == "phn\ttone\tws\tpwpp\tsentype\tword\tunit":
         tacolab = tacolab[1:]
+
+    tokens, token_ids = [], []
+    insert_token = partial(_insert_token, vocab_type=vocab_type)
+
     for i in range(len(tacolab)):
         x = tacolab[i]
 
@@ -618,38 +673,21 @@ def convert_labels_to_text_id_zh(tacolab: List[str]) -> Tuple[List[int], List[in
         x_split = x.split("\t")
         phone, tone, ws, pw, stype, word, unit = x_split
         assert phone in phone_to_int, f"{phone} not in phone set"
-        assert tone in tone_to_int, f"{tone} not in tone set"
+        assert tone in _tone_to_int, f"{tone} not in tone set"
 
-        phone_ids.append(phone_to_int[phone])
-        tone_ids.append(tone_to_int[tone])
-        phones.append(phone)
-        tones.append(tone)
-        if phone[:2] == "C0":
-            if unit in ["S", "E"]:
-                phone_ids.append(phone_to_int["syl_sep"])
-                tone_ids.append(tone_to_int["syl_sep"])
-                phones.append("syl_sep")
-                tones.append("syl_sep")
-                if ws in ["S", "E"]:
-                    phone_ids.append(phone_to_int["zh_word_sep"])
-                    tone_ids.append(tone_to_int["zh_word_sep"])
-                    phones.append("zh_word_sep")
-                    tones.append("zh_word_sep")
-        elif phone[:2] == "E0":
-            if pw != "0":
-                phone_ids.append(phone_to_int["en_word_sep"])
-                tone_ids.append(tone_to_int["en_word_sep"])
-                phones.append("en_word_sep")
-                tones.append("en_word_sep")
+        insert_token(phone, tone, tokens, token_ids)
 
-    return phone_ids, tone_ids, phones, tones
+        if phone[:2] == "C0" and unit in ["S", "E"]:
+            insert_token("syl_sep", None, tokens, token_ids)
+            if ws in ["S", "E"]:
+                insert_token("zh_word_sep", None, tokens, token_ids)
+        elif phone[:2] == "E0" and pw != "0":
+            insert_token("en_word_sep", None, tokens, token_ids)
+
+    return tokens, token_ids
 
 
-def convert_labels_to_text_id_zh_en(tacolab: List[str]) -> Tuple[List[int], List[int], List[str], List[str]]:
-    phone_ids = []
-    tone_ids = []
-    phones = []
-    tones = []
+def convert_labels_to_text_id_zh_en(tacolab: List[str], vocab_type: str) -> Tuple[List[str], List[int]]:
     assert (
         len(tacolab[0].split("\t")) == 7 or len(tacolab[0].split("\t")) == 6
     ), (len(tacolab[0].split("\t")), tacolab[0])
@@ -658,6 +696,10 @@ def convert_labels_to_text_id_zh_en(tacolab: List[str]) -> Tuple[List[int], List
         or tacolab[0] == "phn\ttone\tws\tpwpp\tsentype\tword"
     ):
         tacolab = tacolab[1:]
+
+    tokens, token_ids = [], []
+    insert_token = partial(_insert_token, vocab_type=vocab_type)
+
     for i in range(len(tacolab)):
         x = tacolab[i]
 
@@ -669,45 +711,33 @@ def convert_labels_to_text_id_zh_en(tacolab: List[str]) -> Tuple[List[int], List
             phone, tone, ws, pw, stype, word, unit = x_split
         elif len(x_split) == 6:
             phone, tone, ws, pw, stype, word = x_split
+            unit = None
         else:
             print("Wrong tacolab", x_split)
             return None
 
         assert phone in phone_to_int, f"{phone} not in phone set"
-        assert tone in tone_to_int, f"{tone} not in tone set"
+        assert tone in _tone_to_int, f"{tone} not in tone set"
 
-        phone_ids.append(phone_to_int[phone])
-        tone_ids.append(tone_to_int[tone])
-        phones.append(phone)
-        tones.append(tone)
-        if phone[:2] == "C0":
-            if unit in ["S", "E"]:
-                phone_ids.append(phone_to_int["syl_sep"])
-                tone_ids.append(tone_to_int["syl_sep"])
-                phones.append("syl_sep")
-                tones.append("syl_sep")
-                if ws in ["S", "E"]:
-                    phone_ids.append(phone_to_int["zh_word_sep"])
-                    tone_ids.append(tone_to_int["zh_word_sep"])
-                    phones.append("zh_word_sep")
-                    tones.append("zh_word_sep")
-        elif phone[:2] == "E0":
-            if pw != "0":
-                phone_ids.append(phone_to_int["en_word_sep"])
-                tone_ids.append(tone_to_int["en_word_sep"])
-                phones.append("en_word_sep")
-                tones.append("en_word_sep")
+        insert_token(phone, tone, tokens, token_ids)
 
-    return phone_ids, tone_ids, phones, tones
+        if phone[:2] == "C0" and unit in ["S", "E"]:
+            insert_token("syl_sep", None, tokens, token_ids)
+            if ws in ["S", "E"]:
+                insert_token("zh_word_sep", None, tokens, token_ids)
+        elif phone[:2] == "E0" and pw != "0":
+            insert_token("en_word_sep", None, tokens, token_ids)
+
+    return tokens, token_ids
 
 
-def convert_labels_to_text_id_en(tacolab: List[str]) -> Tuple[List[int], List[int], List[str], List[str]]:
-    phone_ids = []
-    tone_ids = []
-    phones = []
-    tones = []
+def convert_labels_to_text_id_en(tacolab: List[str], vocab_type: str) -> Tuple[List[str], List[int]]:
     if len(tacolab[0].split("\t")) != 5:
         tacolab = convert_v3_to_v1(tacolab)
+
+    tokens, token_ids = [], []
+    insert_token = partial(_insert_token, vocab_type=vocab_type)
+
     for i in range(len(tacolab)):
         x = tacolab[i]
 
@@ -716,18 +746,14 @@ def convert_labels_to_text_id_en(tacolab: List[str]) -> Tuple[List[int], List[in
 
         phone, tone, _, ws, pw = x.split("\t")
         assert phone in phone_to_int, f"{phone} not in phone set"
-        assert tone in tone_to_int, f"{tone} not in tone set"
-        phone_ids.append(phone_to_int[phone])
-        tone_ids.append(tone_to_int[tone])
-        phones.append(phone)
-        tones.append(tone)
-        if pw != "0":
-            phone_ids.append(phone_to_int["en_word_sep"])
-            tone_ids.append(tone_to_int["en_word_sep"])
-            phones.append("en_word_sep")
-            tones.append("en_word_sep")
+        assert tone in _tone_to_int, f"{tone} not in tone set"
 
-    return phone_ids, tone_ids, phones, tones
+        insert_token(phone, tone, tokens, token_ids)
+
+        if pw != "0":
+            insert_token("en_word_sep", None, tokens, token_ids)
+
+    return tokens, token_ids
 
 
 _label_conversion_fns = {
@@ -737,23 +763,45 @@ _label_conversion_fns = {
 }
 
 
-def convert_labels_to_text_id(tacolab: Optional[List[str]], prefix_tags: Optional[List[str]] = None):
+def convert_labels_to_text_id(
+    tacolab: Optional[List[str]],
+    prefix_tags: Optional[List[str]] = None,
+    vocab_type: str = "phoneme"
+) -> Tuple[np.ndarray, List[str], List[str]]:
+    """Convert tacolab into token ids.
+    :param vocab_type: "phonenme" (use phoneme only) or "phoneme+tone" (merge phoneme and tone into one token)
+    :param prefix_tags: Special tags that will be prepended to the beginning of the token sequence.
+    :return: (np.array([token_ids, token_ids]), tokens, tokens)
+
+    NOTE: Always only use the first row of the numpy array, and the second return value token (list of token strings).
+    Do NOT use any other information.
+
+    The return value does not make sense on its own. This format is only kept for backward compatibility.
+    Historically, the return values are (np.array([phone_ids, tone_ids]), phones, tones). However, it is not flexible
+    enough to support the new token types.
+
+    If you wish to use the tone alone, or any other token type, add your vocab and modity the `_get_token` function.
+
+    All of the exisitng projects (04/03/2024) use the first row of the token id array (phones) and the phone strings.
+    """
+    if vocab_type not in VOCAB_TYPES:
+        raise ValueError(f"Invalid vocab_type: {vocab_type}")
     try:
         if tacolab is not None:
             lang = get_lang(tacolab)
-            phone_ids, tone_ids, phones, tones = _label_conversion_fns[lang](tacolab)
+            tokens, token_ids = _label_conversion_fns[lang](tacolab, vocab_type)
         else:
-            phone_ids, tone_ids, phones, tones = [], [], [], []
+            tokens, token_ids = [], []
 
-        # prepend prefix tags (not very clean)
+        # prepend prefix tags
         if prefix_tags is not None:
             for tag in reversed(prefix_tags):
-                _phone_id, _tone_id, _phone, _tone = _get_special_tag_tokens(tag)
-                phone_ids = [_phone_id] + phone_ids
-                tone_ids = [_tone_id] + tone_ids
-                phones = [_phone] + phones
-                tones = [_tone] + tones
-        return np.stack([phone_ids, tone_ids]), phones, tones
+                _tk, _id = _get_token(tag, None, vocab_type)
+                tokens = [_tk] + tokens
+                token_ids = [_id] + token_ids
+
+        return np.stack([token_ids, token_ids]), tokens, tokens
+
     except Exception as e:
         raise SamiTokenizerError(f"Error converting labels to text id: {e}")
 
@@ -798,8 +846,10 @@ def parse_raw_text(text_filepath):
 
 class SamiOfflineTokenizer:
     """SamiOfflineTokenizer expects phonemes to already be extracted from the text."""
-    def __init__(self) -> None:
-        pass
+    def __init__(self, vocab_type: str = DEFAULT_TOKEN_TYPE) -> None:
+        if vocab_type not in VOCAB_TYPES:
+            raise ValueError(f"Invalid vocab_type: {vocab_type}")
+        self.vocab_type: str = vocab_type
 
     def __call__(self, text_batch: Union[str, List[str]], line_break=" <n> ", **kwds) -> Dict[str, torch.Tensor]:
         """Tokenize a text batch (phoneme). Lines separated by line_break."""
@@ -816,8 +866,8 @@ class SamiOfflineTokenizer:
         if not any([phrase.phonemes, phrase.prefix_tags]):
             raise SamiTokenizerError("Empty tokenization result")
         labels = list(filter(lambda x: x != "", phrase.phonemes.split("\n"))) if phrase.phonemes else None
-        text_id, _, _ = convert_labels_to_text_id(labels, phrase.prefix_tags)
-        return text_id[0]  # only takes phone_ids
+        text_id, _, _ = convert_labels_to_text_id(labels, phrase.prefix_tags, self.vocab_type)
+        return text_id[0, :]  # only takes the first row of token ids
 
     def tokenize_phrases(self, phrases: List[Phrase]) -> np.ndarray:
         """Tokenize multiple phrases and concatenate the result into an ndarray."""
@@ -842,8 +892,9 @@ class SamiTokenizer(SamiOfflineTokenizer):
         lib_path="/opt/tiger/sami_engine_cleaned/libs/libsami.so",
         fe="/opt/tiger/sami_tts_api/models/tts_chinese_frontend_model__42.0.model",
         fe_task="tts_chinese_frontend_model",
+        vocab_type: str = DEFAULT_TOKEN_TYPE,
     ) -> None:
-        super().__init__()
+        super().__init__(vocab_type)
         self.cfg = generate_tts_config()
         self.engine = TtsEngine(lib_path=lib_path, fe=fe)
         self.ex = self.engine.create_fe_executor(task_type=fe_task)
@@ -859,6 +910,7 @@ class SamiTokenizer(SamiOfflineTokenizer):
             remove_empty_phrases([Phrase.parse(text=text) for text in sil.split(line_break)])
             for sil in text_batch
         ]
+        
         return self.tokenize_phrase_batch(phrase_batch)
 
     def tokenize_phrase(self, phrase: Phrase) -> Optional[np.ndarray]:
@@ -886,3 +938,38 @@ class SamiTokenizer(SamiOfflineTokenizer):
                 phonemes = self.ex.run(phrase.text, config=self.cfg)[0]
             return phrase._replace(phonemes=phonemes)
         return phrase
+
+
+#Common algorithm pre-processing code, used during inference
+class SamiInferenceTokenizer(SamiOfflineTokenizer):
+    """SamiTokenizer is based on SamiOfflineTokenizer with an extra phoneme generation feature."""
+    def __init__(
+        self,
+        vocab_type: str = DEFAULT_TOKEN_TYPE,
+    ) -> None:
+        super().__init__(vocab_type)
+
+    def __call__(self, front_results: Union[str, List[str]], **kwds) -> Dict[str, torch.Tensor]:
+        """Tokenize a text batch. Lines separated by line_break. Phoneme will be generated internally."""
+        
+        if isinstance(front_results, str):
+            front_results = [front_results] 
+            
+        result_dict = {}
+        mid_phrase_batch = []
+        final_phrase_batch = []
+        for item in front_results:
+            key, value = item.split("#", 1)
+            result_dict[key] = value
+            phrase = Phrase.parse(text=key)
+            if not phrase.is_empty:
+                mid_phrase_batch.append(phrase)
+        for phrase in mid_phrase_batch:
+            if phrase.text and not phrase.phonemes:
+                phonemes = result_dict.get(phrase.text)
+                phrase._replace(phonemes=phonemes)
+                final_phrase_batch.append(Phrase.parse(text = phrase.text, phonemes=phonemes))
+            else:
+                final_phrase_batch.append(phrase)
+
+        return self.tokenize_phrase_batch([final_phrase_batch])

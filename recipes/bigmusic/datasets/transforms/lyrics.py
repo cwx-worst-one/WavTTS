@@ -244,20 +244,29 @@ class LyricsTokenTransform():
         return LyricsTokenTransform(zh_tokenizer, zh_tokenizer.pad_token_id, lyrics_max_seq_len, normalization_fn=normalization_fn, **kwargs)
 
     @classmethod
-    def init_sami_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=True, normalize_tags=True, **kwargs):
+    def init_sami_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=True, normalize_tags=True, vocab_type="phoneme", **kwargs):
         from recipes.datasets.mcc.sami_tokenizer import SamiTokenizer
         normalization_fn = partial(
             normalize_text_sami_tokenizer,
             enable_punctuation=enable_punctuation,
             normalize_tags=normalize_tags
         )
-        zh_phoneme_tokenizer = SamiTokenizer()
+        zh_phoneme_tokenizer = SamiTokenizer(vocab_type=vocab_type)
         return LyricsTokenTransform(zh_phoneme_tokenizer, 0, lyrics_max_seq_len, normalization_fn=normalization_fn, **kwargs)
+    
+    #推理侧使用
     @classmethod
-    def init_sami_offline_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=True, **kwargs):
+    def init_sami_inference_tokenizer(cls, lyrics_max_seq_len, vocab_type="phoneme", **kwargs):
+        from recipes.datasets.mcc.sami_tokenizer import SamiInferenceTokenizer
+        normalization_fn = None
+        zh_phoneme_tokenizer = SamiInferenceTokenizer(vocab_type=vocab_type)
+        return LyricsTokenTransform(zh_phoneme_tokenizer, 0, lyrics_max_seq_len, normalization_fn=normalization_fn, item_key="front_results", **kwargs)
+    
+    @classmethod
+    def init_sami_offline_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=True, vocab_type="phoneme", **kwargs):
         from recipes.datasets.mcc.sami_tokenizer import SamiOfflineTokenizer
         normalization_fn = lambda x: x
-        zh_phoneme_tokenizer = SamiOfflineTokenizer()
+        zh_phoneme_tokenizer = SamiOfflineTokenizer(vocab_type=vocab_type)
         return LyricsTokenTransform(zh_phoneme_tokenizer, 0, lyrics_max_seq_len, normalization_fn=normalization_fn, item_key="phoneme", **kwargs)
 
     @classmethod

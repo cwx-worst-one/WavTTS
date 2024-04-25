@@ -9,7 +9,7 @@ from recipes.diffusion.models.tnt_mss import TNTDiffusionNetwork as TNTDiffusion
 from recipes.diffusion.models.tnt_gru import TNTDiffusionNetwork as ZhTNTDiffusionNetwork
 from recipes.diffusion.models.tnt_v2 import TNTDiffusionNetwork as TNTDiffusionNetworkV2
 from recipes.diffusion.models.tnt_v3 import TNTDiffusionNetwork as TNTDiffusionNetworkV3
-from recipes.diffusion.modules.pl_module import DiffusionModule
+from recipes.diffusion.modules.pl_module_mulan_free import DiffusionModule
 
 VOCODER_HZ = 125
 
@@ -57,7 +57,7 @@ def load_ema_checkpoint(checkpoint_path, model):
     model.load_state_dict(new_state_dict)
     return model
 
-def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, sstk=False, mixv2=False, sample_rate=24000, version=None):
+def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, sstk=False, mixv2=False, version=None):
     # TODO (weitsung) read the model version from ckpt, remove the arguments: is_zh_token, sstk, mixv2.
     with local_zero_first():
         if cache_dir is not None:
@@ -77,13 +77,20 @@ def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, ss
                     unet=True,
                     dropout=0,
                     semantic_cfg_prob=0.1,
-                    use_checkpoint=False,        
+                    use_checkpoint=False,
                     vc=False,
                     vc_cfg_prob=0.1,
                     lora=False,
                 )
             ).model
         if sstk:
+            sstk_setups = {
+                # input_dim, depth, unet, segment_size, segment_stride, unet_stages
+                'sstk_v1': (32, 16, True, 32, 32, [4,8,4]),
+                'sstk_v2': (32, 16, True, 32, 32, [4,8,4]),
+                'sstk_v3': (64, 20, True, 8, 8, [6,8,6,]),
+                'sstk_v4': (64, 20, False, 8, 8, [6,8,6,]),
+            }
             if version == 'sstk_v5':
                 diffusion_network = TNTDiffusionNetworkV3(
                     input_dim=64,
@@ -98,33 +105,8 @@ def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, ss
                     use_checkpoint=False
                 )
             else:
-                # 24k models
-                if version == 'sstk_v1':
-                    input_dim = 32
-                    depth = 16
-                    unet =True
-                    segment_size = 32
-                    segment_stride=32
-                    unet_stages=[4,8,4]
-                elif version == 'sstk_v2':
-                    input_dim = 32
-                    depth = 20
-                    unet = False
-                    segment_size = 32
-                    segment_stride = 32
-                    unet_stages = [6,8,6]
-                # 44.1k models
-                elif version in ['sstk_v3', 'sstk_v4']:
-                    input_dim = 64
-                    depth = 20
-                    if version == 'sstk_v3':
-                        unet = True
-                    else:
-                        unet = False
-                    segment_size = 8
-                    segment_stride = 8
-                    unet_stages = [6,8,6]
-
+                input_dim, depth, unet, segment_size, segment_stride, unet_stages = sstk_setups[version]
+            
                 diffusion_network = TNTDiffusionNetworkV2(
                     input_dim=input_dim,
                     feature_dim=1024,
@@ -143,31 +125,62 @@ def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, ss
                 diffusion_model=diffusion_network,
                 strict=False
             ).model
-        else:
-            if is_zh_token:
-                diffusion_network = ZhTNTDiffusionNetwork(
-                    input_dim=32,
+        if is_zh_token:
+            zh_setups = {
+                # input_dim, depth, segment_size, segment_stride
+                '24000': (32, 16, 32, 32),
+                '44100_v1': (64, 20, 8, 8),
+                '44100_v2': (128, 24, 8, 8)
+            }
+            input_dim, depth, segment_size, segment_stride = zh_setups[version]
+            if version == '44100_v2':
+                diffusion_network = TNTDiffusionNetworkV3(
+                    input_dim=input_dim,
                     feature_dim=1024,
                     context_dim=1,
-                    depth=16,
-                    segment_size=32,
-                    segment_stride=32,
+                    depth=depth,
+                    segment_size=segment_size,
+                    segment_stride=segment_stride,
+                    unet=False,
                     dropout=0,
                     semantic_cfg_prob=0.10,
                     use_checkpoint=False
                 )
             else:
-                diffusion_network = TNTDiffusionNetwork(
-                    input_dim=32,
+                diffusion_network = ZhTNTDiffusionNetwork(
+                    input_dim=input_dim,
                     feature_dim=1024,
                     context_dim=1,
-                    depth=16,
-                    segment_size=32,
-                    segment_stride=32,
+                    depth=depth,
+                    segment_size=segment_size,
+                    segment_stride=segment_stride,
                     dropout=0,
                     semantic_cfg_prob=0.10,
                     use_checkpoint=False
-                )            
+                )
+            if version == '24000': 
+                diffusion_model = load_ema_checkpoint(
+                    local_path,
+                    diffusion_network,
+                )
+            else:
+                diffusion_model = DiffusionModule.load_from_checkpoint(
+                    checkpoint_path=local_path,
+                    diffusion_model=diffusion_network,
+                    strict=False,
+                ).model
+        else:
+            diffusion_network = TNTDiffusionNetwork(
+                input_dim=32,
+                feature_dim=1024,
+                context_dim=1,
+                depth=16,
+                segment_size=32,
+                segment_stride=32,
+                dropout=0,
+                semantic_cfg_prob=0.10,
+                use_checkpoint=False
+            )            
             diffusion_model = load_ema_checkpoint(
                 local_path,
                 diffusion_network,
@@ -210,6 +223,7 @@ def run_diffusion(requires, samples, params):
     schedule_slope = params.get('schedule_slope', 2.5)
     guidance_scale = params.get('guidance_scale', 2.5)
     bf16_portion = params.get('bf16_portion', 0.0)
+    chunk_size = params.get('vocoder_chunk_size', 4)
     vocoder_hz = params.get('vocoder_hz', VOCODER_HZ)
 
     pred_emb = sampler(
@@ -219,8 +233,6 @@ def run_diffusion(requires, samples, params):
         num_chunks=num_chunks,
         num_steps=diffusion_steps,
         bf16_portion=bf16_portion,
-        # start=None,
-        # show_progress=True,
         angle_schedule='linear',
         schdeule_slope=schedule_slope,
         classifier_free_guidance=guidance_scale,
@@ -228,13 +240,10 @@ def run_diffusion(requires, samples, params):
 
     pred_emb = pred_emb.float()
     duration = pred_emb.shape[-1] // vocoder_hz
-    if duration > 30:
-        wavs_g = vocode_in_chunks(pred_emb, vocoder, mini_bs=1, chunk_size=1)
-    else:
-        wavs_g = vocode_in_chunks(pred_emb, vocoder, mini_bs=4, chunk_size=1)
+    wavs_g = vocode_in_chunks(pred_emb, vocoder, mini_bs=1, chunk_size=1)
 
     # For bigmusic: [bs, c, seq] -> [bs, seq] 
-    if len(wavs_g.shape) == 3:
-        wavs_g = wavs_g.squeeze(1)
+    # if len(wavs_g.shape) == 3:
+    #     wavs_g = wavs_g.squeeze(1)
 
     return wavs_g

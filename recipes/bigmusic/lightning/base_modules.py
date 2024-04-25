@@ -24,6 +24,26 @@ from torch.nn.utils.rnn import pad_sequence, unpad_sequence
 import torch.nn.functional as F
 
 
+class TokenBuffer:
+    def __init__(self, max_length):
+        self.max_length = max_length
+        self.buffer = []
+    
+    def put(self, token):
+        if len(self.buffer) > self.max_length:
+            self.buffer.pop(0)
+        self.buffer.append(token)
+    
+    def is_duplicate(self):
+        if len(self.buffer) < self.max_length:
+            return False
+        first = self.buffer[0]
+        for token in self.buffer[1:]:
+            if first != token:
+                return False
+        return True
+
+
 class BaseModule(pl.LightningModule):
     def __init__(
         self,
@@ -319,9 +339,12 @@ class BaseContinuousEmbedModule(BaseModule):
         rl_training=False,
         exclude_ids=None,
         skip_sos=False,
-        use_controller_cfg=False,
+        use_controller_cfg=False,        
         inputs_embeds_cfg=None,
         controller_cfg_gamma=1.0,
+        use_step_out_blank=False,
+        step_out_blank_logic='v1',
+        step_out_blank_max_len=10,
     ):
         """
         Input:
@@ -338,6 +361,7 @@ class BaseContinuousEmbedModule(BaseModule):
         """
         tqdm_name = self.__class__.__name__ if tqdm_name is None else tqdm_name
         batch_size, seq_len, _ = inputs_embeds.size()
+        original_batch_size = batch_size
         if ref_samples is not None:
             assert ref_samples.size(0) == batch_size
             assert ref_samples.size(1) == num_tokens
@@ -379,6 +403,10 @@ class BaseContinuousEmbedModule(BaseModule):
             )
         else:
             past_key_values = None
+        if use_step_out_blank:
+            token_buffer = TokenBuffer(step_out_blank_max_len)
+            previous_tokens = [[] for _ in range(original_batch_size)]
+
         pbar = tqdm(range(num_tokens))
 
         for i in pbar:
@@ -416,6 +444,59 @@ class BaseContinuousEmbedModule(BaseModule):
                 predict_token = self.sample_logits(
                     i, logits, temperature, sample_mode, sample_thresh, exclude_ids
                 )
+
+                if use_step_out_blank:
+                    if step_out_blank_logic == 'v1':
+                        max_trying_times = 5
+                        max_temperature = 1.5
+                        token_buffer.put(predict_token.cpu().numpy()[0,0])        # v1: temperature 不断增加
+                        if token_buffer.is_duplicate():  
+                            high_temperature = temperature          
+                            while token_buffer.is_duplicate():
+                                count = 0
+                                while count < max_trying_times and token_buffer.is_duplicate():
+                                    print(f"TimeStep={i}|Fall into silence loop...", token_buffer.buffer, f"temperature={high_temperature}")
+                                    predict_token = self.sample_logits(i, logits, high_temperature, sample_thresh, sample_mode)
+                                    predict_token=predict_token[:,None]
+                                    token_buffer.put(predict_token.cpu().numpy()[0,0])
+                                    count = count + 1
+                                high_temperature = min(high_temperature + 0.1, max_temperature)
+                    
+                    elif step_out_blank_logic == 'v2':
+                        predict_token_cpu = predict_token.cpu().numpy()
+                        need_to_resample = False
+                        for j in range(original_batch_size):                            
+                            if predict_token_cpu[j,0] in previous_tokens[j]:
+                                need_to_resample = True
+                                break
+
+                        while need_to_resample:      # v2: windowed repetition penalty
+                            # print(f"TimeStep={i}|Fall into windowed loop...", previous_tokens)
+                            for j in range(original_batch_size):
+                                if predict_token_cpu[j,0] in previous_tokens[j]:
+                                    logits[j, 0, predict_token_cpu[j,0]] = -float('Inf')
+                            predict_token = self.sample_logits(i, logits, temperature, sample_mode, sample_thresh, exclude_ids)
+                            
+                            predict_token_cpu = predict_token.cpu().numpy()                            
+                            need_to_resample = False
+                            for j in range(original_batch_size):
+                                if predict_token_cpu[j,0] in previous_tokens[j]:
+                                    need_to_resample = True
+                                    break
+
+                        # if predict_token[0,0] != self.target_embedder.eos_id:   # eos 不压入 previous_tokens
+                        for j in range(original_batch_size):
+                            if len(previous_tokens[j]) < step_out_blank_max_len:
+                                previous_tokens[j].append(predict_token_cpu[j,0])
+                            else:
+                                previous_tokens[j] = previous_tokens[j][-step_out_blank_max_len:]
+                                previous_tokens[j].append(predict_token_cpu[j,0])
+
+                    else:
+                        # TODO: V3.
+                        raise NotImplementedError
+
+
                 predict_token_emb = self.target_embedder.embedder(predict_token)
 
                 if use_controller_cfg:

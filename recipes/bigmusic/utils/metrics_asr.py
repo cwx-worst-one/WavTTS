@@ -266,7 +266,7 @@ def edit_distance(seq1, seq2):
 
 def remove_punc_case(text):
     text = re.sub(r"<\w+>", "", text) # Remove special tags: <n>, <verse>, etc
-    text = re.sub("[.,!?]", "", text).lower()
+    text = re.sub("[.,!?，。！？]", "", text).lower()
     return " ".join(text.split())
 
 
@@ -277,3 +277,12 @@ def remove_space(text):
     '''
     return "".join(text.split())
     
+
+def normalize_lyrics(text):
+    new_text = ''
+    for t in text.split('\n'):
+        if t.strip() != '':
+            if t.strip()[0] == '[' and t.strip()[-1] == ']':
+                continue
+            new_text += t.strip() + ' '
+    return new_text.strip()

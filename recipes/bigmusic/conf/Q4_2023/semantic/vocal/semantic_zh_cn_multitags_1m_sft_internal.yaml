@@ -19,13 +19,11 @@ extra_params:
     semantic_type: bestrq
     train_conditions: "style_category,speaker_id,lyrics_tokens"
     prepare_input_types: []
-    input_embedders: [tag_categorical, speaker_id, lyrics_tokens]
-    tag_taxonomy_lang: "SA"  # Zh, SA
+    input_embedders: [multitags_categorical, speaker_id, lyrics_tokens]
+    tag_taxonomy_lang: "Audio"  # Zh, SA, Audio
     tag_dropout_rate: 0.1
     line_break_dropout_rate: 0
     section_tag_dropout_rate: 0
-    use_mcc_gender: False
-    # mulan_embed_dim: 512
     hidden_size: 1536
     intermediate_size: 4352
     num_hidden_layers: 24
@@ -39,23 +37,23 @@ run_opts:
     fast_dev_run: False
     log_dir: logs
     hdfs_log_dir: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/yilinzhang/logs"
-    log_name: decoder_07B_zh30s_sft
+    log_name: decoder_07B_zh1m_sft
     version: v0
     cache_dir: .module_cache/bigmusic
     precision: "16"
     num_workers: 6
     prefetch_factor: 12
     accelerator: auto
-    max_steps: 20000
+    max_steps: 10000
     val_check_interval: 1000
-    batch_size: 18
-    learning_rate: 5.0e-5
+    batch_size: 10
+    learning_rate: 1.0e-4
     warmup_steps: 200
-    cycle_steps: 5000       # If use 1 GPU to run SFT, about 1.5K steps is an epoch.
+    cycle_steps: 4000       # If use 1 GPU to run SFT, about 1.5K steps is an epoch.
     weight_decay: 0.05
     shuffle_buffer: 0   # 100
     gradient_clip_val: 1.0
-    buckets_in_sec: [22, 24, 26, 28, 30]
+    buckets_in_sec: [30, 40, 50, 60]
     use_dynamic_batch: False
     max_seg_per_track: 3
     segment_method: "random"
@@ -63,13 +61,14 @@ run_opts:
     read_structure_tags: True
     region: "CN"
     lyrics_field: "lyrics"
-    lyrics_confidence: 0.7  # SA ASR confidence
+    lyrics_confidence: 0.0  # SA ASR confidence
     lyrics_tokenizer: "tts_chinese_frontend_model"
-    segment_max_phone_len: 400
-    parquet_dataset_ids: [1932]   # everynoise : artist = 1 : 1, 10k tracks in total
+    segment_max_phone_len: 1000
+    parquet_dataset_ids: [2193]
     parquet_dataset_weights: [1]
-    sinking_threshold: 0.51
+    sinking_threshold: 1.0
     quality_filter: True
+    validation_dataset_id: 1528
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -102,6 +101,7 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     line_break_dropout_rate: !ref <extra_params[line_break_dropout_rate]>
     section_tag_dropout_rate: !ref <extra_params[section_tag_dropout_rate]>
     prefetch_factor: !ref <run_opts[prefetch_factor]>
+    validation_dataset_id: !ref <run_opts[validation_dataset_id]>
 
 model_config: !new:transformers.GPT2Config
     vocab_size: 1 # placeholder. Embedding table gets removed on load
@@ -224,7 +224,7 @@ trainer: !new:pytorch_lightning.Trainer
     logger: !ref <logger>
     accelerator: !ref <run_opts[accelerator]>
     devices: 'auto'
-    num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
     deterministic: False
     enable_model_summary: True
     log_every_n_steps: 500

@@ -51,3 +51,20 @@ CSV Paths: `/mnt/bn/audio-diffusion/data/bigmusic_text_prompts`
 ```
 1. /mnt/bn/audio-diffusion/data/bigmusic_text_prompts/vocal_prompts_20231018_mixed135.csv # Default vocal music prompt
 ```
+
+### MIR Offline Callback
+
+Run MIR models locally to obtain MIR related metrics.
+
+1. Run `bootstrap_sami_models.sh` to install
+   ```sh
+   bash recipes/bigmusic/scripts/bootstrap_sami_models.sh
+   ```
+2. Add the following line under `additional_callbacks` in your inference yaml
+   ```yaml
+   !new:recipes.bigmusic.callbacks.mir_offline_metrics.MIROfflineCallback
+   ```
+3. Set environment variable
+   ```sh
+   export RDMAV_FORK_SAFE=1
+   ```

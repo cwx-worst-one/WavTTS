@@ -1,6 +1,6 @@
 import pytorch_lightning as pl
 import torch
-from typing import Any
+from typing import Any, List, Union
 import json
 from pathlib import Path
 import os
@@ -17,6 +17,7 @@ from recipes.bigmusic.utils.format_utils import update_json
 import numpy as np
 from recipes.musiclm.utils.dist import local_zero_first
 from recipes.bigmusic.utils.upload import audio_tensor_to_bytes, upload_to_easycycle
+from recipes.bigmusic.datasets.mir_data_util import ID_TEMPO_LABEL_MAP, ID_KEY_MAP
 from recipes.bigmusic.datasets.utils.symbolic_music import pretty_midi_obj_to_midi_bytes
 
 
@@ -69,7 +70,7 @@ class SaveOutputsCallback(pl.Callback):
             outputs['generated_audio_tensor'] = outputs['generated_audio_tensor'][0]
         num_items = outputs['generated_audio_tensor'].shape[0] // self.beam_size
         self.total_items += num_items
-        with open(Path(output_dir)/'inference_params.json', 'w') as f:
+        with open(Path(output_dir)/'inference_params.json', 'w', encoding='utf-8') as f:
             json.dump(pl_module.extra_params, f, indent=2)
 
         # save output paths so other callbacks can run metrics on audio
@@ -88,6 +89,21 @@ class SaveOutputsCallback(pl.Callback):
         output_dir = pl_module.extra_params.output_dir
         with local_zero_first():
             if trainer.is_global_zero:
+                output_dir = Path(output_dir)
+                metadata_fps = list(output_dir.glob('**/*.metadata.json'))
+                if len(metadata_fps) == 0:
+                    return
+                index_fname = os.path.join(output_dir, "index.csv")
+                with open(index_fname, "w", encoding='utf-8') as fw:
+                    fw.write("file_name,beam_id,audio_url\n")
+                    for fp in metadata_fps:
+                        with open(fp, "r", encoding='utf-8') as f:
+                            metadata = json.load(f)
+                        file_name = metadata["file_name"]
+                        beam_id = metadata["index"]["beam_idx"]
+                        audio_url = metadata["audio_url"]
+                        fw.write(f"{file_name},{beam_id},{audio_url}\n")
+                print(f"Wrote index to {index_fname}")
                 summary_format = "default" if not self.save_mix_vocal_generated_audio else "singsong"
                 summarize_uploaded_results(output_dir, format=summary_format)
 
@@ -184,6 +200,20 @@ def save_batch_outputs(
     semantic_tokens = outputs.get('generated_semantic_tokens')
     leadsheet_tokens = outputs.get('generated_leadsheet_tokens')
 
+    # Add these conditions (if in batch) to style_text and metadata.json
+    cond_id_label_map = {
+        'key': ID_KEY_MAP,
+        'tempo_label': ID_TEMPO_LABEL_MAP
+    }
+
+    existing_extra_conds = {}
+    for cond, id_label_map in cond_id_label_map.items():
+        if cond not in batch:
+            continue
+        cond_labels = [id_label_map[int(x)] for x in batch[cond]]
+        existing_extra_conds[cond] = cond_labels
+        prompts = [f'{s},{o}' for s, o in zip(prompts, cond_labels)]  # add to style_text (prompts)
+
     output_paths = []
     
     for i, wav in enumerate(wavs):
@@ -218,6 +248,10 @@ def save_batch_outputs(
 
         meta_fp = os.path.join(wav_dir, f"{wav_file_name}.metadata.json")
         metadata = metadatas[i] if metadatas is not None else {}
+
+        # extra_conditions
+        extra_cond_meta = {cond: cond_labels[i] for cond, cond_labels in existing_extra_conds.items()}
+
         metadata = {
             **metadata,
             'file_name': file_name,
@@ -233,7 +267,8 @@ def save_batch_outputs(
                 'batch_idx': ii,
                 'csv_idx': index[ii] if index else absolute_idx,
                 'beam_idx': beam_idx,
-            }
+            },
+            **extra_cond_meta,
         }
         
         if save_mode == "upload":

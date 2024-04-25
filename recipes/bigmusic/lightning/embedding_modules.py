@@ -2,7 +2,7 @@ import logging
 import random
 import torch
 import torch.nn as nn
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 from recipes.musiclm.models.compat.semantic_model import w2v_bert_tokenization
 from abc import abstractmethod
 from typing import Any
@@ -208,7 +208,7 @@ class TokenEmbedder(BaseEmbedder):
         return self.embedder(self.get_sos_token(batch_size))
 
     def get_eos_embed(self, batch_size):
-        return self.embedder(self.get_eos_token(batch_size))    
+        return self.embedder(self.get_eos_token(batch_size))
 
     def tokenize(self, requires=None, batch=None, token_ids=None, with_sos=False, with_eos=False, **kwargs):
         if token_ids is None:
@@ -640,6 +640,14 @@ class SpeakerEmbedder(TokenEmbedder):
         input = torch.clamp(input, 0, self.vocab_size-2) # subtract sos + 1
         return input
     
+class KeyEmbedder(TokenEmbedder):
+    def get_tokens(self, requires, input):
+        return input
+
+class TempoLabelEmbedder(TokenEmbedder):
+    def get_tokens(self, requires, input):
+        return input
+
 class WavToVecTokenEmbedder(TokenEmbedder):
     def __init__(self, vocab_size=1024, embedding_dim=1024, add_sos=False, add_eos=False):
         super().__init__(vocab_size, embedding_dim, add_sos, add_eos)
@@ -882,3 +890,156 @@ class BeatEmbedder(nn.Module):
             print(f"beat_timestamps ({beat_timestamps}): {beat_timestamps}")
             self.logged += 1
         return self.embedder(beat_ids) * beat_timestamps.unsqueeze(2), beat_ids, beat_timestamps
+
+class MultiTagsEmbedder(BaseEmbedder):
+    # MultiTags embedder - takes in list, and then embeds
+    def __init__(self, vocab_size, embedding_dim, add_sos=False, add_eos=False, **kwargs):
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.sos_id = None
+        self.eos_id = None
+        if add_sos:
+            self.vocab_size = self.vocab_size + 1
+            self.sos_id = self.vocab_size - 1
+        if add_eos:
+            self.vocab_size = self.vocab_size + 1
+            self.eos_id = self.vocab_size - 1
+        self.embedder = nn.Embedding(self.vocab_size, embedding_dim, **kwargs)
+
+    @abstractmethod
+    def get_tokens(self, requires, batch, **kwargs):
+        raise NotImplementedError()
+
+    def get_sos_token(self, batch_size):
+        assert self.sos_id is not None, "Error getting sos id. Must initialize embedder with add_sos=True"
+        device = next(self.parameters()).device
+        sos_ids = torch.full(size=(batch_size, 1), fill_value=self.sos_id, dtype=torch.long, device=device)
+        return sos_ids
+
+    def get_eos_token(self, batch_size):
+        assert self.eos_id is not None, "Error getting eos id. Must initialize embedder with add_eos=True"
+        device = next(self.parameters()).device
+        eos_ids = torch.full(size=(batch_size, 1), fill_value=self.eos_id, dtype=torch.long, device=device)
+        return eos_ids
+
+    def get_sos_embed(self, batch_size):
+        return self.embedder(self.get_sos_token(batch_size))
+
+    def get_eos_embed(self, batch_size):
+        return self.embedder(self.get_eos_token(batch_size))    
+
+    def tokenize(self, requires=None, batch=None, token_ids=None, with_sos=False, with_eos=False, **kwargs):
+        raise NotImplementedError()
+
+    def embed(self, requires=None, batch=None, token_ids=None, with_sos=False, with_eos=False):
+        raise NotImplementedError()
+
+class MultiTagsCategoricalEmbedder(MultiTagsEmbedder):
+    def __init__(
+            self,
+            vocab_type='auto',
+            max_vocab_size=1024,
+            embedding_dim=1024,
+            add_sos=False,
+            dropout=0.0,
+            category_separator="|",
+        ):
+        if vocab_type == 'auto':
+            assert max_vocab_size
+            vocab2id = { NONE_LABEL: 0 }
+            vocab_size = max_vocab_size
+            _num_categories = 5  # (the previous default value)
+        else:
+            vocab2id, _num_categories = get_categorical_vocab(vocab_type)  # infer num_categories from vocab_type
+            vocab_size = len(vocab2id)
+        super().__init__(vocab_size, embedding_dim, add_sos)
+        self.vocab2id = vocab2id
+        self.vocab2count = defaultdict(int)
+        self.vocab_type = vocab_type
+        self.dropout = dropout
+        self.category_separator = category_separator
+        self.num_categories = _num_categories
+
+    def get_tag_id(self, tag, dropout=0.0):
+        if tag not in self.vocab2id:
+            if not self.training and len(tag.strip()) > 0:  # use NONE_LABEL for empty label
+                raise Exception(f"Inference Error: Tag {tag} not found in vocab {self.vocab2id}. Please check vocab")
+            tag = NONE_LABEL
+        if self.training and random.random() < dropout:
+            tag = NONE_LABEL
+        return self.vocab2id[tag]
+
+    def get_tokens(self, requires, style_texts):
+        batch_style_tags = []
+        for style_text in style_texts:
+            # Strictly separate style_text by the separator
+            if isinstance(style_text, str):
+                separator = self.category_separator
+                style_tags = []
+                for t in style_text.split(separator):
+                    normalized_style_text = t.replace("，", separator).replace(",", separator)
+                    style_tags.append(normalized_style_text.split(separator))
+            elif isinstance(style_text, list):
+                style_tags = style_text
+            elif isinstance(style_text, dict):
+                # TODO: handle use case where dictionary is not sorted
+                # style_tag_list = [v for k,v in sorted(style_text.items())]
+                style_tags = style_text.values()
+            batch_style_tags.append(style_tags)
+
+        batch_tag_ids = []
+        masks = []
+        max_tags_num = 0
+        for style_tags in batch_style_tags:
+            if isinstance(style_tags, str):
+                style_tags = [style_tags]
+            for tags in style_tags:
+                tag_ids = [self.get_tag_id(tag, self.dropout) for tag in tags]
+                batch_tag_ids.append(torch.tensor(tag_ids))
+                masks.append(torch.tensor([1 for tag in tags]))
+                #_masks = []
+                #for tag in tags:
+                #    if tag == NONE_LABEL:
+                #        _masks.append(self.get_tag_id(NONE_LABEL))
+                #    else:
+                #        _masks.append(1)
+                #masks.append(torch.tensor(_masks))
+                max_tags_num = max(max_tags_num, len(tags))
+        batch_tag_ids = pad_sequence(batch_tag_ids, batch_first=True, padding_value=self.get_tag_id(NONE_LABEL))
+        masks = pad_sequence(masks, batch_first=True, padding_value=0)
+        batch_tag_ids = torch.reshape(batch_tag_ids, [-1, self.num_categories, max_tags_num])
+        masks = torch.reshape(masks, [-1, self.num_categories, max_tags_num])
+        device = next(self.parameters()).device
+        return torch.as_tensor(batch_tag_ids).to(device), torch.as_tensor(masks).to(device)
+
+    def tokenize(self, requires=None, batch=None, token_ids=None, with_sos=False, with_eos=False, **kwargs):
+        token_ids, masks = self.get_tokens(requires, batch, **kwargs)
+        #print('batch: ', batch)
+        #print('token_ids: ', token_ids)
+        #print('masks: ', masks)
+        return token_ids, masks
+
+    def embed(self, requires=None, batch=None, token_ids=None, with_sos=False, with_eos=False):
+        token_ids, masks = self.tokenize(requires, batch, token_ids, with_sos, with_eos)
+        token_ids_shape = token_ids.shape 
+        _token_ids = torch.reshape(token_ids, [token_ids_shape[0]*token_ids_shape[1], token_ids_shape[2]])
+        masks_shape = masks.shape
+        _masks = torch.reshape(masks, [masks_shape[0]*masks_shape[1], masks_shape[2], 1])
+        _embedding = self.embedder(_token_ids)
+        #print('_embedding shape: ', _embedding.shape)
+        #print('_masks shape: ', _masks.shape)
+        #print('_embedding sum shape: ', torch.sum(_embedding, dim=1).shape)
+        #print('_masks sum shape: ', torch.sum(_masks, dim=1).shape)
+        _masks_sum = torch.sum(_masks, dim=1)
+        #print('_masks sum: ', _masks_sum.T)
+        _masks_sum = torch.where(_masks_sum>0, _masks_sum, torch.ones_like(_masks_sum))
+        #print('_masks sum format: ', _masks_sum.T)
+        embedding = torch.sum(_embedding*_masks, dim=1) / _masks_sum
+        #print('embedding shape: ', embedding.shape)
+        embedding = torch.reshape(embedding, [token_ids_shape[0], token_ids_shape[1], -1])
+        #print('embedding reshape: ', embedding.shape)
+        if with_sos:
+            sos_embedding = self.get_sos_embed(embedding.size(0))
+            #print('sos embedding shape: ', sos_embedding.shape)
+            embedding = torch.cat([sos_embedding, embedding], dim=1)
+        return embedding

@@ -47,6 +47,11 @@ MAX_STYLE_LEN = 16
 # added 
 # LINE_BREAK_PHONE_TOKEN = get_line_break_id()
 
+SUPPORTED_SAMI_TOKENIZERS = [
+    "tts_chinese_frontend_model",
+    "tts_chinese_frontend_model_phonetone"
+]
+
 
 def pad_crop(sequence, seq_len, dtype, padding_value=0):
     # in item_pad_idx, 0 indicates the values are padded.
@@ -159,6 +164,10 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
         "conditions": conditions,
         "dataset_name": dataset_name,
 
+        # MIR
+        "tempo_label": torch.tensor([b["tempo_label"] for b in batch]),
+        "key": torch.tensor([b["key"] for b in batch]),
+
         # DEBUG:
         "style_metadata": style_metadata,
         "song_id": song_id,
@@ -210,7 +219,7 @@ class VocalTransforms(BaseTransforms):
         line_break_dropout_rate: float = 0.0,
         section_tag_dropout_rate: float = 0.0,
         leadsheet_codec = None,
-        extra_audio_keys=[]
+        extra_audio_keys: Optional[List] = None,
     ):
         super().__init__()
         self.sample_rate = sample_rate
@@ -221,7 +230,6 @@ class VocalTransforms(BaseTransforms):
         self.lyrics_confidence = lyrics_confidence
         self.audio_key = audio_key
         self.index_key = index_key
-        # self.tokenizer = tokenizer
         self.frame_rate = frame_rate
         # self.infer_structure_tags = infer_structure_tags
         # self.read_structure_tags = read_structure_tags
@@ -235,7 +243,15 @@ class VocalTransforms(BaseTransforms):
         self.sinking_threshold = sinking_threshold
         # self.quality_filter = quality_filter
         # self.tag_taxonomy_lang = tag_taxonomy_lang
-        self.extra_audio_keys = extra_audio_keys
+        self.extra_audio_keys = [] if extra_audio_keys is None else extra_audio_keys
+
+        if tokenizer == "tts_chinese_frontend_model":
+            self.tokenizer = SamiOfflineTokenizer(vocab_type="phoneme")
+        elif tokenizer == "tts_chinese_frontend_model_phonetone":
+            self.tokenizer = SamiOfflineTokenizer(vocab_type="phoneme+tone")
+        else:
+            # disable other tokenizers
+            raise ValueError(f"Unsupported tokenizer {tokenizer}")
 
         self.meta_transform = ZhMetaTransform.from_data_id(
             data_id,
@@ -245,8 +261,8 @@ class VocalTransforms(BaseTransforms):
             max_seg_per_track=self.max_seg_per_track,
             duration_range=(self.min_duration, self.max_duration),
         )
-        self.phrase_dropout = partial(
-            SongSlice.dropout,
+        self.phrase_reformat_and_dropout = partial(
+            SongSlice.reformat_and_dropout,
             line_break_dropout_rate=line_break_dropout_rate,
             section_tag_dropout_rate=section_tag_dropout_rate,
         )
@@ -341,7 +357,11 @@ class VocalTransforms(BaseTransforms):
 
         # Parse and transform meta
         try:
-            _, song_slices, style_text, artist_id, lyrics_confidence, deepchorus = self.meta_transform(meta)
+            trans_meta = self.meta_transform(meta)
+            direct_return_fields = ["style_text", "artist_id", "lyrics_confidence", "key", "tempo_label"]
+            direct_return_dict = {rf: trans_meta[rf] for rf in direct_return_fields}
+            song_slices = trans_meta["song_slices"]
+            deepchorus = trans_meta["structure_tags"]
         except ZhMetaParseError as pe:
             self._update_stats(skipped=True, message=f"ParseError: {pe}")
             return
@@ -360,10 +380,9 @@ class VocalTransforms(BaseTransforms):
             return
 
         # Yield one example per segment
-        self._update_stats(skipped=False)
+        n_skipped_slices = 0
         for song_slice in song_slices:
-            clip, extra_clip = song_slice.slice_audio(audio, self.sample_rate, extra_audio)
-            reformatted_phrases = self.phrase_dropout(phrases=song_slice.phrases)
+            reformatted_phrases = self.phrase_reformat_and_dropout(phrases=song_slice.phrases)
             
             # TODO (qq) When a song's section tag is not reliable, drop out the tags.
             # if use_section_tag_dropout:
@@ -374,13 +393,12 @@ class VocalTransforms(BaseTransforms):
                 "\n".join([s.format_text() for s in reformatted_phrases]), enable_punctuation=True
             )
 
-            tokenizer = SamiOfflineTokenizer()
             # If a phrase fails, skip the entire slice. Otherwise it could worsen the phoneme missing issue
             # in the training data.
             try:
-                text_tokens = torch.from_numpy(tokenizer.tokenize_phrases(reformatted_phrases)).long()
+                text_tokens = torch.from_numpy(self.tokenizer.tokenize_phrases(reformatted_phrases)).long()
             except SamiTokenizerError as e:
-                self._update_stats(skipped=True, message=f"Error tokenizing phrases: {e}")
+                n_skipped_slices += 1
                 continue
 
             # Encode Leadsheet tokens
@@ -399,12 +417,10 @@ class VocalTransforms(BaseTransforms):
             remi_leadsheet_tokens = torch.from_numpy(remi_leadsheet_tokens).long()
             offset_token = int(song_slice.start) if song_slice.start is not None else 0
 
+            clip, extra_clip = song_slice.slice_audio(audio, self.sample_rate, extra_audio)
             yield {
                 "target_audio": clip,
                 "target_tokens_length": int(clip.shape[-1] / self.sample_rate * self.frame_rate),
-                "style_text": style_text,
-                "artist_id": artist_id,
-                "lyrics_confidence": lyrics_confidence,
                 "deepchorus_confidence": deepchorus.confidence,
                 "normalized_text": normalized_text,
                 "lyrics_tokens": text_tokens,
@@ -412,7 +428,13 @@ class VocalTransforms(BaseTransforms):
                 "max_phone_len": self.segment_max_phone_len,
                 "max_leadsheet_len": self.segment_max_leadsheet_len,
                 "offset_token": offset_token,
+                **direct_return_dict,
             } | {k: v for k, v in zip(self.extra_audio_keys, extra_clip)}
+
+        if n_skipped_slices == len(song_slices):
+            self._update_stats(skipped=True, message=f"Error tokenizing all song slices")
+        else:
+            self._update_stats(skipped=False)
 
 
 class VocalDataset(WebPipeline):
@@ -587,6 +609,7 @@ class DataModule(pl.LightningDataModule):
         predict_dataset=None,
         collate_fn: Optional[Callable] = None,
         do_shuffle: bool = True,    # set to False if shuffling is already done at dataset level
+        prefetch_factor: Optional[int] = None,     # set to None to disable prefetching
     ):
         super().__init__()
         self.shuffle_buffer_size = shuffle_buffer_size
@@ -597,6 +620,7 @@ class DataModule(pl.LightningDataModule):
         self.pin_memory = pin_memory
         self.collate_fn = collate_fn
         self.do_shuffle = do_shuffle
+        self.prefetch_factor = prefetch_factor
 
     def train_dataloader(self):
         if self.do_shuffle:
@@ -610,6 +634,7 @@ class DataModule(pl.LightningDataModule):
             batch_size=None,
             num_workers=self.num_workers,
             collate_fn=self.collate_fn,
+            prefetch_factor=self.prefetch_factor,
         )
 
     def val_dataloader(self):
@@ -679,7 +704,8 @@ class MixVocalWebDataModule(DataModule):
         line_break_dropout_rate: float = 0.0,
         section_tag_dropout_rate: float = 0.0,
         leadsheet_codec=None,
-        extra_audio_keys=[]
+        extra_audio_keys=[],
+        prefetch_factor: Optional[int] = None,
     ):
         self.num_workers = num_workers
         self.shuffle_buffer_size = shuffle_buffer_size
@@ -688,8 +714,8 @@ class MixVocalWebDataModule(DataModule):
 
         if tokenizer == "wordpiece":
             self.tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
-        elif tokenizer == "tts_chinese_frontend_model":
-            self.tokenizer = "tts_chinese_frontend_model"
+        elif tokenizer in SUPPORTED_SAMI_TOKENIZERS:
+            self.tokenizer = tokenizer
         elif tokenizer == "phoneme":
             with local_zero_first():
                 self.tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained(
@@ -825,6 +851,7 @@ class MixVocalWebDataModule(DataModule):
             validation_dataset=validation_dataset,
             predict_dataset=train_dataset,  # TODO
             collate_fn=self.collate_fn,
+            prefetch_factor=prefetch_factor,
         )
 
     def bucketize(self, iterator: Iterable):

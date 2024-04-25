@@ -3,7 +3,8 @@ Intermediate meta data representation for Chinese vocal datasets with parsing an
 """
 
 from dataclasses import dataclass
-from functools import partial
+from functools import partial, reduce
+import operator
 from typing import Any, Optional, List, Dict, Tuple, Union
 import math
 import random
@@ -15,7 +16,27 @@ from recipes.bigmusic.datasets.mir_data_util import (
     ARTIST_ID_MAP_V2,
     SA_CAT_VOCAB,
     SA_TAGS_SPECIAL_MAP,
-    VOICE_THRESHOLDS
+    AUDIO_CAT_VOCAB_V0,
+    AUDIO_TAGS_GENRE_SPECIAL_MAP_V0,
+    AUDIO_TAGS_MOOD_SPECIAL_MAP_V0,
+    AUDIO_TAGS_SCENE_SPECIAL_MAP_V0,
+    AUDIO_TAGS_GENDER_SPECIAL_MAP_V0,
+    AUDIO_CAT_VOCAB_V1,
+    AUDIO_TAGS_GENRE_SPECIAL_MAP_V1,
+    AUDIO_TAGS_MOOD_SPECIAL_MAP_V1,
+    AUDIO_TAGS_SCENE_SPECIAL_MAP_V1,
+    AUDIO_TAGS_GENDER_SPECIAL_MAP_V1,
+    AUDIO_CAT_VOCAB_V2,
+    AUDIO_TAGS_GENRE_SPECIAL_MAP_V2,
+    AUDIO_TAGS_MOOD_SPECIAL_MAP_V2,
+    AUDIO_TAGS_SCENE_SPECIAL_MAP_V2,
+    AUDIO_TAGS_GENDER_SPECIAL_MAP_V2,
+    VOICE_THRESHOLDS,
+    TEMPO_RANGE,
+    tempo_to_label,
+    TEMPO_LABEL_ID_MAP,
+    KEYS,
+    KEY_ID_MAP,
 )
 from recipes.datasets.mcc.sami_tokenizer import Phrase
 
@@ -57,15 +78,21 @@ class SongSlice:
             return audio[:, start:end], None
 
     @staticmethod
-    def dropout(
+    def reformat_and_dropout(
         line_break_dropout_rate: float,
         section_tag_dropout_rate: float,
         phrases: List[Phrase]
     ) -> List[Phrase]:
+        """Reformat the phrases to have single-line section tags. Dropout line breaks and section tags."""
         # The execution order matters
+        phrases = [phrase for phrase in phrases if not phrase.is_empty]  # Remove empty phrases, which might be short inst phrases with section tags removed
         phrases = drop_out_line_breaks(phrases, line_break_dropout_rate)
         phrases = move_out_section_tags(phrases)  # Reformat the phrases to have single-line section tags
+        phrases = remove_section_tag_counts(phrases)  # Remove the count number
         return drop_out_section_tags(phrases, section_tag_dropout_rate)
+
+    def __add__(self, other):
+        return self.__class__(phrases=self.phrases + other.phrases)
 
 
 def drop_out_line_breaks(phrases: List[Phrase], rate: float, seed: Optional[int] = None) -> List[Phrase]:
@@ -100,6 +127,15 @@ def move_out_section_tags(phrases: List[Phrase]) -> List[Phrase]:
         if phrase.has_utterance:
             out_phrases.append(phrase._replace(section_tag=None))
     return out_phrases
+
+
+def remove_section_tag_counts(phrases: List[Phrase]) -> List[Phrase]:
+    """Remove the count number in the section_tags. Call this function AFTER move_out_section_tags."""
+    return [
+        phrase._replace(
+            section_tag = None if phrase.section_tag is None else _remove_count_from_section_tag(phrase.section_tag)
+        ) for phrase in phrases
+    ]
 
 
 def drop_out_section_tags(phrases: List[Phrase], rate: float, seed: Optional[int] = None) -> List[Phrase]:
@@ -184,6 +220,10 @@ class ZhMetaBase:
     is_popular_potential: Optional[bool] = None
     source: Optional[str] = None
 
+    # MIR labels
+    tempo: Optional[int] = None
+    key: Optional[str] = None
+
     @classmethod
     def parse(cls, meta, sinking_threshold: float):
         # Parse and check the data here
@@ -195,20 +235,33 @@ class ZhMetaBase:
         segment_method: str,
         max_seg_per_track: int,
         duration_range: Tuple[int, int]
-    ) -> Tuple[ZhMetaLogger, List[SongSlice], List[str], int, Optional[float], Optional[DeepChorus]]:
+    ) -> Dict[str, Any]:
         self._validate(lyrics_confidence)
         _self = self._convert()
         logger, song_slices = _self._to_song_slices(segment_method, max_seg_per_track, duration_range)
-        return logger, song_slices, _self.style_text, _self.artist_id, _self.lyrics_confidence, _self.structure_tags
+        return {
+            "logger": logger,  # ZhMetaLogger
+            "song_slices": song_slices,  # List[SongSlices]
+            "style_text": _self.style_text,  # List[str]
+            "artist_id": _self.artist_id,  # int
+            "lyrics_confidence": _self.lyrics_confidence,  # Optional[float]
+            "structure_tags": _self.structure_tags,  # DeepChorus
+            "tempo_label": _self._to_tempo_label_id(),  # int
+            "key": _self._to_key_id(),  # int
+        }
 
     def _validate(self, lyrics_confidence: Optional[float]):
         """Raise ZhMetaTransformError if the data is invalid"""
-        validate_confidence(lyrics_confidence, self.lyrics_confidence)
-        validate_deepchorus(self.structure_tags)
+        validate_confidence_optional(lyrics_confidence, self.lyrics_confidence)
+        validate_deepchorus_optional(self.structure_tags)
+        validate_mir_tempo_optional(self.tempo)
+        validate_mir_key_optional(self.key)
 
     def _convert(self):
         """Process the data and return a new data. No in-place operation."""
-        return copy.deepcopy(self)
+        _self = copy.deepcopy(self)
+        convert_voice_tag(_self)
+        return _self
 
     def _to_song_slices(
         self, 
@@ -231,10 +284,17 @@ class ZhMetaBase:
                 structure_tags=self.structure_tags.tags,
                 complete_section=max_duration >= 60,  # auto-enable complete section grouping for dur >= 1m
             )
+        song_slices, logger = filter_song_slices(song_slices, duration_range)
         song_slices = take_song_slices_by_method(song_slices, segment_method)
         song_slices = get_max_seg(song_slices, max_seg_per_track)
-        song_slices, logger = filter_song_slices(song_slices, duration_range)
         return logger, song_slices
+
+    def _to_tempo_label_id(self) -> int:
+        return TEMPO_LABEL_ID_MAP[tempo_to_label(self.tempo)]
+
+    def _to_key_id(self) -> int:
+        k = "N" if self.key is None else self.key
+        return KEY_ID_MAP[k]
 
 
 # ------------------------------------------
@@ -256,6 +316,8 @@ def parse_utterance_lyrics(meta: Dict) -> List:
     # Typically, utterances are in the "result" field. However, if the lyrics
     # are generated by ASR, it is possible to put the results under the "utterances" field.
     lyrics = _get_value(meta, "lyrics", "No lyrics")
+    if not isinstance(lyrics, dict):
+        raise ZhMetaParseError("Lyrics not in correct format")
     _result = lyrics.get("result")
     _asr_utterances = lyrics.get("utterances")
     if (  
@@ -296,18 +358,40 @@ def get_deepchorus_score(deepchorus_tags):
     function = [f['funct_prob'] for f in deepchorus_tags['segments']]
     return 0.7 * (sum(boundary)/len(boundary)) + 0.3 * (sum(function)/len(function))
 
+_SECTION_TAG_SEP = "#"
+
+
+def _get_deepchorus_score(deepchorus_tags):
+    boundary = [b['start_prob'] for b in deepchorus_tags['segments']]
+    function = [f['funct_prob'] for f in deepchorus_tags['segments']]
+    return 0.7 * (sum(boundary)/len(boundary)) + 0.3 * (sum(function)/len(function))
+
+
+def _add_count_to_section_tag(section_tag: str, count: int) -> str:
+    if _SECTION_TAG_SEP in section_tag:
+        return section_tag
+    return f"{section_tag}{_SECTION_TAG_SEP}{str(count)}"
+
+
+def _remove_count_from_section_tag(section_tag: str) -> str:
+    return section_tag.split(_SECTION_TAG_SEP)[0]
+
+
 def _format_deepchorus_structure_tags(deepchorus_tags: Dict) -> DeepChorus:
-    # This function converts the deepchorus field in metadata into the format of [{'tag': tag, 'start_time': sec, 'end_time': sec}]
-    # The deepchorus tags are inferred based on the audio.
+    """Convert the deepchorus field in metadata into the format of [{'tag': tag, 'start_time': sec, 'end_time': sec}].
+    A number will be appended to the tag to differentiate adjacent tags with the same name.
+    """
     structure_tags = []
-    for segment in deepchorus_tags['segments']:
-        structure_tag = {"tag": segment["label"]}
-        structure_tag['start_time'] = segment["interval"][0]
-        structure_tag['end_time'] = segment["interval"][1]
+    for count, segment in enumerate(deepchorus_tags['segments']):
+        structure_tag = {
+            "tag": _add_count_to_section_tag(segment["label"], count),
+            "start_time": segment["interval"][0],
+            "end_time": segment["interval"][1],
+        }
         structure_tags.append(structure_tag)
     return DeepChorus(
         tags=structure_tags,
-        confidence=get_deepchorus_score(deepchorus_tags)
+        confidence=_get_deepchorus_score(deepchorus_tags)
     )
 
 
@@ -403,6 +487,284 @@ def parse_style_text_sa(meta: Dict, sinking_threshold: float):
     return _parse_sa_music_tagging(_get_value(meta, "music_tagging", "No music_tagging"), sinking_threshold)
 
 
+# ---------- audio_tags V0 -------------
+
+def _parse_audio_tags_v0(audio_tags: Optional[Dict]) -> Tuple[List[str], Dict[str, str], bool]:
+    def parse_result(result: Union[List, str]) -> str:
+        if isinstance(result, str):
+            return result
+        if len(result) == 0:
+            return ""
+        return result[0]
+
+    def map_tag(tag: str) -> str:
+        """Replace certain tags in the dataset"""
+        AUDIO_TAGS_SPECIAL_MAP = {}
+        for k,v in AUDIO_TAGS_GENRE_SPECIAL_MAP_V0.items():
+            AUDIO_TAGS_SPECIAL_MAP[k] = v
+        for k,v in AUDIO_TAGS_MOOD_SPECIAL_MAP_V0.items():
+            AUDIO_TAGS_SPECIAL_MAP[k] = v
+        for k,v in AUDIO_TAGS_SCENE_SPECIAL_MAP_V0.items():
+            AUDIO_TAGS_SPECIAL_MAP[k] = v
+        for k,v in AUDIO_TAGS_GENDER_SPECIAL_MAP_V0.items():
+            AUDIO_TAGS_SPECIAL_MAP[k] = v
+        return AUDIO_TAGS_SPECIAL_MAP.get(tag, tag)
+
+    # The order should match `mir_data_util`
+    order = ["genre", "mood", "scene", "vocal_gender", "vocal_timbre"]
+    is_sinking = False #'non-Sinking'
+
+    if audio_tags is None:
+        return [""] * len(order), {}, False
+    tags = []
+    unfamiliar_tags = {}
+    for i in range(len(order)):
+        item = order[i]
+        cat_vocab_tags = AUDIO_CAT_VOCAB[i]
+        _tags = []
+        for tag in audio_tags[item]:
+            _tag = map_tag(tag)
+            if _tag not in cat_vocab_tags:
+                _tags.append("")
+                if item not in unfamiliar_tags:
+                    unfamiliar_tags[item] = []
+                if _tag not in unfamiliar_tags[item]:
+                    unfamiliar_tags[item].append(_tag)
+            else:
+                _tags.append(_tag)
+        _tags = list(set(_tags))
+        if i == 0 and len(_tags) > 2: # genre, ["Pop", "Rock", "Chinese Pop"] -> ["Rock"]
+            _merged_tags = []
+            for _t in _tags:
+                if _t not in ['Pop', 'Chinese Pop']:
+                    _merged_tags.append(_t)
+            _tags = _merged_tags
+        tags.append(_tags)
+    return tags, unfamiliar_tags, is_sinking
+
+def parse_style_text_audio_tags_v0(meta: Dict, sinking_threshold: float):
+    return _parse_audio_tags_v0(_get_value(meta, "audio_tags", "No audio_tags"))
+
+
+# ---------- audio_tags V1 -------------
+
+def _parse_audio_tags_v1(music_tagging: Optional[Dict], audio_tags: Optional[Dict]) -> Tuple[List[str], Dict[str, str], bool]:
+    def parse_result(result: Union[List, str]) -> str:
+        if isinstance(result, str):
+            return result
+        if len(result) == 0:
+            return ""
+        return result[0]
+
+    def map_tag(item: str, tag: str) -> str:
+        """Replace certain tags in the dataset"""
+        AUDIO_TAGS_SPECIAL_MAP = {
+            'genre': AUDIO_TAGS_GENRE_SPECIAL_MAP_V1,
+            'mood': AUDIO_TAGS_MOOD_SPECIAL_MAP_V1,
+            'scene': AUDIO_TAGS_SCENE_SPECIAL_MAP_V1,
+            'vocal_gender': AUDIO_TAGS_GENDER_SPECIAL_MAP_V1,
+        }
+        if item in AUDIO_TAGS_SPECIAL_MAP:
+            return AUDIO_TAGS_SPECIAL_MAP[item].get(tag, tag)
+        else:
+            return tag
+
+    # The order should match `mir_data_util`
+    order = ["genre", "mood", "scene", "vocal_gender", "vocal_timbre"]
+    is_sinking = False #'non-Sinking'
+
+    if audio_tags is not None:
+        tags = []
+        unfamiliar_tags = {}
+        for i in range(len(order)):
+            item = order[i]
+            cat_vocab_tags = AUDIO_CAT_VOCAB_V1[i]
+            _tags = []
+            for tag in audio_tags[item]:
+                _tag = map_tag(item, tag)
+                if _tag not in cat_vocab_tags:
+                    _tags.append("")
+                    if item not in unfamiliar_tags:
+                        unfamiliar_tags[item] = []
+                    if _tag not in unfamiliar_tags[item]:
+                        unfamiliar_tags[item].append(_tag)
+                else:
+                    _tags.append(_tag)
+            _tags = list(set(_tags))
+            if i == 0 and len(_tags) > 2: # genre, ["Pop", "Rock", "Chinese Pop"] -> ["Rock"]
+                _merged_tags = []
+                for _t in _tags:
+                    if _t not in ['Pop', 'Chinese Pop']:
+                        _merged_tags.append(_t)
+                _tags = _merged_tags
+            tags.append(_tags)
+        #print(tags, unfamiliar_tags, is_sinking)
+        return tags, unfamiliar_tags, is_sinking
+    elif music_tagging is not None:
+        #print(music_tagging)
+        order_map = {
+            'genre': 'Genre20',
+            'mood': 'Mood',
+            'scene': 'Theme',
+            'vocal_gender': 'sa_gender',
+        }
+        tags = []
+        unfamiliar_tags = {}
+        for i in range(len(order)):
+            item = order[i]
+            if item in order_map:
+                _item = order_map[item]
+                cat_vocab_tags = AUDIO_CAT_VOCAB_V1[i]
+                _tags = []
+                result = music_tagging[_item]['result']
+                if isinstance(result, str):
+                    result = result.split(',')
+                for tag in result:
+                    _tag = map_tag(item, tag)
+                    if _tag not in cat_vocab_tags:
+                        _tags.append("")
+                        if item not in unfamiliar_tags:
+                            unfamiliar_tags[item] = []
+                        if _tag not in unfamiliar_tags[item]:
+                            unfamiliar_tags[item].append(_tag)
+                    else:
+                        _tags.append(_tag)
+                tags.append(_tags)
+            else:
+                tags.append([""])
+        return tags, unfamiliar_tags, is_sinking
+    else:
+        return [""] * len(order), {}, False
+
+def parse_style_text_audio_tags_v1(meta: Dict, sinking_threshold: float):
+    #audio_tags = _get_value(meta, "audio_tags", "No audio_tags")
+    #music_tagging = _get_value(meta, "music_tagging", "No music_tagging")
+    audio_tags = meta.get('audio_tags', None)
+    music_tagging = meta.get('music_tagging', None)
+    if music_tagging is not None:
+        music_tagging["sa_gender"] = meta.get("gender", {}).get("sa_gender", {"result": [""]})
+    #print(audio_tags)
+    #print(music_tagging)
+    if audio_tags is None and music_tagging is None:
+        raise ZhMetaParseError('No music_tagging and audio_tags')
+    return _parse_audio_tags_v1(music_tagging, audio_tags)
+
+
+# ---------- audio_tags V2 -------------
+
+def _parse_audio_tags_v2(music_tagging: Optional[Dict], audio_tags: Optional[Dict]) -> Tuple[List[str], Dict[str, str], bool]:
+    def parse_result(result: Union[List, str]) -> str:
+        if isinstance(result, str):
+            return result
+        if len(result) == 0:
+            return ""
+        return result[0]
+
+    def map_tag(item: str, tag: str) -> str:
+        """Replace certain tags in the dataset"""
+        AUDIO_TAGS_SPECIAL_MAP = {
+            'genre': AUDIO_TAGS_GENRE_SPECIAL_MAP_V2,
+            'mood': AUDIO_TAGS_MOOD_SPECIAL_MAP_V2,
+            'scene': AUDIO_TAGS_SCENE_SPECIAL_MAP_V2,
+            'vocal_gender': AUDIO_TAGS_GENDER_SPECIAL_MAP_V2,
+        }
+        if item in AUDIO_TAGS_SPECIAL_MAP:
+            return AUDIO_TAGS_SPECIAL_MAP[item].get(tag, tag)
+        else:
+            return tag
+
+    # The order should match `mir_data_util`
+    order = ["genre", "mood", "scene", "vocal_gender", "vocal_timbre"]
+    is_sinking = False #'non-Sinking'
+
+    if audio_tags is not None:
+        tags = []
+        unfamiliar_tags = {}
+        for i in range(len(order)):
+            item = order[i]
+            cat_vocab_tags = AUDIO_CAT_VOCAB_V2[i]
+            _tags = []
+            if i == 0: # process ['pop,rock'] -> ['pop', 'rock']
+                new_item = []
+                for v in audio_tags[item]:
+                    new_item.extend(v.split(','))
+                audio_tags[item] = new_item
+            for tag in audio_tags[item]:
+                _tag = map_tag(item, tag.strip())
+                if _tag != '':
+                    if _tag not in cat_vocab_tags:
+                        _tags.append("")
+                        if item not in unfamiliar_tags:
+                            unfamiliar_tags[item] = []
+                        if _tag not in unfamiliar_tags[item]:
+                            unfamiliar_tags[item].append(_tag)
+                    else:
+                        _tags.append(_tag)
+            _tags = list(set(_tags))
+            if i == 0 and len(_tags) > 2: # genre, ["Pop", "Rock", "Chinese Pop"] -> ["Rock"]
+                _merged_tags = []
+                for _t in _tags:
+                    if _t not in ['Pop', 'Chinese Pop']:
+                        _merged_tags.append(_t)
+                _tags = _merged_tags
+            tags.append(_tags)
+        for _genre in tags[0]: # if genre is Tuhai, is_sinking=True
+            if _genre in ["MC", "DJ", "VinaHouse", "Vulgar Pop"]:
+                is_sinking = True
+        #print(tags, unfamiliar_tags, is_sinking)
+        return tags, unfamiliar_tags, is_sinking
+    elif music_tagging is not None:
+        #print(music_tagging)
+        order_map = {
+            'genre': 'Genre20',
+            'mood': 'Mood',
+            'scene': 'Theme',
+            'vocal_gender': 'sa_gender',
+        }
+        tags = []
+        unfamiliar_tags = {}
+        for i in range(len(order)):
+            item = order[i]
+            if item in order_map:
+                _item = order_map[item]
+                cat_vocab_tags = AUDIO_CAT_VOCAB_V2[i]
+                _tags = []
+                result = music_tagging[_item]['result']
+                if isinstance(result, str):
+                    result = result.split(',')
+                for tag in result:
+                    _tag = map_tag(item, tag)
+                    if _tag not in cat_vocab_tags:
+                        _tags.append("")
+                        if item not in unfamiliar_tags:
+                            unfamiliar_tags[item] = []
+                        if _tag not in unfamiliar_tags[item]:
+                            unfamiliar_tags[item].append(_tag)
+                    else:
+                        _tags.append(_tag)
+                tags.append(_tags)
+            else:
+                tags.append([""])
+        for _genre in tags[0]: # if genre is Tuhai, is_sinking=True
+            if _genre in ["MC", "DJ", "VinaHouse", "Vulgar Pop"]:
+                is_sinking = True
+        return tags, unfamiliar_tags, is_sinking
+    else:
+        return [""] * len(order), {}, False
+
+def parse_style_text_audio_tags_v2(meta: Dict, sinking_threshold: float):
+    #audio_tags = _get_value(meta, "audio_tags", "No audio_tags")
+    #music_tagging = _get_value(meta, "music_tagging", "No music_tagging")
+    audio_tags = meta.get('audio_tags', None)
+    music_tagging = meta.get('music_tagging', None)
+    if music_tagging is not None:
+        music_tagging["sa_gender"] = meta.get("gender", {}).get("sa_gender", {"result": [""]})
+    #print(audio_tags)
+    #print(music_tagging)
+    if audio_tags is None and music_tagging is None:
+        raise ZhMetaParseError('No music_tagging and audio_tags')
+    return _parse_audio_tags_v2(music_tagging, audio_tags)
+
 # ---------- artist_id -------------
 
 def parse_artist_id(meta) -> int:
@@ -465,13 +827,49 @@ def parse_voice_tag_sa(meta: Dict) -> Optional[str]:
     return _parse_voice_tag_sa(get_value(get_value(meta, "gender"), "sa_gender"))
 
 
+def parse_voice_tag_sa_optional(meta: Dict) -> Optional[str]:
+    """meta.gender.sa_gender"""
+    try:
+        return parse_voice_tag_sa(meta)
+    except ZhMetaParseError:
+        return None
+
 # ----------- source -----------
 
-def parse_source(meta: Dict) -> Optional[str]:
+def parse_source_optional(meta: Dict) -> Optional[str]:
     """meta.source"""
     # source is optional
     return meta.get("source")
 
+
+# ----------- MIR -----------
+
+def parse_mir_tempo(meta: Dict) -> int:
+    """meta.mir_service.beat.tempo"""
+    get_value = partial(_get_value, msg="No tempo")
+    return get_value(get_value(get_value(meta, "mir_service"), "beat"), "tempo")
+
+
+def parse_mir_tempo_optional(meta: Dict) -> Optional[int]:
+    """meta.mir_service.beat.tempo"""
+    try:
+        return parse_mir_tempo(meta)
+    except ZhMetaParseError:
+        return None
+
+
+def parse_mir_key(meta: Dict) -> str:
+    """meta.mir_service.key.song"""
+    get_value = partial(_get_value, msg="No key")
+    return get_value(get_value(get_value(meta, "mir_service"), "key"), "song")
+
+
+def parse_mir_key_optional(meta: Dict) -> Optional[str]:
+    """meta.mir_service.key.song"""
+    try:
+        return parse_mir_key(meta)
+    except ZhMetaParseError:
+        return None
 
 # ------------------------------------------
 #                 TRANSFORM
@@ -496,7 +894,7 @@ def convert_voice_tag(_self):
 
 # ---------- validators -------------
 
-def validate_confidence(confidence_threshold: Optional[float], confidence: Optional[float]):
+def validate_confidence_optional(confidence_threshold: Optional[float], confidence: Optional[float]):
     if confidence_threshold is None or confidence is None:
         return
     if confidence < confidence_threshold:
@@ -521,11 +919,26 @@ def validate_quality(high_quality: bool):
         raise ZhMetaTransformError(f"Filter out low quality")
 
 
-def validate_deepchorus(deepchorus: Optional[DeepChorus]):    
+def validate_deepchorus_optional(deepchorus: Optional[DeepChorus]):    
     if deepchorus is None:
         return
     if deepchorus.confidence < 0.45:
         raise ZhMetaTransformError(f"Low deepchorus confidence <0.45")
+
+
+def validate_mir_tempo_optional(tempo: Optional[int]):
+    if tempo is None:
+        return
+    l, h = TEMPO_RANGE
+    if not (l < tempo <= h):
+        raise ZhMetaTransformError("Tempo not in supported range")
+
+
+def validate_mir_key_optional(key: Optional[str]):
+    if key is None:
+        return
+    if key not in KEYS:
+        raise ZhMetaTransformError(f"Unsupported key {key}")
 
 
 # ---------- SongSlice -------------
@@ -635,13 +1048,19 @@ def _extract_seg_from_utts(i, utterances, min_duration, max_duration, new_line_t
         return (i, new_seg)
 
 
-def _remove_short_inst_phrases(song_slice: SongSlice) -> Optional[SongSlice]:
-    """Remove short instrumental phrases, or verse/chorus/bridge without utterance to avoid adding unnessary section tags."""
+def _reset_section_tags_for_short_inst_phrases(song_slice: SongSlice) -> SongSlice:
+    """Remove short instrumental phrases' section tags to avoid adding unnessary section tags."""
+    def does_phrase_need_reset(phrase: Phrase) -> bool:
+        return (
+            not phrase.has_utterance and 
+            phrase.section_tag is not None and 
+            phrase.duration is not None and phrase.duration < 2  # hard-coded duration threshold
+        )
     phrases=[
-        p for p in song_slice.phrases
-        if p.has_utterance or (p.section_tag not in ["verse", "chorus", "bridge"] and p.duration >= 2)
+        phrase._replace(section_tag=None) if does_phrase_need_reset(phrase) else phrase
+        for phrase in song_slice.phrases
     ]
-    return SongSlice(phrases=phrases) if phrases else None
+    return SongSlice(phrases=phrases)
 
 
 def transform_utts_to_song_slices_heuristic(
@@ -848,30 +1267,27 @@ def transform_utts_to_song_slices_structure(
         """Group phrases into song slices, but do not split any section."""
         if not phrases: return []
         section_start_ind = get_section_start_ind(phrases) + [len(phrases)]
-        groups = [phrases[start: end] for start, end in zip(section_start_ind, section_start_ind[1:])]
+        song_slices_by_sections = [
+            SongSlice(phrases=phrases[start: end])
+            for start, end in zip(section_start_ind, section_start_ind[1:])
+        ]
+        end_ts = np.array([song_slice.end for song_slice in song_slices_by_sections])
         song_slices = []
-        _phrases = []
-        for group in groups:
-            acc_dur = get_phrase_group_dur(_phrases)
-            group_dur = get_phrase_group_dur(group)
-            if acc_dur + group_dur <= max_duration:
-                _phrases.extend(group)
-            else:  # exceed max_duration
-                if _phrases:
-                    song_slices.append(SongSlice(phrases=_phrases))
-                if group_dur <= max_duration:
-                    _phrases = group[:]  # reset _phrases and insert, shallow copy (necessary)
-                else:
-                    _phrases = []  # the current group is too long, reset and skip
-        if _phrases and get_phrase_group_dur(_phrases) <= max_duration:  # insert the last one
-            song_slices.append(SongSlice(phrases=_phrases))
+        for idx, song_slice in enumerate(song_slices_by_sections):
+           rel_end_ts = end_ts[idx:] - song_slice.start  # section end times relative to the current song_slice's start
+           # idx_inc indicates the number of song slices that should be combined
+           idx_inc = max(1, int(np.searchsorted(rel_end_ts, max_duration, side="right")))
+           song_slices.append(reduce(operator.add, song_slices_by_sections[idx: idx+idx_inc]))
         return song_slices
 
     song_time_span = (math.floor(structure_tags[0]["start_time"]), math.ceil(structure_tags[-1]["end_time"]))
     phrases = format_utterances(utterances)
     phrases = list(map(add_section_tag, phrases))
     phrases = insert_inst_phrases(phrases, song_time_span)
-    return get_song_slices_complete_section(phrases) if complete_section else get_song_slices(phrases)
+    song_slices = get_song_slices_complete_section(phrases) if complete_section else get_song_slices(phrases)
+    # Remove short instrumental sections' section tags. After the removal, these phrases will become placeholders
+    # for SongSlice to correctly calculate the start and end times, but will be completely ignored during tokenization.
+    return list(map(_reset_section_tags_for_short_inst_phrases, song_slices))
 
 
 def take_song_slices_by_method(song_slices: List[SongSlice], segment_method: str):
@@ -899,15 +1315,14 @@ def get_max_seg(song_slices: List[SongSlice], max_seg_per_track: int) -> List[So
 def filter_song_slices(song_slices: List[SongSlice], duration_range: Tuple[int, int]) -> Tuple[List[SongSlice], ZhMetaLogger]:
     n_slices_pre_filter = len(song_slices)
     song_slices = [ss for ss in song_slices if ss.is_time_span_valid(duration_range)]
-    song_slices = list(filter(None, map(_remove_short_inst_phrases, song_slices)))
     n_slices_post_filter = len(song_slices)
     n_filtered = n_slices_pre_filter-n_slices_post_filter
 
     if len(song_slices) == 0:
-        raise ZhMetaTransformError("No song slice")
+        raise ZhMetaTransformError(f"No valid song slice within duration range {duration_range}")
 
     if any(phrase.text and not phrase.phonemes for song_slice in song_slices for phrase in song_slice.phrases):
-        raise ZhMetaTransformError("No phoneme")
+        raise ZhMetaTransformError("No phoneme found in all available song slices")
 
     logger = ZhMetaLogger(
         f"Removed song slices: {n_filtered}/{n_slices_pre_filter}" if n_filtered > 0 else ""

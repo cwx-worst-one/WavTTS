@@ -122,7 +122,7 @@ def update_json(metadata_fp, updates):
             metadata = json.load(f)
     else:
         metadata = {}
-    metadata = { **metadata, **updates }
+    metadata = { **metadata, **updates }    
     with open(metadata_fp, 'w', encoding='utf-8') as f:
         json.dump(metadata, f, indent=2, ensure_ascii=False)
 

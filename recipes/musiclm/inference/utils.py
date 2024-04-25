@@ -250,3 +250,80 @@ def top_p_logits(logits, p):
     out = logits.clone()
     out[indices_to_remove] = -float('Inf')
     return out
+
+
+class SamplingScheduler:
+    def __init__(self, schedule):
+        self.schedule = schedule
+        self.previous_temp = None
+
+    def get_schedule(self, idx):
+        # reverse schedule. choose index higher than start_idx
+        for s in reversed(self.schedule):
+            if idx >= s['start_idx'] and self.schedule:
+                break
+        
+        top_p, target_top_k, target_temp = s['top_p'], s['target_top_k'], s['target_temp']
+        return top_p, target_top_k, target_temp
+    
+    @classmethod
+    def default_schedule(cls, top_p=0.8, target_temp=1, target_top_k=100):
+        # creative for first 10 tokens. conservative for the rest of sequence
+        s1 = { 'start_idx': 0, 'top_p': 0.98, 'target_top_k': None, 'target_temp': target_temp }
+        s2 = { 'start_idx': 50, 'top_p': top_p, 'target_top_k': None, 'target_temp': target_temp }
+        s3 = { 'start_idx': 100, 'top_p': top_p, 'target_top_k': target_top_k, 'target_temp': target_temp }
+        return SamplingScheduler([s1, s2, s3])
+        
+def adaptive_sampling(idx, logits, sampling_schedule: SamplingScheduler, exclude_ids=None):
+    def get_cum_probs(logits, temp):
+        predict_logits = logits / temp.reshape(-1, 1, 1)
+
+        if exclude_ids is not None:
+            for i in exclude_ids:
+                predict_logits[..., i] = float("-inf")
+        probs = F.softmax(predict_logits, dim=-1)
+        sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+        cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+        return cumulative_probs
+    
+    top_p, target_top_k, target_temp = sampling_schedule.get_schedule(idx)
+    # convert global temperature to temp per batch
+    batch_size = logits.shape[0]
+    target_temp = torch.full((batch_size,1), fill_value=target_temp, dtype=logits.dtype, device=logits.device)
+    if sampling_schedule.previous_temp is None:
+        sampling_schedule.previous_temp = target_temp
+    adaptive_temp = sampling_schedule.previous_temp.clone()
+    # get probs
+    cumulative_probs = get_cum_probs(logits, adaptive_temp)
+    token_count = (cumulative_probs <= top_p).sum(-1)
+
+    # increase temperature until # of tokens under top_p > target_top_k
+    if target_top_k is not None:
+        # decrease temperature if token threshold reached.
+        decrease_mask = (token_count > target_top_k) & (adaptive_temp > target_temp)
+        if decrease_mask.any():
+            print("decrease temp for ", decrease_mask)
+        adaptive_temp[decrease_mask] += -0.1
+        adaptive_temp = torch.max(adaptive_temp, target_temp)
+        # increase temperature if token threshold not reached.
+        increase_mask = (token_count < target_top_k) & (adaptive_temp < 8.0)
+        while increase_mask.any():
+            print("increase temp for ", increase_mask)
+            adaptive_temp[increase_mask] += 0.2
+            cumulative_probs = get_cum_probs(logits, adaptive_temp)
+            token_count = (cumulative_probs <= top_p).sum(-1)
+            increase_mask = (token_count < target_top_k) & (adaptive_temp < 4.0)
+    
+    adaptive_temp = sampling_schedule.previous_temp * 0.5 + adaptive_temp * 0.5
+    sampling_schedule.previous_temp = adaptive_temp
+
+    predict_logits = logits / (adaptive_temp.reshape(-1, 1, 1))
+    if exclude_ids is not None:
+        for i in exclude_ids:
+            predict_logits[..., i] = float("-inf")
+    predict_logits = top_p_logits(predict_logits, top_p)
+    probs = predict_logits.softmax(dim=-1)
+    dist = torch.distributions.categorical.Categorical(probs=probs)
+    samples = dist.sample()
+    
+    return samples

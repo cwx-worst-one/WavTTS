@@ -13,6 +13,8 @@ extra_params:
     samples_to_save: 1
     prompt_path: "./prompts/zh_100_en_prompt.csv"
     inference_conditions: style_text,speaker_id,lyrics_tokens # style_text|style_audio,lyrics_tokens,vocal_audio|vocal_text,chroma|speaker_id
+    rewrite_target: "sa_tag"      # multi_tag | sa_tag | TODO: multi_tag_mir
+    transform_style_text: False
     max_items: null
     run_combinations: False
     use_reranker: False
@@ -41,6 +43,7 @@ extra_params:
     # Semantic model
     semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
     semantic_ckpt: "hdfs:///home/byte_speech_sv/zongyu.yin/logs/decoder_07B_ctiga_zh30s/zh_30s_ctiga_1w/checkpoints/step=026000-val_accu_0=13.08.ckpt"
+    predict_step_seed: null
 
     # Used for reranker, only loaded if use_reranker=True
     # structure_ckpt: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/structure_epoch=185-step=93000.ckpt"
@@ -65,7 +68,7 @@ extra_params:
 
     use_controller_cfg: True       # Set to True to activate style CFG.
     controller_cfg_gamma: 1.0
-    controller_cfg_label: "genre"  # mood, scene, sinking,
+    controller_cfg_label: "genre,mood,speaker"  # mood, scene, sinking,
 
 
     cache_dir: .module_cache/bigmusic
@@ -80,8 +83,12 @@ run_opts:
     num_workers: 8
 
 
+# 24k
 # token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS.yaml
 token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS_streaming.yaml
+# 44k
+# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_49hzSS.yaml
+# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_49hzSS_streaming.yaml
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -96,6 +103,8 @@ predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_fr
     dataset_mode: !ref <extra_params[dataset_mode]>
     lang: !ref <extra_params[lyrics_lang]>
     enable_punctuation: True
+    transform_style_text: !ref <extra_params[transform_style_text]>
+    rewrite_target: !ref <extra_params[rewrite_target]>
 
 pl_datamodule: !new:recipes.bigmusic.datasets.lyrics.LyricsDataModule
     predict_dataset: !ref <predict_dataset>

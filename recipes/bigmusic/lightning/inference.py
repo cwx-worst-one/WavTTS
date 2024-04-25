@@ -49,6 +49,7 @@ class SemanticInferenceModule(pl.LightningModule):
             self.semantic_module.replace_ctiga_to_xperf()
         self.requires = {}
         self.predict_step_seed: Optional[int] = self.extra_params.get("predict_step_seed")
+        #self.predict_step_seed: Optional[int] = self.extra_params.get("predict_step_seed", 1995)
 
     def setup(self, stage: str) -> None:
         if isinstance(self.semantic_module.model, gpt.GPTLMHeadModel) and ('32' in self.trainer.precision):
@@ -137,7 +138,7 @@ class SemanticInferenceModule(pl.LightningModule):
 
     def predict_step(self, batch, batch_idx=0, dataloader_idx=0):
         if self.predict_step_seed is not None:
-            pl.seed_everything(self.predict_step_seed + batch_idx)
+            pl.seed_everything(self.predict_step_seed)  # for batch size invariant reproducibility
         if "semantic_tokens" in batch:
             raw_semantic_samples = batch["semantic_tokens"]
         else:

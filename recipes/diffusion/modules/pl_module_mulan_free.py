@@ -12,7 +12,7 @@ from recipes.diffusion.models.semantic_model.utils import (
     w2v_bert_tokenization
 )
 from recipes.diffusion.models.vocoder_model.utils import init_vocoder
-from recipes.diffusion.models.dualpath_net import DualPathDiffusionNetwork
+# from recipes.diffusion.models.dualpath_net import DualPathDiffusionNetwork
 from recipes.diffusion.models.tnt_mulan_free import TNTDiffusionNetwork
 from recipes.diffusion.models.diffusion_mulan_free import ARVSampler
 

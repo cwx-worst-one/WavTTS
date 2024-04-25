@@ -13,6 +13,8 @@ extra_params:
     samples_to_save: 1
     prompt_path: "./prompts/zh_100_en_prompt.csv"
     inference_conditions: style_text,speaker_id,lyrics_tokens # style_text|style_audio,lyrics_tokens,vocal_audio|vocal_text,chroma|speaker_id
+    rewrite_target: "sa_tag"      # multi_tag | sa_tag | TODO: multi_tag_mir
+    transform_style_text: False
     max_items: null
     run_combinations: False
     use_reranker: False
@@ -30,14 +32,18 @@ extra_params:
     # Zh tokenizer diffusion in CN hdfs: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_16/checkpoints_minimal/last-minimal.ckpt"
     diffusion_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_16_1min/checkpoints/diffusion-step=086999-EMA.ckpt"
     vocoder_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/soundstream-step=374999-val_sdr=12.9557.ckpt"
-    lyrics_lang: "zh_phone"     # en | zh_phone | zh_wp
+    lyrics_lang: "zh_phone"     # en | zh_phone | zh_wp | zh_phonetone
     is_zh_token: True           # Set to True only if lyrics_lang is zh_phone or zh_wp. Diffusion model from recipes.diffusion.models.tnt_gru
     mixv2: False                # Set to True for mix UMM token
+    diffusion_version: '24000'
+    sampler_verison: '24000'
+    vocoder_version: "24k_125hz_dim32_baseline"
 
 
     # Semantic model
     semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
     semantic_ckpt: "hdfs:///home/byte_speech_sv/zongyu.yin/logs/decoder_07B_ctiga_zh30s/zh_30s_ctiga_1w/checkpoints/step=026000-val_accu_0=13.08.ckpt"
+    predict_step_seed: null
 
     # Used for reranker, only loaded if use_reranker=True
     # structure_ckpt: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/structure_epoch=185-step=93000.ckpt"
@@ -50,19 +56,27 @@ extra_params:
         schedule_slope: 2.5
         guidance_scale: 2.5
         bf16_portion: 0.0
+        vocoder_chunk_size: 1
 
     # Model Settings
     sample_rate: 24000
     duration: 60
     lyrics_max_seq_len: 1000
-    semantic_temperature: 1.0
-    sample_mode: "top_p"
-    sample_thresh: 0.9
     token2wav_type: diffusion
+
+    # AR sampling hparams
+    semantic_temperature: 1.0
+    sample_mode: "top_p"           # top_p, adaptive_sampling, gumbel
+    sample_thresh: 0.9
+    target_top_k: 100
+
+    use_step_out_blank: False
+    step_out_blank_logic: 'v2'
+    step_out_blank_max_len: 10
 
     use_controller_cfg: True       # Set to True to activate style CFG.
     controller_cfg_gamma: 1.0
-    controller_cfg_label: "genre"  # mood, scene, sinking,
+    controller_cfg_label: "genre,mood,speaker"  # mood, scene, sinking,
 
     cache_dir: .module_cache/bigmusic
 
@@ -88,6 +102,8 @@ predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_fr
     dataset_mode: !ref <extra_params[dataset_mode]>
     lang: !ref <extra_params[lyrics_lang]>
     enable_punctuation: True
+    transform_style_text: !ref <extra_params[transform_style_text]>
+    rewrite_target: !ref <extra_params[rewrite_target]>
 
 pl_datamodule: !new:recipes.bigmusic.datasets.lyrics.LyricsDataModule
     predict_dataset: !ref <predict_dataset>
@@ -104,16 +120,21 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                     cache_dir: !ref <run_opts[cache_dir]>
                     is_zh_token: !ref <extra_params[is_zh_token]>
                     mixv2: !ref <extra_params[mixv2]>
+                    version: !ref <extra_params[diffusion_version]>
             sampler:
                 hpath: null
                 initializer: !name:recipes.diffusion.inference_from_text_lyrics2song.init_sampler
                     cache_dir: !ref <run_opts[cache_dir]>
                     duration: !ref <extra_params[duration]>
+                    version: !ref <extra_params[sampler_verison]>
             vocoder:
                 hpath: !ref <extra_params[vocoder_ckpt]>
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                     cache_dir: !ref <run_opts[cache_dir]>
-                    version: "24k_125hz_dim32_baseline"
+                    sample_rate: !ref <extra_params[sample_rate]>
+                    version: !ref <extra_params[vocoder_version]>
+                    adapt_hopper: False
+
         reranker:
             hpath:
                 rewards:
@@ -140,10 +161,12 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
 
 # separating out additional_callbacks so auto_eval can disable metrics
 additional_callbacks:
-    # - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
-    #   asr_model_path: zh
+    - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsSAOnlineCallback
+      asr_model_path: zh-CN
+    - !new:recipes.bigmusic.callbacks.mir_metrics.MIRTagMetricsSAOnlineCallback
     # - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback  # avoid loading mulan
     # - !new:recipes.bigmusic.callbacks.save_outputs.NormVolumeCallback
+    # - !new:recipes.bigmusic.callbacks.mir_offline_metrics.MIROfflineCallback  # MIR metrics (key, tempo)
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
 callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback

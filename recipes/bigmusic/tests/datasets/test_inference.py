@@ -1,30 +1,21 @@
-from recipes.bigmusic.datasets.inference import split_lyrics_by_section_tags
+from recipes.bigmusic.datasets.inference import process_zh_lyrics, multitags_to_speaker_ids, process_zh_style_text
 
 
-def test_split_and_normalize_lyrics():
-    lyrics = [
-        "\n".join([
-            "[verse] This is verse (Chorus)This is chorus",
-            "<bridge> This is bridge",
-        ]),
-        "\n".join([
-            "[verse] This is verse (Chorus)This is chorus<bridge> This is bridge",
-            "[OUTRO]"
-        ])
+def test_multitags_to_speaker_ids():
+    speaker_ids = [0, 3, 0, 0]
+    assert multitags_to_speaker_ids(speaker_ids, [49, 48, 48, 47]) == [49, 3, 48, 47]
+
+
+def test_zh_style_text():
+    style_text_list = [
+        "Pop|Chill|Female",  # Female
+        "MC|Chill|Male",  # Female
     ]
+    tags, keys, tempo_labels, speaker_ids = process_zh_style_text(style_text_list, "multi_tag")
+    for tag in tags:
+        assert "|" in tag
+    # TODO: support key and tempo completion
+    assert keys == ["N", "N"]
+    assert tempo_labels == ["", ""]
 
-    reformatted_lyrics = split_lyrics_by_section_tags(lyrics)
-
-    assert reformatted_lyrics == [
-        "\n".join([
-            "[verse] This is verse",
-            "(Chorus)This is chorus",
-            "<bridge> This is bridge"
-        ]),
-        "\n".join([
-            "[verse] This is verse",
-            "(Chorus)This is chorus",
-            "<bridge> This is bridge",
-            "[OUTRO]",
-        ])
-    ]
+    assert speaker_ids == [49, 48]

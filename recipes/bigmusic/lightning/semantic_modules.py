@@ -4,6 +4,7 @@ from recipes.bigmusic.lightning.embedding_modules import (
     MulanCategoricalEmbedder,
     LyricsTokenEmbedder,
     TagCategoricalEmbedder,
+    MultiTagsCategoricalEmbedder,
     LeadsheetTokenEmbedderV2,
     REMILeadsheetTokenEmbedder,
     WavToVecTokenEmbedder,
@@ -13,6 +14,8 @@ from recipes.bigmusic.lightning.embedding_modules import (
     StructureEmbedder,
     IntensityEmbedder,
     SpeakerEmbedder,
+    KeyEmbedder,
+    TempoLabelEmbedder,
     BeatEmbedder,
     OffsetEmbedder,
     AudioKeyEmbedder,
@@ -84,8 +87,10 @@ class SemanticModule(BaseContinuousEmbedModule):
         lyrics_vocab_size = extra_params.get('lyrics_codebook_size', 2000)
         style_category_vocab_size = extra_params.get('style_category_vocab_size', 256)
         speaker_vocab_size = extra_params.get('speaker_codebook_size', 10)
+        key_vocab_size = extra_params.get('key_codebook_size', 25)  # 1 empty + 24 keys
+        tempo_label_vocab_size = extra_params.get('tempo_label_codebook_size', 9)  # 1 empty + 8 labels
         offset_codebook_size = extra_params.get('offset_codebook_size', 512)
-        tag_taxonomy_lang = extra_params.get('tag_taxonomy_lang', 'Zh')
+        tag_taxonomy_lang = extra_params.get('tag_taxonomy_lang', 'SA')
         tag_dropout_rate = extra_params.get('tag_dropout_rate', 0)
         mulan_add_cfg = extra_params.get('mulan_add_cfg', False)
         mulan_embed_dim = extra_params.get('mulan_embed_dim', 512)
@@ -117,6 +122,14 @@ class SemanticModule(BaseContinuousEmbedModule):
                     dropout=tag_dropout_rate,
                     vocab_type=tag_taxonomy_lang,
                 )
+            elif emb_type == "multitags_categorical":
+                # Read ground truth tags from style_text
+                embedder_dict[emb_type] = MultiTagsCategoricalEmbedder(
+                    embedding_dim=hidden_size,
+                    add_sos=True,
+                    dropout=tag_dropout_rate,
+                    vocab_type=tag_taxonomy_lang,
+                )
             elif emb_type == "mulan_categorical":
                 # Read ground truth tags from style_text
                 embedder_dict[emb_type] = MulanCategoricalEmbedder(
@@ -128,10 +141,20 @@ class SemanticModule(BaseContinuousEmbedModule):
                     vocab_path=style_category_vocab_path,
                 )
             elif emb_type == "speaker_id":
-                embedder_dict['speaker_id'] = SpeakerEmbedder(
+                embedder_dict[emb_type] = SpeakerEmbedder(
                     vocab_size=speaker_vocab_size, 
                     embedding_dim=hidden_size, 
                     add_sos=True)
+            elif emb_type == "key":
+                embedder_dict[emb_type] = KeyEmbedder(
+                    vocab_size=key_vocab_size, 
+                    embedding_dim=hidden_size, 
+                )
+            elif emb_type == "tempo_label":
+                embedder_dict[emb_type] = TempoLabelEmbedder(
+                    vocab_size=tempo_label_vocab_size, 
+                    embedding_dim=hidden_size, 
+                )
             elif emb_type == "lyrics_tokens":
                 embedder_dict[emb_type] = LyricsTokenEmbedder(
                     vocab_size=lyrics_vocab_size,
@@ -458,19 +481,28 @@ class SemanticModule(BaseContinuousEmbedModule):
         )
         return embeds
 
-    def prepare_speaker_inputs(self, batch, speaker_embedder):
+    def _prepare_one_frame_inputs(self, batch, embedder, condition: str):
         batch_size = self.infer_batch_size(batch)
         conditions = self.infer_conditions(batch)        
-        if 'speaker_id' in conditions and 'speaker_id' in batch:
-            if batch['speaker_id'].dim() == 1:
-                batch['speaker_id'] = batch['speaker_id'].unsqueeze(1)
-            embeds = speaker_embedder.embed(
+        if condition in conditions and condition in batch:
+            if batch[condition].dim() == 1:
+                batch[condition] = batch[condition].unsqueeze(1)
+            embeds = embedder.embed(
                 self.requires, 
-                batch['speaker_id'].to(self.device), 
+                batch[condition].to(self.device), 
                 with_sos=False)     # This ensures only one frame is used for speaker ID or placeholder
         else:
-            embeds = speaker_embedder.get_sos_embed(batch_size)
+            embeds = embedder.get_sos_embed(batch_size)
         return embeds
+
+    def prepare_speaker_inputs(self, batch, speaker_embedder):
+        return self._prepare_one_frame_inputs(batch, speaker_embedder, 'speaker_id')
+
+    def prepare_key_inputs(self, batch, key_embedder):
+        return self._prepare_one_frame_inputs(batch, key_embedder, 'key')
+
+    def prepare_tempo_label_inputs(self, batch, tempo_label_embedder):
+        return self._prepare_one_frame_inputs(batch, tempo_label_embedder, 'tempo_label')
 
     # TODO: make this into a static method (vibertthio)
     def prepare_acc_audio_inputs(self, batch, acc_embedder: BestRQTokenEmbedder):
@@ -590,10 +622,16 @@ class SemanticModule(BaseContinuousEmbedModule):
                 emb_inputs = self.prepare_mulan_inputs(batch, embedder)
             elif emb_type == "tag_categorical":            
                 emb_inputs = self.prepare_categorical_inputs(batch, embedder)
+            elif emb_type == "multitags_categorical":
+                emb_inputs = self.prepare_categorical_inputs(batch, embedder)
             elif emb_type == "lyrics_tokens":
                 emb_inputs = self.prepare_lyrics_inputs(batch, embedder)
             elif emb_type == "speaker_id":
                 emb_inputs = self.prepare_speaker_inputs(batch, embedder)
+            elif emb_type == "key":
+                emb_inputs = self.prepare_key_inputs(batch, embedder)
+            elif emb_type == "tempo_label":
+                emb_inputs = self.prepare_tempo_label_inputs(batch, embedder)
             elif emb_type == "audio_key_token":
                 emb_inputs = self.prepare_audio_key_inputs(batch, embedder)
             elif emb_type == "offset_token":
@@ -809,6 +847,7 @@ class SemanticModule(BaseContinuousEmbedModule):
     @torch.no_grad()
     def prepare_cfg_batch(self, batch, hp):
         controller_cfg_label = hp.get('controller_cfg_label', "genre")
+        rewrite_target = hp.get("rewrite_target", "multi_tag")
         batch_cfg = deepcopy(batch)
         
         # instrumental use case
@@ -818,25 +857,34 @@ class SemanticModule(BaseContinuousEmbedModule):
             batch_cfg['style_text'] = [''] * batch_size
             batch_cfg['style_audio'] = [''] * batch_size
             return batch_cfg
-        
+
         # vocal use case
         cfg_style_text = []
         for x in batch['style_text']:
             x = x.split('|')
-            print(x,controller_cfg_label)
-            x[0] = '' if 'genre' in controller_cfg_label else x[0]
-            x[1] = '' if 'mood' in controller_cfg_label else x[1]
-            x[2] = '' if 'scene' in controller_cfg_label else x[2]
-            x[3] = '' if 'sinking' in controller_cfg_label else x[3]
-            x[4] = '' if 'lang' in controller_cfg_label else x[4]
+            print(x, ' apply cfg to : ', controller_cfg_label)
+            if rewrite_target == 'multi_tag':
+                x[0] = '' if 'genre' in controller_cfg_label else x[0]
+                x[1] = '' if 'mood' in controller_cfg_label else x[1]
+                x[2] = '' if 'scene' in controller_cfg_label else x[2]
+                x[3] = '' if 'speaker' in controller_cfg_label else x[3]
+                x[4] = '' if 'voice' in controller_cfg_label else x[4]
+            else:
+                # Default to using sa_tag
+                x[0] = '' if 'genre' in controller_cfg_label else x[0]
+                x[1] = '' if 'mood' in controller_cfg_label else x[1]
+                x[2] = '' if 'scene' in controller_cfg_label else x[2]
+                x[3] = '' if 'sinking' in controller_cfg_label else x[3]
+                x[4] = '' if 'lang' in controller_cfg_label else x[4]
             print(x)
-            cfg_style_text.append('|'.join(x))                
+            cfg_style_text.append('|'.join(x))
         batch_cfg['style_text'] = cfg_style_text
         batch_cfg['style_category'] = cfg_style_text
         if "speaker" in controller_cfg_label:                
-            print(batch_cfg['speaker_id'])                
+            print(batch_cfg['speaker_id'], ' apply cfg to speaker')
             batch_cfg['speaker_id'] = torch.as_tensor([0] * len(batch['style_category']))
-            print(batch_cfg['speaker_id'])
+            print(batch_cfg['speaker_id']) 
+
         return batch_cfg
 
 
@@ -852,6 +900,9 @@ class SemanticModule(BaseContinuousEmbedModule):
         sample_thresh = hp.get('sample_thresh', 0.9)
         use_controller_cfg = hp.get('use_controller_cfg', False)
         controller_cfg_gamma = hp.get('controller_cfg_gamma', 1)
+        use_step_out_blank = hp.get('use_step_out_blank', False)
+        step_out_blank_logic = hp.get('step_out_blank_logic', 'v2')
+        step_out_blank_max_len = hp.get('step_out_blank_max_len', 10)
         skip_sos = hp.get('skip_sos', False)
         self.extra_params.debug_index = hp.get('debug_index', None)
         exclude_ids = None
@@ -893,7 +944,10 @@ class SemanticModule(BaseContinuousEmbedModule):
             skip_sos=skip_sos,
             use_controller_cfg=use_controller_cfg,
             inputs_embeds_cfg=inputs_emb_cfg,
-            controller_cfg_gamma=controller_cfg_gamma,            
+            controller_cfg_gamma=controller_cfg_gamma,
+            use_step_out_blank=use_step_out_blank,
+            step_out_blank_logic=step_out_blank_logic,
+            step_out_blank_max_len=step_out_blank_max_len,
         )
 
     @torch.no_grad()

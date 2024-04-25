@@ -10,33 +10,36 @@ To add a new dataset:
 
 
 from dataclasses import dataclass
-from typing import Optional, Dict, Tuple, List, TypeVar, Type
+from typing import Any, Optional, Dict, Tuple, TypeVar, Type
 
 from .zh_meta import (
-    DeepChorus,
-    SongSlice,
     ZhMetaBase,
-    ZhMetaLogger,
     # Parsers
     parse_utterance_lyrics,
     parse_style_text_sa,
+    parse_style_text_audio_tags_v0,
+    parse_style_text_audio_tags_v1,
+    parse_style_text_audio_tags_v2,
     parse_lyrics_confidence_force_alignment,
     parse_lyrics_confidence_sa_asr,
     parse_lyrics_confidence_optional,
     parse_structure_tags,
     parse_structure_tags_optional,
     parse_artist_id,
-    parse_source,
+    parse_source_optional,
     parse_filter_label,
     parse_voice_tag,
     parse_voice_tag_sa,
+    parse_voice_tag_sa_optional,
+    parse_mir_tempo,
+    parse_mir_tempo_optional,
+    parse_mir_key,
+    parse_mir_key_optional,
     # Validators
-    validate_quality,
     validate_style_text_sa,
     validate_deepchorus,
     # Converters
     convert_hqmy,
-    convert_voice_tag,
 )
 
 ZhMetaBaseType = TypeVar("ZhMetaBaseType", bound=ZhMetaBase)
@@ -97,9 +100,9 @@ class ZhMetaTransform:
         zh_meta = ZhMetaGeneral if dataset_entry is None else dataset_entry.parser
         return cls(zh_meta, **kwargs)
 
-    def __call__(self, meta: Dict) -> Tuple[ZhMetaLogger, List[SongSlice], List[str], int, Optional[float], Optional[DeepChorus]]:
+    def __call__(self, meta: Dict) -> Dict[str, Any]:
         """Parse the meta dict into an intermediate representation, then convert it into song slices.
-        :return: (meta_logger, song_slices, style_text, artist_id)
+        :return: (meta_logger, song_slices, style_text, artist_id, lyrics_confidence, deepchorus, tempo_label, key)
         """
         return self.zh_meta.parse(meta, self.sinking_threshold).transform(
             lyrics_confidence=self.lyrics_confidence,
@@ -117,6 +120,7 @@ class ZhMetaTransform:
 
 @dataclass
 class ZhMetaLowRisk(ZhMetaBase):
+    """music_tagging (SA), deepchorus, force_alignment lyrics"""
     @classmethod
     def parse(cls, meta, sinking_threshold: float):
         utts = parse_utterance_lyrics(meta)
@@ -138,6 +142,7 @@ class ZhMetaLowRisk(ZhMetaBase):
 
 @dataclass
 class ZhMetaLowRiskVoiceTag(ZhMetaLowRisk):
+    """music_tagging (SA), deepchorus, force_alignment lyrics, gender"""
     @classmethod
     def parse(cls, meta, sinking_threshold: float):
         utts = parse_utterance_lyrics(meta)
@@ -150,13 +155,14 @@ class ZhMetaLowRiskVoiceTag(ZhMetaLowRisk):
             unfamiliar_tags=unfamiliar_tags,
             is_sinking=is_sinking,
             artist_id=parse_artist_id(meta),
-            source=parse_source(meta),
+            source=parse_source_optional(meta),
             voice_tag=parse_voice_tag(meta),
         )
 
 
 @dataclass
-class ZhMetaSFTBase(ZhMetaBase):
+class ZhMetaLowRiskSA(ZhMetaLowRisk):
+    """music_tagging (SA), deepchorus, asr lyrics (SA), sa_gender"""
     @classmethod
     def parse(cls, meta, sinking_threshold: float):
         style_text, unfamiliar_tags, is_sinking = parse_style_text_sa(meta, sinking_threshold)
@@ -168,7 +174,65 @@ class ZhMetaSFTBase(ZhMetaBase):
             unfamiliar_tags=unfamiliar_tags,
             is_sinking=is_sinking,
             artist_id=parse_artist_id(meta),
-            source=parse_source(meta),
+            source=parse_source_optional(meta),
+            voice_tag=parse_voice_tag_sa(meta),
+        )
+
+@dataclass
+class ZhMetaLowRiskMIR(ZhMetaLowRisk):
+    """music_tagging (SA), deepchorus, asr lyrics (SA), sa_gender, tempo, key"""
+    @classmethod
+    def parse(cls, meta, sinking_threshold: float):
+        style_text, unfamiliar_tags, is_sinking = parse_style_text_sa(meta, sinking_threshold)
+        return cls(
+            utterances=parse_utterance_lyrics(meta),
+            lyrics_confidence=parse_lyrics_confidence_sa_asr(meta),
+            structure_tags=parse_structure_tags(meta),
+            style_text=style_text,
+            unfamiliar_tags=unfamiliar_tags,
+            is_sinking=is_sinking,
+            artist_id=parse_artist_id(meta),
+            source=parse_source_optional(meta),
+            voice_tag=parse_voice_tag_sa(meta),
+            tempo=parse_mir_tempo(meta),
+            key=parse_mir_key(meta),
+        )
+
+@dataclass
+class ZhMetaMixLangOpt(ZhMetaLowRisk):
+    """music_tagging (SA), deepchorus, asr lyrics (SA), sa_gender (optional), tempo (optional), key (optional)"""
+    @classmethod
+    def parse(cls, meta, sinking_threshold: float):
+        style_text, unfamiliar_tags, is_sinking = parse_style_text_sa(meta, sinking_threshold)
+        return cls(
+            utterances=parse_utterance_lyrics(meta),
+            lyrics_confidence=parse_lyrics_confidence_sa_asr(meta),
+            structure_tags=parse_structure_tags(meta),
+            style_text=style_text,
+            unfamiliar_tags=unfamiliar_tags,
+            is_sinking=is_sinking,
+            artist_id=parse_artist_id(meta),
+            source=parse_source_optional(meta),
+            voice_tag=parse_voice_tag_sa_optional(meta),
+            tempo=parse_mir_tempo_optional(meta),
+            key=parse_mir_key_optional(meta),
+        )
+
+@dataclass
+class ZhMetaSFTBase(ZhMetaBase):
+    """music_tagging (SA), deepchorus, asr lyrics (SA). Deepchorus confidence validation."""
+    @classmethod
+    def parse(cls, meta, sinking_threshold: float):
+        style_text, unfamiliar_tags, is_sinking = parse_style_text_sa(meta, sinking_threshold)
+        return cls(
+            utterances=parse_utterance_lyrics(meta),
+            lyrics_confidence=parse_lyrics_confidence_sa_asr(meta),
+            structure_tags=parse_structure_tags(meta),
+            style_text=style_text,
+            unfamiliar_tags=unfamiliar_tags,
+            is_sinking=is_sinking,
+            artist_id=parse_artist_id(meta),
+            source=parse_source_optional(meta),
         )
 
     def _validate(self, lyrics_confidence: Optional[float]):
@@ -179,12 +243,12 @@ class ZhMetaSFTBase(ZhMetaBase):
     def _convert(self):
         _self = super()._convert()
         convert_hqmy(_self)
-        convert_voice_tag(_self)
         return _self
 
 
 @dataclass
 class ZhMetaSFTVoiceTagSA(ZhMetaSFTBase):
+    """music_tagging (SA), deepchorus, asr lyrics (SA), sa_gender"""
     @classmethod
     def parse(cls, meta, sinking_threshold: float):
         style_text, unfamiliar_tags, is_sinking = parse_style_text_sa(meta, sinking_threshold)
@@ -196,13 +260,35 @@ class ZhMetaSFTVoiceTagSA(ZhMetaSFTBase):
             unfamiliar_tags=unfamiliar_tags,
             is_sinking=is_sinking,
             artist_id=parse_artist_id(meta),
-            source=parse_source(meta),
+            source=parse_source_optional(meta),
             voice_tag=parse_voice_tag_sa(meta),
         )
 
 
 @dataclass
+class ZhMetaSFTMIRVoiceTagSA(ZhMetaSFTBase):
+    """music_tagging (SA), deepchorus, asr lyrics (SA), tempo, key"""
+    @classmethod
+    def parse(cls, meta, sinking_threshold: float):
+        style_text, unfamiliar_tags, is_sinking = parse_style_text_sa(meta, sinking_threshold)
+        return cls(
+            utterances=parse_utterance_lyrics(meta),
+            lyrics_confidence=parse_lyrics_confidence_sa_asr(meta),
+            structure_tags=parse_structure_tags(meta),
+            style_text=style_text,
+            unfamiliar_tags=unfamiliar_tags,
+            is_sinking=is_sinking,
+            artist_id=parse_artist_id(meta),
+            source=parse_source_optional(meta),
+            voice_tag=parse_voice_tag_sa(meta),
+            tempo=parse_mir_tempo(meta),
+            key=parse_mir_key(meta),
+        )
+
+
+@dataclass
 class ZhMetaSFTFilterLabel(ZhMetaSFTBase):
+    """music_tagging (SA), deepchorus, asr lyrics (SA), filter_label"""
     @classmethod
     def parse(cls, meta, sinking_threshold: float):
         style_text, unfamiliar_tags, is_sinking = parse_style_text_sa(meta, sinking_threshold)
@@ -215,10 +301,124 @@ class ZhMetaSFTFilterLabel(ZhMetaSFTBase):
             unfamiliar_tags=unfamiliar_tags,
             is_sinking=is_sinking,
             artist_id=parse_artist_id(meta),
-            source=parse_source(meta),
+            source=parse_source_optional(meta),
             is_high_quality=is_high_quality,
             is_popular_potential=is_popular_potential,
         )
+
+@dataclass
+class ZhMetaSFTAudioTagsV0(ZhMetaBase):
+    # only support read audio_tags
+    @classmethod
+    def parse(cls, meta, sinking_threshold: float):
+        style_text, unfamiliar_tags, is_sinking = parse_style_text_audio_tags_v0(meta, sinking_threshold)
+        return cls(
+            utterances=parse_utterance_lyrics(meta),
+            lyrics_confidence=1.0,
+            structure_tags=parse_structure_tags(meta),
+            style_text=style_text,
+            unfamiliar_tags=unfamiliar_tags,
+            is_sinking=is_sinking,
+            artist_id=parse_artist_id(meta),
+            source=parse_source_optional(meta),
+        )
+
+    def _validate(self, lyrics_confidence: Optional[float]):
+        pass
+
+@dataclass
+class ZhMetaSFTAudioTagsV1(ZhMetaBase):
+    # support read audio_tags and music_tagging
+    """
+    meta.audio_tags.genre/meta.music_tagging.Genre20,
+    meta.audio_tags.mood/meta.music_tagging.Mood,
+    meta.audio_tags.scene/meta.music_tagging.Theme,
+    meta.audio_tags.vocal_gender/meta.gender.sa_gender,
+    meta.audio_tags.vocal_timbre,
+    meta.deepchorus,
+    meta.lyrics,
+    meta.mir_service.beat.tempo,
+    meta.mir_service.key.song
+    """
+    @classmethod
+    def parse(cls, meta, sinking_threshold: float):
+        style_text, unfamiliar_tags, is_sinking = parse_style_text_audio_tags_v1(meta, sinking_threshold)
+        return cls(
+            utterances=parse_utterance_lyrics(meta),
+            lyrics_confidence=parse_lyrics_confidence_sa_asr(meta),
+            structure_tags=parse_structure_tags(meta),
+            style_text=style_text,
+            unfamiliar_tags=unfamiliar_tags,
+            is_sinking=is_sinking,
+            artist_id=parse_artist_id(meta),
+            source=parse_source_optional(meta),
+            #tempo=parse_mir_tempo_optional(meta),
+            #key=parse_mir_key_optional(meta),
+        )
+
+    def _validate(self, lyrics_confidence: Optional[float]):
+        super()._validate(lyrics_confidence)
+        #pass
+
+
+@dataclass
+class ZhMetaSFTAudioTagsV1NoConf(ZhMetaSFTAudioTagsV1):
+    @classmethod
+    def parse(cls, meta, sinking_threshold: float):
+        style_text, unfamiliar_tags, is_sinking = parse_style_text_audio_tags_v1(meta, sinking_threshold)
+        return cls(
+            utterances=parse_utterance_lyrics(meta),
+            lyrics_confidence=None,  # No confidence
+            structure_tags=parse_structure_tags(meta),
+            style_text=style_text,
+            unfamiliar_tags=unfamiliar_tags,
+            is_sinking=is_sinking,
+            artist_id=parse_artist_id(meta),
+            source=parse_source_optional(meta),
+        )
+
+
+@dataclass
+class ZhMetaSFTAudioTagsV2(ZhMetaBase):
+    # support read audio_tags and music_tagging
+    """
+    meta.audio_tags.genre/meta.music_tagging.Genre20,
+    meta.audio_tags.mood/meta.music_tagging.Mood,
+    meta.audio_tags.scene/meta.music_tagging.Theme,
+    meta.audio_tags.vocal_gender/meta.gender.sa_gender,
+    meta.audio_tags.vocal_timbre,
+    meta.deepchorus,
+    meta.lyrics,
+    meta.mir_service.beat.tempo,
+    meta.mir_service.key.song
+    """
+    @classmethod
+    def parse(cls, meta, sinking_threshold: float):
+        style_text, unfamiliar_tags, is_sinking = parse_style_text_audio_tags_v2(meta, sinking_threshold)
+        voice_tag = parse_voice_tag_sa_optional(meta)
+        voice_tags = style_text[3]
+        if 'Male' in voice_tags:
+            voice_tag = 'Male'
+        elif 'Female' in voice_tags:
+            voice_tag = 'Female'
+
+        return cls(
+            utterances=parse_utterance_lyrics(meta),
+            lyrics_confidence=parse_lyrics_confidence_sa_asr(meta),
+            structure_tags=parse_structure_tags(meta),
+            style_text=style_text,
+            unfamiliar_tags=unfamiliar_tags,
+            is_sinking=is_sinking,
+            artist_id=parse_artist_id(meta),
+            source=parse_source_optional(meta),
+            voice_tag=voice_tag,
+            #tempo=parse_mir_tempo_optional(meta),
+            #key=parse_mir_key_optional(meta),
+        )
+
+    def _validate(self, lyrics_confidence: Optional[float]):
+        super()._validate(lyrics_confidence)
+        #pass
 
 # ------------------------------------------
 #          Dataset-parser Mapping
@@ -239,10 +439,49 @@ class ZhDatasetEntry:
     misc: Optional[Dict] = None
 
     @classmethod
+    def new_pretrain_lowrisk(
+        cls,
+        parser: Type[ZhMetaBaseType],
+        desc: str,
+        is_validation_set: bool = False,
+        misc: Optional[Dict] = None
+    ):
+        return cls(
+            parser=parser,
+            desc=desc,
+            is_copyright_cleared=False,
+            is_releasable=True,
+            is_for_pretrain=True,
+            is_for_sft=False,
+            is_validation_set=is_validation_set,
+            misc=misc,
+        )
+
+    @classmethod
+    def new_pretrain_no_copyright(
+        cls,
+        parser: Type[ZhMetaBaseType],
+        desc: str,
+        is_validation_set: bool = False,
+        misc: Optional[Dict] = None
+    ):
+        return cls(
+            parser=parser,
+            desc=desc,
+            is_copyright_cleared=False,
+            is_releasable=False,
+            is_for_pretrain=True,
+            is_for_sft=False,
+            is_validation_set=is_validation_set,
+            misc=misc,
+        )
+
+    @classmethod
     def new_sft_copyright_cleared(
         cls,
         parser: Type[ZhMetaBaseType],
         desc: str,
+        is_validation_set: bool = False,
         misc: Optional[Dict] = None,
     ):
         return cls(
@@ -252,6 +491,7 @@ class ZhDatasetEntry:
             is_releasable=True,
             is_for_pretrain=False,
             is_for_sft=True,
+            is_validation_set=is_validation_set,
             misc=misc,
         )
 
@@ -260,6 +500,7 @@ class ZhDatasetEntry:
         cls,
         parser: Type[ZhMetaBaseType],
         desc: str,
+        is_validation_set: bool = False,
         misc: Optional[Dict] = None,
     ):
         return cls(
@@ -269,81 +510,63 @@ class ZhDatasetEntry:
             is_releasable=False,
             is_for_pretrain=False,
             is_for_sft=True,
+            is_validation_set=is_validation_set,
             misc=misc,
         )
 
 
 ZH_DATASET_REGISTRY = {
     # low risk
-    1527: ZhDatasetEntry(
+    1527: ZhDatasetEntry.new_pretrain_lowrisk(
         parser=ZhMetaLowRisk,
         desc="Chinese low risk dataset, 712k",
-        is_copyright_cleared=False,
-        is_releasable=True,
-        is_for_pretrain=True,
-        is_for_sft=False,
     ),
-    1528: ZhDatasetEntry(
-        parser=ZhMetaLowRisk,
+    1528: ZhDatasetEntry.new_pretrain_lowrisk(
+        parser=ZhMetaSFTAudioTagsV0,
         desc="Chinese low risk validation dataset",
-        is_copyright_cleared=False,
-        is_releasable=True,
-        is_for_pretrain=True,
-        is_for_sft=False,
-        is_validation_set=True
+        is_validation_set=True,
     ),
-    1973: ZhDatasetEntry(
+    1973: ZhDatasetEntry.new_pretrain_lowrisk(
         parser=ZhMetaLowRisk,
         desc="Chinese low risk dataset, 450k",
-        is_copyright_cleared=False,
-        is_releasable=True,
-        is_for_pretrain=True,
-        is_for_sft=False,
-        is_validation_set=True
     ),
-    1974: ZhDatasetEntry(
+    1974: ZhDatasetEntry.new_pretrain_lowrisk(
         parser=ZhMetaLowRisk,
         desc="Chinese low risk dataset, 712k + 450k",
-        is_copyright_cleared=False,
-        is_releasable=True,
-        is_for_pretrain=True,
-        is_for_sft=False,
-        is_validation_set=True
     ),
-    2117: ZhDatasetEntry(
+    2117: ZhDatasetEntry.new_pretrain_lowrisk(
         parser=ZhMetaLowRisk,
         desc="Chinese low risk dataset with filtering, 476k + 329k",
-        is_copyright_cleared=False,
-        is_releasable=True,
-        is_for_pretrain=True,
-        is_for_sft=False,
-        is_validation_set=False
     ),
-    2192: ZhDatasetEntry(
+    2192: ZhDatasetEntry.new_pretrain_lowrisk(
         parser=ZhMetaLowRisk,
         desc="Chinese low risk dataset with mir service(V41.join(V33))--Train set",
-        is_copyright_cleared=False,
-        is_releasable=True,
-        is_for_pretrain=True,
-        is_for_sft=False,
         is_validation_set=True
     ),
-    2191: ZhDatasetEntry(
+    2191: ZhDatasetEntry.new_pretrain_lowrisk(
         parser=ZhMetaLowRisk,
         desc="Chinese low risk dataset with mir service(V41.join(V33))--Test set",
-        is_copyright_cleared=False,
-        is_releasable=True,
-        is_for_pretrain=True,
-        is_for_sft=False,
         is_validation_set=True
     ),
-    1725: ZhDatasetEntry(
+    1725: ZhDatasetEntry.new_pretrain_lowrisk(
         parser=ZhMetaLowRiskVoiceTag,
         desc="Chinese low risk dataset with gender tag",
-        is_copyright_cleared=False,
-        is_releasable=True,
-        is_for_pretrain=True,
-        is_for_sft=False,
+    ),
+    2226: ZhDatasetEntry.new_pretrain_lowrisk(
+        parser=ZhMetaLowRiskSA,
+        desc="New Chinese low risk dataset (mcc, dq, wyy) with aggressive filtering, 141k + 520k + 339k",
+    ),
+    2228: ZhDatasetEntry.new_pretrain_no_copyright(
+        parser=ZhMetaMixLangOpt,
+        desc="English Group A (key, tempo) + Billboard (key, tempo, no gender tag) + New Chinese low risk dataset (mcc, dq, wyy) with aggressive filtering, 283k + 100k + 141k + 520k + 339k",
+    ),
+    2287: ZhDatasetEntry.new_pretrain_lowrisk(
+        parser=ZhMetaLowRiskMIR,
+        desc="New Chinese low risk dataset (mcc, dq, wyy) with MIR tags and aggressive filtering, 141k + 519k + 337k",
+    ),
+    2350: ZhDatasetEntry.new_pretrain_no_copyright(
+        parser=ZhMetaMixLangOpt,
+        desc="English Group A (key, tempo) + Billboard (key, tempo, gender) + New Chinese low risk dataset (mcc, dq, wyy) with aggressive filtering, 283k + 100k + 141k + 520k + 339k + 440k high risk, MIR",
     ),
     # SFT, internal
     1879: ZhDatasetEntry.new_sft_no_copyright(
@@ -390,6 +613,26 @@ ZH_DATASET_REGISTRY = {
         parser=ZhMetaSFTBase,
         desc="3x(Everynoise, 4k + Chinese artist, 7k + Playlist3k5 + Artist2k) + 2x High risk 200k + Billboard 110k",
     ),
+    2189: ZhDatasetEntry.new_sft_no_copyright(
+        parser=ZhMetaSFTBase,
+        desc="3x(Everynoise, 4k + Chinese artist, 7k + Playlist3k5 + Artist2k) + High risk 440k + Billboard 110k + 20 X 7k lightweight internal",
+    ),
+    2249: ZhDatasetEntry.new_sft_no_copyright(
+        parser=ZhMetaSFTBase,
+        desc="7k5 authorized lightweight filtered from 110k without fine-grained labels",
+    ),
+    2343: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV0,
+        desc="high risk 1k7, from xiaohong",
+    ),
+    2408: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="multitags 3.5k+multitags 6k(from wy)+low risk 5k+high risk 1k7 from xiaohong, rerun sa lyrics, remove valid, update phoneme",
+    ),
+    2407: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="multitags 3.5k+multitags 6k(from mcc)+low risk 5k+high risk 1k7 from xiaohong, rerun sa lyrics, remove valid, update phoneme",
+    ),
     # SFT, releasable
     1935: ZhDatasetEntry.new_sft_copyright_cleared(
         parser=ZhMetaSFTBase,
@@ -425,7 +668,99 @@ ZH_DATASET_REGISTRY = {
         desc="Same as 1939 (todo: remove it)"
     ),
     2119: ZhDatasetEntry.new_sft_copyright_cleared(
-        parser=ZhMetaSFTVoiceTagSA,
+        parser=ZhMetaSFTMIRVoiceTagSA,  # parse additional MIR info
         desc="Authorized data combined, 110k",
+    ),
+    2256: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTMIRVoiceTagSA,
+        desc="Authorized data combined, aggressive filtering, 60k",
+    ),
+    2193: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV0,
+        desc="multitags 3.5k",
+    ),
+    2301: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV1,
+        desc="multitags 3.5k, add mir and update SA asr lyrics",
+    ),
+    2307: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV1,
+        desc="multitags 3.5k + double-yes 7.5k, fix sa lyrics",
+    ),
+    2289: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV1,
+        desc="multitags 3.5k + double-yes 7.5k",
+    ),
+    2293: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV1NoConf,
+        desc="double-yes 7.5k",
+    ),
+    2301: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV1,
+        desc="multitags 3.5k, add mir and update SA asr lyrics",
+    ),
+    2307: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV1,
+        desc="multitags 3.5k + double-yes 7.5k, fix sa lyrics",
+    ),
+    2310: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV1,
+        desc="dq low risk from xiaohong 2.5k, chinese",
+    ),
+    2311: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV1,
+        desc="multitags 3.5k, fix sa lyrics",
+    ),
+    2379: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV1,
+        desc="multitags 7k + 3.5k, low risk 5k",
+    ),
+    2332: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV1,
+        desc="wyy low risk from xiaohong 2k, chinese",
+    ),
+    2333: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV1,
+        desc="mcc low risk from xiaohong 0.5k, chinese",
+    ),
+    2364: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV1,
+        desc="multitags 7.5k",
+    ),
+    2367: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="multitags debug or valid",
+    ),
+    2378: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="multitags 6k, labeled from wy",
+    ),
+    2379: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="multitags 3.5k+multitags 6k(from wy)+low risk from xiaohong 5k, fix sa lyrics, remove valid",
+    ),
+    2383: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV1,
+        desc="Above 3, mcc low risk from xiaohong 5k, chinese",
+    ),
+    2384: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="multitags 3.5k+multitags 6k(from wy)+low risk from xiaohong 5k, rerun sa lyrics, remove valid",
+    ),
+    2385: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="multitags 3.5k+multitags 6k(from mcc)+low risk from xiaohong 5k, rerun sa lyrics, remove valid",
+    ),
+    2405: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="multitags 3.5k+multitags 6k(from wy), update phoneme",
+    ),
+    2406: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="multitags 3.5k+multitags 6k(from mcc), update phoneme",
+    ),
+    2401: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="multitags 6k(from wy)",
     ),
 }

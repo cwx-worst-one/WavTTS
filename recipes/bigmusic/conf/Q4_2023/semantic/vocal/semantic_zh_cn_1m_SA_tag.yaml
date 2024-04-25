@@ -19,12 +19,11 @@ extra_params:
     train_conditions: "style_category,speaker_id,lyrics_tokens"
     prepare_input_types: []
     input_embedders: [tag_categorical, speaker_id, lyrics_tokens]
-    tag_taxonomy_lang: "SA"  # Zh, SA
-    tag_dropout_rate: 0.25
+    tag_taxonomy_lang: "SA"
+    tag_dropout_rate: 0.1
     line_break_dropout_rate: 0
     section_tag_dropout_rate: 0
-    use_mcc_gender: False
-    # mulan_embed_dim: 512
+    # LM params
     hidden_size: 1536
     intermediate_size: 4352
     num_hidden_layers: 24
@@ -43,6 +42,7 @@ run_opts:
     cache_dir: .module_cache/bigmusic
     precision: "16"
     num_workers: 6
+    prefetch_factor: 12
     accelerator: auto
     max_steps: 100000
     val_check_interval: 1000
@@ -60,9 +60,8 @@ run_opts:
     infer_structure_tags: False
     read_structure_tags: True
     region: "CN"
-    lyrics_field: "lyrics"
     lyrics_confidence: 0.1  # Force Alignment confidence
-    lyrics_tokenizer: "tts_chinese_frontend_model"
+    lyrics_tokenizer: "tts_chinese_frontend_model"  # tts_chinese_frontend_model | tts_chinese_frontend_model_phonetone
     segment_max_phone_len: 1000
     parquet_dataset_ids: [1527]
     parquet_dataset_weights: [1]
@@ -86,7 +85,6 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     segment_max_phone_len: !ref <run_opts[segment_max_phone_len]>
     region: !ref <run_opts[region]>
     conditions: !ref <extra_params[train_conditions]>
-    lyrics_field: !ref <run_opts[lyrics_field]>
     lyrics_confidence: !ref <run_opts[lyrics_confidence]>
     read_structure_tags: !ref <run_opts[read_structure_tags]>
     infer_structure_tags: !ref <run_opts[infer_structure_tags]>
@@ -96,10 +94,9 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     sinking_threshold: !ref <run_opts[sinking_threshold]>
     quality_filter: !ref <run_opts[quality_filter]>
     frame_rate: !ref <extra_params[semantic_frame_rate]>
-    tag_taxonomy_lang: !ref <extra_params[tag_taxonomy_lang]>
     line_break_dropout_rate: !ref <extra_params[line_break_dropout_rate]>
     section_tag_dropout_rate: !ref <extra_params[section_tag_dropout_rate]>
-    normalize_audio: True
+    prefetch_factor: !ref <run_opts[prefetch_factor]>
 
 model_config: !new:transformers.GPT2Config
     vocab_size: 1 # placeholder. Embedding table gets removed on load
@@ -204,6 +201,7 @@ callbacks:
       filename: "{step:06d}-{tr_loss:.4f}-{val_accu_0:.2f}"
     - !new:pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: 'step'
+    - !new:samantha.callbacks.timer.Timer
     # - !new:recipes.bigmusic.callbacks.data_logger.BigMusicDataUsageLogger
     #   save_dir: /mnt/bn/audio-diffusion/qq/data_usage_logs
     #   save_every_n_iter: 5000

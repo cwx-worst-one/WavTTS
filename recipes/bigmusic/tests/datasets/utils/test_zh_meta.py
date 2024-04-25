@@ -5,6 +5,7 @@ import mock
 
 from recipes.datasets.mcc.sami_tokenizer import Phrase
 from recipes.bigmusic.datasets.utils.zh_meta import (
+    SongSlice,
     drop_out_line_breaks,
     drop_out_section_tags,
     move_out_section_tags,
@@ -274,9 +275,21 @@ def test_drop_out_line_breaks(test_data):
 
 
 SECTION_TAG_DROPOUT_INPUT = [
-    Phrase(section_tag="verse"),
+    Phrase(section_tag="verse#1"),
     Phrase(text="hello"),
-    Phrase(section_tag="chorus"),
+    Phrase(section_tag="verse#2"),
+    Phrase(text="hello"),
+    Phrase(section_tag="chorus#3"),
+    Phrase(text="world"),
+]
+
+
+SECTION_TAG_DROPOUT_OUTPUT = [
+    Phrase(section_tag="verse#1"),
+    Phrase(text="hello"),
+    Phrase(section_tag="verse#2"),
+    Phrase(text="hello"),
+    Phrase(section_tag="chorus#3"),
     Phrase(text="world"),
 ]
 
@@ -285,12 +298,13 @@ SECTION_TAG_DROPOUT_CASES = [
     # it only has 2 cases
     {
         "rate": 0,
-        "out": SECTION_TAG_DROPOUT_INPUT,
+        "out": SECTION_TAG_DROPOUT_OUTPUT,
         "desc": "no dropout",
     },
     {
         "rate": 1,
         "out": [
+            Phrase(text="hello"),
             Phrase(text="hello"),
             Phrase(text="world"),
         ],
@@ -307,3 +321,14 @@ SECTION_TAG_DROPOUT_CASES = [
 def test_drop_out_section_tags(test_data):
     with mock.patch("recipes.bigmusic.datasets.utils.zh_meta.Random", MockRandom):
         assert drop_out_section_tags(SECTION_TAG_DROPOUT_INPUT, test_data["rate"]) == test_data["out"]
+
+
+def test_reformat_and_dropout():
+    assert SongSlice.reformat_and_dropout(0, 0, SECTION_TAG_DROPOUT_INPUT) == [
+        Phrase(section_tag="verse"),
+        Phrase(text="hello"),
+        Phrase(section_tag="verse"),
+        Phrase(text="hello"),
+        Phrase(section_tag="chorus"),
+        Phrase(text="world"),
+    ]

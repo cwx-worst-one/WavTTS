@@ -10,7 +10,8 @@ from recipes.datasets.mcc.sami_tokenizer import (
     singer_tags,
     section_tags,
     phone_to_int,
-    tone_to_int,
+    phonetone_to_int,
+    VOCAB_TYPES,
     convert_labels_to_text_id,
 )
 
@@ -36,7 +37,7 @@ PHONE_MOCK_INPUT = [
     "。\t0\tS\t4\tO\t\tS",
 ]
 
-PHONE_MOCK_OUTPUT = (
+PHONE_TYPE_MOCK_OUTPUT = (
     np.array(
         [
             [
@@ -74,44 +75,9 @@ PHONE_MOCK_OUTPUT = (
                 265,
                 263,
                 85,
-            ],
-            [
-                2,
-                5,
-                19,
-                17,
-                4,
-                4,
-                19,
-                17,
-                3,
-                3,
-                19,
-                17,
-                5,
-                5,
-                19,
-                17,
-                3,
-                3,
-                19,
-                3,
-                3,
-                19,
-                17,
-                7,
-                7,
-                19,
-                17,
-                6,
-                6,
-                19,
-                4,
-                19,
-                17,
-                2,
-            ],
+            ]
         ]
+        * 2
     ),
     [
         "sil",
@@ -149,57 +115,115 @@ PHONE_MOCK_OUTPUT = (
         "zh_word_sep",
         "。",
     ],
+)
+
+
+PHONE_TONE_TYPE_MOCK_OUTPUT = (
+    np.array(
+        [
+            [
+                2,
+                1401,
+                1595,
+                1593,
+                418,
+                650,
+                1595,
+                1593,
+                424,
+                754,
+                1595,
+                1593,
+                428,
+                711,
+                1595,
+                1593,
+                419,
+                1324,
+                1595,
+                434,
+                739,
+                1595,
+                1593,
+                420,
+                593,
+                1595,
+                1593,
+                428,
+                1402,
+                1595,
+                740,
+                1595,
+                1593,
+                85,
+            ]
+        ]
+        * 2
+    ),
     [
-        "0",
-        "3",
+        "sil",
+        "C0uo@3",
         "syl_sep",
         "zh_word_sep",
-        "2",
-        "2",
+        "C0c",
+        "C0eng@2",
         "syl_sep",
         "zh_word_sep",
-        "1",
-        "1",
+        "C0j",
+        "C0iang@1",
         "syl_sep",
         "zh_word_sep",
-        "3",
-        "3",
+        "C0n",
+        "C0i@3",
         "syl_sep",
         "zh_word_sep",
-        "1",
-        "1",
+        "C0ch",
+        "C0uen@1",
         "syl_sep",
-        "1",
-        "1",
-        "syl_sep",
-        "zh_word_sep",
-        "5",
-        "5",
+        "C0t",
+        "C0ian@1",
         "syl_sep",
         "zh_word_sep",
-        "4",
-        "4",
-        "syl_sep",
-        "2",
+        "C0d",
+        "C0e@5",
         "syl_sep",
         "zh_word_sep",
-        "0",
+        "C0n",
+        "C0uo@4",
+        "syl_sep",
+        "C0ian@2",
+        "syl_sep",
+        "zh_word_sep",
+        "。",
     ],
 )
 
 
-def test_sami_tokenizer():
-    tokens, phonemes, tones = convert_labels_to_text_id(PHONE_MOCK_INPUT)
-    gt_tokens, gt_phonemes, gt_tones = PHONE_MOCK_OUTPUT
+MOCK_OUTPUTS = {
+    "phoneme": PHONE_TYPE_MOCK_OUTPUT,
+    "phoneme+tone": PHONE_TONE_TYPE_MOCK_OUTPUT,
+}
+
+
+VOCAB_MAP = {"phoneme": phone_to_int, "phoneme+tone": phonetone_to_int}
+
+
+@pytest.mark.parametrize("vocab_type", VOCAB_TYPES)
+def test_sami_tokenizer(vocab_type):
+    tokens, phonemes, _ = convert_labels_to_text_id(
+        PHONE_MOCK_INPUT, vocab_type=vocab_type
+    )
+    gt_tokens, gt_phonemes = MOCK_OUTPUTS[vocab_type]
     assert np.array_equal(tokens, gt_tokens)
     assert phonemes == gt_phonemes
-    assert tones == gt_tones
 
 
 def _get_mock_phrase(section_tag, singer_tag):
     # prepend the singer tag to the beginning of the first line
     if section_tag and singer_tag:
-        mock_input = [f"[{section_tag}] {singer_tag}:{PHONE_MOCK_INPUT[0]}"] + PHONE_MOCK_INPUT[1:]
+        mock_input = [
+            f"[{section_tag}] {singer_tag}:{PHONE_MOCK_INPUT[0]}"
+        ] + PHONE_MOCK_INPUT[1:]
     elif section_tag:
         mock_input = [f"[{section_tag}] {PHONE_MOCK_INPUT[0]}"] + PHONE_MOCK_INPUT[1:]
     elif singer_tag:
@@ -209,45 +233,53 @@ def _get_mock_phrase(section_tag, singer_tag):
     return Phrase.parse(phonemes="\n".join(mock_input))
 
 
-@pytest.mark.parametrize("prefix_tags", product([None] + section_tags, [None] + singer_tags))
+@pytest.mark.parametrize(
+    "prefix_tags", product([None] + section_tags, [None] + singer_tags)
+)
 def test_sami_tokenizer_with_prefix_tags(prefix_tags):
+    # test on "phoneme" vocab type only
     section_tag, singer_tag = prefix_tags
     phrase = _get_mock_phrase(section_tag, singer_tag)
-    tokens, phonemes, tones = convert_labels_to_text_id(phrase.phonemes.split("\n"), phrase.prefix_tags)
-    gt_tokens, gt_phonemes, gt_tones = PHONE_MOCK_OUTPUT
+    tokens, phonemes, _ = convert_labels_to_text_id(
+        phrase.phonemes.split("\n"), phrase.prefix_tags
+    )
+    gt_tokens, gt_phonemes = PHONE_TYPE_MOCK_OUTPUT
 
-    section_phone_id = phone_to_int.get(section_tag)
-    section_tone_id = tone_to_int.get(section_tag)
-    singer_phone_id = phone_to_int.get(singer_tag)
-    singer_tone_id = tone_to_int.get(singer_tag)
+    section_phone_id = None if section_tag is None else phone_to_int[section_tag]
+    singer_phone_id = None if singer_tag is None else phone_to_int[singer_tag]
 
     prepend_tokens = list(filter(None, [section_tag, singer_tag]))
     prepend_phone_ids = list(filter(None, [section_phone_id, singer_phone_id]))
-    prepend_tone_ids = list(filter(None, [section_tone_id, singer_tone_id]))
 
-    assert np.array_equal(tokens, np.hstack([[prepend_phone_ids, prepend_tone_ids], gt_tokens]))
+    assert np.array_equal(
+        tokens, np.hstack([[prepend_phone_ids, prepend_phone_ids], gt_tokens])
+    )
     assert phonemes == prepend_tokens + gt_phonemes
-    assert tones == prepend_tokens + gt_tones
 
 
-def test_tokenize_phrase():
+@pytest.mark.parametrize("vocab_type", VOCAB_TYPES)
+def test_tokenize_phrase(vocab_type):
     section_tag = "verse"
     singer_tag = "合"
     phrase = _get_mock_phrase(section_tag, singer_tag)
 
-    section_phone_id = phone_to_int.get(section_tag)
-    singer_phone_id = phone_to_int.get(singer_tag)
+    section_phone_id = VOCAB_MAP[vocab_type][section_tag]
+    singer_phone_id = VOCAB_MAP[vocab_type][singer_tag]
 
     prepend_phone_ids = [section_phone_id, singer_phone_id]
 
-    gt_tokens, _, _ = PHONE_MOCK_OUTPUT
+    gt_tokens, _ = MOCK_OUTPUTS[vocab_type]
 
-    tokenizer = SamiOfflineTokenizer()
-    assert np.array_equal(tokenizer.tokenize_phrase(phrase), np.concatenate([prepend_phone_ids, gt_tokens[0]]))
+    tokenizer = SamiOfflineTokenizer(vocab_type=vocab_type)
+    assert np.array_equal(
+        tokenizer.tokenize_phrase(phrase),
+        np.concatenate([prepend_phone_ids, gt_tokens[0]]),
+    )
 
 
-def test_tokenize_phrase_invalid_inputs():
-    tokenizer = SamiOfflineTokenizer()
+@pytest.mark.parametrize("vocab_type", VOCAB_TYPES)
+def test_tokenize_phrase_invalid_inputs(vocab_type):
+    tokenizer = SamiOfflineTokenizer(vocab_type=vocab_type)
 
     with pytest.raises(SamiTokenizerError):
         tokenizer.tokenize_phrase(Phrase.parse(""))  # empty phrase
@@ -279,11 +311,5 @@ def test_tag_normalization_silent_none():
     assert phrase.section_tag is None
     assert phrase.text == "我的歌词"
 
-
-def test_parse_text():
-    phrases = Phrase.parse_text("(Verse)第一句 [CHORUS] 第二句<bridge> 第三句")
-    assert (phrases[0].text, phrases[0].section_tag) == ("第一句", "verse")
-    assert (phrases[1].text, phrases[1].section_tag) == ("第二句", "chorus")
-    assert (phrases[2].text, phrases[2].section_tag) == ("第三句", "bridge")
 
 # TODO (Yilin) Test SamiTokenizer

@@ -52,12 +52,22 @@ def extend_dim(x: Tensor, dim: int):
     return x.view(*x.shape + (1,) * (dim - x.ndim))
 
 class ARVSampler(nn.Module):
-    def __init__(self, in_channels: int, duration: int, num_splits: int):
+    def __init__(self, 
+        in_channels: int, 
+        duration: int, 
+        num_splits: int, 
+        vocoder_hz: int=VOCODER_HZ,
+        latent_std: float=1,
+        latent_mean: float=0,
+        ):
         super().__init__()
         assert duration % num_splits == 0, "length must be divisible by num_splits"
         self.duration = duration
         self.in_channels = in_channels
         self.num_splits = num_splits
+        self.vocoder_hz = vocoder_hz
+        self.latent_std = latent_std
+        self.latent_mean = latent_mean
     
     def set_device(self, device: torch.device):
         self.device = device
@@ -143,6 +153,8 @@ class ARVSampler(nn.Module):
             sigma = sigma - angle_schedule[i]
             current = np.cos(omega) * current - np.sin(omega) * v_pred
             progress_bar.set_description(f"Sampling {i}")
+        # current = (current * 0.2696) + 0.0086
+        current = (current * self.latent_std) + self.latent_mean
         current = clip(current)
         return current
 
@@ -166,11 +178,11 @@ class ARVSampler(nn.Module):
         b, c, duration = num_items, self.in_channels, self.duration
 
         # Sample initial chunks
-        current_emb = torch.randn(b, c, duration*VOCODER_HZ, device=self.device)
+        current_emb = torch.randn(b, c, duration*self.vocoder_hz, device=self.device)
         semantic_hop_size = 125
         diffusion_hop_size = 625
-        tmp_emb = torch.zeros(b, c, duration*VOCODER_HZ + diffusion_hop_size *(num_chunks - 1), device=self.device)
-        avg_cnt = torch.zeros(b, c, duration*VOCODER_HZ + diffusion_hop_size *(num_chunks - 1), device=self.device)
+        tmp_emb = torch.zeros(b, c, duration*self.vocoder_hz + diffusion_hop_size *(num_chunks - 1), device=self.device)
+        avg_cnt = torch.zeros(b, c, duration*self.vocoder_hz + diffusion_hop_size *(num_chunks - 1), device=self.device)
         prev_noise = current_emb
         output_emb = []
         for i in range(num_chunks):
@@ -179,7 +191,7 @@ class ARVSampler(nn.Module):
                 model=model,
                 semantic_context=semantic_context[:, 0 + (i*semantic_hop_size):duration*SEMANTIC_HZ + (i*semantic_hop_size)],
                 current=current_emb,
-                prev_noise=prev_noise[..., 0 + (i*diffusion_hop_size):duration*VOCODER_HZ + (i*diffusion_hop_size)],
+                prev_noise=prev_noise[..., 0 + (i*diffusion_hop_size):duration*self.vocoder_hz + (i*diffusion_hop_size)],
                 num_steps=num_steps,
                 bf16_portion=bf16_portion,
                 angle_schedule=angle_schedule,
@@ -187,8 +199,8 @@ class ARVSampler(nn.Module):
                 first=(i==0),
             )
 
-            tmp_emb[..., 0 + (i*diffusion_hop_size):duration*VOCODER_HZ + (i*diffusion_hop_size)] += pred_emb
-            avg_cnt[..., 0 + (i*diffusion_hop_size):duration*VOCODER_HZ + (i*diffusion_hop_size)] += 1
+            tmp_emb[..., 0 + (i*diffusion_hop_size):duration*self.vocoder_hz + (i*diffusion_hop_size)] += pred_emb
+            avg_cnt[..., 0 + (i*diffusion_hop_size):duration*self.vocoder_hz + (i*diffusion_hop_size)] += 1
 
             prev_emb = pred_emb[..., -diffusion_hop_size:]
 
@@ -208,9 +220,24 @@ def init_sampler(
     cache_dir,
     duration=30,
     sequence_length=None,   # for backward compat
+    version='24000',
 ):
+    sampler_setups = {
+        # latent_dim, vocoder_hz, latent_std, latent_mean
+        '24000': (32, 125, 1, 0),
+        '44100_v1': (64, 49, 0.2696, 0.0086),
+        '44100_v2': (128, 49, 0.1964, 0.0004),
+    }
+    latent_dim, vocoder_hz, latent_std, latent_mean = sampler_setups[version]
     device = torch.device(f"cuda:{local_rank}")
-    sampler = ARVSampler(32, duration, 1)
+    sampler = ARVSampler(
+        latent_dim, 
+        duration, 
+        1,
+        vocoder_hz,
+        latent_std,
+        latent_mean
+    )
     sampler.set_device(device)
     return { "sampler": sampler }
 
