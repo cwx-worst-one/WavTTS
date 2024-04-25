@@ -79,7 +79,7 @@ prediction_writer: !new:recipes.beat.pl_modules.callbacks.prediction_writer.Beat
 trainer: !new:pytorch_lightning.Trainer
   strategy: "auto"
   fast_dev_run: !ref <run_opts[fast_dev_run]>
-  num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+  num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
   accelerator: !ref <run_opts[accelerator]>
   devices: !ref <train_params[devices]>
   precision: !ref <run_opts[precision]>

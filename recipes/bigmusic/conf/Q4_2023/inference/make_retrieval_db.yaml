@@ -56,7 +56,7 @@ trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: False
     accelerator: "auto"
     devices: "auto"
-    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
     deterministic: False
     max_steps: !ref <run_opts[max_steps]>
     limit_predict_batches: !ref <run_opts[max_steps]>

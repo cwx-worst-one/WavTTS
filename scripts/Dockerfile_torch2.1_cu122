@@ -83,7 +83,7 @@ RUN pip3 install \
         pip --upgrade && \
     pip3 install \
         --no-cache-dir \
-        pytorch-lightning==2.0.0 \
+        pytorch-lightning==2.2.2 \
         hyperpyyaml==1.2.0 \
         Command==0.1.0 \
         yamllint==1.26.3 \
@@ -410,3 +410,7 @@ RUN git clone "https://github.com/aws/aws-ofi-nccl.git" /opt/aws-ofi-nccl \
 # Samantha-specific settings.
 COPY ./scripts/samantha.bashrc /etc/samantha.bashrc
 ENV BASH_ENV=/etc/samantha.bashrc
+
+# hack for pl 2.2 requires wandb>=0.12.10
+COPY ./scripts/setup_wandb.sh .
+RUN bash ./setup_wandb.sh

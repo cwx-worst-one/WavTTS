@@ -163,7 +163,7 @@ callbacks:
 
 trainer: !new:pytorch_lightning.Trainer
   fast_dev_run: !ref <run_opts[fast_dev_run]>
-  num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+  num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
   logger: !ref <logger>
   strategy: "ddp_find_unused_parameters_true"
   accelerator: !ref <run_opts[accelerator]>

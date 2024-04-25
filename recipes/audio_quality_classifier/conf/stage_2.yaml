@@ -94,7 +94,7 @@ trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>
     accelerator: auto
     devices: auto
-    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
     deterministic: False  # warning: setting to True can cause slowdowns
     enable_model_summary: True
     max_epochs: !ref <run_opts[max_epochs]>

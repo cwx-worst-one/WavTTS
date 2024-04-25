@@ -49,7 +49,7 @@ pl_module: !new:apps.bigtts.umm.ar.infer.pl_module_bigtts_ar.SemanticInference
 trainer: !new:pytorch_lightning.Trainer
     accelerator: "auto"
     devices: "auto"
-    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
     deterministic: False
     enable_model_summary: True
     strategy: !ref <run_opts[strategy]>
