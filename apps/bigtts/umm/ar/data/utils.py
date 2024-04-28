@@ -1,7 +1,9 @@
 import math
 import string
-from typing import List, Dict, Union
-from transformers import PreTrainedTokenizer, BertTokenizer, Wav2Vec2PhonemeCTCTokenizer
+from typing import Dict, List, Union
+
+import torch
+from transformers import BertTokenizer, PreTrainedTokenizer, Wav2Vec2PhonemeCTCTokenizer
 
 _TRANSFORMER_TOKENIZERS_CLS: Dict[str, PreTrainedTokenizer] = {
     "bert": BertTokenizer,
@@ -45,3 +47,36 @@ def normalize_text(text: str):
     text = text.replace("&", " and ")
     text = text.replace("/", " ")
     return text.translate(str.maketrans("", "", nlp_punctuation)).strip()
+
+
+def split_prompt_with_pad(length: int, croplen: int, minlen: int):
+    """
+    split the length into a list of indices
+    if the length is less than minlen, return empty tensor
+    if the length is less than croplen, repeat pad
+    if the length is greater than croplen, extend left
+    if the length is greater than croplen and the redundance is less than minlen, extend right
+
+    Args:
+        length: the length of the text
+        croplen: the length of the crop
+        minlen: the minimum length of the text
+
+    Returns:
+        the indices of the prompt after split
+    """
+    redundance = length % croplen
+    if length <= minlen:
+        return torch.Tensor(())
+    if redundance <= minlen:
+        return torch.arange(length - redundance)
+
+    x_index = torch.arange(length)
+    if redundance == 0:
+        return x_index
+    if length < croplen:
+        # repeat pad
+        return x_index.repeat(croplen // length + 1)[-croplen:]
+    else:
+        # extend left
+        return torch.cat((x_index[:length - redundance], x_index[-croplen:]))

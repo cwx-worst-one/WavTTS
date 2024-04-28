@@ -938,6 +938,8 @@ class MixWebDataModule(pl.LightningDataModule):
         dropout_rate_zh_tone: Union[float, None] = None,
         whole_sentence_prob: float = 0.01,
         sample_config=None,
+        spkenc_croplen: int = 150,
+        spkenc_minlen: int = 5,
     ):
         super().__init__()
         self.num_workers = num_workers
@@ -945,7 +947,11 @@ class MixWebDataModule(pl.LightningDataModule):
         self.pin_memory = pin_memory
         self.prefetch_factor = prefetch_factor
         self.collate_fn = collate_fn(
-            target_audio_key, target_token_key, split_by_alignment
+            target_audio_key,
+            target_token_key,
+            split_by_alignment,
+            spkenc_croplen,
+            spkenc_minlen,
         )
 
         if tokenizer == "wordpiece":

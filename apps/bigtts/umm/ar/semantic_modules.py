@@ -16,7 +16,14 @@ from samantha.models.ctiga import gpt
 from samantha.utils.ctiga.inference_params import InferenceParams
 
 from .base_modules import BaseContinuousEmbedModule
-from .utils import TokenBuffer, get_split_emb, reorder_attr, sequence_mask
+from .utils import (
+    TokenBuffer,
+    _custom_cat,
+    _emb_select,
+    get_split_emb,
+    reorder_attr,
+    sequence_mask,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1485,19 +1492,15 @@ class SemanticModule_SpkidLLMV3_3(BaseContinuousEmbedModule):
             bsz, t, c = logits.shape
             sos_ids = self.target_embedder.get_sos_token(bsz)  # [b, 1]
             # prompt_sos_ids = self.prompt_embedder.get_sos_token(bsz)
-            h = torch.zeros([bsz, t], device=logits.device).long()
-            for i in range(bsz):
-                h[i, : input_lens[i] + 1 + 1 + target_lens[i] + 1] = torch.cat(
-                    (
-                        torch.zeros([1]).to(sos_ids.device),  # placeholder
-                        batch["lyrics_tokens"][i, : input_lens[i]],
-                        # torch.zeros([prompt_lens[i]]).to(sos_ids.device), # query placeholder
-                        sos_ids[i, :],
-                        target_ids[i, : target_lens[i] + 1],
-                    )
-                )
-
-            target_ids = h
+            target_ids = _custom_cat(
+                batch['lyrics_tokens'],
+                sos_ids,
+                target_ids,
+                input_lens,
+                target_lens,
+                bsz,
+                t,
+            )
             loss = self.criterion(x, target_ids, mask=loss_mask)
             accu = (
                 ((x.argmax(dim=-1) == target_ids).float() * loss_mask).sum()
@@ -1531,6 +1534,8 @@ class SemanticModule_SpkidLLMV3_3(BaseContinuousEmbedModule):
         assert "prompt_ids" in batch
         prompt_ids = batch["prompt_ids"]
         prompt_lens = batch["prompt_ids_length"]
+        prompt_select_indices = batch.get('prompt_ids_length_select_indices', None)
+        prompt_scatter_indices = batch.get('prompt_ids_length_scatter_indices', None)
 
         land_ids = batch["lang"]
         batch_size = target_ids.size(0)
@@ -1557,9 +1562,13 @@ class SemanticModule_SpkidLLMV3_3(BaseContinuousEmbedModule):
         with self.profiler.profile(
             f"bigtts.umm.ar.get_split_emb{self.trainer.global_step}"
         ):
-            spkemb_input, scatter_index = get_split_emb(
-                prompt_embeds, prompt_lens, self.spkenc_croplen, self.spkenc_minlen
-            )
+            if prompt_select_indices is None or prompt_scatter_indices is None:
+                spkemb_input, scatter_index = get_split_emb(prompt_embeds, prompt_lens, self.spkenc_croplen, self.spkenc_minlen)
+            else:
+                spkemb_input = _emb_select(prompt_embeds, prompt_select_indices, self.spkenc_croplen, prompt_embeds.size(-1))
+                scatter_index = prompt_scatter_indices
+                if spkemb_input.size(0) == 0:
+                    spkemb_input = None
 
         with self.profiler.profile(
             f"bigtts.umm.ar.spkenc_model{self.trainer.global_step}"
@@ -1576,9 +1585,10 @@ class SemanticModule_SpkidLLMV3_3(BaseContinuousEmbedModule):
                 out_prompt = torch.zeros(
                     batch_size, spkemb_output.size(-1), device=spkemb_output.device
                 )
-                scatter_index = scatter_index[:, 0][:, None].repeat(
-                    1, spkemb_output.size(-1)
-                )
+                if prompt_select_indices is None or prompt_scatter_indices is None:
+                    scatter_index = scatter_index[:, 0][:, None].repeat(1, spkemb_output.size(-1))
+                else:
+                    scatter_index = scatter_index[:, None].repeat(1, spkemb_output.size(-1))
                 out_prompt = torch.scatter_reduce(
                     out_prompt,
                     0,

@@ -2,6 +2,7 @@ import torch
 from typing import List, Dict, Any
 from samantha.dataio.lite.transform import CollatorBase
 from samantha.transforms.audio import RandomPad, Pad
+from .utils import split_prompt_with_pad
 
 
 class ARCollator(CollatorBase):
@@ -10,11 +11,15 @@ class ARCollator(CollatorBase):
         audio_key: str = "wav",
         token_key: str = "umm_token",
         split_by_alignment: bool = False,
+        spkenc_crop_len: int = 150,
+        spkenc_min_len: int = 5,
     ):
         super().__init__()
         self.audio_key = audio_key
         self.token_key = token_key
         self.split_by_alignment = split_by_alignment
+        self.spkenc_crop_len = spkenc_crop_len
+        self.spkenc_min_len = spkenc_min_len
 
     def __call__(self, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         if len(batch) > 0 and all("audio" in x for x in batch):
@@ -78,6 +83,19 @@ class ARCollator(CollatorBase):
             res.update(self._split_by_alignment(batch))
         return res
 
+    def _get_split_emb_indices(self, prompt_lens: list, crop_len: int, minlen: int, token_len:int):
+        indices_list = []
+        scatter_list = []
+        for i, plen in enumerate(prompt_lens):
+            x_index = split_prompt_with_pad(plen, crop_len, minlen) + i * token_len
+            y_index = torch.ones(x_index.size(0) // crop_len) * i
+            scatter_list.append(y_index)
+            indices_list.append(x_index)
+
+        select_indices = torch.cat(indices_list).long()
+        scatter_indices = torch.cat(scatter_list).long()
+        return select_indices, scatter_indices
+
     def _split_by_alignment(self, batch):
         max_length = max([x.get("prompt_" + self.token_key).shape[-1] for x in batch])
         zero_pad = Pad(n_samples=max_length)
@@ -88,7 +106,16 @@ class ARCollator(CollatorBase):
                 zero_pad(item.get("prompt_" + self.token_key).unsqueeze(0))
             )
             prompt_umm_token_length.append(item.get("prompt_" + self.token_key).numel())
+
+        select_indices, scatter_indices = self._get_split_emb_indices(
+            prompt_lens=prompt_umm_token_length,
+            crop_len=self.spkenc_crop_len,
+            minlen=self.spkenc_min_len,
+            token_len=max_length,
+        )
         return {
             "prompt_ids": torch.cat(prompt_umm_token, dim=0),
             "prompt_ids_length": torch.tensor(prompt_umm_token_length),
+            "prompt_ids_length_select_indices": select_indices,
+            "prompt_ids_length_scatter_indices": scatter_indices,
         }
