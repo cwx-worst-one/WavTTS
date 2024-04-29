@@ -9,7 +9,8 @@ from recipes.diffusion.models.tnt_mss import TNTDiffusionNetwork as TNTDiffusion
 from recipes.diffusion.models.tnt_gru import TNTDiffusionNetwork as ZhTNTDiffusionNetwork
 from recipes.diffusion.models.tnt_v2 import TNTDiffusionNetwork as TNTDiffusionNetworkV2
 from recipes.diffusion.models.tnt_v3 import TNTDiffusionNetwork as TNTDiffusionNetworkV3
-from recipes.diffusion.modules.pl_module_mulan_free import DiffusionModule
+from recipes.diffusion.modules.pl_module_mulan_free import DiffusionModule as DiffusionModuleMulanFree
+from recipes.diffusion.modules.pl_module import DiffusionModule as DiffusionModuleV1
 
 VOCODER_HZ = 125
 
@@ -65,7 +66,7 @@ def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, ss
         device = torch.device(f"cuda:{local_rank}")
         local_path = download_checkpoint(checkpoint_path, cache_dir)
         if mixv2:
-            diffusion_model = DiffusionModule.load_from_checkpoint(
+            diffusion_model = DiffusionModuleV1.load_from_checkpoint(
                 checkpoint_path=local_path,
                 diffusion_model=TNTDiffusionNetworkV2(
                     input_dim=32,
@@ -120,12 +121,12 @@ def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, ss
                     semantic_cfg_prob=0.10,
                     use_checkpoint=False
                 )
-            diffusion_model = DiffusionModule.load_from_checkpoint(
+            diffusion_model = DiffusionModuleV1.load_from_checkpoint(
                 checkpoint_path=local_path,
                 diffusion_model=diffusion_network,
                 strict=False
             ).model
-        if is_zh_token:
+        elif is_zh_token:
             zh_setups = {
                 # input_dim, depth, segment_size, segment_stride
                 '24000': (32, 16, 32, 32),
@@ -164,7 +165,7 @@ def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, ss
                     diffusion_network,
                 )
             else:
-                diffusion_model = DiffusionModule.load_from_checkpoint(
+                diffusion_model = DiffusionModuleMulanFree.load_from_checkpoint(
                     checkpoint_path=local_path,
                     diffusion_model=diffusion_network,
                     strict=False,
@@ -240,7 +241,7 @@ def run_diffusion(requires, samples, params):
 
     pred_emb = pred_emb.float()
     duration = pred_emb.shape[-1] // vocoder_hz
-    wavs_g = vocode_in_chunks(pred_emb, vocoder, mini_bs=1, chunk_size=1)
+    wavs_g = vocode_in_chunks(pred_emb, vocoder, mini_bs=1, chunk_size=1, device='cpu')
 
     # For bigmusic: [bs, c, seq] -> [bs, seq] 
     # if len(wavs_g.shape) == 3:

@@ -193,7 +193,7 @@ def init_vocoder_yongye(trainer, path, device, cache_dir=None):
 
 
 @torch.no_grad()
-def vocode_in_chunks(pred_emb, vocoder, mini_bs=1, chunk_size=4):
+def vocode_in_chunks(pred_emb, vocoder, mini_bs=1, chunk_size=4, device=None):
     "Vocode in chunks to prevent OOM"
     # If you see this error, lower batch size and chunk size:
     # RuntimeError: Expected output.numel() <= std::numeric_limits<int32_t>::max() to be true, but got false.
@@ -203,7 +203,9 @@ def vocode_in_chunks(pred_emb, vocoder, mini_bs=1, chunk_size=4):
     for item in torch.split(pred_emb, mini_bs): # mini_bs x emb x seq_len
         chunks = []
         for chunk in item.chunk(chunk_size, dim=-1): # mini_bs x emb x seq_len / chunk_size
-            x = vocoder.decode(chunk).detach().cpu() # mini_bs x audio_seq_len / chunk_size
+            x = vocoder.decode(chunk).detach() # mini_bs x audio_seq_len / chunk_size
+            if device is not None:
+                x = x.to(device)
             chunks.append(x)
         chunks = torch.cat(chunks, dim=-1) # mini_bs x audio_seq_len
         items.append(chunks) # bs x audio_seq_len

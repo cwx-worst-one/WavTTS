@@ -111,7 +111,6 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                 initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
                     cache_dir: !ref <run_opts[cache_dir]>
                     sstk: True
-                    sample_rate: !ref <extra_params[sample_rate]>
                     version: !ref <extra_params[diffusion_version]>
             sampler:
                 hpath: null

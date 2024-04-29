@@ -537,6 +537,10 @@ class MulanEmbedder(ContinuousEmbedder):
             device = next(self.parameters()).device
             mulan_embeds = self.embedder(torch.tensor([self.none_id] * bs, device=device))
             return mulan_embeds.unsqueeze(1)
+        if data_type == "embed":
+            if input_audio_or_text.dim() == 2:
+                return input_audio_or_text.unsqueeze(1)
+            return input_audio_or_text
         # Audio
         if self.training and self.mulan_crop:
             input_audio_or_text = random_crop_pad_to_seq_length(input_audio_or_text, self.min_audio_length)

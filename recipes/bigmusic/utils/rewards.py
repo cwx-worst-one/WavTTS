@@ -16,6 +16,7 @@ from recipes.musiclm.inference.utils import dump_wav
 from torchaudio.functional import loudness, resample
 import librosa
 from scipy.stats import entropy
+from recipes.mulan.inference.stats.sstk_anchor_points import load_anchor_points
 
 import json
 import euler
@@ -607,8 +608,7 @@ def anchor_points_sim_reward(
     min_audio_duration=10,
     max_audio_duration=None,
 ):
-
-    binary_center = np.load("/mnt/bn/audio-diffusion/peng/binary_center.npy")
+    binary_center = load_anchor_points()
     min_audio_length = min_audio_duration * sample_rate
     max_audio_length = max_audio_duration * sample_rate if max_audio_duration is not None else None
     if sampled_audio.shape[-1] < min_audio_length:

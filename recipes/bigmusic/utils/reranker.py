@@ -59,8 +59,9 @@ class Reranker:
             assert "chord" in self.requires
             assert "chord_lms" in self.requires
 
+        self.device = torch.device(f'cuda:{local_rank}')
         if sample_rate != 24000:
-            self.resampler = torchaudio.transforms.Resample(sample_rate, 24000).to(torch.device(f'cuda:{local_rank}'))
+            self.resampler = torchaudio.transforms.Resample(sample_rate, 24000).to(self.device)
 
     def compute_rewards(self, sampled_audio, eos_index_list, batch, extra_params):
         rewards = torch.zeros(len(sampled_audio)).to(sampled_audio.device)
@@ -231,7 +232,7 @@ class Reranker:
     def rerank(self, sampled_audio, eos_index_list, batch, extra_params):
         original_audio = sampled_audio.clone()
         if extra_params.sample_rate != 24000 and getattr(self, "resampler", False):
-            sampled_audio = self.resampler(sampled_audio)
+            sampled_audio = self.resampler(sampled_audio.to(self.device))
         if len(sampled_audio.shape) == 3: # convert stereo to mono for rewards
             sampled_audio = sampled_audio.mean(1, keepdims=False)
 

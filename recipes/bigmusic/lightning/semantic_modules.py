@@ -66,6 +66,7 @@ from typing import Optional
 from recipes.mi1.models.music_sft import get_m1_tags
 from torchaudio.transforms import Resample
 from recipes.diffusion.models.vocoder_model.utils import vocode_in_chunks
+from recipes.mulan.inference.stats.sstk_anchor_points import load_anchor_points
 
 from recipes.audio_quality_classifier.models.audio_quality_model.utils import aq_classifier_inference
 
@@ -853,10 +854,17 @@ class SemanticModule(BaseContinuousEmbedModule):
         
         # instrumental use case
         if 'mulan' in self.input_embedders:
-            batch_cfg['conditions'] = ['style_none']
-            batch_size = self.infer_batch_size(batch)
-            batch_cfg['style_text'] = [''] * batch_size
-            batch_cfg['style_audio'] = [''] * batch_size
+            if controller_cfg_label == 'negative_anchor':
+                batch_cfg['conditions'] = ['style_embedding']
+                batch_size = self.infer_batch_size(batch)
+                good, bad = load_anchor_points()
+                bad_t = torch.tensor(bad, device=self.device).repeat(batch_size, 1)
+                batch_cfg['style_embedding'] = bad_t.unsqueeze(1)
+            else:
+                batch_cfg['conditions'] = ['style_none']
+                batch_size = self.infer_batch_size(batch)
+                batch_cfg['style_text'] = [''] * batch_size
+                batch_cfg['style_audio'] = [''] * batch_size
             return batch_cfg
 
         # vocal use case
