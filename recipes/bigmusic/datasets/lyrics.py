@@ -181,16 +181,10 @@ class LyricsDataModule(pl.LightningDataModule):
 
         # initialize validation dataset
         valid_dataset_config = DATASET_CONFIGS[valid_dataset_type]
-        try:
-            valid_dataset = valid_dataset_config['init_fn'](
-                sample_rate, sample_duration, batch_size, lyrics_max_seq_len,
-                **valid_dataset_config['extra_args']
-            )
-        except:
-            valid_dataset = valid_dataset_config['init_fn'](
-                sample_rate, sample_duration, batch_size, None, lyrics_max_seq_len,
-                **valid_dataset_config['extra_args']
-            )
+        valid_dataset = valid_dataset_config['init_fn'](
+            sample_rate, sample_duration, batch_size, None, lyrics_max_seq_len,
+            **valid_dataset_config['extra_args']
+        )
         return LyricsDataModule(train_dataset=train_dataset, validation_dataset=valid_dataset, num_workers=num_workers, pin_memory=pin_memory)
 
     @classmethod
@@ -207,7 +201,7 @@ class LyricsDataModule(pl.LightningDataModule):
         # initialize validation dataset
         predict_dataset_config = DATASET_CONFIGS[predict_dataset_type]
         predict_dataset = predict_dataset_config['init_fn'](
-            sample_rate, sample_duration, batch_size, lyrics_max_seq_len,
+            sample_rate, sample_duration, batch_size, None, lyrics_max_seq_len,
             **predict_dataset_config['extra_args']
         )
         return LyricsDataModule(train_dataset=None, predict_dataset=predict_dataset, num_workers=num_workers, pin_memory=pin_memory)
@@ -604,7 +598,7 @@ class DefaultDatasets():
         
         @staticmethod
         def default_validation_dataset(
-            sample_rate, sample_duration, batch_size, lyrics_max_seq_len, url2index, 
+            sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, url2index, 
             metadata_tfm_fn=partial(MCCMetadataTextTransform, "Vocal"),
             tokenizer_init_fn=LyricsTokenTransform.init_espeak_tokenizer,
             style_conditions="style_text,lyrics_tokens", enable_punctuation=True,
@@ -623,7 +617,7 @@ class DefaultDatasets():
         
         @staticmethod
         def default_validation_parquet_dataset(
-            sample_rate, sample_duration, batch_size, lyrics_max_seq_len, url2index,
+            sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, url2index,
             metadata_tfm_fn=partial(MCCMetadataTextTransform, "Vocal"),
             tokenizer_init_fn=LyricsTokenTransform.init_espeak_tokenizer,
             style_conditions="style_text,lyrics_tokens", enable_punctuation=True,
@@ -633,7 +627,7 @@ class DefaultDatasets():
                                                                          min_song_confidence=min_song_confidence, min_segment_confidence=min_segment_confidence),
                 segment_transforms=[tokenizer_init_fn(lyrics_max_seq_len, enable_punctuation=enable_punctuation), SemanticTokenLengthTransform(), metadata_tfm_fn()],
                 batch_transforms=[AddConditionsTransform(style_conditions)],
-                batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size, lyrics_frame_rate=25),
+                batch_fn=default_bucket_batcher_fn(sample_rate, sample_duration, batch_size),
                 shuffle_buffer_size=None
             )
         
@@ -664,7 +658,7 @@ class DefaultDatasets():
             )
 
         @staticmethod
-        def unfiltered_batched_validation_dataset(sample_rate, sample_duration, batch_size, lyrics_max_seq_len, url2index):
+        def unfiltered_batched_validation_dataset(sample_rate, sample_duration, batch_size, shuffle_buffer_size, lyrics_max_seq_len, url2index):
             return transform_dataset(
                 dataset=DefaultDatasets.Basic.indexed_validation_dataset(sample_rate, sample_duration, url2index=url2index),
                 segment_transforms=[],
@@ -1181,14 +1175,16 @@ DATASET_CONFIGS = {
             "metadata_tfm_fn": partial(SpotifyMetadataTextTransform, max_genres=1),
         }
     },
-    "spotify_sft_artist16_ret": {
-        "init_fn": DefaultDatasets.Batched.default_validation_parquet_dataset,
+    "spotify_sft_groupa_ret": {
+        "init_fn": DefaultDatasets.Batched.batched_vocal_parquet_dataset,
         "extra_args": {
-            "url2index": INDEX[get_region("CN")]["SpotifySFT_Artist16"],
+            "index_list": INDEX[get_region("CN")]["SpotifySFT_GroupA_TTPop"],
             "style_conditions": ["style_category,lyrics_tokens"],
-            "min_song_confidence": 0.7,
-            "min_segment_confidence": 0.7, # lowering segment confidence, for longer segments
-            "metadata_tfm_fn": partial(SpotifyMetadataTextTransform, max_genres=1),
+            "max_num_segments": 1,
+            "shuffle_segments": True,
+            "min_song_confidence": 0.6,
+            "min_segment_confidence": 0.6, # lowering segment confidence, for longer segments
+            "metadata_tfm_fn": partial(SpotifyMetadataTextTransform, max_genres=None),
         }
     },
 }

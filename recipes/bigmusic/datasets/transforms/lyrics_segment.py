@@ -49,7 +49,7 @@ class LyricsSegmentTransforms(TransformBase):
         handler: Callable = wds.warn_and_continue,
         normalize_audio: bool = False
     ) -> None:
-        super().__init__(log_interval=100)
+        super().__init__(log_interval=500)
         self.sample_rate = sample_rate
         self.audio_format = audio_format
         self.audio_keys = audio_keys
@@ -404,8 +404,11 @@ class Segment():
 
         for idx, word in enumerate(valid_words):
             if word.end > target_time: break
-        target_segment = Segment.from_word_segment(reduce(operator.add, self.filter_invalid_words(valid_words[:idx])))
-        remaining_segment = Segment.from_word_segment(reduce(operator.add, self.filter_invalid_words(valid_words[idx:]))) if len(valid_words[idx:]) else None
+        
+        target_words = self.filter_invalid_words(valid_words[:idx])
+        remaining_words = self.filter_invalid_words(valid_words[idx:])
+        target_segment = Segment.from_word_segment(reduce(operator.add, target_words)) if len(target_words) else None
+        remaining_segment = Segment.from_word_segment(reduce(operator.add, remaining_words)) if len(remaining_words) else None
         return target_segment, remaining_segment
 
     def split_to_segments(self, target_duration):
@@ -413,7 +416,8 @@ class Segment():
         split_segments = []
         while long_segment.duration > target_duration:
             target_segment, long_segment = long_segment.split_at(target_duration)
-            split_segments.append(target_segment)
+            if target_segment is not None:
+                split_segments.append(target_segment)
             if long_segment is None: break
         return split_segments
 
@@ -555,22 +559,17 @@ def group_by_fixed_length(segments: List[Segment], target_duration):
             continue
         if base_segment.duration > target_duration: # target reached. append and reset
             target_segment, remainder = base_segment.split_at(target_duration)
-            target_segment.end = base_segment.start + target_duration
-            grouped_segments.append(target_segment)
+            if target_segment:
+                target_segment.end = base_segment.start + target_duration
+                grouped_segments.append(target_segment)
             base_segment = s
         else: # extend
             base_segment += s
     if base_segment.duration > target_duration: # target reached. append and reset
         target_segment, remainder = base_segment.split_at(target_duration)
-        target_segment.end = base_segment.start + target_duration
-        grouped_segments.append(target_segment)
-    """
-    Group segments by variable length.
-    :param segments: List of segments to group.
-    :param target_durations: List of target durations to group by.
-    :param shuffle_start: Whether to shuffle the start of the segments.
-    :return: List of grouped segments.
-    """
+        if target_segment:
+            target_segment.end = base_segment.start + target_duration
+            grouped_segments.append(target_segment)
     return grouped_segments
 
 def group_by_variable_length(segments: List[Segment], target_durations, shuffle_start=False):
