@@ -41,6 +41,7 @@ try:
         semantic_diversity_sim_reward,
         chroma_reward,
         chroma_sim_reward,
+        anchor_points_sim_reward
     )
 except Exception as e:
     pass
@@ -1913,6 +1914,14 @@ class SemanticRLModule(SemanticModule):
             return chroma_sim_reward(
                 sampled_audio,
                 target_audio,
+                sample_rate=self.extra_params.sample_rate,
+                device=sampled_audio.device,
+            )
+        elif reward_type == "anchor_points_sim":
+            return anchor_points_sim_reward(    
+                self.requires["mulan_infer_fn"],
+                self.requires["mulan"],
+                sampled_audio.squeeze(1),
                 sample_rate=self.extra_params.sample_rate,
                 device=sampled_audio.device,
             )

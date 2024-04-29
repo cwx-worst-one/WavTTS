@@ -595,3 +595,36 @@ def chroma_sim_reward(
             prob_entropy_diff = min(1.0, abs(ref_prob_entropy - hyp_prob_entropy) / ref_prob_entropy)
         chroma_sim_rewards[i] = 1 - 0.5 * (max_prob_diff + prob_entropy_diff)
     return chroma_sim_rewards
+
+@torch.no_grad()
+def anchor_points_sim_reward(
+    mulan_infer_fn,
+    mulan_model,
+    sampled_audio,  # (batch_size * beam, T)
+    sample_rate,
+    device,
+    shift_seconds=5,
+    min_audio_duration=10,
+    max_audio_duration=None,
+):
+
+    binary_center = np.load("/mnt/bn/audio-diffusion/peng/binary_center.npy")
+    min_audio_length = min_audio_duration * sample_rate
+    max_audio_length = max_audio_duration * sample_rate if max_audio_duration is not None else None
+    if sampled_audio.shape[-1] < min_audio_length:
+        sampled_audio = crop_pad_to_seq_length(sampled_audio, min_audio_length)
+    elif max_audio_length and sampled_audio.shape[-1] > max_audio_length:
+        sampled_audio = crop_pad_to_seq_length(sampled_audio, max_audio_length)
+    sampled_embeds = mulan_infer_fn(
+        model=mulan_model,
+        music=sampled_audio.float(),
+        device=device,
+        shift_seconds=shift_seconds,
+    )
+    sampled_embeds = sampled_embeds.float().cpu()
+    binary_center = torch.from_numpy(binary_center).float()
+    binary_center = binary_center / binary_center.norm(dim=1, keepdim=True)
+    similarity = torch.matmul(sampled_embeds, binary_center.T)
+    anchor_rewards = similarity[:, 0] - similarity[:, 1]
+    anchor_rewards = anchor_rewards.to(device)
+    return anchor_rewards
