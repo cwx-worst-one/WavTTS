@@ -401,7 +401,7 @@ def parse_structure_tags(meta: Dict) -> DeepChorus:
     return _format_deepchorus_structure_tags(deepchorus_tags)
 
 
-def parse_structure_tags_optional(meta: Dict) -> Optional[List]:
+def parse_structure_tags_optional(meta: Dict) -> Optional[DeepChorus]:
     try:
         return parse_structure_tags(meta)
     except ZhMetaParseError:
@@ -520,7 +520,7 @@ def _parse_audio_tags_v0(audio_tags: Optional[Dict]) -> Tuple[List[str], Dict[st
     unfamiliar_tags = {}
     for i in range(len(order)):
         item = order[i]
-        cat_vocab_tags = AUDIO_CAT_VOCAB[i]
+        cat_vocab_tags = AUDIO_CAT_VOCAB_V0[i]
         _tags = []
         for tag in audio_tags[item]:
             _tag = map_tag(tag)

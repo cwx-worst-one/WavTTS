@@ -37,7 +37,7 @@ from .zh_meta import (
     parse_mir_key_optional,
     # Validators
     validate_style_text_sa,
-    validate_deepchorus,
+    validate_deepchorus_optional,
     # Converters
     convert_hqmy,
 )
@@ -238,7 +238,7 @@ class ZhMetaSFTBase(ZhMetaBase):
     def _validate(self, lyrics_confidence: Optional[float]):
         super()._validate(lyrics_confidence)
         validate_style_text_sa(self.style_text, self.is_sinking)
-        validate_deepchorus(self.structure_tags)
+        validate_deepchorus_optional(self.structure_tags)
 
     def _convert(self):
         _self = super()._convert()
