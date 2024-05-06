@@ -1,0 +1,219 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 1996
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+run_opts:
+    log_dir: logs
+    hdfs_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/music_dit
+    fast_dev_run: False
+    tensorboard_dir: !ref <run_opts[log_dir]>
+    log_name: lyrics2song
+    version: 1.0
+    precision: bf16
+    accelerator: auto
+    strategy: ddp_find_unused_parameters_false # deepspeed_stage_2_offload, ddp_find_unused_parameters_false
+    cache_dir: ./.cache_dir
+    profiler: simple
+    flash_attn: null
+    num_epochs: 100
+    learning_rate: 0.00005
+    weight_decay: 0.001
+    checkpointing: False
+    n_step_save: 5000
+    batch_total_tokens: 20000
+    urls: null
+    data_id: 2314
+    val_data_id: 2314
+    accumulate_grad_batches: 1
+    resume_ckpt_path:
+    use_url_lst: False
+    use_textprefix: True
+    use_prompt: False
+    use_unet_style_skip_connect: true
+    val_output_samples_dir: generated_samples
+    val_check_interval: 10000
+    limit_val_batches: 5
+    text_prefix_type: text # leadsheet|text
+    max_length: 400 # max second, example longer than this will be drop
+    include_phoneme_in_leadsheet: True
+
+    batch_size: 24
+    shuffle_buffer: 0   # 100
+    buckets_in_sec: [5, 60]
+    use_dynamic_batch: true
+    max_seg_per_track: 3
+    segment_method: "random"
+    infer_structure_tags: False
+    read_structure_tags: True
+    region: "CN"
+    lyrics_field: "lyrics"
+    lyrics_confidence: 0.1  # Force Alignment confidence
+    lyrics_tokenizer: "tts_chinese_frontend_model"
+    segment_max_phone_len: 1000
+    parquet_dataset_ids: [1527]
+    parquet_dataset_weights: [1]
+    sinking_threshold: 0.51
+    quality_filter: True
+    num_workers: 8
+    melae_ckpt_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/renyi/samantha_ckpts/melae_kl/0418_melaekl2_beta1em2_lat32_g8_1/checkpoints/step=0395000.ckpt
+
+extra_params:
+    sample_rate: 24000
+    train_conditions: "style_category,speaker_id,lyrics_tokens"
+    tag_taxonomy_lang: "SA"  # Zh, SA
+    tag_dropout_rate: 0.25
+    line_break_dropout_rate: 0
+    section_tag_dropout_rate: 0
+    use_mcc_gender: False
+    semantic_frame_rate: 12.5
+    latent_dims: 32
+
+model_config: !new:recipes.music_dit.model.llama_ldm.ModelArgs
+    in_channels: !ref <extra_params[latent_dims]>
+    out_channels: !ref <extra_params[latent_dims]>
+    prompt_mel_dim: 32
+    n_token: 32768 #TODO check latest value
+    token_upscales: [5]
+    token_downscales: [1]
+    llama_provider: ctiga
+    local_cond_dim: 256
+    time_embed_dim: 256
+    encoder_dim: 1536
+    encoder_n_layers: 24
+    encoder_n_heads: 16
+    use_prompt: !ref <run_opts[use_prompt]>
+    use_textprefix: !ref <run_opts[use_textprefix]>
+    causal: False
+    local_cond_project_type: linear
+    use_unet_style_skip_connect: !ref <run_opts[use_unet_style_skip_connect]>
+    text_prefix_type: !ref <run_opts[text_prefix_type]>
+    use_phone_lang: False
+
+pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
+    sample_rate: !ref <extra_params[sample_rate]>
+    batch_size: !ref <run_opts[batch_size]>
+    shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+    num_workers: !ref <run_opts[num_workers]>
+    pin_memory: True
+    buckets_in_sec: !ref <run_opts[buckets_in_sec]>
+    use_dynamic_batch: !ref <run_opts[use_dynamic_batch]>
+    max_seg_per_track: !ref <run_opts[max_seg_per_track]>
+    tokenizer: !ref <run_opts[lyrics_tokenizer]>
+    segment_max_phone_len: !ref <run_opts[segment_max_phone_len]>
+    region: !ref <run_opts[region]>
+    conditions: !ref <extra_params[train_conditions]>
+    lyrics_field: !ref <run_opts[lyrics_field]>
+    lyrics_confidence: !ref <run_opts[lyrics_confidence]>
+    read_structure_tags: !ref <run_opts[read_structure_tags]>
+    infer_structure_tags: !ref <run_opts[infer_structure_tags]>
+    segment_method: !ref <run_opts[segment_method]>
+    parquet_dataset_ids: !ref <run_opts[parquet_dataset_ids]>
+    parquet_dataset_weights: !ref <run_opts[parquet_dataset_weights]>
+    sinking_threshold: !ref <run_opts[sinking_threshold]>
+    quality_filter: !ref <run_opts[quality_filter]>
+    frame_rate: !ref <extra_params[semantic_frame_rate]>
+    tag_taxonomy_lang: !ref <extra_params[tag_taxonomy_lang]>
+    line_break_dropout_rate: !ref <extra_params[line_break_dropout_rate]>
+    section_tag_dropout_rate: !ref <extra_params[section_tag_dropout_rate]>
+    normalize_audio: False
+
+model_cls: !name:recipes.music_dit.model.llama_ldm.LlamaDiffusionLyric2Song
+    hp: !ref <model_config>
+
+optimizer_cls: !name:deepspeed.ops.adam.FusedAdam
+    lr: !ref <run_opts[learning_rate]>
+    weight_decay: !ref <run_opts[weight_decay]>
+    betas: [0.9, 0.95]
+    eps: 0.0000001
+
+scheduler_cls: !name:recipes.bark.lr_schedulers.musiclm_lr_scheduler.WarmupCosine
+    init_lr: !ref <run_opts[learning_rate]>
+    warmup_steps: 8000
+    cycle_steps: 500000
+    min_lr: !ref <run_opts[learning_rate]> * 0.1
+
+# lightning model setting
+pl_module: !new:recipes.music_dit.lit_module.lit_diffusion_voicebox.VoiceBoxModule
+    model_cls: !ref <model_cls>
+    optimizer_cls: !ref <optimizer_cls>
+    scheduler_cls: !ref <scheduler_cls>
+    checkpointing: !ref <run_opts[checkpointing]>
+    resume_ckpt_path: !ref <run_opts[resume_ckpt_path]>
+    criterions: ["l1"]
+    required_modules:
+        melae:
+            hpath: !ref <run_opts[melae_ckpt_path]>
+            initializer: !name:recipes.umm.requires.model_initializer.init_melae
+                cache_dir: !ref <run_opts[cache_dir]>
+    val_output_samples_dir: !ref <run_opts[log_dir]>/<run_opts[log_name]>/<run_opts[version]>/generated
+
+logger:
+    - !new:pytorch_lightning.loggers.TensorBoardLogger
+      save_dir: !ref <run_opts[tensorboard_dir]>
+      name: !ref <run_opts[log_name]>
+      version: !ref <run_opts[version]>
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[tensorboard_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
+
+callbacks:
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      dirpath: !ref <run_opts[log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+      monitor: step
+      save_top_k: 3
+      every_n_train_steps: !ref <run_opts[n_step_save]>
+      mode: max
+      filename: "{step:06d}"
+      save_last: True
+    - !new:samantha.callbacks.HDFSModelCheckpoint
+      dirpath: !ref <run_opts[log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+      hdfs_path: !ref <run_opts[hdfs_path]>/<run_opts[log_name]>/<run_opts[version]>
+      every_n_train_steps: !ref <run_opts[n_step_save]>
+      mode: min
+      save_last: True
+      save_top_k: 20
+      save_on_train_epoch_end: True
+      verbose: True
+      monitor: loss
+      filename: "{epoch:02d}-{step:06d}-{loss:.2f}"
+    - !new:pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: 'step'
+    - !new:samantha.callbacks.timer.Timer
+
+plugins:
+    - !new:samantha.plugins.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: 'auto'
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False  # warning: setting to True can cause slowdowns
+    enable_model_summary: True
+    log_every_n_steps: 50
+    strategy: !ref <run_opts[strategy]>
+    max_epochs: !ref <run_opts[num_epochs]>
+    precision: !ref <run_opts[precision]>
+    profiler: !ref <run_opts[profiler]>
+    callbacks: !ref <callbacks>
+    gradient_clip_val: 0.2
+    benchmark: false
+    accumulate_grad_batches: !ref <run_opts[accumulate_grad_batches]>
+    plugins: !ref <plugins>
+    limit_val_batches: !ref <run_opts[limit_val_batches]>
+    val_check_interval: !ref <run_opts[val_check_interval]>
+    num_sanity_val_steps: 5
+    limit_train_batches: 10000
+
+
+ckpt_path: last

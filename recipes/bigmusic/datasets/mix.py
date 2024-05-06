@@ -158,6 +158,7 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
         "lyrics_tokens": torch.stack(lyrics_tokens),
         "remi_leadsheet_tokens": torch.stack(remi_leadsheet_tokens),
         "target_tokens_length": torch.as_tensor(target_tokens_length),
+        "seqlen": torch.as_tensor(target_tokens_length),
         "speaker_id": torch.as_tensor(speaker_id).unsqueeze(1),
         "offset_token": torch.as_tensor(offset_tokens).unsqueeze(1),
         "remi_token_length": torch.as_tensor(remi_token_length).unsqueeze(1),
