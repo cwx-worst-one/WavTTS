@@ -68,6 +68,7 @@ class Decoder(nn.Module):
         rates,
         d_out: int = 1,
         adapt_hopper: bool = True,
+        last_act: bool = True,
     ):
         super().__init__()
 
@@ -94,14 +95,15 @@ class Decoder(nn.Module):
                 Snake1d(output_dim),
                 nn.ConstantPad1d(padding=3, value=0),
                 WNConv1d(output_dim, d_out, kernel_size=7),
-                nn.Tanh(),
             ]
         else:
             layers += [
                 Snake1d(output_dim),
                 WNConv1d(output_dim, d_out, kernel_size=7, padding=3),
-                nn.Tanh(),
             ]
+
+        if last_act:
+            layers += [nn.Tanh()]
 
 
         self.model = nn.Sequential(*layers)

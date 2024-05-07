@@ -95,7 +95,7 @@ def init_vocoder(checkpoint_path, local_rank, cache_dir=None, sample_rate=24000,
                     strict=False,
                 )
                 vocoder_model = vocoder_model_pl.generator.eval().to(device)
-        elif sample_rate == 44100 or sample_rate == 48000:
+        elif sample_rate == 44100 or sample_rate == 48000 or sample_rate == 32000:
             if version == '24k_to_48k_stereo':
                 vocoder_model = VQGAN_KL_mix(
                     in_channels=1,
@@ -107,22 +107,28 @@ def init_vocoder(checkpoint_path, local_rank, cache_dir=None, sample_rate=24000,
                     decoder_base_dim=2560,
                     adapt_hopper=adapt_hopper,
                 )
-            elif version in ['44.1k_sa', '44.1k_vocal']:
-                if version == '44.1k_sa':
-                    latent_dim = 64
-                elif version == '44.1k_vocal':
-                    latent_dim = 128
+            else:
+                _setups = {
+                    # latent_dim, downsample_rates, upsample_rates, last_act
+                    '44.1k_sa': (64, [2, 5, 9, 10], [10, 9, 5 ,2], True),
+                    '44.1k_vocal': (128, [2, 5, 9, 10], [10, 9, 5 ,2], True),
+                    '32k': (128, [2, 5, 8, 10], [10, 8, 5, 2], False),
+                }
+                if version in _setups:
+                    latent_dim, downsample_rates, upsample_rates, last_act = _setups[version]
+                else:
+                    raise NotImplementedError(f"unsupported vocoder version: {version}")
+               
                 vocoder_model = VQGAN_KL_new(
                     n_channels=2,
                     latent_dim=latent_dim,
-                    downsample_rates=[2, 5, 9, 10],
-                    upsample_rates=[10, 9, 5 ,2],
+                    downsample_rates=downsample_rates,
+                    upsample_rates=upsample_rates,
                     encoder_base_dim=96,
                     decoder_base_dim=2560,
                     adapt_hopper=adapt_hopper,
+                    last_act=last_act
                 )
-            else:
-                raise NotImplementedError(f"unsupported vocoder version: {version}")
 
             vocoder_model_pl = VocoderModule.load_from_checkpoint(
                     local_path,

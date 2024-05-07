@@ -185,6 +185,7 @@ class VQGAN_KL_new(nn.Module):
             encoder_base_dim=96,
             decoder_base_dim=2560,
             adapt_hopper=True,
+            last_act=True
         ):
         super().__init__()
         self.encoder = Encoder_new(
@@ -202,6 +203,7 @@ class VQGAN_KL_new(nn.Module):
             rates=upsample_rates,
             d_out=n_channels,
             adapt_hopper=adapt_hopper,
+            last_act=last_act
         )
    
     def forward(self, x,  deterministic=False):
