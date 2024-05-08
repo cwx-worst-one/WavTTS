@@ -131,9 +131,13 @@ class SemanticInferenceModule(pl.LightningModule):
             self.semantic_module.load_required_modules(
                 ignore=('sampler', 'diffusion', 'vocoder', 'chord', 'chord_lms', 'structure', 'asr')
             )
-        else:
+        elif 'style_audio' in self.extra_params.get('inference_conditions', ''):
             self.semantic_module.load_required_modules(
                 ignore=('bestrq', 'sampler', 'diffusion', 'vocoder', 'chord', 'chord_lms', 'structure', 'asr')
+            )
+        else:
+            self.semantic_module.load_required_modules(
+                ignore=('bestrq', 'sampler', 'diffusion', 'vocoder', 'chord', 'chord_lms', 'structure', 'asr', 'beat')
             )
 
     def predict_step(self, batch, batch_idx=0, dataloader_idx=0):
@@ -296,6 +300,11 @@ class GTInferenceModule(pl.LightningModule):
             self.decoding_fn = run_diffusion
             required_modules.update(self.hparams.required_modules['diffusion_modules'])
             self.decoding_params = DotDict({**self.extra_params, **extra_params['diffusion_params']})
+        elif self.extra_params.token2wav_type == 'ar-diffusion-vocoder':
+            # this is the tts token2wav
+            self.decoding_fn = run_diffusion_vocoder_batch
+            required_modules.update(self.hparams.required_modules['diffusion_modules'])
+            self.decoding_params = DotDict({ **self.extra_params, **self.extra_params['diffusion_params'] })
         elif self.extra_params.token2wav_type == 'ar':
             self.decoding_fn = run_2ar
             required_modules.update(self.hparams.required_modules['ar_modules'])
@@ -321,7 +330,10 @@ class GTInferenceModule(pl.LightningModule):
     def predict_step(self, batch, batch_idx=0, dataloader_idx=0):
         batch['target_audio'] = batch['style_audio']  # prepare_inputs expects target_audio key
         semantic_samples = self.encoding_fn(self.requires, batch['target_audio'])
-        wavs = self.decoding_fn(self.requires, semantic_samples, self.decoding_params)  #
+        if self.extra_params.token2wav_type == 'ar-diffusion-vocoder':
+            wavs = self.decoding_fn(self.requires, semantic_samples, None)
+        else:
+            wavs = self.decoding_fn(self.requires, semantic_samples, self.decoding_params)  #
         return {
             'generated_audio': wavs,
             'generated_audio_tensor': wavs

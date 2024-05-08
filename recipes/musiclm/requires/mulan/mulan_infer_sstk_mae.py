@@ -1,6 +1,7 @@
 import itertools
 from collections import defaultdict
 
+import os
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -515,9 +516,9 @@ class PretrainedMuTSSTKWrapper(nn.Module):
             use_flash_attn=False,
             output_type=output_type,
         )
-
-        state_dict = torch.load(pretrained_path, map_location="cpu")
-        mut.load_state_dict(state_dict, strict=False)
+        if pretrained_path and os.path.exists(pretrained_path):
+            state_dict = torch.load(pretrained_path, map_location="cpu")
+            mut.load_state_dict(state_dict, strict=False)
         mut.mlp_head = output_layer
         self.mut = mut
 

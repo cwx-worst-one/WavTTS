@@ -225,7 +225,6 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticRLModule
             initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
                 cache_dir: !ref <run_opts[cache_dir]>
                 sstk: True
-                sample_rate: !ref <extra_params[token2wav_sample_rate]>
                 version: !ref <extra_params[diffusion_version]>
         vocoder:
             hpath: !ref <run_opts[vocoder_ckpt]>

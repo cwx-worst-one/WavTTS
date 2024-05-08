@@ -17,6 +17,8 @@ from torchaudio.functional import loudness, resample
 import librosa
 from scipy.stats import entropy
 from recipes.mulan.inference.stats.sstk_anchor_points import load_anchor_points
+import numpy as np
+from scipy.signal import butter, lfilter
 
 import json
 import euler
@@ -628,3 +630,61 @@ def anchor_points_sim_reward(
     anchor_rewards = similarity[:, 0] - similarity[:, 1]
     anchor_rewards = anchor_rewards.to(device)
     return anchor_rewards
+
+@torch.no_grad()
+def mulan_temporal_reward(mulan_infer_fn, mulan_model, sampled_audio, device, sample_rate=24000, shift_seconds=20):
+    mulan_embeds = mulan_infer_fn(
+        model=mulan_model,
+        music=sampled_audio.float(),
+        device=device,
+        shift_seconds=shift_seconds,
+        avg=False
+    )
+    cos_sim = F.cosine_similarity(mulan_embeds.unsqueeze(1), mulan_embeds.unsqueeze(2), dim=-1)
+    eye = ~torch.eye(cos_sim.shape[-1]).bool() # remove diagonal 1
+    cos_mean = (cos_sim * eye.cuda()).sum(dim=(1,2)) / eye.sum()
+    return (1 - cos_mean)
+
+def butter_lowpass_filter(data, cutoff, fs, order=5):
+    b, a = butter(order, cutoff, fs=fs, btype='low', analog=False)
+    y = lfilter(b, a, data)
+    return y
+
+def butter_highpass_filter(data, cutoff, fs, order=5):
+    b, a = butter(order, cutoff, fs=fs, btype='high', analog=False)
+    y = lfilter(b, a, data)
+    return y
+
+@torch.no_grad()
+def _chroma_temporal_reward(audio, sample_rate=24000, sec_split=10):
+    if len(audio.shape) == 2:
+        audio = audio.squeeze(0)
+    audio = audio.float().cpu().numpy()
+    audio_f = butter_highpass_filter(audio, 220, sample_rate)
+#     audio_f = butter_lowpass_filter(audio_f, 1760, sample_rate)
+    chroma = librosa.feature.chroma_stft(
+        y=audio_f,
+        sr=sample_rate,
+        hop_length=sample_rate // 4,    # 0.25s
+    )
+    melody_frame_rate = 0.25
+    melody = chroma.argmax(axis=0)
+    probs = np.bincount(melody) / len(melody)
+    size = int(sec_split/melody_frame_rate)
+    m_split = np.split(melody, range(size,len(melody),size))
+    if m_split[-1].shape != m_split[0].shape:
+        m_split = m_split[:-1]
+    arr = []
+    for m in m_split:
+        probs = np.bincount(m, minlength=12) / len(m)
+        arr.append(probs)
+    # across time
+    chroma_var = np.array(chroma).var(1).mean() # c x t
+    melody_var = np.array(arr).var(0).mean() # t x c
+    return melody_var + chroma_var
+
+
+@torch.no_grad()
+def chroma_temporal_reward(audio_batch, device, sample_rate=24000, sec_split=10):
+    chroma_rewards = [_chroma_temporal_reward(audio, sample_rate, sec_split) for audio in audio_batch]
+    return torch.tensor(chroma_rewards, device=device)

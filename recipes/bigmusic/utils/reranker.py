@@ -16,6 +16,9 @@ from recipes.bigmusic.utils.rewards import (
     audio_metrics_reward,
     semantic_diversity_reward,
     chroma_reward,
+    anchor_points_sim_reward,
+    mulan_temporal_reward,
+    chroma_temporal_reward
 )
 
 
@@ -64,8 +67,8 @@ class Reranker:
             self.resampler = torchaudio.transforms.Resample(sample_rate, 24000).to(self.device)
 
     def compute_rewards(self, sampled_audio, eos_index_list, batch, extra_params):
-        rewards = torch.zeros(len(sampled_audio)).to(sampled_audio.device)
-        rewards_breakdown = [{} for _ in range(len(sampled_audio))]
+        rewards = torch.zeros(len(sampled_audio)).to(self.device)
+        rewards_breakdown = [{ 'weighted': {} } for _ in range(len(sampled_audio))]
         for rw_type, rw_weight in self.rewards.items():
             if rw_weight == 0:
                 continue
@@ -76,6 +79,8 @@ class Reranker:
             rewards += rw_weight * rw
             for i in range(len(sampled_audio)):
                 rewards_breakdown[i][rw_type] = rw[i].item()
+                rewards_breakdown[i]['weighted'][rw_type] = rw[i].item() * rw_weight
+            rewards_breakdown[i]['weighted']['total'] = rewards[i].item()
         return rewards, rewards_breakdown
 
     def _get_reward(
@@ -86,6 +91,7 @@ class Reranker:
         batch,
         extra_params,
     ):
+        sampled_audio = sampled_audio.to(self.device)
         if rw_type == "style_audio":
             return mulan_audio_reward(
                 self.requires["mulan_infer_fn"],
@@ -124,23 +130,6 @@ class Reranker:
                 self.requires["mulan"],
                 sampled_audio,
                 [negative_phrase],
-                device=sampled_audio.device,
-            )[0]
-            return positive_reward - negative_reward
-        elif rw_type == "qualitative_cn":
-            # TODO: make phrase configurable
-            positive_reward = mulan_text_reward(
-                self.requires["mulan_infer_fn"],
-                self.requires["mulan"],
-                sampled_audio,
-                ["CD品质，朗朗上口，令人难忘"],
-                device=sampled_audio.device,
-            )[0]
-            negative_reward = mulan_text_reward(
-                self.requires["mulan_infer_fn"],
-                self.requires["mulan"],
-                sampled_audio,
-                ["吵闹、无聊、容易忘记"],
                 device=sampled_audio.device,
             )[0]
             return positive_reward - negative_reward
@@ -226,6 +215,30 @@ class Reranker:
                 sample_rate=extra_params.sample_rate,
                 device=sampled_audio.device,
             )
+        elif rw_type == "anchor_points_sim":
+            return anchor_points_sim_reward(    
+                self.requires["mulan_infer_fn"],
+                self.requires["mulan"],
+                sampled_audio.squeeze(1),
+                sample_rate=extra_params.sample_rate,
+                device=sampled_audio.device,
+            )
+        elif rw_type == "mulan_temporal":
+            mulan_temporal = mulan_temporal_reward(
+                self.requires["mulan_infer_fn"],
+                self.requires["mulan"],
+                sampled_audio.squeeze(1),
+                device=sampled_audio.device,
+                sample_rate=extra_params.sample_rate,
+            )
+            return mulan_temporal
+        elif rw_type == "chroma_temporal":
+            chroma_temporal = chroma_temporal_reward(
+                sampled_audio.squeeze(1),
+                sample_rate=extra_params.sample_rate,
+                device=sampled_audio.device,
+            )
+            return chroma_temporal
         else:
             raise ValueError(f"Unknown reward type: {rw_type}")
 

@@ -161,18 +161,29 @@ def dump_wav(audio, sr=24000):
     return handle.read()
 
 
-def save_wav(audio, output_file, sr=24000, save_mp3=False):
+def save_wav(audio, output_file, sr=24000, save_mp3=False, normalize_volume=False):
     if audio.dim() == 1:
         audio = audio.unsqueeze(0)
     torchaudio.save(output_file, audio, sr)
-    if save_mp3:
-        output_file_mp3 = output_file.replace(".wav", ".mp3")
-        subprocess.run(
-            f"ffmpeg -y -i {output_file} -ar {sr} -ac 1 -b:a 320k {output_file_mp3}",
-            shell=True,
-        )
-        os.remove(output_file)
 
+    if save_mp3 and normalize_volume:
+        new_ext = ".normalized.mp3"
+    elif normalize_volume:
+        new_ext = ".normalized.wav"
+    elif save_mp3:
+        new_ext = ".mp3"
+    else:
+        # keep original wav
+        return output_file
+    
+    output_file_target = output_file.replace(".wav", new_ext)
+    if normalize_volume:
+        command = "ffmpeg-normalize '%s' -t -16 --keep-loudness-range-target -c:a libmp3lame -b:a 320k -o '%s' -f" % (output_file, output_file_target)
+    else:
+        command = f"ffmpeg -y -i {output_file} -ar {sr} -ac 1 -b:a 320k {output_file_target}"
+    subprocess.run(command, shell=True)
+    os.remove(output_file)
+    return output_file_target
 
 def load_wav(path, sr=24000):
     if path.endswith(".npy"):

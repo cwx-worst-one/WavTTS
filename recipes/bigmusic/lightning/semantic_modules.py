@@ -41,7 +41,9 @@ try:
         semantic_diversity_sim_reward,
         chroma_reward,
         chroma_sim_reward,
-        anchor_points_sim_reward
+        anchor_points_sim_reward,
+        mulan_temporal_reward,
+        chroma_temporal_reward,
     )
 except Exception as e:
     pass
@@ -1754,6 +1756,22 @@ class SemanticRLModule(SemanticModule):
                 target_embeds=items.get("target_mulan_embeds"),
             )
             return mulan_sim
+        elif reward_type == "mulan_temporal":
+            mulan_temporal = mulan_temporal_reward(
+                self.requires["mulan_infer_fn"],
+                self.requires["mulan"],
+                sampled_audio.squeeze(1),
+                device=sampled_audio.device,
+                sample_rate=self.extra_params.sample_rate,
+            )
+            return mulan_temporal
+        elif reward_type == "chroma_temporal":
+            chroma_temporal = chroma_temporal_reward(
+                sampled_audio.squeeze(1),
+                sample_rate=self.extra_params.sample_rate,
+                device=sampled_audio.device,
+            )
+            return chroma_temporal
         elif reward_type == "wer":
             if "sampled_lyrics" not in items:
                 eos_index_list = items["eos_index_list"]

@@ -58,15 +58,14 @@ def prompt_path_to_items(prompt_path, cache_dir='.prompt_cache'):
     if isinstance(prompt_path, dict): # prompt path is already an item list
         # Format expects { 'style_audio': [], 'style_text': [], 'lyrics': [] }
         return prompt_path
-    with local_zero_first():
-        hpath = prompt_path
-        if hpath.startswith("hdfs://"):
+    if prompt_path.startswith("hdfs://"):
+        with local_zero_first():
             local_path = f"{cache_dir}/{os.path.basename(prompt_path)}"
-            if not os.path.exists(prompt_path):
-                if not hh.get(hpath, prompt_path):
-                    raise ConnectionError(f"Cannot retrieve file from {hpath}.")
-            else:
-                prompt_path = local_path
+            if not os.path.exists(local_path):
+                Path(local_path).parent.mkdir(parents=True, exist_ok=True)
+                if not hh.get(prompt_path, local_path):
+                    raise ConnectionError(f"Cannot retrieve file from {prompt_path}.")
+            prompt_path = local_path
 
     prompt_path = Path(prompt_path)
     if prompt_path.suffix == '.json':
