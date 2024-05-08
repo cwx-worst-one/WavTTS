@@ -1,5 +1,5 @@
 ---
-
+# # python3 -m samantha.main predict -c recipes/bigmusic/conf/Q4_2023/inference/inference_inst_gt_30s.yaml
 ################################################################################
 ##########                       BASIC CONFIGURATION                  ##########
 ################################################################################
@@ -9,44 +9,31 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
 
 extra_params:
-    beam_size: 4    # set to 1 if not using reranker
-    samples_to_save: 1
-    save_style_audio: True
-    save_mode: wav  # wav|mp3|upload
-    save_semantic_tokens: False
-    prompt_path: "hdfs://haruna/home/byte_speech_sv/bigmusic/prompts/sstk_random_30_prompts.csv"
-    inference_conditions: "style_text,duration"
+    num_rounds: 1
+    # prompt_path: "/mnt/bn/audio-diffusion/data/mixture_prompts/karaoke-30s.csv"
+    prompt_path: "/mnt/bn/ashaw-us/repos/samantha/recipes/bigmusic/dev/ashaw/scripts/inference_scripts/janne_diffusion_reconstruct_audio/gt_prompts.csv"
+    inference_conditions: style_audio
     max_items: null
-    use_reranker: True
+    run_combinations: False
 
-    output_dir: sstk_out
+    output_dir: assets/generated_output_gt/instrumental_44k
+    # Re-trained vocal checkpoint
+    token2wav_type: diffusion
+    semantic_type: bestrq
 
-    # Semantic model
-    semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
-    semantic_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/instrumental/sstk_v8/semantic/v8_rc1-step=000250-minimal.ckpt"
-    mulan_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/instrumental/sstk_v8/mulan/mulan-step=005000-median_rank_1=72-kaggle-minimal.ckpt"
-    mulan_version: "sstkmae_v2"
+    # Model Settings
+    sample_rate: 44100
+    duration: 30
+    sample_mode: "gumbel"
 
-    # For re-ranking
-    rewards:
-        style_text: 0.5
-        style_audio: 0.0
-        qualitative: 1.0
-        loudness_sim: 0.0
-        audio_metrics: 1.0
-        semantic_diversity: 0.5
-    positive_phrase: "high quality, catchy, memorable"
-    negative_phrase: "noisy, boring, forgettable"
-
-    # CFG
-    use_controller_cfg: True
-    controller_cfg_gamma: 2
-    controller_cfg_label: negative_anchor
-
-    # For intensity calculation
-    intensity_calculation: "mean"
-    intensity_hz: 1
-    intensity_temperature: 1.0
+    ar_params:
+        coarse_duration: 10
+        fine_duration: 4
+        coarse_stride: 5
+        fine_stride: 3
+        coarse_temperature: 0.9
+        fine_temperature: 0.8
+        ar_sample_mode: gumbel
 
     diffusion_version: 'sstk_v5' # sstk_v2 for 24k, sstk_v3 for 44.1k
     diffusion_params:
@@ -60,20 +47,8 @@ extra_params:
         schedule_slope: 4.0
         guidance_scale: 2.5
         bf16_portion: 0.0
-
-    # this is only needed when sample_rate=44100 or 48000, for 24k its bypassed
-    # '24k_to_48k_stereo' to use upsampling vocoder
-    # '44.1k_sa' to use Stable Audio 44.1k stereo vocoder
     vocoder_version: '44.1k_sa'
 
-    # Model Settings
-    sample_rate: 44100  # 24000|44100
-    duration: 30 # 30|45|60|75|90|105|120
-    semantic_temperature: 1.0
-    sample_mode: "top_p"
-    sample_thresh: 0.8
-    token2wav_type: "diffusion"
-    exclude_eos: True
 
 run_opts:
     fast_dev_run: False
@@ -81,7 +56,8 @@ run_opts:
     accelerator: auto
     strategy: auto
     cache_dir: .module_cache/musiclm
-    batch_size: 1  # set to 28 if not using reranker
+    batch_size: 4
+    num_workers: 8
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -91,23 +67,28 @@ predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_fr
     conditions: !ref <extra_params[inference_conditions]>
     max_items: !ref <extra_params[max_items]>
     batch_size: !ref <run_opts[batch_size]>
-    transform_style_text: False
-    extra_params: !ref <extra_params>
+    run_combinations: !ref <extra_params[run_combinations]>
 
 pl_datamodule: !new:recipes.bigmusic.datasets.lyrics.LyricsDataModule
     predict_dataset: !ref <predict_dataset>
     num_workers: 0
 
-pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
-    semantic_cls_path: !ref <extra_params[semantic_cls_path]>
+pl_module: !new:recipes.bigmusic.lightning.inference.GTInferenceModule
     extra_params: !ref <extra_params>
     required_modules:
+        bestrq_modules:
+            bestrq:
+                # US conv UMM-chroma stage 3
+                hpath: hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/user/hanoi.hantrakul/logs/umm_conv_sstk/umm_stage3_conv1D_sstk_no_ctc_794_EMAVQ32768x32/checkpoints_for_inference_retry/step=0850000.ckpt
+                # hpath: hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/user/hanoi.hantrakul/logs/umm_conv_sstk/umm_stage3_conv1D_sstk_no_ctc_794_EMAVQ4096x32/checkpoints_for_inference/step=0865000.ckpt
+                initializer: !name:recipes.umm.requires.model_initializer.init_stage3_conv1d
+                    cache_dir: !ref <run_opts[cache_dir]>
         diffusion_modules:
             diffusion:
                 # hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/24k_v2/diffusion-step=600000-EMA.ckpt # 24k
                 # hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/44.1k_stereo_v0/diffusion-step=450000-EMA.ckpt # 44.1k
                 # hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/44.1k_stereo_v1/diffusion-step=250000-EMA.ckpt
-                hpath: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/instrumental/sstk_v8/diffusion/44.1k_stereo_v2/diffusion-step=600000-EMA-minimal.ckpt
+                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/44.1k_stereo_v2/diffusion-step=600000-EMA.ckpt
                 initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
                     cache_dir: !ref <run_opts[cache_dir]>
                     sstk: True
@@ -121,39 +102,31 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                 # hpath: /mnt/bn/audio-diffusion/wtl/vocoder/sstk/24k_v1/soundstream-step=1240000-val_sdr=12.5666-EMA.ckpt # 24k
                 # hpath: /mnt/bn/audio-diffusion/wtl/vocoder/sstk/24k_v1_to_44.1k_stereo/soundstream-step=1490000-val_sdr=4.9540-EMA.ckpt  # '24k_to_48k_stereo'
                 # hpath: /mnt/bn/audio-diffusion/wtl/vocoder/sstk/44.1k_stereo_sa_v0/last-EMA.ckpt # '44.1k_sa'
-                hpath: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/instrumental/sstk_v8/vocoder/44.1k_stereo_sa_v1/last-EMA-minimal.ckpt
+                hpath: /mnt/bn/audio-diffusion/wtl/vocoder/sstk/44.1k_stereo_sa_v1/last-EMA.ckpt
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                     cache_dir: !ref <run_opts[cache_dir]>
                     sample_rate: !ref <extra_params[sample_rate]>
                     adapt_hopper: True
                     version: !ref <extra_params[vocoder_version]>
-        reranker:
-            hpath:
-                rewards: !ref <extra_params[rewards]>
-                required_modules:
-                    mulan:
-                        hpath: !ref <extra_params[mulan_ckpt]>
-                        initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
-                            version: !ref <extra_params[mulan_version]>
-                    #asr:
-                    #    hpath: en_punc
-                    #    initializer: !name:recipes.bigmusic.utils.metrics_asr.init_asr
-            initializer: !name:recipes.bigmusic.utils.reranker.init_reranker
-                cache_dir: !ref <run_opts[cache_dir]>
-                sample_rate: !ref <extra_params[sample_rate]>
+        ar_modules:
+            coarse:
+                # hpath: /mnt/bn/audio-diffusion/jt/model_archive/vocalmusic/coarse_flash_llama_wav2vec/bestrq_chroma_coarse_0.7b/checkpoints/step=295000-val_accu_0=17.92.ckpt
+                hpath: /mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/coarse_vocal/baseline_en_v1/checkpoints/step=200000-val_accu_0=23.74.ckpt
+                initializer: !name:recipes.bigmusic.utils.model_initializer.init_coarse
+                    cache_dir: !ref <run_opts[cache_dir]>
+            fine:
+                # hpath: /mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/fine/fine_mcc_mix/fixed_posemb_v1/checkpoints/step=206000-val_accu_0=10.44.ckpt
+                hpath: /mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/fine/fine_ctiga_v1/checkpoints/step=200000-val_accu_0=12.11.ckpt
+                initializer: !name:recipes.bigmusic.utils.model_initializer.init_fine
+                    cache_dir: !ref <run_opts[cache_dir]>
+            soundstream_dec:
+                hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
+                initializer: !name:recipes.musiclm.requires.model_initializer.init_soundstream_decoder
+                    cache_dir: !ref <run_opts[cache_dir]>
 
-# separating out additional_callbacks so auto_eval can disable metrics
-#additional_callbacks:
-#   - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
-#   - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
-#   - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
 callbacks:
+    # - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
-      beam_size: !ref <extra_params[beam_size]>
-      samples_to_save: !ref <extra_params[samples_to_save]>
-      save_style_audio: !ref <extra_params[save_style_audio]>
-      save_mode: !ref <extra_params[save_mode]>
-      save_semantic_tokens: !ref <extra_params[save_semantic_tokens]>
 
 trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>
@@ -165,5 +138,4 @@ trainer: !new:pytorch_lightning.Trainer
     use_distributed_sampler: False # for multi-gpu inference
     strategy: !ref <run_opts[strategy]>
     precision: !ref <run_opts[precision]>
-    #callbacks: !apply:operator.add [!ref <additional_callbacks>, !ref <callbacks>]
     callbacks: !ref <callbacks>

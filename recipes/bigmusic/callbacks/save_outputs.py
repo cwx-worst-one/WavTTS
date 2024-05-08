@@ -30,6 +30,7 @@ class SaveOutputsCallback(pl.Callback):
         save_mode="wav",
         save_semantic_tokens=False,
         save_mix_vocal_generated_audio=False,
+        normalize_volume=False
     ):
         super().__init__()
         self.total_items = 0
@@ -39,6 +40,7 @@ class SaveOutputsCallback(pl.Callback):
         self.save_mode = save_mode
         self.save_semantic_tokens = save_semantic_tokens
         self.save_mix_vocal_generated_audio = save_mix_vocal_generated_audio
+        self.normalize_volume = normalize_volume
 
     def on_predict_batch_end(
         self,
@@ -51,6 +53,10 @@ class SaveOutputsCallback(pl.Callback):
     ) -> None:
         output_dir = pl_module.extra_params.output_dir
         sample_rate = pl_module.extra_params.sample_rate
+        if hasattr(pl_module, "semantic_module"):
+            leadsheet_codec = pl_module.semantic_module.extra_params.get("leadsheet_codec")
+        else: # GTInferenceModule does not have semantic_module
+            leadsheet_codec = None
         output_paths = save_batch_outputs(
             outputs,
             batch,
@@ -63,8 +69,9 @@ class SaveOutputsCallback(pl.Callback):
             save_style_audio=self.save_style_audio,
             save_mix_vocal_generated_audio=self.save_mix_vocal_generated_audio,
             save_mode=self.save_mode,
+            normalize_volume=self.normalize_volume,
             save_semantic_tokens=self.save_semantic_tokens,
-            leadsheet_codec=pl_module.semantic_module.extra_params.get("leadsheet_codec"),
+            leadsheet_codec=leadsheet_codec,
         )
         if isinstance(outputs['generated_audio_tensor'], list):
             outputs['generated_audio_tensor'] = outputs['generated_audio_tensor'][0]
@@ -178,6 +185,7 @@ def save_batch_outputs(
     samples_to_save=1,
     save_style_audio=True,
     save_mode="wav",
+    normalize_volume=False,
     save_semantic_tokens=False,
     leadsheet_codec=None,
     save_mix_vocal_generated_audio=False,
@@ -271,14 +279,16 @@ def save_batch_outputs(
             **extra_cond_meta,
         }
         
+        wav_fp = os.path.join(wav_dir, f"{wav_file_name}.generated.wav")
+        print(f"[Saving] {wav_fp}")
+        output_wav_fp = save_wav(wav.cpu().float(), wav_fp, sr=sample_rate, save_mp3=save_mode == "mp3", normalize_volume=normalize_volume)
+        output_paths.append(output_wav_fp)
+
         if save_mode == "upload":
-            audio_bytes = audio_tensor_to_bytes(wav.cpu().float(), sample_rate)
+            saved_wav = torch.from_numpy(load_wav(output_wav_fp, sr=sample_rate))
+            audio_bytes = audio_tensor_to_bytes(saved_wav, sample_rate)
             metadata["audio_url"] = upload_to_easycycle(audio_bytes, f"{wav_file_name}.generated")
-        else:
-            wav_fp = os.path.join(wav_dir, f"{wav_file_name}.generated.wav")
-            print(f"[Saving] {wav_fp}")
-            save_wav(wav.cpu().float(), wav_fp, sr=sample_rate, save_mp3=save_mode == "mp3")
-            output_paths.append(wav_fp)
+            os.remove(output_wav_fp)
 
         if save_style_audio and style_audio is not None and beam_idx == 0:
             # style audio is always 24kHz (for now)
