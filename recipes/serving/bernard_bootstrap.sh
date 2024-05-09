@@ -23,21 +23,37 @@ fi
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/tiger/pypetrel/pypetrel/lib/
 export PYTHONPATH=${PYTHONPATH}:/opt/tiger/pypetrel/pypetrel
 
+function copy_from_hdfs() {
+    local src=$1
+    local dst=$2
 
-mkdir -p /opt/tiger/samantha/models/semantic
-/opt/tiger/yarn_deploy/hadoop/bin/hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/instrumental/semantic/step=000400.ckpt /opt/tiger/samantha/models/semantic/step=000400.ckpt
-mkdir -p /opt/tiger/samantha/models/mulan
-/opt/tiger/yarn_deploy/hadoop/bin/hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/mulan/mulan-step=005000-median_rank_1=72-kaggle.ckpt /opt/tiger/samantha/models/mulan/mulan-step=005000-median_rank_1=72-kaggle.ckpt
-mkdir -p /opt/tiger/samantha/models/diffusion
-/opt/tiger/yarn_deploy/hadoop/bin/hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/instrumental/diffusion/diffusion-step=250000-EMA.ckpt /opt/tiger/samantha/models/diffusion/diffusion-step=250000-EMA.ckpt
-mkdir -p /opt/tiger/samantha/models/vocoder
-/opt/tiger/yarn_deploy/hadoop/bin/hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/instrumental/vocoder/last-EMA.ckpt /opt/tiger/samantha/models/vocoder/last-EMA.ckpt
-mkdir -p /opt/tiger/samantha/models/beat
-/opt/tiger/yarn_deploy/hadoop/bin/hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/instrumental/beat/epoch=13-step=1400.pt /opt/tiger/samantha/models/beat/epoch=13-step=1400.pt
-mkdir -p /opt/tiger/samantha/models/musicfm
-/opt/tiger/yarn_deploy/hadoop/bin/hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/instrumental/musicfm/playlist_classic_stats.json /opt/tiger/samantha/models/musicfm/playlist_classic_stats.json
-/opt/tiger/yarn_deploy/hadoop/bin/hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/instrumental/musicfm/musicfm_25hz_playlist_330m_520k.pt /opt/tiger/samantha/models/musicfm/musicfm_25hz_playlist_330m_520k.pt
+/opt/tiger/yarn_deploy/hadoop/bin/hdfs dfs -get $src $dst
+}
 
+prompt_path="hdfs://haruna/home/byte_speech_sv/bigmusic/prompts/sstk_random_30_prompts.csv"
+semantic_ckpt="hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/instrumental/sstk_v8/semantic/v8_rc1-step=000250-minimal.ckpt"
+mulan_ckpt="hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/instrumental/sstk_v8/mulan/mulan-step=005000-median_rank_1=72-kaggle-minimal.ckpt"
+diffusion_ckpt="hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/instrumental/sstk_v8/diffusion/44.1k_stereo_v2/diffusion-step=600000-EMA-minimal.ckpt"
+vocoder_ckpt="hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/instrumental/sstk_v8/vocoder/44.1k_stereo_sa_v1/last-EMA-minimal.ckpt"
+
+base_path="/opt/tiger/samantha/models"
+mkdir -p "$base_path"
+prompt_local="$base_path/$(basename "$prompt_path")"
+semantic_local="$base_path/$(basename "$semantic_ckpt")"
+mulan_local="$base_path/$(basename "$mulan_ckpt")"
+diffusion_local="$base_path/$(basename "$diffusion_ckpt")"
+vocoder_local="$base_path/$(basename "$vocoder_ckpt")"
+
+copy_from_hdfs "$prompt_path" "$prompt_local"
+echo "Finish copying prompt"
+copy_from_hdfs "$semantic_ckpt" "$semantic_local"
+echo "Finish copying semantic ckpt"
+copy_from_hdfs "$mulan_ckpt" "$mulan_local"
+echo "Finish copying mulan ckpt"
+copy_from_hdfs "$diffusion_ckpt" "$diffusion_local"
+echo "Finish copying diffusion ckpt"
+copy_from_hdfs "$vocoder_ckpt" "$vocoder_local"
+echo "Finish copying vocoder ckpt"
 
 # start the euler server
 worker_num=${SERVER_WORKER_NUM:-1}
