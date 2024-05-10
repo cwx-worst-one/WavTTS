@@ -20,6 +20,7 @@ from recipes.bigmusic.lightning.embedding_modules import (
     MultiTagsCategoricalEmbedder,
     SpeakerEmbedder,
     LyricsTokenEmbedder,
+    OffsetEmbedder,
 )
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,13 @@ class VoiceBoxModule(pl.LightningModule):
                         add_sos=True,
                         dropout=0.1,
                         vocab_type=extra_params['tag_taxonomy_lang'],
+                    )
+                elif emb_type == 'duration_offset':
+                    embedder_dict[emb_type] = OffsetEmbedder(
+                        vocab_size=1024, 
+                        embedding_dim=prefix_hidden_size,
+                        add_sos=True,
+                        add_eos=False,     
                     )
                 elif emb_type == 'speaker_id':
                     embedder_dict[emb_type] = SpeakerEmbedder(
@@ -204,11 +212,11 @@ class VoiceBoxModule(pl.LightningModule):
                     embeds = embedder.embed(self.requires, batch['style_text'], with_sos=True)
                 else:
                     embeds = embedder.get_sos_embed(batch_size)
+            if emb_type == 'duration_offset':
+                if 'duration_offset' in conditions:
+                    embeds = embedder.embed(self.requires, batch['duration_offset'].cpu(), with_sos=True)
             if emb_type == 'speaker_id':
                 if 'speaker_id' in conditions:
-                    # TODO: fix speaker_id when shape=1
-                    if len(batch['speaker_id'].shape) == 1:
-                        batch['speaker_id'] = batch['speaker_id'].view(-1, 1)
                     embeds = embedder.embed(self.requires, batch['speaker_id'].cpu(), with_sos=False)
                 else:
                     embeds = embedder.get_sos_embed(batch_size)
@@ -362,6 +370,15 @@ class VoiceBoxModule(pl.LightningModule):
 
 
 class Lyric2songInferenceModule(VoiceBoxModule):
+
+    def prepare_prefix_inputs(self, batch):
+        speaker_id = torch.tensor(batch['speaker_id'])
+        if len(speaker_id.shape) == 1:
+            speaker_id = speaker_id.view(-1, 1)
+        batch['speaker_id'] = speaker_id
+        return super().prepare_prefix_inputs(batch)
+
+
     def prepare_audio_inputs(self, batch):
         seqlen = math.ceil(self.extra_params.semantic_frame_rate * self.extra_params.duration)
         batch['bn'] = torch.zeros([1, seqlen, self.extra_params.latent_dims]).to(self.device)

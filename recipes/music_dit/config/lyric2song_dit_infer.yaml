@@ -110,7 +110,7 @@ model_config: !new:recipes.music_dit.model.llama_ldm.ModelArgs
     prefix_hidden_size: !ref <extra_params[prefix_hidden_size]>
     temporal_aligned_hidden_size: !ref <extra_params[temporal_aligned_hidden_size]>
     xattn_hidden_size: !ref <extra_params[xattn_hidden_size]>
-    encoder_dim: 2048
+    encoder_dim: 1536
     encoder_n_layers: 24
     encoder_n_heads: 16
     causal: False

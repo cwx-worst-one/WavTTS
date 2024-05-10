@@ -86,7 +86,7 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
     remi_token_length = []
     speaker_id = []
     dataset_name = []
-    offset_tokens = []
+    duration_offset = []
 
     # DEBUG
     style_metadata = []
@@ -135,7 +135,7 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
         remi_leadsheet_tokens.append(leadsheet_token)
         remi_token_length.append(remi_token_len)
 
-        offset_tokens.append(batch[idx]["offset_token"])
+        duration_offset.append(batch[idx]["duration_offset"])
 
         style_metadata.append(batch[idx].get("style_metadata"))
         song_id.append(batch[idx].get("song_id"))
@@ -160,7 +160,7 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
         "target_tokens_length": torch.as_tensor(target_tokens_length),
         "seqlen": torch.as_tensor(target_tokens_length),
         "speaker_id": torch.as_tensor(speaker_id).unsqueeze(1),
-        "offset_token": torch.as_tensor(offset_tokens).unsqueeze(1),
+        "duration_offset": torch.as_tensor(duration_offset),
         "remi_token_length": torch.as_tensor(remi_token_length).unsqueeze(1),
         "conditions": conditions,
         "dataset_name": dataset_name,
@@ -416,9 +416,13 @@ class VocalTransforms(BaseTransforms):
             else:
                 remi_leadsheet_tokens = np.array([0]) # placeholder
             remi_leadsheet_tokens = torch.from_numpy(remi_leadsheet_tokens).long()
-            offset_token = int(song_slice.start) if song_slice.start is not None else 0
 
             clip, extra_clip = song_slice.slice_audio(audio, self.sample_rate, extra_audio)
+
+            duration = int(clip.shape[-1] / self.sample_rate)
+            offset = int(song_slice.start) if song_slice.start is not None else 0
+            duration_offset = [duration, offset]
+            
             yield {
                 "target_audio": clip,
                 "target_tokens_length": int(clip.shape[-1] / self.sample_rate * self.frame_rate),
@@ -428,7 +432,7 @@ class VocalTransforms(BaseTransforms):
                 "remi_leadsheet_tokens": remi_leadsheet_tokens,
                 "max_phone_len": self.segment_max_phone_len,
                 "max_leadsheet_len": self.segment_max_leadsheet_len,
-                "offset_token": offset_token,
+                "duration_offset": duration_offset,
                 **direct_return_dict,
             } | {k: v for k, v in zip(self.extra_audio_keys, extra_clip)}
 

@@ -606,6 +606,8 @@ class REMILeadsheetTokenEmbedder(TokenEmbedder):
 
 
 class OffsetEmbedder(TokenEmbedder):
+    def __init__(self, vocab_size, embedding_dim, add_sos=False, add_eos=False):
+        super().__init__(vocab_size, embedding_dim, add_sos=add_sos, add_eos=add_eos)
     def get_tokens(self, requires, input):
         return input
 
