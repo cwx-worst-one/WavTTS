@@ -41,13 +41,11 @@ run_opts:
     val_output_samples_dir: generated_samples
     val_check_interval: 10000
     limit_val_batches: 5
-    text_prefix_type: text # leadsheet|text
-    max_length: 400 # max second, example longer than this will be drop
-    include_phoneme_in_leadsheet: True
+    max_length: 400         # max second, example longer than this will be drop
 
-    batch_size: 24
-    shuffle_buffer: 0   # 100
-    buckets_in_sec: [5, 60]
+    batch_size: 16
+    shuffle_buffer: 0       # 100
+    buckets_in_sec: [30, 40, 50, 60]
     use_dynamic_batch: true
     max_seg_per_track: 3
     segment_method: "random"
@@ -63,39 +61,41 @@ run_opts:
     sinking_threshold: 0.51
     quality_filter: True
     num_workers: 8
+    prefetch_factor: 12
     melae_ckpt_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/renyi/samantha_ckpts/melae_kl/0418_melaekl2_beta1em2_lat32_g8_1/checkpoints/step=0395000.ckpt
 
 extra_params:
     sample_rate: 24000
+    lyrics_codebook_size: 2000
+    speaker_codebook_size: 100
     train_conditions: "style_category,speaker_id,lyrics_tokens"
-    tag_taxonomy_lang: "SA"  # Zh, SA
-    tag_dropout_rate: 0.25
-    line_break_dropout_rate: 0
-    section_tag_dropout_rate: 0
-    use_mcc_gender: False
-    semantic_frame_rate: 12.5
+    input_embedders:
+        prefix: [multitags_categorical, speaker_id, lyrics_tokens]
+        temporal_aligned: []
+        xattn: []
+    tag_taxonomy_lang: "SA"             # Switch to "SA_unified" after CN vocal V3 merge
+    tag_dropout_rate: 0.1
+    prefix_hidden_size: 256             # Set this if using prefix input
+    temporal_aligned_hidden_size: 0     # Set this if using temporal aligned input
+    xattn_hidden_size: 0                # Set this if using xattn input
+    semantic_frame_rate: 12.5           # Melae
     latent_dims: 32
 
 model_config: !new:recipes.music_dit.model.llama_ldm.ModelArgs
     in_channels: !ref <extra_params[latent_dims]>
     out_channels: !ref <extra_params[latent_dims]>
-    prompt_mel_dim: 32
-    n_token: 32768 #TODO check latest value
-    token_upscales: [5]
-    token_downscales: [1]
     llama_provider: ctiga
     local_cond_dim: 256
     time_embed_dim: 256
+    prefix_hidden_size: !ref <extra_params[prefix_hidden_size]>
+    temporal_aligned_hidden_size: !ref <extra_params[temporal_aligned_hidden_size]>
+    xattn_hidden_size: !ref <extra_params[xattn_hidden_size]>
     encoder_dim: 1536
     encoder_n_layers: 24
     encoder_n_heads: 16
-    use_prompt: !ref <run_opts[use_prompt]>
-    use_textprefix: !ref <run_opts[use_textprefix]>
     causal: False
     local_cond_project_type: linear
     use_unet_style_skip_connect: !ref <run_opts[use_unet_style_skip_connect]>
-    text_prefix_type: !ref <run_opts[text_prefix_type]>
-    use_phone_lang: False
 
 pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     sample_rate: !ref <extra_params[sample_rate]>
@@ -110,7 +110,6 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     segment_max_phone_len: !ref <run_opts[segment_max_phone_len]>
     region: !ref <run_opts[region]>
     conditions: !ref <extra_params[train_conditions]>
-    lyrics_field: !ref <run_opts[lyrics_field]>
     lyrics_confidence: !ref <run_opts[lyrics_confidence]>
     read_structure_tags: !ref <run_opts[read_structure_tags]>
     infer_structure_tags: !ref <run_opts[infer_structure_tags]>
@@ -120,12 +119,9 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     sinking_threshold: !ref <run_opts[sinking_threshold]>
     quality_filter: !ref <run_opts[quality_filter]>
     frame_rate: !ref <extra_params[semantic_frame_rate]>
-    tag_taxonomy_lang: !ref <extra_params[tag_taxonomy_lang]>
-    line_break_dropout_rate: !ref <extra_params[line_break_dropout_rate]>
-    section_tag_dropout_rate: !ref <extra_params[section_tag_dropout_rate]>
-    normalize_audio: False
+    prefetch_factor: !ref <run_opts[prefetch_factor]>
 
-model_cls: !name:recipes.music_dit.model.llama_ldm.LlamaDiffusionLyric2Song
+model_cls: !name:recipes.music_dit.model.llama_ldm.LlamaDiffusion
     hp: !ref <model_config>
 
 optimizer_cls: !name:deepspeed.ops.adam.FusedAdam
@@ -154,16 +150,17 @@ pl_module: !new:recipes.music_dit.lit_module.lit_diffusion_voicebox.VoiceBoxModu
             initializer: !name:recipes.umm.requires.model_initializer.init_melae
                 cache_dir: !ref <run_opts[cache_dir]>
     val_output_samples_dir: !ref <run_opts[log_dir]>/<run_opts[log_name]>/<run_opts[version]>/generated
+    extra_params: !ref <extra_params>
 
 logger:
     - !new:pytorch_lightning.loggers.TensorBoardLogger
       save_dir: !ref <run_opts[tensorboard_dir]>
       name: !ref <run_opts[log_name]>
       version: !ref <run_opts[version]>
-    - !new:pytorch_lightning.loggers.wandb.WandbLogger
-      save_dir: !ref <run_opts[tensorboard_dir]>
-      project: !ref <run_opts[log_name]>
-      name: !ref <run_opts[version]>
+    # - !new:pytorch_lightning.loggers.wandb.WandbLogger
+    #   save_dir: !ref <run_opts[tensorboard_dir]>
+    #   project: !ref <run_opts[log_name]>
+    #   name: !ref <run_opts[version]>
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
