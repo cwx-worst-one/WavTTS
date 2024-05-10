@@ -16,7 +16,7 @@ from collections import defaultdict
 from recipes.bigmusic.utils.format_utils import update_json
 import numpy as np
 from recipes.musiclm.utils.dist import local_zero_first
-from recipes.bigmusic.utils.upload import audio_tensor_to_bytes, upload_to_easycycle
+from recipes.bigmusic.utils.upload import audio_tensor_to_bytes, upload_to_easycycle, upload_to_tos
 from recipes.bigmusic.datasets.mir_data_util import ID_TEMPO_LABEL_MAP, ID_KEY_MAP
 from recipes.bigmusic.datasets.utils.symbolic_music import pretty_midi_obj_to_midi_bytes
 
@@ -421,7 +421,7 @@ def default_format_video_text(metadata):
     num_lines = len(video_text.split("\n"))
     return video_text, fontsize, line_spacing
 
-def save_video(input_results_dir, output_video_dir, format_video_text_fn=default_format_video_text, remove_segments=True):
+def save_video(input_results_dir, output_video_dir, format_video_text_fn=default_format_video_text, remove_segments=True, upload=True):
     colors = ["green", "blue", "brown"]
     output_video_dir = Path(output_video_dir)
     output_video_dir_tmp = output_video_dir/'tmp'
@@ -455,6 +455,18 @@ def save_video(input_results_dir, output_video_dir, format_video_text_fn=default
     (output_video_dir_tmp/"output.mp4").rename(video_output_fp)
     if remove_segments:
         shutil.rmtree(output_video_dir_tmp)
+
+    if upload and os.path.exists(video_output_fp):
+        url = upload_to_tos(video_output_fp, "tmp/video_demo/")
+        print("Saved video:", url)
+
+        # update inference_params
+        meta_fp = os.path.join(output_video_dir, "inference_params.json")
+        with open(meta_fp, 'r', encoding='utf-8') as f:
+            metadata = json.load(f)
+        metadata["demo_video_url"] = url
+        with open(meta_fp, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=2)
     return video_output_fp
 
 def run_average_metrics(output_dir):

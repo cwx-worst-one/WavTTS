@@ -47,3 +47,21 @@ def upload_to_easycycle(data, fname, space_name=None, format="wav"):
         host, 'wangtuo.todd', data, space_name, file_name, expires
     )
     return url
+
+def try_get_toscli():
+    if os.path.exists("/mnt/bn/bigmusic-lf/user/zh/scripts/1.0.0.20/toscli"):
+        tos_cli = "/mnt/bn/bigmusic-lf/user/zh/scripts/1.0.0.20/toscli"
+    elif os.path.exists("/opt/tiger/1.0.0.20/toscli"):
+        tos_cli = "/opt/tiger/1.0.0.20/toscli"
+    else:
+        os.system("hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhaohang.ai/scripts/1.0.0.20 /opt/tiger/")
+        os.system("chmod +x /opt/tiger/1.0.0.20/toscli")
+        tos_cli = "/opt/tiger/1.0.0.20/toscli"
+    return tos_cli
+
+def upload_to_tos(audio_fp, prefix, bucket="sa-music-model-zoo", ak="9NC3OBANMDH4TTPTO52E"):
+    tos_cli = try_get_toscli()
+    os.system(f'{tos_cli} -bucket {bucket} -accessKey {ak} put -prefix {prefix} {audio_fp}')
+    file_name = os.path.basename(audio_fp)
+    url = f'https://tosv.byted.org/obj/{bucket}/{prefix}/{file_name}'
+    return url

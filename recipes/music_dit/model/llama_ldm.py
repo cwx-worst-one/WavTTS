@@ -276,18 +276,17 @@ class LlamaDiffusion(nn.Module):
         if temporal_aligned_inputs_emb:
             x_noisy = torch.cat([x_noisy, temporal_aligned_inputs_emb])
         x = self.x_prenet(x_noisy) + self.prenet(time_emb)
-        print("_forward1", x.shape)
 
         # Append prefix inputs
-        if prefix_inputs_emb:
+        if prefix_inputs_emb is not None:
+            prefix_inputs_emb = self.prefix_prenet(prefix_inputs_emb)
             x = torch.cat([prefix_inputs_emb, x], dim=1)
-        print("_forward2", x.shape)
 
         # TODO (qq) add xattn_inputs_emb to encoder input.
         pred_v = self.encoder(x, x.shape[1])
 
         prefix_len = 0
-        if prefix_inputs_emb:
+        if prefix_inputs_emb is not None:
             prefix_len = prefix_inputs_emb.shape[1]
         pred_v = pred_v[:, prefix_len:, :]
 

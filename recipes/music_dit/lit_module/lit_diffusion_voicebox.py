@@ -1,6 +1,7 @@
 import logging
 import os
 import random
+import math
 
 import pytorch_lightning as pl
 import torch
@@ -13,6 +14,7 @@ from recipes.musiclm.utils.dist import local_zero_first
 from recipes.music_dit.model.loss import MaskedMAELoss, MaskedSSIMLoss, MaskedMSELoss, MaskedMAELossDim2, sequence_mask
 from recipes.music_dit.utils.infer_utils import save_wav
 from recipes.umm.requires.model_initializer import init_stage3_dual_voc
+from samantha.utils.hparams import DotDict
 # TODO (qq) creat embedding_modules.py in music_dit directory.
 from recipes.bigmusic.lightning.embedding_modules import (
     MultiTagsCategoricalEmbedder,
@@ -38,7 +40,6 @@ def fix_flashattn_version(model_cls):
         model_cls.keywords['hp'] = hp
     return model_cls
 
-
 class VoiceBoxModule(pl.LightningModule):
 
     def __init__(
@@ -54,6 +55,7 @@ class VoiceBoxModule(pl.LightningModule):
         extra_params=None,
     ):
         super().__init__()
+        self.extra_params = DotDict(extra_params)
         self.save_hyperparameters()
         # self.model = fix_flashattn_version(model_cls)()
         self.model = model_cls()
@@ -123,7 +125,10 @@ class VoiceBoxModule(pl.LightningModule):
     def load_from_pretrained(self, pretrained_path=None):
         rank_zero_info(f'Loading pre-trained model from checkpoint {pretrained_path}')
         with local_zero_first():
-            local_path = download_checkpoint(pretrained_path, '.')
+            local_path = download_checkpoint(
+                pretrained_path, 
+                cache_dir=self.extra_params.cache_dir,
+            )
 
             ckpt_state_dict = torch.load(
                 local_path, map_location=torch.device('cpu')
@@ -201,6 +206,9 @@ class VoiceBoxModule(pl.LightningModule):
                     embeds = embedder.get_sos_embed(batch_size)
             if emb_type == 'speaker_id':
                 if 'speaker_id' in conditions:
+                    # TODO: fix speaker_id when shape=1
+                    if len(batch['speaker_id'].shape) == 1:
+                        batch['speaker_id'] = batch['speaker_id'].view(-1, 1)
                     embeds = embedder.embed(self.requires, batch['speaker_id'].cpu(), with_sos=False)
                 else:
                     embeds = embedder.get_sos_embed(batch_size)
@@ -290,39 +298,33 @@ class VoiceBoxModule(pl.LightningModule):
 
     predict = inference
 
-    def plot_mel(self, mel, name):
-        fig = plt.figure(figsize=(12, 8))
-        plt.pcolor(mel.T)
-        plt.savefig(f'{self.hparams.val_output_samples_dir}/{name}.png')
-        plt.close(fig)
-
-    def save_mel_wav(self, latents, name):
+    def latent2wav(self, latents):
         if 'melae' in self.requires:
             mel = self.requires['melae'].latent2mel(latents)
-            self.plot_mel(mel[0].float().cpu().numpy(), name=f'{name}')
             wav = self.melvoc(mel.transpose(1, 2), None).reshape(-1)
         else:
             wvae = self.requires['vocoder']
             wav = wvae.decode(latents.float().transpose(1, 2)).reshape(-1)
-        save_wav(wav.float().cpu().numpy(),
-                 f'{self.hparams.val_output_samples_dir}/{name}.wav')
-        print(f'| saved wave to {self.hparams.val_output_samples_dir}/{name}')
+        return wav
 
     def validation_step(self, inputs, step):
         bsz, seqlen, loss_mask = self.prepare_input(
-            inputs, strip_txt_padding=True, Tctx=torch.ones_like(inputs['seqlen'][0]))
-        
-        diffusion_nfe = 20
-        diffusion_sampler = 'ddim'
-        text_cfg_w = 4
-        
+            inputs, Tctx=0)
+        # inputs, strip_txt_padding=True, Tctx=inputs["seqlen"][0] // 3)
+        diffusion_nfe = self.extra_params.diffusion_nfe
+        diffusion_sampler = self.extra_params.diffusion_sampler
+        text_cfg_w = self.extra_params.text_cfg_w
+        batch_num = inputs["bn"].shape[0]
+        assert batch_num == 1
+
         inputs['bn_ctx'] = inputs['bn_ctx'].repeat(2, 1, 1)
         inputs['bn_ctx_mask'] = inputs['bn_ctx_mask'].repeat(2, 1, 1)
         
-        if 'prefix_inputs_emb' in inputs:            
-            cfg_prefix_inputs_emb = torch.unsqueeze(torch.unsqueeze(self.null_embs, 1), -1)
-            cfg_prefix_inputs_emb = cfg_prefix_inputs_emb.repeat(cfg_prefix_inputs_emb.shape[0], 1, cfg_prefix_inputs_emb.shape[1])
-            inputs['prefix_inputs_emb'] = torch.concat(inputs['cfg_prefix_inputs_emb', cfg_prefix_inputs_emb], dim=0)
+        if 'prefix_inputs_emb' in inputs:
+            inputs_embeds = inputs['prefix_inputs_emb']
+            cfg_prefix_inputs_emb = torch.unsqueeze(torch.unsqueeze(self.null_embs, 0), 0)     
+            cfg_prefix_inputs_emb = cfg_prefix_inputs_emb.repeat(inputs_embeds.shape[0], inputs_embeds.shape[1], 1)
+            inputs['prefix_inputs_emb'] = torch.concat([inputs_embeds, cfg_prefix_inputs_emb], dim=0)
 
         # TODO (qq) add cfg input for temporal_aligned_inputs_emb and xattn_inputs_emb
         
@@ -331,14 +333,16 @@ class VoiceBoxModule(pl.LightningModule):
             timesteps=diffusion_nfe,
             sampler=diffusion_sampler,
             text_cfg_w=text_cfg_w)
-        self.save_mel_wav(lat.transpose(1, 2), f'{self.trainer.global_step}/val{step:04d}_out')
-        recording_wav_path = f'{self.hparams.val_output_samples_dir}/val{step:04d}_recording.wav'
-        if not os.path.exists(recording_wav_path):
-            self.save_mel_wav(inputs['bn'], f'val{step:04d}_gt')
-            save_wav(inputs['wav'].float().cpu().numpy().reshape(-1), recording_wav_path)
+        generated_audio = self.latent2wav(lat.transpose(1, 2))
+        outputs = {
+            "generated_audio":generated_audio.reshape(batch_num, -1),
+            "generated_audio_tensor":generated_audio.reshape(1, -1),
+        }
+        if 'target_audio' in inputs:
+            outputs.update({"target_audio":inputs['target_audio'].float().cpu().numpy().reshape(batch_num, -1)})
+        return outputs
 
-    def prepare_output_dir(self):
-        os.makedirs(f'{self.hparams.val_output_samples_dir}/{self.trainer.global_step}', exist_ok=True)
+    def prepare_latent_vocoder(self):
         with local_zero_first():
             local_path = download_checkpoint('hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/renyi/samantha_ckpts/voc/v1/checkpoints/vocoder_last.ckpt', '.module_cache')
             self.melvoc = init_stage3_dual_voc(
@@ -347,11 +351,31 @@ class VoiceBoxModule(pl.LightningModule):
 
     def on_validation_epoch_start(self) -> None:
         super().on_validation_epoch_start()
-        self.prepare_output_dir()
+        self.prepare_latent_vocoder()
 
     def on_predict_epoch_start(self) -> None:
         super().on_predict_epoch_start()
-        self.prepare_output_dir()
+        self.prepare_latent_vocoder()
 
     def predict_step(self, batch, batch_idx=0, dataloader_idx=0):
-        self.validation_step(batch, step=batch_idx)
+        return self.validation_step(batch, step=batch_idx)
+
+
+class Lyric2songInferenceModule(VoiceBoxModule):
+    def prepare_audio_inputs(self, batch):
+        seqlen = math.ceil(self.extra_params.semantic_frame_rate * self.extra_params.duration)
+        batch['bn'] = torch.zeros([1, seqlen, self.extra_params.latent_dims]).to(self.device)
+        batch['seqlen'] = torch.LongTensor([seqlen]).to(self.device)
+
+        batch['cond_audio'] = batch.get('cond_audio', None)   
+        if 'melae' in self.requires:        # melae
+            melae = self.requires['melae']
+            if batch['cond_audio']:
+                batch['cond_bn'] = melae.wav2token(batch['cond_audio'])
+        elif 'vocoder' in self.requires:    # music vae
+            wvae = self.requires['vocoder']   
+            if batch['cond_audio']:
+                h_ = wvae.encode(batch['cond_audio'][:, None])
+                batch['cond_bn'], _, _ = wvae.sample(h_, deterministic=False)
+                batch['cond_bn'] = batch['cond_bn'].transpose(1, 2)
+        return batch

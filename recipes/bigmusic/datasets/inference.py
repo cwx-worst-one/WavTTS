@@ -102,6 +102,7 @@ def inference_dataset_from_prompt(
     is_inference=False,
     front_results=None,
     rewrite_lyrics=True,
+    disable_multitag=False,
 ):
     prompts = prompt_path_to_items(prompt_path)
 
@@ -137,7 +138,7 @@ def inference_dataset_from_prompt(
 
     # Below are query rewritting logics for Chinese Lyrics2song. 
     if lang.startswith("zh_"):
-        prompts = process_zh_prompts(prompts, conditions.split(","), rewrite_target, transform_style_text, rewrite_lyrics)
+        prompts = process_zh_prompts(prompts, conditions.split(","), rewrite_target, transform_style_text, rewrite_lyrics, disable_multitag)
 
     if run_combinations:
         lyrics_prompt_pairs = itertools.product(*list(prompts.values()))
@@ -286,10 +287,14 @@ def process_zh_lyrics(lyrics_list: List[str], genres: Optional[List[str]], rewri
 
     return [split_and_normalize_one(text, genre) for text, genre in zip(lyrics_list, genres)]
 
-def process_zh_style_text(style_text_list: List[str], rewrite_target="") -> Tuple[List[str], List[str], List[str], List[int]]:
+def process_zh_style_text(style_text_list: List[str], rewrite_target="", disable_multitag=False) -> Tuple[List[str], List[str], List[str], List[int]]:
     """Auto-convert macro style text into separate sub-category text seaprated by '|'."""
     def process_one(text: str) -> Tuple[str, str, str, int]:
         """Expecting input style text in the format of "SA_genre|SA_mood|SA_gender" where each field can be optional."""
+        if disable_multitag:
+            # To support infer with pretrain ckpts
+            # https://bytedance.us.larkoffice.com/docx/PddVdJ0ScoLqjExc87Luh0Mjs0c#part-E3sadoTLdoodGbxXrP8uggCestg
+            text=text.split("|")[0]
         if "|" not in text:
             text = text + "||" # For backward compatibility, support top genre only style text
         # TODO: also expand to key and tempo_label.
@@ -334,6 +339,7 @@ def process_zh_prompts(
     rewrite_target: str,
     transform_style_text: bool = True,
     rewrite_lyrics: bool = True,
+    disable_multitag: bool = False,
 ) -> Dict:
     """
     - Reformat lyrics.
@@ -366,7 +372,7 @@ def process_zh_prompts(
             for lyrics_p, style_p in zip(lyrics_prompts, prompts['style_text']):
                 qs.append(lyrics_p[:10] + '\n' + style_p.split('|')[0])
             prompts['original_style_text'] = qs
-        prompts['style_text'], key_from_tag, tempo_label_from_tag, speaker_id_from_tag = process_zh_style_text(prompts['style_text'], rewrite_target)
+        prompts['style_text'], key_from_tag, tempo_label_from_tag, speaker_id_from_tag = process_zh_style_text(prompts['style_text'], rewrite_target, disable_multitag)
     else:
         key_from_tag, tempo_label_from_tag, speaker_id_from_tag = None, None, None        
 

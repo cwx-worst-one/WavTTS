@@ -1,0 +1,6 @@
+--index-url https://bytedpypi.byted.org/simple
+diffusers
+confusables
+easydict
+colorednoise
+pretty_midi
