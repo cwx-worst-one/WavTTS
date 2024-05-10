@@ -154,7 +154,6 @@ RUN pip3 install \
         matplotlib==3.7.1 \
         webrtcvad==2.0.10 \
         openpyxl==3.1.2 \
-        transformers==4.35.0 \
         colorednoise==2.1.0 \
         torch_stft==0.1.4 \
         jieba==0.42.1 \
@@ -169,7 +168,7 @@ RUN pip3 install \
         zhon==1.1.5
 
 ARG CRUISE_VERSION=1.0.0.2602
-ARG PANTHER_VERSION=1.7.14.129
+ARG PANTHER_VERSION=1.7.14.142
 ARG FALCONCLAW_VERSION=1.0.5.129
 ARG ONNX_VERSION=1.0.0.22
 ARG OPENFST_VERSION=1.0.0.8
@@ -329,17 +328,18 @@ RUN pip3 install \
 # flash-attn incompatable, test required.
 # RUN pip install git+https://github.com/NVIDIA/TransformerEngine.git@stable
 
-# # Install bleurt.
-# RUN pip3 install unbabel-comet && \
-#     cd /opt/tiger && \
-#     rm -rf bleurt && \
-#     export http_proxy=http://bj-rd-proxy.byted.org:3128 && \
-#     export https_proxy=http://bj-rd-proxy.byted.org:3128 && \
-#     git clone https://github.com/google-research/bleurt.git && \
-#     cd bleurt && \
-#     pip3 install . && \
-#     pip3 install protobuf==3.20.0 && \
-#     pip3 install jsonargparse==4.14.1
+# Install bleurt.
+RUN pip3 install unbabel-comet && \
+    cd /opt/tiger && \
+    rm -rf bleurt && \
+    export http_proxy=http://bj-rd-proxy.byted.org:3128 && \
+    export https_proxy=http://bj-rd-proxy.byted.org:3128 && \
+    git clone https://github.com/google-research/bleurt.git && \
+    cd bleurt && \
+    pip3 install . && \
+    pip3 install protobuf==3.20.0 && \
+    pip3 install jsonargparse==4.14.1 && \
+    pip3 install transformers==4.35.0
 
 # Add apex
 RUN export MAX_JOBS=32 && \
