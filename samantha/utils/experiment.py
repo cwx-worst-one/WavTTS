@@ -1,6 +1,7 @@
 import logging
 import os
 import shutil
+import tempfile
 import time
 from typing import Dict
 
@@ -28,8 +29,8 @@ def create_experiment_directory(
         resolved_yaml = resolve_references(f, overrides)
 
     hparams_save_path = os.path.join(experiment_directory, "config.yaml")
-    os.makedirs("logs", exist_ok=True)
-    local_path = os.path.join("logs", "config.yaml")
+    temp_logs = tempfile.mkdtemp()
+    local_path = os.path.join(temp_logs, "config.yaml")
 
     try:
         with open(local_path, "w", encoding="utf-8") as w:
@@ -41,7 +42,7 @@ def create_experiment_directory(
             if not os.path.exists(hparams_save_path):
                 shutil.copy(local_path, hparams_save_path)
     finally:
-        os.remove(local_path)
+        shutil.rmtree(temp_logs)
 
 
 @rank_zero_only

@@ -43,20 +43,35 @@ class CUDACallback(Callback):
 
 
 class MemoryCallback(Callback):
+
+    MB = 1024**2
+
     def on_train_batch_end(self, trainer, pl_module, *_) -> None:
-        MB = 1024**2
-        max_memory_allocated = torch.cuda.max_memory_allocated() / MB
-        max_memory_reserved = torch.cuda.max_memory_reserved() / MB
-        memory_allocated = torch.cuda.memory_allocated() / MB
-        memory_reserved = torch.cuda.memory_reserved() / MB
+        max_memory_allocated = torch.cuda.max_memory_allocated() / self.MB
+        max_memory_reserved = torch.cuda.max_memory_reserved() / self.MB
 
         pl_module.log_dict(
             {
                 "gpu/max_memory_allocated": max_memory_allocated,
                 "gpu/max_memory_reserved": max_memory_reserved,
-                "gpu/memory_allocated": memory_allocated,
-                "gpu/memory_reserved": memory_reserved,
             },
+            prog_bar=False,
+            rank_zero_only=True,
+        )
+
+    def on_before_backward(self, trainer, pl_module, *_):
+        memory_allocated = torch.cuda.memory_allocated() / self.MB
+        pl_module.log_dict(
+            {"gpu/before_bwd_memory_allocated": memory_allocated},
+            prog_bar=False,
+            rank_zero_only=True,
+        )
+
+    def on_before_optimizer_step(self, trainer, pl_module, *_):
+
+        memory_allocated = torch.cuda.memory_allocated() / self.MB
+        pl_module.log_dict(
+            {"gpu/before_opt_memory_allocated": memory_allocated},
             prog_bar=False,
             rank_zero_only=True,
         )
