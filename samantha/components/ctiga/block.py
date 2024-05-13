@@ -1,5 +1,6 @@
 # Copyright (c) 2022, Tri Dao.
 
+import os
 from functools import partial
 from typing import Optional
 
@@ -8,8 +9,25 @@ import torch.nn as nn
 from torch import Tensor
 from torchvision.ops import StochasticDepth
 
-from .mha import FLASHATTN_VERSIONS, MHA
-from .mlp import Mlp
+from .mha import (
+    FLASHATTN_VERSIONS,
+    MHA,
+    FlashSelfAttention,
+    FlashSelfAttentionV2,
+    FlashSelfAttentionV2_3,
+    SelfAttention,
+)
+from .mlp import GatedMlp, Mlp
+
+try:
+    from panther.custom_ops.torch.mha import pre_norm_rotary_embedding_self_mha_func
+except ImportError:
+    pre_norm_rotary_embedding_self_mha_func = None
+
+try:
+    from panther.custom_ops.torch.mlp import pre_norm_mlp_func
+except ImportError:
+    pre_norm_mlp_func = None
 
 try:
     from .ops.layer_norm import DropoutAddLayerNorm, dropout_add_layer_norm
@@ -53,6 +71,8 @@ class Block(nn.Module):
         version="2",
         device=None,
         dtype=None,
+        use_fused_block=False,
+        recompute_level=1,
     ):
         """
         For prenorm=True, this Block has a slightly different structure compared to a regular
@@ -175,6 +195,53 @@ class Block(nn.Module):
                 for p in self.norm2.parameters():
                     p._shared_params = True
 
+        disable_fused_mha_debug = os.environ.get("DISABLE_FUSED_MHA_DEBUG", "0") == "1"
+        disable_fused_mlp_debug = os.environ.get("DISABLE_FUSED_MLP_DEBUG", "0") == "1"
+        self.use_fused_mha = (
+            use_fused_block
+            and not disable_fused_mha_debug
+            and pre_norm_rotary_embedding_self_mha_func is not None
+            and not self.return_residual
+            and self.prenorm
+            and self.drop_path1 is None
+            and isinstance(
+                self.norm1,
+                (nn.LayerNorm, RMSNorm, DropoutAddLayerNorm, DropoutAddRMSNorm),
+            )
+            and isinstance(self.dropout1, nn.Dropout)
+            and isinstance(self.mixer, MHA)
+            and isinstance(
+                self.mixer.inner_attn,
+                (
+                    FlashSelfAttention,
+                    FlashSelfAttentionV2,
+                    FlashSelfAttentionV2_3,
+                    SelfAttention,
+                ),
+            )
+            and not self.mixer.cross_attn
+            and not self.mixer.dwconv
+            and not self.mixer.return_residual
+            and hasattr(self.mixer, "rotary_emb")
+            and self.mixer.rotary_emb.interleaved
+        )
+        self.use_fused_mlp = (
+            use_fused_block
+            and not disable_fused_mlp_debug
+            and pre_norm_mlp_func is not None
+            and not self.return_residual
+            and self.prenorm
+            and isinstance(self.mlp, (Mlp, GatedMlp))
+            and self.drop_path2 is None
+            and isinstance(self.dropout2, nn.Dropout)
+            and isinstance(
+                self.norm2,
+                (nn.LayerNorm, RMSNorm, DropoutAddLayerNorm, DropoutAddRMSNorm),
+            )
+        )
+        self.recompute_level = recompute_level
+        print(f"[block.py][Block]: {self.use_fused_mha=}, {self.use_fused_mlp=}")
+
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
         return self.mixer.allocate_inference_cache(
             batch_size, max_seqlen, dtype=dtype, **kwargs
@@ -208,68 +275,62 @@ class Block(nn.Module):
             else dropout_add_layer_norm
         )
         if self.prenorm:
-            if not self.fused_dropout_add_ln:
-                if self.drop_path1 is not None:
-                    dropped = self.drop_path1(self.dropout1(hidden_states))
-                else:
-                    dropped = self.dropout1(hidden_states)
-                residual = (dropped + residual) if residual is not None else dropped
-                hidden_states = self.norm1(residual.to(dtype=self.norm1.weight.dtype))
-                if self.residual_in_fp32:
-                    residual = residual.to(torch.float32)
-            else:
-                if self.drop_path1 is not None:
-                    if self.drop_path1.p == 0 or not self.training:
-                        rowscale1 = None
-                    else:
-                        rowscale1 = self.drop_path1(
-                            torch.ones(
-                                hidden_states.shape[:-1],
-                                device=hidden_states.device,
-                                dtype=hidden_states.dtype,
-                            )
-                        )
-                else:
-                    rowscale1 = None
-                hidden_states, residual = self.norm1(hidden_states, residual)
-            if mixer_kwargs is None:
-                mixer_kwargs = {}
-            if mixer_subset is not None:
-                mixer_kwargs["mixer_subset"] = mixer_subset
-            assert not self.mixer.return_residual and not self.return_residual
-            mixer_out = self.mixer(
-                hidden_states, return_attn_probs=return_attn_probs, **mixer_kwargs
-            )
-            if return_attn_probs:
-                assert len(mixer_out) == 2
-                (
+            if (
+                self.use_fused_mha
+                and mixer_subset is None
+                and not return_attn_probs
+                and (mixer_kwargs is None or "inference_params" not in mixer_kwargs)
+            ):
+                if mixer_kwargs is None:
+                    mixer_kwargs = {}
+                window_size = [-1, -1]
+                if isinstance(self.mixer.inner_attn, FlashSelfAttentionV2_3):
+                    window_size = self.mixer.inner_attn.window_size
+                hidden_states, residual = pre_norm_rotary_embedding_self_mha_func(
                     hidden_states,
-                    attn_probs,
-                ) = mixer_out  # attn_probs: tuple(lse,score_cummax,dmask)
+                    residual,
+                    mixer_kwargs.get("key_padding_mask", None),
+                    mixer_kwargs.get("cu_seqlens", None),
+                    mixer_kwargs.get("max_seqlen", None),
+                    0,
+                    self.norm1.weight,
+                    self.norm1.bias,
+                    self.mixer.Wqkv.weight,
+                    self.mixer.Wqkv.bias,
+                    self.mixer.out_proj.weight,
+                    self.mixer.out_proj.bias,
+                    self.mixer.num_heads,
+                    self.mixer.rotary_emb.base,
+                    self.mixer.rotary_emb.scale_base,
+                    self.mixer.rotary_emb.interleaved,
+                    self.mixer.inner_attn.softmax_scale,
+                    self.mixer.inner_attn.causal,
+                    window_size,
+                    self.dropout1.p if self.training else 0.0,
+                    self.mixer.inner_attn.drop.p if self.training else 0.0,
+                    self.norm1.eps,
+                    self.residual_in_fp32,
+                    isinstance(self.norm1, (RMSNorm, DropoutAddRMSNorm)),
+                    self.recompute_level,
+                )
             else:
-                assert len(mixer_out) == 1
-                hidden_states = mixer_out[0]
-
-            if mixer_subset is not None:
-                residual = residual[:, mixer_subset]
-            if not isinstance(self.mlp, nn.Identity):
                 if not self.fused_dropout_add_ln:
-                    if self.drop_path2 is not None:
-                        dropped = self.drop_path2(self.dropout2(hidden_states))
+                    if self.drop_path1 is not None:
+                        dropped = self.drop_path1(self.dropout1(hidden_states))
                     else:
-                        dropped = self.dropout2(hidden_states)
+                        dropped = self.dropout1(hidden_states)
                     residual = (dropped + residual) if residual is not None else dropped
-                    hidden_states = self.norm2(
-                        residual.to(dtype=self.norm2.weight.dtype)
+                    hidden_states = self.norm1(
+                        residual.to(dtype=self.norm1.weight.dtype)
                     )
                     if self.residual_in_fp32:
                         residual = residual.to(torch.float32)
                 else:
-                    if self.drop_path2 is not None:
-                        if self.drop_path2.p == 0 or not self.training:
-                            rowscale2 = None
+                    if self.drop_path1 is not None:
+                        if self.drop_path1.p == 0 or not self.training:
+                            rowscale1 = None
                         else:
-                            rowscale2 = self.drop_path2(
+                            rowscale1 = self.drop_path1(
                                 torch.ones(
                                     hidden_states.shape[:-1],
                                     device=hidden_states.device,
@@ -277,9 +338,80 @@ class Block(nn.Module):
                                 )
                             )
                     else:
-                        rowscale2 = None
-                    hidden_states, residual = self.norm2(hidden_states, residual)
-                hidden_states = self.mlp(hidden_states)
+                        rowscale1 = None
+                    hidden_states, residual = self.norm1(hidden_states, residual)
+                if mixer_kwargs is None:
+                    mixer_kwargs = {}
+                if mixer_subset is not None:
+                    mixer_kwargs["mixer_subset"] = mixer_subset
+                assert not self.mixer.return_residual and not self.return_residual
+                mixer_out = self.mixer(
+                    hidden_states, return_attn_probs=return_attn_probs, **mixer_kwargs
+                )
+                if return_attn_probs:
+                    assert len(mixer_out) == 2
+                    (
+                        hidden_states,
+                        attn_probs,
+                    ) = mixer_out  # attn_probs: tuple(lse,score_cummax,dmask)
+                else:
+                    assert len(mixer_out) == 1
+                    hidden_states = mixer_out[0]
+
+                if mixer_subset is not None:
+                    residual = residual[:, mixer_subset]
+
+            if not isinstance(self.mlp, nn.Identity):
+                if self.use_fused_mlp:
+                    hidden_states, residual = pre_norm_mlp_func(
+                        hidden_states,
+                        residual,
+                        self.norm2.weight,
+                        self.norm2.bias,
+                        self.mlp.fc1.weight,
+                        self.mlp.fc1.bias,
+                        self.mlp.fc2.weight,
+                        self.mlp.fc2.bias,
+                        self.dropout2.p if self.training else 0.0,
+                        0.0,  # activation dropout
+                        # TODO: @xieshuangyi convert function to name
+                        self.mlp.activation.__name__,
+                        self.norm2.eps,
+                        isinstance(self.norm2, (RMSNorm, DropoutAddRMSNorm)),
+                        isinstance(self.mlp, GatedMlp),
+                        self.residual_in_fp32,
+                        self.recompute_level,
+                    )
+                else:
+                    if not self.fused_dropout_add_ln:
+                        if self.drop_path2 is not None:
+                            dropped = self.drop_path2(self.dropout2(hidden_states))
+                        else:
+                            dropped = self.dropout2(hidden_states)
+                        residual = (
+                            (dropped + residual) if residual is not None else dropped
+                        )
+                        hidden_states = self.norm2(
+                            residual.to(dtype=self.norm2.weight.dtype)
+                        )
+                        if self.residual_in_fp32:
+                            residual = residual.to(torch.float32)
+                    else:
+                        if self.drop_path2 is not None:
+                            if self.drop_path2.p == 0 or not self.training:
+                                rowscale2 = None
+                            else:
+                                rowscale2 = self.drop_path2(
+                                    torch.ones(
+                                        hidden_states.shape[:-1],
+                                        device=hidden_states.device,
+                                        dtype=hidden_states.dtype,
+                                    )
+                                )
+                        else:
+                            rowscale2 = None
+                        hidden_states, residual = self.norm2(hidden_states, residual)
+                    hidden_states = self.mlp(hidden_states)
             block_outs = (hidden_states, residual)
             if return_attn_probs:
                 block_outs += (attn_probs,)

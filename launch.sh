@@ -24,14 +24,23 @@ if [ -z "$OVERRIDE_CRUISE_VERSION" ]
 then
     echo "OVERRIDE_CRUISE_VERSION not set, will not update cruise"
 else
-    echo "OVERRIDE_CRUISE_VERSION set, will update cruise to $OVERRIDE_CRUISE_VERSION"
-    cd /opt/tiger;
-    rm -rf cruise;
-    mkdir -p cruise && cd cruise;
-    wget http://luban-source.byted.org/repository/scm/data.aml.cruise_1.0.0.$OVERRIDE_CRUISE_VERSION.tar.gz;
-    tar -xf data.aml.cruise*.tar.gz;
+    bash scripts/setup_cruise.sh $OVERRIDE_CRUISE_VERSION
+    # cruise will be installed into /opt/tiger/cruise, set PYTHONPATH to make it valid.
     export PYTHONPATH=/opt/tiger/cruise:$PYTHONPATH
-    cd $CUR_DIR
+fi
+
+if [ -z "${OVERRIDE_FMHA_PLUS_VERSION}" ]
+then
+    echo "OVERRIDE_FMHA_PLUS_VERSION not set, will not update fmha_plus"
+else
+    bash scripts/setup_fmha_plus.sh $OVERRIDE_FMHA_PLUS_VERSION
+fi
+
+if [ -z "${OVERRIDE_PANTHER_VERSION}" ]
+then
+    echo "OVERRIDE_PANTHER_VERSION not set, will not update panther"
+else
+    bash scripts/setup_panther.sh $OVERRIDE_PANTHER_VERSION
 fi
 
 export MASTER_PORT=${METIS_WORKER_0_PORT}

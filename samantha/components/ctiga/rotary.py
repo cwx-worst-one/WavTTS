@@ -354,6 +354,7 @@ class RotaryEmbedding(torch.nn.Module):
         super().__init__()
         assert compat in ["default", "byteformer"]
 
+        self.base = base
         self.compat = compat
         # Generate and save the inverse frequency buffer (non trainable)
         inv_freq = 1.0 / (

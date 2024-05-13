@@ -343,6 +343,8 @@ def create_block(config, layer_idx=None, process_group=None, device=None, dtype=
             version=flashattn_version,
             device=device,
             dtype=dtype,
+            use_fused_block=getattr(config, "use_fused_block", False),
+            recompute_level=getattr(config, "recompute_level", 1),
         )
     else:
         assert prenorm
