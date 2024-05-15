@@ -37,6 +37,18 @@ def get_vector_quantizer(vq_type, config):
             decay=config.vq_decay,
         )
 
+def get_vq_losses(vq, vq_type, hidden_states, cnt):
+    if vq_type == "FSQ":
+        vq_embs, vq_ids = vq(hidden_states)
+        vq_loss = None
+    elif vq_type == "EMAEntropy":
+        vq_embs, vq_ids, vq_loss = vq(
+            hidden_states, e_scale=1.0 if cnt < 30_000 else 0.0
+        )
+    else:
+        vq_embs, vq_ids, vq_loss = vq(hidden_states)
+    return vq_embs, vq_ids, vq_loss
+    
 
 def get_noise_scale(vq_proj_noise, cnt):
     """Get projection noise based on current count."""
