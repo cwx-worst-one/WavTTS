@@ -87,8 +87,6 @@ pl_datamodule: !new:apps.bigtts.umm.ar.data.mix.MixWebDataModule
         time_interval_threshold: 5
         max_num_speakers: 1
         max_duration: !ref <pl_datamodule[max_duration]>
-    spkenc_croplen: !ref <extra_params[spkenc_croplen]>
-    spkenc_minlen: !ref <extra_params[spkenc_minlen]>
 
 model_config: !new:transformers.GPT2Config
     vocab_size: 1  # placeholder. Embedding table gets removed on load
