@@ -175,6 +175,11 @@ class LyricsTokenTransform:
         tones = self.lyrics_tokenizer(lyrics_text)["tone"]
         wordsegs = self.lyrics_tokenizer(lyrics_text)["wordseg"]
 
+        # cfg_config
+        phones_cfg = self.lyrics_tokenizer(lyrics_text)["phone_cfg"]
+        tones_cfg = self.lyrics_tokenizer(lyrics_text)["tone_cfg"]
+        wordsegs_cfg = self.lyrics_tokenizer(lyrics_text)["phone_cfg"]
+
         if not self.truncate_long_lyrics and (
             len(lyrics_tokens) > self.lyrics_max_seq_len
         ):
@@ -189,7 +194,7 @@ class LyricsTokenTransform:
 
         # Always add 10 padding
         padding_length = 0
-        print(f"===>>> lyric padding length: {padding_length}")
+
         try:
             lyrics_tokens = pad_crop(
                 torch.tensor(lyrics_tokens),
@@ -224,7 +229,27 @@ class LyricsTokenTransform:
             padding_value=self.pad_id,
         )
         prompt_text_lens = torch.tensor(prompt_text_lens)
-        # return { **item, 'lyrics_tokens': lyrics_tokens, 'lyrics_normalized_text': lyrics_text }
+
+        # cfg_config
+        phones_cfg = pad_crop(
+            torch.tensor(phones_cfg),
+            padding_length + len(phones_cfg),
+            torch.int,
+            padding_value=self.pad_id,
+        )
+        tones_cfg = pad_crop(
+            torch.tensor(tones_cfg),
+            padding_length + len(tones_cfg),
+            torch.int,
+            padding_value=self.pad_id,
+        )
+        wordsegs_cfg = pad_crop(
+            torch.tensor(wordsegs_cfg),
+            padding_length + len(wordsegs_cfg),
+            torch.int,
+            padding_value=self.pad_id,
+        )
+
         return {
             **item,
             "lyrics_tokens": lyrics_tokens,
@@ -233,6 +258,9 @@ class LyricsTokenTransform:
             "tones": tones,
             "wordsegs": wordsegs,
             "prompt_text_lens": prompt_text_lens,
+            "phones_cfg": phones_cfg,
+            "tones_cfg": tones_cfg,
+            "wordsegs_cfg": wordsegs_cfg,
         }
 
     @classmethod
@@ -325,6 +353,17 @@ class SAMITokenizer:
             ret_dict["phone"] = phone
             ret_dict["tone"] = tone
             ret_dict["wordseg"] = wordseg
+
+            # cfg_config
+            ret_dict["phone_cfg"] = np.full(
+                len(phone), 1 + max(self.phone2id.phone_to_int.values())
+            )
+            ret_dict["tone_cfg"] = np.full(
+                len(tone), 1 + max(self.phone2id.tone_to_int.values())
+            )
+            ret_dict["wordseg_cfg"] = np.full(
+                len(wordseg), 1 + max(self.phone2id.wordseg_to_int.values())
+            )
             return ret_dict
 
         prompt_lab, infer_lab = label_path.split("|")
@@ -377,6 +416,16 @@ class SAMITokenizer:
         ret_dict["phone"] = phone
         ret_dict["tone"] = tone
         ret_dict["wordseg"] = wordseg
+        # cfg_config
+        ret_dict["phone_cfg"] = np.full(
+            len(phone), max(self.phone2id.phone_to_int.values())
+        )
+        ret_dict["tone_cfg"] = np.full(
+            len(tone), max(self.phone2id.tone_to_int.values())
+        )
+        ret_dict["wordseg_cfg"] = np.full(
+            len(wordseg), max(self.phone2id.wordseg_to_int.values())
+        )
 
         return ret_dict
 

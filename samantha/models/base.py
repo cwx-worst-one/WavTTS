@@ -12,7 +12,6 @@ from pytorch_lightning import LightningModule
 from pytorch_lightning.utilities.types import STEP_OUTPUT
 from tqdm import tqdm
 
-from recipes.datasets.base import LightningDataModuleBase
 from samantha.components.attention import MultiHeadAttention, SeerAttention
 from samantha.dataio.webdataset.writer import IndexShardWriter
 from samantha.utils.logger import RankedLogger
@@ -261,9 +260,7 @@ class LightningModuleBase(LightningModule):
             root_dir, f"{pl_datamodule.__class__.__name__}_{self.__class__.__name__}"
         )
 
-    def preprocess(
-        self, pl_datamodule: LightningDataModuleBase, root_dir: str, rank: int
-    ):
+    def preprocess(self, pl_datamodule, root_dir: str, rank: int):
         fp = self.preprocess_save_fp(pl_datamodule, root_dir)
         pl_datamodule.setup(stage="fit")
         self = self.to("cuda")

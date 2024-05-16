@@ -5,9 +5,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from recipes.text2semantic.datasets.sami_tacolabel import (
-    generate_tacolabels_from_textstr_punc,
-)
+from samantha.utils.sami_tacolabel import generate_tacolabels_from_textstr_punc
 
 from samantha.dataio.lite.utils.phone_to_id import PhoneToId
 

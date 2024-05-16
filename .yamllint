@@ -27,7 +27,7 @@ ignore: |
   recipes/mir_benchmark
   recipes/musicfm
   recipes/s3prl
-  recipes/umm
+  recipes/umm*
   recipes/beat
   recipes/chord
   recipes/structure

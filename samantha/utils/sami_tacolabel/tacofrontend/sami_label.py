@@ -1,21 +1,19 @@
 # coding=utf-8
 # flake8: noqa
 import json
+import os
 import os.path as osp
 from collections import OrderedDict
 
 import euler
 from tqdm import tqdm
 
-euler.install_thrift_import_hook()
-import os
-
 from samantha.dataio.lite.utils.punctuation import punctuation_all
-from samantha.utils.sami_tacolabel.tacofrontend.server.base_thrift import Base
-from samantha.utils.sami_tacolabel.tacofrontend.server.sami_thrift import (
-    SAMI,
-    InvokeRequest,
-)
+from samantha.utils.service.idl import base_thrift, sami_thrift
+
+Base = base_thrift.Base
+SAMI = sami_thrift.SAMI
+InvokeRequest = sami_thrift.InvokeRequest
 
 _client = None
 _base = None
@@ -265,14 +263,17 @@ def generate_tacolabels_from_textstr_punc(text: str, language="Chinese_v3_punc")
 
     lab_data = None
     while lab_data is None:
-        lab_data, file_id, invoke_response = InvokeServerPunc(
-            None, text, speaker
-        )  # TODO: add japan
+        try:
+            lab_data, file_id, invoke_response = InvokeServerPunc(
+                None, text, speaker
+            )  # TODO: add japan
+        except Exception as e:
+            print("invoke generate_tacolabels_from_textstr_punc failed, retrying")
+            continue
         if lab_data is None:
             print(
                 f"file_id {file_id} failed to get results. Status: {invoke_response}(`speaker` represents language)"
             )
-            print(f"file_id {file_id} retry...")
     return lab_data
 
 

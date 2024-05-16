@@ -1,7 +1,9 @@
+from typing import Any, Dict, List
+
 import torch
-from typing import List, Dict, Any
+
 from samantha.dataio.lite.transform import CollatorBase
-from samantha.transforms.audio import RandomPad, Pad
+from samantha.transforms.audio import Pad, RandomPad
 
 
 class ARCollator(CollatorBase):

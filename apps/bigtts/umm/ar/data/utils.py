@@ -1,7 +1,8 @@
 import math
 import string
-from typing import List, Dict, Union
-from transformers import PreTrainedTokenizer, BertTokenizer, Wav2Vec2PhonemeCTCTokenizer
+from typing import Dict, List, Union
+
+from transformers import BertTokenizer, PreTrainedTokenizer, Wav2Vec2PhonemeCTCTokenizer
 
 _TRANSFORMER_TOKENIZERS_CLS: Dict[str, PreTrainedTokenizer] = {
     "bert": BertTokenizer,

@@ -21,7 +21,7 @@ def process_one(url, output_url, fs):
     writer = ParquetWriter(filename=output_url, filesystem=fs, verbose=False)
 
     for item in parquet_reader(url, fs=fs, need_group_no=False):
-        writer.write({"ori_audio": item["audio"]})
+        writer.write({"ori_audio": item["audio"], "uttid": item["uttid"]})
     writer.close()
 
 

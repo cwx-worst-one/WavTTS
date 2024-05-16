@@ -1,3 +1,5 @@
+import logging
+
 import numpy as np
 
 from samantha.dataio.lite.utils.frontend import (
@@ -6,8 +8,6 @@ from samantha.dataio.lite.utils.frontend import (
     wordseg_to_int,
 )
 from samantha.utils.common import is_float
-import logging
-
 
 logger = logging.getLogger(__name__)
 

@@ -74,7 +74,7 @@ def top_k(logits, thresh=0.5):
     return probs
 
 
-def sample(predict_logits, temp, mode="naive", device="cuda:0"):
+def sample_legacy(predict_logits, temp, mode="naive", device="cuda:0"):
     predict_logits = predict_logits.float()
     if mode == "naive":
         predict_logits = predict_logits / temp
@@ -108,12 +108,17 @@ def top_p_logits(logits, p):
     return out
 
 
-def sample_v2(predict_logits, temp, thresh=0.9, mode="naive", return_probs=False):
+def sample(
+    predict_logits, temp, thresh=0.9, mode="naive", return_probs=False, eos_weight=1.0
+):
     sample_probs = None
     if mode == "naive":
         predict_logits = predict_logits / temp
         predict_logits = top_p_logits(predict_logits, thresh)
         probs = predict_logits.softmax(dim=-1)
+        if probs.shape[-1] > 16384:
+            probs[..., -2:] *= eos_weight
+            probs /= probs.sum(dim=-1, keepdim=True)
         dist = torch.distributions.categorical.Categorical(probs=probs)
         samples = dist.sample()
         if return_probs:

@@ -76,7 +76,7 @@ item_transform: !new:samantha.dataio.lite.compose.Compose
 
 batch_transform: !new:samantha.dataio.lite.compose.BatchCompose
     transforms:
-        - !new:apps.bigtts.umm.ar.data.collate.BigMusicCollator
+        - !new:apps.bigtts.umm.ar.data.collate.ARCollator
             token_key: !ref <run_opts[target_token_key]>
 
 train_dataset: !new:samantha.dataio.parquet.parquet_dataset.ParquetDataset

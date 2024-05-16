@@ -20,9 +20,8 @@ def prepare_diffusion_model(diffusion_ckpt_path, device):
     from .lit_diffusion_voicebox import VoiceBoxModule as pl_module
 
     model = pl_module.load_from_checkpoint(
-        diffusion_ckpt_path, device=torch.device(device)
-    ).model.to(device)
-    model.eval()
+        diffusion_ckpt_path, map_location=torch.device(device)
+    ).model.eval()
     return model
 
 
@@ -34,7 +33,7 @@ def prepare_zvq(zvq_ckpt_path, device):
 
 def prepare_umm(umm_ckpt_path, device):
     rank = int(device[-1])
-    from recipes.umm.requires.model_initializer import init_stage3
+    from recipes.umm_062.requires.model_initializer import init_stage3
 
     token_model = init_stage3(umm_ckpt_path, rank, "./")["Stage3"].eval()
     return token_model
@@ -136,7 +135,7 @@ class DiffusionU2SInfer(LightningModule):
         inpainting_context=False,
     ):
         super().__init__()
-
+        self.save_hyperparameters()
         seed = set_seed(seed)
         self.vocoder_ckpt_path = vocoder_ckpt_path
         self.umm_ckpt_path = umm_ckpt_path
@@ -158,9 +157,6 @@ class DiffusionU2SInfer(LightningModule):
 
         self.use_phone_lang = use_phone_lang
         self.inpainting_context = inpainting_context
-
-        if self.infer_type != "vocoder":
-            self.model = prepare_diffusion_model(diffusion_ckpt_path, self.device)
 
         self.bn_config = bn_config
         if self.use_wvae_vocoder:
@@ -428,6 +424,7 @@ class DiffusionU2SInfer(LightningModule):
     def setup(self, stage):
         device = f"cuda:{self.trainer.local_rank}"
         if self.infer_type != "vocoder":
+            self.model = prepare_diffusion_model(self.hparams.diffusion_ckpt_path, self.device)
             if self.umm_type == "USM":
                 self.umm = prepare_usm(self.umm_ckpt_path, device)
             elif self.umm_type == "UMM":

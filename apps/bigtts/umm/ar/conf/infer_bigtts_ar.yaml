@@ -15,6 +15,7 @@ run_opts:
     thresh: 0.9
     mode: "naive"
     max_blank_length: 5
+    max_repeat_times: 1
     step_out_blank: False
     version: spkid_v3
     icl_mode: "continuation"
@@ -42,6 +43,7 @@ pl_module: !new:apps.bigtts.umm.ar.infer.pl_module_bigtts_ar.SemanticInference
     thresh: !ref <run_opts[thresh]>
     mode: !ref <run_opts[mode]>
     max_blank_length: !ref <run_opts[max_blank_length]>
+    max_repeat_times: !ref <run_opts[max_repeat_times]>
     step_out_blank: !ref <run_opts[step_out_blank]>
     version: !ref <run_opts[version]>
     icl_mode: !ref <run_opts[icl_mode]>

@@ -8,19 +8,18 @@ import torch
 from torchaudio.transforms import Resample
 from torchaudio_augmentations import Compose
 
-
-from .utils import normalize_text
-
+from samantha.dataio.lite.transform import ItemTransformBase
+from samantha.dataio.lite.utils.parquet import get_meta_obj
+from samantha.dataio.lite.utils.phone_to_id import PhoneToId
+from samantha.dataio.lite.utils.stats import UpdateStatsMixin
 from samantha.transforms.audio import (
     FastNormalizeAudio,
     NormalizeAudioToFloat32,
     SetAudioDimensions,
     ToTensor,
 )
-from samantha.dataio.lite.utils.parquet import get_meta_obj
-from samantha.dataio.lite.utils.phone_to_id import PhoneToId
-from samantha.dataio.lite.transform import ItemTransformBase
-from samantha.dataio.lite.utils.stats import UpdateStatsMixin
+
+from .utils import normalize_text
 
 logger = logging.getLogger(__name__)
 

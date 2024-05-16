@@ -80,6 +80,7 @@ class ResampledShards(IterableDataset):
         if os.environ.get("WDS_SHOW_SEED", "0") == "1":
             print(f"# ResampledShards seed {seed}")
         self.rng = random.Random(seed)
+        logger.info(f"resample data urls with mode {self.replacement=}")
         if self.replacement:
             for _ in range(self.nshards):
                 index = self.rng.randint(0, len(self.urls) - 1)

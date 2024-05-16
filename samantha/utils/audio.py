@@ -61,12 +61,13 @@ def to_energy(audio, window_size):
     return torch.max(torch.abs(frames), dim=-1)[0]
 
 
-def load_wav(fn, sr):
+def load_wav(fn, sr, pad_width: Tuple[int, int] = (0, 0)):
     wav, sample_rate = sf.read(fn)
     if len(wav.shape) > 1:
         wav = wav[:, 0]
     if sample_rate != sr:
         wav = scipy.signal.resample(wav, int(len(wav) * sr / sample_rate))
+    wav = np.pad(wav, pad_width=pad_width, mode="constant")
     return wav, sr
 
 

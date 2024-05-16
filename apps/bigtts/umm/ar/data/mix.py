@@ -6,7 +6,6 @@ import pickle
 import random
 import sys
 from enum import IntEnum
-from string import punctuation
 from typing import Any, Dict, Generator, Iterable, List, Optional, Union
 
 import numpy as np
@@ -22,6 +21,7 @@ from webdataset.pipeline import DataPipeline
 
 from apps.bigtts.umm.ar.data.collate import ARCollator
 from apps.bigtts.umm.ar.data.phone_to_id import PhoneToId
+from apps.bigtts.umm.ar.data.utils import normalize_text
 from samantha.dataio.batching import BucketBatcher
 from samantha.dataio.dataset import MultiIterableDataset
 from samantha.dataio.lite.utils.frontend import sil_punc_symbols
@@ -30,8 +30,6 @@ from samantha.dataio.webdataset.pipeline import WebPipeline
 from samantha.transforms.audio import (
     FastNormalizeAudio,
     NormalizeAudioToFloat32,
-    Pad,
-    RandomPad,
     SetAudioDimensions,
     ToTensor,
 )
@@ -43,147 +41,6 @@ logger = logging.getLogger(__name__)
 class DatasetType(IntEnum):
     AUDIO = 1
     UMM_TOKEN = 2
-
-
-def normalize_text(text):
-    nlp_punctuation = punctuation.replace("'", "")
-    text = text.replace("&", " and ")
-    text = text.replace("/", " ")
-    return text.translate(str.maketrans("", "", nlp_punctuation)).strip()
-
-
-def collate_fn(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
-    max_length = max([x["audio"].shape[-1] for x in batch])
-    random_pad = RandomPad(n_samples=max_length)
-    audio = []
-    # text = []
-    token = []
-    # tag = []
-    for idx in range(len(batch)):
-        audio.append(random_pad(batch[idx]["audio"]))
-        # text.append(batch[idx]["text"])
-        token.append(batch[idx].get("token", torch.zeros(0).long()))
-        # tag.append(batch[idx]["tag"])
-    return {
-        "audio": torch.stack(audio, dim=0),
-        # "text": text,
-        "token": torch.nn.utils.rnn.pad_sequence(
-            token, batch_first=True, padding_value=0
-        ),
-        # "tag": tag,
-    }
-
-
-def collate_audio_text(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
-    max_length = max([x["audio"].shape[-1] for x in batch])
-    random_pad = RandomPad(n_samples=max_length)
-    audio = []
-    text = []
-    for idx in range(len(batch)):
-        audio.append(random_pad(batch[idx]["audio"]))
-        text.append(batch[idx]["text"])
-    return {"audio": torch.stack(audio, dim=0), "text": text}
-
-
-def collate_audio(batch: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
-    max_length = max([x["audio"].shape[-1] for x in batch])
-    random_pad = RandomPad(n_samples=max_length)
-    audio = []
-    for idx in range(len(batch)):
-        audio.append(random_pad(batch[idx]["audio"]))
-    return {"audio": torch.stack(audio, dim=0)}
-
-
-def bigmusic_collate_fn(
-    target_audio_key: str,
-    target_token_key: str,
-    split_by_alignment: False,
-    batch: List[torch.Tensor],
-) -> Dict[str, torch.Tensor]:
-    if "audio" in batch[0]:
-        max_length = max([x.get(target_audio_key).shape[-1] for x in batch])
-        random_pad = RandomPad(n_samples=max_length)
-        audio = []
-        # text = []
-        token = []
-        # tag = []
-        for idx in range(len(batch)):
-            audio.append(random_pad(batch[idx].get(target_audio_key)))
-            # text.append(batch[idx]["text"])
-            token.append(batch[idx].get("token", torch.zeros(0).long()))
-            # tag.append(batch[idx]["tag"])
-        return {
-            "target_audio": torch.stack(audio, dim=0),
-            # "text": text,
-            "conditions": "lyrics_tokens",
-            "lyrics_tokens": torch.nn.utils.rnn.pad_sequence(
-                token, batch_first=True, padding_value=0
-            ),
-            # "tag": tag,
-        }
-    else:
-        max_length = max([x.get(target_token_key).shape[-1] for x in batch])
-        zero_pad = Pad(n_samples=max_length)
-        umm_token = []
-        umm_token_length = []
-        # text = []
-        token = []
-        # tag = []
-        phone, tone, wordseg = [], [], []
-        lang = []
-        for idx in range(len(batch)):
-            umm_token.append(zero_pad(batch[idx].get(target_token_key).unsqueeze(0)))
-            umm_token_length.append(batch[idx].get(target_token_key).numel())
-            # text.append(batch[idx]["text"])
-            token.append(batch[idx].get("token", torch.zeros(0).long()))
-            # tag.append(batch[idx]["tag"])
-            phone.append(batch[idx].get("phone", torch.zeros(0).long()))
-            tone.append(batch[idx].get("tone", torch.zeros(0).long()))
-            wordseg.append(batch[idx].get("wordseg", torch.zeros(0).long()))
-
-            # lang.append(batch[idx]["lang"])
-            lang.append(batch[idx].get("lang", 0))
-
-        res = {
-            "target_ids": torch.cat(umm_token, dim=0),
-            "target_ids_length": torch.tensor(umm_token_length),
-            "lyrics_token_length": torch.tensor([x.numel() for x in token]),
-            # "text": text,
-            "conditions": "lyrics_tokens",
-            "lyrics_tokens": torch.nn.utils.rnn.pad_sequence(
-                token, batch_first=True, padding_value=0
-            ),
-            # "tag": tag,
-            "phones": torch.nn.utils.rnn.pad_sequence(
-                phone, batch_first=True, padding_value=0
-            ),
-            "tones": torch.nn.utils.rnn.pad_sequence(
-                tone, batch_first=True, padding_value=0
-            ),
-            "wordsegs": torch.nn.utils.rnn.pad_sequence(
-                wordseg, batch_first=True, padding_value=0
-            ),
-            "lang": torch.tensor(lang),
-        }
-
-        if split_by_alignment:
-            max_length = max(
-                [x.get("prompt_" + target_token_key).shape[-1] for x in batch]
-            )
-            zero_pad = Pad(n_samples=max_length)
-            prompt_umm_token = []
-            prompt_umm_token_length = []
-            for idx in range(len(batch)):
-                prompt_umm_token.append(
-                    zero_pad(batch[idx].get("prompt_" + target_token_key).unsqueeze(0))
-                )
-                prompt_umm_token_length.append(
-                    batch[idx].get("prompt_" + target_token_key).numel()
-                )
-            res["prompt_ids"] = torch.cat(prompt_umm_token, dim=0)
-            res["prompt_ids_length"] = torch.tensor(prompt_umm_token_length)
-
-        return res
 
 
 class BaseTransforms:
@@ -249,6 +106,7 @@ class BigTTSTransforms(BaseTransforms):
         dropout_rate_zh_tone=None,
         whole_sentence_prob: int = 0.01,
         enable_contexutal: bool = False,
+        use_text_cfg: bool = False,
     ):
         super().__init__()
         self.sample_rate = sample_rate
@@ -274,6 +132,7 @@ class BigTTSTransforms(BaseTransforms):
         self.dropout_rate_zh_tone = dropout_rate_zh_tone
         self.whole_sentence_prob = whole_sentence_prob
         self.enable_contextual = enable_contexutal
+        self.use_text_cfg = use_text_cfg
 
     def phone_tone_wordseg_to_id(self, phone, tone, word_seg):
         text_id = (
@@ -357,10 +216,14 @@ class BigTTSTransforms(BaseTransforms):
 
     def process_target_token(self, item):
         if not self.enable_contextual:
-            target_token = torch.as_tensor(
-                pickle.loads(item[self.target_token_key]), dtype=torch.long
-            )
-            target_token_length = target_token.size(0)
+            try:
+                target_token = torch.as_tensor(
+                    pickle.loads(item[self.target_token_key]), dtype=torch.long
+                )
+                target_token_length = target_token.size(0)
+            except:
+                self._update_stats(skipped=True, message="load umm token fail")
+                return None, None
         else:
             target_token = [
                 torch.as_tensor(pickle.loads(raw_token), dtype=torch.long)
@@ -624,19 +487,22 @@ class BigTTSTransforms(BaseTransforms):
 
                         # Map alignment to duration
                         if item["alignment"] == "":
-                            # self._update_stats(skipped=True, message="item['alignment'] is None")  # 回退
-                            # return
+                            # 回退
+                            self._update_stats(
+                                skipped=True, message="item['alignment'] is None"
+                            )
+                            return
                             # alignments = None
                             # candi_idx = []
 
                             ## Update 20240209： 如果 没有 alignment，则给整句，不丢数据
                             # logger.info(f"给整句，不丢数据")
-                            token = torch.cat([start_sil_token, token])
-                            phone = torch.cat([start_sil_phone, phone])
-                            tone = torch.cat([start_sil_tone, tone])
-                            wordseg = torch.cat([start_sil_wordseg, wordseg])
-                            target_token = target_token
-                            prompt_token = target_token[:0]  # 空
+                            # token = torch.cat([start_sil_token, token])
+                            # phone = torch.cat([start_sil_phone, phone])
+                            # tone = torch.cat([start_sil_tone, tone])
+                            # wordseg = torch.cat([start_sil_wordseg, wordseg])
+                            # target_token = target_token
+                            # prompt_token = target_token[:0]  # 空
 
                         else:
                             # alignments = [float(i.split('\t')[1]) for i in item['alignment'].split('\n')]
@@ -660,20 +526,19 @@ class BigTTSTransforms(BaseTransforms):
                                 return
 
                             candi_idx = []
+                            space_limit = 0.25
                             for i in range(2, len(alignments) - 2):
                                 try:
                                     if (
                                         alignments[i].split("\t")[0] in sil_punc_symbols
                                         and float(alignments[i].split("\t")[1])
                                         - float(alignments[i - 1].split("\t")[1])
-                                        >= 0.4
+                                        >= space_limit
                                     ):
-                                        # 标点且0.4s以上静音，会视为分隔候选
+                                        # 标点且 space_limit / 2 以上静音，会视为分隔候选
                                         dur = (
                                             float(alignments[i].split("\t")[1])
-                                            - float(alignments[i - 1].split("\t")[1])
-                                        ) / 1.6 + float(
-                                            alignments[i - 1].split("\t")[1]
+                                            - space_limit / 2
                                         )
                                         candi_idx.append(
                                             (i + 1, int(self.umm_token_freq * dur))
@@ -693,9 +558,6 @@ class BigTTSTransforms(BaseTransforms):
                                 wordseg = torch.cat([start_sil_wordseg, wordseg])
                                 target_token = target_token
                                 prompt_token = target_token[:0]  # 空
-                            # if len(candi_idx) == 0:
-                            #     self._update_stats(skipped=True, message="len(candi_idx) == 0")  # 回退
-                            #     return
                             else:  # 随机挑个分隔段
                                 is_training = self.whole_sentence_prob > 0
                                 if is_training:
@@ -704,7 +566,9 @@ class BigTTSTransforms(BaseTransforms):
                                     split_idx, split_dur = candi_idx[0]
                                 # if random.random() < split_dur/len(target_token):  # 更高概率让target更长些
                                 # if split_dur * 2 > len(target_token):   # 先这样写省显存
-                                if (not is_training) or random.random() < 0.5:
+
+                                # 走后续前 # (not is_training) or random.random() < 0.5:
+                                if False:
                                     token = torch.cat(
                                         [start_sil_token, token[:split_idx]]
                                     )
@@ -731,6 +595,21 @@ class BigTTSTransforms(BaseTransforms):
                                     prompt_token = target_token[:split_dur]
                                     target_token = target_token[split_dur:]
 
+                        prompt_len = prompt_token.shape[0]
+                        if prompt_len > 25 * 8:
+                            prompt_len = 25 * 8  # 最多只用8s
+                        if prompt_len > 25 * 2:  # 2s 以上做随机crop
+                            prompt_len = random.randint(prompt_len // 2, prompt_len)
+                        if (
+                            prompt_len < prompt_token.shape[0]
+                            and prompt_token.shape[0] > 0
+                        ):
+                            prompt_start = random.randint(
+                                0, prompt_token.shape[0] - prompt_len
+                            )
+                            prompt_token = prompt_token[
+                                prompt_start : prompt_start + prompt_len
+                            ]
                         # alignments = item['alignment'].split('\n')
                         # 分隔标点：sil_punc_symbols
 
@@ -833,6 +712,20 @@ class BigTTSTransforms(BaseTransforms):
                                 skipped=True, message="Merging utterances failed"
                             )
                             return
+                # if (self.use_text_cfg and random.random() < 0.1) or prompt_token.shape[
+                #     0
+                # ] == 0:
+                #     # 取字典的最大值+1
+                #     filled_token = filled_phone = (
+                #         max(self.phone2id.phone_to_int.values()) + 1
+                #     )
+                #     filled_tone = max(self.phone2id.tone_to_int.values()) + 1
+                #     filled_ws = max(self.phone2id.wordseg_to_int.values()) + 1
+                #     token = torch.full((len(token),), filled_token, dtype=torch.long)
+                #     phone = torch.full((len(phone),), filled_phone, dtype=torch.long)
+                #     tone = torch.full((len(tone),), filled_tone, dtype=torch.long)
+                #     wordseg = torch.full((len(wordseg),), filled_ws, dtype=torch.long)
+                #     prompt_token = prompt_token[:0]
 
                 assert len(token) == len(phone)
                 output_dict.update(phone=phone)
@@ -841,6 +734,7 @@ class BigTTSTransforms(BaseTransforms):
                 output_dict.update(token=token)
                 output_dict.update(lang=lang_id)
                 output_dict.update(token_length=token_length)
+                output_dict.update(prompt_token=prompt_token)
 
         yield output_dict
         self._update_stats(skipped=False)
@@ -872,6 +766,7 @@ class BigTTSDataset(WebPipeline):
         whole_sentence_prob: int = 0.01,
         sample_config=None,
         enable_contexutal: bool = False,
+        use_text_cfg: bool = False,
         **kwargs,
     ):
         logger.info(f"[{self.name}] [data_id: {data_id}] initializing...")
@@ -899,6 +794,7 @@ class BigTTSDataset(WebPipeline):
             dropout_rate_zh_tone=dropout_rate_zh_tone,
             whole_sentence_prob=whole_sentence_prob,
             enable_contexutal=enable_contexutal,
+            use_text_cfg=use_text_cfg,
         )
         # preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
         # pipeline = [{"compose": [preprocessor.train_buffer_preprocessor]}]
@@ -921,7 +817,7 @@ class MixWebDataModule(pl.LightningDataModule):
         num_workers: int = 4,
         pin_memory: bool = True,
         collate_fn=ARCollator,
-        weights: List[int] = [1, 1, 1],
+        weights: List[int] = [1, 1],
         tokenizer: str = None,
         frame_rate: int = 25,
         data_id: int = 2011,
@@ -938,6 +834,8 @@ class MixWebDataModule(pl.LightningDataModule):
         dropout_rate_zh_tone: Union[float, None] = None,
         whole_sentence_prob: float = 0.01,
         sample_config=None,
+        use_text_cfg: bool = False,
+        replacement: bool = True,
     ):
         super().__init__()
         self.num_workers = num_workers
@@ -988,7 +886,8 @@ class MixWebDataModule(pl.LightningDataModule):
             buckets_samples = [x * umm_token_freq for x in buckets_samples]
 
         logger.info(
-            f"[MixWebDataModule] dataset_type={dataset_type} data_id={data_id} ctx_data_id={ctx_data_id} val_data_ids={val_data_ids} target_token_key={target_token_key} {batch_size=}"
+            f"[MixWebDataModule] dataset_type={dataset_type} data_id={data_id} ctx_data_id={ctx_data_id}"
+            f" val_data_ids={val_data_ids} target_token_key={target_token_key} {batch_size=}"
         )
         logger.info(f"weights: {weights}")
         logger.info(f"{buckets_samples=}")
@@ -1019,7 +918,7 @@ class MixWebDataModule(pl.LightningDataModule):
             dynamic_batch=True,
             maximum_bucket_size=batch_size,
             length_fn=length_fn,
-            bsz_evaluator=bsz_evaluator,
+            # bsz_evaluator=bsz_evaluator,
         )
         datasets = []
         if weights[0] > 0:
@@ -1039,7 +938,6 @@ class MixWebDataModule(pl.LightningDataModule):
                 frame_rate=self.frame_rate,
                 resampled=True,
                 shardshuffle=True,
-                # use_pipe=use_pipe,
                 handler=wds.warn_and_continue,
                 split_by_alignment=split_by_alignment,
                 ignore_code_switch=ignore_code_switch,
@@ -1048,6 +946,8 @@ class MixWebDataModule(pl.LightningDataModule):
                 whole_sentence_prob=whole_sentence_prob,
                 sample_config=sample_config,
                 enable_contexutal=True,
+                use_text_cfg=use_text_cfg,
+                replacement=replacement,
             )
             datasets.append(bigtts_long_ctx)
         if weights[1] > 0:
@@ -1067,7 +967,6 @@ class MixWebDataModule(pl.LightningDataModule):
                 frame_rate=self.frame_rate,
                 resampled=True,
                 shardshuffle=True,
-                # use_pipe=use_pipe,
                 handler=wds.warn_and_continue,
                 split_by_alignment=split_by_alignment,
                 ignore_code_switch=ignore_code_switch,
@@ -1076,6 +975,8 @@ class MixWebDataModule(pl.LightningDataModule):
                 whole_sentence_prob=whole_sentence_prob,
                 sample_config=None,
                 enable_contexutal=False,
+                use_text_cfg=use_text_cfg,
+                replacement=replacement,
             )
             datasets.append(bigtts)
         weights = [i for i in weights if i != 0]

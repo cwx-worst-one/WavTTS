@@ -83,6 +83,7 @@ while true; do
         exit 1;
       fi
       shift 2;
+      if [[ $(($#%2)) -ne 0 ]] && [[ $1 != "--help" && $1 != "-h" ]]; then echo "args number must be even"; exit 1; fi
       ;;
   *) break;
   esac
