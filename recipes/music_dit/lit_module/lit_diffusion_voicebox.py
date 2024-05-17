@@ -20,8 +20,8 @@ from recipes.bigmusic.lightning.embedding_modules import (
     MultiTagsCategoricalEmbedder,
     SpeakerEmbedder,
     LyricsTokenEmbedder,
-    OffsetEmbedder,
 )
+from recipes.music_dit.model.embedding_modules import NumberEmbedder
 
 logger = logging.getLogger(__name__)
 
@@ -78,12 +78,17 @@ class VoiceBoxModule(pl.LightningModule):
                         dropout=0.1,
                         vocab_type=extra_params['tag_taxonomy_lang'],
                     )
-                elif emb_type == 'duration_offset':
-                    embedder_dict[emb_type] = OffsetEmbedder(
-                        vocab_size=1024, 
+                elif emb_type == 'duration':
+                    embedder_dict[emb_type] = NumberEmbedder(
                         embedding_dim=prefix_hidden_size,
                         add_sos=True,
-                        add_eos=False,     
+                        add_eos=True,     
+                    )
+                elif emb_type == 'offset':
+                    embedder_dict[emb_type] = NumberEmbedder(
+                        embedding_dim=prefix_hidden_size,
+                        add_sos=True,
+                        add_eos=True,     
                     )
                 elif emb_type == 'speaker_id':
                     embedder_dict[emb_type] = SpeakerEmbedder(
@@ -225,9 +230,12 @@ class VoiceBoxModule(pl.LightningModule):
                     embeds = embedder.embed(self.requires, batch['style_text'], with_sos=True)
                 else:
                     embeds = embedder.get_sos_embed(batch_size)
-            if emb_type == 'duration_offset':
-                if 'duration_offset' in conditions:
-                    embeds = embedder.embed(self.requires, batch['duration_offset'].cpu(), with_sos=True)
+            if emb_type == 'duration':
+                if 'duration' in conditions:
+                    embeds = embedder.embed(self.requires, batch['duration'].cpu(), with_sos=True)
+            if emb_type == 'offset':
+                if 'offset' in conditions:
+                    embeds = embedder.embed(self.requires, batch['offset'].cpu(), with_sos=True)
             if emb_type == 'speaker_id':
                 if 'speaker_id' in conditions:
                     embeds = embedder.embed(self.requires, batch['speaker_id'].cpu(), with_sos=False)
@@ -417,16 +425,28 @@ class VoiceBoxModule(pl.LightningModule):
 
 
 class Lyric2songInferenceModule(VoiceBoxModule):
-
+    
     def prepare_prefix_inputs(self, batch):
-        speaker_id = torch.tensor(batch['speaker_id'])
-        if len(speaker_id.shape) == 1:
+        # Create default meatadata for infer
+        speaker_id = torch.tensor(batch.get('speaker_id', 0))
+        if len(speaker_id.shape) <= 1:
             speaker_id = speaker_id.view(-1, 1)
         batch['speaker_id'] = speaker_id
+
+        duration = torch.tensor(batch.get('duration', self.extra_params.get("duration", 60)))
+        if len(duration.shape) <= 1:
+            duration = duration.view(-1, 1)
+        batch['duration'] = duration
+
+        offset = torch.tensor(batch.get('offset', self.extra_params.get("offset", 0)))
+        if len(offset.shape) <= 1:
+            offset = offset.view(-1, 1)
+        batch['offset'] = offset
         return super().prepare_prefix_inputs(batch)
 
 
     def prepare_audio_inputs(self, batch):
+        # Create dummy audio feature and mask for infer
         seqlen = math.ceil(self.extra_params.semantic_frame_rate * self.extra_params.duration)
         batch['bn'] = torch.zeros([1, seqlen, self.extra_params.latent_dims]).to(self.device)
         batch['seqlen'] = torch.LongTensor([seqlen]).to(self.device)

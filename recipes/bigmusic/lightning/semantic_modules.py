@@ -17,7 +17,7 @@ from recipes.bigmusic.lightning.embedding_modules import (
     KeyEmbedder,
     TempoLabelEmbedder,
     BeatEmbedder,
-    OffsetEmbedder,
+    IntEmbedder,
     AudioKeyEmbedder,
     ChordSeqEmbedder,
 )
@@ -207,7 +207,7 @@ class SemanticModule(BaseContinuousEmbedModule):
                     add_sos=True
                 )
             elif emb_type == "offset_token":
-                embedder_dict[emb_type] = OffsetEmbedder(
+                embedder_dict[emb_type] = IntEmbedder(
                     vocab_size=offset_codebook_size,
                     embedding_dim=hidden_size,
                     add_sos=True

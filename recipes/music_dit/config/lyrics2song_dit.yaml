@@ -81,6 +81,7 @@ extra_params:
     semantic_frame_rate: 12.5           # Melae
     latent_dims: 32
     prefix_emb_cfg_dropout_rate: [0.15, 0, 0]    # zero means no cfg
+    duration: 60
 
 model_config: !new:recipes.music_dit.model.llama_ldm.ModelArgs
     in_channels: !ref <extra_params[latent_dims]>

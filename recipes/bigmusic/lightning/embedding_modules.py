@@ -165,12 +165,25 @@ class ContinuousEmbedder(BaseEmbedder):
         sos_ids = self.get_sos_token(batch_size)
         return self.projection(self.embedder(sos_ids))
 
-    def embed(self, requires, batch, with_sos=False, **kwargs):
+    def get_eos_token(self, batch_size):
+        assert self.eos_id is not None, "Error getting eos id. Must initialize embedder with add_eos=True"
+        device = next(self.parameters()).device
+        eos_ids = torch.full(size=(batch_size, 1), fill_value=self.eos_id, dtype=torch.long, device=device)
+        return eos_ids
+
+    def get_eos_embed(self, batch_size):
+        eos_ids = self.get_eos_token(batch_size)
+        return self.projection(self.embedder(eos_ids))
+
+    def embed(self, requires, batch, with_sos=False, with_eos=False, **kwargs):
         embeds = self.get_embeds(requires, batch, **kwargs)
         embeds = self.projection(embeds)
         if with_sos:
             sos_embed = self.get_sos_embed(embeds.size(0))
             embeds = torch.cat([sos_embed, embeds], dim=1)
+        if with_eos:
+            eos_embed = self.get_eos_embed(embeds.size(0))
+            embeds = torch.cat([embeds, eos_embed], dim=1)
         return embeds
 
 class TokenEmbedder(BaseEmbedder):
@@ -605,12 +618,14 @@ class REMILeadsheetTokenEmbedder(TokenEmbedder):
         return input
 
 
-class OffsetEmbedder(TokenEmbedder):
+class IntEmbedder(TokenEmbedder):
     def __init__(self, vocab_size, embedding_dim, add_sos=False, add_eos=False):
         super().__init__(vocab_size, embedding_dim, add_sos=add_sos, add_eos=add_eos)
     def get_tokens(self, requires, input):
         return input
-
+    def embed(self, requires=None, batch=None, token_ids=None, with_sos=False, with_eos=False):
+        batch = batch.clamp_min_(0).clamp_max_(self.vocab_size-1).long()
+        return super().embed(requires, batch, token_ids, with_sos, with_eos)
 
 class AudioKeyEmbedder(TokenEmbedder):
     def get_tokens(self, requires, input):

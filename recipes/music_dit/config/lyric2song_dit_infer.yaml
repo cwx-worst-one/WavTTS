@@ -135,6 +135,7 @@ predict_dataset:
     enable_punctuation: True
     rewrite_target: !ref <extra_params[rewrite_target]>
     disable_multitag: !ref <extra_params[disable_multitag]>
+    extra_params: !ref <extra_params>
 
 model_cls: !name:recipes.music_dit.model.llama_ldm.LlamaDiffusion
     hp: !ref <model_config>

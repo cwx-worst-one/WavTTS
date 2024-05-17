@@ -131,6 +131,12 @@ def inference_dataset_from_prompt(
     elif 'structure' in conditions:
         # Use random structure by default
         prompts['structure'] = [None] * len(prompts[next(iter(prompts.keys()))])
+    if 'offset' in conditions:
+        if extra_params is not None:
+            offset = extra_params.get('offset', 0)
+        else:
+            offset = 0
+        prompts['offset'] = [offset] * len(prompts[next(iter(prompts.keys()))])
     if 'semantic_tokens' in prompts:
         prompts['semantic_tokens'] = [torch.load(fp) for fp in prompts['semantic_tokens']]
     if 'chord_seq' in prompts:
