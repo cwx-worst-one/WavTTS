@@ -87,6 +87,7 @@ extra_params:
     text_cfg_w: 4
     cache_dir: !ref <run_opts[cache_dir]>
     duration: 60
+    prefix_emb_cfg_dropout_rate: [0.15, 0, 0]    # zero means no cfg
 
     # prediction dataset
     rewrite_target: "sa_tag"

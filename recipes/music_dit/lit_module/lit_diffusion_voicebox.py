@@ -102,6 +102,16 @@ class VoiceBoxModule(pl.LightningModule):
 
         self.null_embs = torch.nn.Parameter(torch.randn(prefix_hidden_size))
         
+        self.prefix_cfg_dict = dict()
+        prefix_emb_list = extra_params.get('input_embedders', default_input_embedders).get('prefix')
+        prefix_emb_cfg_dropout_rate = extra_params.get('prefix_emb_cfg_dropout_rate', [0] * len(prefix_emb_list)) 
+        
+        if len(prefix_emb_cfg_dropout_rate) != len(prefix_emb_list):
+            prefix_emb_cfg_dropout_rate = [0.15] * len(prefix_emb_list)
+            # 0.15 cfg rate in default for each prefix emb
+        for name, weight in zip(prefix_emb_list,prefix_emb_cfg_dropout_rate):
+            self.prefix_cfg_dict[name] = weight
+
         self.criterion_dict = {}
         for criterion in criterions:
             self.criterion_dict[criterion] = LOSS_DICT[criterion]()
@@ -205,6 +215,9 @@ class VoiceBoxModule(pl.LightningModule):
         batch_size = self.infer_batch_size(batch)
         conditions = self.infer_conditions(batch)
         inputs_embeds = []
+        st_idx = 0
+        batch["inputs_embeds_span"] = {}
+        
         prefix_embedders = self.input_embedders['prefix']
         for emb_type, embedder in prefix_embedders.items():
             if emb_type == 'multitags_categorical':
@@ -226,16 +239,49 @@ class VoiceBoxModule(pl.LightningModule):
                 else:
                     embeds = embedder.get_sos_embed(batch_size)
             inputs_embeds.append(embeds)
+            en_idx = st_idx + embeds.shape[1]
+            batch["inputs_embeds_span"][emb_type] = (st_idx, en_idx)
+            st_idx = en_idx
+
         inputs_embeds = torch.cat(inputs_embeds, dim=1).to(self.device)
         # TODO (qq) Apply separate dropout to different prefix embeds. 
         if self.training:
-            mask_embed = torch.unsqueeze(torch.unsqueeze(self.null_embs, 0), 0)
-            mask_embed = mask_embed.repeat(inputs_embeds.shape[0], inputs_embeds.shape[1], 1)
-            masked_b = torch.rand_like(mask_embed[:, 0, 0].float())
-            masked_b = (masked_b[:, None, None] < 0.15).long()
-            inputs_embeds = inputs_embeds * (1 - masked_b) + mask_embed * masked_b
+            inputs_embeds = self.prepare_prefix_cfg_embeds(batch, inputs_embeds, self.training)
+            # mask_embed = torch.unsqueeze(torch.unsqueeze(self.null_embs, 0), 0)
+            # mask_embed = mask_embed.repeat(inputs_embeds.shape[0], inputs_embeds.shape[1], 1)
+            # masked_b = torch.rand_like(mask_embed[:, 0, 0].float())
+            # masked_b = (masked_b[:, None, None] < 0.15).long()
+            # inputs_embeds = inputs_embeds * (1 - masked_b) + mask_embed * masked_b
         batch['prefix_inputs_emb'] = inputs_embeds
         return batch
+
+
+    def prepare_prefix_cfg_embeds(self, inputs, inputs_embeds, is_training=True):
+        null_embed = torch.unsqueeze(torch.unsqueeze(self.null_embs, 0), 0)
+        null_embed = null_embed.repeat(inputs_embeds.shape[0], inputs_embeds.shape[1], 1)
+
+        if is_training:
+            cfg_embeds = inputs_embeds
+        else:
+            # right now in validation only support bsz = 1, need a new cfg embed rather than inplace operation
+            cfg_embeds = inputs_embeds.clone()
+
+        for emb_type, cfg_weight in self.prefix_cfg_dict.items():
+            st_idx, en_idx = inputs['inputs_embeds_span'][emb_type]
+            if not cfg_weight:  # no cfg
+                continue
+            mask_embed = torch.zeros_like(null_embed)
+            mask_embed[:, st_idx: en_idx] = 1
+
+            if is_training:
+                masked_b = torch.rand_like(mask_embed[:, 0, 0].float())
+                masked_b = (masked_b[:, None, None] < cfg_weight).long()
+                mask_embed *= masked_b
+
+            cfg_embeds = cfg_embeds.masked_scatter(mask_embed.bool(), null_embed)
+
+        return cfg_embeds
+
 
     def prepare_input(self, batch, Tctx=None):
         # Audio inputs: batch['bn'], batch['cond_bn'], batch['seqlen'] 
@@ -330,8 +376,9 @@ class VoiceBoxModule(pl.LightningModule):
         
         if 'prefix_inputs_emb' in inputs:
             inputs_embeds = inputs['prefix_inputs_emb']
-            cfg_prefix_inputs_emb = torch.unsqueeze(torch.unsqueeze(self.null_embs, 0), 0)     
-            cfg_prefix_inputs_emb = cfg_prefix_inputs_emb.repeat(inputs_embeds.shape[0], inputs_embeds.shape[1], 1)
+            # cfg_prefix_inputs_emb = torch.unsqueeze(torch.unsqueeze(self.null_embs, 0), 0)     
+            # cfg_prefix_inputs_emb = cfg_prefix_inputs_emb.repeat(inputs_embeds.shape[0], inputs_embeds.shape[1], 1)
+            cfg_prefix_inputs_emb = self.prepare_prefix_cfg_embeds(inputs, inputs_embeds, self.training)
             inputs['prefix_inputs_emb'] = torch.concat([inputs_embeds, cfg_prefix_inputs_emb], dim=0)
 
         # TODO (qq) add cfg input for temporal_aligned_inputs_emb and xattn_inputs_emb
