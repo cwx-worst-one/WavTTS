@@ -65,6 +65,7 @@ run_opts:
     melae_ckpt_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/renyi/samantha_ckpts/melae_kl/0418_melaekl2_beta1em2_lat32_g8_1/checkpoints/step=0395000.ckpt
 
 extra_params:
+    fixed_prefix_lens: True
     sample_rate: 24000
     lyrics_codebook_size: 2000
     speaker_codebook_size: 100
@@ -78,7 +79,7 @@ extra_params:
     prefix_hidden_size: 256             # Set this if using prefix input
     temporal_aligned_hidden_size: 0     # Set this if using temporal aligned input
     xattn_hidden_size: 0                # Set this if using xattn input
-    semantic_frame_rate: 12.5           # Melae
+    semantic_frame_rate: 12.5           # Melae 12.5, WavAE 49
     latent_dims: 32
     prefix_emb_cfg_dropout_rate: [0.15, 0, 0]    # zero means no cfg
     duration: 60
@@ -98,6 +99,7 @@ model_config: !new:recipes.music_dit.model.llama_ldm.ModelArgs
     causal: False
     local_cond_project_type: linear
     use_unet_style_skip_connect: !ref <run_opts[use_unet_style_skip_connect]>
+    fixed_prefix_lens: !ref <extra_params[fixed_prefix_lens]>
 
 pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     sample_rate: !ref <extra_params[sample_rate]>

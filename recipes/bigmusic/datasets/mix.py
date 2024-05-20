@@ -76,13 +76,14 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
     default_lyrics_token = torch.full((max_phone_len,), PHONE_PAD_ID, dtype=torch.int)
     default_leadsheet_token = torch.full((max_leadsheet_len,), LEADSHEET_PAD_ID, dtype=torch.int)
     target_audio = []
+    target_tokens_length = []
     acc_audio = []
     vocal_audio = []
     style_text = []
     normalized_text = []
     lyrics_tokens = []
-    remi_leadsheet_tokens = []
-    target_tokens_length = []
+    lyrics_tokens_length = []
+    remi_leadsheet_tokens = []    
     remi_token_length = []
     speaker_id = []
     dataset_name = []
@@ -100,7 +101,8 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
         audio = batch[idx]["target_audio"]
         if audio.ndim == 1:
             audio = audio[None, :]
-                  
+
+        # Pad to the max audio length in the batch.          
         target_audio.append(random_pad(audio))
 
         style_label = batch[idx].get("style_text")
@@ -124,6 +126,7 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
         normalized_text.append(text)
         
         target_tokens_length.append(batch[idx]["target_tokens_length"])
+        lyrics_tokens_length.append(batch[idx]['lyrics_tokens_length'])
         phoneme_tokens, _ = pad_crop(
             construct("lyrics_tokens", default_lyrics_token),
             max_phone_len, torch.int, PHONE_PAD_ID)
@@ -154,13 +157,14 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
     if stacked_audio.dim() == 3:
         stacked_audio = stacked_audio.squeeze(1)    
     batch = {
-        "target_audio": torch.stack(target_audio, dim=0),        
+        "target_audio": torch.stack(target_audio, dim=0),
+        "target_tokens_length": torch.as_tensor(target_tokens_length),
         "style_text": style_text,
         "normalized_text": normalized_text,
         "lyrics": normalized_text,
         "lyrics_tokens": torch.stack(lyrics_tokens),
-        "remi_leadsheet_tokens": torch.stack(remi_leadsheet_tokens),
-        "target_tokens_length": torch.as_tensor(target_tokens_length),
+        "lyrics_tokens_length": torch.as_tensor(lyrics_tokens_length),
+        "remi_leadsheet_tokens": torch.stack(remi_leadsheet_tokens),        
         "seqlen": torch.as_tensor(target_tokens_length),
         "speaker_id": torch.as_tensor(speaker_id).unsqueeze(1),
         "duration": torch.as_tensor(duration).unsqueeze(1),
@@ -430,6 +434,7 @@ class VocalTransforms(BaseTransforms):
                 "deepchorus_confidence": deepchorus.confidence,
                 "normalized_text": normalized_text,
                 "lyrics_tokens": text_tokens,
+                "lyrics_tokens_length": len(text_tokens),
                 "remi_leadsheet_tokens": remi_leadsheet_tokens,
                 "max_phone_len": self.segment_max_phone_len,
                 "max_leadsheet_len": self.segment_max_leadsheet_len,
@@ -705,6 +710,7 @@ class MixVocalWebDataModule(DataModule):
             25,
             30,
         ],
+        buckets_in_frames: List[int] = [],
         sinking_threshold: float = 0.51,
         quality_filter: bool = False,
         tag_taxonomy_lang: str = "SA",
@@ -733,22 +739,41 @@ class MixVocalWebDataModule(DataModule):
         else:
             self.tokenizer = None
 
-        buckets_samples = list(map(lambda i: i * sample_rate, buckets_in_sec))
-        maximum_bucket_size = batch_size * sample_rate * buckets_in_sec[-1]
-        if use_dynamic_batch:
-            self.batcher = BucketBatcher(
-                buckets=buckets_samples,
-                dynamic_batch=True,
-                maximum_bucket_size=maximum_bucket_size,
-                length_fn=lambda x: x["target_audio"].shape[-1],
-            )
-        else:            
-            self.batcher = BucketBatcher(
-                buckets=buckets_samples,
-                dynamic_batch=False,
-                batch_size=batch_size,
-                length_fn=lambda x: x["target_audio"].shape[-1],  
-            )
+        assert (len(buckets_in_sec) > 0) != (len(buckets_in_frames) > 0)
+        if len(buckets_in_sec) == 0 and (len(buckets_in_frames) == 0):
+            raise ValueError(f"Set buckets_in_sec or buckets_in_frames.")
+        if len(buckets_in_sec) > 0:
+            buckets_samples = list(map(lambda i: i * sample_rate, buckets_in_sec))
+            maximum_bucket_size = batch_size * sample_rate * buckets_in_sec[-1]
+            if use_dynamic_batch:
+                self.batcher = BucketBatcher(
+                    buckets=buckets_samples,
+                    dynamic_batch=True,
+                    maximum_bucket_size=maximum_bucket_size,
+                    length_fn=lambda x: x["target_audio"].shape[-1],
+                )
+            else:            
+                self.batcher = BucketBatcher(
+                    buckets=buckets_samples,
+                    dynamic_batch=False,
+                    batch_size=batch_size,
+                    length_fn=lambda x: x["target_audio"].shape[-1],
+                )
+        if len(buckets_in_frames) > 0:
+            if use_dynamic_batch:
+                self.batcher = BucketBatcher(
+                    buckets=buckets_in_frames,
+                    dynamic_batch=True,
+                    maximum_bucket_size=buckets_in_frames[-1],
+                    length_fn=lambda x: x['lyrics_tokens_length'] + x['target_tokens_length'],
+                )
+            else:            
+                self.batcher = BucketBatcher(
+                    buckets=buckets_in_frames,
+                    dynamic_batch=False,
+                    batch_size=buckets_in_frames[-1],
+                    length_fn=lambda x: x['lyrics_tokens_length'] + x['target_tokens_length'],
+                )
         self.wds_vocal_datasets = []
         wds_dataset_agg_weight = []
         if wds_dataset_names:

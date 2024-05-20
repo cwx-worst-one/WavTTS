@@ -101,7 +101,6 @@ class VoiceBoxModule(pl.LightningModule):
                         vocab_size=extra_params['lyrics_codebook_size'],
                         embedding_dim=prefix_hidden_size,
                         add_sos=True,
-                        add_eos=False,
                     )
             self.input_embedders[input_type] = nn.ModuleDict(embedder_dict)
 
@@ -207,7 +206,6 @@ class VoiceBoxModule(pl.LightningModule):
                 h_ = wvae.encode(batch['cond_audio'][:, None])
                 batch['cond_bn'], _, _ = wvae.sample(h_, deterministic=False)
                 batch['cond_bn'] = batch['cond_bn'].transpose(1, 2)
-            batch['seqlen'] = batch['seqlen'] * 10  # 12.5hz to 125hz
         return batch
 
     def prepare_temporal_aligned_inputs(self, batch):        
@@ -224,43 +222,54 @@ class VoiceBoxModule(pl.LightningModule):
         batch["inputs_embeds_span"] = {}
         
         prefix_embedders = self.input_embedders['prefix']
+        prefix_lens = torch.zeros([batch_size])
         for emb_type, embedder in prefix_embedders.items():
             if emb_type == 'multitags_categorical':
                 if 'style_text' in conditions:
                     embeds = embedder.embed(self.requires, batch['style_text'], with_sos=True)
                 else:
                     embeds = embedder.get_sos_embed(batch_size)
+                else:
+                    embeds = embedder.get_sos_embed(batch_size)
+                prefix_lens = prefix_lens + embeds.shape[1]         # fixed length                    
             if emb_type == 'duration':
                 if 'duration' in conditions:
                     embeds = embedder.embed(self.requires, batch['duration'].cpu(), with_sos=True)
+                else:
+                    embeds = embedder.get_sos_embed(batch_size)
+                prefix_lens = prefix_lens + embeds.shape[1]         # fixed length                    
             if emb_type == 'offset':
                 if 'offset' in conditions:
                     embeds = embedder.embed(self.requires, batch['offset'].cpu(), with_sos=True)
+                else:
+                    embeds = embedder.get_sos_embed(batch_size)
+                prefix_lens = prefix_lens + embeds.shape[1]         # fixed length                    
             if emb_type == 'speaker_id':
                 if 'speaker_id' in conditions:
                     embeds = embedder.embed(self.requires, batch['speaker_id'].cpu(), with_sos=False)
                 else:
                     embeds = embedder.get_sos_embed(batch_size)
+                prefix_lens = prefix_lens + embeds.shape[1]         # fixed length
             if emb_type == 'lyrics_tokens':
-                if 'lyrics_tokens' in conditions:
+                if 'lyrics_tokens' in conditions:                    
                     embeds = embedder.embed(self.requires, batch['lyrics_tokens'].cpu(), with_sos=True)
-                else:
+                else:                    
                     embeds = embedder.get_sos_embed(batch_size)
+                if self.extra_params.fixed_prefix_lens:
+                    prefix_lens = prefix_lens + embeds.shape[1]     # fixed length
+                else:
+                    prefix_lens = prefix_lens + batch['lyrics_tokens_length'] + 1     # var length
+            # Note: we should only allow one variable length prefix. Ideally save it for audio prompt.
             inputs_embeds.append(embeds)
             en_idx = st_idx + embeds.shape[1]
             batch["inputs_embeds_span"][emb_type] = (st_idx, en_idx)
             st_idx = en_idx
 
         inputs_embeds = torch.cat(inputs_embeds, dim=1).to(self.device)
-        # TODO (qq) Apply separate dropout to different prefix embeds. 
         if self.training:
             inputs_embeds = self.prepare_prefix_cfg_embeds(batch, inputs_embeds, self.training)
-            # mask_embed = torch.unsqueeze(torch.unsqueeze(self.null_embs, 0), 0)
-            # mask_embed = mask_embed.repeat(inputs_embeds.shape[0], inputs_embeds.shape[1], 1)
-            # masked_b = torch.rand_like(mask_embed[:, 0, 0].float())
-            # masked_b = (masked_b[:, None, None] < 0.15).long()
-            # inputs_embeds = inputs_embeds * (1 - masked_b) + mask_embed * masked_b
         batch['prefix_inputs_emb'] = inputs_embeds
+        batch['prefix_lens'] = prefix_lens
         return batch
 
 
@@ -292,7 +301,7 @@ class VoiceBoxModule(pl.LightningModule):
 
 
     def prepare_input(self, batch, Tctx=None):
-        # Audio inputs: batch['bn'], batch['cond_bn'], batch['seqlen'] 
+        # Audio inputs: batch['bn'], batch['cond_bn'], batch['bn_lens']
         batch = self.prepare_audio_inputs(batch)
         # Temporal aligned inputs: batch['temporal_aligned_inputs_emb']
         batch = self.prepare_temporal_aligned_inputs(batch)
@@ -303,7 +312,7 @@ class VoiceBoxModule(pl.LightningModule):
 
         # Add bn mask
         Tmax = batch['bn'].shape[1]
-        batch['seqlen'] = batch['seqlen'].clamp_max(Tmax)
+        batch['bn_lens'] = batch['target_tokens_length'].clamp_max(Tmax)
 
         # TODO (qq) use a class for bn_ctx_mask, support inpainting.
         batch['bn_ctx_mask'] = torch.ones_like(batch['bn'][..., :1])
@@ -313,12 +322,12 @@ class VoiceBoxModule(pl.LightningModule):
         batch['bn_ctx_mask'][:, Tctx:] = 0
         batch['bn_ctx'][:, Tctx:] = 0
 
-        bsz, seqlen = batch['bn'].shape[0], batch['seqlen'].sum()
-        loss_mask = sequence_mask(batch['seqlen'], Tmax, device=batch['seqlen'].device)
-        return bsz, seqlen, loss_mask
+        bsz, bn_lens = batch['bn'].shape[0], batch['bn_lens'].sum()
+        loss_mask = sequence_mask(batch['bn_lens'], Tmax, device=batch['bn_lens'].device)
+        return bsz, bn_lens, loss_mask
 
     def training_step(self, batch, batch_idx):
-        bsz, seqlen, loss_mask = self.prepare_input(batch)
+        bsz, bn_lens, loss_mask = self.prepare_input(batch)
 
         pred, target = self.model(batch)
 
@@ -333,7 +342,7 @@ class VoiceBoxModule(pl.LightningModule):
             log_dict = {
                 'loss': loss.item(),
                 'bsz': bsz,
-                'seqlen': seqlen
+                'bn_lens': bn_lens
             }
             log_dict.update(loss_dict)
             log_dict['training/loss'] = log_dict['loss']
@@ -370,9 +379,9 @@ class VoiceBoxModule(pl.LightningModule):
         return wav
 
     def validation_step(self, inputs, step):
-        bsz, seqlen, loss_mask = self.prepare_input(
+        bsz, bn_lens, loss_mask = self.prepare_input(
             inputs, Tctx=0)
-        # inputs, strip_txt_padding=True, Tctx=inputs["seqlen"][0] // 3)
+        # inputs, strip_txt_padding=True, Tctx=inputs["bn_lens"][0] // 3)
         diffusion_nfe = self.extra_params.diffusion_nfe
         diffusion_sampler = self.extra_params.diffusion_sampler
         text_cfg_w = self.extra_params.text_cfg_w
@@ -446,10 +455,9 @@ class Lyric2songInferenceModule(VoiceBoxModule):
 
 
     def prepare_audio_inputs(self, batch):
-        # Create dummy audio feature and mask for infer
-        seqlen = math.ceil(self.extra_params.semantic_frame_rate * self.extra_params.duration)
-        batch['bn'] = torch.zeros([1, seqlen, self.extra_params.latent_dims]).to(self.device)
-        batch['seqlen'] = torch.LongTensor([seqlen]).to(self.device)
+        bn_lens = math.ceil(self.extra_params.semantic_frame_rate * self.extra_params.duration)
+        batch['bn'] = torch.zeros([1, bn_lens, self.extra_params.latent_dims]).to(self.device)
+        batch['bn_lens'] = torch.LongTensor([bn_lens]).to(self.device)
 
         batch['cond_audio'] = batch.get('cond_audio', None)   
         if 'melae' in self.requires:        # melae

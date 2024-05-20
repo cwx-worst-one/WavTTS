@@ -105,6 +105,8 @@ class ResPostNet(nn.Module):
 
 @dataclass
 class ModelArgs:
+    fixed_prefix_lens: bool = True
+
     local_cond_dim: int = 1536
     time_embed_dim: int = 1536
 
@@ -130,6 +132,7 @@ class ModelArgs:
 
     postnet_type: str = "linear" # conv
     postnet_kernel: int = 3
+    x_padding_value: int = 0
 
     bias: bool = False
     use_unet_style_skip_connect: bool = False
@@ -197,6 +200,10 @@ class LlamaDiffusion(nn.Module):
                     )
 
         self.sigma_distribution = UniformDistribution(vmin=self.min_t, vmax=self.max_t)
+
+        # Must use bn bos eos, no matter fixed-len or var-len prefix.
+        self.bn_eos_bos = nn.Parameter(torch.randn(2, hp.encoder_dim))  
+
         
     def get_alpha_beta(self, sigmas: Tensor) -> Tuple[Tensor, Tensor]:
         angle = sigmas * math.pi / 2
@@ -229,27 +236,98 @@ class LlamaDiffusion(nn.Module):
             target = noise
 
         # concat temporal aligned inputs to x_noisy.
+        # TODO (qq) check different ways to stitch x_noisy, local_cond, time_emb
         x_noisy = torch.cat([x_noisy, inputs['bn_ctx'], inputs['bn_ctx_mask']], -1)
         if 'temporal_aligned_inputs_emb' in inputs:
             # TODO (qq) add conv layers if temporal_aligned_inputs needs resample to align with bn.
             x_noisy = torch.cat([x_noisy, inputs['temporal_aligned_inputs_emb']], -1)
         x_noisy = self.x_prenet(x_noisy) + self.prenet(time_emb)
 
+        # add bos and eos to x_noisy.
+        bn_lens = inputs['bn_lens'] + 2
+        bn_bos = self.bn_eos_bos[0][None, None, :].expand(B, -1, -1)
+        x_noisy = torch.cat([bn_bos, x_noisy, torch.zeros_like(bn_bos)], dim=1)
+        indics_x_noisy = torch.arange(x_noisy.shape[1], device=device)[None, :]
+        mask_eos = (indics_x_noisy == bn_lens[:, None]-1)
+        x_noisy[mask_eos] = self.bn_eos_bos[1][None, None, :]
+
         # 2. Concat prefix inputs with bn.
         encoder_input = x_noisy
         prefix_lens = 0
-        if 'prefix_inputs_emb' in inputs:            
-            # TODO (qq) also support var len prefix
+        # concat prefix to x_noisy.        
+        if 'prefix_inputs_emb' in inputs:
             prefix_embed = inputs['prefix_inputs_emb']
             prefix_embed = self.prefix_prenet(prefix_embed)
-            prefix_lens = prefix_embed.shape[1]
-            feat_lens = x_noisy.shape[1]
-            encoder_input = torch.cat([prefix_embed, x_noisy], dim=1)
-            seq_mask = sequence_mask(torch.full((B,), feat_lens + prefix_lens).to(device), device=device)
+            if self.hp.fixed_prefix_lens:
+                prefix_lens = prefix_embed.shape[1]
+                bn_lens = x_noisy.shape[1]
+                encoder_input = torch.cat([prefix_embed, x_noisy], dim=1)
+                seq_mask = sequence_mask(
+                    torch.full((B,), prefix_lens + bn_lens)
+                    .to(device), device=device)                
+            else:
+                # TODO (qq) move this into a function, too long here. Reuse in _forward()
+                # Both prefix_emb and bn are padded to fixed length separately now, 
+                # we remove their padding, and concat the truncated prefix (to prefix_lens) and 
+                # truncated x_noisy (to bn_lens) into a batch with latent seq capped by T.
+                prefix_lens = inputs['prefix_lens'].to(device)                
+                T = int((bn_lens + prefix_lens).max())                           # Target seq len for the batch
+                C = x_noisy.shape[-1]
+                x_noisy_wprefix = torch.full([B, T, C], self.hp.x_padding_value, device=device, dtype=x_noisy.dtype)
+                # x_noisy_wprefix = alpwhas * x_noisy_wprefix + betas * torch.randn_like(x_noisy_wprefix)                
+                indics_T = torch.arange(T, device=device)[None, :]
 
+                # Truncate prefix_emb and copy the values to x_noisy_wprefix
+                mask_T = (
+                    (indics_T < prefix_lens[:, None]) 
+                    & (indics_T < prefix_embed.shape[1])                    # Inactive
+                )
+                mask_prefix = (
+                    torch.arange(prefix_embed.shape[1], device=device)[None, :] 
+                    < prefix_lens[:, None]
+                )
+                x_noisy_wprefix[mask_T] = prefix_embed[mask_prefix].to(dtype=x_noisy_wprefix.dtype)
+
+                # Truncate x_noisy and copy the values to x_noisy_wprefix
+                mask_T = (
+                    (prefix_lens[:, None] <= indics_T) 
+                    & (indics_T < (prefix_lens + bn_lens)[:, None])
+                    & (indics_T - prefix_lens[:, None] < x_noisy.shape[1])  # Inactive
+                )
+                mask_x_noisy = (
+                    torch.arange(x_noisy.shape[1], device=device)[None, :] 
+                    < bn_lens[:, None]
+                )
+                x_noisy_wprefix[mask_T] = x_noisy[mask_x_noisy].to(dtype=x_noisy_wprefix.dtype)
+
+                encoder_input = x_noisy_wprefix
+                seq_mask = sequence_mask(bn_lens + prefix_lens, device=bn_lens.device)
         # TODO (qq) add xattn input to encoder forward
-        pred_v = self.encoder(encoder_input, encoder_input.shape[1], attention_mask=seq_mask)
-        pred_v = pred_v[:, prefix_lens:, :]
+        encoder_out = self.encoder(encoder_input, encoder_input.shape[1], attention_mask=seq_mask)        
+        if 'prefix_inputs_emb' in inputs:
+            if self.hp.fixed_prefix_lens:
+                pred_v = encoder_out[:, prefix_lens:, :]
+            else:
+                # TODO (qq) move this into a function, too long here.
+                pred_v_woprefix = torch.zeros(B, x_noisy.shape[1], encoder_out.shape[-1], device=device)
+                
+                T = encoder_out.shape[1]
+                indics_T = torch.arange(T, device=device)[None, :]
+                mask_T = (
+                    (prefix_lens[:, None] <= indics_T) 
+                    & (indics_T < (prefix_lens[:, None] + bn_lens[:, None]))
+                )
+
+                indics_x_noisy = torch.arange(x_noisy.shape[1], device=device)[None, :]                
+                mask_x_noisy = (
+                    (indics_x_noisy < bn_lens[:, None]) 
+                    & ((prefix_lens[:, None] + indics_x_noisy) < T)
+                )
+                pred_v_woprefix[mask_x_noisy] = encoder_out[mask_T].to(dtype=pred_v_woprefix.dtype)
+                pred_v = pred_v_woprefix        
+        
+        # Remove eos and bos.
+        pred_v = pred_v[:, 1:-1, :]
         pred_v = self.postnet(pred_v)
 
         if self.target_type == "velocity":
@@ -277,8 +355,16 @@ class LlamaDiffusion(nn.Module):
             x_noisy = torch.cat([x_noisy, temporal_aligned_inputs_emb])
         x = self.x_prenet(x_noisy) + self.prenet(time_emb)
 
+        # Add eos and bos to x_noisy
+        bn_bos = self.bn_eos_bos[0][None, None, :].expand(x.shape[0], -1, -1)
+        bn_eos = self.bn_eos_bos[1][None, None, :].expand(x.shape[0], -1, -1)
+        x = torch.cat([bn_bos, x, bn_eos], dim=1)
+        
         # Append prefix inputs
         if prefix_inputs_emb is not None:
+            # Variable prefix length only supports inference batch size = 1.
+            assert ((self.hp.fixed_prefix_lens==True) 
+                    | ((self.hp.fixed_prefix_lens==False) & (x.shape[0]==1)))
             prefix_inputs_emb = self.prefix_prenet(prefix_inputs_emb)
             x = torch.cat([prefix_inputs_emb, x], dim=1)
 
@@ -289,6 +375,9 @@ class LlamaDiffusion(nn.Module):
         if prefix_inputs_emb is not None:
             prefix_len = prefix_inputs_emb.shape[1]
         pred_v = pred_v[:, prefix_len:, :]
+
+        # Remove eos and bos.
+        pred_v = pred_v[:, 1:-1, :]        
 
         pred_v = self.postnet(pred_v)
 
