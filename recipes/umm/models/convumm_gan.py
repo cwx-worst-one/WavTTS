@@ -247,7 +247,7 @@ class ConvUMMGAN(nn.Module):
             wav
         )  # 14MAY2024 @hanoihantrakul: Ideally this should reuse `lit_module_convumm_gan.process_tgt_mel` but right now it leads to circular import.
         nonpadding = (mel.abs().sum(-1) > 0).float()[..., None]
-        hidden_states = self.input_spectrogram_encoder(hidden_states)
+        hidden_states = self.input_spectrogram_encoder(mel, nonpadding)
         hidden_states = self.encoder(hidden_states, nonpadding)
         _, vq_ids, _, _ = self.forward_vq(hidden_states)
         return vq_ids

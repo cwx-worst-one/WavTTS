@@ -1,0 +1,125 @@
+---
+# @hanoihantrakul 1/8/2024
+# Trains a small pitch detection model to be used as a perceptual loss.
+# - Part of Dual-UMM Token Architecture Q1 2024
+# - Trains on MixMSSDataModule created by Yi Ren
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+ckpt_path: last
+
+seed: 555
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+extra_params:
+    sample_rate: 24000
+    frame_rate: 25
+    tokenizer: "bert-base-multilingual-uncased"
+
+pitch_detector_params:
+    n_mels_input: 160 # All perceptual losses for V2 UMM-Dual Arch will take 160 mel spectrogram
+    hidden_size: 128
+    num_layers: 5
+
+# running parameters
+run_opts:
+    fast_dev_run: False
+    cache_dir: .module_cache/umm_dual
+    hdfs_log_dir: "hdfs://haruna/home/byte_speech_sv/hanoi.hantrakul/logs"
+    log_dir: logs
+    log_name: umm_dual
+    version: pitch_predictor
+    precision: "16-mixed"
+    num_workers: 4
+    accelerator: auto
+    #warmup_steps: 2000
+    max_steps: 10000000
+    val_check_interval: 0
+    ckpt_interval: 5000
+    batch_size: 7
+    #learning_rate: 3.0e-4
+    cycle_steps: 200000
+    weight_decay: 0.1
+    shuffle_buffer: 50
+    gradient_clip_val: 1.0
+    #checkpointing: False
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+pl_datamodule: !new:recipes.datasets.mcc.mix_mkii.MixMSSDataModule
+    data_ids: [1038]
+    data_weights: [1]
+    shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+    sample_rate: !ref <extra_params[sample_rate]>
+    batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <extra_params[sample_rate]>
+    num_workers: !ref <run_opts[num_workers]>
+    max_num_crops: null
+    min_duration: 10
+    max_duration: 240
+    normalize_audio: False
+    tokenizer: !ref <extra_params[tokenizer]>
+    frame_rate: !ref <extra_params[frame_rate]>
+
+model_cls: !name:recipes.umm.models.voc_modules.pitch_predictor.model.PitchPredictor
+    c_in: !ref <pitch_detector_params[n_mels_input]>
+    hidden_size: !ref <pitch_detector_params[hidden_size]>
+    num_layers: !ref <pitch_detector_params[num_layers]>
+
+pl_module: !new:recipes.umm.modules.pitch_predictor_task.PitchPredictorTask
+    model_cls: !ref <model_cls>
+    audio_key: "audio_vocal"
+    sample_rate: !ref <extra_params[sample_rate]>
+    cache_dir: !ref <run_opts[cache_dir]>
+
+# logger: !new:pytorch_lightning.loggers.TensorBoardLogger
+#     save_dir: !ref <run_opts[log_dir]>
+#     name: !ref <run_opts[log_name]>
+#     version: !ref <run_opts[version]>
+
+logger:
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[log_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
+
+callbacks:
+    - !new:samantha.callbacks.HDFSModelCheckpoint
+      hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+      monitor: step
+      save_top_k: 500
+      every_n_train_steps: !ref <run_opts[ckpt_interval]>
+      mode: max
+      filename: "{step:07d}"
+      save_last: True
+    - !new:pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: 'step'
+
+plugins:
+    - !new:samantha.plugins.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    strategy: "ddp_find_unused_parameters_false"
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: "auto"
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    log_every_n_steps: 100
+    max_steps: !ref <run_opts[max_steps]>
+    precision: !ref <run_opts[precision]>
+    accumulate_grad_batches: 1 # TODO
+    gradient_clip_val: !ref <run_opts[gradient_clip_val]>
+    val_check_interval: !ref <run_opts[val_check_interval]>
+    check_val_every_n_epoch: null
+    num_sanity_val_steps: 0
+    sync_batchnorm: True
+    benchmark: False
+    callbacks: !ref <callbacks>
+    plugins: !ref <plugins>

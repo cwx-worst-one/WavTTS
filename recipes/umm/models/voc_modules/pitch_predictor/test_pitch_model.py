@@ -5,7 +5,7 @@ import torch
 import torchaudio
 
 from recipes.umm.models.voc_modules.pitch_predictor import pitch_utils
-from recipes.umm.modules.lit_module_pitch_predictor import PitchPredictorTask
+from recipes.umm.modules.pitch_predictor_task import PitchPredictorTask
 
 
 ### Functions for running the trained model and extracting a standalone .pt file. ###
