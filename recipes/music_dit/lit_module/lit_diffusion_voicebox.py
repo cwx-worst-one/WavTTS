@@ -229,8 +229,6 @@ class VoiceBoxModule(pl.LightningModule):
                     embeds = embedder.embed(self.requires, batch['style_text'], with_sos=True)
                 else:
                     embeds = embedder.get_sos_embed(batch_size)
-                else:
-                    embeds = embedder.get_sos_embed(batch_size)
                 prefix_lens = prefix_lens + embeds.shape[1]         # fixed length                    
             if emb_type == 'duration':
                 if 'duration' in conditions:
@@ -258,7 +256,7 @@ class VoiceBoxModule(pl.LightningModule):
                 if self.extra_params.fixed_prefix_lens:
                     prefix_lens = prefix_lens + embeds.shape[1]     # fixed length
                 else:
-                    prefix_lens = prefix_lens + batch['lyrics_tokens_length'] + 1     # var length
+                    prefix_lens = prefix_lens + batch['lyrics_tokens_length'].cpu() + 1     # var length
             # Note: we should only allow one variable length prefix. Ideally save it for audio prompt.
             inputs_embeds.append(embeds)
             en_idx = st_idx + embeds.shape[1]
@@ -269,7 +267,7 @@ class VoiceBoxModule(pl.LightningModule):
         if self.training:
             inputs_embeds = self.prepare_prefix_cfg_embeds(batch, inputs_embeds, self.training)
         batch['prefix_inputs_emb'] = inputs_embeds
-        batch['prefix_lens'] = prefix_lens
+        batch['prefix_lens'] = prefix_lens.to(self.device)
         return batch
 
 
