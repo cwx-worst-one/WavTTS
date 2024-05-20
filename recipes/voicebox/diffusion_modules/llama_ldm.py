@@ -677,7 +677,7 @@ class LlamaDiffusion(nn.Module):
                     v_pred = text_cfg_w * v_pred + (1 - text_cfg_w) * v_pred_uncond
                 else:
                     v_pred = self._forward(
-                        x, local_cond, text_embed, timesteps=sigmas[i]
+                        x, local_cond, text_embed, timesteps=sigmas[i].expand(batch_size, -1)
                     )
 
                 # TODO: 只是模拟cache过程
