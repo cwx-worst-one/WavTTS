@@ -98,6 +98,33 @@ class HDFSModelCheckpoint(ModelCheckpoint):
         ckpt_type = os.getenv("CheckpointType", None)
         infer_type = os.getenv("InferType", None)
         packed_model = os.getenv("PackedModel", None)
+
+        eval_step_start = os.getenv("EvalStepStart", "0")
+        eval_step_interval = os.getenv("EvalStepInterval", "0")
+        eval_objective_eval_uuid = os.getenv("EvalObjectiveEvalUUID", "")
+
+        eval_runner_path = os.getenv("EvalRunnerPath", "")
+        eval_diffusion_ckpt = os.getenv("EvalDiffusionCkpt", "")
+        eval_vocoder_path = os.getenv("EvalVocoderPath", "")
+        eval_branch_name = os.getenv("EvalBranchName", "")
+        eval_branch_commit = os.getenv("EvalBranchCommit", "")
+        eval_script = os.getenv("EvalScript", "")
+        training_run_id = os.getenv("TRAINING_RUN_ID", "0")
+
+        eval_params = {}
+        if eval_runner_path != "":
+            eval_params["RUNNER_PATH"] = eval_runner_path
+        if eval_diffusion_ckpt != "":
+            eval_params["DIFFUSION_CKPT"] = eval_diffusion_ckpt
+        if eval_vocoder_path != "":
+            eval_params["VOCODER_PATH"] = eval_vocoder_path
+        if eval_branch_name != "":
+            eval_params["BRANCH_NAME"] = eval_branch_name
+        if eval_branch_commit != "":
+            eval_params["BRANCH_COMMIT"] = eval_branch_commit
+        if eval_script != "":
+            eval_params["EVAL_SCRIPT"] = eval_script
+
         if model_name is None or model_arch is None or ckpt_type is None:
             self.should_sync_platform = False
             logger.warning(
@@ -138,6 +165,11 @@ class HDFSModelCheckpoint(ModelCheckpoint):
             wandb_project_name=project,
             merlin_job_id=os.getenv("MERLIN_JOB_ID", "null"),
             commit_id=get_git_revision_hash(),
+            training_run_id=int(training_run_id),
+            eval_config=easycycle.TrainTaskParamsEvalConfig(
+                int(eval_step_start), int(eval_step_interval), eval_objective_eval_uuid
+            ),
+            eval_params=eval_params,
         )
         req.owner = os.getenv("ARNOLD_TRIAL_OWNER", "samantha")
         easycycle.register_raw_model(req)
