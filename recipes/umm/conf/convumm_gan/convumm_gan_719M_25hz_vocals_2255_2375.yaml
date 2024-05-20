@@ -31,7 +31,7 @@ extra_params:
 run_opts:
     fast_dev_run: False
     cache_dir: .module_cache/umm
-    hdfs_log_dir: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul"
+    hdfs_log_dir: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs"
     log_dir: logs
     log_name: convumm_gan_master
     version: !ref convumm_gan_719M_2255_2375_vocals_<extra_params[tokenizer]>_<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>
