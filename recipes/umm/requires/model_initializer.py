@@ -157,6 +157,7 @@ def init_stage2(hpath, local_rank, cache_dir=None):
         model = Stage2.load_from_checkpoint(local_path).to(device).eval()
         return {"Stage2": model}
 
+
 def init_stage3(hpath, local_rank, cache_dir=None):
     """Init function for standard Stage3 UMM backbone."""
     from recipes.umm.modules.lit_module import Stage3
@@ -171,8 +172,15 @@ def init_stage3(hpath, local_rank, cache_dir=None):
         return {"Stage3": model}
 
 
-def init_dualumm(hpath, local_rank=None, cache_dir=None, device=None, load_required_modules_in_init=False, version='v2'):
-    if version == 'v2':
+def init_dualumm(
+    hpath,
+    local_rank=None,
+    cache_dir=None,
+    device=None,
+    load_required_modules_in_init=False,
+    version="v2",
+):
+    if version == "v2":
         from recipes.umm.modules.lit_module_mkii_dual import DualUMMv2 as DualUMM
     if cache_dir is not None:
         os.makedirs(cache_dir, exist_ok=True)
@@ -181,13 +189,17 @@ def init_dualumm(hpath, local_rank=None, cache_dir=None, device=None, load_requi
         device = torch.device(f"cuda:{local_rank}")
     with local_zero_first():
         local_path = ensure_hdfs_ckpt_is_local(hpath, cache_dir)
-        state_dict = torch.load(local_path, map_location='cpu')
-        prefix = 'model.'
+        state_dict = torch.load(local_path, map_location="cpu")
+        prefix = "model."
         model_state_dict = {
-            k[len(prefix):]: v for k, v in state_dict['state_dict'].items() if k[:len(prefix)] == prefix
+            k[len(prefix) :]: v
+            for k, v in state_dict["state_dict"].items()
+            if k[: len(prefix)] == prefix
         }
-        state_dict['hyper_parameters'].update(load_required_modules_in_init=load_required_modules_in_init)
-        stage3_module = DualUMM(**state_dict['hyper_parameters'])
+        state_dict["hyper_parameters"].update(
+            load_required_modules_in_init=load_required_modules_in_init
+        )
+        stage3_module = DualUMM(**state_dict["hyper_parameters"])
         model = stage3_module.model
         model.load_state_dict(model_state_dict)
         model.eval()
@@ -195,22 +207,68 @@ def init_dualumm(hpath, local_rank=None, cache_dir=None, device=None, load_requi
         return {"Stage3": model}
 
 
+def init_convumm_gan(
+    hpath,
+    local_rank=None,
+    cache_dir=None,
+    device=None,
+    load_required_modules_in_init=False,
+):
+    """
+    Init function for ConvUMM-GAN.
+
+    @hanoihantrakul 21MAY2024: ConvUMM-GAN uses a lit_module that is very similar to DualUMM. Thus it is possible
+    to load a ConvUMM-GAN model using `init_dualumm()`. However, I created a new init to make the code clearer.
+    """
+    from recipes.umm.modules.lit_module_convumm_gan import ConvUMMGAN
+
+    if cache_dir is not None:
+        os.makedirs(cache_dir, exist_ok=True)
+
+    if device is None:
+        device = torch.device(f"cuda:{local_rank}")
+    with local_zero_first():
+        local_path = ensure_hdfs_ckpt_is_local(hpath, cache_dir)
+        state_dict = torch.load(local_path, map_location="cpu")
+        prefix = "model."
+        model_state_dict = {
+            k[len(prefix) :]: v
+            for k, v in state_dict["state_dict"].items()
+            if k[: len(prefix)] == prefix
+        }
+        state_dict["hyper_parameters"].update(
+            load_required_modules_in_init=load_required_modules_in_init
+        )
+        lit_module = ConvUMMGAN(**state_dict["hyper_parameters"])
+        model = lit_module.model
+        model.load_state_dict(model_state_dict)
+        model.eval()
+        model.to(device)
+        return {
+            "convumm_gan_model": model
+        }  # @hanoihantrakul 21MAY2024 Unlike other init functions, I stop calling this "Stage3" because there is no concept of Stage1-2-3 training in ConvUMM-GAN.
+
+
 def init_stage3_dual_voc(hpath, local_rank, cache_dir=None):
     device = torch.device(f"cuda:{local_rank}")
     with local_zero_first():
         voc_ckpt = ensure_hdfs_ckpt_is_local(hpath, cache_dir=cache_dir)
-    state_dict = torch.load(voc_ckpt, map_location='cpu')
-    prefix = 'model_gen.'
+    state_dict = torch.load(voc_ckpt, map_location="cpu")
+    prefix = "model_gen."
     model_state_dict = {
-        k[len(prefix):]: v for k, v in state_dict['state_dict'].items() if k[:len(prefix)] == prefix
+        k[len(prefix) :]: v
+        for k, v in state_dict["state_dict"].items()
+        if k[: len(prefix)] == prefix
     }
     from recipes.umm.modules.vocoder_task import MelGANVocoder
-    voc_module = MelGANVocoder(**state_dict['hyper_parameters'], save_hparams=False)
+
+    voc_module = MelGANVocoder(**state_dict["hyper_parameters"], save_hparams=False)
     model = voc_module.model_gen
     model.load_state_dict(model_state_dict)
     model.to(device).eval()
-    print(f'Loading vocoder model from {voc_ckpt}')
+    print(f"Loading vocoder model from {voc_ckpt}")
     return {"mel_vocoder": model}
+
 
 def init_stage3_mss(hpath, local_rank, cache_dir=None):
     """Init function for Stage3 UMM backbone trained with MSS task."""
@@ -367,8 +425,15 @@ def init_wvae_encoder(hpath, local_rank, cache_dir=None):
     return {"wvae_encoder": load_torch_script_module(local_path, device)}
 
 
-def init_melae(hpath, local_rank=None, cache_dir=None, device=None, load_required_modules_in_init=False):
+def init_melae(
+    hpath,
+    local_rank=None,
+    cache_dir=None,
+    device=None,
+    load_required_modules_in_init=False,
+):
     from recipes.music_dit.lit_module.lit_melae import MelAEKL
+
     if cache_dir is not None:
         os.makedirs(cache_dir, exist_ok=True)
 
@@ -378,13 +443,17 @@ def init_melae(hpath, local_rank=None, cache_dir=None, device=None, load_require
         cache_dir = f'{cache_dir}/{hpath.split("/")[-3]}'
         os.makedirs(cache_dir, exist_ok=True)
         local_path = ensure_hdfs_ckpt_is_local(hpath, cache_dir)
-        state_dict = torch.load(local_path, map_location='cpu')
-        prefix = 'model.'
+        state_dict = torch.load(local_path, map_location="cpu")
+        prefix = "model."
         model_state_dict = {
-            k[len(prefix):]: v for k, v in state_dict['state_dict'].items() if k[:len(prefix)] == prefix
+            k[len(prefix) :]: v
+            for k, v in state_dict["state_dict"].items()
+            if k[: len(prefix)] == prefix
         }
-        state_dict['hyper_parameters'].update(load_required_modules_in_init=load_required_modules_in_init)
-        melae_pl_module = MelAEKL(**state_dict['hyper_parameters'])
+        state_dict["hyper_parameters"].update(
+            load_required_modules_in_init=load_required_modules_in_init
+        )
+        melae_pl_module = MelAEKL(**state_dict["hyper_parameters"])
         model = melae_pl_module.model
         model.load_state_dict(model_state_dict)
         model.eval()
