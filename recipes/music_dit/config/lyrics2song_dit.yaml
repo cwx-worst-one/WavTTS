@@ -81,7 +81,7 @@ extra_params:
     xattn_hidden_size: 0                # Set this if using xattn input
     semantic_frame_rate: 12.5           # Melae 12.5, WavAE 49
     latent_dims: 32
-    prefix_emb_cfg_dropout_rate: [0.15, 0, 0]    # zero means no cfg
+    prefix_emb_cfg_dropout_rate: [0.15, 0.15, 0.15]    # zero means no cfg
     duration: 60
 
 model_config: !new:recipes.music_dit.model.llama_ldm.ModelArgs
