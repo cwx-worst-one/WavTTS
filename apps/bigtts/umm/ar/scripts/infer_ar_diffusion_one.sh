@@ -1,5 +1,7 @@
 #!/bin/bash
 
+config=apps/bigtts/umm/ar/conf/ar_diffusion_inference.yaml
+
 seed=
 src_lang=
 tgt_lang=
@@ -33,7 +35,7 @@ echo
 . scripts/parse_options.sh
 
 # check configurations
-all_args="seed src_lang tgt_lang meta_lst ar_ckpt_path ar_output_path temperature thresh mode step_out_blank max_repeat_times ar_model_version icl_mode eos_weight diffusion_ckpt_path diffusion_output_path"
+all_args="config seed src_lang tgt_lang meta_lst ar_ckpt_path ar_output_path temperature thresh mode step_out_blank max_repeat_times ar_model_version icl_mode eos_weight diffusion_ckpt_path diffusion_output_path"
 empty_args=
 for arg in $all_args; do
     value=`eval echo \\$$arg`
@@ -86,6 +88,6 @@ echo "Infer Options: $run_opts $umm_opts $ar_opts $diffusion_opts" | sed 's=--=\
 echo
 
 export NCCL_DEBUG=WARN
-bash launch.sh predict -c apps/bigtts/umm/ar/conf/ar_diffusion_inference.yaml $run_opts $umm_opts $ar_opts $diffusion_opts || exit 1
+bash launch.sh predict -c $config $run_opts $umm_opts $ar_opts $diffusion_opts || exit 1
 
 bash apps/bigtts/umm/diffusion/scripts/analysis.sh $meta_lst $(realpath $diffusion_output_path) $tgt_lang || (echo "error on analysis"; exit 1)
