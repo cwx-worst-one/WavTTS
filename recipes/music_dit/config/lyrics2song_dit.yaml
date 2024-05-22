@@ -12,7 +12,7 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 ################################################################################
 run_opts:
     log_dir: logs
-    hdfs_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/music_dit
+    hdfs_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhongyi.huang/music_dit
     fast_dev_run: False
     tensorboard_dir: !ref <run_opts[log_dir]>
     log_name: lyrics2song
@@ -161,10 +161,10 @@ logger:
       save_dir: !ref <run_opts[tensorboard_dir]>
       name: !ref <run_opts[log_name]>
       version: !ref <run_opts[version]>
-    # - !new:pytorch_lightning.loggers.wandb.WandbLogger
-    #   save_dir: !ref <run_opts[tensorboard_dir]>
-    #   project: !ref <run_opts[log_name]>
-    #   name: !ref <run_opts[version]>
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[tensorboard_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
 
 callbacks:
     - !new:pytorch_lightning.callbacks.ModelCheckpoint
