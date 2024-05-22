@@ -792,7 +792,7 @@ class LitMuLanModule(pl.LightningModule):
 
 
 def create_mulan_model(ckpt_path, device):
-    litmodel = LitMuLanModule.load_from_checkpoint(ckpt_path) 
+    litmodel = LitMuLanModule.load_from_checkpoint(ckpt_path, map_location='cpu') 
 
     # audio tower
     litmodel.music_encoder.eval()

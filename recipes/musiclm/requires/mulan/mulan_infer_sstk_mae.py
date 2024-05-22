@@ -825,6 +825,7 @@ def create_mulan_model(ckpt_path, device, version="v1"):
     litmodel = LitMuLanModule.load_from_checkpoint(
         ckpt_path,
         version=version,
+        map_location='cpu',
         strict=True,
     )
 
