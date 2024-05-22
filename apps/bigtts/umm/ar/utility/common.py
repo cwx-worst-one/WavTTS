@@ -231,3 +231,55 @@ class TokenBuffer:
 
         self.put(predict_token.item())
         return predict_token
+
+
+def _custom_cat(
+    lyrics_tokens: torch.Tensor,
+    sos_ids: torch.Tensor,
+    target_ids: torch.Tensor,
+    input_lens: torch.Tensor,
+    target_lens: torch.Tensor,
+    bsz: int,
+    t: int,
+):
+    """
+    Fuse the lyrics_tokens, sos_ids, target_ids into one tensor.
+
+    The orginal code is:
+    ```python
+        h = torch.zeros([bsz, t], device=logits.device).long()
+        for i in range(bsz):
+            h[i, : input_lens[i] + 1 + 1 + target_lens[i] + 1] = torch.cat(
+                (
+                    batch["lyrics_tokens"][i, : input_lens[i]],
+                    sos_ids[i, :],
+                    torch.zeros([1]).to(sos_ids.device),  # placeholder
+                    target_ids[i, : target_lens[i] + 1],
+                )
+            )
+    ```
+    """
+    device = target_ids.device
+    h = torch.zeros([bsz, t], device=device, dtype=torch.long)
+
+    tN = torch.arange(t, device=device)
+    tN_ = tN[None, :]
+    input_lens_ = input_lens[:, None]
+    target_lens_ = target_lens[:, None]
+    # 0, input_lens, input_lens + 1, input_lens + 2, input_lens + 2 + (target_lens + 1)
+    h_lyrics_mask = tN_ < input_lens_
+    lyrics_mask = (
+        torch.arange(lyrics_tokens.size(1), device=device)[None, :] < input_lens_
+    )
+    h[h_lyrics_mask] = lyrics_tokens[lyrics_mask]
+    h_sos_ids_mask = torch.arange(bsz, device=device) * t + input_lens
+    h.flatten()[h_sos_ids_mask] = sos_ids[:, 0]  # sos_ids: [bsz, 1]
+    h_target_mask = (tN_ >= (input_lens_ + 2)) & (
+        tN_ < (input_lens_ + target_lens_ + 3)
+    )
+    target_mask = torch.arange(target_ids.size(1), device=device)[None, :] < (
+        target_lens_ + 1
+    )
+    h[h_target_mask] = target_ids[target_mask]
+
+    return h

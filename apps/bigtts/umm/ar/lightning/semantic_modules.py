@@ -7,6 +7,7 @@ from tqdm import trange
 from apps.bigtts.umm.ar.lightning.base_modules import BaseContinuousEmbedModule
 from apps.bigtts.umm.ar.utility.common import (
     TokenBuffer,
+    _custom_cat,
     get_split_emb,
     reorder_attr,
     sequence_mask,
@@ -648,20 +649,15 @@ class SemanticModule_MergeV2(BaseContinuousEmbedModule):
             x = logits
             bsz, t, c = logits.shape
             sos_ids = self.target_embedder.get_sos_token(bsz)  # [b, 1]
-            # prompt_sos_ids = self.prompt_embedder.get_sos_token(bsz)
-            h = torch.zeros([bsz, t], device=logits.device).long()
-            for i in range(bsz):
-                h[i, : input_lens[i] + 1 + 1 + target_lens[i] + 1] = torch.cat(
-                    (
-                        batch["lyrics_tokens"][i, : input_lens[i]],
-                        # torch.zeros([prompt_lens[i]]).to(sos_ids.device), # query placeholder
-                        sos_ids[i, :],
-                        torch.zeros([1]).to(sos_ids.device),  # placeholder
-                        target_ids[i, : target_lens[i] + 1],
-                    )
-                )
-
-            target_ids = h
+            target_ids = _custom_cat(
+                batch["lyrics_tokens"],
+                sos_ids,
+                target_ids,
+                input_lens,
+                target_lens,
+                bsz,
+                t,
+            )
             loss = self.criterion(x, target_ids, mask=loss_mask)
             accu = (
                 ((x.argmax(dim=-1) == target_ids).float() * loss_mask).sum()
