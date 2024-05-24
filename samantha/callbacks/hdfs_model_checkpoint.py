@@ -115,9 +115,9 @@ class HDFSModelCheckpoint(ModelCheckpoint):
         if eval_runner_path != "":
             eval_params["RUNNER_PATH"] = eval_runner_path
         if eval_diffusion_ckpt != "":
-            eval_params["DIFFUSION_CKPT"] = eval_diffusion_ckpt
+            eval_params["DIFFUSION_CKPT_PATH"] = eval_diffusion_ckpt
         if eval_vocoder_path != "":
-            eval_params["VOCODER_PATH"] = eval_vocoder_path
+            eval_params["VOCODER_CKPT_PATH"] = eval_vocoder_path
         if eval_branch_name != "":
             eval_params["BRANCH_NAME"] = eval_branch_name
         if eval_branch_commit != "":
