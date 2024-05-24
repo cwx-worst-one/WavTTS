@@ -1,9 +1,8 @@
 import pytorch_lightning as pl
-from typing import Any
 from recipes.bigmusic.utils.format_utils import (
-    concat_metadata_list,
     update_json,
     normalize_text,
+    remove_space_in_zh,
 )
 from recipes.bigmusic.utils.metrics_asr import (
     asr_transcribe_lyrics,
@@ -19,11 +18,13 @@ import json
 from pathlib import Path
 import numpy as np
 import tqdm
-from string import punctuation
 from recipes.bigmusic.utils.format_utils import normalize_text
 from collections import defaultdict
 import requests
 import time
+from uuid import uuid4
+import base64
+
 
 class WERMetricsCallback(pl.Callback):
     def __init__(self, asr_model_path='en_punc'):
@@ -39,9 +40,10 @@ class WERMetricsCallback(pl.Callback):
         run_wer_metrics(generated_output_fps, asr_model_path=self.asr_model_path, device=pl_module.device)
 
 class WERMetricsSAOnlineCallback(pl.Callback):
-    def __init__(self, asr_model_path='en_punc'):
+    def __init__(self, asr_model_path='en_punc', transliteration=False):
         super().__init__()
         self.asr_model_path = asr_model_path
+        self.transliteration = transliteration
 
     def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
         if 'output_paths' in pl_module.extra_params:
@@ -49,7 +51,7 @@ class WERMetricsSAOnlineCallback(pl.Callback):
         else:
             output_dir = pl_module.extra_params.output_dir
             generated_output_fps = list(Path(output_dir).glob('**/*.generated.wav'))
-        run_wer_metrics_sa_online(generated_output_fps, asr_model_path=self.asr_model_path)
+        run_wer_metrics_sa_online(generated_output_fps, asr_model_path=self.asr_model_path, transliteration=self.transliteration)
 
 def run_wer_metrics(generated_output_fps, asr_model_path='en_punc', device='cuda'):
     asr_requires = init_asr(asr_model_path, local_rank=torch.cuda.current_device())
@@ -261,8 +263,138 @@ def run_relative_wer_metrics(output_dir, asr_model_path='zh', device='cuda'):
         update_json(metrics_fp, { 'rWER': wer_metadata })
         print(f"output_dir={output_dir}, rWER={wer_metadata}")
 
+def run_lyric_transliteration_sa_online(origin_text, language):
+    def sa_tts(content, voice, voice_type, codec="wav", timeout=20):
+        """
+        Example
+        {
+        "reqid": "a3273f8ee3db11e7bf2ff3223ff33638",
+        "code": 3000,
+        "message": "Success",
+        "operation": "query",
+        "sequence": -1,
+        "data": "audio data encoded in base64"
+        }
+        """
+        appid="xuling.9427"
+        token="access_token"
+        cluster="demo_test"
 
-def run_asr_lyrics_sa_online(filepath, language):
+        try:
+            srv_url = "http://speech.byted.org/api/v1/tts"
+            req = {
+                "app": {
+                    "appid": appid,
+                    "token": token,
+                    "cluster": cluster,
+                },
+                "user": {
+                    "uid": "388808087185088"
+                },
+                "audio": {
+                    "voice": voice,
+                    "voice_type": voice_type,
+                    "encoding": codec,
+                    "speed": 10,
+                    "volume": 10,
+                    "pitch": 10
+                },
+                "request": {
+                    "reqid": str(uuid4()),
+                    "text": content,
+                    "text_type": "plain",
+                    "operation": "query",
+                    "with_frontend": 1,
+                    "split_sentence": 0,
+                    "return_mel": 0
+                }
+            }
+
+            resp = requests.post(srv_url, json=req, timeout=timeout)
+            if resp.status_code != 200:
+                return None, None
+            resp_json = resp.json()
+            frontend_res = None
+            audio = None
+            if "description" in resp_json["addition"]:
+                frontend_res = resp_json["addition"]["description"]
+            if "data" in resp_json:
+                b64_audio = resp_json["data"]
+                audio = base64.b64decode(b64_audio)
+            return frontend_res, audio
+        except Exception as e:
+            print(str(e))
+        return None, None
+
+    # support zh-CN: character to pinyin
+    def _request_sa_tts_zh_cn(origin_text):
+        voice = "CN_EN_MULTITASK"
+        voice_type = "multitask_frontend"
+        valid_list = [
+          ["\u4E00", "\u9FA5"],
+          ["\u9FA6", "\u9FFF"],
+          ["\u3400", "\u4DBF"]
+        ]
+        text = ""
+        output_text = ""
+        for char in origin_text:
+            valid_flag = 0
+            if char == " " and text.strip() != "":
+                valid_flag = 1
+            for (v1, v2) in valid_list:
+                if char >= v1 and char <= v2:
+                    valid_flag = 1
+            if valid_flag == 1:
+                text += char
+            else:
+                if text.strip() != "":
+                    frontend_res, _ = sa_tts(text, voice, voice_type)
+                    sy_text = ""
+                    for item in json.loads(frontend_res):
+                        for key in item["json"]:
+                            tk_list = item["json"][key]
+                            ph_text = ""
+                            for tk in tk_list:
+                                orth = tk["orth"]
+                                if tk["unitType"] == "text":
+                                    if tk["isEnglish"] == 1:
+                                        sy_text += orth
+                                        sy_text += " "
+                                    else:
+                                        sy_text += tk["pinYin"].lower()
+                                        sy_text += " "
+                    #sy_text = re.sub("[0-9]", "", sy_text)
+                    output_text += " %s" % sy_text.strip()
+                    output_text += " %s" % char
+                    text = ""
+                else:
+                    output_text += "%s" % char
+                    text = ""
+        if text.strip() != "":
+            frontend_res, _ = sa_tts(text, voice, voice_type)
+            sy_text = ""
+            for item in json.loads(frontend_res):
+                for key in item["json"]:
+                    tk_list = item["json"][key]
+                    ph_text = ""
+                    for tk in tk_list:
+                        orth = tk["orth"]
+                        if tk["unitType"] == "text":
+                            if tk["isEnglish"] == 1:
+                                sy_text += orth
+                                sy_text += " "
+                            else:
+                                sy_text += tk["pinYin"].lower()
+                                sy_text += " "
+            #sy_text = re.sub("[0-9]", "", sy_text)
+            output_text += " %s" % sy_text.strip()
+            text = ""
+        return output_text
+
+    if language == 'zh-CN':
+        return _request_sa_tts_zh_cn(origin_text)
+
+def run_asr_lyrics_sa_online(filepath, language='zh-CN'):
     #base_url = 'http://speech-test.byted.org/api/v1/vc'
     #appid = "api_dev"
     #token = "lv_token"
@@ -325,8 +457,76 @@ def run_asr_lyrics_sa_online(filepath, language):
     return text.strip()
 
 
-def run_wer_metrics_sa_online(generated_output_fps, asr_model_path='zh-CN'):
+def run_wer_metrics_sa_online(generated_output_fps, asr_model_path='zh-CN', transliteration=False):
+    def compute_wer(ref, res):
+        a = '' if ref is None else ref
+        g = '' if res is None else res
+        edits = edit_distance(a, g)
+        denom = 1.0 if len(a) == 0 else len(a)
+        ins = round(edits.ins / denom, 3)
+        subs = round(edits.subs / denom, 3)
+        dels = round(edits.dels / denom, 3)
+        wer = sum([ins, subs, dels])
+        wer_metadata = {
+            'wer': wer,
+            'ins error': edits.ins,
+            'subs error': edits.subs,
+            'dels error': edits.dels,
+            'ref length': denom,
+            'ins': ins,
+            'subs': subs,
+            'dels': dels,
+            'greedy_transcript': g,
+            'actual_transcript': a,
+            'badcase': 0,
+        }
+        if dels > 0.8:
+            print("gt trans: ", a, "asr result: ", g, "path: ",str(generated_output_fp), "might be asr model error")
+            wer_metadata['badcase'] = 1
+        return wer_metadata
+
+    def merge_all_wer(category2wer):
+        all_ref_length = 0
+        all_ins_err = 0
+        all_subs_err = 0
+        all_dels_err = 0
+        all_badcase = 0
+        all_support = 0
+        wer_metadata_list = []
+        for dir_path, wers in category2wer.items():
+            metrics_fp = Path(dir_path)/'metrics.json'
+            ref_length, ins_err, subs_err, dels_err, badcase, support = np.array(wers).sum(axis=0)
+            all_ref_length += ref_length
+            all_ins_err += ins_err
+            all_subs_err += subs_err
+            all_dels_err += dels_err
+            all_badcase += badcase
+            all_support += support
+            wer_metadata = {
+                'wer': round((ins_err+subs_err+dels_err)/ref_length, 3),
+                'ins': round(ins_err/ref_length, 3),
+                'subs': round(subs_err/ref_length, 3),
+                'dels': round(dels_err/ref_length, 3),
+                'badcases': int(badcase),
+                'badcase_rate': round(badcase/support, 3),
+                'support': int(support),
+            }
+            wer_metadata_list.append([metrics_fp, wer_metadata])
+        all_wer_metadata = {
+            'wer': round((all_ins_err+all_subs_err+all_dels_err)/all_ref_length, 3),
+            'ins': round(all_ins_err/all_ref_length, 3),
+            'subs': round(all_subs_err/all_ref_length, 3),
+            'dels': round(all_dels_err/all_ref_length, 3),
+            'badcases': int(all_badcase),
+            'badcase_rate': round(all_badcase/all_support, 3),
+            'support': int(all_support),
+        }
+        all_metrics_fp = Path(dir_path.rsplit('/', 1)[0])/'all_metrics.json'
+        wer_metadata_list.append([all_metrics_fp, all_wer_metadata])
+        return wer_metadata_list
+
     category2wer = defaultdict(list)
+    category2pinyinwer = defaultdict(list)
 
     for idx, generated_output_fp in enumerate(generated_output_fps):
         asr_lyrics = run_asr_lyrics_sa_online(generated_output_fp, asr_model_path)
@@ -337,70 +537,49 @@ def run_wer_metrics_sa_online(generated_output_fps, asr_model_path='zh-CN'):
         lyrics = metadata.get('lyrics')
         lyrics = normalize_lyrics(lyrics)
 
+        wer_metadata = {}
         if asr_model_path == 'zh-CN':
-            lyrics = lyrics.replace(' ', '')
-            asr_lyrics = asr_lyrics.replace(' ', '')
+            lyrics = normalize_text(remove_punc_case(lyrics))
+            lyrics = remove_space_in_zh(lyrics)
+            asr_lyrics = normalize_text(remove_punc_case(asr_lyrics))
+            asr_lyrics = remove_space_in_zh(asr_lyrics)
+            wer_metadata['wer'] = compute_wer(lyrics, asr_lyrics)
+            if transliteration:
+                trans_lyrics = run_lyric_transliteration_sa_online(lyrics, asr_model_path)
+                trans_asr_lyrics = run_lyric_transliteration_sa_online(asr_lyrics, asr_model_path)
+                wer_metadata['pinyin_wer'] = compute_wer(trans_lyrics, trans_asr_lyrics)
         
-        a = '' if lyrics is None else normalize_text(remove_punc_case(lyrics))
-        g = normalize_text(remove_punc_case(asr_lyrics)) # greedy transcript
-        edits = edit_distance(a, g)
-        denom = 1.0 if len(a) == 0 else len(a)
-        ins = round(edits.ins / denom, 3)
-        subs = round(edits.subs / denom, 3)
-        dels = round(edits.dels / denom, 3)
-        wer = sum([ins, subs, dels])
-        wer_metadata = {
-            'ins error': edits.ins,
-            'subs error': edits.subs,
-            'dels error': edits.dels,
-            'ref length': denom,
-            'ins': ins,
-            'subs': subs,
-            'dels': dels,
-            'wer': wer,
-            'greedy_transcript': g,
-            'actual_transcript': a
-        }
-        if dels > 0.2:
-            print("gt trans: ", a, "asr result: ", g, "path: ",str(generated_output_fp), "might be asr model error")
-        update_json(metadata_fp, { 'wer': wer_metadata })
+        update_json(metadata_fp, wer_metadata)
         if isinstance(generated_output_fp, str):
             import os
             category_dir = os.path.dirname(generated_output_fp)
         else:
             category_dir = generated_output_fp.parent.resolve()
-        category2wer[str(category_dir)].append([denom, edits.ins, edits.subs, edits.dels]) # append to base directory to calculate total wer
+        category2wer[str(category_dir)].append([
+                wer_metadata['wer']['ref length'],
+                wer_metadata['wer']['ins error'],
+                wer_metadata['wer']['subs error'],
+                wer_metadata['wer']['dels error'],
+                wer_metadata['wer']['badcase'],
+                1
+        ]) # append to base directory to calculate total wer
+        if asr_model_path == 'zh-CN' and transliteration:
+            category2pinyinwer[str(category_dir)].append([
+                    wer_metadata['pinyin_wer']['ref length'],
+                    wer_metadata['pinyin_wer']['ins error'],
+                    wer_metadata['pinyin_wer']['subs error'],
+                    wer_metadata['pinyin_wer']['dels error'],
+                    wer_metadata['pinyin_wer']['badcase'],
+                    1
+            ])
     
-    all_ref_length = 0
-    all_ins_err = 0
-    all_subs_err = 0
-    all_dels_err = 0
-    for dir_path, wers in category2wer.items():
-        metrics_fp = Path(dir_path)/'metrics.json'
-        #wer, ins, subs, dels = np.array(wers).mean(axis=0)
-        ref_length, ins_err, subs_err, dels_err = np.array(wers).sum(axis=0)
-        all_ref_length += ref_length
-        all_ins_err += ins_err
-        all_subs_err += subs_err
-        all_dels_err += dels_err
-        wer_metadata = {
-            'wer': round((ins_err+subs_err+dels_err)/ref_length, 3),
-            'ins': round(ins_err/ref_length, 3),
-            'subs': round(subs_err/ref_length, 3),
-            'dels': round(dels_err/ref_length, 3),
-        }
-        update_json(metrics_fp, { 'wer': wer_metadata })
+    for metrics_fp, wer_metadata in merge_all_wer(category2wer):
+        update_json(metrics_fp, {'wer': wer_metadata})
         print(f"output_dir={metrics_fp}, WER={wer_metadata}")
-    wer_metadata = {
-        'wer': round((all_ins_err+all_subs_err+all_dels_err)/all_ref_length, 3),
-        'ins': round(all_ins_err/all_ref_length, 3),
-        'subs': round(all_subs_err/all_ref_length, 3),
-        'dels': round(all_dels_err/all_ref_length, 3),
-    }
-    all_metrics_fp = Path(dir_path.rsplit('/', 1)[0])/'all_metrics.json'
-    update_json(all_metrics_fp, { 'wer': wer_metadata })
-    print(f"output_dir={all_metrics_fp}, WER={wer_metadata}")
-
+    if asr_model_path == 'zh-CN' and transliteration:
+        for metrics_fp, wer_metadata in merge_all_wer(category2pinyinwer):
+            update_json(metrics_fp, {'pinyin_wer': wer_metadata})
+            print(f"output_dir={metrics_fp}, PINYIN_WER={wer_metadata}")
 
 if __name__ == "__main__":
     import argparse
@@ -411,4 +590,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     # run_relative_wer_metrics(args.input_dir, asr_model_path='zh')
     #run_wer_metrics_svs(list(Path(args.input_dir).glob('**/*.generated.wav')), asr_model_path='zh')
-    run_wer_metrics_sa_online(list(Path(args.input_dir).glob('**/*.generated.wav')), asr_model_path='zh-CN')
+    #run_wer_metrics_sa_online(list(Path(args.input_dir).glob('**/*.generated.wav')), asr_model_path='zh-CN')
+    run_wer_metrics_sa_online(list(Path(args.input_dir).glob('**/*.generated.wav')), asr_model_path='zh-CN', transliteration=True)
+    #run_wer_metrics_sa_online(list(Path(args.input_dir).glob('**/*.generated.wav')), asr_model_path='zh-CN', transliteration=False)

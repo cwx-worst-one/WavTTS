@@ -18,56 +18,56 @@ extra_params:
     semantic_type: bestrq
     train_conditions: "style_category,speaker_id,lyrics_tokens"
     prepare_input_types: []
-    input_embedders: [multitags_categorical, speaker_id, lyrics_tokens]
-    tag_taxonomy_lang: "Audio"  # Zh, SA, Audio
+    input_embedders: [tag_categorical, speaker_id, lyrics_tokens]
+    tag_taxonomy_lang: "SA"
     tag_dropout_rate: 0.1
     line_break_dropout_rate: 0
     section_tag_dropout_rate: 0
+    # LM params
     hidden_size: 1536
     intermediate_size: 4352
     num_hidden_layers: 24
     num_attention_heads: 12
     pretrained_path: null
-    tokenizer_path: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/checkpoints/step=070000.ckpt"
+    tokenizer_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs/umm_conv_mixedZHEN/umm_stage3_conv1D_v2_2250mixedZHEN_2375Speech_direct_stage3_optim_mem_EMAVQ32768x32/checkpoints/step=0310000.ckpt"
     # mulan_path: "hdfs://haruna/home/byte_speech_sv/mulan/cn_mulan_ckpt/mulan-step=012800-kaggle-minimal.ckpt"
 
 # running parameters
 run_opts:
     fast_dev_run: False
     log_dir: logs
-    hdfs_log_dir: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/yilinzhang/logs"
-    log_name: decoder_07B_zh1m_sft
+    hdfs_log_dir: "hdfs:///home/byte_speech_sv/zongyu.yin/logs"
+    log_name: decoder_07B_zh1m_lowrisk_sa_cat
     version: v0
     cache_dir: .module_cache/bigmusic
     precision: "16"
     num_workers: 6
     prefetch_factor: 12
     accelerator: auto
-    max_steps: 10000
+    max_steps: 100000
     val_check_interval: 1000
     batch_size: 10
-    learning_rate: 1.0e-4
-    warmup_steps: 200
-    cycle_steps: 4000       # If use 1 GPU to run SFT, about 1.5K steps is an epoch.
+    learning_rate: 3.0e-4
+    warmup_steps: 2000
+    cycle_steps: 30000
     weight_decay: 0.05
     shuffle_buffer: 0   # 100
     gradient_clip_val: 1.0
-    buckets_in_sec: [30, 40, 50, 60]
+    buckets_in_sec: [20, 30, 40, 50, 60]
     use_dynamic_batch: False
     max_seg_per_track: 3
     segment_method: "random"
     infer_structure_tags: False
     read_structure_tags: True
     region: "CN"
-    lyrics_field: "lyrics"
-    lyrics_confidence: 0.0  # SA ASR confidence
-    lyrics_tokenizer: "tts_chinese_frontend_model"
+    lyrics_confidence: 0.1  # Force alignment confidence
+    lyrics_confidence_phrase: null  # Phrase-level force alignment confidence, set to null for ASR lyrics, set to 0.1 for force_aligned lyrics
+    lyrics_tokenizer: "tts_chinese_frontend_model"  # tts_chinese_frontend_model | tts_chinese_frontend_model_phonetone
     segment_max_phone_len: 1000
-    parquet_dataset_ids: [2193]
+    parquet_dataset_ids: [1527]
     parquet_dataset_weights: [1]
-    sinking_threshold: 1.0
+    sinking_threshold: 0.51
     quality_filter: True
-    validation_parquet_dataset_ids: 1528
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -86,8 +86,8 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     segment_max_phone_len: !ref <run_opts[segment_max_phone_len]>
     region: !ref <run_opts[region]>
     conditions: !ref <extra_params[train_conditions]>
-    lyrics_field: !ref <run_opts[lyrics_field]>
     lyrics_confidence: !ref <run_opts[lyrics_confidence]>
+    lyrics_confidence_phrase: !ref <run_opts[lyrics_confidence_phrase]>
     read_structure_tags: !ref <run_opts[read_structure_tags]>
     infer_structure_tags: !ref <run_opts[infer_structure_tags]>
     segment_method: !ref <run_opts[segment_method]>
@@ -96,11 +96,9 @@ pl_datamodule: !new:recipes.bigmusic.datasets.mix.MixVocalWebDataModule
     sinking_threshold: !ref <run_opts[sinking_threshold]>
     quality_filter: !ref <run_opts[quality_filter]>
     frame_rate: !ref <extra_params[semantic_frame_rate]>
-    tag_taxonomy_lang: !ref <extra_params[tag_taxonomy_lang]>
     line_break_dropout_rate: !ref <extra_params[line_break_dropout_rate]>
     section_tag_dropout_rate: !ref <extra_params[section_tag_dropout_rate]>
     prefetch_factor: !ref <run_opts[prefetch_factor]>
-    validation_parquet_dataset_ids: !ref <run_opts[validation_parquet_dataset_ids]>
 
 model_config: !new:transformers.GPT2Config
     vocab_size: 1 # placeholder. Embedding table gets removed on load
@@ -161,7 +159,7 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
         bestrq:
             # US UMM-chroma-Zh stage 3
             hpath: !ref <extra_params[tokenizer_path]>
-            initializer: !name:recipes.umm.requires.model_initializer.init_stage3
+            initializer: !name:recipes.umm.requires.model_initializer.init_stage3_conv1d
                 cache_dir: !ref <run_opts[cache_dir]>
         # Mulan mix - 110
         # mulan:
@@ -223,7 +221,7 @@ trainer: !new:pytorch_lightning.Trainer
     logger: !ref <logger>
     accelerator: !ref <run_opts[accelerator]>
     devices: 'auto'
-    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
     deterministic: False
     enable_model_summary: True
     log_every_n_steps: 500

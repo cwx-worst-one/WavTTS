@@ -81,6 +81,8 @@ def get_bestrq_umm_tokens(requires, batch, chunk_size=None, **kwargs):
         lit_module = requires['Stage3']
     elif 'Stage3Conv1D' in requires:
         lit_module = requires['Stage3Conv1D']
+    elif 'convumm_gan_model' in requires:
+        lit_module = requires['convumm_gan_model']
     else:
         raise ValueError(f"Can't find UMM in requires")
     if chunk_size is None or batch.shape[-1] <= chunk_size:
@@ -254,7 +256,7 @@ class TagCategoricalEmbedder(TokenEmbedder):
             _num_categories = 5  # (the previous default value)
         else:
             vocab2id, _num_categories = get_categorical_vocab(vocab_type)  # infer num_categories from vocab_type
-            vocab_size = len(vocab2id)
+            vocab_size = max(vocab2id.values()) + 1
         super().__init__(vocab_size, embedding_dim, add_sos)
         self.vocab2id = vocab2id
         self.vocab2count = defaultdict(int)
@@ -972,7 +974,7 @@ class MultiTagsCategoricalEmbedder(MultiTagsEmbedder):
             _num_categories = 5  # (the previous default value)
         else:
             vocab2id, _num_categories = get_categorical_vocab(vocab_type)  # infer num_categories from vocab_type
-            vocab_size = len(vocab2id)
+            vocab_size = max(vocab2id.values()) + 1
         super().__init__(vocab_size, embedding_dim, add_sos)
         self.vocab2id = vocab2id
         self.vocab2count = defaultdict(int)
@@ -1015,6 +1017,8 @@ class MultiTagsCategoricalEmbedder(MultiTagsEmbedder):
             if isinstance(style_tags, str):
                 style_tags = [style_tags]
             for tags in style_tags:
+                if isinstance(tags, str):  # Make it compatible with single tag
+                    tags = [tags]
                 tag_ids = [self.get_tag_id(tag, self.dropout) for tag in tags]
                 batch_tag_ids.append(torch.tensor(tag_ids))
                 masks.append(torch.tensor([1 for tag in tags]))

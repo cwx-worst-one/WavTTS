@@ -15,6 +15,7 @@ import numpy as np
 from recipes.bigmusic.datasets.mir_data_util import (
     ARTIST_ID_MAP_V2,
     SA_CAT_VOCAB,
+    SA_TAGS_MOOD_SPECIAL_MAP,
     SA_TAGS_SPECIAL_MAP,
     AUDIO_CAT_VOCAB_V0,
     AUDIO_TAGS_GENRE_SPECIAL_MAP_V0,
@@ -31,6 +32,7 @@ from recipes.bigmusic.datasets.mir_data_util import (
     AUDIO_TAGS_MOOD_SPECIAL_MAP_V2,
     AUDIO_TAGS_SCENE_SPECIAL_MAP_V2,
     AUDIO_TAGS_GENDER_SPECIAL_MAP_V2,
+    AUDIO_TAGS_TIMBRE_SPECIAL_MAP,  # dedup
     VOICE_THRESHOLDS,
     TEMPO_RANGE,
     tempo_to_label,
@@ -67,6 +69,13 @@ class SongSlice:
         min_duration, max_duration = time_span
         return ((min_duration <= duration <= max_duration) and 
                 start >= 0 and end >= 0 and start < end)
+    
+    def is_lyrics_confidence_phrase_valid(self, lyrics_confidence: float) -> bool:
+        return all((
+            (phrase.lyrics_confidence is not None and phrase.lyrics_confidence >= lyrics_confidence)
+             or not phrase.has_utterance)
+            for phrase in self.phrases
+        )
 
     def slice_audio(self, audio, sample_rate: int, extra_clip=None):
         slice_start, slice_end = self.start, self.end
@@ -234,11 +243,17 @@ class ZhMetaBase:
         lyrics_confidence: Optional[float],
         segment_method: str,
         max_seg_per_track: int,
-        duration_range: Tuple[int, int]
+        duration_range: Tuple[int, int],
+        lyrics_confidence_phrase: Optional[float],
     ) -> Dict[str, Any]:
         self._validate(lyrics_confidence)
         _self = self._convert()
-        logger, song_slices = _self._to_song_slices(segment_method, max_seg_per_track, duration_range)
+        logger, song_slices = _self._to_song_slices(
+            segment_method,
+            max_seg_per_track,
+            duration_range,
+            lyrics_confidence_phrase
+        )
         return {
             "logger": logger,  # ZhMetaLogger
             "song_slices": song_slices,  # List[SongSlices]
@@ -260,7 +275,7 @@ class ZhMetaBase:
     def _convert(self):
         """Process the data and return a new data. No in-place operation."""
         _self = copy.deepcopy(self)
-        convert_voice_tag(_self)
+        convert_artist_id_from_voice_tag(_self)
         return _self
 
     def _to_song_slices(
@@ -268,6 +283,7 @@ class ZhMetaBase:
         segment_method: str, 
         max_seg_per_track: int,
         duration_range: Tuple[int, int],
+        lyrics_confidence_phrase: Optional[float],
     ) -> Tuple[ZhMetaLogger, List[SongSlice]]:
         min_duration, max_duration = duration_range
         # The presence of structure_tags is decided by the parser. Therefore, we don't need to
@@ -284,7 +300,7 @@ class ZhMetaBase:
                 structure_tags=self.structure_tags.tags,
                 complete_section=max_duration >= 60,  # auto-enable complete section grouping for dur >= 1m
             )
-        song_slices, logger = filter_song_slices(song_slices, duration_range)
+        song_slices, logger = filter_song_slices(song_slices, duration_range, lyrics_confidence_phrase)
         song_slices = take_song_slices_by_method(song_slices, segment_method)
         song_slices = get_max_seg(song_slices, max_seg_per_track)
         return logger, song_slices
@@ -352,7 +368,16 @@ def parse_utterance_mix(meta: Dict, lyrics_field: str) -> List:
     return utterances
 
 
+def parse_utterance_lyrics_force_align(meta: Dict) -> List:
+    """meta.lyrics_force_align"""
+    utterances = _get_value(meta, "lyrics_force_align")
+    if utterances is None or len(utterances) == 0:
+        raise ZhMetaParseError("No utterances")
+    return utterances
+
+
 # ---------- structure_tags -------------
+
 def get_deepchorus_score(deepchorus_tags):
     boundary = [b['start_prob'] for b in deepchorus_tags['segments']]
     function = [f['funct_prob'] for f in deepchorus_tags['segments']]
@@ -416,7 +441,7 @@ def parse_lyrics_confidence_sa_asr(meta: Dict) -> float:
     return get_value(get_value(meta, "lyrics"), "confidence")
 
 
-def parse_lyrics_confidence_force_alignment(
+def parse_lyrics_confidence_force_align_legacy(
     meta: Dict,
     utterances: Optional[List] = None
 ) -> float:
@@ -441,13 +466,30 @@ def parse_lyrics_confidence_force_alignment(
     return conf
 
 
+def parse_lyrics_confidence_force_align(meta: Dict) -> float:
+    lyrics_force_align = _get_value(meta, "lyrics_force_align", "No lyrics_force_align")
+    if lyrics_force_align is None or len(lyrics_force_align) == 0:
+        raise ZhMetaParseError("No lyrics_force_align")
+    global_confidence = 0.0
+    num = 0
+    for item in lyrics_force_align:
+        if 'confidence' in item: 
+            global_confidence += item['confidence']
+            num += 1
+    if num == 0:
+        return 0.0
+    else:
+        return global_confidence / num
+
+
 def parse_lyrics_confidence_optional(
     meta: Dict,
     utterances: Optional[List] = None
 ) -> Optional[float]:
     for parse_fn in [
+        parse_lyrics_confidence_force_align,
         parse_lyrics_confidence_sa_asr, 
-        partial(parse_lyrics_confidence_force_alignment, utterances=utterances),
+        partial(parse_lyrics_confidence_force_align_legacy, utterances=utterances),
     ]:
         try:
             return parse_fn(meta)
@@ -466,8 +508,10 @@ def _parse_sa_music_tagging(music_tagging: Optional[Dict], sinking_threshold: fl
             return ""
         return result[0]
 
-    def map_tag(tag: str) -> str:
+    def map_tag(tag: str, category: str) -> str:
         """Replace certain tags in the dataset"""
+        if category == "Mood":
+            return SA_TAGS_MOOD_SPECIAL_MAP.get(tag, tag)
         return SA_TAGS_SPECIAL_MAP.get(tag, tag)
 
     # The order should match `mir_data_util`
@@ -478,7 +522,7 @@ def _parse_sa_music_tagging(music_tagging: Optional[Dict], sinking_threshold: fl
     sinking_prob = music_tagging["MusicLowQuality"]["Sinking"]
     is_sinking = sinking_prob >= sinking_threshold
     quality = "Sinking" if is_sinking else "non-Sinking"
-    tags = [quality if item == "MusicLowQuality" else map_tag(parse_result(music_tagging[item]["result"])) for item in order]
+    tags = [quality if item == "MusicLowQuality" else map_tag(parse_result(music_tagging[item]["result"]), item) for item in order]
     unfamiliar_tags = {cat_name: tag for tag, cat_vocab_tags, cat_name in zip(tags, SA_CAT_VOCAB, order) if tag not in cat_vocab_tags}
     return [(tag if tag in cat_vocab_tags else "") for tag, cat_vocab_tags in zip(tags, SA_CAT_VOCAB)], unfamiliar_tags, is_sinking
 
@@ -667,6 +711,7 @@ def _parse_audio_tags_v2(music_tagging: Optional[Dict], audio_tags: Optional[Dic
             'mood': AUDIO_TAGS_MOOD_SPECIAL_MAP_V2,
             'scene': AUDIO_TAGS_SCENE_SPECIAL_MAP_V2,
             'vocal_gender': AUDIO_TAGS_GENDER_SPECIAL_MAP_V2,
+            'vocal_timbre': AUDIO_TAGS_TIMBRE_SPECIAL_MAP,
         }
         if item in AUDIO_TAGS_SPECIAL_MAP:
             return AUDIO_TAGS_SPECIAL_MAP[item].get(tag, tag)
@@ -881,15 +926,27 @@ def parse_mir_key_optional(meta: Dict) -> Optional[str]:
 # to avoid to many copies.
 
 def convert_hqmy(_self):
-        # Re-assign genre for HQMY songs
+    """Re-assign genre for HQMY songs"""
     if _self.source == "环球美音":
         _self.style_text[0] = "Chinese Tradition"
 
 
-def convert_voice_tag(_self):
-    # Re-assign gender tags
+def convert_artist_id_from_voice_tag(_self):
+    """Re-assign gender tags"""
     if _self.voice_tag and (_self.artist_id == ARTIST_ID_MAP_V2["zh_empty"]):
         _self.artist_id = ARTIST_ID_MAP_V2[_self.voice_tag]
+
+
+def convert_voice_tag_from_audio_tag(_self):
+    """Override voice_tag if Male or Female is in audio tags"""
+    voice_tags = _self.style_text[3]
+    if 'Male' in voice_tags:
+        voice_tag = 'Male'
+    elif 'Female' in voice_tags:
+        voice_tag = 'Female'
+    else:
+        return
+    _self.voice_tag = voice_tag
 
 
 # ---------- validators -------------
@@ -952,6 +1009,15 @@ def _format_utterances(utterances, time_in_sec=False):
         phone = u.get('phoneme', '')        
         phone = '' if not phone else phone
 
+        # NOTE: This operation tries to obtain confidence from 2 sources:
+        # - For force align lyrics: utterance.confidence
+        # - For ASR lyrics: utterance.attribute.confidence
+        # This is not ideal, because we want to separate the parsing methods, and make each one specific.
+        # But it might require more code change. 
+        # For now, it is only up to the validation step to make sure the format is correct.
+        # Since the given utterance is either from ASR or force alignment, it not very likely to go wrong.
+        confidence = u.get('confidence', u.get('attribute', {}).get('confidence'))
+
         if "lyrics" in u:
             u["text"] = u["lyrics"]
         
@@ -970,7 +1036,7 @@ def _format_utterances(utterances, time_in_sec=False):
             new_utterances.append([utt_start, utt_end, u['text'], phone])
         else:
             # TODO (QQ) handle ms directly instead of converting to int.
-            new_utterances.append([math.floor(utt_start/1000), math.ceil(utt_end/1000), u['text'], phone])
+            new_utterances.append([math.floor(utt_start/1000), math.ceil(utt_end/1000), u['text'], phone, confidence])
 
 
     # Sanity check utterances
@@ -1128,8 +1194,8 @@ def transform_utts_to_song_slices_structure(
     def format_utterances(utterances: List[Dict]) -> List[Phrase]:
         formatted_us = _format_utterances(utterances)
         return [
-            Phrase.parse(text=nt, phonemes=phonemes, time_span=(start, end)) 
-            for start, end, nt, phonemes in formatted_us
+            Phrase.parse(text=nt, phonemes=phonemes, time_span=(start, end), lyrics_confidence=conf) 
+            for start, end, nt, phonemes, conf in formatted_us
         ]
 
     def get_overlap(phrase_time_span: Tuple[int, int], section_time_span: Tuple[float, float]) -> Optional[Tuple[float, float]]:
@@ -1218,6 +1284,12 @@ def transform_utts_to_song_slices_structure(
                 ind.append(idx + 1)
         return ind
 
+    def remove_long_intro(phrases: List[Phrase], max_intro_dur: int = 8) -> List[Phrase]:
+        """Remove intro phrases whose lengths are longer max_intro_dur.
+        `max_intro_dur` is hard-coded for now. Ideally it should change according to the full song length.
+        """
+        return [phrase for phrase in phrases if not (phrase.section_tag == "intro" and phrase.duration > max_intro_dur)]
+
     def get_song_slices(phrases: List[Phrase]) -> List[SongSlice]:
         """Group phrases into song slices (might chunk instrument phrases).
         The logic assumes there are short overlaps (~1s) between phrases, or some phrases might
@@ -1274,16 +1346,22 @@ def transform_utts_to_song_slices_structure(
         end_ts = np.array([song_slice.end for song_slice in song_slices_by_sections])
         song_slices = []
         for idx, song_slice in enumerate(song_slices_by_sections):
-           rel_end_ts = end_ts[idx:] - song_slice.start  # section end times relative to the current song_slice's start
-           # idx_inc indicates the number of song slices that should be combined
-           idx_inc = max(1, int(np.searchsorted(rel_end_ts, max_duration, side="right")))
-           song_slices.append(reduce(operator.add, song_slices_by_sections[idx: idx+idx_inc]))
+            rel_end_ts = end_ts[idx:] - song_slice.start  # section end times relative to the current song_slice's start
+            # idx_inc indicates the max number of song slices that can be combined
+            idx_inc = max(1, int(np.searchsorted(rel_end_ts, max_duration, side="right")))
+            # NOTE: The next step pushes every possible lengths into the list starting from idx.
+            # If we simply push [idx: idx+idx_inc], we are enforcing the slice to reach max_duration
+            # as much as possible, which is not necessarily what we want if we need to handle 
+            # short lyrics and generate short songs.
+            for _inc in range(1, idx_inc+1):
+                song_slices.append(reduce(operator.add, song_slices_by_sections[idx: idx+_inc]))
         return song_slices
 
     song_time_span = (math.floor(structure_tags[0]["start_time"]), math.ceil(structure_tags[-1]["end_time"]))
     phrases = format_utterances(utterances)
     phrases = list(map(add_section_tag, phrases))
     phrases = insert_inst_phrases(phrases, song_time_span)
+    phrases = remove_long_intro(phrases)
     song_slices = get_song_slices_complete_section(phrases) if complete_section else get_song_slices(phrases)
     # Remove short instrumental sections' section tags. After the removal, these phrases will become placeholders
     # for SongSlice to correctly calculate the start and end times, but will be completely ignored during tokenization.
@@ -1312,9 +1390,17 @@ def get_max_seg(song_slices: List[SongSlice], max_seg_per_track: int) -> List[So
     return song_slices[:max_seg_per_track]
 
 
-def filter_song_slices(song_slices: List[SongSlice], duration_range: Tuple[int, int]) -> Tuple[List[SongSlice], ZhMetaLogger]:
+def filter_song_slices(
+    song_slices: List[SongSlice],
+    duration_range: Tuple[int, int],
+    lyrics_confidence_phrase: Optional[float],
+) -> Tuple[List[SongSlice], ZhMetaLogger]:
     n_slices_pre_filter = len(song_slices)
     song_slices = [ss for ss in song_slices if ss.is_time_span_valid(duration_range)]
+    if lyrics_confidence_phrase is not None:
+        # Only filter by phrase level confidence if threshold is given
+        # Drop the entire slice if any phrase in the slice has a low confidence
+        song_slices = [ss for ss in song_slices if ss.is_lyrics_confidence_phrase_valid(lyrics_confidence_phrase)]
     n_slices_post_filter = len(song_slices)
     n_filtered = n_slices_pre_filter-n_slices_post_filter
 

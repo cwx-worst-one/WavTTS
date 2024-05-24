@@ -213,6 +213,7 @@ class VocalTransforms(BaseTransforms):
         loudness_ratio_threshold: float = 0.2,  # TODO: Remove it, not used
         lyrics_field: str = "lyrics",  # TODO: Remove it, not used
         lyrics_confidence: float = 0.8,
+        lyrics_confidence_phrase: Optional[float] = None,
         normalize_audio: bool = False,
         tokenizer=None,   # TODO: Remove it, not used
         frame_rate: int = 25,
@@ -231,12 +232,14 @@ class VocalTransforms(BaseTransforms):
         extra_audio_keys: Optional[List] = None,
     ):
         super().__init__()
+        self.data_id = data_id
         self.sample_rate = sample_rate
         self.min_duration = min_duration
         self.max_duration = max_duration
         # self.min_volume_threshold = min_volume_threshold
         # self.loudness_ratio_threshold = loudness_ratio_threshold
         self.lyrics_confidence = lyrics_confidence
+        self.lyrics_confidence_phrase = lyrics_confidence_phrase  # phrase (utterance) level confidence
         self.audio_key = audio_key
         self.index_key = index_key
         self.frame_rate = frame_rate
@@ -263,12 +266,13 @@ class VocalTransforms(BaseTransforms):
             raise ValueError(f"Unsupported tokenizer {tokenizer}")
 
         self.meta_transform = ZhMetaTransform.from_data_id(
-            data_id,
-            sinking_threshold=sinking_threshold,
+            self.data_id,
+            sinking_threshold=self.sinking_threshold,
             lyrics_confidence=self.lyrics_confidence,
             segment_method=self.segment_method,
             max_seg_per_track=self.max_seg_per_track,
             duration_range=(self.min_duration, self.max_duration),
+            lyrics_confidence_phrase=self.lyrics_confidence_phrase,
         )
         self.phrase_reformat_and_dropout = partial(
             SongSlice.reformat_and_dropout,
@@ -372,10 +376,10 @@ class VocalTransforms(BaseTransforms):
             song_slices = trans_meta["song_slices"]
             deepchorus = trans_meta["structure_tags"]
         except ZhMetaParseError as pe:
-            self._update_stats(skipped=True, message=f"ParseError: {pe}")
+            self._update_stats(skipped=True, message=f"Data ID: {self.data_id}, ParseError: {pe}")
             return
         except ZhMetaTransformError as te:
-            self._update_stats(skipped=True, message=f"TransformError: {te}")
+            self._update_stats(skipped=True, message=f"Data ID: {self.data_id}, TransformError: {te}")
             return
 
         use_section_tag_dropout = deepchorus is not None and deepchorus.confidence < 0.1
@@ -466,6 +470,7 @@ class VocalDataset(WebPipeline):
         loudness_ratio_threshold: float = 0.2,
         lyrics_field: str = "lyrics",
         lyrics_confidence: float = 0.8,
+        lyrics_confidence_phrase: Optional[float] = None,
         normalize_audio: bool = False,
         tokenizer: Any = "tts_chinese_frontend_model",
         frame_rate: int = 25,
@@ -494,6 +499,7 @@ class VocalDataset(WebPipeline):
             loudness_ratio_threshold=loudness_ratio_threshold,
             lyrics_field=lyrics_field,
             lyrics_confidence=lyrics_confidence,
+            lyrics_confidence_phrase=lyrics_confidence_phrase,
             normalize_audio=normalize_audio,            
             tokenizer=tokenizer,
             frame_rate=frame_rate,
@@ -550,6 +556,7 @@ class VocalParquetDataset(WebPipeline):
         lyrics_field: str = "lyrics",
         loudness_ratio_threshold: float = 0.2,
         lyrics_confidence: float = 0.8,
+        lyrics_confidence_phrase: Optional[float] = None,
         normalize_audio: bool = False,
         tokenizer: Any = "tts_chinese_frontend_model",
         frame_rate: int = 25,
@@ -583,6 +590,7 @@ class VocalParquetDataset(WebPipeline):
             loudness_ratio_threshold=loudness_ratio_threshold,
             lyrics_field=lyrics_field,
             lyrics_confidence=lyrics_confidence,
+            lyrics_confidence_phrase=lyrics_confidence_phrase,
             normalize_audio=normalize_audio,            
             tokenizer=tokenizer,
             frame_rate=frame_rate,
@@ -699,6 +707,7 @@ class MixVocalWebDataModule(DataModule):
         use_dynamic_batch: str = False,
         lyrics_field: str = "lyrics",
         lyrics_confidence: float = 0.8,
+        lyrics_confidence_phrase: Optional[float] = None,
         segment_method: str = "random",
         segment_max_phone_len: int = 400,
         segment_max_leadsheet_len: int = 1500,
@@ -792,6 +801,7 @@ class MixVocalWebDataModule(DataModule):
                 use_soda_gt_lyrics=True,
                 lyrics_field=lyrics_field,
                 lyrics_confidence=lyrics_confidence,
+                lyrics_confidence_phrase=lyrics_confidence_phrase,
                 tokenizer=self.tokenizer,                
                 resampled=True,
                 shardshuffle=True,
@@ -820,6 +830,7 @@ class MixVocalWebDataModule(DataModule):
                         segment_max_leadsheet_len=segment_max_leadsheet_len,
                         lyrics_field=lyrics_field,
                         lyrics_confidence=lyrics_confidence,
+                        lyrics_confidence_phrase=lyrics_confidence_phrase,
                         tokenizer=self.tokenizer,
                         infer_structure_tags=infer_structure_tags,
                         read_structure_tags=read_structure_tags,
@@ -855,6 +866,7 @@ class MixVocalWebDataModule(DataModule):
                 segment_max_leadsheet_len=segment_max_leadsheet_len,
                 lyrics_field=lyrics_field,
                 lyrics_confidence=lyrics_confidence,
+                lyrics_confidence_phrase=lyrics_confidence_phrase,
                 tokenizer=self.tokenizer,
                 infer_structure_tags=infer_structure_tags,
                 read_structure_tags=read_structure_tags,

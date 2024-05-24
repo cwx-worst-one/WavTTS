@@ -24,6 +24,7 @@ from recipes.bigmusic.lightning.embedding_modules import (
 from recipes.bigmusic.datasets.mir_data_util import convert_m1_tag_to_style_text
 from recipes.bigmusic.utils.metrics_asr import asr_transcribe_lyrics
 from recipes.bigmusic.utils.mulan_tag import get_mulan_tags
+from samantha.utils import groundtruth
 try:
     from recipes.bigmusic.utils.rewards import (
         mulan_audio_reward,
@@ -874,7 +875,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         for x in batch['style_text']:
             x = x.split('|')
             print(x, ' apply cfg to : ', controller_cfg_label)
-            if rewrite_target == 'multi_tag':
+            if rewrite_target in ['multi_tag', 'multi_tag_v3', 'multi_tag_combo_v3']:
                 x[0] = '' if 'genre' in controller_cfg_label else x[0]
                 x[1] = '' if 'mood' in controller_cfg_label else x[1]
                 x[2] = '' if 'scene' in controller_cfg_label else x[2]
@@ -941,7 +942,7 @@ class SemanticModule(BaseContinuousEmbedModule):
             batch_cfg = self.prepare_cfg_batch(batch, hp)
             inputs_emb_cfg = self.prepare_inputs_embeddings(batch_cfg)
 
-        return super().predict(
+        semantic_tokens = super().predict(
             batch,
             inputs_embeds,
             num_tokens,
@@ -959,11 +960,123 @@ class SemanticModule(BaseContinuousEmbedModule):
             use_step_out_blank=use_step_out_blank,
             step_out_blank_logic=step_out_blank_logic,
             step_out_blank_max_len=step_out_blank_max_len,
+            repetition_penalty=hp.get('repetition_penalty', 1.0)
         )
+
+        groundtruth.emit('semantic', data={
+            'batch': batch,
+            'inputs_embeds': torch.cat([inputs_embeds, inputs_emb_cfg], dim=0) if use_controller_cfg else inputs_embeds,
+            'semantic_tokens': semantic_tokens,
+        })
+
+        return semantic_tokens
 
     @torch.no_grad()
     def super_predict(self, inputs_embeds, num_tokens, temperature, **kwargs):
         return super().predict(inputs_embeds, num_tokens, temperature, **kwargs)
+
+    def load_from_pretrained(self, pretrained_path=None):
+        """
+        Patch the parent method to translate single tag to multitag embeddings.
+        Correctly handle SOS and EOS for different sizes of categorical embeddings.
+        TODO: Remove this method after we completely switch to unified vocab.
+        """
+        from pathlib import Path
+        from recipes.musiclm.utils.dist import local_zero_first
+        from recipes.diffusion.utils.utils import download_checkpoint
+
+        print('Loading pre-trained model from checkpoint', pretrained_path)
+        with local_zero_first():
+            cache_dir = Path(self.extra_params.get('cache_dir', '.pretrain_cache'))
+            pretrained_path = download_checkpoint(pretrained_path, cache_dir=cache_dir)
+        state_dict = torch.load(
+            pretrained_path, map_location=torch.device("cpu")
+        )['state_dict']
+        model_state_dict = self.state_dict()
+
+        ##########################################################
+        #                          Patch
+        ##########################################################
+        # state_dict: Pretrained model's state
+        # model_state_dict: Current model's state
+
+        # Don't use two tag embeds at the same time (it's probably ok, but just in case)
+        assert not all(emb in self.input_embedders for emb in ["tag_categorical", "multitags_categorical"])
+
+        # Trigger implicit embedder conversion when the pretrained model uses tag_categorical or multitags_categorical,
+        # and the current model uses multitags_categorical with a unified vocab type.
+        emb_prefixs = [
+            "input_embedders.tag_categorical",
+            "input_embedders.multitags_categorical",
+        ]
+        for prefix in emb_prefixs:
+            if any(k.startswith(prefix) for k in state_dict):
+                pretrain_emb_path = prefix
+                break
+        else:
+            pretrain_emb_path = None
+        
+        if (
+            pretrain_emb_path is not None and
+            "multitags_categorical" in self.input_embedders and
+            "unified" in self.input_embedders["multitags_categorical"].vocab_type
+        ):
+            print("Converting categorical embedding...")
+            current_emb_path = "input_embedders.multitags_categorical"
+            emb_weight_path = "embedder.weight"
+            pretrain_emb_weight_path = f"{pretrain_emb_path}.{emb_weight_path}" 
+            current_emb_weight_path = f"{current_emb_path}.{emb_weight_path}" 
+            # To prevent missing embedding information, the current model must have an equal or larger vocab
+            pretrain_vocab_size, pretrain_hidden = state_dict[pretrain_emb_weight_path].shape
+            current_vocab_size, current_hidden = model_state_dict[current_emb_weight_path].shape
+            assert pretrain_vocab_size <= current_vocab_size
+            assert pretrain_hidden == current_hidden
+
+            # Expand pretrain's embedder size to match the current one
+            expanded_emb_weights = model_state_dict[current_emb_weight_path].clone()
+            expanded_emb_weights[:pretrain_vocab_size, :] = state_dict[pretrain_emb_weight_path]
+            state_dict[current_emb_weight_path] = expanded_emb_weights
+
+            # Move pretrain's sos and eos to the end by swapping the embeddings
+            emb: MultiTagsCategoricalEmbedder = self.input_embedders["multitags_categorical"]
+            current_sos_id = emb.sos_id
+            current_eos_id = emb.eos_id
+            current_seos_token_ids = list(filter(None, [current_sos_id, current_eos_id]))
+            pretrain_seos_token_ids = [pretrain_vocab_size-2, pretrain_vocab_size-1][-len(current_seos_token_ids):]
+            for pretrain_token_id, current_token_id in zip(pretrain_seos_token_ids, current_seos_token_ids):
+                curr = state_dict[current_emb_weight_path][current_token_id].clone()
+                pret = state_dict[current_emb_weight_path][pretrain_token_id]
+                state_dict[current_emb_weight_path][current_token_id] = pret
+                state_dict[current_emb_weight_path][pretrain_token_id] = curr
+
+            # `_extra_state` will be dropped automatically because it's attached to tag_categorical,
+            # which is not in the current model.
+        ##########################################################
+        #                       Patch End
+        ##########################################################
+
+        for k in state_dict:
+            if k not in model_state_dict:
+                print(f"Dropping parameter {k}")
+                continue
+            # skip checking over non-tensor items. i.e. embedding_modules->set_extra_state
+            if not torch.is_tensor(state_dict[k]): continue
+
+            if state_dict[k].shape != model_state_dict[k].shape:
+                # special case for embedder weights
+                if k.endswith('embedder.weight') and state_dict[k].shape[1:] == model_state_dict[k].shape[1:]:
+                    print(f"Embedding module found with different vocab sizes. Copying subset of weights",
+                           k, state_dict[k].shape[0], model_state_dict[k].shape[0])
+                    min_vocab_size = min(state_dict[k].shape[0], model_state_dict[k].shape[0])
+                    model_state_dict[k][:min_vocab_size] = state_dict[k][:min_vocab_size]
+                    state_dict[k] = model_state_dict[k]
+                else:
+                    print(f"Skip loading parameter: {k}, "
+                            f"required shape: {model_state_dict[k].shape}, "
+                            f"loaded shape: {state_dict[k].shape}")
+                    state_dict[k] = model_state_dict[k]
+
+        self.load_state_dict(state_dict, strict=False)
 
 
 class SemanticModuleExtendedTarget(SemanticModule):

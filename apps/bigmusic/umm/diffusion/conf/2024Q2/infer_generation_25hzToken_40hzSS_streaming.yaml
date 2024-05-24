@@ -1,0 +1,81 @@
+---
+
+run_opts:
+    precision: 32
+    strategy: ddp
+    ckpt_path: ""
+    output_dir: output_wavs
+    meta_lst: ""
+    num_workers: 4
+    seed: 1996
+    diffusion_ckpt_path: !apply:os.getenv ["diffusion_ckpt_path", "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/ds2664_H800x32_25hzUMM_40hzSS_streaming_chunk-1x320_20240511/checkpoints/epoch=00-step=430000-loss=0.27.ckpt"]
+    infer_type: ar-diffusion-vocoder
+    use_wvae_vocoder: True
+    lang: en
+    token_chunk_size: 200
+    token_chunk_overlap: 1
+    without_prefix: True
+    vocoder_version: !apply:os.getenv ["vocoder_version", "32k"]
+    tokenizer_version: !apply:os.getenv ["tokenizer_version", "ConformerUMM_baseline"]
+    cache_dir: ".module_cache/vocoder"
+
+
+bn_config: 
+    hop_size: 800
+    frame_rate: 40
+    bn_norm_std: 1
+    bn_norm_mean: 0
+    bn_padding: -5
+    bn_dim: 128
+    wav_norm: False
+    sample_rate: 32000
+    vocoder_model: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
+        checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/32k_stereo_latent=128_hz=40_kl=1e-5_dataid_2196/checkpoints/soundstream-step=870000-val_sdr=11.9673-EMA.ckpt
+        version: "32k"
+        adapt_hopper: True
+        cache_dir: !ref <run_opts[cache_dir]>/32k
+        sample_rate: 32000
+
+
+tokenizer_config:
+    frame_rate: 25
+    umm_type: "UMM"
+    sample_rate: 24000
+    ckpt_path: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/checkpoints/step=070000.ckpt"
+
+
+
+mel_config:
+    n_fft: 4096
+    num_mels: 100
+    hop_size: 600
+    win_size: 2400
+    fmin: 0
+    fmax: 12000
+    sampling_rate: !ref <bn_config[sample_rate]>
+    mel_norm_mean: -4
+    mel_norm_std: 7.5
+    mel_mask_value: -5
+
+
+diffusion_config:
+    diffusion_ckpt_path: !ref <run_opts[diffusion_ckpt_path]>
+    umm_ckpt_path: !ref <tokenizer_config[ckpt_path]>
+    vocoder_ckpt_path: ""
+    output_dir: !ref <run_opts[output_dir]>
+    infer_type: !ref <run_opts[infer_type]>
+    umm_frame_rate: !ref <tokenizer_config[frame_rate]>
+    mel_frame_rate: !ref <bn_config[frame_rate]>
+    mel_config: !ref <mel_config>
+    seed: !ref <run_opts[seed]>
+    diffusion_precision: "bf16"
+    diffusion_nfe: 10
+    diffusion_sampler: "ddim"
+    text_cfg_w: 0
+    use_wvae_vocoder: !ref <run_opts[use_wvae_vocoder]>
+    bn_config: !ref <bn_config>
+    umm_type: !ref <tokenizer_config[umm_type]>
+    token_chunk_size: !ref <run_opts[token_chunk_size]>
+    token_chunk_overlap: !ref <run_opts[token_chunk_overlap]>
+    without_prefix: !ref <run_opts[without_prefix]>
+

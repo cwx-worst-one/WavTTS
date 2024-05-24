@@ -6,8 +6,10 @@ from itertools import accumulate
 import logging
 import math
 import operator
+import random
 import string
 from typing import List, Optional, Tuple
+import unicodedata
 
 import numpy as np
 
@@ -38,18 +40,18 @@ class LyricsProcConfig:
     line_range: Tuple[int, int]
     slb_range: Tuple[int, int]
 
-
+GLOBAL_MAX_N_LINES = 10000  # A very high value that ensures words will not be deleted. The frontend is responsible for the length constraint (200).
 GENRE_CONFIGS = {
-    "Pop": LyricsProcConfig(line_range=(5, 15), slb_range=(5, 15)),
-    "Hip Hop/Rap": LyricsProcConfig(line_range=(8, 25), slb_range=(8, 15)),
-    "Chinese Style": LyricsProcConfig(line_range=(6, 10), slb_range=(5, 15)),
-    "Electronic": LyricsProcConfig(line_range=(5, 15), slb_range=(5, 15)),
-    "DJ": LyricsProcConfig(line_range=(5, 12), slb_range=(4, 15)),
-    "Rock": LyricsProcConfig(line_range=(8, 15), slb_range=(5, 15)),
-    "Folk": LyricsProcConfig(line_range=(5, 12), slb_range=(5, 15)),
-    "R&B/Soul": LyricsProcConfig(line_range=(5, 15), slb_range=(5, 15)),
-    "MC": LyricsProcConfig(line_range=(10, 25), slb_range=(5, 15)),
-    "empty": LyricsProcConfig(line_range=(5, 15), slb_range=(5, 15)),
+    "Pop": LyricsProcConfig(line_range=(5, GLOBAL_MAX_N_LINES), slb_range=(5, 15)),
+    "Hip Hop/Rap": LyricsProcConfig(line_range=(8, GLOBAL_MAX_N_LINES), slb_range=(8, 15)),
+    "Chinese Style": LyricsProcConfig(line_range=(6, GLOBAL_MAX_N_LINES), slb_range=(5, 15)),
+    "Electronic": LyricsProcConfig(line_range=(5, GLOBAL_MAX_N_LINES), slb_range=(5, 15)),
+    "DJ": LyricsProcConfig(line_range=(5, GLOBAL_MAX_N_LINES), slb_range=(4, 15)),
+    "Rock": LyricsProcConfig(line_range=(8, GLOBAL_MAX_N_LINES), slb_range=(5, 15)),
+    "Folk": LyricsProcConfig(line_range=(5, GLOBAL_MAX_N_LINES), slb_range=(5, 15)),
+    "R&B/Soul": LyricsProcConfig(line_range=(5, GLOBAL_MAX_N_LINES), slb_range=(5, 15)),
+    "MC": LyricsProcConfig(line_range=(10, GLOBAL_MAX_N_LINES), slb_range=(5, 15)),
+    "empty": LyricsProcConfig(line_range=(5, GLOBAL_MAX_N_LINES), slb_range=(5, 15)),
 }
 
 def get_genre_config(genre: str) -> LyricsProcConfig:
@@ -57,6 +59,10 @@ def get_genre_config(genre: str) -> LyricsProcConfig:
         if k in genre:
             return GENRE_CONFIGS[k]
     return GENRE_CONFIGS["empty"]
+
+
+def _is_chinese_char(c: str) -> bool:
+    return is_chinese_char(c.encode("unicode_escape"))
 
 @dataclass
 class Syllable:
@@ -102,7 +108,7 @@ class Lyric:
     def lang(self) -> Optional[Lang]:
         if not self.has_utterance:
             return None
-        if any(is_chinese_char(c.encode("unicode_escape")) for c in self.text):
+        if any(_is_chinese_char(c) for c in self.text):
             return Lang.ZH
         return Lang.EN
 
@@ -149,30 +155,55 @@ class Line(list):
     @classmethod
     def parse(cls, text: str):
         """Parse the text into words. (Assume each English word only takes up one syllable for simplicity.)"""
-        lyric_list = []
-        subwords = list(filter(lambda w: len(w) > 0, text.split(" ")))
-        for subword in subwords:
-            zh_ind = [i for i, c in enumerate(subword) if is_chinese_char(c.encode("unicode_escape"))]
-            en_ind = [i for i, c in enumerate(subword) if _has_only_latin_letters(c)]
-            punc_ind = [i for i in range(len(subword)) if i not in zh_ind + en_ind]
-            quote_ind = [i for i, c in enumerate(subword) if c in ["'", "’"]]
-
-            en_buffer = []
-            for i, c in enumerate(subword):
-                if i in quote_ind:
-                    en_buffer.append(c)
-                elif i in zh_ind + punc_ind:
-                    if en_buffer:
-                        lyric_list.append(Lyric(text="".join(en_buffer)))
-                        en_buffer = []
-                    if i in zh_ind:
-                        lyric_list.append(Lyric(text=c))
-                    else:
-                        lyric_list.append(Lyric(punc=c))
+        def replace_space_in_zh_with_comma(text: str) -> str:
+            lst = []
+            subwords = list(filter(lambda w: len(w) > 0, text.split(" ")))
+            last_is_zh = False
+            for subword in subwords: 
+                current_start_is_zh = _is_chinese_char(subword[0])
+                current_end_is_zh = _is_chinese_char(subword[-1])
+                if lst and last_is_zh and current_start_is_zh:
+                    lst[-1] = lst[-1] + "，" + subword
                 else:
-                    en_buffer.append(c)
-            if en_buffer:
-                lyric_list.append(Lyric(text="".join(en_buffer)))
+                    lst.append(subword)
+                last_is_zh = current_end_is_zh
+            return " ".join(lst)
+        
+        def parse_subword(subword: str) -> List[Lyric]:
+            lyric_list = []
+            char_buffer = []
+            for c in subword:
+                if c in ["'", "’"]:  # type: quote
+                    char_buffer.append(c)
+                elif _has_only_latin_letters(c):  # type: English letter
+                    # push and clear buffer
+                    if char_buffer and char_buffer[-1].isdigit():
+                        lyric_list.append(Lyric(text="".join(char_buffer)))
+                        char_buffer = []
+                    char_buffer.append(c)
+                elif c.isdigit():  # type: digit
+                    # push and clear buffer
+                    if char_buffer and _has_only_latin_letters(char_buffer[-1]):
+                        lyric_list.append(Lyric(text="".join(char_buffer)))
+                        char_buffer = []
+                    char_buffer.append(c)
+                else:  # type: Chinese character or punctuation mark
+                    # push and clear buffer
+                    if char_buffer:
+                        lyric_list.append(Lyric(text="".join(char_buffer)))
+                        char_buffer = []
+                    if _is_chinese_char(c):
+                        lyric_list.append(Lyric(text=c))
+                    else:  # must be punc
+                        lyric_list.append(Lyric(punc=c))
+            if char_buffer:
+                lyric_list.append(Lyric(text="".join(char_buffer)))
+            return lyric_list
+
+        text = _normalize_text(text)
+        text = replace_space_in_zh_with_comma(text)
+        subwords = list(filter(lambda w: len(w) > 0, text.split(" ")))
+        lyric_list = reduce(operator.add, [parse_subword(subword) for subword in subwords])
         return cls(lyric_list)
 
     def split(self):  # -> Tuple[Line, Line]
@@ -186,8 +217,8 @@ class Line(list):
                 for punc_idx in punc_ind
             ]
             # break at a midpoint that makes left and right have the minimum syllable number difference
-            mid = punc_ind[np.argmin(np.abs(diffs))]
-        return self[:mid], self[mid+1:]
+            mid = punc_ind[np.argmin(np.abs(diffs))] + 1  # include the punc in the left split
+        return self[:mid], self[mid:]
 
     def without_punc(self):  # -> self
         return self.__class__([lyric for lyric in self if lyric.text])
@@ -511,7 +542,7 @@ def _merge_vocal_sections(paragraphs: List[SectionLyrics]) -> List[SectionLyrics
 
 # Intentionally set this value ower than _MIN_N_LINES_PER_SECTION.
 # If there is only one line, repeating line too many times could be repetitive.
-_MIN_N_LINES_SINGLE_SECTION = 2
+_MIN_N_LINES_SINGLE_SECTION = 4
 
 
 def _repeat_single_section(paragraphs: List[SectionLyrics]) -> List[SectionLyrics]:
@@ -536,10 +567,13 @@ def _process_song_lyrics_lines(
     line_range: Tuple[int, int],
 ) -> SongLyrics:
     """Process lyrics to meet the line range requirement"""
-    _MAX_N_REPEATS = 1  # maximum times the end portion of the song should repeat.
+    _MAX_N_REPEATS = 2  # maximum times the end portion of the song should repeat.
 
     def add_intro(song: SongLyrics) -> SongLyrics:
-        return SongLyrics([SectionLyrics([], section_tag="intro")]) + song
+        if random.random() < 0.5:
+            return SongLyrics([SectionLyrics([], section_tag="intro")]) + song
+        else:
+            return song
 
     def add_outro(song: SongLyrics) -> SongLyrics:
         return song + SongLyrics([SectionLyrics([], section_tag="outro")])
@@ -548,17 +582,18 @@ def _process_song_lyrics_lines(
         return add_outro(add_intro(song))
     
     def add_non_vocal_sections(song: SongLyrics) -> SongLyrics:
-        can_add_intro = not song or song[0].has_utterance
+        # NOTE: V3 patch, only add outro to avoid the long intro issue
+        # can_add_intro = not song or song[0].has_utterance
         can_add_outro = not song or song[-1].has_utterance
         # Short song, add non vocal sections as many as possible
-        if song.n_lines < _MIN_N_LINES_PER_SECTION:
-            if can_add_intro and can_add_outro:
-                return add_intro_and_outro(song)
-            elif can_add_outro:  # consider add to the end first
-                return add_outro(song)
-            elif can_add_intro:
-                return add_intro(song)
-            return song[:]
+        # if song.n_lines < _MIN_N_LINES_PER_SECTION:
+        #     if can_add_intro and can_add_outro:
+        #         return add_intro_and_outro(song)
+        #     elif can_add_outro:  # consider add to the end first
+        #         return add_outro(song)
+        #     elif can_add_intro:
+        #         return add_intro(song)
+        #     return song[:]
         # Medium song, only add outro
         if can_add_outro:
             return add_outro(song)
@@ -573,7 +608,7 @@ def _process_song_lyrics_lines(
         return song.trim_lines_to(max_n_lines)
     # Too short
     prev_iter_song = song
-    if len([p.has_utterance for p in prev_iter_song]) > 1:  # more than one vocal sections
+    if len([p for p in prev_iter_song if p.has_utterance]) > 1:  # more than one vocal sections
         for n_paragraphs in range(1, len(song)+1):
             for n_repeats in range(1, _MAX_N_REPEATS+1):
                 # Must re-assign and merge non-vocal section tags
@@ -615,6 +650,20 @@ def _move_out_section_tags(phrases: List[Phrase]) -> List[Phrase]:
         if phrase.has_utterance:
             out_phrases.append(phrase._replace(section_tag=None))
     return out_phrases
+
+
+def _normalize_text(text: str) -> str:
+    # Convert full-width digits to regular digits
+    normalized_text = ''.join(
+        chr(ord(char) - 0xFEE0) if '０' <= char <= '９' else char
+        for char in text
+    )
+    # Normalize the text to NFKD form and remove diacritical marks
+    normalized_text = unicodedata.normalize('NFKD', normalized_text)
+    normalized_text = ''.join(
+        char for char in normalized_text if unicodedata.category(char) != 'Mn'
+    )
+    return normalized_text
 
 
 def _has_only_latin_letters(name: str) -> bool:

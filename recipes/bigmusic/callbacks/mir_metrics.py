@@ -10,7 +10,7 @@ from datetime import datetime
 from prettytable import PrettyTable
 import pytorch_lightning as pl
 from recipes.bigmusic.utils.format_utils import concat_metadata_list, update_json
-from recipes.bigmusic.datasets.mir_data_util import SA_GENRE20, MAP_SUB_GENRE_2_SA_GENRE20
+from recipes.bigmusic.datasets.mir_data_util import SA_GENRE20, MAP_SUB_GENRE_2_SA_GENRE20, MACRO_STYLE_MAP_MOOD2_SA_MOOD19, SA_MOOD19
 from recipes.mir_benchmark.tagging_inference.genre import GenreTagging
 from recipes.mir_benchmark.tagging_inference.instrument import InstrumentTagging
 from recipes.mir_benchmark.tagging_inference.vocal import VocalTagging
@@ -22,7 +22,10 @@ thriftpy2.load(
 
 
 from music_tagging_thrift import MusicTagging, TaggingRequest
-
+from urllib.request import Request, urlopen
+import base64
+import uuid
+import requests
 
 class MIRTagMetricsCallback(pl.Callback):
     def __init__(self, tags="genre,instrument,vocal"):
@@ -125,6 +128,93 @@ def map_gt_categorical_genre(genre_text):
             print(f"unrecognized genre {g}")
     return list(set(gt_genres))
 
+def map_gt_categorical_mood(mood_text):
+    moods = mood_text.split(',')
+    gt_moods = []
+    for m in moods:
+        if m in SA_MOOD19:
+            gt_moods.append(m)
+        elif m in MACRO_STYLE_MAP_MOOD2_SA_MOOD19:
+            gt_moods.append(MACRO_STYLE_MAP_MOOD2_SA_MOOD19[m])
+        else:
+            print(f"unrecognized mood {m}")
+    return list(set(gt_moods))
+
+def map_gt_categorical_gender(gender_text):
+    genders = gender_text.split(',')
+    gt_genders = []
+    for g in genders:
+        g = g.lower().strip()
+        gt_genders.append(g)
+    return list(set(gt_genders))
+
+def TaggingGender(audio_url):
+    cluster = "gender_detect_qa"
+    audio_type = 'wav'
+    app_id = "bigmusic_data_test"
+    threshold_config= {
+        "male": 0.6,
+        "female": 0.65,
+        #"adult": 0.5,
+        #"child": 0.85
+    }
+
+    #with open(audio_path, 'rb') as f:
+    #    content = f.read()
+    #    content = base64.b64encode(bytes(content))
+    req = Request(audio_url)
+    response = urlopen(req, timeout=30)
+    content = response.read()
+    content = base64.b64encode(bytes(content))
+    headers = {'Content-Type': "application/json;"}
+    uuid_str = str(uuid.uuid4())
+    url = "https://speech-test.byted.org/api/v1/aed_test?reqid=%s" % uuid_str
+    post_data = {
+        "app":{
+            "appid": app_id,
+            "token": "access_token",
+            "cluster": cluster,
+        },
+        "user": {
+            "uid": "388808087185088"
+        },
+        "audio":{
+            "rate": 16000,
+            "format": audio_type,
+            "data": content,
+        },
+        "request": {
+            "reqid": uuid_str,
+            "sequence": -1,
+            "nbest": 5,
+            "workflow": "audio_in,resample,partition,vad",
+        }
+    }
+
+    max_retry_num = 5
+    retry_num = 0
+    while retry_num < max_retry_num:
+        res = requests.post(url, json=post_data, headers=headers)
+        try:
+            res_json = res.json()
+        except Exception as e:
+            res_json = {"code": -1}
+            retry_num += 1
+        else:
+            break
+    #print(json.dumps(res_json))
+    res = []
+    if res_json['code'] == 1000:
+        for item in res_json['event_items']:
+            event = item['event']
+            utt_prob = item['utt_prob']
+            if event not in threshold_config:
+                continue
+            thres = threshold_config[event]
+            if utt_prob > thres:
+                res.append(event)
+    return res
+
 
 def SA_online_tagging_predict(client, audio_url, tag="genre"):
     if tag == "genre":
@@ -140,6 +230,8 @@ def SA_online_tagging_predict(client, audio_url, tag="genre"):
     if tag == 'theme':
         rlts = client.TaggingTheme(TaggingRequest(track_id="test", url=audio_url))
         result = eval(rlts.result_json)['Theme']['result']
+    if tag == 'gender':
+        result = TaggingGender(audio_url)
     return result
 
 
@@ -148,18 +240,34 @@ def parse_gt_tag_from_metadata(audio_file_path, tag="genre"):
     with open(metadata_fp, 'r', encoding='utf-8') as f:
         metadata = json.load(f)
     gt_style_text = metadata.get('style_text')
+    genre_idx = 0
+    mood_idx = 1
+    gender_idx = 2
+        
     if tag == "genre":
         if '|' in gt_style_text:
-            genres = gt_style_text.split('|')[0]
+            genres = gt_style_text.split('|')[genre_idx]
             if ',' in genres:
                 return map_gt_categorical_genre(genres)
             else:
                 return [genres.strip()]
         else:
-            return [gt_style_text.split(',')[0].strip()]
+            return [gt_style_text.split(',')[genre_idx].strip()]
+    if tag == 'mood':
+        if '|' in gt_style_text:
+            moods = gt_style_text.split('|')[mood_idx]
+            return map_gt_categorical_mood(moods)
+        else:
+            return []
+    if tag == 'gender':
+        if '|' in gt_style_text:
+            genders = gt_style_text.split('|')[gender_idx]
+            return map_gt_categorical_gender(genders)
+        else:
+            return []
 
 
-def run_tagging_acc(audio_file_paths, tag="genre"):
+def upload_audio_file_to_tos(audio_file_paths):
     if os.path.exists("/mnt/bn/bigmusic-lf/user/zh/scripts/1.0.0.20/toscli"):
         tos_cli = "/mnt/bn/bigmusic-lf/user/zh/scripts/1.0.0.20/toscli"
     elif os.path.exists("/opt/tiger/1.0.0.20/toscli"):
@@ -168,18 +276,22 @@ def run_tagging_acc(audio_file_paths, tag="genre"):
         os.system("hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhaohang.ai/scripts/1.0.0.20 /opt/tiger/")
         os.system("chmod +x /opt/tiger/1.0.0.20/toscli")
         tos_cli = "/opt/tiger/1.0.0.20/toscli"
-
-    target = 'sd://lab.speech.music_tagging?cluster=default'
-    client = euler.Client(MusicTagging,target=f'{target}&idc=lf', timeout=1200)
-
     tos_prefix = 'tmp/infer/wavs_test/' + datetime.now().strftime("%m-%d-%Y-%H:%M:%S") + '/'
 
-    report_tab = PrettyTable([tag, "accuracy", "support"])
-
-    rlts = {}
-    total_correct = 0
+    audio_list = []
     for audio_fp in audio_file_paths:
         url = upload_to_tos(audio_fp, tos_prefix, tos_cli=tos_cli)
+        audio_list.append([str(audio_fp), url])
+    return audio_list
+
+def run_tagging_acc(audio_list, tag="genre"):
+    target = 'sd://lab.speech.music_tagging?cluster=default'
+    client = euler.Client(MusicTagging,target=f'{target}&idc=lf', timeout=1200)
+    report_tab = PrettyTable([tag, "accuracy", "support"])
+    rlts = {}
+    total_correct = 0
+    for item in audio_list:
+        audio_fp, url = item[0], item[1]
         gt_tags = parse_gt_tag_from_metadata(audio_fp, tag)
         predict_tags = SA_online_tagging_predict(client, url, tag)
         
@@ -206,16 +318,16 @@ def run_tagging_acc(audio_file_paths, tag="genre"):
         k_acc = round(v["correct"] / v["total"], 4)
         report_tab.add_row([k, k_acc, v["total"]])
 
-    total_acc = round(total_correct / len(audio_file_paths), 4)
-    report_tab.add_row(['total', total_acc, len(audio_file_paths)])
+    total_acc = round(total_correct / len(audio_list), 4)
+    report_tab.add_row(['total', total_acc, len(audio_list)])
     
     return report_tab
         
 
 class MIRTagMetricsSAOnlineCallback(pl.Callback):
-    def __init__(self, tags=["genre"]) -> None:
-        self.tags = tags
+    def __init__(self, tags=["genre", "mood", "gender"]) -> None:
         super().__init__()
+        self.tags = tags
 
     def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
         if 'output_paths' in pl_module.extra_params:
@@ -224,8 +336,9 @@ class MIRTagMetricsSAOnlineCallback(pl.Callback):
             output_dir = pl_module.extra_params.output_dir
             generated_output_fps = list(Path(output_dir).glob('**/*.generated.wav'))
         
+        audio_list = upload_audio_file_to_tos(generated_output_fps)
         for tag in self.tags:
-            report = run_tagging_acc(generated_output_fps, tag)
+            report = run_tagging_acc(audio_list, tag)
             print(report)
             if 'output_dir' in pl_module.extra_params:
                 with open(os.path.join(pl_module.extra_params.output_dir, f'{tag}_report.txt'), 'w') as fw:
@@ -240,7 +353,11 @@ if __name__ == "__main__":
     parser.add_argument("--input_dir", type=str, help="Path to the wav directory")
     args = parser.parse_args()
     generated_output_fps = list(Path(args.input_dir).glob('**/*.generated.wav'))
-    report = run_tagging_acc(generated_output_fps)
-    print(report)
-    with open(os.path.join(args.input_dir, 'genre_report.txt'), 'w') as fw:
-        fw.write(report.get_string())
+    audio_list = upload_audio_file_to_tos(generated_output_fps)
+    #report = run_tagging_acc(audio_list, tag='gender')
+
+    for tag in ['genre', 'mood', 'gender']:
+        report = run_tagging_acc(audio_list, tag=tag)
+        print(report)
+        with open(os.path.join(args.input_dir, f'{tag}_report.txt'), 'w') as fw:
+            fw.write(report.get_string())

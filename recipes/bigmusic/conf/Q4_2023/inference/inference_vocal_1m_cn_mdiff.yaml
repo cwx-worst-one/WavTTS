@@ -163,6 +163,7 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
 additional_callbacks:
     - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsSAOnlineCallback
       asr_model_path: zh-CN
+      transliteration: True
     - !new:recipes.bigmusic.callbacks.mir_metrics.MIRTagMetricsSAOnlineCallback
     # - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback  # avoid loading mulan
     # - !new:recipes.bigmusic.callbacks.save_outputs.NormVolumeCallback

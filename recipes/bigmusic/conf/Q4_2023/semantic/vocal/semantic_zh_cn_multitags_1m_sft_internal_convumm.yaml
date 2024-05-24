@@ -28,7 +28,7 @@ extra_params:
     num_hidden_layers: 24
     num_attention_heads: 12
     pretrained_path: null
-    tokenizer_path: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/checkpoints/step=070000.ckpt"
+    tokenizer_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs/umm_conv_mixedZHEN/umm_stage3_conv1D_v2_2250mixedZHEN_2375Speech_direct_stage3_optim_mem_EMAVQ32768x32/checkpoints/step=0310000.ckpt"
     # mulan_path: "hdfs://haruna/home/byte_speech_sv/mulan/cn_mulan_ckpt/mulan-step=012800-kaggle-minimal.ckpt"
 
 # running parameters
@@ -161,7 +161,7 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticModule
         bestrq:
             # US UMM-chroma-Zh stage 3
             hpath: !ref <extra_params[tokenizer_path]>
-            initializer: !name:recipes.umm.requires.model_initializer.init_stage3
+            initializer: !name:recipes.umm.requires.model_initializer.init_stage3_conv1d
                 cache_dir: !ref <run_opts[cache_dir]>
         # Mulan mix - 110
         # mulan:

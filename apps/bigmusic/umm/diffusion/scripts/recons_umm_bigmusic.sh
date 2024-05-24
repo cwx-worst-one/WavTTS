@@ -37,6 +37,16 @@ if [ -z $diffusion_nfe ]; then
 	export diffusion_nfe=10
 fi
 
+if [ -z $tokenizer_version ]; then
+	echo "no environment variant 'tokenizer_version' exsists, will use 'tokenizer_version=ConformerUMM_baseline'"
+	export tokenizer_version=ConformerUMM_baseline
+fi
+
+if [ -z $vocoder_version ]; then
+	echo "no environment variant 'vocoder_version' exsists, will use 'vocoder_version=32k'"
+	export vocoder_version=32k
+fi
+
 
 bash launch.sh predict \
 	-c $cfg_path \
@@ -44,6 +54,8 @@ bash launch.sh predict \
 	--run_opts.output_dir $out_dir \
 	--run_opts.diffusion_ckpt_path $diffusion_ckpt_path \
 	--run_opts.batch_size $batch_size \
+	--run_opts.tokenizer_version $tokenizer_version \
+	--run_opts.vocoder_version $vocoder_version \
 	--pl_module.diffusion_nfe ${diffusion_nfe} \
 	--run_opts.seed $seed
 	

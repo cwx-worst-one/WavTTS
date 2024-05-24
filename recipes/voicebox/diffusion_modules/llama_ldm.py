@@ -19,6 +19,7 @@ from samantha.models.dpm_solver_pytorch import (
     model_wrapper,
 )
 from samantha.models.ECAPA_TDNN_bias import ECAPA_TDNN_GN
+from samantha.utils import groundtruth
 
 logger = logging.getLogger(__name__)
 
@@ -956,7 +957,21 @@ class LlamaDiffusion(nn.Module):
         else:
             raise NotImplementedError
 
-        return x.transpose(1, 2)
+        x = x.transpose(1, 2)
+
+        groundtruth.emit('diffusion', data={
+            'inputs': inputs,
+            'local_cond': local_cond,
+            'out_mel': x,
+            'cached_noise': self.cached_noise,
+            'params': {
+                'timesteps': timesteps,
+                'sampler': sampler,
+                'text_cfg_w': text_cfg_w,
+            }
+        })
+
+        return x
 
 
 if __name__ == "__main__":

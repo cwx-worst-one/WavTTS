@@ -29,6 +29,8 @@ from recipes.bigmusic.datasets.lyrics import (
 from recipes.bigmusic.datasets.mir_data_util import (
     rewrite_style_input_to_multi_tag,
     rewrite_style_input_to_sa_tag,    
+    rewrite_style_input_to_multi_tag_v3,
+    rewrite_style_input_to_multi_tag_combo_v3,
     ARTIST_ID_MAP_V2,
     KEY_ID_MAP,
     TEMPO_LABEL_ID_MAP,
@@ -308,6 +310,10 @@ def process_zh_style_text(style_text_list: List[str], rewrite_target="", disable
             return rewrite_style_input_to_multi_tag(text)
         if rewrite_target == "sa_tag":
             return rewrite_style_input_to_sa_tag(text)
+        if rewrite_target == "multi_tag_v3":
+            return rewrite_style_input_to_multi_tag_v3(text)
+        if rewrite_target == "multi_tag_combo_v3":
+            return rewrite_style_input_to_multi_tag_combo_v3(text)
         else:
             raise NotImplementedError(f"Unsupported rewrite_taget: {rewrite_target}")
     tags, keys, tempo_labels, speaker_ids = tuple(zip(*[process_one(style_text) for style_text in style_text_list]))

@@ -19,6 +19,8 @@ from samantha.models.flash_llama import LlamaPreTrainedModel
 from samantha.models.ctiga import gpt
 import logging
 from pathlib import Path
+from functools import partial
+import types
 
 class SemanticInferenceModule(pl.LightningModule):
     def __init__(
@@ -123,6 +125,8 @@ class SemanticInferenceModule(pl.LightningModule):
         cache_dir.mkdir(exist_ok=True, parents=True)
         for k, v in self.semantic_module.hparams.required_modules.items():
             fn_partial = v['initializer']
+            if isinstance(fn_partial, types.FunctionType):
+                fn_partial = partial(fn_partial)
             _, _, (f, fn_args, fn_kwargs, n) = fn_partial.__reduce__()
             fn_kwargs.update({'cache_dir': cache_dir})
             fn_partial.__setstate__((f, fn_args, fn_kwargs, n))

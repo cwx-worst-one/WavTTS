@@ -82,6 +82,10 @@ run_opts:
     vocoder_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/soundstream-step=374999-val_sdr=12.9557.ckpt"
     is_zh_token: True           # Set to True only if lyrics_lang is zh_phone or zh_wp. Diffusion model from recipes.diffusion.models.tnt_gru
     mixv2: False                # Set to True for mix UMM token
+    diffusion_version: '24000'
+    sampler_verison: '24000'
+    vocoder_version: "24k_125hz_dim32_baseline"
+
     # Dataloader
     buckets_in_sec: [22, 24, 26, 28, 30]
     use_dynamic_batch: False
@@ -199,16 +203,21 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticRLModule
             initializer: !name:recipes.diffusion.inference_from_text_lyrics2song.init_sampler
                 cache_dir: !ref <run_opts[cache_dir]>
                 duration: !ref <extra_params[duration]>
+                version: !ref <extra_params[sampler_verison]>
         diffusion:
             hpath: !ref <run_opts[diffusion_ckpt]>
             initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
                 cache_dir: !ref <run_opts[cache_dir]>
                 is_zh_token: !ref <run_opts[is_zh_token]>
                 mixv2: !ref <run_opts[mixv2]>
+                version: !ref <extra_params[diffusion_version]>
         vocoder:
             hpath: !ref <run_opts[vocoder_ckpt]>
             initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                 cache_dir: !ref <run_opts[cache_dir]>
+                sample_rate: !ref <extra_params[sample_rate]>
+                version: !ref <extra_params[vocoder_version]>
+                adapt_hopper: False
         asr:
             hpath: zh   # en_punc
             initializer: !name:recipes.bigmusic.utils.metrics_asr.init_asr

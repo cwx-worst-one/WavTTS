@@ -142,3 +142,21 @@ def format_section_tags(text):
         text = re.sub(pattern, replacement, text, flags=case_insesitive_flag)
 
     return text
+
+def remove_space_in_zh(text):
+    new_text = ''
+    last_zh = True
+    for ch in text:
+        if '\u4e00' <= ch <= '\u9fff':
+            now_zh = True
+        else:
+            now_zh = False
+        if (last_zh and now_zh) or (not last_zh and not now_zh):
+            new_text += ch
+        elif (last_zh and ch == ' '):
+            now_zh = True
+        else:
+            new_text += ' ' + ch
+        last_zh = now_zh
+    new_text = new_text.replace('  ', ' ').strip()
+    return new_text 

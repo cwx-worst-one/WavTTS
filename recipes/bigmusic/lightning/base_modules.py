@@ -15,7 +15,7 @@ from functools import partial
 
 from recipes.musiclm.utils.dist import local_zero_first
 from samantha.utils.hparams import DotDict
-from recipes.musiclm.inference.utils import sample
+from recipes.musiclm.inference.utils import sample, adaptive_sampling, SamplingScheduler
 from recipes.diffusion.utils.utils import download_checkpoint
 from recipes.bigmusic.lightning.embedding_modules import TokenEmbedder, BaseEmbedder
 from samantha.utils.model_metric import ModelMetric
@@ -322,6 +322,14 @@ class BaseContinuousEmbedModule(BaseModule):
 
     # Prediction code
     def sample_logits(self, i, logits, temp, mode, thresh=0.9, exclude_ids=None):
+        if mode == 'adaptive_sampling':
+            if i == 0: # restart scheduler
+                target_top_k = self.extra_params.get('target_top_k', 100)
+                self.extra_params['sampling_scheduler'] = SamplingScheduler.default_schedule(
+                    thresh, target_temp=temp, target_top_k=target_top_k)
+            sampling_schedule = self.extra_params['sampling_scheduler']
+            samples = adaptive_sampling(i, logits, sampling_schedule=sampling_schedule, exclude_ids=exclude_ids)
+            return samples        
         return sample(logits, temp=temp, mode=mode, thresh=thresh, exclude_ids=exclude_ids)
 
     @torch.no_grad()
@@ -345,6 +353,7 @@ class BaseContinuousEmbedModule(BaseModule):
         use_step_out_blank=False,
         step_out_blank_logic='v1',
         step_out_blank_max_len=10,
+        **kwargs,
     ):
         """
         Input:
@@ -438,12 +447,43 @@ class BaseContinuousEmbedModule(BaseModule):
                 if use_controller_cfg:
                     logits_cfg = logits[batch_size//2:]     # unconditioned path
                     logits = controller_cfg_gamma * logits[0:batch_size//2] + (1 - controller_cfg_gamma) * logits[batch_size//2:]
-                    
+
                 inference_params.sequence_len_offset += model_input['inputs_embeds'].size(1)
                 logits = logits[:, -1:, :] # only predicting on last logit.
+
+                if use_step_out_blank and step_out_blank_logic == 'v4':
+                    repetition_penalty = kwargs.get('repetition_penalty', 1.0)
+                    print(f'{repetition_penalty=}')
+
+                    previous_output_tokens = torch.tensor(previous_tokens, dtype=torch.long, device='cuda').reshape(original_batch_size, -1)
+                    bin_counts = torch.zeros([original_batch_size, logits.size(-1)+1], dtype=torch.long, device='cuda')
+                    bin_counts.scatter_add_(1, previous_output_tokens, torch.ones_like(previous_output_tokens))
+
+                    bin_counts = bin_counts[:, 0:logits.size(-1)]
+
+                    mask = (bin_counts > 0).view(logits.shape)
+                    negative_mask = logits < 0
+
+                    logits = torch.where(mask.logical_and(negative_mask), logits * repetition_penalty, logits)
+                    logits = torch.where(mask.logical_and(negative_mask.logical_not()), logits / repetition_penalty, logits)
+
+                if use_step_out_blank and step_out_blank_logic == 'v3':
+                    for j in range(original_batch_size):
+                        for token in previous_tokens[j]:
+                            logits[j, 0, token] = -float('Inf')
+
                 predict_token = self.sample_logits(
                     i, logits, temperature, sample_mode, sample_thresh, exclude_ids
                 )
+
+                if use_step_out_blank and step_out_blank_logic in ['v3', 'v4']:
+                    predict_token_cpu = predict_token.cpu().numpy()
+                    for j in range(original_batch_size):
+                        if len(previous_tokens[j]) < step_out_blank_max_len:
+                            previous_tokens[j].append(predict_token_cpu[j,0])
+                        else:
+                            previous_tokens[j] = previous_tokens[j][-step_out_blank_max_len:]
+                            previous_tokens[j].append(predict_token_cpu[j,0])
 
                 if use_step_out_blank:
                     if step_out_blank_logic == 'v1':
@@ -492,8 +532,9 @@ class BaseContinuousEmbedModule(BaseModule):
                                 previous_tokens[j] = previous_tokens[j][-step_out_blank_max_len:]
                                 previous_tokens[j].append(predict_token_cpu[j,0])
 
-                    else:
-                        # TODO: V3.
+                    elif step_out_blank_logic in ['v3', 'v4']:
+                        pass
+                    else:                        
                         raise NotImplementedError
 
 
@@ -531,7 +572,6 @@ class BaseContinuousEmbedModule(BaseModule):
                     dim=1,
                 )
             output_tokens = torch.cat([output_tokens, predict_token], dim=1) if output_tokens is not None else predict_token
-
         # Add ref_samples to generation beam
         if ref_samples is not None:
             # (b * beam, s, d) -> (b, s, d) -> (b * (beam + 1), s, d)

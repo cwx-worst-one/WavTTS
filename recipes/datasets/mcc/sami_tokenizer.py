@@ -367,6 +367,7 @@ class Phrase(NamedTuple):
     singer_tag: Optional[str] = None
     section_tag: Optional[str] = None
     time_span: Optional[Union[Tuple[int, int], Tuple[float, float]]] = None
+    lyrics_confidence: Optional[float] = None
 
     def __post_init__(self):
         if self.singer_tag not in [None] + singer_tags:
@@ -384,6 +385,7 @@ class Phrase(NamedTuple):
         singer_tag: Optional[str] = None, 
         section_tag: Optional[str] = None,
         time_span: Optional[Tuple[int, int]] = None,
+        lyrics_confidence: Optional[float] = None,
         normalize_tag: bool = False,
         normalize_chinese: bool = True,
     ):
@@ -429,6 +431,7 @@ class Phrase(NamedTuple):
             singer_tag=singer_tag,
             section_tag=section_tag,
             time_span=time_span,
+            lyrics_confidence=lyrics_confidence,
         )
 
     @classmethod

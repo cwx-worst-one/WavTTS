@@ -145,10 +145,9 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
 
 # separating out additional_callbacks so auto_eval can disable metrics
 additional_callbacks:
-    # - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
-    #   asr_model_path: zh
-    # - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
-    # - !new:recipes.bigmusic.callbacks.save_outputs.NormVolumeCallback
+    - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsSAOnlineCallback
+      asr_model_path: zh-CN
+    - !new:recipes.bigmusic.callbacks.mir_metrics.MIRTagMetricsSAOnlineCallback
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
 callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback

@@ -241,7 +241,8 @@ def save_batch_outputs(
         lyrics_str = lyrics[ii] if ('lyrics_tokens' in conditions or 'leadsheet_tokens' in conditions ) else None
         lyrics_normalized_str = lyrics_normalized_text[ii] if 'lyrics_tokens' in conditions and lyrics_normalized_text else None        
         style_text = prompts[ii] if prompts else None
-        style_category = style_categories[ii] if 'style_category' in conditions and style_categories else None
+        style_category = style_categories[ii] if style_categories else None
+        #style_category = style_categories[ii] if 'style_category' in conditions and style_categories else None
         structure = structures[ii] if 'structure' in conditions else None
         leadsheet_token = leadsheet_tokens[ii] if leadsheet_tokens is not None else None
         if index is None:

@@ -109,7 +109,6 @@ class HDFSModelCheckpoint(ModelCheckpoint):
         eval_branch_name = os.getenv("EvalBranchName", "")
         eval_branch_commit = os.getenv("EvalBranchCommit", "")
         eval_script = os.getenv("EvalScript", "")
-        training_run_id = os.getenv("TRAINING_RUN_ID", "0")
 
         eval_params = {}
         if eval_runner_path != "":
@@ -124,6 +123,8 @@ class HDFSModelCheckpoint(ModelCheckpoint):
             eval_params["BRANCH_COMMIT"] = eval_branch_commit
         if eval_script != "":
             eval_params["EVAL_SCRIPT"] = eval_script
+
+        training_run_id = os.getenv("TRAINING_RUN_ID", "0")
 
         if model_name is None or model_arch is None or ckpt_type is None:
             self.should_sync_platform = False

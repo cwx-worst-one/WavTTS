@@ -27,15 +27,11 @@ extra_params:
     # Zh tokenizer in CN hdfs: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/checkpoints/step=070000.ckpt"
     tokenizer_ckpt: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/checkpoints/step=070000.ckpt"
 
-
     # Diffusion
     # En tokenizer diffusion in CN hdfs: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_14_30s_finetune/checkpoints/last-minimal.ckpt"
     # Zh tokenizer diffusion in CN hdfs: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_16/checkpoints_minimal/last-minimal.ckpt"
 
-    # vocoder
-    # 24k_40hz_dim64_sa: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/weituo/mul_music_vocoder/vocoder/40hz_1e-6_enfreeze_start500k/checkpoints/soundstream-step=1000000-EMA.ckpt
-    # 24k_125hz_dim32_baseline: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/soundstream-step=374999-val_sdr=12.9557.ckpt
-    lyrics_lang: "zh_phone"     # en | zh_phone | zh_wp
+    lyrics_lang: "zh_phone"     # en | zh_phone | zh_wp | zh_phonetone
     is_zh_token: True           # Set to True only if lyrics_lang is zh_phone or zh_wp. Diffusion model from recipes.diffusion.models.tnt_gru
     mixv2: False                # Set to True for mix UMM token
 
@@ -56,26 +52,31 @@ extra_params:
         schedule_slope: 2.5
         guidance_scale: 2.5
         bf16_portion: 0.0
+        vocoder_chunk_size: 1
 
     # Model Settings
     sample_rate: 44100
     duration: 30 # 30
-    lyrics_max_seq_len: 400
-    semantic_temperature: 0.9
-    sample_mode: "top_p"
-    sample_thresh: 0.9
+    lyrics_max_seq_len: 1000
     token2wav_type: ar-diffusion-vocoder    #diffusion
 
-    use_step_out_blank: True
+    # AR sampling hparams
+    semantic_temperature: 1.0
+    sample_mode: "top_p"           # top_p, adaptive_sampling, gumbel
+    sample_thresh: 0.9
+    target_top_k: 100
+
+    use_step_out_blank: False
     step_out_blank_logic: 'v2'
-    step_out_blank_max_len: 5
+    step_out_blank_max_len: 10
+    repetition_penalty: 1.0
 
     use_controller_cfg: True       # Set to True to activate style CFG.
     controller_cfg_gamma: 1.0
     controller_cfg_label: "genre,mood,speaker"  # mood, scene, sinking,
 
-
     cache_dir: .module_cache/bigmusic
+
 
 run_opts:
     fast_dev_run: False
@@ -83,8 +84,11 @@ run_opts:
     accelerator: auto
     strategy: auto
     cache_dir: .module_cache/bigmusic
-    batch_size: 1  # set to 4 if using reranker
+    batch_size: 12  # set to 4 if using reranker
     num_workers: 8
+
+    # groundtruth
+    enable_groundtruth: False
 
 
 # 24k
@@ -92,7 +96,14 @@ run_opts:
 # token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS_streaming.yaml
 # 44k
 # token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_49hzSS.yaml
-token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_49hzSS_streaming.yaml
+# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_49hzSS_streaming.yaml
+# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/2024Q2/infer_generation_25hzToken_40hzSS_streaming.yaml
+# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_49hzSS_streaming_distill.yaml
+# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_49hzSS_dim128_streaming.yaml
+# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_49hzSS_dim128_streaming_distill.yaml
+# test
+# token2wav_config: !apply:hyperpyyaml.load_hyperpyyaml [!apply:open [!apply:os.getenv ["token2wav_config",""], "r"]]
+token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/2024Q2/infer_generation_streaming.yaml
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -121,40 +132,46 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
         diffusion_modules:
             diffusion:
                 hpath: !ref <token2wav_config[diffusion_config]>
+                # hpath: !apply:operator.getitem [!ref <token2wav_config>, 'diffusion_config']
                 initializer: !name:apps.bigmusic.umm.diffusion.requires.model_initializer.init_diffusion
                     cache_dir: !ref <run_opts[cache_dir]>
-        # reranker:
-        #     hpath:
-        #         rewards:
-        #             style_text: 1.0
-        #             # qualitative: 1.0
-        #             qualitative_cn: 1.0 # use qualitative_cn for chinese mulan, qualitative for english mulan
-        #             wer: 1.0
-        #         required_modules:
-        #             # mulan: # English Mulan
-        #             #     hpath: hdfs:///home/byte_speech_sv/jingsong.gao/mulan_ckpt/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt
-        #             #     initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
-        #             #         version: "g4"
-        #             mulan:
-        #                 hpath: hdfs://haruna/home/byte_speech_sv/mulan/cn_mulan_ckpt/mulan-step=012800-kaggle-minimal.ckpt
-        #                 initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
-        #                     cache_dir: !ref <run_opts[cache_dir]>
-        #                     version: "Chinese"
-        #             asr:
-        #                 # hpath: en_punc
-        #                 hpath: zh
-        #                 initializer: !name:recipes.bigmusic.utils.metrics_asr.init_asr
-        #     initializer: !name:recipes.bigmusic.utils.reranker.init_reranker
-        #         cache_dir: !ref <run_opts[cache_dir]>
+
+        reranker:
+            hpath:
+                rewards:
+                    style_text: 1.0
+                    # qualitative: 1.0
+                    qualitative_cn: 1.0 # use qualitative_cn for chinese mulan, qualitative for english mulan
+                    wer: 1.0
+                required_modules:
+                    # mulan: # English Mulan
+                    #     hpath: hdfs:///home/byte_speech_sv/bigmusic/models/mulan/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt
+                    #     initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
+                    #         version: "g4"
+                    mulan:
+                        hpath: hdfs://haruna/home/byte_speech_sv/mulan/cn_mulan_ckpt/mulan-step=012800-kaggle-minimal.ckpt
+                        initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
+                            cache_dir: !ref <run_opts[cache_dir]>
+                            version: "Chinese"
+                    asr:
+                        # hpath: en_punc
+                        hpath: zh
+                        initializer: !name:recipes.bigmusic.utils.metrics_asr.init_asr
+            initializer: !name:recipes.bigmusic.utils.reranker.init_reranker
+                cache_dir: !ref <run_opts[cache_dir]>
 
 # separating out additional_callbacks so auto_eval can disable metrics
 additional_callbacks:
     - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsSAOnlineCallback
       asr_model_path: zh-CN
+      transliteration: True
     - !new:recipes.bigmusic.callbacks.mir_metrics.MIRTagMetricsSAOnlineCallback
-    # - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
+    # - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback  # avoid loading mulan
     # - !new:recipes.bigmusic.callbacks.save_outputs.NormVolumeCallback
+    # - !new:recipes.bigmusic.callbacks.mir_offline_metrics.MIROfflineCallback  # MIR metrics (key, tempo)
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
+    - !new:recipes.bigmusic.callbacks.save_groundtruth.SaveGroundtruthCallback
+      enable: !ref <run_opts[enable_groundtruth]>
 callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
       beam_size: !ref <extra_params[beam_size]>
@@ -164,7 +181,7 @@ trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>
     accelerator: !ref <run_opts[accelerator]>
     devices: 'auto'
-    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
     deterministic: False
     enable_model_summary: True
     use_distributed_sampler: False # for multi-gpu inference

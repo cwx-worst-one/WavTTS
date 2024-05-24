@@ -11,6 +11,7 @@ from pytorch_lightning import LightningModule
 import math
 from typing import Any
 from .lit_diffusion_voicebox import VoiceBoxModule as pl_module
+from samantha.utils import groundtruth
 from samantha.dataio.lite.utils.mel import mel_spectrogram
 from apps.bigtts.umm.diffusion.lit_modules.infer_utils import set_seed, save_wav, load_torch_script
 from apps.bigtts.umm.diffusion.lit_modules.wvae import Wave, mel_spectrogram_torch, spectrogram_torch
@@ -160,12 +161,9 @@ class DiffusionU2SInfer(LightningModule):
         os.makedirs(output_dir, exist_ok=True)
 
         logger.info(f"DiffusionU2SInfer:")
-        logger.info(f"bn_config={self.bn_config}")
-        logger.info(f"diffusion_nfe={self.diffusion_nfe}")
-        logger.info(f"diffusion_sampler={self.diffusion_sampler}")
-        logger.info(f"text_cfg_w={self.text_cfg_w}")
-        logger.info(f"use_prompt={self.model.hp.use_prompt}")
-        logger.info(f"diffusion_ckpt_path={diffusion_ckpt_path}")
+        args_dict = locals()
+        del args_dict['self']
+        logger.info(", ".join(f"{k}={v}\n" for k, v in args_dict.items()))
 
     
     def wvae_decode(self, pred_emb):
@@ -653,10 +651,10 @@ class ChunkInfer(DiffusionU2SInfer):
             self.attention_window_size = None
 
         logger.info(f"ChunkInfer:")
-        logger.info(f"token_chunk_size={self.token_chunk_size}")
-        logger.info(f"token_chunk_overlap={self.token_chunk_overlap}")
-        logger.info(f"attention_window_size={self.attention_window_size}")
-        logger.info(f"without_prefix={self.without_prefix}")
+        args_dict = locals()
+        del args_dict['self']
+        logger.info(", ".join(f"{k}={v}\n" for k, v in args_dict.items()))
+
 
     def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: int = 0) -> Any:
         inputs, prompt_umm_token, syn_umm_token = self.prepare_features(batch)
@@ -756,6 +754,12 @@ class ChunkInfer(DiffusionU2SInfer):
         if self.bn_config['wav_norm'] and inputs["scale"] is not None:
             batched_audio = batched_audio * torch.as_tensor(inputs["scale"]) / 0.95
         batched_audio = np.clip(batched_audio, a_min=-1, a_max=1)
+
+        groundtruth.emit('vocoder', data={
+            'out_mel': outputs,
+            'audio': batched_audio
+        })
+
         for bidx,(uttid, audio) in enumerate(zip(inputs["uttid"], batched_audio)):
             if self.save_prompt:
                 prompt_wav = inputs["gt_wav"][bidx]

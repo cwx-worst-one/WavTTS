@@ -1,0 +1,7 @@
+ddim:
+  nfe: 10
+  text_cfg_w: 0
+
+consistency:
+  nfe: 4
+  text_cfg_w: 1
