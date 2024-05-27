@@ -73,6 +73,7 @@ def _create_fig_mel_with_f0_pred_and_gt(
     mel_bins_max=160,
     f0_hz_max=800,
     vuv_height_multiplier=10,
+    plot_title=None,
 ):
     """Plot f0_pred and f0_gt ontop of mel spectrogram. TODO: handle np vs torch. This function expects numpy."""
     # Configure plot
@@ -112,7 +113,10 @@ def _create_fig_mel_with_f0_pred_and_gt(
         legend_text.append("VUV GT")
     # Titles and legends
     plt.legend(legend_text)
-    plt.title("Combined Mel spectrogram, Pred Raw F0, GT Raw F0 and VUV")
+    if plot_title is not None:
+        plt.title(plot_title)
+    else:
+        plt.title("Combined Mel spectrogram, Pred Raw F0, GT Raw F0 and VUV")
     return fig
 
 
