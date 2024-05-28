@@ -455,7 +455,7 @@ class Lyric2songInferenceModule(VoiceBoxModule):
     def prepare_audio_inputs(self, batch):
         bn_lens = math.ceil(self.extra_params.semantic_frame_rate * self.extra_params.duration)
         batch['bn'] = torch.zeros([1, bn_lens, self.extra_params.latent_dims]).to(self.device)
-        batch['bn_lens'] = torch.LongTensor([bn_lens]).to(self.device)
+        batch['target_tokens_length'] = torch.LongTensor([bn_lens]).to(self.device)
 
         batch['cond_audio'] = batch.get('cond_audio', None)   
         if 'melae' in self.requires:        # melae
