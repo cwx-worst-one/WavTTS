@@ -2,7 +2,7 @@
 # @hanoihantrakul 1/8/2024
 # Trains a small pitch detection model to be used as a perceptual loss.
 # - Part of Dual-UMM Token Architecture Q1 2024
-# - Trains on MixMSSDataModule created by Yi Ren
+# - By default will train on MixMSSDataModule Data ID 1084 created by Yi Ren
 
 ################################################################################
 ##########                       BASIC CONFIGURATION                  ##########

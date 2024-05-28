@@ -822,6 +822,10 @@ class Stage0(pl.LightningModule):
         return loss_dict["loss"]
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
+        """
+        Plot the chroma and mel spectrogram reconstructions as part of the validation step.
+        @hanoihantrakul 2APR2024
+        """
         loss_dict = self._shared_step(batch)
 
         if batch_idx == 0:           

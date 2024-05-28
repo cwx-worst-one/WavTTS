@@ -366,8 +366,118 @@ class UMMLossMSS(UMMLossV2):
         return loss_dict
 
 
+class UMMLossPitchSupervised(UMMLossV2):
+    """
+    Loss for Mel, CTC, Chroma, F0 and VUV.
+    Intended for MAY2024 Pitch Loss ConvUMM models.
+    """
+
+    # @hanoihantrakul 27MAY2024
+    @torch.cuda.amp.autocast(enabled=False)
+    def forward(
+        self,
+        ctc_logits,
+        text_ids,
+        recon_mel,
+        mel,
+        recon_chroma,
+        chroma,
+        recon_f0,
+        f0,
+        recon_vuv,
+        vuv,
+    ):
+        loss_dict = {
+            "loss_mel": self.compute_spectrogram_loss(recon_mel, mel, self.mel_loss_fn),
+            "loss_ctc": self.compute_ctc_loss(ctc_logits, text_ids),
+        }
+        if self.config.add_chroma:
+            loss_dict.update(loss_chroma=self.compute_chroma_loss(recon_chroma, chroma))
+        if self.config.add_supervised_pitch:
+            loss_dict.update(f0_loss=pitch_utils.compute_f0_loss(recon_f0, f0, vuv))
+            loss_dict.update(vuv_loss=pitch_utils.compute_vuv_loss(recon_vuv, vuv))
+        return loss_dict
+
+
+class UMMLossPitchPerceptual(UMMLossV2):
+    """
+    Loss for Mel, CTC, Chroma, Perceptual Pitch Loss (PPL)
+    Intended for MAY2024 Pitch Loss ConvUMM models.
+    """
+
+    # @hanoihantrakul 28MAY2024
+    @torch.cuda.amp.autocast(enabled=False)
+    def forward(
+        self,
+        ctc_logits,
+        text_ids,
+        recon_mel,
+        mel,
+        recon_chroma,
+        chroma,
+        recon_pitch_h,
+        pitch_h,
+    ):
+        loss_dict = {
+            "loss_mel": self.compute_spectrogram_loss(recon_mel, mel, self.mel_loss_fn),
+            "loss_ctc": self.compute_ctc_loss(ctc_logits, text_ids),
+        }
+        if self.config.add_chroma:
+            loss_dict.update(loss_chroma=self.compute_chroma_loss(recon_chroma, chroma))
+        if self.config.add_perceptual_pitch:
+            loss_dict.update(
+                perceptual_pitch_loss=pitch_utils.compute_perceptual_pitch_loss(
+                    recon_pitch_h, pitch_h
+                )
+            )
+        return loss_dict
+
+
+class UMMLossPitchSupervisedPerceptual(UMMLossV2):
+    """
+    Loss for Mel, CTC, Chroma, Supervised Pitch Loss (SPL) and Perceptual Pitch Loss (PPL)
+    Intended for MAY2024 Pitch Loss ConvUMM models.
+    """
+
+    @torch.cuda.amp.autocast(enabled=False)
+    def forward(
+        self,
+        ctc_logits,
+        text_ids,
+        recon_mel,
+        mel,
+        recon_chroma,
+        chroma,
+        recon_f0,
+        f0,
+        recon_vuv,
+        vuv,
+        recon_pitch_h,
+        pitch_h,
+    ):
+        loss_dict = {
+            "loss_mel": self.compute_spectrogram_loss(recon_mel, mel, self.mel_loss_fn),
+            "loss_ctc": self.compute_ctc_loss(ctc_logits, text_ids),
+        }
+        if self.config.add_chroma:
+            loss_dict.update(loss_chroma=self.compute_chroma_loss(recon_chroma, chroma))
+        if self.config.add_supervised_pitch:
+            loss_dict.update(f0_loss=pitch_utils.compute_f0_loss(recon_f0, f0, vuv))
+            loss_dict.update(vuv_loss=pitch_utils.compute_vuv_loss(recon_vuv, vuv))
+        if self.config.add_perceptual_pitch:
+            loss_dict.update(
+                perceptual_pitch_loss=pitch_utils.compute_perceptual_pitch_loss(
+                    recon_pitch_h, pitch_h
+                )
+            )
+        return loss_dict
+
+
 class UMMLossMSSPitchSupervised(UMMLossV2):
-    """Loss for Mel, CTC, Chroma, F0 and VUV."""
+    """
+    Loss for Mel, CTC, Chroma, F0 and VUV.
+    Intended for DEC2023 MSS models.
+    """
 
     @torch.cuda.amp.autocast(enabled=False)
     def forward(
@@ -730,7 +840,9 @@ class UMMMergeLoss(nn.Module):
             target_lengths = labels_mask.sum(-1)
             flattened_targets = text_ids.masked_select(labels_mask)
             # CTCLoss doesn't support fp16
-            log_probs = F.log_softmax(ctc_logits, dim=-1, dtype=torch.float32).transpose(
+            log_probs = F.log_softmax(
+                ctc_logits, dim=-1, dtype=torch.float32
+            ).transpose(
                 0, 1
             )  # [N, T, C] -> [T, N, C]
 
@@ -743,9 +855,13 @@ class UMMMergeLoss(nn.Module):
         # LAS
         if las_logits is not None:
             target_mask = (las_targets > 0).float()
-            las_loss = self.las_loss_fn(las_logits[:, 0:-1], las_targets[:, 1:], mask=target_mask[:, 1:])
+            las_loss = self.las_loss_fn(
+                las_logits[:, 0:-1], las_targets[:, 1:], mask=target_mask[:, 1:]
+            )
             loss_dict["loss_las"] = las_loss["loss"]
-            las_acc = (las_logits[:, 0:-1].argmax(dim=2) == las_targets[:, 1:]).float() * target_mask[:, 1:]
+            las_acc = (
+                las_logits[:, 0:-1].argmax(dim=2) == las_targets[:, 1:]
+            ).float() * target_mask[:, 1:]
             las_acc = las_acc.sum() / target_mask[:, 1:].sum()
             loss_dict["las_acc"] = las_acc
         return loss_dict

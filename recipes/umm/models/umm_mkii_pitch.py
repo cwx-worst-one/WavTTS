@@ -95,8 +95,6 @@ class Stage3Conv1D_v2Pitch(Stage3):
             """Use in house pitch predictor for supervised loss in BigMusic pipeline. This is different from TTS, which uses RVMPE as supervised loss."""
             # the pl_module handles loading the pretrained state_dict of perceptual pitch predictor
             self.pitch_predictor = PerceptualPitchPredictor()
-            # the pitch predictor needs mel 160 input, which in this case is the same as the default `audio_transform` for the pitch predictor
-            self.audio_transform_for_pitchpdt = self.audio_transform
             # This head reconstructs the f0_hz and vuv signals from a mel-160 spectrogram
             self.f0_vuv_head = Conv1dUpsampling(
                 config.hidden_size, 2
@@ -107,8 +105,6 @@ class Stage3Conv1D_v2Pitch(Stage3):
             """Replace original mel spec reconstruction head (n_mel=128) with perceptual loss reconstruction head (n_mel=160)."""
             # the pl_module handles loading the pretrained state_dict of perceptual pitch predictor
             self.pitch_predictor = PerceptualPitchPredictor()
-            # the pitch predictor needs mel 160 input, which in this case is the same as the default `audio_transform` for the pitch predictor
-            self.audio_transform_for_pitchpdt = self.audio_transform
             # @hanoihantrakul 27MAY2024 There is no special reconstruction head for perceptual loss.
             # We pass the mel-160 into the pitch predictor and then use an L1 loss on the hidden states directly (see pl_module)
 
@@ -116,14 +112,10 @@ class Stage3Conv1D_v2Pitch(Stage3):
     @torch.cuda.amp.autocast(enabled=False)
     def preprocessing(self, x):
         """
-        Preprocessing on audio
+        Preprocessing on audio. Add mel, chroma and pitch related features.
         """
         mel = self.audio_transform(x)  # mel-160 features
         input_dict = {"mel": mel}
-        # if self.config.get("interfere_audio", None):
-        #     x_interfered = self.interfere_audio(x)
-        #     mel_interfered = self.audio_transform(x_interfered, normalize=normalize)
-        #     input_dict.update(mel_interfered=mel_interfered)
         if self.config.add_chroma:
             chroma = self.chroma_transform(x)[:, :, :-1].transpose(1, 2)
             chroma = F.normalize(chroma, p=2, dim=-1)
@@ -166,7 +158,6 @@ class Stage3Conv1D_v2Pitch(Stage3):
             is required for perceptual pitch loss.
             """
             pass
-
         return input_dict
 
     def forward(self, input_dict):
@@ -223,9 +214,9 @@ class Stage3Conv1D_v2Pitch(Stage3):
         - e.g. [6, 2917, 160] vs [6, 2916, 160]
         - This will not be a problem if a compeletely new class is defined without inheritance from Stage1 and Stage2
         """
-        trim_len = pitch_utils.compute_min_lengths(input_dict["mel"], mel_out, axis=1)
-        input_dict["mel"] = input_dict["mel"][:, :trim_len, :]
-        mel_out = mel_out[:, :trim_len, :]
+        mel_trim_len = pitch_utils.compute_min_lengths(input_dict["mel"], mel_out, axis=1)
+        input_dict["mel"] = input_dict["mel"][:, :mel_trim_len, :]
+        mel_out = mel_out[:, :mel_trim_len, :]
 
         output_dict = {
             "mel_out": mel_out,
@@ -244,11 +235,19 @@ class Stage3Conv1D_v2Pitch(Stage3):
             output_dict.update(chroma_out=chroma_out)
         if self.config.get("add_supervised_pitch", False):
             f0_vuv_out = self.f0_vuv_head(hidden_states)
+            f0_out=f0_vuv_out[:, :, 0:1]
+            vuv_out=f0_vuv_out[:, :, 1:]
+            # sometimes f0_gt, vuv_gt is 1 timestep longer than f0_out, vuv_out
+            f0_vuv_trim_len = pitch_utils.compute_min_lengths(f0_out, input_dict['f0'], axis=1)
+            input_dict["f0"] = input_dict["f0"][:, :f0_vuv_trim_len, :]
+            f0_out = f0_out[:, :f0_vuv_trim_len, :]
+            input_dict["vuv"] = input_dict["vuv"][:, :f0_vuv_trim_len, :]
+            vuv_out = vuv_out[:, :f0_vuv_trim_len, :]
             output_dict.update(
-                f0_out=f0_vuv_out[:, :, 0:1]
+                f0_out=f0_out
             )  # [batch_size, time_steps, 1]
             output_dict.update(
-                vuv_out=f0_vuv_out[:, :, 1:]
+                vuv_out=vuv_out
             )  # [batch_size, time_steps, 1]
         if self.config.get("add_perceptual_pitch", False):
             # get predicted hidden state from reconstructed mel-160 spectrogram
