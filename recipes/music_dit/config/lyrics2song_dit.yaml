@@ -39,8 +39,8 @@ run_opts:
     use_prompt: False
     use_unet_style_skip_connect: true
     val_output_samples_dir: generated_samples
-    val_check_interval: 10000
-    limit_val_batches: 5
+    val_check_interval: 0
+    limit_val_batches: 0
     max_length: 400         # max second, example longer than this will be drop
 
     batch_size: 16
@@ -213,7 +213,7 @@ trainer: !new:pytorch_lightning.Trainer
     plugins: !ref <plugins>
     limit_val_batches: !ref <run_opts[limit_val_batches]>
     val_check_interval: !ref <run_opts[val_check_interval]>
-    num_sanity_val_steps: 5
+    num_sanity_val_steps: 0
     limit_train_batches: 10000
 
 
