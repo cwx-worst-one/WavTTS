@@ -110,7 +110,7 @@ class DialogueABAIterator(_BaseContextualIterator):
         end_other_speaker_index = raw_sample[2]
         # check time interval for each neighbor pair in source_b
         for i in range(start_other_speaker_index, end_other_speaker_index):
-            if not self.check_time_interval(
+            if not check_time_interval(
                 basis_items[uttids[i]], basis_items[uttids[i + 1]]
             ):
                 return None
@@ -118,7 +118,7 @@ class DialogueABAIterator(_BaseContextualIterator):
         # check source_b total time
         source_b_time = 0
         for i in range(start_other_speaker_index, end_other_speaker_index + 1):
-            source_b_time += self.get_time_interval(basis_items[uttids[i]])
+            source_b_time += get_time_interval(basis_items[uttids[i]])
             if source_b_time > self.dialogue_aba_source_b_time_threshold:
                 return None
         result = uttids[start_other_speaker_index : end_other_speaker_index + 1]
@@ -146,10 +146,10 @@ class DialogueABAIterator(_BaseContextualIterator):
         target_a_time = 0
         target_a_cnt = 0
         for cur_index in range(end_other_speaker_index + 1, len(uttids)):
-            target_a_time += self.get_time_interval(basis_items[uttids[cur_index]])
+            target_a_time += get_time_interval(basis_items[uttids[cur_index]])
             if target_a_time > self.dialogue_aba_target_a_time_threshold:
                 break
-            if not self.check_time_interval(
+            if not check_time_interval(
                 basis_items[uttids[cur_index - 1]], basis_items[uttids[cur_index]]
             ):
                 break
