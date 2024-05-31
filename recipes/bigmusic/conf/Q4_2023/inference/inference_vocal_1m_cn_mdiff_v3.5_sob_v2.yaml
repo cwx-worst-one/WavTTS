@@ -11,10 +11,10 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 extra_params:
     beam_size: 1    # set to 4 if using reranker
     samples_to_save: 1
-    prompt_path: "./prompts/zh_100_en_prompt.csv"
+    prompt_path: "eval0429_151_1min_for_v3_online.csv"
     inference_conditions: style_text,speaker_id,lyrics_tokens # style_text|style_audio,lyrics_tokens,vocal_audio|vocal_text,chroma|speaker_id
-    rewrite_target: "sa_tag"      # multi_tag | sa_tag | TODO: multi_tag_mir
-    transform_style_text: False
+    rewrite_target: "multi_tag_v3"      # multi_tag | sa_tag | TODO: multi_tag_mir
+    transform_style_text: True
     max_items: null
     run_combinations: False
     use_reranker: False
@@ -28,18 +28,20 @@ extra_params:
     tokenizer_ckpt: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/checkpoints/step=070000.ckpt"
 
     # Diffusion
-    # En tokenizer diffusion in CN hdfs: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_14_30s_finetune/checkpoints/last-minimal.ckpt"
-    # Zh tokenizer diffusion in CN hdfs: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_16/checkpoints_minimal/last-minimal.ckpt"
-
-    lyrics_lang: "zh_phone"     # en | zh_phone | zh_wp | zh_phonetone
+    diffusion_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/zh_44.1k_v1.0_1B_dim_128_dataid_2196/checkpoints/diffusion-step=759900-EMA.ckpt"
+    vocoder_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/44.1k_stereo_zh_latent=128_hz=49_kl=1e-6_dataid_2196/checkpoints/last-EMA.ckpt"
+    lyrics_lang: "zh_phonetone"     # en | zh_phone | zh_wp | zh_phonetone
     is_zh_token: True           # Set to True only if lyrics_lang is zh_phone or zh_wp. Diffusion model from recipes.diffusion.models.tnt_gru
     mixv2: False                # Set to True for mix UMM token
+    diffusion_version: '44100_v2'
+    sampler_verison: '44100_v2'
+    vocoder_version: "44.1k_vocal"
 
 
     # Semantic model
     semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
     semantic_ckpt: "hdfs:///home/byte_speech_sv/zongyu.yin/logs/decoder_07B_ctiga_zh30s/zh_30s_ctiga_1w/checkpoints/step=026000-val_accu_0=13.08.ckpt"
-    predict_step_seed: null
+    predict_step_seed: 1234
 
     # Used for reranker, only loaded if use_reranker=True
     # structure_ckpt: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/structure_epoch=185-step=93000.ckpt"
@@ -48,35 +50,38 @@ extra_params:
 
     diffusion_params:
         num_chunks: 1
-        diffusion_steps: 25
+        diffusion_steps: 50
         schedule_slope: 2.5
-        guidance_scale: 2.5
+        guidance_scale: 1.8
         bf16_portion: 0.0
         vocoder_chunk_size: 1
 
     # Model Settings
     sample_rate: 44100
-    duration: 30 # 30
+    duration: 60
     lyrics_max_seq_len: 1000
-    token2wav_type: ar-diffusion-vocoder    #diffusion
+    token2wav_type: diffusion
 
     # AR sampling hparams
-    semantic_temperature: 1.0
+    semantic_temperature: 0.8      # 0.6 for sobv4. 0.8 for sobv2
     sample_mode: "top_p"           # top_p, adaptive_sampling, gumbel
     sample_thresh: 0.9
     target_top_k: 100
 
-    use_step_out_blank: False
+    use_step_out_blank: True
+
+    # step_out_blank_logic: 'v4'
+    # step_out_blank_max_len: 200
+    # repetition_penalty: 1.5
+
     step_out_blank_logic: 'v2'
-    step_out_blank_max_len: 10
-    repetition_penalty: 1.0
+    step_out_blank_max_len: 8
 
     use_controller_cfg: True       # Set to True to activate style CFG.
-    controller_cfg_gamma: 1.0
-    controller_cfg_label: "genre,mood,speaker"  # mood, scene, sinking,
+    controller_cfg_gamma: 3.0
+    controller_cfg_label: "genre,mood,speaker,section_tag"
 
     cache_dir: .module_cache/bigmusic
-
 
 run_opts:
     fast_dev_run: False
@@ -86,25 +91,6 @@ run_opts:
     cache_dir: .module_cache/bigmusic
     batch_size: 12  # set to 4 if using reranker
     num_workers: 8
-
-    # groundtruth
-    enable_groundtruth: False
-
-
-# 24k
-# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS.yaml
-# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS_streaming.yaml
-# 44k
-# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_49hzSS.yaml
-# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_49hzSS_streaming.yaml
-# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/2024Q2/infer_generation_25hzToken_40hzSS_streaming.yaml
-# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_49hzSS_streaming_distill.yaml
-# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_49hzSS_dim128_streaming.yaml
-# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_49hzSS_dim128_streaming_distill.yaml
-
-token2wav_config: !apply:hyperpyyaml.load_hyperpyyaml [!apply:open [!apply:os.getenv ["token2wav_config", "apps/bigmusic/umm/diffusion/conf/2024Q2/infer_generation_streaming.yaml"], "r"]]
-# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/2024Q2/infer_generation.yaml
-# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/2024Q2/infer_generation_streaming.yaml
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -121,6 +107,8 @@ predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_fr
     enable_punctuation: True
     transform_style_text: !ref <extra_params[transform_style_text]>
     rewrite_target: !ref <extra_params[rewrite_target]>
+    use_controller_cfg: !ref <extra_params[use_controller_cfg]>
+    controller_cfg_label: !ref <extra_params[controller_cfg_label]>
 
 pl_datamodule: !new:recipes.bigmusic.datasets.lyrics.LyricsDataModule
     predict_dataset: !ref <predict_dataset>
@@ -132,10 +120,25 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
     required_modules:
         diffusion_modules:
             diffusion:
-                # hpath: !ref <token2wav_config[diffusion_config]>
-                hpath: !apply:operator.getitem [!ref <token2wav_config>, 'diffusion_config']
-                initializer: !name:apps.bigmusic.umm.diffusion.requires.model_initializer.init_diffusion
+                hpath: !ref <extra_params[diffusion_ckpt]>
+                initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
                     cache_dir: !ref <run_opts[cache_dir]>
+                    is_zh_token: !ref <extra_params[is_zh_token]>
+                    mixv2: !ref <extra_params[mixv2]>
+                    version: !ref <extra_params[diffusion_version]>
+            sampler:
+                hpath: null
+                initializer: !name:recipes.diffusion.inference_from_text_lyrics2song.init_sampler
+                    cache_dir: !ref <run_opts[cache_dir]>
+                    duration: !ref <extra_params[duration]>
+                    version: !ref <extra_params[sampler_verison]>
+            vocoder:
+                hpath: !ref <extra_params[vocoder_ckpt]>
+                initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
+                    cache_dir: !ref <run_opts[cache_dir]>
+                    sample_rate: !ref <extra_params[sample_rate]>
+                    version: !ref <extra_params[vocoder_version]>
+                    adapt_hopper: True
 
         reranker:
             hpath:
@@ -171,8 +174,6 @@ additional_callbacks:
     # - !new:recipes.bigmusic.callbacks.save_outputs.NormVolumeCallback
     # - !new:recipes.bigmusic.callbacks.mir_offline_metrics.MIROfflineCallback  # MIR metrics (key, tempo)
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
-    - !new:recipes.bigmusic.callbacks.save_groundtruth.SaveGroundtruthCallback
-      enable: !ref <run_opts[enable_groundtruth]>
 callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
       beam_size: !ref <extra_params[beam_size]>

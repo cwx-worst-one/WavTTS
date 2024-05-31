@@ -1046,10 +1046,18 @@ class MultiTagsCategoricalEmbedder(MultiTagsEmbedder):
 
     def embed(self, requires=None, batch=None, token_ids=None, with_sos=False, with_eos=False):
         token_ids, masks = self.tokenize(requires, batch, token_ids, with_sos, with_eos)
-        token_ids_shape = token_ids.shape 
-        _token_ids = torch.reshape(token_ids, [token_ids_shape[0]*token_ids_shape[1], token_ids_shape[2]])
+        token_ids_shape = token_ids.shape
+        _token_ids = torch.reshape(
+            token_ids,
+            [token_ids_shape[0]*token_ids_shape[1], token_ids_shape[2]],
+        )
+        _token_ids = torch.tensor(_token_ids, dtype=torch.long)
         masks_shape = masks.shape
-        _masks = torch.reshape(masks, [masks_shape[0]*masks_shape[1], masks_shape[2], 1])
+        _masks = torch.reshape(
+            masks,
+            [masks_shape[0]*masks_shape[1], masks_shape[2], 1],
+        )
+        _masks = torch.tensor(_masks, dtype=torch.long)
         _embedding = self.embedder(_token_ids)
         #print('_embedding shape: ', _embedding.shape)
         #print('_masks shape: ', _masks.shape)

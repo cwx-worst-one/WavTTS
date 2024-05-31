@@ -8,14 +8,14 @@ run_opts:
     meta_lst: ""
     num_workers: 4
     seed: 1996
-    diffusion_ckpt_path: !applyref:os.getenv ["diffusion_ckpt_path", "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/h800_ds2232_32xH800_25hzUMM_49hzSS_streaming_chunk392_0405/checkpoints/epoch=00-step=450000-loss=0.28.ckpt"]
+    diffusion_ckpt_path: !applyref:os.getenv ["diffusion_ckpt_path", "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/ds2441_32xH800_25hzUMM_49hzSS_streaming_chunk392_0522/checkpoints/epoch=00-step=880000-loss=0.66.ckpt"]
     infer_type: ar-diffusion-vocoder
     use_wvae_vocoder: True
     lang: en
     token_chunk_size: 200
     token_chunk_overlap: 1
     without_prefix: True
-    vocoder_version: !applyref:os.getenv ["vocoder_version", "44.1k_sa"]
+    vocoder_version: !applyref:os.getenv ["vocoder_version", "44.1k_vocal"]
     tokenizer_version: !applyref:os.getenv ["tokenizer_version", "ConformerUMM_baseline"]
     sampler: !applyref:os.getenv ["diffusion_sampler", "ddim"]
 

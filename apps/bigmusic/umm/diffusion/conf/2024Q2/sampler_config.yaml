@@ -1,7 +1,7 @@
 ddim:
-  nfe: 10
-  text_cfg_w: 0
+  nfe: !apply:samantha.utils.envs.getenv_int ["diffusion_nfe", 10]
+  text_cfg_w: !apply:samantha.utils.envs.getenv_float ["diffusion_cfg", 2]
 
 consistency:
-  nfe: 4
-  text_cfg_w: 1
+  nfe: !apply:samantha.utils.envs.getenv_int ["diffusion_nfe", 4]
+  text_cfg_w: !apply:samantha.utils.envs.getenv_float ["diffusion_cfg", 1]

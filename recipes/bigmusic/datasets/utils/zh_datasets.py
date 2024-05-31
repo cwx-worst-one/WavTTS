@@ -879,7 +879,7 @@ ZH_DATASET_REGISTRY = {
     ),
     2456: ZhDatasetEntry.new_sft_lowrisk(
         parser=ZhMetaSFTMIRVoiceTagSA,
-        desc="lowrisk taobao 4k",
+        desc="lowrisk taobao 4k v2",
     ),
     2476: ZhDatasetEntry.new_sft_copyright_cleared(
         parser=ZhMetaSFTForceAlignConfAudioTagsV2,
@@ -899,10 +899,86 @@ ZH_DATASET_REGISTRY = {
     ),
     2596: ZhDatasetEntry.new_sft_copyright_cleared(
         parser=ZhMetaSFTAudioTagsV2,
-        desc="lowrisk taobao 5k -> fine-grained 3.5k",
+        desc="lowrisk taobao v1 5k -> fine-grained 3.5k",
     ),
     2674: ZhDatasetEntry.new_sft_copyright_cleared(
         parser=ZhMetaSFTForceAlignConfAudioTagsV2,
-        desc="lowrisk taobao 5k -> fine-grained 3.5k, GT lyrics",
+        desc="lowrisk taobao v1 5k -> fine-grained 3.5k, GT lyrics",
+    ),
+    2712: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTForceAlignConfAudioTagsV2,
+        desc="3k en spotify sft genre, GT lyrics",
+    ),
+    2713: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTForceAlignConfAudioTagsV2,
+        desc="highrisk taobao 1.5k, GT lyrics",
+    ),
+    2718: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTForceAlignConfAudioTagsV2,
+        desc="lowrisk taobao v2 4k->fine-grained 2.4k, GT lyrics",
+    ),
+    2719: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="groupA(-UMG) 147k, asr lyrics",
+    ),
+    2736: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="groupA(-UMG) 146k, asr lyrics, lyrics_confidence>0.6",
+    ),
+    2742: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="groupA(-UMG) 15k, asr lyrics, lyrics_confidence>0.6, popularity<5",
+    ),
+    2745: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTForceAlignConfAudioTagsV2,
+        desc="authorized 48k->1.2k double-yes+gt lyrics, 44.1k",
+    ),
+    2751: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="5k highrisk N200k match top_artist+asr lyrics",
+    ),
+    2756: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="for debug:7.5k lowrisk mcc filter ChineseTradition/ChineseStyle+asr lyrics",
+    ),
+    2757: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="for debug:groupA(-UMG) 15k filter Reggae/Punk/Jazz/Electronic/RNB/Rock+asr lyrics",
+    ),
+    2760: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="35k top_artist+filter Chinese+asr lyrics, 44kHz",
+    ),
+    2766: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="5.8k highrisk N240k match top_artist+asr lyrics",
+    ),
+    2769: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTForceAlignConfAudioTagsV2,
+        desc="authorized 48k->1.2k double-yes+gt lyrics, 24k",
+    ),
+    2770: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="35k top_artist+cn+asr lyrics, 24kHz",
+    ),
+    2771: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="6k top_artist+en+asr lyrics, 24kHz",
+    ),
+    2823: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="3k spotify(-UMG)+en+asr lyrics",
+    ),
+    2824: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="2k lowrisk aggressively filtered+double-yes+asr lyrics",
+    ),
+    2857: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="for debug: 7.8k en billboard(-UMG) filter genres+asr lyrics",
+    ),
+    2864: ZhDatasetEntry.new_sft_copyright_cleared(
+        parser=ZhMetaSFTAudioTagsV2,
+        desc="for debug: 3.3k spotify(-UMG) filter genres+asr lyrics",
     ),
 }

@@ -30,6 +30,7 @@ try:
         mulan_audio_reward,
         mulan_text_reward,
         wer_reward,
+        mir_tag_reward,
         loudness_reward,
         chord_reward,
         nonvocal_reward,
@@ -896,6 +897,15 @@ class SemanticModule(BaseContinuousEmbedModule):
             print(batch_cfg['speaker_id'], ' apply cfg to speaker')
             batch_cfg['speaker_id'] = torch.as_tensor([0] * len(batch['style_category']))
             print(batch_cfg['speaker_id']) 
+        if "section_tag" in controller_cfg_label:
+            print('apply cfg to section_tag')
+            batch_cfg["lyrics_tokens"] = batch["lyrics_tokens_cfg"]
+            batch_cfg["lyrics_normalized_text"] = batch["lyrics_normalized_text_cfg"]
+            batch_cfg["lyrics_tokens_length"] = batch["lyrics_tokens_length_cfg"]
+            # delete cfg fields
+            for b in [batch_cfg, batch]:
+                for k in ["lyrics_tokens_cfg", "lyrics_normalized_text_cfg", "lyrics_tokens_length_cfg"]:
+                    b.pop(k, None)
 
         return batch_cfg
 
@@ -915,6 +925,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         use_step_out_blank = hp.get('use_step_out_blank', False)
         step_out_blank_logic = hp.get('step_out_blank_logic', 'v2')
         step_out_blank_max_len = hp.get('step_out_blank_max_len', 10)
+        repetition_penalty = hp.get('repetition_penalty', 1.0)
         skip_sos = hp.get('skip_sos', False)
         self.extra_params.debug_index = hp.get('debug_index', None)
         exclude_ids = None
@@ -960,7 +971,7 @@ class SemanticModule(BaseContinuousEmbedModule):
             use_step_out_blank=use_step_out_blank,
             step_out_blank_logic=step_out_blank_logic,
             step_out_blank_max_len=step_out_blank_max_len,
-            repetition_penalty=hp.get('repetition_penalty', 1.0)
+            repetition_penalty=repetition_penalty,
         )
 
         groundtruth.emit('semantic', data={
@@ -1869,6 +1880,23 @@ class SemanticRLModule(SemanticModule):
                 target_embeds=items.get("target_mulan_embeds"),
             )
             return mulan_sim
+        elif reward_type == "genre_tag":            
+            items = items['batch']
+            target_genres = [style_text[0] for style_text in items["style_category"]]
+            return mir_tag_reward(
+                sampled_audio,
+                sample_rate=self.extra_params.sample_rate,
+                mir_tag_type='genre',
+                target_tags=target_genres,
+                device=sampled_audio.device)
+        elif reward_type == "mood_tag":            
+            target_mood = [style_text[1] for style_text in items["style_category"]]            
+            return mir_tag_reward(
+                sampled_audio,
+                sample_rate=self.extra_params.sample_rate,
+                mir_tag_type='mood',
+                target_tags=target_mood,
+                device=sampled_audio.device)
         elif reward_type == "mulan_temporal":
             mulan_temporal = mulan_temporal_reward(
                 self.requires["mulan_infer_fn"],

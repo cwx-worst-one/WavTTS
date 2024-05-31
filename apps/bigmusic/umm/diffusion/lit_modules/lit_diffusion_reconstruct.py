@@ -115,6 +115,7 @@ class DiffusionU2SInfer(LightningModule):
         text_cfg_w=1,
         use_wvae_vocoder=False,
         bn_config=None,
+        token_config=None,
         use_phone_lang=False,
         without_prefix=True,
     ):
@@ -152,6 +153,11 @@ class DiffusionU2SInfer(LightningModule):
         else:
             self.mel_norm = MelNorm(
                 mel_config["mel_norm_mean"], mel_config["mel_norm_std"])
+
+        if token_config == None:
+            self.token_config = { "token_cfg":True, "token_padding": 32767, }
+        else:
+            self.token_config = token_config
 
         self.mel_norm = MelNorm(
             mel_config["mel_norm_mean"], mel_config["mel_norm_std"])
@@ -396,7 +402,15 @@ class DiffusionU2SInfer(LightningModule):
                 if "lang" in inputs["frontend"]:
                     inputs["frontend"]["lang"] = inputs["frontend"]["lang"].repeat(2, 1)
                     inputs["frontend"]["lang"][1, :] = 1
-            inputs["token"] = inputs["token"].repeat(2, 1)
+            
+            token_key = "token"
+            if "all_token" in inputs:
+                token_key = "all_token"
+            if self.token_config["token_cfg"]:
+                inputs[token_key] = torch.cat((inputs[token_key], torch.ones_like(inputs[token_key])*self.token_config["token_padding"]), 0)
+            else:
+                inputs[token_key] = inputs[token_key].repeat(2, 1)
+
             if self.use_wvae_vocoder:
                 if "prompt_bn" in inputs:
                     inputs["prompt_bn"] = inputs["prompt_bn"].repeat(2, 1, 1)
@@ -615,6 +629,7 @@ class ChunkInfer(DiffusionU2SInfer):
         text_cfg_w=1,
         use_wvae_vocoder=False,
         bn_config=None,
+        token_config=None,
         use_phone_lang=False,
         token_chunk_size=25,
         token_chunk_overlap=0,
@@ -639,6 +654,7 @@ class ChunkInfer(DiffusionU2SInfer):
             text_cfg_w,
             use_wvae_vocoder,
             bn_config,
+            token_config,
             use_phone_lang,
             without_prefix=without_prefix,
         )
@@ -670,9 +686,6 @@ class ChunkInfer(DiffusionU2SInfer):
         else:
             raise NotImplementedError 
 
-        if not self.without_prefix:
-            assert prompt_umm_token is not None
-            inputs["token"] = prompt_umm_token
         out_mel = None
         bs = len(syn_umm_token)
         device = syn_umm_token.device
@@ -683,9 +696,17 @@ class ChunkInfer(DiffusionU2SInfer):
         # To ensure reproduciable
         if not self.without_prefix:
             total_frame = int((prompt_umm_token.shape[1] + syn_umm_token.shape[1])/self.umm_frame_rate*self.mel_frame_rate)
+            assert prompt_umm_token is not None
+            inputs["all_token"] = torch.cat([prompt_umm_token, syn_umm_token], dim=1)
         else:
             total_frame = int((syn_umm_token.shape[1])/self.umm_frame_rate*self.mel_frame_rate)
+            inputs["all_token"] = syn_umm_token
+
         self.model.clear_cache(self.diffusion_nfe, total_frame, bs=bs)
+
+        if self.text_cfg_w != 1:
+            inputs = self.make_cfg_input(inputs)
+
         for i, start in enumerate(start_list):
             if i < len(start_list) - 1:
                 end = min(start_list[i+1]+self.token_chunk_overlap, syn_umm_token.shape[1])
@@ -702,16 +723,11 @@ class ChunkInfer(DiffusionU2SInfer):
             valid_chunk_size = int(valid_chunk_size / self.umm_frame_rate * self.mel_frame_rate)
             
             if i == 0:
-                if not self.without_prefix:
-                    inputs["token"] = torch.cat([
-                        inputs["token"], 
-                        syn_umm_token[:, start:end]], dim=1)
-                else:
-                    inputs["token"] = syn_umm_token[:, start:end]
+                inputs["token"] = inputs["all_token"][:, start:end]
             else:
                 inputs["token"] = torch.cat([
                     inputs["token"][:, :-prev_overlap], 
-                    syn_umm_token[:, start:end].repeat(2 if self.text_cfg_w!=1 else 1,1)], dim=1)
+                    inputs["all_token"][:, start:end]], dim=1)
 
             token_len = inputs["token"].shape[1]
             mel_len = int(token_len / self.umm_frame_rate * self.mel_frame_rate)
@@ -723,8 +739,6 @@ class ChunkInfer(DiffusionU2SInfer):
             pad_len = valid_chunk_size
             inputs["bn_ctx"] = F.pad(inputs["bn_ctx"], (0, 0, 0, pad_len), "constant", self.bn_config["bn_padding"])
 
-            if self.text_cfg_w != 1 and i == 0:
-                inputs = self.make_cfg_input(inputs)
 
             with torch.autocast(device_type="cuda", dtype=dtype, enabled=True): 
                 out_mel = self.model.inference(inputs, 

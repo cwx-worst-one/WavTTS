@@ -149,7 +149,7 @@ def map_gt_categorical_gender(gender_text):
     return list(set(gt_genders))
 
 def TaggingGender(audio_url):
-    cluster = "gender_detect_qa"
+    cluster = "gender_detect"
     audio_type = 'wav'
     app_id = "bigmusic_data_test"
     threshold_config= {
@@ -168,7 +168,7 @@ def TaggingGender(audio_url):
     content = base64.b64encode(bytes(content))
     headers = {'Content-Type': "application/json;"}
     uuid_str = str(uuid.uuid4())
-    url = "https://speech-test.byted.org/api/v1/aed_test?reqid=%s" % uuid_str
+    url = "https://speech-test.byted.org/api/v1/aed?reqid=%s" % uuid_str
     post_data = {
         "app":{
             "appid": app_id,
@@ -294,6 +294,7 @@ def run_tagging_acc(audio_list, tag="genre"):
         audio_fp, url = item[0], item[1]
         gt_tags = parse_gt_tag_from_metadata(audio_fp, tag)
         predict_tags = SA_online_tagging_predict(client, url, tag)
+        print(gt_tags, predict_tags)
         
         flag = False
         for pt_tag in predict_tags:
@@ -325,7 +326,8 @@ def run_tagging_acc(audio_list, tag="genre"):
         
 
 class MIRTagMetricsSAOnlineCallback(pl.Callback):
-    def __init__(self, tags=["genre", "mood", "gender"]) -> None:
+    #def __init__(self, tags=["genre", "mood", "gender"]) -> None:
+    def __init__(self, tags=["genre", "gender"]) -> None:
         super().__init__()
         self.tags = tags
 

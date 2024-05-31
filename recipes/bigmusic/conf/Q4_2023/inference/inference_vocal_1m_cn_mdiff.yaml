@@ -104,6 +104,8 @@ predict_dataset: !apply:recipes.bigmusic.datasets.inference.inference_dataset_fr
     enable_punctuation: True
     transform_style_text: !ref <extra_params[transform_style_text]>
     rewrite_target: !ref <extra_params[rewrite_target]>
+    use_controller_cfg: !ref <extra_params[use_controller_cfg]>
+    controller_cfg_label: !ref <extra_params[controller_cfg_label]>
 
 pl_datamodule: !new:recipes.bigmusic.datasets.lyrics.LyricsDataModule
     predict_dataset: !ref <predict_dataset>

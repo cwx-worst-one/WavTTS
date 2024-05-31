@@ -658,10 +658,10 @@ class LlamaDiffusion(nn.Module):
             else:
                 x = torch.randn([1, frm_len, self.hp.out_channels], device=device).expand(batch_size, -1, -1)
 
-        if t > 20:
-            sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device)
-        else:
-            sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device) ** 2
+        sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device)
+        # sigmas += 0.6
+        # sigmas /= sigmas.max()
+
         sigmas = repeat(sigmas, "i -> i b", b=1)
         sigmas_batch = extend_dim(sigmas, dim=x.ndim)
         alphas, betas = self.get_alpha_beta(sigmas_batch)
@@ -796,7 +796,7 @@ class LlamaDiffusion(nn.Module):
                 ).chunk(2)
                 pred = text_cfg_w * pred + (1 - text_cfg_w) * pred_uncond
             else:
-                pred = self._forward(x, local_cond, text_embed, timesteps=sigmas[i])
+                pred = self._forward(x, local_cond, text_embed, timesteps=sigmas[i].expand(batch_size, -1))
 
             if self.target_type == "velocity":
                 x_pred = alphas[i] * x - betas[i] * pred
@@ -821,7 +821,7 @@ class LlamaDiffusion(nn.Module):
                     )
                 else:
                     pred_prev = self._forward(
-                        x_noisy, local_cond, text_embed, timesteps=sigmas[i + 1]
+                        x_noisy, local_cond, text_embed, timesteps=sigmas[i + 1].expand(batch_size, -1)
                     )
                 pred_prime = (pred + pred_prev) / 2
             elif len(pred_list) == 1:

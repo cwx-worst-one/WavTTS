@@ -10,6 +10,8 @@ from recipes.bigmusic.datasets.utils.zh_vocab import (
     VOCAB2ID_MIX_V0,
     VOCAB2ID_AUDIO_V1,
     VOCAB2ID_MIX_V1,
+    VOCAB2ID_AUDIO_V2,
+    VOCAB2ID_MIX_V2,
 )
 
 logger = logging.getLogger(__file__)
@@ -1227,6 +1229,10 @@ AUDIO_GENRE_V2 = [
     "Vulgar Pop",
     "West Coast Hip Hop",
     "World Music",
+    "Breakbeat",
+    "Country Folk",
+    "Country Rock",
+    "Jazz Blues",
 ]
 
 AUDIO_MOOD_V2 = [
@@ -1446,6 +1452,7 @@ AUDIO_TAGS_GENRE_SPECIAL_MAP_V2 = {
     "Red Song/": "Red Song",
     "Rock BluesNew": "Rock Blues",
     "Chorus": "Chorus_AUDIO_GENRE",  # dedup
+    "low Pop": "Low pop",
 }
 
 AUDIO_TAGS_MOOD_SPECIAL_MAP_V2 = {
@@ -1883,6 +1890,8 @@ _UNIFIED_VOCAB_MAP = {
     # V1 (audio tag v1, v2, v3)
     "Audio_unified_v1": VOCAB2ID_AUDIO_V1,
     "Mix_unified_v1": VOCAB2ID_MIX_V1,
+    "Audio_unified_v2": VOCAB2ID_AUDIO_V2,
+    "Mix_unified_v2": VOCAB2ID_MIX_V2,
 }
 
 def get_categorical_vocab(vocab_type: str) -> Tuple[Dict[str, int], int]:

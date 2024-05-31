@@ -3,8 +3,8 @@ cache_dir: ".module_cache/vocoder"
 44.1k_vocal:
   hop_size: 900
   frame_rate: 49
-  bn_norm_std: 1
-  bn_norm_mean: 0
+  bn_norm_std: !apply:samantha.utils.envs.getenv_float ["bn_norm_std", 0.1964]
+  bn_norm_mean: !apply:samantha.utils.envs.getenv_float ["bn_norm_mean", 0.0004]
   bn_padding: -5
   bn_dim: 128
   wav_norm: False
@@ -20,8 +20,8 @@ cache_dir: ".module_cache/vocoder"
 44.1k_sa:
   hop_size: 900
   frame_rate: 49
-  bn_norm_std: 1
-  bn_norm_mean: 0
+  bn_norm_std: !apply:samantha.utils.envs.getenv_float ["bn_norm_std", 1]
+  bn_norm_mean: !apply:samantha.utils.envs.getenv_float ["bn_norm_mean", 0]
   bn_padding: -5
   bn_dim: 64
   wav_norm: False
@@ -37,8 +37,8 @@ cache_dir: ".module_cache/vocoder"
 24k_125hz_dim32_baseline:
   hop_size: 192
   frame_rate: 125
-  bn_norm_std: 1
-  bn_norm_mean: 0
+  bn_norm_std: !apply:samantha.utils.envs.getenv_float ["bn_norm_std", 1]
+  bn_norm_mean: !apply:samantha.utils.envs.getenv_float ["bn_norm_mean", 0]
   bn_padding: -5
   bn_dim: 32
   wav_norm: False
@@ -54,8 +54,8 @@ cache_dir: ".module_cache/vocoder"
 32k:
   hop_size: 800
   frame_rate: 40
-  bn_norm_std: 1
-  bn_norm_mean: 0
+  bn_norm_std: !apply:samantha.utils.envs.getenv_float ["bn_norm_std", 1]
+  bn_norm_mean: !apply:samantha.utils.envs.getenv_float ["bn_norm_mean", 0]
   bn_padding: -5
   bn_dim: 128
   wav_norm: False

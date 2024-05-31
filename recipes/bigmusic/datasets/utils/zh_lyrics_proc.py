@@ -1,3 +1,12 @@
+"""
+The processing approach is designed primarily for Chinese lyrics, assuming each word consists of
+a single syllable. This approach simplifies the logic, and does not require third-party NLP packages.
+However, it is not suitable for English, so certain processing steps, such as line splitting and
+concatenation, are skipped when handling English lyrics. Code related to English-specific
+processing is commented as "EN Patch: ...".
+"""
+
+
 import bisect
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -150,7 +159,15 @@ class Line(list):
 
     @property
     def has_utterance(self) -> bool:
-        return len(self) > 0 and all(lyric.has_utterance for lyric in self)
+        return len(self) > 0 and any(lyric.has_utterance for lyric in self)
+
+    @property
+    def lang(self) -> Optional[Lang]:
+        if not self.has_utterance:
+            return None
+        if any(lyric.lang == Lang.ZH for lyric in self):
+            return Lang.ZH
+        return Lang.EN
 
     @classmethod
     def parse(cls, text: str):
@@ -257,7 +274,15 @@ class SectionLyrics(list):
 
     @property
     def has_utterance(self) -> bool:
-        return len(self) > 0 and all(line.has_utterance for line in self)
+        return len(self) > 0 and any(line.has_utterance for line in self)
+
+    @property
+    def lang(self) -> Optional[Lang]:
+        if not self.has_utterance:
+            return None
+        if any(line.lang == Lang.ZH for line in self):
+            return Lang.ZH
+        return Lang.EN
 
     @classmethod
     def parse(cls, raw_lines: List[str], section_tag: Optional[str] = None):
@@ -302,9 +327,17 @@ class SongLyrics(list):
     def has_utterance(self) -> bool:
         return len(self) > 0 and all(p.has_utterance for p in self)
 
+    @property
+    def lang(self) -> Optional[Lang]:
+        if not self.has_utterance:
+            return None
+        if any(paragraph.lang == Lang.ZH for paragraph in self):
+            return Lang.ZH
+        return Lang.EN
+
     @classmethod
     def parse(cls, lyrics: str):  # -> Song
-        raw_lines = _split_text_by_parens(lyrics)
+        raw_lines = _split_raw_text(lyrics)
         phrases = [Phrase.parse(text=raw_line, normalize_tag=True, normalize_chinese=False) for raw_line in raw_lines]
         phrases = _move_out_section_tags(phrases)
         section_tag_ind = sorted(list(set([0] + [
@@ -352,11 +385,17 @@ _MAX_ITERS = 100  # as a guardrail to avoid being stuck in an infinite loop
 
 
 def _trim_to_max(paragraph: List[Line], max_n_slbs_per_line: int) -> List[Line]:
+    def lang_aware_line_split(line: Line) -> List[Line]:
+        """EN Patch: Do not split English line"""
+        if line.lang == Lang.EN:
+            return [line]
+        return line.split()
+
     last_processed_paragraph = list(paragraph)
     for _ in range(_MAX_ITERS):
         in_loop_paragraph = []
         for line in last_processed_paragraph:
-            _lines = list(filter(lambda l: len(l) > 0, line.split())) if line.n_syllables > max_n_slbs_per_line else [line]
+            _lines = list(filter(lambda l: len(l) > 0, lang_aware_line_split(line))) if line.n_syllables > max_n_slbs_per_line else [line]
             in_loop_paragraph.extend(_lines)
         if len(in_loop_paragraph) == len(last_processed_paragraph):
             break  # if there's no change to the length, the entire paragraph should be the same
@@ -398,6 +437,8 @@ def _comb_to_min(paragraph: List[Line], slb_range: Tuple[int, int]) -> List[Line
             # Concatenate two lines
             line_a: Line = last_processed_paragraph[idx_a]
             line_b: Line = last_processed_paragraph[idx_b]
+            if Lang.EN in [line_a.lang, line_b.lang]:
+                continue  # EN Patch: No concat for English line(s)
             line_punc = Line([Lyric(punc="，")])  # add a full comma in the middle
             line_comb = (line_a + line_b) if (not line_a[-1].has_utterance or not line_b[0].has_utterance) else (line_a + line_punc + line_b)
             last_processed_paragraph = last_processed_paragraph[:idx_a] + [line_comb] + last_processed_paragraph[idx_b+1:]
@@ -433,6 +474,11 @@ def _split_text_by_parens(text: str) -> List[str]:
     lines = [text[a:b] for a, b in zip(ind, ind[1:])]
     lines = [l.strip() for l in lines]
     return [l for l in lines if len(l) > 0]
+
+
+def _split_raw_text(text: str) -> List[str]:
+    lines = _split_text_by_parens(text)
+    return reduce(operator.add, [line.split("\n") for line in lines])
 
 
 def _match_vocal_non_vocal_section_tags(paragraphs: List[SectionLyrics]) -> List[SectionLyrics]:

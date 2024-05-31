@@ -16,6 +16,10 @@ def getenv_int(env_var, default=1):
     return int(os.getenv(env_var, default))
 
 
+def getenv_float(env_var, default=1):
+    return float(os.getenv(env_var, default))
+
+
 def getenv_bool(env_var, default=False):
     if env_var not in os.environ:
         return default

@@ -854,7 +854,13 @@ class SamiOfflineTokenizer:
             raise ValueError(f"Invalid vocab_type: {vocab_type}")
         self.vocab_type: str = vocab_type
 
-    def __call__(self, text_batch: Union[str, List[str]], line_break=" <n> ", **kwds) -> Dict[str, torch.Tensor]:
+    def __call__(
+        self,
+        text_batch: Union[str, List[str]],
+        line_break=" <n> ",
+        dropout_section_tags: bool = False,
+        **kwds,
+    ) -> Dict[str, torch.Tensor]:
         """Tokenize a text batch (phoneme). Lines separated by line_break."""
         if isinstance(text_batch, str):
             text_batch = [text_batch]
@@ -862,6 +868,8 @@ class SamiOfflineTokenizer:
             [Phrase.parse(phonemes=phonemes) for phonemes in sil.split(line_break)]
             for sil in text_batch
         ]
+        if dropout_section_tags:
+            phrase_batch = [_drop_section_tags(phrases) for phrases in phrase_batch]
         return self.tokenize_phrase_batch(phrase_batch)
 
     def tokenize_phrase(self, phrase: Phrase) -> np.ndarray:
@@ -902,7 +910,13 @@ class SamiTokenizer(SamiOfflineTokenizer):
         self.engine = TtsEngine(lib_path=lib_path, fe=fe)
         self.ex = self.engine.create_fe_executor(task_type=fe_task)
 
-    def __call__(self, text_batch: Union[str, List[str]], line_break=" <n> ", **kwds) -> Dict[str, torch.Tensor]:
+    def __call__(
+        self,
+        text_batch: Union[str, List[str]],
+        line_break=" <n> ",
+        dropout_section_tags: bool = False,
+        **kwds,
+    ) -> Dict[str, torch.Tensor]:
         """Tokenize a text batch. Lines separated by line_break. Phoneme will be generated internally."""
         def remove_empty_phrases(phrases: List[Phrase]) -> List[Phrase]:
             return [phrase for phrase in phrases if not phrase.is_empty]
@@ -913,7 +927,9 @@ class SamiTokenizer(SamiOfflineTokenizer):
             remove_empty_phrases([Phrase.parse(text=text) for text in sil.split(line_break)])
             for sil in text_batch
         ]
-        
+
+        if dropout_section_tags:
+            phrase_batch = [_drop_section_tags(phrases) for phrases in phrase_batch]
         return self.tokenize_phrase_batch(phrase_batch)
 
     def tokenize_phrase(self, phrase: Phrase) -> Optional[np.ndarray]:
@@ -952,7 +968,12 @@ class SamiInferenceTokenizer(SamiOfflineTokenizer):
     ) -> None:
         super().__init__(vocab_type)
 
-    def __call__(self, front_results: Union[str, List[str]], **kwds) -> Dict[str, torch.Tensor]:
+    def __call__(
+        self,
+        front_results: Union[str, List[str]],
+        dropout_section_tags: bool = False,
+        **kwds,
+    ) -> Dict[str, torch.Tensor]:
         """Tokenize a text batch. Lines separated by line_break. Phoneme will be generated internally."""
         
         if isinstance(front_results, str):
@@ -975,4 +996,15 @@ class SamiInferenceTokenizer(SamiOfflineTokenizer):
             else:
                 final_phrase_batch.append(phrase)
 
+        if dropout_section_tags:
+            final_phrase_batch = [_drop_section_tags(phrases) for phrases in final_phrase_batch]
+
         return self.tokenize_phrase_batch([final_phrase_batch])
+
+
+def _drop_section_tags(phrases: List[Phrase]) -> List[Phrase]:
+    """Only remove section tags if there is any lyric phrase"""
+    if not any(phrase.has_utterance for phrase in phrases):  # all inst
+        return phrases[:]
+    phrases = [phrase._replace(section_tag=None) for phrase in phrases]
+    return [phrase for phrase in phrases if not phrase.is_empty]

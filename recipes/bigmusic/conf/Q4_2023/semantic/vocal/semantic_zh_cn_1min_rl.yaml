@@ -34,12 +34,19 @@ extra_params:
 
     # Inference params
     duration: 60
-    semantic_temperature: 1.0
+    semantic_temperature: 1.0       # TODO (qq) set it to the same as inference.
     sample_mode: "top_p"
     beam_size: 2
     decoder_type: "diffusion"
     diffusion_steps: 10
     bf16_portion: 0.0
+    sample_thresh: 0.9
+    use_step_out_blank: False
+    step_out_blank_logic: 'v2'
+    step_out_blank_max_len: 8
+    use_controller_cfg: False       # TODO: (qq) verify that cfg works with beam > 1.
+    controller_cfg_gamma: 3.0
+    controller_cfg_label: "section_tag,genre,mood,speaker"  # mood, scene, sinking,
 
     # Supporting models
     mulan_ckpt: "hdfs:///home/byte_speech_sv/jingsong.gao/mulan_ckpt/mulan-step=024600-median_rank_1=110-kaggle.ckpt"
@@ -64,7 +71,8 @@ extra_params:
         "wer": 1.0
         "mulan_sim": 1.0
         "loudness_sim": 1.0
-        # "qualitative_sim": 1.0
+        "genre_tag": 0
+        "mood_tag": 0
     # Logging params
     log_num_val_samples: 10
     log_num_val_beam_samples: 1

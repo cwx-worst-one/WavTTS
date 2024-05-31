@@ -353,6 +353,7 @@ class BaseContinuousEmbedModule(BaseModule):
         use_step_out_blank=False,
         step_out_blank_logic='v1',
         step_out_blank_max_len=10,
+        repetition_penalty=1.0,
         **kwargs,
     ):
         """
@@ -451,8 +452,7 @@ class BaseContinuousEmbedModule(BaseModule):
                 inference_params.sequence_len_offset += model_input['inputs_embeds'].size(1)
                 logits = logits[:, -1:, :] # only predicting on last logit.
 
-                if use_step_out_blank and step_out_blank_logic == 'v4':
-                    repetition_penalty = kwargs.get('repetition_penalty', 1.0)
+                if use_step_out_blank and step_out_blank_logic == 'v4':                    
                     print(f'{repetition_penalty=}')
 
                     previous_output_tokens = torch.tensor(previous_tokens, dtype=torch.long, device='cuda').reshape(original_batch_size, -1)

@@ -8,7 +8,7 @@ run_opts:
     meta_lst: ""
     num_workers: 4
     seed: 1996
-    diffusion_ckpt_path: !applyref:os.getenv ["diffusion_ckpt_path", "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/h800_ds2441_32xH800_25hzUMM_49hzSS_0501/checkpoints/epoch=00-step=1180000-loss=0.23.ckpt"]
+    diffusion_ckpt_path: !applyref:os.getenv ["diffusion_ckpt_path", "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/ds2441_32xH800_25hzUMM_49hzSS_chunk392_0522/checkpoints/epoch=00-step=810000-loss=0.65.ckpt"]
     infer_type: ar-diffusion-vocoder
     use_wvae_vocoder: True
     lang: en

@@ -12,6 +12,7 @@ from transformers import T5Tokenizer
 from recipes.bigmusic.datasets.tokenizers.cmu_phonemes import CMUPhonemeTokenizer
 from recipes.bigmusic.utils.format_utils import normalize_text, normalize_text_sami_tokenizer, format_section_tags
 from transformers import Wav2Vec2PhonemeCTCTokenizer
+from recipes.datasets.mcc.sami_tokenizer import SamiOfflineTokenizer
 from recipes.musiclm.utils.dist import local_zero_first
 import random
 from recipes.bigmusic.utils.format_utils import rewrite_metadata, rewrite_playlist_labels
@@ -207,8 +208,8 @@ class LyricsTokenTransform():
         self.normalization_fn = normalization_fn
         self.handler = handler
 
-    def tokenize(self, item, lyrics_text):
-        token_dict = self.lyrics_tokenizer(lyrics_text, return_tensors='pt', padding=False, return_length=True)
+    def tokenize(self, item, lyrics_text, **kwargs):
+        token_dict = self.lyrics_tokenizer(lyrics_text, return_tensors='pt', padding=False, return_length=True, **kwargs)
         input_ids = token_dict['input_ids'].squeeze(0)
         lyrics_length = token_dict['length'].squeeze(0).item() # return int item instead of tensor
         if self.dataset_mode == "variable_length": # return length
@@ -234,14 +235,14 @@ class LyricsTokenTransform():
     @classmethod
     def init_cmu_tokenizer(cls, lyrics_max_seq_len, allow_unknown=False, **kwargs):
         cmu_tokenizer = CMUPhonemeTokenizer(allow_unknown=allow_unknown)
-        return LyricsTokenTransform(cmu_tokenizer, cmu_tokenizer.pad_id, lyrics_max_seq_len, **kwargs)
+        return cls(cmu_tokenizer, cmu_tokenizer.pad_id, lyrics_max_seq_len, **kwargs)
     @classmethod
     def init_zh_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=True, **kwargs):
         from transformers import BertTokenizer
         normalization_fn = partial(normalize_text, enable_punctuation=enable_punctuation)
         zh_tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
         zh_tokenizer.add_special_tokens({'additional_special_tokens': [" <n> "]})
-        return LyricsTokenTransform(zh_tokenizer, zh_tokenizer.pad_token_id, lyrics_max_seq_len, normalization_fn=normalization_fn, **kwargs)
+        return cls(zh_tokenizer, zh_tokenizer.pad_token_id, lyrics_max_seq_len, normalization_fn=normalization_fn, **kwargs)
 
     @classmethod
     def init_sami_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=True, normalize_tags=True, vocab_type="phoneme", **kwargs):
@@ -252,7 +253,7 @@ class LyricsTokenTransform():
             normalize_tags=normalize_tags
         )
         zh_phoneme_tokenizer = SamiTokenizer(vocab_type=vocab_type)
-        return LyricsTokenTransform(zh_phoneme_tokenizer, 0, lyrics_max_seq_len, normalization_fn=normalization_fn, **kwargs)
+        return cls(zh_phoneme_tokenizer, 0, lyrics_max_seq_len, normalization_fn=normalization_fn, **kwargs)
     
     #推理侧使用
     @classmethod
@@ -260,14 +261,14 @@ class LyricsTokenTransform():
         from recipes.datasets.mcc.sami_tokenizer import SamiInferenceTokenizer
         normalization_fn = None
         zh_phoneme_tokenizer = SamiInferenceTokenizer(vocab_type=vocab_type)
-        return LyricsTokenTransform(zh_phoneme_tokenizer, 0, lyrics_max_seq_len, normalization_fn=normalization_fn, item_key="front_results", **kwargs)
+        return cls(zh_phoneme_tokenizer, 0, lyrics_max_seq_len, normalization_fn=normalization_fn, item_key="front_results", **kwargs)
     
     @classmethod
     def init_sami_offline_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=True, vocab_type="phoneme", **kwargs):
         from recipes.datasets.mcc.sami_tokenizer import SamiOfflineTokenizer
         normalization_fn = lambda x: x
         zh_phoneme_tokenizer = SamiOfflineTokenizer(vocab_type=vocab_type)
-        return LyricsTokenTransform(zh_phoneme_tokenizer, 0, lyrics_max_seq_len, normalization_fn=normalization_fn, item_key="phoneme", **kwargs)
+        return cls(zh_phoneme_tokenizer, 0, lyrics_max_seq_len, normalization_fn=normalization_fn, item_key="phoneme", **kwargs)
 
     @classmethod
     def init_espeak_tokenizer(cls, lyrics_max_seq_len, enable_punctuation=True, validate_ascii=False, **kwargs):
@@ -282,7 +283,47 @@ class LyricsTokenTransform():
         import logging, phonemizer
         # To silence espeak logging warnings: "WARNING - words count mismatch on 100.0% of the lines"
         phonemizer.logger.get_logger().setLevel(logging.ERROR)
-        return LyricsTokenTransform(espeak_tokenizer, espeak_tokenizer.pad_token_id, lyrics_max_seq_len, normalization_fn=_normalize_text, **kwargs)
+        return cls(espeak_tokenizer, espeak_tokenizer.pad_token_id, lyrics_max_seq_len, normalization_fn=_normalize_text, **kwargs)
+
+
+class LyricsTokenSamiTransform(LyricsTokenTransform):
+    """A LyricsTokenTransform that is designed for SAMI tokenizers and tag dropout for CFG"""
+    def __init__(
+        self,
+        lyrics_tokenizer,
+        pad_id,
+        lyrics_max_seq_len:int=None,
+        item_key="lyrics",
+        normalization_fn=normalize_text,
+        dataset_mode: str = "fixed_length",
+        handler: Callable = wds.ignore_and_continue,
+        use_controller_cfg: bool = False,
+    ):
+        # Only subclasses of SamiOfflineTokenizer have arugment `dropout_section_tag`
+        assert issubclass(type(lyrics_tokenizer), SamiOfflineTokenizer)
+        super().__init__(
+            lyrics_tokenizer=lyrics_tokenizer,
+            pad_id=pad_id,
+            lyrics_max_seq_len=lyrics_max_seq_len,
+            item_key=item_key,
+            normalization_fn=normalization_fn,
+            dataset_mode=dataset_mode,
+            handler=handler,
+        )
+        self.use_controller_cfg = use_controller_cfg
+    
+    def tokenize(self, item, lyrics_text):
+        # dropout_section_tags will be passed into the tokenizer's __call__
+        out_item = super().tokenize(item, lyrics_text, dropout_section_tags=False)
+        if self.use_controller_cfg:
+            cfg_item = super().tokenize(item, lyrics_text, dropout_section_tags=True)
+            out_item = {
+                **out_item,
+                "lyrics_tokens_cfg": cfg_item["lyrics_tokens"],
+                "lyrics_normalized_text_cfg": cfg_item["lyrics_normalized_text"],
+                "lyrics_tokens_length_cfg": cfg_item["lyrics_tokens_length"],
+            }
+        return out_item
 
 
 class AddConditionsTransform():

@@ -1,5 +1,8 @@
 import numpy as np
 import math
+import os
+import uuid
+import thriftpy2
 import torch
 import torch.nn.functional as F
 from recipes.bigmusic.datasets.transforms.structure import (
@@ -17,6 +20,9 @@ from torchaudio.functional import loudness, resample
 import librosa
 from scipy.stats import entropy
 from recipes.mulan.inference.stats.sstk_anchor_points import load_anchor_points
+from recipes.musiclm.inference.utils import save_wav
+from recipes.bigmusic.callbacks.mir_metrics import upload_audio_file_to_tos
+from recipes.bigmusic.datasets.utils.zh_vocab import AUDIO_V3_TO_SA_TAG_MAP
 import numpy as np
 from scipy.signal import butter, lfilter
 
@@ -32,6 +38,11 @@ CLIENT = euler.Client(
     timeout=1200,
 )
 ACCESS_KEY = "ATUBJrWuzl"
+
+thriftpy2.load(
+    os.path.join(os.path.dirname(__file__), "../utils/services/idl/music_tagging.thrift"), "music_tagging_thrift"
+)
+from music_tagging_thrift import MusicTagging, TaggingRequest
 
 
 def _infer_batch_beam(sampled, ref):
@@ -115,6 +126,78 @@ def mulan_text_reward(
     target_embeds_reshaped = target_embeds.repeat(1, beam).reshape(batch_size * beam, -1)
     sim = F.cosine_similarity(sampled_embeds, target_embeds_reshaped)
     return sim, sampled_embeds, target_embeds
+
+
+def SA_online_tagging_predict(audio_url, tag="genre", gt_tags=[]):
+    # TODO (ling) Update to new tagging service that supports fine-grained labels.
+    target = 'sd://lab.speech.music_tagging?cluster=default'
+    client = euler.Client(MusicTagging,target=f'{target}&idc=lf', timeout=1200)
+    gt_tags = [AUDIO_V3_TO_SA_TAG_MAP[gt_tag] for gt_tag in gt_tags]
+    if tag == "genre":
+        max_retry_num = 5
+        retry_num = 0
+        while retry_num < max_retry_num:
+            try:
+                rlts = client.TaggingGenre20(TaggingRequest(track_id="test", url=audio_url))
+                # TODO (qq) Now we are using max logit across multiple gt tags as reward.
+                # Consider other reward that are more calibrated and with emphasis on fusion.
+                result = [eval(rlts.result_json)['Genre20'][gt_tag] for gt_tag in gt_tags]
+                result = np.max(result)
+            except:
+                print(f"failed: {audio_url} check silence")
+                result = 0.0
+                retry_num += 1
+            else:
+                print(f"{tag} reward {result}")
+                break
+    if tag == 'mood':
+        max_retry_num = 5
+        retry_num = 0
+        while retry_num < max_retry_num:
+            try:
+                rlts = client.TaggingMood(TaggingRequest(track_id="test", url=audio_url))
+                # TODO (qq) Now we are using max logit across multiple gt tags as reward.
+                # Consider other reward that are more calibrated and with emphasis on fusion.
+                result = [eval(rlts.result_json)['Mood'][gt_tag] for gt_tag in gt_tags]
+                result = np.max(result)
+            except:
+                print(f"failed: {audio_url} check silence")
+                result = 0.0
+                retry_num += 1
+            else:
+                print(f"{tag} reward {result}")
+                break
+    return result
+
+
+@torch.no_grad()
+def mir_tag_reward(
+    sampled_audio,  # (batch_size * beam, T)
+    sample_rate,
+    mir_tag_type,
+    target_tags,
+    device,
+):    
+    genre_rewards = torch.zeros(sampled_audio.size(0)).to(device) 
+    max_retry_num = 3
+    for i, (sample, gt_tags) in enumerate(zip(sampled_audio, target_tags)):
+        uid = str(uuid.uuid4())
+        wav_fp = f"/tmp/{uid}-{i}.generated.wav"
+        save_wav(sample.cpu().float(), wav_fp, sr=sample_rate, save_mp3=False)
+        retry_num = 0
+        while retry_num < max_retry_num:
+            try:
+                audio_tos_path = upload_audio_file_to_tos([wav_fp])[0][1]
+            except:
+                # TODO: add mechanism for uploading failure after max retry
+                print(f"upload tos failed {audio_tos_path}")
+                retry_num += 1
+            else:
+                break
+        audio_tos_path = upload_audio_file_to_tos([wav_fp])[0][1]
+        if isinstance(gt_tags, str): gt_tags = [gt_tags]        
+        genre_rewards[i] = SA_online_tagging_predict(audio_tos_path, tag=mir_tag_type, gt_tags=gt_tags)
+    return genre_rewards
 
 
 @torch.no_grad()

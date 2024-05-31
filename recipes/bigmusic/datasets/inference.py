@@ -38,6 +38,7 @@ from recipes.bigmusic.datasets.mir_data_util import (
 )
 from recipes.bigmusic.datasets.transforms.lyrics import (
     LyricsTokenTransform,
+    LyricsTokenSamiTransform,
     AddConditionsTransform,
     StyleTextT5Transform,
     MCCMetadataTextTransform,
@@ -104,6 +105,8 @@ def inference_dataset_from_prompt(
     is_inference=False,
     front_results=None,
     rewrite_lyrics=True,
+    use_controller_cfg=False,
+    controller_cfg_label="",
     disable_multitag=False,
 ):
     prompts = prompt_path_to_items(prompt_path)
@@ -153,6 +156,9 @@ def inference_dataset_from_prompt(
     else:
         lyrics_prompt_pairs = zip(*list(prompts.values()))
 
+    # only enable dropout when it is truely required
+    use_controller_cfg = use_controller_cfg and ("section_tag" in controller_cfg_label)
+
     global SEGMENT_TRANSFORMS
     if SEGMENT_TRANSFORMS:
         segment_transforms = SEGMENT_TRANSFORMS
@@ -179,42 +185,45 @@ def inference_dataset_from_prompt(
             elif lang == 'zh_phone':
                 if is_inference:
                     segment_transforms.append(
-                        LyricsTokenTransform.init_sami_inference_tokenizer(
+                        LyricsTokenSamiTransform.init_sami_inference_tokenizer(
                             lyrics_max_seq_len=lyrics_max_seq_len,
                             dataset_mode=dataset_mode,
-                            vocab_type="phoneme"
+                            vocab_type="phoneme",
+                            use_controller_cfg=use_controller_cfg,
                         )
                     )
                 else:  
- 
                     segment_transforms.append(
-                        LyricsTokenTransform.init_sami_tokenizer(
+                        LyricsTokenSamiTransform.init_sami_tokenizer(
                             lyrics_max_seq_len=lyrics_max_seq_len,
                             dataset_mode=dataset_mode,
                             enable_punctuation=enable_punctuation,
                             normalize_tags=True,  # support all kinds of section tags
-                            vocab_type="phoneme"
+                            vocab_type="phoneme",
+                            use_controller_cfg=use_controller_cfg,
                         )
                     )
             elif lang == 'zh_phonetone':
                 if is_inference:
                     segment_transforms.append(
-                        LyricsTokenTransform.init_sami_inference_tokenizer(
+                        LyricsTokenSamiTransform.init_sami_inference_tokenizer(
                             lyrics_max_seq_len=lyrics_max_seq_len,
                             dataset_mode=dataset_mode,
                             enable_punctuation=enable_punctuation,
                             normalize_tags=True,  # support all kinds of section tags
-                            vocab_type="phoneme+tone"
+                            vocab_type="phoneme+tone",
+                            use_controller_cfg=use_controller_cfg,
                         )
                     )
                 else:
                     segment_transforms.append(
-                        LyricsTokenTransform.init_sami_tokenizer(
+                        LyricsTokenSamiTransform.init_sami_tokenizer(
                             lyrics_max_seq_len=lyrics_max_seq_len,
                             dataset_mode=dataset_mode,
                             enable_punctuation=enable_punctuation,
                             normalize_tags=True,  # support all kinds of section tags
-                            vocab_type="phoneme+tone"
+                            vocab_type="phoneme+tone",
+                            use_controller_cfg=use_controller_cfg,
                         )
                     )
 
