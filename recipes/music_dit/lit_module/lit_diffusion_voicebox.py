@@ -232,7 +232,7 @@ class VoiceBoxModule(pl.LightningModule):
                 prefix_lens = prefix_lens + embeds.shape[1]         # fixed length                    
             if emb_type == 'duration':
                 if 'duration' in conditions:
-                    embeds = embedder.embed(self.requires, batch['duration'].cpu(), with_sos=True)
+                    embeds = embedder.embed(self.requires, batch['unpadded_duration'].cpu(), with_sos=True)
                 else:
                     embeds = embedder.get_sos_embed(batch_size)
                 prefix_lens = prefix_lens + embeds.shape[1]         # fixed length                    
@@ -443,7 +443,7 @@ class Lyric2songInferenceModule(VoiceBoxModule):
         duration = torch.tensor(batch.get('duration', self.extra_params.get("duration", 60)))
         if len(duration.shape) <= 1:
             duration = duration.view(-1, 1)
-        batch['duration'] = duration
+        batch['unpadded_duration'] = duration
 
         offset = torch.tensor(batch.get('offset', self.extra_params.get("offset", 0)))
         if len(offset.shape) <= 1:

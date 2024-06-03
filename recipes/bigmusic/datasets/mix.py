@@ -87,7 +87,7 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
     remi_token_length = []
     speaker_id = []
     dataset_name = []
-    duration = []
+    unpadded_duration = []
     offset = []
 
     # DEBUG
@@ -140,7 +140,7 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
         remi_token_length.append(remi_token_len)
 
         sample_rate = batch[idx].get("sample_rate")
-        duration.append(audio.shape[1] / sample_rate)
+        unpadded_duration.append(audio.shape[1] / sample_rate)
         offset.append(batch[idx].get("offset", 0))
 
         style_metadata.append(batch[idx].get("style_metadata"))
@@ -167,7 +167,7 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
         "remi_leadsheet_tokens": torch.stack(remi_leadsheet_tokens),        
         "seqlen": torch.as_tensor(target_tokens_length),
         "speaker_id": torch.as_tensor(speaker_id).unsqueeze(1),
-        "duration": torch.as_tensor(duration).unsqueeze(1),
+        "unpadded_duration": torch.as_tensor(unpadded_duration).unsqueeze(1),
         "offset": torch.as_tensor(offset).unsqueeze(1),
         "remi_token_length": torch.as_tensor(remi_token_length).unsqueeze(1),
         "conditions": conditions,
