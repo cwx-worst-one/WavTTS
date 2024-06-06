@@ -1668,6 +1668,154 @@ COMBO_GENRE_TO_MULTITAG_V3 = {
     ],
 }
 
+COMBO_GENRE_TO_MULTITAG_V3_5 = {
+    "Pop": [
+        # sa tags
+        "Pop|Sorrow|Love||Warm",
+        "Pop|Romantic|Love||Bright",
+        "Pop|Miss|Love||Bright,Warm",
+        "Pop|Dynamic|Dance||Bright,Warm",
+        "Pop|Happy|Summer||Bright,Warm",
+        "Pop|Happy|Dance||Bright,Warm",
+        "Pop|Sorrow|Autumn||Bright,Warm",
+        "Pop|Happy|Travel||Warm",
+        "Pop|Inspirational|Love||Bright,Warm",
+        "Pop|Excited|Summer||Husky,Powerful",
+        # detailed tags
+        "Chinese Pop,Pop|Sorrow/Sad|Autumn,Broke up,Love,Rainy Day||Warm",
+        "Chinese Pop,Pop|Sorrow/Sad|Autumn,Broke up,Rainy Day||Warm",
+        "Chinese Pop,Pop|Sorrow/Sad|Autumn,Broke up,Love,Rainy Day||Bright",
+        "Chinese Pop,Pop|Nostalgic/Memory|Autumn,Broke up,Love,Rainy Day||Warm",
+        "Chinese Pop,Pop|Nostalgic/Memory|Autumn,Love,Rainy Day||Warm",
+        "Chinese Pop,Pop|Sorrow/Sad|Autumn,Broke up,Love,Rainy Day||Husky",
+        "Chinese Pop,Pop|Sorrow/Sad|Autumn,Broke up,Love,Rainy Day||Bright,Warm",
+        "Chinese Pop,Pop|Nostalgic/Memory|Autumn,Rainy Day||Warm",
+        "Chinese Pop,Pop|Sorrow/Sad|Autumn,Love,Rainy Day||Bright",
+        "Chinese Pop,Pop|Sorrow/Sad|Autumn,Broke up,Love,Rainy Day||Bright",
+    ],
+    "Hip Hop/Rap": [
+        # sa tags
+        "Hip Hop/Rap|Dynamic|Party||Warm",
+        "Hip Hop/Rap|Dynamic|Dance||Warm",
+        "Hip Hop/Rap|Dynamic|Love||Warm",
+        "Hip Hop/Rap|Sorrow|Love||Bright,Warm",
+        "Hip Hop/Rap|Romantic|Love||Bright",
+        "Hip Hop/Rap|Happy|Love||Warm",
+        "Hip Hop/Rap|Happy|Dance||Bright",
+        "Hip Hop/Rap|Dynamic|Summer||Husky",
+        "Hip Hop/Rap|Sorrow|Party||Husky",
+        "Hip Hop/Rap|Happy|Summer||Bright",
+        # detailed tags
+        "Hip Hop/Rap,Trap Rap|Angry/Aggressive|Dance,Sport||Magnetic",
+        "Hip Hop/Rap,Pop Rap|Nostalgic/Memory|Autumn,Broke up,Love,Rainy Day||Bright,Warm",
+        "Hip Hop/Rap,Trap Rap|Angry/Aggressive|Dance,Danceable,Summer||Sharp",
+        "Hip Hop/Rap,Trap Rap|Dynamic/Energetic|Dance,Nightclub,Party||Husky",
+        "Hip Hop/Rap,Pop Rap|Dynamic/Energetic|Game,Party,Sport||Husky",
+        "Hip Hop/Rap,Trap Rap|Angry/Aggressive|Dance,Sport,Winter||Husky,Sharp,Warm",
+        "Hip Hop/Rap,Trap Rap|Angry/Aggressive|Rainy Day,Sport,Summer||Sharp",
+        "Hip Hop/Rap,Pop Rap|Sweet_SA_MOOD|Commute,Love,Sunny Day,Valentine's day||Warm",
+    ],
+    "Chinese Style": [
+        # sa tags
+        "Chinese Style|Sorrow|Love||Warm",
+        "Chinese Style|Happy|Love||Bright",
+        "Chinese Style|Happy|Spring||Bright,Warm",
+        "Chinese Style|Miss||Love|Warm",
+        "Chinese Style|Sorrow|Autumn||Bright,Warm",
+        "Chinese Style|Excited|Autumn||Warm,Husky",
+        "Chinese Style|Excited|Love||Bright,Warm",
+        "Chinese Style|Romantic|Love||Bright",
+        "Chinese Style|Excited|Summer||Bright",
+        "Chinese Style|Dynamic|Love||Powerful",
+        # detailed tags
+        "Chinese Style,GuFeng Music|Sorrow/Sad|Autumn,Broke up,Love,Sunny Day||Bright,Warm",
+        "Chinese Style,GuFeng Music|Nostalgic/Memory|Autumn,Love,Sunny Day||Warm",
+        "Chinese Style,GuFeng Music|Sorrow/Sad|Autumn,Love,Sunny Day||Warm",
+        "Chinese Style,GuFeng Music|Nostalgic/Memory|Autumn,Love,Sunny Day||Bright",
+        "Chinese Style,GuFeng Music|Nostalgic/Memory|Autumn,Love,Sunny Day||Bright,Warm",
+        "Chinese Style,GuFeng Music|Nostalgic/Memory|Autumn,Love,Sunny Day||Bright,Husky",
+        "Chinese Style,GuFeng Music|Nostalgic/Memory|Commute,Love,Sunny Day||Bright",
+    ],
+    "Electronic": [
+        # sa tags
+        "Electronic|Dynamic|Danceable||Bright",
+        "Electronic|Dynamic|Dance||Warm",
+        "Electronic|Dynamic|Sport||Husky,Warm",
+        "Electronic|Dynamic|Summer||Husky",
+        "Electronic|Happy|Dance||Bright,Warm",
+        "Electronic|Dynamic|Travel||Bright,Warm",
+        "Electronic|Dynamic|Love||Sexy/Lazy",
+        "Electronic|Dynamic|Autumn||Sexy/Lazy",
+        "Electronic|Happy|Summer||Powerful",
+        "Electronic|Excited|Travel||Bright",
+    ],
+    "DJ": [
+        # default
+        "DJ,Tuhai|Dynamic/Energetic|Dance,Roadtrip,Summer||Husky",
+    ],
+    "Rock": [
+        # sa tags
+        "Rock|Excited|Travel||Bright",
+        "Rock|Excited|Summer||Husky",
+        "Rock|Happy|Travel||Warm",
+        "Rock|Happy|Summer||Bright,Warm",
+        "Rock|Sorrow|Autumn||Bright",
+        "Rock|Excited|Drive||Warm",
+        "Rock|Miss|Travel||Magnetic",
+        "Rock|Excited|Autumn||Husky",
+        "Rock|Sorrow|Love||Bright,Warm",
+        "Rock|Sorrow|Travel||Husky",
+        # detailed tags
+        "Pop Rock,Rock|Excited|Sport,Summer,Sunny Day||Bright",
+        "Pop Rock,Rock|Excited|Commute,Roadtrip,Sunny Day||Bright",
+        "Pop Rock,Rock|Excited|Commute,Summer,Sunny Day||Bright",
+        "Pop Rock,Rock|Excited|Sport,Summer,Sunny Day||Powerful",
+        "Pop Rock,Rock|Excited|Commute,Roadtrip,Sunny Day||Warm",
+        "Pop Rock,Rock|Miss|Autumn,Rainy Day||Powerful",
+        "Pop Rock,Rock|Sorrow/Sad|Autumn,Broke up,Love,Rainy Day||Powerful",
+        "Indie Rock,Rock|Nostalgic/Memory|Autumn,Rainy Day||Sexy/Lazy",
+    ],
+    "Folk": [
+        # detailed tags
+        "Folk,Folk Pop|Nostalgic/Memory|Autumn,Love,Rainy Day||Husky",
+        "Folk,Folk Pop|Sorrow/Sad|Autumn,Broke up,Love,Rainy Day||Husky",
+        "Folk,Folk Pop|Nostalgic/Memory|Autumn,Broke up,Love,Rainy Day||Husky,Warm",
+        "Folk,Folk Pop|Nostalgic/Memory|Autumn,Love,Rainy Day||Warm",
+        "Chinese Folk,Folk|Nostalgic/Memory|Autumn,Rainy Day||Magnetic",
+    ],
+    "R&B/Soul": [
+        # sa tags
+        "R&B/Soul|Romantic|Love||Warm",
+        "R&B/Soul|Dynamic|Dance||Husky",
+        "R&B/Soul|Happy|Dance||Bright",
+        "R&B/Soul|Happy|Summer||Warm",
+        "R&B/Soul|Happy|Love||Bright,Warm",
+        "R&B/Soul|Sorrow|Love||Warm",
+        "R&B/Soul|Dynamic|Love||Warm",
+        "R&B/Soul|Romantic|Wedding||Bright,Warm",
+        "R&B/Soul|Happy|Travel||Husky",
+        "R&B/Soul|Miss|Love||Warm",
+        # detailed tags
+        "Contemporary R&B,R&B/Soul|Groovy/Funky,Romantic|Commute,Love,Roadtrip,Sunny Day||Warm",
+    ],
+    "Chinese Tradition": [
+        # default
+        "Chinese Tradition|Inspirational/Hopeful|National's Day,Sunny Day||Loud and sonorous",
+    ],
+    "Jazz": [
+        # default
+        "Jazz|Sorrow/Sad|Spring,Travel||Magnetic",
+    ],
+    "Punk": [
+        # default
+        "Punk|Sorrow/Sad|Sunny Day,Summer||Bright",
+    ],
+    "Reggae": [
+        # default
+        "Reggae|Sorrow/Sad|Love,Bar||Warm",
+    ],
+}
+
 
 COMBO_MOOD_TO_MULTITAG_V3 = [
     "Nostalgic/Memory",
@@ -1972,6 +2120,29 @@ def _split_and_check_style_text(text: str) -> Tuple[str, str, str]:
         raise ValueError(f"Unsupported gender {gender}")
     return genre, mood, gender
 
+def rewrite_style_input_to_multi_tag_combo_v3_5(text: str) -> Tuple[str, str, str, int]:
+    genre, mood, gender = _split_and_check_style_text(text)
+    # default genre
+    if (not genre) or (genre not in COMBO_GENRE_TO_MULTITAG_V3_5):
+        genre = "Pop"
+    multitag_list = random.choice(COMBO_GENRE_TO_MULTITAG_V3_5[genre])
+    multitag_list = multitag_list.split('|')
+    if mood:
+        mood = MAP_SA_TO_AUDIO_TAG[mood] if mood in SA_MOOD19 else mood
+    multitag_list[1] = mood
+    if not gender:
+        gender = random.choice(COMBO_VOICE_GENDER_TO_MULTITAG_V3)
+    if 'Adult' not in gender:
+        gender = 'Adult,' + gender
+    multitag_list[3] = gender
+    multitag = "|".join(multitag_list)
+    gender = "Male" if "Male" in multitag_list[3] else "Female"
+    speaker_id = ARTIST_ID_MAP_V2[gender]
+
+    key, tempo_label = "N", ""
+    print('Original style input : ' + text)
+    print('Rewrite style input : ' + multitag)
+    return multitag, key, tempo_label, speaker_id
 
 def rewrite_style_input_to_multi_tag_combo_v3(text: str) -> Tuple[str, str, str, int]:
     multitag_list = ['', '', '', '', '']
@@ -2082,3 +2253,4 @@ def rewrite_style_input_to_sa_tag(text: str) -> Tuple[str, str, str, int]:
     print('Original style input : ' + text)
     print('Rewrite style input : ' + satag)
     return satag, key, tempo_label, speaker_id
+

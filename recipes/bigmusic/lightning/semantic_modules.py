@@ -876,7 +876,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         for x in batch['style_text']:
             x = x.split('|')
             print(x, ' apply cfg to : ', controller_cfg_label)
-            if rewrite_target in ['multi_tag', 'multi_tag_v3', 'multi_tag_combo_v3']:
+            if rewrite_target in ['multi_tag', 'multi_tag_v3', 'multi_tag_combo_v3', 'multi_tag_combo_v3_5']:
                 x[0] = '' if 'genre' in controller_cfg_label else x[0]
                 x[1] = '' if 'mood' in controller_cfg_label else x[1]
                 x[2] = '' if 'scene' in controller_cfg_label else x[2]
