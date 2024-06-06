@@ -361,9 +361,9 @@ RUN pip3 install --no-cache-dir mpi4py
 # To make docker image stable, we currently pin to the latest commit into main branch.
 #
 # This must be the last pip package, otherwise it may get overwritten back to 2.1 when installing other packages.
-RUN pip3 install --no-cache-dir 'git+https://github.com/openai/triton.git@8e0c7b425ac149c43183de966ffa423fd46e4762#egg=triton&subdirectory=python'
+RUN pip3 install --no-cache-dir 'git+https://github.com/openai/triton.git@604622323f16bf1bf6d8ea8e489e6e491278e74d#egg=triton&subdirectory=python'
 
-# Upgrade Python Pillow 
+# Upgrade Python Pillow
 RUN pip install --upgrade "pillow>=10.0.1"
 
 # INSTALL AWS RELATED LIBS
