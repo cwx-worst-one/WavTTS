@@ -658,6 +658,7 @@ class SemanticModule_MergeV2(BaseContinuousEmbedModule):
                 bsz,
                 t,
             )
+            target_ids = torch.where(loss_mask.bool(), target_ids, torch.zeros_like(target_ids))
             loss = self.criterion(x, target_ids, mask=loss_mask)
             accu = (
                 ((x.argmax(dim=-1) == target_ids).float() * loss_mask).sum()
