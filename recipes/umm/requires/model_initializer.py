@@ -178,10 +178,8 @@ def init_dualumm(
     cache_dir=None,
     device=None,
     load_required_modules_in_init=False,
-    version="v2",
 ):
-    if version == "v2":
-        from recipes.umm.modules.lit_module_mkii_dual import DualUMMv2 as DualUMM
+    from recipes.umm.modules.lit_module_mkii_dual import DualUMMv2 as DualUMM
     if cache_dir is not None:
         os.makedirs(cache_dir, exist_ok=True)
 
@@ -245,8 +243,8 @@ def init_convumm_gan(
         model.eval()
         model.to(device)
         return {
-            "convumm_gan_model": model
-        }  # @hanoihantrakul 21MAY2024 Unlike other init functions, I stop calling this "Stage3" because there is no concept of Stage1-2-3 training in ConvUMM-GAN.
+            "Stage3": model
+        }  # Using Stage3 naming convention to keep things consistent. Note: convumm_gan does not have a stage3
 
 
 def init_stage3_dual_voc(hpath, local_rank, cache_dir=None):

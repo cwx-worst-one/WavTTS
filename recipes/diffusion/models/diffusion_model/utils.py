@@ -241,7 +241,7 @@ def run_diffusion(requires, samples, params):
 
     pred_emb = pred_emb.float()
     duration = pred_emb.shape[-1] // vocoder_hz
-    wavs_g = vocode_in_chunks(pred_emb, vocoder, mini_bs=1, chunk_size=1, device='cpu')
+    wavs_g = vocode_in_chunks(pred_emb, vocoder, mini_bs=1, chunk_size=4, device='cpu')
 
     # For bigmusic: [bs, c, seq] -> [bs, seq] 
     # if len(wavs_g.shape) == 3:

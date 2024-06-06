@@ -1,11 +1,12 @@
 from typing import Optional
 
-from pytorch_lightning.callbacks import ModelCheckpoint
+# from pytorch_lightning.callbacks import ModelCheckpoint
+from samantha.callbacks.hdfs_model_checkpoint import HDFSModelCheckpoint
 from pytorch_lightning.utilities import rank_zero_info
 from recipes.diffusion.utils.ema import EMA
 
 
-class EMAModelCheckpoint(ModelCheckpoint):
+class EMAModelCheckpoint(HDFSModelCheckpoint):
     """
     Extent the original ModelCheckpoint to save and load ema stats.
     """

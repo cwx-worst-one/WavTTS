@@ -5,7 +5,7 @@ import torch
 import torchaudio
 import soundfile as sf
 import pytorch_lightning as pl
-from einops import repeat
+from einops import repeat, rearrange
 
 from pytorch_lightning.profilers import PassThroughProfiler
 from pytorch_lightning.utilities.rank_zero import rank_zero_info
@@ -32,10 +32,12 @@ class DiffusionModule(pl.LightningModule):
             lora,
             target_dim,
             num_chunks,
+            scale_latent,
             duration,
             noise_range,
             tokenizer_sample_rate,
             diffusion_sample_rate,
+            dataloader_sample_rate,
             sample_pool_size,
             train_batch_size,
             val_batch_size,
@@ -52,7 +54,7 @@ class DiffusionModule(pl.LightningModule):
         # all parameters in ctor will be saved to self.hparams
         self.save_hyperparameters(ignore=['diffusion_model'])
    
-        self.loss_function = torch.nn.MSELoss()
+        self.loss_function = torch.nn.MSELoss(reduction='none')
         
         self.requires = {}
         self.model = diffusion_model 
@@ -70,16 +72,17 @@ class DiffusionModule(pl.LightningModule):
         self.sampler = Sampler(
             in_channels=target_dim,
             window_length=duration,
-            vocoder_hz=125 if diffusion_sample_rate==24000 else 147
+            # num_splits=num_chunks,
+            vocoder_hz=125 if diffusion_sample_rate==24000 else 49
         )
         self.current_step = 0
         if sample_pool_size > 0:
             if online_feature:
                 self.sample_pool = SamplePool(
-                    data_samplerate=diffusion_sample_rate,
+                    data_samplerate=dataloader_sample_rate,
                     cache_size=sample_pool_size,
                     batch_size=train_batch_size,
-                    length_samples=int(duration*diffusion_sample_rate),
+                    length_samples=int(duration*dataloader_sample_rate),
                     silence_prob=0.05,
                 )
             else:
@@ -88,8 +91,8 @@ class DiffusionModule(pl.LightningModule):
                     batch_size=train_batch_size,
                     silence_prob=0,
                 )
-        if diffusion_sample_rate != tokenizer_sample_rate:
-            self.resampler = torchaudio.transforms.Resample(diffusion_sample_rate, tokenizer_sample_rate)
+        if dataloader_sample_rate != tokenizer_sample_rate:
+            self.resampler = torchaudio.transforms.Resample(dataloader_sample_rate, tokenizer_sample_rate)
     
     def load_from_pretrained(self, pretrained_path=None):
         rank_zero_info(f'Loading pre-trained model from checkpoint {pretrained_path}')
@@ -250,6 +253,9 @@ class DiffusionModule(pl.LightningModule):
                     condition_audio = condition_audio.mean(dim=1, keepdim=True)
                 else:
                     condition_audio = batch['audio']
+                # tmp solution to use 44k raw audio for 24k on-the-fly training
+                if self.hparams.dataloader_sample_rate != self.hparams.diffusion_sample_rate and getattr(self, "resampler", False):
+                    batch['audio'] = condition_audio
                 
                 with torch.autocast(device_type="cuda", enabled=False):
                     # context
@@ -276,7 +282,13 @@ class DiffusionModule(pl.LightningModule):
                     # concat vc condition at the front
                     condition_tokens = torch.cat([vc_condition_tokens, condition_tokens], dim=-1)
                     vocoder_embs = torch.cat([vc_condition_emb, vocoder_embs], dim=-1)
-                
+
+            # scale latent
+            # std_mean = (tensor(0.2419), tensor(-0.0012) from 1500 batch, 4 min per batch audio, data id 1530
+            # ckpt: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/44.1k_stereo_latent=64_hz=49_kl=1e-6_v2_freq=2/checkpoints/last-EMA.ckpt
+            if self.hparams.scale_latent:
+                vocoder_embs = vocoder_embs / 0.2419  
+
             # get training target
             b, d, l = vocoder_embs.shape
             et = torch.randn_like(vocoder_embs)
@@ -288,6 +300,8 @@ class DiffusionModule(pl.LightningModule):
             t = (lower_bound - upper_bound) * t + upper_bound
             # extent t to l, use clone to avoid call by reference
             t = repeat(t, 'b 1 n -> b 1 (n l)', l=l).clone().detach()
+
+            original_t = t.clone()
 
             if self.hparams.vc:
                 t = torch.cat([torch.zeros_like(t)[..., :vc_condition_emb.shape[-1]], t[..., vc_condition_emb.shape[-1]:]], dim=-1)
@@ -318,10 +332,9 @@ class DiffusionModule(pl.LightningModule):
             end_ts = time.perf_counter()
         # model_metric
         num_tokens = b * l
-
-        self.model_metric.num_tokens += num_tokens
+        semantic_seqlen = condition_tokens.shape[-1]
         if self.trainer.global_step % self.trainer.log_every_n_steps==0:
-            self.model_metric.update(0,self.trainer.state.stage)
+            self.model_metric.update(num_tokens, self.trainer.state.stage, model_kwargs=dict(bs=b, seqlen=l, semantic_seqlen=semantic_seqlen))
 
         with self.profiler.profile("[litmodule]TNTDiffusionNetwork.forward"):
             vt_pred = self.model(
@@ -331,21 +344,44 @@ class DiffusionModule(pl.LightningModule):
                 vc_context=vc_condition_emb.mean(dim=-1, keepdim=True).permute(0, 2, 1).detach() if self.hparams.vc else None,
                 is_causal=is_causal,
             )
-
             with torch.autocast(device_type="cuda", enabled=False):
                 # unweighted_loss = self.loss_function(vt_pred[:, :, vc_condition_emb.shape[-1]:].float(), vt[:, :, vc_condition_emb.shape[-1]:].float())
                 unweighted_loss = self.loss_function(vt_pred.float(), vt.float())
+                if self.trainer.global_step % self.trainer.log_every_n_steps == 0:
+                    # track loss by noise level
+                    loss_dict = {i: [] for i in range(4)}
+                    unweighted_loss_all = rearrange(self.all_gather(unweighted_loss), 'w b c t -> (w b) c t')
+                    original_t_all = rearrange(self.all_gather(original_t)[:, :, 0, 0], 'w b -> (w b)')
+                    for i, original_t in enumerate(original_t_all):
+                        index = int(original_t // 0.25) 
+                        index = min(index, 3)  # Ensure the index does not exceed 3
+                        loss_dict[index].append(unweighted_loss_all[i].mean())
+
+                    for k in loss_dict:
+                        loss_dict[k] = torch.mean(torch.tensor(loss_dict[k]))
+
+                # don't calculate the loss for 0 noise level input
+                t_mask = (t != 0).bool()
+                t_mask = repeat(t_mask, 'b 1 t -> b d t', d=d)
+                unweighted_loss = unweighted_loss[t_mask]
+
                 unweighted_loss = torch.mean(unweighted_loss)
                 loss = torch.mean(unweighted_loss)
+
+
         if isinstance(self.model.flops_fn,TNTDiffusionNetworkFLOPsCounter):
             self.model.flops_fn(b,l, condition_tokens.shape[1], vc_condition_emb.shape[1] if self.hparams.vc else 0)
             
-        flops = self.model.flops_fn.get_total_flops()
+        # flops = self.model.flops_fn.get_total_flops()
         
-        if self.trainer.global_step % self.trainer.log_every_n_steps == 0:
+        if (self.trainer.global_step) % self.trainer.log_every_n_steps == 0:
             log_dict = {
-                "training/loss": loss, 
-                "training/unweighted_loss": unweighted_loss,
+                "training/loss": loss.cpu().item(),
+                "training/unweighted_loss": unweighted_loss.cpu().item(),
+                "training/loss/noise_level=[0-0.25]": loss_dict[0].cpu().item(),
+                "training/loss/noise_level=[0.25-0.5]": loss_dict[1].cpu().item(),
+                "training/loss/noise_level=[0.5-0.75]": loss_dict[2].cpu().item(),
+                "training/loss/noise_level=[0.75-1]": loss_dict[3].cpu().item()
             }
             log_dict["training/bs"] = b
             log_dict["training/seqlen"] = l
@@ -380,11 +416,11 @@ class DiffusionModule(pl.LightningModule):
                     batch['audio'] = batch['audio'][:, None, :] # bs, seq_len -> bs, ch1, seq_len
                 
                 # context
-                batch['audio'] = batch['audio'][:self.hparams.val_batch_size, :int(self.hparams.duration*self.hparams.diffusion_sample_rate)]
+                batch['audio'] = batch['audio'][:self.hparams.val_batch_size, :, :int(self.hparams.duration*self.hparams.dataloader_sample_rate)]
 
                 # pad to int(self.hparams.duration*self.hparams.diffusion_sample_rate)
-                if batch['audio'].shape[-1] < int(self.hparams.duration*self.hparams.diffusion_sample_rate):
-                    pad_len = int(self.hparams.duration*self.hparams.diffusion_sample_rate) - batch['audio'].shape[-1]
+                if batch['audio'].shape[-1] < int(self.hparams.duration*self.hparams.dataloader_sample_rate):
+                    pad_len = int(self.hparams.duration*self.hparams.dataloader_sample_rate) - batch['audio'].shape[-1]
                     batch['audio'] = torch.nn.functional.pad(batch['audio'], (0, pad_len), 'constant', 0)
 
                 if getattr(self, "resampler", False):
@@ -418,7 +454,7 @@ class DiffusionModule(pl.LightningModule):
                 semantic_context=condition_tokens,
                 num_items=condition_tokens.shape[0], # batch size: how many samples to generate
                 num_chunks=self.hparams.num_chunks,
-                num_steps=25, # diffusion steps
+                num_steps=50, # diffusion steps
                 bf16_portion=0.0,
                 angle_schedule='linear',
                 schdeule_slope=2.5,
@@ -441,7 +477,7 @@ class DiffusionModule(pl.LightningModule):
                 sf.write(
                     f"{self.hparams.val_output_samples_dir}/{self.current_step}/{self.local_rank}/{num_files}_gt.wav",
                     gt.cpu().numpy().T,
-                    self.hparams.diffusion_sample_rate,
+                    self.hparams.dataloader_sample_rate,
                 )
         else:
             gt_wavs = self.vocoder_embs_to_wav(gt_vocoder_embs.float())

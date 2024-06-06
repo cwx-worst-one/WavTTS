@@ -15,8 +15,7 @@ from webdataset import shardlists
 from samantha.dataio.parquet.parquet_dataset import ParquetDataset
 from samantha.dataio.webdataset.pipeline import WebPipeline
 
-from recipes.bigmusic.datasets.symbolic_music.bm_dfs_dict_builder import BMDfsDictBuilder
-from recipes.bigmusic.datasets.symbolic_music.fixed_length_trans5stem_and_lyric2audio_codec import FixedLengthTrans5StemsAndLyric2AudioCodec
+import torchaudio
 
 class ParquetDatasetWrapper(WebPipeline):
     def __init__(
@@ -46,18 +45,25 @@ class ParquetDatasetWrapper(WebPipeline):
     def decode(self, items) -> Iterator[Dict[str, Any]]:
         for item in items:
             # from byte to npy
-            wav_npy, sr = librosa.load(io.BytesIO(item["wav"]), sr=None, mono=(self.n_channels==1))
+            # wav_npy, sr = librosa.load(io.BytesIO(item["wav"]), sr=None, mono=(self.n_channels==1))
+            wav_npy, sr = torchaudio.load(io.BytesIO(item["wav"]))
             wav_tensor = torch.as_tensor(wav_npy, dtype=torch.float32)
             if wav_tensor.ndim == 1:
                 wav_tensor = wav_tensor[None, :]
+            # drop samples with not enogh channels
+            if wav_tensor.shape[0] != self.n_channels:
+                continue
             audio_duration_samples = int(self.audio_duration * self.dataset_samplerate)
+            # drop the sample its too short
+            if wav_tensor.shape[-1] < (audio_duration_samples* 0.8):
+                continue
             # pad audio to the length of duration
-            if wav_tensor.shape[-1] < audio_duration_samples:
+            elif wav_tensor.shape[-1] < (audio_duration_samples):
                 pad_len = audio_duration_samples - wav_tensor.shape[-1]
                 wav_tensor = torch.nn.functional.pad(
                     wav_tensor, (0, pad_len), "constant", 0
                 )
-
+            
             if self.audio_random_crop:
                 # random crop
                 start = torch.randint(
@@ -67,7 +73,6 @@ class ParquetDatasetWrapper(WebPipeline):
             else:
                 # use first [audio_duration second]
                 wav_tensor = wav_tensor[:, :audio_duration_samples]
-
             # loudness detection
             db = self.meter.integrated_loudness(wav_tensor.detach().cpu().numpy().T)
             if db < -50 or np.isneginf(db):
@@ -224,111 +229,6 @@ class OfflineFeatureParquetDatasetWrapper(ParquetDatasetWrapper):
             }
 
 
-class OfflineLeadsheetParquetDatasetWrapper(ParquetDatasetWrapper):
-    KEYS_REQUIRED=["uttid", "vocoder_emb", "meta"]
-    def __init__(self, data_id=408, resampled: bool = True, audio_duration: int = 30, audio_random_crop: bool = True, nodesplitter=wds.split_by_node, n_channels: int = 1, dataset_samplerate: int = 44100):
-        super().__init__(data_id, resampled, audio_duration, audio_random_crop, nodesplitter, n_channels, dataset_samplerate)
-        self.config = FixedLengthTrans5StemsAndLyric2AudioCodec.Config(
-        # TODO:hzy:move to config yaml
-        lyrics_seq_len=0,
-        leadsheet_seq_len=7000,
-        semantic_frame_rate=25,
-        audio_max_duration=audio_duration,
-        sample_rate=dataset_samplerate,
-        audio_key='wav',
-        conditions="remi_leadsheet_tokens",
-        include_utterance_phoneme_tokens=False
-        )
-        self.codec = FixedLengthTrans5StemsAndLyric2AudioCodec(self.config)
-
-    def decode(self, items) -> Iterator[Dict[str, Any]]:
-        for item in items:
-            assert all([k in item for k in self.KEYS_REQUIRED])
-
-            # TODO:hzy:extract vocoder_embs in 1838/1839 datasets
-            # Extract vocoder_embs
-            meta_song_id = item["uttid"]
-            vocoder_embs = item["vocoder_emb"]
-            if vocoder_embs is None:
-                print(
-                    f"[WARNING] get 'vocoder_emb=None' from dataset (uttid={meta_song_id})"
-                )
-                continue
-            else:
-                vocoder_embs = torch.from_numpy(pickle.loads(vocoder_embs))
-                if vocoder_embs.ndim == 2:
-                    vocoder_embs = vocoder_embs[None, :]
-            
-            # Extract leadsheet tokens
-            dfs_dict = BMDfsDictBuilder(item)\
-                .pre_load_meta()\
-                .add_df_note(subsets=["vocal", "piano", "guitar", "bass", "drums"])\
-                .add_df_lyrics()\
-                .add_df_beat()\
-                .add_df_section()\
-                .add_df_chord()\
-                .quantize_chord_to_beat()\
-                .quantize_section_to_downbeat()\
-                .add_audio(audio_key=self.config.audio_key)\
-                .create_output()
-            tokens = self.codec.encode_leadsheet(dfs_dict)
-
-            ## Convert leadsheet tokens to required model input format
-            leadsheet_tokens = self.codec.chop_or_pad(arr=tokens[:-1],
-                target_len=self.config.leadsheet_seq_len - 1,
-            )
-            leadsheet_tokens = torch.LongTensor(np.append(leadsheet_tokens, self.codec.indexer["eos"]))
-
-            # Extract audio array
-            audio, sample_rate = dfs_dict["audio"]
-            audio = audio.squeeze(0)
-            dur =  len(audio)/sample_rate
-            wav_tensor = torch.as_tensor(audio, dtype=torch.float32)
-            if wav_tensor.ndim == 1:
-                wav_tensor = wav_tensor[None, :]
-            audio_duration_samples = int(self.audio_duration * self.dataset_samplerate)
-
-            # pad audio to the length of duration
-            if wav_tensor.shape[-1] < audio_duration_samples:
-                pad_len = audio_duration_samples - wav_tensor.shape[-1]
-                wav_tensor = torch.nn.functional.pad(
-                    wav_tensor, (0, pad_len), "constant", 0
-                )
-
-            if self.audio_random_crop:
-                # random crop
-                start = torch.randint(
-                    0, wav_tensor.shape[-1] - audio_duration_samples + 1, (1,)
-                ).item()
-                wav_tensor = wav_tensor[:, start : start + audio_duration_samples]
-            else:
-                # use first [audio_duration second]
-                wav_tensor = wav_tensor[:, :audio_duration_samples]
-
-            # loudness detection
-            loudness = self.meter.integrated_loudness(wav_tensor.detach().cpu().numpy().T)
-            if loudness < -50 or np.isneginf(loudness):
-                continue
-
-            if not (isinstance(loudness,list) and isinstance(dur,float)):
-                print(f"[WARINING] invalid 'loudness' with {type(loudness)}(list) and {type(dur)}(float)")
-                continue
-
-            try:
-                assert len(leadsheet_tokens) == len(vocoder_embs) == len(loudness)
-                min_bs = len(leadsheet_tokens)
-            except:
-                min_bs = min(len(leadsheet_tokens), len(vocoder_embs), len(loudness))
-
-            yield {
-                "meta_song_id": meta_song_id,
-                "condition_tokens": leadsheet_tokens[:min_bs],
-                "vocoder_embs": vocoder_embs[:min_bs],
-                "loudness": loudness[:min_bs],
-                "duration": dur,
-            }
-
-
 class OfflineFeatureParquetDataModule(pl.LightningDataModule):
     def __init__(
         self,
@@ -344,20 +244,19 @@ class OfflineFeatureParquetDataModule(pl.LightningDataModule):
         audio_duration: int = 30,
         audio_random_crop: bool = True,
         prefetch_factor=2,
-        datasetcalss = None,
     ):
         super().__init__()
         self.train_batch_size = train_batch_size
         self.valid_batch_size = valid_batch_size
         self.shuffle_buffer_size = shuffle_buffer_size
-        self.train_dataset = datasetcalss(
+        self.train_dataset = OfflineFeatureParquetDatasetWrapper(
             data_id=train_data_id,
             resampled=resampled,
             audio_duration=audio_duration,
             audio_random_crop=audio_random_crop,
             dataset_samplerate=dataset_samplerate,
         )
-        self.validation_dataset = datasetcalss(
+        self.validation_dataset = OfflineFeatureParquetDatasetWrapper(
             data_id=valid_data_id,
             resampled=True,
             audio_duration=audio_duration,
@@ -427,6 +326,16 @@ class OfflineFeatureParquetDataModule(pl.LightningDataModule):
 
 
 if __name__ == "__main__":
+    dataset = ParquetDatasetWrapper(
+            data_id=2190,
+            resampled=True,
+            audio_duration=30,
+            audio_random_crop=True,
+            n_channels=2,
+            dataset_samplerate=44100,
+    )
+    
+
     # datamodule = ParquetDataModule(794, 793, 4, 4, 2, dataset_samplerate=24000)
     
     # train_loader = datamodule.val_dataloader()
@@ -437,27 +346,15 @@ if __name__ == "__main__":
     #     # assert 1==2
 
     # dataset=OfflineFeatureParquetDatasetWrapper(865)
-    # # dataset=OfflineFeatureParquetDatasetWrapper(856)
-    # # dataset=OfflineFeatureParquetDatasetWrapper(839)
-    # # dataset=OfflineFeatureParquetDatasetWrapper(808)
-    # for data in dataset:
-    #     # print(data.keys())
-    #     for k,v in data.items():
-    #         try:
-    #             print(k, v.shape)
-    #         except:
-    #             print(k, v)
-    # print("OfflineFeatureParquetDatasetWrapper")
-    # # OfflineFeatureParquetDataModule(856,856,16,16)
-
-
-
-    dataset=OfflineLeadsheetParquetDatasetWrapper(1838, dataset_samplerate=24000)
+    # dataset=OfflineFeatureParquetDatasetWrapper(856)
+    # dataset=OfflineFeatureParquetDatasetWrapper(839)
+    # dataset=OfflineFeatureParquetDatasetWrapper(808)
     for data in dataset:
-        print(data.keys())
+        # print(data.keys())
         for k,v in data.items():
             try:
                 print(k, v.shape)
             except:
                 print(k, v)
-    print("OfflineLeadsheetParquetDatasetWrapper")
+        print()
+    # OfflineFeatureParquetDataModule(856,856,16,16)
