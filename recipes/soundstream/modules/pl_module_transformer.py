@@ -3,10 +3,7 @@ import os
 import pytorch_lightning as pl
 import soundfile as sf
 import torch
-try:
-    import torch_museval
-except Exception as e:
-    print('WARNING: torch_museval not installed. This is required if doing Soundstream training')
+import torch_museval
 
 from recipes.soundstream.utils.losses import (
     MultiResolutionSTFTLoss,
@@ -196,7 +193,6 @@ class SoundstreamModule(pl.LightningModule):
         )
         self.log_dict(
             {
-                "training/loss": total_loss_d,
                 "total_loss_d": total_loss_d,
                 # "total_loss_g": total_loss_g,
                 "sc_loss": sc_loss,

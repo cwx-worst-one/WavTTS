@@ -60,8 +60,6 @@ train_dataset: !new:recipes.musiclm.datasets.mcc.MCC40MDataset
     overlap_vocal_threshold: 0.1
     resampled: True
     shardshuffle: True
-    seed: !ref <seed>
-
 
 val_dataset: !new:recipes.soundstream.dataset.mcc.MCCDataset
     music_len: 240000 
@@ -96,7 +94,7 @@ dis_lr_scheduler_cls: !name:torch.optim.lr_scheduler.LambdaLR
         decay_factor: 0.5
         decay_interval: 200000
 
-pl_module: !new:recipes.soundstream.modules.pl_module_vae.VocoderModule.load_from_checkpoint
+pl_module: !new:recipes.soundstream.modules.pl_module_vae.VocoderModule
     seed: !ref <seed>
     generator: !new:recipes.soundstream.models.vqgan.VQGAN_KL_new
         latent_dim: 32
@@ -137,7 +135,7 @@ trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>
     accelerator: auto
     devices: auto
-    num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
     deterministic: False  # warning: setting to True can cause slowdowns
     strategy: !ref <run_opts[strategy]>
     enable_model_summary: True

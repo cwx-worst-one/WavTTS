@@ -3,11 +3,7 @@ import os
 import pytorch_lightning as pl
 import soundfile as sf
 import torch
-try:
-    import torch_museval
-except Exception as e:
-    print('WARNING: torch_museval not installed. This is required if doing Soundstream training')
-
+import torch_museval
 
 from recipes.soundstream.utils.losses import (
     MultiResolutionSTFTLoss,
@@ -150,7 +146,6 @@ class SoundstreamModule(pl.LightningModule):
         )
         self.log_dict(
             {
-                "training/loss": total_loss_d,
                 "total_loss_d": total_loss_d,
                 # "total_loss_g": total_loss_g,
                 "sc_loss": sc_loss,
@@ -174,6 +169,7 @@ class SoundstreamModule(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         wavs_g, _, _, _ = self.generator(batch["audio"], warmup=False)
+        wavs_g = wavs_g.detach()
 
         # calculate SDR
         sdrs = []
@@ -222,7 +218,7 @@ class SoundstreamModule(pl.LightningModule):
     def on_validation_epoch_end(self):
         # get results from all the gpu
         # NOTE: gather dict will get all the results from all the gpu under same key, might be redundant
-        results = self.all_gather(self.val_output_dict) 
+        results = self.all_gather(self.val_output_dict).detach().cpu()
 
         # get median sdr
         # put values in result to list

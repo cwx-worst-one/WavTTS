@@ -6,7 +6,7 @@
 
 seed: 43
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
-ckpt_path: null
+checkpoint_path: null
 
 # running parameters
 run_opts:
@@ -14,13 +14,13 @@ run_opts:
     log_dir: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl
     tensorboard_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
     log_name: "vocoder"
-    version: "model_7_44.1k_shutterstock"
+    version: "model_6_44.1k_a100"
     strategy: ddp_find_unused_parameters_true #!new:pytorch_lightning.strategies.ddp.DDPStrategy static_graph: True
     precision: 32
-    log_every_n_steps: 100
-    limit_val_batches: 200
+    log_every_n_steps: 10
+    limit_val_batches: 400
     num_steps: 6000000
-    val_check_interval: 5000
+    val_check_interval: 4000
     val_output_samples_dir: generated_samples #"/mnt/bn/audio-diffusion/wtl/vocoder/model_5_44.1k/generated_samples"
     adapt_hopper: True
 
@@ -28,13 +28,13 @@ training_params:
     n_channels: 2
     sample_rate: 44100
     dataloader_batch_size: 4
-    dataloader_num_workers: 12
-    dataloader_duration: 4.0
-    dataloader_prefetch_factor: 2
+    dataloader_num_workers: 15
+    dataloader_duration: 20.0
+    dataloader_prefetch_factor: 32
     shuffle_buffer_size: 10
     train_batch_size: 16
     valid_batch_size: 1
-    train_sample_pool_size: 64
+    train_sample_pool_size: 512
     train_sample_length: 16800 # 40 frame, 0.38 sec 
     learning_rate: 0.00005
     weight_decay: 0.005
@@ -51,15 +51,11 @@ training_params:
 #     batch_size: !ref <training_params[dataloader_batch_size]>
 #     shuffle_buffer_size: !ref <training_params[shuffle_buffer_size]>
 #     num_workers: !ref <training_params[dataloader_num_workers]>
-pl_datamodule: !new:recipes.diffusion.dataset.parquet_dataset.ParquetDataModule
-    train_data_id: 877
-    valid_data_id: 878
+pl_datamodule: !new:recipes.diffusion.dataset.mcc60m_441_subset.MCC60M441SubsetDataModule
     train_batch_size: !ref <training_params[dataloader_batch_size]>
     valid_batch_size: !ref <training_params[valid_batch_size]>
     shuffle_buffer_size: !ref <training_params[shuffle_buffer_size]>
     num_workers: !ref <training_params[dataloader_num_workers]>
-    n_channels: !ref <training_params[n_channels]>
-    dataset_samplerate: !ref <training_params[sample_rate]>
     audio_duration: !ref <training_params[dataloader_duration]>
     prefetch_factor: !ref <training_params[dataloader_prefetch_factor]>
 
@@ -67,7 +63,6 @@ pl_datamodule: !new:recipes.diffusion.dataset.parquet_dataset.ParquetDataModule
 optimizer_cls: !name:torch.optim.AdamW
     lr: !ref <training_params[learning_rate]>
     weight_decay: !ref <training_params[weight_decay]>
-    betas: (0.8, 0.9)
 
 gen_lr_scheduler_cls: !name:torch.optim.lr_scheduler.LambdaLR
     lr_lambda: !name:recipes.soundstream.utils.lr_schedulers.lr_lambda 
@@ -94,8 +89,8 @@ pl_module: !new:recipes.soundstream.modules.pl_module_vae.VocoderModule
     discriminator: !new:recipes.soundstream.models.modules.discriminator.MultiScaleSTFTDiscriminator
         in_channels: !ref <training_params[n_channels]>
         filters: 48
-        adapt_hopper: False
-    generator_warmup_steps: 10000
+        adapt_hopper: !ref <run_opts[adapt_hopper]>
+    generator_warmup_steps: 0
     lambda_generator_loss: 1.0
     n_channels: !ref <training_params[n_channels]>
     sample_rate: !ref <training_params[sample_rate]>
@@ -139,7 +134,7 @@ trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>
     accelerator: auto
     devices: auto
-    num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
     deterministic: False  # warning: setting to True can cause slowdowns
     strategy: !ref <run_opts[strategy]>
     enable_model_summary: True

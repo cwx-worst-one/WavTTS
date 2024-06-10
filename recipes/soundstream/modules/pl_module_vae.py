@@ -4,10 +4,7 @@ import time
 import pytorch_lightning as pl
 import soundfile as sf
 import torch
-try:
-    import torch_museval
-except Exception as e:
-    print('WARNING: torch_museval not installed. This is required if doing Soundstream training')
+import torch_museval
 import torchaudio
 
 from pytorch_lightning.utilities.rank_zero import rank_zero_info
@@ -53,40 +50,43 @@ class VocoderModule(pl.LightningModule):
         dis_lr_scheduler_cls,
         precision=32,
         profiling_flops=True,
-        mix_training=False
+        mix_training=False,
+        training_samplerate=None,
     ):
         super().__init__()
         # all parameters in ctor will be saved to self.hparams
         self.save_hyperparameters(ignore=["generator", "discriminator"])
         self.generator = generator
         if mix_training:
-            for p in generator.encoder.parameters():
-                p.requires_grad = False
-            for p in generator.mean_logvar_conv.parameters():
-                p.requires_grad = False
-            self.generator.encoder.eval()
-            self.generator.mean_logvar_conv.eval()
+            # for p in generator.encoder.parameters():
+            #     p.requires_grad = False
+            # for p in generator.mean_logvar_conv.parameters():
+            #     p.requires_grad = False
+            # self.generator.encoder.eval()
+            # self.generator.mean_logvar_conv.eval()
 
             if dataloader_samplerate != encoder_samplerate:
                 self.enc_resampler = torchaudio.transforms.Resample(dataloader_samplerate, encoder_samplerate)
             if dataloader_samplerate != decoder_samplerate:
                 self.dec_resampler = torchaudio.transforms.Resample(dataloader_samplerate, decoder_samplerate)
 
+        if training_samplerate is not None and training_samplerate != dataloader_samplerate:
+            self.resampler = torchaudio.transforms.Resample(dataloader_samplerate, training_samplerate)
         self.discriminator = discriminator
 
         # stft loss
         # self.stft_criterion = MultiResolutionSTFTLoss()
         self.mel_criterion = MelSpectrogramLoss(
             sample_rate=decoder_samplerate,
-            n_mels=[5, 10, 20, 40, 80, 160, 320],
-            window_lengths=[32, 64, 128, 256, 512, 1024, 2048],
+            n_mels=[5, 10, 20, 40, 80, 160, 320, 640],
+            window_lengths=[32, 64, 128, 256, 512, 1024, 2048, 4096],
             loss_fn=torch.nn.L1Loss(),
             clamp_eps=1e-5,
             mag_weight=0.0,
             log_weight=1.0,
             pow=1.0,
-            mel_fmins=[0, 0, 0, 0, 0, 0, 0],
-            mel_fmaxes=[None, None, None, None, None, None, None],
+            mel_fmins=[0, 0, 0, 0, 0, 0, 0, 0],
+            mel_fmaxes=[None, None, None, None, None, None, None, None],
         )
 
         # disable automatic optimization for GAN training
@@ -113,6 +113,9 @@ class VocoderModule(pl.LightningModule):
     def setup(self, stage: str) -> None:
         # set torch seed for randomness
         torch.manual_seed(self.hparams.seed + self.global_rank)
+
+        if getattr(self, "resampler", False):
+            self.resampler = self.resampler.to(torch.device(f"cuda:{self.local_rank}"))
 
         if getattr(self, "enc_resampler", False):
             self.enc_resampler = self.enc_resampler.to(torch.device(f"cuda:{self.local_rank}"))
@@ -189,6 +192,9 @@ class VocoderModule(pl.LightningModule):
         if len(batch["audio"].shape) == 2:
             batch["audio"] = batch["audio"].unsqueeze(1)
 
+        if getattr(self, "resampler", False):
+            batch["audio"] = self.resampler(batch["audio"])
+
         # process batch
         batch["audio"] = self.sample_pool.process(batch["audio"])
 
@@ -216,17 +222,17 @@ class VocoderModule(pl.LightningModule):
         loss_d, r_losses, g_losses = discriminator_loss(y_d_rs, y_d_gs)
         total_loss_d = loss_d
 
-        # # warmup for generator
-        # if batch_idx > self.hparams.generator_warmup_steps:
-        opt_d.zero_grad()
-        self.manual_backward(total_loss_d)
-        norm_d = torch.nn.utils.clip_grad_norm_(
-            self.discriminator.parameters(), 1.0
-        )
-        opt_d.step()
-        sch_d.step()
-        # else:
-        #     norm_d = torch.FloatTensor([0.0])
+        # update freq = 2
+        if batch_idx % 2 == 0:
+            opt_d.zero_grad()
+            self.manual_backward(total_loss_d)
+            norm_d = torch.nn.utils.clip_grad_norm_(
+                self.discriminator.parameters(), 1.0
+            )
+            opt_d.step()
+            sch_d.step()
+        else:
+            norm_d = torch.FloatTensor([0.0])
 
         self.untoggle_optimizer(opt_d)
 
@@ -237,8 +243,18 @@ class VocoderModule(pl.LightningModule):
 
         # g logit loss
         loss_g, loss_g_items = generator_loss(y_d_gs)
+        # diff and sum representation
+        sum_wavs_g = wavs_g[:, 0, :] + wavs_g[:, 1, :]
+        sum_gt_audio = gt_audio[:, 0, :] + gt_audio[:, 1, :]
+
+        diff_wavs_g = wavs_g[:, 0, :] - wavs_g[:, 1, :]
+        diff_gt_audio = gt_audio[:, 0, :] - gt_audio[:, 1, :]
 
         mel_loss = self.mel_criterion(wavs_g, gt_audio)
+        sum_mel_loss = self.mel_criterion(sum_wavs_g, sum_gt_audio)
+        dif_mel_loss = self.mel_criterion(diff_wavs_g, diff_gt_audio)
+
+        mel_loss = 0.5 * sum_mel_loss + 0.5 * dif_mel_loss + mel_loss
 
         # fmap loss
         fmap_loss, fmap_loss_items = feature_loss(fmap_rs, fmap_gs, dynamic=True)
@@ -251,11 +267,6 @@ class VocoderModule(pl.LightningModule):
                 + 2 * fmap_loss
                 + self.hparams.kl_weight * kl_loss
             )
-            # total_loss_g = recipes/soundstream/modules/pl_module_vae.py(
-            #     # 7 * sc_loss
-            #     7 * mel_loss
-            #     + 2e-3 * kl_loss
-            # )
         else:
             total_loss_g = (
                 self.hparams.lambda_generator_loss * loss_g
@@ -272,7 +283,6 @@ class VocoderModule(pl.LightningModule):
         self.untoggle_optimizer(opt_g)
 
         stats_dict = {
-            "training/loss": total_loss_d,
             "total_loss_d": total_loss_d,
             "total_loss_g": total_loss_g,
             "mel": mel_loss,
@@ -312,6 +322,9 @@ class VocoderModule(pl.LightningModule):
         self.last_timestamp = time.time()
 
     def validation_step(self, batch, batch_idx):
+        if getattr(self, "resampler", False):
+            batch["audio"] = self.resampler(batch["audio"])
+
         if getattr(self, "enc_resampler", False):
             input_audio = self.enc_resampler(batch["audio"])
             input_audio = input_audio.mean(dim=1, keepdims=True)
