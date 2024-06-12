@@ -20,6 +20,7 @@ from samantha.components.ctiga.block import Block, ParallelBlock
 from samantha.components.ctiga.embedding import GPT2Embeddings, ParallelGPT2Embeddings
 from samantha.components.ctiga.mha import FLASHATTN_VERSIONS, MHA, ParallelMHA
 from samantha.components.ctiga.mlp import FusedMLP, GatedMlp, Mlp, ParallelFusedMLP
+from samantha.utils.ctiga import get_s3a_version
 from samantha.utils.ctiga.inference_params import InferenceParams
 from samantha.utils.ctiga.localmask import ELEMWISE_WINDOW_MASK, WINDOW_MASK_TYPES
 from samantha.utils.ctiga.padding import pad_input, unpad_input
@@ -117,6 +118,13 @@ def create_mixer_cls(
             window_size = [-1, -1]
             window_type = ELEMWISE_WINDOW_MASK
         window_type = WINDOW_MASK_TYPES[window_type]
+        if window_size[0] != -1 and window_type == 1:
+            s3a_version = get_s3a_version()
+            assert s3a_version is not None, "s3a has not been installed"
+            major, _, _, minor = [int(n) for n in s3a_version.split(".")]
+            assert (
+                major == 1 and minor >= 68
+            ), f"blockwise window_size_left!=-1, got 's3a=={s3a_version}'(expect' s3a>=1.0.0.68')"
     else:
         assert (
             not use_window_mask

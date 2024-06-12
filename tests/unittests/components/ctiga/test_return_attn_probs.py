@@ -17,90 +17,90 @@ try:
     from samantha.utils.ctiga.reconstruct_attn_probs import reconstruct_attention_probs
 except Exception:
     skip_test = True
+else:
+    has_cuda = torch.cuda.is_available()
+    pl.seed_everything(0)
 
-has_cuda = torch.cuda.is_available()
-pl.seed_everything(0)
+    device = "cuda:0"
+    dtype = torch.float16
 
-device = "cuda:0"
-dtype = torch.float16
-
-llama_mha_cls = functools.partial(
-    MHA,
-    cross_attn=False,
-    qkv_proj_bias=False,
-    out_proj_bias=False,
-    dwconv=False,
-    rotary_emb_interleaved=True,
-    use_flash_attn=True,
-    return_residual=False,
-    version=2,
-    device=device,
-    dtype=dtype,
-)
-
-llama_block_cls = functools.partial(
-    Block,
-    version=2,
-    fused_dropout_add_ln=True,
-    return_residual=False,
-    residual_in_fp32=True,
-)
-
-llama_mlp_cls = functools.partial(
-    GatedMlp,
-    activation=F.silu,
-    bias1=False,
-    bias2=False,
-    return_residual=False,
-    device=device,
-    dtype=dtype,
-)
-llama_norm_cls = functools.partial(RMSNorm, eps=1e-6, device=device, dtype=dtype)
-
-llama_config_cls= functools.partial(GPT2Config,
-        vocab_size=1227,
-        n_positions=0,  # No absolute position embedding
-        # n_embd=llama_config.hidden_size,
-        n_layer=24,
-        # n_head=llama_config.num_attention_heads,
-        # n_inner=llama_config.intermediate_size,
-        activation_function="swiglu",  # Hardcode since HF calls it 'silu'
-        # Llama doesn't have dropout, idk if it's because they only release the inference code
-        resid_pdrop=0.0,
-        embd_pdrop=0.0,
-        attn_pdrop=0.1,
-        layer_norm_epsilon=1e-6,
-        initializer_range=0.02,
-        bos_token_id=1,
-        eos_token_id=2,
-        # These are new arguments not in the original GPT2Config
-        pad_token_id=0,  # Idk if this does anything
-        rms_norm=True,
-        rotary_emb_fraction=1.0,
-        rotary_emb_interleaved=True,  # align with byteformer
-        rotary_emb_compat="default",
-        tie_word_embeddings=False,
+    llama_mha_cls = functools.partial(
+        MHA,
+        cross_attn=False,
         qkv_proj_bias=False,
         out_proj_bias=False,
-        mlp_fc1_bias=False,
-        mlp_fc2_bias=False,
+        dwconv=False,
+        rotary_emb_interleaved=True,
         use_flash_attn=True,
-        fused_bias_fc=True,
-        fused_mlp=False,
+        return_residual=False,
+        version=2,
+        device=device,
+        dtype=dtype,
+    )
+
+    llama_block_cls = functools.partial(
+        Block,
+        version=2,
         fused_dropout_add_ln=True,
+        return_residual=False,
         residual_in_fp32=True,
-        flashattn_version=2,
+    )
 
-)
+    llama_mlp_cls = functools.partial(
+        GatedMlp,
+        activation=F.silu,
+        bias1=False,
+        bias2=False,
+        return_residual=False,
+        device=device,
+        dtype=dtype,
+    )
+    llama_norm_cls = functools.partial(RMSNorm, eps=1e-6, device=device, dtype=dtype)
 
-def random_seqlen(bs, max_seqlen, max_diff_len=20):
-    max_seqlen_idx = random.randint(0, bs - 1)
-    return [
-        max_seqlen
-        if i == max_seqlen_idx
-        else max_seqlen - random.randint(1, min(max_diff_len, max_seqlen))
-        for i in range(bs)
-    ]
+    llama_config_cls= functools.partial(GPT2Config,
+            vocab_size=1227,
+            n_positions=0,  # No absolute position embedding
+            # n_embd=llama_config.hidden_size,
+            n_layer=24,
+            # n_head=llama_config.num_attention_heads,
+            # n_inner=llama_config.intermediate_size,
+            activation_function="swiglu",  # Hardcode since HF calls it 'silu'
+            # Llama doesn't have dropout, idk if it's because they only release the inference code
+            resid_pdrop=0.0,
+            embd_pdrop=0.0,
+            attn_pdrop=0.1,
+            layer_norm_epsilon=1e-6,
+            initializer_range=0.02,
+            bos_token_id=1,
+            eos_token_id=2,
+            # These are new arguments not in the original GPT2Config
+            pad_token_id=0,  # Idk if this does anything
+            rms_norm=True,
+            rotary_emb_fraction=1.0,
+            rotary_emb_interleaved=True,  # align with byteformer
+            rotary_emb_compat="default",
+            tie_word_embeddings=False,
+            qkv_proj_bias=False,
+            out_proj_bias=False,
+            mlp_fc1_bias=False,
+            mlp_fc2_bias=False,
+            use_flash_attn=True,
+            fused_bias_fc=True,
+            fused_mlp=False,
+            fused_dropout_add_ln=True,
+            residual_in_fp32=True,
+            flashattn_version=2,
+
+    )
+
+    def random_seqlen(bs, max_seqlen, max_diff_len=20):
+        max_seqlen_idx = random.randint(0, bs - 1)
+        return [
+            max_seqlen
+            if i == max_seqlen_idx
+            else max_seqlen - random.randint(1, min(max_diff_len, max_seqlen))
+            for i in range(bs)
+        ]
 
 
 @pytest.mark.skip
