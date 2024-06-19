@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+from torch.nn import CTCLoss
 from torch.nn.utils import clip_grad_value_
 
 from recipes.umm.models.voc_modules.pitch_predictor.pitch_utils import (
@@ -77,6 +78,19 @@ class ConvUMMGAN(Stage0, DualUMMUtilsMixin):
         if load_required_modules_in_init:
             self.load_required_modules()
 
+        if self.config.get("train_on_vocal_music", False):
+            """
+            19JUN2024 @hanoihantrakul: originally the `nn.CTC` object is handled
+            and configured by the `criterion.UMMLoss` object. In order to bring this back
+            to ConvUMM-GAN which doesn't have a criterion class, I put it in the
+            lit_module init for the time being.
+            """
+            self.ctc_loss_fn = CTCLoss(
+                blank=config.ctc_blank_id,
+                reduction=config.ctc_loss_reduction,
+                zero_infinity=config.ctc_zero_infinity,
+            )
+
     def load_required_modules(self):
         # @hanoihantrakul: pitch predictor to be incorporated later
         # if "pitchpdt" in self.hparams.required_modules:
@@ -105,7 +119,9 @@ class ConvUMMGAN(Stage0, DualUMMUtilsMixin):
 
         # Add text tokens if training on vocal music
         if self.config.get("train_on_vocal_music", False):
-            input_dict.update(text_ids=batch["token"].long())  # must be long type
+            input_dict.update(
+                text_ids=batch["token"].long()
+            )  # must be long type otherwise training will throw an error
         return input_dict
 
     def configure_optimizers(self):
@@ -303,8 +319,46 @@ class ConvUMMGAN(Stage0, DualUMMUtilsMixin):
                 losses_adv[k] = losses_adv[k] * self.model.config.w_loss_adv
             loss_dict.update(losses_adv)
 
-        # ASR LAS loss
+        # CTC loss
         if self.config.get("train_on_vocal_music", False):
+            """
+            19JUN2024 @hanoihantrakul: Always use CTC loss for training on vocal music.
+            In the mkii implementation, the loss is calculated as part of `criterion.py`.
+            Here, we calculate the CTC loss directly.
+            """
+            ctc_logits = output_dict["ctc_logits"]
+            text_ids = batch["text_ids"]  # `batch` is the `input_dict`
+
+            # 19JUN2024 @hanoihantrakul: the following code is copied from `UMMLoss` in lit_module/criterion.py
+            ctc_logits = ctc_logits.contiguous().float()
+            input_lengths = torch.full(
+                (ctc_logits.size(0),), ctc_logits.size(1), dtype=torch.long
+            )
+            labels_mask = text_ids > 0
+            target_lengths = labels_mask.sum(-1)
+            flattened_targets = text_ids.masked_select(labels_mask)
+
+            # CTCLoss doesn't support fp16
+            log_probs = F.log_softmax(
+                ctc_logits, dim=-1, dtype=torch.float32
+            ).transpose(
+                0, 1
+            )  # [N, T, C] -> [T, N, C]
+            with torch.backends.cudnn.flags(enabled=False):
+                ctc_loss = self.ctc_loss_fn(
+                    log_probs, flattened_targets, input_lengths, target_lengths
+                )
+
+            w_loss_ctc = self.model.config.get("w_loss_ctc", 1.0)
+            loss_dict["loss_ctc"] = ctc_loss * w_loss_ctc
+
+        # (Not used by default) ASR LAS loss
+        if self.config.get("use_las_loss", False):
+            """
+            19JUN2024 @hanoihantrakul: QQ informed me that for tokenizer training
+            we should use CTC loss and not the LAS ASR loss. I leave this here to indicate
+            what the original logic was.
+            """
             text_ids = batch["text_ids"]
             w_las = self.model.config.get("w_loss_las", 0.1)
             loss_dict[f"las_loss"] = F.cross_entropy(

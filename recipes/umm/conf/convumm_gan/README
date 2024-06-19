@@ -1,0 +1,6 @@
+19JUN2024 @hanoihantrakul
+The ConvUMM-GAN experiments were from May-June2024. I refactored
+the code from DualUMM (which had additional logic for GAN
+adversarial losses not found in umm_mkii implementation) so it works
+for a single branch + single codebook (instead of a dual-branch 
+and dual-codebook architecture).

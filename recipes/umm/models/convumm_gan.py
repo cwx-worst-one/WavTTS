@@ -128,10 +128,17 @@ class ConvUMMGAN(nn.Module):
             upsampling=self.ds,
         )
         # This is a special recon head that should only be engaged for vocal music
-        if config.get("train_on_vocal_music", False):  # TODO: ADD THIS TO CONFIG
-            self.asr_aux_vocal_head = TransformerDecoder(
-                config.vocab_size, config.hidden_size, 4, config.hidden_size * 4, 4
-            )
+        if config.get("train_on_vocal_music", False):
+            # 19JUN2024 @hanoihantrakul: always use CTC head for BigMusic Vocal music training
+            self.ctc_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+
+            # 19JUN2024 @hanoihantrakul: QQ informed me that for tokenizer training
+            # we should use CTC loss and not the LAS ASR loss. I leave this here to indicate
+            # what the original logic was when it was still LAS:
+            #
+            # self.asr_aux_vocal_head = TransformerDecoder(
+            #     config.vocab_size, config.hidden_size, 4, config.hidden_size * 4, 4
+            # )
 
     def init_vq_layers(self, config):
         """Initliaze the VQ layer."""
@@ -191,15 +198,20 @@ class ConvUMMGAN(nn.Module):
         mel_out = self.mel_head(hidden_states_aftervq, nonpadding)[:, :T]
         chroma_out = self.chroma_head(hidden_states_aftervq, nonpadding)[:, :T]
 
-        # for LAS loss when training on vocals
-        if self.config.get("train_on_vocal_music", False):
+        # Not used by default. LAS loss kept here for legacy reasons.
+        if self.config.get("use_las_loss", False):
+            """
+            19JUN2024 @hanoihantrakul: QQ informed me that for tokenizer training
+            we should use CTC loss and not the LAS ASR loss. I leave this here to indicate
+            what the original logic was.
+            """
             text_ids = input_dict["text_ids"]
             text_ids_pad = F.pad(text_ids, [1, -1], value=1)
             text_out = self.asr_aux_vocal_head(
                 hidden_states_aftervq, None, text_ids_pad, (text_ids_pad > 0).sum(-1)
             )[0]
 
-        # Populate the ouput dictionary
+        # Populate the output dict with variables for both instrumental and vocal music.
         output_dict = {
             "mel_out": mel_out,
             "vq_ids": vq_ids,
@@ -207,9 +219,27 @@ class ConvUMMGAN(nn.Module):
             "chroma_out": chroma_out,
             "hidden_states_aftervq": hidden_states_aftervq,  # TODO: CHANGE VAR NAME
         }
-        output_dict.update(vq_codebook_distance_stats)  # add codebook distance stats
-        # Add text output when training on vocal music
+
+        # Add codebook distance stats
+        output_dict.update(vq_codebook_distance_stats)
+
+        # CTC loss when training on vocals
         if self.config.get("train_on_vocal_music", False):
+            """
+            19JUN2024 @hanoihantrakul: By default we only use CTC loss
+            when training tokenizer on vocal music.
+            """
+            # For CTC, send the ctc_logits
+            output_dict.update(ctc_logits=self.ctc_head(hidden_states))
+
+        # Not used by default. See comments.
+        if self.config.get("use_las_loss", False):
+            """
+            19JUN2024 @hanoihantrakul: QQ informed me that for tokenizer training
+            we should use CTC loss and not the LAS ASR loss. I leave this here to indicate
+            what the original logic was.
+            """
+            # For ASR, send the actual text output
             output_dict.update(text_out=text_out)
         return output_dict
 

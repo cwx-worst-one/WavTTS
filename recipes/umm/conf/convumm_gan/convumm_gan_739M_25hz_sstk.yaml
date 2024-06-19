@@ -114,16 +114,16 @@ config: !new:recipes.umm.models.config.UMMConfig
     #vq_layer_idx: 6
     w_loss_mel: 1.0
     w_loss_chroma: 1.0
-    w_loss_pitch: 1.0
+    #w_loss_pitch: 1.0
     w_loss_vq: 1.0
     # w_loss_ctc: 1.0 # in ConvUMM-GAN and DualUMM we replace CTC with LAS loss
-    w_loss_las: 0.1 # maybe increase this strength higher than the default 0.1
+    # w_loss_las: 0.1 # maybe increase this strength higher than the default 0.1
     w_loss_adv: 0.05 # maybe increase this strength higher than default 0.05 
     tokenizer: !ref <extra_params[tokenizer]>
     frame_rate: !ref <extra_params[frame_rate]>
     vocab_size: 105880
-    ctc_blank_id: 105879
-    ctc_zero_infinity: True
+    #ctc_blank_id: 105879
+    #ctc_zero_infinity: True
     use_bn: false
     # hidden_dropout: 0.0
     conv_hidden_size: 256 # Changing this only changes params in the recon heads. It does not beef up the encoder.
@@ -202,7 +202,7 @@ trainer: !new:pytorch_lightning.Trainer
     logger: !ref <logger>
     accelerator: !ref <run_opts[accelerator]>
     devices: "auto"
-    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
     deterministic: False
     enable_model_summary: True
     log_every_n_steps: 100
