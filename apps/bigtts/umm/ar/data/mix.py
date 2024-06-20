@@ -107,6 +107,7 @@ class BigTTSTransforms(BaseTransforms):
         whole_sentence_prob: int = 0.01,
         enable_contexutal: bool = False,
         use_text_cfg: bool = False,
+        use_prompt_token_for_short_audio: bool = False,
     ):
         super().__init__()
         self.sample_rate = sample_rate
@@ -133,6 +134,7 @@ class BigTTSTransforms(BaseTransforms):
         self.whole_sentence_prob = whole_sentence_prob
         self.enable_contextual = enable_contexutal
         self.use_text_cfg = use_text_cfg
+        self.use_prompt_token_for_short_audio = use_prompt_token_for_short_audio
 
     def phone_tone_wordseg_to_id(self, phone, tone, word_seg):
         text_id = (
@@ -557,7 +559,10 @@ class BigTTSTransforms(BaseTransforms):
                                 tone = torch.cat([start_sil_tone, tone])
                                 wordseg = torch.cat([start_sil_wordseg, wordseg])
                                 target_token = target_token
-                                prompt_token = target_token[:0]  # 空
+                                if self.use_prompt_token_for_short_audio:
+                                    prompt_token = target_token
+                                else:
+                                    prompt_token = target_token[:0]  # 空
                             else:  # 随机挑个分隔段
                                 is_training = self.whole_sentence_prob > 0
                                 if is_training:
@@ -767,6 +772,7 @@ class BigTTSDataset(WebPipeline):
         sample_config=None,
         enable_contexutal: bool = False,
         use_text_cfg: bool = False,
+        use_prompt_token_for_short_audio: bool = False,
         **kwargs,
     ):
         logger.info(f"[{self.name}] [data_id: {data_id}] initializing...")
@@ -795,6 +801,7 @@ class BigTTSDataset(WebPipeline):
             whole_sentence_prob=whole_sentence_prob,
             enable_contexutal=enable_contexutal,
             use_text_cfg=use_text_cfg,
+            use_prompt_token_for_short_audio=use_prompt_token_for_short_audio,
         )
         # preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
         # pipeline = [{"compose": [preprocessor.train_buffer_preprocessor]}]
@@ -836,6 +843,7 @@ class MixWebDataModule(pl.LightningDataModule):
         sample_config=None,
         use_text_cfg: bool = False,
         replacement: bool = True,
+        use_prompt_token_for_short_audio: bool = False,
     ):
         super().__init__()
         self.num_workers = num_workers
@@ -948,6 +956,7 @@ class MixWebDataModule(pl.LightningDataModule):
                 enable_contexutal=True,
                 use_text_cfg=use_text_cfg,
                 replacement=replacement,
+                use_prompt_token_for_short_audio=use_prompt_token_for_short_audio,
             )
             datasets.append(bigtts_long_ctx)
         if weights[1] > 0:
@@ -977,6 +986,7 @@ class MixWebDataModule(pl.LightningDataModule):
                 enable_contexutal=False,
                 use_text_cfg=use_text_cfg,
                 replacement=replacement,
+                use_prompt_token_for_short_audio=use_prompt_token_for_short_audio,
             )
             datasets.append(bigtts)
         weights = [i for i in weights if i != 0]
@@ -1020,6 +1030,7 @@ class MixWebDataModule(pl.LightningDataModule):
                         sample_config=None,
                         enable_contexutal=False,
                         nodesplitter=return_self,
+                        use_prompt_token_for_short_audio=use_prompt_token_for_short_audio,
                     ),
                     self.val_bucketize,
                 )

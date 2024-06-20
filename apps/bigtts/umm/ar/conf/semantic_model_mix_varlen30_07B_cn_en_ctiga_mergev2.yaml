@@ -28,6 +28,7 @@ extra_params:
     use_lang_embedding: False
     use_text_lang_embedding: False
     gradient_checkpointing: False
+    freezon_spkenc_params: False
 
 # running parameters
 run_opts:
@@ -83,6 +84,7 @@ pl_datamodule: !new:apps.bigtts.umm.ar.data.mix.MixWebDataModule
     split_by_alignment: True
     token_pretrain: False
     dropout_rate_zh_tone: null      # int or null
+    use_prompt_token_for_short_audio: !ref <extra_params[freezon_spkenc_params]>
     sample_config:
         name: _ContexualParquetSample
         contextual_strategy: 5

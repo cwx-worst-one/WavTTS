@@ -50,6 +50,11 @@ class BaseModule(pl.LightningModule):
                 )
             else:
                 self.spkenc_model = spkenc_model_cls()
+
+            if extra_params.get("freezon_spkenc_params", False):
+                for param in self.spkenc_model.parameters():
+                    param.requires_grad = False
+
         self.criterion = criterion_cls()
         self.extra_params = DotDict(extra_params)
         self.requires = {}
