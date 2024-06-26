@@ -7,7 +7,7 @@ from webdataset.pipeline import DataPipeline
 
 from samantha.dataio.parquet.extension import setup_sampler
 from samantha.dataio.parquet.shardlists import ResampledShards, SimpleShardList
-from samantha.dataio.utils import resolve_data_urls
+from samantha.dataio.utils import resolve_data_urls, split_urls_by_nodes
 
 logger = logging.getLogger(__name__)
 
@@ -35,19 +35,29 @@ class ParquetDataset(DataPipeline, FluidInterface):
         sample_limit_per_file: int = None,
         extra_fields_in_data: Optional[List[str]] = None,
         sample_config: Optional[Any] = None,
+        resolve_urls: bool = True,
+        resampled_split_by_nodes: bool = False,
         **kwargs,
     ):
         super().__init__()
         self.data_id = data_id
         self.data_urls = data_urls
-        urls = resolve_data_urls(data_id=self.data_id, data_urls=self.data_urls)
 
-        if resampled:
-            self.append(
-                ResampledShards(urls, replacement=kwargs.get("replacement", False))
+        if resolve_urls:
+            self.urls = resolve_data_urls(
+                data_id=self.data_id, data_urls=self.data_urls
             )
         else:
-            self.append(SimpleShardList(urls))
+            self.urls = self.data_urls
+
+        if resampled:
+            if resampled_split_by_nodes:
+                self.urls = split_urls_by_nodes(self.urls)
+            self.append(
+                ResampledShards(self.urls, replacement=kwargs.get("replacement", False))
+            )
+        else:
+            self.append(SimpleShardList(self.urls))
             self.append(nodesplitter)
             self.append(shardlists.split_by_worker)
             if shardshuffle:

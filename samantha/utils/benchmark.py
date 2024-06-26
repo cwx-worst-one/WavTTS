@@ -32,26 +32,26 @@ def benchmark_model(
 ):
     pl_datamodule.setup(stage="fit")
     pl_datamodule.prepare_data()
-    train_loader = pl_datamodule.train_dataloader()
+    # train_loader = pl_datamodule.train_dataloader()
 
-    test_dataset = []
-    for idx, batch in tqdm(
-        enumerate(train_loader),
-        desc="Building benchmark dataset...",
-        total=n_datapoints,
-    ):
-        if idx > n_datapoints:
-            break
+    # test_dataset = []
+    # for idx, batch in tqdm(
+    #     enumerate(train_loader),
+    #     desc="Building benchmark dataset...",
+    #     total=n_datapoints,
+    # ):
+    #     if idx > n_datapoints:
+    #         break
 
-        test_dataset.extend(batch)
+    #     test_dataset.append(batch)
 
-    batch_size = pl_datamodule.batch_size
+    # batch_size = pl_datamodule.batch_size
 
-    del train_loader
-    del pl_datamodule
-    benchmark_datamodule = BenchmarkDataLoader(test_dataset, batch_size)
+    # del train_loader
+    # del pl_datamodule
+    # benchmark_datamodule = BenchmarkDataLoader(test_dataset, batch_size)
 
     trainer.profiler = AdvancedProfiler(dirpath=".", filename="perf_logs")
-    trainer.fit_loop.epoch_loop.max_epochs = 10
-    trainer.fit_loop.epoch_loop.max_steps = 10
-    trainer.fit(pl_module, datamodule=benchmark_datamodule)
+    trainer.fit_loop.epoch_loop.max_epochs = -1
+    trainer.fit_loop.epoch_loop.max_steps = 100
+    trainer.fit(pl_module, datamodule=pl_datamodule)

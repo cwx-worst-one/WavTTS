@@ -1,7 +1,11 @@
 import json
+import math
+import os
+import random
 import re
 import sys
 import tarfile
+from glob import glob
 from typing import (
     Any,
     Callable,
@@ -16,7 +20,7 @@ from typing import (
 )
 
 from lightning_fabric.utilities.cloud_io import get_filesystem
-from webdataset import filters, shardlists
+from webdataset import filters, shardlists, with_epoch
 from webdataset.compat import FluidInterface
 from webdataset.filters import reraise_exception
 from webdataset.pipeline import DataPipeline
@@ -28,8 +32,12 @@ from webdataset.tariterators import (
     valid_sample,
 )
 
-from samantha.utils.hdfs_helper import hopen
-from samantha.utils.hdfs_tools import hdfs_open
+from samantha.dataio.utils import split_urls_by_nodes
+from samantha.utils.hdfs_helper import hdfs_ls, hopen
+from samantha.utils.hdfs_tools import hdfs_count_lines_all, hdfs_open
+from samantha.utils.logger import RankedLogger
+
+logger = RankedLogger()
 
 
 def group_by_keys(
@@ -76,16 +84,36 @@ def group_by_keys(
         yield current_sample
 
 
-def resolve_url2index(url2index: Union[str, Dict[str, str]]) -> Dict[str, str]:
-    if type(url2index) is str:  # Load mapping from file
-        url2index_map = {}
-        with hopen(url2index, "r") as f:
-            for line in f:
-                if type(line) is bytes:
-                    line = line.decode("utf-8")
-                ary = line.strip().split("\t")
-                url2index_map[ary[0]] = ary[1]
-        return url2index_map
+def url2index_map(url2index: str, resolve_relative_path: bool) -> dict:
+    parent_dir = os.path.dirname(url2index)
+    url2index_map = {}
+    with hopen(url2index, "r") as f:
+        for line in f:
+            if type(line) is bytes:
+                line = line.decode("utf-8")
+            ary = line.strip().split("\t")
+
+            if resolve_relative_path:
+                ary[0] = os.path.join(parent_dir, ary[0])
+                ary[1] = os.path.join(parent_dir, ary[1])
+            url2index_map[ary[0]] = ary[1]
+    return url2index_map
+
+
+def resolve_url2index(
+    url2index: Union[str, List[str], Dict[str, str]], resolve_relative_path: bool
+) -> Dict[str, str]:
+    if type(url2index) is list:
+        all = {}
+        for url in url2index:
+            map = url2index_map(url, resolve_relative_path)
+            existing_keys = set(all.keys()).intersection(set(map.keys()))
+            if len(existing_keys):
+                raise Exception(f"Duplicate keys: {existing_keys}")
+            all.update(map)
+        return all
+    elif type(url2index) is str:  # Load mapping from file
+        return url2index_map(url2index, resolve_relative_path)
     else:
         assert type(url2index) is dict
         return url2index
@@ -299,9 +327,22 @@ class IndexedWebDataset(DataPipeline, FluidInterface):
         detshuffle: bool = False,
         nodesplitter=shardlists.single_node_only,
         use_pipe: bool = False,
+        resolve_relative_path: bool = False,
+        rng: Optional[random.Random] = None,
+        resampled_split_by_nodes: bool = False,
     ):
         super().__init__()
-        url2index = resolve_url2index(url2index)
+        if "*" in url2index:
+            logger.warn("* detected in url2index, doing glob:")
+            if url2index.startswith("hdfs://"):
+                url2index = hdfs_ls(url2index)
+            else:
+                url2index = glob(url2index)
+
+        logger.warn(f"url2index: {url2index}")
+        url2index = resolve_url2index(
+            url2index, resolve_relative_path=resolve_relative_path
+        )
 
         def handle_hdfs_cat(url):
             if not use_pipe:
@@ -313,11 +354,16 @@ class IndexedWebDataset(DataPipeline, FluidInterface):
                 return url
 
         url2index = {handle_hdfs_cat(k): v for k, v in url2index.items()}
-        urls = list(url2index.keys())
+        self.urls = list(url2index.keys())
+
         if resampled:
-            self.append(shardlists.ResampledShards(urls))
+            if resampled_split_by_nodes:
+                # first expand all urls, then split them:
+                self.urls = shardlists.expand_urls(self.urls)
+                self.urls = split_urls_by_nodes(self.urls)
+            self.append(shardlists.ResampledShards(self.urls))
         else:
-            self.append(shardlists.SimpleShardList(urls))
+            self.append(shardlists.SimpleShardList(self.urls))
             self.append(nodesplitter)
             self.append(shardlists.split_by_worker)
             if shardshuffle is True:
@@ -326,7 +372,7 @@ class IndexedWebDataset(DataPipeline, FluidInterface):
                 if detshuffle:
                     self.append(filters.detshuffle(shardshuffle))
                 else:
-                    self.append(filters.shuffle(shardshuffle))
+                    self.append(filters.shuffle(shardshuffle, rng=rng))
         self.append(
             filters.pipelinefilter(indexed_tarfile_samples)(
                 url2index=url2index, handler=handler, use_pipe=use_pipe

@@ -1,3 +1,4 @@
+import gc
 import io
 import json
 import logging
@@ -344,6 +345,30 @@ class _ParquetSample(_BaseSample):
         super().__init__(handler, sample_limit_per_file, extra_fields_in_data)
 
     def get_all_utt(self, src, filesystem):
+        """This function first builds a dictionary of utterance id's and group id's.
+
+        - Utterance id's are unique identifiers within both the data- and index shards.
+        - Group id's are the 'locations' of the data within the data shards.
+
+        The utterance id's within the index shards, are used to retrieve the group id's
+        in the data shards. The group id's are a kind of iterator ('random access') on the data shard.
+
+        - `common_utt` is a set of utterances within the shard urls. The first iterator makes sure that
+            there are no duplicates.
+
+        - `utt_sampler` is then used to order the `common_utt` according to the `index` shard.
+            This requires another iteration on the index (that was already done), but is negligible due to
+            the index shard being of a smaller file size.
+
+        Args:
+            src (dict): dictionary of data/index shard url's.
+            filesystem (str): filesystem type
+
+        Returns:
+            utt_sampler: De-duplicated, ordered list of utterance id's (according to the index shard)
+            utt2group_no: Dictionary that maps utterance id's to group id's
+        """
+
         utt2group_no = {}
         common_utt = None
         for name, url in src.items():
@@ -372,6 +397,7 @@ class _ParquetSample(_BaseSample):
         return ordered_utt, utt2group_no
 
     def construct_sample(self, sample, cache, name, reader_iter, common_utt):
+        # TODO: this is definitely not efficient if the data shard is shuffled differently than the index shard
         utt = sample["uttid"]
         cur_sample = cache[name].pop(utt, None)
         if cur_sample is None:
@@ -392,9 +418,16 @@ class _ParquetSample(_BaseSample):
                 for extra_field in self.extra_fields_in_data:
                     if extra_field in cur_sample:
                         extra_fields[extra_field] = cur_sample.get(extra_field, None)
+
+            try:
+                src_sample_rate = librosa.get_samplerate(io.BytesIO(audio_bin))
+            except Exception as e:
+                src_sample_rate = None
+                logger.warn(e)
+
             cur_sample = {
                 "wav": audio_bin,
-                "src_sample_rate": librosa.get_samplerate(io.BytesIO(audio_bin)),
+                "src_sample_rate": src_sample_rate,
                 # extra fields in data, possible vocal/acc for mss
                 **extra_fields,
             }
@@ -413,8 +446,14 @@ class _ParquetSample(_BaseSample):
                 filesystem = get_filesystem(src["index"])
                 # get common uttid from all parquet(data/index/feat)
                 ordered_utt, utt2group_no = self.get_all_utt(src, filesystem)
+
                 # limit common uttid, compute row groups for each parquet
-                common_utt = set(ordered_utt)
+                common_utt = set(ordered_utt)  # NOTE: this is already a set
+
+                # this is a dictionary of the shard name ('data', 'index') and the group id's
+                # now, group id's used to be locations of each datapoint (i.e., [0, 0, 1, 1, 1, 2, 2])
+                # this line actually evaluates it to [0, 1, 2], so the point of storing the locations of
+                # each group id is lost..?
                 row_groups = {
                     name: sorted({utt2group_no[name][uttid] for uttid in common_utt})
                     for name in src
@@ -426,7 +465,11 @@ class _ParquetSample(_BaseSample):
                     )
                     for name, url in src.items()
                 }
+
+                # this turns each ParquetReader into an iterable
                 reader_iters = {name: iter(reader) for name, reader in readers.items()}
+
+                # NOTE: re-evaluate this...!
                 cache = {name: {} for name in readers}
 
                 # read data and combine to sample
@@ -434,10 +477,14 @@ class _ParquetSample(_BaseSample):
                     if utt not in common_utt:
                         continue
                     try:
+                        # this copies the dictionary of `src_url` to create a sample dictionary
                         sample = deepcopy(src_url)
                         sample.update({"__key__": utt, "uttid": utt})
 
+                        # this updates the sample dictionary for each data/index shard:
                         for name, rit in reader_iters.items():
+                            # the sample is constructed by querying the `rit` (iterator) on the `utt` variable
+                            # from the `ordered_utt`. This means that we're kindof doing a random access here??
                             sample = self.construct_sample(
                                 sample, cache, name, rit, common_utt
                             )
@@ -462,14 +509,179 @@ class _ParquetSample(_BaseSample):
                     reader.close()
 
 
+class _ParquetSampleFast(_BaseSample):
+    def __init__(
+        self,
+        handler: Callable[[Exception], bool] = warn_and_continue,
+        sample_limit_per_file: Union[int, float] = None,
+        extra_fields_in_data: Optional[List[str]] = None,
+        sample_config: Optional[Any] = None,
+    ):
+        super().__init__(handler, sample_limit_per_file, extra_fields_in_data)
+
+    def __call__(self, sources: Iterable[Dict[str, Any]]):
+        for src in sources:
+            index_reader = None
+            data_reader = None
+            index = {}
+
+            try:
+                src_url = self.get_src_url(src)
+
+                # first, define the index shard reader and build a dictionary of samples.
+                # this is fast, because the indexes are usually much smaller than the shards containing
+                # the binary data
+                index_reader = _ParquetReader(src["index"], return_all=True)
+                for (
+                    row_group,
+                    last_row_group,
+                    group_index,
+                    last_group,
+                    item,
+                ) in index_reader:
+                    uttid = item["uttid"]
+
+                    # build index sample:
+                    sample = deepcopy(src_url)
+                    sample["__key__"] = uttid
+                    sample["meta"] = item["meta"]
+                    sample["text"] = item["text"]
+                    index[uttid] = sample
+
+                index_reader.close()
+
+                # second, define the data shard reader that will be actually used to yield samples
+                # back downstream (i.e., the iterator).
+                data_reader = _ParquetReader(src["data"], return_all=True)
+
+                for (
+                    row_group,
+                    last_row_group,
+                    group_index,
+                    last_group,
+                    item,
+                ) in data_reader:
+                    uttid = item["uttid"]
+
+                    # NOTE: this can be slightly more optimized
+                    if uttid not in index:
+                        continue
+
+                    sample = index[uttid]
+
+                    extra_fields = {}
+                    if self.extra_fields_in_data:
+                        for extra_field in self.extra_fields_in_data:
+                            if extra_field in item:
+                                extra_fields[extra_field] = item.get(extra_field, None)
+
+                    # add the audio binaries:
+                    audio_keys = list([k for k in item.keys() if "audio" in k])
+                    for k in audio_keys:
+                        sample[k] = item[k]
+
+                    # rename "audio" to "audio.wav" (default extension)
+                    if "audio" in sample:
+                        sample["audio.wav"] = sample.pop("audio")
+
+                    sample.update(
+                        {
+                            "uttid": uttid,
+                            "src_sample_rate": None,
+                            "row_group": row_group,
+                            "last_row_group": last_row_group,
+                            "last_group": last_group,
+                            "group_index": group_index,
+                            **extra_fields,
+                        }
+                    )
+                    yield sample
+
+            except Exception as e:
+                logger.error(e)
+
+            if index_reader is not None:
+                index_reader.close()
+
+            if data_reader is not None:
+                data_reader.close()
+
+            del index
+            del index_reader
+            del data_reader
+            gc.collect()
+            logger.debug("[gc] Cleared parquet readers")
+
+
+class _ParquetSampleIndex(_BaseSample):
+    def __init__(
+        self,
+        handler: Callable[[Exception], bool] = warn_and_continue,
+        sample_limit_per_file: Union[int, float] = None,
+        extra_fields_in_data: Optional[List[str]] = None,
+        sample_config: Optional[Any] = None,
+    ):
+        super().__init__(handler, sample_limit_per_file, extra_fields_in_data)
+
+    def __call__(self, sources: Iterable[Dict[str, Any]]):
+        for src in sources:
+            index_reader = None
+            try:
+                src_url = self.get_src_url(src)
+                index_reader = _ParquetReader(src["index"], return_all=True)
+                for (
+                    row_group,
+                    last_row_group,
+                    group_index,
+                    last_group,
+                    item,
+                ) in index_reader:
+                    uttid = item["uttid"]
+
+                    # build index sample:
+                    sample = deepcopy(src_url)
+                    sample["__key__"] = uttid
+                    sample["uttid"] = uttid
+                    sample["meta"] = item["meta"]
+                    sample["text"] = item["text"]
+                    yield sample
+
+            except Exception as e:
+                logger.error(e)
+
+            if index_reader is not None:
+                index_reader.close()
+
+            del index_reader
+            gc.collect()
+            logger.debug("[gc] Cleared parquet readers")
+
+
 class _ParquetReader:
-    def __init__(self, url, fs=None, columns=None, row_groups=None):
+    def __init__(
+        self, url, fs=None, columns=None, row_groups=None, return_all: bool = False
+    ):
         if fs is None:
             fs = get_filesystem(url)
+        self.return_all = return_all
         self.stream = fs.open(url, skip_instance_cache=True)
         self.parquet_file = ParquetFile(self.stream)
         self.columns = columns
         self.row_groups = row_groups or list(range(self.parquet_file.num_row_groups))
+        self.last_row_group = self.row_groups[-1]
+
+    @property
+    def metadata(self) -> "pyarrow._parquet.FileMetaData":
+        return self.parquet_file.metadata
+
+    def count_rows(self):
+        row_count = 0
+        for row_group in self.row_groups:
+            group_data = self.parquet_file.read_row_group(
+                row_group, columns=self.columns
+            )
+            row_count += len(group_data)
+        return row_count
 
     def __iter__(self):
         for row_group in self.row_groups:
@@ -477,9 +689,14 @@ class _ParquetReader:
                 row_group, columns=self.columns
             )
             group_datas = group_data.to_pandas()
-            for row in group_datas.iterrows():
-                item = row[1].to_dict()
-                yield row_group, item
+            if not self.return_all:
+                for row in group_datas.iterrows():
+                    item = row[1].to_dict()
+                    yield row_group, item
+            else:
+                last_group_index = len(group_datas) - 1
+                for group_index, row in group_datas.iterrows():
+                    yield row_group, self.last_row_group, group_index, last_group_index, row.to_dict()
 
     def set_row_groups(self, row_groups=None):
         self.row_groups = row_groups

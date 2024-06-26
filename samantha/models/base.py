@@ -1,88 +1,21 @@
-import os
 from abc import abstractmethod, abstractproperty
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from functools import cached_property
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
-from uuid import uuid4
+from typing import IO, Any, Dict, NamedTuple, Optional, Sequence, Union
 
-import numpy as np
 import torch
-import torch.nn as nn
+from lightning_fabric.utilities.types import _MAP_LOCATION_TYPE, _PATH
 from pytorch_lightning import LightningModule
+from pytorch_lightning.utilities.model_helpers import _restricted_classmethod
+from pytorch_lightning.utilities.model_summary import summarize
 from pytorch_lightning.utilities.types import STEP_OUTPUT
 from tqdm import tqdm
+from typing_extensions import Self
 
-from samantha.components.attention import MultiHeadAttention, SeerAttention
-from samantha.dataio.webdataset.writer import IndexShardWriter
+from samantha.utils.hdfs_tools import hdfs_get_cache
 from samantha.utils.logger import RankedLogger
 
 logger = RankedLogger(__name__)
-
-
-class BaseModel(nn.Module):
-    def __init__(self, config: Any) -> None:
-        super().__init__()
-        self.config = config
-
-    def init_cache(
-        self, init_values: Optional[torch.Tensor] = None, cache: Optional[dict] = None
-    ) -> Tuple[dict, List]:
-        """The `MultiHeadAttention` module optionally accepts `kv_cache` which
-        stores the key and value tensors calculated for the previous positions.
-        This method returns a dictionary that stores all caches, and the necessary
-        hooks for the key and value projection modules that save the intermediate
-        tensors to be reused during later calculations.
-
-        The `self.hooks` contain a list of PyTorch RemovableHandle objects to stop
-        the hooks from being called. This is done in `self.deinit_cache`.
-
-        Args:
-            init_values (Optional[torch.Tensor], optional):
-                Tensor containing values to initialize the k/v cache with
-                (i.e., single forward pass). Defaults to None.
-
-            cache (Optional[dict], optional):
-                Existing k/v cache. Defaults to None.
-
-        Returns:
-            Tuple[dict, List]:
-                A dictionary object mapping the key/value projection modules
-                to its cache
-        """
-        self.hooks = []
-        cache = {**cache} if cache is not None else {}
-
-        def save_to_cache(module, _, output):
-            if module not in cache:
-                cache[module] = output
-            else:
-                cache[module] = torch.cat([cache[module], output], dim=1).detach()
-            return cache[module]
-
-        def install_hooks(layer: nn.Module):
-            if isinstance(layer, (MultiHeadAttention, SeerAttention)):
-                layer._use_cache = True
-                self.hooks.append(layer.to_k.register_forward_hook(save_to_cache))
-                self.hooks.append(layer.to_v.register_forward_hook(save_to_cache))
-
-        self.apply(install_hooks)
-
-        if init_values is not None:
-            self.forward(init_values)
-
-        return cache
-
-    def deinit_cache(self) -> None:
-        def unset_cache(layer: nn.Module):
-            if isinstance(layer, (MultiHeadAttention, SeerAttention)):
-                layer._use_cache = False
-
-        self.apply(unset_cache)
-
-        for h in self.hooks:
-            h.remove()
-        self.hooks = []
-
 
 LossDict = Union[Dict[str, torch.Tensor], Dict[str, float]]
 
@@ -94,9 +27,9 @@ class ModelIdentifier(NamedTuple):
 
 
 class LightningModuleBase(LightningModule):
-    def __init__(self, ignore_hparams: List[str] = []):
+    def __init__(self, ignore: Optional[Union[Sequence[str], str]] = None):
         super().__init__()
-        self.save_hyperparameters(ignore=ignore_hparams)
+        self.save_hyperparameters(ignore=ignore, logger=False)
 
     @property
     @torch.jit.unused
@@ -118,7 +51,7 @@ class LightningModuleBase(LightningModule):
         pass
 
     @abstractmethod
-    def forward(self):
+    def forward(self, batch: Any):
         pass
 
     @abstractmethod
@@ -147,6 +80,9 @@ class LightningModuleBase(LightningModule):
             mean=torch.stack(mean).sum().item(),
             std=torch.stack(std).sum().item(),
         )
+
+    def summarize(self, max_depth: int = 1):
+        return summarize(self, max_depth=max_depth)
 
     # def on_train_start(self) -> None:
     #     if self.logger is not None:
@@ -183,6 +119,7 @@ class LightningModuleBase(LightningModule):
         on_epoch: Optional[bool] = None,
         batch_size: Optional[int] = None,
     ) -> None:
+        batch_size = loss_dict.get("batch_size", None)
         loss_dict = {f"{k}/{tag}": v for k, v in loss_dict.items()}
         self.log_dict(
             loss_dict,
@@ -202,87 +139,18 @@ class LightningModuleBase(LightningModule):
     def get_inputs(self, batch: Any):
         pass
 
-    def preprocess_dataloader(
-        self, data_loader, directory: str, rank: int, padding_strategy: str
-    ):
-        pattern = os.path.join(directory, str(rank), "%05d.tar")
-
-        # TODO retain shard variety -> audio is larger, around ~400 tracks per 8GB
-        # mel take up much less space, so I'm setting a manual maxcount instead
-
-        # maxsize = (1 << 32) * 2  # 8GiB, maximum size of each shard
-        maxcount = 1000
-        writer = IndexShardWriter(pattern, maxcount=maxcount)
-
-        logger.info(f"Writing shards to: {pattern}")
-
-        audio_key = "audio"
-
-        for batch_idx, batch in enumerate(tqdm(data_loader)):
-            batch_keys = list(batch.keys())
-
-            batch_size = batch[audio_key].shape[0]
-
-            batch.audio = batch.audio.to(self.device)
-            inputs = self.get_inputs(batch)
-
-            # write to new items
-            batch_keys.remove(audio_key)
-            for idx in range(batch_size):
-                obj = {}
-                index = {}
-
-                # write new index
-                for k in batch_keys:
-                    if batch[k] is not None:
-                        if isinstance(batch[k], str):
-                            index[k] = batch[k]
-                        else:
-                            index[k] = batch[k][idx]
-
-                # write new tar
-                for k, v in asdict(inputs).items():
-                    numpy_key = f"{k}.npy"
-                    if isinstance(v, torch.Tensor):
-                        if v.ndim:
-                            obj[numpy_key] = v[idx].detach().cpu().numpy()
-                        else:
-                            # scalars
-                            obj[numpy_key] = np.array([v.item()])
-
-                unique_id = str(uuid4())
-                obj["__key__"] = unique_id
-                writer.write(obj, index)
-        writer.close()
-
-    def preprocess_save_fp(self, pl_datamodule, root_dir: str):
-        return os.path.join(
-            root_dir, f"{pl_datamodule.__class__.__name__}_{self.__class__.__name__}"
-        )
-
-    def preprocess(self, pl_datamodule, root_dir: str, rank: int):
-        fp = self.preprocess_save_fp(pl_datamodule, root_dir)
-        pl_datamodule.setup(stage="fit")
-        self = self.to("cuda")
-
-        self.preprocess_dataloader(
-            pl_datamodule.train_dataloader(),
-            f"{fp}/train",
-            rank,
-            pl_datamodule.padding_strategy,
-        )
-        self.preprocess_dataloader(
-            pl_datamodule.val_dataloader(),
-            f"{fp}/validation",
-            rank,
-            pl_datamodule.padding_strategy,
-        )  # TODO: check if this does all validation?
-        self.preprocess_dataloader(
-            pl_datamodule.test_dataloader(),
-            f"{fp}/test",
-            rank,
-            pl_datamodule.padding_strategy,
-        )
+    @_restricted_classmethod
+    def load_from_checkpoint(
+        cls,
+        checkpoint_path: Union[_PATH, IO],
+        cache: bool = False,
+        cache_dir: str = ".cache",
+        **kwargs: Any,
+    ) -> Self:
+        if cache:
+            checkpoint_path = hdfs_get_cache(checkpoint_path, cache_dir=cache_dir)
+            logger.info(f"Loading checkpoint from cache: {checkpoint_path}")
+        return super().load_from_checkpoint(checkpoint_path=checkpoint_path, **kwargs)
 
 
 @dataclass
@@ -293,64 +161,41 @@ class TrainingResultBase:
 class DefaultTrainingBaseModule(LightningModuleBase):
     @abstractmethod
     def step(
-        self, batch: Dict[str, torch.Tensor], return_loss: bool
+        self, batch: Dict[str, torch.Tensor], batch_idx: int, return_loss: bool
     ) -> TrainingResultBase:
         pass
 
     def training_step(
         self, batch: Dict[str, torch.Tensor], batch_idx: int
     ) -> torch.Tensor:
-        result = self.step(batch, return_loss=True)
+        result = self.step(batch, batch_idx, return_loss=True)
         self.log_step(
             result.loss,
             tag="train",
             prog_bar=True,
             rank_zero_only=True,
             on_step=True,
-            sync_dist=True,  # TODO
+            sync_dist=False,
         )
         return result.loss["loss"]
 
     def validation_step(
         self, batch: Dict[str, torch.Tensor], batch_idx: int
     ) -> torch.Tensor:
-        result = self.step(batch, return_loss=True)
-        self.log_step(result.loss, tag="valid", prog_bar=True, rank_zero_only=True)
+        result = self.step(batch, batch_idx, return_loss=True)
+        self.log_step(
+            result.loss, tag="valid", prog_bar=True, rank_zero_only=True, sync_dist=True
+        )
         return result.loss["loss"]
 
     def test_step(self, batch: Dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
-        result = self.step(batch, return_loss=True)
-        self.log_step(result.loss, tag="test", prog_bar=True, rank_zero_only=True)
+        result = self.step(batch, batch_idx, return_loss=True)
+        self.log_step(
+            result.loss, tag="test", prog_bar=True, rank_zero_only=True, sync_dist=True
+        )
         return result.loss["loss"]
 
     def predict_step(
         self, batch: Dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0
     ) -> torch.Tensor:
-        return self.step(batch, return_loss=False)
-
-
-class GenerativeBaseModule(DefaultTrainingBaseModule):
-    def __init__(self):
-        super().__init__()
-
-    @abstractproperty
-    def max_seq_len(self) -> int:
-        pass
-
-    @property
-    def extra_hparams(self):
-        hparams = super().extra_hparams
-        hparams.update({"global_token_size": self.global_token_size})
-        return hparams
-
-    @property
-    def global_token_size(self) -> int:
-        return self.global_batch_size * self.max_seq_len
-
-    @property
-    def _tokens_seen(self) -> int:
-        try:
-            return self.global_token_size * self.global_step
-        except Exception as e:
-            print(e)
-            return 0
+        return self.step(batch, batch_idx, return_loss=False)

@@ -5,9 +5,10 @@ import io
 import os
 import subprocess
 from contextlib import contextmanager
-from typing import IO, Any, AnyStr, List
+from typing import IO, Any, AnyStr, List, Optional
 
 import torch
+from tqdm import tqdm
 
 HDFS_BIN = "hdfs"
 ARNOLD_REGION = os.getenv("ARNOLD_REGION", "US")
@@ -316,3 +317,35 @@ def hdfs_torch_save(obj, filepath: str, **kwargs):
             torch.save(obj, writer, **kwargs)
     else:
         torch.save(obj, filepath, **kwargs)
+
+
+def hdfs_count_lines(hdfs_path: str) -> Optional[int]:
+    assert hdfs_path.startswith("hdfs://"), hdfs_path
+    pipe = subprocess.Popen(
+        "{} dfs -cat {} | wc -l".format(HDFS_BIN, hdfs_path),
+        shell=True,
+        stdout=subprocess.PIPE,
+    )
+    try:
+        return int(pipe.stdout.read().decode().strip())
+    except Exception as e:
+        print(e)
+        return None
+
+
+def hdfs_count_lines_all(
+    hdfs_paths: List[str], n_processes: int = 16
+) -> List[Optional[int]]:
+
+    if n_processes:
+        from multiprocessing import Pool
+
+        with Pool(n_processes) as p:
+            hdfs_n_lines = list(
+                tqdm(p.imap(hdfs_count_lines, hdfs_paths), total=len(hdfs_paths))
+            )
+    else:
+        hdfs_n_lines = []
+        for fp in hdfs_paths:
+            hdfs_n_lines.append(hdfs_count_lines(fp))
+    return hdfs_n_lines

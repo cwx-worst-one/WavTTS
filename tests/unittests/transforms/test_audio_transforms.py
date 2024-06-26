@@ -53,8 +53,8 @@ def test_spectrogram():
     y = transform(x)
 
     fig, ax = plt.subplots(1, 1)
-    transform.plot(x, ax=ax)
-    plt.savefig("spectrogram.png")
+    # transform.plot(x, ax=ax)
+    # plt.savefig("spectrogram.png")
 
 
 def test_mel_spectrogram():
@@ -65,8 +65,8 @@ def test_mel_spectrogram():
     )
     y = transform(x)
     fig, ax = plt.subplots(1, 1)
-    transform.plot(x, ax=ax)
-    plt.savefig("melspectrogram.png")
+    # transform.plot(x, ax=ax)
+    # plt.savefig("melspectrogram.png")
 
 def test_compile_transforms():
     transform = Spectrogram(n_fft=1024, win_length=1024, hop_length=256)

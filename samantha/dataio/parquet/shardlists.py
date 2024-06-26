@@ -94,7 +94,7 @@ class ResampledShards(IterableDataset):
                 index = cursor % url_length
                 if index == 0:
                     loop = cursor // url_length
-                    logger.info(f"{rank=} {worker=} #{loop} shuffle")
+                    logger.info(f"{rank=} {worker=} {seed=} #{loop} shuffle")
                     self.rng.shuffle(self.urls)
                 if self._should_stamp():
                     progress = index / url_length

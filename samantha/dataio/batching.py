@@ -1,3 +1,4 @@
+import bisect
 import logging
 from typing import Callable, Dict, List, Optional
 
@@ -330,3 +331,19 @@ class TaggedBucketBatcher:
     def clear(self, tag, bucket_idx):
         """clear data buffer"""
         self.bucket_list[tag][bucket_idx] = []
+
+
+def get_bucketed_max_length(max_length: int, available_buckets: List[int]):
+    """
+    Find the smallest bucket size that is greater than or equal to max_length.
+
+    :param max_length: The calculated maximum length
+    :param available_buckets: A sorted list of available bucket sizes
+    :return: The smallest bucket size that fits max_length
+    """
+    index = bisect.bisect_left(available_buckets, max_length)
+    if index == len(available_buckets):
+        return available_buckets[
+            -1
+        ]  # If max_length is larger than all buckets, return the largest bucket
+    return available_buckets[index]

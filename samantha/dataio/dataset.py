@@ -1,4 +1,3 @@
-r"""Dataset examples for loading individual data points"""
 import logging
 from itertools import islice
 from typing import List
@@ -57,6 +56,10 @@ class MultiIterableDataset(IterableDataset):
         assert len(self._weights) == len(self._datasets)
         self._seed = seed
         self._epoch_count = 0
+
+    @property
+    def datasets(self) -> List[IterableDataset]:
+        return self._datasets
 
     def _generate_idx_by_chunk(self, rng):
         """Generate indices by chunk"""

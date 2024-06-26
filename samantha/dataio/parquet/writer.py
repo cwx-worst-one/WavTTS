@@ -48,6 +48,14 @@ class ParquetWriter:
         self.count = 0
         self._tik = time.perf_counter()
 
+    def write_row_group(self, row_group_size: int):
+        tb = pyarrow.Table.from_pylist(self.tb)
+        self.writer.write_table(tb)
+        self.total += row_group_size
+        self.row_group_no += 1
+        self.tb = []
+        return self.total
+
     def write(self, item):
         r"""Write an item to parquet."""
         if item is None:
@@ -227,6 +235,7 @@ class IndexShardWriter:
         self.data_pattern = os.path.join(
             output_root, "data", partition_path, filename_pattern
         )
+
         self.idx_pattern = os.path.join(
             output_root, f"index_{idx_version}", partition_path, filename_pattern
         )

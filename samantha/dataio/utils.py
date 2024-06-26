@@ -12,6 +12,9 @@ from multiprocessing.pool import ThreadPool
 import braceexpand
 import numpy as np
 from bytedance.easycycle import get_dataset_collection_info
+from tqdm import tqdm
+from webdataset.shardlists import split_by_node
+from webdataset.utils import pytorch_worker_info
 
 try:
     from bytedance.easycycle import get_dataset_collection_info_v2
@@ -216,6 +219,7 @@ def parquet_reader(
     num_row_groups = meta[url][0][0]
 
     if sample_limit is None:
+        # for row_group in tqdm(range(num_row_groups), desc=url):
         for row_group in range(num_row_groups):
             group_data = parquet_file.read_row_group(row_group, columns=columns)
             group_datas = group_data.to_pandas()
@@ -285,7 +289,13 @@ def resolve_data_urls(data_id=None, data_urls=None):
     if data_id is not None:
         os.environ["DatasetID"] = str(data_id)
         if get_dataset_collection_info_v2 is not None:
-            data_urls = get_dataset_collection_info_v2(data_id)["origin"]["paths"]
+            try:
+                data_urls = get_dataset_collection_info_v2(data_id)["origin"]["paths"]
+            except Exception as e:
+                logger.error(e)
+
+            data_urls = get_dataset_collection_info(data_id)
+
         else:
             data_urls = get_dataset_collection_info(data_id)
 
@@ -398,3 +408,38 @@ def _resolve_one_url(url, columns):
 def resolve_data_sources(data_id=None, data_urls=None):
     data_path = parse_data_urls(data_id, data_urls)
     return sort_data_sources(data_path)
+
+
+def split_urls_by_nodes(urls):
+    logger.info(f"Splitting {len(urls)} urls by node...")
+    # split the url's by nodes, so that duplicate shards cannot be sampled!
+    # 1. sort the url's, so that each node receives the same list:
+
+    if type(urls[0]) is dict:
+        urls = sorted(urls, key=lambda u: u["data"])
+    else:
+        urls = sorted(urls)
+
+    # 2. split url's by node:
+    node_urls = list(split_by_node(urls, group=None))
+
+    # 3. logging:
+    rank, world_size, worker, num_workers = pytorch_worker_info(group=None)
+
+    if type(urls[0]) is dict:
+        preview_urls_first = "\n".join([u["data"] for u in node_urls[:10]])
+        preview_urls_last = "\n".join([u["data"] for u in node_urls[-10:]])
+    else:
+        preview_urls_first = "\n".join(node_urls[:10])
+        preview_urls_last = "\n".join(node_urls[-10:])
+
+    logger.info(
+        f"{rank=} {world_size=} considering node urls {len(node_urls)} of total {len(urls)}"
+    )
+    logger.info(
+        f"{rank=} {world_size=} Preview of first 10 urls:\n{preview_urls_first}\n"
+    )
+    logger.info(
+        f"{rank=} {world_size=} Preview of last 10 urls:\n{preview_urls_last}\n"
+    )
+    return node_urls

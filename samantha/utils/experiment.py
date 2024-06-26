@@ -3,8 +3,10 @@ import os
 import shutil
 import tempfile
 import time
+from datetime import datetime
 from typing import Dict
 
+import git
 from hyperpyyaml import resolve_references
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
@@ -61,3 +63,19 @@ def save_dummy_model(trainer, pl_module, check_load_ckpt: bool = False):
         pl_module.load_from_checkpoint(out_fp)
         tok = time.perf_counter()
         logger.info(f"({module_name}) It took {tok - tik} to load the model checkpoint")
+
+
+def get_git_hash():
+    repo = git.Repo(search_parent_directories=True)
+    sha = repo.head.object.hexsha
+    return repo.git.rev_parse(sha, short=7)
+
+
+def get_version_name() -> str:
+    git_hash = get_git_hash()
+    datetime_str = datetime.today().strftime("%Y-%m-%d/%H-%M-%S")
+    return os.path.join(git_hash, datetime_str)
+
+
+def wandb_sanitize(s: str) -> str:
+    return s.replace("/", "_")
