@@ -1,0 +1,12 @@
+1JUL2024 @hanoihantrakul
+I consulted with Li Tang in JUN2024 on what tokenizer setup 
+the TTS was using. I learned they have their own implementation
+of ROPE embedding, which is not the same as the MK2 implementation
+used by default in BigMusic Tokenizer and is also not the same as 
+the MK4 implementation which is supposed to be the same as the paper.
+
+In this set of configs, I use the exact same setting as TTS. There
+are additional tricks they use including
+- GELU activation
+- self.audio_encoder is also a conformer. In default BigMusic tokenizer
+self.audio_encoder is actually a Conv2D with Subsampling strides. 
