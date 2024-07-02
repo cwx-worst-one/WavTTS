@@ -1,3 +1,5 @@
+import logging
+
 import librosa
 import numpy as np
 import torch
@@ -5,6 +7,8 @@ import torch.backends.cuda
 import torch.backends.cudnn
 import torch.nn.functional as F
 from torchaudio.transforms import Resample
+
+logger = logging.getLogger(__name__)
 
 
 def preprocess_audio(audio_bin, sample_rate, resampler, device, *_, **__):
@@ -43,9 +47,17 @@ def process_batch(model, batch, device, *_, **__):
     torch.backends.cudnn.allow_tf32 = False
     if not batch:
         yield from batch
-
+    one_min = 60 * 24000
     for wav in batch:
-        yield model(wav.to(device)).squeeze().cpu().numpy()
+        try:
+            token = []
+            for start in range(0, wav.shape[-1], one_min):
+                sub_wav = wav[:, start : start + one_min]
+                token.append(model(sub_wav.to(device)).squeeze().cpu().numpy())
+            yield np.hstack(token)
+        except Exception as e:
+            logger.error(f"process wav error", exc_info=e)
+            yield None
 
 
 def model_path_patten(feature_version):
