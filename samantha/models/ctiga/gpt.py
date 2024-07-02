@@ -90,9 +90,10 @@ def create_mixer_cls(
     rotary_emb_dim = int(getattr(config, "rotary_emb_fraction", 0.0) * head_dim)
     rotary_emb_scale_base = getattr(config, "rotary_emb_scale_base", None)
     rotary_emb_interleaved = getattr(config, "rotary_emb_interleaved", False)
+    rotary_emb_compat = getattr(config, "rotary_emb_compat", "default")
+    use_rotary_triton = getattr(config, "use_rotary_triton", False)
     use_flash_attn = getattr(config, "use_flash_attn", False)
     fused_bias_fc = getattr(config, "fused_bias_fc", False)
-    rotary_emb_compat = getattr(config, "rotary_emb_compat", "default")
     causal = getattr(config, "causal", True)
     blocksparse = getattr(config, "blocksparse", False)
     blockmask = getattr(config, "blockmask", None)
@@ -165,6 +166,7 @@ def create_mixer_cls(
         rotary_emb_scale_base=rotary_emb_scale_base,
         rotary_emb_interleaved=rotary_emb_interleaved,
         rotary_emb_compat=rotary_emb_compat,
+        use_rotary_triton=use_rotary_triton,
         use_flash_attn=use_flash_attn,
         checkpointing=grad_checkpointing,
         blocksparse=blocksparse,
@@ -646,16 +648,13 @@ class GPTModel(GPTPreTrainedModel):
             mixer_kwargs["inference_params"] = inference_params
 
         if attention_mask is not None:
+            assert inference_params is None, "varlen do not support in inference"
             batch, seqlen = hidden_states.shape[:2]
             hidden_states, indices, cu_seqlens, max_seqlen_in_batch = unpad_input(
                 hidden_states, attention_mask
             )
             mixer_kwargs["cu_seqlens"] = cu_seqlens
             mixer_kwargs["max_seqlen"] = max_seqlen_in_batch
-
-            if getattr(self.config, "rotary_emb_fraction", 0.0) > 0.0:
-                mixer_kwargs["indices"] = indices
-                mixer_kwargs["key_padding_mask"] = attention_mask
 
         if return_attn_probs:
             assert (

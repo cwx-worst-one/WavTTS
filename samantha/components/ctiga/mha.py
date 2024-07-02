@@ -1057,6 +1057,7 @@ class MHA(nn.Module):
         rotary_emb_scale_base=None,
         rotary_emb_interleaved=False,
         rotary_emb_compat="default",
+        use_rotary_triton=False,
         fused_bias_fc=False,
         use_flash_attn=False,
         return_residual=False,
@@ -1116,6 +1117,7 @@ class MHA(nn.Module):
                 scale_base=rotary_emb_scale_base,
                 interleaved=rotary_emb_interleaved,
                 compat=rotary_emb_compat,
+                use_triton=use_rotary_triton,
                 device=device,
             )
 
@@ -1359,11 +1361,11 @@ class MHA(nn.Module):
             # assert key_padding_mask is None
             assert self.use_flash_attn
             assert not self.dwconv
-            if self.rotary_emb_dim > 0:
-                assert indices is not None
-                assert key_padding_mask is not None
-            else:
-                assert key_padding_mask is None
+            # if self.rotary_emb_dim > 0:
+            #     # assert indices is not None
+            #     # assert key_padding_mask is not None
+            # else:
+            #     assert key_padding_mask is None
             is_pad = False
 
         if key_padding_mask is not None:
@@ -1437,14 +1439,22 @@ class MHA(nn.Module):
 
             if inference_params is None:
                 if self.rotary_emb_dim > 0:
-                    if not is_pad:
-                        qkv = pad_input(
-                            qkv, indices, cu_seqlens.shape[0] - 1, max_seqlen
+                    if key_padding_mask is not None and indices is not None:
+                        if not is_pad:
+                            qkv = pad_input(
+                                qkv, indices, cu_seqlens.shape[0] - 1, max_seqlen
+                            )
+                        qkv = self.rotary_emb(qkv)
+                        if not is_pad:
+                            qkv, _, _, _ = unpad_input(qkv, key_padding_mask)
+                    else:
+                        qkv = self.rotary_emb(
+                            qkv=qkv,
+                            kv=None,
+                            seqlen_offset=kwargs.get("seqlen_offset", 0),
+                            cu_seqlens=cu_seqlens,
+                            max_seqlen=max_seqlen,
                         )
-                    qkv = self.rotary_emb(qkv)
-                    if not is_pad:
-                        qkv, _, _, _ = unpad_input(qkv, key_padding_mask)
-
                 input_args = self._get_inner_attn_args(
                     qkv,
                     causal=kwargs.get("causal", None),
@@ -1473,6 +1483,8 @@ class MHA(nn.Module):
                 if (
                     not inference_params.fused_ft_kernel
                 ) or inference_params.sequence_len_offset == 0:
+                    # TODO: support varlen
+                    assert is_pad
                     if self.rotary_emb_dim > 0:
                         qkv = self.rotary_emb(
                             qkv, seqlen_offset=inference_params.sequence_len_offset
@@ -1626,17 +1638,30 @@ class MHA(nn.Module):
                         kv[:, :, 1] = self.k_norm(kv[:, :, 1])
                 if inference_params is None:
                     if self.rotary_emb_dim > 0:
-                        if not is_pad:
-                            q = pad_input(
-                                q, indices, cu_seqlens.shape[0] - 1, max_seqlen
+                        if key_padding_mask is not None and indices is not None:
+                            if not is_pad:
+                                q = pad_input(
+                                    q, indices, cu_seqlens.shape[0] - 1, max_seqlen
+                                )
+                                kv = pad_input(
+                                    kv, indices, cu_seqlens.shape[0] - 1, max_seqlen
+                                )
+                            q, kv = self.rotary_emb(q, kv)
+                            if not is_pad:
+                                q, _, _, _ = unpad_input(q, key_padding_mask)
+                                kv, _, _, _ = unpad_input(kv, key_padding_mask)
+
+                        else:
+                            q, kv = self.rotary_emb(
+                                q,
+                                kv,
+                                seqlen_offset=kwargs.get("seqlen_offset", 0),
+                                seqlen_offset_k=kwargs.get("seqlen_offset", 0),
+                                cu_seqlens=cu_seqlens,
+                                cu_seqlens_k=cu_seqlens,
+                                max_seqlen=max_seqlen,
+                                max_seqlen_k=max_seqlen,
                             )
-                            kv = pad_input(
-                                kv, indices, cu_seqlens.shape[0] - 1, max_seqlen
-                            )
-                        q, kv = self.rotary_emb(q, kv)
-                        if not is_pad:
-                            q, _, _, _ = unpad_input(q, key_padding_mask)
-                            kv, _, _, _ = unpad_input(kv, key_padding_mask)
                     input_args = self._get_inner_cross_attn_args(
                         q,
                         kv,
@@ -1665,8 +1690,12 @@ class MHA(nn.Module):
                         context = attn_outs[0]
                 else:
                     if self.rotary_emb_dim > 0:
+                        assert is_pad
                         q, kv = self.rotary_emb(
-                            q, kv, seqlen_offset=inference_params.sequence_len_offset
+                            q,
+                            kv,
+                            seqlen_offset=inference_params.sequence_len_offset,
+                            seqlen_offset_k=inference_params.sequence_len_offset,
                         )
                     kv = self._update_kv_cache(kv, inference_params)
                     # If we're processing the prompt, causal=None (use self.causal).
