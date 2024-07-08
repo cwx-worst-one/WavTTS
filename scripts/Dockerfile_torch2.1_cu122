@@ -6,20 +6,18 @@ FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as US-East-Red
 FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as Aliyun_SG
 FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as China-North-LF
 
+ENV http_proxy="http://sys-proxy-rd-relay.byted.org:8118"
+ENV https_proxy="http://sys-proxy-rd-relay.byted.org:8118"
+ENV no_proxy="byted.org,anaconda.org"
+
 FROM ${REGION}
 
 LABEL maintainer="Gao Lu <gaolu.e820@bytedance.com>"
-
-ARG http_proxy="http://sys-proxy-rd-relay.byted.org:8118"
-ARG https_proxy="http://sys-proxy-rd-relay.byted.org:8118"
-ARG no_proxy="byted.org,anaconda.org"
 
 ENV PYTORCH_CUDA_ALLOC_CONF expandable_segments:True
 ENV CUBLASLT_WORKSPACE_SIZE 32768
 # Temporary solution, more investigation needed.
 ENV NCCL_PROTO ^LL128
-# # If this is not sufficient, consider optimizing your computation density.
-# ENV NCCL_MAX_CTAS 8
 
 ENV DEBIAN_FRONTEND noninteractive
 ENV LD_LIBRARY_PATH /opt/tiger/native_libhdfs/lib/native:$LD_LIBRARY_PATH
@@ -34,9 +32,6 @@ ENV NCCL_IB_TIMEOUT 23
 ENV SPEECH_USE_SYSTEM_TRITON 1
 ENV PANTHER_PLIR_EXCLUDE_OPS batch_gemm_fwd,batch_gemm_bwd
 ENV TORCH_NCCL_AVOID_RECORD_STREAMS 1
-
-
-RUN pip3 uninstall -y pytorch-triton
 
 RUN apt update && \
     apt install \
@@ -168,7 +163,7 @@ RUN pip3 install --no-cache-dir pip==24.0 && \
         zhon==1.1.5
 
 ARG CRUISE_VERSION=1.0.0.2808
-ARG PANTHER_VERSION=1.7.14.233
+ARG PANTHER_VERSION=1.7.14.256
 ARG FALCONCLAW_VERSION=1.0.5.129
 ARG ONNX_VERSION=1.0.0.22
 ARG OPENFST_VERSION=1.0.0.8
@@ -177,9 +172,15 @@ ARG SPEECH_EVALS_VERSION=1.0.0.14
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.58
 ARG DATALOADER_VERSION=1.0.0.160
-ARG BUMI_VERSION=1.2.0.19
+ARG BUMI_VERSION=1.2.1.14
 ARG TRITON_VERSION=1.0.0.6
 ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.17
+# https://github.com/facebookresearch/xformers.git:6425fd0
+ARG XFORMERS_VERSION=1.0.0.7
+# https://github.com/google-research/bleurt.git:cebe7e6
+ARG BLEURT_VERSION=1.0.0.5
+# https://github.com/NVIDIA/apex.git:23c1f86
+ARG APEX_VERSION=1.0.0.2
 
 # 2. install falconclaw && panther && dataloader
 RUN \
@@ -261,21 +262,24 @@ RUN \
 
 # install flash_attn_plus
 RUN \
-    MARIANA_FMHA_TMP=/tmp/fmha_${MARIANA_FMHA_PLUS_VERSION} && \
-    mkdir -p ${MARIANA_FMHA_TMP} && \
-    cd ${MARIANA_FMHA_TMP} && \
-    wget http://luban-source.byted.org/repository/scm/data.speech.flash_attn_plus_${MARIANA_FMHA_PLUS_VERSION}.tar.gz && \
-    sudo pip3 uninstall -y fmha_plus && \
-    pip3 uninstall -y fmha_plus && \
-    tar -zxf data.speech.flash_attn_plus_${MARIANA_FMHA_PLUS_VERSION}.tar.gz && \
-    sudo -E pip3 install --no-deps fmha_plus-*.whl && \
-    rm -rf ${MARIANA_FMHA_TMP}
+    mkdir -p /tmp/py_mariana_fmha_plus && \
+    cd /tmp/py_mariana_fmha_plus && \
+    wget http://luban-source.byted.org/repository/scm/data.speech.flash_attn_plus_$MARIANA_FMHA_PLUS_VERSION.tar.gz && \
+    tar -zxf data.speech.flash_attn_plus_$MARIANA_FMHA_PLUS_VERSION.tar.gz && \
+    pip3 install --no-cache-dir --no-deps fmha_plus*.whl && \
+    rm -rf /tmp/py_mariana_fmha_plus
 
 # install xformers
-RUN git clone https://github.com/facebookresearch/xformers.git && cd xformers && git checkout 6425fd0cacb1a6579aa2f0c4a570b737cb10e9c3 \
-    && git submodule update --init --recursive && cd .. \
-    && XFORMERS_DISABLE_FLASH_ATTN=1 pip3 install -v --disable-pip-version-check --no-cache-dir ./xformers \
-    && rm -rf ./xformers
+# RUN git clone https://github.com/facebookresearch/xformers.git && cd xformers && git checkout 6425fd0cacb1a6579aa2f0c4a570b737cb10e9c3 \
+#     && git submodule update --init --recursive && cd .. \
+#     && XFORMERS_DISABLE_FLASH_ATTN=1 pip3 install -v --disable-pip-version-check --no-cache-dir ./xformers \
+#     && rm -rf ./xformers
+RUN mkdir -p /tmp/py_xformers && \
+    cd /tmp/py_xformers && \
+    wget http://luban-source.byted.org/repository/scm/seed.speech.scm_packer_$XFORMERS_VERSION.tar.gz && \
+    tar -xvzf seed.speech.scm_packer_$XFORMERS_VERSION.tar.gz && \
+    pip3 install --no-cache-dir xformers*.whl && \
+    rm -rf /tmp/py_xformers
 
 # 4. add tools and env
 # 4.1 HDFS env
@@ -312,7 +316,7 @@ RUN pip3 install \
         langchain \
         backoff \
         pyzstd \
-        accelerate && \
+        accelerate==0.31.0 && \
     pip3 install \
         --no-cache-dir \
         --index-url https://bytedpypi.byted.org/simple \
@@ -336,51 +340,57 @@ RUN pip3 install \
         mir_eval \
         soft-moe-pytorch \
         tensorflow_io \
-        speechbrain
+        speechbrain \
+        thriftpy2==0.4.16
 
 # Transformer Engine
 # flash-attn incompatable, test required.
 # RUN pip install git+https://github.com/NVIDIA/TransformerEngine.git@stable
 
 # Install bleurt.
-RUN pip3 install unbabel-comet && \
-    cd /opt/tiger && \
-    rm -rf bleurt && \
-    export http_proxy=http://bj-rd-proxy.byted.org:3128 && \
-    export https_proxy=http://bj-rd-proxy.byted.org:3128 && \
-    git clone https://github.com/google-research/bleurt.git && \
-    cd bleurt && \
-    pip3 install . && \
+# RUN pip3 install unbabel-comet && \
+#     cd /opt/tiger && \
+#     rm -rf bleurt && \
+#     git clone https://github.com/google-research/bleurt.git && \
+#     cd bleurt && \
+#     pip3 install . && \
+#     pip3 install protobuf==3.20.0 && \
+#     pip3 install jsonargparse==4.14.1 && \
+#     pip3 install transformers==4.35.0
+RUN mkdir -p /tmp/py_bleurt && \
+    cd /tmp/py_bleurt && \
+    wget http://luban-source.byted.org/repository/scm/seed.speech.scm_packer_$BLEURT_VERSION.tar.gz && \
+    tar -xvzf seed.speech.scm_packer_$BLEURT_VERSION.tar.gz && \
+    pip3 install --no-cache-dir BLEURT*.whl && \
     pip3 install protobuf==3.20.0 && \
     pip3 install jsonargparse==4.14.1 && \
-    pip3 install transformers==4.35.0
+    pip3 install transformers==4.35.0 && \
+    rm -rf /tmp/py_bleurt
 
 # Add apex
-RUN export MAX_JOBS=32 && \
-    export http_proxy=http://bj-rd-proxy.byted.org:3128 && \
-    export https_proxy=http://bj-rd-proxy.byted.org:3128 && \
-    export no_proxy=byted.org && \
-    git clone https://github.com/NVIDIA/apex.git && \
-    cd apex && sed -i 's|check_cuda_torch_binary_vs_bare_metal(CUDA_HOME)||g' setup.py && \
-    pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation --config-settings "--build-option=--cpp_ext" --config-settings "--build-option=--cuda_ext" ./ && \
-    cd .. && \
-    rm -rf apex
+# RUN export MAX_JOBS=32 && \
+#     git clone https://github.com/NVIDIA/apex.git && \
+#     cd apex && sed -i 's|check_cuda_torch_binary_vs_bare_metal(CUDA_HOME)||g' setup.py && \
+#     pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation --config-settings "--build-option=--cpp_ext" --config-settings "--build-option=--cuda_ext" ./
+#     cd .. && \
+#     rm -rf apex
+RUN mkdir -p /tmp/py_apex && \
+    cd /tmp/py_apex && \
+    wget http://luban-source.byted.org/repository/scm/seed.speech.scm_packer_$APEX_VERSION.tar.gz && \
+    tar -xvzf seed.speech.scm_packer_$APEX_VERSION.tar.gz && \
+    pip3 install --no-cache-dir apex*.whl && \
+    rm -rf /tmp/py_apex
 
 RUN pip3 install --no-cache-dir mpi4py
 
-# Triton 3.0. Triton 2.1 works poorly on H800, Triton 2.2 is better, 2.3 was ... branched at almost the same time
-# as of 2.2? Not sure what they were doing. Main branch really shines (compared to other versions).
-#
-# To make docker image stable, we currently pin to the latest commit into main branch.
-#
-# This must be the last pip package, otherwise it may get overwritten back to 2.1 when installing other packages.
-RUN cd /tmp && \
+# Install triton 3.0 which well performs on H800
+RUN mkdir -p /tmp/py_triton && \
+    cd /tmp/py_triton && \
     wget http://luban-source.byted.org/repository/scm/seed.speech.triton_$TRITON_VERSION.tar.gz && \
     tar -xvf seed.speech.triton_$TRITON_VERSION.tar.gz && \
-    pip3 install \
-        --no-cache-dir \
-        triton*.whl && \
-    rm -rf /tmp/* /root/.cache
+    pip3 uninstall -y pytorch-triton && \
+    pip3 install --no-cache-dir triton*.whl && \
+    rm -rf /tmp/py_triton /root/.cache
 
 # Upgrade Python Pillow
 RUN pip install --upgrade "pillow>=10.0.1"
