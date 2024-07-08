@@ -11,9 +11,11 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 extra_params:
     sample_rate: 24000
     output_dir: "./audio_db"
+    save_audio: True
+    save_text: False
 
 run_opts:
-    max_steps: 800
+    max_steps: 20000
     cache_dir: .module_cache/musiclm
 
 ################################################################################
@@ -24,10 +26,10 @@ pl_datamodule: !new:recipes.bigmusic.datasets.instrumental.InstrumentalWebDataMo
     dataset_name: "SSTK_US"
     val_split: "SSTK_US"
     sample_rate: !ref <extra_params[sample_rate]>
-    duration: 120
-    batch_size: 64
+    duration: 60
+    batch_size: 48
     shuffle_buffer_size: 0
-    num_workers: 1
+    num_workers: 6
     pin_memory: True
     min_volume_threshold: 0.0
     loudness_ratio_threshold: 0.0
@@ -39,17 +41,17 @@ pl_datamodule: !new:recipes.bigmusic.datasets.instrumental.InstrumentalWebDataMo
     overlap_vocal_threshold: 0.1
     text_type: null
     max_num_crops: 1
-    crop_step_size: 30
+    crop_step_size: 60
     use_pipe: False
 
 pl_module: !new:recipes.bigmusic.lightning.retrieval_modules.MusicDatabaseModule
     extra_params: !ref <extra_params>
     required_modules:
         mulan:
-            hpath: /mnt/bn/audio-diffusion/weituo/sstk_mulan/mulan-step=005000-median_rank_1=83-kaggle.ckpt
+            hpath: /mnt/bn/audio-diffusion/peng/clap_sstk_mulan_files/MuLan_sstk/CLAP_genre_balanced/checkpoints/mulan-step=005000-median_rank_1=72-kaggle.ckpt
             initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                 cache_dir: !ref <run_opts[cache_dir]>
-                version: "sstkmae"
+                version: "sstkmae_v2"
 
 trainer: !new:pytorch_lightning.Trainer
     strategy: "ddp_find_unused_parameters_false"

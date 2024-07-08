@@ -7,6 +7,10 @@ import pytorch_lightning as pl
 from tqdm.auto import tqdm
 from recipes.musiclm.inference.utils import save_wav
 from samantha.utils.hparams import DotDict
+from torchaudio.transforms import Resample
+
+from recipes.musiclm.inference.utils import save_wav, load_wav
+from recipes.bigmusic.utils.upload import audio_tensor_to_bytes, upload_to_easycycle
 
 
 class MusicDatabaseModule(pl.LightningModule):
@@ -15,6 +19,10 @@ class MusicDatabaseModule(pl.LightningModule):
         self.save_hyperparameters()
         self.extra_params = DotDict(extra_params)
         self.requires = {}
+        if self.extra_params.sample_rate != 24000:
+            self.resample = Resample(self.extra_params.sample_rate, 24000)
+        else:
+            self.resample = None
 
     def setup(self, stage):
         if not self.requires:
@@ -37,21 +45,26 @@ class MusicDatabaseModule(pl.LightningModule):
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         audio = batch["target_audio"]
-        style_category = batch['style_category']
+        if self.resample:
+            audio_resample = self.resample(audio).to(audio.device)
+        audio_resample = audio_resample[..., :24000 * 10]
         with torch.no_grad():
             mulan_embeds = self.requires["mulan_infer_fn"](
                 model=self.requires["mulan"],
-                music=audio.float(),
-                device=audio.device,
+                music=audio_resample.float(),
+                device=audio_resample.device,
             )
         if not os.path.exists(self.extra_params.output_dir):
             os.makedirs(self.extra_params.output_dir, exist_ok=True)
         fname = f"{self.global_rank}_{dataloader_idx}_{batch_idx}"
-        audio = (audio.cpu().float().numpy() * 32768.0).astype("int16")
         mulan_embeds = mulan_embeds.cpu().float().numpy()
-        with open(os.path.join(self.extra_params.output_dir, f"{fname}.style_category.json"), 'w') as f:
-            json.dump(style_category, f)
-        np.save(os.path.join(self.extra_params.output_dir, f"{fname}.audio.npy"), audio)
+        if self.extra_params.save_text:
+            style_category = batch['style_text']
+            with open(os.path.join(self.extra_params.output_dir, f"{fname}.style_text.json"), 'w') as f:
+                json.dump(style_category, f)
+        if self.extra_params.save_audio:
+            audio = (audio.cpu().float().numpy() * 32768.0).astype("int16")
+            np.save(os.path.join(self.extra_params.output_dir, f"{fname}.audio.npy"), audio)
         np.save(os.path.join(self.extra_params.output_dir, f"{fname}.mulan_embeds.npy"), mulan_embeds)
         del audio
         del mulan_embeds
@@ -63,6 +76,7 @@ class RetrievalModule(pl.LightningModule):
         self.save_hyperparameters()
         self.extra_params = DotDict(extra_params)
         self.requires = {}
+        self.metadatas = []
 
     def infer_batch_size(self, batch):
         batch_size = [len(t) for t in batch.values() if torch.is_tensor(t) or isinstance(t, list)][0]
@@ -179,27 +193,40 @@ class RetrievalModule(pl.LightningModule):
         index = batch["index"]
         categories = batch.get('category')
         style_audio = batch.get('style_audio')
+        sample_rate = self.extra_params.sample_rate
         if "duration" in batch:
-            max_len = batch["duration"] * self.extra_params.sample_rate
+            max_len = batch["duration"] * sample_rate
         else:
-            max_len = self.extra_params.duration * self.extra_params.sample_rate
+            max_len = self.extra_params.duration * sample_rate
         for i, wav in enumerate(retrieved_audio):
+            fname = index[i]
+            wav_file_name = f"{fname}.generated.wav"
+            metadata = {"retrieval_score": retrieved_scores[i]}
+            metadata['file_name'] = fname
+            metadata['index'] = i
             if categories is not None and categories[i]:
                 wav_dir = os.path.join(self.extra_params.output_dir, categories[i])
+                metadata['category'] = categories[i]
             else:
                 wav_dir = self.extra_params.output_dir
             os.makedirs(wav_dir, exist_ok=True)
-            fname = index[i]
-
-            wav_fp = os.path.join(wav_dir, f"{fname}.generated.wav")
+            wav_fp = os.path.join(wav_dir, wav_file_name)
             print(f"[Saving] {wav_fp}")
             wav = wav[..., :max_len]
-            save_wav(
+            output_wav_fp =save_wav(
                 wav.cpu().float(),
                 wav_fp,
-                sr=self.extra_params.sample_rate,
+                sr=sample_rate,
                 save_mp3=self.extra_params.save_mp3,
+                normalize_volume=True
             )
+
+            save_mode = "upload"
+            if save_mode == "upload":
+                saved_wav = torch.from_numpy(load_wav(output_wav_fp, sr=sample_rate))
+                audio_bytes = audio_tensor_to_bytes(saved_wav, sample_rate)
+                metadata["audio_url"] = upload_to_easycycle(audio_bytes, wav_file_name)
+
             if self.extra_params.save_style_audio and style_audio is not None:
                 style_wav_fp = os.path.join(wav_dir, f"{fname}.style_audio.wav")
                 save_wav(
@@ -207,10 +234,22 @@ class RetrievalModule(pl.LightningModule):
                     style_wav_fp,
                     sr=self.extra_params.sample_rate,
                     save_mp3=self.extra_params.save_mp3,
+                    normalize_volume=True
                 )
 
             meta_fp = os.path.join(wav_dir, f"{fname}.metadata.json")
-            metadata = {"retrieval_score": retrieved_scores[i]}
             print(f"Saving metadata: {metadata}")
+            self.metadatas.append(metadata)
             with open(meta_fp, "w", encoding="utf-8") as f:
                 json.dump(metadata, f, indent=2)
+                
+
+    def on_predict_end(self) -> None:
+        index_fname = os.path.join(self.extra_params.output_dir, "index.csv")
+        with open(index_fname, "w", encoding='utf-8') as fw:
+            fw.write("file_name,beam_id,audio_url\n")
+            for metadata in self.metadatas:
+                file_name = metadata["file_name"]
+                beam_id = metadata["index"]
+                audio_url = metadata["audio_url"]
+                fw.write(f"{file_name},{beam_id},{audio_url}\n")

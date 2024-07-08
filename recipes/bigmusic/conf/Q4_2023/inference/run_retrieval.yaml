@@ -9,15 +9,16 @@ __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
 
 extra_params:
-    sample_rate: 24000  # 44100
-    duration: 30 # 30|45|60|75|90|105|120
+    sample_rate: 44100  # 44100
+    duration: 60 # 30|45|60|75|90|105|120
     save_style_audio: True
     save_mp3: False
-    prompt_path: "/mnt/bn/audio-diffusion/data/bigmusic_text_prompts/instrumental_prompts_20231030_subset150+duration.csv"
+    # prompt_path: "/mnt/bn/audio-diffusion/data/bigmusic_text_prompts/instrumental_prompts_20231030_subset150+duration.csv"
+    prompt_path: "/mnt/bn/audio-diffusion/peng/sstk_random_30_prompts.csv"
     inference_conditions: style_text,duration
     max_items: null
 
-    db_dir: "/mnt/bn/audio-diffusion/ducle/data/sstk_retrieval_2m"
+    db_dir: "/mnt/bn/audio-diffusion/ducle/data/sstk_retrieval_44.1k_100k"
     output_dir: retrieval_out
 
 run_opts:
@@ -46,10 +47,10 @@ pl_module: !new:recipes.bigmusic.lightning.retrieval_modules.RetrievalModule
     extra_params: !ref <extra_params>
     required_modules:
         mulan:
-            hpath: /mnt/bn/audio-diffusion/weituo/sstk_mulan/mulan-step=005000-median_rank_1=83-kaggle.ckpt
+            hpath: /mnt/bn/audio-diffusion/peng/clap_sstk_mulan_files/MuLan_sstk/CLAP_genre_balanced/checkpoints/mulan-step=005000-median_rank_1=72-kaggle.ckpt
             initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                 cache_dir: !ref <run_opts[cache_dir]>
-                version: "sstkmae"
+                version: "sstkmae_v2"
 
 trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>
