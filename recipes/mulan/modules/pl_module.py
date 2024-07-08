@@ -105,7 +105,7 @@ class LitMuLanModule(pl.LightningModule):
             optimizer,
             init_lr=self.hparams.lr,
             warmup_steps=500,
-            cycle_steps=50000,
+            cycle_steps=10000,
             min_lr=self.hparams.lr * 0.1,
         )
 

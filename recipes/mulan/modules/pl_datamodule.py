@@ -149,7 +149,7 @@ class MuLanMMEDataModule(pl.LightningDataModule):
             wds.shuffle(self.sample_buffer_size),
             wds.batched(self.batch_size, collation_fn=utils.collate_fn),
         )
-        return DataLoader(train_dataset_batched, batch_size=None, num_workers=4, collate_fn=lambda x:x)
+        return DataLoader(train_dataset_batched, batch_size=None, num_workers=self.num_workers, collate_fn=lambda x:x)
 
     def val_dataloader(self):
         val_loaders = [
@@ -157,7 +157,7 @@ class MuLanMMEDataModule(pl.LightningDataModule):
                 val,
                 sampler=DistributedSampler(val, shuffle=False),
                 batch_size=self.val_batch_size,
-                num_workers=4,
+                num_workers=1,
             )
             for val in self.val_dataset
         ]

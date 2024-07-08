@@ -46,6 +46,8 @@ def process_audio(data, vocal_segments=None):
         if audio.shape[-1] < music_len:
             audio = np.pad(audio, ((0, 0), (0, music_len - audio.shape[-1])), "constant")
             start_idx = 0
+        elif audio.shape[-1] > music_len * 4: # trim intro / outro
+            start_idx = random.randint(music_len, audio.shape[-1] - music_len * 2)
         else:
             start_idx = random.randint(0, audio.shape[-1] - music_len)
 
