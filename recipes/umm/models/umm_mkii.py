@@ -1524,6 +1524,7 @@ class Stage2(Base):
             print("RMVPE hop_length (on 16k):", hop_length)
             self.rmvpe = RMVPE(hop_length=hop_length)
             self.f0_vuv_head = Conv2dUpsampling(config.hidden_size, 2)
+        self.audio_transform.load_from_checkpoint(self.config.feature_cmvn)
 
     def forward(self, input_dict):
         feature = (

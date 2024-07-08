@@ -10,6 +10,14 @@ The `forward` function of these lit_modules:
 -Stage3PitchSupervisedPerceptual 
 are very similar. I copy pasted code mainly to speed up spiking whether 
 this approach works. I noted which parts are copy pasted.
+
+@hanoih 8JUL2024
+It is likely this lit module was implemented incorrectly when I did it in MAY2024 and did the experiments in May.
+This is because it does not contain a modified `load_required_modules()` to load the pre-trained pitch predictor.
+I only realized this error when trying to incorporate the pretrained pitch detector into ConformerUMM_TTS_ROPE_2255_2375
+in JUL2024. Could potentially revisit this experiment again.
+
+The pitch predictor was essentially a randomly initialize model outputting random f0_hz predictions!
 """
 
 
@@ -49,7 +57,10 @@ class Stage3PitchSupervised(Stage3):
         to extract full mix. I keep this as a separate method to make intention clear.
         """
         return super().prepare_feature(batch)
-
+    
+    ### TODO: @hanoih This lit_module is missing a `load_required_modules` which loads the pretrained pitch predictor
+    ### All the experiments in May2024 ConvUMM-Pitch were using a randomly initialized pitch predictor!!
+    
     def _shared_step(self, batch):
         input_dict = self.prepare_feature(batch)
         output_dict = self.model(input_dict)

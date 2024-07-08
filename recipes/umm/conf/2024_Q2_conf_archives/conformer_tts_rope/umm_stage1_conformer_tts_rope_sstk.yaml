@@ -3,7 +3,6 @@
 # Take a look at `umm_stage1_conformer_tts_rope_mixedZHEN2255.yaml` for a deeper explanation.
 # 
 # In this configuration, I switch out the dataset with SSTK.
-# The model is 647M parameters (but will increase in Stage2 and Stage3 training)
 
 ---
 

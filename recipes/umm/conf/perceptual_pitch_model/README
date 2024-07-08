@@ -1,0 +1,23 @@
+@hanoih 5JUlY2024
+The Perceptual Pitch module docs:
+https://bytedance.larkoffice.com/docx/N2qldkFMxohvxnxcEPylJ1k4gUb
+https://bytedance.sg.larkoffice.com/docx/EVpYddZKZogIftxlw8FlPTvwgWO
+
+Originally I trained this model in JAN2024 to use as a perceptual pitch module
+for DualUMM. I ended up using it for the ConvUMM-Pitch models in JUN2024
+and the repurposed it in JUL2024 for the ConformerUMM_TTS_ROPE models.
+This is because in original ConformerUMM for Vocal Music, we do not 
+use any f0_hz pitch-based losses in Stage2/Stage3 training. TTS team
+on the other hand, do use a f0_hz pitch-based loss for Stage2/Stage3
+training. 
+
+In order to make my ConformerUMM_TTS_ROPE applicable to BigMusic pipeline,
+I am using the pretrained pitch detector defined in this folder's YAML
+because it is trained on the same BigMusic data. It has the same structure
+as RVMPE, but is better suited for f0_hz tracking on vocal data. I trained
+both a pitch detector to output vocal f0_hz based on the clean MSS vocal and
+the full mix.
+
+ConformerUMM_TTS_ROPE uses the full-mix version of the pitch detector. This
+is because that model does not use MSS data during training, so the pitch
+detector can only be applied to the full mix. 

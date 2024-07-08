@@ -393,7 +393,7 @@ class UMMLossPitchSupervised(UMMLossV2):
         }
         if self.config.add_chroma:
             loss_dict.update(loss_chroma=self.compute_chroma_loss(recon_chroma, chroma))
-        if self.config.add_supervised_pitch:
+        if self.config.get("add_supervised_pitch", False) or self.config.get("add_pitch", False):
             loss_dict.update(f0_loss=pitch_utils.compute_f0_loss(recon_f0, f0, vuv))
             loss_dict.update(vuv_loss=pitch_utils.compute_vuv_loss(recon_vuv, vuv))
         return loss_dict
