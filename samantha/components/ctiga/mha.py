@@ -984,6 +984,10 @@ def _update_kv_cache(kv, inference_params, layer_idx):
     batch_start = inference_params.batch_size_offset
     batch_end = batch_start + kv.shape[0]
     sequence_start = inference_params.sequence_len_offset
+    if inference_params.n_look_feature is not None and not inference_params.last:
+        assert (
+            kv.shape[1] == inference_params.n_look_feature
+        ), f"{kv.shape[1]} != {inference_params.n_look_feature}"
     sequence_end = sequence_start + kv.shape[1]
     assert batch_end <= (
         kv_cache.shape[0] if kv_cache is not None else v_cache.shape[0]
@@ -995,7 +999,16 @@ def _update_kv_cache(kv, inference_params, layer_idx):
     if not inference_params.fused_ft_kernel:
         assert kv_cache is not None
         kv_cache[batch_start:batch_end, sequence_start:sequence_end, ...] = kv
-        kv = kv_cache[batch_start:batch_end, :sequence_end, ...]
+        if inference_params.n_look_past is None:
+            kv = kv_cache[batch_start:batch_end, :sequence_end, ...]
+        else:
+            kv = kv_cache[
+                batch_start:batch_end,
+                max(
+                    0, sequence_start - inference_params.n_look_past + 1
+                ) : sequence_end,
+                ...,
+            ]
         return kv
     else:
         assert inference_params.sequence_len_offset == 0
@@ -1270,6 +1283,23 @@ class MHA(nn.Module):
         assert (
             self.layer_idx is not None
         ), "Generation requires layer_idx in the constructor"
+        # modify inference_params for attention window mask
+        if (
+            self.window_type == 0
+            and self.window_size[0] == -1
+            and self.window_size[1] in [-1, 0]
+        ):
+            # non-window-mask (casual or non-casual)
+            pass
+        else:
+            if inference_params.n_look_past is None:
+                if self.window_size[0] != -1:
+                    inference_params.n_look_past = self.window_size[0]
+            if inference_params.n_look_feature is None:
+                if self.window_type == 0:
+                    inference_params.n_look_feature = self.window_size[1] + 1
+                elif self.window_type == 1:
+                    inference_params.n_look_feature = self.window_size[1]
         return _update_kv_cache(kv, inference_params, self.layer_idx)
 
     def _get_inner_attn_args(

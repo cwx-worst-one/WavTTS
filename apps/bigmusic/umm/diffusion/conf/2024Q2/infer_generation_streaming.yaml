@@ -62,7 +62,9 @@ diffusion_config:
     use_wvae_vocoder: !ref <run_opts[use_wvae_vocoder]>
     bn_config: !ref <bn_config>
     umm_type: !ref <tokenizer_config[umm_type]>
+    without_prefix: !ref <run_opts[without_prefix]>
+    diffusion_model_cls: !apply:os.getenv ["diffusion_model_cls","ChunkInfer2"]
     token_chunk_size: !ref <run_opts[token_chunk_size]>
     token_chunk_overlap: !ref <run_opts[token_chunk_overlap]>
-    without_prefix: !ref <run_opts[without_prefix]>
+    padding_mode: "token_padding"
 

@@ -7,11 +7,15 @@ cd /opt/tiger
 # Download sami_engine scm package
 mkdir -p sami_engine
 cd sami_engine
-wget http://luban-source.byted.org/repository/scm/lab.sami.sami_engine_1.0.2.1559.tar.gz;
+if [ ! -f lab.sami.sami_engine_1.0.2.1559.tar.gz ]; then
+    wget http://luban-source.byted.org/repository/scm/lab.sami.sami_engine_1.0.2.1559.tar.gz;
+fi
 tar -xf lab.sami.sami_engine*.tar.gz;
 
 # Download sami_tts_api repo
-git clone git@code.byted.org:lab-audio/sami_tts_api.git /opt/tiger/sami_tts_api
+if [ ! -d /opt/tiger/sami_tts_api ]; then
+    git clone git@code.byted.org:lab-audio/sami_tts_api.git /opt/tiger/sami_tts_api
+fi
 pip3 install /opt/tiger/sami_tts_api/sami_tts_api
 
 # Clean up sami_engine libs

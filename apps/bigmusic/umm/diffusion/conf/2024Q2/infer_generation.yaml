@@ -61,4 +61,4 @@ diffusion_config:
     bn_config: !ref <bn_config>
     umm_type: !ref <tokenizer_config[umm_type]>
     without_prefix: !ref <run_opts[without_prefix]>
-
+    diffusion_model_cls: "DiffusionU2sInfer"

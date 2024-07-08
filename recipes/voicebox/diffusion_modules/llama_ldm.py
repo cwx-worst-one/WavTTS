@@ -1,5 +1,6 @@
 import logging
 import math
+import numpy as np
 from dataclasses import dataclass, field
 from math import pi
 from typing import Sequence, Tuple, Union
@@ -20,6 +21,8 @@ from samantha.models.dpm_solver_pytorch import (
 )
 from samantha.models.ECAPA_TDNN_bias import ECAPA_TDNN_GN
 from samantha.utils import groundtruth
+from samantha.utils.ctiga import inference_params
+from samantha.utils.ctiga.inference_params import InferenceParams
 
 logger = logging.getLogger(__name__)
 
@@ -275,10 +278,13 @@ class ModelArgs:
     encoder_dim: int = 1536
     encoder_n_layers: int = 24
     encoder_n_heads: int = 24
+    encoder_n_kv_heads: int = None
+    mlp_extend: float = None
     out_channels: int = 80
     max_seq_len: int = 8192
     causal: bool = False
     use_window_mask: bool = False
+    use_qk_norm: str = ""  # head, channel
     window_size: list = field(default_factory=lambda: [-1, -1])
     window_type: str = "elemwise"  # elemwise, blockwise
 
@@ -394,11 +400,14 @@ class LlamaDiffusion(nn.Module):
             dim=hp.encoder_dim,
             n_layers=hp.encoder_n_layers,
             n_heads=hp.encoder_n_heads,
+            n_kv_heads=hp.encoder_n_kv_heads,
+            mlp_extend=hp.mlp_extend,
             causal=hp.causal,
             max_seq_len=hp.max_seq_len,
             use_window_mask=hp.use_window_mask,
             window_size=hp.window_size,
             window_type=hp.window_type,
+            use_qk_norm=hp.use_qk_norm,
             use_unet_style_skip_connect=hp.use_unet_style_skip_connect,
             flashattn_version=hp.flashattn_version,
         )
@@ -598,7 +607,9 @@ class LlamaDiffusion(nn.Module):
 
         return pred.transpose(1, 2), target.transpose(1, 2)
 
-    def _forward(self, x, local_cond, text_embed, timesteps):
+    def _forward(
+        self, x, local_cond, text_embed, timesteps, infer_params: InferenceParams = None
+    ):
         residual = x
         time_emb = self.time_embedding(timesteps)
         time_emb = time_emb.unsqueeze(1).expand(-1, local_cond.shape[1], -1)
@@ -606,7 +617,7 @@ class LlamaDiffusion(nn.Module):
 
         if self.hp.use_textprefix:
             x = torch.cat([text_embed, x], dim=1)
-        pred_v = self.encoder(x, x.shape[1])
+        pred_v = self.encoder(x, x.shape[1], inference_params=infer_params)
 
         if self.hp.use_textprefix:
             pred_v = pred_v[:, text_embed.shape[1] :, :]
@@ -620,7 +631,31 @@ class LlamaDiffusion(nn.Module):
             raise NotImplementedError
         return pred
 
-    def clear_cache(self, t, total_frame=None, bs=1):
+    def clear_infer_params(self, t, total_frame=None, bs=1, text_cfg=1.0):
+        if total_frame is None:
+            self.infer_params = None
+            self.cached_noise = None
+        else:
+            self.infer_params = []
+            self.cached_noise = []
+            for i in range(t):
+                self.infer_params.append(
+                    InferenceParams(
+                        max_sequence_len=total_frame,
+                        max_batch_size=bs * (2 if text_cfg != 1.0 else 1),
+                        last=False,
+                    )
+                )
+                self.cached_noise.append(
+                    torch.randn(1, total_frame, self.hp.out_channels).expand(bs, -1, -1)
+                )
+
+    def update_infer_params(self, cache_len, last=False):
+        for i in range(len(self.infer_params)):
+            self.infer_params[i].sequence_len_offset += cache_len
+            self.infer_params[i].last = last
+
+    def clear_cache(self, t, total_frame=None, bs=1, text_cfg=1.0):
         if total_frame is None:
             self.cached_noise = None
         else:
@@ -640,23 +675,32 @@ class LlamaDiffusion(nn.Module):
         use_cache=False,
         cached_v_len=None,
         eta=0.0,
+        use_infer_params=False,
     ):
+        assert use_cache ^ use_infer_params
         t = timesteps
         batch_size, device, frm_len = (
             local_cond.size(0),
             local_cond.device,
             local_cond.size(1),
         )
+        real_batch_size = batch_size if text_cfg_w == 1.0 else batch_size // 2
+
         if use_cache:
             assert self.cached_noise is not None
             if self.cached_noise is not None:
                 x = self.cached_noise[0][:, :frm_len, :].to(device)
+        elif use_infer_params:
+            assert self.cached_noise is not None
+            assert self.infer_params is not None
+            seqlen_offset = self.infer_params[0].sequence_len_offset
+            x = self.cached_noise[0][:, seqlen_offset : seqlen_offset + frm_len, :].to(
+                device
+            )
         else:
-            if text_cfg_w !=1:
-                # TODO: text_cfg_w>1
-                x = torch.randn([1, frm_len, self.hp.out_channels], device=device).expand(batch_size//2, -1, -1)
-            else:
-                x = torch.randn([1, frm_len, self.hp.out_channels], device=device).expand(batch_size, -1, -1)
+            x = torch.randn([1, frm_len, self.hp.out_channels], device=device).expand(
+                real_batch_size, -1, -1
+            )
 
         sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device)
         # sigmas += 0.6
@@ -667,19 +711,18 @@ class LlamaDiffusion(nn.Module):
         alphas, betas = self.get_alpha_beta(sigmas_batch)
 
         for i in range(t):
+            # print(f"step({i}/{t})")
             if self.target_type == "velocity":
+                v_pred = self._forward(
+                    x.repeat(2 if text_cfg_w != 1 else 1, 1, 1),
+                    local_cond,
+                    text_embed,
+                    timesteps=sigmas[i].expand(batch_size, -1),
+                    infer_params=self.infer_params[i] if use_infer_params else None,
+                )
                 if text_cfg_w != 1:
-                    v_pred, v_pred_uncond = self._forward(
-                        x.repeat(2,1,1),
-                        local_cond,
-                        text_embed,
-                        timesteps=sigmas[i].expand(batch_size, -1),
-                    ).chunk(2)
+                    v_pred, v_pred_uncond = v_pred.chunk(2)
                     v_pred = text_cfg_w * v_pred + (1 - text_cfg_w) * v_pred_uncond
-                else:
-                    v_pred = self._forward(
-                        x, local_cond, text_embed, timesteps=sigmas[i].expand(batch_size, -1)
-                    )
 
                 # TODO: 只是模拟cache过程
                 if use_cache:
@@ -693,9 +736,9 @@ class LlamaDiffusion(nn.Module):
                             :, :cached_v_len, :
                         ]
                     self.cached_v[i] = v_pred
-
-                x_pred = alphas[i] * x - betas[i] * v_pred
-                noise_pred = betas[i] * x + alphas[i] * v_pred
+                # print(f"{x.shape=} {v_pred.shape=} {alphas[i].shape=}")
+                x_pred = alphas[i] * x[:real_batch_size] - betas[i] * v_pred
+                noise_pred = betas[i] * x[:real_batch_size] + alphas[i] * v_pred
 
                 # disable
                 if inpaint_x is not None:
@@ -796,7 +839,12 @@ class LlamaDiffusion(nn.Module):
                 ).chunk(2)
                 pred = text_cfg_w * pred + (1 - text_cfg_w) * pred_uncond
             else:
-                pred = self._forward(x, local_cond, text_embed, timesteps=sigmas[i].expand(batch_size, -1))
+                pred = self._forward(
+                    x,
+                    local_cond,
+                    text_embed,
+                    timesteps=sigmas[i].expand(batch_size, -1),
+                )
 
             if self.target_type == "velocity":
                 x_pred = alphas[i] * x - betas[i] * pred
@@ -821,7 +869,10 @@ class LlamaDiffusion(nn.Module):
                     )
                 else:
                     pred_prev = self._forward(
-                        x_noisy, local_cond, text_embed, timesteps=sigmas[i + 1].expand(batch_size, -1)
+                        x_noisy,
+                        local_cond,
+                        text_embed,
+                        timesteps=sigmas[i + 1].expand(batch_size, -1),
                     )
                 pred_prime = (pred + pred_prev) / 2
             elif len(pred_list) == 1:
@@ -857,6 +908,7 @@ class LlamaDiffusion(nn.Module):
         text_cfg_w=1.0,
         use_cache=False,
         cached_v_len=None,
+        use_infer_params=False,
     ):
         t = timesteps
         batch_size, device, frm_len = (
@@ -864,11 +916,20 @@ class LlamaDiffusion(nn.Module):
             local_cond.device,
             local_cond.size(1),
         )
-
+        real_batch_size = batch_size if text_cfg_w == 1.0 else batch_size // 2
         if use_cache:
             x = self.cached_noise[0][:, :frm_len, :].to(device)
+        elif use_infer_params:
+            assert self.cached_noise is not None
+            assert self.infer_params is not None
+            seqlen_offset = self.infer_params[0].sequence_len_offset
+            x = self.cached_noise[0][:, seqlen_offset : seqlen_offset + frm_len, :].to(
+                device
+            )
         else:
-            x = torch.randn([1, frm_len, self.hp.out_channels], device=device)
+            x = torch.randn([1, frm_len, self.hp.out_channels], device=device).expand(
+                real_batch_size, -1, -1
+            )
 
         if t > 20:
             sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device)
@@ -879,8 +940,16 @@ class LlamaDiffusion(nn.Module):
         alphas, betas = self.get_alpha_beta(sigmas_batch)
 
         for i in range(t):
-
-            v_pred = self._forward(x, local_cond, text_embed, timesteps=sigmas[i].expand(batch_size, -1))
+            v_pred = self._forward(
+                x.repeat(2 if text_cfg_w != 1 else 1, 1, 1),
+                local_cond,
+                text_embed,
+                timesteps=sigmas[i].expand(batch_size, -1),
+                infer_params=self.infer_params[i] if use_infer_params else None,
+            )
+            if text_cfg_w != 1:
+                v_pred, v_pred_uncond = v_pred.chunk(2)
+                v_pred = text_cfg_w * v_pred + (1 - text_cfg_w) * v_pred_uncond
 
             # TODO: 只是模拟cache过程
             if use_cache:
@@ -959,17 +1028,103 @@ class LlamaDiffusion(nn.Module):
 
         x = x.transpose(1, 2)
 
-        groundtruth.emit('diffusion', data={
-            'inputs': inputs,
-            'local_cond': local_cond,
-            'out_mel': x,
-            'cached_noise': self.cached_noise,
-            'params': {
-                'timesteps': timesteps,
-                'sampler': sampler,
-                'text_cfg_w': text_cfg_w,
-            }
-        })
+        groundtruth.emit(
+            "diffusion",
+            data={
+                "inputs": inputs,
+                "local_cond": local_cond,
+                "out_mel": x,
+                "cached_noise": self.cached_noise,
+                "params": {
+                    "timesteps": timesteps,
+                    "sampler": sampler,
+                    "text_cfg_w": text_cfg_w,
+                },
+            },
+        )
+
+        return x
+
+    @torch.no_grad()
+    def chunk_inference(
+        self, inputs, timesteps=20, sampler="ddim", text_cfg_w=1.0, first=True, **kwargs
+    ):
+        if not hasattr(self, "token_overlap"):
+            self.token_overlap = int(np.prod(self.hp.token_downscales))
+        if not hasattr(self, "token_embed_overlap"):
+            self.token_embed_overlap = int(np.prod(self.hp.token_upscales))
+
+        assert self.infer_params is not None and self.cached_noise is not None
+        if self.hp.use_textprefix:
+            text_embed = self.frontend_embed(inputs["frontend"])  # [B, T, 1024]
+        else:
+            text_embed = None
+
+        # token encoder to align frame-rate.
+        token_embed = self.token_embedding(inputs["token"])
+        token_embed = token_embed.transpose(1, 2)
+        # print(f"[chunk_inference:before] {token_embed.shape=}")
+
+        for layer in self.token_prenet:
+            token_embed = layer(token_embed)
+        # print(f"[chunk_inference:after] {token_embed.shape=}")
+        start_idx = 0 if first else self.token_embed_overlap
+        end_idx = -self.token_embed_overlap
+        token_embed = token_embed[..., start_idx:end_idx]
+        token_embed = token_embed.transpose(1, 2)  # B, T, C
+        # print(f"[chunk_inference:slice] {token_embed.shape=}")
+
+        ctx_feature = f"{self.hp.ctx_feature}_ctx"
+        assert token_embed.shape[1] >= inputs[ctx_feature].shape[1]
+        token_embed = token_embed[:, : inputs[ctx_feature].shape[1], :]
+
+        if self.use_prompt:
+            # speaker embedding
+            prompt_feature = f"prompt_{self.hp.prompt_feature}"
+            spk_emb = self.prompt_encoder(inputs[prompt_feature])
+            spk_emb = spk_emb.unsqueeze(1).expand(-1, token_embed.shape[1], -1)
+
+            # local conditioning.
+            local_cond = torch.cat([token_embed, inputs[ctx_feature], spk_emb], dim=-1)
+        else:
+            local_cond = token_embed
+        local_cond = self.local_cond_project(local_cond)
+
+        if sampler == "ddim":
+            x = self.ddim_sample(
+                timesteps, local_cond, text_embed, text_cfg_w=text_cfg_w, **kwargs
+            )
+        elif sampler == "dpmsolver":
+            x = self.dpmsolver_sample(
+                timesteps, local_cond, text_embed, text_cfg_w=text_cfg_w, **kwargs
+            )
+        elif sampler == "plms":
+            x = self.plms_sample(
+                timesteps, local_cond, text_embed, text_cfg_w=text_cfg_w, **kwargs
+            )
+        elif sampler == "consistency":
+            x = self.consistency_sample(
+                timesteps, local_cond, text_embed, text_cfg_w=text_cfg_w, **kwargs
+            )
+        else:
+            raise NotImplementedError
+
+        x = x.transpose(1, 2)
+
+        groundtruth.emit(
+            "diffusion",
+            data={
+                "inputs": inputs,
+                "local_cond": local_cond,
+                "out_mel": x,
+                "cached_noise": self.cached_noise,
+                "params": {
+                    "timesteps": timesteps,
+                    "sampler": sampler,
+                    "text_cfg_w": text_cfg_w,
+                },
+            },
+        )
 
         return x
 

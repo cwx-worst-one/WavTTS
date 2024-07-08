@@ -18,3 +18,7 @@ class InferenceParams:
     key_value_memory_dict: dict = field(default_factory=dict)
     fused_ft_kernel: bool = False
     lengths_per_sample: Optional[Tensor] = None
+
+    n_look_past: Optional[int] = None
+    n_look_feature: Optional[int] = None
+    last: bool = False
