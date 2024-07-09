@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 def prepare_diffusion_model(diffusion_ckpt_path, device):
     model = pl_module.load_from_checkpoint(
-        diffusion_ckpt_path, device=torch.device(device)
+        diffusion_ckpt_path, map_location='cpu'
     ).model.to(device)
     model.eval()
     return model
@@ -61,6 +61,10 @@ def prepare_umm_dualconv(umm_ckpt_path, device):
     model = init_dualumm(umm_ckpt_path, device=device)['Stage3'].eval().to(device)
     return model
 
+def prepare_umm_convgan(umm_ckpt_path, device):
+    from recipes.umm.requires.model_initializer import init_convumm_gan
+    model = init_convumm_gan(umm_ckpt_path, device=device)['Stage3'].eval().to(device)
+    return model
 
 def prepare_umm_codebook(umm_codebook_path, device):
     codebook = torch.load(umm_codebook_path).to(device)
@@ -512,6 +516,8 @@ class DiffusionU2SInfer(LightningModule):
                 self.umm = prepare_umm_conv(self.umm_ckpt_path, device)
             elif self.umm_type in ["UMM_dualconv", "UMM_dualconvV1", "UMM_dualconvV3"]:
                 self.umm = prepare_umm_dualconv(self.umm_ckpt_path, device)
+            elif self.umm_type == "UMMM_convgan":
+                self.umm = prepare_umm_convgan(self.umm_ckpt_path, device)
             else:
                 raise NotImplementedError
         else:
@@ -555,7 +561,7 @@ class DiffusionU2SInfer(LightningModule):
         batched_scale=None
         assert self.infer_type in ["ar-diffusion-vocoder","diffusion-vocoder"]
         def batching(container, data):
-            if data is None or data is "":
+            if data is None or data == "":
                 if container is not None:
                     raise ValueError("try to batching data 'None'")
             else:

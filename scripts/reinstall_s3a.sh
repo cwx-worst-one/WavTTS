@@ -14,6 +14,7 @@ if [ "${current_s3a_version}" != "${S3A_VERSION}" ]; then
     tar -xvf lab_audio.seed.s3a_$S3A_VERSION.tar.gz -C tmp.s3a;
     sudo pip3 install --no-cache-dir tmp.s3a/s3a-$S3A_VERSION-cp39-cp39-linux_x86_64.whl;
     rm -fr tmp.s3a;
+    rm -fr lab_audio.seed.s3a_$S3A_VERSION.tar.gz;
 else
      echo "[INFO] current_s3a_version '${current_s3a_version}' has already installed"
 fi

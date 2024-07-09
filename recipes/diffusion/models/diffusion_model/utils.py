@@ -68,6 +68,7 @@ def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, ss
         if mixv2:
             diffusion_model = DiffusionModuleV1.load_from_checkpoint(
                 checkpoint_path=local_path,
+                map_location="cpu",
                 diffusion_model=TNTDiffusionNetworkV2(
                     input_dim=32,
                     feature_dim=1024,
@@ -123,6 +124,7 @@ def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, ss
                 )
             diffusion_model = DiffusionModuleV1.load_from_checkpoint(
                 checkpoint_path=local_path,
+                map_location="cpu",
                 diffusion_model=diffusion_network,
                 strict=False
             ).model
@@ -167,6 +169,7 @@ def init_diffusion(checkpoint_path, local_rank, cache_dir, is_zh_token=False, ss
             else:
                 diffusion_model = DiffusionModuleMulanFree.load_from_checkpoint(
                     checkpoint_path=local_path,
+                    map_location="cpu",
                     diffusion_model=diffusion_network,
                     strict=False,
                 ).model

@@ -1,0 +1,79 @@
+---
+
+run_opts:
+    precision: 32
+    strategy: ddp
+    ckpt_path: ""
+    output_dir: output_wavs
+    meta_lst: ""
+    num_workers: 4
+    seed: 1996
+    diffusion_ckpt_path: /mnt/bn/audio-diffusion/ashaw/models/sstk_v9/diffusion/ds2869_32xH800_25hzUMM_49hzSS_streaming_chunk1176_392_0603_sstk_convumm_gan/epoch=00-step=340000-loss=0.55-minimal.ckpt
+    umm_ckpt_path: "/mnt/bn/audio-diffusion/ashaw/models/sstk_v9/umm/convumm_gan_719M_sstk_None_EMAEntropy32768x32/step=0700000-minimal.ckpt"
+    vocoder_ckpt_path: ""
+    umm_frame_rate: 25
+    mel_frame_rate: 49
+    infer_type: ar-diffusion-vocoder
+    use_wvae_vocoder: True
+    lang: en
+    streaming: True
+    token_chunk_size: 200
+    token_chunk_overlap: 25
+    without_prefix: True
+
+
+mel_config: # ibigvgan config.
+    n_fft: 4096
+    num_mels: 100
+    hop_size: 600
+    win_size: 2400
+    fmin: 0
+    fmax: 12000
+    sampling_rate: 44100
+    mel_norm_mean: -2.5
+    mel_norm_std: 6
+    mel_padding: -5
+    mel_mask_value: -5
+
+bn_config: # 125hz
+    bn_dim: 64
+    hop_size: 900
+    bn_norm_std: 0.2419
+    bn_norm_mean: -0.0012
+    bn_padding: -5
+    pad_trim: False
+    silence_bn_path: recipes/voicebox/vocoder/silence_wvae/v3_40hz/silence_wvae.npy
+    # wvae_encoder_hop_size: 300
+    # wvae_encoder_win_size: 1200
+    wav_norm: False
+
+
+    vocoder_model: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
+        checkpoint_path: /mnt/bn/audio-diffusion/ashaw/models/sstk_v9/vocoder/44.1k_stereo_sa_v1/last-EMA-minimal.ckpt
+        version: "44.1k_sa"
+        cache_dir: ".module_cache"
+        sample_rate: !ref <mel_config[sampling_rate]>
+        adapt_hopper: True
+
+
+diffusion_config:
+    diffusion_ckpt_path: !ref <run_opts[diffusion_ckpt_path]>
+    umm_ckpt_path: !ref <run_opts[umm_ckpt_path]>
+    vocoder_ckpt_path: !ref <run_opts[vocoder_ckpt_path]>
+    output_dir: !ref <run_opts[output_dir]>
+    infer_type: !ref <run_opts[infer_type]>
+    umm_frame_rate: !ref <run_opts[umm_frame_rate]>
+    mel_frame_rate: !ref <run_opts[mel_frame_rate]>
+    mel_config: !ref <mel_config>
+    seed: !ref <run_opts[seed]>
+    diffusion_precision: "bf16"
+    diffusion_nfe: 10
+    diffusion_sampler: "ddim"
+    text_cfg_w: 1.2
+    use_wvae_vocoder: !ref <run_opts[use_wvae_vocoder]>
+    bn_config: !ref <bn_config>
+    umm_type: "UMMM_convgan"
+    token_chunk_size: !ref <run_opts[token_chunk_size]>
+    token_chunk_overlap: !ref <run_opts[token_chunk_overlap]>
+    without_prefix: !ref <run_opts[without_prefix]>
+

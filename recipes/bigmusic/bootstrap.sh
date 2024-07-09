@@ -53,6 +53,10 @@ if [ -d "/opt/tiger/sami_tts_api" ]; then
     cd -
 fi
 
+## Attention library - 68 uses windowed attention
+bash scripts/reinstall_s3a.sh 68;
+export FLASHATTN_VERSION=2.3
+
 # For huggingface blocking our IP
 if [ -d "/mnt/bn/audio-diffusion/.module_cache" ]; then
     echo "Found existing cache. Setting huggingface cache to /mnt/bn/audio-diffusion/.module_cache"

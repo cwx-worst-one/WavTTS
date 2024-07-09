@@ -27,6 +27,7 @@ def local_zero_first():
 def ensure_hdfs_ckpt_is_local(target_path, cache_dir):
     """If the ckpt path is on HDFS then download it to a local cache, otherwise use the filepath directly."""
     if target_path.startswith("hdfs://"):
+        if cache_dir is None: cache_dir = "/tmp"
         local_path = f"{cache_dir}/{os.path.basename(target_path)}"
         if not os.path.exists(local_path):
             hh.get(target_path, local_path)
@@ -168,7 +169,7 @@ def init_stage3(hpath, local_rank, cache_dir=None):
     device = torch.device(f"cuda:{local_rank}")
     with local_zero_first():
         local_path = ensure_hdfs_ckpt_is_local(hpath, cache_dir)
-        model = Stage3.load_from_checkpoint(local_path).to(device).eval()
+        model = Stage3.load_from_checkpoint(local_path, map_location="cpu").to(device).eval()
         return {"Stage3": model}
 
 
@@ -299,7 +300,7 @@ def init_stage3_conv1d(hpath, local_rank, cache_dir=None):
     device = torch.device(f"cuda:{local_rank}")
     with local_zero_first():
         local_path = ensure_hdfs_ckpt_is_local(hpath, cache_dir)
-        model = Stage3Conv1D.load_from_checkpoint(local_path).to(device).eval()
+        model = Stage3Conv1D.load_from_checkpoint(local_path, map_location="cpu").to(device).eval()
         return {"Stage3Conv1D": model}
 
 
