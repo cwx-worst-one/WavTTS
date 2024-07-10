@@ -256,10 +256,10 @@ class HDFSModelCheckpoint(ModelCheckpoint):
         super().on_train_epoch_end(trainer, pl_module)
         self.check_and_sync_checkpoints(global_step=trainer.global_step)
 
-    def on_validation_epoch_start(
+    def on_validation_end(
         self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"
     ) -> None:
-        super().on_validation_epoch_start(trainer, pl_module)
+        super().on_validation_end(trainer, pl_module)
         self.check_and_sync_checkpoints(global_step=trainer.global_step)
 
     def teardown(
