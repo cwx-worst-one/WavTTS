@@ -44,6 +44,7 @@ class SemanticInferenceModule(pl.LightningModule):
 
         self.semantic_module: BaseModule = semantic_class.load_from_checkpoint(
             semantic_ckpt_path,
+            map_location='cpu',
             # need to be False to load RL ckpts
             strict=False,
         ).eval()
@@ -332,7 +333,9 @@ class GTInferenceModule(pl.LightningModule):
             self.requires.update(initializer(hpath, local_rank=self.local_rank))
 
     def predict_step(self, batch, batch_idx=0, dataloader_idx=0):
-        batch['target_audio'] = batch['style_audio']  # prepare_inputs expects target_audio key
+        max_duration = self.extra_params.duration
+        sample_rate = self.extra_params.sample_rate
+        batch['target_audio'] = batch['style_audio'][..., :max_duration*sample_rate]  # prepare_inputs expects target_audio key
         semantic_samples = self.encoding_fn(self.requires, batch['target_audio'])
         if self.extra_params.token2wav_type == 'ar-diffusion-vocoder':
             wavs = self.decoding_fn(self.requires, semantic_samples, None)

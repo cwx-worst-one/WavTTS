@@ -13,7 +13,7 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 extra_params:
     sample_rate: 24000
     token2wav_sample_rate: 44100
-    duration: [30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180]
+    duration: [30, 60, 60, 75, 90, 90, 105, 120, 120, 120]
     lyrics_codebook_size: 400
     semantic_codebook_size: 32_768
     semantic_frame_rate: 25
@@ -21,9 +21,9 @@ extra_params:
     hidden_size: 1536
     semantic_type: bestrq
     pretrained_path: null # for loading state dicts
-    input_embedders: ["mulan", "duration", "intensity"]
-    prediction_heads:
-        intensity: 1.0
+    input_embedders: ["mulan", "start_time", "duration_continuous"]
+    # prediction_heads:
+        # intensity: 1.0
     # How to extract UMM tokens
     semantic_chunk_size: null
     # How to extract MuLan embedding
@@ -38,7 +38,7 @@ extra_params:
     sample_mode: "top_p"
     sample_thresh: 0.8
     exclude_eos: True
-    beam_size: 2
+    beam_size: 4
     decoder_type: "diffusion"
     diffusion_steps: 20
     bf16_portion: 0.0
@@ -57,7 +57,7 @@ extra_params:
     vocoder_version: '44.1k_sa'
     # RL training params
     add_ref_to_beam: False
-    ce_weight: 0.1
+    ce_weight: 0.2
     seq_weight: 10
     positive_phrase: "high quality, catchy, memorable"
     negative_phrase: "noisy, boring, forgettable"
@@ -65,9 +65,12 @@ extra_params:
         "mulan_sim": 2.0
         "loudness_sim": 1.0
         "qualitative_sim": 0.0
-        "semantic_diversity_sim": 1.0
-        "audio_metrics": 1.0
-        "intensity_sim": 2.0
+        "semantic_diversity_sim": 0.5
+        "audio_metrics": 0.0
+        "intensity_sim": 1.0
+        "anchor_points_sim": 1.0
+        "mulan_temporal": 0.5
+        "chroma_temporal": 0.5
     # Logging params
     log_num_val_samples: 5
     log_num_val_beam_samples: 1
@@ -90,7 +93,7 @@ run_opts:
     weight_decay: 0.05
     shuffle_buffer: 16
     gradient_clip_val: 1.0
-    val_check_interval: 200
+    val_check_interval: 50
     min_length_ratio: 0.95
     normalize_audio: False
     aed_filtered: False
@@ -98,13 +101,13 @@ run_opts:
     avoid_vocal: True
     max_vocal_threshold: 0.5
     overlap_vocal_threshold: 0.1
-    text_type: "sstk_random"
+    text_type: "sstk_dropout"
     max_num_crops: 1
-    crop_step_size: [10, 15, 20, 25, 30, 30, 30, 30, 30, 30, 30]
+    crop_step_size: [10, 20, 20, 25, 30, 30, 30, 30, 30, 30]
     mixed_ratio: 0.5
     use_pipe: False
-    diffusion_ckpt: "/mnt/bn/audio-diffusion/wtl/diffusion/sstk/44.1k_stereo_v2/diffusion-step=600000-EMA.ckpt"
-    vocoder_ckpt: "/mnt/bn/audio-diffusion/wtl/vocoder/sstk/44.1k_stereo_sa_v1/last-EMA.ckpt"
+    diffusion_ckpt: "/mnt/bn/audio-diffusion/ashaw/models/sstk_v9/diffusion/44.1k_30s_v4_gpu_40_v5_convummgan_700k_steps/diffusion-step=580000-EMA-minimal.ckpt"
+    vocoder_ckpt: "/mnt/bn/audio-diffusion/ashaw/models/sstk_v9/vocoder/44.1k_stereo_sa_v1/last-EMA-minimal.ckpt"
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -117,7 +120,7 @@ additional_transforms:
       intensity_hz: !ref <extra_params[intensity_hz]>
 
 pl_datamodule: !new:recipes.bigmusic.datasets.instrumental.InstrumentalWebDataModule
-    dataset_name: "SSTK_US_GENRE_BALANCED"
+    dataset_name: "SSTK_US_SFT_3k"
     val_split: "SSTK_US"
     sample_rate: !ref <extra_params[sample_rate]>
     duration: !ref <extra_params[duration]>
@@ -198,17 +201,14 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticRLModule
     extra_params: !ref <extra_params>
     required_modules:
         mulan:
-            # hpath: /mnt/bn/audio-diffusion/weituo/sstk_mulan/mulan-step=005000-median_rank_1=83-kaggle.ckpt
-            hpath: /mnt/bn/audio-diffusion/peng/clap_sstk_mulan_files/MuLan_sstk/CLAP_genre_balanced/checkpoints/mulan-step=005000-median_rank_1=72-kaggle.ckpt
+            hpath: /mnt/bn/audio-diffusion/ashaw/models/sstk_v9/mulan/mulan-step=005500-median_rank_1=63-kaggle-minimal.ckpt
             initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                 cache_dir: !ref <run_opts[cache_dir]>
-                # version: "sstkmae"
-                version: "sstkmae_v2"
+                version: "sstkmae_v3"
         bestrq:
-            # US conv UMM-chroma stage 3
-            hpath: hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/user/hanoi.hantrakul/logs/umm_conv_sstk/umm_stage3_conv1D_sstk_no_ctc_794_EMAVQ32768x32/checkpoints_for_inference_retry/step=0850000.ckpt
-            # hpath: hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/user/hanoi.hantrakul/logs/umm_conv_sstk/umm_stage3_conv1D_sstk_no_ctc_794_EMAVQ4096x32/checkpoints_for_inference/step=0865000.ckpt
-            initializer: !name:recipes.umm.requires.model_initializer.init_stage3_conv1d
+            # US conv UMM-chroma+gan
+            hpath: /mnt/bn/audio-diffusion/ashaw/models/sstk_v9/umm/convumm_gan_719M_sstk_None_EMAEntropy32768x32/step=0700000-minimal.ckpt
+            initializer: !name:recipes.umm.requires.model_initializer.init_convumm_gan
                 cache_dir: !ref <run_opts[cache_dir]>
         sampler:
             hpath: null
@@ -250,8 +250,8 @@ callbacks:
       every_n_train_steps: !ref <run_opts[val_check_interval]>
       mode: max
       filename: "{step:06d}"
-    - !new:pytorch_lightning.callbacks.LearningRateMonitor
-      logging_interval: 'step'
+    # - !new:pytorch_lightning.callbacks.LearningRateMonitor
+    #   logging_interval: 'step'
 
 plugins:
     - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
@@ -268,7 +268,7 @@ trainer: !new:pytorch_lightning.Trainer
     log_every_n_steps: 10
     max_steps: !ref <run_opts[max_steps]>
     precision: !ref <run_opts[precision]>
-    accumulate_grad_batches: 1
+    accumulate_grad_batches: 3
     gradient_clip_val: !ref <run_opts[gradient_clip_val]>
     val_check_interval: !ref <run_opts[val_check_interval]>
     check_val_every_n_epoch: null

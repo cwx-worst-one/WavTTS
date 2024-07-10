@@ -15,7 +15,7 @@ from recipes.musiclm.inference.utils import slugify, save_wav, generate_hash, fo
 from collections import defaultdict
 from recipes.bigmusic.utils.format_utils import update_json
 import numpy as np
-from recipes.musiclm.utils.dist import local_zero_first
+from recipes.musiclm.utils.dist import local_zero_last, is_local_zero
 from recipes.bigmusic.utils.upload import audio_tensor_to_bytes, upload_to_easycycle, upload_to_tos
 from recipes.bigmusic.datasets.mir_data_util import ID_TEMPO_LABEL_MAP, ID_KEY_MAP
 from recipes.bigmusic.datasets.utils.symbolic_music import pretty_midi_obj_to_midi_bytes
@@ -94,8 +94,8 @@ class SaveOutputsCallback(pl.Callback):
         if self.save_mode != "upload":
             return
         output_dir = pl_module.extra_params.output_dir
-        with local_zero_first():
-            if trainer.is_global_zero:
+        with local_zero_last():
+            if is_local_zero():
                 output_dir = Path(output_dir)
                 metadata_fps = list(output_dir.glob('**/*.metadata.json'))
                 if len(metadata_fps) == 0:
@@ -282,14 +282,18 @@ def save_batch_outputs(
         
         wav_fp = os.path.join(wav_dir, f"{wav_file_name}.generated.wav")
         print(f"[Saving] {wav_fp}")
-        output_wav_fp = save_wav(wav.cpu().float(), wav_fp, sr=sample_rate, save_mp3=save_mode == "mp3", normalize_volume=normalize_volume)
+        save_mp3 = save_mode in ["mp3", "upload"]
+        output_wav_fp = save_wav(wav.cpu().float(), wav_fp, sr=sample_rate, save_mp3=save_mp3, normalize_volume=normalize_volume)
         output_paths.append(output_wav_fp)
 
         if save_mode == "upload":
-            saved_wav = torch.from_numpy(load_wav(output_wav_fp, sr=sample_rate))
-            audio_bytes = audio_tensor_to_bytes(saved_wav, sample_rate)
-            metadata["audio_url"] = upload_to_easycycle(audio_bytes, f"{wav_file_name}.generated")
-            os.remove(output_wav_fp)
+            try:
+                saved_wav = torch.from_numpy(load_wav(output_wav_fp, sr=sample_rate))
+                audio_bytes = audio_tensor_to_bytes(saved_wav, sample_rate)
+                metadata["audio_url"] = upload_to_easycycle(audio_bytes, f"{wav_file_name}.generated")
+            except Exception as e:
+                print('WARNING: Unable to upload file:', output_wav_fp, e)
+                metadata["audio_url"] = "ERROR"
 
         if save_style_audio and style_audio is not None and beam_idx == 0:
             # style audio is always 24kHz (for now)
@@ -348,8 +352,8 @@ def save_batch_outputs(
 class SaveVideoCallback(pl.Callback):
     def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
         output_dir = pl_module.extra_params.output_dir
-        with local_zero_first():
-            if trainer.is_global_zero:
+        with local_zero_last():
+            if is_local_zero():
                 save_video(output_dir, output_dir)
 
 
@@ -508,8 +512,8 @@ def run_average_metrics(output_dir):
 class AverageMetricsCallback(pl.Callback):
     def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
         output_dir = pl_module.extra_params.output_dir
-        with local_zero_first():
-            if trainer.is_global_zero:
+        with local_zero_last():
+            if is_local_zero():
                 try:
                     run_average_metrics(output_dir)
                 except Exception as e:

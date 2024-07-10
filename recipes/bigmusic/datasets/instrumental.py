@@ -56,7 +56,7 @@ class InstrumentalWebDataModule(DataModule):
         max_num_crops: Optional[Union[int, List[int]]] = 3,
         crop_step_size: Optional[Union[float, List[float]]] = 10.0,
         additional_transforms: Optional[List] = None,
-        keys=["audio", "text", "structure", "intensity"],
+        keys=["audio", "text", "structure", "intensity", "start_time"],
         mixed_ratio: float = 0.0,
         max_duration: Optional[int] = None,
         melody_filtered: bool = False,
@@ -112,6 +112,18 @@ class InstrumentalWebDataModule(DataModule):
             train_urls_and_weights = [(155, 1.0)]
         elif dataset_name == "SSTK_US_1M":
             train_urls_and_weights = [(164, 1.0)]
+        elif dataset_name == "SSTK_US_SFT_3k":
+            train_urls_and_weights = [(247, 1.0)]
+        elif dataset_name == "SSTK_US_SFT_FINE":
+            train_urls_and_weights = [(191, 1.0)]
+        elif dataset_name == "SSTK_US_44.1k":
+            train_urls_and_weights = [(206, 1.0)]
+        elif dataset_name == "SSTK_HUMAN_LABELS":
+            train_urls_and_weights = [
+                (191, 1.0),
+                (220, 1.0),
+                (246, 1.0),
+            ]
         else:
             raise NotImplementedError(f"Unknown dataset: {dataset_name}")
 

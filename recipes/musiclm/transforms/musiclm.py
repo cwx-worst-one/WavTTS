@@ -173,14 +173,13 @@ class MCCTransforms(TransformBase):
         avoid_sound_effect: bool = False,
         exclude_licenses: List[str] = [],
         avoid_vocal: bool = False,
+        avoid_vocal_segments: bool = False,
         max_vocal_threshold: float = 0.5,
         overlap_vocal_threshold: float = 0.1,
         audio_metrics_filtered: bool = False,
-        ar_filtering: Optional[ARFiltering] = None,
         text_type: Optional[str] = None,
         max_num_crops: Optional[Union[int, List[int]]] = None,    # if None, auto set based on audio length
         crop_step_size: Optional[Union[int, List[int]]] = None,   # if None, auto set based on n_samples
-        melody_filtered: bool = False,
         max_samples: Optional[int] = None,
     ) -> None:
         super().__init__()
@@ -194,12 +193,11 @@ class MCCTransforms(TransformBase):
         self.avoid_sound_effect = avoid_sound_effect
         self.exclude_licenses = set(exclude_licenses)
         self.avoid_vocal = avoid_vocal
+        self.avoid_vocal_segments = avoid_vocal_segments
         self.max_vocal_threshold = max_vocal_threshold
         self.overlap_vocal_threshold = overlap_vocal_threshold
         self.audio_metrics_filtered = audio_metrics_filtered
-        self.ar_filtering = ar_filtering
         self.text_type = text_type
-        self.melody_filtered = melody_filtered
         self.max_samples = max_samples
 
         if not isinstance(min_length_ratio, (list, tuple)):
@@ -268,8 +266,9 @@ class MCCTransforms(TransformBase):
         if "filter_label" in metadata:
             if metadata["filter_label"]["high_quality"] != "yes":
                 return False, "Not High Quality (SFT)"
-            if metadata["filter_label"]["popular_potential"] != "yes":
-                return False, "Not Popular (SFT)"
+            ## Note: only disabling high quality filter for v9
+            # if metadata["filter_label"]["popular_potential"] != "yes":
+            #     return False, "Not Popular (SFT)"
         return True, None
 
     def is_audio_metrics_good(self, audio_metrics: Dict[str, Any]) -> Tuple[bool, str]:
@@ -335,7 +334,7 @@ class MCCTransforms(TransformBase):
         vad_segments = vad.get("segment", [])
         total_duration = vad.get("extra", {}).get("audio_duration_in_seconds", 0.0)
         if total_duration <= 0:
-            return [], 0.0
+            return [], 0.0, False
         vocal_segments = []
         vocal_duration = 0.0
         curr_segment = None
@@ -355,7 +354,13 @@ class MCCTransforms(TransformBase):
             if curr_segment.duration() >= thresh:
                 vocal_segments.append(curr_segment)
                 vocal_duration += curr_segment.duration()
-        return vocal_segments, vocal_duration / total_duration
+
+        text = ""
+        for key in ["description", "title", "keywords", "genres", "instruments"]:
+            if key in metadata:
+                text += str(key)
+        has_vocal_metadata = 'vocal' in text.lower()
+        return vocal_segments, vocal_duration / total_duration, has_vocal_metadata
 
     def contains_vocal(
         self, vocal_segments: List[Segment], st: float, en: float
@@ -370,49 +375,14 @@ class MCCTransforms(TransformBase):
         metadata = x["__index_data__"]
         num_windows = 1 + (audio.size(1) - n_samples) // crop_step_size
         window_ids = list(range(num_windows))
-        if self.ar_filtering is None:
-            return audio, window_ids, num_windows
-        elif "ar_data_quality" not in metadata:
-            print(f"WARNING: ar_filtering is set but can't find ar_data_quality in metadata: {metadata}")
-            return audio, window_ids, num_windows
-        elif not metadata["ar_data_quality"]:
-            # new meta use {} as default ar_data_quality
-            return audio, window_ids, num_windows
-        else:
-            # Only work for MCC40M numpy
-            genre = "-".join(os.path.basename(x["__url__"]).split("-")[:-1])
-            if genre not in self.ar_filtering.genres:
-                genre = x["__url__"].split("genre=")[-1].split("/")[0]
-            if genre not in self.ar_filtering.genres:
-                print(f"WARNING: can't find genre {genre} in ar_filtering's genres: {self.ar_filtering.genres}")
-                return audio, window_ids, num_windows
-            ar_data_quality = metadata["ar_data_quality"]
-            segment_config = ar_data_quality["segment_config"]
-            segment_duration = segment_config["segment_duration"]
-            segment_step_sec = segment_duration - segment_config["overlap"]
-            sd = ar_data_quality["semantic_diversity"]
-            sp = ar_data_quality["semantic_probs"]
-            num_segments = len(sd)
-            audio = audio[..., :segment_config["max_duration"] * self.sample_rate]
-            num_windows = 1 + (audio.size(1) - n_samples) // crop_step_size
-            window_length_sec = n_samples // self.sample_rate
-            window_step_sec = crop_step_size // self.sample_rate
-            window_ids = []
-            for wid in range(num_windows):
-                window_start_sec = wid * window_step_sec
-                window_end_sec = window_start_sec + window_length_sec
-                segment_start_id = window_start_sec // segment_step_sec
-                for segment_end_id in range(segment_start_id, num_segments):
-                    segment_end_sec = segment_duration + segment_end_id * segment_step_sec
-                    if segment_end_sec >= window_end_sec:
-                        break
-                window_sd_score = np.mean(sd[segment_start_id:segment_end_id + 1])
-                window_sp_score = np.mean(sp[segment_start_id:segment_end_id + 1])
-                if self.ar_filtering.is_valid(genre, window_sd_score, window_sp_score):
-                    window_ids.append(wid)
-            return audio, window_ids, num_windows
+        return audio, window_ids, num_windows
 
     def get_text(self, metadata, text_type):
+        if "human_label" in metadata:
+            hvals = [l for l in metadata["human_label"].values() if isinstance(l, str) and len(l)]
+            human_labels = ", ".join(hvals)
+            return human_labels
+
         if text_type == "mixed":
             text_type = "long" if random.random() <= 0.5 else "short"
         if text_type == "long":
@@ -438,6 +408,50 @@ class MCCTransforms(TransformBase):
                 ary = metadata["mcc_annotation"].get(key, "").split(",")
                 tags.extend([x.strip() for x in ary if len(x.strip()) > 0])
             return ", ".join(tags)
+        elif text_type == "sstk_dropout":
+            text_fields = {}
+            for key in ["description", "title", "keywords", "genres", "instruments"]:
+                v = metadata.get(key)
+                if v is None or v == "\\N" or len(v.strip()) == 0:
+                    continue
+                text_fields[key] = v.strip()
+            if len(text_fields) == 0:
+                return ""
+            if random.random() <= 0.3:
+                if random.random() < 0.8 and "description" in text_fields:
+                    return text_fields["description"]
+                elif "title" in text_fields:
+                    return text_fields["title"]
+                
+            def sample_pct(arr, dropout=0.5, min_examples=1):
+                random.shuffle(arr)
+                if len(arr) * dropout <= min_examples:
+                    return arr[:min_examples]
+                return [a for idx, a in enumerate(arr) if random.random() >= dropout]
+
+            keywords = []
+            if "keywords" in text_fields:
+                kw = [t.strip() for t in text_fields["keywords"].split(",")]
+                kw = sample_pct(kw, 0.5, min_examples=6)
+                keywords.extend(kw)
+            if "genres" in text_fields:
+                g = [t.strip() for t in text_fields["genres"].split(",")]
+                g = sample_pct(g, 0.3, min_examples=1)
+                keywords.extend(g)
+            if "instruments" in text_fields:
+                i = [t.strip() for t in text_fields["instruments"].split(",")]
+                i = sample_pct(i, 0.3, min_examples=1)
+                keywords.extend(i)
+            keywords = list(set(keywords))
+            random.shuffle(keywords)
+            if random.random() < 0.5:
+                keywords = [k.lower() for k in keywords]
+            else:
+                keywords = [k.capitalize() for k in keywords]
+            if random.random() < 0.5:
+                return ", ".join(keywords)
+            else:
+                return " ".join(keywords)
         elif text_type in {"sstk_concat", "sstk_random"}:
             text_fields = {}
             for key in ["description", "keywords", "genres", "instruments"]:
@@ -462,6 +476,43 @@ class MCCTransforms(TransformBase):
                 text_fields = list(text_fields.values())
             random.shuffle(text_fields)
             return ", ".join(text_fields)
+        elif text_type == "human_label":
+            if "human_label" in metadata and str(metadata["human_label"]["label_genre"]) != "nan":
+                human_labels = metadata["human_label"]
+                text_fields = {}
+                for key in ["label_genre", "label_mood", "label_instrument"]:
+                    v = human_labels.get(key)
+                    if v is None or v == "\\N" or len(v.strip()) == 0:
+                        continue
+                if len(text_fields) == 0:
+                    return ""
+                selected_fields = random.sample(text_fields.keys(), k=random.randint(1, 3)) # Number of text keys to use can be configured
+                text_fields = [text_fields[k] for k in selected_fields]
+                return ",".join(text_fields)
+            else:
+                text_fields = {}
+                for key in ["description", "keywords", "genres", "instruments"]:
+                    v = metadata.get(key)
+                    if v is None or v == "\\N" or len(v.strip()) == 0:
+                        continue
+                    text_fields[key] = v.strip()
+                if len(text_fields) == 0:
+                    return ""
+                if text_type == "sstk_random":
+                    long_text_available = "description" in text_fields
+                    short_text_available = any([k in text_fields for k in ["keywords", "genres", "instruments"]])
+                    if long_text_available and not short_text_available:
+                        text_fields = [text_fields["description"]]
+                    elif short_text_available and not long_text_available:
+                        text_fields = [text_fields[k] for k in ["keywords", "genres", "instruments"] if k in text_fields]
+                    elif random.random() <= 0.5:
+                        text_fields = [text_fields["description"]]
+                    else:
+                        text_fields = [text_fields[k] for k in ["keywords", "genres", "instruments"] if k in text_fields]
+                else:
+                    text_fields = list(text_fields.values())
+                random.shuffle(text_fields)
+                return ", ".join(text_fields)
         else:
             raise ValueError(f"Unknown text type: {text_type}")
 
@@ -482,9 +533,9 @@ class MCCTransforms(TransformBase):
         if not is_good:
             self._update_stats(skipped=True, message=message)
             return
-        vocal_segments, vocal_ratio = self.get_vocal_data(x["__index_data__"])
+        vocal_segments, vocal_ratio, has_vocal_metadata = self.get_vocal_data(x["__index_data__"])
         #print(f"vocal_segments: {vocal_segments}, vocal_ratio: {vocal_ratio}")
-        if self.avoid_vocal and vocal_ratio > self.max_vocal_threshold:
+        if self.avoid_vocal and (vocal_ratio > self.max_vocal_threshold or has_vocal_metadata):
             #print(f"Skipped: vocal_ratio={vocal_ratio}")
             self._update_stats(skipped=True, message="Has Vocal")
             return
@@ -533,12 +584,10 @@ class MCCTransforms(TransformBase):
                 st_sample / self.sample_rate,
                 en_sample / self.sample_rate,
             )
-            if self.avoid_vocal and has_vocal:
+            if self.avoid_vocal_segments and has_vocal:
                 continue
             cropped_audio = audio[:, st_sample : en_sample]
             if not self.is_loud(cropped_audio):
-                continue
-            if self.melody_filtered and not self.is_melody_good(cropped_audio):
                 continue
             output = {
                 "audio": cropped_audio,
@@ -546,6 +595,7 @@ class MCCTransforms(TransformBase):
                 "key": x["__key__"],
                 "metadata": x["__index_data__"],
                 "url": x["__url__"],
+                "start_time": st_sample // self.sample_rate,
                 "sample_start_pos": st_sample,
                 "sample_rate": self.sample_rate,
             }

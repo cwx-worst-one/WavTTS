@@ -13,14 +13,13 @@ from samantha.utils.ctiga.inference_params import InferenceParams
 from tqdm.auto import tqdm
 from functools import partial
 
-from recipes.musiclm.utils.dist import local_zero_first
+from recipes.musiclm.utils.dist import local_zero_first, is_local_zero
 from samantha.utils.hparams import DotDict
 from recipes.musiclm.inference.utils import sample, adaptive_sampling, SamplingScheduler
 from recipes.diffusion.utils.utils import download_checkpoint
 from recipes.bigmusic.lightning.embedding_modules import TokenEmbedder, BaseEmbedder
 from samantha.utils.model_metric import ModelMetric
 from collections import defaultdict
-from torch.nn.utils.rnn import pad_sequence, unpad_sequence
 import torch.nn.functional as F
 
 
@@ -417,7 +416,7 @@ class BaseContinuousEmbedModule(BaseModule):
             token_buffer = TokenBuffer(step_out_blank_max_len)
             previous_tokens = [[] for _ in range(original_batch_size)]
 
-        pbar = tqdm(range(num_tokens))
+        pbar = tqdm(range(num_tokens), disable=(not is_local_zero()), miniters=int(num_tokens/100))
 
         for i in pbar:
             pbar.set_description(f"{tqdm_name} [0 - {num_tokens}]")

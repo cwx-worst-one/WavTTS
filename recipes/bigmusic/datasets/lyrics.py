@@ -273,10 +273,10 @@ def default_bucket_batcher_fn(
 ):
     token_frame_rate = semantic_frame_rate + lyrics_frame_rate
     sample_duration = sample_duration if isinstance(sample_duration, (list, tuple)) else [sample_duration]
-    buckets_samples = [d * token_frame_rate for d in sample_duration]
+    buckets_samples = [d * token_frame_rate for d in sorted(set(sample_duration))]
     length_fn = partial(default_bucket_batcher_length_fn, sample_rate=sample_rate, semantic_frame_rate=semantic_frame_rate)
     if max_duration is None:
-        maximum_bucket_size = buckets_samples[-1] * batch_size
+        maximum_bucket_size = max(buckets_samples) * batch_size
     else:
         maximum_bucket_size = max_duration * token_frame_rate * batch_size
     return LyricsBucketBatcher(

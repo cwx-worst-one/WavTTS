@@ -14,7 +14,7 @@ extra_params:
     save_style_audio: True
     save_mode: wav  # wav|mp3|upload
     save_semantic_tokens: False
-    prompt_path: "hdfs://haruna/home/byte_speech_sv/bigmusic/prompts/sstk_random_30_prompts.csv"
+    prompt_path: "/mnt/bn/audio-diffusion/peng/sstk_random_30_prompts.csv"
     inference_conditions: "style_text,duration"
     max_items: null
     use_reranker: True
@@ -23,17 +23,19 @@ extra_params:
 
     # Semantic model
     semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
-    semantic_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/instrumental/sstk_v8/semantic/v8_rc1-step=000250-minimal.ckpt"
-    mulan_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/instrumental/sstk_v8/mulan/mulan-step=005000-median_rank_1=72-kaggle-minimal.ckpt"
-    mulan_version: "sstkmae_v2"
+    semantic_ckpt: "/mnt/bn/audio-diffusion/ashaw/models/sstk_v9/semantic/rl/step=000150-minimal.ckpt"
+    mulan_ckpt: "/mnt/bn/audio-diffusion/ashaw/models/sstk_v9/mulan/mulan-step=005500-median_rank_1=63-kaggle-minimal.ckpt"
+    mulan_version: "sstkmae_v3"
 
     # For re-ranking
     rewards:
-        style_text: 0.5
+        style_text: 1
+        mulan_temporal: 0.5
+        chroma_temporal: 1.0
         style_audio: 0.0
-        qualitative: 1.0
+        qualitative: 0.5
         loudness_sim: 0.0
-        audio_metrics: 1.0
+        audio_metrics: 0.0
         semantic_diversity: 0.5
     positive_phrase: "high quality, catchy, memorable"
     negative_phrase: "noisy, boring, forgettable"
@@ -43,28 +45,12 @@ extra_params:
     controller_cfg_gamma: 2
     controller_cfg_label: negative_anchor
 
-    # For intensity calculation
-    intensity_calculation: "mean"
-    intensity_hz: 1
-    intensity_temperature: 1.0
-
-    diffusion_version: 'sstk_v5' # sstk_v2 for 24k, sstk_v3 for 44.1k
-    diffusion_params:
-        window_length: 30 # in second
-        vocoder_hz: 49 # 125 for 24k vocoder, 49 for '44.1k_sa' vocoder
-        semantic_hz: 25
-        latent_dim: 64 # 32 for 24k vocoder, 64 for '44.1k_sa' vocoder
-        outpainting_overlap: 0.5 #[0, 1]
-        sampler_version: 'v2' # use v2 to pair with sstk_v5 diffusion model, otherwise use v1
-        diffusion_steps: 50
-        schedule_slope: 4.0
-        guidance_scale: 2.5
-        bf16_portion: 0.0
-
     # this is only needed when sample_rate=44100 or 48000, for 24k its bypassed
     # '24k_to_48k_stereo' to use upsampling vocoder
     # '44.1k_sa' to use Stable Audio 44.1k stereo vocoder
     vocoder_version: '44.1k_sa'
+
+    diffusion_params: {}
 
     # Model Settings
     sample_rate: 44100  # 24000|44100
@@ -75,6 +61,7 @@ extra_params:
     token2wav_type: "ar-diffusion-vocoder"
     exclude_eos: True
 
+
 run_opts:
     fast_dev_run: False
     precision: 16
@@ -83,7 +70,7 @@ run_opts:
     cache_dir: .module_cache/musiclm
     batch_size: 1  # set to 28 if not using reranker
 
-token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_49hzSS_streaming_cn_v8.yaml
+token2wav_config: !include:../../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_49hzSS_streaming_us_v9.yaml
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -117,17 +104,14 @@ pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
                         hpath: !ref <extra_params[mulan_ckpt]>
                         initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                             version: !ref <extra_params[mulan_version]>
-                    #asr:
-                    #    hpath: en_punc
-                    #    initializer: !name:recipes.bigmusic.utils.metrics_asr.init_asr
             initializer: !name:recipes.bigmusic.utils.reranker.init_reranker
                 cache_dir: !ref <run_opts[cache_dir]>
                 sample_rate: !ref <extra_params[sample_rate]>
 
 # separating out additional_callbacks so auto_eval can disable metrics
-#additional_callbacks:
-#   - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback
+additional_callbacks:
 #   - !new:recipes.bigmusic.callbacks.mcs_metrics.MCSMetricsCallback
+    - !new:recipes.bigmusic.callbacks.average_metrics.AverageMetricsCallback
 #   - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
 callbacks:
     - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
@@ -136,6 +120,7 @@ callbacks:
       save_style_audio: !ref <extra_params[save_style_audio]>
       save_mode: !ref <extra_params[save_mode]>
       save_semantic_tokens: !ref <extra_params[save_semantic_tokens]>
+      normalize_volume: True
 
 trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>
@@ -147,5 +132,4 @@ trainer: !new:pytorch_lightning.Trainer
     use_distributed_sampler: False # for multi-gpu inference
     strategy: !ref <run_opts[strategy]>
     precision: !ref <run_opts[precision]>
-    #callbacks: !apply:operator.add [!ref <additional_callbacks>, !ref <callbacks>]
-    callbacks: !ref <callbacks>
+    callbacks: !apply:operator.add [!ref <additional_callbacks>, !ref <callbacks>]

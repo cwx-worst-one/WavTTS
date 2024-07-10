@@ -77,12 +77,10 @@ def get_t5_embeds(requires, x):
 
 @torch.no_grad()
 def get_bestrq_umm_tokens(requires, batch, chunk_size=None, **kwargs):
-    if 'Stage3' in requires:
-        lit_module = requires['Stage3']
-    elif 'Stage3Conv1D' in requires:
-        lit_module = requires['Stage3Conv1D']
-    elif 'convumm_gan_model' in requires:
-        lit_module = requires['convumm_gan_model']
+    for umm_key in ['Stage3', 'Stage3Conv1D', 'convumm_gan_model']:
+        if umm_key in requires:
+            lit_module = requires[umm_key]
+            break
     else:
         raise ValueError(f"Can't find UMM in requires")
     if chunk_size is None or batch.shape[-1] <= chunk_size:
@@ -145,7 +143,8 @@ class ContinuousEmbedder(BaseEmbedder):
         if add_none:
             self.none_id = self.vocab_size
             self.vocab_size = self.vocab_size + 1
-        self.embedder = nn.Embedding(self.vocab_size, input_dim)
+        if self.vocab_size:
+            self.embedder = nn.Embedding(self.vocab_size, input_dim)
 
         if input_dim != embedding_dim:
             self.projection = nn.Linear(input_dim, embedding_dim, bias=False)
@@ -234,8 +233,8 @@ class TokenEmbedder(BaseEmbedder):
             token_ids = torch.cat([token_ids, self.get_eos_token(token_ids.size(0))], dim=1)
         return token_ids
 
-    def embed(self, requires=None, batch=None, token_ids=None, with_sos=False, with_eos=False):
-        token_ids = self.tokenize(requires, batch, token_ids, with_sos, with_eos)
+    def embed(self, requires=None, batch=None, token_ids=None, with_sos=False, with_eos=False, **kwargs):
+        token_ids = self.tokenize(requires, batch, token_ids, with_sos, with_eos, **kwargs)
         return self.embedder(token_ids)
 
 
@@ -506,7 +505,7 @@ class MulanCategoricalEmbedder(BaseEmbedder):
                 mulan_embeds = mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
             self.sync_tags([]) # must call sync tags for distributed training
             return mulan_embeds
-    
+
 class MulanEmbedder(ContinuousEmbedder):
     def __init__(
             self,
@@ -538,7 +537,8 @@ class MulanEmbedder(ContinuousEmbedder):
         # Text
         if data_type == "text":
             mulan_embeds = get_mulan_embeds(requires, input_audio_or_text, data_type)
-            mulan_embeds = mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
+            if len(mulan_embeds.shape) == 2:
+                mulan_embeds = mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
             if not self.mulan_crop and not self.mulan_average:
                 assert target_samples_length is not None
                 # TODO: don't hardcode shift length
@@ -748,28 +748,36 @@ class SoundstreamTokenEmbedder(TokenEmbedder):
         return soundstream_ids
 
 
-class DurationEmbedder(nn.Module):
-    def __init__(self, durations, embedding_dim):
-        super().__init__()
+class DurationEmbedder(TokenEmbedder):
+    def __init__(self, durations, embedding_dim, add_sos=False):
         durations = durations if isinstance(durations, (list, tuple)) else [durations]
         durations = [int(d) for d in durations]
+        super().__init__(len(durations), embedding_dim, add_sos)
         self.duration2id = {durations[i]: i for i in range(len(durations))}
-        self.embedding_dim = embedding_dim
-        self.embedder = nn.Embedding(len(durations) + 1, embedding_dim)
 
-    def embed(self, duration, batch_size):
+    def get_tokens(self, requires, duration, batch_size):
         duration = int(duration)
         duration_id = self.duration2id[duration]
         device = next(self.parameters()).device
         duration_ids = torch.LongTensor([duration_id] * batch_size).to(device)
-        return self.embedder(duration_ids).unsqueeze(1)
+        return duration_ids.reshape(-1, 1)
 
-    def empty_embed(self, batch_size):
-        empty_id = len(self.duration2id)
+
+class DurationContinuousEmbedder(ContinuousEmbedder):
+    def __init__(self, input_dim=1, embedding_dim=1024, add_sos=False):
+        super().__init__(input_dim, embedding_dim, add_sos)
+
+    def get_embeds(self, requires, duration, batch_size):
         device = next(self.parameters()).device
-        empty_ids = torch.LongTensor([empty_id] * batch_size).to(device)
-        return self.embedder(empty_ids).unsqueeze(1)
+        duration = torch.FloatTensor([duration] * batch_size).to(device)
+        return duration.float().reshape(-1, 1, 1)
 
+class StartTimeEmbedder(ContinuousEmbedder):
+    def __init__(self, input_dim=1, embedding_dim=1024, add_sos=False):
+        super().__init__(input_dim, embedding_dim, add_sos)
+
+    def get_embeds(self, requires, start_time):
+        return start_time.float().reshape(-1, 1, 1)
 
 class StructureEmbedder(nn.Module):
     def __init__(

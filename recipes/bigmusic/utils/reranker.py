@@ -68,7 +68,7 @@ class Reranker:
 
     def compute_rewards(self, sampled_audio, eos_index_list, batch, extra_params):
         rewards = torch.zeros(len(sampled_audio)).to(self.device)
-        rewards_breakdown = [{ 'weighted': {} } for _ in range(len(sampled_audio))]
+        rewards_breakdown = [{ 'weighted': {}, 'unweighted': {} } for _ in range(len(sampled_audio))]
         for rw_type, rw_weight in self.rewards.items():
             if rw_weight == 0:
                 continue
@@ -78,9 +78,9 @@ class Reranker:
             rw = self._get_reward(rw_type, sampled_audio, eos_index_list, batch, extra_params)
             rewards += rw_weight * rw
             for i in range(len(sampled_audio)):
-                rewards_breakdown[i][rw_type] = rw[i].item()
+                rewards_breakdown[i]['unweighted'][rw_type] = rw[i].item()
                 rewards_breakdown[i]['weighted'][rw_type] = rw[i].item() * rw_weight
-            rewards_breakdown[i]['weighted']['total'] = rewards[i].item()
+                rewards_breakdown[i]['weighted']['total'] = rewards[i].item()
         return rewards, rewards_breakdown
 
     def _get_reward(
@@ -222,6 +222,7 @@ class Reranker:
                 sampled_audio.squeeze(1),
                 sample_rate=extra_params.sample_rate,
                 device=sampled_audio.device,
+                mulan_hpath=self.hparams.required_modules["mulan"]["hpath"],
             )
         elif rw_type == "mulan_temporal":
             mulan_temporal = mulan_temporal_reward(

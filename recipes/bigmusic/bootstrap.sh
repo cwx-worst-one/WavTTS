@@ -37,8 +37,13 @@ PYPETREL_VERSION="1.0.0.129-dev2"
 if ! grep -q "version:$PYPETREL_VERSION" /opt/tiger/pypetrel/current_revision; then
     cd /opt/tiger
     rm -rf /opt/tiger/pypetrel
-    echo "Downloading ASR model: pypetrel"
-    hdfs dfs -get /home/byte_speech_sv/andrew.shaw/data/asr/pypetrel.$PYPETREL_VERSION.tar .
+    if [ -f "/mnt/bn/audio-diffusion/ashaw/bvc/pypetrel.$PYPETREL_VERSION.tar" ]; then
+        echo "Copying ASR model pypetrel from audio-diffusion bytenas"
+        cp -r /mnt/bn/audio-diffusion/ashaw/bvc/pypetrel.$PYPETREL_VERSION.tar .
+    else
+        echo "Downloading ASR model: pypetrel"
+        hdfs dfs -get /home/byte_speech_sv/andrew.shaw/data/asr/pypetrel.$PYPETREL_VERSION.tar .
+    fi
     tar -xvf pypetrel.$PYPETREL_VERSION.tar
     cd -
 fi

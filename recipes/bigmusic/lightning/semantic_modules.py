@@ -11,6 +11,8 @@ from recipes.bigmusic.lightning.embedding_modules import (
     MetadataT5TokenEmbedder,
     BestRQTokenEmbedder,
     DurationEmbedder,
+    DurationContinuousEmbedder,
+    StartTimeEmbedder,
     StructureEmbedder,
     IntensityEmbedder,
     SpeakerEmbedder,
@@ -70,7 +72,7 @@ from typing import Optional
 from recipes.mi1.models.music_sft import get_m1_tags
 from torchaudio.transforms import Resample
 from recipes.diffusion.models.vocoder_model.utils import vocode_in_chunks
-from recipes.mulan.inference.stats.sstk_anchor_points import load_anchor_points
+from recipes.mulan.inference.stats.sstk_anchor_points import load_anchor_points, load_anchor_points_from_mulan_ckpt
 
 from recipes.audio_quality_classifier.models.audio_quality_model.utils import aq_classifier_inference
 
@@ -179,6 +181,17 @@ class SemanticModule(BaseContinuousEmbedModule):
                 embedder_dict[emb_type] = DurationEmbedder(
                     durations=extra_params["duration"],
                     embedding_dim=hidden_size,
+                    add_sos=True
+                )
+            elif emb_type == "duration_continuous":
+                embedder_dict[emb_type] = DurationContinuousEmbedder(
+                    embedding_dim=hidden_size,
+                    add_sos=False,
+                )
+            elif emb_type == "start_time":
+                embedder_dict[emb_type] = StartTimeEmbedder(
+                    embedding_dim=hidden_size,
+                    add_sos=False,
                 )
             elif emb_type == "structure":
                 embedder_dict[emb_type] = StructureEmbedder(
@@ -283,6 +296,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         if isinstance(prediction_heads, list):  # backward compat
             prediction_heads = {x: 1.0 for x in prediction_heads}
         for pred_type, pred_wt in prediction_heads.items():
+            if pred_wt == 0: continue
             prediction_weights[pred_type] = pred_wt
             if pred_type == "intensity":
                 prediction_dict[pred_type] = nn.Linear(
@@ -316,7 +330,15 @@ class SemanticModule(BaseContinuousEmbedModule):
         conditions = self.infer_conditions(batch)
         target_duration = self.infer_target_duration(batch)
         target_samples_length = target_duration * self.extra_params.sample_rate
-        if 'style_text' in conditions:
+        if 'style_text_retrieval' in conditions:
+            assert "style_text" in batch
+            embeds = mulan_embedder.embed(
+                self.requires,
+                batch,
+                with_sos=True,
+                data_type='text_retrieval',                
+            )
+        elif 'style_text' in conditions:
             assert "style_text" in batch
             embeds = mulan_embedder.embed(
                 self.requires,
@@ -450,14 +472,18 @@ class SemanticModule(BaseContinuousEmbedModule):
         else:
             embeds = embedder.get_sos_embed(batch_size)
         return embeds
+
     def prepare_duration_inputs(self, batch, duration_embedder):
         batch_size = self.infer_batch_size(batch)
-        conditions = self.infer_conditions(batch)
-        if 'duration' in conditions:
-            duration = self.infer_target_duration(batch)
-            embeds = duration_embedder.embed(duration, batch_size)
-        else:
-            embeds = duration_embedder.empty_embed(batch_size)
+        duration = self.infer_target_duration(batch)
+        embeds = duration_embedder.embed(self.requires, duration, with_sos=False, batch_size=batch_size)
+        return embeds
+
+    def prepare_start_time_inputs(self, batch, start_time_embedder):
+        batch_size = self.infer_batch_size(batch)
+        if 'start_time' not in batch:
+            batch['start_time'] = torch.zeros((batch_size,))
+        embeds = start_time_embedder.embed(self.requires, batch['start_time'].to(self.device), with_sos=False)
         return embeds
 
     def prepare_structure_inputs(self, batch, structure_embedder):
@@ -646,8 +672,10 @@ class SemanticModule(BaseContinuousEmbedModule):
                 emb_inputs = self.prepare_leadsheet_inputs(batch, embedder)
             elif emb_type == "remi_leadsheet_tokens":
                 emb_inputs = self.prepare_remi_leadsheet_inputs(batch, embedder)
-            elif emb_type == "duration":
+            elif emb_type == "duration" or emb_type == "duration_continuous":
                 emb_inputs = self.prepare_duration_inputs(batch, embedder)
+            elif emb_type == "start_time":
+                emb_inputs = self.prepare_start_time_inputs(batch, embedder)
             elif emb_type == "structure":
                 emb_inputs = self.prepare_structure_inputs(batch, embedder)
             elif emb_type == "acc_audio":
@@ -861,11 +889,12 @@ class SemanticModule(BaseContinuousEmbedModule):
             if controller_cfg_label == 'negative_anchor':
                 batch_cfg['conditions'] = ['style_embedding']
                 batch_size = self.infer_batch_size(batch)
-                good, bad = load_anchor_points()
+                mulan_hpath = self.hparams.required_modules["mulan"]["hpath"]
+                good, bad = load_anchor_points_from_mulan_ckpt(mulan_hpath=mulan_hpath)
                 bad_t = torch.tensor(bad, device=self.device).repeat(batch_size, 1)
                 batch_cfg['style_embedding'] = bad_t.unsqueeze(1)
             else:
-                batch_cfg['conditions'] = ['style_none']
+                batch_cfg['conditions'] = ['style_text']
                 batch_size = self.infer_batch_size(batch)
                 batch_cfg['style_text'] = [''] * batch_size
                 batch_cfg['style_audio'] = [''] * batch_size
@@ -1904,6 +1933,7 @@ class SemanticRLModule(SemanticModule):
                 sampled_audio.squeeze(1),
                 device=sampled_audio.device,
                 sample_rate=self.extra_params.sample_rate,
+                shift_seconds=(20,30)
             )
             return mulan_temporal
         elif reward_type == "chroma_temporal":
@@ -1911,6 +1941,7 @@ class SemanticRLModule(SemanticModule):
                 sampled_audio.squeeze(1),
                 sample_rate=self.extra_params.sample_rate,
                 device=sampled_audio.device,
+                sec_split=(10,20,30)
             )
             return chroma_temporal
         elif reward_type == "wer":
@@ -2091,6 +2122,7 @@ class SemanticRLModule(SemanticModule):
                 sampled_audio.squeeze(1),
                 sample_rate=self.extra_params.sample_rate,
                 device=sampled_audio.device,
+                mulan_hpath=self.hparams.required_modules["mulan"]["hpath"]
             )
         else:
             raise ValueError(f"Unknown reward type: {reward_type}")

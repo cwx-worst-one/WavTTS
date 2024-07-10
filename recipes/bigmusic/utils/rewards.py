@@ -19,11 +19,12 @@ from recipes.musiclm.inference.utils import dump_wav
 from torchaudio.functional import loudness, resample
 import librosa
 from scipy.stats import entropy
-from recipes.mulan.inference.stats.sstk_anchor_points import load_anchor_points
+from recipes.mulan.inference.stats.sstk_anchor_points import load_anchor_points, load_anchor_points_from_mulan_ckpt
 from recipes.musiclm.inference.utils import save_wav
 from recipes.bigmusic.callbacks.mir_metrics import upload_audio_file_to_tos
 from recipes.bigmusic.datasets.utils.zh_vocab import AUDIO_V3_TO_SA_TAG_MAP
 import numpy as np
+import random
 from scipy.signal import butter, lfilter
 
 import json
@@ -601,10 +602,10 @@ def intensity_sim_reward(
 
 
 @torch.no_grad()
-def semantic_diversity_reward(umm_tokens, device):
+def semantic_diversity_reward(umm_tokens, device, max_diversity=0.8):
     semantic_diversity_rewards = torch.zeros(umm_tokens.size(0)).to(device)
     for i in range(len(umm_tokens)):
-        semantic_diversity_rewards[i] = float(len(umm_tokens[i].unique())) / umm_tokens.shape[-1]
+        semantic_diversity_rewards[i] = min(float(len(umm_tokens[i].unique())) / umm_tokens.shape[-1], max_diversity)
     return semantic_diversity_rewards
 
 
@@ -689,11 +690,12 @@ def anchor_points_sim_reward(
     sampled_audio,  # (batch_size * beam, T)
     sample_rate,
     device,
+    mulan_hpath,
     shift_seconds=5,
     min_audio_duration=10,
     max_audio_duration=None,
 ):
-    binary_center = load_anchor_points()
+    binary_center = load_anchor_points_from_mulan_ckpt(mulan_hpath)
     min_audio_length = min_audio_duration * sample_rate
     max_audio_length = max_audio_duration * sample_rate if max_audio_duration is not None else None
     if sampled_audio.shape[-1] < min_audio_length:
@@ -716,6 +718,8 @@ def anchor_points_sim_reward(
 
 @torch.no_grad()
 def mulan_temporal_reward(mulan_infer_fn, mulan_model, sampled_audio, device, sample_rate=24000, shift_seconds=20):
+    if isinstance(shift_seconds, tuple):
+        shift_seconds = random.choice(shift_seconds)
     mulan_embeds = mulan_infer_fn(
         model=mulan_model,
         music=sampled_audio.float(),
@@ -725,6 +729,7 @@ def mulan_temporal_reward(mulan_infer_fn, mulan_model, sampled_audio, device, sa
     )
     cos_sim = F.cosine_similarity(mulan_embeds.unsqueeze(1), mulan_embeds.unsqueeze(2), dim=-1)
     eye = ~torch.eye(cos_sim.shape[-1]).bool() # remove diagonal 1
+    if eye.sum() == 0: return torch.zeros((mulan_embeds.shape[0],), device=device) # only one embedding
     cos_mean = (cos_sim * eye.cuda()).sum(dim=(1,2)) / eye.sum()
     return (1 - cos_mean)
 
@@ -739,7 +744,7 @@ def butter_highpass_filter(data, cutoff, fs, order=5):
     return y
 
 @torch.no_grad()
-def _chroma_temporal_reward(audio, sample_rate=24000, sec_split=10):
+def _chroma_temporal_reward(audio, sample_rate=24000, sec_split=20):
     if len(audio.shape) == 2:
         audio = audio.squeeze(0)
     audio = audio.float().cpu().numpy()
@@ -755,10 +760,14 @@ def _chroma_temporal_reward(audio, sample_rate=24000, sec_split=10):
     probs = np.bincount(melody) / len(melody)
     size = int(sec_split/melody_frame_rate)
     m_split = np.split(melody, range(size,len(melody),size))
+    if len(m_split) <= 1: return 0
     if m_split[-1].shape != m_split[0].shape:
         m_split = m_split[:-1]
     arr = []
-    for m in m_split:
+    for idx, m in enumerate(m_split):
+        # skip every other if we have enough splits
+        if len(m_split) > 2 and idx % 2 == 1:
+            continue
         probs = np.bincount(m, minlength=12) / len(m)
         arr.append(probs)
     # across time
@@ -768,6 +777,8 @@ def _chroma_temporal_reward(audio, sample_rate=24000, sec_split=10):
 
 
 @torch.no_grad()
-def chroma_temporal_reward(audio_batch, device, sample_rate=24000, sec_split=10):
+def chroma_temporal_reward(audio_batch, device, sample_rate=24000, sec_split=30):
+    if isinstance(sec_split, tuple):
+        sec_split = random.choice(sec_split)
     chroma_rewards = [_chroma_temporal_reward(audio, sample_rate, sec_split) for audio in audio_batch]
     return torch.tensor(chroma_rewards, device=device)

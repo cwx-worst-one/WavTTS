@@ -10,8 +10,7 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 
 extra_params:
     num_rounds: 1
-    # prompt_path: "/mnt/bn/audio-diffusion/data/mixture_prompts/karaoke-30s.csv"
-    prompt_path: "/mnt/bn/ashaw-us/repos/samantha/recipes/bigmusic/dev/ashaw/scripts/inference_scripts/janne_diffusion_reconstruct_audio/gt_prompts.csv"
+    prompt_path: "/mnt/bn/ashaw-lq/repos/samantha/recipes/bigmusic/dev/ashaw/scripts/inference_scripts/janne_diffusion_reconstruct_audio/gt_prompts.csv"
     inference_conditions: style_audio
     max_items: null
     run_combinations: False
@@ -23,7 +22,7 @@ extra_params:
 
     # Model Settings
     sample_rate: 44100
-    duration: 30
+    duration: 120
     sample_mode: "gumbel"
 
     ar_params:
@@ -55,7 +54,7 @@ run_opts:
     precision: 16
     accelerator: auto
     strategy: auto
-    cache_dir: .module_cache/musiclm
+    cache_dir: .module_cache/musiclm_diffusion
     batch_size: 4
     num_workers: 8
 
@@ -78,17 +77,12 @@ pl_module: !new:recipes.bigmusic.lightning.inference.GTInferenceModule
     required_modules:
         bestrq_modules:
             bestrq:
-                # US conv UMM-chroma stage 3
-                hpath: hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/user/hanoi.hantrakul/logs/umm_conv_sstk/umm_stage3_conv1D_sstk_no_ctc_794_EMAVQ32768x32/checkpoints_for_inference_retry/step=0850000.ckpt
-                # hpath: hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/user/hanoi.hantrakul/logs/umm_conv_sstk/umm_stage3_conv1D_sstk_no_ctc_794_EMAVQ4096x32/checkpoints_for_inference/step=0865000.ckpt
-                initializer: !name:recipes.umm.requires.model_initializer.init_stage3_conv1d
+                hpath: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/instrumental/sstk_v9/umm/convumm_gan_719M_sstk_None_EMAEntropy32768x32/step=0700000-minimal.ckpt
+                initializer: !name:recipes.umm.requires.model_initializer.init_convumm_gan
                     cache_dir: !ref <run_opts[cache_dir]>
         diffusion_modules:
             diffusion:
-                # hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/24k_v2/diffusion-step=600000-EMA.ckpt # 24k
-                # hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/44.1k_stereo_v0/diffusion-step=450000-EMA.ckpt # 44.1k
-                # hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/44.1k_stereo_v1/diffusion-step=250000-EMA.ckpt
-                hpath: /mnt/bn/audio-diffusion/wtl/diffusion/sstk/44.1k_stereo_v2/diffusion-step=600000-EMA.ckpt
+                hpath: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/44.1k_30s_v4_gpu_40_v5_convummgan_700k_steps/checkpoints/diffusion-step=580000-EMA.ckpt
                 initializer: !name:recipes.diffusion.models.diffusion_model.utils.init_diffusion
                     cache_dir: !ref <run_opts[cache_dir]>
                     sstk: True
@@ -99,30 +93,12 @@ pl_module: !new:recipes.bigmusic.lightning.inference.GTInferenceModule
                     cache_dir: !ref <run_opts[cache_dir]>
                     params: !ref <extra_params[diffusion_params]>
             vocoder:
-                # hpath: /mnt/bn/audio-diffusion/wtl/vocoder/sstk/24k_v1/soundstream-step=1240000-val_sdr=12.5666-EMA.ckpt # 24k
-                # hpath: /mnt/bn/audio-diffusion/wtl/vocoder/sstk/24k_v1_to_44.1k_stereo/soundstream-step=1490000-val_sdr=4.9540-EMA.ckpt  # '24k_to_48k_stereo'
-                # hpath: /mnt/bn/audio-diffusion/wtl/vocoder/sstk/44.1k_stereo_sa_v0/last-EMA.ckpt # '44.1k_sa'
-                hpath: /mnt/bn/audio-diffusion/wtl/vocoder/sstk/44.1k_stereo_sa_v1/last-EMA.ckpt
+                hpath: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/instrumental/sstk_v9/vocoder/44.1k_stereo_sa_v1/last-EMA-minimal.ckpt
                 initializer: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
                     cache_dir: !ref <run_opts[cache_dir]>
                     sample_rate: !ref <extra_params[sample_rate]>
                     adapt_hopper: True
                     version: !ref <extra_params[vocoder_version]>
-        ar_modules:
-            coarse:
-                # hpath: /mnt/bn/audio-diffusion/jt/model_archive/vocalmusic/coarse_flash_llama_wav2vec/bestrq_chroma_coarse_0.7b/checkpoints/step=295000-val_accu_0=17.92.ckpt
-                hpath: /mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/coarse_vocal/baseline_en_v1/checkpoints/step=200000-val_accu_0=23.74.ckpt
-                initializer: !name:recipes.bigmusic.utils.model_initializer.init_coarse
-                    cache_dir: !ref <run_opts[cache_dir]>
-            fine:
-                # hpath: /mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/fine/fine_mcc_mix/fixed_posemb_v1/checkpoints/step=206000-val_accu_0=10.44.ckpt
-                hpath: /mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/fine/fine_ctiga_v1/checkpoints/step=200000-val_accu_0=12.11.ckpt
-                initializer: !name:recipes.bigmusic.utils.model_initializer.init_fine
-                    cache_dir: !ref <run_opts[cache_dir]>
-            soundstream_dec:
-                hpath: hdfs://harunava/home/byte_speech_sv/zongyu.yin/ckpts/soundstream/190k
-                initializer: !name:recipes.musiclm.requires.model_initializer.init_soundstream_decoder
-                    cache_dir: !ref <run_opts[cache_dir]>
 
 callbacks:
     # - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsCallback

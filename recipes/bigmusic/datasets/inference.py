@@ -52,7 +52,7 @@ from recipes.bigmusic.datasets.transforms.structure import (
 from recipes.bigmusic.datasets.utils.zh_lyrics_proc import SongLyrics
 from recipes.datasets.mcc.sami_tokenizer import section_parens
 from recipes.musiclm.inference.utils import load_wav
-from recipes.musiclm.utils.dist import local_zero_first
+from recipes.musiclm.utils.dist import local_zero_first, is_local_zero
 
 default_prompt_path = Path(__file__).absolute().parent/'inference_prompts/default.json'
 
@@ -63,13 +63,21 @@ def prompt_path_to_items(prompt_path, cache_dir='.prompt_cache'):
         # Format expects { 'style_audio': [], 'style_text': [], 'lyrics': [] }
         return prompt_path
     if prompt_path.startswith("hdfs://"):
-        with local_zero_first():
-            local_path = f"{cache_dir}/{os.path.basename(prompt_path)}"
-            if not os.path.exists(local_path):
-                Path(local_path).parent.mkdir(parents=True, exist_ok=True)
-                if not hh.get(prompt_path, local_path):
-                    raise ConnectionError(f"Cannot retrieve file from {prompt_path}.")
-            prompt_path = local_path
+        local_path = f"{cache_dir}/{os.path.basename(prompt_path)}"
+        if not os.path.exists(local_path):
+            with local_zero_first():
+                if is_local_zero():
+                    Path(local_path).parent.mkdir(parents=True, exist_ok=True)
+                    if not hh.get(prompt_path, local_path):
+                        raise ConnectionError(f"Cannot retrieve file from {prompt_path}.")
+                else:
+                    # torch.dist is sometimes not initialized at dataloader step. Sleep to wait for local rank 0
+                    import time
+                    count = 0
+                    while not os.path.exists(local_path) and count < 45:
+                        time.sleep(1) 
+                        count += 1
+        prompt_path = local_path
 
     prompt_path = Path(prompt_path)
     if prompt_path.suffix == '.json':
@@ -283,6 +291,24 @@ def inference_dataset_from_prompt(
         batch_transforms=batch_transforms,
         batch_fn=batch_fn,
     )
+
+def inference_anchor(mulan_hpath):
+    import numpy as np
+    from recipes.mulan.inference.stats.sstk_anchor_points import load_anchor_points, load_anchor_points_from_mulan_ckpt
+    binary_center = load_anchor_points_from_mulan_ckpt(mulan_hpath)
+    
+    prompts = {
+        'style_embedding': binary_center[:, None, :],
+    }
+    default_batch_size=2
+    inference_dataset = inference_dataset_from_prompt(
+        prompts, conditions="style_embedding,duration",
+        batch_size=default_batch_size,
+        lyrics_max_seq_len=None,
+        dataset_mode=None,
+        extra_params={ 'duration': 60 }
+    )
+    return inference_dataset
 
 def load_and_normalize_wavs(wav_paths, additional_transforms=()):
     audio_transforms = Compose([ToTensor(), SetAudioDimensions(), *additional_transforms])
