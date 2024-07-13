@@ -558,30 +558,38 @@ class FlopsProfiler(object):
             items = [
                 "{} = {:g}% Params".format(
                     params_to_string(params),
-                    round(100 * params / total_params, DEFAULT_PRECISION)
-                    if total_params
-                    else 0,
+                    (
+                        round(100 * params / total_params, DEFAULT_PRECISION)
+                        if total_params
+                        else 0
+                    ),
                 ),
                 "{} = {:g}% MACs".format(
                     macs_to_string(macs),
-                    round(100 * macs / total_macs, DEFAULT_PRECISION)
-                    if total_macs
-                    else 0,
+                    (
+                        round(100 * macs / total_macs, DEFAULT_PRECISION)
+                        if total_macs
+                        else 0
+                    ),
                 ),
                 "{} = {:g}% latency".format(
                     duration_to_string(duration),
-                    round(100 * duration / total_duration, DEFAULT_PRECISION)
-                    if total_duration
-                    else 0,
+                    (
+                        round(100 * duration / total_duration, DEFAULT_PRECISION)
+                        if total_duration
+                        else 0
+                    ),
                 ),
                 flops_to_string(
                     round(flops / duration, DEFAULT_PRECISION) if duration else 0
                 ),
                 "{} = {:g}% FLOPs".format(
                     flops_to_string(flops),
-                    round(100 * flops / total_flops, DEFAULT_PRECISION)
-                    if total_flops
-                    else 0,
+                    (
+                        round(100 * flops / total_flops, DEFAULT_PRECISION)
+                        if total_flops
+                        else 0
+                    ),
                 ),
             ]
             original_extra_repr = module.original_extra_repr()
@@ -1409,18 +1417,30 @@ def _flash_rmsnorm_forward_hook(
 
 
 def _flash_rotaryemb_forward_hook(flash_rotaryemb_module, input, output):
-    if len(input) == 1:
-        qkv, seqlen_offset = input[0], 0
+    qkv, kv = input[:2]
+    if kv is None:
+        # mha
+        if qkv.ndim == 5:  # b,t,3,n,h
+            b, tq, _, nq, h = qkv.shape
+        elif qkv.ndim == 4:  # cum_t,3,n,h
+            b = 1
+            tq, _, nq, h = qkv.shape
+        else:
+            assert False, "qkv.shape wrong"
+        flops = b * tq * nq * h * 2 * 2
     else:
-        qkv, seqlen_offset = input
-    if qkv.ndim == 5:  # b,t,3,n,h
-        b, t, _, n, h = qkv.shape
-    elif qkv.ndim == 4:
-        b, t, n, h = qkv.shape
-    else:
-        assert False, "qkv.shape wrong"
-
-    flops = b * t * n * h * 2 * 2
+        # gqa/mqa
+        assert qkv.ndim + 1 == kv.ndim
+        if qkv.ndim == 4:  # b,t,n,h
+            b, tq, nq, h = qkv.shape
+            _, tk, _, nk, h = kv.shape
+        elif qkv.ndim == 3:  # cum_t,n,h
+            b = 1
+            tq, nq, h = qkv.shape
+            tk, _, nk, h = kv.shape
+        else:
+            assert False, "qkv/kv.shape wrong"
+        flops = b * tq * nq * h * 2 + b * tk * nk * h * 2
     flash_rotaryemb_module.__flops__ += flops
 
 

@@ -1440,20 +1440,20 @@ class MHA(nn.Module):
             if inference_params is None:
                 if self.rotary_emb_dim > 0:
                     if key_padding_mask is not None and indices is not None:
+                        # print("rotary mha path0")
                         if not is_pad:
                             qkv = pad_input(
                                 qkv, indices, cu_seqlens.shape[0] - 1, max_seqlen
                             )
-                        qkv = self.rotary_emb(qkv)
+                        qkv = self.rotary_emb(
+                            qkv, None, 0, None, None, None, None, None
+                        )
                         if not is_pad:
                             qkv, _, _, _ = unpad_input(qkv, key_padding_mask)
                     else:
+                        # print("rotary mha path1")
                         qkv = self.rotary_emb(
-                            qkv=qkv,
-                            kv=None,
-                            seqlen_offset=kwargs.get("seqlen_offset", 0),
-                            cu_seqlens=cu_seqlens,
-                            max_seqlen=max_seqlen,
+                            qkv, None, 0, None, cu_seqlens, None, max_seqlen, None
                         )
                 input_args = self._get_inner_attn_args(
                     qkv,
@@ -1487,7 +1487,14 @@ class MHA(nn.Module):
                     assert is_pad
                     if self.rotary_emb_dim > 0:
                         qkv = self.rotary_emb(
-                            qkv, seqlen_offset=inference_params.sequence_len_offset
+                            qkv,
+                            None,
+                            inference_params.sequence_len_offset,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
                         )
                     q = qkv[:, :, 0]
                     kv = self._update_kv_cache(qkv[:, :, 1:], inference_params)
@@ -1532,9 +1539,11 @@ class MHA(nn.Module):
                         self.rotary_emb_dim,
                         rotary_emb_base,
                         # neox_rotary_style
-                        (not self.rotary_emb.interleaved)
-                        if self.rotary_emb_dim > 0
-                        else True,
+                        (
+                            (not self.rotary_emb.interleaved)
+                            if self.rotary_emb_dim > 0
+                            else True
+                        ),
                     )
                     context = rearrange(context, "b h d -> b 1 h d")
         else:
@@ -1639,6 +1648,7 @@ class MHA(nn.Module):
                 if inference_params is None:
                     if self.rotary_emb_dim > 0:
                         if key_padding_mask is not None and indices is not None:
+                            # print("rotary gqa path0")
                             if not is_pad:
                                 q = pad_input(
                                     q, indices, cu_seqlens.shape[0] - 1, max_seqlen
@@ -1646,21 +1656,22 @@ class MHA(nn.Module):
                                 kv = pad_input(
                                     kv, indices, cu_seqlens.shape[0] - 1, max_seqlen
                                 )
-                            q, kv = self.rotary_emb(q, kv)
+                            q, kv = self.rotary_emb(q, kv, 0, 0, None, None, None, None)
                             if not is_pad:
                                 q, _, _, _ = unpad_input(q, key_padding_mask)
                                 kv, _, _, _ = unpad_input(kv, key_padding_mask)
 
                         else:
+                            # print("rotary gqa path1")
                             q, kv = self.rotary_emb(
                                 q,
                                 kv,
-                                seqlen_offset=kwargs.get("seqlen_offset", 0),
-                                seqlen_offset_k=kwargs.get("seqlen_offset", 0),
-                                cu_seqlens=cu_seqlens,
-                                cu_seqlens_k=cu_seqlens,
-                                max_seqlen=max_seqlen,
-                                max_seqlen_k=max_seqlen,
+                                0,
+                                0,
+                                cu_seqlens,
+                                cu_seqlens,
+                                max_seqlen,
+                                max_seqlen,
                             )
                     input_args = self._get_inner_cross_attn_args(
                         q,
@@ -1694,8 +1705,12 @@ class MHA(nn.Module):
                         q, kv = self.rotary_emb(
                             q,
                             kv,
-                            seqlen_offset=inference_params.sequence_len_offset,
-                            seqlen_offset_k=inference_params.sequence_len_offset,
+                            inference_params.sequence_len_offset,
+                            inference_params.sequence_len_offset,
+                            None,
+                            None,
+                            None,
+                            None,
                         )
                     kv = self._update_kv_cache(kv, inference_params)
                     # If we're processing the prompt, causal=None (use self.causal).
@@ -1939,9 +1954,11 @@ class ParallelMHA(nn.Module):
                     self.rotary_emb_dim,
                     rotary_emb_base,
                     # neox_rotary_style
-                    (not self.rotary_emb.interleaved)
-                    if self.rotary_emb_dim > 0
-                    else True,
+                    (
+                        (not self.rotary_emb.interleaved)
+                        if self.rotary_emb_dim > 0
+                        else True
+                    ),
                 )
                 context = rearrange(context, "b h d -> b 1 h d")
         if seqlen is None:

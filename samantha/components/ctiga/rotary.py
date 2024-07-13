@@ -754,13 +754,13 @@ class RotaryEmbedding(torch.nn.Module):
     def forward(
         self,
         qkv: torch.Tensor,
-        kv: Optional[torch.Tensor] = None,
-        seqlen_offset: Union[int, torch.Tensor] = 0,
-        seqlen_offset_k: Union[int, torch.Tensor] = None,
-        cu_seqlens: Optional[torch.Tensor] = None,
-        cu_seqlens_k: Optional[torch.Tensor] = None,
-        max_seqlen: Optional[int] = None,
-        max_seqlen_k: Optional[int] = None,
+        kv: Optional[torch.Tensor],
+        seqlen_offset: Union[int, torch.Tensor],
+        seqlen_offset_k: Optional[Union[int, torch.Tensor]],
+        cu_seqlens: Optional[torch.Tensor],
+        cu_seqlens_k: Optional[torch.Tensor],
+        max_seqlen: Optional[int],
+        max_seqlen_k: Optional[int],
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         qkv/q: (batch, seqlen, 3/1, nheads, headdim)
