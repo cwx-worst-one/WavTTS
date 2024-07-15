@@ -1,9 +1,57 @@
 ARG REGION
 
 FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as Aliyun_VA
+
+RUN apt-get update && \
+    apt-get install \
+        -yq --no-install-recommends \
+        locales tzdata && \
+    # Change timezone
+    echo "$ETC_TIMEZONE" > /etc/timezone; \
+    ln -sfn "/usr/share/zoneinfo/$ETC_LOCALTIME" /etc/localtime; \
+    # Generate locales
+    sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen; \
+    locale-gen;
+
 FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as US-East
+
+RUN apt-get update && \
+    apt-get install \
+        -yq --no-install-recommends \
+        locales tzdata && \
+    # Change timezone
+    echo "$ETC_TIMEZONE" > /etc/timezone; \
+    ln -sfn "/usr/share/zoneinfo/$ETC_LOCALTIME" /etc/localtime; \
+    # Generate locales
+    sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen; \
+    locale-gen;
+
 FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as US-East-Red
+
+RUN apt-get update && \
+    apt-get install \
+        -yq --no-install-recommends \
+        locales tzdata && \
+    # Change timezone
+    echo "$ETC_TIMEZONE" > /etc/timezone; \
+    ln -sfn "/usr/share/zoneinfo/$ETC_LOCALTIME" /etc/localtime; \
+    # Generate locales
+    sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen; \
+    locale-gen;
+
 FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as Aliyun_SG
+
+RUN apt-get update && \
+    apt-get install \
+        -yq --no-install-recommends \
+        locales tzdata && \
+    # Change timezone
+    echo "$ETC_TIMEZONE" > /etc/timezone; \
+    ln -sfn "/usr/share/zoneinfo/$ETC_LOCALTIME" /etc/localtime; \
+    # Generate locales
+    sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen; \
+    locale-gen;
+
 FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as China-North-LF
 
 ENV http_proxy="http://sys-proxy-rd-relay.byted.org:8118"
@@ -33,9 +81,10 @@ ENV SPEECH_USE_SYSTEM_TRITON 1
 ENV PANTHER_PLIR_EXCLUDE_OPS batch_gemm_fwd,batch_gemm_bwd
 ENV TORCH_NCCL_AVOID_RECORD_STREAMS 1
 
-RUN apt update && \
-    apt install \
+RUN apt-get update && \
+    apt-get install \
         -yq --no-install-recommends \
+        libc6 \
         libucx0 \
         libmkl-rt \
         cmake \
@@ -68,8 +117,8 @@ RUN apt update && \
     cd /tmp && \
     wget https://developer.download.nvidia.com/compute/cuda/repos/debian11/x86_64/cuda-keyring_1.1-1_all.deb && \
     dpkg -i cuda-keyring_1.1-1_all.deb && rm -f cuda-keyring_1.1-1_all.deb && \
-    apt update && \
-    apt install -y cuda-nsight-compute-12-2 \
+    apt-get update && \
+    apt-get install -y cuda-nsight-compute-12-2 \
                    cuda-nsight-systems-12-2 \
                    libcudnn8=8.9.7.29-1+cuda12.2 \
                    libcudnn8-dev=8.9.7.29-1+cuda12.2 && \
@@ -163,12 +212,12 @@ RUN pip3 install --no-cache-dir pip==24.0 && \
         zhon==1.1.5
 
 ARG CRUISE_VERSION=1.0.0.2808
-ARG PANTHER_VERSION=1.7.14.256
+ARG PANTHER_VERSION=1.7.14.266
 ARG FALCONCLAW_VERSION=1.0.5.129
 ARG ONNX_VERSION=1.0.0.22
 ARG OPENFST_VERSION=1.0.0.8
 ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
-ARG SPEECH_EVALS_VERSION=1.0.0.14
+ARG SPEECH_EVALS_VERSION=1.0.0.26
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.58
 ARG DATALOADER_VERSION=1.0.0.160
@@ -183,35 +232,37 @@ ARG BLEURT_VERSION=1.0.0.5
 ARG APEX_VERSION=1.0.0.2
 
 # 2. install falconclaw && panther && dataloader
-RUN \
-    pip3 install \
-        --no-cache-dir \
-        http://luban-source.byted.org/repository/scm/data.aml.cruise_$CRUISE_VERSION.tar.gz && \
-    pip3 install \
-        --no-cache-dir \
-        http://luban-source.byted.org/repository/scm/lab.speech.openfst_python_$OPENFST_VERSION.tar.gz && \
-    pip3 install \
-        --no-cache-dir \
-        http://luban-source.byted.org/repository/scm/lab.speech.falconclaw_$FALCONCLAW_VERSION.tar.gz && \
-    pip3 install \
-        --no-cache-dir \
-        http://luban-source.byted.org/repository/scm/seed.speech.bumi_$BUMI_VERSION.tar.gz && \
-    cd /tmp && \
+RUN pip3 install --no-cache-dir \
+        http://luban-source.byted.org/repository/scm/data.aml.cruise_$CRUISE_VERSION.tar.gz
+
+RUN pip3 install --no-cache-dir \
+        http://luban-source.byted.org/repository/scm/lab.speech.openfst_python_$OPENFST_VERSION.tar.gz
+
+RUN pip3 install --no-cache-dir \
+        http://luban-source.byted.org/repository/scm/lab.speech.falconclaw_$FALCONCLAW_VERSION.tar.gz
+
+RUN pip3 install --no-cache-dir \
+        http://luban-source.byted.org/repository/scm/seed.speech.bumi_$BUMI_VERSION.tar.gz
+
+RUN mkdir -p /tmp/py_pkg.tensorflow_onnx_panther && \
+    cd /tmp/py_pkg.tensorflow_onnx_panther && \
     wget http://luban-source.byted.org/repository/scm/lab.speech.tensorflow_onnx_panther_$ONNX_VERSION.tar.gz && \
     tar -xvf lab.speech.tensorflow_onnx_panther_$ONNX_VERSION.tar.gz && \
-    pip3 install \
-        --no-cache-dir \
-        tf2onnx-1.9.3-py3-none-any.whl && \
+    pip3 install --no-cache-dir tf2onnx-1.9.3-py3-none-any.whl && \
+    rm -rf /tmp/* /root/.cache
+
+RUN mkdir -p /tmp/py_pkg.panther && \
+    cd /tmp/py_pkg.panther && \
     wget http://luban-source.byted.org/repository/scm/lab.speech.panther_arnold_$PANTHER_VERSION.tar.gz && \
     tar -xvf lab.speech.panther_arnold_$PANTHER_VERSION.tar.gz && \
-    pip3 install \
-        --no-cache-dir \
-        *torch*/panther_gpu*.whl && \
+    pip3 install --no-cache-dir *torch*/panther_gpu*.whl && \
+    rm -rf /tmp/* /root/.cache
+
+RUN mkdir -p /tmp/py_pkg.dataloader && \
+    cd /tmp/py_pkg.dataloader && \
     wget http://luban-source.byted.org/repository/scm/lab.arnold.dataloader_$DATALOADER_VERSION.tar.gz && \
     tar -xvf lab.arnold.dataloader_$DATALOADER_VERSION.tar.gz && \
-    pip3 install \
-        --no-cache-dir \
-        byted_dataloader*cp39*.whl && \
+    pip3 install --no-cache-dir byted_dataloader*cp39*.whl && \
     strip -g /usr/local/lib/python3.9/dist-packages/openfst_python/*.so* && \
     rm -rf /tmp/* /root/.cache
 
@@ -399,13 +450,13 @@ RUN pip install --upgrade "pillow>=10.0.1"
 ARG EFA_INSTALLER_VERSION=1.29.0
 ARG AWS_OFI_NCCL_VERSION=v1.7.4-aws
 
-RUN apt update -y \
-    && apt purge -y \
+RUN apt-get update -y \
+    && apt-get purge -y \
         libmlx5-1 \
         ibverbs-utils \
         libibverbs-dev \
         libibverbs1 \
-    && apt install -y --allow-unauthenticated \
+    && apt-get install -y --allow-unauthenticated \
         kmod \
         build-essential \
         curl \
@@ -430,8 +481,8 @@ RUN cd $HOME \
     && curl -O "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz" \
     && tar -xf $HOME/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz \
     && cd aws-efa-installer \
-    && apt install -y ./DEBS/UBUNTU2004/x86_64/rdma-core/*.deb \
-    && apt install -y ./DEBS/UBUNTU2004/x86_64/*.deb \
+    && apt-get install -y ./DEBS/UBUNTU2004/x86_64/rdma-core/*.deb \
+    && apt-get install -y ./DEBS/UBUNTU2004/x86_64/*.deb \
     && cd - \
     && rm -fr aws-efa-installer $HOME/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz
 
