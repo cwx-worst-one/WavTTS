@@ -2,7 +2,14 @@ import torch
 from torch import Tensor, int32, nn
 from torch.nn import functional as F
 
-from recipes.umm.models.dualumm_vector_quantizers import get_vq_codebook_distances
+from recipes.umm.models.dualumm_vector_quantizers import (
+    get_embeddings_from_vector_quantizer,
+    get_noise_scale,
+    get_vector_quantizer,
+    get_vector_quantizer_projection_layers,
+    get_vq_codebook_distances,
+    get_vq_losses,
+)
 from recipes.umm.models.umm_mkii import Conv2dUpsampling, Stage2
 from recipes.umm.models.voc_modules.pitch_predictor import pitch_utils
 from recipes.umm.models.voc_modules.pitch_predictor.inference import (
@@ -192,4 +199,131 @@ class Stage2TTSRope(Stage2):
             vuv_out = vuv_out[:, :f0_vuv_trim_len, :]
             output_dict.update(f0_out=f0_out)  # [batch_size, time_steps, 1]
             output_dict.update(vuv_out=vuv_out)  # [batch_size, time_steps, 1]
+        return output_dict
+
+
+class Stage3TTSRope(Stage2TTSRope):
+    def __init__(self, config):
+        super().__init__(config)
+        self.init_vq_layers(config)
+
+    def init_vq_layers(self, config):
+        """
+        Init the VQ layer.
+        @hanoihantrakul: I copied this from `convumm_gan.py` because it is cleaner than the original umm_mkii.Stage3 code
+        """
+        # Configure the specific type of VQ
+        vq_type = config.get("vq_type", None)
+        self.vq = get_vector_quantizer(vq_type, config)
+        # Configure the type of projection layer going into and out of VQ layer
+        vq_proj_norm_type = config.get("vq_proj_norm", None)
+        self.vq_proj_in, self.vq_proj_out = get_vector_quantizer_projection_layers(
+            vq_proj_norm_type, config
+        )
+        # Configure the noise injected into the VQ projection layer
+        if config.get("vq_proj_noise", 0) > 0:
+            self.register_buffer(f"cnt", torch.FloatTensor([0]))
+
+    def forward(self, input_dict):
+        """
+        12JUL2024 @hanoih:
+        This function is unfortunately becoming very large since it combines code from
+        - umm_mkii.stage3.forward()
+        - umm_mkii_pitch.stage3.forward()
+        - convumm_gan.forward()
+
+        If this approach works, recommend refactoring to a cleaner implementation.
+        """
+        feature = input_dict["mel"]
+        flops = self.audio_encoder.get_flops(*feature.shape)
+        audio_feature = self.audio_encoder(feature)
+        hidden_states = self.encoder_input_dropout(audio_feature)
+        position_embeddings = self.embed_positions(hidden_states)
+        flops += self.encoder_layers[0].get_flops(*hidden_states.shape[0:2]) * len(
+            self.encoder_layers
+        )
+
+        """
+        @hanoihantrakul 12JUL2024
+        I copied this part of the code from `umm_mkii.Stage3 forward`.
+        It can be simplified to be more like `convumm_gan.forward_vq()`
+        """
+        for i, layer in enumerate(self.encoder_layers):
+            if i == self.config.vq_layer_idx:
+                hidden_states = self.vq_proj_in(hidden_states)
+                if self.config.get("vq_proj_noise", 0) > 0:
+                    noise_scale = (self.config.vq_proj_noise - self.cnt).clamp(
+                        0
+                    ) / self.config.vq_proj_noise
+                    hidden_states = (
+                        hidden_states + torch.randn_like(hidden_states) * noise_scale
+                    )
+                    self.cnt.add_(1)
+                if self.config.get("vq_type", None) == "FSQ":
+                    vq_embs, vq_ids = self.vq(hidden_states)
+                    vq_loss = None
+                elif self.config.get("vq_type", None) == "EMAEntropy":
+                    vq_embs, vq_ids, vq_loss = self.vq(
+                        hidden_states, e_scale=1.0 if self.cnt < 30_000 else 0.0
+                    )
+                else:
+                    vq_embs, vq_ids, vq_loss = self.vq(hidden_states)
+                # calculate codebook distances by accessing the VQ's internal matrix representing the actual codebook
+                codebook_distance_stats = get_vq_codebook_distances(
+                    self.vq.embedding.weight.data
+                )
+                hidden_states = self.vq_proj_out(vq_embs)
+            hidden_states = layer(
+                hidden_states, position_embeddings=position_embeddings
+            )
+
+        flops += self.mel_head.get_flops(*hidden_states.shape)
+        mel_out = self.mel_head(hidden_states)
+
+        """
+        @hanoihantrakul 12JUL2024
+        I copied this code from `umm_mkii_pitch` to handle the new f0_hz signal.
+
+        `mel` (ground truth) can sometimes be 1 sample longer than `mel_out` (predicted)
+        - Just for this one config only, correct for this 1 sample difference.
+        - e.g. [6, 2917, 160] vs [6, 2916, 160]
+        - This will not be a problem if a compeletely new class is defined without inheritance from Stage1 and Stage2
+        """
+        mel_trim_len = pitch_utils.compute_min_lengths(
+            input_dict["mel"], mel_out, axis=1
+        )
+        input_dict["mel"] = input_dict["mel"][:, :mel_trim_len, :]
+        mel_out = mel_out[:, :mel_trim_len, :]
+
+        output_dict = {
+            "mel_out": mel_out,
+            "vq_ids": vq_ids,
+            "vq_loss": vq_loss,
+            "flops": flops * 3,  # extra 2x for backward.
+        }
+        if self.config.get("add_ctc", True):
+            flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
+            ctc_out = self.ctc_head(hidden_states)
+            output_dict.update(ctc_out=ctc_out)
+        if self.config.get("vq_proj_noise", False):
+            output_dict.update(noise_scale=noise_scale)
+        if self.config.get("add_chroma", False):
+            chroma_out = self.chroma_head(hidden_states)
+            output_dict.update(chroma_out=chroma_out)
+        if self.config.get("add_pitch", False):
+            f0_vuv_out = self.f0_vuv_head(hidden_states)
+            f0_out = f0_vuv_out[:, :, 0:1]
+            vuv_out = f0_vuv_out[:, :, 1:]
+            # sometimes f0_gt, vuv_gt is 1 timestep longer than f0_out, vuv_out
+            f0_vuv_trim_len = pitch_utils.compute_min_lengths(
+                f0_out, input_dict["f0"], axis=1
+            )
+            input_dict["f0"] = input_dict["f0"][:, :f0_vuv_trim_len, :]
+            f0_out = f0_out[:, :f0_vuv_trim_len, :]
+            input_dict["vuv"] = input_dict["vuv"][:, :f0_vuv_trim_len, :]
+            vuv_out = vuv_out[:, :f0_vuv_trim_len, :]
+            output_dict.update(f0_out=f0_out)  # [batch_size, time_steps, 1]
+            output_dict.update(vuv_out=vuv_out)  # [batch_size, time_steps, 1]
+        # add the codebook stats
+        output_dict.update(codebook_distance_stats)
         return output_dict

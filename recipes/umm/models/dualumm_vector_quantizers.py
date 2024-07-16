@@ -1,5 +1,6 @@
-from torch import nn
+import numpy as np
 import torch
+from torch import nn
 
 from recipes.umm.models.umm_mkii import (
     ClusteredVectorQuantizer,
@@ -37,6 +38,7 @@ def get_vector_quantizer(vq_type, config):
             decay=config.vq_decay,
         )
 
+
 def get_vq_losses(vq, vq_type, hidden_states, cnt):
     if vq_type == "FSQ":
         vq_embs, vq_ids = vq(hidden_states)
@@ -48,18 +50,18 @@ def get_vq_losses(vq, vq_type, hidden_states, cnt):
     else:
         vq_embs, vq_ids, vq_loss = vq(hidden_states)
     return vq_embs, vq_ids, vq_loss
-    
+
 
 def get_noise_scale(vq_proj_noise, cnt):
     """Get projection noise based on current count."""
     return (vq_proj_noise - cnt).clamp(0) / vq_proj_noise
 
-     
+
 def get_embeddings_from_vector_quantizer(token, vq):
     """Given an integer token, get quantized continuous embeddings after VQ."""
     if isinstance(vq, FiniteScalarQuantizer):
         # this method is badly named. It should be called `indices_to_embeddings` even though FSQ technically outputs codes.
-        return vq.indices_to_codes(token)  
+        return vq.indices_to_codes(token)
     else:
         return vq.embedding(token)
 
@@ -99,6 +101,7 @@ def get_vector_quantizer_projection_layers(vq_proj_norm_type, config):
         vq_proj_out = nn.Linear(config.vq_codebook_dim, config.hidden_size, bias=False)
     return vq_proj_in, vq_proj_out
 
+
 def get_vq_codebook_distances(codebook_data):
     """Calculate pairwise codebook distance statistics for monitoring on wandb."""
     embeddings = codebook_data
@@ -108,8 +111,28 @@ def get_vq_codebook_distances(codebook_data):
         + torch.eye(pairwise_distances.shape[0], device=pairwise_distances.device)
         * pairwise_distances.max()
     )
+
+    num_zero_mag_vectors = get_num_zero_magnitude_entries(codebook_data)
+
     return {
-        "vq_mean_distance": pairwise_distances.mean(),
-        "vq_min_distance": min_distance,
-        "vq_max_distance": pairwise_distances.max(),
+        "vq_mean_distance": pairwise_distances.mean(),  # this should be called "vq_pairwise_mean_distance"
+        "vq_min_distance": min_distance,  # this should be called "vq_pairwise_min_distance"
+        "vq_max_distance": pairwise_distances.max(),  # this should be called "vq_pairwise_max_distance"
+        "num_zero_mag_codebook_vectors": num_zero_mag_vectors,
     }
+
+
+def get_codebook_magnitudes(codebook_data):
+    return codebook_data.norm(p=2, dim=1)
+
+
+def get_num_zero_magnitude_entries(codebook_data):
+    """Calculate number of codes with zero magnitude."""
+    codebook_mags = get_codebook_magnitudes(codebook_data)
+    codebook_mags = codebook_mags.cpu().detach().numpy()
+    unique_values, counts = np.unique(codebook_mags, return_counts=True)
+    # first entry in `unique_values` is the smallest value first
+    if np.isclose(unique_values[0], 0.00):
+        return counts[0]
+    else:
+        return 0
