@@ -14,7 +14,7 @@ export BYTED_TORCH_C10D_LOG_LEVEL=ERROR
 COMMIT=${SAMANTHA_COMMIT:-$(git rev-parse --short HEAD)}
 
 branch_name=$(git branch --show-current)
-git fetch -q --all
+git fetch -q --all || echo "fetch failed"
 git fetch --unshallow || echo "on a complete repository"
 
 git checkout $COMMIT
