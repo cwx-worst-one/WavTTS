@@ -15,8 +15,12 @@ def preprocess_audio(audio_bin, sample_rate, resampler, device, *_, **__):
     hop_length, frame_rate = 150, 40
     rate = int(sample_rate / frame_rate)
 
-    wav, sr = librosa.load(audio_bin, sr=None)
-    if wav.size == 0:
+    try:
+        wav, sr = librosa.load(audio_bin, sr=None)
+        if wav.size == 0:
+            return None, None
+    except Exception as e:
+        logger.error("read audio error", exc_info=True)
         return None, None
     audio_dur = wav.shape[-1] / float(sr)
     if len(wav.shape) == 2 and wav.shape[-1] == 2:
