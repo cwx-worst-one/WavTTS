@@ -39,7 +39,7 @@ extra_params:
     n_fft: 2048
     win_length: 2048
     hop_length: 240
-    # feature_cmvn: "recipes/datasets/mcc/MixDataModule_SpeechTransform.stats.pt" # this config uses DualUMM mel transform (no normalization), not the original ConformerUMM mel transform (requires normalization stats)
+    feature_cmvn: "recipes/datasets/mcc/MixDataModule_SpeechTransform.stats.pt" # this config uses DualUMM mel transform (no normalization), not the original ConformerUMM mel transform (requires normalization stats)
     tokenizer: "bert-base-multilingual-uncased"
  
 
@@ -106,7 +106,7 @@ scheduler_cls: !name:recipes.umm.modules.lr_scheduler.WarmupCosine
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
 config: !new:recipes.umm.models.config.UMMConfig
-    # feature_cmvn: !ref <extra_params[feature_cmvn]>
+    feature_cmvn: !ref <extra_params[feature_cmvn]>
     sample_rate: !ref <extra_params[sample_rate]>
     n_mels: !ref <extra_params[n_mels]>
     n_mels_tgt: !ref <extra_params[n_mels_tgt]>
