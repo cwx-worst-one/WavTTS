@@ -3,12 +3,9 @@ from torch import Tensor, int32, nn
 from torch.nn import functional as F
 
 from recipes.umm.models.dualumm_vector_quantizers import (
-    get_embeddings_from_vector_quantizer,
-    get_noise_scale,
     get_vector_quantizer,
     get_vector_quantizer_projection_layers,
     get_vq_codebook_distances,
-    get_vq_losses,
 )
 from recipes.umm.models.umm_mkii import Conv2dUpsampling, Stage2
 from recipes.umm.models.voc_modules.pitch_predictor import pitch_utils
@@ -327,3 +324,37 @@ class Stage3TTSRope(Stage2TTSRope):
         # add the codebook stats
         output_dict.update(codebook_distance_stats)
         return output_dict
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def _prepare_wav(self, wav):
+        """Check audio dimensions and pad."""
+        if wav.dim() == 3:
+            wav = wav.squeeze(dim=1)
+        return self.pad_audio(wav.float())
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def _get_vq_ids(self, hidden_states, position_embeddings):
+        """Apply Vector Quantization and only get the ID's."""
+        for i, layer in enumerate(self.encoder_layers):
+            if i == self.config.vq_layer_idx:
+                vq_hidden_states = self.vq_proj_in(hidden_states)
+                _, vq_ids, _ = self.vq(vq_hidden_states)
+                return {"vq_ids": vq_ids, "hidden_states": hidden_states}
+            hidden_states = layer(
+                hidden_states, position_embeddings=position_embeddings
+            )
+        return {"vq_ids": vq_ids, "hidden_states": hidden_states}
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def wav2token(self, wav):
+        """Convert audio file to tokens (after Vector Quantization)."""
+        wav = self._prepare_wav(wav)
+        feature = self.preprocessing(wav)["mel"]
+        audio_feature = self.audio_encoder(feature)
+        hidden_states = self.encoder_input_dropout(audio_feature)
+        position_embeddings = self.embed_positions(hidden_states)
+        result = self._get_vq_ids(hidden_states, position_embeddings)
+        return result["vq_ids"]
