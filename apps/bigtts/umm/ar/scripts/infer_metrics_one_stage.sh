@@ -178,6 +178,6 @@ echo "Uploading outputs to hdfs ${hdfs_output_path}"
 set -x
 tar -cf ${info}.tar ${output_root}
 hdfs dfs -mkdir -p ${hdfs_output_path}
-hdfs dfs -put ${info}.tar ${hdfs_output_path}
+hdfs dfs -put -f ${info}.tar ${hdfs_output_path}
 rm ${info}.tar
 set +x

@@ -4,7 +4,7 @@ output_dir=$2
 lang=$3
 
 # 需修改;
-bigtts_eval_dir=/mnt/bn/cjw-lq-1/project/scripts/bigtts-eval
+bigtts_eval_dir=/mnt/bn/cjw-lq-1/project/scripts/bigtts-eval-colin
 
 cd $bigtts_eval_dir
 # pip install -r requirements.txt
