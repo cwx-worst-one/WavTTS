@@ -241,6 +241,7 @@ def _custom_cat(
     target_lens: torch.Tensor,
     bsz: int,
     t: int,
+    extra_len: int = 1
 ):
     """
     Fuse the lyrics_tokens, sos_ids, target_ids into one tensor.
@@ -274,8 +275,8 @@ def _custom_cat(
     h[h_lyrics_mask] = lyrics_tokens[lyrics_mask]
     h_sos_ids_mask = torch.arange(bsz, device=device) * t + input_lens
     h.flatten()[h_sos_ids_mask] = sos_ids[:, 0]  # sos_ids: [bsz, 1]
-    h_target_mask = (tN_ >= (input_lens_ + 2)) & (
-        tN_ < (input_lens_ + target_lens_ + 3)
+    h_target_mask = (tN_ >= (input_lens_ + 1 + extra_len)) & (
+        tN_ < (input_lens_ + 1 + extra_len + 1 + target_lens_)
     )
     target_mask = torch.arange(target_ids.size(1), device=device)[None, :] < (
         target_lens_ + 1

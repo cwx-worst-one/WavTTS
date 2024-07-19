@@ -46,6 +46,7 @@ class ARCollator(CollatorBase):
 
         umm_token, umm_token_length = [], []
         token, phone, tone, wordseg, lang = [], [], [], [], []
+        bpe, speaker_id, tag_id, text_lang = [], [], [], []
         for x in batch:
             umm_token.append(zero_pad(x.get(self.token_key).unsqueeze(0)))
             umm_token_length.append(x.get(self.token_key).numel())
@@ -55,6 +56,11 @@ class ARCollator(CollatorBase):
             tone.append(x.get("tone", torch.zeros(0).long()))
             wordseg.append(x.get("wordseg", torch.zeros(0).long()))
             lang.append(x["lang"])
+
+            bpe.append(x.get("bpe", torch.zeros(0).long()))
+            speaker_id.append(x.get("spk_id", 0))
+            tag_id.append(x.get("tag_id", 0))
+            text_lang.append(x.get("text_lang", torch.zeros(0).long()))
 
         res = {
             "target_ids": torch.cat(umm_token, dim=0),
@@ -74,6 +80,15 @@ class ARCollator(CollatorBase):
                 wordseg, batch_first=True, padding_value=0
             ),
             "lang": torch.tensor(lang),
+            "bpes": torch.nn.utils.rnn.pad_sequence(
+                bpe, batch_first=True, padding_value=0
+            ),
+            "bpe_length": torch.tensor([x.numel() for x in bpe]),
+            "speaker_id": torch.tensor(speaker_id),
+            "tag_id": torch.tensor(tag_id),
+            "text_lang": torch.nn.utils.rnn.pad_sequence(
+                text_lang, batch_first=True, padding_value=0
+            ),
         }
 
         if self.split_by_alignment:

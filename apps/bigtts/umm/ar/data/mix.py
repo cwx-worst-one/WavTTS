@@ -21,10 +21,11 @@ from webdataset.pipeline import DataPipeline
 
 from apps.bigtts.umm.ar.data.collate import ARCollator
 from apps.bigtts.umm.ar.data.phone_to_id import PhoneToId
-from apps.bigtts.umm.ar.data.utils import normalize_text
+from apps.bigtts.umm.ar.data.utils import normalize_text, get_text_lang_ids
 from samantha.dataio.batching import BucketBatcher
 from samantha.dataio.dataset import MultiIterableDataset
 from samantha.dataio.lite.utils.frontend import sil_punc_symbols
+from samantha.dataio.remote_io import load_json
 from samantha.dataio.parquet import ParquetDataset
 from samantha.dataio.webdataset.pipeline import WebPipeline
 from samantha.transforms.audio import (
@@ -34,6 +35,8 @@ from samantha.transforms.audio import (
     ToTensor,
 )
 from samantha.utils.webdataset import return_self
+
+from transformers import LlamaTokenizer, T5Tokenizer, AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -99,12 +102,21 @@ class BigTTSTransforms(BaseTransforms):
         tokenizer=None,
         phone2id=None,
         phone_tone_wordseg_dict=None,
+        frame_rate: int = 25,
+        use_spk_id=False,
+        spk2id=None,
+        use_bpe=False,
+        bpe_dir=None,
+        bpe_type=None,
+        use_spk_tag=False,
+        spk2tag=None,
+        whole_sentence_prob: int = 0.01,
+        use_text_lang_embedding=False,
+        textlang2id=None,
         split_by_alignment: bool = False,
         ignore_code_switch: bool = False,
-        frame_rate: int = 25,
         token_pretrain: bool = False,
         dropout_rate_zh_tone=None,
-        whole_sentence_prob: int = 0.01,
         enable_contexutal: bool = False,
         use_text_cfg: bool = False,
         use_prompt_token_for_short_audio: bool = False,
@@ -131,10 +143,41 @@ class BigTTSTransforms(BaseTransforms):
         self.lang2id = {"en": 0, "zh": 1, "zh_en": 2, "jp": 3}
         self.token_pretrain = token_pretrain
         self.dropout_rate_zh_tone = dropout_rate_zh_tone
+
+        self.use_spk_id = use_spk_id
+        if self.use_spk_id:
+            self.spk2id = load_json(spk2id)
+
+        self.use_bpe = use_bpe
+        self.bpe_type = bpe_type
+        self.bpe_dir = bpe_dir
+
+        if self.use_bpe:
+            print(f"##### Using BPE {self.bpe_type} #####")
+            if self.bpe_type == "flan-T5-large":
+                self.bpe_tokenizer = T5Tokenizer.from_pretrained(bpe_dir)
+            elif self.bpe_type == "byte-T5-base":
+                self.bpe_tokenizer = AutoTokenizer.from_pretrained(bpe_dir)
+            elif self.bpe_type == "llama":
+                self.bpe_tokenizer = LlamaTokenizer.from_pretrained(bpe_dir)
+            else:
+                raise NotImplementedError
+        else:
+            self.bpe_tokenizer = None
+
+        self.use_spk_tag = use_spk_tag
+        if self.use_spk_tag:
+            self.spk2tag = load_json(spk2tag)
+
         self.whole_sentence_prob = whole_sentence_prob
         self.enable_contextual = enable_contexutal
         self.use_text_cfg = use_text_cfg
         self.use_prompt_token_for_short_audio = use_prompt_token_for_short_audio
+
+        self.use_text_lang_embedding = use_text_lang_embedding
+        if self.use_text_lang_embedding:
+            self.textlang2id = load_json(textlang2id)
+            print(f"{self.textlang2id=}")
 
     def phone_tone_wordseg_to_id(self, phone, tone, word_seg):
         text_id = (
@@ -162,6 +205,12 @@ class BigTTSTransforms(BaseTransforms):
                 meta_obj = json.loads(meta_obj)
             item = {}
             item["labels"] = str(meta_obj.get("labels", ""))
+
+            item["speaker_name"] = str(meta_obj.get("speaker_id", ""))
+            if item["speaker_name"] == "" and meta_obj.get("metas_v1"):
+                metas_v1 = json.loads(meta_obj.get("metas_v1"))
+                item["speaker_name"] = str(metas_v1.get("speaker_id", ""))
+
             if self.split_by_alignment:
                 item["alignment"] = str(meta_obj.get("alignment", ""))
             item["text"] = normalize_text(sample["text"])
@@ -253,16 +302,20 @@ class BigTTSTransforms(BaseTransforms):
         tone_list = []
         wordseg_list = []
         token_length = []
+        text_lang_ids_list = []
         lang_id = None
         for sub_labels in labels:
-            token, phone, tone, wordseg, lang_id, _ = self.sami_tokenize(sub_labels)
+            token, phone, tone, wordseg, lang_id, _, text_lang_ids = self.sami_tokenize(
+                sub_labels
+            )
             if token is None:
-                return None, None, None, None, None, None
+                return None, None, None, None, None, None, None
             token_list.append(token)
             phone_list.append(phone)
             tone_list.append(tone)
             wordseg_list.append(wordseg)
             token_length.append(len(token))
+            text_lang_ids_list.append(text_lang_ids)
         return (
             torch.cat(token_list),
             torch.cat(phone_list),
@@ -270,13 +323,14 @@ class BigTTSTransforms(BaseTransforms):
             torch.cat(wordseg_list),
             lang_id,
             token_length,
+            torch.cat(text_lang_ids_list),
         )
 
     def sami_tokenize(self, labels):
         labels = list(filter(lambda x: x != "", labels.split("\n")))
         if len(labels) < 2:
             self._update_stats(skipped=True, message="Label length is shorter than 2")
-            return None, None, None, None, None, None
+            return None, None, None, None, None, None, None
         if len(labels[-1].split("\t")) == 2:
             last_duration = labels[-1].split("\t")[-1]
             last_line = labels[-2]
@@ -288,15 +342,26 @@ class BigTTSTransforms(BaseTransforms):
         lang_key = self.get_lang(labels)
         lang_id = self.lang2id[lang_key]
 
+        if self.use_text_lang_embedding:
+            # Get text language ID
+            text_lang_ids, text_langs = get_text_lang_ids(labels, self.textlang2id)
+            if text_lang_ids is None:
+                self._update_stats(skipped=True, message="get_text_lang_ids failed")
+                return None, None, None, None, None, None, None
+            text_lang_ids += 1
+            text_lang_ids = torch.from_numpy(text_lang_ids).long()
+        else:
+            text_lang_ids = None
+
         # Convert tacolabel to phone, tone, and wordseg ids
         text_id_phones_tones = self.phone2id.convert_tacolab_to_text_id(labels)
         if text_id_phones_tones is None:
             self._update_stats(
                 skipped=True, message="convert_tacolab_to_text_id failed"
             )
-            return None, None, None, None, None, None
+            return None, None, None, None, None, None, None
         else:
-            text_id, _, _, _, _ = text_id_phones_tones
+            text_id, *_ = text_id_phones_tones
 
         # Map phone, tone, and wordseg to id
         token = self.phone_tone_wordseg_to_id(
@@ -314,7 +379,7 @@ class BigTTSTransforms(BaseTransforms):
         tone = torch.from_numpy(tone).long()
         wordseg = torch.from_numpy(wordseg).long()
         token_length = token.size(0)
-        return token, phone, tone, wordseg, lang_id, token_length
+        return token, phone, tone, wordseg, lang_id, token_length, text_lang_ids
 
     def do_resample(self, src_sample_rate, x):
         if src_sample_rate == self.sample_rate:
@@ -347,6 +412,53 @@ class BigTTSTransforms(BaseTransforms):
             lang = "en"
         return lang
 
+    def get_spk_id(self, item):
+        dataset_name = item.get("dataset_name")
+        speaker_name = item.get("speaker_name")
+        uttid = item["uttid"]
+        if not dataset_name or not speaker_name:
+            spk_id = self.spk2id["default"]
+        dataset_name = dataset_name
+        speaker_name = speaker_name
+        spk_key = "/".join([dataset_name, speaker_name])
+        if spk_key in self.spk2id:
+            spk_id = self.spk2id[spk_key]
+        else:
+            spk_key = dataset_name
+            if spk_key not in self.spk2id:
+                print(
+                    f"warning: {uttid} speaker {spk_key} {dataset_name} {speaker_name} not in dict, will use default spkID"
+                )
+                spk_id = self.spk2id["default"]
+            else:
+                spk_id = self.spk2id[spk_key]
+        spk_id += 1
+        return spk_id
+
+    def get_tag_id(self, item):
+        dataset_name = item.get("dataset_name")
+        speaker_name = item.get("speaker_name")
+        uttid = item["uttid"]
+        if not dataset_name or not speaker_name:
+            tag_id = self.spk2tag["default"]
+        else:
+            dataset_name = dataset_name
+            speaker_name = speaker_name
+            spk_key = "/".join([dataset_name, speaker_name])
+            if spk_key in self.spk2tag:
+                tag_id = self.spk2tag[spk_key]
+            else:
+                spk_key = dataset_name
+                if spk_key not in self.spk2tag:
+                    print(
+                        f"warning: {uttid} speaker {spk_key} {dataset_name} {speaker_name} not in dict, will use default tagID"
+                    )
+                    tag_id = self.spk2tag["default"]
+                else:
+                    tag_id = self.spk2tag[spk_key]
+        tag_id += 1
+        return tag_id
+
     def __call__(self, buffer: Generator):
         for item in buffer:
             yield from self.item_transform(item)
@@ -373,6 +485,22 @@ class BigTTSTransforms(BaseTransforms):
             return
 
         output_dict = {"text": text, "tag": "vocal"}
+
+        # bpe
+        if self.bpe_tokenizer is not None:
+            bpe_seq = np.asarray(
+                self.bpe_tokenizer(text, truncation=True, max_length=2048).input_ids
+            )
+            output_dict["bpe"] = torch.from_numpy(bpe_seq).long()
+
+        # spk id
+        if self.use_spk_id:
+            output_dict["spk_id"] = self.get_spk_id(item)
+
+        # tag id
+        if self.use_spk_tag:
+            output_dict["tag_id"] = self.get_tag_id(item)
+
         if self.audio_key in item:
             output_dict[self.audio_key] = audio
         if self.target_token_key in item:
@@ -395,6 +523,7 @@ class BigTTSTransforms(BaseTransforms):
                             wordseg,
                             lang_id,
                             token_length,
+                            text_lang_ids,
                         ) = self.process_sami_token(labels)
                         if token is None:
                             return
@@ -481,11 +610,15 @@ class BigTTSTransforms(BaseTransforms):
                         start_sil_phone = phone[:1]
                         start_sil_tone = tone[:1]
                         start_sil_wordseg = wordseg[:1]
+                        if text_lang_ids is not None:
+                            start_text_lang_ids = text_lang_ids[:1]
 
                         token = token[1:]
                         phone = phone[1:]
                         tone = tone[1:]
                         wordseg = wordseg[1:]
+                        if text_lang_ids is not None:
+                            text_lang_ids = text_lang_ids[1:]
 
                         # Map alignment to duration
                         if item["alignment"] == "":
@@ -558,6 +691,10 @@ class BigTTSTransforms(BaseTransforms):
                                 phone = torch.cat([start_sil_phone, phone])
                                 tone = torch.cat([start_sil_tone, tone])
                                 wordseg = torch.cat([start_sil_wordseg, wordseg])
+                                if text_lang_ids is not None:
+                                    text_lang_ids = torch.cat(
+                                        [start_text_lang_ids, text_lang_ids]
+                                    )
                                 target_token = target_token
                                 if self.use_prompt_token_for_short_audio:
                                     prompt_token = target_token
@@ -597,6 +734,13 @@ class BigTTSTransforms(BaseTransforms):
                                     wordseg = torch.cat(
                                         [start_sil_wordseg, wordseg[split_idx:]]
                                     )
+                                    if text_lang_ids is not None:
+                                        text_lang_ids = torch.cat(
+                                            [
+                                                start_text_lang_ids,
+                                                text_lang_ids[split_idx:],
+                                            ]
+                                        )
                                     prompt_token = target_token[:split_dur]
                                     target_token = target_token[split_dur:]
 
@@ -619,16 +763,16 @@ class BigTTSTransforms(BaseTransforms):
                         # 分隔标点：sil_punc_symbols
 
                         if self.target_token_key in item:
-                            output_dict[
-                                "prompt_" + self.target_token_key
-                            ] = prompt_token
-                            output_dict[
-                                f"prompt_{self.target_token_key}_length"
-                            ] = prompt_token.size(0)
+                            output_dict["prompt_" + self.target_token_key] = (
+                                prompt_token
+                            )
+                            output_dict[f"prompt_{self.target_token_key}_length"] = (
+                                prompt_token.size(0)
+                            )
                             output_dict[self.target_token_key] = target_token
-                        output_dict[
-                            f"{self.target_token_key}_length"
-                        ] = target_token.size(0)
+                        output_dict[f"{self.target_token_key}_length"] = (
+                            target_token.size(0)
+                        )
 
                     ###################  split by context  ##############
                     if self.enable_contextual:
@@ -641,47 +785,51 @@ class BigTTSTransforms(BaseTransforms):
                                 tone = tone[token_length[0] :]
                                 wordseg = wordseg[token_length[0] :]
                                 token = token[token_length[0] :]
+                                if text_lang_ids is not None:
+                                    text_lang_ids = text_lang_ids[token_length[0] :]
                                 token_length = token_length[1:]
                                 # split token
-                                output_dict[
-                                    f"prompt_{self.target_token_key}"
-                                ] = target_token[: target_token_length[0]]
+                                output_dict[f"prompt_{self.target_token_key}"] = (
+                                    target_token[: target_token_length[0]]
+                                )
                                 output_dict[
                                     f"prompt_{self.target_token_key}_length"
                                 ] = target_token_length[0]
                                 output_dict[f"{self.target_token_key}"] = target_token[
                                     target_token_length[0] :
                                 ]
-                                output_dict[
-                                    f"{self.target_token_key}_length"
-                                ] = target_token_length[1:]
+                                output_dict[f"{self.target_token_key}_length"] = (
+                                    target_token_length[1:]
+                                )
                             else:
                                 # split label
                                 phone = phone[: -token_length[-1]]
                                 tone = tone[: -token_length[-1]]
                                 wordseg = wordseg[: -token_length[-1]]
                                 token = token[: -token_length[-1]]
+                                if text_lang_ids is not None:
+                                    text_lang_ids = text_lang_ids[: -token_length[-1]]
                                 token_length = token_length[:-1]
                                 # split token
-                                output_dict[
-                                    f"prompt_{self.target_token_key}"
-                                ] = target_token[-target_token_length[-1] :]
+                                output_dict[f"prompt_{self.target_token_key}"] = (
+                                    target_token[-target_token_length[-1] :]
+                                )
                                 output_dict[
                                     f"prompt_{self.target_token_key}_length"
                                 ] = target_token_length[-1]
                                 output_dict[f"{self.target_token_key}"] = target_token[
                                     : -target_token_length[-1]
                                 ]
-                                output_dict[
-                                    f"{self.target_token_key}_length"
-                                ] = target_token_length[:-1]
+                                output_dict[f"{self.target_token_key}_length"] = (
+                                    target_token_length[:-1]
+                                )
                         else:
-                            output_dict[
-                                f"prompt_{self.target_token_key}"
-                            ] = target_token[:0]
-                            output_dict[
-                                f"prompt_{self.target_token_key}_length"
-                            ] = target_token[:0].size(0)
+                            output_dict[f"prompt_{self.target_token_key}"] = (
+                                target_token[:0]
+                            )
+                            output_dict[f"prompt_{self.target_token_key}_length"] = (
+                                target_token[:0].size(0)
+                            )
 
                         ######### merge context #########
                         try:
@@ -700,9 +848,9 @@ class BigTTSTransforms(BaseTransforms):
                                 merge_umm_token_length.append(sum(l[1] for l in v_list))
 
                             token_length = merge_token_length
-                            output_dict[
-                                f"{self.target_token_key}_length"
-                            ] = merge_umm_token_length
+                            output_dict[f"{self.target_token_key}_length"] = (
+                                merge_umm_token_length
+                            )
 
                             if len(token_length) != len(
                                 output_dict[f"{self.target_token_key}_length"]
@@ -739,7 +887,10 @@ class BigTTSTransforms(BaseTransforms):
                 output_dict.update(token=token)
                 output_dict.update(lang=lang_id)
                 output_dict.update(token_length=token_length)
-                output_dict.update(prompt_token=prompt_token)
+                if self.split_by_alignment:
+                    output_dict.update(prompt_token=prompt_token)
+                if text_lang_ids is not None:
+                    output_dict.update(text_lang=text_lang_ids)
 
         yield output_dict
         self._update_stats(skipped=False)
@@ -773,6 +924,15 @@ class BigTTSDataset(WebPipeline):
         enable_contexutal: bool = False,
         use_text_cfg: bool = False,
         use_prompt_token_for_short_audio: bool = False,
+        use_spk_id: bool = False,
+        spk2id: str = None,
+        use_bpe: bool = False,
+        bpe_type: str = None,
+        bpe_dir: str = None,
+        use_spk_tag: bool = False,
+        spk2tag: str = None,
+        use_text_lang_embedding: bool = False,
+        textlang2id: str = None,
         **kwargs,
     ):
         logger.info(f"[{self.name}] [data_id: {data_id}] initializing...")
@@ -802,6 +962,15 @@ class BigTTSDataset(WebPipeline):
             enable_contexutal=enable_contexutal,
             use_text_cfg=use_text_cfg,
             use_prompt_token_for_short_audio=use_prompt_token_for_short_audio,
+            use_spk_id=use_spk_id,
+            spk2id=spk2id,
+            use_bpe=use_bpe,
+            bpe_type=bpe_type,
+            bpe_dir=bpe_dir,
+            use_spk_tag=use_spk_tag,
+            spk2tag=spk2tag,
+            use_text_lang_embedding=use_text_lang_embedding,
+            textlang2id=textlang2id,
         )
         # preprocessor = WebDatasetBufferPreprocessor(transforms=transforms)
         # pipeline = [{"compose": [preprocessor.train_buffer_preprocessor]}]
@@ -844,6 +1013,16 @@ class MixWebDataModule(pl.LightningDataModule):
         use_text_cfg: bool = False,
         replacement: bool = True,
         use_prompt_token_for_short_audio: bool = False,
+        use_spk_id: bool = False,
+        spk2id: str = None,
+        use_bpe: bool = False,
+        bpe_type: str = None,
+        bpe_dir: str = None,
+        use_spk_tag: bool = False,
+        spk2tag: str = None,
+        use_text_lang_embedding: bool = False,
+        textlang2id: str = None,
+        use_pure_audio_in_length_fn: bool = False,
     ):
         super().__init__()
         self.num_workers = num_workers
@@ -888,6 +1067,7 @@ class MixWebDataModule(pl.LightningDataModule):
         if buckets_samples[-1] < max_duration:
             buckets_samples.append(max_duration)
         logger.info(f"[Buckets] {len(buckets_samples)} {str(buckets_samples)}")
+
         if dataset_type == DatasetType.AUDIO:
             buckets_samples = [x * sample_rate for x in buckets_samples]
         else:
@@ -903,9 +1083,16 @@ class MixWebDataModule(pl.LightningDataModule):
         if dataset_type == DatasetType.AUDIO:
             length_fn = lambda x: x.get(target_audio_key).size(-1)
         else:
-            length_fn = (
-                lambda x: x.get(target_token_key).size(-1) + x.get("token").size(-1) + 3
-            )  # bos + sep + prompt
+            if not use_pure_audio_in_length_fn:
+                # bos + sep + prompt
+                length_fn = (
+                    lambda x: x.get(target_token_key).size(-1)
+                    + x.get("token").size(-1)
+                    + 3
+                )
+            else:
+                # Note: when we create bucket list, we only calculate the audio token length
+                length_fn = lambda x: x.get(target_token_key).size(-1)
 
         def bsz_evaluator(b, t):
             # 如果 t 太小，就不能填充太多数据，因为计算会变慢
@@ -987,6 +1174,15 @@ class MixWebDataModule(pl.LightningDataModule):
                 use_text_cfg=use_text_cfg,
                 replacement=replacement,
                 use_prompt_token_for_short_audio=use_prompt_token_for_short_audio,
+                use_spk_id=use_spk_id,
+                spk2id=spk2id,
+                use_bpe=use_bpe,
+                bpe_type=bpe_type,
+                bpe_dir=bpe_dir,
+                use_spk_tag=use_spk_tag,
+                spk2tag=spk2tag,
+                use_text_lang_embedding=use_text_lang_embedding,
+                textlang2id=textlang2id,
             )
             datasets.append(bigtts)
         weights = [i for i in weights if i != 0]

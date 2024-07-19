@@ -158,6 +158,11 @@ class DiffusionU2SInfer(LightningModule):
         self.use_phone_lang = use_phone_lang
         self.inpainting_context = inpainting_context
 
+        if self.infer_type != "vocoder":
+            self.model = prepare_diffusion_model(
+                self.hparams.diffusion_ckpt_path, self.device
+            )
+
         self.bn_config = bn_config
         if self.use_wvae_vocoder:
             self.bn_norm = MelNorm(bn_config["bn_norm_mean"], bn_config["bn_norm_std"])
@@ -424,7 +429,6 @@ class DiffusionU2SInfer(LightningModule):
     def setup(self, stage):
         device = f"cuda:{self.trainer.local_rank}"
         if self.infer_type != "vocoder":
-            self.model = prepare_diffusion_model(self.hparams.diffusion_ckpt_path, self.device)
             if self.umm_type == "USM":
                 self.umm = prepare_usm(self.umm_ckpt_path, device)
             elif self.umm_type == "UMM":

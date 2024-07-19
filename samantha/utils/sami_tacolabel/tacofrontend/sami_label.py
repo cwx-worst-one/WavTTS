@@ -5,6 +5,7 @@ import os
 import os.path as osp
 from collections import OrderedDict
 
+import emoji
 import euler
 from tqdm import tqdm
 
@@ -284,13 +285,24 @@ def text_all_punc(text):
     return True
 
 
+def text_all_emoji(text):
+    for x in text:
+        if not emoji.is_emoji(x):
+            return False
+    return True
+
+
 def split_text_engine(
     text: str, language="Chinese_v3_punc", max_paragraph_phoneme_size=240
 ):
     if language == "Chinese_v3_punc":
         speaker = "front_end_zh"
     elif language == "English_v3_punc":
-        speaker = "front_end_en"
+        # speaker = "front_end_en"
+        speaker = "front_end_zh"
+        print(
+            f"=====>>>> tacolabels: {language} will use front_end_zh by hard code <<<<====="
+        )
     else:
         raise ValueError("language error : {}".format(language))
 
@@ -305,7 +317,7 @@ def split_text_engine(
     # punc
     new_texts = []
     for text in texts:
-        if not text_all_punc(text):
+        if (not text_all_punc(text)) and (not text_all_emoji(text)):
             new_texts.append(text)
     texts = new_texts
     return texts

@@ -1,4 +1,5 @@
 import logging
+import random
 
 import torch
 import torch.nn as nn
@@ -16,9 +17,13 @@ from samantha.components.embedder import (
     BestRQTokenEmbedder,
     LyricsTokenEmbedder,
     WavToVecTokenEmbedder,
+    SpeakerEmbedder
 )
+from samantha.models.wfvae_ctiga_llama import PositionalEncoding, sequence_mask_binary
 from samantha.components.ops import masked_cat2d, masked_cat3d
 from samantha.utils.ctiga.inference_params import InferenceParams
+
+from transformers import T5EncoderModel
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +144,19 @@ class SemanticModule_Valle(BaseContinuousEmbedModule):
         lyrics_vocab_size = extra_params["lyrics_codebook_size"]
         # mulan_embed_dim = extra_params['mulan_embed_dim']
         semantic_codebook_size = extra_params["semantic_codebook_size"]
+        self.use_spk_id = extra_params.get('use_spk_id', False)
+        self.spk_type = extra_params.get('spk_type', "cln")
+        self.use_bpe = extra_params.get('use_bpe', False)
+        self.tag_type = extra_params.get('tag_type', "concat")
+        self.use_spk_tag = extra_params.get('use_spk_tag', False)
+        print(f"{self.use_spk_tag=}")
+        print(f"{self.tag_type=}")
+
+        if self.use_spk_id and self.spk_type == "concat_dim":
+            joints_dim = 3 * hidden_size
+        else:
+            joints_dim = 2 * hidden_size
+
         embedder_dict = {
             "lyrics_phones": LyricsTokenEmbedder(
                 vocab_size=lyrics_vocab_size, embedding_dim=hidden_size, add_sos=True
@@ -153,8 +171,68 @@ class SemanticModule_Valle(BaseContinuousEmbedModule):
                 embedding_dim=hidden_size // 2,
                 add_sos=True,
             ),
-            "lyrics_joints": torch.nn.Linear(2 * hidden_size, hidden_size, bias=False),
+            "lyrics_joints": torch.nn.Linear(joints_dim, hidden_size, bias=False),
         }
+
+        if self.use_spk_id:
+            speaker_vocab_size = extra_params.get('speaker_codebook_size', 0)
+            if self.spk_type in ["concat", "concat_dim"]:
+                add_sos = True
+            elif self.spk_type == "cln":
+                add_sos = False
+                embedder_dict['speaker_id_proj'] = torch.nn.Linear(
+                    hidden_size, hidden_size * 2, 
+                    bias=False
+                )
+            else:
+                raise ValueError(f"Unsupported spk_type {self.spk_type}")
+            embedder_dict['speaker_id'] = SpeakerEmbedder(
+                vocab_size=speaker_vocab_size, 
+                embedding_dim=hidden_size, 
+                add_sos=add_sos)
+
+        if self.use_bpe:
+            if extra_params['bpe_type'] == "llama":
+                bpe_vocab_size = extra_params.get('bpe_codebook_size', 0)
+                embedder_dict['bpes'] = LyricsTokenEmbedder(
+                    vocab_size=bpe_vocab_size,
+                    embedding_dim=hidden_size,
+                    add_sos=True
+                )
+
+            bpe_cross_attention = nn.MultiheadAttention(
+                embed_dim=extra_params['hidden_size'], 
+                num_heads=extra_params['num_attention_heads'],
+                batch_first=True,
+                bias=False
+            )
+            bpe_positional_encoding = PositionalEncoding(
+                extra_params['hidden_size'], 
+                dropout=extra_params['pos_pdrop'], 
+                maxlen=2048)
+        else:
+            bpe_cross_attention = None
+            bpe_positional_encoding = None
+
+        if self.use_spk_tag:
+            tag_codebook_size = extra_params.get('tag_codebook_size', 0)
+            # assert self.tag_type == "concat", (self.tag_type)
+            if self.tag_type == "concat":
+                add_sos = True
+            elif self.tag_type == "cln":
+                add_sos = False
+                embedder_dict['tag_id_proj'] = torch.nn.Linear(
+                    hidden_size, hidden_size * 2,
+                    bias=False
+                )
+            else:
+                raise ValueError(f"Unsupported tag_type {self.tag_type}")
+
+            embedder_dict['tag_id'] = SpeakerEmbedder(
+                vocab_size=tag_codebook_size, 
+                embedding_dim=hidden_size, 
+                add_sos=add_sos)
+
         input_embedders = nn.ModuleDict(embedder_dict)
         semantic_type = extra_params.get("semantic_type", "wav2vec")
         if semantic_type == "wav2vec":
@@ -174,19 +252,22 @@ class SemanticModule_Valle(BaseContinuousEmbedModule):
         else:
             raise NotImplementedError
 
-        self.use_lang_embedding = use_lang_embedding = extra_params.get(
-            "use_lang_embedding", True
-        )
-        self.use_text_lang_embedding = extra_params.get(
-            "use_text_lang_embedding", False
-        )
+        self.use_lang_embedding = extra_params.get("use_lang_embedding", True)
         lang_embeddings = None
-        if use_lang_embedding:
+        if self.use_lang_embedding:
             logger.info(f"lang_embeddings size: [256, {hidden_size}]")
-            logger.info(f"use_text_lang_embedding: {self.use_text_lang_embedding}")
             lang_embeddings = nn.Embedding(256, hidden_size)
         else:
             logger.info(f"======= do not use lang_embeddings...")
+
+        self.use_text_lang_embedding = extra_params.get("use_text_lang_embedding", False)
+        text_lang_embeddings = None
+        if self.use_text_lang_embedding:
+            print(f"use_text_lang_embedding: {self.use_text_lang_embedding}")
+            text_lang_embeddings = nn.Embedding(256, hidden_size)
+            print(f"======= use text_lang_embeddings...")
+        else:
+            print(f"======= do not use text_lang_embeddings...")
 
         super().__init__(
             model_cls=model_cls,
@@ -199,7 +280,20 @@ class SemanticModule_Valle(BaseContinuousEmbedModule):
             lang_embeddings=lang_embeddings,
             checkpointing=checkpointing,
             extra_params=extra_params,
+            text_lang_embeddings=text_lang_embeddings,
+            bpe_cross_attention=bpe_cross_attention,
+            bpe_positional_encoding=bpe_positional_encoding,
         )
+
+        if self.use_bpe and self.extra_params['bpe_type'] == "byte-T5-base":
+            self.text_encoder = T5EncoderModel.from_pretrained(extra_params['bpe_dir'])
+            self.text_linear = nn.Linear(self.text_encoder.config.d_model, extra_params['hidden_size'], bias=False)
+            if extra_params['freeze_text_encoder']:
+                for param in self.text_encoder.parameters():
+                    param.requires_grad = False
+        else:
+            self.text_encoder = None
+
         self.save_hyperparameters()
 
     def training_step(self, batch, batch_idx):
@@ -221,20 +315,23 @@ class SemanticModule_Valle(BaseContinuousEmbedModule):
                 target_ids,
                 input_lens,
                 target_lens,
+                shift_len
             ) = self.prepare_training_inputs(batch)
+
             # input_ids['inputs_embeds']: [b, t = 1+tp + 1 + t_u, c]
             # target_ids: [b, t_u+1]
             # input_lens: token lengths, max = t_p
             # target_lens: target length, max = t_u
 
-            seq_lens = input_lens + 1 + target_lens + 1  # input + sos + target + eos
+            # sos/input_token/{spk:2}/{spk_tag:2}/umm_token
+            seq_lens = 1 + input_lens + shift_len + 1 + target_lens
             loss_mask = sequence_mask(
                 seq_lens,
                 max_len=input_ids["inputs_embeds"].shape[1],
                 device=input_ids["inputs_embeds"].device,
             )
             text_loss_mask = sequence_mask(
-                input_lens + 1,
+                1 + input_lens + shift_len,
                 max_len=input_ids["inputs_embeds"].shape[1],
                 device=input_ids["inputs_embeds"].device,
             )
@@ -248,7 +345,9 @@ class SemanticModule_Valle(BaseContinuousEmbedModule):
                 self.metric.update(
                     num_tokens=b * t * valid_token_ratio,
                     stage=self.trainer.state.stage,
-                    model_kwargs={"batch_size": b, "seq_len": t * valid_token_ratio},
+                    model_kwargs={
+                        "model": {"batch_size": b, "seq_len": t * valid_token_ratio},
+                    },
                 )
                 if self.trainer.global_step % self.trainer.log_every_n_steps == 0:
                     logs = {
@@ -274,16 +373,29 @@ class SemanticModule_Valle(BaseContinuousEmbedModule):
             x = logits
             bsz, t, c = logits.shape
             sos_ids = self.target_embedder.get_sos_token(bsz)  # [b, 1]
-            h = torch.zeros([bsz, t], device=logits.device).long()
-            for i in range(bsz):
-                h[i, : input_lens[i] + 1 + target_lens[i] + 1] = torch.cat(
-                    (
-                        batch["lyrics_tokens"][i, : input_lens[i]],
-                        sos_ids[i, :],
-                        target_ids[i, : target_lens[i] + 1],
-                    )
-                )  # [b, t_p + 1 + t_u+1]
-            target_ids = h
+
+            target_ids = _custom_cat(
+                batch["lyrics_tokens"],
+                sos_ids,
+                target_ids,
+                input_lens,
+                target_lens,
+                bsz,
+                t,
+                extra_len=shift_len
+            )
+
+            # h = torch.zeros([bsz, t], device=logits.device).long()
+            # for i in range(bsz):
+            #     h[i, : input_lens[i] + 1 + target_lens[i] + 1] = torch.cat(
+            #         (
+            #             batch["lyrics_tokens"][i, : input_lens[i]],
+            #             sos_ids[i, :],
+            #             target_ids[i, : target_lens[i] + 1],
+            #         )
+            #     )  # [b, t_p + 1 + t_u+1]
+            # target_ids = h
+
             loss = self.criterion(x, target_ids, mask=loss_mask)
             accu = (
                 ((x.argmax(dim=-1) == target_ids).float() * loss_mask).sum()
@@ -316,21 +428,17 @@ class SemanticModule_Valle(BaseContinuousEmbedModule):
             target_lens = batch["target_ids_length"]
 
         batch_size = target_ids.size(0)
-        inputs_embeds = self.prepare_inputs_embeddings(
+        inputs_embeds, spk_embeds, shift_lens_dict, tag_embeds = self.prepare_inputs_embeddings(
             batch
         )  # [b, t_p] --> [b, 1+t_p, h]
+
         input_lens = 1 + batch["lyrics_token_length"]
 
         sos_embeds = self.target_embedder.get_sos_embed(batch_size)  # [b, 1, h]
-        target_embeds = self.target_embedder.embed(
-            token_ids=target_ids, with_sos=False, with_eos=False
-        )  # [b, t_u] --> [b, t_u, h]
+        target_embeds = self.target_embedder.embed(token_ids=target_ids, with_sos=False, with_eos=False)  # [b, t_u] --> [b, t_u, h]
         if self.lang_embeddings is not None:
             land_ids = batch["lang"]
             target_embeds += self.lang_embeddings(land_ids).unsqueeze(1)
-
-            if self.use_text_lang_embedding:
-                inputs_embeds += self.lang_embeddings(land_ids).unsqueeze(1)
 
         if self.target_embedder.eos_id is not None:  # true
             eos_ids = self.target_embedder.get_eos_token(batch_size)  # [b, 1]
@@ -346,33 +454,36 @@ class SemanticModule_Valle(BaseContinuousEmbedModule):
                 "encoder_hidden_states": inputs_embeds,
             }, torch.cat([target_ids, eos_ids], dim=1)
 
-        eos_len = torch.ones(
-            batch_size, dtype=input_lens.dtype, device=input_lens.device
-        )
-        # customized op
-        # concat inputs_embeds, sos_embes and target_embeds with correspond valid length
-        # basically like below:
-        #
-        # h: [b, max(sum(valid_length)), ...]
-        # h[i] = Concat(
-        #           inputs_embeds[i, :input_lens[i]],
-        #           sos_embeds[i, :eos_len[i]],
-        #           target_embeds[i, :target_lens]
-        #        )
+        eos_len = torch.ones(batch_size, dtype=input_lens.dtype, device=input_lens.device)
+
+        prompt_embeds = []
+        prompt_lens = 0
+        if self.use_spk_id and self.spk_type == 'concat':
+            prompt_embeds.append(spk_embeds)
+            prompt_lens = prompt_lens + shift_lens_dict["spk_shift"]
+        if self.use_spk_tag and self.tag_type == 'concat':
+            prompt_embeds.append(tag_embeds)
+            prompt_lens = prompt_lens + shift_lens_dict["tag_shift"]
+        prompt_embeds.append(sos_embeds)
+        prompt_embeds = torch.cat(prompt_embeds, dim=1)
+
+        # [sos][text token][sos][spk][sos][tag][sos][target token]  # if all use concat
         h = masked_cat3d(
-            inputs_embeds, sos_embeds, target_embeds, input_lens, eos_len, target_lens
+            inputs_embeds, prompt_embeds, target_embeds, input_lens, prompt_lens + eos_len, target_lens
         )
-        target_ids_ = masked_cat2d(target_ids, eos_ids, target_lens, eos_len)
+        target_ids = masked_cat2d(target_ids, eos_ids, target_lens, eos_len)
 
         model_inputs = {"inputs_embeds": h}  # [b, 1+t_p + 1 + t_u]
-        # target_ids = torch.cat([target_ids, eos_ids], dim=1)
-        target_ids = target_ids_  # [b, t_u + 1]
-        target_lens = target_lens + 1  # no need cause return target_lens -1 ?
+        if self.use_spk_id and self.spk_type == 'cln':
+            model_inputs['cond'] = spk_embeds
+        assert not (self.spk_type == "cln" and self.tag_type == "cln"), (self.spk_type, self.tag_type)
+        if self.use_spk_tag and self.tag_type == "cln":
+            model_inputs["cond"] = tag_embeds
 
         if return_all:
             return model_inputs, target_ids, inputs_embeds, sos_embeds, target_embeds
         else:
-            return model_inputs, target_ids, input_lens - 1, target_lens - 1
+            return model_inputs, target_ids, input_lens - 1, target_lens, prompt_lens
 
     def prepare_inputs_embeddings(self, batch):
         conditions = batch["conditions"].split(",")
@@ -390,55 +501,155 @@ class SemanticModule_Valle(BaseContinuousEmbedModule):
             wordseg_embeds = self.input_embedders["lyrics_wordsegs"].embed(
                 self.requires, batch["wordsegs"].to(self.device), with_sos=with_sos
             )
-            embeds = self.input_embedders["lyrics_joints"](
-                torch.cat([phone_embeds, tone_embeds, wordseg_embeds], dim=-1)
-            )
+            if self.use_spk_id and self.spk_type == 'concat_dim':
+                if batch['speaker_id'].dim() == 1:
+                    batch['speaker_id'] = batch['speaker_id'].unsqueeze(1)
+                spk_embeds = self.input_embedders['speaker_id'].embed(self.requires, batch['speaker_id'].to(self.device), with_sos=with_sos)
+                spk_sos, spk_embeds = spk_embeds[:, :1], spk_embeds[:, 1:]
+                spk_embeds = spk_embeds.expand(-1, phone_embeds.size(1) - 1, -1).contiguous()
+                spk_embeds = torch.cat([spk_sos, spk_embeds], dim=1)
+                embeds = self.input_embedders['lyrics_joints'](torch.cat([phone_embeds, tone_embeds, wordseg_embeds, spk_embeds], dim=-1))
+            else:
+                embeds = self.input_embedders["lyrics_joints"](
+                    torch.cat([phone_embeds, tone_embeds, wordseg_embeds], dim=-1)
+                )
             inputs_embeds.append(embeds)
         else:
             inputs_embeds.append(
                 self.input_embedders["lyrics_tokens"].get_sos_embed(batch_size)
             )
-        return torch.cat(inputs_embeds, dim=1)
+        inputs_embeds = torch.cat(inputs_embeds, dim=1)
+
+        spk_shift = 0
+        spk_embeds = None
+        if self.use_spk_id:
+            if batch['speaker_id'].dim() == 1:
+                batch['speaker_id'] = batch['speaker_id'].unsqueeze(1)
+            if self.spk_type == "concat":
+                embeds = self.input_embedders['speaker_id'].embed(self.requires, batch['speaker_id'].to(self.device), with_sos=with_sos)
+                spk_embeds = embeds
+                spk_shift += 2
+            elif self.spk_type == "cln":
+                embeds = self.input_embedders['speaker_id'].embed(self.requires, batch['speaker_id'].to(self.device), with_sos=False)
+                spk_embeds = self.input_embedders['speaker_id_proj'](embeds)
+            elif self.spk_type == "concat_dim":
+                spk_embeds = None
+            else:
+                raise ValueError(f"{self.spk_type} not supported.")
+
+        tag_shift = 0
+        tag_embeds = None
+        if self.use_spk_tag:
+            if batch['tag_id'].dim() == 1:
+                batch['tag_id'] = batch['tag_id'].unsqueeze(1)
+            if self.tag_type == "concat":
+                tag_embeds = self.input_embedders['tag_id'].embed(self.requires, batch['tag_id'].to(self.device), with_sos=with_sos)
+                tag_shift += 2
+            elif self.tag_type == "cln":
+                embeds = self.input_embedders['tag_id'].embed(self.requires, batch['tag_id'].to(self.device), with_sos=False)
+                tag_embeds = self.input_embedders['tag_id_proj'](embeds)
+            else:
+                raise ValueError(f"{self.tag_type} not supported.")
+
+        if self.use_bpe:
+            bpe_seqs = batch['bpes'].to(self.device)
+            if 'bpe_length' in batch:
+                bpe_lens = batch['bpe_length']
+            else:
+                assert bpe_seqs.shape[0] == 1
+                bpe_lens = torch.as_tensor([bpe_seqs.shape[1]]).to(self.device)
+            if self.extra_params['bpe_type'] == "llama":
+                bpe_lens += 1
+            if 'lyrics_token_length' in batch:
+                text_lens = 1 + batch['lyrics_token_length']
+            else:
+                assert inputs_embeds.shape[0] == 1
+                text_lens = torch.as_tensor([inputs_embeds.shape[1]]).to(self.device)
+            bsz = bpe_seqs.shape[0]
+            bpe_mask = sequence_mask_binary(bpe_lens, device=self.device)
+
+            if self.text_encoder is not None:
+                self.text_encoder.eval()
+                bpe_embeds = self.text_encoder(bpe_seqs, attention_mask=~bpe_mask)["last_hidden_state"]
+                bpe_embeds = self.text_linear(bpe_embeds)
+            else:
+                bpe_embeds = self.input_embedders['bpes'].embed(self.requires, bpe_seqs, with_sos=with_sos)
+
+            attn_bpe_in_h, attn_weights = self.cross_attention(
+                query=self.positional_encoding(inputs_embeds),
+                key=self.positional_encoding(bpe_embeds),
+                value=self.positional_encoding(bpe_embeds),
+                key_padding_mask=bpe_mask,
+                average_attn_weights=False
+            )
+            self.attn_weights = attn_weights
+
+            # Todo: accelerate this for faster replace_op
+            for i in range(bsz):
+                if self.training and random.random() < self.extra_params["bpe_cfg"]:
+                    inputs_embeds[i, :text_lens[i], :] = attn_bpe_in_h[i, :text_lens[i], :]
+                else:
+                    inputs_embeds[i, :text_lens[i], :] += attn_bpe_in_h[i, :text_lens[i], :]
+
+        if self.text_lang_embeddings is not None:
+            text_lang_ids = batch['text_lang']
+            if with_sos:
+                inputs_embeds[:, 1:, :] += self.text_lang_embeddings(text_lang_ids) # [B, T, D]
+            else:
+                inputs_embeds += self.text_lang_embeddings(text_lang_ids)
+
+        return inputs_embeds, spk_embeds, {"spk_shift": spk_shift, "tag_shift": tag_shift}, tag_embeds
 
     @torch.no_grad()
     def predict(self, batch, hp, beam=1, ref_samples=None):
-        frame_rate = self.extra_params.semantic_frame_rate
-        num_tokens = hp.duration * frame_rate
+        if batch['audio_prompt'] is not None:
+            num_tokens = batch['phones'].shape[1] * 6 - batch['audio_prompt'].shape[1]
+            min_num_tokens = 10
+        else:
+            num_tokens = batch['phones'].shape[1] * 6
+            min_num_tokens = batch['phones'].shape[1] * 1
+
         temperature = hp.semantic_temperature
         thresh = hp.semantic_thresh
         sample_mode = hp.sample_mode
         max_blank_length = hp.max_blank_length
         step_out_blank = hp.step_out_blank
 
-        inputs_embeds = self.prepare_inputs_embeddings(batch)
-        target_embeds = self.target_embedder.embed(
-            self.requires,
-            token_ids=batch["audio_prompt"].to(self.device),
-            with_sos=False,
-            with_eos=False,
-        )
+        inputs_embeds, spk_embeds, shift_lens_dict, tag_embeds = self.prepare_inputs_embeddings(batch)
+
+        target_embeds = None
+        if batch['audio_prompt'] is not None:
+            target_embeds = self.target_embedder.embed(self.requires, token_ids=batch['audio_prompt'].to(self.device), with_sos=False, with_eos=False)
 
         src_lang_embed = None
-        tgt_lang_embed = None
         if self.lang_embeddings is not None:
-            src_land_ids = batch["src_lang"].to(self.device)
+            src_land_ids = batch['src_lang'].to(self.device)
             src_lang_embed = self.lang_embeddings(src_land_ids).unsqueeze(1)
             target_embeds += src_lang_embed
-
-            tgt_land_ids = batch["tgt_lang"].to(self.device)
-            tgt_lang_embed = self.lang_embeddings(tgt_land_ids).unsqueeze(1)
-
-            if self.use_text_lang_embedding:
-                prompt_text_lens = batch["prompt_text_lens"][0]
-                inputs_embeds[:, :prompt_text_lens] += src_lang_embed
-                inputs_embeds[:, prompt_text_lens:] += tgt_lang_embed
-
         else:
-            logger.info("======= do not use lang_embeddings...")
+            print(f"======= do not use src lang_embeddings...")
 
-        logger.info(f"target_embeds: {target_embeds}")
+        cond = None
+        if self.use_spk_id:
+            if self.spk_type == 'concat':
+                inputs_embeds = torch.concat([inputs_embeds, spk_embeds], axis=1)
+            if self.spk_type == 'cln':
+                cond = spk_embeds
+        assert not (self.spk_type == "cln" and self.tag_type == "cln"), (self.spk_type, self.tag_type)
+        if self.use_spk_tag:
+            if self.tag_type == "concat":
+                inputs_embeds = torch.concat([inputs_embeds, tag_embeds], axis=1)
+            if self.tag_type == "cln":
+                cond = tag_embeds
 
-        return super().predict(
+        tgt_lang_embed = None
+        if self.lang_embeddings is not None:
+            tgt_land_ids = batch['tgt_lang'].to(self.device)
+            tgt_lang_embed = self.lang_embeddings(tgt_land_ids).unsqueeze(1)
+        else:
+            print(f"======= do not use tgt lang_embeddings...")
+
+        infer_umm_token = super().predict(
             inputs_embeds,
             target_embeds,
             num_tokens,
@@ -450,11 +661,25 @@ class SemanticModule_Valle(BaseContinuousEmbedModule):
             ref_samples=ref_samples,
             max_blank_length=max_blank_length,
             step_out_blank=step_out_blank,
+            cond=cond,
+            min_num_tokens=min_num_tokens,
         )
 
+        return infer_umm_token
+
     @torch.no_grad()
-    def super_predict(self, inputs_embeds, num_tokens, temperature, **kwargs):
-        return super().predict(inputs_embeds, num_tokens, temperature, **kwargs)
+    def super_predict(
+        self,
+        inputs_embeds,
+        target_embeds,
+        num_tokens,
+        lang_embed,
+        temperature,
+        **kwargs,
+    ):
+        return super().predict(
+            inputs_embeds, target_embeds, num_tokens, lang_embed, temperature, **kwargs
+        )
 
 
 class SemanticModule_MergeV2(BaseContinuousEmbedModule):
@@ -1112,8 +1337,18 @@ class SemanticModule_MergeV2(BaseContinuousEmbedModule):
         return output_tokens
 
     @torch.no_grad()
-    def super_predict(self, inputs_embeds, num_tokens, temperature, **kwargs):
-        return super().predict(inputs_embeds, num_tokens, temperature, **kwargs)
+    def super_predict(
+        self,
+        inputs_embeds,
+        target_embeds,
+        num_tokens,
+        lang_embed,
+        temperature,
+        **kwargs,
+    ):
+        return super().predict(
+            inputs_embeds, target_embeds, num_tokens, lang_embed, temperature, **kwargs
+        )
 
 
 class SemanticModule_MergeV2_1(SemanticModule_MergeV2):

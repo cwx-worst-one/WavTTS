@@ -82,8 +82,6 @@ TORCHRUN samantha/main.py predict \
     --predict_dataset.npy_path $ar_predict_token_path \
     --predict_dataset.meta_file $meta_lst \
     --predict_dataset.wav_dir $prompt_wav_dir \
-    --predict_dataset.prompt_lang $src_lang \
-    --predict_dataset.syn_lang $tgt_lang \
     --run_opts.output_dir $out_dir \
     --run_opts.diffusion_ckpt_path $diffusion_ckpt_path\
     --run_opts.umm_ckpt_path $umm_ckpt \

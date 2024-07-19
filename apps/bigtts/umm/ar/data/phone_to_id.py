@@ -57,6 +57,17 @@ class PhoneToId:
             lang = "en"
         return lang
 
+    def get_head_type(self, x_split):
+        if len(x_split) == 6:
+            head_type = 0
+        elif len(x_split) == 8:
+            head_type = 3
+        elif is_float(x_split[-1]):
+            head_type = 2
+        else:
+            head_type = 1
+        return head_type
+
     def convert_tacolab_to_text_id(self, tacolab):
         try:
             lang = self.get_lang(tacolab)
@@ -87,14 +98,7 @@ class PhoneToId:
                     head_type = head_type_dict[tacolab[0]]
                     tacolab = tacolab[1:]
                 else:
-                    if len(tacolab[0].split("\t")) == 6:
-                        head_type = 0
-                    elif len(tacolab[0].split("\t")) == 8:
-                        head_type = 3
-                    elif is_float(tacolab[0].split("\t")[-1]):
-                        head_type = 2
-                    else:
-                        head_type = 1
+                    head_type = self.get_head_type(tacolab[0].split("\t"))
 
                 assert head_type in [1, 3]
 
@@ -158,21 +162,13 @@ class PhoneToId:
                     )
                     head_type = head_type_dict[tacolab[0]]
                     tacolab = tacolab[1:]
-                else:
-                    if len(tacolab[0].split("\t")) == 6:
-                        head_type = 0
-                    elif len(tacolab[0].split("\t")) == 8:
-                        head_type = 3
-                    elif is_float(tacolab[0].split("\t")[-1]):
-                        head_type = 2
-                    else:
-                        head_type = 1
 
                 for i in range(len(tacolab)):
                     x = tacolab[i]
                     if i != 0 and x.split("\t")[0] == "sil":
                         continue
                     x_split = x.split("\t")
+                    head_type = self.get_head_type(x_split)
                     if head_type == 0:
                         phone, tone, ws, pw, stype, word = x_split
                     elif head_type == 1:
@@ -287,21 +283,13 @@ class PhoneToId:
                     )
                     head_type = head_type_dict[tacolab[0]]
                     tacolab = tacolab[1:]
-                else:
-                    if len(tacolab[0].split("\t")) == 6:
-                        head_type = 0
-                    elif len(tacolab[0].split("\t")) == 8:
-                        head_type = 3
-                    elif is_float(tacolab[0].split("\t")[-1]):
-                        head_type = 2
-                    else:
-                        head_type = 1
 
                 for i in range(len(tacolab)):
                     x = tacolab[i]
                     if i != 0 and x.split("\t")[0] == "sil":
                         continue
                     x_split = x.split("\t")
+                    head_type = self.get_head_type(x_split)
                     if head_type == 0:
                         phone, tone, ws, pw, stype, word = x_split
                     elif head_type == 1:

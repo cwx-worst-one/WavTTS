@@ -1,0 +1,243 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+ckpt_path: null
+
+seed: 1995
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+extra_params:
+    sample_rate: 24000
+    lyrics_codebook_size: 4096
+    semantic_codebook_size: 16384
+    semantic_frame_rate: 25
+    semantic_type: bestrq
+    mulan_embed_dim: 512
+    hidden_size: 1536
+    intermediate_size: 4352
+    num_hidden_layers: 24
+    num_attention_heads: 12
+    pretrained_path: null
+    use_lang_embedding: False
+    use_spk_id: False
+    spk2id: "apps/bigtts/umm/ar/data/dict/spk2id.parquet.json"
+    speaker_codebook_size: 65536
+    use_spk_embd: False
+    spk_type: "cln"
+    spk_embd_dim: 256
+    use_bpe: False
+    bpe_codebook_size: 32000
+    bpe_type: "llama"
+    bpe_dir: "resource/models/llama_7B_tokenizer"
+    use_spk_tag: False
+    spk2tag: "apps/bigtts/umm/ar/data/dict/spk2tag.parquet.0-3.v11.json"
+    tag_codebook_size: 16
+    tag_type: "concat"
+    whole_sentence_prob: 0.0
+    use_text_lang_embedding: False
+    textlang2id: "apps/bigtts/umm/ar/data/dict/textlang2id.json"
+    pos_pdrop: 0.1
+    bpe_cfg: 0.1
+    use_pure_audio_in_length_fn: True
+    freeze_text_encoder: True
+    freezon_spkenc_params: False
+
+# running parameters
+run_opts:
+    fast_dev_run: False
+    log_dir: ./logs
+    hdfs_log_dir: None
+    log_name: semantic_model_mulan_text_07B_cn
+    version: v0
+    cache_dir: .module_cache/musiclm
+    precision: "16-mixed"
+    num_workers: 8
+    accelerator: auto
+    max_steps: 1000000
+    val_check_interval: 5000
+    batch_size: 12
+    learning_rate: 3.0e-4
+    warmup_steps: 2000
+    cycle_steps: 400000
+    weight_decay: 0.05
+    shuffle_buffer: 20   # 100
+    gradient_clip_val: 1.0
+    # offline umm token
+    data_id: 2011       # 1768
+    ctx_data_id: 2021   # 1606
+    val_data_ids: [2010]
+    umm_token_freq: !ref <extra_params[semantic_frame_rate]>
+    dataset_type: 2 # AUDIO = 1 UMM_TOKEN = 2
+    target_token_key: umm_token
+    every_n_train_steps: 10000
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+pl_datamodule: !new:apps.bigtts.umm.ar.data.mix.MixWebDataModule
+    sample_rate: !ref <extra_params[sample_rate]>
+    shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+    num_workers: !ref <run_opts[num_workers]>
+    normalize_audio: False
+    tokenizer: sami
+    min_duration: 0.0001
+    max_duration: 130
+    weights: [0, 1] # long-ctx, speech
+    batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <run_opts[umm_token_freq]>
+    dataset_type: !ref <run_opts[dataset_type]>
+    data_id: !ref <run_opts[data_id]>
+    ctx_data_id: !ref <run_opts[ctx_data_id]>
+    val_data_ids: !ref <run_opts[val_data_ids]>
+    umm_token_freq: !ref <run_opts[umm_token_freq]>
+    target_token_key: !ref <run_opts[target_token_key]>
+    skip_validation: True
+    pin_memory: False
+    prefetch_factor: null              # int or null
+    split_by_alignment: False
+    token_pretrain: False
+    dropout_rate_zh_tone: null      # int or null
+    use_prompt_token_for_short_audio: !ref <extra_params[freezon_spkenc_params]>
+    sample_config:
+        name: _ContexualParquetSample
+        contextual_strategy: 5
+        time_interval_threshold: 5
+        max_num_speakers: 1
+        max_duration: !ref <pl_datamodule[max_duration]>
+    use_spk_id: !ref <extra_params[use_spk_id]>
+    spk2id: !ref <extra_params[spk2id]>
+    use_bpe: !ref <extra_params[use_bpe]>
+    bpe_type: !ref <extra_params[bpe_type]>
+    bpe_dir: !ref <extra_params[bpe_dir]>
+    use_spk_tag: !ref <extra_params[use_spk_tag]>
+    spk2tag: !ref <extra_params[spk2tag]>
+    whole_sentence_prob: !ref <extra_params[whole_sentence_prob]>
+    use_text_lang_embedding: !ref <extra_params[use_text_lang_embedding]>
+    textlang2id: !ref <extra_params[textlang2id]>
+    use_pure_audio_in_length_fn: !ref <extra_params[use_pure_audio_in_length_fn]>
+
+model_config: !new:transformers.GPT2Config
+    vocab_size: 1 # placeholder. Embedding table gets removed on load
+    max_position_embeddings: 0
+    use_cache: False
+    n_positions: 0  # No absolute position embedding
+    num_logits: !ref <extra_params[semantic_codebook_size]> + 2 # +2 for EOS
+    n_embd: !ref <extra_params[hidden_size]>
+    n_layer: !ref <extra_params[num_hidden_layers]>
+    n_head: !ref <extra_params[num_attention_heads]>
+    n_inner: !ref <extra_params[intermediate_size]>
+    use_rms_norm: True
+    activation_function: "swiglu"
+    resid_pdrop: 0.0
+    embd_pdrop: 0.0
+    attn_pdrop: 0.0
+    layer_norm_epsilon: 1e-6
+    initializer_range: 0.02
+    rescale_prenorm_residual: False
+    rms_norm: True
+    rotary_emb_fraction: 1.0
+    rotary_emb_interleaved: True
+    rotary_emb_compat: "default" #"byteformer"
+    tie_word_embeddings: False
+    qkv_proj_bias: False
+    out_proj_bias: False
+    mlp_fc1_bias: False
+    mlp_fc2_bias: False
+    use_flash_attn: True
+    fused_bias_fc: True
+    fused_mlp: False
+    fused_dropout_add_ln: True
+    residual_in_fp32: True
+
+model_cls: !name:samantha.models.ctiga.gpt.GPTLMHeadModel
+    config: !ref <model_config>
+
+optimizer_cls: !name:deepspeed.ops.adam.FusedAdam
+    lr: !ref <run_opts[learning_rate]>
+    weight_decay: !ref <run_opts[weight_decay]>
+    betas: [0.9, 0.96]
+    eps: 0.00000001
+
+scheduler_cls: !name:samantha.optim.lr_scheduler.WarmupCosine
+    init_lr: !ref <run_opts[learning_rate]>
+    warmup_steps: !ref <run_opts[warmup_steps]>
+    cycle_steps: !ref <run_opts[cycle_steps]>
+    min_lr: !ref <run_opts[learning_rate]> * 0.1
+
+pl_module: !new:apps.bigtts.umm.ar.lightning.SemanticModule_Valle
+    checkpointing: False
+    model_cls: !ref <model_cls>
+    optimizer_cls: !ref <optimizer_cls>
+    scheduler_cls: !ref <scheduler_cls>
+    criterion_cls: !name:samantha.criterion.criterion.MaskedCrossEntropy
+        return_dict: False
+    extra_params: !ref <extra_params>
+
+logger:
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[log_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
+
+callbacks:
+    - !new:pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: 'step'
+    - !new:samantha.callbacks.HDFSModelCheckpoint
+      dirpath: !ref <run_opts[log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+      hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+      monitor: training/accu
+      save_top_k: 30
+      every_n_train_steps: !ref <run_opts[every_n_train_steps]>
+      mode: max
+      filename: "step={step:06d}-accu={training/accu:.2f}"
+      auto_insert_metric_name: False
+    - !new:samantha.callbacks.Timer
+    - !new:samantha.callbacks.memory.MemoryCallback
+
+plugins:
+    - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
+
+profiler: !new:pytorch_lightning.profilers.PyTorchProfiler
+    activities:
+    - !name:torch.profiler.ProfilerActivity.CPU
+    - !name:torch.profiler.ProfilerActivity.CUDA
+    schedule: !apply:torch.profiler.schedule
+        wait: 0
+        warmup: 50
+        active: 10
+        repeat: 1
+        skip_first: 100
+    on_trace_ready: !apply:torch.profiler.tensorboard_trace_handler
+        - !ref <run_opts[log_dir]>/<run_opts[version]>
+    record_shapes: True
+    profile_memory: True
+    with_stack: True
+
+strategy: !new:pytorch_lightning.strategies.DDPStrategy
+    bucket_cap_mb: 25
+    find_unused_parameters: False
+
+trainer: !new:pytorch_lightning.Trainer
+    strategy: !ref <strategy>
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: 'auto'
+    num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    log_every_n_steps: 500
+    max_steps: !ref <run_opts[max_steps]>
+    precision: !ref <run_opts[precision]>
+    accumulate_grad_batches: 1
+    gradient_clip_val: !ref <run_opts[gradient_clip_val]>
+    val_check_interval: !ref <run_opts[val_check_interval]>
+    check_val_every_n_epoch: null
+    num_sanity_val_steps: 0  # skip validation sanity checks so we don't run into hdfs file close errors
+    callbacks: !ref <callbacks>
+    plugins: !ref <plugins>
+    # profiler: !ref <profiler>

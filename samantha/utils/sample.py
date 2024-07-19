@@ -129,6 +129,10 @@ def sample(
         if return_probs:
             probs = (predict_logits / temp).softmax(dim=-1)
             sample_probs = torch.gather(probs, -1, samples.unsqueeze(1)).squeeze(1)
+    elif mode == "greedy":
+        samples = torch.argmax(predict_logits, dim=-1)
+        if return_probs:
+            sample_probs = samples / samples
     else:
         raise NotImplementedError
 

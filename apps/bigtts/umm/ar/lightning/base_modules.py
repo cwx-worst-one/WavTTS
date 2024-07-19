@@ -54,6 +54,8 @@ class BaseModule(pl.LightningModule):
             if extra_params.get("freezon_spkenc_params", False):
                 for param in self.spkenc_model.parameters():
                     param.requires_grad = False
+        else:
+            self.spkenc_model = None
 
         self.criterion = criterion_cls()
         self.extra_params = DotDict(extra_params)
@@ -231,6 +233,9 @@ class BaseContinuousEmbedModule(BaseModule):
         checkpointing=False,
         spkenc_model_cls=None,
         extra_params=None,
+        text_lang_embeddings=None,
+        bpe_cross_attention=None,
+        bpe_positional_encoding=None,
     ):
         super().__init__(
             model_cls,
@@ -251,6 +256,9 @@ class BaseContinuousEmbedModule(BaseModule):
         self.target_embedder = target_embedder
         self.prompt_embedder = prompt_embedder
         self.lang_embeddings = lang_embeddings
+        self.text_lang_embeddings = text_lang_embeddings
+        self.cross_attention = bpe_cross_attention
+        self.positional_encoding = bpe_positional_encoding
 
         init_weights_fn = None
         if isinstance(self.model, gpt.GPTLMHeadModel):
@@ -271,6 +279,12 @@ class BaseContinuousEmbedModule(BaseModule):
                 self.lang_embeddings.apply(init_weights_fn)
             if self.spkenc_model is not None:
                 self.spkenc_model.apply(init_weights_fn)
+            if self.text_lang_embeddings is not None:
+                self.text_lang_embeddings.apply(init_weights_fn)
+            if self.cross_attention is not None:
+                self.cross_attention.apply(init_weights_fn)
+            if self.positional_encoding is not None:
+                self.positional_encoding.apply(init_weights_fn)
         self._init_weights_fn = init_weights_fn
         self.use_cross_attn = self.extra_params.get("use_cross_attn", False)
 
@@ -357,6 +371,9 @@ class BaseContinuousEmbedModule(BaseModule):
         ref_samples=None,
         max_blank_length=5,
         step_out_blank=False,
+        cond=None,
+        min_num_tokens=10,
+        max_repeat_times=1,
     ):
         """
         Input:
@@ -391,22 +408,35 @@ class BaseContinuousEmbedModule(BaseModule):
                     "encoder_hidden_states": inputs_embeds,
                 }
             else:
-                return {
-                    "inputs_embeds": torch.cat(
-                        [inputs_embeds, sos_embeds, target_embeds], dim=1
-                    )
-                }
+                if target_embeds is None:
+                    return {
+                        "inputs_embeds": torch.cat([inputs_embeds, sos_embeds], dim=1)
+                    }
+                else:
+                    return {
+                        "inputs_embeds": torch.cat(
+                            [inputs_embeds, sos_embeds, target_embeds], dim=1
+                        )
+                    }
 
         model_input = _init_model_input()
 
         output_tokens = None
         past_key_values = None
         pbar = tqdm(range(num_tokens))
-        token_buffer = TokenBuffer(max_blank_length)
+        token_buffer = TokenBuffer(
+            max_length=max_blank_length,
+            init_temperature=temperature,
+            max_temperature=1.5,
+            max_retry_times=5,
+            step_out_blank_version=step_out_blank,
+            max_repeat_times=max_repeat_times,
+            eos_id=self.target_embedder.eos_id,
+        )
         if not isinstance(self.model, gpt.GPTLMHeadModel):
             for i in pbar:
                 pbar.set_description(
-                    f"{tqdm_name} [0 - {num_tokens}], mode: {sample_mode}, temp: {temperature}, thresh: {thresh}"
+                    f"{tqdm_name} [0 - {num_tokens}], mode: {sample_mode}, temp: {temperature}, step_out_blank: {step_out_blank}, thresh: {thresh}"
                 )
                 model_output = self.model(
                     **model_input, past_key_values=past_key_values, use_cache=True
@@ -421,17 +451,18 @@ class BaseContinuousEmbedModule(BaseModule):
                 if predict_token == self.target_embedder.eos_id:
                     break
 
-                if step_out_blank:
-                    token_buffer.put(predict_token.item())
-                    new_predict_token = token_buffer.process_token(
-                        i,
-                        self.sample_logits,
-                        logits=logits,
-                        thresh=thresh,
-                        mode=sample_mode,
-                    )
-                    if new_predict_token is not None:
-                        predict_token = new_predict_token
+                new_predict_token = token_buffer.process_token(
+                    step=i,
+                    predict_token=predict_token,
+                    sampler=self.sample_logits,
+                    logits=logits,
+                    thresh=thresh,
+                    mode=sample_mode,
+                )
+                if new_predict_token is not None:
+                    if new_predict_token.item() == self.target_embedder.eos_id:
+                        break
+                    predict_token = new_predict_token
 
                 predict_token_emb = self.target_embedder.embedder(predict_token)
                 if lang_embed is not None:
@@ -449,7 +480,7 @@ class BaseContinuousEmbedModule(BaseModule):
             position_ids = None
             for i in pbar:
                 pbar.set_description(
-                    f"{tqdm_name} [0 - {num_tokens}], mode: {sample_mode}, temp: {temperature}, thresh: {thresh}"
+                    f"{tqdm_name} [0 - {num_tokens}], mode: {sample_mode}, temp: {temperature}, step_out_blank: {step_out_blank}, thresh: {thresh}"
                 )
                 input_embeds = model_input["inputs_embeds"]
                 logits = self.model(
@@ -457,9 +488,10 @@ class BaseContinuousEmbedModule(BaseModule):
                     inference_params=infer_params,
                     position_ids=position_ids,
                     last_token_only=True,
+                    cond=cond,
                 ).logits  # b,1,num_logits
 
-                if i < 10:
+                if i < min_num_tokens:
                     logits = logits[..., :-2]
 
                 predict_token = self.sample_logits(
@@ -469,17 +501,18 @@ class BaseContinuousEmbedModule(BaseModule):
                 if predict_token[0][0] == self.target_embedder.eos_id:
                     break
 
-                if step_out_blank:
-                    token_buffer.put(predict_token.item())
-                    new_predict_token = token_buffer.process_token(
-                        i,
-                        self.sample_logits,
-                        logits=logits,
-                        thresh=thresh,
-                        mode=sample_mode,
-                    )
-                    if new_predict_token is not None:
-                        predict_token = new_predict_token
+                new_predict_token = token_buffer.process_token(
+                    step=i,
+                    predict_token=predict_token,
+                    sampler=self.sample_logits,
+                    logits=logits,
+                    thresh=thresh,
+                    mode=sample_mode,
+                )
+                if new_predict_token is not None:
+                    if new_predict_token.item() == self.target_embedder.eos_id:
+                        break
+                    predict_token = new_predict_token
 
                 predict_token_emb = self.target_embedder.embedder(predict_token)
                 if lang_embed is not None:

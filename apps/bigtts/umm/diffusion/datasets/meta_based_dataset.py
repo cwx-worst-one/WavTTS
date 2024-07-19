@@ -8,6 +8,7 @@ from torch.utils.data import Dataset
 from samantha.utils.sami_tacolabel import generate_tacolabels_from_textstr_punc
 
 from samantha.dataio.lite.utils.phone_to_id import PhoneToId
+from apps.bigtts.umm.ar.data.bigtts_test import generate_tacolabels_engine
 
 
 class MetaBasedDataset(Dataset):
@@ -53,10 +54,15 @@ class MetaBasedDataset(Dataset):
 
 # For UMM
 class PickleDataset(Dataset):
-    def __init__(self, wav_dir=None,
-            text_file=None, meta_file=None,
-            pickle_file=None, npy_path=None,
-            prompt_lang="en", syn_lang="en"):
+
+    def __init__(
+        self,
+        wav_dir=None,
+        text_file=None,
+        meta_file=None,
+        pickle_file=None,
+        npy_path=None,
+    ):
         assert pickle_file is not None or npy_path is not None
 
         if pickle_file is not None and text_file is not None:
@@ -73,10 +79,6 @@ class PickleDataset(Dataset):
 
         self.phone2id = PhoneToId()
 
-        self.prompt_frontend_version = "English_v3_punc" if prompt_lang == "en" else "Chinese_v3_punc"
-        self.syn_frontend_version = "English_v3_punc" if syn_lang == "en" else "Chinese_v3_punc"
-
-
     def _parse_meta3(self, npy_path, wav_dir, meta_file):
         meta = []
         with open(meta_file, "r", encoding="utf8") as f:
@@ -92,7 +94,6 @@ class PickleDataset(Dataset):
                 if predictor_token.size(0) > 1:
                     meta.append([prompt_text, syn_text, prompt_wav_path, predictor_token, uttid])
         return meta
-
 
     def _parse_meta2(self, npy_path, wav_dir, text_file):
 
@@ -138,7 +139,7 @@ class PickleDataset(Dataset):
                 # wav_file = key + '.wav'
                 wav_file = text_dict[key][1]
                 wav_path = os.path.join(wav_dir, wav_file)
-                #wav_path = wav_file
+                # wav_path = wav_file
                 predict_token = value.cpu().squeeze(0)
                 target_text = text_dict[key][2]
                 prompt_text = text_dict[key][0]
@@ -161,18 +162,17 @@ class PickleDataset(Dataset):
         elif self.type == 2:
             prompt_text, target_text, wav_path, predictor_token, uttid = self.meta[index]
 
-            tacolab = generate_tacolabels_from_textstr_punc(prompt_text, self.prompt_frontend_version).decode()
+            tacolab = generate_tacolabels_engine(prompt_text).decode()
             tacolab = tacolab.strip().split("\n")
             prompt_id, _, _, _ = self.phone2id.convert_tacolab_to_text_id_infer(tacolab)
 
-            tacolab = generate_tacolabels_from_textstr_punc(target_text, self.syn_frontend_version).decode()
+            tacolab = generate_tacolabels_engine(target_text).decode()
             tacolab = tacolab.strip().split("\n")
             target_id, _, _, _ = self.phone2id.convert_tacolab_to_text_id_infer(tacolab)
         else:
             raise NotImplementedError
 
         return prompt_id, target_id, wav_path, predictor_token, uttid
-
 
 
 # for unit2wav reconstrunction test.

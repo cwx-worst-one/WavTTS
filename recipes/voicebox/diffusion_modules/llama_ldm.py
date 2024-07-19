@@ -396,6 +396,11 @@ class LlamaDiffusion(nn.Module):
             hp.window_size = [-1, -1]
 
         # backbone
+        # flash attn and win mask, hard code by chenkuan
+        # this is for backward as previous code using this
+        if hp.use_window_mask:
+            hp.flashattn_version = "2.3"
+
         llama_config = LLamaArgs(
             dim=hp.encoder_dim,
             n_layers=hp.encoder_n_layers,

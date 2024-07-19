@@ -935,6 +935,7 @@ class GPTLMHeadModel(GPTPreTrainedModel):
         inference_params=None,
         last_token_only=False,
         return_attn_probs=False,
+        cond=None,
         output_hidden_states=False,
     ):
         """
@@ -963,6 +964,7 @@ class GPTLMHeadModel(GPTPreTrainedModel):
             inference_params=inference_params,
             attention_mask=attention_mask,
             return_attn_probs=return_attn_probs,
+            cond=cond,
         )
 
         if return_attn_probs:
