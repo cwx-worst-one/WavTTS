@@ -176,7 +176,7 @@ class ARDiffusionInference(LightningModule):
 
     def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: int = 0) -> Any:
         set_seed(self.hparams.seed)
-        uttid, prompt_lab, prompt_text, prompt_wav_path, infer_lab = batch
+        uttid = batch[0]
 
         try:
             infer_umm_token = self.text2token(batch)
@@ -196,7 +196,7 @@ class ARDiffusionInference(LightningModule):
             return
 
     def text2token(self, batch):
-        uttid, prompt_lab, prompt_wav_path, infer_lab = batch
+        uttid, prompt_lab, prompt_text, prompt_wav_path, infer_lab, infer_text = batch
         ar_batch = self.prepare_ar_inputs(prompt_wav_path, prompt_lab, infer_lab)
         dtype = self.convert_precision_to_amp_dtype(self.hparams.ar_opts.precision)
         with (
@@ -280,7 +280,7 @@ class ARDiffusionInference(LightningModule):
     def prepare_diffusion_inputs(self, batch, inferred_token):
         from samantha.dataio.lite.utils.phone_to_id import PhoneToId
 
-        uttid, prompt_lab, prompt_text, prompt_wav_path, infer_lab = batch
+        uttid, prompt_lab, prompt_text, prompt_wav_path, infer_lab, infer_text = batch
         p2i = PhoneToId()
         prompt_text_id, *_ = p2i.convert_tacolab_to_text_id_infer(
             prompt_lab.strip().split("\n")
