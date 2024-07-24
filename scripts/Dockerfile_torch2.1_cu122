@@ -510,3 +510,7 @@ ENV BASH_ENV=/etc/samantha.bashrc
 # hack for pl 2.2 requires wandb>=0.12.10
 COPY ./scripts/setup_wandb.sh .
 RUN bash ./setup_wandb.sh
+
+# Make debugging easier.
+COPY ./scripts/scm_install.py /usr/bin/scm_install
+RUN chmod +x /usr/bin/scm_install
