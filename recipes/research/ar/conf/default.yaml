@@ -1,0 +1,145 @@
+---
+
+seed: 42
+__set_seed: !apply:recipes.research.seed_everything [!ref <seed>, True]  # NOTE: This also seeds all workers individually (https://arc.net/l/quote/euoaupkf)
+ckpt_path: null
+
+num_channels: 1
+duration: 30.0
+n_segments_per_read: 1
+batch_size: 4
+num_workers: 16
+sample_rate: 44100
+log_name: "ar/default"
+version: !applyref:samantha.utils.experiment.get_version_name
+log_dir: "/mnt/bn/janne-research-xl/logs"
+hdfs_log_dir: !ref "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/js/logs/<log_name>/<version>"
+
+
+billboard_v2: !new:samantha.data.audio.webdataset.AudioWebDataset
+  url2index: hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/js/data/music/shards/billboard_hot_200-v2_normalised_-16LUFS/*/url2index.txt
+  data_type: music_vocal
+  sample_rate: !ref <sample_rate>
+  channels: !ref <num_channels>
+  pad: True
+  segment_duration: !ref <duration>
+  n_segments_per_read: !ref <n_segments_per_read>
+  resampled: True
+  shardshuffle: True
+  shuffle_buffer_size: 0
+
+shutterstock: !new:recipes.research.dataset.parquet_dataset.AudioParquetDataset
+  data_id: 206 # 164 = filtered, 146 = unfiltered, 206 = 44.1k unfiltered
+  data_type: music_instrumental
+  sample_rate: !ref <sample_rate>
+  shuffle_buffer_size: 0
+  channels: !ref <num_channels>
+  pad: True
+  segment_duration: !ref <duration>
+  n_segments_per_read: !ref <n_segments_per_read>
+  resampled: True
+  shardshuffle: True
+
+# shutterstock_test: !new:recipes.research.dataset.parquet_dataset.AudioParquetDataset
+#   data_id: 206 # 164 = filtered, 146 = unfiltered, 206 = 44.1k unfiltered
+#   data_type: music_instrumental
+#   sample_rate: !ref <sample_rate>
+#   shuffle_buffer_size: 0
+#   channels: !ref <num_channels>
+#   pad: True
+#   segment_duration: !ref <duration>
+#   n_segments_per_read: !ref <n_segments_per_read>
+#   resampled: True
+#   shardshuffle: True
+
+musdb_test: !new:samantha.data.audio.dataset.AudioFolderDataset
+  root: /mnt/bd/janne-download/data/music/musdb18hq/test
+  data_type: music_instrumental
+  duration: !ref <duration>
+  sample_rate: !ref <sample_rate>
+  shuffle: False
+  num_channels: !ref <num_channels>
+  pad: True
+  num_workers: !ref <num_workers>
+
+pl_datamodule: !new:samantha.data.audio.dataset.AudioFolderDataModule
+  train_datasets:
+    - !ref <shutterstock>
+    - !ref <billboard_v2>
+  validation_datasets:
+    - !ref <musdb_test>
+  test_datasets:
+    - !ref <musdb_test>
+  weights: [0.8, 0.2]
+  batch_size: !ref <batch_size>
+  shuffle: null
+  num_workers: !ref <num_workers>
+  prefetch_factor: 2
+  batch_drop_duplicates: True
+
+# pl_datamodule: !new:samantha.data.dummy.audio.DummyAudioDataModule
+#   data_type: music_vocal
+#   sample_rate: 25  # framerate
+#   n_channels: 4  # codebooks
+#   min_duration: !ref <duration>
+#   max_duration: !ref <duration>
+#   batch_size: !ref <batch_size>
+#   num_workers: !ref <num_workers>
+
+
+pl_module: !new:recipes.research.ar.AR
+  config: !new:recipes.research.ar.ARConfig
+    sample_rate: !ref <sample_rate>
+    max_duration: !ref <duration>
+    n_embd: 1536
+    n_layer: 24
+    n_head: 24
+    learning_rate: 3.0e-4
+
+logger:
+  - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
+    save_dir: !ref <log_dir>
+    name: !ref <log_name>
+    version: !ref <version>
+    default_hp_metric: False
+  - !new:pytorch_lightning.loggers.WandbLogger
+    save_dir: !ref <log_dir>
+    project: !apply:samantha.utils.experiment.wandb_sanitize [!ref <log_name>]
+    name: !apply:samantha.utils.experiment.wandb_sanitize [!ref <version>]
+
+checkpoint: !new:samantha.callbacks.HDFSModelCheckpoint
+  hdfs_path: !ref <hdfs_log_dir>
+  monitor: step
+  save_top_k: 100
+  save_last: True
+  every_n_train_steps: !ref <trainer[val_check_interval]>
+  mode: max
+  filename: "{step:06d}"
+
+model_summary: !new:pytorch_lightning.callbacks.ModelSummary
+  max_depth: 2
+
+lr_monitor: !new:pytorch_lightning.callbacks.LearningRateMonitor
+  logging_interval: 'step'
+
+plugins:
+  - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+  strategy: ddp_find_unused_parameters_false
+  sync_batchnorm: True
+  logger: !ref <logger>
+  num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
+  enable_model_summary: True
+  max_epochs: -1
+  max_steps: 1000000
+  precision: bf16-mixed
+  val_check_interval: 10000
+  limit_val_batches: 50
+  check_val_every_n_epoch: null
+  num_sanity_val_steps: 0
+  gradient_clip_val: 1.0
+  callbacks:
+    - !ref <checkpoint>
+    - !ref <lr_monitor>
+  plugins: !ref <plugins>

@@ -1,9 +1,35 @@
+import json
+from glob import glob
+from typing import List, Optional
+
 import pandas as pd
 import ujson
 from tqdm import tqdm
-from typing import List
+
 from samantha.dataio.data_bucket import data_bucket
-from samantha.utils.hdfs_tools import hdfs_loadtxt_cache, hdfs_loadtxt
+from samantha.utils.hdfs_helper import hdfs_ls
+from samantha.utils.hdfs_tools import hdfs_loadtxt, hdfs_loadtxt_cache
+
+
+def get_parquet_index_df(index_uri, n_indexes: Optional[int] = None):
+    if index_uri.startswith("hdfs://"):
+        index_files = hdfs_ls(index_uri)
+    else:
+        index_files = glob(index_uri)
+
+    if n_indexes is not None:
+        index_files = index_files[:n_indexes]
+
+    dfs = []
+    print(len(index_files))
+    for f in tqdm(index_files):
+        df = pd.read_parquet(f)
+        df["index_fp"] = f
+        dfs.append(df)
+
+    dfs = pd.concat(dfs).reset_index(drop=True)
+    return dfs
+
 
 class IndexReader:
 
@@ -40,6 +66,7 @@ class IndexReader:
 
             index[key] = index_data
         return list(index.values())
+
 
 if __name__ == "__main__":
     url2index = data_bucket(

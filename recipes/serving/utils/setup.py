@@ -55,6 +55,8 @@ def get_model_configs(app):
         model_config_path = 'recipes/bigmusic/conf/Q4_2023/inference/inference_vocal_2m_deploy.yaml'
     elif app == 'Instrumental':
         model_config_path = 'recipes/bigmusic/conf/Q4_2023/inference/inference_instrumental_sstk_v8_deploy.yaml'
+    elif app == "Research":
+        model_config_path = 'recipes/research/diff/conf/prod/instrumental.yaml'
     else:
         raise ValueError(f"Unknown app: {app}")
 

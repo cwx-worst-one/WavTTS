@@ -1,0 +1,9 @@
+---
+
+seed: 42
+__set_seed: !apply:recipes.research.seed_everything [!ref <seed>, True]  # NOTE: This also seeds all workers individually (https://arc.net/l/quote/euoaupkf)
+
+pl_module: !apply:recipes.research.diff.prod.load_diffusion_model
+  commit_hash: 55ff351
+  cache: True
+  ckpt_path: hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/js/logs/diff/default/55ff351/2024-06-30/00-43-14/checkpoints/step=1000000.ckpt

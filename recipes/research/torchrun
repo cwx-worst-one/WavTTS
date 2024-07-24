@@ -1,0 +1,24 @@
+#!/bin/bash
+
+bash recipes/research/bootstrap.sh
+
+cwd=$(pwd)
+
+# git clone https://github.com/wilicc/gpu-burn.git
+# cd gpu-burn && make && ./gpu_burn -d 36000 &
+# cd $cwd
+
+master_addr=${master_addr:=$ARNOLD_WORKER_0_HOST}
+master_port=${master_port:=$(echo "$ARNOLD_WORKER_0_PORT" | cut -d "," -f 1)}
+
+nproc_per_node=$1
+shift
+
+torchrun \
+    --node_rank=$ARNOLD_ID \
+    --nproc_per_node=$nproc_per_node \
+    --nnodes=$ARNOLD_WORKER_NUM \
+    --rdzv_endpoint=${master_addr}:${master_port} \
+    $@
+
+# pkill -9 gpu_burn

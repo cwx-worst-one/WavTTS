@@ -1,0 +1,5 @@
+from .base import MultiHeadAttention, TensorPointerDict  # noqa
+from .blocksparse import _is_blocksparse_available  # noqa
+
+if _is_blocksparse_available:
+    from .blocksparse import BlockSparseAttention  # noqa

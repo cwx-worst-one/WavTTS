@@ -5,6 +5,7 @@ from typing import Any, Iterable
 import webdataset as wds
 
 from samantha.dataio.data_bucket import data_bucket
+from samantha.dataio.utils import expand_urls
 from samantha.utils.hdfs_helper import hdfs_ls
 from samantha.utils.logger import RankedLogger
 
@@ -13,7 +14,7 @@ logger = RankedLogger(__name__, rank_zero_only=True)
 
 class MIRDataModuleBase:
     _splits = []
-    _sample_rate = None
+    _data_sample_rate = None
 
     def __init__(
         self,
@@ -47,6 +48,7 @@ class MIRDataModuleBase:
             .decode()
             .compose(self.transform)
         )
+        self.dataset.urls = expand_urls(urls)
 
         self.logger.info(
             f"Collected {len(urls)} shard urls for data split: {self.split}"
@@ -65,8 +67,8 @@ class MIRDataModuleBase:
         return self.split == "train"
 
     @property
-    def sample_rate(self) -> int:
-        return self._sample_rate
+    def data_sample_rate(self) -> int:
+        return self._data_sample_rate
 
     @property
     def shard_urls(self):

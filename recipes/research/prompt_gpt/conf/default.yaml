@@ -1,0 +1,92 @@
+---
+
+seed: 42
+__set_seed: !apply:recipes.research.seed_everything [!ref <seed>, True]  # NOTE: This also seeds all workers individually (https://arc.net/l/quote/euoaupkf)
+ckpt_path: null
+
+batch_size: 16
+num_workers: 8
+log_name: prompt_gpt/default
+version: !applyref:samantha.utils.experiment.get_version_name
+log_dir: "/mnt/bn/janne-research-xl/logs"
+hdfs_log_dir: !ref "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/js/logs/<log_name>/<version>"
+
+shutterstock_text: !new:recipes.research.dataset.collection.ShutterStockIndexParquetDataset
+  resampled: True
+  shardshuffle: True
+
+shutterstock_text_test: !new:recipes.research.dataset.collection.ShutterStockIndexParquetDataset
+  resampled: True
+  shardshuffle: True
+
+pl_datamodule: !new:samantha.data.audio.dataset.AudioFolderDataModule
+  train_datasets:
+    - !ref <shutterstock_text>
+  validation_datasets:
+    - !ref <shutterstock_text_test>
+  test_datasets:
+    - !ref <shutterstock_text_test>
+  weights: null
+  batch_size: !ref <batch_size>
+  shuffle: null
+  num_workers: !ref <num_workers>
+  prefetch_factor: 2
+  batch_drop_duplicates: True
+
+
+pl_module: !new:recipes.research.prompt_gpt.PromptGPT
+  config: !new:recipes.research.prompt_gpt.PromptGPTConfig
+    n_embd: 768
+    n_layer: 12
+    n_head: 12
+
+logger:
+  - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
+    save_dir: !ref <log_dir>
+    name: !ref <log_name>
+    version: !ref <version>
+    default_hp_metric: False
+  - !new:pytorch_lightning.loggers.WandbLogger
+    save_dir: !ref <log_dir>
+    project: !apply:samantha.utils.experiment.wandb_sanitize [!ref <log_name>]
+    name: !apply:samantha.utils.experiment.wandb_sanitize [!ref <version>]
+
+checkpoint: !new:samantha.callbacks.HDFSModelCheckpoint
+  hdfs_path: !ref <hdfs_log_dir>
+  monitor: step
+  save_top_k: 100
+  save_last: True
+  every_n_train_steps: !ref <trainer[val_check_interval]>
+  mode: max
+  filename: "{step:06d}"
+
+model_summary: !new:pytorch_lightning.callbacks.ModelSummary
+  max_depth: 2
+
+lr_monitor: !new:pytorch_lightning.callbacks.LearningRateMonitor
+  logging_interval: 'step'
+
+data_monitor: !new:recipes.research.dataset.data_monitor.DataMonitor
+  hdfs_log_dir: !ref <hdfs_log_dir>
+
+plugins:
+  - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+  strategy: ddp_find_unused_parameters_false
+  sync_batchnorm: True
+  logger: !ref <logger>
+  num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
+  enable_model_summary: True
+  max_epochs: -1
+  max_steps: 100000
+  precision: bf16-mixed
+  val_check_interval: 5000
+  limit_val_batches: 50
+  gradient_clip_val: 1.0
+  callbacks:
+    - !ref <model_summary>
+    - !ref <checkpoint>
+    - !ref <lr_monitor>
+    - !ref <data_monitor>
+  plugins: !ref <plugins>

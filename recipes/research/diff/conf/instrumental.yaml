@@ -1,0 +1,104 @@
+---
+
+seed: 42
+__set_seed: !apply:recipes.research.seed_everything [!ref <seed>, True]  # NOTE: This also seeds all workers individually (https://arc.net/l/quote/euoaupkf)
+ckpt_path: null
+
+num_channels: 1
+duration: 60.0
+n_segments_per_read: 1 # NOTE: anything more than this will cause duplicates -across- ranks!!
+batch_size: 4
+num_workers: 8
+sample_rate: 44100
+log_name: diff/default
+version: !applyref:samantha.utils.experiment.get_version_name
+log_dir: "/mnt/bn/janne-research-xl/logs"
+hdfs_log_dir: !ref "hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/js/logs/<log_name>/<version>"
+
+
+shutterstock_feature: !new:recipes.research.dataset.collection.ShutterStockFeature7c355eaParquetDataset
+  segment_duration: !ref <duration>
+  resampled: True
+  shardshuffle: True
+  crop_from_start: True
+
+shutterstock_feature_test: !new:recipes.research.dataset.collection.ShutterStockFeature7c355eaParquetDataset
+  segment_duration: !ref <duration>
+  resampled: True
+  shardshuffle: True
+  crop_from_start: True
+
+
+pl_datamodule: !new:samantha.data.audio.dataset.AudioFolderDataModule
+  train_datasets:
+    - !ref <shutterstock_feature>
+  validation_datasets:
+    - !ref <shutterstock_feature_test>
+  test_datasets:
+    - !ref <shutterstock_feature_test>
+  weights: null
+  batch_size: !ref <batch_size>
+  shuffle: null
+  num_workers: !ref <num_workers>
+  prefetch_factor: 2
+  batch_drop_duplicates: True
+
+pl_module: !new:recipes.research.diff.DiffInstrumental
+  config: !new:recipes.research.diff.DiffConfig
+    sample_rate: !ref <sample_rate>
+    max_duration: !ref <duration>
+    n_embd: 1536
+    n_layer: 24
+    n_head: 24
+    snr_sampler: cosine
+
+logger:
+  - !new:pytorch_lightning.loggers.tensorboard.TensorBoardLogger
+    save_dir: !ref <log_dir>
+    name: !ref <log_name>
+    version: !ref <version>
+    default_hp_metric: False
+  - !new:pytorch_lightning.loggers.WandbLogger
+    save_dir: !ref <log_dir>
+    project: !apply:samantha.utils.experiment.wandb_sanitize [!ref <log_name>]
+    name: !apply:samantha.utils.experiment.wandb_sanitize [!ref <version>]
+
+checkpoint: !new:samantha.callbacks.HDFSModelCheckpoint
+  hdfs_path: !ref <hdfs_log_dir>
+  monitor: step
+  save_top_k: 100
+  save_last: True
+  every_n_train_steps: !ref <trainer[val_check_interval]>
+  mode: max
+  filename: "{step:06d}"
+
+model_summary: !new:pytorch_lightning.callbacks.ModelSummary
+  max_depth: 2
+
+lr_monitor: !new:pytorch_lightning.callbacks.LearningRateMonitor
+  logging_interval: 'step'
+
+data_monitor: !new:recipes.research.dataset.data_monitor.DataMonitor
+  hdfs_log_dir: !ref <hdfs_log_dir>
+
+plugins:
+  - !new:samantha.plugins.torch_io.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+  strategy: ddp_find_unused_parameters_false
+  sync_batchnorm: True
+  logger: !ref <logger>
+  num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
+  enable_model_summary: True
+  max_epochs: -1
+  max_steps: 1000000
+  precision: bf16-mixed
+  val_check_interval: 10000
+  limit_val_batches: 50
+  gradient_clip_val: 1.0
+  callbacks:
+    - !ref <model_summary>
+    - !ref <checkpoint>
+    - !ref <lr_monitor>
+    - !ref <data_monitor>
+  plugins: !ref <plugins>
