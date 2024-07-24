@@ -23,7 +23,6 @@ from recipes.bigmusic.lightning.embedding_modules import (
     AudioKeyEmbedder,
     ChordSeqEmbedder,
 )
-from recipes.bigmusic.datasets.mir_data_util import convert_m1_tag_to_style_text
 from recipes.bigmusic.utils.metrics_asr import asr_transcribe_lyrics
 from recipes.bigmusic.utils.mulan_tag import get_mulan_tags
 from samantha.utils import groundtruth
@@ -69,7 +68,6 @@ from collections import defaultdict
 from copy import deepcopy
 from itertools import zip_longest
 from typing import Optional
-from recipes.mi1.models.music_sft import get_m1_tags
 from torchaudio.transforms import Resample
 from recipes.diffusion.models.vocoder_model.utils import vocode_in_chunks
 from recipes.mulan.inference.stats.sstk_anchor_points import load_anchor_points, load_anchor_points_from_mulan_ckpt
@@ -108,7 +106,6 @@ class SemanticModule(BaseContinuousEmbedModule):
         chord_vocab_size = extra_params.get('chord_vocab_size', 73)  # 1 empty + 12 key * (maj, min, sus2, sus4, dim, aug)
 
         self.augmented_noise_gain = extra_params.get('augmented_noise_gain', 0.01)
-        self.prepare_input_types = extra_params.get("prepare_input_types", []) # m1_tagger, mulan_tagger
         embedder_dict = {}
         for emb_type in extra_params.get("input_embedders", ["mulan", "lyrics_tokens"]):
             if emb_type == "mulan":
@@ -262,15 +259,12 @@ class SemanticModule(BaseContinuousEmbedModule):
             chunk_size = extra_params.get("semantic_chunk_size", None)
             if chunk_size is not None:
                 chunk_size = extra_params["sample_rate"] * chunk_size
-            store_hidden_states = "m1_tags" in self.prepare_input_types
             target_embedder = BestRQTokenEmbedder(
                 vocab_size=semantic_codebook_size,
                 embedding_dim=hidden_size,
                 add_sos=True,
                 add_eos=True,
-                chunk_size=chunk_size,
-                store_hidden_states=store_hidden_states
-                
+                chunk_size=chunk_size,                
             )
         else:
             raise NotImplementedError
@@ -622,27 +616,10 @@ class SemanticModule(BaseContinuousEmbedModule):
         batch["beat_timestamps"] = beat_timestamps
         return embeds
 
-    def prepare_batch_inputs(self, batch):
-        """For extra batch preparation that requires GPU"""
-        if "m1_tagger" in self.prepare_input_types:
-            assert isinstance(self.target_embedder, BestRQTokenEmbedder), "m1 requires target_hidden_states to predict categories"
-            assert self.target_embedder.hidden_states is not None, "m1 requires target_hidden_states to predict categories"
-            assert 'target_audio' in batch, "m1 requires target_audio to predict categories"
-            target_audio = batch["target_audio"]
-            target_hidden_states = self.target_embedder.hidden_states
-            m1_tags = get_m1_tags(self.requires, target_hidden_states, target_audio)
-            batch["style_category"] = convert_m1_tag_to_style_text(m1_tags)
-
-        if "mulan_tagger" in self.prepare_input_types:
-            mulan_tags = get_mulan_tags(self.requires, batch["target_audio"])
-            batch["style_category"] = mulan_tags
-        return batch
-
     def prepare_inputs_embeddings(self, batch, input_embedders=None):
         if input_embedders is None:
             input_embedders = self.input_embedders.items()
 
-        batch = self.prepare_batch_inputs(batch)
         if self.log_counter < 1:
             print(batch)
 
