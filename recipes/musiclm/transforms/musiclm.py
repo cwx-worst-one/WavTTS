@@ -409,49 +409,7 @@ class MCCTransforms(TransformBase):
                 tags.extend([x.strip() for x in ary if len(x.strip()) > 0])
             return ", ".join(tags)
         elif text_type == "sstk_dropout":
-            text_fields = {}
-            for key in ["description", "title", "keywords", "genres", "instruments"]:
-                v = metadata.get(key)
-                if v is None or v == "\\N" or len(v.strip()) == 0:
-                    continue
-                text_fields[key] = v.strip()
-            if len(text_fields) == 0:
-                return ""
-            if random.random() <= 0.3:
-                if random.random() < 0.8 and "description" in text_fields:
-                    return text_fields["description"]
-                elif "title" in text_fields:
-                    return text_fields["title"]
-                
-            def sample_pct(arr, dropout=0.5, min_examples=1):
-                random.shuffle(arr)
-                if len(arr) * dropout <= min_examples:
-                    return arr[:min_examples]
-                return [a for idx, a in enumerate(arr) if random.random() >= dropout]
-
-            keywords = []
-            if "keywords" in text_fields:
-                kw = [t.strip() for t in text_fields["keywords"].split(",")]
-                kw = sample_pct(kw, 0.5, min_examples=6)
-                keywords.extend(kw)
-            if "genres" in text_fields:
-                g = [t.strip() for t in text_fields["genres"].split(",")]
-                g = sample_pct(g, 0.3, min_examples=1)
-                keywords.extend(g)
-            if "instruments" in text_fields:
-                i = [t.strip() for t in text_fields["instruments"].split(",")]
-                i = sample_pct(i, 0.3, min_examples=1)
-                keywords.extend(i)
-            keywords = list(set(keywords))
-            random.shuffle(keywords)
-            if random.random() < 0.5:
-                keywords = [k.lower() for k in keywords]
-            else:
-                keywords = [k.capitalize() for k in keywords]
-            if random.random() < 0.5:
-                return ", ".join(keywords)
-            else:
-                return " ".join(keywords)
+            return format_text_sstk_dropout(metadata)
         elif text_type in {"sstk_concat", "sstk_random"}:
             text_fields = {}
             for key in ["description", "keywords", "genres", "instruments"]:
@@ -616,6 +574,50 @@ class MCCTransforms(TransformBase):
         else:
             self._update_stats(skipped=False)
 
+def sample_pct(arr, dropout=0.5, min_examples=1):
+    random.shuffle(arr)
+    if len(arr) * (1 - dropout) <= min_examples:
+        return arr
+    return [a for idx, a in enumerate(arr) if random.random() >= dropout]
+
+def format_text_sstk_dropout(metadata):
+    text_fields = {}
+    for key in ["description", "title", "keywords", "genres", "instruments"]:
+        v = metadata.get(key)
+        if v is None or v == "\\N" or len(v.strip()) == 0:
+            continue
+        text_fields[key] = v.strip()
+    if len(text_fields) == 0:
+        return ""
+    if random.random() <= 0.3:
+        if random.random() < 0.8 and "description" in text_fields:
+            return text_fields["description"]
+        elif "title" in text_fields:
+            return text_fields["title"]
+        
+    keywords = []
+    if "keywords" in text_fields:
+        kw = [t.strip() for t in text_fields["keywords"].split(",")]
+        kw = sample_pct(kw, 0.5, min_examples=6)
+        keywords.extend(kw)
+    if "genres" in text_fields:
+        g = [t.strip() for t in text_fields["genres"].split(",")]
+        g = sample_pct(g, 0.3, min_examples=1)
+        keywords.extend(g)
+    if "instruments" in text_fields:
+        i = [t.strip() for t in text_fields["instruments"].split(",")]
+        i = sample_pct(i, 0.3, min_examples=1)
+        keywords.extend(i)
+    keywords = list(set(keywords))
+    random.shuffle(keywords)
+    if random.random() < 0.5:
+        keywords = [k.lower() for k in keywords]
+    else:
+        keywords = [k.capitalize() for k in keywords]
+    if random.random() < 0.5:
+        return ", ".join(keywords)
+    else:
+        return " ".join(keywords)
 
 class PGCTransforms(TransformBase):
     def __init__(

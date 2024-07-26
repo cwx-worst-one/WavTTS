@@ -6,7 +6,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchaudio
-from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
+try:
+    from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
+except Exception as e:
+    print('Unable to load deepspeed for mulan. Required if used for training', e)
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 from pytorch_lightning.strategies import DeepSpeedStrategy

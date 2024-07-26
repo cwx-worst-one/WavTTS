@@ -98,44 +98,15 @@ class SSTKDataset(IterableDataset):
             v = metadata.get(key)
             if isEmpty(v): continue
             text_fields[key] = v.strip()
-        if len(text_fields) == 0: pass
+        if len(text_fields) == 0: return
+            
         if self.text_pick == "sstk_dropout":
-            if random.random() <= 0.3:
-                if random.random() < 0.8 and "description" in text_fields:
-                    data["text"] = text_fields["description"]
-                elif "title" in text_fields:
-                    data["text"] = text_fields["title"]
-                
-            def sample_pct(arr, dropout=0.5, min_examples=1):
-                random.shuffle(arr)
-                if len(arr) * dropout <= min_examples:
-                    return arr[:min_examples]
-                return [a for idx, a in enumerate(arr) if random.random() >= dropout]
-
-            if not data.get("text"):
-                keywords = []
-                if "keywords" in text_fields:
-                    kw = [t.strip() for t in text_fields["keywords"].split(",")]
-                    kw = sample_pct(kw, 0.5, 5)
-                    keywords.extend(kw)
-                if "genres" in text_fields:
-                    g = [t.strip() for t in text_fields["genres"].split(",")]
-                    g = sample_pct(g, 0.2, 0)
-                    keywords.extend(g)
-                if "instruments" in text_fields:
-                    i = [t.strip() for t in text_fields["instruments"].split(",")]
-                    i = sample_pct(i, 0.3, 2)
-                    keywords.extend(i)
-                keywords = list(set(keywords))
-                random.shuffle(keywords)
-                if random.random() < 0.5:
-                    keywords = [k.lower() for k in keywords]
-                else:
-                    keywords = [k.capitalize() for k in keywords]
-                if random.random() < 0.5:
-                    data["text"] = ", ".join(keywords)
-                else:
-                    data["text"] = " ".join(keywords)
+            data["text"] = _process_sstk_dropout(text_fields)
+        elif self.name == "sstk_sft":
+            try:
+                data["text"] = _process_sstk_sft(metadata, text_fields)
+            except:
+                return None
         elif self.text_pick == "random":
                 if random.random() < 0.2: # instruments: a, b, c
                     text_fields = [f"{key}: {value}" for key, value in text_fields.items()]
@@ -157,6 +128,59 @@ class SSTKDataset(IterableDataset):
     def __iter__(self):
         return iter(self.dataset)
 
+def sample_pct(arr, dropout=0.5, min_examples=1):
+    random.shuffle(arr)
+    if len(arr) * (1 - dropout) <= min_examples:
+        return arr
+    return [a for idx, a in enumerate(arr) if random.random() >= dropout]
+
+def _process_sstk_sft(metadata, text_fields):
+    if "human_label" in metadata and random.random() > 0.5:
+        hvals = [l for l in metadata["human_label"].values() if isinstance(l, str) and len(l)]
+        human_labels = ", ".join(hvals)
+        if random.random() > 0.5:
+            human_labels = ', '.join([k.strip().capitalize() for k in human_labels.split(',')])
+        sstk_text = human_labels
+    else:
+        sstk_text = _process_sstk_dropout(text_fields)
+
+    is_high_quality = metadata["filter_label"]["high_quality"] == "yes"
+    if is_high_quality:
+        sstk_text = "high_quality | " + sstk_text
+    else:
+        sstk_text = "low_quality | " + sstk_text
+    return sstk_text
+            
+def _process_sstk_dropout(text_fields):
+    if random.random() <= 0.3:
+        if random.random() < 0.8 and "description" in text_fields:
+            return text_fields["description"]
+        elif "title" in text_fields:
+            return text_fields["title"]
+        
+    keywords = []
+    if "keywords" in text_fields:
+        kw = [t.strip() for t in text_fields["keywords"].split(",")]
+        kw = sample_pct(kw, 0.5, 5)
+        keywords.extend(kw)
+    if "genres" in text_fields:
+        g = [t.strip() for t in text_fields["genres"].split(",")]
+        g = sample_pct(g, 0.2, 0)
+        keywords.extend(g)
+    if "instruments" in text_fields:
+        i = [t.strip() for t in text_fields["instruments"].split(",")]
+        i = sample_pct(i, 0.3, 2)
+        keywords.extend(i)
+    keywords = list(set(keywords))
+    random.shuffle(keywords)
+    if random.random() < 0.5:
+        keywords = [k.lower() for k in keywords]
+    else:
+        keywords = [k.capitalize() for k in keywords]
+
+    if random.random() < 0.5:
+        return ", ".join(keywords)
+    return " ".join(keywords)
 
 if __name__ == "__main__":
     dataset = SSTKDataset(name="sstk", mode="train")

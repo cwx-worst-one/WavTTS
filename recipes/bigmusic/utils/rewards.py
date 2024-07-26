@@ -756,7 +756,7 @@ def butter_highpass_filter(data, cutoff, fs, order=5):
     return y
 
 @torch.no_grad()
-def _chroma_temporal_reward(audio, sample_rate=24000, sec_split=20):
+def _chroma_temporal_reward(audio, sample_rate=24000, sec_split=10):
     if len(audio.shape) == 2:
         audio = audio.squeeze(0)
     audio = audio.float().cpu().numpy()
@@ -789,8 +789,10 @@ def _chroma_temporal_reward(audio, sample_rate=24000, sec_split=20):
 
 
 @torch.no_grad()
-def chroma_temporal_reward(audio_batch, device, sample_rate=24000, sec_split=30):
+def chroma_temporal_reward(audio_batch, device, sample_rate=24000, sec_split=10):
     if isinstance(sec_split, tuple):
+        audio_duration = audio_batch.shape[-1] // sample_rate
+        sec_split = [s for s in sec_split if s <= audio_duration // 2]
         sec_split = random.choice(sec_split)
     chroma_rewards = [_chroma_temporal_reward(audio, sample_rate, sec_split) for audio in audio_batch]
     return torch.tensor(chroma_rewards, device=device)

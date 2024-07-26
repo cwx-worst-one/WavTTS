@@ -282,14 +282,13 @@ def save_batch_outputs(
         
         wav_fp = os.path.join(wav_dir, f"{wav_file_name}.generated.wav")
         print(f"[Saving] {wav_fp}")
-        save_mp3 = save_mode in ["mp3", "upload"]
+        save_mp3 = save_mode in ["mp3"]
         output_wav_fp = save_wav(wav.cpu().float(), wav_fp, sr=sample_rate, save_mp3=save_mp3, normalize_volume=normalize_volume)
         output_paths.append(output_wav_fp)
 
         if save_mode == "upload":
             try:
-                saved_wav = torch.from_numpy(load_wav(output_wav_fp, sr=sample_rate))
-                audio_bytes = audio_tensor_to_bytes(saved_wav, sample_rate)
+                audio_bytes = audio_tensor_to_bytes(wav.cpu().float(), sample_rate)
                 metadata["audio_url"] = upload_to_easycycle(audio_bytes, f"{wav_file_name}.generated")
             except Exception as e:
                 print('WARNING: Unable to upload file:', output_wav_fp, e)

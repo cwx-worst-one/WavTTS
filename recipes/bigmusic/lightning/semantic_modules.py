@@ -1918,7 +1918,7 @@ class SemanticRLModule(SemanticModule):
                 sampled_audio.squeeze(1),
                 sample_rate=self.extra_params.sample_rate,
                 device=sampled_audio.device,
-                sec_split=(10,20,30)
+                sec_split=(10,15,20,30)
             )
             return chroma_temporal
         elif reward_type == "wer":

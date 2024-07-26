@@ -83,6 +83,8 @@ extra_params:
     token2wav_type: "diffusion"
     exclude_eos: True
 
+    normalize_volume: False
+
 run_opts:
     fast_dev_run: False
     precision: 16
@@ -161,7 +163,7 @@ callbacks:
       save_style_audio: !ref <extra_params[save_style_audio]>
       save_mode: !ref <extra_params[save_mode]>
       save_semantic_tokens: !ref <extra_params[save_semantic_tokens]>
-      normalize_volume: True
+      normalize_volume: !ref <extra_params[normalize_volume]>
 
 trainer: !new:pytorch_lightning.Trainer
     fast_dev_run: !ref <run_opts[fast_dev_run]>

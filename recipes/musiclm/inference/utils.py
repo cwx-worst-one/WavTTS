@@ -178,21 +178,22 @@ def save_wav(audio, output_file, sr=24000, save_mp3=False, normalize_volume=Fals
     
     output_file_target = output_file.replace(".wav", new_ext)
     if normalize_volume:
-        command = "ffmpeg-normalize '%s' -t -16 --keep-loudness-range-target -c:a libmp3lame -b:a 320k -o '%s' -f" % (output_file, output_file_target)
+        command = "ffmpeg-normalize '%s' -t -16 --keep-loudness-range-target -c:a libmp3lame -b:a 320k -ar {sr} -ac 2 -o '%s' -f" % (output_file, output_file_target)
     else:
-        command = f"ffmpeg -y -i {output_file} -ar {sr} -ac 1 -b:a 320k {output_file_target}"
+        command = f"ffmpeg -y -i {output_file} -ar {sr} -ac 2 -b:a 320k {output_file_target}"
     subprocess.run(command, shell=True)
     os.remove(output_file)
     return output_file_target
 
-def load_wav(path, sr=24000):
+def load_wav(path, sr=24000, mono=True):
     if path.endswith(".npy"):
         wav = np.load(path)
     elif path.endswith(".wav"):
-        wav, sr = librosa.load(path, sr=sr)
+        wav, sr = librosa.load(path, sr=sr, mono=mono)
     else:
         audio = AudioSegment.from_file(path)
-        audio = audio.set_channels(1)
+        channels = 1 if mono else 2
+        audio = audio.set_channels(channels)
         audio = audio.set_frame_rate(sr)
         wav = np.asarray(audio.get_array_of_samples())
     if wav.dtype == np.int16:

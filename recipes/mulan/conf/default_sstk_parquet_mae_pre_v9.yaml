@@ -8,7 +8,7 @@ seed: 2023
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
 
 # running parameters
-log_dir: /mnt/bn/mm-data/projects/mulan/sstk_mulan_xuchen
+log_dir: /mnt/bn/lyrics-to-song/ashaw/logs/bigmusic/mulan
 
 run_opts:
     fast_dev_run: False
@@ -81,7 +81,7 @@ train_datasets:
     sstk_genre: !ref <sstk_genre_dataset>
     sstk_1m: !ref <sstk_1m_dataset>
 
-selected_dataset_names: [sstk, sstk_genre_dataset, sstk_1m]
+selected_dataset_names: [sstk, sstk_genre, sstk_1m]
 weights: [1, 1, 1]
 
 train_dataset: !new:samantha.dataio.dataset.MultiIterableDataset
