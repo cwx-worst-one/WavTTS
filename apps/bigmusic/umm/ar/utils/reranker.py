@@ -100,6 +100,7 @@ class Reranker:
                 self.requires["mulan"],
                 sampled_audio,
                 batch["style_text"],
+                sample_rate=self.extra_params.sample_rate,
                 device=sampled_audio.device,
             )[0]
         elif rw_type == "qualitative":
@@ -111,6 +112,7 @@ class Reranker:
                 self.requires["mulan"],
                 sampled_audio,
                 [positive_phrase],
+                sample_rate=self.extra_params.sample_rate,
                 device=sampled_audio.device,
             )[0]
             negative_phrase = extra_params.get(
@@ -121,6 +123,7 @@ class Reranker:
                 self.requires["mulan"],
                 sampled_audio,
                 [negative_phrase],
+                sample_rate=self.extra_params.sample_rate,
                 device=sampled_audio.device,
             )[0]
             return positive_reward - negative_reward
@@ -131,6 +134,7 @@ class Reranker:
                 self.requires["mulan"],
                 sampled_audio,
                 ["CD品质，朗朗上口，令人难忘"],
+                sample_rate=self.extra_params.sample_rate,
                 device=sampled_audio.device,
             )[0]
             negative_reward = mulan_text_reward(
@@ -138,6 +142,7 @@ class Reranker:
                 self.requires["mulan"],
                 sampled_audio,
                 ["吵闹、无聊、容易忘记"],
+                sample_rate=self.extra_params.sample_rate,
                 device=sampled_audio.device,
             )[0]
             return positive_reward - negative_reward

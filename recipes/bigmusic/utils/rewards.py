@@ -104,12 +104,21 @@ def mulan_text_reward(
     mulan_model,
     sampled_audio,  # (batch_size * beam, T)
     target_text,   # (batch_size,)
+    sample_rate,
     device,
     sampled_embeds=None,    # (batch_size * beam, D)
     target_embeds=None,     # (batch_size, D)
     shift_seconds=5,
+    min_audio_duration=10,
+    max_audio_duration=None,
 ):
     if sampled_embeds is None:
+        min_audio_length = min_audio_duration * sample_rate
+        max_audio_length = max_audio_duration * sample_rate if max_audio_duration is not None else None
+        if sampled_audio.shape[-1] < min_audio_length:
+            sampled_audio = crop_pad_to_seq_length(sampled_audio, min_audio_length)
+        elif max_audio_length and sampled_audio.shape[-1] > max_audio_length:
+            sampled_audio = random_crop_pad_to_seq_length(sampled_audio, max_audio_length)
         sampled_embeds = mulan_infer_fn(
             model=mulan_model,
             music=sampled_audio.float(),
@@ -718,6 +727,9 @@ def anchor_points_sim_reward(
 
 @torch.no_grad()
 def mulan_temporal_reward(mulan_infer_fn, mulan_model, sampled_audio, device, sample_rate=24000, shift_seconds=20):
+    min_audio_length = (10 + shift_seconds) * sample_rate
+    if sampled_audio.shape[-1] < min_audio_length:
+        return torch.zeros((sampled_audio.shape[0],), device=device) # temporal length too short
     if isinstance(shift_seconds, tuple):
         shift_seconds = random.choice(shift_seconds)
     mulan_embeds = mulan_infer_fn(

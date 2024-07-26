@@ -83,12 +83,17 @@ def mulan_text_reward(
     mulan_model,
     sampled_audio,  # (batch_size * beam, T)
     target_text,  # (batch_size,)
+    sample_rate,
     device,
     sampled_embeds=None,  # (batch_size * beam, D)
     target_embeds=None,  # (batch_size, D)
     shift_seconds=5,
+    min_audio_duration=10,
 ):
     if sampled_embeds is None:
+        min_audio_length = min_audio_duration * sample_rate
+        if sampled_audio.shape[-1] < min_audio_length:
+            sampled_audio = crop_pad_to_seq_length(sampled_audio, min_audio_length)
         sampled_embeds = mulan_infer_fn(
             model=mulan_model,
             music=sampled_audio.float(),
