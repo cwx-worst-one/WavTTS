@@ -49,37 +49,23 @@ class ResampledShards(IterableDataset):
         self,
         urls,
         nshards=sys.maxsize,
-        worker_seed=None,
+        worker_seed=123356,
         deterministic=False,
         replacement=False,
     ):
         super().__init__()
         self.urls = urls
         self.nshards = nshards
-        self.worker_seed = (
-            utils.pytorch_worker_seed if worker_seed is None else worker_seed
-        )
+        self.worker_seed = worker_seed
         self.deterministic = deterministic
         self.epoch = -1
         self.replacement = replacement
+        self.rng = random.Random(self.worker_seed)
         self._tik = time.perf_counter()
 
     def __iter__(self):
         """Return an iterator over the shards."""
         self.epoch += 1
-        if self.deterministic:
-            seed = utils.make_seed(self.worker_seed(), self.epoch)
-        else:
-            seed = utils.make_seed(
-                self.worker_seed(),
-                self.epoch,
-                os.getpid(),
-                time.time_ns(),
-                os.urandom(4),
-            )
-        if os.environ.get("WDS_SHOW_SEED", "0") == "1":
-            print(f"# ResampledShards seed {seed}")
-        self.rng = random.Random(seed)
         logger.info(f"resample data urls with mode {self.replacement=}")
         if self.replacement:
             for _ in range(self.nshards):
@@ -87,14 +73,17 @@ class ResampledShards(IterableDataset):
                 yield self.urls[index]
         else:
             rank, world_size, worker, num_workers = utils.pytorch_worker_info()
+            idx = worker + rank * num_workers
             url_length = len(self.urls)
             self._tik = time.perf_counter()
             loop = 0
-            for cursor in range(self.nshards):
+            for cursor in range(idx, self.nshards, world_size * num_workers):
                 index = cursor % url_length
                 if index == 0:
                     loop = cursor // url_length
-                    logger.info(f"{rank=} {worker=} {seed=} #{loop} shuffle")
+                    logger.info(
+                        f"{rank=} {worker=} {self.worker_seed=} #{loop} shuffle"
+                    )
                     self.rng.shuffle(self.urls)
                 if self._should_stamp():
                     progress = index / url_length

@@ -28,8 +28,9 @@ from samantha.dataio.lite.utils.frontend import sil_punc_symbols
 from samantha.dataio.remote_io import load_json
 from samantha.dataio.parquet import ParquetDataset
 from samantha.dataio.webdataset.pipeline import WebPipeline
+from samantha.utils.audio import FastNormalizeAudio
+
 from samantha.transforms.audio import (
-    FastNormalizeAudio,
     NormalizeAudioToFloat32,
     SetAudioDimensions,
     ToTensor,
@@ -1011,7 +1012,7 @@ class MixWebDataModule(pl.LightningDataModule):
         whole_sentence_prob: float = 0.01,
         sample_config=None,
         use_text_cfg: bool = False,
-        replacement: bool = True,
+        replacement: bool = False,
         use_prompt_token_for_short_audio: bool = False,
         use_spk_id: bool = False,
         spk2id: str = None,
