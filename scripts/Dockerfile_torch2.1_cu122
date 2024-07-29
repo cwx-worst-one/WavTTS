@@ -1,6 +1,6 @@
 ARG REGION
 
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as Aliyun_VA
+FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as aliyun_va
 
 RUN apt-get update && \
     apt-get install \
@@ -13,7 +13,7 @@ RUN apt-get update && \
     sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen; \
     locale-gen;
 
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as US-East
+FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as us-east
 
 RUN apt-get update && \
     apt-get install \
@@ -26,7 +26,7 @@ RUN apt-get update && \
     sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen; \
     locale-gen;
 
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as US-East-Red
+FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as us-east-red
 
 RUN apt-get update && \
     apt-get install \
@@ -39,7 +39,7 @@ RUN apt-get update && \
     sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen; \
     locale-gen;
 
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as Aliyun_SG
+FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as aliyun_sg
 
 RUN apt-get update && \
     apt-get install \
@@ -52,13 +52,16 @@ RUN apt-get update && \
     sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen; \
     locale-gen;
 
-FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as China-North-LF
+FROM hub.byted.org/base/lab.pytorch2.staging:v2.1.0.u9.cu122 as china-north-lf
 
 ENV http_proxy="http://sys-proxy-rd-relay.byted.org:8118"
 ENV https_proxy="http://sys-proxy-rd-relay.byted.org:8118"
 ENV no_proxy="byted.org,anaconda.org"
 
 FROM ${REGION}
+
+# multi-stage build, env are independent; hdfs-stdenv need env $REGION;
+ARG REGION
 
 LABEL maintainer="Gao Lu <gaolu.e820@bytedance.com>"
 
@@ -80,6 +83,26 @@ ENV NCCL_IB_TIMEOUT 23
 ENV SPEECH_USE_SYSTEM_TRITON 1
 ENV PANTHER_PLIR_EXCLUDE_OPS batch_gemm_fwd,batch_gemm_bwd
 ENV TORCH_NCCL_AVOID_RECORD_STREAMS 1
+
+ARG CRUISE_VERSION=1.0.0.3110
+ARG PANTHER_VERSION=1.7.14.266
+ARG FALCONCLAW_VERSION=1.0.5.129
+ARG ONNX_VERSION=1.0.0.22
+ARG OPENFST_VERSION=1.0.0.8
+ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
+ARG SPEECH_EVALS_VERSION=1.0.0.26
+ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
+ARG S3A_VERSION=1.0.0.58
+ARG DATALOADER_VERSION=1.0.0.160
+ARG BUMI_VERSION=1.3.0.14
+ARG TRITON_VERSION=1.0.0.6
+ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.17
+# https://github.com/facebookresearch/xformers.git:6425fd0
+ARG XFORMERS_VERSION=1.0.0.7
+# https://github.com/google-research/bleurt.git:cebe7e6
+ARG BLEURT_VERSION=1.0.0.5
+# https://github.com/NVIDIA/apex.git:23c1f86
+ARG APEX_VERSION=1.0.0.2
 
 RUN apt-get update && \
     apt-get install \
@@ -211,28 +234,8 @@ RUN pip3 install --no-cache-dir pip==24.0 && \
         einops==0.6.1 \
         zhon==1.1.5
 
-ARG CRUISE_VERSION=1.0.0.3091
-ARG PANTHER_VERSION=1.7.14.266
-ARG FALCONCLAW_VERSION=1.0.5.129
-ARG ONNX_VERSION=1.0.0.22
-ARG OPENFST_VERSION=1.0.0.8
-ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
-ARG SPEECH_EVALS_VERSION=1.0.0.26
-ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
-ARG S3A_VERSION=1.0.0.58
-ARG DATALOADER_VERSION=1.0.0.160
-ARG BUMI_VERSION=1.2.1.14
-ARG TRITON_VERSION=1.0.0.6
-ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.17
-# https://github.com/facebookresearch/xformers.git:6425fd0
-ARG XFORMERS_VERSION=1.0.0.7
-# https://github.com/google-research/bleurt.git:cebe7e6
-ARG BLEURT_VERSION=1.0.0.5
-# https://github.com/NVIDIA/apex.git:23c1f86
-ARG APEX_VERSION=1.0.0.2
-
 # 2. install falconclaw && panther && dataloader
-RUN pip3 install --no-cache-dir \
+RUN pip3 install --no-cache-dir --use-pep517 \
         http://luban-source.byted.org/repository/scm/data.aml.cruise_$CRUISE_VERSION.tar.gz
 
 RUN pip3 install --no-cache-dir \
@@ -508,6 +511,7 @@ COPY ./scripts/samantha.bashrc /etc/samantha.bashrc
 ENV BASH_ENV=/etc/samantha.bashrc
 
 # hack for pl 2.2 requires wandb>=0.12.10
+RUN pip3 install byted_wandb
 COPY ./scripts/setup_wandb.sh .
 RUN bash ./setup_wandb.sh
 
