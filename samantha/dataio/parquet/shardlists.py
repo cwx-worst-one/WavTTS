@@ -79,7 +79,7 @@ class ResampledShards(IterableDataset):
             loop = 0
             for cursor in range(idx, self.nshards, world_size * num_workers):
                 index = cursor % url_length
-                if index == 0:
+                if index == idx:
                     loop = cursor // url_length
                     logger.info(
                         f"{rank=} {worker=} {self.worker_seed=} #{loop} shuffle"
