@@ -141,6 +141,7 @@ train_dataloader: !new:cruise.data_module.lite.dataloader.LiteCruiseDataLoader
     dataset: !ref <train_dataset>
     num_workers: !ref <run_opts[num_workers]>
     pin_memory: True
+    batch_transform: !apply:eval ["lambda x: x[0]"]
     prefetch_factor: 32
     batch_prefetch_factor: 32
 

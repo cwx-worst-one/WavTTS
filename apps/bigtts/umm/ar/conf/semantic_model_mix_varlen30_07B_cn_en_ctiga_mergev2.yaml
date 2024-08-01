@@ -66,7 +66,6 @@ pl_datamodule: !new:apps.bigtts.umm.ar.data.mix.MixWebDataModule
     sample_rate: !ref <extra_params[sample_rate]>
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
     num_workers: !ref <run_opts[num_workers]>
-    normalize_audio: False
     tokenizer: sami
     min_duration: 1.5
     max_duration: 90

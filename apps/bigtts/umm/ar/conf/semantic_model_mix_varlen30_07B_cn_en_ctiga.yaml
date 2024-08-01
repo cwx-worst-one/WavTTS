@@ -67,7 +67,6 @@ item_transform: !new:samantha.dataio.lite.compose.Compose
             token_key: !ref <run_opts[target_token_key]>
             min_duration: !ref <run_opts[min_duration]>
             max_duration: !ref <run_opts[max_duration]>
-            normalize_audio: False
             tokenizer: sami
             phone2id: !new:samantha.dataio.lite.utils.phone_to_id.PhoneToId
             phone_tone_wordseg_dict: !apply:torch.load

@@ -98,7 +98,6 @@ class BigTTSTransforms(BaseTransforms):
         target_token_key: str = "umm_token",
         min_duration: int = 5,
         max_duration: int = 30,
-        normalize_audio: bool = False,
         max_num_crops: int = None,
         tokenizer=None,
         phone2id=None,
@@ -138,8 +137,6 @@ class BigTTSTransforms(BaseTransforms):
         self.frame_rate = frame_rate
         base_transforms = [ToTensor(), SetAudioDimensions(), NormalizeAudioToFloat32()]
         self.resampler = {}
-        self.fast_normalizer = FastNormalizeAudio()
-        self.normalize_audio = normalize_audio
         self.base_transform = Compose(base_transforms)
         self.lang2id = {"en": 0, "zh": 1, "zh_en": 2, "jp": 3}
         self.token_pretrain = token_pretrain
@@ -250,8 +247,6 @@ class BigTTSTransforms(BaseTransforms):
         else:
             audio = self.base_transform(item[self.audio_key])
         audio = self.do_resample(item["src_sample_rate"], audio)
-        if self.normalize_audio:
-            audio = self.fast_normalizer(audio)
 
         if audio.size(-1) < self.min_duration * self.sample_rate:
             self._update_stats(skipped=True, message="Audio too short")
@@ -910,7 +905,6 @@ class BigTTSDataset(WebPipeline):
         target_token_key: str = "umm_token",
         min_duration: int = 5,
         max_duration: int = 30,
-        normalize_audio: bool = False,
         max_num_crops: int = None,
         tokenizer=None,
         phone2id=None,
@@ -950,7 +944,6 @@ class BigTTSDataset(WebPipeline):
             target_token_key=target_token_key,
             min_duration=min_duration,
             max_duration=max_duration,
-            normalize_audio=normalize_audio,
             tokenizer=tokenizer,
             phone2id=phone2id,
             phone_tone_wordseg_dict=phone_tone_wordseg_dict,
@@ -989,7 +982,6 @@ class MixWebDataModule(pl.LightningDataModule):
         min_duration: int = 5,
         max_duration: int = 30,
         max_num_crops: int = None,
-        normalize_audio: bool = False,
         shuffle_buffer_size: int = 10,
         num_workers: int = 4,
         pin_memory: bool = True,
@@ -1127,7 +1119,6 @@ class MixWebDataModule(pl.LightningDataModule):
                 min_duration=min_duration,
                 max_duration=max_duration,
                 max_num_crops=max_num_crops,
-                normalize_audio=normalize_audio,
                 tokenizer=self.tokenizer,
                 phone2id=self.phone2id,
                 phone_tone_wordseg_dict=self.phone_tone_wordseg_dict,
@@ -1157,7 +1148,6 @@ class MixWebDataModule(pl.LightningDataModule):
                 min_duration=min_duration,
                 max_duration=max_duration,
                 max_num_crops=max_num_crops,
-                normalize_audio=normalize_audio,
                 tokenizer=self.tokenizer,
                 phone2id=self.phone2id,
                 phone_tone_wordseg_dict=self.phone_tone_wordseg_dict,
@@ -1210,7 +1200,6 @@ class MixWebDataModule(pl.LightningDataModule):
                         min_duration=min_duration,
                         max_duration=max_duration,
                         max_num_crops=max_num_crops,
-                        normalize_audio=normalize_audio,
                         tokenizer=self.tokenizer,
                         phone2id=self.phone2id,
                         phone_tone_wordseg_dict=self.phone_tone_wordseg_dict,
@@ -1304,7 +1293,6 @@ if __name__ == "__main__":
         split_by_alignment=True,
         token_pretrain=False,
         dropout_rate_zh_tone=None,
-        normalize_audio=False,
         sample_rate=24000,
     )
     for item in dm.train_dataloader():

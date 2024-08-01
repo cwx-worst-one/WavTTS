@@ -107,7 +107,7 @@ train_dataset: !new:samantha.dataio.parquet.parquet_dataset.ParquetDataset
     # shardshuffle: True
     sample_shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
     item_transform: !ref <item_transform>
-    batch_size_in_worker: 16
+    batch_size_in_worker: null
     yield_state: True
 
 # batcher configuration
@@ -134,7 +134,7 @@ pl_datamodule: !new:samantha.dataio.lite.lite_datamodule.LiteDataModule
     val_dataloader: [] # skip_validation=true
 
 
-llama_config: !new:.samantha.models.wfvae_ctiga_llama.VAELLaMaModelArgs
+llama_config: !new:samantha.models.wfvae_ctiga_llama.VAELLaMaModelArgs
     dim: 1536
     n_layers: 30
     n_heads: 24
