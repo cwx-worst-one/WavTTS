@@ -6,6 +6,7 @@ from samantha.dataio.lite.utils.punctuation import punctuation_all
 class LangID(Enum):
     EN = "en"
     ZH = "zh"
+    ZH_EN = "zh_en"
 
 
 def is_chinese_char(char):
@@ -45,6 +46,7 @@ def is_english_spanish_char(char):
 # This implementation is not work for everywhere,
 # feel free to update it with backward compatibility.
 def get_lang_by_text(text, detail=False):
+
     text = text.replace("'", "")
     # en, zh
     en_word_cnt = 0
@@ -56,6 +58,7 @@ def get_lang_by_text(text, detail=False):
             i += 1
             continue
         elif is_chinese_char(x):  # zh
+
             zh_char_cnt += 1
             i += 1
         elif is_english_spanish_char(x):  # en with little spanish
@@ -72,10 +75,17 @@ def get_lang_by_text(text, detail=False):
         else:
             i += 1
 
-    lang = LangID.EN.value
-    if zh_char_cnt > en_word_cnt:
-        lang = LangID.ZH.value
     # TODO: japan
+    if zh_char_cnt > 0:
+        if en_word_cnt > 0:
+            lang = LangID.ZH_EN
+        else:
+            lang = LangID.ZH
+    else:
+        if en_word_cnt > 0:
+            lang = LangID.EN
+        else:
+            raise NotImplementedError
     if detail:
         lang = (lang, zh_char_cnt, en_word_cnt)
     return lang

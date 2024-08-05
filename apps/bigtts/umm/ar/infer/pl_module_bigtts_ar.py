@@ -4,6 +4,7 @@ from typing import Any
 
 import numpy as np
 import torch
+
 from pytorch_lightning import LightningModule
 
 from samantha.utils.audio import load_wav
@@ -159,8 +160,9 @@ class SemanticInference(LightningModule):
             self.hparams.umm_ckpt_path, self.device, self.hparams.umm_version
         )
 
-    def preprocess_prompt_wav(self, prompt_wav_path, device):
-        wav, sr = load_wav(prompt_wav_path, sr=24000, pad_width=(960 * 1, 960 * 2))
+    def preprocess_prompt_wav(self, prompt_wav_path, device, use_pad=True):
+        pad_width = (960 * 1, 960 * 2) if use_pad else (0, 0)
+        wav, _ = load_wav(prompt_wav_path, sr=24000, pad_width=pad_width)
         wav = torch.FloatTensor(wav).unsqueeze(0)
         scale = max(0.001, torch.max(torch.abs(wav)).item())
         wav = wav / scale * 0.95
@@ -340,7 +342,11 @@ class SemanticInference(LightningModule):
             infer_labs = [infer_labs]
             infer_texts = [infer_texts]
 
-        prompt_wav = self.preprocess_prompt_wav(prompt_wav_path, self.device)
+        prompt_wav = self.preprocess_prompt_wav(
+            prompt_wav_path,
+            self.device,
+            use_pad=False if self.hparams.version == "merge_v1" else True,
+        )
 
         infer_meta_lst = os.path.join(self.hparams.output_path, "../meta_split.lst")
         pre_utt = {"lab": None, "token": None, "lang": None, "text": None}
