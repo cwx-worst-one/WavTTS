@@ -1,13 +1,13 @@
 import logging
 from typing import Any, Callable, Dict, List, Optional
 
-from webdataset import filters, shardlists, warn_and_continue
+from webdataset import filters, shardlists, utils, warn_and_continue
 from webdataset.compat import FluidInterface
 from webdataset.pipeline import DataPipeline
 
 from samantha.dataio.parquet.extension import setup_sampler
 from samantha.dataio.parquet.shardlists import ResampledShards, SimpleShardList
-from samantha.dataio.utils import resolve_data_urls, split_urls_by_nodes
+from samantha.dataio.utils import resolve_data_urls
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,13 @@ class YieldState:
         # now yield None to adapt cruise lite dataloader
         if item is not None:
             return item, (None, None)
+
+
+def print_url(url_iter):
+    for url in url_iter:
+        rank, world_size, worker, num_workers = utils.pytorch_worker_info()
+        logger.debug(f"rank {rank}, worker {worker}, url: {url['data']}")
+        yield url
 
 
 class ParquetDataset(DataPipeline, FluidInterface):
@@ -36,7 +43,6 @@ class ParquetDataset(DataPipeline, FluidInterface):
         extra_fields_in_data: Optional[List[str]] = None,
         sample_config: Optional[Any] = None,
         resolve_urls: bool = True,
-        resampled_split_by_nodes: bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -51,11 +57,11 @@ class ParquetDataset(DataPipeline, FluidInterface):
             self.urls = self.data_urls
 
         if resampled:
-            if resampled_split_by_nodes:
-                self.urls = split_urls_by_nodes(self.urls)
             self.append(
                 ResampledShards(self.urls, replacement=kwargs.get("replacement", False))
             )
+            self.append(shardlists.split_by_node)
+            self.append(shardlists.split_by_worker)
         else:
             self.append(SimpleShardList(self.urls))
             self.append(nodesplitter)
@@ -67,6 +73,7 @@ class ParquetDataset(DataPipeline, FluidInterface):
                 else:
                     self.append(filters.shuffle(shardshuffle))
 
+        self.append(print_url)
         self.append(
             setup_sampler(
                 handler, sample_limit_per_file, extra_fields_in_data, sample_config

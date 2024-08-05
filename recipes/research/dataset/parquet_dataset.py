@@ -56,8 +56,7 @@ class IndexParquetDataset(ParquetDataset):
         shardshuffle: bool = True,
         detshuffle: bool = False,
         nodesplitter=wds.shardlists.split_by_node,
-        resolve_urls: bool = True,
-        resampled_split_by_nodes: bool = False,
+        resolve_urls: bool = True
     ):
         self.shuffle_buffer_size = shuffle_buffer_size
         super().__init__(
@@ -68,7 +67,6 @@ class IndexParquetDataset(ParquetDataset):
             detshuffle=detshuffle,
             nodesplitter=nodesplitter,
             resolve_urls=resolve_urls,
-            resampled_split_by_nodes=resampled_split_by_nodes,
             sample_config={"name": "_ParquetSampleIndex"},
         )
 
@@ -130,7 +128,6 @@ class AudioParquetDataset(ParquetDataset):
         crop_from_start: bool = False,
         n_segments_per_read: int = 1,
         resolve_urls: bool = True,
-        resampled_split_by_nodes: bool = False,
         audio_filters = None,
         nitems: int = -1,
     ):
@@ -198,7 +195,6 @@ class AudioParquetDataset(ParquetDataset):
             detshuffle=detshuffle,
             nodesplitter=nodesplitter,
             resolve_urls=resolve_urls,
-            resampled_split_by_nodes=resampled_split_by_nodes,
             sample_config={
                 # "name": "_ParquetSample",  # default
                 "name": "_ParquetSampleFast"
@@ -535,7 +531,6 @@ class FeatureParquetDataset(ParquetDataset):
         crop_from_start: bool = False,
         n_segments_per_read: int = 1,
         resolve_urls: bool = True,
-        resampled_split_by_nodes: bool = False,
         nitems: int = -1,
     ):
         assert segment_duration is None or segment_duration > 0
@@ -566,7 +561,6 @@ class FeatureParquetDataset(ParquetDataset):
             detshuffle=detshuffle,
             nodesplitter=nodesplitter,
             resolve_urls=resolve_urls,
-            resampled_split_by_nodes=resampled_split_by_nodes,
             sample_config={
                 "name": "_ParquetSampleFast"
             },

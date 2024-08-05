@@ -1,5 +1,4 @@
 import logging
-import os
 import random
 import sys
 import time
@@ -73,13 +72,12 @@ class ResampledShards(IterableDataset):
                 yield self.urls[index]
         else:
             rank, world_size, worker, num_workers = utils.pytorch_worker_info()
-            idx = worker + rank * num_workers
             url_length = len(self.urls)
             self._tik = time.perf_counter()
             loop = 0
-            for cursor in range(idx, self.nshards, world_size * num_workers):
+            for cursor in range(self.nshards):
                 index = cursor % url_length
-                if index == idx:
+                if index == 0:
                     loop = cursor // url_length
                     logger.info(
                         f"{rank=} {worker=} {self.worker_seed=} #{loop} shuffle"
