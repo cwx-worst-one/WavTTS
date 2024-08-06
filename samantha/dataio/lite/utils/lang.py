@@ -78,12 +78,12 @@ def get_lang_by_text(text, detail=False):
     # TODO: japan
     if zh_char_cnt > 0:
         if en_word_cnt > 0:
-            lang = LangID.ZH_EN
+            lang = LangID.ZH_EN.value
         else:
-            lang = LangID.ZH
+            lang = LangID.ZH.value
     else:
         if en_word_cnt > 0:
-            lang = LangID.EN
+            lang = LangID.EN.value
         else:
             raise NotImplementedError
     if detail:
