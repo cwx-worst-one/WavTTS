@@ -21,7 +21,7 @@ diffusion_hdfs_dir=hdfs://haruna/home/byte_data_seed/lf_lq/speech/checkpoints/us
 diffusion_hdfs_path=`hdfs dfs -ls $diffusion_hdfs_dir/checkpoints/ | awk '{print $8}' | grep -E '300000'`
 diffusion_step=`echo $diffusion_hdfs_path | awk -F"/" '{print $NF}' | cut -d "-" -f 2 | cut -d "=" -f 2`
 
-out_dir=/mnt/bn/chenkuan-nas-lq-001/outputs/code_merge/master
+out_dir=/mnt/bn/music-ai-unified-repo-lq/yangbing/workspace/valid_outputs/infer_outputs
 
 port_index=0
 
@@ -41,6 +41,7 @@ meta_lst=/mnt/bn/huangzhiying-nas-speech2speech-volume1/code/bigtts_testset/${te
 
 # [optional] 外部提供切句信息，此时就不会调用切句服务进行切句，主要是为了保证每次合成的切句结果是一样的
 offline_splittext_path=/mnt/bn/huangzhiying-nas-speech2speech-volume1/code/bigtts_testset/${testspk}/meta.lst.${testset}.split_online
+
 use_offline_splittext=True
 if [ ! -f $offline_splittext_path ];then
     use_offline_splittext=False
@@ -49,6 +50,7 @@ fi
 out_umm_dir=$out_dir/infer/${pair}/shortform-causal_lang${src_lang}-${tgt_lang}_astep${ar_step}_dstep${diffusion_step}_${infer_spk_basename}_tag${tag_id}_${sample_mode}-${temperature}_b10_global${only_use_global_prompt}/umm
 [ ! -d $out_umm_dir ] && mkdir -p $out_umm_dir
 [ ! -f $out_umm_dir/../`basename $meta_lst` ] && cp $meta_lst $out_umm_dir/../
+
 
 ARNOLD_WORKER_0_PORT=`expr 10000 + ${port_index}` bash apps/bigtts/umm/ar/scripts/infer-umm-ar-wer_inhouse.sh \
     --src_lang $src_lang \
@@ -73,6 +75,7 @@ ARNOLD_WORKER_0_PORT=`expr 10000 + ${port_index}` bash apps/bigtts/umm/ar/script
     --temperature $temperature
 echo ">>>>> END AR Inference"
 
+
 echo ">>>>> Start Diffusion Inference"
 cat $out_umm_dir/../meta_split.lst | sort | uniq > $out_umm_dir/../meta_split.lst.sort.uniq
 mv $out_umm_dir/../meta_split.lst.sort.uniq $out_umm_dir/../meta_split.lst
@@ -92,6 +95,7 @@ ARNOLD_WORKER_0_PORT=`expr 20000 + ${port_index}` bash apps/bigtts/umm/diffusion
     --diffusion_ckpt_path $diffusion_hdfs_path \
     --only_use_global_prompt $only_use_global_prompt
 echo ">>>>> End Diffusion Inference"
+
 
 echo ">>>>> Start Merge&Norm Wav"
 python3 /mnt/bn/huangzhiying-nas-speech2speech-volume1/code/samantha_bigtts_umm_shortform/recipes/bigmusic/utils/merge_split_wavs.py $meta_lst ${out_wav_dir}_split $out_wav_dir
