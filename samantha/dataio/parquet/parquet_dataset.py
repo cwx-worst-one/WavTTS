@@ -22,13 +22,6 @@ class YieldState:
             return item, (None, None)
 
 
-def print_url(url_iter):
-    for url in url_iter:
-        rank, world_size, worker, num_workers = utils.pytorch_worker_info()
-        logger.debug(f"rank {rank}, worker {worker}, url: {url['data']}")
-        yield url
-
-
 class ParquetDataset(DataPipeline, FluidInterface):
     def __init__(
         self,
@@ -73,7 +66,6 @@ class ParquetDataset(DataPipeline, FluidInterface):
                 else:
                     self.append(filters.shuffle(shardshuffle))
 
-        self.append(print_url)
         self.append(
             setup_sampler(
                 handler, sample_limit_per_file, extra_fields_in_data, sample_config
