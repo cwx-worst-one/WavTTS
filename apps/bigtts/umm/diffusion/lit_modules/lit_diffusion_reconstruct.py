@@ -119,7 +119,7 @@ class DiffusionU2SInfer(LightningModule):
         output_dir,
         infer_type,
         umm_frame_rate,
-        mel_frame_rate,
+        bn_frame_rate,
         mel_config,
         seed=1996,
         save_prompt=False,
@@ -128,7 +128,9 @@ class DiffusionU2SInfer(LightningModule):
         diffusion_precision="bf16",
         diffusion_nfe=10,
         diffusion_sampler="ddim",
-        text_cfg_w=1,
+        cfg_w=1,
+        only_use_global_prompt=False,
+        mask_prompt_token=True,
         use_wvae_vocoder=False,
         bn_config=None,
         use_phone_lang=False,
@@ -144,7 +146,7 @@ class DiffusionU2SInfer(LightningModule):
         self.infer_type = infer_type
         self.mel_config = mel_config
         self.umm_frame_rate = umm_frame_rate
-        self.mel_frame_rate = mel_frame_rate
+        self.bn_frame_rate = bn_frame_rate
         self.save_prompt = save_prompt
         self.umm_type = umm_type
         self.umm_codebook_path = umm_codebook_path
@@ -152,9 +154,11 @@ class DiffusionU2SInfer(LightningModule):
         self.diffusion_precision = diffusion_precision
         self.diffusion_nfe = diffusion_nfe
         self.diffusion_sampler = diffusion_sampler
-        self.text_cfg_w = text_cfg_w
+        self.cfg_w = cfg_w
         self.use_wvae_vocoder = use_wvae_vocoder
 
+        self.only_use_global_prompt = only_use_global_prompt
+        self.mask_prompt_token = mask_prompt_token
         self.use_phone_lang = use_phone_lang
         self.inpainting_context = inpainting_context
 
@@ -177,9 +181,9 @@ class DiffusionU2SInfer(LightningModule):
         os.makedirs(output_dir, exist_ok=True)
 
     # align wav for umm & mel feature length.
-    def align_wav(self, wav, sampling_rate, umm_frame_rate, mel_frame_rate):
+    def align_wav(self, wav, sampling_rate, umm_frame_rate, bn_frame_rate):
         umm_hop = sampling_rate // umm_frame_rate
-        mel_hop = sampling_rate // mel_frame_rate * 4
+        mel_hop = sampling_rate // bn_frame_rate * 4
         align_block_len = abs(umm_hop * mel_hop) // math.gcd(umm_hop, mel_hop)
         crop_wav_len = wav.shape[1] % align_block_len
         if crop_wav_len > 0:
@@ -228,7 +232,7 @@ class DiffusionU2SInfer(LightningModule):
                 wav,
                 self.mel_config["sampling_rate"],
                 self.umm_frame_rate,
-                self.mel_frame_rate,
+                self.bn_frame_rate,
             )
             if self.umm_type == "USM":
                 token_len = syn_wav.shape[1] // 960
@@ -264,12 +268,12 @@ class DiffusionU2SInfer(LightningModule):
                 wav,
                 self.mel_config["sampling_rate"],
                 self.umm_frame_rate,
-                self.mel_frame_rate,
+                self.bn_frame_rate,
             )
         elif self.infer_type == "ar-diffusion-vocoder":
             wav_divide = (
                 4800
-                if (self.umm_frame_rate == 25 and self.mel_frame_rate == 40)
+                if (self.umm_frame_rate == 25 and self.bn_frame_rate == 40)
                 else 600
             )
             prompt_wav = self.align_wav2(
@@ -302,7 +306,10 @@ class DiffusionU2SInfer(LightningModule):
             raise NotImplementedError
 
         # Text
-        text_id = torch.cat([prompt_text_id, syn_text_id[:, 1:]], dim=-1)
+        if self.only_use_global_prompt:
+            text_id = syn_text_id
+        else:
+            text_id = torch.cat([prompt_text_id, syn_text_id[:, 1:]], dim=-1)
         text_id = F.pad(text_id, (0, 1), "constant", 1)
         inputs["frontend"] = {
             "phone": text_id[0:1, :].to(device),
@@ -313,48 +320,44 @@ class DiffusionU2SInfer(LightningModule):
             inputs["frontend"]["lang"] = text_id[3:4, :].to(device)
 
         if self.infer_type in ["diffusion-vocoder", "ar-diffusion-vocoder"]:
-            inputs["token"] = torch.cat([prompt_umm_token, syn_umm_token], dim=1)
-            token_len = inputs["token"].shape[1]
-            mel_len = int(token_len / self.umm_frame_rate * self.mel_frame_rate)
+            if self.only_use_global_prompt:
+                inputs["token"] = syn_umm_token
+            else:
+                inputs["token"] = torch.cat([prompt_umm_token, syn_umm_token], dim=1)
 
-            if self.use_wvae_vocoder:
-                crop_bn = self.wvae.encode(prompt_wav)
-                m, logs = torch.split(crop_bn, 64, dim=-1)
-                crop_bn = m + torch.randn_like(m) * torch.exp(logs)
-                crop_bn = self.bn_norm.norm_mel(crop_bn)
-                inputs["prompt_bn"] = crop_bn.transpose(1, 2)  # [B,C,T]
-                inputs["bn_ctx"] = (
-                    torch.ones([1, mel_len, crop_bn.shape[2]], device=device)
-                    * self.bn_config["bn_padding"]
-                )
+            token_len = inputs["token"].shape[1]
+            bn_len = int(token_len / self.umm_frame_rate * self.bn_frame_rate)
+
+            crop_bn = self.wvae.encode(prompt_wav)
+            m, logs = torch.split(crop_bn, 64, dim=-1)
+            crop_bn = m + torch.randn_like(m) * torch.exp(logs)
+            crop_bn = self.bn_norm.norm_mel(crop_bn)
+            inputs["prompt_bn"] = crop_bn.transpose(1, 2)  # [B,C,T]
+            inputs["bn_ctx"] = (
+                torch.ones([1, bn_len, crop_bn.shape[2]], device=device)
+                * self.bn_config["bn_padding"]
+            )
+
+            if self.only_use_global_prompt:
+                inputs["prompt_length"] = inputs["prompt_bn"].shape[-1]
+            else:
                 inputs["bn_ctx"][:, : inputs["prompt_bn"].shape[-1], :] = inputs[
                     "prompt_bn"
                 ].transpose(1, 2)
                 inputs["prompt_length"] = inputs["prompt_bn"].shape[-1]
-            else:
-                prompt_mel = self.mel_transform(prompt_wav)
-                prompt_mel = self.mel_norm.norm_mel(prompt_mel)
-                inputs["prompt_mel"] = prompt_mel
-                inputs["mel_ctx"] = (
-                    torch.ones([1, mel_len, self.mel_config["num_mels"]], device=device)
-                    * self.mel_mask_value
-                )
-                inputs["mel_ctx"][:, : inputs["prompt_mel"].shape[-1]] = inputs[
-                    "prompt_mel"
-                ].transpose(1, 2)
-                inputs["prompt_length"] = inputs["prompt_mel"].shape[-1]
+
         else:
             raise NotImplementedError
 
         inputs["uttid"] = uttid
 
-        if self.text_cfg_w != 1:
+        if self.cfg_w != 1:
             inputs = self.make_cfg_input(inputs)
 
         return inputs
 
     def make_cfg_input(self, inputs):
-        if self.text_cfg_w != 1:
+        if self.cfg_w != 1:
             inputs["frontend"]["phone"] = inputs["frontend"]["phone"].repeat(2, 1)
             inputs["frontend"]["phone"][1, :] = 1
             inputs["frontend"]["tone"] = inputs["frontend"]["tone"].repeat(2, 1)
@@ -364,6 +367,8 @@ class DiffusionU2SInfer(LightningModule):
             if "lang" in inputs["frontend"]:
                 inputs["frontend"]["lang"] = inputs["frontend"]["lang"].repeat(2, 1)
                 inputs["frontend"]["lang"][1, :] = 1
+            inputs["bn_ctx"] = inputs["bn_ctx"].repeat(2, 1, 1)
+            inputs["bn_ctx"][1, :] = self.bn_config["bn_padding"]
 
         return inputs
 
@@ -389,7 +394,8 @@ class DiffusionU2SInfer(LightningModule):
                     inputs,
                     self.diffusion_nfe,
                     self.diffusion_sampler,
-                    text_cfg_w=self.text_cfg_w,
+                    cfg_w=self.cfg_w,
+                    mask_prompt_token=self.mask_prompt_token
                 )
             if self.infer_type in ["ar-diffusion-vocoder", "diffusion-vocoder"]:
                 out_mel = out_mel[:, :, inputs["prompt_length"] :]

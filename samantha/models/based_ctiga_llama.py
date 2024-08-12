@@ -417,16 +417,14 @@ class LLaMa(nn.Module):
         seqlen: int,
         start_pos: int = 0,
         inference_params=None,
-        cond=None,
-        attention_mask=None,
+        **kwargs,
     ):
         h = self.forward_layers(
             h,
             start_pos=start_pos,
             seqlen=seqlen,
             inference_params=inference_params,
-            cond=cond,
-            attention_mask=attention_mask,
+            **kwargs,
         )
         if self.provider == "default":
             h = self.norm(h)
@@ -511,21 +509,10 @@ class LLaMa(nn.Module):
                 layers.append(TransformerBlock(layer_id, params))
             return layers
 
-    def forward_layers(
-        self,
-        h,
-        start_pos,
-        seqlen,
-        inference_params=None,
-        cond=None,
-        attention_mask=None,
-    ):
+    def forward_layers(self, h, start_pos, seqlen, inference_params=None, **kwargs):
         if self.provider == "ctiga":
             return self.layers(
-                inputs_embeds=h,
-                inference_params=inference_params,
-                cond=cond,
-                attention_mask=attention_mask,
+                inputs_embeds=h, inference_params=inference_params, **kwargs
             )
         else:
             self.freqs_cis = self.freqs_cis.to(h.device)

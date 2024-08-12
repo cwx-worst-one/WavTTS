@@ -1,4 +1,5 @@
 """Command line argument parser for SAMI AI pytorch-lightning projects."""
+
 import sys
 from argparse import ArgumentParser, RawTextHelpFormatter
 

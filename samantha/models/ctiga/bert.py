@@ -499,9 +499,9 @@ class BertForPreTraining(BertPreTrainedModel):
             input_ids,
             position_ids=position_ids,
             token_type_ids=token_type_ids,
-            attention_mask=attention_mask.bool()
-            if attention_mask is not None
-            else None,
+            attention_mask=(
+                attention_mask.bool() if attention_mask is not None else None
+            ),
             masked_tokens_mask=masked_tokens_mask,
         )
         sequence_output, pooled_output = (

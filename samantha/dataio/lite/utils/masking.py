@@ -209,7 +209,7 @@ class WavMasking(DataBlock):
         )  # true for dropped frames
         return l_ctx, l_ctx_mask
 
-    def masking(self, example, mask_feature="mel"):
+    def masking(self, example, mask_feature="mel", drop_x=False):
         """
         Takes in an example and mask the audio frames or duration frames
         """
@@ -225,7 +225,7 @@ class WavMasking(DataBlock):
         else:
             if mask_feature in example:
                 x = example[mask_feature]
-                if np.random.rand() > self._p_drop_x:
+                if np.random.rand() > self._p_drop_x and not drop_x:
                     if self.mask_use_alignment:
                         x_ctx, x_ctx_mask = self._mask_audio_frames(
                             x, example.get("duration_ori", None)

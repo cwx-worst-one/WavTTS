@@ -222,9 +222,9 @@ def apply_rotary(
             seqlen,  # shapes
             rotary_dim,
             seqlen_ro,
-            output.stride(0)
-            if not is_varlen
-            else 0,  # batch_strides if not varlen else 0
+            (
+                output.stride(0) if not is_varlen else 0
+            ),  # batch_strides if not varlen else 0
             output.stride(-3),  # seqlen_stride or total_seqlen_stride
             output.stride(-2),  # nheads_stride
             output.stride(-1),  # headdim_stride

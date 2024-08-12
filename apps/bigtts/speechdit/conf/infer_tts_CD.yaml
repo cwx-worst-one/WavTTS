@@ -1,0 +1,63 @@
+---
+
+run_opts:
+    precision: 32
+    strategy: ddp
+    ckpt_path: ""
+    output_dir: output_wavs
+    meta_lst: ""
+    num_workers: 4
+    seed: 1996
+    diffusion_ckpt_path: ""
+    vocoder_ckpt_path: ""
+    lang: en
+    syn_lang: en
+
+predict_dataset: !new:apps.bigtts.speechdit.datasets.meta_based_dataset.TTSTestDataset
+    meta_lst: !ref <run_opts[meta_lst]>
+    lang: !ref <run_opts[lang]>
+    syn_lang: !ref <run_opts[syn_lang]>
+
+dataloader: !new:torch.utils.data.DataLoader
+    dataset: !ref <predict_dataset>
+    num_workers: !ref <run_opts[num_workers]>
+    batch_size: null
+    drop_last: False
+
+pl_datamodule: !new:samantha.dataio.lite.lite_datamodule.LiteDataModule
+    predict_dataloader: !ref <dataloader>
+
+bn_config: # 40hz wvae 3.1
+    hop_size: 600
+    bn_norm_std: 2
+    bn_norm_mean: 0
+    bn_padding: 0
+    wvae_encoder_path: hdfs://haruna/home/byte_speech_sv/user/liuzhengxi/WaveVAE3.0/torchscript/wavevae_encoder_z1_%d.pt
+    wvae_decoder_path: hdfs://haruna/home/byte_speech_sv/user/liuzhengxi/WaveVAE3.0/torchscript/wavevae_decoder_z1_%d.pt
+    wvae_version: 3.1
+    wvae_cache_dir: .module_cache
+    wvae_encoder_hop_size: 300
+    wvae_encoder_win_size: 1200
+    hz: 40
+
+pl_module: !new:apps.bigtts.speechdit.lit_modules.lit_infer.TTSInfer
+    diffusion_ckpt_path: !ref <run_opts[diffusion_ckpt_path]>
+    training_type: pretrain
+    vocoder_ckpt_path: !ref <run_opts[vocoder_ckpt_path]>
+    output_dir: !ref <run_opts[output_dir]>
+    seed: !ref <run_opts[seed]>
+    diffusion_precision: "bf16"
+    diffusion_nfe: 10
+    diffusion_sampler: "ddim"
+    bn_config: !ref <bn_config>
+    classifier_path: null
+
+trainer: !new:pytorch_lightning.Trainer
+    accelerator: "auto"
+    devices: "auto"
+    num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    strategy: !ref <run_opts[strategy]>
+    precision: !ref <run_opts[precision]>
+    max_epochs: 1

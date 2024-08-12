@@ -245,11 +245,10 @@ section_patterns = [
 ]
 section_pattern = section_patterns[0]
 
-
 all_phones = (
-    sil_punc_symbols + EN_consonant + EN_vowel + ZH_consonant + ZH_vowel + sep_strs
-    # special tags
-    + singer_tags + section_tags
+        sil_punc_symbols + EN_consonant + EN_vowel + ZH_consonant + ZH_vowel + sep_strs
+        # special tags
+        + singer_tags + section_tags
 )
 all_tones = [str(i) for i in range(N_TONES)]
 
@@ -295,6 +294,7 @@ def _symbol_to_int(symbol_list: List[str], offset: int = 0) -> Dict[str, int]:
 phone_to_int = _symbol_to_int(all_phones, offset)  # offset: 0, 1, phones: 2~296
 phonetone_to_int = _symbol_to_int(all_phonetones, offset)  # offset: 0, 1, phones: 2~1626
 _tone_to_int = _symbol_to_int(all_tones)  # 0~14  (only used internally)
+
 
 # ------------------------------------------
 # Special tag utils
@@ -357,6 +357,7 @@ def add_section_tag(section_tag: Optional[str], text: str) -> str:
         return f"[{section_tag}]{sep}{text}"
     return text
 
+
 # ------------------------------------------
 # Segment parsing
 # ------------------------------------------
@@ -396,6 +397,7 @@ class Phrase(NamedTuple):
             True: Support other section format besides the strict formats (for user input)
             False: Only parse section tags enclosed by "[]"
         """
+
         def strip(text: Optional[str]) -> Optional[str]:
             if text is None:
                 return None
@@ -445,10 +447,10 @@ class Phrase(NamedTuple):
 
         def concat_opt_str_mix_lang(str_a: Optional[str], str_b: Optional[str]):
             if ((not str_a or not str_b) or  # also handles the case when any of these is empty
-                (is_chinese_char(str_a[-1].encode('unicode_escape')) and 
-                 is_chinese_char(str_b[0].encode('unicode_escape')))):
+                    (is_chinese_char(str_a[-1].encode('unicode_escape')) and
+                     is_chinese_char(str_b[0].encode('unicode_escape')))):
                 return concat_opt_str(str_a, str_b)
-            return concat_opt_str(str_a, " "+str_b)  # add a space inbetween
+            return concat_opt_str(str_a, " " + str_b)  # add a space inbetween
 
         def concat_phonemes(phone_a: Optional[str], phone_b: Optional[str]) -> Optional[str]:
             if phone_a is None or phone_b is None:
@@ -460,8 +462,8 @@ class Phrase(NamedTuple):
             return phone_a + "\n" + phone_b
 
         def concat_time_span(
-            time_span_a: Optional[Tuple[int, int]],
-            time_span_b: Optional[Tuple[int, int]]
+                time_span_a: Optional[Tuple[int, int]],
+                time_span_b: Optional[Tuple[int, int]]
         ) -> Optional[Tuple[int, int]]:
             # invalid time span is supposed to be filtered out before running this function
             if time_span_a is None or time_span_b is None:
@@ -485,11 +487,11 @@ class Phrase(NamedTuple):
     @classmethod
     def concatable(cls, phrase_a, phrase_b) -> bool:
         def time_span_match(
-            time_span_a: Optional[Tuple[int, int]],
-            time_span_b: Optional[Tuple[int, int]]
+                time_span_a: Optional[Tuple[int, int]],
+                time_span_b: Optional[Tuple[int, int]]
         ) -> bool:
             # either both have time_span or both do not have
-            return (all(ts is None for ts in [time_span_a, time_span_b]) or 
+            return (all(ts is None for ts in [time_span_a, time_span_b]) or
                     all(ts is not None for ts in [time_span_a, time_span_b]))
 
         return ((phrase_a.prefix_tags == phrase_b.prefix_tags) and
@@ -510,7 +512,7 @@ class Phrase(NamedTuple):
     @property
     def start(self) -> Optional[int]:
         return None if self.time_span is None else self.time_span[0]
-    
+
     @property
     def end(self) -> Optional[int]:
         return None if self.time_span is None else self.time_span[1]
@@ -537,8 +539,8 @@ def convert_v3_to_v1(tacolab):
     tacolab_v1 = []
     # en, zh
     if (
-        tacolab[0] == "phn\ttone\tws\tpwpp\tsentype\tword"
-        or tacolab[0] == "phn\ttone\tws\tpwpp\tsentype\tword\tunit"
+            tacolab[0] == "phn\ttone\tws\tpwpp\tsentype\tword"
+            or tacolab[0] == "phn\ttone\tws\tpwpp\tsentype\tword\tunit"
     ):
         tacolab = tacolab[1:]
     for x in tacolab:
@@ -574,9 +576,9 @@ def is_english_spanish_char(char):
         "Ü",
     ]
     if (
-        ("\u0041" <= char <= "\u005a")
-        or ("\u0061" <= char <= "\u007a")
-        or char in special_Spanish_chars_list
+            ("\u0041" <= char <= "\u005a")
+            or ("\u0061" <= char <= "\u007a")
+            or char in special_Spanish_chars_list
     ):
         return True
     else:
@@ -586,8 +588,8 @@ def is_english_spanish_char(char):
 def get_lang(tacolab):
     if len(tacolab[0].split("\t")) != 5:
         if (
-            tacolab[0] == "phn\ttone\tws\tpwpp\tsentype\tword"
-            or tacolab[0] == "phn\ttone\tws\tpwpp\tsentype\tword\tunit"
+                tacolab[0] == "phn\ttone\tws\tpwpp\tsentype\tword"
+                or tacolab[0] == "phn\ttone\tws\tpwpp\tsentype\tword\tunit"
         ):
             tacolab = tacolab[1:]
     prefix_phn_list = [x.split("\t")[0][:2] for x in tacolab]
@@ -692,11 +694,11 @@ def convert_labels_to_text_id_zh(tacolab: List[str], vocab_type: str) -> Tuple[L
 
 def convert_labels_to_text_id_zh_en(tacolab: List[str], vocab_type: str) -> Tuple[List[str], List[int]]:
     assert (
-        len(tacolab[0].split("\t")) == 7 or len(tacolab[0].split("\t")) == 6
+            len(tacolab[0].split("\t")) == 7 or len(tacolab[0].split("\t")) == 6
     ), (len(tacolab[0].split("\t")), tacolab[0])
     if (
-        tacolab[0] == "phn\ttone\tws\tpwpp\tsentype\tword\tunit"
-        or tacolab[0] == "phn\ttone\tws\tpwpp\tsentype\tword"
+            tacolab[0] == "phn\ttone\tws\tpwpp\tsentype\tword\tunit"
+            or tacolab[0] == "phn\ttone\tws\tpwpp\tsentype\tword"
     ):
         tacolab = tacolab[1:]
 
@@ -898,6 +900,7 @@ class SamiOfflineTokenizer:
 
 class SamiTokenizer(SamiOfflineTokenizer):
     """SamiTokenizer is based on SamiOfflineTokenizer with an extra phoneme generation feature."""
+
     def __init__(
         self,
         lib_path="/opt/tiger/sami_engine_cleaned/libs/libsami.so",
@@ -922,7 +925,7 @@ class SamiTokenizer(SamiOfflineTokenizer):
             return [phrase for phrase in phrases if not phrase.is_empty]
 
         if isinstance(text_batch, str):
-            text_batch = [text_batch] 
+            text_batch = [text_batch]
         phrase_batch = [
             remove_empty_phrases([Phrase.parse(text=text) for text in sil.split(line_break)])
             for sil in text_batch
@@ -935,7 +938,7 @@ class SamiTokenizer(SamiOfflineTokenizer):
     def tokenize_phrase(self, phrase: Phrase) -> Optional[np.ndarray]:
         """Tokenize a phrase. Phoneme will be generated internally."""
         return super().tokenize_phrase(self.fill_phonemes(phrase))
-    
+
     def tokenize_phrases(self, phrases: List[Phrase]) -> np.ndarray:
         """Tokenize multiple phrases and concatenate the result into an ndarray. Phoneme will be generated internally."""
         return super().tokenize_phrases([self.fill_phonemes(phrase) for phrase in phrases])

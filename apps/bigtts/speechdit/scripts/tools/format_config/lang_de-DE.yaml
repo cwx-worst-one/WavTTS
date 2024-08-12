@@ -1,0 +1,435 @@
+lang: "de"
+cal_type: "wer"
+Delimiter: " "
+ord_range: []
+unit: {}
+cardinals: {}
+large_num: {}
+in_word_have_meaning: ["'", '.']
+non_prounciation_pre:
+- "!"
+- "?"
+- "\""
+- ";"
+- "{"
+- "}"
+- "["
+- "]"
+- "《"
+- "》"
+- "【"
+- "】"
+- "「"
+- "」"
+- "("
+- ")"
+- "\\"
+- "^"
+- "`"
+- "|"
+- "，"
+- ","
+- "。"
+- "！"
+- "‼"
+- "？"
+- "、"
+- "“"
+- "”"
+- "‘"
+- "’"
+- "；"
+- ":"
+- "："
+- "・"
+- "……"
+- "…"
+non_prounciation_post:
+- "."
+- "/"
+- "<"
+- ">"
+- "/"
+- "="
+- "+"
+- "-"
+- "*"
+- "&"
+- "#"
+- "$"
+- "¥"
+- "￥"
+- "%"
+- "~"
+- "／"
+char_vocab:
+# 阿拉伯数字
+- "0"
+- "1"
+- "2"
+- "3"
+- "4"
+- "5"
+- "6"
+- "7"
+- "8"
+- "9"
+# 大写字符
+- "A"
+- "B"
+- "C"
+- "D"
+- "E"
+- "F"
+- "G"
+- "H"
+- "I"
+- "J"
+- "K"
+- "L"
+- "M"
+- "N"
+- "O"
+- "P"
+- "Q"
+- "R"
+- "S"
+- "T"
+- "U"
+- "V"
+- "W"
+- "X"
+- "Y"
+- "Z"
+- "Ä"
+- "Ö"
+- "Ü"
+- "ẞ"
+# 小写字符
+- "a"
+- "b"
+- "c"
+- "d"
+- "e"
+- "f"
+- "g"
+- "h"
+- "i"
+- "j"
+- "k"
+- "l"
+- "m"
+- "n"
+- "o"
+- "p"
+- "q"
+- "r"
+- "s"
+- "t"
+- "u"
+- "v"
+- "w"
+- "x"
+- "y"
+- "z"
+- "ä"
+- "ö"
+- "ü"
+- "ß"
+# 所有标点
+- " "
+- "'"
+- "."
+- "​"
+sub_map:
+# "大写": "小写"
+  "A": "a"
+  "B": "b"
+  "C": "c"
+  "D": "d"
+  "E": "e"
+  "F": "f"
+  "G": "g"
+  "H": "h"
+  "I": "i"
+  "J": "j"
+  "K": "k"
+  "L": "l"
+  "M": "m"
+  "N": "n"
+  "O": "o"
+  "P": "p"
+  "Q": "q"
+  "R": "r"
+  "S": "s"
+  "T": "t"
+  "U": "u"
+  "V": "v"
+  "W": "w"
+  "X": "x"
+  "Y": "y"
+  "Z": "z"
+  "Ä": "ä"
+  "Ö": "ö"
+  "Ü": "ü"
+  "ẞ": "ß"
+modal_words:
+- 'ach'
+- 'ah'
+- 'äh'
+- 'aha'
+- 'aja'
+- 'aso'
+- 'auweia'
+- 'auweh'
+- 'aua'
+- 'auf'
+- 'autsch'
+- 'bah'
+- 'bäh'
+- 'basta'
+- 'bitte'
+- 'boah'
+- 'boo'
+- 'brr'
+- 'buh'
+- 'ey'
+- 'gluck'
+- 'glug'
+- 'grr'
+- 'grrr'
+- 'grrrr'
+- 'ha'
+- 'hä'
+- 'hanoi'
+- 'hach'
+- 'hatschi'
+- 'hatzi'
+- 'hauruck'
+- 'heisa'
+- 'herrje'
+- 'heureka'
+- 'hi'
+- 'hipphipp'
+- 'hurra'
+- 'hoi'
+- 'hoppala'
+- 'hoppla'
+- 'hu'
+- 'hü'
+- 'hüa'
+- 'huch'
+- 'huhu'
+- 'hui'
+- 'hurra'
+- 'husch'
+- 'ia'
+- 'igitt'
+- 'iiih'
+- 'isso'
+- 'ja'
+- 'jap'
+- 'jep'
+- 'jo'
+- 'jö'
+- 'juhu'
+- 'ker'
+- 'kek'
+- 'kikeriki'
+- 'killekille'
+- 'kuckuck'
+- 'kusch'
+- 'los'
+- 'mäh'
+- 'mau'
+- 'menno'
+- 'miau'
+- 'mjam'
+- 'moin'
+- 'muh'
+- 'na'
+- 'nä'
+- 'naja'
+- 'ne'
+- 'nee'
+- 'nein'
+- 'nix'
+- 'nö'
+- 'nu'
+- 'nun'
+- 'och'
+- 'oh'
+- 'oje'
+- 'ojemine'
+- 'okay'
+- 'OMG'
+- 'pfui'
+- 'potz'
+- 'puh'
+- 'Quatsch'
+- 'Schitte'
+- 'seufz'
+- 'so'
+- 'sorry'
+- 'tamam'
+- 'tmm'
+- 'toitoitoi'
+- 'tja'
+- 'top'
+- 'topp'
+- 'üäh'
+- 'uff'
+- 'ups'
+- 'verdorri'
+- 'verdammt'
+- 'verflixt'
+- 'wau'
+- 'wayne'
+- 'weh'
+- 'wehe'
+- 'wuff'
+- 'woll'
+modal_map:
+  "auweia": "auweh"
+  "ah": "aha"
+  "aja": "aha"
+  "bah": "äh"
+  "bäh": "äh"
+  "iiih": "äh"
+  "üäh": "äh"
+  "buh": "boo"
+  "glug": "gluck"
+  "grrr": "grr"
+  "grrrr": "grr"
+  "ey": "hi"
+  "hoi": "hi"
+  "hanoi": "nee"
+  "hatzi": "hatschi"
+  "hoppala": "ups"
+  "hoppla": "ups"
+  "huch": "ups"
+  "hüa": "hü"
+  "jap": "jep"
+  "jo": "ja"
+  "mau": "miau"
+  "nä": "nein"
+  "nee": "nein"
+  "nö": "nein"
+  "nu": "nun"
+  "ojemine": "oje"
+  "pfui": "puh"
+  "tamam": "tmm"
+  "top": "topp"
+  "wuff": "wau"
+abb_word_map:
+  "'n": "ein"
+  "'ne": "eine"
+  "'nem": "einem"
+  "'nen": "einen"
+  "'ner": "einer"
+  "am": "an dem"
+  "anderns": "anderens"
+  "ans": "an das"
+  "aufs": "auf das"
+  "beim": "bei dem"
+  "beym": "bei dem"
+  "bins": "bin es"
+  "biste": "bist du"
+  "bists": "bist es"
+  "darfs": "darf es"
+  "dichs": "dich es"
+  "dirs": "dir es"
+  "drauf": "darauf"
+  "drinne": "drinne"
+  "drüber": "darüber"
+  "drum": "darum"
+  "drunter": "darunter"
+  "durchs": "durch das"
+  "dus": "du es"
+  "ei'm": "einem"
+  "eim": "einem"
+  "ers": "er es" 
+  "fährste": "fährst du" 
+  "fürs": "für das"
+  "gab's": "gab es" 
+  "geht's": "geht es" 
+  "gibt's": "gibt es" 
+  "gings": "ging es" 
+  "Gnad'": "Gnade" 
+  "grad": "gerade" 
+  "grade": "gerade" 
+  "hab's": "hab es" 
+  "habs": "hab es" 
+  "habens": "haben es" 
+  "haben's": "haben es" 
+  "habts": "habt es" 
+  "ham": "haben" 
+  "hammer": "haben wir" 
+  "hamse": "haben sie" 
+  "hastu": "hast du"
+  "haste": "hast du" 
+  "hasts": "hast es" 
+  "hats": "hat es" 
+  "hinterm": "hinter dem"
+  "hintern": "hinter den"
+  "hinters": "hinter das"
+  "ichs": "ich es"
+  "ihrs": "ihr es"
+  "im": "in dem"
+  "in's": "in das"
+  "ins": "in das"
+  "isses": "ist es"
+  "ists": "ist es" 
+  "kanns": "kann es"  
+  "kannste": "kannst du"
+  "komma": "komm mal"  
+  "Küfa": "Küche für alle"  
+  "mag's": "mag es"
+  "mags": "mag es"
+  "mim": "mit dem"
+  "mirs": "mir es"
+  "möchts": "möchte es"
+  "nem": "einem"
+  "ner": "einer"
+  "obs": "ob es"
+  "seids": "seid es"
+  "seid's": "seid es"
+  "sichs": "sich es"
+  "sich's": "sich es"
+  "siehste": "siehst du"
+  "sies": "sie es"
+  "sie's": "sie es"
+  "simmer": "sind wir"
+  "sinds": "sind es"
+  "so'n": "so ein"
+  "son": "so ein"
+  "solls": "soll es"
+  "soll's": "soll es"
+  "sone": "so eine"
+  "sonne": "so eine" 
+  "sowas": "so etwas" 
+  "überm": "über dem"
+  "übern": "über den"
+  "übers": "über das"
+  "ums": "um das"
+  "unterm": "unter dem"
+  "untern": "unter den"
+  "unters": "unter das"
+  "vom": "von dem"
+  "vors": "vor das"
+  "vorm": "vor dem"
+  "vorn": "vor den"
+  "war's": "war es"
+  "wars": "war es"
+  "wär's": "wäre es"
+  "warens": "waren es"
+  "weißte": "weißt du"
+  "wers": "wer es"
+  "wills": "will es"
+  "will's": "will es"
+  "wirds": "wird es"
+  "wird's": "wird es" 
+  "wir's": "wir es"
+  "wirs": "wir es" 
+  "zun": "zu den"
+  "zur": "zu der"

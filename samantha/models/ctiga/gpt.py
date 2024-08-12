@@ -600,6 +600,7 @@ class GPTModel(GPTPreTrainedModel):
         inference_params=None,
         return_attn_probs=False,
         cond=None,
+        return_block_out=False,
     ):
         # If using Tensor Parallel with sequence parallel, we combine the batch and the seqlen
         # dimensions so that we can split on it easily, in case of small batch size.
@@ -664,6 +665,9 @@ class GPTModel(GPTPreTrainedModel):
 
         if self.use_unet_style_skip_connect:
             skip_connects = []
+
+        if return_block_out:
+            block_outs = []
 
         for i, layer in enumerate(self.layers):
             if self.gradient_checkpointing and self.training:
@@ -759,21 +763,19 @@ class GPTModel(GPTPreTrainedModel):
             if return_attn_probs:
                 all_attn_probs.append(attn_probs)
 
-            if cond is not None:
-                scln_scale, scln_bias = cond.chunk(2, dim=-1)
-                hidden_states = scln_scale * hidden_states + scln_bias
-
             if self.use_unet_style_skip_connect:
                 if i < self.num_hidden_layers // 2 - 1:  # [0,1,2]
                     skip_connects.append(hidden_states)
                 elif (
                     i >= self.num_hidden_layers // 2 and i < self.num_hidden_layers - 1
-                ):  # [4,5,6,7]
+                ):  # [4,5,6]
                     skip_connect = skip_connects.pop()
                     hidden_states = torch.cat([hidden_states, skip_connect], dim=-1)
                     hidden_states = self.skip_combiner[i - self.num_hidden_layers // 2](
                         hidden_states
                     )
+            if return_block_out:
+                block_outs.append(pad_input(hidden_states, indices, batch, seqlen))
 
         if attention_mask is not None:
             hidden_states = pad_input(hidden_states, indices, batch, seqlen)
@@ -832,7 +834,10 @@ class GPTModel(GPTPreTrainedModel):
         if return_attn_probs:
             return (hidden_states, all_attn_probs)
         else:
-            return hidden_states
+            if return_block_out:
+                return (hidden_states, block_outs)
+            else:
+                return hidden_states
 
     def fwd_flop_per_token(self, seq_len):
         # an estimate of the total non-embedding forward compute

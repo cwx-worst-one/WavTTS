@@ -1,0 +1,376 @@
+cal_type: "wer"
+Delimiter: " "
+ord_range: []
+unit: {}
+cardinals: {}
+large_num: {}
+in_word_have_meaning: ["'", '.']
+non_prounciation_pre:
+- "!"
+- "?"
+- "\""
+- ";"
+- "{"
+- "}"
+- "["
+- "]"
+- "《"
+- "》"
+- "【"
+- "】"
+- "「"
+- "」"
+- "("
+- ")"
+- "\\"
+- "^"
+- "`"
+- "|"
+- "，"
+- ","
+- "。"
+- "！"
+- "‼"
+- "？"
+- "、"
+- "“"
+- "”"
+- "‘"
+- "’"
+- "；"
+- ":"
+- "："
+- "・"
+- "……"
+- "…"
+non_prounciation_post:
+- "."
+- "/"
+- "<"
+- ">"
+- "/"
+- "="
+- "+"
+- "-"
+- "*"
+- "&"
+- "#"
+- "$"
+- "¥"
+- "￥"
+- "%"
+- "~"
+- "／"
+char_vocab:
+# 大写字符
+- "A"
+- "À"
+- "B"
+- "C"
+- "D"
+- "E"
+- "È"
+- "É"
+- "F"
+- "G"
+- "H"
+- "I"
+- "Ì"
+- "J"
+- "K"
+- "L"
+- "M"
+- "N"
+- "O"
+- "Ò"
+- "P"
+- "Q"
+- "R"
+- "S"
+- "T"
+- "U"
+- "Ù"
+- "V"
+- "W"
+- "X"
+- "Y"
+- "Z"
+# 小写字符
+- "a"
+- "à"
+- "b"
+- "c"
+- "d"
+- "e"
+- "è"
+- "é"
+- "f"
+- "g"
+- "h"
+- "i"
+- "ì"
+- "j"
+- "k"
+- "l"
+- "m"
+- "n"
+- "o"
+- "ò"
+- "p"
+- "q"
+- "r"
+- "s"
+- "t"
+- "u"
+- "ù"
+- "v"
+- "w"
+- "x"
+- "y"
+- "z"
+# 数字
+- "0"
+- "1"
+- "2"
+- "3"
+- "4"
+- "5"
+- "6"
+- "7"
+- "8"
+- "9"
+- " "
+- "'"
+- ""
+- "."
+sub_map:
+# "大写": "小写"
+  "A": "a"
+  "À": "à"
+  "B": "b"
+  "C": "c"
+  "D": "d"
+  "E": "e"
+  "È": "è"
+  "É": "é"
+  "F": "f"
+  "G": "g"
+  "H": "h"
+  "I": "i"
+  "Ì": "ì"
+  "J": "j"
+  "K": "k"
+  "L": "l"
+  "M": "m"
+  "N": "n"
+  "O": "o"
+  "Ò": "ò"
+  "P": "p"
+  "Q": "q"
+  "R": "r"
+  "S": "s"
+  "T": "t"
+  "U": "u"
+  "Ù": "ù"
+  "V": "v"
+  "W": "w"
+  "X": "x"
+  "Y": "y"
+  "Z": "z"
+# "非法": "合法"
+modal_words:
+- 'ah'
+- 'ahi' 
+- 'ahia'
+- 'ahimè' 
+- 'ahm'
+- 'ahó'
+- 'aho'
+- 'aimè'
+- 'alalà'
+- 'alé'
+- 'amen'
+- 'ammappalo'
+- 'ammappelo'
+- 'ammazzalo'
+- 'ammappete'
+- 'ammazza'
+- 'ammazzelo'
+- 'ammazzete'
+- 'ammen'
+- 'arri'
+- 'auffa' 
+- 'uff'
+- 'uffa'
+- 'aùff'
+- 'aùf'
+- 'aùffa'
+- 'ave'
+- 'ba'
+- 'bah'
+- 'bau'
+- 'baubau'
+- 'bè'
+- 'beh'
+- 'bo'
+- 'boh'
+- 'brr'
+- 'chicchirichì'
+- 'ciac' 
+- 'ciàc'
+- 'ciak' 
+- 'ciàk'
+- 'coccodè'
+- 'cucù'
+- 'cuccù'
+- 'dai'
+- 'daje'
+- 'deh' 
+- 'dè'
+- 'de'
+- 'eccì'
+- 'etcì'
+- 'etciù'
+- 'ecciù'
+- 'ehi'
+- 'ehm'
+- 'hurrà' 
+- 'urra' 
+- 'hurrah'
+- 'urrà'
+- 'lallà'
+- 'lallera'
+- 'lallero'
+- 'ma'
+- 'mah'
+- "marc'" 
+- 'march'
+- "marsc'"
+- 'marsch'
+- 'miao' 
+- 'miào'
+- 'neh'
+- 'brr'
+- 'nop'
+- 'ohibò'
+- 'oibò'
+- 'olà' 
+- 'ohilà'
+- 'oilà'
+- 'ohimè' 
+- 'ohime'
+- 'oimè'
+- 'ohmè'
+- 'omei'
+- 'oimè'
+- 'omè'
+- 'oplà' 
+- 'op'
+- 'là'
+- 'ou'
+- 'puah'
+- "to'"
+- 'toh'
+- 'trallallà'
+- 'trallallero' 
+- 'trallallera'
+- 'uff' 
+- 'auff'
+- 'auffa'
+- 'auf' 
+- 'uffa'
+- 'uffi'
+- 'uh'
+- 'uì'
+- "va'"
+- 'vah'
+- 'zac'
+- 'zacchete' 
+- 'zàcchete'
+- 'zaff'
+- 'zaffe'
+- 'zaffete'
+- 'ziffe' 
+- 'ziffete'
+#modal words with blank 
+- 'gnam gnam'
+- 'hip hip hip'
+modal_map:
+  "ha": "ah"
+  "ahi": "ah"
+  "ahia": "ah"
+  "deh": "ah"
+  "aimè": "ahimè"
+  "omè": "ahimè"
+  "altolà": "alt"
+  "ammappalo": "ammazzalo"
+  "ammappelo": "ammazzalo"
+  "ammappete": "ammazzalo"
+  "ammazzelo": "ammazzalo"
+  "ammazzete": "ammazzalo"
+  "ammen": "amen"
+  "auffa": "uff"
+  "ba": "bah"
+  "bè": "beh"
+  "bo": "boh"
+  "chicchirichí": "chicchirichì"
+  "ciak": "ciac"
+  "cuccù": "cucù"
+  "daje": "dai"
+  "eccì": "etcì"
+  "ecciù": "etcì"
+  "gnamgnam": "gnam"
+  "hurrà": "urrà"
+  "lallera": "lallà"
+  "lallero": "lallà"
+  "marsc'": "marc'"
+  "oibò": "ohibò"
+  "oilà": "ohilà"
+  "ohmè": "ohimè"
+  "omei": "ohimè"
+  "oimè": "ohimè"
+  "to'": "toh"
+  "uffi": "uffa"
+  "zacchete": "zac"
+  "zaffe": "zaff"
+  "zaffete": "zaff"
+abb_word_map:
+  "al": "a il"
+  "allo": "a lo"
+  "alla": "a la"
+  "all'": "a l'"
+  "ai": "a i"
+  "agli": "a gli" 
+  "alle": "a le"
+  "dal": "da il"
+  "dallo": "da lo"
+  "dalla": "da la"
+  "dall'": "da l'"
+  "dai": "da i"
+  "dagli": "da gli"
+  "dalle": "da le"
+  "del": "di il"
+  "dello": "di lo"
+  "della": "di la"
+  "dell'": "di l'"
+  "dei": "di i"
+  "degli": "di gli"
+  "delle": "di le"
+  "nel": "in il"
+  "nello": "in lo"
+  "nella": "in la"
+  "nell'": "in l'"
+  "nei": "in i"
+  "negli": "in gli"
+  "nelle": "in le"
+  "sul": "su il"
+  "sullo": "su lo"
+  "sulla": "su la"
+  "sull'": "su l'"
+  "sugli": "su gli"
+  "sui": "su i"
+  "sulle": "su le"
+  "col": "con il"
+  "coi": "con i"
+  "c'è": "ci è"
+  "v'è": "vi è"

@@ -1,0 +1,315 @@
+lang: "pt"
+cal_type: "wer"
+Delimiter: " "
+ord_range: []
+unit: {}
+cardinals: {}
+large_num: {}
+in_word_have_meaning: ["'", '.']
+non_prounciation_pre:
+- "!"
+- "?"
+- "\""
+- ";"
+- "{"
+- "}"
+- "["
+- "]"
+- "《"
+- "》"
+- "【"
+- "】"
+- "「"
+- "」"
+- "("
+- ")"
+- "\\"
+- "^"
+- "`"
+- "|"
+- "，"
+- ","
+- "。"
+- "！"
+- "‼"
+- "？"
+- "、"
+- "“"
+- "”"
+- "‘"
+- "’"
+- "；"
+- ":"
+- "："
+- "・"
+- "……"
+- "…"
+non_prounciation_post:
+- "."
+- "/"
+- "<"
+- ">"
+- "/"
+- "="
+- "+"
+- "-"
+- "*"
+- "&"
+- "#"
+- "$"
+- "¥"
+- "￥"
+- "%"
+- "~"
+- "／"
+char_vocab:
+- " "
+- "'"
+- "."
+- "​"
+- "0"
+- "1"
+- "2"
+- "3"
+- "4"
+- "5"
+- "6"
+- "7"
+- "8"
+- "9"
+- "a"
+- "A"
+- "á"
+- "Á"
+- "à"
+- "À"
+- "â"
+- "Â"
+- "ã"
+- "Ã"
+- "b"
+- "B"
+- "c"
+- "C"
+- "ç"
+- "Ç"
+- "d"
+- "D"
+- "e"
+- "E"
+- "é"
+- "É"
+- "è"
+- "È"
+- "ê"
+- "Ê"
+- "f"
+- "F"
+- "g"
+- "G"
+- "h"
+- "H"
+- "i"
+- "I"
+- "í"
+- "Í"
+- "j"
+- "J"
+- "k"
+- "K"
+- "l"
+- "L"
+- "m"
+- "M"
+- "n"
+- "N"
+- "ñ"
+- "Ñ"
+- "o"
+- "O"
+- "ó"
+- "Ó"
+- "ô"
+- "Ô"
+- "õ"
+- "Õ"
+- "º"
+- "p"
+- "P"
+- "q"
+- "Q"
+- "r"
+- "R"
+- "s"
+- "S"
+- "t"
+- "T"
+- "u"
+- "U"
+- "ú"
+- "Ú"
+- "v"
+- "V"
+- "w"
+- "W"
+- "x"
+- "X"
+- "y"
+- "Y"
+- "z"
+- "Z"
+- "а"
+- "е"
+- "о"
+sub_map:
+  "A": "a"
+  "B": "b"
+  "C": "c"
+  "D": "d"
+  "E": "e"
+  "F": "f"
+  "G": "g"
+  "H": "h"
+  "I": "i"
+  "J": "j"
+  "K": "k"
+  "L": "l"
+  "M": "m"
+  "N": "n"
+  "O": "o"
+  "P": "p"
+  "Q": "q"
+  "R": "r"
+  "S": "s"
+  "T": "t"
+  "U": "u"
+  "V": "v"
+  "W": "w"
+  "X": "x"
+  "Y": "y"
+  "Z": "z"
+  "Á": "á"
+  "À": "à"
+  "Â": "â"
+  "Ã": "ã"
+  "Ç": "ç"
+  "É": "é"
+  "È": "è"
+  "Ê": "ê"
+  "Í": "í"
+  "Ñ": "ñ"
+  "Ó": "ó"
+  "Ô": "ô"
+  "Õ": "õ"
+  "Ú": "ú"
+modal_words:
+- 'ah'
+- 'ai'
+- 'arre'
+- 'alô'
+- 'bis'
+- 'bem'
+- 'boa'
+- 'chi'
+- 'eba'
+- 'eh'
+- 'ei'
+- 'eia'
+- 'eita'
+- 'hein'
+- 'hum'
+- 'hã'
+- 'hã-hã'
+- 'hei'
+- 'hup'
+- 'ih'
+- 'nossa'
+- 'ó'
+- 'oi'
+- 'oba'
+- 'opa'
+- 'ora'
+- 'oh'
+- 'olá'
+- 'olé'
+- 'pô'
+- 'poxa'
+- 'puxa'
+- 'putz'
+- 'psiu'
+- 'psit'
+- 'sai'
+- 'sim'
+- 'tá'
+- 'tchau'
+- 'uai'
+- 'ual'
+- 'uau'
+- 'ué'
+- 'ufa'
+- 'uhu'
+- 'ui'
+- 'upa'
+- 'xi'
+- 'xiu'
+- 'xô'
+modal_map:
+ "ai": "ah"
+ "arre": "ah"
+ "uau": "uai"
+ "ual": "uai"
+ "ui": "uai"
+ "upa": "opa"
+ "oba": "opa"
+ "hem": "hum"
+ "hã-hã": "hã"
+ "ó": "oh"
+ "oi": "oh"
+ "ei": "eh"
+ "eia": "eh"
+ "eita": "eh"
+ "hein": "eh"
+abb_word_map:
+ "amg": "amigo"
+ "aq": "aqui"
+ "ajd": "ajuda"
+ "bjs": "beijos"
+ "bj": "beijos"
+ "bjos": "beijos"
+ "bpn": "boa pra nóis"
+ "btf": "boto fé"
+ "ctz": "certeza"
+ "ctt": "contato"
+ "dnv": "de novo"
+ "dmr": "demorou"
+ "flw": "falou"
+ "fds": "final de semana"
+ "msm": "mesmo"
+ "mdm": "melhor de mundo"
+ "mds": "meu deus"
+ "mvd": "minha vida"
+ "pdc": "pode crer"
+ "pdp": "pode pá"
+ "plmdds": "pelo amor de deus"
+ "pfvr": "por favor"
+ "pq": "porque"
+ "plmns": "pelo menos"
+ "pprt": "papo reto"
+ "pse": "pois é"
+ "psr": "poser"
+ "vlw": "valeu"
+ "vdd": "verdade"
+ "sdv": "segue de volta"
+ "sqn": "só que não"
+ "sdds": "saludades"
+ "slk": "se é louco"
+ "sla": "sei lá"
+ "smdd": "sem maldade"
+ "obg": "obrigado"
+ "qt": "quanto"
+ "mddc": "meu deus do céu"
+ "tm": "estamos"
+ "tlgd": "tá ligado"
+ "tmj": "tamos junto"
+ "tqr": "tem que respeitar"
+ "vdb": "vai dar bom"

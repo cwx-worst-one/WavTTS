@@ -4,6 +4,75 @@ import torch.nn as nn
 from samantha.criterion.ssim import SSIM
 
 
+class PseudoHuberLoss(nn.Module):
+    """The Pseudo-Huber loss."""
+
+    reductions = {"mean": torch.mean, "sum": torch.sum, "none": lambda x: x}
+
+    def __init__(self, beta=1, reduction="mean"):
+        super().__init__()
+        self.beta = beta
+        self.reduction = reduction
+
+    def extra_repr(self):
+        return f"beta={self.beta:g}, reduction={self.reduction!r}"
+
+    def forward(self, input, target):
+        output = self.beta**2 * input.sub(target).div(self.beta).pow(2).add(
+            1
+        ).sqrt().sub(1)
+        return self.reductions[self.reduction](output)
+
+
+class MaskedCrossEntropy(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, logits, targets, mask=None, log_softmax=True):
+        logits = logits.contiguous()
+        targets = targets.contiguous()
+
+        logits = logits.view(-1, logits.size(-1))
+        targets = targets.view(-1, 1)
+
+        if log_softmax:
+            log_probs = F.log_softmax(logits, dim=-1)
+        else:
+            log_probs = logits
+        loss = -torch.gather(log_probs, dim=1, index=targets)
+
+        if mask is None:
+            return loss.mean()
+
+        mask = mask.contiguous()
+        loss = loss.view(*mask.size()) * mask
+        loss = (loss / mask.sum()).sum()
+        return loss
+
+
+class MaskedCrossEntropyV2(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, logits, targets, mask=None):
+        logits = logits.contiguous().float()
+        targets = targets.contiguous()
+
+        logits = logits.view(-1, logits.size(-1))
+        targets = targets.view(-1, 1)
+
+        log_probs = F.log_softmax(logits.float(), dim=-1)
+        loss = -torch.gather(log_probs, dim=1, index=targets)
+
+        if mask is None:
+            return loss.mean()
+
+        mask = mask.contiguous()
+        loss = loss.view(*mask.size()) * mask
+        loss = (loss.sum(dim=-1, keepdim=True) / mask.sum(dim=-1, keepdim=True)).mean()
+        return loss
+
+
 class MaskedMAE(nn.Module):
     def __init__(self):
         super().__init__()
@@ -121,31 +190,35 @@ def sequence_mask(seq_lens, max_len=None, device="cpu"):
 class MaskedSSIMLoss(nn.Module):
     def __init__(self):
         super().__init__()
-        self.ssim = SSIM()
+        self.ssim = SSIM(size_average=False)
 
-    def forward(self, pred, target, mask):
+    def forward(self, pred, target, mask, weight=None):
+        C = pred.shape[1]
         if mask.ndim == 2:
             mask = mask.unsqueeze(1)
         pred = torch.unsqueeze(pred * mask, dim=1)
         target = torch.unsqueeze(target * mask, dim=1)
-        masked_ssim_loss = 1 - self.ssim(pred, target)  # 越大越好
+        # masked_ssim_loss = 1 - self.ssim(pred, target)  # 越大越好
+        masked_ssim_loss = 1 - self.ssim(pred, target)
+        reduce_sum = torch.clamp(torch.sum(mask) * C, min=1.0)
+        masked_ssim_loss = (masked_ssim_loss * mask).sum() / reduce_sum
         return masked_ssim_loss
 
 
-class MaskedL1Loss(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.mae = nn.L1Loss(reduction="none")
-
-    def forward(self, pred, target, mask, weight=None):
-        # pred, target: [B, C, T]
-        # mask: [B, T]
-        mae_loss = self.mae(pred, target)
-        if weight is not None:
-            mae_loss = mae_loss * weight[:, None, None]
-        reduce_sum = torch.clamp(torch.sum(mask), min=1.0) * target.size(1)
-        masked_mae_loss = torch.sum(mae_loss * mask.unsqueeze(1)) / reduce_sum
-        return masked_mae_loss
+# class MaskedL1Loss(nn.Module):
+#    def __init__(self):
+#        super().__init__()
+#        self.mae = nn.L1Loss(reduction="none")
+#
+#    def forward(self, pred, target, mask, weight=None):
+#        # pred, target: [B, C, T]
+#        # mask: [B, T]
+#        mae_loss = self.mae(pred, target)
+#        if weight is not None:
+#            mae_loss = mae_loss * weight[:, None, None]
+#        reduce_sum = torch.clamp(torch.sum(mask), min=1.0) * target.size(1)
+#        masked_mae_loss = torch.sum(mae_loss * mask.unsqueeze(1)) / reduce_sum
+#        return masked_mae_loss
 
 
 class MaskedMAELoss(nn.Module):
@@ -169,12 +242,41 @@ class MaskedMSELoss(nn.Module):
         super().__init__()
         self.mse = nn.MSELoss(reduction="none")
 
-    def forward(self, pred, target, mask=None):
-        reduce_sum = torch.clamp(torch.sum(mask), min=1.0) * target.size(1)
-        masked_mse_loss = (
-            torch.sum(self.mse(pred, target) * mask.unsqueeze(1)) / reduce_sum
-        )
+    def forward(self, pred, target, mask=None, weight=None):
+        if weight is not None:
+            reduce_sum = torch.sum(mask, 1) * target.size(1)
+            B = pred.shape[0]
+            batch_loss = (
+                torch.sum(self.mse(pred, target) * mask.unsqueeze(1), (1, 2))
+                / reduce_sum
+            )
+            masked_mse_loss = torch.sum(batch_loss * weight) / B
+        else:
+            reduce_sum = torch.clamp(torch.sum(mask), min=1.0) * target.size(1)
+            masked_mse_loss = (
+                torch.sum(self.mse(pred, target) * mask.unsqueeze(1)) / reduce_sum
+            )
         return masked_mse_loss
+
+
+class MaskedPseudoHuberLoss(nn.Module):
+    def __init__(self, c=0.1):
+        super().__init__()
+        self.func = PseudoHuberLoss(c, reduction="none")
+
+    def forward(self, pred, target, mask=None, weight=None):
+        reduce_sum = torch.clamp(torch.sum(mask), min=1.0) * target.size(1)
+
+        if weight is not None:  # not supported
+            masked_loss = (
+                torch.sum(self.func(pred, target) * mask.unsqueeze(1) * weight)
+                / reduce_sum
+            )
+        else:
+            masked_loss = (
+                torch.sum(self.func(pred, target) * mask.unsqueeze(1)) / reduce_sum
+            )
+        return masked_loss
 
 
 class MaskedCELoss(nn.Module):

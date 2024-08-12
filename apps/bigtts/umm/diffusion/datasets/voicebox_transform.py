@@ -28,11 +28,12 @@ class VoiceBoxTransform(ItemTransformBase):
         mel_norm_std=2.2615,
         mel_padding=-2,
         umm_hop_size=600,
-        masking: Optional["WavMasking"] = None,
-        mask_use_alignment=True,
+        masking=None,
+        mask_use_alignment=False,
         wav_divide=2400,
         use_text=False,
-        text_drop_rate=0,
+        cfg_drop_rate=0,
+        text_drop_id=0,
         wav_amp_aug=None,
         token_spec_aug=None,
         use_bn=False,
@@ -40,6 +41,7 @@ class VoiceBoxTransform(ItemTransformBase):
         mel_vocoder_type="hifigan",
         use_phone_lang=False,
         token_type="umm",
+        p_drop_bn_ctx=0,
     ):
         self.max_wav_len = int(max_length * 24000)
         self.phone2id = PhoneToId()
@@ -51,12 +53,14 @@ class VoiceBoxTransform(ItemTransformBase):
         self.umm_hop_size = umm_hop_size
         self.umm_hz = 24000 // umm_hop_size
         self.use_text = use_text
-        self.text_drop_rate = text_drop_rate
+        self.cfg_drop_rate = cfg_drop_rate
+        self.text_drop_id = text_drop_id
         self.wav_divide = wav_divide
         self.use_bn = use_bn
         self.bn_config = bn_config
         self.mel_vocoder_type = mel_vocoder_type
         self.token_type = token_type
+        self.p_drop_bn_ctx = p_drop_bn_ctx
         assert token_type in ["umm", "zvq"]
         self.use_phone_lang = use_phone_lang
         self.shot = 0
@@ -64,11 +68,6 @@ class VoiceBoxTransform(ItemTransformBase):
         self.audio_resampler = {}
 
         self.hop_ms = mel_config["hop_size"] / mel_config["sampling_rate"]
-        # self.masking = WavMasking(
-        #     p_drop_x=mask_p_drop_x,
-        #     p_drop_audio_frames=p_drop_audio_frames,
-        #     padding_value=bn_config["bn_padding"] if self.use_bn else mel_padding,
-        # )
         self.masking = masking
         self.mask_use_alignment = mask_use_alignment
 
@@ -90,7 +89,6 @@ class VoiceBoxTransform(ItemTransformBase):
             bn = get_bn(item)
             if bn.shape[1] != 64 or bn.shape[0] < self.bn_hz * 0.5:
                 return None
-
             if self.bn_hz == self.umm_hz:
                 max_bn_len = min(bn.shape[0], data_dict["token"].shape[0])
                 max_umm_len = max_bn_len
@@ -168,6 +166,13 @@ class VoiceBoxTransform(ItemTransformBase):
             mel = (mel - self.mel_norm_mean) / self.mel_norm_std
             data_dict["mel"] = mel.transpose(1, 0)
 
+        if self.cfg_drop_rate > 0:
+            flag_drop = np.random.rand() <= self.cfg_drop_rate
+        else:
+            flag_drop = False
+
+        data_dict["flag_drop"] = flag_drop
+
         text_info = get_text_info(
             item,
             meta_obj,
@@ -175,7 +180,8 @@ class VoiceBoxTransform(ItemTransformBase):
             self.hop_ms,
             self.mask_use_alignment,
             self.use_text,
-            self.text_drop_rate,
+            flag_drop,
+            self.text_drop_id,
             self.use_phone_lang,
         )
         if text_info is None:
@@ -190,14 +196,21 @@ class VoiceBoxTransform(ItemTransformBase):
         # masking
         if self.use_bn:
             # mask bn.
-            data_dict = self.masking.masking(data_dict, "bn")  # update ctx & ctx_mask
+            data_dict = self.masking.masking(data_dict, "bn", flag_drop)  # update ctx & ctx_mask
             data_dict["bn"] = data_dict["bn"].transpose(0, 1)
             data_dict["bn_ctx"] = data_dict["bn_ctx"].transpose(0, 1)
             data_dict["bn_ctx_mask"] = data_dict["ctx_mask"]
         else:
-            data_dict = self.masking.masking(data_dict, "mel")  # update ctx & ctx_mask
-            data_dict["mel_ctx"] = data_dict["mel_ctx"].transpose(0, 1)[:, :max_mel_len]
-            data_dict["mel"] = data_dict["mel"].transpose(0, 1)[:, :max_mel_len]
-            data_dict["mel_ctx_mask"] = data_dict["ctx_mask"][:max_mel_len]
+            raise NotImplementedError
+
+        if flag_drop:
+            data_dict["prompt_bn"] = torch.zeros_like(data_dict["bn_ctx"])[:, :1]
+        else:
+            unmask_idx = torch.where(data_dict["bn_ctx_mask"]!=1)[0]
+            data_dict["prompt_bn"] = data_dict["bn_ctx"][:, unmask_idx]
+
+        if self.p_drop_bn_ctx > 0:
+            if np.random.rand() <= self.p_drop_bn_ctx:
+                data_dict["bn_ctx"][:] = self.bn_config["bn_padding"]
 
         return data_dict

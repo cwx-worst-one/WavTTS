@@ -62,20 +62,12 @@ class FrontendEmbedding(nn.Module):
         n_lang=0,
     ):
         super().__init__()
-        self.phone_embedding = nn.Embedding(
-            n_phone, phone_embed_dim, padding_idx=padding_idx
-        )
-        self.tone_embeddig = nn.Embedding(
-            n_tone, tone_embed_dim, padding_idx=padding_idx
-        )
-        self.wordseg_embeddig = nn.Embedding(
-            n_wordseg, wordseg_embed_dim, padding_idx=padding_idx
-        )
+        self.phone_embedding = nn.Embedding(n_phone, phone_embed_dim)
+        self.tone_embeddig = nn.Embedding(n_tone, tone_embed_dim)
+        self.wordseg_embeddig = nn.Embedding(n_wordseg, wordseg_embed_dim)
 
         if lang_embed_dim > 0:
-            self.lang_embedding = nn.Embedding(
-                n_lang, lang_embed_dim, padding_idx=padding_idx
-            )
+            self.lang_embedding = nn.Embedding(n_lang, lang_embed_dim)
             input_dim = (
                 phone_embed_dim + tone_embed_dim + wordseg_embed_dim + lang_embed_dim
             )
@@ -95,21 +87,6 @@ class FrontendEmbedding(nn.Module):
             emb = torch.cat([phone_emb, tone_emb, wordseg_emb], dim=-1)
 
         return self.out_linear(emb)
-
-
-# TODO: remove it if useless
-class DurationEmbedding(nn.Module):
-    def __init__(self, duration_embed_dim, out_dim, padding_idx=0, n_duration=300):
-        super().__init__()
-        self.duration_embedding = nn.Embedding(
-            n_duration, duration_embed_dim, padding_idx=padding_idx
-        )
-        input_dim = duration_embed_dim
-        self.out_linear = nn.Linear(input_dim, out_dim, bias=False)
-
-    def forward(self, inputs):
-        duration_emb = self.duration_embedding(inputs)
-        return self.out_linear(duration_emb)
 
 
 class RMSNorm(nn.Module):
@@ -259,30 +236,29 @@ class ModelArgs:
     n_tone: int = 30
     n_lang: int = 8
 
-    local_cond_dim: int = 1536
-    time_embed_dim: int = 1536
+    local_cond_dim: int = 512
+    time_embed_dim: int = 256
 
     # token
-    n_token: int = 32768
+    n_token: int = 16390
     token_embed_dim: int = 512
     token_hidden_dim: int = 768
-    token_upscales: list = field(default_factory=lambda: [1])
-    token_downscales: list = field(default_factory=lambda: [1])
-    use_token_vector: bool = False
-    token_vector_dim: int = 32
+    token_upscales: list = field(default_factory=lambda: [2, 2, 2])
+    token_downscales: list = field(default_factory=lambda: [5])
 
     local_cond_project_type: str = "linear"  # conv
     local_cond_conv_kernel: int = 9
     local_cond_conv_padding: int = 4
 
     # llama
-    encoder_dim: int = 1536
+    encoder_dim: int = 1024
     encoder_n_layers: int = 24
-    encoder_n_heads: int = 24
+    encoder_n_heads: int = 16
     encoder_n_kv_heads: int = None
     mlp_extend: float = None
     out_channels: int = 80
     max_seq_len: int = 8192
+
     causal: bool = False
     use_qk_norm: str = ""  # head, channel
     use_window_mask: bool = False
@@ -290,28 +266,27 @@ class ModelArgs:
     window_type: str = "elemwise"  # elemwise, blockwise
 
     # speaker encoder
-    prompt_mel_dim: int = 80
+    prompt_mel_dim: int = 64
     spk_e_dim: int = 1024
     spk_embed_dim: int = 512
-    prompt_loss_weight: float = 0.2  # deprecated
 
     llama_provider: str = "ctiga"
     postnet_type: str = "linear"  # conv
     postnet_kernel: int = 3
 
-    # features ["mel", "bn"]
-    target: str = "mel"
-    prompt_feature: str = "mel"
-    ctx_feature: str = "mel"
-    in_channels: int = 80
-    out_channels: int = 80
+    target: str = "bn"
+    prompt_feature: str = "bn"
+    ctx_feature: str = "bn"
+    in_channels: int = 64
+    out_channels: int = 64
     use_textprefix: bool = True
-    x_padding_value: int = -2
+
+    mask_token: bool = False
 
     bias: bool = False
-    use_unet_style_skip_connect: bool = False
     target_type: str = "velocity"
     use_prompt: bool = True
+    use_unet_style_skip_connect: bool = True
 
     min_t: float = 0.0
     max_t: float = 1.0
@@ -501,10 +476,14 @@ class LlamaDiffusion(nn.Module):
             token_embed = layer(token_embed)
         token_embed = token_embed.transpose(1, 2)  # B, T, C
 
+        if self.hp.mask_token:
+            token_embed[~inputs["bn_ctx_mask"]] = 0
+
         # speaker embedding
         if self.use_prompt:
             prompt_feature = f"prompt_{self.hp.prompt_feature}"
             spk_emb = self.prompt_encoder(inputs[prompt_feature])
+            spk_emb[inputs["flag_drop"]] = 0
             spk_emb = spk_emb.unsqueeze(1).expand(-1, token_embed.shape[1], -1)
 
             # local conditioning.
@@ -542,13 +521,7 @@ class LlamaDiffusion(nn.Module):
         if self.hp.use_textprefix:
             T = inputs["text_mel_mask"].shape[1]
             C = x_noisy.shape[-1]
-            x_noisy_wtext = torch.full(
-                [B, T, C], self.hp.x_padding_value, device=device, dtype=x_noisy.dtype
-            )
-
-            x_noisy_wtext = alphas * x_noisy_wtext + betas * torch.randn_like(
-                x_noisy_wtext
-            )
+            x_noisy_wtext = torch.full([B, T, C], 0, device=device, dtype=x_noisy.dtype)
 
             T_text = text_embed.shape[1]
             T_feat = x_noisy.shape[1]
@@ -611,11 +584,10 @@ class LlamaDiffusion(nn.Module):
     def _forward(self, x, local_cond, text_embed, timesteps):
         residual = x
         time_emb = self.time_embedding(timesteps)
-        time_emb = time_emb.unsqueeze(1).expand(-1, local_cond.shape[1], -1)
+        time_emb = time_emb.unsqueeze(1).expand(
+            local_cond.shape[0], local_cond.shape[1], -1
+        )
         x = self.x_prenet(x) + self.prenet(torch.cat([time_emb, local_cond], dim=-1))
-
-        # When CFG is enabled, text_embed has a batch size of 2
-        x = x.expand(text_embed.shape[0], -1, -1)
 
         if self.hp.use_textprefix:
             x = torch.cat([text_embed, x], dim=1)
@@ -649,7 +621,7 @@ class LlamaDiffusion(nn.Module):
         timesteps,
         local_cond,
         text_embed,
-        text_cfg_w=1.0,
+        cfg_w=1.0,
         inpaint_x=None,
         use_cache=False,
         cached_v_len=None,
@@ -674,11 +646,11 @@ class LlamaDiffusion(nn.Module):
 
         for i in range(t):
             if self.target_type == "velocity":
-                if text_cfg_w != 1:
+                if cfg_w != 1:
                     v_pred, v_pred_uncond = self._forward(
                         x, local_cond, text_embed, timesteps=sigmas[i]
                     ).chunk(2)
-                    v_pred = text_cfg_w * v_pred + (1 - text_cfg_w) * v_pred_uncond
+                    v_pred = cfg_w * v_pred + (1 - cfg_w) * v_pred_uncond
                 else:
                     v_pred = self._forward(
                         x, local_cond, text_embed, timesteps=sigmas[i]
@@ -726,7 +698,7 @@ class LlamaDiffusion(nn.Module):
         return x
 
     def dpmsolver_sample(
-        self, timesteps, local_cond, text_embed, text_cfg_w=1.0, inpaint_x=None
+        self, timesteps, local_cond, text_embed, cfg_w=1.0, inpaint_x=None
     ):
         batch_size, device, frm_len = (
             local_cond.size(0),
@@ -904,14 +876,20 @@ class LlamaDiffusion(nn.Module):
         return x
 
     @torch.no_grad()
-    def inference(self, inputs, timesteps=20, sampler="ddim", text_cfg_w=1.0, **kwargs):
-
+    def inference(
+        self,
+        inputs,
+        timesteps=20,
+        sampler="ddim",
+        cfg_w=1.0,
+        mask_prompt_token=True,
+        **kwargs,
+    ):
         if self.hp.use_textprefix:
             text_embed = self.frontend_embed(inputs["frontend"])  # [B, T, 1024]
         else:
             text_embed = None
 
-        # B, device = inputs["token"].size(0), inputs["token"].device
         ctx_feature = f"{self.hp.ctx_feature}_ctx"
 
         # token encoder to align frame-rate.
@@ -924,12 +902,19 @@ class LlamaDiffusion(nn.Module):
         if token_embed.shape[1] > inputs[ctx_feature].shape[1]:
             token_embed = token_embed[:, : inputs[ctx_feature].shape[1], :]
         elif token_embed.shape[1] < inputs[ctx_feature].shape[1]:
-            raise ValueError("token_embed.shape[1] < inputs[ctx_feature].shape[1]")
+            raise RuntimeError
+
+        if mask_prompt_token:
+            token_embed[:, : inputs["prompt_length"]] = 0
 
         if self.use_prompt:
             # speaker embedding
             prompt_feature = f"prompt_{self.hp.prompt_feature}"
             spk_emb = self.prompt_encoder(inputs[prompt_feature])
+            if cfg_w != 1:
+                spk_emb = spk_emb.repeat(2, 1)
+                spk_emb[1, :] = 0  # whether enable global spk cfg
+                token_embed = token_embed.expand(2, -1, -1)
             spk_emb = spk_emb.unsqueeze(1).expand(-1, token_embed.shape[1], -1)
 
             # local conditioning.
@@ -940,15 +925,15 @@ class LlamaDiffusion(nn.Module):
 
         if sampler == "ddim":
             x = self.ddim_sample(
-                timesteps, local_cond, text_embed, text_cfg_w=text_cfg_w, **kwargs
+                timesteps, local_cond, text_embed, cfg_w=cfg_w, **kwargs
             )
         elif sampler == "dpmsolver":
             x = self.dpmsolver_sample(
-                timesteps, local_cond, text_embed, text_cfg_w=text_cfg_w, **kwargs
+                timesteps, local_cond, text_embed, cfg_w=cfg_w, **kwargs
             )
         elif sampler == "plms":
             x = self.plms_sample(
-                timesteps, local_cond, text_embed, text_cfg_w=text_cfg_w, **kwargs
+                timesteps, local_cond, text_embed, cfg_w=cfg_w, **kwargs
             )
         elif sampler == "consistency":
             x = self.consistency_sample(

@@ -1,0 +1,485 @@
+cal_type: "wer"
+Delimiter: " " 
+ord_range: []
+unit: {}
+cardinals: {}
+large_num: {}
+in_word_have_meaning: ["'", '.', '-']
+non_prounciation_pre:
+- "!"
+- "?"
+- "\""
+- ";"
+- "{"
+- "}"
+- "["
+- "]"
+- "《"
+- "》"
+- "【"
+- "】"
+- "「"
+- "」"
+- "("
+- ")"
+- "\\"
+- "^"
+- "`"
+- "|"
+- "，"
+- ","
+- "。"
+- "！"
+- "‼"
+- "？"
+- "、"
+- "“"
+- "”"
+- "‘"
+- "’"
+- "；"
+- ":"
+- "："
+- "・"
+- "……"
+- "…"
+non_prounciation_post:
+- "."
+- "/"
+- "<"
+- ">"
+- "/"
+- "="
+- "+"
+- "-"
+- "*"
+- "&"
+- "#"
+- "$"
+- "¥"
+- "￥"
+- "%"
+- "~"
+- "／"
+char_vocab:
+# ======= fixed ======
+# default symbol
+- " "
+- "'"
+- "."
+- "-"
+- ""
+# default number for youtube
+- "0"
+- "1"
+- "2"
+- "3"
+- "4"
+- "5"
+- "6"
+- "7"
+- "8"
+- "9"
+# default for eng
+- "A"
+- "B"
+- "C"
+- "D"
+- "E"
+- "F"
+- "G"
+- "H"
+- "I"
+- "J"
+- "K"
+- "L"
+- "M"
+- "N"
+- "O"
+- "P"
+- "Q"
+- "R"
+- "S"
+- "T"
+- "U"
+- "V"
+- "W"
+- "X"
+- "Y"
+- "Z"
+- "a"
+- "b"
+- "c"
+- "d"
+- "e"
+- "f"
+- "g"
+- "h"
+- "i"
+- "j"
+- "k"
+- "l"
+- "m"
+- "n"
+- "o"
+- "p"
+- "q"
+- "r"
+- "s"
+- "t"
+- "u"
+- "v"
+- "w"
+- "x"
+- "y"
+- "z"
+# =====================
+# for target language 
+# all upper
+- "A"
+- "Ą"
+- "B"
+- "C"
+- "Ć"
+- "D"
+- "E"
+- "Ę"
+- "F"
+- "G"
+- "H"
+- "I"
+- "J"
+- "K"
+- "L"
+- "Ł"
+- "M"
+- "N"
+- "Ń"
+- "O"
+- "Ó"
+- "P"
+- "R"
+- "S"
+- "Ś"
+- "T"
+- "U"
+- "W"
+- "Y"
+- "Z"
+- "Ź"
+- "Ż"
+# all lower
+- "a"
+- "ą"
+- "b"
+- "c"
+- "ć"
+- "d"
+- "e"
+- "ę"
+- "f"
+- "g"
+- "h"
+- "i"
+- "j"
+- "k"
+- "l"
+- "ł"
+- "m"
+- "n"
+- "ń"
+- "o"
+- "ó"
+- "p"
+- "r"
+- "s"
+- "ś"
+- "t"
+- "u"
+- "w"
+- "y"
+- "z"
+- "ź"
+- "ż"
+# others valid char (like number, special char...)
+
+
+sub_map:
+# ========== fixed ========
+# default for eng
+  "A": "a"
+  "B": "b"
+  "C": "c"
+  "D": "d"
+  "E": "e"
+  "F": "f"
+  "G": "g"
+  "H": "h"
+  "I": "i"
+  "J": "j"
+  "K": "k"
+  "L": "l"
+  "M": "m"
+  "N": "n"
+  "O": "o"
+  "P": "p"
+  "Q": "q"
+  "R": "r"
+  "S": "s"
+  "T": "t"
+  "U": "u"
+  "V": "v"
+  "W": "w"
+  "X": "x"
+  "Y": "y"
+  "Z": "z"
+# =====================
+# ====== for target language ======
+# "upper": "lower"
+  "A": "a"
+  "Ą": "ą"
+  "B": "b"
+  "C": "c"
+  "Ć": "ć"
+  "D": "d"
+  "E": "e"
+  "Ę": "ę"
+  "F": "f"
+  "G": "g"
+  "H": "h"
+  "I": "i"
+  "J": "j"
+  "K": "k"
+  "L": "l"
+  "Ł": "ł"
+  "M": "m"
+  "N": "n"
+  "Ń": "ń"
+  "O": "o"
+  "Ó": "ó"
+  "P": "p"
+  "R": "r"
+  "S": "s"
+  "Ś": "ś"
+  "T": "t"
+  "U": "u"
+  "W": "w"
+  "Y": "y"
+  "Z": "z"
+  "Ź": "ź"
+  "Ż": "ż"
+modal_words:           
+- 'ach'
+- 'och'
+- 'oj'
+- 'ojej'
+- 'ojejku'
+- 'ożeż'
+- 'aha'
+- 'oho'
+- 'ahoj'
+- 'aj'
+- 'apsik'
+- 'au'
+- 'aua'
+- 'auć'
+- 'brr'
+- 'brrr'
+- 'bu'
+- 'cmok'
+- 'cyk'
+- 'tyk'
+- 'ej'
+- 'ejże'
+- 'hej'
+- 'elo'
+- 'fuj'
+- 'pfuj'
+- 'pfe'
+- "fu"
+- 'hm'
+- 'mhm'
+- 'hura'
+- 'hurra'
+- 'jeja'
+- 'jejku'
+- 'pff'
+- 'prr'
+- 'uf'
+- 'uff'
+- 'łał'
+- 'pyk'
+- 'ble'
+- 'chrup'
+- 'ciii'
+- 'uaa'
+- 'siorb'
+- 'miam'
+- 'ech'
+- 'ojezu'
+- 'aaa'
+- 'ała'
+- 'buuu'
+- 'buu'
+- 'dalejże'
+- 'nuże'
+- 'sio'
+- 'hejka'
+- 'heja'
+- 'halo'
+- 'pfu'
+- 'fe'
+- 'fu'
+- 'twu'
+- 'hmm'
+- 'hmmm'
+- 'emmm'
+- 'hurrah'
+#modal words with blank 
+- 'puk puk'
+- 'szur szur'
+- 'plusk plusk'
+- 'szu szu'
+- 'eche eche'
+- 'la la la'
+- 'łe łe łe'
+- 'o o o'
+- 'yhy yhy'
+- 'o rany'
+- 'oż ty'
+modal_map:            
+  "ach": "och" 
+  "ech": "och" 
+  "ej": "och" 
+  "aj": "och" 
+  "oj": "och" 
+  "oj": "jej"
+  "ojej": "jej"
+  "ojejku": "jej"
+  "ojezu": "jej"
+  "jejku": "jej"
+  "ożeż": "oż"
+  "aha": "aha"
+  "aaa": "aha"
+  "aua": "au"
+  "auć": "au"
+  "ała": "au"
+  "brrr": "brr"
+  "buuu": "bu"
+  "buu": "bu"
+  "tyk": "cyk"
+  "pyk": "cyk"
+  "ejże": "nuż"
+  "dalejże": "nuż"
+  "nuże": "nuż"
+  "sio": "nuż"
+  "hejka": "hej"
+  "heja": "hej"
+  "halo": "hej"
+  "pfuj": "fuj"
+  "pfe": "fuj"
+  "pfu": "fuj"
+  "fe": "fuj"
+  "fu": "fuj"
+  "twu": "fuj"
+  "hmm": "hm"
+  "hmmm": "hm"
+  "mhm": "hm"
+  "emmm": "hm"
+  "hurrah": "hurra"
+  "uff": "uf"
+#modal words with blank
+  "o rany": "jej" 
+  "oż ty": "oż"
+abb_word_map:
+  "bezeń": "bez niego"
+  "dlań": "dla niego"
+  "nadeń": "nad niego"
+  "oń": "o niego"
+  "podeń": "pod niego"
+  "przedeń": "przed niego"
+  "przezeń": "przez niego"
+  "uń": "u niego"
+  "weń": "w niego"
+  "zań": "za niego"
+  "al.": "aleja"
+  "ang.": "angielski"
+  "arch.": "architekt"
+  "art.": "artysta"
+  "b.m.": "bez miejsca"
+  "b.p.": "bez podpisu"
+  "b.r.": "bez roku"
+  "b.u.": "bez uwag"
+  "BN": "Biblioteka Narodowa"
+  "cdn.": "ciąg dalszy nastąpi"
+  "cyt.": "cytat"
+  "cz.": "część"
+  "czyt.": "czytaj"
+  "dag": "dekagram"
+  "db": "dobry"
+  "dyr.": "dyrektor"
+  "dz.": "dział"
+  "itd.": "i tak dalej"
+  "itp.": "i tym podobne"
+  "inst.": "instytut"
+  "inż.": "inżynier"
+  "iron.": "ironiczny"
+  "jw.": "jak wyżej"
+  "jęz.": "język"
+  "ks.": "ksiądz"
+  "książ.": "książkowy"
+  "lek.": "lekarz"
+  "lic.": "licencjat"
+  "lm.": "liczba mnoga"
+  "lp.": "liczba pojedyncza"
+  "lit.": "literacki"
+  "mgr": "magister"
+  "mkw.": "metr kwadratowy"
+  "mies.": "miesiąc"
+  "m.in.": "między innymi"
+  "min": "minuta"
+  "n.p.m.": "nad poziomem morza"
+  "np.": "na przykład"
+  "n.e.": "naszej ery"
+  "nr": "numer"
+  "o.o.": "ograniczona odpowiedzialność"
+  "os.": "osiedle"
+  "pl.": "plac"
+  "poch.": "pochodzenie"
+  "pn.": "pod nazwą"
+  "pt.": "pod tytułem"
+  "poj.": "pojedynczy"
+  "PN": "Polska Norma"
+  "płn.": "północny "
+  "prof.": "profesor"
+  "p.n.e.": "przed naszą erą"
+  "sam.": "samochód"
+  "sek.": "sekunda"
+  "sp.": "spółka"
+  "str.": "strona"
+  "św.": "święty"
+  "tj.": "to jest"
+  "ul.": "ulica"
+  "wg": "według"
+  "wsch.": "wschodni"
+  "wsp.": "współpracownik"
+  "wydz.": "wydział"
+  "zach.": "zachodni"
+  "zagr.": "zagranica"
+  "zdj.": "zdjęcie"
+  "zł.": "złoty"
+  "zob.": "zobacz"
+  "zool.": "zoologia"
+  "żart.": "żartobliwy"
+  "źr.": "źródło"
+#abb words with blank
+  "dr n. med.": "doktor nauk medycznych"
+  "i in.": "i inne"
+  "i wsp.": "i współautorzy"
+  "lek. dent.": "lekarz dentysta"
+  "lek. stom.": "lekarz stomatolog"
+  "lek. wet.": "lekarz weterynarz"
+  "ub. m.": "ubiegły miesiąc"
+  "ub. r.": "ubiegły rok"
+  "z o.o.": "z ograniczoną odpowiedzialnością"
+  "za gr.": "za granicą"

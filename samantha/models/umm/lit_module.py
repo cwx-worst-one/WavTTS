@@ -554,22 +554,26 @@ class Stage2(Stage0):
             text_ids=text_ids if config.get("add_ctc", True) else None,
             recon_mel=output_dict["mel_out"] if config.get("add_mel", True) else None,
             mel=mel if config.get("add_mel", True) else None,
-            recon_chroma=output_dict["chroma_out"]
-            if config.get("add_chroma", True)
-            else None,
+            recon_chroma=(
+                output_dict["chroma_out"] if config.get("add_chroma", True) else None
+            ),
             chroma=input_dict["chroma"] if config.get("add_chroma", True) else None,
-            recon_f0=output_dict["f0_out"].squeeze(-1)
-            if config.get("add_pitch", False)
-            else None,
+            recon_f0=(
+                output_dict["f0_out"].squeeze(-1)
+                if config.get("add_pitch", False)
+                else None
+            ),
             f0=input_dict["f0"] if config.get("add_pitch", False) else None,
-            recon_vuv=output_dict["vuv_out"].squeeze(-1)
-            if config.get("add_pitch", False)
-            else None,
+            recon_vuv=(
+                output_dict["vuv_out"].squeeze(-1)
+                if config.get("add_pitch", False)
+                else None
+            ),
             vuv=input_dict["vuv"] if config.get("add_pitch", False) else None,
             las_logits=output_dict["las_out"] if config.get("add_las", False) else None,
-            las_targets=output_dict["las_targets"]
-            if config.get("add_las", False)
-            else None,
+            las_targets=(
+                output_dict["las_targets"] if config.get("add_las", False) else None
+            ),
         )
         loss_dict["loss"] = 0.0
         if config.get("add_mel", True):
@@ -676,22 +680,26 @@ class Stage3(Stage2):
             text_ids=text_ids if config.get("add_ctc", True) else None,
             recon_mel=output_dict["mel_out"] if config.get("add_mel", True) else None,
             mel=mel if config.get("add_mel", True) else None,
-            recon_chroma=output_dict["chroma_out"]
-            if config.get("add_chroma", True)
-            else None,
+            recon_chroma=(
+                output_dict["chroma_out"] if config.get("add_chroma", True) else None
+            ),
             chroma=input_dict["chroma"] if config.get("add_chroma", True) else None,
-            recon_f0=output_dict["f0_out"].squeeze(-1)
-            if config.get("add_pitch", False)
-            else None,
+            recon_f0=(
+                output_dict["f0_out"].squeeze(-1)
+                if config.get("add_pitch", False)
+                else None
+            ),
             f0=input_dict["f0"] if config.get("add_pitch", False) else None,
-            recon_vuv=output_dict["vuv_out"].squeeze(-1)
-            if config.get("add_pitch", False)
-            else None,
+            recon_vuv=(
+                output_dict["vuv_out"].squeeze(-1)
+                if config.get("add_pitch", False)
+                else None
+            ),
             vuv=input_dict["vuv"] if config.get("add_pitch", False) else None,
             las_logits=output_dict["las_out"] if config.get("add_las", False) else None,
-            las_targets=output_dict["las_targets"]
-            if config.get("add_las", False)
-            else None,
+            las_targets=(
+                output_dict["las_targets"] if config.get("add_las", False) else None
+            ),
         )
         loss_dict["loss"] = 0.0
         if config.get("add_mel", True):

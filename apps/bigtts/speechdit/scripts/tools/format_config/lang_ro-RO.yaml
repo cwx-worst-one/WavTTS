@@ -1,0 +1,326 @@
+cal_type: "wer"
+Delimiter: " "
+ord_range: []
+unit: {}
+cardinals: {}
+large_num: {}
+in_word_have_meaning: ["'", '.', ',', '-']
+non_prounciation_pre:
+- "!"
+- "?"
+- "\""
+- ";"
+- "{"
+- "}"
+- "["
+- "]"
+- "《"
+- "》"
+- "【"
+- "】"
+- "「"
+- "」"
+- "("
+- ")"
+- "\\"
+- "^"
+- "`"
+- "|"
+- "，"
+- ","
+- "。"
+- "！"
+- "‼"
+- "？"
+- "、"
+- "“"
+- "”"
+- "‘"
+- "’"
+- "；"
+- ":"
+- "："
+- "・"
+- "……"
+- "…"
+non_prounciation_post:
+- "."
+- "/"
+- "<"
+- ">"
+- "/"
+- "="
+- "+"
+- "-"
+- "*"
+- "&"
+- "#"
+- "$"
+- "¥"
+- "￥"
+- "%"
+- "~"
+- "／"
+char_vocab:
+- " "
+- "'"
+- "."
+- "​"
+- "0"
+- "1"
+- "2"
+- "3"
+- "4"
+- "5"
+- "6"
+- "7"
+- "8"
+- "9"
+- "A"
+- "a"
+- "B"
+- "b"
+- "C"
+- "c"
+- "D"
+- "d"
+- "E"
+- "e"
+- "F"
+- "f"
+- "G"
+- "g"
+- "H"
+- "h"
+- "I"
+- "i"
+- "J"
+- "j"
+- "K"
+- "k"
+- "L"
+- "l"
+- "M"
+- "m"
+- "N"
+- "n"
+- "O"
+- "o"
+- "P"
+- "p"
+- "Q"
+- "q"
+- "R"
+- "r"
+- "S"
+- "s"
+- "T"
+- "t"
+- "U"
+- "u"
+- "V"
+- "v"
+- "W"
+- "w"
+- "X"
+- "x"
+- "Y"
+- "y"
+- "Z"
+- "z"
+- "Ș"
+- "ș"
+- "Ț"
+- "ț"
+- "Î"
+- "î"
+- "Ă"
+- "ă"
+- "Â"
+- "â"
+- "Ş"
+- "ş"
+- "Ţ"
+- "ţ"
+sub_map:
+  "A": "a"
+  "B": "b"
+  "C": "c"
+  "D": "d"
+  "E": "e"
+  "F": "f"
+  "G": "g"
+  "H": "h"
+  "I": "i"
+  "J": "j"
+  "K": "k"
+  "L": "l"
+  "M": "m"
+  "N": "n"
+  "O": "o"
+  "P": "p"
+  "Q": "q"
+  "R": "r"
+  "S": "s"
+  "T": "t"
+  "U": "u"
+  "V": "v"
+  "W": "w"
+  "X": "x"
+  "Y": "y"
+  "Z": "z"
+  "Ș": "ș"
+  "Ț": "ț"
+  "Î": "î"
+  "Ă": "ă"
+  "Â": "â"
+  "Ş": "ș"
+  "ş": "ș"
+  "ţ": "ț"
+  "Ţ": "ț"
+modal_words:
+- 'aba'
+- 'abracadabra'
+- 'ah'
+- 'au'
+- 'ași'
+- 'aham'
+- 'aha'
+- 'aiurea'
+- 'aoleo'
+- 'bang'
+- 'bau'
+- 'bă'
+- 'băi'
+- 'bâldâbac'
+- 'bâz'
+- 'behehe'
+- 'bla-bla'
+- 'boc'
+- 'bre'
+- 'brr'
+- 'bu'
+- 'buf'
+- 'buhuhu'
+- 'bum'
+- 'căh'
+- 'clic'
+- 'cri-cri'
+- 'cip-cirip'
+- 'cucu'
+- 'cuțu-cuțu'
+- 'cucurigu'
+- 'da-da'
+- 'eh'
+- 'ehe'
+- 'ei'
+- 'er'
+- 'fă'
+- 'fâl-fâl'
+- 'fâs'
+- 'fleoșc'
+- 'ga'
+- 'ghiorț'
+- 'glu-glu-glu'
+- 'ha-ha'
+- 'hâc'
+- 'hai'
+- 'haihui'
+- 'hârs'
+- 'hâş'
+- 'ham-ham'
+- 'haci'
+- 'hait'
+- 'haț'
+- 'hapciu'
+- 'he-he'
+- 'hehei'
+- 'hei'
+- 'hei-rup'
+- 'hi-hi'
+- 'hî'
+- 'hm'
+- 'hoho'
+- 'hop'
+- 'hopa'
+- 'hu'
+- 'huo'
+- 'hup'
+- 'huş'
+- 'ia'
+- 'iaca'
+- 'îhî'
+- 'itiiu'
+- 'leroi'
+- 'lip-lip'
+- 'mâi'
+- 'mâr'
+- 'marş'
+- 'mă'
+- 'mamă-mamă'
+- 'mehehe'
+- 'miau'
+- 'mmm'
+- 'mor'
+- 'mu'
+- 'mucles'
+- 'm-hm'
+- 'na'
+- 'nț'
+- 'oac'
+- 'oau'
+- 'of'
+- 'oh'
+- 'ole'
+- 'ouch'
+- 'oops'
+- 'pa'
+- 'pac'
+- 'pfiu'
+- 'pfu'
+- 'phiu'
+- 'pic'
+- 'piu'
+- 'pis-pis'
+- 'pui-pui-pui'
+- 'pleosc'
+- 'pst'
+- 'poc'
+- 'salut'
+- 'servus'
+- 'ssst'
+- 'țac'
+- 'țț'
+- 'țuști'
+- 'trosc'
+- 'uau'
+- 'uf'
+- 'um'
+- 'ura'
+- 'valea'
+- 'vălea'
+- 'vai'
+- 'vai-vai'
+- 'vaj'
+- 'wow'
+- 'zău'
+- 'zbâr'
+- 'zdronc'
+- 'zdup'
+modal_map:
+  "oau": "wow"
+  "ouch": "ouch"
+  "vai": "oh"
+  "ohhh": "oh" 
+  "oleoleo": "oleo"
+  "aoleo": "oleo" 
+  "vai-vai": "vai" 
+abb_word_map:
+  "cnv": "cineva" 
+  "fain": "frumos" 
+  "ms": "mersi" 
+  "kkt": "căcat" 
+  "pt": "pentru" 
+  "vb": "vorbesc" 
+  "dvs": "dumneavoastră"
+  "ex": "exemplu"

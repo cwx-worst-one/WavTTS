@@ -1,0 +1,301 @@
+lang: "es"
+cal_type: "wer"
+Delimiter: " "
+ord_range: []
+unit: {}
+cardinals: {}
+large_num: {}
+in_word_have_meaning: ["'", '.']
+non_prounciation_pre:
+- "!"
+- "?"
+- "\""
+- ";"
+- "{"
+- "}"
+- "["
+- "]"
+- "《"
+- "》"
+- "【"
+- "】"
+- "「"
+- "」"
+- "("
+- ")"
+- "\\"
+- "^"
+- "`"
+- "|"
+- "，"
+- ","
+- "。"
+- "！"
+- "‼"
+- "？"
+- "、"
+- "“"
+- "”"
+- "‘"
+- "’"
+- "；"
+- ":"
+- "："
+- "・"
+- "……"
+- "…"
+non_prounciation_post:
+- "."
+- "/"
+- "<"
+- ">"
+- "/"
+- "="
+- "+"
+- "-"
+- "*"
+- "&"
+- "#"
+- "$"
+- "¥"
+- "￥"
+- "%"
+- "~"
+- "／"
+char_vocab:
+- " "
+- "'"
+- "."
+- "​"
+- "0"
+- "1"
+- "2"
+- "3"
+- "4"
+- "5"
+- "6"
+- "7"
+- "8"
+- "9"
+- "A"
+- "Á"
+- "B"
+- "C"
+- "D"
+- "E"
+- "É"
+- "F"
+- "G"
+- "H"
+- "I"
+- "Í"
+- "J"
+- "K"
+- "L"
+- "M"
+- "N"
+- "Ñ"
+- "O"
+- "Ó"
+- "P"
+- "Q"
+- "R"
+- "S"
+- "T"
+- "U"
+- "Ú"
+- "Ü"
+- "V"
+- "W"
+- "X"
+- "Y"
+- "Z"
+- "a"
+- "á"
+- "b"
+- "c"
+- "d"
+- "e"
+- "é"
+- "f"
+- "g"
+- "h"
+- "i"
+- "í"
+- "j"
+- "k"
+- "l"
+- "m"
+- "n"
+- "ñ"
+- "o"
+- "ó"
+- "p"
+- "q"
+- "r"
+- "s"
+- "t"
+- "u"
+- "ú"
+- "ü"
+- "v"
+- "w"
+- "x"
+- "y"
+- "z"
+
+sub_map:
+ "A": "a"
+ "Á": "á"
+ "B": "b"
+ "C": "c"
+ "D": "d"
+ "E": "e"
+ "É": "é"
+ "F": "f"
+ "G": "g"
+ "H": "h"
+ "I": "i"
+ "Í": "í"
+ "J": "j"
+ "K": "k"
+ "L": "l"
+ "M": "m"
+ "N": "n"
+ "Ñ": "ñ"
+ "O": "o"
+ "Ó": "ó"
+ "P": "p"
+ "Q": "q"
+ "R": "r"
+ "S": "s"
+ "T": "t"
+ "U": "u"
+ "Ú": "ú"
+ "Ü": "ü"
+ "V": "v"
+ "W": "w"
+ "X": "x"
+ "Y": "y"
+ "Z": "z"
+
+modal_words:
+- 'ah'
+- 'ay'
+- 'ajá'
+- 'ajó'
+- 'arre'
+- 'aguas'
+- 'ándale'
+- 'anda'
+- 'aúpa'
+- 'achis'
+- 'bah'
+- 'buah'
+- 'buuu'
+- 'bien padre'
+- 'cachís'
+- 'chingón'
+- 'chao'
+- 'chau'
+- 'chitón'
+- 'camarón'
+- 'ea'
+- 'eh'
+- 'epa'
+- 'épale'
+- 'fuchi'
+- 'guau'
+- 'guay'
+- 'güey'
+- 'hala'
+- 'hale'
+- 'hurra'
+- 'hújule'
+- 'híjole'
+- 'huy'
+- 'ja'
+- 'jaja'
+- 'jajaja'
+- 'jo'
+- 'jolín'
+- 'joder'
+- 'maldita sea'
+- 'muy chido'
+- 'mmm'
+- 'oh'
+- 'ora'
+- 'órale'
+- 'oiga'
+- 'ojalá'
+- 'ojo'
+- 'ojú'
+- 'okey'
+- 'olé'
+- 'oye'
+- 'oops'
+- 'puaj'
+- 'puf'
+- 'pum'
+- 'puta' 
+- "pa'su mecha"
+- 'shhh'
+- 'sopas'
+- 'sobres'
+- 'salucita'
+- 'tururú'
+- 'uf'
+- 'uy'
+- 'uh'
+- 'újule'
+- 'vaya'
+- 'viva'
+- 'wow'
+- 'Yey'
+- 'Yupi'
+- 'Zaz'
+- 'zas'
+modal_map:
+  "ajá": "ah"
+  "huy": "ah"
+  "uy": "ah"
+  "oh": "ah"
+  "anda": "ándale"
+  "chau": "chao"
+  "epa": "épale"
+  "ea": "eh"
+  "ora": "órale"
+  "jaja": "ja"
+  "jajaja": "ja"
+  "guau": "guay" 
+  "újule": "uh"
+  "hújule": "uh"
+abb_word_map:
+  "anda": "ándale"
+  "a'onde": "a dónde"
+  "a/f": "a favor"
+  "a d.g.": a dios gracias
+  "b.l.m": "besa la mano"
+  "comper": "con permiso"
+  "cel.": "celular"
+  "desp.": "después"
+  "d.e.p.": "descanse en paz"
+  "dr.": "doctor"
+  "ej.": "ejemplo"
+  "e.p.d.": "en paz descanse"
+  "e.s.m.": "en sus manos"
+  "etc.": "etcétera"
+  "ee.uu.": "estados unidos"
+  "izq.": "izquierdo"
+  "j.c.": "jesucristo"
+  "jhs.": "jesús"
+  "jj.oo.": "juegos olímpicos"
+  "onde": "donde"
+  "prof.": "profesor"
+  "porfa": "por favor"
+  "p.ej.": "por ejemplo"
+  "salds.": "saludos"
+  "sra.": "señora"
+  "tel.": "teléfono"
+  "ud.": "usted"
+  "univ.": "universidad"

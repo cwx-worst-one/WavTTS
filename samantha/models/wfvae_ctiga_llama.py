@@ -629,9 +629,9 @@ class VAELLaMaLangSpkSer(LLaMa):
             "bn_in_z": bn_in_z,
             "attn_weights": attn_weights,
             "lang_output": lang_output.float() if lang_output is not None else None,
-            "ser_tag_logits": ser_tag_output.float()
-            if ser_tag_output is not None
-            else None,
+            "ser_tag_logits": (
+                ser_tag_output.float() if ser_tag_output is not None else None
+            ),
         }
 
         return output_dict

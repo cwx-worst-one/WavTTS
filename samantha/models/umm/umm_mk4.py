@@ -414,24 +414,30 @@ class Stage3(Stage2):
         if config.get("vq_proj_norm", None) == "bn":
             self.vq_proj_in = nn.Sequential(
                 Transpose(),
-                WNConv1d(config.hidden_size, config.vq_codebook_dim, kernel_size=1)
-                if config.hidden_size != config.vq_codebook_dim
-                else nn.Identity(),
+                (
+                    WNConv1d(config.hidden_size, config.vq_codebook_dim, kernel_size=1)
+                    if config.hidden_size != config.vq_codebook_dim
+                    else nn.Identity()
+                ),
                 nn.BatchNorm1d(config.vq_codebook_dim, affine=False, momentum=0.05),
                 Transpose(),
             )
             self.vq_proj_out = nn.Sequential(
                 Transpose(),
-                WNConv1d(config.vq_codebook_dim, config.hidden_size, kernel_size=1)
-                if config.vq_codebook_dim != config.hidden_size
-                else nn.Identity(),
+                (
+                    WNConv1d(config.vq_codebook_dim, config.hidden_size, kernel_size=1)
+                    if config.vq_codebook_dim != config.hidden_size
+                    else nn.Identity()
+                ),
                 Transpose(),
             )
         elif config.get("vq_proj_norm", None) == "ln":
             self.vq_proj_in = nn.Sequential(
-                nn.Linear(config.hidden_size, config.vq_codebook_dim, bias=False)
-                if config.hidden_size != config.vq_codebook_dim
-                else nn.Identity(),
+                (
+                    nn.Linear(config.hidden_size, config.vq_codebook_dim, bias=False)
+                    if config.hidden_size != config.vq_codebook_dim
+                    else nn.Identity()
+                ),
                 nn.LayerNorm(config.vq_codebook_dim, elementwise_affine=False),
             )
             self.vq_proj_out = nn.Sequential(

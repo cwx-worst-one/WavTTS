@@ -48,6 +48,9 @@ class VoiceBoxCollator(CollatorBase):
         ret_dict["token_mask"] = sequence_mask(torch.from_numpy(np.array(token_lens)),
                   max_len=ret_dict["token"].shape[1])
 
+        flag_drop = torch.from_numpy(np.array([b["flag_drop"] for b in batches]))
+        ret_dict["flag_drop"] = flag_drop
+
         # pad bn/mel
         feat_name = "bn" if self.use_bn else "mel"
         feat_lens = [b[feat_name].shape[1] for b in batches]
@@ -111,11 +114,10 @@ class VoiceBoxCollator(CollatorBase):
                     pad_idx=0, max_len=max_text_len
                 )
 
-        crop_len = max(self.feat_hz, np.random.rand() * min_feat_len)
-        crop_len = int(min(self.max_crop_len , crop_len))
-        start_point = random.randint(0,  max(min_feat_len - crop_len - 1, 0))
-        ret_dict[f"prompt_{feat_name}"] = (
-            ret_dict[feat_name][:, start_point:start_point+crop_len, :].transpose(1, 2)
-        )
+        max_prompt_len = max([b['prompt_bn'].shape[1] for b in batches])
+        ret_dict["prompt_bn"] = collate_2d(
+            [b['prompt_bn'] for b in batches],
+            pad_idx=0,
+            max_len=max_prompt_len)
 
         return ret_dict

@@ -17,7 +17,7 @@ run_opts:
     tensorboard_dir: !ref <run_opts[log_dir]>
     log_name: semantic
     version: 1.0
-    precision: bf16
+    precision: bf16-mixed
     accelerator: auto
     strategy: ddp_find_unused_parameters_false # deepspeed_stage_2_offload, ddp_find_unused_parameters_false
     cache_dir: ./.cache_dir
@@ -30,7 +30,7 @@ run_opts:
     weight_decay: 0.001
     checkpointing: False
     n_step_save: 10000
-    batch_total_tokens: 25000
+    batch_total_tokens: 30000
     urls: null
     data_id: null
     accumulate_grad_batches: 1
@@ -52,7 +52,7 @@ model_config: !new:samantha.models.llama_ldm.ModelArgs
     target: !ref <run_opts[target]>
     prompt_feature: !ref <run_opts[prompt_feature]>
     ctx_feature: !ref <run_opts[ctx_feature]>
-    local_cond_dim: 256
+    local_cond_dim: 512
     time_embed_dim: 256
     encoder_dim: 1024
     encoder_n_layers: 24
@@ -62,7 +62,7 @@ model_config: !new:samantha.models.llama_ldm.ModelArgs
     causal: False
     use_window_mask: True
     use_qk_norm: ""
-    window_size: [-1, 8]
+    window_size: [-1, 32]
     window_type: "blockwise" # elemwise, blockwise
     use_unet_style_skip_connect: !ref <run_opts[use_unet_style_skip_connect]>
     flashattn_version: "2.3"
@@ -78,26 +78,29 @@ mel_config: # 40hz iBigVGAN
 
 bn_config: # 40hz wvae 3.1
     hop_size: 600
-    bn_norm_std: 15
+    bn_norm_std: 2
     bn_norm_mean: 0
-    bn_padding: -2
-    pad_trim: True
+    bn_padding: 0
+    pad_trim: False
     silence_bn_path: apps/bigtts/umm/diffusion/silence_wvae/v3_40hz/silence_wvae.npy
 
 item_transform: !new:apps.bigtts.umm.diffusion.datasets.voicebox_transform.VoiceBoxTransform
+    mask_use_alignment: False
     mel_config: !ref <mel_config>
     max_length: 60
     mel_norm_mean: -2.5
     mel_norm_std: 6
     mel_padding: -5
     use_text: True
+    cfg_drop_rate: 0.1
+    text_drop_id: 1
     use_bn: True
     bn_config: !ref <bn_config>
     umm_hop_size: 960
     wav_divide: 4800
     masking: !new:samantha.dataio.lite.utils.masking.WavMasking
-      p_drop_x: 0.3
-      p_drop_audio_frames: (0.3, 1.0)
+      p_drop_x: 0
+      p_drop_audio_frames: (0.3, 0.7)
       padding_value: !ref <bn_config[bn_padding]>
       p_drop_from_end_frame: 1
 
@@ -163,7 +166,7 @@ _world_size: !apply:samantha.utils.envs.getenv_int ["WORLD_SIZE", 1]
 scheduler_cls: !name:samantha.optim.lr_scheduler.warmup_cosine_lr.WarmupCosine
     init_lr: !ref <run_opts[learning_rate]>
     warmup_steps: 1000
-    cycle_steps: 200000
+    cycle_steps: 500000
     min_lr: !ref <run_opts[learning_rate]> * 0.1
 
 # lightning model setting
@@ -175,6 +178,7 @@ pl_module: !new:apps.bigtts.umm.diffusion.lit_modules.lit_diffusion_voicebox.Voi
     resume_ckpt_path: !ref <run_opts[resume_ckpt_path]>
     criterions: ["l1"]
     required_modules: {}
+    umm_dropout: 0.2
 
 logger:
     - !new:pytorch_lightning.loggers.TensorBoardLogger

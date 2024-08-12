@@ -2,6 +2,7 @@
     FLOPS(Floating Point Operations Per Second):每秒浮点运算次数，是一个衡量硬件速度的指标，维基百科介绍如下
     FLOPs(Floating Point Operations):浮点运算次数，用来衡量模型计算复杂度
 """
+
 import collections
 import functools
 import time

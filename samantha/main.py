@@ -2,6 +2,7 @@
 
 Use `python3 -m samantha.main -h` for usage help.
 """
+
 import logging
 import sys
 

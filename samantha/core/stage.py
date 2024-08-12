@@ -1,4 +1,5 @@
 """BaseStage class string"""
+
 import json
 import logging
 import os

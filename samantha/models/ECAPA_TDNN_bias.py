@@ -197,6 +197,7 @@ class ECAPA_TDNN_GN(nn.Module):
         sg = torch.sqrt((torch.sum((x**2) * w, dim=2) - mu**2).clamp(min=1e-4))
 
         x = torch.cat((mu, sg), 1)
+
         x = self.bn5(x)
-        x = self.fc6(x)
+        x = self.fc6(x).float()
         return x

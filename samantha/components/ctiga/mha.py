@@ -1090,6 +1090,7 @@ class MHA(nn.Module):
             performance reason: for post-norm architecture, returning the input allows us
             to fuse the backward of nn.Linear with the residual connection.
         """
+
         assert isinstance(version, (str, int, float))
         version = str(version)
         assert version in FLASHATTN_VERSIONS

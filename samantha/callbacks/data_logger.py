@@ -127,9 +127,11 @@ class AudioDataLogger(pl.Callback):
             batch_size = audios.shape[0]
             batch_idxs = choices(
                 range(batch_size),
-                k=self.examples_per_batch
-                if self.examples_per_batch < batch_size
-                else batch_size,
+                k=(
+                    self.examples_per_batch
+                    if self.examples_per_batch < batch_size
+                    else batch_size
+                ),
             )
 
             for idx in batch_idxs:

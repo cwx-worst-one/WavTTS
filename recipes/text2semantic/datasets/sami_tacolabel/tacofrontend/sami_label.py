@@ -4,6 +4,7 @@ import json
 from collections import OrderedDict
 from tqdm import tqdm
 import euler
+
 euler.install_thrift_import_hook()
 from .server.sami_thrift import SAMI, InvokeRequest
 from .server.base_thrift import Base
@@ -16,7 +17,6 @@ GATEWAYS = [
     'sd://lab.sami.gateway',
     'sd://lab.sami.gateway.service.hl'
 ]
-
 
 
 def InvokeServer(file_id, text, speaker):
@@ -53,6 +53,7 @@ def InvokeServer(file_id, text, speaker):
     result = _client.Invoke(req)
     return result.data, file_id, result.BaseResp.StatusMessage
 
+
 def InvokeServerPunc(file_id, text, speaker):
     payload_obj = {
         'audio_info': {'format': 'wav', 'sample_rate': 24000, 'pitch_rate': 0, 'speech_rate': 0, 'speaker': speaker,
@@ -87,6 +88,7 @@ def InvokeServerPunc(file_id, text, speaker):
                 break
     result = _client.Invoke(req)
     return result.data, file_id, result.BaseResp.StatusMessage
+
 
 def InvokeServerSplitText(file_id, text, speaker, max_paragraph_phoneme_size=240):
     payload_obj = {
@@ -123,6 +125,7 @@ def InvokeServerSplitText(file_id, text, speaker, max_paragraph_phoneme_size=240
     result = _client.Invoke(req)
     return json.loads(result.payload)['text_segmentation'], file_id, result.BaseResp.StatusMessage
 
+
 def parse_raw_text(text_filepath):
     text_dict = OrderedDict()
     f = open(text_filepath)
@@ -136,7 +139,8 @@ def parse_raw_text(text_filepath):
             text_dict[f'{index:08}'] = metas[0]
     return text_dict
 
-def generate_tacolabels_from_textstr(text:str, language='Chinese'):
+
+def generate_tacolabels_from_textstr(text: str, language='Chinese'):
     if language == 'Chinese' or language == 'English':
         speaker = 'front_end'
     elif language == 'Chinese_new':
@@ -151,11 +155,12 @@ def generate_tacolabels_from_textstr(text:str, language='Chinese'):
         speaker = 'front_end_kr'
     else:
         raise ValueError('language error : {}'.format(language))
-    
+
     lab_data, file_id, invoke_response = InvokeServer(None, text, speaker)
     if lab_data is None:
         print(f'file_id {file_id} failed to get results. Status: {invoke_response}(`speaker` represents language)')
     return lab_data
+
 
 def generate_tacolabels_from_text(text_filepath, lab_output_dir, language='Chinese'):
     os.makedirs(lab_output_dir, exist_ok=True)
@@ -184,6 +189,7 @@ def generate_tacolabels_from_text(text_filepath, lab_output_dir, language='Chine
             f.write(lab_data)
         sucess_labs.append(osp.abspath(output_path))
     return sucess_labs
+
 
 def generate_tacolabels_from_text_by_split(text_filepath, utt2split, lab_output_dir_prefix, language='Chinese'):
     # mkdir_or_exist(lab_output_dir)
@@ -219,32 +225,96 @@ def generate_tacolabels_from_text_by_split(text_filepath, utt2split, lab_output_
         sucess_labs.append(osp.abspath(output_path))
     return sucess_labs
 
-def generate_tacolabels_from_textstr_punc(text:str, language='Chinese_v3_punc'):
-    if language == 'Chinese_v3_punc':
-        speaker = "front_end_zh"
-    elif language == 'English_v3_punc':
-        speaker = 'front_end_en'
-    else:
-        raise ValueError('language error : {}'.format(language))
-    
-    lab_data, file_id, invoke_response = InvokeServerPunc(None, text, speaker)
-    if lab_data is None:
-        print(f'file_id {file_id} failed to get results. Status: {invoke_response}(`speaker` represents language)')
-    return lab_data
 
-def split_text_engine(text:str, language='Chinese_v3_punc', max_paragraph_phoneme_size=240):
+def InvokeServerPunc_crosslingual(file_id, text, speaker, context_language):
+    payload_obj = {
+        'audio_info': {'format': 'wav', 'sample_rate': 24000, 'pitch_rate': 0, 'speech_rate': 0, 'speaker': speaker,
+                       'need_alignment': True, "silence_duration": 0},
+        "lang": "crosslingual",
+        "internal": {"lab_version": "V3", "enable_recover_puncts": False, "context_language": context_language},
+        'text': text,
+    }
+    # "internal": {"lab_version": "V3", "enable_recover_puncts": True, "context_language": context_language},
+
+    payload_str = json.dumps(payload_obj)
+
+    global _base
+    if _base is None:
+        _base = Base()
+    req = InvokeRequest(
+        Base=_base,
+        # ppe
+        access_key="kWeeJYJfKU",
+        # online
+        # access_key="TuxANXWuFZ",
+        method="TTS",
+        payload=payload_str,
+    )
+    # qa账号
+    # yoQqDUzFkc
+    # hongxu账号
+    # kWeeJYJfKU
+
+    # _client = euler.Client(SAMI, 'sd://lab.sami.gateway?cluster=release_thrift', timeout=1200)
+
+    _client = euler.Client(SAMI, 'sd://lab.sami.gateway?cluster=release_thrift&env_tag=ppe_sami', timeout=1200)
+
+    # global _client
+    # if _client is None:
+    #     for gateway in GATEWAYS:
+    #         _client = euler.Client(SAMI, gateway + '?cluster=release_thrift', timeout=1200)
+    #         result = _client.Invoke(req)
+    #         if result.BaseResp.StatusMessage == 'ServerFailedInvoke':
+    #             continue
+    #         else:
+    #             break
+    result = _client.Invoke(req)
+    # print(result)
+    return result.data, file_id, result.BaseResp.StatusMessage
+
+
+def generate_tacolabels_from_textstr_punc(text: str, language='Chinese_v3_punc', context_language='zh'):
+    # if language == 'Chinese_v3_punc':
+    #     speaker = "front_end_zh"
+    # elif language == 'English_v3_punc':
+    #     speaker = 'front_end_en'
+    # elif language == 'Japanese_v3_punc':
+    #     speaker = "front_end_zh"
+    # elif language == 'spanish_v3_punc':
+    #     speaker = "front_end_zh"
+    # else:
+    #     raise ValueError('language error : {}'.format(language))
+    speaker = "front_end_zh"
+    if language in ['Chinese_v3_punc', 'English_v3_punc']:
+        lab_data, file_id, invoke_response = InvokeServerPunc(None, text, speaker)
+        if lab_data is None:
+            print(f'file_id {file_id} failed to get results. Status: {invoke_response}(`speaker` represents language)')
+        return lab_data
+
+    elif language in ['Japanese_v3_punc', 'Spanish_v3_punc', 'Indonesia_v3_punc', 'Portuguese_v3_punc']:
+        lab_data, file_id, invoke_response = InvokeServerPunc_crosslingual(None, text, speaker, context_language)
+        if lab_data is None:
+            print(f'file_id {file_id} failed to get results. Status: {invoke_response}(`speaker` represents language)')
+        return lab_data
+    else:
+        raise ValueError('language error : {}'.format(language))
+
+
+def split_text_engine(text: str, language='Chinese_v3_punc', max_paragraph_phoneme_size=240):
     if language == 'Chinese_v3_punc':
         speaker = "front_end_zh"
     elif language == 'English_v3_punc':
         speaker = 'front_end_en'
     else:
         raise ValueError('language error : {}'.format(language))
-    
-    texts, file_id, invoke_response = InvokeServerSplitText(None, text, speaker, max_paragraph_phoneme_size=max_paragraph_phoneme_size)
+
+    texts, file_id, invoke_response = InvokeServerSplitText(None, text, speaker,
+                                                            max_paragraph_phoneme_size=max_paragraph_phoneme_size)
     if texts is None:
         print(f'file_id {file_id} failed to get results. Status: {invoke_response}(`speaker` represents language)')
     # return texts
     return [t for t in texts if len(t) > 0]
+
 
 if __name__ == "__main__":
     text = "好啊，我觉得《追捕野蛮人》就不错，适合长时间工作之后放松身心。它讲的是一个为了不被抓进儿童收容所的“熊孩子”，和一个为了不被抓进监狱的怪叔叔的森林逃亡之旅。里面有顺手拈来的戏谑、回味无穷的冷幽默，比如，瑞奇被寄养在贝拉家的时候，他趁天黑逃跑，但因为不熟悉地形，折腾了一晚上，发现只跑出去不到200米，醒来后贝拉就坐在他旁边盯着他，让人忍俊不禁，另外，在这部影片中你还可以欣赏新西兰壮丽的风景，把你工作中的疲惫一扫光。"

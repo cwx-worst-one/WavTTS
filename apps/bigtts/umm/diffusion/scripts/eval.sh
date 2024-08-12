@@ -16,6 +16,6 @@ echo $output_dir/wav_res_ref_text
 
 bash eval/cal_wer.sh ${output_dir}/wav_res_ref_text ${output_dir}/wav_res_ref_text.wer internal $lang
 
-bash eval/cal_asv.sh ${output_dir}/wav_res_ref_text ${output_dir}/wav_res_ref_text.asv
+# bash eval/cal_asv.sh ${output_dir}/wav_res_ref_text ${output_dir}/wav_res_ref_text.asv
 
 cd -

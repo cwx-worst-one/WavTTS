@@ -4,6 +4,7 @@ import pickle
 
 import librosa
 import numpy as np
+import soundfile as sf
 import torch
 from torchaudio.transforms import Resample
 
@@ -66,12 +67,13 @@ def get_duration_wds(alignments, phonemes, mel_len, hop_ms):
 def get_text_info(
     sample,
     meta_obj,
-    acoustic_len,
-    hop_ms,
-    mask_use_alignment,
     use_text,
-    text_drop_rate,
+    flag_drop,
+    text_drop_id,
     use_phone_lang,
+    hop_ms=0,  # deprecated
+    acoustic_len=0,  # deprecated
+    mask_use_alignment=False,  # deprecated
 ):  # sourcery skip: extract-method
     # load phone seq & duration
     text = sample["text"]
@@ -109,9 +111,11 @@ def get_text_info(
         data_dict["duration"] = duration
 
     if use_text:
-        text_id = np.concatenate([text_id, np.ones([text_id.shape[0], 1])], axis=-1)
-        if text_drop_rate > 0 and np.random.rand() <= text_drop_rate:
-            text_id[:, :] = 1
+        if flag_drop:
+            text_id[:, :] = text_drop_id
+        text_id = np.concatenate(
+            [text_id, np.ones([text_id.shape[0], 1])], axis=-1
+        )  # 1 is always EOS for text
         data_dict["phone"] = text_id[0, :]
         data_dict["tone"] = text_id[1, :]
         data_dict["word_seg"] = text_id[2, :]
@@ -124,11 +128,31 @@ def get_text_info(
 
 
 def get_bn(sample):
-    bn = pickle.loads(sample["bns"])
-    bn = torch.from_numpy(bn)
-    out_dim = bn.shape[1] // 2
-    m, logs = torch.split(bn, out_dim, dim=-1)
-    bn = m + torch.randn_like(m) * torch.exp(logs)
+    if "bns" in sample:
+        bn = pickle.loads(sample["bns"])
+        bn = torch.from_numpy(bn)
+        out_dim = bn.shape[1] // 2
+        m, logs = torch.split(bn, out_dim, dim=-1)
+        bn = m + torch.randn_like(m) * torch.exp(logs)
+    else:
+        return None
+    # else:
+    # bn = pickle.loads(sample["vae"])
+    # bn = bn.squeeze(0).transpose(1, 0)
+    # bn = torch.from_numpy(bn)
+
+    # if torch.any(torch.isnan(bn)):
+    #    print(bn)
+    #    wav, sr = librosa.load(io.BytesIO(sample["wav"]), sr=None, mono=False)
+    #    uttid = sample["uttid"]
+    #    sf.write(f"vae_failed_case/{uttid}.wav", wav, sr)
+    #    np.save(f"vae_failed_case/{uttid}.npy", bn.numpy())
+    #    exit()
+    #
+    # out_dim = bn.shape[1] // 2
+    # m, logs = torch.split(bn, out_dim, dim=-1)
+    # bn = m + torch.randn_like(m) * torch.exp(logs * 0.5)
+
     return bn
 
 

@@ -54,9 +54,13 @@ def construct_local_mask(
         local_mask = torch.logical_or(
             col_idx
             >= torch.minimum(
-                (row_idx + 1 + sk - sq + window_size[1])
-                if window_type == ELEMWISE_WINDOW_MASK
-                else (row_idx + sk - sq + window_size[1] - (row_idx) % window_size[1]),
+                (
+                    (row_idx + 1 + sk - sq + window_size[1])
+                    if window_type == ELEMWISE_WINDOW_MASK
+                    else (
+                        row_idx + sk - sq + window_size[1] - (row_idx) % window_size[1]
+                    )
+                ),
                 sk,
             ),
             col_idx < row_idx + sk - sq - window_size[0],
