@@ -75,4 +75,6 @@ diffusion_config:
     token_chunk_size: !ref <run_opts[token_chunk_size]>
     token_chunk_overlap: !ref <run_opts[token_chunk_overlap]>
     without_prefix: !ref <run_opts[without_prefix]>
+    diffusion_model_cls: !apply:os.getenv ["diffusion_model_cls","ChunkInfer2"]
+    padding_mode: "token_padding"
 
