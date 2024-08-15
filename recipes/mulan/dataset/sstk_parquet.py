@@ -23,6 +23,45 @@ def process_audio_pq(data, segment = None):
     data = process_audio(data, segment)
     return data
 
+
+def process_audio_segments(data, metadata):
+    audio, _ = librosa.load(io.BytesIO(data["wav"]), sr = None)
+    del data["wav"]
+
+    if audio.dtype == np.int16:
+        audio = (audio / 32768.0).astype("float32")
+    if len(audio.shape) == 1:
+        audio = audio[None, :]
+
+    music_len = 24000 * 10
+    if audio.shape[-1] < music_len:
+        audio = np.pad(audio, ((0, 0), (0, music_len - audio.shape[-1])), "constant")
+        start_idx = 0
+    elif 'deepchorus' in metadata:
+        segments = metadata['deepchorus']['segments']
+        audio_duration = audio.shape[-1]
+        start_candidates = []
+        for s in segments:
+            label = s['label']
+            start, end = s['interval']
+            start_idx = int(start * 24000)
+            end_idx = int(min(end * 24000, audio_duration))
+            if label in ['chorus', 'verse', 'bridge', 'inst'] and (start_idx + music_len) <= audio_duration:
+                random_section_start = random.randint(start_idx, max(start_idx, end_idx - music_len))
+                start_candidates.append(random_section_start)
+        if start_candidates:
+            start_idx = random.choice(start_candidates)
+        else:
+            start_idx = random.randint(0, max(0, audio.shape[-1] - music_len))
+    elif audio.shape[-1] > music_len * 4: # trim intro / outro
+        start_idx = random.randint(music_len, audio.shape[-1] - music_len * 2)
+    else:
+        start_idx = random.randint(0, max(0, audio.shape[-1] - music_len))
+
+    audio = torch.from_numpy(audio[..., start_idx : start_idx + music_len]).float()
+    data["audio"] = audio
+    return data
+
 def pattern_apply(text_content):
     try:
         pattern = r'"text":\s*"([^"]+)"'
@@ -51,12 +90,12 @@ def return_self(x):
 
 def isEmpty(v):
 
-    if v is None or v == "\\N" or len(v.strip()) == 0:
+    if v is None or v == "\\N" or (isinstance(v, str) and len(v.strip()) == 0):
         return True
     return False
 
 class SSTKDataset(IterableDataset):
-    def __init__(self, name="sstk", mode="train", text_pick = "random", dataset_id=105, **kwargs):
+    def __init__(self, name="sstk", mode="train", text_pick = "random", dataset_id=340, **kwargs):
         self.tokenizer = AutoTokenizer.from_pretrained("laion/larger_clap_general")
         # self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
         self.name = name
@@ -75,7 +114,7 @@ class SSTKDataset(IterableDataset):
         text = ""
         for key in ["description", "title", "keywords", "genres", "instruments"]:
             if key in metadata:
-                text += str(key)
+                text += str(metadata[key])
         has_vocal_metadata = 'vocal' in text.lower()
         voice_proportion = vad.get("extra", {}).get("voice_proportion", 0.0)
         if has_vocal_metadata or voice_proportion > 0.5:
@@ -88,7 +127,8 @@ class SSTKDataset(IterableDataset):
         # "extra": {"voice_duration_in_seconds": 8.38, "audio_duration_in_seconds": 154.10526, "voice_proportion": 0.054378}} 
         # segment = metadata.get("vad", {}).get("segment", None)
         #print("segment in _process_audio", segment)
-        return process_audio_pq(data, segment=segment)
+        return process_audio_segments(data, metadata)
+        # return process_audio_pq(data, segment=segment)
 
 
     def _process_text(self, data):
@@ -99,7 +139,13 @@ class SSTKDataset(IterableDataset):
             if isEmpty(v): continue
             text_fields[key] = v.strip()
         if len(text_fields) == 0: return
-            
+
+        if "bpm" in metadata and not isEmpty(metadata["bpm"]):
+            try:
+                bpm = int(metadata['bpm'])
+                text_fields["bpm"] = f'{bpm} BPM'
+            except Exception as e: pass
+    
         if self.text_pick == "sstk_dropout":
             data["text"] = _process_sstk_dropout(text_fields)
         elif self.name == "sstk_sft":
@@ -161,7 +207,7 @@ def _process_sstk_dropout(text_fields):
     keywords = []
     if "keywords" in text_fields:
         kw = [t.strip() for t in text_fields["keywords"].split(",")]
-        kw = sample_pct(kw, 0.5, 5)
+        kw = sample_pct(kw, 0.75, 5)
         keywords.extend(kw)
     if "genres" in text_fields:
         g = [t.strip() for t in text_fields["genres"].split(",")]
@@ -171,6 +217,8 @@ def _process_sstk_dropout(text_fields):
         i = [t.strip() for t in text_fields["instruments"].split(",")]
         i = sample_pct(i, 0.3, 2)
         keywords.extend(i)
+    if "bpm" in text_fields and random.random() < 0.3:
+        keywords.append(text_fields["bpm"])
     keywords = list(set(keywords))
     random.shuffle(keywords)
     if random.random() < 0.5:

@@ -60,14 +60,6 @@ sstk_dataset: !new:recipes.mulan.dataset.sstk_parquet.SSTKDataset
     tokenizer_name: !ref <run_opts[text_encoder]>
     resampled: True
 
-sstk_genre_dataset: !new:recipes.mulan.dataset.sstk_parquet.SSTKDataset
-    name: "sstk"
-    mode: "train"
-    text_pick: sstk_dropout
-    dataset_id: 146 # genre balanced
-    tokenizer_name: !ref <run_opts[text_encoder]>
-    resampled: True
-
 sstk_1m_dataset: !new:recipes.mulan.dataset.sstk_parquet.SSTKDataset
     name: "sstk"
     mode: "train"
@@ -76,13 +68,26 @@ sstk_1m_dataset: !new:recipes.mulan.dataset.sstk_parquet.SSTKDataset
     tokenizer_name: !ref <run_opts[text_encoder]>
     resampled: True
 
+everynoise_dataset: !new:recipes.mulan.dataset.everynoise_parquet.EverynoiseDataset
+    mode: "train"
+    dataset_id: 312 # 1m dataset
+    tokenizer_name: !ref <run_opts[text_encoder]>
+    resampled: True
+
+wyy_dataset: !new:recipes.mulan.dataset.wyy_parquet.WYYDataset
+    mode: "train"
+    dataset_id: 317 # 1m dataset
+    tokenizer_name: !ref <run_opts[text_encoder]>
+    resampled: True
+
 train_datasets:
     sstk: !ref <sstk_dataset>
-    sstk_genre: !ref <sstk_genre_dataset>
     sstk_1m: !ref <sstk_1m_dataset>
+    everynoise: !ref <everynoise_dataset>
+    wyy: !ref <wyy_dataset>
 
-selected_dataset_names: [sstk, sstk_genre, sstk_1m]
-weights: [1, 1, 1]
+selected_dataset_names: [sstk, sstk_1m, everynoise, wyy]
+weights: [1, 1, 0.1, 0.2]
 
 train_dataset: !new:samantha.dataio.dataset.MultiIterableDataset
     datasets: !apply:recipes.mulan.dataset.utils.select_datasets
