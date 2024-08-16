@@ -176,13 +176,13 @@ class VoiceBoxTransform(ItemTransformBase):
         text_info = get_text_info(
             item,
             meta_obj,
-            acoustic_len,
-            self.hop_ms,
-            self.mask_use_alignment,
             self.use_text,
             flag_drop,
             self.text_drop_id,
             self.use_phone_lang,
+            hop_ms=self.hop_ms,
+            acoustic_len=acoustic_len,
+            mask_use_alignment=self.mask_use_alignment,
         )
         if text_info is None:
             return None
