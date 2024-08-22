@@ -1,0 +1,15 @@
+21AUG2024 @hanoihantrakul
+The TTS ROPE recipe is based on YAML's
+`recipes/umm/conf/2024_Q2_conf_archives/conformer_tts_rope/umm_stage1_conformer_tts_rope_mixedZHEN2255.yaml`
+`recipes/umm/conf/2024_Q2_conf_archives/conformer_tts_rope/umm_stage2_conformer_tts_rope_mixedZHEN2255.yaml`
+`recipes/umm/conf/2024_Q2_conf_archives/conformer_tts_rope/umm_stage3_conformer_tts_rope_mixedZHEN2255_Speech2375.yaml`
+
+I use the same configuration but now train on data [2255, 2375, 794]
+instead of just [2255,2375]
+
+The main difference with the BigMusic Recipe is in two areas:
+1.) The use of TTS ROPE implementation over BigMusic ROPE implementation
+2.) The addition of a pitch-loss head. The total number of losses is now
+[mel_loss, chroma_loss, ctc_loss, pitch_loss]
+
+

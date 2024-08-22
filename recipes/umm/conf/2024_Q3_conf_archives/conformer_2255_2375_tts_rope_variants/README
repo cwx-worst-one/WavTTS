@@ -1,0 +1,9 @@
+22AUG2024 @hanoihantrakul
+At the time of writing, ConformerUMM_2255_2375_TTS_ROPE has a worse E2E WER of 2.31 
+compated to ConformerUMM_2255_2375 E2E WER of 1.78
+
+I created a variant of ConformerUMM_2255_2375_TTS_ROPE which uses the same config
+as Li Tang but removes the pitch_loss. I want to ablate whether the pitch_loss
+is causing the reduction in WER (a bit like the addition of GAN-loss also reducing
+WER back in ConvUMM-GAN models)
+
