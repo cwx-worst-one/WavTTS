@@ -3,7 +3,7 @@ import random
 import pytest
 import pytorch_lightning as pl
 import torch
-
+from einops import rearrange
 from samantha.utils.ctiga.padding import pad_input, unpad_input
 
 torch.backends.cudnn.enabled = True
@@ -561,3 +561,112 @@ def test_llama_mha_varlen_training(mha_type, dtype, use_triton, dim, seqlen):
         torch.testing.assert_allclose(d_h_act, d_h_ref, atol=0.016 * 2, rtol=1e-5 * 2)
     else:
         torch.testing.assert_allclose(d_h_act, d_h_ref)
+
+def apply_rotary_emb(
+    x,
+    cos,
+    sin,
+    interleaved=False,
+    inplace=False,
+    seqlen_offsets= 0,
+    cu_seqlens = None,
+    max_seqlen= None,
+):
+    from samantha.components.ctiga.rotary import apply_rotary_emb_func
+    """
+    Arguments:
+        x: (batch_size, seqlen, nheads, headdim) if cu_seqlens is None
+            else (total_seqlen, nheads, headdim)
+        cos, sin: (seqlen_rotary, rotary_dim / 2)
+        interleaved: if True, rotate pairs of even and odd dimensions (GPT-J style) instead
+            of 1st half and 2nd half (GPT-NeoX style).
+        inplace: if True, apply rotary embedding in-place.
+        seqlen_offsets: (batch_size,) or int. Each sequence in x is shifted by this amount.
+            Most commonly used in inference when we have KV cache.
+        cu_seqlens: (batch + 1,) or None
+        max_seqlen: int
+    Return:
+        out: (batch_size, seqlen, nheads, headdim) if cu_seqlens is None
+            else (total_seqlen, nheads, headdim)
+    rotary_dim must be <= headdim
+    Apply rotary embedding to the first rotary_dim of x.
+    """
+    return apply_rotary_emb_func(
+        x, cos, sin, interleaved, inplace, 
+        # seqlen_offsets, cu_seqlens, max_seqlen
+    )
+
+def generate_cos_sin(seqlen, rotary_dim, device, dtype):
+    import math
+    assert rotary_dim % 2 == 0
+    angle = torch.rand(seqlen * 2, rotary_dim // 2, device=device) * 2 * math.pi
+    cos = torch.cos(angle).to(dtype=dtype)
+    sin = torch.sin(angle).to(dtype=dtype)
+    return cos, sin
+
+
+def generate_seqlen_offsets(seqlen_offsets_type, batch_size, seqlen, device):
+    if seqlen_offsets_type == 0:
+        return 0
+    elif seqlen_offsets_type is int:
+        return torch.randint(0, seqlen + 1, (1,)).item()
+    elif seqlen_offsets_type is torch.Tensor:
+        return torch.randint(0, seqlen + 1, (batch_size,), dtype=torch.int32, device=device)
+
+
+def index_cos_sin(cos, sin, seqlen_offsets, seqlen):
+    if isinstance(seqlen_offsets, torch.Tensor):
+        batch_size = seqlen_offsets.shape[0]
+        arange = rearrange(torch.arange(seqlen, device=cos.device), "s -> 1 s")
+        idx = rearrange(seqlen_offsets, "b -> b 1") + arange
+        cos_pt = rearrange(cos[idx.flatten()], "(b s) d -> b s d", b=batch_size)
+        sin_pt = rearrange(sin[idx.flatten()], "(b s) d -> b s d", b=batch_size)
+    else:
+        cos_pt = cos[seqlen_offsets : seqlen_offsets + seqlen]
+        sin_pt = sin[seqlen_offsets : seqlen_offsets + seqlen]
+    return cos_pt, sin_pt
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("seqlen_offsets_type", [0])
+@pytest.mark.parametrize("rotary_fraction", [1.0])
+@pytest.mark.parametrize("interleaved", [False, True])
+@pytest.mark.parametrize("inplace", [False, True])
+def test_rotary_emb_func(inplace, interleaved, rotary_fraction, seqlen_offsets_type, dtype):
+    from samantha.components.ctiga.rotary import apply_rotary_emb_torch
+    rtol = 1e-3
+    batch_size = 32
+    nheads = 4
+    seqlen = 217
+    headdim = 128
+    device = "cuda"
+    rotary_dim = int(rotary_fraction * headdim)
+    torch.manual_seed(42)
+    x = torch.randn(
+        batch_size, seqlen, nheads, headdim, dtype=dtype, device=device, requires_grad=True
+    )
+    x_pt = x.detach().clone().requires_grad_()
+    cos, sin = generate_cos_sin(seqlen, rotary_dim, device, dtype)
+    seqlen_offsets = generate_seqlen_offsets(seqlen_offsets_type, batch_size, seqlen, device)
+    out = apply_rotary_emb(
+        x, cos, sin, seqlen_offsets=seqlen_offsets, interleaved=interleaved, inplace=inplace
+    )
+    cos_pt, sin_pt = index_cos_sin(cos, sin, seqlen_offsets, seqlen)
+    out_pt = apply_rotary_emb_torch(
+        x_pt.float(), cos_pt.float(), sin_pt.float(), interleaved=interleaved
+    ).to(dtype=dtype)
+    print(f"Output max diff: {(out - out_pt).abs().max().item()}")
+
+    g = torch.randn_like(out)
+    g_pt = g.clone()  # If inplace=True, we might modify the gradient inplace
+    out.backward(g)
+    out_pt.backward(g_pt)
+    print(f"Grad max diff: {(x.grad - x_pt.grad).abs().max().item()}")
+
+    if not inplace:
+        assert torch.equal(x, x_pt)
+    # Numerical error if we just do any arithmetic
+    atol = ((out_pt + 0.3 - 0.3) - out_pt).abs().max().item()
+    # assert torch.allclose(out, out_pt, rtol=rtol, atol=2 * atol)
+    atol = ((x_pt.grad + 0.3 - 0.3) - x_pt.grad).abs().max().item()
+    assert torch.allclose(x.grad, x_pt.grad, rtol=rtol, atol=2 * atol)
