@@ -934,9 +934,11 @@ class SemanticModule(BaseContinuousEmbedModule):
         repetition_penalty = hp.get('repetition_penalty', 1.0)
         skip_sos = hp.get('skip_sos', False)
         self.extra_params.debug_index = hp.get('debug_index', None)
-        exclude_ids = None
+        exclude_ids = hp.get("exclude_token_ids", [])
         if hp.get("exclude_eos", False) and self.target_embedder.eos_id is not None:
-            exclude_ids = [self.target_embedder.eos_id]
+            if self.target_embedder.eos_id not in exclude_ids:
+                exclude_ids.append(self.target_embedder.eos_id)
+        if exclude_ids:
             print(f"exclude_ids: {exclude_ids}")
         
         # Predict intensity if it's not available

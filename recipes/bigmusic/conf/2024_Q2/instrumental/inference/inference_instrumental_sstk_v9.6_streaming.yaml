@@ -14,7 +14,7 @@ extra_params:
     save_style_audio: True
     save_mode: wav  # wav|mp3|upload
     save_semantic_tokens: False
-    prompt_path: "hdfs://haruna/home/byte_speech_sv/bigmusic/prompts/sstk-prompt100.csv"
+    prompt_path: "/mnt/bn/audio-diffusion/data/bigmusic_text_prompts/sstk-prompt100.csv"
     inference_conditions: "style_text,duration"
     max_items: null
     use_reranker: True
@@ -23,8 +23,8 @@ extra_params:
 
     # Semantic model
     semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
-    semantic_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/instrumental/sstk_v9/semantic/rl/step=000550-minimal.ckpt"
-    mulan_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixingxing.cs/models/bigmusic/instrumental/sstk_v9/mulan/mulan-step=005000-median_rank_1=61-kaggle-minimal.ckpt"
+    semantic_ckpt: "/mnt/bn/audio-diffusion/ashaw/models/sstk_v9/semantic/rl/v9.6-rc1-step=000500-minimal.ckpt"
+    mulan_ckpt: "/mnt/bn/audio-diffusion/ashaw/models/sstk_v9/mulan/mulan-step=005000-median_rank_1=61-kaggle-minimal.ckpt"
     mulan_version: "sstkmae_v3"
 
     # For re-ranking
@@ -60,6 +60,7 @@ extra_params:
     sample_thresh: 0.8
     token2wav_type: "ar-diffusion-vocoder"
     exclude_eos: True
+    exclude_token_ids: [1307]
 
     normalize_volume: False
 
@@ -72,7 +73,7 @@ run_opts:
     cache_dir: .module_cache/musiclm
     batch_size: 1  # set to 28 if not using reranker
 
-token2wav_config: !include:../../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_49hzSS_streaming_cn_v9.yaml
+token2wav_config: !include:../../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_49hzSS_streaming_us_v9.yaml
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
