@@ -4,12 +4,13 @@ if [ "${quota_pool}" == "third_party_aws" ]; then
 fi
 unset quota_pool
 
-system_cuda_lib_version=$(realpath /usr/lib/x86_64-linux-gnu/libcuda.so | sed 's=/usr/lib/x86_64-linux-gnu/libcuda.so.\([^.]*\).*=\1=')
-compat_cuda_lib_version=$(realpath /usr/local/cuda/compat/libcuda.so | sed 's=/usr/local/cuda.*/libcuda.so.\([^.]*\).*=\1=')
-if [ "${system_cuda_lib_version}" -lt "${compat_cuda_lib_version}" ]; then
-  export LD_LIBRARY_PATH=/usr/local/cuda/compat:$LD_LIBRARY_PATH
-fi
-unset system_cuda_lib_version compat_cuda_lib_version
+# No longer need this anymore, arnold entrypoint already done this since 2024-04.
+# system_cuda_lib_version=$(realpath /usr/lib/x86_64-linux-gnu/libcuda.so | sed 's=/usr/lib/x86_64-linux-gnu/libcuda.so.\([^.]*\).*=\1=')
+# compat_cuda_lib_version=$(realpath /usr/local/cuda/compat/libcuda.so | sed 's=/usr/local/cuda.*/libcuda.so.\([^.]*\).*=\1=')
+# if [ "${system_cuda_lib_version}" -lt "${compat_cuda_lib_version}" ]; then
+#   export LD_LIBRARY_PATH=/usr/local/cuda/compat:$LD_LIBRARY_PATH
+# fi
+# unset system_cuda_lib_version compat_cuda_lib_version
 
 MEM_LIMIT=${MY_MEM_LIMIT:=0}
 # 1.8T
