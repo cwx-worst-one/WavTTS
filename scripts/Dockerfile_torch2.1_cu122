@@ -233,7 +233,11 @@ RUN pip3 install --no-cache-dir pip==24.0 && \
         byted-janus==0.1.6.post6 \
         torchaudio-augmentations==0.2.1 \
         einops==0.6.1 \
-        zhon==1.1.5
+        zhon==1.1.5 && \
+    pip3 install \
+        --no-cache-dir \
+        byted-omnistore \
+        emoji
 
 # 2. install falconclaw && panther && dataloader
 RUN pip3 install --no-cache-dir --use-pep517 \
