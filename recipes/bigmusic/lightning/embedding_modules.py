@@ -761,7 +761,101 @@ class DurationEmbedder(TokenEmbedder):
         device = next(self.parameters()).device
         duration_ids = torch.LongTensor([duration_id] * batch_size).to(device)
         return duration_ids.reshape(-1, 1)
+    
+class SectionStartEmbedder(BaseEmbedder):
+    def __init__(
+            self,
+            embedding_dim=1024,
+            add_sos=False,
+            max_sec_len=10,
+            dropout=0.0,
+        ):
+        super().__init__()
+        self.none_id = 0
+        vocab = ["none", "silence", "intro", "verse", "chorus", "bridge", "inst", "outro"]
+        self.vocab2id = { label:idx for idx, label in enumerate(vocab)}
+        self.vocab_size = len(vocab)
+        
+        self.max_sec_len = max_sec_len
+            
+        self.sos_id = None
+        self.eos_id = None
+        self.dropout = dropout
+        if add_sos:
+            self.vocab_size = self.vocab_size + 1
+            self.sos_id = self.vocab_size - 1
+        self.embedder = nn.Embedding(self.vocab_size, embedding_dim)
+        self.start_time_projection = nn.Linear(1, embedding_dim, bias=True)
 
+        self.dropout = dropout
+
+    # TokenEmbedder
+    def get_sos_token(self, batch_size):
+        assert self.sos_id is not None, "Error getting sos id. Must initialize embedder with add_sos=True"
+        device = next(self.parameters()).device
+        sos_ids = torch.full(size=(batch_size, 1), fill_value=self.sos_id, dtype=torch.long, device=device)
+        return sos_ids
+
+    def get_sos_embed(self, batch_size):
+        return self.projection(self.embedder(self.get_sos_token(batch_size)))
+
+    def embed(self, requires, batch, with_sos=False, **kwargs):
+        embeds = self.get_embeds(requires, batch, **kwargs)
+        if with_sos:
+            sos_embed = self.get_sos_embed(embeds.size(0))
+            embeds = torch.cat([sos_embed, embeds], dim=1)
+        return embeds
+
+    def get_embeds(
+        self,
+        requires,
+        input_audio_or_text,
+    ):
+        # input = (label1, start1, l2, s2)
+        batch_start_times = []
+        batch_labels = []
+
+        ## handle the following cases
+        # type1 = s1, s2, s3, l1, l2, l3
+        # type2 = s1, None
+        # type3 = s1, l1, l2, l3
+        
+        device = next(self.parameters()).device
+        for item in input_audio_or_text:
+            start_times = item[1::2][:self.max_sec_len]
+            labels = item[::2][:self.max_sec_len]
+            
+            # enc_type = random.choice(['t1', 't2','t3']) if self.training else 't1'
+            enc_type = 't1'
+            if enc_type == 't1':
+                batch_start_times.append(start_times)
+                batch_labels.append(labels)
+            elif enc_type == 't2':
+                batch_start_times.append(start_times)
+                batch_labels.append([])
+            elif enc_type == 't3':
+                batch_start_times.append(start_times[:1])
+                batch_labels.append(labels)
+        # print('Labels, start time', batch_labels, batch_start_times)
+        
+        batch_sec_ids = []
+        for labels in batch_labels:
+            label_ids = [self.vocab2id[label] for label in labels]
+            while len(label_ids) < self.max_sec_len:
+                label_ids.append(int(self.none_id))
+            batch_sec_ids.append(label_ids)
+        label_embeds = self.embedder(torch.tensor(batch_sec_ids, device=device))
+        
+        batch_starts = []
+        for start_times in batch_start_times:
+            start_times = start_times[:]
+            while len(start_times) < self.max_sec_len:
+                start_times.append(-100)
+            batch_starts.append(start_times)
+        batch_starts = torch.tensor(batch_starts, device=device).float().unsqueeze(-1) # bs x seq_len x 1
+        start_embeds = self.start_time_projection(batch_starts) # bs x seq_len x emb
+        
+        return torch.concat([start_embeds, label_embeds], dim=1)
 
 class DurationContinuousEmbedder(ContinuousEmbedder):
     def __init__(self, input_dim=1, embedding_dim=1024, add_sos=False):
@@ -769,7 +863,11 @@ class DurationContinuousEmbedder(ContinuousEmbedder):
 
     def get_embeds(self, requires, duration, batch_size):
         device = next(self.parameters()).device
-        duration = torch.FloatTensor([duration] * batch_size).to(device)
+        if isinstance(duration, (int, float)):
+            duration = torch.FloatTensor([duration] * batch_size).to(device)
+        elif torch.is_tensor(duration):
+            duration = duration.to(device)
+        else: raise ValueError("Invalid duration input type", duration)
         return duration.float().reshape(-1, 1, 1)
 
 class StartTimeEmbedder(ContinuousEmbedder):

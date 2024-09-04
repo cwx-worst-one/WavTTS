@@ -207,6 +207,7 @@ def save_batch_outputs(
     wavs = outputs['generated_audio']
     semantic_tokens = outputs.get('generated_semantic_tokens')
     leadsheet_tokens = outputs.get('generated_leadsheet_tokens')
+    sections = batch.get('sections')
 
     # Add these conditions (if in batch) to style_text and metadata.json
     cond_id_label_map = {
@@ -242,6 +243,7 @@ def save_batch_outputs(
         lyrics_normalized_str = lyrics_normalized_text[ii] if 'lyrics_tokens' in conditions and lyrics_normalized_text else None        
         style_text = prompts[ii] if prompts else None
         style_category = style_categories[ii] if style_categories else None
+        section = sections[ii] if sections else None
         #style_category = style_categories[ii] if 'style_category' in conditions and style_categories else None
         structure = structures[ii] if 'structure' in conditions else None
         leadsheet_token = leadsheet_tokens[ii] if leadsheet_tokens is not None else None
@@ -270,6 +272,7 @@ def save_batch_outputs(
             'style_category': style_category,
             'structure': structure,
             'conditions': conditions,
+            'section': section,
             'index': {
                 'round': sample_round,
                 'absolute_idx': absolute_idx,

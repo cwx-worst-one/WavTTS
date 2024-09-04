@@ -8,7 +8,7 @@ import argparse
 # python3 recipes/bigmusic/scripts/convert_semantic_ckpt_to_minimal.py --ckpt_path /mnt/bn/lyrics-to-song/baseline_models/q4/20231102-new-baseline-mixed-ctiga-196k/checkpoints/step=196000-tr_loss=3.9746-val_accu_0=24.90.ckpt --overwrite
 # mlx worker launch -- python3 recipes/bigmusic/scripts/convert_semantic_ckpt_to_minimal.py --ckpt_path /mnt/bn/lyrics-to-song/baseline_models/q4/20231102-new-baseline-mixed-ctiga-196k/checkpoints/step=196000-tr_loss=3.9746-val_accu_0=24.90.ckpt --overwrite
 
-def main(ckpt_path='/mnt/bn/lyrics-to-song/baseline_models/q4/20231106-2min_varlen/checkpoints/step=216000-tr_loss=0.0000-val_accu_0=17.27.ckpt', output_path=None, map_location=None, overwrite=True):
+def main(ckpt_path='/mnt/bn/lyrics-to-song/baseline_models/q4/20231106-2min_varlen/checkpoints/step=216000-tr_loss=0.0000-val_accu_0=17.27.ckpt', output_path=None, map_location=None, overwrite=True, overwrite_mulan_path=None):
     assert ckpt_path.endswith('.ckpt'), 'Please provide valid .ckpt path'
     if output_path is None:
         output_path = ckpt_path.replace('.ckpt', '-minimal.ckpt')
@@ -33,10 +33,9 @@ def main(ckpt_path='/mnt/bn/lyrics-to-song/baseline_models/q4/20231106-2min_varl
     # Convert to minimal mulan
     try:
         mulan_path = state_dict['hyper_parameters']['required_modules']['mulan']['hpath']
-        if mulan_path == '/mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=024600-kaggle.ckpt':
-            # convert old checkpoints to new path
-            mulan_path = '/mnt/bn/audio-diffusion/mulan/ongoing/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt'
-            print('Old mulan 110 path found. Converting to new path first.', mulan_path)
+        if isinstance(overwrite_mulan_path, str):
+            print(f'Overwriting old mulan path. \nOld: {mulan_path}\nNew: {overwrite_mulan_path}')
+            mulan_path = overwrite_mulan_path
         state_dict['hyper_parameters']['required_modules']['mulan']['hpath'] = check_and_convert_to_minimal_path(mulan_path)
     except: 
         pass
@@ -86,7 +85,12 @@ if __name__ == '__main__':
         '--overwrite',
         action='store_true'
     )
+    parser.add_argument(
+        '--overwrite_mulan_path',
+        type=str,
+        default=None
+    )
     args = parser.parse_args()
     assert (args.ckpt_path is not None), f'Must provide valid ckpt path: {args.ckpt_path}'
-    main(args.ckpt_path, args.output_path, args.map_location, args.overwrite)
+    main(args.ckpt_path, args.output_path, args.map_location, args.overwrite, args.overwrite_mulan_path)
 

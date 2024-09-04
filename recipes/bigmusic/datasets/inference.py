@@ -140,6 +140,10 @@ def inference_dataset_from_prompt(
         prompts['intensity_audio'] = load_and_normalize_wavs(prompts['intensity_audio'])
     if 'beat_audio' in prompts:
         prompts['beat_audio'] = load_and_normalize_wavs(prompts['beat_audio'])
+    if 'sections' in prompts:
+        def format_section(section_str):
+            return [val if idx % 2 == 0 else float(val) for idx, val in enumerate(section_str.split(','))]
+        prompts['sections'] = [format_section(s) for s in prompts['sections']]
     if 'structure' in prompts:
         prompts['structure'] = [None if x == "random" else json.loads(x) for x in prompts['structure']]
     elif 'structure' in conditions:

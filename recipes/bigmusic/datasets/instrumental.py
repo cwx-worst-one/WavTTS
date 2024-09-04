@@ -111,7 +111,7 @@ class InstrumentalWebDataModule(DataModule):
         elif dataset_name == "SSTK_US_SFT":
             train_urls_and_weights = [(155, 1.0)]
         elif dataset_name == "SSTK_US_1M":
-            train_urls_and_weights = [(164, 1.0)]
+            train_urls_and_weights = [(341, 1.0)]
         elif dataset_name == "SSTK_US_SFT_3k":
             train_urls_and_weights = [(247, 1.0)]
         elif dataset_name == "SSTK_US_SFT_FINE":
@@ -177,7 +177,7 @@ class InstrumentalWebDataModule(DataModule):
                 ("hdfs://harunava/home/byte_data_seed_us/hdd_va/speech/data/shutterstock/val_url2idx_tag.txt", 1.0),
             ]
         elif val_split == "SSTK_US":
-            val_urls_and_weights = [(107, 1.0)]
+            val_urls_and_weights = [(346, 1.0)]
         else:
             raise NotImplementedError(f"Unknown val split: {val_split}")
 

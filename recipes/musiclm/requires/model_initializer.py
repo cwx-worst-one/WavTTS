@@ -101,19 +101,18 @@ def _init_cached_mulan(hpath, local_rank, cache_dir=None, version="149", prefix=
             if not os.path.exists(local_path):
                 if not hh.get(hpath, local_path):
                     raise ConnectionError(f"Cannot retrieve file from {hpath}.")
-            return {
-                f"{prefix}mulan": create_mulan_model(local_path, device=device),
-                f"{prefix}mulan_infer_fn": mulan_inference,
-                f"{prefix}mulan_rvq_fn": mulan_rvq_indexs,
-            }
+        return {
+            f"{prefix}mulan": create_mulan_model(local_path, device=device),
+            f"{prefix}mulan_infer_fn": mulan_inference,
+            f"{prefix}mulan_rvq_fn": mulan_rvq_indexs,
+        }
     else:
         local_path = hpath
-        with local_zero_first():
-            return {
-                f"{prefix}mulan": create_mulan_model(local_path, device=device),
-                f"{prefix}mulan_infer_fn": mulan_inference,
-                f"{prefix}mulan_rvq_fn": mulan_rvq_indexs,
-            }
+        return {
+            f"{prefix}mulan": create_mulan_model(local_path, device=device),
+            f"{prefix}mulan_infer_fn": mulan_inference,
+            f"{prefix}mulan_rvq_fn": mulan_rvq_indexs,
+        }
 
 
 def init_mulan_centers(hpath, local_rank, cache_dir=None):
@@ -213,35 +212,6 @@ def init_best_rq_minz(hpath, local_rank, cache_dir=None):
         "semantic": model
     }
 
-# def init_best_rq_minz(hpath, local_rank, cache_dir=None):
-#     from recipes.best_rq.models.chromatic_t5_rq import BEST_RQ
-
-#     device = torch.device(f"cuda:{local_rank}")
-#     model = BEST_RQ(
-#         codebook_dim=16,
-#         codebook_size=8192,
-#         hop_length=240,
-#         n_mels=128,
-#         conv_dim=512,
-#         encoder_dim=1024,
-#         encoder_depth=24,
-#         mask_hop=0.4,
-#         mask_prob=0.5,
-#         is_flash=True,
-#         global_mean=16.4,
-#         global_std=14.7,
-#         is_torchscript=True,
-#     )
-#     S = torch.load(
-#         "/mnt/bn/audio-diffusion/pretrained_models/best_rq/chromatic_80k.pt"
-#     )["state_dict"]
-#     SS = {k[6:]: v for k, v in S.items()}
-#     model.load_state_dict(SS, strict=False)
-
-#     model = model.to(device)
-#     model = model.half()
-#     model.eval()
-#     return {"semantic": model}
 def init_semantic_centers(hpath, local_rank, cache_dir=None):
     if cache_dir is not None:
         os.makedirs(cache_dir, exist_ok=True)

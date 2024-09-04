@@ -13,7 +13,7 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 extra_params:
     sample_rate: 24000
     token2wav_sample_rate: 44100
-    duration: [30, 60, 60, 75, 90, 90, 105, 120, 120, 120]
+    duration: [30, 45, 60, 75, 90, 120, 120]
     lyrics_codebook_size: 400
     semantic_codebook_size: 32_768
     semantic_frame_rate: 25
@@ -38,6 +38,7 @@ extra_params:
     sample_mode: "top_p"
     sample_thresh: 0.8
     exclude_eos: True
+    exclude_token_ids: [1307]
     beam_size: 4
     decoder_type: "diffusion"
     diffusion_steps: 20
@@ -68,7 +69,7 @@ extra_params:
         "semantic_diversity_sim": 0.5
         "audio_metrics": 0.0
         "intensity_sim": 1.0
-        "anchor_points_sim": 1.0
+        "anchor_points_sim": 0.0
         "mulan_temporal": 0.5
         "chroma_temporal": 1.0
     # Logging params
@@ -96,14 +97,10 @@ run_opts:
     val_check_interval: 50
     min_length_ratio: 0.95
     normalize_audio: False
-    aed_filtered: False
-    sstk_filtered: null
     avoid_vocal: True
     max_vocal_threshold: 0.5
-    overlap_vocal_threshold: 0.1
     text_type: "sstk_dropout"
-    max_num_crops: 1
-    crop_step_size: [10, 20, 20, 25, 30, 30, 30, 30, 30, 30]
+    max_num_crops: [3, 2, 2, 2, 1, 1, 1]
     mixed_ratio: 0.1
     use_pipe: False
     diffusion_ckpt: "/mnt/bn/audio-diffusion/ashaw/models/sstk_v9/diffusion/44.1k_30s_v4_gpu_40_v5_convummgan_700k_steps/diffusion-step=580000-EMA-minimal.ckpt"
@@ -119,7 +116,7 @@ additional_transforms:
       calculation_mode: !ref <extra_params[intensity_calculation]>
       intensity_hz: !ref <extra_params[intensity_hz]>
 
-pl_datamodule: !new:recipes.bigmusic.datasets.instrumental.InstrumentalWebDataModule
+pl_datamodule: !new:recipes.bigmusic.datasets.instrumental_v9.InstrumentalV9WebDataModule
     dataset_name: "SSTK_US_SFT_3k"
     val_split: "SSTK_US"
     sample_rate: !ref <extra_params[sample_rate]>
@@ -132,18 +129,13 @@ pl_datamodule: !new:recipes.bigmusic.datasets.instrumental.InstrumentalWebDataMo
     loudness_ratio_threshold: 0.1
     min_length_ratio: !ref <run_opts[min_length_ratio]>
     normalize_audio: !ref <run_opts[normalize_audio]>
-    aed_filtered: !ref <run_opts[aed_filtered]>
-    sstk_filtered: !ref <run_opts[sstk_filtered]>
     avoid_vocal: !ref <run_opts[avoid_vocal]>
     max_vocal_threshold: !ref <run_opts[max_vocal_threshold]>
-    overlap_vocal_threshold: !ref <run_opts[overlap_vocal_threshold]>
     text_type: !ref <run_opts[text_type]>
     max_num_crops: !ref <run_opts[max_num_crops]>
-    crop_step_size: !ref <run_opts[crop_step_size]>
     additional_transforms: !ref <additional_transforms>
     mixed_ratio: !ref <run_opts[mixed_ratio]>
     use_pipe: !ref <run_opts[use_pipe]>
-    max_duration: 120
 
 model_config: !new:transformers.GPT2Config
     vocab_size: 1 # placeholder. Embedding table gets removed on load
@@ -201,7 +193,7 @@ pl_module: !new:recipes.bigmusic.lightning.semantic_modules.SemanticRLModule
     extra_params: !ref <extra_params>
     required_modules:
         mulan:
-            hpath: /mnt/bn/audio-diffusion/ashaw/models/sstk_v9/mulan/mulan-step=005500-median_rank_1=63-kaggle-minimal.ckpt
+            hpath: /mnt/bn/audio-diffusion/ashaw/models/sstk_v9/mulan/mulan-step=005000-median_rank_1=61-kaggle-minimal.ckpt
             initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
                 cache_dir: !ref <run_opts[cache_dir]>
                 version: "sstkmae_v3"

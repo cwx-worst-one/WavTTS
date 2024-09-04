@@ -358,7 +358,7 @@ class MCCTransforms(TransformBase):
         text = ""
         for key in ["description", "title", "keywords", "genres", "instruments"]:
             if key in metadata:
-                text += str(key)
+                text += str(metadata[key])
         has_vocal_metadata = 'vocal' in text.lower()
         return vocal_segments, vocal_duration / total_duration, has_vocal_metadata
 
@@ -598,15 +598,15 @@ def format_text_sstk_dropout(metadata):
     keywords = []
     if "keywords" in text_fields:
         kw = [t.strip() for t in text_fields["keywords"].split(",")]
-        kw = sample_pct(kw, 0.5, min_examples=6)
+        kw = sample_pct(kw, 0.75, min_examples=3)
         keywords.extend(kw)
     if "genres" in text_fields:
         g = [t.strip() for t in text_fields["genres"].split(",")]
-        g = sample_pct(g, 0.3, min_examples=1)
+        g = sample_pct(g, 0.3, min_examples=0)
         keywords.extend(g)
     if "instruments" in text_fields:
         i = [t.strip() for t in text_fields["instruments"].split(",")]
-        i = sample_pct(i, 0.3, min_examples=1)
+        i = sample_pct(i, 0.3, min_examples=0)
         keywords.extend(i)
     keywords = list(set(keywords))
     random.shuffle(keywords)

@@ -13,6 +13,7 @@ from recipes.bigmusic.lightning.embedding_modules import (
     DurationEmbedder,
     DurationContinuousEmbedder,
     StartTimeEmbedder,
+    SectionStartEmbedder,
     StructureEmbedder,
     IntensityEmbedder,
     SpeakerEmbedder,
@@ -190,6 +191,8 @@ class SemanticModule(BaseContinuousEmbedModule):
                     embedding_dim=hidden_size,
                     add_sos=False,
                 )
+            elif emb_type == "section_start":
+                embedder_dict[emb_type] = SectionStartEmbedder(embedding_dim=hidden_size)
             elif emb_type == "structure":
                 embedder_dict[emb_type] = StructureEmbedder(
                     durations=extra_params["duration"],
@@ -312,9 +315,17 @@ class SemanticModule(BaseContinuousEmbedModule):
 
     def infer_target_duration(self, batch):
         if "duration" in batch:
-            target_duration = batch["duration"]
+            if torch.is_tensor(batch["duration"]) and len(batch["duration"].shape) == 1:
+                target_duration = batch["duration"][0].item()
+            else:
+                target_duration = batch["duration"]
         elif "target_audio" in batch:
             target_duration = batch["target_audio"].shape[-1] // self.extra_params.sample_rate
+        elif "duration" in self.extra_params:
+            if isinstance(self.extra_params.duration, (list, tuple)):
+                target_duration = self.extra_params.duration[-1]
+            else:
+                target_duration = self.extra_params.duration
         else:
             target_duration = None
         return target_duration
@@ -469,8 +480,11 @@ class SemanticModule(BaseContinuousEmbedModule):
 
     def prepare_duration_inputs(self, batch, duration_embedder):
         batch_size = self.infer_batch_size(batch)
-        duration = self.infer_target_duration(batch)
-        embeds = duration_embedder.embed(self.requires, duration, with_sos=False, batch_size=batch_size)
+        if "song_duration" in batch: # instrumental v9 uses song duration instead of cropped duration
+            song_duration = batch["song_duration"]
+        else:
+            song_duration = self.infer_target_duration(batch)
+        embeds = duration_embedder.embed(self.requires, song_duration, with_sos=False, batch_size=batch_size)
         return embeds
 
     def prepare_start_time_inputs(self, batch, start_time_embedder):
@@ -478,6 +492,13 @@ class SemanticModule(BaseContinuousEmbedModule):
         if 'start_time' not in batch:
             batch['start_time'] = torch.zeros((batch_size,))
         embeds = start_time_embedder.embed(self.requires, batch['start_time'].to(self.device), with_sos=False)
+        return embeds
+
+    def prepare_section_start_inputs(self, batch, section_start_embedder):
+        batch_size = self.infer_batch_size(batch)
+        if 'sections' not in batch:
+            batch['sections'] = [['none', 0] for _ in range(batch_size)]
+        embeds = section_start_embedder.embed(self.requires, batch['sections'], with_sos=False)
         return embeds
 
     def prepare_structure_inputs(self, batch, structure_embedder):
@@ -653,6 +674,8 @@ class SemanticModule(BaseContinuousEmbedModule):
                 emb_inputs = self.prepare_duration_inputs(batch, embedder)
             elif emb_type == "start_time":
                 emb_inputs = self.prepare_start_time_inputs(batch, embedder)
+            elif emb_type == "section_start":
+                emb_inputs = self.prepare_section_start_inputs(batch, embedder)
             elif emb_type == "structure":
                 emb_inputs = self.prepare_structure_inputs(batch, embedder)
             elif emb_type == "acc_audio":
@@ -875,6 +898,7 @@ class SemanticModule(BaseContinuousEmbedModule):
                 batch_size = self.infer_batch_size(batch)
                 batch_cfg['style_text'] = [''] * batch_size
                 batch_cfg['style_audio'] = [''] * batch_size
+            batch_cfg['sections'] = [['none', 0] for _ in range(batch_size)]
             return batch_cfg
 
         # vocal use case
@@ -921,7 +945,7 @@ class SemanticModule(BaseContinuousEmbedModule):
         frame_rate = self.extra_params.semantic_frame_rate
         if "duration" not in batch:
             batch["duration"] = hp.duration
-        duration = batch["duration"]
+        duration = self.infer_target_duration(batch)
         num_tokens = duration * frame_rate
         temperature = hp.semantic_temperature
         sample_mode = hp.sample_mode
@@ -1626,12 +1650,9 @@ class SemanticRLModule(SemanticModule):
             ref_samples = None
             if self.extra_params.add_ref_to_beam and mode == "training":
                 ref_samples = target_ids
-            if "duration" not in batch:
-                if isinstance(self.extra_params.duration, (list, tuple)):
-                    batch["duration"] = self.extra_params.duration[-1]
-                else:
-                    batch["duration"] = self.extra_params.duration
-            num_tokens = batch["duration"] * self.extra_params.semantic_frame_rate
+
+            duration = self.infer_target_duration(batch)
+            num_tokens = duration * self.extra_params.semantic_frame_rate
 
             self.set_requires_grad(False) # fix nested autocast bug: https://discuss.pytorch.org/t/autocast-and-torch-no-grad-unexpected-behaviour/93475/2
             sampled_semantic_tokens, model_inputs = super().predict(
@@ -1849,7 +1870,8 @@ class SemanticRLModule(SemanticModule):
         batch = items["batch"]
         sampled_audio = self.decoder_fn(items).float()
         if "duration" in batch:
-            max_samples = batch["duration"] * self.extra_params.sample_rate
+            target_duration = self.infer_target_duration(batch)
+            max_samples = target_duration * self.extra_params.sample_rate
             sampled_audio = sampled_audio[..., :max_samples]
         items["sampled_audio"] = sampled_audio
         reward = 0.0

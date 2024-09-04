@@ -228,24 +228,24 @@ def init_convumm_gan(
         device = torch.device(f"cuda:{local_rank}")
     with local_zero_first():
         local_path = ensure_hdfs_ckpt_is_local(hpath, cache_dir)
-        state_dict = torch.load(local_path, map_location="cpu")
-        prefix = "model."
-        model_state_dict = {
-            k[len(prefix) :]: v
-            for k, v in state_dict["state_dict"].items()
-            if k[: len(prefix)] == prefix
-        }
-        state_dict["hyper_parameters"].update(
-            load_required_modules_in_init=load_required_modules_in_init
-        )
-        lit_module = ConvUMMGAN(**state_dict["hyper_parameters"])
-        model = lit_module.model
-        model.load_state_dict(model_state_dict)
-        model.eval()
-        model.to(device)
-        return {
-            "Stage3": model
-        }  # Using Stage3 naming convention to keep things consistent. Note: convumm_gan does not have a stage3
+    state_dict = torch.load(local_path, map_location="cpu")
+    prefix = "model."
+    model_state_dict = {
+        k[len(prefix) :]: v
+        for k, v in state_dict["state_dict"].items()
+        if k[: len(prefix)] == prefix
+    }
+    state_dict["hyper_parameters"].update(
+        load_required_modules_in_init=load_required_modules_in_init
+    )
+    lit_module = ConvUMMGAN(**state_dict["hyper_parameters"])
+    model = lit_module.model
+    model.load_state_dict(model_state_dict)
+    model.eval()
+    model.to(device)
+    return {
+        "Stage3": model
+    }  # Using Stage3 naming convention to keep things consistent. Note: convumm_gan does not have a stage3
 
 
 def init_stage3_dual_voc(hpath, local_rank, cache_dir=None):

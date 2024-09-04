@@ -30,7 +30,7 @@ extra_params:
     # For re-ranking
     rewards:
         style_text: 1
-        mulan_temporal: 0.5
+        mulan_temporal: 1
         chroma_temporal: 1.0
         style_audio: 0.0
         qualitative: 0.5

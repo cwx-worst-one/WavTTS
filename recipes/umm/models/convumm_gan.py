@@ -243,7 +243,7 @@ class ConvUMMGAN(nn.Module):
             output_dict.update(text_out=text_out)
         return output_dict
 
-    def forward_vq(self, hidden_states):
+    def forward_vq(self, hidden_states, calculate_stats=True):
         """Forward pass through the VQ layer."""
         org_len = hidden_states.shape[1]
         # Apply projection into VQ layer
@@ -260,9 +260,12 @@ class ConvUMMGAN(nn.Module):
         # Apply VQ
         vq_type = self.config.get("vq_type", None)
         # Inject logic for getting codebook distance
-        codebook_distance_stats = get_vq_codebook_distances(
-            self.vq.embedding.weight.data
-        )
+        if calculate_stats:
+            codebook_distance_stats = get_vq_codebook_distances(
+                self.vq.embedding.weight.data
+            )
+        else:
+            codebook_distance_stats = None
         vq_embs, vq_ids, vq_loss = get_vq_losses(self.vq, vq_type, hidden_states, cnt)
         # Apply projection out of VQ layer
         hidden_states = self.vq_proj_out(vq_embs)[:, :org_len]
@@ -279,7 +282,7 @@ class ConvUMMGAN(nn.Module):
         nonpadding = (mel.abs().sum(-1) > 0).float()[..., None]
         hidden_states = self.input_spectrogram_encoder(mel, nonpadding)
         hidden_states = self.encoder(hidden_states, nonpadding)
-        _, vq_ids, _, _ = self.forward_vq(hidden_states)
+        _, vq_ids, _, _ = self.forward_vq(hidden_states, calculate_stats=False)
         return vq_ids
 
     @torch.no_grad()

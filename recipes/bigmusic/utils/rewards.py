@@ -727,11 +727,11 @@ def anchor_points_sim_reward(
 
 @torch.no_grad()
 def mulan_temporal_reward(mulan_infer_fn, mulan_model, sampled_audio, device, sample_rate=24000, shift_seconds=20):
+    if isinstance(shift_seconds, tuple):
+        shift_seconds = random.choice(shift_seconds)
     min_audio_length = (10 + shift_seconds) * sample_rate
     if sampled_audio.shape[-1] < min_audio_length:
         return torch.zeros((sampled_audio.shape[0],), device=device) # temporal length too short
-    if isinstance(shift_seconds, tuple):
-        shift_seconds = random.choice(shift_seconds)
     mulan_embeds = mulan_infer_fn(
         model=mulan_model,
         music=sampled_audio.float(),
@@ -793,6 +793,8 @@ def chroma_temporal_reward(audio_batch, device, sample_rate=24000, sec_split=10)
     if isinstance(sec_split, tuple):
         audio_duration = audio_batch.shape[-1] // sample_rate
         sec_split = [s for s in sec_split if s <= audio_duration // 2]
+        if len(sec_split) == 0: # audio too short
+            return torch.zeros((audio_batch.shape[0],), device=device)
         sec_split = random.choice(sec_split)
     chroma_rewards = [_chroma_temporal_reward(audio, sample_rate, sec_split) for audio in audio_batch]
     return torch.tensor(chroma_rewards, device=device)
