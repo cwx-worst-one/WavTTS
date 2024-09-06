@@ -25,7 +25,6 @@ from recipes.bigmusic.lightning.embedding_modules import (
     ChordSeqEmbedder,
 )
 from recipes.bigmusic.utils.metrics_asr import asr_transcribe_lyrics
-from recipes.bigmusic.utils.mulan_tag import get_mulan_tags
 from samantha.utils import groundtruth
 try:
     from recipes.bigmusic.utils.rewards import (
