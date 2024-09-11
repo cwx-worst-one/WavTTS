@@ -21,9 +21,12 @@ _is_blocksparse_available = _is_triton_available()
 
 
 if _is_blocksparse_available:
-    from triton.ops.blocksparse import matmul as blocksparse_matmul  # type: ignore
-    from triton.ops.blocksparse import softmax as blocksparse_softmax  # type: ignore
-
+    from samantha.utils.triton.blocksparse import (
+        matmul as blocksparse_matmul,  # type: ignore
+    )
+    from samantha.utils.triton.blocksparse import (
+        softmax as blocksparse_softmax,  # type: ignore
+    )
 
 if _is_blocksparse_available:
 

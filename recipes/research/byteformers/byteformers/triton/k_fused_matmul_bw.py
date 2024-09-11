@@ -145,7 +145,7 @@ def fused_matmul_backward(
         grad_out_ = grad_act
 
     # The following ops can also be handled by pytorch
-    grad_in = triton.ops.matmul(grad_out_, weight)
+    grad_in = torch.matmul(grad_out_, weight)
     grad_weight = grad_out_.transpose(1, 0) @ inputs_ if trainable_weight else None
     grad_bias = torch.sum(grad_out_, dim=0) if trainable_bias else None
 

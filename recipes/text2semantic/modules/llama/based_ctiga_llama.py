@@ -11,8 +11,8 @@ import torch.nn.functional as F
 from torch.cuda.amp import autocast
 
 from einops import rearrange, repeat
-from triton.ops.blocksparse import matmul as sparse_matmul
-from triton.ops.blocksparse import softmax as sparse_softmax
+from samantha.utils.triton.blocksparse import matmul as sparse_matmul
+from samantha.utils.triton.blocksparse import softmax as sparse_softmax
 
 from samantha.models.ctiga.gpt import GPTModel
 from samantha.utils.cuda import get_compute_capability

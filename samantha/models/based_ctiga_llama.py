@@ -12,12 +12,12 @@ from einops import rearrange, repeat
 from torch import nn
 from torch.cuda.amp import autocast
 from transformers import GPT2Config
-from triton.ops.blocksparse import matmul as sparse_matmul
-from triton.ops.blocksparse import softmax as sparse_softmax
 
 from samantha.models.ctiga.gpt import GPTModel
 from samantha.utils.ctiga.localmask import ELEMWISE_WINDOW_MASK
 from samantha.utils.cuda import get_compute_capability
+from samantha.utils.triton.blocksparse import matmul as sparse_matmul
+from samantha.utils.triton.blocksparse import softmax as sparse_softmax
 
 __all__ = ["LLaMa"]
 

@@ -293,9 +293,6 @@ def resolve_data_urls(data_id=None, data_urls=None):
                 data_urls = get_dataset_collection_info_v2(data_id)["origin"]["paths"]
             except Exception as e:
                 logger.error(e)
-
-            data_urls = get_dataset_collection_info(data_id)
-
         else:
             data_urls = get_dataset_collection_info(data_id)
 

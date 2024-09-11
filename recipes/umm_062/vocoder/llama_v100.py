@@ -12,8 +12,8 @@ from torch import nn
 import torch.nn.functional as F
 from torch.nn.utils import weight_norm, remove_weight_norm
 
-from triton.ops.blocksparse import matmul as sparse_matmul
-from triton.ops.blocksparse import softmax as sparse_softmax
+from samantha.utils.triton.blocksparse import matmul as sparse_matmul
+from samantha.utils.triton.blocksparse import softmax as sparse_softmax
 
 
 __all__ = [

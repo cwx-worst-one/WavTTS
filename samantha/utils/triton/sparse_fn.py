@@ -1,6 +1,7 @@
 import torch
-from triton.ops.blocksparse import matmul as sparse_matmul
-from triton.ops.blocksparse import softmax as sparse_softmax
+
+from .blocksparse import matmul as sparse_matmul
+from .blocksparse import softmax as sparse_softmax
 
 sparse_fns = {}
 

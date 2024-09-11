@@ -45,8 +45,8 @@ from transformers.utils import (
     logging,
 )
 from transformers.utils.model_parallel_utils import assert_device_map, get_device_map
-from triton.ops.blocksparse import matmul as sparse_matmul
-from triton.ops.blocksparse import softmax as sparse_softmax
+from samantha.utils.triton.blocksparse import matmul as sparse_matmul
+from samantha.utils.triton.blocksparse import softmax as sparse_softmax
 
 logger = logging.get_logger(__name__)
 

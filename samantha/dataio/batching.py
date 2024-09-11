@@ -5,6 +5,10 @@ from typing import Callable, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+def default_bsz_evaluator(x, y):
+    return x * y
+
+
 class SimpleBatcher:
     """
     batch num bucket schedule.
@@ -101,7 +105,7 @@ class BucketBatcher:
         self.bucket_size = [0 for _ in range(self.bucket_num)]
         self.bucket_max_size = [0 for _ in range(self.bucket_num)]
         self.throw_num = 0
-        self.bsz_evaluator = bsz_evaluator or (lambda x, y: x * y)
+        self.bsz_evaluator = bsz_evaluator or default_bsz_evaluator
         self.bucket_size_fn = bucket_size_fn
 
     def find_bucket(self, data_item):

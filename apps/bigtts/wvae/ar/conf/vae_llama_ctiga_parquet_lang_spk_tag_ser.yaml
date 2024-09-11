@@ -115,7 +115,9 @@ bucket_batcher: !new:samantha.dataio.batching.BucketBatcher
     buckets: !apply:eval ["list(range(0, 6000, 100))"]  # [0, 100, 200 ... 4000] 4000以上的可以先丢掉
     dynamic_batch: True
     maximum_bucket_size: !ref <run_opts[batch_total_tokens]>
-    length_fn: !apply:eval ["lambda x: x[\"stop_token\"].shape[0]"]  # seq.shape
+    length_fn: !name:apps.bigtts.wvae.ar.utilities.length_func.get_length_by_key_and_dim
+        key: stop_token
+        dim: 0
 
 # dataloader configuration
 train_dataloader: !new:cruise.data_module.lite.dataloader.LiteCruiseDataLoader
@@ -180,8 +182,6 @@ optimizer_cls: !name:deepspeed.ops.adam.FusedAdam # FusedAdam, DeepSpeedCPUAdam
     betas: [0.9, 0.95]
     eps: 0.00000001
 
-_steps_per_epoch: !apply:operator.length_hint [!ref <train_dataloader>]
-_world_size: !apply:samantha.utils.envs.getenv_int ["WORLD_SIZE", 1]
 scheduler_cls: !name:samantha.optim.lr_scheduler.warmup_cosine_lr.WarmupCosine
     init_lr: !ref <run_opts[learning_rate]>
     warmup_steps: 2000
@@ -216,10 +216,6 @@ pl_module: !new:apps.bigtts.wvae.ar.lit_vae_t2s_ctiga_lang_spk_ser.VAET2SLangSpk
     use_ref_enc: !ref <run_opts[use_ref_enc]>
 
 logger:
-    - !new:pytorch_lightning.loggers.TensorBoardLogger
-      save_dir: !ref <run_opts[tensorboard_dir]>
-      name: !ref <run_opts[log_name]>
-      version: !ref <run_opts[version]>
     - !new:pytorch_lightning.loggers.wandb.WandbLogger
       save_dir: !ref <run_opts[tensorboard_dir]>
       project: !ref <run_opts[log_name]>
