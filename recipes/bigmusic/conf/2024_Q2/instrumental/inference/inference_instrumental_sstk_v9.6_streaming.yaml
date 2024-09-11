@@ -23,7 +23,7 @@ extra_params:
 
     # Semantic model
     semantic_cls_path: recipes.bigmusic.lightning.semantic_modules.SemanticModule
-    semantic_ckpt: "/mnt/bn/audio-diffusion/ashaw/models/sstk_v9/semantic/rl/v9.6-rc1-step=000500-minimal.ckpt"
+    semantic_ckpt: "/mnt/bn/audio-diffusion/ashaw/models/sstk_v9/semantic/rl/v9.6-rc1-fixed-step=000500-minimal.ckpt"
     mulan_ckpt: "/mnt/bn/audio-diffusion/ashaw/models/sstk_v9/mulan/mulan-step=005000-median_rank_1=61-kaggle-minimal.ckpt"
     mulan_version: "sstkmae_v3"
 
