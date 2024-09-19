@@ -25,13 +25,13 @@ except Exception:
     get_dataset_collection_info_v2 = None
 
 try:
-    from bytedance.easycycle import get_dataset_collection_info_v3_with_idc
+    from bytedance.easycycle import get_dataset_collection_info_v2_with_idc
 except Exception:
     warnings.warn(
-        "Could not import get_dataset_collection_info_v3_with_idc from bytedance.easycycle,"
+        "Could not import get_dataset_collection_info_v2_with_idc from bytedance.easycycle,"
         "please upgrade your package."
     )
-    get_dataset_collection_info_v3_with_idc = None
+    get_dataset_collection_info_v2_with_idc = None
 
 from lightning_fabric.utilities.cloud_io import get_filesystem
 from lightning_fabric.utilities.exceptions import MisconfigurationException
@@ -298,11 +298,11 @@ def resolve_data_urls(data_id=None, data_urls=None):
     if data_id is not None:
         os.environ["DatasetID"] = str(data_id)
 
-        if get_dataset_collection_info_v3_with_idc is not None:
+        if get_dataset_collection_info_v2_with_idc is not None:
             data_id = str(data_id)
             if ":" in data_id:
                 logger.info(f"treat dataset id as idc format, {data_id=}")
-            data_urls = get_dataset_collection_info_v3_with_idc(data_id)["origin"][
+            data_urls = get_dataset_collection_info_v2_with_idc(data_id)["origin"][
                 "paths"
             ]
         elif get_dataset_collection_info_v2 is not None:
