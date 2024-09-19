@@ -34,7 +34,7 @@ ENV SPEECH_USE_SYSTEM_TRITON 1
 ENV PANTHER_PLIR_EXCLUDE_OPS batch_gemm_fwd,batch_gemm_bwd
 ENV TORCH_NCCL_AVOID_RECORD_STREAMS 1
 
-ARG CRUISE_VERSION=1.0.0.3341
+ARG CRUISE_VERSION=1.0.0.3400
 ARG PANTHER_VERSION=1.7.14.312
 ARG OPENFST_VERSION=1.0.0.8
 ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
@@ -373,6 +373,7 @@ RUN mkdir -p /tmp/py_triton && \
     wget http://luban-source.byted.org/repository/scm/seed.speech.triton_$TRITON_VERSION.tar.gz && \
     tar -xvf seed.speech.triton_$TRITON_VERSION.tar.gz && \
     pip3 uninstall -y pytorch-triton && \
+    pip3 uninstall -y triton && \
     pip3 install --no-cache-dir triton*.whl && \
     rm -rf /tmp/py_triton /root/.cache
 
