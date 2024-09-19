@@ -10,7 +10,7 @@ import tempfile
 import subprocess
 
 _INSTALL_CMD_WHL = "pip3 install *.whl"
-_INSTALL_CMD_DIST = "pip3 install *"
+_INSTALL_CMD_DIST = "pip3 install ."
 
 _ABBRS_ = {
     "panther": "lab/speech/panther_arnold",
