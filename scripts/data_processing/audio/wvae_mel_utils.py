@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 from librosa.filters import mel as librosa_mel_fn
 from torchaudio.transforms import Resample
+from math import ceil
 
 
 def preprocess_audio(
@@ -168,17 +169,29 @@ def process_batch(
         F.pad(e, (0, max_length - length[i], 0, 0, 0, 0), value=0.0)
         for i, e in enumerate(batch)
     ]
-    batch_wav = torch.cat(batch, dim=0).to(device)
-    batch_spec = spectrogram_torch(
-        batch_wav.squeeze(1), n_fft, sample_rate, hop_length, win_length
-    )
-    batch_mel = mel_spectrogram_torch(
-        batch_wav.squeeze(1), n_fft, 80, sample_rate, hop_length, win_length, 0.0, None
-    )
+    batch_wavs = torch.cat(batch, dim=0) 
+    chunk_size = 60 * sample_rate
+    n_chunk = ceil(batch_wavs.shape[-1] / chunk_size)
 
-    _, batch_m, batch_logs = model(
-        batch_wav.to(device), batch_spec.to(device), batch_mel.to(device)
-    )
+    batch_m_lst, batch_logs_lst = [], []
+    for i in range(n_chunk):
+        batch_wav = batch_wavs[:, :, i * chunk_size: (i + 1) * chunk_size].to(device)
+        batch_spec = spectrogram_torch(
+            batch_wav.squeeze(1), n_fft, sample_rate, hop_length, win_length
+        )
+        batch_mel = mel_spectrogram_torch(
+            batch_wav.squeeze(1), n_fft, 80, sample_rate, hop_length, win_length, 0.0, None
+        )
+
+        _, batch_m, batch_logs = model(
+            batch_wav.to(device), batch_spec.to(device), batch_mel.to(device)
+        )
+        batch_m_lst.append(batch_m.cpu())
+        batch_logs_lst.append(batch_logs.cpu())
+
+    batch_m = torch.cat(batch_m_lst, dim=-1)
+    batch_logs = torch.cat(batch_logs_lst, dim=-1)
+
     pad_mod = sample_rate // freq
     for i, ilen in enumerate(length):
         m, logs = (
@@ -188,7 +201,7 @@ def process_batch(
         m = m[0].permute(1, 0)
         logs = logs[0].permute(1, 0)
         bn = torch.cat([m, logs], -1)
-        bn = bn.cpu().numpy()
+        bn = bn.numpy()
         yield bn
 
 
