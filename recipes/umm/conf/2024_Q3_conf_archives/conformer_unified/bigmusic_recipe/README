@@ -9,4 +9,7 @@ instead of just [2255,2375]
 
 I still keep the same loss heads, namely [mel_loss, chroma_loss, ctc_loss].
 
+The purpose of this config was to train the already succesfull ConformerUMM_2255_2375
+on unified data. 
+
 

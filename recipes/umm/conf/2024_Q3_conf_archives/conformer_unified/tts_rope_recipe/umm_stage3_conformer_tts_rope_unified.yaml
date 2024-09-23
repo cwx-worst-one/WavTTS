@@ -1,5 +1,11 @@
 ---
-
+# 20SEP2024 @hanoihantrakul 
+# See "README" in this folder to better understand the context for this model.
+#
+# Technically speaking, you CANNOT use the model defined in:
+# `recipes/umm/conf/2024_Q3_conf_archives/conformer_unified/bigmusic_recipe/umm_stage3_conformer_unified.yaml`
+# because the activation functions and ROPE conformer implementation is different to this one (Li Tang's version)
+#
 # 14JUL2024 @hanoihantrakul
 # This YAML replicates the TTS ROPE Conformer training, but uses BigMusic data instead.
 # 
@@ -48,10 +54,10 @@ extra_params:
 run_opts:
     fast_dev_run: False
     cache_dir: .module_cache/umm
-    hdfs_log_dir: "hdfs:///home/byte_speech_sv/hanoi.hantrakul/logs"
+    hdfs_log_dir: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs"
     log_dir: logs
-    log_name: umm_conformer_2255mixedZHEN_tts_rope
-    version: !ref umm_stage3_2255mixedZHEN_2375Speech_tts_rope_<extra_params[tokenizer]>
+    log_name: umm_conformer_unified_tts_rope
+    version: !ref umm_stage3_unified_tts_rope_<extra_params[tokenizer]>
     precision: "32"
     num_workers: 3
     accelerator: auto
@@ -73,9 +79,9 @@ run_opts:
 ################################################################################
 
 pl_datamodule: !new:recipes.datasets.mcc.mix_mkii.MixDataModule
-    data_ids: [2255,2375]
+    data_ids: [2255, 2375, 794]
     val_data_id: 2255
-    data_weights: [10,1]
+    data_weights: [20,1,1] # 15AUG2024 @hanoihantrakul: this means within a batch, 20 samples will be vocal, 1 sample will be speech and 1 sample will be instrumental. This keeps the overall ratio of [vocal, non_vocal] of [10:1] consistent. Remember `non_vocal=[speech, instrumental]` so you have to do 20:1:1 to keep 10:1
     shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
     sample_rate: !ref <extra_params[sample_rate]>
     batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <extra_params[sample_rate]>

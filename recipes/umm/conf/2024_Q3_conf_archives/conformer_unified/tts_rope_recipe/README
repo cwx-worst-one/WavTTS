@@ -1,3 +1,8 @@
+22SEP2024 @hanoihantrakul
+At the time of writing, this is the best performing Vocal Music Tokenizer. 
+It is improves the WER compared to the previous SOTA ConformerUMM_2255_2375
+See this doc: https://bytedance.us.larkoffice.com/docx/D3ZDdxoxUocraTxAozSuFCl2sdc
+
 21AUG2024 @hanoihantrakul
 The TTS ROPE recipe is based on YAML's
 `recipes/umm/conf/2024_Q2_conf_archives/conformer_tts_rope/umm_stage1_conformer_tts_rope_mixedZHEN2255.yaml`
@@ -12,4 +17,11 @@ The main difference with the BigMusic Recipe is in two areas:
 2.) The addition of a pitch-loss head. The total number of losses is now
 [mel_loss, chroma_loss, ctc_loss, pitch_loss]
 
-
+In addition, when training on [Vocal Music, Speech, Instrumental Music] we have
+to consider the behavior of the following features:
+- Chroma: how does this feature react to the 3 different data types?
+See this doc https://bytedance.sg.larkoffice.com/docx/DyjYduDyzoBzAKxtUKOlSuNHgMg
+- Pitch Hz: how does this signal react to the 3 different data types?
+Seed this doc https://bytedance.sg.larkoffice.com/docx/DyjYduDyzoBzAKxtUKOlSuNHgMg
+The conclusion is we can apply these chroma and pitch detector to all 3 different data 
+types based on visual inspection of the signals. 

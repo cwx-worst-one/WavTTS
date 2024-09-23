@@ -1,25 +1,13 @@
 ---
-
-# 14JUL2024 @hanoihantrakul
-# This YAML replicates the TTS ROPE Conformer training, but uses BigMusic data instead.
-# 
-# See `umm_stage1_conformer_tts_rope_mixedZHEN2255.yaml` for more information.
+# 20SEP2024 @hanoihantrakul
+# This model is like `conf/2024_Q2_conf_archives/conformer_tts_rope/umm_stage3_conformer_tts_rope_mixedZHEN2255_Speech2375.yaml`
+# but I remove the pitch loss. This is to ablate whether pitch_loss is affecting the E2E WER.
 #
-# This YAML combines settings from three sources. 
-# The first YAML does not exist in master. I link it in this doc:
-# https://bytedance.sg.larkoffice.com/docx/MOyIdYILropKFfxBzTjlZWyKgKf
-# 
-# He then modifies this YAML with settings in the merlin job 
-# https://ml.bytedance.net/development/instance/jobs/04ec5622a227fb5d?tabState=run_info&trialId=27450277
+# At the time of writing, it was confirmed that ConformerUMM_TTS_ROPE_2255_2375 actually has best WER performance compared
+# to the previous baseline of ConformerUMM_2255_2375.
 #
-# I have copied this settings into this YAML as the default settings
-# 
-# Lastly, to train on music data, I cherry pick settings from 
-# `conf/umm_stage3_2255mixedZHEN_2375Speech.yaml` to make the YAML train on BigMusic data.
-# I use `2024_Q1_conf_archives/pitch_experiments/umm_stage3_pitch_supervised.yaml`
-# to configure an in-house trained pitch detector which replaces the TTS RMVPE. 
-#
-# This model is 724M params.
+# This model was trained to ablate the effect of the pitch loss when using the TTS_ROPE recipe.
+# This model is 723M params.
 
 ################################################################################
 ##########                       BASIC CONFIGURATION                  ##########
@@ -41,7 +29,7 @@ extra_params:
     win_length: 2048
     hop_length: 240
     feature_cmvn: "recipes/datasets/mcc/data_ids=794.stats.pt" # we need this because original mkii ConformerUMM normalized using these statistics
-    tokenizer: "bert-base-multilingual-uncased" # stage2/stage3 apply language tokenizer to both EN and CN
+    tokenizer: "bert-base-multilingual-uncased" # stage2 apply language tokenizer to both EN and CN
     
 
 # running parameters
@@ -51,7 +39,7 @@ run_opts:
     hdfs_log_dir: "hdfs:///home/byte_speech_sv/hanoi.hantrakul/logs"
     log_dir: logs
     log_name: umm_conformer_2255mixedZHEN_tts_rope
-    version: !ref umm_stage3_2255mixedZHEN_2375Speech_tts_rope_<extra_params[tokenizer]>
+    version: !ref umm_stage3_2255mixedZHEN_2375Speech_tts_rope_no_pitch_<extra_params[tokenizer]>_<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>
     precision: "32"
     num_workers: 3
     accelerator: auto
@@ -111,8 +99,7 @@ config: !new:recipes.umm.models.config.UMMConfig
     n_mels: !ref <extra_params[n_mels]>
     n_mels_tgt: !ref <extra_params[n_mels_tgt]>
     add_ctc: True # 5JUL2024 @hanoih There is a EN and CN speech. CTC turned on.
-    add_pitch: True # 5JUL2024 @hanoih unlike TTS version, `add_pitch` here uses in-house trained pitch predictor created by @hanoih. It does not use RMVPE like TTS pipeline.
-    add_chroma: True # 5JUL2024 @hanoih unlike TTS version, we turn chroma on
+    add_pitch: False # 20SEP2024 @hanoih Try turnig this off to see effect of pitch loss on E2E Lyrics2Song performance
     n_chroma: !ref <extra_params[n_chroma]>
     n_fft: !ref <extra_params[n_fft]>
     win_length: !ref <extra_params[win_length]>
@@ -152,30 +139,23 @@ config: !new:recipes.umm.models.config.UMMConfig
     ### 
 
 
-model_cls: !name:recipes.umm.models.umm_mkii_tts_rope.Stage3TTSRope # instead of `umm_mkii.Stage3` 
+model_cls: !name:recipes.umm.models.umm_mkii.Stage3 # instead of `umm_mkii_tts_rope.Stage3TTSRope` 
     config: !ref <config>
 
-pl_module: !new:recipes.umm.modules.lit_module_mkii_tts_rope.Stage3TTSRope # instead of `lit_module.Stage3Improved`
+# 20SEP2024 This Lit Module is what Li Tang uses in his work
+pl_module: !new:recipes.umm.modules.lit_module.Stage3Improved # instead of `lit_module_mkii_tts_rope.Stage3TTSRope` 
     checkpointing: !ref <run_opts[checkpointing]> 
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
     scheduler_cls: !ref <scheduler_cls>
-    criterion_cls: !name:recipes.umm.modules.criterion.UMMLossPitchSupervised # instead of `criterion.CTCPitchMelLoss`
+    criterion_cls: !name:recipes.umm.modules.criterion.UMMLoss # instead of `criterion.UMMLossPitchSupervised`
         config: !ref <config>
     extra_params: !ref <extra_params>
     required_modules:
         pretrained:
-            ckpt_path: "hdfs:///home/byte_speech_sv/hanoi.hantrakul/logs/umm_conformer_2255mixedZHEN_tts_rope/umm_stage2_2255mixedZHEN_tts_rope_bert-base-multilingual-uncased/checkpoints/step=150000.ckpt"
+        # trained by @hanoihantrakul and finished training on 25AUG2024
+            ckpt_path: "hdfs://haruna/home/byte_speech_sv/hanoi.hantrakul/logs/umm_conformer_2255mixedZHEN_tts_rope/umm_stage2_2255mixedZHEN_tts_rope_no_pitch_bert-base-multilingual-uncased/checkpoints/step=200000.ckpt"
             init_fn: !name:recipes.umm.requires.model_initializer.init_pretrained
-            cache_dir: !ref <run_opts[cache_dir]>
-        # @hanoih 4JUL2024: Do not use the RVMPE model used in TTS pipeline
-        # rmvpe:
-        #     ckpt_path: "hdfs://haruna/home/byte_speech_sv/user/chenyuanzhe/share/rmvpe.pt"
-        #     init_fn: !name:recipes.umm.requires.model_initializer.init_rmvpe
-        #     cache_dir: !ref <run_opts[cache_dir]>
-        pitchpdt: # @hanoihantrakul 28MAY2024: Use pitch detector trained on full mix to provide the ground truth signals.
-            ckpt_path: "hdfs://haruna/home/byte_speech_sv/hanoi.hantrakul/logs/umm_dual/pitch_predictor_trained_on_full_mix/models_for_sharing/perceptual_pitch_model_1_26_2024.pt"
-            init_fn: !name:recipes.umm.requires.model_initializer.init_perceptual_pitch_predictor
             cache_dir: !ref <run_opts[cache_dir]>
 
 logger:
