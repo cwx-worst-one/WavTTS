@@ -29,6 +29,17 @@ extra_params:
     use_text_lang_embedding: False
     gradient_checkpointing: False
     freezon_spkenc_params: False
+    use_lora: False
+    lora_config:
+        r: 16
+        target_modules: [
+            "mixer.Wqkv", "mixer.out_proj", "mlp.fc1", "mlp.fc2", 
+            'self_attn.linear_q', 'self_attn.linear_k', 'self_attn.linear_v', 'self_attn.linear_out',
+            'intermediate_dense', 'out_dense'
+            ]
+        lora_alpha: 32
+        lora_dropout: 0.01
+        bias: "none"
 
 # running parameters
 run_opts:
@@ -57,6 +68,7 @@ run_opts:
     umm_token_freq: !ref <extra_params[semantic_frame_rate]>
     dataset_type: 2 # AUDIO = 1 UMM_TOKEN = 2
     target_token_key: umm_token
+    every_n_train_steps: 10000
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -179,7 +191,7 @@ callbacks:
       hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
       monitor: training/accu
       save_top_k: 30
-      every_n_train_steps: 10000
+      every_n_train_steps: !ref <run_opts[every_n_train_steps]>
       mode: max
       filename: "step={step:06d}-accu={training/accu:.2f}"
       auto_insert_metric_name: False
