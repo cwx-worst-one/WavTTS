@@ -128,3 +128,4 @@ recipes/leadsheet
 *.ipynb
 *.png
 scripts_usr
+.deploy_cache
