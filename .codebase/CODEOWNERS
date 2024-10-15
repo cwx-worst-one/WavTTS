@@ -12,12 +12,15 @@ samantha
 /apps @wangxin.colin @zhangshuo.0 @huwenchao.hu @xieshuangyi
 
 /apps/bigmusic/umm/ar @andrew.shaw @qingqing.huang
-/apps/bigmusic/umm/diffusion @weitsung.lu @weituohao @zhangshuo.0
-/apps/bigmusic/umm/umm @qingqing.huang @lamtharn.hantrakul @ren.yi
-/apps/bigmusic/umm/vocoder @weitsung.lu @weituohao @zhangshuo.0
+/apps/bigmusic/umm/diffusion @weituohao @zhangshuo.0
+/apps/bigmusic/umm/umm @lamtharn.hantrakul @ju-chiang.wang
+/apps/bigmusic/umm/vocoder @weituohao @zhangshuo.0
 
-/apps/bigtts/umm/ar @jiawei.chen @kainan.peng
-/apps/bigtts/umm/diffusion @jiadongya @congjian.tts
+/apps/bigtts/umm/ar @jiawei.chen @chenkuan.7116
+/apps/bigtts/umm/diffusion @jiadongya @caorong.01
 /apps/bigtts/umm/umm @litang.frank
-/apps/bigtts/wvae/ar  @huangzhiying.92 @mingbo.ma @panjunjie.jeff @lijiaxin.drany01
+/apps/bigtts/wvae/ar  @huangzhiying.92 @panjunjie.jeff @lijiaxin.drany01
 /apps/bigtts/wvae/vocoder @liuzhengxi.nico
+/apps/bigtts/speechdit @jiadongya @caorong.01 @chenkuan.7116
+
+/apps/bigtts/audiogen @zhuangxiaobin
