@@ -240,7 +240,8 @@ class Block(nn.Module):
             )
         )
         self.recompute_level = recompute_level
-        print(f"[block.py][Block]: {self.use_fused_mha=}, {self.use_fused_mlp=}")
+        if use_fused_block:
+            print(f"[block.py][Block]: {self.use_fused_mha=}, {self.use_fused_mlp=}")
 
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
         return self.mixer.allocate_inference_cache(
