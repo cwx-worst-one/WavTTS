@@ -19,6 +19,34 @@ from apps.bigtts.audiogen.soundify.modules.loss import sequence_mask
 logger = logging.getLogger(__name__)
 
 
+def load_video_ckpt(model, checkpoint_path, freeze_video=True):
+
+    print("setup video")
+
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+
+    if "state_dict" in checkpoint:
+        checkpoint = checkpoint["state_dict"]
+        new_ckpt = OrderedDict()
+        for name, param in checkpoint.items():
+            if "model.video_encoder" in name:
+                new_ckpt[name[20::]] = param
+        msg = model.load_state_dict(new_ckpt)
+    else:
+        msg = model.load_state_dict(checkpoint)
+
+    print("setup video DONE", msg)
+
+    if freeze_video:
+        model.freeze_parameters()
+        model.eval()
+        print("fix video encoder")
+    else:
+        print("train video encoder")
+
+    return model
+
+
 def load_vocoder_ckpt(model, checkpoint_path):
     print("setup vocoder")
     assert os.path.isfile(checkpoint_path)
@@ -46,28 +74,8 @@ def load_vocoder_ckpt(model, checkpoint_path):
     return model
 
 
-def load_video_ckpt(model, checkpoint_path, freeze_video=True):
-    print("setup video")
-
-    checkpoint = torch.load(checkpoint_path)
-    msg = model.load_state_dict(checkpoint)
-    print("setup video DONE", msg)
-
-    if freeze_video:
-        model.freeze_parameters()
-        model.eval()
-        print("fix video encoder")
-    else:
-        print("train video encoder")
-
-    return model
-
-
 def rescale_noise_cfg(noise_cfg, noise_pred_cond, guidance_rescale=0.0):
-    """
-    Rescale `noise_cfg` according to `guidance_rescale`. Based on findings of [Common Diffusion Noise Schedules and
-    Sample Steps are Flawed](https://arxiv.org/pdf/2305.08891.pdf). See Section 3.4
-    """
+
     std_cond = noise_pred_cond.std(dim=list(range(1, noise_pred_cond.ndim)), keepdim=True)
     std_cfg = noise_cfg.std(dim=list(range(1, noise_cfg.ndim)), keepdim=True)
     # rescale the results from guidance (fixes overexposure)
@@ -110,22 +118,6 @@ def extend_dim(x: Tensor, dim: int):
     return x.view(*x.shape + (1,) * (dim - x.ndim))
 
 
-class VideoProjector(nn.Module):
-
-    def __init__(self, feat_dim=512, hidden_dim=768, mlp_depth=3, bias=False):
-        super(VideoProjector, self).__init__()
-
-        modules = [nn.Linear(feat_dim, hidden_dim)]
-        for _ in range(1, mlp_depth):
-            modules.append(nn.GELU())
-            modules.append(nn.Linear(hidden_dim, hidden_dim, bias=bias))
-
-        self.mlp = nn.Sequential(*modules)
-
-    def forward(self, video_feats):
-        return self.mlp(video_feats)
-
-
 class Embedding(nn.Module):
 
     def __init__(self, modulation_features, num_layers: int = 2, bias=True):
@@ -150,14 +142,13 @@ class Embedding(nn.Module):
 class ModelArgs:
     min_t: float = 0.0
     max_t: float = 1.0
-    v2a_ratio: int = 10
-    video_type: str = "cavp"
+    v2a_ratio: int = 2
     video_feat_dim: int = 512
-    in_channels: int = 128
-    out_channels: int = 128
+    in_channels: int = 64
+    out_channels: int = 64
     local_cond_dim: int = 512
     time_embed_dim: int = 512
-    encoder_dim: int = 1024
+    encoder_dim: int = 1536
     encoder_n_layers: int = 24
     encoder_n_heads: int = 16
     causal: bool = False
@@ -166,44 +157,68 @@ class ModelArgs:
     use_qk_norm: str = 'head'
     bias: bool = False
     target_type: str = 'velocity'
-    condition_type: str = 'prepend'
-    video_repeat: int = 2
-    drop_type: str = "video"
+    video_repeat: int = 4
+
+
+class RMSNorm(nn.Module):
+
+    def __init__(self, dim, eps=1e-8):
+        super().__init__()
+        self.scale = dim**-0.5
+        self.eps = eps
+        self.g = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x):
+        norm = torch.norm(x, dim=-1, keepdim=True) * self.scale
+        return x / norm.clamp(min=self.eps) * self.g
+
+
+class TagEmbed(nn.Module):
+
+    def __init__(self, hidden_dim):
+        super(TagEmbed, self).__init__()
+
+        self.embed = nn.Embedding(10, hidden_dim)
+        self.proj = nn.Sequential(
+            RMSNorm(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(approximate="tanh"),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
+
+    def forward(self, tag):
+
+        embed = self.embed(tag)
+        embed = self.proj(embed)
+
+        return embed
 
 
 class Diffusion(nn.Module):
 
-    def __init__(self,):
+    def __init__(self):
         super().__init__()
 
         hp = ModelArgs()
+
         self.hp = hp
 
         self.min_t = hp.min_t
         self.max_t = hp.max_t
 
         self.target_type = hp.target_type
-        self.condition_type = hp.condition_type
         self.video_repeat = hp.video_repeat
-        self.drop_type = hp.drop_type
+   
+        self.sigma_distribution = UniformDistribution(vmin=self.min_t, vmax=self.max_t)
 
-        ############################################################################
         # time embedding
         self.time_embedding = Embedding(modulation_features=hp.time_embed_dim,
                                         num_layers=2,
                                         bias=hp.bias)
 
-        self.speech_embedding = Embedding(modulation_features=hp.time_embed_dim,
-                                          num_layers=2,
-                                          bias=hp.bias)
+        self.speech_embedding = TagEmbed(hidden_dim=hp.video_feat_dim)
 
-        self.quality_embedding = Embedding(modulation_features=hp.time_embed_dim,
-                                           num_layers=2,
-                                           bias=hp.bias)
-
-        self.music_embedding = Embedding(modulation_features=hp.time_embed_dim,
-                                         num_layers=2,
-                                         bias=hp.bias)
+        self.music_embedding = TagEmbed(hidden_dim=hp.video_feat_dim)
 
         # backbone
         llama_config = LLamaArgs(dim=hp.encoder_dim,
@@ -222,8 +237,6 @@ class Diffusion(nn.Module):
                                      bias=hp.bias)
 
         self.postnet = nn.Linear(hp.encoder_dim, hp.out_channels, bias=hp.bias)
-
-        self.sigma_distribution = UniformDistribution(vmin=self.min_t, vmax=self.max_t)
 
     def get_alpha_beta(self, sigmas: Tensor) -> Tuple[Tensor, Tensor]:
         angle = sigmas * math.pi / 2
@@ -255,47 +268,45 @@ class Diffusion(nn.Module):
 
         # concat condition.
         latent = self.latent_prenet(latent)
-        cond = self.cond_prenet(torch.cat([time_emb, cond_embs], dim=-1))
+        condition = self.cond_prenet(torch.cat([time_emb, cond_embs], dim=-1))
 
-        # add zeros
-        latent = F.pad(latent, (0, 0, 3, 0), "constant", 0)
+        latent = F.pad(latent, (0, 0, 2, 0), "constant", 0.0)
+        x_noisy = latent + condition
 
-        x_noisy = latent + cond
         pred_v = self.latent_encoder(x_noisy, x_noisy.shape[1], attention_mask=seq_mask)
 
         pred_v = self.postnet(pred_v)
 
-        # remove zeros
-        pred_v = pred_v[:, 3::, :]
+        pred_v = pred_v[0:, 2:, :]
 
         return pred_v
 
-    @torch.no_grad()
-    def ddim_sample(self, video_embeds, step_num=25, cfg_w=7.5, norm_cfg=True):
 
-        device = video_embeds.device
-        frame_num = video_embeds.size(1)
+    @torch.no_grad()
+    def ddim_sample(self, video_embs, step_num=25, cfg_scale=7.5, norm_cfg=True):
+
+        bsz, device, frame_num = video_embs.size(0), video_embs.device, video_embs.size(1)
+
+        device = video_embs.device
+        frame_num = video_embs.size(1)
 
         frame_num = frame_num * self.video_repeat
 
         latents = torch.randn([1, frame_num, self.hp.out_channels], device=device)
 
-        self.max_t = 0.999
         sigmas = torch.linspace(self.max_t, self.min_t, step_num + 1, device=device)
         sigmas = repeat(sigmas, "i -> i b", b=1)
         sigmas_batch = extend_dim(sigmas, dim=latents.ndim)
         alphas, betas = self.get_alpha_beta(sigmas_batch)
 
-        zero_value = torch.zeros(1, 1).to(device)
-        one_value = torch.ones(1, 1).to(device)
+        zero_value = torch.zeros(1, 1).to(device).to(dtype=torch.long)
+        speech_embs = self.speech_embedding(zero_value)
+        music_embs = self.music_embedding(zero_value)
+        video_embs = self.video_condition(video_embs)
 
-        speech_embs = self.speech_embedding(zero_value).unsqueeze(1)
-        music_embs = self.music_embedding(zero_value).unsqueeze(1)
-        quality_embs = self.quality_embedding(one_value).unsqueeze(1)
-        video_embeds = self.video_condition(video_embeds)
+        cond_embs = torch.cat([speech_embs, music_embs, video_embs], dim=1)
 
-        cond_embs = torch.cat([speech_embs, music_embs, quality_embs, video_embeds], dim=1)
-
+        # cfg
         null_embs = torch.zeros_like(cond_embs)
         cond_embs = torch.cat([cond_embs, null_embs], dim=0)
 
@@ -305,7 +316,7 @@ class Diffusion(nn.Module):
                                                       latent=latents,
                                                       seq_mask=None).chunk(2)
 
-            v_pred = cfg_w * v_pred_cond + (1 - cfg_w) * v_pred_uncond
+            v_pred = cfg_scale * v_pred_cond + (1 - cfg_scale) * v_pred_uncond
 
             if norm_cfg:
                 v_pred = rescale_noise_cfg(noise_cfg=v_pred,
@@ -314,7 +325,6 @@ class Diffusion(nn.Module):
 
             x_pred = alphas[i] * latents - betas[i] * v_pred
             noise_pred = betas[i] * latents + alphas[i] * v_pred
-
             latents = alphas[i + 1] * x_pred + betas[i + 1] * noise_pred
 
         return latents
@@ -338,16 +348,15 @@ if __name__ == "__main__":
 
     video = torch.randn(bts, max_video_len, 3, 224, 224).to(device)  # mae
     audio = torch.randn(bts, 1, max_audio_len).to(device)
-    speech = torch.randn(bts, 1).to(device)
-    music = torch.randn(bts, 1).to(device)
-    quality = torch.randn(bts, 1).to(device)
+    speech = torch.ones(bts, 1).to(device).to(dtype=torch.long)
+    music = torch.ones(bts, 1).to(device).to(dtype=torch.long)
 
     video_lens = torch.randint(max_video_len // 2, max_video_len, [bts]).to(device)
     video_lens[0] = max_video_len
     audio_lens = (video_lens / video_fps * audio_fps)
 
-    max_seq = max_video_len * 2 + 3
-    seq_len = video_lens * 2 + 3
+    max_seq = max_video_len * 2
+    seq_len = video_lens * 2
     mask = sequence_mask(seq_len, max_len=max_seq, device=device)
 
     inputs = {}
@@ -355,9 +364,7 @@ if __name__ == "__main__":
     inputs["video"] = video
     inputs["speech"] = speech
     inputs["music"] = music
-    inputs["quality"] = quality
     inputs["seqlen"] = seq_len
-    inputs["mask"] = mask
 
     print(audio.shape, video.shape, max_seq, mask.shape, speech.shape, music.shape)
 
@@ -373,8 +380,6 @@ if __name__ == "__main__":
 
         mask = torch.ones(bts, max_seq).to(device)
 
-        mask = mask[:, 3::]
-
         loss = loss_funcs(pred_v, target_v, mask)
 
         print(loss)
@@ -383,4 +388,4 @@ if __name__ == "__main__":
         trainable_num = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f'Total {total_num/1024/1024} M, Trainable {trainable_num/1024/1024} M')
 
-        resule = model.inference(inputs=inputs, step_num=50, sampler="ddim", cfg_w=7.5)
+        resule = model.inference(inputs=inputs, step_num=50, cfg_scale=7.5)

@@ -152,7 +152,7 @@ def load_checkpoint(
 ):
     if Path(checkpoint_path).suffix in ('.npz', '.npy'):
         # Separate path loading numpy big_vision (SigLIP) weights
-        from open_clip.convert import load_big_vision_weights
+        from apps.bigtts.audiogen.open_clip.convert import load_big_vision_weights
         load_big_vision_weights(model, checkpoint_path)
         return {}
 

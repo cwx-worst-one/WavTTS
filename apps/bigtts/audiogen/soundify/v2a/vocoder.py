@@ -57,9 +57,6 @@ class ResidualUnit(nn.Module):
 
     def forward(self, x):
         y = self.block(x)
-        pad = (x.shape[-1] - y.shape[-1]) // 2
-        if pad > 0:
-            x = x[..., pad:-pad]
         return x + y
 
 
@@ -136,9 +133,9 @@ class Vocoder(nn.Module):
         self.latent_freq = latent_freq
         self.sample_rate = sample_rate
 
-        decoder_rates = [5, 5, 5, 4, 2, 2]
-        latent_dim = 128
-        self.frame_len = 2000
+        decoder_rates = [5, 5, 5, 2, 2, 2]
+        latent_dim = 64
+        self.frame_len = 1000
 
         self.post_quant_conv = nn.Conv1d(latent_dim, hidden_dim, kernel_size=3, stride=1, padding=1)
         self.decoder = Decoder(input_channel=hidden_dim,

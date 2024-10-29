@@ -14,15 +14,14 @@ from apps.bigtts.audiogen.soundify.modules.based_ctiga_llama import ModelArgs as
 class ModelArgs:
     in_channels: int = 512
     out_channels: int = 512
-    encoder_dim: int = 512
-    encoder_n_layers: int = 8
+    encoder_dim: int = 1536
+    encoder_n_layers: int = 24
     encoder_n_heads: int = 16
     causal: bool = False
     llama_provider: str = 'ctiga'
     use_unet_style_skip_connect: bool = True
     use_qk_norm: str = 'head'
     bias: bool = False
-    vocab_size: int = 1024
 
 
 class VideoProjector(nn.Module):
@@ -49,7 +48,7 @@ class VideoProjector(nn.Module):
 class VideoEncoder(nn.Module):
 
     def __init__(self):
-        super().__init__()
+        super(VideoEncoder, self).__init__()
 
         hp = ModelArgs()
 
@@ -74,14 +73,13 @@ class VideoEncoder(nn.Module):
         for name, param in self.image_backbone.named_parameters():
             param.requires_grad = False
         ########################################################################
-        self.action_encoder = ActionEncoder(embed_dim=512)
+        self.action_encoder = ActionEncoder(embed_dim=hp.in_channels)
         ########################################################################
-
-        self.embed_dim = 512
+        self.video_fuse = nn.Linear(hp.in_channels, hp.encoder_dim)
         self.video_llama = LLaMa(llama_config, hp.llama_provider)
-        self.video_projector = VideoProjector(feat_dim=512,
-                                              hidden_dim=hp.in_channels,
-                                              out_dim=self.embed_dim,
+        self.video_projector = VideoProjector(feat_dim=hp.encoder_dim,
+                                              hidden_dim=hp.encoder_dim,
+                                              out_dim=hp.out_channels,
                                               mlp_depth=3,
                                               bias=False)
 
@@ -93,13 +91,31 @@ class VideoEncoder(nn.Module):
         ##################################################################
         image_embed = self.image_backbone.encode_image(video)
         image_embed = image_embed.reshape(bts, t, -1)  # [b, t, d]
-        # image_embed = F.normalize(image_embed, dim=-1)
         ##################################################################
         video = video.reshape(bts, t, c, h, w)
         action_embed = self.action_encoder(video)
-        # action_embed = F.normalize(action_embed, dim=-1)
         ##################################################################
-        video_embed = self.video_llama(image_embed + action_embed, seqlen=image_embed.shape[1])
+        video_embed = self.video_fuse(image_embed + action_embed)
+        video_embed = self.video_llama(video_embed, seqlen=image_embed.shape[1])
+        video_embed = self.video_projector(video_embed)
+
+        return video_embed  # [b, t, d]
+
+    @torch.no_grad()
+    def infer(self, video):
+
+        bts, t, c, h, w = video.shape  # [b, t, c, h, w]
+        video = video.flatten(0, 1)  # [b*t, c, h, w]
+        video = self.preprocess(video)
+        ##################################################################
+        image_embed = self.image_backbone.encode_image(video)
+        image_embed = image_embed.reshape(bts, t, -1)  # [b, t, d]
+        ##################################################################
+        video = video.reshape(bts, t, c, h, w)
+        action_embed = self.action_encoder(video)
+        ##################################################################
+        video_embed = self.video_fuse(image_embed + action_embed)
+        video_embed = self.video_llama(video_embed, seqlen=image_embed.shape[1])
         video_embed = self.video_projector(video_embed)
 
         return video_embed  # [b, t, d]

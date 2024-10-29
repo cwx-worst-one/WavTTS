@@ -1,4 +1,5 @@
 import torch
+import os
 from torch import nn
 import random
 import numpy as np
@@ -156,7 +157,7 @@ if __name__ == "__main__":
     vocoder_ckpt = ".deploy_cache/v2a_15w_32k_ft2_33000_vocoder.ckpt"
 
     cfg_scale = 5.0
-    step_num = 30
+    step_num = 50
 
     set_seed(1234)
     device = "cuda"
@@ -164,10 +165,19 @@ if __name__ == "__main__":
     v2a_model = Soundify_v2a(cavp_ckpt=cavp_ckpt, dit_ckpt=dit_ckpt, vocoder_ckpt=vocoder_ckpt)
     v2a_model = v2a_model.to(device=device)
 
-    # read video
-    frames = v2a_model.read_video(in_video, target_fps=8, remove_caption=True)
-    frames = frames.unsqueeze(0).to(device)
-    # inference
-    wave = v2a_model.inference(frames, cfg_scale = cfg_scale, step_num=step_num)
-    save_audio(wave, out_audio)
-    save_video(in_video, out_audio, out_video)
+    with open("/mnt/bn/zxb-lq/workspace/samantha/apps/bigtts/audiogen/testdata/v2a.txt") as f:
+        file_paths = f.read().splitlines()
+
+    for in_video in file_paths:
+        in_video = "/mnt/bn/zxb-lq/workspace/samantha/" + in_video
+        file_name = in_video.split("/")[-1]
+
+        out_audio = os.path.join(".deploy_cache", file_name.replace(".mp4", ".wav"))
+        out_video = os.path.join(".deploy_cache", file_name.replace(".mp4", "_out.mp4"))
+        # read video
+        frames = v2a_model.read_video(in_video, target_fps=8, remove_caption=True)
+        frames = frames.unsqueeze(0).to(device)
+        # inference
+        wave = v2a_model.inference(frames, cfg_scale = cfg_scale, step_num=step_num)
+        save_audio(wave, out_audio)
+        save_video(in_video, out_audio, out_video)
