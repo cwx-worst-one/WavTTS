@@ -1016,6 +1016,8 @@ class MixWebDataModule(pl.LightningDataModule):
         use_text_lang_embedding: bool = False,
         textlang2id: str = None,
         use_pure_audio_in_length_fn: bool = False,
+        resampled: bool = True,
+        shardshuffle: bool = True,
     ):
         super().__init__()
         self.num_workers = num_workers
@@ -1123,8 +1125,8 @@ class MixWebDataModule(pl.LightningDataModule):
                 phone2id=self.phone2id,
                 phone_tone_wordseg_dict=self.phone_tone_wordseg_dict,
                 frame_rate=self.frame_rate,
-                resampled=True,
-                shardshuffle=True,
+                resampled=resampled,
+                shardshuffle=shardshuffle,
                 handler=wds.warn_and_continue,
                 split_by_alignment=split_by_alignment,
                 ignore_code_switch=ignore_code_switch,
@@ -1156,8 +1158,8 @@ class MixWebDataModule(pl.LightningDataModule):
                         phone2id=self.phone2id,
                         phone_tone_wordseg_dict=self.phone_tone_wordseg_dict,
                         frame_rate=self.frame_rate,
-                        resampled=True,
-                        shardshuffle=True,
+                        resampled=resampled,
+                        shardshuffle=shardshuffle,
                         handler=wds.warn_and_continue,
                         split_by_alignment=split_by_alignment,
                         ignore_code_switch=ignore_code_switch,
