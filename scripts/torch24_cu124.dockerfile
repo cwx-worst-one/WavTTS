@@ -35,15 +35,20 @@ ENV PANTHER_PLIR_EXCLUDE_OPS batch_gemm_fwd,batch_gemm_bwd
 ENV TORCH_NCCL_AVOID_RECORD_STREAMS 1
 ENV TOKENIZERS_PARALLELISM false
 
-ARG CRUISE_VERSION=1.0.0.3520
-ARG PANTHER_VERSION=1.7.14.312
+ENV MASON_SKIP_LEGO_AUTO_PIP_INSTALL 1
+ENV MASON_SKIP_BPEX_AUTO_PIP_INSTALL 1
+ENV MASON_SKIP_MEGATRON_AUTO_PIP_INSTALL 1
+ENV CRS_LOGGING_LEVEL INFO
+
+ARG CRUISE_VERSION=1.0.0.3555
+ARG PANTHER_VERSION=1.7.14.366
 ARG OPENFST_VERSION=1.0.0.8
 ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
 # For torch 2.4
 ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.5
-ARG BUMI_VERSION=1.5.9.7
+ARG BUMI_VERSION=1.6.9.2
 ARG TRITON_VERSION=1.0.0.102
 ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.18
 # https://github.com/facebookresearch/xformers.git:6425fd0
@@ -186,6 +191,7 @@ RUN pip3 install \
         clldutils==3.22.2 \
         cloudpickle==1.6.0 \
         cmake==3.26.3 \
+        codetiming==1.4.0 \
         colorama==0.4.6 \
         coloredlogs==15.0.1 \
         colorednoise==2.1.0 \
@@ -460,6 +466,7 @@ RUN pip3 install \
         tenacity==8.5.0 \
         tensorboard==2.17.1 \
         tensorboard-data-server==0.7.2 \
+        tensordict==0.6.0 \
         tensorflow==2.17.0 \
         tensorflow-io==0.37.1 \
         tensorflow-io-gcs-filesystem==0.37.1 \

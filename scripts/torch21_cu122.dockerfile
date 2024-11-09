@@ -83,7 +83,12 @@ ENV PANTHER_PLIR_EXCLUDE_OPS batch_gemm_fwd,batch_gemm_bwd
 ENV TORCH_NCCL_AVOID_RECORD_STREAMS 1
 ENV TOKENIZERS_PARALLELISM false
 
-ARG CRUISE_VERSION=1.0.0.3494
+ENV MASON_SKIP_LEGO_AUTO_PIP_INSTALL 1
+ENV MASON_SKIP_BPEX_AUTO_PIP_INSTALL 1
+ENV MASON_SKIP_MEGATRON_AUTO_PIP_INSTALL 1
+ENV CRS_LOGGING_LEVEL INFO
+
+ARG CRUISE_VERSION=1.0.0.3555
 ARG PANTHER_VERSION=1.7.14.346
 ARG OPENFST_VERSION=1.0.0.8
 ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
@@ -91,7 +96,7 @@ ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.58
 ARG DATALOADER_VERSION=1.0.0.160
-ARG BUMI_VERSION=1.5.9.7
+ARG BUMI_VERSION=1.6.9.2
 ARG TRITON_VERSION=1.0.0.103
 ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.17
 # https://github.com/facebookresearch/xformers.git:6425fd0
@@ -188,7 +193,7 @@ RUN pip3 install \
         bytedance-context==0.7.1 \
         bytedance-metrics==0.5.2 \
         bytedance.ckpt_io_metrics==0.0.21 \
-        bytedance.easycycle==1.1.30 \
+        bytedance.easycycle==1.1.33 \
         bytedance.hdfs-stdenv==0.0.30 \
         bytedance.modelhub==0.0.77 \
         bytedance.servicediscovery==0.1.2 \
@@ -230,6 +235,7 @@ RUN pip3 install \
         clldutils==3.22.2 \
         cloudpickle==1.6.0 \
         cmake==3.26.3 \
+        codetiming==1.4.0 \
         colorama==0.4.6 \
         colorednoise==2.1.0 \
         colorlog==6.8.2 \
@@ -486,6 +492,7 @@ RUN pip3 install \
         soundfile==0.12.1 \
         sox==1.4.1 \
         soxbindings==1.2.3 \
+        soxr==0.5.0.post1  \
         speechbrain==1.0.1 \
         SQLAlchemy==2.0.34 \
         stack-data==0.6.3 \
@@ -498,6 +505,7 @@ RUN pip3 install \
         tensorboard==2.17.1 \
         tensorboard-data-server==0.7.2 \
         tensorboardX==2.6.2.2 \
+        tensordict==0.6.0 \
         tensorflow==2.17.0 \
         tensorflow-io==0.37.1 \
         tensorflow-io-gcs-filesystem==0.37.1 \
