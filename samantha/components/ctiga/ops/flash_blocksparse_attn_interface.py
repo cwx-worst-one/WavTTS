@@ -103,15 +103,9 @@ class FlashBlocksparseAttnFun(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, dout):
-        (
-            qkv,
-            context,
-            S_dmask,
-            softmax_lse,
-            cu_seqlens,
-            blockmask,
-            rng_state,
-        ) = ctx.saved_tensors
+        (qkv, context, S_dmask, softmax_lse, cu_seqlens, blockmask, rng_state) = (
+            ctx.saved_tensors
+        )
         if rng_state is not None:
             cur_rng_state = torch.cuda.get_rng_state()
             torch.cuda.set_rng_state(rng_state)
@@ -168,15 +162,9 @@ class FlashBlocksparseAttnFunWithS(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, dout, _dS_dmask_ignored, _dsoftmax_sum_ignored):
-        (
-            qkv,
-            context,
-            S_dmask,
-            softmax_lse,
-            cu_seqlens,
-            blockmask,
-            rng_state,
-        ) = ctx.saved_tensors
+        (qkv, context, S_dmask, softmax_lse, cu_seqlens, blockmask, rng_state) = (
+            ctx.saved_tensors
+        )
         if rng_state is not None:
             cur_rng_state = torch.cuda.get_rng_state()
             torch.cuda.set_rng_state(rng_state)

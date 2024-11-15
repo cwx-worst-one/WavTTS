@@ -1,8 +1,0 @@
-# ---
-
-# codecov:
-#   status:
-#     project:
-#       default:
-#         base: "change"
-#         threshold: 1%

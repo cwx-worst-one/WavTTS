@@ -1,4 +1,5 @@
 """Supervised Fine-tuning datamodule for GPT"""
+
 import logging
 import os
 import re
@@ -250,9 +251,11 @@ class AsrDataModule(CruiseDataModule):
             num_readers=[1],
             decode_fn_list=None,
             processor=UtteranceTextProcessor(
-                tokenizer=self.tokenizer
-                if self.tokenizer is not None
-                else self.hparams.tokenizer,
+                tokenizer=(
+                    self.tokenizer
+                    if self.tokenizer is not None
+                    else self.hparams.tokenizer
+                ),
                 template_fn=self.hparams.template_fn,
                 max_seq_len=self.hparams.max_seq_len,
                 drop_last=False,
@@ -289,9 +292,11 @@ class AsrDataModule(CruiseDataModule):
             num_readers=[1],
             decode_fn_list=None,
             processor=UtteranceTextProcessor(
-                tokenizer=self.tokenizer
-                if self.tokenizer is not None
-                else self.hparams.tokenizer,
+                tokenizer=(
+                    self.tokenizer
+                    if self.tokenizer is not None
+                    else self.hparams.tokenizer
+                ),
                 template_fn=self.hparams.val_template_fn,
                 max_seq_len=self.hparams.max_seq_len,
                 drop_last=False,

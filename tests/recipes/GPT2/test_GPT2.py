@@ -30,7 +30,8 @@ def fit_args(project_dir, hdfs_ckpt_dir):
         "--training_params.steps_per_epoch=200",
     )
 
-
+# TODO: fix hdfs in ci
+@pytest.mark.skip(reason="hdfs is not available yet")
 def test_gpt2_fit(fit_args, hdfs_ckpt_dir):
     assert mkdir(hdfs_ckpt_dir)
 

@@ -200,24 +200,16 @@ class FlashAttnQKVPackedFunc(torch.autograd.Function):
 
         if softmax_scale is None:
             softmax_scale = qkv.shape[-1] ** (-0.5)
-        (
-            out,
-            q,
-            k,
-            v,
-            out_padded,
-            softmax_lse,
-            score_cummax,
-            S_dmask,
-            _rng_state,
-        ) = _flash_attn_forward(
-            qkv[:, :, 0],
-            qkv[:, :, 1],
-            qkv[:, :, 2],
-            dropout_p,
-            softmax_scale,
-            causal=causal,
-            return_softmax=return_softmax and dropout_p > 0,
+        (out, q, k, v, out_padded, softmax_lse, score_cummax, S_dmask, _rng_state) = (
+            _flash_attn_forward(
+                qkv[:, :, 0],
+                qkv[:, :, 1],
+                qkv[:, :, 2],
+                dropout_p,
+                softmax_scale,
+                causal=causal,
+                return_softmax=return_softmax and dropout_p > 0,
+            )
         )
         if len(FA2_BWD_ARGS) == 14:
             rng_state = _rng_state
@@ -278,28 +270,20 @@ class FlashAttnVarlenQKVPackedFunc(torch.autograd.Function):
             rng_state = torch.cuda.get_rng_state() if dropout_p > 0 else None
         if softmax_scale is None:
             softmax_scale = qkv.shape[-1] ** (-0.5)
-        (
-            out,
-            q,
-            k,
-            v,
-            out_padded,
-            softmax_lse,
-            score_cummax,
-            S_dmask,
-            _rng_state,
-        ) = _flash_attn_varlen_forward(
-            qkv[:, 0],
-            qkv[:, 1],
-            qkv[:, 2],
-            cu_seqlens,
-            cu_seqlens,
-            max_seqlen,
-            max_seqlen,
-            dropout_p,
-            softmax_scale,
-            causal=causal,
-            return_softmax=return_softmax and dropout_p > 0,
+        (out, q, k, v, out_padded, softmax_lse, score_cummax, S_dmask, _rng_state) = (
+            _flash_attn_varlen_forward(
+                qkv[:, 0],
+                qkv[:, 1],
+                qkv[:, 2],
+                cu_seqlens,
+                cu_seqlens,
+                max_seqlen,
+                max_seqlen,
+                dropout_p,
+                softmax_scale,
+                causal=causal,
+                return_softmax=return_softmax and dropout_p > 0,
+            )
         )
         if len(FA2_BWD_ARGS) == 14:
             rng_state = _rng_state
@@ -356,24 +340,16 @@ class FlashAttnKVPackedFunc(torch.autograd.Function):
             rng_state = torch.cuda.get_rng_state() if dropout_p > 0 else None
         if softmax_scale is None:
             softmax_scale = q.shape[-1] ** (-0.5)
-        (
-            out,
-            q,
-            k,
-            v,
-            out_padded,
-            softmax_lse,
-            score_cummax,
-            S_dmask,
-            _rng_state,
-        ) = _flash_attn_forward(
-            q,
-            kv[:, :, 0],
-            kv[:, :, 1],
-            dropout_p,
-            softmax_scale,
-            causal=causal,
-            return_softmax=return_softmax and dropout_p > 0,
+        (out, q, k, v, out_padded, softmax_lse, score_cummax, S_dmask, _rng_state) = (
+            _flash_attn_forward(
+                q,
+                kv[:, :, 0],
+                kv[:, :, 1],
+                dropout_p,
+                softmax_scale,
+                causal=causal,
+                return_softmax=return_softmax and dropout_p > 0,
+            )
         )
         if len(FA2_BWD_ARGS) == 14:
             rng_state = _rng_state
@@ -437,28 +413,20 @@ class FlashAttnVarlenKVPackedFunc(torch.autograd.Function):
             rng_state = torch.cuda.get_rng_state() if dropout_p > 0 else None
         if softmax_scale is None:
             softmax_scale = q.shape[-1] ** (-0.5)
-        (
-            out,
-            q,
-            k,
-            v,
-            out_padded,
-            softmax_lse,
-            score_cummax,
-            S_dmask,
-            _rng_state,
-        ) = _flash_attn_varlen_forward(
-            q,
-            kv[:, 0],
-            kv[:, 1],
-            cu_seqlens_q,
-            cu_seqlens_k,
-            max_seqlen_q,
-            max_seqlen_k,
-            dropout_p,
-            softmax_scale,
-            causal=causal,
-            return_softmax=return_softmax and dropout_p > 0,
+        (out, q, k, v, out_padded, softmax_lse, score_cummax, S_dmask, _rng_state) = (
+            _flash_attn_varlen_forward(
+                q,
+                kv[:, 0],
+                kv[:, 1],
+                cu_seqlens_q,
+                cu_seqlens_k,
+                max_seqlen_q,
+                max_seqlen_k,
+                dropout_p,
+                softmax_scale,
+                causal=causal,
+                return_softmax=return_softmax and dropout_p > 0,
+            )
         )
         if len(FA2_BWD_ARGS) == 14:
             rng_state = _rng_state
@@ -477,16 +445,9 @@ class FlashAttnVarlenKVPackedFunc(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, dout, *args):
-        (
-            q,
-            k,
-            v,
-            out,
-            softmax_lse,
-            cu_seqlens_q,
-            cu_seqlens_k,
-            rng_state,
-        ) = ctx.saved_tensors
+        (q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k, rng_state) = (
+            ctx.saved_tensors
+        )
         if len(FA2_BWD_ARGS) == 13 and rng_state is not None:
             cur_rng_state = torch.cuda.get_rng_state()
             torch.cuda.set_rng_state(rng_state)
@@ -527,24 +488,16 @@ class FlashAttnFunc(torch.autograd.Function):
             rng_state = torch.cuda.get_rng_state() if dropout_p > 0 else None
         if softmax_scale is None:
             softmax_scale = q.shape[-1] ** (-0.5)
-        (
-            out,
-            q,
-            k,
-            v,
-            out_padded,
-            softmax_lse,
-            score_cummax,
-            S_dmask,
-            _rng_state,
-        ) = _flash_attn_forward(
-            q,
-            k,
-            v,
-            dropout_p,
-            softmax_scale,
-            causal=causal,
-            return_softmax=return_softmax and dropout_p > 0,
+        (out, q, k, v, out_padded, softmax_lse, score_cummax, S_dmask, _rng_state) = (
+            _flash_attn_forward(
+                q,
+                k,
+                v,
+                dropout_p,
+                softmax_scale,
+                causal=causal,
+                return_softmax=return_softmax and dropout_p > 0,
+            )
         )
         if len(FA2_BWD_ARGS) == 14:
             rng_state = _rng_state
@@ -608,28 +561,20 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
             rng_state = torch.cuda.get_rng_state() if dropout_p > 0 else None
         if softmax_scale is None:
             softmax_scale = q.shape[-1] ** (-0.5)
-        (
-            out,
-            q,
-            k,
-            v,
-            out_padded,
-            softmax_lse,
-            score_cummax,
-            S_dmask,
-            _rng_state,
-        ) = _flash_attn_varlen_forward(
-            q,
-            k,
-            v,
-            cu_seqlens_q,
-            cu_seqlens_k,
-            max_seqlen_q,
-            max_seqlen_k,
-            dropout_p,
-            softmax_scale,
-            causal=causal,
-            return_softmax=return_softmax and dropout_p > 0,
+        (out, q, k, v, out_padded, softmax_lse, score_cummax, S_dmask, _rng_state) = (
+            _flash_attn_varlen_forward(
+                q,
+                k,
+                v,
+                cu_seqlens_q,
+                cu_seqlens_k,
+                max_seqlen_q,
+                max_seqlen_k,
+                dropout_p,
+                softmax_scale,
+                causal=causal,
+                return_softmax=return_softmax and dropout_p > 0,
+            )
         )
         if len(FA2_BWD_ARGS) == 14:
             rng_state = _rng_state
@@ -648,16 +593,9 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, dout, *args):
-        (
-            q,
-            k,
-            v,
-            out,
-            softmax_lse,
-            cu_seqlens_q,
-            cu_seqlens_k,
-            rng_state,
-        ) = ctx.saved_tensors
+        (q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k, rng_state) = (
+            ctx.saved_tensors
+        )
         if len(FA2_BWD_ARGS) == 13 and rng_state is not None:
             cur_rng_state = torch.cuda.get_rng_state()
             torch.cuda.set_rng_state(rng_state)

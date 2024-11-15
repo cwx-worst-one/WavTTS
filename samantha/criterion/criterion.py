@@ -226,7 +226,7 @@ class UMMLoss(nn.Module):
             self.chroma_loss_fn = STFTLoss()
         self.config = config
 
-    @torch.cuda.amp.autocast(enabled=False)
+    @torch.amp.autocast("cuda", enabled=False)
     def forward(self, ctc_logits, text_ids, recon_mel, mel, recon_chroma, chroma):
         loss_dict = {}
 
@@ -318,7 +318,7 @@ class UMMLossV2(nn.Module):
             )
         return ctc_loss
 
-    @torch.cuda.amp.autocast(enabled=False)
+    @torch.amp.autocast("cuda", enabled=False)
     def forward(self, ctc_logits, text_ids, recon_mel, mel, recon_chroma, chroma):
         loss_dict = {
             "loss_mel": self.compute_mel_loss(recon_mel, mel),
@@ -338,7 +338,7 @@ class UMMLossMSS(UMMLossV2):
         self.mel_vocal_loss_fn = STFTLoss()
         self.mel_inst_loss_fn = STFTLoss()
 
-    @torch.cuda.amp.autocast(enabled=False)
+    @torch.amp.autocast("cuda", enabled=False)
     def forward(
         self,
         ctc_logits,

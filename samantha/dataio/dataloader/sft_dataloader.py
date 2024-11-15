@@ -1,4 +1,5 @@
 """Supervised Fine-tuning datamodule for GPT"""
+
 import logging
 import os
 import tempfile
@@ -274,9 +275,11 @@ class SFTDataModule(CruiseDataModule):
             num_readers=[1],
             decode_fn_list=None,
             processor=RawTextProcessor(
-                tokenizer=self.tokenizer
-                if self.tokenizer is not None
-                else self.hparams.tokenizer,
+                tokenizer=(
+                    self.tokenizer
+                    if self.tokenizer is not None
+                    else self.hparams.tokenizer
+                ),
                 text_keys=self.hparams.text_keys,
                 max_seq_len=self.hparams.max_seq_len,
                 drop_last=False,
@@ -317,9 +320,11 @@ class SFTDataModule(CruiseDataModule):
             num_readers=[1],
             decode_fn_list=None,
             processor=RawTextProcessor(
-                tokenizer=self.tokenizer
-                if self.tokenizer is not None
-                else self.hparams.tokenizer,
+                tokenizer=(
+                    self.tokenizer
+                    if self.tokenizer is not None
+                    else self.hparams.tokenizer
+                ),
                 text_keys=self.hparams.text_keys,
                 max_seq_len=self.hparams.max_seq_len,
                 drop_last=False,
@@ -354,9 +359,11 @@ class SFTDataModule(CruiseDataModule):
             num_readers=[1],
             decode_fn_list=None,
             processor=RawTextProcessor(
-                tokenizer=self.tokenizer
-                if self.tokenizer is not None
-                else self.hparams.tokenizer,
+                tokenizer=(
+                    self.tokenizer
+                    if self.tokenizer is not None
+                    else self.hparams.tokenizer
+                ),
                 text_keys=self.hparams.text_keys,
                 max_seq_len=self.hparams.max_seq_len,
                 drop_last=False,

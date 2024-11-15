@@ -95,12 +95,12 @@ class Attention(nn.Module):
                 )
 
                 batch_range = torch.arange(b, device=q.device)[:, None]
-                expand_q.permute(0, 2, 1, 3)[
-                    batch_range, masked_n_unmasked[1]
-                ] = q.permute(0, 2, 1, 3)
-                expand_k.permute(0, 2, 1, 3)[
-                    batch_range, masked_n_unmasked[1]
-                ] = k.permute(0, 2, 1, 3)
+                expand_q.permute(0, 2, 1, 3)[batch_range, masked_n_unmasked[1]] = (
+                    q.permute(0, 2, 1, 3)
+                )
+                expand_k.permute(0, 2, 1, 3)[batch_range, masked_n_unmasked[1]] = (
+                    k.permute(0, 2, 1, 3)
+                )
 
                 q = (
                     rotary_emb.rotate_queries_or_keys(expand_q)

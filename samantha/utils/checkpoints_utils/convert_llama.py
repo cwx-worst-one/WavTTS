@@ -93,9 +93,9 @@ def convert_llama_state_dict(
             f"layers.{layer_idx}.ffn_norm.weight"
         ]
 
-        converted[
-            f"transformer.h.{layer_idx}.attn.rotary_embeddings.inv_freq"
-        ] = inv_freq
+        converted[f"transformer.h.{layer_idx}.attn.rotary_embeddings.inv_freq"] = (
+            inv_freq
+        )
     return converted
 
 

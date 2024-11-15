@@ -699,15 +699,14 @@ class GPTModel(GPTPreTrainedModel):
                             hidden_states, residual = layer_outs
                     else:
                         # NOTE: no support return_attn_probs now
-                        (
-                            hidden_states,
-                            hidden_states2,
-                        ) = torch.utils.checkpoint.checkpoint(
-                            create_custom_forward(layer),
-                            hidden_states,
-                            hidden_states2,
-                            residual,
-                            use_reentrant=False,
+                        (hidden_states, hidden_states2) = (
+                            torch.utils.checkpoint.checkpoint(
+                                create_custom_forward(layer),
+                                hidden_states,
+                                hidden_states2,
+                                residual,
+                                use_reentrant=False,
+                            )
                         )
                 else:
                     if not self.parallel_block:

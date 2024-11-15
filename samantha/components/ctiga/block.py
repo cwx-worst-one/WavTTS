@@ -351,10 +351,9 @@ class Block(nn.Module):
                 )
                 if return_attn_probs:
                     assert len(mixer_out) == 2
-                    (
-                        hidden_states,
-                        attn_probs,
-                    ) = mixer_out  # attn_probs: tuple(lse,score_cummax,dmask)
+                    (hidden_states, attn_probs) = (
+                        mixer_out  # attn_probs: tuple(lse,score_cummax,dmask)
+                    )
                 else:
                     assert len(mixer_out) == 1
                     hidden_states = mixer_out[0]
@@ -428,11 +427,9 @@ class Block(nn.Module):
             #     mixer_out, hidden_states = mixer_out
             if return_attn_probs:
                 assert len(mixer_out) == 3
-                (
-                    mixer_out,
-                    hidden_states,
-                    attn_porbs,
-                ) = mixer_out  # attn_probs: tuple(lse,score_cummax,dmask)
+                (mixer_out, hidden_states, attn_porbs) = (
+                    mixer_out  # attn_probs: tuple(lse,score_cummax,dmask)
+                )
             else:
                 mixer_out, hidden_states = mixer_out
 

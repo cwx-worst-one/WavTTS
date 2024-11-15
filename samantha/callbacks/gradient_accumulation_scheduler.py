@@ -4,8 +4,9 @@ import pytorch_lightning as pl
 from lightning_fabric.utilities.exceptions import MisconfigurationException
 from lightning_utilities.core.rank_zero import rank_zero_warn
 from pytorch_lightning import Callback
-from pytorch_lightning.utilities.imports import _LIGHTNING_COLOSSALAI_AVAILABLE
 from pytorch_lightning.utilities.model_helpers import is_overridden
+
+_LIGHTNING_COLOSSALAI_AVAILABLE = False
 
 
 class GradientAccumulationScheduler(Callback):

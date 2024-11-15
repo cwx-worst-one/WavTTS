@@ -517,9 +517,9 @@ class VAELLaMaLangSpkSer(LLaMa):
                             h[i, text_lens[i] : text_lens[i] + 1, :] = spk_embeds[i]
                             if self.use_ser_tag:
                                 # insert bn embeds
-                                h[
-                                    i, text_lens[i] + 1 : text_lens[i] + 2, :
-                                ] = ser_tag_embeds[i]
+                                h[i, text_lens[i] + 1 : text_lens[i] + 2, :] = (
+                                    ser_tag_embeds[i]
+                                )
                                 h[
                                     i,
                                     text_lens[i] + 2 : text_lens[i] + 2 + bn_lens[i],
@@ -534,18 +534,18 @@ class VAELLaMaLangSpkSer(LLaMa):
                                 ] = bn_in_h[i, : bn_lens[i], :]
                         elif self.spk_type == "add" or self.spk_type == "cln":
                             if self.use_ser_tag:
-                                h[
-                                    i, text_lens[i] : text_lens[i] + 1, :
-                                ] = ser_tag_embeds[i]
+                                h[i, text_lens[i] : text_lens[i] + 1, :] = (
+                                    ser_tag_embeds[i]
+                                )
                                 h[
                                     i,
                                     text_lens[i] + 1 : text_lens[i] + 1 + bn_lens[i],
                                     :,
                                 ] = bn_in_h[i, : bn_lens[i], :]
                             else:
-                                h[
-                                    i, text_lens[i] : text_lens[i] + bn_lens[i], :
-                                ] = bn_in_h[i, : bn_lens[i], :]
+                                h[i, text_lens[i] : text_lens[i] + bn_lens[i], :] = (
+                                    bn_in_h[i, : bn_lens[i], :]
+                                )
 
                     else:
                         if self.use_ser_tag:
@@ -567,9 +567,9 @@ class VAELLaMaLangSpkSer(LLaMa):
                             h[i, text_lens[i] : text_lens[i] + 1, :] = spk_embeds[i]
                             if self.use_ser_tag:
                                 # insert bn embeds
-                                h[
-                                    i, text_lens[i] + 1 : text_lens[i] + 2, :
-                                ] = ser_tag_embeds[i]
+                                h[i, text_lens[i] + 1 : text_lens[i] + 2, :] = (
+                                    ser_tag_embeds[i]
+                                )
                                 h[
                                     i,
                                     text_lens[i] + 2 : text_lens[i] + 2 + bn_lens[i],
@@ -584,18 +584,18 @@ class VAELLaMaLangSpkSer(LLaMa):
                                 ] = bn_in_h[i, : bn_lens[i], :]
                         elif self.spk_type == "add" or self.spk_type == "cln":
                             if self.use_ser_tag:
-                                h[
-                                    i, text_lens[i] : text_lens[i] + 1, :
-                                ] = ser_tag_embeds[i]
+                                h[i, text_lens[i] : text_lens[i] + 1, :] = (
+                                    ser_tag_embeds[i]
+                                )
                                 h[
                                     i,
                                     text_lens[i] + 1 : text_lens[i] + 1 + bn_lens[i],
                                     :,
                                 ] = bn_in_h[i, : bn_lens[i], :]
                             else:
-                                h[
-                                    i, text_lens[i] : text_lens[i] + bn_lens[i], :
-                                ] = bn_in_h[i, : bn_lens[i], :]
+                                h[i, text_lens[i] : text_lens[i] + bn_lens[i], :] = (
+                                    bn_in_h[i, : bn_lens[i], :]
+                                )
                     else:
                         if self.use_ser_tag:
                             h[i, text_lens[i] : text_lens[i] + 1, :] = ser_tag_embeds[i]

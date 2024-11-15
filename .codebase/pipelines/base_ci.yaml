@@ -1,0 +1,66 @@
+---
+
+name: SAMANTHA Base CI
+trigger:
+  change:
+    types: [create, push]
+  push:
+    branches: [master]
+    types: [branch]
+
+post-trigger:
+  # This post trigger does nothing. It's a workaround to the limitation that
+  # Codebase CI leaves us no node to define "common" YAML nodes for later
+  # reference.
+  - if: false
+    inputs:
+      step-templates:
+        - &use-training-image
+          image: hub.byted.org/base/samantha_preview:1.0.0.462
+        - &step-checkout
+          name: checkout
+          uses: actions/checkout
+          inputs:
+            depth: 1
+        - &step-setup-lfs
+          name: setup git lfs
+          commands:
+            - git lfs install --system && git lfs pull
+            - git config --global lfs.concurrenttransfers 50
+        - &step-fetch-submodules
+          name: fetch submodules
+          parallel-with-next-step: true
+          commands:
+            - git submodule update --init --depth 1 --jobs 64
+        - &step-setup-bvc
+          name: setup bvc
+          uses: actions/setup-bvc
+        - &step-doas
+          name: doas
+          uses: actions/doas
+        - &step-setup-pytest-xdist
+          name: setup pytest-xdist
+          commands:
+            - pip3 install pytest-xdist
+        - &step-check-cuda-availability
+          name: check cuda availability
+          commands:
+            - nvidia-smi
+        - &step-set-cuda-device
+          name: set cuda device
+          commands:
+            - DEVICE_ID=`scripts/ci/list_cuda_devices.sh | head -n1`
+            - echo "::set-output name=CUDA_VISIBLE_DEVICES::${DEVICE_ID}"
+            - echo "::set-env name=CUDA_VISIBLE_DEVICES::${DEVICE_ID}"
+
+jobs:
+  lint:
+    name: "Lint (Training Image)"
+    <<: *use-training-image
+    steps:
+      - *step-checkout
+      - *step-setup-lfs
+      - *step-setup-bvc
+      - name: lint
+        commands:
+          - bash ./scripts/lint.sh

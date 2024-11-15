@@ -1,5 +1,6 @@
 import pytest
 import torch
+from packaging import version
 
 from samantha.criterion.spectral_loss import (
     MagnitudeSTFTLoss,
@@ -63,6 +64,11 @@ def test_multistft_loss(scale):
     assert loss == 0
     assert len(losses) == 3
 
+
+@pytest.mark.skipif(
+    version.parse(torch.__version__) < version.parse("2.4.0"),
+    reason="`torch.compile` is not compatible with triton 3.0.0 in our training image.",
+)
 @pytest.mark.parametrize("scale", [None, "mel"])
 def test_compile_loss(scale):
 

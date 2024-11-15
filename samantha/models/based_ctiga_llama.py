@@ -593,12 +593,12 @@ def checkpoint_converter(origin_ckpt_path, ctiga_ckpt_path, only_weights=False):
             )
             hf_state_dict[f"model.layers.{i}.self_attn.k_proj.weight"] = kw
 
-            hf_state_dict[
-                f"model.layers.{i}.self_attn.v_proj.weight"
-            ] = hf_state_dict.pop(f"{attn_layer}.wv.weight")
-            hf_state_dict[
-                f"model.layers.{i}.self_attn.o_proj.weight"
-            ] = hf_state_dict.pop(f"{attn_layer}.wo.weight")
+            hf_state_dict[f"model.layers.{i}.self_attn.v_proj.weight"] = (
+                hf_state_dict.pop(f"{attn_layer}.wv.weight")
+            )
+            hf_state_dict[f"model.layers.{i}.self_attn.o_proj.weight"] = (
+                hf_state_dict.pop(f"{attn_layer}.wo.weight")
+            )
 
             hf_state_dict[f"model.layers.{i}.mlp.gate_proj.weight"] = hf_state_dict.pop(
                 f"{mlp}.w1.weight"
@@ -610,12 +610,12 @@ def checkpoint_converter(origin_ckpt_path, ctiga_ckpt_path, only_weights=False):
                 f"{mlp}.w3.weight"
             )
 
-            hf_state_dict[
-                f"model.layers.{i}.input_layernorm.weight"
-            ] = hf_state_dict.pop(f"{input_norm}.weight")
-            hf_state_dict[
-                f"model.layers.{i}.post_attention_layernorm.weight"
-            ] = hf_state_dict.pop(f"{ffn_norm}.weight")
+            hf_state_dict[f"model.layers.{i}.input_layernorm.weight"] = (
+                hf_state_dict.pop(f"{input_norm}.weight")
+            )
+            hf_state_dict[f"model.layers.{i}.post_attention_layernorm.weight"] = (
+                hf_state_dict.pop(f"{ffn_norm}.weight")
+            )
         return hf_state_dict
 
     def map_to_ctiga(hf_state_dict, params):
@@ -656,16 +656,16 @@ def checkpoint_converter(origin_ckpt_path, ctiga_ckpt_path, only_weights=False):
         for layer_idx in range(n_layer):
             # RMS-Norm
             # input_layernorm -> norm1
-            ctiga_state_dict[
-                f"{to_prefix.format(layer_idx, 'norm1')}.weight"
-            ] = ctiga_state_dict.pop(
-                f"{from_prefix.format(layer_idx, 'input_layernorm')}.weight"
+            ctiga_state_dict[f"{to_prefix.format(layer_idx, 'norm1')}.weight"] = (
+                ctiga_state_dict.pop(
+                    f"{from_prefix.format(layer_idx, 'input_layernorm')}.weight"
+                )
             )
             # post_attention_layernorm -> norm2
-            ctiga_state_dict[
-                f"{to_prefix.format(layer_idx, 'norm2')}.weight"
-            ] = ctiga_state_dict.pop(
-                f"{from_prefix.format(layer_idx, 'post_attention_layernorm')}.weight"
+            ctiga_state_dict[f"{to_prefix.format(layer_idx, 'norm2')}.weight"] = (
+                ctiga_state_dict.pop(
+                    f"{from_prefix.format(layer_idx, 'post_attention_layernorm')}.weight"
+                )
             )
 
             # attention block

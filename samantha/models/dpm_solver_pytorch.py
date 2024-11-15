@@ -1013,9 +1013,7 @@ class DPM_Solver:
                 expand_dims(sigma_t / sigma_prev_0, dims) * x
                 - expand_dims(alpha_t * (torch.exp(-h) - 1.0), dims) * model_prev_0
                 + expand_dims(alpha_t * ((torch.exp(-h) - 1.0) / h + 1.0), dims) * D1
-                - expand_dims(
-                    alpha_t * ((torch.exp(-h) - 1.0 + h) / h**2 - 0.5), dims
-                )
+                - expand_dims(alpha_t * ((torch.exp(-h) - 1.0 + h) / h**2 - 0.5), dims)
                 * D2
             )
         else:
@@ -1381,16 +1379,15 @@ class DPM_Solver:
                         model_prev_list[-1] = self.model_fn(x, vec_t)
         elif method in ["singlestep", "singlestep_fixed"]:
             if method == "singlestep":
-                (
-                    timesteps_outer,
-                    orders,
-                ) = self.get_orders_and_timesteps_for_singlestep_solver(
-                    steps=steps,
-                    order=order,
-                    skip_type=skip_type,
-                    t_T=t_T,
-                    t_0=t_0,
-                    device=device,
+                (timesteps_outer, orders) = (
+                    self.get_orders_and_timesteps_for_singlestep_solver(
+                        steps=steps,
+                        order=order,
+                        skip_type=skip_type,
+                        t_T=t_T,
+                        t_0=t_0,
+                        device=device,
+                    )
                 )
             elif method == "singlestep_fixed":
                 K = steps // order

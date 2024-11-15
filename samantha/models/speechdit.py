@@ -524,14 +524,9 @@ class Diffusion(nn.Module):
         return text_embed, text_lens, local_cond, time_emb, alphas, betas
 
     def forward(self, inputs, sigmas=None, x_noisy=None, return_disc_feat=False):
-        (
-            text_embed,
-            text_lens,
-            local_cond,
-            time_emb,
-            alphas,
-            betas,
-        ) = self.compute_forward_condition(inputs, sigmas)
+        (text_embed, text_lens, local_cond, time_emb, alphas, betas) = (
+            self.compute_forward_condition(inputs, sigmas)
+        )
 
         B, device = inputs["bn_ctx"].size(0), inputs["bn_ctx"].device
         feat_lens = inputs["bn_lens"]

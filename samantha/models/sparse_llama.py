@@ -515,7 +515,9 @@ class LLaMaNAR(nn.Module):
             targets.append(x_[i, :, ind])
         targets = torch.stack(targets, dim=0)
         loss_mask = seq_mask
-        assert (targets == 0).sum() == (loss_mask == 0).sum()  # 确保loss_mask与输入的一致性
+        assert (targets == 0).sum() == (
+            loss_mask == 0
+        ).sum()  # 确保loss_mask与输入的一致性
         model_outputs.update(
             {
                 "targets": (targets - 1).clamp(0),  # remove offset: pad 1

@@ -217,15 +217,9 @@ class FlashAttnKVPackedFunc(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, dout, *args):
-        (
-            q,
-            kv,
-            out,
-            softmax_lse,
-            cu_seqlens_q,
-            cu_seqlens_k,
-            rng_state,
-        ) = ctx.saved_tensors
+        (q, kv, out, softmax_lse, cu_seqlens_q, cu_seqlens_k, rng_state) = (
+            ctx.saved_tensors
+        )
         dq = torch.empty_like(q)
         dkv = torch.empty_like(kv)
         _flash_attn_backward(
@@ -297,16 +291,9 @@ class FlashAttnFunc(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, dout, *args):
-        (
-            q,
-            k,
-            v,
-            out,
-            softmax_lse,
-            cu_seqlens_q,
-            cu_seqlens_k,
-            rng_state,
-        ) = ctx.saved_tensors
+        (q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k, rng_state) = (
+            ctx.saved_tensors
+        )
         dq, dk, dv = torch.empty_like(q), torch.empty_like(k), torch.empty_like(v)
         _flash_attn_backward(
             dout,
@@ -414,15 +401,9 @@ class FlashAttnQKVPackedSplitFunc(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, dout, *args):
-        (
-            qkv,
-            out,
-            softmax_lse0,
-            softmax_lse1,
-            cu_seqlens,
-            rng_state0,
-            rng_state1,
-        ) = ctx.saved_tensors
+        (qkv, out, softmax_lse0, softmax_lse1, cu_seqlens, rng_state0, rng_state1) = (
+            ctx.saved_tensors
+        )
         batch_size0 = ctx.batch_size0
         if rng_state0 is not None:
             cur_rng_state = torch.cuda.get_rng_state()

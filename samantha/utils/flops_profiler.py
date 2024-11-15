@@ -234,15 +234,13 @@ class FlopsProfiler(object):
         def add_or_reset_attrs(module):
             module.__flops__ = 0
             module.__macs__ = 0
-            module.__params__ = (
-                module.__expert_params__
-            ) = module.__model_expert_params__ = 0
+            module.__params__ = module.__expert_params__ = (
+                module.__model_expert_params__
+            ) = 0
             for p in module.parameters():
-                (
-                    num_params,
-                    expert_parallelism,
-                    per_param_size,
-                ) = get_param_count_and_ep(p)
+                (num_params, expert_parallelism, per_param_size) = (
+                    get_param_count_and_ep(p)
+                )
                 params = num_params if not expert_parallelism else 0
                 expert_params = num_params if expert_parallelism else 0
                 # number of expert parameters taking into

@@ -1,3 +1,4 @@
+from packaging import version
 import matplotlib.pyplot as plt
 import pytest
 import torch
@@ -68,12 +69,16 @@ def test_mel_spectrogram():
     # transform.plot(x, ax=ax)
     # plt.savefig("melspectrogram.png")
 
+@pytest.mark.skipif(
+    version.parse(torch.__version__) < version.parse("2.4.0"),
+    reason="`torch.compile` is not compatible with triton 3.0.0 in our training image.",
+)
 def test_compile_transforms():
     transform = Spectrogram(n_fft=1024, win_length=1024, hop_length=256)
 
     mel_transform = MelSpectrogram(
         sample_rate=24000, n_mels=128, n_fft=1024, win_length=1024, hop_length=256
     )
-    
+
     torch.compile(transform)
     torch.compile(mel_transform)
