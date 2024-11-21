@@ -217,7 +217,6 @@ class Diffusion(nn.Module):
                                         bias=hp.bias)
 
         self.speech_embedding = TagEmbed(hidden_dim=hp.video_feat_dim)
-
         self.music_embedding = TagEmbed(hidden_dim=hp.video_feat_dim)
 
         # backbone
@@ -287,19 +286,19 @@ class Diffusion(nn.Module):
 
         bsz, device, frame_num = video_embs.size(0), video_embs.device, video_embs.size(1)
 
-        device = video_embs.device
-        frame_num = video_embs.size(1)
-
         frame_num = frame_num * self.video_repeat
 
         latents = torch.randn([1, frame_num, self.hp.out_channels], device=device)
 
         sigmas = torch.linspace(self.max_t, self.min_t, step_num + 1, device=device)
+
         sigmas = repeat(sigmas, "i -> i b", b=1)
         sigmas_batch = extend_dim(sigmas, dim=latents.ndim)
         alphas, betas = self.get_alpha_beta(sigmas_batch)
 
         zero_value = torch.zeros(1, 1).to(device).to(dtype=torch.long)
+
+
         speech_embs = self.speech_embedding(zero_value)
         music_embs = self.music_embedding(zero_value)
         video_embs = self.video_condition(video_embs)

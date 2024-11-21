@@ -5,7 +5,7 @@ import samantha.utils.hdfs_helper as hh
 from collections import OrderedDict
 
 
-def get_ckpt_path(ckpt_path, ckpt_cache=".deploy_cache", force_update = True):
+def get_ckpt_path(ckpt_path, ckpt_cache=".deploy_cache", force_update=True):
 
     if not force_update:
         fn = os.path.basename(ckpt_path)
@@ -39,14 +39,13 @@ def export_video(ckpt, save_path):
     for name, param in ckpt.items():
         print(name)
         if key in name:
-            print(name[(len(key)+1)::], "->", name)
-            new_ckpt[name[(len(key)+1)::]] = param
+            print(name[(len(key) + 1)::], "->", name)
+            new_ckpt[name[(len(key) + 1)::]] = param
 
     msg = encoder.load_state_dict(new_ckpt)
 
-    print(f"encoder {msg}") 
+    print(f"encoder {msg}")
     print(save_path)
-
 
 
 def export_video(ckpt, save_path):
@@ -68,7 +67,7 @@ def export_video(ckpt, save_path):
 
     torch.save(new_ckpt, save_path)
 
-    print(f"encoder {msg}") 
+    print(f"encoder {msg}")
     print(save_path)
 
 
@@ -95,9 +94,8 @@ def export_diffusion(ckpt, save_path):
 
     torch.save(new_ckpt, save_path)
 
-    print(f"model {msg}") 
+    print(f"model {msg}")
     print(save_path)
-
 
 
 def export_vocoder(ckpt, save_path):
@@ -121,16 +119,15 @@ def export_vocoder(ckpt, save_path):
 
     torch.save(new_ckpt, save_path)
 
-    print(f"model {msg}") 
+    print(f"model {msg}")
     print(save_path)
 
 
 if __name__ == "__main__":
 
-    file_name = "v2a_15w_32k_ft2_33000"
+    file_name = "v2a_15w_32k_ft12_74000"
 
     local_path = f"/mnt/bn/zxb-lq/workspace/samantha/.deploy_cache/{file_name}.ckpt"
-
 
     encoder_path = os.path.join(".deploy_cache", f"{file_name}_encoder.ckpt")
     diffusion_path = os.path.join(".deploy_cache", f"{file_name}_diffusion.ckpt")
@@ -140,7 +137,6 @@ if __name__ == "__main__":
     ckpt = torch.load(local_path, map_location="cpu")
     print("loading done")
 
-
-    # export_video(ckpt = ckpt, save_path =encoder_path)
-    # export_diffusion(ckpt = ckpt, save_path =diffusion_path)
-    export_vocoder(ckpt = ckpt, save_path =vocoder_path)
+    export_video(ckpt=ckpt, save_path=encoder_path)
+    export_diffusion(ckpt=ckpt, save_path=diffusion_path)
+    export_vocoder(ckpt=ckpt, save_path=vocoder_path)

@@ -1,5 +1,5 @@
-import torch
 import os
+import torch
 from torch import nn
 import random
 import numpy as np
@@ -50,6 +50,106 @@ def save_video(in_video, wave_path, out_path):
     print(out_path)
 
 
+
+class Soundify_video:
+
+    def __init__(self, target_fps=8, mean_threshold=10, std_threshold=10, remove_caption=True):
+
+        self.target_fps = target_fps
+        self.mean_threshold = mean_threshold
+        self.std_threshold = std_threshold
+        self.remove_caption = remove_caption
+
+    def detect_black(self, mini_frames):
+
+        gray = 0.299 * mini_frames[..., 0] + 0.587 * mini_frames[..., 1] + 0.114 * mini_frames[...,
+                                                                                               2]
+        gray_mean = torch.mean(gray, axis=[0, 2])
+        gray_std = torch.std(gray, axis=[0, 2])
+
+        cnt = 0
+        for top in range(40, -1, -1):
+            if gray_mean[top] < self.mean_threshold and gray_std[top] < self.std_threshold:
+                cnt += 1
+                if cnt == 3:
+                    break
+        top = top + cnt
+
+        cnt = 0
+        for bottom in range(60, 100, 1):
+            if gray_mean[bottom] < self.mean_threshold and gray_std[bottom] < self.std_threshold:
+                cnt += 1
+                if cnt == 3:
+                    break
+        bottom = bottom - cnt
+
+        return top, bottom
+
+    def resize(self, frame, top, bottom):
+
+        w, h = frame.size
+        ratio = w / h
+
+        if ratio < 9 / 14:
+            top = np.clip(top, 10, 40)
+            bottom = np.clip(bottom, 60, 90)
+
+        if self.remove_caption:
+            w_ratio = 0.85
+        else:
+            w_ratio = 1.0
+
+        img_top = int(top / 100 * h)
+        img_bottom = int(bottom / 100 * h)
+        new_h = int((img_bottom - img_top) * w_ratio)
+        img_bottom = img_top + new_h
+
+        new_w = np.clip(int(new_h * ratio), w * 0.85, w)
+
+        img_left = (w - new_w) // 2
+        img_right = img_left + new_w
+
+        frame = frame.crop((img_left, img_top, img_right, img_bottom))
+        frame = frame.resize([224, 224])
+
+        return frame
+
+    def load(self, in_video):
+
+        video_reader = VideoReader(in_video, num_threads=1)
+        vlen = len(video_reader)
+        fps = video_reader.get_avg_fps()
+
+        target_num = int(vlen / float(fps) * float(self.target_fps))
+        frame_indices = np.linspace(start=0, stop=vlen, num=target_num + 1)[0:-1].astype(int)
+
+        mini_frames = []
+        for idx in frame_indices:
+            frame = video_reader[idx].asnumpy()
+            frame = Image.fromarray(frame).convert('RGB')
+            w, h = frame.size
+            frame = frame.resize([int(100 * w / h), 100])
+            frame = np.array(frame).astype('uint8')
+            mini_frames.append(frame)
+        mini_frames = torch.from_numpy(np.asarray(mini_frames))
+
+        top, bottom = self.detect_black(mini_frames)
+
+        out_frames = []
+        for idx in frame_indices:
+            frame = video_reader[idx].asnumpy()
+            frame = Image.fromarray(frame).convert('RGB')
+            frame = self.resize(frame, top, bottom)
+            frame = np.array(frame).astype('uint8')
+            out_frames.append(frame)
+
+        out_frames = np.asarray(out_frames)
+        out_frames = torch.from_numpy(out_frames).to(dtype=torch.uint8)  # [t, h, w, c]
+        out_frames = out_frames.permute(0, 3, 1, 2)  # [c, t, h, w]
+        out_frames = (out_frames / 255.0).to(dtype=torch.float32)
+
+        return out_frames
+
 class Soundify_v2a(nn.Module):
 
     def __init__(self, cavp_ckpt, dit_ckpt, vocoder_ckpt):
@@ -83,7 +183,9 @@ class Soundify_v2a(nn.Module):
         for idx in frame_indices:
             frame = video_reader[idx].asnumpy()
             frame = Image.fromarray(frame).convert('RGB')
-            if remove_caption:
+
+            w, h = frame.size
+            if remove_caption and w > h:
                 frame = frame.resize([280, 280])
                 frame = frame.crop((28, 0, 252, 224))  # left, top, right, bottom
             else:
@@ -114,25 +216,19 @@ class Soundify_v2a(nn.Module):
 
         return audio
 
-    def set_silence(self, audio, start_point, end_point):
-
-        audio[:, start_point:end_point] = 0.0
-
-        return audio
-
     def post_process(self, wave):
 
         wave_len = wave.shape[1]
-        wave = self.fade_in(wave, 0, 8000)
-        wave = self.fade_out(wave, wave_len - 800, wave_len)
+        wave = self.fade_in(wave, 0, 32000)
+        wave = self.fade_out(wave, wave_len - 32000, wave_len)
 
         return wave
 
     @torch.no_grad()
-    def inference(self, frames, cfg_scale=7.5, step_num=50):
+    def inference(self, frames, cfg_scale=4.5, step_num=25):
 
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
-            video_embs = self.video_encoder(frames)    
+            video_embs = self.video_encoder(frames)
             latents = self.diffusion.ddim_sample(video_embs=video_embs,
                                                  step_num=step_num,
                                                  cfg_scale=cfg_scale)
@@ -147,37 +243,41 @@ class Soundify_v2a(nn.Module):
 
 if __name__ == "__main__":
 
-    # in_video = ".deploy_cache/刹车1.mp4"
-    in_video = ".deploy_cache/car.mp4"
-    out_audio = ".deploy_cache/car.wav"
-    out_video = ".deploy_cache/car_out.mp4"
 
-    cavp_ckpt = ".deploy_cache/v2a_15w_32k_ft2_33000_encoder.ckpt"
-    dit_ckpt = ".deploy_cache/v2a_15w_32k_ft2_33000_diffusion.ckpt"
-    vocoder_ckpt = ".deploy_cache/v2a_15w_32k_ft2_33000_vocoder.ckpt"
+    cavp_ckpt = ".deploy_cache/v2a_0.7b_0.3_v2_20k_encoder.ckpt"
+    dit_ckpt = ".deploy_cache/v2a_0.7b_0.3_v2_20k_diffusion.ckpt"
+    vocoder_ckpt = ".deploy_cache/v2a_0.7b_0.3_v2_20k_vocoder.ckpt"
 
-    cfg_scale = 5.0
-    step_num = 50
+    
 
-    set_seed(1234)
     device = "cuda"
 
     v2a_model = Soundify_v2a(cavp_ckpt=cavp_ckpt, dit_ckpt=dit_ckpt, vocoder_ckpt=vocoder_ckpt)
     v2a_model = v2a_model.to(device=device)
 
+    v2a_reader = Soundify_video(target_fps=8, mean_threshold=10, std_threshold=10, remove_caption=True)
+
     with open("/mnt/bn/zxb-lq/workspace/samantha/apps/bigtts/audiogen/testdata/v2a.txt") as f:
         file_paths = f.read().splitlines()
+
 
     for in_video in file_paths:
         in_video = "/mnt/bn/zxb-lq/workspace/samantha/" + in_video
         file_name = in_video.split("/")[-1]
 
-        out_audio = os.path.join(".deploy_cache", file_name.replace(".mp4", ".wav"))
-        out_video = os.path.join(".deploy_cache", file_name.replace(".mp4", "_out.mp4"))
-        # read video
-        frames = v2a_model.read_video(in_video, target_fps=8, remove_caption=True)
-        frames = frames.unsqueeze(0).to(device)
-        # inference
-        wave = v2a_model.inference(frames, cfg_scale = cfg_scale, step_num=step_num)
-        save_audio(wave, out_audio)
-        save_video(in_video, out_audio, out_video)
+        for step_num in [10, 20,30,40, 50]:
+            for cfg_scale in [3.5, 4.5, 5.5, 6.5, 7.5, 8.5]:
+                set_seed(123456)
+                out_audio = os.path.join("output",
+                                        file_name.replace(".mp4", f"_{cfg_scale}_{step_num}.wav"))
+                out_video = os.path.join("output",
+                                        file_name.replace(".mp4", f"_out_{cfg_scale}_{step_num}.mp4"))
+                # read video
+                frames = v2a_reader.load(in_video)
+                frames = frames.unsqueeze(0).to(device)
+                # inference
+                wave = v2a_model.inference(frames, cfg_scale=cfg_scale, step_num=step_num)
+                save_audio(wave, out_audio)
+                save_video(in_video, out_audio, out_video)
+
+                os.remove(out_audio)
