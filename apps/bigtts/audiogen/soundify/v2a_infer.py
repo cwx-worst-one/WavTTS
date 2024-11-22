@@ -229,11 +229,7 @@ class Soundify_v2a(nn.Module):
     def inference(self, frames, cfg_scale=7.5, step_num=50):
 
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
-<<<<<<< HEAD
             video_embs = self.video_encoder.infer(frames)
-=======
-            video_embs = self.video_encoder(frames)
->>>>>>> 73636a3c66d820f70b083bed41227b825d35b7e1
             latents = self.diffusion.ddim_sample(video_embs=video_embs,
                                                  step_num=step_num,
                                                  cfg_scale=cfg_scale)
@@ -248,18 +244,14 @@ class Soundify_v2a(nn.Module):
 
 if __name__ == "__main__":
 
-<<<<<<< HEAD
-    in_video = ".deploy_cache/case0.mp4"
-=======
     in_video = ".deploy_cache/case3.mp4"
->>>>>>> 73636a3c66d820f70b083bed41227b825d35b7e1
 
     cavp_ckpt = ".deploy_cache/v2a_0.7b_0.3_v2_20k_encoder.ckpt"
     dit_ckpt = ".deploy_cache/v2a_0.7b_0.3_v2_20k_diffusion.ckpt"
     vocoder_ckpt = ".deploy_cache/v2a_0.7b_0.3_v2_20k_vocoder.ckpt"
 
     cfg_scale = 4.5
-    step_num = 30
+    step_num = 50
 
     device = "cuda"
 
@@ -275,13 +267,8 @@ if __name__ == "__main__":
     frames = v2_reader.load(in_video)
     frames = frames.unsqueeze(0).to(device)
 
-<<<<<<< HEAD
-    out_audio = "output/case0.wav"
-    out_video = "output/case0.mp4"
-=======
-    out_audio = "output/case3.wav"
-    out_video = "output/case3.mp4"
->>>>>>> 73636a3c66d820f70b083bed41227b825d35b7e1
+    out_audio = ".deploy_cache/case3.wav"
+    out_video = ".deploy_cache/case3.mp4"
     # inference
     wave = v2a_model.inference(frames, cfg_scale=cfg_scale, step_num=step_num)
     save_audio(wave, out_audio)
