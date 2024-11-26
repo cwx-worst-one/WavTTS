@@ -1,0 +1,26 @@
+25NOV2024 @hanoihantrakul
+Implementation notes:
+
+When I first tried to spike this system, I only worked with 
+mono signals and magnitude spectrum only. I never got round
+to doing experiments with complex representations.
+
+I used data 2255 which was the same data used to train the tokenizer. 
+This was for the 24khz mono configuration.
+
+I used data 5495 which is the same data used for diffusion training. 
+This is the 44.1khz mono configuration.
+
+Note that I had to comment out some code in the dataloader to make this work
+but I did not commit it to master because this was more of a spike. 
+In `recipes/datasets/mcc/mix_mkii.py` line 271 I had to comment out
+the `get_text()` function.
+
+def __call__(self, item: Dict[str, Any]) -> Generator:
+        try:
+            text = self.get_text(item)
+        except Exception as e:
+            self._update_stats(skipped=True, message=f"Error loading text: {e}")
+            return
+        try:
+            ...

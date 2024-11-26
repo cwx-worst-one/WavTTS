@@ -6,6 +6,25 @@ import torch
 import torch.nn as nn
 from torch.nn.utils import spectral_norm
 
+def init_discriminator(channels_in=160, num_discs=3, discs_hidden_size=32, disc_hidden_size_max=256):
+    """
+    Initialize a discriminator. 
+
+    @hanoihantrakul 21OCT2024: Ren Yi wrote the implementation of this PatchGan Discriminator.
+    I reused it in the development of the FrozenUMM-Mel-Decoder.
+    """
+    disc_norm_type = "sn"
+    mel_disc = PatchGANDisc2D(
+        freq_length=channels_in,
+        time_length=-1,
+        hidden_size=discs_hidden_size,
+        max_hidden_size=disc_hidden_size_max,
+        norm_type=disc_norm_type,
+        same_clip_batch=True,
+        num_layers=4,
+        num_disc=num_discs,
+    )
+    return mel_disc
 
 class DiscriminatorBlock2D(nn.Module):
     def __init__(self, input_channels, filters, strides=(2, 2), kernel_size=3, use_norm=True, norm_type='in'):
