@@ -181,3 +181,95 @@ class UMMConfig(PretrainedConfig):
             return self.__getattribute__(name)
         else:
             return default
+
+
+class UMMConfigLFR(UMMConfig):
+
+    def __init__(self, 
+                 token_frame_rate=20,
+                 hop_length = 200, # 24000/200 = 120 Hz mel feature rate to support smooth downsampling to 20,15 and 10zh
+                 **kwargs):
+        '''
+        @hanoihantrakul 4NOV2024
+        Unlike the previous config which assumed 100Hz mel features downsampled to 25hz tokens,
+        This config is configured for 120Hz mel features, which can be downsampled to 20, 15, 10 Hz tokens.
+
+        Basically, the previous implementation had 2 layers of conv with kernel size 5.
+        If you try to do 10x downsampling by doing stride=2 and then stride=5 in the space of 2 layers, you will be
+        jumping over too many features in the second layer when going from 100hz -> 10hz. A stride of 5 and kernel size of 5
+        means there is no overlap in the features, which will make the implementation not comparable to the previous tokenizer.
+
+        Instead I did this by making the input feature 120Hz and then downsampling by strides 2, then 2 and then 3.
+        120/2/2/3 = 10hz. This ensures we still have overlapping regions with kernel 5.
+        '''
+        assert token_frame_rate in [20, 15, 10] # the striding patterns only support these frame rates for ablation
+        assert hop_length == 200 # 24000/200 = 120 Hz mel feature rate
+        self.token_frame_rate = token_frame_rate
+        super().__init__(hop_length=hop_length,
+                         **kwargs)
+
+        '''
+        @hanoihantrakul 4NOV2024
+        The previous umm_mkii.py hardcoded this relationship as 100hz mel features -> 100/2/2 = 25hz token rate. 
+        In order to support different frame rates, I have changed the input mel features to be 120Hz, which can be divided easily into 20,15 and 10Hz frame rates.
+
+        Basically, the previous implementation had 2 layers of conv with kernel size 5.
+        If you try to do 10x downsampling by doing stride=2 and then stride=5, you will be
+        jumping over too many features in the second layer when going from 100hz -> 10hz. A stride of 5 and kernel size of 5
+        means there is no overlap in the features, which will make the implementation not comparable to the previous tokenizer.
+
+        Instead I did this by making the input feature 120Hz and then downsampling by strides 2, then 2 and then 3.
+        120/2/2/3 = 10hz. This ensures we still have overlapping regions with kernel 5.
+        '''
+        self.conv_striding_patterns = {
+            20 : {'conv1': 1, 'conv2': 2, 'conv3': 3}, # 120 Hz Mel Frame rate -> 120/1/2/3 = 20 Hz token rate
+            15 : {'conv1': 2, 'conv2': 2, 'conv3': 2}, # 120 Hz Mel Frame rate -> 120/2/2/2 = 15 Hz token rate
+            10 : {'conv1': 2, 'conv2': 2, 'conv3': 3}, # 120 Hz Mel Frame rate -> 120/2/2/3 = 10 Hz token rate
+        }
+    
+    def get_conv_downsampling_config(self):
+        """Handles the striding pattern and linear projection config to go from 120 Hz mel feature rate to 20, 15 and 10hz frame rate."""
+        conv_config_dict = self.conv_striding_patterns[self.token_frame_rate]
+        striding2linear_units = {20: 11264, # Why 11264? -> 128/1/2/3 = 21.33 which becomes 22 after all the conv ops on mel-128. Then 22*512 (last layer channels) gives 11264 total dims to be projected down to output_dim=1024
+                                 15: 8192, # Why 8192? -> 128/2/2/2 = 16 which becomes 16 after all the conv ops on mel-128. Then 16*512 (last layer channels) gives 8096 total dims to be projected down to output_dim=1024
+                                 10: 5632} # Why 5632? -> 128/2/2/3 = 10.66 which becomes 11 after all the conv ops on mel-128. Then 11*512 (last layer channels) gives 5632 total dims to be projected down to output_dim=1024
+        conv_config_dict['linear'] = striding2linear_units[self.token_frame_rate]
+        return conv_config_dict
+
+    def get_conv_upsampling_config(self):
+        """Handles the striding pattern and linear projection to upsample back to 120hz mel feature rate from 20, 15 and 10hz token frame rate."""
+        conv_config_dict = self.conv_striding_patterns[self.token_frame_rate]
+        striding2linear_units = {20: 6149, # Why 6149? -> 1024*1*2*3 = 6144 which becomes 6149 after all ConvTranspose2d padding has been accounted for. This is then projected to output_dim
+                                 15: 8192, # Why 8192? -> 1024*2*2*2 = 8192 which becomes 8192 after all ConvTranspose2d padding has been accounted for. This is then projected to output_dim
+                                 10: 12287} # # Why 12287? -> 1024*2*2*3 = 12288 which becomes 12287 after all ConvTranspose2d padding has been accounted for. This is then projected to output_dim
+        conv_config_dict['linear'] = striding2linear_units[self.token_frame_rate]
+        return conv_config_dict
+    
+    def get_mel_mask_len_factor(self):
+        '''
+        @hanoihantrakul 4NOV2024
+        The mel mask in Stage1 random projection is multiples of the hop length.
+        '''
+        return int(self.len_masking_raw / self.hop_length) 
+    
+    @property
+    def rq_input_dim(self):
+        '''
+        @hanoihantrakul 4NOV2024
+        This function configures random projection quantizer in Stage1. It is related to the number of conv layers
+        used in the Conv2DSubsampling implementation of AudioEncoder().
+        '''
+        # return self.num_channels * pow(self.feature_encoder_kernel, 2) # I left this here to indicate how umm_mkii hard coded this to 2 conv layers
+        return self.num_channels * pow(self.feature_encoder_kernel, 3) # my new implementation uses 3 conv layers to achieve smooth downsampling and upsampling
+    
+    @property
+    def len_masking_token(self):
+        '''
+        @hanoihantrakul 4NOV2024
+        This function configures the masking vector during Stage1 training. It is related
+        to the striding patterns used in the Conv2DSubsampling implementation of AudioEncoder().
+        '''
+        conv_dict = self.conv_striding_patterns[self.token_frame_rate]
+        downsampling_factor = conv_dict['conv1'] * conv_dict['conv2'] * conv_dict['conv3'] # my implementation assumes 3 conv layers for smoothly downsampling from 120hz
+        return int(self.len_masking_raw / self.hop_length / downsampling_factor) # 20hz->downsampling_factor=6, 15hz->downsampling_factor=8, 10hz->downsampling_factor=12
+        # This was previously hard coded as `return int(self.len_masking_raw / self.hop_length / 4)` because 25hz->downsampling_factor=4 

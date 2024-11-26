@@ -19,7 +19,7 @@ MODELS_DICT = {
 def load_model(ckpt_path, cache_dir):
     print(f"Downloading {ckpt_path}")
     DUMMY_RANK = 0
-    # Can reuse stage3_conv1d init function
+    # Can reuse stage3 init function
     token_model = init_stage3(ckpt_path, DUMMY_RANK, cache_dir)[
         "Stage3"
     ].eval()

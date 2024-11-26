@@ -1,0 +1,233 @@
+---
+
+# @hanoihantrakul 4NOV2024
+# This YAML replicates the TTS ROPE Conformer training, but has been re-written 
+# to support token rates of 20, 15 and 10Hz instead of the default 25hz.
+#
+# This config is for thr 15hz tokenizer, which I trained first given limited GPUs at the time. 
+#
+# The problem with the original UMM codebase was the pipeline
+# hard coded 100hz mel feature rate and 4x downsampling to 25hz token rate. When we wanted to try
+# 20, 15 and 10 token rates, introducing this change into umm_mkii.py was not possible withoout
+# re writing a few modules.
+
+# At the same time, Ju Chiang was working on UMM2 and performing regression tests so we could migrate
+# from the relatively messy UMM codebase to the cleaner and modularized UMM2. At the time of writing,
+# we are still regression testing UMM2.
+
+# Therefore, I have implemented the LFR version of the ConformerUMM_TTS_ROPE tokenizer using the 
+# older UMM codebase. Once UMM2 has been properly tested E2E, we can migrate this implementation
+# into UMM2. I've extensively commented the code to make migration easier. 
+#
+# This Model is 729M params, which is still in the same order of magnitude as all previous tokenizers.
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+ckpt_path: null
+
+seed: 555
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+extra_params:
+    sample_rate: 24000
+    frame_rate: 20 # supports [20, 15, 10]
+    n_mels: 128 # this is the mel-128 transform for the spectrogram loss
+    n_mels_tgt: 160 # this is the mel-160 transform for the inhouse pretrained pitch detector
+    n_chroma: 12 # @hanoih: this should be 12. Not sure why TTS folks use 50
+    n_fft: 2048
+    win_length: 2048
+    hop_length: 200 # 24000/200=120hz mel features instead of 24000/240=100hz mel features
+    feature_cmvn: "recipes/datasets/mcc/data_ids=794.stats.pt" # we need this because original mkii ConformerUMM normalized using these statistics
+    tokenizer: "bert-base-multilingual-uncased" # stage2/stage3 apply language tokenizer to both EN and CN
+    
+
+# running parameters
+run_opts:
+    fast_dev_run: False
+    cache_dir: .module_cache/umm
+    hdfs_log_dir: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs"
+    log_dir: logs
+    log_name: umm_conformer_tts_rope_lfr
+    version: !ref umm_stage3_tts_rope_lfr-<extra_params[frame_rate]>_<extra_params[tokenizer]>_<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>
+    precision: "32"
+    num_workers: 3
+    accelerator: auto
+    warmup_steps: 2000
+    max_steps: 1000000
+    val_check_interval: 10000 # 14APR2024 @hanoihantrakul set trainer.limit_train_val_batches=1 so that validation loop is called
+    ckpt_interval: 10000
+    batch_size: 5.5 # Can get 78/81GB utilization on H800 GPU. Any higher and you will OOM the GPU.
+    learning_rate: 3.0e-5 # 14JUL2024 @hanoih: setting used by Li Tang
+    cycle_steps: 30000 # 200000 # 5JUL2024 @hanoihantrakul: these settings were chosen by Li Tang in the reference Stage2 Job
+    weight_decay: 0.1
+    shuffle_buffer: 800 # 8000 
+    gradient_clip_val: 1.0
+    checkpointing: False
+    num_spectrogram_val_samples_for_plotting: 8 # As of 13APR2024 This new flag controls the number of spectrograms from the validation dataset to plot to Merlin
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+pl_datamodule: !new:recipes.datasets.mcc.mix_mkii.MixDataModule
+    data_ids: [2255,2375]
+    val_data_id: 2255
+    data_weights: [10,1]
+    shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+    sample_rate: !ref <extra_params[sample_rate]>
+    batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <extra_params[sample_rate]>
+    num_workers: !ref <run_opts[num_workers]>
+    max_num_crops: null
+    min_duration: 1
+    max_duration: 60 # 12APR2024 Hanoi and Devon Sun and I manually verified this dataset only contains audio lengths between 0-60s.
+    normalize_audio: False
+    tokenizer: !ref <extra_params[tokenizer]>
+    frame_rate: !ref <extra_params[frame_rate]>
+    # collate_fn: !name:recipes.datasets.mcc.mix.collate_audio # I leave this here so people in the future don't make the same mistake I did
+    # @hanoihantrakul 12APR2024 This `collate_fn` took me a whole day to find and caused some annoying bugs!
+    # This was turned on in recipes/umm/conf/umm_stage{1,2,3}_SSTK.yaml but turned off in apps/bigmusic/umm/umm/conf/umm_stage{1,2,3}_mix.yaml
+    # For SSTK, `collate_audio` will ignore all text related entries in the data. When it is turned on here for 2255,
+    # it caused the dataloader to ignore all the text and only return the `audio` key. But 2255 requires me to train on `token` data too!
+    # The class definition of `MixDataModule()` uses `collate_fn` by default and correctly handles presence of `audio` and `token` key.
+    
+optimizer_cls: !name:torch.optim.AdamW
+    lr: !ref <run_opts[learning_rate]>
+    weight_decay: !ref <run_opts[weight_decay]>
+    betas: [0.9, 0.96] # TODO
+    eps: 0.00000001
+
+scheduler_cls: !name:recipes.umm.modules.lr_scheduler.WarmupCosine
+    init_lr: !ref <run_opts[learning_rate]>
+    warmup_steps: !ref <run_opts[warmup_steps]>
+    cycle_steps: !ref <run_opts[cycle_steps]>
+    min_lr: !ref <run_opts[learning_rate]> * 0.1
+
+config: !new:recipes.umm.models.config.UMMConfigLFR
+    feature_cmvn: !ref <extra_params[feature_cmvn]>
+    sample_rate: !ref <extra_params[sample_rate]>
+    n_mels: !ref <extra_params[n_mels]>
+    n_mels_tgt: !ref <extra_params[n_mels_tgt]>
+    add_ctc: True # 5JUL2024 @hanoih There is a EN and CN speech. CTC turned on.
+    add_pitch: True # 5JUL2024 @hanoih unlike TTS version, `add_pitch` here uses in-house trained pitch predictor created by @hanoih. It does not use RMVPE like TTS pipeline.
+    add_chroma: True # 5JUL2024 @hanoih unlike TTS version, we turn chroma on
+    n_chroma: !ref <extra_params[n_chroma]>
+    n_fft: !ref <extra_params[n_fft]>
+    win_length: !ref <extra_params[win_length]>
+    hop_length: !ref <extra_params[hop_length]>
+    hidden_size: 1024
+    intermediate_size: 4096
+    num_hidden_layers: 24
+    num_attention_heads: 8
+    max_source_positions: 2500
+    add_vq: True
+    vq_layer_idx: 12 
+    vq_proj_noise: 10000
+    vq_type: "EMAEntropy"
+    vq_codebook_size: 32768 # 54400 # 32768 4NOV2024 Originally all 25hz tokenizers had codebook_size=32768. For 15hz is a ~60% decrease in time steps, so bump up codebook_size by ~60%
+    vq_codebook_dim: 32 # 56 # 32 # 4NOV2024 Originally all 25hz tokenizers had dim=32. For 15hz is a ~60% decrease in time steps, so bump up dim by ~60% 
+    vq_decay: 0.99
+    w_loss_mel: 1.0
+    w_loss_chroma: 1.0
+    w_loss_pitch: 1.0
+    w_loss_vq: 1.0
+    w_loss_ctc: 1.0
+    tokenizer: !ref <extra_params[tokenizer]>
+    frame_rate: !ref <extra_params[frame_rate]>
+    vocab_size: 105880
+    ctc_blank_id: 105879
+    ctc_zero_infinity: True
+    use_bn: False
+    ### 5JUL2024 @hanoihantrakul According to the Merlin Job Li Tang uses the following settings `first_conformer`, `act_fn`, `mask_mel`, `rope_enhance_pos`
+    first_conformer: True 
+    act_fn: "gelu" 
+    mask_mel: False  
+    rope_enhance_pos: 0 # 14JUL2024 hanoih: this is turned off in Stage3 training according to Li Tang
+    hidden_dropout: 0.0
+    activation_dropout: 0.0
+    attention_dropout: 0.0
+    conformer_conv_dropout: 0.0
+    ### 4NOV2024 @hanoihantrakul Added a new config for controlling frame rate to [20,15,10] instead of hard coded 25hz
+    token_frame_rate: !ref <extra_params[frame_rate]> 
+
+
+model_cls: !name:recipes.umm.models.umm_mkii_tts_rope_lfr.Stage3TTSRopeLFR # instead of `umm_mkii_tts_rope.Stage3TTSRope`` 
+    config: !ref <config>
+
+pl_module: !new:recipes.umm.modules.lit_module_mkii_tts_rope.Stage3TTSRope # instead of `lit_module.Stage3Improved`. I need to load my in-house pitch detector, not Li Tang's default RVMPE pitch detector
+    checkpointing: !ref <run_opts[checkpointing]> 
+    model_cls: !ref <model_cls>
+    optimizer_cls: !ref <optimizer_cls>
+    scheduler_cls: !ref <scheduler_cls>
+    criterion_cls: !name:recipes.umm.modules.criterion.UMMLossPitchSupervised # instead of `criterion.CTCPitchMelLoss`
+        config: !ref <config>
+    extra_params: !ref <extra_params>
+    required_modules:
+        pretrained: # 25NOV2024 Stage2 Checkpoint finished training
+            ckpt_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs/umm_conformer_tts_rope_lfr/test_umm_stage2_tts_rope_lfr-20_bert-base-multilingual-uncased/checkpoints/step=140000.ckpt"
+            init_fn: !name:recipes.umm.requires.model_initializer.init_pretrained
+            cache_dir: !ref <run_opts[cache_dir]>
+        # @hanoih 4JUL2024: Do not use the RVMPE model used in TTS pipeline
+        # rmvpe:
+        #     ckpt_path: "hdfs://haruna/home/byte_speech_sv/user/chenyuanzhe/share/rmvpe.pt"
+        #     init_fn: !name:recipes.umm.requires.model_initializer.init_rmvpe
+        #     cache_dir: !ref <run_opts[cache_dir]>
+        pitchpdt: # @hanoihantrakul 28MAY2024: Use pitch detector trained on full mix to provide the ground truth signals.
+            ckpt_path: "hdfs://haruna/home/byte_speech_sv/hanoi.hantrakul/logs/umm_dual/pitch_predictor_trained_on_full_mix/models_for_sharing/perceptual_pitch_model_1_26_2024.pt"
+            init_fn: !name:recipes.umm.requires.model_initializer.init_perceptual_pitch_predictor
+            cache_dir: !ref <run_opts[cache_dir]>
+
+logger:
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[log_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
+
+callbacks:
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      dirpath: !ref <run_opts[log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+      monitor: step
+      save_top_k: 500
+      every_n_train_steps: !ref <run_opts[ckpt_interval]>
+      mode: max
+      filename: "{step:06d}"
+    - !new:samantha.callbacks.HDFSModelCheckpoint
+      hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+      monitor: step
+      save_top_k: 500
+      every_n_train_steps: !ref <run_opts[ckpt_interval]>
+      mode: max
+      filename: "{step:06d}"
+    - !new:pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: 'step'
+    - !new:recipes.umm.callbacks.log_spectrogram.LogSpectrogram
+      n_examples: 3
+
+plugins:
+    - !new:samantha.plugins.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    strategy: "ddp_find_unused_parameters_false"
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: "auto"
+    num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    log_every_n_steps: 100
+    max_steps: !ref <run_opts[max_steps]>
+    precision: !ref <run_opts[precision]>
+    accumulate_grad_batches: 1
+    gradient_clip_val: !ref <run_opts[gradient_clip_val]>
+    val_check_interval: !ref <run_opts[val_check_interval]>
+    check_val_every_n_epoch: null
+    num_sanity_val_steps: 0
+    limit_val_batches: 1
+    limit_train_batches: 10000 # Consult Colin Wang: forces an epoch to end every 10k steps and prevent OOM
+    sync_batchnorm: True
+    benchmark: False
+    callbacks: !ref <callbacks>
+    plugins: !ref <plugins>

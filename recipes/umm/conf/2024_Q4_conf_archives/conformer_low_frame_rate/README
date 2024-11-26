@@ -1,0 +1,15 @@
+4NOV2024 The best performing tokenizer at the time of writing is 
+ConformerUMM_2255_2375_TTS_ROPE recipe which operates at a 25hz token rate. 
+
+These are the configs found in:
+recipes/umm/conf/2024_Q2_conf_archives/conformer_tts_rope
+
+In order to reduce inference time/memory pressure, we are trying to ablate tokenizers 
+with lower frame rates of 20, 15 and 10hz.
+
+The old tokenizer (ConformerUMM and ConformerUMM_TTS_ROPE) hard coded a lot of logic assuming
+the input mel features were 100hz and the downsampling was 4x to 25 token rate. 
+
+For these ablations I re-wrote the striding and conv module logic to support 20, 15 and 10hz. 
+I also changed the mel feature sample rate to 120hz which is more easily divided into 20, 15 and 10 hz.
+
