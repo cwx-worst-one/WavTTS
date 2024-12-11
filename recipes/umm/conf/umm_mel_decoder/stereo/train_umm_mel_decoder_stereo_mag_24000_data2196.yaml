@@ -44,7 +44,7 @@ run_opts:
     hdfs_log_dir: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs"
     log_dir: logs
     log_name: umm_mel_decoder
-    version: !ref 44khz_stereo_mel_decoder_MonoToStereoDecoding_l1-<extra_params[w_loss_l1]>_ssim-<extra_params[w_loss_ssim]>_adv-<extra_params[w_loss_adv]>_num_conv_layers-<extra_params[num_conv_layers]>_conv_hidden_size-<extra_params[conv_hidden_size]>hidden_size-<extra_params[hidden_size]>
+    version: !ref 24khz_stereo_mel_decoder_MonoToStereoDecoding_l1-<extra_params[w_loss_l1]>_ssim-<extra_params[w_loss_ssim]>_adv-<extra_params[w_loss_adv]>_num_conv_layers-<extra_params[num_conv_layers]>_conv_hidden_size-<extra_params[conv_hidden_size]>hidden_size-<extra_params[hidden_size]>
     precision: "32" # changed from "16-mixed" because ConvUMM-GAN and DualUMM used "32"
     num_workers: 4
     accelerator: auto
