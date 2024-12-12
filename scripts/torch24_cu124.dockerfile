@@ -39,16 +39,17 @@ ENV MASON_SKIP_LEGO_AUTO_PIP_INSTALL 1
 ENV MASON_SKIP_BPEX_AUTO_PIP_INSTALL 1
 ENV MASON_SKIP_MEGATRON_AUTO_PIP_INSTALL 1
 ENV CRS_LOGGING_LEVEL INFO
+ENV TORCH_NCCL_HIGH_PRIORITY 1
 
 ARG CRUISE_VERSION=1.0.0.3641
-ARG PANTHER_VERSION=1.7.14.396
+ARG PANTHER_VERSION=1.7.14.411
 ARG OPENFST_VERSION=1.0.0.8
 ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
 # For torch 2.4
 ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.5
-ARG BUMI_VERSION=1.7.0.7
+ARG BUMI_VERSION=1.7.0.31
 ARG TRITON_VERSION=1.0.0.102
 ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.18
 # https://github.com/facebookresearch/xformers.git:6425fd0
@@ -256,7 +257,7 @@ RUN pip3 install \
         hjson==3.1.0 \
         httpcore==1.0.5 \
         httpx==0.27.2 \
-        huggingface-hub==0.24.6 \
+        huggingface-hub==0.26.3 \
         humanfriendly==10.0 \
         hydra-core==1.3.2 \
         HyperPyYAML==1.2.0 \
@@ -476,7 +477,7 @@ RUN pip3 install \
         thriftpy2==0.4.16 \
         tiktoken==0.7.0 \
         timm==1.0.9 \
-        tokenizers==0.14.1 \
+        tokenizers==0.15.2 \
         toml==0.10.2 \
         tomli==2.0.1 \
         toolz==0.12.1 \
@@ -493,7 +494,7 @@ RUN pip3 install \
         tqdm==4.65.0 \
         trainer==0.0.36 \
         traitlets==5.14.3 \
-        transformers==4.35.0 \
+        transformers==4.37.0 \
         typing==3.7.4.3 \
         typing-inspect==0.9.0 \
         typing_extensions==4.12.2 \
