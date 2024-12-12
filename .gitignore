@@ -129,3 +129,4 @@ recipes/leadsheet
 *.png
 scripts_usr
 .deploy_cache
+output

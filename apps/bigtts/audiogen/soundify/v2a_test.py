@@ -13,6 +13,14 @@ from apps.bigtts.audiogen.soundify.v2a.encoder import VideoEncoder
 from apps.bigtts.audiogen.soundify.v2a.diffusion import Diffusion
 from apps.bigtts.audiogen.soundify.v2a.vocoder import Vocoder
 
+import re
+
+
+def drop_punctuation(text):
+    punc = '~`!#$%^&*()_+-=|\';"＂:/.,?><~·！@#￥%……&*（）——+-=“：’；、。，？》{《}】【\n\]\[ '
+    new_text = re.sub(r"[%s]+" % punc, "", text)
+    return new_text
+
 
 def set_seed(seed=1234):
     random.seed(seed)
@@ -48,7 +56,6 @@ def save_video(in_video, wave_path, out_path):
 
     video_with_audio.write_videofile(out_path, codec="libx264", audio_codec="aac", logger=None)
     print(out_path)
-
 
 
 class Soundify_video:
@@ -150,6 +157,7 @@ class Soundify_video:
 
         return out_frames
 
+
 class Soundify_v2a(nn.Module):
 
     def __init__(self, cavp_ckpt, dit_ckpt, vocoder_ckpt):
@@ -169,36 +177,6 @@ class Soundify_v2a(nn.Module):
         msg = vocoder.load_state_dict(torch.load(vocoder_ckpt))
         self.vocoder = vocoder.eval()
         print(f"loading vocoder {msg}")
-
-    def read_video(self, in_video, target_fps=8, remove_caption=False):
-
-        video_reader = VideoReader(in_video, num_threads=1)
-        vlen = len(video_reader)
-        fps = video_reader.get_avg_fps()
-
-        target_num = int(vlen / float(fps) * float(target_fps))
-        frame_indices = np.linspace(start=0, stop=vlen, num=target_num + 1)[0:-1].astype(int)
-
-        out_frames = []
-        for idx in frame_indices:
-            frame = video_reader[idx].asnumpy()
-            frame = Image.fromarray(frame).convert('RGB')
-
-            w, h = frame.size
-            if remove_caption and w > h:
-                frame = frame.resize([280, 280])
-                frame = frame.crop((28, 0, 252, 224))  # left, top, right, bottom
-            else:
-                frame = frame.resize([224, 224])
-            frame = np.array(frame).astype('uint8')
-            out_frames.append(frame)
-
-        out_frames = np.asarray(out_frames)
-        out_frames = torch.from_numpy(out_frames).to(dtype=torch.uint8)  # [t, h, w, c]
-        out_frames = out_frames.permute(0, 3, 1, 2)  # [c, t, h, w]
-        out_frames = (out_frames / 255.0).to(dtype=torch.float32)
-
-        return out_frames  # [t, d, h, w]
 
     def fade_in(self, audio, start_point, end_point):
 
@@ -243,41 +221,49 @@ class Soundify_v2a(nn.Module):
 
 if __name__ == "__main__":
 
-
-    cavp_ckpt = ".deploy_cache/v2a_0.7b_0.3_v2_20k_encoder.ckpt"
-    dit_ckpt = ".deploy_cache/v2a_0.7b_0.3_v2_20k_diffusion.ckpt"
-    vocoder_ckpt = ".deploy_cache/v2a_0.7b_0.3_v2_20k_vocoder.ckpt"
-
-    
+    cavp_ckpt = ".deploy_cache/v2a_0.7b_sft_v9_3000_encoder.ckpt"
+    dit_ckpt = ".deploy_cache/v2a_0.7b_sft_v9_3000_diffusion.ckpt"
+    vocoder_ckpt = ".deploy_cache/v2a_0.7b_sft_v9_3000_vocoder.ckpt"
 
     device = "cuda"
 
     v2a_model = Soundify_v2a(cavp_ckpt=cavp_ckpt, dit_ckpt=dit_ckpt, vocoder_ckpt=vocoder_ckpt)
     v2a_model = v2a_model.to(device=device)
 
-    v2a_reader = Soundify_video(target_fps=8, mean_threshold=10, std_threshold=10, remove_caption=True)
+    v2a_reader = Soundify_video(target_fps=8,
+                                mean_threshold=10,
+                                std_threshold=10,
+                                remove_caption=True)
 
     with open("/mnt/bn/zxb-lq/workspace/samantha/apps/bigtts/audiogen/testdata/v2a.txt") as f:
         file_paths = f.read().splitlines()
 
+    cfg_scale = 4.5
+    step_num = 50
 
-    for in_video in file_paths:
-        in_video = "/mnt/bn/zxb-lq/workspace/samantha/" + in_video
-        file_name = in_video.split("/")[-1]
+    for idx, in_video in enumerate(file_paths):
 
-        for step_num in [10, 20,30,40, 50]:
-            for cfg_scale in [3.5, 4.5, 5.5, 6.5, 7.5, 8.5]:
-                set_seed(123456)
-                out_audio = os.path.join("output",
-                                        file_name.replace(".mp4", f"_{cfg_scale}_{step_num}.wav"))
-                out_video = os.path.join("output",
-                                        file_name.replace(".mp4", f"_out_{cfg_scale}_{step_num}.mp4"))
-                # read video
-                frames = v2a_reader.load(in_video)
-                frames = frames.unsqueeze(0).to(device)
-                # inference
-                wave = v2a_model.inference(frames, cfg_scale=cfg_scale, step_num=step_num)
-                save_audio(wave, out_audio)
-                save_video(in_video, out_audio, out_video)
+        try:
+            set_seed(1234)
+            in_video = "/mnt/bn/zxb-lq/workspace/samantha/" + in_video
+            file_name = in_video.split("/")[-1]
+            file_name = file_name[0:-4]
 
-                os.remove(out_audio)
+            out_audio = os.path.join("output", f"{idx}_{file_name[0:10]}.wav")
+            out_video = os.path.join("output", f"{idx}_{file_name[0:10]}.mp4")
+
+            if os.path.exists(out_audio):
+                continue
+            # read video
+            frames = v2a_reader.load(in_video)
+            frames = frames.unsqueeze(0).to(device)
+            # inference
+            wave = v2a_model.inference(frames, cfg_scale=cfg_scale, step_num=step_num)
+            save_audio(wave, out_audio)
+            save_video(in_video, out_audio, out_video)
+
+            os.remove(out_audio)
+
+        except Exception as e:
+            print(e)
+            print("*" * 100)

@@ -125,7 +125,7 @@ def export_vocoder(ckpt, save_path):
 
 if __name__ == "__main__":
 
-    file_name = "v2a_15w_32k_ft12_74000"
+    file_name = "v2a_0.7b_sft_v9_3000"
 
     local_path = f"/mnt/bn/zxb-lq/workspace/samantha/.deploy_cache/{file_name}.ckpt"
 

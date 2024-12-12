@@ -15,13 +15,29 @@ mkdir .deploy_cache
 hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/checkpoints/user/zhuangxiaobin/v2a_deploy/models--apple--DFN2B-CLIP-ViT-B-16 .deploy_cache
 ```
 
-v3:
+v1.2:
+
+``
+hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/checkpoints/user/zhuangxiaobin/v2a_deploy/v2a_15w_32k_ft12_74000_encoder.ckpt .deploy_cache
+hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/checkpoints/user/zhuangxiaobin/v2a_deploy/v2a_15w_32k_ft12_74000_diffusion.ckpt .deploy_cache
+hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/checkpoints/user/zhuangxiaobin/v2a_deploy/v2a_15w_32k_ft12_74000_vocoder.ckpt .deploy_cache
+```
+
+v1.3:
 
 ```
 hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/checkpoints/user/zhuangxiaobin/v2a_deploy/v2a_0.7b_0.3_v2_20k_encoder.ckpt .deploy_cache
 hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/checkpoints/user/zhuangxiaobin/v2a_deploy/v2a_0.7b_0.3_v2_20k_diffusion.ckpt .deploy_cache
 hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/checkpoints/user/zhuangxiaobin/v2a_deploy/v2a_0.7b_0.3_v2_20k_vocoder.ckpt .deploy_cache
 ```
+
+v1.6 
+```
+hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/checkpoints/user/zhuangxiaobin/v2a_deploy/v2a_0.7b_sft_v9_3000_encoder.ckpt .deploy_cache
+hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/checkpoints/user/zhuangxiaobin/v2a_deploy/v2a_0.7b_sft_v9_3000_diffusion.ckpt .deploy_cache
+hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/checkpoints/user/zhuangxiaobin/v2a_deploy/v2a_0.7b_sft_v9_3000_vocoder.ckpt .deploy_cache
+```
+
 
 inference:
 
@@ -31,7 +47,9 @@ python3 apps/bigtts/audiogen/soundify/v2a_infer.py
 
 ```
 frames = v2_reader.load(in_video) # 包含了去黑边的逻辑
+frames = v2_reader.load(in_video) # 包含了去黑边的逻辑
 frames = frames.unsqueeze(0).to(device)
+wave = v2a_model.inference(frames) # 默认 cfg = 4.5， steps = 50
 wave = v2a_model.inference(frames) # 默认 cfg = 4.5， steps = 50
 save_audio(wave, out_audio)
 save_video(in_video, out_audio, out_video)

@@ -71,9 +71,7 @@ class VideoEncoder(nn.Module):
         del self.image_backbone.transformer
         self.image_backbone.eval()
         for name, param in self.image_backbone.named_parameters():
-            print("video encoder freeze: ", name)
             param.requires_grad = False
-        self.image_projector = nn.Linear(hp.in_channels, hp.in_channels)
         ########################################################################
         self.action_encoder = ActionEncoder(embed_dim=hp.in_channels)
         ########################################################################
@@ -85,26 +83,14 @@ class VideoEncoder(nn.Module):
                                               mlp_depth=3,
                                               bias=False)
 
-    def random_mask(self, video, prob=0.1):
-
-        null_video = torch.randn_like(video) * 0.1
-
-        B, device = video.shape[0], video.device
-        mask = torch.bernoulli(torch.full([B, 1, 1, 1], prob, device=device))
-        video = torch.where(mask.to(torch.bool), null_video, video)
-
-        return video
-
     def forward(self, video):
 
         bts, t, c, h, w = video.shape  # [b, t, c, h, w]
         video = video.flatten(0, 1)  # [b*t, c, h, w]
         video = self.preprocess(video)
-        video = self.random_mask(video, prob=0.1)
         ##################################################################
         image_embed = self.image_backbone.encode_image(video)
         image_embed = image_embed.reshape(bts, t, -1)  # [b, t, d]
-        image_embed = self.image_projector(image_embed)
         ##################################################################
         video = video.reshape(bts, t, c, h, w)
         action_embed = self.action_encoder(video)
@@ -124,7 +110,6 @@ class VideoEncoder(nn.Module):
         ##################################################################
         image_embed = self.image_backbone.encode_image(video)
         image_embed = image_embed.reshape(bts, t, -1)  # [b, t, d]
-        image_embed = self.image_projector(image_embed)
         ##################################################################
         video = video.reshape(bts, t, c, h, w)
         action_embed = self.action_encoder(video)

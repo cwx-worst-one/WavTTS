@@ -263,6 +263,8 @@ if __name__ == "__main__":
     set_seed(1234)
 
 
+
+
     # read video
     frames = v2_reader.load(in_video)
     frames = frames.unsqueeze(0).to(device)

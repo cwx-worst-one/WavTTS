@@ -208,7 +208,7 @@ class Diffusion(nn.Module):
 
         self.target_type = hp.target_type
         self.video_repeat = hp.video_repeat
-   
+
         self.sigma_distribution = UniformDistribution(vmin=self.min_t, vmax=self.max_t)
 
         # time embedding
@@ -216,8 +216,11 @@ class Diffusion(nn.Module):
                                         num_layers=2,
                                         bias=hp.bias)
 
-        self.speech_embedding = TagEmbed(hidden_dim=hp.video_feat_dim)
-        self.music_embedding = TagEmbed(hidden_dim=hp.video_feat_dim)
+        self.quality_embedding = Embedding(modulation_features=hp.time_embed_dim,
+                                           num_layers=2,
+                                           bias=hp.bias)
+
+        self.speech_embedding = nn.Linear(1, hp.time_embed_dim, bias=hp.bias)
 
         # backbone
         llama_config = LLamaArgs(dim=hp.encoder_dim,
@@ -269,41 +272,44 @@ class Diffusion(nn.Module):
         latent = self.latent_prenet(latent)
         condition = self.cond_prenet(torch.cat([time_emb, cond_embs], dim=-1))
 
-        latent = F.pad(latent, (0, 0, 2, 0), "constant", 0.0)
+        latent = F.pad(latent, (0, 0, 1, 0), "constant", 0.0)
         x_noisy = latent + condition
 
         pred_v = self.latent_encoder(x_noisy, x_noisy.shape[1], attention_mask=seq_mask)
 
         pred_v = self.postnet(pred_v)
 
-        pred_v = pred_v[0:, 2:, :]
+        pred_v = pred_v[0:, 1:, :]
 
         return pred_v
-
 
     @torch.no_grad()
     def ddim_sample(self, video_embs, step_num=25, cfg_scale=7.5, norm_cfg=True):
 
         bsz, device, frame_num = video_embs.size(0), video_embs.device, video_embs.size(1)
 
+        device = video_embs.device
+        frame_num = video_embs.size(1)
+
         frame_num = frame_num * self.video_repeat
 
         latents = torch.randn([1, frame_num, self.hp.out_channels], device=device)
 
         sigmas = torch.linspace(self.max_t, self.min_t, step_num + 1, device=device)
-
         sigmas = repeat(sigmas, "i -> i b", b=1)
         sigmas_batch = extend_dim(sigmas, dim=latents.ndim)
         alphas, betas = self.get_alpha_beta(sigmas_batch)
 
-        zero_value = torch.zeros(1, 1).to(device).to(dtype=torch.long)
+        zero_value = torch.zeros(bsz, 1).to(device)
+        one_value = torch.ones(bsz, 1).to(device)
 
+        quality_embs = self.quality_embedding(one_value).unsqueeze(1)
 
-        speech_embs = self.speech_embedding(zero_value)
-        music_embs = self.music_embedding(zero_value)
+        speech_embs = self.speech_embedding(zero_value.unsqueeze(2))
         video_embs = self.video_condition(video_embs)
+        cond_embs = video_embs + speech_embs
 
-        cond_embs = torch.cat([speech_embs, music_embs, video_embs], dim=1)
+        cond_embs = torch.cat([quality_embs, cond_embs], dim=1)
 
         # cfg
         null_embs = torch.zeros_like(cond_embs)
