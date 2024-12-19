@@ -9,6 +9,10 @@ Basic example demonstrating how to load ConformerUMM_TTS_ROPE_LFR for low frame 
 """
 
 MODELS_DICT = {
+    # @hanoihantrakul: 18DEC2024 10Hz 32768x32 Tokenizer.  Tokenizer
+    "conformerumm_tts_rope_lfr_10hz": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs/umm_conformer_tts_rope_lfr/umm_stage3_tts_rope_lfr-10_bert-base-multilingual-uncased_EMAEntropy32768x32/checkpoints/step=190000.ckpt",
+    # @hanoihantrakul: 18DEC2024 10Hz 54400x40 Tokenizer
+    "conformerumm_tts_rope_lfr_10hz_larger_codebook": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs/umm_conformer_tts_rope_lfr/umm_stage3_tts_rope_larger_codebook_lfr-10_bert-base-multilingual-uncased_EMAEntropy54400x48/checkpoints/step=190000.ckpt",
     # @hanoihantrakul: 25NOV2024 15Hz 32768x32 Tokenizer. The step count might seem low but this was trained for 6 days on 4x8 GPU's
     "conformerumm_tts_rope_lfr_15hz": "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs/umm_conformer_tts_rope_lfr/umm_stage3_tts_rope_lfr-15_bert-base-multilingual-uncased_EMAEntropy32768x32/checkpoints/step=080000.ckpt",
     # @hanoihantrakul: 25NOV2024 15Hz 54400x40 Tokenizer. The step count might seem low but this was trained for 6 days on 4x8 GPU's

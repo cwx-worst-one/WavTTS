@@ -79,15 +79,15 @@ scheduler_cls: !name:recipes.umm.modules.lr_scheduler.WarmupCosine
 config: !new:recipes.umm.models.umm_mel_decoder.UMMMelDecoderConfig
     training_sample_rate: !ref <extra_params[sample_rate]>
     n_mel_bins_out: 160
-    n_mel_channels_out: 1 # supports 1 (mono) or 2 (stereo)
+    n_mel_channels_out: 1 
     w_loss_l1: 1.0
     w_loss_ssim: 1.0
     w_loss_adv: 0.05
 
-model_cls: !name:recipes.umm.models.umm_mel_decoder.UMMMelDecoder
+model_cls: !name:recipes.umm.models.umm_mel_decoder.UMMMelDecoderMono
     config: !ref <config>
 
-pl_module: !new:recipes.umm.modules.lit_module_umm_mel_decoder.UMMMelDecoderTrainingTask
+pl_module: !new:recipes.umm.modules.lit_module_umm_mel_decoder.UMMMelDecoderTrainingTaskMono
     config: !ref <config>
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>

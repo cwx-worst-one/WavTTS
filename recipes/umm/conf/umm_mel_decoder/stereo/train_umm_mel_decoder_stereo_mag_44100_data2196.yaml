@@ -112,7 +112,7 @@ scheduler_cls: !name:recipes.umm.modules.lr_scheduler.WarmupCosine
     min_lr: !ref <run_opts[learning_rate]> * 0.5 # adopted from ConvUMM-GAN
 
 config: !new:recipes.umm.models.umm_mel_decoder.UMMMelDecoderConfig
-    training_sample_rate: 24000
+    training_sample_rate: 44100
     n_mel_bins_out: 160 # default ConvUMM-GAN mel head: 160
     n_mel_channels_out: !ref <extra_params[n_channels]>
     return_complex: !ref <extra_params[return_complex]>
@@ -124,10 +124,10 @@ config: !new:recipes.umm.models.umm_mel_decoder.UMMMelDecoderConfig
     w_loss_ssim: !ref <extra_params[w_loss_ssim]>
     w_loss_adv: !ref <extra_params[w_loss_adv]>
 
-model_cls: !name:recipes.umm.models.umm_mel_decoder.UMMMelDecoderV2
+model_cls: !name:recipes.umm.models.umm_mel_decoder.UMMMelDecoderStereo
     config: !ref <config>
 
-pl_module: !new:recipes.umm.modules.lit_module_umm_mel_decoder.UMMMelDecoderTrainingTaskV2
+pl_module: !new:recipes.umm.modules.lit_module_umm_mel_decoder.UMMMelDecoderTrainingTaskStereo
     config: !ref <config>
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>

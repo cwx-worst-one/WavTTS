@@ -1,0 +1,20 @@
+17DEC2024 @hanoihantrakul
+Implementation notes:
+
+The griffin lim algorithm requires the forward function wav2mel to be
+compatible with the backwards inversion mel2wav.
+
+The previous FrozenUMM-Mel-Decoder used a `torch_wav2spec()` as the forwards
+function, which is not compatible with the default griffinlim implementation
+in librosa nor pytorch. 
+
+In these configs I use a `GriffinLimHandler()` which ensure the forwards wav2mel
+can be correctly inverted back mel2wav using the native pytorch implementation.
+
+Ideally, the mel spectrogram would be inverted back to audio using an ML model,
+but at the time of writing I have only implemented GriffinLim. 
+
+Note that the GriffinLim algorithm is also imperfect because when an STFT
+is warped into a mel spectrogram, it needs to be warped back to STFT before
+GriffinLim can be applied. That warping procedure introduces loss of 
+information. 

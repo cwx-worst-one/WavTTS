@@ -24,3 +24,6 @@ def __call__(self, item: Dict[str, Any]) -> Generator:
             return
         try:
             ...
+
+These configs reconstruct audio using the `torch_wav2spec()` function, which is not compatible
+with GriffinLim inversion.

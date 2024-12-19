@@ -104,10 +104,10 @@ config: !new:recipes.umm.models.umm_mel_decoder.UMMMelDecoderConfig
     w_loss_ssim: !ref <extra_params[w_loss_ssim]>
     w_loss_adv: !ref <extra_params[w_loss_adv]>
 
-model_cls: !name:recipes.umm.models.umm_mel_decoder.UMMMelDecoder
+model_cls: !name:recipes.umm.models.umm_mel_decoder.UMMMelDecoderMono
     config: !ref <config>
 
-pl_module: !new:recipes.umm.modules.lit_module_umm_mel_decoder.UMMMelDecoderTrainingTask
+pl_module: !new:recipes.umm.modules.lit_module_umm_mel_decoder.UMMMelDecoderTrainingTaskMono
     config: !ref <config>
     model_cls: !ref <model_cls>
     optimizer_cls: !ref <optimizer_cls>
