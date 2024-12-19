@@ -1,10 +1,10 @@
 ARG REGION
 
-FROM aliyun-va-hub.byted.org/compile/seed.speech.pytorch2:159c9e2f0fb158d293de72e25644d07b as aliyun_va
-FROM use-hub.byted.org/compile/seed.speech.pytorch2:159c9e2f0fb158d293de72e25644d07b as us-east
-FROM hub.tiktoke.org/compile/seed.speech.pytorch2:159c9e2f0fb158d293de72e25644d07b as us-east-red
-FROM aliyun-sin-hub.byted.org/compile/seed.speech.pytorch2:159c9e2f0fb158d293de72e25644d07b as aliyun_sg
-FROM hub.byted.org/compile/seed.speech.pytorch2:159c9e2f0fb158d293de72e25644d07b as china-north-lf
+FROM aliyun-va-hub.byted.org/compile/seed.speech.pytorch2:cdfc47d2d4b963bb7f4757169735a7c1 as aliyun_va
+FROM use-hub.byted.org/compile/seed.speech.pytorch2:cdfc47d2d4b963bb7f4757169735a7c1 as us-east
+FROM hub.tiktoke.org/compile/seed.speech.pytorch2:cdfc47d2d4b963bb7f4757169735a7c1 as us-east-red
+FROM aliyun-sin-hub.byted.org/compile/seed.speech.pytorch2:cdfc47d2d4b963bb7f4757169735a7c1 as aliyun_sg
+FROM hub.byted.org/compile/seed.speech.pytorch2:cdfc47d2d4b963bb7f4757169735a7c1 as china-north-lf
 
 ENV http_proxy="http://sys-proxy-rd-relay.byted.org:8118"
 ENV https_proxy="http://sys-proxy-rd-relay.byted.org:8118"
@@ -40,6 +40,7 @@ ENV MASON_SKIP_BPEX_AUTO_PIP_INSTALL 1
 ENV MASON_SKIP_MEGATRON_AUTO_PIP_INSTALL 1
 ENV CRS_LOGGING_LEVEL INFO
 ENV TORCH_NCCL_HIGH_PRIORITY 1
+ENV MARIANA_SKIP_MASON_INSTALL 1
 
 ARG CRUISE_VERSION=1.0.0.3641
 ARG PANTHER_VERSION=1.7.14.411
@@ -49,7 +50,7 @@ ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
 ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.5
-ARG BUMI_VERSION=1.7.0.31
+ARG BUMI_VERSION=1.7.0.71
 ARG TRITON_VERSION=1.0.0.102
 ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.18
 # https://github.com/facebookresearch/xformers.git:6425fd0
