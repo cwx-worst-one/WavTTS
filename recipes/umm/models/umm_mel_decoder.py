@@ -50,7 +50,7 @@ class UMMMelDecoderConfig(PretrainedConfig):
         self.w_loss_ssim = w_loss_ssim
         self.w_loss_adv = w_loss_adv
 
-class UMMMelDecoder(nn.Module):
+class UMMMelDecoderMono(nn.Module):
     """
     1NOV2024 @hanoihantrakul
     A Decoder which takes a latent (typically from Stage2 or Stage3 UMM) and transforms
@@ -87,7 +87,7 @@ class UMMMelDecoder(nn.Module):
         # x = [batch_size, mel_timesteps, n_mel_bins_out] e.g. [4, 200, 160]
         return x 
     
-class UMMMelDecoderV2(nn.Module):
+class UMMMelDecoderStereo(nn.Module):
     """
     1NOV2024 @hanoihantrakul
     A Decoder which takes a latent (typically from Stage2 or Stage3 UMM) and transforms
@@ -134,7 +134,18 @@ class UMMMelDecoderV2(nn.Module):
         x = self.mel_decoder(x)
         return x 
     
-
+class UMMMelDecoderV2(UMMMelDecoderStereo):
+    """
+    Just for backwards compatability. It's just the same as UMMMelDecoderStereo.
+    """
+    def __init__(self, config: UMMMelDecoderConfig):
+        config.latent_dim_in = 32
+        config.hidden_size = 2048
+        config.conv_hidden_size = 512
+        config.num_conv_layers = 8
+        super().__init__(config)
+    
+    
 if __name__ == "__main__":
     inputs = {}
     BATCH_SIZE=1
