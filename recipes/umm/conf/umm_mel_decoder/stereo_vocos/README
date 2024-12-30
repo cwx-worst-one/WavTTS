@@ -1,0 +1,15 @@
+19DEC2024 @hanoihantrakul
+Implementation notes:
+
+The Vocos is a pretrained model which operates on mono mel spectrograms at 24khz.
+
+There are 2 key implementation items:
+
+- Vocos has a default hop_size=256, which at 24khz means the mel_feature_rate=93.75
+This is different from our tokenizer which has hop_size=240, which at 24khz means the mel_feature_rate=100
+To solve this problem, I simply task the decoder with reconstructing the mel at 93.75Hz and then zero padding
+to what it should have been 100hz. Essentially the FrozenUMM-Mel-Decoder is decoding a "truncated mel spectrogram".
+Obviously the proper way to fix this is to completely retrain Vocos with a hop_size=240 but I just don't have
+time for this task with only 2 weeks left at the company.
+
+- Vocos operates on mono signals, so to generate stereo signals I invert the left and right mel channel separately.
