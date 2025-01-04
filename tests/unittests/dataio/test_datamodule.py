@@ -1,3 +1,4 @@
+import pytest
 from samantha.dataio.datamodule import UniDataModule, ProcessorBase
 
 
@@ -5,7 +6,7 @@ class Processor(ProcessorBase):
     def process_one(self, sample):
         return sample
 
-
+@pytest.mark.skip(reason="data source broken on platform")
 def test_uni_datamodule():
     path = ["hdfs://haruna/home/byte_speech_sv/user/wangxin.colin/tests/ci/00000.tar"]
     batcher_config = dict(buckets=None, dynamic_batch=False, maximum_bucket_size=10_000, batch_size=4, length_fn=lambda x: 1)
@@ -26,6 +27,7 @@ def test_uni_datamodule():
     assert len(keys) == 4096
 
 
+@pytest.mark.skip(reason="data source broken on platform")
 def test_uni_datamodule_with_data_id():
     batcher_config = dict(buckets=None, dynamic_batch=False, maximum_bucket_size=10_000, batch_size=4, length_fn=lambda x: 1)
     processor = Processor(batcher_config=batcher_config)

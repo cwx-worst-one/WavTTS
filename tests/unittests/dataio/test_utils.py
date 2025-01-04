@@ -1,4 +1,5 @@
 import json
+import pytest
 from collections import Counter
 
 from bytedance import easycycle
@@ -7,7 +8,7 @@ from samantha.dataio.utils import parse_data_urls, uniq_data_urls
 
 easycycle.set_region(easycycle.get_current_region())
 
-
+@pytest.mark.skip(reason="ci env not support")
 def test_parse_data_urls():
     data_id = 23
     data_path = parse_data_urls(data_id=data_id)
@@ -21,7 +22,7 @@ def test_parse_data_urls():
         "hdfs://haruna/home/byte_speech_sv/user/wangxin.colin/tests/ci/00000.tar"
     ]
 
-
+@pytest.mark.skip(reason="ci env not support")
 def test_uniq_data_urls():
     dataset_id = 2200
     if easycycle.get_current_region() == easycycle.Region.I18n:
@@ -38,6 +39,7 @@ def test_uniq_data_urls():
     assert json.dumps(uniqed_data_urls_v1) == json.dumps(uniqed_data_urls_v2)
 
 
+@pytest.mark.skip(reason="ci env not support")
 def uniq_data_urls_v1(data_urls):
     frequency = Counter(url["index"] for url in data_urls)
     uniqed_data_urls, memory = [], set()
