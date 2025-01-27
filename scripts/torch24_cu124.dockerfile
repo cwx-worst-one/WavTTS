@@ -1,10 +1,10 @@
 ARG REGION
 
-FROM aliyun-va-hub.byted.org/compile/seed.speech.pytorch2:cdfc47d2d4b963bb7f4757169735a7c1 as aliyun_va
-FROM use-hub.byted.org/compile/seed.speech.pytorch2:cdfc47d2d4b963bb7f4757169735a7c1 as us-east
-FROM hub.tiktoke.org/compile/seed.speech.pytorch2:cdfc47d2d4b963bb7f4757169735a7c1 as us-east-red
-FROM aliyun-sin-hub.byted.org/compile/seed.speech.pytorch2:cdfc47d2d4b963bb7f4757169735a7c1 as aliyun_sg
-FROM hub.byted.org/compile/seed.speech.pytorch2:cdfc47d2d4b963bb7f4757169735a7c1 as china-north-lf
+FROM aliyun-va-hub.byted.org/compile/seed.speech.pytorch2:5aaeec89a746bd4a1f5ec3661a8fe9ee as aliyun_va
+FROM use-hub.byted.org/compile/seed.speech.pytorch2:5aaeec89a746bd4a1f5ec3661a8fe9ee as us-east
+FROM hub.tiktoke.org/compile/seed.speech.pytorch2:5aaeec89a746bd4a1f5ec3661a8fe9ee as us-east-red
+FROM aliyun-sin-hub.byted.org/compile/seed.speech.pytorch2:5aaeec89a746bd4a1f5ec3661a8fe9ee as aliyun_sg
+FROM hub.byted.org/compile/seed.speech.pytorch2:5aaeec89a746bd4a1f5ec3661a8fe9ee as china-north-lf
 
 ENV http_proxy="http://sys-proxy-rd-relay.byted.org:8118"
 ENV https_proxy="http://sys-proxy-rd-relay.byted.org:8118"
@@ -42,17 +42,18 @@ ENV CRS_LOGGING_LEVEL INFO
 ENV TORCH_NCCL_HIGH_PRIORITY 1
 ENV MARIANA_SKIP_MASON_INSTALL 1
 
-ARG CRUISE_VERSION=1.0.0.3641
-ARG PANTHER_VERSION=1.7.14.411
+ARG CRUISE_VERSION=1.0.0.3759
+ARG PANTHER_VERSION=1.7.14.437
 ARG OPENFST_VERSION=1.0.0.8
 ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
 # For torch 2.4
 ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
-ARG S3A_VERSION=1.0.0.5
-ARG BUMI_VERSION=1.7.0.71
+ARG S3A_VERSION=1.0.0.79
+ARG BUMI_VERSION=2.1.0.11
+ARG LSDP_VERSION=1.0.9.0
 ARG TRITON_VERSION=1.0.0.102
-ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.18
+ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.47
 # https://github.com/facebookresearch/xformers.git:6425fd0
 ARG XFORMERS_VERSION=1.0.0.15
 # https://github.com/google-research/bleurt.git:cebe7e6
@@ -66,7 +67,8 @@ ARG LIBSOX_VERSION=1.0.0.18
 
 RUN apt-get update && \
     apt-get install \
-        -yq --no-install-recommends \
+        -yq --no-install-recommends --allow-downgrades \
+        libsepol1=3.1-1 \
         libc6 \
         libucx0 \
         libmkl-rt \
@@ -98,7 +100,8 @@ RUN apt-get update && \
         sox \
         libsox-dev \
         iproute2 \
-        elfutils && \
+        elfutils \
+        numactl && \
     cd /tmp && \
     wget https://developer.download.nvidia.com/compute/cuda/repos/debian11/x86_64/cuda-keyring_1.1-1_all.deb && \
     dpkg -i cuda-keyring_1.1-1_all.deb && rm -f cuda-keyring_1.1-1_all.deb && \
@@ -150,15 +153,17 @@ RUN pip3 install \
         byted-janus==0.1.6.post6 \
         byted-kms-encryption==0.0.5 \
         byted-kmsv2inner==0.1.14 \
-        byted-omnistore==0.2.54 \
+        byted-lafka-internal==1.4.16rc1 \
+        byted-omnistore==0.6.11 \
         byted-wandb==0.13.72 \
         byted_encrypted_hdfs==0.7.2 \
         bytedance-context==0.7.1 \
         bytedance-metrics==0.5.2 \
-        bytedance.ckpt_io_metrics==0.0.21 \
+        bytedance.ckpt_io_metrics==0.0.22 \
         bytedance.easycycle==1.1.33 \
         bytedance.hdfs-stdenv==0.0.30 \
         bytedance.modelhub==0.0.78 \
+        bytedance.ndtimeline==2.2.8 \
         bytedance.servicediscovery==0.1.2 \
         bytedbackgrounds==0.0.6 \
         byteddatabus==1.0.6 \
@@ -167,17 +172,19 @@ RUN pip3 install \
         bytedeuler==0.42.1 \
         bytedevent==1.5.0 \
         bytedfeather==0.2.0 \
+        bytedkafka==0.2.27 \
         bytedkmsv2==0.10.50 \
         bytedlogger==0.15.2 \
         bytedlogid==0.2.1 \
         bytedmemfd==0.2 \
-        bytedmerlin==0.0.4.dev2 \
+        bytedmerlin==0.0.6.33 \
         bytedmetrics==0.10.2 \
         bytedpymongo==2.0.5 \
         bytedredis==1.7.6 \
         bytedrh2==1.18.9a19 \
         bytedservicediscovery==0.17.4 \
-        bytedtcc==1.4.5 \
+        bytedsinfmetacenter==1.4.3 \
+        bytedtcc==1.4.4 \
         bytedtos==1.1.9 \
         bytedtrace==0.3.0 \
         bytedzti==1.0.11 \
@@ -204,6 +211,7 @@ RUN pip3 install \
         contourpy==1.3.0 \
         coqpit==0.0.17 \
         coverage==7.6.1 \
+        cramjam==2.9.1 \
         cryptography==39.0.2 \
         csvw==3.3.0 \
         cxxfilt==0.3.0 \
@@ -325,6 +333,7 @@ RUN pip3 install \
         mypy==1.11.2 \
         mypy-extensions==1.0.0 \
         namex==0.0.8 \
+        nest_asyncio==1.6.0 \
         networkx==3.3 \
         ninja==1.11.1 \
         nltk==3.9.1 \
@@ -403,6 +412,7 @@ RUN pip3 install \
         python-engineio==4.9.1 \
         python-etcd==0.4.5 \
         python-jose==3.3.0 \
+        python-snappy==0.7.3 \
         python-socketio==5.11.4 \
         pytorch-lightning==2.4.0 \
         pytz==2022.5 \
@@ -445,6 +455,7 @@ RUN pip3 install \
         sniffio==1.3.1 \
         snowballstemmer==2.2.0 \
         soft-moe-pytorch==0.1.8 \
+        sortedcontainers==2.4.0 \
         soundfile==0.12.1 \
         sox==1.4.1 \
         soxbindings==1.2.3 \
@@ -475,6 +486,7 @@ RUN pip3 install \
         termcolor==2.4.0 \
         tf-slim==1.1.0 \
         threadpoolctl==3.5.0 \
+        thrift==0.21.0 \
         thriftpy2==0.4.16 \
         tiktoken==0.7.0 \
         timm==1.0.9 \
@@ -485,11 +497,9 @@ RUN pip3 install \
         torch-complex==0.4.4 \
         torch-pitch-shift==1.2.4 \
         torch-stft==0.1.4 \
-        torchaudio==2.4.0+cu124 \
         torchaudio-augmentations==0.2.4 \
         torchlibrosa==0.1.0 \
         torchmetrics==1.4.1 \
-        torchvision==0.19.0+cu124 \
         tornado==6.4.1 \
         tox==3.28.0 \
         tqdm==4.65.0 \
@@ -510,6 +520,7 @@ RUN pip3 install \
         wcwidth==0.2.13 \
         webdataset==0.2.48 \
         webrtcvad==2.0.10 \
+        websockets==14.1 \
         websocket-client==1.8.0 \
         Werkzeug==3.0.4 \
         wget==3.2 \
@@ -546,6 +557,15 @@ RUN pip3 install --no-cache-dir --no-deps \
 RUN pip3 install --no-cache-dir --no-deps \
         http://luban-source.byted.org/repository/scm/seed.speech.bumi_$BUMI_VERSION.tar.gz
 
+RUN \
+    mkdir -p /tmp/py_lsdp && \
+    cd /tmp/py_lsdp && \
+    curl -f --location --request GET http://luban-source.byted.org/repository/scm/seed.speech.lsdp_$LSDP_VERSION.tar.gz --user 'huwenchao.hu:2rrxXA6wu7nlh6$ZlT-5' -o lsdp.tar.gz && \
+    pip3 install --no-cache-dir --no-deps lsdp.tar.gz && \
+    rm -rf /tmp/py_lsdp
+# RUN pip3 install --no-cache-dir --no-deps \
+#         http://luban-source.byted.org/repository/scm/seed.speech.lsdp_$LSDP_VERSION.tar.gz
+
 RUN mkdir -p /tmp/py_pkg.panther && \
     cd /tmp/py_pkg.panther && \
     wget http://luban-source.byted.org/repository/scm/lab.speech.panther_arnold_$PANTHER_VERSION.tar.gz && \
@@ -553,12 +573,13 @@ RUN mkdir -p /tmp/py_pkg.panther && \
     pip3 install --no-cache-dir --no-deps *torch*/panther_gpu*.whl && \
     rm -rf /tmp/* /root/.cache
 
-RUN pip3 uninstall -y s3a \
-    && wget http://luban-source.byted.org/repository/scm/lab_audio.seed.s3a_torch24_$S3A_VERSION.tar.gz \
-    && mkdir tmp.s3a \
-    && tar -xvf lab_audio.seed.s3a_torch24_$S3A_VERSION.tar.gz -C tmp.s3a \
-    && pip3 install --no-cache-dir --no-deps tmp.s3a/s3a-$S3A_VERSION-cp311-cp311-linux_x86_64.whl \
-    && rm -fr tmp.s3a lab_audio.seed.s3a_torch24_$S3A_VERSION.tar.gz
+RUN pip3 uninstall -y s3a && \
+    wget http://luban-source.byted.org/repository/scm/lab_audio.seed.s3a_$S3A_VERSION.tar.gz && \
+    mkdir tmp.s3a && \
+    tar -xvf lab_audio.seed.s3a_$S3A_VERSION.tar.gz -C tmp.s3a && \
+    pip3 install --no-cache-dir --no-deps tmp.s3a/s3a*.whl && \
+    pip3 install --no-cache-dir --no-deps flash-attn==2.7.2.post1 && \
+    rm -fr tmp.s3a lab_audio.seed.s3a_$S3A_VERSION.tar.gz
 
 # 3. install asr_eval_tool
 RUN \
@@ -601,6 +622,7 @@ RUN \
     wget http://luban-source.byted.org/repository/scm/data.speech.flash_attn_plus_$MARIANA_FMHA_PLUS_VERSION.tar.gz && \
     tar -zxf data.speech.flash_attn_plus_$MARIANA_FMHA_PLUS_VERSION.tar.gz && \
     pip3 install --no-cache-dir --no-deps fmha_plus*.whl && \
+    python3 -m fmha_plus.setup_lib --sudo && \
     rm -rf /tmp/py_mariana_fmha_plus
 
 # install xformers
@@ -669,3 +691,6 @@ RUN bash ./setup_wandb_311.sh
 # Make debugging easier.
 COPY ./scripts/scm_install.py /usr/bin/scm_install
 RUN chmod +x /usr/bin/scm_install
+
+# Rm unused package.
+RUN pip3 uninstall typing -y

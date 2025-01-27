@@ -90,17 +90,17 @@ ENV CRS_LOGGING_LEVEL INFO
 ENV TORCH_NCCL_HIGH_PRIORITY 1
 ENV MARIANA_SKIP_MASON_INSTALL 1
 
-ARG CRUISE_VERSION=1.0.0.3641
-ARG PANTHER_VERSION=1.7.14.414
+ARG CRUISE_VERSION=1.0.0.3759
+ARG PANTHER_VERSION=1.7.14.435
 ARG OPENFST_VERSION=1.0.0.8
 ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
 ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
-ARG S3A_VERSION=1.0.0.58
+ARG S3A_VERSION=1.0.0.78
 ARG DATALOADER_VERSION=1.0.0.160
-ARG BUMI_VERSION=1.7.0.71
+ARG BUMI_VERSION=2.1.0.11
 ARG TRITON_VERSION=1.0.0.103
-ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.17
+ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.46
 # https://github.com/facebookresearch/xformers.git:6425fd0
 ARG XFORMERS_VERSION=1.0.0.7
 # https://github.com/google-research/bleurt.git:cebe7e6
@@ -142,7 +142,8 @@ RUN apt-get update && \
         fonts-arphic-ukai \
         sox \
         libsox-dev \
-        iproute2 && \
+        iproute2 \
+        numactl && \
     cd /tmp && \
     wget https://developer.download.nvidia.com/compute/cuda/repos/debian11/x86_64/cuda-keyring_1.1-1_all.deb && \
     dpkg -i cuda-keyring_1.1-1_all.deb && rm -f cuda-keyring_1.1-1_all.deb && \
@@ -189,15 +190,16 @@ RUN pip3 install \
         byted-kms-encryption==0.0.5 \
         byted-kmsv2inner==0.1.14 \
         byted-lafka-internal==1.4.16rc1 \
-        byted-omnistore==0.2.54 \
+        byted-omnistore==0.6.11 \
         byted-wandb==0.13.72 \
         byted_encrypted_hdfs==0.7.2 \
         bytedance-context==0.7.1 \
         bytedance-metrics==0.5.2 \
-        bytedance.ckpt_io_metrics==0.0.21 \
+        bytedance.ckpt_io_metrics==0.0.22 \
         bytedance.easycycle==1.1.33 \
         bytedance.hdfs-stdenv==0.0.30 \
         bytedance.modelhub==0.0.77 \
+        bytedance.ndtimeline==2.2.8 \
         bytedance.servicediscovery==0.1.2 \
         bytedbackgrounds==0.0.6 \
         byteddatabus==1.0.6 \
@@ -213,7 +215,7 @@ RUN pip3 install \
         bytedlogger==0.15.2 \
         bytedlogid==0.2.1 \
         bytedmemfd==0.2 \
-        bytedmerlin==0.0.4.dev2 \
+        bytedmerlin==0.0.6.33 \
         bytedmetrics==0.9.1 \
         bytedpymongo==2.0.5 \
         bytedquicksilver==2.2.0.15 \
@@ -370,6 +372,7 @@ RUN pip3 install \
         mypy==1.11.2 \
         mypy-extensions==1.0.0 \
         namex==0.0.8 \
+        nest_asyncio==1.6.0 \
         networkx==2.6.3 \
         ninja==1.11.1 \
         nltk==3.9.1 \
@@ -425,7 +428,7 @@ RUN pip3 install \
         pycparser==2.22 \
         pycryptodomex==3.20.0 \
         pycurl==7.43.0.6 \
-        pydantic==1.10.18 \
+        pydantic==1.10.19 \
         pydub==0.25.1 \
         pyflakes==3.2.0 \
         Pygments==2.18.0 \
@@ -491,6 +494,7 @@ RUN pip3 install \
         smmap==5.0.1 \
         sniffio==1.3.1 \
         soft-moe-pytorch==0.1.8 \
+        sortedcontainers==2.4.0 \
         soundfile==0.12.1 \
         sox==1.4.1 \
         soxbindings==1.2.3 \
@@ -551,6 +555,7 @@ RUN pip3 install \
         wcwidth==0.2.13 \
         webdataset==0.2.48 \
         webrtcvad==2.0.10 \
+        websockets==14.1 \
         websocket-client==1.8.0 \
         Werkzeug==3.0.4 \
         wget==3.2 \
@@ -595,12 +600,13 @@ RUN mkdir -p /tmp/py_pkg.dataloader && \
     rm -rf /tmp/* /root/.cache
 
 # install s3a
-RUN pip3 uninstall -y s3a \
-    && wget http://luban-source.byted.org/repository/scm/lab_audio.seed.s3a_$S3A_VERSION.tar.gz \
-    && mkdir tmp.s3a \
-    && tar -xvf lab_audio.seed.s3a_$S3A_VERSION.tar.gz -C tmp.s3a \
-    && pip3 install --no-cache-dir --no-deps tmp.s3a/s3a-0.0.1-cp39-cp39-linux_x86_64.whl \
-    && rm -fr tmp.s3a lab_audio.seed.s3a_$S3A_VERSION.tar.gz
+RUN pip3 uninstall -y s3a && \
+    wget http://luban-source.byted.org/repository/scm/lab_audio.seed.s3a_$S3A_VERSION.tar.gz && \
+    mkdir tmp.s3a && \
+    tar -xvf lab_audio.seed.s3a_$S3A_VERSION.tar.gz -C tmp.s3a && \
+    pip3 install --no-cache-dir --no-deps tmp.s3a/s3a*.whl && \
+    pip3 install --no-cache-dir --no-deps flash-attn==2.7.2.post1 && \
+    rm -fr tmp.s3a lab_audio.seed.s3a_$S3A_VERSION.tar.gz
 
 # 3. install asr_eval_tool
 RUN \
@@ -643,6 +649,7 @@ RUN \
     wget http://luban-source.byted.org/repository/scm/data.speech.flash_attn_plus_$MARIANA_FMHA_PLUS_VERSION.tar.gz && \
     tar -zxf data.speech.flash_attn_plus_$MARIANA_FMHA_PLUS_VERSION.tar.gz && \
     pip3 install --no-cache-dir --no-deps fmha_plus*.whl && \
+    python3 -m fmha_plus.setup_lib --sudo && \
     rm -rf /tmp/py_mariana_fmha_plus
 
 # install xformers
@@ -701,3 +708,6 @@ RUN bash ./setup_wandb.sh
 # Make debugging easier.
 COPY ./scripts/scm_install.py /usr/bin/scm_install
 RUN chmod +x /usr/bin/scm_install
+
+# Rm unused package.
+RUN pip3 uninstall typing -y
