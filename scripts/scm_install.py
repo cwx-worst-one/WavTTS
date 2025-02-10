@@ -6,6 +6,7 @@
 import shutil
 import sys
 import os
+import pkg_resources
 import tempfile
 import subprocess
 
@@ -16,12 +17,23 @@ _ABBRS_ = {
     "panther": "lab/speech/panther_arnold",
     "bumi": "seed/speech/bumi",
     "triton": "seed/speech/triton",
+    "lsdp": "seed/speech/lsdp",
 }
 _INSTALL_CMD = {
     "lab/speech/panther_arnold": "pip3 install *torch*/panther_gpu-*.whl",
     "seed/speech/bumi": _INSTALL_CMD_DIST,
     "seed/speech/triton": _INSTALL_CMD_WHL,
+    "seed/speech/lsdp": _INSTALL_CMD_DIST,
 }
+
+
+def _get_package_version(package_name):
+    try:
+        version = pkg_resources.get_distribution(package_name).version
+        print(f"Already installed {package_name}={version}")
+    except pkg_resources.DistributionNotFound:
+        version = None
+    return version
 
 
 def _install_python_package(name, version):
@@ -51,6 +63,8 @@ def _install_python_package(name, version):
 
 name = sys.argv[1]
 version = sys.argv[2]
-name = _ABBRS_.get(name, name)
 
-_install_python_package(name, version)
+installed_version = _get_package_version(name)
+
+if version != installed_version:
+    _install_python_package(_ABBRS_.get(name, name), version)
