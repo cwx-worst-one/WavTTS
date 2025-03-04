@@ -1,10 +1,10 @@
 ARG REGION
 
-FROM aliyun-va-hub.byted.org/compile/seed.speech.pytorch2:5aaeec89a746bd4a1f5ec3661a8fe9ee as aliyun_va
-FROM use-hub.byted.org/compile/seed.speech.pytorch2:5aaeec89a746bd4a1f5ec3661a8fe9ee as us-east
-FROM hub.tiktoke.org/compile/seed.speech.pytorch2:5aaeec89a746bd4a1f5ec3661a8fe9ee as us-east-red
-FROM aliyun-sin-hub.byted.org/compile/seed.speech.pytorch2:5aaeec89a746bd4a1f5ec3661a8fe9ee as aliyun_sg
-FROM hub.byted.org/compile/seed.speech.pytorch2:5aaeec89a746bd4a1f5ec3661a8fe9ee as china-north-lf
+FROM aliyun-va-hub.byted.org/compile/seed.speech.pytorch2:2fe6c33822d587e9e8481fc89ee607ee as aliyun_va
+FROM use-hub.byted.org/compile/seed.speech.pytorch2:2fe6c33822d587e9e8481fc89ee607ee as us-east
+FROM hub.tiktoke.org/compile/seed.speech.pytorch2:2fe6c33822d587e9e8481fc89ee607ee as us-east-red
+FROM aliyun-sin-hub.byted.org/compile/seed.speech.pytorch2:2fe6c33822d587e9e8481fc89ee607ee as aliyun_sg
+FROM hub.byted.org/compile/seed.speech.pytorch2:2fe6c33822d587e9e8481fc89ee607ee as china-north-lf
 
 ENV http_proxy="http://sys-proxy-rd-relay.byted.org:8118"
 ENV https_proxy="http://sys-proxy-rd-relay.byted.org:8118"
@@ -42,17 +42,17 @@ ENV CRS_LOGGING_LEVEL INFO
 ENV TORCH_NCCL_HIGH_PRIORITY 1
 ENV MARIANA_SKIP_MASON_INSTALL 1
 
-ARG CRUISE_VERSION=1.0.0.3759
-ARG PANTHER_VERSION=1.7.14.437
+ARG CRUISE_VERSION=1.0.0.3829
+ARG PANTHER_VERSION=1.7.14.466
 ARG OPENFST_VERSION=1.0.0.8
 ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
 # For torch 2.4
 ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.79
-ARG BUMI_VERSION=2.1.0.11
-ARG LSDP_VERSION=1.0.9.0
-ARG TRITON_VERSION=1.0.0.102
+ARG BUMI_VERSION=2.1.0.41
+ARG LSDP_VERSION=1.1.0.18
+ARG TRITON_VERSION=1.0.0.216
 ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.47
 # https://github.com/facebookresearch/xformers.git:6425fd0
 ARG XFORMERS_VERSION=1.0.0.15
@@ -134,7 +134,7 @@ RUN pip3 install \
         astor==0.8.1 \
         asttokens==2.4.1 \
         astunparse==1.6.3 \
-        attrs==19.3.0 \
+        attrs==25.1.0 \
         audioread==3.0.1 \
         babel==2.16.0 \
         backoff==2.2.1 \
@@ -667,7 +667,8 @@ RUN mkdir -p /tmp/py_triton && \
     tar -xvf seed.speech.triton_$TRITON_VERSION.tar.gz && \
     pip3 uninstall -y pytorch-triton && \
     pip3 uninstall -y triton && \
-    pip3 install --no-cache-dir --no-deps triton*.whl && \
+    pip3 uninstall -y byted-triton && \
+    pip3 install --no-cache-dir --no-deps byted_triton*.whl && \
     rm -rf /tmp/py_triton /root/.cache
 
 # # Fix libsox.so issue.
