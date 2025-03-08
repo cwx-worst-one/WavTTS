@@ -14,16 +14,18 @@ _INSTALL_CMD_WHL = "pip3 install *.whl"
 _INSTALL_CMD_DIST = "pip3 install ."
 
 _ABBRS_ = {
-    "panther": "lab/speech/panther_arnold",
-    "bumi": "seed/speech/bumi",
-    "triton": "seed/speech/triton",
-    "lsdp": "seed/speech/lsdp",
+    "panther": "lab.speech.panther_arnold",
+    "bumi": "seed.speech.bumi",
+    "triton": "seed.speech.triton",
+    "lsdp": "seed.speech.lsdp",
+    "lut": "seed.speech.lut",
 }
 _INSTALL_CMD = {
-    "lab/speech/panther_arnold": "pip3 install *torch*/panther_gpu-*.whl",
-    "seed/speech/bumi": _INSTALL_CMD_DIST,
-    "seed/speech/triton": _INSTALL_CMD_WHL,
-    "seed/speech/lsdp": _INSTALL_CMD_DIST,
+    "lab.speech.panther_arnold": "pip3 install *torch*/panther_gpu-*.whl",
+    "seed.speech.bumi": _INSTALL_CMD_DIST,
+    "seed.speech.triton": _INSTALL_CMD_WHL,
+    "seed.speech.lsdp": _INSTALL_CMD_DIST,
+    "seed.speech.lut": _INSTALL_CMD_DIST,
 }
 
 
@@ -39,7 +41,6 @@ def _get_package_version(package_name):
 def _install_python_package(name, version):
     cmd = _INSTALL_CMD.get(name, "")
 
-    name = name.replace("/", ".")
     url = f"http://luban-source.byted.org/repository/scm/{name}_{version}.tar.gz"
 
     # Special case
@@ -64,6 +65,7 @@ def _install_python_package(name, version):
 name = sys.argv[1]
 version = sys.argv[2]
 
+name = name.replace("/", ".")
 installed_version = _get_package_version(name)
 
 if version != installed_version:
