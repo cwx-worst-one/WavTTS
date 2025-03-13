@@ -50,8 +50,8 @@ ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
 ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.79
-ARG BUMI_VERSION=2.1.0.41
-ARG LSDP_VERSION=1.1.0.22
+ARG BUMI_VERSION=2.3.0.0
+ARG LSDP_VERSION=1.1.0.28
 ARG TRITON_VERSION=1.0.0.216
 ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.47
 # https://github.com/facebookresearch/xformers.git:6425fd0
@@ -578,7 +578,7 @@ RUN pip3 uninstall -y s3a && \
     mkdir tmp.s3a && \
     tar -xvf lab_audio.seed.s3a_$S3A_VERSION.tar.gz -C tmp.s3a && \
     pip3 install --no-cache-dir --no-deps tmp.s3a/s3a*.whl && \
-    pip3 install --no-cache-dir --no-deps flash-attn==2.7.2.post1 && \
+    pip3 install --no-cache-dir --no-deps flash-attn==2.7.4.post1 && \
     rm -fr tmp.s3a lab_audio.seed.s3a_$S3A_VERSION.tar.gz
 
 # 3. install asr_eval_tool
