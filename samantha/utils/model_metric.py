@@ -27,6 +27,8 @@ class ModelMetric(Metric):
         "H800": {32: 67e12, 16: 988e12, 64: 1e12},
         "A100": {32: 19.5e12, 16: 312e12, 64: 9.7e12},
         "A800": {32: 19.5e12, 16: 312e12, 64: 9.7e12},
+        "H20": {32: 44e12, 16: 148e12, 64: 1e12},
+        "H200": {32: 67e12, 16: 989e12, 64: 34e12},
     }
 
     def __init__(
@@ -59,6 +61,10 @@ class ModelMetric(Metric):
             self._theoretical = self.THEORETICAL_MAPPING["H100"]
         elif "H800" in device_name:
             self._theoretical = self.THEORETICAL_MAPPING["H800"]
+        elif "H20" in device_name and "H200" not in device_name:
+            self._theoretical = self.THEORETICAL_MAPPING["H20"]
+        elif "H200" in device_name:
+            self._theoretical = self.THEORETICAL_MAPPING["H200"]
         else:
             rank_zero_warn(
                 f"MFU calculation not support for current device {device_name}"
