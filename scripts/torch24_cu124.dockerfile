@@ -1,10 +1,10 @@
 ARG REGION
 
-FROM aliyun-va-hub.byted.org/compile/seed.speech.pytorch2:2fe6c33822d587e9e8481fc89ee607ee as aliyun_va
-FROM use-hub.byted.org/compile/seed.speech.pytorch2:2fe6c33822d587e9e8481fc89ee607ee as us-east
-FROM hub.tiktoke.org/compile/seed.speech.pytorch2:2fe6c33822d587e9e8481fc89ee607ee as us-east-red
-FROM aliyun-sin-hub.byted.org/compile/seed.speech.pytorch2:2fe6c33822d587e9e8481fc89ee607ee as aliyun_sg
-FROM hub.byted.org/compile/seed.speech.pytorch2:2fe6c33822d587e9e8481fc89ee607ee as china-north-lf
+FROM aliyun-va-hub.byted.org/compile/seed.speech.pytorch2:6d2fcf503d018c7cd8146814b49929a8 as aliyun_va
+FROM use-hub.byted.org/compile/seed.speech.pytorch2:6d2fcf503d018c7cd8146814b49929a8 as us-east
+FROM hub.tiktoke.org/compile/seed.speech.pytorch2:6d2fcf503d018c7cd8146814b49929a8 as us-east-red
+FROM aliyun-sin-hub.byted.org/compile/seed.speech.pytorch2:6d2fcf503d018c7cd8146814b49929a8 as aliyun_sg
+FROM hub.byted.org/compile/seed.speech.pytorch2:6d2fcf503d018c7cd8146814b49929a8 as china-north-lf
 
 ENV http_proxy="http://sys-proxy-rd-relay.byted.org:8118"
 ENV https_proxy="http://sys-proxy-rd-relay.byted.org:8118"
@@ -42,7 +42,7 @@ ENV CRS_LOGGING_LEVEL INFO
 ENV TORCH_NCCL_HIGH_PRIORITY 1
 ENV MARIANA_SKIP_MASON_INSTALL 1
 
-ARG CRUISE_VERSION=1.0.0.3844
+ARG CRUISE_VERSION=1.0.0.3878
 ARG PANTHER_VERSION=1.7.14.466
 ARG OPENFST_VERSION=1.0.0.8
 ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
@@ -51,7 +51,7 @@ ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.79
 ARG BUMI_VERSION=2.3.0.0
-ARG LSDP_VERSION=1.1.0.28
+ARG LSDP_VERSION=1.2.0.19
 ARG TRITON_VERSION=1.0.0.216
 ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.47
 # https://github.com/facebookresearch/xformers.git:6425fd0
@@ -160,7 +160,7 @@ RUN pip3 install \
         bytedance-context==0.7.1 \
         bytedance-metrics==0.5.2 \
         bytedance.ckpt_io_metrics==0.0.22 \
-        bytedance.easycycle==1.1.33 \
+        bytedance.easycycle==1.1.44 \
         bytedance.hdfs-stdenv==0.0.30 \
         bytedance.modelhub==0.0.78 \
         bytedance.ndtimeline==2.2.8 \
