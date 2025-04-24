@@ -42,16 +42,17 @@ ENV CRS_LOGGING_LEVEL INFO
 ENV TORCH_NCCL_HIGH_PRIORITY 1
 ENV MARIANA_SKIP_MASON_INSTALL 1
 
-ARG CRUISE_VERSION=1.0.0.3878
-ARG PANTHER_VERSION=1.7.14.466
+ARG CRUISE_VERSION=1.0.0.3897
+ARG PANTHER_VERSION=1.7.14.487
 ARG OPENFST_VERSION=1.0.0.8
 ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
 # For torch 2.4
 ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.79
-ARG BUMI_VERSION=2.3.0.0
-ARG LSDP_VERSION=1.2.0.19
+ARG BUMI_VERSION=2.3.0.40
+ARG LSDP_VERSION=1.2.0.42
+ARG LUT_VERSION=1.0.0.37
 ARG TRITON_VERSION=1.0.0.216
 ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.47
 # https://github.com/facebookresearch/xformers.git:6425fd0
@@ -148,7 +149,8 @@ RUN pip3 install \
         botocore==1.35.14 \
         braceexpand==0.1.7 \
         byted-dataloader==0.5.4 \
-        byted-hdfs-io==0.3.13 \
+        byted-hdfs-io==0.3.20 \
+        byted-unified-io==0.0.20 \
         byted-iceberg==0.2.151 \
         byted-janus==0.1.6.post6 \
         byted-kms-encryption==0.0.5 \
@@ -273,6 +275,7 @@ RUN pip3 install \
         identify==2.6.0 \
         idna==3.8 \
         imagesize==1.4.1 \
+        importlib_metadata==6.7.0 \
         iniconfig==2.0.0 \
         intel-openmp==2023.2.4 \
         ipaddress==1.0.23 \
@@ -394,7 +397,7 @@ RUN pip3 install \
         pydub==0.25.1 \
         pyflakes==3.2.0 \
         Pygments==2.18.0 \
-        PyJWT==2.8.0 \
+        PyJWT==2.10.1 \
         pylatexenc==2.10 \
         pyope==0.2.2 \
         pyOpenSSL==23.2.0 \
@@ -418,7 +421,7 @@ RUN pip3 install \
         pytz==2022.5 \
         pyvad==0.2.0 \
         pyworld==0.3.4 \
-        PyYAML==6.0 \
+        PyYAML==6.0.2 \
         pyzstd==0.16.1 \
         rapidfuzz==3.9.7 \
         rdflib==7.0.0 \
@@ -533,6 +536,7 @@ RUN pip3 install \
         zhconv==1.4.3 \
         zhon==1.1.5 \
         zict==3.0.0 \
+        zipp==3.21.0 \
         zope.event==5.0 \
         zope.interface==7.0.3 \
         zstandard==0.19.0
@@ -557,14 +561,17 @@ RUN pip3 install --no-cache-dir --no-deps \
 RUN pip3 install --no-cache-dir --no-deps \
         http://luban-source.byted.org/repository/scm/seed.speech.bumi_$BUMI_VERSION.tar.gz
 
-RUN \
-    mkdir -p /tmp/py_lsdp && \
-    cd /tmp/py_lsdp && \
-    curl -f --location --request GET http://luban-source.byted.org/repository/scm/seed.speech.lsdp_$LSDP_VERSION.tar.gz --user 'huwenchao.hu:2rrxXA6wu7nlh6$ZlT-5' -o lsdp.tar.gz && \
-    pip3 install --no-cache-dir --no-deps lsdp.tar.gz && \
-    rm -rf /tmp/py_lsdp
-# RUN pip3 install --no-cache-dir --no-deps \
-#         http://luban-source.byted.org/repository/scm/seed.speech.lsdp_$LSDP_VERSION.tar.gz
+# RUN \
+#     mkdir -p /tmp/py_lsdp && \
+#     cd /tmp/py_lsdp && \
+#     curl -f --location --request GET http://luban-source.byted.org/repository/scm/seed.speech.lsdp_$LSDP_VERSION.tar.gz --user 'huwenchao.hu:2rrxXA6wu7nlh6$ZlT-5' -o lsdp.tar.gz && \
+#     pip3 install --no-cache-dir --no-deps lsdp.tar.gz && \
+#     rm -rf /tmp/py_lsdp
+RUN pip3 install --no-cache-dir --no-deps \
+        http://luban-source.byted.org/repository/scm/seed.speech.lsdp_$LSDP_VERSION.tar.gz
+
+RUN pip3 install --no-cache-dir --no-deps \
+    http://luban-source.byted.org/repository/scm/seed.speech.lut_$LUT_VERSION.tar.gz
 
 RUN mkdir -p /tmp/py_pkg.panther && \
     cd /tmp/py_pkg.panther && \
