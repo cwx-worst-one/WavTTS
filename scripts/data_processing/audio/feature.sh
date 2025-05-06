@@ -15,8 +15,7 @@ COMMIT=${SAMANTHA_COMMIT:-$(git rev-parse --short HEAD)}
 
 branch_name=$(git branch --show-current)
 
-git fetch origin $COMMIT || echo "fetch $COMMIT failed"
-git fetch --unshallow || echo "on a complete repository"
+git fetch origin --depth 1 $COMMIT || echo "fetch $COMMIT failed"
 
 git checkout $COMMIT
 
