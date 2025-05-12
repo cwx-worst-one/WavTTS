@@ -1,10 +1,10 @@
 ARG REGION
 
-FROM aliyun-va-hub.byted.org/compile/seed.speech.pytorch2:6d2fcf503d018c7cd8146814b49929a8 as aliyun_va
-FROM use-hub.byted.org/compile/seed.speech.pytorch2:6d2fcf503d018c7cd8146814b49929a8 as us-east
-FROM hub.tiktoke.org/compile/seed.speech.pytorch2:6d2fcf503d018c7cd8146814b49929a8 as us-east-red
-FROM aliyun-sin-hub.byted.org/compile/seed.speech.pytorch2:6d2fcf503d018c7cd8146814b49929a8 as aliyun_sg
-FROM hub.byted.org/compile/seed.speech.pytorch2:6d2fcf503d018c7cd8146814b49929a8 as china-north-lf
+FROM aliyun-va-hub.byted.org/compile/seed.speech.pytorch2:ada0474e1acc893375e4e44591205776 as aliyun_va
+FROM use-hub.byted.org/compile/seed.speech.pytorch2:ada0474e1acc893375e4e44591205776 as us-east
+FROM hub.tiktoke.org/compile/seed.speech.pytorch2:ada0474e1acc893375e4e44591205776 as us-east-red
+FROM aliyun-sin-hub.byted.org/compile/seed.speech.pytorch2:ada0474e1acc893375e4e44591205776 as aliyun_sg
+FROM hub.byted.org/compile/seed.speech.pytorch2:ada0474e1acc893375e4e44591205776 as china-north-lf
 
 ENV http_proxy="http://sys-proxy-rd-relay.byted.org:8118"
 ENV https_proxy="http://sys-proxy-rd-relay.byted.org:8118"
@@ -42,7 +42,7 @@ ENV CRS_LOGGING_LEVEL INFO
 ENV TORCH_NCCL_HIGH_PRIORITY 1
 ENV MARIANA_SKIP_MASON_INSTALL 1
 
-ARG CRUISE_VERSION=1.0.0.3897
+ARG CRUISE_VERSION=1.0.0.3922
 ARG PANTHER_VERSION=1.7.14.487
 ARG OPENFST_VERSION=1.0.0.8
 ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
@@ -50,8 +50,8 @@ ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
 ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.79
-ARG BUMI_VERSION=2.3.0.40
-ARG LSDP_VERSION=1.2.0.42
+ARG BUMI_VERSION=2.4.0.36
+ARG LSDP_VERSION=1.3.0.31
 ARG LUT_VERSION=1.0.0.37
 ARG TRITON_VERSION=1.0.0.216
 ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.47
@@ -131,42 +131,58 @@ RUN pip3 install \
         annotated-types==0.7.0 \
         antlr4-python3-runtime==4.9.3 \
         anyio==4.4.0 \
+        argon2-cffi==23.1.0 \
+        argon2-cffi-bindings==21.2.0 \
+        arrow==1.3.0 \
         asn1crypto==1.5.1 \
         astor==0.8.1 \
         asttokens==2.4.1 \
         astunparse==1.6.3 \
-        attrs==25.1.0 \
+        async-lru==2.0.5 \
+        attrs==25.3.0 \
         audioread==3.0.1 \
+        azure-core==1.33.0 \
+        azure-identity==1.21.0 \
+        azure-storage-blob==12.25.1 \
+        azure-storage-file-datalake==12.20.0 \
         babel==2.16.0 \
         backoff==2.2.1 \
+        bcrypt==4.3.0 \
+        beautifulsoup4==4.13.4 \
         bibtexparser==2.0.0b7 \
         bidict==0.23.1 \
         bitarray==2.9.2 \
         black==24.2.0 \
+        bleach==6.2.0 \
         blessed==1.20.0 \
         blobfile==3.0.0 \
         boto3==1.35.14 \
         botocore==1.35.14 \
         braceexpand==0.1.7 \
+        Brotli==1.1.0 \
         byted-dataloader==0.5.4 \
         byted-hdfs-io==0.3.20 \
-        byted-unified-io==0.0.20 \
-        byted-iceberg==0.2.151 \
+        byted_huggingface_hub==0.130.5 \
+        byted-iceberg==0.2.219 \
         byted-janus==0.1.6.post6 \
         byted-kms-encryption==0.0.5 \
         byted-kmsv2inner==0.1.14 \
         byted-lafka-internal==1.4.16rc1 \
         byted-omnistore==0.6.11 \
-        byted-wandb==0.13.72 \
+        byted-seed-models==1.1.0 \
+        byted-streaming==1.1.85 \
+        byted-unified-io==0.0.20 \
+        byted-wandb==0.13.86 \
         byted_encrypted_hdfs==0.7.2 \
-        bytedance-context==0.7.1 \
-        bytedance-metrics==0.5.2 \
         bytedance.ckpt_io_metrics==0.0.22 \
+        bytedance-context==0.7.1 \
         bytedance.easycycle==1.1.44 \
-        bytedance.hdfs-stdenv==0.0.30 \
+        bytedance.hdfs-stdenv==0.0.39 \
+        bytedance-metrics==0.5.2 \
         bytedance.modelhub==0.0.78 \
         bytedance.ndtimeline==2.2.8 \
         bytedance.servicediscovery==0.1.2 \
+        bytedance.trainingmetrics==0.0.61 \
         bytedbackgrounds==0.0.6 \
         byteddatabus==1.0.6 \
         byteddps==0.1.2 \
@@ -183,7 +199,7 @@ RUN pip3 install \
         bytedmetrics==0.10.2 \
         bytedpymongo==2.0.5 \
         bytedredis==1.7.6 \
-        bytedrh2==1.18.9a19 \
+        bytedrh2==1.18.11 \
         bytedservicediscovery==0.17.4 \
         bytedsinfmetacenter==1.4.3 \
         bytedtcc==1.4.4 \
@@ -198,6 +214,7 @@ RUN pip3 install \
         cfgv==3.4.0 \
         chardet==5.2.0 \
         charset-normalizer==3.3.2 \
+        circuitbreaker==2.1.3 \
         click==8.1.3 \
         clldutils==3.22.2 \
         cloudpickle==1.6.0 \
@@ -207,6 +224,7 @@ RUN pip3 install \
         coloredlogs==15.0.1 \
         colorednoise==2.1.0 \
         colorlog==6.8.2 \
+        comm==0.2.2 \
         Command==0.1.0 \
         ConfigArgParse==1.5.3 \
         configparser==7.1.0 \
@@ -219,9 +237,13 @@ RUN pip3 install \
         cxxfilt==0.3.0 \
         cycler==0.12.1 \
         Cython==0.29.34 \
+        dataclasses-json==0.6.7 \
         datasets==2.5.1 \
+        debugpy==1.8.14 \
         decorator==5.1.1 \
+        decord==0.6.0 \
         deepspeed==0.15.1 \
+        defusedxml==0.7.1 \
         Deprecated==1.2.14 \
         dill==0.3.5.1 \
         distlib==0.3.8 \
@@ -241,13 +263,17 @@ RUN pip3 install \
         et-xmlfile==1.1.0 \
         eventlet==0.33.3 \
         executing==2.1.0 \
+        fairscale==0.4.13 \
         fairseq==0.12.2 \
+        fastavro==1.10.0 \
+        fastjsonschema==2.21.1 \
         ffmpeg-python==0.2.0 \
         filelock==3.15.4 \
         fire==0.6.0 \
         flake8==7.0.0 \
         flatbuffers==24.3.25 \
         fonttools==4.53.1 \
+        fqdn==1.5.1 \
         frozendict==2.4.4 \
         frozenlist==1.4.1 \
         fsspec==2023.6.0 \
@@ -256,9 +282,15 @@ RUN pip3 install \
         gevent==22.10.2 \
         gitdb==4.0.11 \
         GitPython==3.1.43 \
+        google-api-core==2.25.0rc0 \
         google-auth==2.34.0 \
         google-auth-oauthlib==1.0.0 \
+        google-cloud-core==2.4.3 \
+        google-cloud-storage==2.10.0 \
+        google-crc32c==1.7.1 \
         google-pasta==0.2.0 \
+        google-resumable-media==2.7.2 \
+        googleapis-common-protos==1.70.0 \
         gpustat==1.1.1 \
         greenlet==3.0.3 \
         grpcio==1.66.1 \
@@ -268,20 +300,24 @@ RUN pip3 install \
         hjson==3.1.0 \
         httpcore==1.0.5 \
         httpx==0.27.2 \
-        huggingface-hub==0.26.3 \
+        httpx-sse==0.4.0 \
+        huggingface-hub==0.30.2 \
         humanfriendly==10.0 \
         hydra-core==1.3.2 \
         HyperPyYAML==1.2.0 \
         identify==2.6.0 \
         idna==3.8 \
         imagesize==1.4.1 \
-        importlib_metadata==6.7.0 \
+        importlib-metadata==6.7.0 \
         iniconfig==2.0.0 \
         intel-openmp==2023.2.4 \
         ipaddress==1.0.23 \
+        ipykernel==6.29.5 \
         ipython==8.27.0 \
+        ipywidgets==8.1.6 \
         iso8601==1.0.0 \
         isodate==0.6.1 \
+        isoduration==20.11.0 \
         isort==5.12.0 \
         jedi==0.19.1 \
         jieba==0.42.1 \
@@ -290,24 +326,39 @@ RUN pip3 install \
         jiwer==3.0.4 \
         jmespath==1.0.1 \
         joblib==1.4.2 \
+        json5==0.12.0 \
         jsonargparse==4.14.1 \
         jsonpatch==1.33 \
         jsonpointer==3.0.0 \
         jsonschema==4.23.0 \
         jsonschema-specifications==2023.12.1 \
         julius==0.2.7 \
+        jupyter==1.1.1 \
+        jupyter_client==8.6.3 \
+        jupyter-console==6.6.3 \
+        jupyter_core==5.7.2 \
+        jupyter-events==0.12.0 \
+        jupyter-lsp==2.2.5 \
+        jupyter_server==2.15.0 \
+        jupyter_server_terminals==0.5.3 \
+        jupyterlab==4.4.1 \
+        jupyterlab_pygments==0.3.0 \
+        jupyterlab_server==2.27.3 \
+        jupyterlab_widgets==3.0.14 \
         kaldiio==2.18.0 \
         keras==3.5.0 \
         kiwisolver==1.4.7 \
         LAC==2.1.2 \
-        langchain==0.2.16 \
-        langchain-core==0.2.39 \
-        langchain-text-splitters==0.2.4 \
+        langchain==0.3.24 \
+        langchain-community==0.3.22 \
+        langchain-core==0.3.55 \
+        langchain-text-splitters==0.3.8 \
         langdetect==1.0.9 \
-        langsmith==0.1.118 \
+        langsmith==0.3.33 \
         language-tags==1.2.0 \
         libclang==18.1.1 \
         librosa==0.9.2 \
+        liger_kernel==0.4.0 \
         lightning-utilities==0.11.7 \
         llvmlite==0.43.0 \
         lxml==5.3.0 \
@@ -315,12 +366,14 @@ RUN pip3 install \
         Markdown==3.7 \
         markdown-it-py==2.2.0 \
         MarkupSafe==2.1.5 \
+        marshmallow==3.26.1 \
         matplotlib==3.7.1 \
         matplotlib-inline==0.1.7 \
         mccabe==0.7.0 \
         mdurl==0.1.2 \
         mir-eval==0.7 \
         miscreant==0.3.0 \
+        mistune==3.1.3 \
         mkl==2023.1.0 \
         mkl-devel==2023.1.0 \
         mkl-include==2023.1.0 \
@@ -330,22 +383,30 @@ RUN pip3 install \
         mock==5.1.0 \
         mpi4py==4.0.0 \
         mpmath==1.3.0 \
+        msal==1.32.0 \
+        msal-extensions==1.3.1 \
         msgpack==1.0.8 \
         multidict==6.0.5 \
         multiprocess==0.70.13 \
         mypy==1.11.2 \
         mypy-extensions==1.0.0 \
         namex==0.0.8 \
-        nest_asyncio==1.6.0 \
+        nbclient==0.10.2 \
+        nbconvert==7.16.6 \
+        nbformat==5.10.4 \
+        nest-asyncio==1.6.0 \
         networkx==3.3 \
         ninja==1.11.1 \
-        nltk==3.9.1 \
+        nltk==3.8.1 \
         nodeenv==1.9.1 \
         none==0.1.1 \
+        notebook==7.4.1 \
+        notebook_shim==0.2.4 \
         numba==0.60.0 \
-        numpy==1.24.4 \
+        numpy==1.26.4 \
         nvidia-ml-py==12.560.30 \
         oauthlib==3.2.2 \
+        oci==2.150.2 \
         omegaconf==2.3.0 \
         onnx==1.16.2 \
         onnxruntime==1.19.2 \
@@ -354,14 +415,19 @@ RUN pip3 install \
         opt-einsum==3.3.0 \
         optree==0.12.1 \
         orjson==3.10.7 \
+        overrides==7.7.0 \
         packaging==24.1 \
         paddlepaddle==2.5.2 \
         pandas==1.5.3 \
+        pandocfilters==1.5.1 \
+        paramiko==3.5.1 \
         parso==0.8.4 \
         path==17.0.0 \
         pathlib2==2.3.7.post1 \
         pathspec==0.12.1 \
         pathtools==0.1.2 \
+        pdfminer.six==20231228 \
+        pdfplumber==0.11.4 \
         peft==0.12.0 \
         pexpect==4.9.0 \
         phonemizer==3.3.0 \
@@ -374,10 +440,13 @@ RUN pip3 install \
         POT==0.9.4 \
         pre-commit==3.6.2 \
         pre-commit-hooks==4.5.0 \
+        prettytable==3.16.0 \
         primePy==1.3 \
+        prometheus_client==0.21.1 \
         promise==2.3 \
         prompt_toolkit==3.0.47 \
-        protobuf==3.20.0 \
+        proto-plus==1.26.1 \
+        protobuf==3.20.3 \
         psutil==5.9.5 \
         ptyprocess==0.7.0 \
         pure_eval==0.2.3 \
@@ -388,20 +457,26 @@ RUN pip3 install \
         pyarrow==12.0.0 \
         pyasn1==0.6.0 \
         pyasn1_modules==0.4.1 \
+        pybind11==2.12.0 \
         pycairo==1.23.0 \
+        pycocoevalcap==1.2 \
+        pycocotools==2.0.8 \
         pycodestyle==2.11.1 \
         pycparser==2.22 \
         pycryptodomex==3.20.0 \
-        pydantic==2.9.2 \
-        pydantic_core==2.23.2 \
+        pydantic==2.11.3 \
+        pydantic_core==2.33.1 \
+        pydantic-settings==2.9.1 \
         pydub==0.25.1 \
         pyflakes==3.2.0 \
         Pygments==2.18.0 \
         PyJWT==2.10.1 \
         pylatexenc==2.10 \
+        PyNaCl==1.5.0 \
         pyope==0.2.2 \
         pyOpenSSL==23.2.0 \
         pyparsing==3.0.9 \
+        pypdfium2==4.30.1 \
         pypinyin==0.48.0 \
         pyre-extensions==0.0.29 \
         PySoundFile==0.9.0.post1 \
@@ -412,16 +487,20 @@ RUN pip3 install \
         pytest-runner==6.0.0 \
         python-consul==1.1.0 \
         python-dateutil==2.9.0.post0 \
+        python-dotenv==1.1.0 \
         python-engineio==4.9.1 \
         python-etcd==0.4.5 \
         python-jose==3.3.0 \
+        python-json-logger==3.3.0 \
         python-snappy==0.7.3 \
         python-socketio==5.11.4 \
         pytorch-lightning==2.4.0 \
         pytz==2022.5 \
         pyvad==0.2.0 \
         pyworld==0.3.4 \
+        pywsd==1.2.5 \
         PyYAML==6.0.2 \
+        pyzmq==26.4.0 \
         pyzstd==0.16.1 \
         rapidfuzz==3.9.7 \
         rdflib==7.0.0 \
@@ -430,10 +509,13 @@ RUN pip3 install \
         regex==2024.7.24 \
         requests==2.31.0 \
         requests-oauthlib==2.0.0 \
+        requests-toolbelt==1.0.0 \
         resampy==0.4.3 \
         responses==0.18.0 \
         retry==0.9.2 \
+        rfc3339-validator==0.1.4 \
         rfc3986==1.5.0 \
+        rfc3986-validator==0.1.1 \
         rich==13.3.5 \
         rotary-embedding-torch==0.8.3 \
         rouge==1.0.1 \
@@ -448,9 +530,11 @@ RUN pip3 install \
         scikit-learn==1.2.2 \
         scipy==1.10.1 \
         segments==2.2.1 \
+        Send2Trash==1.8.3 \
         sentencepiece==0.1.99 \
         sentry-sdk==2.14.0 \
         setproctitle==1.3.3 \
+        setuptools==64.0.0 \
         shortuuid==1.0.13 \
         simple-websocket==1.0.0 \
         six==1.16.0 \
@@ -460,9 +544,10 @@ RUN pip3 install \
         soft-moe-pytorch==0.1.8 \
         sortedcontainers==2.4.0 \
         soundfile==0.12.1 \
+        soupsieve==2.7 \
         sox==1.4.1 \
         soxbindings==1.2.3 \
-        soxr==0.5.0.post1  \
+        soxr==0.5.0.post1 \
         speechbrain==1.0.1 \
         Sphinx==5.3.0 \
         sphinxcontrib-applehelp==2.0.0 \
@@ -487,12 +572,14 @@ RUN pip3 install \
         tensorflow-io==0.37.1 \
         tensorflow-io-gcs-filesystem==0.37.1 \
         termcolor==2.4.0 \
+        terminado==0.18.1 \
         tf-slim==1.1.0 \
         threadpoolctl==3.5.0 \
         thrift==0.21.0 \
         thriftpy2==0.4.16 \
         tiktoken==0.7.0 \
-        timm==1.0.9 \
+        timm==1.0.11 \
+        tinycss2==1.4.0 \
         tokenizers==0.15.2 \
         toml==0.10.2 \
         tomli==2.0.1 \
@@ -509,11 +596,13 @@ RUN pip3 install \
         trainer==0.0.36 \
         traitlets==5.14.3 \
         transformers==4.37.0 \
-        typing==3.7.4.3 \
-        typing-inspect==0.9.0 \
+        types-python-dateutil==2.9.0.20241206 \
         typing_extensions==4.12.2 \
+        typing-inspect==0.9.0 \
+        typing-inspection==0.4.0 \
         tzdata==2024.1 \
         universal_pathlib==0.2.3 \
+        uri-template==1.3.0 \
         uritemplate==4.1.1 \
         urllib3==1.26.20 \
         vector-quantize-pytorch==1.17.3 \
@@ -521,12 +610,18 @@ RUN pip3 install \
         watchdog==5.0.3 \
         wavaugment==0.2 \
         wcwidth==0.2.13 \
+        webcolors==24.11.1 \
         webdataset==0.2.48 \
+        webencodings==0.5.1 \
         webrtcvad==2.0.10 \
-        websockets==14.1 \
         websocket-client==1.8.0 \
+        websockets==14.1 \
         Werkzeug==3.0.4 \
         wget==3.2 \
+        wheel==0.44.0 \
+        widgetsnbextension==4.0.14 \
+        wn==0.0.23 \
+        word2number==1.1 \
         wrapt==1.16.0 \
         wsproto==1.2.0 \
         xxhash==3.5.0 \
@@ -539,7 +634,8 @@ RUN pip3 install \
         zipp==3.21.0 \
         zope.event==5.0 \
         zope.interface==7.0.3 \
-        zstandard==0.19.0
+        zstandard==0.23.0 \
+        zstd==1.5.6.7
 
 
 # 2. install falconclaw && panther && dataloader
@@ -561,12 +657,6 @@ RUN pip3 install --no-cache-dir --no-deps \
 RUN pip3 install --no-cache-dir --no-deps \
         http://luban-source.byted.org/repository/scm/seed.speech.bumi_$BUMI_VERSION.tar.gz
 
-# RUN \
-#     mkdir -p /tmp/py_lsdp && \
-#     cd /tmp/py_lsdp && \
-#     curl -f --location --request GET http://luban-source.byted.org/repository/scm/seed.speech.lsdp_$LSDP_VERSION.tar.gz --user 'huwenchao.hu:2rrxXA6wu7nlh6$ZlT-5' -o lsdp.tar.gz && \
-#     pip3 install --no-cache-dir --no-deps lsdp.tar.gz && \
-#     rm -rf /tmp/py_lsdp
 RUN pip3 install --no-cache-dir --no-deps \
         http://luban-source.byted.org/repository/scm/seed.speech.lsdp_$LSDP_VERSION.tar.gz
 
@@ -677,16 +767,6 @@ RUN mkdir -p /tmp/py_triton && \
     pip3 uninstall -y byted-triton && \
     pip3 install --no-cache-dir --no-deps byted_triton*.whl && \
     rm -rf /tmp/py_triton /root/.cache
-
-# # Fix libsox.so issue.
-# RUN \
-#     mkdir -p /tmp/libsox && \
-#     cd /tmp/libsox && \
-#     wget http://luban-source.byted.org/repository/scm/seed.speech.scm_packer_$LIBSOX_VERSION.tar.gz && \
-#     tar -zxf seed.speech.scm_packer_$LIBSOX_VERSION.tar.gz && \
-#     rm /usr/lib/x86_64-linux-gnu/libsox.so && \
-#     mv libsox.so /usr/lib/x86_64-linux-gnu/libsox.so && \
-#     rm -rf /tmp/libsox
 
 # Samantha-specific settings.
 COPY ./scripts/samantha.bashrc /etc/samantha.bashrc
