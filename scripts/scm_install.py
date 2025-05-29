@@ -10,22 +10,20 @@ import pkg_resources
 import tempfile
 import subprocess
 
-_INSTALL_CMD_WHL = "pip3 install *.whl"
-_INSTALL_CMD_DIST = "pip3 install ."
+_INSTALL_CMD_WHL = "pip3 install --no-cache-dir *.whl"
+_INSTALL_CMD_DIST = "pip3 install --no-cache-dir ."
 
 _ABBRS_ = {
     "panther": "lab.speech.panther_arnold",
     "bumi": "seed.speech.bumi",
     "triton": "seed.speech.triton",
     "lsdp": "seed.speech.lsdp",
-    "lut": "seed.speech.lut",
 }
 _INSTALL_CMD = {
     "lab.speech.panther_arnold": "pip3 install *torch*/panther_gpu-*.whl",
     "seed.speech.bumi": _INSTALL_CMD_DIST,
     "seed.speech.triton": _INSTALL_CMD_WHL,
     "seed.speech.lsdp": _INSTALL_CMD_DIST,
-    "seed.speech.lut": _INSTALL_CMD_DIST,
 }
 
 
@@ -45,12 +43,12 @@ def _install_python_package(name, version):
 
     # Special case
     if cmd == _INSTALL_CMD_DIST:
-        subprocess.check_call(f"pip3 install {url}", shell=True)
+        subprocess.check_call(f"pip3 install --no-cache-dir {url}", shell=True)
         return
 
     dir = tempfile.mkdtemp()
     try:
-        print(f"Fetching package [{name}] from SCM ...")
+        print(f"Fetching package [{name}] from SCM at [{url}] ...")
         subprocess.check_call(f"wget -qO- {url} | tar -xz -C {dir}", shell=True)
         if not cmd:
             contains_whl = len([x for x in os.listdir(dir) if x.endswith(".whl")]) == 1
