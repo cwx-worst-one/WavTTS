@@ -6,15 +6,16 @@ FROM hub.tiktoke.org/compile/seed.speech.pytorch2:ada0474e1acc893375e4e445912057
 FROM aliyun-sin-hub.byted.org/compile/seed.speech.pytorch2:ada0474e1acc893375e4e44591205776 as aliyun_sg
 FROM hub.byted.org/compile/seed.speech.pytorch2:ada0474e1acc893375e4e44591205776 as china-north-lf
 
-ENV http_proxy="http://sys-proxy-rd-relay.byted.org:8118"
-ENV https_proxy="http://sys-proxy-rd-relay.byted.org:8118"
-ENV no_proxy="byted.org,anaconda.org"
+ARG http_proxy "http://sys-proxy-rd-relay.byted.org:8118"
+ARG https_proxy "http://sys-proxy-rd-relay.byted.org:8118"
+ARG no_proxy "byted.org,anaconda.org"
 
 FROM ${REGION}
 
 # multi-stage build, env are independent; hdfs-stdenv need env $REGION;
 ARG REGION
 
+ENV PIP_NO_CACHE_DIR=1
 ENV PYTORCH_CUDA_ALLOC_CONF expandable_segments:True
 ENV CUBLASLT_WORKSPACE_SIZE 32768
 # Temporary solution, more investigation needed.
@@ -26,6 +27,9 @@ ENV ARNOLD_HDFS_NATIVE 1
 ENV ARNOLD_HDFS_CELER 1
 ENV INFSEC_HADOOP_ENABLED 1
 ENV CPP_HDFS_CONF /opt/tiger/arnold/hdfs_client/conf/celer_us/core-site.xml:/opt/tiger/arnold/hdfs_client/conf/celer_us/hdfs-site.xml
+ENV CCACHE_COMPRESS="1"
+ENV CCACHE_REMOTE_STORAGE="redis://speech-CCACHE-redis-auTH-12345-random-9e280a94040@[fdbd:dc03:13:913::224]"
+ENV CCACHE_REMOTE_ONLY="1"
 
 ENV ARNOLD_SORT_IP 1
 ENV NCCL_IB_QPS_PER_CONNECTION 5
@@ -42,7 +46,7 @@ ENV CRS_LOGGING_LEVEL INFO
 ENV TORCH_NCCL_HIGH_PRIORITY 1
 ENV MARIANA_SKIP_MASON_INSTALL 1
 
-ARG CRUISE_VERSION=1.0.0.3922
+ARG CRUISE_VERSION=1.0.0.3942
 ARG PANTHER_VERSION=1.7.14.487
 ARG OPENFST_VERSION=1.0.0.8
 ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
@@ -50,9 +54,8 @@ ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
 ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.79
-ARG BUMI_VERSION=2.4.0.36
-ARG LSDP_VERSION=1.3.0.31
-ARG LUT_VERSION=1.0.0.37
+ARG BUMI_VERSION=2.5.0.17
+ARG LSDP_VERSION=1.4.0.33
 ARG TRITON_VERSION=1.0.0.216
 ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.47
 # https://github.com/facebookresearch/xformers.git:6425fd0
@@ -168,7 +171,6 @@ RUN pip3 install \
         byted-kms-encryption==0.0.5 \
         byted-kmsv2inner==0.1.14 \
         byted-lafka-internal==1.4.16rc1 \
-        byted-omnistore==0.6.11 \
         byted-seed-models==1.1.0 \
         byted-streaming==1.1.85 \
         byted-unified-io==0.0.20 \
@@ -660,9 +662,6 @@ RUN pip3 install --no-cache-dir --no-deps \
 RUN pip3 install --no-cache-dir --no-deps \
         http://luban-source.byted.org/repository/scm/seed.speech.lsdp_$LSDP_VERSION.tar.gz
 
-RUN pip3 install --no-cache-dir --no-deps \
-    http://luban-source.byted.org/repository/scm/seed.speech.lut_$LUT_VERSION.tar.gz
-
 RUN mkdir -p /tmp/py_pkg.panther && \
     cd /tmp/py_pkg.panther && \
     wget http://luban-source.byted.org/repository/scm/lab.speech.panther_arnold_$PANTHER_VERSION.tar.gz && \
@@ -741,6 +740,14 @@ RUN mkdir -p /var/run/sshd && \
 # 4.3 for kinit
 ADD ./scripts/krb5.conf /etc/krb5.conf
 
+# Make debugging easier.
+COPY ./scripts/scm_install.py /usr/bin/scm_install
+RUN chmod +x /usr/bin/scm_install
+
+# TODO(lanzongwei.lan): remove this after omnistore release their new version.
+# Install omnistore
+RUN scm_install data.aml.omnistore_test 1.0.0.56
+
 # Install bleurt.
 RUN mkdir -p /tmp/py_bleurt && \
     cd /tmp/py_bleurt && \
@@ -775,10 +782,6 @@ ENV BASH_ENV=/etc/samantha.bashrc
 # hack for pl 2.2 requires wandb>=0.12.10
 COPY ./scripts/setup_wandb_311.sh .
 RUN bash ./setup_wandb_311.sh
-
-# Make debugging easier.
-COPY ./scripts/scm_install.py /usr/bin/scm_install
-RUN chmod +x /usr/bin/scm_install
 
 # Rm unused package.
 RUN pip3 uninstall typing -y
