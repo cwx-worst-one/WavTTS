@@ -6,9 +6,9 @@ FROM hub.tiktoke.org/compile/seed.speech.pytorch2:ada0474e1acc893375e4e445912057
 FROM aliyun-sin-hub.byted.org/compile/seed.speech.pytorch2:ada0474e1acc893375e4e44591205776 as aliyun_sg
 FROM hub.byted.org/compile/seed.speech.pytorch2:ada0474e1acc893375e4e44591205776 as china-north-lf
 
-ARG http_proxy "http://sys-proxy-rd-relay.byted.org:8118"
-ARG https_proxy "http://sys-proxy-rd-relay.byted.org:8118"
-ARG no_proxy "byted.org,anaconda.org"
+ENV http_proxy "http://sys-proxy-rd-relay.byted.org:8118"
+ENV https_proxy "http://sys-proxy-rd-relay.byted.org:8118"
+ENV no_proxy "byted.org,anaconda.org"
 
 FROM ${REGION}
 
@@ -56,8 +56,8 @@ ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
 ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.79
-ARG BUMI_VERSION=2.5.0.24
-ARG LSDP_VERSION=1.4.0.43
+ARG BUMI_VERSION=2.5.0.112
+ARG LSDP_VERSION=1.4.0.84
 ARG TRITON_VERSION=1.0.0.216
 ARG OMNIDISPATCHER_VERSION=1.0.0.26
 ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.47
@@ -665,7 +665,11 @@ RUN pip3 install --no-cache-dir --no-deps \
 RUN pip3 install --no-cache-dir --no-deps \
         http://luban-source.byted.org/repository/scm/seed.speech.lsdp_$LSDP_VERSION.tar.gz
 
-RUN pip3 install http://luban-source.byted.org/repository/scm/seed.speech.OmniDispatcher_$OMNIDISPATCHER_VERSION.tar.gz
+# Install omnidispatcher omnistore
+RUN pip3 install --no-cache-dir \
+        http://luban-source.byted.org/repository/scm/seed.speech.OmniDispatcher_$OMNIDISPATCHER_VERSION.tar.gz \
+        byted-omnistore==1.0.7
+
 
 RUN mkdir -p /tmp/py_pkg.panther && \
     cd /tmp/py_pkg.panther && \
@@ -679,7 +683,7 @@ RUN pip3 uninstall -y s3a && \
     mkdir tmp.s3a && \
     tar -xvf lab_audio.seed.s3a_$S3A_VERSION.tar.gz -C tmp.s3a && \
     pip3 install --no-cache-dir --no-deps tmp.s3a/s3a*.whl && \
-    pip3 install --no-cache-dir --no-deps flash-attn==2.7.4.post1 && \
+    pip3 install --no-cache-dir --no-deps --no-build-isolation flash-attn==2.7.4.post1 && \
     rm -fr tmp.s3a lab_audio.seed.s3a_$S3A_VERSION.tar.gz
 
 # 3. install asr_eval_tool
@@ -749,10 +753,6 @@ ADD ./scripts/krb5.conf /etc/krb5.conf
 COPY ./scripts/scm_install.py /usr/bin/scm_install
 RUN chmod +x /usr/bin/scm_install
 
-# TODO(lanzongwei.lan): remove this after omnistore release their new version.
-# Install omnistore
-RUN scm_install data.aml.omnistore_test 1.0.0.56
-
 # Install bleurt.
 RUN mkdir -p /tmp/py_bleurt && \
     cd /tmp/py_bleurt && \
@@ -790,3 +790,8 @@ RUN bash ./setup_wandb_311.sh
 
 # Rm unused package.
 RUN pip3 uninstall typing -y
+
+# clear proxy env
+ENV http_proxy=""
+ENV https_proxy=""
+ENV no_proxy=""
