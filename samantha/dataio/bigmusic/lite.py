@@ -158,10 +158,16 @@ class MusicLiteDataModule(BaseDataModule):
             self.hparams.data_key_in_source_urls,
         )
         self.val_data_sources_types = self._make_data_sources_and_types(
-            val_dataset_ids, val_data_urls, val_dataset_weights, "data"
+            val_dataset_ids,
+            val_data_urls,
+            val_dataset_weights,
+            self.hparams.data_key_in_source_urls,
         )
         self.predict_data_sources_types = self._make_data_sources_and_types(
-            predict_dataset_ids, predict_data_urls, predict_dataset_weights, "data"
+            predict_dataset_ids,
+            predict_data_urls,
+            predict_dataset_weights,
+            self.hparams.data_key_in_source_urls,
         )
 
     def _make_data_sources_and_types(
@@ -266,10 +272,7 @@ class MusicLiteDataModule(BaseDataModule):
             dataloader_config["save_ckpt_interval"] = int(1e9)
 
         key_index = "index"
-        if stage == "train":
-            data_urls = data_sources[self.hparams.data_key_in_source_urls]
-        else:
-            data_urls = data_sources["data"]
+        data_urls = data_sources[self.hparams.data_key_in_source_urls]
         index_urls = data_sources.get(key_index, None)
 
         transform_config = getattr(self.hparams, f"{stage}_item_transform")

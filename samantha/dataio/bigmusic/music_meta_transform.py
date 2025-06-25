@@ -5,6 +5,7 @@ import math
 import operator
 import pickle
 import random
+import re
 import sys
 import warnings
 from collections import Counter
@@ -528,15 +529,20 @@ class TokenIdsToString(MusicMetaRWTransform):
         self,
         in_key: str = "umm_token",
         out_key: str = "umm_string",
+        first_n: int = -1,
         template: str = "<au_%s>",
         **kwargs,
     ):
         super().__init__(in_key, out_key, allow_empty_in=False, **kwargs)
         self.template = template
+        self.first_n = first_n
 
     def call(self, umm_tokens, **kwargs) -> str:
         def format(token_id: int) -> str:
             return self.template % token_id
+
+        if self.first_n > 0:
+            umm_tokens = umm_tokens[: self.first_n]
 
         return "".join([format(token_id) for token_id in umm_tokens])
 
@@ -649,10 +655,14 @@ class PRDMetaParser(MusicMetaRWTransform):
             "instrument",
             "language",
         ),
+        use_subgenre: bool = True,
+        genre_repeat: int = 1,
         **kwargs,
     ):
         super().__init__(in_key, out_key, allow_empty_in=False, **kwargs)
         self.required_fields = required_fields
+        self.genre_repeat = genre_repeat
+        self.use_subgenre = use_subgenre
 
     def call(self, tags: dict, **kwargs) -> dict:
         def dedup_with_order(items: list[str]) -> list[str]:
@@ -667,9 +677,15 @@ class PRDMetaParser(MusicMetaRWTransform):
         meta = {}
         for field in self.required_fields:
             if field == "genre":
-                meta[field] = dedup_with_order(
-                    tags.get("genre", []) + tags.get("genre_extra", [])
+                genre = (
+                    dedup_with_order(
+                        tags.get("genre", []) + tags.get("genre_extra", [])
+                    )
+                    * self.genre_repeat
                 )
+                if not self.use_subgenre:
+                    genre = genre[:1]  # the first one is genre
+                meta[field] = genre
             elif field == "mood":
                 meta[field] = dedup_with_order(tags.get("mood", []))
             elif field == "gender":
@@ -685,6 +701,57 @@ class PRDMetaParser(MusicMetaRWTransform):
             elif field == "duration":
                 meta[field] = tags.get("duration", [])
         return meta
+
+
+class GenreInLyrics(MusicMetaRWTransform):
+    def __init__(
+        self,
+        in_key: str = ["prd_meta", "lyrics"],
+        out_key: str = "lyrics",
+        replace_prob=1.0,
+        **kwargs,
+    ):
+        super().__init__(in_key, out_key, allow_empty_in=False, **kwargs)
+        self.replace_prob = replace_prob
+
+    def call(self, item, **kwargs):
+        meta, lyrics = item
+        if "genre" not in meta:
+            return lyrics
+        genre_str = f'<genre>{"|".join(x for x in meta["genre"])}</genre>'
+
+        def replace_with_prob(match):
+            if random.random() < self.replace_prob:
+                return f"[{match.group(1)} {genre_str}]"
+            return match.group(0)
+
+        lyrics = re.sub(r"\[([^\]]+)\]", replace_with_prob, lyrics)
+        return lyrics
+
+
+class MapGenre2CN(MusicMetaRWTransform):
+    def __init__(
+        self, in_key: str = "prd_meta.genre", out_key: str = "prd_meta.genre", **kwargs
+    ):
+        super().__init__(in_key, out_key, allow_empty_in=False, **kwargs)
+        self.mapping = {
+            "R&B/Soul": "节奏布鲁斯",
+            "Rock": "摇滚",
+            "Hip Hop/Rap": "嘻哈",
+            "DJ": "DJ",
+            "Chinese Style": "国风",
+            "Jazz": "爵士",
+            "Folk": "民谣",
+            "Electronic": "电子",
+            "Punk": "朋克",
+            "Pop": "流行",
+            "Reggae": "雷鬼",
+        }
+
+    def call(self, item, **kwargs):
+        genres = item
+        genres = [self.mapping.get(genre, genre) for genre in genres]
+        return genres
 
 
 class TextAugmentor(MusicMetaRWTransform):
@@ -1397,6 +1464,35 @@ class UtteranceParser(MusicMetaRWTransform):
             return parse_utterances(meta, self.confidence_threshold)
         except UttError as e:
             raise MusicMetaError(str(e))
+
+
+class CondDropoutTransform(MusicMetaRWTransform):
+    """
+    Probabilistically dropout with the given dropout_rate if the condition item is True,
+    forced dropout if the condition item is False.
+    """
+
+    def __init__(self, in_key: str, dropout_rate: float, **kwargs):
+        """
+        Args:
+            in_key: (dropout_item_key, condition_item_key)
+        """
+        assert len(in_key) == 2, "in_key must be a tuple of length 2"
+        super().__init__(in_key, out_key=in_key[0], **kwargs)
+        self.dropout_rate = dropout_rate
+
+    def call(self, value, **kwargs):
+        value, cond = value
+        if value is None:
+            return None
+        assert isinstance(value, (str, list, dict, tuple)), value
+        if cond:
+            if random.random() < self.dropout_rate:
+                return type(
+                    value
+                )()  # creates an empty instance of the same type as value
+            return value
+        return type(value)()  # condition is False, must drop
 
 
 class VoiceProportionParser(MusicMetaRWTransform):
