@@ -1,9 +1,4 @@
-"""
-Minimalist callbacks for output saving.
-"""
-
 import json
-import time
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -13,14 +8,16 @@ import pytorch_lightning as pl
 import torch
 import torchaudio
 
-from recipes.bigmusic.utils.upload import audio_tensor_to_bytes, upload_to_easycycle_v2
+from recipes.bigmusic.callbacks.common_callbacks import UploadToEasyCycleCallback
+
+from .utils import sync_all_ranks
 
 
 class SaveOutputsCallback(pl.Callback):
     def __init__(
         self,
-        sample_rate: int = None,
-        output_dir: str = None,
+        sample_rate: int,
+        output_dir: str,
         index_key: str = "index",
         category_key: str = "category",
         output_audio_key: str = "generated_audio",
@@ -95,41 +92,22 @@ class SaveOutputsCallback(pl.Callback):
     def on_predict_end(
         self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"
     ) -> None:
-        output_dir = self.output_dir
-        (
-            Path(output_dir)
-            / f"{self.__class__.__name__}.{trainer.global_rank}.SUCCESS"
-        ).touch()
-
-        if trainer.is_global_zero:
-            ts = time.time()
-            while not all(
-                [
-                    (
-                        Path(output_dir) / f"{self.__class__.__name__}.{rank}.SUCCESS"
-                    ).exists()
-                    for rank in range(trainer.world_size)
-                ]
-            ):
-                time.sleep(10)
-                print(
-                    f"[{self.__class__.__name__}(rank={trainer.global_rank})] waiting for all ranks done ... (cost {round(time.time() - ts, 3)}s)"
-                )
-
-            metadata_fps = list(Path(output_dir).glob(f"**/*.metadata.json"))
-            if len(metadata_fps) == 0:
-                return
-            index_fname = Path(output_dir) / "index.csv"
-            with open(index_fname, "w", encoding="utf-8") as fw:
-                fw.write("file_name,beam_id,audio_url\n")
-                for fp in metadata_fps:
-                    with open(fp, "r", encoding="utf-8") as f:
-                        metadata = json.load(f)
-                    file_name = metadata["file_name"]
-                    index = metadata["index"]
-                    audio_url = metadata.get("audio_url", "")
-                    fw.write(f"{file_name},{index},{audio_url}\n")
-            print(f"Wrote index to {index_fname}")
+        if not sync_all_ranks(trainer, self.output_dir, self.__class__.__name__):
+            return
+        metadata_fps = list(Path(self.output_dir).glob(f"**/*.metadata.json"))
+        if len(metadata_fps) == 0:
+            return
+        index_fname = Path(self.output_dir) / "index.csv"
+        with open(index_fname, "w", encoding="utf-8") as fw:
+            fw.write("file_name,index,audio_url\n")
+            for fp in metadata_fps:
+                with open(fp, "r", encoding="utf-8") as f:
+                    metadata = json.load(f)
+                file_name = metadata["file_name"]
+                index = metadata["index"]
+                audio_url = metadata.get("audio_url", "")
+                fw.write(f"{file_name},{index},{audio_url}\n")
+        print(f"Wrote index to {index_fname}")
 
 
 def save_batch_outputs(
@@ -205,11 +183,7 @@ def save_batch_outputs(
             output_paths.append(wav_fp)
 
             if upload_audio:
-                saved_wav = torch.from_numpy(load_wav(wav_fp, sr=sample_rate))
-                audio_bytes = audio_tensor_to_bytes(saved_wav, sample_rate)
-                metadata["audio_url"] = upload_to_easycycle_v2(
-                    audio_bytes, f"{file_name}.generated"
-                )
+                metadata["audio_url"] = UploadToEasyCycleCallback.upload_file(wav_fp)
                 print(f"[Saving] {Path(wav_fp).name}: {metadata['audio_url']}")
 
             if not save_audio:
