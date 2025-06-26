@@ -1,6 +1,6 @@
 import itertools
 from collections import defaultdict
-
+import os
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -9,7 +9,9 @@ import torchaudio
 try:
     from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 except Exception as e:
-    print('Unable to load deepspeed for mulan. Required if used for training', e)
+    print("[WARNING] Failed to import DeepSpeedCPUAdam, FusedAdam from deepspeed.ops.adam\n{e}")
+    DeepSpeedCPUAdam, FusedAdam = None, None
+    
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 from pytorch_lightning.strategies import DeepSpeedStrategy
@@ -17,9 +19,10 @@ from pytorch_lightning.utilities import rank_zero_info
 from rotary_embedding_torch import RotaryEmbedding
 from torch.utils.checkpoint import checkpoint
 from transformers import AutoModel, AutoProcessor, AutoTokenizer, AutoConfig
-
 # helpers
-
+import samantha
+from mariana.utils.audio.audio_logger import AudioLogger
+logger = AudioLogger()
 
 def pair(t):
     return t if isinstance(t, tuple) else (t, t)
@@ -425,9 +428,23 @@ class PretrainedMuTWrapper(nn.Module):
 
 
 class TextEncoder(nn.Module):
-    def __init__(self, pretrained_model="bert-base-uncased", emb_dim: int = 128):
+    def __init__(self, pretrained_model_name: str = "bert-base-uncased", emb_dim: int = 128, cache_dir: str = "/opt/tiger/tokenizer/"):
         super(TextEncoder, self).__init__()
-        config = AutoConfig.from_pretrained(pretrained_model)
+
+        self.pretrained_model_name = pretrained_model_name
+        self.emb_dim = emb_dim
+
+        try:
+            # Try to load configuration from a local cache directory
+            config_path = os.path.join(cache_dir, pretrained_model_name)
+            config = AutoConfig.from_pretrained(config_path, local_files_only=True)
+            logger.info(f"Loaded model config for '{pretrained_model_name}' from local cache: {config_path}")
+        except Exception as e:
+            # If loading from cache fails, download from Hugging Face Hub
+            logger.info(f"Failed to load config for '{pretrained_model_name}' from local cache ({e}), downloading from Hugging Face Hub instead.")
+            config = AutoConfig.from_pretrained(pretrained_model_name)
+
+    
         self.text_model =  AutoModel.from_config(config, add_pooling_layer=False)
         self.text_model.gradient_checkpointing_enable()
         self.text_linear = nn.Linear(1024, emb_dim)
@@ -556,6 +573,7 @@ class LitMuLanModule(pl.LightningModule):
         lr,
         weight_decay,
         temperature,
+        local_path: str = "/opt/tiger/tokenizer/"
     ):
         super().__init__()
         self.save_hyperparameters()  # save hyperparameter in ckpt
@@ -574,7 +592,12 @@ class LitMuLanModule(pl.LightningModule):
         # Validation outputs
         self.val_outputs = dict()
 
-        self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
+        try:
+            local_path = os.path.join(local_path, "bert-large-uncased")
+            self.tokenizer = AutoTokenizer.from_pretrained(local_path)
+        except:
+            logger.info(f"Failed loading tokenizer from {local_path} \n.Load bert-large-uncased from huggingface")
+            self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
 
     def on_fit_start(self):
         self.music_encoder.mut.manually_to_device(self.device)
@@ -783,19 +806,21 @@ class LitMuLanModule(pl.LightningModule):
         attention_mask = tokenized_text["attention_mask"]
         token_type_ids = tokenized_text["token_type_ids"]
         return input_ids, attention_mask, token_type_ids
-
-    def encode_text(self, text):
+    def encode_text(self, text, return_hidden_state=False):
         input_ids, attention_mask, token_type_ids = self.tokenize_text(text)
         device = next(self.text_encoder.parameters()).device
         input_ids = input_ids.to(device)
         attention_mask = attention_mask.to(device)
         token_type_ids = token_type_ids.to(device)
+        if return_hidden_state:
+            result_dict = self.text_encoder.text_model(input_ids, attention_mask, token_type_ids, output_hidden_states=True, return_dict=True)
+            return result_dict.hidden_states[-2]
         text_embed = self.text_encoder(input_ids, attention_mask, token_type_ids)
         return text_embed
 
 
 def create_mulan_model(ckpt_path, device):
-    litmodel = LitMuLanModule.load_from_checkpoint(ckpt_path, map_location='cpu') 
+    litmodel = LitMuLanModule.load_from_checkpoint(ckpt_path, map_location='cpu', strict=False) 
 
     # audio tower
     litmodel.music_encoder.eval()
@@ -810,14 +835,14 @@ def create_mulan_model(ckpt_path, device):
 
 @torch.no_grad()
 def mulan_inference(
-    model, text=None, music=None, device="cpu", avg=True, shift_seconds=5
+    model, text=None, music=None, device="cpu", avg=True, shift_seconds=5,
+    return_hidden_state=False,
 ):
     assert (text is not None) ^ (
         music is not None
-    ), "text inputs and music input can only select one"
-
+    ), "text inputs and music input can only select one"    
     if text is not None:
-        emb = model.encode_text(text)
+        emb = model.encode_text(text, return_hidden_state=return_hidden_state)
 
     if music is not None:
         # music needs to be in 2D: [b, t]

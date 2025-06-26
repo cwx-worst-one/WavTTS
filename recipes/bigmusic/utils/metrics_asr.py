@@ -20,7 +20,7 @@ PYPETREL_LIB_FOUND = False
 try:
     import pypetrel
 
-    pypetrel.set_log_level(5)
+    # pypetrel.set_log_level(5)
     PYPETREL_LIB_FOUND = True
 except ImportError as e:
     logger.error(f"`pypetrel` library was not found in PYTHONPATH {e}")
@@ -269,6 +269,10 @@ def remove_punc_case(text):
     text = re.sub("[.,!?，。！？]", "", text).lower()
     return " ".join(text.split())
 
+
+def remove_section_case(text):
+    text = re.sub(r"\[.*?\]", "", text).strip() # Remove section tags
+    return text
 
 
 def remove_space(text):

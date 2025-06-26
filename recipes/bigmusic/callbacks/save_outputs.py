@@ -2,6 +2,7 @@ import pytorch_lightning as pl
 import torch
 from typing import Any, List, Union
 import json
+import time
 from pathlib import Path
 import os
 import textwrap
@@ -15,11 +16,15 @@ from recipes.musiclm.inference.utils import slugify, save_wav, generate_hash, fo
 from collections import defaultdict
 from recipes.bigmusic.utils.format_utils import update_json
 import numpy as np
-from recipes.musiclm.utils.dist import local_zero_last, is_local_zero
-from recipes.bigmusic.utils.upload import audio_tensor_to_bytes, upload_to_easycycle, upload_to_tos
-from recipes.bigmusic.datasets.mir_data_util import ID_TEMPO_LABEL_MAP, ID_KEY_MAP
+from recipes.musiclm.utils.dist import local_zero_first
+from recipes.bigmusic.utils.upload import audio_tensor_to_bytes, upload_to_easycycle, upload_to_tos_v2, upload_to_easycycle_v2
+from recipes.bigmusic.callbacks.common_callbacks import UploadToEasyCycleCallback
+from recipes.bigmusic.utils.audio_utils import concat_and_crossfade_audio_tensors
+from recipes.bigmusic.datasets.mir_data_util import ID_TEMPO_LABEL_MAP, ID_KEY_MAP, ID_ROOT_MAP, ID_MODE_MAP
+from recipes.bigmusic.utils.audio_utils import concat_and_crossfade_audio_tensors
 from recipes.bigmusic.datasets.utils.symbolic_music import pretty_midi_obj_to_midi_bytes
-
+import re
+import argparse
 
 class SaveOutputsCallback(pl.Callback):
     def __init__(
@@ -29,8 +34,10 @@ class SaveOutputsCallback(pl.Callback):
         save_style_audio=True,
         save_mode="wav",
         save_semantic_tokens=False,
+        save_preprocess_outputs=False,
         save_mix_vocal_generated_audio=False,
-        normalize_volume=False
+        normalize_volume=False,
+        token2wav_prefix_length=-1,
     ):
         super().__init__()
         self.total_items = 0
@@ -39,8 +46,10 @@ class SaveOutputsCallback(pl.Callback):
         self.save_style_audio = save_style_audio
         self.save_mode = save_mode
         self.save_semantic_tokens = save_semantic_tokens
+        self.save_preprocess_outputs = save_preprocess_outputs
         self.save_mix_vocal_generated_audio = save_mix_vocal_generated_audio
         self.normalize_volume = normalize_volume
+        self.token2wav_prefix_length = token2wav_prefix_length
 
     def on_predict_batch_end(
         self,
@@ -71,20 +80,23 @@ class SaveOutputsCallback(pl.Callback):
             save_mode=self.save_mode,
             normalize_volume=self.normalize_volume,
             save_semantic_tokens=self.save_semantic_tokens,
+            save_preprocess_outputs=self.save_preprocess_outputs,
             leadsheet_codec=leadsheet_codec,
+            token2wav_prefix_length=self.token2wav_prefix_length,
         )
         if isinstance(outputs['generated_audio_tensor'], list):
             outputs['generated_audio_tensor'] = outputs['generated_audio_tensor'][0]
         num_items = outputs['generated_audio_tensor'].shape[0] // self.beam_size
         self.total_items += num_items
-        with open(Path(output_dir)/'inference_params.json', 'w', encoding='utf-8') as f:
-            json.dump(pl_module.extra_params, f, indent=2)
 
         # save output paths so other callbacks can run metrics on audio
         if 'output_paths' in pl_module.extra_params:
             pl_module.extra_params['output_paths'].extend(output_paths)
         else:
             pl_module.extra_params['output_paths'] = output_paths
+
+        with open(Path(output_dir)/f'inference_params.{trainer.global_rank}.json', 'w', encoding='utf-8') as f:
+            json.dump(pl_module.extra_params, f, indent=2)
 
     def on_predict_end(
         self,
@@ -94,25 +106,30 @@ class SaveOutputsCallback(pl.Callback):
         if self.save_mode != "upload":
             return
         output_dir = pl_module.extra_params.output_dir
-        with local_zero_last():
-            if is_local_zero():
-                output_dir = Path(output_dir)
-                metadata_fps = list(output_dir.glob('**/*.metadata.json'))
-                if len(metadata_fps) == 0:
-                    return
-                index_fname = os.path.join(output_dir, "index.csv")
-                with open(index_fname, "w", encoding='utf-8') as fw:
-                    fw.write("file_name,beam_id,audio_url\n")
-                    for fp in metadata_fps:
-                        with open(fp, "r", encoding='utf-8') as f:
-                            metadata = json.load(f)
-                        file_name = metadata["file_name"]
-                        beam_id = metadata["index"]["beam_idx"]
-                        audio_url = metadata["audio_url"]
-                        fw.write(f"{file_name},{beam_id},{audio_url}\n")
-                print(f"Wrote index to {index_fname}")
-                summary_format = "default" if not self.save_mix_vocal_generated_audio else "singsong"
-                summarize_uploaded_results(output_dir, format=summary_format)
+        (Path(output_dir)/f"{self.__class__.__name__}.{trainer.global_rank}.SUCCESS").touch()
+        
+        if trainer.is_global_zero:
+            ts = time.time()
+            while not all([(Path(output_dir)/f"{self.__class__.__name__}.{rank}.SUCCESS").exists() for rank in range(trainer.world_size)]):
+                time.sleep(10)
+                print(f"[{self.__class__.__name__}(rank={trainer.global_rank})] waiting for all ranks done ... (cost {round(time.time() - ts, 3)}s)")
+
+            metadata_fps = list(Path(output_dir).glob(f"**/*.metadata.json"))
+            if len(metadata_fps) == 0:
+                return
+            index_fname = os.path.join(output_dir, "index.csv")
+            with open(index_fname, "w", encoding='utf-8') as fw:
+                fw.write("file_name,beam_id,audio_url\n")
+                for fp in metadata_fps:
+                    with open(fp, "r", encoding='utf-8') as f:
+                        metadata = json.load(f)
+                    file_name = metadata["file_name"]
+                    beam_id = metadata["index"]["beam_idx"]
+                    audio_url = metadata["audio_url"]
+                    fw.write(f"{file_name},{beam_id},{audio_url}\n")
+            print(f"Wrote index to {index_fname}")
+            summary_format = "default" if not self.save_mix_vocal_generated_audio else "singsong"
+            summarize_uploaded_results(output_dir, format=summary_format)
 
 
 def summarize_uploaded_results(output_dir, format="default"):
@@ -120,7 +137,7 @@ def summarize_uploaded_results(output_dir, format="default"):
         raise ValueError(f"Not supported format of summarying index csv: {format}")
 
     output_dir = Path(output_dir)
-    metadata_fps = list(output_dir.glob('**/*.metadata.json'))
+    metadata_fps = list(output_dir.glob('**/*.metadata.json')) 
     if len(metadata_fps) == 0:
         return
 
@@ -187,41 +204,61 @@ def save_batch_outputs(
     save_mode="wav",
     normalize_volume=False,
     save_semantic_tokens=False,
+    save_preprocess_outputs=False,
     leadsheet_codec=None,
     save_mix_vocal_generated_audio=False,
+    token2wav_prefix_length=-1,
 ):
     conditions = batch['conditions']
     if isinstance(conditions, list):
         conditions = conditions[0]
     index = batch.get('index')
     lyrics = batch.get('lyrics')
-    lyrics_normalized_text = batch.get('lyrics_normalized_text')
-    prompts = batch.get('original_style_text', batch.get('style_text'))
-    style_categories = batch.get('style_category')
+    lyrics_normalized_text = batch.get('lyrics_normalized_text', lyrics)
+    lyrics_display = batch.get('lyrics_display', lyrics)
+    lyrics_eval = batch.get('lyrics_eval', lyrics)
+    prompts = batch.get('style_text')
+    # style_text_display = batch.get('style_text_display')
+    extra_video_text = batch.get('extra_video_text')
+    style_categories = batch.get('style_category',prompts) #shouldbe deprecate
+    freeform_texts = batch.get('freeform_text')
+    total_durations = batch.get('slice_duration', torch.tensor([]))
+    # section_durations = batch.get('section_durations', torch.tensor([]))
     structures = batch.get('structure')
-    categories = batch.get('category')
-    style_audio = batch.get('style_audio')
-    vocal_audio = batch.get('vocal_audio')   
-    target_audio = batch.get('target_audio')  
+    categories = batch.get('category', None)
+    if not categories:
+        categories = batch.get('text_category', None)
+    style_audio = batch.get('style_audio',None)
+    vocal_audio = batch.get('vocal_audio',None)   
+    target_audio = batch.get('target_audio',None)  
     metadatas = outputs.get('metadata')
     wavs = outputs['generated_audio']
     semantic_tokens = outputs.get('generated_semantic_tokens')
     leadsheet_tokens = outputs.get('generated_leadsheet_tokens')
-    sections = batch.get('sections')
-
+    audio_prompt = batch.get('audio_prompt', [None] * len(wavs))
+    generated_string = outputs.get('generated_string', None)
+    task = batch.get('task', None)
+    instructs = batch.get('instructs', None)
     # Add these conditions (if in batch) to style_text and metadata.json
     cond_id_label_map = {
         'key': ID_KEY_MAP,
-        'tempo_label': ID_TEMPO_LABEL_MAP
+        'tempo_label': ID_TEMPO_LABEL_MAP,
+        'key_root': ID_ROOT_MAP,
+        'key_mode': ID_MODE_MAP,
+        'tempo_label': ID_TEMPO_LABEL_MAP,
+        'tempo': None,
     }
 
-    existing_extra_conds = {}
+    existing_extra_conds = {} # k: [label]xorig_bs
     for cond, id_label_map in cond_id_label_map.items():
         if cond not in batch:
             continue
-        cond_labels = [id_label_map[int(x)] for x in batch[cond]]
+        if id_label_map is None:
+            cond_labels = [int(x) for x in batch[cond]]
+        else:
+            cond_labels = [id_label_map[int(x)] for x in batch[cond]]
         existing_extra_conds[cond] = cond_labels
-        prompts = [f'{s},{o}' for s, o in zip(prompts, cond_labels)]  # add to style_text (prompts)
+        # prompts = [f'{s},{o}' for s, o in zip(prompts, cond_labels)]  # add to style_text (prompts)
 
     output_paths = []
     
@@ -243,8 +280,10 @@ def save_batch_outputs(
         lyrics_normalized_str = lyrics_normalized_text[ii] if 'lyrics_tokens' in conditions and lyrics_normalized_text else None        
         style_text = prompts[ii] if prompts else None
         style_category = style_categories[ii] if style_categories else None
-        section = sections[ii] if sections else None
         #style_category = style_categories[ii] if 'style_category' in conditions and style_categories else None
+        freeform_text = freeform_texts[ii] if freeform_texts else None
+        total_duration = total_durations[ii].tolist() if len(total_durations) > 0 else None
+        section_durations = extract_section_duration_from_lyrics_str(lyrics_str)
         structure = structures[ii] if 'structure' in conditions else None
         leadsheet_token = leadsheet_tokens[ii] if leadsheet_tokens is not None else None
         if index is None:
@@ -261,23 +300,36 @@ def save_batch_outputs(
         metadata = metadatas[i] if metadatas is not None else {}
 
         # extra_conditions
-        extra_cond_meta = {cond: cond_labels[i] for cond, cond_labels in existing_extra_conds.items()}
+        extra_cond_meta = {cond: cond_labels[prompt_idx] for cond, cond_labels in existing_extra_conds.items()}
+
+        csv_index = index[ii] if index else absolute_idx
+        if min(beam_size, samples_to_save) > 1:
+            csv_index += f".{beam_idx}"  # csv_index will be used as part of the song title in the generated video
 
         metadata = {
             **metadata,
             'file_name': file_name,
             'lyrics': lyrics_str,
             'lyrics_normalized_text': lyrics_normalized_str,
+            'lyrics_display': None if lyrics_display is None else lyrics_display[ii],
+            'lyrics_eval': None if lyrics_eval is None else lyrics_eval[ii],
             'style_text': style_text,
+            # 'style_text_display': style_text_display[ii],
+            "extra_video_text": extra_video_text[ii] if extra_video_text is not None else None,
             'style_category': style_category,
+            'freeform_text': freeform_text,
+            'total_duration': total_duration if (total_duration is not None and total_duration > 0) else None,
+            'section_durations': section_durations,
             'structure': structure,
             'conditions': conditions,
-            'section': section,
+            'instructs': instructs[ii] if instructs is not None else None,
+            'generated_string': generated_string,
+            'task': task,
             'index': {
                 'round': sample_round,
                 'absolute_idx': absolute_idx,
                 'batch_idx': ii,
-                'csv_idx': index[ii] if index else absolute_idx,
+                'csv_idx': csv_index,
                 'beam_idx': beam_idx,
             },
             **extra_cond_meta,
@@ -285,26 +337,31 @@ def save_batch_outputs(
         
         wav_fp = os.path.join(wav_dir, f"{wav_file_name}.generated.wav")
         print(f"[Saving] {wav_fp}")
-        save_mp3 = save_mode in ["mp3"]
-        output_wav_fp = save_wav(wav.cpu().float(), wav_fp, sr=sample_rate, save_mp3=save_mp3, normalize_volume=normalize_volume)
+        if token2wav_prefix_length > 0 and audio_prompt[i] is not None:
+            prompt_wav = audio_prompt[i].squeeze().cpu().float()
+            wav = concat_and_crossfade_audio_tensors(prompt_wav, wav, sample_rate, crossfade_duration=batch["crossfade_secs"])
+        output_wav_fp = save_wav(wav.cpu().float(), wav_fp, sr=sample_rate, save_mp3=save_mode == "mp3", normalize_volume=normalize_volume)
         output_paths.append(output_wav_fp)
 
-        if save_mode == "upload":
-            try:
-                audio_bytes = audio_tensor_to_bytes(wav.cpu().float(), sample_rate)
-                metadata["audio_url"] = upload_to_easycycle(audio_bytes, f"{wav_file_name}.generated")
-            except Exception as e:
-                print('WARNING: Unable to upload file:', output_wav_fp, e)
-                metadata["audio_url"] = "ERROR"
+        if save_mode in ["upload", "upload_keep_wav"]:
+            saved_wav = torch.from_numpy(load_wav(output_wav_fp, sr=sample_rate))
+            audio_bytes = audio_tensor_to_bytes(saved_wav, sample_rate)
+            metadata["audio_url"] = upload_to_easycycle_v2(audio_bytes, f"{wav_file_name}.generated")
+            print(f"[Saving] {os.path.basename(output_wav_fp)}: {metadata['audio_url']}")
+            
+            if save_mode == "upload":
+                os.remove(output_wav_fp)
 
         if save_style_audio and style_audio is not None and beam_idx == 0:
             # style audio is always 24kHz (for now)
             if save_mode == "upload":
                 audio_bytes = audio_tensor_to_bytes(style_audio[ii].cpu().float(), 24000)
                 metadata["style_audio_url"] = upload_to_easycycle(audio_bytes, f"{file_name}.style_audio")
-            else:
-                input_wav_fp = os.path.join(wav_dir, f"{file_name}.style_audio.wav")
-                save_wav(style_audio[ii].cpu().float(), input_wav_fp, sr=24000, save_mp3=save_mode == "mp3")
+            else:                
+                tracks = [track for track in style_audio[ii]] if not isinstance(style_audio[ii], list) else style_audio[ii]
+                for i, track in enumerate(tracks):
+                    input_wav_fp = os.path.join(wav_dir, f"{file_name}.style_audio_{i}.wav")
+                    save_wav(track.cpu().float(), input_wav_fp, sr=24000, save_mp3=save_mode == "mp3")
 
         if target_audio is not None and beam_idx == 0:
             # target audio is always 24kHz (for now)
@@ -348,15 +405,73 @@ def save_batch_outputs(
         meta_fp = os.path.join(wav_dir, f"{wav_file_name}.metadata.json")
         with open(meta_fp, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
+
+    # temporarily saving preprocess outputs
+    if save_preprocess_outputs:
+        pp_fp = os.path.join(output_dir, f"preprocess.json")
+        phonemes = batch.get("phonemes")
+        style_info_objs = []
+        for i in range(len(prompts)):
+            speaker_id = batch['speaker_id'][i].item()
+            tags_music = {
+                "genre": prompts[i][0],
+                "genre_extra": prompts[i][1],
+                "extra": prompts[i][2],
+                "mood": prompts[i][3],
+                "scene": prompts[i][4],
+                "speaker": prompts[i][5],
+                "voice": prompts[i][6],
+                "lang": prompts[i][7],
+                "sinking": prompts[i][8],
+                "speaker_id": speaker_id,
+            }
+            lyr = lyrics[i]
+            duration = total_durations[i].item()
+            audio_prompt = style_audio[i] if style_audio else None
+            frontend_results = phonemes[i] if phonemes else None
+            extra = {   # better read from prompt csv
+                "audio_prompt": audio_prompt,
+                "index": index[i],
+                "category": categories[i],
+                "lyrics": lyr,
+                # "text_prompt": None,
+                "genre": tags_music["genre"],
+                "mood": tags_music["mood"],
+                "gender": tags_music["voice"],
+                # "length": None, 
+                "total_duration": duration,
+                "frontend_results": frontend_results,
+            }
+            style_info = {
+                "index": index[i],
+                "category": categories[i],
+                "tags_music": tags_music,
+                "speaker_id": speaker_id,
+                "lyrics": lyr,
+                "duration": duration,
+                # "prompt_lyrics": "",
+                "style_tags": prompts[i],
+                "freeform_text": freeform_texts[i],
+                # "style_text_display": style_text_display[i],
+                "extra": extra,
+            }
+            style_info_objs.append(style_info)
+        with open(pp_fp, 'w', encoding='utf-8') as f:
+            json.dump(style_info_objs, f, indent=2, ensure_ascii=False)
+
     return output_paths
 
 
 class SaveVideoCallback(pl.Callback):
     def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
         output_dir = pl_module.extra_params.output_dir
-        with local_zero_last():
-            if is_local_zero():
-                save_video(output_dir, output_dir)
+        (Path(output_dir)/f"{self.__class__.__name__}.{trainer.global_rank}.SUCCESS").touch()
+        if trainer.is_global_zero:
+            ts = time.time()
+            while not all([(Path(output_dir)/f"{self.__class__.__name__}.{rank}.SUCCESS").exists() for rank in range(trainer.world_size)]):
+                time.sleep(10)
+                print(f"[{self.__class__.__name__}(rank={trainer.global_rank})] waiting for all ranks done ... (cost {round(time.time() - ts, 3)}s)")
+            save_video(output_dir, output_dir)
 
 
 class NormVolumeCallback(pl.Callback):
@@ -375,18 +490,55 @@ class NormVolumeCallback(pl.Callback):
             os.remove(generated_output_fp)
 
 
+def format_style_text_display(style_text: list[list[str]]) -> str:
+    if not style_text:
+        return None
+    if isinstance(style_text, str):
+        return style_text
+    return "| ".join([", ".join(sublist) for sublist in style_text])
+
+def add_space_after_punc(text):
+    """
+    add space after punctuation, so lines can be split for video display
+    """
+    return text.replace('|', '| ').replace('|  ', '| ').replace(',', ', ').replace(',  ', ', ') 
+
+def split_lines(text, max_width):
+    """
+    split long text and add indentation from 2nd lines
+    """
+    lines = textwrap.wrap(text, max_width, break_long_words=False)
+    for i in range(1, len(lines)):
+        lines[i] = '    ' + lines[i]
+    return lines
+
 def format_video_text(metadata, max_width=50):
+
     index = metadata['index']['csv_idx']
-    style_text = ""
     if metadata.get("style_text") is not None:
         style_text = metadata.get('style_text')
-        style_text = '\n'.join(textwrap.wrap(style_text, max_width, break_long_words=False))
     elif metadata.get("style_category") is not None:
         style_text = metadata.get('style_category')
-        style_text = '\n'.join(textwrap.wrap(style_text, max_width, break_long_words=False))
-    video_text = f'{index}: {style_text}\n\n'
+    else:
+        style_text = [[""]]
+    style_text = format_style_text_display(style_text)
+    freeform_text = metadata.get("freeform_text", None)
+    total_duration = metadata.get("total_duration", None)
+    extra_video_text = metadata.get("extra_video_text", None)
 
-    lyrics = metadata.get('lyrics')
+    lines = []
+    lines.append(f'{index}')
+    if style_text:
+        lines.extend( split_lines('style_text: ' + style_text, max_width) )
+    if freeform_text:
+        lines.extend( split_lines('freeform_text: ' + freeform_text, max_width) )
+    if total_duration:
+        lines.append('total_duration: ' + '%.1f' % total_duration)
+    if extra_video_text:
+        lines.extend( split_lines(add_space_after_punc(extra_video_text), max_width) )
+    video_text = '\n'.join(lines) + '\n\n'
+
+    lyrics = metadata.get('lyrics_display', metadata.get('lyrics'))
     if lyrics is not None:
         # Respect natural linebreaks
         lyrics = lyrics.split("\n")
@@ -403,35 +555,34 @@ def format_video_text(metadata, max_width=50):
 
 def default_format_video_text(metadata):
     # short text
-    fontsize, max_width, line_spacing = 26, 50, 14
-    video_text = format_video_text(metadata, max_width)
+    video_text = format_video_text(metadata, max_width=60)
     num_lines = len(video_text.split("\n"))
+
     if num_lines < 18:
-        return video_text, fontsize, line_spacing
-    
-    # long text
-    fontsize, max_width, line_spacing = 20, 60, 4
-    video_text = format_video_text(metadata, max_width)
-    num_lines = len(video_text.split("\n"))
-    if num_lines < 36:
-        return video_text, fontsize, line_spacing
-    
-    # really long text
-    fontsize, max_width, line_spacing = 16, 80, 2
-    video_text = format_video_text(metadata, max_width)
-    num_lines = len(video_text.split("\n"))
-    if num_lines < 44:
-        return video_text, fontsize, line_spacing
-    
-    fontsize, max_width, line_spacing = 11, 90, 0
-    video_text = format_video_text(metadata, max_width)
-    num_lines = len(video_text.split("\n"))
+        fontsize = 22
+        line_spacing = 14
+    if 18 <= num_lines < 30:
+        fontsize = 20
+        line_spacing = 4
+    if 30 <= num_lines < 36:
+        fontsize = 18
+        line_spacing = 3
+    if 36 <= num_lines < 40:
+        fontsize = 16
+        line_spacing = 2
+    if 40 <= num_lines < 48:
+        fontsize = 14
+        line_spacing = 1
+    if num_lines >= 48:
+        fontsize = 12
+        line_spacing = 0
+
     return video_text, fontsize, line_spacing
 
 def save_video(input_results_dir, output_video_dir, format_video_text_fn=default_format_video_text, remove_segments=True, upload=True):
     colors = ["green", "blue", "brown"]
     output_video_dir = Path(output_video_dir)
-    output_video_dir_tmp = output_video_dir/'tmp'
+    output_video_dir_tmp = output_video_dir.parent/f'{output_video_dir.stem}.video_tmp'
     output_video_dir_tmp.mkdir(exist_ok=True, parents=True)
 
     generated_output_fps = list(Path(input_results_dir).glob('**/*.generated.wav'))
@@ -452,7 +603,7 @@ def save_video(input_results_dir, output_video_dir, format_video_text_fn=default
             f.write(video_text)
         color = colors[idx % len(colors)]
         fontfile = "/usr/share/fonts/truetype/arphic/ukai.ttc"
-        cmd = f'ffmpeg -y -v 0 -f lavfi -i color=c={color}:s=800x800:d=0.5 -i {audio_fp} -c:a aac -vf "drawtext=fontfile={fontfile}:fontsize={fontsize}:line_spacing={line_spacing}:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:textfile={output_text_fp}" {output_video_fp} -v 0'
+        cmd = f'ffmpeg -y -v 0 -f lavfi -i color=c={color}:s=800x800:d=0.5 -i "{audio_fp}" -c:a aac -vf "drawtext=fontfile={fontfile}:fontsize={fontsize}:line_spacing={line_spacing}:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:textfile={output_text_fp}" "{output_video_fp}" -v 0'
         os.system(cmd)
 
     # concat output videos
@@ -464,14 +615,24 @@ def save_video(input_results_dir, output_video_dir, format_video_text_fn=default
         shutil.rmtree(output_video_dir_tmp)
 
     if upload and os.path.exists(video_output_fp):
-        url = upload_to_tos(video_output_fp, "tmp/video_demo/")
+        url = UploadToEasyCycleCallback.upload_file(video_output_fp)
+        # url = upload_to_tos_v2(video_output_fp, "tmp/video_demo/" + str(int(time.time())))
         print("Saved video:", url)
 
         # update inference_params
-        meta_fp = os.path.join(output_video_dir, "inference_params.json")
-        with open(meta_fp, 'r', encoding='utf-8') as f:
-            metadata = json.load(f)
+        metadata = None
+        for meta_fp in list(Path(output_video_dir).glob("inference_params.*.json")):
+            with open(meta_fp, 'r', encoding='utf-8') as f:
+                _metadata = json.load(f)
+                if metadata is None:
+                    metadata = _metadata
+                else:
+                    if "output_paths" in metadata:
+                        metadata["output_paths"] += _metadata.get("output_paths", [])
+                    else:
+                        metadata["output_paths"] = _metadata.get("output_paths", [])
         metadata["demo_video_url"] = url
+        meta_fp = os.path.join(output_video_dir, "inference_params.json")   
         with open(meta_fp, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, indent=2)
     return video_output_fp
@@ -514,12 +675,11 @@ def run_average_metrics(output_dir):
 class AverageMetricsCallback(pl.Callback):
     def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
         output_dir = pl_module.extra_params.output_dir
-        with local_zero_last():
-            if is_local_zero():
-                try:
-                    run_average_metrics(output_dir)
-                except Exception as e:
-                    print('Could not run average metrics:', e)
+        if trainer.is_global_zero:
+            try:
+                run_average_metrics(output_dir)
+            except Exception as e:
+                print('Could not run average metrics:', e)
 
 
 class MergeFullSongCallback(pl.Callback):
@@ -603,3 +763,33 @@ def mix_two_audio_tensors(tensor_1, tensor_2):
         return mixed / mixed.max()
     
     raise ValueError(f"Cannot handle tensors with ndim as :{tensor_1.ndim}")
+
+
+def extract_section_duration_from_lyrics_str(lyrics):
+    lines = lyrics.split('\n')
+    result = []
+    for line in lines:
+        match = re.search(r'<([\d.]+)>', line)
+        if match:
+            result.append(float(match.group(1)))
+        else:
+            return None
+    return result
+
+
+if __name__ == '__main__':
+    """
+    this main function can be used to output videos from a folder of pre-generated samples
+    """
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--path_output", type=str, default='', help="Path to the generated result folder")
+    args = parser.parse_args()
+
+    path_output = args.path_output
+    save_video(path_output, path_output)
+
+    """
+    python3 /opt/tiger/samantha/recipes/bigmusic/callbacks/save_outputs.py \
+    --path_output /opt/tiger/samantha/20241212-111652_3.6k
+    """

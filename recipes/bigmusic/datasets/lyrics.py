@@ -1,5 +1,6 @@
 from typing import Callable, List, Optional, Any
 import torch
+import random
 from pathlib import Path
 import webdataset as wds
 import pytorch_lightning as pl
@@ -273,10 +274,10 @@ def default_bucket_batcher_fn(
 ):
     token_frame_rate = semantic_frame_rate + lyrics_frame_rate
     sample_duration = sample_duration if isinstance(sample_duration, (list, tuple)) else [sample_duration]
-    buckets_samples = [d * token_frame_rate for d in sorted(set(sample_duration))]
+    buckets_samples = [d * token_frame_rate for d in sample_duration]
     length_fn = partial(default_bucket_batcher_length_fn, sample_rate=sample_rate, semantic_frame_rate=semantic_frame_rate)
     if max_duration is None:
-        maximum_bucket_size = max(buckets_samples) * batch_size
+        maximum_bucket_size = buckets_samples[-1] * batch_size
     else:
         maximum_bucket_size = max_duration * token_frame_rate * batch_size
     return LyricsBucketBatcher(
@@ -289,13 +290,21 @@ def default_bucket_batcher_fn(
 def default_batch_fn(batch_size, collation_fn=dictionary_collate):
     return wds.batched(batch_size, collation_fn=collation_fn)
 
-def transform_dataset(dataset, segment_transforms=(), batch_transforms=(), batch_fn=None, shuffle_buffer_size=None):
+def transform_dataset(dataset, segment_transforms=(), batch_transforms=(), batch_fn=None, shuffle_buffer_size=None, deterministic=False):
     if isinstance(dataset, DataPipeline):
         data_pipeline = dataset
     else:
         data_pipeline = DataPipeline(dataset)
     if shuffle_buffer_size is not None:
-        data_pipeline.append(wds.shuffle(shuffle_buffer_size))
+        if deterministic:
+            # ensure reproducibility
+            rng_state = random.getstate()
+            rng = random.Random()
+            rng.setstate(rng_state)
+        else:
+            rng = None
+
+        data_pipeline.append(wds.shuffle(bufsize=shuffle_buffer_size, rng=rng))
     for segment_transform in segment_transforms:
         data_pipeline.append(wds.map(segment_transform))
     if batch_fn is not None:

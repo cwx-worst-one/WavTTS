@@ -2,6 +2,7 @@ import os
 import numpy as np
 import torch
 import torch.nn.functional as F
+from torch.nn.utils.rnn import pad_sequence, unpad_sequence
 from torchaudio.functional import resample
 from functools import partial
 import librosa
@@ -15,7 +16,7 @@ from samantha.utils import groundtruth
 from samantha.dataio.lite.utils.mel import mel_spectrogram
 from apps.bigtts.umm.diffusion.lit_modules.infer_utils import set_seed, save_wav
 from recipes.diffusion.models.vocoder_model.utils import vocode_in_chunks
-
+from hyperpyyaml import load_hyperpyyaml
 
 import logging
 
@@ -139,12 +140,13 @@ class DiffusionU2SInfer(LightningModule):
         diffusion_nfe=10,
         diffusion_sampler="ddim",
         text_cfg_w=1,
+        rescale_factor=0.7,
         use_wvae_vocoder=False,
         bn_config=None,
         token_config=None,
         use_phone_lang=False,
         without_prefix=True,
-        **kwrags,
+        **kwargs,
     ):
         super().__init__()
 
@@ -165,6 +167,7 @@ class DiffusionU2SInfer(LightningModule):
         self.diffusion_nfe = diffusion_nfe
         self.diffusion_sampler = diffusion_sampler
         self.text_cfg_w = text_cfg_w
+        self.rescale_factor = rescale_factor
         self.use_wvae_vocoder = use_wvae_vocoder
 
         self.use_phone_lang = use_phone_lang
@@ -202,9 +205,16 @@ class DiffusionU2SInfer(LightningModule):
         duration = pred_emb.shape[-1] // self.mel_frame_rate
         with torch.autocast(device_type="cuda", enabled=False):
             if duration > 30:
-                wavs_g = vocode_in_chunks(pred_emb, self.wvae, mini_bs=1, chunk_size=1)
+                wavs_g = vocode_in_chunks(
+                    pred_emb,
+                    self.wvae,
+                    mini_bs=1,
+                    chunk_size=self.bn_config["chunk_size"],
+                )
             else:
-                wavs_g = vocode_in_chunks(pred_emb, self.wvae, mini_bs=4, chunk_size=1)
+                wavs_g = vocode_in_chunks(
+                    pred_emb, self.wvae, mini_bs=self.bn_config["mini_bs"], chunk_size=1
+                )
         return wavs_g
 
     # align wav to make sure wav length could be divided by `umm_frame_rate` and `mel_frame_rate` evenly
@@ -253,6 +263,8 @@ class DiffusionU2SInfer(LightningModule):
         elif self.umm_type in ["UMMv2", "UMM_music"]:
             with torch.cuda.amp.autocast(enabled=True, dtype=torch.float16):
                 umm_token = self.umm.wav2token(wav)
+        elif self.umm_type == "UMM2":
+            umm_token = self.umm.forward({"audio":wav})['vq_ids']
         else:
             raise NotImplementedError
 
@@ -568,6 +580,7 @@ class DiffusionU2SInfer(LightningModule):
                     self.diffusion_nfe,
                     self.diffusion_sampler,
                     text_cfg_w=self.text_cfg_w,
+                    rescale_factor=self.rescale_factor,
                 )
             if self.infer_type in ["ar-diffusion-vocoder", "diffusion-vocoder"]:
                 out_mel = out_mel[:, :, inputs["prompt_length"] :]
@@ -634,8 +647,16 @@ class DiffusionU2SInfer(LightningModule):
                 self.umm = prepare_umm_conv(self.umm_ckpt_path, device)
             elif self.umm_type in ["UMM_dualconv", "UMM_dualconvV1", "UMM_dualconvV3"]:
                 self.umm = prepare_umm_dualconv(self.umm_ckpt_path, device)
-            elif self.umm_type == "UMMM_convgan":
-                self.umm = prepare_umm_convgan(self.umm_ckpt_path, device)
+            elif self.umm_type == "UMM2":
+                hparams = load_hyperpyyaml(open(self.umm_ckpt_path, "r", encoding="utf-8"))
+                # model = hparams["frontend"]
+                model = hparams["model"]
+                required_modules = hparams["required_modules"]
+                for module_name, loader_config in hparams["required_modules"].items():
+                    print(f"loading module {module_name}...")
+                    _args = {k: v for k, v in loader_config.items() if k != "loader" and k != "initializer"}
+                    loader = loader_config["loader"](**_args)
+                    self.umm = loader.nn_load_model(model)
             else:
                 raise NotImplementedError
         else:
@@ -682,7 +703,7 @@ class DiffusionU2SInfer(LightningModule):
         assert self.infer_type in ["ar-diffusion-vocoder", "diffusion-vocoder"]
 
         def batching(container, data):
-            if data is None or data == "":
+            if data is None or data is "":
                 if container is not None:
                     raise ValueError("try to batching data 'None'")
             else:
@@ -706,21 +727,13 @@ class DiffusionU2SInfer(LightningModule):
                 uttid,
             ) = (None, None, None, None, None, None)
             if self.infer_type == "ar-diffusion-vocoder":
-                (
-                    prompt_text_id,
-                    syn_text_id,
-                    prompt_wav_path,
-                    syn_umm_token,
-                    uttid,
-                ) = item[:5]
+                (prompt_text_id, syn_text_id, prompt_wav_path, syn_umm_token, uttid) = (
+                    item[:5]
+                )
             elif self.infer_type == "diffusion-vocoder":
-                (
-                    uttid,
-                    prompt_wav_path,
-                    syn_wav_path,
-                    prompt_text_id,
-                    syn_text_id,
-                ) = item[:5]
+                (uttid, prompt_wav_path, syn_wav_path, prompt_text_id, syn_text_id) = (
+                    item[:5]
+                )
 
             if prompt_wav_path:
                 if not os.path.isfile(prompt_wav_path):
@@ -776,6 +789,7 @@ class ChunkInfer(DiffusionU2SInfer):
         diffusion_nfe=10,
         diffusion_sampler="ddim",
         text_cfg_w=1,
+        rescale_factor=0.7,
         use_wvae_vocoder=False,
         bn_config=None,
         token_config=None,
@@ -802,6 +816,7 @@ class ChunkInfer(DiffusionU2SInfer):
             diffusion_nfe,
             diffusion_sampler,
             text_cfg_w,
+            rescale_factor,
             use_wvae_vocoder,
             bn_config,
             token_config,
@@ -913,6 +928,7 @@ class ChunkInfer(DiffusionU2SInfer):
                     self.diffusion_nfe,
                     self.diffusion_sampler,
                     text_cfg_w=self.text_cfg_w,
+                    rescale_factor=self.rescale_factor,
                     use_cache=True,
                     cached_v_len=prompt_length,
                 )
@@ -1144,6 +1160,7 @@ class ChunkInfer2(DiffusionU2SInfer):
         diffusion_nfe=10,
         diffusion_sampler="ddim",
         text_cfg_w=1,
+        rescale_factor=0.7,
         use_wvae_vocoder=False,
         bn_config=None,
         token_config=None,
@@ -1169,6 +1186,7 @@ class ChunkInfer2(DiffusionU2SInfer):
             diffusion_nfe,
             diffusion_sampler,
             text_cfg_w,
+            rescale_factor,
             use_wvae_vocoder,
             bn_config,
             token_config,
@@ -1187,6 +1205,13 @@ class ChunkInfer2(DiffusionU2SInfer):
             self.bn_chunk_size * self.umm_frame_rate // self.mel_frame_rate
         )
         self.token_overlap = int(np.prod(self.model.hp.token_downscales))
+        self.mem_efficient = kwargs.get("mem_efficient", False)
+
+        print("enable memory efficient:", self.mem_efficient)
+        self.context_duration = int(kwargs.get("context_duration", 60))
+        if self.infer_type == "ar-diffusion-vocoder":
+            self.context_duration = 0
+        self.concat_context = (not self.without_prefix) and kwargs.get("concat_context", False) and self.context_duration > 0
 
     def prepare_features(self, batch) -> None:
         (
@@ -1209,13 +1234,18 @@ class ChunkInfer2(DiffusionU2SInfer):
             assert batched_syn_wav_path is not None
             inputs["gt_wav"] = []
             scales = []
-            syn_wavlens = []
+            ori_syn_wavlens = []
             syn_wavs = []
             for bidx, syn_wav_path in enumerate(batched_syn_wav_path):
-                syn_wav, _ = librosa.load(
-                    syn_wav_path, sr=self.token_sample_rate, mono=True
+                syn_wav, sr = librosa.load(
+                    syn_wav_path, sr=None, mono=True
                 )
                 inputs["gt_wav"].append(syn_wav)
+                ori_syn_wavlens.append(syn_wav.shape[-1])
+                if sr != self.token_sample_rate:
+                    syn_wav, sr = librosa.load(
+                        syn_wav_path, sr=self.token_sample_rate, mono=True
+                    )
                 syn_wavlens.append(syn_wav.shape[-1])
                 if self.bn_config["wav_norm"]:
                     if batched_scale is None:
@@ -1267,7 +1297,7 @@ class ChunkInfer2(DiffusionU2SInfer):
                 raise ValueError(f"no padding implement named '{self.padding_mode}'")
 
             inputs["scale"] = scales
-            inputs["syn_wavlen"] = syn_wavlens
+            inputs["syn_wavlen"] = ori_syn_wavlens
         elif self.infer_type == "ar-diffusion-vocoder":
             assert (
                 batched_syn_umm_token is not None
@@ -1279,7 +1309,7 @@ class ChunkInfer2(DiffusionU2SInfer):
             ]
             max_syn_umm_token_len = max(syn_umm_token_lens)
             syn_wavlens = [
-                self.umm_frame_rate * syn_umm_token_len
+                syn_umm_token_len * (self.bn_config["sample_rate"]  // self.umm_frame_rate)
                 for syn_umm_token_len in syn_umm_token_lens
             ]
             batched_syn_umm_token = torch.stack(
@@ -1411,7 +1441,122 @@ class ChunkInfer2(DiffusionU2SInfer):
         inputs["uttid"] = batched_uttid
         return inputs, batched_prompt_umm_token, batched_syn_umm_token
 
+    def prepare_features_prefix(self, batch) -> None:
+        (
+            batched_uttid,
+            batched_prompt_text_id,
+            batched_prompt_wav_path,
+            batched_syn_text_id,
+            batched_syn_wav_path,
+            batched_syn_umm_token,
+            batched_scale,
+        ) = self.batched_data(batch)
+
+        bs = len(batched_uttid)
+        batched_text_id = None
+        device = f"cuda:{self.local_rank}"
+        inputs = dict()
+
+        """ compute umm token and bn """
+        # syn
+        if self.infer_type == "diffusion-vocoder":
+            assert batched_syn_wav_path is not None
+            ori_syn_wavlens =[]
+            inputs["gt_wav"] = []
+            scales = []
+            syn_umm_token_lens = []
+            batched_syn_umm_token = []
+            for bidx, syn_wav_path in enumerate(batched_syn_wav_path):
+                syn_wav, sr = librosa.load(
+                    syn_wav_path, sr=None, mono=False
+                )
+                inputs["gt_wav"].append(syn_wav)
+                ori_syn_wavlens.append(syn_wav.shape[-1])
+                if sr != self.token_sample_rate:
+                    syn_wav, sr = librosa.load(
+                        syn_wav_path, sr=self.token_sample_rate, mono=True
+                    )
+                if self.bn_config["wav_norm"]:
+                    if batched_scale is None:
+                        scale = max(0.001, torch.max(torch.abs(syn_wav)))
+                        syn_wav = syn_wav / scale * 0.95
+                        scales.append(scale.item())
+                    else:
+                        scales.append(batched_scale[bidx])
+                # syn_wavs.append(syn_wav)
+                syn_wav = torch.from_numpy(syn_wav).to(device)
+                syn_umm_token = self.wav2token(syn_wav.unsqueeze(0))
+                syn_umm_token = syn_umm_token[..., self.context_duration * self.umm_frame_rate:]
+                syn_umm_token_lens.append(syn_umm_token.shape[-1])
+                batched_syn_umm_token.append(syn_umm_token.squeeze(0))
+            inputs["scale"] = scales
+            inputs["syn_wavlen"] = ori_syn_wavlens
+
+        else:
+            assert (
+                batched_syn_umm_token is not None
+                and self.padding_mode == "token_padding"
+            )
+            # padding_value = self.token_config["token_padding"]
+            syn_umm_token_lens = []
+            ori_syn_wavlens =[]
+            for bidx in range(bs):
+                if batched_syn_umm_token[bidx].ndim > 1:
+                    batched_syn_umm_token[bidx] = batched_syn_umm_token[bidx].squeeze(0)
+                syn_umm_token_lens.append(batched_syn_umm_token[bidx].shape[-1])
+                ori_syn_wavlens.append(batched_syn_umm_token[bidx].shape[-1] * self.bn_config["sample_rate"]  // self.umm_frame_rate)
+            inputs["scale"] = batched_scale
+            inputs["syn_wavlen"] = ori_syn_wavlens
+
+        # prompt
+        assert self.use_wvae_vocoder
+        assert batched_prompt_wav_path is not None
+        batched_prompt_umm_token = []
+        prompt_umm_token_lens = []
+        prompt_bn_lens = []
+        batched_crop_bn = []
+        batched_prompt_wav = []
+        for bidx, prompt_wav_path in enumerate(batched_prompt_wav_path):
+            prompt_wav, _ = librosa.load(
+                prompt_wav_path, sr=self.token_sample_rate, mono=True
+            )
+            prompt_wav = torch.from_numpy(prompt_wav).to(device)
+            prompt_umm_token = self.wav2token(prompt_wav.unsqueeze(0))
+            prompt_umm_token_lens.append(prompt_umm_token[-1])
+            batched_prompt_umm_token.append(prompt_umm_token.squeeze(0))
+            
+            prompt_wav, sr = librosa.load(
+                prompt_wav_path, sr=None, mono=False
+            )
+            batched_prompt_wav.append(prompt_wav)
+            prompt_wav = torch.from_numpy(prompt_wav).to(device)
+            if len(prompt_wav.shape)==1:
+                prompt_wav = prompt_wav.unsqueeze(0)
+            encoder_out = self.wvae.encode(prompt_wav.unsqueeze(0))
+            crop_bn, _, _ = self.wvae.sample(encoder_out, deterministic=False)
+            crop_bn = self.bn_norm.norm_mel(crop_bn)
+            prompt_bn_lens.append(crop_bn.shape[-1])
+            batched_crop_bn.append(crop_bn.transpose(-1,-2).squeeze(0))
+        
+        inputs["prompt_bn"] = batched_crop_bn
+        inputs["prompt_length"] = prompt_bn_lens
+        """ padding to batch """
+        # umm
+        assert len(batched_syn_umm_token) == len(batched_prompt_wav_path)
+        inputs["prompt_bn"] = pad_sequence(
+            inputs["prompt_bn"],
+            batch_first=True,
+            padding_value=self.bn_config["bn_padding"],
+        )
+        inputs["all_bn_ctx"] = inputs["prompt_bn"]
+        inputs["uttid"] = batched_uttid
+
+        return inputs, batched_prompt_umm_token, batched_syn_umm_token
+
     def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: int = 0) -> Any:
+        if not self.without_prefix:
+            return self.predict_step_prefix(batch, batch_idx, dataloader_idx)
+        
         inputs, prompt_umm_token, syn_umm_token = self.prepare_features(batch)
         if inputs is None:
             return
@@ -1477,7 +1622,7 @@ class ChunkInfer2(DiffusionU2SInfer):
         # chunk inference
         full_mel = []
         self.model.clear_infer_params(
-            self.diffusion_nfe, total_frame, bs, self.text_cfg_w
+            self.diffusion_nfe, total_frame, bs, self.text_cfg_w, self.mem_efficient
         )
         for chunk_idx in range(n_chunks):
             token_start_index = chunk_idx * self.token_chunk_size - (
@@ -1539,3 +1684,141 @@ class ChunkInfer2(DiffusionU2SInfer):
                 audio = audio[..., : inputs["syn_wavlen"][bidx]]
             save_wav(audio.T, output_path, sr=self.mel_config["sampling_rate"])
         return torch.from_numpy(batched_audio)
+
+    def predict_step_prefix(self, batch: Any, batch_idx: int, dataloader_idx: int = 0) -> Any:
+        inputs, prompt_umm_token, syn_umm_token = self.prepare_features_prefix(batch)
+        if inputs is None:
+            return
+
+        if self.diffusion_precision == "bf16":
+            dtype = torch.bfloat16
+        elif self.diffusion_precision == "fp16":
+            dtype = torch.float16
+        elif self.diffusion_precision == "fp32":
+            dtype = torch.float32
+        else:
+            raise NotImplementedError
+
+        if not prompt_umm_token:
+            return 
+        if not syn_umm_token:
+            return 
+        
+        bs = len(syn_umm_token)
+        device = syn_umm_token[0].device
+
+        inputs["all_token"] = [torch.cat([prompt_umm_token[bidx], syn_umm_token[bidx]], dim=-1) for bidx in range(bs)]
+        inputs["all_token"] = pad_sequence(inputs["all_token"], batch_first=True, padding_value=self.token_config["token_padding"])
+        # align for n*token_chunk_size+chunk_overlap (B,T)
+        token_len = inputs["all_token"].shape[1]
+        n_chunks = math.ceil(token_len / self.token_chunk_size)
+        aligned_token_len = (
+            math.ceil(token_len / self.token_chunk_size) * self.token_chunk_size
+            + self.token_overlap
+        )
+        token_pad_len = aligned_token_len - token_len
+        if token_pad_len > 0:
+            inputs["all_token"] = F.pad(
+                inputs["all_token"],
+                [0, token_pad_len],
+                mode="constant",
+                value=self.token_config["token_padding"],
+            )
+        print(
+            f"{batch_idx=} token align from {token_len} to {aligned_token_len} ({token_pad_len=} {n_chunks=})"
+        )
+
+        # pad bn_ctx (B,T,C)
+        bn_ctx_len = inputs["all_bn_ctx"].shape[1]
+        aligned_bn_ctx_len = self.bn_chunk_size * n_chunks
+        bn_ctx_pad_len = aligned_bn_ctx_len - bn_ctx_len
+        print(
+            f"{batch_idx=} bn_ctx align from {bn_ctx_len} to {aligned_bn_ctx_len} ({bn_ctx_pad_len=} {n_chunks=})"
+        )
+        if bn_ctx_pad_len > 0:
+            inputs["all_bn_ctx"] = F.pad(
+                inputs["all_bn_ctx"],
+                [0, 0, 0, bn_ctx_pad_len],
+                mode="constant",
+                value=self.bn_config["bn_padding"],
+            )
+
+        total_frame = math.ceil(token_len * self.mel_frame_rate / self.umm_frame_rate)
+        print(f"{batch_idx=} {total_frame=}")
+        # apply text cfg
+        if self.text_cfg_w != 1:
+            inputs = self.make_cfg_input(inputs)
+        
+
+        # chunk inference
+        full_mel = []
+        self.model.clear_infer_params(
+            self.diffusion_nfe, total_frame, bs, self.text_cfg_w, self.mem_efficient
+        )
+        for chunk_idx in range(n_chunks):
+            token_start_index = chunk_idx * self.token_chunk_size - (
+                0 if chunk_idx == 0 else self.token_overlap
+            )
+            token_end_index = (
+                chunk_idx + 1
+            ) * self.token_chunk_size + self.token_overlap
+
+            bn_start_index = chunk_idx * self.bn_chunk_size
+            bn_end_index = min((chunk_idx + 1) * self.bn_chunk_size, total_frame)
+
+            inputs["token"] = inputs["all_token"][:, token_start_index:token_end_index]
+            inputs["bn_ctx"] = inputs["all_bn_ctx"][:, bn_start_index:bn_end_index]
+            # print(f"{chunk_idx=} token={(token_start_index,token_end_index, token_end_index-token_start_index)}({inputs['all_token'].shape[1]}, {inputs['token'].shape[1]})")
+            # print(f"{chunk_idx=} bn_ctx={(bn_start_index, bn_end_index, bn_end_index-bn_start_index)}({inputs['all_bn_ctx'].shape[1]} {inputs['bn_ctx'].shape[1]})")
+            with torch.autocast(device_type="cuda", dtype=dtype, enabled=True):
+                chunk_mel = self.model.chunk_inference(
+                    inputs,
+                    self.diffusion_nfe,
+                    self.diffusion_sampler,
+                    text_cfg_w=self.text_cfg_w,
+                    use_infer_params=True,
+                    first=chunk_idx == 0,
+                )
+            # print(f"{chunk_idx=} mel={chunk_mel.shape=}")
+            self.model.update_infer_params(
+                bn_end_index - bn_start_index, last=chunk_idx + 1 >= n_chunks - 1
+            )
+            if self.infer_type in ["ar-diffusion-vocoder", "diffusion-vocoder"]:
+                full_mel.append(chunk_mel)
+        self.model.clear_infer_params(self.diffusion_nfe)
+
+        full_mel = torch.cat(full_mel, dim=-1)
+        batched_audio = []
+        for bidx in range(bs):
+            prompt_length = inputs["prompt_length"][bidx]
+            if self.use_wvae_vocoder:
+                z = full_mel[bidx, :, prompt_length:].unsqueeze(0)
+                z = self.bn_norm.denorm_mel(z)
+                out_wav = self.wvae_decode(z)
+            else:
+                _full_mel = self.mel_norm.denorm_mel(full_mel[bidx,:, prompt_length:])
+                _full_mel = torch.clamp(_full_mel, min=-8.5, max=3.5)
+                out_wav = self.vocoder(_full_mel)
+
+            audio = out_wav
+            if self.bn_config["wav_norm"] and inputs["scale"] is not None:
+                audio = audio * torch.as_tensor(inputs["scale"][bidx]) / 0.95
+            audio = torch.clip(audio,min=-1,max=1).squeeze(0)
+            audio = audio.cpu().numpy()
+            uttid = inputs["uttid"][bidx]
+            if "syn_wavlen" in inputs:
+                audio = audio[..., : inputs["syn_wavlen"][bidx]]
+
+            batched_audio.append(torch.from_numpy(audio))
+            output_path = os.path.join(self.output_dir, uttid + ".wav")
+            save_wav(audio.T, output_path, sr=self.mel_config["sampling_rate"])
+
+            if self.concat_context:
+                output_path = os.path.join(self.output_dir, uttid + ".full.wav")
+                full_audio = inputs['gt_wav'][bidx]
+                context_audio = full_audio[...,:self.context_duration * self.mel_config["sampling_rate"]]
+                print(f"{context_audio.shape=} {audio.shape=}")
+                audio = np.concatenate([context_audio, audio], axis=-1)
+                save_wav(audio.T, output_path, sr=self.mel_config["sampling_rate"])
+
+        return pad_sequence(batched_audio, batch_first=True)

@@ -1,0 +1,122 @@
+---
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 0
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+# running parameters
+run_opts:
+  fast_dev_run: False
+  precision: 16-mixed
+  accelerator: 'auto'
+  batch_size: 16
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+train_params:
+  learning_rate: 0.0001
+  scheduler_patience: 20
+  scheduler_decay_factor: 0.7
+  devices: 'auto'
+
+extra_params:
+  final_pooling: True
+  tag_types: !apply:recipes.mir2.parquet_dataset.vocab_index.bigmusic_new_tags
+
+################################################################################
+##########                    TASK CONFIGURATION                  ##########
+################################################################################
+
+audio:
+  sampling_rate: 24000        # sampling rate for audio
+  sample_len: 30.0            # duration in sec for input  #{24 or 6}
+
+
+################################################################################
+##########             DATASET/DATALOADING CONFIGURATION              ##########
+################################################################################
+
+
+# datamodule configuration
+pl_datamodule: !new:recipes.mir2.pl_modules.pl_datamodule.BaseDataModule
+  train_dataloader: None
+  val_dataloader: None
+  test_dataloader: None
+  sampling_rate: !ref <audio[sampling_rate]>
+
+################################################################################
+##########                      MODEL CONFIGURATION                   ##########
+################################################################################
+
+config: !new:recipes.umm2.models.config.UMMConfig
+  feature_cmvn: "recipes/datasets/mcc/data_ids=794.stats.pt"
+  sample_rate: !ref <audio[sampling_rate]>
+  n_mels: 128
+  n_fft: 2048
+  win_length: 2048
+  hop_length: 240
+  hidden_size: 1024
+  intermediate_size: 4096
+  num_hidden_layers: 24
+  num_attention_heads: 8
+  max_source_positions: 2500
+  tokenizer: null
+  frame_rate: 25
+  use_bn: False
+
+frontend: !new:recipes.mir2.models.umm_ft.UMM # umm not frozen
+  config: !ref <config>
+  takes: [audio]
+  provides: [latent]
+  bypasses: [tags]
+
+backend: !new:recipes.mir2.models.tagging_umm2.TaggingProbingStage
+  task: "tagging"
+  takes: [latent, tags]
+  provides: [tag_pred]
+  final_pooling: !ref <extra_params[final_pooling]>
+  n_channel: !ref <config[hidden_size]>
+  tag_types: !ref <extra_params[tag_types]>
+
+model: !new:recipes.umm2.models.base.PipelineModel
+  input_names: [audio, tags]
+  output_names: [tag_pred]
+  stages:
+    - !ref <frontend>
+    - !ref <backend>
+
+required_modules:
+  pretrained:
+    ckpt_path: "hdfs://haruna/home/byte_speech_sv/ju-chiang.wang/logs/umm2_conformer_2255mixedZHEN/stage2_hpss_onset_2255mixedZHEN_optim_mem_bert-base-multilingual-uncased/checkpoints/step=0250000.ckpt"
+    loader: !name:recipes.umm2.loaders.stage2.ModelLoader
+    cache_dir: ".module_cache/umm"
+
+pl_module: !new:recipes.mir2.pl_modules.tagging_pl_umm2.LitTagging
+  model: !ref <model>
+  lr: !ref <train_params[learning_rate]>
+  scheduler_patience: !ref <train_params[scheduler_patience]>
+  scheduler_decay_factor: !ref <train_params[scheduler_decay_factor]>
+  sample_rate: !ref <audio[sampling_rate]>
+  sample_len: !ref <audio[sample_len]>
+  tag_types: !ref <extra_params[tag_types]>
+  final_pooling: !ref <extra_params[final_pooling]>
+  required_modules: !ref <required_modules>
+
+################################################################################
+##########                     TRAINER CONFIGURATION                  ##########
+################################################################################
+
+prediction_writer: !new:recipes.mir2.pl_modules.callbacks.tagging_prediction_writer.TaggingWriter
+  output_dir: null
+
+trainer: !new:pytorch_lightning.Trainer
+  # strategy: "ddp"
+  fast_dev_run: !ref <run_opts[fast_dev_run]>
+  num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+  accelerator: !ref <run_opts[accelerator]>
+  devices: !ref <train_params[devices]>
+  precision: !ref <run_opts[precision]>
+  callbacks: !ref <prediction_writer>

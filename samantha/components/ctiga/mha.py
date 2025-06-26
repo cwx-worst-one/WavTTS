@@ -9,10 +9,10 @@ import torch.utils.checkpoint
 from einops import rearrange, repeat
 from pytorch_lightning.utilities.rank_zero import rank_zero_warn
 
+from samantha.components.ctiga.ops.rms_norm import RMSNorm
 from samantha.utils.ctiga.blockmask import convert_blockmask
 from samantha.utils.ctiga.padding import pad_input, unpad_input
-
-from .ops.rms_norm import RMSNorm
+from samantha.utils.envs import getenv_int
 
 try:
     # flash_attn_2_3
@@ -100,6 +100,9 @@ except Exception as e:
         f"Failed to import flash attn related modules with error message {e}"
     )
     flash_blocksparse_attn_func = None
+
+
+VARLEN_KV_CACHE_VERSION = getenv_int("VARLEN_KV_CACHE_VERSION", 2)
 
 
 class FlashSelfAttention(nn.Module):
@@ -956,10 +959,125 @@ class LinearResidual(nn.Linear):
         return super().forward(input), input
 
 
+def _update_varlen_kv_cache_v1(
+    kv, inference_params, layer_idx, seqlens_k, to_cache_indices, cached_indices
+):
+    # """kv: (cumlative_seqlen, 2, nheads, head_dim)"""
+    # Pre-allocate memory for key-values for inference.
+    device = kv.device
+    assert not inference_params.fused_ft_kernel
+    num_heads, head_dim = kv.shape[-2:]
+    max_bs = inference_params.max_batch_size
+    max_seqlen = inference_params.max_sequence_len
+    if inference_params.lengths_per_sample is None:
+        inference_params.lengths_per_sample = torch.zeros(
+            (max_bs,), device=device, dtype=torch.int32
+        )
+
+    if layer_idx not in inference_params.key_value_memory_dict:
+        kv_cache = torch.zeros(
+            max_bs, max_seqlen, 2, num_heads, head_dim, dtype=kv.dtype, device=kv.device
+        )
+        inference_params.key_value_memory_dict[layer_idx] = kv_cache
+    else:
+        kv_cache = inference_params.key_value_memory_dict[layer_idx]
+
+    assert to_cache_indices.max().item() < max_bs * max_seqlen
+    assert cached_indices.max().item() < max_bs * max_seqlen
+    # Copy key and values.
+    assert kv_cache is not None
+    _flat_kv_cache = kv_cache.view(-1, 2, num_heads, head_dim)
+    _flat_kv_cache[to_cache_indices] = kv
+    kv = _flat_kv_cache[cached_indices, ...]
+    return kv
+
+
+def _update_varlen_kv_cache_v2(
+    kv, inference_params, layer_idx, seqlens_k, to_cache_indices, cached_indices
+):
+    # """kv: (cumlative_seqlen, 2, nheads, head_dim)"""
+    # Pre-allocate memory for key-values for inference.
+    device = kv.device
+    assert not inference_params.fused_ft_kernel
+    num_heads, head_dim = kv.shape[-2:]
+    max_bs = inference_params.max_batch_size
+    max_seqlen = inference_params.max_sequence_len
+    if inference_params.lengths_per_sample is None:
+        inference_params.lengths_per_sample = torch.zeros(
+            (max_bs,), device=device, dtype=torch.int32
+        )
+
+    if layer_idx not in inference_params.key_value_memory_dict:
+        kv_cache = torch.zeros(
+            max_bs, max_seqlen, 2, num_heads, head_dim, dtype=kv.dtype, device=kv.device
+        )
+        inference_params.key_value_memory_dict[layer_idx] = kv_cache
+    else:
+        kv_cache = inference_params.key_value_memory_dict[layer_idx]
+
+    assert to_cache_indices[0].max().item() < max_bs
+    assert cached_indices[0].max().item() < max_bs
+    assert to_cache_indices[1].max().item() < max_seqlen
+    assert cached_indices[1].max().item() < max_seqlen
+    # Copy key and values.
+    assert kv_cache is not None
+    kv_cache[to_cache_indices[0], to_cache_indices[1]] = kv
+    kv = kv_cache[cached_indices[0], cached_indices[1]]
+    return kv
+
+
+def _update_limited_kv_cache(kv, inference_params, layer_idx):
+    """kv: (batch_size, seqlen, 2, nheads, head_dim) or (batch_size, 1, 2, nheads, head_dim)"""
+    # Pre-allocate memory for key-values for inference.
+    assert (inference_params.n_look_past is not None) and (
+        inference_params.n_look_future is not None
+    )
+    assert not inference_params.fused_ft_kernel
+    bs, seqlen_k, _, num_heads, head_dim = kv.shape
+    if not inference_params.last:
+        assert (
+            seqlen_k == inference_params.n_look_future
+        ), f"{seqlen_k} != {inference_params.n_look_future}"
+
+    limit_cache_len = inference_params.n_look_past + inference_params.n_look_future
+    if layer_idx in inference_params.key_value_memory_dict:
+        kv_cache = inference_params.key_value_memory_dict[layer_idx]
+    else:
+        kv_cache = kv_cache = torch.empty(
+            inference_params.max_batch_size,
+            limit_cache_len,
+            2,
+            num_heads,
+            head_dim,
+            dtype=kv.dtype,
+            device=kv.device,
+        )
+
+    # Adjust key and value for inference
+    batch_start = inference_params.batch_size_offset
+    batch_end = batch_start + bs
+    assert batch_end <= bs
+    kv_cache[batch_start:batch_end, : inference_params.n_look_past] = kv_cache[
+        batch_start:batch_end, inference_params.n_look_future :
+    ].clone()
+    kv_cache[
+        batch_start:batch_end,
+        inference_params.n_look_past : inference_params.n_look_past + seqlen_k,
+    ] = kv
+    sequence_start = max(
+        0, inference_params.n_look_past - inference_params.sequence_len_offset
+    )
+    sequence_end = min(
+        sequence_start + inference_params.n_look_past + seqlen_k, limit_cache_len
+    )
+    inference_params.key_value_memory_dict[layer_idx] = kv_cache
+    return kv_cache[batch_start:batch_end, sequence_start:sequence_end]
+
+
 def _update_kv_cache(kv, inference_params, layer_idx):
     """kv: (batch_size, seqlen, 2, nheads, head_dim) or (batch_size, 1, 2, nheads, head_dim)"""
     # Pre-allocate memory for key-values for inference.
-    num_heads, head_dim = kv.shape[-2:]
+    bs, seqlen_k, _, num_heads, head_dim = kv.shape
     if layer_idx not in inference_params.key_value_memory_dict:
         kv_cache = torch.empty(
             inference_params.max_batch_size,
@@ -982,13 +1100,13 @@ def _update_kv_cache(kv, inference_params, layer_idx):
             kv_cache = None
     # Adjust key and value for inference
     batch_start = inference_params.batch_size_offset
-    batch_end = batch_start + kv.shape[0]
+    batch_end = batch_start + bs
     sequence_start = inference_params.sequence_len_offset
-    if inference_params.n_look_feature is not None and not inference_params.last:
+    if inference_params.n_look_future is not None and not inference_params.last:
         assert (
-            kv.shape[1] == inference_params.n_look_feature
-        ), f"{kv.shape[1]} != {inference_params.n_look_feature}"
-    sequence_end = sequence_start + kv.shape[1]
+            seqlen_k == inference_params.n_look_future
+        ), f"{seqlen_k} != {inference_params.n_look_future} and last={inference_params.last}"
+    sequence_end = sequence_start + seqlen_k
     assert batch_end <= (
         kv_cache.shape[0] if kv_cache is not None else v_cache.shape[0]
     )
@@ -1004,9 +1122,7 @@ def _update_kv_cache(kv, inference_params, layer_idx):
         else:
             kv = kv_cache[
                 batch_start:batch_end,
-                max(
-                    0, sequence_start - inference_params.n_look_past + 1
-                ) : sequence_end,
+                max(0, sequence_start - inference_params.n_look_past) : sequence_end,
                 ...,
             ]
         return kv
@@ -1090,7 +1206,6 @@ class MHA(nn.Module):
             performance reason: for post-norm architecture, returning the input allows us
             to fuse the backward of nn.Linear with the residual connection.
         """
-
         assert isinstance(version, (str, int, float))
         version = str(version)
         assert version in FLASHATTN_VERSIONS
@@ -1278,30 +1393,71 @@ class MHA(nn.Module):
             )
             return k_cache, v_cache
 
-    def _update_kv_cache(self, kv, inference_params):
-        """kv: (batch_size, seqlen, 2, n_kv_heads, head_dim) or (batch_size, 1, 2, n_kv_heads, head_dim)"""
+    def _update_kv_cache(
+        self,
+        kv,
+        inference_params,
+        seqlens_k=None,
+        to_cache_indices=None,
+        cached_indices=None,
+    ):
+        """kv: (batch_size, seqlen, 2, n_kv_heads, head_dim) or (batch_size, 1, 2, n_kv_heads, head_dim)
+        or (cum_seqlen, 2, n_kv_heads, head_dim)
+        """
         assert not self.dwconv, "Generation does not support dwconv yet"
         assert (
             self.layer_idx is not None
         ), "Generation requires layer_idx in the constructor"
         # modify inference_params for attention window mask
+        assert kv.ndim in [4, 5]
+        varlen = kv.ndim == 4
         if (
             self.window_type == 0
             and self.window_size[0] == -1
             and self.window_size[1] in [-1, 0]
         ):
             # non-window-mask (casual or non-casual)
-            pass
+            if varlen:
+                assert to_cache_indices is not None and cached_indices is not None
+                if VARLEN_KV_CACHE_VERSION == 1:
+                    return _update_varlen_kv_cache_v1(
+                        kv,
+                        inference_params,
+                        self.layer_idx,
+                        seqlens_k,
+                        to_cache_indices,
+                        cached_indices,
+                    )
+                else:
+                    return _update_varlen_kv_cache_v2(
+                        kv,
+                        inference_params,
+                        self.layer_idx,
+                        seqlens_k,
+                        to_cache_indices,
+                        cached_indices,
+                    )
+            else:
+                return _update_kv_cache(kv, inference_params, self.layer_idx)
         else:
             if inference_params.n_look_past is None:
                 if self.window_size[0] != -1:
                     inference_params.n_look_past = self.window_size[0]
-            if inference_params.n_look_feature is None:
+            if inference_params.n_look_future is None:
                 if self.window_type == 0:
-                    inference_params.n_look_feature = self.window_size[1] + 1
+                    inference_params.n_look_future = self.window_size[1] + 1
                 elif self.window_type == 1:
-                    inference_params.n_look_feature = self.window_size[1]
-        return _update_kv_cache(kv, inference_params, self.layer_idx)
+                    inference_params.n_look_future = self.window_size[1]
+            if (
+                inference_params.n_look_past is not None
+                and inference_params.n_look_future is not None
+                and inference_params.mem_efficient
+            ):
+                # print("use _update_limited_kv_cache ...")
+                return _update_limited_kv_cache(kv, inference_params, self.layer_idx)
+            else:
+                # print("use _update_kv_cache ...")
+                return _update_kv_cache(kv, inference_params, self.layer_idx)
 
     def _get_inner_attn_args(
         self,
@@ -1386,24 +1542,24 @@ class MHA(nn.Module):
             return_attn_probs: return attn_probs (softmax(mm(qk)/sqrt(d))) default:False
             https://github.com/NVIDIA/apex/blob/3ff1a10f72ec07067c4e44759442329804ac5162/apex/transformer/testing/standalone_transformer_lm.py#L470
         """
-        is_pad = True
-        if cu_seqlens is not None:
-            assert max_seqlen is not None
-            # assert key_padding_mask is None
+        assert x.ndim in [2, 3]
+        is_pad = x.ndim == 3
+        if is_pad:
+            bs = x.shape[0]
+        else:
+            bs = cu_seqlens.shape[0] - 1
+
+            assert cu_seqlens is not None and max_seqlen is not None
             assert self.use_flash_attn
             assert not self.dwconv
-            # if self.rotary_emb_dim > 0:
-            #     # assert indices is not None
-            #     # assert key_padding_mask is not None
-            # else:
-            #     assert key_padding_mask is None
-            is_pad = False
-
-        if key_padding_mask is not None:
-            if self.rotary_emb_dim == 0:
-                assert cu_seqlens is None
-                assert max_seqlen is None
-                assert not self.use_flash_attn
+            if self.cross_attn:
+                assert inference_params is None
+                assert x_kv is not None and x_kv.ndim == x.ndim
+                assert kwargs.get("cu_seqlens_k") is not None
+                assert kwargs.get("max_seqlen_k") is not None
+            else:
+                assert x_kv is None
+                assert mixer_subset is None
 
         if inference_params is not None:
             if self.version == 2.3 and self.use_flash_attn:
@@ -1417,9 +1573,22 @@ class MHA(nn.Module):
                     raise NotImplementedError(
                         "no support causal or no_causal&no_mask generation in flashattn 2.3 now"
                     )
-            assert key_padding_mask is None
-            assert cu_seqlens is None and max_seqlen is None
-            assert not self.dwconv
+            assert not self.training
+            assert (
+                not inference_params.fused_ft_kernel
+            ), "disable 'fused_ft_kernel' in generation"
+            if not is_pad:
+                if inference_params.lengths_per_sample is None:
+                    inference_params.lengths_per_sample = torch.zeros(
+                        inference_params.max_batch_size,
+                        dtype=torch.int,
+                        device=x.device,
+                    )
+                assert kwargs.get("cu_seqlens_k") is not None
+                assert kwargs.get("max_seqlen_k") is not None
+                assert kwargs.get("seqlens") is not None
+                assert kwargs.get("to_cache_indices") is not None
+                assert kwargs.get("cached_indices") is not None
 
         kwargs = (
             {"cu_seqlens": cu_seqlens, "max_seqlen": max_seqlen, **kwargs}
@@ -1431,7 +1600,6 @@ class MHA(nn.Module):
             assert (
                 self.use_flash_attn and self.version == 2
             ), "only support return_attn_probs=True used by FlashAttn2"
-            assert self.training, "only support return_attn_probs=True in training now"
 
         if not self.cross_attn and self.num_heads_kv == self.num_heads:
             assert x_kv is None and mixer_subset is None
@@ -1473,9 +1641,7 @@ class MHA(nn.Module):
                     if key_padding_mask is not None and indices is not None:
                         # print("rotary mha path0")
                         if not is_pad:
-                            qkv = pad_input(
-                                qkv, indices, cu_seqlens.shape[0] - 1, max_seqlen
-                            )
+                            qkv = pad_input(qkv, indices, bs, max_seqlen)
                         qkv = self.rotary_emb(
                             qkv, None, 0, None, None, None, None, None
                         )
@@ -1511,72 +1677,48 @@ class MHA(nn.Module):
                 else:
                     context = attn_outs[0]
             else:
-                if (
-                    not inference_params.fused_ft_kernel
-                ) or inference_params.sequence_len_offset == 0:
-                    # TODO: support varlen
-                    assert is_pad
-                    if self.rotary_emb_dim > 0:
-                        qkv = self.rotary_emb(
-                            qkv,
-                            None,
-                            inference_params.sequence_len_offset,
-                            None,
-                            None,
-                            None,
-                            None,
-                            None,
-                        )
-                    q = qkv[:, :, 0]
-                    kv = self._update_kv_cache(qkv[:, :, 1:], inference_params)
-                    # If we're processing the prompt, causal=None (use self.causal).
-                    # If we're decoding, then causal=False.
-                    causal = (
-                        None if inference_params.sequence_len_offset == 0 else False
-                    )
-                    input_args = self._get_inner_cross_attn_args(
-                        q, kv, causal=causal, use_window_mask=False
-                    )
-                    context = self.inner_cross_attn(*input_args)
-
-                    if isinstance(context, (tuple, list)):
-                        assert len(context) == 1
-                        context = context[0]
+                # If we're processing the prompt, causal=None (use self.causal).
+                # If we're decoding, then causal=False.
+                if is_pad:
+                    seq_offset = inference_params.sequence_len_offset
+                    causal = None if seq_offset == 0 else False
                 else:
-                    assert inference_params.fused_ft_kernel
-                    assert ft_attention is not None
-                    batch_start = inference_params.batch_size_offset
-                    batch_end = batch_start + qkv.shape[0]
-                    k_cache, v_cache = inference_params.key_value_memory_dict[
-                        self.layer_idx
-                    ]
-                    lengths_per_sample = (
-                        inference_params.lengths_per_sample[batch_start:batch_end]
-                        if inference_params.lengths_per_sample is not None
-                        else None
+                    bs_start = inference_params.batch_size_offset
+                    bs_end = bs_start + bs
+                    seq_offset = inference_params.lengths_per_sample[bs_start:bs_end]
+                    causal = None if (seq_offset == 0).all() else False
+                if self.rotary_emb_dim > 0:
+                    qkv = self.rotary_emb.forward(
+                        qkv, None, seq_offset, None, cu_seqlens, None, max_seqlen, None
                     )
-                    rotary_emb_base = (
-                        self.rotary_emb.base if self.rotary_emb_dim > 0 else 0
-                    )
-                    context = ft_attention.single_query_attention(
-                        *rearrange(qkv, "b 1 three h d -> b three h d").unbind(dim=1),
-                        k_cache[batch_start:batch_end],
-                        v_cache[batch_start:batch_end],
-                        lengths_per_sample,
-                        None,  # rotary_cos_
-                        None,  # rotary_sin_
-                        None,  # nnz_head_idx
-                        inference_params.sequence_len_offset,
-                        self.rotary_emb_dim,
-                        rotary_emb_base,
-                        # neox_rotary_style
-                        (
-                            (not self.rotary_emb.interleaved)
-                            if self.rotary_emb_dim > 0
-                            else True
-                        ),
-                    )
-                    context = rearrange(context, "b h d -> b 1 h d")
+                q = qkv[..., 0, :, :]  # [..., h, d]
+                kv = qkv[..., 1:, :, :]  # [...,two, h, d]
+                kv = self._update_kv_cache(
+                    kv,
+                    inference_params,
+                    kwargs.get("seqlens"),
+                    kwargs.get("to_cache_indices"),
+                    kwargs.get("cached_indices"),
+                )
+
+                input_args = self._get_inner_cross_attn_args(
+                    q,
+                    kv,
+                    causal,
+                    cu_seqlens,
+                    max_seqlen,
+                    kwargs.get("cu_seqlens_k"),
+                    kwargs.get("max_seqlen_k"),
+                    return_attn_probs,
+                    key_padding_mask,
+                    use_window_mask=False,
+                )
+
+                context = self.inner_cross_attn(*input_args)
+
+                if isinstance(context, (tuple, list)):
+                    assert len(context) == 1
+                    context = context[0]
         else:
             if self.cross_attn:  # mha cross branch
                 if not self.return_residual:
@@ -1681,12 +1823,8 @@ class MHA(nn.Module):
                         if key_padding_mask is not None and indices is not None:
                             # print("rotary gqa path0")
                             if not is_pad:
-                                q = pad_input(
-                                    q, indices, cu_seqlens.shape[0] - 1, max_seqlen
-                                )
-                                kv = pad_input(
-                                    kv, indices, cu_seqlens.shape[0] - 1, max_seqlen
-                                )
+                                q = pad_input(q, indices, bs, max_seqlen)
+                                kv = pad_input(kv, indices, bs, max_seqlen)
                             q, kv = self.rotary_emb(q, kv, 0, 0, None, None, None, None)
                             if not is_pad:
                                 q, _, _, _ = unpad_input(q, key_padding_mask)
@@ -1731,27 +1869,50 @@ class MHA(nn.Module):
                     else:
                         context = attn_outs[0]
                 else:
+                    # If we're processing the prompt, causal=None (use self.causal).
+                    # If we're decoding, then causal=False.
+                    if is_pad:
+                        seq_offset = inference_params.sequence_len_offset
+                        causal = None if seq_offset == 0 else False
+                    else:
+                        bs_start = inference_params.batch_size_offset
+                        bs_end = bs_start + bs
+                        seq_offset = inference_params.lengths_per_sample[
+                            bs_start:bs_end
+                        ]
+                        causal = None if (seq_offset == 0).all() else False
                     if self.rotary_emb_dim > 0:
-                        assert is_pad
                         q, kv = self.rotary_emb(
                             q,
                             kv,
-                            inference_params.sequence_len_offset,
-                            inference_params.sequence_len_offset,
-                            None,
-                            None,
-                            None,
-                            None,
+                            seq_offset,
+                            seq_offset,
+                            cu_seqlens,
+                            cu_seqlens,
+                            max_seqlen,
+                            max_seqlen,
                         )
-                    kv = self._update_kv_cache(kv, inference_params)
-                    # If we're processing the prompt, causal=None (use self.causal).
-                    # If we're decoding, then causal=False.
-                    causal = (
-                        None if inference_params.sequence_len_offset == 0 else False
+
+                    kv = self._update_kv_cache(
+                        kv,
+                        inference_params,
+                        kwargs.get("seqlens"),
+                        kwargs.get("to_cache_indices"),
+                        kwargs.get("cached_indices"),
                     )
                     input_args = self._get_inner_cross_attn_args(
-                        q, kv, causal=causal, use_window_mask=False
+                        q,
+                        kv,
+                        causal,
+                        cu_seqlens,
+                        max_seqlen,
+                        kwargs.get("cu_seqlens_k"),
+                        kwargs.get("max_seqlen_k"),
+                        return_attn_probs,
+                        key_padding_mask,
+                        use_window_mask=False,
                     )
+
                     context = self.inner_cross_attn(*input_args)
 
                     if isinstance(context, (tuple, list)):

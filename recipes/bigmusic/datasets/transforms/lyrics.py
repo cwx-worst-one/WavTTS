@@ -209,7 +209,15 @@ class LyricsTokenTransform():
         self.handler = handler
 
     def tokenize(self, item, lyrics_text, **kwargs):
-        token_dict = self.lyrics_tokenizer(lyrics_text, return_tensors='pt', padding=False, return_length=True, **kwargs)
+        #print('lyrics_text: ', lyrics_text)
+        lang = [[]]
+        line_break = " <n> "
+        lyrics_text_list = lyrics_text.split(line_break)
+        for i in lyrics_text_list:
+            lang[0].append(item.get('lang', None))
+        #print('lang: ', lang)
+        token_dict = self.lyrics_tokenizer(lyrics_text, return_tensors='pt', padding=False, return_length=True, language_batch=lang, **kwargs)
+        #print('token_dict: ', token_dict)
         input_ids = token_dict['input_ids'].squeeze(0)
         lyrics_length = token_dict['length'].squeeze(0).item() # return int item instead of tensor
         if self.dataset_mode == "variable_length": # return length
@@ -314,9 +322,10 @@ class LyricsTokenSamiTransform(LyricsTokenTransform):
     
     def tokenize(self, item, lyrics_text):
         # dropout_section_tags will be passed into the tokenizer's __call__
-        out_item = super().tokenize(item, lyrics_text, dropout_section_tags=False)
+        #print('item: ', item)
+        out_item = super().tokenize(item, lyrics_text, dropout_section_tags=False, dropout_singer_tags=False)
         if self.use_controller_cfg:
-            cfg_item = super().tokenize(item, lyrics_text, dropout_section_tags=True)
+            cfg_item = super().tokenize(item, lyrics_text, dropout_section_tags=True, dropout_singer_tags=True)
             out_item = {
                 **out_item,
                 "lyrics_tokens_cfg": cfg_item["lyrics_tokens"],

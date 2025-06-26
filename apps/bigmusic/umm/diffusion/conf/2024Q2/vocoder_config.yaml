@@ -9,6 +9,8 @@ cache_dir: ".module_cache/vocoder"
   bn_dim: 128
   wav_norm: False
   sample_rate: 44100
+  mini_bs: !apply:samantha.utils.envs.getenv_int ["vocoder_mini_bs", 4]
+  chunk_size: !apply:samantha.utils.envs.getenv_int ["vocoder_chunk_size", 4]
   vocoder_model: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
     checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/44.1k_stereo_zh_latent=128_hz=49_kl=1e-6_dataid_2196/checkpoints/last-EMA.ckpt
     version: 44.1k_vocal

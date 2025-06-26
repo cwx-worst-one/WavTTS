@@ -6,15 +6,24 @@ from typing import Dict, Optional, Any, List
 from recipes.musiclm.models.compat.semantic_model import w2v_bert_tokenization
 from abc import abstractmethod
 from typing import Any
-from torch.nn.utils.rnn import pad_sequence
+from torch.nn.utils.rnn import pad_sequence, unpad_sequence
 from torch import distributed
 from collections import defaultdict
+from recipes.musiclm.transforms.audio import RandomResizedCrop
+from recipes.bigmusic.utils.mulan_tag import MulanTagger
+from samantha.utils.ctiga.inference_params import InferenceParams
 from recipes.bigmusic.datasets.transforms.lyrics_segment import crop_pad_to_seq_length, random_crop_pad_to_seq_length
 from recipes.bigmusic.datasets.mir_data_util import NONE_LABEL, get_categorical_vocab
+from recipes.bigmusic.datasets.utils.zh_vocab_dev import get_tag_map, prob_to_tag
 import samantha.utils.hdfs_helper as hh
 import json
+import torch.nn.functional as F
 
-logger = logging.getLogger()
+import samantha
+from mariana.utils.audio.audio_logger import AudioLogger
+logger = AudioLogger()
+import os
+
 
 # Functions
 @torch.no_grad()
@@ -44,7 +53,7 @@ def get_soundstream_tokens(requires, x):
     return output
 
 @torch.no_grad()
-def get_mulan_embeds(requires, x, data_type="music", average=True):
+def get_mulan_embeds(requires, x, data_type="music", average=True, return_hidden_state=False):
     if data_type == "music":
         mulan_embeds = requires["mulan_infer_fn"](
             model=requires["mulan"],
@@ -53,9 +62,12 @@ def get_mulan_embeds(requires, x, data_type="music", average=True):
             avg=average,
         )
     elif data_type == "text":
-        # x should be a list of strings
+        # x should be a list of strings        
         mulan_embeds = requires["mulan_infer_fn"](
-            model=requires["mulan"], text=x, device=requires["mulan"].device
+            model=requires["mulan"], 
+            text=x, 
+            device=requires["mulan"].device,
+            return_hidden_state=return_hidden_state
         )
     else:
         raise ValueError(f"Unknown data type: {data_type}")
@@ -75,14 +87,20 @@ def get_t5_embeds(requires, x):
 
 @torch.no_grad()
 def get_bestrq_umm_tokens(requires, batch, chunk_size=None, **kwargs):
-    for umm_key in ['Stage3', 'Stage3Conv1D', 'convumm_gan_model']:
-        if umm_key in requires:
-            lit_module = requires[umm_key]
-            break
+    if 'Stage3' in requires:
+        lit_module = requires['Stage3']
+    elif 'Stage3Conv1D' in requires:
+        lit_module = requires['Stage3Conv1D']
+    elif 'convumm_gan_model' in requires:
+        lit_module = requires['convumm_gan_model']
+    elif 'UMM2_30s' in requires:
+        lit_module = requires['UMM2_30s']
     else:
         raise ValueError(f"Can't find UMM in requires")
     if chunk_size is None or batch.shape[-1] <= chunk_size:
         vq_ids = lit_module.wav2token(batch, **kwargs)
+        if isinstance(vq_ids, dict) and "vq_ids" in vq_ids:
+            vq_ids = vq_ids["vq_ids"]
     else:
         if batch.dim() == 3:
             batch = batch.squeeze(1)
@@ -116,6 +134,12 @@ def get_bestrq_umm_embeds(requires, batch):
     lit_module = requires['Stage3']
     return lit_module.wav2embed(batch)
 
+@torch.no_grad()
+def get_umm2_outputs(requires, batch):
+    lit_module = requires['umm2']
+    return None
+
+
 class BaseEmbedder(nn.Module):
     @abstractmethod
     def embed(self, requires, batch, token_ids=None):
@@ -141,8 +165,7 @@ class ContinuousEmbedder(BaseEmbedder):
         if add_none:
             self.none_id = self.vocab_size
             self.vocab_size = self.vocab_size + 1
-        if self.vocab_size:
-            self.embedder = nn.Embedding(self.vocab_size, input_dim)
+        self.embedder = nn.Embedding(self.vocab_size, input_dim)
 
         if input_dim != embedding_dim:
             self.projection = nn.Linear(input_dim, embedding_dim, bias=False)
@@ -231,9 +254,449 @@ class TokenEmbedder(BaseEmbedder):
             token_ids = torch.cat([token_ids, self.get_eos_token(token_ids.size(0))], dim=1)
         return token_ids
 
-    def embed(self, requires=None, batch=None, token_ids=None, with_sos=False, with_eos=False, **kwargs):
-        token_ids = self.tokenize(requires, batch, token_ids, with_sos, with_eos, **kwargs)
+    def embed(self, requires=None, batch=None, token_ids=None, with_sos=False, with_eos=False):
+        token_ids = self.tokenize(requires, batch, token_ids, with_sos, with_eos)
         return self.embedder(token_ids)
+
+class LyricsTokenEmbedder(TokenEmbedder):
+    def __init__(self, vocab_size, embedding_dim, add_sos=False, add_eos=False, is_varlen=False):
+        super().__init__(vocab_size, embedding_dim, add_sos=add_sos, add_eos=add_eos)
+        self.is_varlen = is_varlen
+
+    # TODO: (AS) add padding_idx
+    def get_tokens(self, requires, input):
+        return input
+    
+    @property
+    def device(self):
+        return next(self.parameters()).device
+
+    def prepare_embed(self, batch, batch_size, conditions):
+        lyrics_tokens, lyrics_token_length = self._prepare_embed(batch, batch_size, conditions)
+        lyrics_embeds = self.embed(token_ids=lyrics_tokens, with_sos=False, with_eos=False).to(self.device)
+        if self.is_varlen:
+            lyrics_tokens = unpad_sequence(lyrics_tokens, lyrics_token_length, batch_first=True)
+            lyrics_embeds = unpad_sequence(lyrics_embeds, lyrics_token_length, batch_first=True)
+        return lyrics_embeds, lyrics_tokens, lyrics_token_length
+
+    def _prepare_embed(self, batch, batch_size, conditions):
+        """
+        Return:
+        - lyrics_tokens: Padded lyrics token with optionally sos_id and eos_id
+        - lyrics_token_length: Original lyrics_token_length for varlen or padded lyrics_token_length for regular
+        """
+        if 'lyrics_tokens' in conditions:
+            assert 'lyrics_tokens_length' in batch
+            lyrics_token_length = batch['lyrics_tokens_length'].clone().to(self.device)
+            lyrics_tokens = batch['lyrics_tokens'].clone().to(self.device)
+            lyrics_tokens = self.tokenize(token_ids=lyrics_tokens, with_sos=False)
+        else:
+            lyrics_token_length = torch.zeros((batch_size), device=self.device)
+            lyrics_tokens = torch.zeros((batch_size, 0)).long().to(self.device)
+        
+        padded_lyrics_token_length = lyrics_tokens.shape[1]
+        
+        # Pad lyrics_tokens to lyrics_token_length. This is for cfg lyrics tokens with tag dropout.
+        if max(lyrics_token_length) > lyrics_tokens.shape[1]:
+            lyrics_tokens_pad = torch.full((lyrics_tokens.shape[0], max(lyrics_token_length)), 0)
+            lyrics_tokens_pad[:, :lyrics_tokens.shape[1]] = lyrics_tokens
+            lyrics_tokens = lyrics_tokens_pad.to(self.device)
+
+        if self.sos_id and self.eos_id:        
+            lyrics_tokens = F.pad(lyrics_tokens, (1, 1), 'constant', 0)
+            lyrics_tokens[:, 0] = self.sos_id
+            eos_indices = (lyrics_token_length+1).unsqueeze(1)              # set last index to EOS
+            lyrics_tokens.scatter_(1, eos_indices, self.eos_id)
+            lyrics_token_length += 2                                        # +2 for eos and sos
+            padded_lyrics_token_length += 2
+        
+        if not self.is_varlen:
+            lyrics_token_length = padded_lyrics_token_length
+
+        return lyrics_tokens, lyrics_token_length
+
+
+class LyricsTokenSectionEmbedder(LyricsTokenEmbedder):
+    """
+    Treat the positions of all -1 and -2 values in batch.lyrics_tokens as the positions of XVal duration embeddings
+    (Multiply the embedding by batch.section_durations).
+    -1 indicates section duration, -2 indicates slice duration.
+    """
+    def __init__(self, vocab_size, embedding_dim, add_sos=False, add_eos=False, is_varlen=False):
+        BaseEmbedder.__init__(self)         # call grandparent
+        self.is_varlen = is_varlen
+        self.vocab_size = vocab_size
+        self.dur_id = None
+        self.global_dur_id = None
+        self.sos_id = None
+        self.eos_id = None
+
+        # add_dur
+        self.vocab_size = self.vocab_size + 1
+        self.dur_id = self.vocab_size - 1
+
+        # add global_dur
+        self.vocab_size = self.vocab_size + 1
+        self.global_dur_id = self.vocab_size - 1
+
+        if add_sos:
+            self.vocab_size = self.vocab_size + 1
+            self.sos_id = self.vocab_size - 1
+        if add_eos:
+            self.vocab_size = self.vocab_size + 1
+            self.eos_id = self.vocab_size - 1
+
+        self.embedder = nn.Embedding(self.vocab_size, embedding_dim)
+
+    def normalize_timestamp(self, x, max_duration=240, max_timestamp=10):
+        # normalize the timestamp between [0, 5]
+        x = torch.clamp(x, max=max_duration)
+        return x / max_duration * max_timestamp
+
+    # def insert_token_at_positions(self, tokens, positions, new_token):
+    #     """
+    #     example usage:
+    #     - input:
+    #         tokens = torch.tensor([1, 2, 3, 4, 5, 0, 0, 0, 0, 0])
+    #         positions = torch.tensor([[0, 2, -1]])
+    #         new_token = 100
+    #     - output:
+    #         out_tokens = torch.tensor([[1, 100, 2, 3, 100, 0, 0, 0, 0, 0, 0, 0, 0]])
+    #     """
+    #     out_tokens = torch.zeros(len(tokens) + len(positions), dtype=tokens.dtype)
+    #     orig_index = 0
+    #     new_index = 0
+    #     for pos in positions[positions != -1]:
+    #         pos = pos + 1
+    #         out_tokens[new_index:new_index + pos - orig_index] = tokens[orig_index:pos]
+    #         new_index += pos - orig_index
+    #         orig_index = pos
+    #         out_tokens[new_index] = new_token
+    #         new_index += 1
+    #     out_tokens[new_index:new_index + len(tokens) - orig_index] = tokens[orig_index:]
+    #     return out_tokens
+    
+    # def multiply_embeddings_by_duration(self, lyrics_embeds, section_positions, section_durations):
+    #     """
+    #     example usage:
+    #     - input:
+    #         lyrics_embeds = torch.tensor([
+    #             [[1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1]], 
+    #             [[1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1]]
+    #         ])
+    #         section_positions = torch.tensor([[1, 4, -1], [1, 3, 5]])
+    #         section_durations = torch.tensor([[5, 10, 0], [5, 20, 10]])
+    #     - output:
+    #         lyrics_embeds = torch.tensor([
+    #             [[1, 1], [5, 5], [1, 1], [1, 1], [10, 10], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1]],
+    #             [[1, 1], [5, 5], [1, 1], [20, 20], [1, 1], [10, 10], [1, 1], [1, 1], [1, 1], [1, 1]],
+    #         ])
+    #     """
+    #     mask = section_positions != -1
+    #     batch_indices = torch.arange(lyrics_embeds.size(0)).unsqueeze(1).expand_as(section_positions).to(lyrics_embeds.device)
+    #     flat_positions = section_positions[mask]
+    #     flat_durations = section_durations[mask]
+    #     flat_batch_indices = batch_indices[mask]
+    #     flat_durations = flat_durations.unsqueeze(-1).expand(-1, lyrics_embeds.size(2))
+    #     lyrics_embeds[flat_batch_indices, flat_positions] *= flat_durations
+        
+    #     return lyrics_embeds
+    
+    def multiple_embedding_at_indices(self, lyrics_embeds, duration_values, indices):
+
+        durations_expanded = torch.ones_like(lyrics_embeds)
+        batch_indices, token_indices = indices.nonzero(as_tuple=True)
+        duration_indices = indices.cumsum(dim=1)[indices] - 1
+        durations_expanded[batch_indices, token_indices] = duration_values[batch_indices, duration_indices].unsqueeze(-1)
+        lyrics_embeds *= durations_expanded
+        return lyrics_embeds
+
+    def prepare_embed(self, batch, batch_size, conditions):
+
+        lyrics_tokens, lyrics_token_length = self._prepare_embed(batch, batch_size, conditions)
+        lyrics_tokens[lyrics_tokens == -1] = self.dur_id
+        lyrics_tokens[lyrics_tokens == -2] = self.global_dur_id
+
+        lyrics_embeds = self.embed(token_ids=lyrics_tokens, with_sos=False, with_eos=False).to(self.device)
+
+        sec_dur_indices = (lyrics_tokens == self.dur_id)
+        if self.dur_id in lyrics_tokens:
+            section_durations = self.normalize_timestamp(batch['section_durations']).to(self.device)
+            lyrics_embeds = self.multiple_embedding_at_indices(lyrics_embeds, section_durations, sec_dur_indices)
+        
+        slice_dur_indices = (lyrics_tokens == self.global_dur_id)
+        if self.global_dur_id in lyrics_tokens:
+            slice_durations = self.normalize_timestamp(batch['slice_duration']).unsqueeze(-1).to(self.device)
+            lyrics_embeds = self.multiple_embedding_at_indices(lyrics_embeds, slice_durations, slice_dur_indices)
+
+        if self.is_varlen:
+            lyrics_tokens = unpad_sequence(lyrics_tokens, lyrics_token_length, batch_first=True)
+            lyrics_embeds = unpad_sequence(lyrics_embeds, lyrics_token_length, batch_first=True)
+        else:
+            lyrics_token_length = lyrics_tokens.shape[1] + torch.zeros((batch_size), device=self.device)
+
+        return lyrics_embeds, lyrics_tokens, lyrics_token_length
+        
+
+    # def prepare_embed(self, batch, batch_size, conditions):
+    #     lyrics_tokens, lyrics_token_length = self._prepare_embed(batch, batch_size, conditions)
+
+    #     section_positions = batch['section_tag_token_pos'].to(self.device)              # section_positions: [[0 -1 -1 -1 -1], [1 2 3 4 5], [-1 -1 -1 -1 -1], [1 2 -1 -1 -1]]   (all -1 means vocal type)
+    #     section_durations = self.normalize_timestamp(batch['section_durations']).to(self.device)
+    #     global_duration = batch['slice_duration'].to(self.device)
+
+    #     # handle empty (e.g., after section_tag cfg)
+    #     if section_positions.numel() == 0:
+    #         section_positions = torch.tensor([[-1]] * batch_size).to(self.device)
+    #         section_durations = torch.tensor([[0]] * batch_size).to(self.device)
+        
+    #     # shift position by 1 after adding sos token
+    #     if self.sos_id:         
+    #         mask = section_positions != -1
+    #         section_positions[mask] += 1                                # section_positions: [[1 -1 -1 -1 -1], [2 3 4 5 6], [-1 -1 -1 -1 -1], [2 3 -1 -1 -1]
+    #     valid_section_positions = [tensor[tensor!=-1] for tensor in section_positions]
+    #     section_counts = torch.tensor( [len(x) for x in valid_section_positions] ).to(self.device)      # section_counts: [1, 5, 0, 2]
+
+    #     lyrics_tokens = torch.stack([                                   # lyrics_tokens[0]: [2000 1620 2 428 442 1595 422 593 1595 1593 431 502 1595 1593 1401 ...]
+    #         self.insert_token_at_positions(tokens, positions, self.dur_id) for
+    #         tokens, positions in zip(lyrics_tokens, section_positions)
+    #     ]).to(self.device)                                              # lyrics_tokens[0]: [2000 1620 2002 2 428 442 1595 422 593 1595 1593 431 502 1595 1593 1401 ...]
+
+    #     # update the token positions
+    #     offsets = torch.arange(1, section_positions.size(1) + 1).unsqueeze(0).to(self.device)
+    #     mask = section_positions != -1
+    #     section_positions = torch.where(mask, section_positions + offsets, section_positions)   # section_positions: [[ 1, -1, -1, -1, -1], [ 2,  4,  6,  8, 10], [ -1, -1, -1, -1, -1], [ 2,  4, -1, -1, -1]]
+    #     lyrics_token_length = lyrics_token_length + section_counts      # lyrics_token_length: [272, 12, 360, 6] (previous: [271, 7, 359, 4])
+
+    #     # add global duration token when global_duration>0
+    #     global_duration_indices = (global_duration > 0).nonzero(as_tuple=True)[0]
+    #     global_dur_pos = 1 if self.sos_id else 0        # make sure the global duration token is after sos token (if exists)
+    #     lyrics_tokens[global_duration_indices, 1+global_dur_pos:] = lyrics_tokens[global_duration_indices, global_dur_pos:-1]
+    #     lyrics_tokens[global_duration_indices, global_dur_pos] = self.global_dur_id
+    #     lyrics_token_length[global_duration_indices] += 1
+    #     lyrics_embeds = self.embed(token_ids=lyrics_tokens, with_sos=False, with_eos=False).to(self.device)
+
+    #     # multiply the duration embedding by normalized durations
+    #     lyrics_embeds = self.multiply_embeddings_by_duration(lyrics_embeds, section_positions, section_durations)
+
+    #     # multiply the global duration embedding by the global normalized durations (if applied)
+    #     if global_duration_indices.numel() > 0:
+    #         lyrics_embeds[global_duration_indices, global_dur_pos, :] *= self.normalize_timestamp(global_duration)[global_duration_indices].unsqueeze(1).to(self.device)
+
+    #     if self.is_varlen:
+    #         lyrics_tokens = unpad_sequence(lyrics_tokens, lyrics_token_length, batch_first=True)
+    #         lyrics_embeds = unpad_sequence(lyrics_embeds, lyrics_token_length, batch_first=True)
+    #     else:
+    #         lyrics_token_length = lyrics_tokens.shape[1]
+
+    #     return lyrics_embeds, lyrics_tokens, lyrics_token_length
+
+class XValEmbedder(nn.Module):
+    def __init__(self, embedding_dim, max_value=120, norm_max_value=10) -> None:
+        super().__init__()
+
+        self.token_id = 1   # there is only one token, which is set to 1
+        self.pad_id = 0
+        self.vocab_size = 2    # single_token + <pad> (no eos)
+        self.embedder = nn.Embedding(self.vocab_size, embedding_dim)
+        self.max_value = max_value  
+        self.norm_max_value = norm_max_value  
+        self.logged = 0
+
+    def normalize(self, x):
+        x = torch.clamp(x, max=self.max_value)
+        norm = x / self.max_value * self.norm_max_value
+        norm[x <= 0] = 1  # always use the pad embedding where x <= 0, no need to scale the embedding in this case
+        return norm
+
+    # input can be either 2d tensor (section-level) or 1d tensor (sample-level)
+    def embed(self, input):
+        if input.ndim == 1: 
+            input = input.unsqueeze(1)
+
+        device = next(self.parameters()).device
+        token_ids = torch.where(input > 0, torch.tensor(self.token_id), torch.tensor(self.pad_id)).long().to(device)
+        # normalize the input to range
+        normalized_input = self.normalize(input).float()
+        embeds = self.embedder(token_ids) * normalized_input.unsqueeze(2)
+        if self.logged < 5:
+            print(f"Xval input: {input}")
+            print(f"token_ids ({token_ids.shape}): {token_ids}")
+            print(f"normalized input ({normalized_input.shape}): {normalized_input}")
+            self.logged += 1
+
+        return embeds, token_ids, normalized_input
+        
+class InstrumentEmbedder(TokenEmbedder):
+    def __init__(self, vocab_size, embedding_dim, add_sos=False, add_eos=False, is_varlen=False):
+        super().__init__(vocab_size, embedding_dim, add_sos, add_eos)
+        self.is_varlen = is_varlen
+
+    def add_sos_eos_id(self, padded_tokens, ori_token_length, with_sos=False, with_eos=False):
+        """
+        padded_tokens: [B, T_max]
+        token_length: [B]
+        """
+        padded_token_length = padded_tokens.shape[1]
+        token_length = ori_token_length.clone()
+        
+        # Pad tokens to token_length. This is for cfg inst tokens with inst dropout.
+        if max(token_length) > padded_token_length:
+            padded_tokens = F.pad(padded_tokens, (0, max(token_length) - padded_token_length), 'constant', 0)
+
+        if self.sos_id and with_sos:
+            padded_tokens = F.pad(padded_tokens, (1, 0), 'constant', 0)
+            padded_tokens[:, 0] = self.sos_id
+            token_length += 1                                        # +1 for sos
+            padded_token_length += 1
+            
+        if self.eos_id and with_eos:        
+            padded_tokens = F.pad(padded_tokens, (0, 1), 'constant', 0)
+            eos_indices = token_length.unsqueeze(1)              # set last index to EOS
+            padded_tokens.scatter_(1, eos_indices, self.eos_id)
+            token_length += 1                                           # +1 for eos
+            padded_token_length += 1
+        
+        if not self.is_varlen:
+            token_length = padded_token_length
+
+        return padded_tokens, token_length
+
+    def prepare_embed(self, requires, input: torch.Tensor, token_length: torch.Tensor, with_sos=False, with_eos=False):
+        """
+        input: [B, N_max_inst]
+        token_length: [B]
+        """
+        batch_size = input.shape[0]
+        # padded_tokens: [B, T_max+(with_sos)+(with_eos)], token_length: [B]
+        padded_token_ids, token_length = self.add_sos_eos_id(input, token_length, with_sos, with_eos)
+        padded_token_embed = self.embedder(padded_token_ids)
+
+        if self.is_varlen:
+            token_ids = unpad_sequence(padded_token_ids, token_length, batch_first=True)
+            token_embed = unpad_sequence(padded_token_embed, token_length, batch_first=True)
+        else:
+            token_length = token_embed.shape[1] + torch.zeros((batch_size), device=self.device)
+            token_embed = padded_token_embed
+            token_ids = padded_token_ids
+
+        return token_ids, token_embed, token_length
+
+class XvalDurationEmbedder(nn.Module):
+
+    def __init__(self, embedding_dim, max_duration=120, max_timestamp=10):
+        super().__init__()
+
+        self.token_id = 1   # there is only one token, which is set to 1
+        self.pad_id = 0
+        self.vocab_size = 2    # single_token + <pad> (no eos)
+        self.embedder = nn.Embedding(self.vocab_size, embedding_dim)
+        self.max_duration = max_duration    # max of possible section duration
+        self.max_timestamp = max_timestamp
+        self.logged = 0
+    
+    def normalize_timestamp(self, x):
+        # normalize the timestamp between [0, 5]
+        x = torch.clamp(x, max=self.max_duration)
+        return x / self.max_duration * self.max_timestamp
+
+    # durations can be either 2d tensor (section_durations) or 1d tensor (global duration)
+    def embed(self, durations):
+
+        if durations.ndim == 1:     # in case of global duration, durations
+            durations = durations.unsqueeze(1)
+
+        device = next(self.parameters()).device
+        token_ids = torch.where(durations != 0, torch.tensor(self.token_id), torch.tensor(self.pad_id)).long().to(device)
+        # normalize the duration to range
+        normalized_timestamps = self.normalize_timestamp(durations).float()
+        embeds = self.embedder(token_ids) * normalized_timestamps.unsqueeze(2)
+        if self.logged < 5:
+            print(f"durations: {durations}")
+            print(f"token_ids ({token_ids.shape}): {token_ids}")
+            print(f"normalized_timestamps ({normalized_timestamps.shape}): {normalized_timestamps}")
+            self.logged += 1
+
+        return embeds, token_ids, normalized_timestamps
+
+
+class BpeTokenEmbedder(BaseEmbedder):
+    def __init__(self, tokenizer_path, device, input_key="raw_lyrics"):
+
+        from transformers import AutoTokenizer
+
+        super().__init__()
+        assert os.path.exists(tokenizer_path), f"{tokenizer_path} not found in local"
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+        self.input_key = input_key
+        self.device = device
+        self.eos_id = self.tokenizer.eos_token_id
+        self.sos_id = self.tokenizer.bos_token_id
+
+    def get_tokens(self, batch=None):
+        # print(f"BpeTokenEmbedder {self.input_key} {len(batch[self.input_key])}")
+        # for idx, lyrics in enumerate(batch[self.input_key]):
+        #     print(f"[{idx}]:{lyrics}")
+
+        tokens = self.tokenizer(batch[self.input_key])['input_ids']
+        token_length = torch.tensor([len(token) for token in tokens], dtype=torch.long, device=self.device)
+        tokens = [torch.tensor(token, dtype=torch.long, device=self.device) for token in tokens]
+        
+        return tokens, token_length
+        
+
+
+class LyricsTokenEmbedderV2(TokenEmbedder):
+    def __init__(self, vocab_size, embedding_dim, add_sos=False, add_eos=False, is_varlen=False, **kwargs):
+        super().__init__(
+            vocab_size=vocab_size,
+            embedding_dim=embedding_dim,
+            add_sos=add_sos,
+            add_eos=add_eos,
+            *kwargs,
+        )
+        self.is_varlen = is_varlen
+
+    def embed(
+        self,
+        requires=None,
+        batch=None,
+        token_ids=None,
+        with_sos=False,
+        with_eos=False,
+        token_wise_multiplication=None,
+    ):
+        # token_wise_multiplication is the scaling factor to each embedding of token, 1.0 means no change, 0.0 means disable
+        # Here we set (scaling factor) == (float time in second) as the representaion of time tokens
+        token_ids = self.tokenize(requires, batch, token_ids, with_sos, with_eos)
+        embedding = self.embedder(token_ids)
+        if with_sos:
+            sos_token = self.get_sos_token(token_wise_multiplication.size(0))
+            sos_coff = torch.ones_like(sos_token).float() # for sos toke, we simply set token_wise_multiplication=1.0 (not scaling)
+            token_wise_multiplication = torch.cat([sos_coff, token_wise_multiplication], dim=1)
+        if with_eos:
+            eos_coff = self.get_sos_token(token_wise_multiplication.size(0))
+            eos_coff = torch.ones_like(eos_coff).float() # for eos toke, we simply set token_wise_multiplication=1.0 (not scaling)
+            token_wise_multiplication = torch.cat([token_wise_multiplication, eos_coff], dim=1)
+        token_wise_multiplication = token_wise_multiplication.unsqueeze(-1)
+        embedding = embedding * token_wise_multiplication
+        return embedding
+
+    def prepare_embed(self, batch, batch_size, conditions):
+        assert "lyrics_tokens" in (conditions.split(",") if isinstance(conditions, str) else conditions)
+        lyrics_tokens = self.get_tokens(batch=batch)
+        lyrics_token_length = batch["lyrics_tokens_length"]
+        lyrics_coffs = batch.get("lyrics_coffs", torch.ones_like(lyrics_tokens))
+        lyrics_embeds = self.embed(token_ids=lyrics_tokens, token_wise_multiplication=lyrics_coffs)
+        if self.is_varlen:
+            lyrics_tokens = unpad_sequence(lyrics_tokens, lyrics_token_length, batch_first=True)
+            lyrics_embeds = unpad_sequence(lyrics_embeds, lyrics_token_length, batch_first=True)
+        else:
+            lyrics_token_length = lyrics_tokens.shape[1] + torch.zeros((batch_size), device=self.device)
+        return lyrics_embeds, lyrics_tokens, lyrics_token_length
+
+    def get_tokens(self, requires=None, batch=None, **kwargs):
+        return batch["lyrics_tokens"]
 
 
 class TagCategoricalEmbedder(TokenEmbedder):
@@ -285,7 +748,7 @@ class TagCategoricalEmbedder(TokenEmbedder):
     def get_tag_id(self, tag, dropout=0.0):
         if tag not in self.vocab2id:
             if not self.training and len(tag.strip()) > 0:  # use NONE_LABEL for empty label
-                raise Exception(f"Inference Error: Tag {tag} not found in vocab {self.vocab2id}. Please check vocab")
+                logger.warning(f"Inference Error: Tag {tag} not found in vocab {self.vocab2id}. Please check vocab")
             tag = NONE_LABEL
         if self.training and random.random() < dropout:
             tag = NONE_LABEL
@@ -326,7 +789,8 @@ class TagCategoricalEmbedder(TokenEmbedder):
         self.vocab2id = state['vocab'] 
         self.vocab2count.update(state.get('counts', {}))
     def get_extra_state(self) -> Any: return { 'vocab': self.vocab2id, 'counts': dict(self.vocab2count) }
-    
+
+
 class MulanCategoricalEmbedder(BaseEmbedder):
     def __init__(
             self,
@@ -472,7 +936,6 @@ class MulanCategoricalEmbedder(BaseEmbedder):
         requires,
         input_audio_or_text,
         data_type=None,
-        target_samples_length=None,
     ):
         # Text
         if data_type == "text":
@@ -516,33 +979,30 @@ class MulanEmbedder(ContinuousEmbedder):
             mulan_crop=True,
             mulan_average=True,
             dropout=0.0,
+            text_emb_max_len=100,
+            return_hidden_state=False
         ):
         super().__init__(input_dim, embedding_dim, add_sos, add_none=add_none)
 
         self.data_type = data_type
         self.min_audio_length = min_audio_length # 10s * 24k sample rate
         self.mulan_crop = mulan_crop
-        self.mulan_average = mulan_average
         self.dropout = dropout
+        self.text_emb_max_len = text_emb_max_len
+        self.return_hidden_state = return_hidden_state
 
     def get_embeds(
         self,
         requires,
         input_audio_or_text,
         data_type=None,
-        target_samples_length=None,
     ):
         # Text
         if data_type == "text":
-            mulan_embeds = get_mulan_embeds(requires, input_audio_or_text, data_type)
+            mulan_embeds = get_mulan_embeds(requires, input_audio_or_text, data_type, return_hidden_state=self.return_hidden_state)
             if len(mulan_embeds.shape) == 2:
                 mulan_embeds = mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
-            if not self.mulan_crop and not self.mulan_average:
-                assert target_samples_length is not None
-                # TODO: don't hardcode shift length
-                shift_length = self.min_audio_length // 2
-                prefix_length = 1 + (target_samples_length - self.min_audio_length) // shift_length
-                mulan_embeds = mulan_embeds.expand(-1, prefix_length, -1)
+            mulan_embeds = mulan_embeds[:, :self.text_emb_max_len, :]
             return mulan_embeds
         ## CFG
         if data_type == "none":
@@ -555,22 +1015,28 @@ class MulanEmbedder(ContinuousEmbedder):
                 return input_audio_or_text.unsqueeze(1)
             return input_audio_or_text
         # Audio
-        if self.training and self.mulan_crop:
-            input_audio_or_text = random_crop_pad_to_seq_length(input_audio_or_text, self.min_audio_length)
-        if not self.training and not self.mulan_crop and not self.mulan_average:
-            assert target_samples_length is not None
-            input_audio_or_text = random_crop_pad_to_seq_length(input_audio_or_text, target_samples_length)
-        if input_audio_or_text.shape[-1] < self.min_audio_length:
-            input_audio_or_text = crop_pad_to_seq_length(input_audio_or_text, self.min_audio_length)
-        ## Audio embed
         if data_type == "music":
-            mulan_embeds = get_mulan_embeds(
-                requires, input_audio_or_text, data_type, average=self.mulan_average
-            )
-            if self.training and random.random() < self.dropout:
-                none_embeds = self.embedder(torch.tensor([self.none_id], device=mulan_embeds.device))
-                mulan_embeds[..., :] = none_embeds.squeeze(0)
-
+            if input_audio_or_text.dim() == 1: input_audio_or_text = input_audio_or_text.unsqueeze(0)
+            if input_audio_or_text.shape[-1] < self.min_audio_length:
+                input_audio_or_text = crop_pad_to_seq_length(input_audio_or_text, self.min_audio_length)
+            else:
+                if self.mulan_crop and self.training:
+                    # Always use moving average of mulan emb for validation and inference.
+                    input_audio_or_text = random_crop_pad_to_seq_length(input_audio_or_text, self.min_audio_length)                            
+            bs = input_audio_or_text.shape[0]
+            device = next(self.parameters()).device            
+            if self.training:
+                if random.random() < self.dropout:
+                    mulan_embeds = self.embedder(torch.tensor([self.none_id] * bs, device=device)).unsqueeze(1)
+                else:
+                    mulan_embeds = get_mulan_embeds(requires, input_audio_or_text, data_type)
+            else:
+                if torch.sum(input_audio_or_text) == 0:
+                    # This is the CFG path
+                    mulan_embeds = self.embedder(torch.tensor([self.none_id] * bs, device=device)).unsqueeze(1)
+                else:
+                    # This is the conditioned path
+                    mulan_embeds = get_mulan_embeds(requires, input_audio_or_text, data_type)
             if mulan_embeds.dim() == 2:
                 mulan_embeds = mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
             return mulan_embeds
@@ -632,18 +1098,45 @@ class AudioKeyEmbedder(TokenEmbedder):
         return input
 
 
-class LyricsTokenEmbedder(TokenEmbedder):
-    def __init__(self, vocab_size, embedding_dim, add_sos=False, add_eos=False):
-        super().__init__(vocab_size, embedding_dim, add_sos=add_sos, add_eos=add_eos)
-    # TODO: (AS) add padding_idx
-    def get_tokens(self, requires, input):
-        return input
 
 class ChordSeqEmbedder(TokenEmbedder):
     def __init__(self, vocab_size, embedding_dim, add_sos=False, add_eos=False):
         super().__init__(vocab_size, embedding_dim, add_sos=add_sos, add_eos=add_eos)
     def get_tokens(self, requires, input):
         return input
+
+class T5Embedder(ContinuousEmbedder):
+    def __init__(self, input_dim=768, embedding_dim=1024, add_sos=False, model: str = "t5-base", max_length: int = 512):
+        super().__init__(input_dim, embedding_dim, add_sos)
+        from transformers import AutoTokenizer, T5EncoderModel
+
+        self.required_modules = {
+            "tokenizer": AutoTokenizer.from_pretrained(model),
+            "encoder": T5EncoderModel.from_pretrained(model).eval()
+        }
+        self.max_length = max_length
+        # self.embedding_features = self.required_modules["encoder"].config.d_model
+
+    @torch.no_grad()
+    def get_embeds(self, requires, texts):
+        encoded = self.required_modules["tokenizer"](
+            texts,
+            truncation=True,
+            max_length=self.max_length,
+            padding="max_length",
+            return_tensors="pt",
+        )
+
+        device = next(self.parameters()).device
+        input_ids = encoded["input_ids"].to(device)
+        # attention_mask = encoded["attention_mask"].to(device)
+        self.required_modules["encoder"].to(device)
+        
+        with torch.autocast(device_type="cuda", enabled=True, dtype=torch.float32):
+            embedding = self.required_modules["encoder"](
+                input_ids=input_ids, attention_mask=None
+            )["last_hidden_state"]
+        return embedding
 
 class MetadataT5TokenEmbedder(ContinuousEmbedder):
     def __init__(self, input_dim=512, embedding_dim=1024, add_sos=False):
@@ -693,6 +1186,7 @@ class BestRQTokenEmbedder(TokenEmbedder):
         self.store_hidden_states = store_hidden_states # save hidden states for m1 classifier
         self.last_hidden_state = None
         self.chunk_size = chunk_size
+        self.tag_map = get_tag_map()
 
     def get_tokens(self, requires, input_audio, **kwargs):
         if self.store_hidden_states:
@@ -702,6 +1196,466 @@ class BestRQTokenEmbedder(TokenEmbedder):
             return token_ids
         else:
             return get_bestrq_umm_tokens(requires, input_audio, self.chunk_size, **kwargs)
+
+    def tokenize_and_tag(self, requires, input_audio, **kwargs):
+        lit_module = requires['Stage3']
+        umm2_out = lit_module.wav2tokentag(input_audio)
+        tag_logits = umm2_out['tags_logits']
+        return umm2_out['vq_ids'], tag_logits
+    
+    def _key_with_max_value(d, topk=1, threshold=0): 
+        return max(d, key=d.get)
+
+    def convert_tag_logits_to_tags(self, tag_logits):
+        return prob_to_tag(tag_logits, self.tag_map)
+
+
+class BestRQMultiTokenEmbedder(BestRQTokenEmbedder):
+    def __init__(
+        self,
+        vocab_size=32_768,
+        embedding_dim=1024,
+        add_sos=False,
+        add_eos=False,
+        chunk_size=None,
+        store_hidden_states=False,
+        pattern='delay',
+        group=2,
+        null_placeholder=True,
+        encoder='fc',
+        decoder='fc',
+        semantic_codebook_depth=1,
+    ):
+        """
+        Embedder for Multi-token prediction
+        """
+        if chunk_size is not None and store_hidden_states:
+            raise Exception("Tokenizer currently does not support both chunking and saving last hidden state")
+        self.store_hidden_states = store_hidden_states # save hidden states for m1 classifier
+        self.last_hidden_state = None
+        self.chunk_size = chunk_size
+        self.group = group
+        self.pattern = pattern
+        self.null_placeholder = null_placeholder
+        self.embedding_dim = embedding_dim
+        self.R = semantic_codebook_depth
+
+        super().__init__(vocab_size, embedding_dim, add_sos, add_eos)
+
+        if self.pattern is None:
+            self.pattern = 'parallel'
+            self.group = 1
+            encoder = 'skip'
+            decoder = {'model_type': 'fc'}
+
+        self.null_id = None
+        if self.null_placeholder and self.pattern:
+            self.vocab_size += 1
+            self.null_id = self.vocab_size - 1
+            self.embedder = nn.Embedding(self.vocab_size, embedding_dim, padding_idx=self.null_id)
+
+        if self.R > 1:
+            self.embedder = nn.ModuleList([])
+            for r in range(self.R):
+                self.embedder.append(nn.Embedding(self.vocab_size, embedding_dim, padding_idx=self.null_id))
+
+        self.encoder_type = encoder
+        if self.encoder_type == 'fc':    # concat -> fc
+            self.encoder = nn.Sequential(
+                nn.Linear(self.group * embedding_dim, embedding_dim),
+                nn.Tanh(),
+                nn.Linear(embedding_dim, embedding_dim),
+            )
+        elif self.encoder_type in ['skip', 'sum']:
+            self.encoder = None # operation instead of layers
+        else:
+            raise NotImplementedError(f"Unsupported multi-token encoder {self.encoder_type}")
+        
+        self.decoder_type = decoder["model_type"]
+        if self.decoder_type in ['fc']:    # concat -> fc
+            self.decoder = None
+        elif self.decoder_type in ['transformer', 'RQ_transformer', 'ARQ_transformer']:
+            self.decoder = decoder["model_cls"]()
+        elif self.decoder_type in ['context_fc']:
+            self.decoder = nn.Sequential(
+                nn.Linear(2 * embedding_dim, embedding_dim),    # context + cond
+                nn.SiLU(),
+                nn.Linear(embedding_dim, decoder["output_dim"]),    # num_logits
+            )
+        else:
+            raise NotImplementedError(f"Unsupported multi-token decoder {self.decoder_type}")
+
+    def get_sos_embed(self, batch_size):
+        if self.R == 1:
+            return self.embedder(self.get_sos_token(batch_size))
+        else:
+            return self.embedder[0](self.get_sos_token(batch_size))
+
+    def embed(self, requires=None, batch=None, token_ids=None, with_sos=False, with_eos=False):
+        token_ids = self.tokenize(requires, batch, token_ids, with_sos, with_eos)
+        # (qinxin) Here, to align with super class func embed(), target_token_length is not given,
+        # so interpret target token length with added sos_id and eos_id 
+        token_length = torch.where(token_ids == self.eos_id)[1]  # [BS]
+        batch_size = token_ids.shape[0]
+        batch_token_embeds, batch_token_lengths, batch_group_token_ids = [], [], []
+        for b in range(batch_size):
+            if self.R == 1: # group on time frames
+                this_token_ids = token_ids[b, 1:token_length[b]]    # [T_b]
+                if len(this_token_ids) % self.group != 0:
+                    this_token_ids = F.pad(this_token_ids, 
+                                    (0, self.group - len(this_token_ids) % self.group), 
+                                    'constant', self.eos_id)
+                this_token_ids = this_token_ids.reshape(-1, self.group).mT  # [T_b//G, G], [G, T_b//G]
+            elif self.R == self.group:  # group on hierarchy
+                this_token_ids = token_ids[b, 1:token_length[b]].mT    # [T_b, R (G)] => [R (G), T_b]
+            else:
+                raise NotImplementedError(f"Unsupported semantic codebook depth {self.R} and group {self.group}")
+
+            if self.pattern == 'delay':
+                this_token_ids = F.pad(this_token_ids, (self.group - 1, 0), 'constant', self.null_id)
+                this_token_ids = torch.stack([torch.roll(this_token_ids[d], d + 1 - self.group) for d in range(self.group)])
+                # add EOS tokens, this_token_ids: [G, T]
+                if self.null_id in this_token_ids[:, -self.group:]:
+                    null_mask = this_token_ids[:, -self.group:] == self.null_id
+                    this_token_ids[:, -self.group:][null_mask] = self.eos_id
+
+            if this_token_ids.shape[1] == 0: 
+                this_token_ids = torch.ones(self.group, 1, dtype=torch.long, device=this_token_ids.device) * self.sos_id
+            if sum(this_token_ids[:, -1] == self.eos_id) != self.group:
+                this_token_ids = F.pad(this_token_ids, (0, 1), 'constant', self.eos_id)
+            
+            # [G, T] => [G, T, D] --- multi-token encoder ---> [T, D]
+            this_token_embeds = self.embed_token_id(this_token_ids)
+            this_sos_embed = self.get_sos_embed(1).squeeze(0)
+            this_token_embeds = torch.cat([
+                this_sos_embed,    # SOS token, [1, D]
+                this_token_embeds,             # grouped tokens + EOS tokens, [T, D]
+            ], dim=0)
+            
+            batch_token_embeds.append(this_token_embeds)    # [T, D]
+            batch_group_token_ids.append(this_token_ids) # [G, T-1] (no SOS token, with EOS tokens, serve as targets to be predicted by LM)
+            batch_token_lengths.append(this_token_embeds.shape[0])
+
+        token_embeds = pad_sequence(batch_token_embeds, batch_first=True, padding_value=0.)
+        return token_embeds, batch_group_token_ids, torch.LongTensor(batch_token_lengths)
+    
+    def embed_token_id(self, token_ids, frame_idx=None):
+        """token_ids: [G, T] / [B, G, T]"""
+        if frame_idx is not None and frame_idx + 1 < self.group and self.pattern == 'delay':
+            assert token_ids.shape[-1] == 1
+            token_ids[..., self.group-(frame_idx+1):, 0] = self.null_id
+
+        if self.R == 1:
+            token_embeds = self.embedder(token_ids) # [*, G, T] => [*, G, T, D]
+        else:
+            token_embeds = torch.stack([self.embedder[r](token_ids[..., r, :]) for r in range(self.R)], dim=-3) # [*, G, T] => [*, G, T, D]
+
+        if token_ids.ndim == 2:   # [G, T, D] => [T, D]
+            if self.encoder_type == 'skip':   # [G, T, D] => [T, D]
+                token_embeds = token_embeds[0]
+            elif self.encoder_type == 'sum': # => [G, T, D] => [T, D]
+                token_embeds = token_embeds.sum(dim=0)
+            else:    # [G, T, D] => [T, G, D] => [T, G*D] => [T, D]
+                token_embeds = self.encoder(token_embeds.transpose(1, 0).reshape(-1, self.group*self.embedding_dim))
+        else:   # [B, G, T, D] => [B, T, D]
+            if self.encoder_type =='skip':   # [B, T]
+                token_embeds = token_embeds[:, 0]
+            elif self.encoder_type =='sum':  # [B, T]
+                token_embeds = token_embeds.sum(dim=1)
+            else:   # [B, G, T, D] => [B, T, G, D] => [B, T, G*D] => [B, T, D]
+                token_embeds = self.encoder(token_embeds.transpose(2, 1).reshape(token_ids.shape[0], -1, self.group*self.embedding_dim))
+        return token_embeds
+
+
+    def decode_target_id(self, target_id, delete_null=False, add_sos=True, delay_back=False):
+        """target_id: [G, T]"""
+        # [G, T] -- reorganize --> [T, G]
+        if self.pattern == 'delay' and delay_back:
+            target_id = torch.stack([torch.roll(target_id[d], -d) for d in range(self.group)])
+
+        target_id = target_id.mT
+        if self.R == 1: # flatten --> [T*G]
+            target_id = target_id.reshape(-1)
+            if add_sos: # add on time axis
+                target_id = F.pad(target_id, (1, 0), 'constant', self.sos_id)
+        elif self.R == self.group: # [T, G]
+            if add_sos: # add on time axis
+                target_id = F.pad(target_id, (0, 0, 1, 0), 'constant', self.sos_id)
+            if (target_id[-1] == self.eos_id).sum() != self.R:
+                target_id[-1] = self.eos_id
+        
+        if delete_null:
+            target_id = target_id[target_id != self.null_id]
+        return target_id
+
+    def init_decoder(self, batch_size, max_seq_len=8000):
+        model_input = dict()
+        model_input["inputs_embeds"] = self.get_sos_embed(batch_size).to(self.decoder.lm_head.weight.dtype)
+        self.inference_params = InferenceParams(max_sequence_len=max_seq_len, max_batch_size=batch_size)
+        # pre allocate rotary cos/sin to reduce recompute them per step
+        for layer in self.decoder.transformer.layers:
+            if hasattr(layer.mixer, "rotary_emb"):
+                layer.mixer.rotary_emb._update_cos_sin_cache(model_input["inputs_embeds"], max_seq_len)
+                
+    def decode_hidden_state_inference(self, hidden_state, last_predict_token_emb=None, 
+                                      frame_idx=None, decoder_embeds=None, cfg_path=None):
+        """hidden_state: [B, T=1, D], last_predict_token_emb: [B, T=1, D]"""
+        if self.decoder is None or self.decoder_type not in ['transformer', 'RQ_transformer', 'context_fc', 'ARQ_transformer']:
+            return hidden_state
+        
+        model_input = {"inputs_embeds": None}
+        batch_size = hidden_state.shape[0]
+
+        def AR_decoder(model_input, hidden_state, last_predict_token_emb=None):
+            batch_size = hidden_state.shape[0]
+            if last_predict_token_emb is not None:
+                model_input["inputs_embeds"] = torch.cat((last_predict_token_emb[:batch_size], hidden_state), 
+                                                        dim=1)
+            else:
+                model_input["inputs_embeds"] = torch.cat((self.get_sos_embed(batch_size).to(self.decoder.lm_head.weight.dtype),
+                                                        hidden_state), dim=1)
+            decoder_output = self.decoder(**model_input, inference_params=self.inference_params,
+                                        position_ids=None, last_token_only=False,)
+            self.inference_params.sequence_len_offset += model_input['inputs_embeds'].size(1)
+            # [B, T=2, G*D]
+            target_logits = decoder_output.logits
+            target_logits = target_logits[:, -1:]   # [B, T=1, G*D]
+            return target_logits
+        
+        def context_fc(hidden_state, last_predict_token_emb):
+            batch_size = hidden_state.shape[0]
+            if last_predict_token_emb is None:
+                decoder_input = torch.cat((hidden_state, self.get_sos_embed(batch_size)), dim=-1)
+            else:
+                decoder_input = torch.cat((hidden_state, last_predict_token_emb[:batch_size]), dim=-1)
+            decoder_output = self.decoder(decoder_input)
+            return decoder_output
+        
+        def RQ_transformer(model_input, hidden_state):
+            print("RQ transformer inference will be done in `base_modules.py` or `semantic_modules_v4.py` because the \
+                  token sampling and cfg is defined there.")
+        
+        def ARQ_transformer(model_input, hidden_state):
+            print("ARQ transformer inference will be done in `base_modules.py` or `semantic_modules_v4.py` because the \
+                  token sampling and cfg is defined there.")
+        
+        if frame_idx == 0:
+            if self.decoder_type in ['transformer', 'RQ_transformer']:
+                self.init_decoder(batch_size, decoder_embeds=decoder_embeds, cfg_path=cfg_path)
+        
+        if self.decoder_type == 'transformer':
+            target_logits = AR_decoder(model_input, hidden_state, last_predict_token_emb)
+        elif self.decoder_type == 'context_fc':
+            target_logits = context_fc(hidden_state, last_predict_token_emb)
+
+        return target_logits
+
+
+    def decode_hidden_state(self, hidden_state, token_embeds, prefix_length, target_length=None,
+                            token_ids=None):
+        """
+        This function is called during training (teacher-forcing) for AR-based decoder,
+        for simplicity, the prefix length will be truncated.
+        hidden_state: [B, T//G, D] serves as condition to generate upcoming N=group tokens
+        target_ids: [B, T] 
+        """
+        def AR_decoder(hidden_state, token_embeds, prefix_length, target_length):
+            B, T, D = hidden_state.size()
+            hidden_state_expanded = hidden_state.unsqueeze(2)  # [B, T, 1, D]
+            token_embeds_expanded = token_embeds.unsqueeze(2)  # [B, T, 1, D]
+            # prefix_emb...; emb_sos; cond_{1~G},emb_{1~G}; cond_{G+1~2G},emb_{G+1~2G};...; cond_{T*G~(T+1)*G}
+            group_embeds = torch.cat((token_embeds_expanded, hidden_state_expanded), dim=2) # [B, T, 2, D]
+
+            # remove LM prefix (keep the sos_emb)
+            group_embeds = [group_embeds[b][prefix_length[b]:].reshape(-1, D) for b in range(B)] # B x [2*T_b (interleaved style), D]
+            group_embeds = pad_sequence(group_embeds, batch_first=True, padding_value=0.)   
+
+            # [B, 2T, G*D]
+            target_logits = self.decoder(inputs_embeds=group_embeds).logits
+            # [B, G, 2T, D]
+            target_logits = torch.stack(torch.chunk(target_logits, chunks=self.group, dim=-1), dim=1)
+            # outputs corresponding to cond_{1~G},emb_{1~G}; cond_{G+1~2G},emb_{G+1~2G};...; cond_{T*G~(T+1)*G}
+            n_logits = target_logits.shape[-1]
+            batch_target_logits = []
+            for b in range(B):
+                # shape: [G, 2(Tb), D], index: -1 to remove input shift (target_length - 1)
+                this_target_logits = target_logits[b, :, :(target_length[b]-1)*2]
+                this_target_logits = this_target_logits[:,1::2]  # [G, Tb, D]
+                # G, 2T, n_logits => 2T, G, n_logits => (2T*G), n_logits
+                _target_logits = this_target_logits.transpose(1, 0).reshape(-1, n_logits)
+                batch_target_logits.append(torch.cat(
+                    (torch.zeros(prefix_length[b], n_logits).to(_target_logits.device),
+                    _target_logits,
+                    ), dim=0))
+            # [B, pT+T, n_logits]
+            return batch_target_logits
+
+        def RQ_transformer(hidden_state, token_ids, prefix_length, target_length):
+            """
+            hidden_state (with prefix): [B, pT + T//G, D]
+            token_ids (with prefix): [B, pt + T]
+            """
+            B, _, D = hidden_state.size()
+            group_embeds = []
+            # input: concatenation of [LM_cond, single_token_emb] (B*(T//G), time_steps=G, 2D)
+            # output: token logits (B*(T//G), time_steps=G, n_logits)
+            for b in range(B):
+                # 1) prepare group token embeddings
+                # w/o sos_id; with all eos_id
+                this_token_ids = token_ids[b][prefix_length[b]:prefix_length[b] + (target_length[b]-1)*self.group]
+                if len(this_token_ids) % self.group != 0:
+                    this_token_ids = F.pad(this_token_ids, (0, self.group - len(this_token_ids) % self.group), 
+                                            'constant', self.eos_id)
+                this_token_embeds = self.embedder(this_token_ids)  # [T, D] (exclude sos_embed, include all eos_embed)
+                this_group_token_embeds = this_token_embeds.reshape(-1, self.group, this_token_embeds.shape[-1])    # [T//G, G, D]
+                # shift group_token_embeds by 1: group_1,...,group_G => sos_embed, group_1,...,group_G-1
+                this_group_token_embeds = torch.cat((self.get_sos_embed(this_group_token_embeds.shape[0]),
+                                                     this_group_token_embeds[:, :-1]), dim=1)
+                # 2) prepare LM condition embeddings
+                this_hidden_state = hidden_state[b][prefix_length[b]:prefix_length[b] + target_length[b] - 1]  # [T//G, D]
+                this_group_hidden_state = this_hidden_state.unsqueeze(1).repeat(1, self.group, 1)   # [T//G, G, D]
+
+                this_group_embeds = torch.cat((this_group_hidden_state, this_group_token_embeds), -1)   # [T//G, G, 2D]
+                group_embeds.append(this_group_embeds)
+
+            group_embeds = pad_sequence(group_embeds, batch_first=True, padding_value=0.)   # [B, T//G, G, 2D]
+            group_embeds = group_embeds.reshape(-1, self.group, 2*D)    # [B*(T//G), G, 2D]
+            target_logits = self.decoder(inputs_embeds=group_embeds).logits     # [B*(T//G), G, N]
+
+            target_logits = target_logits.reshape(B, -1, self.group, target_logits.shape[-1])   # [B, T//G, G, N]
+            n_logits = target_logits.shape[-1]
+            batch_target_logits = []
+            for b in range(B):
+                # [G, T//G, N] => [T//G, G, N] => [T, N]
+                this_target_logits = target_logits[b, :target_length[b]-1].reshape(-1, n_logits)   
+                batch_target_logits.append(torch.cat(
+                    (torch.zeros(prefix_length[b], n_logits).to(this_target_logits.device),
+                    this_target_logits,
+                    ), dim=0))
+            return batch_target_logits
+        
+        def ARQ_transformer(hidden_state, token_ids, prefix_length, target_length):
+            """
+            hidden_state (with prefix): [B, pT + T//G, D]
+            token_embeds (with prefix): [B, pt + T, D]
+            """
+            B, T, D = hidden_state.size()
+            group_embeds = []
+            # prefix_emb...; emb_sos; cond_{1~G},emb_1,...,emb_G; 
+            #                         cond_{G+1~2G},emb_{G+1}...,emb_{2G}; ...; 
+            #                         cond_{T*G~(T+1)*G},emb_{T*G}...,emb_{(T+1)*G}
+            for b in range(B):
+                # 1) prepare group token embeddings
+                this_token_ids = token_ids[b][prefix_length[b]:prefix_length[b] + (target_length[b]-1)*self.group]
+                if len(this_token_ids) % self.group != 0:
+                    this_token_ids = F.pad(this_token_ids, (0, self.group - len(this_token_ids) % self.group), 
+                                    'constant', self.eos_id)
+                this_token_embeds = self.embedder(this_token_ids)  # [T, D] (exclude sos_embed, include all eos_embed)
+                this_group_token_embeds = this_token_embeds.reshape(-1, self.group, this_token_embeds.shape[-1])    # [T//G, G, D]
+                
+                # 2) prepare LM condition embeddings
+                this_hidden_state = hidden_state[b][prefix_length[b]:prefix_length[b] + target_length[b] - 1]  # [T//G, D]
+                this_group_hidden_state = this_hidden_state.unsqueeze(1)   # [T//G, 1, D] (exclude sos_embed)
+
+                # 3) insert LM into group token embeddings
+                assert this_group_token_embeds.shape[0] == this_group_hidden_state.shape[0]
+                this_group_embeds = torch.cat((this_group_hidden_state, this_group_token_embeds), dim=1)    # [T//G, G+1, D]
+                this_group_embeds = torch.cat((self.get_sos_embed(1)[0], this_group_embeds.reshape(-1, D)), dim=0) # 1+T//G*(G+1), D
+
+                group_embeds.append(this_group_embeds)
+            
+            group_embeds = pad_sequence(group_embeds, batch_first=True, padding_value=0.)   # [B, 1+T//G*(G+1), D]
+            target_logits = self.decoder(inputs_embeds=group_embeds).logits     # [B,1+(T//G)*(G+1), N]
+
+            # exclude sos_embed
+            target_logits = target_logits[:, 1:].reshape(B, -1, self.group+1, target_logits.shape[-1])   # [B, T//G, G+1, N]
+            n_logits = target_logits.shape[-1]
+            batch_target_logits = []
+            for b in range(B):
+                # [T//G, G+1, N] => [T//G, G, N] => [T, N]
+                this_target_logits = target_logits[b, :target_length[b]-1, :self.group].reshape(-1, n_logits)  # 
+                batch_target_logits.append(torch.cat(
+                    (torch.zeros(prefix_length[b], n_logits).to(this_target_logits.device),
+                    this_target_logits,
+                    ), dim=0))
+            return batch_target_logits
+
+        def context_fc_decoder(hidden_state, token_embeds, prefix_length):
+            # remove LM prefix (keep the sos_emb)
+            B, T, D = hidden_state.size()
+            group_embeds = torch.cat((hidden_state, token_embeds), -1)  # [B, T, D*2]
+            group_embeds = [group_embeds[b][prefix_length[b]:] for b in range(B)] # B x [T_b, 2D (concat style)]
+            group_embeds = pad_sequence(group_embeds, batch_first=True, padding_value=0.)   
+            
+            target_logits = self.decoder(group_embeds)  # [B, T, N]
+            target_logits = torch.stack(torch.chunk(target_logits, chunks=self.group, dim=-1), dim=1)   # [B, G, T//G, N]
+            # outputs corresponding to cond_{1~G},emb_{1~G}; cond_{G+1~2G},emb_{G+1~2G};...; cond_{T*G~(T+1)*G}
+            n_logits = target_logits.shape[-1]
+            batch_target_logits = []
+            for b in range(B):
+                # [G, T//G, N] => [T//G, G, N] => [T, N]
+                this_target_logits = target_logits[b, :, :target_length[b]-1].transpose(1, 0).reshape(-1, n_logits)   
+                batch_target_logits.append(torch.cat(
+                    (torch.zeros(prefix_length[b], n_logits).to(this_target_logits.device),
+                    this_target_logits,
+                    ), dim=0))
+            return batch_target_logits
+
+        assert token_embeds is not None
+        if self.pattern != 'parallel':
+            raise NotImplementedError()
+
+        if self.decoder_type == 'transformer':
+            assert target_length is not None
+            batch_target_logits = AR_decoder(hidden_state, token_embeds, prefix_length, target_length)
+        elif self.decoder_type == 'context_fc':
+            batch_target_logits = context_fc_decoder(hidden_state, token_embeds, prefix_length)
+        elif self.decoder_type == 'RQ_transformer':
+            batch_target_logits = RQ_transformer(hidden_state, token_ids, prefix_length, target_length)
+        elif self.decoder_type == 'ARQ_transformer':
+            batch_target_logits = ARQ_transformer(hidden_state, token_ids, prefix_length, target_length)
+        
+        batch_target_logits = pad_sequence(batch_target_logits, batch_first=True, padding_value=0.)
+        return batch_target_logits
+
+    def decode_target_logits(self, target_logits, prefix_length, target_length,
+                            token_embeds=None, target_ids=None):
+        """
+        target_logits: [B, T//G, G*D] => [B, G, T, D]
+        prefix_length / target_length: [B]
+        """
+        prefix_length = prefix_length.long()
+        if self.decoder_type in ['transformer', 'context_fc', 'RQ_transformer', 'ARQ_transformer']: # input: [B, T//G, D]
+            return self.decode_hidden_state(target_logits, token_embeds, prefix_length, target_length, target_ids)
+        
+        if target_logits.ndim == 3: # [B, G, T, D]
+            target_logits = torch.stack(torch.chunk(target_logits, chunks=self.group, dim=-1), dim=1)
+
+        n_logits = target_logits.shape[-1]
+        batch_size = target_logits.shape[0]
+        batch_target_logits = []
+        for b in range(batch_size):
+            this_target_logits = target_logits[b, :, prefix_length[b]:prefix_length[b]+target_length[b]-1] # here, -1 to remove input shift (target_length - 1)
+            if self.pattern == 'delay': # [G, T, n_logits] == reorganize ==> [T, G, n_logits]
+                _target_logits = torch.stack([torch.roll(this_target_logits[d], -d) for d in range(self.group)]).transpose(1, 0)
+            elif self.pattern == 'parallel':
+                _target_logits = this_target_logits.transpose(1, 0)
+            this_prefix_target_logits = target_logits[b, :, :prefix_length[b]].transpose(1, 0)  # [pT, G, n_logits]
+
+            if self.R == 1:    #  [T, G, n_logits] => [(T*G), n_logits]
+                _target_logits = _target_logits.reshape(-1, n_logits)
+                this_prefix_target_logits = this_prefix_target_logits[:, 0] # [pT, n_logits]
+
+            this_target_logits = torch.cat([
+                this_prefix_target_logits,    #   no loss will be computed within prefix_length (including SOS token), so choose group[0]
+                _target_logits,              
+            ], dim=0)    
+            batch_target_logits.append(this_target_logits)
+
+        batch_target_logits = pad_sequence(batch_target_logits, batch_first=True, padding_value=0)
+        
+        return batch_target_logits
+    
 
 class BestRQMKIITokenEmbedder(TokenEmbedder):
     def __init__(self, vocab_size=65_536, embedding_dim=1024, add_sos=False, add_eos=False):
@@ -746,134 +1700,28 @@ class SoundstreamTokenEmbedder(TokenEmbedder):
         return soundstream_ids
 
 
-class DurationEmbedder(TokenEmbedder):
-    def __init__(self, durations, embedding_dim, add_sos=False):
+class DurationEmbedder(nn.Module):
+    def __init__(self, durations, embedding_dim):
+        super().__init__()
         durations = durations if isinstance(durations, (list, tuple)) else [durations]
         durations = [int(d) for d in durations]
-        super().__init__(len(durations), embedding_dim, add_sos)
         self.duration2id = {durations[i]: i for i in range(len(durations))}
+        self.embedding_dim = embedding_dim
+        self.embedder = nn.Embedding(len(durations) + 1, embedding_dim)
 
-    def get_tokens(self, requires, duration, batch_size):
+    def embed(self, duration, batch_size):
         duration = int(duration)
         duration_id = self.duration2id[duration]
         device = next(self.parameters()).device
         duration_ids = torch.LongTensor([duration_id] * batch_size).to(device)
-        return duration_ids.reshape(-1, 1)
-    
-class SectionStartEmbedder(BaseEmbedder):
-    def __init__(
-            self,
-            embedding_dim=1024,
-            add_sos=False,
-            max_sec_len=10,
-            dropout=0.0,
-        ):
-        super().__init__()
-        self.none_id = 0
-        vocab = ["none", "silence", "intro", "verse", "chorus", "bridge", "inst", "outro"]
-        self.vocab2id = { label:idx for idx, label in enumerate(vocab)}
-        self.vocab_size = len(vocab)
-        
-        self.max_sec_len = max_sec_len
-            
-        self.sos_id = None
-        self.eos_id = None
-        self.dropout = dropout
-        if add_sos:
-            self.vocab_size = self.vocab_size + 1
-            self.sos_id = self.vocab_size - 1
-        self.embedder = nn.Embedding(self.vocab_size, embedding_dim)
-        self.start_time_projection = nn.Linear(1, embedding_dim, bias=True)
+        return self.embedder(duration_ids).unsqueeze(1)
 
-        self.dropout = dropout
-
-    # TokenEmbedder
-    def get_sos_token(self, batch_size):
-        assert self.sos_id is not None, "Error getting sos id. Must initialize embedder with add_sos=True"
+    def empty_embed(self, batch_size):
+        empty_id = len(self.duration2id)
         device = next(self.parameters()).device
-        sos_ids = torch.full(size=(batch_size, 1), fill_value=self.sos_id, dtype=torch.long, device=device)
-        return sos_ids
+        empty_ids = torch.LongTensor([empty_id] * batch_size).to(device)
+        return self.embedder(empty_ids).unsqueeze(1)
 
-    def get_sos_embed(self, batch_size):
-        return self.projection(self.embedder(self.get_sos_token(batch_size)))
-
-    def embed(self, requires, batch, with_sos=False, **kwargs):
-        embeds = self.get_embeds(requires, batch, **kwargs)
-        if with_sos:
-            sos_embed = self.get_sos_embed(embeds.size(0))
-            embeds = torch.cat([sos_embed, embeds], dim=1)
-        return embeds
-
-    def get_embeds(
-        self,
-        requires,
-        input_audio_or_text,
-    ):
-        # input = (label1, start1, l2, s2)
-        batch_start_times = []
-        batch_labels = []
-
-        ## handle the following cases
-        # type1 = s1, s2, s3, l1, l2, l3
-        # type2 = s1, None
-        # type3 = s1, l1, l2, l3
-        
-        device = next(self.parameters()).device
-        for item in input_audio_or_text:
-            start_times = item[1::2][:self.max_sec_len]
-            labels = item[::2][:self.max_sec_len]
-            
-            # enc_type = random.choice(['t1', 't2','t3']) if self.training else 't1'
-            enc_type = 't1'
-            if enc_type == 't1':
-                batch_start_times.append(start_times)
-                batch_labels.append(labels)
-            elif enc_type == 't2':
-                batch_start_times.append(start_times)
-                batch_labels.append([])
-            elif enc_type == 't3':
-                batch_start_times.append(start_times[:1])
-                batch_labels.append(labels)
-        # print('Labels, start time', batch_labels, batch_start_times)
-        
-        batch_sec_ids = []
-        for labels in batch_labels:
-            label_ids = [self.vocab2id[label] for label in labels]
-            while len(label_ids) < self.max_sec_len:
-                label_ids.append(int(self.none_id))
-            batch_sec_ids.append(label_ids)
-        label_embeds = self.embedder(torch.tensor(batch_sec_ids, device=device))
-        
-        batch_starts = []
-        for start_times in batch_start_times:
-            start_times = start_times[:]
-            while len(start_times) < self.max_sec_len:
-                start_times.append(-100)
-            batch_starts.append(start_times)
-        batch_starts = torch.tensor(batch_starts, device=device).float().unsqueeze(-1) # bs x seq_len x 1
-        start_embeds = self.start_time_projection(batch_starts) # bs x seq_len x emb
-        
-        return torch.concat([start_embeds, label_embeds], dim=1)
-
-class DurationContinuousEmbedder(ContinuousEmbedder):
-    def __init__(self, input_dim=1, embedding_dim=1024, add_sos=False):
-        super().__init__(input_dim, embedding_dim, add_sos)
-
-    def get_embeds(self, requires, duration, batch_size):
-        device = next(self.parameters()).device
-        if isinstance(duration, (int, float)):
-            duration = torch.FloatTensor([duration] * batch_size).to(device)
-        elif torch.is_tensor(duration):
-            duration = duration.to(device)
-        else: raise ValueError("Invalid duration input type", duration)
-        return duration.float().reshape(-1, 1, 1)
-
-class StartTimeEmbedder(ContinuousEmbedder):
-    def __init__(self, input_dim=1, embedding_dim=1024, add_sos=False):
-        super().__init__(input_dim, embedding_dim, add_sos)
-
-    def get_embeds(self, requires, start_time):
-        return start_time.float().reshape(-1, 1, 1)
 
 class StructureEmbedder(nn.Module):
     def __init__(
@@ -970,6 +1818,7 @@ class IntensityEmbedder(nn.Module):
         return self.embedder(intensity_ids)
 
 
+
 class BeatEmbedder(nn.Module):
     def __init__(self, beat_labels, embedding_dim, max_duration, max_timestamp=5):
         super().__init__()
@@ -1061,6 +1910,38 @@ class MultiTagsEmbedder(BaseEmbedder):
     def embed(self, requires=None, batch=None, token_ids=None, with_sos=False, with_eos=False):
         raise NotImplementedError()
 
+
+# class MultiTagsCategoricalEmbedderV2(BaseEmbedder):
+#     def __init__(
+#             self, 
+#             max_vocab_size=1024,
+#             embedding_dim=1024,
+#             add_sos=False,
+#             add_eos=False,
+#         ):
+#         super().__init__()
+        
+#         # Initialize special token IDs
+#         self.sos_id = None
+#         self.eos_id = None
+        
+#         # Calculate the total vocabulary size considering special tokens
+#         total_vocab_size = vocab_size
+#         if add_sos:
+#             total_vocab_size += 1
+#             self.sos_id = total_vocab_size - 1
+#         if add_eos:
+#             total_vocab_size += 1
+#             self.eos_id = total_vocab_size - 1
+        
+#         # Initialize the embedding layer
+#         self.embedder = nn.Embedding(total_vocab_size, embedding_dim, **kwargs)
+
+    
+#     def embed(self, token_ids, len_token_ids):
+
+
+
 class MultiTagsCategoricalEmbedder(MultiTagsEmbedder):
     def __init__(
             self,
@@ -1075,7 +1956,9 @@ class MultiTagsCategoricalEmbedder(MultiTagsEmbedder):
             assert max_vocab_size
             vocab2id = { NONE_LABEL: 0 }
             vocab_size = max_vocab_size
-            _num_categories = 5  # (the previous default value)
+            #_num_categories = 5  # (the previous default value)
+            #_num_categories = 9
+            _num_categories = 13
         else:
             vocab2id, _num_categories = get_categorical_vocab(vocab_type)  # infer num_categories from vocab_type
             vocab_size = max(vocab2id.values()) + 1
@@ -1087,10 +1970,15 @@ class MultiTagsCategoricalEmbedder(MultiTagsEmbedder):
         self.category_separator = category_separator
         self.num_categories = _num_categories
 
+
+        self.vocab2id['Non-Sinking'] = self.vocab2id['non-Sinking']
+        self.vocab2id['Cute'] = self.vocab2id['Cute_AUDIO_TIMBRE']
+
+
     def get_tag_id(self, tag, dropout=0.0):
         if tag not in self.vocab2id:
             if not self.training and len(tag.strip()) > 0:  # use NONE_LABEL for empty label
-                raise Exception(f"Inference Error: Tag {tag} not found in vocab {self.vocab2id}. Please check vocab")
+                logger.warning(f"Inference Error: Tag {tag} not found in vocab {self.vocab2id}. Please check vocab")
             tag = NONE_LABEL
         if self.training and random.random() < dropout:
             tag = NONE_LABEL
@@ -1112,6 +2000,8 @@ class MultiTagsCategoricalEmbedder(MultiTagsEmbedder):
                 # TODO: handle use case where dictionary is not sorted
                 # style_tag_list = [v for k,v in sorted(style_text.items())]
                 style_tags = style_text.values()
+            else:
+                style_tags = [NONE_LABEL] * self.num_categories
             batch_style_tags.append(style_tags)
 
         batch_tag_ids = []
@@ -1155,13 +2045,13 @@ class MultiTagsCategoricalEmbedder(MultiTagsEmbedder):
             token_ids,
             [token_ids_shape[0]*token_ids_shape[1], token_ids_shape[2]],
         )
-        _token_ids = torch.tensor(_token_ids, dtype=torch.long)
+        _token_ids = _token_ids.to(dtype=torch.long)
         masks_shape = masks.shape
         _masks = torch.reshape(
             masks,
             [masks_shape[0]*masks_shape[1], masks_shape[2], 1],
         )
-        _masks = torch.tensor(_masks, dtype=torch.long)
+        _masks = _masks.to(dtype=torch.long)
         _embedding = self.embedder(_token_ids)
         #print('_embedding shape: ', _embedding.shape)
         #print('_masks shape: ', _masks.shape)

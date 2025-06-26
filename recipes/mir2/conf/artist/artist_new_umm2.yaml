@@ -1,0 +1,230 @@
+---
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 0
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+# running parameters`
+log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+
+run_opts:
+  fast_dev_run: False
+  hdfs_log_dir: "hdfs:///home/byte_speech_sv/ju-chiang.wang/samantha_tagging"
+  log_name: 'tagging'
+  version: 'all_artist_hpss_umm2'
+  precision: 16-mixed
+  accelerator: 'auto'
+  num_workers: 14
+  pin_memory: True
+  log_dir: logs
+  val_check_interval: 5000  # validate every n steps of training
+
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+train_params:
+  learning_rate: 0.0001
+  max_epochs: -1
+  batch_size: 32
+  scheduler_patience: 32
+  scheduler_decay_factor: 0.5
+  devices: 'auto'
+  shuffle_buffer: 100
+  data_id: [5450, 3614, 3567]
+
+val_params:
+  data_id: [5446, 3615, 3571]
+  num_sanity_val_steps: 2
+  batch_size: 16
+  per_node_max_num: 2000 # should be greater than num_iter * num_workers * batch_size
+  check_val_every_n_epoch: 1
+
+test_params:
+  data_id: 6130
+  batch_size: 1
+  infer_batch_size: 32
+  per_node_max_num: 5000
+
+extra_params:
+  final_pooling: True
+  tag_types: ['artist']
+
+################################################################################
+##########                    TASK CONFIGURATION                  ##########
+################################################################################
+
+audio:
+  sampling_rate: 24000        # sampling rate for audio
+  sample_len: 30.0            # duration in sec for input  #{24 or 6}
+
+
+################################################################################
+##########             DATASET/DATALOADING CONFIGURATION              ##########
+################################################################################
+
+train_transformed: !new:recipes.mir2.parquet_dataset.artist_new.MusicFmParquetDataset
+  sample_rate: !ref <audio[sampling_rate]>
+  data_id: !ref <train_params[data_id]>
+  batch_size: !ref <train_params[batch_size]>
+  shuffle_buffer: !ref <train_params[shuffle_buffer]>
+  sample_len: !ref <audio[sample_len]>
+  tag_types: !ref <extra_params[tag_types]>
+
+val_transformed: !new:recipes.mir2.parquet_dataset.artist_new.MusicFmParquetDataset
+  sample_rate: !ref <audio[sampling_rate]>
+  data_id: !ref <val_params[data_id]>
+  batch_size: !ref <val_params[batch_size]>
+  resampled: False
+  sample_len: !ref <audio[sample_len]>
+  tag_types: !ref <extra_params[tag_types]>
+  validation: True
+
+test_transformed: !new:recipes.mir2.parquet_dataset.artist_new.MusicFmParquetDataset
+  sample_rate: !ref <audio[sampling_rate]>
+  data_id: !ref <test_params[data_id]>
+  batch_size: !ref <test_params[batch_size]>
+  infer_batch_size: !ref <test_params[infer_batch_size]>
+  resampled: False
+  sample_len: !ref <audio[sample_len]>
+  tag_types: !ref <extra_params[tag_types]>
+  test: True
+
+
+# dataloader configuration
+train_dataloader: !new:torch.utils.data.DataLoader
+  dataset: !ref <train_transformed>
+  shuffle: False
+  batch_size: null
+  num_workers: !ref <run_opts[num_workers]>
+  pin_memory: !ref <run_opts[pin_memory]>
+  persistent_workers: False
+
+val_dataloader: !new:torch.utils.data.DataLoader
+  dataset: !ref <val_transformed>
+  shuffle: False
+  batch_size: null
+  num_workers: !ref <run_opts[num_workers]>
+  pin_memory: !ref <run_opts[pin_memory]>
+  persistent_workers: False
+
+test_dataloader: !new:torch.utils.data.DataLoader
+  dataset: !ref <test_transformed>
+  shuffle: False
+  batch_size: null
+  num_workers: !ref <run_opts[num_workers]>
+  pin_memory: !ref <run_opts[pin_memory]>
+  persistent_workers: False
+
+# datamodule configuration
+pl_datamodule: !new:recipes.beat.pl_modules.pl_datamodule.BeatDataModule
+  train_dataloader: !ref <train_dataloader>
+  val_dataloader: !ref <val_dataloader>
+  test_dataloader: !ref <test_dataloader>
+
+################################################################################
+##########                      MODEL CONFIGURATION                   ##########
+################################################################################
+
+config: !new:recipes.umm2.models.config.UMMConfig
+  feature_cmvn: "recipes/datasets/mcc/data_ids=794.stats.pt"
+  sample_rate: !ref <audio[sampling_rate]>
+  n_mels: 128
+  n_fft: 2048
+  win_length: 2048
+  hop_length: 240
+  hidden_size: 1024
+  intermediate_size: 4096
+  num_hidden_layers: 24
+  num_attention_heads: 8
+  max_source_positions: 2500
+  tokenizer: null
+  frame_rate: 25
+  use_bn: False
+
+frontend: !new:recipes.umm2.models.umm_fm.UMM # umm not frozen
+  config: !ref <config>
+  takes: [audio]
+  provides: [latent]
+  bypasses: [tags]
+
+backend: !new:recipes.mir2.models.tagging_umm2.TaggingProbingStage
+  task: "tagging"
+  takes: [latent, tags]
+  provides: [tag_pred]
+  final_pooling: !ref <extra_params[final_pooling]>
+  n_channel: !ref <config[hidden_size]>
+  tag_map: !apply:recipes.mir2.parquet_dataset.vocab_index.artist_new
+  tag_types: !ref <extra_params[tag_types]>
+
+model: !new:recipes.umm2.models.base.PipelineModel
+  input_names: [audio, tags]
+  output_names: [tag_pred]
+  stages:
+    - !ref <frontend>
+    - !ref <backend>
+
+required_modules:
+  pretrained:
+    #ckpt_path: "hdfs://haruna/home/byte_speech_sv/ju-chiang.wang/logs/umm2_conformer_2255mixedZHEN/stage1_4096x16x8/checkpoints/step=0580000.ckpt"
+    ckpt_path: "hdfs://haruna/home/byte_speech_sv/ju-chiang.wang/logs/umm2_conformer_2255mixedZHEN/stage2_hpss_onset_2255mixedZHEN_optim_mem_bert-base-multilingual-uncased/checkpoints/step=0250000.ckpt"
+    loader: !name:recipes.umm2.loaders.stage2.ModelLoader
+    cache_dir: ".module_cache/umm"
+
+pl_module: !new:recipes.mir2.pl_modules.tagging_pl_umm2.LitTagging
+  model: !ref <model>
+  lr: !ref <train_params[learning_rate]>
+  scheduler_patience: !ref <train_params[scheduler_patience]>
+  scheduler_decay_factor: !ref <train_params[scheduler_decay_factor]>
+  sample_rate: !ref <audio[sampling_rate]>
+  sample_len: !ref <audio[sample_len]>
+  tag_map: !apply:recipes.mir2.parquet_dataset.vocab_index.artist_new
+  tag_types: !ref <extra_params[tag_types]>
+  valid_per_node_max_num: !ref <val_params[per_node_max_num]>
+  test_per_node_max_num: !ref <test_params[per_node_max_num]>
+  final_pooling: !ref <extra_params[final_pooling]>
+  required_modules: !ref <required_modules>
+
+################################################################################
+##########                     TRAINER CONFIGURATION                  ##########
+################################################################################
+
+logger:
+  - !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: ".module_cache/tagging"
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+  - !new:pytorch_lightning.loggers.wandb.WandbLogger
+    save_dir: !ref <run_opts[log_dir]>
+    project: !ref <run_opts[log_name]>
+    name: !ref <run_opts[version]>
+
+
+trainer: !new:pytorch_lightning.Trainer
+  strategy: "ddp_find_unused_parameters_false"
+  fast_dev_run: !ref <run_opts[fast_dev_run]>
+  num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+  logger: !ref <logger>
+  accelerator: !ref <run_opts[accelerator]>
+  profiler: simple
+  devices: !ref <train_params[devices]>
+  precision: !ref <run_opts[precision]>
+  num_sanity_val_steps: !ref <val_params[num_sanity_val_steps]>
+  max_epochs: !ref <train_params[max_epochs]>
+  check_val_every_n_epoch: !ref <val_params[check_val_every_n_epoch]>
+  val_check_interval: !ref <run_opts[val_check_interval]>
+  callbacks:
+    - !new:samantha.callbacks.HDFSModelCheckpoint
+      hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+      mode: "max"
+      monitor: "pr_auc"
+      save_top_k: 3
+      every_n_train_steps: !ref <run_opts[val_check_interval]>
+      filename: "{step:07d}"
+      save_last: True
+  plugins:
+    - !new:samantha.plugins.LargeTorchCheckpointIO

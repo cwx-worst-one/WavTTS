@@ -19,15 +19,3 @@ def local_zero_first():
         yield
         if is_local_zero():
             dist.barrier()
-
-@contextlib.contextmanager
-def local_zero_last():
-    if not dist.is_initialized():
-        yield
-    else:
-        if is_local_zero():
-            dist.barrier()
-            yield
-        else:
-            yield
-            dist.barrier()

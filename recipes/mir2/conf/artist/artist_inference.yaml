@@ -1,0 +1,108 @@
+---
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 0
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+# running parameters
+run_opts:
+  fast_dev_run: False
+  precision: 16-mixed
+  accelerator: 'auto'
+  batch_size: 16
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+train_params:
+  learning_rate: 0.0001
+  scheduler_patience: 20
+  scheduler_decay_factor: 0.7
+  devices: 'auto'
+
+extra_params:
+  post_pooling: False
+  final_pooling: True
+  tag_types: ['artist']
+################################################################################
+##########                    TASK CONFIGURATION                  ##########
+################################################################################
+
+audio:
+  sampling_rate: 24000        # sampling rate for audio
+  sample_len: 30.0            # duration in sec for input  #{24 or 6}
+
+
+################################################################################
+##########             DATASET/DATALOADING CONFIGURATION              ##########
+################################################################################
+
+
+# datamodule configuration
+pl_datamodule: !new:recipes.mir2.pl_modules.pl_datamodule.BaseDataModule
+  train_dataloader: None
+  val_dataloader: None
+  test_dataloader: None
+  sampling_rate: !ref <audio[sampling_rate]>
+
+################################################################################
+##########                      MODEL CONFIGURATION                   ##########
+################################################################################
+
+frontend: !new:recipes.mir2.models.frontend.Frontend
+  model:
+    !new:recipes.icassp.models.musicfm_25Hz.MusicFM25Hz
+    encoder_depth: 12
+    is_flash: False
+    state_path: "hdfs://haruna/home/byte_speech_sv/ju-chiang.wang/musicfm/playlist_classic_stats.json"
+    model_path: "hdfs://haruna/home/byte_speech_sv/ju-chiang.wang/musicfm/musicfm_25hz_playlist_330m_520k.pt"
+  layer_ix: 12
+  is_update: True
+
+backend: !new:recipes.mir2.models.tagging_probing_label.TaggingProbingStage
+  post_pool: !ref <extra_params[post_pooling]>
+  final_pooling: !ref <extra_params[final_pooling]>
+  n_channel: 1024
+  one_shot_map: !apply:recipes.mir2.parquet_dataset.vocab_index.artist_combined
+  tag_types: !ref <extra_params[tag_types]>
+
+model: !new:samantha.core.BaseModel
+  input_names: [audio]
+  output_names: [tag_pred]
+  stages:
+    - !ref <frontend>
+    - !ref <backend>
+
+pl_module: !new:recipes.mir2.pl_modules.tagging_pl_label.LitTagging
+  model: !ref <model>
+  lr: !ref <train_params[learning_rate]>
+  scheduler_patience: !ref <train_params[scheduler_patience]>
+  scheduler_decay_factor: !ref <train_params[scheduler_decay_factor]>
+  sample_rate: !ref <audio[sampling_rate]>
+  sample_len: !ref <audio[sample_len]>
+  infer_batch_size: !ref <run_opts[batch_size]>
+  one_shot_map: !apply:recipes.mir2.parquet_dataset.vocab_index.artist_combined
+  tag_types: !ref <extra_params[tag_types]>
+  final_pooling: !ref <extra_params[final_pooling]>
+
+################################################################################
+##########                     TRAINER CONFIGURATION                  ##########
+################################################################################
+
+prediction_writer: !new:recipes.mir2.pl_modules.callbacks.prediction_writer.TaggingWriter
+  output_dir: null
+
+trainer: !new:pytorch_lightning.Trainer
+  strategy: deepspeed_stage_2
+  fast_dev_run: !ref <run_opts[fast_dev_run]>
+  num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+  accelerator: !ref <run_opts[accelerator]>
+  devices: !ref <train_params[devices]>
+  precision: !ref <run_opts[precision]>
+  callbacks: !ref <prediction_writer>
+
+
+# sh recipes/mir_benchmark/bootstrap.sh -c recipes/mir_benchmark/conf/tagging/tagging_artist_inference.yaml --ckpt_path /mnt/bn/bigmusic-lf/user/daiyu/musicfm/tensorboard/fm7/artist_en/checkpoints/last-v2.ckpt/ --pl_datamodule.audio_dir artist_en_dataset_validation/ --prediction_writer.output_dir ./sstk_tagging/
+# sh launch.sh predict -c recipes/mir_benchmark/conf/tagging/tagging_artist_inference.yaml --ckpt_path /mnt/bn/bigmusic-lf/user/daiyu/musicfm/tensorboard/fm7/artist_en/checkpoints/last-v2.ckpt/ --pl_datamodule.audio_dir artist_en_dataset_validation/ --prediction_writer.output_dir ./sstk_tagging/

@@ -246,17 +246,53 @@ def group_by_section_start(song_structure, segments, target_duration=None):
     return structure_segments
 
 
-def merge_raw_song_structure_by_start_prob(sections, threshold_same_section=0.3, threshold_new_section=0.1):
-    
+def merge_raw_song_structure_by_start_prob(raw_segments, mode='vocal'):
+    """
+    merge raw segments from deepchorus
+    it usually contains more segments than the default deepchorus segments
+    after merge, section name confidence ('funct_prob') is updated using the duration-weighted average from raw segments
+    """
+    raw_segments = deepcopy(raw_segments)  # do not mutate it in-place
     sections_processed = []
-    sections_processed.append(sections[0])
-    for i in range(1, len(sections)):
-        if sections[i]["start_prob"] > threshold_same_section:
-            sections_processed[-1]["interval"][1] = sections[i]["interval"][0]
-            sections_processed.append(sections[i])
-        else:
-            if sections[i]["label"] != sections[i-1]["label"] and sections[i]["start_prob"] > threshold_new_section:
-                sections_processed[-1]["interval"][1] = sections[i]["interval"][0]
-                sections_processed.append(sections[i])
-    sections_processed[-1]["interval"][1] = sections[-1]["interval"][1]
+    if isinstance(raw_segments, str) or len(raw_segments)==0:
+        return sections_processed
+    sections_processed.append(raw_segments[0])
+
+    if mode == 'vocal':
+        for i in range(1, len(raw_segments)):
+
+            # if start_prob > 0.3, split here anyway
+            if raw_segments[i]["start_prob"] > 0.3:
+                sections_processed[-1]["interval"][1] = raw_segments[i]["interval"][0]
+                sections_processed.append(raw_segments[i])
+
+            # if section_name changes, either start_prob > 0.1 or funct_prob > 0.85, split here
+            elif raw_segments[i]["label"] != raw_segments[i-1]["label"] and ( raw_segments[i]["start_prob"] > 0.1 or raw_segments[i]["funct_prob"] > 0.85) :
+                sections_processed[-1]["interval"][1] = raw_segments[i]["interval"][0]
+                sections_processed.append(raw_segments[i])
+
+    if mode == 'inst':      # for instrumental, all prob values are not quite reliable. Almost keep all the raw segments (unless boundary confidence is extremely low)
+
+        for i in range(1, len(raw_segments)):
+            # if start_prob > 0.01, split here anyway
+            if raw_segments[i]["start_prob"] > 0.01:
+                sections_processed[-1]["interval"][1] = raw_segments[i]["interval"][0]
+                sections_processed.append(raw_segments[i])
+        
+    sections_processed[-1]["interval"][1] = raw_segments[-1]["interval"][1]
+
+    def calculate_weighted_funct_prob(intervals, new_interval):
+        total_duration = 0
+        weighted_funct_prob_sum = 0
+        for interval in intervals:
+            start, end = interval['interval']
+            if start >= new_interval[0] and end <= new_interval[1]:
+                duration = end - start
+                total_duration += duration
+                weighted_funct_prob_sum += duration * interval['funct_prob']
+        return weighted_funct_prob_sum / total_duration if total_duration else 0
+
+    for section in sections_processed:
+        section['funct_prob'] = calculate_weighted_funct_prob(raw_segments, section['interval'])
+
     return sections_processed

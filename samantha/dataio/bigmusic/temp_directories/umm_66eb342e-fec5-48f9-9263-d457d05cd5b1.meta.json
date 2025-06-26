@@ -1,0 +1,336 @@
+{
+    "downloaded_lyrics": "[00:00.00-1] 作曲 : Théophile Hommet/Francesco Sannicandro\n",
+    "music_tagging": {
+      "Genre20": {
+        "Blues": 0.02250811457633972,
+        "Chinese Opera": 0.021491318941116333,
+        "Chinese Style": 0.020535767078399658,
+        "Chinese Tradition": 0.019164860248565674,
+        "Classical": 0.018991529941558838,
+        "Country": 0.0210171639919281,
+        "DJ": 0.039013445377349854,
+        "Easy Listening": 0.01702246069908142,
+        "Electronic": 0.6590257883071899,
+        "Folk": 0.021795183420181274,
+        "Hip Hop/Rap": 0.03148713707923889,
+        "Jazz": 0.018422186374664307,
+        "Latin": 0.02185186743736267,
+        "MC": 0.022875428199768066,
+        "Metal": 0.024260401725769043,
+        "Other genre": 0.13735198974609375,
+        "Pop": 0.024859845638275146,
+        "Punk": 0.020344972610473633,
+        "R&B/Soul": 0.02181336283683777,
+        "Reggae": 0.023518353700637817,
+        "Rock": 0.025321662425994873,
+        "result": "Electronic"
+      },
+      "Mood": {
+        "Angry": 0.050727635622024536,
+        "Calm": 0.036809951066970825,
+        "Chill": 0.031538575887680054,
+        "Cute": 0.025063246488571167,
+        "Dynamic": 0.17523789405822754,
+        "Excited": 0.02324533462524414,
+        "Funny": 0.04044446349143982,
+        "Happy": 0.013185352087020874,
+        "Healing": 0.0299932062625885,
+        "Inspirational": 0.021563440561294556,
+        "Lonely": 0.046685487031936646,
+        "Miss,Memory": 0.026318013668060303,
+        "Mysterious": 0.026087135076522827,
+        "Other": 0.08888831734657288,
+        "Romantic": 0.017474710941314697,
+        "Sorrow": 0.046077221632003784,
+        "Sweet": 0.026441186666488647,
+        "Tense": 0.15553182363510132,
+        "Weird": 0.2992897629737854,
+        "result": [
+          "Weird"
+        ],
+        "version": 20230525
+      },
+      "Theme": {
+        "Autumn": 0.03498673439025879,
+        "Bedtime": 0.013501942157745361,
+        "Birthday": 0.00902557373046875,
+        "Broke up": 0.00892975926399231,
+        "Cafe": 0.012594401836395264,
+        "Campus": 0.009366989135742188,
+        "Christmas": 0.008586019277572632,
+        "Dance": 0.40166956186294556,
+        "Danceable": 0.1425824761390686,
+        "Date": 0.00915592908859253,
+        "Dream": 0.009405761957168579,
+        "Drive": 0.021325677633285522,
+        "Evening": 0.012356340885162354,
+        "Family": 0.009661287069320679,
+        "Focus": 0.013776183128356934,
+        "Food": 0.010081499814987183,
+        "Friendship": 0.009295910596847534,
+        "Game": 0.03854924440383911,
+        "Halloween": 0.01967981457710266,
+        "Love": 0.026671558618545532,
+        "Meditation": 0.020464599132537842,
+        "Morning": 0.012524664402008057,
+        "Other": 0.05488947033882141,
+        "Party": 0.137782484292984,
+        "Sport": 0.05948743224143982,
+        "Spring": 0.011528044939041138,
+        "Spring Festival": 0.009898483753204346,
+        "Summer": 0.07184955477714539,
+        "Travel": 0.04735848307609558,
+        "Valentine's Day": 0.009158194065093994,
+        "Wedding": 0.01594880223274231,
+        "Winter": 0.012289345264434814,
+        "Yoga": 0.01725083589553833,
+        "result": [
+          "Dance"
+        ],
+        "version": 20230927
+      },
+      "Language": {
+        "Ambonese Malay": 0.0028673147317022085,
+        "Arabic": 0.007032315246760845,
+        "Bengali": 0.00420115003362298,
+        "Bhojpuri": 0.004189233295619488,
+        "Cantonese": 0.0027072601951658726,
+        "Chinese": 0.007032805122435093,
+        "Chinese Dialects": 0.004201638512313366,
+        "Czech": 0.004332477692514658,
+        "Dutch": 0.0037288570310920477,
+        "English": 0.03776362165808678,
+        "Finnish": 0.0021993881091475487,
+        "French": 0.0048657008446753025,
+        "German": 0.00556197389960289,
+        "Greek": 0.005247076973319054,
+        "Gujarati": 0.006066502537578344,
+        "Hindi": 0.003603521501645446,
+        "Indonesian": 0.003721758723258972,
+        "Italian": 0.003008974716067314,
+        "Japanese": 0.010838462971150875,
+        "Javanese": 0.004067923408001661,
+        "Kannada": 0.004916161764413118,
+        "Korean": 0.010082250460982323,
+        "Malay": 0.0012258862843737006,
+        "Malayalam": 0.006518827751278877,
+        "Marathi": 0.005285833030939102,
+        "Minangkabau": 0.0013832199620082974,
+        "Non-vocal": 0.7459667325019836,
+        "Norwegian": 0.003817366436123848,
+        "Other": 0.01375390961766243,
+        "Polish": 0.005175944417715073,
+        "Portuguese": 0.004698856268078089,
+        "Punjabi": 0.0021050197537988424,
+        "Rajasthani": 0.006321230437606573,
+        "Russian": 0.005304823629558086,
+        "Sanskrit": 0.008151274174451828,
+        "Spanish": 0.014204790815711021,
+        "Sundanese": 0.0034274139907211065,
+        "Swedish": 0.0030301257502287626,
+        "Taiwanese": 0.002411108696833253,
+        "Tamil": 0.008466387167572975,
+        "Telugu": 0.008314050734043121,
+        "Thai": 0.002515321597456932,
+        "Turkish": 0.003066576784476638,
+        "Vietnamese": 0.00261886790394783,
+        "result": "Non-vocal"
+      },
+      "MusicLowQuality": {
+        "Sinking": 0.011921912431716919
+      }
+    },
+    "music_taxonomy": {
+      "genre": null,
+      "zh_genre": null
+    },
+    "vad": {
+      "extra": {
+        "voice_duration_in_seconds": 0,
+        "audio_duration_in_seconds": 98.474686,
+        "voice_proportion": 0
+      }
+    },
+    "raw": {
+      "song_detail": {
+        "name": "Pirate Dance (Footprint System Remix)",
+        "id": 1370923365,
+        "ar": [
+          {
+            "id": 0,
+            "name": "Loba",
+            "tns": [],
+            "alias": []
+          }
+        ],
+        "hr": null
+      },
+      "audio_info": {
+        "gain": -9.0814,
+        "peak": 0,
+        "level": "jyeffect"
+      },
+      "ugc_song": {
+        "song_id": 1370923365,
+        "song_name": "Pirate Dance (Footprint System Remix)",
+        "artists": [
+          {
+            "album_id": 0,
+            "album_name": "Loba"
+          }
+        ],
+        "language": "英语",
+        "album": {
+          "album_id": 79699554,
+          "album_name": "Heartquake"
+        },
+        "lyric_artists": [],
+        "compose_artists": [
+          {
+            "artist_name": "Théophile Hommet",
+            "artist_id": 31985147
+          },
+          {
+            "artist_name": "Francesco Sannicandro",
+            "artist_id": 32514429
+          }
+        ]
+      },
+      "ugc_album": null,
+      "歌曲ID": 1370923365,
+      "歌曲链接": "https://music.163.com/#/song?id=1370923365",
+      "歌曲名称": "pirate dance footprint system remix",
+      "主歌手": "loba",
+      "主歌手ID": 0,
+      "语言": "英语",
+      "发行时间": "2019-06-10",
+      "发行公司": "ODGprod",
+      "音质": "jyeffect",
+      "采样率": 44100,
+      "文件大小": "85.1 MB",
+      "下载链接": "http://m7.music.126.net/20240710200944/cc7ab67b2fdc2fc715e86cd57008a1d3/ymusic/obj/w5zDlMODwrDDiGjCn8Ky/30104257918/551d/c580/0390/5ddaa8baf4e9515c6e7b627f03e47c81.flac",
+      "曲风名称": "雷鬼 > 回响",
+      "曲风ID": 1101
+    },
+    "duration": "240.413813",
+    "deepchorus": {
+      "thumbnail": [
+        {
+          "label": "chorus",
+          "interval": [
+            72.384,
+            91.968
+          ],
+          "decision": "chorus_right",
+          "start_prob": 0.1633,
+          "end_prob": 0.6279,
+          "chorus_prob": 0.9322
+        }
+      ],
+      "chorus_segments": [
+        {
+          "interval": [
+            72.384,
+            91.968
+          ],
+          "start_prob": 0.1633,
+          "funct_prob": 0.9322
+        }
+      ],
+      "segments": [
+        {
+          "interval": [
+            0,
+            11.52
+          ],
+          "label": "intro",
+          "start_prob": 0.0285,
+          "funct_prob": 0.62558
+        },
+        {
+          "interval": [
+            11.52,
+            72.384
+          ],
+          "label": "verse",
+          "start_prob": 0.0263,
+          "funct_prob": 0.64057
+        },
+        {
+          "interval": [
+            72.384,
+            91.968
+          ],
+          "label": "chorus",
+          "start_prob": 0.1633,
+          "funct_prob": 0.9322
+        }
+      ],
+      "raw_segments": [
+        {
+          "interval": [
+            0,
+            11.52
+          ],
+          "label": "intro",
+          "start_prob": 0.0285,
+          "funct_prob": 0.6256
+        },
+        {
+          "interval": [
+            11.52,
+            23.616
+          ],
+          "label": "verse",
+          "start_prob": 0.0263,
+          "funct_prob": 0.6943
+        },
+        {
+          "interval": [
+            23.616,
+            39.36
+          ],
+          "label": "verse",
+          "start_prob": 0.0348,
+          "funct_prob": 0.6381
+        },
+        {
+          "interval": [
+            39.36,
+            52.608
+          ],
+          "label": "verse",
+          "start_prob": 0.4156,
+          "funct_prob": 0.6895
+        },
+        {
+          "interval": [
+            52.608,
+            59.904
+          ],
+          "label": "verse",
+          "start_prob": 0.0317,
+          "funct_prob": 0.6468
+        },
+        {
+          "interval": [
+            59.904,
+            72.384
+          ],
+          "label": "verse",
+          "start_prob": 0.033,
+          "funct_prob": 0.5361
+        },
+        {
+          "interval": [
+            72.384,
+            91.968
+          ],
+          "label": "chorus",
+          "start_prob": 0.1633,
+          "funct_prob": 0.9322
+        }
+      ]
+    }
+  }
+  

@@ -1,0 +1,107 @@
+---
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 555
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+extra_params:
+  final_pooling: True
+  tag_types: ['genres', 'year', 'key', 'tempo', 'instruments']
+  tag_loss_weights: [0.3, 0.1, 0.1, 0.1, 1.0]
+  tag_map: !apply:recipes.mir2.parquet_dataset.vocab_index.karaoke_tags
+
+
+################################################################################
+##########                    TASK CONFIGURATION                  ##########
+################################################################################
+
+audio:
+  sampling_rate: 24000        # sampling rate for audio
+  sample_len: 30.0            # duration for finetuning tagging tasks
+  max_duration: 60            # duration for pretraining audio encoder
+  frame_rate: 25
+
+################################################################################
+##########                      MODEL CONFIGURATION                   ##########
+################################################################################
+
+config: !new:recipes.umm2.models.config.UMMConfig
+  feature_cmvn: "recipes/datasets/mcc/data_ids=794.stats.pt"
+  sample_rate: !ref <audio[sampling_rate]>
+  sample_len: !ref <audio[sample_len]> # in seconds
+  n_mels: 128
+  n_fft: 2048
+  win_length: 2048
+  hop_length: 240
+  hidden_size: 1024
+  intermediate_size: 4096
+  num_hidden_layers: 24
+  num_attention_heads: 8
+  max_source_positions: 2500
+  add_vq: True
+  vq_type: null # this will default to EMAVectorQuantizer()
+  vq_proj_norm: "bn"
+  vq_proj_noise: 10000
+  vq_codebook_size: 32768
+  vq_codebook_dim: 32
+  vq_layer_idx: 12
+  vq_decay: 0.99
+  tokenizer: null
+  frame_rate: !ref <audio[frame_rate]>
+  use_bn: False
+
+ema_vq: !new:recipes.umm2.models.tasks.vq_module.EMAVectorQuantizer
+  codebook_size: !ref <config[vq_codebook_size]>
+  codebook_dim: !ref <config[vq_codebook_dim]>
+  decay: !ref <config[vq_decay]>
+  dist: False
+
+vq_module: !new:recipes.umm2.models.tasks.vq_module.VQ  # BaseStage
+  task: "vq"
+  config: !ref <config>
+  takes: [latent]
+  provides: [latent, vq_ids]
+  vq_scheme: !ref <ema_vq>
+
+# IMPORTANT: umm_vq_frozen appplies to <audio[sample_len]> is smaller than <audio[max_duration]>
+# need to pad the front of length (max_duration - sample_len) // 2
+frontend: !new:recipes.mir2.models.umm_vq_frozen.AE_UMM # finetune post-vq layers
+  config: !ref <config>
+  takes: [audio]
+  provides: [latent, vq_ids]
+  loss_weight: null
+  is_frozen: True
+  is_train: False
+  pre_vq_latent: False
+  insert_modules:
+    12: !ref <vq_module> # at layer 12
+
+
+backend: !new:recipes.mir2.models.tagging_umm2.TaggingProbingStage
+  task: "tagging"
+  takes: [latent]
+  provides: [tag_pred]
+  bypasses: [vq_ids]
+  final_pooling: !ref <extra_params[final_pooling]>
+  n_channel: !ref <config[hidden_size]>
+  tag_map: !ref <extra_params[tag_map]>
+  tag_types: !ref <extra_params[tag_types]>
+  is_frozen: True
+  loss_weight: null
+
+model: !new:recipes.umm2.models.base.PipelineModel
+  input_names: [audio]
+  output_names: [tag_pred, vq_ids]
+  stages:
+    - !ref <frontend>
+    - !ref <backend>
+
+required_modules:
+  pretrained:
+    #ckpt_path: "hdfs://haruna/home/byte_speech_sv/ju-chiang.wang/logs/umm2_conformer_2255mixedZHEN/stage3_hpss_onset_2255mixedZHEN_2375Speech_optim_mem_bert-base-multilingual-uncased_None32768x32/checkpoints/step=0325000.ckpt"
+    ckpt_path: "hdfs://haruna/home/byte_speech_sv/ju-chiang.wang/samantha_tagging/karaoke/mir2_umm3_novqlatent/checkpoints/last.ckpt"
+    loader: !name:recipes.umm2.loaders.stage3_tagging.ModelLoader
+    cache_dir: ".module_cache/umm"

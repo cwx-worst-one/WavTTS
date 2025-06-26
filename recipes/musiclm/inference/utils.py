@@ -62,6 +62,7 @@ def sample(
     mode="naive",
     return_probs=False,
     exclude_ids=None,
+    p_base=0.1,
 ):
     if exclude_ids is not None:
         for i in exclude_ids:
@@ -71,12 +72,24 @@ def sample(
         probs = predict_logits.softmax(dim=-1)
         dist = torch.distributions.categorical.Categorical(probs=probs)
         samples = dist.sample()
-    elif mode == "top_p" or mode == "top_k":
-        predict_logits = predict_logits / (temp)
+    elif mode == "top_p" or mode == "top_k" or mode == "min_p":
+        # pre-temp-scale
+        if isinstance(temp, float):
+            predict_logits = predict_logits / (temp)
+        elif isinstance(temp, torch.Tensor):
+            predict_logits = predict_logits / (temp.reshape(-1, 1, 1))
+        else:
+            raise NotImplementedError()
+
         if mode == "top_p":
             predict_logits = top_p_logits(predict_logits, thresh)
+        elif mode == "min_p":
+            min_p_logits = min_p(predict_logits, p_base=p_base)
+            predict_logits = top_p_logits(min_p_logits, thresh)
         else:
             predict_logits = top_k(predict_logits, thresh=thresh)
+        # post-temp-scale
+        # predict_logits = predict_logits / (temp)
         probs = predict_logits.softmax(dim=-1)
         dist = torch.distributions.categorical.Categorical(probs=probs)
         samples = dist.sample()
@@ -87,6 +100,10 @@ def sample(
             predict_logits, temp, fixed_noise=fixed_noise, exclude_ids=exclude_ids
         )
         probs = (predict_logits / temp).softmax(dim=-1)
+    elif mode == "greedy":
+        predict_logits = predict_logits / (temp)
+        probs = predict_logits.softmax(dim=-1)
+        samples = probs.argmax(dim=-1)
     else:
         raise NotImplementedError()
 
@@ -178,9 +195,9 @@ def save_wav(audio, output_file, sr=24000, save_mp3=False, normalize_volume=Fals
     
     output_file_target = output_file.replace(".wav", new_ext)
     if normalize_volume:
-        command = "ffmpeg-normalize '%s' -t -16 --keep-loudness-range-target -c:a libmp3lame -b:a 320k -ar {sr} -ac 2 -o '%s' -f" % (output_file, output_file_target)
+        command = "ffmpeg-normalize '%s' -t -16 --keep-loudness-range-target -c:a libmp3lame -b:a 320k -o '%s' -f" % (output_file, output_file_target)
     else:
-        command = f"ffmpeg -y -i {output_file} -ar {sr} -ac 2 -b:a 320k {output_file_target}"
+        command = f"ffmpeg -y -i {output_file} -ar {sr} -ac 1 -b:a 320k {output_file_target}"
     subprocess.run(command, shell=True)
     os.remove(output_file)
     return output_file_target
@@ -192,8 +209,7 @@ def load_wav(path, sr=24000, mono=True):
         wav, sr = librosa.load(path, sr=sr, mono=mono)
     else:
         audio = AudioSegment.from_file(path)
-        channels = 1 if mono else 2
-        audio = audio.set_channels(channels)
+        audio = audio.set_channels(1)
         audio = audio.set_frame_rate(sr)
         wav = np.asarray(audio.get_array_of_samples())
     if wav.dtype == np.int16:
@@ -262,6 +278,28 @@ def top_p_logits(logits, p):
     out = logits.clone()
     out[indices_to_remove] = -float('Inf')
     return out
+
+
+def min_p(logits, p_base=0.01, filter_value=-float('Inf')):
+    assert 0 < p_base < 1.0, f"{p_base} in min_p should be float between 0 and 1.0"
+    probs = F.softmax(logits, dim=-1)
+    top_probs, _ = probs.max(dim=-1, keepdim=True)
+    scaled_min_p = p_base * top_probs
+    indices_to_remove = probs < scaled_min_p
+    sorted_indices = torch.argsort(logits, descending=True, dim=-1)
+    sorted_indices_to_remove = torch.gather(indices_to_remove, dim=-1, index=sorted_indices)
+    # sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+    # sorted_indices_to_remove[..., 0] = 0
+    # indices_to_remove = torch.zeros_like(
+    #     logits,
+    #     dtype=sorted_indices_to_remove.dtype).scatter_(dim=-1, index=sorted_indices, src=sorted_indices_to_remove)
+    # out = logits.clone()
+    # out[indices_to_remove] = filter_value
+    # return out
+    indices_to_remove = sorted_indices_to_remove.scatter(
+        -1, sorted_indices, sorted_indices_to_remove)
+    logits = logits.masked_fill(indices_to_remove, filter_value)
+    return logits
 
 
 class SamplingScheduler:

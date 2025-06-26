@@ -1,0 +1,428 @@
+data:
+    save_ckpt_interval: 2000 # keep same with model checkpoint save interval
+    train_dataset_ids: ["CN:10032", "CN:10096", "CN:10126"]
+    train_dataset_weights: [1, 3, 1]
+    val_dataset_ids: [4423]
+    val_dataset_weights: [1.0]
+
+    train_batcher:
+      type: 'TokenBucketBatcher'
+      dynamic_batch: True
+      bucket_schedule_key: 'num_total_tokens'
+      maximum_bucket_size: 100000 # 240 seconds * (50: audio_token:25 + text_token:25) * 3 full song
+
+    val_batcher:
+      type: 'TokenBucketBatcher'
+      dynamic_batch: True
+      bucket_schedule_key: 'num_total_tokens'
+      maximum_bucket_size: 100000 # 240 seconds * (50: audio_token:25 + text_token:25) * 3 full song
+
+    train_item_transform:
+        - type: "ConvertMetaToDict"
+        - type: "MusicParser"
+          in_key: "audio"
+          out_key: "audio"
+          max_len: 800.0 #second
+        - type: "NormalizeAudioToFloat32"
+          in_key: "audio"
+          out_key: "audio"
+        - type: "WavResample"
+          key: "audio"
+          sample_rate: 24000
+        # Meta data parsing
+        - type: "StructureParser"
+          confidence_threshold: 0.45
+        - type: "TempoParser"
+          dropout_rate: 0.1
+        - type: "KeyModeParser"
+          dropout_rate: 0.1
+        - type: "InstParser"
+          dropout_rate: 0.1
+        - type: "StyleTagParser"
+          dropout_rate: 0.1
+        - type: "StyleTagFilter"
+        - type: "StyleTagTokenizer"
+          vocab: "v0"
+        - type: "FreeformTextParser"
+          keyword_dropout_rate: 0.1
+          dropout_rate: 0.1
+        - type: "UtteranceParser"
+        - type: "MusicMetaRWTransform"
+          in_key: "meta.mir_service.vocal2midi"
+          out_key: "vocal2midi"
+          allow_empty_in: true
+        # Split parsed data into multple song slices with style tags and freeform text tucked in
+        - type: "SongSliceSplit"
+          max_duration: 240.0
+          line_break_dropout_rate: 0.1
+          slice_mode: section  # section | full
+        # (Optional) Remove redundant data after the split
+        - type: "MusicMetaRWTransform"
+          in_key: ["utterances", "style_tags", "style_input_ids", "freeform_text", "structure", "vocal2midi"]
+          out_key: null
+          remove_in_key: true
+
+        # -------------------------------------------------
+        # A series of operations on individual song slices
+        # -------------------------------------------------
+        - type: "SongSliceMapFilter"
+          duration_range: [20, 240]
+          lyrics_confidence: 0.6
+        # Randomly sample n_items song slices
+        - type: "RandomSampleFromList"
+          in_key: "song_slices"
+          out_key: "song_slices"
+          n_items: 10
+          p_full: 0.0
+        # reformat -> sequentialize -> tokenize phonemes with interleaved tags (section, singer, etc.)
+        - type: "SongSliceMapSequentialize"
+          mode: phoneme
+        - type: "SongSliceMapTokenize"
+          vocab: "v0"
+          section_tag_dropout_rate: 0.1
+          slice_duration_dropout_rate: 0.1
+          singer_tag_dropout_rate: 0.1
+        - type: "SongSliceAudioCut"
+          in_key: "song_slices"
+          audio_key: "audio"
+        # Take song slices out, became list of song slices (dict)
+        - type: "MusicMetaRWTransform"
+          in_key: "song_slices"
+          out_key: null
+          overwrite_item: true
+          maybe_return_list_output: true
+        # -------------------------------------------------
+
+        - type: SpeakerIdParser
+          in_key: "style_tags.vocal_gender"
+          out_key: "speaker_id"
+
+        - type: ExtractLyrics
+          in_key: "phrases"
+          out_key: "raw_lyrics"
+
+        - type: "SanityCheck"
+          keys: ['uttid','audio','phrases','style_tags','style_input_ids','freeform_text','phoneme_tokens','duration','speaker_id']
+
+        - type: "CalculateToken"
+          token_rate: 25
+          audio_length_out_key: 'target_tokens_length'
+          lyrics_length_out_key: 'lyrics_tokens_length'
+          total_token_length: 'num_total_tokens'
+          sample_rate: 24000
+
+        - type: "ConvertDictToList"
+          in_key: style_tags
+          out_key: style_text
+          list_order: ["genre", "genre_extra", "extra", "mood", "scene", "vocal_gender", "vocal_timbre", "language", "is_sinking", "instrument", "tempo", "key", "mode"]
+
+        - type: "AddField"
+          key: conditions
+          value: "style_category,speaker_id,freeform_text,lyrics_tokens"
+
+        - type: "RenameKey"
+          in_key_list: ["audio",]
+          out_key_list: ["target_audio"]
+          in_place: true
+
+        # - type: "ConvertDictToList"
+        #   in_key: style_tags
+        #   out_key: style_text
+        #   list_order: ["genre", "genre_extra", "extra", "mood", "scene", "speaker", "voice", "lang", "sinking", "instrument", "tempo", "key", "mode"]
+        - type: "CaptureWorkerInfo"
+
+    train_batch_transform:
+      - type: WorkerInfoCollate
+      - type: AudioCollate
+        in_key: 'target_audio'
+        length_key: "audio_length"
+        pad_value: 0.0
+
+      #phoneme_tokens: tokens(str), input_ids(int id), coffs(float)
+      - type: TokenCoffCollate
+        in_key: 'phoneme_tokens'
+        token_key: 'input_ids'
+        coff_key: 'coffs'
+        token_output_key: 'lyrics_tokens'
+        coff_output_key: 'lyrics_coffs'
+
+      - type: NestListCollate
+        key_list: ['uttid','style_tags','style_text', 'style_input_ids','freeform_text','phoneme_tokens.tokens', 'conditions', 'raw_lyrics']
+        to_tensor: False
+
+      - type: NestListCollate
+        key_list: ['lyrics_tokens_length', 'target_tokens_length', 'num_total_tokens', 'speaker_id', 'tempo']
+        to_tensor: True
+
+
+    val_item_transform:
+        - type: "ConvertMetaToDict"
+        - type: 'MusicParser'
+          in_key: "audio"
+          out_key: "audio"
+          max_len: 800.0 #second
+        - type: 'WavResample'
+          key: 'audio'
+          sample_rate: 24000
+        - type: 'NormalizeAudioToFloat32'
+          in_key: 'audio'
+          out_key: 'audio'
+        # Meta data parsing
+        - type: "StructureParser"
+          confidence_threshold: 0.45
+        - type: "TempoParser"
+          dropout_rate: 0.1
+        - type: "KeyModeParser"
+          dropout_rate: 0.1
+        - type: "InstParser"
+          dropout_rate: 0.1
+        - type: "StyleTagParser"
+          dropout_rate: 0.1
+        - type: "StyleTagFilter"
+        - type: "StyleTagTokenizer"
+          vocab: "v0"
+        - type: "FreeformTextParser"
+          keyword_dropout_rate: 0.1
+          dropout_rate: 0.1
+        - type: "UtteranceParser"
+        - type: "MusicMetaRWTransform"
+          in_key: "meta.mir_service.vocal2midi"
+          out_key: "vocal2midi"
+          allow_empty_in: true
+        # Split parsed data into multple song slices with style tags and freeform text tucked in
+        - type: "SongSliceSplit"
+          max_duration: 240.0
+          line_break_dropout_rate: 0.1
+          slice_mode: section  # section | full
+        # (Optional) Remove redundant data after the split
+        - type: "MusicMetaRWTransform"
+          in_key: ["utterances", "style_tags", "style_input_ids", "freeform_text", "structure", "vocal2midi"]
+          out_key: null
+          remove_in_key: true
+
+        # -------------------------------------------------
+        # A series of operations on individual song slices
+        # -------------------------------------------------
+        - type: "SongSliceMapFilter"
+          duration_range: [20, 240]
+          lyrics_confidence: 0.6
+        # Randomly sample n_items song slices
+        - type: "RandomSampleFromList"
+          in_key: "song_slices"
+          out_key: "song_slices"
+          n_items: 10
+          p_full: 0.0
+        # reformat -> sequentialize -> tokenize phonemes with interleaved tags (section, singer, etc.)
+        - type: "SongSliceMapSequentialize"
+          mode: phoneme
+        - type: "SongSliceMapTokenize"
+          vocab: "v0"
+          section_tag_dropout_rate: 0.1
+          slice_duration_dropout_rate: 0.1
+          singer_tag_dropout_rate: 0.1
+        - type: "SongSliceAudioCut"
+          in_key: "song_slices"
+          audio_key: "audio"
+        # Take song slices out, became list of song slices (dict)
+        - type: "MusicMetaRWTransform"
+          in_key: "song_slices"
+          out_key: null
+          overwrite_item: true
+          maybe_return_list_output: true
+        # -------------------------------------------------
+
+        - type: SpeakerIdParser
+          in_key: "style_tags.vocal_gender"
+          out_key: "speaker_id"
+
+        - type: "SanityCheck"
+          keys: ['uttid','audio','phrases','style_tags','style_input_ids','freeform_text','phoneme_tokens','duration','speaker_id']
+
+        - type: "CalculateToken"
+          token_rate: 25
+          audio_length_out_key: 'target_tokens_length'
+          lyrics_length_out_key: 'lyrics_tokens_length'
+          total_token_length: 'num_total_tokens'
+          sample_rate: 24000
+
+        - type: "ConvertDictToList"
+          in_key: style_tags
+          out_key: style_text
+          list_order: ["genre", "genre_extra", "extra", "mood", "scene", "vocal_gender", "vocal_timbre", "language", "is_sinking", "instrument", "tempo", "key", "mode"]
+
+        - type: "AddField"
+          key: conditions
+          value: "style_category,speaker_id,freeform_text,lyrics_tokens"
+
+        - type: "RenameKey"
+          in_key_list: ["audio",]
+          out_key_list: ["target_audio"]
+          in_place: true
+
+        # - type: "ConvertDictToList"
+        #   in_key: style_tags
+        #   out_key: style_text
+        #   list_order: ["genre", "genre_extra", "extra", "mood", "scene", "speaker", "voice", "lang", "sinking", "instrument", "tempo", "key", "mode"]
+
+
+    val_batch_transform:
+      - type: AudioCollate
+        in_key: 'target_audio'
+        length_key: "audio_length"
+        pad_value: 0.0
+
+      #phoneme_tokens: tokens(str), input_ids(int id), coffs(float)
+      - type: TokenCoffCollate
+        in_key: 'phoneme_tokens'
+        token_key: 'input_ids'
+        coff_key: 'coffs'
+        token_output_key: 'lyrics_tokens'
+        coff_output_key: 'lyrics_coffs'
+
+      - type: NestListCollate
+        key_list: ['uttid','style_tags','style_text', 'style_input_ids','freeform_text','phoneme_tokens.tokens', 'conditions']
+        to_tensor: False
+
+      - type: NestListCollate
+        key_list: ['lyrics_tokens_length', 'target_tokens_length', 'num_total_tokens', 'speaker_id', 'tempo']
+        to_tensor: True
+
+model:
+  llm_path: 'hdfs://haruna/home/byte_data_seed/hdd_hldy/user/huakai.dev/ckpt/moe/680M_MOE_M8_D7/680M_M8_D7_2.25T_mixCT.32K/megatron_merge_states.pt'
+  network:
+    llm_empty_init: False
+    init_weight: True
+    # tokenizer_path: 'hdfs://haruna/home/byte_data_aml_research/user/anzhecheng/tokenizer/bbpe155k-v6.4.3-ml.pret'
+    tokenizer_path: '/opt/tiger/bbpe155k-v6.4.3-ml.pret'
+    ignored_llm_missing_keys: ['inv_freq', 'extra_embedding']
+
+    # Arch
+    arch: m8
+    hidden_size: 1152
+    n_embed: 1152  # vocab embedding
+    n_inner: 576
+    n_layer: 28
+    vocab_size: 187906  # 155136(text_codebook_size) + 0(special tokens) + 32770(semantic_codebook_size)
+    text_vocab_size: 155136
+    tie_weight: true
+    tie_extra: True
+    use_extra_tie_weight: true
+    pad_idx: 1
+    activation_function: 'swiglu'
+    embd_pdrop: 0.0
+    resid_pdrop: 0.1
+    initializer_range:  0.0161
+
+    # ROPE
+    max_position_embeddings: 32768
+    position_embeddings_type: "rope"
+    rope_mode: ntk
+    rope_base: 10000
+    rope_scale: 50
+    rope_dim: 32
+
+    # Attn
+    kv_mirror_imitated_layers: [0,1,2,3,4,5,6,7]
+    kv_mirror_layers: [20,21,22,23,24,25,26,27]
+    query_head_scale_factor: 2
+    use_attention_bias: False
+    attn_pdrop: 0.1
+    n_head: 12
+    n_shared_qhead: 3
+
+
+    # Pre-post norm
+    pre_post_layernorm_layers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
+    layer_norm_type: rmsnorm
+    layer_norm_epsilon: 1.0e-5
+
+    # MoE
+    transformer_kernel: "default"
+    mlp_type: "moe"
+    moe_expert_type: 'swiglu-melego'
+    moe_gate_type: 'cap-lego'
+    moe_expert_op_version: 'V6'
+    moe_expert_eq_dim_factor: 1.0
+    moe_topk: 6
+    moe_num_expert: 128
+    moe_share_expert_num: 2
+    moe_ema_calc_type: 'local'
+    moe_aux_loss_weight: 0.005
+
+    # HPC
+    use_flash_attn: True
+    use_flash_ce: True
+    use_fused_layernorm: True
+    use_bumi: True
+    use_bumi_gemm: False
+    gpt_use_fused_block: True
+    gpt_selective_recompute: 0
+    gpt_fused_block_full_recompute_start_layer_index: 100
+    use_llm_fp16: False
+    use_llm_bf16: False
+    freeze_llm: False
+    gradient_checkpointing_start_layers: 100
+    gradient_checkpointing: False
+
+    emb_config_path: 'apps/bigmusic/mariana_tasks/conf/v5_emb.yaml'
+    emb_config:
+      extra_params:
+        hidden_size: 1152 # = model.network.hidden_size
+        text_codebook_size: 155136 # = model.network.text_vocab_size
+        input_embedders: ["bpe"]
+        bpe_tokenizer_path: 'bbpe155k-v6.4.3-ml.pret' #support local file only
+
+trainer:
+  # default_hdfs_dir:
+  gradient_clip_val: 1.0
+  log_every_n_steps: 10
+  max_steps: 20000
+  max_epochs: -1
+  val_check_interval: 2000  # trigger checkpoint saving while save_after_val=True
+  static_sync_limit_val: True
+  #resume_ckpt_path: 'auto'
+  precision: 'bf16'
+  strategy: 'lsdp'
+  # enable_profiler: True
+  profiler_schedule_kwargs:
+    wait: 19
+    warmup: 3
+    active: 3
+    repeat: 1
+  accumulate_grad_batches: 1
+  accelerator_kwargs:
+    lsdp_config:
+      matchers:
+      - "*.transformer.h.*"
+      forward_prefetch_steps: 1
+      backward_prefetch_steps:
+      - "*.transformer.h.*,1"
+      mixed_precision:
+        weight_dtype: 'bf16'
+        gradient_dtype: 'fp32'
+        override_weight_dtype:
+          - "*.transformer.h.*.gate.*,fp32"
+      distributed_saving: true
+      distributed_loading: true
+  optimizer_kwargs:
+    optimizer:
+      type: "torch.optim.AdamW"
+      params:
+        lr: 1e-4
+        betas:
+        - 0.9
+        - 0.98
+        eps: 1.0e-08
+        weight_decay: 0.01
+        bias_correction: true
+        adam_w_mode: true
+        fused: true
+    scheduler:
+      type: "mariana.optim.lr_scheduler.get_cosine_schedule_with_warmup_lrdecay"
+      total_steps_param_name: "num_training_steps"
+      warmup_steps_param_name: "num_warmup_steps"
+      interval: "step"
+      params:
+        warmup_step_rate: 0.01
+        lr_end: 0.1  # 1e-5/1e-4
+        lr_decay_rate: 1.0

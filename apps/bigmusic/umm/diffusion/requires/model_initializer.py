@@ -1,5 +1,7 @@
 import os
+import uuid
 import torch
+import pathlib
 import torch.nn.functional as F
 from typing import Optional, List, Union
 from apps.bigmusic.umm.diffusion.lit_modules import (
@@ -8,6 +10,7 @@ from apps.bigmusic.umm.diffusion.lit_modules import (
     ChunkInfer2,
 )
 from apps.bigtts.umm.diffusion.lit_modules.infer_utils import save_wav
+from recipes.umm.requires.model_initializer import ensure_hdfs_ckpt_is_local
 
 
 def init_diffusion(
@@ -15,6 +18,15 @@ def init_diffusion(
 ):
     if device is None:
         device = torch.device(f"cuda:{local_rank}")
+    diffusion_config = diffusion_config.copy()
+
+    if cache_dir is not None:
+        os.makedirs(f"{cache_dir}/{local_rank}", exist_ok=True)
+
+    local_path = ensure_hdfs_ckpt_is_local(diffusion_config["diffusion_ckpt_path"], f"{cache_dir}/{local_rank}")
+    print(f"Download {diffusion_config['diffusion_ckpt_path']} to {local_path}")
+    diffusion_config["diffusion_ckpt_path"] = local_path
+
     diffusion_model_cls_name = diffusion_config.pop(
         "diffusion_model_cls", "DiffusionU2sInfer"
     )
@@ -70,13 +82,11 @@ def token2wav_batch(
         prompt_wav_paths = [""] * bs
         if prompt_wavs is not None:
             assert len(prompt_wavs) == bs
-            if isinstance(prompt_wavs, torch.Tensor):
-                assert prompt_wavs.ndim == 2
             for bidx, prompt_wav in enumerate(prompt_wavs):
                 prompt_wav = prompt_wav.squeeze().cpu().numpy()
-                prompt_wav_path = f"prompt_{bidx}.wav"
+                prompt_wav_path = f"prompt_{str(uuid.uuid4())}.wav"
                 prompt_wav_paths[bidx] = prompt_wav_path
-                save_wav(prompt_wav, prompt_wav_path)
+                save_wav(prompt_wav.T, prompt_wav_path, sr=44100)
     assert len(prompt_wav_paths) == bs
 
     if uttids is None:
@@ -99,9 +109,13 @@ def token2wav_batch(
         )
         for bidx in range(bs)
     ]
-
     with torch.no_grad():
         pure_audio_output = diffusion.predict_step(batch, batch_idx=0)
+
+    if prompt_wavs is not None:
+        for temp_prompt_wav_path in prompt_wav_paths:
+            pathlib.Path(temp_prompt_wav_path).unlink()
+    
     return pure_audio_output
 
 

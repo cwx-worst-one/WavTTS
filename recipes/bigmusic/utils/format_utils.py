@@ -13,6 +13,7 @@ from recipes.bigmusic.datasets.mir_data_util import (
     VOICE_THRESHOLDS,
 )
 from recipes.datasets.mcc.sami_tokenizer import Phrase
+from filelock import FileLock
 
 
 def rewrite_playlist_labels(label1, label2):
@@ -117,14 +118,32 @@ def concat_metadata_list(existimg_metadata, metadata):
     return existimg_metadata
 
 def update_json(metadata_fp, updates):
-    if Path(metadata_fp).exists():
-        with open(metadata_fp, 'r', encoding='utf-8') as f:
-            metadata = json.load(f)
-    else:
-        metadata = {}
-    metadata = { **metadata, **updates }    
-    with open(metadata_fp, 'w', encoding='utf-8') as f:
-        json.dump(metadata, f, indent=2, ensure_ascii=False)
+    lock_fp = str(Path(metadata_fp)) + ".lock"
+    lock = FileLock(lock_fp)
+
+    with lock:
+        if Path(metadata_fp).exists():
+            with open(metadata_fp, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+        else:
+            metadata = {}
+
+        metadata = {**metadata, **updates}
+
+        with open(metadata_fp, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
+
+def load_json_locked(metadata_fp):
+    lock_fp = str(Path(metadata_fp)) + ".lock"
+    lock = FileLock(lock_fp)
+    with lock:
+        if Path(metadata_fp).exists():
+            with open(metadata_fp, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+        else:
+            metadata = {}
+    return metadata
+
 
 def format_section_tags(text):
     """Converts [Verse 1] to <verse>."""

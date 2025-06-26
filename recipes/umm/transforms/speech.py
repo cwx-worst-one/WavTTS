@@ -239,7 +239,40 @@ class SpeechTransform(ModelInputTransform):
         # self.process_data(pl_datamodule.val_dataloader(), f"{fp}/validation", rank, pl_datamodule.padding_strategy) # TODO: check if this does all validation?
         # self.process_data(pl_datamodule.test_dataloader(), f"{fp}/test", rank, pl_datamodule.padding_strategy)
 
+class SpeechTransformModified(SpeechTransform):
+    def forward(self, waveform: torch.Tensor, waveform_length: torch.Tensor, normalize: bool, mel: Optional[torch.Tensor] = None) -> torch.Tensor:
+        if mel is None or (type(mel) == list and mel[0] is None):
+            if waveform.ndim != 2:
+                waveform = waveform.squeeze(dim=1)
 
+            # theoretical frame size of stft
+            # mel_length = (waveform_length - self.n_fft) // self.hop_length + 1
+
+            # actual frame size of torch.stft function
+            # -1 to align with sub/upsampling (see forward function of SpeechTransform)
+            mel_length = waveform_length // self.hop_length + 1 - 1
+            mel_length = torch.clamp(mel_length, min=0)
+            
+            mel = self.mel_transform(waveform)
+            mel = mel[..., :-1]
+
+            # t = mel.size(-1)
+            # if t > mel_length.max():
+            #     mel = mel[..., :mel_length.max()]
+            
+            mel = self.amplitude_to_db(mel)
+            mel = rearrange(mel, "b n_mels time -> b time n_mels")
+        
+        if normalize:
+            if self.n_datapoints == 0:
+                raise Exception(
+                    "statistics are not loaded, use `load_data_stats(fp)` first"
+                )
+            mel = mel - self.mean.float()
+            mel = mel / self.std.float()
+            
+        return mel, mel_length
+    
 class WhisperSpeechTransform24k(SpeechTransform):
     _sample_rate = 24000
     _n_mels = 80

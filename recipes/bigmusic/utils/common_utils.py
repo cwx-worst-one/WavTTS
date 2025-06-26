@@ -1,10 +1,16 @@
+import contextlib
 import itertools
+import importlib
+import os
+import sys
+import time
+from contextlib import contextmanager
 from typing import Iterable, List, Tuple
 
 import numpy as np
 from tqdm import tqdm
 
-__author__ = ["chaonan99"]
+__author__ = ["chaonan99", "yilinzhang"]
 
 
 def pairwise(iterable):
@@ -155,3 +161,33 @@ class TqdmWrapper:
     def close(self):
         if self.verbose:
             self.pbar.close()
+
+
+@contextmanager
+def record_time(record: dict, key: str):
+    start_time = time.time()
+    try:
+        yield
+    finally:
+        end_time = time.time()
+        record[key] = end_time - start_time
+
+
+class ExternalModule:
+    def __init__(self, module_dir: str, module: str):
+        self.module_dir = module_dir
+        with _temp_sys_path(self.module_dir):
+            self.module = importlib.import_module(module)
+    
+    def getattr(self, attr: str):
+        return getattr(self.module, attr)
+
+
+@contextlib.contextmanager
+def _temp_sys_path(path):
+    original_sys_path = sys.path.copy()
+    sys.path.insert(0, path)
+    try:
+        yield
+    finally:
+        sys.path = original_sys_path

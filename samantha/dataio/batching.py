@@ -1,12 +1,67 @@
-import bisect
-import logging
+import copy
+import operator
 from typing import Callable, Dict, List, Optional
 
-logger = logging.getLogger(__name__)
+from cruise.utilities.logger import get_cruise_logger
+
+logger = get_cruise_logger()
 
 
-def default_bsz_evaluator(x, y):
-    return x * y
+def setup_batcher_fn(cfg):
+    """Factory function to create and configure a batcher instance.
+
+    This function dynamically creates a batcher object based on the specified type
+    in the configuration. It extracts common parameters with default values and
+    passes them to the appropriate batcher class constructor.
+
+    The function supports different batcher types:
+    - SimpleBatcher: Basic batching with fixed batch size
+    - BucketBatcher: Groups samples into buckets based on their size
+    - TaggedBucketBatcher: Groups samples by tag and size
+    - TokenBucketBatcher: Specialized for token-based batching
+
+    Args:
+        cfg (dict): Configuration dictionary containing:
+            - type: Batcher class name (default: 'SimpleBatcher')
+            - maximum_bucket_size: Maximum size for dynamic batching (default: 1)
+            - dynamic_batch: Whether to use dynamic batching (default: True)
+            - batch_size: Fixed batch size for non-dynamic batching (default: 1)
+            - bucket_skip_warning_num: Warning threshold for skipped items (default: 10000)
+            - buckets: List of bucket sizes (default: None)
+            - bucket_schedule_key: Key to extract item size (default: 'num_total_tokens')
+            - Additional parameters specific to each batcher type
+
+    Returns:
+        object: Configured batcher instance of the specified type
+    """
+    # Create a deep copy to avoid modifying the original config
+    cfg = copy.deepcopy(cfg)
+
+    # Extract common parameters with default values
+    batch_strategy = cfg.pop("type", "SimpleBatcher")
+    maximum_bucket_size = cfg.pop("maximum_bucket_size", 1)
+    dynamic_batch = cfg.pop("dynamic_batch", True)
+    batch_size = cfg.pop("batch_size", 1)
+    bucket_skip_warning_num = cfg.pop("bucket_skip_warning_num", 10000)
+    buckets = cfg.pop("buckets", None)
+    bucket_schedule_key = cfg.pop("bucket_schedule_key", "num_total_tokens")
+
+    # Get the batcher class from the global namespace
+    batch_strategy = globals()[batch_strategy]
+
+    # Create and return the batcher instance with extracted parameters
+    # Any remaining config items are passed as additional kwargs
+    batcher = batch_strategy(
+        buckets=buckets,
+        dynamic_batch=dynamic_batch,
+        maximum_bucket_size=maximum_bucket_size,
+        batch_size=batch_size,
+        bucket_skip_warning_num=bucket_skip_warning_num,
+        bucket_schedule_key=bucket_schedule_key,
+        **cfg,
+    )
+
+    return batcher
 
 
 class SimpleBatcher:
@@ -15,9 +70,9 @@ class SimpleBatcher:
     collate batch data depending on data item num.
     """
 
-    def __init__(self, max_batch_size):
+    def __init__(self, batch_size=1, **kwargs):
         self.data_buffer = []
-        self.max_batch_size = max_batch_size
+        self.batch_size = batch_size
 
     def collate_batch(self, data_item):
         """
@@ -30,7 +85,7 @@ class SimpleBatcher:
         """
         self.data_buffer.append(data_item)
         bsz = len(self.data_buffer)
-        if bsz >= self.max_batch_size:
+        if bsz >= self.batch_size:
             batch_data = self.data_buffer
             self.clear()
             return batch_data
@@ -76,7 +131,7 @@ class BucketBatcher:
         dynamic_batch: bool = True,
         maximum_bucket_size: int = None,
         batch_size: int = None,
-        length_fn: Callable = len,
+        length_fn: Callable = None,
         bucket_skip_warning_num: int = 10000,
         bsz_evaluator: Optional[Callable] = None,
         bucket_size_fn: Optional[Callable] = None,
@@ -98,14 +153,14 @@ class BucketBatcher:
         self.dynamic_batch = dynamic_batch
         self.maximum_bucket_size = maximum_bucket_size
         self.batch_size = batch_size
-        self.length_fn = length_fn
+        self.length_fn = length_fn or len
         self.bucket_skip_warning_num = bucket_skip_warning_num
         self.bucket_num = 1 if self.buckets is None else len(self.buckets)
         self.bucket_list = [[] for _ in range(self.bucket_num)]
         self.bucket_size = [0 for _ in range(self.bucket_num)]
         self.bucket_max_size = [0 for _ in range(self.bucket_num)]
         self.throw_num = 0
-        self.bsz_evaluator = bsz_evaluator or default_bsz_evaluator
+        self.bsz_evaluator = bsz_evaluator or operator.mul
         self.bucket_size_fn = bucket_size_fn
 
     def find_bucket(self, data_item):
@@ -337,17 +392,163 @@ class TaggedBucketBatcher:
         self.bucket_list[tag][bucket_idx] = []
 
 
-def get_bucketed_max_length(max_length: int, available_buckets: List[int]):
-    """
-    Find the smallest bucket size that is greater than or equal to max_length.
+class TokenBucketBatcher:
+    def __init__(
+        self,
+        buckets: List[int] = None,
+        dynamic_batch: bool = True,
+        maximum_bucket_size: int = None,
+        batch_size: int = None,
+        bucket_schedule_key: str = "num_total_tokens",
+        bucket_skip_warning_num: int = 10000,
+        frame_rate: int = 50,  # estimated  audio HZ：25 lyrics/phonem token HZ: 15
+        sample_rate: int = 24000,
+    ):
 
-    :param max_length: The calculated maximum length
-    :param available_buckets: A sorted list of available bucket sizes
-    :return: The smallest bucket size that fits max_length
-    """
-    index = bisect.bisect_left(available_buckets, max_length)
-    if index == len(available_buckets):
-        return available_buckets[
-            -1
-        ]  # If max_length is larger than all buckets, return the largest bucket
-    return available_buckets[index]
+        if buckets is None:
+            # in seconds
+            self.buckets = [i * frame_rate for i in range(10, 240, 10)]
+        else:
+            self.buckets = buckets
+
+        logger.info(f"buckets: {self.buckets}")
+
+        if dynamic_batch and maximum_bucket_size is None:
+            raise ValueError(
+                "Expecting maximum_bucket_size be provided when dynamic_batch is True."
+            )
+
+        if not dynamic_batch and batch_size is None:
+            raise ValueError(
+                "Expecting batch_size be provided when dynamic_batch is False."
+            )
+
+        self.bucket_schedule_key = bucket_schedule_key
+        self.dynamic_batch = dynamic_batch
+        self.maximum_bucket_size = maximum_bucket_size
+        self.bucket_num = len(self.buckets)
+        self.bucket_list = [[] for _ in range(self.bucket_num)]
+        self.bucket_size = [0 for _ in range(self.bucket_num)]
+        self.bucket_max_size = [0 for _ in range(self.bucket_num)]
+        self.throw_num = 0
+        self.sample_rate = sample_rate
+        self.bucket_skip_warning_num = bucket_skip_warning_num
+
+    def get_item_size(self, data_item):
+        """Get item size in seconds from audio data or direct length value.
+
+        Args:
+            data_item (dict): Dictionary containing audio data or length
+
+        Returns:
+            int or None: Duration in seconds, None if invalid data
+        """
+        size = data_item.get(self.bucket_schedule_key, None)
+        if size is None:
+            logger.warning(f"Missing key: {self.bucket_schedule_key}")
+            return None
+        return size
+
+    def find_bucket(self, data_item):
+        """find a suitable bucket and push to bucket."""
+        size = self.get_item_size(data_item)
+        if size is None:
+            return None, None
+        bucket_idx = self.find_bucket_idx(size)
+        if bucket_idx is None:
+            return None, None
+        return size, bucket_idx
+
+    def find_bucket_idx(self, size):
+        r"""find bucket idx for a size.
+
+        Args:
+            size(int): size of a data item
+        Returns:
+            int: the minimum bucket idx for this size, which match
+                 `size <= bucket_schedule[idx]`.
+                 -1 means no bucket match.
+        """
+
+        if size > self.buckets[-1]:
+            logger.warning(
+                f"{size=} exceeding the maximum bucket size {self.buckets[-1]}."
+            )
+            return None
+
+        bucket_length = len(self.buckets)
+        low = -1
+        high = bucket_length - 1
+        while low + 1 < high:
+            mid = (high + low) >> 1
+            if self.buckets[mid] < size:
+                low = mid
+            else:
+                high = mid
+        return high
+
+    def push_bucket(self, data_item, size, bucket_idx):
+        self.bucket_list[bucket_idx].append(data_item)
+        self.bucket_size[bucket_idx] += size
+        self.bucket_max_size[bucket_idx] = max(self.bucket_max_size[bucket_idx], size)
+
+    def _max_batch_size(self, bucket_idx, current_size):
+        return max(self.bucket_max_size[bucket_idx], current_size)
+
+    def collate_batch(self, data_item):
+        """
+        push data_item to bucket_list for collate batch.
+        Args:
+            data_item(any): data item.
+        Returns:
+            batch_data(any): collated batch data if batch is full else None.
+        """
+        size, bucket_idx = self.find_bucket(data_item)
+        if size is None:
+            self.throw_num += 1
+            if self.throw_num % self.bucket_skip_warning_num == 0:
+                logger.warning(
+                    f"Cannot find suitable bucket. You have already "
+                    f"skipped {self.throw_num} data_item"
+                )
+            return None
+
+        max_batch_size = self._max_batch_size(bucket_idx, size)
+        bsz = len(self.bucket_list[bucket_idx]) + 1
+
+        if self.dynamic_batch:
+            total_size = bsz * max_batch_size
+
+            if total_size >= self.maximum_bucket_size:
+                batch_data = self.bucket_list[bucket_idx]
+                self.clear(bucket_idx)
+                self.push_bucket(data_item, size, bucket_idx)
+                return batch_data
+        else:
+            if bsz == self.batch_size:
+                batch_data = self.bucket_list[bucket_idx]
+                self.clear(bucket_idx)
+                self.push_bucket(data_item, size, bucket_idx)
+                return batch_data
+
+        self.push_bucket(data_item, size, bucket_idx)
+
+        return None
+
+    def collect_last_batch(self):
+        """collect batch data(s) that has not been get."""
+        last_batch = self.bucket_list
+        self.clear()
+        return last_batch
+
+    def clear(self, bucket_idx=None):
+        """clear data buffer"""
+        if bucket_idx is None:
+            self.bucket_list = [[] for _ in range(self.bucket_num)]
+            self.bucket_size = [0 for _ in range(self.bucket_num)]
+            self.bucket_max_size = [0 for _ in range(self.bucket_num)]
+        else:
+            assert bucket_idx >= 0
+            self.bucket_list[bucket_idx] = []
+            self.bucket_size[bucket_idx] = 0
+            self.bucket_max_size[bucket_idx] = 0

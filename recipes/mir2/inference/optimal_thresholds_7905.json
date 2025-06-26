@@ -1,0 +1,2567 @@
+{
+    "GENRE": [
+        {
+            "tag_id": 0,
+            "tag_name": "Other_genre",
+            "avg_precision": 0.04841624675269188,
+            "threshold": -4.304657605229593,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 1,
+            "tag_name": "Pop",
+            "avg_precision": 0.8136242067091499,
+            "threshold": -0.5453603316326525,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 2,
+            "tag_name": "Electronic",
+            "avg_precision": 0.8970952468283504,
+            "threshold": -0.15569196428571352,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 3,
+            "tag_name": "Chinese_Style",
+            "avg_precision": 0.8333413487188915,
+            "threshold": -0.7732780612244881,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 4,
+            "tag_name": "Rock",
+            "avg_precision": 0.7446184363973338,
+            "threshold": -0.6336096938775508,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 5,
+            "tag_name": "Jazz",
+            "avg_precision": 0.7354396069857586,
+            "threshold": -0.21396683673469497,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 6,
+            "tag_name": "Hip_Hop",
+            "avg_precision": 0.9386832981882218,
+            "threshold": -0.33864795918367285,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 7,
+            "tag_name": "Classical",
+            "avg_precision": 0.30672756138432766,
+            "threshold": 0.5347998225182593,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 8,
+            "tag_name": "R&B_Soul",
+            "avg_precision": 0.7141940400845386,
+            "threshold": -1.3138950892857135,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 9,
+            "tag_name": "Metal",
+            "avg_precision": 0.9268573599005734,
+            "threshold": -0.005102040816328923,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 10,
+            "tag_name": "Tuhai",
+            "avg_precision": 0.005777458762596408,
+            "threshold": -10.58762823130886,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 11,
+            "tag_name": "Childhood",
+            "avg_precision": 0.578220273616693,
+            "threshold": 2.772251285316166,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 12,
+            "tag_name": "Devotional",
+            "avg_precision": 0.10966528281597296,
+            "threshold": 1.9750402537198077,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 13,
+            "tag_name": "Chinese_Tradition",
+            "avg_precision": 0.6508309858642597,
+            "threshold": -1.926658163265305,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 14,
+            "tag_name": "Easy_Listening",
+            "avg_precision": 0.002506265664160401,
+            "threshold": -3.8630387516817244,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 15,
+            "tag_name": "New_Age",
+            "avg_precision": 0.10660764286527949,
+            "threshold": -0.9497416604603117,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 16,
+            "tag_name": "8_Bit",
+            "avg_precision": 0.23648018648018648,
+            "threshold": -1.3943876029053754,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 17,
+            "tag_name": "Folk",
+            "avg_precision": 0.7021539902065782,
+            "threshold": -1.1900510204081645,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 18,
+            "tag_name": "Latin",
+            "avg_precision": 0.3505733296573448,
+            "threshold": -1.296875,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 19,
+            "tag_name": "Alternative_Indie",
+            "avg_precision": 0.07265464857639534,
+            "threshold": -2.483049665178571,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 20,
+            "tag_name": "Epic",
+            "avg_precision": 0.625,
+            "threshold": -0.7103601588026152,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 21,
+            "tag_name": "BGM",
+            "avg_precision": null,
+            "threshold": -10.3515625,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 22,
+            "tag_name": "Chinese_Pop",
+            "avg_precision": 0.44808290002045376,
+            "threshold": -1.0801977040816322,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 23,
+            "tag_name": "Cantopop",
+            "avg_precision": null,
+            "threshold": -10.7421875,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 24,
+            "tag_name": "Taiwanese_Pop",
+            "avg_precision": null,
+            "threshold": -10.59375,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 25,
+            "tag_name": "Pop_Folk",
+            "avg_precision": null,
+            "threshold": -10.3828125,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 26,
+            "tag_name": "Contemporary_Pop",
+            "avg_precision": null,
+            "threshold": -10.171875,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 27,
+            "tag_name": "Teen_Pop",
+            "avg_precision": 0.0016556291390728477,
+            "threshold": -2.0677834102120585,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 28,
+            "tag_name": "Indie_Pop",
+            "avg_precision": 0.2527021777139653,
+            "threshold": -1.9202911999760843,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 29,
+            "tag_name": "Dream_Pop",
+            "avg_precision": 0.15143129793839177,
+            "threshold": -1.4933035714285694,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 30,
+            "tag_name": "City_Pop",
+            "avg_precision": 0.037709906591261735,
+            "threshold": -3.05781648596939,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 31,
+            "tag_name": "Synth_Pop",
+            "avg_precision": 0.04789875428162959,
+            "threshold": -2.509646045918368,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 32,
+            "tag_name": "Celtic_Pop",
+            "avg_precision": 0.02564102564102564,
+            "threshold": -3.226343776026649,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 33,
+            "tag_name": "Dance_Pop",
+            "avg_precision": 0.23788812986990898,
+            "threshold": -2.1921237244897966,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 34,
+            "tag_name": "Deep_Dance_Pop",
+            "avg_precision": 0.007042253521126761,
+            "threshold": -4.606831395348838,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 35,
+            "tag_name": "Electropop",
+            "avg_precision": 0.3269961177234026,
+            "threshold": -2.063127790178571,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 36,
+            "tag_name": "Chamber_Pop",
+            "avg_precision": 0.008984334812502557,
+            "threshold": -1.592087610212861,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 37,
+            "tag_name": "A_cappella",
+            "avg_precision": null,
+            "threshold": -10.734375,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 38,
+            "tag_name": "Country_Pop",
+            "avg_precision": 0.8270463831502692,
+            "threshold": -0.610331632653061,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 39,
+            "tag_name": "EDM",
+            "avg_precision": 0.21671089567091725,
+            "threshold": -1.543714095135126,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 40,
+            "tag_name": "House",
+            "avg_precision": 0.5107012298065642,
+            "threshold": -1.373943718112244,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 41,
+            "tag_name": "Dubstep",
+            "avg_precision": 0.6002754466213545,
+            "threshold": -0.8088329081632644,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 42,
+            "tag_name": "Future_Bass",
+            "avg_precision": 0.5651479730664049,
+            "threshold": -0.6511479591836746,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 43,
+            "tag_name": "Chillout",
+            "avg_precision": 0.05805909776498012,
+            "threshold": -1.73820429619931,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 44,
+            "tag_name": "Trance",
+            "avg_precision": 0.3844719350178393,
+            "threshold": -2.4931640625,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 45,
+            "tag_name": "Techno",
+            "avg_precision": 0.243345952636822,
+            "threshold": -2.8642852160395407,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 46,
+            "tag_name": "Drum&Bass",
+            "avg_precision": 0.5922350322064407,
+            "threshold": -1.9685307716836746,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 47,
+            "tag_name": "Tropical_House",
+            "avg_precision": 0.1310665457620252,
+            "threshold": -2.2914142219387763,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 48,
+            "tag_name": "Disco",
+            "avg_precision": 0.16049787444434985,
+            "threshold": -2.2167869100765323,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 49,
+            "tag_name": "Vaporwave",
+            "avg_precision": 0.5,
+            "threshold": 0.25621924350534897,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 50,
+            "tag_name": "Trip_Hop",
+            "avg_precision": 0.004196252772876834,
+            "threshold": -2.7333376877922966,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 51,
+            "tag_name": "Ambient",
+            "avg_precision": 0.33231114216427865,
+            "threshold": -2.824338329081634,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 52,
+            "tag_name": "Deep_Pop_Edm",
+            "avg_precision": 0.018954075438703723,
+            "threshold": -3.158242984693876,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 53,
+            "tag_name": "EDM_Trap",
+            "avg_precision": 0.41541309976845897,
+            "threshold": -1.9645746970663254,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 54,
+            "tag_name": "Future_House",
+            "avg_precision": 0.22031352463473894,
+            "threshold": -1.2578125,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 55,
+            "tag_name": "ChinaWave",
+            "avg_precision": 0.23600232058613996,
+            "threshold": -2.3480747767857153,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 56,
+            "tag_name": "GuFeng_Music",
+            "avg_precision": 0.6163856368132998,
+            "threshold": -1.139508928571427,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 57,
+            "tag_name": "Chinoiserie_Rap",
+            "avg_precision": 0.5701372876034937,
+            "threshold": -2.1498724489795897,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 58,
+            "tag_name": "Chinoiserie_Electronic",
+            "avg_precision": 0.38868071815373517,
+            "threshold": -2.685810945471939,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 59,
+            "tag_name": "Hard_Rock",
+            "avg_precision": 0.2357293958559558,
+            "threshold": -0.6654974489795897,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 60,
+            "tag_name": "Psychedelic_Rock",
+            "avg_precision": 0.09388811202512035,
+            "threshold": -3.173728475765305,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 61,
+            "tag_name": "Pop_Rock",
+            "avg_precision": 0.5220760618968056,
+            "threshold": -1.2976721938775508,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 62,
+            "tag_name": "Instrumental_Rock",
+            "avg_precision": 0.00400487742081761,
+            "threshold": -4.797504144243703,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 63,
+            "tag_name": "Alternative_Rock",
+            "avg_precision": 0.19628462759329235,
+            "threshold": -2.1472516741071423,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 64,
+            "tag_name": "Indie_Rock",
+            "avg_precision": 0.3486000286995341,
+            "threshold": -1.3502670599489814,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 65,
+            "tag_name": "Post-Rock",
+            "avg_precision": 0.17343426077167626,
+            "threshold": -3.166095344387756,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 66,
+            "tag_name": "Lo-Fi",
+            "avg_precision": null,
+            "threshold": -10.3046875,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 67,
+            "tag_name": "J_Rock",
+            "avg_precision": 0.20174216027874564,
+            "threshold": -0.019790147923973933,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 68,
+            "tag_name": "Shoegazing",
+            "avg_precision": null,
+            "threshold": -10.34375,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 69,
+            "tag_name": "Math_Rock",
+            "avg_precision": 0.5,
+            "threshold": -2.232393971426742,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 70,
+            "tag_name": "Surf_Rock",
+            "avg_precision": 0.02030032231901523,
+            "threshold": -1.988570295983088,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 71,
+            "tag_name": "Progressive_Rock",
+            "avg_precision": 0.013150353086582217,
+            "threshold": -2.929846287598501,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 72,
+            "tag_name": "Soft_Rock",
+            "avg_precision": 0.018105431272151255,
+            "threshold": -2.700924496684605,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 73,
+            "tag_name": "Jazz_Pop",
+            "avg_precision": 0.4322205264586403,
+            "threshold": -1.1536591198979593,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 74,
+            "tag_name": "Jazz_Fusion",
+            "avg_precision": 0.09106529667673749,
+            "threshold": -1.4499603218695931,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 75,
+            "tag_name": "Bossa_Nova",
+            "avg_precision": 0.6474051176445225,
+            "threshold": -1.0637755102040813,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 76,
+            "tag_name": "Avant-Garde_Jazz",
+            "avg_precision": 0.030154639175257732,
+            "threshold": -2.8992384451678532,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 77,
+            "tag_name": "Swing",
+            "avg_precision": 0.36914492983189895,
+            "threshold": -2.2673240194515323,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 78,
+            "tag_name": "Big_Band",
+            "avg_precision": 0.3382034632034632,
+            "threshold": -0.546545287374272,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 79,
+            "tag_name": "Bop",
+            "avg_precision": null,
+            "threshold": -10.71875,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 80,
+            "tag_name": "Post-Bop",
+            "avg_precision": null,
+            "threshold": -4.671875,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 81,
+            "tag_name": "Smooth_Jazz",
+            "avg_precision": 0.06712094071739462,
+            "threshold": -0.3358255728866375,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 82,
+            "tag_name": "Cool_Jazz",
+            "avg_precision": 0.17890984941930155,
+            "threshold": -0.10551736227897379,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 83,
+            "tag_name": "Vocal_Jazz",
+            "avg_precision": 0.030643823639599624,
+            "threshold": -0.5845613408129928,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 84,
+            "tag_name": "Nu_Jazz",
+            "avg_precision": null,
+            "threshold": -2.388671875,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 85,
+            "tag_name": "Free_Jazz",
+            "avg_precision": null,
+            "threshold": -3.705078125,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 86,
+            "tag_name": "Trap_Rap",
+            "avg_precision": 0.7080622059204058,
+            "threshold": -0.6898915816326543,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 87,
+            "tag_name": "Old_School",
+            "avg_precision": 0.08934940707198122,
+            "threshold": -2.017498405612244,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 88,
+            "tag_name": "R&B_Rap",
+            "avg_precision": 0.4668947702344185,
+            "threshold": -1.2586495535714306,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 89,
+            "tag_name": "Jazz_Hip_Hop",
+            "avg_precision": 0.40815497672713125,
+            "threshold": -2.2396763392857153,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 90,
+            "tag_name": "Alternative_Hip_Hop",
+            "avg_precision": 0.13238997003910583,
+            "threshold": -2.426080197704083,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 91,
+            "tag_name": "Instrumental_Hip_Hop",
+            "avg_precision": 0.05,
+            "threshold": -4.623041995002886,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 92,
+            "tag_name": "Pop_Rap",
+            "avg_precision": 0.3446565813046262,
+            "threshold": -1.8330775669642865,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 93,
+            "tag_name": "Hardcore_Rap",
+            "avg_precision": 0.1525012379243157,
+            "threshold": -2.98848054846939,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 94,
+            "tag_name": "Comedy_Hip_Hop",
+            "avg_precision": 0.08545116272917692,
+            "threshold": -1.3808305955298223,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 95,
+            "tag_name": "Hip_House",
+            "avg_precision": 0.21775705959437625,
+            "threshold": -3.010642538265305,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 96,
+            "tag_name": "Chill_Beats",
+            "avg_precision": 0.09891339238038263,
+            "threshold": -3.142478475765305,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 97,
+            "tag_name": "Chorus_AUDIO_GENRE",
+            "avg_precision": null,
+            "threshold": -10.28125,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 98,
+            "tag_name": "Chamber_Music",
+            "avg_precision": null,
+            "threshold": -10.1875,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 99,
+            "tag_name": "Symphony",
+            "avg_precision": null,
+            "threshold": -10.90625,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 100,
+            "tag_name": "Funk",
+            "avg_precision": 0.3460045338622097,
+            "threshold": -1.5720264668367356,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 101,
+            "tag_name": "Contemporary_R&B",
+            "avg_precision": 0.5313730596994068,
+            "threshold": -1.274553571428573,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 102,
+            "tag_name": "Neo_Soul",
+            "avg_precision": 0.04493418496809759,
+            "threshold": -2.5931521045918373,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 103,
+            "tag_name": "Soul",
+            "avg_precision": 0.11800081324987963,
+            "threshold": -2.5939592633928577,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 104,
+            "tag_name": "Pop_Soul",
+            "avg_precision": 0.05548086685845766,
+            "threshold": -2.5826690051020407,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 105,
+            "tag_name": "Black_Metal",
+            "avg_precision": 0.4527010614454409,
+            "threshold": -1.1399872448979593,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 106,
+            "tag_name": "Death_Metal",
+            "avg_precision": 0.4893577088971671,
+            "threshold": -1.1920041454081627,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 107,
+            "tag_name": "Glam_Metal_\uff08Hair_Metal\uff0cPop_Metal\uff09",
+            "avg_precision": 0.174634228323091,
+            "threshold": -2.2706672512755084,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 108,
+            "tag_name": "Grindcore_",
+            "avg_precision": 0.24305981818604167,
+            "threshold": -2.629862882653061,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 109,
+            "tag_name": "Power_Metal",
+            "avg_precision": 0.46850631714531754,
+            "threshold": -0.967813297193878,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 110,
+            "tag_name": "Progressive_Metal\uff08Prog_Metal)",
+            "avg_precision": 0.0514902170605212,
+            "threshold": -4.415497448979593,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 111,
+            "tag_name": "Speed_Metal",
+            "avg_precision": 0.040025080432454375,
+            "threshold": -1.97916291282273,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 112,
+            "tag_name": "DJ",
+            "avg_precision": 0.7642458075892603,
+            "threshold": 0.36160714285714235,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 113,
+            "tag_name": "VinaHouse",
+            "avg_precision": 0.03413813053689385,
+            "threshold": -1.891707420899003,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 114,
+            "tag_name": "MC",
+            "avg_precision": 0.0001232315979081322,
+            "threshold": -11.43138423745916,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 115,
+            "tag_name": "Gospel",
+            "avg_precision": 0.12293086918731368,
+            "threshold": -1.125596298109265,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 116,
+            "tag_name": "Holiday_Music",
+            "avg_precision": null,
+            "threshold": -2.79296875,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 117,
+            "tag_name": "Christian_Music",
+            "avg_precision": 0.1162444014124546,
+            "threshold": 0.5275630683319719,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 118,
+            "tag_name": "Buddhist_music",
+            "avg_precision": 0.1111111111111111,
+            "threshold": 1.0293710759818033,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 119,
+            "tag_name": "Chinese_Opera",
+            "avg_precision": 0.009924474974788784,
+            "threshold": -10.695004684797231,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 120,
+            "tag_name": "Traditional_Chinese_Folk",
+            "avg_precision": 0.5803548467181233,
+            "threshold": -0.19606983418367463,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 121,
+            "tag_name": "Chinese_Quyi",
+            "avg_precision": 0.26666666666666666,
+            "threshold": 2.5139761866150927,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 122,
+            "tag_name": "Red_Song_",
+            "avg_precision": 0.4413679208555398,
+            "threshold": -0.29874840561224403,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 123,
+            "tag_name": "Folk_Pop",
+            "avg_precision": 0.36725673225312533,
+            "threshold": -1.8505859375,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 124,
+            "tag_name": "Indie_Folk",
+            "avg_precision": 0.25818695672720354,
+            "threshold": -1.350231559909119,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 125,
+            "tag_name": "Tango",
+            "avg_precision": 0.4100684261974584,
+            "threshold": 0.020657004334939444,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 126,
+            "tag_name": "Reggaeton",
+            "avg_precision": 0.17783013317750213,
+            "threshold": -4.528738839285715,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 127,
+            "tag_name": "Blues",
+            "avg_precision": 0.7413536514450717,
+            "threshold": -1.3089923469387745,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 128,
+            "tag_name": "Punk",
+            "avg_precision": 0.8178832469299329,
+            "threshold": -1.251953125,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 129,
+            "tag_name": "Reggae",
+            "avg_precision": 0.9289783507150207,
+            "threshold": 0.491230867346939,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 130,
+            "tag_name": "Boombap",
+            "avg_precision": 0.4841411884747069,
+            "threshold": -1.2048389668367356,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 131,
+            "tag_name": "Chillwave",
+            "avg_precision": 0.07183268557089312,
+            "threshold": -3.244106840404573,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 132,
+            "tag_name": "Chinese_Folk",
+            "avg_precision": 0.3892356013325987,
+            "threshold": -1.576191804846939,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 133,
+            "tag_name": "Contemporary_Blues",
+            "avg_precision": 0.4629987380469694,
+            "threshold": -1.9144810267857153,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 134,
+            "tag_name": "Contemporary_Folk",
+            "avg_precision": 0.10635954500367945,
+            "threshold": -2.2798549107142883,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 135,
+            "tag_name": "Country_Blues",
+            "avg_precision": 0.4104998874661939,
+            "threshold": -1.7562978316326543,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 136,
+            "tag_name": "Emo_Rap",
+            "avg_precision": 0.09398802412652589,
+            "threshold": -3.6135179169323983,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 137,
+            "tag_name": "English_Folk",
+            "avg_precision": 0.01864836299620576,
+            "threshold": -0.7347065895476987,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 138,
+            "tag_name": "Flamenco",
+            "avg_precision": 0.04608648056923918,
+            "threshold": -3.324292325341151,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 139,
+            "tag_name": "Gangsta_Rap",
+            "avg_precision": 0.034316565893471804,
+            "threshold": -2.2529470177461697,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 140,
+            "tag_name": "Hardstyle",
+            "avg_precision": 0.5168623100841299,
+            "threshold": -1.576132015306122,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 141,
+            "tag_name": "Heavy_Metal",
+            "avg_precision": 0.27307384044048455,
+            "threshold": -1.748903858418366,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 142,
+            "tag_name": "Hi-NRG",
+            "avg_precision": 0.006320581873943485,
+            "threshold": -4.103757497677623,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 143,
+            "tag_name": "Indian_Pop",
+            "avg_precision": 0.00042486069182674167,
+            "threshold": -5.844027784451278,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 144,
+            "tag_name": "Italian_Pop",
+            "avg_precision": null,
+            "threshold": -7.45703125,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 145,
+            "tag_name": "Japanese_Folk",
+            "avg_precision": null,
+            "threshold": -4.54296875,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 146,
+            "tag_name": "J_Pop",
+            "avg_precision": 0.21018518518518517,
+            "threshold": 1.0267780457188174,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 147,
+            "tag_name": "K-Pop",
+            "avg_precision": 0.07289067563782811,
+            "threshold": -4.274339924082259,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 148,
+            "tag_name": "Latin_Pop",
+            "avg_precision": 0.23442992535411764,
+            "threshold": -2.0771484375,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 149,
+            "tag_name": "Low_pop",
+            "avg_precision": null,
+            "threshold": -11.1015625,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 150,
+            "tag_name": "Melbourne_Bounce",
+            "avg_precision": 0.04194970259165676,
+            "threshold": -4.705357142857142,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 151,
+            "tag_name": "New_Chinese_Folk",
+            "avg_precision": 0.15374263109542113,
+            "threshold": -2.720135124362244,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 152,
+            "tag_name": "New_Wave_",
+            "avg_precision": 0.18482586474763915,
+            "threshold": -3.0119180484693864,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 153,
+            "tag_name": "Nostalgic_Pop",
+            "avg_precision": null,
+            "threshold": -10.921875,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 154,
+            "tag_name": "Pop_Punk",
+            "avg_precision": 0.5389075394479954,
+            "threshold": -0.44252232142857295,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 155,
+            "tag_name": "Rock_BluesNew",
+            "avg_precision": 0.4846862364511859,
+            "threshold": -1.05781648596939,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 156,
+            "tag_name": "Russian_Pop",
+            "avg_precision": null,
+            "threshold": -6.640625,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 157,
+            "tag_name": "Samba",
+            "avg_precision": 0.021650731997413034,
+            "threshold": -1.2580977921391465,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 158,
+            "tag_name": "Shi_Dai_Qu",
+            "avg_precision": 0.4924819904727603,
+            "threshold": -1.8791852678571423,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 159,
+            "tag_name": "Soundtrack",
+            "avg_precision": null,
+            "threshold": -11.1328125,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 160,
+            "tag_name": "Thrash_Metal",
+            "avg_precision": 0.2474647923587932,
+            "threshold": -0.865353954081634,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 161,
+            "tag_name": "Traditional_Folk",
+            "avg_precision": 0.11989997131475395,
+            "threshold": -2.009550779998719,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 162,
+            "tag_name": "Traditional_Jazz",
+            "avg_precision": 0.28266477412876023,
+            "threshold": 0.7855935728185663,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 163,
+            "tag_name": "Vulgar_Pop",
+            "avg_precision": null,
+            "threshold": -10.234375,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 164,
+            "tag_name": "West_Coast_Hip_Hop",
+            "avg_precision": 0.1048438809937741,
+            "threshold": -0.03323740522013097,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 165,
+            "tag_name": "World_Music",
+            "avg_precision": 0.08868241821149936,
+            "threshold": -3.649593431122449,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 166,
+            "tag_name": "Breakbeat",
+            "avg_precision": 0.21598255933804103,
+            "threshold": -1.4461447272006538,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 167,
+            "tag_name": "Country_Folk",
+            "avg_precision": 0.26767935918160457,
+            "threshold": -1.3922193877551017,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 168,
+            "tag_name": "Country_Rock",
+            "avg_precision": 0.48271863043406693,
+            "threshold": -1.6936184630102034,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 169,
+            "tag_name": "Jazz_Blues",
+            "avg_precision": 0.14309513924566103,
+            "threshold": -0.6507494924803012,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 170,
+            "tag_name": "Acapella",
+            "avg_precision": 0.7352207749742028,
+            "threshold": -1.6107700892857153,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 171,
+            "tag_name": "Acid_Jazz",
+            "avg_precision": 0.00868823455073929,
+            "threshold": -2.7039990199964734,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 172,
+            "tag_name": "African_Folk",
+            "avg_precision": null,
+            "threshold": -7.796875,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 173,
+            "tag_name": "African_Pop",
+            "avg_precision": 0.06702298882313056,
+            "threshold": -2.1015005615750546,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 174,
+            "tag_name": "Arabic_Folk",
+            "avg_precision": null,
+            "threshold": -7.91015625,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 175,
+            "tag_name": "Arabic_Pop",
+            "avg_precision": null,
+            "threshold": -8.03125,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 176,
+            "tag_name": "Baroque",
+            "avg_precision": null,
+            "threshold": -2.58984375,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 177,
+            "tag_name": "Bass_House",
+            "avg_precision": 0.24035588611955422,
+            "threshold": -2.574846540178573,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 178,
+            "tag_name": "Bebop",
+            "avg_precision": 0.0992063492063492,
+            "threshold": -2.3482454783698508,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 179,
+            "tag_name": "Bhangra",
+            "avg_precision": null,
+            "threshold": -5.296875,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 180,
+            "tag_name": "Blue_Grass",
+            "avg_precision": 0.44046749185215955,
+            "threshold": -1.4568219866071423,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 181,
+            "tag_name": "Blues_Rock",
+            "avg_precision": 0.10743904412301201,
+            "threshold": -3.2386599170918373,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 182,
+            "tag_name": "Boogie_Woogie",
+            "avg_precision": 0.2000379695615191,
+            "threshold": -0.6348500864885622,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 183,
+            "tag_name": "Brazilian_Funk_Style",
+            "avg_precision": null,
+            "threshold": -2.439453125,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 184,
+            "tag_name": "Brit_Pop",
+            "avg_precision": 0.17036397828868496,
+            "threshold": -1.8221321132840025,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 185,
+            "tag_name": "Bubblegum_Bass",
+            "avg_precision": null,
+            "threshold": -2.25390625,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 186,
+            "tag_name": "Chinese_Ballad_Pop",
+            "avg_precision": 0.6370136119454751,
+            "threshold": -0.8515625,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 187,
+            "tag_name": "Chinese_Traditional_Instrumental_Music",
+            "avg_precision": null,
+            "threshold": -4.01953125,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 188,
+            "tag_name": "Classical_period",
+            "avg_precision": 0.0400219298245614,
+            "threshold": -2.770743115950733,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 189,
+            "tag_name": "Classic_R&B___Soul",
+            "avg_precision": 0.24569620398886244,
+            "threshold": -2.548011001275512,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 190,
+            "tag_name": "Contemporary_classical_music",
+            "avg_precision": 0.010309278350515464,
+            "threshold": -2.220213498622588,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 191,
+            "tag_name": "Dancehall",
+            "avg_precision": 0.055668160211847756,
+            "threshold": -0.7759146616134913,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 192,
+            "tag_name": "Dance_Punk",
+            "avg_precision": 0.006668820744740857,
+            "threshold": -2.696079410316166,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 193,
+            "tag_name": "Dark_Ambient",
+            "avg_precision": 0.008745677041766427,
+            "threshold": -1.5559629310413854,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 194,
+            "tag_name": "Deathcore",
+            "avg_precision": 0.18423369242398124,
+            "threshold": -1.4783163265306136,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 195,
+            "tag_name": "Doom_Metal",
+            "avg_precision": 0.3289753005566298,
+            "threshold": -2.5264419244260203,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 196,
+            "tag_name": "Doo-Wop",
+            "avg_precision": 0.003998149616706317,
+            "threshold": 0.07748783582513497,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 197,
+            "tag_name": "Downtempo",
+            "avg_precision": null,
+            "threshold": -1.76953125,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 198,
+            "tag_name": "Drill_Rap",
+            "avg_precision": 0.5507625577222718,
+            "threshold": -0.7265625,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 199,
+            "tag_name": "East_Coast_Hip_Hop",
+            "avg_precision": 0.012652947719688543,
+            "threshold": -3.2760992256070196,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 200,
+            "tag_name": "Emo_Punk",
+            "avg_precision": 0.133483051007887,
+            "threshold": -3.025510204081634,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 201,
+            "tag_name": "Enka",
+            "avg_precision": null,
+            "threshold": -3.966796875,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 202,
+            "tag_name": "Fado",
+            "avg_precision": null,
+            "threshold": -10.3125,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 203,
+            "tag_name": "Folk_Metal",
+            "avg_precision": 0.3054716810966811,
+            "threshold": 0.3658424038715644,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 204,
+            "tag_name": "Folktronica",
+            "avg_precision": null,
+            "threshold": -4.109375,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 205,
+            "tag_name": "French_Folk",
+            "avg_precision": null,
+            "threshold": -8.546875,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 206,
+            "tag_name": "French_Pop",
+            "avg_precision": 0.00022624434389140272,
+            "threshold": -5.399820416106092,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 207,
+            "tag_name": "German_Pop",
+            "avg_precision": null,
+            "threshold": -10.0,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 208,
+            "tag_name": "Glitch",
+            "avg_precision": 0.052670261999350716,
+            "threshold": -2.611397070600294,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 209,
+            "tag_name": "Gothic_Metal",
+            "avg_precision": 0.36184097047595265,
+            "threshold": -1.9130959024234677,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 210,
+            "tag_name": "Grunge_Rock",
+            "avg_precision": 0.035379292392048074,
+            "threshold": -3.6801658163265287,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 211,
+            "tag_name": "Gypsy_Jazz",
+            "avg_precision": 0.05077846322949207,
+            "threshold": -1.8861399698291024,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 212,
+            "tag_name": "Hard_Bop",
+            "avg_precision": null,
+            "threshold": -3.650390625,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 213,
+            "tag_name": "Hardcore",
+            "avg_precision": 0.5166476163175922,
+            "threshold": -0.9662786989795933,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 214,
+            "tag_name": "Hardcore_Punk",
+            "avg_precision": 0.5678327607243724,
+            "threshold": -1.1098931760204067,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 215,
+            "tag_name": "IDM",
+            "avg_precision": 0.06022336611255635,
+            "threshold": -2.3832350576990855,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 216,
+            "tag_name": "Impressionism",
+            "avg_precision": null,
+            "threshold": -5.359375,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 217,
+            "tag_name": "Industrial_Metal",
+            "avg_precision": 0.02503219600083333,
+            "threshold": -2.321887612915628,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 218,
+            "tag_name": "Irish_Folk",
+            "avg_precision": 0.04033070643930614,
+            "threshold": -0.9705204379284389,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 219,
+            "tag_name": "Japanese_Traditional_Music",
+            "avg_precision": null,
+            "threshold": -4.828125,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 220,
+            "tag_name": "Korean_Folk",
+            "avg_precision": null,
+            "threshold": -10.9765625,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 221,
+            "tag_name": "Korea_Trot",
+            "avg_precision": null,
+            "threshold": -8.640625,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 222,
+            "tag_name": "Latin_Rock",
+            "avg_precision": 0.023043583097564203,
+            "threshold": -3.1477940911493363,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 223,
+            "tag_name": "Lo-Fi_House",
+            "avg_precision": 0.125,
+            "threshold": -6.403895589083223,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 224,
+            "tag_name": "Lo-Fi_Rock",
+            "avg_precision": 0.010279395239554602,
+            "threshold": -3.688714368513356,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 225,
+            "tag_name": "Metalcore",
+            "avg_precision": 0.42992908333597857,
+            "threshold": -1.670467454559951,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 226,
+            "tag_name": "Midwest_Hip_Hop",
+            "avg_precision": null,
+            "threshold": -4.56640625,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 227,
+            "tag_name": "Modernism",
+            "avg_precision": null,
+            "threshold": -3.134765625,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 228,
+            "tag_name": "Mongolian_Folk_Songs",
+            "avg_precision": 0.20931877905801494,
+            "threshold": -3.179506564722274,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 229,
+            "tag_name": "Neo_Funk",
+            "avg_precision": 0.17852395246233244,
+            "threshold": -3.7249481823979593,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 230,
+            "tag_name": "No_Wave",
+            "avg_precision": 0.034482758620689655,
+            "threshold": -3.913606533089883,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 231,
+            "tag_name": "Nu_Metal",
+            "avg_precision": 0.2683613961701539,
+            "threshold": -2.1960299744897966,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 232,
+            "tag_name": "Post-hardcore",
+            "avg_precision": 0.2187936458880868,
+            "threshold": -2.4506536989795933,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 233,
+            "tag_name": "Post-Punk",
+            "avg_precision": 0.19613409188106642,
+            "threshold": -3.1621193399234677,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 234,
+            "tag_name": "Progressive_R&B",
+            "avg_precision": 0.07028883308641275,
+            "threshold": -3.7639907525510203,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 235,
+            "tag_name": "Ragtime",
+            "avg_precision": 0.029411764705882353,
+            "threshold": -3.050274481068616,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 236,
+            "tag_name": "Rap_Metal",
+            "avg_precision": 0.052392753180796656,
+            "threshold": -0.6288835392441854,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 237,
+            "tag_name": "Romantic_music",
+            "avg_precision": 0.025,
+            "threshold": -1.9069512180472792,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 238,
+            "tag_name": "Rumba",
+            "avg_precision": null,
+            "threshold": -4.453125,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 239,
+            "tag_name": "Score",
+            "avg_precision": 0.09993066947364568,
+            "threshold": -2.4667036545422505,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 240,
+            "tag_name": "Shima_Uta",
+            "avg_precision": null,
+            "threshold": -5.234375,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 241,
+            "tag_name": "Shoegaze-Rock",
+            "avg_precision": 0.3242224888125093,
+            "threshold": -1.1630525282889685,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 242,
+            "tag_name": "Ska_Punk",
+            "avg_precision": 0.41755984340042224,
+            "threshold": -2.4327965561224474,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 243,
+            "tag_name": "Son_cubano",
+            "avg_precision": 0.0009041591320072332,
+            "threshold": -6.056078424306488,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 244,
+            "tag_name": "Southern_Hip_Hop",
+            "avg_precision": 0.06771416203258797,
+            "threshold": -1.405196921647768,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 245,
+            "tag_name": "Synthwave",
+            "avg_precision": 0.36790133113366935,
+            "threshold": -1.8201483123156486,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 246,
+            "tag_name": "Traditional_Blues",
+            "avg_precision": 0.21547134585257155,
+            "threshold": 0.28448833167663423,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 247,
+            "tag_name": "Turkish_Pop",
+            "avg_precision": null,
+            "threshold": -11.09375,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 248,
+            "tag_name": "Uygur_Folk_Songs",
+            "avg_precision": null,
+            "threshold": -5.0625,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 249,
+            "tag_name": "Worldbeat",
+            "avg_precision": 0.017049908544551868,
+            "threshold": -3.834737521221733,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 250,
+            "tag_name": "Yodeling",
+            "avg_precision": 0.19863636363636364,
+            "threshold": -2.8308089984143763,
+            "threshold_strategy": "peak_f1"
+        }
+    ],
+    "THEME": [
+        {
+            "tag_id": 0,
+            "tag_name": "Other_scene",
+            "avg_precision": 0.14182832293436187,
+            "threshold": -1.5853794642857135,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 1,
+            "tag_name": "Halloween",
+            "avg_precision": 0.0173936213858513,
+            "threshold": -3.6253188775510203,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 2,
+            "tag_name": "Christmas",
+            "avg_precision": 0.010582159955507452,
+            "threshold": -0.7705250176180414,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 3,
+            "tag_name": "New_Year",
+            "avg_precision": 0.5445419812877418,
+            "threshold": -3.24617845184949,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 4,
+            "tag_name": "Spring_Festival",
+            "avg_precision": 0.3936039776664787,
+            "threshold": -2.9181680484693864,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 5,
+            "tag_name": "Valentine's_day",
+            "avg_precision": 0.16865850981819064,
+            "threshold": -2.063740632971939,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 6,
+            "tag_name": "Qi_Xi",
+            "avg_precision": 0.045567817150171684,
+            "threshold": -3.143734056122451,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 7,
+            "tag_name": "Birthday",
+            "avg_precision": 0.005076142131979695,
+            "threshold": -2.4561050515728127,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 8,
+            "tag_name": "Wedding",
+            "avg_precision": 0.0076983988969168545,
+            "threshold": -4.596301020408163,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 9,
+            "tag_name": "Funeral",
+            "avg_precision": 0.012938861985472155,
+            "threshold": -4.939157697482221,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 10,
+            "tag_name": "Graduation",
+            "avg_precision": 0.009725544056977623,
+            "threshold": -3.2022035564417966,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 11,
+            "tag_name": "National's_Day_",
+            "avg_precision": 0.3595198389544224,
+            "threshold": -2.8248166454081627,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 12,
+            "tag_name": "Vlog_DailyLife",
+            "avg_precision": 0.0008941046616065755,
+            "threshold": -3.6040350318726375,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 13,
+            "tag_name": "Food",
+            "avg_precision": 0.00017205781142463867,
+            "threshold": -5.219551821064771,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 14,
+            "tag_name": "Pet_Animals",
+            "avg_precision": 0.004369255238482736,
+            "threshold": -2.6444557977368834,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 15,
+            "tag_name": "Beauty_Fashion",
+            "avg_precision": 0.0018619865423255592,
+            "threshold": -1.6660800659875719,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 16,
+            "tag_name": "Entertainment",
+            "avg_precision": 0.015957404492318156,
+            "threshold": -4.272321428571429,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 17,
+            "tag_name": "Babies",
+            "avg_precision": 0.0062750038989401345,
+            "threshold": -2.0323698967742985,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 18,
+            "tag_name": "Children",
+            "avg_precision": 0.44787818679606334,
+            "threshold": 1.86141690340909,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 19,
+            "tag_name": "Transition_(\u5361\u70b9)",
+            "avg_precision": 0.002672080541053754,
+            "threshold": -1.1145117600422836,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 20,
+            "tag_name": "Anime",
+            "avg_precision": 0.041037534912487024,
+            "threshold": -1.721374437423922,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 21,
+            "tag_name": "Wake_up",
+            "avg_precision": 0.022505745316339774,
+            "threshold": -3.47249681122449,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 22,
+            "tag_name": "Family_time",
+            "avg_precision": 0.12659053963982497,
+            "threshold": -3.3249661192602034,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 23,
+            "tag_name": "Landscape_Scenery",
+            "avg_precision": 0.016778953124004375,
+            "threshold": -1.6546335948010764,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 24,
+            "tag_name": "Prank",
+            "avg_precision": 0.0027811259852575762,
+            "threshold": -2.2814009045262367,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 25,
+            "tag_name": "Timelapse",
+            "avg_precision": 0.036217948717948714,
+            "threshold": -4.849631772935485,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 26,
+            "tag_name": "Rainy_Day",
+            "avg_precision": 0.6387237016557967,
+            "threshold": -0.8549107142857153,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 27,
+            "tag_name": "Sunny_Day",
+            "avg_precision": 0.565524339503336,
+            "threshold": -1.0184151785714288,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 28,
+            "tag_name": "Spring",
+            "avg_precision": 0.12979757861453772,
+            "threshold": -1.9084622130102034,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 29,
+            "tag_name": "Summer",
+            "avg_precision": 0.7088599959041462,
+            "threshold": -0.5675223214285712,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 30,
+            "tag_name": "Autumn",
+            "avg_precision": 0.6212268783180251,
+            "threshold": -0.9891581632653068,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 31,
+            "tag_name": "Winter",
+            "avg_precision": 0.08567454739174346,
+            "threshold": -3.272580516581632,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 32,
+            "tag_name": "Evening",
+            "avg_precision": 0.15645789364547927,
+            "threshold": -1.8056989397321423,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 33,
+            "tag_name": "Morning",
+            "avg_precision": 0.06251569695401887,
+            "threshold": -2.500139508928571,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 34,
+            "tag_name": "Beach",
+            "avg_precision": 0.2516416369542629,
+            "threshold": -1.4734235491071441,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 35,
+            "tag_name": "Nightclub",
+            "avg_precision": 0.41533937428259404,
+            "threshold": -1.3722496811224474,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 36,
+            "tag_name": "Coffee_Shop",
+            "avg_precision": 0.21383339468277424,
+            "threshold": -1.5272042410714288,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 37,
+            "tag_name": "Restaurants",
+            "avg_precision": 0.0286010938158328,
+            "threshold": -1.8994931590800395,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 38,
+            "tag_name": "Lounge",
+            "avg_precision": 0.07698077252698045,
+            "threshold": -2.395525251116071,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 39,
+            "tag_name": "Campus",
+            "avg_precision": 0.03844850174644924,
+            "threshold": -2.533003826530612,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 40,
+            "tag_name": "Park",
+            "avg_precision": null,
+            "threshold": -10.2734375,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 41,
+            "tag_name": "Marketplace",
+            "avg_precision": 0.024805902066902714,
+            "threshold": -3.8675860969387745,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 42,
+            "tag_name": "Universe",
+            "avg_precision": 0.08817509471088303,
+            "threshold": -4.585778061224492,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 43,
+            "tag_name": "Bar",
+            "avg_precision": 0.30048696662191343,
+            "threshold": -1.7906967474489797,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 44,
+            "tag_name": "Theater___Concert_hall",
+            "avg_precision": 0.26373921704171854,
+            "threshold": -2.5470742984693864,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 45,
+            "tag_name": "Sport",
+            "avg_precision": 0.6909529313753894,
+            "threshold": -1.1404257015306136,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 46,
+            "tag_name": "Dance",
+            "avg_precision": 0.647579917502961,
+            "threshold": -1.002072704081633,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 47,
+            "tag_name": "Game",
+            "avg_precision": 0.5668963432129873,
+            "threshold": -1.2265625,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 48,
+            "tag_name": "Travel",
+            "avg_precision": 0.2655509568594278,
+            "threshold": -1.0363520408163254,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 49,
+            "tag_name": "Focus",
+            "avg_precision": 0.011391629873985778,
+            "threshold": -5.460140306122449,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 50,
+            "tag_name": "Party",
+            "avg_precision": 0.191147689911006,
+            "threshold": -1.8743024553571432,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 51,
+            "tag_name": "Commute",
+            "avg_precision": 0.34899705136848586,
+            "threshold": -1.497130102040816,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 52,
+            "tag_name": "Roadtrip",
+            "avg_precision": 0.3504882230536765,
+            "threshold": -1.4515306122448974,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 53,
+            "tag_name": "Meditation",
+            "avg_precision": 0.014885196836040539,
+            "threshold": -0.6559602032481262,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 54,
+            "tag_name": "Relaxation",
+            "avg_precision": 0.2666319872775897,
+            "threshold": -1.3698182397959187,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 55,
+            "tag_name": "Cleaning_and_Chores",
+            "avg_precision": null,
+            "threshold": -10.1328125,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 56,
+            "tag_name": "Running",
+            "avg_precision": 0.043166224257236596,
+            "threshold": -2.918885522959183,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 57,
+            "tag_name": "Dating",
+            "avg_precision": 0.18426375737751732,
+            "threshold": -1.7164306640624982,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 58,
+            "tag_name": "Danceable",
+            "avg_precision": 0.49674426730796895,
+            "threshold": -1.3654336734693864,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 59,
+            "tag_name": "Flirt",
+            "avg_precision": 0.020754575152919685,
+            "threshold": -2.8285833864795933,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 60,
+            "tag_name": "Bedtime",
+            "avg_precision": null,
+            "threshold": -9.8828125,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 61,
+            "tag_name": "Broke_up",
+            "avg_precision": 0.4062954298548357,
+            "threshold": -1.9724968112244898,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 62,
+            "tag_name": "Dream",
+            "avg_precision": null,
+            "threshold": -10.1796875,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 63,
+            "tag_name": "Drive",
+            "avg_precision": null,
+            "threshold": -9.59375,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 64,
+            "tag_name": "Friendship",
+            "avg_precision": 0.027849962361499208,
+            "threshold": -4.220025510204083,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 65,
+            "tag_name": "Love",
+            "avg_precision": 0.6861879296815581,
+            "threshold": -0.22911352040816357,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 66,
+            "tag_name": "Yoga",
+            "avg_precision": null,
+            "threshold": -9.8046875,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 67,
+            "tag_name": "Mid-autumn_Festival",
+            "avg_precision": 0.008046536952698143,
+            "threshold": -4.759088556682043,
+            "threshold_strategy": "peak_f1"
+        }
+    ],
+    "MOOD": [
+        {
+            "tag_id": 0,
+            "tag_name": "Other_mood",
+            "avg_precision": 0.07404041026142978,
+            "threshold": -6.416812818877551,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 1,
+            "tag_name": "Happy",
+            "avg_precision": 0.4887303355778784,
+            "threshold": -0.8485331632653068,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 2,
+            "tag_name": "Cute_Playful",
+            "avg_precision": 0.06620658511634903,
+            "threshold": 1.1393070253940039,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 3,
+            "tag_name": "Excited",
+            "avg_precision": 0.7455103005788162,
+            "threshold": -0.8381696428571423,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 4,
+            "tag_name": "Funny",
+            "avg_precision": 0.013882065332235786,
+            "threshold": -3.456343670280612,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 5,
+            "tag_name": "Inspirational_Hopeful",
+            "avg_precision": 0.22930159259482258,
+            "threshold": -1.5074936224489797,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 6,
+            "tag_name": "Sorrow_Sad",
+            "avg_precision": 0.5051239029637407,
+            "threshold": -1.1042131696428577,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 7,
+            "tag_name": "Sentimental_Melancholic_Lonely",
+            "avg_precision": 0.14720830848329364,
+            "threshold": -2.466896524234693,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 8,
+            "tag_name": "Weird",
+            "avg_precision": 0.05732666960565104,
+            "threshold": -3.1908482142857135,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 9,
+            "tag_name": "Thrilling_Suspenseful_Tense",
+            "avg_precision": 0.013222906934219772,
+            "threshold": -1.2235646802325597,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 10,
+            "tag_name": "Angry_Aggressive",
+            "avg_precision": 0.7838846001172008,
+            "threshold": -1.643494897959183,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 11,
+            "tag_name": "Groovy_Funky",
+            "avg_precision": 0.3953851926093915,
+            "threshold": -1.7504982461734695,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 12,
+            "tag_name": "Dynamic_Energetic",
+            "avg_precision": 0.8280397843336819,
+            "threshold": -0.5378667091836729,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 13,
+            "tag_name": "Romantic",
+            "avg_precision": 0.27660734567805817,
+            "threshold": -1.5082908163265287,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 14,
+            "tag_name": "Nostalgic_Memory",
+            "avg_precision": 0.41182097541668455,
+            "threshold": -1.044025031887756,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 15,
+            "tag_name": "Dreamy_Ethereal",
+            "avg_precision": 0.09521871534612553,
+            "threshold": -3.7144850127551017,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 16,
+            "tag_name": "Healing",
+            "avg_precision": 0.025644453699315284,
+            "threshold": -3.8519212372448983,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 17,
+            "tag_name": "Miss",
+            "avg_precision": 0.202243114795842,
+            "threshold": -1.703025350765305,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 18,
+            "tag_name": "Chill",
+            "avg_precision": 0.3275294186841721,
+            "threshold": -1.7544642857142847,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 19,
+            "tag_name": "Calm_Relaxing",
+            "avg_precision": 0.015618790551014075,
+            "threshold": -3.0972377232142865,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 20,
+            "tag_name": "Shocking_magnificent_epic",
+            "avg_precision": 0.10578900505621187,
+            "threshold": -2.7757294323979593,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 21,
+            "tag_name": "Mysterious",
+            "avg_precision": 0.03649610217045595,
+            "threshold": -3.8880739795918373,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 22,
+            "tag_name": "Sweet_SA_MOOD",
+            "avg_precision": 0.2505460505361877,
+            "threshold": -2.53125,
+            "threshold_strategy": "peak_f1"
+        }
+    ],
+    "GENDER": [
+        {
+            "tag_id": 0,
+            "tag_name": "Unkonwn",
+            "avg_precision": 0.04276542776808115,
+            "threshold": -16.924744897959183,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 1,
+            "tag_name": "Neutral",
+            "avg_precision": 0.07587778319305012,
+            "threshold": -2.3533063616071423,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 2,
+            "tag_name": "Female",
+            "avg_precision": 0.9509837017939787,
+            "threshold": -0.10969387755102034,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 3,
+            "tag_name": "Male",
+            "avg_precision": 0.9504298316660804,
+            "threshold": -0.15226403061224492,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 4,
+            "tag_name": "Child",
+            "avg_precision": 0.4181599538403813,
+            "threshold": -0.6860650510204067,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 5,
+            "tag_name": "Adult",
+            "avg_precision": 0.7688194032203373,
+            "threshold": -11.32764668367347,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 6,
+            "tag_name": "Chrous",
+            "avg_precision": 0.22993368032011552,
+            "threshold": -1.5170200892857153,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 7,
+            "tag_name": "Multiple",
+            "avg_precision": 0.14660828397312564,
+            "threshold": -1.8338349011479593,
+            "threshold_strategy": "peak_f1"
+        }
+    ],
+    "TIMBRE": [
+        {
+            "tag_id": 0,
+            "tag_name": "Empty",
+            "avg_precision": 0.19079363780065128,
+            "threshold": -0.12316645408163218,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 1,
+            "tag_name": "Warm",
+            "avg_precision": 0.606186315415217,
+            "threshold": -0.9782366071428577,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 2,
+            "tag_name": "Ethereal",
+            "avg_precision": 0.13243125838540953,
+            "threshold": -2.1254608777104593,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 3,
+            "tag_name": "Husky",
+            "avg_precision": 0.3259756094658329,
+            "threshold": -1.6744658801020407,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 4,
+            "tag_name": "Deep",
+            "avg_precision": 0.10837350454480378,
+            "threshold": -2.202656648596938,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 5,
+            "tag_name": "Loud_and_sonorous",
+            "avg_precision": 0.11034604391795666,
+            "threshold": -1.8737842793367356,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 6,
+            "tag_name": "Extreme",
+            "avg_precision": 0.8247021878839134,
+            "threshold": -0.9112723214285712,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 7,
+            "tag_name": "Sharp",
+            "avg_precision": 0.3374370087805627,
+            "threshold": -1.395487882653061,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 8,
+            "tag_name": "Bright",
+            "avg_precision": 0.6041227065006105,
+            "threshold": -0.33139349489795933,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 9,
+            "tag_name": "Sweet_AUDIO_TIMBRE",
+            "avg_precision": null,
+            "threshold": -11.6171875,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 10,
+            "tag_name": "Powerful",
+            "avg_precision": 0.13247553291447525,
+            "threshold": -2.35074537627551,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 11,
+            "tag_name": "Sexy_Lazy",
+            "avg_precision": 0.23768218333763347,
+            "threshold": -1.8025774274553577,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 12,
+            "tag_name": "Magnetic",
+            "avg_precision": 0.1767023401484573,
+            "threshold": -1.620725047831633,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 13,
+            "tag_name": "Cute_AUDIO_TIMBRE",
+            "avg_precision": null,
+            "threshold": -11.9296875,
+            "threshold_strategy": "peak_f1"
+        },
+        {
+            "tag_id": 14,
+            "tag_name": "Electrified_voice",
+            "avg_precision": 0.48469591582260446,
+            "threshold": -1.2158801020408152,
+            "threshold_strategy": "peak_f1"
+        }
+    ]
+}

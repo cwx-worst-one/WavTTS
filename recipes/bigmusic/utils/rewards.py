@@ -3,6 +3,7 @@ import math
 import os
 import uuid
 import thriftpy2
+import itertools
 import torch
 import torch.nn.functional as F
 from recipes.bigmusic.datasets.transforms.structure import (
@@ -13,24 +14,33 @@ from recipes.bigmusic.datasets.transforms.lyrics_segment import crop_pad_to_seq_
 from recipes.bigmusic.utils.metrics_asr import (
     edit_distance,
     remove_punc_case,
+    remove_section_case,
 )
+from recipes.bigmusic.utils.format_utils import remove_space_in_zh
 from recipes.bigmusic.lightning.embedding_modules import get_bestrq_umm_tokens
 from recipes.musiclm.inference.utils import dump_wav
 from torchaudio.functional import loudness, resample
 import librosa
 from scipy.stats import entropy
-from recipes.mulan.inference.stats.sstk_anchor_points import load_anchor_points, load_anchor_points_from_mulan_ckpt
+from recipes.mulan.inference.stats.sstk_anchor_points import load_anchor_points
 from recipes.musiclm.inference.utils import save_wav
 from recipes.bigmusic.callbacks.mir_metrics import upload_audio_file_to_tos
-from recipes.bigmusic.datasets.utils.zh_vocab import AUDIO_V3_TO_SA_TAG_MAP
+from recipes.bigmusic.datasets.utils.zh_vocab import AUDIO_V4_TO_SA_TAG_MAP
+from recipes.bigmusic.datasets.mir_data_util import SA_GENRE20, SA_LANG43, SA_MOOD19
 import numpy as np
-import random
 from scipy.signal import butter, lfilter
 
 import json
 import euler
 euler.install_thrift_import_hook()
+
+thriftpy2.load(
+    os.path.join(os.path.dirname(__file__), "services/idl/base.thrift"), "base_thrift"
+)
 import base_thrift
+thriftpy2.load(
+    os.path.join(os.path.dirname(__file__), "../../../sami.thrift"), "sami_thrift"
+)
 import sami_thrift
 
 CLIENT = euler.Client(
@@ -41,9 +51,10 @@ CLIENT = euler.Client(
 ACCESS_KEY = "ATUBJrWuzl"
 
 thriftpy2.load(
-    os.path.join(os.path.dirname(__file__), "../utils/services/idl/music_tagging.thrift"), "music_tagging_thrift"
+    os.path.join(os.path.dirname(__file__), "services/idl/music_tagging.thrift"), "music_tagging_thrift"
 )
 from music_tagging_thrift import MusicTagging, TaggingRequest
+from multiprocessing.pool import ThreadPool
 
 
 def _infer_batch_beam(sampled, ref):
@@ -51,6 +62,35 @@ def _infer_batch_beam(sampled, ref):
     batch_size = len(ref)
     beam = len(sampled) // len(ref)
     return batch_size, beam
+
+
+def upload_wavs_to_tos(sampled_audio, sample_rate=24000):
+    def upload(sample, sample_rate=24000, max_retry_num=5, i=0):
+        uid = str(uuid.uuid4())
+        wav_fp = f"/tmp/{uid}-{i}.generated.wav"
+        save_wav(sample.cpu().float(), wav_fp, sr=sample_rate, save_mp3=False)
+        retry_num = 0
+        audio_tos_path = ''
+        while retry_num < max_retry_num:
+            try:
+                audio_tos_path = upload_audio_file_to_tos([wav_fp])[0][1]
+            except:
+                # TODO: add mechanism for uploading failure after max retry
+                print(f"upload tos failed {audio_tos_path}")
+                retry_num += 1
+            else:
+                break
+        return wav_fp, audio_tos_path
+
+    wavs_tos_paths = []
+    pool = ThreadPool(4)
+    max_retry_num = 3
+    for i, sample in enumerate(sampled_audio):
+        wavs_tos_paths.append(pool.apply_async(upload, args=(sample, sample_rate, max_retry_num, i)))
+    pool.close()
+    pool.join()
+    wavs_local_paths, wavs_tos_paths = zip(*[path.get() for path in wavs_tos_paths])
+    return wavs_local_paths, wavs_tos_paths
 
 
 @torch.no_grad()
@@ -69,32 +109,28 @@ def mulan_audio_reward(
 ):
     min_audio_length = min_audio_duration * sample_rate
     max_audio_length = max_audio_duration * sample_rate if max_audio_duration is not None else None
+    def get_mulan_audio_embeds(audio):
+        if audio.shape[-1] < min_audio_length:
+            audio = crop_pad_to_seq_length(audio, min_audio_length)
+        elif max_audio_length and audio.shape[-1] > max_audio_length:
+            audio = random_crop_pad_to_seq_length(audio, max_audio_length)
+        return mulan_infer_fn(
+            model=mulan_model,
+            music=audio.float(),
+            device=device,
+            shift_seconds=shift_seconds,
+        )
+
     if sampled_embeds is None:
-        if sampled_audio.shape[-1] < min_audio_length:
-            sampled_audio = crop_pad_to_seq_length(sampled_audio, min_audio_length)
-        elif max_audio_length and sampled_audio.shape[-1] > max_audio_length:
-            sampled_audio = random_crop_pad_to_seq_length(sampled_audio, max_audio_length)
-        sampled_embeds = mulan_infer_fn(
-            model=mulan_model,
-            music=sampled_audio.float(),
-            device=device,
-            shift_seconds=shift_seconds,
-        )
+        sampled_embeds = get_mulan_audio_embeds(sampled_audio)
     if target_embeds is None:
-        if target_audio.shape[-1] < min_audio_length:
-            target_audio = crop_pad_to_seq_length(target_audio, min_audio_length)
-        elif max_audio_length and target_audio.shape[-1] > max_audio_length:
-            target_audio = random_crop_pad_to_seq_length(target_audio, max_audio_length)
-        target_embeds = mulan_infer_fn(
-            model=mulan_model,
-            music=target_audio.float(),
-            device=device,
-            shift_seconds=shift_seconds,
-        )
+        target_embeds = get_mulan_audio_embeds(target_audio)
+
     batch_size, beam = _infer_batch_beam(sampled_embeds, target_embeds)
     # (batch_size, D) --> (batch_size * beam, D)
     target_embeds_reshaped = target_embeds.repeat(1, beam).reshape(batch_size * beam, -1)
     sim = F.cosine_similarity(sampled_embeds, target_embeds_reshaped)
+    print(f"mulan text rewards: {sim}")
     return sim, sampled_embeds, target_embeds
 
 
@@ -104,21 +140,12 @@ def mulan_text_reward(
     mulan_model,
     sampled_audio,  # (batch_size * beam, T)
     target_text,   # (batch_size,)
-    sample_rate,
     device,
     sampled_embeds=None,    # (batch_size * beam, D)
     target_embeds=None,     # (batch_size, D)
     shift_seconds=5,
-    min_audio_duration=10,
-    max_audio_duration=None,
 ):
     if sampled_embeds is None:
-        min_audio_length = min_audio_duration * sample_rate
-        max_audio_length = max_audio_duration * sample_rate if max_audio_duration is not None else None
-        if sampled_audio.shape[-1] < min_audio_length:
-            sampled_audio = crop_pad_to_seq_length(sampled_audio, min_audio_length)
-        elif max_audio_length and sampled_audio.shape[-1] > max_audio_length:
-            sampled_audio = random_crop_pad_to_seq_length(sampled_audio, max_audio_length)
         sampled_embeds = mulan_infer_fn(
             model=mulan_model,
             music=sampled_audio.float(),
@@ -138,76 +165,128 @@ def mulan_text_reward(
     return sim, sampled_embeds, target_embeds
 
 
-def SA_online_tagging_predict(audio_url, tag="genre", gt_tags=[]):
+def SA_online_tagging_predict(audio_url, tag_type="genre", gt_tags=[], style_text={}):
     # TODO (ling) Update to new tagging service that supports fine-grained labels.
     target = 'sd://lab.speech.music_tagging?cluster=default'
-    client = euler.Client(MusicTagging,target=f'{target}&idc=lf', timeout=1200)
-    gt_tags = [AUDIO_V3_TO_SA_TAG_MAP[gt_tag] for gt_tag in gt_tags]
-    if tag == "genre":
-        max_retry_num = 5
+    clients = itertools.cycle([
+            euler.Client(
+                MusicTagging,
+                target=f'{target}&idc=hl',
+                timeout=1200,
+            ),
+            euler.Client(
+                MusicTagging,
+                target=f'{target}&idc=lf',
+                timeout=1200,
+            )
+        ])
+
+    def map2satag(tag, tag_type='genre'):
+        OOV_TAG_MAP = {'genre': 'Other genre', 'mood': 'Other', 'lang': 'Other'}
+        if tag in (SA_GENRE20 + SA_LANG43 + SA_MOOD19):
+            return tag
+        if not tag:
+            return OOV_TAG_MAP[tag_type]
+        if tag in AUDIO_V4_TO_SA_TAG_MAP:
+            return AUDIO_V4_TO_SA_TAG_MAP[tag]
+
+        print(f"Out of vocabulary {tag_type} tag: {tag}")
+        return OOV_TAG_MAP[tag_type]
+
+    def request(tag_model_name, service_name, max_retry_num=5, style_text={}):
         retry_num = 0
         while retry_num < max_retry_num:
             try:
-                rlts = client.TaggingGenre20(TaggingRequest(track_id="test", url=audio_url))
+                if tag_model_name == 'Language':
+                    rlts = getattr(next(clients), service_name)(TaggingRequest(
+                    track_id="test",
+                    url=audio_url,
+                    **style_text,
+                    ))
+                else:
+                    rlts = getattr(next(clients), service_name)(TaggingRequest(track_id="test", url=audio_url))
                 # TODO (qq) Now we are using max logit across multiple gt tags as reward.
                 # Consider other reward that are more calibrated and with emphasis on fusion.
-                result = [eval(rlts.result_json)['Genre20'][gt_tag] for gt_tag in gt_tags]
+                result = [eval(rlts.result_json)[tag_model_name][gt_tag] for gt_tag in gt_tags]
                 result = np.max(result)
-            except:
-                print(f"failed: {audio_url} check silence")
+            except Exception as e:
+                print(f"failed: {audio_url} , Reason: {e} or check silence")
                 result = 0.0
                 retry_num += 1
             else:
-                print(f"{tag} reward {result}")
                 break
-    if tag == 'mood':
-        max_retry_num = 5
-        retry_num = 0
-        while retry_num < max_retry_num:
-            try:
-                rlts = client.TaggingMood(TaggingRequest(track_id="test", url=audio_url))
-                # TODO (qq) Now we are using max logit across multiple gt tags as reward.
-                # Consider other reward that are more calibrated and with emphasis on fusion.
-                result = [eval(rlts.result_json)['Mood'][gt_tag] for gt_tag in gt_tags]
-                result = np.max(result)
-            except:
-                print(f"failed: {audio_url} check silence")
-                result = 0.0
-                retry_num += 1
-            else:
-                print(f"{tag} reward {result}")
-                break
-    return result
+        return result
+
+    gt_tags = list(set([map2satag(gt_tag, tag_type) for gt_tag in gt_tags]))
+    if tag_type == "genre":
+        return request('Genre20', 'TaggingGenre20')
+    if tag_type == 'lang':
+        return request('Language', 'TaggingLanguage', style_text=style_text)
+    if tag_type == 'mood':
+        return request('Mood', 'TaggingMood')
+    else:
+        raise NotImplementedError("Unknown mir tag type: {tag_type}")
 
 
 @torch.no_grad()
 def mir_tag_reward(
-    sampled_audio,  # (batch_size * beam, T)
-    sample_rate,
+    wav_urls,   # batch_size * beam
     mir_tag_type,
-    target_tags,
+    target_tags,    # batch_size
+    beam_size,
     device,
-):    
-    genre_rewards = torch.zeros(sampled_audio.size(0)).to(device) 
-    max_retry_num = 3
-    for i, (sample, gt_tags) in enumerate(zip(sampled_audio, target_tags)):
-        uid = str(uuid.uuid4())
-        wav_fp = f"/tmp/{uid}-{i}.generated.wav"
-        save_wav(sample.cpu().float(), wav_fp, sr=sample_rate, save_mp3=False)
-        retry_num = 0
-        while retry_num < max_retry_num:
-            try:
-                audio_tos_path = upload_audio_file_to_tos([wav_fp])[0][1]
-            except:
-                # TODO: add mechanism for uploading failure after max retry
-                print(f"upload tos failed {audio_tos_path}")
-                retry_num += 1
+    style_text=[],
+):
+    def request(audio_url, mir_tag_type, gt_tags, style_text={}):
+        if isinstance(gt_tags, str): gt_tags = [gt_tags]
+        return SA_online_tagging_predict(audio_url, tag_type=mir_tag_type, gt_tags=gt_tags, style_text=style_text)
+
+    def _process_lyrics(style_text, dropout_rate=0.5):
+        """process lyrics as auxiliary info for language tagging"""
+        res = []
+        for lyrics, slice_type in style_text:
+            if slice_type and slice_type != "vocal":
+                style_parts = [""] * 4
+                if slice_type == 'inst':
+                    style_parts = ["", "instrumental", "instrumental", ""]
             else:
-                break
-        audio_tos_path = upload_audio_file_to_tos([wav_fp])[0][1]
-        if isinstance(gt_tags, str): gt_tags = [gt_tags]        
-        genre_rewards[i] = SA_online_tagging_predict(audio_tos_path, tag=mir_tag_type, gt_tags=gt_tags)
-    return genre_rewards
+                lyrics = remove_section_case(remove_space_in_zh(remove_punc_case(lyrics)))
+                if len(lyrics) < 4:
+                    style_parts = [lyrics] * 4
+                else:
+                    style_parts = [lyrics[i:i+len(lyrics) // 4] for i in range(0, len(lyrics), len(lyrics) // 4)][:4]
+
+            for j in range(len(style_parts)):
+                if np.random.random() < dropout_rate:
+                    style_parts[j] = ""
+
+            res.append({"artist": style_parts[0], "album": style_parts[1], "song_name": style_parts[2], "lyricist": style_parts[3]})
+
+        return res
+
+    target_tags_with_beam = [tag for tag in target_tags for _ in range(beam_size)]
+
+    if mir_tag_type == "lang":
+        aux_res = _process_lyrics(style_text)
+        style_text_with_beam = [aux for aux in aux_res for _ in range(beam_size)]
+    else:
+        style_text_with_beam = [{} for tt in target_tags for _ in range(beam_size)]
+
+    results = []
+    pool = ThreadPool(4)
+    tag_rewards = torch.zeros(len(wav_urls)).to(device)
+
+    assert len(wav_urls) == len(target_tags_with_beam) == len(style_text_with_beam), f'Number of wav urls {len(wav_urls)} and target tags {len(target_tags_with_beam)} and style text {len(style_text_with_beam)} must be equal'
+
+    for i, (url, gt_tags, st) in enumerate(zip(wav_urls, target_tags_with_beam, style_text_with_beam)):
+        results.append(pool.apply_async(request, args=(url, mir_tag_type, gt_tags, st)))
+    pool.close()
+    results = [result.get() for result in results]
+
+    tag_rewards = torch.tensor(results, dtype=torch.float32, device=device)
+
+    print(f"{mir_tag_type} rewards {tag_rewards}")
+    return tag_rewards
 
 
 @torch.no_grad()
@@ -219,18 +298,61 @@ def wer_reward(
     batch_size, beam = _infer_batch_beam(sampled_lyrics, ref_lyrics)
     wer = torch.zeros(batch_size * beam).to(device)
     for i in range(batch_size):
-        ref = remove_punc_case(ref_lyrics[i])
+        ref = remove_space_in_zh(remove_section_case(remove_punc_case(ref_lyrics[i])))
         for j in range(beam):
             idx = i * beam + j
-            hyp = remove_punc_case(sampled_lyrics[idx])
+            hyp = remove_space_in_zh(remove_punc_case(sampled_lyrics[idx]))
             if ref != "" and hyp != "":
                 # Cap WER at 100% for more stable range
                 wer[idx] = min(1.0, edit_distance(ref, hyp).edits() / len(ref))
             elif (ref == "" and hyp != "") or (ref != "" and hyp == ""):
                 # Default to 100% WER
                 wer[idx] = 1.0
+            elif ref == "" and hyp == "":
+                # Reward inst, decrease inst wer reward
+                wer[idx] = 0.7
+    print(f"wer rewards: {1-wer}")
     # Return inverse WER as reward (higher is better)
     return 1 - wer
+
+
+@torch.no_grad()
+def umm_reward(
+    rm_model,
+    sampled_audio,  # (batch_size * beam, T)
+    sample_rate,
+    device,
+    truncate_len_in_sec=40,
+    max_reward=4.,
+    min_reward=-4.,
+    rm_type="melody_flow",
+):
+    # batch_size, beam = _infer_batch_beam(sampled_audio, target_audio)
+    # TODO (hang): check reward beam size
+    truncated_audio_list = []
+    truncate_len = sample_rate * truncate_len_in_sec
+    for idx, sampled_audio in enumerate(sampled_audio):
+        # TODO (hang): truncate sliding windows, cal avg rewards
+        if truncate_len > 0:
+            truncated_audio = sampled_audio[:truncate_len]
+        else:
+            truncated_audio = sampled_audio
+        truncated_audio_list.append(truncated_audio)
+
+    rws = []
+    for sampled_audio in truncated_audio_list:
+        if isinstance(sampled_audio, np.ndarray):
+            sampled_audio = torch.from_numpy(sampled_audio)
+        if sampled_audio.ndim == 1:
+            sampled_audio = sampled_audio.unsqueeze(0)
+        sampled_audio = sampled_audio.to(device)
+        score = rm_model.wav2score({"audio":sampled_audio})
+        rws.append(score)
+    scores = torch.cat(rws, dim=0).squeeze(1).to(device)
+    scores = torch.clamp(scores, min=min_reward, max=max_reward)
+    scores = (scores - min_reward) / (max_reward - min_reward)
+    print(f"{rm_type} rewards: {scores}")
+    return scores
 
 
 @torch.no_grad()
@@ -475,6 +597,7 @@ def get_audio_metrics(audio_bytes):
                 "rms_stats": True,
                 "clipping": True,
                 "loudness": True,
+                "enable_score": True,
             }
         }
     )
@@ -611,10 +734,10 @@ def intensity_sim_reward(
 
 
 @torch.no_grad()
-def semantic_diversity_reward(umm_tokens, device, max_diversity=0.8):
+def semantic_diversity_reward(umm_tokens, device):
     semantic_diversity_rewards = torch.zeros(umm_tokens.size(0)).to(device)
     for i in range(len(umm_tokens)):
-        semantic_diversity_rewards[i] = min(float(len(umm_tokens[i].unique())) / umm_tokens.shape[-1], max_diversity)
+        semantic_diversity_rewards[i] = float(len(umm_tokens[i].unique())) / umm_tokens.shape[-1]
     return semantic_diversity_rewards
 
 
@@ -699,12 +822,11 @@ def anchor_points_sim_reward(
     sampled_audio,  # (batch_size * beam, T)
     sample_rate,
     device,
-    mulan_hpath,
     shift_seconds=5,
     min_audio_duration=10,
     max_audio_duration=None,
 ):
-    binary_center = load_anchor_points_from_mulan_ckpt(mulan_hpath)
+    binary_center = load_anchor_points()
     min_audio_length = min_audio_duration * sample_rate
     max_audio_length = max_audio_duration * sample_rate if max_audio_duration is not None else None
     if sampled_audio.shape[-1] < min_audio_length:
@@ -727,11 +849,6 @@ def anchor_points_sim_reward(
 
 @torch.no_grad()
 def mulan_temporal_reward(mulan_infer_fn, mulan_model, sampled_audio, device, sample_rate=24000, shift_seconds=20):
-    if isinstance(shift_seconds, tuple):
-        shift_seconds = random.choice(shift_seconds)
-    min_audio_length = (10 + shift_seconds) * sample_rate
-    if sampled_audio.shape[-1] < min_audio_length:
-        return torch.zeros((sampled_audio.shape[0],), device=device) # temporal length too short
     mulan_embeds = mulan_infer_fn(
         model=mulan_model,
         music=sampled_audio.float(),
@@ -741,7 +858,6 @@ def mulan_temporal_reward(mulan_infer_fn, mulan_model, sampled_audio, device, sa
     )
     cos_sim = F.cosine_similarity(mulan_embeds.unsqueeze(1), mulan_embeds.unsqueeze(2), dim=-1)
     eye = ~torch.eye(cos_sim.shape[-1]).bool() # remove diagonal 1
-    if eye.sum() == 0: return torch.zeros((mulan_embeds.shape[0],), device=device) # only one embedding
     cos_mean = (cos_sim * eye.cuda()).sum(dim=(1,2)) / eye.sum()
     return (1 - cos_mean)
 
@@ -772,14 +888,10 @@ def _chroma_temporal_reward(audio, sample_rate=24000, sec_split=10):
     probs = np.bincount(melody) / len(melody)
     size = int(sec_split/melody_frame_rate)
     m_split = np.split(melody, range(size,len(melody),size))
-    if len(m_split) <= 1: return 0
     if m_split[-1].shape != m_split[0].shape:
         m_split = m_split[:-1]
     arr = []
-    for idx, m in enumerate(m_split):
-        # skip every other if we have enough splits
-        if len(m_split) > 2 and idx % 2 == 1:
-            continue
+    for m in m_split:
         probs = np.bincount(m, minlength=12) / len(m)
         arr.append(probs)
     # across time
@@ -790,11 +902,5 @@ def _chroma_temporal_reward(audio, sample_rate=24000, sec_split=10):
 
 @torch.no_grad()
 def chroma_temporal_reward(audio_batch, device, sample_rate=24000, sec_split=10):
-    if isinstance(sec_split, tuple):
-        audio_duration = audio_batch.shape[-1] // sample_rate
-        sec_split = [s for s in sec_split if s <= audio_duration // 2]
-        if len(sec_split) == 0: # audio too short
-            return torch.zeros((audio_batch.shape[0],), device=device)
-        sec_split = random.choice(sec_split)
     chroma_rewards = [_chroma_temporal_reward(audio, sample_rate, sec_split) for audio in audio_batch]
     return torch.tensor(chroma_rewards, device=device)

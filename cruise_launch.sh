@@ -9,5 +9,8 @@ export NCCL_DEBUG=WARN
 
 export TOKENIZERS_PARALLELISM=false
 export PYTHONPATH=/opt/tiger/Megatron-LM/:$WORK_DIR/mariana:$PYTHONPATH
+export MARIANA_SKIP_MASON_INSTALL=1
 
-TORCHRUN "$@"
+# adapt script file path in mariana/launch.sh
+cp apps/mariana/setup_cruise.sh ./setup_cruise.sh
+bash apps/mariana/launch.sh "$@"

@@ -25,7 +25,7 @@ from recipes.umm.models.voc_modules.pitch_predictor.pitch_utils import (
 )
 from recipes.umm.models.vq import EMAVectorQuantizer
 from recipes.umm.transforms.chroma import ChromaSpectrogram
-from recipes.umm.transforms.speech import SpeechTransform
+from recipes.umm.transforms.speech import SpeechTransform, SpeechTransformModified
 from recipes.umm.utils.mel_utils import torch_wav2spec
 
 
@@ -291,6 +291,7 @@ class ConformerSelfAttention(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
+        attn_mask: Optional[torch.Tensor] = None,
         position_embeddings: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         # self-attention mechanism
@@ -321,14 +322,20 @@ class ConformerSelfAttention(nn.Module):
         key = key.transpose(1, 2)
         value = value.transpose(1, 2)
 
+        if attn_mask is not None:
+            additive_mask = (~attn_mask).unsqueeze(1).unsqueeze(2)  # [B, nchannel, T, feature_dim]
+            additive_mask = additive_mask * -1e9
+            attn_mask = additive_mask
+        
         with torch.backends.cuda.sdp_kernel(
             enable_math=True, enable_flash=True, enable_mem_efficient=True
         ):
+            
             hidden_states = F.scaled_dot_product_attention(
                 query.float(),
                 key.float(),
                 value.float(),
-                attn_mask=None,
+                attn_mask=attn_mask,
                 dropout_p=0.0,
                 is_causal=False,
             )
@@ -411,7 +418,7 @@ class ConformerEncoderLayer(nn.Module):
         self.final_layer_norm = nn.LayerNorm(embed_dim)
 
     def forward(
-        self, hidden_states, position_embeddings: Optional[torch.Tensor] = None
+        self, hidden_states, attn_mask: Optional[torch.Tensor] = None, position_embeddings: Optional[torch.Tensor] = None
     ):
         hidden_states = hidden_states
 
@@ -425,7 +432,7 @@ class ConformerEncoderLayer(nn.Module):
         # 2. Self-Attention layer
         hidden_states = self.self_attn_layer_norm(hidden_states)
         hidden_states = self.self_attn(
-            hidden_states=hidden_states, position_embeddings=position_embeddings
+            hidden_states=hidden_states, attn_mask=attn_mask, position_embeddings=position_embeddings
         )
         hidden_states = self.self_attn_dropout(hidden_states)
         hidden_states = hidden_states + residual
@@ -467,7 +474,7 @@ class ConformerEncoder(nn.Module):
         )
         self.gradient_checkpointing = False
 
-    def forward(self, hidden_states, output_hidden_states=False):
+    def forward(self, hidden_states, attn_mask=None, output_hidden_states=False):
         all_hidden_states = () if output_hidden_states else None
         hidden_states = self.dropout(hidden_states)
         position_embeddings = self.embed_positions(hidden_states)
@@ -485,11 +492,11 @@ class ConformerEncoder(nn.Module):
                     return custom_forward
 
                 layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(layer), hidden_states, position_embeddings
+                    create_custom_forward(layer), hidden_states, attn_mask, position_embeddings
                 )
             else:
                 layer_outputs = layer(
-                    hidden_states, position_embeddings=position_embeddings
+                    hidden_states, attn_mask=attn_mask, position_embeddings=position_embeddings
                 )
             hidden_states = layer_outputs
 
@@ -595,27 +602,94 @@ class Conv2dSubsampling(nn.Module):
         return flops1 + flops2
 
 
+class Conv2dSubsamplingModified(nn.Module):
+    def __init__(
+        self, input_dim, output_dim, kernel, padding, use_bn=True, act_fn=nn.ReLU
+    ):
+        super().__init__()
+        self.stride = [2, 2]
+        self.kernel_size = kernel
+        self.padding_size = padding
+        self.conv = nn.Sequential(
+            nn.Conv2d(1, 256, kernel, self.stride[0], padding),
+            nn.BatchNorm2d(256) if use_bn else nn.Identity(),
+            act_fn(),
+            nn.Conv2d(256, 256, kernel, self.stride[1], padding),
+            nn.BatchNorm2d(256) if use_bn else nn.Identity(),
+            act_fn(),
+        )
+        self.linear = nn.Linear(input_dim * 64, output_dim)
+
+    def _compute_output_length(self, x_length):
+        for s in self.stride:
+            x_length = (x_length + 2 * self.padding_size - self.kernel_size) // s + 1
+        return x_length
+    
+    def forward(self, x, x_lengths=None):
+        if x.dim() == 3:
+            x = x.unsqueeze(1)  # (b, c, t, f)
+  
+        x = self.conv(x)
+        x = rearrange(x, "b c t f -> b t (c f)")
+        x = self.linear(x)
+        if x_lengths is None:
+            return x
+        output_lengths = self._compute_output_length(x_lengths)
+        return x, output_lengths
+    
+    def get_flops(self, b, t, d):
+        flops1, out_shape1 = conv_flops(self.conv[0], [b, 1, t, d])
+        flops2, _ = conv_flops(self.conv[3], out_shape1)
+        return flops1 + flops2
+
+
 class AudioEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.feature_encoder = Conv2dSubsampling(
-            config.num_channels,
-            config.hidden_size,
-            config.feature_encoder_kernel,
-            config.feature_encoder_padding,
-            use_bn=config.get("use_bn", True),
-        )
+
+        if self.config.get("cal_attention_mask", True):
+            self.feature_encoder = Conv2dSubsamplingModified(
+                config.num_channels,
+                config.hidden_size,
+                config.feature_encoder_kernel,
+                config.feature_encoder_padding,
+                use_bn=config.get("use_bn", True),
+            )
+        else:
+            self.feature_encoder = Conv2dSubsampling(
+                config.num_channels,
+                config.hidden_size,
+                config.feature_encoder_kernel,
+                config.feature_encoder_padding,
+                use_bn=config.get("use_bn", True),
+            )
         self.conformer_layer = (
             ConformerEncoderLayer(config)
             if config.get("first_conformer", True)
             else nn.Identity()
         )
 
-    def forward(self, x):
-        x = self.feature_encoder(x)
-        x = self.conformer_layer(x)
-        return x
+    def _calculate_masking(self, x, x_length):
+        #https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html
+        # A boolean mask where a value of True indicates that the element should take part in attention
+        B = x_length.size(0)
+        # max_len = torch.max(x_length).item()
+        max_len = x.shape[-2]
+        indices = torch.arange(max_len, device=x_length.device)
+        mask = indices.unsqueeze(0) < x_length.unsqueeze(1)
+        return mask
+    
+    def forward(self, x, x_length=None):
+        if x_length is None:
+            x = self.feature_encoder(x)
+            x = self.conformer_layer(x)
+            return x
+        else:
+            x, x_length = self.feature_encoder(x, x_length)
+            attn_mask = self._calculate_masking(x, x_length)
+            x = self.conformer_layer(x, attn_mask=attn_mask)
+            return x, attn_mask
 
     def get_flops(self, b, t, d):
         if self.config.get("first_conformer", True):
@@ -837,10 +911,12 @@ class EMAVectorQuantizerEntropy(nn.Module):
             self.embedding.embed_avg_ema_update(embed_sum)
             # normalize embed_avg and update weight
             self.embedding.weight_update(self.codebook_size)
-
-        loss = torch.mean((z_q.detach() - z) ** 2) + e_scale * self.entropy_loss(
-            -d, loss_type="softmax"
-        )
+            
+            loss = torch.mean((z_q.detach() - z) ** 2) + e_scale * self.entropy_loss(
+                -d, loss_type="softmax"
+            )
+        else:
+            loss = torch.zeros(1).to(z.device)
         # preserve gradients
         z_q = z + (z_q - z).detach()
 
@@ -1352,15 +1428,26 @@ class Base(nn.Module):
         self.encoder_layers = nn.ModuleList(
             [ConformerEncoderLayer(config) for _ in range(config.num_hidden_layers)]
         )
-        self.audio_transform = SpeechTransform(
-            sample_rate=config.sample_rate,
-            n_mels=config.n_mels,
-            n_fft=config.n_fft,
-            win_length=config.win_length,
-            hop_length=config.hop_length,
-            f_min=0,
-            f_max=config.sample_rate // 2,
-        )
+        if config.get("cal_attention_mask", True):
+            self.audio_transform = SpeechTransformModified(
+                sample_rate=config.sample_rate,
+                n_mels=config.n_mels,
+                n_fft=config.n_fft,
+                win_length=config.win_length,
+                hop_length=config.hop_length,
+                f_min=0,
+                f_max=config.sample_rate // 2,
+            )
+        else:
+            self.audio_transform = SpeechTransform(
+                sample_rate=config.sample_rate,
+                n_mels=config.n_mels,
+                n_fft=config.n_fft,
+                win_length=config.win_length,
+                hop_length=config.hop_length,
+                f_min=0,
+                f_max=config.sample_rate // 2,
+            )
         if config.feature_cmvn is not None:
             self.audio_transform.load_from_checkpoint(config.feature_cmvn)
 

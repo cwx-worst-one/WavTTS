@@ -171,6 +171,19 @@ def init_stage3(hpath, local_rank, cache_dir=None):
         local_path = ensure_hdfs_ckpt_is_local(hpath, cache_dir)
         model = Stage3.load_from_checkpoint(local_path, map_location="cpu").to(device).eval()
         return {"Stage3": model}
+    
+def init_stage3_rvq(hpath, local_rank, cache_dir=None):
+    """Init function for standard Stage3 UMM backbone."""
+    from recipes.umm.modules.lit_module_mkii_tts_rope import Stage3TTSRopeRVQ
+
+    if cache_dir is not None:
+        os.makedirs(cache_dir, exist_ok=True)
+
+    device = torch.device(f"cuda:{local_rank}")
+    with local_zero_first():
+        local_path = ensure_hdfs_ckpt_is_local(hpath, cache_dir)
+        model = Stage3TTSRopeRVQ.load_from_checkpoint(local_path, map_location="cpu").to(device).eval()
+        return {"Stage3": model}
 
 
 def init_dualumm(
@@ -459,3 +472,60 @@ def init_melae(
         model.to(device)
         print(f"| load melae from {local_path}")
         return {"melae": model}
+
+import torchaudio
+def load_example_audio(audio_path=None):
+    if audio_path is None:
+        os.system("hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/testset/token2wav/inp071.generated.wav .")
+        audio_path = "inp071.generated.wav"
+        # audio_path = "/mnt/hdfs/qinxin.025/testset/token2wav/inp071.generated.wav"
+
+    audio, sr = torchaudio.load(audio_path)
+    if sr != 24000:
+        audio = torchaudio.functional.resample(audio, sr, 24000)
+
+    audio = audio[0].unsqueeze(0).unsqueeze(1).cuda()   # [B, 1, T]
+    print("audio duration", audio.shape[-1] / 24000)
+
+    return audio
+
+if __name__ == "__main__":
+    # audio shape: [B, 1, T] (24kHz)
+    audio = load_example_audio()
+
+    # ===================================================
+    # 25Hz Hanoi baseline: ConformerUMM_Unified_TTS_ROPE
+    # ===================================================
+    # ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs/umm_conformer_unified_tts_rope/umm_stage3_unified_tts_rope_bert-base-multilingual-uncased_EMAEntropy32768x32/checkpoints/step=220000.ckpt"
+    # model = init_stage3(ckpt_path, 0, cache_dir="./.module_cache/umm/")
+    # model = model["Stage3"].eval()
+
+    # output = model.wav2token(audio)
+    # for key in output:
+    #     print(key, output[key])
+
+
+    # ===================================================
+    # 25Hz rm padding: ConformerUMM_Unified_TTS_ROPE_rmpad
+    # ===================================================
+    ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/umm_conformer_unified_tts_rope_rmpad/umm_stage3_unified_tts_rope_bert-base-multilingual-uncased/checkpoints/step=220000.ckpt"
+    model = init_stage3(ckpt_path, 0, cache_dir="./.module_cache/umm_rmpad/")
+    model = model["Stage3"].eval()
+
+    import torch.nn.functional as F
+    audio_length = torch.LongTensor([audio.shape[-1]]).to(audio.device)
+    pad_audio = F.pad(audio, (0, 24000*10), mode="constant", value=0)
+    output = model.wav2token(audio, audio_length)
+    output_pad = model.wav2token(pad_audio, audio_length)
+
+    print("without padding", output["vq_ids"].shape, "duration: {}s".format(audio.shape[-1] / 24000))
+    vq_id_shape = output["vq_ids"].shape[-1]
+    with open("full.txt", "w") as f:
+        f.writelines("\n".join(output["vq_ids"][0].cpu().reshape(-1).numpy().astype(str).tolist()))
+
+    print("with 10s padding", output_pad["vq_ids"].shape, "duration: {}s".format(pad_audio.shape[-1] / 24000))
+    with open("full_rmpad.txt", "w") as f:
+        f.writelines("\n".join(output_pad["vq_ids"][0].cpu().reshape(-1).numpy().astype(str).tolist()))
+
+    locality = torch.sum(output["vq_ids"] == output_pad["vq_ids"][...,:vq_id_shape]) / torch.prod(torch.tensor(output["vq_ids"].shape))
+    print("locality", locality.item() * 100, "%")

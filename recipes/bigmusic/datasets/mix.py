@@ -1,15 +1,15 @@
 import json
-from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Tuple, Union
 import pytorch_lightning as pl
 import torch
 import numpy as np
 import webdataset as wds
 from functools import partial
 from torch.utils.data import DataLoader
+from torch.nn.utils.rnn import pad_sequence
 from torchaudio.transforms import Resample
 from torchaudio_augmentations import Compose
 from transformers import BertTokenizer, Wav2Vec2PhonemeCTCTokenizer
-from webdataset import shardlists
 from webdataset.pipeline import DataPipeline
 import logging, phonemizer
 from recipes.bigmusic.datasets.symbolic_music.bm_dfs_dict_builder import BMDfsDictBuilder
@@ -80,6 +80,9 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
     acc_audio = []
     vocal_audio = []
     style_text = []
+    freeform_text_raw = []
+    freeform_text_short = []
+    freeform_text_long = []
     normalized_text = []
     lyrics_tokens = []
     lyrics_tokens_length = []
@@ -89,6 +92,7 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
     dataset_name = []
     unpadded_duration = []
     offset = []
+    section_durations = []
 
     # DEBUG
     style_metadata = []
@@ -109,6 +113,10 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
         if isinstance(style_label, Tuple):
             style_label = style_label[0]
         style_text.append(style_label)
+
+        freeform_text_raw.append(batch[idx].get("freeform_text_raw", None))
+        freeform_text_short.append(batch[idx].get("freeform_text_short", None))
+        freeform_text_long.append(batch[idx].get("freeform_text_long", None))
 
         speaker_id.append(batch[idx]["artist_id"])
         _lc = batch[idx]["lyrics_confidence"]
@@ -152,6 +160,8 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
             acc_audio.append(random_pad(batch[idx]['acc']))
         if 'vocal' in batch[idx]:
             vocal_audio.append(random_pad(batch[idx]['vocal']))
+        
+        section_durations.append(torch.tensor(batch[idx].get('section_durations')))
 
     stacked_audio = torch.stack(target_audio, dim=0)
     if stacked_audio.dim() == 3:
@@ -160,6 +170,9 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
         "target_audio": torch.stack(target_audio, dim=0),
         "target_tokens_length": torch.as_tensor(target_tokens_length),
         "style_text": style_text,
+        "freeform_text_raw": freeform_text_raw,
+        "freeform_text_short": freeform_text_short,
+        "freeform_text_long": freeform_text_long,
         "normalized_text": normalized_text,
         "lyrics": normalized_text,
         "lyrics_tokens": torch.stack(lyrics_tokens),
@@ -172,6 +185,7 @@ def collate_fn(batch: List[torch.Tensor], conditions="style_text,lyrics_tokens")
         "remi_token_length": torch.as_tensor(remi_token_length).unsqueeze(1),
         "conditions": conditions,
         "dataset_name": dataset_name,
+        'section_durations': pad_sequence(section_durations, batch_first=True, padding_value=0),
 
         # MIR
         "tempo_label": torch.tensor([b["tempo_label"] for b in batch]),
@@ -212,8 +226,9 @@ class VocalTransforms(BaseTransforms):
         min_volume_threshold: float = 0.05,  # TODO: Remove it, not used
         loudness_ratio_threshold: float = 0.2,  # TODO: Remove it, not used
         lyrics_field: str = "lyrics",  # TODO: Remove it, not used
-        lyrics_confidence: float = 0.8,
+        lyrics_confidence: Optional[float] = 0.8,
         lyrics_confidence_phrase: Optional[float] = None,
+        deepchorus_confidence: float = 0.45,
         normalize_audio: bool = False,
         tokenizer=None,   # TODO: Remove it, not used
         frame_rate: int = 25,
@@ -240,6 +255,7 @@ class VocalTransforms(BaseTransforms):
         # self.loudness_ratio_threshold = loudness_ratio_threshold
         self.lyrics_confidence = lyrics_confidence
         self.lyrics_confidence_phrase = lyrics_confidence_phrase  # phrase (utterance) level confidence
+        self.deepchorus_confidence = deepchorus_confidence
         self.audio_key = audio_key
         self.index_key = index_key
         self.frame_rate = frame_rate
@@ -269,10 +285,11 @@ class VocalTransforms(BaseTransforms):
             self.data_id,
             sinking_threshold=self.sinking_threshold,
             lyrics_confidence=self.lyrics_confidence,
+            lyrics_confidence_phrase=self.lyrics_confidence_phrase,
+            deepchorus_confidence=self.deepchorus_confidence,
             segment_method=self.segment_method,
             max_seg_per_track=self.max_seg_per_track,
             duration_range=(self.min_duration, self.max_duration),
-            lyrics_confidence_phrase=self.lyrics_confidence_phrase,
         )
         self.phrase_reformat_and_dropout = partial(
             SongSlice.reformat_and_dropout,
@@ -371,8 +388,17 @@ class VocalTransforms(BaseTransforms):
         # Parse and transform meta
         try:
             trans_meta = self.meta_transform(meta)
-            direct_return_fields = ["style_text", "artist_id", "lyrics_confidence", "key", "tempo_label"]
-            direct_return_dict = {rf: trans_meta[rf] for rf in direct_return_fields}
+            direct_return_fields = [
+                "style_text",
+                "freeform_text_raw",
+                "freeform_text_short",
+                "freeform_text_long",
+                "artist_id",
+                "lyrics_confidence",
+                "key",
+                "tempo_label",
+            ]
+            direct_return_dict = {rf: trans_meta[rf] for rf in direct_return_fields if rf in trans_meta}
             song_slices = trans_meta["song_slices"]
             deepchorus = trans_meta["structure_tags"]
         except ZhMetaParseError as pe:
@@ -396,7 +422,11 @@ class VocalTransforms(BaseTransforms):
         n_skipped_slices = 0
         for song_slice in song_slices:
             reformatted_phrases = self.phrase_reformat_and_dropout(phrases=song_slice.phrases)
-            
+            section_durations = SongSlice.get_section_durations(reformatted_phrases)
+            if not reformatted_phrases:  # skip empty slice
+                n_skipped_slices += 1
+                continue
+
             # TODO (qq) When a song's section tag is not reliable, drop out the tags.
             # if use_section_tag_dropout:
             #     reformatted_phrases = [phrase._replace(section_tag=None) for phrase in reformatted_phrases]
@@ -409,16 +439,28 @@ class VocalTransforms(BaseTransforms):
             # If a phrase fails, skip the entire slice. Otherwise it could worsen the phoneme missing issue
             # in the training data.
             try:
-                text_tokens = torch.from_numpy(self.tokenizer.tokenize_phrases(reformatted_phrases)).long()
+                style_text_list = []
+                for st in trans_meta['style_text']:
+                    style_text_list.extend(st)
+                #print('style_text_list: ', style_text_list)
+                languages = []
+                for item in reformatted_phrases:
+                    if 'Cantonese' in style_text_list:
+                        languages.append('Cantonese')
+                    else:
+                        languages.append('')
+                #print('languages: ', languages)
+                text_tokens, phrase_start_pos = self.tokenizer.tokenize_phrases(reformatted_phrases, languages=languages)
+                text_tokens = torch.from_numpy(text_tokens).long()            
             except SamiTokenizerError as e:
+                n_skipped_slices += 1
+                continue
+            if len(text_tokens) > self.segment_max_phone_len:
                 n_skipped_slices += 1
                 continue
 
             # Encode Leadsheet tokens
             if self.leadsheet_codec != None:
-                if len(text_tokens) > self.segment_max_phone_len:
-                    self._update_stats(skipped=True, message=f"TransformError: Lyric phone seq too long")
-                    continue
                 if "mir_service" not in meta.keys():
                     self._update_stats(skipped=True, message=f"No leadsheet transcription")
                     continue
@@ -444,6 +486,7 @@ class VocalTransforms(BaseTransforms):
                 "max_leadsheet_len": self.segment_max_leadsheet_len,
                 "offset": offset,
                 "sample_rate": self.sample_rate,
+                "section_durations": section_durations,
                 **direct_return_dict,
             } | {k: v for k, v in zip(self.extra_audio_keys, extra_clip)}
 
@@ -469,8 +512,9 @@ class VocalDataset(WebPipeline):
         min_volume_threshold: float = 0.05,
         loudness_ratio_threshold: float = 0.2,
         lyrics_field: str = "lyrics",
-        lyrics_confidence: float = 0.8,
+        lyrics_confidence: Optional[float] = 0.8,
         lyrics_confidence_phrase: Optional[float] = None,
+        deepchorus_confidence: float = 0.45,
         normalize_audio: bool = False,
         tokenizer: Any = "tts_chinese_frontend_model",
         frame_rate: int = 25,
@@ -500,6 +544,7 @@ class VocalDataset(WebPipeline):
             lyrics_field=lyrics_field,
             lyrics_confidence=lyrics_confidence,
             lyrics_confidence_phrase=lyrics_confidence_phrase,
+            deepchorus_confidence=deepchorus_confidence,
             normalize_audio=normalize_audio,            
             tokenizer=tokenizer,
             frame_rate=frame_rate,
@@ -555,8 +600,9 @@ class VocalParquetDataset(WebPipeline):
         min_volume_threshold: float = 0.05,
         lyrics_field: str = "lyrics",
         loudness_ratio_threshold: float = 0.2,
-        lyrics_confidence: float = 0.8,
+        lyrics_confidence: Optional[float] = 0.8,
         lyrics_confidence_phrase: Optional[float] = None,
+        deepchorus_confidence: float = 0.45,
         normalize_audio: bool = False,
         tokenizer: Any = "tts_chinese_frontend_model",
         frame_rate: int = 25,
@@ -591,6 +637,7 @@ class VocalParquetDataset(WebPipeline):
             lyrics_field=lyrics_field,
             lyrics_confidence=lyrics_confidence,
             lyrics_confidence_phrase=lyrics_confidence_phrase,
+            deepchorus_confidence=deepchorus_confidence,
             normalize_audio=normalize_audio,            
             tokenizer=tokenizer,
             frame_rate=frame_rate,
@@ -690,6 +737,7 @@ class MixVocalWebDataModule(DataModule):
         self,
         sample_rate: int = 24000,
         batch_size: int = 2,
+        val_batch_size: int = 0,
         shuffle_buffer_size: int = 10,
         num_workers: int = 4,
         pin_memory: bool = True,             
@@ -703,11 +751,13 @@ class MixVocalWebDataModule(DataModule):
         wds_dataset_weights: List[int] = [],
         parquet_dataset_ids: List[int] = [],
         parquet_dataset_weights: List[int] = [],
-        validation_parquet_dataset_ids: int = 1528,
+        #validation_parquet_dataset_ids: int = 1528,
+        validation_parquet_dataset_ids: int = 3520,
         use_dynamic_batch: str = False,
         lyrics_field: str = "lyrics",
-        lyrics_confidence: float = 0.8,
-        lyrics_confidence_phrase: Optional[float] = None,
+        lyrics_confidence: Union[Optional[float], List[Optional[float]]] = 0.8,
+        lyrics_confidence_phrase: Optional[Union[Optional[float], List[Optional[float]]]] = None,
+        deepchorus_confidence: float = 0.45,
         segment_method: str = "random",
         segment_max_phone_len: int = 400,
         segment_max_leadsheet_len: int = 1500,
@@ -722,7 +772,8 @@ class MixVocalWebDataModule(DataModule):
         buckets_in_frames: List[int] = [],
         sinking_threshold: float = 0.51,
         quality_filter: bool = False,
-        tag_taxonomy_lang: str = "SA",
+        #tag_taxonomy_lang: str = "SA",
+        tag_taxonomy_lang: str = "Mix_unified_v3",
         line_break_dropout_rate: float = 0.0,
         section_tag_dropout_rate: float = 0.0,
         leadsheet_codec=None,
@@ -748,7 +799,11 @@ class MixVocalWebDataModule(DataModule):
         else:
             self.tokenizer = None
 
+        if val_batch_size == 0:
+            val_batch_size = batch_size
         assert (len(buckets_in_sec) > 0) != (len(buckets_in_frames) > 0)
+        print(f"dataloader initialized with buckets_in_frames: {buckets_in_frames}")
+        print(f"dataloader initialized with buckets_in_sec: {buckets_in_sec}")
         if len(buckets_in_sec) == 0 and (len(buckets_in_frames) == 0):
             raise ValueError(f"Set buckets_in_sec or buckets_in_frames.")
         if len(buckets_in_sec) > 0:
@@ -768,21 +823,35 @@ class MixVocalWebDataModule(DataModule):
                     batch_size=batch_size,
                     length_fn=lambda x: x["target_audio"].shape[-1],
                 )
+            self.val_batcher = BucketBatcher(
+                buckets=buckets_samples,
+                dynamic_batch=False,
+                batch_size=val_batch_size,
+                length_fn=lambda x: x["target_audio"].shape[-1],
+            )            
         if len(buckets_in_frames) > 0:
             if use_dynamic_batch:
+                maximum_bucket_size = batch_size * buckets_in_frames[-1]
                 self.batcher = BucketBatcher(
                     buckets=buckets_in_frames,
                     dynamic_batch=True,
-                    maximum_bucket_size=buckets_in_frames[-1],
+                    maximum_bucket_size=maximum_bucket_size,
                     length_fn=lambda x: x['lyrics_tokens_length'] + x['target_tokens_length'],
                 )
             else:            
                 self.batcher = BucketBatcher(
                     buckets=buckets_in_frames,
                     dynamic_batch=False,
-                    batch_size=buckets_in_frames[-1],
+                    batch_size=batch_size,
                     length_fn=lambda x: x['lyrics_tokens_length'] + x['target_tokens_length'],
                 )
+            self.val_batcher = BucketBatcher(
+                buckets=buckets_in_frames,
+                dynamic_batch=False,
+                batch_size=val_batch_size,
+                length_fn=lambda x: x['lyrics_tokens_length'] + x['target_tokens_length'],
+            )
+
         self.wds_vocal_datasets = []
         wds_dataset_agg_weight = []
         if wds_dataset_names:
@@ -802,6 +871,7 @@ class MixVocalWebDataModule(DataModule):
                 lyrics_field=lyrics_field,
                 lyrics_confidence=lyrics_confidence,
                 lyrics_confidence_phrase=lyrics_confidence_phrase,
+                deepchorus_confidence=deepchorus_confidence,
                 tokenizer=self.tokenizer,                
                 resampled=True,
                 shardshuffle=True,
@@ -816,21 +886,35 @@ class MixVocalWebDataModule(DataModule):
                 leadsheet_codec=leadsheet_codec,
                 )]
         self.parquet_vocal_datasets = []
+        if len(buckets_in_sec) > 0:
+            min_duration = buckets_in_sec[0]
+            max_duration = buckets_in_sec[-1]
+        elif len(buckets_in_frames) > 0:
+            min_duration = buckets_in_frames[0] / (frame_rate + 10)
+            max_duration = buckets_in_frames[-1] / (frame_rate + 25)  # max audio duration for 3000 frame is 60s.
         if parquet_dataset_ids:
-            for parquet_id in parquet_dataset_ids:
+            # expand confidence parameters to lists
+            n_datasets = len(parquet_dataset_ids)
+            if not isinstance(lyrics_confidence, list):
+                lyrics_confidence = [lyrics_confidence] * n_datasets
+            if not isinstance(lyrics_confidence_phrase, list):
+                lyrics_confidence_phrase = [lyrics_confidence_phrase] * n_datasets
+
+            for parquet_id, _lyrics_confidence, _lyrics_confidence_phrase in zip(parquet_dataset_ids, lyrics_confidence, lyrics_confidence_phrase):
                 self.parquet_vocal_datasets.append(
                     VocalParquetDataset(
                         data_id=parquet_id,
-                        min_duration=buckets_in_sec[0],
-                        max_duration=buckets_in_sec[-1],
+                        min_duration=min_duration,
+                        max_duration=max_duration,
                         normalize_audio=normalize_audio,
                         segment_method=segment_method,
                         max_seg_per_track=max_seg_per_track,
                         segment_max_phone_len=segment_max_phone_len,
                         segment_max_leadsheet_len=segment_max_leadsheet_len,
                         lyrics_field=lyrics_field,
-                        lyrics_confidence=lyrics_confidence,
-                        lyrics_confidence_phrase=lyrics_confidence_phrase,
+                        lyrics_confidence=_lyrics_confidence,
+                        lyrics_confidence_phrase=_lyrics_confidence_phrase,
+                        deepchorus_confidence=deepchorus_confidence,
                         tokenizer=self.tokenizer,
                         infer_structure_tags=infer_structure_tags,
                         read_structure_tags=read_structure_tags,
@@ -857,16 +941,21 @@ class MixVocalWebDataModule(DataModule):
         validation_dataset = [WebPipeline(
             VocalParquetDataset(
                 data_id=validation_parquet_dataset_ids,
-                min_duration=buckets_in_sec[0],
-                max_duration=buckets_in_sec[-1],
+                min_duration=min_duration,
+                max_duration=max_duration,
                 normalize_audio=normalize_audio,
                 segment_method=segment_method,
                 max_seg_per_track=1,
                 segment_max_phone_len=segment_max_phone_len,
                 segment_max_leadsheet_len=segment_max_leadsheet_len,
                 lyrics_field=lyrics_field,
-                lyrics_confidence=lyrics_confidence,
-                lyrics_confidence_phrase=lyrics_confidence_phrase,
+                # Completely skip the lyrics confidence filtering for the validation set
+                # The user can choose to pre-filter the dataset
+                # This is a quick fix to allow list type to work for validation set
+                # Ideally we should set its confidence values separately
+                lyrics_confidence=0,
+                lyrics_confidence_phrase=None,
+                deepchorus_confidence=deepchorus_confidence,
                 tokenizer=self.tokenizer,
                 infer_structure_tags=infer_structure_tags,
                 read_structure_tags=read_structure_tags,
@@ -903,332 +992,3 @@ class MixVocalWebDataModule(DataModule):
             batch = self.batcher.collate_batch(item)
             if batch is not None:
                 yield batch
-
-
-class MixLangVocalWebDataModule(DataModule):
-    def __init__(
-        self,
-        sample_rate: int = 24000,
-        batch_size: int = 2,
-        shuffle_buffer_size: int = 10,
-        num_workers: int = 4,
-        pin_memory: bool = True,
-        collate_fn: Optional[Callable] = collate_fn,        
-        use_pipe: bool = True,
-        tokenizer: str = "tts_chinese_frontend_model",
-        frame_rate: int = 25,
-        normalize_audio: bool = False,
-        zh_parquet_dataset_ids: List[int] = [],
-        zh_parquet_dataset_weights: List[int] = [],
-        en_parquet_dataset_ids: List[int] = [],        
-        en_parquet_dataset_weights: List[int] = [],
-        use_dynamic_batch: str = False,
-        lyrics_field: str = "lyrics",
-        lyrics_confidence: float = 0.8,
-        segment_method: str = "random",
-        segment_max_phone_len: int = 400,
-        segment_max_leadsheet_len: int = 1500,
-        max_seg_per_track: int = -1,
-        buckets_in_sec: List[int] = [
-            20,
-            25,
-            30,
-        ],
-        sinking_threshold: float = 0.51,
-        quality_filter: bool = False,
-        tag_taxonomy_lang: str = "SA",
-        line_break_dropout_rate: float = 0.0,
-        section_tag_dropout_rate: float = 0.0,
-    ):        
-        self.num_workers = num_workers
-        self.shuffle_buffer_size = shuffle_buffer_size
-        self.pin_memory = pin_memory
-        self.collate_fn = collate_fn
-
-        if tokenizer == "wordpiece":
-            self.tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
-        elif tokenizer == "tts_chinese_frontend_model":
-            self.tokenizer = "tts_chinese_frontend_model"
-        elif tokenizer == "phoneme":
-            with local_zero_first():
-                self.tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained(
-                    "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
-                )
-                self.tokenizer._add_tokens(["<n>"])
-            phonemizer.logger.get_logger().setLevel(logging.ERROR)
-        else:
-            self.tokenizer = None
-
-        buckets_samples = list(map(lambda i: i * sample_rate, buckets_in_sec))
-        maximum_bucket_size = batch_size * sample_rate * buckets_in_sec[-1]
-        if use_dynamic_batch:
-            self.batcher = BucketBatcher(
-                buckets=buckets_samples,
-                dynamic_batch=True,
-                maximum_bucket_size=maximum_bucket_size,
-                length_fn=lambda x: x["target_audio"].shape[-1],
-            )
-        else:            
-            self.batcher = BucketBatcher(
-                buckets=buckets_samples,
-                dynamic_batch=False,
-                batch_size=batch_size,
-                length_fn=lambda x: x["target_audio"].shape[-1],  
-            )
-        
-        self.parquet_vocal_datasets = []
-        if zh_parquet_dataset_ids:
-            for parquet_id in zh_parquet_dataset_ids:
-                self.parquet_vocal_datasets.append(
-                    VocalParquetDataset(
-                        data_id=parquet_id,
-                        min_duration=buckets_in_sec[0],
-                        max_duration=buckets_in_sec[-1],
-                        normalize_audio=normalize_audio,
-                        segment_method=segment_method,
-                        max_seg_per_track=max_seg_per_track,
-                        segment_max_phone_len=segment_max_phone_len,
-                        segment_max_leadsheet_len=segment_max_leadsheet_len,
-                        lyrics_field=lyrics_field,
-                        lyrics_confidence=lyrics_confidence,
-                        tokenizer=self.tokenizer,                
-                        resampled=True,
-                        shardshuffle=True,
-                        use_pipe=use_pipe,            
-                        handler=wds.warn_and_continue,
-                        sinking_threshold=sinking_threshold,
-                        quality_filter=quality_filter,
-                        frame_rate=frame_rate,
-                        tag_taxonomy_lang=tag_taxonomy_lang,
-                        line_break_dropout_rate=line_break_dropout_rate,
-                        section_tag_dropout_rate=section_tag_dropout_rate,
-                        ))
-
-        if en_parquet_dataset_ids:
-            for parquet_id in en_parquet_dataset_ids:
-                self.parquet_vocal_datasets.append(
-                    VocalParquetDataset(
-                        data_id=parquet_id,
-                        min_duration=buckets_in_sec[0],
-                        max_duration=buckets_in_sec[-1],
-                        normalize_audio=normalize_audio,
-                        segment_method=segment_method,
-                        max_seg_per_track=max_seg_per_track,
-                        segment_max_phone_len=segment_max_phone_len,
-                        segment_max_leadsheet_len=segment_max_leadsheet_len,
-                        lyrics_field=lyrics_field,
-                        lyrics_confidence=lyrics_confidence,
-                        tokenizer=self.tokenizer,                
-                        resampled=True,
-                        shardshuffle=True,
-                        use_pipe=use_pipe,            
-                        handler=wds.warn_and_continue,
-                        sinking_threshold=sinking_threshold,
-                        quality_filter=quality_filter,
-                        frame_rate=frame_rate,
-                        tag_taxonomy_lang=tag_taxonomy_lang,
-                        line_break_dropout_rate=line_break_dropout_rate,
-                        section_tag_dropout_rate=section_tag_dropout_rate,
-                        ))
-
-        train_dataset = WebPipeline(            
-            MultiIterableDataset(datasets=self.parquet_vocal_datasets, 
-                                 weights=zh_parquet_dataset_weights+en_parquet_dataset_weights),
-            pipeline=[{"compose": [self.bucketize]}],
-        )
-
-        validation_dataset = [WebPipeline(
-            VocalDataset(
-                region='CN',
-                dataset_names="SodaTest",
-                dataset_weights=1,
-                min_duration=buckets_in_sec[0],
-                max_duration=buckets_in_sec[-1],
-                lyrics_field=lyrics_field,
-                lyrics_confidence=lyrics_confidence,
-                normalize_audio=normalize_audio,
-                segment_method=segment_method,
-                max_seg_per_track=1,
-                segment_max_phone_len=segment_max_phone_len,
-                segment_max_leadsheet_len=segment_max_leadsheet_len,
-                tokenizer=self.tokenizer,                
-                use_pipe=use_pipe,
-                resampled=False,
-                nodesplitter=return_self,                
-                handler=wds.warn_and_continue,
-                sinking_threshold=sinking_threshold,
-                quality_filter=quality_filter,
-                frame_rate=frame_rate,
-                tag_taxonomy_lang=tag_taxonomy_lang,
-                line_break_dropout_rate=line_break_dropout_rate,
-                section_tag_dropout_rate=section_tag_dropout_rate,
-            ),
-            pipeline=[{"compose": [self.bucketize]}],
-        )] 
-
-        super().__init__(
-            shuffle_buffer_size=shuffle_buffer_size,
-            num_workers=num_workers,
-            pin_memory=pin_memory,
-            train_dataset=train_dataset,
-            validation_dataset=validation_dataset,
-            predict_dataset=train_dataset,  # TODO
-            collate_fn=collate_fn,
-        )
-
-    def bucketize(self, iterator: Iterable):
-        for item in iterator:
-            batch = self.batcher.collate_batch(item)
-            if batch is not None:
-                yield batch
-
-
-class SftWebDataModule(DataModule):
-    # This DataModule supports both Artist SFT and Lyrics SFT.
-    def __init__(
-        self,
-        sample_rate: int = 24000,
-        batch_size: int = 2,
-        shuffle_buffer_size: int = 10,
-        num_workers: int = 4,
-        pin_memory: bool = True,
-        conditions: str = "style_text,speaker_id,lyrics_tokens",
-        use_pipe: bool = True,
-        tokenizer: str = "phoneme",
-        frame_rate: int = 25,
-        normalize_audio: bool = False,        
-        parquet_datasets: dict = {},
-        use_dynamic_batch: str = False,
-        lyrics_field: str = "lyrics",
-        lyrics_confidence: float = 0.8,
-        read_structure_tags: bool = False,
-        segment_method: str = "random",
-        segment_max_phone_len: int = 400,
-        segment_max_leadsheet_len: int = 1500,
-        max_seg_per_track: int = -1,
-        buckets_in_sec: List[int] = [
-            20,
-            25,
-            30,
-        ],
-        sample_limit_per_file: int = 1000,
-        sinking_threshold: float = 0.51,
-        quality_filter: bool = False,
-        tag_taxonomy_lang: str = "SA",
-        line_break_dropout_rate: float = 0.0,
-        section_tag_dropout_rate: float = 0.0,
-    ):        
-        print(conditions)
-        print(parquet_datasets)
-        self.num_workers = num_workers
-        self.shuffle_buffer_size = shuffle_buffer_size
-        self.pin_memory = pin_memory
-        self.collate_fn = partial(collate_fn, conditions=conditions)
-        assert parquet_datasets
-
-        if tokenizer == "wordpiece":
-            self.tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
-        elif tokenizer == "tts_chinese_frontend_model":
-            self.tokenizer = "tts_chinese_frontend_model"
-        elif tokenizer == "phoneme":
-            with local_zero_first():
-                self.tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained(
-                    "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
-                )
-                self.tokenizer._add_tokens(["<n>"])
-            phonemizer.logger.get_logger().setLevel(logging.ERROR)
-        else:
-            self.tokenizer = None
-
-        buckets_samples = list(map(lambda i: i * sample_rate, buckets_in_sec))
-        maximum_bucket_size = batch_size * sample_rate * buckets_in_sec[-1]
-        if use_dynamic_batch:
-            self.batcher = BucketBatcher(
-                buckets=buckets_samples,
-                dynamic_batch=True,
-                maximum_bucket_size=maximum_bucket_size,
-                length_fn=lambda x: x["target_audio"].shape[-1],
-            )
-        else:            
-            self.batcher = BucketBatcher(
-                buckets=buckets_samples,
-                dynamic_batch=False,
-                batch_size=batch_size,
-                length_fn=lambda x: x["target_audio"].shape[-1],  
-            )
-        self.parquet_vocal_datasets = {}
-        for split, pd_id_weights in parquet_datasets.items():
-            pds, pdws = [], []
-            is_train = True if split == 'train' else False
-            nodesplitter = shardlists.single_node_only if split == 'train' else return_self
-            for pd_id, pd_weight in pd_id_weights:
-                pdws.append(pd_weight)
-                pds.append(
-                    VocalParquetDataset(
-                        data_id=pd_id,
-                        min_duration=buckets_in_sec[0],
-                        max_duration=buckets_in_sec[-1],
-                        normalize_audio=normalize_audio,
-                        lyrics_field=lyrics_field,
-                        lyrics_confidence=lyrics_confidence,
-                        read_structure_tags=read_structure_tags,
-                        segment_method=segment_method,
-                        max_seg_per_track=max_seg_per_track,
-                        segment_max_phone_len=segment_max_phone_len,
-                        segment_max_leadsheet_len=segment_max_leadsheet_len,
-                        tokenizer=self.tokenizer,                
-                        resampled=is_train,
-                        shardshuffle=is_train,
-                        nodesplitter=nodesplitter,
-                        use_pipe=use_pipe,            
-                        handler=wds.warn_and_continue,
-                        sample_limit_per_file=sample_limit_per_file,
-                        sinking_threshold=sinking_threshold,
-                        quality_filter=quality_filter,
-                        frame_rate=frame_rate,
-                        tag_taxonomy_lang=tag_taxonomy_lang,
-                        line_break_dropout_rate=line_break_dropout_rate,
-                        section_tag_dropout_rate=section_tag_dropout_rate,
-                        ))
-            self.parquet_vocal_datasets[split] = WebPipeline(            
-                MultiIterableDataset(datasets=pds, weights=pdws),
-                pipeline=[{"compose": [self.bucketize]}],
-            )
-        
-        super().__init__(
-            shuffle_buffer_size=shuffle_buffer_size,
-            num_workers=num_workers,
-            pin_memory=pin_memory,
-            train_dataset=self.parquet_vocal_datasets["train"],
-            validation_dataset=self.parquet_vocal_datasets["test"],
-            predict_dataset=self.parquet_vocal_datasets["train"],  # TODO
-            collate_fn=self.collate_fn,
-        )
-
-    def bucketize(self, iterator: Iterable):
-        for item in iterator:
-            batch = self.batcher.collate_batch(item)
-            if batch is not None:
-                yield batch
-
-
-class LyricsSftWebDataModule(SftWebDataModule):
-    def __init__(
-        self,
-        **kwargs,
-    ):
-        super().__init__(
-            parquet_datasets={"train":[(1026, 1)], "test":[(1012, 1)]},
-            **kwargs,
-        )
-
-
-class ArtistSftWebDataModule(SftWebDataModule):
-    def __init__(
-        self,
-        **kwargs,
-    ):
-        super().__init__(
-            parquet_datasets={"train":[(1473, 1)], "test":[(1012, 1)]},
-            **kwargs,
-        )

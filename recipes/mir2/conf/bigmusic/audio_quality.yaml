@@ -1,0 +1,209 @@
+---
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 0
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+# running parameters`
+log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+
+run_opts:
+  fast_dev_run: False
+  tensorboard_dir: '/mnt/bn/bigmusic-lf/user/ju-chiang.wang'
+  log_name: 'audio_quality'
+  version: 'mir2_4tags'
+  precision: 16-mixed
+  accelerator: 'auto'
+  num_workers: 10
+  pin_memory: True
+  log_dir: logs
+  val_check_interval: 100  # validate every n steps of training
+
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+train_params:
+  learning_rate: 0.0001
+  max_epochs: -1
+  batch_size: 20
+  scheduler_patience: 20
+  scheduler_decay_factor: 0.5
+  devices: 'auto'
+  shuffle_buffer: 100
+  data_id: 4152
+
+val_params:
+  data_id: 4153
+  num_sanity_val_steps: 2
+  batch_size: 16
+  num_iter: 7
+  per_node_max_num: 3000 # should be greater than num_iter * num_workers * batch_size
+  check_val_every_n_epoch: 1
+
+test_params:
+  data_id: 4338   # unknown size, tried 20k, but it seems larger than 20k
+  batch_size: 1
+  infer_batch_size: 32
+  per_node_max_num: 2000
+
+extra_params:
+  print_per_tag_pr_auc: True
+  post_pooling: True
+  final_pooling: True
+  tag_types: ['quality']
+  tag_loss_weights: [1.0]
+  state_path: "hdfs://haruna/home/byte_speech_sv/ju-chiang.wang/musicfm/playlist_classic_stats.json"
+  model_path: "hdfs://haruna/home/byte_speech_sv/ju-chiang.wang/musicfm/musicfm_25hz_playlist_330m_520k.pt"
+
+################################################################################
+##########                    TASK CONFIGURATION                  ##########
+################################################################################
+
+audio:
+  sampling_rate: 24000        # sampling rate for audio
+  sample_len: 30.0            # duration in sec for input  #{24 or 6}
+
+
+################################################################################
+##########             DATASET/DATALOADING CONFIGURATION              ##########
+################################################################################
+
+train_transformed: !new:recipes.mir2.parquet_dataset.audio_quality.MusicFmParquetDataset
+  sample_rate: !ref <audio[sampling_rate]>
+  data_id: !ref <train_params[data_id]>
+  batch_size: !ref <train_params[batch_size]>
+  shuffle_buffer: !ref <train_params[shuffle_buffer]>
+  sample_len: !ref <audio[sample_len]>
+  tag_types: !ref <extra_params[tag_types]>
+
+val_transformed: !new:recipes.mir2.parquet_dataset.audio_quality.MusicFmParquetDataset
+  sample_rate: !ref <audio[sampling_rate]>
+  data_id: !ref <val_params[data_id]>
+  batch_size: !ref <val_params[batch_size]>
+  resampled: False
+  num_iter: !ref <val_params[num_iter]>  # because of too slow, cap the number of iterations
+  sample_len: !ref <audio[sample_len]>
+  tag_types: !ref <extra_params[tag_types]>
+  validation: True
+
+test_transformed: !new:recipes.mir2.parquet_dataset.audio_quality.MusicFmParquetDataset
+  sample_rate: !ref <audio[sampling_rate]>
+  data_id: !ref <test_params[data_id]>
+  batch_size: !ref <test_params[batch_size]>
+  infer_batch_size: !ref <test_params[infer_batch_size]>
+  resampled: False
+  sample_len: !ref <audio[sample_len]>
+  tag_types: !ref <extra_params[tag_types]>
+  test: True
+
+# dataloader configuration
+train_dataloader: !new:torch.utils.data.DataLoader
+  dataset: !ref <train_transformed>
+  shuffle: False
+  batch_size: null
+  num_workers: !ref <run_opts[num_workers]>
+  pin_memory: !ref <run_opts[pin_memory]>
+  persistent_workers: False
+
+val_dataloader: !new:torch.utils.data.DataLoader
+  dataset: !ref <val_transformed>
+  shuffle: False
+  batch_size: null
+  num_workers: !ref <run_opts[num_workers]>
+  pin_memory: !ref <run_opts[pin_memory]>
+  persistent_workers: False
+
+test_dataloader: !new:torch.utils.data.DataLoader
+  dataset: !ref <test_transformed>
+  shuffle: False
+  batch_size: null
+  num_workers: !ref <run_opts[num_workers]>
+  pin_memory: !ref <run_opts[pin_memory]>
+  persistent_workers: False
+
+# datamodule configuration
+pl_datamodule: !new:recipes.beat.pl_modules.pl_datamodule.BeatDataModule
+  train_dataloader: !ref <train_dataloader>
+  val_dataloader: !ref <val_dataloader>
+  test_dataloader: !ref <test_dataloader>
+
+################################################################################
+##########                      MODEL CONFIGURATION                   ##########
+################################################################################
+
+frontend: !new:recipes.mir2.models.frontend.Frontend
+  model:
+    !new:recipes.icassp.models.musicfm_25Hz.MusicFM25Hz
+    encoder_depth: 12
+    is_flash: False
+    stat_path: !ref <extra_params[model_path]>
+    model_path: !ref <extra_params[model_path]>
+  layer_ix: 12
+  is_update: True
+
+backend: !new:recipes.mir2.models.tagging_probing_label.TaggingProbingStage
+  post_pool: !ref <extra_params[post_pooling]>
+  n_channel: 1024
+  one_shot_map: !apply:recipes.mir2.parquet_dataset.vocab_index.quality_tags
+  tag_types: !ref <extra_params[tag_types]>
+  loss_weights: !ref <extra_params[tag_loss_weights]>
+
+model: !new:samantha.core.BaseModel
+  input_names: [audio]
+  output_names: [tag_pred]
+  stages:
+    - !ref <frontend>
+    - !ref <backend>
+
+pl_module: !new:recipes.mir2.pl_modules.tagging_pl_label.LitTagging
+  model: !ref <model>
+  lr: !ref <train_params[learning_rate]>
+  scheduler_patience: !ref <train_params[scheduler_patience]>
+  scheduler_decay_factor: !ref <train_params[scheduler_decay_factor]>
+  sample_rate: !ref <audio[sampling_rate]>
+  sample_len: !ref <audio[sample_len]>
+  one_shot_map: !apply:recipes.mir2.parquet_dataset.vocab_index.quality_tags
+  tag_types: !ref <extra_params[tag_types]>
+  per_tag: !ref <extra_params[print_per_tag_pr_auc]>
+  valid_per_node_max_num: !ref <val_params[per_node_max_num]>
+  test_per_node_max_num: !ref <test_params[per_node_max_num]>
+
+
+################################################################################
+##########                     TRAINER CONFIGURATION                  ##########
+################################################################################
+
+logger:
+  - !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[tensorboard_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+  - !new:pytorch_lightning.loggers.wandb.WandbLogger
+    save_dir: !ref <run_opts[log_dir]>
+    project: !ref <run_opts[log_name]>
+    name: !ref <run_opts[version]>
+
+
+trainer: !new:pytorch_lightning.Trainer
+  strategy: "deepspeed_stage_2"
+  fast_dev_run: !ref <run_opts[fast_dev_run]>
+  num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+  logger: !ref <logger>
+  accelerator: !ref <run_opts[accelerator]>
+  profiler: simple
+  devices: !ref <train_params[devices]>
+  precision: !ref <run_opts[precision]>
+  num_sanity_val_steps: !ref <val_params[num_sanity_val_steps]>
+  max_epochs: !ref <train_params[max_epochs]>
+  check_val_every_n_epoch: !ref <val_params[check_val_every_n_epoch]>
+  val_check_interval: !ref <run_opts[val_check_interval]>
+  callbacks:
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      every_n_epochs: 1
+      mode: "max"
+      monitor: "pr_auc"
+      save_top_k: 3
+      save_last: True

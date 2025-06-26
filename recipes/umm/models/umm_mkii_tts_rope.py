@@ -87,7 +87,7 @@ class Stage2TTSRope(Stage2):
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
-    def preprocessing(self, x):
+    def preprocessing(self, x, x_length=None):
         # This is mel-128 for computing the tokenizer's reconstruction loss
         normalize = self.config.feature_cmvn is not None
         if self.config.get("fix_stats_not_loading", False):
@@ -104,9 +104,12 @@ class Stage2TTSRope(Stage2):
             self.audio_transform.load_from_checkpoint(
                 self.config.feature_cmvn
             )  # for some reason I have to do this everytime. If I leave it in the constructor it doesn't work for SSTK data (?)
-        mel = self.audio_transform(x, normalize=normalize)
-        input_dict = {"mel": mel}
-
+        if x_length is not None:
+            mel, mel_length = self.audio_transform(x, x_length, normalize=normalize)
+            input_dict = {"mel": mel, "mel_length": mel_length}
+        else:
+            mel = self.audio_transform(x, normalize=normalize)
+            input_dict = {"mel": mel}
         # @hanoihantrakul: By default, this `interfere_audio` branch is never used by BigMusic not BigTTS.
         # if self.config.get("interfere_audio", None):
         #     x_interfered = self.interfere_audio(x)
@@ -197,6 +200,41 @@ class Stage2TTSRope(Stage2):
             output_dict.update(f0_out=f0_out)  # [batch_size, time_steps, 1]
             output_dict.update(vuv_out=vuv_out)  # [batch_size, time_steps, 1]
         return output_dict
+    
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def _get_hidden_state(self, hidden_states, position_embeddings):
+        """Apply Vector Quantization and only get the ID's."""
+        for i, layer in enumerate(self.encoder_layers):
+            if i == self.config.vq_layer_idx:
+                return {"vq_ids": None, 
+                        "pre_hidden_states": hidden_states,
+                        "post_hidden_states": hidden_states}
+            hidden_states = layer(
+                hidden_states, position_embeddings=position_embeddings
+            )
+        return None
+
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def _prepare_wav(self, wav):
+        """Check audio dimensions and pad."""
+        if wav.dim() == 3:
+            wav = wav.squeeze(dim=1)
+        return self.pad_audio(wav.float())
+    
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def wav2token(self, wav):
+        """Convert audio file to tokens (after Vector Quantization)."""
+        wav = self._prepare_wav(wav)
+        feature = self.preprocessing(wav)["mel"]
+        audio_feature = self.audio_encoder(feature)
+        hidden_states = self.encoder_input_dropout(audio_feature)
+        position_embeddings = self.embed_positions(hidden_states)
+        result = self._get_hidden_state(hidden_states, position_embeddings)
+        return result #result["vq_ids"]
 
 
 class Stage3TTSRope(Stage2TTSRope):
@@ -232,8 +270,15 @@ class Stage3TTSRope(Stage2TTSRope):
         If this approach works, recommend refactoring to a cleaner implementation.
         """
         feature = input_dict["mel"]
+
+        if self.config.get("cal_attention_mask", False) and "mel_length" in input_dict:
+            feature_length = input_dict["mel_length"]
+            audio_feature, audio_feature_attn_mask = self.audio_encoder(feature, feature_length)
+        else:
+            audio_feature = self.audio_encoder(feature)
+            audio_feature_attn_mask = None
+
         flops = self.audio_encoder.get_flops(*feature.shape)
-        audio_feature = self.audio_encoder(feature)
         hidden_states = self.encoder_input_dropout(audio_feature)
         position_embeddings = self.embed_positions(hidden_states)
         flops += self.encoder_layers[0].get_flops(*hidden_states.shape[0:2]) * len(
@@ -248,7 +293,7 @@ class Stage3TTSRope(Stage2TTSRope):
         for i, layer in enumerate(self.encoder_layers):
             if i == self.config.vq_layer_idx:
                 hidden_states = self.vq_proj_in(hidden_states)
-                if self.config.get("vq_proj_noise", 0) > 0:
+                if self.config.get("vq_proj_noise", 0) > 0 and self.training:
                     noise_scale = (self.config.vq_proj_noise - self.cnt).clamp(
                         0
                     ) / self.config.vq_proj_noise
@@ -271,7 +316,7 @@ class Stage3TTSRope(Stage2TTSRope):
                 )
                 hidden_states = self.vq_proj_out(vq_embs)
             hidden_states = layer(
-                hidden_states, position_embeddings=position_embeddings
+                hidden_states, attn_mask=audio_feature_attn_mask, position_embeddings=position_embeddings
             )
 
         flops += self.mel_head.get_flops(*hidden_states.shape)
@@ -302,7 +347,7 @@ class Stage3TTSRope(Stage2TTSRope):
             flops += 2 * torch.numel(hidden_states) * self.ctc_head.weight.shape[0]
             ctc_out = self.ctc_head(hidden_states)
             output_dict.update(ctc_out=ctc_out)
-        if self.config.get("vq_proj_noise", False):
+        if self.config.get("vq_proj_noise", False) and self.training:
             output_dict.update(noise_scale=noise_scale)
         if self.config.get("add_chroma", False):
             chroma_out = self.chroma_head(hidden_states)
@@ -335,29 +380,52 @@ class Stage3TTSRope(Stage2TTSRope):
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
-    def _get_vq_ids(self, hidden_states, position_embeddings):
+    def _get_vq_ids(self, hidden_states, attn_mask=None, position_embeddings=None,):
         """Apply Vector Quantization and only get the ID's."""
         for i, layer in enumerate(self.encoder_layers):
             if i == self.config.vq_layer_idx:
                 vq_hidden_states = self.vq_proj_in(hidden_states)
-                _, vq_ids, _ = self.vq(vq_hidden_states)
-                return {"vq_ids": vq_ids, "hidden_states": hidden_states}
+                vq_embs, vq_ids, _ = self.vq(vq_hidden_states)
+                # return {"vq_ids": vq_ids, "hidden_states": hidden_states}
+                post_hidden_states = self.vq_proj_out(vq_embs)
+                return {"vq_ids": vq_ids, 
+                        "pre_hidden_states": hidden_states,
+                        "post_hidden_states": post_hidden_states}
             hidden_states = layer(
-                hidden_states, position_embeddings=position_embeddings
+                hidden_states, attn_mask, position_embeddings=position_embeddings
             )
         return {"vq_ids": vq_ids, "hidden_states": hidden_states}
-
+    
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
-    def wav2token(self, wav):
+    def pad_audio(self, x, x_mask=None):
+        rate = int(self.config.sample_rate / self.config.frame_rate)
+        if x.size(-1) % rate > 0:
+            x = F.pad(x, (0, rate - (x.size(-1) % rate)), "constant", 0)
+        if x_mask is None:
+            return x
+        return x, F.pad(x_mask, (0, rate - (x.size(-1) % rate)), "constant", 0)
+    
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def wav2token(self, wav, wav_length=None):
         """Convert audio file to tokens (after Vector Quantization)."""
         wav = self._prepare_wav(wav)
-        feature = self.preprocessing(wav)["mel"]
-        audio_feature = self.audio_encoder(feature)
-        hidden_states = self.encoder_input_dropout(audio_feature)
-        position_embeddings = self.embed_positions(hidden_states)
-        result = self._get_vq_ids(hidden_states, position_embeddings)
-        return result["vq_ids"]
+
+        if wav_length is not None:
+            feature_dict = self.preprocessing(wav, wav_length)
+            feature, feature_length = feature_dict["mel"], feature_dict["mel_length"]
+            audio_feature, audio_feature_attn_mask = self.audio_encoder(feature, feature_length)
+            hidden_states = self.encoder_input_dropout(audio_feature)
+            position_embeddings = self.embed_positions(hidden_states)
+            result = self._get_vq_ids(hidden_states, attn_mask=audio_feature_attn_mask, position_embeddings=position_embeddings)
+        else:
+            feature = self.preprocessing(wav)["mel"]
+            audio_feature = self.audio_encoder(feature)
+            hidden_states = self.encoder_input_dropout(audio_feature)
+            position_embeddings = self.embed_positions(hidden_states)
+            result = self._get_vq_ids(hidden_states, position_embeddings=position_embeddings)
+        return result #result["vq_ids"]
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)

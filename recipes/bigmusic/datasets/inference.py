@@ -1,15 +1,18 @@
 import copy
-import itertools
-import os
-import json
+from email.mime import audio
+from functools import partial
 import glob
-import torch
-from typing import Dict, List, Optional, Tuple
+import itertools
+import json
+import os
 import pandas as pd
 from pathlib import Path
-from functools import partial, reduce
-import operator
+import shutil
+from typing import Dict, List, Optional, Tuple
+import urllib.request
+from urllib.parse import urlparse
 
+import torch
 from torchaudio_augmentations import Compose
 
 from samantha.dataio.webdataset.pipeline import WebPipeline
@@ -27,15 +30,10 @@ from recipes.bigmusic.datasets.lyrics import (
     dictionary_collate,
 )
 from recipes.bigmusic.datasets.mir_data_util import (
-    rewrite_style_input_to_multi_tag,
-    rewrite_style_input_to_sa_tag,    
-    rewrite_style_input_to_multi_tag_v3,
-    rewrite_style_input_to_multi_tag_combo_v3,
-    rewrite_style_input_to_multi_tag_combo_v3_5,
+    rewrite_style_input_to_multi_tag_combo_v4,
     ARTIST_ID_MAP_V2,
     KEY_ID_MAP,
     TEMPO_LABEL_ID_MAP,
-    tempo_to_label,
 )
 from recipes.bigmusic.datasets.transforms.lyrics import (
     LyricsTokenTransform,
@@ -52,7 +50,7 @@ from recipes.bigmusic.datasets.transforms.structure import (
 from recipes.bigmusic.datasets.utils.zh_lyrics_proc import SongLyrics
 from recipes.datasets.mcc.sami_tokenizer import section_parens
 from recipes.musiclm.inference.utils import load_wav
-from recipes.musiclm.utils.dist import local_zero_first, is_local_zero
+from recipes.musiclm.utils.dist import local_zero_first
 
 default_prompt_path = Path(__file__).absolute().parent/'inference_prompts/default.json'
 
@@ -63,21 +61,13 @@ def prompt_path_to_items(prompt_path, cache_dir='.prompt_cache'):
         # Format expects { 'style_audio': [], 'style_text': [], 'lyrics': [] }
         return prompt_path
     if prompt_path.startswith("hdfs://"):
-        local_path = f"{cache_dir}/{os.path.basename(prompt_path)}"
-        if not os.path.exists(local_path):
-            with local_zero_first():
-                if is_local_zero():
-                    Path(local_path).parent.mkdir(parents=True, exist_ok=True)
-                    if not hh.get(prompt_path, local_path):
-                        raise ConnectionError(f"Cannot retrieve file from {prompt_path}.")
-                else:
-                    # torch.dist is sometimes not initialized at dataloader step. Sleep to wait for local rank 0
-                    import time
-                    count = 0
-                    while not os.path.exists(local_path) and count < 45:
-                        time.sleep(1) 
-                        count += 1
-        prompt_path = local_path
+        with local_zero_first():
+            local_path = f"{cache_dir}/{os.path.basename(prompt_path)}"
+            if not os.path.exists(local_path):
+                Path(local_path).parent.mkdir(parents=True, exist_ok=True)
+                if not hh.get(prompt_path, local_path):
+                    raise ConnectionError(f"Cannot retrieve file from {prompt_path}.")
+            prompt_path = local_path
 
     prompt_path = Path(prompt_path)
     if prompt_path.suffix == '.json':
@@ -117,11 +107,13 @@ def inference_dataset_from_prompt(
     use_controller_cfg=False,
     controller_cfg_label="",
     disable_multitag=False,
+    audio_prompt_cache_dir=".module_cache/audio_prompt_cache",
 ):
     prompts = prompt_path_to_items(prompt_path)
 
     if 'index' in prompts:
         prompts['index'] = [str(x) for x in prompts['index']]
+
     if 'text_category' in prompts: # fix csv formatting
         prompts['category'] = prompts.pop('text_category')
     if 'text_prompt' in prompts: # fix csv formatting
@@ -130,20 +122,30 @@ def inference_dataset_from_prompt(
         prompts['style_text'] = prompts.pop('text')
     if 'style_category' in conditions and 'style_category' not in prompts:
         prompts['style_category'] = prompts['style_text']
-    if 'style_audio' in prompts:
-        prompts['vocal_prompt'] = prompts['style_audio']
-        prompts['style_audio'] = load_and_normalize_wavs(prompts['style_audio'])
-    if 'vocal_audio' in prompts:
-        additional_transforms = [voice_clone_transform(extra_params)] if extra_params.get('app_type') == 'vclone' else []
-        prompts['vocal_audio'] = load_and_normalize_wavs(prompts['vocal_audio'], additional_transforms)
+
+    if 'audio_prompt' in prompts:
+        additional_transforms = voice_clone_transform_optional(extra_params)
+        # audio prompt for continuation, audio emb prefix, singsong, and voice clone                
+        prompts['audio_prompt'] = [
+            download_and_normalize_wavs_optional(
+                audio_prompt.split(','),
+                audio_prompt_cache_dir=audio_prompt_cache_dir,
+                additional_transforms = additional_transforms
+            ) for audio_prompt in prompts['audio_prompt']
+        ]
+        if 'style_audio' in conditions:
+            # Audio emb prefix
+            prompts['style_audio'] = prompts['audio_prompt']
+        if 'vocal_prompt' in conditions:
+            # Singsong
+            prompts['vocal_prompt'] = prompts['audio_prompt']
+        if 'vocal_audio' in conditions:
+            prompts['vocal_audio'] = prompts['audio_prompt']
+
     if 'intensity_audio' in prompts:
         prompts['intensity_audio'] = load_and_normalize_wavs(prompts['intensity_audio'])
     if 'beat_audio' in prompts:
         prompts['beat_audio'] = load_and_normalize_wavs(prompts['beat_audio'])
-    if 'sections' in prompts:
-        def format_section(section_str):
-            return [val if idx % 2 == 0 else float(val) for idx, val in enumerate(section_str.split(','))]
-        prompts['sections'] = [format_section(s) for s in prompts['sections']]
     if 'structure' in prompts:
         prompts['structure'] = [None if x == "random" else json.loads(x) for x in prompts['structure']]
     elif 'structure' in conditions:
@@ -222,8 +224,6 @@ def inference_dataset_from_prompt(
                         LyricsTokenSamiTransform.init_sami_inference_tokenizer(
                             lyrics_max_seq_len=lyrics_max_seq_len,
                             dataset_mode=dataset_mode,
-                            enable_punctuation=enable_punctuation,
-                            normalize_tags=True,  # support all kinds of section tags
                             vocab_type="phoneme+tone",
                             use_controller_cfg=use_controller_cfg,
                         )
@@ -282,13 +282,12 @@ def inference_dataset_from_prompt(
     # HACK:如果处于推理状态（非batch），那么将front_results添加到第一个item
     if is_inference and front_results is not None and items:
         items[0]['front_results'] = front_results
-        return items
     dataset = WebPipeline(items, pipeline=[])
     batch_fn = default_batch_fn(
         batch_size,
         collation_fn=partial(dictionary_collate, remove_invalid=False),
     )
-    
+
     return transform_dataset(
         dataset,
         segment_transforms=segment_transforms,
@@ -296,46 +295,77 @@ def inference_dataset_from_prompt(
         batch_fn=batch_fn,
     )
 
-def inference_anchor(mulan_hpath):
-    import numpy as np
-    from recipes.mulan.inference.stats.sstk_anchor_points import load_anchor_points, load_anchor_points_from_mulan_ckpt
-    binary_center = load_anchor_points_from_mulan_ckpt(mulan_hpath)
-    
-    prompts = {
-        'style_embedding': binary_center[:, None, :],
-    }
-    default_batch_size=2
-    inference_dataset = inference_dataset_from_prompt(
-        prompts, conditions="style_embedding,duration",
-        batch_size=default_batch_size,
-        lyrics_max_seq_len=None,
-        dataset_mode=None,
-        extra_params={ 'duration': 60 }
-    )
-    return inference_dataset
-
 def load_and_normalize_wavs(wav_paths, additional_transforms=()):
     audio_transforms = Compose([ToTensor(), SetAudioDimensions(), *additional_transforms])
     wavs = [audio_transforms(load_wav(wav_path)) for wav_path in wav_paths]
     return wavs
 
-def voice_clone_transform(extra_params):
-    sample_rate = extra_params['sample_rate']
-    voice_clone_duration = extra_params.get('voice_clone_duration', -1)
-    return lambda vocal_audio: vocal_audio[:, :(voice_clone_duration * sample_rate)]
+def load_and_normalize_wavs_optional(wav_paths, additional_transforms=()):
+    audio_transforms = Compose([ToTensor(), SetAudioDimensions(), *additional_transforms])
+    wavs = [audio_transforms(load_wav(wav_path)) if wav_path else None for wav_path in wav_paths]
+    return wavs
 
-def process_zh_lyrics(lyrics_list: List[str], genres: Optional[List[str]], rewrite_lyrics: bool) -> List[str]:
-    def split_and_normalize_one(text: str, genre: str) -> str:
+def download_wavs(wav_paths: List[Optional[str]], audio_prompt_cache_dir: str) -> List[Optional[str]]:
+    cache_dir = Path(audio_prompt_cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def download_wav(wav_path: str):
+        """Download wav file from web url or hdfs to local dir, unless the wav_path is already a local path"""
+        def is_web_url(path: str):
+            parsed_url = urlparse(path)
+            return parsed_url.scheme in ('http', 'https')
+
+        def get_local_path(path: str) -> Path:
+            path_hash = hash(path)
+            filename = ("1" + str(-path_hash) if path_hash < 0 else "0" + str(path_hash)) + ".wav"
+            return cache_dir / filename
+
+        local_path = get_local_path(wav_path)
+        if is_web_url(wav_path):
+            if not local_path.exists():
+                with urllib.request.urlopen(wav_path) as response, open(local_path, "wb") as out_file:
+                    shutil.copyfileobj(response, out_file)
+            return str(local_path)
+        elif hh.ishdfs(wav_path):
+            if not local_path.exists():
+                hh.get(wav_path, str(local_path))
+            return str(local_path)
+        # it is local path already
+        return wav_path
+
+    return [download_wav(wav_path) if wav_path else None for wav_path in wav_paths]
+
+def download_and_normalize_wavs_optional(
+    wav_paths: List[Optional[str]],
+    additional_transforms=(),
+    audio_prompt_cache_dir=".audio_prompt_cache_dir",
+):
+    wav_paths = download_wavs(wav_paths, audio_prompt_cache_dir)
+    return load_and_normalize_wavs_optional(wav_paths, additional_transforms)
+
+def voice_clone_transform_optional(extra_params):
+    if isinstance(extra_params, dict) and extra_params.get('app_type') == 'vclone':
+        sample_rate = extra_params['sample_rate']
+        voice_clone_duration = extra_params.get('voice_clone_duration', -1)
+        return [lambda vocal_audio: vocal_audio[:, :(voice_clone_duration * sample_rate)]]
+    else:
+        return []
+
+def process_zh_lyrics(lyrics_list: List[str], genres: Optional[List[str]], rewrite_lyrics: bool) -> Tuple[List[str], List[bool]]:
+    def split_and_normalize_one(text: str, genre: str) -> Tuple[str, bool]:
+        """Result processed lyrics (str) and a flag indicating whether the lyrics contain any singer tag"""
         if rewrite_lyrics:
-            return str(SongLyrics.parse(text).process(genre))
-        return "\n".join(list(filter(lambda l: len(l) > 0, map(lambda l: l.strip(), text.split("\n")))))
+            song_lyrics = SongLyrics.parse(text).process(genre)
+            return song_lyrics.to_str(), song_lyrics.has_singer_tag
+        return "\n".join(list(filter(lambda l: len(l) > 0, map(lambda l: l.strip(), text.split("\n"))))), False
 
     if genres is None:
         genres = ["empty"] * len(lyrics_list)
 
-    return [split_and_normalize_one(text, genre) for text, genre in zip(lyrics_list, genres)]
+    results = [split_and_normalize_one(text, genre) for text, genre in zip(lyrics_list, genres)]
+    return [lyrics for lyrics, _ in results], [has_singer_tag for _, has_singer_tag in results]
 
-def process_zh_style_text(style_text_list: List[str], rewrite_target="", disable_multitag=False) -> Tuple[List[str], List[str], List[str], List[int]]:
+def process_zh_style_text(style_text_list: List[str], rewrite_target="", disable_multitag=False, has_singer_tag_list=None) -> Tuple[List[str], List[str], List[str], List[int]]:
     """Auto-convert macro style text into separate sub-category text seaprated by '|'."""
     def process_one(text: str) -> Tuple[str, str, str, int]:
         """Expecting input style text in the format of "SA_genre|SA_mood|SA_gender" where each field can be optional."""
@@ -346,16 +376,8 @@ def process_zh_style_text(style_text_list: List[str], rewrite_target="", disable
         if "|" not in text:
             text = text + "||" # For backward compatibility, support top genre only style text
         # TODO: also expand to key and tempo_label.
-        if rewrite_target == "multi_tag":
-            return rewrite_style_input_to_multi_tag(text)
-        if rewrite_target == "sa_tag":
-            return rewrite_style_input_to_sa_tag(text)
-        if rewrite_target == "multi_tag_v3":
-            return rewrite_style_input_to_multi_tag_v3(text)
-        if rewrite_target == "multi_tag_combo_v3":
-            return rewrite_style_input_to_multi_tag_combo_v3(text)
-        if rewrite_target == "multi_tag_combo_v3_5":
-            return rewrite_style_input_to_multi_tag_combo_v3_5(text)
+        if rewrite_target == "9_cat_combo_v4":
+            return rewrite_style_input_to_multi_tag_combo_v4(text)
         else:
             raise NotImplementedError(f"Unsupported rewrite_taget: {rewrite_target}")
     tags, keys, tempo_labels, speaker_ids = tuple(zip(*[process_one(style_text) for style_text in style_text_list]))
@@ -394,6 +416,7 @@ def process_zh_prompts(
     transform_style_text: bool = True,
     rewrite_lyrics: bool = True,
     disable_multitag: bool = False,
+    audio_prompt_cache_dir: str = ''
 ) -> Dict:
     """
     - Reformat lyrics.
@@ -404,6 +427,12 @@ def process_zh_prompts(
     n_songs = len(prompts['lyrics'])
 
     prompts["lyrics"] = [lyrics.strip() for lyrics in prompts["lyrics"]]
+    # If lyrics_prompt (for prompt_audio) is given, prepend it to lyrics
+    if "lyrics_prompt" in prompts:
+        lyrics_prompt = ["" if p is None else p.strip() for p in prompts["lyrics_prompt"]]
+        prompts["lyrics"] = [((pl + "\n" + l) if pl else l) for pl, l in zip(lyrics_prompt, prompts["lyrics"])]
+    # process lyrics based on style (the first item in style text should always be genre)
+    prompts['lyrics'], has_singer_tag_list = process_zh_lyrics(prompts['lyrics'], [s.split("|")[0] for s in prompts['style_text']], rewrite_lyrics)
 
     # Add section tag to the optional "rewrite_lyrics" column
     # if 'rewrite_lyrics' in prompts:  # override lyrics with rewrite_lyrics
@@ -426,12 +455,14 @@ def process_zh_prompts(
             for lyrics_p, style_p in zip(lyrics_prompts, prompts['style_text']):
                 qs.append(lyrics_p[:10] + '\n' + style_p.split('|')[0])
             prompts['original_style_text'] = qs
-        prompts['style_text'], key_from_tag, tempo_label_from_tag, speaker_id_from_tag = process_zh_style_text(prompts['style_text'], rewrite_target, disable_multitag)
+        prompts['style_text'], key_from_tag, tempo_label_from_tag, speaker_id_from_tag = process_zh_style_text(
+            prompts['style_text'],
+            rewrite_target,
+            disable_multitag,
+            has_singer_tag_list
+        )
     else:
         key_from_tag, tempo_label_from_tag, speaker_id_from_tag = None, None, None        
-
-    # process lyrics based on style (the first item in style text should always be genre)
-    prompts['lyrics'] = process_zh_lyrics(prompts['lyrics'], [s.split("|")[0] for s in prompts['style_text']], rewrite_lyrics)
 
     # Override speaker_id if using multitag (there is a category dedicated to the voice), defaults to 0.
     if 'speaker_id' in conditions:

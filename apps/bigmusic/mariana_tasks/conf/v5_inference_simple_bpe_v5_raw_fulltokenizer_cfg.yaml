@@ -1,0 +1,229 @@
+---
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 1995
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision:
+  !apply:torch.set_float32_matmul_precision ["high"]
+
+extra_params:
+  network_cfg: "apps/bigmusic/mariana_tasks/conf/v5_m8_680m_bpe_simple_priority_fulltokenizer.yaml"
+  skip_sos: False # Audio continuation needs to skip audio SOS
+  stop_eos: True # stop generation in case of EOS
+
+  samples_to_save: 1
+  output_dir: ./generated_output/conditional
+
+  # Semantic model
+  semantic_cls_path: apps.bigmusic.mariana_tasks.semantic_seed_train_bpe.SemanticLlmModelBpe
+  emb_path: "emb.pt"
+  llm_path: "llm.pt"
+  predict_step_seed: 1234
+
+  # Model Settings
+  sample_rate: 44100
+  duration: 240
+  lyrics_max_seq_len: 4000
+  semantic_frame_rate: 25
+
+  # AR sampling hparams
+  semantic_temperature: 0.6 # 0.6 for sobv4. 0.8 for sobv2
+  sample_mode: "top_p" # top_p, adaptive_sampling, gumbel
+  sample_thresh: 0.9
+  target_top_k: 100
+  beam_size: 1
+
+  # Sampling
+  use_step_out_blank: True
+  step_out_blank_logic: "v4"
+  step_out_blank_max_len: 200
+  repetition_penalty: 1.6
+  emit_eos_thresh_secs: 5 # Force to emit EOS after reaching specific duration
+  exclude_eos_thresh_secs: 1 # Suppress EOS until threshold before reaching specific duration
+  exclude_eos_first_secs: 20 # Suppress eos prediction in the beginning.
+  exclude_text_tokens: True
+
+  # CFG
+  use_controller_cfg: True # Set to True to activate style CFG.
+  controller_cfg_gamma: 3.0
+
+  # Cache
+  cache_dir: .module_cache/bigmusic
+
+run_opts:
+  fast_dev_run: False
+  precision: bf16
+  accelerator: auto
+  strategy: auto
+  cache_dir: .module_cache/bigmusic
+  batch_size: 1
+  num_workers: 8
+
+  enable_groundtruth: False
+
+token2wav_config:
+  !apply:hyperpyyaml.load_hyperpyyaml [
+    !apply:open [
+      !apply:os.getenv [
+        "token2wav_config",
+        "apps/bigmusic/umm/diffusion/conf/2024Q2/infer_generation_streaming.yaml",
+      ],
+      "r",
+    ],
+  ]
+
+data:
+  predict_dataset_ids: [12497]
+  predict_dataset_weights: [1]
+  data_key_in_source_urls: 'data'
+
+  predict_batcher:
+    type: "SimpleBatcher"
+    batch_size: 1
+
+  predict_item_transform:
+    - type: "DeserializeJSON"
+      in_key: 'meta'
+      out_key: 'meta'
+
+    - type: "AstLiteralEval"
+      in_key: 'meta.raw.tags_music'
+      out_key: 'meta.raw.tags_music'
+
+    - type: "GetItem"
+      in_key: 'meta.raw.tags_music'
+      out_key: 'tags_music'
+
+    # for genre acc callbacks
+    - type: "ConvertDictToList"
+      in_key: tags_music
+      out_key: style_text
+      list_order:
+        [
+          "genre",
+          "genre_extra",
+          "extra",
+          "mood",
+          "scene",
+          "speaker",
+          "voice",
+          "lang",
+          "sinking",
+          "instrument",
+          "tempo",
+          "key",
+          "mode"
+        ]
+
+    - type: "PRDMetaParser"
+      in_key: 'tags_music'
+      out_key: 'prd_meta'
+
+    - type: "PackMeta2PromptFull"
+      in_key: 'prd_meta'
+      out_key: 'prompt'
+      shuffle: False
+      # do not drop out for test prompts
+      field_dropout_rate: 0.0
+      dropout_rate: 0.0
+
+    - type: "MusicMetaRWTransform"
+      in_key: 'meta.raw.lyrics'
+      out_key: 'lyrics'
+
+    - type: "TextAugmentor"
+      in_key: 'lyrics'
+      out_key: 'lyrics'
+      aug_rates: 1.0
+      aug_fns: ['traditional2simplified', 'lower']
+
+    - type: "GroupItems"
+      in_key: ['prompt', 'lyrics']
+      out_key: 'input_strings'
+
+    - type: "GroupItems"
+      in_key: ['lyrics']
+      out_key: 'input_strings_uncond'
+    
+    - type: "MusicMetaRWTransform" # for callback
+      in_key: 'prompt'
+      out_key: 'freeform_text'
+
+  predict_batch_transform:
+    - type: FullTokenCollate
+      in_key: 'input_strings'
+      bpe_tokenizer_path: '/opt/tiger/bbpe155k-v6.4.3-ml.pret'
+      seq_template: "<prompt>{}</prompt><lyrics>{}</lyrics><audio>"
+    - type: FullTokenCollate
+      in_key: 'input_strings_uncond'
+      out_key_suffix: '_uncond'
+      bpe_tokenizer_path: '/opt/tiger/bbpe155k-v6.4.3-ml.pret'
+      seq_template: "<prompt></prompt><lyrics>{}</lyrics><audio>" # <lyrics> tags are kept, to align with training
+
+    # WORKAROUND: for callbacks
+    - type: NestListCollate
+      key_list:
+        [
+          "style_text",
+          "lyrics",
+          "freeform_text"
+        ]
+      to_tensor: False
+
+pl_datamodule: !new:samantha.dataio.bigmusic.lite.MusicLiteDataModule
+  predict_dataset_ids: !ref <data[predict_dataset_ids]>
+  predict_dataset_weights: !ref <data[predict_dataset_weights]>
+  predict_item_transform: !ref <data[predict_item_transform]>
+  predict_batch_transform: !ref <data[predict_batch_transform]>
+  predict_batcher: !ref <data[predict_batcher]>
+  data_key_in_source_urls: !ref <data[data_key_in_source_urls]>
+
+pl_module: !new:apps.bigmusic.mariana_tasks.inference.SemanticInferenceModule
+  semantic_cls_path: !ref <extra_params[semantic_cls_path]>
+  extra_params: !ref <extra_params>
+  required_modules:
+    diffusion_modules:
+      diffusion:
+        hpath:
+          !apply:operator.getitem [!ref <token2wav_config>, "diffusion_config"]
+        initializer:
+          !name:apps.bigmusic.umm.diffusion.requires.model_initializer.init_diffusion
+          cache_dir: !ref <run_opts[cache_dir]>
+
+# separating out additional_callbacks so auto_eval can disable metrics
+additional_callbacks:
+    # ===== base callback. Must be placed in front of all callbacks. =====
+    - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
+    - !new:recipes.bigmusic.callbacks.common_callbacks.UploadToEasyCycleCallback
+      space_name: null
+      expires: null
+    - !new:recipes.bigmusic.callbacks.common_callbacks.ASRCallback
+      asr_model_path: zh-CN
+    - !new:recipes.bigmusic.callbacks.common_callbacks.ForceAlignCallback
+    # ====================================================================
+    # ===== features =====================================================
+    - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsSAOnlineCallback
+      asr_model_path: zh-CN
+      transliteration: True
+    - !new:recipes.bigmusic.callbacks.mir_metrics.MIRTagMetricsSAOnlineCallback
+callbacks:
+  - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
+    beam_size: !ref <extra_params[beam_size]>
+    samples_to_save: !ref <extra_params[samples_to_save]>
+    save_style_audio: False # style_audio is usually downloaded and saved separately, no need to save
+trainer: !new:pytorch_lightning.Trainer
+  fast_dev_run: !ref <run_opts[fast_dev_run]>
+  accelerator: !ref <run_opts[accelerator]>
+  devices: "auto"
+  num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
+  deterministic: False
+  enable_model_summary: True
+  use_distributed_sampler: False # for multi-gpu inference
+  strategy: !ref <run_opts[strategy]>
+  # strategy: !new:pytorch_lightning.strategies.DDPStrategy
+  #     timeout: !new:datetime.timedelta
+  #     seconds: 7200
+  precision: !ref <run_opts[precision]>
+  callbacks: !apply:operator.add [!ref <additional_callbacks>, !ref <callbacks>]

@@ -1,0 +1,425 @@
+data:
+  train_num_workers: 6
+  valid_num_workers: 1
+
+  batch_strategy:
+    type: MultiTaskTokenBatching
+    max_batch_size: 80000
+  val_batch_strategy:
+    type: MultiTaskTokenBatching
+    max_batch_size: 80000
+
+  parquet:
+    read_batch_size: 40
+    index_file_list: null
+    sampler: ParquetSampler
+    columns: null
+    use_threads: true
+    native_parallel_file_num: 64
+    split_path_list_by_rank: false
+    split_path_list_by_process: false
+
+  prompt_template: null
+  tokenizer_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/assets/bbpe155k-v6.4.3-ml.pret"
+  drop_last: False
+  shuffle: True
+  pin_memory: True
+
+  train_multitask_paths:
+    - task: "CT_MusicPureText"
+      task_weight: 1 # 100->21
+      datasets:
+        - dataset: "D73_CT_zh"
+          dataset_weight: 1
+          dataset_weight_schedule:
+            type: LinearWeightSchedule
+            init_weight: 0.08
+            final_weight: 0.01
+            warmup_step: 0
+            k: -0.00058 # 衰减10000 step
+          source_type: parquet
+          data_paths:
+            - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/llm/D73_CT/repart_20240506_v1_cp_stage1_merged/zh_deleteBugData_fix2_new_decontaV3/*.parquet"
+
+        - dataset: "D73_CT_en"
+          dataset_weight: 1
+          dataset_weight_schedule:
+            type: LinearWeightSchedule
+            init_weight: 0.08
+            final_weight: 0.01
+            warmup_step: 0
+            k: -0.00058 # 衰减10000 step
+          source_type: parquet
+          data_paths:
+            - "hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/llm/D73_CT/repart_20240506_v1_cp_stage1_merged/en_fix2_new_decontaV3/*.parquet"
+
+    - task: "CT_MusicTTS"
+      task_weight: 1 # 100->21
+      datasets:
+        - dataset: "ct_musictts_pretrain"
+          dataset_weight_schedule:
+            type: LinearWeightSchedule
+            init_weight: 0.08
+            final_weight: 0.01
+            warmup_step: 0
+            k: -0.00058 # 衰减10000 step
+          source_type: "parquet"
+          data_paths: CN:12938
+
+    - task: "Lyrics2Song"
+      task_weight: 80 # 100->21
+      system_prompt: "[Lyrics2Song]You are a musician assistant. Your task is to synthesize the corresponding music when the user gives you a description of a piece of music or lyrics. The music is represented by a series of special tokens <au_%s>, and do not output any text."
+      datasets:
+        - dataset: "lyrics2song_pretrain"
+          dataset_weight_schedule:
+            type: ConstantWeightSchedule
+            init_weight: 0.08
+          source_type: "parquet"
+          data_paths: CN:12558
+
+    - task: "TokenASR"
+      task_weight: 1 # 100->21
+      system_prompt: "[TokenASR]You are a musician assistant. Your task is to recognize lyrics given an audio. The music is represented by a series of special tokens <au_%s>"
+      datasets:
+        - dataset: "tokenasr_pretrain"
+          dataset_weight_schedule:
+            type: LinearWeightSchedule
+            init_weight: 0.08
+            final_weight: 0.01
+            warmup_step: 0
+            k: -0.00058 # 衰减10000 step
+          source_type: "parquet"
+          data_paths: CN:12558
+
+    - task: "MusicCaption"
+      task_weight: 5 # 100->21
+      system_prompt: "[MusicCaption]You are a musician assistant. Your task is to make musical caption to a given audio. The music is represented by a series of special tokens <au_%s>"
+      datasets:
+        - dataset: "musiccaption_pretrain"
+          dataset_weight_schedule:
+            type: LinearWeightSchedule
+            init_weight: 0.08
+            final_weight: 0.01
+            warmup_step: 0
+            k: -0.00058 # 衰减10000 step
+          source_type: "parquet"
+          data_paths: CN:12558
+
+    - task: "AudioContinuation"
+      task_weight: 1 # 100->21
+      system_prompt: "[AudioContinuation]You are a musician assistant. Your task is to continue the given audio. The music is represented by a series of special tokens <au_%s>"
+      datasets:
+        - dataset: "audiocontinuation_pretrain"
+          dataset_weight_schedule:
+            type: LinearWeightSchedule
+            init_weight: 0.08
+            final_weight: 0.01
+            warmup_step: 0
+            k: -0.00058 # 衰减10000 step
+          source_type: "parquet"
+          data_paths: CN:12558
+
+    - task: "Prompt2Song"
+      task_weight: 1 # 100->21
+      system_prompt: "[Prompt2Song]You are a musician assistant. Your task is to synthesize the corresponding music when the user gives you a description of a piece of music. The music is represented by a series of special tokens <au_%s>, and do not output any text."
+      datasets:
+        - dataset: "prompt2song_pretrain"
+          dataset_weight_schedule:
+            type: LinearWeightSchedule
+            init_weight: 0.08
+            final_weight: 0.01
+            warmup_step: 0
+            k: -0.00058 # 衰减10000 step
+          source_type: "parquet"
+          data_paths: CN:12558
+
+    - task: "Tag2Prompt"
+      task_weight: 1 # 100->21
+      system_prompt: "[Tag2Prompt]You are a musician assistant. Your task write music description to a given musical tags and lyrics."
+      datasets:
+        - dataset: "tag2prompt_pretrain"
+          dataset_weight_schedule:
+            type: LinearWeightSchedule
+            init_weight: 0.08
+            final_weight: 0.01
+            warmup_step: 0
+            k: -0.00058 # 衰减10000 step
+          source_type: "parquet"
+          data_paths: CN:12558
+
+  valid_multitask_paths:
+    - task: "Lyrics2Song"
+      task_weight: 20 # 100->21
+      system_prompt: "You are a musician assistant. Your task is to synthesize the corresponding music when the user gives you a description of a piece of music or lyrics. The music is represented by a series of special tokens <au_%s>, and do not output any text."
+      datasets:
+        - dataset: "lyrics2song_pretrain"
+          dataset_weight_schedule:
+            type: ConstantWeightSchedule
+            init_weight: 0.08
+          source_type: "parquet"
+          data_paths: CN:12561
+
+  test_multitask_paths: []
+
+  train_item_transform:
+    - type: samantha.dataio.bigmusic.music_meta_transform.DeserializeJSON
+      in_key: "meta"
+      out_key: "meta"
+      return_item_if_in_key_not_found: true
+
+    - type: samantha.dataio.bigmusic.music_meta_transform.DeserializePickle
+      in_key: "umm_token"
+      out_key: "umm_token"
+      return_item_if_in_key_not_found: true
+
+    # NOTE (Yilin): commit it out for umm_token_3.83
+    - type: samantha.dataio.bigmusic.music_meta_transform.GetItem
+      in_key: "umm_token.umm_token"
+      out_key: "umm_token"
+      return_item_if_in_key_not_found: true
+
+    - type: samantha.dataio.bigmusic.music_meta_transform.StandardMetaParser
+      in_key: "standard_music_meta"
+      out_key: "standard_meta"
+      meta_types: ["web", "human_annotation", "tagging_model"]
+      meta_weights: [3, 2, 1]
+      return_item_if_in_key_not_found: true
+
+    - type: samantha.dataio.bigmusic.music_meta_transform.PackMeta2Prompt
+      in_key: "standard_meta"
+      out_key: "prompt"
+      shuffle: true
+      field_dropout_rate: 0.1
+      dropout_rate: 0.1
+      return_item_if_in_key_not_found: true
+
+    - type: samantha.dataio.bigmusic.music_meta_transform.LyricsParser
+      lyrics_type: "asr"
+      in_key: "meta"
+      out_key: "lyrics"
+      return_item_if_in_key_not_found: true
+
+    - type: samantha.dataio.bigmusic.music_meta_transform.MaflFormatPrefix
+      in_key: "prompt"
+      out_key: "prompt_prefix"
+      return_item_if_in_key_not_found: true
+
+    - type: samantha.dataio.bigmusic.music_meta_transform.MaflFormatPrefix
+      in_key: "lyrics"
+      out_key: "lyrics_prefix"
+      return_item_if_in_key_not_found: true
+
+    - type: samantha.dataio.bigmusic.music_meta_transform.TokenIdsToString
+      in_key: "umm_token"
+      out_key: "umm_string"
+      return_item_if_in_key_not_found: true
+
+    - type: samantha.dataio.bigmusic.music_multitasks.CTS2T2UPreSchemaParser
+
+    - type: samantha.dataio.bigmusic.music_batch_transform.ExpandedTokenizer
+      tokenizer_path: "/opt/tiger/bbpe155k-v6.4.3-ml.pret"
+      audio_vocab_size: 32768
+
+    - type: CTSanityCheck
+      max_tokens: 9600 # 240s * (25hz(token) + 15hz(prompt)) = 9600
+      tokens_key: "num_tokens"
+
+  valid_item_transform:
+    - type: samantha.dataio.bigmusic.music_meta_transform.DeserializeJSON
+      in_key: "meta"
+      out_key: "meta"
+      return_item_if_in_key_not_found: true
+
+    - type: samantha.dataio.bigmusic.music_meta_transform.DeserializePickle
+      in_key: "umm_token"
+      out_key: "umm_token"
+      return_item_if_in_key_not_found: true
+
+    # NOTE (Yilin): commit it out for umm_token_3.83
+    - type: samantha.dataio.bigmusic.music_meta_transform.GetItem
+      in_key: "umm_token.umm_token"
+      out_key: "umm_token"
+      return_item_if_in_key_not_found: true
+
+    - type: samantha.dataio.bigmusic.music_meta_transform.StandardMetaParser
+      in_key: "standard_music_meta"
+      out_key: "standard_meta"
+      meta_types: ["web", "human_annotation", "tagging_model"]
+      meta_weights: [3, 2, 1]
+      return_item_if_in_key_not_found: true
+
+    - type: samantha.dataio.bigmusic.music_meta_transform.PackMeta2Prompt
+      in_key: "standard_meta"
+      out_key: "prompt"
+      shuffle: true
+      field_dropout_rate: 0.1
+      dropout_rate: 0.1
+      return_item_if_in_key_not_found: true
+
+    - type: samantha.dataio.bigmusic.music_meta_transform.LyricsParser
+      lyrics_type: "asr"
+      in_key: "meta"
+      out_key: "lyrics"
+      return_item_if_in_key_not_found: true
+
+    - type: samantha.dataio.bigmusic.music_meta_transform.MaflFormatPrefix
+      in_key: "prompt"
+      out_key: "prompt_prefix"
+      return_item_if_in_key_not_found: true
+
+    - type: samantha.dataio.bigmusic.music_meta_transform.MaflFormatPrefix
+      in_key: "lyrics"
+      out_key: "lyrics_prefix"
+      return_item_if_in_key_not_found: true
+
+    - type: samantha.dataio.bigmusic.music_meta_transform.TokenIdsToString
+      in_key: "umm_token"
+      out_key: "umm_string"
+      return_item_if_in_key_not_found: true
+
+    - type: samantha.dataio.bigmusic.music_multitasks.CTS2T2UPreSchemaParser
+
+    - type: samantha.dataio.bigmusic.music_batch_transform.ExpandedTokenizer
+      tokenizer_path: "/opt/tiger/bbpe155k-v6.4.3-ml.pret"
+      audio_vocab_size: 32768
+
+    - type: CTSanityCheck
+      max_tokens: 9600 # 240s * (25hz(token) + 15hz(prompt)) = 9600
+      tokens_key: "num_tokens"
+
+  test_item_transform: []
+
+  batch_transform:
+    - type: ListCollate
+      key: task,dataset,token_ids,num_tokens,inputs
+    - type: samantha.dataio.bigmusic.music_batch_transform.TokenPadCollate
+
+model:
+  llm_path: 'hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/lixiaoyang.x/train/ckpts/llm/m8/m8_2b5_lr4_32M_32k_mixct/checkpoints/global_step_30370/megatron_merge_states.pt'
+  network:
+    llm_empty_init: False
+    init_weight: True
+    tokenizer_path: 'hdfs://haruna/home/byte_data_aml_research/user/anzhecheng/tokenizer/bbpe155k-v6.4.3-ml.pret'
+    ignored_llm_missing_keys: ['inv_freq', 'extra_embedding']
+
+    # Arch
+    arch: m8
+    hidden_size: 2048
+    n_embed: 2048  # vocab embedding
+    n_inner: 1024
+    n_layer: 40
+    vocab_size: 187905  # 155124(original:155121 + sectionstart/end:2 + textend:1) + 32769(semantic_codebook_size + audioend)
+    text_vocab_size: 155136 # embedding size, there are tokens not used in the middle
+    tie_weight: true
+    tie_extra: True
+    use_extra_tie_weight: true
+    pad_idx: 1
+    activation_function: 'swiglu'
+    embd_pdrop: 0.0
+    resid_pdrop: 0.1
+    initializer_range:  0.0161
+
+    # ROPE
+    max_position_embeddings: 32768
+    position_embeddings_type: "rope"
+    rope_mode: default
+    rope_base: 10000
+    rope_dim: 48
+
+    # Attn
+    kv_mirror_imitated_layers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    kv_mirror_layers: [28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
+    query_head_scale_factor: 2
+    use_attention_bias: False
+    attn_pdrop: 0.1
+    n_head: 16
+    n_shared_qhead: 4
+
+
+    # Pre-post norm
+    pre_post_layernorm_layers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
+    layer_norm_type: rmsnorm
+    layer_norm_epsilon: 1.0e-5
+
+    # MoE
+    transformer_kernel: "default"
+    mlp_type: "moe"
+    moe_expert_type: 'swiglu-melego'
+    moe_gate_type: 'cap-lego'
+    moe_expert_op_version: 'V6'
+    moe_expert_eq_dim_factor: 1.0
+    moe_topk: 6
+    moe_num_expert: 128
+    moe_share_expert_num: 2
+    moe_ema_calc_type: 'local'
+    moe_aux_loss_weight: 0.01
+
+    # HPC
+    use_flash_attn: True
+    use_flash_ce: True
+    use_fused_layernorm: True
+    use_bumi: True
+    use_bumi_gemm: False
+    moe_use_fused_block: True
+    moe_selective_recompute: 0
+    moe_fused_block_full_recompute_start_layer_index: 100
+    use_llm_fp16: False
+    use_llm_bf16: False
+    freeze_llm: False
+    gradient_checkpointing_start_layers: 100
+    gradient_checkpointing: False
+
+trainer:
+  # default_hdfs_dir:
+  gradient_clip_val: 1.0
+  log_every_n_steps: 10
+  max_steps: 20000
+  max_epochs: -1
+  val_check_interval: 2000  # trigger checkpoint saving while save_after_val=True
+  static_sync_limit_val: True
+  #resume_ckpt_path: 'auto'
+  precision: 'bf16'
+  strategy: 'lsdp'
+  # enable_profiler: True
+  profiler_schedule_kwargs:
+    wait: 19
+    warmup: 3
+    active: 3
+    repeat: 1
+  accumulate_grad_batches: 1
+  accelerator_kwargs:
+    lsdp_config:
+      matchers:
+      - "*.transformer.h.*"
+      forward_prefetch_steps: 1
+      backward_prefetch_steps:
+      - "*.transformer.h.*,1"
+      mixed_precision:
+        weight_dtype: 'bf16'
+        gradient_dtype: 'fp32'
+        override_weight_dtype:
+          - "*.transformer.h.*.gate.*,fp32"
+      distributed_saving: true
+      distributed_loading: true
+  optimizer_kwargs:
+    optimizer:
+      type: "torch.optim.AdamW"
+      params:
+        lr: 1e-4
+        betas:
+        - 0.9
+        - 0.98
+        eps: 1.0e-08
+        weight_decay: 0.01
+        bias_correction: true
+        adam_w_mode: true
+        fused: true
+    scheduler:
+      type: "mariana.optim.lr_scheduler.get_cosine_schedule_with_warmup_lrdecay"
+      total_steps_param_name: "num_training_steps"
+      warmup_steps_param_name: "num_warmup_steps"
+      interval: "step"
+      params:
+        warmup_step_rate: 0.01
+        lr_end: 0.1  # 1e-5/1e-4
+        lr_decay_rate: 1.0

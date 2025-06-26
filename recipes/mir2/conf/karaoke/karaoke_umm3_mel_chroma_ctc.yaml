@@ -1,0 +1,242 @@
+---
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 0
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+# running parameters`
+log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+
+run_opts:
+  fast_dev_run: False
+  hdfs_log_dir: "hdfs:///home/byte_speech_sv/ju-chiang.wang/umm_tag"
+  log_name: 'karaoke'
+  version: 'umm_stage3_mel_chroma_ctc'
+  log_dir: logs
+  precision: 16-mixed
+  accelerator: 'auto'
+  num_workers: 10
+  batch_size: 16
+  pin_memory: True
+  val_check_interval: 5000  # validate every n steps of training
+  pre_vq_latent: False
+  weight_decay: 0.1
+  warmup_steps: 2000
+  tokenizer: "bert-base-multilingual-uncased" # stage2 apply language tokenizer to both EN and CN
+  frame_rate: 25
+
+extra_params:
+  final_pooling: True
+  tag_types: ['genres', 'year', 'key', 'tempo', 'instruments']
+  tag_loss_weights: [0.3, 0.1, 0.1, 0.1, 1.0]
+
+
+################################################################################
+##########                    TASK CONFIGURATION                  ##########
+################################################################################
+
+audio:
+  sampling_rate: 24000        # sampling rate for audio
+  sample_len: 30.0            # duration in sec for input  #{24 or 6}
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+train_params:
+  learning_rate: 0.0001
+  max_epochs: -1
+  scheduler_patience: 20
+  scheduler_decay_factor: 0.8
+  devices: 'auto'
+
+pl_datamodule: !new:recipes.datasets.mcc.mix_mir2.MixDataModule
+  data_ids: [6667]
+  val_data_id: 5491
+  data_weights: [1]
+  shuffle_buffer_size: 100
+  sample_rate: !ref <audio[sampling_rate]>
+  batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <audio[sampling_rate]>
+  num_workers: 10
+  max_num_crops: null
+  min_duration: 15
+  max_duration: 50 # 12APR2024 Hanoi and Devon Sun and I manually verified this datasert only contains audio lengths between 0-60s.
+  normalize_audio: False
+  tokenizer: !ref <run_opts[tokenizer]>
+  frame_rate: !ref <run_opts[frame_rate]>
+  # collate_fn: !name:recipes.datasets.mcc.mix.collate_audio # 14APR2024 @hanoihantrakul Must turn this off for Stage2 because you need both `audio` and `token` to be passed by default collate_fn
+
+
+################################################################################
+##########                      MODEL CONFIGURATION                   ##########
+################################################################################
+
+config: !new:recipes.umm2.models.config.UMMConfig
+  feature_cmvn: "recipes/datasets/mcc/data_ids=794.stats.pt"
+  sample_rate: !ref <audio[sampling_rate]>
+  frame_rate: !ref <run_opts[frame_rate]>
+  n_mels: 128
+  n_chroma: 12
+  n_fft: 2048
+  win_length: 2048
+  hop_length: 240
+  hidden_size: 1024
+  intermediate_size: 4096
+  num_hidden_layers: 24
+  num_attention_heads: 8
+  max_source_positions: !ref <extra_params[frame_rate]> * <pl_datamodule[max_duration]>
+  vq_type: null # this will default to EMAVectorQuantizer()
+  vq_proj_noise: 10000
+  vq_codebook_size: 32768
+  vq_codebook_dim: 32
+  vq_decay: 0.99
+  w_loss_mel: 1.0
+  w_loss_chroma: 0.5
+  w_loss_ctc: 0.7
+  w_loss_vq: 0.5
+  w_loss_tag: 0.8
+  tokenizer: !ref <extra_params[tokenizer]>
+  vocab_size: 105880
+  ctc_blank_id: 105879
+  ctc_zero_infinity: True
+  use_bn: False
+
+ema_vq: !new:recipes.umm2.models.tasks.vq_module.EMAVectorQuantizer
+  codebook_size: !ref <config[vq_codebook_size]>
+  codebook_dim: !ref <config[vq_codebook_dim]>
+  decay: !ref <config[vq_decay]>
+
+vq_module: !new:recipes.umm2.models.tasks.vq_module.VQ  # BaseStage
+  task: "vq"
+  loss_weight: !ref <config[w_loss_vq]>
+  config: !ref <config>
+  takes: [latent]
+  provides: [latent, vq_ids, vq_entropy]
+  vq_scheme: !ref <ema_vq>
+
+
+frontend: !new:recipes.umm2.models.tasks.autoencoder.AE_UMM # BaseStage
+  config: !ref <config>
+  takes: [audio]
+  provides: [audio, mel, latent, vq_ids, vq_entropy]
+  bypasses: [token, tags]
+  loss_weight: null
+  lr_ratio: 0.1
+  insert_modules:
+    12: !ref <vq_module> # at layer 12
+
+
+tag_head: !new:recipes.mir2.models.tagging_umm2.TaggingProbingStage
+  task: "tagging"
+  loss_weight: !ref <config[w_loss_tag]>
+  takes: [latent, tags]
+  provides: [tag_pred]
+  final_pooling: !ref <extra_params[final_pooling]>
+  n_channel: !ref <config[hidden_size]>
+  tag_map: !apply:recipes.mir2.parquet_dataset.vocab_index.karaoke_tags
+  tag_types: !ref <extra_params[tag_types]>
+
+mel_head: !new:recipes.umm2.models.tasks.mel_head.Mel_Head # BaseStage
+  task: "mel"
+  loss_weight: !ref <config[w_loss_mel]>
+  config: !ref <config>
+  takes: [mel, latent]
+  provides: [mel, mel_out]
+ctc_head: !name:recipes.umm2.models.tasks.ctc_head.CTC_Head # BaseStage
+  task: "ctc"
+  loss_weight: !ref <config[w_loss_ctc]>
+  config: !ref <config>
+  takes: [token, latent]
+  provides: [text_ids, ctc_out]
+chroma_head: !new:recipes.umm2.models.tasks.chroma_head.Chroma_Head # BaseStage
+  task: "chroma"
+  loss_weight: !ref <config[w_loss_chroma]>
+  config: !ref <config>
+  takes: [audio, latent]
+  provides: [chroma, chroma_out]
+
+backend: !new:recipes.umm2.models.base.SpanModel
+  input_names: [audio, token, mel, latent, tags]
+  output_names: [mel, mel_out, text_ids, ctc_out, tag_pred]
+  bypass_names: [vq_ids, vq_entropy, loss_vq]
+  spans:
+    mel: !ref <mel_head>
+    ctc: !ref <ctc_head>
+    chroms: !ref <chroma_head>
+    tag: !ref <tag_head>
+
+model: !new:recipes.umm2.models.base.PipelineModel
+  input_names: [audio, token, tags]
+  output_names: [mel, mel_out, vq_ids, vq_entropy, text_ids, ctc_out, tag_pred]
+  stages:
+    - !ref <frontend>
+    - !ref <backend>
+
+
+required_modules:
+  pretrained:
+    #ckpt_path: "hdfs://haruna/home/byte_speech_sv/ju-chiang.wang/logs/umm2_conformer_2255mixedZHEN/stage1_4096x16x8/checkpoints/step=0580000.ckpt"
+    #ckpt_path: "hdfs://haruna/home/byte_speech_sv/ju-chiang.wang/logs/umm2_conformer_2255mixedZHEN/stage2_hpss_onset_2255mixedZHEN_optim_mem_bert-base-multilingual-uncased/checkpoints/step=0250000.ckpt"
+    #ckpt_path: "hdfs://haruna/home/byte_speech_sv/ju-chiang.wang/logs/umm2_conformer_2255mixedZHEN/stage3_hpss_onset_2255mixedZHEN_2375Speech_optim_mem_bert-base-multilingual-uncased_None32768x32/checkpoints/step=0325000.ckpt"
+    ckpt_path: "hdfs://haruna/home/byte_speech_sv/ju-chiang.wang/logs/umm2_conformer_2255mixedZHEN/stage3_reg1_2255mixedZHEN_2375Speech_optim_mem_bert-base-multilingual-uncased_None32768x32/checkpoints/step=0190000.ckpt"
+    loader: !name:recipes.umm2.loaders.stage3.ModelLoader
+    cache_dir: ".module_cache/umm"
+
+
+pl_module: !new:recipes.mir2.pl_modules.pl_umm_dataloader.LitTagging
+  model: !ref <model>
+  lr: !ref <train_params[learning_rate]>
+  scheduler_patience: !ref <train_params[scheduler_patience]>
+  scheduler_decay_factor: !ref <train_params[scheduler_decay_factor]>
+  sample_rate: !ref <audio[sampling_rate]>
+  sample_len: !ref <audio[sample_len]>
+  tag_map: !apply:recipes.mir2.parquet_dataset.vocab_index.karaoke_tags
+  tag_types: !ref <extra_params[tag_types]>
+  valid_per_node_max_num: 2000
+  test_per_node_max_num: 6000
+  final_pooling: !ref <extra_params[final_pooling]>
+  required_modules: !ref <required_modules>
+  vq_codebook_size: !ref <config[vq_codebook_size]>
+
+################################################################################
+##########                     TRAINER CONFIGURATION                  ##########
+################################################################################
+
+logger:
+  - !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: ".module_cache/tagging"
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+  - !new:pytorch_lightning.loggers.wandb.WandbLogger
+    save_dir: !ref <run_opts[log_dir]>
+    project: !ref <run_opts[log_name]>
+    name: !ref <run_opts[version]>
+
+
+trainer: !new:pytorch_lightning.Trainer
+  strategy: "ddp_find_unused_parameters_false"
+  fast_dev_run: !ref <run_opts[fast_dev_run]>
+  num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+  logger: !ref <logger>
+  accelerator: !ref <run_opts[accelerator]>
+  profiler: simple
+  devices: !ref <train_params[devices]>
+  precision: !ref <run_opts[precision]>
+  num_sanity_val_steps: !ref <val_params[num_sanity_val_steps]>
+  max_epochs: !ref <train_params[max_epochs]>
+  check_val_every_n_epoch: !ref <val_params[check_val_every_n_epoch]>
+  val_check_interval: !ref <run_opts[val_check_interval]>
+  callbacks:
+    - !new:samantha.callbacks.HDFSModelCheckpoint
+      hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+      mode: "max"
+      monitor: "pr_auc"
+      save_top_k: 3
+      every_n_train_steps: !ref <run_opts[val_check_interval]>
+      filename: "{step:07d}"
+      save_last: True
+  plugins:
+    - !new:samantha.plugins.LargeTorchCheckpointIO

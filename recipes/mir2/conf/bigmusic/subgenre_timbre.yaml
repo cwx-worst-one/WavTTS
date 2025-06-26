@@ -1,0 +1,202 @@
+---
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 0
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+
+# running parameters`
+log_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
+
+run_opts:
+  fast_dev_run: False
+  tensorboard_dir: '/mnt/bn/bigmusic-lf/user/daiyu/musicfm/tensorboard'
+  log_name: 'fm7'
+  version: 'subgenre_timbre'
+  precision: 16-mixed
+  accelerator: 'auto'
+  num_workers: 5
+  pin_memory: True
+  log_dir: logs
+  val_check_interval: 200  # validate every n steps of training
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+train_params:
+  learning_rate: 0.0001
+  max_epochs: -1
+  batch_size: 10
+  scheduler_patience: 20
+  scheduler_decay_factor: 0.5
+  devices: 'auto'
+  shuffle_buffer: 100
+  data_id: 4363
+
+val_params:
+  num_sanity_val_steps: 2
+  batch_size: 1
+  data_id: 4364
+  check_val_every_n_epoch: 1
+
+extra_params:
+  tag_types: ['genre', 'vocal_timbre']
+
+################################################################################
+##########                    TASK CONFIGURATION                  ##########
+################################################################################
+
+audio:
+  sampling_rate: 24000        # sampling rate for audio
+  sample_len: 29.1             # duration in sec for input  #{24 or 6}
+
+labels:
+  n_tag: 50
+
+
+################################################################################
+##########             DATASET/DATALOADING CONFIGURATION              ##########
+################################################################################
+
+preprocessor: !new:recipes.mir2.utils.tagging_processor.TaggingPreprocessor
+  - !ref <audio[sample_len]>
+  - !ref <audio[sampling_rate]>
+
+train_transformed: !new:recipes.mir2.parquet_dataset.subgenre_timbre.MusicFmParquetDataset
+  sample_rate: !ref <audio[sampling_rate]>
+  data_id: !ref <train_params[data_id]>
+  batch_size: !ref <train_params[batch_size]>
+  shuffle_buffer: !ref <train_params[shuffle_buffer]>
+  sample_len: !ref <audio[sample_len]>
+  tag_types: !ref <extra_params[tag_types]>
+
+val_transformed: !new:recipes.mir2.parquet_dataset.subgenre_timbre.MusicFmParquetDataset
+  sample_rate: !ref <audio[sampling_rate]>
+  data_id: !ref <val_params[data_id]>
+  batch_size: !ref <train_params[batch_size]>
+  shuffle_buffer: !ref <train_params[shuffle_buffer]>
+  sample_len: !ref <audio[sample_len]>
+  tag_types: !ref <extra_params[tag_types]>
+  validation: True
+
+
+test_urls: !apply:recipes.mir2.utils.concat_tagging_data.concatenate_dataset ["test"]
+test_dataset: !new:webdataset.WebDataset
+  urls: !ref <test_urls>
+  nodesplitter: !name:recipes.mir2.utils.helper.return_self
+
+test_transformed: !new:recipes.mir2.parquet_dataset.subgenre_timbre.MusicFmParquetDataset
+  sample_rate: !ref <audio[sampling_rate]>
+  data_id: !ref <val_params[data_id]>
+  batch_size: !ref <train_params[batch_size]>
+  shuffle_buffer: !ref <train_params[shuffle_buffer]>
+  sample_len: !ref <audio[sample_len]>
+  tag_types: !ref <extra_params[tag_types]>
+  validation: True
+
+# dataloader configuration
+train_dataloader: !new:torch.utils.data.DataLoader
+  dataset: !ref <train_transformed>
+  shuffle: False
+  batch_size: null
+  num_workers: !ref <run_opts[num_workers]>
+  pin_memory: !ref <run_opts[pin_memory]>
+  persistent_workers: False
+
+val_dataloader: !new:torch.utils.data.DataLoader
+  dataset: !ref <val_transformed>
+  shuffle: False
+  batch_size: null
+  num_workers: !ref <run_opts[num_workers]>
+  pin_memory: !ref <run_opts[pin_memory]>
+  persistent_workers: False
+
+test_dataloader: !new:torch.utils.data.DataLoader
+  dataset: !ref <test_transformed>
+  shuffle: False
+  batch_size: null
+  num_workers: !ref <run_opts[num_workers]>
+  pin_memory: !ref <run_opts[pin_memory]>
+  persistent_workers: False
+
+# datamodule configuration
+pl_datamodule: !new:recipes.beat.pl_modules.pl_datamodule.BeatDataModule
+  train_dataloader: !ref <train_dataloader>
+  val_dataloader: !ref <val_dataloader>
+  test_dataloader: !ref <test_dataloader>
+
+################################################################################
+##########                      MODEL CONFIGURATION                   ##########
+################################################################################
+
+frontend: !new:recipes.mir2.models.frontend.Frontend
+  model:
+    !new:recipes.icassp.models.musicfm_25Hz.MusicFM25Hz
+    encoder_depth: 12
+    is_flash: False
+    stat_path: "/mnt/bn/bigmusic-lf/user/daiyu/musicfm/playlist_classic_stats.json"
+    model_path: "/mnt/bn/bigmusic-lf/user/daiyu/musicfm/musicfm_25hz_playlist_330m_520k.pt"
+  layer_ix: 12
+  is_update: True
+
+backend: !new:recipes.mir2.models.tagging_probing_label.TaggingProbingStage
+  n_channel: 1024
+  one_shot_map: !apply:recipes.mir2.parquet_dataset.vocab_index.get_genre_timbre_map
+  tag_types: !ref <extra_params[tag_types]>
+
+
+model: !new:samantha.core.BaseModel
+  input_names: [audio]
+  output_names: [tag_pred]
+  stages:
+    - !ref <frontend>
+    - !ref <backend>
+
+pl_module: !new:recipes.mir2.pl_modules.tagging_pl_label.LitTagging
+  model: !ref <model>
+  lr: !ref <train_params[learning_rate]>
+  scheduler_patience: !ref <train_params[scheduler_patience]>
+  scheduler_decay_factor: !ref <train_params[scheduler_decay_factor]>
+  sample_rate: !ref <audio[sampling_rate]>
+  sample_len: !ref <audio[sample_len]>
+  one_shot_map: !apply:recipes.mir2.parquet_dataset.vocab_index.karaoke_tags
+  tag_types: !ref <extra_params[tag_types]>
+
+  # manual_to_device: False
+
+
+################################################################################
+##########                     TRAINER CONFIGURATION                  ##########
+################################################################################
+
+logger:
+  - !new:pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: !ref <run_opts[tensorboard_dir]>
+    name: !ref <run_opts[log_name]>
+    version: !ref <run_opts[version]>
+  - !new:pytorch_lightning.loggers.wandb.WandbLogger
+    save_dir: !ref <run_opts[log_dir]>
+    project: !ref <run_opts[log_name]>
+    name: !ref <run_opts[version]>
+
+
+trainer: !new:pytorch_lightning.Trainer
+  strategy: "deepspeed_stage_2"
+  fast_dev_run: !ref <run_opts[fast_dev_run]>
+  num_nodes: !apply:os.getenv ["ARNOLD_WORKER_NUM", 1]
+  logger: !ref <logger>
+  accelerator: !ref <run_opts[accelerator]>
+  profiler: simple
+  devices: !ref <train_params[devices]>
+  precision: !ref <run_opts[precision]>
+  num_sanity_val_steps: !ref <val_params[num_sanity_val_steps]>
+  max_epochs: !ref <train_params[max_epochs]>
+  check_val_every_n_epoch: !ref <val_params[check_val_every_n_epoch]>
+  # val_check_interval: !ref <run_opts[val_check_interval]>
+  callbacks:
+    - !new:pytorch_lightning.callbacks.ModelCheckpoint
+      every_n_epochs: 1
+      mode: "max"
+      monitor: "pr_auc"
+      save_last: True

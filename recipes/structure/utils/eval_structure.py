@@ -202,11 +202,12 @@ def post_process(
     label_hop,
     downbeat_align=False,
     beat_pred=None,
+    segment_classes=["silence", "chorus", "verse", "bridge", "inst", "outro", "intro"],
 ):
 
     top_index, _ = select_peaks(probs_bound[:, 0], top=n_top_bound, hop_sec=label_hop)
     segments, raw_segments, pred_labels = predict_segment(
-        top_index, probs_funct, hop_sec=label_hop
+        top_index, probs_funct, hop_sec=label_hop, segment_classes=segment_classes
     )
 
     choruses = [seg for seg in raw_segments if seg["funct_name"] == "chorus"]

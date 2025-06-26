@@ -4,6 +4,8 @@ ConformerUMM_baseline:
   umm_type: "UMM"
   sample_rate: 24000
   ckpt_path: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/checkpoints/step=070000.ckpt"
+  token_cfg: True
+  token_padding: !apply:samantha.utils.envs.getenv_int ["token_padding", 32768]
 
 
 
@@ -11,7 +13,9 @@ ConformerUMM_2250_2375:
   frame_rate: 25
   umm_type: "UMM"
   sample_rate: 24000
-  ckpt_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs/umm_conformer_2255mixedZHEN_2375Speech/umm_stage3_2255mixedZHEN_2375Speech_optim_mem_bert-base-multilingual-uncased_None32768x32/checkpoints/step=0160000.ckpt"
+  ckpt_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs/umm_conformer_2255mixedZHEN_2375Speech/umm_stage3_2255mixedZHEN_2375Speech_optim_mem_bert-base-multilingual-uncased_None32768x32/checkpoints/step=0180000.ckpt"
+  token_cfg: True
+  token_padding: !apply:samantha.utils.envs.getenv_int ["token_padding", 32768]
 
 
 ConvUMM_2255_2375:
@@ -19,4 +23,14 @@ ConvUMM_2255_2375:
   umm_type: "UMM_conv"
   sample_rate: 24000
   ckpt_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs/umm_conv_mixedZHEN/umm_stage3_conv1D_v2_2250mixedZHEN_2375Speech_direct_stage3_optim_mem_EMAVQ32768x32/checkpoints/step=0310000.ckpt"
+  token_cfg: True
+  token_padding: !apply:samantha.utils.envs.getenv_int ["token_padding", 32768]
 
+ConformerUMM2:
+  frame_rate: 25
+  umm_type: "UMM2"
+  sample_rate: 24000
+  # ckpt_path: "recipes/umm2/conf/inference_stage3_wav2tokens.yaml"
+  ckpt_path: "recipes/umm2/conf/inference_stage4_token_tag.yaml"
+  token_cfg: True
+  token_padding: !apply:samantha.utils.envs.getenv_int ["token_padding", 32768]

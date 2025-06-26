@@ -396,11 +396,6 @@ class LlamaDiffusion(nn.Module):
             hp.window_size = [-1, -1]
 
         # backbone
-        # flash attn and win mask, hard code by chenkuan
-        # this is for backward as previous code using this
-        if hp.use_window_mask:
-            hp.flashattn_version = "2.3"
-
         llama_config = LLamaArgs(
             dim=hp.encoder_dim,
             n_layers=hp.encoder_n_layers,
@@ -636,7 +631,7 @@ class LlamaDiffusion(nn.Module):
             raise NotImplementedError
         return pred
 
-    def clear_infer_params(self, t, total_frame=None, bs=1, text_cfg=1.0):
+    def clear_infer_params(self, t, total_frame=None, bs=1, text_cfg=1.0, mem_efficient=False):
         if total_frame is None:
             self.infer_params = None
             self.cached_noise = None
@@ -649,6 +644,7 @@ class LlamaDiffusion(nn.Module):
                         max_sequence_len=total_frame,
                         max_batch_size=bs * (2 if text_cfg != 1.0 else 1),
                         last=False,
+                        mem_efficient=mem_efficient,
                     )
                 )
                 self.cached_noise.append(
@@ -670,12 +666,24 @@ class LlamaDiffusion(nn.Module):
             ]
         self.cached_v = dict([(i, None) for i in range(t)])
 
+    def apply_rescale_cfg(self, pos, neg, weight=7.5, rescale=0.7):
+        # Apply regular classifier-free guidance.
+        cfg = neg + weight * (pos - neg)
+        # Calculate standard deviations.
+        std_pos = pos.std([1,2], keepdim=True)
+        std_cfg = cfg.std([1,2], keepdim=True)
+        # Apply guidance rescale with fused operations.
+        factor = std_pos / std_cfg
+        factor = rescale * factor + (1 - rescale)
+        return cfg * factor
+
     def ddim_sample(
         self,
         timesteps,
         local_cond,
         text_embed,
         text_cfg_w=1.0,
+        rescale_factor=0.7,
         inpaint_x=None,
         use_cache=False,
         cached_v_len=None,
@@ -911,6 +919,7 @@ class LlamaDiffusion(nn.Module):
         local_cond,
         text_embed,
         text_cfg_w=1.0,
+        rescale_factor=0.7,
         use_cache=False,
         cached_v_len=None,
         use_infer_params=False,
@@ -936,10 +945,7 @@ class LlamaDiffusion(nn.Module):
                 real_batch_size, -1, -1
             )
 
-        if t > 20:
-            sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device)
-        else:
-            sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device) ** 2
+        sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device)
         sigmas = repeat(sigmas, "i -> i b", b=1)
         sigmas_batch = extend_dim(sigmas, dim=3)
         alphas, betas = self.get_alpha_beta(sigmas_batch)
@@ -954,7 +960,10 @@ class LlamaDiffusion(nn.Module):
             )
             if text_cfg_w != 1:
                 v_pred, v_pred_uncond = v_pred.chunk(2)
-                v_pred = text_cfg_w * v_pred + (1 - text_cfg_w) * v_pred_uncond
+                if rescale_factor <= 0:
+                    v_pred = text_cfg_w * v_pred + (1 - text_cfg_w) * v_pred_uncond
+                else:
+                    v_pred = self.apply_rescale_cfg(v_pred, v_pred_uncond, text_cfg_w, rescale_factor)
 
             # TODO: 只是模拟cache过程
             if use_cache:
@@ -1122,11 +1131,13 @@ class LlamaDiffusion(nn.Module):
                 "inputs": inputs,
                 "local_cond": local_cond,
                 "out_mel": x,
-                "cached_noise": self.cached_noise,
+                "cached_noise": self.cached_noise if hasattr(self, "cached_noise") else None,
                 "params": {
                     "timesteps": timesteps,
                     "sampler": sampler,
                     "text_cfg_w": text_cfg_w,
+                    "token_overlap": self.token_overlap,
+                    "token_embed_overlap": self.token_embed_overlap,
                 },
             },
         )

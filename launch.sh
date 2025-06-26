@@ -20,12 +20,12 @@ fi
 pip3 install -q --upgrade pip  bytedance-easycycle==1.1.19 -i https://bytedpypi.byted.org/simple
 pip3 install emoji
 
-# setup cruise: install custom cruise version by specify env OVERRIDE_CRUISE_VERSION
-if [ -z "$OVERRIDE_CRUISE_VERSION" ]
+# setup cruise: install custom cruise version by specify env MARIANA_OVERRIDE_CRUISE_VERSION
+if [ -z "$MARIANA_OVERRIDE_CRUISE_VERSION" ]
 then
-    echo "OVERRIDE_CRUISE_VERSION not set, will not update cruise"
+    echo "MARIANA_OVERRIDE_CRUISE_VERSION not set, will not update cruise"
 else
-    bash scripts/setup_cruise.sh $OVERRIDE_CRUISE_VERSION
+    bash scripts/setup_cruise.sh
     # cruise will be installed into /opt/tiger/cruise, set PYTHONPATH to make it valid.
     export PYTHONPATH=/opt/tiger/cruise:$PYTHONPATH
 fi

@@ -10,7 +10,7 @@ from pytorch_lightning.profilers import PassThroughProfiler
 from torch.nn.utils.rnn import pad_sequence
 from tqdm import tqdm
 from transformers import BertTokenizer
-
+import inspect
 from recipes.umm.models.utils import clip_grad_value_, mel_spectrogram_torch
 from recipes.umm.modules.criterion_vocoder import (
     MultiResolutionSTFTLoss,
@@ -712,6 +712,12 @@ class Stage0(pl.LightningModule):
             self.device_FLOPS = 989e12
         elif "V100" in device_name:
             self.device_FLOPS = 125e12
+        elif "H20" in device_name:
+            self.device_FLOPS = 148e12
+        elif 'L40' in device_name:
+            self.device_FLOPS = 181.05e12
+        elif 'L20' in device_name:
+            self.device_FLOPS = 119.5e12
         else:
             raise RuntimeError("unknow cuda device name: ", device_name)
 
@@ -826,25 +832,23 @@ class Stage0(pl.LightningModule):
         Plot the chroma and mel spectrogram reconstructions as part of the validation step.
         @hanoihantrakul 2APR2024
         """
-        loss_dict = self._shared_step(batch)
-
         if batch_idx == 0:           
             input_dict = self.prepare_feature(batch)
             output_dict = self.model(input_dict)
 
             # Get the instance of the wandb_logger
             wandb_logger = logging_utils.get_wandb_logger(self.logger)
-            num_samples_to_plot = self.model.config.get('num_spectrogram_val_samples_for_plotting', 8)
+            num_samples_to_plot = self.model.config.get('num_spectrogram_val_samples_for_plotting', 0)
 
             # Log Mel Spectrograms
-            if "mel" in input_dict.keys():
+            if "mel" in input_dict.keys() and num_samples_to_plot > 0:
                 gt_mel_wandb_img_list = logging_utils.get_list_of_mel_spec_plots_to_log(input_dict['mel'], num_samples_to_plot)
                 recon_mel_wandb_img_list = logging_utils.get_list_of_mel_spec_plots_to_log(output_dict['mel_out'], num_samples_to_plot)
                 wandb_logger.experiment.log({"Mel GT": gt_mel_wandb_img_list})
                 wandb_logger.experiment.log({"Mel Recon": recon_mel_wandb_img_list})
 
             # Log Chroma 
-            if "chroma" in input_dict.keys():
+            if "chroma" in input_dict.keys() and num_samples_to_plot > 0:
                 gt_chroma_wandb_img_list = logging_utils.get_list_of_chroma_spec_plots_to_log(input_dict['chroma'], num_samples_to_plot)
                 recon_chroma_wandb_img_list = logging_utils.get_list_of_chroma_spec_plots_to_log(output_dict['chroma_out'], num_samples_to_plot)
                 wandb_logger.experiment.log({"Chroma GT": gt_chroma_wandb_img_list})
@@ -1872,7 +1876,9 @@ class Stage3(Stage2):
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
-    def wav2token(self, wav):
+    def wav2token(self, wav, wav_length=None):
+        if inspect.signature(self.model.wav2token).parameters.get('wav_length'):
+            return self.model.wav2token(wav, wav_length)
         return self.model.wav2token(wav)
 
 
@@ -2958,11 +2964,11 @@ class UMMBase(pl.LightningModule):
             "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
         }
 
-    def get_code_rate(self, target_tokens):
+    def get_code_rate(self, target_tokens): # [B, T]
         code_rate = (
             sum(
                 [
-                    len(target_tokens[i, :].unique())
+                    len(target_tokens[i, :].unique())   # [num_code * B] / [B, T]
                     for i in range(target_tokens.size(0))
                 ]
             )

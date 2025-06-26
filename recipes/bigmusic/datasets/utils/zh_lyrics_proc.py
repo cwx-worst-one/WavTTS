@@ -8,26 +8,29 @@ processing is commented as "EN Patch: ...".
 
 
 import bisect
-from dataclasses import dataclass
-from enum import Enum, auto
-from functools import reduce
-from itertools import accumulate 
+import copy
 import logging
 import math
 import operator
 import random
 import string
-from typing import List, Optional, Tuple
 import unicodedata
+from dataclasses import dataclass
+from enum import Enum, auto
+from functools import reduce
+from itertools import accumulate
+from typing import List, Optional, Tuple
 
 import numpy as np
 
-from recipes.datasets.mcc.sami_tokenizer import (
-    Phrase,
-    is_chinese_char,
-    add_section_tag,
-    section_parens as SECTION_PARENS,
+from recipes.bigmusic.datasets.utils.zh_meta import (
+    _add_count_to_section_tag,
+    move_out_section_tags,
+    move_out_singer_tags,
+    remove_section_tag_counts,
 )
+from recipes.datasets.mcc.sami_tokenizer import Phrase, is_chinese_char
+from recipes.datasets.mcc.sami_tokenizer import section_parens as SECTION_PARENS
 
 logger = logging.getLogger(__file__)
 
@@ -106,7 +109,7 @@ class Lyric:
         return text + punc
 
     @property
-    def n_syllables(self):
+    def n_syllables(self) -> int:
         if self.syllables:
             return len(self.syllables)
         if not self.has_utterance:
@@ -124,38 +127,37 @@ class Lyric:
     @property
     def has_utterance(self) -> bool:
         return self.text is not None
+    
+    def punc_to_space(self) -> "Lyric":
+        _self = copy.deepcopy(self)
+        if _self.punc:
+            _self.punc = " "
+        return _self
 
 
 class Line(list):
-    def __init__(self, lyrics: List[Lyric]):
+    def __init__(self, lyrics: List[Lyric], singer_tag: Optional[str] = None):
         super().__init__(lyrics)
+        self.singer_tag = singer_tag
 
     def __getitem__(self, index_or_slice):
         lst = list.__getitem__(self, index_or_slice)
         if isinstance(index_or_slice, int):
             return lst
-        return self.__class__(lst)
+        return self.__class__(lst, singer_tag=self.singer_tag)
 
     def __add__(self, other):
-        return self.__class__(list.__add__(self, other))
+        return self.__class__(list.__add__(self, other), singer_tag=_pick_singer_tag_from_lines([self, other]))
 
     def __mul__(self, other):
-        return self.__class__(list.__mul__(self, other))
+        return self.__class__(list.__mul__(self, other), singer_tag=_pick_singer_tag_from_lines([self, other]))
 
-    def __str__(self) -> str:
-        words = []
-        for lyric, next_lyric in zip(self, self[1:] + [None]):
-            words.append(str(lyric))
-            if next_lyric is None:
-                continue
-            # append a space if they are in different langauges or both are English
-            if lyric.lang != next_lyric.lang or lyric.lang == Lang.EN or next_lyric.lang is None:
-                words.append(" ")
-        return "".join(words).strip()
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({list(self).__repr__()}, singer_tag={self.singer_tag.__repr__()})"
 
     @property
-    def n_syllables(self):
-        return sum(lyric.n_syllables for lyric in self)
+    def n_syllables(self) -> int:
+        return sum(lyric.n_syllables for lyric in self) if len(self) else 0
 
     @property
     def has_utterance(self) -> bool:
@@ -218,10 +220,12 @@ class Line(list):
             return lyric_list
 
         text = _normalize_text(text)
+        _phrase = Phrase.parse(text=text)  # extract singer tag
+        text, singer_tag = _phrase.text, _phrase.singer_tag
         text = replace_space_in_zh_with_comma(text)
         subwords = list(filter(lambda w: len(w) > 0, text.split(" ")))
         lyric_list = reduce(operator.add, [parse_subword(subword) for subword in subwords])
-        return cls(lyric_list)
+        return cls(lyric_list, singer_tag=singer_tag)
 
     def split(self):  # -> Tuple[Line, Line]
         """Split the line into two"""
@@ -238,7 +242,23 @@ class Line(list):
         return self[:mid], self[mid:]
 
     def without_punc(self):  # -> self
-        return self.__class__([lyric for lyric in self if lyric.text])
+        return self.__class__([lyric for lyric in self if lyric.text], singer_tag=self.singer_tag)
+
+    def to_phrase(self, section_tag: Optional[str] = None) -> Phrase:
+        words = []
+        for lyric, next_lyric in zip(self, self[1:] + self.__class__([None])):
+            if next_lyric is None:
+                if lyric.has_utterance:
+                    words.append(str(lyric))  # No need to keep the trailing space of last punc
+                continue
+            word = str(lyric.punc_to_space())
+            # append a space if they are in different langauges or both are English
+            if lyric.lang != next_lyric.lang or lyric.lang == Lang.EN or next_lyric.lang is None:
+                word = word + " "
+            words.append(word)
+        # reduce multiple adjacent spaces down to one
+        text = " ".join([word for word in "".join(words).split(" ") if word])
+        return Phrase(text=text, singer_tag=self.singer_tag, section_tag=section_tag)  # init directly, no need to parse again
 
 
 class SectionLyrics(list):
@@ -265,16 +285,17 @@ class SectionLyrics(list):
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({list(self).__repr__()}, section_tag={self.section_tag.__repr__()})"
 
-    def __str__(self) -> str:
-        return "\n".join([add_section_tag(self.section_tag, "")] + [str(line) for line in self]).strip()
-
     @property
-    def n_syllables(self):
-        return sum(line.n_syllables for line in self)
+    def n_syllables(self) -> int:
+        return sum(line.n_syllables for line in self) if len(self) else 0
 
     @property
     def has_utterance(self) -> bool:
         return len(self) > 0 and any(line.has_utterance for line in self)
+
+    @property
+    def has_singer_tag(self) -> bool:
+        return any(line.singer_tag is not None for line in self)
 
     @property
     def lang(self) -> Optional[Lang]:
@@ -291,13 +312,18 @@ class SectionLyrics(list):
     def process(self, genre: str):  # -> Paragraph
         config = get_genre_config(genre)
         paragraph = self.__class__(_process_section_lyrics(self, config.slb_range), section_tag=self.section_tag)
-        # ASR lyrics does not have many punctuations, remove them for now
-        return paragraph.without_punc()
+        return paragraph
 
     def without_punc(self):  # -> SectionLyrics
         lines = [line.without_punc() for line in self]
         lines = [l for l in lines if len(l) > 0]  # remove empty lines
         return self.__class__(lines, section_tag=self.section_tag)
+
+    def to_phrases(self, count: Optional[int] = None) -> List[Phrase]:
+        section_tag = self.section_tag if count is None or self.section_tag is None else _add_count_to_section_tag(self.section_tag, count)
+        if len(self) == 0:
+            return [Phrase(section_tag=section_tag)]
+        return [line.to_phrase(section_tag=section_tag) for line in self]
 
 
 class SongLyrics(list):
@@ -316,16 +342,17 @@ class SongLyrics(list):
     def __mul__(self, other):
         return self.__class__(list.__mul__(self, other))
 
-    def __str__(self) -> str:
-        return "\n".join(str(paragraph) for paragraph in self).strip()
-
     @property
     def n_lines(self) -> int:
         return sum(len(paragraph) for paragraph in self) if len(self) > 0 else 0
 
     @property
     def has_utterance(self) -> bool:
-        return len(self) > 0 and all(p.has_utterance for p in self)
+        return len(self) > 0 and any(p.has_utterance for p in self)
+
+    @property
+    def has_singer_tag(self) -> bool:
+        return any(paragraph.has_singer_tag for paragraph in self)
 
     @property
     def lang(self) -> Optional[Lang]:
@@ -334,11 +361,17 @@ class SongLyrics(list):
         if any(paragraph.lang == Lang.ZH for paragraph in self):
             return Lang.ZH
         return Lang.EN
+    
+    @property
+    def n_syllables(self) -> int:
+        return sum(paragraph.n_syllables for paragraph in self) if len(self) else 0
 
     @classmethod
     def parse(cls, lyrics: str):  # -> Song
-        raw_lines = _split_raw_text(lyrics)
+        raw_lines = _split_raw_text(_replace_colons(lyrics))
         phrases = [Phrase.parse(text=raw_line, normalize_tag=True, normalize_chinese=False) for raw_line in raw_lines]
+        phrases = [phrase for phrase in phrases if not phrase.is_empty]  # remove empty
+        phrases = _reformat_singer_tags(phrases)
         phrases = _move_out_section_tags(phrases)
         section_tag_ind = sorted(list(set([0] + [
             idx for idx, phrase in enumerate(phrases) if phrase.section_tag is not None
@@ -351,8 +384,11 @@ class SongLyrics(list):
             ) for group in groups
         ])
 
-    def process(self, genre: str):  # -> Song
+    def process(self, genre: str, is_full_song: bool = False):  # -> Song
+        _fill_singer_tags_inplace(self, default_singer_tag=None)
         ps = [paragraph.process(genre) for paragraph in self]
+        if is_full_song:  # always add an intro for full song
+            ps = _add_intro(ps)
         ps = _match_vocal_non_vocal_section_tags(ps)
         ps = _correct_non_vocal_section_tags(ps)
         ps = _assign_vocal_section_tags(ps)
@@ -364,8 +400,9 @@ class SongLyrics(list):
         line_range = get_genre_config(genre).line_range
         ps = _process_song_lyrics_lines(self.__class__(ps), line_range)
         ps = _add_outro(ps)  # always add an outro
-        # Using outro might introduce halluciations, replace it with inst instead
-        ps = _reassign_last_non_vocal_to_inst(ps)
+        # short song: Using outro might introduce halluciations, replace it with inst instead
+        # full song: Extend the lyrics by adding more inst sections
+        ps = _insert_insts(ps) if is_full_song else _reassign_last_non_vocal_to_inst(ps)
         return self.__class__(ps)
 
     def trim_lines_to(self, n_lines: int):  # -> Song
@@ -376,7 +413,15 @@ class SongLyrics(list):
         p_idx = bisect.bisect_left(acc_lines, n_lines)
         n_lines_to_remove = acc_lines[p_idx] - n_lines
         return self[:p_idx] + self.__class__([self[p_idx][:-n_lines_to_remove]])
-
+    
+    def to_str(self) -> str:
+        if len(self) == 0:
+            return ""
+        phrases = reduce(operator.add, [paragraph.to_phrases(count=idx) for idx, paragraph in enumerate(self)])
+        phrases = move_out_section_tags(phrases)
+        phrases = move_out_singer_tags(phrases)
+        phrases = remove_section_tag_counts(phrases)
+        return "\n".join([phrase.format_text() for phrase in phrases])
 
 # ====================================================================
 
@@ -422,14 +467,21 @@ def _comb_to_min(paragraph: List[Line], slb_range: Tuple[int, int]) -> List[Line
             if line.n_syllables + min([l.n_syllables for l in [line_prev, line_next] if l is not None]) > max_n_slbs_per_line:
                 continue  # unable to process
 
+            # Check singer tags to know the mergeability
+            line_prev_avail = line_prev is not None and (None in [line.singer_tag, line_prev.singer_tag] or line.singer_tag == line_prev.singer_tag)
+            line_next_avail = line_next is not None and (None in [line.singer_tag, line_next.singer_tag] or line.singer_tag == line_next.singer_tag)
+
+            if not line_prev_avail and not line_next_avail:
+                continue  # merging is not available
+
             # Obtain the indices of two lines that we want to merge
-            if line_prev is not None and line_next is not None:
+            if line_prev_avail and line_next_avail:
                 # Concatenate with the shortest
                 if line_prev.n_syllables < line_next.n_syllables:
                     idx_a, idx_b = idx-1, idx
                 else:
                     idx_a, idx_b = idx, idx+1
-            elif line_prev is not None:
+            elif line_prev_avail:
                 idx_a, idx_b = idx-1, idx
             else:  # line_next is not None
                 idx_a, idx_b = idx, idx+1
@@ -478,7 +530,20 @@ def _split_text_by_parens(text: str) -> List[str]:
 
 def _split_raw_text(text: str) -> List[str]:
     lines = _split_text_by_parens(text)
+    if not lines:
+        return []
     return reduce(operator.add, [line.split("\n") for line in lines])
+
+
+def _fill_singer_tags_inplace(paragraphs: List[SectionLyrics], default_singer_tag: Optional[str] = None):
+    """If there is any singer tag found in the section, make sure all the lines after the first singer tag have their singer tags."""
+    prev_singer_tag = default_singer_tag
+    for paragraph in paragraphs:
+        for line in paragraph:
+            if prev_singer_tag is not None and line.singer_tag is None:
+                line.singer_tag = prev_singer_tag
+            if line.singer_tag is not None:
+                prev_singer_tag = line.singer_tag
 
 
 def _match_vocal_non_vocal_section_tags(paragraphs: List[SectionLyrics]) -> List[SectionLyrics]:
@@ -646,6 +711,10 @@ def _process_song_lyrics_lines(
         return song[:]
 
     min_n_lines, max_n_lines = line_range
+    #if song[0].section_tag != "intro":
+    #    song = SongLyrics([SectionLyrics([], section_tag="intro")]) + song
+    #if song[0].section_tag not in ["intro", "inst"]:
+    #    song = SongLyrics([SectionLyrics([], section_tag="inst")]) + song
     # Meet the requirement already
     if min_n_lines <= song.n_lines <= max_n_lines:
         return song
@@ -671,6 +740,13 @@ def _process_song_lyrics_lines(
     return add_non_vocal_sections(prev_iter_song)
 
 
+def _add_intro(song: SongLyrics) -> SongLyrics:
+    """Add an intro section if the first section is not intro"""
+    if not song or song[0].section_tag == "intro":
+        return song[:]
+    return SongLyrics([SectionLyrics([], section_tag="intro")]) + song[:]
+
+
 def _add_outro(song: SongLyrics) -> SongLyrics:
     """Add an outro section if the last section is not outro"""
     if not song or song[-1].section_tag == "outro":
@@ -684,7 +760,62 @@ def _reassign_last_non_vocal_to_inst(song: SongLyrics) -> SongLyrics:
     return song[:-1] + SongLyrics([SectionLyrics([], section_tag="inst")])
 
 
+def _insert_insts(song: SongLyrics) -> SongLyrics:
+    n_syllables = song.n_syllables
+    # do not add inst between verse and chorus
+    if n_syllables >= 0:
+        return song
+    song_with_more_insts = SongLyrics([])
+    for prev_paragrpah, curr_paragraph in zip([None] + song, song):
+        if prev_paragrpah is not None and prev_paragrpah.has_utterance and curr_paragraph.has_utterance:
+            song_with_more_insts.append(SectionLyrics([], section_tag="inst"))
+        song_with_more_insts.append(curr_paragraph)
+    return song_with_more_insts
+
+
 # ====================================================================
+
+
+def _replace_colons(text: str) -> str:
+    return text.replace("：", ":")
+
+
+def _reformat_singer_tags(phrases: List[Phrase]) -> List[Phrase]:
+    """
+    If any singer tag presents in the phrases, ensure that every utterance phrase
+    that comes after it has a singer tag, and infer a singer tag for every phrase
+    that comes before it. Remove singer tags for any phrase that does not have utterance.
+    This function is similar to infer_missing_singer_tags in zh_meta.py but different.
+    """
+    if not any(phrase.singer_tag for phrase in phrases):
+        return phrases[:]
+    phrases = phrases[:]  # shallow copy
+    utt_phrase_ind = [idx for idx, phrase in enumerate(phrases) if phrase.has_utterance]
+    # it can be in a phrase that only has section_tag and singer_tag
+    first_singer_tag_idx, first_singer_tag = next((idx, phrase.singer_tag) for idx, phrase in enumerate(phrases) if phrase.singer_tag)
+    inferred_singer_tag = {"男": "女", "女": "男"}.get(first_singer_tag)  # it's almost always this pattern
+    # Utterance phrases before the first singer tag
+    utt_singer_ind_before = [idx for idx in utt_phrase_ind if idx < first_singer_tag_idx]
+    utt_singer_tags_before = [inferred_singer_tag] * len(utt_singer_ind_before)  # replace the tags before with the first singer_tag
+    # Utterance phrases after the first singer tag
+    utt_singer_ind_after = [idx for idx in utt_phrase_ind if idx > first_singer_tag_idx]
+    utt_singer_tags_after = []  # obtained by filling the the empty (None) tag with the previous tag
+    _prev_singer_tag = first_singer_tag
+    for idx in range(first_singer_tag_idx + 1, len(phrases)):
+        _tag = phrases[idx].singer_tag
+        if idx in utt_singer_ind_after:  # phrases[idx] has utterance
+            if _tag is None:
+                utt_singer_tags_after.append(_prev_singer_tag)  # No singer_tag: follow the previous one
+            else:
+                utt_singer_tags_after.append(_tag)  # Has singer_tag: preserve it
+        if _tag is not None:  # update previous singer tag no matter the phrase has utterance or not
+            _prev_singer_tag = _tag
+    # Re-assign singer tags for the utterance phrases
+    for idx, tag in zip(utt_singer_ind_before + utt_singer_ind_after, utt_singer_tags_before + utt_singer_tags_after):
+        phrases[idx] = phrases[idx]._replace(singer_tag=tag)
+    # Remove singer tags for any phrase that does not have utterance
+    phrases = [(phrase._replace(singer_tag=None) if not phrase.has_utterance else phrase) for phrase in phrases]
+    return [phrase for phrase in phrases if not phrase.is_empty]  # remove empty
 
 
 def _move_out_section_tags(phrases: List[Phrase]) -> List[Phrase]:
@@ -715,3 +846,10 @@ def _normalize_text(text: str) -> str:
 def _has_only_latin_letters(name: str) -> bool:
     char_set = string.ascii_letters
     return all(True if x in char_set else False for x in name)
+
+
+def _pick_singer_tag_from_lines(lines: List[Line]) -> Optional[str]:
+    singer_tags = [line.singer_tag for line in lines if line.singer_tag is not None]
+    if not singer_tags:
+        return None
+    return singer_tags[0]

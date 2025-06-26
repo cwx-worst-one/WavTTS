@@ -1,73 +1,27 @@
 from functools import reduce
 import logging
 import operator
-from typing import Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional
 import random
 
 from recipes.bigmusic.datasets.utils.zh_vocab import (
     VOCAB2ID_SA,
-    VOCAB2ID_AUDIO_V0,
-    VOCAB2ID_MIX_V0,
-    VOCAB2ID_AUDIO_V1,
-    VOCAB2ID_MIX_V1,
-    VOCAB2ID_AUDIO_V2,
-    VOCAB2ID_MIX_V2,
+    VOCAB2ID_AUDIO_V3,
+    VOCAB2ID_MIX_V3,
+    VOCAB2ID_AUDIO_V4,
+    VOCAB2ID_MIX_V4,
+    VOCAB2ID_INST_V1,
+)
+
+from recipes.bigmusic.datasets.combo_audio_tags import (
+    COMBO_GENRE_TO_MULTITAG_V4,
+    COMBO_GENRE_TO_INSTRUMENTS_V4,
+    COMBO_GENRE_TO_CANT_MULTITAG_V5,
+    SUB_GENRE_MAPPING
 )
 
 logger = logging.getLogger(__file__)
 
-
-ARTIST_ID_MAP = {
-    # En dropout
-    "en_empty": 0,
-    # Deepmind
-    "5IH6FPUwQTxPSXurCrcIov": 1,    # Alec Benjamin
-    "6VuMaDnrHyPL1p4EHjYLi7": 2,    # Charlie Puth
-    "25uiPmTg16RbhZWAqwLBy5": 3,    # Charli XCX
-    "6S2OmqARrzebs0tKUEyXyp": 4,    # Demi Lovato
-    "5y2Xq6xcjJb2jVM54GHK3t": 5,    # John Legend
-    "5WUlDfRSoLAfcVSX1WnrxN": 6,    # Sia
-    "3aQeKQSyrW4qWr35idm0cy": 7,    # T-Pain
-    "3WGpXCj9YhhfX11TToZcXP": 8,    # Troye Sivan
-    "0mbgkaYR8KNUb5s3s1yYHG": 9,    # Papoose
-    # En Artist 17
-    "74ASZWbe4lXaubB36ztrGX": 11,   # Bob Dylan
-    "5e4Dhzv426EvQe3aDb64jL": 12,   # Shania Twain
-    "3fMbdgg4jU18AjLCKBhRSm": 13,   # Michael Jackson
-    "43ZHCT0cAZBISjO8DG9PnE": 14,   # Elvis Presley
-    "3WrFJ7ztbogyGnTHbHJFl2": 15,   # The Beatles
-    "1dfeR4HaWDbWqFHLkxsg1d": 16,   # Queen
-    "3TVXtAsR1Inumwj472S9r4": 17,   # Drake
-    "4kYSro6naA4h99UJvo89HB": 18,   # Cardi B
-    "5V0MlUE1Bft0mbLlND7FJz": 19,   # Ella Fitzgerald
-    "2QsynagSdAqZj3U9HgDzjD": 20,   # Bob Marley
-    "6vWDO969PvNqNYHIOW5v0m": 21,   # Beyonce
-    "5pKCCKE2ajJHZ9KAiaK11H": 22,   # Rihanna
-    "7guDJrEfX3qb6FEbdPA5qi": 23,   # Stevie Wonder
-    "1uNFoZAHBGtllmzznpCI3s": 24,   # Justin Bieber
-    "0du5cEVh5yTK9QJze8zA0C": 25,   # Bruno Mars
-    "7dGJo4pcD2V6oG8kP0tJRR": 26,   # Eminem
-    "4S9EykWXhStSc15wEx8QFK": 27,   # Celine Dion
-    # Zh droput
-    "zh_empty": 50,
-    # Zh Artist 16
-    "2elBjNSdBE2Y3f0j1mjrql": 51,
-    "40tNK2YedBV2jRFAHxpifB": 52,
-    "16s0YTFcyjP4kgFwt7ktrY": 53,
-    "1piwhsT7JM9pBzmLcLCg8v": 54,
-    "10LslMPb7P5j9L2QXGZBmM": 55,
-    "3qObkSIVSfNNDL1vbwL2N2": 56,
-    "7Dx7RhX0mFuXhCOUgB01uM": 57,
-    "2n3uDrupL8UtFSeZhY38MS": 58,
-    "1Hu58yHg2CXNfDhlPd7Tdd": 59,
-    "3WYT2b8pOLsLsqSaoWYr7U": 60,
-    "0SIXZXJCAhNU8sxK0qm7hn": 61,
-    "3ienC90A5I1X3irDyQoqWZ": 62,
-    "6jlz5QSUqbKE4vnzo2qfP1": 63,
-    "3AroL2oDPiAnMpTmIQv3KP": 64,
-    "1r9DuPTHiQ7hnRRZ99B8nL": 65,
-    "6qzfo7jiO4OrhxrvPFPlWX": 66,
-}
 
 ARTIST_ID_MAP_V2 = {
     # Zh droput
@@ -110,8 +64,17 @@ ARTIST_ID_MAP_V2 = {
     "6776144869279664130": 35, # 陈粒	142	 
     "6817645899284482049": 36, # 毛不易	129	 
     "6795061528409147393": 37, # 汪苏泷	239 
+    # Inst dropout
+    "inst_empty": 38,
+    # Cant dropout
+    "cant_empty": 39,
     # Voice tags
-    "Child": 47,
+    "Neutral": 43,
+    "Multiple": 44,
+    "Chorus_AUDIO_GENDER": 45,
+    "Chorus": 45,
+    "Child": 46,
+    "Male_Female": 47,
     "Male": 48,
     "Female": 49,
     # En dropout
@@ -347,7 +310,7 @@ CHINESE_CAT_VOCAB = [
     GENDER_VOCAB, LANG_VOCAB
 ]
 
-# ========================================================================
+# =======================================================================
  
 NONE_LABEL = 'None'
 
@@ -474,20 +437,25 @@ SA_GENRE20 = [
     "Rock",
 ]
 
+UNKNOWN_GENRE_MAP_SA_GENRE20 = {
+    'Surf Rock': 'Rock',
+}
+
 MACRO_STYLE_MAP_MOOD2_SA_MOOD19 = {
     'Calm/Relaxing': 'Calm',
-    'Nostalgic/Memory': 'Miss,Memory',
-    #'Nostalgic/Memory': 'Miss/Memory',
+    # 'Nostalgic/Memory': 'Miss,Memory',
+    'Nostalgic/Memory': 'Miss/Memory',
     'Sorrow/Sad': 'Sorrow',
     'Inspirational/Hopeful': 'Inspirational',
     'Dynamic/Energetic': 'Dynamic',
-    'Miss': 'Miss,Memory',
-    #'Miss': 'Miss/Memory',
+    # 'Miss': 'Miss,Memory',
+    'Miss': 'Miss/Memory',
     'Sentimental/Melancholic/Lonely': 'Lonely',
     'Dreamy/Ethereal': 'Mysterious',
     'Groovy/Funky': 'Dynamic',
     'Angry/Aggressive': 'Angry',
-    'Cute/Playful': 'Cute',
+    'Cute/Playful': 'Cute_SA_MOOD',
+    'Shocking/magnificent/epic': '',
 }
 
 SA_MOOD19 = [
@@ -548,6 +516,52 @@ SA_THEME33 = [
     "Yoga",
 ]
 
+SA_LANG43 = [
+    'Chinese',
+    'Cantonese',
+    'Taiwanese',
+    'English',
+    'Hindi',
+    'Punjabi',
+    'Indonesian',
+    'Portuguese',
+    'Telugu',
+    'Tamil',
+    'Malayalam',
+    'Kannada',
+    'Spanish',
+    'Japanese',
+    'Korean',
+    'German',
+    'French',
+    'Italian',
+    'Russian',
+    'Arabic',
+    'Non-vocal',
+    'Malay',
+    'Thai',
+    'Gujarati',
+    'Bengali',
+    'Bhojpuri',
+    'Marathi',
+    'Turkish',
+    'Dutch',
+    'Finnish',
+    'Greek',
+    'Norwegian',
+    'Swedish',
+    'Polish',
+    'Czech',
+    'Javanese',
+    'Rajasthani',
+    'Sanskrit',
+    'Sundanese',
+    'Minangkabau',
+    'Ambonese Malay',
+    'Vietnamese',
+    'Chinese Dialects',
+]
+
 SA_LANG = [
     "Cantonese",
     "Chinese",
@@ -560,781 +574,447 @@ SA_SINKING = [
     "non-Sinking",
 ]
 
-AUDIO_GENRE_V0 = [
-    "Pop",
-    "Electronic",
-    "Chinese Style",
-    "Rock",
-    "Jazz",
-    "Hip Hop/Rap",
-    "Classical",
-    "R&B/Soul",
-    "Metal",
-    "Tuhai",
-    "Childhood",
-    "Devotional",
-    "Chinese Tradition",
-    "Easy Listening",
-    "New Age",
+AUDIO_GENRE_V3 = [
     "8 Bit",
-    "Folk",
-    "Latin",
-    "Alternative/Indie",
-    "Epic",
-    "BGM",
-    "Chinese Pop",
-    "Cantopop",
-    "Taiwanese Pop",
-    "Pop Folk",
-    "Contemporary Pop",
-    "Teen Pop",
-    "Indie Pop",
-    "Dream Pop",
-    "City Pop",
-    "Synth Pop",
-    "Celtic Pop",
-    "Dance Pop",
-    "Deep Dance Pop",
-    "Electropop",
-    "Chamber Pop",
+    "Acapella",
     "A cappella",
-    "Country Pop",
-    "EDM",
-    "House",
-    "Dubstep",
-    "Future Bass",
-    "Chillout",
-    "Trance",
-    "Techno",
-    "Drum&Bass",
-    "Tropical House",
-    "Disco",
-    "Vaporwave",
-    "Trip Hop",
-    "Ambient",
-    "Deep Pop Edm",
-    "EDM Trap",
-    "Future House",
-    "China-Wave",
-    "GuFeng Music",
-    "Chinoiserie Rap",
-    "Chinoiserie Electronic",
-    "Hard Rock",
-    "Psychedelic Rock",
-    "Pop Rock",
-    "Instrumental Rock",
-    "Alternative Rock",
-    "Indie Rock",
-    "Post-Rock",
-    "Lo-Fi",
-    "J Rock",
-    "Shoegazing",
-    "Math Rock",
-    "Surf Rock",
-    "Progressive Rock",
-    "Soft Rock",
-    "Jazz Pop",
-    "Jazz Fusion",
-    "Bossa Nova",
-    "Avant-Garde Jazz",
-    "Swing",
-    "Big Band",
-    "Bop",
-    "Post-Bop",
-    "Smooth Jazz",
-    "Cool Jazz",
-    "Vocal Jazz",
-    "Nu Jazz",
-    "Free Jazz",
-    "Trap Rap",
-    "Old School",
-    "R&B Rap",
-    "Jazz Hip Hop",
+    "Acid Jazz",
+    "African Folk",
+    "African Pop",
     "Alternative Hip Hop",
-    "Instrumental Hip Hop",
-    "Pop Rap",
-    "Hardcore Rap",
-    "Comedy Hip Hop",
-    "Hip House",
-    "Chill Beats",
-    "Chorus_AUDIO_GENRE",  # dedup
-    "Chamber Music",
-    "Symphony",
-    "Funk",
-    "Contemporary R&B",
-    "Neo Soul",
-    "Soul",
-    "Pop Soul",
-    "Black Metal",
-    "Death Metal",
-    "Glam Metal",
-    "Grindcore",
-    "Power Metal",
-    "Progressive Metal",
-    "Speed Metal",
-    "DJ",
-    "VinaHouse",
-    "MC",
-    "Gospel",
-    "Holiday Music",
-    "Christian Music",
-    "Buddhist music",
-    "Chinese Opera",
-    "Traditional Chinese Folk",
-    "Chinese Quyi",
-    "Red Song",
-    "Folk Pop",
-    "Indie Folk",
-    "Tango",
-    "Reggaeton",
-]
-
-AUDIO_MOOD_V0 = [
-    "Happy",
-    "Cute/Playful",
-    "Excited",
-    "Funny",
-    "Inspirational/Hopeful",
-    "Sorrow/Sad",
-    "Sentimental/Melancholic/Lonely",
-    "Weird",
-    "Thrilling/Suspenseful/Tense",
-    "Angry/Aggressive",
-    "Groovy/Funky",
-    "Dynamic/Energetic",
-    "Romantic",
-    "Nostalgic/Memory",
-    "Dreamy/Ethereal",
-    "Healing",
-    "Miss",
-    "Chill",
-    "Calm/Relaxing",
-    "Shocking/magnificent/epic",
-    "Mysterious",
-    "No Mood",
-]
-
-AUDIO_SCENE_V0 = [
-    "Halloween",
-    "Christmas",
-    "New Year",
-    "Spring Festival",
-    "Valentine's day",
-    "Qi Xi",
-    "Birthday",
-    "Wedding",
-    "Funeral",
-    "Graduation",
-    "National's Day",
-    "Vlog/DailyLife",
-    "Food",
-    "Pet/Animals",
-    "Beauty/Fashion",
-    "Entertainment",
-    "babies",
-    "children",
-    "Transition",
-    "Anime",
-    "Wake up",
-    "Family time",
-    "landscape/scenery",
-    "Prank",
-    "Timelapse",
-    "Rainy Day",
-    "Sunny Day",
-    "Spring",
-    "Summer",
-    "Autumn",
-    "Winter",
-    "Evening",
-    "Morning",
-    "Beach",
-    "Nightclub",
-    "Coffee Shop",
-    "Restaurants",
-    "Lounge",
-    "Campus",
-    "Park",
-    "Marketplace",
-    "Universe",
-    "Bar",
-    "Theater/Concert hall",
-    "Sport",
-    "Dance",
-    "Game",
-    "Travel",
-    "Focus",
-    "Party",
-    "Commute",
-    "Roadtrip",
-    "Meditation",
-    "Relaxation",
-    "Cleaning and Chores",
-    "Running",
-    "Date",
-    "Danceable",
-    "Flirt",
-    "Other",
-]
-
-AUDIO_GENDER_V0 = [
-    "Female",
-    "Male",
-    "Neutral",
-    "Child",
-    "Adult",
-    "Chorus_AUDIO_GENDER",  # dedup
-]
-
-AUDIO_TIMBRE_V0 = [
-    "Warm",
-    "Ethereal",
-    "Husky",
-    "Deep",
-    "Loud and sonorous",
-    "Extreme",
-    "Sharp",
-    "Bright",
-    "Sweet_AUDIO_TIMBRE",  # dedup
-    "Powerful",
-    "Sexy/Lazy",
-    "Magnetic",
-    "Cute_AUDIO_TIMBRE",  # dedup
-    "Electrified voice",
-]
-
-AUDIO_GENRE_V1 = [
-    "Pop",
-    "Electronic",
-    "Chinese Style",
-    "Rock",
-    "Jazz",
-    "Hip Hop/Rap",
-    "Classical",
-    "R&B/Soul",
-    "Metal",
-    "Tuhai",
-    "Childhood",
-    "Devotional",
-    "Chinese Tradition",
-    "Easy Listening",
-    "New Age",
-    "8 Bit",
-    "Folk",
-    "Latin",
     "Alternative/Indie",
-    "Epic",
-    "BGM",
-    "Chinese Pop",
-    "Cantopop",
-    "Taiwanese Pop",
-    "Pop Folk",
-    "Contemporary Pop",
-    "Teen Pop",
-    "Indie Pop",
-    "Dream Pop",
-    "City Pop",
-    "Synth Pop",
-    "Celtic Pop",
-    "Dance Pop",
-    "Deep Dance Pop",
-    "Electropop",
-    "Chamber Pop",
-    "A cappella",
-    "Country Pop",
-    "EDM",
-    "House",
-    "Dubstep",
-    "Future Bass",
-    "Chillout",
-    "Trance",
-    "Techno",
-    "Drum&Bass",
-    "Tropical House",
-    "Disco",
-    "Vaporwave",
-    "Trip Hop",
-    "Ambient",
-    "Deep Pop Edm",
-    "EDM Trap",
-    "Future House",
-    "China-Wave",
-    "GuFeng Music",
-    "Chinoiserie Rap",
-    "Chinoiserie Electronic",
-    "Hard Rock",
-    "Psychedelic Rock",
-    "Pop Rock",
-    "Instrumental Rock",
     "Alternative Rock",
-    "Indie Rock",
-    "Post-Rock",
-    "Lo-Fi",
-    "J Rock",
-    "Shoegazing",
-    "Math Rock",
-    "Surf Rock",
-    "Progressive Rock",
-    "Soft Rock",
-    "Jazz Pop",
-    "Jazz Fusion",
-    "Bossa Nova",
+    "Ambient",
+    "Arabic Folk",
+    "Arabic Pop",
     "Avant-Garde Jazz",
-    "Swing",
+    "Baroque",
+    "Bass House",
+    "Bebop",
+    "BGM",
+    "Bhangra",
     "Big Band",
-    "Bop",
-    "Post-Bop",
-    "Smooth Jazz",
-    "Cool Jazz",
-    "Vocal Jazz",
-    "Nu Jazz",
-    "Free Jazz",
-    "Trap Rap",
-    "Old School",
-    "R&B Rap",
-    "Jazz Hip Hop",
-    "Alternative Hip Hop",
-    "Instrumental Hip Hop",
-    "Pop Rap",
-    "Hardcore Rap",
-    "Comedy Hip Hop",
-    "Hip House",
-    "Chill Beats",
-    "Chorus_AUDIO_GENRE",  # dedup
-    "Chamber Music",
-    "Symphony",
-    "Funk",
-    "Contemporary R&B",
-    "Neo Soul",
-    "Soul",
-    "Pop Soul",
     "Black Metal",
-    "Death Metal",
-    "Glam Metal",
-    "Grindcore",
-    "Power Metal",
-    "Progressive Metal",
-    "Speed Metal",
-    "DJ",
-    "VinaHouse",
-    "MC",
-    "Gospel",
-    "Holiday Music",
-    "Christian Music",
-    "Buddhist music",
-    "Chinese Opera",
-    "Traditional Chinese Folk",
-    "Chinese Quyi",
-    "Red Song",
-    "Folk Pop",
-    "Indie Folk",
-    "Tango",
-    "Reggaeton",
+    "Blue Grass",
     "Blues",
-    "Country",
-    "Punk",
-    "Reggae",
-    "Other genre"
-]
-
-AUDIO_MOOD_V1 = [
-    "Happy",
-    "Cute/Playful",
-    "Excited",
-    "Funny",
-    "Inspirational/Hopeful",
-    "Sorrow/Sad",
-    "Sentimental/Melancholic/Lonely",
-    "Weird",
-    "Thrilling/Suspenseful/Tense",
-    "Angry/Aggressive",
-    "Groovy/Funky",
-    "Dynamic/Energetic",
-    "Romantic",
-    "Nostalgic/Memory",
-    "Dreamy/Ethereal",
-    "Healing",
-    "Miss",
-    "Chill",
-    "Calm/Relaxing",
-    "Shocking/magnificent/epic",
-    "Mysterious",
-    "No Mood",
-    "Sweet",
-    "Other mood",
-]
-
-AUDIO_SCENE_V1 = [
-    "Halloween",
-    "Christmas",
-    "New Year",
-    "Spring Festival",
-    "Valentine's day",
-    "Qi Xi",
-    "Birthday",
-    "Wedding",
-    "Funeral",
-    "Graduation",
-    "National's Day",
-    "Vlog/DailyLife",
-    "Food",
-    "Pet/Animals",
-    "Beauty/Fashion",
-    "Entertainment",
-    "babies",
-    "children",
-    "Transition",
-    "Anime",
-    "Wake up",
-    "Family time",
-    "landscape/scenery",
-    "Prank",
-    "Timelapse",
-    "Rainy Day",
-    "Sunny Day",
-    "Spring",
-    "Summer",
-    "Autumn",
-    "Winter",
-    "Evening",
-    "Morning",
-    "Beach",
-    "Nightclub",
-    "Coffee Shop",
-    "Restaurants",
-    "Lounge",
-    "Campus",
-    "Park",
-    "Marketplace",
-    "Universe",
-    "Bar",
-    "Theater/Concert hall",
-    "Sport",
-    "Dance",
-    "Game",
-    "Travel",
-    "Focus",
-    "Party",
-    "Commute",
-    "Roadtrip",
-    "Meditation",
-    "Relaxation",
-    "Cleaning and Chores",
-    "Running",
-    "Date",
-    "Danceable",
-    "Flirt",
-    "Bedtime",
-    "Broke up",
-    "Dream",
-    "Drive",
-    "Friendship",
-    "Love",
-    "Yoga",
-    "Other scene",
-]
-
-AUDIO_GENDER_V1 = [
-    "Female",
-    "Male",
-    "Neutral",
-    "Child",
-    "Adult",
-    "Chorus_AUDIO_GENDER",  # dedup
-    "Unkonwn",
-]
-
-AUDIO_TIMBRE_V1 = [
-    "Warm",
-    "Ethereal",
-    "Husky",
-    "Deep",
-    "Loud and sonorous",
-    "Extreme",
-    "Sharp",
-    "Bright",
-    "Sweet_AUDIO_TIMBRE",
-    "Powerful",
-    "Sexy/Lazy",
-    "Magnetic",
-    "Cute_AUDIO_TIMBRE",
-    "Electrified voice",
-]
-
-AUDIO_GENRE_V2 = [
-    "Pop",
-    "Electronic",
-    "Chinese Style",
-    "Rock",
-    "Jazz",
-    "Hip Hop/Rap",
-    "Classical",
-    "R&B/Soul",
-    "Metal",
-    "Tuhai",
-    "Childhood",
-    "Devotional",
-    "Chinese Tradition",
-    "Easy Listening",
-    "New Age",
-    "8 Bit",
-    "Folk",
-    "Latin",
-    "Alternative/Indie",
-    "Epic",
-    "BGM",
-    "Chinese Pop",
-    "Cantopop",
-    "Taiwanese Pop",
-    "Pop Folk",
-    "Contemporary Pop",
-    "Teen Pop",
-    "Indie Pop",
-    "Dream Pop",
-    "City Pop",
-    "Synth Pop",
-    "Celtic Pop",
-    "Dance Pop",
-    "Deep Dance Pop",
-    "Electropop",
-    "Chamber Pop",
-    "A cappella",
-    "Country Pop",
-    "EDM",
-    "House",
-    "Dubstep",
-    "Future Bass",
-    "Chillout",
-    "Trance",
-    "Techno",
-    "Drum&Bass",
-    "Tropical House",
-    "Disco",
-    "Vaporwave",
-    "Trip Hop",
-    "Ambient",
-    "Deep Pop Edm",
-    "EDM Trap",
-    "Future House",
-    "China-Wave",
-    "GuFeng Music",
-    "Chinoiserie Rap",
-    "Chinoiserie Electronic",
-    "Hard Rock",
-    "Psychedelic Rock",
-    "Pop Rock",
-    "Instrumental Rock",
-    "Alternative Rock",
-    "Indie Rock",
-    "Post-Rock",
-    "Lo-Fi",
-    "J Rock",
-    "Shoegazing",
-    "Math Rock",
-    "Surf Rock",
-    "Progressive Rock",
-    "Soft Rock",
-    "Jazz Pop",
-    "Jazz Fusion",
-    "Bossa Nova",
-    "Avant-Garde Jazz",
-    "Swing",
-    "Big Band",
-    "Bop",
-    "Post-Bop",
-    "Smooth Jazz",
-    "Cool Jazz",
-    "Vocal Jazz",
-    "Nu Jazz",
-    "Free Jazz",
-    "Trap Rap",
-    "Old School",
-    "R&B Rap",
-    "Jazz Hip Hop",
-    "Alternative Hip Hop",
-    "Instrumental Hip Hop",
-    "Pop Rap",
-    "Hardcore Rap",
-    "Comedy Hip Hop",
-    "Hip House",
-    "Chill Beats",
-    "Chorus_AUDIO_GENRE",
-    "Chamber Music",
-    "Symphony",
-    "Funk",
-    "Contemporary R&B",
-    "Neo Soul",
-    "Soul",
-    "Pop Soul",
-    "Black Metal",
-    "Death Metal",
-    "Glam Metal",
-    "Grindcore",
-    "Power Metal",
-    "Progressive Metal",
-    "Speed Metal",
-    "DJ",
-    "VinaHouse",
-    "MC",
-    "Gospel",
-    "Holiday Music",
-    "Christian Music",
-    "Buddhist music",
-    "Chinese Opera",
-    "Traditional Chinese Folk",
-    "Chinese Quyi",
-    "Red Song",
-    "Folk Pop",
-    "Indie Folk",
-    "Tango",
-    "Reggaeton",
-    "Blues",
-    "Country",
-    "Punk",
-    "Reggae",
-    "Other genre",
+    "Blues Rock",
+    "Boogie Woogie",
     "Boombap",
+    "Bop",
+    "Bossa Nova",
+    "Brazilian Funk Style",
+    "Breakbeat",
+    "Brit Pop",
+    "Bubblegum Bass",
+    "Buddhist music",
+    "Cantopop",
+    "Celtic Pop",
+    "Chamber Music",
+    "Chamber Pop",
+    "Childhood",
+    "Chill Beats",
+    "Chillout",
     "Chillwave",
+    "China-Wave",
+    "Chinese Ballad Pop",
     "Chinese Folk",
+    "Chinese Opera",
+    "Chinese Pop",
+    "Chinese Quyi",
+    "Chinese Style",
+    "Chinese Tradition",
+    "Chinese Traditional Instrumental Music",
+    "Chinoiserie Electronic",
+    "Chinoiserie Rap",
+    "Chorus_AUDIO_GENRE",
+    "Christian Music",
+    "City Pop",
+    "Classical",
+    "Classical period",
+    "Classic R&B / Soul",
+    "Comedy Hip Hop",
     "Contemporary Blues",
+    "Contemporary classical music",
     "Contemporary Folk",
+    "Contemporary Pop",
+    "Contemporary R&B",
+    "Cool Jazz",
+    "Country",
     "Country Blues",
+    "Country Folk",
+    "Country Pop",
+    "Country Rock",
+    "Dancehall",
+    "Dance Pop",
+    "Dance Punk",
+    "Dark Ambient",
+    "Deathcore",
+    "Death Metal",
+    "Deep Dance Pop",
+    "Deep Pop Edm",
+    "Devotional",
+    "Disco",
+    "DJ",
+    "Doom Metal",
+    "Doo-Wop",
+    "Downtempo",
+    "Dream Pop",
+    "Drill Rap",
+    "Drum&Bass",
+    "Dubstep",
+    "East Coast Hip Hop",
+    "Easy Listening",
+    "EDM",
+    "EDM Trap",
+    "Electronic",
+    "Electropop",
+    "Emo Punk",
     "Emo Rap",
     "English Folk",
+    "Enka",
+    "Epic",
+    "Fado",
     "Flamenco",
+    "Folk",
+    "Folk Metal",
+    "Folk Pop",
+    "Folktronica",
+    "Free Jazz",
+    "French Folk",
+    "French Pop",
+    "Funk",
+    "Future Bass",
+    "Future House",
     "Gangsta Rap",
+    "German Pop",
+    "Glam Metal",
+    "Glam Metal（Hair Metal，Pop Metal）",
+    "Glam Metal\n（Hair Metal，Pop Metal）",
+    "Glitch",
+    "Gospel",
+    "Gothic Metal",
+    "Grindcore ",
+    "Grindcore",
+    "Grunge Rock",
+    "GuFeng Music",
+    "Gypsy Jazz",
+    "Hard Bop",
+    "Hardcore",
+    "Hardcore Punk ",
+    "Hardcore Rap",
+    "Hard Rock",
     "Hardstyle",
     "Heavy Metal",
+    "Hi-NRG",
     "HiNRG",
+    "Hip Hop",
+    "Hip Hop/Rap",
+    "Hip House",
+    "Holiday Music",
+    "House",
+    "IDM",
+    "Impressionism",
     "Indian Pop",
+    "Indie Folk",
+    "Indie Pop",
+    "Indie Rock",
+    "Industrial Metal",
+    "Instrumental Hip Hop",
+    "Instrumental Rock",
+    "Irish Folk",
     "Italian Pop",
     "Japanese Folk",
+    "Japanese Traditional Music",
+    "Jazz",
+    "Jazz Blues",
+    "Jazz Fusion",
+    "Jazz Hip Hop",
+    "Jazz Pop",
     "J Pop",
+    "J Rock",
+    "Korean Folk",
+    "Korea Trot",
+    "K-Pop",
     "KPop",
+    "Latin",
     "Latin Pop",
+    "Latin Rock",
+    "Lo-Fi",
+    "Lo-Fi House",
+    "Lo-Fi Rock",
     "Low pop",
+    "Math Rock",
+    "MC",
     "Melbourne Bounce",
+    "Metal",
+    "Metalcore",
+    "Midwest Hip Hop",
+    "Modernism",
+    "Mongolian Folk Songs",
+    "Neo Funk",
+    "Neo Soul",
+    "New Age",
     "New Chinese Folk",
+    "New Wave ",
     "New Wave",
     "Nostalgic Pop",
+    "No Wave",
+    "Nu Jazz",
+    "Nu Metal",
+    "Old School",
+    "Other",
+    "Other genre",
+    "Pop",
+    "Pop Folk",
     "Pop Punk",
+    "Pop Rap",
+    "Pop Rock",
+    "Pop Soul",
+    "Post-Bop",
+    "Post-hardcore",
+    "Post-Punk",
+    "Post-Rock",
+    "Power Metal",
+    "Progressive Metal",
+    "Progressive Metal（Prog Metal)",
+    "Progressive R&B",
+    "Progressive Rock",
+    "Psychedelic Rock",
+    "Punk",
+    "Ragtime",
+    "Rap Metal",
+    "R&B Rap",
+    "R&B/Soul",
+    "Red Song",
+    "Reggae",
+    "Reggaeton",
+    "Rock",
     "Rock Blues",
+    "Romantic music",
+    "Rumba",
     "Russian Pop",
     "Samba",
+    "Score",
     "Shi Dai Qu",
+    "Shima Uta",
+    "Shoegaze-Rock",
+    "Shoegazing",
+    "Ska Punk",
+    "Smooth Jazz",
+    "Soft Rock",
+    "Son cubano",
+    "Soul",
     "Soundtrack",
+    "Southern Hip Hop",
+    "Speed Metal",
+    "Surf Rock",
+    "Swing",
+    "Symphony",
+    "Synth Pop",
+    "Synthwave",
+    "Taiwanese Pop",
+    "Tango",
+    "Techno",
+    "Teen Pop",
     "Thrash Metal",
+    "Traditional Blues",
+    "Traditional Chinese Folk",
     "Traditional Folk",
     "Traditional Jazz",
+    "Trance",
+    "Trap Rap",
+    "Trip Hop",
+    "Tropical House",
+    "Tuhai",
+    "Turkish Pop",
+    "Uygur Folk Songs",
+    "Vaporwave",
+    "VinaHouse",
+    "Vocal Jazz",
     "Vulgar Pop",
     "West Coast Hip Hop",
+    "Worldbeat",
     "World Music",
-    "Breakbeat",
-    "Country Folk",
-    "Country Rock",
-    "Jazz Blues",
+    "Yodeling",
 ]
 
-AUDIO_MOOD_V2 = [
-    "Happy",
+AUDIO_EXTRA_V3 = [
+    "Tuhai_AUDIO_EXTRA",
+    "Soundtrack_AUDIO_EXTRA",
+    "Nostalgic",
+    "Lo-fi",
+]
+
+AUDIO_MOOD_V3 = [
+    "Angry",
+    "Angry/Aggressive",
+    "Calm",
+    "Calm/Relaxing",
+    "Chill",
     "Cute/Playful",
+    "Cute_SA_MOOD",
+    "Dreamy/Ethereal",
+    "Dynamic",
+    "Dynamic/Energetic",
     "Excited",
     "Funny",
-    "Inspirational/Hopeful",
-    "Sorrow/Sad",
-    "Sentimental/Melancholic/Lonely",
-    "Weird",
-    "Thrilling/Suspenseful/Tense",
-    "Angry/Aggressive",
     "Groovy/Funky",
-    "Dynamic/Energetic",
-    "Romantic",
-    "Nostalgic/Memory",
-    "Dreamy/Ethereal",
+    "Happy",
     "Healing",
+    "Inspirational",
+    "Inspirational/Hopeful",
+    "Lonely",
     "Miss",
-    "Chill",
-    "Calm/Relaxing",
-    "Shocking/magnificent/epic",
+    "Miss/Memory",
     "Mysterious",
     "No Mood",
+    "Nostalgic/Memory",
     "Other mood",
+    "Other_SA_MOOD",
+    "Romantic",
+    "Sentimental/Melancholic/Lonely",
+    "Shocking/magnificent/epic",
+    "Sorrow",
+    "Sorrow/Sad",
+    "Sweet_SA_MOOD",
+    "Tense",
+    "Thrilling/Suspenseful/Tense",
+    "Weird",
 ]
 
-AUDIO_SCENE_V2 = [
-    "Halloween",
-    "Christmas",
-    "New Year",
-    "Spring Festival",
-    "Valentine's day",
-    "Qi Xi",
-    "Birthday",
-    "Wedding",
-    "Funeral",
-    "Graduation",
-    "National's Day",
-    "Vlog/DailyLife",
-    "Food",
-    "Pet/Animals",
-    "Beauty/Fashion",
-    "Entertainment",
-    "babies",
-    "children",
-    "Transition",
+AUDIO_SCENE_V3 = [
     "Anime",
-    "Wake up",
-    "Family time",
-    "landscape/scenery",
-    "Prank",
-    "Timelapse",
-    "Rainy Day",
-    "Sunny Day",
-    "Spring",
-    "Summer",
     "Autumn",
-    "Winter",
-    "Evening",
-    "Morning",
-    "Beach",
-    "Nightclub",
-    "Coffee Shop",
-    "Restaurants",
-    "Lounge",
-    "Campus",
-    "Park",
-    "Marketplace",
-    "Universe",
+    "babies",
     "Bar",
-    "Theater/Concert hall",
-    "Sport",
-    "Dance",
-    "Game",
-    "Travel",
-    "Focus",
-    "Party",
-    "Commute",
-    "Roadtrip",
-    "Meditation",
-    "Relaxation",
-    "Cleaning and Chores",
-    "Running",
-    "Date",
-    "Danceable",
-    "Flirt",
+    "Beach",
+    "Beauty/Fashion",
     "Bedtime",
+    "Birthday",
     "Broke up",
+    "Cafe",
+    "Campus",
+    "children",
+    "Christmas",
+    "Cleaning and Chores",
+    "Coffee Shop",
+    "Commute",
+    "Dance",
+    "Danceable",
+    "Date",
     "Dream",
     "Drive",
+    "Entertainment",
+    "Evening",
+    "Family",
+    "Family time",
+    "Flirt",
+    "Focus",
+    "Food",
     "Friendship",
+    "Funeral",
+    "Game",
+    "Graduation",
+    "Halloween",
+    "landscape/scenery",
+    "Lounge",
     "Love",
-    "Yoga",
-    "Other scene",
+    "Marketplace",
+    "Meditation",
     "Mid-autumn Festival",
+    "Morning",
+    "National's Day",
+    "New Year",
+    "Nightclub",
+    "Other",
+    "Other scene",
+    "Park",
+    "Party",
+    "Pet/Animals",
+    "Prank",
+    "Qi Xi",
+    "Rainy Day",
+    "Relaxation",
+    "Restaurants",
+    "Roadtrip",
+    "Running",
+    "Sport",
+    "Spring",
+    "Spring Festival",
+    "Summer",
+    "Sunny Day",
+    "Theater/Concert hall",
+    "Timelapse",
+    "Transition",
+    "Travel",
+    "Universe",
+    "Valentine's day",
+    "Valentine's Day",
+    "Vlog/DailyLife",
+    "Wake up",
+    "Wedding",
+    "Winter",
+    "Yoga",
 ]
 
-AUDIO_GENDER_V2 = AUDIO_GENDER_V1
+AUDIO_LANG_V3 = [
+    "Cantonese",
+    "Chinese",
+    "Chinese Dialects",
+    "English",
+    "African",
+    "Arabic",
+    "French",
+    "German",
+    "Hindi",
+    "Instrumental/Non-vocal",
+    "Italian",
+    "Japanese",
+    "Korea",
+    "Other",
+    "Other Lang",
+    "Russian",
+    "Sichuanese",
+    "Taiwanese",
+    "Turkish",
+]
 
-AUDIO_TIMBRE_V2 = AUDIO_TIMBRE_V1
+AUDIO_GENDER_V3 = [
+    "Female",
+    "Male",
+    "Neutral",
+    "Child",
+    "Adult",
+    "Chorus_AUDIO_GENDER",
+    "Unknown",
+    "Multiple",
+    "female",
+    "male",
+    "child",
+    "adult",
+]
+
+AUDIO_TIMBRE_V3 = [
+    "Bright",
+    "Cute_AUDIO_TIMBRE",
+    "Cute",
+    "Deep",
+    "Electrified voice",
+    "Ethereal",
+    "Extreme",
+    "Husky",
+    "Loud and sonorous",
+    "Magnetic",
+    "Powerful",
+    "Sexy/Lazy",
+    "Sharp",
+    "Sweet_AUDIO_TIMBRE",
+]
+
+AUDIO_SINKING_V3 = [
+    "Sinking",
+    "non-Sinking",
+]
 
 # Map SA genre mood scene tag to Multitag vocab
 MAP_SA_TO_AUDIO_TAG = {
@@ -1357,6 +1037,7 @@ MAP_SA_TO_AUDIO_TAG = {
     "Sweet_SA_MOOD": "Cute/Playful",  # dedup
     "Tense": "Thrilling/Suspenseful/Tense",
     "Weird": "Weird",
+    "Shocking/Magnificent/Epic": "Shocking/magnificent/epic",
 }
 
 # Certain tags in the dataset should be replaced
@@ -1374,56 +1055,6 @@ SA_TAGS_MOOD_SPECIAL_MAP = {
     "Other": "Other_SA_MOOD"
 }
 
-AUDIO_TAGS_GENRE_SPECIAL_MAP_V0 = {
-    "Hip Hop": "Hip Hop/Rap",
-    "Chorus": "Chorus_AUDIO_GENRE",  # dedup
-}
-
-AUDIO_TAGS_MOOD_SPECIAL_MAP_V0 = {
-}
-
-AUDIO_TAGS_SCENE_SPECIAL_MAP_V0 = {
-    "Transition (卡点)": "Transition",
-    "Theater / Concert hall": "Theater/Concert hall",
-}
-
-AUDIO_TAGS_GENDER_SPECIAL_MAP_V0 = {
-    # dedup
-    "chorus": "Chorus_AUDIO_GENDER",
-    "Chorus": "Chorus_AUDIO_GENDER",
-    # fix typo (if any)
-    "chrous": "Chorus_AUDIO_GENDER",
-    "Chrous": "Chorus_AUDIO_GENDER",
-}
-
-AUDIO_TAGS_GENRE_SPECIAL_MAP_V1 = {
-    "Hip Hop": "Hip Hop/Rap",
-    "Chorus": "Chorus_AUDIO_GENRE",  # dedup
-}
-
-AUDIO_TAGS_MOOD_SPECIAL_MAP_V1 = {
-    "Angry": "Angry/Aggressive",
-    "Calm": "Calm/Relaxing",
-    "Cute": "Cute/Playful",
-    "Dynamic": "Dynamic/Energetic",
-    "Inspirational": "Inspirational/Hopeful",
-    "Lonely": "Sentimental/Melancholic/Lonely",
-    "Miss, Memory": "Miss",
-    "Miss,Memory": "Miss",
-    "Sorrow": "Sorrow/Sad",
-    "Tense": "Thrilldding/Suspenseful/Tense",
-    "Other": "Other mood",
-}
-
-AUDIO_TAGS_SCENE_SPECIAL_MAP_V1 = {
-    "Transition (卡点)": "Transition",
-    "Theater / Concert hall": "Theater/Concert hall",
-    "Valentine's Day": "Valentine's day",
-    "Cafe": "Coffee Shop",
-    "Family": "Family time",
-    "Other": "Other scene",
-}
-
 AUDIO_TAGS_GENDER_SPECIAL_MAP_V1 = {
     "female": "Female",
     "male": "Male",
@@ -1435,6 +1066,8 @@ AUDIO_TAGS_GENDER_SPECIAL_MAP_V1 = {
     # fix typo (if any)
     "chrous": "Chorus_AUDIO_GENDER",
     "Chrous": "Chorus_AUDIO_GENDER",
+    #"": "Unknown",
+    "": "empty gender",
 }
 
 AUDIO_TAGS_GENRE_SPECIAL_MAP_V2 = {
@@ -1444,7 +1077,6 @@ AUDIO_TAGS_GENRE_SPECIAL_MAP_V2 = {
     "Glam Metal（Hair Metal，Pop Metal）": "Glam Metal",
     "Glam Metal\n（Hair Metal，Pop Metal）": "Glam Metal",
     "low pop": "Low pop",
-    "Other": "Other genre",
     "tuhai": "Tuhai",
     "ChinaWave": "China-Wave",
     "DJDJ/remix": "DJ",
@@ -1453,6 +1085,9 @@ AUDIO_TAGS_GENRE_SPECIAL_MAP_V2 = {
     "Rock BluesNew": "Rock Blues",
     "Chorus": "Chorus_AUDIO_GENRE",  # dedup
     "low Pop": "Low pop",
+    "": "empty genre",
+    "Other": "Other_AUDIO_GENRE",
+    "Other genre": "Other_AUDIO_GENRE",
 }
 
 AUDIO_TAGS_MOOD_SPECIAL_MAP_V2 = {
@@ -1466,8 +1101,10 @@ AUDIO_TAGS_MOOD_SPECIAL_MAP_V2 = {
     "Miss,Memory": "Miss",
     "Sorrow": "Sorrow/Sad",
     "Tense": "Thrilldding/Suspenseful/Tense",
-    "Other": "Other mood",
-    "Sweet": "Cute/Playful", # Sweet also in vocal_timbre
+    "Other": "Other_AUDIO_MOOD",
+    #"Sweet": "Cute/Playful", # Sweet also in vocal_timbre
+    "Sweet": "Sweet_SA_MOOD",
+    "": "empty mood",
 }
 
 AUDIO_TAGS_SCENE_SPECIAL_MAP_V2 = {
@@ -1482,6 +1119,7 @@ AUDIO_TAGS_SCENE_SPECIAL_MAP_V2 = {
     "Dating": "Date",
     "Landscape/Scenery": "landscape/scenery",
     "National's Day ": "National's Day",
+    "": "empty scene",
 }
 
 AUDIO_TAGS_GENDER_SPECIAL_MAP_V2 = AUDIO_TAGS_GENDER_SPECIAL_MAP_V1
@@ -1490,501 +1128,76 @@ AUDIO_TAGS_TIMBRE_SPECIAL_MAP = {  # for all versions
     # dedup
     "Cute": "Cute_AUDIO_TIMBRE",
     "Sweet": "Sweet_AUDIO_TIMBRE",
+    "ACG": "ACG voice",
+    "Chinese Folk": "Chinese_Folk_AUDIO_TIMBRE",
+    "Romantic": "Romantic_AUDIO_TIMBRE",
+    "": "empty timbre",
 }
 
-MACRO_STYLE_MAP = {
-    "Pop": "Pop|||non-Sinking|Chinese",
-    "Hip Hop/Rap": "Hip Hop/Rap|||non-Sinking|Chinese",
-    "Chinese Style": "Chinese Style|||non-Sinking|Chinese",
-    "Electronic": "Electronic|||non-Sinking|Chinese",
-    "DJ": "DJ|||Sinking|Chinese",
-    "Rock": "Rock|||non-Sinking|Chinese",
-    "Folk": "Folk|||non-Sinking|Chinese",
-    "R&B/Soul": "R&B/Soul|||non-Sinking|Chinese",
-    "MC": "MC|||Sinking|Chinese",
-    "Chinese Tradition": "Chinese Tradition|||non-Sinking|Chinese",
-    "Jazz": "Jazz|||non-Sinking|Chinese",
-    "Punk": "Punk|||non-Sinking|Chinese",
-    "Reggae": "Reggae|||non-Sinking|Chinese",
-    "empty": "||||"
+AUDIO_TAGS_LANG_SPECIAL_MAP = {
+    "Other": "Other Lang",
+    "Chinesse": "Chinese",
+    "Canto": "Cantonese",
+    "": "empty lang",
 }
 
-MACRO_STYLE_MAP_GENRE_TO_MULTITAG = {
-    "Pop": [
-        "Pop,Chinese Pop|Nostalgic/Memory|Autumn,Rainy Day|Adult,Female|Warm", 
-        # "Pop,Chinese Pop|Happy|Commute,Summer,Sunny Day|Adult,Female|Bright",
-        # "Pop,Chinese Pop|Nostalgic/Memory|Roadtrip,Commute,Sport|Adult,Male|Powerful"
-    ],
-    "Hip Hop/Rap": [
-        "Hip Hop/Rap,R&B Rap|Dynamic/Energetic|Dance,Commute,Roadtrip|Adult,Male|Powerful,Husky",
-        # "Hip Hop,Trap Rap|Dynamic/Energetic|Dance,Commute,Sport|Adult,Male|Powerful"
-    ],
-    "Chinese Style": [
-        "Chinese Style|Nostalgic/Memory|Autumn,Rainy Day|Adult,Male|Warm",
-        # "Chinese Style|Sorrow/Sad|Autumn,Rainy Day|Adult,Female|Warm"
-    ],
-    "Electronic": [
-        "Electropop,Pop|Dynamic/Energetic|Dance,Nightclub,Party|Adult,Female|Sexy/Lazy",
-        # "Electronic|Dynamic/Energetic|Dance,Party,Sport|Adult,Female|Electrified voice"
-    ],
-    "DJ": [
-        "DJ,Tuhai|Dynamic/Energetic|Dance,Roadtrip,Summer|Adult,Male|Husky",
-        # "DJ,Tuhai|Dynamic/Energetic|Dance,Roadtrip,Summer|Adult,Female|Warm"
-    ],
-    "Rock": [
-        "Rock|Excited|Commute,Sport|Adult,Male|Husky",
-        # "Rock|Excited|Running,Roadtrip,Party,Sport,Sunny Day,Summer,Commute|Adult,Male|Magnetic"
-    ],
-    "Folk": [
-        "Folk|Nostalgic/Memory|Autumn,Rainy Day|Adult,Female|Sexy/Lazy",
-        # "Pop,Pop Folk|Romantic|Commute,Sunny Day,Travel|Adult,Male|Warm"
-    ],
-    "R&B/Soul": [
-        "R&B/Soul|Chill|Relaxation,Bar,Date|Adult,Female|Magnetic",
-        # "R&B/Soul|Groovy/Funky,Romantic|Roadtrip,Valentine's day,Sunny Day,Commute,Relaxation|Adult,Male|Sexy/Lazy,Husky"
-    ],
-    "MC": [
-        "MC,Tuhai,DJ|Dynamic/Energetic|Dance,Summer|Adult,Male|Sharp,Bright",
-        # "MC|||Adult,Female|Bright",
-    ],
-    "empty": ["||||"]
+AUDIO_TAGS_EXTRA_SPECIAL_MAP = {
+    "Tuhai": "Tuhai_AUDIO_EXTRA",
+    "tuhai": "Tuhai_AUDIO_EXTRA",
+    "Soundtrack": "Soundstrack_AUDIO_EXTRA",
+    "soundtrack": "Soundstrack_AUDIO_EXTRA",
+    "": "empty extra",
 }
 
-MACRO_STYLE_MAP_GENRE_TO_MULTITAG_V3 = {
-    "Pop": [
-        "Pop,Chinese Pop|Nostalgic/Memory|Autumn,Rainy Day|Adult,Female|Warm", 
-    ],
-    "Hip Hop/Rap": [
-        "Hip Hop/Rap,R&B Rap|Dynamic/Energetic|Dance,Commute,Roadtrip|Adult,Male|Powerful,Husky",
-    ],
-    "Chinese Style": [
-        "Chinese Style|Nostalgic/Memory|Autumn,Rainy Day|Adult,Male|Warm",
-    ],
-    "Electronic": [
-        #"Electropop,Pop|Dynamic/Energetic|Dance,Nightclub,Party|Adult,Female|Sexy/Lazy",
-        "Electronic,Deep Pop Edm|Sorrow/Sad|Nightclub,Danceable,Summer|Female,Adult|Bright",
-    ],
-    "DJ": [
-        "DJ,Tuhai|Dynamic/Energetic|Dance,Roadtrip,Summer|Adult,Male|Husky",
-    ],
-    "Rock": [
-        "Rock|Excited|Commute,Sport|Adult,Male|Husky",
-    ],
-    "Folk": [
-        "Folk|Nostalgic/Memory|Autumn,Rainy Day|Adult,Female|Sexy/Lazy",
-    ],
-    "R&B/Soul": [
-        "R&B/Soul|Chill|Relaxation,Bar,Date|Adult,Female|Magnetic",
-    ],
-    #"MC": [
-    #    #"MC,Tuhai,DJ|Dynamic/Energetic|Dance,Summer|Adult,Male|Sharp,Bright",
-    #    "MC,Tuhai|Dynamic/Energetic|Dance,Summer|Adult,Male|Sharp,Bright",
-    #],
-    "Chinese Tradition": [
-        "Chinese Tradition|Inspirational/Hopeful|National's Day,Sunny Day|Adult,Male|Loud and sonorous",
-    ],
-    "Jazz": [
-        "Jazz|Sorrow/Sad|Spring,Travel|Female,Adult|Magnetic",
-    ],
-    "Punk": [
-        "Punk|Sorrow/Sad|Sunny Day,Summer|Female,Adult|Bright",
-    ],
-    "Reggae": [
-        "Reggae|Sorrow/Sad|Love,Bar|Female,Adult|Warm",
-    ],
-    "empty": ["||||"]
+AUDIO_TAGS_INST_SPECIAL_MAP = {
+    "Frenchhorn": "French_Horn",
+    "Drumset": "Drum_Set",
+    "Drums": "Drum_Set",
+    "Smallpercussion": "Percussive",
+    "Synthdrums": "Synth_Drums",
+    "Electricpiano": "Electric_piano",
+    "Doublebass": "Double_Bass",
+    "Contrabass": "Double_Bass",
+    "Synthstrings": "Synth_Strings",
+    "Synthbass": "Synth_Bass",
+    "Acousticguitar": "Acoustic_Guitar",
+    "Electricguitar": "Electric_Guitar",
+    "Pluck": "Synth_Pluck",
+    "Lead": "Synth_Lead",
+    "Pad": "Synth_Pad",
+    "Syntheffects": "Synth_Effects",
+    "Harp": "Orchestral_Harp",
+    "Soundeffects": "Sound_Effects",
+    "Bassdrum": "Bass_Drum",
+    "Tom": "Tom_Tom",
+    "Cymbals": "Crash_Cymbal",
+    "Chimes": "Tubular_Bells",
+    "Others": "Other Inst",
+    "": "empty instrument",
 }
 
-COMBO_GENRE_TO_MULTITAG_V3 = {
-    "Pop": [
-        "Pop,Chinese Pop",
-        "Pop,Nostalgic Pop",
-        "Pop,Electropop",
-        "Pop,Indie Pop",
-        "Pop,Dance Pop",
-        "Pop,Synth Pop",
-        "Pop,Chinese Pop,Hip Hop/Rap",
-        "Pop,Chinese Pop,Folk",
-        "Pop,Chinese Pop,Chinese Style",
-        "Pop,Chinese Pop,Rock",
-        "Pop,Pop Folk",
-    ],
-    "Chinese Style": [
-        "Chinese Style,China-Wave",
-        "Chinese Style,Chinese Pop,Pop",
-        "Chinese Style,GuFeng Music",
-        "Chinese Style,Chinoiserie Electronic",
-        "Chinese Style,Chinoiserie Rap",
-    ],
-    "Rock": [
-        "Rock,Pop Rock",
-        "Rock,Indie Rock",
-        "Rock,Chinese Pop,Pop",
-    ],
-    "Hip Hop/Rap": [
-        "Hip Hop/Rap,Pop Rap",
-        "Hip Hop/Rap,R&B Rap",
-        "Hip Hop/Rap,Trap Rap",
-        "Hip Hop/Rap,Chinese Pop,Pop",
-        "Hip Hop/Rap,Boombap",
-        "Hip Hop/Rap,Old School",
-        "Hip Hop/Rap,R&B/Soul",
-        "Hip Hop/Rap,Jazz Hip Hop",
-        "Hip Hop/Rap,Emo Rap",
-    ],
-    "R&B/Soul": [
-        "R&B/Soul,Contemporary R&B",
-        "R&B/Soul,Funk",
-        "R&B/Soul,Chinese Pop,Pop",
-        "R&B/Soul,Pop Soul",
-        "R&B/Soul,Hip Hop/Rap",
-    ],
-    "DJ": [
-        "Tuhai,DJ",
-    ],
-    "Folk": [
-        "Folk,Chinese Folk",
-        "Folk,Folk Pop",
-    ],
-    "Chinese Tradition": [
-        "Chinese Tradition,New Chinese Folk",
-        "Chinese Tradition,Traditional Chinese Folk",
-        "Chinese Tradition,Red Song",
-    ],
-    "Electronic": [
-        "Electronic,Deep Pop Edm",
-        "Electronic,EDM",
-        "Electronic,Pop,Chinese Pop",
-    ],
-    "Jazz": [
-        "Jazz,Jazz Pop",
-        "Jazz,Bossa Nova",
-    ],
-    "Punk": [
-        "Punk,Pop Punk",
-    ],
-    "Reggae": [
-        "Reggae,Reggae",
-    ],
+AUDIO_TAGS_TEMPO_SPECIAL_MAP = {
+    "": "empty tempo",
 }
 
-COMBO_GENRE_TO_MULTITAG_V3_5 = {
-    "Pop": [
-        # sa tags
-        "Pop|Sorrow|Love||Warm",
-        "Pop|Romantic|Love||Bright",
-        "Pop|Miss|Love||Bright,Warm",
-        "Pop|Dynamic|Dance||Bright,Warm",
-        "Pop|Happy|Summer||Bright,Warm",
-        "Pop|Happy|Dance||Bright,Warm",
-        "Pop|Sorrow|Autumn||Bright,Warm",
-        "Pop|Happy|Travel||Warm",
-        "Pop|Inspirational|Love||Bright,Warm",
-        "Pop|Excited|Summer||Husky,Powerful",
-        # detailed tags
-        "Chinese Pop,Pop|Sorrow/Sad|Autumn,Broke up,Love,Rainy Day||Warm",
-        "Chinese Pop,Pop|Sorrow/Sad|Autumn,Broke up,Rainy Day||Warm",
-        "Chinese Pop,Pop|Sorrow/Sad|Autumn,Broke up,Love,Rainy Day||Bright",
-        "Chinese Pop,Pop|Nostalgic/Memory|Autumn,Broke up,Love,Rainy Day||Warm",
-        "Chinese Pop,Pop|Nostalgic/Memory|Autumn,Love,Rainy Day||Warm",
-        "Chinese Pop,Pop|Sorrow/Sad|Autumn,Broke up,Love,Rainy Day||Husky",
-        "Chinese Pop,Pop|Sorrow/Sad|Autumn,Broke up,Love,Rainy Day||Bright,Warm",
-        "Chinese Pop,Pop|Nostalgic/Memory|Autumn,Rainy Day||Warm",
-        "Chinese Pop,Pop|Sorrow/Sad|Autumn,Love,Rainy Day||Bright",
-        "Chinese Pop,Pop|Sorrow/Sad|Autumn,Broke up,Love,Rainy Day||Bright",
-    ],
-    "Hip Hop/Rap": [
-        # sa tags
-        "Hip Hop/Rap|Dynamic|Party||Warm",
-        "Hip Hop/Rap|Dynamic|Dance||Warm",
-        "Hip Hop/Rap|Dynamic|Love||Warm",
-        "Hip Hop/Rap|Sorrow|Love||Bright,Warm",
-        "Hip Hop/Rap|Romantic|Love||Bright",
-        "Hip Hop/Rap|Happy|Love||Warm",
-        "Hip Hop/Rap|Happy|Dance||Bright",
-        "Hip Hop/Rap|Dynamic|Summer||Husky",
-        "Hip Hop/Rap|Sorrow|Party||Husky",
-        "Hip Hop/Rap|Happy|Summer||Bright",
-        # detailed tags
-        "Hip Hop/Rap,Trap Rap|Angry/Aggressive|Dance,Sport||Magnetic",
-        "Hip Hop/Rap,Pop Rap|Nostalgic/Memory|Autumn,Broke up,Love,Rainy Day||Bright,Warm",
-        "Hip Hop/Rap,Trap Rap|Angry/Aggressive|Dance,Danceable,Summer||Sharp",
-        "Hip Hop/Rap,Trap Rap|Dynamic/Energetic|Dance,Nightclub,Party||Husky",
-        "Hip Hop/Rap,Pop Rap|Dynamic/Energetic|Game,Party,Sport||Husky",
-        "Hip Hop/Rap,Trap Rap|Angry/Aggressive|Dance,Sport,Winter||Husky,Sharp,Warm",
-        "Hip Hop/Rap,Trap Rap|Angry/Aggressive|Rainy Day,Sport,Summer||Sharp",
-        "Hip Hop/Rap,Pop Rap|Sweet_SA_MOOD|Commute,Love,Sunny Day,Valentine's day||Warm",
-    ],
-    "Chinese Style": [
-        # sa tags
-        "Chinese Style|Sorrow|Love||Warm",
-        "Chinese Style|Happy|Love||Bright",
-        "Chinese Style|Happy|Spring||Bright,Warm",
-        "Chinese Style|Miss||Love|Warm",
-        "Chinese Style|Sorrow|Autumn||Bright,Warm",
-        "Chinese Style|Excited|Autumn||Warm,Husky",
-        "Chinese Style|Excited|Love||Bright,Warm",
-        "Chinese Style|Romantic|Love||Bright",
-        "Chinese Style|Excited|Summer||Bright",
-        "Chinese Style|Dynamic|Love||Powerful",
-        # detailed tags
-        "Chinese Style,GuFeng Music|Sorrow/Sad|Autumn,Broke up,Love,Sunny Day||Bright,Warm",
-        "Chinese Style,GuFeng Music|Nostalgic/Memory|Autumn,Love,Sunny Day||Warm",
-        "Chinese Style,GuFeng Music|Sorrow/Sad|Autumn,Love,Sunny Day||Warm",
-        "Chinese Style,GuFeng Music|Nostalgic/Memory|Autumn,Love,Sunny Day||Bright",
-        "Chinese Style,GuFeng Music|Nostalgic/Memory|Autumn,Love,Sunny Day||Bright,Warm",
-        "Chinese Style,GuFeng Music|Nostalgic/Memory|Autumn,Love,Sunny Day||Bright,Husky",
-        "Chinese Style,GuFeng Music|Nostalgic/Memory|Commute,Love,Sunny Day||Bright",
-    ],
-    "Electronic": [
-        # sa tags
-        "Electronic|Dynamic|Danceable||Bright",
-        "Electronic|Dynamic|Dance||Warm",
-        "Electronic|Dynamic|Sport||Husky,Warm",
-        "Electronic|Dynamic|Summer||Husky",
-        "Electronic|Happy|Dance||Bright,Warm",
-        "Electronic|Dynamic|Travel||Bright,Warm",
-        "Electronic|Dynamic|Love||Sexy/Lazy",
-        "Electronic|Dynamic|Autumn||Sexy/Lazy",
-        "Electronic|Happy|Summer||Powerful",
-        "Electronic|Excited|Travel||Bright",
-    ],
-    "DJ": [
-        # default
-        "DJ,Tuhai|Dynamic/Energetic|Dance,Roadtrip,Summer||Husky",
-    ],
-    "Rock": [
-        # sa tags
-        "Rock|Excited|Travel||Bright",
-        "Rock|Excited|Summer||Husky",
-        "Rock|Happy|Travel||Warm",
-        "Rock|Happy|Summer||Bright,Warm",
-        "Rock|Sorrow|Autumn||Bright",
-        "Rock|Excited|Drive||Warm",
-        "Rock|Miss|Travel||Magnetic",
-        "Rock|Excited|Autumn||Husky",
-        "Rock|Sorrow|Love||Bright,Warm",
-        "Rock|Sorrow|Travel||Husky",
-        # detailed tags
-        "Pop Rock,Rock|Excited|Sport,Summer,Sunny Day||Bright",
-        "Pop Rock,Rock|Excited|Commute,Roadtrip,Sunny Day||Bright",
-        "Pop Rock,Rock|Excited|Commute,Summer,Sunny Day||Bright",
-        "Pop Rock,Rock|Excited|Sport,Summer,Sunny Day||Powerful",
-        "Pop Rock,Rock|Excited|Commute,Roadtrip,Sunny Day||Warm",
-        "Pop Rock,Rock|Miss|Autumn,Rainy Day||Powerful",
-        "Pop Rock,Rock|Sorrow/Sad|Autumn,Broke up,Love,Rainy Day||Powerful",
-        "Indie Rock,Rock|Nostalgic/Memory|Autumn,Rainy Day||Sexy/Lazy",
-    ],
-    "Folk": [
-        # detailed tags
-        "Folk,Folk Pop|Nostalgic/Memory|Autumn,Love,Rainy Day||Husky",
-        "Folk,Folk Pop|Sorrow/Sad|Autumn,Broke up,Love,Rainy Day||Husky",
-        "Folk,Folk Pop|Nostalgic/Memory|Autumn,Broke up,Love,Rainy Day||Husky,Warm",
-        "Folk,Folk Pop|Nostalgic/Memory|Autumn,Love,Rainy Day||Warm",
-        "Chinese Folk,Folk|Nostalgic/Memory|Autumn,Rainy Day||Magnetic",
-    ],
-    "R&B/Soul": [
-        # sa tags
-        "R&B/Soul|Romantic|Love||Warm",
-        "R&B/Soul|Dynamic|Dance||Husky",
-        "R&B/Soul|Happy|Dance||Bright",
-        "R&B/Soul|Happy|Summer||Warm",
-        "R&B/Soul|Happy|Love||Bright,Warm",
-        "R&B/Soul|Sorrow|Love||Warm",
-        "R&B/Soul|Dynamic|Love||Warm",
-        "R&B/Soul|Romantic|Wedding||Bright,Warm",
-        "R&B/Soul|Happy|Travel||Husky",
-        "R&B/Soul|Miss|Love||Warm",
-        # detailed tags
-        "Contemporary R&B,R&B/Soul|Groovy/Funky,Romantic|Commute,Love,Roadtrip,Sunny Day||Warm",
-    ],
-    "Chinese Tradition": [
-        # default
-        "Chinese Tradition|Inspirational/Hopeful|National's Day,Sunny Day||Loud and sonorous",
-    ],
-    "Jazz": [
-        # default
-        "Jazz|Sorrow/Sad|Spring,Travel||Magnetic",
-    ],
-    "Punk": [
-        # default
-        "Punk|Sorrow/Sad|Sunny Day,Summer||Bright",
-    ],
-    "Reggae": [
-        # default
-        "Reggae|Sorrow/Sad|Love,Bar||Warm",
-    ],
+AUDIO_TAGS_MODE_SPECIAL_MAP = {
+    "Others": "Other Mode",
+    "Maj": "Major",
+    "Min": "Minor",
+    "Blues": "Blues_AUDIO_MODE",
+    "": "empty mode",
 }
 
+AUDIO_TAGS_KEY_SPECIAL_MAP = {
+    "Db": "C#",
+    "Eb": "D#",
+    "Gb": "F#",
+    "Ab": "G#",
+    "Bb": "A#",
+    "": "empty key",
+}
 
-COMBO_MOOD_TO_MULTITAG_V3 = [
-    "Nostalgic/Memory",
-    "Sorrow/Sad",
-    "Dynamic/Energetic",
-    "Happy",
-    "Romantic",
-    "Miss",
-    "Excited",
-    "Inspirational/Hopeful",
-    "Sentimental/Melancholic/Lonely",
-    "Chill",
-    "Cute/Playful",
-    "Groovy/Funky",
-    "Nostalgic/Memory,Miss",
-    "Dynamic/Energetic,Happy",
-    "Healing",
-    "Angry/Aggressive",
-    "Nostalgic/Memory,Romantic",
-    "Dynamic/Energetic,Sorrow/Sad",
-    "Angry/Aggressive,Dynamic/Energetic",
-    "Happy,Romantic",
-    "Groovy/Funky,Happy",
-    "Dynamic/Energetic,Romantic",
-    "Nostalgic/Memory,Dynamic/Energetic",
-    "Chill,Romantic",
-    "Nostalgic/Memory,Sorrow/Sad",
-    "Groovy/Funky,Dynamic/Energetic",
-    "Calm/Relaxing",
-    "Cute/Playful,Dynamic/Energetic",
-    "Nostalgic/Memory,Sentimental/Melancholic/Lonely",
-    "Cute/Playful,Romantic",
-    "Groovy/Funky,Romantic",
-    "Excited,Inspirational/Hopeful",
-    "Miss,Sentimental/Melancholic/Lonely",
-    "Miss,Sorrow/Sad",
-    "Funny",
-    "Miss,Romantic",
-    "Excited,Dynamic/Energetic",
-    "Cute/Playful,Happy",
-    "Groovy/Funky,Sorrow/Sad",
-    "Sentimental/Melancholic/Lonely,Dynamic/Energetic",
-    "Inspirational/Hopeful,Dynamic/Energetic",
-    "Excited,Romantic",
-    "Excited,Happy",
-    "Nostalgic/Memory,Groovy/Funky",
-    "Nostalgic/Memory,Excited",
-    "Nostalgic/Memory,Chill",
-]
-
-
-COMBO_SCENE_TO_MULTITAG_V3 = [
-    "Rainy Day,Autumn,Love,Broke up",
-    "Rainy Day,Autumn,Love",
-    "Rainy Day,Autumn",
-    "Commute,Sunny Day,Love",
-    "Roadtrip,Commute,Sunny Day",
-    "Rainy Day,Love,Broke up",
-    "Summer,Commute,Sunny Day",
-    "Commute,Spring,Sunny Day",
-    "Autumn,Love,Broke up",
-    "Commute,Sunny Day",
-    "Summer,Sunny Day,Sport",
-    "Commute,Sunny Day,Dance",
-    "Valentine's day,Sunny Day,Love",
-    "Roadtrip,Commute,Sport",
-    "Rainy Day,Autumn,Winter",
-    "Summer,Roadtrip,Commute,Sunny Day",
-    "Travel,Commute,Sunny Day",
-    "Valentine's day,Love,Date",
-    "Roadtrip,Commute",
-    "Valentine's day,Sunny Day,Love,Date",
-    "Autumn,Winter",
-    "Commute,Autumn,Love",
-    "Summer,Roadtrip,Dance",
-    "Commute,Dance,Sport",
-    "Rainy Day,Winter,Love,Broke up",
-    "Summer,Roadtrip,Sunny Day",
-    "Rainy Day,Autumn,Evening",
-    "Summer,Roadtrip,Commute",
-    "Roadtrip,Commute,Love",
-    "Sunny Day,Love,Spring",
-    "Summer,Roadtrip,Sport",
-    "Commute,Rainy Day,Autumn",
-    "Commute,Sunny Day,Spring",
-    "Commute,Roadtrip,Sunny Day,Love",
-    "Summer,Sunny Day,Love",
-    "Summer,Sunny Day,Dance",
-    "Roadtrip,Commute,Dance",
-    "Summer,Commute,Love",
-    "Sunny Day,Love,Dance",
-    "Party,Dance,Sport",
-    "Danceable,Nightclub,Dance",
-    "Autumn,Commute",
-    "Sunny Day,Love,Date",
-    "Party,Commute,Dance",
-    "Summer,Commute,Dance",
-    "Commute,Dance",
-    "Summer,Roadtrip,Sunny Day,Sport",
-    "Evening,Roadtrip,Commute",
-    "Commute,Sunny Day,Sport",
-    "Summer,Party,Sunny Day",
-    "Summer,Dance,Sport",
-    "Commute,Love,Dance",
-    "Summer,Sunny Day",
-    "Evening,Autumn,Rainy Day",
-    "Commute,Sunny Day,Love,Dance",
-    "Commute,Autumn",
-    "Summer,Running,Sunny Day",
-    "Summer,Dance",
-    "Party,Sunny Day,Dance",
-    "Game,Dance,Sport",
-    "Evening,Commute,Relaxation",
-]
-
-
-COMBO_VOICE_GENDER_TO_MULTITAG_V3 = ["Female,Adult", "Male,Adult"]
-
-COMBO_VOICE_TIMBRE_TO_MULTITAG_V3 = [
-    "Warm",
-    "Bright",
-    "Bright,Warm",
-    "Husky",
-    "Magnetic",
-    "Powerful",
-    "Sexy/Lazy",
-    "Sweet_AUDIO_TIMBRE",
-    "Husky,Warm",
-    "Husky,Bright",
-    "Sharp",
-    "Magnetic,Warm",
-    "Warm,Sexy/Lazy",
-    "Bright,Magnetic",
-    "Husky,Powerful",
-    "Warm,Sweet_AUDIO_TIMBRE",
-    "Loud and sonorous",
-    "Bright,Sweet_AUDIO_TIMBRE",
-    "Bright,Powerful",
-    "Deep",
-    "Bright,Sexy/Lazy",
-    "Warm,Powerful",
-    "Magnetic,Sexy/Lazy",
-    "Husky,Sharp",
-    "Sharp,Bright",
-    "Husky,Magnetic",
-    "Ethereal",
-    "Warm,Ethereal",
-    "Sharp,Warm",
-    "Bright,Loud and sonorous",
-    "Cute_AUDIO_TIMBRE",
-    "Husky,Deep",
-    "Bright,Ethereal",
-    "Husky,Sexy/Lazy",
-    "Sweet_AUDIO_TIMBRE,Sexy/Lazy",
-    "Sharp,Electrified voice",
-    "Deep,Warm",
-    "Sharp,Powerful",
-    "Deep,Magnetic",
-    "Husky,Bright,Warm",
-    "Sharp,Sexy/Lazy",
-    "Loud and sonorous,Warm",
-    "Magnetic,Powerful",
-    "Bright,Sharp",
-    "Deep,Bright",
-    "Cute_AUDIO_TIMBRE,Warm",
-    "Bright,Warm,Powerful",
-    "Bright,Magnetic,Warm",
-]
-
+COMBO_VOICE_GENDER_TO_MULTITAG_V3 = ["Female", "Male"]
 
 MAP_SUB_GENRE_2_SA_GENRE20 = {
     'Hip Hop': ['Hip Hop/Rap'],
@@ -2002,9 +1215,8 @@ MAP_SUB_GENRE_2_SA_GENRE20 = {
 
 
 SA_CAT_VOCAB = [SA_GENRE20, SA_MOOD19, SA_THEME33, SA_SINKING, SA_LANG]
-AUDIO_CAT_VOCAB_V0 = [AUDIO_GENRE_V0, AUDIO_MOOD_V0, AUDIO_SCENE_V0, AUDIO_GENDER_V0, AUDIO_TIMBRE_V0]
-AUDIO_CAT_VOCAB_V1 = [AUDIO_GENRE_V1, AUDIO_MOOD_V1, AUDIO_SCENE_V1, AUDIO_GENDER_V1, AUDIO_TIMBRE_V1]
-AUDIO_CAT_VOCAB_V2 = [AUDIO_GENRE_V2, AUDIO_MOOD_V2, AUDIO_SCENE_V2, AUDIO_GENDER_V2, AUDIO_TIMBRE_V2]
+#AUDIO_CAT_VOCAB_V3 = [AUDIO_GENRE_V3, AUDIO_GENRE_V3, AUDIO_EXTRA_V3, AUDIO_MOOD_V3, AUDIO_SCENE_V3, AUDIO_GENDER_V3, AUDIO_TIMBRE_V3, AUDIO_LANG_V3, AUDIO_SINKING_V3]
+AUDIO_CAT_VOCAB_V3 = list(VOCAB2ID_MIX_V4.to_dict().keys())
 
 # Call it "voice" because:
 # 1. GENDER_VOCAB has been used
@@ -2018,42 +1230,55 @@ VOICE_THRESHOLDS = {
 
 VOICE_VOCAB = list(VOICE_THRESHOLDS.keys())
 
-# Deprecated
-_VOCAB_MAP = {
-    "Zh": CHINESE_CAT_VOCAB,
-    "SA": SA_CAT_VOCAB,
-    "AudioV0": AUDIO_CAT_VOCAB_V0,  # for model V1.5, initial taxonomy 
-    "Audio": AUDIO_CAT_VOCAB_V1,    # unified vocab to support initial taxonomy and SA tag. # TODO rename
-    "AudioV2": AUDIO_CAT_VOCAB_V2,  # unified vocab to support new taxonomy and SA tag
-}
 
 _UNIFIED_VOCAB_MAP = {
-    "SA_unified": VOCAB2ID_SA,
-    # backward compatible
-    "Audio_unified": VOCAB2ID_AUDIO_V0,
-    "Mix_unified": VOCAB2ID_MIX_V0,
-    # V0 (audio tag v0)
-    "Audio_unified_v0": VOCAB2ID_AUDIO_V0,
-    "Mix_unified_v0": VOCAB2ID_MIX_V0,
-    # V1 (audio tag v1, v2, v3)
-    "Audio_unified_v1": VOCAB2ID_AUDIO_V1,
-    "Mix_unified_v1": VOCAB2ID_MIX_V1,
-    "Audio_unified_v2": VOCAB2ID_AUDIO_V2,
-    "Mix_unified_v2": VOCAB2ID_MIX_V2,
+    "Audio_unified_v3": VOCAB2ID_AUDIO_V3,
+    "Mix_unified_v3": VOCAB2ID_MIX_V3,
+    "Audio_unified_v4": VOCAB2ID_AUDIO_V4,
+    "Mix_unified_v4": VOCAB2ID_MIX_V4,
 }
+
+def parse_artist_id_by_lang_gender(lang, gender) -> int:
+    if 'Chinese' in lang:
+        artist_id = ARTIST_ID_MAP_V2['zh_empty']
+    elif 'Cantonese' in lang:
+        artist_id = ARTIST_ID_MAP_V2['cant_empty']
+    elif 'English' in lang:
+        artist_id = ARTIST_ID_MAP_V2['en_empty']
+    else:
+        artist_id = ARTIST_ID_MAP_V2['inst_empty']
+
+    if 'Neutral' in gender:
+        artist_id = ARTIST_ID_MAP_V2['Neutral']
+    elif 'Child' in gender:
+        artist_id = ARTIST_ID_MAP_V2['Child']
+    elif 'Male' in gender and 'Female' in gender:
+        artist_id = ARTIST_ID_MAP_V2['Male_Female']
+    elif 'Male' in gender:
+        artist_id = ARTIST_ID_MAP_V2['Male']
+    elif 'Female' in gender:
+        artist_id = ARTIST_ID_MAP_V2['Female']
+    elif 'Multiple' in gender:
+        artist_id = ARTIST_ID_MAP_V2['Multiple']
+    elif 'Chorus' in gender:
+        artist_id = ARTIST_ID_MAP_V2['Chorus']
+    elif 'Chorus_AUDIO_GENDER' in gender:
+        artist_id = ARTIST_ID_MAP_V2['Chorus_AUDIO_GENDER']
+    return artist_id
+
 
 def get_categorical_vocab(vocab_type: str) -> Tuple[Dict[str, int], int]:
     if vocab_type in _UNIFIED_VOCAB_MAP:
         _vocab2id = _UNIFIED_VOCAB_MAP[vocab_type]
         # Hard-code num_categories here. It's supposed to be decided by dataloader.
         # The lookup table does not know how many categories the dataloader would use.
-        return _vocab2id.to_dict(), 5
-    logger.warning("Non-unified vocab is deprecated.")
-    vocab = _VOCAB_MAP[vocab_type]
-    num_categories = len(vocab)
-    all_values = [NONE_LABEL] + reduce(operator.add, vocab)
-    vocab2id = { value: idx for idx, value in enumerate(all_values) }
-    return vocab2id, num_categories
+        if vocab_type in ['Audio_unified_v3', 'Mix_unified_v3']:
+            return _vocab2id.to_dict(), 9
+        elif vocab_type in ['Audio_unified_v4', 'Mix_unified_v4']:
+            return _vocab2id.to_dict(), 13
+        else:
+            return _vocab2id.to_dict(), 5
+
 
 def convert_m1_tag_to_style_text(m1_tags_list):    
     style_texts = []
@@ -2075,6 +1300,144 @@ def convert_m1_tag_to_style_text(m1_tags_list):
 
 # ========================================================================
 
+AUDIO_INST_V3 = [
+    "Accordion",
+    "Acousticguitar",
+    "Acoustic_Guitar",
+    "Acoustic_Piano",
+    "Backingvocal",
+    "Bagpipe",
+    "Banjo",
+    "Baritone_Sax",
+    "Bass",
+    "Bassdrum",
+    "Bass_Drum",
+    "Bassoon",
+    "Bells",
+    "Belltree",
+    "Bianzhong",
+    "Brass",
+    "Brass_Section",
+    "Cello",
+    "Chimes",
+    "Chinese_Drums",
+    "Chinese Traditional Instruments",
+    "Choir_and_Voice",
+    "Chorus",
+    "Chromatic_Percussion",
+    "Clap",
+    "Clarinet",
+    "Clean_Electric_Guitar",
+    "Contrabass",
+    "Crash_Cymbal",
+    "Cymbals",
+    "Di",
+    "Distorted_Electric_Guitar",
+    "Doublebass",
+    "Double_Bass",
+    "Drums",
+    "Drumset",
+    "Drum_Set",
+    "Dulcimer",
+    "Electric_Bass",
+    "Electricguitar",
+    "Electric_Guitar",
+    "Electric_piano",
+    "Electricpiano",
+    "English_Horn",
+    "Erhu",
+    "Ethnic",
+    "Flute",
+    "Frenchhorn",
+    "French_Horn",
+    "Fx",
+    "Glockenspiel",
+    "Guitar",
+    "Guqin",
+    "Guzheng",
+    "Hangdrum",
+    "Harmonica",
+    "Harp",
+    "Hi_hat",
+    "Hulusi",
+    "Irishwhistle",
+    "Keys",
+    "Lead",
+    "Mandolin",
+    "Marimba",
+    "Matouqin",
+    "Musicbox",
+    "Oboe",
+    "Ocarina",
+    "Orchestral_Harp",
+    "Organ",
+    "Other Inst",
+    "Pad",
+    "Panflute",
+    "Percussion",
+    "Percussive",
+    "Piccolo",
+    "Pipa",
+    "Pipe",
+    "Pluck",
+    "Plucked Strings",
+    "Ruan",
+    "Sandhammer",
+    "Sanxian",
+    "Saxophone",
+    "Sheng",
+    "Sitar",
+    "Smallpercussion",
+    "Snare",
+    "Soprano/Alto_Sax",
+    "Soundeffects",
+    "Sound_Effects",
+    "String_Ensemble",
+    "Strings",
+    "Suona",
+    "Synthbass",
+    "Synth_Bass",
+    "Synth_Brass",
+    "Synth_Clave",
+    "Synth_Cymbals",
+    "Synthdrums",
+    "Synth_Drums",
+    "Syntheffects",
+    "Synth_Effects",
+    "Synthesizers",
+    "Synth_Hi_hat",
+    "Synth_Kick",
+    "Synth_Lead",
+    "Synth_Pad",
+    "Synth_Pluck",
+    "Synth_Snare",
+    "Synthstrings",
+    "Synth_Strings",
+    "Synth_Tom",
+    "Tambourine",
+    "Tenor_Sax",
+    "Timpani",
+    "Tom",
+    "Tom_Tom",
+    "Trombone",
+    "Trumpet",
+    "Tuba",
+    "Tubular_Bells",
+    "Ukelele",
+    "Vibraphone",
+    "Viola",
+    "Violin",
+    "Vocal",
+    "Vocal_Chops",
+    "Whistle",
+    "Woodwinds",
+    "Xiao",
+    "Xun",
+    "Xylophone",
+    "Yangqin",
+]
+
+
 _TEMPO_LABEL_RANGES = {
     "Grave": (0, 40),
     "Largo": (40, 60),
@@ -2086,10 +1449,33 @@ _TEMPO_LABEL_RANGES = {
     "Presto": (160, 200),
 }
 
+_TEMPO_COARSE_LABEL_RANGES = {
+    "Slow": (0, 60),
+    "Moderate speed": (60, 110),
+    "Fast": (110, 150),
+    "Very fast": (150, 200),
+}
+
+COARSE_TEMPO_LABEL2TEMPO_LABEL = {
+    "Slow": ["Grave", "Largo"],
+    "Moderate speed": ["Adagio", "Andante", "Moderato"],
+    "Fast": ["Allegro", "Vivace"],
+    "Very fast": ["Vivace", "Presto"],
+}
+
 TEMPO_RANGE = (0, 200)
 TEMPO_LABELS = [""] + list(_TEMPO_LABEL_RANGES.keys())
+COARSE_TEMPO_LABELS = [""] + list(_TEMPO_COARSE_LABEL_RANGES.keys())
+
 TEMPO_LABEL_ID_MAP = {label: i for i, label in enumerate(TEMPO_LABELS)}
 ID_TEMPO_LABEL_MAP = {v: k for k, v in TEMPO_LABEL_ID_MAP.items()}
+COARSE_TEMPO_LABELS_ID_MAP = {label: i for i, label in enumerate(COARSE_TEMPO_LABELS)}
+ID_COARSE_TEMPO_LABEL_MAP = {v: k for k, v in COARSE_TEMPO_LABELS_ID_MAP.items()}
+
+TIME_SIGNATURES = ["X", "2/4", "3/4", "4/4"]  # currently only support 4 quarter note
+TIME_SIGNATURE_ID_MAP = {label: i for i, label in enumerate(TIME_SIGNATURES)}
+ID_TIME_SIGNATURE_MAP = {v: k for k, v in TIME_SIGNATURE_ID_MAP.items()}
+
 
 
 def tempo_to_label(tempo: Optional[int]) -> str:
@@ -2100,157 +1486,912 @@ def tempo_to_label(tempo: Optional[int]) -> str:
             return label
     return ""
 
+def tempo_to_coarse_label(tempo: Optional[int]) -> str:
+    if tempo is None:
+        return ""
+    for label, (low, high) in _TEMPO_COARSE_LABEL_RANGES.items():
+        if low <= tempo < high:
+            return label
+    return ""
+
+
+# ========================================================================
+
 
 # ========================================================================
 
 _ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-_KEY_TYPES = ["Maj", "Min"]
+_MODES = ["Maj", "Min", "Major", "Minor"]
+_FINEGRAINED_MODES = ["Others", "Major", "Minor", "Gregorian", "Pentatonic", "Blues", # first class mode label
+                      "Natural_Major", "Harmonic_Major", "Melodic_Major",    # second class mode label
+                      "Natural_Minor", "Harmonic_Minor", "Melodic_Minor",
+                      "Gong", "Shang", "Jue", "Zhi", "Yu", "DuJie"]
 
-KEYS = ["N"] + [root + ":" + key_type for root in _ROOTS for key_type in _KEY_TYPES]
+# - used by music fm plus 
+ROOTS = ["X"] + _ROOTS
+ROOT_ID_MAP = {label: i for i, label in enumerate(ROOTS)}
+ID_ROOT_MAP = {v: k for k, v in ROOT_ID_MAP.items()}
+
+MODES = ["X"] + _MODES
+MODE_ID_MAP = {
+    "X": 0,
+    "Maj": 1, "Major": 1,
+    "Min": 2, "Minor": 2,
+}
+ID_MODE_MAP = {v: k for k, v in MODE_ID_MAP.items()}
+
+FINEGRAINED_MODES = ["X"] + _FINEGRAINED_MODES
+
+KEYS = ["X"] + [root + ":" + key_type for root in _ROOTS for key_type in _MODES]
 KEY_ID_MAP = {label: i for i, label in enumerate(KEYS)}
 ID_KEY_MAP = {v: k for k, v in KEY_ID_MAP.items()}
 
+
 # ========================================================================
 
-def _split_and_check_style_text(text: str) -> Tuple[str, str, str]:
-    genre, mood, gender = text.split('|')
-    if mood and mood not in AUDIO_MOOD_V2 and mood not in SA_MOOD19:
-        raise ValueError(f"Unsupported mood {mood}")
-    if gender and gender not in ["Male", "Female"]:
+
+class StyleText:
+    STYLE_TEXT_TAGS_IN_ORDER = ["genre", "mood", "gender", "timbre", "scene", "genre_extra", "extra", "language", "is_sinking", "instrument", "tempo", "key", "mode"]
+    _STYLE_TEXT_TAG_IDX_MAP = {tag_name: pos for pos, tag_name in enumerate(STYLE_TEXT_TAGS_IN_ORDER)}
+
+    def __init__(self, style_text: str):
+        self.style_text = style_text
+        self.tags = self.style_text.split("|")
+
+        self.genre = self.tags[self._STYLE_TEXT_TAG_IDX_MAP["genre"]] if self._STYLE_TEXT_TAG_IDX_MAP["genre"] < len(self.tags) else ""
+        self.mood = self.tags[self._STYLE_TEXT_TAG_IDX_MAP["mood"]] if self._STYLE_TEXT_TAG_IDX_MAP["mood"] < len(self.tags) else ""
+        self.gender = self.tags[self._STYLE_TEXT_TAG_IDX_MAP["gender"]] if self._STYLE_TEXT_TAG_IDX_MAP["gender"] < len(self.tags) else ""
+        self.timbre = self.tags[self._STYLE_TEXT_TAG_IDX_MAP["timbre"]] if self._STYLE_TEXT_TAG_IDX_MAP["timbre"] < len(self.tags) else ""
+        self.scene = self.tags[self._STYLE_TEXT_TAG_IDX_MAP["scene"]] if self._STYLE_TEXT_TAG_IDX_MAP["scene"] < len(self.tags) else ""
+        self.genre_extra = self.tags[self._STYLE_TEXT_TAG_IDX_MAP["genre_extra"]] if self._STYLE_TEXT_TAG_IDX_MAP["genre_extra"] < len(self.tags) else ""
+        self.extra = self.tags[self._STYLE_TEXT_TAG_IDX_MAP["extra"]] if self._STYLE_TEXT_TAG_IDX_MAP["extra"] < len(self.tags) else ""
+        self.language = self.tags[self._STYLE_TEXT_TAG_IDX_MAP["language"]] if self._STYLE_TEXT_TAG_IDX_MAP["language"] < len(self.tags) else ""
+        self.is_sinking = self.tags[self._STYLE_TEXT_TAG_IDX_MAP["is_sinking"]] if self._STYLE_TEXT_TAG_IDX_MAP["is_sinking"] < len(self.tags) else ""
+        self.instrument = self.tags[self._STYLE_TEXT_TAG_IDX_MAP["instrument"]] if self._STYLE_TEXT_TAG_IDX_MAP["instrument"] < len(self.tags) else ""
+        self.tempo_label = self.tags[self._STYLE_TEXT_TAG_IDX_MAP["tempo_label"]] if self._STYLE_TEXT_TAG_IDX_MAP["tempo_label"] < len(self.tags) else ""
+        self.key = self.tags[self._STYLE_TEXT_TAG_IDX_MAP["key"]] if self._STYLE_TEXT_TAG_IDX_MAP["key"] < len(self.tags) else ""
+        self.mode = self.tags[self._STYLE_TEXT_TAG_IDX_MAP["mode"]] if self._STYLE_TEXT_TAG_IDX_MAP["mode"] < len(self.tags) else ""
+
+
+def _split_and_check_style_text_v3(text: str) -> Tuple[str, str, str, str, str]:
+    style_text = StyleText(text)
+    genre, mood, gender, scene, timbre, genre_extra, extra, language, is_sinking, instrument, tempo_label, key, mode = (
+        style_text.genre,
+        style_text.mood,
+        style_text.gender,
+        style_text.scene,
+        style_text.timbre,
+        style_text.genre_extra,
+        style_text.extra,
+        style_text.language,
+        style_text.is_sinking,
+        style_text.instrument,
+        style_text.tempo_label,
+        style_text.key,
+        style_text.mode,
+    )
+    target_mood_list = []
+    target_mood_list.extend(AUDIO_MOOD_V3)
+    target_mood_list.extend(SA_MOOD19)
+    target_mood_list.extend(list(MAP_SA_TO_AUDIO_TAG.keys()))
+    new_mood = []
+    if mood:
+        for _mood in mood.split(','):
+            _mood = SA_TAGS_SPECIAL_MAP.get(_mood, _mood)
+            if _mood not in target_mood_list:
+                print(target_mood_list)
+                raise ValueError(f"Unsupported mood {_mood}")
+            new_mood.append(_mood)
+    mood = ','.join(new_mood)
+    if gender and gender not in AUDIO_GENDER_V3:
         raise ValueError(f"Unsupported gender {gender}")
-    return genre, mood, gender
+    return genre, mood, scene, gender, timbre, genre_extra, extra, language, is_sinking, instrument, tempo_label, key, mode
 
-def rewrite_style_input_to_multi_tag_combo_v3_5(text: str) -> Tuple[str, str, str, int]:
-    genre, mood, gender = _split_and_check_style_text(text)
+
+def _subgenre_to_genre_by_hierarchy(subgenre: str, supported_genres: List[str]) -> str:
+    """This function is a patch for rewrite_style_input_to_multi_tag_combo_v4 to ensure \
+    any genre tag, either in the vocab or not, can be mapped to the tags that are in the vocab.
+    """
+
+    def subgenre_to_genre(subgenre: str) -> Optional[str]:
+        for genre, subgenres in DEFAULT_TAG_HIERARCHY["genre"].items():
+            if subgenre in subgenres:
+                return genre
+        return "Pop"  # Set a default genre
+
+    if not supported_genres:
+        raise ValueError("supported_genres can not be empty")
+    if subgenre in supported_genres:
+        return subgenre
+    genre = subgenre_to_genre(subgenre)
+    return genre if genre in supported_genres else supported_genres[0]
+
+
+def rewrite_style_input_to_multi_tag_combo_v4(
+    text: str, random_seed: Optional[int] = None
+) -> Tuple[str, str, str, int]:
+    rnd = random.Random(random_seed)
+    logger.info(f"'rewrite_style_input_to_multi_tag_combo_v4' will use seed {random_seed}")
+    target_genre_list = []
+    target_sub_genre_list = []
+    main_genre_list = list(COMBO_GENRE_TO_MULTITAG_V4.keys())
+    sub_genre_mapping = SUB_GENRE_MAPPING
+    for key1 in COMBO_GENRE_TO_MULTITAG_V4:
+        target_genre_list.append(key1)
+        for item in COMBO_GENRE_TO_MULTITAG_V4[key1]:
+            for key2 in item.split("|")[0].split(","):
+                if key2 not in target_genre_list:
+                    target_sub_genre_list.append(key2)
+                sub_genre_mapping[key2] = key1
+    target_genre_list = list(set(target_genre_list))
+    target_sub_genre_list = list(set(target_sub_genre_list))
+
+    genres, mood, scene, gender, timbre, genre_extra, extra, language, is_sinking = (
+        _split_and_check_style_text_v3(text)
+    )
+
+    # Patch (Yilin):  Remap the genres to make the function work
+    genres = ",".join(
+        list(
+            set(
+                _subgenre_to_genre_by_hierarchy(g, list(sub_genre_mapping.keys()))
+                for g in genres.split(",")
+            )
+        )
+    )
+
+    # default is Chinese
+    if not language:
+        language = "Chinese"
     # default genre
-    if (not genre) or (genre not in COMBO_GENRE_TO_MULTITAG_V3_5):
-        genre = "Pop"
-    multitag_list = random.choice(COMBO_GENRE_TO_MULTITAG_V3_5[genre])
-    multitag_list = multitag_list.split('|')
-    if mood:
-        mood = MAP_SA_TO_AUDIO_TAG[mood] if mood in SA_MOOD19 else mood
-    multitag_list[1] = mood
-    if not gender:
-        gender = random.choice(COMBO_VOICE_GENDER_TO_MULTITAG_V3)
-    if 'Adult' not in gender:
-        gender = 'Adult,' + gender
-    multitag_list[3] = gender
-    multitag = "|".join(multitag_list)
-    gender = "Male" if "Male" in multitag_list[3] else "Female"
-    speaker_id = ARTIST_ID_MAP_V2[gender]
-
-    key, tempo_label = "N", ""
-    print('Original style input : ' + text)
-    print('Rewrite style input : ' + multitag)
-    return multitag, key, tempo_label, speaker_id
-
-def rewrite_style_input_to_multi_tag_combo_v3(text: str) -> Tuple[str, str, str, int]:
-    multitag_list = ['', '', '', '', '']
-    genre, mood, gender = _split_and_check_style_text(text)
-    # default genre
-    if (not genre) or (genre not in COMBO_GENRE_TO_MULTITAG_V3):
-        genre = "Pop"
-    genre = random.choice(COMBO_GENRE_TO_MULTITAG_V3[genre])
-    multitag_list[0] = genre
-    # default mood
-    if mood:
-        mood = MAP_SA_TO_AUDIO_TAG[mood] if mood in SA_MOOD19 else mood
-    else:
-        mood = random.choice(COMBO_MOOD_TO_MULTITAG_V3)
-    multitag_list[1] = mood
-    # default scene
-    multitag_list[2] = random.choice(COMBO_SCENE_TO_MULTITAG_V3)
-    # default gender
-    if not gender:
-        gender = random.choice(COMBO_VOICE_GENDER_TO_MULTITAG_V3)
-    if 'Adult' not in gender:
-        gender = 'Adult,' + gender
-    multitag_list[3] = gender
-    # default timbre
-    multitag_list[4] = random.choice(COMBO_VOICE_TIMBRE_TO_MULTITAG_V3)
-    multitag = "|".join(multitag_list)
-    
-    gender = "Male" if "Male" in multitag_list[3] else "Female"
-    speaker_id = ARTIST_ID_MAP_V2[gender]
-
-    key, tempo_label = "N", ""
-    print('Original style input : ' + text)
-    print('Rewrite style input : ' + multitag)
-    return multitag, key, tempo_label, speaker_id
-
-def rewrite_style_input_to_multi_tag_v3(text: str) -> Tuple[str, str, str, int]:
-    genre, mood, gender = _split_and_check_style_text(text)
-    # default genre
-    if (not genre) or (genre not in MACRO_STYLE_MAP_GENRE_TO_MULTITAG_V3):
-        genre = "Pop"
-    multitag = random.choice(MACRO_STYLE_MAP_GENRE_TO_MULTITAG_V3[genre])
-    multitag_list = multitag.split('|')
-    # default mood
-    if mood:
-        mood = MAP_SA_TO_AUDIO_TAG[mood] if mood in SA_MOOD19 else mood
-        multitag_list[1] = mood
-    # default gender
-    if gender and ('Adult' not in gender):
-        multitag_list[3] = 'Adult,' + gender
-    multitag = "|".join(multitag_list)    
-
-    gender = "Male" if "Male" in multitag_list[3] else "Female"
-    speaker_id = ARTIST_ID_MAP_V2[gender]
-
-    key, tempo_label = "N", ""
-    print('Original style input : ' + text)
-    print('Rewrite style input : ' + multitag)
-    return multitag, key, tempo_label, speaker_id
-
-
-def rewrite_style_input_to_multi_tag(text: str) -> Tuple[str, str, str, int]:
-    genre, mood, gender = _split_and_check_style_text(text)
-
-    # TODO(yilin) rethink the style input rewritting logic here.
-    if (not genre) or (genre not in MACRO_STYLE_MAP_GENRE_TO_MULTITAG):  # default genre
-        genre = "Pop"
-    # Based on genre to get a complete multi-tag + key + tempo_label expansion.
-    multitag = random.choice(MACRO_STYLE_MAP_GENRE_TO_MULTITAG[genre])
-    # If user specifies mood and gender, overwrite the multitag field.
-    multitag_list = multitag.split('|')
-    if mood:
-        mood = MAP_SA_TO_AUDIO_TAG[mood] if mood in SA_MOOD19 else mood # Support SA tag input.
-        multitag_list[1] = mood
-    if gender:
-        multitag_list[3] = 'Adult,' + gender
-    multitag = "|".join(multitag_list)    
-
-    gender = "Male" if "Male" in multitag_list[3] else "Female"
-    speaker_id = ARTIST_ID_MAP_V2[gender]
-
-    # TODO(yilin) Add key, tempo_label expansion
-    key, tempo_label = "N", ""
-    print('Original style input : ' + text)
-    print('Rewrite style input : ' + multitag)
-    return multitag, key, tempo_label, speaker_id
-
-
-def rewrite_style_input_to_sa_tag(text: str) -> Tuple[str, str, str, int]:
-    genre, mood, gender = _split_and_check_style_text(text)
-
-    # Obtain SA style text
-    if not genre:  # default genre
-        genre = "Pop"
-    satag = MACRO_STYLE_MAP[genre]
-    satag_list = satag.split('|')
-    if mood:  # override mood if given
-        if mood in MACRO_STYLE_MAP_MOOD2_SA_MOOD19:
-            satag_list[1] = MACRO_STYLE_MAP_MOOD2_SA_MOOD19[mood]
+    format_genres = []
+    main_format_genres = []
+    for genre in genres.split(","):
+        if genre in AUDIO_GENRE_V3:
+            if genre != sub_genre_mapping[genre]:
+                format_genres.append(genre)
+                main_format_genres.append(sub_genre_mapping[genre])
         else:
-            satag_list[1] = mood
-    satag = "|".join(satag_list)    
+            logger.info("%s not in AUDIO_GENRE_V3" % genre)
+    for genre in genres.split(","):
+        if (
+            genre in AUDIO_GENRE_V3
+            and genre not in format_genres
+            and genre not in main_format_genres
+        ):
+            format_genres.append(genre)
+    if len(format_genres) == 0:
+        for genre in genres.split(","):
+            if genre in sub_genre_mapping:
+                format_genres.append(sub_genre_mapping[genre])
+            else:
+                logger.info("%s not in sub_genre_mapping" % genre)
+    format_genres = list(set(format_genres))
+    if len(format_genres) == 0:
+        if timbre:
+            for item in timbre.split(","):
+                if item in ["Loud and sonorous", "Powerful"]:
+                    format_genres.append(
+                        rnd.choice(["Chinese Tradition", "Rock", "Punk"])
+                    )
+                elif item in ["Sexy/Lazy"]:
+                    format_genres.append(rnd.choice(["Jazz", "R&B/Soul", "Reggae"]))
+                elif item in ["Electrified voice"]:
+                    format_genres.append(
+                        rnd.choice(["Electronic", "Hip Hop/Rap", "DJ"])
+                    )
+        else:
+            format_genres = ["Pop"]
+    if len(format_genres) == 0:
+        format_genres = ["Pop"]
+    logger.info("format_genres: %s" % format_genres)
+    expand_mood_list = [
+        [
+            "Miss",
+            "Sorrow/Sad",
+            "Nostalgic/Memory",
+            "Sentimental/Melancholic/Lonely",
+        ],
+        [
+            "Dynamic/Energetic",
+            "Excited",
+        ],
+        [
+            "Chill",
+            "Calm/Relaxing",
+            "Healing",
+        ],
+        [
+            "Dreamy/Ethereal",
+            "Mysterious",
+        ],
+    ]
+    mood_type = {
+        "neutral": [
+            "Shocking/magnificent/epic",
+            "Chill",
+            "Calm/Relaxing",
+            "Mysterious",
+            "Groovy/Funky",
+            "Dynamic/Energetic",
+            "Romantic",
+            "Nostalgic/Memory",
+            "Miss",
+            "Dreamy/Ethereal",
+            "Healing",
+            "No Mood",
+        ],
+        "positive": [
+            "Happy",
+            "Cute/Playful",
+            "Excited",
+            "Funny",
+            "Inspirational/Hopeful",
+            "Sweet",
+        ],
+        "negative": [
+            "Sorrow/Sad",
+            "Sentimental/Melancholic/Lonely",
+            "Weird",
+            "Thrilling/Suspenseful/Tense",
+            "Angry/Aggressive",
+        ],
+    }
+    mood_mapping = {}
+    for genre in format_genres:
+        if genre in COMBO_GENRE_TO_MULTITAG_V4:
+            for item in COMBO_GENRE_TO_MULTITAG_V4[genre]:
+                for key in item.split("|")[1].split(","):
+                    if key not in mood_mapping:
+                        mood_mapping[key] = []
+                    mood_mapping[key].append(item)
+    random_genre_list = []
+    new_mood_list = []
+    not_match_mood_list = []
+    if mood:
+        for key in mood.split(","):
+            key = MAP_SA_TO_AUDIO_TAG[key] if key in MAP_SA_TO_AUDIO_TAG else key
+            for item in expand_mood_list:
+                if key in item:
+                    new_mood_list.extend(item)
+        for key in new_mood_list:
+            if key in mood_mapping:
+                random_genre_list.extend(mood_mapping[key])
+            else:
+                not_match_mood_list.append(key)
+    if len(random_genre_list) == 0:
+        for genre in format_genres:
+            if genre in COMBO_GENRE_TO_MULTITAG_V4:
+                random_genre_list.extend(COMBO_GENRE_TO_MULTITAG_V4[genre])
+            else:
+                for item in COMBO_GENRE_TO_MULTITAG_V4[sub_genre_mapping[genre]]:
+                    if genre in item.split("|")[0].split(","):
+                        random_genre_list.append(item)
+                if len(random_genre_list) == 0:
+                    random_genre_list.extend(
+                        COMBO_GENRE_TO_MULTITAG_V4[sub_genre_mapping[genre]]
+                    )
+    if len(random_genre_list) == 0:
+        random_genre_list.extend(COMBO_GENRE_TO_MULTITAG_V4["Pop"])
+    logger.info("random_genre_list: %s" % random_genre_list)
+    _multitag_list = rnd.choice(random_genre_list)
+    _multitag_list = _multitag_list.split("|")
+    # [genre, mood, scene, timbre] -> [genre, mood, scene, gender, timbre]
+    multitag_list = [
+        _multitag_list[0],
+        _multitag_list[1],
+        _multitag_list[2],
+        "",
+        _multitag_list[3],
+    ]
+    if len(format_genres) > 0:
+        new_genre = []
+        for genre in format_genres:
+            new_genre.append(genre)
+            if sub_genre_mapping[genre] in multitag_list[0].split(","):
+                new_genre.append(sub_genre_mapping[genre])
+        new_genre = list(set(new_genre))
+        if len(new_genre) == 1:
+            new_genre.extend(multitag_list[0].split(","))
+            multitag_list[0] = ",".join(list(set(new_genre)))
+        elif len(new_genre) > 1:
+            _new_genre = []
+            _new_genre_extra = []
+            for g in new_genre:
+                mg = sub_genre_mapping[g]
+                if mg in multitag_list[0].split(",") or g in multitag_list[0].split(
+                    ","
+                ):
+                    _new_genre.append(g)
+                else:
+                    _new_genre_extra.append(g)
+            if len(_new_genre) == 1:
+                _new_genre.extend(multitag_list[0].split(","))
+            multitag_list[0] = ",".join(list(set(_new_genre)))
+            genre_extra = ",".join(list(set(_new_genre_extra)))
 
-    gender = gender if gender else "zh_empty"
-    speaker_id = ARTIST_ID_MAP_V2[gender]
+    new_mood = mood.split(",")
+    new_mood_type = []
+    for m in new_mood:
+        if m in mood_type["positive"]:
+            new_mood_type.append("positive")
+        if m in mood_type["negative"]:
+            new_mood_type.append("negative")
+    for m in multitag_list[1].split(","):
+        if m in mood_type["neutral"] and m not in new_mood:
+            new_mood.append(m)
+        if m in mood_type["positive"] and "negative" not in new_mood_type and m not in new_mood:
+            new_mood.append(m)
+        if m in mood_type["negative"] and "positive" not in new_mood_type and m not in new_mood:
+            new_mood.append(m)
+    # cause tags_lyrics only read first one tag in mood, keep user choice in first place
+    multitag_list[1] = ",".join(new_mood)
+    if timbre:
+        multitag_list[4] = timbre
+    logger.info("multitag_list: %s" % multitag_list)
+    if not gender:
+        if "Sweet_AUDIO_TIMBRE" in multitag_list[4]:
+            gender = "Female,Adult"
+        elif "Cute_AUDIO_TIMBRE" in multitag_list[4]:
+            gender = "Female,Adult"
+        elif "Husky" in multitag_list[4]:
+            gender = "Male,Adult"
+        elif "Loud and sonorous" in multitag_list[4]:
+            gender = "Male,Adult"
+        else:
+            gender = rnd.choice(COMBO_VOICE_GENDER_TO_MULTITAG_V3)
+    if "Adult" not in gender:
+        gender = "Adult," + gender
+    multitag_list[3] = gender
+    multitag_list.append(genre_extra)
+    multitag_list.append(extra)
+    multitag_list.append(language)
+    if not is_sinking:
+        is_sinking = "non-Sinking"
+        for item in multitag_list[0].split(","):
+            if item in ["DJ", "MC", "Tuhai", "Tuhai_AUDIO_EXTRA"]:
+                is_sinking = "Sinking"
+        for item in multitag_list[5].split(","):
+            if item in ["DJ", "MC", "Tuhai", "Tuhai_AUDIO_EXTRA"]:
+                is_sinking = "Sinking"
+        for item in multitag_list[6].split(","):
+            if item in ["DJ", "MC", "Tuhai", "Tuhai_AUDIO_EXTRA"]:
+                is_sinking = "Sinking"
+    if is_sinking == "Sinking" and "Tuhai_AUDIO_EXTRA" not in extra:
+        extra = multitag_list[6].split(",")
+        extra.append("Tuhai_AUDIO_EXTRA")
+        multitag_list[6] = ",".join(extra)
+    multitag_list.append(is_sinking)
 
-    # TODO(yilin) Add key, tempo_label expansion
+    # check rewrite result is valid
+    vocab2id = VOCAB2ID_MIX_V3.to_dict()
+    new_multitag_list = []
+    for item in multitag_list:
+        tmp_list = []
+        for _item in item.split(","):
+            if _item:
+                if _item in vocab2id:
+                    tmp_list.append(_item)
+                else:
+                    logger.info("%s not in vocab2id %s" % (_item, vocab2id))
+        new_multitag_list.append(",".join(tmp_list))
+    # [genre, mood, scene, gender, timbre, genre_extra, extra, lang, sinking] ->
+    # [genre, genre_extra, extra, mood, scene, gender, timbre, lang, sinking]
+    multitag = "|".join(
+        [
+            # genre
+            new_multitag_list[0],
+            # genre_extra
+            new_multitag_list[5],
+            # extra
+            new_multitag_list[6],
+            # mood
+            new_multitag_list[1],
+            # scene
+            new_multitag_list[2],
+            # gender
+            new_multitag_list[3],
+            # timbre
+            new_multitag_list[4],
+            # lang
+            new_multitag_list[7],
+            # sinking
+            new_multitag_list[8],
+        ]
+    )
+    speaker_id = parse_artist_id_by_lang_gender(language, gender)
+
     key, tempo_label = "N", ""
-    print('Original style input : ' + text)
-    print('Rewrite style input : ' + satag)
-    return satag, key, tempo_label, speaker_id
+    logger.info("Original style input : " + text)
+    logger.info("Rewrite style input : " + multitag)
+    return multitag, key, tempo_label, speaker_id
 
+
+def rewrite_total_duration_to_section_duration(total_duration: float) -> Tuple[list, list]:
+
+    patterns = [
+        {
+            'sections': ['verse'],
+            'normed_section_durations': [[1]],
+            'duration_range': [0, 15],
+            'weight': 0.5,
+        },
+        {
+            'sections': ['chorus'],
+            'normed_section_durations': [[1]],
+            'duration_range': [0, 15],
+            'weight': 1,
+        },
+        {
+            'sections': ['inst'],
+            'normed_section_durations': [[1]],
+            'duration_range': [0, 15],
+            'weight': 1,
+        },
+        {
+            'sections': ['verse', 'chorus'],
+            'normed_section_durations': [[1, 2], [1, 1], [1, 1.5]],
+            'duration_range': [10, 30],
+            'weight': 1,
+        },
+        {
+            'sections': ['chorus', 'chorus'],
+            'normed_section_durations': [[1, 2], [1, 1], [1, 1.5]],
+            'duration_range': [10, 30],
+            'weight': 0.2,
+        },
+        {
+            'sections': ['intro', 'chorus'],
+            'normed_section_durations': [[1, 2], [1, 1], [1, 1.5]],
+            'duration_range': [10, 30],
+            'weight': 0.5,
+        },
+        {
+            'sections': ['intro', 'verse', 'chorus'],
+            'normed_section_durations': [[1, 2, 2], [1, 1, 1], [1, 2, 4]],
+            'duration_range': [25, 40],
+            'weight': 1,
+        },
+        {
+            'sections': ['verse', 'inst', 'chorus'],
+            'normed_section_durations': [[1, 1, 2], [1, 1, 1], [1, 2, 4]],
+            'duration_range': [25, 40],
+            'weight': 1,
+        },
+        {
+            'sections': ['verse', 'verse', 'chorus'],
+            'normed_section_durations': [[1, 1, 2]],
+            'duration_range': [25, 40],
+            'weight': 0.5,
+        },
+        {
+            'sections': ['verse', 'chorus', 'chorus'],
+            'normed_section_durations': [[1, 1, 1]],
+            'duration_range': [25, 40],
+            'weight': 0.5,
+        },
+        {
+            'sections': ['verse', 'chorus', 'verse', 'chorus'],
+            'normed_section_durations': [[1, 1, 1, 1], [1, 2, 1, 2]],
+            'duration_range': [30, 60],
+            'weight': 1,
+        },
+        {
+            'sections': ['verse', 'chorus', 'inst', 'chorus'],
+            'normed_section_durations': [[1, 1, 1, 1], [1, 2, 1, 2]],
+            'duration_range': [30, 60],
+            'weight': 1,
+        },
+        {
+            'sections': ['verse', 'inst', 'chorus', 'chorus'],
+            'normed_section_durations': [[1, 1, 1, 1], [1, 2, 1, 1], [1, 2, 2, 2]],
+            'duration_range': [30, 60],
+            'weight': 1,
+        },
+        {
+            'sections': ['verse', 'inst', 'verse', 'inst'],
+            'normed_section_durations': [[1, 2, 2, 1], [1, 2, 4, 1]],
+            'duration_range': [30, 60],
+            'weight': 1,
+        },
+        {
+            'sections': ['verse', 'inst', 'verse', 'inst'],
+            'normed_section_durations': [[1, 2, 2, 1], [1, 2, 4, 1]],
+            'duration_range': [50, 80],
+            'weight': 1,
+        },
+        {
+            'sections': ['verse', 'inst', 'verse', 'chorus'],
+            'normed_section_durations': [[1, 1, 1, 1], [1, 2, 1, 1], [1, 2, 2, 2]],
+            'duration_range': [50, 80],
+            'weight': 1,
+        },
+        {
+            'sections': ['intro', 'verse', 'chorus', 'verse', 'chorus'],
+            'normed_section_durations': [[1, 2, 2, 2, 2]],
+            'duration_range': [50, 80],
+            'weight': 1,
+        },
+        {
+            'sections': ['intro', 'verse', 'chorus', 'inst', 'chorus'],
+            'normed_section_durations': [[1, 2, 2, 2, 2], [1, 2, 2, 1, 2]],
+            'duration_range': [50, 80],
+            'weight': 1,
+        },
+        {
+            'sections': ['intro', 'verse', 'chorus', 'bridge', 'verse', 'chorus'],
+            'normed_section_durations': [[1, 2, 2, 1, 2, 2]],
+            'duration_range': [70, 120],
+            'weight': 1,
+        },
+        {
+            'sections': ['intro', 'verse', 'chorus', 'bridge', 'chorus', 'outro'],
+            'normed_section_durations': [[1, 2, 2, 1, 2, 1]],
+            'duration_range': [70, 120],
+            'weight': 1,
+        },
+        {
+            'sections': ['intro', 'verse', 'chorus', 'inst', 'chorus', 'outro'],
+            'normed_section_durations': [[1, 2, 2, 1, 2, 1]],
+            'duration_range': [70, 120],
+            'weight': 1,
+        },
+        {
+            'sections': ['verse', 'chorus', 'inst', 'verse', 'chorus', 'outro'],
+            'normed_section_durations': [[1, 1, 1, 1, 1, 0.5]],
+            'duration_range': [70, 120],
+            'weight': 1,
+        },
+        {
+            'sections': ['intro', 'verse', 'chorus', 'inst', 'verse', 'chorus', 'outro'],
+            'normed_section_durations': [[0.5, 1, 1, 1, 1, 1, 0.5]],
+            'duration_range': [70, 120],
+            'weight': 1,
+        },
+        {
+            'sections': ['intro', 'verse', 'chorus', 'chorus', 'inst', 'verse', 'chorus', 'chorus', 'outro'],
+            'normed_section_durations': [[0.5, 1, 1, 1, 1, 1, 1, 1, 0.5]],
+            'duration_range': [90, 240],
+            'weight': 1,
+        },
+        {
+            'sections': ['intro', 'verse', 'chorus', 'bridge', 'chorus', 'verse', 'chorus', 'outro'],
+            'normed_section_durations': [[0.5, 1, 1, 0.5, 1, 1, 1, 0.5], [1, 1, 1, 1, 1, 1, 1, 0.5],  [0.5, 1, 1, 1, 1, 1, 1, 0.5]],
+            'duration_range': [90, 240],
+            'weight': 1,
+        },
+        {
+            'sections': ['intro', 'verse', 'chorus', 'inst', 'chorus', 'verse', 'chorus', 'outro'],
+            'normed_section_durations': [[0.5, 1, 1, 0.5, 1, 1, 1, 0.5], [1, 1, 1, 1, 1, 1, 1, 0.5],  [0.5, 1, 1, 1, 1, 1, 1, 0.5]],
+            'duration_range': [90, 240],
+            'weight': 1,
+        },
+        {
+            'sections': ['intro', 'verse', 'chorus', 'bridge', 'chorus', 'bridge', 'chorus', 'bridge', 'chorus', 'outro'],
+            'normed_section_durations': [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1], [0.5, 1, 1, 0.5, 1, 0.5, 1, 0.5, 1, 0.5]],
+            'duration_range': [90, 240],
+            'weight': 1,
+        },
+        {
+            'sections': ['intro', 'verse', 'chorus', 'bridge', 'verse', 'chorus', 'bridge', 'verse', 'chorus', 'bridge', 'outro'],
+            'normed_section_durations': [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], [0.5, 1, 1, 0.5, 1, 1, 0.5, 1, 1, 0.5, 0.5]],
+            'duration_range': [90, 240],
+            'weight': 1,
+        },
+    ]
+    # for item in patterns:
+    #     for durations in item['normed_section_durations']:
+    #         assert(len(durations) == len(item['sections']))
+    valid_patterns = [x for x in patterns if  x['duration_range'][0] <= total_duration <= x['duration_range'][1] ]
+    weights = [x['weight'] for x in valid_patterns]
+    pattern = random.choices(valid_patterns, weights=weights, k=1)[0]
+    section_tags = pattern['sections']
+    normed_section_durations = random.choice(pattern['normed_section_durations'])
+    section_durations = [x/sum(normed_section_durations) * total_duration for x in normed_section_durations]
+    message = ' + '.join(['%s (%.1fs)' % (a, b)for a, b in zip(section_tags, section_durations)])
+    # logger.log(msg = f'##### rewrite section duration: {total_duration} -> {message}', level=30)
+    logger.debug(f'##### rewrite section duration: {total_duration} -> {message}')
+    return section_tags, section_durations
+
+
+def rewrite_style_input_to_multi_tag_combo_v5(
+    text: str, random_seed: Optional[int] = None
+) -> Tuple[str, str, str, int]:
+    genres, mood, scene, gender, timbre, genre_extra, extra, language, is_sinking, instrument, tempo_label, music_key, music_mode = (
+        _split_and_check_style_text_v3(text)
+    )
+
+    rnd = random.Random(random_seed)
+    logger.info(f"'rewrite_style_input_to_multi_tag_combo_v5' will use seed {random_seed}")
+    target_genre_list = []
+    target_sub_genre_list = []
+    if language == "Cantonese":
+        main_genre_list = list(COMBO_GENRE_TO_CANT_MULTITAG_V5.keys())
+    else:
+        main_genre_list = list(COMBO_GENRE_TO_MULTITAG_V4.keys())
+    sub_genre_mapping = SUB_GENRE_MAPPING
+    for key1 in COMBO_GENRE_TO_MULTITAG_V4:
+        target_genre_list.append(key1)
+        for item in COMBO_GENRE_TO_MULTITAG_V4[key1]:
+            for key2 in item.split("|")[0].split(","):
+                if key2 not in target_genre_list:
+                    target_sub_genre_list.append(key2)
+                sub_genre_mapping[key2] = key1
+    target_genre_list = list(set(target_genre_list))
+    target_sub_genre_list = list(set(target_sub_genre_list))
+
+    # Patch (Yilin):  Remap the genres to make the function work
+    genres = ",".join(
+        list(
+            set(
+                _subgenre_to_genre_by_hierarchy(g, list(sub_genre_mapping.keys()))
+                for g in genres.split(",")
+            )
+        )
+    )
+
+    # default is Chinese
+    if not language:
+        language = "Chinese"
+    # default genre
+    format_genres = []
+    main_format_genres = []
+    for genre in genres.split(","):
+        if genre in AUDIO_GENRE_V3:
+            if genre != sub_genre_mapping[genre]:
+                format_genres.append(genre)
+                main_format_genres.append(sub_genre_mapping[genre])
+        else:
+            logger.info("%s not in AUDIO_GENRE_V3" % genre)
+    for genre in genres.split(","):
+        if (
+            genre in AUDIO_GENRE_V3
+            and genre not in format_genres
+            and genre not in main_format_genres
+        ):
+            format_genres.append(genre)
+    if len(format_genres) == 0:
+        for genre in genres.split(","):
+            if genre in sub_genre_mapping:
+                format_genres.append(sub_genre_mapping[genre])
+            else:
+                logger.info("%s not in sub_genre_mapping" % genre)
+    format_genres = list(set(format_genres))
+    if len(format_genres) == 0:
+        if timbre:
+            for item in timbre.split(","):
+                if item in ["Loud and sonorous", "Powerful"]:
+                    format_genres.append(
+                        rnd.choice(["Chinese Tradition", "Rock", "Punk"])
+                    )
+                elif item in ["Sexy/Lazy"]:
+                    format_genres.append(rnd.choice(["Jazz", "R&B/Soul", "Reggae"]))
+                elif item in ["Electrified voice"]:
+                    format_genres.append(
+                        rnd.choice(["Electronic", "Hip Hop/Rap", "DJ"])
+                    )
+        else:
+            format_genres = ["Pop"]
+    if len(format_genres) == 0:
+        format_genres = ["Pop"]
+    logger.info("format_genres: %s" % format_genres)
+    expand_mood_list = [
+        [
+            "Miss",
+            "Sorrow/Sad",
+            "Nostalgic/Memory",
+            "Sentimental/Melancholic/Lonely",
+        ],
+        [
+            "Dynamic/Energetic",
+            "Excited",
+        ],
+        [
+            "Chill",
+            "Calm/Relaxing",
+            "Healing",
+        ],
+        [
+            "Dreamy/Ethereal",
+            "Mysterious",
+        ],
+    ]
+    mood_type = {
+        "neutral": [
+            "Shocking/magnificent/epic",
+            "Chill",
+            "Calm/Relaxing",
+            "Mysterious",
+            "Groovy/Funky",
+            "Dynamic/Energetic",
+            "Romantic",
+            "Nostalgic/Memory",
+            "Miss",
+            "Dreamy/Ethereal",
+            "Healing",
+            "No Mood",
+        ],
+        "positive": [
+            "Happy",
+            "Cute/Playful",
+            "Excited",
+            "Funny",
+            "Inspirational/Hopeful",
+            "Sweet",
+        ],
+        "negative": [
+            "Sorrow/Sad",
+            "Sentimental/Melancholic/Lonely",
+            "Weird",
+            "Thrilling/Suspenseful/Tense",
+            "Angry/Aggressive",
+        ],
+    }
+    mood_mapping = {}
+    for genre in format_genres:
+        if genre in COMBO_GENRE_TO_MULTITAG_V4:
+            for item in COMBO_GENRE_TO_MULTITAG_V4[genre]:
+                for key in item.split("|")[1].split(","):
+                    if key not in mood_mapping:
+                        mood_mapping[key] = []
+                    mood_mapping[key].append(item)
+    random_genre_list = []
+    new_mood_list = []
+    not_match_mood_list = []
+    if mood:
+        for key in mood.split(","):
+            key = MAP_SA_TO_AUDIO_TAG[key] if key in MAP_SA_TO_AUDIO_TAG else key
+            for item in expand_mood_list:
+                if key in item:
+                    new_mood_list.extend(item)
+        for key in new_mood_list:
+            if key in mood_mapping:
+                random_genre_list.extend(mood_mapping[key])
+            else:
+                not_match_mood_list.append(key)
+    if len(random_genre_list) == 0:
+        for genre in format_genres:
+            if genre in COMBO_GENRE_TO_MULTITAG_V4:
+                random_genre_list.extend(COMBO_GENRE_TO_MULTITAG_V4[genre])
+            else:
+                for item in COMBO_GENRE_TO_MULTITAG_V4[sub_genre_mapping[genre]]:
+                    if genre in item.split("|")[0].split(","):
+                        random_genre_list.append(item)
+                if len(random_genre_list) == 0:
+                    random_genre_list.extend(
+                        COMBO_GENRE_TO_MULTITAG_V4[sub_genre_mapping[genre]]
+                    )
+    if len(random_genre_list) == 0:
+        random_genre_list.extend(COMBO_GENRE_TO_MULTITAG_V4["Pop"])
+    logger.info("random_genre_list: %s" % random_genre_list)
+    _multitag_list = rnd.choice(random_genre_list)
+    _multitag_list = _multitag_list.split("|")
+    # [genre, mood, scene, timbre] -> [genre, mood, scene, gender, timbre]
+    multitag_list = [
+        _multitag_list[0],
+        _multitag_list[1],
+        _multitag_list[2],
+        "",
+        _multitag_list[3],
+    ]
+    if len(format_genres) > 0:
+        new_genre = []
+        for genre in format_genres:
+            new_genre.append(genre)
+            if sub_genre_mapping[genre] in multitag_list[0].split(","):
+                new_genre.append(sub_genre_mapping[genre])
+        new_genre = list(set(new_genre))
+        if len(new_genre) == 1:
+            new_genre.extend(multitag_list[0].split(","))
+            multitag_list[0] = ",".join(list(set(new_genre)))
+        elif len(new_genre) > 1:
+            _new_genre = []
+            _new_genre_extra = []
+            for g in new_genre:
+                mg = sub_genre_mapping[g]
+                if mg in multitag_list[0].split(",") or g in multitag_list[0].split(
+                    ","
+                ):
+                    _new_genre.append(g)
+                else:
+                    _new_genre_extra.append(g)
+            if len(_new_genre) == 1:
+                _new_genre.extend(multitag_list[0].split(","))
+            multitag_list[0] = ",".join(list(set(_new_genre)))
+            genre_extra = ",".join(list(set(_new_genre_extra)))
+
+    new_mood = mood.split(",")
+    new_mood_type = []
+    for m in new_mood:
+        if m in mood_type["positive"]:
+            new_mood_type.append("positive")
+        if m in mood_type["negative"]:
+            new_mood_type.append("negative")
+    for m in multitag_list[1].split(","):
+        if m in mood_type["neutral"] and m not in new_mood:
+            new_mood.append(m)
+        if m in mood_type["positive"] and "negative" not in new_mood_type and m not in new_mood:
+            new_mood.append(m)
+        if m in mood_type["negative"] and "positive" not in new_mood_type and m not in new_mood:
+            new_mood.append(m)
+    # cause tags_lyrics only read first one tag in mood, keep user choice in first place
+    multitag_list[1] = ",".join(new_mood)
+    if timbre:
+        multitag_list[4] = timbre
+    logger.info("multitag_list: %s" % multitag_list)
+    if not gender:
+        if "Sweet_AUDIO_TIMBRE" in multitag_list[4]:
+            gender = "Female"
+        elif "Cute_AUDIO_TIMBRE" in multitag_list[4]:
+            gender = "Female"
+        elif "Husky" in multitag_list[4]:
+            gender = "Male"
+        elif "Loud and sonorous" in multitag_list[4]:
+            gender = "Male"
+        else:
+            gender = rnd.choice(COMBO_VOICE_GENDER_TO_MULTITAG_V3)
+    multitag_list[3] = gender
+    multitag_list.append(genre_extra)
+    multitag_list.append(extra)
+    multitag_list.append(language)
+    multitag_list.append(is_sinking)
+
+    # check rewrite result is valid
+    vocab2id = DEFAULT_VOCAB2ID.to_dict()
+    new_multitag_list = []
+    for item in multitag_list:
+        tmp_list = []
+        for _item in item.split(","):
+            if _item:
+                if _item in vocab2id:
+                    tmp_list.append(_item)
+                else:
+                    logger.info("%s not in vocab2id %s" % (_item, vocab2id))
+        new_multitag_list.append(",".join(tmp_list))
+    # [genre, mood, scene, gender, timbre, genre_extra, extra, lang, sinking] ->
+    # [genre, genre_extra, extra, mood, scene, gender, timbre, lang, sinking]
+    inst = []
+    for g in new_multitag_list[0].split(','):
+        if g in COMBO_GENRE_TO_INSTRUMENTS_V4:
+            inst.append(rnd.choice(COMBO_GENRE_TO_INSTRUMENTS_V4[g]))
+    multitag = [
+        # genre
+        new_multitag_list[0],
+        # genre_extra
+        new_multitag_list[5],
+        # extra
+        new_multitag_list[6],
+        # mood
+        new_multitag_list[1],
+        # scene
+        new_multitag_list[2],
+        # gender
+        new_multitag_list[3],
+        # timbre
+        new_multitag_list[4],
+        # lang
+        new_multitag_list[7],
+        # sinking
+        new_multitag_list[8],
+        # instrument
+        ','.join(inst),
+        # tempo
+        '',
+        # key
+        '',
+        # mode
+        '',
+    ]
+    #multitag = [x.split(',') for x in multitag]
+    #multitag = process_tags(multitag)
+    #multitag = [','.join(x) for x in multitag]
+    multitag = "|".join(multitag)
+    speaker_id = parse_artist_id_by_lang_gender(language, gender)
+
+    if not music_key:
+        music_key = "X"
+    if not tempo_label:
+        tempo_label = ""
+    logger.info("Original style input : " + text)
+    logger.info("Rewrite style input : " + multitag)
+    return multitag, music_key, tempo_label, speaker_id
