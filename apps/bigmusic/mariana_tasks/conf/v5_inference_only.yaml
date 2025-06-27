@@ -45,7 +45,7 @@ extra_params:
   # Sampling
   use_step_out_blank: True
   step_out_blank_logic: "v4"
-  step_out_blank_max_len: 200
+  step_out_blank_max_len: 8000
   repetition_penalty: 1.6
   emit_eos_thresh_secs: 5 # Force to emit EOS after reaching specific duration
   exclude_eos_thresh_secs: 1 # Suppress EOS until threshold before reaching specific duration
@@ -134,9 +134,11 @@ data:
         [
           "genre",
           "genre_extra",
+          "extra",
           "mood",
           "speaker",
           "lyrics",
+          "section_tag",
           "scene",
           "voice",
           "sinking",
@@ -215,7 +217,7 @@ data:
     # These fields are no longer used in the embedding module, but they are still required by the callbacks
     - type: AddField
       key: conditions
-      value: style_text,freeform_text,speaker_id,lyrics_tokens
+      value: style_text,freeform_text,speaker_id,lyrics_tokens  # TODO (hang): add tempo for 1.5b model
 
     # Audio is None
     - type: "CalculateToken"
@@ -328,8 +330,8 @@ pl_module: !new:apps.bigmusic.mariana_tasks.inference.SemanticInferenceModule
 
 # separating out additional_callbacks so auto_eval can disable metrics
 additional_callbacks:
-    # ===== base callback. Must be placed in front of all callbacks. =====
-    - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
+  # ===== base callback. Must be placed in front of all callbacks. =====
+  - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
 callbacks:
   - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
     beam_size: !ref <extra_params[beam_size]>

@@ -1,7 +1,7 @@
 import os
 import random
 from copy import deepcopy
-from typing import Optional
+from typing import List, Dict, Optional, Union, Tuple
 
 import torch
 import torch.nn as nn
@@ -89,6 +89,7 @@ class SemanticEmbModule(torch.nn.Module):
         if audio_sample_rate != tokenizer_sample_rate:
             audio_prompt = resample(audio_prompt, audio_sample_rate, tokenizer_sample_rate)
 
+        # NOTE: when bs > 1, there could be zero padding at the end of audio_prompt
         token_ids = self.target_embedder.tokenize(
             requires=self.requires,
             batch=audio_prompt,
@@ -96,15 +97,18 @@ class SemanticEmbModule(torch.nn.Module):
         token_ids += self.text_codebook_size
 
         # Exclude the last token, update the audio_prompt to reflect the actual audio duration
-        n_tokens = token_ids.shape[-1] - 1
-        token_ids = token_ids[..., :n_tokens]
+        n_tokens = int(batch["target_tokens_length"].max())  # +1 SOS, -1 end token
+        token_ids = token_ids[..., :n_tokens]  # exclude the last token
         n_samples_batch_audio = round((n_tokens - 1) * audio_sample_rate / frame_rate)  # do not count the SOS token
         batch["audio_prompt"] = batch["audio_prompt"][..., :n_samples_batch_audio]  # in-place modification
+        batch["target_tokens_length"] = batch["target_tokens_length"] - 1  # -1 end token => actual num audio tokens
+        batch["audio_prompt_token_ids"] = token_ids[:, 1:]  # remove SOS, add tokens to batch for reconstruction
+        batch["audio_prompt_n_samples"] = batch["target_tokens_length"] // frame_rate * audio_sample_rate  # add a key for prompt concat
 
         embeds = self.target_embedder.embedder(token_ids)
         embed_dict = {
             "token_embeds": embeds,
-            "token_length": torch.Tensor([embeds.shape[1]]).to(self.device),
+            "token_length": batch["target_tokens_length"] + 1,  # +1 SOS
         }
         batch["audio_prompt_token_ids"] = token_ids[:, 1:]  # remove SOS, add tokens to batch for reconstruction
         return embed_dict
@@ -258,7 +262,6 @@ class SemanticEmbModule(torch.nn.Module):
                     batch_group_cfg[i]["instrument_length"] = batch["instrument_length"]
         
         return batch_group_cfg
-    
 
     # TODO: make this into a static method (vibertthio)
     def infer_batch_size(self, batch):
@@ -278,7 +281,7 @@ class SemanticEmbModule(torch.nn.Module):
         return training_inputs
 
     @torch.no_grad()
-    def prepare_cfg_batch_v2(self, batch, hp):
+    def _prepare_cfg_batch(self, batch, hp):
         """
         Separate all the key/value pairs whose keys end with _cfg into a CFG batch (plus "app_type" and "conditions"),
         then remove these key/value pairs from the batch.
@@ -302,140 +305,157 @@ class SemanticEmbModule(torch.nn.Module):
         #     batch.pop(k, None)
         return batch_cfg
 
-    @torch.no_grad()
-    def predict(self, batch, hp, beam=1, rl_training=False):
-        # is_varlen_prefix = self.extra_params.varlen_lyrics_prefix        
-        # if is_varlen_prefix: assert self.infer_batch_size(batch) == 1
-
-        # frame_rate = self.extra_params.semantic_frame_rate
-        # num_tokens = hp.duration * frame_rate
-        # temperature = hp.semantic_temperature
-        # sample_mode = hp.sample_mode
-        # sample_thresh = hp.get('sample_thresh', 0.9)
-        use_controller_cfg = hp.get('use_controller_cfg', False)
-        controller_cfg_gamma = hp.get('controller_cfg_gamma', 1)
-        # use_step_out_blank = hp.get('use_step_out_blank', False)
-        # step_out_blank_logic = hp.get('step_out_blank_logic', 'v2')
-        # step_out_blank_max_len = hp.get('step_out_blank_max_len', 10)
-        # repetition_penalty = hp.get('repetition_penalty', 1.0)
-        # exclude_eos_first_secs = hp.get('exclude_eos_first_secs', 0)
-        # exclude_eos_thresh_secs = hp.get('exclude_eos_thresh_secs', 0)
-        # emit_eos_thresh_secs = hp.get('emit_eos_thresh_secs', 0)
-        skip_sos = hp.get('skip_sos', False)
-        # stop_eos = hp.get('stop_eos', False)
-        self.extra_params.debug_index = hp.get('debug_index', None)
-        exclude_ids = None
-        if hp.get("exclude_eos", False) and self.target_embedder.eos_id is not None:
-            exclude_ids = [self.target_embedder.eos_id]
-            print(f"exclude_ids: {exclude_ids}")
-        
-        # Init batch_cfg before batch gets modified
-        if isinstance(controller_cfg_gamma, list) and use_controller_cfg:
-            batch_uncond = self.prepare_cfg_batch_v2(batch, hp)
-            batch_cfg = self.prepare_group_cfg_batch(batch, hp) # list
-            batch_cfg.append(batch_uncond)  # also add FULL uncond path
-        else:
-            batch_cfg = self.prepare_cfg_batch_v2(batch, hp) if use_controller_cfg else None
-
-        prefix_inputs = self.prepare_prefix_inputs(batch)        
-        token_embeds = zip(*[i['token_embeds'] for i in prefix_inputs])
-        token_embeds = [torch.cat(t, dim=0) for t in token_embeds]
-        token_embeds = pad_sequence(token_embeds, batch_first=True, padding_value=0)
-        prefix_length = torch.vstack([i['token_length'] for i in prefix_inputs]).sum(dim=0).int()
-
-        if batch_cfg:
-            if isinstance(batch_cfg, list):
-                token_embeds_cfg, prefix_length_cfg = [], []
-                for group_idx in range(len(batch_cfg)):
-                    _prefix_inputs_cfg = self.prepare_prefix_inputs(batch_cfg[group_idx])
-                    _token_embeds_cfg = zip(*[i['token_embeds'] for i in _prefix_inputs_cfg])
-                    _token_embeds_cfg = [torch.cat(t, dim=0) for t in _token_embeds_cfg]
-                    _token_embeds_cfg = pad_sequence(_token_embeds_cfg, batch_first=True, padding_value=0)
-                    _prefix_length_cfg = torch.vstack([i['token_length'] for i in _prefix_inputs_cfg]).sum(dim=0).int()
-                    assert torch.all(_prefix_length_cfg == prefix_length)
-                    print(f"cfg group={group_idx}{_token_embeds_cfg.shape=} {_prefix_length_cfg=}")
-                    token_embeds_cfg.append(_token_embeds_cfg)
-                    prefix_length_cfg.append(_prefix_length_cfg)
-            else:
-                prefix_inputs_cfg = self.prepare_prefix_inputs(batch_cfg)
-                token_embeds_cfg = zip(*[i['token_embeds'] for i in prefix_inputs_cfg])
-                token_embeds_cfg = [torch.cat(t, dim=0) for t in token_embeds_cfg]
-                token_embeds_cfg = pad_sequence(token_embeds_cfg, batch_first=True, padding_value=0)
-                prefix_length_cfg = torch.vstack([i['token_length'] for i in prefix_inputs_cfg]).sum(dim=0).int()
-                assert torch.all(prefix_length_cfg == prefix_length)
-                print(f"{token_embeds_cfg.shape=} {prefix_length_cfg=}")
-        else:
-            token_embeds_cfg = None
-            prefix_length_cfg = None
-
-        batch["prefix_length"] = prefix_length
-        batch["prefix_length_cfg"] = prefix_length_cfg
-
-
-        # (shuo): copy from BaseContinuousEmbedModule.predict()
-
-        inputs_embeds = token_embeds
-        use_controller_cfg = use_controller_cfg
-        inputs_embeds_cfg = token_embeds_cfg
-
-        batch_size, seq_len, _ = inputs_embeds.size()
-        original_batch_size = batch_size
-        inputs_embeds = inputs_embeds.repeat(1, beam, 1).reshape(batch_size * beam, seq_len, -1)
-
-        if use_controller_cfg:
-            if isinstance(inputs_embeds_cfg, list) and isinstance(controller_cfg_gamma, list):
-                # delete cfg samples with zero cfg gammas (to avoid extra differences from different batch sizes)
-                # lambda_{s,l}, lambda_{l}, lambda_{s}, lambda
-                keep_idx = [i for i, gamma in enumerate(controller_cfg_gamma[1:]) if gamma != 0]
-                inputs_embeds_cfg = [inputs_embeds_cfg[i] for i in keep_idx]
-                inputs_embeds_cfg = torch.cat(inputs_embeds_cfg, 0)
-                controller_cfg_gamma = [gamma for gamma in controller_cfg_gamma if gamma != 0]
-                cfg_batch_size = inputs_embeds_cfg.shape[0]
-                inputs_embeds_cfg = inputs_embeds_cfg.repeat(1, beam, 1).reshape(cfg_batch_size * beam, seq_len, -1)
-                if controller_cfg_gamma[0] > 0:
-                    inputs_embeds = torch.cat([inputs_embeds, inputs_embeds_cfg], dim=0)  # cat on first-dim(batch_size)
-                else:
-                    inputs_embeds = inputs_embeds_cfg
-            else:
-                cfg_batch_size = inputs_embeds_cfg.shape[0]
-                inputs_embeds_cfg = inputs_embeds_cfg.repeat(1, beam, 1).reshape(cfg_batch_size * beam, seq_len, -1)
-                inputs_embeds = torch.cat([inputs_embeds, inputs_embeds_cfg], dim=0)  # cat on first-dim(batch_size)
-                
-        batch_size, seq_len, _ = inputs_embeds.size() # recalculate batch size
-        sos_embeds = self.target_embedder.get_sos_embed(batch_size)
-  
-        seq_len = inputs_embeds.shape[1]
-        prefix_length = prefix_length.repeat(batch_size // original_batch_size)
-        inputs_embeds_list = unpad_sequence(inputs_embeds, prefix_length, batch_first=True)
-        if not skip_sos:
-            inputs_embeds_list = [torch.cat([e, sos_embeds[i]]) for i, e in enumerate(inputs_embeds_list)]
-            seq_len += 1
-            prefix_length += 1
-        
-        pad_embeds = []
-        # pad at left side
-        for e in inputs_embeds_list:
-            emb = torch.nn.functional.pad(e, (0, 0, seq_len-e.shape[0], 0))
-            pad_embeds.append(emb)
-        inputs_embeds = torch.stack(pad_embeds, dim=0)
-        inputs_embeds_mask = (torch.arange(0, seq_len, device=prefix_length.device) < (seq_len - prefix_length)[:, None]).bitwise_not()
-        model_input = {}
-        model_input['inputs_embeds'] = inputs_embeds
-        model_input['inputs_embeds_mask'] = inputs_embeds_mask
-        if use_controller_cfg:
-            model_input['cfg_batch_size'] = cfg_batch_size
-        else:
-            model_input['cfg_batch_size'] = None
-
-        model_input['original_batch_size'] = original_batch_size
-        model_input['prefix_length'] = prefix_length
-        model_input['exclude_ids'] = exclude_ids
-
-        return model_input
-    
     # Temporary hack to make it compatible with the old module
     def is_token_input(self) -> bool:
         return False
 
-    def predict_emb(self, batch, hp, beam: int, rl_training: bool = False):
-        return self.predict(batch, hp, beam, rl_training)
+    def predict_emb(self, batch: Dict, hp: Dict, beam: int = 1) -> Dict:
+        return self.predict(batch, hp, beam)
+
+    def _prepare_token_embeds(self, batch: Dict) -> Tuple[torch.Tensor, torch.Tensor]:
+        prefix_inputs = self.prepare_prefix_inputs(batch)
+        token_embeds = zip(*[i['token_embeds'] for i in prefix_inputs])
+        token_embeds = [torch.cat(t, dim=0) for t in token_embeds]
+        token_embeds = pad_sequence(token_embeds, batch_first=True, padding_value=0)
+        prefix_length = torch.vstack([i['token_length'] for i in prefix_inputs]).sum(dim=0).int()
+        return token_embeds, prefix_length
+
+    def prepare_cfg_batch(self, batch: Dict, hp: Dict, use_controller_cfg: bool,
+                          controller_cfg_gamma: Union[float, List[float]]) -> Optional[Union[Dict, List[Dict]]]:
+        if not use_controller_cfg:
+            return None
+
+        if isinstance(controller_cfg_gamma, list):
+            batch_uncond = self._prepare_cfg_batch(batch, hp)
+            batch_cfg = self.prepare_group_cfg_batch(batch, hp)  # list
+            batch_cfg.append(batch_uncond)  # also add FULL uncond path
+            return batch_cfg
+        else:
+            return self._prepare_cfg_batch(batch, hp)
+
+    def _prepare_group_cfg_embeddings(self, batch_cfg_list: List[Dict],
+                                     prefix_length: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+        token_embeds_cfg = []
+        prefix_length_cfg = []
+
+        for group_idx, batch_cfg_group in enumerate(batch_cfg_list):
+            token_embeds, _prefix_length = self._prepare_token_embeds(batch_cfg_group)
+
+            assert torch.all(_prefix_length == prefix_length), \
+                f"CFG group {group_idx} prefix length mismatch: expected {prefix_length}, got {_prefix_length}"
+
+            print(f"cfg group={group_idx}, shape={token_embeds.shape}, prefix_length={_prefix_length}")
+            token_embeds_cfg.append(token_embeds)
+            prefix_length_cfg.append(_prefix_length)
+
+        return token_embeds_cfg, prefix_length_cfg
+
+    def _prepare_cfg_embeddings(self, batch_cfg: Dict,
+                                      prefix_length: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        token_embeds_cfg, prefix_length_cfg = self._prepare_token_embeds(batch_cfg)
+
+        assert torch.all(prefix_length_cfg == prefix_length), \
+            f"CFG prefix length mismatch: expected {prefix_length}, got {prefix_length_cfg}"
+
+        print(f"token_embeds_cfg.shape={token_embeds_cfg.shape}, prefix_length_cfg={prefix_length_cfg}")
+        return token_embeds_cfg, prefix_length_cfg
+
+    def _process_group_cfg_for_generation(self, inputs_embeds: torch.Tensor,inputs_embeds_cfg: List[torch.Tensor],
+                               controller_cfg_gamma: List[float], beam: int, seq_len: int) -> Tuple[torch.Tensor, int]:
+        # delete cfg samples with zero cfg gammas (to avoid extra differences from different batch sizes)
+        # lambda_{s,l}, lambda_{l}, lambda_{s}, lambda
+        keep_indices = [i for i, gamma in enumerate(controller_cfg_gamma[1:]) if gamma != 0]
+        inputs_embeds_cfg = [inputs_embeds_cfg[i] for i in keep_indices]
+        inputs_embeds_cfg = torch.cat(inputs_embeds_cfg, 0)
+        controller_cfg_gamma = [gamma for gamma in controller_cfg_gamma if gamma != 0]
+
+        cfg_batch_size = inputs_embeds_cfg.shape[0]
+        inputs_embeds_cfg = inputs_embeds_cfg.repeat(1, beam, 1).reshape(cfg_batch_size * beam, seq_len, -1)
+
+        if controller_cfg_gamma[0] > 0:
+            inputs_embeds = torch.cat([inputs_embeds, inputs_embeds_cfg], dim=0)    # cat on first-dim(batch_size)
+        else:
+            inputs_embeds = inputs_embeds_cfg
+
+        return inputs_embeds, cfg_batch_size
+
+    def _process_cfg_for_generation(self, inputs_embeds: torch.Tensor, inputs_embeds_cfg: torch.Tensor, beam: int, seq_len: int) -> tuple:
+        cfg_batch_size = inputs_embeds_cfg.shape[0]
+        inputs_embeds_cfg = inputs_embeds_cfg.repeat(1, beam, 1).reshape(cfg_batch_size * beam, seq_len, -1)
+        inputs_embeds = torch.cat([inputs_embeds, inputs_embeds_cfg], dim=0)    # cat on first-dim(batch_size)
+        return inputs_embeds, cfg_batch_size
+
+    @torch.no_grad()
+    def predict(self, batch: Dict, hp: Dict, beam: int = 1) -> Dict:
+        use_controller_cfg = hp.get('use_controller_cfg', False)
+        controller_cfg_gamma = hp.get('controller_cfg_gamma', 1)
+        skip_sos = hp.get('skip_sos', False)
+        self.extra_params.debug_index = hp.get('debug_index', None)
+
+        exclude_ids = None
+        if hp.get("exclude_eos", False) and self.target_embedder.eos_id is not None:
+            exclude_ids = [self.target_embedder.eos_id]
+            print(f"exclude_ids: {exclude_ids}")
+
+        batch_cfg = self.prepare_cfg_batch(
+            batch, hp, use_controller_cfg, controller_cfg_gamma
+        )
+
+        inputs_embeds, prefix_length = self._prepare_token_embeds(batch)
+
+        inputs_embeds_cfg, prefix_length_cfg = None, None
+        if batch_cfg:
+            if isinstance(batch_cfg, list):
+                inputs_embeds_cfg, prefix_length_cfg =  self._prepare_group_cfg_embeddings(batch_cfg, prefix_length)
+            else:
+                inputs_embeds_cfg, prefix_length_cfg =  self._prepare_cfg_embeddings(batch_cfg, prefix_length)
+
+        batch.update({
+            "prefix_length": prefix_length,
+            "prefix_length_cfg": prefix_length_cfg
+        })
+
+        batch_size, seq_len, _ = inputs_embeds.size()
+        original_batch_size = batch_size
+
+        inputs_embeds = inputs_embeds.repeat(1, beam, 1).reshape(batch_size * beam, seq_len, -1)
+
+        cfg_batch_size = None
+        if use_controller_cfg and inputs_embeds_cfg is not None:
+            if isinstance(inputs_embeds_cfg, list) and isinstance(controller_cfg_gamma, list):
+                inputs_embeds, cfg_batch_size = self._process_group_cfg_for_generation(inputs_embeds, inputs_embeds_cfg, controller_cfg_gamma, beam, seq_len)
+            else:
+                inputs_embeds, cfg_batch_size = self._process_cfg_for_generation(inputs_embeds, inputs_embeds_cfg, beam, seq_len)
+
+        batch_size, seq_len, _ = inputs_embeds.size() # recalculate batch size
+
+        prefix_length = prefix_length.repeat(batch_size // original_batch_size)
+        inputs_embeds_list = unpad_sequence(inputs_embeds, prefix_length, batch_first=True)
+
+        if not skip_sos:
+            sos_embeds = self.target_embedder.get_sos_embed(batch_size)
+            inputs_embeds_list = [torch.cat([e, sos_embeds[i]]) for i, e in enumerate(inputs_embeds_list)]
+            seq_len += 1
+            prefix_length += 1
+
+        # pad at left side
+        seq_len = max(seq_len, max(e.shape[0] for e in inputs_embeds_list))
+        padded_embeds = []
+        for e in inputs_embeds_list:
+            pad_length = seq_len - e.shape[0]
+            if pad_length > 0:
+                padded_e = torch.nn.functional.pad(e, (0, 0, pad_length, 0))
+            else:
+                padded_e = e
+            padded_embeds.append(padded_e)
+        inputs_embeds = torch.stack(padded_embeds, dim=0)
+        inputs_embeds_mask = (torch.arange(0, seq_len, device=prefix_length.device) < (seq_len - prefix_length)[:, None]).bitwise_not()
+
+        return {
+            'inputs_embeds': inputs_embeds,
+            'inputs_embeds_mask': inputs_embeds_mask,
+            'cfg_batch_size': cfg_batch_size,
+            'original_batch_size': original_batch_size,
+            'prefix_length': prefix_length,
+            'exclude_ids': exclude_ids
+        }

@@ -6,7 +6,9 @@ import gc
 import itertools
 import os
 import sys
-from typing import Dict
+import operator
+from functools import partial, reduce
+from typing import Dict, List
 import math
 import torch
 import torch.distributed as dist
@@ -56,7 +58,6 @@ from tasks.audio.ndtimeline import get_ndtimeline_profile
 
 import hyperpyyaml
 from tqdm.auto import tqdm
-from recipes.bigmusic.lightning.base_modules import TokenBuffer
 from recipes.musiclm.inference.utils import sample, adaptive_sampling, SamplingScheduler
 from samantha.utils.hparams import DotDict
 
@@ -198,12 +199,166 @@ _inference_config = {
     "cuda_graph_max_seqlen": 10240,
 }
 
+
 def _get_local_path(hdfs_path, cache_dir="."):
     if hdfs_path:
         local_path = os.path.join(cache_dir, os.path.basename(hdfs_path))
     else:
         local_path = None
     return local_path
+
+
+class GenerationConfig:
+    def __init__(self, hp, **kwargs):
+        # basic
+        self.duration = hp.duration
+        self.skip_sos = hp.get('skip_sos', False)
+        self.frame_rate = hp.get('semantic_frame_rate', 25)
+
+        # forward
+        self.use_cache = kwargs.get("use_cache", False)
+        self.use_cuda_graph = kwargs.get("use_cuda_graph", False)
+        self.cuda_graph_max_bsz = kwargs.get("cuda_graph_max_bsz", 1)
+        self.cuda_graph_max_seqlen = kwargs.get("cuda_graph_max_seqlen", 1024)
+
+        # cfg
+        self.use_controller_cfg = hp.get('use_controller_cfg', False)
+        self.controller_cfg_gamma = hp.get('controller_cfg_gamma', 3)
+
+        # sampling
+        self.temperature = hp.semantic_temperature
+        self.sample_mode = hp.sample_mode
+        self.sample_thresh = hp.get("sample_thresh", 0.9)
+        self.repetition_penalty = hp.get('repetition_penalty', 1.0)
+
+        # sob
+        self.use_step_out_blank = hp.get('use_step_out_blank', False)
+        self.step_out_blank_logic = hp.get('step_out_blank_logic', 'v4')
+        self.step_out_blank_max_len = hp.get('step_out_blank_max_len', 8000)
+
+        # eos
+        self.exclude_eos_first_secs = hp.get('exclude_eos_first_secs', 0)
+        self.exclude_eos_thresh_secs = hp.get('exclude_eos_thresh_secs', 0)
+        self.emit_eos_thresh_secs = hp.get('emit_eos_thresh_secs', 0)
+        self.stop_eos = hp.get('stop_eos', False)
+
+
+class GenerationState:
+    """Manage generation state like updating output tokens and checking stop criteria."""
+
+    def __init__(self, beam: int, original_batch_size: int, device: torch.device):
+        self.beam = beam
+        self.original_batch_size = original_batch_size
+        self.device = device
+        self.is_eos_stop = torch.zeros((beam, original_batch_size), dtype=torch.long, device=device)
+        self.output_tokens = None
+
+    def update_output_tokens(self, predict_token: torch.Tensor) -> None:
+        self.output_tokens = torch.cat([self.output_tokens, predict_token], dim=1) if self.output_tokens is not None else predict_token
+
+    def check_stopping_criteria(self, predict_token: torch.Tensor, step: int, num_tokens: torch.Tensor,
+                                eos_id: int, stop_eos: bool) -> bool:
+        if not stop_eos:
+            return False
+
+        num_tokens_mask = (step >= num_tokens).broadcast_to(self.beam, self.original_batch_size) # (beam, bsz)
+        eos_mask = predict_token.view(self.beam, -1) == eos_id  # (beam, bsz)
+        eos_mask = torch.logical_or(eos_mask, num_tokens_mask)
+        self.is_eos_stop += eos_mask
+        self.output_tokens[eos_mask.view(-1), -1] = eos_id  # force
+        return torch.all(self.is_eos_stop > 0)
+
+
+class TokenBuffer:
+    def __init__(self, beam: int, original_batch_size: int, step_out_blank_max_len: int, batch: Dict):
+        self.beam = beam
+        self.original_batch_size = original_batch_size
+        self.step_out_blank_max_len = step_out_blank_max_len
+        self.buffers = self._initialize_buffers(batch)
+
+    def _initialize_buffers(self, batch: Dict) -> List[List[int]]:
+        buffers = [[] for _ in range(self.beam * self.original_batch_size)] # init previous_tokens
+
+        if "audio_prompt_token_ids" in batch:
+            token_ids = batch["audio_prompt_token_ids"].tolist()
+            previous_tokens = reduce(operator.add, [[ti[:l]]for l, ti in zip(batch["target_tokens_length"].tolist(), token_ids)] * self.beam)  # (beam * bs, audio_prompt_token_len)
+            buffer_len = min(max(len(pt) for pt in previous_tokens), self.step_out_blank_max_len)
+            buffers = [[-1] * (buffer_len - len(pt)) + pt[-buffer_len:] for pt in previous_tokens]
+
+        return buffers
+
+    def update(self, predict_token: torch.Tensor) -> None:
+        predict_token_cpu = predict_token.cpu().numpy()
+        # predict_token_cpu: (beam, b)
+        # previous_tokens: (beam_size * b, queue_len)
+        for beam_idx in range(self.beam):
+            for j in range(self.original_batch_size):
+                batch_slice = slice(beam_idx * self.original_batch_size, (beam_idx + 1) * self.original_batch_size)
+                if len(self.buffers[batch_slice][j]) < self.step_out_blank_max_len:
+                    self.buffers[batch_slice][j].append(predict_token_cpu[batch_slice][j])
+                else:
+                    self.buffers[batch_slice][j] = self.buffers[batch_slice][j][-self.step_out_blank_max_len:]
+                    self.buffers[batch_slice][j].append(predict_token_cpu[batch_slice][j])
+
+
+class LogitsProcessor:
+    def __init__(self, config: GenerationConfig) -> None:
+        self.config = config
+
+    def _apply_cfg(self, logits, batch_size, n_cfg_path):
+        if isinstance(self.config.controller_cfg_gamma, list):
+            beam_bs = batch_size // (1+n_cfg_path)
+            uncond_logits = logits[-beam_bs:]
+            cond_cfg_logits = torch.zeros_like(uncond_logits)
+            for gg in range(len(self.config.controller_cfg_gamma)):
+                this_cond_logits = logits[beam_bs*gg: beam_bs*(gg+1)]
+                cond_cfg_logits += (self.config.controller_cfg_gamma[gg] * this_cond_logits)
+            logits = cond_cfg_logits
+        else:
+            uncond_logits = logits[batch_size//2:]     # unconditioned path
+            cond_logits = logits[0:batch_size//2]
+            logits = self.config.controller_cfg_gamma * cond_logits + (1 - self.config.controller_cfg_gamma) * uncond_logits
+        return logits
+
+    def apply_cfg(self, logits: torch.Tensor, batch_size: int, n_cfg_path: int) -> torch.Tensor:
+        if self.config.use_controller_cfg:
+            return self._apply_cfg(logits, batch_size, n_cfg_path)
+        return logits
+
+    def apply_step_out_blank(self, logits: torch.Tensor, previous_tokens: List[List[int]],
+                                beam: int, original_batch_size: int) -> torch.Tensor:
+        if not self.config.use_step_out_blank or self.config.step_out_blank_logic != 'v4':
+            logger.warning("The step_out_blank for v1, v2, and v3 are now deprecated. Only v4 is supported.")
+            return logits
+
+        # process previous token, bin counts, apply penalty
+        previous_output_tokens = torch.tensor(
+            previous_tokens, dtype=torch.long, device=logits.device
+        ).reshape(beam * original_batch_size, -1)
+        bin_counts = torch.zeros(
+            [beam * original_batch_size, logits.size(-1) + 1],
+            dtype=torch.long, device=logits.device
+        )
+        bin_counts.scatter_add_(1, previous_output_tokens, torch.ones_like(previous_output_tokens))
+        bin_counts = bin_counts[:, :logits.size(-1)]
+
+        mask = (bin_counts > 0).view(logits.shape)
+        negative_mask = logits < 0
+
+        penalty_mask_neg = mask & negative_mask
+        penalty_mask_pos = mask & (~negative_mask)
+
+        logits = torch.where(penalty_mask_neg, logits * self.config.repetition_penalty, logits)
+        logits = torch.where(penalty_mask_pos, logits / self.config.repetition_penalty, logits)
+
+        return logits
+
+    def apply_eos_control(self, logits: torch.Tensor, step: int, exclude_eos_first_secs: torch.Tensor,
+                         frame_rate: int, original_batch_size: int, eos_id: int) -> torch.Tensor:
+        for i in range(original_batch_size):
+            if step < exclude_eos_first_secs[i] * frame_rate:
+                logits[i, 0, eos_id] = -float('Inf')
+        return logits
 
 
 class SemanticLlmModel(CruiseModule):
@@ -1154,7 +1309,6 @@ class SemanticLlmModel(CruiseModule):
         }
 
     def predict_step(self, batch, batch_idx):
-
         output = self.emb.predict(batch)
         # TODO: token to wave
         return super().predict_step(batch, batch_idx)
@@ -1171,293 +1325,196 @@ class SemanticLlmModel(CruiseModule):
             return samples
         return sample(logits, temp=temp, mode=mode, thresh=thresh, exclude_ids=exclude_ids)
 
+    def _prepare_cuda_graph(self, use_cache: bool, use_cuda_graph: bool, cuda_graph_max_bsz: int = 1, cuda_graph_max_seqlen: int = 1024) -> None:
+        # init cuda graph
+        if use_cache and use_cuda_graph and self.graph is None:
+            logger.info(f"Initializing CUDA graph for {self.gpt2.__class__.__name__} "
+                       f"with max_bsz={cuda_graph_max_bsz} and max_seqlen={cuda_graph_max_seqlen}")
+
+            with torch.autocast(device_type="cuda", enabled=True, dtype=torch.bfloat16):
+                # max_batch_size must equal to beam_size * real_batch_size
+                self.capture_cuda_graph(cuda_graph_max_bsz, cuda_graph_max_seqlen)
+
+    def _forward_step(self, model_input: Dict, gpt2_kwargs: Dict, step: int,
+                     use_cache: bool, use_cuda_graph: bool) -> Dict:
+        # to enable inference without a trainer, we simply cast the inputs to the expected model type
+        # which is either torch.float16 or torch.bfloat16
+        model_input["inputs_embeds"] = model_input["inputs_embeds"].to(self.gpt2.transformer.ln_f.weight.dtype)
+        B, T, _ = model_input['inputs_embeds'].shape
+
+        if step == 0:
+            # prefill
+            gpt2_kwargs = self.gpt2.prepare_inputs_for_generation(
+                None,
+                inputs_embeds=model_input['inputs_embeds'],
+                inputs_embeds_mask=model_input['inputs_embeds_mask'],
+                **gpt2_kwargs,
+            )
+        else:
+            # decode
+            gpt2_kwargs.update(
+                inputs_embeds=model_input['inputs_embeds'],
+                inputs_embeds_mask=torch.ones(B, T, dtype=torch.bool, device=model_input["inputs_embeds"].device),
+            )
+
+        with torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+            if use_cache and use_cuda_graph:
+                if step == 0:
+                    # prefill
+                    gpt2_kwargs['past_key_values'] = self.past_key_values
+                    output = self.gpt2(**gpt2_kwargs, return_dict=True)
+                else:
+                    # decode
+                    output = self.predict_by_cuda_graph(
+                        gpt2_kwargs['inputs_embeds'],
+                        gpt2_kwargs['inputs_embeds_mask'],
+                        gpt2_kwargs['cache_seqlens'],
+                        gpt2_kwargs['past_key_values'],
+                    )
+            else:
+                output = self.gpt2(**gpt2_kwargs, return_dict=True)
+
+        return output, gpt2_kwargs
+
+    def _update_cache(self, gpt2_kwargs: Dict, output: Dict) -> Dict:
+        # update generation input for next step
+        cache_seqlens = gpt2_kwargs.get('cache_seqlens', None)
+        past_key_values = gpt2_kwargs.get('past_key_values', None)
+        if past_key_values is None:
+            past_key_values = output.get('past_key_values', None)
+        this_peer_finished = gpt2_kwargs.get('this_peer_finished', False)
+
+        assert past_key_values is not None, "past_key_values should not be None when using cache"
+
+        if cache_seqlens is None:
+            inputs_embeds_mask = gpt2_kwargs.get('inputs_embeds_mask', None)
+            assert inputs_embeds_mask is not None, "inputs_embeds_mask should not be None"
+            cache_seqlens = inputs_embeds_mask.view(inputs_embeds_mask.shape[0], -1).sum(-1, dtype=torch.int32) - 1
+
+        cache_seqlens = cache_seqlens + 1
+
+        gpt2_kwargs.update({
+            'cache_seqlens': cache_seqlens,
+            'this_peer_finished': this_peer_finished,
+            'past_key_values': past_key_values
+        })
+
+        return gpt2_kwargs
+
     @torch.no_grad()
-    def predict(self, batch, hp, beam=1, rl_training=False):
+    def predict(self, batch, hp, beam=1):
         if self.emb.is_token_input():
             raise NotImplementedError("token input has derapcated, please use bpe module")
 
-        assert rl_training is False, "Not support yet."
+        # prepare config
+        config = GenerationConfig(
+            hp=hp,
+            **self.hparams.inference,
+        )
+
+        # prepare emb results and init cfg batch
         model_input = self.emb.predict_emb(
             batch=batch,
             hp=hp,
-            beam=beam,
-            rl_training=rl_training)
-
-        frame_rate = self.extra_params.get("semantic_frame_rate", 25)
-        batch_size, seq_len, _ = model_input["inputs_embeds"].size()
-
-        def apply_cfg(logits, controller_cfg_gamma, batch_size, n_cfg_path):
-            if isinstance(controller_cfg_gamma, list):
-                beam_bs = batch_size // (1+n_cfg_path)
-                uncond_logits = logits[-beam_bs:]
-                cond_cfg_logits = torch.zeros_like(uncond_logits)
-                for gg in range(len(controller_cfg_gamma)):
-                    this_cond_logits = logits[beam_bs*gg: beam_bs*(gg+1)]
-                    cond_cfg_logits += (controller_cfg_gamma[gg] * this_cond_logits)
-                logits = cond_cfg_logits
-            else:
-                uncond_logits = logits[batch_size//2:]     # unconditioned path
-                cond_logits = logits[0:batch_size//2]
-                logits = controller_cfg_gamma * cond_logits + (1 - controller_cfg_gamma) * uncond_logits
-            return logits
-
-        num_tokens = hp.duration * frame_rate
-        temperature = hp.semantic_temperature
-        sample_mode = hp.sample_mode
-        sample_thresh = hp.get('sample_thresh', 0.9)
-        use_controller_cfg = hp.get('use_controller_cfg', False)
-        controller_cfg_gamma = hp.get('controller_cfg_gamma', 1)
-        use_step_out_blank = hp.get('use_step_out_blank', False)
-        step_out_blank_logic = hp.get('step_out_blank_logic', 'v2')
-        step_out_blank_max_len = hp.get('step_out_blank_max_len', 10)
-        repetition_penalty = hp.get('repetition_penalty', 1.0)
-        exclude_eos_first_secs = hp.get('exclude_eos_first_secs', 0)
-        exclude_eos_thresh_secs = hp.get('exclude_eos_thresh_secs', 0)
-        emit_eos_thresh_secs = hp.get('emit_eos_thresh_secs', 0)
-        skip_sos = hp.get('skip_sos', False)
-        stop_eos = hp.get('stop_eos', False)
-
-        # n_cfg_path = model_input['n_cfg_path']
-        if use_controller_cfg:
-            cfg_batch_size = model_input['cfg_batch_size']
-        else:
-            cfg_batch_size = None
+            beam=beam)
 
         original_batch_size = model_input['original_batch_size']
-        prefix_length = model_input['prefix_length']
         exclude_ids = model_input['exclude_ids']
-        inputs_embeds_mask = model_input['inputs_embeds_mask']
+        inputs_embeds = model_input['inputs_embeds']
 
-        output_tokens = None
-
-        if use_step_out_blank:
-            if step_out_blank_logic == "v1":
-                token_buffer = TokenBuffer(step_out_blank_max_len)
-            else:
-                # previous_tokens is a series of token buffers.
-                # Suppose beam == 2, original_batch_size == 2, the buffer order is:
-                #  |------ batch_size ------|  |------ batch_size ------|
-                #  |-------- beam#0 --------|  |-------- beam#1 --------|
-                # [beam#0_seq#0, beam#0_seq#1, beam#1_seq#0, beam#1_seq#1]
-                previous_tokens = [[] for _ in range(beam * original_batch_size)]
-                if "audio_prompt_token_ids" in batch:
-                    previous_tokens = torch.concat([batch["audio_prompt_token_ids"]] * beam).tolist()   # (beam * bs, audio_prompt_token_len)
-                    buffer_len = min(min(len(pt) for pt in previous_tokens), step_out_blank_max_len)
-                    previous_tokens = [pt[-buffer_len:] for pt in previous_tokens]
-
+        frame_rate = config.frame_rate
         slice_dur = batch['slice_duration'].ceil().int()
+        # Variable slice_dur will be used to calculate the number of tokens to generate.
+        # For audio continuation, the prompt duration should be subtracted from the slice duration.
+        if "audio_prompt" in batch:
+            slice_dur = slice_dur - batch["target_tokens_length"] / frame_rate
+
         exclude_eos_first_secs = (
-            slice_dur - exclude_eos_thresh_secs
-            if exclude_eos_thresh_secs > 0
-            else torch.empty(original_batch_size, dtype=torch.int32).fill_(exclude_eos_first_secs)
-        )
-        exclude_eos_first_secs = exclude_eos_first_secs.int().cpu()
-        num_tokens = (slice_dur + emit_eos_thresh_secs) * frame_rate if emit_eos_thresh_secs > 0 else num_tokens
+            slice_dur - config.exclude_eos_thresh_secs
+            if config.exclude_eos_thresh_secs > 0
+            else torch.empty(original_batch_size, dtype=torch.int32).fill_(config.exclude_eos_first_secs)
+        ).int().cpu()
+
+        num_tokens = (slice_dur + config.emit_eos_thresh_secs) * frame_rate if config.emit_eos_thresh_secs > 0 else config.duration * frame_rate
         if isinstance(num_tokens, torch.Tensor):
             num_tokens_max = num_tokens.int().amax().item()
         else:
             num_tokens_max = num_tokens
             num_tokens = torch.empty(original_batch_size, dtype=torch.int32).fill_(num_tokens_max)
 
+        n_cfg_path = 0
+        if config.use_controller_cfg:
+            cfg_batch_size = model_input['cfg_batch_size']
+            n_cfg_path = cfg_batch_size // original_batch_size
+
+        batch_size = inputs_embeds.size(0)
+        logits_processor = LogitsProcessor(config)
+        generation_state = GenerationState(beam, original_batch_size, self.gpt2.device)
+
+        token_buffer = None
+        if config.use_step_out_blank:
+            token_buffer = TokenBuffer(beam, original_batch_size, config.step_out_blank_max_len, batch)
+
+        # prepare cuda graph
+        self._prepare_cuda_graph(
+            config.use_cache, config.use_cuda_graph,
+            config.cuda_graph_max_bsz, config.cuda_graph_max_seqlen,
+        )
+
+        # generation loop
+        gpt2_kwargs = dict(use_cache=config.use_cache)
         pbar = tqdm(range(num_tokens_max))
         tqdm_name = f"{self.__class__.__name__}.rank{DIST_ENV.local_rank}"
-        is_eos_stop = torch.zeros((beam, original_batch_size), dtype=torch.long, device=self.gpt2.device)
 
-        B, T, _ = model_input['inputs_embeds'].shape
-        use_cache = self.hparams.inference.get('use_cache', False)
-        use_cuda_graph = self.hparams.inference.get('use_cuda_graph', False)
-        if use_cache:
-            # init cuda graph
-            if use_cuda_graph and self.graph is None:
-                cuda_graph_max_bsz = self.hparams.inference.get('cuda_graph_max_bsz', 1)
-                cuda_graph_max_seqlen = self.hparams.inference.get('cuda_graph_max_seqlen', 1024)
-                logger.info(f"init cuda graph for {self.gpt2.__class__.__name__} with max_bsz={cuda_graph_max_bsz} and max_seqlen={cuda_graph_max_seqlen}")
-                with torch.autocast(device_type="cuda", enabled=True, dtype=torch.bfloat16):
-                    # max_batch_size must equal to beam_size * real_batch_size
-                    self.capture_cuda_graph(cuda_graph_max_bsz, cuda_graph_max_seqlen)
-
-        gpt2_kwargs = dict(use_cache=use_cache)
-
-        for i in pbar:
+        for step in pbar:
             pbar.set_description(f"{tqdm_name} [0 - {num_tokens_max}]")
+            # forward
+            output, gpt2_kwargs = self._forward_step(model_input, gpt2_kwargs, step, config.use_cache, config.use_cuda_graph)
 
-            # to enable inference without a trainer, we simply cast the inputs to the expected model type
-            # which is either torch.float16 or torch.bfloat16
-            model_input["inputs_embeds"] = model_input["inputs_embeds"].to(self.gpt2.transformer.ln_f.weight.dtype)
-            B, T, _ = model_input['inputs_embeds'].shape
-            if i == 0:
-                gpt2_kwargs = self.gpt2.prepare_inputs_for_generation(
-                    None,
-                    inputs_embeds=model_input["inputs_embeds"],
-                    inputs_embeds_mask=inputs_embeds_mask,
-                    **gpt2_kwargs,
-                )
-            else:
-                gpt2_kwargs.update(
-                    inputs_embeds=model_input["inputs_embeds"],
-                    inputs_embeds_mask=torch.ones(B, T, dtype=torch.bool, device=model_input["inputs_embeds"].device),
-                )
-            with torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
-                if use_cache and use_cuda_graph:
-                    if i == 0:
-                        # prefill
-                        gpt2_kwargs['past_key_values'] = self.past_key_values
-                        output = self.gpt2(**gpt2_kwargs, return_dict=True)
-                    else:
-                        # decode
-                        output = self.predict_by_cuda_graph(
-                            gpt2_kwargs['inputs_embeds'],
-                            gpt2_kwargs['inputs_embeds_mask'],
-                            gpt2_kwargs['cache_seqlens'],
-                            gpt2_kwargs['past_key_values'],
-                        )
-                else:
-                    output = self.gpt2(**gpt2_kwargs, return_dict=True)
+            # update cache
+            if config.use_cache:
+                gpt2_kwargs = self._update_cache(gpt2_kwargs, output)
 
-            if use_cache:
-                # update generation input for next step
-                cache_seqlens = gpt2_kwargs.get('cache_seqlens', None)
-                past_key_values = gpt2_kwargs.get('past_key_values', None)
-                if past_key_values is None:
-                    past_key_values = output.get('past_key_values', None)
-                this_peer_finished = gpt2_kwargs.get('this_peer_finished', False)
-                assert past_key_values is not None
-                if cache_seqlens is None:
-                    inputs_embeds_mask = gpt2_kwargs.get('inputs_embeds_mask', None)
-                    assert inputs_embeds_mask is not None
-                    cache_seqlens = inputs_embeds_mask.view(inputs_embeds_mask.shape[0], -1).sum(-1, dtype=torch.int32) - 1
-                cache_seqlens = cache_seqlens + 1
+            logits = output['logits'].float()[:, -1:, :]
 
-                gpt2_kwargs['cache_seqlens'] = cache_seqlens
-                gpt2_kwargs['this_peer_finished'] = this_peer_finished
-                gpt2_kwargs['past_key_values'] = past_key_values
+            # cfg
+            logits = logits_processor.apply_cfg(logits, batch_size, n_cfg_path)
 
-            logits = output['logits']
-            # cast back to full precision
-            logits = logits.float()
+            # sob
+            if token_buffer:
+                logits = logits_processor.apply_step_out_blank(logits, token_buffer.buffers, beam, original_batch_size)
 
-            # inference_params.sequence_len_offset += model_input['inputs_embeds'].size(1)
-            logits = logits[:, -1:, :] # only predicting on last logit.
-
-            if use_controller_cfg:
-                n_cfg_path = cfg_batch_size // original_batch_size
-                logits = apply_cfg(logits, controller_cfg_gamma, batch_size, n_cfg_path)
-            else:
-                n_cfg_path = 0
-
-            if use_step_out_blank:
-                if step_out_blank_logic == 'v3':
-                    for j in range(original_batch_size):
-                        for token in previous_tokens[j]:
-                            logits[j, 0, token] = -float('Inf')
-
-                elif step_out_blank_logic == 'v4':
-                    previous_output_tokens = torch.tensor(previous_tokens, dtype=torch.long, device='cuda').reshape(beam * original_batch_size, -1)
-                    bin_counts = torch.zeros([beam * original_batch_size, logits.size(-1)+1], dtype=torch.long, device='cuda')
-                    bin_counts.scatter_add_(1, previous_output_tokens, torch.ones_like(previous_output_tokens))
-
-                    bin_counts = bin_counts[:, 0:logits.size(-1)]
-
-                    mask = (bin_counts > 0).view(logits.shape)
-                    negative_mask = logits < 0
-
-                    logits = torch.where(mask.logical_and(negative_mask), logits * repetition_penalty, logits)
-                    logits = torch.where(mask.logical_and(negative_mask.logical_not()), logits / repetition_penalty, logits)
-
-            # Ensure that it generates at least 30s music.
-            for j in range(original_batch_size):
-                if i < frame_rate * exclude_eos_first_secs[j]:
-                    logits[j, 0, self.emb.target_embedder.eos_id] = -float('Inf')
-
-            predict_token = self.sample_logits(
-                i, logits, temperature, sample_mode, sample_thresh, exclude_ids
+            logits = logits_processor.apply_eos_control(
+                logits, step, exclude_eos_first_secs, frame_rate,
+                original_batch_size, self.emb.target_embedder.eos_id
             )
 
-            if use_step_out_blank:
-                if step_out_blank_logic == 'v1':
-                    max_trying_times = 5
-                    max_temperature = 1.5
-                    token_buffer.put(predict_token.cpu().numpy()[0,0])        # v1: temperature 不断增加
-                    if token_buffer.is_duplicate():
-                        high_temperature = temperature
-                        while token_buffer.is_duplicate():
-                            count = 0
-                            while count < max_trying_times and token_buffer.is_duplicate():
-                                print(f"TimeStep={i}|Fall into silence loop...", token_buffer.buffer, f"temperature={high_temperature}")
-                                predict_token = self.sample_logits(i, logits, high_temperature, sample_thresh, sample_mode)
-                                predict_token=predict_token[:,None]
-                                token_buffer.put(predict_token.cpu().numpy()[0,0])
-                                count = count + 1
-                            high_temperature = min(high_temperature + 0.1, max_temperature)
+            # sampling
+            predict_token = self.sample_logits(
+                step, logits, config.temperature, config.sample_mode, config.sample_thresh, exclude_ids
+            )
 
-                elif step_out_blank_logic == 'v2':
-                    predict_token_cpu = predict_token.cpu().numpy()
-                    need_to_resample = False
-                    for j in range(original_batch_size):
-                        if predict_token_cpu[j,0] in previous_tokens[j]:
-                            need_to_resample = True
-                            break
+            if config.use_step_out_blank:
+                token_buffer.update(predict_token)
 
-                    while need_to_resample:      # v2: windowed repetition penalty
-                        # print(f"TimeStep={i}|Fall into windowed loop...", previous_tokens)
-                        for j in range(original_batch_size):
-                            if predict_token_cpu[j,0] in previous_tokens[j]:
-                                logits[j, 0, predict_token_cpu[j,0]] = -float('Inf')
-                        predict_token = self.sample_logits(i, logits, temperature, sample_mode, sample_thresh, exclude_ids)
-
-                        predict_token_cpu = predict_token.cpu().numpy()
-                        need_to_resample = False
-                        for j in range(original_batch_size):
-                            if predict_token_cpu[j,0] in previous_tokens[j]:
-                                need_to_resample = True
-                                break
-
-                    # if predict_token[0,0] != self.target_embedder.eos_id:   # eos 不压入 previous_tokens
-                    for j in range(original_batch_size):
-                        if len(previous_tokens[j]) < step_out_blank_max_len:
-                            previous_tokens[j].append(predict_token_cpu[j,0])
-                        else:
-                            previous_tokens[j] = previous_tokens[j][-step_out_blank_max_len:]
-                            previous_tokens[j].append(predict_token_cpu[j,0])
-
-                elif step_out_blank_logic in ['v3', 'v4']:
-                    predict_token_cpu = predict_token.cpu().numpy()
-                    # predict_token_cpu: (beam, b)
-                    # previous_tokens: (beam_size * b, queue_len)
-                    for beam_idx in range(beam):
-                        for j in range(original_batch_size):
-                            batch_slice = slice(beam_idx*original_batch_size, (beam_idx+1)*original_batch_size)
-                            if len(previous_tokens[batch_slice][j]) < step_out_blank_max_len:
-                                previous_tokens[batch_slice][j].append(predict_token_cpu[batch_slice][j])
-                            else:
-                                previous_tokens[batch_slice][j] = previous_tokens[batch_slice][j][-step_out_blank_max_len:]
-                                previous_tokens[batch_slice][j].append(predict_token_cpu[batch_slice][j])
-                else:
-                    raise NotImplementedError
-
+            # get next input embedding
             predict_token_emb = self.emb.target_embedder.embedder(predict_token)
-
-            if use_controller_cfg:
+            if config.use_controller_cfg:
                 predict_token_emb = predict_token_emb.repeat(n_cfg_path + 1, 1, 1)
 
-            # inference workaround
-            if use_cache:
+            # update cache
+            if config.use_cache:
                 model_input['inputs_embeds'] = predict_token_emb
             else:
-                model_input['inputs_embeds'] = torch.cat((model_input['inputs_embeds'],predict_token_emb), 1)
+                model_input['inputs_embeds'] = torch.cat((model_input['inputs_embeds'], predict_token_emb), 1)
 
-            output_tokens = torch.cat([output_tokens, predict_token], dim=1) if output_tokens is not None else predict_token
+            generation_state.update_output_tokens(predict_token)
 
-            if stop_eos:
-                num_tokens_mask = (i >= num_tokens).broadcast_to(beam, original_batch_size) # (beam, bsz)
-                eos_mask = predict_token.view(beam, -1) == self.emb.target_embedder.eos_id  # (beam, bsz)
-                eos_mask = torch.logical_or(eos_mask, num_tokens_mask)
-                is_eos_stop += eos_mask
-                output_tokens[eos_mask.view(-1), -1] = self.emb.target_embedder.eos_id  # force
-                if torch.all(is_eos_stop > 0):
-                    break
-        return output_tokens
+            # stopping criteria
+            if generation_state.check_stopping_criteria(predict_token, step, num_tokens, self.emb.target_embedder.eos_id, config.stop_eos):
+                break
 
+        return generation_state.output_tokens
 
     def __del__(self):
         if self.graph is not None:
@@ -1466,7 +1523,6 @@ class SemanticLlmModel(CruiseModule):
     def execution_order(self) -> list[str]:
         """LSDP need this"""
         return ["gpt2"]
-
 
 def _get_skip_meter_name(transform_name: str):
     return "transform_skip/"+transform_name
