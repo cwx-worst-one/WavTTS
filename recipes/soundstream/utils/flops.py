@@ -62,8 +62,12 @@ def get_device_flops(precision="16"):
     device_name = torch.cuda.get_device_name()
     if "A100" in device_name or "A800" in device_name:
         return 312e12 if precision == "16" else 156e12
+    elif "A30" in device_name:
+        return 165e12 if precision == "16" else 82e12
     elif "H100" in device_name or "H800" in device_name:
         return 1979e12 if precision == "16" else 989e12
+    elif "H20" in device_name and "H200" not in device_name:
+        return 148e12 if precision == "16" else 74e12
     elif "V100" in device_name:
         return 125e12
 
