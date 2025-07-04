@@ -49,11 +49,11 @@ from mariana.utils.exp_helper import ExpHelper
 from tasks.audio.audio_trainer import AudioTrainer
 from mariana.utils.audio.audio_logger import AudioLogger
 from tasks.audio.utils import (
-    get_formated_model_summary_table,
     get_optimizer_grouped_parameters,
     upload_single_compressed_trace,
     upload_trace,
 )
+from mariana.utils.comm_utils import get_formated_model_summary_table
 from tasks.audio.ndtimeline import get_ndtimeline_profile
 
 import hyperpyyaml
