@@ -1,40 +1,26 @@
-# yaml file only used in CI test.
-
 data:
-  save_ckpt_interval: -1
-  train_dataset_ids: [15314]
+  save_ckpt_interval: 2000 # keep same with model checkpoint save interval
+  train_dataset_ids: [14253]
   train_dataset_weights: [1]
-  val_dataset_ids: [15314]
-  val_dataset_weights: [1]
-  predict_dataset_ids: [15314]
-  predict_dataset_weights: [1]
 
   train_batcher:
     type: "TokenBucketBatcher"
     dynamic_batch: True
     bucket_schedule_key: "num_total_tokens"
-    maximum_bucket_size: 5000
-
-  val_batcher:
-    type: "SimpleBatcher"
-    batch_size: 1
-
-  predict_batcher:
-    type: "SimpleBatcher"
-    batch_size: 1
+    maximum_bucket_size: 100000 # 240 seconds * (50: audio_token:25 + text_token:25) * 3 full song
 
   train_item_transform:
     - type: "ConvertMetaToDict"
     - type: "MusicParser"
       in_key: "audio"
       out_key: "audio"
-      max_len: 800.0 # second
-    - type: "WavResample"
-      key: "audio"
-      sample_rate: 24000
+      max_len: 800.0 #second
     - type: "NormalizeAudioToFloat32"
       in_key: "audio"
       out_key: "audio"
+    - type: "WavResample"
+      key: "audio"
+      sample_rate: 24000
     # Meta data parsing
     - type: "StructureParser"
       in_key: [
@@ -44,23 +30,28 @@ data:
       ]
       merge_mode: [null, null, vocal]
       out_key: "structure"
-      confidence_threshold: 0.0
+      confidence_threshold: null
     - type: "TempoParser"
-      dropout_rate: 0.0
+      dropout_rate: 0.1
+    # - type: "KeyModeParser"
+    #   dropout_rate: 0.1
+    # - type: "InstParser"
+    #   dropout_rate: 0.1
+    - type: "UtteranceParser"
+    - type: "VoiceProportionParser"
+      vad_threshold: 0.15
+    # - type: "VocalOrInstFilter"
+    #   target_type: inst
     - type: "StyleTagParser"
-      dropout_rate: 0.0
+      dropout_rate: 0.1
       vocab: "v3"
       standardize: true
     - type: "StyleTagFilter"
     - type: "StyleTagTokenizer"
       vocab: "v3"
     - type: "FreeformTextParser"
-      keyword_dropout_rate: 0.0
-      dropout_rate: 0.0
-    - type: "UtteranceParser"
-      confidence_threshold: 0.0
-    - type: "VoiceProportionParser"
-      vad_threshold: 0.15
+      keyword_dropout_rate: 0.1
+      dropout_rate: 0.1
     - type: "MusicMetaRWTransform"
       in_key: "meta.mir_service.vocal2midi"
       out_key: "vocal2midi"
@@ -68,9 +59,8 @@ data:
     # Split parsed data into multple song slices with style tags and freeform text tucked in
     - type: "SongSliceSplit"
       max_duration: 240.0
-      line_break_dropout_rate: 0.0
+      line_break_dropout_rate: 0.1
       slice_mode: section # section | full
-      out_key: song_slices
     # (Optional) Remove redundant data after the split
     - type: "MusicMetaRWTransform"
       in_key:
@@ -95,17 +85,16 @@ data:
     - type: "RandomSampleFromList"
       in_key: "song_slices"
       out_key: "song_slices"
-      n_items: 10
-      p_full: 0.0
+      n_items: 3
+      p_full: 1.0
     # reformat -> sequentialize -> tokenize phonemes with interleaved tags (section, singer, etc.)
     - type: "SongSliceMapSequentialize"
       mode: phoneme
-      note_dropout_rate: 1.0
     - type: "SongSliceMapTokenize"
-      vocab: "v2"
-      section_tag_dropout_rate: 0.0
-      slice_duration_dropout_rate: 0.0
-      singer_tag_dropout_rate: 0.0
+      vocab: "v1"
+      section_tag_dropout_rate: 0.1
+      slice_duration_dropout_rate: 0.1
+      singer_tag_dropout_rate: 0.1
     - type: "SongSliceAudioCut"
       in_key: "song_slices"
       audio_key: "audio"
@@ -164,7 +153,7 @@ data:
 
     - type: "AddField"
       key: conditions
-      value: "style_category,speaker_id,tempo,freeform_text,lyrics_tokens"
+      value: "style_category,speaker_id,freeform_text,lyrics_tokens"
 
     - type: "RenameKey"
       in_key_list: ["audio"]
@@ -174,7 +163,7 @@ data:
     - type: "CaptureWorkerInfo"
 
   train_batch_transform:
-    #- type: WorkerInfoCollate
+    - type: WorkerInfoCollate
     - type: AudioCollate
       in_key: "target_audio"
       length_key: "audio_length"
@@ -187,14 +176,12 @@ data:
       coff_key: "coffs"
       token_output_key: "lyrics_tokens"
       coff_output_key: "lyrics_coffs"
-      max_phone_len: 4000
 
     - type: NestListCollate
       key_list:
         [
           "uttid",
           "style_tags",
-          "style_text",
           "style_input_ids",
           "freeform_text",
           "phoneme_tokens.tokens",
@@ -213,12 +200,3 @@ data:
           "tempo",
         ]
       to_tensor: True
-
-  predict_item_transform: &predict_item_transform
-    - type: ConvertMetaToDict
-
-  predict_batch_transform: &predict_batch_transform
-    - type: mariana.data.audio.collates.SimpleListCollate
-
-  val_item_transform: *predict_item_transform
-  val_batch_transform: *predict_batch_transform

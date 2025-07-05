@@ -610,6 +610,7 @@
       "Acoustic_Piano": 546,
       "Acousticpiano": 546,
       "Electric_Piano": 547,
+      "Electric_piano": 547,
       "Organ": 548,
       "Accordion": 549,
       "Harpsichord": 550,
@@ -726,6 +727,7 @@
       "Clean_Electric_Guitar": 656,
       "Distorted_Electric_Guitar": 657,
       "Choir_And_Voice": 658,
+      "Choir_and_Voice": 658,
       "Other": 659
     },
     "tempo":  {

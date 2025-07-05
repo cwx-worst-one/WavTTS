@@ -236,6 +236,17 @@ class TestTempoParser:
             "tempo": 120.0,
         }
 
+    def test_standard_music_meta_nonbpe(self):
+        assert TempoParser(
+            in_key="meta.standard_music_meta_nonbpe",
+            out_key="tempo",
+            remove_in_key=True,
+            dropout_rate=0.0,
+        )({"meta": {"standard_music_meta_nonbpe": {"extra_info": {"bpm": "120.5"}}}}) == {
+            "meta": {},
+            "tempo": 120.5,
+        }
+
     def test_multi_in_keys(self):
         assert TempoParser(
             in_key=["meta.musicfm_plus.beat", "meta.tempo"],
@@ -243,6 +254,14 @@ class TestTempoParser:
             remove_in_key=True,
             dropout_rate=0.0,
         )({"meta": {"tempo": "120.5"}}) == {"meta": {}, "tempo": 120.5}
+
+    def test_empty(self):
+        assert TempoParser(
+            in_key=["meta.musicfm_plus.beat", "meta.tempo"],
+            out_key="tempo",
+            remove_in_key=True,
+            dropout_rate=0.0,
+        )({"meta":{}}) == {"meta": {}, "tempo": -1.0}
 
 
 class TestKeyModeParser:

@@ -1,11 +1,3 @@
-# 04/23/2025 Changes:
-# - Update phoneme vocab to v1
-# - Update style vocab to v2
-# - Standardize style tags on-the-fly
-# - Remove style_text
-# - Switch to the refactored embedding module
-# - Remove text_codebook_size
-
 data:
   save_ckpt_interval: 2000 # keep same with model checkpoint save interval
   train_dataset_ids: ["CN:14570","CN:14571","CN:14847"]
@@ -17,7 +9,7 @@ data:
     type: "TokenBucketBatcher"
     dynamic_batch: True
     bucket_schedule_key: "num_total_tokens"
-    maximum_bucket_size: 80000 # 240 seconds * (50: audio_token:25 + text_token:25) * 3 full song
+    maximum_bucket_size: 60000 # 240 seconds * (50: audio_token:25 + text_token:25) * 3 full song
 
   val_batcher:
     type: "TokenBucketBatcher"
@@ -46,7 +38,7 @@ data:
       ]
       merge_mode: [null, null, vocal]
       out_key: "structure"
-      confidence_threshold: null
+      confidence_threshold: 0.45
     - type: "TempoParser"
       dropout_rate: 0.1
     - type: "StyleTagParser"
@@ -60,6 +52,9 @@ data:
       keyword_dropout_rate: 0.1
       dropout_rate: 0.1
     - type: "UtteranceParser"
+      confidence_threshold: 0.5
+    - type: "VoiceProportionParser"
+      vad_threshold: 0.15
     - type: "MusicMetaRWTransform"
       in_key: "meta.mir_service.vocal2midi"
       out_key: "vocal2midi"
@@ -194,6 +189,7 @@ data:
           "freeform_text",
           "phoneme_tokens.tokens",
           "conditions",
+          "prompt_type",
         ]
       to_tensor: False
 
@@ -236,6 +232,9 @@ data:
       keyword_dropout_rate: 0.1
       dropout_rate: 0.1
     - type: "UtteranceParser"
+      confidence_threshold: 0.5
+    - type: "VoiceProportionParser"
+      vad_threshold: 0.15
     - type: "MusicMetaRWTransform"
       in_key: "meta.mir_service.vocal2midi"
       out_key: "vocal2midi"
@@ -367,6 +366,7 @@ data:
           "freeform_text",
           "phoneme_tokens.tokens",
           "conditions",
+          "prompt_type",
         ]
       to_tensor: False
 
@@ -392,12 +392,12 @@ model:
 
     # Arch
     arch: gpt2
-    hidden_size: 1792
-    n_embed: 1792 # vocab embedding
-    n_inner: 4992
+    hidden_size: 1536
+    n_embed: 1536 # vocab embedding
+    n_inner: 8960
     n_layer: 28
-    n_head: 28
-    n_shared_qhead: 7
+    n_head: 12
+    n_shared_qhead: 2
     vocab_size: 32770 # semantic_codebook_size=32768 +2 for EOS
     tie_weight: true
     pad_idx: 1
@@ -436,14 +436,14 @@ model:
     emb_config_path: "apps/bigmusic/mariana_tasks/conf/v5_semantic_embedder.yaml"
     emb_config:
       extra_params:
-        embedding_dim: 1792 # = model.network.hidden_size
+        embedding_dim: 1536 # = model.network.hidden_size
         text_codebook_size: 0 # = model.network.text_vocab_size
 
 trainer:
   # default_hdfs_dir:
   gradient_clip_val: 1.0
   log_every_n_steps: 10
-  max_steps: 20000
+  max_steps: 500000
   max_epochs: -1
   val_check_interval: 2000 # trigger checkpoint saving while save_after_val=True
   static_sync_limit_val: True
@@ -475,7 +475,7 @@ trainer:
     optimizer:
       type: "torch.optim.AdamW"
       params:
-        lr: 1e-4
+        lr: 3e-4
         betas:
           - 0.9
           - 0.98

@@ -2,50 +2,136 @@ import logging
 import re
 from typing import Optional
 
+try:
+    from ToJyutping import ToJyutping  # 3.2.0
+except ImportError:
+    ToJyutping = None
+
 from ..tokenizers.sami_phoneme_tokenizer import PhnStrParser
 
 logger = logging.getLogger(__file__)
 
 
-def convert_phonemes(phone: str, lang: str):
-    """
-    sil     0       S       0       O               S
-    C0m     4       B       0       O       蔓家    B
-    C0an    4       B       0       O       蔓家    E
-    C0j     1       E       1       O               B
-    C0ia    1       E       1       O               E
-    C0uan   6       B       0       O       挽手    S
-    C0sh    3       E       0       O               B
-    C0ou    3       E       0       O               E
-    C0l     2       S       4       O       喽      B
-    C0ou    2       S       4       O       喽      E
-    。      0       S       4       O               S
-
-
-    sil     0       S       0       O               S
-    C1m  19       B  0       O       蔓家    B
-    C1an 19       B  0       O       蔓家    E
-    C1j  16       E  1       O               B
-    C1ia 16       E  1       O               E
-    C1uan        21       B  0       O       挽手    S
-    C1sh 18       E  0       O               B
-    C1ou 18       E  0       O               E
-    C1l  17       S  4       O       喽      B
-    C1ou 17       S  4       O       喽      E
-    。      0       S       4       O               S
-    """
+def convert_phonemes(text, phoneme, lang):
     if isinstance(lang, str):
         lang = lang.split(",")
-    if "Cantonese" in lang:
-        new_phone_list = []
-        phone_list = phone.split("\n")
-        for item in phone_list:
-            item = PhnStrParser.parse(item)
-            if item.phn == "C0":
-                item.phn = "C1"
-            new_phone_list.append(item.format())
-        return "\n".join(phone_list)
-    return phone
+    if "Cantonese" not in lang:
+        return phoneme
+    phoneme_list = phoneme.split("\n")
+    merged_phoneme_list = []
+    last_prefix = None
+    for ph in phoneme_list:
+        x_split = ph.split("\t")
+        if len(x_split) == 7:
+            phone, tone, _, _, _, word, _ = x_split
+        elif len(x_split) == 6:
+            phone, tone, _, _, _, word = x_split
+        else:
+            raise ValueError(f"Wrong tacolab {x_split}")
+        now_prefix = phone[:2] if phone not in ["sil", "。"] else phone
+        if now_prefix not in ["C0", "E0", "JP", "sil", "。"]:
+            continue
+        is_zh = all([is_chinese_char(ch) for ch in word])
+        is_en = all([is_english_char(ch) for ch in word])
+        if not word:
+            if now_prefix not in ["sil", "。"]:
+                now_prefix = last_prefix
+        elif is_zh:
+            now_prefix = "C0"
+        elif is_en:
+            now_prefix = "E0"
+        if not last_prefix:
+            if now_prefix == "C0":
+                merged_phoneme_list.append(
+                    {"prefix": now_prefix, "phoneme": "", "word": word}
+                )
+            else:
+                merged_phoneme_list.append(
+                    {"prefix": now_prefix, "phoneme": ph, "word": word}
+                )
+        elif last_prefix == now_prefix:
+            if now_prefix == "C0":
+                merged_phoneme_list[-1]["word"] += word
+            elif now_prefix == "E0":
+                merged_phoneme_list[-1]["phoneme"] += "\n" + ph
+                merged_phoneme_list[-1]["word"] += " " + word
+            else:
+                merged_phoneme_list[-1]["phoneme"] += "\n" + ph
+                merged_phoneme_list[-1]["word"] += word
+            merged_phoneme_list[-1]["phoneme"] = merged_phoneme_list[-1][
+                "phoneme"
+            ].strip()
+            merged_phoneme_list[-1]["word"] = merged_phoneme_list[-1]["word"].strip()
+        else:
+            merged_phoneme_list.append(
+                {"prefix": now_prefix, "phoneme": ph, "word": word}
+            )
+        last_prefix = now_prefix
+
+    converted_phoneme_list = []
+    converted_phoneme_list.append({"prefix": "sil", "phoneme": "sil\t0\tS\t0\tO\t\tS"})
+    idx = 0
+    pinyin = []
+    for ch, ph in ToJyutping.get_jyutping_list(text):
+        if ph:
+            for sub_ph in ph.split(" "):
+                pinyin.append((ch, sub_ph))
+        else:
+            pinyin.append((ch, ph))
+    for ch, ph in pinyin:
+        if (not ch.strip()) and (not ph):
+            continue
+        _ph = ""
+        now_prefix = ""
+        if ph:
+            tone = ph[-1]  # 1~6
+            if "C1" + ph[0] in CANTO_CONSONANTS and "C1" + ph[1:-1] in CANTO_VOWELS:
+                consonant = "C1" + ph[0]
+                vowel = "C1" + ph[1:-1]
+            elif "C1" + ph[:2] in CANTO_CONSONANTS and "C1" + ph[2:-1] in CANTO_VOWELS:
+                consonant = "C1" + ph[:2]
+                vowel = "C1" + ph[2:-1]
+            elif "C1" + ph[:-1] in CANTO_CONSONANTS or "C1" + ph[:-1] in CANTO_VOWELS:
+                consonant = "C1" + ph[:-1]
+                vowel = ""
+            else:
+                consonant = ""
+                vowel = ""
+                tone = ""
+
+            if consonant:
+                _ph = "\t".join([consonant, tone, "B", "0", "O", ch, "B"])
+                now_prefix = "C1"
+            if vowel:
+                _ph += "\n" + "\t".join([vowel, tone, "B", "0", "O", ch, "E"])
+                now_prefix = "C1"
+        if idx == 0:
+            converted_phoneme_list.append({"prefix": now_prefix, "phoneme": _ph})
+        else:
+            if now_prefix == converted_phoneme_list[-1]["prefix"]:
+                converted_phoneme_list[-1]["phoneme"] += "\n" + _ph
+                converted_phoneme_list[-1]["phoneme"] = converted_phoneme_list[-1][
+                    "phoneme"
+                ].strip()
+            else:
+                converted_phoneme_list.append({"prefix": now_prefix, "phoneme": _ph})
+        idx += 1
+    converted_phoneme_list.append(
+        {"prefix": "。", "phoneme": "。\t0\tS\t4\tE_DECL\t\tS"}
+    )
+    if len(merged_phoneme_list) != len(converted_phoneme_list):
+        return phoneme
+    converted_phoneme = ""
+    for idx in range(len(merged_phoneme_list)):
+        item1 = merged_phoneme_list[idx]
+        item2 = converted_phoneme_list[idx]
+        if item1["prefix"] in ["sil", "。"]:
+            converted_phoneme += item1["phoneme"] + "\n"
+        elif item1["prefix"] == "C0":
+            converted_phoneme += item2["phoneme"] + "\n"
+        else:
+            converted_phoneme += item1["phoneme"] + "\n"
+    return converted_phoneme.strip()
 
 
 # NOTE: **Always update the regex pattern whenver the tags are updated**
@@ -53,7 +139,7 @@ def convert_phonemes(phone: str, lang: str):
 # The pattern should match all the singer tags in the dataset
 # What we select eventually is a subset `singer_tags`.
 # Filtering should be done after matching.
-SINGER_PATTERN = r"^(singer\d+|男|女|合)?:\s*((?:.|\n)*)"
+SINGER_PATTERN = r"^(singer\d+|男|女|合|中|童|念|多|伴|对)?:\s*((?:.|\n)*)"
 SECTION_PARENS = ["[]", "【】", "()", "（）", "<>", "《》", "{}", "「」"]
 SECTION_PATTERNS = [
     re.compile(f"^\\{paren[0]}(.*?)\\{paren[1]}\\s*((?:.|\n)*)")
@@ -97,14 +183,16 @@ def norm_section_tag(section_tag: str) -> Optional[str]:
     norm_tag = section_tag.lower().strip()
     # Map pre-chorus to bridge
     if norm_tag in ["pre_chorus", "prechorus", "pre-chorus"]:
-        return "bridge"
+        #    return "bridge"
+        return "pre-chorus"
     if norm_tag.find("主歌") != -1 or norm_tag.find("verse") != -1:
         return "verse"
     if norm_tag.find("副歌") != -1 or norm_tag.find("chorus") != -1:
         return "chorus"
     return (
         norm_tag
-        if norm_tag in ["intro", "outro", "inst", "verse", "chorus", "bridge"]
+        if norm_tag
+        in ["intro", "outro", "inst", "verse", "chorus", "bridge", "pre-chorus"]
         else None
     )
 

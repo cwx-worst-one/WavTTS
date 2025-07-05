@@ -50,11 +50,11 @@ from samantha.dataio.bigmusic.transforms.song_slice import (
     validate_song_slice,
 )
 from samantha.dataio.bigmusic.transforms.structure import transform_raw_segments
-from samantha.dataio.bigmusic.transforms.tags import (
+from samantha.dataio.bigmusic.transforms.tags import (  # transform_tags,
     TagError,
     TagsProto,
+    parse_style_tags,
     tokenize_tags,
-    transform_tags,
     validate_tags,
 )
 from samantha.dataio.bigmusic.transforms.utterance import UttError, parse_utterances
@@ -1095,19 +1095,9 @@ class StyleTagParser(MusicMetaRWTransform):
 
     def __init__(
         self,
-        in_key: Union[list[str], tuple[str]] = (
-            "meta",
-            "instruments",
-            "tempo",
-            "key_mode",
-        ),
+        in_key: str = "meta",
         out_key: str = "style_tags",
         vocab: str = _StyleTagTokenizer.DEFAULT_VOCAB_VER,
-        optional_keys: Union[list[str], tuple[str]] = (
-            "instruments",
-            "tempo",
-            "key_mode",
-        ),
         dropout_rate: float = 0.0,
         standardize: bool = True,
         extend_extra: bool = True,
@@ -1131,9 +1121,7 @@ class StyleTagParser(MusicMetaRWTransform):
                 - "fill": Fill the missing tags with the first available tag in the source. \
                 - "merge": Merge all the tags into one list.
         """
-        super().__init__(
-            in_key, out_key, optional_keys=optional_keys, allow_empty_in=True, **kwargs
-        )
+        super().__init__(in_key, out_key, allow_empty_in=True, **kwargs)
         self.vocab = _StyleTagTokenizer.get_vocab(vocab)
         self.dropout_rate = dropout_rate
         self.standardize = standardize
@@ -1152,16 +1140,22 @@ class StyleTagParser(MusicMetaRWTransform):
             return dropped_tags
 
         try:
-            meta, insts, tempo, key_mode = item
-            t = transform_tags(
+            meta = item
+            # t = transform_tags(
+            #     self.vocab,
+            #     meta,
+            #     insts,
+            #     tempo,
+            #     key_mode,
+            #     standardize=self.standardize,
+            #     extend_extra=self.extend_extra,
+            #     source_selection=self.source_selection,
+            # )
+            t = parse_style_tags(
                 self.vocab,
                 meta,
-                insts,
-                tempo,
-                key_mode,
                 standardize=self.standardize,
                 extend_extra=self.extend_extra,
-                source_selection=self.source_selection,
             )
             tags = t["tags"]
             oov_tags = t["oov_tags"]
@@ -1223,8 +1217,10 @@ class FreeformTextParser(MusicMetaRWTransform):
         self,
         in_key: Union[list, tuple] = ("meta", "style_tags"),
         out_key: str = "freeform_text",
-        keyword_dropout_rate: float = 0.0,
-        dropout_rate: float = 0.0,
+        dropout_rate: float = 0.1,  # default: 0.1 chance to drop the whole freeform_text content
+        long_description_rate: float = 0.0,  # default: not to use any long description
+        keyword_dropout_rate: float = 0.1,  # default: 0.1 chance to drop all keywords
+        style_tags_dropout_rate: float = 0.5,  # default: 0.5 chance to concat style_tags
         **kwargs,
     ):
         """
@@ -1238,8 +1234,10 @@ class FreeformTextParser(MusicMetaRWTransform):
             not isinstance(in_key, str) and len(in_key) == 2
         ), f"in_key must be a list of length 2, got {in_key}"
         super().__init__(in_key, out_key, allow_empty_in=False, **kwargs)
-        self.keyword_dropout_rate = keyword_dropout_rate
         self.dropout_rate = dropout_rate
+        self.long_description_rate = long_description_rate
+        self.keyword_dropout_rate = keyword_dropout_rate
+        self.style_tags_dropout_rate = style_tags_dropout_rate
 
     def call(self, item, **kwargs) -> str:
         meta, style_tags = item
@@ -1247,7 +1245,10 @@ class FreeformTextParser(MusicMetaRWTransform):
             return ""
         freeform_text_dict = parse_freeform_text(meta, style_tags)
         freeform_text = format_freeform_text(
-            freeform_text_dict, self.keyword_dropout_rate
+            freeform_text_dict,
+            self.long_description_rate,
+            self.keyword_dropout_rate,
+            self.style_tags_dropout_rate,
         )
         return freeform_text
 
@@ -1281,7 +1282,7 @@ class TempoParser(MusicMetaRWTransform):
 
     def __init__(
         self,
-        in_key: Union[str, list[str]] = ("meta.tempo", "meta.musicfm_plus.beat"),
+        in_key: Union[str, list[str]] = "meta.standard_music_meta_nonbpe",
         out_key: str = "tempo",
         allow_empty_in: bool = True,  # allow data without tempo by default
         dropout_rate: float = 0.1,
@@ -1297,9 +1298,7 @@ class TempoParser(MusicMetaRWTransform):
         super().__init__(in_key, out_key, allow_empty_in=allow_empty_in, **kwargs)
         self.dropout_rate = dropout_rate
 
-    def call(self, bpm, **kwargs) -> float:
-        uttid = kwargs.get("uttid")
-
+    def get_bpm_from_non_standard(self, bpm) -> float:
         def is_musicfm_beat(bpm) -> bool:
             return isinstance(bpm, list)
 
@@ -1309,21 +1308,28 @@ class TempoParser(MusicMetaRWTransform):
 
         if isinstance(self.in_key, str):
             bpm = [bpm]
-
         for bpm_value in bpm:  # pick the first valid bpm value
             if not bpm_value:  # 0 or None
                 continue
             if is_musicfm_beat(bpm_value):
                 bpm_value = get_bpm_from_musicfm_beat(bpm_value)
-            if random.random() < self.dropout_rate:
-                return self.DEFAULT_BPM
-            try:
-                return float(bpm_value)
-            except TypeError:
-                logger.debug(
-                    f"{self._get_log_prefix(uttid)} tempo {bpm_value} is invalid"
-                )
-                continue
+            return float(bpm_value)
+        return self.DEFAULT_BPM
+
+    def call(self, standard_music_meta_nonbpe, **kwargs) -> float:
+        uttid = kwargs.get("uttid")
+        if random.random() < self.dropout_rate:
+            return self.DEFAULT_BPM
+        if not standard_music_meta_nonbpe:
+            return self.DEFAULT_BPM
+        try:
+            if isinstance(standard_music_meta_nonbpe, dict):
+                bpm = standard_music_meta_nonbpe.get("extra_info", {}).get("bpm")
+            else:
+                bpm = self.get_bpm_from_non_standard(bpm=standard_music_meta_nonbpe)
+            return float(bpm)
+        except TypeError:
+            logger.debug(f"{self._get_log_prefix(uttid)} tempo {bpm} is invalid")
         return self.DEFAULT_BPM
 
 
@@ -1504,26 +1510,51 @@ class VoiceProportionParser(MusicMetaRWTransform):
             "meta.vad.extra.voice_proportion",
             "utterances",
         ),
-        out_key: Optional[str] = None,  # no need to use the voice proportion
+        out_key: str = "prompt_type",  # no need to use the voice proportion
         allow_empty_in: bool = True,  # allow in-keys' values to be empty
-        threshold: float = 0.5,
+        vad_threshold: float = 0.15,
         **kwargs,
     ):
         super().__init__(in_key, out_key, allow_empty_in=allow_empty_in, **kwargs)
-        self.threshold = threshold
+        self.vad_threshold = vad_threshold
 
     def call(self, item, **kwargs) -> float:
         voice_proportion, utterances = item
-        if utterances:
-            return -1.0  # indicate vocal music
+        # if not voice_proportion:
+        #     raise MusicMetaError(
+        #         f"No vad results"
+        #     )
+        prompt_type = "inst"
+        if voice_proportion:
+            if voice_proportion > self.vad_threshold:
+                prompt_type = "vocal"
+        else:
+            if utterances:
+                prompt_type = "vocal"
 
-        if voice_proportion is None:
-            return -2.0  # indicate no VAD data
+        return prompt_type
 
-        if voice_proportion > self.threshold:
-            raise MusicMetaError(
-                f"Discard because of high voice proportion {voice_proportion} for instrumental music"
-            )
+
+class VocalOrInstFilter(MusicMetaRWTransform):
+    """Filter out vocal or inst samples"""
+
+    def __init__(
+        self,
+        in_key: str = "prompt_type",
+        out_key=None,
+        target_type: str = "inst",
+        **kwargs,
+    ):
+        super().__init__(in_key, out_key, allow_empty_in=False, **kwargs)
+        self.target_type = target_type
+
+    def call(self, prompt_type: str, **kwargs):
+        if self.target_type == prompt_type:
+            return
+
+        raise MusicMetaError(
+            f"Discard because of the sample is not {self.target_type} music"
+        )
 
 
 class PackUtteranceStructureToLyrics(MusicMetaRWTransform):
@@ -1560,6 +1591,7 @@ class SongSliceSplit(MusicMetaRWTransform):
             "freeform_text",
             "vocal2midi",
             "tempo",
+            "prompt_type",
         ),
         out_key: str = "song_slices",
         allow_empty_in: bool = True,
@@ -1567,6 +1599,7 @@ class SongSliceSplit(MusicMetaRWTransform):
             "freeform_text",
             "vocal2midi",
             "tempo",
+            "prompt_type",
         ),
         max_duration: float = 240.0,
         line_break_dropout_rate: float = 0.1,
@@ -1586,8 +1619,8 @@ class SongSliceSplit(MusicMetaRWTransform):
         """
         # using invalid arguments should not be recoverable
         assert (
-            not isinstance(in_key, str) and len(in_key) == 7
-        ), f"in_key must be a list of length 7, got {in_key}"
+            not isinstance(in_key, str) and len(in_key) == 8
+        ), f"in_key must be a list of length 8, got {in_key}"
         super().__init__(
             in_key,
             out_key,
@@ -1608,6 +1641,7 @@ class SongSliceSplit(MusicMetaRWTransform):
             freeform_text,
             vocal2midi,
             tempo,
+            prompt_type,
         ) = item
         tempo = TempoParser.DEFAULT_BPM if tempo is None else tempo
 
@@ -1621,6 +1655,7 @@ class SongSliceSplit(MusicMetaRWTransform):
                 freeform_text,
                 vocal2midi,
                 tempo,
+                prompt_type,
                 self.slice_mode,
                 self.line_break_dropout_rate,
             )
@@ -2028,7 +2063,17 @@ class SpeakerIdParser:
                 return None
         else:
             # Assign speaker ID based on gender
-            if "Male" in gender:
+            if "Neutral" in gender:
+                output_id = 43  # ID for Neutral
+            elif "Multiple" in gender:
+                output_id = 44  # ID for Multiple
+            elif "Chorus" in gender:
+                output_id = 45  # ID for Chorus
+            elif "Child" in gender:
+                output_id = 46  # ID for Child
+            elif "Male" in gender and "Female" in gender:
+                output_id = 47  # ID for Duet
+            elif "Male" in gender:
                 output_id = 48  # ID for Male
             elif "Female" in gender:
                 output_id = 49  # ID for Female
@@ -2376,6 +2421,7 @@ class PromptToSongSliceTransformParquet:
         self,
         phoneme_vocab: Optional[str] = SamiPhonemeSeqTokenizer.DEFAULT_VOCAB_VER,
         style_tag_vocab: Optional[str] = _StyleTagTokenizer.DEFAULT_VOCAB_VER,
+        phoneme_tokenizer: Optional[str] = "sami_phoneme",
         use_cfg: bool = True,
         cfg_items: Union[list[str], tuple[str]] = (),
         standardize: bool = False,
@@ -2390,9 +2436,10 @@ class PromptToSongSliceTransformParquet:
                 Check the json vocab files for available versions: \
                 tokenizers/style_tag_tokenizer/vocabs/vocab.[version].json
         """
-        self.phoneme_tokenizer = (
-            SamiPhonemeSeqTokenizer(vocab=phoneme_vocab) if phoneme_vocab else None
-        )
+        self.phoneme_tokenizer = {
+            "sami_phoneme": SamiPhonemeSeqTokenizer,
+            "sami_phoneme_pos": SamiPhonemeSeqPosTokenizer,
+        }[phoneme_tokenizer](vocab=phoneme_vocab)
         self.style_tag_tokenizer = (
             _StyleTagTokenizer(vocab=style_tag_vocab) if style_tag_vocab else None
         )
@@ -2439,6 +2486,8 @@ class PromptToSongSliceTransformParquet:
             key_dropout_config = None
             symbol_dropout_config = None
         if "line_break" in self.cfg_items:
+            if "lyrics" in self.cfg_items:
+                phrases = [p for p in phrases if p.has_utterance]
             phrases = drop_out_line_breaks(phrases, 1.0)
         if "freeform_text" in self.cfg_items:
             freeform_text = ""

@@ -314,6 +314,10 @@ class XValEmbedder(BaseEmbedder):
         self.norm_max_value = norm_max_value
         self.logged = 0
         self.item_key = item_key
+        if self.with_sos or self.with_eos:
+            raise ValueError(
+                "XValEmbedder does not support with_sos or with_eos for now."
+            )
 
     def normalize(self, x):
         x = torch.clamp(x, max=self.max_value)
@@ -355,6 +359,46 @@ class XValEmbedder(BaseEmbedder):
         item = batch[self.item_key]
         embeds, _, _ = self.embed(item)
         return self.get_dummy_token_ids_and_length(embeds)
+
+
+class RotaryXValEmbedder(XValEmbedder):
+    def normalize(self, x):
+        x = torch.clamp(x, max=self.max_value)
+        norm = x / self.max_value * self.norm_max_value
+        norm[x <= 0] = (
+            0.0  # change from 1.0 to 0.0 for rotary xval
+        )
+        return norm
+
+    def embed(
+        self, input: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        # TODO (Yilin): add SOS and EOS
+
+        if input.ndim == 1:
+            input = input.unsqueeze(1)
+
+        device = self.get_device()
+        token_ids = (
+            torch.where(
+                input > 0, torch.tensor(self._token_id), torch.tensor(self.none_id)
+            )
+            .long()
+            .to(device)
+        )
+        normalized_input = self.normalize(input).float()
+        embeds = apply_rope_xval(
+            self.embedder(token_ids),
+            normalized_input.unsqueeze(2),
+            max_value=self.max_value,
+        )  # change from * to apply_rope_xval
+        if self.logged < 5:
+            logger.info(f"RotaryXval input: {input}")
+            logger.info(f"token_ids ({token_ids.shape}): {token_ids}")
+            logger.info(f"normalized input ({normalized_input.shape}): {normalized_input}")
+            self.logged += 1
+
+        return embeds, token_ids, normalized_input
 
 
 class TokenEmbedder(BaseEmbedder):
@@ -1236,6 +1280,106 @@ class TokenXvalEmbedder(TokenEmbedder):
         }
 
 
+class TokenRotaryXvalEmbedder(TokenXvalEmbedder):
+    def __init__(
+        self,
+        vocab_size: int,
+        embedding_dim: int,
+        add_sos: bool = False,
+        add_eos: bool = False,
+        with_sos: bool = False,
+        with_eos: bool = False,
+        is_varlen: bool = False,
+        id_key: str = "lyrics_tokens",
+        length_key: str = "lyrics_tokens_length",
+        coff_key: str = "lyrics_coffs",
+        max_value: float = 1.0,
+        **kwargs,
+    ):
+        super().__init__(
+            vocab_size=vocab_size,
+            embedding_dim=embedding_dim,
+            add_sos=add_sos,
+            add_eos=add_eos,
+            with_sos=with_sos,
+            with_eos=with_eos,
+            is_varlen=is_varlen,
+            id_key=id_key,
+            length_key=length_key,
+            coff_key=coff_key,
+            *kwargs,
+        )
+        self.max_value = max_value
+
+    def embed(
+        self,
+        requires: Optional[Any] = None,  # not used
+        batch: Optional[Any] = None,  # not used
+        token_ids: Optional[torch.Tensor] = None,
+        # NOTE (Yilin): The "multiplication" here is misleading.
+        # I only keep the arg name for minimal code change.
+        token_wise_multiplication: Optional[torch.Tensor] = None,
+    ) -> dict[str, torch.Tensor]:
+        assert token_ids is not None, "token_ids must be provided"
+        assert (
+            token_wise_multiplication is not None
+        ), "token_wise_multiplication must be provided"
+
+        # token_wise_multiplication is the scaling factor to each embedding of token, 1.0 means no change, 0.0 means disable
+        # Here we set (scaling factor) == (float time in second) as the representaion of time tokens
+        token_ids = self.tokenize(requires, batch, token_ids)  # SOS and EOS added here
+        embedding = self.embedder(token_ids)
+        batch_size = token_wise_multiplication.shape[0]
+        if self.with_sos:
+            sos_token = self.get_sos_token(batch_size)
+            sos_coff = torch.zeros_like(sos_token).float()  # <- modified (ones_like => zeros_like)
+            token_wise_multiplication = torch.cat(
+                [sos_coff, token_wise_multiplication], dim=1
+            )
+        if self.with_eos:
+            eos_token = self.get_eos_token(batch_size)
+            eos_coff = torch.zeros_like(eos_token).float()  # <- modified (ones_like => zeros_like)
+            token_wise_multiplication = torch.cat(
+                [token_wise_multiplication, eos_coff], dim=1
+            )
+        token_wise_multiplication = token_wise_multiplication.unsqueeze(-1)
+        embedding = apply_rope_xval(embedding, token_wise_multiplication, max_value=self.max_value)  # <- modified
+        return {
+            "token_ids": token_ids,
+            "embeds": embedding,
+        }
+
+
+def apply_rope_xval(embedding: torch.Tensor, value: torch.Tensor, max_value: float):
+    """
+    Apply rotary positional encoding to an embedding based on a numerical value.
+
+    Args:
+        embedding: The original embedding tensor of shape [batch_size, seq_len, emb_dim]
+        value: The numerical value tensor of shape [batch_size, seq_len, 1]
+        max_value: The maximum value expected, which defines the frequency distribution
+                  MUST be the same during training and inference
+
+    Returns:
+        The rotated embedding tensor of the same shape as input embedding
+    """
+    dim = embedding.shape[-1]
+    device = embedding.device
+    theta = 2.0 * math.pi / max_value  # Full rotation at max_value
+    freqs = theta * torch.arange(0, dim//2, device=device).float()
+    emb_even = embedding[..., 0::2]
+    emb_odd = embedding[..., 1::2]
+    angles = value * freqs
+    cos = torch.cos(angles)
+    sin = torch.sin(angles)
+    emb_rotated_even = emb_even * cos - emb_odd * sin
+    emb_rotated_odd = emb_even * sin + emb_odd * cos
+    emb_rotated = torch.zeros_like(embedding, device=device)
+    emb_rotated[..., 0::2] = emb_rotated_even
+    emb_rotated[..., 1::2] = emb_rotated_odd
+    return emb_rotated
+
+
 class RotaryEmbedding2D(nn.Module):
     def __init__(self, h, w, dim, freq_scale=1.0):
         super().__init__()
@@ -1312,6 +1456,7 @@ class TokenXvalPosEmbedder(TokenXvalEmbedder):
         # cfg definition for lyrics position can be quite tricky
         # currently ill position works well (ill position without section tag and linebreak: [0,1,-1],[0,2,-1],[0,3,-1],...,[0,n_phoneme,-1])
         self.rotary_emb = RotaryEmbedding2D(h=200, w=2000, dim=pos_emb_dim)
+        self.rotary_emb_bak = RotaryEmbedding2D(h=200, w=4000, dim=pos_emb_dim)
         self.pos_emb_fc = nn.Sequential(
             nn.Linear(pos_emb_dim, pos_emb_dim, bias=False),
             nn.SiLU(),
@@ -1329,7 +1474,7 @@ class TokenXvalPosEmbedder(TokenXvalEmbedder):
         mask = (token_wise_position != self.blank_id).sum(-1).bool().unsqueeze(-1)  # [B, T, 1]
         token_wise_position[token_wise_position == self.blank_id] = 0
         position_embedding = torch.stack([
-            self.rotary_emb.rotation_matrix[token_wise_position[b, :, 0], token_wise_position[b, :, 1]] 
+            self.rotary_emb_bak.rotation_matrix[token_wise_position[b, :, 0], token_wise_position[b, :, 1]]
             for b in range(token_wise_position.shape[0])], dim=0)   # [B, T, embedding_dim]
         masked_pos_emb = self.pos_emb_fc(position_embedding) * mask
         return masked_pos_emb

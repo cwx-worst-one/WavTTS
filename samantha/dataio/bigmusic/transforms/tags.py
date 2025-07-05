@@ -11,7 +11,7 @@ from ..tokenizers.style_tag_tokenizer import (
 )
 from ..utils.dcbase import DCBase
 
-__all__ = ["TagError", "tokenize_tags", "transform_tags", "validate_tags"]
+__all__ = ["TagError", "tokenize_tags", "validate_tags"]
 
 
 _DEFAULT_SINKING_THRESHOLD = 0.51
@@ -20,6 +20,70 @@ _EMPTY_TAG = ""
 
 class TagError(Exception):
     pass
+
+
+def parse_style_tags(
+    vocab: StyleTagVocab,
+    meta: dict,
+    standardize: bool = True,
+    extend_extra: bool = True,
+) -> dict:
+    style_tags = meta.get("standard_music_meta_nonbpe", {}).get("style_tags_merged", {})
+    if not style_tags:
+        raise TagError("No valid tags")
+
+    # ----------
+    # temperary: fix this later in UDF, so this logic can be removed here
+    style_tags["genre"] = [x for x in style_tags["genre"] if x and x not in ["Empty"]]
+    if len(style_tags["genre"]) > 1:
+        if "Other" in style_tags["genre"]:
+            style_tags["genre"].remove("Other")
+        if "Other genre" in style_tags["genre"]:
+            style_tags["genre"].remove("Other genre")
+    style_tags["mood"] = [x for x in style_tags["mood"] if x and x not in ["Empty"]]
+    if len(style_tags["mood"]) > 1:
+        if "Other" in style_tags["mood"]:
+            style_tags["mood"].remove("Other")
+        if "Other mood" in style_tags["mood"]:
+            style_tags["mood"].remove("Other mood")
+    style_tags["scene"] = [x for x in style_tags["scene"] if x and x not in ["Empty"]]
+    if len(style_tags["scene"]) > 1:
+        if "Other" in style_tags["scene"]:
+            style_tags["scene"].remove("Other")
+        if "Other scene" in style_tags["scene"]:
+            style_tags["scene"].remove("Other scene")
+    style_tags["vocal_timbre"] = [
+        x for x in style_tags["vocal_timbre"] if x and x not in ["Empty"]
+    ]
+    style_tags["vocal_gender"] = [
+        x
+        for x in style_tags["vocal_gender"]
+        if x and x not in ["Empty", "Unknown", "Unkonwn", "adult", "Adult"]
+    ]
+    if isinstance(style_tags["language"][0], list):
+        style_tags["language"] = style_tags["language"][0]
+    if style_tags["language"] == ["Non-vocal"] or style_tags["language"] == [
+        "Instrumental/Non-Vocal"
+    ]:
+        style_tags["vocal_gender"] = []
+        style_tags["vocal_timbre"] = []
+    quality_score = (
+        meta.get("music_tagging", {}).get("MusicLowQuality", {}).get("Sinking")
+    )
+    style_tags["is_sinking"] = ["Non-Sinking"]
+    if quality_score is not None and quality_score >= 0.51:
+        style_tags["is_sinking"] = ["Sinking"]
+    if not style_tags["genre_extra"] or style_tags["genre_extra"] == [""]:
+        style_tags["genre_extra"] = style_tags["genre"]
+    # ----------
+
+    tags = TagsProto.from_dict(style_tags)
+    if standardize:
+        tags.standardize_inplace(vocab)
+    if extend_extra:
+        tags.extend_extra_inplace()  # this step might introduce OOV tags
+    tags, oov = tags.remove_oov_tags(vocab)
+    return {"tags": tags.fill_empty_inplace().to_dict(), "oov_tags": oov}
 
 
 def transform_tags(
@@ -87,6 +151,7 @@ def validate_tags(style_tags: dict) -> None:
             "Japanese",
             "Sichuanese",
             "Instrumental/Non-Vocal",
+            "Non-Vocal",
         ]
     ):
         raise TagError(f"Audio tags contains invalid language: {tags_proto.language}")
@@ -131,111 +196,111 @@ def tokenize_tags(style_tags: dict, tokenizer: StyleTagTokenizer) -> dict:
     return style_tokens
 
 
-@dataclass
-class AudioTagsProto(DCBase):
-    extra: list[str] = field(default_factory=list)
-    genre: list[str] = field(default_factory=list)
-    genre_extra: list[str] = field(default_factory=list)
-    instrument: list[str] = field(default_factory=list)
-    language: list[str] = field(default_factory=list)
-    mood: list[str] = field(default_factory=list)
-    scene: list[str] = field(default_factory=list)
-    vocal_gender: list[str] = field(default_factory=list)
-    vocal_timbre: list[str] = field(default_factory=list)
-    remark: str = ""
-    satisfy_filter_standard: str = "yes"
+# @dataclass
+# class AudioTagsProto(DCBase):
+#     extra: list[str] = field(default_factory=list)
+#     genre: list[str] = field(default_factory=list)
+#     genre_extra: list[str] = field(default_factory=list)
+#     instrument: list[str] = field(default_factory=list)
+#     language: list[str] = field(default_factory=list)
+#     mood: list[str] = field(default_factory=list)
+#     scene: list[str] = field(default_factory=list)
+#     vocal_gender: list[str] = field(default_factory=list)
+#     vocal_timbre: list[str] = field(default_factory=list)
+#     remark: str = ""
+#     satisfy_filter_standard: str = "yes"
 
-    @classmethod
-    def from_dict_with_norm(cls, d: dict) -> "AudioTagsProto":
-        """Parse the audio_tags field in metadata with tag normalization (str -> list[str])"""
+#     @classmethod
+#     def from_dict_with_norm(cls, d: dict) -> "AudioTagsProto":
+#         """Parse the audio_tags field in metadata with tag normalization (str -> list[str])"""
 
-        def parse_tags(k: str, v: Union[str, list[str]]) -> Union[str, list[str]]:
-            if k not in [
-                "extra",
-                "genre",
-                "genre_extra",
-                "instrument",
-                "language",
-                "mood",
-                "scene",
-                "vocal_gender",
-                "vocal_timbre",
-            ]:
-                return v
-            return _normalize_tags(v)
+#         def parse_tags(k: str, v: Union[str, list[str]]) -> Union[str, list[str]]:
+#             if k not in [
+#                 "extra",
+#                 "genre",
+#                 "genre_extra",
+#                 "instrument",
+#                 "language",
+#                 "mood",
+#                 "scene",
+#                 "vocal_gender",
+#                 "vocal_timbre",
+#             ]:
+#                 return v
+#             return _normalize_tags(v)
 
-        # Only normalize tag slots. Fields not in the proto will be dropped.
-        return cls.from_dict(
-            {k: parse_tags(k, v) for k, v in d.items() if v is not None}
-        )
-
-
-@dataclass
-class SATagsProto(DCBase):
-    genre: list[str] = field(default_factory=list)
-    mood: list[str] = field(default_factory=list)
-    theme: list[str] = field(default_factory=list)
-    language: list[str] = field(default_factory=list)
-    vocal_gender: list[str] = field(default_factory=list)
-    sinking: float = 0.0
-
-    @classmethod
-    def from_dict_with_norm(cls, d: dict) -> "SATagsProto":
-        return SATagsProto(
-            genre=_normalize_tags(d.get("Genre20", {}).get("result")),
-            mood=_normalize_tags(d.get("Mood", {}).get("result")),
-            theme=_normalize_tags(d.get("Theme", {}).get("result")),
-            language=_normalize_tags(d.get("Language", {}).get("result")),
-            vocal_gender=_normalize_tags(
-                [
-                    x
-                    for x in d.get("sa_gender", {}).get("result", [])
-                    if x and x not in ["adult"]
-                ]
-            ),
-            sinking=d.get("MusicLowQuality", {}).get("Sinking", 0.0),
-        )
+#         # Only normalize tag slots. Fields not in the proto will be dropped.
+#         return cls.from_dict(
+#             {k: parse_tags(k, v) for k, v in d.items() if v is not None}
+#         )
 
 
-@dataclass
-class MusicFMFinegrainedTagsProto(DCBase):
-    genre: list[str] = field(default_factory=list)
-    mood: list[str] = field(default_factory=list)
-    scene: list[str] = field(default_factory=list)
-    vocal_timbre: list[str] = field(default_factory=list)
-    vocal_gender: list[str] = field(default_factory=list)
+# @dataclass
+# class SATagsProto(DCBase):
+#     genre: list[str] = field(default_factory=list)
+#     mood: list[str] = field(default_factory=list)
+#     theme: list[str] = field(default_factory=list)
+#     language: list[str] = field(default_factory=list)
+#     vocal_gender: list[str] = field(default_factory=list)
+#     sinking: float = 0.0
 
-    @classmethod
-    def from_dict_with_norm(cls, d: dict) -> "MusicFMFinegrainedTagsProto":
-        return cls(
-            genre=_normalize_tags(
-                [
-                    x
-                    for x in d.get("GENRE", [])
-                    if x and x not in ["Other genre", "Empty"]
-                ]
-            ),
-            mood=_normalize_tags(
-                [x for x in d.get("MOOD", []) if x and x not in ["Other mood", "Empty"]]
-            ),
-            scene=_normalize_tags(
-                [
-                    x
-                    for x in d.get("THEME", [])
-                    if x and x not in ["Other scene", "Empty"]
-                ]
-            ),
-            vocal_timbre=_normalize_tags(
-                [x for x in d.get("TIMBRE", []) if x and x not in ["Empty"]]
-            ),
-            vocal_gender=_normalize_tags(
-                [
-                    x
-                    for x in d.get("GENDER", [])
-                    if x and x not in ["Unkonwn", "Unknown", "Adult"]
-                ]
-            ),
-        )
+#     @classmethod
+#     def from_dict_with_norm(cls, d: dict) -> "SATagsProto":
+#         return SATagsProto(
+#             genre=_normalize_tags(d.get("Genre20", {}).get("result")),
+#             mood=_normalize_tags(d.get("Mood", {}).get("result")),
+#             theme=_normalize_tags(d.get("Theme", {}).get("result")),
+#             language=_normalize_tags(d.get("Language", {}).get("result")),
+#             vocal_gender=_normalize_tags(
+#                 [
+#                     x
+#                     for x in d.get("sa_gender", {}).get("result", [])
+#                     if x and x not in ["adult"]
+#                 ]
+#             ),
+#             sinking=d.get("MusicLowQuality", {}).get("Sinking", 0.0),
+#         )
+
+
+# @dataclass
+# class MusicFMFinegrainedTagsProto(DCBase):
+#     genre: list[str] = field(default_factory=list)
+#     mood: list[str] = field(default_factory=list)
+#     scene: list[str] = field(default_factory=list)
+#     vocal_timbre: list[str] = field(default_factory=list)
+#     vocal_gender: list[str] = field(default_factory=list)
+
+#     @classmethod
+#     def from_dict_with_norm(cls, d: dict) -> "MusicFMFinegrainedTagsProto":
+#         return cls(
+#             genre=_normalize_tags(
+#                 [
+#                     x
+#                     for x in d.get("GENRE", [])
+#                     if x and x not in ["Other genre", "Empty"]
+#                 ]
+#             ),
+#             mood=_normalize_tags(
+#                 [x for x in d.get("MOOD", []) if x and x not in ["Other mood", "Empty"]]
+#             ),
+#             scene=_normalize_tags(
+#                 [
+#                     x
+#                     for x in d.get("THEME", [])
+#                     if x and x not in ["Other scene", "Empty"]
+#                 ]
+#             ),
+#             vocal_timbre=_normalize_tags(
+#                 [x for x in d.get("TIMBRE", []) if x and x not in ["Empty"]]
+#             ),
+#             vocal_gender=_normalize_tags(
+#                 [
+#                     x
+#                     for x in d.get("GENDER", [])
+#                     if x and x not in ["Unkonwn", "Unknown", "Adult"]
+#                 ]
+#             ),
+#         )
 
 
 @dataclass
@@ -254,46 +319,46 @@ class TagsProto(DCBase):
     key: list[str] = field(default_factory=list)
     mode: list[str] = field(default_factory=list)
 
-    @classmethod
-    def from_sa_tags(
-        cls, sa_tags: SATagsProto, sinking_threshold: float = _DEFAULT_SINKING_THRESHOLD
-    ) -> "TagsProto":
-        return cls(
-            genre=sa_tags.genre,
-            mood=sa_tags.mood,
-            scene=sa_tags.theme,
-            language=sa_tags.language,
-            vocal_gender=sa_tags.vocal_gender,
-            is_sinking=(
-                ["Sinking"] if sa_tags.sinking > sinking_threshold else ["Non-Sinking"]
-            ),
-        )
+    # @classmethod
+    # def from_sa_tags(
+    #     cls, sa_tags: SATagsProto, sinking_threshold: float = _DEFAULT_SINKING_THRESHOLD
+    # ) -> "TagsProto":
+    #     return cls(
+    #         genre=sa_tags.genre,
+    #         mood=sa_tags.mood,
+    #         scene=sa_tags.theme,
+    #         language=sa_tags.language,
+    #         vocal_gender=sa_tags.vocal_gender,
+    #         is_sinking=(
+    #             ["Sinking"] if sa_tags.sinking > sinking_threshold else ["Non-Sinking"]
+    #         ),
+    #     )
 
-    @classmethod
-    def from_musicfm_finegrained_tags(
-        cls, musicfm_finegrained_tags: MusicFMFinegrainedTagsProto
-    ) -> "TagsProto":
-        return cls(
-            genre=musicfm_finegrained_tags.genre,
-            mood=musicfm_finegrained_tags.mood,
-            scene=musicfm_finegrained_tags.scene,
-            vocal_timbre=musicfm_finegrained_tags.vocal_timbre,
-            vocal_gender=musicfm_finegrained_tags.vocal_gender,
-        )
+    # @classmethod
+    # def from_musicfm_finegrained_tags(
+    #     cls, musicfm_finegrained_tags: MusicFMFinegrainedTagsProto
+    # ) -> "TagsProto":
+    #     return cls(
+    #         genre=musicfm_finegrained_tags.genre,
+    #         mood=musicfm_finegrained_tags.mood,
+    #         scene=musicfm_finegrained_tags.scene,
+    #         vocal_timbre=musicfm_finegrained_tags.vocal_timbre,
+    #         vocal_gender=musicfm_finegrained_tags.vocal_gender,
+    #     )
 
-    @classmethod
-    def from_audio_tags(cls, audio_tags: AudioTagsProto) -> "TagsProto":
-        return cls(
-            genre=audio_tags.genre,
-            genre_extra=audio_tags.genre_extra,
-            extra=audio_tags.extra,
-            mood=audio_tags.mood,
-            scene=audio_tags.scene,
-            vocal_gender=audio_tags.vocal_gender,
-            vocal_timbre=audio_tags.vocal_timbre,
-            language=audio_tags.language,
-            instrument=audio_tags.instrument,
-        )
+    # @classmethod
+    # def from_audio_tags(cls, audio_tags: AudioTagsProto) -> "TagsProto":
+    #     return cls(
+    #         genre=audio_tags.genre,
+    #         genre_extra=audio_tags.genre_extra,
+    #         extra=audio_tags.extra,
+    #         mood=audio_tags.mood,
+    #         scene=audio_tags.scene,
+    #         vocal_gender=audio_tags.vocal_gender,
+    #         vocal_timbre=audio_tags.vocal_timbre,
+    #         language=audio_tags.language,
+    #         instrument=audio_tags.instrument,
+    #     )
 
     @classmethod
     def _merge_two(cls, tag_a: "TagsProto", tag_b: "TagsProto") -> "TagsProto":
@@ -457,11 +522,12 @@ class TagsProto(DCBase):
 
 def _normalize_tags(tags: Union[str, list[str]]) -> list[str]:
     def strip_all(tags: list[str]) -> list[str]:
-        tags = [t.strip() for t in tags]
-        return [t for t in tags if t]
+        tags = [t.strip() for t in tags if t]
+        if tags:
+            return tags
+        else:
+            return [_EMPTY_TAG]
 
-    if not tags:
-        return []
     if isinstance(tags, str):
         return strip_all(tags.split(","))
     return strip_all(tags)
@@ -492,6 +558,9 @@ def _standardize_tag(tag: str) -> str:
             word = sep.join([capitalize_word(w) for w in subword])
         return word
 
+    if not tag:
+        return _EMPTY_TAG
+
     if tag.strip().lower() in ["other", "others"]:
         return "Other"
 
@@ -510,155 +579,155 @@ def _standardize_tag(tag: str) -> str:
 
 def _split_by_separators(input_string: str) -> list[str]:
     result = re.split(r"[ /\-&_,]", input_string)
-    result = [item for item in result if item if item]
+    result = [item for item in result if item]
     return result
 
 
-def _parse_audio_tags_from_meta(meta: dict) -> Optional[AudioTagsProto]:
-    """
-    Parse the audio_tags field in metadata.
-    """
-    audio_tags = meta.get("audio_tags")
-    if not audio_tags:
-        return None
-    return AudioTagsProto.from_dict_with_norm(audio_tags)
+# def _parse_audio_tags_from_meta(meta: dict) -> Optional[AudioTagsProto]:
+#     """
+#     Parse the audio_tags field in metadata.
+#     """
+#     audio_tags = meta.get("audio_tags")
+#     if not audio_tags:
+#         return None
+#     return AudioTagsProto.from_dict_with_norm(audio_tags)
 
 
-def _parse_human_label_from_meta(meta: dict) -> Optional[AudioTagsProto]:
-    """
-    Parse the human_label field in metadata. Possibly an old annotation format.
-    """
-    human_label = meta.get("human_label")
-    if not human_label:
-        return None
+# def _parse_human_label_from_meta(meta: dict) -> Optional[AudioTagsProto]:
+#     """
+#     Parse the human_label field in metadata. Possibly an old annotation format.
+#     """
+#     human_label = meta.get("human_label")
+#     if not human_label:
+#         return None
 
-    def get_value(key: str) -> list[str]:
-        v = human_label.get(key)
-        if not v:  # covers both missing key or empty value
-            return []
-        if isinstance(v, str):
-            return v.split(",")
-        return v
+#     def get_value(key: str) -> list[str]:
+#         v = human_label.get(key)
+#         if not v:  # covers both missing key or empty value
+#             return []
+#         if isinstance(v, str):
+#             return v.split(",")
+#         return v
 
-    return AudioTagsProto.from_dict_with_norm(
-        {
-            "genre": get_value("label_genre") + get_value("label_subgenre"),
-            "genre_extra": get_value("genre_extra"),
-            "extra": get_value("extra"),
-            "mood": get_value("label_mood"),
-            "scene": get_value("label_theme"),
-            "instrument": get_value("label_instrument"),
-        }
-    )
-
-
-def _parse_llm_tags_from_meta(meta: dict) -> Optional[AudioTagsProto]:
-    """
-    Parse the llm_tags field in metadata.
-    """
-    llm_tags = meta.get("llm_tags")
-    if not llm_tags:
-        return None
-    return AudioTagsProto.from_dict_with_norm(llm_tags)
+#     return AudioTagsProto.from_dict_with_norm(
+#         {
+#             "genre": get_value("label_genre") + get_value("label_subgenre"),
+#             "genre_extra": get_value("genre_extra"),
+#             "extra": get_value("extra"),
+#             "mood": get_value("label_mood"),
+#             "scene": get_value("label_theme"),
+#             "instrument": get_value("label_instrument"),
+#         }
+#     )
 
 
-def _parse_sa_tags_from_meta(meta: dict) -> Optional[SATagsProto]:
-    """
-    Parse the music_tagging field in metadata.
-    """
-    sa_tags = meta.get("music_tagging")
-    sa_gender = meta.get("gender", {}).get("sa_gender")
-    if not sa_tags:
-        return None
-    if sa_gender:
-        sa_tags["sa_gender"] = sa_gender
-    return SATagsProto.from_dict_with_norm(sa_tags)
+# def _parse_llm_tags_from_meta(meta: dict) -> Optional[AudioTagsProto]:
+#     """
+#     Parse the llm_tags field in metadata.
+#     """
+#     llm_tags = meta.get("llm_tags")
+#     if not llm_tags:
+#         return None
+#     return AudioTagsProto.from_dict_with_norm(llm_tags)
 
 
-def _parse_audio_tags_into_tags_proto(
-    meta: dict, fn: Callable[[dict], AudioTagsProto]
-) -> Optional[TagsProto]:
-    audio_tags = fn(meta)
-    if audio_tags:
-        if audio_tags.satisfy_filter_standard != "yes":  # add a filter for quality flag
-            raise TagError(
-                f"Audio tags contains invalid quality flag: {audio_tags.satisfy_filter_standard}"
-            )
-        audio_tags = TagsProto.from_audio_tags(audio_tags)
-    return audio_tags
+# def _parse_sa_tags_from_meta(meta: dict) -> Optional[SATagsProto]:
+#     """
+#     Parse the music_tagging field in metadata.
+#     """
+#     sa_tags = meta.get("music_tagging")
+#     sa_gender = meta.get("gender", {}).get("sa_gender")
+#     if not sa_tags:
+#         return None
+#     if sa_gender:
+#         sa_tags["sa_gender"] = sa_gender
+#     return SATagsProto.from_dict_with_norm(sa_tags)
 
 
-def _parse_sa_tags_into_tags_proto(
-    meta: dict, fn: Callable[[dict], SATagsProto]
-) -> Optional[TagsProto]:
-    sa_tags = fn(meta)
-    if sa_tags:
-        sa_tags = TagsProto.from_sa_tags(sa_tags)
-    return sa_tags
+# def _parse_audio_tags_into_tags_proto(
+#     meta: dict, fn: Callable[[dict], AudioTagsProto]
+# ) -> Optional[TagsProto]:
+#     audio_tags = fn(meta)
+#     if audio_tags:
+#         if audio_tags.satisfy_filter_standard != "yes":  # add a filter for quality flag
+#             raise TagError(
+#                 f"Audio tags contains invalid quality flag: {audio_tags.satisfy_filter_standard}"
+#             )
+#         audio_tags = TagsProto.from_audio_tags(audio_tags)
+#     return audio_tags
 
 
-def _parse_musicfm_finegrained_tags_from_meta(
-    meta: dict,
-) -> Optional[MusicFMFinegrainedTagsProto]:
-    """
-    Parse the musicfm_finegrained_tags field in metadata.
-    """
-    musicfm_finegrained_tags = meta.get("musicfm_finegrained_tagging", {}).get(
-        "finegrained_tags"
-    )
-    if not musicfm_finegrained_tags:
-        return None
-    return MusicFMFinegrainedTagsProto.from_dict_with_norm(musicfm_finegrained_tags)
+# def _parse_sa_tags_into_tags_proto(
+#     meta: dict, fn: Callable[[dict], SATagsProto]
+# ) -> Optional[TagsProto]:
+#     sa_tags = fn(meta)
+#     if sa_tags:
+#         sa_tags = TagsProto.from_sa_tags(sa_tags)
+#     return sa_tags
 
 
-def _parse_musicfm_finegrained_tags_into_tags_proto(
-    meta: dict, fn: Callable[[dict], MusicFMFinegrainedTagsProto]
-) -> Optional[TagsProto]:
-    musicfm_finegrained_tags = fn(meta)
-    if musicfm_finegrained_tags:
-        musicfm_finegrained_tags = TagsProto.from_musicfm_finegrained_tags(
-            musicfm_finegrained_tags
-        )
-    return musicfm_finegrained_tags
+# def _parse_musicfm_finegrained_tags_from_meta(
+#     meta: dict,
+# ) -> Optional[MusicFMFinegrainedTagsProto]:
+#     """
+#     Parse the musicfm_finegrained_tags field in metadata.
+#     """
+#     musicfm_finegrained_tags = meta.get("musicfm_finegrained_tagging", {}).get(
+#         "finegrained_tags"
+#     )
+#     if not musicfm_finegrained_tags:
+#         return None
+#     return MusicFMFinegrainedTagsProto.from_dict_with_norm(musicfm_finegrained_tags)
+
+
+# def _parse_musicfm_finegrained_tags_into_tags_proto(
+#     meta: dict, fn: Callable[[dict], MusicFMFinegrainedTagsProto]
+# ) -> Optional[TagsProto]:
+#     musicfm_finegrained_tags = fn(meta)
+#     if musicfm_finegrained_tags:
+#         musicfm_finegrained_tags = TagsProto.from_musicfm_finegrained_tags(
+#             musicfm_finegrained_tags
+#         )
+#     return musicfm_finegrained_tags
 
 
 # The labels should match the vocab
-_TEMPO_LABEL_RANGES = {
-    "Grave": (0, 40),
-    "Largo": (40, 60),
-    "Adagio": (60, 70),
-    "Andante": (70, 90),
-    "Moderato": (90, 110),
-    "Allegro": (110, 140),
-    "Vivace": (140, 160),
-    "Presto": (160, 200),
-}
+# _TEMPO_LABEL_RANGES = {
+#     "Grave": (0, 40),
+#     "Largo": (40, 60),
+#     "Adagio": (60, 70),
+#     "Andante": (70, 90),
+#     "Moderato": (90, 110),
+#     "Allegro": (110, 140),
+#     "Vivace": (140, 160),
+#     "Presto": (160, 200),
+# }
 
 
 def _tempo_to_label(tempo: Optional[int]) -> str:
     if tempo is None or tempo < 0:
-        return ""
+        return _EMPTY_TAG
     for label, (low, high) in _TEMPO_LABEL_RANGES.items():
         if low <= tempo < high:
             return label
-    return "empty tempo"
+    return _EMPTY_TAG
 
 
 def _parse_insts_to_tags_proto(insts: Optional[list[str]]) -> Optional[TagsProto]:
     if not insts:
-        return None
+        return _EMPTY_TAG
     return TagsProto(instrument=insts)
 
 
 def _parse_tempo_to_tags_proto(tempo: Optional[float]) -> Optional[TagsProto]:
     if tempo is None or tempo < 0:
-        return None
+        return _EMPTY_TAG
     return TagsProto(tempo=[_tempo_to_label(tempo)])
 
 
 def _parse_key_mode_to_tags_proto(key_mode: Optional[str]) -> Optional[TagsProto]:
     if not key_mode:
-        return None
+        return _EMPTY_TAG
     key, mode = key_mode.split(":")
     mode = {  # remap to match the vocab
         "Major": "Natural_Major",

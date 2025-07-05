@@ -740,28 +740,50 @@ class TokenCoffCollate:
         self.pos_output_key = pos_output_key
 
     def _pad_or_truncate(self, tensor_list, max_len, padding_value):
-        """Helper function to pad or truncate a list of tensors to max_len."""
-        processed_tensors = []
-        for i, t in enumerate(tensor_list):  # Added index for logging
+        """Helper function to pad or truncate a list of tensors to max_len.
+
+        Supports both 1D and 2D tensors. For 2D tensors, pads/truncates the first dimension.
+        """
+        if not tensor_list:
+            return torch.empty(0)
+
+        # Get sample tensor to determine shape and dtype
+        sample_tensor = tensor_list[0]
+        batch_size = len(tensor_list)
+
+        # Determine output shape based on input tensor dimensions
+        if sample_tensor.dim() == 1:
+            output_shape = (batch_size, max_len)
+        elif sample_tensor.dim() == 2:
+            output_shape = (batch_size, max_len, sample_tensor.shape[1])
+        else:
+            raise ValueError(f"Unsupported tensor dimension: {sample_tensor.dim()}")
+
+        # Pre-allocate output tensor filled with padding_value
+        output_tensor = torch.full(
+            output_shape,
+            padding_value,
+            dtype=sample_tensor.dtype,
+            device=sample_tensor.device,
+        )
+
+        # Fill the output tensor
+        for i, t in enumerate(tensor_list):
             current_len = t.shape[0]
-            if current_len < max_len:
-                padding_size = max_len - current_len
-                # Pad requires tuple (padding_left, padding_right) for 1D
-                padded_t = F.pad(
-                    t, (0, padding_size), mode="constant", value=padding_value
-                )
-                processed_tensors.append(padded_t)
-            elif current_len > max_len:
+
+            if current_len > max_len:
+                # Truncate and copy
                 logger.warning(
                     f"Truncating sequence at index {i} from length {current_len} to {max_len} "
                     f"for key '{self.token_output_key}'/'{self.coff_output_key}'"
                     f"{'/' + self.pos_output_key if self.pos_output_key else ''}."
                 )
-                truncated_t = t[:max_len]
-                processed_tensors.append(truncated_t)
-            else:  # current_len == max_len
-                processed_tensors.append(t)
-        return torch.stack(processed_tensors)
+                output_tensor[i, :max_len] = t[:max_len]
+            else:
+                # Copy (no truncation needed, padding already handled by pre-allocation)
+                output_tensor[i, :current_len] = t
+
+        return output_tensor
 
     def __call__(self, batch_list, batch_out):
         lyrics_tokens = [
@@ -797,7 +819,14 @@ class TokenCoffCollate:
             lyrics_pos = [
                 torch.as_tensor(item[self.in_key][self.pos_key]) for item in batch_list
             ]
-            padded_pos = pad_sequence(lyrics_pos, batch_first=True, padding_value=-1)
+            if self.max_phone_len > 0:
+                padded_pos = self._pad_or_truncate(
+                    lyrics_pos, self.max_phone_len, padding_value=-1
+                )
+            else:
+                padded_pos = pad_sequence(
+                    lyrics_pos, batch_first=True, padding_value=-1
+                )
             batch_out[self.pos_output_key] = padded_pos
 
 

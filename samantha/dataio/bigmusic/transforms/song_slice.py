@@ -38,6 +38,7 @@ def split_into_song_slices(
     freeform_text: str,
     vocal2midi: dict,
     tempo: float,
+    prompt_type: str,
     slice_mode: str = "section",
     line_break_dropout_rate: float = 0.0,
 ) -> list[dict]:
@@ -62,6 +63,7 @@ def split_into_song_slices(
     # Assign tempo (BPM)
     for song_slice in song_slices:
         song_slice.tempo = tempo
+        song_slice.prompt_type = prompt_type
     return [song_slice.to_dict() for song_slice in song_slices]
 
 
@@ -342,6 +344,7 @@ class SongSlice(DCBase):
     freeform_text: Optional[str] = None
     notes: Optional[list[Note]] = None
     tempo: Optional[float] = None
+    prompt_type: Optional[str] = None
 
     symbol_seq: Optional[list[dict]] = None
     phoneme_tokens: Optional[list[dict]] = None
@@ -619,7 +622,7 @@ def transform_utts_to_song_slices_structure(
         return [
             Phrase.parse(
                 text=us["text"],
-                phonemes=convert_phonemes(us["phonemes"], language),
+                phonemes=convert_phonemes(us["text"], us["phonemes"], language),
                 time_span=(us["start_time"], us["end_time"]),
                 lyrics_confidence=us["confidence"],
             )
