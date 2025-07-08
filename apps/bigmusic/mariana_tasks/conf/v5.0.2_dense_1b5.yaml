@@ -1,7 +1,9 @@
 data:
   save_ckpt_interval: 2000 # keep same with model checkpoint save interval
-  train_dataset_ids: ["CN:15579","CN:14571","CN:15334"]
-  train_dataset_weights: [3,1,1]
+  # train_dataset_ids: ["CN:15579","CN:14571","CN:15334"]
+  # train_dataset_weights: [3,1,1]
+  # fetch train_dataset_ids and train_dataset_weights from training space
+  dataset_version: "BigMusic_PT-4-release"
   val_dataset_ids: [15314]
   val_dataset_weights: [1.0]
 

@@ -7,10 +7,19 @@ from typing import Any, Callable, Dict, List, Literal, Union
 
 import pytorch_lightning as pl
 import torch
+import yaml
 from cruise import CruiseConfig, CruiseDataModule, last_cli
 from cruise.data_module.lite.batcher import DefaultBatcher
 from cruise.data_module.lite.dataloader import LiteCruiseDataLoader, LiteCruiseDataset
 from cruise.data_module.lite.multi_iterable_dataset import MultiIterableDataset
+from mariana.data.utils.path_utils import (
+    _get_file_name,
+    datazone_hdfs_idc,
+    file_pattern,
+    get_dataset,
+    get_file_key,
+    get_training_data_config,
+)
 from mariana.utils.audio.audio_logger import AudioLogger
 
 import samantha  # noqa: F401, import for solve mariana import path.
@@ -22,15 +31,6 @@ from samantha.dataio.bigmusic.bigmusic_compose import (
     build_item_augmentation,
 )
 from samantha.dataio.utils import resolve_data_urls
-
-# Not ready
-# from mariana.data.utils.path_utils import (
-#     file_pattern,
-#     format_file_list,
-#     get_file_key,
-#     resolve_data_urls,
-# )
-
 
 logger = AudioLogger()
 
@@ -109,6 +109,7 @@ else:
 class MusicLiteDataModule(BaseDataModule):
     def __init__(
         self,
+        dataset_version=None,
         train_dataset_ids: Union[int, List[int], str, List[str]] = None,
         train_data_urls: List[Dict[str, str]] = None,
         train_dataset_weights: List[float] = None,
@@ -150,6 +151,40 @@ class MusicLiteDataModule(BaseDataModule):
         else:
             assert isinstance(self, CruiseDataModule)
             self.save_hparams()
+
+        if dataset_version is not None and get_training_data_config is not None:
+            try:
+                dataset_config = get_training_data_config(
+                    str(dataset_version), force_hdfs_idc=datazone_hdfs_idc
+                )
+            except Exception:
+                logger.error(
+                    "can't support force_hdfs_idc, please make sure bytedance.easycycle greater than 1.1.43"
+                )
+                dataset_config = get_training_data_config(str(dataset_version))
+            dataset_config = yaml.safe_load(dataset_config)
+            datasets = dataset_config["data"]["train_multitask_paths"][0]["datasets"]
+            _train_dataset_ids = [dataset["data_id"] for dataset in datasets]
+            _train_dataset_weights = [dataset["dataset_weight"] for dataset in datasets]
+            logger.info(
+                f"fetch {_train_dataset_ids=} {_train_dataset_weights=} from {dataset_version=}"
+            )
+            if train_dataset_ids is None:
+                logger.error(
+                    f"replace train_dataset_ids {train_dataset_ids} -> {_train_dataset_ids}"
+                )
+                train_dataset_ids = _train_dataset_ids
+            if train_dataset_weights is None:
+                logger.error(
+                    f"replace train_dataset_weights {train_dataset_weights} -> {_train_dataset_weights}"
+                )
+                train_dataset_weights = _train_dataset_weights
+            self.hparams.update(
+                {
+                    "train_dataset_ids": _train_dataset_ids,
+                    "train_dataset_weights": _train_dataset_weights,
+                }
+            )
 
         self.train_data_sources_types = self._make_data_sources_and_types(
             train_dataset_ids,
