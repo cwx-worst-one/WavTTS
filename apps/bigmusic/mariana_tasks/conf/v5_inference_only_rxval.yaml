@@ -258,7 +258,6 @@ data:
       token_output_key: "lyrics_tokens"
       coff_output_key: "lyrics_coffs"
       max_phone_len: 4000
-      coff_padding_value: 0.0
 
     - type: TokenCoffCollate
       in_key: "phoneme_tokens_cfg"

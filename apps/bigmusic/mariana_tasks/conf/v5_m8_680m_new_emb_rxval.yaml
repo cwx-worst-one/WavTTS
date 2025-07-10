@@ -155,7 +155,6 @@ data:
         coff_key: 'coffs'
         token_output_key: 'lyrics_tokens'
         coff_output_key: 'lyrics_coffs'
-        coff_padding_value: 0.0
 
       - type: NestListCollate
         key_list: ['uttid','style_tags', 'style_input_ids','freeform_text','phoneme_tokens.tokens', 'conditions']
@@ -286,7 +285,6 @@ data:
         coff_key: 'coffs'
         token_output_key: 'lyrics_tokens'
         coff_output_key: 'lyrics_coffs'
-        coff_padding_value: 0.0
 
       - type: NestListCollate
         key_list: ['uttid','style_tags','style_input_ids','freeform_text','phoneme_tokens.tokens', 'conditions']
