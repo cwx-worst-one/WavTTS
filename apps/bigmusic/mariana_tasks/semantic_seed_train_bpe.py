@@ -236,59 +236,59 @@ class SemanticLlmModelBpe(SemanticLlmModel):
         emit_eos_thresh_secs = hp.get('emit_eos_thresh_secs', 0)
         skip_sos = hp.get('skip_sos', False)
         stop_eos = hp.get('stop_eos', False)
-    
-        model_inputs = [] # model_inputs is a list of batch, e.g. [batch, uncond_batch], compatible with cfg
+
+        input_ids = batch['input_ids']
+        inputs_embeds_mask = batch['attention_mask']
         eos_id = batch['eos_id'] # TODO get all required fields
         text_codebook_size = batch['text_codebook_size'] # TODO get all required fields
-
-        model_inputs.append({'token_ids': batch['input_ids']})
+        model_inputs = dict(
+            input_ids = input_ids,
+            inputs_embeds_mask = inputs_embeds_mask,
+        )
+        n_fwd_path = 0
         
         if use_controller_cfg:
             controller_cfg_gamma = [controller_cfg_gamma] if isinstance(controller_cfg_gamma, (float, int)) else controller_cfg_gamma # to list
-            for idx in range(len(controller_cfg_gamma)):
-                if idx == 0: # hack, will be removed in future version
-                    model_inputs.append({'token_ids': batch[f'input_ids_uncond']})
-                    continue
-                model_inputs.append({'token_ids': batch[f'input_ids_uncond{idx}']})
-
-        batch_size, seq_len = model_inputs[0]['token_ids'].size()
+            if len(controller_cfg_gamma) == 1: # vanilla cfg
+                n_fwd_path = 2
+            elif len(controller_cfg_gamma) > 1: # group cfg
+                n_fwd_path = len(controller_cfg_gamma)
+        batch_size, seq_len = input_ids.size()
+        original_batch_size = batch_size // (n_fwd_path)
 
         if 'slice_duration' in batch:
-            slice_dur = math.ceil(batch['slice_duration'].item())
-            exclude_eos_first_secs = slice_dur - exclude_eos_thresh_secs if exclude_eos_thresh_secs > 0 else exclude_eos_first_secs
-            num_tokens = (slice_dur + emit_eos_thresh_secs) * 25 if emit_eos_thresh_secs > 0 else num_tokens
-
-        pbar = tqdm(range(num_tokens))
+            slice_dur = batch['slice_duration'].ceil().int()
+            exclude_eos_first_secs = (
+                slice_dur - exclude_eos_thresh_secs
+                if exclude_eos_thresh_secs > 0
+                else torch.empty(original_batch_size, dtype=torch.int32).fill_(exclude_eos_first_secs)
+            )
+            exclude_eos_first_secs = exclude_eos_first_secs.int().cpu()
+            num_tokens = (slice_dur + emit_eos_thresh_secs) * frame_rate if emit_eos_thresh_secs > 0 else num_tokens
+        else:
+            exclude_eos_first_secs = torch.empty(original_batch_size, dtype=torch.int32).fill_(exclude_eos_first_secs)
+        if isinstance(num_tokens, torch.Tensor):
+            num_tokens_max = num_tokens.int().amax().item()
+            num_tokens = num_tokens.cuda()
+        else:
+            num_tokens_max = num_tokens
+            num_tokens = torch.empty(original_batch_size, dtype=torch.int32).fill_(num_tokens_max).cuda()
+        pbar = tqdm(range(num_tokens_max))
         # is_eos_stop = torch.zeros((batch_size * beam), dtype=torch.long, device=self.device)
         tqdm_name = f"{self.__class__.__name__}.rank{DIST_ENV.local_rank}" 
-
-        def apply_cfg(logits_list, controller_cfg_gamma, batch_size, n_cfg_path):
-            if len(controller_cfg_gamma) > 2: # group cfg TODO
-                beam_bs = batch_size // (1+n_cfg_path)
-                uncond_logits = logits[-beam_bs:]
-                cond_cfg_logits = torch.zeros_like(uncond_logits)
-                for gg in range(len(controller_cfg_gamma)):
-                    this_cond_logits = logits[beam_bs*gg: beam_bs*(gg+1)]
-                    cond_cfg_logits += (controller_cfg_gamma[gg] * this_cond_logits)
-                logits = cond_cfg_logits
-            elif len(logits_list) == 2: # vanilla cfg
-                cond_logits, uncond_logits = logits_list
+        is_eos_stop = torch.zeros((beam, original_batch_size), dtype=torch.long, device=self.gpt2.device)
+        def apply_cfg(logits, controller_cfg_gamma, batch_size, n_fwd_path):
+            if len(controller_cfg_gamma) > 1: # group cfg
+                *logits_list, = logits.chunk(n_fwd_path)
+                logits = sum([cond_gamma * cond_logits for cond_gamma, cond_logits in zip(controller_cfg_gamma, logits_list)])
+            else: # vanilla cfg
+                cond_logits, uncond_logits = logits[0:batch_size//2], logits[batch_size//2:]
                 controller_cfg_gamma = controller_cfg_gamma[0]
                 logits = controller_cfg_gamma * cond_logits + (1 - controller_cfg_gamma) * uncond_logits
-            else: # no cfg
-                logits = logits_list[0]
             return logits
 
-
-        if use_controller_cfg:
-            cfg_batch_size = batch_size
-        else:
-            cfg_batch_size = None
-
-        assert beam == 1, "predict_token not support beam > 1"
         assert step_out_blank_logic == "v4", "predict_token support step_out_blank_logic v4 only"
 
-        original_batch_size = batch_size
         exclude_ids = []
 
         output_tokens = None
@@ -303,97 +303,71 @@ class SemanticLlmModelBpe(SemanticLlmModel):
                 previous_tokens = torch.concat([batch["audio_prompt_token_ids"]] * beam).tolist()   # (beam * bs, audio_prompt_token_len)
                 buffer_len = min(min(len(pt) for pt in previous_tokens), step_out_blank_max_len)
                 previous_tokens = [pt[-buffer_len:] for pt in previous_tokens]
-
-        # TODO: adapt to batch infer
-        # slice_dur = math.ceil(batch['slice_duration'].item())
-        # exclude_eos_first_secs = slice_dur - exclude_eos_thresh_secs if exclude_eos_thresh_secs > 0 else exclude_eos_first_secs
-        # num_tokens = (slice_dur + emit_eos_thresh_secs) * 25 if emit_eos_thresh_secs > 0 else num_tokens
-
-        pbar = tqdm(range(num_tokens))
-        is_eos_stop = torch.zeros((beam, original_batch_size), dtype=torch.long, device=self.gpt2.device)
-
-        for model_input in model_inputs:
-            model_input["inputs_embeds"] = self.gpt2.transformer.wte(model_input["token_ids"].contiguous())
+        model_inputs["inputs_embeds"] = self.gpt2.transformer.wte(model_inputs["input_ids"].contiguous())
 
         use_cache = self.hparams.inference.get('use_cache', False)
         use_cuda_graph = self.hparams.inference.get('use_cuda_graph', False)
         if use_cache:
             # init cuda graph
             if use_cuda_graph and self.graph is None:
-                cuda_graph_max_bsz = self.hparams.inference.get('cuda_graph_max_bsz', 1)
+                cuda_graph_max_bsz = batch_size
                 cuda_graph_max_seqlen = self.hparams.inference.get('cuda_graph_max_seqlen', 1024)
                 logger.info(f"init cuda graph for {self.gpt2.__class__.__name__} with max_bsz={cuda_graph_max_bsz} and max_seqlen={cuda_graph_max_seqlen}")
                 with torch.autocast(device_type="cuda", enabled=True, dtype=torch.bfloat16):
                     # max_batch_size must equal to beam_size * real_batch_size
                     self.capture_cuda_graph(cuda_graph_max_bsz, cuda_graph_max_seqlen)
                 
-        gpt2_kwargs = []
-        for _ in model_inputs:
-            gpt2_kwargs.append(dict(use_cache=use_cache))
-
+        gpt2_kwargs = dict(use_cache=use_cache)
         for i in pbar:
-            pbar.set_description(f"{tqdm_name} [0 - {num_tokens}]")
-
-            # to enable inference without a trainer, we simply cast the inputs to the expected model type
-            # which is either torch.float16 or torch.bfloat16
-            for model_input in model_inputs:
-                model_input["inputs_embeds"] = model_input["inputs_embeds"].to(self.gpt2.transformer.ln_f.weight.dtype)
+            pbar.set_description(f"{tqdm_name} [0 - {num_tokens_max}]")
             
-            for idx, gpt2_kwarg in enumerate(gpt2_kwargs):
-                inputs_embeds = model_inputs[idx]["inputs_embeds"]
-                                                # B, T
-                inputs_embeds_mask = torch.ones(*model_inputs[idx]['inputs_embeds'].shape[:2], dtype=torch.bool, device=model_inputs[idx]["inputs_embeds"].device)
-                if i == 0:
-                    gpt2_kwargs[idx] = self.gpt2.prepare_inputs_for_generation(
-                        None,
-                        inputs_embeds=inputs_embeds,
-                        inputs_embeds_mask=inputs_embeds_mask,
-                        **gpt2_kwarg,
-                    )
-                else:
-                    gpt2_kwarg.update(
-                        inputs_embeds=inputs_embeds,
-                        inputs_embeds_mask=inputs_embeds_mask
-                    )
+            inputs_embeds = model_inputs["inputs_embeds"]
+            inputs_embeds_mask = model_inputs["inputs_embeds_mask"]
+            if i == 0:
+                gpt2_kwargs = self.gpt2.prepare_inputs_for_generation(
+                    None,
+                    inputs_embeds=inputs_embeds,
+                    inputs_embeds_mask=inputs_embeds_mask,
+                    **gpt2_kwargs,
+                )
+            else:
+                gpt2_kwargs.update(
+                    inputs_embeds=inputs_embeds,
+                    inputs_embeds_mask=inputs_embeds_mask
+                )
 
             with torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
-                outputs = []
-                for gpt2_kwarg in gpt2_kwargs:
-                    if use_cache and use_cuda_graph:
-                        if i == 0:
-                            # prefill
-                            gpt2_kwarg['past_key_values'] = self.input_buffers["past_key_values"].clone() # past_key_values generated by gpt2.prepare_inputs_for_generation as a length of 32768, overwrite it here
-                            output = self.gpt2(**gpt2_kwarg, return_dict=True)  
-                        else:
-                            # decode
-                            output = self.predict_by_cuda_graph(
-                                gpt2_kwarg['inputs_embeds'],
-                                gpt2_kwarg['inputs_embeds_mask'],
-                                gpt2_kwarg['cache_seqlens'],
-                                gpt2_kwarg['past_key_values'],
-                            )
-                        cache_seqlens = gpt2_kwarg.get('cache_seqlens', None)
-                        this_peer_finished = gpt2_kwarg.get('this_peer_finished', False)
-                        if cache_seqlens is None:
-                            inputs_embeds_mask = gpt2_kwarg.get('inputs_embeds_mask', None)
-                            assert inputs_embeds_mask is not None
-                            cache_seqlens = inputs_embeds_mask.view(inputs_embeds_mask.shape[0], -1).sum(-1, dtype=torch.int32) - 1
-                        cache_seqlens = cache_seqlens + 1
-
-                        gpt2_kwarg['cache_seqlens'] = cache_seqlens
-                        gpt2_kwarg['this_peer_finished'] = this_peer_finished
-                        gpt2_kwarg['past_key_values'].copy_(output['past_key_values'])
+                if use_cache and use_cuda_graph:
+                    if i == 0:
+                        # prefill
+                        gpt2_kwargs['past_key_values'] = self.input_buffers["past_key_values"].clone() # past_key_values generated by gpt2.prepare_inputs_for_generation as a length of 32768, overwrite it here
+                        output = self.gpt2(**gpt2_kwargs, return_dict=True)  
                     else:
-                        output = self.gpt2(**gpt2_kwarg, return_dict=True)
-                    outputs.append(copy.deepcopy(output)) # prevent the second call to cuda graph from overwriting the first output
+                        # decode
+                        output = self.predict_by_cuda_graph(
+                            gpt2_kwargs['inputs_embeds'],
+                            gpt2_kwargs['inputs_embeds_mask'],
+                            gpt2_kwargs['cache_seqlens'],
+                            gpt2_kwargs['past_key_values'],
+                        )
+                    cache_seqlens = gpt2_kwargs.get('cache_seqlens', None)
+                    this_peer_finished = gpt2_kwargs.get('this_peer_finished', False)
+                    if cache_seqlens is None:
+                        inputs_embeds_mask = gpt2_kwargs.get('inputs_embeds_mask', None)
+                        assert inputs_embeds_mask is not None
+                        cache_seqlens = inputs_embeds_mask.view(inputs_embeds_mask.shape[0], -1).sum(-1, dtype=torch.int32) - 1
+                    cache_seqlens = cache_seqlens + 1
 
-            logits_list = []
-            for output in outputs:
-                logits = output['logits']
-                logits = logits.float()
-                logits = logits[:, -1:, :] # only predicting on last logit.
-                logits_list.append(logits)
-            logits = apply_cfg(logits_list, controller_cfg_gamma, batch_size, cfg_batch_size)
+                    gpt2_kwargs['cache_seqlens'] = cache_seqlens
+                    gpt2_kwargs['this_peer_finished'] = this_peer_finished
+                    gpt2_kwargs['past_key_values'].copy_(output['past_key_values'])
+                else:
+                    output = self.gpt2(**gpt2_kwargs, return_dict=True)
+            logits = output['logits']
+            logits = logits.float()
+            logits = logits[:, -1:, :] # only predicting on last logit.
+            if use_controller_cfg:
+                logits = apply_cfg(logits, controller_cfg_gamma, batch_size, n_fwd_path)
 
             if use_step_out_blank:
                 previous_output_tokens = torch.tensor(previous_tokens, dtype=torch.long, device='cuda').reshape(beam * original_batch_size, -1)
@@ -408,9 +382,9 @@ class SemanticLlmModelBpe(SemanticLlmModel):
                 logits = torch.where(mask.logical_and(negative_mask), logits * repetition_penalty, logits)
                 logits = torch.where(mask.logical_and(negative_mask.logical_not()), logits / repetition_penalty, logits)
 
-            if i < 25 * exclude_eos_first_secs:
-                # Ensure that it generates at least 30s music.
-                for j in range(original_batch_size):
+            # Ensure that it generates at least 30s music.
+            for j in range(original_batch_size):
+                if i < frame_rate * exclude_eos_first_secs[j]:
                     logits[j, 0, eos_id] = -float('Inf')
 
             if exclude_text_tokens:
@@ -428,27 +402,29 @@ class SemanticLlmModelBpe(SemanticLlmModel):
                     for j in range(original_batch_size):
                         batch_slice = slice(beam_idx*original_batch_size, (beam_idx+1)*original_batch_size)
                         if len(previous_tokens[batch_slice][j]) < step_out_blank_max_len:
-                            previous_tokens[batch_slice][j].append(predict_token_cpu[beam_idx][j])
+                            previous_tokens[batch_slice][j].append(predict_token_cpu[batch_slice][j])
                         else:
                             previous_tokens[batch_slice][j] = previous_tokens[batch_slice][j][-step_out_blank_max_len:]
-                            previous_tokens[batch_slice][j].append(predict_token_cpu[beam_idx][j])
+                            previous_tokens[batch_slice][j].append(predict_token_cpu[batch_slice][j])
 
             # predict_token_emb = self.emb.target_embedder.embedder(predict_token)
             predict_token_emb = self.gpt2.transformer.wte(predict_token)
-
-            for model_input in model_inputs:
-                if use_cache:
-                    model_input['inputs_embeds'] = predict_token_emb
-                else:
-                    model_input['inputs_embeds'] = torch.cat((model_input['inputs_embeds'],predict_token_emb), 1) 
+            if use_cache:
+                model_inputs['inputs_embeds'] = predict_token_emb.repeat(n_fwd_path, 1, 1) if use_controller_cfg else predict_token_emb
+                model_inputs['inputs_embeds_mask'] = torch.ones(model_inputs['inputs_embeds'].shape[:2], dtype=torch.bool, device=model_inputs['inputs_embeds'].device)
+            else:
+                model_inputs['inputs_embeds'] = torch.cat((model_inputs['inputs_embeds'],predict_token_emb), 1) 
 
             output_tokens = torch.cat([output_tokens, predict_token], dim=1) if output_tokens is not None else predict_token
 
             if stop_eos:
-                eos_mask = predict_token == (eos_id)  # (beam, b)
+                num_tokens_mask = (i >= num_tokens).broadcast_to(beam, original_batch_size) # (beam, bsz)
+                eos_mask = predict_token.view(beam, -1) == eos_id  # (beam, bsz)
+                eos_mask = torch.logical_or(eos_mask, num_tokens_mask)
                 is_eos_stop += eos_mask
+                output_tokens[eos_mask.view(-1), -1] = eos_id  # force
                 if torch.all(is_eos_stop > 0):
-                    break 
+                    break
 
         output_tokens -= text_codebook_size
         return output_tokens

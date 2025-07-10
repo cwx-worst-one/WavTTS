@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, TypedDict
+from typing import Dict, List, Optional, Tuple, TypedDict, Union
 
 import numpy as np
 import torch
@@ -321,18 +321,27 @@ class FullTokenCollate:
     # local tokenizer path: recipes/musiclish/lyrics_audio_tokenizer_hf/
     def __init__(
         self,
-        in_key="input_strings",
-        bpe_tokenizer_path="/opt/tiger/bbpe155k-v6.4.3-ml.pret",
-        audio_vocab_size=32768,
-        extra_tokens=[],
-        seq_template="<prompt>{}</prompt><lyrics>{}</lyrics><audio>{}</audio>",
-        out_key_suffix="",  # _uncond for cfg uncond
+        in_key: List[str] = "input_strings",
+        bpe_tokenizer_path: str = "/opt/tiger/bbpe155k-v6.4.3-ml.pret",
+        audio_vocab_size: int = 32768,
+        extra_tokens: List[str] = None,
+        seq_template: Union[
+            str, List[str]
+        ] = "<prompt>{}</prompt><lyrics>{}</lyrics><audio>{}</audio>",
+        out_key_suffix: Union[str, List[str]] = "",  # deprecated: keep it for compat
+        padding_side="right",
     ):
         """init."""
-        self.in_key = in_key
-        self.bpe_tokenizer = AutoTokenizer.from_pretrained(bpe_tokenizer_path)
-        self.seq_template = seq_template
-        self.out_key_suffix = out_key_suffix
+        self.in_key = in_key if isinstance(in_key, list) else [in_key]
+        self.bpe_tokenizer = AutoTokenizer.from_pretrained(
+            bpe_tokenizer_path, padding_side=padding_side
+        )
+        self.seq_template = (
+            seq_template if isinstance(seq_template, list) else [seq_template]
+        )
+        assert len(self.in_key) == len(self.seq_template)
+
+        extra_tokens = extra_tokens or []
 
         # no section_spectial_tokens here, as we will use downloaded lyrics which has richer section tags
         # e.g. [Verse 2: Doechii & Luke, exciting]
@@ -379,7 +388,7 @@ class FullTokenCollate:
         )
 
         total_vocab = len(self.bpe_tokenizer)
-        print(f"the new whole vocab size is {total_vocab}")
+        logger.info(f"the new whole vocab size is {total_vocab}")
 
         self.eos_id = self.bpe_tokenizer.convert_tokens_to_ids(
             self.audio_boundary_tokens[1]
@@ -396,50 +405,33 @@ class FullTokenCollate:
             bucket_list(list): list of item in a bucket.
             batch_out(dict): output data.
         """
-        input_strings = [item[self.in_key] for item in batch_in]
-        input_ids_batch = []
-        attention_mask_batch = []
-        token_type_ids_batch = []
+        input_strings_list = [
+            [item[in_key] for item in batch_in] for in_key in self.in_key
+        ]
 
-        for item in input_strings:
-            if "{}" in self.seq_template:
-                full_input = self.seq_template.format(*item)
+        text_inputs = []
+        for input_strings, seq_template in zip(input_strings_list, self.seq_template):
+            if "{}" in seq_template:
+                full_input = [seq_template.format(*item) for item in input_strings]
             else:
-                full_input = (
-                    self.seq_template
-                )  # not really a template, just a string, e.g. '<audio>' for cfg uncond
-            encoded = self.bpe_tokenizer(full_input)
+                full_input = [seq_template for _ in input_strings]
+            text_inputs.extend(full_input)
+        tk_output = self.bpe_tokenizer(text_inputs, padding=True, return_tensors="pt")
+        # remodify token_type_ids
 
-            input_ids = encoded["input_ids"]  # just a list integers
+        token_type_ids = (
+            (tk_output["input_ids"] >= self.audio_start_id)
+            & (tk_output["input_ids"] <= self.eos_id)
+        ).long()
+        tk_output["token_type_ids"] = token_type_ids
+        batch_out.update(tk_output)
 
-            token_type_ids = [
-                1 if self.audio_start_id <= token_id <= self.eos_id else 0
-                for token_id in input_ids  # including the audio boundary
-            ]
-            attention_mask = [1] * len(input_ids)
-
-            input_ids_batch.append(torch.tensor(input_ids))
-            attention_mask_batch.append(torch.tensor(attention_mask))
-            token_type_ids_batch.append(torch.tensor(token_type_ids))
-
-        input_ids_batch = pad_sequence(
-            input_ids_batch, batch_first=True, padding_value=self.eos_id
-        )
-        attention_mask_batch = pad_sequence(
-            attention_mask_batch, batch_first=True, padding_value=0
-        )
-        token_type_ids_batch = pad_sequence(
-            token_type_ids_batch, batch_first=True, padding_value=0
-        )
-
-        batch_out["input_ids" + self.out_key_suffix] = input_ids_batch
-        batch_out["attention_mask" + self.out_key_suffix] = attention_mask_batch
-        batch_out["token_type_ids" + self.out_key_suffix] = token_type_ids_batch
-
+        batch_size = len(text_inputs) // len(self.seq_template)
         batch_out["conditions"] = ["lyrics_tokens"]
-        batch_out["category"] = ["results"]
+        batch_out["category"] = ["results"] * batch_size
         batch_out["eos_id"] = self.eos_id
         batch_out["text_codebook_size"] = self.audio_start_id + 1  # exclude <audio>
+        return
 
 
 class StandardMetaToStyleTextCollate:

@@ -700,6 +700,8 @@ class PRDMetaParser(MusicMetaRWTransform):
                 meta[field] = dedup_with_order(tags.get("lang", []))
             elif field == "duration":
                 meta[field] = tags.get("duration", [])
+            elif field == "character":
+                meta[field] = tags.get("character", [])
         return meta
 
 

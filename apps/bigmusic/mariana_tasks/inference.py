@@ -111,6 +111,8 @@ class SemanticInferenceModule(pl.LightningModule):
         eos_id = batch.get('eos_id', None)
         if eos_id is None:
             eos_id = self.semantic_module.emb.target_embedder.eos_id
+        else:
+            eos_id = eos_id - batch.get("text_codebook_size", 0)
 
         semantic_samples, eos_index_list = process_eos_indexes(
             raw_semantic_samples,
