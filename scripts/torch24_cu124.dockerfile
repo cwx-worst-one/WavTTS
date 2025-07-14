@@ -61,10 +61,11 @@ ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
 ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.79
-ARG BUMI_VERSION=25.6.0.35
-ARG LSDP_VERSION=25.6.0.28
+ARG BUMI_VERSION=25.7.0.42
+ARG LSDP_VERSION=25.7.0.38
 ARG TRITON_VERSION=1.0.0.216
 ARG OMNIDISPATCHER_VERSION=1.0.0.40
+ARG LITEDATALOADER_VERSION=1.0.0.22
 ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.47
 # https://github.com/facebookresearch/xformers.git:6425fd0
 ARG XFORMERS_VERSION=1.0.0.15
@@ -673,8 +674,10 @@ RUN pip3 install --no-cache-dir --no-deps \
 # Install omnidispatcher omnistore
 RUN pip3 install --no-cache-dir \
         http://luban-source.byted.org/repository/scm/seed.speech.OmniDispatcher_$OMNIDISPATCHER_VERSION.tar.gz \
-        byted-omnistore==1.0.7
+        byted-omnistore==1.0.9rc2
 
+RUN pip3 install --no-cache-dir \
+        http://luban-source.byted.org/repository/scm/seed.speech.lite_dataloader_$LITEDATALOADER_VERSION.tar.gz
 
 RUN mkdir -p /tmp/py_pkg.panther && \
     cd /tmp/py_pkg.panther && \

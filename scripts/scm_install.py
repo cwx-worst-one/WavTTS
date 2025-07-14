@@ -18,6 +18,8 @@ _ABBRS_ = {
     "bumi": "seed.speech.bumi",
     "triton": "seed.speech.triton",
     "lsdp": "seed.speech.lsdp",
+    "fa3": "seed.specch.flash_attention_v3",
+    "dataloader": "seed.speech.lite_dataloader"
 }
 _INSTALL_CMD = {
     "lab.speech.panther_arnold": "pip3 install *torch*/panther_gpu-*.whl",
