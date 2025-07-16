@@ -605,9 +605,9 @@ class LitMuLanModule(pl.LightningModule):
         self.val_outputs = dict()
 
         if text_encoder == 'clap':
-            self.tokenizer = AutoTokenizer.from_pretrained("laion/larger_clap_general")
+            self.tokenizer = AutoTokenizer.from_pretrained(".module_cache/huggingface/larger_clap_general")
         else:
-            self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
+            self.tokenizer = AutoTokenizer.from_pretrained(".module_cache/huggingface/bert-large-uncased")
 
     def on_fit_start(self):
         self.music_encoder.mut.manually_to_device(self.device)

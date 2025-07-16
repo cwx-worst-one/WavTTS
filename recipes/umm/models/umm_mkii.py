@@ -673,11 +673,11 @@ class AudioEncoder(nn.Module):
     def _calculate_masking(self, x, x_length):
         #https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html
         # A boolean mask where a value of True indicates that the element should take part in attention
-        B = x_length.size(0)
+        # B = x_length.size(0)
         # max_len = torch.max(x_length).item()
         max_len = x.shape[-2]
         indices = torch.arange(max_len, device=x_length.device)
-        mask = indices.unsqueeze(0) < x_length.unsqueeze(1)
+        mask = indices.unsqueeze(0) < x_length.view(-1).unsqueeze(1)
         return mask
     
     def forward(self, x, x_length=None):
