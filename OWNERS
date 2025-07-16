@@ -1,0 +1,18 @@
+patterns:
+    /:
+        reviewers:
+            - wangxin.colin
+            - zhangshuo.0
+            - xieshuangyi
+        approvals_required: 1
+        no_parent: true
+    /sami_ai:
+        reviewers:
+            - wangxin.colin
+            - zhangshuo.0
+        approvals_required: 1
+        no_parent: true
+    /recipes:
+        approvals_required: 0
+        no_parent: true
+
