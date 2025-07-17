@@ -1,10 +1,20 @@
+import json
 import logging
 import re
+import string
+from pathlib import Path
 from typing import Optional
 
 from ..tokenizers.sami_phoneme_tokenizer import PhnStrParser
 
 logger = logging.getLogger(__file__)
+_VOCAB_DIR = (
+    Path(__file__).parent.absolute() / "../tokenizers/sami_phoneme_tokenizer/vocabs"
+)
+
+
+def is_punc(ch):
+    return ch in string.punctuation
 
 
 def is_chinese_char(ch):
@@ -21,13 +31,28 @@ def is_english_char(ch):
     return ch.encode("utf-8").isalpha()
 
 
-def convert_phonemes(text, phoneme, lang):
+def get_vocab_from_version(version: str = "v2"):
+    vocab = {}
+    version_file = _VOCAB_DIR / f"builder.{version}.json"
+    with open(version_file, "r") as f:
+        vocab = json.load(f)
+    return vocab
+
+
+def convert_phonemes(text, phoneme, lang, version="v2"):
     try:
         import ToJyutping  # 3.2.0
     except ImportError:
         raise ImportError(
             "Failed to import ToJyutping, please install it for `convert_phonemes`."
         )
+
+    vocab = get_vocab_from_version(version)
+    CANTO_CONSONANTS, CANTO_VOWELS = [], []
+    for item in vocab.get("phn_vocabs", []):
+        if item.get("language") == "cant":
+            CANTO_CONSONANTS = item.get("consonants", [])
+            CANTO_VOWELS = item.get("vowels", [])
 
     if isinstance(lang, str):
         lang = lang.split(",")
