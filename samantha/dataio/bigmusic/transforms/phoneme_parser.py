@@ -9,6 +9,20 @@ from ..tokenizers.sami_phoneme_tokenizer import PhnStrParser
 logger = logging.getLogger(__file__)
 
 
+def is_chinese_char(ch):
+    if is_punc(ch):
+        return True
+    return (ch.encode("unicode_escape") >= b"\\u4e00") and (
+        ch.encode("unicode_escape") <= b"\\u9fff"
+    )
+
+
+def is_english_char(ch):
+    if is_punc(ch):
+        return True
+    return ch.encode("utf-8").isalpha()
+
+
 def convert_phonemes(text, phoneme, lang):
     if isinstance(lang, str):
         lang = lang.split(",")
