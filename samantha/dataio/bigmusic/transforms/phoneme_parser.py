@@ -2,8 +2,6 @@ import logging
 import re
 from typing import Optional
 
-import ToJyutping  # 3.2.0
-
 from ..tokenizers.sami_phoneme_tokenizer import PhnStrParser
 
 logger = logging.getLogger(__file__)
@@ -24,6 +22,13 @@ def is_english_char(ch):
 
 
 def convert_phonemes(text, phoneme, lang):
+    try:
+        import ToJyutping  # 3.2.0
+    except ImportError:
+        raise ImportError(
+            "Failed to import ToJyutping, please install it for `convert_phonemes`."
+        )
+
     if isinstance(lang, str):
         lang = lang.split(",")
     if "Cantonese" not in lang:
