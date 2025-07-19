@@ -7,6 +7,7 @@ import pytest
 from tests.helpers.runif import RunIf
 from samantha.utils import hdfs_helper as hh
 
+
 dummy_place = "hdfs://haruna/home/byte_speech_sv/user/wangxin.colin/example/didispeech/dummy_place.json"  # noqa
 
 
@@ -23,13 +24,14 @@ def sample_json_path():
     )
     return test_json_path
 
-
+@pytest.mark.skip(reason="Outdated test case, should use hdfs api from `hdfs_io` package")
 def test_ishdfs(sample_hdfs_path):
     assert hh.ishdfs(sample_hdfs_path)
     sample_non_hdfs_path = "tests/samples/images/logo.jpeg"
     assert not hh.ishdfs(sample_non_hdfs_path)
 
 
+@pytest.mark.skip(reason="Outdated test case, should use hdfs api from `hdfs_io` package")
 def test_put_many_error():
     try:
         hh.put_many(["", ""], "not_hdfs_path")
@@ -37,7 +39,7 @@ def test_put_many_error():
         assert isinstance(e, ValueError)
         assert str(e) == "not_hdfs_path is not a directory."
 
-
+@pytest.mark.skip(reason="Outdated test case, should use hdfs api from `hdfs_io` package")
 def test_hopen(sample_hdfs_path, sample_json_path):
     # 1: test open hdfs
     res = hh.hopen(sample_hdfs_path)
@@ -53,7 +55,7 @@ def test_hopen(sample_hdfs_path, sample_json_path):
         assert out_json["utt1"]["text"] == "hello world"
 
 
-@pytest.mark.skip(reason="no hdfs in test env")
+@pytest.mark.skip(reason="Outdated test case, should use hdfs api from `hdfs_io` package")
 def test_hdfs_file(sample_json_path):
     """
     We first put a sample json file to a dummy place on hdfs,
@@ -71,7 +73,7 @@ def test_hdfs_file(sample_json_path):
         assert last_line.endswith("final words")
     assert hh.rm(dummy_place)
 
-
+@pytest.mark.skip(reason="Outdated test case, should use hdfs api from `hdfs_io` package")
 @RunIf(has_hdfs=True)
 def test_hdfs_ls():
     assert hh.hdfs_ls("/user")

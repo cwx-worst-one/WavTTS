@@ -47,7 +47,7 @@ post-trigger:
         - &step-setup-pytest-xdist
           name: setup pytest-xdist
           commands:
-            - pip3 install pytest-xdist
+            - pip3 install -U pytest pytest-xdist
         - &step-check-cuda-availability
           name: check cuda availability
           commands:
