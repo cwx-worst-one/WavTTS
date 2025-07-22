@@ -291,14 +291,10 @@ class TokenBuffer:
         predict_token_cpu = predict_token.cpu().numpy()
         # predict_token_cpu: (beam, b)
         # previous_tokens: (beam_size * b, queue_len)
-        for beam_idx in range(self.beam):
-            for j in range(self.original_batch_size):
-                batch_slice = slice(beam_idx * self.original_batch_size, (beam_idx + 1) * self.original_batch_size)
-                if len(self.buffers[batch_slice][j]) < self.step_out_blank_max_len:
-                    self.buffers[batch_slice][j].append(predict_token_cpu[batch_slice][j])
-                else:
-                    self.buffers[batch_slice][j] = self.buffers[batch_slice][j][-self.step_out_blank_max_len:]
-                    self.buffers[batch_slice][j].append(predict_token_cpu[batch_slice][j])
+        for j in range(self.beam * self.original_batch_size):
+            self.buffers[j].append(predict_token_cpu[j,0])
+            if len(self.buffers[j]) > self.step_out_blank_max_len:
+                self.buffers[j] = self.buffers[j][-self.step_out_blank_max_len:]
 
 
 class LogitsProcessor:

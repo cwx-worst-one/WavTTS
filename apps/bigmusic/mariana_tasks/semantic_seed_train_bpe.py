@@ -398,14 +398,10 @@ class SemanticLlmModelBpe(SemanticLlmModel):
                 predict_token_cpu = predict_token.cpu().numpy()
                 # predict_token_cpu: (beam, b)
                 # previous_tokens: (beam_size * b, queue_len)
-                for beam_idx in range(beam):
-                    for j in range(original_batch_size):
-                        batch_slice = slice(beam_idx*original_batch_size, (beam_idx+1)*original_batch_size)
-                        if len(previous_tokens[batch_slice][j]) < step_out_blank_max_len:
-                            previous_tokens[batch_slice][j].append(predict_token_cpu[batch_slice][j])
-                        else:
-                            previous_tokens[batch_slice][j] = previous_tokens[batch_slice][j][-step_out_blank_max_len:]
-                            previous_tokens[batch_slice][j].append(predict_token_cpu[batch_slice][j])
+                for j in range(beam * original_batch_size):
+                    previous_tokens[j].append(predict_token_cpu[j,0])
+                    if len(previous_tokens[j]) > step_out_blank_max_len:
+                        previous_tokens[j] = previous_tokens[j][-step_out_blank_max_len:]
 
             # predict_token_emb = self.emb.target_embedder.embedder(predict_token)
             predict_token_emb = self.gpt2.transformer.wte(predict_token)
