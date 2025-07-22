@@ -1,4 +1,5 @@
 import ast
+import copy
 import io
 import json
 import math
@@ -1934,6 +1935,105 @@ class SongSliceAudioCut:
         return item
 
 
+class SongSliceAudioCutWithMetaData(SongSliceAudioCut):
+    """
+    A transform class that cuts audio data into segments based on song slice information.
+    Each song slice will get its corresponding audio segment from the full audio.
+    original item key will be copy into new item
+    This is a intermedia version for merging to master puprose
+    """
+
+    def __init__(
+        self,
+        in_key: str = "song_slices",
+        audio_key="audio",
+        duration_leeway_in_s: float = 2.0,
+        no_slice: bool = False,
+        **kwargs,
+    ):
+        super().__init__(
+            in_key=in_key,
+            audio_key=audio_key,
+            duration_leeway_in_s=duration_leeway_in_s,
+            no_slice=no_slice,
+            **kwargs,
+        )
+        # excluded_keys will NOT be copied into new item
+        self.excluded_keys = {"audio", "uttid", "text", "audio_44k", "wav"}
+
+    def __call__(self, item, **kwargs):
+        # Skip processing if item is None or doesn't contain song slices
+
+        if item is None or self.in_key not in item:
+            return None
+
+        # Validate that all required keys are present in the input item
+        for key in self.required_keys:
+            if key not in item:
+                logger.error(f"Missing required key: {key} in {item['uttid']}")
+                return None
+
+        # Ensure the audio sample rate matches the expected rate
+        if self.sample_rate != item["sample_rate"]:
+            logger.error(
+                f"Sample rate mismatch for {item['uttid']}: expected {self.sample_rate}, got {item['sample_rate']}"
+            )
+            return None
+
+        song_slices = copy.deepcopy(item[self.in_key])
+        if self.no_slice and len(song_slices) != 1:
+            logger.error(
+                f"Discard {item['uttid']} because no_slice is True but len(song_slices) != 1"
+            )
+            return None
+        # Process each song slice
+        for song_slice_index, song_slice in enumerate(song_slices):
+            # Create a unique ID for each slice by appending a zero-padded index
+            song_slice["uttid"] = f"{item['uttid']}-{str(song_slice_index).zfill(2)}"
+            try:
+                # Convert time-based start/end points to sample indices
+                start_sample = int(song_slice["start"] * item["sample_rate"])
+                end_sample = int(song_slice["end"] * item["sample_rate"])
+
+                if (
+                    start_sample < 0
+                    or end_sample
+                    > item[self.audio_key].shape[1] + self.duration_leeway_in_samples
+                ):
+                    logger.error(
+                        f"Invalid start or end sample for {song_slice['uttid']}"
+                    )
+                    return None
+
+                # Extract the audio segment for this slice
+                # Preserves all channels (dimension 0) while slicing the time dimension (dimension 1)
+                if self.no_slice:
+                    song_slice[self.audio_key] = item[self.audio_key]
+                else:
+                    song_slice[self.audio_key] = item[self.audio_key][
+                        :, start_sample:end_sample
+                    ]
+                song_slice["audio_shape"] = song_slice[self.audio_key].shape[-1]
+
+                # Copy other keys from the original item to the song slice
+
+                for key, value in item.items():
+                    if key in self.excluded_keys:
+                        continue
+                    if isinstance(value, np.ndarray) and value.size > 8192:
+                        logger.info(f"{key} is larger than 8192. discard")
+                        continue
+                    song_slice[key] = value
+
+            except Exception as e:
+                # Log any errors during slice processing
+                logger.debug(f"Discard {song_slice['uttid']} because of {e}")
+
+        item[self.in_key] = song_slices
+
+        return item
+
+
 class CalculateToken:
     """
     A transform class that calculates the total number of tokens by combining:
@@ -2963,5 +3063,379 @@ class CalculateTokenV2:
         item[self.total_token_length] = (
             item[self.audio_length_out_key] + item[self.lyrics_length_out_key]
         )
+
+        return item
+
+
+class CheckDataType:
+
+    def __init__(self, out_key: str = "data_type"):
+
+        self.out_key = out_key
+
+    def __call__(self, item, **__kwargs):
+        if item is None:
+            return None
+
+        if "text" in item and len(item["text"]) > 0:
+            item[self.out_key] = "speech"
+            return item
+
+        if "data_type" in item["meta"] and item["meta"]["data_type"] == "instrument":
+            item[self.out_key] = "instrument"
+            return item
+
+        item[self.out_key] = "vocal"
+        return item
+
+
+class TextNormalizer:
+    def __init__(self, in_key="text", text_length_key="text_length"):
+
+        from string import punctuation
+
+        from zhon.hanzi import punctuation as punctuation_zh
+
+        self.in_key = in_key
+        self.text_length_key = text_length_key
+
+        self.punctuation_zh = punctuation_zh
+        self.punctuation_en = punctuation.replace("'", "")
+
+    def __call__(self, item, **kwargs):
+
+        if item is None or self.in_key not in item:
+            return None
+
+        text = item[self.in_key]
+
+        text = self._normalize_text(text)
+        text = self._remove_punc(text)
+        text = self._remove_cn_space(text)
+        item[self.in_key] = text
+
+        item[self.text_length_key] = len(text)
+        return item
+
+    def _normalize_text(self, text):
+        text = text.replace("&", " and ").replace("/", " ")
+        return text.translate(str.maketrans("", "", self.punctuation_en)).strip()
+
+    def _remove_punc(self, text):
+        # Remove all Chinese + English punctuation (but preserve apostrophe)
+        all_punc = self.punctuation_zh + self.punctuation_en
+        return re.sub(f"[{re.escape(all_punc)}]", "", text)
+
+    def _remove_cn_space(self, text):
+        # Remove spaces between consecutive Chinese characters
+        return re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])", "", text)
+
+
+class UtteranceSegmentSampler:
+    def __init__(
+        self,
+        out_key: str = "audio_slice",
+        data_type_key: str = "data_type",
+        instrument_text: str = "<PURE_INSTRUMENT>",
+        num_segments: int = 3,
+        full_song: bool = True,
+        min_duration: float = 20.0,
+        max_duration: float = 60.0,
+    ):
+
+        self.out_key = out_key
+        self.data_type_key = data_type_key
+        self.instrument_text = instrument_text  # Not used for now
+        self.num_segments = num_segments
+        self.full_song = full_song
+        self.min_duration = min_duration  # in seconds
+        self.max_duration = max_duration  # in seconds
+
+    def _get_utterances(self, item):
+        # Get basic identifiers for error messages
+        uttid = item.get("uttid", "unknown")
+        crs_filename = item.get("crs_filename", "None")
+
+        # Safely get lyrics_data with proper type checking
+        lyrics_data = item.get("meta", {}).get("lyrics")
+
+        if lyrics_data is None:
+            logger.debug(f"lyrics_data is None: {uttid}, {crs_filename}")
+            return None
+
+        if not isinstance(lyrics_data, dict):
+            logger.debug(f"lyrics_data is not a dict: {uttid}, {crs_filename}")
+            return None
+
+        # Try to get utterances directly first
+        utterances = lyrics_data.get("utterances")
+        if utterances:
+            return utterances
+
+        # Fallback to checking result list if utterances not found directly
+        result_list = lyrics_data.get("result")
+        if isinstance(result_list, list) and result_list:
+            first_result = result_list[0]
+            if isinstance(first_result, dict):
+                utterances = first_result.get("utterances")
+                if utterances:
+                    return utterances
+
+        # If we get here, no utterances were found
+        logger.error(
+            f"Utterances not found for uttid: {uttid}, crs_filename: {crs_filename}"
+        )
+        return None
+
+    def _handle_speech_data(
+        self, item: Dict[str, Any], duration_sec: float
+    ) -> Dict[str, Any]:
+        """Handles speech data type."""
+
+        if duration_sec < self.min_duration or duration_sec > self.max_duration:
+            logger.debug(
+                f"Duration {duration_sec} is outside the allowed range for uttid: {item.get('uttid', 'unknown_uttid')},"
+                f" crs_filename: {item.get('crs_filename', 'None')}"
+            )
+            return None
+
+        if "text" not in item:
+            logger.debug(
+                f"Text not found for uttid: {item.get('uttid', 'unknown_uttid')}, "
+                f"crs_filename: {item.get('crs_filename', 'None')}"
+            )
+            return None
+
+        results = [{"start": 0.0, "end": duration_sec, "text": item["text"]}]
+        item[self.out_key] = results
+        return item
+
+    def _handle_instrument_data(
+        self, item: Dict[str, Any], duration_sec: float
+    ) -> Dict[str, Any]:
+        """Handles instrument data type."""
+        results: List[Dict[str, Any]] = []
+
+        dur = random.uniform(self.min_duration, min(self.max_duration, duration_sec))
+        dur = round(dur, 3)
+        start_time = round(random.uniform(0, max(0, duration_sec - dur)), 3)
+        end_time = min(start_time + dur, duration_sec)
+        results.append({"start": start_time, "end": end_time, "text": ""})
+        item[self.out_key] = results
+        return item
+
+    def _handle_vocal_data(
+        self, item: Dict[str, Any], duration_sec: float
+    ) -> Optional[Dict[str, Any]]:
+        """Handles vocal data type with target duration distribution."""
+
+        # Extract and preprocess utterances
+        utterances = self._prepare_utterances(item, duration_sec)
+        if not utterances:
+            return None
+
+        # Generate segments based on utterance count
+        if len(utterances) < self.num_segments:
+            # Simple case: create one segment per utterance
+            segments = self._create_simple_segments(utterances, duration_sec)
+        else:
+            # Complex case: generate multiple segments by combining utterances
+            segments = self._create_combined_segments(utterances, duration_sec)
+
+        # Return result or None if no valid segments
+        if not segments:
+            logger.debug(
+                f"No valid segments created for uttid: {item.get('uttid', 'unknown_uttid')}"
+            )
+            return None
+
+        item[self.out_key] = segments
+        return item
+
+    def _prepare_utterances(
+        self, item: Dict[str, Any], duration_sec: float
+    ) -> List[Dict[str, Any]]:
+        """Extract utterances and convert time units."""
+        utterances_orig = self._get_utterances(item)
+
+        if not utterances_orig:
+            logger.debug(
+                f"Could not extract utterances for uttid: {item.get('uttid', 'unknown_uttid')}, "
+                f"crs_filename: {item.get('crs_filename', 'None')}"
+            )
+            return []
+
+        # Create deep copies and convert milliseconds to seconds
+        utterances = [dict(u) for u in utterances_orig]
+        MS_TO_SECONDS = 1000.0
+
+        for u in utterances:
+            u["start_time"] = u.get("start_time", 0) / MS_TO_SECONDS
+            u["end_time"] = u.get("end_time", 0) / MS_TO_SECONDS
+
+        # Handle full song mode: extend first and last utterances
+        if self.full_song and utterances:
+            utterances[0]["start_time"] = 0.0
+            utterances[-1]["end_time"] = float(duration_sec)
+
+        # Sort by start time for proper chronological ordering
+        utterances.sort(key=lambda x: x["start_time"])
+        return utterances
+
+    def _create_simple_segments(
+        self, utterances: List[Dict], duration_sec: float
+    ) -> List[Dict[str, Any]]:
+        """Create segments from individual utterances when count is low."""
+        segments = []
+
+        for u in utterances:
+            duration = u["end_time"] - u["start_time"]
+            if (
+                self.min_duration <= duration <= self.max_duration
+                and u["end_time"] <= duration_sec
+            ):
+                segments.append(
+                    {
+                        "start": round(u["start_time"], 3),
+                        "end": round(u["end_time"], 3),
+                        "text": u["text"].strip(),
+                    }
+                )
+
+        return segments
+
+    def _create_combined_segments(
+        self, utterances: List[Dict], duration_sec: float
+    ) -> List[Dict[str, Any]]:
+        """Generate segments by combining multiple utterances."""
+        segments = []
+        n = len(utterances)
+
+        for _ in range(self.num_segments):
+            # Generate random target duration
+            target_duration = random.uniform(
+                self.min_duration, min(self.max_duration, duration_sec)
+            )
+            target_duration = round(target_duration, 3)
+
+            # Find valid starting utterances
+            valid_starts = []
+            for i, u in enumerate(utterances):
+                potential_end_time = min(
+                    u["start_time"] + self.max_duration, duration_sec
+                )
+                if potential_end_time - u["start_time"] >= self.min_duration:
+                    valid_starts.append((i, u))
+
+            if not valid_starts:
+                continue
+
+            # Select starting utterance and build segment
+            selected_index, selected_u = random.choice(valid_starts)
+            start_time = selected_u["start_time"]
+            text_segments = [selected_u["text"]]
+            end_time = selected_u["end_time"]
+
+            # Extend segment by adding consecutive utterances
+            for i in range(selected_index + 1, n):
+                u = utterances[i]
+                potential_end = u["end_time"]
+                potential_duration = potential_end - start_time
+
+                # Stop if adding this utterance would exceed maximum duration
+                if potential_duration > self.max_duration:
+                    break
+
+                # Stop if we've reached target and current segment is valid
+                current_duration = end_time - start_time
+                if (
+                    current_duration >= target_duration
+                    and current_duration >= self.min_duration
+                ):
+                    break
+
+                # Add this utterance to the segment
+                text_segments.append(u["text"])
+                end_time = potential_end
+
+            # Validate and add segment
+            actual_duration = end_time - start_time
+            if (
+                self.min_duration <= actual_duration <= self.max_duration
+                and end_time <= duration_sec
+            ):
+                segments.append(
+                    {
+                        "start": round(start_time, 3),
+                        "end": round(end_time, 3),
+                        "text": " ".join(text_segments).strip(),
+                    }
+                )
+
+        return segments
+
+    def __call__(self, item: Dict[str, Any], **kargs) -> Optional[Dict[str, Any]]:
+        if not item or "meta" not in item:
+            return None
+
+        duration_sec = item.get("duration", None)
+        if not duration_sec:
+            logger.debug(
+                f"There is no duration in {item.get('uttid', 'unknown_uttid')}"
+            )
+            return None
+
+        data_type = item.get(self.data_type_key, None)
+        if not data_type:
+            logger.error(
+                f"There is no data_type in {item.get('uttid', 'unknown_uttid')}"
+            )
+            return None
+
+        if data_type == "speech":
+            return self._handle_speech_data(item, duration_sec)
+
+        if data_type == "instrument":
+            return self._handle_instrument_data(item, duration_sec)
+
+        if data_type == "vocal":
+            return self._handle_vocal_data(item, duration_sec)
+
+        logger.warning(
+            f"Unknown data_type '{data_type}' for uttid: {item.get('uttid', 'unknown_uttid')}"
+        )
+        return None
+
+
+class UtteranceSegmentSamplerRandom:
+    def __init__(
+        self,
+        out_key: str = "audio_slice",
+        num_segments: int = 3,
+        min_duration: float = 20.0,
+        max_duration: float = 180.0,
+    ):
+
+        self.out_key = out_key
+        self.num_segments = num_segments
+        self.min_duration = min_duration  # in seconds
+        self.max_duration = max_duration  # in seconds
+
+    def __call__(self, item: Dict[str, Any], **kargs) -> Optional[Dict[str, Any]]:
+
+        # Get duration in seconds, return None if invalid
+        duration_sec = item.get("duration", None)
+        if not duration_sec:
+            logger.debug(f"There is no duration in {item['uttid']}")
+            return None
+        results: List[Dict[str, Any]] = []
+        for _ in range(self.num_segments):
+            dur = random.uniform(
+                self.min_duration, min(self.max_duration, duration_sec)
+            )
+            start_time = random.uniform(0, max(0, duration_sec - dur))
+            end_time = min(start_time + dur, duration_sec)
+            results.append({"start": start_time, "end": end_time, "text": ""})
+        item[self.out_key] = results
 
         return item

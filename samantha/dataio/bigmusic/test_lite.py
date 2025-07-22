@@ -22,8 +22,7 @@ warnings.simplefilter(action="ignore", category=DeprecationWarning)
 
 
 def test_musiclitedatamodule(
-    cfg_path="./samantha/dataio/bigmusic/temp_directories/v5_dataloader_mariana.yaml",
-    test_step=100,
+    cfg_path="tests/unittests/dataio/assets/v5_dataloader_mariana.yaml", test_step=100
 ):
     import sys
 
@@ -62,8 +61,7 @@ def test_musiclitedatamodule(
 
 
 def test_musiclitedatamodule_eval(
-    cfg_path="./samantha/dataio/bigmusic/temp_directories/v5_dataloader_mariana.yaml",
-    test_step=1,
+    cfg_path="tests/unittests/dataio/assets/v5_dataloader_mariana.yaml", test_step=1
 ):
     import sys
 
@@ -102,7 +100,7 @@ def test_musiclitedatamodule_eval(
 
 
 def test_musiclitedatamodule_mafl(
-    # cfg_path="/opt/tiger/samantha/samantha/dataio/bigmusic/temp_directories/musiclish.yaml",
+    # cfg_path="/opt/tiger/samantha/tests/unittests/dataio/assets/musiclish.yaml",
     # cfg_path="/opt/tiger/samantha/apps/bigmusic/mariana_tasks/v5_m8_pt_debug_on_1gpu_mafl.yaml",
     cfg_path="/opt/tiger/samantha/apps/bigmusic/mariana_tasks/conf/v5_m8_680m_bpe_simple_1gpu.yaml",
     test_step=10000,

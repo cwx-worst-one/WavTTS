@@ -14,9 +14,9 @@ random.seed(123)
 
 # TESTING PURPOSE
 def make_data():
-    test_meta_json = "./samantha/dataio/bigmusic/temp_directories/test_temp_meta.json"
+    test_meta_json = ".tests/unittests/dataio/assets/test_temp_meta.json"
     # hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/rui.xia/bigmusic/misc/test_audio.wav
-    test_wav = "./samantha/dataio/bigmusic/temp_directories/test_audio.wav"
+    test_wav = "tests/unittests/dataio/assets/test_audio.wav"
 
     data = {"uttid": "test_sample"}
 
@@ -36,7 +36,7 @@ def make_data_converted():
 
 
 def make_eval_data():
-    test_meta_json = "./samantha/dataio/bigmusic/temp_directories/test_eval_meta.json"
+    test_meta_json = "tests/unittests/dataio/assets/test_eval_meta.json"
     data = {"uttid": "test_sample"}
 
     with open(test_meta_json, "r") as fp:
@@ -49,8 +49,10 @@ def make_eval_data():
 
 def make_data_token():
 
-    umm_token_file = "./samantha/dataio/bigmusic/temp_directories/umm_66eb342e-fec5-48f9-9263-d457d05cd5b1.bin"
-    test_meta = "./samantha/dataio/bigmusic/temp_directories/umm_66eb342e-fec5-48f9-9263-d457d05cd5b1.meta.json"
+    umm_token_file = (
+        "tests/unittests/dataio/assets/umm_66eb342e-fec5-48f9-9263-d457d05cd5b1.bin"
+    )
+    test_meta = "tests/unittests/dataio/assets/umm_66eb342e-fec5-48f9-9263-d457d05cd5b1.meta.json"
 
     with open(test_meta, "r") as fp:
         test_meta = json.load(fp)
@@ -103,7 +105,7 @@ def write_json(d, fp):
 
 def test_all_transforms():
 
-    cfg_path = "./samantha/dataio/bigmusic/temp_directories/v5_dataloader_mariana.yaml"
+    cfg_path = "tests/unittests/dataio/assets/v5_dataloader_mariana.yaml"
     with open(cfg_path) as f:
         kwargs = yaml.full_load(f)
     print(kwargs)
@@ -136,12 +138,12 @@ def test_all_transforms():
     #     print(test_processed_dict['audio'].shape)
     # else:
     #     dct = test_processed_dict
-    # write_json(dct, "./samantha/dataio/bigmusic/temp_directories/processed.json")
+    # write_json(dct, "tests/unittests/dataio/assets/processed.json")
 
 
 def test_all_transform_with_batch_transform():
 
-    cfg_path = "./samantha/dataio/bigmusic/temp_directories/v5_dataloader_mariana.yaml"
+    cfg_path = "tests/unittests/dataio/assets/v5_dataloader_mariana.yaml"
     with open(cfg_path) as f:
         kwargs = yaml.full_load(f)
     print(kwargs)
@@ -170,7 +172,7 @@ def test_all_transform_with_batch_transform():
 
 
 def test_eval_item_transforms():
-    cfg_path = "./samantha/dataio/bigmusic/temp_directories/v5_dataloader_mariana.yaml"
+    cfg_path = "tests/unittests/dataio/assets/v5_dataloader_mariana.yaml"
     with open(cfg_path) as f:
         kwargs = yaml.full_load(f)
 
@@ -191,9 +193,7 @@ def test_eval_item_transforms():
 
 
 def test_eval_item_transforms_cfg():
-    cfg_path = (
-        "./samantha/dataio/bigmusic/temp_directories/v5_dataloader_mariana_CFG.yaml"
-    )
+    cfg_path = "tests/unittests/dataio/assets/v5_dataloader_mariana_CFG.yaml"
     with open(cfg_path) as f:
         kwargs = yaml.full_load(f)
 
@@ -207,7 +207,7 @@ def test_eval_item_transforms_cfg():
 
 
 def test_eval_item_transforms():
-    cfg_path = "./samantha/dataio/bigmusic/temp_directories/v5_dataloader_mariana.yaml"
+    cfg_path = "tests/unittests/dataio/assets/v5_dataloader_mariana.yaml"
     with open(cfg_path) as f:
         kwargs = yaml.full_load(f)
 
@@ -228,9 +228,7 @@ def test_eval_item_transforms():
 
 
 def test_eval_item_transforms_cfg():
-    cfg_path = (
-        "./samantha/dataio/bigmusic/temp_directories/v5_dataloader_mariana_CFG.yaml"
-    )
+    cfg_path = "tests/unittests/dataio/assets/v5_dataloader_mariana_CFG.yaml"
     with open(cfg_path) as f:
         kwargs = yaml.full_load(f)
 
@@ -244,7 +242,7 @@ def test_eval_item_transforms_cfg():
 
 
 def test_eval_item_transforms():
-    cfg_path = "./samantha/dataio/bigmusic/temp_directories/v5_dataloader_mariana.yaml"
+    cfg_path = "tests/unittests/dataio/assets/v5_dataloader_mariana.yaml"
     with open(cfg_path) as f:
         kwargs = yaml.full_load(f)
 
@@ -265,9 +263,7 @@ def test_eval_item_transforms():
 
 
 def test_eval_item_transforms_cfg():
-    cfg_path = (
-        "./samantha/dataio/bigmusic/temp_directories/v5_dataloader_mariana_CFG.yaml"
-    )
+    cfg_path = "tests/unittests/dataio/assets/v5_dataloader_mariana_CFG.yaml"
     with open(cfg_path) as f:
         kwargs = yaml.full_load(f)
 
@@ -282,7 +278,7 @@ def test_eval_item_transforms_cfg():
 
 def test_token_transform():
     test_init_dict = make_data_token()
-    cfg_path = "./samantha/dataio/bigmusic/temp_directories/v5_dataloader_mariana_offline_token.yaml"
+    cfg_path = "tests/unittests/dataio/assets/v5_dataloader_mariana_offline_token.yaml"
     with open(cfg_path) as f:
         kwargs = yaml.full_load(f)
 

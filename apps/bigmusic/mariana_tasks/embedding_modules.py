@@ -1749,10 +1749,22 @@ def get_bestrq_umm_tokens(requires, batch, chunk_size=None, **kwargs):
         lit_module = requires["convumm_gan_model"]
     elif "UMM2_30s" in requires:
         lit_module = requires["UMM2_30s"]
+    elif "UMM2_stage2" in requires:
+        lit_module = requires["UMM2_stage2"]
     else:
         raise ValueError(f"Can't find UMM in requires")
     if chunk_size is None or batch.shape[-1] <= chunk_size:
-        vq_ids = lit_module.wav2token(batch, **kwargs)
+        if "UMM2_stage2" in requires:
+            if batch.ndim==2:
+                # [B, T] -> [B, 1, T]
+                batch = batch.unsqueeze(1)
+            vq_ids = lit_module.wav2requires(
+                batch, 
+                audio_length=kwargs["wav_length"], 
+                requires=["token"], 
+                slice_method="full")['token']
+        else:
+            vq_ids = lit_module.wav2token(batch, **kwargs)
     else:
         if batch.dim() == 3:
             batch = batch.squeeze(1)

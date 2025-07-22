@@ -1,6 +1,7 @@
 import copy
 import operator
-from typing import Callable, Dict, List, Optional
+from collections import defaultdict
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from cruise.utilities.logger import get_cruise_logger
 
@@ -552,3 +553,362 @@ class TokenBucketBatcher:
             self.bucket_list[bucket_idx] = []
             self.bucket_size[bucket_idx] = 0
             self.bucket_max_size[bucket_idx] = 0
+
+
+class BalancedTokenBucketBatcher:
+    def __init__(
+        self,
+        buckets: List[int] = None,
+        dynamic_batch: bool = True,
+        maximum_bucket_size: int = None,
+        batch_size: int = None,
+        bucket_schedule_key: str = "num_total_tokens",
+        balance_key: str = None,
+        bucket_skip_warning_num: int = 10000,
+        frame_rate: int = 50,
+        sample_rate: int = 24000,
+    ):
+        if buckets is None:
+            self.buckets = [i * frame_rate for i in range(10, 240, 10)]
+        else:
+            self.buckets = buckets
+
+        logger.info(f"buckets: {self.buckets}")
+
+        if dynamic_batch and maximum_bucket_size is None:
+            raise ValueError(
+                "Expecting maximum_bucket_size be provided when dynamic_batch is True."
+            )
+
+        if not dynamic_batch and batch_size is None:
+            raise ValueError(
+                "Expecting batch_size be provided when dynamic_batch is False."
+            )
+
+        self.bucket_schedule_key = bucket_schedule_key
+        self.dynamic_batch = dynamic_batch
+        self.maximum_bucket_size = maximum_bucket_size
+        self.batch_size = batch_size
+        self.bucket_num = len(self.buckets)
+
+        # Each bucket is a dictionary where the key is from `balance_key` and the value is a list of items.
+        self.bucket_list: List[defaultdict[str, List[Any]]] = [
+            defaultdict(list) for _ in range(self.bucket_num)
+        ]
+
+        self.bucket_size = [0 for _ in range(self.bucket_num)]
+        self.bucket_max_size = [0 for _ in range(self.bucket_num)]
+
+        # --- RENAMED ATTRIBUTE ---
+        self.balance_key = balance_key
+        if self.balance_key is None:
+            logger.warning(
+                "balance_key is not provided. The batcher will not perform balancing."
+            )
+
+        self.throw_num = 0
+        self.sample_rate = sample_rate
+        self.bucket_skip_warning_num = bucket_skip_warning_num
+
+    def get_item_size(self, data_item):
+        size = data_item.get(self.bucket_schedule_key, None)
+        if size is None:
+            logger.warning(f"Missing key: {self.bucket_schedule_key}")
+            return None
+        return size
+
+    def find_bucket_idx(self, size):
+        if size > self.buckets[-1]:
+            logger.warning(
+                f"{size=} exceeding the maximum bucket size {self.buckets[-1]}."
+            )
+            return None
+
+        # (Binary search logic remains the same)
+        bucket_length = len(self.buckets)
+        low = -1
+        high = bucket_length - 1
+        while low + 1 < high:
+            mid = (high + low) >> 1
+            if self.buckets[mid] < size:
+                low = mid
+            else:
+                high = mid
+        return high
+
+    def push_bucket(self, data_item, size, bucket_idx):
+        if self.balance_key:
+            # Place data into the corresponding sub-list based on the balance key's value
+            category = data_item.get(self.balance_key, "unknown")
+            self.bucket_list[bucket_idx][category].append(data_item)
+        else:
+            # If balance_key is not provided, fall back to a default category
+            if "default" not in self.bucket_list[bucket_idx]:
+                self.bucket_list[bucket_idx]["default"] = []
+            self.bucket_list[bucket_idx]["default"].append(data_item)
+
+        self.bucket_size[bucket_idx] += size
+        self.bucket_max_size[bucket_idx] = max(self.bucket_max_size[bucket_idx], size)
+
+    def _max_batch_size(self, bucket_idx, current_size):
+        return max(self.bucket_max_size[bucket_idx], current_size)
+
+    def _create_balanced_batch(self, bucket_idx: int) -> List[Any]:
+        """
+        Creates a balanced batch from a bucket using a Round-Robin strategy.
+        This function consumes the items from the bucket.
+        """
+        category_dict = self.bucket_list[bucket_idx]
+        if not category_dict:
+            return []
+
+        # If balancing is disabled, just flatten all lists
+        if not self.balance_key:
+            batch = [item for sublist in category_dict.values() for item in sublist]
+            return batch
+
+        balanced_batch = []
+        # Convert the dictionary to a list of (category, items_list) for polling
+        category_queues = list(category_dict.items())
+
+        # Use an index to simulate taking an element from each queue in turn
+        item_idx = 0
+        while True:
+            items_added_in_this_round = 0
+            for category, items in category_queues:
+                if item_idx < len(items):
+                    balanced_batch.append(items[item_idx])
+                    items_added_in_this_round += 1
+
+            if items_added_in_this_round == 0:
+                # If a full round adds no items, all queues are exhausted
+                break
+            item_idx += 1
+
+        return balanced_batch
+
+    def collate_batch(self, data_item):
+        size, bucket_idx = self.find_bucket(data_item)
+        if size is None:
+            self.throw_num += 1
+            if self.throw_num % self.bucket_skip_warning_num == 0:
+                logger.warning(
+                    f"Cannot find suitable bucket. You have already "
+                    f"skipped {self.throw_num} data_item"
+                )
+            return None
+
+        # Calculate the total number of items across all categories in the current bucket
+        current_total_items = sum(
+            len(items) for items in self.bucket_list[bucket_idx].values()
+        )
+        bsz = current_total_items + 1
+
+        max_batch_size = self._max_batch_size(bucket_idx, size)
+
+        batch_is_ready = False
+        if self.dynamic_batch:
+            total_size = bsz * max_batch_size
+            if total_size >= self.maximum_bucket_size:
+                batch_is_ready = True
+        else:
+            if self.batch_size is not None and bsz >= self.batch_size:
+                batch_is_ready = True
+
+        if batch_is_ready:
+            # 1. Create a batch using the balanced sampling algorithm
+            batch_data = self._create_balanced_batch(bucket_idx)
+            # 2. Clear the bucket
+            self.clear(bucket_idx)
+            # 3. Add the current item to the now-empty bucket
+            self.push_bucket(data_item, size, bucket_idx)
+            return batch_data
+
+        # If the batch is not full, just push the data item
+        self.push_bucket(data_item, size, bucket_idx)
+        return None
+
+    def collect_last_batch(self):
+        all_remaining_batches = []
+        for i in range(self.bucket_num):
+            # Check if there are any items in any category list for this bucket
+            if any(self.bucket_list[i].values()):
+                # Apply balanced sampling to all remaining buckets
+                batch = self._create_balanced_batch(i)
+                if batch:
+                    all_remaining_batches.append(batch)
+        self.clear()  # Clear all data after collection
+        return all_remaining_batches
+
+    def clear(self, bucket_idx=None):
+        if bucket_idx is None:
+            # Clear all buckets
+            self.bucket_list = [defaultdict(list) for _ in range(self.bucket_num)]
+            self.bucket_size = [0 for _ in range(self.bucket_num)]
+            self.bucket_max_size = [0 for _ in range(self.bucket_num)]
+        else:
+            # Clear a specific bucket
+            assert bucket_idx >= 0
+            self.bucket_list[bucket_idx].clear()
+            self.bucket_size[bucket_idx] = 0
+            self.bucket_max_size[bucket_idx] = 0
+
+    def find_bucket(self, data_item):
+        """Find a suitable bucket for a data item."""
+        size = self.get_item_size(data_item)
+        if size is None:
+            return None, None
+        bucket_idx = self.find_bucket_idx(size)
+        if bucket_idx is None:
+            return None, None
+        return size, bucket_idx
+
+
+class HierarchicalTokenBucketBatcher:
+    """
+    A streaming batcher that supports hierarchical bucketing strategy.
+
+    It now intelligently handles instrumental tracks (where text_length is 0)
+    by assigning them a configurable, healthy target ratio.
+    """
+
+    def __init__(
+        self,
+        buckets: List[int],
+        bucket_schedule_key: str = "audio_shape",
+        bucket_secondary_key: str = "text_length",
+        instrumental_target_ratio: float = 3.0,
+        batch_size: int = None,
+        maximum_bucket_size: int = None,
+        dynamic_batch: bool = True,
+        drop_last: bool = True,
+        bucket_skip_warning_num: int = 10000,
+        **kwargs,
+    ):
+        """
+        Initializes the batcher.
+        Args:
+            instrumental_target_ratio (float): The T/L ratio to assign to instrumental tracks.
+            ... (other parameters)
+        """
+        if dynamic_batch and maximum_bucket_size is None:
+            raise ValueError(
+                "maximum_bucket_size must be provided for dynamic batching."
+            )
+        if not dynamic_batch and batch_size is None:
+            raise ValueError("batch_size must be provided for fixed batching.")
+
+        self.buckets = sorted(buckets)
+        self.batch_size = batch_size
+        self.maximum_bucket_size = maximum_bucket_size
+        self.dynamic_batch = dynamic_batch
+        self.bucket_schedule_key = bucket_schedule_key
+        self.bucket_secondary_key = bucket_secondary_key
+        self.instrumental_target_ratio = instrumental_target_ratio
+        self.drop_last = drop_last
+        self.bucket_skip_warning_num = bucket_skip_warning_num
+
+        self.bucket_num = len(self.buckets) + 1
+        self.bucket_list = [[] for _ in range(self.bucket_num)]
+        self.bucket_max_len = [0 for _ in range(self.bucket_num)]
+        self.throw_num = 0
+
+    def _get_item_keys(self, data_item: Dict[str, Any]) -> Tuple[int, int, float]:
+        """Gets primary key, secondary key, and ratio from a data item."""
+        primary_val = data_item.get(self.bucket_schedule_key)
+        secondary_val = data_item.get(self.bucket_secondary_key)
+
+        if primary_val is None or secondary_val is None:
+            return None, None, None
+
+        # --- NEW LOGIC FOR RATIO CALCULATION ---
+        if secondary_val == 0:
+            # This is an instrumental track. Assign the target ratio.
+            ratio = self.instrumental_target_ratio
+        else:
+            # This is a vocal track. Calculate the true ratio.
+            ratio = primary_val / secondary_val
+
+        return primary_val, secondary_val, ratio
+
+    def _find_bucket_idx(self, size: int) -> int:
+        """Finds the corresponding bucket index for a given size."""
+        for i, boundary in enumerate(self.buckets):
+            if size <= boundary:
+                return i
+        return len(self.buckets)
+
+    def _push_to_bucket(
+        self, bucket_idx: int, data_item: Dict[str, Any], ratio: float, primary_val: int
+    ):
+        """Pushes the data item, its ratio, and its length into a bucket."""
+        self.bucket_list[bucket_idx].append((data_item, ratio))
+        self.bucket_max_len[bucket_idx] = max(
+            self.bucket_max_len[bucket_idx], primary_val
+        )
+
+    def collate_batch(self, data_item: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Processes a single data item and returns a batch when a bucket is ready.
+        """
+        primary_val, _, ratio = self._get_item_keys(data_item)
+
+        if primary_val is None:
+            self.throw_num += 1
+            if self.throw_num % self.bucket_skip_warning_num == 0:
+                logger.warning(
+                    f"Skipped {self.throw_num} items due to missing key "
+                    f"'{self.bucket_schedule_key}' or '{self.bucket_secondary_key}'"
+                )
+            return None
+
+        bucket_idx = self._find_bucket_idx(primary_val)
+
+        batch_ready = False
+        if self.dynamic_batch:
+            current_bsz = len(self.bucket_list[bucket_idx])
+            estimated_max_len = max(self.bucket_max_len[bucket_idx], primary_val)
+            estimated_total_tokens = (current_bsz + 1) * estimated_max_len
+
+            if estimated_total_tokens >= self.maximum_bucket_size and current_bsz > 0:
+                batch_ready = True
+        else:
+            if len(self.bucket_list[bucket_idx]) >= self.batch_size:
+                batch_ready = True
+
+        if batch_ready:
+            bucket_to_process = self.bucket_list[bucket_idx]
+
+            bucket_to_process.sort(key=lambda x: x[1])
+            batch_data = [item for item, ratio in bucket_to_process]
+
+            self.clear(bucket_idx)
+            self._push_to_bucket(bucket_idx, data_item, ratio, primary_val)
+
+            return batch_data
+
+        self._push_to_bucket(bucket_idx, data_item, ratio, primary_val)
+        return None
+
+    def collect_last_batches(self) -> List[List[Dict[str, Any]]]:
+        """Collects all remaining data in buckets as final batches."""
+        all_last_batches = []
+        for bucket_idx in range(self.bucket_num):
+            remaining_items = self.bucket_list[bucket_idx]
+            if remaining_items:
+                if not self.drop_last and len(remaining_items) > 0:
+                    remaining_items.sort(key=lambda x: x[1])
+                    batch_data = [item for item, ratio in remaining_items]
+                    all_last_batches.append(batch_data)
+
+        self.clear()
+        return all_last_batches
+
+    def clear(self, bucket_idx: int = None):
+        """Clears the data buffers."""
+        if bucket_idx is not None:
+            self.bucket_list[bucket_idx] = []
+            self.bucket_max_len[bucket_idx] = 0
+        else:
+            self.bucket_list = [[] for _ in range(self.bucket_num)]
+            self.bucket_max_len = [0 for _ in range(self.bucket_num)]

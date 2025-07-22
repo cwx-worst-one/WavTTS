@@ -1,0 +1,339 @@
+---
+# @hanoihantrakul 18APR2024
+# This training config exists because Ren Yi, Qingqing and myself were trying to
+# ablate the effectiveness of the ConformerUMM, ConvUMM and DualUMM on the 
+# downstream ZH Lyrics2Song task.
+# 
+# We wanted to train from scratch Stage1, Stage2 and Stage3 model using new data
+# from Parquet ID 2255. 
+#
+# There are two configurations for this model:
+# `umm_stage3_2255mixedZHEN.yaml` which trains on 2255mixedZHEN only <-- This config
+# `umm_stage3_2255mixedZHEN+2375Speech.yaml` which takes trains on additional speech data. This makes the model more comparable to old MixUMM model.
+#
+# The associated stage2 config is `umm_stage2_2255mixedZHEN.yaml`
+# This model has 723M params.
+# With batch_size=6 and max_duration=60 I can get 66.20GB GPU utilization.
+#
+
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+ckpt_path: !ref last.ckpt
+
+seed: 555
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+extra_params:
+    sample_rate: 24000
+    frame_rate: 25
+    n_mels: 128
+    n_chroma: 12
+    n_fft: 2048
+    win_length: 2048
+    hop_length: 240
+    feature_cmvn: "recipes/datasets/mcc/data_ids=794.stats.pt" # we need this because original mkii ConformerUMM normalized using these statistics
+    tokenizer: "bert-base-multilingual-uncased" # stage2 apply language tokenizer to both EN and CN
+
+# running parameters
+run_opts:
+    fast_dev_run: False
+    cache_dir: .module_cache/umm
+    hdfs_log_dir: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs"
+    log_dir: logs
+    log_name: umm2_conformer_2255mixedZHEN
+    version: !ref stage3_reg1_2255mixedZHEN_2375Speech_optim_mem_<extra_params[tokenizer]>_<config[vq_type]><config[vq_codebook_size]>x<config[vq_codebook_dim]>
+    precision: "16-mixed"
+    num_workers: 4
+    accelerator: auto
+    warmup_steps: 2000
+    max_steps: 800000
+    val_check_interval: 5000 # 14APR2024 @hanoihantrakul set limit_train_val_batches=1 so that validation loop is called
+    ckpt_interval: 5000
+    batch_size: 5 # There are VQ params so have to reduce memory
+    learning_rate: 1.0e-4
+    cycle_steps: 300000
+    weight_decay: 0.1
+    shuffle_buffer: 10 # 8000 # See above comments on why I picked this number
+    gradient_clip_val: 1.0
+    checkpointing: False
+    # num_spectrogram_val_samples_for_plotting: 8 # As of 13APR2024 This new flag controls the number of spectrograms from the validation dataset to plot to Merlin
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+# old data module (same sampling rate)
+pl_datamodule: !new:recipes.datasets.mcc.mix_mkii.MixDataModule
+    data_ids: [2255, 2375, 794]
+    val_data_id: 2255
+    data_weights: [20, 1, 1]
+    shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+    sample_rate: !ref <extra_params[sample_rate]>
+    batch_size: !ref <run_opts[batch_size]> * <pl_datamodule[max_duration]> * <extra_params[sample_rate]>
+    num_workers: !ref <run_opts[num_workers]>
+    max_num_crops: null
+    min_duration: 1
+    max_duration: 60 # 12APR2024 Hanoi and Devon Sun and I manually verified this datasert only contains audio lengths between 0-60s.
+    normalize_audio: False
+    tokenizer: !ref <extra_params[tokenizer]>
+    frame_rate: !ref <extra_params[frame_rate]>
+    # collate_fn: !name:recipes.datasets.mcc.mix.collate_audio # 14APR2024 @hanoihantrakul Must turn this off for Stage2 because you need both `audio` and `token` to be passed by default collate_fn
+    
+
+optimizer_cls: !name:torch.optim.AdamW
+    lr: !ref <run_opts[learning_rate]>
+    weight_decay: !ref <run_opts[weight_decay]>
+    betas: [0.9, 0.96]
+    eps: 0.00000001
+
+# optimizer_d_cls: !name:torch.optim.AdamW
+#     lr: 1.0e-4
+#     weight_decay: 0.0
+#     betas: [0.5, 0.95]
+#     eps: 1.0e-7
+
+scheduler_cls: !name:recipes.umm2.modules.lr_scheduler.WarmupCosine
+    init_lr: !ref <run_opts[learning_rate]>
+    warmup_steps: !ref <run_opts[warmup_steps]>
+    cycle_steps: !ref <run_opts[cycle_steps]>
+    min_lr: !ref <run_opts[learning_rate]> * 0.1
+
+# scheduler_d_cls: !name:recipes.umm.modules.lr_scheduler.WarmupCosine
+#     init_lr: !ref <optimizer_d_cls[lr]>
+#     warmup_steps: !ref <run_opts[warmup_steps]>
+#     cycle_steps: !ref <run_opts[cycle_steps]>
+#     min_lr: !ref <optimizer_d_cls[lr]> * 0.1
+
+
+# Copied over from `umm_stage3_mix.yaml` `config` setting.
+config: !new:recipes.umm2.models.config.UMMConfig
+    feature_cmvn: !ref <extra_params[feature_cmvn]>
+    sample_rate: !ref <extra_params[sample_rate]>
+    n_mels: !ref <extra_params[n_mels]>
+    add_chroma: True
+    add_ctc: True # There is a EN and CN speech. CTC turned on.
+    n_chroma: !ref <extra_params[n_chroma]>
+    n_fft: !ref <extra_params[n_fft]>
+    win_length: !ref <extra_params[win_length]>
+    hop_length: !ref <extra_params[hop_length]>
+    hidden_size: 1024
+    intermediate_size: 4096
+    num_hidden_layers: 24
+    num_attention_heads: 8
+    max_source_positions: 2500
+    add_vq: True
+    vq_type: VQEntropy
+    vq_proj_noise: 0 #10000
+    vq_codebook_size: 32768
+    vq_codebook_dim: 32
+    vq_layer_idx: 12
+    vq_decay: 0.99
+    vq_stale_count: 100
+    w_loss_mel: 1.0
+    w_loss_chroma: 1.0
+    w_loss_vq: 1.0
+    w_loss_ctc: 1.0
+    w_loss_f0: 1.0
+    tokenizer: !ref <extra_params[tokenizer]>
+    frame_rate: !ref <extra_params[frame_rate]>
+    vocab_size: 105880
+    ctc_blank_id: 105879
+    ctc_zero_infinity: True
+    use_bn: False
+    ### 5JUL2024 @hanoihantrakul According to the Merlin Job Li Tang uses the following settings `first_conformer`, `act_fn`, `mask_mel`, `rope_enhance_pos`
+    first_conformer: True 
+    act_fn: "gelu" 
+    mask_mel: False  
+    rope_enhance_pos: 0 # 14JUL2024 hanoih: this is turned off in Stage3 training according to Li Tang
+    hidden_dropout: 0.0
+    activation_dropout: 0.0
+    attention_dropout: 0.0
+    conformer_conv_dropout: 0.0
+
+dual_tokenizer_config: !new:recipes.umm2.models.umm_dual_24k_mel.DualTokenizerConfig
+    sample_rate: 24000
+    encoder_block: 12
+    decoder_block: 12
+    rvq: 3
+    win: 2048
+    stride: 240 # 100Hz for 32000Hz
+    emb_dim: 1024
+    group: 5
+    num_bins: 1025
+    vq_codebook_size: 32768
+    vq_codebook_dim: 32
+    vq_stale_count: 100
+    vq_decay: 0.99
+    vq_type: VQEntropy
+    frame_rate: 25
+    vq_proj_noise: 10000
+
+
+ema_vq: !new:recipes.umm2.models.tasks.vq_module.EMAVectorQuantizerEntropy
+    codebook_size: !ref <config[vq_codebook_size]>
+    codebook_dim: !ref <config[vq_codebook_dim]>
+    decay: !ref <config[vq_decay]>
+
+vq_module: !new:recipes.umm2.models.tasks.vq_module.VQ  # BaseStage
+    task: "vq"
+    loss_weight: !ref <config[w_loss_vq]>
+    config: !ref <config>
+    takes: [latent]
+    provides: [latent, vq_ids, vq_entropy, vq_embs, prevq_embs, loss_vq]
+    vq_scheme: !ref <ema_vq>
+
+# stage1: prepare_feature (audio->mel), forward enc/dec layers (insert vq_module)
+stage1: !new:recipes.umm2.models.umm_dual_24k_mel.AE_UMM_Dual # BaseStage
+    config: !ref <config>
+    takes: [audio]
+    provides: [audio, mel, prevq_latent, latent, vq_ids, vq_entropy, vq_embs, prevq_embs, loss_vq] 
+    bypasses: [token]
+    lr_ratio: 0.1
+    insert_modules:
+        12 : !ref <vq_module>
+
+# @qinxin: feature of each prediction head is computed within the head (e.g., audio -> chroma);
+# loss is computed in corresponding head, associated with 'task'
+mel_head: !name:recipes.umm2.models.tasks.mel_head.Mel_Head # BaseStage
+    task: "mel"
+    loss_weight: !ref <config[w_loss_mel]>
+    config: !ref <config>
+    takes: [mel, latent]
+    provides: [mel, mel_out]
+ctc_head: !name:recipes.umm2.models.tasks.ctc_head.CTC_Head # BaseStage
+    task: "ctc"
+    loss_weight: !ref <config[w_loss_ctc]>
+    config: !ref <config>
+    takes: [token, latent]
+    provides: [text_ids, ctc_out] 
+chroma_head: !name:recipes.umm2.models.tasks.chroma_head.Chroma_Head # BaseStage
+    task: "chroma"
+    loss_weight: !ref <config[w_loss_chroma]>
+    config: !ref <config>
+    takes: [audio, latent]
+    provides: [chroma, chroma_out] 
+
+f0_vuv_head: !name:recipes.umm2.models.tasks.f0_vuv_head.F0_VUV_Head_Pitchpdt # BaseStage
+    task: "f0_vuv"
+    loss_weight: !ref <config[w_loss_f0]>
+    config: !ref <config>
+    takes: [audio, latent]
+    provides: [f0, vuv, f0_out, vuv_out]
+
+# spec_head: !name:recipes.umm2.models.umm_dual_v2.Spec_Head # BaseStage
+#     config: !ref <config>
+#     dt_config: !ref <dual_tokenizer_config>
+    # task: "spec"
+    # loss_weight: !ref <config[w_loss_mel]>
+    # takes: [audio, latent]
+    # provides: [spec, spec_out]
+
+# stage2: prediction heads, based on the input latent, compute losses in corresponding head with the input ground truth
+stage2: !name:recipes.umm2.models.base.SpanModel
+    input_names: [audio, token, mel, latent]
+    output_names: [mel, mel_out, text_ids, ctc_out] 
+    bypass_names: []
+    spans:
+        mel: !ref <mel_head>
+        # spec: !ref <spec_head>
+        ctc: !ref <ctc_head>
+        chroma: !ref <chroma_head>
+        pitch: !ref <f0_vuv_head>
+
+mix_vq: !new:recipes.umm2.models.umm_dual_24k_mel.MixVectorQuantization  # BaseStage
+    config: !ref <config>
+    dt_config: !ref <dual_tokenizer_config>
+    dist: True
+
+#TODO
+stage4: !name:recipes.umm2.models.umm_dual_24k_mel.DualEncoder
+    config: !ref <config>
+    dt_config: !ref <dual_tokenizer_config>
+    quantization: !ref <mix_vq>
+    # spec_head: !ref <spec_head>
+    
+model: !name:recipes.umm2.models.umm_dual_24k_mel.DualTokenizerModel
+    input_names: [audio, token] # both masks are not used, just a placeholder for potential masking
+    output_names: [mel, mel_out, text_ids, vq_ids, vq_embs, vq_entropy] 
+    stages:
+        - !ref <stage1>
+        - !ref <stage2>
+        - !ref <stage4>
+
+required_modules:
+    # pretrained: 
+    #     ckpt_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/RVQ/RVQ_RP_2x32768_lr3e-5_30k_pitchpdt_re2/checkpoints/step=0250000.ckpt"
+    #     # ckpt_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/VQ/VQ_entropy_1x32768_lr3e-5_30k_pitchpdt_re2/checkpoints/step=0200000.ckpt"
+    #     loader: !name:recipes.umm2.loaders.stage4.DualTokenizerModelLoader
+    #     cache_dir: !ref <run_opts[cache_dir]>
+    pretrained:
+        ckpt_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs/umm_conformer_unified_tts_rope/umm_stage3_unified_tts_rope_bert-base-multilingual-uncased_EMAEntropy32768x32/checkpoints/step=220000.ckpt"
+        loader: !name:recipes.umm2.loaders.stage4.UMMModelLoader
+        cache_dir: !ref <run_opts[cache_dir]>
+        copy_encoder: True
+    pitchpdt: # @hanoihantrakul 28MAY2024: Use pitch detector trained on full mix to provide the ground truth signals.
+        ckpt_path: "hdfs://haruna/home/byte_speech_sv/hanoi.hantrakul/logs/umm_dual/pitch_predictor_trained_on_full_mix/models_for_sharing/perceptual_pitch_model_1_26_2024.pt"
+        loader: !name:recipes.umm2.loaders.pitchpdt.ModelLoader
+        cache_dir: !ref <run_opts[cache_dir]>
+        model_position: # pitch model will be used at stage2 - head4
+            stages: 1 
+            spans: 3 
+
+
+pl_module: !new:recipes.umm2.modules.stages.stage3.Stage3RVQ
+    config: !ref <config>
+    checkpointing: !ref <run_opts[checkpointing]>
+    model_cls: !ref <model>
+    optimizer_cls: !ref <optimizer_cls>
+    scheduler_cls: !ref <scheduler_cls>
+    extra_params: !ref <extra_params>
+    required_modules: !ref <required_modules>
+
+logger:
+    - !new:pytorch_lightning.loggers.wandb.WandbLogger
+      save_dir: !ref <run_opts[log_dir]>
+      project: !ref <run_opts[log_name]>
+      name: !ref <run_opts[version]>
+
+callbacks:
+    - !new:samantha.callbacks.HDFSModelCheckpoint
+      hdfs_path: !ref <run_opts[hdfs_log_dir]>/<run_opts[log_name]>/<run_opts[version]>
+      monitor: step
+      save_top_k: 5
+      every_n_train_steps: !ref <run_opts[ckpt_interval]>
+      mode: max
+      filename: "{step:07d}"
+      save_last: True
+    - !new:pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: 'step'
+
+plugins:
+    - !new:samantha.plugins.LargeTorchCheckpointIO
+
+trainer: !new:pytorch_lightning.Trainer
+    strategy: "ddp_find_unused_parameters_true"
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    logger: !ref <logger>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: "auto"
+    num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    log_every_n_steps: 100
+    max_steps: !ref <run_opts[max_steps]>
+    precision: !ref <run_opts[precision]>
+    accumulate_grad_batches: 1 # TODO
+    # gradient_clip_val: !ref <run_opts[gradient_clip_val]>
+    val_check_interval: !ref <run_opts[val_check_interval]>
+    check_val_every_n_epoch: null
+    num_sanity_val_steps: 0
+    limit_val_batches: 50 # Turn on 1 batch so that spectrograms from validation dataloader can be plotted
+    limit_train_batches: 5000 # 10000 # Consult Colin Wang: forces an epoch to end every 10k steps and prevent OOM # See above comments on why I picked this number
+    sync_batchnorm: True
+    benchmark: False
+    callbacks: !ref <callbacks>
+    plugins: !ref <plugins>

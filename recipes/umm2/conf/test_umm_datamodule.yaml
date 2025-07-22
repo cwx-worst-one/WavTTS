@@ -1,0 +1,76 @@
+---
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+ckpt_path: !ref last.ckpt
+
+seed: 555
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+extra_params:
+    sample_rate: 24000
+    frame_rate: 25
+    n_mels: 128
+    n_chroma: 12
+    n_fft: 2048
+    win_length: 2048
+    hop_length: 240
+    feature_cmvn: "recipes/datasets/mcc/data_ids=794.stats.pt" # we need this because original mkii ConformerUMM normalized using these statistics
+    tokenizer: "bert-base-multilingual-uncased" # stage2 apply language tokenizer to both EN and CN
+
+# running parameters
+run_opts:
+    fast_dev_run: False
+    cache_dir: .module_cache/umm
+    hdfs_log_dir: "hdfs:///home/byte_speech_sv/ju-chiang.wang/logs"
+    log_dir: logs
+    log_name: test_umm_datamodule
+    version: !ref dummy_<extra_params[tokenizer]>
+    precision: "16-mixed"
+    num_workers: 10
+    accelerator: auto
+    warmup_steps: 2000
+    max_steps: 10000000
+    val_check_interval: 1000 # 14APR2024 @hanoihantrakul set limit_train_val_batches=1 so that validation loop is called
+    ckpt_interval: 1000
+    batch_size: 10
+    learning_rate: 1.0e-4
+    cycle_steps: 200000
+    weight_decay: 0.1
+    shuffle_buffer: 800 # 8000 # See above comments on why I picked this number
+    gradient_clip_val: 1.0
+    checkpointing: False
+    # num_spectrogram_val_samples_for_plotting: 8 # As of 13APR2024 This new flag controls the number of spectrograms from the validation dataset to plot to Merlin
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+
+tag_types: !apply:recipes.mir2.parquet_dataset.utils.combine_tag_types
+    datasets:
+        - !apply:recipes.mir2.parquet_dataset.vocab_index.karaoke_tags
+        - !apply:recipes.mir2.parquet_dataset.vocab_index.bigmusic_artist
+
+tag_type_to_id: !apply:recipes.mir2.parquet_dataset.utils.get_tag_type_to_id
+    tag_types: !ref <tag_types>
+
+pl_datamodule: !new:recipes.datasets.mcc.mix_mir_alltags.MixDataModule   #alltags
+    data_ids: [6667, 5004, 5450]  # 
+    val_data_ids: [6962, 4144, 5446]
+    data_weights: [3, 1, 1]
+    shuffle_buffer_size: !ref <run_opts[shuffle_buffer]>
+    sample_rate: !ref <extra_params[sample_rate]>
+    batch_size: !ref <run_opts[batch_size]>
+    num_workers: !ref <run_opts[num_workers]>
+    max_num_crops: null
+    min_duration: 1
+    max_duration: 50
+    normalize_audio: False
+    tokenizer: !ref <extra_params[tokenizer]>
+    frame_rate: !ref <extra_params[frame_rate]>
+    tag_types: !ref <tag_types>
+    tag_type_index: !ref <tag_type_to_id>
+    # valid_nodesplitter: !name:webdataset.shardlists.split_by_node
+    # collate_fn: !name:recipes.datasets.mcc.mix.collate_audio # 14APR2024 @hanoihantrakul Must turn this off for Stage2 because you need both `audio` and `token` to be passed by default collate_fn

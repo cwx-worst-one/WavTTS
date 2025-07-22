@@ -14,7 +14,7 @@ logger.setLevel(_LOG_LEVEL)
 
 
 def test_musiclitedatamodule(
-    cfg_path="./samantha/dataio/bigmusic/temp_directories/v5_dataloader_mariana_with_idc.yaml",
+    cfg_path="tests/unittests/dataio/assets/v5_dataloader_mariana_with_idc.yaml",
     test_step=100,
 ):
     import sys
@@ -51,8 +51,7 @@ def test_musiclitedatamodule(
 
 
 def test_musiclitedatamodule_eval(
-    cfg_path="./samantha/dataio/bigmusic/temp_directories/v5_dataloader_mariana.yaml",
-    test_step=1,
+    cfg_path="tests/unittests/dataio/assets/v5_dataloader_mariana.yaml", test_step=1
 ):
     import sys
 

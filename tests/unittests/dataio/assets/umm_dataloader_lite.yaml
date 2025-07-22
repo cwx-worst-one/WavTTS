@@ -1,0 +1,176 @@
+data:
+  save_ckpt_interval: 2000
+  train_dataset_ids: [9824,9825,13588,9806,9807,2375]
+  train_dataset_weights: [3,3,2,4,4,1]
+  val_dataset_ids: []
+  val_dataset_weights: []
+  predict_dataset_ids: []
+  predict_dataset_weights: []
+
+  train_batcher:
+    type: "HierarchicalTokenBucketBatcher"
+    dynamic_batch: True
+    bucket_schedule_key: "audio_shape"
+    bucket_secondary_key: "text_length"
+    instrumental_target_ratio: 3.0
+    buckets:
+      [
+        120000,
+        240000,
+        360000,
+        480000,
+        600000,
+        720000,
+        840000,
+        960000,
+        1080000,
+        1200000,
+        1320000,
+        1440000,
+        1560000,
+        1680000,
+        1800000,
+        1920000,
+        2040000,
+        2160000,
+        2280000,
+        2400000,
+        2880000,
+      ]
+    maximum_bucket_size: 14400000 #  10min
+
+  val_batcher:
+    type: "HierarchicalTokenBucketBatcher"
+    dynamic_batch: True
+    bucket_schedule_key: "audio_shape"
+    bucket_secondary_key: "text_length"
+    instrumental_target_ratio: 3.0
+    buckets:
+      [
+        120000,
+        240000,
+        360000,
+        480000,
+        600000,
+        720000,
+        840000,
+        960000,
+        1080000,
+        1200000,
+        1320000,
+        1440000,
+        1560000,
+        1680000,
+        1800000,
+        1920000,
+        2040000,
+        2160000,
+        2280000,
+        2400000,
+        2880000,
+      ]
+    maximum_bucket_size: 1440000 #  10min
+
+
+  train_item_transform: # This is correctly indented
+    - type: "ConvertMetaToDict"
+    - type: "MusicParser"
+      in_key: "audio"
+      out_key: "audio"
+      min_len: 10.0
+      max_len: 800.0 #second
+    - type: "NormalizeAudioToFloat32"
+      in_key: "audio"
+      out_key: "audio"
+    - type: "MusicWavResample"
+      key: "audio"
+      sample_rate: 24000
+    - type: "CheckDataType"
+      out_key: "data_type"
+    - type: "UtteranceSegmentSampler"
+      out_key: "audio_slice"
+      num_segments: 3 # get number of data from one audio
+      full_song: True
+      min_duration: 10 # min_duration 20 seconds
+      max_duration: 60 # max_duration 2 min (2b conformer maxinput)
+    - type: "SongSliceAudioCut"
+      in_key: "audio_slice"
+      out_key: "audio_slice"
+      duration_leeway_in_s: 2.0
+
+    - type: "MusicMetaRWTransform"
+      in_key: "audio_slice"
+      out_key: null
+      overwrite_item: true
+      maybe_return_list_output: true
+
+    - type: "TextNormalizer"
+      in_key: "text"
+
+    - type: "SanityCheck"
+      keys: ["uttid","audio", "meta", "data_type", "text", "audio_shape"]
+
+  train_batch_transform: # <-- This should be here, at the same level as train_item_transform
+    - type: AudioCollate
+      in_key: "audio"
+      length_key: "audio_length" #output audio_length
+      pad_value: 0.0
+
+    - type: NestListCollate
+      key_list: ["uttid","data_type","text","audio_shape"]
+      to_tensor: False
+    
+    - type: MixTokenCollate
+      in_key: "text"
+      out_key: "text_id"
+      tokenizer: "/opt/tiger/tokenizer/bert-base-multilingual-uncased"
+  
+  val_item_transform: # This is correctly indented
+    - type: "ConvertMetaToDict"
+    - type: "MusicParser"
+      in_key: "audio"
+      out_key: "audio"
+      min_len: 10.0
+      max_len: 800.0 #second
+    - type: "NormalizeAudioToFloat32"
+      in_key: "audio"
+      out_key: "audio"
+    - type: "MusicWavResample"
+      key: "audio"
+      sample_rate: 24000
+    - type: "UtteranceSegmentSampler"
+      out_key: "audio_slice"
+      num_segments: 3 # get number of data from one audio
+      full_song: True
+      min_duration: 10 # min_duration 20 seconds
+      max_duration: 60 # max_duration 2 min (2b conformer maxinput)
+    - type: "SongSliceAudioCut"
+      in_key: "audio_slice"
+      out_key: "audio_slice"
+      duration_leeway_in_s: 0.0
+    - type: "MusicMetaRWTransform"
+      in_key: "audio_slice"
+      out_key: null
+      overwrite_item: true
+      maybe_return_list_output: true
+
+    - type: "TextFilter"
+      in_key: "text"
+
+    - type: "SanityCheck"
+      keys: ["uttid", "audio", "text", "audio_shape"]
+
+  val_batch_transform: # <-- This should be here, at the same level as train_item_transform
+    - type: AudioCollate
+      in_key: "audio"
+      length_key: "audio_length" #output audio_length
+      pad_value: 0.0
+
+    - type: NestListCollate
+      key_list: ["uttid"]
+      to_tensor: False
+    
+    - type: MixTokenCollate
+      in_key: "text"
+      out_key: "text_id"
+      tokenizer: "/opt/tiger/tokenizer/bert-base-multilingual-uncased"

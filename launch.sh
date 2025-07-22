@@ -17,7 +17,6 @@ then
 fi
 
 # install easycycle
-pip3 install -q --upgrade pip  bytedance-easycycle==1.1.19 -i https://bytedpypi.byted.org/simple
 pip3 install emoji
 
 # setup cruise: install custom cruise version by specify env MARIANA_OVERRIDE_CRUISE_VERSION
