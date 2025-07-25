@@ -248,9 +248,56 @@ class Best_RQ(BaseStage):
             batch: Dict[str, torch.Tensor]
             ) -> Dict[str, torch.Tensor]:
         if self.config.use_fused_kernel:
-            return self._compute_fused_kernel(batch)
+            if not self.config.use_causal_conformer:
+                return self._compute_fused_kernel(batch)
+            elif self.config.use_causal_conformer:
+                return self._compute_causal_conformer(batch)
         else:
             return self._compute_normal(batch)
+
+    
+    def _compute_causal_conformer(
+            self, 
+            batch: Dict[str, torch.Tensor]
+            ) -> Dict[str, torch.Tensor]:
+        input_dict = self.get_masked_features(batch, mask_on_mel=self.config.get("mask_mel", False))
+        masked_feature = input_dict["masked_mel"]
+        masked_indices = input_dict["masked_indices"]
+        masked_feature_len = input_dict["masked_mel_length"]
+
+        encoded_masked_feature, encoded_masked_feature_masking = self.audio_encoder(masked_feature, masked_feature_len)
+        hidden_states = self.encoder_input_dropout(encoded_masked_feature)
+
+        hidden_states = self.conformer(hidden_states, encoded_masked_feature_masking)
+        hidden_states = hidden_states.float() * encoded_masked_feature_masking.view(*hidden_states.shape[:-1], 1)
+        fw_flops, bw_flops, _ = self.conformer.calc_flops(encoded_masked_feature_masking.sum(dim = -1).view(-1),
+                                                          rmpad=self.causal_conformer_config.conformer_use_rmpad)
+        flops = fw_flops + bw_flops
+
+        logits = self.rq_head(hidden_states)
+        logits = rearrange(
+            logits, "b t (d c) -> b t d c", c=self.config.rq_codebook_num
+        )
+        masked_logits = logits[tuple(masked_indices.t())]
+        masked_logits = rearrange(
+            masked_logits, "b d c -> (b c) d", c=self.config.rq_codebook_num
+        )
+
+        feature = input_dict["mel"]
+        target = self.get_rq_target(feature)
+        masked_target = target[tuple(masked_indices.t())]
+        masked_target = rearrange(masked_target, "b c -> (b c)")
+        output_dict = {
+            "mel": input_dict["mel"],
+            "mel_length": input_dict["mel_length"],
+            "rq_logits": logits,
+            "rq_target": target,
+            "flops": flops,
+        }
+        metric_dict = self.get_metrics(masked_logits, masked_target)
+        output_dict.update(metric_dict)  # include loss and flops
+        
+        return output_dict    
 
     def _compute_fused_kernel(
             self, 

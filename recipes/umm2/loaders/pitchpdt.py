@@ -6,7 +6,7 @@ class ModelLoader(BaseModelLoader):
         self,
         ckpt_path,
         cache_dir=None,
-        model_position: dict={"stages": 1, "spans": 3},
+        model_position=None,
     ):
         super().__init__(
             ckpt_path=ckpt_path,
@@ -21,5 +21,8 @@ class ModelLoader(BaseModelLoader):
         # overwrite self.device with local_rank as specified in the original code
         state_dict = self.init_pretrained()
         print(f'Loading Pitch prediction model from {self.ckpt_path}')
-        pl_module.model.stages[self.model_position['stages']].spans[self.model_position["spans"]].pitch_pdt.load_and_eval(state_dict)
+        if self.model_position is not None:
+            pl_module.model.stages[self.model_position['stages']].spans[self.model_position["spans"]].pitch_pdt.load_and_eval(state_dict)
+        else:
+            pl_module.model.pitchpdt.load_and_eval(state_dict)
         return pl_module

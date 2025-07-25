@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import numpy as np
 from recipes.umm2.modules.utils import get_task_losses
+import inspect
 
 class GreedyCTCDecoder(torch.nn.Module):
     def __init__(self, blank=266, padding=0):
@@ -128,7 +129,7 @@ def levenshtein_distance(hypothesis: list, reference: list):
 
 class TokenEvaluator(torch.nn.Module):
     def __init__(self, pl_module, config, model_type="VQ", 
-                 segment_size=30, slice_length=[5, 15, 30]):
+                 segment_size=30, slice_length=[5, 15, 30], inference_R=None):
         super().__init__()
         self.pl_module = pl_module
         self.config = config
@@ -150,17 +151,28 @@ class TokenEvaluator(torch.nn.Module):
         print("codebook_size: ", self.codebook_size)
         self.load_required_modules()
 
-    def load_required_modules(self):
+        # support inference with given R (RVQ)
+        self.inference_R = inference_R
+
+
+    def load_required_modules(self, local_rank=0):
+        self.pl_module.requires = {}
         for module_name, loader_config in self.pl_module.required_modules.items():
             if module_name == "pretrained":
                 continue
             print(f"loading module {module_name}...")
-            _args = {k: v for k, v in loader_config.items() if k != "loader"}
-            loader = loader_config["loader"](**_args)
-            self.pl_module = loader.load_model(pl_module=self.pl_module)
+            if "loader" in loader_config:
+                _args = {k: v for k, v in loader_config.items() if k != "loader"}
+                loader = loader_config["loader"](**_args)
+                self.pl_module = loader.load_model(pl_module=self.pl_module)
+            else:
+                hpath = loader_config['hpath']
+                initializer = loader_config['initializer']
+                self.pl_module.requires.update(initializer(hpath, local_rank=local_rank, cache_dir="./"))
+
 
     @torch.no_grad()
-    def get_tokens(self, audio, audio_len=None, slice_mode="full", chunk_dur=60, slice_info=None, ):
+    def get_tokens(self, audio, audio_len=None, slice_mode="full", chunk_dur=60, slice_info=None):
         """
         audio shape: [B, n_signal_sample]
         """
@@ -170,7 +182,7 @@ class TokenEvaluator(torch.nn.Module):
         n_secs = float(audio.shape[-1]) / self.sample_rate
 
         if slice_mode == 'full':
-            vq_id = self.get_vq_id_from_dict(self.pl_module.wav2token(audio, audio_len))
+            vq_id = self.get_vq_id(audio, audio_len)
             sliced_audios.append(audio)
         
         elif slice_mode in ['max', 'even']:
@@ -189,7 +201,7 @@ class TokenEvaluator(torch.nn.Module):
                 # merge the tail if the remaining chunk is too short (< 1s) 
                 if n_samples - _et < self.sample_rate * 1 or audio[...,_et:].shape[-1] < self.sample_rate * 1:
                     _et = n_samples
-                _vq_id = self.get_vq_id_from_dict(self.pl_module.wav2token(audio[..., _st:_et]))
+                _vq_id = self.get_vq_id(audio[..., _st:_et], None)
                 vq_id.append(_vq_id)
                 sliced_audios.append(audio[..., _st:_et])
                 if _et >= n_samples:
@@ -204,7 +216,7 @@ class TokenEvaluator(torch.nn.Module):
                 _st, _et = int(st*self.sample_rate), int(et*self.sample_rate)
                 if n_samples - _et < self.sample_rate * 1 or audio[...,_et:].shape[-1] < self.sample_rate * 1:
                     _et = n_samples
-                _vq_id = self.get_vq_id_from_dict(self.pl_module.wav2token(audio[..., _st:_et]))
+                _vq_id = self.get_vq_id(audio[..., _st:_et], None)
                 vq_id.append(_vq_id)
                 sliced_audios.append(audio[..., _st:_et])
             vq_id = torch.cat(vq_id, dim=1)
@@ -213,8 +225,10 @@ class TokenEvaluator(torch.nn.Module):
         
         return vq_id, sliced_audios, slice_texts
     
-    @staticmethod
-    def get_vq_id_from_dict(result_dict):
+
+    def get_vq_id(self, audio, audio_len):
+        result_dict = self.pl_module.wav2token(audio, audio_len, inference_R=self.inference_R)
+
         if "vq_ids" in result_dict:
             vq_id = result_dict["vq_ids"]
         elif "rvq_ids" in result_dict:
@@ -248,6 +262,7 @@ class TokenEvaluator(torch.nn.Module):
                                                  minlength=self.codebook_size)
 
     def reset_code_count(self):
+        self.h = self.inference_R if self.inference_R is not None else self.h
         self.code_count = torch.zeros(self.h, self.codebook_size)
 
     def compute_code_rate(self):

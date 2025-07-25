@@ -25,7 +25,7 @@ def evaluate_audio_slice(it,
                         max_i=1000,
                         slice_mode='even',
                         chunk_dur=45,
-                        text_tokenizer=None,
+                        text_tokenizer=None
                         ):
     nsample, mean_sample_dur, time_cnt, i = 0, 0, 0, 0
     slice_loss_dicts, slice_locality_dicts, slice_ctc_wers = {}, {}, []
@@ -417,6 +417,7 @@ if __name__ == "__main__":
     parser.add_argument("--slice_modes", type=str, default='full', help="slice modes of tokenizer input audio, now support [full, max, even, section]")
     parser.add_argument("--slice_dur", type=int, default=45, help="slice duration of tokenizer input audio")
     parser.add_argument("--locality_chunk", type=int, default=10, help="locality chunk duration")
+    parser.add_argument("--inference_R", type=int, default=None, help="valid inference hierarchy for RVQ/HVQ tokens")
     args = parser.parse_args()
 
     model_name = args.model_name
@@ -425,6 +426,7 @@ if __name__ == "__main__":
     max_i = args.nsample
     slice_modes = args.slice_modes.split(",")
     chunk_dur = args.slice_dur
+    inference_R = args.inference_R
     tasks = args.tasks.split(",")
     tasks.append("code_rate")
     pl_module_string = args.model_cls
@@ -457,7 +459,8 @@ if __name__ == "__main__":
     evaluator = TokenEvaluator(pl_module, config,
                                 model_type=model_name, 
                                 segment_size=60, 
-                                slice_length=[15, 30, 60])
+                                slice_length=[15, 30, 60],
+                                inference_R=inference_R)
 
     # ===== build dataset =====
     if any([x in ["loss", "locality"] for x in tasks]):
@@ -536,7 +539,7 @@ if __name__ == "__main__":
                                         model_name=model_name,
                                         slice_mode="full", chunk_dur=chunk_dur,
                                         text_tokenizer=lyric_dataset.tokenizer,
-                                        tasks=['ctc_wer']) 
+                                        tasks=['ctc_wer'],) 
             f2.write("="*50 + "\n")
             for k, v in eval_output_dict.items():
                 f2.write(f"{k}\n{v}" + "\n")

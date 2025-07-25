@@ -58,6 +58,7 @@ run_opts:
   gradient_clip_val: 1.0
   checkpointing: False
   use_fused_kernel: False
+  use_causal_conformer: False
   # num_spectrogram_val_samples_for_plotting: 8 # As of 13APR2024 This new flag controls the number of spectrograms from the validation dataset to plot to Merlin
 
 ################################################################################
@@ -139,7 +140,7 @@ data:
       num_segments: !ref <extra_params[num_seg_per_track]> # get number of data from one audio
       min_duration: !ref <extra_params[min_duration]> # min_duration 20 seconds
       max_duration: !ref <extra_params[max_duration]> # max_duration 2 min (2b conformer maxinput)
-    - type: "SongSliceAudioCut"
+    - type: "SongSliceAudioCutWithMetaData"
       in_key: "audio_slice"
       out_key: "audio_slice"
       duration_leeway_in_s: 0.0
@@ -180,7 +181,7 @@ data:
       num_segments: 1 # get number of data from one audio
       min_duration: 10 # min_duration 20 seconds
       max_duration: 60 # max_duration 180 seconds
-    - type: "SongSliceAudioCut"
+    - type: "SongSliceAudioCutWithMetaData"
       in_key: "audio_slice"
       out_key: "audio_slice"
       duration_leeway_in_s: 0.0
@@ -262,7 +263,7 @@ config: !new:recipes.umm2.models.config.UMMConfig
   ctc_zero_infinity: True
   use_bn: False
   ### 5JUL2024 @hanoihantrakul According to the Merlin Job Li Tang uses the following settings `first_conformer`, `act_fn`, `mask_mel`, `rope_enhance_pos`
-  first_conformer: True
+  first_conformer: False
   act_fn: "gelu"
   mask_mel: True
   rope_enhance_pos: 7500 # 25 * 300
@@ -273,6 +274,7 @@ config: !new:recipes.umm2.models.config.UMMConfig
   conformer_conv_dropout: 0.0
   ###
   use_fused_kernel: !ref <run_opts[use_fused_kernel]>
+  use_causal_conformer: !ref <run_opts[use_causal_conformer]>
 
 # stage1:
 stage1: !new:recipes.umm2.models.tasks.bestrq.Best_RQ # BaseStage
@@ -334,8 +336,8 @@ trainer: !new:pytorch_lightning.Trainer
   val_check_interval: !ref <run_opts[val_check_interval]>
   check_val_every_n_epoch: null
   num_sanity_val_steps: 0
-  limit_train_batches: 5000 # 10000 # Consult Colin Wang: forces an epoch to end every 10k steps and prevent OOM # See above comments on why I picked this number
-  limit_val_batches: 50
+  #limit_train_batches: 5000 # 10000 # Consult Colin Wang: forces an epoch to end every 10k steps and prevent OOM # See above comments on why I picked this number
+  limit_val_batches: 0
   sync_batchnorm: True
   benchmark: False
   callbacks: !ref <callbacks>

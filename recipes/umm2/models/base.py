@@ -9,6 +9,7 @@ from hydra.utils import instantiate
 
 from easydict import EasyDict
 from mariana.models.audio.conformer import ConformerLayer
+from mariana.models.audio.duplex_conformer import DuplexConformerBackbone
 from mariana.models.audio.positional_encoding import RotaryPositionalEncoding
 from recipes.umm2.models.umm_conformer import ConformerEncoderLayer
 
@@ -62,7 +63,7 @@ class BaseStage(nn.Module):
         self.is_frozen = is_frozen
 
         if config is not None:
-            conformer_config = EasyDict({
+            self.noncausal_conformer_config = EasyDict({
                 # backbone
                 'conformer_normalize_before': True,
                 'conformer_attention_heads': config.num_attention_heads,
@@ -93,18 +94,60 @@ class BaseStage(nn.Module):
                 'flash_attn': True,
                 'conformer_mask_type': 'default',
             })
+
+            self.causal_conformer_config = EasyDict({
+                'conformer_normalize_before': True,
+                'conformer_attention_heads': config.num_attention_heads,
+                'conformer_linear_units': config.intermediate_size,
+                'conformer_num_blocks': config.num_hidden_layers,
+                'conformer_dropout_rate': config.hidden_dropout,
+                'conformer_positional_dropout_rate': 0.0,
+                'conformer_attention_dropout_rate': config.attention_dropout,
+                'conformer_positionwise_layer_type': 'linear',
+                'conformer_activation_fn': 'gelu',
+                'conformer_positionwise_conv_kernel_size': 1,
+                'conformer_macaron_style': 1,
+                'conformer_pos_enc_layer_type': 'fix_rel_pos',
+                'conformer_selfattention_layer_type': 'rel_selfattn',
+                'conformer_layer_order': 'mhsa_before_conv',
+                'conformer_use_cnn_module': 1,
+                'conformer_cnn_module': 'ConvolutionModule',
+                'conformer_cnn_module_kernel': str(config.conv_depthwise_kernel_size),
+                'conformer_cnn_norm_type': 'layer_norm',
+                'conformer_layernorm_interval': 0,
+                'conformer_weight_scale': 1.0,
+                'conformer_half_pooling': 0,
+                'conformer_use_rmpad': True,
+                'conformer_fuse_dropout_residual_layernorm': True,
+                'backbone_memory_size': config.hidden_size,
+                'dropout': 0.0,
+                'squeeze_mem': False,
+                'attn_amp_enable': True,
+                'flash_attn': True,
+                'conformer_mask_type': 'stream_chunkwise',
+                'conformer_mask_topology': f'[(1000000000000,8)]*{config.num_hidden_layers}',
+                'conformer_chunk_conv': True,
+                'enable_dyna_chunk': True,
+                'dyna_chunk_range': "1, 1",
+                'enable_full_ctxt': False,
+                'acoustic_backbone_type': 'DuplexConformerBackbone',
+                'fused_conformer': True,
+            })
             
             if not config.use_fused_kernel:
                 self.encoder_layers = nn.ModuleList(
                     [ConformerEncoderLayer(config) for _ in range(config.num_hidden_layers)]
                 )
             else:
-                self.encoder_layers = nn.Sequential(*[
-                    ConformerLayer(conformer_config, None, i) for i in range(config.num_hidden_layers)
-                ])
+                if not config.get("use_causal_conformer", False):
+                    self.encoder_layers = nn.Sequential(*[
+                        ConformerLayer(self.noncausal_conformer_config, None, i) for i in range(config.num_hidden_layers)
+                    ])
 
-                self.pos_enc = RotaryPositionalEncoding(config.hidden_size / config.num_attention_heads, 
-                    config, variant_type=2 if config.rope_enhance_pos > 0 else 0)
+                    self.pos_enc = RotaryPositionalEncoding(config.hidden_size / config.num_attention_heads, 
+                        config, variant_type=2 if config.rope_enhance_pos > 0 else 0)
+                else:
+                    self.conformer = DuplexConformerBackbone(self.causal_conformer_config)
  
     def validattr(self, attr_name):
         return hasattr(self, attr_name) and getattr(self, attr_name) is not None

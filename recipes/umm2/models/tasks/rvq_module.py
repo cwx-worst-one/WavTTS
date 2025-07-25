@@ -62,11 +62,11 @@ class RVQ(VQ):
             vq_output_dict = self.rvq(hidden_states, attn_mask)
 
         vq_emb = vq_output_dict["embs"]
+        vq_ids = vq_output_dict["ids"]
 
         if self.training:
             batch_size = vq_emb.shape[0]
             # here, quantizer dropout is applied to each [sample]
-
             if torch.rand(1) > 0.5:
                 hidden_states = self.vq_proj_out(vq_emb[..., -1])
             else:
@@ -74,16 +74,20 @@ class RVQ(VQ):
                 dropout_rvq_embs = vq_emb[range(batch_size), ..., quantizer_dropout]
                 hidden_states = self.vq_proj_out(dropout_rvq_embs)
         else:
-            hidden_states = self.vq_proj_out(vq_emb[..., -1])
+            if "inference_R" in data:
+                R_idx = min(max(data["inference_R"]-1, 0), vq_emb.shape[-1]-1)
+                hidden_states = self.vq_proj_out(vq_emb[..., R_idx])
+                vq_ids = vq_ids[..., :R_idx+1]
+            else:
+                hidden_states = self.vq_proj_out(vq_emb[..., -1])
 
         loss = vq_output_dict["loss"].sum()
         loss_weighted = loss * self.loss_weight
 
-
         output_dict = {
             "prevq_embs": to_quantize_embs,
             "quantized_out": hidden_states,
-            "vq_ids": vq_output_dict["ids"],
+            "vq_ids": vq_ids,
             "loss": loss_weighted,
             f"aux/loss_{self.task}": loss, 
 
@@ -94,7 +98,10 @@ class RVQ(VQ):
                 output_dict[f"aux/vq_entropy_{i}"] = temp_v
         if "ppl" in vq_output_dict.keys():
             for i, temp_v in enumerate(vq_output_dict["ppl"]):
-                output_dict[f"aux/vq_ppl_{i}"] = temp_v          
+                output_dict[f"aux/vq_ppl_{i}"] = temp_v      
+        # log loss of each layer for check (should be decreasing trend for RVQ)
+        for i, temp_v in enumerate(vq_output_dict["loss"]):
+            output_dict[f"aux/vq_loss_{i}"] = temp_v.item()
             
         return output_dict
 
@@ -195,7 +202,7 @@ class EMAEmbeddingRP(EMAEmbedding):
         self.register_buffer("embed_avg", weight.clone())
         self.update = True
 
-class EMAVectorQuantizerRP(EMAVectorQuantizer):
+class EMAVectorQuantizerRP(EMAVectorQuantizerEntropy):
     def __init__(self, r, stale_tolerance=100, *args, **kwargs,):
         super().__init__(*args, **kwargs)
         self.embedding = EMAEmbeddingRP(
@@ -206,7 +213,7 @@ class EMAVectorQuantizerRP(EMAVectorQuantizer):
         self.r = r
         self.eps = 1e-5
 
-    def forward(self, z):
+    def forward(self, z, padding_mask):
         """Notation:
         B: batch size
         T: n_frame
@@ -300,7 +307,7 @@ class EMAVectorQuantizerRPSimple(EMAVectorQuantizerRP):
     def __init__(self, *args, **kwargs,):
         super().__init__(*args, **kwargs)
 
-    def forward(self, z):
+    def forward(self, z, padding_mask):
         """Notation:
         B: batch size
         T: n_frame
@@ -309,18 +316,21 @@ class EMAVectorQuantizerRPSimple(EMAVectorQuantizerRP):
         """
         z_flattened = rearrange(z.detach(), "b t d -> (b t) d") # [B*T, D]
 
-        d = (
-            torch.sum(z_flattened**2, dim=1, keepdim=True)
-            + torch.sum(self.embedding.weight**2, dim=1)
-            - 2
-            * torch.einsum("bd,nd->bn", z_flattened, self.embedding.weight)
-        )   # [B*T, N]
+        d = self._compute_distance(z_flattened, self.embedding.weight)
         # print("distance", d)
 
         min_encoding_indices = torch.argmin(d, dim=1)  # [B*T]
         z_q = self.embedding(min_encoding_indices).reshape(z.shape)  # [B*T, D] -> [B, T, D]
+        valid_mask = rearrange(padding_mask, "b t -> (b t)")
+        valid_indices = torch.where(valid_mask)[0]
+        min_encoding_indices_valid = min_encoding_indices[valid_indices]  # [n_valid]
 
-        encodings = F.one_hot(min_encoding_indices, self.codebook_size).type(z.dtype)  # [B*T, N]
+        z_flattened_valid = z_flattened[valid_indices]  # [n_valid, D]
+        z_q_flattened_valid = self.embedding(min_encoding_indices_valid)  # [n_valid, D]
+        d_valid = d
+        d_valid = d_valid[valid_indices] # inplace modification to avoid copy large d matrix
+
+        encodings = F.one_hot(min_encoding_indices_valid, self.codebook_size).type(z.dtype)  # [B*T, N]
         # EMA cluster size
         encoding_sum = encodings.sum(0)  # [N]
         if self.dist and self.training:
@@ -333,7 +343,7 @@ class EMAVectorQuantizerRPSimple(EMAVectorQuantizerRP):
         # print("perplexity", perplexity)
 
         if self.training and self.embedding.update:
-            update_direction = torch.einsum('bk, bn -> kn', encodings, z_flattened)  # N, D
+            update_direction = torch.einsum('bk, bn -> kn', encodings, z_flattened_valid)  # N, D
             if self.dist:
                 torch.distributed.all_reduce(update_direction)
             current_center = update_direction / (encoding_sum.unsqueeze(-1) + self.eps)
@@ -349,8 +359,8 @@ class EMAVectorQuantizerRPSimple(EMAVectorQuantizerRP):
             self.stale_counter = self.stale_counter * unused_codes + unused_codes
             replace_code = (self.stale_counter == self.stale_tolerance) # N
             if replace_code.sum() > 0:
-                random_input_idx = torch.randperm(z_flattened.shape[0])
-                random_input = z_flattened[random_input_idx].reshape(z_flattened.shape)
+                random_input_idx = torch.randperm(z_flattened_valid.shape[0])
+                random_input = z_flattened_valid[random_input_idx].reshape(z_flattened_valid.shape)
                 if random_input.shape[0] < replace_code.sum():
                     random_input = torch.cat([random_input]*(replace_code.sum() // random_input.shape[0] + 1), 0)
                 random_input = random_input[:replace_code.sum()]  # num_code, N
@@ -366,7 +376,7 @@ class EMAVectorQuantizerRPSimple(EMAVectorQuantizerRP):
                 # always contain an all-zero embedding for residual layers
                 self.embedding.weight.data[0] = 0.0
             
-        loss = torch.mean((z_q.detach() - z) ** 2)
+        loss = torch.mean((z_q_flattened_valid.detach() - z_flattened_valid) ** 2)
         # preserve gradients
         z_q = z + (z_q - z).detach()
 
@@ -382,26 +392,34 @@ class EMAResidualVectorQuantizerRP(EMAResidualVectorQuantizerEntropy):
     def __init__(self, vq_type, codebook_size, codebook_dim, 
                  same_index_shape=True,
                  decay=0.99, dist=True, rvq=1, stale_tolerance=100):
-        super().__init__(codebook_size, codebook_dim, same_index_shape, decay, dist, rvq)
+        # fix distance type as "euclidean", as the input embedding-to-be-quantized is unit-normed by default
+        super().__init__(codebook_size, codebook_dim, same_index_shape, decay, 
+                         dist=dist, rvq=rvq, distance_type='euclidean')
         self.rvq = rvq
         self.eps = 1e-5
         self.RVQ = nn.ModuleList([])
         self.stale_tolerance = stale_tolerance
+        if isinstance(codebook_size, int):
+            codebook_size = [codebook_size] * self.rvq
+        if isinstance(codebook_dim, int):
+            codebook_dim = [codebook_dim] * self.rvq
         for r in range(self.rvq):
-            if vq_type == "RP":
+            if vq_type == "EMARP":
                 self.RVQ.append(
                     EMAVectorQuantizerRP(r=r, stale_tolerance=self.stale_tolerance,
-                    codebook_size=codebook_size, codebook_dim=codebook_dim,
+                    codebook_size=codebook_size[r], codebook_dim=codebook_dim[r],
+                    same_index_shape=same_index_shape, decay=decay, dist=dist)
+                )
+            elif vq_type == "EMARPSimple":
+                self.RVQ.append(
+                    EMAVectorQuantizerRPSimple(r=r, stale_tolerance=self.stale_tolerance,
+                    codebook_size=codebook_size[r], codebook_dim=codebook_dim[r],
                     same_index_shape=same_index_shape, decay=decay, dist=dist)
                 )
             else:
-                self.RVQ.append(
-                    EMAVectorQuantizerRPSimple(r=r, stale_tolerance=self.stale_tolerance,
-                    codebook_size=codebook_size, codebook_dim=codebook_dim,
-                    same_index_shape=same_index_shape, decay=decay, dist=dist)
-                )
+                raise NotImplementedError(f"vq_type {vq_type} not supported")
 
-    def forward(self, z):
+    def forward(self, z, padding_mask):
         z_unitnorm = z * torch.rsqrt(z.pow(2).sum(-1, keepdim=True) + self.eps) # [B, T, D]
 
         quantized = []
@@ -410,7 +428,7 @@ class EMAResidualVectorQuantizerRP(EMAResidualVectorQuantizerEntropy):
         ppl = []
         residual = z_unitnorm
         for r in range(len(self.RVQ)):
-            this_z_q, this_indices, this_vq_loss, this_ppl = self.RVQ[r](residual)
+            this_z_q, this_indices, this_vq_loss, this_ppl = self.RVQ[r](residual, padding_mask)
             residual = residual - this_z_q
             if r == 0:
                 quantized.append(this_z_q)
@@ -435,3 +453,43 @@ class EMAResidualVectorQuantizerRP(EMAResidualVectorQuantizerEntropy):
             "ppl": ppl,
         }
         return output_dict
+
+
+
+if __name__ == "__main__":
+    args = {
+        'r': 0,
+        'stale_tolerance': 100,
+        'codebook_size': 16384,
+        'codebook_dim': 32,
+        'decay': 0.99,
+        'dist': False,
+        # 'learnable': False,
+    }
+    
+    # initialize with same embedding weight
+    embedding = EMAEmbeddingRP(r=0, codebook_dim=16384, codebook_size=32, decay=0.99,)
+    
+    # original_vq = EMAVectorQuantizerRPSimple(**args)
+    # new_vq = EMAVectorQuantizerRPSimplePadding(**args)
+    # original_vq.embedding.weight.data.copy_(embedding.weight.T.data)
+    # new_vq.embedding.weight.data.copy_(embedding.weight.T.data)
+
+    z = torch.randn(2, 100, 32)
+    z = F.normalize(z, p=2, dim=-1)
+    padding_mask = torch.ones(2, 100).long()
+    padding_mask[0,90:] = 0
+    padding_mask[1,40:] = 0
+
+    # z_q, min_encoding_indices, loss, perplexity = original_vq(z)
+    # z_q_new, min_encoding_indices_new, loss_new, perplexity_new = new_vq(z, padding_mask)
+
+    new_rvq = EMAResidualVectorQuantizerRP(vq_type="EMARPSimple",
+                                           codebook_size=16384,
+                                           codebook_dim=32,
+                                           decay=0.99,
+                                           dist=False,
+                                           rvq=4,
+                                           stale_tolerance=100,)
+    returns = new_rvq(z, padding_mask)
+    print(returns)

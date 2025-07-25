@@ -311,6 +311,7 @@ config: !new:recipes.umm2.models.config.UMMConfig
     add_vq: True
     rvq: 4
     vq_type: "EMAEntropy"
+    stale_tolerance: 100
     vq_proj_noise: 10000
     vq_codebook_size: !ref <extra_params[vq_codebook_size]>
     vq_codebook_dim: 32

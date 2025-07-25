@@ -44,3 +44,40 @@ class ModelLoader(BaseModelLoader):
                 print(f"[MSD] {k} -> {k_new}")
                 del state_dict[k]
 
+class EncoderOnlyModelLoader(BaseModelLoader):
+    def __init__(
+        self,
+        ckpt_path, 
+        cache_dir=None,
+    ):
+        super().__init__(
+            ckpt_path=ckpt_path,
+            cache_dir=cache_dir,
+        )
+    def load_model(self, pl_module: pl.LightningModule):
+        state_dict = self.init_pretrained()
+        print(f'Loading pretrained model from {self.ckpt_path}')
+        map_state_dict = self.modify_state_dict_and_check_size(pl_module.state_dict(), state_dict)
+        missing_keys, unexpected_keys = pl_module.load_state_dict(state_dict=map_state_dict, strict=False)
+        print(f"[Missing] {missing_keys}")
+        print(f"[Unexpected] {unexpected_keys}")
+        return pl_module
+    
+    def modify_state_dict_and_check_size(self, current_state_dict, state_dict):
+        current_state_dict_keys = current_state_dict.keys()
+        map_state_dict = {}
+        module_keys = ["audio_encoder", "encoder_layers", "embed_positions", "audio_transform"]
+        
+        for k in list(state_dict.keys()):
+            if any([x in k for x in module_keys]):
+                _k = k.replace("stages.0.", "")
+                if _k not in current_state_dict_keys:
+                    print(f"[ModelLoader/Missing] {_k} not in current_state_dict_keys")
+                else:
+                    if state_dict[k].size() != current_state_dict[_k].size():
+                        print(f"[UMMModelLoader/Error] {k} size mismatch, \
+                                pretrained: {state_dict[k].size()}, current: {current_state_dict[_k].size()}")
+                    else:
+                        map_state_dict[_k] = state_dict[k].clone()
+                        print("[UMMModelLoader/Success]", k, _k)
+        return map_state_dict

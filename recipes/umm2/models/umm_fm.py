@@ -19,7 +19,7 @@ from easydict import EasyDict
 from mariana.models.audio.conformer import ConformerLayer
 from mariana.models.audio.positional_encoding import RotaryPositionalEncoding
 from recipes.umm2.models.tasks.vq_module import VQ, EMAVectorQuantizerEntropy
-from recipes.umm2.models.tasks.rvq_module import RVQ, EMAResidualVectorQuantizerEntropy
+from recipes.umm2.models.tasks.rvq_module import RVQ, EMAResidualVectorQuantizerEntropy, EMAResidualVectorQuantizerRP
 
 from recipes.umm2.models.umm_conformer import (
     ConformerRotaryPositionalEmbedding,
@@ -297,7 +297,8 @@ class AudioEncoder(nn.Module):
         if x_length is not None:
             x, x_length = self.feature_encoder(x, x_length)
             attn_mask = self._calculate_masking(x, x_length)
-            x = self.conformer_layer(x, attn_mask=attn_mask)
+            if self.config.get("first_conformer", True):
+                x = self.conformer_layer(x, attn_mask=attn_mask)
             return x, attn_mask
         else:
             x = self.feature_encoder(x)
@@ -493,9 +494,31 @@ class UMMModified_no_VQ(BaseStage):
         return mel , mel_length
     def forward(self, batch):
         if self.config.use_fused_kernel:
-            return self._compute_fused_kernel(batch)
+            if not self.config.use_causal_conformer:
+                return self._compute_fused_kernel(batch)
+            elif self.config.use_causal_conformer:
+                return self._compute_causal_conformer(batch)
         else:
             return self._compute_normal(batch)
+
+    def _compute_causal_conformer(self, batch):
+        mel, mel_len = self.get_feature(batch)
+        feature, feature_mask = self.audio_encoder(mel, mel_len)
+        hidden_states = self.encoder_input_dropout(feature)   
+
+        hidden_states = self.conformer(hidden_states, feature_mask)
+        hidden_states = hidden_states.float() * feature_mask.view(*hidden_states.shape[:-1], 1)
+        fw_flops, bw_flops, _ = self.conformer.calc_flops(feature_mask.sum(dim = -1).view(-1),
+                                                          rmpad=self.causal_conformer_config.conformer_use_rmpad)
+        flops = fw_flops + bw_flops
+
+        batch['mel'] = mel
+        batch['mel_len'] = mel_len
+        batch['latent'] = hidden_states
+        batch['flops'] = flops
+        batch['attn_mask'] = feature_mask
+        return batch 
+
     
     def _compute_normal(self, batch):
         mel, mel_len = self.get_feature(batch)  
@@ -518,6 +541,7 @@ class UMMModified_no_VQ(BaseStage):
         batch['flops'] = flops * 3  # extra 2x for backward.
         batch['attn_mask'] = feature_mask
         return batch 
+
     def _compute_fused_kernel(self, batch):
         mel, mel_len = self.get_feature(batch)  
         flops = self.audio_encoder.get_flops(*mel.shape)
@@ -624,7 +648,6 @@ class UMMModified(BaseStage):
                 )
             distance_type = getattr(config, 'vq_distance_type', 'euclidean')
             if config.rvq == 1:
-                
                 # Initialize VQ components
                 quantize = EMAVectorQuantizerEntropy(
                     config.vq_codebook_size,
@@ -639,16 +662,26 @@ class UMMModified(BaseStage):
                     vq_scheme=quantize
                 )
             else:
-                
                 logger.info(f"rvq: {config.rvq}")
-
-                quantize = EMAResidualVectorQuantizerEntropy(
-                    config.vq_codebook_size, # support list of codebook_size
-                    config.vq_codebook_dim, # support list of codebook_size
-                    decay=config.vq_decay,
-                    rvq=config.rvq,
-                    distance_type=distance_type
-                )
+                if config.vq_type == "EMAEntropy":
+                    quantize = EMAResidualVectorQuantizerEntropy(
+                        config.vq_codebook_size, # support list of codebook_size
+                        config.vq_codebook_dim, # support list of vq_codebook_dim
+                        decay=config.vq_decay,
+                        rvq=config.rvq,
+                        distance_type=distance_type
+                    )
+                elif config.vq_type.startswith("EMARP"):
+                    quantize = EMAResidualVectorQuantizerRP(
+                        config.vq_type, 
+                        config.vq_codebook_size, # support list of codebook_size
+                        config.vq_codebook_dim, 
+                        decay=config.vq_decay,
+                        rvq=config.rvq, 
+                        stale_tolerance=config.stale_tolerance,
+                    )
+                else:
+                    raise NotImplementedError(f"vq_type {config.vq_type} not supported")
 
                 self.vq_layer = RVQ(
                     config, 
@@ -841,7 +874,6 @@ class UMMModified(BaseStage):
         for layer_index, layer in enumerate(self.encoder_layers):
             
             if layer_index == self.vq_layer_idx:
-
                 vq_output_dict = self.vq_layer({
                                     'latent': hidden_states,
                                     'attn_mask' : conformer_mask
@@ -882,14 +914,14 @@ class UMMModified(BaseStage):
         return batch 
 
     @torch.no_grad()
-    def wav2token(self, audio, audio_len=None):
+    def wav2token(self, audio, audio_len=None, **kwargs):
         if self.config.use_fused_kernel:
-            return self._wav2token_fused(audio, audio_len)
+            return self._wav2token_fused(audio, audio_len, **kwargs)
         else:
-            return self._wav2token_normal(audio, audio_len)
+            return self._wav2token_normal(audio, audio_len, **kwargs)
 
     @torch.no_grad()
-    def _wav2token_normal(self, audio, audio_len=None):
+    def _wav2token_normal(self, audio, audio_len=None, **kwargs):
  
         if audio_len is None:
             audio_len = torch.tensor([audio.shape[-1]] * audio.shape[0], device=audio.device, dtype=torch.long)
@@ -905,7 +937,7 @@ class UMMModified(BaseStage):
         for layer_index, layer in enumerate(self.encoder_layers):
             if self.vq_layer is not None and layer_index == self.vq_layer_idx:
                 
-                vq_input = {'latent': hidden_states, 'attn_mask': feature_mask}
+                vq_input = {'latent': hidden_states, 'attn_mask': feature_mask, **kwargs}
                 vq_output = self.vq_layer(vq_input)
                 
                 hidden_states = vq_output['quantized_out']
@@ -927,7 +959,7 @@ class UMMModified(BaseStage):
         
         return output_dict
 
-    def _wav2token_fused(self, audio, audio_len=None):
+    def _wav2token_fused(self, audio, audio_len=None, **kwargs):
 
         if audio_len is None:
             audio_len = torch.tensor([audio.shape[-1]] * audio.shape[0], device=audio.device, dtype=torch.long)
@@ -950,7 +982,7 @@ class UMMModified(BaseStage):
         for layer_index, layer in enumerate(self.encoder_layers):
             if self.vq_layer is not None and layer_index == self.vq_layer_idx:
                 
-                vq_input = {'latent': hidden_states, 'attn_mask': conformer_mask}
+                vq_input = {'latent': hidden_states, 'attn_mask': conformer_mask, **kwargs}
                 vq_output = self.vq_layer(vq_input)
                 
                 hidden_states = vq_output['quantized_out']

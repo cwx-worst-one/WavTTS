@@ -43,7 +43,7 @@ class UMMConfig(PretrainedConfig):
         w_loss_vq=1,
         fix_layers=False,
         rvq=1,
-        vq_stale_tolerance=100,
+        stale_tolerance=100,
         # aux loss
         use_consistency_loss=False,
         consistency_loss_weight=0.1,
@@ -154,7 +154,7 @@ class UMMConfig(PretrainedConfig):
         self.w_loss_vq = w_loss_vq
         self.fix_layers = fix_layers
         self.rvq = rvq
-        self.vq_stale_tolerance = vq_stale_tolerance
+        self.stale_tolerance = stale_tolerance
         self.use_consistency_loss = use_consistency_loss
         self.consistency_loss_weight = consistency_loss_weight
         self.consistency_chunk_ratio = consistency_chunk_ratio
@@ -213,6 +213,9 @@ class UMMConfig(PretrainedConfig):
         self.interfere_audio = interfere_audio
 
         self.use_fused_kernel = kwargs.get("use_fused_kernel", False)
+        self.use_causal_conformer = self.use_fused_kernel and \
+            kwargs.get("use_causal_conformer", False)
+
 
     @property
     def rq_input_dim(self):

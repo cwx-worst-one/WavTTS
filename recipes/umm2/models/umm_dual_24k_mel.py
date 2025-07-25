@@ -7,6 +7,7 @@ from recipes.umm2.models.umm_fm import \
     UMM, \
     AudioEncoder
 import math
+import inspect
 from recipes.umm2.models.tasks.autoencoder import AE_UMM
 from recipes.umm2.models.tasks.rvq_module import EMAVectorQuantizerRPSimple, EMAVectorQuantizerEntropy
 from recipes.umm2.models.tasks.discriminator import MultiFreqDiscriminator
@@ -94,7 +95,7 @@ class MixVectorQuantization(nn.Module):
         hidden_states = dual_enc_out_dict['latent'] # [B, T, H]
         hidden_states = self.vq_proj_in(hidden_states)  # [B, T, h]
         noise_scale = 0
-        import pdb; pdb.set_trace()
+
         if self.dt_config.vq_proj_noise > 0 and self.training:
             noise_scale = (self.dt_config.vq_proj_noise - self.cnt).clamp(0) / self.dt_config.vq_proj_noise
             hidden_states = (
@@ -102,8 +103,17 @@ class MixVectorQuantization(nn.Module):
             )
             self.cnt.add_(1)
 
-        vq_output_dict = self.forward_vq(hidden_states, enc_out_dict)
+        if "e_scale" in inspect.getfullargspec(self.RVQ[0].forward).args:   # with entropy loss
+            e_scale = 0.
+            if hasattr(self, "cnt") and self.cnt < 30000 and self.training:
+                e_scale = 1.0
+        else:
+            e_scale = None
+
+
+        vq_output_dict = self.forward_vq(hidden_states, enc_out_dict, e_scale=e_scale)
         vq_emb = vq_output_dict["vq_embs"]  # [B, T, h, R]
+        vq_ids = vq_output_dict["vq_ids"]
         dropout_rvq_embs = vq_emb[..., -1]
         if self.training:
             if torch.rand(1) < 0.2:
@@ -114,13 +124,17 @@ class MixVectorQuantization(nn.Module):
                 dropout_rvq_embs = vq_emb[range(batch_size), ..., quantizer_dropout]
         else:
             if inference_R is not None:
-                dropout_rvq_embs = vq_emb[..., inference_R]
+                R_idx = min(max(inference_R-1, 0), vq_emb.shape[-1]-1)
+                # print("R_idx", R_idx)
+                dropout_rvq_embs = vq_emb[..., R_idx]
+                vq_ids = vq_ids[..., :R_idx+1]
                 
         hidden_states = self.vq_proj_out(dropout_rvq_embs)
 
         output_dict = {
             "latent": hidden_states,
-            "vq_ids": vq_output_dict["vq_ids"],
+            "vq_ids": vq_ids,
+            "vq_embs": vq_emb,
             "loss": vq_output_dict["loss"],
             "noise_scale": noise_scale,
         } 
@@ -132,25 +146,34 @@ class MixVectorQuantization(nn.Module):
         return output_dict
     
 
-    def forward_vq(self, z, enc_out_dict):
+    def forward_vq(self, z, enc_out_dict, e_scale=None):
         z_1 = enc_out_dict['prevq_embs']
         z_q1, id_R1, loss_R1, entropy_R1 = enc_out_dict['vq_embs'], enc_out_dict['vq_ids'], \
             enc_out_dict["loss_vq"], enc_out_dict["vq_entropy"]
 
-        residual = z - z_1
+        # according to implementation by Li Tang, the residual is defined between:
+        # 1) prevq_embs (output of vq_proj_in / z) of the dual encoder 
+        # 2) postvq_embs (quantized prevq_embs / z_1) of the encoder
+        residual = z - z_q1
         # z_unitnorm = z * torch.rsqrt(z.pow(2).sum(-1, keepdim=True) + self.eps) # [B, T, D]
         quantized, indices, rvq_loss, entropy = [z_q1], [id_R1], [loss_R1], [entropy_R1]
         for r in range(len(self.RVQ)):
-            r_output_dict = self.RVQ[r](residual)
-            this_z_q = r_output_dict["embs"]
-            residual = residual - this_z_q
-            if r == 0:
-                quantized.append(this_z_q)
+            if e_scale is not None:
+                r_output_dict = self.RVQ[r](residual, e_scale)
+                this_z_q, this_indices, this_vq_loss, this_entropy = \
+                    r_output_dict["embs"], r_output_dict["ids"], r_output_dict["loss"], r_output_dict["entropy"]
+                entropy.append(this_entropy)
             else:
-                quantized.append(quantized[-1] + this_z_q)
-            indices.append(r_output_dict["ids"])
-            rvq_loss.append(r_output_dict["loss"])
-            entropy.append(r_output_dict["entropy"])
+                this_z_q, this_indices, this_vq_loss, this_ppl = self.RVQ[r](residual)
+                entropy.append(this_ppl)
+            
+            residual = residual - this_z_q
+            # if r == 0:
+            #     quantized.append(this_z_q)
+            # else:
+            quantized.append(quantized[-1] + this_z_q)
+            indices.append(this_indices)
+            rvq_loss.append(this_vq_loss)
 
         # straight-through estimator (have been called in each VQ)
         # quantized = (quantized - z_unitnorm.unsqueeze(-1)).detach() + z_unitnorm.unsqueeze(-1)
@@ -172,7 +195,15 @@ class DualTokenizerModel(PipelineModel):
         output_names: List[str],
     ):
         super(DualTokenizerModel, self).__init__(stages, input_names, output_names)
-
+        # manually set stage1 encoder & VQ params as non-trainable
+        stage1 = self.stages[0]
+        stage1.audio_encoder.requires_grad_(False)
+        stage1.embed_positions.requires_grad_(False)
+        # stage1.encoder_input_dropout.requires_grad(False)
+        stage1.audio_transform.requires_grad_(False)
+        stage1.encoder_layers[:stage1.insert_layer_nums[0]].requires_grad_(False)
+        stage1.insert_modules.requires_grad_(False)
+        stage1.insert_modules[0].vq.embedding.update = False
 
     def forward(self, batch):
         r"""Perform forward computation.
@@ -191,24 +222,28 @@ class DualTokenizerModel(PipelineModel):
         Return:
             - latent: (will not be used)
             - ppl, loss_rvq, loss:  (will not be used)
-            - vq_ids: [B, 25T, R]
-            - vq_embs: [B, 25T, H, R]
-            - mel: mel spec of 24k audio [B, 100T, 128]
-            - audio: padded audio [B, 44100T]
+            - vq_ids: [B, 25*frames, R]
+            - vq_embs: [B, 25*frames, 32, R]
+            - loss_vq / loss: [R]
+            - prevq_embs: [B, 25*frames, 32]
+            - prevq_latent: [B, 25*frames, 1024]
+            - mel: mel spec of 24k audio [B, 100*frames, 128]
+            - audio: padded audio [B, 24000*secs]
         """
-        with torch.no_grad():
-            # 'loss_vq', 'latent', 'loss', 'vq_entropy', 'vq_ids', 'prevq_embs', 'vq_embs', 'audio', 'mel', 'prevq_latent', 'position_embeddings'
-            stage1_enc_out_dict = stage1.wav2token(batch["audio"])
-        
-        # ["latent"]
-        stage4_enc_out_dict = stage4.encoder(stage1_enc_out_dict)
 
+        # with torch.no_grad():
+        # 'loss_vq', 'latent', 'loss', 'vq_entropy', 'vq_ids', 'prevq_embs', 'vq_embs', 'audio', 'mel', 'prevq_latent', 'position_embeddings'
+        stage1_enc_out_dict = stage1.wav2token(batch["audio"])
+        
+        # "latent"
+        stage4_enc_out_dict = stage4.encoder(stage1_enc_out_dict)
         # dict_keys(['latent', 'vq_ids', 'loss', 'noise_scale', 'ppl', 'position_embeddings'])
         inference_R = batch['inference_R'] if "inference_R" in batch else None
         quant_out_dict = stage4.quantization(stage1_enc_out_dict, stage4_enc_out_dict, inference_R)
         quant_out_dict.update({
             "position_embeddings": stage1_enc_out_dict["position_embeddings"],
         })
+
         # dict_keys(['latent'])
         dec_out_dict = stage1.decoder(quant_out_dict)
         # dict_keys(['spec_out'])
@@ -238,12 +273,21 @@ class DualTokenizerModel(PipelineModel):
             "mel": stage1_enc_out_dict["mel"],
             "audio": stage1_enc_out_dict["audio"],
             "flops": output_dict["flops"],
-            "text_ids": output_dict["text_ids"]
+            "text_ids": output_dict["text_ids"],
+            "ctc_out": output_dict["ctc_out"],
         }
 
         return model_output_dict
     
-
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def wav2token(self, wav, inference_R=None):
+        stage1, stage2, stage4 = self.stages
+        stage1_enc_out_dict = stage1.wav2token(wav)
+        stage4_enc_out_dict = stage4.encoder(stage1_enc_out_dict)
+        # dict_keys(['latent', 'vq_ids', 'loss', 'noise_scale', 'ppl', 'position_embeddings'])
+        quant_out_dict = stage4.quantization(stage1_enc_out_dict, stage4_enc_out_dict, inference_R)
+        return quant_out_dict
 
 class DualEncoder(UMM):
     def __init__(self, 
@@ -298,38 +342,6 @@ class AE_UMM_Dual(AE_UMM):
         super().__init__(*args, **kwargs)
     
 
-    @torch.no_grad()
-    def _compute_encoder(self, batch):
-        input_dict = self.get_feature(batch)  
-        output_dict = {}
-        insert_output_dict = {}
-        feature = input_dict['mel']
-
-        feature = self.audio_encoder(feature)
-        hidden_states = self.encoder_input_dropout(feature)
-        position_embeddings = self.embed_positions(hidden_states)
-
-        assert self.insert_layer_nums is not None
-
-        # only support one insert layer for now
-        for i in range(self.insert_layer_nums[0]):
-            hidden_states = self.encoder_layers[i](
-                hidden_states, position_embeddings=position_embeddings
-            )
-        # TODO: verify if is_training works
-        insert_module = self.insert_modules[0]
-        insert_input_dict = {'latent': hidden_states}
-        insert_output_dict = insert_module(insert_input_dict)
-        output_dict.update(insert_output_dict)
-
-        output_dict.update({
-            "position_embeddings": position_embeddings,
-            "audio": batch['audio'],
-            "mel": input_dict["mel"],
-            "latent": hidden_states,
-        })
-        return output_dict
-    
     def decoder(self, input_dict):
         # input_dict: latent, position_embeddings
         position_embeddings = input_dict["position_embeddings"]

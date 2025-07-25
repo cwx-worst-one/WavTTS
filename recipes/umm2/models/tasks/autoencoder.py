@@ -43,7 +43,6 @@ class AE_UMM(UMM):
             self.insert_layer_nums = None
 
     def _compute(self, batch):
-        import pdb; pdb.set_trace()
         input_dict = self.get_feature(batch)  
         output_dict = {}
         insert_output_dict = {}

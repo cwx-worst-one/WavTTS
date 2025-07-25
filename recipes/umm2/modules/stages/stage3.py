@@ -141,3 +141,38 @@ class Stage3RVQ(Stage3):
         loss_dict = {k: v for k, v in loss_dict.items() if 'loss' in k}  # keep only loss related items
         self.val_outputs[dataloader_idx].append(loss_dict)
 
+class Stage3RVQDualEncoder(Stage3RVQ):
+    def __init__(
+        self,
+        config,
+        model_cls,
+        optimizer_cls,
+        scheduler_cls,
+        required_modules=None,
+        checkpointing=False,
+        extra_params=None,
+    ):
+        super().__init__(
+            config=config,
+            model_cls=model_cls,
+            optimizer_cls=optimizer_cls,
+            scheduler_cls=scheduler_cls,
+            required_modules=required_modules,
+            checkpointing=checkpointing,
+            extra_params=extra_params,
+        )
+        self.config = config
+    
+    def configure_optimizers(self):
+        params = self.model.parameters()
+        optimizer = self.optimizer_cls(params)
+        scheduler = self.scheduler_cls(optimizer=optimizer)
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
+        } 
+    
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def wav2token(self, wav, inference_R=None):
+        return self.model.wav2token(wav, inference_R)

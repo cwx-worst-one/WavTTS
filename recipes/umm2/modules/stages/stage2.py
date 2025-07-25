@@ -150,8 +150,8 @@ class Stage2(Stage0):
     
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
-    def wav2token(self, wav, wav_len):
-        return self.model.stages[0].wav2token(wav, wav_len)
+    def wav2token(self, wav, wav_len=None, **kwargs):
+        return self.model.stages[0].wav2token(wav, wav_len, **kwargs)
     
     
     @torch.no_grad()
