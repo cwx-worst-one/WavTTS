@@ -515,6 +515,7 @@ def setup_cli(CLI_Clazz=SemanticLlmCLI):
             'find_unused_parameters': False,
             "save_before_val": False,
             "callbacks": callbacks,
+            "enable_omnistore": True,
         },
     )
     # add inference config here
