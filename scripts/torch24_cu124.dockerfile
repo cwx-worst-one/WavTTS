@@ -53,7 +53,7 @@ ARG CMAKE_CXX_COMPILER_LAUNCHER="/usr/bin/ccache"
 ARG CMAKE_C_COMPILER_LAUNCHER="/usr/bin/ccache"
 ARG PYTORCH_NVCC="/usr/bin/ccache /usr/local/cuda/bin/nvcc"
 
-ARG CRUISE_VERSION=1.0.0.3977
+ARG CRUISE_VERSION=1.0.0.4011
 ARG PANTHER_VERSION=1.7.14.498
 ARG OPENFST_VERSION=1.0.0.8
 ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
@@ -62,9 +62,9 @@ ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.79
 ARG BUMI_VERSION=25.7.0.77
-ARG LSDP_VERSION=25.7.0.68
+ARG LSDP_VERSION=25.7.0.80
 ARG TRITON_VERSION=1.0.0.216
-ARG OMNIDISPATCHER_VERSION=1.0.0.42
+ARG OMNIDISPATCHER_VERSION=1.0.0.47
 ARG LITEDATALOADER_VERSION=1.0.0.22
 ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.51
 # https://github.com/facebookresearch/xformers.git:6425fd0
@@ -172,6 +172,7 @@ RUN pip3 install \
         botocore==1.35.14 \
         braceexpand==0.1.7 \
         Brotli==1.1.0 \
+        bs4==0.0.2 \
         byted-dataloader==0.5.4 \
         byted-hdfs-io==0.3.20 \
         byted_huggingface_hub==0.130.5 \
@@ -288,6 +289,7 @@ RUN pip3 install \
         frozendict==2.4.4 \
         frozenlist==1.4.1 \
         fsspec==2023.6.0 \
+        ftfy==6.3.1 \
         future==0.18.3 \
         gast==0.6.0 \
         gevent==22.10.2 \
@@ -422,6 +424,7 @@ RUN pip3 install \
         onnx==1.16.2 \
         onnxruntime==1.19.2 \
         openai==1.44.1 \
+        opencv-python==4.12.0.88 \
         openpyxl==3.1.2 \
         opt-einsum==3.3.0 \
         optree==0.12.1 \
