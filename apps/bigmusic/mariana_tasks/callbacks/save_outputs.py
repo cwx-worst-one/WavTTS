@@ -249,8 +249,8 @@ def save_batch_outputs(
             output_paths.append(wav_fp)
 
             if upload_audio:
-                metadata["audio_url"] = UploadToEasyCycleCallback.upload_file(wav_fp)
-                print(f"[Saving] {Path(wav_fp).name}: {metadata['audio_url']}")
+                metadata["easycycle_url"] = UploadToEasyCycleCallback.upload_file(wav_fp)
+                print(f"[Saving] {Path(wav_fp).name}: {metadata['easycycle_url']}")
 
             if not save_audio:
                 Path(wav_fp).unlink()

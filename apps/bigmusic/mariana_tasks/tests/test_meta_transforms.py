@@ -208,6 +208,31 @@ class TestStandardMetaParser:
             "out": {"field1": ["Pop", "Chinese Pop"], "field2": ["Sad/Sorrow"]}
         }
 
+    def test_norm_sep(self):
+        assert StandardMetaParser(
+            in_key="music_standard_meta",
+            out_key="out",
+            remove_in_key=True,
+            meta_types=["web"],
+            norm_sep=True,
+        )(
+            {
+                # This transform should be field name agnostic
+                "music_standard_meta": {
+                    "web": {
+                        "field1": ["Pop / Chinese Pop", "Jazz"],
+                        "field2": ["Sad/Sorrow / Happy"],
+                    }
+                }
+            }
+        ) == {
+            "out": {
+                # combine web and llm, ignore tagging_model
+                "field1": ["Pop", "Chinese Pop", "Jazz"],
+                "field2": ["Sad/Sorrow", "Happy"],
+            }
+        }
+
 
 class TestPackMeta2Prompt:
     def test_call(self):
@@ -362,3 +387,79 @@ class TestInstParser:
                 "inst": ["Guitar", "Drums"],
             }
         )
+
+
+class TestRegexDropoutTransform:
+
+    def test_all_mode(self):
+        meta = {"lyrics": "this is my lyrics"}
+        transform = RegexDropoutTransform(in_key="lyrics", modes=["all"], weights=[1.0])
+        assert transform(meta) == {"lyrics": ""}
+
+    def test_none_mode(self):
+        meta = {"lyrics": "this is my lyrics"}
+        transform = RegexDropoutTransform(
+            in_key="lyrics", modes=["none"], weights=[1.0]
+        )
+        assert transform(meta) == {"lyrics": "this is my lyrics"}
+
+    def test_positive_mode(self):
+        meta = {"lyrics": "[verse]\nthis is my lyrics"}
+        transform = RegexDropoutTransform(
+            in_key="lyrics", modes=["positive"], weights=[1.0]
+        )
+        assert transform(meta) == {"lyrics": "this is my lyrics"}
+
+    def test_negative_mode(self):
+        meta = {"lyrics": "[verse]\nthis is my lyrics"}
+        transform = RegexDropoutTransform(
+            in_key="lyrics", modes=["negative"], weights=[1.0]
+        )
+        assert transform(meta) == {"lyrics": "[verse]\n"}
+
+
+class TestKeywordExpansion:
+
+    def test_str(self):
+        keyword_expansion = KeywordExpansion(in_key="key", out_key="key")
+        assert keyword_expansion({"key": "爵士"}) == {"key": ["Jazz"]}
+        assert keyword_expansion({"key": "TV Music"}) == {
+            "key": ["TV Music", "Soundtrack"]
+        }  # case insensitive mapping
+
+    def test_list(self):
+        keyword_expansion = KeywordExpansion(in_key="key", out_key="key")
+        assert keyword_expansion({"key": ["爵士", "TV Music"]}) == {
+            "key": ["Jazz", "TV Music", "Soundtrack"]
+        }
+    
+    def test_list_rep(self):
+        keyword_expansion = KeywordExpansion(in_key="key", out_key="key")
+        assert keyword_expansion({"key": ["爵士", "TV Music", "Soundtrack"]}) == {
+            "key": ["Jazz", "TV Music", "Soundtrack"]  # no duplication
+        }
+
+    def test_dict(self):
+        keyword_expansion = KeywordExpansion(in_key="key", out_key="key")
+        assert keyword_expansion(
+            {"key": {"key_a": ["爵士"], "key_b": ["TV Music"]}}
+        ) == {"key": {"key_a": ["Jazz"], "key_b": ["TV Music", "Soundtrack"]}}
+
+        
+class TestMultiDropoutTransform:
+    def test_multi_tasks(self):
+        meta = {"a": "item a", "b": "item b", "c": "item c"}
+        transform = MultiDropoutTransform(
+            in_key=["a", "b", "c"],
+            out_key="out",
+            tasks=[
+                {"task": ["a", "b"], "weight": 1.0},
+                {"task": ["b", "c"], "weight": 0.0},
+            ],
+        )
+        assert transform(meta) == {
+            "a": "item a",
+            "b": "item b",
+            "c": "item c",
+            "out": {"a": "item a", "b": "item b", "c": ""},
+        }

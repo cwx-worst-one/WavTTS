@@ -41,6 +41,7 @@ class SemanticLlmModelBpe(SemanticLlmModel):
             partial_pretrain='',
             hybrid_shard_group_size=-1,
             ddp_gate=False,
+            weighted_loss=False,
             inference: CruiseConfig = CruiseConfig(dict(_inference_config))):
         super().__init__(
             network=network,
@@ -49,6 +50,7 @@ class SemanticLlmModelBpe(SemanticLlmModel):
             partial_pretrain=partial_pretrain,
             hybrid_shard_group_size=hybrid_shard_group_size,
             ddp_gate=ddp_gate,
+            weighted_loss=weighted_loss,
             inference=inference,
         )
         # NOTE: This is a hack to remove the embedding module while keeping other methods reusable
@@ -75,8 +77,10 @@ class SemanticLlmModelBpe(SemanticLlmModel):
         attention_mask = batch["attention_mask"][:,1:].contiguous()
         labels_shift_rmpad, _, _, _ = unpad_input(batch["input_ids"][..., 1:].unsqueeze(2).contiguous(), attention_mask)
         hidden_states_rmpad, _, _, _  = unpad_input(hidden_states[:, :-1, :].contiguous(), attention_mask)
-        loss_mask_rmpad, _, _, _ = unpad_input(batch["token_type_ids"][:,1:].unsqueeze(2).contiguous(), attention_mask)
+        loss_mask_rmpad, _, cu_seqlens, _ = unpad_input(batch["token_type_ids"][:,1:].unsqueeze(2).contiguous(), attention_mask)
         loss_mask_rmpad = loss_mask_rmpad.view(-1)
+
+            
 
         loss, acc = self.gpt2.transformer.wte(
             hidden_states_rmpad.view(-1, hidden_states.size(-1)).to(torch.bfloat16),
@@ -88,8 +92,30 @@ class SemanticLlmModelBpe(SemanticLlmModel):
 
         num_valid_tokens = loss_mask_rmpad.sum()
         outputs = dict()
-        loss = (loss * loss_mask_rmpad).sum() / loss_mask_rmpad.sum()
-        acc = (acc * loss_mask_rmpad).sum() / loss_mask_rmpad.sum()
+
+        acc = (acc * loss_mask_rmpad).sum() / num_valid_tokens
+
+        if self.hparams.weighted_loss:
+            segment_ratio = 0.1
+            inforced_weight = 3
+            for i in range(len(cu_seqlens) - 1):
+                start, end = cu_seqlens[i], cu_seqlens[i + 1]
+                segment = loss_mask_rmpad[start:end]
+                nonzero = torch.nonzero(segment, as_tuple=False)
+                if nonzero.numel() > 0:
+                    global_index = start + nonzero[0].item()
+                else:
+                    global_index = start  # or None if no non-zero exists
+                # inforce the loss for the first segment_ratio part
+                inforced_segment_end = global_index + int(segment_ratio * (end - global_index))
+                loss_mask_rmpad[global_index:inforced_segment_end] = inforced_weight
+
+                # inforce the loss for the last segment_ratio part
+                inforced_segment_start = global_index + int((1 - segment_ratio) * (end - global_index))
+                loss_mask_rmpad[inforced_segment_start:end] = inforced_weight
+
+        loss = (loss * loss_mask_rmpad).sum() / num_valid_tokens
+
         outputs["loss"] = loss
         outputs["acc"] = acc
         outputs["eos_acc"] = -1.0
@@ -469,7 +495,7 @@ def setup_cli(CLI_Clazz=SemanticLlmCLI):
     data_save_max_items_from_env = int(os.getenv('MARIANA_SPEECH_DATA_COLLECT_MAX', 32))
     if data_save_interval_from_env > 0:
         collector = SpeechDataCollectCallback(
-            keys_to_collect = ["prompt","lyrics"],
+            keys_to_collect = ["data_type", "prompt","lyrics"],
             audio_key=None,
             audio_duration_key=None,
             max_items_to_save=data_save_max_items_from_env,

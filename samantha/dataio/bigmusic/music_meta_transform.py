@@ -33,6 +33,10 @@ from samantha.dataio.bigmusic.transforms.freeform_text import (
     format_freeform_text,
     parse_freeform_text,
 )
+from samantha.dataio.bigmusic.transforms.keywords import (
+    expand_keyword,
+    translate_zh_to_en,
+)
 from samantha.dataio.bigmusic.transforms.mafl import (
     MaflError,
     parse_and_format_freeform_text_legacy,
@@ -202,6 +206,7 @@ class MusicMetaRWTransform:
         overwrite_item: bool = False,
         maybe_return_list_output: bool = False,
         return_item_if_in_key_not_found: bool = False,
+        bypass_condition: Optional[str] = None,
     ):
         """
         A simple transform that takes the value from in_key and put it into out_key.
@@ -231,11 +236,15 @@ class MusicMetaRWTransform:
         self.overwrite_item = overwrite_item
         self.maybe_return_list_output = maybe_return_list_output
         self.return_item_if_in_key_not_found = return_item_if_in_key_not_found
+        self.bypass_condition = bypass_condition
 
         if self.overwrite_item:
             assert (
                 self.out_key is None
             ), "out_key should always be None when overwrite_item is True"
+
+        if self.bypass_condition:
+            assert "==" in self.bypass_condition or "!=" in self.bypass_condition
 
     def __call__(self, item: dict, **kwargs):
         if item is None:
@@ -246,6 +255,16 @@ class MusicMetaRWTransform:
                 return item
             if not _validate_item_with_keys("uttid", item):
                 return item
+
+        if self.bypass_condition is not None:
+            sep = "!=" if "!=" in self.bypass_condition else "=="
+            key, value = self.bypass_condition.split(sep)
+            if sep == "!=":
+                if str(item.get(key)) != value:
+                    return item
+            else:
+                if str(item.get(key)) == value:
+                    return item
 
         uttid = item.get("uttid")
         try:
@@ -340,6 +359,92 @@ class DropoutTransform(MusicMetaRWTransform):
         if random.random() < self.dropout_rate:
             return type(value)()  # creates an empty instance of the same type as value
         return value
+
+
+class RegexDropoutTransform(MusicMetaRWTransform):
+    def __init__(
+        self,
+        in_key: str,
+        out_key: str = None,
+        regex: str = "\\[[^\\]]*\\]\\n",
+        modes: Union[tuple[str], list[str]] = ("all", "none", "positive", "negative"),
+        weights: Union[tuple[float], list[float]] = (1.0, 1.0, 1.0, 1.0),
+        dropout_rate: float = 1.0,
+        replace_str: str = "",
+        **kwargs,
+    ):
+        if out_key is None:
+            out_key = in_key
+        super().__init__(in_key=in_key, out_key=out_key, **kwargs)
+        assert set(modes).issubset(["all", "none", "positive", "negative"])
+        assert len(modes) == len(weights), "modes and weights must have the same length"
+        self.pattern = re.compile(regex)
+        self.modes = modes
+        self.weights = weights
+        self.dropout_rate = dropout_rate
+        self.replace_str = replace_str.replace("\\n", "\n")
+
+    def call(self, item: str, **kwargs) -> str:
+        def drop_with_prob(match):
+            if random.random() < self.dropout_rate:
+                return self.replace_str
+            return match.group(0)
+
+        mode = random.choices(self.modes, weights=self.weights)[0]
+
+        if mode == "positive":
+            # Remove all text that matches the regex
+            result = self.pattern.sub(drop_with_prob, item)
+        elif mode == "negative":
+            # Keep only text that matches the regex
+            matches = self.pattern.findall(item)
+            result = "".join(matches)
+        elif mode == "none":
+            return item
+        else:  # mode == "all"
+            result = ""
+
+        return result
+
+
+class MultiDropoutTransform(MusicMetaRWTransform):
+    def __init__(
+        self,
+        in_key: Union[list[str], tuple[str]],
+        out_key: str,
+        tasks: list[dict],
+        **kwargs,
+    ):
+        super().__init__(in_key=in_key, out_key=out_key, **kwargs)
+        self.tasks = tasks
+        # [
+        #     {
+        #         "task": ["k1", "k2"],
+        #         "weight": 0.1
+        #     },
+        #     {
+        #         "task": ["k1", "k3"],
+        #         "weight": 0.2
+        #     },
+        # ]
+
+    def call(self, values, **kwargs):
+        def drop_item(value):
+            assert isinstance(value, (str, list, dict, tuple)), value
+            return type(value)()
+
+        items = {k: v for k, v in zip(self.in_key, values)}
+        task = random.choices(self.tasks, weights=[t["weight"] for t in self.tasks])[0][
+            "task"
+        ]
+
+        # drop items that are not in the task
+        for k in items:
+            if k in task:
+                continue
+            items[k] = drop_item(items[k])
+
+        return items
 
 
 class MusicMetaMapTransform(MusicMetaRWTransform):
@@ -577,6 +682,7 @@ class StandardMetaParser(MusicMetaRWTransform):
         ),
         meta_weights: Union[list[int], tuple[int]] = (4, 3, 2, 1),
         mode: str = "sample",
+        norm_sep: bool = False,  # split by " / "
         **kwargs,
     ):
         super().__init__(in_key, out_key, allow_empty_in=False, **kwargs)
@@ -587,22 +693,18 @@ class StandardMetaParser(MusicMetaRWTransform):
             "consolidate",
         ], "mode must be either 'sample' or 'consolidate'"
         self.mode = mode
+        self.norm_sep = norm_sep
 
     def call(self, standard_meta: dict, **kwargs) -> dict:
         if self.mode == "sample":
-            return self._call_sample(standard_meta, **kwargs)
-        return self._call_consolidate(standard_meta, **kwargs)
+            sm = self._call_sample(standard_meta, **kwargs)
+        else:
+            sm = self._call_consolidate(standard_meta, **kwargs)
+        if self.norm_sep:
+            sm = {k: _norm_sep(v) for k, v in sm.items()}
+        return sm
 
     def _call_consolidate(self, standard_meta: dict, **kwargs) -> dict:
-        def dedup_with_order(items: list[str]) -> list[str]:
-            seen = set()
-            result = []
-            for item in items:
-                if item not in seen:
-                    seen.add(item)
-                    result.append(item)
-            return result
-
         consolidated_standard_meta = {}
         for k in standard_meta[
             self.meta_types[0]
@@ -616,7 +718,7 @@ class StandardMetaParser(MusicMetaRWTransform):
                     continue
                 meta_list.append(meta)
             if len(meta_list) > 0:
-                meta_list_concat = dedup_with_order(reduce(operator.add, meta_list))
+                meta_list_concat = _dedup_with_order(reduce(operator.add, meta_list))
                 consolidated_standard_meta[k] = meta_list_concat
             else:
                 continue
@@ -640,6 +742,40 @@ class StandardMetaParser(MusicMetaRWTransform):
                 continue
             weighted_standard_meta[k] = random.choices(meta_list, weight_list)[0]
         return weighted_standard_meta
+
+
+def _dedup_with_order(items: list[str]) -> list[str]:
+    seen = set()
+    result = []
+    for item in items:
+        if item not in seen:
+            result.append(item)
+            seen.add(item)
+    return result
+
+
+def _norm_sep(s: Union[str, list[str]], sep: str = " / ") -> list[str]:
+    def split(kw: str) -> str:
+        return [k.strip() for k in kw.split(sep)]
+
+    if isinstance(s, str):
+        s = [s]
+    return _dedup_with_order(reduce(operator.add, [split(kw) for kw in s]))
+
+
+class SplitItem(MusicMetaRWTransform):
+    def __init__(
+        self,
+        in_key: str = "meta.raw.freeform_text",
+        out_key: str = "tags_music.character",
+        sep: str = ",",
+        **kwargs,
+    ):
+        super().__init__(in_key, out_key, allow_empty_in=False, **kwargs)
+        self.sep = sep
+
+    def call(self, item: str, **kwargs):
+        return [x.strip() for x in item.split(self.sep)]
 
 
 class PRDMetaParser(MusicMetaRWTransform):
@@ -666,20 +802,11 @@ class PRDMetaParser(MusicMetaRWTransform):
         self.use_subgenre = use_subgenre
 
     def call(self, tags: dict, **kwargs) -> dict:
-        def dedup_with_order(items: list[str]) -> list[str]:
-            seen = set()
-            result = []
-            for item in items:
-                if item not in seen:
-                    result.append(item)
-                    seen.add(item)
-            return result
-
         meta = {}
         for field in self.required_fields:
             if field == "genre":
                 genre = (
-                    dedup_with_order(
+                    _dedup_with_order(
                         tags.get("genre", []) + tags.get("genre_extra", [])
                     )
                     * self.genre_repeat
@@ -688,17 +815,17 @@ class PRDMetaParser(MusicMetaRWTransform):
                     genre = genre[:1]  # the first one is genre
                 meta[field] = genre
             elif field == "mood":
-                meta[field] = dedup_with_order(tags.get("mood", []))
+                meta[field] = _dedup_with_order(tags.get("mood", []))
             elif field == "gender":
-                meta[field] = dedup_with_order(tags.get("speaker", []))
+                meta[field] = _dedup_with_order(tags.get("speaker", []))
             elif field == "scene":
-                meta[field] = dedup_with_order(tags.get("scene", []))
+                meta[field] = _dedup_with_order(tags.get("scene", []))
             elif field == "timbre":
-                meta[field] = dedup_with_order(tags.get("voice", []))
+                meta[field] = _dedup_with_order(tags.get("voice", []))
             elif field == "instrument":
-                meta[field] = dedup_with_order(tags.get("instrument", []))
+                meta[field] = _dedup_with_order(tags.get("instrument", []))
             elif field == "language":
-                meta[field] = dedup_with_order(tags.get("lang", []))
+                meta[field] = _dedup_with_order(tags.get("lang", []))
             elif field == "duration":
                 meta[field] = tags.get("duration", [])
             elif field == "character":
@@ -732,6 +859,37 @@ class GenreInLyrics(MusicMetaRWTransform):
         return lyrics
 
 
+class GenreInstInLyrics(MusicMetaRWTransform):
+    def __init__(
+        self,
+        in_key: str = ["prd_meta", "lyrics"],
+        out_key: str = "lyrics",
+        replace_prob=1.0,
+        **kwargs,
+    ):
+        super().__init__(in_key, out_key, allow_empty_in=False, **kwargs)
+        self.replace_prob = replace_prob
+
+    def call(self, item, **kwargs):
+        meta, lyrics = item
+        insert_keys = ["genre", "instrument"]
+        if not any(k in meta for k in insert_keys):
+            return lyrics
+        insert_str = ""
+        for k in insert_keys:
+            if k not in meta:
+                continue
+            insert_str += f"<{k}>{'|'.join(x for x in meta[k])}</{k}>"
+
+        def replace_with_prob(match):
+            if random.random() < self.replace_prob:
+                return f"[{match.group(1)} {insert_str}]"
+            return match.group(0)
+
+        lyrics = re.sub(r"\[([^\]]+)\]", replace_with_prob, lyrics)
+        return lyrics
+
+
 class MapGenre2CN(MusicMetaRWTransform):
     def __init__(
         self, in_key: str = "prd_meta.genre", out_key: str = "prd_meta.genre", **kwargs
@@ -755,6 +913,33 @@ class MapGenre2CN(MusicMetaRWTransform):
         genres = item
         genres = [self.mapping.get(genre, genre) for genre in genres]
         return genres
+
+
+class KeywordExpansion(MusicMetaRWTransform):
+    def __init__(self, in_key: str, out_key: str, **kwargs):
+        super().__init__(in_key, out_key, **kwargs)
+
+    def call(self, item, **kwargs):
+        def process_keyword(keyword: str) -> list[str]:
+            kws = translate_zh_to_en(keyword, keep_input=False)
+            if kws:  # completely replace Chinese keywords with English keywords
+                return kws
+            return expand_keyword(keyword, keep_input=True)
+
+        def process_keyword_list(keywords: list[str]) -> list[str]:
+            return _dedup_with_order(
+                reduce(operator.add, [process_keyword(keyword) for keyword in keywords])
+            )
+
+        def process_keyword_or_keyword_list(kw: Union[str, list[str]]) -> list[str]:
+            if isinstance(kw, str):
+                return process_keyword(kw)
+            return process_keyword_list(kw)
+
+        if isinstance(item, dict):
+            return {k: process_keyword_or_keyword_list(v) for k, v in item.items()}
+
+        return process_keyword_or_keyword_list(item)
 
 
 class TextAugmentor(MusicMetaRWTransform):
@@ -871,6 +1056,7 @@ class PackMeta2PromptFull(MusicMetaRWTransform):
         dropout_rate: float = 0.0,
         system_prompt: str = "",
         keyword_mode: str = "key_value",  # or value_only
+        refer_path: str = "",
         **kwargs,
     ):
         super().__init__(in_key, out_key, allow_empty_in=False, **kwargs)
@@ -879,24 +1065,72 @@ class PackMeta2PromptFull(MusicMetaRWTransform):
         self.dropout_rate = dropout_rate
         self.system_prompt = system_prompt
         self.keyword_mode = keyword_mode
+        if refer_path:
+            with open(refer_path, "r") as ff:
+                self.refer_prompt = json.load(ff)
 
     def call(self, standard_meta: dict, **kwargs):
         prompt = ""
         keys = list(standard_meta.keys())
         if self.shuffle:
             random.shuffle(keys)
+
+        value_only_prompt_lst = []
+        genre_prompt_lst = []
         for k in keys:
             v = standard_meta[k]
             if v is None or random.random() < self.field_dropout_rate:
                 continue
             if not isinstance(v, (list, tuple)):
                 v = [v]
+
             if self.keyword_mode == "key_value":
                 prompt += f'<{k.lower()}>{"|".join(str(x) for x in v)}</{k.lower()}>'
             elif self.keyword_mode == "value_only":
-                values_lst = [x for x in v]
-                random.shuffle(values_lst)
-                prompt += f'<section>{",".join(values_lst)}</section>'  # <section></section> is the default boundary
+                if k == "genre":
+                    genre_prompt_lst += v
+                else:
+                    value_only_prompt_lst += v
+            elif self.keyword_mode == "value_only_expanded":
+                if k == "genre":
+                    genre_prompt_lst += v
+                    for x in v:
+                        value_only_prompt_lst += self.refer_prompt.get(x, [])
+                        # values_lst = values_lst[:random.randint(len(values_lst)//2, len(values_lst))]
+                elif k == "duration":
+                    value_only_prompt_lst += [f"duration:{v[0]}"]
+                else:
+                    value_only_prompt_lst += v
+
+            elif self.keyword_mode == "expanded":
+                if k == "genre":
+                    values_lst = []
+                    for x in v:
+                        values_lst += self.refer_prompt.get(x, [])
+                    if self.shuffle:
+                        random.shuffle(values_lst)
+                        values_lst = values_lst[: random.randint(1, len(values_lst))]
+                    values_lst = ["|".join(str(x) for x in v)] + values_lst
+                    prompt += f'<{k.lower()}>{"|".join(str(x) for x in values_lst)}</{k.lower()}>'
+                else:
+                    prompt += (
+                        f'<{k.lower()}>{",".join(str(x) for x in v)}</{k.lower()}>'
+                    )
+
+        if (
+            self.keyword_mode == "value_only"
+            or self.keyword_mode == "value_only_expanded"
+        ):
+            if self.shuffle:
+                random.shuffle(value_only_prompt_lst)
+            value_only_prompt_lst = _dedup_with_order(value_only_prompt_lst)
+            # there are integers in the list
+            merged_lst = list(map(str, genre_prompt_lst + value_only_prompt_lst))
+            merged_lst = [
+                v for v in merged_lst if random.random() >= self.field_dropout_rate
+            ]
+            prompt = "|".join(merged_lst)
+
         prompt = "" if random.random() < self.dropout_rate else prompt
         if self.system_prompt:
             prompt = f"[SYSTEM_PRMOPT: {self.system_prompt}]" + prompt
@@ -927,12 +1161,16 @@ Please use dedicated lyrics parser transforms with SimpleSelector instead.""",
             "downloaded": parse_downloaded_lyrics,
             "suno": parse_suno_lyrics,
         }
-        for t in self.lyrics_type:
-            try:
-                return fns[t](meta)
-            except MaflError:
-                continue
-        return ""
+        lyrics = ""
+        if "data_type" in meta and meta["data_type"] == "tts":
+            lyrics = meta["lyrics"]
+        else:
+            for t in self.lyrics_type:
+                try:
+                    lyrics = fns[t](meta)
+                except MaflError:
+                    continue
+        return lyrics
 
 
 class SimpleSelector(MusicMetaRWTransform):
@@ -960,6 +1198,22 @@ class SimpleSelector(MusicMetaRWTransform):
         if self.allow_empty_out:
             return None
         raise MusicMetaError("No item satisfies the predicate")
+
+
+class WeightedSelector(MusicMetaRWTransform):
+    def __init__(
+        self,
+        in_key: Union[list[str], tuple[str]],
+        out_key: str,
+        weights: Union[list[float], tuple[float]],
+        **kwargs,
+    ):
+        super().__init__(in_key, out_key, **kwargs)
+        self.weights = weights
+
+    def call(self, item: list[dict], **kwargs):
+        selected_item = random.choices(item, weights=self.weights, k=1)[0]
+        return selected_item
 
 
 def _predicate_bool(x):
@@ -2485,6 +2739,87 @@ class GetItem:
                 logger.error(f"{self.in_key} is not right for data {item['uttid']}")
                 return None
         item[self.out_key] = data
+
+        return item
+
+
+class DeleteItem:
+    def __init__(self, in_key):
+        self.in_key = in_key
+
+    def __call__(self, item, **kwargs):
+        if item is None:
+            return None
+        item_path, item_key = self.in_key.rsplit(".", 1)
+        data = get_nested_value(item, item_path)
+        if item_key in data:
+            del data[item_key]
+        return item
+
+
+class DataAdaptor:
+    def __init__(self):
+        pass
+
+    def __call__(self, item, **kwargs):
+        # breakpoint()
+        if item is None:
+            return None
+
+        if "text" in item.keys() and item["text"] != "":
+            item["meta"]["lyrics"] = item["text"]
+            item["meta"]["data_type"] = "tts"
+            item["data_type"] = "tts"
+            item["meta"]["standard_music_meta"] = {
+                "web": {"genre": ["spoken"]},
+                "human_annotation": {"genre": ["spoken"]},
+                "tagging_model": {"genre": ["spoken"]},
+            }
+
+        else:
+            item["meta"]["data_type"] = "l2s"
+            item["data_type"] = "l2s"
+
+        return item
+
+
+class InferDataAdaptor:
+    def __init__(self, out_key="input_strings", prompt_type="keyword"):
+        self.out_key = out_key
+        self.prompt_type = prompt_type
+
+    def __call__(self, item, **kwargs):
+
+        if item is None:
+            return None
+
+        index = item["index"]
+        digits_only = "".join([char for char in index if char.isdigit()])
+        index = int(digits_only)
+
+        if index % 2 == 0:
+            data_type = "tts"
+            if self.prompt_type == "keyword":
+                prompt = "spoken"
+            elif self.prompt_type == "special_token":
+                prompt = "<genre>spoken</genre>"
+            lyrics = item["lyrics"]
+
+            pattern = re.compile("\\[[^\\]]*\\]\\n?")
+            lyrics = pattern.sub("", lyrics)
+
+        else:
+            data_type = "l2s"
+            prompt = item["prompt"]
+            lyrics = item["lyrics"]
+            section_tags = re.findall(r"\[.*?\]", lyrics)
+            lyrics = "\n".join(section_tags) + "\n"
+
+        item["prompt"] = prompt
+        item["lyrics"] = lyrics
+        item["data_type"] = data_type
+
+        item[self.out_key] = [prompt, lyrics]
 
         return item
 

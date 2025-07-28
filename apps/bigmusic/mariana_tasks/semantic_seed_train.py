@@ -69,6 +69,7 @@ _m8_network_config = {
     "llm_empty_init": True,
     "tokenizer_path": "hdfs://haruna/home/byte_data_aml_research/user/anzhecheng/tokenizer/bbpe155k-v6.4.3-ml.pret",
     "ignored_llm_missing_keys": ["inv_freq"],
+    "fp8_amp": False,
     # Arch
     "arch": "m8",
     "hidden_size": 1152,
@@ -366,6 +367,7 @@ class SemanticLlmModel(CruiseModule):
             partial_pretrain='',
             hybrid_shard_group_size=-1,
             ddp_gate=False,
+            weighted_loss=False,
             inference: CruiseConfig = CruiseConfig(dict(_inference_config)),
     ):
         super().__init__()

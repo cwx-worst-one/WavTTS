@@ -60,11 +60,43 @@ def rm_tree(pth: Path) -> None:
 # ---------------------------------------------
 
 
-def format_regular_text(key: str, text: str, max_width: int) -> list[str]:
-    lines = textwrap.wrap(text, max_width, break_long_words=False)
+def wrap_pipe_separated(text, max_width):
+    # Step 1: Replace existing "| " with a temporary placeholder
+    placeholder = "||SPACE||"
+    modified_text = text.replace("| ", placeholder)
+
+    # Step 2: Add space after remaining "|" characters
+    modified_text = modified_text.replace("|", "| ")
+
+    # Step 3: Wrap the text
+    wrapped = textwrap.wrap(modified_text, max_width, break_long_words=False)
+
+    # Step 4: Restore original "| " and remove added spaces
+    result = []
+    for line in wrapped:
+        # First restore the original "| " sequences
+        line = line.replace(placeholder, "| ")
+        # Then remove the spaces we added (but keep the original ones)
+        line = line.replace("| ", "|").replace(placeholder, "| ")
+        result.append(line)
+
+    return result
+
+
+def format_paragraph(key: str, text: str, max_width: int) -> list[str]:
+    lines = wrap_pipe_separated(text, max_width)
     for i in range(1, len(lines)):
         lines[i] = "    " + lines[i]  # add indentation
-    return [f"{key}: "] + lines
+    if key:
+        return [f"{key}:"] + lines
+    return lines
+
+
+def format_text(key: str, text: str, max_width: int) -> list[str]:
+    lines = wrap_pipe_separated(text, max_width)
+    if key:
+        return [f"{key}:"] + lines
+    return lines
 
 
 def format_float(key: str, text: float, _max_width: int) -> list[str]:
@@ -96,7 +128,7 @@ def format_xml(_key: str, text: str, max_width: int) -> list[str]:
         # Check if adding this tag would exceed width
         if current_line and len(current_line + tag) > max_width:
             # Start a new line
-            lines.append(current_line.rstrip())
+            lines.append(current_line)
             current_line = tag
         else:
             # Add to current line
@@ -104,9 +136,9 @@ def format_xml(_key: str, text: str, max_width: int) -> list[str]:
 
     # Add the last line if it has content
     if current_line:
-        lines.append(current_line.rstrip())
+        lines.append(current_line)
 
-    return lines
+    return format_text("", "\n".join(lines), max_width)
 
 
 def format_lyrics(_key: str, lyrics: str, max_width: int) -> list[str]:
@@ -121,10 +153,13 @@ def format_lyrics(_key: str, lyrics: str, max_width: int) -> list[str]:
                 lyrics_list.append("\t")
             lyrics_list.append(y)
             lyrics_list.append("\n")
-    return "".join(lyrics_list).split("\n")
+    # wrap empty lines around it
+    return [""] + "".join(lyrics_list).split("\n") + [""]
 
 
-def format_style_text(_key: str, style_text: list[list[str]], _max_width: int) -> list[str]:
+def format_style_text(
+    _key: str, style_text: list[list[str]], _max_width: int
+) -> list[str]:
     if not style_text:
         return None
     if isinstance(style_text, str):
@@ -133,7 +168,8 @@ def format_style_text(_key: str, style_text: list[list[str]], _max_width: int) -
 
 
 TEXT_FORMATTERS = {
-    "regular": format_regular_text,
+    "paragraph": format_paragraph,
+    "text": format_text,
     "float": format_float,
     "int": format_int,
     "lyrics": format_lyrics,
@@ -151,12 +187,29 @@ def format_video_text(
     additional_keys: dict = _empty_dict(),
     max_width: int = 60,
 ) -> str:
+    def strip_empty_strings(lst):
+        if not lst:
+            return lst
+        # Find first non-empty string
+        start = 0
+        while start < len(lst) and lst[start] == "":
+            start += 1
+        # If all strings are empty
+        if start == len(lst):
+            return []
+        # Find last non-empty string
+        end = len(lst) - 1
+        while end >= 0 and lst[end] == "":
+            end -= 1
+        return lst[start : end + 1]
+
     index = metadata[index_key]
     additional_text = {k: metadata.get(k, "") for k in additional_keys}
-    lines = [str(index)]
+    lines = [str(index), ""]
     for k, v in additional_text.items():
         formatter = TEXT_FORMATTERS[additional_keys[k]]
         lines.extend(formatter(k, v, max_width))
+    lines = strip_empty_strings(lines)
     video_text = "\n".join(lines)
     return video_text
 
@@ -203,7 +256,9 @@ def save_video(
     output_video_dir_tmp.mkdir(exist_ok=True, parents=True)
 
     audio_format = "wav"
-    generated_output_fps = sorted(list(Path(input_results_dir).glob(f"**/*.generated.{audio_format}")))
+    generated_output_fps = sorted(
+        list(Path(input_results_dir).glob(f"**/*.generated.{audio_format}"))
+    )
     for idx, generated_output_fp in enumerate(generated_output_fps):
         audio_fp = generated_output_fp
         metadata_fp = str(generated_output_fp).replace(
