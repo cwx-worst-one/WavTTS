@@ -54,6 +54,29 @@ def song_slice_to_audio_slice(song_slice, chunk_dur=30):
         text_slices.append(text)
     return audio_slices, text_slices
 
+def detect_consecutive_repetitions(numbers):
+    if not numbers:
+        return {}
+    
+    consecutive_counts = {}
+    current_num = numbers[0]
+    current_count = 1
+    for num in numbers[1:]:
+        if num == current_num:
+            current_count += 1
+        else:
+            if current_count not in consecutive_counts:
+                consecutive_counts[current_count] = 1
+            else:
+                consecutive_counts[current_count] += 1
+            current_num = num
+            current_count = 1
+    if current_count not in consecutive_counts:
+        consecutive_counts[current_count] = 1
+    else:
+        consecutive_counts[current_count] += 1
+    return consecutive_counts
+
 def levenshtein_distance(hypothesis: list, reference: list):
     """levenshtein distance between two sequences
     C: correct
@@ -272,6 +295,7 @@ class TokenEvaluator(torch.nn.Module):
         return code_rate
     
     def plot_token_distribution(self, path="./test.png"):
+        fig = plt.figure()
         colors = ["r", "blue", "g", "black"]
         legend_list = []
         for r in range(self.code_count.shape[0]):
@@ -282,6 +306,20 @@ class TokenEvaluator(torch.nn.Module):
             legend_list.append(f"{r+1}")
         plt.legend(legend_list)
         plt.savefig(path)
+        plt.close(fig)
+
+        fig = plt.figure()
+        for r in range(self.code_count.shape[0]):
+            sorted_code_count = self.code_count[r]
+            sorted_code_count = sorted(sorted_code_count)[::-1]
+            if r > len(colors):
+                plt.plot(sorted_code_count)
+            else:
+                plt.plot(sorted_code_count, color=colors[r])
+        plt.legend(legend_list)
+        path_prefix, path_suffix = ".".join(path.rsplit(".")[:-1]), path.rsplit(".")[-1]
+        plt.savefig(path_prefix + "_sorted." + path_suffix)
+        plt.close(fig)
 
     @torch.no_grad()
     def locality(self, audio):
@@ -407,6 +445,11 @@ class TokenEvaluator(torch.nn.Module):
             f"chunk_locality_{chunk_size}": result
         }
 
+    def token_repetition(self, tokens):
+        if tokens.ndim == 2:
+            tokens = tokens.unsqueeze(-1)
+        return detect_consecutive_repetitions(tokens[...,0].squeeze().tolist())
+    
     def ctc_wer(self, output_text_logits, ref_text_id, tokenizer=None):
         """
         output_text_logits: [B, n_output, n_logits]

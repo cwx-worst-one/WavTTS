@@ -28,7 +28,7 @@ def evaluate_audio_slice(it,
                         text_tokenizer=None
                         ):
     nsample, mean_sample_dur, time_cnt, i = 0, 0, 0, 0
-    slice_loss_dicts, slice_locality_dicts, slice_ctc_wers = {}, {}, []
+    slice_loss_dicts, slice_locality_dicts, slice_repetition_dicts, slice_ctc_wers = {}, {}, {}, []
     slice_loss_dicts_vocal, slice_loss_dicts_inst = {}, {}
     evaluator.reset_code_count()
 
@@ -74,7 +74,7 @@ def evaluate_audio_slice(it,
         f.writelines("=" * 50 + "\n")
         f.writelines(f"batch {i}, length={sample_dur}, avg_length={mean_sample_dur/nsample}\n")
 
-        slice_loss_dict, slice_locality_dict = {}, {}
+        slice_loss_dict, slice_locality_dict, slice_repetition_dict = {}, {}, {}
         # iter over slices
         for a in range(len(sliced_audios)):
             if sliced_texts is not None:
@@ -116,6 +116,13 @@ def evaluate_audio_slice(it,
                         slice_locality_dict[key] = [this_locality[key]]
                     else:
                         slice_locality_dict[key].append(this_locality[key])
+            if "token_repetition" in tasks:
+                this_repetition = evaluator.token_repetition(tokens)
+                for key in this_repetition.keys():
+                    if key not in slice_repetition_dict:
+                        slice_repetition_dict[key] = 0
+                    else:
+                        slice_repetition_dict[key] += this_repetition[key]
 
             this_loss_dict = evaluator.get_loss_dict(slice_output_dict)
             this_output_dict = evaluator.get_outputs(slice_output_dict)
@@ -128,7 +135,6 @@ def evaluate_audio_slice(it,
                 if key not in slice_loss_dict.keys():
                     slice_loss_dict[key] = []
                 slice_loss_dict[key].append(this_output_dict[key])
-            print(a, this_loss_dict)
 
         # combine results of slices
         for key in slice_loss_dict.keys():
@@ -151,6 +157,13 @@ def evaluate_audio_slice(it,
                 if key not in slice_locality_dicts.keys():
                     slice_locality_dicts[key] = []
                 slice_locality_dicts[key].append(slice_locality_dict[key])
+
+        if "token_repetition" in tasks:
+            for key in slice_repetition_dict.keys():
+                slice_repetition_dict[key] = torch.tensor(slice_repetition_dict[key]).mean(0)  # [n_slice, n]
+                if key not in slice_repetition_dicts.keys():
+                    slice_repetition_dicts[key] = []
+                slice_repetition_dicts[key].append(slice_repetition_dict[key])
 
         # ctc wer   
         if "ctc_wer" in tasks:
@@ -184,13 +197,13 @@ def evaluate_audio_slice(it,
 
         tiktok = [time_cnt, nsample, mean_sample_dur / nsample]
         if i % 5 == 0:
-            print_stat(i, evaluator, slice_loss_dicts, slice_locality_dicts, slice_ctc_wers, tiktok, tasks=tasks)
+            print_stat(i, evaluator, slice_loss_dicts, slice_locality_dicts, slice_ctc_wers, slice_repetition_dicts, tiktok, tasks=tasks)
             print("instrumental music")
-            print_stat(inst_i, evaluator, slice_loss_dicts_inst, slice_locality_dicts, slice_ctc_wers, tiktok, tasks=tasks)
+            print_stat(inst_i, evaluator, slice_loss_dicts_inst, slice_locality_dicts, slice_ctc_wers, slice_repetition_dicts, tiktok, tasks=tasks)
             print("vocal music")
-            print_stat(vocal_i, evaluator, slice_loss_dicts_vocal, slice_locality_dicts, slice_ctc_wers, tiktok, tasks=tasks)
+            print_stat(vocal_i, evaluator, slice_loss_dicts_vocal, slice_locality_dicts, slice_ctc_wers, slice_repetition_dicts, tiktok, tasks=tasks)
 
-    print_stat(i, evaluator, slice_loss_dicts, slice_locality_dicts, slice_ctc_wers, tiktok, tasks=tasks)
+    print_stat(i, evaluator, slice_loss_dicts, slice_locality_dicts, slice_ctc_wers, slice_repetition_dicts, tiktok, tasks=tasks)
 
     output_dict = {}
     if "code_rate" in tasks:
@@ -222,6 +235,12 @@ def evaluate_audio_slice(it,
         print("wer | ins | del | sub ", slice_ctc_wers.mean(0))
         output_dict["ctc_wer"] = slice_ctc_wers.mean(0)
     
+    if "token_repetition" in tasks:
+        print("[token repetition]")
+        for key in slice_repetition_dicts.keys():
+            print(key, slice_repetition_dicts[key])
+        output_dict["token_repetition"] = slice_repetition_dicts
+
     output_dict["time_count"] = [time_cnt, nsample, mean_sample_dur / nsample]
     print("[time]")
     print(time_cnt)
@@ -229,7 +248,7 @@ def evaluate_audio_slice(it,
     return output_dict
         
     
-def print_stat(i, evaluator, loss_dicts, locality_dict, ctc_wers, tiktok, tasks=["loss", "locality", "ctc_wer"]):
+def print_stat(i, evaluator, loss_dicts, locality_dict, ctc_wers, repetition_dict, tiktok, tasks=["loss", "locality", "ctc_wer"]):
     if i == 0:
         return
     
@@ -258,6 +277,16 @@ def print_stat(i, evaluator, loss_dicts, locality_dict, ctc_wers, tiktok, tasks=
         _cd = torch.from_numpy(np.stack(ctc_wers))
         print("wer | ins | del | sub ", _cd.mean(0))
         
+    if "token_repetition" in tasks:
+        print("\n[token_repetition]")
+        cnt = 0
+        all_tokens = sum([k*v for k, v in repetition_dict.items()])
+        for key in sorted(repetition_dict.keys()):
+            print(key, repetition_dict[key], "{:.2f}%".format(repetition_dict[key] / all_tokens * 100))
+            cnt += 1
+            if cnt > 10:
+                break
+
     print("[time]")
     print(tiktok)
 
@@ -275,7 +304,7 @@ def evaluate(it,
              text_tokenizer=None,
              chunk_locality_dur=10,
              ):
-    loss_dicts, locality_dict = {}, {}
+    loss_dicts, locality_dict, repetition_dict = {}, {}, {}
     nsample, mean_sample_dur, time_cnt, i = 0, 0, 0, 0
     ctc_wers = []
     evaluator.reset_code_count()
@@ -315,9 +344,9 @@ def evaluate(it,
         nsample += tokens.shape[0]
         mean_sample_dur += (sample_dur * tokens.shape[0])
         print("=" * 50)
-        print(f"batch {i}, length={sample_dur}, avg_length={mean_sample_dur/nsample}")
+        print(f"batch {i}, length={sample_dur}, avg_length={mean_sample_dur/nsample}, no_lyric_flag={batch['no_lyric_flag']}")
         f.writelines("=" * 50 + "\n")
-        f.writelines(f"batch {i}, length={sample_dur}, avg_length={mean_sample_dur/nsample}\n")
+        f.writelines(f"batch {i}, length={sample_dur}, avg_length={mean_sample_dur/nsample}, no_lyric_flag={batch['no_lyric_flag']}")
 
         this_output_dict = evaluator.model(input_batch)
         # import matplotlib.pyplot as plt
@@ -361,13 +390,18 @@ def evaluate(it,
                 else:
                     locality_dict[key].append(this_locality[key])
             
-
+        if "token_repetition" in tasks:
+            this_repetition = evaluator.token_repetition(tokens)
+            for key in this_repetition.keys():
+                if key not in repetition_dict:
+                    repetition_dict[key] = 0
+                repetition_dict[key] += this_repetition[key]
         i += 1
         tiktok = [time_cnt, nsample, mean_sample_dur / nsample]
         if i % 5 == 0:
-            print_stat(i, evaluator, loss_dicts, locality_dict, ctc_wers, tiktok, tasks=tasks)
+            print_stat(i, evaluator, loss_dicts, locality_dict, ctc_wers, repetition_dict, tiktok, tasks=tasks)
 
-
+    print_stat(i, evaluator, loss_dicts, locality_dict, ctc_wers, repetition_dict, tiktok, tasks=tasks)
     output_dict = {}
     if "code_rate" in tasks:
         code_rate = evaluator.compute_code_rate()
@@ -396,6 +430,17 @@ def evaluate(it,
         print("wer | ins | del | sub ", ctc_wers.mean(0))
         output_dict["ctc_wer"] = ctc_wers.mean(0)
         
+    if "token_repetition" in tasks:
+        print("\n[token_repetition]")
+        cnt = 0
+        all_tokens = sum([k*v for k, v in repetition_dict.items()])
+        for key in sorted(repetition_dict.keys()):
+            print(key, repetition_dict[key], "{:.2f}%".format(repetition_dict[key] / all_tokens * 100))
+            cnt += 1
+            if cnt > 10:
+                break
+        output_dict["token_repetition"] = repetition_dict
+
     output_dict["time_count"] = [time_cnt, nsample, mean_sample_dur / nsample]
     print("[time]")
     print(time_cnt)
@@ -463,9 +508,9 @@ if __name__ == "__main__":
                                 inference_R=inference_R)
 
     # ===== build dataset =====
-    if any([x in ["loss", "locality"] for x in tasks]):
+    if any([x in ["loss", "locality", "token_repetition"] for x in tasks]):
         dataset = EvalDataset(
-            data_id=7562,
+            data_id="CN:7562",
             url_pattern=None,
             frame_rate=frame_rate,
             sample_rate=sample_rate,
@@ -516,7 +561,7 @@ if __name__ == "__main__":
 
     if any([x in ["ctc_wer"] for x in tasks]):
         lyric_dataset = EvalDataset(
-            data_id=7602,
+            data_id="CN:7602",
             url_pattern=None,
             frame_rate=frame_rate,
             sample_rate=sample_rate,

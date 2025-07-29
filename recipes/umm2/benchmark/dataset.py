@@ -121,7 +121,7 @@ def parse_structure_tags_custom_concat(meta: Dict, music_type='vocal'):
     if isinstance(segments, str):
         return None
     segments = merge_raw_song_structure_by_start_prob(segments, music_type)
-    return _format_deepchorus_structure_tags({'segments': segments})
+    return _format_deepchorus_structure_tags(segments)
 
 # class TextNormalizer:
 #     def __init__(self, in_key='text', text_length_key='text_length'):
@@ -289,12 +289,13 @@ class VocalTransforms(BaseTransforms):
         structure_tags = parse_structure_tags_custom_concat(meta)
         if structure_tags is None:
             song_slices = transform_utts_to_song_slices_heuristic(utterances, 
-                                                                  min_duration=self.min_duration, max_duration=self.max_duration)
+                                                                  min_duration=self.min_duration, max_duration=self.max_duration, 
+                                                                  language='Chinese')
         else:
             # todo: merge with AR latest codebase
             song_slices = transform_utts_to_song_slices_structure(utterances, min_duration=self.min_duration, max_duration=self.max_duration,
-                                                structure_tags=structure_tags.tags, complete_section=True,)
-
+                                                structure_tags=structure_tags.tags, slice_mode='section', language='Chinese')
+            
         ok_song_slices = []
         for i in range(len(song_slices)):
             if song_slices[i].duration < self.min_duration:
@@ -423,7 +424,7 @@ class EvalDataset(pl.LightningDataModule):
 def test441():
     # lyrics dataset
     l2 = EvalDataset(
-        data_id=7295,
+        data_id="CN:7295",
         url_pattern=None,
         frame_rate=25,
         sample_rate=44100,
@@ -451,7 +452,7 @@ if __name__ == "__main__":
 
     # reconstruction dataset
     l = EvalDataset(
-        data_id=7562,
+        data_id="CN:7562",
         url_pattern=None,
         frame_rate=frame_rate,
         sample_rate=sample_rate,
