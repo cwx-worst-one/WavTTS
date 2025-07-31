@@ -329,7 +329,7 @@ config: !new:recipes.umm2.models.config.UMMConfig
     vocab_size: 105880
     use_bn: False
     ### 5JUL2024 @hanoihantrakul According to the Merlin Job Li Tang uses the following settings `first_conformer`, `act_fn`, `mask_mel`, `rope_enhance_pos`
-    first_conformer: True 
+    first_conformer: False 
     act_fn: "gelu" 
     mask_mel: False  
     rope_enhance_pos: 7500 # 300s*25Hz
@@ -349,8 +349,15 @@ config: !new:recipes.umm2.models.config.UMMConfig
     ctc_ignore_empty: !ref <extra_params[ctc_ignore_empty]>
     ###
     use_fused_kernel: !ref <run_opts[use_fused_kernel]>
+    use_causal_conformer: !ref <run_opts[use_causal_conformer]>
+    conv_depthwise_kernel_size: !ref <run_opts[conv_depthwise_kernel_size]>
+    conformer_mask_topology: "[(4,1)]*24"
+    conformer_chunk_conv: False
+    enable_dyna_chunk: False
+    dyna_chunk_range: "1, 16"
+    conformer_decoder_idx: !ref <extra_params[num_hidden_layers]> // 2
 
-# stage1: prepare_feature (audio->mel), forward enc/dec layers (insert vq_module)
+
 stage1: !name:recipes.umm2.models.umm_fm.UMMModified
   config: !ref <config>
   takes: ['audio','audio_length']
@@ -445,7 +452,7 @@ plugins:
     - !new:samantha.plugins.LargeTorchCheckpointIO
 
 trainer: !new:pytorch_lightning.Trainer
-    strategy: "ddp_find_unused_parameters_false"
+    strategy: "ddp_find_unused_parameters_true"
     fast_dev_run: !ref <run_opts[fast_dev_run]>
     logger: !ref <logger>
     accelerator: !ref <run_opts[accelerator]>

@@ -14,3 +14,8 @@ ConformerUMM2_RVQ4_RP:
   hpath: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/RVQ/RVQ_RP_4x16384_lr3e-5_30k_bs5_a100/checkpoints/step=0200000.ckpt
   initializer: !name:recipes.umm2.scripts.model_initializer.init_stage3
     cache_dir: !ref <cache_dir>/44.1k_vocal
+
+Conformer_Window_Attn_4_1:
+  hpath: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/si.luo/umm2/umm_stage3_rmpad_v2/2025082609_UMM-stage3_64GPU_12mins_leftcxt12_conformer_model/checkpoints/step=0060000.ckpt
+  initializer: !name:recipes.umm2.scripts.model_initializer.init_stage3_window_attn
+    cache_dir: !ref <cache_dir>/44.1k_vocal

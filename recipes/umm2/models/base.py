@@ -125,13 +125,14 @@ class BaseStage(nn.Module):
                 'attn_amp_enable': True,
                 'flash_attn': True,
                 'conformer_mask_type': 'stream_chunkwise',
-                'conformer_mask_topology': f'[(1000000000000,8)]*{config.num_hidden_layers}',
-                'conformer_chunk_conv': True,
-                'enable_dyna_chunk': True,
-                'dyna_chunk_range': "1, 1",
+                'conformer_mask_topology': config.conformer_mask_topology if hasattr(config, 'conformer_mask_topology') else None,
+                'conformer_chunk_conv': config.conformer_chunk_conv if hasattr(config, 'conformer_chunk_conv') else None,
+                'enable_dyna_chunk': config.enable_dyna_chunk if hasattr(config, 'enable_dyna_chunk') else None,
+                'dyna_chunk_range': config.dyna_chunk_range if hasattr(config, 'dyna_chunk_range') else None,
                 'enable_full_ctxt': False,
                 'acoustic_backbone_type': 'DuplexConformerBackbone',
                 'fused_conformer': True,
+                # 'conformer_decoder_idx': config.conformer_decoder_idx,
             })
             
             if not config.use_fused_kernel:
@@ -139,7 +140,7 @@ class BaseStage(nn.Module):
                     [ConformerEncoderLayer(config) for _ in range(config.num_hidden_layers)]
                 )
             else:
-                if not config.get("use_causal_conformer", False):
+                if not hasattr(config, 'use_causal_conformer') or not config.get("use_causal_conformer", False):
                     self.encoder_layers = nn.Sequential(*[
                         ConformerLayer(self.noncausal_conformer_config, None, i) for i in range(config.num_hidden_layers)
                     ])

@@ -43,7 +43,7 @@ extra_params:
     ctc_ignore_empty: true
     min_duration: 5
     max_duration: 60
-
+    num_hidden_layers: 24
 
 
 # running parameters
@@ -70,6 +70,7 @@ run_opts:
     checkpointing: False
     use_fused_kernel: False
     use_causal_conformer: False
+    conv_depthwise_kernel_size: 31
     pretrained_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/rui.xia/bigmusic/experiments/umm2/umm_stage1/2025051507_UMM-stage1_GB15minX64/checkpoints/step=0300000.ckpt" # baseline stage1
     # pretrained_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/si.luo/umm2/umm_stage1/2025051415_UMM-stage1_GB12minX32_fused_attnmask_model/checkpoints/step=0560000.ckpt" # fused kernel stage1
 
@@ -295,7 +296,7 @@ config: !new:recipes.umm2.models.config.UMMConfig
     hop_length: !ref <extra_params[hop_length]>
     hidden_size: 1024
     intermediate_size: 4096
-    num_hidden_layers: 24
+    num_hidden_layers: !ref <extra_params[num_hidden_layers]>
     num_attention_heads: 8
     max_source_positions: 2500
     add_vq: False
@@ -336,6 +337,13 @@ config: !new:recipes.umm2.models.config.UMMConfig
     ###
     use_fused_kernel: !ref <run_opts[use_fused_kernel]>
     use_causal_conformer: !ref <run_opts[use_causal_conformer]>
+    conv_depthwise_kernel_size: !ref <run_opts[conv_depthwise_kernel_size]>
+    conformer_mask_topology: "[(12,1)]*24"
+    conformer_chunk_conv: False
+    enable_dyna_chunk: False
+    dyna_chunk_range: "1, 16"
+    conformer_decoder_idx: !ref <extra_params[num_hidden_layers]> // 2
+
 
 stage1: !name:recipes.umm2.models.umm_fm.UMMModified_no_VQ
   config: !ref <config>

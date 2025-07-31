@@ -69,7 +69,11 @@ class MixTokenCollate:
         """
         input_strings = [item[self.in_key] for item in batch_in]
         batch_out[self.out_key] = self.bpe_tokenizer.batch_encode_plus(
-            input_strings, padding=True, truncation=True, return_tensors="pt"
+            input_strings,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+            add_special_tokens=False,
         )
 
 

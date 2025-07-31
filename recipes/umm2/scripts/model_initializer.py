@@ -57,6 +57,17 @@ def init_stage3(hpath, local_rank, requires=[], cache_dir=None):
     return_dict = {"Stage3": Stage3}
     return return_dict
 
+def init_stage3_window_attn(hpath, local_rank, requires=[], cache_dir=None):
+    """Init function for standard Stage3 UMM backbone."""
+    from recipes.umm2.modules.stages.stage3 import Stage3
+
+    device = torch.device(f"cuda:{local_rank}")
+    loader = ModelLoader(hpath, requires=requires, cache_dir=cache_dir, device=device)
+    model = loader.load_model(Stage3)
+    Stage3 = model["pl_module"]
+    return_dict = {"Stage3": Stage3}
+    return return_dict
+
 def load_example_audio(audio_path=None):
     if audio_path is None:
         audio_path = "/mnt/bn/music-llm-nas-lq/qinxin/bak/inp071.generated.wav"

@@ -59,6 +59,7 @@ run_opts:
   checkpointing: False
   use_fused_kernel: False
   use_causal_conformer: False
+  conv_depthwise_kernel_size: 31
   # num_spectrogram_val_samples_for_plotting: 8 # As of 13APR2024 This new flag controls the number of spectrograms from the validation dataset to plot to Merlin
 
 ################################################################################
@@ -275,6 +276,10 @@ config: !new:recipes.umm2.models.config.UMMConfig
   ###
   use_fused_kernel: !ref <run_opts[use_fused_kernel]>
   use_causal_conformer: !ref <run_opts[use_causal_conformer]>
+  conv_depthwise_kernel_size: !ref <run_opts[conv_depthwise_kernel_size]>
+  conformer_mask_topology: "[(1000000000000,1000000000000)]*24"
+  conformer_chunk_conv: False
+  enable_dyna_chunk: False
 
 # stage1:
 stage1: !new:recipes.umm2.models.tasks.bestrq.Best_RQ # BaseStage

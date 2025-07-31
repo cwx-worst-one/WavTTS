@@ -215,7 +215,12 @@ class UMMConfig(PretrainedConfig):
         self.use_fused_kernel = kwargs.get("use_fused_kernel", False)
         self.use_causal_conformer = self.use_fused_kernel and \
             kwargs.get("use_causal_conformer", False)
-
+        self.conformer_mask_topology = kwargs.get("conformer_mask_topology", \
+            f'[(1000000000000,8)]*{self.num_hidden_layers}')
+        self.conformer_chunk_conv = kwargs.get('conformer_chunk_conv', False)
+        self.enable_dyna_chunk = kwargs.get('enable_dyna_chunk', False)
+        self.dyna_chunk_range = kwargs.get('dyna_chunk_range', "1, 16")
+        self.conformer_decoder_idx = kwargs.get('conformer_decoder_idx', None)
 
     @property
     def rq_input_dim(self):

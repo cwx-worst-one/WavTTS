@@ -200,10 +200,10 @@ class VoiceBoxModule(pl.LightningModule):
             self.model.load_state_dict(new_state_dict, strict=False)
 
     @torch.no_grad()
-    def get_umm_token(self, wav, slice_pct=0.0):
+    def get_umm_token(self, wav, audio_lengths=None, slice_pct=0.0):
         with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=True):
             mode = 'even' if np.random.rand() < slice_pct else 'full'
-            token = self.requires["Stage3"].wav2requires(wav, slice_method=mode, chunk_size=60, requires=['token'])
+            token = self.requires["Stage3"].wav2requires(wav, audio_length=audio_lengths, slice_method=mode, chunk_size=60, requires=['token'])
             if isinstance(token, dict):
                 token = token["token"]
         return token
@@ -286,7 +286,8 @@ class VoiceBoxModule(pl.LightningModule):
             batch["wav"] = torchaudio.functional.gain(batch["wav"], gain_db=-3)
 
         if "token" not in batch:
-            batch["token"] = self.get_umm_token(batch["wav_24k"].unsqueeze(1), slice_pct=self.umm_slice_pct)
+            wav_24k_lens = batch['wav_lens'] / self.diffusion_sample_rate * 24000
+            batch["token"] = self.get_umm_token(batch["wav_24k"].unsqueeze(1), wav_24k_lens.int(), slice_pct=self.umm_slice_pct)
         if self.umm_dropout > 0:
             drop_idx = torch.rand([batch["token"].shape[0],batch["token"].shape[1]]) < self.umm_dropout
             if torch.sum(drop_idx) > 0:
@@ -462,7 +463,8 @@ class VoiceBoxModule(pl.LightningModule):
         max_val_output_samples_num = 10
 
         if "token" not in batch:
-            batch["token"] = self.get_umm_token(batch["wav_24k"].unsqueeze(1))
+            wav_24k_lens = batch['wav_lens'] / self.diffusion_sample_rate * 24000
+            batch["token"] = self.get_umm_token(batch["wav_24k"].unsqueeze(1), wav_24k_lens.int())
         # print('UMM', batch["token"].shape)
 
         batch["bn"] = self.get_sacodec_embedding(batch["wav"]) # B x L x D

@@ -462,6 +462,7 @@ class UMMModified_no_VQ(BaseStage):
         )
         if config.feature_cmvn is not None:
             self.audio_transform.load_from_checkpoint(config.feature_cmvn)
+
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
     def pad_audio(self, x):
@@ -470,6 +471,7 @@ class UMMModified_no_VQ(BaseStage):
             return F.pad(x, (0, rate - (x.size(-1) % rate)), "constant", 0)
         else:
             return x
+        
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
     def preprocessing(
@@ -481,6 +483,7 @@ class UMMModified_no_VQ(BaseStage):
         normalize = self.config.feature_cmvn is not None
         mel, mel_length = self.audio_transform(x, x_length, normalize=normalize)
         return mel, mel_length
+    
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
     def get_feature(
@@ -492,6 +495,7 @@ class UMMModified_no_VQ(BaseStage):
         wav = self.pad_audio(wav) 
         mel, mel_length = self.preprocessing(wav, wav_len)
         return mel , mel_length
+    
     def forward(self, batch):
         if self.config.use_fused_kernel:
             if not self.config.use_causal_conformer:
@@ -506,7 +510,12 @@ class UMMModified_no_VQ(BaseStage):
         feature, feature_mask = self.audio_encoder(mel, mel_len)
         hidden_states = self.encoder_input_dropout(feature)   
 
-        hidden_states = self.conformer(hidden_states, feature_mask)
+        if self.training:
+            hidden_states = self.conformer(hidden_states, feature_mask)
+        else:
+            with torch.cuda.amp.autocast():
+                hidden_states = self.conformer(hidden_states, feature_mask, use_fused_block=True)
+
         hidden_states = hidden_states.float() * feature_mask.view(*hidden_states.shape[:-1], 1)
         fw_flops, bw_flops, _ = self.conformer.calc_flops(feature_mask.sum(dim = -1).view(-1),
                                                           rmpad=self.causal_conformer_config.conformer_use_rmpad)
@@ -782,9 +791,84 @@ class UMMModified(BaseStage):
 
     def forward(self, batch):
         if self.config.use_fused_kernel:
-            return self._compute_fused_kernel(batch)
+            if not hasattr(self.config, 'use_causal_conformer') or not self.config.use_causal_conformer:
+                return self._compute_fused_kernel(batch)
+            else:
+                return self._compute_causal_conformer(batch)
         else:
             return self._compute_normal(batch)
+
+    @torch.autocast(device_type='cuda')
+    def _compute_causal_conformer(self, batch):
+        # Extract features
+        mel, mel_len = self.get_feature(batch)
+        flops = self.audio_encoder.get_flops(*mel.shape)
+
+        # Encode features
+        feature, feature_mask = self.audio_encoder(mel, mel_len)
+        hidden_states = self.encoder_input_dropout(feature)
+
+        layer_kwargs = {
+            'use_fused_block': True,
+            'fuse_dropout_residual_layernorm': True,
+        }
+
+        num_layers = len(self.conformer.encoders)
+        input_shape = hidden_states.shape
+        layer_inputs, layer_kwargs, extra_outputs = self.conformer.inputs_forward(
+            hidden_states, feature_mask, layer_kwargs)
+
+        # Initialize tracking variables
+        vq_output_dict = None
+
+        for layer_index in range(num_layers):
+            if layer_index == self.vq_layer_idx:
+
+                hidden_states = self.conformer.outputs_forward(
+                    layer_inputs, layer_kwargs, extra_outputs, input_shape)
+
+                vq_output_dict = self.vq_layer({
+                                    'latent': hidden_states,
+                                    'attn_mask' : feature_mask
+                                    })
+                hidden_states = vq_output_dict['quantized_out']
+
+                if self.use_consistency_loss:
+                    projected_states_before_vq = vq_output_dict['prevq_embs']
+                    target_vq_ids = vq_output_dict['vq_ids']
+                    consistency_loss, mismatch_rate = self.calculate_consistency_loss(
+                        projected_states_before_vq,
+                        target_vq_ids,
+                        feature_mask
+                    )
+                    vq_output_dict['loss'] += consistency_loss * self.consistency_loss_weight
+                    vq_output_dict['aux/loss_consistency'] = consistency_loss
+                    vq_output_dict['aux/consistency_mismatch_rate'] = mismatch_rate
+
+                layer_inputs, layer_kwargs, extra_outputs = self.conformer.inputs_forward(
+                    hidden_states, feature_mask, layer_kwargs)
+
+            layer_inputs, layer_kwargs, extra_outputs = self.conformer.layer_forward(
+                layer_index, layer_inputs, layer_kwargs, extra_outputs)    
+
+        hidden_states = self.conformer.outputs_forward(
+            layer_inputs, layer_kwargs, extra_outputs, input_shape)
+
+        hidden_states = hidden_states.float() * feature_mask.view(*hidden_states.shape[:-1], 1)
+        fw_flops, bw_flops, _ = self.conformer.calc_flops(feature_mask.sum(dim = -1).view(-1),
+                                                          rmpad=self.causal_conformer_config.conformer_use_rmpad)
+        flops = fw_flops + bw_flops
+
+        batch['mel'] = mel
+        batch['mel_len'] = mel_len
+        batch['latent'] = hidden_states
+        batch['flops'] = flops
+        batch['attn_mask'] = feature_mask
+        
+        if vq_output_dict:
+            batch.update(vq_output_dict)
+        
+        return batch
 
     def _compute_normal(self, batch):
 
@@ -916,9 +1000,63 @@ class UMMModified(BaseStage):
     @torch.no_grad()
     def wav2token(self, audio, audio_len=None, **kwargs):
         if self.config.use_fused_kernel:
-            return self._wav2token_fused(audio, audio_len, **kwargs)
+            if not hasattr(self.config, 'use_causal_conformer') or not self.config.use_causal_conformer:
+                return self._wav2token_fused(audio, audio_len, **kwargs)
+            else:
+                return self._wav2token_causal_conformer(audio, audio_len, **kwargs)
         else:
             return self._wav2token_normal(audio, audio_len, **kwargs)
+
+    @torch.no_grad()
+    @torch.autocast(device_type='cuda')
+    def _wav2token_causal_conformer(self, audio, audio_len=None, **kwargs):
+        if audio_len is None:
+            audio_len = torch.tensor([audio.shape[-1]] * audio.shape[0], device=audio.device, dtype=torch.long)
+        
+        mel, mel_len = self.preprocessing(audio, audio_len)
+        feature, feature_mask = self.audio_encoder(mel, mel_len)
+        
+        output_dict = {}
+        hidden_states = feature
+
+        layer_kwargs = {
+            'use_fused_block': True,
+            'fuse_dropout_residual_layernorm': True,
+        }
+
+        num_layers = len(self.conformer.encoders)
+        input_shape = hidden_states.shape
+        layer_inputs, layer_kwargs, extra_outputs = self.conformer.inputs_forward(
+                hidden_states, feature_mask, layer_kwargs)
+
+        for layer_index in range(num_layers):
+            if self.vq_layer is not None and layer_index == self.vq_layer_idx:
+                hidden_states = self.conformer.outputs_forward(
+                    layer_inputs, layer_kwargs, extra_outputs, input_shape)
+                
+                vq_input = {'latent': hidden_states, 'attn_mask': feature_mask, **kwargs}
+                vq_output = self.vq_layer(vq_input)
+                
+                hidden_states = vq_output['quantized_out']
+                # Store intermediate VQ-related tensors for analysis or other purposes
+                output_dict['quantized_latent'] = hidden_states
+
+                layer_inputs, layer_kwargs, extra_outputs = self.conformer.inputs_forward(
+                    hidden_states, feature_mask, layer_kwargs)
+
+            layer_inputs, layer_kwargs, extra_outputs = self.conformer.layer_forward(
+                layer_index, layer_inputs, layer_kwargs, extra_outputs)        
+
+        hidden_states = self.conformer.outputs_forward(
+            layer_inputs, layer_kwargs, extra_outputs, input_shape)
+        
+        output_dict['mel'] = mel
+        output_dict['mel_len'] = mel_len
+        output_dict['hidden_states'] = hidden_states
+        output_dict['attn_mask'] = feature_mask
+        output_dict.update(vq_output)
+        
+        return output_dict
 
     @torch.no_grad()
     def _wav2token_normal(self, audio, audio_len=None, **kwargs):
