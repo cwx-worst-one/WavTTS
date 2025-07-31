@@ -18,7 +18,7 @@ run_opts:
     # ConformerUMM_baseline
     # diffusion_ckpt_path: !applyref:os.getenv ["diffusion_ckpt_path", "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/ds2869_32xH800_25hzUMM_49hzSS_streaming_chunk392_196_0617/checkpoints/epoch=00-step=1130000-loss=0.68.ckpt"]
     # ConformerUMM_2250_2375
-    diffusion_ckpt_path: !applyref:os.getenv ["diffusion_ckpt_path", "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/ds3416_32xH800_25hzUMM_49hzSS_streaming_chunk392_196_0702/checkpoints/epoch=00-step=1250000-loss=0.68.ckpt"]
+    diffusion_ckpt_path: !applyref:os.getenv ["diffusion_ckpt", "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/ds3416_32xH800_25hzUMM_49hzSS_streaming_chunk392_196_0702/checkpoints/epoch=00-step=1250000-loss=0.68.ckpt"]
     token_chunk_size: !apply:samantha.utils.envs.getenv_int ["diffusion_token_chunk_size", 100]
     token_chunk_overlap: 1
     vocoder_version: !applyref:os.getenv ["vocoder_version", "44.1k_vocal"]
@@ -71,6 +71,17 @@ mel_config:
     mel_norm_std: 7.5
     mel_mask_value: -5
 
+metrics_callbacks:
+    - !new:recipes.bigmusic.callbacks.audio_metrics.AudioMetricsCallback
+    - !new:recipes.bigmusic.callbacks.fad_mulan_metrics.FADMulanDistanceCallback
+    - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsSAOnlineCallback
+      asr_model_path: zh-CN
+      transliteration: True
+      no_gt_lyrics: True 
+    - !new:recipes.bigmusic.callbacks.sdr_metrics.SISDRCallback
+
+upload_callbacks:
+    - !new:recipes.bigmusic.callbacks.common_callbacks.UploadToEasyCycleCallback
 
 pl_module: !new:apps.bigmusic.umm.diffusion.lit_modules.lit_diffusion_reconstruct.ChunkInfer2
     diffusion_ckpt_path: !ref <run_opts[diffusion_ckpt_path]>
@@ -97,7 +108,9 @@ pl_module: !new:apps.bigmusic.umm.diffusion.lit_modules.lit_diffusion_reconstruc
     token_chunk_size: !ref <run_opts[token_chunk_size]>
     token_chunk_overlap: !ref <run_opts[token_chunk_overlap]>
     padding_mode: "token_padding"
+    save_prompt: True
     mem_efficient: !applyref:samantha.utils.envs.getenv_bool ['mem_efficient', True]
+    extra_params: !ref <run_opts>
 
 trainer: !new:pytorch_lightning.Trainer
     accelerator: "auto"
@@ -108,4 +121,5 @@ trainer: !new:pytorch_lightning.Trainer
     strategy: !ref <run_opts[strategy]>
     precision: !ref <run_opts[precision]>
     max_epochs: 1
+    callbacks: !apply:sum [[!ref <metrics_callbacks>, !ref <upload_callbacks>], []]
 

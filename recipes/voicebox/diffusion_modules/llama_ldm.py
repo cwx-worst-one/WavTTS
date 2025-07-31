@@ -314,7 +314,7 @@ class ModelArgs:
 
     min_t: float = 0.0
     max_t: float = 1.0
-    flashattn_version: str = "2"
+    flashattn_version: str = "2.3"
 
 
 class LlamaDiffusion(nn.Module):
@@ -489,8 +489,7 @@ class LlamaDiffusion(nn.Module):
         if self.hp.use_textprefix:
             text_embed = self.frontend_embed(inputs["frontend"])  # [B, T, 1024]
             text_lens = inputs["text_lens"]
-        feat_lens = inputs["mel_lens"] if "mel_lens" in inputs else inputs["bn_lens"]
-
+        feat_lens = inputs[f"{self.hp.ctx_feature}_lens"]
         B, device = inputs["token"].size(0), inputs["token"].device
 
         # token encoder to align frame-rate.
@@ -690,7 +689,6 @@ class LlamaDiffusion(nn.Module):
         eta=0.0,
         use_infer_params=False,
     ):
-        assert use_cache ^ use_infer_params
         t = timesteps
         batch_size, device, frm_len = (
             local_cond.size(0),
@@ -1042,20 +1040,23 @@ class LlamaDiffusion(nn.Module):
 
         x = x.transpose(1, 2)
 
-        groundtruth.emit(
-            "diffusion",
-            data={
-                "inputs": inputs,
-                "local_cond": local_cond,
-                "out_mel": x,
-                "cached_noise": self.cached_noise,
-                "params": {
-                    "timesteps": timesteps,
-                    "sampler": sampler,
-                    "text_cfg_w": text_cfg_w,
+        try:
+            groundtruth.emit(
+                "diffusion",
+                data={
+                    "inputs": inputs,
+                    "local_cond": local_cond,
+                    "out_mel": x,
+                    "cached_noise": self.cached_noise,
+                    "params": {
+                        "timesteps": timesteps,
+                        "sampler": sampler,
+                        "text_cfg_w": text_cfg_w,
+                    },
                 },
-            },
-        )
+            )
+        except Exception as e:
+            logger.warning(f"Error calling groundtruth.emit: {e}")
 
         return x
 
@@ -1125,22 +1126,23 @@ class LlamaDiffusion(nn.Module):
 
         x = x.transpose(1, 2)
 
-        groundtruth.emit(
-            "diffusion",
-            data={
-                "inputs": inputs,
-                "local_cond": local_cond,
-                "out_mel": x,
-                "cached_noise": self.cached_noise if hasattr(self, "cached_noise") else None,
-                "params": {
-                    "timesteps": timesteps,
-                    "sampler": sampler,
-                    "text_cfg_w": text_cfg_w,
-                    "token_overlap": self.token_overlap,
-                    "token_embed_overlap": self.token_embed_overlap,
+        try:
+            groundtruth.emit(
+                "diffusion",
+                data={
+                    "inputs": inputs,
+                    "local_cond": local_cond,
+                    "out_mel": x,
+                    "cached_noise": self.cached_noise,
+                    "params": {
+                        "timesteps": timesteps,
+                        "sampler": sampler,
+                        "text_cfg_w": text_cfg_w,
+                    },
                 },
-            },
-        )
+            )
+        except Exception as e:
+            logger.warning(f"Error calling groundtruth.emit: {e}")
 
         return x
 

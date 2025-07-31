@@ -11,7 +11,7 @@ from pytorch_lightning import LightningModule
 import math
 from typing import Any
 from recipes.musiclm.utils.dist import local_zero_first
-from recipes.diffusion.utils.utils import download_checkpoint
+from samantha.utils.utils import download_checkpoint
 from recipes.voicebox.utils.infer_utils import set_seed, save_wav, load_torch_script
 from recipes.voicebox.utils.infer_utils import set_seed, save_wav
 from recipes.voicebox.lit_modules.lit_diffusion_voicebox import VoiceBoxModule as pl_module

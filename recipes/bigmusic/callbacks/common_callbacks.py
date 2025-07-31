@@ -274,6 +274,26 @@ class UploadToEasyCycleCallback(pl.Callback):
         logger.setLevel(logging.INFO)
         return url
 
+    @staticmethod
+    def summarize_uploaded_results(output_dir):
+        output_dir = Path(output_dir)
+        metadata_fps = list(output_dir.glob('**/*.metadata.json')) 
+        if len(metadata_fps) == 0:
+            return
+        index_fname = os.path.join(output_dir, "index.csv")
+        with open(index_fname, "w", encoding='utf-8') as fw:
+            fw.write("file_name,audio_url\n")
+            for fp in metadata_fps:
+                with open(fp, "r", encoding='utf-8') as f:
+                    metadata = json.load(f)
+                file_name = metadata["file_name"]
+                if "easycycle_url" in metadata:
+                    audio_url = metadata["easycycle_url"]
+                else:
+                    audio_url = metadata["audio_url"]
+                fw.write(f"{file_name},{audio_url}\n")
+        print(f"Wrote index to {index_fname}")
+
     def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule", output_dir=None):
 
         if output_dir is None:
@@ -296,6 +316,8 @@ class UploadToEasyCycleCallback(pl.Callback):
                 url = self.upload_file(generated_output_fp, self.space_name, self.expires)
 
                 update_json(metadata_fp, { 'easycycle_url': url })
+
+            self.summarize_uploaded_results(output_dir)
 
     def run_parallel(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule", output_dir=None, parallel=10):
         if output_dir is None:

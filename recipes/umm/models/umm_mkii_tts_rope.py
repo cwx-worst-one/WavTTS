@@ -386,7 +386,6 @@ class Stage3TTSRope(Stage2TTSRope):
             if i == self.config.vq_layer_idx:
                 vq_hidden_states = self.vq_proj_in(hidden_states)
                 vq_embs, vq_ids, _ = self.vq(vq_hidden_states)
-                # return {"vq_ids": vq_ids, "hidden_states": hidden_states}
                 post_hidden_states = self.vq_proj_out(vq_embs)
                 return {"vq_ids": vq_ids, 
                         "pre_hidden_states": hidden_states,
@@ -426,6 +425,15 @@ class Stage3TTSRope(Stage2TTSRope):
             position_embeddings = self.embed_positions(hidden_states)
             result = self._get_vq_ids(hidden_states, position_embeddings=position_embeddings)
         return result #result["vq_ids"]
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def wav2token_alloutputs(self, *args, **kwargs):
+        """Legacy API compatibility"""
+        result = self.wav2token(*args, **kwargs)
+        if "pre_hidden_states" in result: # remap to hidden states
+            result["hidden_states"] = result["pre_hidden_states"]
+        return result
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)

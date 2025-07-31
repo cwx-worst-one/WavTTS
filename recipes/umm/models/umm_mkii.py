@@ -648,7 +648,7 @@ class AudioEncoder(nn.Module):
         super().__init__()
         self.config = config
 
-        if self.config.get("cal_attention_mask", True):
+        if self.config.get("cal_attention_mask", False):
             self.feature_encoder = Conv2dSubsamplingModified(
                 config.num_channels,
                 config.hidden_size,
@@ -1428,7 +1428,7 @@ class Base(nn.Module):
         self.encoder_layers = nn.ModuleList(
             [ConformerEncoderLayer(config) for _ in range(config.num_hidden_layers)]
         )
-        if config.get("cal_attention_mask", True):
+        if config.get("cal_attention_mask", False):
             self.audio_transform = SpeechTransformModified(
                 sample_rate=config.sample_rate,
                 n_mels=config.n_mels,
@@ -2263,7 +2263,7 @@ class Stage3(Stage2):
             if i == self.config.vq_layer_idx:
                 vq_hidden_states = self.vq_proj_in(hidden_states)
                 _, vq_ids, _ = self.vq(vq_hidden_states)
-                return {"vq_ids": vq_ids, "hidden_states": hidden_states}
+                return {"vq_ids": vq_ids, "hidden_states": hidden_states,  "vq_hidden_states": vq_hidden_states}
             hidden_states = layer(
                 hidden_states, position_embeddings=position_embeddings
             )

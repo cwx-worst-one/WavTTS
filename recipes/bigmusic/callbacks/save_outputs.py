@@ -114,57 +114,7 @@ class SaveOutputsCallback(pl.Callback):
                 time.sleep(10)
                 print(f"[{self.__class__.__name__}(rank={trainer.global_rank})] waiting for all ranks done ... (cost {round(time.time() - ts, 3)}s)")
 
-            metadata_fps = list(Path(output_dir).glob(f"**/*.metadata.json"))
-            if len(metadata_fps) == 0:
-                return
-            index_fname = os.path.join(output_dir, "index.csv")
-            with open(index_fname, "w", encoding='utf-8') as fw:
-                fw.write("file_name,beam_id,audio_url\n")
-                for fp in metadata_fps:
-                    with open(fp, "r", encoding='utf-8') as f:
-                        metadata = json.load(f)
-                    file_name = metadata["file_name"]
-                    beam_id = metadata["index"]["beam_idx"]
-                    audio_url = metadata["audio_url"]
-                    fw.write(f"{file_name},{beam_id},{audio_url}\n")
-            print(f"Wrote index to {index_fname}")
-            summary_format = "default" if not self.save_mix_vocal_generated_audio else "singsong"
-            summarize_uploaded_results(output_dir, format=summary_format)
-
-
-def summarize_uploaded_results(output_dir, format="default"):
-    if format not in ["default", "singsong"]:
-        raise ValueError(f"Not supported format of summarying index csv: {format}")
-
-    output_dir = Path(output_dir)
-    metadata_fps = list(output_dir.glob('**/*.metadata.json')) 
-    if len(metadata_fps) == 0:
-        return
-
-    index_fname = os.path.join(output_dir, "index.csv")
-    
-    with open(index_fname, "w", encoding='utf-8') as fw:
-        if format == "default":
-            fw.write("file_name,beam_id,audio_url\n")
-            for fp in metadata_fps:
-                with open(fp, "r", encoding='utf-8') as f:
-                    metadata = json.load(f)
-                file_name = metadata["file_name"]
-                beam_id = metadata["index"]["beam_idx"]
-                audio_url = metadata["audio_url"]
-                fw.write(f"{file_name},{beam_id},{audio_url}\n")  
-        elif format == "singsong":
-            fw.write("file_name,accomp_audio_url,vocal_audio_url,mixed_audio_url\n")
-            for fp in metadata_fps:
-                with open(fp, "r", encoding='utf-8') as f:
-                    metadata = json.load(f)
-                file_name = metadata["file_name"]
-                accomp_audio_url = metadata["audio_url"]
-                vocal_audio_url = metadata["vocal_audio_url"]
-                mixed_audio_url = metadata["mixed_audio_url"]
-                fw.write(f"{file_name},{accomp_audio_url},{vocal_audio_url},{mixed_audio_url}\n")
-    print(f"Wrote index to {index_fname}")
-
+            UploadToEasyCycleCallback.summarize_uploaded_results(output_dir)
 
 def format_lyrics_and_style(style_text, lyrics=None):
     if style_text is None and lyrics is None: # gt case
@@ -344,7 +294,7 @@ def save_batch_outputs(
         output_paths.append(output_wav_fp)
 
         if save_mode in ["upload", "upload_keep_wav"]:
-            saved_wav = torch.from_numpy(load_wav(output_wav_fp, sr=sample_rate))
+            saved_wav = torch.from_numpy(load_wav(output_wav_fp, sr=sample_rate, mono=False))
             audio_bytes = audio_tensor_to_bytes(saved_wav, sample_rate)
             metadata["audio_url"] = upload_to_easycycle_v2(audio_bytes, f"{wav_file_name}.generated")
             print(f"[Saving] {os.path.basename(output_wav_fp)}: {metadata['audio_url']}")
@@ -471,7 +421,10 @@ class SaveVideoCallback(pl.Callback):
             while not all([(Path(output_dir)/f"{self.__class__.__name__}.{rank}.SUCCESS").exists() for rank in range(trainer.world_size)]):
                 time.sleep(10)
                 print(f"[{self.__class__.__name__}(rank={trainer.global_rank})] waiting for all ranks done ... (cost {round(time.time() - ts, 3)}s)")
-            save_video(output_dir, output_dir)
+            try:
+                save_video(output_dir, output_dir)
+            except Exception as e:
+                print("Warning: failed to save video", e)
 
 
 class NormVolumeCallback(pl.Callback):

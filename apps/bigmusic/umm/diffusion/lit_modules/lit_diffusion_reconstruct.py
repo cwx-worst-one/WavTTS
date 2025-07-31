@@ -1,4 +1,5 @@
 import os
+import json
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -17,6 +18,7 @@ from samantha.dataio.lite.utils.mel import mel_spectrogram
 from apps.bigtts.umm.diffusion.lit_modules.infer_utils import set_seed, save_wav
 from recipes.diffusion.models.vocoder_model.utils import vocode_in_chunks
 from hyperpyyaml import load_hyperpyyaml
+from samantha.utils.hparams import DotDict
 
 import logging
 
@@ -146,6 +148,7 @@ class DiffusionU2SInfer(LightningModule):
         token_config=None,
         use_phone_lang=False,
         without_prefix=True,
+        extra_params=None,
         **kwargs,
     ):
         super().__init__()
@@ -177,6 +180,9 @@ class DiffusionU2SInfer(LightningModule):
             self.model = prepare_diffusion_model(diffusion_ckpt_path, self.device)
 
         self.bn_config = bn_config
+        self.extra_params = DotDict(extra_params)
+        self.save_hyperparameters()
+
         if self.use_wvae_vocoder:
             self.bn_norm = MelNorm(bn_config["bn_norm_mean"], bn_config["bn_norm_std"])
         else:
@@ -246,7 +252,7 @@ class DiffusionU2SInfer(LightningModule):
             )
             umm_token = umm_token[:, :token_len]
         elif self.umm_type in ["UMM", "UMM_conv"]:
-            umm_token = self.umm.wav2token(wav)
+            umm_token = self.umm.model.wav2token_alloutputs(wav)['vq_ids']
         elif self.umm_type in ["UMM_dualconv"]:
             token_vocal = self.umm.wav2token(wav, "vocal").squeeze()
             token_inst = self.umm.wav2token(wav, "inst").squeeze()
@@ -822,6 +828,7 @@ class ChunkInfer(DiffusionU2SInfer):
             token_config,
             use_phone_lang,
             without_prefix=without_prefix,
+            **kwargs
         )
         self.token_chunk_size = token_chunk_size
         self.token_chunk_overlap = token_chunk_overlap
@@ -1167,6 +1174,7 @@ class ChunkInfer2(DiffusionU2SInfer):
         use_phone_lang=False,
         without_prefix=True,
         padding_mode="token_padding",
+        save_meta=True,
         **kwargs,
     ):
         super().__init__(
@@ -1192,7 +1200,9 @@ class ChunkInfer2(DiffusionU2SInfer):
             token_config,
             use_phone_lang,
             without_prefix,
+            **kwargs
         )
+        self.save_meta = save_meta
         self.padding_mode = padding_mode
         if self.infer_type == "ar-diffusion-vocoder":
             assert self.padding_mode == "token_padding"
@@ -1235,12 +1245,18 @@ class ChunkInfer2(DiffusionU2SInfer):
             inputs["gt_wav"] = []
             scales = []
             ori_syn_wavlens = []
+            syn_wavlens = []
             syn_wavs = []
             for bidx, syn_wav_path in enumerate(batched_syn_wav_path):
                 syn_wav, sr = librosa.load(
                     syn_wav_path, sr=None, mono=True
                 )
-                inputs["gt_wav"].append(syn_wav)
+                # for gt wav saving accurately
+                gt_wav, _ = librosa.load(
+                    syn_wav_path, sr=self.mel_config["sampling_rate"], mono=False
+                )
+                
+                inputs["gt_wav"].append(gt_wav)
                 ori_syn_wavlens.append(syn_wav.shape[-1])
                 if sr != self.token_sample_rate:
                     syn_wav, sr = librosa.load(
@@ -1276,7 +1292,7 @@ class ChunkInfer2(DiffusionU2SInfer):
             elif self.padding_mode == "token_padding":
                 padding_value = self.token_config["token_padding"]
                 batched_syn_umm_token = [
-                    self.wav2token(syn_wav.unsqueeze(0)) for syn_wav in syn_wavs
+                    self.wav2token(torch.FloatTensor(syn_wav).unsqueeze(0).to(device)) for syn_wav in syn_wavs
                 ]
                 max_syn_umm_token_len = max(
                     [syn_umm_token.shape[-1] for syn_umm_token in batched_syn_umm_token]
@@ -1284,7 +1300,7 @@ class ChunkInfer2(DiffusionU2SInfer):
                 batched_syn_umm_token = torch.cat(
                     [
                         F.pad(
-                            syn_wav,
+                            syn_umm_token,
                             [0, max_syn_umm_token_len - syn_umm_token.shape[-1]],
                             "constant",
                             padding_value,
@@ -1677,12 +1693,27 @@ class ChunkInfer2(DiffusionU2SInfer):
         for bidx, (uttid, audio) in enumerate(zip(inputs["uttid"], batched_audio)):
             if self.save_prompt:
                 prompt_wav = inputs["gt_wav"][bidx]
-                audio = np.concatenate([prompt_wav, np.ones([10]), audio])
+                # audio = np.concatenate([prompt_wav, np.ones([10]), audio])
+                gt_path = os.path.join(self.output_dir, uttid + ".target_audio.wav")
+                print(prompt_wav.shape, "prompt_wav")
+                if len(prompt_wav.shape) > 1:
+                    gt_wav = prompt_wav.T 
+                else:
+                    gt_wav = prompt_wav
+                save_wav(gt_wav, gt_path, sr=self.mel_config["sampling_rate"])
+            if self.save_meta:
+                metadata = {
+                            'file_name': uttid,
+                        }
+                meta_fp = os.path.join(self.output_dir, f"{uttid}.metadata.json")
+                with open(meta_fp, 'w', encoding='utf-8') as f:
+                    json.dump(metadata, f, indent=2, ensure_ascii=False)
 
-            output_path = os.path.join(self.output_dir, uttid + ".wav")
+            output_path = os.path.join(self.output_dir, uttid + ".generated.wav")
             if "syn_wavlen" in inputs:
                 audio = audio[..., : inputs["syn_wavlen"][bidx]]
             save_wav(audio.T, output_path, sr=self.mel_config["sampling_rate"])
+
         return torch.from_numpy(batched_audio)
 
     def predict_step_prefix(self, batch: Any, batch_idx: int, dataloader_idx: int = 0) -> Any:

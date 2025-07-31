@@ -23,7 +23,7 @@ from samantha.models.ctiga import gpt
 from samantha.utils.ctiga.inference_params import InferenceParams
 from samantha.utils.hparams import DotDict
 from recipes.umm.modules import lit_module_logging_utils as logging_utils
-
+import math 
 
 def log(t, eps=1e-5):
     return torch.log(t + eps)
@@ -708,7 +708,9 @@ class Stage0(pl.LightningModule):
         device_name = torch.cuda.get_device_name()
         if "A100" in device_name or "A800" in device_name:
             self.device_FLOPS = 312e12
-        elif "H100" in device_name or "H800" in device_name:
+        elif "A30" in device_name:
+            self.device_FLOPS = 165e12
+        elif "H100" in device_name or "H800" in device_name or "H20" in device_name:
             self.device_FLOPS = 989e12
         elif "V100" in device_name:
             self.device_FLOPS = 125e12
@@ -1880,6 +1882,51 @@ class Stage3(Stage2):
         if inspect.signature(self.model.wav2token).parameters.get('wav_length'):
             return self.model.wav2token(wav, wav_length)
         return self.model.wav2token(wav)
+
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def wav2requires(self, audio, sample_rate=24000, slice_method='full', chunk_size=45):
+        def prepare_input_audio(audio, slice_method, sample_rate, chunk_size):
+            # prepare input  
+            if slice_method == 'full':
+                input_audio = audio
+                # print("full", input_audio.shape)
+            else:
+                input_audio = []
+                n_samples = audio.shape[-1]
+                target_audio_length = float(n_samples) / sample_rate
+                if slice_method == 'even':
+                    chunk_num = math.ceil(target_audio_length / chunk_size)
+                    chunk_size = math.ceil(target_audio_length / chunk_num)
+                elif slice_method == 'max':
+                    chunk_size = chunk_size
+                st = 0
+                while st < n_samples:
+                    st_sample, et_sample = int(st*sample_rate), int((st+chunk_size)*sample_rate)
+                    # merge the tail if the remaining chunk is too short (<5s)
+                    if n_samples - et_sample < sample_rate * 5 or audio[..., et_sample:].shape[-1] < sample_rate * 5:
+                        et_sample = n_samples
+                    input_audio.append(audio[..., st_sample:et_sample])
+                    if et_sample >= n_samples:
+                        break
+                    st += chunk_size
+                # print("chunk", [a.shape for a in input_audio])
+            return input_audio
+
+        def forward_encoder(input_audio):
+            # output_dict = {}
+            if slice_method == 'full':
+                umm_token = self.model.wav2token_alloutputs(input_audio)['vq_ids']
+            else:
+                result_dicts = [self.model.wav2token_alloutputs(a)['vq_ids'] for a in input_audio]
+                umm_token = torch.cat(result_dicts, dim=-1)
+            return umm_token
+
+        input_audio = prepare_input_audio(audio, slice_method, sample_rate, chunk_size)
+        umm_token = forward_encoder(input_audio)
+        return umm_token
+
 
 
 class Stage3Improved(Stage3):

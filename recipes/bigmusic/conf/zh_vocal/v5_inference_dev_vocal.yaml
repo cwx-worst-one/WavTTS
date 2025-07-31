@@ -1,0 +1,235 @@
+---
+
+################################################################################
+##########                       BASIC CONFIGURATION                  ##########
+################################################################################
+
+seed: 1995
+__set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
+__set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
+
+extra_params:
+    # Audio Continuation
+    app_type: "lyrics2song"  # Audio continuation sets to "audio_cont"
+    skip_sos: False         # Audio continuation needs to skip audio SOS
+    stop_eos: True          # stop generation in case of EOS
+
+    beam_size: 1    # set to 4 if using reranker
+    samples_to_save: 1
+    prompt_path: "eval0429_151_1min_for_v3_online.csv"
+    inference_conditions: style_text,freeform_text,tempo,speaker_id,lyrics_tokens  # audio_prompt_token | style_audio
+    rewrite_target: "13_cat_combo_v5"      # multi_tag | sa_tag | TODO: multi_tag_mir
+
+    max_items: null  # max number of prompt items
+
+    # Preprocessing
+    use_offline_preprocess: False  # Set to True to activate preprocessing by preprocess_py
+
+    is_full_song: True  # Set it to True set full song lyrics processing logic as default
+    use_reranker: False
+    dataset_mode: variable_length       # variable_length | truncate_length
+
+    output_dir: ./generated_output/conditional
+
+    # Tokenizer
+    # En tokenizer in CN hdfs: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/stage3_music_chroma_vq32768x32/checkpoints/step=0070000.ckpt"
+    # Zh tokenizer in CN hdfs: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/checkpoints/step=070000.ckpt"
+    # Tokenizer before V4: tokenizer_ckpt: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/checkpoints/step=070000.ckpt"
+    tokenizer_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs/umm_conformer_2255mixedZHEN_2375Speech/umm_stage3_2255mixedZHEN_2375Speech_optim_mem_bert-base-multilingual-uncased_None32768x32/checkpoints/step=0180000.ckpt"
+
+    # Diffusion
+    # En tokenizer diffusion in CN hdfs: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_14_30s_finetune/checkpoints/last-minimal.ckpt"
+    # Zh tokenizer diffusion in CN hdfs: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/diffusion/model_16/checkpoints_minimal/last-minimal.ckpt"
+
+    lyrics_tokenizer: "sami_phoneme_v4"  # sami_phoneme_legacy | sami_phoneme_v2
+    lyrics_lang: "zh_phonetone"     # en | zh_phone | zh_wp | zh_phonetone
+    is_zh_token: True           # Set to True only if lyrics_lang is zh_phone or zh_wp. Diffusion model from recipes.diffusion.models.tnt_gru
+    mixv2: False                # Set to True for mix UMM token
+
+
+    # Semantic model
+    semantic_cls_path: recipes.bigmusic.lightning.semantic_modules_v4.SemanticModule
+    semantic_ckpt: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/yilinzhang/logs/decoder_07B_zh4m/pretrain4min_v5_cover_1023/checkpoints/step=100000-tr_loss=4.0055-val_accu_0=18.80.ckpt"
+    predict_step_seed: 1234
+
+    # Used for reranker, only loaded if use_reranker=True
+    # structure_ckpt: "/mnt/bn/audio-diffusion/ducle/recipes/diffusion/assets/structure_epoch=185-step=93000.ckpt"
+    mulan_ckpt: "infer_from_semantic_ckpt"
+    mulan_rewards_ckpt: "hdfs://haruna/home/byte_speech_sv/mulan/cn_mulan_ckpt/mulan-step=012800-kaggle-minimal.ckpt"
+
+    # Model Settings
+    sample_rate: 44100
+    duration: 240
+    lyrics_max_seq_len: 4000
+    token2wav_type: ar-diffusion-vocoder    #diffusion
+
+    # AR sampling hparams
+    semantic_temperature: 0.6      # 0.6 for sobv4. 0.8 for sobv2
+    sample_mode: "top_p"           # top_p, adaptive_sampling, gumbel, min_p, edt
+    sample_thresh: 0.9
+    edt_theta: 1.0
+    edt_t0: 0.7
+    target_top_k: 100
+    p_base: 0.01
+
+    # Sampling
+    use_step_out_blank: True
+    step_out_blank_logic: 'v4'
+    step_out_blank_max_len: 200
+    repetition_penalty: 1.6
+    emit_eos_thresh_secs: 5    # Force to emit EOS after reaching specific duration
+    exclude_eos_thresh_secs: 1    # Suppress EOS until threshold before reaching specific duration
+    exclude_eos_first_secs: 20     # Suppress eos prediction in the beginning.
+
+    # CFG
+    use_controller_cfg: True       # Set to True to activate style CFG.
+    controller_cfg_gamma: 3.0
+    controller_cfg_label: [genre, genre_extra, mood, speaker, lyrics, scene, voice, sinking, freeform_text, line_break]
+    group_controller_cfg_label: [["style_text", "freeform_text", "speaker_id", "mir"], ["lyrics"]]
+
+    # Cache
+    cache_dir: .module_cache/bigmusic
+    audio_prompt_cache_dir: .module_cache/audio_prompt_cache
+    cache_preprocessed_prompt: True
+    prompt_cache_dir: .module_cache/prompt_cache
+
+    # Callback
+    save_style_audio: False  # style_audio is usually downloaded and saved separately, no need to save
+    cache_semantic_tokens_dir: null
+
+run_opts:
+    fast_dev_run: False
+    precision: 16-mixed
+    accelerator: auto
+    strategy: auto
+    cache_dir: .module_cache/bigmusic
+    batch_size: 1
+    num_workers: 8
+
+    # groundtruth
+    enable_groundtruth: False
+
+
+# 24k
+# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS.yaml
+# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS_streaming.yaml
+# 44k
+token2wav_config: !apply:hyperpyyaml.load_hyperpyyaml [!apply:open [!apply:os.getenv ["token2wav_config", "apps/bigmusic/umm/diffusion/conf/2024Q2/infer_generation_streaming.yaml"], "r"]]
+# token2wav_config: !include:../../../../../apps/bigmusic/umm/diffusion/conf/2024Q2/infer_generation_streaming.yaml
+
+################################################################################
+##########                    TRAINING CONFIGURATION                  ##########
+################################################################################
+predict_dataset: !apply:recipes.bigmusic.datasets.zh_inference.inference_dataset_from_prompt
+    prompt_path: !ref <extra_params[prompt_path]>
+    conditions: !ref <extra_params[inference_conditions]>
+    batch_size: !ref <run_opts[batch_size]>
+    max_phone_len: !ref <extra_params[lyrics_max_seq_len]>
+    style_text_transform_target: !ref <extra_params[rewrite_target]>
+    enable_cfg: !ref <extra_params[use_controller_cfg]>
+    cfg_targets: !ref <extra_params[controller_cfg_label]>
+    lyrics_tokenizer: !ref <extra_params[lyrics_tokenizer]>
+    max_items: !ref <extra_params[max_items]>
+    enable_offline_preprocess: !ref <extra_params[use_offline_preprocess]>
+    audio_prompt_cache_dir: !ref <extra_params[audio_prompt_cache_dir]>
+    cache_preprocessed_prompt: !ref <extra_params[cache_preprocessed_prompt]>
+    prompt_cache_dir: !ref <extra_params[prompt_cache_dir]>
+    random_seed: !ref <extra_params[predict_step_seed]>
+
+pl_datamodule: !new:recipes.bigmusic.datasets.lyrics.LyricsDataModule
+    predict_dataset: !ref <predict_dataset>
+    num_workers: 0
+
+pl_module: !new:recipes.bigmusic.lightning.inference.SemanticInferenceModule
+    semantic_cls_path: !ref <extra_params[semantic_cls_path]>
+    extra_params: !ref <extra_params>
+    required_modules:
+        diffusion_modules:
+            diffusion:
+                # hpath: !ref <token2wav_config[diffusion_config]>
+                hpath: !apply:operator.getitem [!ref <token2wav_config>, 'diffusion_config']
+                initializer: !name:apps.bigmusic.umm.diffusion.requires.model_initializer.init_diffusion
+                    cache_dir: !ref <run_opts[cache_dir]>
+
+        reranker:
+            hpath:
+                rewards:
+                    style_text: 1.0
+                    # qualitative: 1.0
+                    qualitative_cn: 1.0 # use qualitative_cn for chinese mulan, qualitative for english mulan
+                    wer: 1.0
+                required_modules:
+                    mulan: # English Mulan
+                        hpath: "hdfs:///home/byte_speech_sv/bigmusic/models/mulan/mulan-step=024600-median_rank_1=110-kaggle-minimal.ckpt"
+                        initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
+                            cache_dir: !ref <run_opts[cache_dir]>
+                            version: "g4"
+                    # mulan:
+                    #     hpath: hdfs://haruna/home/byte_speech_sv/mulan/cn_mulan_ckpt/mulan-step=012800-kaggle-minimal.ckpt
+                    #     initializer: !name:recipes.musiclm.requires.model_initializer.init_mulan
+                    #         cache_dir: !ref <run_opts[cache_dir]>
+                    #         version: "Chinese"
+                    asr:
+                        # hpath: en_punc
+                        hpath: zh
+                        initializer: !name:recipes.bigmusic.utils.metrics_asr.init_asr
+            initializer: !name:recipes.bigmusic.utils.reranker.init_reranker
+                cache_dir: !ref <run_opts[cache_dir]>
+
+# separating out additional_callbacks so auto_eval can disable metrics
+additional_callbacks:
+    # ===== base callback. Must be placed in front of all callbacks. =====
+    - !new:recipes.bigmusic.callbacks.save_outputs.SaveVideoCallback
+    - !new:recipes.bigmusic.callbacks.common_callbacks.UploadToEasyCycleCallback
+      space_name: null
+      expires: null
+    - !new:recipes.bigmusic.callbacks.common_callbacks.ASRCallback
+      asr_model_path: zh-CN
+    - !new:recipes.bigmusic.callbacks.common_callbacks.ForceAlignCallback
+    # ====================================================================
+
+    # ===== features =====================================================
+    - !new:recipes.bigmusic.callbacks.wer_metrics.WERMetricsSAOnlineCallback
+      asr_model_path: zh-CN
+      transliteration: True
+    - !new:recipes.bigmusic.callbacks.mir_metrics.MIRTagMetricsSAOnlineCallback
+    # - !new:recipes.bigmusic.callbacks.mir_metrics.TotalDurationCallback  # missing
+    # - !new:recipes.bigmusic.callbacks.mir_metrics.MIRSectionDurationCallback  # bug
+    # - !new:recipes.bigmusic.callbacks.save_outputs.NormVolumeCallback
+    # - !new:recipes.bigmusic.callbacks.mir_offline_metrics.MIROfflineCallback  # MIR metrics (key, tempo)
+    - !new:recipes.bigmusic.callbacks.mir_metrics.MIRSectionTransitionCallback
+      online: True
+    - !new:recipes.bigmusic.callbacks.wer_metrics.LinebreakMetricsOnlineCallback
+    # - !new:recipes.bigmusic.callbacks.audio_metrics.AudioSilenceCallback
+    - !new:recipes.bigmusic.callbacks.save_groundtruth.SaveGroundtruthCallback
+      enable: !ref <run_opts[enable_groundtruth]>
+    - !new:recipes.bigmusic.callbacks.mir_metrics.MIRFineGrainedTaggingCallback
+      online: True
+    - !new:recipes.bigmusic.callbacks.mir_metrics.MIRPitchMetricsCallback
+      online: True
+    - !new:recipes.bigmusic.callbacks.mir_metrics.StructureConfidenceCallback
+      online: True
+    # ====================================================================
+
+callbacks:
+    - !new:recipes.bigmusic.callbacks.save_outputs.SaveOutputsCallback
+      beam_size: !ref <extra_params[beam_size]>
+      samples_to_save: !ref <extra_params[samples_to_save]>
+      save_style_audio: !ref <extra_params[save_style_audio]>
+    - !new:recipes.bigmusic.callbacks.cache_semantic_tokens.CacheSemanticTokensCallback
+      cache_dir: !ref <extra_params[cache_semantic_tokens_dir]>
+
+trainer: !new:pytorch_lightning.Trainer
+    fast_dev_run: !ref <run_opts[fast_dev_run]>
+    accelerator: !ref <run_opts[accelerator]>
+    devices: 'auto'
+    num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
+    deterministic: False
+    enable_model_summary: True
+    use_distributed_sampler: False # for multi-gpu inference
+    strategy: !ref <run_opts[strategy]>
+    # strategy: !new:pytorch_lightning.strategies.DDPStrategy
+    #     timeout: !new:datetime.timedelta
+    #     seconds: 7200
+    precision: !ref <run_opts[precision]>
+    callbacks: !apply:operator.add [!ref <additional_callbacks>, !ref <callbacks>]

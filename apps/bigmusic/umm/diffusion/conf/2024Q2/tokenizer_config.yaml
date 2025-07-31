@@ -26,6 +26,14 @@ ConvUMM_2255_2375:
   token_cfg: True
   token_padding: !apply:samantha.utils.envs.getenv_int ["token_padding", 32768]
 
+ConformerUMM_Unified_TTS_ROPE:
+  frame_rate: 25
+  umm_type: "UMM"
+  sample_rate: 24000
+  ckpt_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs/umm_conformer_unified_tts_rope/umm_stage3_unified_tts_rope_bert-base-multilingual-uncased_EMAEntropy32768x32/checkpoints/step=220000.ckpt"
+  token_cfg: True
+  token_padding: !apply:samantha.utils.envs.getenv_int ["token_padding", 32768]
+
 ConformerUMM2:
   frame_rate: 25
   umm_type: "UMM2"

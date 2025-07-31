@@ -452,7 +452,6 @@ class BaseContinuousEmbedModule(BaseModule):
                 logits = logits[:, -1:, :] # only predicting on last logit.
 
                 if use_step_out_blank and step_out_blank_logic == 'v4':                    
-                    print(f'{repetition_penalty=}')
 
                     previous_output_tokens = torch.tensor(previous_tokens, dtype=torch.long, device='cuda').reshape(original_batch_size, -1)
                     bin_counts = torch.zeros([original_batch_size, logits.size(-1)+1], dtype=torch.long, device='cuda')

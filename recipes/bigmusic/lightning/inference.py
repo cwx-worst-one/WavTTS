@@ -68,12 +68,12 @@ class SemanticInferenceModule(pl.LightningModule):
             # this is the old music token2wav
             self.decoding_fn = run_diffusion
             required_modules.update(self.hparams.required_modules['diffusion_modules'])
-            self.decoding_params = DotDict({**self.extra_params, **self.extra_params['diffusion_params']})
+            self.decoding_params = DotDict({**self.extra_params, **self.extra_params.get('diffusion_params', {})})
         elif self.extra_params.token2wav_type == 'ar-diffusion-vocoder':
             # this is the tts token2wav
             self.decoding_fn = run_diffusion_vocoder_batch
             required_modules.update(self.hparams.required_modules['diffusion_modules'])
-            self.decoding_params = DotDict({ **self.extra_params, **self.extra_params['diffusion_params'] })
+            self.decoding_params = DotDict({ **self.extra_params, **self.extra_params.get('diffusion_params', {}) })
         elif self.extra_params.token2wav_type == 'ar':
             # this is the soundstorm token2wav
             self.decoding_fn = run_2ar
@@ -150,6 +150,7 @@ class SemanticInferenceModule(pl.LightningModule):
             pl.seed_everything(self.predict_step_seed)  # for batch size invariant reproducibility
         if "semantic_tokens" in batch:
             raw_semantic_samples = batch["semantic_tokens"]
+            print("Loading semantic tokens from cache", raw_semantic_samples.shape)
         else:
             raw_semantic_samples = self.semantic_module.predict(
                 batch,

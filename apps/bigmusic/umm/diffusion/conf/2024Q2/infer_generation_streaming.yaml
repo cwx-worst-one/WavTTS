@@ -76,5 +76,6 @@ diffusion_config:
     token_chunk_size: !ref <run_opts[token_chunk_size]>
     token_chunk_overlap: !ref <run_opts[token_chunk_overlap]>
     padding_mode: "token_padding"
+    audio_norm_type: !ref <sampler_config[audio_norm_type]>
     mem_efficient: !applyref:samantha.utils.envs.getenv_bool ['mem_efficient', True]
 

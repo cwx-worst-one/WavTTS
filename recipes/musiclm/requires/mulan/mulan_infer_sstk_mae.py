@@ -7,7 +7,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchaudio
-from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 from pytorch_lightning.strategies import DeepSpeedStrategy
@@ -398,7 +397,7 @@ class TextEncoder(nn.Module):
             if pretrained_model == "laion/larger_clap_general":
                 try:
                     self.text_model = ClapModel.from_pretrained('.module_cache/huggingface/larger_clap_general')
-                except OSError as e:
+                except Exception as e:
                     print(f"Failed to load from local cache, download from huggingface instead: {e}")
                     self.text_model = ClapModel.from_pretrained(pretrained_model)
             else:
@@ -585,12 +584,26 @@ class LitMuLanModule(pl.LightningModule):
         weight_decay,
         temperature,
         version="v1",
+        load_text_tower: bool = True
     ):
         super().__init__()
         self.save_hyperparameters()  # save hyperparameter in ckpt
         print(f"music_encoder: {music_encoder}, text_encoder: {text_encoder}")
         self.music_encoder = get_music_encoder(music_encoder, emb_dim, version=version)
-        self.text_encoder = get_text_encoder(text_encoder, emb_dim)
+        if load_text_tower:
+            self.text_encoder = get_text_encoder(text_encoder, emb_dim)
+
+            if text_encoder == 'clap':
+                try:
+                    self.tokenizer = AutoTokenizer.from_pretrained(".module_cache/huggingface/larger_clap_general")
+                except Exception as e:
+                    self.tokenizer = AutoTokenizer.from_pretrained("laion/larger_clap_general")
+            else:
+                try:
+                    self.tokenizer = AutoTokenizer.from_pretrained(".module_cache/huggingface/bert-large-uncased")
+                except Exception as e:
+                    self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
+
         self.spec_aug = spec_aug
         self.lr = lr
         self.weight_decay = weight_decay
@@ -603,11 +616,6 @@ class LitMuLanModule(pl.LightningModule):
 
         # Validation outputs
         self.val_outputs = dict()
-
-        if text_encoder == 'clap':
-            self.tokenizer = AutoTokenizer.from_pretrained(".module_cache/huggingface/larger_clap_general")
-        else:
-            self.tokenizer = AutoTokenizer.from_pretrained(".module_cache/huggingface/bert-large-uncased")
 
     def on_fit_start(self):
         self.music_encoder.mut.manually_to_device(self.device)
@@ -634,10 +642,12 @@ class LitMuLanModule(pl.LightningModule):
 
     def configure_optimizers(self):
         if self.deepspeed_offload:
+            from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
             return DeepSpeedCPUAdam(
                 self.parameters(), lr=self.lr, weight_decay=self.weight_decay
             )
         elif isinstance(self.trainer.strategy, DeepSpeedStrategy):
+            from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
             optimizer = FusedAdam(
                 self.parameters(), lr=self.lr, weight_decay=self.weight_decay
             )
@@ -847,6 +857,9 @@ def create_mulan_model(ckpt_path, device, version="v1"):
     litmodel.text_encoder.eval()
     litmodel.text_encoder.to(device)
 
+    # litmodel
+    litmodel.to(device)
+
     return litmodel
 
 
@@ -860,6 +873,7 @@ def mulan_inference(
     shift_seconds=5,
     normalize_text=False,
     return_hidden_state=False,
+    return_sequence=False,
 ):
     assert (text is not None) ^ (
         music is not None
@@ -883,6 +897,14 @@ def mulan_inference(
         b, n, t = music.shape
         music = music.reshape(b * n, t)
         # print(f"mulan_inference: reshaped wav shape is {music.shape}")
+
+        if return_sequence:
+            saved_output_type = music_encoder.mut.mut.output_type
+            music_encoder.mut.mut.output_type = "seq"
+            emb = music_encoder(music.unsqueeze(1))
+            music_encoder.mut.mut.output_type = saved_output_type
+            return emb
+
         emb = music_encoder(music.unsqueeze(1))
         # print(f"mulan_inference: embe shape is {emb.shape}, b={b}, n={n}, t={t}")
         emb = emb.reshape(b, n, -1)

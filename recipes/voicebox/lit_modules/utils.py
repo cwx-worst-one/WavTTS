@@ -1,6 +1,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
+import wandb
+from pytorch_lightning.loggers.wandb import WandbLogger
+from pytorch_lightning.utilities.rank_zero import rank_zero_only
+
 
 def plot_mel(mel, t=None):
     fig, ax = plt.subplots(figsize=(10,2))
@@ -78,3 +82,9 @@ class ode_wrapper(torch.nn.Module):
             return x
         else:
             return self.model.inference(x=x, t=t)
+
+
+@rank_zero_only
+def log_audio(wandb_logger: WandbLogger, key, audios, uttids, sample_rate, step, rank):
+    metrics = {key:[wandb.Audio(audio,caption=f"{step=}/{rank=}/{uttid}",sample_rate=sample_rate) for uttid, audio in zip(uttids, audios)]}
+    wandb_logger.log_metrics(metrics, step)

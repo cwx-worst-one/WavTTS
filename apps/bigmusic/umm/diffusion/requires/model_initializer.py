@@ -4,18 +4,29 @@ import torch
 import pathlib
 import torch.nn.functional as F
 from typing import Optional, List, Union
-from apps.bigmusic.umm.diffusion.lit_modules import (
-    DiffusionU2SInfer,
-    ChunkInfer,
-    ChunkInfer2,
-)
 from apps.bigtts.umm.diffusion.lit_modules.infer_utils import save_wav
 from recipes.umm.requires.model_initializer import ensure_hdfs_ckpt_is_local
-
+from apps.bigmusic.umm.diffusion.lit_modules import ChunkInfer
 
 def init_diffusion(
     diffusion_config: dict, local_rank=None, cache_dir=None, device=None
 ):
+    try:
+        vocoder_version = diffusion_config["bn_config"]["major_version"]
+        if vocoder_version in ["v2", "sacodec"]:
+            return init_diffusion_sacodec(diffusion_config=diffusion_config, local_rank=local_rank, cache_dir=cache_dir, device=device)
+    except:
+        pass # load v1 by default
+    return init_diffusion_v1(diffusion_config=diffusion_config, local_rank=local_rank, cache_dir=cache_dir, device=device)
+
+def init_diffusion_v1(
+    diffusion_config: dict, local_rank=None, cache_dir=None, device=None
+):
+    from apps.bigmusic.umm.diffusion.lit_modules import (
+        DiffusionU2SInfer,
+        ChunkInfer,
+        ChunkInfer2,
+    )
     if device is None:
         device = torch.device(f"cuda:{local_rank}")
     diffusion_config = diffusion_config.copy()
@@ -35,6 +46,32 @@ def init_diffusion(
     diffusion.setup(0)
     return {"diffusion": diffusion.to(device)}
 
+def init_diffusion_sacodec(
+    diffusion_config: dict, local_rank=None, cache_dir=None, device=None
+):
+    
+    from apps.bigmusic.umm.diffusion.lit_modules.lit_diffusion_reconstruct_sacodec import (
+        DiffusionU2SInfer,
+        ChunkInfer,
+        ChunkInfer2,
+    )
+    if device is None:
+        device = torch.device(f"cuda:{local_rank}")
+
+    if cache_dir is not None:
+        os.makedirs(f"{cache_dir}/{local_rank}", exist_ok=True)
+
+    local_path = ensure_hdfs_ckpt_is_local(diffusion_config["diffusion_ckpt_path"], f"{cache_dir}/{local_rank}")
+    print(f"Download {diffusion_config['diffusion_ckpt_path']} to {local_path}")
+    diffusion_config["diffusion_ckpt_path"] = local_path
+
+    diffusion_model_cls_name = diffusion_config.pop(
+        "diffusion_model_cls", "DiffusionU2sInfer"
+    )
+    diffusion_model_cls = eval(diffusion_model_cls_name)
+    diffusion = diffusion_model_cls(**diffusion_config)
+    diffusion.setup(0)
+    return {"diffusion": diffusion.to(device)}
 
 def token2wav(
     diffusion,

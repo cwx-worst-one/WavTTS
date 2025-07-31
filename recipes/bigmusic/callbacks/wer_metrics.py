@@ -33,6 +33,8 @@ from recipes.musiclm.utils.dist import local_zero_first
 from multiprocess.pool import ThreadPool
 import re
 from bytedance.easycycle import get_current_region, Region
+from recipes.bigmusic.callbacks.common_callbacks import ASRCallback
+
 
 class WERMetricsCallback(pl.Callback):
     def __init__(self, asr_model_path='en_punc'):
@@ -48,11 +50,12 @@ class WERMetricsCallback(pl.Callback):
         run_wer_metrics(generated_output_fps, asr_model_path=self.asr_model_path, device=pl_module.device)
 
 class WERMetricsSAOnlineCallback(pl.Callback):
-    def __init__(self, asr_model_path='en_punc', transliteration=False, parallel=1):
+    def __init__(self, asr_model_path='en_punc', transliteration=False, parallel=1, no_gt_lyrics=False):
         super().__init__()
         self.asr_model_path = asr_model_path
         self.transliteration = transliteration
-        self.parallel = 1
+        self.parallel = parallel
+        self.no_gt_lyrics = no_gt_lyrics
 
     @metadata_check_decorator
     def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule", output_dir=None) -> None:
@@ -67,8 +70,10 @@ class WERMetricsSAOnlineCallback(pl.Callback):
                 time.sleep(10)
                 print(f"[{self.__class__.__name__}(rank={trainer.global_rank})] waiting for all ranks done ... (cost {round(time.time() - ts, 3)}s)")              
             generated_output_fps = list(Path(output_dir).glob('**/*.generated.wav'))
-
-            run_wer_metrics_sa_online(generated_output_fps, asr_model_path=self.asr_model_path, transliteration=self.transliteration, parallel=self.parallel)
+            if self.no_gt_lyrics:
+                run_wer_metrics_sa_online_wo_gtlyrics(generated_output_fps, asr_model_path=self.asr_model_path, transliteration=self.transliteration)
+            else:
+                run_wer_metrics_sa_online(generated_output_fps, asr_model_path=self.asr_model_path, transliteration=self.transliteration, parallel=self.parallel)
             try:
                 output_wer_for_all_samples_into_one_file(output_dir)
                 plot_wer(output_dir)
@@ -725,6 +730,135 @@ def run_wer_metrics_sa_online(generated_output_fps, asr_model_path='zh-CN', tran
             update_json(metrics_fp, {'pinyin_wer': wer_metadata})
             print(f"output_dir={metrics_fp}, PINYIN_WER={wer_metadata}")
 
+def run_wer_metrics_sa_online_wo_gtlyrics(generated_output_fps, asr_model_path='zh-CN', transliteration=False):
+    def compute_wer(ref, res):
+        if not ref:
+            return {key: np.nan for key in ['wer', 'ins error', 'subs error', 'dels error', 'ref length', 'ins', 'subs', 'dels', 'greedy_transcript', 'actual_transcript', 'badcase']}
+        a = '' if ref is None else ref
+        g = '' if res is None else res
+        edits = edit_distance(a, g)
+        denom = 1.0 if len(a) == 0 else len(a)
+        ins = round(edits.ins / denom, 3)
+        subs = round(edits.subs / denom, 3)
+        dels = round(edits.dels / denom, 3)
+        wer = sum([ins, subs, dels])
+        wer_metadata = {
+            'wer': wer,
+            'ins error': edits.ins,
+            'subs error': edits.subs,
+            'dels error': edits.dels,
+            'ref length': denom,
+            'ins': ins,
+            'subs': subs,
+            'dels': dels,
+            'greedy_transcript': g,
+            'actual_transcript': a,
+            'badcase': 0,
+        }
+        if dels > 0.8:
+            print("gt trans: ", a, "asr result: ", g, "path: ",str(generated_output_fp), "might be asr model error")
+            wer_metadata['badcase'] = 1
+        return wer_metadata
+
+    def merge_all_wer(category2wer):
+        all_ref_length = 0
+        all_ins_err = 0
+        all_subs_err = 0
+        all_dels_err = 0
+        all_badcase = 0
+        all_support = 0
+        wer_metadata_list = []
+        for dir_path, wers in category2wer.items():
+            metrics_fp = Path(dir_path)/'metrics.json'
+            ref_length, ins_err, subs_err, dels_err, badcase, support = np.array(wers).sum(axis=0)
+            if not np.isnan(ref_length):
+                all_ref_length += ref_length
+                all_ins_err += ins_err
+                all_subs_err += subs_err
+                all_dels_err += dels_err
+                all_badcase += badcase
+                all_support += support
+            wer_metadata = {
+                'wer': round((ins_err+subs_err+dels_err)/ref_length, 3),
+                'ins': round(ins_err/ref_length, 3),
+                'subs': round(subs_err/ref_length, 3),
+                'dels': round(dels_err/ref_length, 3),
+                'badcases': int(badcase) if not np.isnan(badcase) else np.nan,
+                'badcase_rate': round(badcase/support, 3),
+                'support': int(support) if not np.isnan(badcase) else np.nan,
+            }
+            wer_metadata_list.append([metrics_fp, wer_metadata])
+        all_ref_length = all_ref_length if all_ref_length else np.nan
+        all_wer_metadata = {
+            'wer': round((all_ins_err+all_subs_err+all_dels_err)/all_ref_length, 3),
+            'ins': round(all_ins_err/all_ref_length, 3),
+            'subs': round(all_subs_err/all_ref_length, 3),
+            'dels': round(all_dels_err/all_ref_length, 3),
+            'badcases': int(all_badcase) if not np.isnan(all_badcase) else np.nan,
+            'badcase_rate': round(all_badcase/all_support, 3) if all_support else np.nan,
+            'support': int(all_support) if not np.isnan(all_support) else np.nan,
+        }
+        all_metrics_fp = Path(dir_path.rsplit('/', 1)[0])/'all_metrics.json'
+        wer_metadata_list.append([all_metrics_fp, all_wer_metadata])
+        return wer_metadata_list
+
+    category2wer = defaultdict(list)
+    category2pinyinwer = defaultdict(list)
+    for idx, generated_output_fp in tqdm.tqdm(enumerate(generated_output_fps)):
+        asr_lyrics, _ = ASRCallback.run_asr_lyrics_sa_online(generated_output_fp, asr_model_path)
+        metadata_fp = str(generated_output_fp).replace('generated.wav', 'metadata.json')
+        targetaudio_fp = str(generated_output_fp).replace('generated.wav', 'target_audio.wav')
+        # actual transcript
+        lyrics, _ = ASRCallback.run_asr_lyrics_sa_online(targetaudio_fp, asr_model_path)
+        if lyrics == '': 
+            asr_lyrics = lyrics = 'THIS CASE IS INST'
+        wer_metadata = {}
+        if asr_model_path in ['zh-CN', 'ja-JP']:
+            lyrics = normalize_text(remove_punc_case(lyrics))
+            lyrics = remove_space_in_zh(lyrics)
+            asr_lyrics = normalize_text(remove_punc_case(asr_lyrics))
+            asr_lyrics = remove_space_in_zh(asr_lyrics)
+            wer_metadata['wer'] = compute_wer(lyrics, asr_lyrics)
+            if transliteration:
+                trans_lyrics = run_lyric_transliteration_sa_online(lyrics, asr_model_path)
+                trans_asr_lyrics = run_lyric_transliteration_sa_online(asr_lyrics, asr_model_path)
+                wer_metadata['pinyin_wer'] = compute_wer(trans_lyrics, trans_asr_lyrics)
+        
+
+        update_json(metadata_fp, wer_metadata)
+        if isinstance(generated_output_fp, str):
+            import os
+            category_dir = os.path.dirname(generated_output_fp)
+        else:
+            category_dir = generated_output_fp.parent.resolve()
+
+        category2wer[str(category_dir)].append([
+                wer_metadata['wer']['ref length'],
+                wer_metadata['wer']['ins error'],
+                wer_metadata['wer']['subs error'],
+                wer_metadata['wer']['dels error'],
+                wer_metadata['wer']['badcase'],
+                1
+        ]) # append to base directory to calculate total wer
+        if asr_model_path == 'zh-CN' and transliteration:
+            category2pinyinwer[str(category_dir)].append([
+                    wer_metadata['pinyin_wer']['ref length'],
+                    wer_metadata['pinyin_wer']['ins error'],
+                    wer_metadata['pinyin_wer']['subs error'],
+                    wer_metadata['pinyin_wer']['dels error'],
+                    wer_metadata['pinyin_wer']['badcase'],
+                    1
+            ])
+    
+    for metrics_fp, wer_metadata in merge_all_wer(category2wer):
+        update_json(metrics_fp, {'wer': wer_metadata})
+        print(f"output_dir={metrics_fp}, WER={wer_metadata}")
+    if asr_model_path == 'zh-CN' and transliteration:
+        for metrics_fp, wer_metadata in merge_all_wer(category2pinyinwer):
+            update_json(metrics_fp, {'pinyin_wer': wer_metadata})
+            print(f"output_dir={metrics_fp}, PINYIN_WER={wer_metadata}")
+
+
 def run_wer_metrics_sa_online_parallel(generated_output_fps, asr_model_path='zh-CN', transliteration=False, parallel=10):
     def compute_wer(ref, res):
         if not ref:
@@ -1102,7 +1236,7 @@ def output_wer_for_all_samples_into_one_file(path_result):
     filename_out = os.path.join(path_result, 'wer_for_all_samples.txt')
     table = tabulate(df, headers='keys', tablefmt='grid')
     print(table)
-    with open(filename_out, 'w') as f:
+    with open(filename_out, 'w', encoding='utf-8') as f:
         f.write(table)
 
 

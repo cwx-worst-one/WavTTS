@@ -15,9 +15,8 @@ import soundfile as sf
 
 from recipes.musiclm.utils.dist import local_zero_first
 from pytorch_lightning.utilities.rank_zero import rank_zero_info
-from recipes.diffusion.utils.utils import download_checkpoint
+from samantha.utils.utils import download_checkpoint
 from samantha.utils.hparams import DotDict
-from s3a.providers.ctiga.utils.generation import InferenceParams
 from samantha.utils.model_metric import ModelMetric
 from samantha.utils.flops_profiler import FlopsProfiler
 from recipes.voicebox.modules.loss import sequence_mask

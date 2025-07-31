@@ -1,0 +1,22 @@
+--index-url https://bytedpypi.byted.org/simple
+rotary_embedding_torch
+transformers==4.45.1
+ffmpeg
+bytedeuler>=0.42.1
+fsspec>=2023.9.1 # fix use_pipe=False for parquet files
+Cython>=0.29.32
+bytedance.easycycle
+
+# ## Needed for Inference - save_outputs.py.
+confusables # from sami_tokenizer.py. Added to fix imports
+
+# faster audio dataloader
+av==13.0.0
+
+more_itertools
+
+# soundstream
+thop
+
+# for audio mp3 compression
+pedalboard

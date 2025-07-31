@@ -72,7 +72,6 @@ from torchaudio.transforms import Resample
 from recipes.diffusion.models.vocoder_model.utils import vocode_in_chunks
 from recipes.mulan.inference.stats.sstk_anchor_points import load_anchor_points, load_anchor_points_from_mulan_ckpt
 
-from recipes.audio_quality_classifier.models.audio_quality_model.utils import aq_classifier_inference
 
 DEFAULT_REWARDS = {"mulan_sim": 1.0, "wer": 1.0}
 
