@@ -4,7 +4,7 @@ import cruise as crs
 from cruise.trainer.callback import Callback
 from cruise.utilities.types import STEP_OUTPUT
 from cruise.trainer.logger.tracking import TrackingLogger
-from cruise.utilities.rank_zero import rank_zero_debug, rank_zero_warn, rank_zero_only
+from cruise.utilities.rank_zero import rank_zero_info, rank_zero_warn, rank_zero_only
 from io import BytesIO
 import torch
 import numpy as np
@@ -18,6 +18,79 @@ import os
 from tasks.audio.audio_trainer import AudioTrainer
 
 
+
+class TokenNumPerCategoryParser:
+    _instance = None
+    _task_list = []
+    _data_id_list = []
+    _category_key = None
+    _out_key = None
+
+    def __init__(self):
+        if not TokenNumPerCategoryParser._instance:
+            TokenNumPerCategoryParser._instance = self
+ 
+    
+    @classmethod
+    def initialize(cls, global_config):
+        if cls._instance is None:
+            cls()
+        for t in global_config.data.config.train_batch_transform:
+            if t.type == "TokenNumPerCategory":
+                cls._category_key = t.category_key
+                cls._out_key = t.out_key
+        if cls._category_key == None:
+            rank_zero_warn("TokenNumPerCategory not found in train_item_transform")
+            return
+        train_multitask_paths = global_config.data.config.train_multitask_paths
+
+        task_list = []
+        data_id_list = []
+
+        for task in global_config.data.config.train_multitask_paths:
+            task_list.append(task.task)
+            for dataset in task.datasets:
+                data_id_list.append(dataset.data_id)
+        
+        cls._task_list = list(set(task_list))
+        cls._data_id_list = list(set(data_id_list))
+        rank_zero_info(f"TokenNumPerCategoryParser init with category_key={cls._category_key} out_key={cls._out_key} task={cls._task_list} data_id={cls._data_id_list}")
+    
+    @classmethod
+    def get_train_meters(cls):
+        if not cls._instance or cls._category_key is None:
+            rank_zero_warn("TokenNumPerCategoryParser not initialized or category_key is None")
+            return []
+        
+        if cls._category_key == "task":
+            category_list = cls._task_list
+        elif cls._category_key == "dataset":
+            category_list = cls._data_id_list
+        else:
+            rank_zero_warn(f"TokenNumPerCategory category_key {cls._category_key} not supported")
+            return []
+
+        train_meters = [
+                (f"{category}_tokens(B)", {"type": "Sum", "args": [f"{category}_tokens(B)"]})
+                for category in category_list
+            ]
+        
+        rank_zero_warn(f"TokenNumPerCategory category_key {cls._category_key} not supported")
+        return train_meters
+
+    @classmethod
+    def get_data(cls, batch):
+        outputs = {}
+        if cls._out_key in batch:
+            for key in batch[cls._out_key]:
+                token_num = batch[cls._out_key][key] * 1e-9
+                out_key = f"{key}_tokens(B)"
+                if isinstance(token_num, torch.Tensor):
+                    outputs[out_key] = token_num.item()
+                elif isinstance(token_num, (int, float)):
+                    outputs[out_key] = token_num
+        
+        return outputs
 
 class SpeechDataCollectCallback(Callback):
     def __init__(self, keys_to_collect=None, audio_key="target_audio", audio_duration_key="duration", sample_rate=24000, audio_upload_to_tos=True, max_items_to_save=32, every_n_train_steps=100):
@@ -128,7 +201,7 @@ class SpeechDataCollectCallback(Callback):
             **media_to_save
         }
         tk.log(log_dict, step=trainer.global_step, commit=False)
-        rank_zero_debug(f"Logging {len(b_indices_choosen)} items to wandb in global_step={trainer.global_step}")
+        rank_zero_info(f"Logging {len(b_indices_choosen)} items to wandb in global_step={trainer.global_step}")
 
     @staticmethod
     def get_audio_bytes(audio_samples, sr=24000):

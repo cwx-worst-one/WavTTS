@@ -14,110 +14,42 @@ data:
       dynamic_batch: True
       bucket_schedule_key: 'num_total_tokens'
       maximum_bucket_size: 200000 # 240 seconds * (50: audio_token:25 + text_token:25) * 3 full song
-    
-    dataset_version: bigmusic_BPE_PT-6
+      
     train_multitask_paths:
-      - task: "speech_pt"
-        # task_weight: 1
-        # datasets: 
-        #   - data_id: "CN:15482"
-        #     filter_by_index: false
-        #     dataset_weight_schedule:
-        #       type: MultiLinearWeightSchedule
-        #       steps: 0,50000,60000
-        #       weights: 40,40,0
-        #   - data_id: "CN:15529"
-        #     filter_by_index: false
-        #     dataset_weight_schedule:
-        #       type: MultiLinearWeightSchedule
-        #       steps: 0,50000,60000
-        #       weights: 40,40,0
-        #   - data_id: "CN:15975"
-        #     filter_by_index: false
-        #     dataset_weight_schedule:
-        #       type: MultiLinearWeightSchedule
-        #       steps: 0,50000,60000
-        #       weights: 40,40,0
-
-        item_transform:
-        - type: "DeserializeJSON"
-          in_key: 'meta'
-          out_key: 'meta'
-
-        - type: "DeserializePickle"
-          in_key: 'umm_token'
-          out_key: 'umm_token'
-
-        - type: "GetItem"
-          in_key: 'umm_token.umm_token'
-          out_key: 'umm_token'
-
-        - type: "DataAdaptor"
-
-        - type: "StandardMetaParser"
-          in_key: 'meta.standard_music_meta'
-          out_key: 'standard_meta'
-          meta_types: ['web','human_annotation','tagging_model']
-          mode: 'sample'
-          norm_sep: True
-
-        - type: "DeleteItem"
-          in_key: 'standard_meta.character'
-
-        - type: "PackMeta2PromptFull"
-          in_key: 'standard_meta'
-          out_key: 'prompt'
-          shuffle: true
-          field_dropout_rate: 0.1
-          dropout_rate: 0.1
-          keyword_mode: 'key_value'
-
-        - type: "LyricsParser"
-          in_key: 'meta'
-          out_key: 'lyrics'
-          lyrics_type: "asr"
-
-        # PT only
-        - type: RegexDropoutTransform  # drop out section tags or content
-          in_key: lyrics
-          bypass_condition: 'data_type==tts'
-          modes: [negative]
-          weights: [1.0]
-          regex: "\\[[^\\]]*\\]\\n?"
-
-        - type: "TokenIdsToString"
-          in_key: 'umm_token'
-          out_key: 'umm_string'
-
-        - type: "SimpleTokenLengthEstimation"
-          in_key: ['prompt', 'lyrics', 'umm_token']
-          out_key: 'num_total_tokens'  # bucket_schedule_key
-
-        - type: "GroupItems"
-          in_key: ['prompt', 'lyrics', 'umm_string']
-          out_key: 'input_strings'
-
       - task: "music_pt"
-        # task_weight: 1
-        # datasets: 
-        #   - data_id: "CN:13122"
-        #     filter_by_index: false
-        #     dataset_weight_schedule:
-        #       type: MultiLinearWeightSchedule
-        #       steps: 0,50000,60000
-        #       weights: 1,1,0
-        #   - data_id: "CN:13217"
-        #     filter_by_index: false
-        #     dataset_weight_schedule: 
-        #       type: MultiLinearWeightSchedule
-        #       steps: 0,50000,60000
-        #       weights: 1,1,0
-        #   - data_id: "CN:13218"
-        #     filter_by_index: false
-        #     dataset_weight_schedule: 
-        #       type: MultiLinearWeightSchedule
-        #       steps: 0,50000,60000
-        #       weights: 1,1,0
+        task_weight: 1
+        datasets: 
+          - data_id: "CN:15482"
+            filter_by_index: false
+            dataset_weight_schedule: 
+              type: ConstantWeightSchedule
+              init_weight: 7
+          - data_id: "CN:15529"
+            filter_by_index: false
+            dataset_weight_schedule: 
+              type: ConstantWeightSchedule
+              init_weight: 7
+          - data_id: "CN:15975"
+            filter_by_index: false
+            dataset_weight_schedule: 
+              type: ConstantWeightSchedule
+              init_weight: 7
+          - data_id: "CN:13122"
+            filter_by_index: false
+            dataset_weight_schedule: 
+              type: ConstantWeightSchedule
+              init_weight: 1
+          - data_id: "CN:13217"
+            filter_by_index: false
+            dataset_weight_schedule: 
+              type: ConstantWeightSchedule
+              init_weight: 1
+          - data_id: "CN:13218"
+            filter_by_index: false
+            dataset_weight_schedule: 
+              type: ConstantWeightSchedule
+              init_weight: 1
+
         item_transform:
         - type: "DeserializeJSON"
           in_key: 'meta'
@@ -175,105 +107,6 @@ data:
         - type: "GroupItems"
           in_key: ['prompt', 'lyrics', 'umm_string']
           out_key: 'input_strings'
-
-      - task: "music_ct"
-        # task_weight: 1
-        # datasets: 
-        #   - data_id: "CN:13122"
-        #     filter_by_index: false
-        #     dataset_weight_schedule:
-        #       type: MultiLinearWeightSchedule
-        #       steps: 0,50000,60000
-        #       weights: 0,0,3
-        #   - data_id: "CN:13217"
-        #     filter_by_index: false
-        #     dataset_weight_schedule:
-        #       type: MultiLinearWeightSchedule
-        #       steps: 0,50000,60000
-        #       weights: 0,0,1
-        #   - data_id: "CN:13218"
-        #     filter_by_index: false
-        #     dataset_weight_schedule:
-        #       type: MultiLinearWeightSchedule
-        #       steps: 0,50000,60000
-        #       weights: 0,0,1
-        item_transform:
-          - type: "DeserializeJSON"
-            in_key: 'meta'
-            out_key: 'meta'
-
-          - type: "DeserializePickle"
-            in_key: 'umm_token'
-            out_key: 'umm_token'
-
-          - type: "GetItem"
-            in_key: 'umm_token.umm_token'
-            out_key: 'umm_token'
-
-          - type: "DataAdaptor"
-
-          - type: "StandardMetaParser"
-            in_key: 'meta.standard_music_meta'
-            out_key: 'standard_meta'
-            meta_types: ['web','human_annotation','tagging_model']
-            meta_weights: [3, 2, 1]
-            mode: 'sample'
-            norm_sep: True
-
-          - type: "DurationParser"
-            in_key: "meta.duration"
-            out_key: 'standard_meta.duration'
-
-          - type: "PackMeta2PromptFull"
-            in_key: 'standard_meta'
-            out_key: 'prompt'
-            shuffle: true
-            field_dropout_rate: 0.1
-            dropout_rate: 0.0
-            keyword_mode: 'key_value'
-
-          - type: "LyricsParser"
-            in_key: 'meta'
-            out_key: 'lyrics'
-            lyrics_type: "asr"
-
-          - type: RegexDropoutTransform  # drop out section tags or content
-            in_key: lyrics
-            modes: [none, positive, negative]
-            weights: [8.0, 1.0, 1.0]
-            regex: "\\[[^\\]]*\\]\\n?"
-
-          - type: MultiDropoutTransform
-            in_key: [prompt, lyrics]
-            out_key: dropout_task
-            tasks:
-              - task: [prompt, lyrics]
-                weight: 0.81
-              - task: [prompt]
-                weight: 0.09
-              - task: [lyrics]
-                weight: 0.00
-              - task: []
-                weight: 0.1
-          - type: MusicMetaRWTransform
-            in_key: dropout_task.prompt
-            out_key: prompt
-          - type: MusicMetaRWTransform
-            in_key: dropout_task.lyrics
-            out_key: lyrics
-
-          - type: "TokenIdsToString"
-            in_key: 'umm_token'
-            out_key: 'umm_string'
-
-          - type: "SimpleTokenLengthEstimation"
-            in_key: ['prompt', 'lyrics', 'umm_token']
-            out_key: 'num_total_tokens'  # bucket_schedule_key
-
-          - type: "GroupItems"
-            in_key: ['prompt', 'lyrics', 'umm_string']
-            out_key: 'input_strings'
-
 
     train_batch_transform:
       - type: NestListCollate

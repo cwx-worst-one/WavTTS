@@ -4,20 +4,22 @@ import os
 import torch
 from cruise import CruiseConfig
 from cruise.trainer.callback import ModelCheckpoint
+from cruise import CruiseCLI, CruiseConfig, CruiseModule, last_cli
 import torch.distributed
 
 import samantha # noqa: F401, resolve mariana python path
+from tasks.audio.audio_trainer import AudioTrainer
 from mariana.models.audio.speech_checkpoint import SpeechModelCheckpoint
 from mariana.utils.audio.audio_logger import AudioLogger
 from mariana.utils.exp_helper import ExpHelper
-from samantha.dataio.bigmusic.lite import MusicLiteDataModule
-from apps.bigmusic.mariana_tasks.utils.speech_data_collect_callback import SpeechDataCollectCallback
+from apps.bigmusic.mariana_tasks.utils.speech_data_collect_callback import SpeechDataCollectCallback, TokenNumPerCategoryParser
 from apps.bigmusic.mariana_tasks.semantic_seed_train import (
     SemanticLlmCLI,
     SemanticLlmModel,
     SemanticLlmTrainer,
     _m8_network_config,
     _inference_config,
+    _get_skip_meter_name,
 )
 from mariana.models.audio.gpt2_audio import (
     GPT2LMHeadModel,
@@ -29,8 +31,14 @@ from cruise.utilities.distributed import DIST_ENV
 import copy
 from panther.custom_ops.torch.flash_attn import unpad_input
 
-
 logger = AudioLogger()
+
+_LITE_USE_MULTITASK = int(os.getenv("_LITE_USE_MULTITASK", "0")) != 0
+if _LITE_USE_MULTITASK:
+    from samantha.dataio.bigmusic.lite_multitask import MusicLiteDataModule
+else:
+    from samantha.dataio.bigmusic.lite import MusicLiteDataModule
+logger.info(f"run training with {_LITE_USE_MULTITASK=}")
 
 class SemanticLlmModelBpe(SemanticLlmModel):
 
@@ -92,6 +100,7 @@ class SemanticLlmModelBpe(SemanticLlmModel):
 
         num_valid_tokens = loss_mask_rmpad.sum()
         outputs = dict()
+        outputs.update(TokenNumPerCategoryParser.get_data(batch))
 
         acc = (acc * loss_mask_rmpad).sum() / num_valid_tokens
 
@@ -451,7 +460,7 @@ class SemanticLlmModelBpe(SemanticLlmModel):
         output_tokens -= text_codebook_size
         return output_tokens
     
-class SemanticLlmBpeTrainer(SemanticLlmTrainer):
+class SemanticLlmBpeTrainer(AudioTrainer):
     train_meters = [
         ('loss', {'type': 'Weighted', 'args': ['loss', 'tokens']}),
         ('acc', {'type': 'Weighted', 'args': ['acc', 'tokens']}),
@@ -474,6 +483,31 @@ class SemanticLlmBpeTrainer(SemanticLlmTrainer):
         'lr * 1e3',
         'flops',
     ]
+
+    def _setup_meters(self):
+        self._config
+        global_config = last_cli().hparams
+        train_transform_names = [t.type for t in global_config.data.train_item_transform]
+        # TODO: 或许可以手动将需要观察的transform名字加在这里。其实有很多是不会skip的。
+        skip_meters = [
+            (_get_skip_meter_name(tn), {"type": "Sum", "args": [_get_skip_meter_name(tn)]})
+            for tn in train_transform_names
+        ]
+        self.train_meters.extend(skip_meters)
+
+        if global_config.model.network.get('return_moe_metric', False):
+            moe_meters = []
+            for i in range(global_config.model.network.n_layer):
+                moe_meters.append(
+                    (f'moe/expert_cnt_layer{i}', {'type': 'Histogram', 'args': [f'expert_cnt_layer{i}']})
+                )
+                moe_meters.append(
+                    (f'moe/expert_active_cnt_layer{i}', {'type': 'Simple', 'args': [f'expert_active_cnt_layer{i}']})
+                )
+
+            self.train_meters.extend(moe_meters)
+        TokenNumPerCategoryParser.initialize(global_config)
+        self.train_meters.extend(TokenNumPerCategoryParser.get_train_meters())
 
 def setup_cli(CLI_Clazz=SemanticLlmCLI):
     helper = ExpHelper(__file__)

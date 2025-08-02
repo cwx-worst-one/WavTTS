@@ -935,3 +935,27 @@ class WorkerInfoCollate:
             skip_num=skip_nums,
         )
         batch_out["worker_info"] = worker_info_batch
+
+
+class TokenNumPerCategory:
+    def __init__(
+        self,
+        num_total_tokens_key="num_total_tokens",
+        category_key="task",
+        out_key="num_token_per_category",
+    ):
+        self.num_total_tokens_key = num_total_tokens_key
+        self.category_key = category_key
+        self.out_key = out_key
+
+    def __call__(self, batch_in, batch_out):
+        num_token_per_category = {}
+        for item in batch_in:
+            if self.num_total_tokens_key in item and self.category_key in item:
+                category = item[self.category_key]
+                num_total_tokens = item[self.num_total_tokens_key]
+                if category in num_token_per_category:
+                    num_token_per_category[category] += num_total_tokens
+                else:
+                    num_token_per_category[category] = num_total_tokens
+        batch_out[self.out_key] = num_token_per_category
