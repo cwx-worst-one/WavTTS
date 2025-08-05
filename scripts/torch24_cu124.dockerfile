@@ -61,11 +61,11 @@ ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
 ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.79
-ARG BUMI_VERSION=25.7.0.77
+ARG BUMI_VERSION=25.7.0.124
 ARG LSDP_VERSION=25.7.0.80
 ARG TRITON_VERSION=1.0.0.216
-ARG OMNIDISPATCHER_VERSION=1.0.0.47
-ARG LITEDATALOADER_VERSION=1.0.0.22
+ARG OMNIDISPATCHER_VERSION=1.0.0.50
+ARG LITEDATALOADER_VERSION=1.0.0.39
 ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.51
 # https://github.com/facebookresearch/xformers.git:6425fd0
 ARG XFORMERS_VERSION=1.0.0.15
@@ -181,6 +181,7 @@ RUN pip3 install \
         byted-kms-encryption==0.0.5 \
         byted-kmsv2inner==0.1.14 \
         byted-lafka-internal==1.4.16rc1 \
+        byted-seed-kernels==0.3.5 \
         byted-seed-models==1.1.0 \
         byted-streaming==1.1.85 \
         byted-unified-io==0.0.20 \
