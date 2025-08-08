@@ -29,7 +29,7 @@ ENV INFSEC_HADOOP_ENABLED 1
 ENV CPP_HDFS_CONF /opt/tiger/arnold/hdfs_client/conf/celer_us/core-site.xml:/opt/tiger/arnold/hdfs_client/conf/celer_us/hdfs-site.xml
 ENV CCACHE_COMPRESS="1"
 ENV CCACHE_NOHASHDIR="1"
-ENV CCACHE_REMOTE_STORAGE="redis://speech-CCACHE-redis-auTH-12345-random-9e280a94040@[fdbd:dc03:13:913::224]"
+# ENV CCACHE_REMOTE_STORAGE="redis://speech-CCACHE-redis-auTH-12345-random-9e280a94040@[fdbd:dc03:13:913::224]"
 ENV CCACHE_REMOTE_ONLY="1"
 
 ENV ARNOLD_SORT_IP 1
@@ -64,7 +64,7 @@ ARG S3A_VERSION=1.0.0.79
 ARG BUMI_VERSION=25.7.0.124
 ARG LSDP_VERSION=25.7.0.80
 ARG TRITON_VERSION=1.0.0.216
-ARG OMNIDISPATCHER_VERSION=1.0.0.50
+ARG OMNIDISPATCHER_VERSION=1.0.0.53
 ARG LITEDATALOADER_VERSION=1.0.0.39
 ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.51
 # https://github.com/facebookresearch/xformers.git:6425fd0
@@ -182,14 +182,14 @@ RUN pip3 install \
         byted-kmsv2inner==0.1.14 \
         byted-lafka-internal==1.4.16rc1 \
         byted-seed-kernels==0.3.5 \
-        byted-seed-models==1.1.0 \
+        byted-seed-models==1.3.3 \
         byted-streaming==1.1.85 \
         byted-unified-io==0.0.20 \
         byted-wandb==0.13.86 \
         byted_encrypted_hdfs==0.7.2 \
         bytedance.ckpt_io_metrics==0.0.22 \
         bytedance-context==0.7.1 \
-        bytedance.easycycle==1.1.44 \
+        bytedance.easycycle==1.1.62 \
         bytedance.hdfs-stdenv==0.0.39 \
         bytedance-metrics==0.5.2 \
         bytedance.modelhub==0.0.78 \
@@ -267,6 +267,7 @@ RUN pip3 install \
         docstring_parser==0.16 \
         docutils==0.19 \
         dotted-dict==1.1.3 \
+        dtaidistance==2.3.13 \
         easydict==1.13 \
         ecdsa==0.19.0 \
         editdistance==0.8.1 \
