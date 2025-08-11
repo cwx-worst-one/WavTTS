@@ -26,8 +26,7 @@ run_opts:
     weight_decay: 0.001
     checkpointing: False
     n_step_save: 20000
-    batch_total_tokens: 22050000 # 44100 * 500 # batch = 500 / 60 ~ 8
-    # batch_total_tokens: 26460000 # 44100 * 600 # batch = 10
+    batch_total_tokens: 22050000 # 44100 * 500
     accumulate_grad_batches: 1
 
     use_url_lst: False
@@ -44,6 +43,7 @@ run_opts:
     bn_hop_size: 900
     bn_audio_freq: 44100
     bn_frame_rate: 50
+    vocoder_version: "umm_post"
 
     window_left: 8
     window_right: 4
@@ -215,11 +215,9 @@ pl_module: !new:recipes.voicebox.lit_modules.lit_diffusion_voicebox_sacodec.Voic
     resume_ckpt_path: !ref <run_opts[resume_ckpt_path]>
     criterions: ["l2"]
     required_modules:
-        vocoder:
-            hpath: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/andrew.shaw/sacodec_v5/sacodec_vB_44k_50h_128d_umm_rope_b2_vocal_h1536_ummdimfix_pretrain/checkpoints/sacodec_checkpoint_epoch=0_step=180000_val_loss=1.1525.ckpt
-            initializer: !name:recipes.voicebox.lit_modules.lit_diffusion_voicebox_sacodec.init_sacodec
-                cache_dir: .module_cache/vocoder/sacodec
-                version: umm
+        vocoder: !applyref:operator.getitem
+            - !include:vocoder.yaml
+            - !ref <run_opts[vocoder_version]>
         tokenizer: !applyref:operator.getitem
             - !include:tokenizer.yaml
             - !ref <run_opts[tokenizer_version]>

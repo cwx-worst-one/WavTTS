@@ -4,7 +4,7 @@ import torchaudio
 from torch import nn
 from torch.nn.utils.parametrizations import weight_norm
 from recipes.sacodec.models.components.spectral_ops import AMP_PHA_Spectrum
-from recipes.sacodec.models.components.vae_bottleneck import VAEBottleneck, VAEBottleneckV2
+from recipes.sacodec.models.components.vae_bottleneck import VAEBottleneck, VAEBottleneckV2, VAEBottleneckV3
 from recipes.sacodec.models.components.convnext import ConvNeXtBlock, ConvNextBackboneDownUp
 from recipes.sacodec.models.components.conformer_next import ConformerConfig, ConformerNextBlock, ConformerNextBackboneDownUp
  
@@ -18,7 +18,7 @@ class Transpose(nn.Module):
 class UMMLoss(nn.Module):
     def __init__(self, 
                  vae_dim=64, hidden_size=1536, block_layers=0, 
-                 sample_rate=44100, umm_version="umm"
+                 sample_rate=44100, umm_version="umm", vae_hz=50
                  ):
         super().__init__()
         self.sample_rate = sample_rate
@@ -36,6 +36,10 @@ class UMMLoss(nn.Module):
         self.required_modules = {}
 
         if block_layers > 0:
+            if vae_hz == 50:
+                downsample_block = [torch.nn.Conv1d(vae_dim, hidden_size, kernel_size=3, stride=2, padding=1)] # B D L
+            elif vae_hz == 25:
+                downsample_block = [torch.nn.Conv1d(vae_dim, hidden_size, kernel_size=1, stride=1, padding=0)] # B D L
             config = ConformerConfig(
                 input_channels=hidden_size,
                 hidden_size=hidden_size,
@@ -45,16 +49,20 @@ class UMMLoss(nn.Module):
             )
             semantic_encoder = ConformerNextBlock(config)
             self.alignment_head = nn.Sequential(
-                torch.nn.Conv1d(vae_dim, hidden_size, kernel_size=3, stride=2, padding=1), # B D L
+                *downsample_block, # B D L
                 Transpose(), # B L D
                 semantic_encoder,
                 torch.nn.Linear(hidden_size, umm_dim),
                 Transpose(), # B D L
             )
         else:
+            if vae_hz == 50:
+                downsample_block = [torch.nn.Conv1d(vae_dim, hidden_size*2, kernel_size=3, stride=2, padding=1)] # B D L
+            elif vae_hz == 25:
+                downsample_block = [torch.nn.Conv1d(vae_dim, hidden_size*2, kernel_size=1, stride=1, padding=0)] # B D L
             self.semantic_encoder = None
             self.alignment_head = nn.Sequential(
-                torch.nn.Conv1d(vae_dim, hidden_size*2, kernel_size=3, stride=2, padding=1), # B D L
+                *downsample_block,
                 Transpose(), # B L D
                 nn.GELU(),
                 torch.nn.Linear(hidden_size*2, umm_dim),
@@ -103,12 +111,14 @@ class UMMLoss(nn.Module):
         return None  
 
     @torch.no_grad()
+    @torch.cuda.amp.autocast(dtype=torch.float16, enabled=True)
     def get_conformer_umm_hidden(self, conformer_umm, input_audio):
         outputs = conformer_umm.model.wav2token_alloutputs(input_audio)
         hidden = outputs['hidden_states'].permute((0, 2, 1))
         return hidden
     
     @torch.no_grad()
+    @torch.cuda.amp.autocast(dtype=torch.float16, enabled=True)
     def get_conformer_vq_hidden(self, conformer_umm, input_audio):
         outputs = conformer_umm.model.wav2token_alloutputs(input_audio)
         vq_hidden = outputs['vq_hidden_states'].permute((0, 2, 1))
@@ -136,8 +146,9 @@ class UMMLoss(nn.Module):
             # TODO: switch this to categorical cross entropy and predict vq ids
             umm_features = self.get_conformer_vq_hidden(self.conformer_umm, audio_input_24k_mono) # B, D, L
 
-        cosine_loss = -torch.nn.functional.cosine_similarity(umm_predicted_features, umm_features, dim=1).mean()
-        l1_loss = torch.nn.functional.l1_loss(umm_predicted_features, umm_features)
+        with torch.autocast(device_type="cuda", dtype=torch.float32, enabled=False):
+            cosine_loss = -torch.nn.functional.cosine_similarity(umm_predicted_features, umm_features, dim=1).mean()
+            l1_loss = torch.nn.functional.l1_loss(umm_predicted_features, umm_features)
 
         # TODO: Try adding melspec and masked loss
 
@@ -151,8 +162,9 @@ class STFTEncoderVAEPostUMM(nn.Module):
     def __init__(self, 
                  n_fft=1024, hop_length=256, win_length=None,
                  sample_rate=44100,
+                 atan2_magnitude_threshold_ratio=0.0,
                  vae_dim=128, beta=1e-5, hidden_size=1536, audio_channels=2, block_layers=[1,4,4], umm_block_layers=1, even_pad=True,
-                 kernel_size=7, umm_version="umm", final_block="conformer", bottleneck_version="v1"
+                 kernel_size=7, umm_version="umm", final_block="conformer", bottleneck_version="v1", align_pre=False, normalize_spec=False
                  ):
         super().__init__()
         self.audio_channels = audio_channels
@@ -168,7 +180,7 @@ class STFTEncoderVAEPostUMM(nn.Module):
         pre_channels = n_fft // 4
 
         # Feature encoder
-        self.spec_encoder = AMP_PHA_Spectrum(n_fft=n_fft, hop_length=hop_length, win_length=win_length, audio_channels=audio_channels)
+        self.spec_encoder = AMP_PHA_Spectrum(n_fft=n_fft, hop_length=hop_length, win_length=win_length, audio_channels=audio_channels, normalize_spec=normalize_spec, atan2_magnitude_threshold_ratio=atan2_magnitude_threshold_ratio)
 
         # Pre-encoder
         T_PAD = 2 if even_pad else 3
@@ -218,8 +230,10 @@ class STFTEncoderVAEPostUMM(nn.Module):
                 kernel_size=kernel_size
             )
 
+        self.align_pre = align_pre
+        semantic_input_dim = hidden_size if self.align_pre else vae_dim
         self.semantic_encoder = UMMLoss(
-            vae_dim=vae_dim,
+            vae_dim=semantic_input_dim,
             hidden_size=hidden_size,
             block_layers=umm_block_layers,
             sample_rate=sample_rate,
@@ -227,6 +241,8 @@ class STFTEncoderVAEPostUMM(nn.Module):
         )
         if bottleneck_version == "v2":
             self.bottleneck = VAEBottleneckV2(in_channels=hidden_size, latent_dim=vae_dim, beta=beta)
+        elif bottleneck_version == "v3":
+            self.bottleneck = VAEBottleneckV3(in_channels=hidden_size, latent_dim=vae_dim, beta=beta)
         else:
             self.bottleneck = VAEBottleneck(in_channels=hidden_size, latent_dim=vae_dim, beta=beta) # x2 for audio + semantic features
 
@@ -265,10 +281,10 @@ class STFTEncoderVAEPostUMM(nn.Module):
                 "features": features,
                 "kl_loss": kl,
             }
-    
 
+        semantic_input_features = features if self.align_pre else hidden_states_latents
 
-        umm_results = self.semantic_encoder(hidden_states_latents, return_loss=return_loss, audio_input_24k_mono=audio_input_24k_mono)
+        umm_results = self.semantic_encoder(semantic_input_features, return_loss=return_loss, audio_input_24k_mono=audio_input_24k_mono)
         return {
             **umm_results, # umm_cosine_loss, umm_l1_loss, umm_features, semantic_features # bs x ch x seq
             "latent": hidden_states_latents,

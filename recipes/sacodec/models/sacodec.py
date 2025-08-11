@@ -4,7 +4,7 @@ from torch.nn.utils.parametrizations import weight_norm
 from recipes.sacodec.models.components.spectral_ops import AMP_PHA_Spectrum
 from recipes.sacodec.models.components.vae_bottleneck import VAEBottleneck
 from recipes.sacodec.models.components.convnext import ConvNeXtBlock, ConvNextBackboneDownUp
-from recipes.sacodec.models.components.istft_head import ISTFTHeadStereo
+from recipes.sacodec.models.components.istft_head import ISTFTHeadStereo, ISTFTHeadStereoVocos, ISTFTHeadStereoMusic2Latent
 
 
 class STFTEncoderVAE(nn.Module):
@@ -94,7 +94,8 @@ class STFTEncoderVAE(nn.Module):
 class ISTFTDecoder(nn.Module):
     def __init__(self, 
                  n_fft=1024, hop_length=256, win_length=None,
-                 vae_dim=128, hidden_size=1536, audio_channels=2, block_layers=[8,4,1], even_pad=True, final_hidden_size=3072
+                 atan2_magnitude_threshold_ratio=0.0,
+                 vae_dim=128, hidden_size=1536, audio_channels=2, block_layers=[8,4,1], even_pad=True, final_hidden_size=3072, istft_head="stereo"
         ):
         super().__init__()
         self.n_fft = n_fft
@@ -132,7 +133,14 @@ class ISTFTDecoder(nn.Module):
 #             pre_embed_padding=(7 - 2) // 2, # 3000 -> 3001
             apply_final_layer_norm=True
         )
-        self.istft_head = ISTFTHeadStereo(dim=final_hidden_size, n_fft=n_fft, hop_length=hop_length, audio_channels=audio_channels)
+        if istft_head == "vocos":
+            self.istft_head = ISTFTHeadStereoVocos(dim=final_hidden_size, n_fft=n_fft, hop_length=hop_length, audio_channels=audio_channels)
+        elif istft_head == "m2l":
+            self.istft_head = ISTFTHeadStereoMusic2Latent(dim=final_hidden_size, n_fft=n_fft, hop_length=hop_length, audio_channels=audio_channels, normalize_spec=False, atan2_magnitude_threshold_ratio=atan2_magnitude_threshold_ratio)
+        elif istft_head == "m2l_norm":
+            self.istft_head = ISTFTHeadStereoMusic2Latent(dim=final_hidden_size, n_fft=n_fft, hop_length=hop_length, audio_channels=audio_channels, normalize_spec=True, atan2_magnitude_threshold_ratio=atan2_magnitude_threshold_ratio)
+        else:
+            self.istft_head = ISTFTHeadStereo(dim=final_hidden_size, n_fft=n_fft, hop_length=hop_length, audio_channels=audio_channels, atan2_magnitude_threshold_ratio=atan2_magnitude_threshold_ratio)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.upconv_1(x)

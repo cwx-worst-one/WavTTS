@@ -1,9 +1,12 @@
 import os
+import math
 import torch
 from recipes.musiclm.utils.dist import local_zero_first
 from recipes.soundstream.models.vqgan import VQGAN_KL, VQGAN_KL_new, VQGAN_KL_mix
 from recipes.soundstream.modules.pl_module_vae import VocoderModule
 from recipes.diffusion.utils.utils import download_checkpoint
+from recipes.diffusion.models.vocoder_model.stream import islice
+
 
 def load_ema_checkpoint(checkpoint_path, model):
     ckpt = torch.load(checkpoint_path, map_location="cpu")
@@ -216,3 +219,135 @@ def vocode_in_chunks(pred_emb, vocoder, mini_bs=1, chunk_size=4, device=None):
         chunks = torch.cat(chunks, dim=-1) # mini_bs x audio_seq_len
         items.append(chunks) # bs x audio_seq_len
     return torch.cat(items)
+
+
+@torch.no_grad()
+def vocode_in_ovl_chunks(pred_emb, vocoder, mini_bs=1, chunk_size=4, overlap_ratio=0.2, border_padding=1, padding_value=-5,
+                            vocoder_frame_rate=49, sample_rate=44100, device=None, vocoder_type='v1'):
+    "Vocode in overlapped chunks to prevent OOM"
+    # pred_emb = bs x emb x seq_len
+    items = []
+    overlap_len = math.ceil(chunk_size * overlap_ratio)
+    overlap_wav_len = math.ceil(overlap_len / vocoder_frame_rate * sample_rate)
+    pad_wav_len = math.ceil(1/vocoder_frame_rate * sample_rate)
+    # n_chunks = math.ceil(pred_emb.shape[-1] / (chunk_size - overlap_len)) 
+
+    for item in torch.split(pred_emb, mini_bs): # mini_bs x emb x seq_len
+        chunks = None
+        chunk_idx, chunk_st = 0, 0
+        final_flag = False
+        while not final_flag: #for chunk_idx in range(n_chunks): # mini_bs x emb x seq_len / chunk_size
+            # import pdb; pdb.set_trace()
+            this_chunk = item[..., chunk_st:chunk_st+chunk_size]
+            final_flag = True if chunk_st + chunk_size >= pred_emb.shape[-1] else False
+            # print(chunk_idx, chunk_st, chunk_st+chunk_size, final_flag)
+            if chunk_idx == 0:
+                this_chunk = torch.nn.functional.pad(this_chunk, [border_padding, 0], value=padding_value) # padding left
+            elif final_flag:
+                this_chunk = torch.nn.functional.pad(this_chunk, [0, border_padding], value=padding_value) # padding right
+            
+            if vocoder_type == 'v1':
+                x = vocoder.decode(this_chunk).detach() # mini_bs x audio_seq_len / chunk_size
+            else:
+                x = vocoder.decode_latents(this_chunk.transpose(1,2)).detach()
+                
+            if device is not None:
+                x = x.to(device)
+
+            if chunk_idx == 0:
+                x = x[..., pad_wav_len:] # remove padding
+                x[..., -overlap_wav_len:] *= torch.linspace(1, 0, overlap_wav_len).unsqueeze(0).unsqueeze(0).to(x.device)  # fade out only
+                chunks = x
+            else:
+                if final_flag:
+                    x = x[..., :-pad_wav_len] # remove padding
+                    x[..., :overlap_wav_len] *= torch.linspace(0, 1, overlap_wav_len).unsqueeze(0).unsqueeze(0).to(x.device) # fade in only
+                else:
+                    # fade in & out
+                    x[..., :overlap_wav_len] *= torch.linspace(0, 1, overlap_wav_len).unsqueeze(0).unsqueeze(0).to(x.device)
+                    x[..., -overlap_wav_len:] *= torch.linspace(1, 0, overlap_wav_len).unsqueeze(0).unsqueeze(0).to(x.device)
+                chunks = torch.cat([chunks[..., :-overlap_wav_len], 
+                                    chunks[..., -overlap_wav_len:] + x[..., :overlap_wav_len],
+                                    x[..., overlap_wav_len:]
+                                    ], dim=-1) 
+            
+            chunk_st += (chunk_size - overlap_len)
+            chunk_idx += 1
+                
+            
+        items.append(chunks) # bs x audio_seq_len
+    return torch.cat(items)
+
+
+@torch.no_grad()
+def vocode_in_ovl_chunks_v2(pred_emb, vocoder, chunk_size=100, overlap=8, device=None, 
+                            vocoder_frame_rate=49, sample_rate=44100, vocoder_type='v1', dim=-1, *args, **kwargs):
+    "Vocode in overlapped chunks with boundary on both sides"
+    # pred_emb: bs x emb x seq_len
+    items = []
+    for item in torch.split(pred_emb, 1):  #mini_bs x emb x seq_len
+        def emb_generator():
+            yield item
+        
+        # 2. cut into overlapped chunks
+        chunk_generator = islice(
+            emb_generator(), 
+            step=chunk_size, 
+            overlap=overlap, 
+            dim=dim,
+        )
+        
+        chunk_sample = int(chunk_size / vocoder_frame_rate*sample_rate)
+        # 3. decode and cut overlapped chunks
+        audio_chunks = []
+        for i, chunk_info in enumerate(chunk_generator):
+            chunk = chunk_info["data"] # mini_bs x emb x chunk_size_with_overlap
+
+            if vocoder_type == 'v1':
+                _audio = vocoder.decode(chunk).detach()  # mini_bs x 1 x audio_len
+            else:
+                _audio = vocoder.decode_latents(chunk.transpose(1, 2)).detach()
+            
+            # remove overlap at both sides
+            start_sample = int(overlap/vocoder_frame_rate*sample_rate)
+            if i == 0: # first chunk
+                start_sample = 0
+            if start_sample > _audio.shape[-1]: # last chunk
+                audio = _audio[..., -chunk_sample:]
+            else:
+                audio = _audio[..., start_sample:start_sample+chunk_sample]
+
+            if device is not None:
+                audio = audio.to(device)
+            
+            audio_chunks.append(audio)
+
+        items.append(torch.cat(audio_chunks, dim=-1))
+    
+    return torch.cat(items, dim=0)
+
+
+
+def process_eos_indexes(semantic_samples, eos_id=32769, semantic_frame_rate=25, output_frame_rate=50):
+    eos_padding_id = -10000
+    eos_mask = torch.cumsum(semantic_samples == eos_id, 1) > 0
+    semantic_samples[eos_mask] = eos_padding_id
+    semantic2output_rate = output_frame_rate / semantic_frame_rate
+    eos_index_list = ((semantic_samples == eos_padding_id).bool().cumsum(axis=1) == 0).bool().sum(
+        axis=1)
+    eos_index_list = torch.round(eos_index_list * semantic2output_rate) # convert 
+    return eos_index_list.long().to(semantic_samples.device)
+
+
+def pad_sequence_dim(tensors, dim=1, padding_value=0):
+    max_length = max(tensor.size(dim) for tensor in tensors)
+    padded_tensors = []
+    for tensor in tensors:
+        pad_length = max_length - tensor.size(dim)
+        padding = [0 for _ in range(len(tensor.shape))]
+        padding[dim] = pad_length
+        padded = torch.nn.functional.pad(
+            tensor, padding, mode='constant', value=padding_value
+        )
+        padded_tensors.append(padded)
+    return torch.stack(padded_tensors, dim=0)

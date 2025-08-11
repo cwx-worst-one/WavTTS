@@ -315,6 +315,7 @@ class ModelArgs:
     min_t: float = 0.0
     max_t: float = 1.0
     flashattn_version: str = "2.3"
+    rf_sigma_distribution: str = "lognorm"
 
 
 class LlamaDiffusion(nn.Module):
@@ -515,21 +516,51 @@ class LlamaDiffusion(nn.Module):
         # diffusion target
         x = inputs[self.hp.target]
 
-        sigmas = self.sigma_distribution(num_samples=B, device=device)
-        sigmas_batch = extend_dim(sigmas, dim=x.ndim)
-        alphas, betas = self.get_alpha_beta(sigmas_batch)
-
-        # time embedding
-        time_emb = self.time_embedding(sigmas)
-        time_emb = time_emb.unsqueeze(1).expand(-1, local_cond.shape[1], -1)
 
         noise = torch.randn_like(x)
-        x_noisy = alphas * x + betas * noise
-        residual = x_noisy
-        if self.target_type == "velocity":
-            target = alphas * noise - betas * x
-        elif self.target_type == "x0":
-            target = x
+        if self.target_type == "rectified-flow":
+            if self.hp.rf_sigma_distribution == "lognorm":
+                # give more weight to intermediate timestep
+                # https://arxiv.org/pdf/2403.03206#page=22.08
+                sigmas = torch.sigmoid(torch.randn(B, device=device))
+            elif self.hp.rf_sigma_distribution == "uniform":
+                # from original recitified flow paper
+                # https://arxiv.org/pdf/2209.03003#page=3.71
+                sigmas = self.sigma_distribution(num_samples=B, device=device)
+            else:
+                raise NotImplementedError
+
+            sigmas_batch = extend_dim(sigmas, dim=x.ndim)
+
+
+            # time embedding
+            time_emb = self.time_embedding(sigmas)
+            time_emb = time_emb.unsqueeze(1).expand(-1, local_cond.shape[1], -1)
+
+            # umm2 approach
+            alphas = sigmas_batch
+            betas = 1 - alphas
+            # stable audio approach. Reverses in sampling stage
+            # betas = sigmas_batch
+            # alphas = 1 - betas
+            x_noisy = alphas * x + betas * noise
+            residual = x_noisy
+            target = noise - x
+        else:
+            sigmas = self.sigma_distribution(num_samples=B, device=device)
+            sigmas_batch = extend_dim(sigmas, dim=x.ndim)
+            alphas, betas = self.get_alpha_beta(sigmas_batch)
+
+            # time embedding
+            time_emb = self.time_embedding(sigmas)
+            time_emb = time_emb.unsqueeze(1).expand(-1, local_cond.shape[1], -1)
+
+            x_noisy = alphas * x + betas * noise
+            residual = x_noisy
+            if self.target_type == "velocity":
+                target = alphas * noise - betas * x
+            elif self.target_type == "x0":
+                target = x
 
         # concat condition.
         x_noisy = self.x_prenet(x_noisy) + self.prenet(
@@ -598,6 +629,9 @@ class LlamaDiffusion(nn.Module):
 
         pred_v = self.postnet(pred_v)
 
+        if self.target_type == "rectified-flow":
+            if self.hp.use_unet_style_skip_connect:
+                pred = pred_v + residual
         if self.target_type == "velocity":
             if self.hp.use_unet_style_skip_connect:
                 pred = pred_v + residual
@@ -623,7 +657,7 @@ class LlamaDiffusion(nn.Module):
 
         pred_v = self.postnet(pred_v)
 
-        if self.target_type == "velocity":
+        if self.target_type == "velocity" or self.target_type == "rectified-flow":
             if self.hp.use_unet_style_skip_connect:
                 pred = pred_v + residual
         else:
@@ -676,6 +710,89 @@ class LlamaDiffusion(nn.Module):
         factor = rescale * factor + (1 - rescale)
         return cfg * factor
 
+    def flow_sample(
+        self,
+        timesteps,
+        local_cond,
+        text_embed,
+        text_cfg_w=1.0,
+        use_cache=False,
+        cached_v_len=None,
+        use_infer_params=False,
+        **kwargs
+    ):
+        t = timesteps
+        batch_size, device, frm_len = (
+            local_cond.size(0),
+            local_cond.device,
+            local_cond.size(1),
+        )
+        real_batch_size = batch_size if text_cfg_w == 1.0 else batch_size // 2
+
+        if use_cache:
+            assert self.cached_noise is not None
+            if self.cached_noise is not None:
+                x = self.cached_noise[0][:, :frm_len, :].to(device)
+        elif use_infer_params:
+            assert self.cached_noise is not None
+            assert self.infer_params is not None
+            seqlen_offset = self.infer_params[0].sequence_len_offset
+            x = self.cached_noise[0][:, seqlen_offset : seqlen_offset + frm_len, :].to(
+                device
+            )
+        else:
+            x = torch.randn([1, frm_len, self.hp.out_channels], device=device).expand(
+                real_batch_size, -1, -1
+            )
+
+        sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device)
+        # sigmas += 0.6
+        # sigmas /= sigmas.max()
+
+        sigmas = repeat(sigmas, "i -> i b", b=1)
+        sigmas = 1 - sigmas # using reverse rectified flow
+        # sigmas_batch = extend_dim(sigmas, dim=x.ndim)
+        # alphas, betas = self.get_alpha_beta(sigmas_batch)
+
+        for i in range(t):
+            # print(f"step({i}/{t})")
+            if self.target_type == "rectified-flow":
+                dt = 1.0 / t
+                # dt = torch.tensor([dt] * real_batch_size, device=device)[:, None, None]
+                v_pred = self._forward(
+                    x.repeat(2 if text_cfg_w != 1 else 1, 1, 1),
+                    local_cond,
+                    text_embed,
+                    timesteps=sigmas[i].expand(batch_size, -1),
+                    infer_params=self.infer_params[i] if use_infer_params else None,
+                )
+                if text_cfg_w != 1:
+                    v_pred, v_pred_uncond = v_pred.chunk(2)
+                    v_pred = text_cfg_w * v_pred + (1 - text_cfg_w) * v_pred_uncond
+
+                # TODO: 只是模拟cache过程
+                if use_cache:
+                    if self.cached_v[i] is not None:
+                        cached_v_len = (
+                            self.cached_v[i].shape[1]
+                            if cached_v_len is None
+                            else cached_v_len
+                        )
+                        v_pred[:, :cached_v_len, :] = self.cached_v[i][
+                            :, :cached_v_len, :
+                        ]
+                    self.cached_v[i] = v_pred
+                # print(f"{x.shape=} {v_pred.shape=} {alphas[i].shape=}")
+
+                ## old
+                # x_pred = alphas[i] * x[:real_batch_size] - betas[i] * v_pred
+                # noise_pred = betas[i] * x[:real_batch_size] + alphas[i] * v_pred
+                # x = alphas[i + 1] * x_pred + betas[i + 1] * noise_pred
+
+                x = x[:real_batch_size] - dt * v_pred
+
+        return x
+    
     def ddim_sample(
         self,
         timesteps,
@@ -1019,7 +1136,11 @@ class LlamaDiffusion(nn.Module):
             local_cond = token_embed
         local_cond = self.local_cond_project(local_cond)
 
-        if sampler == "ddim":
+        if self.target_type == "rectified-flow":
+            x = self.flow_sample(
+                timesteps, local_cond, text_embed, text_cfg_w=text_cfg_w, **kwargs
+            )
+        elif sampler == "ddim":
             x = self.ddim_sample(
                 timesteps, local_cond, text_embed, text_cfg_w=text_cfg_w, **kwargs
             )
@@ -1105,7 +1226,11 @@ class LlamaDiffusion(nn.Module):
             local_cond = token_embed
         local_cond = self.local_cond_project(local_cond)
 
-        if sampler == "ddim":
+        if self.target_type == "rectified-flow":
+            x = self.flow_sample(
+                timesteps, local_cond, text_embed, text_cfg_w=text_cfg_w, **kwargs
+            )
+        elif sampler == "ddim":
             x = self.ddim_sample(
                 timesteps, local_cond, text_embed, text_cfg_w=text_cfg_w, **kwargs
             )

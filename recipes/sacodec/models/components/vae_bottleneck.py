@@ -21,6 +21,7 @@ class FeatureExtractor(nn.Module):
         raise NotImplementedError("Subclasses must implement the forward method.")
 
 ## VAEBottleneck
+@torch.cuda.amp.autocast(enabled=False)
 def sample_vae(
     mean: Tensor, scale: Tensor, epsilon: float = 1e-6
 ) -> Tuple[Tensor, Tensor]:
@@ -46,8 +47,10 @@ class VAEBottleneck(nn.Module):
         self.bottleneck = nn.Linear(in_channels, latent_dim * 2)
         self.beta = beta
 
+    @torch.cuda.amp.autocast(enabled=False)
     def forward(self, x: Tensor) -> Dict[str, Tensor]:
         # in: b x c x l
+        x = x.float()
         x = self.bottleneck(x.transpose(1, 2)).transpose(1, 2)
         mu, logvar = x.chunk(2, dim=1)
 
@@ -64,8 +67,10 @@ class VAEBottleneckV2(nn.Module):
         self.bottleneck = nn.Linear(in_channels, latent_dim * 2)
         self.beta = beta
 
+    @torch.cuda.amp.autocast(enabled=False)
     def forward(self, x: Tensor, deterministic=False) -> Dict[str, Tensor]:
         # in: b x c x l
+        x = x.float()
         x = self.bottleneck(x.transpose(1, 2)).transpose(1, 2)
         mean, logvar = x.chunk(2, dim=1)
         logvar = torch.clamp(logvar, -30.0, 20.0)
@@ -90,7 +95,9 @@ class VAEBottleneckV3(nn.Module):
         self.bottleneck = nn.Linear(in_channels, latent_dim)
         self.activation_bottleneck = nn.Tanh()
 
+    @torch.cuda.amp.autocast(enabled=False)
     def forward(self, x: Tensor, deterministic=False) -> Dict[str, Tensor]:
         # in: b x c x l
+        x = x.float()
         x = self.bottleneck(x.transpose(1, 2)).transpose(1, 2)
         return self.activation_bottleneck(x), 0

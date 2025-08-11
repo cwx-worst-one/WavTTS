@@ -1,0 +1,8 @@
+cache_dir: ".module_cache/vocoder"
+
+### SACodec
+sacodec_0408_44k_50h_128d_h1536_data8424:
+  hpath: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/andrew.shaw/sacodec_v5/sacodec_0408_44k_50h_128d_h1536_data8424/checkpoints/sacodec_checkpoint_epoch=0_step=400000_val_loss=1.1710.ckpt
+  initializer: !name:recipes.voicebox.lit_modules.lit_diffusion_voicebox_sacodec.init_sacodec
+    cache_dir: !ref <cache_dir>/sacodec
+    version: umm

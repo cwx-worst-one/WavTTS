@@ -113,6 +113,8 @@ model_config: !new:recipes.voicebox.diffusion_modules.llama_ldm.ModelArgs
           - -1
     local_cond_project_type: linear
     use_unet_style_skip_connect: !ref <run_opts[use_unet_style_skip_connect]>
+    rf_sigma_distribution: lognorm
+    target_type: rectified-flow
 
 train_dataset: !new:recipes.voicebox.datasets.voicebox_promptmel_dataset_otf.VoiceBoxParquetDataset
     data_id: !ref <run_opts[data_id]>
@@ -140,6 +142,10 @@ train_dataset: !new:recipes.voicebox.datasets.voicebox_promptmel_dataset_otf.Voi
     token_audio_freq: !ref <run_opts[token_audio_freq]>
     bn_audio_freq: !ref <run_opts[bn_audio_freq]>
     shuffle_buffer_size: 0
+    max_audio_length: !ref <run_opts[max_audio_length]>
+    min_audio_length: !ref <run_opts[min_audio_length]>
+    allow_resample: False
+    allow_mono: False
 
 val_dataset: !new:recipes.voicebox.datasets.voicebox_promptmel_dataset_otf.VoiceBoxParquetDataset
     data_id: !ref <run_opts[val_data_id]>
@@ -166,6 +172,8 @@ val_dataset: !new:recipes.voicebox.datasets.voicebox_promptmel_dataset_otf.Voice
     token_audio_freq: !ref <run_opts[token_audio_freq]>
     bn_audio_freq: !ref <run_opts[bn_audio_freq]>
     shuffle_buffer_size: 0
+    allow_resample: False
+    allow_mono: False
 
 collator: !new:recipes.voicebox.datasets.voicebox_promptmel_dataset_otf.VoiceBoxCollator
 

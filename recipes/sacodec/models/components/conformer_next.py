@@ -348,7 +348,8 @@ class ConformerNextBlock(nn.Module):
     def __init__( # VOCOS
         self,
         config: ConformerConfig,
-        add_final_layer=False
+        add_final_layer=False,
+        channels_first=False
     ):
         super().__init__()
         self.config = config
@@ -356,6 +357,7 @@ class ConformerNextBlock(nn.Module):
         self.layers = nn.ModuleList(
             [ConformerNextEncoderLayer(config, add_final_layer=add_final_layer) for _ in range(config.num_hidden_layers)]
         )
+        self.channels_first = channels_first
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -364,6 +366,8 @@ class ConformerNextBlock(nn.Module):
             nn.init.constant_(m.bias, 0)
 
     def forward(self, hidden_states):
+        if self.channels_first:
+            hidden_states = hidden_states.transpose(1, 2)
         # inpput = B, L, D
         position_embeddings = self.embed_positions(hidden_states)
         for i, layer in enumerate(self.layers):
@@ -371,6 +375,8 @@ class ConformerNextBlock(nn.Module):
                 hidden_states, position_embeddings=position_embeddings
             )
             hidden_states = layer_outputs
+        if self.channels_first:
+            hidden_states = hidden_states.transpose(1, 2)
         return hidden_states
 
 class ConformerNextBackboneDownUp(nn.Module):

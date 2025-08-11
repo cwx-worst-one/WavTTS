@@ -16,7 +16,7 @@ from recipes.voicebox.lit_modules.lit_diffusion_voicebox_sacodec import VoiceBox
 from samantha.utils import groundtruth
 from samantha.dataio.lite.utils.mel import mel_spectrogram
 from apps.bigtts.umm.diffusion.lit_modules.infer_utils import set_seed, save_wav
-from recipes.diffusion.models.vocoder_model.utils import vocode_in_chunks
+from recipes.diffusion.models.vocoder_model.utils import vocode_in_chunks, vocode_in_ovl_chunks_v2, process_eos_indexes, pad_sequence_dim
 from hyperpyyaml import load_hyperpyyaml
 from recipes.sacodec.modules.sacodec_module_umm import SACodecModule
 from samantha.utils.hparams import DotDict
@@ -114,7 +114,7 @@ class DiffusionU2SInfer(LightningModule):
         self.bn_norm = MelNorm(bn_config["bn_norm_mean"], bn_config["bn_norm_std"])
 
         if token_config is None:
-            self.token_config = {"token_cfg": True, "token_padding": 32767}
+            self.token_config = {"token_cfg": True, "token_padding": 32768, "token_eos": 32769, "frame_rate": 25 }
         else:
             self.token_config = token_config
         self.mel_mask_value = mel_config["mel_mask_value"]  # -5
@@ -129,12 +129,34 @@ class DiffusionU2SInfer(LightningModule):
         logger.info(", ".join(f"{k}={v}\n" for k, v in args_dict.items()))
 
     @torch.no_grad()
-    def sacodec_embs_to_wav(self, latents):
+    def sacodec_embs_to_wav(self, latents, eos_index_list=None):
+        """Truncate latents to EOS and decode sequentially to prevent OOM."""
         latents = self.bn_norm.denorm_mel(latents)
-        audio_hat = self.sacodec.decode_latents(latents.transpose(1, 2))
-        # logamp_g, pha_g, rea_g, imag_g, y_g = self.sacodec.decoder(latents)
-        # audio_hat = y_g
-        return audio_hat # B x CH x L
+        if eos_index_list is None:
+            return self.sacodec.decode_latents(latents.transpose(1, 2))
+
+        output_wavs = []
+        for latent, eos_index in zip(latents, eos_index_list):
+            latent = latent.unsqueeze(0).transpose(1, 2) # L C -> B C L
+            output_wav = self.sacodec.decode_latents(latent[..., :eos_index])
+            output_wav = output_wav.squeeze(0) # B C L -> C L
+            output_wavs.append(output_wav.cpu())
+
+        output_wavs = pad_sequence_dim(output_wavs, dim=0)
+        return output_wavs
+        
+    @torch.no_grad()
+    def sacodec_embs_to_wav_chunked(self, latents, eos_index_list=None):
+        """Chunked decoding uses less memory and gives results similar to online streaming. Use sacodec_embs_to_wav for best results"""
+        # TODO: support eos_index_list
+        audio_hat = vocode_in_ovl_chunks_v2(latents, self.sacodec,
+                            mini_bs=1,
+                            chunk_size=self.bn_config.get("bn_chunk_size", 100),
+                            overlap=self.bn_config.get("bn_bothside_overlap_size", 8),
+                            vocoder_frame_rate=self.bn_config["frame_rate"],
+                            sample_rate=self.bn_config["sample_rate"],
+                            vocoder_type="v2")
+        return audio_hat
 
 
     # align wav to make sure wav length could be divided by `umm_frame_rate` and `mel_frame_rate` evenly
@@ -151,7 +173,8 @@ class DiffusionU2SInfer(LightningModule):
 
     def wav2token(self, wav):
         if self.umm_type in ["UMM", "UMM_conv"]:
-            umm_token = self.umm.model.wav2token_alloutputs(wav)['vq_ids']
+            # umm_token = self.umm.wav2token(wav)
+            umm_token = self.umm.wav2requires(wav, 24000, slice_method="even")
         else:
             raise NotImplementedError
 
@@ -291,23 +314,6 @@ class DiffusionU2SInfer(LightningModule):
                 raise Exception("Not hangled make_cfg_input")
         return inputs
 
-    def sacodec_reconstruct(self, batch):
-        device = f"cuda:{self.trainer.local_rank}"
-        for item in batch:
-            uttid, syn_wav_path = item
-            wav, _ = librosa.load(
-                syn_wav_path,
-                sr=self.mel_config["sampling_rate"],
-                mono=False,
-            )
-            wav = torch.FloatTensor(wav).unsqueeze(0)
-            wav = wav.to(device)
-            if len(wav.shape) == 2:
-                wav = wav.unsqueeze(1)
-            reconstruct_wav = self.sacodec.reconstruct_audio(wav)
-            output_path = os.path.join(self.output_dir, uttid + ".wav")
-            save_wav(reconstruct_wav.cpu().numpy(), output_path)
-
     def setup(self, stage):
         device = f"cuda:{self.local_rank}"
         if self.infer_type != "vocoder" and self.umm_ckpt_path:
@@ -318,9 +324,23 @@ class DiffusionU2SInfer(LightningModule):
         else:
             self.umm = None
 
+        if self.infer_type == "ar-diffusion-vocoder":
+            self.umm = None
+
         self.sacodec: SACodecModule = self.bn_config["vocoder_model"](local_rank=self.local_rank)[
             "sacodec"
         ]
+        vocoder_precision = self.bn_config["precision"]
+        if self.sacodec.precision == "16-mixed" and vocoder_precision == "fp32":
+            raise Exception(f"Mismatched precision between reconstruction ({vocoder_precision}) and trained vocoder ({self.sacodec.precision})")
+        self.sacodec.precision = vocoder_precision
+
+        if self.infer_type == "ar-diffusion-vocoder":
+            self.sacodec.encoder = None
+            self.sacodec.melspec_loss = None
+            self.sacodec.multiperioddisc = None
+            self.sacodec.chroma_loss = None
+            self.sacodec.multiresddisc = None
 
         if self.umm_codebook_path is not None:
             self.umm_codebook = prepare_umm_codebook(self.umm_codebook_path, device)
@@ -587,6 +607,8 @@ class ChunkInfer2(DiffusionU2SInfer):
         without_prefix=True,
         padding_mode="token_padding",
         save_meta=True,
+        save_diffusion_output=False,
+        vocoder_chunk_infer=False,
         **kwargs,
     ):
         super().__init__(
@@ -614,8 +636,10 @@ class ChunkInfer2(DiffusionU2SInfer):
             # without_prefix,
             **kwargs,
         )
+        self.save_diffusion_output = save_diffusion_output
         self.save_meta = save_meta
         self.padding_mode = padding_mode
+        self.vocoder_chunk_infer = vocoder_chunk_infer
         if self.infer_type == "ar-diffusion-vocoder":
             assert self.padding_mode == "token_padding"
         assert (
@@ -851,9 +875,19 @@ class ChunkInfer2(DiffusionU2SInfer):
 
         full_mel = torch.cat(full_mel, dim=-1)
         full_mel = full_mel[:, inputs["prompt_length"] :, :]
-        with torch.autocast(device_type="cuda", enabled=False):
-            output_wavs = self.sacodec_embs_to_wav(full_mel.float()).cpu()
 
+        eos_id = self.token_config["token_eos"]
+        semantic_frame_rate = self.token_config["frame_rate"]
+        vocoder_frame_rate = self.bn_config["frame_rate"]
+        eos_index_list = process_eos_indexes(
+            semantic_samples=syn_umm_token, eos_id=eos_id,
+            semantic_frame_rate=semantic_frame_rate, output_frame_rate=vocoder_frame_rate
+        )
+        if self.vocoder_chunk_infer:
+            output_wavs = self.sacodec_embs_to_wav_chunked(full_mel, eos_index_list)
+        else:
+            output_wavs = self.sacodec_embs_to_wav(full_mel, eos_index_list)
+        
         batched_audio = output_wavs.cpu().numpy()
         if self.audio_norm_type == "clip":
             batched_audio = np.clip(batched_audio, a_min=-1, a_max=1)
@@ -862,11 +896,13 @@ class ChunkInfer2(DiffusionU2SInfer):
 
         groundtruth.emit("vocoder", data={"out_mel": full_mel, "audio": batched_audio})
 
+        save_output_dir = os.path.join(self.output_dir, "default")
+        os.makedirs(save_output_dir, exist_ok=True)
         for bidx, (uttid, audio) in enumerate(zip(inputs["uttid"], batched_audio)):
             if self.save_prompt:
                 prompt_wav = inputs["gt_wav"][bidx]
                 # audio = np.concatenate([prompt_wav, np.ones([10]), audio])
-                gt_path = os.path.join(self.output_dir, uttid + ".target_audio.wav")
+                gt_path = os.path.join(save_output_dir, uttid + ".target_audio.wav")
                 print(prompt_wav.shape, "prompt_wav")
                 if len(prompt_wav.shape) > 1:
                     gt_wav = prompt_wav.T 
@@ -877,13 +913,18 @@ class ChunkInfer2(DiffusionU2SInfer):
                 metadata = {
                             'file_name': uttid,
                         }
-                meta_fp = os.path.join(self.output_dir, f"{uttid}.metadata.json")
+                meta_fp = os.path.join(save_output_dir, f"{uttid}.metadata.json")
                 with open(meta_fp, 'w', encoding='utf-8') as f:
                     json.dump(metadata, f, indent=2, ensure_ascii=False)
 
-            output_path = os.path.join(self.output_dir, uttid + ".generated.wav")
+            output_path = os.path.join(save_output_dir, uttid + ".generated.wav")
             if "syn_wavlen" in inputs:
                 audio = audio[..., : inputs["syn_wavlen"][bidx]]
             save_wav(audio.T, output_path, sr=self.mel_config["sampling_rate"])
+
+            if self.save_diffusion_output:
+                latent = full_mel[bidx]
+                latent_path = os.path.join(save_output_dir, uttid + ".diffusion_output.pt")
+                torch.save(latent, latent_path)
 
         return torch.from_numpy(batched_audio)

@@ -69,6 +69,19 @@ class MaskedMSELoss(nn.Module):
         masked_mse_loss = torch.sum(self.mse(pred, target) * mask.unsqueeze(1)) / reduce_sum
         return masked_mse_loss
 
+
+
+class MaskedMSEWoReductionLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.mse = nn.MSELoss(reduction='none')
+
+    def forward(self, pred, target, mask=None):
+        reduce_sum = torch.clamp(torch.sum(mask), min=1.0) * target.size(1)
+        masked_mse_wo_reduction_loss = self.mse(pred, target) * mask.unsqueeze(1) / reduce_sum
+        return masked_mse_wo_reduction_loss
+
+
 class MaskedCELoss(nn.Module):
     def __init__(self):
         super().__init__()

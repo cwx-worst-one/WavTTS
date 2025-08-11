@@ -6,6 +6,7 @@ ConformerUMM_baseline:
   ckpt_path: "hdfs://haruna/home/byte_speech_sv/zongyu.yin/logs/umm/umm_stage3_zh_dw1-1-0_wordpiece_vq32768x16-layer12/checkpoints/step=070000.ckpt"
   token_cfg: True
   token_padding: !apply:samantha.utils.envs.getenv_int ["token_padding", 32768]
+  token_eos: !apply:samantha.utils.envs.getenv_int ["token_eos", 32769]
 
 
 
@@ -16,6 +17,7 @@ ConformerUMM_2250_2375:
   ckpt_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs/umm_conformer_2255mixedZHEN_2375Speech/umm_stage3_2255mixedZHEN_2375Speech_optim_mem_bert-base-multilingual-uncased_None32768x32/checkpoints/step=0180000.ckpt"
   token_cfg: True
   token_padding: !apply:samantha.utils.envs.getenv_int ["token_padding", 32768]
+  token_eos: !apply:samantha.utils.envs.getenv_int ["token_eos", 32769]
 
 
 ConvUMM_2255_2375:
@@ -25,6 +27,7 @@ ConvUMM_2255_2375:
   ckpt_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs/umm_conv_mixedZHEN/umm_stage3_conv1D_v2_2250mixedZHEN_2375Speech_direct_stage3_optim_mem_EMAVQ32768x32/checkpoints/step=0310000.ckpt"
   token_cfg: True
   token_padding: !apply:samantha.utils.envs.getenv_int ["token_padding", 32768]
+  token_eos: !apply:samantha.utils.envs.getenv_int ["token_eos", 32769]
 
 ConformerUMM_Unified_TTS_ROPE:
   frame_rate: 25
@@ -33,6 +36,7 @@ ConformerUMM_Unified_TTS_ROPE:
   ckpt_path: "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/hanoi.hantrakul/logs/umm_conformer_unified_tts_rope/umm_stage3_unified_tts_rope_bert-base-multilingual-uncased_EMAEntropy32768x32/checkpoints/step=220000.ckpt"
   token_cfg: True
   token_padding: !apply:samantha.utils.envs.getenv_int ["token_padding", 32768]
+  token_eos: !apply:samantha.utils.envs.getenv_int ["token_eos", 32769]
 
 ConformerUMM2:
   frame_rate: 25
@@ -42,3 +46,4 @@ ConformerUMM2:
   ckpt_path: "recipes/umm2/conf/inference_stage4_token_tag.yaml"
   token_cfg: True
   token_padding: !apply:samantha.utils.envs.getenv_int ["token_padding", 32768]
+  token_eos: !apply:samantha.utils.envs.getenv_int ["token_eos", 32769]

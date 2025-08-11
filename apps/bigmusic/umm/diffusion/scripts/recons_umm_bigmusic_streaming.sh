@@ -1,5 +1,5 @@
 export https_proxy=http://bj-rd-proxy.byted.org:3128 http_proxy=http://bj-rd-proxy.byted.org:3128 no_proxy=code.byted.org
-bash scripts/reinstall_s3a.sh 66
+bash scripts/reinstall_s3a.sh 68
 sudo apt install -y bc && pip install thop
 # meta_lst=/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/voice_condition_valsets/test_wo_vc.lst
 # meta_lst=/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/voice_condition_valsets/test_vc2.lst

@@ -4,7 +4,7 @@ __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high
 
 training_params:
     batch_size: 6
-    num_workers: 10
+    num_workers: 16
     duration: [3, 5, 8, 10]
     shuffle_buffer_size: 0
     valid_batch_size: 5
@@ -18,6 +18,8 @@ training_params:
     n_mels: 160
     n_chroma: 12
     audio_channels: 2
+
+    precision: 32
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -41,6 +43,8 @@ pl_datamodule: !new:recipes.sacodec.datasets.sacodec_dataset.ParquetDataModule
     valid_audio_duration: [20]
     max_num_crops: 12
     resample_to_24k: True
+    allow_resample: False
+    allow_mono: False
     audio_augmentations: null
     # prefetch_factor: !ref <training_params[dataloader_prefetch_factor]>
 
@@ -62,6 +66,9 @@ pl_module: !new:recipes.sacodec.modules.sacodec_module_umm.SACodecModule
     n_chroma: !ref <training_params[n_chroma]>
     n_mels: !ref <training_params[n_mels]>
     audio_channels: !ref <training_params[audio_channels]>
+    remove_grn_layers: True
+
+    precision: !ref <training_params[precision]>
 
     encoder_cls: !name:recipes.sacodec.models.sacodec_umm.STFTEncoderVAEPostUMM
         n_fft: !ref <training_params[n_fft]>
@@ -74,6 +81,7 @@ pl_module: !new:recipes.sacodec.modules.sacodec_module_umm.SACodecModule
         umm_version: umm_cn_rope
         umm_block_layers: 1
         block_layers: [1, 4, 4]
+        atan2_magnitude_threshold_ratio: 0.0
 
     decoder_cls: !name:recipes.sacodec.models.sacodec.ISTFTDecoder
         n_fft: !ref <training_params[n_fft]>
@@ -84,6 +92,7 @@ pl_module: !new:recipes.sacodec.modules.sacodec_module_umm.SACodecModule
         even_pad: True
         block_layers: [8, 4, 1]
         final_hidden_size: 3072
+        atan2_magnitude_threshold_ratio: 0.0
 
 
 run_opts:
@@ -128,4 +137,5 @@ trainer: !new:pytorch_lightning.Trainer
     num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
     log_every_n_steps: 100
     num_sanity_val_steps: 0
+    precision: !ref <training_params[precision]>
     val_check_interval: !ref <run_opts[val_check_interval]>

@@ -43,8 +43,8 @@ if [ -z $tokenizer_version ]; then
 fi
 
 if [ -z $vocoder_version ]; then
-	echo "no environment variant 'vocoder_version' exsists, will use 'vocoder_version=32k'"
-	export vocoder_version=32k
+	echo "no environment variant 'vocoder_version' exsists, will use 'vocoder_version=44.1k_vocal'"
+	export vocoder_version=44.1k_vocal
 fi
 
 

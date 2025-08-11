@@ -21,7 +21,8 @@ from samantha.utils.model_metric import ModelMetric
 from samantha.utils.flops_profiler import FlopsProfiler
 from recipes.voicebox.modules.loss import sequence_mask
 from recipes.voicebox.modules.loss import MaskedMAELoss, MaskedBCELoss, MaskedSSIMLoss, MaskedMSELoss
-from .utils import log_audio, plot_mel
+from recipes.voicebox.modules.loss import MaskedMSEWoReductionLoss
+from recipes.voicebox.lit_modules.utils import log_audio, plot_mel
 from recipes.sacodec.modules.sacodec_module_umm import SACodecModule as SACodecModuleUMM
 from recipes.sacodec.modules.sacodec_module import SACodecModule
 import random
@@ -35,6 +36,7 @@ logger = logging.getLogger(__name__)
 LOSS_DICT = {
         "l1": MaskedMAELoss,
         "l2": MaskedMSELoss,
+        "l2_wo_reduction": MaskedMSEWoReductionLoss,
         "ssim": MaskedSSIMLoss
         }
 
@@ -79,8 +81,6 @@ class VoiceBoxModule(pl.LightningModule):
     def __init__(
         self,
         model_cls,
-        optimizer_cls,
-        scheduler_cls,
         required_modules,
         criterions,
         checkpointing=True,
@@ -88,9 +88,15 @@ class VoiceBoxModule(pl.LightningModule):
         umm_dropout = 0.0,
         umm_pad=16384,
         diffusion_sample_rate=24000,
-        val_output_samples_dir="",
+        val_output_samples_dir="/tmp",
         bn_config=None,
+        optimizer_cls=None,
+        scheduler_cls=None,
         normalize_audio=0,
+        dpo_train=False,
+        dpo_loss_type='sigmoid',
+        dpo_beta=1.0,
+        dpo_condition_sync=True,
         umm_slice_pct=0.0
     ):
         super().__init__()
@@ -111,6 +117,10 @@ class VoiceBoxModule(pl.LightningModule):
 
         self.normalize_audio = normalize_audio
         self.umm_slice_pct = umm_slice_pct
+        self.dpo_train = dpo_train
+        self.dpo_loss_type = dpo_loss_type
+        self.dpo_beta = dpo_beta
+        self.dpo_condition_sync = dpo_condition_sync
 
         self.resume_ckpt_path = resume_ckpt_path
 
@@ -170,7 +180,7 @@ class VoiceBoxModule(pl.LightningModule):
     def get_umm_token(self, wav, slice_pct=0.0):
         with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=True):
             mode = 'even' if np.random.rand() < slice_pct else 'full'
-            # token = self.requires["Stage3"].model.wav2token_all_outputs(wav)["vq_ids"]
+            # token = self.requires["Stage3"].wav2token(wav)
             token = self.requires["Stage3"].wav2requires(wav, 24000, mode, chunk_size=60)
 
         return token
@@ -203,14 +213,8 @@ class VoiceBoxModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         if self.normalize_audio != 0 and "token" in batch:
             raise Exception("normalize_audio is not supported when training on pre-extracted UMM features. Either use OTF training or normalize_audio=0")
-        if self.normalize_audio == 1 and random.random() < 0.5:
-            batch["wav_24k"] = normalize_audio(batch["wav_24k"].unsqueeze(1)).squeeze(1)
-            batch["wav"] = normalize_audio(batch["wav"])
-
-            # randomly increase sound for tokenizer.
-            if random.random() < 0.8:
-                gain = 1 + random.random() * 0.25
-                batch["wav_24k"] = batch["wav_24k"] * gain
+        if self.normalize_audio == 1:
+            raise DeprecationWarning("normalize_audio=1 has been deprecated")
         elif self.normalize_audio == 2:
             prob = random.random()
             if prob < 0.80:
@@ -225,6 +229,19 @@ class VoiceBoxModule(pl.LightningModule):
                     gain_db = random.randint(-6, -1)
                     batch["wav_24k"] = torchaudio.functional.gain(batch["wav_24k"], gain_db=gain_db)
                     batch["wav"] = torchaudio.functional.gain(batch["wav"], gain_db=gain_db)
+        elif self.normalize_audio == 4: # increase umm volume. decrease wav volume
+            batch["wav_24k"] = batch["wav_24k"] * 1.05
+            batch["wav"] = batch["wav"]
+        elif self.normalize_audio == 5: # random change and clip umm volume.
+            gain_db = random.randint(-6, 6)
+            random_clamp = random.uniform(0.99, 1)
+            batch["wav_24k"] = torchaudio.functional.gain(batch["wav_24k"], gain_db=gain_db).clamp(-1*random_clamp, random_clamp)
+            batch["wav"] = batch["wav"]
+        elif self.normalize_audio == 6: # random change and clip umm volume. decrease wav volume -3db
+            gain_db = random.randint(-6, 6)
+            random_clamp = random.uniform(0.95, 1)
+            batch["wav_24k"] = torchaudio.functional.gain(batch["wav_24k"], gain_db=gain_db).clamp(-1*random_clamp, random_clamp)
+            batch["wav"] = torchaudio.functional.gain(batch["wav"], gain_db=-3)
 
         if "token" not in batch:
             batch["token"] = self.get_umm_token(batch["wav_24k"].unsqueeze(1), slice_pct=self.umm_slice_pct)
@@ -233,6 +250,11 @@ class VoiceBoxModule(pl.LightningModule):
             if torch.sum(drop_idx) > 0:
                 batch["token"][drop_idx] = self.umm_pad
                 # print(f"umm_dropout drop_idx={torch.sum(drop_idx)}/{batch['token'].shape[0]}")
+
+        if self.dpo_train and self.dpo_condition_sync:
+            # for DPO training, make sure token condition of win and lose are the same.
+            win_token, lose_token = batch["token"].chunk(2)
+            batch["token"] = torch.cat([win_token, win_token], dim=0)
 
         batch["bn"] = self.get_sacodec_embedding(batch["wav"]) # B x L x D
         sacodec_lens = (batch["wav_lens"] / 44100 * 50).round() # TODO: replace magic numbers with config values
@@ -261,11 +283,61 @@ class VoiceBoxModule(pl.LightningModule):
             pred, target = self.model(batch)
 
             loss_dict = {}
-            loss = 0
+            loss = None
             for loss_type, loss_func in self.criterion_dict.items():
                 tmp_loss = loss_func(pred, target, loss_mask)
-                loss_dict[loss_type] = tmp_loss.item()
-                loss += tmp_loss
+                loss_dict[loss_type] = tmp_loss.sum().item()
+                if loss is None:
+                    loss = tmp_loss
+                else:
+                    loss += tmp_loss
+
+            if self.dpo_train:
+                loss = loss.sum(dim=list(range(1, len(loss.shape))))
+                loss_w, loss_l = loss.chunk(2)
+                bsz = loss_w.shape[0]
+
+                with torch.no_grad():
+                    ref_preds, ref_target = self.model(batch)
+                    ref_loss = None
+                    for loss_type, loss_func in self.criterion_dict.items():
+                        tmp_loss = loss_func(ref_preds, ref_target, loss_mask)
+                        loss_dict["ref_"+loss_type] = tmp_loss.sum().item()
+                        if ref_loss is None:
+                            ref_loss = tmp_loss
+                        else:
+                            ref_loss += tmp_loss
+                    ref_loss = ref_loss.sum(dim=list(range(1, len(ref_loss.shape))))
+                    ref_losses_w, ref_losses_l = ref_loss.detach().chunk(2)
+
+                model_diff = loss_w - loss_l
+                ref_diff = ref_losses_w - ref_losses_l
+                # Final loss.
+                logits = ref_diff - model_diff
+                if self.dpo_loss_type == "sigmoid":
+                    loss = -1 * F.logsigmoid(self.dpo_beta * logits).mean()
+                elif self.dpo_loss_type == "hinge":
+                    loss = torch.relu(1 - self.dpo_beta * logits).mean()
+                elif self.dpo_loss_type == "ipo":
+                    losses = (logits - 1 / (2 * self.dpo_beta)) ** 2
+                    loss = losses.mean()
+                elif self.dpo_loss_type == "dspo":
+                    # https://openreview.net/pdf?id=xyfb9HHvMe
+                    scale_term = -0.5 * self.dpo_beta
+                    logits = scale_term * (model_diff - ref_diff) # [B]
+                    pred2, _ = (pred - ref_preds).chunk(2) # [B, T, D]
+
+                    expand_dims = (1,) * (pred2.ndim - 1)  # (1,1,1)
+                    logits_expanded = F.sigmoid(logits).view(-1, *expand_dims)  # [B, 1, 1]
+                    ref_losses_expanded = ref_losses_w.view(-1, *[1]*(pred2.ndim-1))  # [B, 1, 1]
+                    loss = (ref_losses_expanded - self.dpo_beta * (1 - logits_expanded) * pred2).pow(2)
+                    loss = loss.mean(dim=list(range(1, pred2.ndim))).mean()
+                else:
+                    raise ValueError(f"Unknown loss type {self.dpo_loss_type}")
+
+                implicit_acc = (logits > 0).sum().float() / logits.size(0)
+                implicit_acc += 0.5 * (logits == 0).sum().float() / logits.size(0)
+                loss_dict["implicit_acc"] = implicit_acc.item()
             
         if self.trainer.global_step % self.trainer.log_every_n_steps == 0:
             log_dict = {
@@ -329,7 +401,14 @@ class VoiceBoxModule(pl.LightningModule):
         # TODO: add validation loss
 
     def validation_from_dataset(self, batch, step):
+        return
         if step > 1: return
+
+        device_name = torch.cuda.get_device_name(0)
+        if "H20" in device_name:
+            return
+        if self.model.target_type != "rectified-flow":
+            return
         diffusion_nfe = 10
         diffusion_sampler = "ddim"
         text_cfg_w = 1.0
@@ -380,9 +459,8 @@ class VoiceBoxModule(pl.LightningModule):
                 gt_emb = single_batch_input["bn"].transpose(1,2) # B L D -> B D L
 
                 # print(f"gt_emb={gt_emb.shape} emb={emb.shape}")
-                with torch.autocast(device_type="cuda", enabled=False):
-                    wavs = self.sacodec_embs_to_wav(emb.float()).squeeze().cpu()
-                    gt_wavs = self.sacodec_embs_to_wav(gt_emb.float()).squeeze().cpu()
+                wavs = self.sacodec_embs_to_wav(emb).squeeze().cpu()
+                gt_wavs = self.sacodec_embs_to_wav(gt_emb).squeeze().cpu()
 
                 print(f"gt_wavs={gt_wavs.shape} wavs={wavs.shape}")
 

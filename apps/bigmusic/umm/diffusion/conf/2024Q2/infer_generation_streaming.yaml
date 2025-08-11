@@ -75,6 +75,7 @@ diffusion_config:
     diffusion_model_cls: !apply:os.getenv ["diffusion_model_cls","ChunkInfer2"]
     token_chunk_size: !ref <run_opts[token_chunk_size]>
     token_chunk_overlap: !ref <run_opts[token_chunk_overlap]>
+    vocoder_chunk_infer: False # switch to True for lower memory usage, lower quality
     padding_mode: "token_padding"
     audio_norm_type: !ref <sampler_config[audio_norm_type]>
     mem_efficient: !applyref:samantha.utils.envs.getenv_bool ['mem_efficient', True]

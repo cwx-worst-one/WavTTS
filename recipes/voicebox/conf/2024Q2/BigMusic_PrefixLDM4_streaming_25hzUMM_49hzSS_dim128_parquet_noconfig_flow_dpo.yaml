@@ -113,8 +113,10 @@ model_config: !new:recipes.voicebox.diffusion_modules.llama_ldm.ModelArgs
           - -1
     local_cond_project_type: linear
     use_unet_style_skip_connect: !ref <run_opts[use_unet_style_skip_connect]>
+    rf_sigma_distribution: lognorm
+    target_type: rectified-flow
 
-train_dataset: !new:recipes.voicebox.datasets.voicebox_promptmel_dataset_otf.VoiceBoxParquetDataset
+train_dataset: !new:recipes.voicebox.datasets.voicebox_promptmel_dataset_dpo.VoiceBoxParquetDataset
     data_id: !ref <run_opts[data_id]>
     drop_last: False
     batcher_config:
@@ -134,12 +136,13 @@ train_dataset: !new:recipes.voicebox.datasets.voicebox_promptmel_dataset_otf.Voi
                 - !ref <run_opts[bn_audio_freq]>
         dynamic_batch: True
         maximum_bucket_size: !ref <run_opts[batch_total_tokens]>
-        length_fn: !apply:eval ["lambda x: x[\"wav\"].shape[-1]"]  # seq.shape
+        length_fn: !apply:eval ["lambda x: x[\"win_wav\"].shape[-1]"]  # seq.shape
     bn_config: !ref <bn_config>
     umm_frame_rate: !ref <run_opts[umm_frame_rate]>
     token_audio_freq: !ref <run_opts[token_audio_freq]>
     bn_audio_freq: !ref <run_opts[bn_audio_freq]>
     shuffle_buffer_size: 0
+    dataset_cls: "PerferrenceDataset"
 
 val_dataset: !new:recipes.voicebox.datasets.voicebox_promptmel_dataset_otf.VoiceBoxParquetDataset
     data_id: !ref <run_opts[val_data_id]>
@@ -167,21 +170,20 @@ val_dataset: !new:recipes.voicebox.datasets.voicebox_promptmel_dataset_otf.Voice
     bn_audio_freq: !ref <run_opts[bn_audio_freq]>
     shuffle_buffer_size: 0
 
-collator: !new:recipes.voicebox.datasets.voicebox_promptmel_dataset_otf.VoiceBoxCollator
 
 # dataloader configuration
 train_dataloader: !new:torch.utils.data.DataLoader
     dataset: !ref <train_dataset>
     num_workers: !ref <run_opts[num_workers]>
     batch_size: !ref <run_opts[batch_size]>
-    collate_fn: !ref <collator>
+    collate_fn: !new:recipes.voicebox.datasets.voicebox_promptmel_dataset_dpo.VoiceBoxCollator
     pin_memory: True
 
 val_dataloader: !new:torch.utils.data.DataLoader
     dataset: !ref <val_dataset>
     num_workers: 2
     batch_size: !ref <run_opts[batch_size]>
-    collate_fn: !ref <collator>
+    collate_fn: !new:recipes.voicebox.datasets.voicebox_promptmel_dataset_otf.VoiceBoxCollator
     pin_memory: True
 
 # datamodule configuration
@@ -213,7 +215,7 @@ pl_module: !new:recipes.voicebox.lit_modules.lit_diffusion_voicebox_sacodec.Voic
     scheduler_cls: !ref <scheduler_cls>
     checkpointing: !ref <run_opts[checkpointing]>
     resume_ckpt_path: !ref <run_opts[resume_ckpt_path]>
-    criterions: ["l2"]
+    criterions: ["l2_wo_reduction"]
     required_modules:
         vocoder:
             hpath: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/andrew.shaw/sacodec_v5/sacodec_vB_44k_50h_128d_umm_rope_b2_vocal_h1536_ummdimfix_pretrain/checkpoints/sacodec_checkpoint_epoch=0_step=180000_val_loss=1.1525.ckpt
@@ -228,6 +230,10 @@ pl_module: !new:recipes.voicebox.lit_modules.lit_diffusion_voicebox_sacodec.Voic
     bn_config: !ref <bn_config>
     umm_dropout: 0.1
     umm_pad: !ref <run_opts[tokenizer_pad]> # not used
+    dpo_train: False
+    dpo_loss_type: 'sigmoid'
+    dpo_beta: 1.0
+    dpo_condition_sync: True
 
 logger:
     - !new:pytorch_lightning.loggers.TensorBoardLogger

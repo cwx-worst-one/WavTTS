@@ -16,7 +16,7 @@ from apps.bigmusic.umm.diffusion.lit_modules.lit_diffusion_voicebox import (
 from samantha.utils import groundtruth
 from samantha.dataio.lite.utils.mel import mel_spectrogram
 from apps.bigtts.umm.diffusion.lit_modules.infer_utils import set_seed, save_wav
-from recipes.diffusion.models.vocoder_model.utils import vocode_in_chunks
+from recipes.diffusion.models.vocoder_model.utils import vocode_in_chunks, vocode_in_ovl_chunks
 from hyperpyyaml import load_hyperpyyaml
 from samantha.utils.hparams import DotDict
 
@@ -211,12 +211,12 @@ class DiffusionU2SInfer(LightningModule):
         duration = pred_emb.shape[-1] // self.mel_frame_rate
         with torch.autocast(device_type="cuda", enabled=False):
             if duration > 30:
-                wavs_g = vocode_in_chunks(
-                    pred_emb,
-                    self.wvae,
-                    mini_bs=1,
-                    chunk_size=self.bn_config["chunk_size"],
-                )
+                wavs_g = vocode_in_ovl_chunks(pred_emb, self.wvae, 
+                                              mini_bs=1, overlap_ratio=0.1,
+                                            chunk_size=self.bn_config["chunk_size"],
+                                            border_padding=1, padding_value=0, #self.bn_config["bn_padding"],
+                                            vocoder_frame_rate=self.bn_config["frame_rate"], 
+                                            sample_rate=self.bn_config["sample_rate"])
             else:
                 wavs_g = vocode_in_chunks(
                     pred_emb, self.wvae, mini_bs=self.bn_config["mini_bs"], chunk_size=1
@@ -252,7 +252,7 @@ class DiffusionU2SInfer(LightningModule):
             )
             umm_token = umm_token[:, :token_len]
         elif self.umm_type in ["UMM", "UMM_conv"]:
-            umm_token = self.umm.model.wav2token_alloutputs(wav)['vq_ids']
+            umm_token = self.umm.wav2token(wav)
         elif self.umm_type in ["UMM_dualconv"]:
             token_vocal = self.umm.wav2token(wav, "vocal").squeeze()
             token_inst = self.umm.wav2token(wav, "inst").squeeze()
@@ -640,7 +640,7 @@ class DiffusionU2SInfer(LightningModule):
 
     def setup(self, stage):
         device = f"cuda:{self.local_rank}"
-        if self.infer_type != "vocoder" and self.umm_ckpt_path:
+        if self.infer_type != "vocoder" and self.infer_type != "ar-diffusion-vocoder" and self.umm_ckpt_path:
             if self.umm_type == "USM":
                 self.umm = prepare_usm(self.umm_ckpt_path, device)
             elif self.umm_type == "UMM":

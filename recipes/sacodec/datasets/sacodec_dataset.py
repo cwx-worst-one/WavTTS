@@ -12,6 +12,7 @@ import pytorch_lightning as pl
 import webdataset as wds
 import io
 from typing import Optional
+from torchaudio.functional import resample
 
 from torch.utils.data import DataLoader
 from webdataset.pipeline import DataPipeline
@@ -22,6 +23,9 @@ from samantha.dataio.webdataset.pipeline import WebPipeline
 import pyloudnorm as pyln
 import numpy as np
 import torchaudio
+
+# __dataset_name__
+NORM_DATASET = ["music_wyy-hq-part1_Swyy_N170k_T44k_v1_Clip", "music_wyy-hq-part2_Swyy_N87k_T44k_v1_Clip", "music_wyy-hq-part4_Swyy_N80k_T44k_v1_Clip"]
 
 
 ## accepts csv with uttid and wav path. e.g.: /mnt/bn/ashaw-lq/eval/valset_56wavs_120s/test_full.lst
@@ -52,6 +56,8 @@ class ParquetDatasetWrapper(WebPipeline):
         n_channels:int = 1,
         dataset_samplerate: int= 44100,
         resample_to_24k: bool = True,
+        allow_mono: bool = False,
+        allow_resample: bool = False,
         audio_augmentations: str = None,
     ):
         if isinstance(data_id, str) and data_id.endswith(".lst"):
@@ -66,6 +72,8 @@ class ParquetDatasetWrapper(WebPipeline):
         # self.meter = LoudnessCheck(dataset_samplerate, threshold=.05, loudness_ratio_threshold=0.3)
         self.dataset_samplerate = dataset_samplerate
         self.n_channels = n_channels
+        self.allow_mono = allow_mono
+        self.allow_resample = allow_resample
         self.resample_to_24k = resample_to_24k
         audio_augmentations = audio_augmentations if audio_augmentations else ""
         self.audio_augmentations = audio_augmentations.split(",")
@@ -95,8 +103,11 @@ class ParquetDatasetWrapper(WebPipeline):
                 else:
                     wav_npy, sr = torchaudio.load(io.BytesIO(item["wav"]))
                 if sr != self.dataset_samplerate:
-                    self._update_stats(f"Invalid sample rate {sr}")
-                    continue
+                    if self.allow_resample:
+                        wav_npy = resample(wav_npy, sr, self.dataset_samplerate)
+                    else:
+                        self._update_stats(f"Invalid sample rate {sr}")
+                        continue
             except Exception as e:
                 self._update_stats("Unable to load audio")
                 continue
@@ -106,8 +117,11 @@ class ParquetDatasetWrapper(WebPipeline):
                 wav_tensor = wav_tensor[None, :]
             # drop samples with not enogh channels
             if wav_tensor.shape[0] != self.n_channels:
-                self._update_stats(f"Invalid channels {wav_tensor.shape[0]}")
-                continue
+                if self.allow_mono and len(wav_tensor.squeeze().shape)==1: 
+                    wav_tensor = torch.stack([wav_tensor.squeeze(), wav_tensor.squeeze()], dim=0)
+                else:
+                    self._update_stats(f"Invalid channels {wav_tensor.shape[0]}")
+                    continue
                 
             audio_duration_samples = int(max(self.audio_duration) * self.dataset_samplerate)
             # drop the sample its too short
@@ -152,10 +166,11 @@ class ParquetDatasetWrapper(WebPipeline):
                 # if not self.meter(wav_crop):
                 #     self._update_stats("Audio not loud enough")
                 #     continue
-
-                if "quiet" in self.audio_augmentations and db > -14 and random.random() < 0.8:
+                dataset_name = item.get("__dataset_name__", "")
+                if "quiet" in self.audio_augmentations and db > -14 and random.random() < 0.75 and dataset_name in NORM_DATASET:
                     gain_db = random.randint(-6, -1)
                     wav_crop = torchaudio.functional.gain(wav_crop, gain_db=gain_db)
+
             
                 res = {"audio": wav_crop, "meta_song_id": item["uttid"]}
             
@@ -174,6 +189,31 @@ class ParquetDatasetWrapper(WebPipeline):
                     else: # no compression
                         audio_mp3_compress = wav_crop
                     res['audio_mp3_compress'] = audio_mp3_compress
+
+                if "reduce_volume" in self.audio_augmentations: 
+                    ## gain audio on both. add clipping to input.
+                    ## independently... reduce target audio by 0.9.
+
+                    audio_target = res['audio']
+                    # audio_24k_mono = res['audio_24k']
+                    audio_augment = res['audio_augmented'] if 'audio_augmented' in res else audio_target
+
+                    # randomly gain audio to both. randomly hard clip input.
+                    if random.random() < 0.25:
+                        gain_db = random.randint(1, 3)
+                        # audio_24k_mono = torchaudio.functional.gain(audio_24k_mono, gain_db=gain_db)
+                        audio_target = torchaudio.functional.gain(audio_target, gain_db=gain_db)
+                        audio_augment = torchaudio.functional.gain(audio_augment, gain_db=gain_db)
+                        if random.random() > 0.5:
+                            audio_augment = torch.clip(audio_augment, min=-1, max=1)
+
+                    # always reduce target by 1 db
+                    audio_target = torchaudio.functional.gain(audio_target, gain_db=-1)
+
+                    res['audio'] = audio_target
+                    res['audio_augmented'] = audio_augment
+
+
 
                 yield res
             self._update_stats(None, skipped=False)
@@ -225,6 +265,8 @@ class ParquetDataModule(pl.LightningDataModule):
         valid_audio_duration: int = None,
         max_num_crops: int = 6,
         resample_to_24k: bool = True,
+        allow_resample: bool = False,
+        allow_mono: bool = False,
         audio_augmentations: str = "",
         prefetch_factor=2,
     ):
@@ -240,6 +282,8 @@ class ParquetDataModule(pl.LightningDataModule):
             n_channels=n_channels,
             dataset_samplerate=dataset_samplerate,
             resample_to_24k=resample_to_24k,
+            allow_resample=allow_resample,
+            allow_mono=allow_mono,
             audio_augmentations=audio_augmentations,
         )
 

@@ -79,6 +79,10 @@ metrics_callbacks:
       transliteration: True
       no_gt_lyrics: True 
     - !new:recipes.bigmusic.callbacks.sdr_metrics.SISDRCallback
+    - !new:recipes.bigmusic.callbacks.audio_metrics.AudioLoundessDiffCallback
+
+diffusion_metrics_callbacks:
+    - !new:recipes.bigmusic.callbacks.diffusion_metrics.LatentMeanStdCallback
 
 upload_callbacks:
     - !new:recipes.bigmusic.callbacks.common_callbacks.UploadToEasyCycleCallback
@@ -109,6 +113,8 @@ pl_module: !new:apps.bigmusic.umm.diffusion.lit_modules.lit_diffusion_reconstruc
     token_chunk_overlap: !ref <run_opts[token_chunk_overlap]>
     padding_mode: "token_padding"
     save_prompt: True
+    save_diffusion_output: True
+    vocoder_chunk_infer: False # switch to True for lower memory usage, lower quality
     mem_efficient: !applyref:samantha.utils.envs.getenv_bool ['mem_efficient', True]
     extra_params: !ref <run_opts>
 
@@ -121,5 +127,5 @@ trainer: !new:pytorch_lightning.Trainer
     strategy: !ref <run_opts[strategy]>
     precision: !ref <run_opts[precision]>
     max_epochs: 1
-    callbacks: !apply:sum [[!ref <metrics_callbacks>, !ref <upload_callbacks>], []]
+    callbacks: !apply:sum [[!ref <metrics_callbacks>, !ref <upload_callbacks>, !ref <diffusion_metrics_callbacks>], []]
 

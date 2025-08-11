@@ -260,7 +260,7 @@ class ChromaLoss(nn.Module):
             B, A_C, CH, T = chroma.shape
             chroma = chroma.reshape(B * A_C, CH, T) #  bs, a_c, ch, l -> bs*ac, ch x l
             chroma = chroma[:, :, :-1].transpose(1, 2) # bs x ch x l -> bs x l x ch
-            return torch.nn.functional.normalize(chroma, p=2, dim=-1)
+            return torch.nn.functional.normalize(chroma, p=2, dim=-1, eps=1e-7)
         loss = torch.nn.functional.mse_loss(normalize_chroma(chroma_pred), normalize_chroma(chroma_gt))
 
         return loss
@@ -424,7 +424,7 @@ class SNRLoss(torch.nn.Module):
     https://github.com/csteinmetz1/auraloss/blob/main/auraloss/time.py
     """
 
-    def __init__(self, zero_mean=True, eps=1e-8, reduction="mean"):
+    def __init__(self, zero_mean=True, eps=1e-7, reduction="mean"):
         super(SNRLoss, self).__init__()
         self.zero_mean = zero_mean
         self.eps = eps
@@ -465,7 +465,7 @@ class SISDRLoss(torch.nn.Module):
     https://github.com/csteinmetz1/auraloss/blob/main/auraloss/time.py
     """
 
-    def __init__(self, zero_mean=True, eps=1e-8, reduction="mean"):
+    def __init__(self, zero_mean=True, eps=1e-7, reduction="mean"):
         super(SISDRLoss, self).__init__()
         self.zero_mean = zero_mean
         self.eps = eps

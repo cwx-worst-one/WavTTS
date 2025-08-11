@@ -21,6 +21,7 @@ class GRN(nn.Module):
         Gx = torch.norm(x, p=2, dim=1, keepdim=True)
         Nx = Gx / (Gx.mean(dim=-1, keepdim=True) + 1e-6)
         return self.gamma * (x * Nx) + self.beta + x
+    
 
 class ConvNeXtBlock(nn.Module):
     """ConvNeXt Block adapted from https://github.com/facebookresearch/ConvNeXt to 1D audio signal.
@@ -40,10 +41,12 @@ class ConvNeXtBlock(nn.Module):
         intermediate_dim: int,
         layer_scale_init_value: float = 0,
         adanorm_num_embeddings: Optional[int] = None,
-        add_prenorm=False
+        add_prenorm=False,
+        add_grn=True
     ):
         super().__init__()
         self.add_prenorm = add_prenorm
+        self.add_grn = add_grn
         if add_prenorm:
             self.prenorm = nn.LayerNorm(dim, eps=1e-6)
         self.dwconv = nn.Conv1d(dim, dim, kernel_size=7, padding=3, groups=dim)  # depthwise conv
@@ -54,13 +57,19 @@ class ConvNeXtBlock(nn.Module):
             self.norm = nn.LayerNorm(dim, eps=1e-6)
         self.pwconv1 = nn.Linear(dim, intermediate_dim)  # pointwise/1x1 convs, implemented with linear layers
         self.act = nn.GELU()
-        self.grn = GRN(intermediate_dim)
+        if add_grn:
+            self.grn = GRN(intermediate_dim)
+
         self.pwconv2 = nn.Linear(intermediate_dim, dim)
         self.gamma = (
             nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
             if layer_scale_init_value > 0
             else None
         )
+
+    def remove_grn_layer(self):
+        self.grn = None
+        self.add_grn = False
 
     def forward(self, x: torch.Tensor, cond_embedding_id: Optional[torch.Tensor] = None) -> torch.Tensor:
         residual = x
@@ -77,7 +86,8 @@ class ConvNeXtBlock(nn.Module):
             x = self.norm(x)
         x = self.pwconv1(x)
         x = self.act(x)
-        x = self.grn(x)
+        if self.add_grn:
+            x = self.grn(x)
         x = self.pwconv2(x)
         if self.gamma is not None:
             x = self.gamma * x
@@ -86,6 +96,13 @@ class ConvNeXtBlock(nn.Module):
         x = residual + x
         return x
 
+
+
+# TODO: (AS) remove GRN completely once new models have migrated over.
+def remove_grn_from_module(module):
+    for idx, module in enumerate(module.modules()):
+        if isinstance(module, ConvNeXtBlock):
+            module.remove_grn_layer()
 
 class AdaLayerNorm(nn.Module):
     """
@@ -247,7 +264,7 @@ class ConvNextBackboneDownUp(nn.Module):
             nn.init.trunc_normal_(m.weight, std=0.02)
             nn.init.constant_(m.bias, 0)
 
-    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, embed_fp32=False, **kwargs) -> torch.Tensor:
         """
         Args:
             x (Tensor): Input tensor of shape (B, C, L), where B is the batch size,
@@ -260,7 +277,11 @@ class ConvNextBackboneDownUp(nn.Module):
         # x: bs x ch x l
         # out: bs x ch x l
         bandwidth_id = kwargs.get('bandwidth_id', None)
-        x = self.pre_embed(x)
+        if embed_fp32:
+            with torch.autocast(device_type="cuda", enabled=False):
+                x = self.pre_embed(x.float())
+        else:
+            x = self.pre_embed(x)
         x = self.pre_norm(x.transpose(1, 2))
         x = x.transpose(1, 2)
         for conv_block in self.convnext:

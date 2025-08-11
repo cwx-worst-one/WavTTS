@@ -83,7 +83,8 @@ class DiscriminatorP(nn.Module):
     def forward(
         self, x: torch.Tensor, cond_embedding_id: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
-        x = self.preprocess(x) # added from soundstream
+        with torch.autocast(device_type="cuda", enabled=False):
+            x = self.preprocess(x.float()) # added from soundstream
         fmap = []
         # 1d to 2d
         b, c, t = x.shape
@@ -222,7 +223,8 @@ class DiscriminatorR(nn.Module):
         return x_bands
 
     def forward(self, x: torch.Tensor, cond_embedding_id: torch.Tensor = None):
-        x_bands = self.spectrogram(x)
+        with torch.autocast(device_type="cuda", enabled=False):
+            x_bands = self.spectrogram(x.float())
         fmap = []
         x = []
         for band, stack in zip(x_bands, self.band_convs):
