@@ -2,7 +2,7 @@
 # This software may be used and distributed according to the terms of the GNU General Public License version 3.
 
 from typing import Optional, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 
 import torch
@@ -11,8 +11,9 @@ import torch.nn.functional as F
 from torch.cuda.amp import autocast
 
 from einops import rearrange, repeat
-from triton.ops.blocksparse import matmul as sparse_matmul
-from triton.ops.blocksparse import softmax as sparse_softmax
+from samantha.utils.triton.blocksparse import matmul as sparse_matmul
+from samantha.utils.triton.blocksparse import softmax as sparse_softmax
+from recipes.voicebox.diffusion_modules.a_unet.blocks import default
 
 from samantha.models.ctiga.gpt import GPTModel
 from samantha.utils.cuda import get_compute_capability
@@ -59,6 +60,10 @@ class ModelArgs:
     multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
     norm_eps: float = 1e-6
     causal: bool = True
+    use_window_mask: bool = False
+    window_size: list = field(default_factory=lambda : [-1, -1]) 
+    window_type: str = "elemwise" # elemwise, blockwise
+    flashattn_version: float = 2.3
 
     max_batch_size: int = 32
     max_seq_len: int = 8192
@@ -76,6 +81,7 @@ class ModelArgs:
     phone_tokens_num: int = 200
 
     use_unet_style_skip_connect: bool = False
+    use_mla: bool = False
 
 
 class RMSNorm(torch.nn.Module):
@@ -490,7 +496,12 @@ class LLaMa(nn.Module):
                 residual_in_fp32=True,
                 checkpointing=params.checkpointing,
                 causal=params.causal,
-                use_unet_style_skip_connect=params.use_unet_style_skip_connect
+                use_window_mask=params.use_window_mask,
+                window_size=params.window_size,
+                window_type=params.window_type,
+                use_unet_style_skip_connect=params.use_unet_style_skip_connect,
+                use_mla=params.use_mla,
+                flashattn_version=params.flashattn_version,
             )
             layers = GPTModel(ctiga_config)
             del layers.embeddings.word_embeddings

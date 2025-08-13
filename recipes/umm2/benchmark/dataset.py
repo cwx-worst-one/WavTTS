@@ -313,7 +313,10 @@ class VocalTransforms(BaseTransforms):
         if len(ok_song_slices) == 0:
             if len(song_slices) == 1:
                 ok_song_slices = song_slices
-                ok_song_slices[0].text = song_slices[0].phrases[0].text.replace(" ", "")
+                if song_slices[0].phrases[0].text is None:
+                    song_slices[0].text = ""
+                else:
+                    song_slices[0].text = song_slices[0].phrases[0].text.replace(" ", "")
             else:
                 song_slice = SongSlice(
                     phrases=[Phrase(text=None, time_span=[0, meta["duration"]])],

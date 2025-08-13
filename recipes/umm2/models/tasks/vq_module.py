@@ -632,6 +632,9 @@ class EMAVectorQuantizerEntropy(nn.Module):
         Returns:
             distances: Distance matrix of shape [N, K]
         """
+        if not hasattr(self, "distance_type"):
+            self.distance_type = "euclidean"
+            
         if self.distance_type == "cosine":
             # Normalize vectors for cosine similarity
 

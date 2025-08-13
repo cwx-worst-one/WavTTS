@@ -59,6 +59,9 @@ def load_example_audio(audio_path=None):
     if audio_path is None:
         audio_path = "/mnt/bn/music-llm-nas-lq/qinxin/bak/inp071.generated.wav"
         audio_path = "/mnt/hdfs/qinxin.025/testset/token2wav/inp071.generated.wav"
+        if not os.path.exists(audio_path):
+            os.system("hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/testset/token2wav/inp071.generated.wav .")
+            audio_path = "inp071.generated.wav"
 
     audio, sr = torchaudio.load(audio_path)
     if sr != 24000:
@@ -74,10 +77,10 @@ if __name__ == "__main__":
     audio = load_example_audio()
 
     # 25Hz RVQ4
-    # ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/RVQ/RVQ_RP_4x16384_lr3e-5_30k_bs5_a100/checkpoints/step=0200000.ckpt"
+    ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/RVQ/RVQ_RP_4x16384_lr3e-5_30k_bs5_a100/checkpoints/step=0200000.ckpt"
 
     # 50Hz finetune stage3
-    ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/stage3/50Hz_FT25Hz_lr1e-4_cyc100k_bs4.5_VQ-RP_CTC-25Hz/checkpoints/step=0220000.ckpt"
+    # ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/stage3/50Hz_FT25Hz_lr1e-4_cyc100k_bs4.5_VQ-RP_CTC-25Hz/checkpoints/step=0220000.ckpt"
     # ckpt_path = "hdfs://haruna/home/byte_speech_sv/ju-chiang.wang/umm_tag/karaoke/umm_stage4_artist_weight_mel_chroma_ctc_vq/checkpoints/step=0320000.ckpt"
     
     # ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/stage3/50Hz_FT25Hz_lr1e-4_cyc100k_bs4.5_VQ-RP_CTC-25Hz_base2w_reweight/checkpoints/step=0220000.ckpt"
@@ -96,7 +99,7 @@ if __name__ == "__main__":
     
     # chunk-wise inference (recommended)
     print("======= chunk-wise inference =======")
-    chunk_output_dict = model.wav2requires(audio, requires=requires, slice_method="max", chunk_size=45)
+    chunk_output_dict = model.wav2requires(audio, audio_length=None, requires=requires, slice_method="max", chunk_size=45)
     for k in chunk_output_dict.keys():
         print(k)
         print(chunk_output_dict[k].shape if isinstance(chunk_output_dict[k], torch.Tensor) and chunk_output_dict[k].ndim > 1 else chunk_output_dict[k])
@@ -104,7 +107,7 @@ if __name__ == "__main__":
 
     # full-length inference (not recommended)
     print("======= full-length inference =======")
-    full_output_dict = model.wav2requires(audio, requires=requires, slice_method="full", chunk_size=None)
+    full_output_dict = model.wav2requires(audio, audio_length=None, requires=requires, slice_method="full", chunk_size=None)
     for k in full_output_dict.keys():
         print(k)
         print(full_output_dict[k].shape if isinstance(full_output_dict[k], torch.Tensor) and full_output_dict[k].ndim > 1 else full_output_dict[k])
@@ -113,7 +116,7 @@ if __name__ == "__main__":
     chunk_tokens = chunk_output_dict["token"]
     full_tokens = full_output_dict["token"]
 
-    with open("test_full.txt", "w") as f:
-        f.writelines("\n".join(full_tokens[0].cpu().reshape(-1).numpy().astype(str).tolist()))
-    with open("test_chunk.txt", "w") as f:
-        f.writelines("\n".join(chunk_tokens[0].cpu().reshape(-1).numpy().astype(str).tolist()))
+    with open("test_chunk_R1.txt", "w") as f:
+        f.writelines("\n".join(chunk_tokens[0][:,0].cpu().reshape(-1).numpy().astype(str).tolist()))
+    with open("test_full_R1.txt", "w") as f:
+        f.writelines("\n".join(full_tokens[0][:,0].cpu().reshape(-1).numpy().astype(str).tolist()))

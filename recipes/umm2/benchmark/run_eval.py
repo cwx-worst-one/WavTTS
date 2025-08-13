@@ -69,8 +69,9 @@ def evaluate_audio_slice(it,
         sample_dur = batch['audio'].shape[-1] / evaluator.sample_rate
         nsample += tokens.shape[0]
         mean_sample_dur += (sample_dur * tokens.shape[0])
+        data_type = "inst" if batch['no_lyric_flag'] else "vocal"
         print("=" * 50)
-        print(f"batch {i}, length={sample_dur}, avg_length={mean_sample_dur/nsample}, no_lyric_flag={batch['no_lyric_flag']}")
+        print(f"batch {i}, length={sample_dur}, avg_length={mean_sample_dur/nsample}, data_type={data_type}")
         f.writelines("=" * 50 + "\n")
         f.writelines(f"batch {i}, length={sample_dur}, avg_length={mean_sample_dur/nsample}\n")
 
@@ -188,10 +189,12 @@ def evaluate_audio_slice(it,
             slice_loss_dicts[key] += slice_loss_dict[key]
             if batch["no_lyric_flag"]:
                 slice_loss_dicts_inst[key] += slice_loss_dict[key]
-                inst_i += 1
             else:
                 slice_loss_dicts_vocal[key] += slice_loss_dict[key]
-                vocal_i += 1
+        if data_type == 'inst':
+            inst_i += 1
+        else:
+            vocal_i += 1
 
         i += 1  
 
@@ -204,6 +207,11 @@ def evaluate_audio_slice(it,
             print_stat(vocal_i, evaluator, slice_loss_dicts_vocal, slice_locality_dicts, slice_ctc_wers, slice_repetition_dicts, tiktok, tasks=tasks)
 
     print_stat(i, evaluator, slice_loss_dicts, slice_locality_dicts, slice_ctc_wers, slice_repetition_dicts, tiktok, tasks=tasks)
+    print("instrumental music")
+    print_stat(inst_i, evaluator, slice_loss_dicts_inst, slice_locality_dicts, slice_ctc_wers, slice_repetition_dicts, tiktok, tasks=tasks)
+    print("vocal music")
+    print_stat(vocal_i, evaluator, slice_loss_dicts_vocal, slice_locality_dicts, slice_ctc_wers, slice_repetition_dicts, tiktok, tasks=tasks)
+
 
     output_dict = {}
     if "code_rate" in tasks:
@@ -265,12 +273,14 @@ def print_stat(i, evaluator, loss_dicts, locality_dict, ctc_wers, repetition_dic
     _ld = {}
     if "locality" in tasks:
         print("\n[locality]")
-        for key in locality_dict.keys():
-            if isinstance(locality_dict[key][0], list):
-                _ld[key] = torch.tensor(locality_dict[key]).mean(0)
-            else:
-                _ld[key] = torch.stack(locality_dict[key]).mean(0)  # [n_slice, n_locality_metrics]
-            print(key, _ld[key])
+        for hh in range(evaluator.h):
+            print("** hierarchy {} **".format(hh))
+            for key in locality_dict.keys():
+                if isinstance(locality_dict[key][hh][0], list):
+                    _ld[key] = torch.tensor(locality_dict[key][hh]).mean(0)
+                else:
+                    _ld[key] = torch.stack(locality_dict[key][hh]).mean(0)  # [n_slice, n_locality_metrics]
+                print(key, f"{_ld[key].item() * 100:.2f}%")  
 
     if "ctc_wer" in tasks:
         print("\n[ctc wer]")
@@ -279,15 +289,17 @@ def print_stat(i, evaluator, loss_dicts, locality_dict, ctc_wers, repetition_dic
         
     if "token_repetition" in tasks:
         print("\n[token_repetition]")
-        cnt = 0
-        all_tokens = sum([k*v for k, v in repetition_dict.items()])
-        for key in sorted(repetition_dict.keys()):
-            print(key, repetition_dict[key], "{:.2f}%".format(repetition_dict[key] / all_tokens * 100))
-            cnt += 1
-            if cnt > 10:
-                break
+        for hh in range(len(repetition_dict)):
+            cnt = 0
+            print("** hierarchy {} **".format(hh))
+            all_tokens = sum([k*v for k, v in repetition_dict[hh].items()])
+            for key in sorted(repetition_dict[hh].keys()):
+                print(key, repetition_dict[hh][key], "{:.2f}%".format(repetition_dict[hh][key] / all_tokens * 100))
+                cnt += 1
+                if cnt > 10:
+                    break
 
-    print("[time]")
+    print("\n[time]")
     print(tiktok)
 
 
@@ -304,8 +316,9 @@ def evaluate(it,
              text_tokenizer=None,
              chunk_locality_dur=10,
              ):
-    loss_dicts, locality_dict, repetition_dict = {}, {}, {}
-    nsample, mean_sample_dur, time_cnt, i = 0, 0, 0, 0
+    loss_dicts, locality_dict, repetition_dict = {}, {}, [{} for _ in range(evaluator.h)]
+    nsample, mean_sample_dur, time_cnt, i, inst_i, vocal_i = 0, 0, 0, 0, 0, 0
+    loss_dicts_vocal, loss_dicts_inst = {}, {}
     ctc_wers = []
     evaluator.reset_code_count()
 
@@ -343,8 +356,9 @@ def evaluate(it,
         sample_dur = batch['audio'].shape[-1] / evaluator.sample_rate
         nsample += tokens.shape[0]
         mean_sample_dur += (sample_dur * tokens.shape[0])
+        data_type = "inst" if batch['no_lyric_flag'] else "vocal"
         print("=" * 50)
-        print(f"batch {i}, length={sample_dur}, avg_length={mean_sample_dur/nsample}, no_lyric_flag={batch['no_lyric_flag']}")
+        print(f"batch {i}, length={sample_dur}, avg_length={mean_sample_dur/nsample}, data_type={data_type}")
         f.writelines("=" * 50 + "\n")
         f.writelines(f"batch {i}, length={sample_dur}, avg_length={mean_sample_dur/nsample}, no_lyric_flag={batch['no_lyric_flag']}")
 
@@ -366,6 +380,21 @@ def evaluate(it,
                 for key in loss_dict.keys():
                     loss_dicts[key] += loss_dict[key]
             print(loss_dict)
+            for key in loss_dict.keys():
+                if key.endswith("out"):
+                    continue
+                if data_type == 'inst':
+                    if key not in loss_dicts_inst:
+                        loss_dicts_inst[key] = 0
+                    loss_dicts_inst[key] += loss_dict[key]
+                else:
+                    if key not in loss_dicts_vocal:
+                        loss_dicts_vocal[key] = 0
+                    loss_dicts_vocal[key] += loss_dict[key]
+            if data_type == 'inst':
+                inst_i += 1
+            else:
+                vocal_i += 1
 
         if "ctc_wer" in tasks:
             ctc_wer, transcript = evaluator.ctc_wer(this_output_dict["ctc_out"], input_batch["token"]['input_ids'], text_tokenizer)
@@ -392,16 +421,29 @@ def evaluate(it,
             
         if "token_repetition" in tasks:
             this_repetition = evaluator.token_repetition(tokens)
-            for key in this_repetition.keys():
-                if key not in repetition_dict:
-                    repetition_dict[key] = 0
-                repetition_dict[key] += this_repetition[key]
+            for hh in range(evaluator.h):
+                for key in this_repetition[hh].keys():
+                    if key not in repetition_dict[hh]:
+                        repetition_dict[hh][key] = 0
+                    repetition_dict[hh][key] += this_repetition[hh][key]
+
         i += 1
+        
+
         tiktok = [time_cnt, nsample, mean_sample_dur / nsample]
         if i % 5 == 0:
             print_stat(i, evaluator, loss_dicts, locality_dict, ctc_wers, repetition_dict, tiktok, tasks=tasks)
+            print("instrumental music")
+            print_stat(inst_i, evaluator, loss_dicts_inst, locality_dict, ctc_wers, repetition_dict, tiktok, tasks=tasks)
+            print("vocal music")
+            print_stat(vocal_i, evaluator, loss_dicts_vocal, locality_dict, ctc_wers, repetition_dict, tiktok, tasks=tasks)
+
 
     print_stat(i, evaluator, loss_dicts, locality_dict, ctc_wers, repetition_dict, tiktok, tasks=tasks)
+    print("instrumental music")
+    print_stat(inst_i, evaluator, loss_dicts_inst, locality_dict, ctc_wers, repetition_dict, tiktok, tasks=tasks)
+    print("vocal music")
+    print_stat(vocal_i, evaluator, loss_dicts_vocal, locality_dict, ctc_wers, repetition_dict, tiktok, tasks=tasks)
     output_dict = {}
     if "code_rate" in tasks:
         code_rate = evaluator.compute_code_rate()
@@ -419,26 +461,32 @@ def evaluate(it,
 
     if "locality" in tasks:
         print("[locality]")
-        for key in locality_dict.keys():
-            locality_dict[key] = torch.tensor(locality_dict[key]).mean(0)  # [n_slice, n_locality_metrics]
-            print(key, locality_dict[key])
-        output_dict["locality"] = locality_dict
+        _ld = {}
+        for hh in range(evaluator.h):
+            print("** hierarchy {} **".format(hh))
+            for key in locality_dict.keys():
+                if isinstance(locality_dict[key][hh][0], list):
+                    _ld[key] = torch.tensor(locality_dict[key][hh]).mean(0).item()
+                else:
+                    _ld[key] = torch.stack(locality_dict[key][hh]).mean(0).item()  # [n_slice, n_locality_metrics]
+                print(key, f"{_ld[key] * 100:.2f}%")
+        output_dict["locality"] = _ld
 
     if "ctc_wer" in tasks:
         print("[ctc wer]")
         ctc_wers = torch.tensor(ctc_wers)
         print("wer | ins | del | sub ", ctc_wers.mean(0))
         output_dict["ctc_wer"] = ctc_wers.mean(0)
-        
+
     if "token_repetition" in tasks:
         print("\n[token_repetition]")
         cnt = 0
-        all_tokens = sum([k*v for k, v in repetition_dict.items()])
-        for key in sorted(repetition_dict.keys()):
-            print(key, repetition_dict[key], "{:.2f}%".format(repetition_dict[key] / all_tokens * 100))
-            cnt += 1
-            if cnt > 10:
-                break
+        for hh in range(len(repetition_dict)):
+            print("** hierarchy {} **".format(hh))
+            all_tokens = sum([k*v for k, v in repetition_dict[hh].items()])
+            for key in sorted(repetition_dict[hh].keys()):
+                print(key, repetition_dict[hh][key], "{:.2f}%".format(repetition_dict[hh][key] / all_tokens * 100))
+                cnt += 1
         output_dict["token_repetition"] = repetition_dict
 
     output_dict["time_count"] = [time_cnt, nsample, mean_sample_dur / nsample]
@@ -538,7 +586,7 @@ if __name__ == "__main__":
             f.write("="*50 + "\n")
             for k, v in eval_output_dict.items():
                 f.write(f"{k}\n{v}" + "\n")
-            f.close()
+            f.write("="*50 + "\n")
 
         for slice_mode in slice_modes:
             if slice_mode == 'full':
@@ -557,7 +605,7 @@ if __name__ == "__main__":
             for k, v in eval_output_dict.items():
                 f.write(f"{k}\n{v}" + "\n")
             f.write("="*50 + "\n")
-
+        f.close()
 
     if any([x in ["ctc_wer"] for x in tasks]):
         lyric_dataset = EvalDataset(
@@ -588,7 +636,7 @@ if __name__ == "__main__":
             f2.write("="*50 + "\n")
             for k, v in eval_output_dict.items():
                 f2.write(f"{k}\n{v}" + "\n")
-            f2.close()
+            f2.write("="*50 + "\n")
 
         for slice_mode in slice_modes:
             if slice_mode == 'full':
@@ -606,5 +654,6 @@ if __name__ == "__main__":
             f2.write("="*50 + "\n")
             for k, v in eval_output_dict.items():
                 f2.write(f"{k}\n{v}" + "\n")
-            f2.close()
+            f2.write("="*50 + "\n")
+        f2.close()
 

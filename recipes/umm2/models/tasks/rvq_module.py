@@ -88,6 +88,7 @@ class RVQ(VQ):
             "prevq_embs": to_quantize_embs,
             "quantized_out": hidden_states,
             "vq_ids": vq_ids,
+            "vq_emb": vq_emb,
             "loss": loss_weighted,
             f"aux/loss_{self.task}": loss, 
 
@@ -468,7 +469,7 @@ if __name__ == "__main__":
     }
     
     # initialize with same embedding weight
-    embedding = EMAEmbeddingRP(r=0, codebook_dim=16384, codebook_size=32, decay=0.99,)
+    embedding = EMAEmbeddingRP(r=0, codebook_dim=16384, codebook_size=32, decay=0.99, dist=False)
     
     # original_vq = EMAVectorQuantizerRPSimple(**args)
     # new_vq = EMAVectorQuantizerRPSimplePadding(**args)

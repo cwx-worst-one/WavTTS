@@ -73,9 +73,9 @@ class CTC_Head(BaseStage):
         self.blank_id = config.ctc_blank_id
         self.reduction = config.ctc_loss_reduction
         self.loss_weight = loss_weight
-        self.ignore_empty = config.ctc_ignore_empty
+        self.ignore_empty = config.get("ctc_ignore_empty", True)
 
-        if config.ctc_downsample:
+        if config.get("ctc_downsample", False):
             self.ctc_downsample = Downsampler(
                 config.hidden_size, 
                 config.ctc_downsample_rate, 
@@ -100,6 +100,8 @@ class CTC_Head(BaseStage):
             reduction=config.ctc_loss_reduction,
             zero_infinity=config.ctc_zero_infinity,
         )
+
+        self.ctc_head_input_key = config.get('ctc_head_input_key', 'latent')
 
     def get_metrics(self, ctc_logits, input_attn_mask, tokens, tokens_attn_mask, ignore_invalid: bool = True):
         """
@@ -233,8 +235,7 @@ class CTC_Head(BaseStage):
 
 
     def forward(self, input_dict):
-
-        hidden_states = input_dict['latent']
+        hidden_states = input_dict[self.ctc_head_input_key]
         attn_mask = input_dict['attn_mask']
         tokens = input_dict['token']['input_ids']
         tokens_attn_mask = input_dict['token']['attention_mask']

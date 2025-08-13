@@ -108,9 +108,50 @@ class AE_UMM(UMM):
         padded_wav = self.pad_audio(wav.float())
         return padded_wav
     
+    # @qinxin: This version is for models trained before umm2 refactor (no attn_mask, no fused kernel)
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
-    def wav2token(self, wav):
+    def wav2token_old(self, wav):
+        wav = self.prepare_wav(wav)
+        input_dict = self.preprocessing(wav)
+        output_dict = {}
+        feature = input_dict['mel']
+        feature = self.audio_encoder(feature)
+        hidden_states = self.encoder_input_dropout(feature)
+        position_embeddings = self.embed_positions(hidden_states)
+
+        output_dict = {}
+        hidden_states = feature # [B, T, D]
+        for i, layer in enumerate(self.encoder_layers):
+            if self.insert_layer_nums is not None and i in self.insert_layer_nums:
+                insert_module = self.insert_modules[self.insert_layer_nums.index(i)]
+                insert_input_dict = {'latent': hidden_states,
+                                     'attn_mask': torch.ones_like(hidden_states[:, :, 0])}
+                insert_output_dict = insert_module(insert_input_dict)
+                output_dict.update(insert_output_dict)
+                if i == self.insert_layer_nums[-1]:
+                    break
+
+            # Pass the hidden_states through the current Conformer encoder layer
+            hidden_states = layer(
+                hidden_states,
+                position_embeddings=position_embeddings
+            )
+
+        output_dict.update({
+            "audio": wav,
+            "mel": input_dict["mel"],
+            "latent": hidden_states,
+        })
+        return output_dict
+
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def wav2token(self, wav, wav_len=None):
+        if not hasattr(self, 'pos_enc'):
+            return self.wav2token_old(wav)
+
         wav = self.prepare_wav(wav)
         input_dict = self.preprocessing(wav)
         output_dict = {}

@@ -66,7 +66,8 @@ class EncoderOnlyModelLoader(BaseModelLoader):
     def modify_state_dict_and_check_size(self, current_state_dict, state_dict):
         current_state_dict_keys = current_state_dict.keys()
         map_state_dict = {}
-        module_keys = ["audio_encoder", "encoder_layers", "embed_positions", "audio_transform"]
+        module_keys = ["audio_encoder", "encoder_layers", "embed_positions", "audio_transform",
+                       "pos_enc"]
         
         for k in list(state_dict.keys()):
             if any([x in k for x in module_keys]):

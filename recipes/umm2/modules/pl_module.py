@@ -67,11 +67,18 @@ class Stage0(pl.LightningModule):
 
 
     def load_required_modules(self):
+        self.requires = {}
         for module_name, loader_config in self.required_modules.items():
             print(f"loading module {module_name}...")
-            _args = {k: v for k, v in loader_config.items() if k != "loader"}
-            loader = loader_config["loader"](**_args)
-            self = loader.load_model(pl_module=self)
+            if "loader" in loader_config:   # load into model
+                _args = {k: v for k, v in loader_config.items() if k != "loader"}
+                loader = loader_config["loader"](**_args)
+                self = loader.load_model(pl_module=self)
+            else:   # load as extra module
+                hpath = loader_config['hpath']
+                initializer = loader_config['initializer']
+                self.requires.update(initializer(hpath, local_rank=self.local_rank, cache_dir="./"))
+
 
     @property
     def profiler(self):

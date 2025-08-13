@@ -40,7 +40,10 @@ class Stage2(Stage0):
 
         #  Calculate VQ statistic if vq layer is in model
         if self.trainer.global_step % 100 == 0:
-            vq_stats = self._calculate_vq_stats(output_dict)
+            if "acoustic_vq_ids" in output_dict and "semantic_vq_ids" in output_dict:
+                vq_stats = self._calculate_dual_vq_stats(output_dict)
+            else:
+                vq_stats = self._calculate_vq_stats(output_dict)
             output_dict.update(vq_stats)
 
         output_dict['aux/bs'] = len(batch['uttid'])
@@ -66,7 +69,6 @@ class Stage2(Stage0):
         codebook_size = self.config.vq_codebook_size
 
         ndim = vq_ids_tensor.ndim
-
         if ndim == 3:
             stats.update(self._process_multi_codebook(vq_ids_long, attn_mask, codebook_size))
         elif ndim == 2:
@@ -76,6 +78,54 @@ class Stage2(Stage0):
         return stats
         
 
+    def _calculate_dual_vq_stats(self, output_dict: dict) -> dict:
+        """
+        Calculates acoustic & semantic quantization statistics based on the model's output.
+        Handles both single and multi-codebook cases.
+        Optimized for performance with early returns and batch processing.
+        """
+
+        # This dictionary will store the new metrics
+        stats = {}
+        semantic_vq_ids_tensor = output_dict.get("semantic_vq_ids")
+        acoustic_vq_ids_tensor = output_dict.get("acoustic_vq_ids")
+        if semantic_vq_ids_tensor is None:
+            logger.warning("semantic_vq_ids_tensor is None")
+        if acoustic_vq_ids_tensor is None:
+            logger.warning("acoustic_vq_ids_tensor is None")
+            # return {}
+
+        semantic_vq_ids_long = semantic_vq_ids_tensor.long()
+        acoustic_vq_ids_long = acoustic_vq_ids_tensor.long()
+        attn_mask = output_dict['attn_mask']
+        acoustic_codebook_size = self.config.vq_codebook_size
+        semantic_codebook_size = self.config.get("semantic_vq_codebook_size", acoustic_codebook_size)
+        
+        ndim = semantic_vq_ids_tensor.ndim
+        semantic_stats = {}
+        if ndim == 3:
+            semantic_stats = self._process_multi_codebook(semantic_vq_ids_long, attn_mask, semantic_codebook_size)
+        elif ndim == 2:
+            semantic_stats = self._process_single_codebook(semantic_vq_ids_long, attn_mask, semantic_codebook_size)
+        else:
+            logger.warning(f"semantic_vq_ids has unsupported dimension {ndim}. Skipping calculation.")
+        
+        for key in semantic_stats:
+            stats["semantic_"+key] = semantic_stats[key]
+
+        ndim = acoustic_vq_ids_tensor.ndim
+        acoustic_stats = {}
+        if ndim == 3:
+            acoustic_stats = self._process_multi_codebook(acoustic_vq_ids_long, attn_mask, acoustic_codebook_size)
+        elif ndim == 2:
+            acoustic_stats = self._process_single_codebook(acoustic_vq_ids_long, attn_mask, acoustic_codebook_size)
+        else:
+            logger.warning(f"acoustic_vq_ids has unsupported dimension {ndim}. Skipping calculation.")
+        for key in acoustic_stats:
+            stats["acoustic_"+key] = acoustic_stats[key]
+
+        return stats
+    
     def _process_multi_codebook(self, vq_ids_long, attn_mask, codebook_sizes):
         """Process multi-codebook VQ statistics with optimized batch operations."""
         num_codebooks = vq_ids_long.shape[-1]
@@ -234,7 +284,7 @@ class Stage2(Stage0):
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
-    def wav2requires(self, audio, audio_length, requires=None, slice_method='full', chunk_size=45):
+    def wav2requires(self, audio, audio_length=None, requires=None, slice_method='full', chunk_size=45):
         """
         Args:
             requires: list of requirements, support {token, latent, tag, loss}
@@ -248,6 +298,8 @@ class Stage2(Stage0):
 
         if requires is None:
             requires = []
+        if audio_length is None:
+            audio_length = torch.tensor(audio.shape[-1], device=self.device).repeat(audio.shape[0])
             
         assert audio.ndim == 3 and audio.shape[1] == 1, "Input audio must be mono with shape [B, 1, T]."
         audio = audio.to(self.device)

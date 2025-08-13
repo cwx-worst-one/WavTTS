@@ -171,6 +171,11 @@ class TokenEvaluator(torch.nn.Module):
         else:
             self.codebook_size = self.config.vq_codebook_size
             self.h = self.config.get("rvq", 1)
+
+            if self.config.get("semantic_decoder_vq_type", None):
+                self.codebook_size = [self.config.vq_codebook_size, self.config.semantic_vq_codebook_size]
+                self.h = 2
+
         print("codebook_size: ", self.codebook_size)
         self.load_required_modules()
 
@@ -258,6 +263,9 @@ class TokenEvaluator(torch.nn.Module):
             vq_id = result_dict["rvq_ids"]
         elif "uq_ids" in result_dict:
             vq_id = result_dict["uq_ids"]
+        elif "acoustic_vq_ids" in result_dict and "semantic_vq_ids" in result_dict:
+            vq_id = torch.stack([result_dict["acoustic_vq_ids"],
+                                result_dict["semantic_vq_ids"]], dim=-1)
         else:
             raise ValueError("vq_ids or rvq_ids not found in result_dict")
         return vq_id
@@ -275,22 +283,32 @@ class TokenEvaluator(torch.nn.Module):
         
     def compute_locality(self, ref_token, token):
         assert ref_token.shape == token.shape
-        return torch.sum(ref_token == token) / torch.prod(torch.tensor(ref_token.shape))
+        if token.ndim == 2:
+            if token.shape[-1] > 1:
+                token, ref_token = token.unsqueeze(0), ref_token.unsqueeze(0)
+            else:
+                token, ref_token = token.unsqueeze(-1), ref_token.unsqueeze(-1)
+        locality = []
+        for i in range(self.h):
+            locality.append(torch.sum(ref_token[...,i] == token[...,i]) / torch.prod(torch.tensor(ref_token[..., i].shape)))
+        return locality
 
     def update_code_usage(self, tokens):
         if tokens.ndim == 2:
             tokens = tokens.unsqueeze(-1)
         for i in range(tokens.shape[-1]):
             self.code_count[i] += torch.bincount(tokens[...,i].flatten().cpu(),
-                                                 minlength=self.codebook_size)
+                                                 minlength=self.codebook_size[i] if isinstance(self.codebook_size, list) else self.codebook_size)
 
     def reset_code_count(self):
         self.h = self.inference_R if self.inference_R is not None else self.h
-        self.code_count = torch.zeros(self.h, self.codebook_size)
+        self.code_count = []
+        for i in range(self.h):
+            self.code_count.append(torch.zeros(self.codebook_size[i] if isinstance(self.codebook_size, list) else self.codebook_size))
 
     def compute_code_rate(self):
         code_rate = []
-        for i in range(self.code_count.shape[0]):
+        for i in range(self.h):
             code_rate.append(torch.sum(self.code_count[i] > 0) / len(self.code_count[i]))
         return code_rate
     
@@ -298,7 +316,7 @@ class TokenEvaluator(torch.nn.Module):
         fig = plt.figure()
         colors = ["r", "blue", "g", "black"]
         legend_list = []
-        for r in range(self.code_count.shape[0]):
+        for r in range(self.h):
             if r > len(colors):
                 plt.plot(self.code_count[r])
             else:
@@ -309,7 +327,7 @@ class TokenEvaluator(torch.nn.Module):
         plt.close(fig)
 
         fig = plt.figure()
-        for r in range(self.code_count.shape[0]):
+        for r in range(self.h):
             sorted_code_count = self.code_count[r]
             sorted_code_count = sorted(sorted_code_count)[::-1]
             if r > len(colors):
@@ -330,7 +348,6 @@ class TokenEvaluator(torch.nn.Module):
             # fix as the center
             start_sec = int((audio.shape[-1] / self.sample_rate - _slice_len) / 2)
             target_audio_slice = audio[..., start_sec*self.sample_rate: (start_sec + _slice_len) * self.sample_rate]
-
 
             target_tokens, _, _ = self.get_tokens(target_audio_slice, None)
             # 1) padding zeros
@@ -362,7 +379,10 @@ class TokenEvaluator(torch.nn.Module):
             # print("right_border_tokens", right_border_tokens[:,-target_tokens.shape[1]:].shape, target_tokens.shape)
             right_border_locality = self.compute_locality(right_border_tokens[:,-target_tokens.shape[1]:], target_tokens)
             
-            locality[f"{_slice_len}s"] = [zero_padding_locality, context_locality, left_border_locality, right_border_locality]
+            locality[f"{_slice_len}s_zero_pad"] = zero_padding_locality
+            locality[f"{_slice_len}s_context"] = context_locality
+            locality[f"{_slice_len}s_left_border"] = left_border_locality
+            locality[f"{_slice_len}s_right_border"] = right_border_locality
 
         return locality
 
@@ -438,8 +458,7 @@ class TokenEvaluator(torch.nn.Module):
         min_len = min(concatenated_tokens.shape[0], full_tokens.shape[0])
 
         # Compare with full tokens
-
-        result =  self.compute_locality(concatenated_tokens[0:min_len], full_tokens[0:min_len])
+        result = self.compute_locality(concatenated_tokens[0:min_len], full_tokens[0:min_len])
         
         return {
             f"chunk_locality_{chunk_size}": result
@@ -448,7 +467,11 @@ class TokenEvaluator(torch.nn.Module):
     def token_repetition(self, tokens):
         if tokens.ndim == 2:
             tokens = tokens.unsqueeze(-1)
-        return detect_consecutive_repetitions(tokens[...,0].squeeze().tolist())
+
+        consecutive_repetitions = []
+        for i in range(self.h):
+            consecutive_repetitions.append(detect_consecutive_repetitions(tokens[...,i].squeeze().tolist()))
+        return consecutive_repetitions
     
     def ctc_wer(self, output_text_logits, ref_text_id, tokenizer=None):
         """
