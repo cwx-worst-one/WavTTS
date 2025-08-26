@@ -297,7 +297,7 @@ class SemanticEmbModule(torch.nn.Module):
         batch_cfg = batch_cfg | batch_cfg_additional
         if self.extra_params.varlen_lyrics_prefix:
             # TODO (qq) temp fix: pad to same length to ensure var len inference cfg.
-            batch_cfg["lyrics_tokens_length"] = batch["lyrics_tokens_length"]
+            # batch_cfg["lyrics_tokens_length"] = batch["lyrics_tokens_length"]
             if "instrument_length" in batch:
                 batch_cfg["instrument_length"] = batch["instrument_length"]
         # cfg_keys = [k for k in batch if is_key_cfg(k)]  # remove cfg keys in original batch
@@ -354,8 +354,8 @@ class SemanticEmbModule(torch.nn.Module):
                                       prefix_length: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         token_embeds_cfg, prefix_length_cfg = self._prepare_token_embeds(batch_cfg)
 
-        assert torch.all(prefix_length_cfg == prefix_length), \
-            f"CFG prefix length mismatch: expected {prefix_length}, got {prefix_length_cfg}"
+        # assert torch.all(prefix_length_cfg == prefix_length), \
+        #     f"CFG prefix length mismatch: expected {prefix_length}, got {prefix_length_cfg}"
 
         print(f"token_embeds_cfg.shape={token_embeds_cfg.shape}, prefix_length_cfg={prefix_length_cfg}")
         return token_embeds_cfg, prefix_length_cfg
@@ -381,9 +381,10 @@ class SemanticEmbModule(torch.nn.Module):
 
     def _process_cfg_for_generation(self, inputs_embeds: torch.Tensor, inputs_embeds_cfg: torch.Tensor, beam: int, seq_len: int) -> tuple:
         cfg_batch_size = inputs_embeds_cfg.shape[0]
+        seq_len = inputs_embeds_cfg.shape[1]
         inputs_embeds_cfg = inputs_embeds_cfg.repeat(1, beam, 1).reshape(cfg_batch_size * beam, seq_len, -1)
-        inputs_embeds = torch.cat([inputs_embeds, inputs_embeds_cfg], dim=0)    # cat on first-dim(batch_size)
-        return inputs_embeds, cfg_batch_size
+        inputs_embeds_list = [inputs_embeds, inputs_embeds_cfg]
+        return inputs_embeds_list, cfg_batch_size
 
     @torch.no_grad()
     def predict(self, batch: Dict, hp: Dict, beam: int = 1) -> Dict:
@@ -396,7 +397,7 @@ class SemanticEmbModule(torch.nn.Module):
         if hp.get("exclude_eos", False) and self.target_embedder.eos_id is not None:
             exclude_ids = [self.target_embedder.eos_id]
             print(f"exclude_ids: {exclude_ids}")
-
+        
         batch_cfg = self.prepare_cfg_batch(
             batch, hp, use_controller_cfg, controller_cfg_gamma
         )
@@ -405,10 +406,10 @@ class SemanticEmbModule(torch.nn.Module):
 
         inputs_embeds_cfg, prefix_length_cfg = None, None
         if batch_cfg:
-            if isinstance(batch_cfg, list):
-                inputs_embeds_cfg, prefix_length_cfg =  self._prepare_group_cfg_embeddings(batch_cfg, prefix_length)
-            else:
-                inputs_embeds_cfg, prefix_length_cfg =  self._prepare_cfg_embeddings(batch_cfg, prefix_length)
+            # if isinstance(batch_cfg, list):
+            #     inputs_embeds_cfg, prefix_length_cfg =  self._prepare_group_cfg_embeddings(batch_cfg, prefix_length)
+            # else:
+            inputs_embeds_cfg, prefix_length_cfg = self._prepare_cfg_embeddings(batch_cfg, prefix_length)
 
         batch.update({
             "prefix_length": prefix_length,
@@ -422,15 +423,26 @@ class SemanticEmbModule(torch.nn.Module):
 
         cfg_batch_size = None
         if use_controller_cfg and inputs_embeds_cfg is not None:
-            if isinstance(inputs_embeds_cfg, list) and isinstance(controller_cfg_gamma, list):
-                inputs_embeds, cfg_batch_size = self._process_group_cfg_for_generation(inputs_embeds, inputs_embeds_cfg, controller_cfg_gamma, beam, seq_len)
-            else:
-                inputs_embeds, cfg_batch_size = self._process_cfg_for_generation(inputs_embeds, inputs_embeds_cfg, beam, seq_len)
+            # if isinstance(inputs_embeds_cfg, list) and isinstance(controller_cfg_gamma, list):
+            #     inputs_embeds, cfg_batch_size = self._process_group_cfg_for_generation(inputs_embeds, inputs_embeds_cfg, controller_cfg_gamma, beam, seq_len)
+            # else:
+                # inputs_embeds_list, cfg_batch_size = self._process_cfg_for_generation(inputs_embeds, inputs_embeds_cfg, beam, seq_len)
 
-        batch_size, seq_len, _ = inputs_embeds.size() # recalculate batch size
+            cfg_batch_size = inputs_embeds_cfg.shape[0]
+            cfg_seq_len = inputs_embeds_cfg.shape[1]
+            inputs_embeds_cfg = inputs_embeds_cfg.repeat(1, beam, 1).reshape(cfg_batch_size * beam, cfg_seq_len, -1)
+            inputs_embeds_list = unpad_sequence(inputs_embeds, prefix_length, batch_first=True)
+            cfg_inputs_embeds_list = unpad_sequence(inputs_embeds_cfg, prefix_length_cfg, batch_first=True)
+            inputs_embeds_list = inputs_embeds_list + cfg_inputs_embeds_list
+            prefix_length = torch.concat([prefix_length, prefix_length_cfg], dim=0)
+            # return inputs_embeds_list, cfg_batch_size
+            batch_size = prefix_length.shape[0]
+            seq_len = prefix_length.max()
+        else:
+            batch_size, seq_len, _ = inputs_embeds.size() # recalculate batch size
 
-        prefix_length = prefix_length.repeat(batch_size // original_batch_size)
-        inputs_embeds_list = unpad_sequence(inputs_embeds, prefix_length, batch_first=True)
+        # prefix_length = prefix_length.repeat(batch_size // original_batch_size)
+        # inputs_embeds_list = unpad_sequence(inputs_embeds, prefix_length, batch_first=True)
 
         if not skip_sos:
             sos_embeds = self.target_embedder.get_sos_embed(batch_size)

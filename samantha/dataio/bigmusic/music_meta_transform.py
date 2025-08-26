@@ -1539,7 +1539,7 @@ class TempoParser(MusicMetaRWTransform):
 
     def __init__(
         self,
-        in_key: Union[str, list[str]] = "meta.standard_music_meta_nonbpe",
+        in_key: str = "meta.standard_music_meta_nonbpe",
         out_key: str = "tempo",
         allow_empty_in: bool = True,  # allow data without tempo by default
         dropout_rate: float = 0.1,
@@ -1555,24 +1555,6 @@ class TempoParser(MusicMetaRWTransform):
         super().__init__(in_key, out_key, allow_empty_in=allow_empty_in, **kwargs)
         self.dropout_rate = dropout_rate
 
-    def get_bpm_from_non_standard(self, bpm) -> float:
-        def is_musicfm_beat(bpm) -> bool:
-            return isinstance(bpm, list)
-
-        def get_bpm_from_musicfm_beat(bpm: list[list[float]]) -> float:
-            avg_beat_interval = np.mean(np.diff(np.array(bpm)[:, 0], n=1))  # spb
-            return 60 / avg_beat_interval  # 60 / spb -> 60 * bps -> bpm
-
-        if isinstance(self.in_key, str):
-            bpm = [bpm]
-        for bpm_value in bpm:  # pick the first valid bpm value
-            if not bpm_value:  # 0 or None
-                continue
-            if is_musicfm_beat(bpm_value):
-                bpm_value = get_bpm_from_musicfm_beat(bpm_value)
-            return float(bpm_value)
-        return self.DEFAULT_BPM
-
     def call(self, standard_music_meta_nonbpe, **kwargs) -> float:
         uttid = kwargs.get("uttid")
         if random.random() < self.dropout_rate:
@@ -1580,10 +1562,7 @@ class TempoParser(MusicMetaRWTransform):
         if not standard_music_meta_nonbpe:
             return self.DEFAULT_BPM
         try:
-            if isinstance(standard_music_meta_nonbpe, dict):
-                bpm = standard_music_meta_nonbpe.get("extra_info", {}).get("bpm")
-            else:
-                bpm = self.get_bpm_from_non_standard(bpm=standard_music_meta_nonbpe)
+            bpm = standard_music_meta_nonbpe.get("extra_info", {}).get("bpm")
             return float(bpm)
         except TypeError:
             logger.debug(f"{self._get_log_prefix(uttid)} tempo {bpm} is invalid")

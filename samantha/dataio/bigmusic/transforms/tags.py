@@ -31,6 +31,7 @@ def parse_style_tags(
     style_tags = meta.get("standard_music_meta_nonbpe", {}).get("style_tags_merged", {})
     if not style_tags:
         raise TagError("No valid tags")
+
     # ----------
     # temperary: fix this later in UDF, so this logic can be removed here
     style_tags["genre"] = [x for x in style_tags["genre"] if x and x not in ["Empty"]]
@@ -59,7 +60,7 @@ def parse_style_tags(
         for x in style_tags["vocal_gender"]
         if x and x not in ["Empty", "Unknown", "Unkonwn", "adult", "Adult"]
     ]
-    if isinstance(style_tags["language"][0], list):
+    if len(style_tags["language"]) > 0 and isinstance(style_tags["language"][0], list):
         style_tags["language"] = style_tags["language"][0]
     if style_tags["language"] == ["Non-vocal"] or style_tags["language"] == [
         "Instrumental/Non-Vocal"
@@ -137,23 +138,79 @@ def parse_style_tags(
 #     return {"tags": tags.fill_empty_inplace().to_dict(), "oov_tags": oov}
 
 
+# def transform_tags(
+#     vocab: StyleTagVocab,
+#     meta: dict,
+#     insts: Optional[list[str]] = None,
+#     tempo: Optional[float] = None,
+#     key_mode: Optional[str] = None,
+#     standardize: bool = True,
+#     extend_extra: bool = True,
+#     source_selection: str = "fill",
+# ) -> dict:
+#     audio_tags = _parse_audio_tags_into_tags_proto(meta, _parse_audio_tags_from_meta)
+#     human_tags = _parse_audio_tags_into_tags_proto(meta, _parse_human_label_from_meta)
+#     musicfm_finegrained_tags = _parse_musicfm_finegrained_tags_into_tags_proto(
+#         meta, _parse_musicfm_finegrained_tags_from_meta
+#     )
+#     llm_tags = _parse_audio_tags_into_tags_proto(meta, _parse_llm_tags_from_meta)
+#     sa_tags = _parse_sa_tags_into_tags_proto(meta, _parse_sa_tags_from_meta)
+#     inst_tags = _parse_insts_to_tags_proto(insts)
+#     tempo_tags = _parse_tempo_to_tags_proto(tempo)
+#     key_mode_tags = _parse_key_mode_to_tags_proto(key_mode)
+#     # Arrange tag sources from high priority to low priority
+#     valid_tags = list(
+#         filter(
+#             None,
+#             [
+#                 human_tags,
+#                 audio_tags,
+#                 musicfm_finegrained_tags,
+#                 llm_tags,
+#                 sa_tags,
+#                 inst_tags,
+#                 tempo_tags,
+#                 key_mode_tags,
+#             ],
+#         )
+#     )
+#     if not valid_tags:
+#         raise TagError("No valid tags")
+#     if source_selection == "fill":
+#         tags = TagsProto.fill(*valid_tags)
+#     elif source_selection == "merge":
+#         tags = TagsProto.merge(*valid_tags)
+#     else:
+#         raise TagError(f"Invalid source_selection: {source_selection}")
+#     if standardize:
+#         tags.standardize_inplace(vocab)
+#     if extend_extra:
+#         tags.extend_extra_inplace()  # this step might introduce OOV tags
+#     tags, oov = tags.remove_oov_tags(vocab)
+#     return {"tags": tags.fill_empty_inplace().to_dict(), "oov_tags": oov}
+
+
 def validate_tags(style_tags: dict) -> None:
     tags_proto = TagsProto.from_dict(style_tags)
-    if any(
-        lang
-        for lang in tags_proto.language
-        if lang
-        not in [
-            "English",
-            "Chinese",
-            "Cantonese",
-            "Japanese",
-            "Sichuanese",
-            "Instrumental/Non-Vocal",
-            "Non-Vocal",
-        ]
-    ):
-        raise TagError(f"Audio tags contains invalid language: {tags_proto.language}")
+    if tags_proto.language:
+        if any(
+            lang
+            for lang in tags_proto.language
+            if lang
+            not in [
+                "",
+                "English",
+                "Chinese",
+                "Cantonese",
+                "Japanese",
+                "Sichuanese",
+                "Instrumental/Non-Vocal",
+                "Non-Vocal",
+            ]
+        ):
+            raise TagError(
+                f"Audio tags contains invalid language: {tags_proto.language}"
+            )
     if set(["Chinese", "Cantonese"]).issubset(tags_proto.language):
         raise TagError(f"Audio tags contains invalid language: {tags_proto.language}")
 

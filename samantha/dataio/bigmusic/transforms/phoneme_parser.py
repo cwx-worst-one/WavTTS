@@ -5,6 +5,8 @@ import string
 from pathlib import Path
 from typing import Optional
 
+from ToJyutping import ToJyutping  # 3.2.0
+
 from ..tokenizers.sami_phoneme_tokenizer import PhnStrParser
 
 logger = logging.getLogger(__file__)
@@ -224,7 +226,7 @@ def norm_section_tag(section_tag: str) -> Optional[str]:
     norm_tag = section_tag.lower().strip()
     # Map pre-chorus to bridge
     if norm_tag in ["pre_chorus", "prechorus", "pre-chorus"]:
-        # return "bridge"
+        #    return "bridge"
         return "pre-chorus"
     if norm_tag.find("主歌") != -1 or norm_tag.find("verse") != -1:
         return "verse"

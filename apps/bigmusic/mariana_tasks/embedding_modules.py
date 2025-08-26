@@ -1804,3 +1804,112 @@ def _infer_batch_size(batch):
         len(t) for t in batch.values() if torch.is_tensor(t) or isinstance(t, list)
     ][0]
     return batch_size
+
+
+class TokenRotaryXvalPosEmbedder(TokenXvalPosEmbedder):
+    def __init__(
+        self,
+        vocab_size: int,
+        embedding_dim: int,
+        add_sos: bool = False,
+        add_eos: bool = False,
+        with_sos: bool = False,
+        with_eos: bool = False,
+        is_varlen: bool = False,
+        id_key: str = "lyrics_tokens",
+        length_key: str = "lyrics_tokens_length",
+        coff_key: str = "lyrics_coffs",
+        pos_key: str = "lyrics_pos",
+        mode: str = "concat",
+        max_value: float = 1.0,
+        **kwargs,
+    ):
+        super().__init__(
+            vocab_size=vocab_size,
+            embedding_dim=embedding_dim,
+            add_sos=add_sos,
+            add_eos=add_eos,
+            with_sos=with_sos,
+            with_eos=with_eos,
+            is_varlen=is_varlen,
+            id_key=id_key,
+            length_key=length_key,
+            coff_key=coff_key,
+            *kwargs,
+        )
+        self.max_value = max_value
+        self.pos_key = pos_key
+        if mode not in ["add", "concat"]:
+            raise ValueError(f"Invalid mode {mode}")
+        self.mode = mode
+
+        self.blank_id = -1
+
+        pos_emb_dim = embedding_dim
+        if self.mode == "concat":
+            pos_emb_dim = 256
+
+        # @qinxin: here assume maximum of 200 lines and maximum 2000 phonemes per line
+        # ![future warning]!
+        # cfg definition for lyrics position can be quite tricky
+        # currently ill position works well (ill position without section tag and linebreak: [0,1,-1],[0,2,-1],[0,3,-1],...,[0,n_phoneme,-1])
+        self.rotary_emb = RotaryEmbedding2D(h=200, w=2000, dim=pos_emb_dim)
+        self.rotary_emb_bak = RotaryEmbedding2D(h=200, w=4000, dim=pos_emb_dim)
+        self.pos_emb_fc = nn.Sequential(
+            nn.Linear(pos_emb_dim, pos_emb_dim, bias=False),
+            nn.SiLU(),
+            nn.Linear(pos_emb_dim, pos_emb_dim, bias=False),
+        )
+        nn.init.constant_(self.pos_emb_fc[0].weight, 0)
+        nn.init.constant_(self.pos_emb_fc[-1].weight, 0)
+
+        if self.mode == "concat":
+            self.concat_fc = nn.Linear(embedding_dim * 2 + pos_emb_dim, embedding_dim, bias=False)
+
+    def embed(
+        self,
+        requires: Optional[Any] = None,  # not used
+        batch: Optional[Any] = None,  # not used
+        token_ids: Optional[torch.Tensor] = None,
+        token_wise_multiplication: Optional[torch.Tensor] = None,
+        token_wise_position: Optional[torch.Tensor] = None,
+    ) -> dict:
+        # token_wise_multiplication is the scaling factor to each embedding of token, 1.0 means no change, 0.0 means disable
+        # Here we set (scaling factor) == (float time in second) as the representaion of time tokens
+        token_ids = self.tokenize(requires, batch, token_ids)  # SOS and EOS added here
+        embedding = self.embedder(token_ids)
+        batch_size = token_wise_multiplication.shape[0]
+        pos_size = token_wise_position.shape[2]
+        if self.with_sos or self.with_eos:
+            blank_pad = torch.ones((batch_size, 1, pos_size), dtype=torch.int32, device=self.get_device()) * self.blank_id
+        else:
+            blank_pad = None
+        if self.with_sos:
+            sos_token = self.get_sos_token(batch_size)
+            sos_coff = torch.ones_like(sos_token).float()
+            token_wise_multiplication = torch.cat([sos_coff, token_wise_multiplication], dim=1)
+            token_wise_position = torch.cat([blank_pad, token_wise_position], dim=1)
+        if self.with_eos:
+            eos_token = self.get_eos_token(batch_size)
+            eos_coff = torch.ones_like(eos_token).float()
+            token_wise_multiplication = torch.cat([token_wise_multiplication, eos_coff], dim=1)
+            token_wise_position = torch.cat([token_wise_position, blank_pad], dim=1)
+        position_embedding = self.encode_2dpos(token_wise_position[..., :2])
+        section_embedding = self.encode_section(token_wise_position[..., 2])
+        token_wise_multiplication = token_wise_multiplication.unsqueeze(-1)
+        embedding = apply_rope_xval(embedding, token_wise_multiplication, max_value=self.max_value)  # <- modified
+        if self.mode == "add":
+            embedding = embedding + position_embedding + section_embedding
+        elif self.mode == "concat":
+            embedding = self.concat_fc(torch.cat((
+                embedding,
+                section_embedding,
+                position_embedding,
+            ), dim=-1))
+        else:
+            # should not reach here since mode has been checked in __init__
+            raise NotImplementedError(f"Invalid mode {self.mode}")
+        return {
+            "token_ids": token_ids,
+            "embeds": embedding,
+        }

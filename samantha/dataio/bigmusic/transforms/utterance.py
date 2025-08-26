@@ -21,6 +21,8 @@ def parse_utterances(meta: dict, confidence_threshold: float = 0.0) -> list[dict
         raise UttError("Discard because of lyrics is empty or invalid results")
 
     utterances = _result[0].get("utterances") if _result else _asr_utterances
+    if utterances and len(utterances) > 200:
+        raise UttError("Discard because of lyrics lines larger than 200")
     if not utterances:
         raise UttError("Discard because of No utterances")
 

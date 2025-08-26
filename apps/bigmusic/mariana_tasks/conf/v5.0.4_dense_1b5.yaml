@@ -439,7 +439,7 @@ model:
     gradient_checkpointing_start_layers: 100
     gradient_checkpointing: False
 
-    emb_config_path: "apps/bigmusic/mariana_tasks/conf/v5.0.2_semantic_embedder.yaml"
+    emb_config_path: "apps/bigmusic/mariana_tasks/conf/v5.0.4_semantic_embedder.yaml"
     emb_config:
       extra_params:
         embedding_dim: 1536 # = model.network.hidden_size

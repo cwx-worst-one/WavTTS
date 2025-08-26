@@ -9,7 +9,7 @@ __set_float32_matmul_precision:
   !apply:torch.set_float32_matmul_precision ["high"]
 
 extra_params:
-  network_cfg: "apps/bigmusic/mariana_tasks/conf/v5_m8_680m_new_emb.yaml"
+  network_cfg: "apps/bigmusic/mariana_tasks/conf/v5.0.2_dense_1b5.yaml"
   skip_sos: False # Audio continuation needs to skip audio SOS
   stop_eos: True # stop generation in case of EOS
 
@@ -121,6 +121,7 @@ data:
     - type: PromptToSongSliceTransformParquet
       phoneme_vocab: v2
       style_tag_vocab: v3
+      phoneme_tokenizer: sami_phoneme_pos
       use_cfg: True
       standardize: True
       cfg_items:
