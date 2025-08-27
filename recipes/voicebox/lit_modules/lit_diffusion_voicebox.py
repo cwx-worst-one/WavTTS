@@ -46,6 +46,7 @@ class VoiceBoxModule(pl.LightningModule):
         checkpointing=True,
         resume_ckpt_path = None,
         umm_dropout = 0.0,
+        umm_perturb_p = 0.0,
         umm_pad=16384,
         diffusion_sample_rate=24000,
         val_output_samples_dir="",
@@ -64,6 +65,7 @@ class VoiceBoxModule(pl.LightningModule):
             self.model.gradient_checkpointing_enable()
 
         self.umm_dropout = umm_dropout
+        self.umm_perturb_p = umm_perturb_p
         self.umm_pad = umm_pad
         self.bn_config = bn_config 
 
@@ -154,6 +156,11 @@ class VoiceBoxModule(pl.LightningModule):
             drop_idx = torch.rand([batch["token"].shape[0],batch["token"].shape[1]]) < self.umm_dropout
             if torch.sum(drop_idx) > 0:
                 batch["token"][drop_idx] = self.umm_pad
+                # print(f"umm_dropout drop_idx={torch.sum(drop_idx)}/{batch['token'].shape[0]}")
+            if self.umm_perturb_p > 0 and self.model.hp.n_token_hierarchy > 1 and torch.sum(drop_idx) < batch["token"].shape[0]:
+                for h in range(1, self.model.hp.n_token_hierarchy):
+                    print(batch["token"][~drop_idx, ..., h].shape)
+                    batch["token"][~drop_idx, ..., h] = self.model.perturb_tokens(batch["token"][~drop_idx, ..., h])
 
         if "umm_codebook" in self.requires:
             batch["token"] = self.get_umm_embedding(batch["token"])
@@ -256,8 +263,10 @@ class VoiceBoxModule(pl.LightningModule):
                 # if "lang" in inputs["frontend"]:
                 #     inputs["frontend"]["lang"] = inputs["frontend"]["lang"].repeat(2, 1)
                 #     inputs["frontend"]["lang"][1, :] = 1
-
-                inputs["token"] = inputs["token"].repeat(2, 1)
+                if inputs["token"].ndim == 2:
+                    inputs["token"] = inputs["token"].repeat(2, 1)
+                else:
+                    inputs["token"] = inputs["token"].repeat(2, 1, 1)
                 inputs["prompt_bn"] = inputs["prompt_bn"].repeat(2, 1, 1)
                 inputs["bn_ctx"] = inputs["bn_ctx"].repeat(2, 1, 1)
                 

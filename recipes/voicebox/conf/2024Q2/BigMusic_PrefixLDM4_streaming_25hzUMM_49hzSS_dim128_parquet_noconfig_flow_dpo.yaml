@@ -61,11 +61,12 @@ run_opts:
     log_every_n_steps: 1000
     val_check_interval: 20000
     n_token: 32769
+    n_token_hierarchy: 1
     tokenizer_pad: !applyref:operator.sub # not used
         - !ref <run_opts[n_token]>
         - 1
     tokenizer_version: "ConformerUMM_Unified_TTS_ROPE"
-    # token_embed_dim: 512
+    token_embed_dim: 512
 
 bn_config: # 40hz
     bn_dim: 128
@@ -80,8 +81,10 @@ model_config: !new:recipes.voicebox.diffusion_modules.llama_ldm.ModelArgs
     in_channels: !ref <bn_config[bn_dim]>
     out_channels: !ref <bn_config[bn_dim]>
     prompt_mel_dim: !ref <bn_config[bn_dim]>
-    # token_embed_dim: !ref <run_opts[token_embed_dim]>
+    token_embed_dim: !ref <run_opts[token_embed_dim]>
     n_token: !ref <run_opts[n_token]>
+    n_token_hierarchy: !ref <run_opts[n_token_hierarchy]>
+    hierarchical_token_aggregation: "sum" # "concat"
     token_upscales: [2]
     token_downscales: []
     # token_upscales: [7,7]

@@ -19,8 +19,10 @@ run_opts:
     # diffusion_ckpt_path: !applyref:os.getenv ["diffusion_ckpt_path", "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/ds2869_32xH800_25hzUMM_49hzSS_streaming_chunk392_196_0617/checkpoints/epoch=00-step=1130000-loss=0.68.ckpt"]
     # ConformerUMM_2250_2375
     diffusion_ckpt_path: !applyref:os.getenv ["diffusion_ckpt_path", "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhangshuo/bigmusic/unified_diffusion/unified_diffusion/ds3416_32xH800_25hzUMM_49hzSS_streaming_chunk392_196_0702/checkpoints/epoch=00-step=1250000-loss=0.68.ckpt"]
-    token_chunk_size: !apply:samantha.utils.envs.getenv_int ["diffusion_token_chunk_size", 100]
-    token_chunk_overlap: 1
+    # token_chunk_size: !apply:samantha.utils.envs.getenv_int ["diffusion_token_chunk_size", 100]
+    # token_chunk_overlap: 1
+    token_chunk_size: !apply:samantha.utils.envs.getenv_int ["diffusion_token_chunk_size", 200]
+    token_chunk_overlap: 20
     without_prefix: !applyref:samantha.utils.envs.getenv_bool ["without_prefix", True]
     vocoder_version: !applyref:os.getenv ["vocoder_version", "44.1k_vocal"]
     tokenizer_version: !applyref:os.getenv ["tokenizer_version", "ConformerUMM_2250_2375"]

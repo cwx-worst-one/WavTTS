@@ -263,6 +263,7 @@ class ModelArgs:
 
     # token
     n_token: int = 32768
+    n_token_hierarchy: int = 1
     token_embed_dim: int = 512
     token_hidden_dim: int = 768
     token_upscales: list = field(default_factory=lambda: [1])
@@ -273,6 +274,7 @@ class ModelArgs:
     local_cond_project_type: str = "linear"  # conv
     local_cond_conv_kernel: int = 9
     local_cond_conv_padding: int = 4
+    hierarchical_token_aggregation: str = "concat" # "sum"
 
     # llama
     encoder_dim: int = 1536
@@ -316,6 +318,7 @@ class ModelArgs:
     max_t: float = 1.0
     flashattn_version: str = "2.3"
     rf_sigma_distribution: str = "lognorm"
+    use_mla: bool = False
 
 
 class LlamaDiffusion(nn.Module):
@@ -360,7 +363,23 @@ class LlamaDiffusion(nn.Module):
                 )
 
         # token.
-        self.token_embedding = nn.Embedding(hp.n_token, hp.token_embed_dim)
+        # if hp.n_token_hierarchy > 1:
+        #     self.token_embedding = nn.ModuleList([nn.Embedding(hp.n_token, hp.token_embed_dim) for _ in range(hp.n_token_hierarchy)])
+        if hp.n_token_hierarchy > 1:
+            self.token_embedding = nn.ModuleList([nn.Embedding(hp.n_token, hp.token_embed_dim) for _ in range(hp.n_token_hierarchy)])
+            if hp.hierarchical_token_aggregation == "concat":
+                token_concat_net_in_dim = hp.token_embed_dim * hp.n_token_hierarchy  # [D*H]
+            elif hp.hierarchical_token_aggregation == "sum":
+                token_concat_net_in_dim = hp.token_embed_dim  # [D]
+            else:
+                raise NotImplementedError(f"hierarchical_token_aggregation, {hp.hierarchical_token_aggregation=}")
+            self.token_concat_net = nn.Sequential(
+                nn.Linear(token_concat_net_in_dim, hp.token_embed_dim * 2, bias=self.bias),
+                nn.SiLU(), 
+                nn.Linear(hp.token_embed_dim * 2, hp.token_embed_dim, bias=self.bias),
+            )
+        else:
+            self.token_embedding = nn.Embedding(hp.n_token, hp.token_embed_dim)
         self.token_prenet = self.create_token_prenet(hp)
 
         # time-embedding
@@ -483,6 +502,15 @@ class LlamaDiffusion(nn.Module):
 
         return token_prenet
 
+    def perturb_tokens(self, tokens, p=0.05):
+        # tokens: [B, T]
+        B, T = tokens.size()
+        mask = torch.rand(B, T) < p
+        mask = mask.to(tokens.device)
+        noisy_tokens = torch.randint(self.hp.n_token, (B, T)).to(tokens.device)
+        tokens = tokens * ~mask + noisy_tokens * mask
+        return tokens
+
     def forward(self, inputs):
         # inputs["token"]: [B, T1]
         # inputs["prompt_mel"]: [B, T2, C]
@@ -493,9 +521,12 @@ class LlamaDiffusion(nn.Module):
         feat_lens = inputs[f"{self.hp.ctx_feature}_lens"]
         B, device = inputs["token"].size(0), inputs["token"].device
 
-        # token encoder to align frame-rate.
-        token_embed = self.token_embedding(inputs["token"])
-        token_embed = token_embed.transpose(1, 2)
+        if self.hp.n_token_hierarchy > 1:
+            token_embed = self.embed_hierarchical_token(inputs["token"])
+        else:
+            token_embed = self.token_embedding(inputs["token"])
+        token_embed = token_embed.transpose(1, 2)   # [B, D, T]
+
         for layer in self.token_prenet:
             token_embed = layer(token_embed)
         token_embed = token_embed.transpose(1, 2)  # B, T, C
@@ -1111,9 +1142,12 @@ class LlamaDiffusion(nn.Module):
 
         # B, device = inputs["token"].size(0), inputs["token"].device
 
-        # token encoder to align frame-rate.
-        token_embed = self.token_embedding(inputs["token"])
-        token_embed = token_embed.transpose(1, 2)
+        if self.hp.n_token_hierarchy > 1:
+            token_embed = self.embed_hierarchical_token(inputs["token"])
+        else:
+            token_embed = self.token_embedding(inputs["token"])
+        token_embed = token_embed.transpose(1, 2)   # [B, D]
+
         for layer in self.token_prenet:
             token_embed = layer(token_embed)
         token_embed = token_embed.transpose(1, 2)  # B, T, C
@@ -1196,10 +1230,11 @@ class LlamaDiffusion(nn.Module):
         else:
             text_embed = None
 
-        # token encoder to align frame-rate.
-        token_embed = self.token_embedding(inputs["token"])
-        token_embed = token_embed.transpose(1, 2)
-        # print(f"[chunk_inference:before] {token_embed.shape=}")
+        if self.hp.n_token_hierarchy > 1:
+            token_embed = self.embed_hierarchical_token(inputs["token"])
+        else:
+            token_embed = self.token_embedding(inputs["token"])
+        token_embed = token_embed.transpose(1, 2)   # [B, ]
 
         for layer in self.token_prenet:
             token_embed = layer(token_embed)
@@ -1271,6 +1306,27 @@ class LlamaDiffusion(nn.Module):
 
         return x
 
+    def embed_hierarchical_token(self, token):
+        token_embeds = []
+        B = token.size(0)
+        for h in range(self.hp.n_token_hierarchy):
+            token_embeds.append(self.token_embedding[h](token[..., h]))
+        if self.hp.hierarchical_token_aggregation == "concat":
+            token_embeds = torch.cat(token_embeds, dim=-1)  # [B, T, D*H]
+        elif self.hp.hierarchical_token_aggregation == "sum":
+            token_embeds = torch.stack(token_embeds, dim=-1)  # [B, T, D, H]
+            token_embeds = torch.sum(token_embeds, dim=-1, keepdim=False)  # [B, T, D]
+        else:
+            raise NotImplementedError(f"hierarchical_token_aggregation, {self.hp.hierarchical_token_aggregation=}")
+        if self.training and torch.rand(1) < 0.1:   # apply quantizer dropout 
+            quantizer_dropout_R = torch.randint(self.hp.n_token_hierarchy, size=(B,)) + 1   # values can be {0,...R-1}+1
+            quantizer_dropout_dim = quantizer_dropout_R * self.hp.token_embed_dim    # [B]
+            mask = torch.ones_like(token_embeds)
+            for bs in range(B):
+                mask[bs, ..., quantizer_dropout_dim[bs]:] = 0
+            token_embeds = mask * token_embeds
+        token_embed = self.token_concat_net(token_embeds)
+        return token_embed
 
 if __name__ == "__main__":
     config = ModelArgs()

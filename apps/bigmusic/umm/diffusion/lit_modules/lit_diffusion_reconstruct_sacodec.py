@@ -33,11 +33,17 @@ def prepare_diffusion_model(diffusion_ckpt_path, device):
     return model
 
 
-def prepare_umm(umm_ckpt_path, device):
+def prepare_umm(umm_ckpt_path, device, umm_type):
     rank = int(device[-1])
-    from recipes.umm.requires.model_initializer import init_stage3
-
-    token_model = init_stage3(umm_ckpt_path, rank, "./")["Stage3"].eval()
+    if umm_type in ["UMM", "UMM_conv"]:
+        from recipes.umm.requires.model_initializer import init_stage3
+        token_model = init_stage3(umm_ckpt_path, rank, cache_dir="./")["Stage3"].eval()
+    elif umm_type in ["RVQ"]:
+        from recipes.umm2.scripts.model_initializer import init_stage3
+        token_model = init_stage3(umm_ckpt_path, rank, cache_dir="./")["Stage3"].eval()
+    else:
+        raise ValueError(f"umm_type {umm_type} not supported")
+    
     return token_model
 
 def prepare_umm_codebook(umm_codebook_path, device):
@@ -138,7 +144,8 @@ class DiffusionU2SInfer(LightningModule):
         output_wavs = []
         for latent, eos_index in zip(latents, eos_index_list):
             latent = latent.unsqueeze(0).transpose(1, 2) # L C -> B C L
-            output_wav = self.sacodec.decode_latents(latent[..., :eos_index])
+            logger.info(f"Decoding sacodec_emb {latent.shape=}, {eos_index=}")
+            output_wav = self.sacodec.decode_latents(latent[:, :eos_index, :])
             output_wav = output_wav.squeeze(0) # B C L -> C L
             output_wavs.append(output_wav.cpu())
 
@@ -175,6 +182,9 @@ class DiffusionU2SInfer(LightningModule):
         if self.umm_type in ["UMM", "UMM_conv"]:
             # umm_token = self.umm.wav2token(wav)
             umm_token = self.umm.wav2requires(wav, 24000, slice_method="even")
+        elif self.umm_type in ['RVQ']:
+            wav = wav.unsqueeze(1)
+            umm_token = self.umm.wav2requires(wav, slice_method="even", chunk_size=60, requires=['token'])['token']
         else:
             raise NotImplementedError
 
@@ -317,10 +327,7 @@ class DiffusionU2SInfer(LightningModule):
     def setup(self, stage):
         device = f"cuda:{self.local_rank}"
         if self.infer_type != "vocoder" and self.umm_ckpt_path:
-            if self.umm_type == "UMM":
-                self.umm = prepare_umm(self.umm_ckpt_path, device)
-            else:
-                raise NotImplementedError
+            self.umm = prepare_umm(self.umm_ckpt_path, device, self.umm_type)
         else:
             self.umm = None
 
@@ -575,7 +582,7 @@ class ChunkInfer(DiffusionU2SInfer):
             if "syn_wavlen" in inputs:
                 audio = audio[..., : inputs["syn_wavlen"][bidx]]
             save_wav(audio.T, output_path, sr=self.mel_config["sampling_rate"])
-            print("saving to", output_path)
+            logger.info("saving to", output_path)
 
         return torch.from_numpy(batched_audio)
 
@@ -653,7 +660,7 @@ class ChunkInfer2(DiffusionU2SInfer):
         self.token_overlap = int(np.prod(self.model.hp.token_downscales))
         self.mem_efficient = kwargs.get("mem_efficient", False)
 
-        print("enable memory efficient:", self.mem_efficient)
+        logger.info("enable memory efficient:", self.mem_efficient)
         self.context_duration = int(kwargs.get("context_duration", 60))
         if self.infer_type == "ar-diffusion-vocoder":
             self.context_duration = 0
@@ -805,13 +812,18 @@ class ChunkInfer2(DiffusionU2SInfer):
         )
         token_pad_len = aligned_token_len - token_len
         if token_pad_len > 0:
-            inputs["all_token"] = F.pad(
-                inputs["all_token"],
-                [0, token_pad_len],
-                mode="constant",
-                value=self.token_config["token_padding"],
-            )
-        print(
+            if inputs["all_token"].ndim == 2:
+                inputs["all_token"] = F.pad(
+                    inputs["all_token"],
+                    [0, token_pad_len],
+                    mode="constant",
+                    value=self.token_config["token_padding"],
+                )
+            elif inputs["all_token"].ndim == 3:
+                inputs["all_token"] = F.pad(syn_umm_token,[0, 0, 0, token_pad_len],mode="constant",value=self.token_config["token_padding"],)
+            else:
+                raise NotImplementedError(f"Padding unimplemented for {inputs['all_token'].shape=}")
+        logger.info(
             f"{batch_idx=} token align from {token_len} to {aligned_token_len} ({token_pad_len=} {n_chunks=})"
         )
 
@@ -819,7 +831,7 @@ class ChunkInfer2(DiffusionU2SInfer):
         bn_ctx_len = inputs["all_bn_ctx"].shape[1]
         aligned_bn_ctx_len = self.bn_chunk_size * n_chunks
         bn_ctx_pad_len = aligned_bn_ctx_len - bn_ctx_len
-        print(
+        logger.info(
             f"{batch_idx=} bn_ctx align from {bn_ctx_len} to {aligned_bn_ctx_len} ({bn_ctx_pad_len=} {n_chunks=})"
         )
         if bn_ctx_pad_len > 0:
@@ -831,7 +843,7 @@ class ChunkInfer2(DiffusionU2SInfer):
             )
 
         total_frame = math.ceil(token_len * self.mel_frame_rate / self.umm_frame_rate)
-        print(f"{batch_idx=} {total_frame=}")
+        logger.info(f"{batch_idx=} {total_frame=}")
         # apply text cfg
         if self.text_cfg_w != 1:
             inputs = self.make_cfg_input(inputs)
@@ -854,8 +866,8 @@ class ChunkInfer2(DiffusionU2SInfer):
 
             inputs["token"] = inputs["all_token"][:, token_start_index:token_end_index]
             inputs["bn_ctx"] = inputs["all_bn_ctx"][:, bn_start_index:bn_end_index]
-            # print(f"{chunk_idx=} token={(token_start_index,token_end_index, token_end_index-token_start_index)}({inputs['all_token'].shape[1]}, {inputs['token'].shape[1]})")
-            # print(f"{chunk_idx=} bn_ctx={(bn_start_index, bn_end_index, bn_end_index-bn_start_index)}({inputs['all_bn_ctx'].shape[1]} {inputs['bn_ctx'].shape[1]})")
+            # logger.info(f"{chunk_idx=} token={(token_start_index,token_end_index, token_end_index-token_start_index)}({inputs['all_token'].shape[1]}, {inputs['token'].shape[1]})")
+            # logger.info(f"{chunk_idx=} bn_ctx={(bn_start_index, bn_end_index, bn_end_index-bn_start_index)}({inputs['all_bn_ctx'].shape[1]} {inputs['bn_ctx'].shape[1]})")
             with torch.autocast(device_type="cuda", dtype=dtype, enabled=True):
                 chunk_mel = self.model.chunk_inference(
                     inputs,
@@ -865,7 +877,7 @@ class ChunkInfer2(DiffusionU2SInfer):
                     use_infer_params=True,
                     first=chunk_idx == 0,
                 )
-            # print(f"{chunk_idx=} mel={chunk_mel.shape=}")
+            # logger.info(f"{chunk_idx=} mel={chunk_mel.shape=}")
             self.model.update_infer_params(
                 bn_end_index - bn_start_index, last=chunk_idx + 1 >= n_chunks - 1
             )
@@ -874,7 +886,7 @@ class ChunkInfer2(DiffusionU2SInfer):
         self.model.clear_infer_params(self.diffusion_nfe)
 
         full_mel = torch.cat(full_mel, dim=-1)
-        full_mel = full_mel[:, inputs["prompt_length"] :, :]
+        full_mel = full_mel[:, :, inputs["prompt_length"] :]
 
         eos_id = self.token_config["token_eos"]
         semantic_frame_rate = self.token_config["frame_rate"]
@@ -903,7 +915,7 @@ class ChunkInfer2(DiffusionU2SInfer):
                 prompt_wav = inputs["gt_wav"][bidx]
                 # audio = np.concatenate([prompt_wav, np.ones([10]), audio])
                 gt_path = os.path.join(save_output_dir, uttid + ".target_audio.wav")
-                print(prompt_wav.shape, "prompt_wav")
+                logger.info(f"{bidx=} {prompt_wav.shape=}")
                 if len(prompt_wav.shape) > 1:
                     gt_wav = prompt_wav.T 
                 else:
@@ -921,7 +933,7 @@ class ChunkInfer2(DiffusionU2SInfer):
             if "syn_wavlen" in inputs:
                 audio = audio[..., : inputs["syn_wavlen"][bidx]]
             save_wav(audio.T, output_path, sr=self.mel_config["sampling_rate"])
-
+            logger.info(f'{output_path=}')
             if self.save_diffusion_output:
                 latent = full_mel[bidx]
                 latent_path = os.path.join(save_output_dir, uttid + ".diffusion_output.pt")

@@ -1886,7 +1886,7 @@ class Stage3(Stage2):
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
-    def wav2requires(self, audio, sample_rate=24000, slice_method='full', chunk_size=45):
+    def wav2requires(self, audio, audio_length=None, requires=None, sample_rate=24000, slice_method='full', chunk_size=45):
         def prepare_input_audio(audio, slice_method, sample_rate, chunk_size):
             # prepare input  
             if slice_method == 'full':

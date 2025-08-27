@@ -2,6 +2,7 @@ import os
 import uuid
 import torch
 import pathlib
+import torchaudio
 import torch.nn.functional as F
 from typing import Optional, List, Union
 from apps.bigtts.umm.diffusion.lit_modules.infer_utils import save_wav
@@ -247,41 +248,74 @@ def run_diffusion_vocoder_batch(
     )
     return output_wavs
 
+def test_generate_from_cache(token_cache, 
+                            requires=None,
+                            save_dir="./",
+                            local_rank=0,
+                            hparams_file = "apps/bigmusic/umm/diffusion/conf/2024Q2/infer_generation_streaming.yaml",
+                            cache_dir = ".module_cache/",
+    ):
+    # Example for generate audio from token cache
+    device = f"cuda:{local_rank}"
+
+
+
+    if requires is None:
+        from hyperpyyaml import load_hyperpyyaml
+        assert os.path.exists(hparams_file)
+        with open(hparams_file, "r", encoding="utf-8") as fin:
+            params = load_hyperpyyaml(fin)
+        requires = init_diffusion_sacodec(params["diffusion_config"], local_rank, cache_dir)
+
+    with open(token_cache, "r") as fin:
+        token_list = fin.readlines()
+
+    for token_path in token_list:
+        token_path = token_path.strip()
+        save_path = os.path.join(save_dir, os.path.basename(token_path).replace("semantic_tokens.pt", "generated.wav"))
+        semantic_sample = torch.load(token_path).to(torch.long).to(device)
+        padding = torch.ones_like(semantic_sample) * params["diffusion_config"]['token_config']['token_padding']
+        semantic_sample_padded = torch.cat([semantic_sample, padding], dim=1)
+        with torch.no_grad():
+            wav = run_diffusion_vocoder(requires, semantic_sample_padded).squeeze(0).cpu()
+        torchaudio.save(save_path, wav, 44100, format="wav")
+
 
 if __name__ == "__main__":
+    token_cache = "/mnt/bn/music-llm-nas-lq/zhongyi.huang/sft2_RVQ4_1in2out_2D_RQ_group2_step=003000_diffusion_rvqtie_80000/token.list"
+    test_generate_from_cache(token_cache=token_cache)
+    # local_rank = 0
+    # device = f"cuda:0"
+    # cache_dir = ".module_cache/"
 
-    local_rank = 0
-    device = f"cuda:0"
-    cache_dir = ".module_cache/"
+    # # no-streaming
+    # # hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConvV1_40hzSS.yaml"
+    # # hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConvV3_125hzSS.yaml"
 
-    # no-streaming
-    # hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConvV1_40hzSS.yaml"
-    # hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConvV3_125hzSS.yaml"
+    # # hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConv_125hzSS.yaml"
+    # # or you can download the files from here: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/weituo/infer_files/voice_condition_valsets.zip
+    # syn_wav_path = "/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/voice_condition_valsets/slices/male_husky_0_slice1.wav"
+    # prompt_wav_path = "voice_condition_valsets/conditions_6s/male_husky_0.wav"
 
-    # hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_50hzDualConv_125hzSS.yaml"
-    # or you can download the files from here: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/weituo/infer_files/voice_condition_valsets.zip
-    syn_wav_path = "/mnt/bn/data-storage-hl/user/zhangshuo/data/assets/voice_condition_valsets/slices/male_husky_0_slice1.wav"
-    prompt_wav_path = "voice_condition_valsets/conditions_6s/male_husky_0.wav"
+    # # streaming infer with prompt free model
+    # hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS_streaming.yaml"
+    # prompt_wav_path = ""
 
-    # streaming infer with prompt free model
-    hparams_file = "apps/bigmusic/umm/diffusion/conf/infer_generation_25hzConformer_125hzSS_streaming.yaml"
-    prompt_wav_path = ""
+    # from hyperpyyaml import load_hyperpyyaml
+    # from samantha.utils.hparams import DotDict
 
-    from hyperpyyaml import load_hyperpyyaml
-    from samantha.utils.hparams import DotDict
+    # with open(hparams_file, "r", encoding="utf-8") as fin:
+    #     params = load_hyperpyyaml(fin)
 
-    with open(hparams_file, "r", encoding="utf-8") as fin:
-        params = load_hyperpyyaml(fin)
+    # requires = init_diffusion(params["diffusion_config"], local_rank, cache_dir)
 
-    requires = init_diffusion(params["diffusion_config"], local_rank, cache_dir)
-
-    with torch.no_grad():
-        umm_token, scale = wav2token(requires["diffusion"], syn_wav_path)
-        # generate wav in output_wavs/test.wav
-        token2wav(
-            diffusion=requires["diffusion"],
-            umm_token=umm_token.squeeze(0),
-            prompt_wav_path=prompt_wav_path,
-            uttid="test",
-            scale=scale,
-        )
+    # with torch.no_grad():
+    #     umm_token, scale = wav2token(requires["diffusion"], syn_wav_path)
+    #     # generate wav in output_wavs/test.wav
+    #     token2wav(
+    #         diffusion=requires["diffusion"],
+    #         umm_token=umm_token.squeeze(0),
+    #         prompt_wav_path=prompt_wav_path,
+    #         uttid="test",
+    #         scale=scale,
+    #     )

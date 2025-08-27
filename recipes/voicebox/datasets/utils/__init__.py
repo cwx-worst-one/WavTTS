@@ -42,5 +42,5 @@ from .masking import Masking
 # from .voicebox_batch_2_tensors import VoiceboxBatchToTensor
 
 from .phone_to_id import PhoneToId
-from .pad import collate_1d, collate_2d
+from .pad import collate_1d, collate_2d, collate_2d_token
 from .phone_to_id import get_duration_frames, get_duration_frames_wds

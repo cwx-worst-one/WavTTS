@@ -86,9 +86,13 @@ class VoiceBoxModule(pl.LightningModule):
         checkpointing=True,
         resume_ckpt_path = None,
         umm_dropout = 0.0,
+        umm_perturb_p = 0.0,
         umm_pad=16384,
-        diffusion_sample_rate=24000,
-        val_output_samples_dir="/tmp",
+        umm_hz=25,
+        codebook_tie_flag=False,
+        bn_hz=50,
+        diffusion_sample_rate=44100,
+        val_output_samples_dir="",
         bn_config=None,
         optimizer_cls=None,
         scheduler_cls=None,
@@ -112,7 +116,12 @@ class VoiceBoxModule(pl.LightningModule):
             self.model.gradient_checkpointing_enable()
 
         self.umm_dropout = umm_dropout
+        self.umm_perturb_p = umm_perturb_p
         self.umm_pad = umm_pad
+        self.umm_hz = umm_hz
+        self.codebook_tie_flag = codebook_tie_flag
+        self.bn_hz = bn_hz
+        self.diffusion_sample_rate = diffusion_sample_rate
         self.bn_config = bn_config 
 
         self.normalize_audio = normalize_audio
@@ -135,7 +144,21 @@ class VoiceBoxModule(pl.LightningModule):
             model_obj_or_objs=self.model,
         )
         self.load_required_modules()
-        
+        if self.codebook_tie_flag:
+            # replace token_embedding with codebook token_embedding, and freeze codebook
+            Stage3 = self.requires["Stage3"].model
+            assert isinstance(self.model.token_embedding, nn.ModuleList), "token_embedding must be ModuleList"
+
+            tokenizer_codebook = [Stage3.stages[0].insert_modules[0].rvq.RVQ[i].embedding.weight
+                                for i in range(self.model.hp.n_token_hierarchy)]
+            for i in range(len(self.model.token_embedding)):
+                tokenizer_codebook_vocab_size = tokenizer_codebook[i].shape[0]
+                # [codebook_size, token_embed_dim]
+                self.model.token_embedding[i].weight.data[:tokenizer_codebook_vocab_size].copy_(tokenizer_codebook[i])
+                self.model.token_embedding[i].weight.data[tokenizer_codebook_vocab_size:].fill_(0)
+                self.model.token_embedding[i].weight.requires_grad = False
+            print("Initialized codebook by tokenizer codebook.")
+
     def load_required_modules(self, ignore=()):
         for name, item in self.hparams.required_modules.items():
             if name in ignore: 
@@ -180,9 +203,9 @@ class VoiceBoxModule(pl.LightningModule):
     def get_umm_token(self, wav, slice_pct=0.0):
         with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=True):
             mode = 'even' if np.random.rand() < slice_pct else 'full'
-            # token = self.requires["Stage3"].wav2token(wav)
-            token = self.requires["Stage3"].wav2requires(wav, 24000, mode, chunk_size=60)
-
+            token = self.requires["Stage3"].wav2requires(wav, slice_method=mode, chunk_size=60, requires=['token'])
+            if isinstance(token, dict):
+                token = token["token"]
         return token
 
     @torch.no_grad()
@@ -205,6 +228,25 @@ class VoiceBoxModule(pl.LightningModule):
 
     def load_state_dict(self, state_dict, strict: bool = True):
         return super().load_state_dict(state_dict, False)
+
+
+    def align_umm_and_bn(self, batch):
+        # align to mininmal length
+        wav = batch["wav"]
+        wav_24k = batch["wav_24k"]
+        umm_token = batch["token"]
+        bn = batch["bn"]
+        umm_duration = umm_token.shape[1] / self.umm_hz
+        wav_24k_duration = wav_24k.shape[1] / 24000
+        wav_duration = wav.shape[-1] / self.diffusion_sample_rate
+        bn_duration = bn.shape[1] / self.bn_hz
+        
+        min_duration = min(umm_duration, bn_duration, wav_24k_duration, wav_duration)
+        umm_token = umm_token[:, :int(min_duration * self.umm_hz), ...]
+        bn = bn[:, :int(min_duration * self.bn_hz), ...]
+        batch["token"] = umm_token
+        batch["bn"] = bn
+        return batch
 
     @property
     def profiler(self):
@@ -246,10 +288,14 @@ class VoiceBoxModule(pl.LightningModule):
         if "token" not in batch:
             batch["token"] = self.get_umm_token(batch["wav_24k"].unsqueeze(1), slice_pct=self.umm_slice_pct)
         if self.umm_dropout > 0:
-            drop_idx = torch.rand(batch["token"].shape[0]) < self.umm_dropout
+            drop_idx = torch.rand([batch["token"].shape[0],batch["token"].shape[1]]) < self.umm_dropout
             if torch.sum(drop_idx) > 0:
                 batch["token"][drop_idx] = self.umm_pad
                 # print(f"umm_dropout drop_idx={torch.sum(drop_idx)}/{batch['token'].shape[0]}")
+            if self.umm_perturb_p > 0 and self.model.hp.n_token_hierarchy > 1 and torch.sum(drop_idx) < batch["token"].shape[0]:
+                for h in range(1, self.model.hp.n_token_hierarchy):
+                    print(batch["token"][~drop_idx, ..., h].shape)
+                    batch["token"][~drop_idx, ..., h] = self.model.perturb_tokens(batch["token"][~drop_idx, ..., h])
 
         if self.dpo_train and self.dpo_condition_sync:
             # for DPO training, make sure token condition of win and lose are the same.
@@ -257,7 +303,8 @@ class VoiceBoxModule(pl.LightningModule):
             batch["token"] = torch.cat([win_token, win_token], dim=0)
 
         batch["bn"] = self.get_sacodec_embedding(batch["wav"]) # B x L x D
-        sacodec_lens = (batch["wav_lens"] / 44100 * 50).round() # TODO: replace magic numbers with config values
+        batch = self.align_umm_and_bn(batch)
+        sacodec_lens = (batch["wav_lens"] / self.diffusion_sample_rate * self.bn_hz).round() # TODO: replace magic numbers with config values
         # print('Sacodec feat', batch["bn"].shape, sacodec_lens)
         batch["bn_lens"] = sacodec_lens
         batch["bn_mask"] = sequence_mask(sacodec_lens, max_len=batch["bn"].shape[1], device=sacodec_lens.device)
@@ -414,18 +461,23 @@ class VoiceBoxModule(pl.LightningModule):
         text_cfg_w = 1.0
         max_val_output_samples_num = 10
 
-        batch["bn"] = self.get_sacodec_embedding(batch["wav"]) # B x L x D
-        sacodec_lens = (batch["wav_lens"] / 44100 * 50).round() # TODO: replace magic numbers with config values
-        batch["bn_lens"] = sacodec_lens
-        batch["bn_mask"] = sequence_mask(sacodec_lens, max_len=batch["bn"].shape[1], device=sacodec_lens.device)
-        # batch["bn_mask"] = sequence_mask(sacodec_lens, mask_len=sacodec_lens.max().item())
         if "token" not in batch:
             batch["token"] = self.get_umm_token(batch["wav_24k"].unsqueeze(1))
         # print('UMM', batch["token"].shape)
 
+        batch["bn"] = self.get_sacodec_embedding(batch["wav"]) # B x L x D
+        batch = self.align_umm_and_bn(batch)
+        sacodec_lens = (batch["wav_lens"] / 44100 * 50).round() # TODO: replace magic numbers with config values
+        batch["bn_lens"] = sacodec_lens
+        batch["bn_mask"] = sequence_mask(sacodec_lens, max_len=batch["bn"].shape[1], device=sacodec_lens.device)
+        # batch["bn_mask"] = sequence_mask(sacodec_lens, mask_len=sacodec_lens.max().item())
+
         def make_cfg_input(inputs):
             if text_cfg_w != 1:
-                inputs["token"] = inputs["token"].repeat(2, 1)
+                if inputs["token"].ndim == 2:
+                    inputs["token"] = inputs["token"].repeat(2, 1)
+                else:
+                    inputs["token"] = inputs["token"].repeat(2, 1, 1)
                 # inputs["bn"] = inputs["bn"].repeat(2, 1, 1)
                 inputs["bn_ctx"] = inputs["bn_ctx"].repeat(2, 1, 1)
                 

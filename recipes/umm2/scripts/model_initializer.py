@@ -32,7 +32,7 @@ class ModelLoader(BaseModelLoader):
 
         with local_zero_first():
             local_path = self.ensure_hdfs_ckpt_is_local(self.ckpt_path, self.cache_dir)
-            model = pl_module_cls.load_from_checkpoint(local_path, strict=False).to(self.device).eval()
+            model = pl_module_cls.load_from_checkpoint(local_path, strict=False, map_location="cpu").to(self.device).eval()
 
         self.pl_module = model
         return {"pl_module": model}
@@ -53,7 +53,9 @@ def init_stage3(hpath, local_rank, requires=[], cache_dir=None):
     # module = importlib.import_module(module_name)
     # pl_module_cls = getattr(module, cls_name)
     model = loader.load_model(Stage3RVQ)
-    return model["pl_module"]
+    Stage3 = model["pl_module"]
+    return_dict = {"Stage3": Stage3}
+    return return_dict
 
 def load_example_audio(audio_path=None):
     if audio_path is None:

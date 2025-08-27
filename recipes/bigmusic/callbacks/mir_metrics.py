@@ -14,7 +14,6 @@ from pathlib import Path
 from datetime import datetime
 from prettytable import PrettyTable
 import pytorch_lightning as pl
-from recipes.bigmusic.datasets.zh_inference import format_style_text
 from recipes.bigmusic.utils.format_utils import concat_metadata_list, update_json, load_json_locked
 from recipes.bigmusic.utils.upload import upload_to_tos_v2
 from recipes.bigmusic.datasets.mir_data_util import SA_GENRE20, MAP_SUB_GENRE_2_SA_GENRE20, MACRO_STYLE_MAP_MOOD2_SA_MOOD19, SA_MOOD19
@@ -301,6 +300,7 @@ def parse_gt_tag_from_metadata(audio_file_path, tag="genre"):
         metadata = json.load(f)
     gt_style_text = metadata.get('style_text')
     #print('gt_style_text: ', gt_style_text)
+    from recipes.bigmusic.datasets.zh_inference import format_style_text
     #gt_style_text = format_style_text(gt_style_text)  # insert a reformat logic to make it compatible with the previous code
     if '|' in gt_style_text:
         gt_style_text = gt_style_text.split('|')

@@ -15,6 +15,7 @@ from recipes.voicebox.datasets.utils import (
     PhoneToId,
     collate_1d,
     collate_2d,
+    collate_2d_token,
     get_duration_frames_wds,
 )
 from recipes.voicebox.utils.infer_utils import save_wav
@@ -374,7 +375,26 @@ class VoiceBoxParquetDataset(IterableDataset):
             vocal_included = False
         
         if self.use_bn:
-            data_dict["token"] = torch.as_tensor(pickle.loads(sample["umm_token"]), dtype=torch.long)
+            token = torch.as_tensor(pickle.loads(sample["umm_token"]), dtype=torch.long)
+
+            if self.interleave_token_with_offset > 0:
+                if token.shape[0] %2 != 0:
+                    logger.warning(f"token={token.shape} interleave_token_with_offset={self.interleave_token_with_offset}")
+                    return None
+                                
+                # [[token_vocal, token_inst], ... [token_vocal, token_inst]]
+                token = token.reshape(-1, 2) + torch.tensor([0,self.interleave_token_with_offset])
+                data_dict["token"] = token.reshape(-1)
+
+                # verification
+                # vocal_flag = token[:,0] >= self.interleave_token_with_offset
+                # inst_flag = token[:,1] < self.interleave_token_with_offset
+                # assert not torch.any(vocal_flag), f"vocal_flag={vocal_flag}, token={token[:,0]}"
+                # assert not torch.any(inst_flag), f"inst_flag={inst_flag}, token={token[:,1]}"
+
+            else:
+                data_dict["token"] = token
+
 
             bn = self.get_bn(sample)
             assert bn.shape[1] == 64
@@ -559,7 +579,10 @@ class VoiceBoxCollator(object):
 
         token_lens = [b['token'].shape[0] for b in batches]
         max_token_len = max(token_lens)
-        token = collate_1d(
+        token_collate_fn = collate_1d
+        if batches[0]["token"].ndim == 2:
+            token_collate_fn = collate_2d_token
+        token = token_collate_fn(
             [b["token"] for b in batches],
             pad_idx=self.tokenizer_pad,
             max_len=max_token_len

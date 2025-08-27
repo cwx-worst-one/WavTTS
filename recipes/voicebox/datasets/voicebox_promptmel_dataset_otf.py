@@ -2,6 +2,7 @@ import json
 import logging
 import pickle
 import math
+import copy
 import numpy as np
 import torch
 import librosa
@@ -140,6 +141,7 @@ class VoiceBoxParquetDataset(IterableDataset):
         wav = read_wav_sf(sample) # L, CH
         if wav.shape[0] == 0:
             print(f'Empty wav duration {wav.shape}')
+            del sample
             return None
 
         if len(wav.shape) != 2 or wav.shape[-1] != 2:
@@ -148,6 +150,7 @@ class VoiceBoxParquetDataset(IterableDataset):
             else:
                 print(f'Invalid wav src sample shape. Perhaps mono? {wav.shape}')
                 log_sample(sample, wav)
+                del sample
                 return None
 
         if sample["src_sample_rate"] != self.bn_audio_freq:
@@ -157,6 +160,7 @@ class VoiceBoxParquetDataset(IterableDataset):
                 print('Invalid src sample rate', sample["src_sample_rate"], self.bn_audio_freq)
                 log_sample(sample, wav)
                 # raise Exception("Src sample rate does not equal")
+                del sample
                 return None
 
         
@@ -179,6 +183,8 @@ class VoiceBoxParquetDataset(IterableDataset):
         min_sample_len = self.min_audio_length * sr
         max_sample_len = self.max_audio_length * sr
         if wav.shape[-1] < min_sample_len:
+            del wav
+            del sample
             return None
         start, end = None, None
         if wav.shape[-1] > max_sample_len:
@@ -200,27 +206,33 @@ class VoiceBoxParquetDataset(IterableDataset):
             # print('Umm duration', umm_token.shape, wav.shape, umm_hz, umm_token_len, max_wav_len)
 
             data_dict["token"] = umm_token[..., :umm_token_len]
-            data_dict['wav'] = wav[:, :max_wav_len]
+            data_dict['wav'] = copy.deepcopy(wav[:, :max_wav_len])
         else: # Reasample to wav_24k for OTF umm extraction
             # For now, truncate to nearest 25hz divisible
-            max_wav_len = int(int(wav.shape[-1] / sr * umm_hz) * sr / umm_hz)
+            # max_wav_len = int(int(wav.shape[-1] / sr * umm_hz) * sr / umm_hz)
+            max_wav_len = int(wav.shape[-1] / sr) * sr
             wav = wav[:, :max_wav_len]
-            data_dict['wav'] = wav
+            data_dict['wav'] = copy.deepcopy(wav)
 
             try:
                 wav_24k = self.audio_resampler(wav.mean(0))
             except Exception as e:
                 print(f'Error resampling wav {wav.shape}', e)
                 log_sample(sample, wav)
+                del sample
+                del wav
                 return None
             data_dict['wav_24k'] = wav_24k
 
         utt_id = sample["__key__"]
         data_dict['utt_id'] = utt_id
+        del sample
+        del wav
 
         return data_dict
 
     def __iter__(self):
+        self.batcher.clear()
         for item in self.wds:
             batch = self.batcher.collate_batch(item)
             if batch:

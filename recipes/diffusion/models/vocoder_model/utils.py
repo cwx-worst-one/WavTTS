@@ -335,7 +335,9 @@ def process_eos_indexes(semantic_samples, eos_id=32769, semantic_frame_rate=25, 
     semantic2output_rate = output_frame_rate / semantic_frame_rate
     eos_index_list = ((semantic_samples == eos_padding_id).bool().cumsum(axis=1) == 0).bool().sum(
         axis=1)
-    eos_index_list = torch.round(eos_index_list * semantic2output_rate) # convert 
+    eos_index_list = torch.round(eos_index_list * semantic2output_rate) # convert
+    if eos_index_list.ndim == 2:
+        eos_index_list = eos_index_list[:, 0]
     return eos_index_list.long().to(semantic_samples.device)
 
 

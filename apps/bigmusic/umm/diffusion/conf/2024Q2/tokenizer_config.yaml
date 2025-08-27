@@ -1,4 +1,3 @@
-
 ConformerUMM_baseline:
   frame_rate: 25
   umm_type: "UMM"
@@ -8,8 +7,6 @@ ConformerUMM_baseline:
   token_padding: !apply:samantha.utils.envs.getenv_int ["token_padding", 32768]
   token_eos: !apply:samantha.utils.envs.getenv_int ["token_eos", 32769]
 
-
-
 ConformerUMM_2250_2375:
   frame_rate: 25
   umm_type: "UMM"
@@ -18,7 +15,6 @@ ConformerUMM_2250_2375:
   token_cfg: True
   token_padding: !apply:samantha.utils.envs.getenv_int ["token_padding", 32768]
   token_eos: !apply:samantha.utils.envs.getenv_int ["token_eos", 32769]
-
 
 ConvUMM_2255_2375:
   frame_rate: 25
@@ -47,3 +43,12 @@ ConformerUMM2:
   token_cfg: True
   token_padding: !apply:samantha.utils.envs.getenv_int ["token_padding", 32768]
   token_eos: !apply:samantha.utils.envs.getenv_int ["token_eos", 32769]
+
+ConformerUMM2_RVQ4_RP:
+  frame_rate: 25
+  umm_type: "RVQ"
+  sample_rate: 24000
+  ckpt_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/RVQ/RVQ_RP_4x16384_lr3e-5_30k_bs5_a100/checkpoints/step=0200000.ckpt
+  token_cfg: True
+  token_padding: !apply:samantha.utils.envs.getenv_int ["token_padding", 16385]
+  token_eos: !apply:samantha.utils.envs.getenv_int ["token_eos", 16385]
