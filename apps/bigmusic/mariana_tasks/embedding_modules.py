@@ -510,6 +510,7 @@ class BestRQTokenEmbedder(TokenEmbedder):
         chunk_dur: float = 60.0,
         item_key: str = "target_audio",
         length_key: str = "target_audio_length",
+        varlen: bool = True,
         **kwargs,
     ):
         super().__init__(
@@ -546,6 +547,7 @@ class BestRQTokenEmbedder(TokenEmbedder):
         # NOTE (Yilin): Hacky implementation...
         if self.with_sos ^ self.with_eos:
             raise ValueError("Both with_sos and with_eos should both be True or False")
+        self.varlen = varlen
 
     def get_tokens(self, requires, input_audio, **kwargs) -> torch.Tensor:
         if self.store_hidden_states:
@@ -590,7 +592,7 @@ class BestRQTokenEmbedder(TokenEmbedder):
         else:
             target_audio_length = float(batch[self.item_key].shape[-1]) / self.sample_rate
             if target_audio_length <= self.chunk_dur or self.slice_method is None:
-                wav_length = batch['audio_length'].view(-1).to(batch['target_audio'].device)
+                wav_length = batch['audio_length'].view(-1).to(batch['target_audio'].device) if self.varlen else None
                 target_ids = self.tokenize(
                     requires, 
                     batch[self.item_key],
@@ -640,7 +642,7 @@ class BestRQTokenEmbedder(TokenEmbedder):
                     _target_id = self.tokenize(
                         requires, 
                         target_audio,
-                        wav_length=wav_length,
+                        wav_length=wav_length if self.varlen else None,
                         ).to(device)
                     target_ids.append(_target_id)
                     if _et >= n_samples:

@@ -103,6 +103,7 @@ target_embedder: !new:apps.bigmusic.mariana_tasks.embedding_modules.BestRQTokenE
     chunk_dur: !ref <extra_params[tokenizer_chunk_duration]>
     item_key: target_audio
     length_key: target_tokens_length
+    varlen: False
 
 # Multi-token target embedder
 # target_embedder: !new:apps.bigmusic.mariana_tasks.embedding_modules.BestRQMultiTokenEmbedder
