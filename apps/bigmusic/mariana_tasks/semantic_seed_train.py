@@ -32,11 +32,10 @@ from mariana.models.audio.speech_checkpoint import SpeechModelCheckpoint
 import samantha # noqa: F401, resolve mariana python path
 from mariana.utils.audio.audio_logger import AudioLogger
 from mariana.models.audio.weight_init import ModuleInitializer
-from samantha.dataio.bigmusic.lite import MusicLiteDataModule
 from samantha.criterion.masked_loss import sequence_mask
 from apps.bigmusic.mariana_tasks.semantic_modules import SemanticEmbModule as SemanticEmbModuleLegacy
 from apps.bigmusic.mariana_tasks.semantic_emb_module import SemanticEmbModule
-from apps.bigmusic.mariana_tasks.utils.speech_data_collect_callback import SpeechDataCollectCallback
+from apps.bigmusic.mariana_tasks.utils.speech_data_collect_callback import SpeechDataCollectCallback, TokenNumPerCategoryParser
 from mariana.models.audio.gpt2_audio import (
     GPT2LMHeadModel,
     inplace_update_megatron_state_dict,
@@ -63,6 +62,14 @@ from samantha.utils.hparams import DotDict
 
 
 logger = AudioLogger()
+
+_LITE_USE_MULTITASK = int(os.getenv("_LITE_USE_MULTITASK", "0")) != 0
+if _LITE_USE_MULTITASK:
+    from samantha.dataio.bigmusic.lite_multitask import MusicLiteDataModule
+else:
+    from samantha.dataio.bigmusic.lite import MusicLiteDataModule
+logger.info(f"run training with {_LITE_USE_MULTITASK=}")
+
 
 # default config for M8 MoE-680M LLM
 _m8_network_config = {
@@ -1019,6 +1026,7 @@ class SemanticLlmModel(CruiseModule):
             require_eos_acc=kwargs.get("require_eos_acc", False),
             eos_index_window=kwargs.get("eos_index_window", 1),
         )
+        outputs.update(TokenNumPerCategoryParser.get_data(batch))
         outputs['seqlens_q'] = cu_seqlens_q.diff()
         outputs['gpt2_lengths'] = outputs['seqlens_q']
         outputs['tokens'] = input_embeds_rmpad.shape[0]
@@ -1561,7 +1569,6 @@ class SemanticLlmTrainer(AudioTrainer):
             for tn in train_transform_names
         ]
         self.train_meters.extend(skip_meters)
-
         if global_config.model.network.get('return_moe_metric', False):
             moe_meters = []
             for i in range(global_config.model.network.n_layer):
@@ -1571,8 +1578,10 @@ class SemanticLlmTrainer(AudioTrainer):
                 moe_meters.append(
                     (f'moe/expert_active_cnt_layer{i}', {'type': 'Simple', 'args': [f'expert_active_cnt_layer{i}']})
                 )
-
             self.train_meters.extend(moe_meters)
+        TokenNumPerCategoryParser.initialize(global_config)
+        self.train_meters.extend(TokenNumPerCategoryParser.get_train_meters())
+
 
 class SemanticLlmCLI(CruiseCLI):
     def _parse_arguments(self, parser) -> None:

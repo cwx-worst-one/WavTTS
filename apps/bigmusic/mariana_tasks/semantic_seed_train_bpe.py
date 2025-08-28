@@ -4,11 +4,9 @@ import os
 import torch
 from cruise import CruiseConfig
 from cruise.trainer.callback import ModelCheckpoint
-from cruise import CruiseCLI, CruiseConfig, CruiseModule, last_cli
 import torch.distributed
 
 import samantha # noqa: F401, resolve mariana python path
-from tasks.audio.audio_trainer import AudioTrainer
 from mariana.models.audio.speech_checkpoint import SpeechModelCheckpoint
 from mariana.utils.audio.audio_logger import AudioLogger
 from mariana.utils.exp_helper import ExpHelper
@@ -460,7 +458,7 @@ class SemanticLlmModelBpe(SemanticLlmModel):
         output_tokens -= text_codebook_size
         return output_tokens
     
-class SemanticLlmBpeTrainer(AudioTrainer):
+class SemanticLlmBpeTrainer(SemanticLlmTrainer):
     train_meters = [
         ('loss', {'type': 'Weighted', 'args': ['loss', 'tokens']}),
         ('acc', {'type': 'Weighted', 'args': ['acc', 'tokens']}),
@@ -483,31 +481,6 @@ class SemanticLlmBpeTrainer(AudioTrainer):
         'lr * 1e3',
         'flops',
     ]
-
-    def _setup_meters(self):
-        self._config
-        global_config = last_cli().hparams
-        train_transform_names = [t.type for t in global_config.data.train_item_transform]
-        # TODO: 或许可以手动将需要观察的transform名字加在这里。其实有很多是不会skip的。
-        skip_meters = [
-            (_get_skip_meter_name(tn), {"type": "Sum", "args": [_get_skip_meter_name(tn)]})
-            for tn in train_transform_names
-        ]
-        self.train_meters.extend(skip_meters)
-
-        if global_config.model.network.get('return_moe_metric', False):
-            moe_meters = []
-            for i in range(global_config.model.network.n_layer):
-                moe_meters.append(
-                    (f'moe/expert_cnt_layer{i}', {'type': 'Histogram', 'args': [f'expert_cnt_layer{i}']})
-                )
-                moe_meters.append(
-                    (f'moe/expert_active_cnt_layer{i}', {'type': 'Simple', 'args': [f'expert_active_cnt_layer{i}']})
-                )
-
-            self.train_meters.extend(moe_meters)
-        TokenNumPerCategoryParser.initialize(global_config)
-        self.train_meters.extend(TokenNumPerCategoryParser.get_train_meters())
 
 def setup_cli(CLI_Clazz=SemanticLlmCLI):
     helper = ExpHelper(__file__)
