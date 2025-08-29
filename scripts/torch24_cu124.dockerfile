@@ -65,7 +65,7 @@ ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
 ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.79
-ARG BUMI_VERSION=25.8.0.65
+ARG BUMI_VERSION=25.8.0.88
 ARG LSDP_VERSION=25.8.0.37
 ARG TRITON_VERSION=1.0.0.216
 ARG OMNIDISPATCHER_VERSION=1.0.0.57
@@ -500,7 +500,7 @@ RUN pip3 install \
         pypinyin==0.48.0 \
         pyre-extensions==0.0.29 \
         PySoundFile==0.9.0.post1 \
-        pytest==6.2.5 \
+        pytest==8.4.1 \
         pytest-cov==3.0.0 \
         pytest-datadir==1.3.1 \
         pytest-mock==3.8.2 \
@@ -683,8 +683,7 @@ RUN pip3 install --no-cache-dir --no-deps \
 # Install omnidispatcher omnistore
 RUN pip3 install --no-cache-dir \
         http://luban-source.byted.org/repository/scm/seed.speech.OmniDispatcher_$OMNIDISPATCHER_VERSION.tar.gz \
-        http://luban-source.byted.org/repository/scm/data.aml.omnistore_test_1.0.0.90.tar.gz
-        # byted-omnistore==1.0.9rc2
+        byted-omnistore==1.0.9rc2
 
 RUN pip3 install --no-cache-dir \
         http://luban-source.byted.org/repository/scm/seed.speech.lite_dataloader_$LITEDATALOADER_VERSION.tar.gz
