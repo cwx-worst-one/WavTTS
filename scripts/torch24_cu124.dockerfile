@@ -47,6 +47,10 @@ ENV MASON_SKIP_MEGATRON_AUTO_PIP_INSTALL 1
 ENV CRS_LOGGING_LEVEL INFO
 ENV TORCH_NCCL_HIGH_PRIORITY 1
 ENV MARIANA_SKIP_MASON_INSTALL 1
+ENV OMNISTORE_ENABLE_STRICT_GC 1
+ENV OMNISTORE_ENABLE_SAVE_LOAD_TRIM_MEM 1
+ENV OMNISTORE_ENABLE_CLEAR_MMAP_CACHE 1
+ENV OMNISTORE_ENABLE_PINNED_MEM_D2H 0
 
 ARG CMAKE_CUDA_COMPILER_LAUNCHER="/usr/bin/ccache"
 ARG CMAKE_CXX_COMPILER_LAUNCHER="/usr/bin/ccache"
@@ -61,11 +65,11 @@ ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
 ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.79
-ARG BUMI_VERSION=25.8.0.30
-ARG LSDP_VERSION=25.8.0.22
+ARG BUMI_VERSION=25.8.0.65
+ARG LSDP_VERSION=25.8.0.37
 ARG TRITON_VERSION=1.0.0.216
 ARG OMNIDISPATCHER_VERSION=1.0.0.57
-ARG LITEDATALOADER_VERSION=1.0.0.43
+ARG LITEDATALOADER_VERSION=1.0.0.44
 ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.51
 # https://github.com/facebookresearch/xformers.git:6425fd0
 ARG XFORMERS_VERSION=1.0.0.15
@@ -183,7 +187,7 @@ RUN pip3 install \
         byted-lafka-internal==1.4.16rc1 \
         byted-seed-kernels==0.3.5 \
         byted-seed-models==1.3.3 \
-        byted-streaming==1.1.85 \
+        byted-streaming==1.1.226 \
         byted-unified-io==0.0.20 \
         byted-wandb==0.13.86 \
         byted_encrypted_hdfs==0.7.2 \
@@ -679,7 +683,8 @@ RUN pip3 install --no-cache-dir --no-deps \
 # Install omnidispatcher omnistore
 RUN pip3 install --no-cache-dir \
         http://luban-source.byted.org/repository/scm/seed.speech.OmniDispatcher_$OMNIDISPATCHER_VERSION.tar.gz \
-        byted-omnistore==1.0.9rc2
+        http://luban-source.byted.org/repository/scm/data.aml.omnistore_test_1.0.0.90.tar.gz
+        # byted-omnistore==1.0.9rc2
 
 RUN pip3 install --no-cache-dir \
         http://luban-source.byted.org/repository/scm/seed.speech.lite_dataloader_$LITEDATALOADER_VERSION.tar.gz
