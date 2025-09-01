@@ -684,7 +684,7 @@ RUN pip3 install --no-cache-dir --no-deps \
 # Install omnidispatcher omnistore
 RUN pip3 install --no-cache-dir \
         http://luban-source.byted.org/repository/scm/seed.speech.OmniDispatcher_$OMNIDISPATCHER_VERSION.tar.gz \
-        byted-omnistore==1.0.9rc2
+        byted-omnistore==1.0.9rc12
 
 RUN pip3 install --no-cache-dir \
         http://luban-source.byted.org/repository/scm/seed.speech.lite_dataloader_$LITEDATALOADER_VERSION.tar.gz
