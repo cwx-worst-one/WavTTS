@@ -224,7 +224,6 @@ RUN pip3 install \
         bytedtrace==0.3.0 \
         bytedzti==1.0.11 \
         bytedztijwthelper==0.0.23 \
-        bytedztispiffe==0.0.14 \
         cachetools==5.5.0 \
         certifi==2024.8.30 \
         cffi==1.15.1 \
@@ -655,6 +654,8 @@ RUN pip3 install \
         zope.event==5.0 \
         zope.interface==7.0.3 \
         zstandard==0.23.0 \
+        bytedztispiffe==0.0.16 \
+        bytedztijwt==0.2.25 \
         zstd==1.5.6.7
 
 
