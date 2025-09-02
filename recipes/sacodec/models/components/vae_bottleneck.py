@@ -101,3 +101,78 @@ class VAEBottleneckV3(nn.Module):
         x = x.float()
         x = self.bottleneck(x.transpose(1, 2)).transpose(1, 2)
         return self.activation_bottleneck(x), 0
+
+
+class VAEBottleneckV4(nn.Module):
+    "sigma-vae variant from latentLM"
+    "https://arxiv.org/pdf/2412.08635"
+
+    def __init__(self, in_channels: int, latent_dim: int, beta: float, std: float=0.75):
+        super().__init__()
+        self.bottleneck = nn.Linear(in_channels, latent_dim)
+        self.beta = beta
+        self.std = std
+
+    @torch.cuda.amp.autocast(enabled=False)
+    def forward(self, x: Tensor) -> Dict[str, Tensor]:
+        # in: b x c x l
+        x = x.float()
+        mean = self.bottleneck(x.transpose(1, 2)).transpose(1, 2)
+        value = self.std / 0.8
+        
+        batch_size = mean.shape[0]
+        std = torch.randn([batch_size,1,1]).to(mean.device) * value
+        std = nn.functional.softplus(std) + 1e-4  # NOTE: tie to beta?
+        kl = mean.norm(p=2, dim=-1)
+        z = mean + std * torch.randn_like(mean).to(device=x.device)
+        return z, kl.mean()
+
+
+class VAEBottleneckV5(nn.Module):
+    "VAE with high-res and low-res latents"
+
+    def __init__(self, in_channels: int, latent_dim: int, beta: float, latent_dim_lores: int):
+        super().__init__()
+        self.bottleneck = nn.Linear(in_channels, latent_dim * 2)
+        self.linear_fine2corse = nn.Linear(latent_dim, latent_dim_lores)
+        self.linear_corse_to_fine = nn.Linear(latent_dim_lores, latent_dim)
+        self.beta = beta
+
+    @torch.cuda.amp.autocast(enabled=False)
+    def forward(self, x: Tensor) -> Dict[str, Tensor]:
+        # in: b x c x l
+        x = x.float()
+
+        # high_res residual
+        x_residual = self.bottleneck(x.transpose(1, 2)).transpose(1, 2)
+        mu, logvar = x_residual.chunk(2, dim=1)
+        z, kl = sample_vae(mu, logvar)
+        z = z.transpose(1, 2)
+        kl = self.beta * kl
+
+        # low_res
+        z_low_res = self.linear_fine2corse(z)
+        # shape low-res, add residual, and concat two part
+        z_low_res_reshape = self.linear_corse_to_fine(z_low_res)
+        z_residual = z - z_low_res_reshape
+        merged_z = torch.cat([z_residual, z_low_res_reshape], dim=-1)
+        merged_z = merged_z.transpose(1, 2)
+        return merged_z, kl
+
+class VAEBottleneckConstSigma(nn.Module):
+    "sigma-vae variant with constant sigma"
+
+    def __init__(self, in_channels: int, latent_dim: int, beta: float, std: float=0.2):
+        super().__init__()
+        self.bottleneck = nn.Linear(in_channels, latent_dim)
+        self.beta = beta
+        self.std = std
+
+    @torch.cuda.amp.autocast(enabled=False)
+    def forward(self, x: Tensor) -> Dict[str, Tensor]:
+        # in: b x c x l
+        x = x.float()
+        mean = self.bottleneck(x.transpose(1, 2)).transpose(1, 2)
+        kl = mean.norm(p=2, dim=-1)
+        z = mean + self.std * torch.randn_like(mean).to(device=x.device)
+        return z, kl.mean()

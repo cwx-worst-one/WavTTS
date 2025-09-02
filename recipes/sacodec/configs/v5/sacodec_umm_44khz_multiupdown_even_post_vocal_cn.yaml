@@ -18,6 +18,8 @@ training_params:
     n_mels: 160
     n_chroma: 12
     audio_channels: 2
+    vae_hz: 50
+    bottleneck_version: "v1"
 
     precision: 32
 
@@ -82,6 +84,9 @@ pl_module: !new:recipes.sacodec.modules.sacodec_module_umm.SACodecModule
         umm_block_layers: 1
         block_layers: [1, 4, 4]
         atan2_magnitude_threshold_ratio: 0.0
+        vae_hz: !ref <training_params[vae_hz]>
+        sample_rate: !ref <training_params[sample_rate]>
+        bottleneck_version: !ref <training_params[bottleneck_version]>
 
     decoder_cls: !name:recipes.sacodec.models.sacodec.ISTFTDecoder
         n_fft: !ref <training_params[n_fft]>

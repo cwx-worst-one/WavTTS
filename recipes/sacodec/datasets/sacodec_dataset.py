@@ -101,7 +101,7 @@ class ParquetDatasetWrapper(WebPipeline):
                 if "wav_path" in item: # support meta.lst from local path
                     wav_npy, sr = torchaudio.load(item["wav_path"])
                 else:
-                    wav_npy, sr = torchaudio.load(io.BytesIO(item["wav"]))
+                    wav_npy, sr = torchaudio.load(io.BytesIO(item.get("audio_44k", item["wav"])))
                 if sr != self.dataset_samplerate:
                     if self.allow_resample:
                         wav_npy = resample(wav_npy, sr, self.dataset_samplerate)
@@ -180,15 +180,12 @@ class ParquetDatasetWrapper(WebPipeline):
                     )
                     res['audio_24k'] = audio_24k_mono
                     
-                if "mp3" in self.audio_augmentations:
-                    if random.random() > 0.5:
-                        compress_rate = random.randint(0, 7)
-                        self.mp3_compress[0].vbr_quality = compress_rate
-                        audio_mp3_compress = self.mp3_compress(wav_crop.numpy(), sample_rate=self.dataset_samplerate)
-                        audio_mp3_compress = torch.from_numpy(audio_mp3_compress)
-                    else: # no compression
-                        audio_mp3_compress = wav_crop
-                    res['audio_mp3_compress'] = audio_mp3_compress
+                if "mp3" in self.audio_augmentations and random.random() > 0.5:
+                    compress_rate = random.randint(0, 7)
+                    self.mp3_compress[0].vbr_quality = compress_rate
+                    audio_mp3_compress = self.mp3_compress(wav_crop.numpy(), sample_rate=self.dataset_samplerate)
+                    audio_mp3_compress = torch.from_numpy(audio_mp3_compress)
+                    res['audio_augmented'] = audio_mp3_compress
 
                 if "reduce_volume" in self.audio_augmentations: 
                     ## gain audio on both. add clipping to input.

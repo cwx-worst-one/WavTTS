@@ -4,7 +4,14 @@ import torchaudio
 from torch import nn
 from torch.nn.utils.parametrizations import weight_norm
 from recipes.sacodec.models.components.spectral_ops import AMP_PHA_Spectrum
-from recipes.sacodec.models.components.vae_bottleneck import VAEBottleneck, VAEBottleneckV2, VAEBottleneckV3
+from recipes.sacodec.models.components.vae_bottleneck import (
+    VAEBottleneck,
+    VAEBottleneckV2,
+    VAEBottleneckV3,
+    VAEBottleneckV4,
+    VAEBottleneckV5,
+    VAEBottleneckConstSigma,
+)
 from recipes.sacodec.models.components.convnext import ConvNeXtBlock, ConvNextBackboneDownUp
 from recipes.sacodec.models.components.conformer_next import ConformerConfig, ConformerNextBlock, ConformerNextBackboneDownUp
  
@@ -18,6 +25,7 @@ class Transpose(nn.Module):
 class UMMLoss(nn.Module):
     def __init__(self, 
                  vae_dim=64, hidden_size=1536, block_layers=0, 
+                 vae_dim_lowres=32,
                  sample_rate=44100, umm_version="umm", vae_hz=50
                  ):
         super().__init__()
@@ -40,6 +48,8 @@ class UMMLoss(nn.Module):
                 downsample_block = [torch.nn.Conv1d(vae_dim, hidden_size, kernel_size=3, stride=2, padding=1)] # B D L
             elif vae_hz == 25:
                 downsample_block = [torch.nn.Conv1d(vae_dim, hidden_size, kernel_size=1, stride=1, padding=0)] # B D L
+            elif vae_hz == 100:
+                downsample_block = [torch.nn.Conv1d(vae_dim, hidden_size, kernel_size=5, stride=4, padding=1)] # B D L
             config = ConformerConfig(
                 input_channels=hidden_size,
                 hidden_size=hidden_size,
@@ -55,11 +65,22 @@ class UMMLoss(nn.Module):
                 torch.nn.Linear(hidden_size, umm_dim),
                 Transpose(), # B D L
             )
+            if self.umm_version == "umm_continuous_and_vq":
+                self.alignment_head_lores = nn.Sequential(
+                    *downsample_block, # B D L
+                    Transpose(), # B L D
+                    semantic_encoder,
+                    torch.nn.Linear(hidden_size, vae_dim_lowres),
+                    Transpose(), # B D L
+                )
+
         else:
             if vae_hz == 50:
                 downsample_block = [torch.nn.Conv1d(vae_dim, hidden_size*2, kernel_size=3, stride=2, padding=1)] # B D L
             elif vae_hz == 25:
                 downsample_block = [torch.nn.Conv1d(vae_dim, hidden_size*2, kernel_size=1, stride=1, padding=0)] # B D L
+            elif vae_hz == 100:
+                downsample_block = [torch.nn.Conv1d(vae_dim, hidden_size*2, kernel_size=5, stride=4, padding=1)] # B D L
             self.semantic_encoder = None
             self.alignment_head = nn.Sequential(
                 *downsample_block,
@@ -68,6 +89,14 @@ class UMMLoss(nn.Module):
                 torch.nn.Linear(hidden_size*2, umm_dim),
                 Transpose(), # B D L
             )
+            if self.umm_version == "umm_continuous_and_vq":
+                self.alignment_head_lores = nn.Sequential(
+                    *downsample_block,
+                    Transpose(), # B L D
+                    nn.GELU(),
+                    torch.nn.Linear(hidden_size*2, vae_dim_lowres),
+                    Transpose(), # B D L
+                )
 
     def load_umm(self, device):
         umm_version = self.umm_version
@@ -124,7 +153,7 @@ class UMMLoss(nn.Module):
         vq_hidden = outputs['vq_hidden_states'].permute((0, 2, 1))
         return vq_hidden
 
-    def forward(self, encoder_features, return_loss=True, audio_input_24k_mono=None):
+    def forward(self, encoder_features, return_loss=True, audio_input_24k_mono=None, low_res_latents=None):
         # assert len(input_audio.shape) == 3 and len(encoder_features.shape) == 3, f"Invalid number of channels {input_audio.shape}, {encoder_features.shape}"
         # encoder features = B, D, L
         umm_predicted_features = self.alignment_head(encoder_features)
@@ -145,11 +174,18 @@ class UMMLoss(nn.Module):
         elif self.umm_version == "umm_vq":
             # TODO: switch this to categorical cross entropy and predict vq ids
             umm_features = self.get_conformer_vq_hidden(self.conformer_umm, audio_input_24k_mono) # B, D, L
+        elif self.umm_version == "umm_continuous_and_vq":
+            umm_features = self.get_conformer_umm_hidden(self.conformer_umm, audio_input_24k_mono) # [2, 1024, 250],  B, D, L
+            umm_features_vq = self.get_conformer_vq_hidden(self.conformer_umm, audio_input_24k_mono) # B, D, L
 
         with torch.autocast(device_type="cuda", dtype=torch.float32, enabled=False):
             cosine_loss = -torch.nn.functional.cosine_similarity(umm_predicted_features, umm_features, dim=1).mean()
             l1_loss = torch.nn.functional.l1_loss(umm_predicted_features, umm_features)
 
+            if self.umm_version == "umm_continuous_and_vq":
+                umm_predicted_features_low_res = self.alignment_head_lores(low_res_latents)
+                cosine_loss += -torch.nn.functional.cosine_similarity(umm_predicted_features_low_res, umm_features_vq, dim=1).mean()
+                l1_loss += torch.nn.functional.l1_loss(umm_predicted_features_low_res, umm_features_vq)
         # TODO: Try adding melspec and masked loss
 
         return {
@@ -163,11 +199,14 @@ class STFTEncoderVAEPostUMM(nn.Module):
                  n_fft=1024, hop_length=256, win_length=None,
                  sample_rate=44100,
                  atan2_magnitude_threshold_ratio=0.0,
+                 vae_hz=50,
+                 vae_dim_lores=32,
                  vae_dim=128, beta=1e-5, hidden_size=1536, audio_channels=2, block_layers=[1,4,4], umm_block_layers=1, even_pad=True,
                  kernel_size=7, umm_version="umm", final_block="conformer", bottleneck_version="v1", align_pre=False, normalize_spec=False
                  ):
         super().__init__()
         self.audio_channels = audio_channels
+        self.bottleneck_version = bottleneck_version
         if win_length is None: win_length = n_fft
 
         # legacy block layers was hardcoded. hack is to fix this
@@ -237,12 +276,19 @@ class STFTEncoderVAEPostUMM(nn.Module):
             hidden_size=hidden_size,
             block_layers=umm_block_layers,
             sample_rate=sample_rate,
+            vae_hz=vae_hz,
             umm_version=umm_version
         )
         if bottleneck_version == "v2":
             self.bottleneck = VAEBottleneckV2(in_channels=hidden_size, latent_dim=vae_dim, beta=beta)
         elif bottleneck_version == "v3":
             self.bottleneck = VAEBottleneckV3(in_channels=hidden_size, latent_dim=vae_dim, beta=beta)
+        elif bottleneck_version == "v4":
+            self.bottleneck = VAEBottleneckV4(in_channels=hidden_size, latent_dim=vae_dim, beta=beta)
+        elif bottleneck_version == "v5":
+            self.bottleneck = VAEBottleneckV5(in_channels=hidden_size, latent_dim=vae_dim, beta=beta, latent_dim_lores=vae_dim_lores)
+        elif bottleneck_version == "const_sigma":
+            self.bottleneck = VAEBottleneckConstSigma(in_channels=hidden_size, latent_dim=vae_dim, beta=beta)
         else:
             self.bottleneck = VAEBottleneck(in_channels=hidden_size, latent_dim=vae_dim, beta=beta) # x2 for audio + semantic features
 
@@ -274,6 +320,11 @@ class STFTEncoderVAEPostUMM(nn.Module):
 
 
         hidden_states_latents, kl = self.bottleneck(features) # bs x ch x seq
+        if self.bottleneck_version == "v5":
+            residual_latents, low_res_latents = hidden_states_latents.chunk(2, dim=1)
+            hidden_states_latents = residual_latents + low_res_latents
+        else:
+            low_res_latents = None
 
         if return_loss == False:
             return {
@@ -284,7 +335,7 @@ class STFTEncoderVAEPostUMM(nn.Module):
 
         semantic_input_features = features if self.align_pre else hidden_states_latents
 
-        umm_results = self.semantic_encoder(semantic_input_features, return_loss=return_loss, audio_input_24k_mono=audio_input_24k_mono)
+        umm_results = self.semantic_encoder(semantic_input_features, return_loss=return_loss, audio_input_24k_mono=audio_input_24k_mono, low_res_latents=low_res_latents)
         return {
             **umm_results, # umm_cosine_loss, umm_l1_loss, umm_features, semantic_features # bs x ch x seq
             "latent": hidden_states_latents,
