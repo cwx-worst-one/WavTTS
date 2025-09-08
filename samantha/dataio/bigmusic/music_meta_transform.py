@@ -3232,6 +3232,7 @@ class SongSliceTokenCut:
         self.duration_leeway_in_tokens = round(
             duration_leeway_in_s * self.token_frame_rate
         )
+        self.included_keys = kwargs.get("included_keys", [])
 
     def __call__(self, item, **kwargs) -> Any:
         if item is None or self.in_key not in item:
@@ -3241,10 +3242,7 @@ class SongSliceTokenCut:
                 logger.error(f"Missing required key: {key} in {item['uttid']}")
                 return None
 
-        umm_token = pickle.loads(item[self.token_key])
-        if umm_token is None:
-            logger.error(f"Invalid umm_token for {item['uttid']}")
-            return None
+        umm_token = item[self.token_key]
 
         if isinstance(umm_token, dict):
             umm_token = umm_token["umm_token"]
@@ -3267,12 +3265,15 @@ class SongSliceTokenCut:
                     # fmt: on
                     return None
                 # Extract the audio segment for this slice
-                song_slice[self.token_key] = item[self.token_key][start_token:end_token]
+                # song_slice[self.token_key] = item[self.token_key][start_token:end_token]
 
                 # Extract the audio segment for this slice
                 # Preserves all channels (dimension 0) while slicing the time dimension (dimension 1)
                 song_slice[self.token_key] = umm_token[start_token:end_token]
-
+                if len(self.included_keys) > 0:
+                    for key, value in item.items():
+                        if key in self.included_keys:
+                            song_slice[key] = value
             except Exception as e:
                 # Log any errors during slice processing
                 logger.debug(f"Discard {song_slice['uttid']} because of {e}")
@@ -3299,6 +3300,7 @@ class SongSliceTokenMatch:
             duration_leeway_in_s * self.token_frame_rate
         )
         self.n_items = n_items
+        self.included_keys = kwargs.get("included_keys", [])
 
     def __call__(self, item, **kwargs) -> Any:
         if item is None or self.in_key not in item:
@@ -3331,6 +3333,10 @@ class SongSliceTokenMatch:
             time_span = song_slice["time_span"]
             if time_span in umm_token_map:
                 song_slice[self.token_key] = umm_token_map[time_span]
+                if len(self.included_keys) > 0:
+                    for key, value in item.items():
+                        if key in self.included_keys:
+                            song_slice[key] = value
                 picked_song_slices.append(song_slice)
         picked_song_slices = random.sample(
             picked_song_slices, min(len(picked_song_slices), self.n_items)
