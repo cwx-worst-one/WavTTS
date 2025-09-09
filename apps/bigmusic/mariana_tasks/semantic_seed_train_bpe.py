@@ -2,7 +2,7 @@
 
 import os
 import torch
-from cruise import CruiseConfig
+from cruise import CruiseCLI, CruiseConfig, CruiseModule, last_cli
 from cruise.trainer.callback import ModelCheckpoint
 import torch.distributed
 
@@ -10,7 +10,7 @@ import samantha # noqa: F401, resolve mariana python path
 from mariana.models.audio.speech_checkpoint import SpeechModelCheckpoint
 from mariana.utils.audio.audio_logger import AudioLogger
 from mariana.utils.exp_helper import ExpHelper
-from apps.bigmusic.mariana_tasks.utils.speech_data_collect_callback import SpeechDataCollectCallback, TokenNumPerCategoryParser
+from apps.bigmusic.mariana_tasks.utils.speech_data_collect_callback import SpeechDataCollectCallback, MusicTrainMeter
 from apps.bigmusic.mariana_tasks.semantic_seed_train import (
     SemanticLlmCLI,
     SemanticLlmModel,
@@ -27,7 +27,7 @@ from tqdm.auto import tqdm
 import math
 from cruise.utilities.distributed import DIST_ENV
 import copy
-from panther.custom_ops.torch.flash_attn import unpad_input
+from panther.custom_ops.torch.flash_attn import pad_input, unpad_input
 
 logger = AudioLogger()
 
@@ -83,7 +83,7 @@ class SemanticLlmModelBpe(SemanticLlmModel):
         attention_mask = batch["attention_mask"][:,1:].contiguous()
         labels_shift_rmpad, _, _, _ = unpad_input(batch["input_ids"][..., 1:].unsqueeze(2).contiguous(), attention_mask)
         hidden_states_rmpad, _, _, _  = unpad_input(hidden_states[:, :-1, :].contiguous(), attention_mask)
-        loss_mask_rmpad, _, cu_seqlens, _ = unpad_input(batch["token_type_ids"][:,1:].unsqueeze(2).contiguous(), attention_mask)
+        loss_mask_rmpad, indices, cu_seqlens, _ = unpad_input(batch["token_type_ids"][:,1:].unsqueeze(2).contiguous(), attention_mask)
         loss_mask_rmpad = loss_mask_rmpad.view(-1)
 
             
@@ -98,7 +98,16 @@ class SemanticLlmModelBpe(SemanticLlmModel):
 
         num_valid_tokens = loss_mask_rmpad.sum()
         outputs = dict()
-        outputs.update(TokenNumPerCategoryParser.get_data(batch))
+        if 'task' in batch and 'dataset' in batch:
+            bsz, seqlen = attention_mask.shape
+            outputs.update(MusicTrainMeter.calc_meters(
+                tasks = batch['task'],
+                datasets = batch['dataset'],
+                loss = pad_input(loss.unsqueeze(1), indices, bsz, seqlen).squeeze(-1).sum(-1).tolist(),
+                acc = pad_input(acc.unsqueeze(1), indices, bsz, seqlen).squeeze(-1).sum(-1).tolist(),
+                token_num = attention_mask.sum(-1).tolist(),
+                loss_token_num = batch['token_type_ids'][:,1:].sum(-1).tolist(),
+                ))
 
         acc = (acc * loss_mask_rmpad).sum() / num_valid_tokens
 
@@ -481,6 +490,31 @@ class SemanticLlmBpeTrainer(SemanticLlmTrainer):
         'lr * 1e3',
         'flops',
     ]
+
+    def _setup_meters(self):
+        self._config
+        global_config = last_cli().hparams
+        train_transform_names = [t.type for t in global_config.data.train_item_transform]
+        # TODO: 或许可以手动将需要观察的transform名字加在这里。其实有很多是不会skip的。
+        skip_meters = [
+            (_get_skip_meter_name(tn), {"type": "Sum", "args": [_get_skip_meter_name(tn)]})
+            for tn in train_transform_names
+        ]
+        self.train_meters.extend(skip_meters)
+
+        if global_config.model.network.get('return_moe_metric', False):
+            moe_meters = []
+            for i in range(global_config.model.network.n_layer):
+                moe_meters.append(
+                    (f'moe/expert_cnt_layer{i}', {'type': 'Histogram', 'args': [f'expert_cnt_layer{i}']})
+                )
+                moe_meters.append(
+                    (f'moe/expert_active_cnt_layer{i}', {'type': 'Simple', 'args': [f'expert_active_cnt_layer{i}']})
+                )
+
+            self.train_meters.extend(moe_meters)
+        MusicTrainMeter.initialize(global_config)
+        self.train_meters.extend(MusicTrainMeter.get_train_meters())
 
 def setup_cli(CLI_Clazz=SemanticLlmCLI):
     helper = ExpHelper(__file__)

@@ -1,5 +1,5 @@
-from typing import Any
-
+from typing import Any, Dict, List
+from collections import defaultdict
 import cruise as crs
 from cruise.trainer.callback import Callback
 from cruise.utilities.types import STEP_OUTPUT
@@ -17,80 +17,212 @@ from recipes.bigmusic.utils.upload import upload_obj_to_tos
 import os
 from tasks.audio.audio_trainer import AudioTrainer
 
+import yaml
+try:
+    from lite.module.datapath import datazone_hdfs_idc
+except Exception:
+    datazone_hdfs_idc = None
+
+try:
+    from bytedance.easycycle import get_training_data_config
+except Exception:
+    logger.warning("Could not import get_training_data_config from bytedance.easycycle, please upgrade your package.")
+    get_training_data_config = None
 
 
-class TokenNumPerCategoryParser:
+class MusicTrainMeter:
     _instance = None
     _task_list = []
-    _data_id_list = []
-    _category_key = None
-    _out_key = None
+    _task_dataset_list = []
 
     def __init__(self):
-        if not TokenNumPerCategoryParser._instance:
-            TokenNumPerCategoryParser._instance = self
+        if not MusicTrainMeter._instance:
+            MusicTrainMeter._instance = self
  
     
     @classmethod
     def initialize(cls, global_config):
         if cls._instance is None:
             cls()
-        for t in global_config.data.config.train_batch_transform:
-            if t.type == "TokenNumPerCategory":
-                cls._category_key = t.category_key
-                cls._out_key = t.out_key
-        if cls._category_key == None:
-            rank_zero_warn("TokenNumPerCategory not found in train_item_transform")
-            return
-        train_multitask_paths = global_config.data.config.train_multitask_paths
+
+        config = global_config.data.config
+        dataset_version = config.dataset_version
+        if dataset_version is not None and get_training_data_config is not None:
+            # get dataset config from BigSpeech Platform
+            dataset_version = str(dataset_version)
+            try:
+                dataset_config = get_training_data_config(dataset_version, force_hdfs_idc=datazone_hdfs_idc)
+            except Exception:
+                rank_zero_warn("can't support force_hdfs_idc, please make sure bytedance.easycycle greater than 1.1.43")
+                dataset_config = get_training_data_config(dataset_version)
+            dataset_config = yaml.safe_load(dataset_config)
+            rank_zero_warn(f"update config with {dataset_version} {dataset_config}")
+
+            def update_paths(target_paths, src_paths):
+                for target_path in target_paths:
+                    update_path = None
+                    for src_path in src_paths:
+                        if src_path['task'] == target_path['task']:
+                            update_path = src_path
+                    if update_path is None:
+                        raise Exception(f"{target_path['task']} is not found in dataset_version:{dataset_version}")
+                    else:
+                        target_path.update(update_path)
+            
+            if "train_multitask_paths" in dataset_config["data"]:
+                update_paths(config.train_multitask_paths, dataset_config["data"]["train_multitask_paths"])
+            if "valid_multitask_paths" in dataset_config["data"]:
+                update_paths(config.val_multitask_paths, dataset_config["data"]["valid_multitask_paths"])
+            if "predict_multitask_paths" in dataset_config["data"]:
+                update_paths(config.predict_multitask_paths, dataset_config["data"]["predict_multitask_paths"])
 
         task_list = []
-        data_id_list = []
+        task_dataset_list = []
 
-        for task in global_config.data.config.train_multitask_paths:
+        for task in config.train_multitask_paths:
             task_list.append(task.task)
             for dataset in task.datasets:
-                data_id_list.append(dataset.data_id)
+                if 'dataset' in dataset:
+                    task_dataset_list.append((task.task, dataset.get('dataset')))
         
-        cls._task_list = list(set(task_list))
-        cls._data_id_list = list(set(data_id_list))
-        rank_zero_info(f"TokenNumPerCategoryParser init with category_key={cls._category_key} out_key={cls._out_key} task={cls._task_list} data_id={cls._data_id_list}")
+        cls._task_list = task_list
+        cls._task_dataset_list = task_dataset_list
+        rank_zero_info(f"MusicTrainMeter init with task={cls._task_list} task_dataset={cls._task_dataset_list}")
+
     
     @classmethod
     def get_train_meters(cls):
-        if not cls._instance or cls._category_key is None:
-            rank_zero_warn("TokenNumPerCategoryParser not initialized or category_key is None")
-            return []
         
-        if cls._category_key == "task":
-            category_list = cls._task_list
-        elif cls._category_key == "dataset":
-            category_list = cls._data_id_list
-        else:
-            rank_zero_warn(f"TokenNumPerCategory category_key {cls._category_key} not supported")
-            return []
-
-        train_meters = [
-                (f"{category}_tokens(B)", {"type": "Sum", "args": [f"{category}_tokens(B)"]})
-                for category in category_list
+        train_meters = []
+    
+        # consume_tokens(B)
+        train_meters.extend(
+            [
+                (f'consume_tokens(B)/{task}', {'type': 'Sum', 'args': [f'consume_tokens(B)/{task}']})
+                for task in cls._task_list
             ]
+        )
+        train_meters.extend(
+            [
+                (
+                    f'consume_tokens(B)/{task}@@{dataset}',
+                    {'type': 'Sum', 'args': [f'consume_tokens(B)/{task}@@{dataset}']},
+                )
+                for task, dataset in cls._task_dataset_list
+            ]
+        )
+
+        # loss_tokens(B)
+        train_meters.extend(
+            [
+                (f'loss_tokens(B)/{task}', {'type': 'Sum', 'args': [f'loss_tokens(B)/{task}']})
+                for task in cls._task_list
+            ]
+        )
+        train_meters.extend(
+            [
+                (
+                    f'loss_tokens(B)/{task}@@{dataset}',
+                    {'type': 'Sum', 'args': [f'loss_tokens(B)/{task}@@{dataset}']},
+                )
+                for task, dataset in cls._task_dataset_list
+            ]
+        )
+
+        # loss_tokens
+        train_meters.extend(
+            [
+                (f'loss_tokens/{task}', {'type': 'Sum', 'args': [f'loss_tokens/{task}']})
+                for task in cls._task_list
+            ]
+        )
+        train_meters.extend(
+            [
+                (
+                    f'loss_tokens/{task}@@{dataset}',
+                    {'type': 'Sum', 'args': [f'loss_tokens/{task}@@{dataset}']},
+                )
+                for task, dataset in cls._task_dataset_list
+            ]
+        )
+
+
+        # acc
+        train_meters.extend(
+            [
+                (f'acc/{task}', {'type': 'Weighted', 'args': [f'acc/{task}', f'loss_tokens/{task}']}) 
+                for task in cls._task_list
+            ]
+        )
+
+        train_meters.extend(
+            [
+                (
+                    f'acc/{task}@@{dataset}',
+                    {'type': 'Weighted', 'args': [f'acc/{task}@@{dataset}', f'loss_tokens/{task}@@{dataset}']},
+                )
+                for task, dataset in cls._task_dataset_list
+            ]
+        )
+
+        # loss
+        train_meters.extend(
+            [
+                (f'loss/{task}', {'type': 'Weighted', 'args': [f'loss/{task}', f'loss_tokens/{task}']})
+                for task in cls._task_list
+            ]
+        )
+        train_meters.extend(
+            [
+                (
+                    f'loss/{task}@@{dataset}',
+                    {'type': 'Weighted', 'args': [f'loss/{task}@@{dataset}', f'loss_tokens/{task}@@{dataset}']},
+                )
+                for task, dataset in cls._task_dataset_list
+            ]
+        )
         
-        rank_zero_warn(f"TokenNumPerCategory category_key {cls._category_key} not supported")
+
         return train_meters
 
     @classmethod
-    def get_data(cls, batch):
-        outputs = {}
-        if cls._out_key in batch:
-            for key in batch[cls._out_key]:
-                token_num = batch[cls._out_key][key] * 1e-9
-                out_key = f"{key}_tokens(B)"
-                if isinstance(token_num, torch.Tensor):
-                    outputs[out_key] = token_num.item()
-                elif isinstance(token_num, (int, float)):
-                    outputs[out_key] = token_num
+    def calc_meters(
+            cls,
+            tasks : List[str],
+            datasets : List[str],
+            token_num : List[int], 
+            loss_token_num : List[int], 
+            loss : List[float], 
+            acc : List[float],
+            ):
+
+        loss_dic, acc_dic, token_num_dic, loss_token_num_dic  = defaultdict(float), defaultdict(float), defaultdict(float), defaultdict(float)
+
+        if len(datasets) != len(tasks) or len(datasets) != len(loss) or len(datasets) != len(acc):
+            rank_zero_warn(f"TokenNumPerCategory dataset({len(datasets)}), task({len(tasks)}), loss({len(loss)}), acc({len(acc)}) not same length")
+            return {}
         
-        return outputs
+        for idx, (task, dataset) in enumerate(zip(tasks, datasets)):
+            acc_dic[task] += acc[idx]
+            acc_dic[f'{task}@@{dataset}'] += acc[idx]
+            loss_dic[task] += loss[idx]
+            loss_dic[f'{task}@@{dataset}'] += loss[idx]
+            token_num_dic[task] += token_num[idx]
+            token_num_dic[f'{task}@@{dataset}'] += token_num[idx]
+            loss_token_num_dic[task] += loss_token_num[idx]
+            loss_token_num_dic[f'{task}@@{dataset}'] += loss_token_num[idx]
+
+        acc_dic = { k: v / loss_token_num_dic[k] + 1e-5 for k, v in acc_dic.items() }
+        loss_dic = { k: v / loss_token_num_dic[k] + 1e-5 for k, v in loss_dic.items() }
+
+        output = {}
+        output.update({f'loss/{k}': v for k, v in loss_dic.items()})
+        output.update({f'acc/{k}': v for k, v in acc_dic.items()})
+        output.update({f'loss_tokens/{k}': v for k, v in loss_token_num_dic.items()})
+        output.update({f'consume_tokens(B)/{k}': v * 1e-9 for k, v in token_num_dic.items()})
+        output.update({f'loss_tokens(B)/{k}': v * 1e-9 for k, v in loss_token_num_dic.items()})
+
+        return output
 
 class SpeechDataCollectCallback(Callback):
     def __init__(self, keys_to_collect=None, audio_key="target_audio", audio_duration_key="duration", sample_rate=24000, audio_upload_to_tos=True, max_items_to_save=32, every_n_train_steps=100):

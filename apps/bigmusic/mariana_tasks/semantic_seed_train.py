@@ -20,7 +20,7 @@ from cruise.module.model_io import _partial_load_from_checkpoint
 from cruise.trainer.callback import ModelCheckpoint
 from cruise.utilities.distributed import DIST_ENV
 from cruise.utilities.hdfs_io import hcopy, hput
-from panther.custom_ops.torch.flash_attn import unpad_input
+from panther.custom_ops.torch.flash_attn import pad_input, unpad_input
 import torch.distributed
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import MixedPrecision, ShardingStrategy
@@ -35,7 +35,7 @@ from mariana.models.audio.weight_init import ModuleInitializer
 from samantha.criterion.masked_loss import sequence_mask
 from apps.bigmusic.mariana_tasks.semantic_modules import SemanticEmbModule as SemanticEmbModuleLegacy
 from apps.bigmusic.mariana_tasks.semantic_emb_module import SemanticEmbModule
-from apps.bigmusic.mariana_tasks.utils.speech_data_collect_callback import SpeechDataCollectCallback, TokenNumPerCategoryParser
+from apps.bigmusic.mariana_tasks.utils.speech_data_collect_callback import SpeechDataCollectCallback, MusicTrainMeter
 from mariana.models.audio.gpt2_audio import (
     GPT2LMHeadModel,
     inplace_update_megatron_state_dict,
@@ -959,6 +959,8 @@ class SemanticLlmModel(CruiseModule):
 
         num_valid_tokens = loss_mask.sum()
         assert num_valid_tokens.item() > 0
+        loss_tensor = loss
+        acc_tensor = acc
         loss = (loss * loss_mask).sum() / num_valid_tokens
         acc = (acc * loss_mask).sum() / num_valid_tokens
 
@@ -974,7 +976,7 @@ class SemanticLlmModel(CruiseModule):
         output["acc"] = acc
         output["loss_tokens"] = num_valid_tokens
         output["eos_acc"] = eos_acc
-        return output
+        return output, loss_tensor, acc_tensor
 
 
     def forward(self, batch, **kwargs):
@@ -1010,7 +1012,7 @@ class SemanticLlmModel(CruiseModule):
             )
 
         labels_shift_rmpad, _, _, _ = unpad_input(target_ids.unsqueeze(2).contiguous(), attention_mask=shifted_input_mask)
-        target_loss_mask, _, _, _ = unpad_input(target_loss_mask.unsqueeze(2).contiguous(), shifted_input_mask)
+        target_loss_mask, indices, _, _ = unpad_input(target_loss_mask.unsqueeze(2).contiguous(), shifted_input_mask)
         hidden_states = self.gpt2(
             inputs_embeds=input_embeds_rmpad.unsqueeze(1).contiguous(),
             return_final_hidden_states=True,
@@ -1019,14 +1021,25 @@ class SemanticLlmModel(CruiseModule):
         )
         if self.hparams.network.get('return_moe_metric', False):
             hidden_states, expert_cnt = hidden_states
-        outputs = self.calc_loss_acc(
+        outputs, loss_tensor, acc_tensor = self.calc_loss_acc(
             hidden_states,
             labels_shift_rmpad.squeeze(1),
             target_loss_mask.squeeze(1),
             require_eos_acc=kwargs.get("require_eos_acc", False),
             eos_index_window=kwargs.get("eos_index_window", 1),
         )
-        outputs.update(TokenNumPerCategoryParser.get_data(batch))
+
+        if 'task' in batch and 'dataset' in batch:
+            bsz, seqlen = shifted_input_mask.shape
+            outputs.update(MusicTrainMeter.calc_meters(
+                tasks = batch['task'],
+                datasets = batch['dataset'],
+                loss = pad_input(loss_tensor.unsqueeze(1), indices, bsz, seqlen).squeeze(-1).sum(-1).tolist(),
+                acc = pad_input(acc_tensor.unsqueeze(1), indices, bsz, seqlen).squeeze(-1).sum(-1).tolist(),
+                token_num = shifted_input_mask.sum(-1).tolist(),
+                loss_token_num = target_loss_mask.sum(-1).tolist(),
+                ))
+            
         outputs['seqlens_q'] = cu_seqlens_q.diff()
         outputs['gpt2_lengths'] = outputs['seqlens_q']
         outputs['tokens'] = input_embeds_rmpad.shape[0]
@@ -1579,8 +1592,8 @@ class SemanticLlmTrainer(AudioTrainer):
                     (f'moe/expert_active_cnt_layer{i}', {'type': 'Simple', 'args': [f'expert_active_cnt_layer{i}']})
                 )
             self.train_meters.extend(moe_meters)
-        TokenNumPerCategoryParser.initialize(global_config)
-        self.train_meters.extend(TokenNumPerCategoryParser.get_train_meters())
+        MusicTrainMeter.initialize(global_config)
+        self.train_meters.extend(MusicTrainMeter.get_train_meters())
 
 
 class SemanticLlmCLI(CruiseCLI):
