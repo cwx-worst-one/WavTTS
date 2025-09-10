@@ -16,24 +16,61 @@ import pickle
 from recipes.bigmusic.utils.upload import upload_obj_to_tos
 import os
 from tasks.audio.audio_trainer import AudioTrainer
-
+import time
 import yaml
-try:
-    from lite.module.datapath import datazone_hdfs_idc
-except Exception:
-    datazone_hdfs_idc = None
 
-try:
-    from bytedance.easycycle import get_training_data_config
-except Exception:
-    logger.warning("Could not import get_training_data_config from bytedance.easycycle, please upgrade your package.")
-    get_training_data_config = None
+from mariana.data.utils.path_utils import datazone_hdfs_idc, get_training_data_config
+# from tasks.omni.utils.meters import get_flush_rule, get_meters_utils, get_task_datasets
+def get_task_datasets(global_config, max_retries=10):
+    if "dataset_version" in global_config['data']['config'] and global_config['data']['config']['dataset_version']:
+        retry_count = 0
+        dataset_version = global_config['data']['config']['dataset_version']
+        while retry_count < max_retries:
+            try:
+                dataset_config = get_training_data_config(
+                    dataset_version, force_hdfs_idc=datazone_hdfs_idc
+                )
+                break
+            except Exception as e:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    raise
+                print(f"get_training_data_config failed, {dataset_version=} retrying ({retry_count}/{max_retries})... Error: {str(e)}")
+                time.sleep(1)
+        dataset_config = yaml.safe_load(dataset_config)
+
+        def update_paths(target_paths, src_paths):
+            for target_path in target_paths:
+                update_path = None
+                for src_path in src_paths:
+                    if src_path['task'] == target_path['task']:
+                        update_path = src_path
+                if update_path is None:
+                    raise Exception(f"{target_path['task']} is not found in dataset_version:{dataset_version}")
+                else:
+                    target_path.update(update_path)
+        if "train_multitask_paths" in dataset_config["data"]:
+            update_paths(global_config['data']['config']['train_multitask_paths'], dataset_config["data"]["train_multitask_paths"])
+        if "valid_multitask_paths" in dataset_config["data"]:
+            update_paths(global_config['data']['config']['valid_multitask_paths'], dataset_config["data"]["valid_multitask_paths"])
+        if "predict_multitask_paths" in dataset_config["data"]:
+            update_paths(global_config['data']['config']['predict_multitask_paths'], dataset_config["data"]["predict_multitask_paths"])
+
+    # assert "train_multitask_paths" in global_config['data']['config'], "train_multitask_paths not found in config"
+    task_datasets = []
+    if "train_multitask_paths" in global_config['data']['config']:
+        multitask_data_config = global_config['data']['config']['train_multitask_paths']
+        for task_config in multitask_data_config:
+            task = task_config['task']
+            for dataset in task_config['datasets']:
+                task_datasets.append((task, dataset.get("dataset")))
+    return task_datasets
 
 
 class MusicTrainMeter:
     _instance = None
-    _task_list = []
-    _task_dataset_list = []
+    tasks = []
+    tasks_datasets = []
 
     def __init__(self):
         if not MusicTrainMeter._instance:
@@ -44,62 +81,24 @@ class MusicTrainMeter:
     def initialize(cls, global_config):
         if cls._instance is None:
             cls()
-
         config = global_config.data.config
-        dataset_version = config.dataset_version
-        if dataset_version is not None and get_training_data_config is not None:
-            # get dataset config from BigSpeech Platform
-            dataset_version = str(dataset_version)
-            try:
-                dataset_config = get_training_data_config(dataset_version, force_hdfs_idc=datazone_hdfs_idc)
-            except Exception:
-                rank_zero_warn("can't support force_hdfs_idc, please make sure bytedance.easycycle greater than 1.1.43")
-                dataset_config = get_training_data_config(dataset_version)
-            dataset_config = yaml.safe_load(dataset_config)
-            rank_zero_warn(f"update config with {dataset_version} {dataset_config}")
-
-            def update_paths(target_paths, src_paths):
-                for target_path in target_paths:
-                    update_path = None
-                    for src_path in src_paths:
-                        if src_path['task'] == target_path['task']:
-                            update_path = src_path
-                    if update_path is None:
-                        raise Exception(f"{target_path['task']} is not found in dataset_version:{dataset_version}")
-                    else:
-                        target_path.update(update_path)
-            
-            if "train_multitask_paths" in dataset_config["data"]:
-                update_paths(config.train_multitask_paths, dataset_config["data"]["train_multitask_paths"])
-            if "valid_multitask_paths" in dataset_config["data"]:
-                update_paths(config.val_multitask_paths, dataset_config["data"]["valid_multitask_paths"])
-            if "predict_multitask_paths" in dataset_config["data"]:
-                update_paths(config.predict_multitask_paths, dataset_config["data"]["predict_multitask_paths"])
-
-        task_list = []
-        task_dataset_list = []
-
-        for task in config.train_multitask_paths:
-            task_list.append(task.task)
-            for dataset in task.datasets:
-                if 'dataset' in dataset:
-                    task_dataset_list.append((task.task, dataset.get('dataset')))
-        
-        cls._task_list = task_list
-        cls._task_dataset_list = task_dataset_list
-        rank_zero_info(f"MusicTrainMeter init with task={cls._task_list} task_dataset={cls._task_dataset_list}")
+        cls.tasks_datasets = get_task_datasets(global_config)
+        cls.tasks = list({task for task, _ in cls.tasks_datasets})
+        rank_zero_info(f"MusicTrainMeter init with task={cls.tasks} task_dataset={cls.tasks_datasets}")
 
     
     @classmethod
     def get_train_meters(cls):
         
         train_meters = []
+        if len(cls.tasks_datasets) == 0:
+            return train_meters
     
         # consume_tokens(B)
         train_meters.extend(
             [
                 (f'consume_tokens(B)/{task}', {'type': 'Sum', 'args': [f'consume_tokens(B)/{task}']})
-                for task in cls._task_list
+                for task in cls.tasks
             ]
         )
         train_meters.extend(
@@ -108,7 +107,7 @@ class MusicTrainMeter:
                     f'consume_tokens(B)/{task}@@{dataset}',
                     {'type': 'Sum', 'args': [f'consume_tokens(B)/{task}@@{dataset}']},
                 )
-                for task, dataset in cls._task_dataset_list
+                for task, dataset in cls.tasks_datasets
             ]
         )
 
@@ -116,7 +115,7 @@ class MusicTrainMeter:
         train_meters.extend(
             [
                 (f'loss_tokens(B)/{task}', {'type': 'Sum', 'args': [f'loss_tokens(B)/{task}']})
-                for task in cls._task_list
+                for task in cls.tasks
             ]
         )
         train_meters.extend(
@@ -125,7 +124,7 @@ class MusicTrainMeter:
                     f'loss_tokens(B)/{task}@@{dataset}',
                     {'type': 'Sum', 'args': [f'loss_tokens(B)/{task}@@{dataset}']},
                 )
-                for task, dataset in cls._task_dataset_list
+                for task, dataset in cls.tasks_datasets
             ]
         )
 
@@ -133,7 +132,7 @@ class MusicTrainMeter:
         train_meters.extend(
             [
                 (f'loss_tokens/{task}', {'type': 'Sum', 'args': [f'loss_tokens/{task}']})
-                for task in cls._task_list
+                for task in cls.tasks
             ]
         )
         train_meters.extend(
@@ -142,7 +141,7 @@ class MusicTrainMeter:
                     f'loss_tokens/{task}@@{dataset}',
                     {'type': 'Sum', 'args': [f'loss_tokens/{task}@@{dataset}']},
                 )
-                for task, dataset in cls._task_dataset_list
+                for task, dataset in cls.tasks_datasets
             ]
         )
 
@@ -151,7 +150,7 @@ class MusicTrainMeter:
         train_meters.extend(
             [
                 (f'acc/{task}', {'type': 'Weighted', 'args': [f'acc/{task}', f'loss_tokens/{task}']}) 
-                for task in cls._task_list
+                for task in cls.tasks
             ]
         )
 
@@ -161,7 +160,7 @@ class MusicTrainMeter:
                     f'acc/{task}@@{dataset}',
                     {'type': 'Weighted', 'args': [f'acc/{task}@@{dataset}', f'loss_tokens/{task}@@{dataset}']},
                 )
-                for task, dataset in cls._task_dataset_list
+                for task, dataset in cls.tasks_datasets
             ]
         )
 
@@ -169,7 +168,7 @@ class MusicTrainMeter:
         train_meters.extend(
             [
                 (f'loss/{task}', {'type': 'Weighted', 'args': [f'loss/{task}', f'loss_tokens/{task}']})
-                for task in cls._task_list
+                for task in cls.tasks
             ]
         )
         train_meters.extend(
@@ -178,7 +177,7 @@ class MusicTrainMeter:
                     f'loss/{task}@@{dataset}',
                     {'type': 'Weighted', 'args': [f'loss/{task}@@{dataset}', f'loss_tokens/{task}@@{dataset}']},
                 )
-                for task, dataset in cls._task_dataset_list
+                for task, dataset in cls.tasks_datasets
             ]
         )
         
