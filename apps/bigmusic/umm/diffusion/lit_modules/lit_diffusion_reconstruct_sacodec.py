@@ -660,7 +660,7 @@ class ChunkInfer2(DiffusionU2SInfer):
         self.token_overlap = int(np.prod(self.model.hp.token_downscales))
         self.mem_efficient = kwargs.get("mem_efficient", False)
 
-        logger.info("enable memory efficient:", self.mem_efficient)
+        print("enable memory efficient:", self.mem_efficient)
         self.context_duration = int(kwargs.get("context_duration", 60))
         if self.infer_type == "ar-diffusion-vocoder":
             self.context_duration = 0
