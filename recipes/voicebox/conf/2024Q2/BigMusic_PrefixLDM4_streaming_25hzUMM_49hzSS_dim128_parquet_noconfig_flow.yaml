@@ -118,6 +118,7 @@ model_config: !new:recipes.voicebox.diffusion_modules.llama_ldm.ModelArgs
     use_unet_style_skip_connect: !ref <run_opts[use_unet_style_skip_connect]>
     rf_sigma_distribution: lognorm
     target_type: rectified-flow
+    padding_idx: !ref <run_opts[tokenizer_pad]>
 
 train_dataset: !new:recipes.voicebox.datasets.voicebox_promptmel_dataset_otf.VoiceBoxParquetDataset
     data_id: !ref <run_opts[data_id]>
@@ -238,7 +239,7 @@ pl_module: !new:recipes.voicebox.lit_modules.lit_diffusion_voicebox_sacodec.Voic
     val_output_samples_dir: !ref <run_opts[val_output_samples_dir]>/<run_opts[log_name]>/<run_opts[version]>
     bn_config: !ref <bn_config>
     umm_dropout: 0.1
-    umm_pad: !ref <run_opts[tokenizer_pad]> # not used
+    umm_pad: !ref <run_opts[tokenizer_pad]>
     codebook_tie_flag: False
 
 logger:

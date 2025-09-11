@@ -228,6 +228,76 @@ class PreNet(nn.Module):
     def forward(self, inputs):
         return self.net(inputs.transpose(1, 2)).transpose(1, 2)
 
+class HierarchicalTokenEmbedder(nn.Module):
+    def __init__(self, hp):
+        super().__init__()
+        self.bias = hp.bias
+        self.n_token = hp.n_token
+        self.token_embed_dim = hp.token_embed_dim
+        self.padding_idx = hp.padding_idx
+        self.n_token_hierarchy = hp.n_token_hierarchy
+        self.token_aggregation = hp.hierarchical_token_aggregation
+
+        self.token_embedding = nn.ModuleList([nn.Embedding(self.n_token, self.token_embed_dim) for _ in range(hp.n_token_hierarchy)])
+        if self.token_aggregation == "concat":
+            token_concat_net_in_dim = self.token_embed_dim * self.n_token_hierarchy  # [D*H]
+        elif self.token_aggregation== "sum":
+            token_concat_net_in_dim = self.token_embed_dim  # [D]
+        else:
+            raise NotImplementedError(f"hierarchical_token_aggregation, {self.token_aggregation}")
+
+        self.token_concat_net = nn.Sequential(
+            nn.Linear(token_concat_net_in_dim, self.token_embed_dim * 2, bias=self.bias),
+            nn.SiLU(), 
+            nn.Linear(self.token_embed_dim * 2, self.token_embed_dim, bias=self.bias),
+        )
+
+    def init_token_embedding(self, tokenizer_codebook):
+        for i in range(len(self.token_embedding)):
+            tokenizer_codebook_vocab_size = tokenizer_codebook[i].shape[0]
+            # [codebook_size, token_embed_dim]
+            self.token_embedding[i].weight.data[:tokenizer_codebook_vocab_size].copy_(tokenizer_codebook[i])
+            self.token_embedding[i].weight.data[tokenizer_codebook_vocab_size:].fill_(0)
+            self.token_embedding[i].weight.requires_grad = False
+        return 0
+
+    def forward(self, token):
+        B = token.size(0)
+        if self.token_aggregation == "concat":
+            if self.training and torch.rand(1) < 0.1:   # apply quantizer dropout 
+                # random replace [R:] layer with pad id
+                quantizer_dropout_R = torch.randint(self.n_token_hierarchy, size=(B,)) + 1   # values can be {0,...R-1}+1
+                for bs in range(B):
+                    # higher layer tokens is more likely to be dropped
+                    token[bs, ..., quantizer_dropout_R[bs]:] = self.padding_idx
+
+            token_embeds = []
+            for h in range(self.n_token_hierarchy):
+                token_embeds.append(self.token_embedding[h](token[..., h]))
+            token_embeds = torch.cat(token_embeds, dim=-1)  # [B, T, D*H]
+
+        elif self.token_aggregation == "sum":
+            token_embeds = []
+            for h in range(self.n_token_hierarchy):
+                token_embeds.append(self.token_embedding[h](token[..., h]))
+            token_embeds = torch.stack(token_embeds, dim=-1)  # [B, T, D, H]
+            token_embeds = token_embeds.cumsum(dim=-1) # [B, T, D, H]
+            # operate on R: quantizer dropout [B, T, D, H] => [B, T, D]
+            if self.training and torch.rand(1) < 0.1:   # apply quantizer dropout 
+                # sample-level dropout
+                _token_embeds = []
+                for bs in range(B):
+                    # random select a cumsum index, higher layer tokens is more likely to be ignore
+                    rand_R = torch.randint(0, self.n_token_hierarchy, size=(1,)).item()
+                    _token_embeds.append(token_embeds[bs, ..., rand_R])
+                token_embeds = torch.stack(_token_embeds, dim=0)
+            else:
+                token_embeds = token_embeds[..., -1]
+        else:
+            raise NotImplementedError(f"hierarchical_token_aggregation, {self.token_aggregation}")
+
+        token_embed = self.token_concat_net(token_embeds)
+        return token_embed
 
 class ResPostNet(nn.Module):
     def __init__(self, in_dim, out_dim, conv_kernel, conv_padding):
@@ -275,6 +345,7 @@ class ModelArgs:
     local_cond_conv_kernel: int = 9
     local_cond_conv_padding: int = 4
     hierarchical_token_aggregation: str = "concat" # "sum"
+    padding_idx: int = None
 
     # llama
     encoder_dim: int = 1536
@@ -362,22 +433,9 @@ class LlamaDiffusion(nn.Module):
                     out_dim=hp.encoder_dim,
                 )
 
-        # token.
-        # if hp.n_token_hierarchy > 1:
-        #     self.token_embedding = nn.ModuleList([nn.Embedding(hp.n_token, hp.token_embed_dim) for _ in range(hp.n_token_hierarchy)])
+        # token-embedding
         if hp.n_token_hierarchy > 1:
-            self.token_embedding = nn.ModuleList([nn.Embedding(hp.n_token, hp.token_embed_dim) for _ in range(hp.n_token_hierarchy)])
-            if hp.hierarchical_token_aggregation == "concat":
-                token_concat_net_in_dim = hp.token_embed_dim * hp.n_token_hierarchy  # [D*H]
-            elif hp.hierarchical_token_aggregation == "sum":
-                token_concat_net_in_dim = hp.token_embed_dim  # [D]
-            else:
-                raise NotImplementedError(f"hierarchical_token_aggregation, {hp.hierarchical_token_aggregation=}")
-            self.token_concat_net = nn.Sequential(
-                nn.Linear(token_concat_net_in_dim, hp.token_embed_dim * 2, bias=self.bias),
-                nn.SiLU(), 
-                nn.Linear(hp.token_embed_dim * 2, hp.token_embed_dim, bias=self.bias),
-            )
+            self.token_embedding = HierarchicalTokenEmbedder(hp)
         else:
             self.token_embedding = nn.Embedding(hp.n_token, hp.token_embed_dim)
         self.token_prenet = self.create_token_prenet(hp)
@@ -521,10 +579,7 @@ class LlamaDiffusion(nn.Module):
         feat_lens = inputs[f"{self.hp.ctx_feature}_lens"]
         B, device = inputs["token"].size(0), inputs["token"].device
 
-        if self.hp.n_token_hierarchy > 1:
-            token_embed = self.embed_hierarchical_token(inputs["token"])
-        else:
-            token_embed = self.token_embedding(inputs["token"])
+        token_embed = self.token_embedding(inputs["token"])
         token_embed = token_embed.transpose(1, 2)   # [B, D, T]
 
         for layer in self.token_prenet:
@@ -1142,10 +1197,7 @@ class LlamaDiffusion(nn.Module):
 
         # B, device = inputs["token"].size(0), inputs["token"].device
 
-        if self.hp.n_token_hierarchy > 1:
-            token_embed = self.embed_hierarchical_token(inputs["token"])
-        else:
-            token_embed = self.token_embedding(inputs["token"])
+        token_embed = self.token_embedding(inputs["token"])
         token_embed = token_embed.transpose(1, 2)   # [B, D]
 
         for layer in self.token_prenet:
@@ -1230,10 +1282,7 @@ class LlamaDiffusion(nn.Module):
         else:
             text_embed = None
 
-        if self.hp.n_token_hierarchy > 1:
-            token_embed = self.embed_hierarchical_token(inputs["token"])
-        else:
-            token_embed = self.token_embedding(inputs["token"])
+        token_embed = self.token_embedding(inputs["token"])
         token_embed = token_embed.transpose(1, 2)   # [B, ]
 
         for layer in self.token_prenet:
@@ -1306,27 +1355,6 @@ class LlamaDiffusion(nn.Module):
 
         return x
 
-    def embed_hierarchical_token(self, token):
-        token_embeds = []
-        B = token.size(0)
-        for h in range(self.hp.n_token_hierarchy):
-            token_embeds.append(self.token_embedding[h](token[..., h]))
-        if self.hp.hierarchical_token_aggregation == "concat":
-            token_embeds = torch.cat(token_embeds, dim=-1)  # [B, T, D*H]
-        elif self.hp.hierarchical_token_aggregation == "sum":
-            token_embeds = torch.stack(token_embeds, dim=-1)  # [B, T, D, H]
-            token_embeds = torch.sum(token_embeds, dim=-1, keepdim=False)  # [B, T, D]
-        else:
-            raise NotImplementedError(f"hierarchical_token_aggregation, {self.hp.hierarchical_token_aggregation=}")
-        if self.training and torch.rand(1) < 0.1:   # apply quantizer dropout 
-            quantizer_dropout_R = torch.randint(self.hp.n_token_hierarchy, size=(B,)) + 1   # values can be {0,...R-1}+1
-            quantizer_dropout_dim = quantizer_dropout_R * self.hp.token_embed_dim    # [B]
-            mask = torch.ones_like(token_embeds)
-            for bs in range(B):
-                mask[bs, ..., quantizer_dropout_dim[bs]:] = 0
-            token_embeds = mask * token_embeds
-        token_embed = self.token_concat_net(token_embeds)
-        return token_embed
 
 if __name__ == "__main__":
     config = ModelArgs()

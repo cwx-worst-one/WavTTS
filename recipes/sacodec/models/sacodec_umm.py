@@ -11,6 +11,8 @@ from recipes.sacodec.models.components.vae_bottleneck import (
     VAEBottleneckV4,
     VAEBottleneckV5,
     VAEBottleneckConstSigma,
+    VAEBottleneckResidual,
+    DeTokBottleneck,
 )
 from recipes.sacodec.models.components.convnext import ConvNeXtBlock, ConvNextBackboneDownUp
 from recipes.sacodec.models.components.conformer_next import ConformerConfig, ConformerNextBlock, ConformerNextBackboneDownUp
@@ -200,6 +202,7 @@ class STFTEncoderVAEPostUMM(nn.Module):
                  sample_rate=44100,
                  atan2_magnitude_threshold_ratio=0.0,
                  vae_hz=50,
+                 const_std=0.2,
                  vae_dim_lores=32,
                  vae_dim=128, beta=1e-5, hidden_size=1536, audio_channels=2, block_layers=[1,4,4], umm_block_layers=1, even_pad=True,
                  kernel_size=7, umm_version="umm", final_block="conformer", bottleneck_version="v1", align_pre=False, normalize_spec=False
@@ -288,7 +291,11 @@ class STFTEncoderVAEPostUMM(nn.Module):
         elif bottleneck_version == "v5":
             self.bottleneck = VAEBottleneckV5(in_channels=hidden_size, latent_dim=vae_dim, beta=beta, latent_dim_lores=vae_dim_lores)
         elif bottleneck_version == "const_sigma":
-            self.bottleneck = VAEBottleneckConstSigma(in_channels=hidden_size, latent_dim=vae_dim, beta=beta)
+            self.bottleneck = VAEBottleneckConstSigma(in_channels=hidden_size, latent_dim=vae_dim, beta=beta, std=const_std)
+        elif bottleneck_version == "residual":
+            self.bottleneck = VAEBottleneckResidual(in_channels=hidden_size, latent_dim=vae_dim, beta=beta)
+        elif bottleneck_version == "detok":
+            self.bottleneck = DeTokBottleneck(in_channels=hidden_size, latent_dim=vae_dim, beta=beta)
         else:
             self.bottleneck = VAEBottleneck(in_channels=hidden_size, latent_dim=vae_dim, beta=beta) # x2 for audio + semantic features
 

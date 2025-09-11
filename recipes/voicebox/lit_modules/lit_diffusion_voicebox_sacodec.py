@@ -147,16 +147,9 @@ class VoiceBoxModule(pl.LightningModule):
         if self.codebook_tie_flag:
             # replace token_embedding with codebook token_embedding, and freeze codebook
             Stage3 = self.requires["Stage3"].model
-            assert isinstance(self.model.token_embedding, nn.ModuleList), "token_embedding must be ModuleList"
-
             tokenizer_codebook = [Stage3.stages[0].insert_modules[0].rvq.RVQ[i].embedding.weight
                                 for i in range(self.model.hp.n_token_hierarchy)]
-            for i in range(len(self.model.token_embedding)):
-                tokenizer_codebook_vocab_size = tokenizer_codebook[i].shape[0]
-                # [codebook_size, token_embed_dim]
-                self.model.token_embedding[i].weight.data[:tokenizer_codebook_vocab_size].copy_(tokenizer_codebook[i])
-                self.model.token_embedding[i].weight.data[tokenizer_codebook_vocab_size:].fill_(0)
-                self.model.token_embedding[i].weight.requires_grad = False
+            self.model.token_embedding.init_token_embedding(tokenizer_codebook)
             print("Initialized codebook by tokenizer codebook.")
 
     def load_required_modules(self, ignore=()):

@@ -87,6 +87,7 @@ pl_module: !new:recipes.sacodec.modules.sacodec_module_umm.SACodecModule
         vae_hz: !ref <training_params[vae_hz]>
         sample_rate: !ref <training_params[sample_rate]>
         bottleneck_version: !ref <training_params[bottleneck_version]>
+        const_std: 0.2
 
     decoder_cls: !name:recipes.sacodec.models.sacodec.ISTFTDecoder
         n_fft: !ref <training_params[n_fft]>
