@@ -65,10 +65,10 @@ ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
 ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.79
-ARG BUMI_VERSION=25.9.0.5
-ARG LSDP_VERSION=25.8.0.37
+ARG BUMI_VERSION=25.9.0.34
+ARG LSDP_VERSION=25.9.0.2
 ARG TRITON_VERSION=1.0.0.216
-ARG OMNIDISPATCHER_VERSION=1.0.0.57
+ARG OMNIDISPATCHER_VERSION=1.0.0.65
 ARG LITEDATALOADER_VERSION=1.0.0.48
 ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.51
 # https://github.com/facebookresearch/xformers.git:6425fd0
@@ -261,6 +261,7 @@ RUN pip3 install \
         deepspeed==0.15.1 \
         defusedxml==0.7.1 \
         Deprecated==1.2.14 \
+        diffusers==0.29.1 \
         dill==0.3.5.1 \
         distlib==0.3.8 \
         distro==1.9.0 \
@@ -315,11 +316,12 @@ RUN pip3 install \
         gunicorn==20.1.0 \
         h11==0.14.0 \
         h5py==3.11.0 \
+        hf-xet==1.1.9 \
         hjson==3.1.0 \
         httpcore==1.0.5 \
         httpx==0.27.2 \
         httpx-sse==0.4.0 \
-        huggingface-hub==0.30.2 \
+        huggingface-hub==0.34.4 \
         humanfriendly==10.0 \
         hydra-core==1.3.2 \
         HyperPyYAML==1.2.0 \
@@ -436,7 +438,7 @@ RUN pip3 install \
         orjson==3.10.7 \
         overrides==7.7.0 \
         packaging==24.1 \
-        paddlepaddle==2.5.2 \
+        paddlepaddle==2.6.0 \
         pandas==1.5.3 \
         pandocfilters==1.5.1 \
         paramiko==3.5.1 \
@@ -536,7 +538,7 @@ RUN pip3 install \
         rfc3986==1.5.0 \
         rfc3986-validator==0.1.1 \
         rich==13.3.5 \
-        rotary-embedding-torch==0.8.3 \
+        rotary-embedding-torch==0.8.6 \
         rouge==1.0.1 \
         rpds-py==0.20.0 \
         rsa==4.9 \
