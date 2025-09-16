@@ -757,7 +757,7 @@ class ChunkInfer2(DiffusionU2SInfer):
         else:
             raise NotImplementedError(f"{self.infer_type=}")
 
-        if self.extra_params['diffusion_drop_rvq_token'] > 0 and batched_syn_umm_token.ndim == 3:
+        if self.extra_params.get('diffusion_drop_rvq_token', -1) > 0 and batched_syn_umm_token.ndim == 3:
             logger.info(f"Dropping rvq token, index=[{self.extra_params['diffusion_drop_rvq_token']}:-1]")
             batched_syn_umm_token[:, :, self.extra_params['diffusion_drop_rvq_token']:] = self.token_config["token_padding"]
         # prompt
