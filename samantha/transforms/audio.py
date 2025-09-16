@@ -46,11 +46,11 @@ def fp32_to_int16(audio: torch.Tensor) -> torch.Tensor:
     return (audio * max_val).to(torch.int16)
 
 
-def to_tensor(x: np.ndarray):
+def to_tensor(x: np.ndarray, mono=True):
     if torch.is_tensor(x):
         return x
     if isinstance(x, bytes):
-        x, _ = librosa.load(io.BytesIO(x), sr=None)
+        x, _ = librosa.load(io.BytesIO(x), mono=mono, sr=None)
     return torch.from_numpy(x)
 
 
@@ -75,8 +75,8 @@ def normalize_audio_to_float32(tensor: torch.Tensor) -> torch.Tensor:
 
 
 class ToTensor:
-    def __init__(self) -> None:
-        pass
+    def __init__(self, mono=True) -> None:
+        self.mono = mono
 
     def __call__(self, x):
         """Converts numpy array to torch.Tensor
@@ -87,7 +87,7 @@ class ToTensor:
         Returns:
             torch.Tensor: Audio tensor
         """
-        return to_tensor(x)
+        return to_tensor(x, mono=self.mono)
 
 
 class SetAudioDimensions:

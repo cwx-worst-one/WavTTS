@@ -41,7 +41,7 @@ class FADMulanDistanceCallback(pl.Callback):
                 ):
         super().__init__()
         self.mulan_requires = None
-        self.mulan_init_func = partial(init_mulan, hpath=mulan_ckpt, cache_dir=cache_dir, version=mulan_version)
+        self.mulan_init_func = partial(init_mulan, hpath=mulan_ckpt, cache_dir=cache_dir, version=mulan_version, load_text_tower=False)
         self.sample_rate = sample_rate
 
     def load_mulan(self, local_rank):
@@ -90,8 +90,8 @@ class FADMulanDistanceCallback(pl.Callback):
         waveform2 = torch.FloatTensor(waveform2).unsqueeze(0).to(device)
 
         # 提取音频特征
-        features1 = get_mulan_embeds(self.mulan_requires, waveform1, data_type="music", average=False, return_sequence=True)
-        features2 = get_mulan_embeds(self.mulan_requires, waveform2, data_type="music", average=False, return_sequence=True)
+        features1 = get_mulan_embeds(self.mulan_requires, waveform1, data_type="music", average=False, return_sequence=2)
+        features2 = get_mulan_embeds(self.mulan_requires, waveform2, data_type="music", average=False, return_sequence=2)
 
         # 裁剪到最短长度
         min_length = min(features1.shape[0], features2.shape[0])
@@ -206,7 +206,7 @@ def run_fad_mulan_distance_metrics(generated_output_fps, fad_mulan_distance_func
             all_fad_mulan_distance.append(mean)
 
         all_metadata = {f"{metric_name}_avg": np.mean(all_fad_mulan_distance)}
-        all_metrics_fp = Path(dir_path.rsplit("/", 1)[0]) / "all_metrics.json"
+        all_metrics_fp = Path(dir_path.rsplit("/", 1)[0]) / "metrics.json"
         fad_mulan_distance_metadata_list.append([all_metrics_fp, all_metadata])
         return fad_mulan_distance_metadata_list
 
@@ -294,4 +294,3 @@ if __name__ == "__main__":
 #         generated_fps,
 #         callback.get_fad_mulan_distance,
 #     )
-

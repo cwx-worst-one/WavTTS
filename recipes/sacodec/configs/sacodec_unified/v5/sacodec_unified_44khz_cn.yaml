@@ -3,8 +3,8 @@ seed_everything: 4444
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
 
 training_params:
-    batch_size: 6
-    num_workers: 10
+    batch_size: 5
+    num_workers: 16
     duration: [3, 5, 8, 10]
     shuffle_buffer_size: 0
     valid_batch_size: 5
@@ -19,13 +19,20 @@ training_params:
     n_chroma: 12
     audio_channels: 2
 
+    precision: 16-mixed
+
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
 ################################################################################
 
 pl_datamodule: !new:recipes.sacodec.datasets.sacodec_dataset.ParquetDataModule
-    train_data_id: 1421
-    valid_data_id: 444
+    # train_data_id: 2196 # wtl's vocoder dataset
+    # valid_data_id: 2124
+    # train_data_id: 6848 # zhongyi's sft dataset
+    train_data_id: 8424 # wtl's original diffusion dataset
+    valid_data_id: 8394
+    # train_data_id: 1421 # US
+    # valid_data_id: 444
     train_batch_size: !ref <training_params[batch_size]>
     valid_batch_size: !ref <training_params[valid_batch_size]>
     shuffle_buffer_size: !ref <training_params[shuffle_buffer_size]>
@@ -38,6 +45,36 @@ pl_datamodule: !new:recipes.sacodec.datasets.sacodec_dataset.ParquetDataModule
     resample_to_24k: True
     audio_augmentations: null
     # prefetch_factor: !ref <training_params[dataloader_prefetch_factor]>
+
+
+encoder_config: !new:recipes.sacodec.models.sacodec_unified.sacodec_unified.STFTEncoderUnifiedConfig
+    n_fft: !ref <training_params[n_fft]>
+    hop_length: !ref <training_params[hop_length]>
+    vae_dim: !ref <training_params[vae_dim]>
+    beta: !ref <training_params[beta]>
+    hidden_size: !ref <training_params[hidden_size]>
+    audio_channels: !ref <training_params[audio_channels]>
+    ratio_block_dim: [[3, 3, 2], [1, 4, 4], [1536, 1536, 1536]]
+    scale_spatial_channels: False
+    semantic_n_blocks: 1
+    semantic_loss_type: umm_cn_rope
+    semantic_alignment_position: "pre"
+    bottleneck_type: v1
+    bottleneck_framerate: 50
+    shortcut: 1
+    mlp_ratio: 2
+    pre_embed_type: post_linear_simple
+
+decoder_config: !new:recipes.sacodec.models.sacodec_unified.sacodec_unified.ISTFTDecoderUnifiedConfig
+    n_fft: !ref <training_params[n_fft]>
+    hop_length: !ref <training_params[hop_length]>
+    vae_dim: !ref <training_params[vae_dim]>
+    hidden_size: !ref <training_params[hidden_size]>
+    audio_channels: !ref <training_params[audio_channels]>
+    ratio_block_dim: [[2, 3, 3], [8, 4, 1], [1536, 1536, 3072]]
+    upsample_type: transpose
+    shortcut: 1
+    mlp_ratio: 2
 
 pl_module: !new:recipes.sacodec.modules.sacodec_module_umm.SACodecModule
     sample_rate: !ref <training_params[sample_rate]>
@@ -57,34 +94,20 @@ pl_module: !new:recipes.sacodec.modules.sacodec_module_umm.SACodecModule
     n_chroma: !ref <training_params[n_chroma]>
     n_mels: !ref <training_params[n_mels]>
     audio_channels: !ref <training_params[audio_channels]>
+    precision: !ref <training_params[precision]>
 
-    encoder_cls: !name:recipes.sacodec.models.sacodec_umm.STFTEncoderVAEPostUMM
-        n_fft: !ref <training_params[n_fft]>
-        hop_length: !ref <training_params[hop_length]>
-        vae_dim: !ref <training_params[vae_dim]>
-        beta: !ref <training_params[beta]>
-        hidden_size: !ref <training_params[hidden_size]>
-        audio_channels: !ref <training_params[audio_channels]>
-        even_pad: True
-        umm_version: umm_rope
-        umm_block_layers: 1
-        block_layers: [1, 4, 4]
+    encoder_cls: !name:recipes.sacodec.models.sacodec_unified.sacodec_unified.STFTEncoderUnified
+        config: !ref <encoder_config>
 
-    decoder_cls: !name:recipes.sacodec.models.sacodec.ISTFTDecoder
-        n_fft: !ref <training_params[n_fft]>
-        hop_length: !ref <training_params[hop_length]>
-        vae_dim: !ref <training_params[vae_dim]>
-        hidden_size: !ref <training_params[hidden_size]>
-        audio_channels: !ref <training_params[audio_channels]>
-        even_pad: True
-        block_layers: [8, 4, 1]
-        final_hidden_size: 3072
+    decoder_cls: !name:recipes.sacodec.models.sacodec_unified.sacodec_unified.ISTFTDecoderUnified
+        config: !ref <decoder_config>
 
 
 run_opts:
-    log_dir: /mnt/bn/lyrics-to-song/ashaw/logs/sacodec
+    log_dir: logs
     tensorboard_dir: !apply:os.getenv ["ARNOLD_OUTPUT", "logs"]
-    log_name: "sacodec_v5"
+    log_name: "sacodec_unified_v0"
+    hdfs_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/andrew.shaw
     version: 'test'
     val_check_interval: 20000
 
@@ -100,15 +123,17 @@ trainer: !new:pytorch_lightning.Trainer
     callbacks:
         - !new:pytorch_lightning.callbacks.LearningRateMonitor
         - !new:pytorch_lightning.callbacks.ModelSummary
-          max_depth: 2
-        - !new:pytorch_lightning.callbacks.ModelCheckpoint
+          max_depth: 3
+        - !new:samantha.callbacks.HDFSModelCheckpoint
           monitor: val_loss
           filename: sacodec_checkpoint_{epoch}_{step}_{val_loss:.4f}
           dirpath: !ref <run_opts[log_dir]>/<run_opts[log_name]>/<run_opts[version]>
-          every_n_train_steps: !ref <run_opts[val_check_interval]>
+          hdfs_path: !ref <run_opts[hdfs_path]>/<run_opts[log_name]>/<run_opts[version]>
           mode: min
           save_top_k: 10
           save_last: true
+          save_on_train_epoch_end: False
+        #   every_n_train_steps: !ref <run_opts[val_check_interval]> # disable to sync checkpoint with validation check. otherwise GAN causes validation to be out of sync
 
     # Lightning calculates max_steps across all optimizer steps (rather than number of batches)
     # 2M equals to 1M steps per generator and 1M per discriminator
@@ -117,7 +142,9 @@ trainer: !new:pytorch_lightning.Trainer
     limit_val_batches: 40
     accelerator: auto
     strategy: ddp_find_unused_parameters_true
+    precision: !ref <training_params[precision]>
     devices: auto
     num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
     log_every_n_steps: 100
+    num_sanity_val_steps: 0
     val_check_interval: !ref <run_opts[val_check_interval]>

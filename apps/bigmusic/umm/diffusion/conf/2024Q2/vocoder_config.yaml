@@ -91,9 +91,26 @@ vocoder_v2_422:
   bn_dim: 128
   wav_norm: False
   sample_rate: 44100
+  precision: fp32
   major_version: v2
   vocoder_model: !name:recipes.voicebox.lit_modules.lit_diffusion_voicebox_sacodec.init_sacodec
     checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/andrew.shaw/sacodec_v5/sacodec_0408_44k_50h_128d_h1536_data8424/checkpoints/sacodec_checkpoint_epoch=0_step=400000_val_loss=1.1710.ckpt
+    version: umm
+    cache_dir: !ref <cache_dir>/sacodec
+
+vocoder_v2_atan:
+  # hop_size: 900
+  frame_rate: 50
+  bn_norm_std: 0.989
+  bn_norm_mean: 0.015
+  bn_padding: -5
+  bn_dim: 128
+  wav_norm: False
+  sample_rate: 44100
+  precision: fp16
+  major_version: v2
+  vocoder_model: !name:recipes.voicebox.lit_modules.lit_diffusion_voicebox_sacodec.init_sacodec
+    checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/zhongyi.huang/sacodec_v5/sacodec_0710_44k_50h_128d_h1536_data8424_stableAtanDecoder/checkpoints/sacodec_checkpoint_epoch=0_step=20000_val_loss=1.0912.ckpt
     version: umm
     cache_dir: !ref <cache_dir>/sacodec
 
@@ -109,8 +126,7 @@ sacodec_umm_env:
   wav_norm: False
   sample_rate: 44100
   precision: fp32
-  # mini_bs: !apply:samantha.utils.envs.getenv_int ["vocoder_mini_bs", 4]
-  # chunk_size: !apply:samantha.utils.envs.getenv_int ["vocoder_chunk_size", 4]
+  major_version: v2
   vocoder_model: !name:recipes.voicebox.lit_modules.lit_diffusion_voicebox_sacodec.init_sacodec
     checkpoint_path: !applyref:os.getenv ["vocoder_ckpt_path", ""]
     version: umm
@@ -127,10 +143,40 @@ sacodec_umm_env_fp16:
   bn_dim: 128
   wav_norm: False
   sample_rate: 44100
-  major_version: v2
   precision: fp16
-  # mini_bs: !apply:samantha.utils.envs.getenv_int ["vocoder_mini_bs", 4]
-  # chunk_size: !apply:samantha.utils.envs.getenv_int ["vocoder_chunk_size", 4]
+  major_version: v2
+  vocoder_model: !name:recipes.voicebox.lit_modules.lit_diffusion_voicebox_sacodec.init_sacodec
+    checkpoint_path: !applyref:os.getenv ["vocoder_ckpt_path", ""]
+    version: umm
+    cache_dir: !ref <cache_dir>/sacodec
+
+
+sacodec_umm_env_fp16_mean_std:
+  # hop_size: 900
+  frame_rate: !apply:samantha.utils.envs.getenv_int ["bn_frame_rate", 50]
+  bn_norm_std: !applyref:os.getenv ["bn_norm_std", 1]
+  bn_norm_mean: !applyref:os.getenv ["bn_norm_mean", 0]
+  bn_padding: -5
+  bn_dim: 128
+  wav_norm: False
+  sample_rate: 44100
+  precision: fp16
+  major_version: v2
+  vocoder_model: !name:recipes.voicebox.lit_modules.lit_diffusion_voicebox_sacodec.init_sacodec
+    checkpoint_path: !applyref:os.getenv ["vocoder_ckpt_path", ""]
+    version: umm
+    cache_dir: !ref <cache_dir>/sacodec
+
+sacodec_umm_env_fp16_25hz:
+  frame_rate: !apply:samantha.utils.envs.getenv_int ["bn_frame_rate", 25]
+  bn_norm_std: !applyref:os.getenv ["bn_norm_std", 1]
+  bn_norm_mean: !applyref:os.getenv ["bn_norm_mean", 0]
+  bn_padding: -5
+  bn_dim: 160
+  wav_norm: False
+  sample_rate: 44100
+  precision: fp16
+  major_version: v2
   vocoder_model: !name:recipes.voicebox.lit_modules.lit_diffusion_voicebox_sacodec.init_sacodec
     checkpoint_path: !applyref:os.getenv ["vocoder_ckpt_path", ""]
     version: umm

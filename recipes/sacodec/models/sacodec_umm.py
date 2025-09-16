@@ -204,18 +204,13 @@ class STFTEncoderVAEPostUMM(nn.Module):
                  vae_hz=50,
                  const_std=0.2,
                  vae_dim_lores=32,
-                 vae_dim=128, beta=1e-5, hidden_size=1536, audio_channels=2, block_layers=[1,4,4], umm_block_layers=1, even_pad=True,
+                 vae_dim=128, beta=1e-5, hidden_size=1536, audio_channels=2, block_layers=[1,4,4], ratio=[2, 3, 3], umm_block_layers=1, even_pad=True,
                  kernel_size=7, umm_version="umm", final_block="conformer", bottleneck_version="v1", align_pre=False, normalize_spec=False
                  ):
         super().__init__()
         self.audio_channels = audio_channels
         self.bottleneck_version = bottleneck_version
         if win_length is None: win_length = n_fft
-
-        # legacy block layers was hardcoded. hack is to fix this
-        if isinstance(block_layers, int):
-            block_layers = [1,4,4] if final_block == "conformer" else [1,4,8]
-        
         self.vae_dim = vae_dim
         
         N_CH = audio_channels * 2
@@ -225,8 +220,9 @@ class STFTEncoderVAEPostUMM(nn.Module):
         self.spec_encoder = AMP_PHA_Spectrum(n_fft=n_fft, hop_length=hop_length, win_length=win_length, audio_channels=audio_channels, normalize_spec=normalize_spec, atan2_magnitude_threshold_ratio=atan2_magnitude_threshold_ratio)
 
         # Pre-encoder
+        assert ratio[0] == 2, "First downsample must be ratio of 2. Other ratios not supported yet"
         T_PAD = 2 if even_pad else 3
-        self.pre_conv = weight_norm(nn.Conv2d(N_CH, N_CH, (7, 7), stride=(2, 2),
+        self.pre_conv = weight_norm(nn.Conv2d(N_CH, N_CH, (7, 7), stride=(2, ratio[0]),
                                         padding=(2, T_PAD)))
         self.pre_norm = nn.LayerNorm(pre_channels * N_CH, eps=1e-6)
         self.pre_convnext = nn.ModuleList(
@@ -246,7 +242,7 @@ class STFTEncoderVAEPostUMM(nn.Module):
             dim=hidden_size,
             intermediate_dim=hidden_size*2,
             num_layers=block_layers[1],
-            ratio=3,
+            ratio=ratio[1],
             apply_final_layer_norm=False,
             kernel_size=kernel_size
         )
@@ -258,7 +254,7 @@ class STFTEncoderVAEPostUMM(nn.Module):
                 dim=hidden_size,
                 intermediate_dim=hidden_size*2,
                 num_layers=block_layers[2],
-                ratio=3,
+                ratio=ratio[2],
                 apply_final_layer_norm=True
             )
         else:
@@ -267,7 +263,7 @@ class STFTEncoderVAEPostUMM(nn.Module):
                 dim=hidden_size,
                 intermediate_dim=hidden_size*2,
                 num_layers=block_layers[2],
-                ratio=3,
+                ratio=ratio[2],
                 apply_final_layer_norm=True,
                 kernel_size=kernel_size
             )
@@ -350,3 +346,15 @@ class STFTEncoderVAEPostUMM(nn.Module):
             "kl_loss": kl,
         }
     
+
+    def normalize_features(self, features: torch.Tensor, mean, std):
+        if mean == 0 and std == 1: return features
+        return (features - mean) / std
+
+    def denormalize_features(self, features: torch.Tensor, mean, std):
+        if mean == 0 and std == 1: return features
+        return features * std + mean
+
+    def features_to_decoder_latents(self, latents):
+        # just return. sacodec_umm decoder and diffusion latents are same.
+        return latents

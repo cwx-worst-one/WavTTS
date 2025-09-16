@@ -20,3 +20,5 @@ thop
 
 # for audio mp3 compression
 pedalboard
+# for audio loudness augmentation
+pyloudnorm

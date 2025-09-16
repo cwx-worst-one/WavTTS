@@ -28,6 +28,7 @@ run_opts:
     without_prefix: !applyref:samantha.utils.envs.getenv_bool ["without_prefix", True]
     concat_context: !applyref:samantha.utils.envs.getenv_bool ["concat_context", True]
     context_duration: 60
+    diffusion_drop_rvq_token: -1
 
 seed: !ref <run_opts[seed]>
 __set_seed: !apply:pytorch_lightning.seed_everything [!ref <seed>]
@@ -79,6 +80,7 @@ metrics_callbacks:
       transliteration: True
       no_gt_lyrics: True 
     - !new:recipes.bigmusic.callbacks.sdr_metrics.SISDRCallback
+    - !new:recipes.sacodec.utils.fix_wer_callback.FixWERCallback
     - !new:recipes.bigmusic.callbacks.audio_metrics.AudioLoundessDiffCallback
 
 diffusion_metrics_callbacks:

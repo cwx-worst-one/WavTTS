@@ -440,34 +440,7 @@ class ASRCallback(pl.Callback):
         return text.strip(), None
 
     def on_predict_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule", output_dir=None):
-
-        if output_dir is None:
-            output_dir = pl_module.extra_params.output_dir
-
-        if (trainer is None             # for offline mode
-            or trainer.is_global_zero): # for multi-GPU mode
-
-            print("Begin to call asr model...")
-
-            generated_output_fps = list(Path(output_dir).glob('**/*.generated.wav'))
-            generated_output_fps.sort()  
-
-            for i, generated_output_fp in enumerate(tqdm(generated_output_fps)):
-
-                # get lyrics
-                metadata_fp = str(generated_output_fp).replace('generated.wav', 'metadata.json')
-                metadata = json.load(open(metadata_fp, 'r', encoding='utf-8'))
-
-                if 'asr_lyrics' in metadata:
-                    print(f"ASR already exists for {generated_output_fp}")
-                    continue
-
-                asr_lyrics, timestamps = self.run_asr_lyrics_sa_online(generated_output_fp, self.asr_model_path)
-
-                update_json(metadata_fp, {'asr_lyrics': asr_lyrics})
-
-                if timestamps is not None:
-                    update_json(metadata_fp, {'asr_timestamps': timestamps})
+        self.run_parallel(trainer, pl_module, output_dir)
 
     def run_parallel(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule", output_dir=None, parallel=10):
         

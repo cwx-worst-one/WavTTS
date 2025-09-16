@@ -91,11 +91,23 @@ class STFTEncoderVAE(nn.Module):
             }
         return hidden_states_latents, kl
     
+    def normalize_features(self, features: torch.Tensor, mean, std):
+        if mean == 0 and std == 1: return features
+        return (features - mean) / std
+
+    def denormalize_features(self, features: torch.Tensor, mean, std):
+        if mean == 0 and std == 1: return features
+        return features * std + mean
+    
+    def features_to_decoder_latents(self, latents):
+        # just return. sacodec decoder and diffusion latents are same.
+        return latents
+
 class ISTFTDecoder(nn.Module):
     def __init__(self, 
                  n_fft=1024, hop_length=256, win_length=None,
                  atan2_magnitude_threshold_ratio=0.0,
-                 vae_dim=128, hidden_size=1536, audio_channels=2, block_layers=[8,4,1], even_pad=True, final_hidden_size=3072, istft_head="stereo"
+                 vae_dim=128, hidden_size=1536, audio_channels=2, block_layers=[8,4,1], ratio=[2, 3, 3], even_pad=True, final_hidden_size=3072, istft_head="stereo"
         ):
         super().__init__()
         self.n_fft = n_fft
@@ -106,12 +118,13 @@ class ISTFTDecoder(nn.Module):
 
         T_PAD = 2 if even_pad else 3
 
+        assert ratio[0] == 2, "First downsample must be ratio of 2 for padding purposes. Other ratios not supported yet"
         self.upconv_1 = ConvNextBackboneDownUp(
             input_channels=vae_dim,
             dim=hidden_size,
             intermediate_dim=hidden_size*2,
             num_layers=block_layers[0],
-            ratio=1/2,
+            ratio=1/ratio[0],
             pre_embed_padding=T_PAD, # 3000 -> 3001
             apply_final_layer_norm=False
         )
@@ -120,7 +133,7 @@ class ISTFTDecoder(nn.Module):
             dim=hidden_size,
             intermediate_dim=hidden_size,
             num_layers=block_layers[1],
-            ratio=1/3,
+            ratio=1/ratio[1],
 #             pre_embed_padding=(7 - 2) // 2, # 3000 -> 3001
             apply_final_layer_norm=True
         )
@@ -129,7 +142,7 @@ class ISTFTDecoder(nn.Module):
             dim=final_hidden_size,
             intermediate_dim=final_hidden_size,
             num_layers=block_layers[2],
-            ratio=1/3,
+            ratio=1/ratio[2],
 #             pre_embed_padding=(7 - 2) // 2, # 3000 -> 3001
             apply_final_layer_norm=True
         )

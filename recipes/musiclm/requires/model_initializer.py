@@ -27,11 +27,11 @@ def load_torch_script_module(module_path, device):
     module = torch.jit.load(module_path, map_location=device).to(device).eval()
     return module
 
-def init_mulan(hpath, local_rank, cache_dir=None, version="149", prefix=""):
-    return _init_cached_mulan(hpath, local_rank, cache_dir, version, prefix)
+def init_mulan(hpath, local_rank, cache_dir=None, version="149", prefix="", **kwargs):
+    return _init_cached_mulan(hpath, local_rank, cache_dir, version, prefix, **kwargs)
 
 @lru_cache() # cache initialization so we don't load multiple mulan's (e.g. during inference with semantic and reranker modules)
-def _init_cached_mulan(hpath, local_rank, cache_dir=None, version="149", prefix=""):
+def _init_cached_mulan(hpath, local_rank, cache_dir=None, version="149", prefix="", **kwargs):
     if version in ["149"]:
         from .mulan.mulan_infer_149 import (
             create_mulan_model,
@@ -98,7 +98,7 @@ def _init_cached_mulan(hpath, local_rank, cache_dir=None, version="149", prefix=
                 if not hh.get(hpath, local_path):
                     raise ConnectionError(f"Cannot retrieve file from {hpath}.")
             return {
-                f"{prefix}mulan": create_mulan_model(local_path, device=device),
+                f"{prefix}mulan": create_mulan_model(local_path, device=device, **kwargs),
                 f"{prefix}mulan_infer_fn": mulan_inference,
                 f"{prefix}mulan_rvq_fn": mulan_rvq_indexs,
             }
@@ -106,7 +106,7 @@ def _init_cached_mulan(hpath, local_rank, cache_dir=None, version="149", prefix=
         local_path = hpath
         with local_zero_first():
             return {
-                f"{prefix}mulan": create_mulan_model(local_path, device=device),
+                f"{prefix}mulan": create_mulan_model(local_path, device=device, **kwargs),
                 f"{prefix}mulan_infer_fn": mulan_inference,
                 f"{prefix}mulan_rvq_fn": mulan_rvq_indexs,
             }

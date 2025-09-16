@@ -19,7 +19,6 @@ def upsample_head(input_dim, output_dim):
         WNConv1d(output_dim*2, output_dim, kernel_size=1),
     )
 
-
 class VAEVectorizer(nn.Module):
     def __init__(self, decoder_dim: int, sub_dim: int, beta=1e-5):
         super().__init__()
@@ -76,12 +75,12 @@ class ResidualVAEVectorizer(nn.Module):
     def forward(self, audio_features):
         residual = audio_features
         kl_loss = 0
-        diffusion_latents = []
+        hierarchical_latents = []
         decoder_latents = 0
 
         if self.training and self.vector_dropout:
             n_sub_dims = len(self.sub_dims)
-            n_dropout = random.randint(self.vector_dropout, n_sub_dims+1)
+            n_dropout = random.randint(self.vector_dropout, n_sub_dims+3)
         else:
             n_dropout = len(self.sub_dims) + 1
 
@@ -90,13 +89,13 @@ class ResidualVAEVectorizer(nn.Module):
             kl_loss += kl
             if idx < n_dropout:
                 decoder_latents += decoder_latent
-            diffusion_latents.append(diffusion_latent)
+            hierarchical_latents.append(diffusion_latent)
             if idx == 0 and self.skip_semantic_residual:
                 pass
             else:
                 residual = residual - decoder_latent
-        diffusion_latents = torch.cat(diffusion_latents, dim=1)
-        return decoder_latents, kl_loss, diffusion_latents, n_dropout
+        # hierarchical_latents = torch.cat(hierarchical_latents, dim=1) # return list instead
+        return decoder_latents, kl_loss, hierarchical_latents, n_dropout
 
 class STFTEncoderVAEHierarchicalUMMLoss(nn.Module):
     def __init__(self, 
@@ -104,7 +103,7 @@ class STFTEncoderVAEHierarchicalUMMLoss(nn.Module):
                  sample_rate=44100,
                  vae_dim=128, beta=1e-5, hidden_size=1536, audio_channels=2, block_layers=[1,4,4], even_pad=True,
                  kernel_size=7, vae_sub_dim=32, n_vectorizers=4, umm_version="umm_vq", vector_dropout=False,
-                 skip_semantic_residual=False, umm_block_layers=0
+                 skip_semantic_residual=False, umm_block_layers=0, vae_hz=50
                  ):
         super().__init__()
         self.audio_channels = audio_channels
@@ -161,7 +160,11 @@ class STFTEncoderVAEHierarchicalUMMLoss(nn.Module):
         self.audio_post = nn.Linear(hidden_size, vae_dim)
 
         semantic_dim = self.vectorizer.sub_dims[0]
-        self.umm_loss = UMMLoss(vae_dim=semantic_dim, hidden_size=hidden_size, umm_version=umm_version, block_layers=umm_block_layers) # first quantizer is semantic
+        if umm_version == "no_loss":
+            def no_loss(*args, **kwargs): return {}
+            self.umm_loss = no_loss
+        else:
+            self.umm_loss = UMMLoss(vae_dim=semantic_dim, hidden_size=hidden_size, umm_version=umm_version, block_layers=umm_block_layers, vae_hz=vae_hz) # first quantizer is semantic
 
     def audio_to_spec(self, audio):
         return self.spec_encoder(audio)
@@ -187,20 +190,21 @@ class STFTEncoderVAEHierarchicalUMMLoss(nn.Module):
         audio_features = self.audio_post(features.transpose(1, 2)).transpose(1, 2) # B D L
 
 
-        decoder_latents, kl_loss, diffusion_latents, n_vector_dropout = self.vectorizer(audio_features)
-        semantic_features, *acoustic_features = self.vectorizer.split_features(diffusion_latents)
+        decoder_latents, kl_loss, hierarchical_latents, hierarchical_latents_list, n_vector_dropout = self.vectorizer(audio_features)
+        semantic_features, *acoustic_features = self.vectorizer.split_features(hierarchical_latents)
         umm_loss_results = self.umm_loss(semantic_features, audio_input_24k_mono=audio_input_24k_mono, return_loss=return_loss)
 
         # input to decoder: residual + semantic 
         # vae: residual.
         # decoder_latents = B VAE_DIM L
-        # diffusion_latents = B x sub_dim*n_vectorizers x L
+        # hierarchical_latents = B x sub_dim*n_vectorizers x L
         return {
             **umm_loss_results, # umm_cosine_loss, umm_l1_loss, umm_features
             "latent": decoder_latents, # combined features for decoder
-            "features": diffusion_latents, # B x D x L
+            "hierarchical_latents": hierarchical_latents, # B x D x L
+            "hierarchical_latents_list": hierarchical_latents_list,
             "kl_loss": kl_loss,
-            "prevae_features": features,
+            "features": features,
             'n_vector_dropout': n_vector_dropout,
         }
     
@@ -214,3 +218,15 @@ class STFTEncoderVAEHierarchicalUMMLoss(nn.Module):
             emb = vectorizer.features_to_decoder_latents(chunk)
             latents += emb
         return latents
+
+    def normalize_features(self, features: torch.Tensor, mean, std):
+        if mean == 0 and std == 1: return features
+        features = self.vectorizer.split_features(features, dim=-1)
+        features = [(f - m) / s for f, m, s in zip(features, mean, std)]
+        return torch.cat(features, dim=-1)
+
+    def denormalize_features(self, features: torch.Tensor, mean, std):
+        if mean == 0 and std == 1: return features
+        features = self.vectorizer.split_features(features, dim=-1)
+        features = [f * s + m for f, m, s in zip(features, mean, std)]
+        return torch.cat(features, dim=-1)

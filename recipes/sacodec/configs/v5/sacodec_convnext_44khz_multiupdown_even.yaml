@@ -104,10 +104,11 @@ trainer: !new:pytorch_lightning.Trainer
           monitor: val_loss
           filename: sacodec_checkpoint_{epoch}_{step}_{val_loss:.4f}
           dirpath: !ref <run_opts[log_dir]>/<run_opts[log_name]>/<run_opts[version]>
-          every_n_train_steps: !ref <run_opts[val_check_interval]>
           mode: min
           save_top_k: 10
           save_last: true
+          save_on_train_epoch_end: False
+        #   every_n_train_steps: !ref <run_opts[val_check_interval]> # disable to sync checkpoint with validation check. otherwise GAN causes validation to be out of sync
 
     # Lightning calculates max_steps across all optimizer steps (rather than number of batches)
     # 2M equals to 1M steps per generator and 1M per discriminator

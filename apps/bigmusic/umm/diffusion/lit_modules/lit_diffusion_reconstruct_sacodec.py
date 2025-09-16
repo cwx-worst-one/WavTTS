@@ -25,7 +25,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def prepare_diffusion_model(diffusion_ckpt_path, device):
+def prepare_diffusion_model(diffusion_ckpt_path, device) -> pl_module:
     model = pl_module.load_from_checkpoint(
         diffusion_ckpt_path, map_location="cpu"
     ).model.to(device)
@@ -49,19 +49,6 @@ def prepare_umm(umm_ckpt_path, device, umm_type):
 def prepare_umm_codebook(umm_codebook_path, device):
     codebook = torch.load(umm_codebook_path).to(device)
     return codebook
-
-
-class MelNorm:
-    def __init__(self, mean, std):
-        self.mean = mean
-        self.std = std
-
-    def denorm_mel(self, mel):
-        return (mel * self.std) + self.mean
-
-    def norm_mel(self, mel):
-        return (mel - self.mean) / self.std
-
 
 class DiffusionU2SInfer(LightningModule):
     def __init__(
@@ -116,9 +103,6 @@ class DiffusionU2SInfer(LightningModule):
         self.extra_params = DotDict(extra_params)
         self.save_hyperparameters()
 
-        ## TODO: add back bn_norm, sacodec uses mean/std of 0/1, so not needed for now
-        self.bn_norm = MelNorm(bn_config["bn_norm_mean"], bn_config["bn_norm_std"])
-
         if token_config is None:
             self.token_config = {"token_cfg": True, "token_padding": 32768, "token_eos": 32769, "frame_rate": 25 }
         else:
@@ -135,17 +119,18 @@ class DiffusionU2SInfer(LightningModule):
         logger.info(", ".join(f"{k}={v}\n" for k, v in args_dict.items()))
 
     @torch.no_grad()
+
     def sacodec_embs_to_wav(self, latents, eos_index_list=None):
         """Truncate latents to EOS and decode sequentially to prevent OOM."""
-        latents = self.bn_norm.denorm_mel(latents)
+        latents = latents.transpose(1, 2) # B C T -> B T C
+        latents = self.sacodec.encoder.denormalize_features(latents, self.bn_config["bn_norm_mean"], self.bn_config['bn_norm_std'])
         if eos_index_list is None:
-            return self.sacodec.decode_latents(latents.transpose(1, 2))
+            return self.sacodec.decode_latents()
 
         output_wavs = []
         for latent, eos_index in zip(latents, eos_index_list):
-            latent = latent.unsqueeze(0).transpose(1, 2) # L C -> B C L
-            logger.info(f"Decoding sacodec_emb {latent.shape=}, {eos_index=}")
-            output_wav = self.sacodec.decode_latents(latent[:, :eos_index, :])
+            latent = latent.unsqueeze(0) # T C -> B T C
+            output_wav = self.sacodec.decode_latents(latent[..., :eos_index, :])
             output_wav = output_wav.squeeze(0) # B C L -> C L
             output_wavs.append(output_wav.cpu())
 
@@ -156,6 +141,7 @@ class DiffusionU2SInfer(LightningModule):
     def sacodec_embs_to_wav_chunked(self, latents, eos_index_list=None):
         """Chunked decoding uses less memory and gives results similar to online streaming. Use sacodec_embs_to_wav for best results"""
         # TODO: support eos_index_list
+        latents = self.sacodec.encoder.denormalize_features(latents, self.bn_config["bn_norm_mean"], self.bn_config['bn_norm_std'])
         audio_hat = vocode_in_ovl_chunks_v2(latents, self.sacodec,
                             mini_bs=1,
                             chunk_size=self.bn_config.get("bn_chunk_size", 100),
@@ -337,13 +323,10 @@ class DiffusionU2SInfer(LightningModule):
         self.sacodec: SACodecModule = self.bn_config["vocoder_model"](local_rank=self.local_rank)[
             "sacodec"
         ]
-        vocoder_precision = self.bn_config["precision"]
-        if self.sacodec.precision == "16-mixed" and vocoder_precision == "fp32":
-            raise Exception(f"Mismatched precision between reconstruction ({vocoder_precision}) and trained vocoder ({self.sacodec.precision})")
-        self.sacodec.precision = vocoder_precision
+        self.sacodec.precision = self.bn_config["precision"]
 
         if self.infer_type == "ar-diffusion-vocoder":
-            self.sacodec.encoder = None
+            # self.sacodec.encoder = None # encoder is needed for normalize and denormalize features
             self.sacodec.melspec_loss = None
             self.sacodec.multiperioddisc = None
             self.sacodec.chroma_loss = None
@@ -606,7 +589,7 @@ class ChunkInfer2(DiffusionU2SInfer):
         diffusion_nfe=10,
         diffusion_sampler="ddim",
         text_cfg_w=1,
-        rescale_factor=0.7,
+        rescale_factor=-1,
         use_wvae_vocoder=False,
         bn_config=None,
         token_config=None,
@@ -647,6 +630,7 @@ class ChunkInfer2(DiffusionU2SInfer):
         self.save_meta = save_meta
         self.padding_mode = padding_mode
         self.vocoder_chunk_infer = vocoder_chunk_infer
+        self.rescale_factor = rescale_factor
         if self.infer_type == "ar-diffusion-vocoder":
             assert self.padding_mode == "token_padding"
         assert (
@@ -773,6 +757,9 @@ class ChunkInfer2(DiffusionU2SInfer):
         else:
             raise NotImplementedError(f"{self.infer_type=}")
 
+        if self.extra_params['diffusion_drop_rvq_token'] > 0 and batched_syn_umm_token.ndim == 3:
+            logger.info(f"Dropping rvq token, index=[{self.extra_params['diffusion_drop_rvq_token']}:-1]")
+            batched_syn_umm_token[:, :, self.extra_params['diffusion_drop_rvq_token']:] = self.token_config["token_padding"]
         # prompt
         batched_prompt_umm_token = None
         inputs["prompt_bn"] = torch.zeros(
@@ -876,6 +863,7 @@ class ChunkInfer2(DiffusionU2SInfer):
                     text_cfg_w=self.text_cfg_w,
                     use_infer_params=True,
                     first=chunk_idx == 0,
+                    rescale_factor=self.rescale_factor
                 )
             # logger.info(f"{chunk_idx=} mel={chunk_mel.shape=}")
             self.model.update_infer_params(
@@ -885,8 +873,8 @@ class ChunkInfer2(DiffusionU2SInfer):
                 full_mel.append(chunk_mel)
         self.model.clear_infer_params(self.diffusion_nfe)
 
-        full_mel = torch.cat(full_mel, dim=-1)
-        full_mel = full_mel[:, :, inputs["prompt_length"] :]
+        full_mel = torch.cat(full_mel, dim=-1) # B x C x T
+        full_mel = full_mel[:, :, inputs["prompt_length"]:] # Currently, prompt_length=0
 
         eos_id = self.token_config["token_eos"]
         semantic_frame_rate = self.token_config["frame_rate"]

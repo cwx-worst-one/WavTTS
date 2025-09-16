@@ -146,8 +146,6 @@ train_dataset: !new:recipes.voicebox.datasets.voicebox_promptmel_dataset_otf.Voi
     token_audio_freq: !ref <run_opts[token_audio_freq]>
     bn_audio_freq: !ref <run_opts[bn_audio_freq]>
     shuffle_buffer_size: 0
-    max_audio_length: !ref <run_opts[max_audio_length]>
-    min_audio_length: !ref <run_opts[min_audio_length]>
     allow_resample: False
     allow_mono: False
 

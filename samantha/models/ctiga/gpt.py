@@ -775,7 +775,10 @@ class GPTModel(GPTPreTrainedModel):
                         hidden_states
                     )
             if return_block_out:
-                block_outs.append(pad_input(hidden_states, indices, batch, seqlen))
+                if attention_mask is not None:
+                    block_outs.append(pad_input(hidden_states, indices, batch, seqlen))
+                else:
+                    block_outs.append(hidden_states)
 
         if attention_mask is not None:
             hidden_states = pad_input(hidden_states, indices, batch, seqlen)

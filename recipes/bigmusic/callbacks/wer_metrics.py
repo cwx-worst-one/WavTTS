@@ -661,7 +661,7 @@ def run_wer_metrics_sa_online(generated_output_fps, asr_model_path='zh-CN', tran
     #     all_generated_output_fps += list(_fps)
     # pool.join()
 
-    for idx, generated_output_fp in enumerate(generated_output_fps):
+    for idx, generated_output_fp in tqdm.tqdm(enumerate(generated_output_fps)):
         # asr_lyrics = run_asr_lyrics_sa_online(generated_output_fp, asr_model_path)
         metadata_fp = str(generated_output_fp).replace('generated.wav', 'metadata.json')
         with open(metadata_fp, 'r', encoding='utf-8') as f:
@@ -1238,6 +1238,43 @@ def output_wer_for_all_samples_into_one_file(path_result):
     print(table)
     with open(filename_out, 'w', encoding='utf-8') as f:
         f.write(table)
+
+# # uncomment to run ASR on directory
+# if __name__ == "__main__":
+#     import argparse
+#     parser = argparse.ArgumentParser(
+#     )
+#     # Add arguments for the two directory paths
+#     parser.add_argument("--input_dir", type=str, help="Path to the wav directory")
+#     parser.add_argument("--has_gt", action="store_true")
+#     args = parser.parse_args()
+#     # callback = WERMetricsSAOnlineCallback(asr_model_path='zh-CN', transliteration=True, no_gt_lyrics=True)
+#     asr_model_path = "zh-CN"
+#     # asr_model_path = None
+#     transliteration=False
+    
+#     if "," in args.input_dir:
+#         input_dirs = args.input_dir.split(",")
+#         for input_dir in input_dirs:
+#             generated_output_fps = list(Path(input_dir).glob('**/*.generated.wav'))
+#             if args.has_gt:
+#                 run_wer_metrics_sa_online(generated_output_fps, asr_model_path=asr_model_path, transliteration=True)
+#                 # run_wer_metrics_sa_online_parallel(generated_output_fps, asr_model_path=asr_model_path, transliteration=False)
+#             else:
+#                 run_wer_metrics_sa_online_wo_gtlyrics(generated_output_fps, asr_model_path=asr_model_path, transliteration=True)
+#             # output_wer_for_all_samples_into_one_file(input_dir)
+#     else:
+#         input_dir = args.input_dir
+#         generated_output_fps = list(Path(input_dir).glob('**/*.generated.wav'))
+#         # run_wer_metrics_sa_online_parallel(generated_output_fps, asr_model_path=asr_model_path, transliteration=transliteration)
+#         if args.has_gt:
+#             print("Run sa online")
+#             run_wer_metrics_sa_online(generated_output_fps, asr_model_path=asr_model_path, transliteration=True)
+#         else:
+#             run_wer_metrics_sa_online_wo_gtlyrics(generated_output_fps, asr_model_path=asr_model_path, transliteration=True)
+#             # run_wer_metrics_sa_online_parallel(generated_output_fps, asr_model_path=asr_model_path, transliteration=False)
+#         # output_wer_for_all_samples_into_one_file(input_dir)
+
 
 
 if __name__ == "__main__":

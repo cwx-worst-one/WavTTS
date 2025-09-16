@@ -5,7 +5,6 @@ import pytorch_lightning as pl
 import torch
 import torchaudio
 import tqdm
-
 import librosa
 
 import json
@@ -71,6 +70,69 @@ class AudioLoundessDiffCallback(pl.Callback):
                 },
             )
 
+class AudioLoundessDiffCallback(pl.Callback):
+    def __init__(self) -> None:
+        super().__init__()
+    def on_predict_end(
+        self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"
+    ) -> None:
+        output_dir = pl_module.extra_params.output_dir
+        (
+            Path(output_dir)
+            / f"{self.__class__.__name__}.{trainer.global_rank}.SUCCESS"
+        ).touch()
+
+        if trainer.is_global_zero:
+            ts = time.time()
+            while not all(
+                [
+                    (
+                        Path(output_dir) / f"{self.__class__.__name__}.{rank}.SUCCESS"
+                    ).exists()
+                    for rank in range(trainer.world_size)
+                ]
+            ):
+                time.sleep(10)
+                print(
+                    f"[{self.__class__.__name__}(rank={trainer.global_rank})] waiting for all ranks done ... (cost {round(time.time() - ts, 3)} s)"
+                )
+
+            generated_output_fps = list(
+                Path(output_dir).glob("**/*.generated.wav")
+            )
+
+            loudness_diff_mean, loudness_diff_std = run_audio_loudness_diff(generated_output_fps)
+            metrics_fp = Path(output_dir) / "metrics.json"
+            print(f"AudioLoundessDiff: {loudness_diff_mean=}, {loudness_diff_std=}")
+            update_json(
+                metrics_fp,
+                {
+                    "loudness_diff_mean": loudness_diff_mean,
+                    "loudness_diff_std": loudness_diff_std,
+                },
+            )
+
+
+def run_audio_loudness_diff(generated_output_fps):
+    loudness_diffs = []
+    for fp in generated_output_fps:
+        fp = str(fp)
+        target_song = fp.replace(".generated.", ".target_audio.")
+        target_loudness = get_audio_loudness(target_song)
+        pred_loudness = get_audio_loudness(fp)
+        audio_loudness_diff = pred_loudness-target_loudness
+
+        metadata_fp = str(fp).replace("generated.wav", "metadata.json")
+        update_json(metadata_fp, {
+            "audio_loudness_diff": audio_loudness_diff,
+            })
+        loudness_diffs.append(audio_loudness_diff)
+    return np.mean(loudness_diffs), np.std(loudness_diffs)
+
+def get_audio_loudness(wavfile):
+    wav, sr = librosa.load(wavfile, sr = None, mono=False)
+    meter = pyln.Meter(sr)
+    return meter.integrated_loudness(wav.T)
 
 def run_audio_loudness_diff(generated_output_fps):
     loudness_diffs = []
@@ -335,7 +397,8 @@ def run_audio_metrics(
         score = get_audio_metrics_score(metrics)
         score_list.append(score)
         if score < 1.:
-            print(f"AudioMetrics {wavfile} score={score} {metrics['score']['worst_type']}")
+            filename = Path(metadata_fp).name
+            print(f"AudioMetrics {filename} score={score} {metrics['score']['worst_type']}")
 
         if 'rms_downmix_diff' in metrics['phase_check']:
             downmixdiff_list.append(metrics['phase_check']["rms_downmix_diff"])
@@ -409,10 +472,17 @@ def output_for_all_samples_into_one_file(path_result):
     with open(filename_out, 'w', encoding='utf-8') as f:
         f.write(table)
 
-if __name__=="__main__":
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    # Add arguments for the two directory paths
+    parser.add_argument("--input_dir", type=str, help="Path to the wav directory")
+    args = parser.parse_args()
+
     import sys
     # rootdir=Path("/mnt/bn/bigspeech-lf-nas/user/zhangshuo/data/diffusion/eval/20240618-1910542965")
-    rootdir = "/mnt/bn/bigspeech-lf-nas/user/zhangshuo/data/diffusion/eval/"
+    rootdir = Path(args.input_dir)
     # exp = "20240607-1705272156"
     exp = sys.argv[1]
     print(f"analyse {exp}")

@@ -4,6 +4,7 @@ import numpy as np
 from dataclasses import dataclass, field
 from math import pi
 from typing import Sequence, Tuple, Union
+import os
 
 import torch
 from einops import rearrange, reduce, repeat
@@ -166,6 +167,13 @@ def Ts(t):
     """Builds a type template for a given type that accepts a list of instances"""
     return lambda *types: lambda: t(*[tp() for tp in types])
 
+
+def offset_noise(init_noise):
+    disable_offset_noise = os.environ.get("DISABLE_OFFSET_NOISE", False)
+    if int(disable_offset_noise): return init_noise
+    B, L, D = init_noise.shape # offset emb noise to not rely on mean features https://arxiv.org/pdf/2305.08891
+    noise = init_noise + 0.1 * torch.randn((B, 1, D), device=init_noise.device)
+    return noise
 
 class Sequential(nn.Module):
     """Custom Sequential that includes all args"""
@@ -604,6 +612,7 @@ class LlamaDiffusion(nn.Module):
 
 
         noise = torch.randn_like(x)
+        noise = offset_noise(noise)
         if self.target_type == "rectified-flow":
             if self.hp.rf_sigma_distribution == "lognorm":
                 # give more weight to intermediate timestep
@@ -718,7 +727,7 @@ class LlamaDiffusion(nn.Module):
         if self.target_type == "rectified-flow":
             if self.hp.use_unet_style_skip_connect:
                 pred = pred_v + residual
-        if self.target_type == "velocity":
+        elif self.target_type == "velocity":
             if self.hp.use_unet_style_skip_connect:
                 pred = pred_v + residual
         elif self.target_type == "x0":
@@ -767,7 +776,7 @@ class LlamaDiffusion(nn.Module):
                     )
                 )
                 self.cached_noise.append(
-                    torch.randn(1, total_frame, self.hp.out_channels).expand(bs, -1, -1)
+                    offset_noise(torch.randn(1, total_frame, self.hp.out_channels).expand(bs, -1, -1))
                 )
 
     def update_infer_params(self, cache_len, last=False):
@@ -780,7 +789,7 @@ class LlamaDiffusion(nn.Module):
             self.cached_noise = None
         else:
             self.cached_noise = [
-                torch.randn([1, total_frame, self.hp.out_channels]).expand(bs, -1, -1)
+                offset_noise(torch.randn([1, total_frame, self.hp.out_channels]).expand(bs, -1, -1))
                 for i in range(t + 1)
             ]
         self.cached_v = dict([(i, None) for i in range(t)])
@@ -805,6 +814,7 @@ class LlamaDiffusion(nn.Module):
         use_cache=False,
         cached_v_len=None,
         use_infer_params=False,
+        rescale_factor=0.0, # default is 0.7
         **kwargs
     ):
         t = timesteps
@@ -831,51 +841,54 @@ class LlamaDiffusion(nn.Module):
                 real_batch_size, -1, -1
             )
 
-        sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device)
+        # sigmas = torch.linspace(self.max_t, self.min_t, t + 1, device=device)
+        sigmas = torch.linspace(self.min_t, self.max_t, t + 1, device=device) # using reverse rectified flow
         # sigmas += 0.6
         # sigmas /= sigmas.max()
 
         sigmas = repeat(sigmas, "i -> i b", b=1)
-        sigmas = 1 - sigmas # using reverse rectified flow
         # sigmas_batch = extend_dim(sigmas, dim=x.ndim)
         # alphas, betas = self.get_alpha_beta(sigmas_batch)
 
         for i in range(t):
             # print(f"step({i}/{t})")
-            if self.target_type == "rectified-flow":
-                dt = 1.0 / t
-                # dt = torch.tensor([dt] * real_batch_size, device=device)[:, None, None]
-                v_pred = self._forward(
-                    x.repeat(2 if text_cfg_w != 1 else 1, 1, 1),
-                    local_cond,
-                    text_embed,
-                    timesteps=sigmas[i].expand(batch_size, -1),
-                    infer_params=self.infer_params[i] if use_infer_params else None,
-                )
-                if text_cfg_w != 1:
+            dt = 1.0 / t
+            # dt = torch.tensor([dt] * real_batch_size, device=device)[:, None, None]
+            v_pred = self._forward(
+                x.repeat(2 if text_cfg_w != 1 else 1, 1, 1),
+                local_cond,
+                text_embed,
+                timesteps=sigmas[i].expand(batch_size, -1),
+                infer_params=self.infer_params[i] if use_infer_params else None,
+            )
+            if text_cfg_w != 1:
+                if rescale_factor > 0:
+                    v_pred, v_pred_uncond = v_pred.chunk(2)
+                    v_pred = self.apply_rescale_cfg(v_pred, v_pred_uncond, text_cfg_w, rescale_factor)
+                else:
                     v_pred, v_pred_uncond = v_pred.chunk(2)
                     v_pred = text_cfg_w * v_pred + (1 - text_cfg_w) * v_pred_uncond
 
-                # TODO: 只是模拟cache过程
-                if use_cache:
-                    if self.cached_v[i] is not None:
-                        cached_v_len = (
-                            self.cached_v[i].shape[1]
-                            if cached_v_len is None
-                            else cached_v_len
-                        )
-                        v_pred[:, :cached_v_len, :] = self.cached_v[i][
-                            :, :cached_v_len, :
-                        ]
-                    self.cached_v[i] = v_pred
-                # print(f"{x.shape=} {v_pred.shape=} {alphas[i].shape=}")
+            # TODO: 只是模拟cache过程
+            if use_cache:
+                if self.cached_v[i] is not None:
+                    cached_v_len = (
+                        self.cached_v[i].shape[1]
+                        if cached_v_len is None
+                        else cached_v_len
+                    )
+                    v_pred[:, :cached_v_len, :] = self.cached_v[i][
+                        :, :cached_v_len, :
+                    ]
+                self.cached_v[i] = v_pred
+            # print(f"{x.shape=} {v_pred.shape=} {alphas[i].shape=}")
 
-                ## old
-                # x_pred = alphas[i] * x[:real_batch_size] - betas[i] * v_pred
-                # noise_pred = betas[i] * x[:real_batch_size] + alphas[i] * v_pred
-                # x = alphas[i + 1] * x_pred + betas[i + 1] * noise_pred
+            ## old
+            # x_pred = alphas[i] * x[:real_batch_size] - betas[i] * v_pred
+            # noise_pred = betas[i] * x[:real_batch_size] + alphas[i] * v_pred
+            # x = alphas[i + 1] * x_pred + betas[i + 1] * noise_pred
 
-                x = x[:real_batch_size] - dt * v_pred
+            x = x[:real_batch_size] - dt * v_pred
 
         return x
     

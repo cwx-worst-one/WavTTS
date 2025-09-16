@@ -70,6 +70,7 @@ def init_sacodec(checkpoint_path, local_rank, cache_dir=None, version="umm"):
             map_location="cpu"
         ).eval().to(device)
         sacodec_model.setup('predict')
+        sacodec_model.precision = "16-mixed"
 
         return {
             "sacodec": sacodec_model, 
@@ -97,6 +98,7 @@ class VoiceBoxModule(pl.LightningModule):
         optimizer_cls=None,
         scheduler_cls=None,
         normalize_audio=0,
+        normalize_audio_gain_db=-3, # -3 decibles to fix loudness
         dpo_train=False,
         dpo_loss_type='sigmoid',
         dpo_beta=1.0,
@@ -125,6 +127,7 @@ class VoiceBoxModule(pl.LightningModule):
         self.bn_config = bn_config 
 
         self.normalize_audio = normalize_audio
+        self.normalize_audio_gain_db = normalize_audio_gain_db
         self.umm_slice_pct = umm_slice_pct
         self.dpo_train = dpo_train
         self.dpo_loss_type = dpo_loss_type
@@ -195,8 +198,15 @@ class VoiceBoxModule(pl.LightningModule):
     @torch.no_grad()
     def get_umm_token(self, wav, audio_lengths=None, slice_pct=0.0):
         with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=True):
-            mode = 'even' if np.random.rand() < slice_pct else 'full'
-            token = self.requires["Stage3"].wav2requires(wav, audio_length=audio_lengths, slice_method=mode, chunk_size=60, requires=['token'])
+            wav_duration = wav.shape[-1] // 24000
+            if wav_duration > 60 and np.random.rand() < slice_pct:
+                mode = 'max'
+                chunk_size = np.random.randint(30, 60)
+            else:
+                mode = 'full'
+                chunk_size = 60
+            # token = self.requires["Stage3"].wav2token(wav)
+            token = self.requires["Stage3"].wav2requires(wav, audio_length=audio_lengths, slice_method=mode, chunk_size=chunk_size, requires=['token'])
             if isinstance(token, dict):
                 token = token["token"]
         return token
@@ -206,14 +216,14 @@ class VoiceBoxModule(pl.LightningModule):
         # wav = B x CH x L
         model: SACodecModuleUMM = self.requires["sacodec"]
         latents = model.get_latents(wav) # B L D
-        latents = model.normalize_features(latents, self.bn_config["bn_norm_mean"], self.bn_config['bn_norm_std'])
+        latents = model.encoder.normalize_features(latents, self.bn_config["bn_norm_mean"], self.bn_config['bn_norm_std'])
         return latents
     
     @torch.no_grad()
     def sacodec_embs_to_wav(self, latents):
         model: SACodecModuleUMM = self.requires["sacodec"]
-        latents = model.denormalize_features(latents, self.bn_config["bn_norm_mean"], self.bn_config['bn_norm_std'])
         latents = latents.transpose(1, 2) # B D L -> B L D
+        latents = model.encoder.denormalize_features(latents, self.bn_config["bn_norm_mean"], self.bn_config['bn_norm_std'])
         audio_hat = model.decode_latents(latents)
         return audio_hat # B x CH x L
 
@@ -246,37 +256,16 @@ class VoiceBoxModule(pl.LightningModule):
         return getattr(self.trainer, "profiler") or PassThroughProfiler()
 
     def training_step(self, batch, batch_idx):
-        if self.normalize_audio != 0 and "token" in batch:
-            raise Exception("normalize_audio is not supported when training on pre-extracted UMM features. Either use OTF training or normalize_audio=0")
-        if self.normalize_audio == 1:
-            raise DeprecationWarning("normalize_audio=1 has been deprecated")
-        elif self.normalize_audio == 2:
-            prob = random.random()
-            if prob < 0.80:
-                scale_val = get_max_scale_audio(batch["wav"])
-                batch["wav_24k"] = batch["wav_24k"] * scale_val.squeeze(1)
-                batch["wav"] = batch["wav"] * scale_val
-        elif self.normalize_audio == 3:
-            if random.random() < 0.75:
-                batch["wav_24k"] = normalize_audio(batch["wav_24k"].unsqueeze(1)).squeeze(1)
-                batch["wav"] = normalize_audio(batch["wav"])
-                if random.random() < 0.8:
-                    gain_db = random.randint(-6, -1)
-                    batch["wav_24k"] = torchaudio.functional.gain(batch["wav_24k"], gain_db=gain_db)
-                    batch["wav"] = torchaudio.functional.gain(batch["wav"], gain_db=gain_db)
-        elif self.normalize_audio == 4: # increase umm volume. decrease wav volume
-            batch["wav_24k"] = batch["wav_24k"] * 1.05
-            batch["wav"] = batch["wav"]
-        elif self.normalize_audio == 5: # random change and clip umm volume.
-            gain_db = random.randint(-6, 6)
-            random_clamp = random.uniform(0.99, 1)
-            batch["wav_24k"] = torchaudio.functional.gain(batch["wav_24k"], gain_db=gain_db).clamp(-1*random_clamp, random_clamp)
-            batch["wav"] = batch["wav"]
+        if self.normalize_audio <= 0: # default no normalization
+            pass
         elif self.normalize_audio == 6: # random change and clip umm volume. decrease wav volume -3db
+            assert "token" not in batch, "normalize_audio is not supported when training on pre-extracted UMM features. Either use OTF training or normalize_audio=0"
             gain_db = random.randint(-6, 6)
             random_clamp = random.uniform(0.95, 1)
             batch["wav_24k"] = torchaudio.functional.gain(batch["wav_24k"], gain_db=gain_db).clamp(-1*random_clamp, random_clamp)
-            batch["wav"] = torchaudio.functional.gain(batch["wav"], gain_db=-3)
+            batch["wav"] = torchaudio.functional.gain(batch["wav"], gain_db=self.normalize_audio_gain_db)
+        else:
+            raise ValueError(f"normalize_audio={self.normalize_audio} is not supported")
 
         if "token" not in batch:
             wav_24k_lens = batch['wav_lens'] / self.diffusion_sample_rate * 24000
@@ -447,8 +436,6 @@ class VoiceBoxModule(pl.LightningModule):
 
         device_name = torch.cuda.get_device_name(0)
         if "H20" in device_name:
-            return
-        if self.model.target_type != "rectified-flow":
             return
         diffusion_nfe = 10
         diffusion_sampler = "ddim"

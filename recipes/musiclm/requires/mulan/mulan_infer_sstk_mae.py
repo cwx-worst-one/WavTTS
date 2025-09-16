@@ -592,7 +592,6 @@ class LitMuLanModule(pl.LightningModule):
         self.music_encoder = get_music_encoder(music_encoder, emb_dim, version=version)
         if load_text_tower:
             self.text_encoder = get_text_encoder(text_encoder, emb_dim)
-
             if text_encoder == 'clap':
                 try:
                     self.tokenizer = AutoTokenizer.from_pretrained(".module_cache/huggingface/larger_clap_general")
@@ -604,6 +603,8 @@ class LitMuLanModule(pl.LightningModule):
                 except Exception as e:
                     self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
 
+        else:
+            print("Skipping load text tower")
         self.spec_aug = spec_aug
         self.lr = lr
         self.weight_decay = weight_decay
@@ -841,21 +842,27 @@ class LitMuLanModule(pl.LightningModule):
         return text_embed
 
 
-def create_mulan_model(ckpt_path, device, version="v1"):
+def create_mulan_model(ckpt_path, device, version="v1", load_text_tower=True):
+    strict = load_text_tower
     litmodel = LitMuLanModule.load_from_checkpoint(
         ckpt_path,
         version=version,
         map_location='cpu',
-        strict=True,
+        strict=strict,
+        load_text_tower=load_text_tower
     )
 
     # audio tower
     litmodel.music_encoder.eval()
     litmodel.music_encoder.to(device)
     litmodel.music_encoder.mut.manually_to_device(device)
-    # text tower
-    litmodel.text_encoder.eval()
-    litmodel.text_encoder.to(device)
+    if load_text_tower:
+        # text tower
+        litmodel.text_encoder.eval()
+        litmodel.text_encoder.to(device)
+
+    # litmodel
+    litmodel.to(device)
 
     # litmodel
     litmodel.to(device)
@@ -873,7 +880,7 @@ def mulan_inference(
     shift_seconds=5,
     normalize_text=False,
     return_hidden_state=False,
-    return_sequence=False,
+    return_sequence=0,
 ):
     assert (text is not None) ^ (
         music is not None
@@ -903,6 +910,11 @@ def mulan_inference(
             music_encoder.mut.mut.output_type = "seq"
             emb = music_encoder(music.unsqueeze(1))
             music_encoder.mut.mut.output_type = saved_output_type
+            if return_sequence == 2:
+                # do not unfold sequence. for previous fad_mulan compatibility
+                return emb
+            t, e = emb.shape[-2:] # fold back into original shape
+            emb = emb.reshape(b, n * t, e)
             return emb
 
         emb = music_encoder(music.unsqueeze(1))

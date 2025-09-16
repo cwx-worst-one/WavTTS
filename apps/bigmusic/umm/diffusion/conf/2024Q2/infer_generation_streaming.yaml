@@ -7,7 +7,7 @@ run_opts:
     output_dir: output_wavs
     meta_lst: ""
     num_workers: 4
-    seed: 1996
+    seed: !apply:samantha.utils.envs.getenv_int ["diffusion_seed", 1996]
     infer_type: ar-diffusion-vocoder
     use_wvae_vocoder: True
     lang: en

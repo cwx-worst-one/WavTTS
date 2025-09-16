@@ -21,14 +21,15 @@ from samantha.dataio.batching import BucketBatcher
 from samantha.dataio.parquet import ParquetDataset
 from samantha.dataio.webdataset.ra_wds import WebDataset
 
-# __dataset_name__
-NORM_DATASET = ["music_wyy-hq-part1_Swyy_N170k_T44k_v1_Clip", "music_wyy-hq-part2_Swyy_N87k_T44k_v1_Clip", "music_wyy-hq-part4_Swyy_N80k_T44k_v1_Clip"]
 import random
 import torchaudio
 import pyloudnorm as pyln
 
 def read_wav_sf(sample):
-    byte_stream = io.BytesIO(sample["wav"])
+    if "audio_44k" in sample: # special case for data_id=16944
+        byte_stream = io.BytesIO(sample["audio_44k"])
+    else:
+        byte_stream = io.BytesIO(sample["wav"])
     with sf.SoundFile(byte_stream) as wav_file:
         # sample_rate = wav_file.samplerate
         # num_channels = wav_file.channels
@@ -48,6 +49,14 @@ def read_wav2(sample):
         raise Exception("Not support data type: {}".format(wav.dtype))
     return wav
 
+def read_wav_torch(item) -> tuple[torch.Tensor, int]:
+    if "wav_path" in item: # support meta.lst from local path
+        wav_npy, sr = torchaudio.load(item["wav_path"])
+    elif "audio_44k" in item: # special case for data_id=16944
+        wav_npy, sr = torchaudio.load(io.BytesIO(item["audio_44k"]))
+    else:
+        wav_npy, sr = torchaudio.load(io.BytesIO(item["wav"]))
+    return wav_npy, sr
 
 def read_wav_librosa(sample, sr: Optional[int] = None, mono: bool = False) -> np.ndarray:
     byte_stream = io.BytesIO(sample["wav"])
@@ -81,14 +90,11 @@ class VoiceBoxParquetDataset(IterableDataset):
         token_audio_freq = 24000,
         bn_audio_freq = 44100,
         shuffle_buffer_size=100,
-        max_audio_length=60,
-        min_audio_length=10,
         allow_mono=False,
-        allow_resample=False,
-        audio_norm=False
+        allow_resample=False
     ):
         self.wds = (
-            ParquetDataset(data_id=data_id, resampled=True)
+            ParquetDataset(data_id=data_id, resampled=True, extra_fields_in_data=["audio_44k"])
             .shuffle(shuffle_buffer_size)
             .map(self.process)
         )
@@ -100,17 +106,12 @@ class VoiceBoxParquetDataset(IterableDataset):
         self.drop_last = drop_last
         self.batcher = BucketBatcher(**batcher_config)
         self.umm_frame_rate = umm_frame_rate
+        self.max_audio_samples = max(batcher_config["buckets"])
+        self.min_audio_samples = min(batcher_config["buckets"])
 
         self.bn_config = bn_config
 
-        if audio_norm:
-            self.meter = pyln.Meter(bn_audio_freq)
-        else:
-            self.meter = None
-
         self.audio_resampler = Resample(orig_freq=bn_audio_freq, new_freq=token_audio_freq)
-        self.max_audio_length = max_audio_length
-        self.min_audio_length = min_audio_length
         self.allow_mono = allow_mono
         self.allow_resample = allow_resample
         
@@ -137,61 +138,58 @@ class VoiceBoxParquetDataset(IterableDataset):
 
         data_dict = dict()
 
+        try:
+            wav, sr = read_wav_torch(sample) # CH, L
+        except Exception as e:
+            print("Failed to load audio")
+            return None
 
-        wav = read_wav_sf(sample) # L, CH
-        if wav.shape[0] == 0:
+        if wav.shape[-1] == 0:
             print(f'Empty wav duration {wav.shape}')
             del sample
             return None
 
-        if len(wav.shape) != 2 or wav.shape[-1] != 2:
+        if len(wav.shape) != 2 or wav.shape[0] != 2:
             if self.allow_mono and len(wav.squeeze().shape)==1: 
-                wav = torch.stack([wav.squeeze(), wav.squeeze()], dim=-1)
+                wav = torch.stack([wav.squeeze(), wav.squeeze()], dim=0)
             else:
                 print(f'Invalid wav src sample shape. Perhaps mono? {wav.shape}')
                 log_sample(sample, wav)
                 del sample
                 return None
 
-        if sample["src_sample_rate"] != self.bn_audio_freq:
+        if sr != self.bn_audio_freq:
             if self.allow_resample:
-                wav = resample(wav, sample["src_sample_rate"], self.bn_audio_freq)
+                wav = resample(wav, sr, self.bn_audio_freq)
             else:
-                print('Invalid src sample rate', sample["src_sample_rate"], self.bn_audio_freq)
+                print('Invalid src sample rate', sr, self.bn_audio_freq)
                 log_sample(sample, wav)
                 # raise Exception("Src sample rate does not equal")
                 del sample
                 return None
 
-        
-
-        wav = wav.astype(np.float32)
-        wav = torch.FloatTensor(wav)
-        wav = wav.transpose(0, 1) # L, CH -> CH, L
         sr = self.bn_audio_freq
         umm_hz = self.umm_frame_rate # UMM token frame rate. 
 
-
-        dataset_name = sample.get("__dataset_name__", "")
-        if self.meter and random.random() < 0.8 and dataset_name in NORM_DATASET:
-            db = self.meter.integrated_loudness(wav.detach().cpu().numpy().T)
-            if db > -14:
-                gain_db = random.randint(-6, -2)
-                wav = torchaudio.functional.gain(wav, gain_db=gain_db)
-
-        # Trim audio between [min_audio_length, max_audio_length] seconds
-        min_sample_len = self.min_audio_length * sr
-        max_sample_len = self.max_audio_length * sr
-        if wav.shape[-1] < min_sample_len:
-            del wav
-            del sample
+        # truncate short audio. mulan cannot handle under 10
+        if wav.shape[-1] < self.min_audio_samples:
+            print(f'Wav too short {wav.shape}')
             return None
-        start, end = None, None
-        if wav.shape[-1] > max_sample_len:
-            # random crop
-            start = random.randint(0, wav.shape[-1] - max_sample_len)
-            end = random.randint(start, start + max_sample_len)
-            wav = wav[:, start:end]
+        
+        ## handle long wavs here. truncate to max audio - 60 seconds
+        max_audio_samples = self.max_audio_samples
+        if wav.shape[-1] > max_audio_samples:
+            if "umm_token" in sample: # umm already extracted. do not do random croping for now
+                # TODO: enable random cropping
+                wav = wav[..., :max_audio_samples]
+            else:
+                start = random.randint(0, wav.shape[-1] - max_audio_samples + 1)
+                # min_audio_samples = self.min_audio_samples
+                wav_duration = wav.shape[-1] / sr
+                min_audio_samples = (wav_duration // 60 * 60) * sr # truncate to minute
+                min_audio_samples = min(min_audio_samples, max_audio_samples)
+                end = random.randint(start + min_audio_samples, start + max_audio_samples)
+                wav = wav[..., start:end]
 
         ## UMM pre-extracted features
         if "umm_token" in sample:
@@ -206,13 +204,13 @@ class VoiceBoxParquetDataset(IterableDataset):
             # print('Umm duration', umm_token.shape, wav.shape, umm_hz, umm_token_len, max_wav_len)
 
             data_dict["token"] = umm_token[..., :umm_token_len]
-            data_dict['wav'] = copy.deepcopy(wav[:, :max_wav_len])
+            data_dict['wav'] = wav[:, :max_wav_len].clone()
         else: # Reasample to wav_24k for OTF umm extraction
             # For now, truncate to nearest 25hz divisible
             # max_wav_len = int(int(wav.shape[-1] / sr * umm_hz) * sr / umm_hz)
             max_wav_len = int(wav.shape[-1] / sr) * sr
             wav = wav[:, :max_wav_len]
-            data_dict['wav'] = copy.deepcopy(wav)
+            data_dict['wav'] = wav.clone()
 
             try:
                 wav_24k = self.audio_resampler(wav.mean(0))

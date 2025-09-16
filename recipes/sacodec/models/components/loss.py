@@ -453,7 +453,7 @@ class SISDRLoss(torch.nn.Module):
 
     Args:
         zero_mean (bool, optional) Remove any DC offset in the inputs. Default: ``True``
-        eps (float, optional): Small epsilon value for stablity. Default: 1e-8
+        eps (float, optional): Small epsilon value for stablity. Default: 1e-7 for mixed precision
         reduction (string, optional): Specifies the reduction to apply to the output:
             'none': no reduction will be applied,
             'mean': the sum of the output will be divided by the number of elements in the output,

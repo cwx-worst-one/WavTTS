@@ -46,8 +46,8 @@ class LatentMeanStdCallback(pl.Callback):
                 Path(output_dir).glob("**/*.diffusion_output.pt")
             )
 
-            vocoder_mean = pl_module.bn_norm.mean
-            vocoder_std = pl_module.bn_norm.std
+            vocoder_mean = pl_module.bn_config["bn_norm_mean"]
+            vocoder_std = pl_module.bn_config["bn_norm_std"]
             mean, std, outlier_ratio = run_latent_meanstd(generated_output_fps, vocoder_mean, vocoder_std)
             metrics_fp = Path(output_dir) / "metrics.json"
             update_json(

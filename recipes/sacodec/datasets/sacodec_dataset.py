@@ -45,6 +45,14 @@ def parse_meta_lst(meta_lst):
             metas.append(meta)
     return metas
 
+def has_overlap(ranges, target):
+    t_start, t_end = target
+    for start, end in ranges:
+        # Overlap occurs if the ranges are not completely apart
+        if not (t_end <= start or t_start >= end):
+            return True
+    return False
+
 class ParquetDatasetWrapper(WebPipeline):
     def __init__(
         self,
@@ -63,8 +71,14 @@ class ParquetDatasetWrapper(WebPipeline):
         if isinstance(data_id, str) and data_id.endswith(".lst"):
             dataset = WebPipeline(parse_meta_lst(data_id), pipeline=[])
         else:
+            if dataset_samplerate == 44100:
+                # special case for data_id=16944
+                extra_fields_in_data = ["audio_44k"]
+            else:
+                extra_fields_in_data = None
             dataset = ParquetDataset(
-                data_id=data_id, resampled=resampled, nodesplitter=nodesplitter
+                data_id=data_id, resampled=resampled, nodesplitter=nodesplitter,
+                extra_fields_in_data=extra_fields_in_data
             )
         self.audio_duration = audio_duration
         self.max_num_crops = max_num_crops
@@ -100,6 +114,8 @@ class ParquetDatasetWrapper(WebPipeline):
             try:
                 if "wav_path" in item: # support meta.lst from local path
                     wav_npy, sr = torchaudio.load(item["wav_path"])
+                elif "audio_44k" in item: # special case for data_id=16944
+                    wav_npy, sr = torchaudio.load(io.BytesIO(item["audio_44k"]))
                 else:
                     wav_npy, sr = torchaudio.load(io.BytesIO(item.get("audio_44k", item["wav"])))
                 if sr != self.dataset_samplerate:
@@ -115,6 +131,9 @@ class ParquetDatasetWrapper(WebPipeline):
             wav_tensor = torch.as_tensor(wav_npy, dtype=torch.float32)
             if wav_tensor.ndim == 1:
                 wav_tensor = wav_tensor[None, :]
+
+            if wav_tensor.shape[0] == 2 and wav_tensor.shape[0] != self.n_channels: # convert to mono
+                wav_tensor = wav_tensor.mean(dim=0, keepdim=True)
             # drop samples with not enogh channels
             if wav_tensor.shape[0] != self.n_channels:
                 if self.allow_mono and len(wav_tensor.squeeze().shape)==1: 
@@ -135,9 +154,10 @@ class ParquetDatasetWrapper(WebPipeline):
                     wav_tensor, (0, pad_len), "constant", 0
                 )
             
-            max_num_crops = wav_tensor.shape[-1] // max(self.audio_duration) // 2
+            max_num_crops = int(wav_tensor.shape[-1] / self.dataset_samplerate // max(self.audio_duration) // 1.5)
+            max_num_crops = max(max_num_crops, 1) # sample at least 1
             max_num_crops = min(max_num_crops, self.max_num_crops)
-            # TODO: handle overlaps...
+            ranges = []
             for i in range(max_num_crops):
                 target_audio_duration = random.choice(self.audio_duration)
                 target_audio_duration_samples = target_audio_duration * self.dataset_samplerate
@@ -145,18 +165,25 @@ class ParquetDatasetWrapper(WebPipeline):
                 audio_duration_samples = wav_tensor.shape[-1]
                 
                 if target_audio_duration_samples > audio_duration_samples:
-                    # audio too short
                     self._update_stats("Audio crop too short")
                     continue
                 
                 # random crop
                 if self.max_num_crops == 1:
                     start = 0
+                    end = target_audio_duration_samples
                 else:
                     start = torch.randint(
                         0, wav_tensor.shape[-1] - target_audio_duration_samples + 1, (1,)
                     ).item()
-                wav_crop = wav_tensor[:, start : start + target_audio_duration_samples]
+                    end = start + target_audio_duration_samples
+
+                if has_overlap(ranges, (start, end)):
+                    continue
+                ranges.append((start, end))
+
+                wav_crop = wav_tensor[:, start : end]
+
 
                 # loudness detection
                 db = self.meter.integrated_loudness(wav_crop.detach().cpu().numpy().T)
@@ -187,7 +214,7 @@ class ParquetDatasetWrapper(WebPipeline):
                     audio_mp3_compress = torch.from_numpy(audio_mp3_compress)
                     res['audio_augmented'] = audio_mp3_compress
 
-                if "reduce_volume" in self.audio_augmentations: 
+                if "volume" in self.audio_augmentations: 
                     ## gain audio on both. add clipping to input.
                     ## independently... reduce target audio by 0.9.
 
@@ -197,12 +224,12 @@ class ParquetDatasetWrapper(WebPipeline):
 
                     # randomly gain audio to both. randomly hard clip input.
                     if random.random() < 0.25:
-                        gain_db = random.randint(1, 3)
+                        gain_db = random.randint(-3, 3)
                         # audio_24k_mono = torchaudio.functional.gain(audio_24k_mono, gain_db=gain_db)
                         audio_target = torchaudio.functional.gain(audio_target, gain_db=gain_db)
                         audio_augment = torchaudio.functional.gain(audio_augment, gain_db=gain_db)
-                        if random.random() > 0.5:
-                            audio_augment = torch.clip(audio_augment, min=-1, max=1)
+                        random_clamp = random.uniform(0.97, 1)
+                        audio_augment = torch.clip(audio_augment, min=-1*random_clamp, max=1*random_clamp)
 
                     # always reduce target by 1 db
                     audio_target = torchaudio.functional.gain(audio_target, gain_db=-1)
@@ -296,7 +323,7 @@ class ParquetDataModule(pl.LightningDataModule):
             n_channels=n_channels,
             dataset_samplerate=dataset_samplerate,
             resample_to_24k=resample_to_24k,
-            audio_augmentations=audio_augmentations,
+            # audio_augmentations=audio_augmentations, # Disable augmentations in validation set
         )
         self.dataset_samplerate = dataset_samplerate
         self.audio_duration = audio_duration
@@ -331,7 +358,7 @@ class ParquetDataModule(pl.LightningDataModule):
             self.validation_dataset,
             wds.map(SemanticTokenLengthTransform(sample_rate=self.dataset_samplerate, audio_key="audio")),
             default_bucket_batcher_fn(
-                self.dataset_samplerate, self.valid_audio_duration, self.train_batch_size, lyrics_frame_rate=0, max_duration=max(self.valid_audio_duration)
+                self.dataset_samplerate, self.valid_audio_duration, self.valid_batch_size, lyrics_frame_rate=0, max_duration=max(self.valid_audio_duration)
             ),
         )
 

@@ -9,6 +9,7 @@ import numpy as np
 
 from einops import rearrange, repeat
 from recipes.umm.transforms.chroma import ChromaSpectrogram
+import torch.nn.functional as F
 
 class MaskedDescriptMelSpectrogramLoss(nn.Module):
     """Compute distance between mel spectrograms. Can be used
@@ -159,7 +160,7 @@ class MaskedChromaLoss(nn.Module):
             B, A_C, CH, T = chroma.shape
             chroma = chroma.reshape(B * A_C, CH, T) #  bs, a_c, ch, l -> bs*ac, ch x l
             chroma = chroma[:, :, :-1].transpose(1, 2) # bs x a_ch, ch x l -> bs x l x ch
-            return torch.nn.functional.normalize(chroma, p=2, dim=-1)
+            return torch.nn.functional.normalize(chroma, p=2, dim=-1, eps=1e-7)
         # print('Chroma_pred_before_norm', chroma_pred.shape)
 
         
@@ -245,21 +246,46 @@ class MaskedEmb(nn.Module):
 
     def forward(
         self, x: torch.Tensor, mask_prob: float) -> torch.Tensor:
-        B, D, T = x.shape # bs x emb x seq
+        B, T, D = x.shape # bs x seq x emb
 
         if self.length != None:
             ratio = T // self.length
             keep_mask = prob_mask_like(
-                (B, 1, ratio), mask_prob, device=x.device
+                (B, ratio, 1), mask_prob, device=x.device
             )
-            keep_mask = torch.nn.functional.interpolate(keep_mask.float(), size=T).bool()
+            # interpolate B x L
+            keep_mask = keep_mask.float().transpose(1,2)
+            keep_mask = torch.nn.functional.interpolate(keep_mask, size=T, mode="nearest").bool()
+            keep_mask = keep_mask.transpose(1,2)
         else:
             keep_mask = prob_mask_like(
-                (B, 1, T), mask_prob, device=x.device
+                (B, T, 1), mask_prob, device=x.device
             )
         if self.learnable:
-            x_null = repeat(self.null_emb, "d -> b d t", b=B, t=T)
+            x_null = repeat(self.null_emb, "d -> b t d", b=B, t=T)
             return torch.where(keep_mask, x, x_null), keep_mask
         else:
-            x_null = torch.randn((B, D, T), device=x.device) * 0.1
+            x_null = torch.randn((B, T, D), device=x.device) * 0.1
             return torch.where(keep_mask, x, x_null), keep_mask
+
+class MaskedCrossEntropy(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, logits, targets, mask=None):
+        logits = logits.contiguous().float()
+        targets = targets.contiguous()
+
+        logits = logits.view(-1, logits.size(-1))
+        targets = targets.view(-1, 1)
+
+        log_probs = F.log_softmax(logits.float(), dim=-1)
+        loss = -torch.gather(log_probs, dim=1, index=targets)
+
+        if mask is None:
+            return loss.mean()
+
+        mask = mask.contiguous()
+        loss = loss.view(*mask.size()) * mask
+        loss = (loss.sum(dim=-1, keepdim=True) / mask.sum(dim=-1, keepdim=True).clamp(1e-7)).mean()
+        return loss

@@ -709,7 +709,7 @@ class DiffusionU2SInfer(LightningModule):
         assert self.infer_type in ["ar-diffusion-vocoder", "diffusion-vocoder"]
 
         def batching(container, data):
-            if data is None or data is "":
+            if data is None or data == "":
                 if container is not None:
                     raise ValueError("try to batching data 'None'")
             else:

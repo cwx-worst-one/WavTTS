@@ -58,7 +58,7 @@ run_opts:
     log_name: unified_diffusion_sacodec
     version: !ref ds<run_opts[data_id]>_<device_type>x<num_gpu>_<run_opts[umm_frame_rate]>hzUMM_<run_opts[bn_frame_rate]>hzSS_streaming_chunk<run_opts[window_left]>x<run_opts[window_right]>_<run_opts[max_audio_length]>s
 
-    log_every_n_steps: 1000
+    log_every_n_steps: 500
     val_check_interval: 20000
     n_token: 32769
     tokenizer_pad: !applyref:operator.sub # not used

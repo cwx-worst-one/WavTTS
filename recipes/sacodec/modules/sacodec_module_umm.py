@@ -12,8 +12,6 @@ from typing import Type, Dict
 from recipes.sacodec.models.components.loss import MelSpecReconstructionLoss, ChromaLoss, DescriptMelSpectrogramLoss
 from recipes.sacodec.models.components.loss import DiscriminatorLoss, GeneratorLoss, FeatureMatchingLoss, SNRLoss
 from recipes.sacodec.models.sacodec import STFTEncoderVAE, ISTFTDecoder
-from recipes.sacodec.models.sacodec_hierarchical import STFTEncoderVAEHierarchicalUMMLoss
-from recipes.sacodec.models.sacodec_umm import STFTEncoderVAEPostUMM
 from recipes.sacodec.models.components.convnext import remove_grn_from_module
 
 from functools import partial
@@ -67,6 +65,8 @@ class SACodecModule(pl.LightningModule):
         remove_grn_layers: bool = False,
         scale_disc_loss: bool = False,
         precision: str = "32",
+        num_freeze_steps: int = 2000,
+        skip_load_disc_weights: bool = True,
         **kwargs
     ):
         """
@@ -161,10 +161,20 @@ class SACodecModule(pl.LightningModule):
         # set to False to fix umm weight loading error
         self.strict_loading = False
 
+        self.needs_unfreeze = True
+
+        self.num_freeze_steps = num_freeze_steps # how many steps to freeze mismatched weights
+        self.skip_load_disc_weights = skip_load_disc_weights # should load discriminator steps from pretrain or start from new. 
+
 
     def setup(self, stage: str = None):
         if stage == "fit" and self.hparams.pretrained_path is not None:
             self.load_from_pretrained(self.hparams.pretrained_path)
+        if stage == "predict":
+            del self.multiperioddisc
+            del self.multiresddisc
+            if hasattr(self.encoder, "semantic_encoder"):
+                del self.encoder.semantic_encoder
 
     def load_from_pretrained(self, pretrained_path=None):
         print('Loading pre-trained model from checkpoint', pretrained_path)
@@ -182,13 +192,23 @@ class SACodecModule(pl.LightningModule):
         # self.load_state_dict(state_dict, strict=False)
 
         model_state_dict = self.state_dict()
+        mismatched_params = []
+
+        for k in model_state_dict:
+            # new parameters not in old parameters
+            if k not in state_dict:
+                mismatched_params.append(k)
+                continue
+
         for k in state_dict:
             if k not in model_state_dict:
                 print(f"Dropping parameter {k}")
+                # mismatched_params.append(k) # old parameters not in new one. No need to add
                 continue
 
-            # if "multiperioddisc" in k: continue  # skip loading discriminator weights
-            # if "multiresddisc" in k: continue  # skip loading discriminator weights
+            if self.skip_load_disc_weights:
+                if "multiperioddisc" in k: continue  # skip loading discriminator weights
+                if "multiresddisc" in k: continue  # skip loading discriminator weights
             
             # skip checking over non-tensor items. i.e. embedding_modules->set_extra_state
             if not torch.is_tensor(state_dict[k]): continue
@@ -202,24 +222,37 @@ class SACodecModule(pl.LightningModule):
                         model_state_dict[k][:, :state_dict[k].shape[1]] = state_dict[k]
                         model_state_dict[k][:, state_dict[k].shape[1]:] = state_dict[k]
                         state_dict[k] = model_state_dict[k]
+                        mismatched_params.append(k)
                     elif (state_dict[k].shape[0] * 2) == model_state_dict[k].shape[0]:
                         print(f"Weights found with different sizes. Copying subset of weights",
                             k, state_dict[k].shape, model_state_dict[k].shape)
                         model_state_dict[k][:state_dict[k].shape[0]] = state_dict[k]
                         model_state_dict[k][state_dict[k].shape[0]:] = state_dict[k]
                         state_dict[k] = model_state_dict[k]
+                        mismatched_params.append(k)
                     else:
                         print(f"Skip loading parameter: {k}, "
                                 f"required shape: {model_state_dict[k].shape}, "
                                 f"loaded shape: {state_dict[k].shape}")
                         state_dict[k] = model_state_dict[k]
+                        mismatched_params.append(k)
             except Exception as e:
                 print(f"Error loading weights. Skipped: {k}, "
                         f"required shape: {model_state_dict[k].shape}, "
                         f"loaded shape: {state_dict[k].shape}")
                 state_dict[k] = model_state_dict[k]
+                mismatched_params.append(k)
 
         self.load_state_dict(state_dict, strict=False)
+
+        mismatched_params = set(mismatched_params)
+        print("Number of mismatched params:", len(mismatched_params), "Unfreezing these")
+        if len(mismatched_params) > 0:
+            for param_name, param in self.named_parameters():
+                if param_name in mismatched_params:
+                    param.requires_grad = True
+                else:
+                    param.requires_grad = False
 
 
     def _divide_params_group(self, model):
@@ -300,7 +333,8 @@ class SACodecModule(pl.LightningModule):
         self,
         audio: torch.Tensor,
         audio_input_24k_mono: torch.Tensor=None,
-        chunk_duration=None
+        chunk_duration=None,
+        return_dict=False
     ) -> Dict[str, torch.Tensor]:
         """called by diffusion."""
         logamp, pha, rea, imag = self.encoder.audio_to_spec(audio.float())
@@ -308,38 +342,14 @@ class SACodecModule(pl.LightningModule):
         dtype = self.get_dtype()
         with torch.autocast(device_type="cuda", dtype=dtype, enabled=True):
             encoder_results = self.encoder(logamp, pha, return_loss=False, audio_input_24k_mono=audio_input_24k_mono)
-        if isinstance(self.encoder, STFTEncoderVAEHierarchicalUMMLoss):
-            # use hierarchical features for diffusion - which have smooth vae latents
-            latent = encoder_results["features"]
+        if "hierarchical_latents" in encoder_results:
+            # use hierarchical features for diffusion - which have concat vae latents
+            latent = encoder_results["hierarchical_latents"]
         else:
             latent = encoder_results["latent"]
+        if return_dict:
+            return latent.transpose(1, 2), encoder_results
         return latent.transpose(1, 2)  # bs x emb x seq -> bs x seq x emb
-    
-    def decode_hierarchical_features(self, features: torch.Tensor, skip_idxs=None):
-        encoder: STFTEncoderVAEHierarchicalUMMLoss = self.encoder
-        features = features.transpose(1, 2) # B D L
-        decoder_latents = encoder.features_to_decoder_latents(features, skip_idxs=skip_idxs)
-        logamp_g, pha_g, rea_g, imag_g, y_g = self.decoder(decoder_latents)
-        return y_g
-    
-    def normalize_features(self, features: torch.Tensor, mean, std):
-        if mean == 0 and std == 1: return features
-        if isinstance(self.encoder, STFTEncoderVAEHierarchicalUMMLoss):
-            features = self.encoder.vectorizer.split_features(features, dim=-1)
-            features = [(f - m) / s for f, m, s in zip(features, mean, std)]
-            return torch.cat(features, dim=-1)
-        else:
-            return (features - mean) / std
-
-    def denormalize_features(self, features: torch.Tensor, mean, std):
-        if mean == 0 and std == 1: return features
-        if isinstance(self.encoder, STFTEncoderVAEHierarchicalUMMLoss):
-            features = self.encoder.vectorizer.split_features(features, dim=-1)
-            features = [f * s + m for f, m, s in zip(features, mean, std)]
-            return torch.cat(features, dim=-1)
-        else:
-            return features * std + mean
-
 
     def decode_latents(
         self,
@@ -347,13 +357,10 @@ class SACodecModule(pl.LightningModule):
     ):
         dtype = self.get_dtype()
         with torch.autocast(device_type="cuda", dtype=dtype, enabled=True):
-            # input: bs x seq x emb
-            if isinstance(self.encoder, STFTEncoderVAEHierarchicalUMMLoss):
-                # hierarchical features != decoder latents. Must go through upsample blocks and sum residuals first
-                return self.decode_hierarchical_features(latents)
-            latents = latents.transpose(1, 2) # bs x seq x emb -> bs x emb x seq. Vocos requires sequence last
+            latents = latents.transpose(1, 2) # B x T x D -> B x D x T
+            decoder_latents = self.encoder.features_to_decoder_latents(latents)
             # x = self.backbone(latents)
-            logamp_g, pha_g, rea_g, imag_g, y_g = self.decoder(latents)
+            logamp_g, pha_g, rea_g, imag_g, y_g = self.decoder(decoder_latents)
         return y_g
 
     def training_step(self, batch, batch_idx, **kwargs):
@@ -365,12 +372,21 @@ class SACodecModule(pl.LightningModule):
         audio_input = batch['audio']
         audio_input_24k = batch['audio_24k'] if 'audio_24k' in batch else None
 
-        return_encoder_loss = True
-        if self.freeze_encoder:
-            for param in self.encoder.parameters():
-                param.requires_grad = False
-            self.encoder.eval()
-            return_encoder_loss = False
+        return_encoder_loss = not self.freeze_encoder
+        if self.needs_unfreeze:
+            if self.freeze_encoder:
+                for param in self.encoder.parameters():
+                    param.requires_grad = False
+                self.encoder.eval()
+                for param in self.decoder.parameters():
+                    param.requires_grad = True
+                self.needs_unfreeze = False
+            if self.global_step > self.num_freeze_steps:
+                for param in self.parameters():
+                    param.requires_grad = True
+                self.needs_unfreeze = False
+
+        
 
         if 'audio_augmented' in batch:
             audio_input_aug = batch['audio_augmented']
@@ -572,7 +588,7 @@ class SACodecModule(pl.LightningModule):
         audio_hat = y_g
 
         with torch.autocast(device_type="cuda", enabled=False):
-            sdr = 0
+            sdrs = []
             si_sdr = 0
             audio_hat = audio_hat.float()
             audio_input = audio_input.float()
@@ -580,7 +596,6 @@ class SACodecModule(pl.LightningModule):
                 si_sdrs = scale_invariant_signal_distortion_ratio(audio_hat, audio_input, zero_mean=True)
                 si_sdr = torch.nanmedian(si_sdrs).item()
 
-                sdrs = []
                 for wav_g, wav_o in zip(audio_hat, audio_input):
                     try:
                         sdr, _, _, _ = torch_museval.evaluate(
@@ -595,7 +610,6 @@ class SACodecModule(pl.LightningModule):
                         # sometimes target is all zero
                         sdrs.append(torch.zeros(1))
                         print("Warning: torch_museval nan sdr:", e)
-                sdr = torch.nanmedian(torch.tensor(sdrs)).item()
                 
                 ## Batched version produces memory leak
                 # try:
@@ -620,7 +634,7 @@ class SACodecModule(pl.LightningModule):
             "val_loss": total_loss,
             "mel_loss": mel_loss,
             "val_kl_loss": loss_kl,
-            "sdr": sdr,
+            "sdr": sdrs,
             "si_sdr": si_sdr,
             "latent": latent.detach(),
         }
@@ -630,6 +644,8 @@ class SACodecModule(pl.LightningModule):
             outputs["umm_l1_loss"] = encoder_results["umm_l1_loss"]
         if "features" in encoder_results:
             outputs["features"] = encoder_results["features"]
+        if "hierarchical_latents_list" in encoder_results:
+            outputs["hierarchical_latents_list"] = encoder_results["hierarchical_latents_list"]
 
         # log audio outputs. use song describer instead
         self.log_val_audio(audio_input, audio_hat, batch["meta_song_id"], batch_idx)
@@ -681,24 +697,22 @@ class SACodecModule(pl.LightningModule):
         if "umm_l1_loss" in outputs[0]:
             umm_l1_loss = torch.stack([x["umm_l1_loss"] for x in outputs]).mean()
             self.log("val/umm_l1_loss", umm_l1_loss, sync_dist=True)
-        sdr = torch.median(torch.sort(torch.tensor([x["sdr"] for x in outputs], device=self.device))[0])
+
+        sdrs = sum([x["sdr"] for x in outputs], [])
+        # sdr = torch.median(torch.sort(torch.tensor(sdrs, device=self.device))[0])
+        sdr = torch.tensor(sdrs, device=self.device).mean()
         si_sdr = np.array([x["si_sdr"] for x in outputs]).mean()
 
         latents = torch.cat([x["latent"] for x in outputs], dim=0)
         std, mean = torch.std_mean(latents)
 
-        if "features" in outputs[0]:
-            features = torch.cat([x["features"] for x in outputs], dim=0)
-            if isinstance(self.encoder, STFTEncoderVAEHierarchicalUMMLoss):
-                features = self.encoder.vectorizer.split_features(features)
-                for idx, f in enumerate(features):
-                    features_std, features_mean = torch.std_mean(f)
-                    self.log(f"val/features_mean_{idx}", features_mean, sync_dist=True)
-                    self.log(f"val/features_std_{idx}", features_std, sync_dist=True)
-            else:
-                features_std, features_mean = torch.std_mean(features)
-                self.log("val/features_mean", features_mean, sync_dist=True)
-                self.log("val/features_std", features_std, sync_dist=True)
+        if "hierarchical_latents_list" in outputs[0]:
+            hierarchical_latents_list = zip(*[x["hierarchical_latents_list"] for x in outputs]) # transpose output[features[]] to features[output[]]
+            for idx, hierarchical_latent in enumerate(hierarchical_latents_list):
+                hl = torch.cat(hierarchical_latent, dim=0)
+                features_std, features_mean = torch.std_mean(hl)
+                self.log(f"val/hierarchical_latents_mean_{idx}", features_mean, sync_dist=True)
+                self.log(f"val/hierarchical_latents_std_{idx}", features_std, sync_dist=True)
 
 
         self.log("val_loss", avg_loss, sync_dist=True)

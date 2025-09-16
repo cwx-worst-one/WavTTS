@@ -3,7 +3,7 @@ seed_everything: 4444
 __set_float32_matmul_precision: !apply:torch.set_float32_matmul_precision ['high']
 
 training_params:
-    batch_size: 6
+    batch_size: 5
     num_workers: 16
     duration: [3, 5, 8, 10]
     shuffle_buffer_size: 0
@@ -18,10 +18,8 @@ training_params:
     n_mels: 160
     n_chroma: 12
     audio_channels: 2
-    vae_hz: 50
-    bottleneck_version: "v1"
 
-    precision: 32
+    precision: 16-mixed
 
 ################################################################################
 ##########                    TRAINING CONFIGURATION                  ##########
@@ -45,10 +43,41 @@ pl_datamodule: !new:recipes.sacodec.datasets.sacodec_dataset.ParquetDataModule
     valid_audio_duration: [20]
     max_num_crops: 12
     resample_to_24k: True
-    allow_resample: False
-    allow_mono: False
     audio_augmentations: null
     # prefetch_factor: !ref <training_params[dataloader_prefetch_factor]>
+
+
+encoder_config: !new:recipes.sacodec.models.sacodec_unified.sacodec_unified.STFTEncoderUnifiedConfig
+    n_fft: !ref <training_params[n_fft]>
+    hop_length: !ref <training_params[hop_length]>
+    vae_dim: !ref <training_params[vae_dim]>
+    beta: !ref <training_params[beta]>
+    hidden_size: !ref <training_params[hidden_size]>
+    audio_channels: !ref <training_params[audio_channels]>
+    ratio_block_dim: [[3, 3, 2], [2, 4, 4], [1536, 1536, 1536]]
+    scale_spatial_channels: False
+    semantic_n_blocks: 1
+    semantic_loss_type: umm_cn_rope
+    semantic_alignment_position: "post"
+    bottleneck_type: v1
+    bottleneck_framerate: 50
+    shortcut: 1
+    mlp_ratio: 2
+    pre_embed_type: post_linear_simple
+    atan2_magnitude_threshold_ratio: 0.0
+    use_grn: True
+
+decoder_config: !new:recipes.sacodec.models.sacodec_unified.sacodec_unified.ISTFTDecoderUnifiedConfig
+    n_fft: !ref <training_params[n_fft]>
+    hop_length: !ref <training_params[hop_length]>
+    vae_dim: !ref <training_params[vae_dim]>
+    hidden_size: !ref <training_params[hidden_size]>
+    audio_channels: !ref <training_params[audio_channels]>
+    ratio_block_dim: [[2, 3, 3], [8, 4, 2], [1536, 1536, 3072]]
+    upsample_type: transpose
+    shortcut: 1
+    mlp_ratio: 3
+    atan2_magnitude_threshold_ratio: 0.0
 
 pl_module: !new:recipes.sacodec.modules.sacodec_module_umm.SACodecModule
     sample_rate: !ref <training_params[sample_rate]>
@@ -68,37 +97,13 @@ pl_module: !new:recipes.sacodec.modules.sacodec_module_umm.SACodecModule
     n_chroma: !ref <training_params[n_chroma]>
     n_mels: !ref <training_params[n_mels]>
     audio_channels: !ref <training_params[audio_channels]>
-    remove_grn_layers: True
-
     precision: !ref <training_params[precision]>
 
-    encoder_cls: !name:recipes.sacodec.models.sacodec_umm.STFTEncoderVAEPostUMM
-        n_fft: !ref <training_params[n_fft]>
-        hop_length: !ref <training_params[hop_length]>
-        vae_dim: !ref <training_params[vae_dim]>
-        beta: !ref <training_params[beta]>
-        hidden_size: !ref <training_params[hidden_size]>
-        audio_channels: !ref <training_params[audio_channels]>
-        even_pad: True
-        umm_version: umm_cn_rope
-        umm_block_layers: 1
-        block_layers: [1, 4, 4]
-        atan2_magnitude_threshold_ratio: 0.0
-        vae_hz: !ref <training_params[vae_hz]>
-        sample_rate: !ref <training_params[sample_rate]>
-        bottleneck_version: !ref <training_params[bottleneck_version]>
-        const_std: 0.2
+    encoder_cls: !name:recipes.sacodec.models.sacodec_unified.sacodec_unified.STFTEncoderUnified
+        config: !ref <encoder_config>
 
-    decoder_cls: !name:recipes.sacodec.models.sacodec.ISTFTDecoder
-        n_fft: !ref <training_params[n_fft]>
-        hop_length: !ref <training_params[hop_length]>
-        vae_dim: !ref <training_params[vae_dim]>
-        hidden_size: !ref <training_params[hidden_size]>
-        audio_channels: !ref <training_params[audio_channels]>
-        even_pad: True
-        block_layers: [8, 4, 1]
-        final_hidden_size: 3072
-        atan2_magnitude_threshold_ratio: 0.0
+    decoder_cls: !name:recipes.sacodec.models.sacodec_unified.sacodec_unified.ISTFTDecoderUnified
+        config: !ref <decoder_config>
 
 
 run_opts:
@@ -121,7 +126,7 @@ trainer: !new:pytorch_lightning.Trainer
     callbacks:
         - !new:pytorch_lightning.callbacks.LearningRateMonitor
         - !new:pytorch_lightning.callbacks.ModelSummary
-          max_depth: 2
+          max_depth: 3
         - !new:samantha.callbacks.HDFSModelCheckpoint
           monitor: val_loss
           filename: sacodec_checkpoint_{epoch}_{step}_{val_loss:.4f}
@@ -140,9 +145,9 @@ trainer: !new:pytorch_lightning.Trainer
     limit_val_batches: 40
     accelerator: auto
     strategy: ddp_find_unused_parameters_true
+    precision: !ref <training_params[precision]>
     devices: auto
     num_nodes: !apply:samantha.utils.envs.getenv_int ["ARNOLD_WORKER_NUM", 1]
     log_every_n_steps: 100
     num_sanity_val_steps: 0
-    precision: !ref <training_params[precision]>
     val_check_interval: !ref <run_opts[val_check_interval]>
