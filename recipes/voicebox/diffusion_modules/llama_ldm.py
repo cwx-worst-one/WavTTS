@@ -169,7 +169,7 @@ def Ts(t):
 
 
 def offset_noise(init_noise):
-    disable_offset_noise = os.environ.get("DISABLE_OFFSET_NOISE", False)
+    disable_offset_noise = os.environ.get("DISABLE_OFFSET_NOISE", 1)
     if int(disable_offset_noise): return init_noise
     B, L, D = init_noise.shape # offset emb noise to not rely on mean features https://arxiv.org/pdf/2305.08891
     noise = init_noise + 0.1 * torch.randn((B, 1, D), device=init_noise.device)
