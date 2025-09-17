@@ -169,8 +169,6 @@ def Ts(t):
 
 
 def offset_noise(init_noise):
-    disable_offset_noise = os.environ.get("DISABLE_OFFSET_NOISE", 1)
-    if int(disable_offset_noise): return init_noise
     B, L, D = init_noise.shape # offset emb noise to not rely on mean features https://arxiv.org/pdf/2305.08891
     noise = init_noise + 0.1 * torch.randn((B, 1, D), device=init_noise.device)
     return noise
@@ -776,7 +774,7 @@ class LlamaDiffusion(nn.Module):
                     )
                 )
                 self.cached_noise.append(
-                    offset_noise(torch.randn(1, total_frame, self.hp.out_channels).expand(bs, -1, -1))
+                    torch.randn(1, total_frame, self.hp.out_channels).expand(bs, -1, -1)
                 )
 
     def update_infer_params(self, cache_len, last=False):
@@ -789,7 +787,7 @@ class LlamaDiffusion(nn.Module):
             self.cached_noise = None
         else:
             self.cached_noise = [
-                offset_noise(torch.randn([1, total_frame, self.hp.out_channels]).expand(bs, -1, -1))
+                torch.randn([1, total_frame, self.hp.out_channels]).expand(bs, -1, -1)
                 for i in range(t + 1)
             ]
         self.cached_v = dict([(i, None) for i in range(t)])
