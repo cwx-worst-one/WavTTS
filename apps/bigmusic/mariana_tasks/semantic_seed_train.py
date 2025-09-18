@@ -207,6 +207,12 @@ _inference_config = {
     "cuda_graph_max_seqlen": 10240,
 }
 
+_weighted_loss_config = {
+    'enabled': False,
+    'segment_ratio': [0.1, 0.1],
+    'weight': 3.0,
+}
+
 
 def _get_local_path(hdfs_path, cache_dir="."):
     if hdfs_path:
@@ -374,7 +380,7 @@ class SemanticLlmModel(CruiseModule):
             partial_pretrain='',
             hybrid_shard_group_size=-1,
             ddp_gate=False,
-            weighted_loss=False,
+            weighted_loss: CruiseConfig = CruiseConfig(dict(_weighted_loss_config)),
             inference: CruiseConfig = CruiseConfig(dict(_inference_config)),
     ):
         super().__init__()

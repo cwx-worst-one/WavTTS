@@ -1,23 +1,23 @@
+import json
+import random
 import logging
 import random
 import torch
 import torch.nn as nn
-from typing import Dict, Optional, Any, List
-from recipes.musiclm.models.compat.semantic_model import w2v_bert_tokenization
+import torch.nn.functional as F
+
 from abc import abstractmethod
-from typing import Any
+from typing import Dict, Any, Union, List
 from torch.nn.utils.rnn import pad_sequence, unpad_sequence
-from torch import distributed
+from torch import distributed, Tensor
 from collections import defaultdict
-from recipes.musiclm.transforms.audio import RandomResizedCrop
-from recipes.bigmusic.utils.mulan_tag import MulanTagger
-from samantha.utils.ctiga.inference_params import InferenceParams
+from recipes.musiclm.models.compat.semantic_model import w2v_bert_tokenization
 from recipes.bigmusic.datasets.transforms.lyrics_segment import crop_pad_to_seq_length, random_crop_pad_to_seq_length
 from recipes.bigmusic.datasets.mir_data_util import NONE_LABEL, get_categorical_vocab
 from recipes.bigmusic.datasets.utils.zh_vocab_dev import get_tag_map, prob_to_tag
+
 import samantha.utils.hdfs_helper as hh
-import json
-import torch.nn.functional as F
+from samantha.utils.ctiga.inference_params import InferenceParams
 
 import samantha
 from mariana.utils.audio.audio_logger import AudioLogger
@@ -53,7 +53,9 @@ def get_soundstream_tokens(requires, x):
     return output
 
 @torch.no_grad()
-def get_mulan_embeds(requires, x, data_type="music", average=True, return_hidden_state=False):
+def get_mulan_embeds(
+    requires, x, data_type="music", average=True, return_hidden_state=False
+):
     if data_type == "music":
         mulan_embeds = requires["mulan_infer_fn"](
             model=requires["mulan"],
@@ -64,13 +66,63 @@ def get_mulan_embeds(requires, x, data_type="music", average=True, return_hidden
     elif data_type == "text":
         # x should be a list of strings        
         mulan_embeds = requires["mulan_infer_fn"](
-            model=requires["mulan"], 
-            text=x, 
+            model=requires["mulan"],
+            text=x,
             device=requires["mulan"].device,
             return_hidden_state=return_hidden_state
         )
     else:
         raise ValueError(f"Unknown data type: {data_type}")
+
+    return mulan_embeds
+
+@torch.no_grad()
+def get_mulan_embeds_2(
+    requires: Dict,
+    x: Union[Tensor, List[Tensor], List[str]],
+    data_type: str = "music",
+    average_audio_embd: bool = False,  # If true, average chunk audio embeddings
+    normalize_audio_embd: bool = False,  # If true, normalize audio embedding to norm=1
+    shift_seconds: float = 5.,  # Hop length in seconds
+    return_hidden_state: bool = False
+):
+    """
+    Get mulan embeddings for music or text data via the mulan_inference_2() function,
+    which handles audio batching differently. @Yatong Bai
+
+    Args:
+        requires (Dict):
+            A dictionary containing the required models and functions.
+        x (Tensor or List[Tensor] or List[str]): 
+            Input data for music or text.
+        data_type (str, optional):
+            Type of input data, either "music" or "text". Defaults to "music".
+        average (bool, optional):
+            Whether to average the embeddings. Defaults to True.
+        return_hidden_state (bool, optional):
+            Whether to return the hidden state. Defaults to False.
+
+    Returns:
+        torch.Tensor: The mulan embeddings.
+    """
+    if data_type == "music":
+        mulan_embeds = requires["mulan_infer_fn_2"](
+            model=requires["mulan"],
+            music=x, text=None,
+            average_audio_embd=average_audio_embd,
+            normalize_audio_embd=normalize_audio_embd,
+            shift_seconds=shift_seconds,
+        )
+    elif data_type == "text":
+        # x should be a list of strings        
+        mulan_embeds = requires["mulan_infer_fn_2"](
+            model=requires["mulan"],
+            text=x, music=None,
+            return_hidden_state=return_hidden_state
+        )
+    else:
+        raise ValueError(f"Unknown data type: {data_type}")
+
     return mulan_embeds
 
 @torch.no_grad()
@@ -120,7 +172,8 @@ def get_bestrq_umm_tokens(requires, batch, chunk_size=None, **kwargs):
 @torch.no_grad()
 def get_bestrq_umm_outputs(requires, batch):
     lit_module = requires['Stage3']
-    assert hasattr(lit_module.model, 'wav2token_alloutputs'), f"For M1 training, UMM model ({type(lit_module.model)}) version must support wav2token_alloutputs function"
+    assert hasattr(lit_module.model, 'wav2token_alloutputs'), \
+        f"For M1 training, UMM model ({type(lit_module.model)}) version must support wav2token_alloutputs function"
     return lit_module.model.wav2token_alloutputs(batch)
 
 @torch.no_grad()
@@ -148,6 +201,7 @@ class BaseEmbedder(nn.Module):
     @abstractmethod
     def get_sos_embed(self, batch_size):
         pass
+
 
 class ContinuousEmbedder(BaseEmbedder):
     def __init__(self, input_dim, embedding_dim, add_sos=False, add_eos=False, add_none=False):
@@ -208,6 +262,7 @@ class ContinuousEmbedder(BaseEmbedder):
             embeds = torch.cat([embeds, eos_embed], dim=1)
         return embeds
 
+
 class TokenEmbedder(BaseEmbedder):
     # Token embedder - takes in tokens, and then embeds
     def __init__(self, vocab_size, embedding_dim, add_sos=False, add_eos=False, **kwargs):
@@ -257,6 +312,7 @@ class TokenEmbedder(BaseEmbedder):
     def embed(self, requires=None, batch=None, token_ids=None, with_sos=False, with_eos=False):
         token_ids = self.tokenize(requires, batch, token_ids, with_sos, with_eos)
         return self.embedder(token_ids)
+
 
 class LyricsTokenEmbedder(TokenEmbedder):
     def __init__(self, vocab_size, embedding_dim, add_sos=False, add_eos=False, is_varlen=False):
@@ -491,6 +547,7 @@ class LyricsTokenSectionEmbedder(LyricsTokenEmbedder):
 
     #     return lyrics_embeds, lyrics_tokens, lyrics_token_length
 
+
 class XValEmbedder(nn.Module):
     def __init__(self, embedding_dim, max_value=120, norm_max_value=10) -> None:
         super().__init__()
@@ -526,7 +583,8 @@ class XValEmbedder(nn.Module):
             self.logged += 1
 
         return embeds, token_ids, normalized_input
-        
+
+
 class InstrumentEmbedder(TokenEmbedder):
     def __init__(self, vocab_size, embedding_dim, add_sos=False, add_eos=False, is_varlen=False):
         super().__init__(vocab_size, embedding_dim, add_sos, add_eos)
@@ -539,7 +597,7 @@ class InstrumentEmbedder(TokenEmbedder):
         """
         padded_token_length = padded_tokens.shape[1]
         token_length = ori_token_length.clone()
-        
+
         # Pad tokens to token_length. This is for cfg inst tokens with inst dropout.
         if max(token_length) > padded_token_length:
             padded_tokens = F.pad(padded_tokens, (0, max(token_length) - padded_token_length), 'constant', 0)
@@ -549,14 +607,14 @@ class InstrumentEmbedder(TokenEmbedder):
             padded_tokens[:, 0] = self.sos_id
             token_length += 1                                        # +1 for sos
             padded_token_length += 1
-            
+
         if self.eos_id and with_eos:        
             padded_tokens = F.pad(padded_tokens, (0, 1), 'constant', 0)
             eos_indices = token_length.unsqueeze(1)              # set last index to EOS
             padded_tokens.scatter_(1, eos_indices, self.eos_id)
             token_length += 1                                           # +1 for eos
             padded_token_length += 1
-        
+
         if not self.is_varlen:
             token_length = padded_token_length
 
@@ -582,6 +640,7 @@ class InstrumentEmbedder(TokenEmbedder):
 
         return token_ids, token_embed, token_length
 
+
 class XvalDurationEmbedder(nn.Module):
 
     def __init__(self, embedding_dim, max_duration=120, max_timestamp=10):
@@ -594,7 +653,7 @@ class XvalDurationEmbedder(nn.Module):
         self.max_duration = max_duration    # max of possible section duration
         self.max_timestamp = max_timestamp
         self.logged = 0
-    
+
     def normalize_timestamp(self, x):
         # normalize the timestamp between [0, 5]
         x = torch.clamp(x, max=self.max_duration)
@@ -697,6 +756,150 @@ class LyricsTokenEmbedderV2(TokenEmbedder):
 
     def get_tokens(self, requires=None, batch=None, **kwargs):
         return batch["lyrics_tokens"]
+
+
+class RotaryEmbedding2D(nn.Module):
+    def __init__(self, h, w, dim, freq_scale=1.0):
+        super().__init__()
+        self.dim = dim
+        inv_freq = 1.0 / (10000 ** (torch.arange(0, dim//2, 2).float() / (dim//2)))
+        self.register_buffer('inv_freq', inv_freq)
+        self.freq_scale = freq_scale
+
+        self.h, self.w = h, w
+        grid = self._create_grid(h, w)
+        rotation_matrix = self.get_rotation_matrix(grid)
+        self.register_buffer('rotation_matrix', rotation_matrix)
+
+    def _create_grid(self, h, w):
+        rows = torch.arange(h, dtype=torch.float32)
+        cols = torch.arange(w, dtype=torch.float32)
+        grid = torch.stack(torch.meshgrid(rows, cols, indexing='ij'), dim=-1)
+        return grid  # [H, W, 2]
+    
+    def get_rotation_matrix(self, grid):
+        pos = grid * self.freq_scale
+        sin_row = torch.sin(pos[..., 0:1] * self.inv_freq)
+        cos_row = torch.cos(pos[..., 0:1] * self.inv_freq)
+        sin_col = torch.sin(pos[..., 1:2] * self.inv_freq)
+        cos_col = torch.cos(pos[..., 1:2] * self.inv_freq)
+
+        rotation_matrix = torch.cat([cos_row, -sin_row, cos_col, -sin_col], dim=-1)
+        return rotation_matrix.view(self.h, self.w, self.dim)
+
+
+class LyricsTokenPosEmbedderV2(LyricsTokenEmbedderV2):
+    def __init__(
+        self, vocab_size, embedding_dim, add_sos=False, add_eos=False, is_varlen=False, mode="concat", **kwargs
+    ):
+        super().__init__(
+            vocab_size=vocab_size,
+            embedding_dim=embedding_dim,
+            add_sos=add_sos,
+            add_eos=add_eos,
+            *kwargs,
+        )
+        self.is_varlen = is_varlen
+        self.blank_id = -1
+
+        self.mode = mode
+        pos_emb_dim = embedding_dim
+        if self.mode == "concat":
+            pos_emb_dim = 256
+
+        # @qinxin: here assume maximum of 200 lines and maximum 2000 phonemes per line
+        # ![future warning]!
+        # cfg definition for lyrics position can be quite tricky
+        # currently ill position works well (ill position without section tag and linebreak: [0,1,-1],[0,2,-1],[0,3,-1],...,[0,n_phoneme,-1])
+        self.rotary_emb = RotaryEmbedding2D(h=200, w=2000, dim=pos_emb_dim)
+        self.rotary_emb_bak = RotaryEmbedding2D(h=200, w=4000, dim=pos_emb_dim)
+        self.pos_emb_fc = nn.Sequential(
+            nn.Linear(pos_emb_dim, pos_emb_dim, bias=False),
+            nn.SiLU(),
+            nn.Linear(pos_emb_dim, pos_emb_dim, bias=False),
+        )
+        nn.init.constant_(self.pos_emb_fc[0].weight, 0)
+        nn.init.constant_(self.pos_emb_fc[-1].weight, 0)
+
+        if self.mode == "concat":
+            self.concat_fc = nn.Linear(embedding_dim * 2 + pos_emb_dim, embedding_dim, bias=False)
+
+    def encode_2dpos(self, token_wise_position):
+        # token_wise_position: [B, T, 2]
+        # return: [B, T, embedding_dim]
+        mask = (token_wise_position != self.blank_id).sum(-1).bool().unsqueeze(-1)  # [B, T, 1]
+        token_wise_position[token_wise_position == self.blank_id] = 0
+        position_embedding = torch.stack([
+            self.rotary_emb_bak.rotation_matrix[token_wise_position[b, :, 0], token_wise_position[b, :, 1]] 
+            # self.rotary_emb.rotation_matrix[token_wise_position[b, :, 0], token_wise_position[b, :, 1]] 
+            for b in range(token_wise_position.shape[0])], dim=0)   # [B, T, embedding_dim]
+        masked_pos_emb = self.pos_emb_fc(position_embedding) * mask
+        return masked_pos_emb
+        
+    def encode_section(self, section_ids):
+        # section_ids: [B, T]
+        # return: [B, T, embedding_dim]
+        section_mask = (section_ids != self.blank_id) # [B, T]
+        # section_ids[section_ids == self.blank_id] = 0
+        section_ids = section_ids * section_mask
+        return self.embedder(section_ids) * section_mask.unsqueeze(-1)
+
+    def embed(
+        self,
+        requires=None,
+        batch=None,
+        token_ids=None,
+        with_sos=False,
+        with_eos=False,
+        token_wise_multiplication=None,
+        token_wise_position=None,
+    ):
+        # token_wise_multiplication is the scaling factor to each embedding of token, 1.0 means no change, 0.0 means disable
+        # Here we set (scaling factor) == (float time in second) as the representaion of time tokens
+        token_ids = self.tokenize(requires, batch, token_ids, with_sos, with_eos)
+        embedding = self.embedder(token_ids)
+        position_embedding = self.encode_2dpos(token_wise_position[..., :2])
+        section_embedding = self.encode_section(token_wise_position[..., 2])
+
+        if with_sos:
+            sos_token = self.get_sos_token(token_wise_multiplication.size(0))
+            sos_coff = torch.ones_like(sos_token).float() # for sos toke, we simply set token_wise_multiplication=1.0 (not scaling)
+            token_wise_multiplication = torch.cat([sos_coff, token_wise_multiplication], dim=1)
+        if with_eos:
+            eos_coff = self.get_sos_token(token_wise_multiplication.size(0))
+            eos_coff = torch.ones_like(eos_coff).float() # for eos toke, we simply set token_wise_multiplication=1.0 (not scaling)
+            token_wise_multiplication = torch.cat([token_wise_multiplication, eos_coff], dim=1)
+        token_wise_multiplication = token_wise_multiplication.unsqueeze(-1)
+
+        if self.mode == "add":
+            embedding = embedding * token_wise_multiplication + position_embedding + section_embedding
+        elif self.mode == "concat":
+            embedding = self.concat_fc(torch.cat((
+                embedding * token_wise_multiplication,
+                section_embedding,
+                position_embedding,
+            ), dim=-1))
+
+        return embedding
+
+    def prepare_embed(self, batch, batch_size, conditions):
+        assert "lyrics_tokens" in (conditions.split(",") if isinstance(conditions, str) else conditions)
+        lyrics_tokens = self.get_tokens(batch=batch)
+        lyrics_token_length = batch["lyrics_tokens_length"]
+        lyrics_coffs = batch.get("lyrics_coffs", torch.ones_like(lyrics_tokens))
+        lyrics_pos = batch.get("lyrics_pos", torch.ones_like(lyrics_tokens).unsqueeze(-1) * -1)
+
+        lyrics_embeds = self.embed(
+            token_ids=lyrics_tokens, token_wise_multiplication=lyrics_coffs, 
+            token_wise_position=lyrics_pos
+        )
+
+        if self.is_varlen:
+            lyrics_tokens = unpad_sequence(lyrics_tokens, lyrics_token_length, batch_first=True)
+            lyrics_embeds = unpad_sequence(lyrics_embeds, lyrics_token_length, batch_first=True)
+        else:
+            lyrics_token_length = lyrics_tokens.shape[1] + torch.zeros((batch_size), device=self.device)
+        return lyrics_embeds, lyrics_tokens, lyrics_token_length
 
 
 class TagCategoricalEmbedder(TokenEmbedder):
@@ -930,7 +1133,6 @@ class MulanCategoricalEmbedder(BaseEmbedder):
         feat = torch.sum(emb * mask.unsqueeze(-1), dim=1) / denom
         return feat
 
-
     def get_embeds(
         self,
         requires,
@@ -966,6 +1168,7 @@ class MulanCategoricalEmbedder(BaseEmbedder):
                 mulan_embeds = mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
             self.sync_tags([]) # must call sync tags for distributed training
             return mulan_embeds
+
 
 class MulanEmbedder(ContinuousEmbedder):
     def __init__(
@@ -1041,6 +1244,7 @@ class MulanEmbedder(ContinuousEmbedder):
                 mulan_embeds = mulan_embeds[:, None, :] # bs x d -> bs x seq_len x d
             return mulan_embeds
 
+
 class MulanTokenEmbedder(TokenEmbedder):
     def __init__(self, data_type='music', num_rvq=12, codebook_size=1024, embedding_dim=1024, add_sos=False):
         vocab_size = num_rvq * codebook_size
@@ -1056,6 +1260,7 @@ class MulanTokenEmbedder(TokenEmbedder):
             + torch.arange(self.num_rvq, device=self.device) * self.codebook_size
         )
         return mulan_tokens
+
 
 class LeadsheetTokenEmbedderV2(TokenEmbedder):
     def embed(self, requires=None, input_tokens=None, token_wise_multiplication=None, token_ids=None, with_sos=False, with_eos=False):
@@ -1093,10 +1298,10 @@ class IntEmbedder(TokenEmbedder):
         batch = batch.clamp_min_(0).clamp_max_(self.vocab_size-1).long()
         return super().embed(requires, batch, token_ids, with_sos, with_eos)
 
+
 class AudioKeyEmbedder(TokenEmbedder):
     def get_tokens(self, requires, input):
         return input
-
 
 
 class ChordSeqEmbedder(TokenEmbedder):
@@ -1104,6 +1309,7 @@ class ChordSeqEmbedder(TokenEmbedder):
         super().__init__(vocab_size, embedding_dim, add_sos=add_sos, add_eos=add_eos)
     def get_tokens(self, requires, input):
         return input
+
 
 class T5Embedder(ContinuousEmbedder):
     def __init__(self, input_dim=768, embedding_dim=1024, add_sos=False, model: str = "t5-base", max_length: int = 512):
@@ -1138,6 +1344,7 @@ class T5Embedder(ContinuousEmbedder):
             )["last_hidden_state"]
         return embedding
 
+
 class MetadataT5TokenEmbedder(ContinuousEmbedder):
     def __init__(self, input_dim=512, embedding_dim=1024, add_sos=False):
         super().__init__(input_dim, embedding_dim, add_sos)
@@ -1145,22 +1352,27 @@ class MetadataT5TokenEmbedder(ContinuousEmbedder):
     def get_embeds(self, requires, input):
         return get_t5_embeds(requires, input)
 
+
 class VocalChromaEmbedder(TokenEmbedder):
     def get_tokens(self, requires, input):
         return input
+
 
 class SpeakerEmbedder(TokenEmbedder):
     def get_tokens(self, requires, input):
         input = torch.clamp(input, 0, self.vocab_size-2) # subtract sos + 1
         return input
-    
+
+
 class KeyEmbedder(TokenEmbedder):
     def get_tokens(self, requires, input):
         return input
 
+
 class TempoLabelEmbedder(TokenEmbedder):
     def get_tokens(self, requires, input):
         return input
+
 
 class WavToVecTokenEmbedder(TokenEmbedder):
     def __init__(self, vocab_size=1024, embedding_dim=1024, add_sos=False, add_eos=False):
@@ -1668,12 +1880,14 @@ class BestRQMKIITokenEmbedder(TokenEmbedder):
         tokens = tokens + torch.arange(num_vq, device=tokens.device) * codebook_size
         return tokens.reshape(bs, -1)
 
+
 class BestRQEmbedder(ContinuousEmbedder):
     def __init__(self, input_dim=1024, embedding_dim=1024, add_sos=False):
         super().__init__(input_dim, embedding_dim, add_sos)
 
     def get_embeds(self, requires, input_audio):
         return get_bestrq_umm_embeds(requires, input_audio)
+
 
 class SoundstreamTokenEmbedder(TokenEmbedder):
     # needs both embeddings (input) and tokens (output)
@@ -1818,7 +2032,6 @@ class IntensityEmbedder(nn.Module):
         return self.embedder(intensity_ids)
 
 
-
 class BeatEmbedder(nn.Module):
     def __init__(self, beat_labels, embedding_dim, max_duration, max_timestamp=5):
         super().__init__()
@@ -1866,6 +2079,7 @@ class BeatEmbedder(nn.Module):
             print(f"beat_timestamps ({beat_timestamps}): {beat_timestamps}")
             self.logged += 1
         return self.embedder(beat_ids) * beat_timestamps.unsqueeze(2), beat_ids, beat_timestamps
+
 
 class MultiTagsEmbedder(BaseEmbedder):
     # MultiTags embedder - takes in list, and then embeds
@@ -2040,18 +2254,17 @@ class MultiTagsCategoricalEmbedder(MultiTagsEmbedder):
 
     def embed(self, requires=None, batch=None, token_ids=None, with_sos=False, with_eos=False):
         token_ids, masks = self.tokenize(requires, batch, token_ids, with_sos, with_eos)
+
         token_ids_shape = token_ids.shape
         _token_ids = torch.reshape(
-            token_ids,
-            [token_ids_shape[0]*token_ids_shape[1], token_ids_shape[2]],
-        )
-        _token_ids = _token_ids.to(dtype=torch.long)
+            token_ids, [token_ids_shape[0]*token_ids_shape[1], token_ids_shape[2]],
+        ).to(torch.long)
+
         masks_shape = masks.shape
         _masks = torch.reshape(
-            masks,
-            [masks_shape[0]*masks_shape[1], masks_shape[2], 1],
-        )
-        _masks = _masks.to(dtype=torch.long)
+            masks, [masks_shape[0]*masks_shape[1], masks_shape[2], 1],
+        ).to(torch.long)
+
         _embedding = self.embedder(_token_ids)
         #print('_embedding shape: ', _embedding.shape)
         #print('_masks shape: ', _masks.shape)
@@ -2065,6 +2278,7 @@ class MultiTagsCategoricalEmbedder(MultiTagsEmbedder):
         #print('embedding shape: ', embedding.shape)
         embedding = torch.reshape(embedding, [token_ids_shape[0], token_ids_shape[1], -1])
         #print('embedding reshape: ', embedding.shape)
+
         if with_sos:
             sos_embedding = self.get_sos_embed(embedding.size(0))
             #print('sos embedding shape: ', sos_embedding.shape)

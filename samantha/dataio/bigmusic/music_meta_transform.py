@@ -21,6 +21,9 @@ import zhconv
 from mariana.utils.audio.audio_logger import AudioLogger
 
 import samantha  # noqa: F401, resolve mariana python path
+from samantha.dataio.bigmusic.base_exception import MusicMetaError, MusicMetaMapError
+from samantha.dataio.bigmusic.base_transform import *
+from samantha.dataio.bigmusic.temporary_transform import *
 from samantha.dataio.bigmusic.tokenizers.sami_phoneme_tokenizer import (
     SamiPhonemeSeqPosTokenizer,
     SamiPhonemeSeqTokenizer,
@@ -29,14 +32,13 @@ from samantha.dataio.bigmusic.tokenizers.sami_phoneme_tokenizer import (
 from samantha.dataio.bigmusic.tokenizers.style_tag_tokenizer import (
     StyleTagTokenizer as _StyleTagTokenizer,
 )
+from samantha.dataio.bigmusic.transforms.descriptions import *
 from samantha.dataio.bigmusic.transforms.freeform_text import (
     format_freeform_text,
     parse_freeform_text,
 )
-from samantha.dataio.bigmusic.transforms.keywords import (
-    expand_keyword,
-    translate_zh_to_en,
-)
+from samantha.dataio.bigmusic.transforms.keywords import *
+from samantha.dataio.bigmusic.transforms.lyrics import *
 from samantha.dataio.bigmusic.transforms.mafl import (
     MaflError,
     parse_and_format_freeform_text_legacy,
@@ -62,72 +64,10 @@ from samantha.dataio.bigmusic.transforms.tags import (  # transform_tags,
     tokenize_tags,
     validate_tags,
 )
+from samantha.dataio.bigmusic.transforms.utils import *
 from samantha.dataio.bigmusic.transforms.utterance import UttError, parse_utterances
 
 logger = AudioLogger()
-
-
-class MusicMetaError(Exception):
-    """Raise this error when the entire item is supposed to be discarded"""
-
-    pass
-
-
-class MusicMetaMapError(Exception):
-    """Raise this error when the element in the list is supposed to be filtered out"""
-
-    pass
-
-
-def err_loc() -> str:
-    _, _, exc_tb = sys.exc_info()
-    while (
-        exc_tb.tb_next
-    ):  # Traverse to the deepest traceback (where the error was raised)
-        exc_tb = exc_tb.tb_next
-    return f"{exc_tb.tb_frame.f_code.co_filename}:{exc_tb.tb_lineno}"
-
-
-def get_nested_value(dictionary, keys):
-    """
-    Retrieve a value from a nested dictionary using a list of keys or a dot-separated string.
-
-    :param dictionary: The dictionary to search in.
-    :param keys: A list of keys or a dot-separated string representing the path to the value.
-    :return: The value if found, otherwise None.
-
-    Example:
-        nested_dict = {
-            "style_tags": {
-                "gender": "male",
-                "age": "30"
-            }
-        }
-
-        # 使用点分隔的字符串
-        value = get_nested_value(nested_dict, "style_tags.gender")
-        print(value)  # 输出: male
-
-        # 使用键列表
-        value = get_nested_value(nested_dict, ["style_tags", "gender"])
-        print(value)  # 输出: male
-
-        # 键不存在的情况
-        value = get_nested_value(nested_dict, "style_tags.height")
-        print(value)  # 输出: None，并记录错误日志
-    """
-    if isinstance(keys, str):
-        keys = keys.split(".")  # 如果 keys 是字符串，按 '.' 分割成列表
-
-    current_level = dictionary
-    for key in keys:
-        if isinstance(current_level, dict) and key in current_level:
-            current_level = current_level[key]
-        else:
-            logger.error(f"Key '{key}' not found or current level is not a dictionary.")
-            return None
-
-    return current_level
 
 
 def _auto_expand(
@@ -190,156 +130,6 @@ class ConvertMetaToDict:
 
         item[self.out_key] = temp_meta
 
-        return item
-
-
-class MusicMetaRWTransform:
-    def __init__(
-        self,
-        in_key: Optional[Union[str, list[str], tuple[str]]],
-        out_key: Optional[str],
-        optional_keys: Optional[Union[list[str], tuple[str]]] = None,
-        allow_empty_in: bool = False,
-        remove_in_key: bool = False,
-        overwrite_out_key: bool = True,
-        disable_dot_ref: bool = False,
-        overwrite_item: bool = False,
-        maybe_return_list_output: bool = False,
-        return_item_if_in_key_not_found: bool = False,
-        bypass_condition: Optional[str] = None,
-    ):
-        """
-        A simple transform that takes the value from in_key and put it into out_key.
-        Args:
-            in_key: key of the input item, or a list/tuple of in_keys (tuple is more recommended in case of in-place \
-                modification), or None to take the entire input item.
-            out_key: key of the output item, or None to not modify the item.
-            optional_keys: when in_key is a list or tuple, the optional_keys are the keys that are optional. \
-                If any of the optional_keys can't be find in the meta, the style tag of that category will be \
-                an empty tag [""]. You might want to set allow_empty_in to True to allow empty input.
-            allow_empty_in: allow empty input (in_key not found)
-            overwrite_out_key: allow to overwrite the out_key if it exists
-            remove_in_key: remove the in_key after the transformation
-            disable_dot_ref: disable dot reference for in_key and out_key
-            overwrite_item: overwrite the entire item by the returned value of the `call` method if out_key is None
-            maybe_return_list_output: this flag shows the return value of the `call` method is a list, it is a \
-                indicatior for following item_tranforms to do item by item
-            return_item_if_in_key_not_found: return the item if in_key is not found in the item
-        """
-        self.in_key = in_key
-        self.out_key = out_key
-        self.optional_keys = optional_keys
-        self.allow_empty_in = allow_empty_in
-        self.remove_in_key = remove_in_key
-        self.overwrite_out_key = overwrite_out_key
-        self.disable_dot_ref = disable_dot_ref
-        self.overwrite_item = overwrite_item
-        self.maybe_return_list_output = maybe_return_list_output
-        self.return_item_if_in_key_not_found = return_item_if_in_key_not_found
-        self.bypass_condition = bypass_condition
-
-        if self.overwrite_item:
-            assert (
-                self.out_key is None
-            ), "out_key should always be None when overwrite_item is True"
-
-        if self.bypass_condition:
-            assert "==" in self.bypass_condition or "!=" in self.bypass_condition
-
-    def __call__(self, item: dict, **kwargs):
-        if item is None:
-            return None
-
-        if self.return_item_if_in_key_not_found:
-            if not _validate_item_with_keys(self.in_key, item):
-                return item
-            if not _validate_item_with_keys("uttid", item):
-                return item
-
-        if self.bypass_condition is not None:
-            sep = "!=" if "!=" in self.bypass_condition else "=="
-            key, value = self.bypass_condition.split(sep)
-            if sep == "!=":
-                if str(item.get(key)) != value:
-                    return item
-            else:
-                if str(item.get(key)) == value:
-                    return item
-
-        uttid = item.get("uttid")
-        try:
-            inner_item = self._take(item, uttid)
-
-            if "uttid" not in kwargs:
-                kwargs["uttid"] = uttid
-
-            _validate_item_with_optional_keys(
-                self.in_key, self.optional_keys, inner_item
-            )
-            result = self.call(inner_item, **kwargs)
-            if self.overwrite_item and self.out_key is None:
-                return result
-            return self._put(item, result, uttid)
-        except MusicMetaError as e:
-            logger.debug(f"{self._get_err_log_prefix(uttid)} {str(e)} ")
-            return None
-
-    def _get_log_prefix(self, uttid):
-        return f"[uttid: {uttid}][transform: {self.__class__.__name__}]"
-
-    def _get_err_log_prefix(self, uttid):
-        return self._get_log_prefix(uttid) + f"[{err_loc()}]"
-
-    def _take_one(
-        self, item: Optional[dict], in_key: str, uttid: Optional[str]
-    ) -> Optional[Any]:
-        if in_key is None:
-            return item
-        keys = [in_key] if self.disable_dot_ref else in_key.split(".")
-        for idx, key in enumerate(keys):
-            if key not in item:
-                if not self.allow_empty_in:
-                    raise MusicMetaError(f'in_key "{in_key}" is not found in item')
-                else:
-                    return None
-            if self.remove_in_key and idx == len(keys) - 1:
-                item = item.pop(key)
-            else:
-                item = item[key]
-        return item
-
-    def _take(self, item: Optional[dict], uttid: Optional[str]) -> Optional[Any]:
-        if isinstance(self.in_key, str):
-            return self._take_one(item, self.in_key, uttid)
-        items = [self._take_one(item, in_key, uttid) for in_key in self.in_key]
-        return items
-
-    def _put(self, item: dict, value: Any, uttid: Optional[str]) -> dict:
-        if self.out_key is None:
-            return item
-        inner_item = item
-        keys = [self.out_key] if self.disable_dot_ref else self.out_key.split(".")
-        for idx, k in enumerate(keys):
-            if not isinstance(inner_item, dict):
-                raise MusicMetaError(f'out_key "{self.out_key}" is not a dict')
-            elif idx == len(keys) - 1:
-                if not self.overwrite_out_key and k in inner_item:
-                    raise MusicMetaError(
-                        f'out_key "{self.out_key}" already exists in item'
-                    )
-                inner_item[k] = value
-            elif k not in inner_item:
-                inner_item[k] = {}
-                inner_item = inner_item[k]
-            else:
-                inner_item = inner_item[k]
-        return item
-
-    def call(self, item, **kwargs):
-        """
-        The item is not None unless self.allow_empty_in is True. If self.in_key is a list/tuple,
-        the item will be a list of values.
-        """
         return item
 
 
@@ -466,9 +256,9 @@ class MusicMetaMapTransform(MusicMetaRWTransform):
             return None
 
         if self.return_item_if_in_key_not_found:
-            if not _validate_item_with_keys(self.in_key, item):
+            if not validate_item_with_keys(self.in_key, item):
                 return item
-            if not _validate_item_with_keys("uttid", item):
+            if not validate_item_with_keys("uttid", item):
                 return item
 
         uttid = item.get("uttid")
@@ -479,7 +269,7 @@ class MusicMetaMapTransform(MusicMetaRWTransform):
             n = len(inner_items)
             for idx, inner_item in enumerate(inner_items):
                 try:
-                    _validate_item_with_optional_keys(
+                    validate_item_with_optional_keys(
                         self.in_key, self.optional_keys, inner_item
                     )
                     result = self.call(inner_item, **kwargs)
@@ -508,34 +298,6 @@ class MusicMetaMapTransform(MusicMetaRWTransform):
 
     def call(self, item, **kwargs):
         return item
-
-
-def _validate_item_with_keys(in_keys, item):
-    """
-    Check if all in_key is in the item.
-    Return:
-        True if all in_key is in the item, False otherwise
-    """
-    if isinstance(in_keys, str):
-        return in_keys in item
-    return all(in_key in item for in_key in in_keys)
-
-
-def _validate_item_with_optional_keys(in_key, optional_keys, item):
-    empty_items = []
-    if isinstance(in_key, str):
-        if optional_keys:
-            raise ValueError("Do not set optional_keys when in_key is str")
-        return
-    if optional_keys is None:
-        return  # skip if optional_keys is None
-    for k, i in zip(in_key, item):
-        if k in optional_keys:
-            continue
-        if i is None:
-            empty_items.append(k)
-    if empty_items:
-        raise MusicMetaError(f"Discard because of empty {', '.join(empty_items)}")
 
 
 # ================================================================
@@ -636,16 +398,23 @@ class TokenIdsToString(MusicMetaRWTransform):
         in_key: str = "umm_token",
         out_key: str = "umm_string",
         first_n: int = -1,
+        max_len: int = 20000,
         template: str = "<au_%s>",
         **kwargs,
     ):
         super().__init__(in_key, out_key, allow_empty_in=False, **kwargs)
         self.template = template
         self.first_n = first_n
+        self.max_len = max_len
 
     def call(self, umm_tokens, **kwargs) -> str:
         def format(token_id: int) -> str:
             return self.template % token_id
+
+        if len(umm_tokens) > self.max_len:
+            raise MusicMetaError(
+                f"umm_tokens length {len(umm_tokens)} exceeds max_len {self.max_len}"
+            )
 
         if self.first_n > 0:
             umm_tokens = umm_tokens[: self.first_n]
@@ -670,6 +439,10 @@ class SimpleTokenLengthEstimation(MusicMetaRWTransform):
 
 
 class StandardMetaParser(MusicMetaRWTransform):
+    """
+    deprecated!
+    """
+
     def __init__(
         self,
         in_key: str = "meta.standard_music_meta",
@@ -683,6 +456,7 @@ class StandardMetaParser(MusicMetaRWTransform):
         meta_weights: Union[list[int], tuple[int]] = (4, 3, 2, 1),
         mode: str = "sample",
         norm_sep: bool = False,  # split by " / "
+        gemini_override: bool = False,
         **kwargs,
     ):
         super().__init__(in_key, out_key, allow_empty_in=False, **kwargs)
@@ -694,6 +468,7 @@ class StandardMetaParser(MusicMetaRWTransform):
         ], "mode must be either 'sample' or 'consolidate'"
         self.mode = mode
         self.norm_sep = norm_sep
+        self.gemini_override = gemini_override
 
     def call(self, standard_meta: dict, **kwargs) -> dict:
         if self.mode == "sample":
@@ -704,21 +479,50 @@ class StandardMetaParser(MusicMetaRWTransform):
             sm = {k: _norm_sep(v) for k, v in sm.items()}
         return sm
 
+    def _parse_gemini_v1(self, standard_meta: dict) -> dict:
+        gemini_meta = standard_meta.get("gemini", None)
+        if gemini_meta is None:
+            return None
+        return gemini_meta
+
+    def _parse_gemini(self, standard_meta: dict) -> dict:
+        gemini_v1 = self._parse_gemini_v1(standard_meta)
+        gemini_v2_meta = standard_meta.get("gemini_v2", None)
+        if gemini_v2_meta is None:
+            return None
+        gemini_v2 = _parse_gemini_v2(gemini_v2_meta)
+        if gemini_v2 is not None:
+            return gemini_v2
+        if gemini_v1 is not None:
+            return gemini_v1
+        return None
+
     def _call_consolidate(self, standard_meta: dict, **kwargs) -> dict:
+        meta_types = self.meta_types
+        gemini_meta = self._parse_gemini(standard_meta)
+        if self.gemini_override and gemini_meta is not None:
+            standard_meta["gemini_merged"] = gemini_meta
+            meta_types = ["gemini_merged"]
         consolidated_standard_meta = {}
-        for k in standard_meta[
-            self.meta_types[0]
-        ].keys():  # each meta type has the same keys
+        keys = dedup_with_order(
+            [
+                k
+                for sm in standard_meta.values()
+                if isinstance(sm, dict)
+                for k in sm.keys()
+            ]
+        )
+        for k in keys:  # each meta type has the same keys
             if k == "src":
                 continue  # drop src, which stands for meta source, e.g. wyy
             meta_list = []
-            for meta_type in self.meta_types:
-                meta = standard_meta[meta_type][k]
+            for meta_type in meta_types:
+                meta = standard_meta[meta_type].get(k, None)
                 if meta is None or len(meta) == 0:
                     continue
                 meta_list.append(meta)
             if len(meta_list) > 0:
-                meta_list_concat = _dedup_with_order(reduce(operator.add, meta_list))
+                meta_list_concat = dedup_with_order(reduce(operator.add, meta_list))
                 consolidated_standard_meta[k] = meta_list_concat
             else:
                 continue
@@ -744,23 +548,13 @@ class StandardMetaParser(MusicMetaRWTransform):
         return weighted_standard_meta
 
 
-def _dedup_with_order(items: list[str]) -> list[str]:
-    seen = set()
-    result = []
-    for item in items:
-        if item not in seen:
-            result.append(item)
-            seen.add(item)
-    return result
-
-
 def _norm_sep(s: Union[str, list[str]], sep: str = " / ") -> list[str]:
     def split(kw: str) -> str:
         return [k.strip() for k in kw.split(sep)]
 
     if isinstance(s, str):
         s = [s]
-    return _dedup_with_order(reduce(operator.add, [split(kw) for kw in s]))
+    return dedup_with_order(reduce(operator.add, [split(kw) for kw in s]))
 
 
 class SplitItem(MusicMetaRWTransform):
@@ -806,7 +600,7 @@ class PRDMetaParser(MusicMetaRWTransform):
         for field in self.required_fields:
             if field == "genre":
                 genre = (
-                    _dedup_with_order(
+                    dedup_with_order(
                         tags.get("genre", []) + tags.get("genre_extra", [])
                     )
                     * self.genre_repeat
@@ -815,17 +609,17 @@ class PRDMetaParser(MusicMetaRWTransform):
                     genre = genre[:1]  # the first one is genre
                 meta[field] = genre
             elif field == "mood":
-                meta[field] = _dedup_with_order(tags.get("mood", []))
+                meta[field] = dedup_with_order(tags.get("mood", []))
             elif field == "gender":
-                meta[field] = _dedup_with_order(tags.get("speaker", []))
+                meta[field] = dedup_with_order(tags.get("speaker", []))
             elif field == "scene":
-                meta[field] = _dedup_with_order(tags.get("scene", []))
+                meta[field] = dedup_with_order(tags.get("scene", []))
             elif field == "timbre":
-                meta[field] = _dedup_with_order(tags.get("voice", []))
+                meta[field] = dedup_with_order(tags.get("voice", []))
             elif field == "instrument":
-                meta[field] = _dedup_with_order(tags.get("instrument", []))
+                meta[field] = dedup_with_order(tags.get("instrument", []))
             elif field == "language":
-                meta[field] = _dedup_with_order(tags.get("lang", []))
+                meta[field] = dedup_with_order(tags.get("lang", []))
             elif field == "duration":
                 meta[field] = tags.get("duration", [])
             elif field == "character":
@@ -927,7 +721,7 @@ class KeywordExpansion(MusicMetaRWTransform):
             return expand_keyword(keyword, keep_input=True)
 
         def process_keyword_list(keywords: list[str]) -> list[str]:
-            return _dedup_with_order(
+            return dedup_with_order(
                 reduce(operator.add, [process_keyword(keyword) for keyword in keywords])
             )
 
@@ -1054,8 +848,10 @@ class PackMeta2PromptFull(MusicMetaRWTransform):
         shuffle: bool = False,
         field_dropout_rate: float = 0.0,
         dropout_rate: float = 0.0,
+        inst_dropout_rate: float = 0.0,
         system_prompt: str = "",
         keyword_mode: str = "key_value",  # or value_only
+        keyword_sep: str = "|",
         refer_path: str = "",
         **kwargs,
     ):
@@ -1063,11 +859,27 @@ class PackMeta2PromptFull(MusicMetaRWTransform):
         self.shuffle = shuffle
         self.field_dropout_rate = field_dropout_rate
         self.dropout_rate = dropout_rate
+        self.inst_dropout_rate = inst_dropout_rate
         self.system_prompt = system_prompt
         self.keyword_mode = keyword_mode
+        self.keyword_sep = keyword_sep
         if refer_path:
             with open(refer_path, "r") as ff:
                 self.refer_prompt = json.load(ff)
+
+        self.tempo_templates = [
+            "tempo {tempo}",
+            "{tempo} bpm",
+            "{tempo}bpm",
+            "bpm{tempo}",
+            "bpm {tempo}",
+        ]
+
+        self.duration_templates = [
+            "duration {duration}",
+            "{duration} seconds",
+            "{duration}s",
+        ]
 
     def call(self, standard_meta: dict, **kwargs):
         prompt = ""
@@ -1075,17 +887,83 @@ class PackMeta2PromptFull(MusicMetaRWTransform):
         if self.shuffle:
             random.shuffle(keys)
 
+        if "duration" in keys:
+            duration = standard_meta["duration"]
+            if isinstance(duration, (list, tuple)):
+                duration = duration[0]
+            standard_meta["duration"] = random.choice(self.duration_templates).format(
+                duration=duration
+            )
+        if "tempo" in keys:
+            tempo = standard_meta["tempo"]
+            new_tempo = []
+            if isinstance(tempo, (list, tuple)):
+                for t in tempo:
+                    if is_number(t):
+                        new_tempo.append(
+                            random.choice(self.tempo_templates).format(tempo=t)
+                        )
+                    else:
+                        new_tempo.append(t)
+            standard_meta["tempo"] = new_tempo
+
+        language = standard_meta.get("language", None)
+        genre = standard_meta.get("genre", None)
+
+        if language is not None and "Non-vocal" not in language:  # vocal song
+            standard_meta["instrument"] = [
+                inst
+                for inst in standard_meta.get("instrument", [])
+                if inst.lower() not in ["viola", "trombone", "tuba"]
+            ]
+        if language is not None and "Non-vocal" in language:  # instrumental music
+            standard_meta["gender"] = []
+            standard_meta["timbre"] = []
+        if genre is not None and "electronic" in [g.lower() for g in genre]:
+            standard_meta["instrument"] = [
+                inst
+                for inst in standard_meta.get("instrument", [])
+                if inst.lower()
+                not in [
+                    "brass section",
+                    "acoustic piano",
+                    "french horn",
+                    "orchestral harp",
+                    "soprano/alto sax",
+                    "baritone sax",
+                    "tenor sax",
+                ]
+            ]
+
         value_only_prompt_lst = []
         genre_prompt_lst = []
         for k in keys:
             v = standard_meta[k]
+
+            if k == "instrument":
+                instruments = []
+                for inst in v:
+                    if random.random() < self.inst_dropout_rate:
+                        continue
+                    instruments.append(inst)
+                v = instruments
+
+            if k == "gender":
+                genders = []
+                for g in v:
+                    if g.lower() in ["multiple", "chrous"]:
+                        genders.append("multiple singer")
+                    else:
+                        genders.append(g)
+                v = genders
+
             if v is None or random.random() < self.field_dropout_rate:
                 continue
             if not isinstance(v, (list, tuple)):
                 v = [v]
 
             if self.keyword_mode == "key_value":
-                prompt += f'<{k.lower()}>{"|".join(str(x) for x in v)}</{k.lower()}>'
+                prompt += f"<{k.lower()}>{self.keyword_sep.join(str(x) for x in v)}</{k.lower()}>"
             elif self.keyword_mode == "value_only":
                 if k == "genre":
                     genre_prompt_lst += v
@@ -1097,8 +975,6 @@ class PackMeta2PromptFull(MusicMetaRWTransform):
                     for x in v:
                         value_only_prompt_lst += self.refer_prompt.get(x, [])
                         # values_lst = values_lst[:random.randint(len(values_lst)//2, len(values_lst))]
-                elif k == "duration":
-                    value_only_prompt_lst += [f"duration:{v[0]}"]
                 else:
                     value_only_prompt_lst += v
 
@@ -1123,18 +999,149 @@ class PackMeta2PromptFull(MusicMetaRWTransform):
         ):
             if self.shuffle:
                 random.shuffle(value_only_prompt_lst)
-            value_only_prompt_lst = _dedup_with_order(value_only_prompt_lst)
             # there are integers in the list
             merged_lst = list(map(str, genre_prompt_lst + value_only_prompt_lst))
             merged_lst = [
                 v for v in merged_lst if random.random() >= self.field_dropout_rate
             ]
-            prompt = "|".join(merged_lst)
+            merged_lst = dedup_with_order(merged_lst)
+            prompt = self.keyword_sep.join(merged_lst)
 
         prompt = "" if random.random() < self.dropout_rate else prompt
         if self.system_prompt:
             prompt = f"[SYSTEM_PRMOPT: {self.system_prompt}]" + prompt
         return prompt
+
+
+class KeywordsPostProcess(MusicMetaRWTransform):
+    """
+    !!! Deprecated
+    """
+
+    def __init__(
+        self,
+        in_key: str = "prompt",
+        out_key: str = "prompt",
+        expansion_num: int = 1,
+        dropout_rate: float = 0.0,
+        keywords_range: list = (25, 35),
+        **kwargs,
+    ):
+        def get_mapping_table(json_path):
+            mapping_table = json.load(open(json_path))
+            mapping_table = {
+                k.lower(): [keyword.lower() for keyword in keywords]
+                for k, keywords in mapping_table.items()
+            }
+            return mapping_table
+
+        def merge_table(table1, table2):
+            for k, v in table2.items():
+                if k not in table1:
+                    table1[k] = v
+                else:
+                    table1[k].extend(v)
+            return table1
+
+        super().__init__(in_key, out_key, allow_empty_in=False, **kwargs)
+
+        self.expansion_num = expansion_num
+        self.dropout_rate = dropout_rate
+        self.keywords_range = keywords_range
+
+        self.expansion_table = dict()
+        self.expansion_table = merge_table(
+            self.expansion_table,
+            get_mapping_table(
+                "samantha/dataio/bigmusic/transforms/keywords/close2open.json"
+            ),
+        )
+        self.expansion_table = merge_table(
+            self.expansion_table,
+            get_mapping_table(
+                "samantha/dataio/bigmusic/transforms/keywords/wyy_tag2freeform.json"
+            ),
+        )
+        self.expansion_table = merge_table(
+            self.expansion_table,
+            get_mapping_table(
+                "samantha/dataio/bigmusic/transforms/keywords/apm_non_matched_mood.json"
+            ),
+        )
+        self.expansion_table = merge_table(
+            self.expansion_table,
+            get_mapping_table(
+                "samantha/dataio/bigmusic/transforms/keywords/apm_non_matched.json"
+            ),
+        )
+
+        self.translate_table = dict()
+        self.translate_table = merge_table(
+            self.translate_table,
+            get_mapping_table(
+                "samantha/dataio/bigmusic/transforms/keywords/wyy_tag_translate.json"
+            ),
+        )
+
+    def call(self, keywords: str, **kwargs):
+
+        keywords = keywords.strip()
+        keywords = keywords.replace("，", ",")
+        keywords = keywords.split(",")
+        keywords = [x.strip() for x in keywords]
+        keywords = dedup_with_order(keywords)
+
+        new_keywords = []
+        for keyword in keywords:
+            keyword = keyword.lower()
+            if any(
+                bad_keyword in keyword
+                for bad_keyword in [
+                    "other",
+                    "empty",
+                    "unknown",
+                    "unkonwn",
+                    "\\N",
+                    "adult",
+                ]
+            ):
+                continue
+            if keyword == "multiple":
+                continue
+
+            if has_chinese(keyword):
+                keyword = keyword.split("-")
+                keyword = keyword[0] if len(keyword) == 1 else keyword[1]
+
+            keywords = None
+            if keyword in self.translate_table:
+                if random.random() < 0.5:
+                    keywords = self.translate_table[keyword]
+            if keyword in self.expansion_table:
+                expansion_keywords = self.expansion_table[keyword]
+                expansion_num = random.randint(
+                    1, min(len(expansion_keywords), self.expansion_num)
+                )
+                keywords = random.sample(expansion_keywords, expansion_num)
+            if isinstance(keywords, str):
+                keywords = [keywords]
+            if keywords is None:
+                keywords = [keyword]
+            new_keywords.extend(keywords)
+
+        keywords = dedup_with_order(new_keywords)
+
+        keywords = [
+            keyword for keyword in keywords if random.random() > self.dropout_rate
+        ]
+
+        num_keywords = min(len(keywords), random.randint(*self.keywords_range))
+        indices = sorted(random.sample(range(len(keywords)), num_keywords))
+        keywords = [keywords[i] for i in indices]
+
+        keywords = ", ".join(keywords)
+
+        return keywords
 
 
 class LyricsParser(MusicMetaRWTransform):
@@ -1339,10 +1346,16 @@ class StructureParser(MusicMetaRWTransform):
             results = transform_raw_segments(
                 _item, mode, obtain_confidence=cfd is not None
             )
+            if results is None:
+                logger.debug(
+                    f"in_key {ik}. Discard because all structures are filtered"
+                )
+                continue
             if cfd is not None and results["confidence"] < cfd:
-                raise MusicMetaError(
+                logger.debug(
                     f"in_key {ik}. Discard because of low confidence {results['confidence']}"
                 )
+                continue
             return results["transformed"]
         raise MusicMetaError("Discard because structure is not found")
 
@@ -1518,17 +1531,42 @@ class DurationParser(MusicMetaRWTransform):
         in_key: Union[str, list[str]] = ("meta.duration",),
         out_key: str = "duration",
         allow_empty_in: bool = True,
+        round_float: bool = True,
         **kwargs,
     ):
         super().__init__(in_key, out_key, allow_empty_in=allow_empty_in, **kwargs)
+        self.round_float = round_float
 
     def call(self, duration, **kwargs) -> float:
         if isinstance(duration, (list, tuple)):
             duration = duration[0]
         try:
-            duration = int(float(duration))
+            duration = float(duration)
         except TypeError:
             duration = -1
+        if self.round_float:
+            duration = round(duration)
+        return duration
+
+
+class UMMDurationParser(MusicMetaRWTransform):
+    """Parse song duration from meta"""
+
+    def __init__(
+        self,
+        in_key: str = "umm_token",
+        out_key: str = "duration",
+        allow_empty_in: bool = True,
+        round_float: bool = True,
+        **kwargs,
+    ):
+        super().__init__(in_key, out_key, allow_empty_in=allow_empty_in, **kwargs)
+        self.round_float = round_float
+
+    def call(self, umm_token, **kwargs) -> float:
+        duration = len(umm_token) / 25
+        if self.round_float:
+            duration = round(duration)
         return duration
 
 
@@ -2696,11 +2734,13 @@ class GetItem:
         out_key,
         convert_str_to_dict=False,
         return_item_if_in_key_not_found=False,
+        deepcopy=False,
     ):
         self.in_key = in_key
         self.out_key = out_key
         self.convert_str_to_dict = convert_str_to_dict
         self.return_item_if_in_key_not_found = return_item_if_in_key_not_found
+        self.deepcopy = deepcopy
 
     def __call__(self, item, **kwargs):
         if item is None:
@@ -2717,6 +2757,10 @@ class GetItem:
             else:
                 logger.error(f"{self.in_key} is not right for data {item['uttid']}")
                 return None
+
+        if self.deepcopy:
+            data = copy.deepcopy(data)
+
         item[self.out_key] = data
 
         return item
@@ -2753,6 +2797,8 @@ class DataAdaptor:
                 "web": {"genre": ["spoken"]},
                 "human_annotation": {"genre": ["spoken"]},
                 "tagging_model": {"genre": ["spoken"]},
+                "sa_tagging_model": {"genre": ["spoken"]},
+                "fg_tagging_model": {"genre": ["spoken"]},
             }
 
         else:
@@ -2763,9 +2809,13 @@ class DataAdaptor:
 
 
 class InferDataAdaptor:
-    def __init__(self, out_key="input_strings", prompt_type="keyword"):
+    def __init__(
+        self, out_key="input_strings", prompt_type="keyword", mode="iterative"
+    ):
         self.out_key = out_key
         self.prompt_type = prompt_type
+        assert mode in ["iterative", "tts", "l2s"]
+        self.mode = mode
 
     def __call__(self, item, **kwargs):
 
@@ -2776,7 +2826,7 @@ class InferDataAdaptor:
         digits_only = "".join([char for char in index if char.isdigit()])
         index = int(digits_only)
 
-        if index % 2 == 0:
+        if self.mode == "tts" or (self.mode == "iterative" and index % 2 == 0):
             data_type = "tts"
             if self.prompt_type == "keyword":
                 prompt = "spoken"
@@ -2787,7 +2837,7 @@ class InferDataAdaptor:
             pattern = re.compile("\\[[^\\]]*\\]\\n?")
             lyrics = pattern.sub("", lyrics)
 
-        else:
+        elif self.mode == "l2s" or (self.mode == "iterative" and index % 2 == 1):
             data_type = "l2s"
             prompt = item["prompt"]
             lyrics = item["lyrics"]

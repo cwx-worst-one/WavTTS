@@ -1,0 +1,2362 @@
+{
+  "Chinese Pop": [
+    "Chinese Pop",
+    "C-pop",
+    "Mandarin Pop"
+  ],
+  "Chamber Pop": [
+    "Chamber Pop",
+    "Orchestral Pop",
+    "Baroque Pop"
+  ],
+  "Acapella": [
+    "Acapella",
+    "A Cappella",
+    "Vocal Band",
+    "Unaccompanied Vocals"
+  ],
+  "Blue Grass": [
+    "Bluegrass",
+    "Blue Grass",
+    "Hillbilly Music",
+    "Mountain Music"
+  ],
+  "Glitch": [
+    "Glitch",
+    "Glitch Hop",
+    "Digital Glitch"
+  ],
+  "Rock": [
+    "Rock"
+  ],
+  "Ragtime": [
+    "Ragtime",
+    "Rag",
+    "Syncopated Piano",
+    "New Orleans Traditional Jazz"
+  ],
+  "Traditional Jazz": [
+    "Traditional Jazz",
+    "New Orleans Jazz",
+    "Dixieland Jazz",
+    "Classic Jazz"
+  ],
+  "Avant-Garde Jazz": [
+    "Avant-Garde Jazz",
+    "Avant-Jazz",
+    "Free Jazz",
+    "Experimental Jazz"
+  ],
+  "Big Band": [
+    "Big Band",
+    "Swing Band",
+    "Jazz Orchestra"
+  ],
+  "Cool Jazz": [
+    "Cool Jazz",
+    "West Coast Jazz"
+  ],
+  "Acid Jazz": [
+    "Acid Jazz",
+    "Psychedelic Jazz",
+    "Jazz Funk"
+  ],
+  "Gypsy Jazz": [
+    "Gypsy Jazz",
+    "Gypsy Swing",
+    "Manouche Jazz"
+  ],
+  "Trap Rap": [
+    "Trap Rap",
+    "Trap"
+  ],
+  "Alternative Hip Hop": [
+    "Alternative Hip Hop",
+    "Alternative Rap",
+    "Experimental Hip Hop"
+  ],
+  "Pop Rap": [
+    "Pop Rap",
+    "Pop Hip Hop",
+    "Commercial Rap"
+  ],
+  "Middle Ages": [
+    "Middle Ages",
+    "Medieval Period",
+    "Religious Music"
+  ],
+  "Contemporary Blues": [
+    "Contemporary Blues",
+    "Modern Blues"
+  ],
+  "Rock Blues": [
+    "Rock Blues",
+    "Blues Rock"
+  ],
+  "Traditional Blues": [
+    "Traditional Blues",
+    "Classic Blues",
+    "Early Blues"
+  ],
+  "Glam Metal": [
+    "Glam Metal",
+    "Hair Metal",
+    "Glam Rock Metal"
+  ],
+  "Kawaii Metal": [
+    "Kawaii Metal",
+    "Cute Metal"
+  ],
+  "Christian Music": [
+    "Christian Music",
+    "Sacred Music",
+    "Religious Music"
+  ],
+  "Reggaeton": [
+    "Reggaeton",
+    "Reggaetón",
+    "Latin Hip-Hop",
+    "Reggae en Espanol"
+  ],
+  "Brazilian Funk Style": [
+    "Brazilian Funk",
+    "Funk Carioca",
+    "Brazilian Funk Style"
+  ],
+  "Cha-Cha-Cha": [
+    "Cha-Cha-Cha",
+    "Cha Cha",
+    "Cha-Cha"
+  ],
+  "Epic": [
+    "Epic",
+    "Cinematic Epic",
+    "Neoorchestral Music"
+  ],
+  "Score": [
+    "Score",
+    "Film Score",
+    "Movie Score",
+    "Background Music",
+    "BGM"
+  ],
+  "Saxophone": [
+    "Saxophone",
+    "Sax"
+  ],
+  "Soprano/Alto_Sax": [
+    "Soprano Sax",
+    "Alto Sax",
+    "Soprano Saxophone",
+    "Alto Saxophone"
+  ],
+  "Tenor_Sax": [
+    "Tenor Sax",
+    "Tenor Saxophone"
+  ],
+  "Baritone_Sax": [
+    "Baritone Sax",
+    "Baritone Saxophone",
+    "Bari Sax"
+  ],
+  "Brass": [
+    "Brass",
+    "Brass Instruments",
+    "Horns"
+  ],
+  "French_Horn": [
+    "French Horn",
+    "Horn"
+  ],
+  "Brass_Section": [
+    "Brass Section",
+    "Horn Section",
+    "Brass Ensemble"
+  ],
+  "Synth_Brass": [
+    "Synth Brass",
+    "Synthesized Brass",
+    "Electronic Brass"
+  ],
+  "Drum_Set": [
+    "Drum Set",
+    "Drum Kit",
+    "Drums"
+  ],
+  "Bass_Drum": [
+    "Bass Drum",
+    "Kick Drum",
+    "Kick"
+  ],
+  "Hi_hat": [
+    "Hi Hat",
+    "Hi-Hat",
+    "Hihat"
+  ],
+  "Crash_Cymbal": [
+    "Crash Cymbal",
+    "Crash",
+    "Cymbal Crash"
+  ],
+  "Ride_Cymbal": [
+    "Ride Cymbal",
+    "Ride",
+    "Cymbal Ride"
+  ],
+  "Belltree": [
+    "Bell Tree",
+    "Belltree"
+  ],
+  "Hangdrum": [
+    "Hang Drum",
+    "Handpan",
+    "Hangdrum",
+    "Pantam"
+  ],
+  "Church_Bells": [
+    "Church Bells",
+    "Cathedral Bells"
+  ],
+  "Tubular_Bells": [
+    "Tubular Bells",
+    "Chimes"
+  ],
+  "Singing_Bowl": [
+    "Singing Bowl",
+    "Tibetan Singing Bowl",
+    "Sound Bowl"
+  ],
+  "Sandhammer": [
+    "Sandhammer",
+    "Sand Hammer",
+    "Shaker"
+  ],
+  "Mark_Tree": [
+    "Mark Tree",
+    "Chime Tree",
+    "Bar Chimes"
+  ],
+  "Congas/Bongos": [
+    "Congas",
+    "Bongos",
+    "Conga Drums",
+    "Bongo Drums"
+  ],
+  "Cajón/Box_drum": [
+    "Cajón",
+    "Cajon",
+    "Box Drum"
+  ],
+  "Wind_Chimes": [
+    "Wind Chimes",
+    "Chimes"
+  ],
+  "Orchestral_Bassdrum": [
+    "Orchestral Bass Drum",
+    "Concert Bass Drum"
+  ],
+  "Orchestral_Snare": [
+    "Orchestral Snare",
+    "Concert Snare"
+  ],
+  "Orchestral_Cymbals": [
+    "Orchestral Cymbals",
+    "Concert Cymbals"
+  ],
+  "Taiko_Drums": [
+    "Taiko Drums",
+    "Taiko"
+  ],
+  "Tam_Tam": [
+    "Tam Tam",
+    "Gong"
+  ],
+  "Synth_Drums": [
+    "Synth Drums",
+    "Synthesized Drums",
+    "Electronic Drums"
+  ],
+  "Synth_Kick": [
+    "Synth Kick",
+    "Electronic Kick"
+  ],
+  "Synth_Snare": [
+    "Synth Snare",
+    "Electronic Snare"
+  ],
+  "Synth_Hi_hat": [
+    "Synth Hi Hat",
+    "Electronic Hi Hat",
+    "Synth Hihat"
+  ],
+  "Synth_Tom": [
+    "Synth Tom",
+    "Electronic Tom"
+  ],
+  "Synth_Cymbals": [
+    "Synth Cymbals",
+    "Electronic Cymbals"
+  ],
+  "Synth_Clave": [
+    "Synth Clave",
+    "Electronic Clave"
+  ],
+  "Fx": [
+    "FX",
+    "Effects",
+    "Sound Effects"
+  ],
+  "Body_Percussion": [
+    "Body Percussion",
+    "Body Percussive"
+  ],
+  "Finger_snaps": [
+    "Finger Snaps",
+    "Finger Snap",
+    "Snaps",
+    "Snap"
+  ],
+  "Beat_box": [
+    "Beatbox",
+    "Beat Box",
+    "Beatboxing",
+    "Beat Boxing"
+  ],
+  "Chinese_Percussion": [
+    "Chinese Percussion"
+  ],
+  "Chinese_Drums": [
+    "Chinese Drums",
+    "Dagu"
+  ],
+  "Gongs": [
+    "Gongs",
+    "Gong"
+  ],
+  "Wood_Block": [
+    "Wood Block",
+    "Muyu"
+  ],
+  "Tang_Drums": [
+    "Tang Drums",
+    "Tang Drum",
+    "Tanggu"
+  ],
+  "Ban_Drums": [
+    "Ban Drums",
+    "Bangu"
+  ],
+  "Chinese_Clappers": [
+    "Chinese Clappers",
+    "Kuaiban"
+  ],
+  "Chinese_Cymbals": [
+    "Chinese Cymbals",
+    "Bo",
+    "Dabo"
+  ],
+  "Acoustic_Piano": [
+    "Acoustic Piano",
+    "Piano"
+  ],
+  "Electric_piano": [
+    "Electric Piano",
+    "E-Piano"
+  ],
+  "Pipe_Organ": [
+    "Pipe Organ",
+    "Organ"
+  ],
+  "Double_Bass": [
+    "Double Bass",
+    "Upright Bass"
+  ],
+  "String_Ensemble": [
+    "String Ensemble",
+    "String Section"
+  ],
+  "Synth_Strings": [
+    "Synth Strings",
+    "Synthesized Strings"
+  ],
+  "Electric_Bass": [
+    "Electric Bass",
+    "Bass Guitar"
+  ],
+  "Synth_Bass": [
+    "Synth Bass",
+    "Synthesized Bass"
+  ],
+  "Double_Bass_Pizzicato": [
+    "Double Bass Pizzicato",
+    "Pizzicato Bass"
+  ],
+  "Acoustic_Guitar": [
+    "Acoustic Guitar"
+  ],
+  "Electric_Guitar": [
+    "Electric Guitar"
+  ],
+  "Clean_Electric_Guitar": [
+    "Clean Electric Guitar",
+    "Clean Guitar"
+  ],
+  "Distorted_Electric_Guitar": [
+    "Distorted Electric Guitar",
+    "Distorted Guitar"
+  ],
+  "Di": [
+    "Di",
+    "Dizi",
+    "Zhudi"
+  ],
+  "Xiao": [
+    "Xiao",
+    "Dongxiao"
+  ],
+  "Synth_Pluck": [
+    "Synth Pluck",
+    "Pluck"
+  ],
+  "Synth_Lead": [
+    "Synth Lead",
+    "Lead Synth"
+  ],
+  "Synth_Pad": [
+    "Synth Pad",
+    "Pad Synth"
+  ],
+  "Synth_Chord": [
+    "Synth Chord",
+    "Chord Synth"
+  ],
+  "Synth_Bell": [
+    "Synth Bell",
+    "Bell Synth"
+  ],
+  "Synth_Effects": [
+    "Synth Effects",
+    "Synthesizer Effects"
+  ],
+  "Orchestral_Harp": [
+    "Orchestral Harp",
+    "Harp"
+  ],
+  "Sound_Effects": [
+    "Sound Effects",
+    "SFX",
+    "Audio Effects",
+    "Foley"
+  ],
+  "Backing_Vocals": [
+    "Backing Vocals",
+    "Background Vocals",
+    "BV",
+    "BGV",
+    "Harmony Vocals"
+  ],
+  "Choir_and_Voice": [
+    "Choir and Voice",
+    "Choir"
+  ],
+  "Vocal_Chops": [
+    "Vocal Chops",
+    "Vocal Chop"
+  ],
+  "Brisk/Carefree": [
+    "Brisk",
+    "Carefree",
+    "Breezy",
+    "Lively",
+    "Light"
+  ],
+  "Warm/Kind": [
+    "Warm",
+    "Kind",
+    "Gentle",
+    "Friendly",
+    "Comforting"
+  ],
+  "Cute/Playful": [
+    "Cute",
+    "Playful",
+    "Charming",
+    "Lovely",
+    "Adorable"
+  ],
+  "Funny": [
+    "Funny",
+    "Humorous",
+    "Amusing",
+    "Comedic"
+  ],
+  "Sweet": [
+    "Sweet",
+    "Gentle",
+    "Tender"
+  ],
+  "Inspirational/Hopeful": [
+    "Inspirational",
+    "Hopeful",
+    "Uplifting",
+    "Motivational"
+  ],
+  "Excited": [
+    "Excited",
+    "Enthusiastic",
+    "Thrilled",
+    "Energetic"
+  ],
+  "Confident/Determined": [
+    "Confident",
+    "Determined",
+    "Strong",
+    "Resolute"
+  ],
+  "Cool/Swag": [
+    "Cool",
+    "Swag",
+    "Stylish",
+    "Hip"
+  ],
+  "Shocking/magnificent/epic": [
+    "Shocking",
+    "Magnificent",
+    "Epic",
+    "Grand",
+    "Spectacular"
+  ],
+  "Elegant/Sophisticated": [
+    "Elegant",
+    "Sophisticated",
+    "Refined",
+    "Classy"
+  ],
+  "Serious/Reflective": [
+    "Serious",
+    "Reflective",
+    "Thoughtful",
+    "Solemn"
+  ],
+  "Chill": [
+    "Chill",
+    "Relaxed",
+    "Laid-back",
+    "Mellow"
+  ],
+  "Calm/Relaxing": [
+    "Calm",
+    "Relaxing",
+    "Peaceful",
+    "Tranquil"
+  ],
+  "Lyrical/Ballad": [
+    "Lyrical",
+    "Ballad",
+    "Melodic",
+    "Expressive"
+  ],
+  "Romantic": [
+    "Romantic",
+    "Loving",
+    "Passionate",
+    "Intimate"
+  ],
+  "Nostalgic/Memory": [
+    "Nostalgic",
+    "Memory",
+    "Sentimental",
+    "Reminiscent"
+  ],
+  "Moving": [
+    "Moving",
+    "Touching",
+    "Emotional",
+    "Heartfelt"
+  ],
+  "Miss": [
+    "Miss",
+    "Longing",
+    "Yearning",
+    "Pining"
+  ],
+  "Magical/Fairytale": [
+    "Magical",
+    "Fairytale",
+    "Enchanting",
+    "Mystical"
+  ],
+  "Dreamy/Ethereal": [
+    "Dreamy",
+    "Ethereal",
+    "Otherworldly",
+    "Floating"
+  ],
+  "Mysterious": [
+    "Mysterious",
+    "Enigmatic",
+    "Cryptic",
+    "Mystical"
+  ],
+  "Weird": [
+    "Weird",
+    "Strange",
+    "Odd",
+    "Bizarre"
+  ],
+  "Groovy/Funky": [
+    "Groovy",
+    "Funky",
+    "Rhythmic",
+    "Smooth"
+  ],
+  "Dynamic/Energetic": [
+    "Dynamic",
+    "Energetic",
+    "Vibrant",
+    "Powerful"
+  ],
+  "Healing": [
+    "Healing",
+    "Therapeutic",
+    "Soothing",
+    "Restorative"
+  ],
+  "Sorrow/Sad": [
+    "Sorrow",
+    "Sad",
+    "Melancholic",
+    "Sorrowful"
+  ],
+  "Dark": [
+    "Dark",
+    "Gloomy",
+    "Somber",
+    "Brooding"
+  ],
+  "Sentimental/Melancholic/Lonely": [
+    "Sentimental",
+    "Melancholic",
+    "Lonely",
+    "Wistful"
+  ],
+  "Thrilling/Suspenseful/Tense": [
+    "Thrilling",
+    "Suspenseful",
+    "Tense",
+    "Intense"
+  ],
+  "Angry/Aggressive": [
+    "Angry",
+    "Aggressive",
+    "Furious",
+    "Hostile"
+  ],
+  "No Mood": [
+    "No Mood",
+    "Neutral",
+    "Emotionless"
+  ],
+  "Love": [
+    "Love",
+    "Romance",
+    "Affection"
+  ],
+  "Broke up": [
+    "Broke Up",
+    "Breakup",
+    "Separation"
+  ],
+  "Friendship": [
+    "Friendship",
+    "Companionship",
+    "Brotherhood"
+  ],
+  "Nature": [
+    "Nature",
+    "Natural",
+    "Outdoors"
+  ],
+  "National Pride": [
+    "National Pride",
+    "Patriotism",
+    "Patriotic"
+  ],
+  "Self and Growth": [
+    "Self and Growth",
+    "Personal Growth",
+    "Self-improvement"
+  ],
+  "Celebration and Joy": [
+    "Celebration and Joy",
+    "Celebratory",
+    "Joyful"
+  ],
+  "Life and Mindset": [
+    "Life and Mindset",
+    "Philosophy",
+    "Lifestyle"
+  ],
+  "Dream and Future": [
+    "Dream and Future",
+    "Dreams",
+    "Future",
+    "Aspirations"
+  ],
+  "Halloween": [
+    "Halloween",
+    "All Hallows' Eve",
+    "Spooky Holiday"
+  ],
+  "Spring Festival": [
+    "Spring Festival",
+    "Chinese New Year",
+    "Lunar New Year"
+  ],
+  "Mid-autumn Festival": [
+    "Mid-autumn Festival",
+    "Moon Festival",
+    "Mooncake Festival"
+  ],
+  "Christmas": [
+    "Christmas",
+    "Xmas",
+    "Holiday Season"
+  ],
+  "New Year": [
+    "New Year",
+    "New Year's Day"
+  ],
+  "Valentine's day": [
+    "Valentine's Day",
+    "Valentine Day",
+    "Lovers' Day"
+  ],
+  "Qi Xi": [
+    "Qi Xi",
+    "Chinese Valentine's Day",
+    "Qixi Festival"
+  ],
+  "Birthday": [
+    "Birthday",
+    "Birth Anniversary"
+  ],
+  "Wedding": [
+    "Wedding",
+    "Marriage",
+    "Matrimony"
+  ],
+  "Funeral": [
+    "Funeral",
+    "Memorial Service"
+  ],
+  "Graduation": [
+    "Graduation",
+    "Commencement"
+  ],
+  "National's Day": [
+    "National Day",
+    "Independence Day"
+  ],
+  "Matsuri": [
+    "Matsuri",
+    "Japanese Festival"
+  ],
+  "Sunrise/Dawn": [
+    "Sunrise",
+    "Dawn",
+    "Daybreak"
+  ],
+  "Morning": [
+    "Morning",
+    "AM",
+    "Early Day"
+  ],
+  "Sunset/Afternoon": [
+    "Sunset",
+    "Afternoon",
+    "Dusk"
+  ],
+  "Evening": [
+    "Evening",
+    "Nightfall",
+    "Twilight"
+  ],
+  "Midnight": [
+    "Midnight",
+    "Late Night"
+  ],
+  "Spring": [
+    "Spring",
+    "Springtime"
+  ],
+  "Summer": [
+    "Summer",
+    "Summertime"
+  ],
+  "Autumn": [
+    "Autumn",
+    "Fall"
+  ],
+  "Winter": [
+    "Winter",
+    "Wintertime"
+  ],
+  "Sunny Day": [
+    "Sunny Day",
+    "Bright Day",
+    "Clear Day"
+  ],
+  "Cloudy Day": [
+    "Cloudy Day",
+    "Overcast Day"
+  ],
+  "Fog": [
+    "Fog",
+    "Mist",
+    "Haze"
+  ],
+  "Rainy Day": [
+    "Rainy Day",
+    "Wet Day"
+  ],
+  "Storm": [
+    "Storm",
+    "Thunderstorm",
+    "Tempest"
+  ],
+  "Beach": [
+    "Beach",
+    "Shore",
+    "Coast"
+  ],
+  "Sky/Heaven/Paradise": [
+    "Sky",
+    "Heaven",
+    "Paradise",
+    "Heavenly"
+  ],
+  "Ocean/Sea": [
+    "Ocean",
+    "Sea",
+    "Marine"
+  ],
+  "Forest": [
+    "Forest",
+    "Woods",
+    "Woodland"
+  ],
+  "Outdoor": [
+    "Outdoor",
+    "Outside",
+    "Open Air"
+  ],
+  "Tea Room": [
+    "Tea Room",
+    "Teahouse",
+    "Tea Shop"
+  ],
+  "Nightclub": [
+    "Nightclub",
+    "Club",
+    "Dance Club"
+  ],
+  "Coffee Shop": [
+    "Coffee Shop",
+    "Cafe",
+    "Coffeehouse"
+  ],
+  "Restaurants": [
+    "Restaurants",
+    "Restaurant",
+    "Dining"
+  ],
+  "Bar": [
+    "Bar",
+    "Pub",
+    "Tavern"
+  ],
+  "Lounge": [
+    "Lounge",
+    "Cocktail Lounge"
+  ],
+  "Campus": [
+    "Campus",
+    "University",
+    "School"
+  ],
+  "Marketplace": [
+    "Marketplace",
+    "Market",
+    "Bazaar"
+  ],
+  "Universe": [
+    "Universe",
+    "Cosmos",
+    "Space"
+  ],
+  "Theater / Concert hall": [
+    "Theater",
+    "Concert Hall",
+    "Music Hall"
+  ],
+  "Livehouse": [
+    "Livehouse",
+    "Live Venue",
+    "Music Venue"
+  ],
+  "Music Festival": [
+    "Music Festival",
+    "Festival",
+    "Concert Festival"
+  ],
+  "Undergound": [
+    "Underground",
+    "Metro",
+    "Subway"
+  ],
+  "Circus/Carnival": [
+    "Circus",
+    "Carnival",
+    "Fair"
+  ],
+  "Temple": [
+    "Temple",
+    "Shrine"
+  ],
+  "Church": [
+    "Church",
+    "Cathedral",
+    "Chapel"
+  ],
+  "Countryside": [
+    "Countryside",
+    "Rural",
+    "Country"
+  ],
+  "Vlog/DailyLife": [
+    "Vlog",
+    "Daily Life",
+    "Lifestyle"
+  ],
+  "Food": [
+    "Food",
+    "Cuisine",
+    "Meal"
+  ],
+  "Pet/Animals": [
+    "Pet",
+    "Animals",
+    "Pets"
+  ],
+  "Beauty/Fashion": [
+    "Beauty",
+    "Fashion",
+    "Style"
+  ],
+  "Entertainment": [
+    "Entertainment",
+    "Fun",
+    "Amusement"
+  ],
+  "Babies": [
+    "Babies",
+    "Infants",
+    "Baby"
+  ],
+  "Children": [
+    "Children",
+    "Kids",
+    "Child"
+  ],
+  "Transition": [
+    "Transition",
+    "Change",
+    "Transformation"
+  ],
+  "Emotional": [
+    "Emotional",
+    "Heartfelt",
+    "Moving"
+  ],
+  "Technology/Science": [
+    "Technology",
+    "Science",
+    "Tech"
+  ],
+  "High-energy video": [
+    "High-energy Video",
+    "Energetic Video",
+    "Dynamic Video"
+  ],
+  "Anime": [
+    "Anime",
+    "Japanese Animation"
+  ],
+  "Wake up": [
+    "Wake Up",
+    "Waking Up",
+    "Morning Routine"
+  ],
+  "Family time": [
+    "Family Time",
+    "Family",
+    "Family Bonding"
+  ],
+  "Landscape/Scenery": [
+    "Landscape",
+    "Scenery",
+    "View"
+  ],
+  "Prank": [
+    "Prank",
+    "Joke",
+    "Trick"
+  ],
+  "Timelapse": [
+    "Timelapse",
+    "Time Lapse"
+  ],
+  "Documentary": [
+    "Documentary",
+    "Documentary Film"
+  ],
+  "Drama": [
+    "Drama",
+    "Dramatic"
+  ],
+  "Supernatural": [
+    "Supernatural",
+    "Paranormal",
+    "Mystical"
+  ],
+  "Commercial": [
+    "Commercial",
+    "Advertisement",
+    "Ad"
+  ],
+  "Advertisement": [
+    "Advertisement",
+    "Ad",
+    "Commercial"
+  ],
+  "Seniors video": [
+    "Seniors Video",
+    "Elderly Video"
+  ],
+  "Viral short video": [
+    "Viral Short Video",
+    "Short Video",
+    "Viral Video"
+  ],
+  "Trailer": [
+    "Trailer",
+    "Preview",
+    "Teaser"
+  ],
+  "Patriotic Video": [
+    "Patriotic Video",
+    "Patriotic",
+    "National Video"
+  ],
+  "Sport": [
+    "Sport",
+    "Sports",
+    "Athletic"
+  ],
+  "Cultural events": [
+    "Cultural Events",
+    "Cultural",
+    "Culture"
+  ],
+  "War/Fight": [
+    "War",
+    "Fight",
+    "Battle"
+  ],
+  "Game": [
+    "Game",
+    "Gaming",
+    "Video Game"
+  ],
+  "Focus": [
+    "Focus",
+    "Concentration",
+    "Focused"
+  ],
+  "Party": [
+    "Party",
+    "Celebration",
+    "Festive"
+  ],
+  "Commute": [
+    "Commute",
+    "Commuting",
+    "Travel"
+  ],
+  "Travel": [
+    "Travel",
+    "Journey",
+    "Trip"
+  ],
+  "Roadtrip": [
+    "Road Trip",
+    "Roadtrip",
+    "Road Journey"
+  ],
+  "Adventure/Discovery": [
+    "Adventure",
+    "Discovery",
+    "Exploration"
+  ],
+  "Meditation": [
+    "Meditation",
+    "Meditative",
+    "Mindfulness"
+  ],
+  "Relaxation": [
+    "Relaxation",
+    "Relaxing",
+    "Rest"
+  ],
+  "Running": [
+    "Running",
+    "Jogging",
+    "Run"
+  ],
+  "Dating": [
+    "Dating",
+    "Date",
+    "Romantic Date"
+  ],
+  "Danceable": [
+    "Danceable",
+    "Dance-worthy",
+    "Good for Dancing"
+  ],
+  "Flirt": [
+    "Flirt",
+    "Flirting",
+    "Flirtatious"
+  ],
+  "Dance": [
+    "Dance",
+    "Dancing",
+    "Choreography"
+  ],
+  "Male": [
+    "Male",
+    "Man",
+    "Men"
+  ],
+  "Neutral": [
+    "Neutral",
+    "Gender-neutral",
+    "Unisex"
+  ],
+  "Multiple": [
+    "Multiple",
+    "Many",
+    "Several",
+    "Group"
+  ],
+  "Chorus": [
+    "Chorus",
+    "Choir",
+    "Group Vocals"
+  ],
+  "Child": [
+    "Child",
+    "Kid",
+    "Children",
+    "Young"
+  ],
+  "Speaking": [
+    "Speaking",
+    "Spoken",
+    "Speech"
+  ],
+  "Duet": [
+    "Duet",
+    "Duo"
+  ],
+  "Deep": [
+    "Deep",
+    "Low",
+    "Bass"
+  ],
+  "Warm": [
+    "Warm"
+  ],
+  "Round": [
+    "Round"
+  ],
+  "Bright": [
+    "Bright",
+    "Clear",
+    "Crisp"
+  ],
+  "Sharp": [
+    "Sharp",
+    "Piercing",
+    "Cutting"
+  ],
+  "Smoky": [
+    "Smoky",
+    "Raspy"
+  ],
+  "Gritty": [
+    "Gritty",
+    "Rough",
+    "Raw"
+  ],
+  "Husky": [
+    "Husky",
+    "Raspy",
+    "Gravelly"
+  ],
+  "Extreme": [
+    "Extreme",
+    "Intense",
+    "Dramatic"
+  ],
+  "Enthusiastic": [
+    "Enthusiastic",
+    "Excited",
+    "Energetic"
+  ],
+  "Sassy": [
+    "Sassy",
+    "Cheeky",
+    "Bold"
+  ],
+  "Energetic": [
+    "Energetic",
+    "High-energy",
+    "Vigorous"
+  ],
+  "Loud and sonorous": [
+    "Loud",
+    "Sonorous",
+    "Powerful"
+  ],
+  "thick voiced": [
+    "Thick",
+    "Dense",
+    "Heavy"
+  ],
+  "Ethereal": [
+    "Ethereal",
+    "Heavenly",
+    "Otherworldly"
+  ],
+  "Refreshing": [
+    "Refreshing",
+    "Fresh",
+    "Crisp"
+  ],
+  "Soothing": [
+    "Soothing",
+    "Calming",
+    "Peaceful"
+  ],
+  "Delicate": [
+    "Delicate",
+    "Subtle",
+    "Gentle"
+  ],
+  "Gentle": [
+    "Gentle",
+    "Soft",
+    "Mild"
+  ],
+  "Magnetic": [
+    "Magnetic",
+    "Captivating",
+    "Compelling"
+  ],
+  "Flat": [
+    "Flat",
+    "Monotone",
+    "Lifeless",
+    "Dull"
+  ],
+  "Sexy/Lazy": [
+    "Sexy",
+    "Lazy",
+    "Sultry",
+    "Laid-back"
+  ],
+  "Cute": [
+    "Cute",
+    "Adorable",
+    "Sweet"
+  ],
+  "Comical": [
+    "Comical",
+    "Funny",
+    "Humorous"
+  ],
+  "Uncle Like": [
+    "Uncle Like",
+    "Paternal",
+    "Fatherly"
+  ],
+  "Electrified voice": [
+    "Electrified Voice",
+    "Electronic Voice",
+    "Processed Voice",
+    "Vocoded"
+  ],
+  "Growling": [
+    "Growling",
+    "Guttural",
+    "Harsh"
+  ],
+  "cutesy&squeaky voice": [
+    "Cutesy Voice",
+    "Squeaky Voice",
+    "High-pitched Voice"
+  ],
+  "Nasal Sound": [
+    "Nasal Sound",
+    "Nasal Voice",
+    "Nasal Tone"
+  ],
+  "ACG voice": [
+    "ACG Voice",
+    "Anime Voice"
+  ],
+  "Chinese Opera Tune": [
+    "Chinese Opera Tune",
+    "Opera Singing",
+    "Traditional Opera"
+  ],
+  "Bel Canto": [
+    "Bel Canto",
+    "Classical Singing"
+  ],
+  "Chinese Folk": [
+    "Chinese Folk",
+    "Folk Singing"
+  ],
+  "Breathy voice": [
+    "Breathy Voice",
+    "Airy Voice",
+    "Whispery"
+  ],
+  "Singing": [
+    "Vocal",
+    "Humming"
+  ],
+  "Chinese": [
+    "Chinese",
+    "Mandarin"
+  ],
+  "Cantonese": [
+    "Cantonese"
+  ],
+  "Taiwanese": [
+    "Taiwanese",
+    "Hokkien"
+  ],
+  "Sichuanese": [
+    "Sichuanese",
+    "Sichuan Dialect"
+  ],
+  "English": [
+    "English"
+  ],
+  "French": [
+    "French",
+    "Français"
+  ],
+  "Italian": [
+    "Italian",
+    "Italiano"
+  ],
+  "African": [
+    "African"
+  ],
+  "German": [
+    "German",
+    "Deutsch"
+  ],
+  "Russian": [
+    "Russian"
+  ],
+  "Turkish": [
+    "Turkish"
+  ],
+  "Arabic": [
+    "Arabic"
+  ],
+  "Korean": [
+    "Korean"
+  ],
+  "Japanese": [
+    "Japanese"
+  ],
+  "Hindi": [
+    "Hindi"
+  ],
+  "Portuguese": [
+    "Portuguese",
+    "Português"
+  ],
+  "Spanish": [
+    "Spanish",
+    "Español"
+  ],
+  "Indonesian": [
+    "Indonesian",
+    "Bahasa Indonesia"
+  ],
+  "Thai": [
+    "Thai"
+  ],
+  "Vietnamese": [
+    "Vietnamese"
+  ],
+  "Chinese Dialects": [
+    "Chinese Dialects"
+  ],
+  "Instrumental/Non-Vocal": [
+    "Instrumental",
+    "Non-Vocal"
+  ],
+  "Non-Vocal": [
+    "Instrumental",
+    "Non-Vocal"
+  ],
+  "Pop": [
+    "Pop"
+  ],
+  "Country": [
+    "Country"
+  ],
+  "Folk": [
+    "Folk"
+  ],
+  "Electronic": [
+    "Electronic"
+  ],
+  "Chinese Style": [
+    "Chinese Style"
+  ],
+  "Punk": [
+    "Punk"
+  ],
+  "Jazz": [
+    "Jazz"
+  ],
+  "Hip Hop/Rap": [
+    "Hip Hop",
+    "Rap",
+    "Hip Hop/Rap"
+  ],
+  "Classical": [
+    "Classical"
+  ],
+  "R&B/Soul": [
+    "R&B",
+    "R&B/Soul"
+  ],
+  "Blues": [
+    "Blues"
+  ],
+  "Reggae": [
+    "Reggae"
+  ],
+  "Metal": [
+    "Metal"
+  ],
+  "Childhood": [
+    "Childhood",
+    "Kids Music",
+    "Children's Music"
+  ],
+  "Devotional": [
+    "Devotional",
+    "Religious Music"
+  ],
+  "Chinese Tradition": [
+    "Chinese Tradition",
+    "Traditional Chinese"
+  ],
+  "Easy Listening": [
+    "Easy Listening"
+  ],
+  "New Age": [
+    "New Age"
+  ],
+  "Latin": [
+    "Latin"
+  ],
+  "Alternative/Indie": [
+    "Alternative",
+    "Indie",
+    "Alternative/Indie"
+  ],
+  "World Music": [
+    "World Music"
+  ],
+  "DJ": [
+    "DJ"
+  ],
+  "MC": [
+    "MC"
+  ],
+  "Chinese Ballad Pop": [
+    "Chinese Ballad Pop",
+    "Chinese Ballad"
+  ],
+  "Modern Pop Ballad": [
+    "Modern Pop Ballad",
+    "Contemporary Ballad"
+  ],
+  "K-Pop": [
+    "K-Pop",
+    "Korean Pop"
+  ],
+  "J Pop": [
+    "J-Pop",
+    "Japanese Pop"
+  ],
+  "Indian Pop": [
+    "Indian Pop"
+  ],
+  "African Pop": [
+    "African Pop"
+  ],
+  "French Pop": [
+    "French Pop"
+  ],
+  "Italian Pop": [
+    "Italian Pop"
+  ],
+  "German Pop": [
+    "German Pop"
+  ],
+  "Russian Pop": [
+    "Russian Pop"
+  ],
+  "Turkish Pop": [
+    "Turkish Pop"
+  ],
+  "Arabic Pop": [
+    "Arabic Pop"
+  ],
+  "Teen Pop": [
+    "Teen Pop",
+    "Teenage Pop"
+  ],
+  "Indie Pop": [
+    "Indie Pop"
+  ],
+  "Dream Pop": [
+    "Dream Pop"
+  ],
+  "City Pop": [
+    "City Pop"
+  ],
+  "Synth Pop": [
+    "Synth Pop",
+    "Synthesizer Pop"
+  ],
+  "Celtic Pop": [
+    "Celtic Pop"
+  ],
+  "Dance Pop": [
+    "Dance Pop"
+  ],
+  "Deep Dance Pop": [
+    "Deep Dance Pop"
+  ],
+  "Electropop": [
+    "Electropop",
+    "Electronic Pop"
+  ],
+  "Country Pop": [
+    "Country Pop"
+  ],
+  "Country Rock": [
+    "Country Rock"
+  ],
+  "Yodeling": [
+    "Yodeling"
+  ],
+  "Country Folk": [
+    "Country Folk"
+  ],
+  "Early Country": [
+    "Early Country"
+  ],
+  "Folk Pop": [
+    "Folk Pop"
+  ],
+  "Indie Folk": [
+    "Indie Folk"
+  ],
+  "Contemporary Folk": [
+    "Contemporary Folk"
+  ],
+  "English Folk": [
+    "English Folk"
+  ],
+  "Irish Folk": [
+    "Irish Folk"
+  ],
+  "French Folk": [
+    "French Folk"
+  ],
+  "Korean Folk": [
+    "Korean Folk"
+  ],
+  "Japanese Folk": [
+    "Japanese Folk"
+  ],
+  "African Folk": [
+    "African Folk"
+  ],
+  "Arabic Folk": [
+    "Arabic Folk"
+  ],
+  "Traditional Folk": [
+    "Traditional Folk"
+  ],
+  "Celtic Folk": [
+    "Celtic Folk"
+  ],
+  "EDM": [
+    "EDM",
+    "Electronic Dance Music"
+  ],
+  "House": [
+    "House"
+  ],
+  "Future Bass": [
+    "Future Bass"
+  ],
+  "Downtempo": [
+    "Downtempo"
+  ],
+  "Midtempo": [
+    "Midtempo"
+  ],
+  "Dubstep": [
+    "Dubstep"
+  ],
+  "Ambient": [
+    "Ambient"
+  ],
+  "Breakbeat": [
+    "Breakbeat"
+  ],
+  "Trance": [
+    "Trance"
+  ],
+  "Techno": [
+    "Techno"
+  ],
+  "Drum&Bass": [
+    "Drum and Bass",
+    "Drum&Bass",
+    "DNB"
+  ],
+  "8 Bit": [
+    "8-Bit",
+    "Chiptune"
+  ],
+  "Folktronica": [
+    "Folktronica"
+  ],
+  "Hardstyle": [
+    "Hardstyle"
+  ],
+  "Hardcore": [
+    "Hardcore"
+  ],
+  "Hi-NRG": [
+    "Hi-NRG",
+    "High Energy"
+  ],
+  "IDM": [
+    "IDM",
+    "Intelligent Dance Music"
+  ],
+  "Disco": [
+    "Disco"
+  ],
+  "Phonk": [
+    "Phonk"
+  ],
+  "Jersey Club": [
+    "Jersey Club"
+  ],
+  "UK Garage": [
+    "UK Garage",
+    "UKG"
+  ],
+  "Moombahton": [
+    "Moombahton"
+  ],
+  "Sci-Fi": [
+    "Sci-Fi"
+  ],
+  "China-Wave": [
+    "China-Wave",
+    "Chinese Wave"
+  ],
+  "GuFeng Music": [
+    "GuFeng Music"
+  ],
+  "Chinoiserie Rap": [
+    "Chinoiserie Rap",
+    "Chinese Style Rap"
+  ],
+  "Chinoiserie Electronic": [
+    "Chinoiserie Electronic",
+    "Chinese Style Electronic"
+  ],
+  "Chinoiserie Rock": [
+    "Chinoiserie Rock",
+    "Chinese Style Rock"
+  ],
+  "Hard Rock": [
+    "Hard Rock"
+  ],
+  "Psychedelic Rock": [
+    "Psychedelic Rock",
+    "Psych Rock"
+  ],
+  "Pop Rock": [
+    "Pop Rock"
+  ],
+  "Brit Pop": [
+    "Britpop",
+    "British Pop"
+  ],
+  "Alternative Rock": [
+    "Alternative Rock",
+    "Alt Rock"
+  ],
+  "Indie Rock": [
+    "Indie Rock"
+  ],
+  "Post-Rock": [
+    "Post-Rock"
+  ],
+  "Lo-Fi Rock": [
+    "Lo-Fi Rock"
+  ],
+  "J Rock": [
+    "J-Rock",
+    "Japanese Rock"
+  ],
+  "Shoegaze-Rock": [
+    "Shoegaze-Rock",
+    "Shoegaze",
+    "Shoegaze Rock"
+  ],
+  "Math Rock": [
+    "Math Rock"
+  ],
+  "Surf Rock": [
+    "Surf Rock"
+  ],
+  "Progressive Rock": [
+    "Progressive Rock",
+    "Prog Rock"
+  ],
+  "Soft Rock": [
+    "Soft Rock"
+  ],
+  "Grunge Rock": [
+    "Grunge",
+    "Grunge Rock"
+  ],
+  "Glam Rock": [
+    "Glam Rock",
+    "Glitter Rock"
+  ],
+  "Pop Punk": [
+    "Pop Punk"
+  ],
+  "Post-Punk": [
+    "Post-Punk"
+  ],
+  "New Wave": [
+    "New Wave"
+  ],
+  "Hardcore Punk": [
+    "Hardcore Punk"
+  ],
+  "Ska Punk": [
+    "Ska Punk"
+  ],
+  "No Wave": [
+    "No Wave"
+  ],
+  "Dance Punk": [
+    "Dance Punk"
+  ],
+  "Emo Punk": [
+    "Emo",
+    "Emo Punk"
+  ],
+  "Melodic Hardcore": [
+    "Melodic Hardcore"
+  ],
+  "Jazz Pop": [
+    "Jazz Pop"
+  ],
+  "Bebop": [
+    "Bebop"
+  ],
+  "Jazz Fusion": [
+    "Jazz Fusion",
+    "Fusion Jazz"
+  ],
+  "Bossa Nova": [
+    "Bossa Nova"
+  ],
+  "Swing": [
+    "Swing",
+    "Swing Jazz"
+  ],
+  "Post-Bop": [
+    "Post-Bop"
+  ],
+  "Smooth Jazz": [
+    "Smooth Jazz"
+  ],
+  "Vocal Jazz": [
+    "Vocal Jazz"
+  ],
+  "Nu Jazz": [
+    "Nu Jazz"
+  ],
+  "Free Jazz": [
+    "Free Jazz"
+  ],
+  "Hard Bop": [
+    "Hard Bop"
+  ],
+  "Japanese Jazz Fusion": [
+    "Japanese Jazz Fusion"
+  ],
+  "Old School": [
+    "Old School",
+    "Old School Hip Hop"
+  ],
+  "R&B Rap": [
+    "R&B Rap"
+  ],
+  "Boombap": [
+    "Boom Bap",
+    "Boombap"
+  ],
+  "Jazz Hip Hop": [
+    "Jazz Hip Hop",
+    "Jazz Rap"
+  ],
+  "Hardcore Rap": [
+    "Hardcore Rap"
+  ],
+  "Comedy Hip Hop": [
+    "Comedy Hip Hop",
+    "Comedy Rap"
+  ],
+  "Hip House": [
+    "Hip House"
+  ],
+  "Chill Beats": [
+    "Chill Beats",
+    "Chillhop"
+  ],
+  "Gangsta Rap": [
+    "Gangsta Rap"
+  ],
+  "West Coast Hip Hop": [
+    "West Coast Hip Hop",
+    "West Coast Rap"
+  ],
+  "East Coast Hip Hop": [
+    "East Coast Hip Hop",
+    "East Coast Rap"
+  ],
+  "Southern Hip Hop": [
+    "Southern Hip Hop",
+    "Dirty South"
+  ],
+  "Midwest Hip Hop": [
+    "Midwest Hip Hop",
+    "Midwest Rap"
+  ],
+  "Drill Rap": [
+    "Drill",
+    "Drill Rap"
+  ],
+  "Emo Rap": [
+    "Emo Rap"
+  ],
+  "Afrobeats": [
+    "Afrobeats"
+  ],
+  "Renaissance": [
+    "Renaissance",
+    "Renaissance Music"
+  ],
+  "Baroque": [
+    "Baroque"
+  ],
+  "Classical Period": [
+    "Classical Period"
+  ],
+  "Romantic Music": [
+    "Romantic Music"
+  ],
+  "Impressionism": [
+    "Impressionism",
+    "Impressionist Music"
+  ],
+  "Modernism": [
+    "Modernism",
+    "Modern Classical"
+  ],
+  "Contemporary Classical Music": [
+    "Contemporary Classical",
+    "Modern Classical",
+    "Contemporary Classical Music"
+  ],
+  "Funk": [
+    "Funk"
+  ],
+  "Contemporary R&B": [
+    "Contemporary R&B"
+  ],
+  "Neo Soul": [
+    "Neo Soul"
+  ],
+  "Soul": [
+    "Soul"
+  ],
+  "Pop Soul": [
+    "Pop Soul"
+  ],
+  "Doo-Wop": [
+    "Doo-Wop"
+  ],
+  "Gospel": [
+    "Gospel"
+  ],
+  "Classic R&B / Soul": [
+    "Classic R&B",
+    "Classic Soul"
+  ],
+  "Progressive R&B": [
+    "Progressive R&B"
+  ],
+  "Neo Funk": [
+    "Neo Funk"
+  ],
+  "Country Blues": [
+    "Country Blues"
+  ],
+  "Jazz Blues": [
+    "Jazz Blues"
+  ],
+  "Boogie Woogie": [
+    "Boogie Woogie",
+    "Boogie"
+  ],
+  "Dancehall": [
+    "Dancehall"
+  ],
+  "Dub": [
+    "Dub"
+  ],
+  "Black Metal": [
+    "Black Metal"
+  ],
+  "Death Metal": [
+    "Death Metal"
+  ],
+  "Doom Metal": [
+    "Doom Metal"
+  ],
+  "Grindcore": [
+    "Grindcore"
+  ],
+  "Power Metal": [
+    "Power Metal"
+  ],
+  "Progressive Metal": [
+    "Progressive Metal"
+  ],
+  "Speed Metal": [
+    "Speed Metal"
+  ],
+  "Thrash Metal": [
+    "Thrash Metal"
+  ],
+  "Industrial Metal": [
+    "Industrial Metal"
+  ],
+  "Folk Metal": [
+    "Folk Metal"
+  ],
+  "Rap Metal": [
+    "Rap Metal"
+  ],
+  "Heavy Metal": [
+    "Heavy Metal"
+  ],
+  "Nu Metal": [
+    "Nu Metal"
+  ],
+  "Metalcore": [
+    "Metalcore"
+  ],
+  "Post-Hardcore": [
+    "Post-Hardcore"
+  ],
+  "Deathcore": [
+    "Deathcore"
+  ],
+  "Gothic Metal": [
+    "Gothic Metal"
+  ],
+  "Holiday Music": [
+    "Holiday Music"
+  ],
+  "Buddhist Music": [
+    "Buddhist Music"
+  ],
+  "Chinese Opera": [
+    "Chinese Opera"
+  ],
+  "Traditional Chinese Folk": [
+    "Traditional Chinese Folk"
+  ],
+  "Chinese Traditional Instrumental Music": [
+    "Chinese Traditional Instrumental",
+    "Chinese Traditional Instrumental Music"
+  ],
+  "Chinese Quyi": [
+    "Chinese Quyi"
+  ],
+  "Red Song": [
+    "Red Song"
+  ],
+  "New Chinese Folk": [
+    "New Chinese Folk"
+  ],
+  "Shi Dai Qu": [
+    "Shi Dai Qu"
+  ],
+  "Prairie Style": [
+    "Prairie Style"
+  ],
+  "Latin Pop": [
+    "Latin Pop"
+  ],
+  "Latin Rock": [
+    "Latin Rock"
+  ],
+  "Tango": [
+    "Tango"
+  ],
+  "Samba": [
+    "Samba"
+  ],
+  "Rumba": [
+    "Rumba"
+  ],
+  "Korea Trot": [
+    "Korea Trot",
+    "Trot"
+  ],
+  "Shima Uta": [
+    "Shima Uta"
+  ],
+  "Enka": [
+    "Enka"
+  ],
+  "Japanese Traditional Music": [
+    "Japanese Traditional Music"
+  ],
+  "Bhangra": [
+    "Bhangra"
+  ],
+  "Flamenco": [
+    "Flamenco"
+  ],
+  "Chanson": [
+    "Chanson"
+  ],
+  "Son Cubano": [
+    "Son Cubano"
+  ],
+  "Worldbeat": [
+    "Worldbeat"
+  ],
+  "Mongolian Folk Songs": [
+    "Mongolian Folk Songs"
+  ],
+  "Uygur Folk Songs": [
+    "Uygur Folk Songs"
+  ],
+  "Fado": [
+    "Fado"
+  ],
+  "Ainu Folk": [
+    "Ainu Folk"
+  ],
+  "Okinawan Pop": [
+    "Okinawan Pop"
+  ],
+  "VinaHouse": [
+    "VinaHouse",
+    "Vietnamese House"
+  ],
+  "Happy": [
+    "Happy",
+    "Joyful",
+    "Cheerful",
+    "upbeat", 
+    "delightful", 
+    "sunny", 
+    "positive vibes"
+  ],
+  "Magnificent/Epic": [
+    "Magnificent",
+    "Epic",
+    "Grand"
+  ],
+  "Family": [
+    "Family",
+    "Familial",
+    "home", 
+    "loved ones", 
+    "relatives"
+  ],
+  "Broke Up": [
+    "Broke Up",
+    "Breakup"
+  ],
+  "Self And Growth": [
+    "Self and Growth",
+    "Personal Growth"
+  ],
+  "Celebration And Joy": [
+    "Celebration and Joy",
+    "Celebratory"
+  ],
+  "Life And Mindset": [
+    "Life and Mindset"
+  ],
+  "Dream And Future": [
+    "Dream and Future",
+    "Aspirational"
+  ],
+  "Mid-Autumn Festival": [
+    "Mid-Autumn Festival",
+    "Moon Festival"
+  ],
+  "Valentine's Day": [
+    "Valentine's Day"
+  ],
+  "Grassland": [
+    "Grassland",
+    "Prairie"
+  ],
+  "Theater/Concert Hall": [
+    "Theater",
+    "Concert Hall"
+  ],
+  "Haunted House": [
+    "Haunted House"
+  ],
+  "High-Energy Video": [
+    "High-Energy Video"
+  ],
+  "Wake Up": [
+    "Wake Up",
+    "Waking Up"
+  ],
+  "Family Time": [
+    "Family Time"
+  ],
+  "Seniors Video": [
+    "Seniors Video"
+  ],
+  "Viral Short Video": [
+    "Viral Short Video"
+  ],
+  "Cultural Events": [
+    "Cultural Events"
+  ],
+  "Piccolo": [
+    "Piccolo"
+  ],
+  "Flute": [
+    "Flute"
+  ],
+  "Clarinet": [
+    "Clarinet"
+  ],
+  "Oboe": [
+    "Oboe"
+  ],
+  "English_Horn": [
+    "English Horn",
+    "Cor Anglais"
+  ],
+  "Pipe": [
+    "Pipe"
+  ],
+  "Bassoon": [
+    "Bassoon"
+  ],
+  "Trumpet": [
+    "Trumpet"
+  ],
+  "Trombone": [
+    "Trombone"
+  ],
+  "Tuba": [
+    "Tuba"
+  ],
+  "Chromatic_Percussion": [
+    "Chromatic Percussion"
+  ],
+  "Percussive": [
+    "Percussive",
+    "Percussion"
+  ],
+  "Orchestral_Drums": [
+    "Orchestral Drums"
+  ],
+  "Organ": [
+    "Organ"
+  ],
+  "Accordion": [
+    "Accordion"
+  ],
+  "Harpsichord": [
+    "Harpsichord"
+  ],
+  "Clavinet": [
+    "Clavinet"
+  ],
+  "Violin": [
+    "Violin"
+  ],
+  "Viola": [
+    "Viola"
+  ],
+  "Cello": [
+    "Cello"
+  ],
+  "Suona": [
+    "Suona"
+  ],
+  "Erhu": [
+    "Erhu"
+  ],
+  "Guzheng": [
+    "Guzheng"
+  ],
+  "Pipa": [
+    "Pipa"
+  ],
+  "Yangqin": [
+    "Yangqin"
+  ],
+  "Sheng": [
+    "Sheng"
+  ],
+  "Hulusi": [
+    "Hulusi"
+  ],
+  "Panflute": [
+    "Pan Flute",
+    "Panflute"
+  ],
+  "Xun": [
+    "Xun"
+  ],
+  "Matouqin": [
+    "Matouqin",
+    "Horsehead Fiddle"
+  ],
+  "Ruan": [
+    "Ruan"
+  ],
+  "Sanxian": [
+    "Sanxian"
+  ],
+  "Guqin": [
+    "Guqin"
+  ],
+  "Ukelele": [
+    "Ukulele"
+  ],
+  "Banjo": [
+    "Banjo"
+  ],
+  "Mandolin": [
+    "Mandolin"
+  ],
+  "Bagpipe": [
+    "Bagpipe",
+    "Bagpipes"
+  ],
+  "Dulcimer": [
+    "Dulcimer"
+  ],
+  "Harmonica": [
+    "Harmonica",
+    "Mouth Harp"
+  ],
+  "Irishwhistle": [
+    "Irish Whistle",
+    "Tin Whistle"
+  ],
+  "Ocarina": [
+    "Ocarina"
+  ],
+  "Sitar": [
+    "Sitar"
+  ],
+  "Whistle": [
+    "Whistle"
+  ],
+  "Musicbox": [
+    "Music Box"
+  ],
+  "Major": [
+    "Major",
+    "Major Key"
+  ],
+  "Minor": [
+    "Minor",
+    "Minor Key"
+  ],
+  "Gregorian": [
+    "Gregorian",
+    "Gregorian Mode"
+  ],
+  "Pentatonic": [
+    "Pentatonic",
+    "Pentatonic Scale"
+  ],
+  "Female": [
+    "female", 
+    "woman",
+    "girl",
+    "women"
+  ]
+}

@@ -1,0 +1,884 @@
+{
+  "Edgy": [
+    "Edgy",
+    "Dark",
+    "Intense",
+    "Sharp",
+    "Cutting"
+  ],
+  "Melodic & Lyrical": [
+    "Melodic & Lyrical",
+    "Musical",
+    "Tuneful",
+    "Harmonic",
+    "Expressive"
+  ],
+  "Retro": [
+    "Retro",
+    "Vintage",
+    "Classic",
+    "Old-school",
+    "Throwback"
+  ],
+  "Childlike": [
+    "Childlike",
+    "Innocent",
+    "Youthful",
+    "Simple",
+    "Pure"
+  ],
+  "Magical": [
+    "Magical",
+    "Mystical",
+    "Enchanting",
+    "Supernatural",
+    "Wonder"
+  ],
+  "Heavenly": [
+    "Heavenly",
+    "Divine",
+    "Celestial",
+    "Angelic",
+    "Ethereal"
+  ],
+  "Grungy": [
+    "Grungy",
+    "Raw",
+    "Dirty",
+    "Rough",
+    "Underground"
+  ],
+  "Sweeping": [
+    "Sweeping",
+    "Grand",
+    "Flowing",
+    "Expansive",
+    "Broad"
+  ],
+  "Falling & Descending": [
+    "Falling & Descending",
+    "Declining",
+    "Dropping",
+    "Downward",
+    "Cascading"
+  ],
+  "Drunken": [
+    "Drunken",
+    "Swaying",
+    "Unsteady",
+    "Wobbly",
+    "Intoxicated"
+  ],
+  "Motivation": [
+    "Motivation",
+    "Drive",
+    "Inspiration",
+    "Push",
+    "Encouragement"
+  ],
+  "Overcoming Adversity": [
+    "Overcoming Adversity",
+    "Triumph",
+    "Victory",
+    "Resilience",
+    "Perseverance"
+  ],
+  "Happiness": [
+    "Happiness",
+    "Joy",
+    "Bliss",
+    "Delight",
+    "Cheerfulness"
+  ],
+  "Hope": [
+    "Hope",
+    "Faith",
+    "Optimism",
+    "Expectation",
+    "Promise"
+  ],
+  "Inspiration": [
+    "Inspiration",
+    "Motivation",
+    "Creativity",
+    "Influence",
+    "Spark"
+  ],
+  "Separation & Loneliness": [
+    "Separation & Loneliness",
+    "Isolation",
+    "Solitude",
+    "Apart",
+    "Distant"
+  ],
+  "Despair": [
+    "Despair",
+    "Hopelessness",
+    "Anguish",
+    "Devastation",
+    "Gloom"
+  ],
+  "Wishing For": [
+    "Wishing For",
+    "Yearning",
+    "Longing",
+    "Desire",
+    "Craving"
+  ],
+  "Thwarted Love": [
+    "Thwarted Love",
+    "Rejected",
+    "Unrequited",
+    "Blocked",
+    "Denied"
+  ],
+  "Painful Emotions": [
+    "Painful Emotions",
+    "Hurt",
+    "Anguish",
+    "Suffering",
+    "Torment"
+  ],
+  "Danger": [
+    "Danger",
+    "Risk",
+    "Threat",
+    "Peril",
+    "Hazard"
+  ],
+  "Loss": [
+    "Loss",
+    "Gone",
+    "Missing",
+    "Absence",
+    "Void"
+  ],
+  "Tragedy": [
+    "Tragedy",
+    "Disaster",
+    "Catastrophe",
+    "Misfortune",
+    "Calamity"
+  ],
+  "Upbeat or Positive": [
+    "Upbeat or Positive",
+    "Energetic",
+    "Optimistic",
+    "Lively",
+    "Bright"
+  ],
+  "Powerful": [
+    "Powerful",
+    "Strong",
+    "Mighty",
+    "Forceful",
+    "Dominant"
+  ],
+  "Optimistic": [
+    "Optimistic",
+    "Positive",
+    "Hopeful",
+    "Confident",
+    "Bright"
+  ],
+  "Inspirational or Motivational": [
+    "Inspirational or Motivational",
+    "Uplifting",
+    "Encouraging",
+    "Empowering",
+    "Stimulating"
+  ],
+  "Strong": [
+    "Strong",
+    "Robust",
+    "Solid",
+    "Firm",
+    "Sturdy"
+  ],
+  "Cheerful": [
+    "Cheerful",
+    "Happy",
+    "Sunny",
+    "Bright",
+    "Jovial"
+  ],
+  "Tension": [
+    "Tension",
+    "Stress",
+    "Strain",
+    "Pressure",
+    "Conflict"
+  ],
+  "Nostalgic or Sentimental": [
+    "Nostalgic or Sentimental",
+    "Wistful",
+    "Remembering",
+    "Touching",
+    "Emotional"
+  ],
+  "Uplifting": [
+    "Uplifting",
+    "Elevating",
+    "Inspiring",
+    "Encouraging",
+    "Raising"
+  ],
+  "Epic or Cinematic Mood": [
+    "Epic or Cinematic Mood",
+    "Grand",
+    "Dramatic",
+    "Heroic",
+    "Spectacular"
+  ],
+  "Fun": [
+    "Fun",
+    "Enjoyable",
+    "Entertaining",
+    "Amusing",
+    "Playful"
+  ],
+  "Lighthearted": [
+    "Lighthearted",
+    "Carefree",
+    "Easy",
+    "Breezy",
+    "Cheerful"
+  ],
+  "Depressing": [
+    "Depressing",
+    "Gloomy",
+    "Sad",
+    "Dismal",
+    "Bleak"
+  ],
+  "Bouncy Mood": [
+    "Bouncy Mood",
+    "Energetic",
+    "Lively",
+    "Springy",
+    "Buoyant"
+  ],
+  "Leisurely": [
+    "Leisurely",
+    "Relaxed",
+    "Unhurried",
+    "Casual",
+    "Easy-going"
+  ],
+  "Nervous": [
+    "Nervous",
+    "Anxious",
+    "Jittery",
+    "Worried",
+    "Tense"
+  ],
+  "Agitated": [
+    "Agitated",
+    "Restless",
+    "Disturbed",
+    "Excited",
+    "Stirred"
+  ],
+  "Relentless": [
+    "Relentless",
+    "Persistent",
+    "Unstoppable",
+    "Continuous",
+    "Determined"
+  ],
+  "Scary": [
+    "Scary",
+    "Frightening",
+    "Terrifying",
+    "Spooky",
+    "Creepy"
+  ],
+  "Peaceful": [
+    "Peaceful",
+    "Calm",
+    "Tranquil",
+    "Serene",
+    "Quiet"
+  ],
+  "Dangerous": [
+    "Dangerous",
+    "Risky",
+    "Threatening",
+    "Hazardous",
+    "Unsafe"
+  ],
+  "Joyous": [
+    "Joyous",
+    "Celebratory",
+    "Festive",
+    "Elated",
+    "Jubilant"
+  ],
+  "Anxious": [
+    "Anxious",
+    "Worried",
+    "Nervous",
+    "Uneasy",
+    "Concerned"
+  ],
+  "Menacing": [
+    "Menacing",
+    "Threatening",
+    "Intimidating",
+    "Ominous",
+    "Sinister"
+  ],
+  "Eerie": [
+    "Eerie",
+    "Spooky",
+    "Unsettling",
+    "Strange",
+    "Ghostly"
+  ],
+  "Melancholy": [
+    "Melancholy",
+    "Wistful",
+    "Pensive",
+    "Reflective",
+    "Thoughtful"
+  ],
+  "Fiery": [
+    "Fiery",
+    "Passionate",
+    "Intense",
+    "Burning",
+    "Hot"
+  ],
+  "Light": [
+    "Light",
+    "Airy",
+    "Gentle",
+    "Soft",
+    "Delicate"
+  ],
+  "Heavy or Somber": [
+    "Heavy or Somber",
+    "Serious",
+    "Grave",
+    "Weighty",
+    "Dark"
+  ],
+  "Soothing": [
+    "Soothing",
+    "Calming",
+    "Comforting",
+    "Gentle",
+    "Peaceful"
+  ],
+  "Tranquil": [
+    "Tranquil",
+    "Peaceful",
+    "Still",
+    "Calm",
+    "Quiet"
+  ],
+  "Concerned": [
+    "Concerned",
+    "Worried",
+    "Troubled",
+    "Thoughtful",
+    "Caring"
+  ],
+  "Perky": [
+    "Perky",
+    "Lively",
+    "Bright",
+    "Energetic",
+    "Cheerful"
+  ],
+  "Anthemic": [
+    "Anthemic",
+    "Rousing",
+    "Unifying",
+    "Rallying",
+    "Inspiring"
+  ],
+  "Sad": [
+    "Sad",
+    "Sorrowful",
+    "Melancholy",
+    "Down",
+    "Blue"
+  ],
+  "Passionate": [
+    "Passionate",
+    "Intense",
+    "Fervent",
+    "Ardent",
+    "Emotional"
+  ],
+  "Rollicking": [
+    "Rollicking",
+    "Lively",
+    "Boisterous",
+    "Spirited",
+    "Exuberant"
+  ],
+  "Lonely": [
+    "Lonely",
+    "Solitary",
+    "Isolated",
+    "Alone",
+    "Desolate"
+  ],
+  "Intimate": [
+    "Intimate",
+    "Close",
+    "Personal",
+    "Private",
+    "Tender"
+  ],
+  "Majestic": [
+    "Majestic",
+    "Grand",
+    "Royal",
+    "Stately",
+    "Noble"
+  ],
+  "Courageous": [
+    "Courageous",
+    "Brave",
+    "Bold",
+    "Fearless",
+    "Heroic"
+  ],
+  "Loving": [
+    "Loving",
+    "Affectionate",
+    "Caring",
+    "Tender",
+    "Devoted"
+  ],
+  "Disturbing": [
+    "Disturbing",
+    "Unsettling",
+    "Troubling",
+    "Upsetting",
+    "Alarming"
+  ],
+  "Angry": [
+    "Angry",
+    "Mad",
+    "Furious",
+    "Enraged",
+    "Hostile"
+  ],
+  "Graceful Mood": [
+    "Graceful Mood",
+    "Elegant",
+    "Flowing",
+    "Beautiful",
+    "Refined"
+  ],
+  "Euphoric": [
+    "Euphoric",
+    "Ecstatic",
+    "Blissful",
+    "Elated",
+    "High"
+  ],
+  "Poignant": [
+    "Poignant",
+    "Touching",
+    "Moving",
+    "Emotional",
+    "Bittersweet"
+  ],
+  "Quiet": [
+    "Quiet",
+    "Still",
+    "Soft",
+    "Gentle",
+    "Subdued"
+  ],
+  "Celebratory": [
+    "Celebratory",
+    "Festive",
+    "Joyous",
+    "Triumphant",
+    "Victorious"
+  ],
+  "Evil": [
+    "Evil",
+    "Wicked",
+    "Malicious",
+    "Sinister",
+    "Dark"
+  ],
+  "Violent": [
+    "Violent",
+    "Aggressive",
+    "Brutal",
+    "Harsh",
+    "Destructive"
+  ],
+  "Comedic Mood": [
+    "Comedic Mood",
+    "Funny",
+    "Humorous",
+    "Amusing",
+    "Comic"
+  ],
+  "Strange": [
+    "Strange",
+    "Odd",
+    "Unusual",
+    "Weird",
+    "Bizarre"
+  ],
+  "Cold": [
+    "Cold",
+    "Chilly",
+    "Icy",
+    "Frigid",
+    "Distant"
+  ],
+  "Seductive": [
+    "Seductive",
+    "Alluring",
+    "Tempting",
+    "Enticing",
+    "Sultry"
+  ],
+  "Mischievous": [
+    "Mischievous",
+    "Playful",
+    "Cheeky",
+    "Naughty",
+    "Impish"
+  ],
+  "Spiritual": [
+    "Spiritual",
+    "Sacred",
+    "Divine",
+    "Holy",
+    "Transcendent"
+  ],
+  "Solemn": [
+    "Solemn",
+    "Serious",
+    "Grave",
+    "Formal",
+    "Ceremonial"
+  ],
+  "Supernatural": [
+    "Supernatural",
+    "Otherworldly",
+    "Mystical",
+    "Paranormal",
+    "Unearthly"
+  ],
+  "Horrifying": [
+    "Horrifying",
+    "Terrifying",
+    "Frightening",
+    "Nightmare",
+    "Shocking"
+  ],
+  "Ponderous": [
+    "Ponderous",
+    "Heavy",
+    "Weighty",
+    "Slow",
+    "Deliberate"
+  ],
+  "Lazy": [
+    "Lazy",
+    "Relaxed",
+    "Slow",
+    "Laid-back",
+    "Sluggish"
+  ],
+  "Panic": [
+    "Panic",
+    "Frantic",
+    "Chaotic",
+    "Frenzied",
+    "Alarmed"
+  ],
+  "Dignified": [
+    "Dignified",
+    "Noble",
+    "Respectable",
+    "Stately",
+    "Distinguished"
+  ],
+  "Creepy": [
+    "Creepy",
+    "Eerie",
+    "Unsettling",
+    "Spine-chilling",
+    "Disturbing"
+  ],
+  "Boisterous": [
+    "Boisterous",
+    "Loud",
+    "Rowdy",
+    "Wild",
+    "Rambunctious"
+  ],
+  "Nightmarish": [
+    "Nightmarish",
+    "Horrifying",
+    "Terrifying",
+    "Disturbing",
+    "Haunting"
+  ],
+  "Humorous": [
+    "Humorous",
+    "Funny",
+    "Amusing",
+    "Witty",
+    "Comic"
+  ],
+  "Spooky": [
+    "Spooky",
+    "Eerie",
+    "Ghostly",
+    "Haunting",
+    "Creepy"
+  ],
+  "Mournful": [
+    "Mournful",
+    "Grieving",
+    "Sorrowful",
+    "Lamenting",
+    "Sad"
+  ],
+  "Tragic": [
+    "Tragic",
+    "Heartbreaking",
+    "Devastating",
+    "Sorrowful",
+    "Catastrophic"
+  ],
+  "Exotic": [
+    "Exotic",
+    "Foreign",
+    "Unusual",
+    "Mysterious",
+    "Intriguing"
+  ],
+  "Heartbreaking": [
+    "Heartbreaking",
+    "Devastating",
+    "Tragic",
+    "Painful",
+    "Crushing"
+  ],
+  "Patriotic": [
+    "Patriotic",
+    "National",
+    "Proud",
+    "Loyal",
+    "Devoted"
+  ],
+  "Silly": [
+    "Silly",
+    "Goofy",
+    "Ridiculous",
+    "Absurd",
+    "Foolish"
+  ],
+  "Shocking": [
+    "Shocking",
+    "Surprising",
+    "Stunning",
+    "Startling",
+    "Jarring"
+  ],
+  "Madcap": [
+    "Madcap",
+    "Wild",
+    "Crazy",
+    "Frenzied",
+    "Chaotic"
+  ],
+  "Wry": [
+    "Wry",
+    "Ironic",
+    "Dry",
+    "Sardonic",
+    "Subtle"
+  ],
+  "Sacred": [
+    "Sacred",
+    "Holy",
+    "Divine",
+    "Blessed",
+    "Hallowed"
+  ],
+  "Saucy": [
+    "Saucy",
+    "Bold",
+    "Cheeky",
+    "Provocative",
+    "Spirited"
+  ],
+  "Pulsing": [
+    "Pulsing",
+    "Rhythmic",
+    "Throbbing",
+    "Beating",
+    "Pounding"
+  ],
+  "Aerial & Floating": [
+    "Aerial & Floating",
+    "Weightless",
+    "Soaring",
+    "Drifting",
+    "Light"
+  ],
+  "Stomping": [
+    "Stomping",
+    "Heavy",
+    "Pounding",
+    "Marching",
+    "Forceful"
+  ],
+  "Rhythmic": [
+    "Rhythmic",
+    "Beat",
+    "Steady",
+    "Pulsing",
+    "Measured"
+  ],
+  "Elegant": [
+    "Elegant",
+    "Refined",
+    "Sophisticated",
+    "Graceful",
+    "Classy"
+  ],
+  "Ponderous & Heavy": [
+    "Ponderous & Heavy",
+    "Weighty",
+    "Slow",
+    "Deliberate",
+    "Massive"
+  ],
+  "Chase": [
+    "Chase",
+    "Pursuit",
+    "Racing",
+    "Fast",
+    "Following"
+  ],
+  "Shuffle": [
+    "Shuffle",
+    "Dragging",
+    "Sliding",
+    "Loose",
+    "Relaxed"
+  ],
+  "Smooth": [
+    "Smooth",
+    "Flowing",
+    "Silky",
+    "Polished",
+    "Seamless"
+  ],
+  "Slow Motion": [
+    "Slow Motion",
+    "Gradual",
+    "Extended",
+    "Drawn-out",
+    "Stretched"
+  ],
+  "Syncopated": [
+    "Syncopated",
+    "Off-beat",
+    "Complex",
+    "Irregular",
+    "Jazz-like"
+  ],
+  "Skipping": [
+    "Skipping",
+    "Light",
+    "Bouncy",
+    "Playful",
+    "Hopping"
+  ],
+  "Stabbing": [
+    "Stabbing",
+    "Sharp",
+    "Piercing",
+    "Sudden",
+    "Cutting"
+  ],
+  "Action Adventure": [
+    "Action Adventure",
+    "Thrilling",
+    "Dynamic",
+    "Exciting",
+    "Heroic"
+  ],
+  "Horror & Thriller": [
+    "Horror & Thriller",
+    "Scary",
+    "Suspenseful",
+    "Dark",
+    "Frightening"
+  ],
+  "Bright & Optimistic": [
+    "Bright & Optimistic",
+    "Positive",
+    "Cheerful",
+    "Upbeat",
+    "Sunny"
+  ],
+  "Motivational": [
+    "Motivational",
+    "Inspiring",
+    "Encouraging",
+    "Uplifting",
+    "Empowering"
+  ],
+  "Power & Energy": [
+    "Power & Energy",
+    "Strong",
+    "Forceful",
+    "Dynamic",
+    "Intense"
+  ],
+  "Psychedelic": [
+    "Psychedelic",
+    "Trippy",
+    "Surreal",
+    "Mind-bending",
+    "Hallucinogenic"
+  ],
+  "Vintage Style": [
+    "Vintage Style",
+    "Classic",
+    "Retro",
+    "Old-fashioned",
+    "Timeless"
+  ],
+  "Retro Kitsch": [
+    "Retro Kitsch",
+    "Campy",
+    "Vintage",
+    "Quirky",
+    "Nostalgic"
+  ],
+  "Kitsch & Retro": [
+    "Kitsch & Retro",
+    "Campy",
+    "Vintage",
+    "Pop Culture",
+    "Nostalgic"
+  ],
+  "Grooves": [
+    "Grooves",
+    "Rhythm",
+    "Beat",
+    "Flow",
+    "Pocket"
+  ]
+}

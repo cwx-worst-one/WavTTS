@@ -1,6 +1,10 @@
 import json
 from pathlib import Path
 
+from .keywords_parsing import *
+from .keywords_postprocess import *
+from .keywords_preprocess import *
+
 
 def _build_reversed_map(merged_dict: dict[str, list[str]]) -> dict[str, list[str]]:
     reverse_map = {}
@@ -17,28 +21,3 @@ def is_chinese_in_str(s: str) -> bool:
         if "\u4e00" <= c <= "\u9fff":
             return True
     return False
-
-
-KEYWORD_MAPPING_PATH = Path(__file__).parent / "mapping.json"
-KEYWORD_MAPPING = json.loads(KEYWORD_MAPPING_PATH.read_text())
-KEYWORD_MAPPING_LOWERK = {
-    k.lower(): v for k, v in KEYWORD_MAPPING.items()
-}  # for case-insensitive mapping
-REVERSE_KEYWORD_MAPPING = _build_reversed_map(KEYWORD_MAPPING)
-
-
-def expand_keyword(keyword: str, keep_input: bool = False) -> list[str]:
-    if keyword.lower() not in KEYWORD_MAPPING_LOWERK:
-        return []
-    keywords = KEYWORD_MAPPING_LOWERK[keyword.lower()]
-    if keep_input:
-        keywords = [keyword] + keywords
-    return keywords
-
-
-def translate_zh_to_en(keyword: str, keep_input: bool = False) -> list[str]:
-    if not is_chinese_in_str(keyword):
-        if keep_input:
-            return [keyword]
-        return []
-    return expand_keyword(keyword, keep_input)

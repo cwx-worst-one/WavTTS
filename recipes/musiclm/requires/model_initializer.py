@@ -78,19 +78,28 @@ def _init_cached_mulan(hpath, local_rank, cache_dir=None, version="149", prefix=
         from .mulan.mulan_infer_sstk_mae import(
             create_mulan_model,
             mulan_inference,
+            mulan_inference_2,
             mulan_rvq_indexs,
+        )
+        from recipes.bigmusic.utils.psfad_utils import (
+            get_embedding_similarity,
+            get_fad_from_embeddings,
         )
         if version == "sstkmae":
             create_mulan_model = partial(create_mulan_model, version="v1")
         else:
             create_mulan_model = partial(create_mulan_model, version="v2")
+            # Enable normalize_text (replace commas with spaces)
             mulan_inference = partial(mulan_inference, normalize_text=True)
+            mulan_inference_2 = partial(mulan_inference_2, normalize_text=True)
+            # Matching bottom-right of covariance matrix should only be used with time-encoded embeddings.
+            # In general, we should disable it. Hardcode to False for now.
+            get_fad_from_embeddings = partial(get_fad_from_embeddings, match_bottom_right=False)
     else:
         raise KeyError(f"Not a valid mulan version. {version}")
     if cache_dir is not None:
         os.makedirs(cache_dir, exist_ok=True)
 
-    device = torch.device(f"cuda:{local_rank}")
     if hpath.startswith("hdfs://"):
         local_path = f"{cache_dir}/{os.path.basename(hpath)}"
         with local_zero_first():

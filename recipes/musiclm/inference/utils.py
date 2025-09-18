@@ -4,17 +4,21 @@ import re
 import unicodedata
 import hashlib
 import os
+import subprocess
 import librosa
 import numpy as np
 import torch
 import torchaudio
+import pyloudnorm as pln
+
+from typing import Union, Optional
 from pydub import AudioSegment
 from scipy.io.wavfile import write
 from hyperpyyaml import load_hyperpyyaml
-import torchaudio
 from samantha.utils.hparams import DotDict
+from torch import Tensor
 from torch.nn import functional as F
-import subprocess
+from torchaudio import functional as Fa
 
 
 noises = None
@@ -192,7 +196,7 @@ def save_wav(audio, output_file, sr=24000, save_mp3=False, normalize_volume=Fals
     else:
         # keep original wav
         return output_file
-    
+
     output_file_target = output_file.replace(".wav", new_ext)
     if normalize_volume:
         command = "ffmpeg-normalize '%s' -t -16 --keep-loudness-range-target -c:a libmp3lame -b:a 320k -o '%s' -f" % (output_file, output_file_target)
@@ -201,6 +205,80 @@ def save_wav(audio, output_file, sr=24000, save_mp3=False, normalize_volume=Fals
     subprocess.run(command, shell=True)
     os.remove(output_file)
     return output_file_target
+
+
+def tensor_resample(
+    wav: Tensor, orig_freq: int = 44100, new_freq: int = 24000
+) -> Tensor:
+    """
+    Resample audio with TorchAudio following HiFi-GAN setting which mimics SoX.
+    Compatible with GPU computation.
+    """
+    assert isinstance(wav, Tensor), f"expected torch tensor, but got {type(wav)}"
+
+    # Check whether the last dimension is the time dimension
+    for i in range(len(wav.shape) - 1):
+        assert wav.shape[i] <= wav.shape[-1]
+    if new_freq == orig_freq:
+        return wav
+
+    # The resample setting here comes from HiFi-GAN, which mimics SoX
+    orig_type = wav.dtype
+    wav = Fa.resample(
+        wav.double(),
+        orig_freq=orig_freq,
+        new_freq=new_freq,
+        lowpass_filter_width=64,
+        rolloff=0.9475937167399596,
+        resampling_method="sinc_interp_kaiser",
+        beta=14.769656459379492,
+    ).to(orig_type)
+
+    return wav
+
+
+def level_norm_lufs(
+    wav: Union[Tensor, np.ndarray],
+    sr: int = 24000,
+    target_lufs: float = -23.0,
+    tensor_out: Optional[bool] = None,
+) -> Union[Tensor, np.ndarray]:
+    """
+    Loudness level normalization to target_lufs (-23dB LUFS by default).
+    NOTE: this operation uses numpy operations, and thus does not support gradient and always runs on CPU.
+    wav should have shape (T, 1) or (T,)
+
+    tensor_out controls whether the output is a torch tensor or a numpy array.
+    If tensor_out is None and input wav is a torch tensor, a torch tensor will be returned.
+    If tensor_out is None and input wav is a numpy array, a numpy array will be returned.
+    """
+    # Convert to numpy array
+    tensor_wav = isinstance(wav, Tensor)
+    tensor_out = tensor_wav if tensor_out is None else tensor_out
+    if tensor_wav:
+        orig_device, orig_dtype = wav.device, wav.dtype
+        wav = wav.cpu().numpy()
+
+    # wav now must be a numpy array with shape either (T, 1) or (T,)
+    assert isinstance(wav, np.ndarray), \
+        f"wav must be a numpy array, but got {type(wav)}"
+    assert 0 < len(wav.shape) <= 2, \
+        f"wav must have shape either (T, 1) or (T,), but got {wav.shape}"
+    assert len(wav.shape) == 1 or wav.shape[1] < wav.shape[0], \
+        "the time dimension must be the first dimension"
+    wav = wav.astype(np.float64)
+
+    # Now, actually do the level norm
+    loudness_meter = pln.Meter(sr)
+    measured_lufs = loudness_meter.integrated_loudness(wav)
+    gain_db = target_lufs - measured_lufs
+    gain_linear = 10 ** (gain_db / 20.0)
+    wav = wav * gain_linear
+
+    if tensor_out:
+        wav = torch.from_numpy(wav).to(orig_device).to(orig_dtype)
+    return wav
+
 
 def load_wav(path, sr=24000, mono=True):
     if path.endswith(".npy"):
@@ -273,8 +351,10 @@ def top_p_logits(logits, p):
     # Shift the indices to the right to keep also the first token above the threshold
     sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
     sorted_indices_to_remove[..., 0] = 0
-    indices_to_remove = torch.zeros_like(logits, dtype=sorted_indices_to_remove.dtype).scatter_(
-            dim=-1, index=sorted_indices, src=sorted_indices_to_remove )
+    indices_to_remove = torch.zeros_like(
+        logits, dtype=sorted_indices_to_remove.dtype).scatter_(
+        dim=-1, index=sorted_indices, src=sorted_indices_to_remove
+    )
     out = logits.clone()
     out[indices_to_remove] = -float('Inf')
     return out
@@ -312,10 +392,10 @@ class SamplingScheduler:
         for s in reversed(self.schedule):
             if idx >= s['start_idx'] and self.schedule:
                 break
-        
+
         top_p, target_top_k, target_temp = s['top_p'], s['target_top_k'], s['target_temp']
         return top_p, target_top_k, target_temp
-    
+
     @classmethod
     def default_schedule(cls, top_p=0.8, target_temp=1, target_top_k=100):
         # creative for first 10 tokens. conservative for the rest of sequence
@@ -323,7 +403,7 @@ class SamplingScheduler:
         s2 = { 'start_idx': 50, 'top_p': top_p, 'target_top_k': None, 'target_temp': target_temp }
         s3 = { 'start_idx': 100, 'top_p': top_p, 'target_top_k': target_top_k, 'target_temp': target_temp }
         return SamplingScheduler([s1, s2, s3])
-        
+
 def adaptive_sampling(idx, logits, sampling_schedule: SamplingScheduler, exclude_ids=None):
     def get_cum_probs(logits, temp):
         predict_logits = logits / temp.reshape(-1, 1, 1)
@@ -335,7 +415,7 @@ def adaptive_sampling(idx, logits, sampling_schedule: SamplingScheduler, exclude
         sorted_probs, sorted_indices = torch.sort(probs, descending=True)
         cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
         return cumulative_probs
-    
+
     top_p, target_top_k, target_temp = sampling_schedule.get_schedule(idx)
     # convert global temperature to temp per batch
     batch_size = logits.shape[0]
@@ -363,7 +443,7 @@ def adaptive_sampling(idx, logits, sampling_schedule: SamplingScheduler, exclude
             cumulative_probs = get_cum_probs(logits, adaptive_temp)
             token_count = (cumulative_probs <= top_p).sum(-1)
             increase_mask = (token_count < target_top_k) & (adaptive_temp < 4.0)
-    
+
     adaptive_temp = sampling_schedule.previous_temp * 0.5 + adaptive_temp * 0.5
     sampling_schedule.previous_temp = adaptive_temp
 
@@ -375,5 +455,5 @@ def adaptive_sampling(idx, logits, sampling_schedule: SamplingScheduler, exclude
     probs = predict_logits.softmax(dim=-1)
     dist = torch.distributions.categorical.Categorical(probs=probs)
     samples = dist.sample()
-    
+
     return samples

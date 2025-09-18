@@ -7,6 +7,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchaudio
+
+from typing import Union, List
+from torch import Tensor
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 from pytorch_lightning.strategies import DeepSpeedStrategy
@@ -15,15 +18,14 @@ from rotary_embedding_torch import RotaryEmbedding
 from torch.utils.checkpoint import checkpoint
 from transformers import AutoModel, AutoProcessor, AutoTokenizer, AutoConfig, ClapModel
 
-# helpers
 
+# helpers
 
 def pair(t):
     return t if isinstance(t, tuple) else (t, t)
 
 
 # classes
-
 
 class RMSNorm(nn.Module):
     def __init__(self, dim, eps=1e-8):
@@ -396,7 +398,9 @@ class TextEncoder(nn.Module):
         else:
             if pretrained_model == "laion/larger_clap_general":
                 try:
-                    self.text_model = ClapModel.from_pretrained('.module_cache/huggingface/larger_clap_general')
+                    self.text_model = ClapModel.from_pretrained(
+                        '.module_cache/huggingface/laion/larger_clap_general'
+                    )
                 except Exception as e:
                     print(f"Failed to load from local cache, download from huggingface instead: {e}")
                     self.text_model = ClapModel.from_pretrained(pretrained_model)
@@ -563,11 +567,15 @@ class MuTSSTKMAEWrapper(nn.Module):
         )
         self.mut = mut
 
+    @property
+    def device(self):
+        return next(self.parameters()).device
+
     def forward(self, audio, spec_aug=False):
         emb = self.mut(audio, spec_aug=spec_aug)
         emb = F.normalize(emb, p=2, dim=-1)
         return emb
-   
+
 
 def get_music_encoder(music_encoder="sstk", emb_dim=128, version="v1"):
     return MuTSSTKMAEWrapper(emb_dim, version=version)
@@ -618,6 +626,11 @@ class LitMuLanModule(pl.LightningModule):
         # Validation outputs
         self.val_outputs = dict()
 
+        if text_encoder == 'clap':
+            self.tokenizer = AutoTokenizer.from_pretrained("laion/larger_clap_general")
+        else:
+            self.tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased")
+
     def on_fit_start(self):
         self.music_encoder.mut.manually_to_device(self.device)
 
@@ -643,12 +656,12 @@ class LitMuLanModule(pl.LightningModule):
 
     def configure_optimizers(self):
         if self.deepspeed_offload:
-            from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
+            from deepspeed.ops.adam import DeepSpeedCPUAdam
             return DeepSpeedCPUAdam(
                 self.parameters(), lr=self.lr, weight_decay=self.weight_decay
             )
         elif isinstance(self.trainer.strategy, DeepSpeedStrategy):
-            from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
+            from deepspeed.ops.adam import FusedAdam
             optimizer = FusedAdam(
                 self.parameters(), lr=self.lr, weight_decay=self.weight_decay
             )
@@ -894,16 +907,20 @@ def mulan_inference(
         emb = model.encode_text(text, return_hidden_state)
 
     if music is not None:
-        # music needs to be in 2D: [b, t]
+        # music needs to be in 2D: [b, t]; assumed to be mono 24kHz
         if len(music.shape) == 3:
             music = music.squeeze(1)
         # print(f"mulan_inference: wav shape is {music.shape}")
-        music_encoder = model.music_encoder
+
+        # Chop music into 10-second chunks without overlap
+        # dimension=1, size=24k*10, hop_size=24k*5
         music = music.unfold(1, 24000 * 10, 24000 * shift_seconds)  # [b, n, t]
         # print(f"mulan_inference: unfolded wav shape is {music.shape}")
         b, n, t = music.shape
         music = music.reshape(b * n, t)
+
         # print(f"mulan_inference: reshaped wav shape is {music.shape}")
+        music_encoder = model.music_encoder
 
         if return_sequence:
             saved_output_type = music_encoder.mut.mut.output_type
@@ -923,7 +940,92 @@ def mulan_inference(
         if avg:
             # print("averaging embeds")
             emb = F.normalize(emb.mean(dim=1), p=2, dim=1)
+
     return emb
+
+
+@torch.no_grad()
+def mulan_inference_2(
+    model,
+    text: Union[str, List[str], None] = None,
+    music: Union[Tensor, List[Tensor], None] = None,
+    average_audio_embd: bool = False,  # If true, average chunk audio embeddings
+    normalize_audio_embd: bool = False,  # If true, normalize audio embedding to norm=1
+    shift_seconds: float = 5.,  # Hop length in seconds
+    normalize_text: bool = False,
+    return_hidden_state: bool = False,
+) -> List[Tensor]:
+    """
+    Compatible with different audio length within a batch.
+
+    Takes in music as a list of tensors with shape [n1, t], [n2, t], ...
+    They are then broken into 10-second chunks required by MuLan
+    (different music length -> different number of chunks).
+    The chunks are then concatenate and then fed into MuLan.
+
+    By not collating raw music, we avoid excessive padding, which may
+    result in entire 10-second chunks being empty and distorted MuLan embeddings.
+    """
+    assert (text is not None) ^ (music is not None), \
+        "text inputs and music input can only select one"
+
+    if text is not None:
+        if normalize_text:
+            if isinstance(text, str):
+                text = [text]
+            text = [" ".join(x.split(',')) for x in text]
+        embds = model.encode_text(text, return_hidden_state)
+        # embds is a single tensor with shape [b, d=512]
+
+    if music is not None:
+        if isinstance(music, Tensor):
+            assert music.dim() <= 2, f"Music tensor shape is {music.shape}"
+            music = [music]
+
+        b = len(music)  # batch size
+        pieces = []  # A list of tensors with shape [n1, t], [n2, t], ...
+        num_embds_per_piece = []  # A list of int that keeps track of the number of chunks -- n1, n2, ...
+
+        for piece in music:
+            # piece needs to be in 1D: [t]; assumed to be mono 24kHz
+            if piece.dim() == 2:
+                assert piece.shape[0] == 1, f"Only supports mono audio, but got shape {piece.shape}"
+                piece = piece.squeeze(0)
+            # print(f"mulan_inference: wav shape is {music.shape}")
+
+            # Chop music into 10-second chunks without overlap
+            # dimension=1, size=24k*10, hop_size=24k*5
+            piece = piece.unfold(
+                dimension=0, size=24000 * 10, step=int(24000 * shift_seconds)
+            )
+            # print(f"mulan_inference: unfolded wav shape is {music.shape}")
+
+            ni, t = piece.shape
+            assert t == 24000 * 10, f"Unfolded wav shape is {piece.shape}"
+
+            pieces.append(piece)  # A list of tensors with shape [ni, t]
+            num_embds_per_piece.append(ni)
+
+        # Concatenate pieces into a big tensor
+        pieces = torch.cat(pieces, dim=0).to(model.music_encoder.device)  # [n1+n2+..., t]
+        # print(f"mulan_inference: concatenated wav shape is {pieces.shape}")
+
+        embds = model.music_encoder(pieces.unsqueeze(1))  # [n1+n2+..., d=512]
+        # n is the number of chunks; t is latent dimension (512)
+        # print(f"mulan_inference: embedding shape is {embds.shape}")
+
+        embds = list(torch.split(embds, num_embds_per_piece, dim=0))
+        # Now a list of tensors with shape [n1, d], [n2, d], ...
+        assert len(embds) == b, f"Split embeds len {len(embds)} != batch len {b}"
+
+        # Optionally average and/or normalize embeddings
+        if average_audio_embd:
+            # print("averaging embeds")
+            embds = [emb.mean(dim=0, keepdim=True) for emb in embds]
+        if normalize_audio_embd:
+            embds = [F.normalize(emb, p=2, dim=1) for emb in embds]
+
+    return embds
 
 
 def mulan_rvq_indexs(z, centers):
@@ -933,16 +1035,16 @@ def mulan_rvq_indexs(z, centers):
     ds = []
     for center in centers:
         d = (
-            torch.sum(z**2, dim=1, keepdim=True)
-            + torch.sum(center**2, dim=1)
+            torch.sum(z**2, dim=1, keepdim=True) + torch.sum(center**2, dim=1)
             - 2 * torch.einsum("bd,dn->bn", z, rearrange(center, "n d -> d n"))
         )
         min_index = torch.argmin(d, dim=1)  # [b, ]
 
         # RVQ
-        z = z - torch.nn.functional.embedding(min_index, center)
+        z = z - F.embedding(min_index, center)
 
         indexs.append(min_index)
         ds.append(d.min())
+
     indexs = torch.stack(indexs, dim=1)  # [b, 12]
     return indexs, ds

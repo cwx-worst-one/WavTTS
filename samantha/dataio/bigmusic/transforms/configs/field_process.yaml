@@ -1,0 +1,176 @@
+fields:
+  genre:
+    dropout:
+      default: 0.0
+    aggregates:
+      - mode: priority_sample
+        inputs:
+          - gemini_v2
+          - gemini
+        output: "group_gemini"
+      - mode: priority_sample
+        inputs:
+          - sa_tagging_model
+          - fg_tagging_model
+        output: "group_tagging"
+      - mode: weighted_sample
+        inputs:
+          - "human_annotation"
+          - "web_standard_meta"
+          - "group_tagging"
+          - "group_gemini"
+        weights:
+          - 3
+          - 0.5
+          - 2
+          - 4
+        output: "result"
+
+  genre_extra:
+    dropout: #independent dropout
+      default: 0.0
+      gemini_v2: 0.5
+    aggregates:
+      - mode: priority_sample
+        inputs:
+          - gemini_v2
+          - gemini
+        output: "group_gemini"
+      - mode: priority_sample
+        inputs:
+          - "human_annotation"
+          - "group_gemini"
+        output: "result"
+
+  instrument:
+    dropout:
+      default: 0.0
+      gemini: 0.5
+      gemini_v2: 0.5
+      fg_tagging_model: 0.7
+      sa_tagging_model: 0.5
+
+  scene: #TODO geminiv1 scene_phrase
+    dropout:
+      default: 0.0
+      fg_tagging_model: 0.5
+    aggregates:
+      - mode: merge
+        inputs:
+          - "sa_tagging_model"
+          - "fg_tagging_model"
+          - "web_standard_meta"
+          - "gemini_v2"
+          - "human_annotation"
+        output: "result"
+
+  scene_phrase: #TODO geminiv1 scene_phrase
+    dropout:
+      default: 0.1
+      gemini: 0.7
+      gemini_v2: 0.7
+    aggregates:
+      - mode: merge
+        inputs:
+          - "gemini_v2"
+          - "gemini"
+        output: "result"
+
+  mood:
+    aggregates:
+      - mode: priority_sample
+        inputs:
+          - "gemini_v2"
+          - "gemini"
+        output: "group_gemini"
+      - mode: priority_sample
+        inputs:
+          - "human_annotation"
+          - "fg_tagging_model"
+          - "sa_tagging_model"
+        output: "group_tagging"
+      - mode: merge
+        inputs:
+          - "group_tagging"
+          - "web_standard_meta"
+          - "group_gemini"
+        output: "result"
+
+  timbre:
+    dropout:
+      default: 0.0
+    aggregates:
+      - mode: weighted_sample
+        inputs:
+          - "fg_tagging_model"
+          - "web_standard_meta"
+          - "gemini"
+          - "gemini_v2"
+          - "human_annotation"
+        weights:
+          - 1
+          - 2
+          - 3
+          - 3
+          - 3
+        output: "result"
+
+  gender:
+    dropout:
+      default: 0.0
+    aggregates:
+      - mode: priority_sample
+        inputs:
+          - "human_annotation"
+          - "gemini_v2"
+          - "gemini"
+          - "fg_tagging_model"
+          - "sa_tagging_model"
+          - "web_standard_meta"
+        output: "result"
+
+  language:
+    aggregates:
+      - mode: priority_sample
+        inputs:
+          - "human_annotation"
+          - "sa_tagging_model"
+          - "gemini_v2"
+          - "gemini"
+        output: "result"
+
+  tempo:
+    aggregates:
+      - mode: priority_sample
+        inputs:
+          - "human_annotation"
+          - "fg_tagging_model"
+          - "gemini_v2"
+          - "web_standard_meta"
+        output: "result"
+
+  era:
+    dropout:
+      default: 0.5
+
+  musical:
+    dropout:
+      default: 0.3
+
+  abstract:
+    dropout:
+      default: 0.5
+
+  default:
+    dropout:
+      default: 0.0
+    aggregates:
+      - mode: merge
+        inputs:
+          - web_standard_meta
+          - gemini_v2
+          - gemini
+          - human_annotation
+          - fg_tagging_model
+          - sa_tagging_model
+        output: "result"

@@ -17,6 +17,7 @@ from apps.bigmusic.mariana_tasks.semantic_seed_train import (
     SemanticLlmTrainer,
     _m8_network_config,
     _inference_config,
+    _weighted_loss_config,
     _get_skip_meter_name,
 )
 from mariana.models.audio.gpt2_audio import (
@@ -47,7 +48,7 @@ class SemanticLlmModelBpe(SemanticLlmModel):
             partial_pretrain='',
             hybrid_shard_group_size=-1,
             ddp_gate=False,
-            weighted_loss=False,
+            weighted_loss: CruiseConfig = CruiseConfig(dict(_weighted_loss_config)),
             inference: CruiseConfig = CruiseConfig(dict(_inference_config))):
         super().__init__(
             network=network,
@@ -111,9 +112,10 @@ class SemanticLlmModelBpe(SemanticLlmModel):
 
         acc = (acc * loss_mask_rmpad).sum() / num_valid_tokens
 
-        if self.hparams.weighted_loss:
-            segment_ratio = 0.1
-            inforced_weight = 3
+        if self.hparams.weighted_loss.enabled:
+            loss_mask_rmpad_unweighted = loss_mask_rmpad.clone()
+            segment_ratio = self.hparams.weighted_loss.segment_ratio
+            inforced_weight = self.hparams.weighted_loss.weight
             for i in range(len(cu_seqlens) - 1):
                 start, end = cu_seqlens[i], cu_seqlens[i + 1]
                 segment = loss_mask_rmpad[start:end]
@@ -122,15 +124,22 @@ class SemanticLlmModelBpe(SemanticLlmModel):
                     global_index = start + nonzero[0].item()
                 else:
                     global_index = start  # or None if no non-zero exists
-                # inforce the loss for the first segment_ratio part
-                inforced_segment_end = global_index + int(segment_ratio * (end - global_index))
-                loss_mask_rmpad[global_index:inforced_segment_end] = inforced_weight
 
-                # inforce the loss for the last segment_ratio part
-                inforced_segment_start = global_index + int((1 - segment_ratio) * (end - global_index))
-                loss_mask_rmpad[inforced_segment_start:end] = inforced_weight
+                if segment_ratio[0] > 0:
+                    inforced_segment_end = global_index + int(segment_ratio[0] * (end - global_index))
+                    loss_mask_rmpad[global_index:inforced_segment_end] = inforced_weight
 
-        loss = (loss * loss_mask_rmpad).sum() / num_valid_tokens
+                if segment_ratio[1] > 0:
+                    inforced_segment_start = global_index + int((1 - segment_ratio[1]) * (end - global_index))
+                    loss_mask_rmpad[inforced_segment_start:end] = inforced_weight
+            
+            unweighted_loss = (loss * loss_mask_rmpad_unweighted).sum() / num_valid_tokens
+            outputs["unweighted_loss"] = unweighted_loss
+            loss = (loss * loss_mask_rmpad).sum() / num_valid_tokens
+        else:
+            unweighted_loss = (loss * loss_mask_rmpad).sum() / num_valid_tokens
+            outputs["unweighted_loss"] = unweighted_loss
+            loss = unweighted_loss
 
         outputs["loss"] = loss
         outputs["acc"] = acc
@@ -470,6 +479,7 @@ class SemanticLlmModelBpe(SemanticLlmModel):
 class SemanticLlmBpeTrainer(SemanticLlmTrainer):
     train_meters = [
         ('loss', {'type': 'Weighted', 'args': ['loss', 'tokens']}),
+        ('unweighted_loss', {'type': 'Weighted', 'args': ['unweighted_loss', 'tokens']}),
         ('acc', {'type': 'Weighted', 'args': ['acc', 'tokens']}),
         ('lr * 1e3', {'type': 'Simple', 'args': ['lr * 1e3']}),
         ('loss_tokens(B)', {'type': 'Sum', 'args': ['loss_tokens(B)']}),
@@ -479,6 +489,7 @@ class SemanticLlmBpeTrainer(SemanticLlmTrainer):
 
     valid_meters = [
         ('loss', {'type': 'Weighted', 'args': ['loss', 'loss_tokens']}),
+        ('unweighted_loss', {'type': 'Weighted', 'args': ['unweighted_loss', 'loss_tokens']}),
         ('acc', {'type': 'Weighted', 'args': ['acc', 'loss_tokens']}),
         ('loss_tokens(B)', {'type': 'Sum', 'args': ['loss_tokens(B)']}),
         ('consume_tokens(B)', {'type': 'Sum', 'args': ['consume_tokens(B)']}),
@@ -536,7 +547,7 @@ def setup_cli(CLI_Clazz=SemanticLlmCLI):
     data_save_max_items_from_env = int(os.getenv('MARIANA_SPEECH_DATA_COLLECT_MAX', 32))
     if data_save_interval_from_env > 0:
         collector = SpeechDataCollectCallback(
-            keys_to_collect = ["data_type", "prompt","lyrics"],
+            keys_to_collect = ["meta", "standard_music_meta", "prompt","lyrics"],
             audio_key=None,
             audio_duration_key=None,
             max_items_to_save=data_save_max_items_from_env,

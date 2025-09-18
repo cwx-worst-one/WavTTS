@@ -1,0 +1,12 @@
+{
+  "match": [
+    "other",
+    "empty",
+    "unknown",
+    "unkonwn",
+    "\\N",
+    "adult"
+  ],
+  "contain": [
+  ]
+}

@@ -1944,7 +1944,9 @@ def _parse_audio_tags_or_music_tagging_with_lang_filt(meta: Dict) -> Tuple[Optio
     return audio_tags, music_tagging
 
 
-def infer_freeform_text_from_style_text(style_text: List[Union[List[str], str]], freeform_dropout: float=0.0, is_infer: bool=False, shuffle=True, seed=None) -> str:
+def infer_freeform_text_from_style_text(
+    style_text: List[Union[List[str], str]], freeform_dropout: float=0.0, is_infer: bool=False, shuffle=True, seed=None
+) -> str:
     # print(f"[infer_freeform_text_from_style_text] {shuffle=} {seed=}")
     rnd = random.Random(seed)
     style_text = copy.deepcopy(style_text)
