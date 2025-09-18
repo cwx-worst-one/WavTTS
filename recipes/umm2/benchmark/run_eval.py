@@ -35,7 +35,7 @@ def evaluate_audio_slice(it,
     i, inst_i, vocal_i = 0, 0, 0
     for batch in it:
         # if batch["no_lyric_flag"]:
-        #     continue
+            # continue
         if i == max_i:
             break
 
@@ -325,6 +325,8 @@ def evaluate(it,
     for batch in it:
         if i == max_i:
             break
+        # if not batch["no_lyric_flag"]:
+        #     continue
 
         input_ids = batch["token"].to("cuda")
         attention_mask = batch["token_padding_mask"].to("cuda")
@@ -344,6 +346,8 @@ def evaluate(it,
             },
             "slice": batch["slice"],
         }
+        if evaluator.inference_R:
+            input_batch["inference_R"] = evaluator.inference_R
 
         ct = time()
         tokens, sliced_audios, sliced_texts = evaluator.get_tokens(input_batch["audio"], 
@@ -361,6 +365,15 @@ def evaluate(it,
         print(f"batch {i}, length={sample_dur}, avg_length={mean_sample_dur/nsample}, data_type={data_type}")
         f.writelines("=" * 50 + "\n")
         f.writelines(f"batch {i}, length={sample_dur}, avg_length={mean_sample_dur/nsample}, no_lyric_flag={batch['no_lyric_flag']}")
+
+        # fff = open(os.path.join(out_dir, f"full_{i}_{data_type}_acoustic.txt"), "w")
+        # fff.writelines("\n".join(tokens[...,0].cpu().reshape(-1).numpy().astype(str).tolist()))
+        # fff.close()
+        # fff = open(os.path.join(out_dir, f"full_{i}_{data_type}_semantic.txt"), "w")
+        # fff.writelines("\n".join(tokens[...,1].cpu().reshape(-1).numpy().astype(str).tolist()))
+        # fff.close()
+        # import torchaudio
+        # torchaudio.save(os.path.join(out_dir, f"{i}_{data_type}.wav"), batch["audio"], evaluator.sample_rate)
 
         this_output_dict = evaluator.model(input_batch)
         # import matplotlib.pyplot as plt

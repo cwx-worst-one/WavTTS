@@ -173,10 +173,10 @@ class TokenEvaluator(torch.nn.Module):
             self.h = self.config.get("rvq", 1)
 
             if self.config.get("semantic_decoder_vq_type", None):
-                self.codebook_size = [self.config.vq_codebook_size, self.config.semantic_vq_codebook_size]
-                self.h = 2
+                self.codebook_size = [self.config.semantic_vq_codebook_size] + [self.config.vq_codebook_size]*self.h 
+                self.h = len(self.codebook_size)
 
-        print("codebook_size: ", self.codebook_size)
+        print("codebook_size: ", self.codebook_size, "h: ", self.h)
         self.load_required_modules()
 
         # support inference with given R (RVQ)
@@ -264,8 +264,12 @@ class TokenEvaluator(torch.nn.Module):
         elif "uq_ids" in result_dict:
             vq_id = result_dict["uq_ids"]
         elif "acoustic_vq_ids" in result_dict and "semantic_vq_ids" in result_dict:
-            vq_id = torch.stack([result_dict["acoustic_vq_ids"],
-                                result_dict["semantic_vq_ids"]], dim=-1)
+            if result_dict["acoustic_vq_ids"].ndim == 3:
+                vq_id = torch.cat([result_dict["semantic_vq_ids"],
+                                    result_dict["acoustic_vq_ids"]], dim=-1)
+            else:
+                vq_id = torch.stack([result_dict["semantic_vq_ids"],
+                                    result_dict["acoustic_vq_ids"]], dim=-1)
         else:
             raise ValueError("vq_ids or rvq_ids not found in result_dict")
         return vq_id
@@ -348,6 +352,7 @@ class TokenEvaluator(torch.nn.Module):
             # fix as the center
             start_sec = int((audio.shape[-1] / self.sample_rate - _slice_len) / 2)
             target_audio_slice = audio[..., start_sec*self.sample_rate: (start_sec + _slice_len) * self.sample_rate]
+
 
             target_tokens, _, _ = self.get_tokens(target_audio_slice, None)
             # 1) padding zeros
@@ -458,7 +463,8 @@ class TokenEvaluator(torch.nn.Module):
         min_len = min(concatenated_tokens.shape[0], full_tokens.shape[0])
 
         # Compare with full tokens
-        result = self.compute_locality(concatenated_tokens[0:min_len], full_tokens[0:min_len])
+
+        result =  self.compute_locality(concatenated_tokens[0:min_len], full_tokens[0:min_len])
         
         return {
             f"chunk_locality_{chunk_size}": result

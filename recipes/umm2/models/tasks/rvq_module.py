@@ -24,15 +24,7 @@ class RVQ(VQ):
             config, takes, provides, bypasses, task, loss_weight, lr_ratio, 'none', is_frozen
         )
 
-        if rvq_scheme is None:
-            self.rvq = EMAResidualVectorQuantizerEntropy(
-                codebook_size=config.vq_codebook_size,
-                codebook_dim=config.vq_codebook_dim,
-                decay=config.vq_decay,
-                rvq=config.rvq,
-            )
-        else:
-            self.rvq = rvq_scheme
+        self.rvq = rvq_scheme
 
 
     def forward(self, data):
@@ -42,6 +34,15 @@ class RVQ(VQ):
         hidden_states = self.vq_proj_in(hidden_states)
         to_quantize_embs = hidden_states
 
+
+        if self.rvq is None:
+            quantized_out = self.vq_proj_out(to_quantize_embs)
+            output_dict = {
+                "prevq_embs": to_quantize_embs,
+                "quantized_out": quantized_out,
+            } 
+            return output_dict
+        
         # do we really need vq_proj_noise?
         if self.config.get("vq_proj_noise", 0) > 0:
             noise_scale = (self.config.vq_proj_noise - self.cnt).clamp(0) / self.config.vq_proj_noise
@@ -88,10 +89,10 @@ class RVQ(VQ):
             "prevq_embs": to_quantize_embs,
             "quantized_out": hidden_states,
             "vq_ids": vq_ids,
-            "vq_emb": vq_emb,
+            "vq_embs": vq_emb,
             "loss": loss_weighted,
             f"aux/loss_{self.task}": loss, 
-
+            f"aux/loss_vq": loss, 
         }
 
         if "entropy" in vq_output_dict.keys():
@@ -308,13 +309,16 @@ class EMAVectorQuantizerRPSimple(EMAVectorQuantizerRP):
     def __init__(self, *args, **kwargs,):
         super().__init__(*args, **kwargs)
 
-    def forward(self, z, padding_mask):
+    def forward(self, z, padding_mask=None):
         """Notation:
         B: batch size
         T: n_frame
         D: codebook dimension
         N: codebook num
         """
+        if padding_mask is None:
+            padding_mask = torch.ones_like(z[...,0], dtype=torch.bool)
+            
         z_flattened = rearrange(z.detach(), "b t d -> (b t) d") # [B*T, D]
 
         d = self._compute_distance(z_flattened, self.embedding.weight)
@@ -420,7 +424,7 @@ class EMAResidualVectorQuantizerRP(EMAResidualVectorQuantizerEntropy):
             else:
                 raise NotImplementedError(f"vq_type {vq_type} not supported")
 
-    def forward(self, z, padding_mask):
+    def forward(self, z, padding_mask=None):
         z_unitnorm = z * torch.rsqrt(z.pow(2).sum(-1, keepdim=True) + self.eps) # [B, T, D]
 
         quantized = []

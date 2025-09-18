@@ -194,6 +194,13 @@ class Stage2(Stage0):
             vq_id = result_dict["rvq_ids"].squeeze(-1)
         elif "uq_ids" in result_dict:
             vq_id = result_dict["uq_ids"].squeeze(-1)
+        elif "acoustic_vq_ids" in result_dict and "semantic_vq_ids" in result_dict:
+            if result_dict["acoustic_vq_ids"].ndim == 3:
+                vq_id = torch.cat([result_dict["semantic_vq_ids"],
+                                    result_dict["acoustic_vq_ids"]], dim=-1)
+            else:
+                vq_id = torch.stack([result_dict["semantic_vq_ids"],
+                                    result_dict["acoustic_vq_ids"]], dim=-1)
         else:
             raise ValueError("vq_ids or rvq_ids not found in result_dict")
         return vq_id

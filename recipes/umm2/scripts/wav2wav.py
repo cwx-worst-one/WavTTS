@@ -2,7 +2,7 @@ from recipes.umm2.scripts.test_stage3_wav2tokens_RVQ import ModelLoader, init_mo
 import os
 import torchaudio
 
-def load_msr_audio(audio_path=None):
+def load_msr_audio(audio_path=None, stereo_24k=False):
     if audio_path is None:
         audio_path = "/mnt/bn/music-llm-nas-lq/qinxin/bak/inp071.generated.wav"
         audio_path = "/mnt/hdfs/qinxin.025/testset/token2wav/inp071.generated.wav"
@@ -18,7 +18,11 @@ def load_msr_audio(audio_path=None):
         audio_24k = audio   
     else:
         audio_24k = torchaudio.functional.resample(audio, sr, 24000)
-    audio_24k = audio_24k[0].unsqueeze(0).unsqueeze(1).cuda()       # [1, 1, 24000*sec]
+    
+    if stereo_24k:
+        audio_24k = audio_24k.unsqueeze(0).cuda()   # [1, 2, 24000*sec]
+    else:
+        audio_24k = audio_24k[0].unsqueeze(0).unsqueeze(1).cuda()       # [1, 1, 24000*sec]
 
     if sr == 44100:
         audio_441 = audio
@@ -47,9 +51,13 @@ def load_required_modules(pl_module, local_rank=0):
             pl_module.requires.update(initializer(hpath, local_rank=local_rank, cache_dir="./"))
     return pl_module
 
-def init_mel_DiT(ckpt_path):
+def init_mel_DiT(ckpt_path, model_name=None):
+    if model_name:
+        cache_dir = f".module_cache/{model_name}"
+    else:
+        cache_dir = ".module_cache/umm_DiT"
     model = init_model(ckpt_path=ckpt_path, 
-                    cache_dir=".module_cache/umm_DiT/", 
+                    cache_dir=cache_dir, 
                     device="cuda", 
                     pl_module_string="recipes.umm2.modules.stages.umm_DiT.Stage2DiT")
 
@@ -66,10 +74,10 @@ def init_mel_DiT(ckpt_path):
             "bn_norm_std": 1,
             "diffusion_precision": "bf16",
             "embed_padding": 0,
-
             "token_embed_chunk": True,
             "token_embed_chunk_size": 60,
             "token_embed_chunk_mode": "even",   # {max, even}
+            "inference_R": 4,
         }
 
     pl_module.model.prepare_inference(inference_config)
@@ -114,7 +122,7 @@ if __name__ == "__main__":
     # ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/stage2DiT/encoder_cotrain_dataid8424_noval_adddropout/checkpoints/step=0245000.ckpt"
     # [freeze UMM]
     # ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/stage2DiT/encoder_cotrain_dataid8424_noval_freezeUMM_lr5e5/checkpoints/step=0195000.ckpt"
-    ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/stage2DiT/fixlite_cotrainUMM_melSigmaVAE_align_fused_rmpad_bucket960k/checkpoints/step=0010000.ckpt"
+    # ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/stage2DiT/fixlite_cotrainUMM_melSigmaVAE_align_fused_rmpad_bucket960k/checkpoints/step=0010000.ckpt"
 
     # align mode (UQ)
     # [cotrain UMM]
@@ -123,8 +131,14 @@ if __name__ == "__main__":
     # ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/stage2DiT/encoder_cotrain_dataid8424_UQ25Hz32dim3bit_dropout0p1_fromStage2Fixed_align/checkpoints/step=0175000.ckpt"
     
     # align mode (RVQ4)
-    # [cotrain UMM]
-    # ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/stage3DiT/encoder_cotrain_RVQ4_14bit_align_dataid8424_noval_cotrainUMM/checkpoints/step=0175000.ckpt"
+    # [mono cotrain UMM]
+    # model_name = "mono"
+    # ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/stage3DiT/encoder_cotrain_RVQ4_14bit_align_dataid8424_noval_cotrainUMM/checkpoints/step=0170000.ckpt"
+    # [stereo cotrain UMM]
+    model_name = "stereo_64dim"
+    ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/stage3DiT/fixlite_cotrainUMM_4RVQ_stereoToken_align_fused_rmpad_bucket480k_h20/checkpoints/step=0170000.ckpt"
+    # model_name = "stereo_32dim"
+    # ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/stage3DiT/fixlite_cotrainUMM_4RVQ_stereoEnc32dimToken_align_fused_rmpad_bucket480k_h20/checkpoints/step=0170000.ckpt"
     # [freeze UMM]
     # ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/stage3DiT/encoder_cotrain_RVQ4_14bit_align_dataid8424_noval_freezeUMM/checkpoints/step=0175000.ckpt"
 
@@ -133,27 +147,32 @@ if __name__ == "__main__":
     # prefix mode (120000 valid, add sos, 5e-5 lr, from 50k)
     # ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/stage2DiT/encoder_cotrain_prefix_dataid8424_noval_adddropout_addsos_5e-5_from50k/checkpoints/step=0120000.ckpt"
 
-    pl_module = init_mel_DiT(ckpt_path)
+    pl_module = init_mel_DiT(ckpt_path, model_name)
     if args.audio_path is None:
-        audio_24k, audio_44100 = load_msr_audio()
+        # audio_24k, audio_44100 = load_msr_audio()
+        audio_24k, audio_44100 = load_msr_audio(stereo_24k=True)
+        # audio_24k[:,0] *= 2
         wav2wav(pl_module, audio_24k, audio_44100, audio_name="test", 
                     # target_dir="./saved/UQ_freezeUMM_180k/")
                     # target_dir="./saved/UQ_cotrainUMM_180k/")
                     # target_dir="./saved/RVQ4_freezeUMM_175k/")
                     # target_dir="./saved/RVQ4_cotrainUMM_175k/")
                     # target_dir="./saved/melVAE_freezeUMM_200k/")
-                    target_dir="./saved/melVAE_cotrainUMM_35k/")
+                    # target_dir="./saved/melVAE_cotrainUMM_35k/")
+                    target_dir="./saved/RVQ4_cotrainUMM_stereo_95k")
 
     else:
         wav_list = glob.glob(args.audio_path+"/*.wav")
         for wav_path in wav_list:
-            audio_24k, audio_44100 = load_msr_audio(wav_path)
+            audio_24k, audio_44100 = load_msr_audio(wav_path, stereo_24k=True)
+            # audio_24k, audio_44100 = load_msr_audio(wav_path)
             wav2wav(pl_module, audio_24k, audio_44100, audio_name=wav_path.split("/")[-1].split(".")[0], 
-                    target_dir="./saved/output/RVQ4_cotrainUMM_175k/")
+                    target_dir="./saved/output/RVQ4_cotrainUMM_170k_stereo_4R_64dim/")
+                    # target_dir="./saved/output/RVQ4_cotrainUMM_170k_stereo_4R_32dim/")
+                    # target_dir="./saved/output/RVQ4_cotrainUMM_170k_mono_4R_32dim/")
 
     # pl_module.model.text_cfg_w = 1.0
     # vae = pl_module.model.inference(audio_24k)
     # reconstruct_wav_441 = pl_module.sacodec_embs_to_wav(vae)
     # print(vae.shape, reconstruct_wav_441.shape, audio_44100.shape)
     # torchaudio.save("reconstruct_wav_441_cfg1.0.wav", reconstruct_wav_441[0].cpu(), 44100)
-

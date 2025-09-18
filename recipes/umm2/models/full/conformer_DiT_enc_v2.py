@@ -31,12 +31,14 @@ class Stage2DiTEnc(UMMModified):
     def __init__(self, config, 
                         dit_config, 
                         sigma=0.2,   
+                        stereo=False,
                         takes=[],
                         provides=[],
                         bypasses=[],
                         lr_ratio=1.0,
                         loss_weight=None,
-                        is_frozen=False,):
+                        is_frozen=False,
+                        stereo_mode="concat"):
         BaseStage.__init__(self, 
             takes,
             provides,
@@ -49,6 +51,8 @@ class Stage2DiTEnc(UMMModified):
         self.config = config
         self.dit_config = dit_config
         self.sigma = sigma
+        self.stereo = stereo
+        self.stereo_mode = stereo_mode
         self.prepare_encoder()
         self.prepare_diffusion()
         self.prepare_vq_fc()
@@ -74,6 +78,10 @@ class Stage2DiTEnc(UMMModified):
 
     def prepare_vq_fc(self, ):
         config = self.config
+        self.hidden_proj = None
+        if self.stereo_mode == "pre_quantization_concat":
+            self.hidden_proj = nn.Linear(config.hidden_size * 2, config.hidden_size, bias=False)
+
         self.vq_proj_in = nn.Linear(
             config.hidden_size, config.vq_codebook_dim, bias=False
         )
@@ -92,7 +100,7 @@ class Stage2DiTEnc(UMMModified):
                     codebook_size=config.vq_codebook_size,
                     codebook_dim=config.vq_codebook_dim,
                     rvq=config.rvq, 
-                    dist=False, # for debug 1gpu
+                    # dist=False, # for debug 1gpu
                 )
             else:
                 raise NotImplementedError
@@ -117,6 +125,7 @@ class Stage2DiTEnc(UMMModified):
 
         self.token_embed_chunk = self.inference_config["token_embed_chunk"]
         self.token_embed_chunk_size = self.inference_config["token_embed_chunk_size"]
+        self.inference_R = self.inference_config.get("inference_R", None)
 
     
     def _compute_fused_kernel(self, batch):
@@ -149,6 +158,15 @@ class Stage2DiTEnc(UMMModified):
 
         # add vq
         vq_loss, vq_ids, ppl = None, None, None
+
+        if self.stereo and self.stereo_mode == "pre_quantization_concat":
+            B, T, D = hidden_states.shape
+            assert B % 2 == 0
+            hidden_states = hidden_states.reshape(B//2, 2, T, D)
+            feature_mask = feature_mask.reshape(B//2, 2, T)[:, 0]
+            hidden_states = hidden_states.permute((0, 2, 1, 3)).reshape(B//2, T, 2*D)
+            hidden_states = self.hidden_proj(hidden_states)
+
         bn_hidden_states = self.vq_proj_in(hidden_states) 
         # standard normalize
         if not self.config.add_vq:
@@ -163,9 +181,11 @@ class Stage2DiTEnc(UMMModified):
                 continuous_embed = quantized_embed
             elif self.config.vq_type == "RVQ":
                 # no vq_proj_noise
-                output_dict = self.rvq({"latent": bn_hidden_states, 
-                                        "attn_mask": conformer_mask})   # {embs, ids, loss, ppl}
-                vq_emb = output_dict["vq_embs"]    # [B, T, N, R]
+                # print(bn_hidden_states.shape, bn_hidden_states.dtype, bn_hidden_states.device)
+                # print(feature_mask.shape, feature_mask.dtype, feature_mask.device)
+                output_dict = self.rvq(bn_hidden_states, padding_mask=feature_mask)   # {embs, ids, loss, ppl}
+                vq_emb = output_dict["embs"]    # [B, T, N, R]
+                vq_ids = output_dict["ids"]
                 if self.training:
                     batch_size = vq_emb.shape[0]
                     if torch.rand(1) > 0.5: # all R embs
@@ -174,10 +194,22 @@ class Stage2DiTEnc(UMMModified):
                         quantizer_dropout = torch.randint(vq_emb.shape[-1], size=(batch_size,))
                         continuous_embed = vq_emb[range(batch_size), ..., quantizer_dropout]
                 else:
-                    continuous_embed = vq_emb[..., -1]
+                    if "inference_R" in batch:
+                        R_idx = min(max(batch["inference_R"]-1, 0), vq_emb.shape[-1]-1)
+                        continuous_embed = vq_emb[..., R_idx]
+                        vq_ids = vq_ids[..., :R_idx+1]
+                    else:
+                        continuous_embed = vq_emb[..., -1]
+                        
                 vq_loss = output_dict["loss"]
-                vq_ids = output_dict["vq_ids"]
                 vq_ids = vq_ids[:, 0:seqlen]
+        
+        if self.stereo and self.stereo_mode == "concat":
+            # B, T, C
+            B, T, C = continuous_embed.shape
+            assert B % 2 == 0
+            continuous_embed = continuous_embed.reshape(B//2, 2, T, C)
+            continuous_embed = continuous_embed.permute((0, 2, 1, 3)).reshape(B//2, T, 2*C)
 
         bs = continuous_embed.shape[0]
         if self.training:
@@ -210,7 +242,27 @@ class Stage2DiTEnc(UMMModified):
         if ppl is not None:
             output_dict["ppl"] = output_dict["ppl"]
         return output_dict
-    
+
+    @torch.no_grad()
+    @torch.cuda.amp.autocast(enabled=False)
+    def preprocessing(
+        self, 
+        x: torch.Tensor, 
+        x_length: torch.Tensor
+    ):
+        if not self.stereo:
+            return super().preprocessing(x, x_length)
+        
+        # stereo audio
+        # x: [B, 2, nsample]
+        normalize = self.config.feature_cmvn is not None
+        x = x[:, :2]    #  maximum 2 channels
+        batch_x = x.reshape(-1, x.shape[-1])
+        batch_x_length = x_length.unsqueeze(-1).repeat(1, 2).reshape(-1)
+        mel, mel_length = self.audio_transform(batch_x, batch_x_length, normalize=normalize)
+        return mel, mel_length
+
+
     @torch.no_grad()
     def inference_tokenizer(self, wav, wav_len=None):
         def forward(wav, wav_len):
@@ -238,6 +290,15 @@ class Stage2DiTEnc(UMMModified):
             
             hidden_states = hidden_states[:, 0:seqlen, :]
 
+
+            if self.stereo and self.stereo_mode == "pre_quantization_concat":
+                B, T, D = hidden_states.shape
+                assert B % 2 == 0
+                hidden_states = hidden_states.reshape(B//2, 2, T, D)
+                feature_mask = feature_mask.reshape(B//2, 2, T)[:, 0]
+                hidden_states = hidden_states.permute((0, 2, 1, 3)).reshape(B//2, T, 2*D)
+                hidden_states = self.hidden_proj(hidden_states)
+
             # add vq
             bn_hidden_states = self.vq_proj_in(hidden_states) 
             # standard noramlize
@@ -253,15 +314,21 @@ class Stage2DiTEnc(UMMModified):
                     continuous_embed = quantized_embed
                 elif self.config.vq_type == "RVQ":
                     # no vq_proj_noise
-                    output_dict = self.rvq({"latent": bn_hidden_states, 
-                                            "attn_mask": conformer_mask})    # {embs, ids, loss, ppl}
+                    output_dict = self.rvq(bn_hidden_states, padding_mask=feature_mask)    # {embs, ids, loss, ppl}
                     vq_emb = output_dict["embs"]    # [B, T, N, R]
-                    continuous_embed = vq_emb[..., -1]
-                    # vq_loss = output_dict["loss"]
-                    # vq_ids = output_dict["ids"]
+                    if self.inference_R:
+                        continuous_embed = vq_emb[..., self.inference_R-1]
+                    else:
+                        continuous_embed = vq_emb[..., -1]
 
-            return continuous_embed
+            if self.stereo and self.stereo_mode == "concat":
+                # B, T, C
+                B, T, C = continuous_embed.shape
+                assert B % 2 == 0
+                continuous_embed = continuous_embed.reshape(B//2, 2, T, C)
+                continuous_embed = continuous_embed.permute((0, 2, 1, 3)).reshape(B//2, T, 2*C)
 
+            return continuous_embed        
 
         if wav_len is None:
             wav_len = torch.tensor(wav.shape[-1]).unsqueeze(0).repeat(wav.shape[0]).long().to(wav.device)
@@ -515,6 +582,7 @@ def test_align_dit(config, vocoder, inference=False):
         "embed_padding": 0,
         "token_embed_chunk": False,
         "token_embed_chunk_size": 45,
+        "stereo": False,
     }
         model = model.eval()
         model.prepare_inference(inference_config)

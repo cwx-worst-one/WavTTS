@@ -462,7 +462,6 @@ class UMMModified_no_VQ(BaseStage):
         )
         if config.feature_cmvn is not None:
             self.audio_transform.load_from_checkpoint(config.feature_cmvn)
-
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
     def pad_audio(self, x):
@@ -471,7 +470,6 @@ class UMMModified_no_VQ(BaseStage):
             return F.pad(x, (0, rate - (x.size(-1) % rate)), "constant", 0)
         else:
             return x
-        
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
     def preprocessing(
@@ -483,7 +481,6 @@ class UMMModified_no_VQ(BaseStage):
         normalize = self.config.feature_cmvn is not None
         mel, mel_length = self.audio_transform(x, x_length, normalize=normalize)
         return mel, mel_length
-    
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
     def get_feature(
@@ -495,7 +492,6 @@ class UMMModified_no_VQ(BaseStage):
         wav = self.pad_audio(wav) 
         mel, mel_length = self.preprocessing(wav, wav_len)
         return mel , mel_length
-    
     def forward(self, batch):
         if self.config.use_fused_kernel:
             if not self.config.use_causal_conformer:
@@ -586,7 +582,6 @@ class UMMModified_no_VQ(BaseStage):
 class UMMModified(BaseStage):
 
     def __init__(
-
         self,
         config,       
         takes=[],
@@ -595,6 +590,7 @@ class UMMModified(BaseStage):
         lr_ratio=1.0,
         loss_weight=None,
         is_frozen=False,
+        **kwargs,
     ):
         BaseStage.__init__(self, takes, provides, bypasses, lr_ratio=lr_ratio, loss_weight=loss_weight, is_frozen=is_frozen, config=config)
         logger.info(f"UMMModified config: {config}")
@@ -610,7 +606,7 @@ class UMMModified(BaseStage):
         self.vq_layer = None
         self.vq_layer_idx = None
 
-        if config.add_vq:
+        if config.add_vq or config.get("add_vq_proj_layer", False):
             self._init_vq_module(config)
 
         #Consistency loss
@@ -657,13 +653,16 @@ class UMMModified(BaseStage):
                 )
             distance_type = getattr(config, 'vq_distance_type', 'euclidean')
             if config.rvq == 1:
-                # Initialize VQ components
-                quantize = EMAVectorQuantizerEntropy(
-                    config.vq_codebook_size,
-                    config.vq_codebook_dim, 
-                    decay=config.vq_decay,
-                    distance_type=distance_type
-                )
+                if config.get("add_vq_proj_layer", False) and not config.add_vq:
+                    quantize = None
+                else:
+                    # Initialize VQ components
+                    quantize = EMAVectorQuantizerEntropy(
+                        config.vq_codebook_size,
+                        config.vq_codebook_dim, 
+                        decay=config.vq_decay,
+                        distance_type=distance_type
+                    )
                 self.vq_layer = VQ(
                     config, 
                     task='vq', 
@@ -672,25 +671,28 @@ class UMMModified(BaseStage):
                 )
             else:
                 logger.info(f"rvq: {config.rvq}")
-                if config.vq_type == "EMAEntropy":
-                    quantize = EMAResidualVectorQuantizerEntropy(
-                        config.vq_codebook_size, # support list of codebook_size
-                        config.vq_codebook_dim, # support list of vq_codebook_dim
-                        decay=config.vq_decay,
-                        rvq=config.rvq,
-                        distance_type=distance_type
-                    )
-                elif config.vq_type.startswith("EMARP"):
-                    quantize = EMAResidualVectorQuantizerRP(
-                        config.vq_type, 
-                        config.vq_codebook_size, # support list of codebook_size
-                        config.vq_codebook_dim, 
-                        decay=config.vq_decay,
-                        rvq=config.rvq, 
-                        stale_tolerance=config.stale_tolerance,
-                    )
+                if config.get("add_vq_proj_layer", False) and not config.add_vq:
+                    quantize = None
                 else:
-                    raise NotImplementedError(f"vq_type {config.vq_type} not supported")
+                    if config.vq_type == "EMAEntropy":
+                        quantize = EMAResidualVectorQuantizerEntropy(
+                            config.vq_codebook_size, # support list of codebook_size
+                            config.vq_codebook_dim, # support list of vq_codebook_dim
+                            decay=config.vq_decay,
+                            rvq=config.rvq,
+                            distance_type=distance_type
+                        )
+                    elif config.vq_type.startswith("EMARP"):
+                        quantize = EMAResidualVectorQuantizerRP(
+                            config.vq_type, 
+                            config.vq_codebook_size, # support list of codebook_size
+                            config.vq_codebook_dim, 
+                            decay=config.vq_decay,
+                            rvq=config.rvq, 
+                            stale_tolerance=config.stale_tolerance,
+                        )
+                    else:
+                        raise NotImplementedError(f"vq_type {config.vq_type} not supported")
 
                 self.vq_layer = RVQ(
                     config, 
@@ -797,7 +799,7 @@ class UMMModified(BaseStage):
                 return self._compute_causal_conformer(batch)
         else:
             return self._compute_normal(batch)
-
+        
     @torch.autocast(device_type='cuda')
     def _compute_causal_conformer(self, batch):
         # Extract features
@@ -817,20 +819,19 @@ class UMMModified(BaseStage):
         input_shape = hidden_states.shape
         layer_inputs, layer_kwargs, extra_outputs = self.conformer.inputs_forward(
             hidden_states, feature_mask, layer_kwargs)
-
+        
         # Initialize tracking variables
         vq_output_dict = None
-
         for layer_index in range(num_layers):
             if layer_index == self.vq_layer_idx:
-
                 hidden_states = self.conformer.outputs_forward(
                     layer_inputs, layer_kwargs, extra_outputs, input_shape)
-
+                
                 vq_output_dict = self.vq_layer({
                                     'latent': hidden_states,
                                     'attn_mask' : feature_mask
                                     })
+                
                 hidden_states = vq_output_dict['quantized_out']
 
                 if self.use_consistency_loss:
@@ -847,18 +848,18 @@ class UMMModified(BaseStage):
 
                 layer_inputs, layer_kwargs, extra_outputs = self.conformer.inputs_forward(
                     hidden_states, feature_mask, layer_kwargs)
-
+                
             layer_inputs, layer_kwargs, extra_outputs = self.conformer.layer_forward(
                 layer_index, layer_inputs, layer_kwargs, extra_outputs)    
-
+            
         hidden_states = self.conformer.outputs_forward(
             layer_inputs, layer_kwargs, extra_outputs, input_shape)
-
+        
         hidden_states = hidden_states.float() * feature_mask.view(*hidden_states.shape[:-1], 1)
         fw_flops, bw_flops, _ = self.conformer.calc_flops(feature_mask.sum(dim = -1).view(-1),
                                                           rmpad=self.causal_conformer_config.conformer_use_rmpad)
         flops = fw_flops + bw_flops
-
+        
         batch['mel'] = mel
         batch['mel_len'] = mel_len
         batch['latent'] = hidden_states
@@ -892,7 +893,7 @@ class UMMModified(BaseStage):
 
                 vq_output_dict = self.vq_layer({
                                     'latent': hidden_states,
-                                    'attn_mask' : feature_mask
+                                    'attn_mask': feature_mask
                                     })
                 hidden_states = vq_output_dict['quantized_out']
 
@@ -958,9 +959,10 @@ class UMMModified(BaseStage):
         for layer_index, layer in enumerate(self.encoder_layers):
             
             if layer_index == self.vq_layer_idx:
+
                 vq_output_dict = self.vq_layer({
                                     'latent': hidden_states,
-                                    'attn_mask' : conformer_mask
+                                    'attn_mask': conformer_mask
                                     })
                 hidden_states = vq_output_dict['quantized_out']
 
@@ -996,7 +998,7 @@ class UMMModified(BaseStage):
             batch.update(vq_output_dict)
         
         return batch 
-
+    
     @torch.no_grad()
     def wav2token(self, audio, audio_len=None, **kwargs):
         if self.config.use_fused_kernel:
@@ -1006,7 +1008,7 @@ class UMMModified(BaseStage):
                 return self._wav2token_causal_conformer(audio, audio_len, **kwargs)
         else:
             return self._wav2token_normal(audio, audio_len, **kwargs)
-
+        
     @torch.no_grad()
     @torch.autocast(device_type='cuda')
     def _wav2token_causal_conformer(self, audio, audio_len=None, **kwargs):
@@ -1018,17 +1020,14 @@ class UMMModified(BaseStage):
         
         output_dict = {}
         hidden_states = feature
-
         layer_kwargs = {
             'use_fused_block': True,
             'fuse_dropout_residual_layernorm': True,
         }
-
         num_layers = len(self.conformer.encoders)
         input_shape = hidden_states.shape
         layer_inputs, layer_kwargs, extra_outputs = self.conformer.inputs_forward(
                 hidden_states, feature_mask, layer_kwargs)
-
         for layer_index in range(num_layers):
             if self.vq_layer is not None and layer_index == self.vq_layer_idx:
                 hidden_states = self.conformer.outputs_forward(
@@ -1040,13 +1039,10 @@ class UMMModified(BaseStage):
                 hidden_states = vq_output['quantized_out']
                 # Store intermediate VQ-related tensors for analysis or other purposes
                 output_dict['quantized_latent'] = hidden_states
-
                 layer_inputs, layer_kwargs, extra_outputs = self.conformer.inputs_forward(
                     hidden_states, feature_mask, layer_kwargs)
-
             layer_inputs, layer_kwargs, extra_outputs = self.conformer.layer_forward(
                 layer_index, layer_inputs, layer_kwargs, extra_outputs)        
-
         hidden_states = self.conformer.outputs_forward(
             layer_inputs, layer_kwargs, extra_outputs, input_shape)
         
@@ -1119,7 +1115,6 @@ class UMMModified(BaseStage):
 
         for layer_index, layer in enumerate(self.encoder_layers):
             if self.vq_layer is not None and layer_index == self.vq_layer_idx:
-                
                 vq_input = {'latent': hidden_states, 'attn_mask': conformer_mask, **kwargs}
                 vq_output = self.vq_layer(vq_input)
                 

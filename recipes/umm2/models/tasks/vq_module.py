@@ -33,14 +33,14 @@ class VQ(BaseStage):
         self.num_bands = 0  # not using multi-bands
         self.vq_codebook_size = config.vq_codebook_size
 
-        if vq_scheme is None:
-            self.vq = EMAVectorQuantizer(
-                codebook_size=config.vq_codebook_size,
-                codebook_dim=config.vq_codebook_dim,
-                decay=config.vq_decay,
-            )
-        else:
-            self.vq = vq_scheme
+        # if vq_scheme is None:
+        #     self.vq = EMAVectorQuantizer(
+        #         codebook_size=config.vq_codebook_size,
+        #         codebook_dim=config.vq_codebook_dim,
+        #         decay=config.vq_decay,
+        #     )
+        # else:
+        self.vq = vq_scheme
 
         if config.get("vq_proj_norm", None) == "melrof":
             self.vq_proj_in = MLP_embed(
@@ -181,6 +181,14 @@ class VQ(BaseStage):
         hidden_states = self.vq_proj_in(hidden_states)
         to_quantize_embs = hidden_states
 
+        if self.vq is None:
+            quantized_out = self.vq_proj_out(to_quantize_embs)
+            output_dict = {
+                "prevq_embs": to_quantize_embs,
+                "quantized_out": quantized_out,
+            } 
+            return output_dict
+        
         if self.config.get("vq_proj_norm", None) == "melrof":
             num_bands = hidden_states.shape[2]
             hidden_states = rearrange(hidden_states, "b t k d -> b t (k d)") # [batch, time, vq_codebook_dim]
@@ -191,6 +199,7 @@ class VQ(BaseStage):
                 hidden_states + torch.randn_like(hidden_states) * noise_scale
             )
             self.cnt.add_(1)
+
         if "e_scale" in inspect.getfullargspec(self.vq.forward).args:
             e_scale = 0.
             if self.training and hasattr(self, "cnt") and self.cnt < 30000:

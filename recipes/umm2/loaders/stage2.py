@@ -178,11 +178,55 @@ class DualDecoderModelLoader(ModelLoader):
     def load_model(self, pl_module: pl.LightningModule):
         state_dict = self.init_pretrained()
         logger.info(f'Loading pretrained model from {self.ckpt_path}')
-        self.modify_state_dict(state_dict)
-        missing_keys, unexpected_keys = pl_module.load_state_dict(state_dict=state_dict, strict=False)
+        map_state_dict = self.modify_state_dict_and_check_size(pl_module.state_dict(), state_dict)
+        missing_keys, unexpected_keys = pl_module.load_state_dict(state_dict=map_state_dict, strict=False)
         logger.info(f"[Missing] {missing_keys}")
         logger.info(f"[Unexpected] {unexpected_keys}")
         return pl_module
+    
+    def modify_state_dict_and_check_size(self, current_state_dict, state_dict):
+        map_state_dict = {}
+
+        for k in list(state_dict.keys()):
+            if k.startswith("model.stages.0.encoder_pre_layers"):
+                k_i = int(k.split(".")[2])
+                k_suffix = ".".join(k.split(".")[3:])
+                k_new = f"model.stages.0.encoder_layers.{k_i}.{k_suffix}"
+                map_state_dict[k_new] = state_dict[k]
+                print(f"[MSD] {k} -> {k_new}")
+            elif k.startswith("model.stages.0.encoder_post_layers"):
+                k_i = int(k.split(".")[2]) + 12
+                k_suffix = ".".join(k.split(".")[3:])
+                k_new = f"model.stages.0.encoder_layers.{k_i}.{k_suffix}"
+                map_state_dict[k_new] = state_dict[k]
+                print(f"[MSD] {k} -> {k_new}")
+            else:
+                if state_dict[k].size() != current_state_dict[k].size():
+                    print(f"[UMMModelLoader/Error] {k} size mismatch, \
+                            pretrained: {state_dict[k].size()}, current: {current_state_dict[k].size()}")
+                else:
+                    map_state_dict[k] = state_dict[k].clone()
+                    print("[UMMModelLoader/Success]", k)
+
+        return map_state_dict
+
+class DualDecoderModelLoaderCustomized(DualDecoderModelLoader):
+    def __init__(self, map_list, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+        """
+        e.g.,
+        map_list = [
+            ['ctc', 'stages.1.spans.1.', 'stages.2.spans.0.'],
+        ]
+        e.g.2, 
+        map_list = [
+            ['ctc', 'stages.1.spans.1.', 'stages.2.spans.0.'],
+            ['chroma', 'stages.1.spans.2.', 'stages.2.spans.1.'],
+            ['f0_vuv', 'stages.1.spans.3.', 'stages.2.spans.2.'],
+        ]
+        """
+        self.map_list = map_list
     
     def modify_state_dict(self, state_dict):
         for k in list(state_dict.keys()):
@@ -193,6 +237,7 @@ class DualDecoderModelLoader(ModelLoader):
                 state_dict[k_new] = state_dict[k]
                 print(f"[MSD] {k} -> {k_new}")
                 del state_dict[k]
+
             elif k.startswith("model.stages.0.encoder_post_layers"):
                 k_i = int(k.split(".")[2]) + 12
                 k_suffix = ".".join(k.split(".")[3:])
@@ -201,10 +246,19 @@ class DualDecoderModelLoader(ModelLoader):
                 print(f"[MSD] {k} -> {k_new}")
                 del state_dict[k]
 
-            elif (any(["ctc_head" in k, "ctc_downsample" in k, "ctc_norm" in k])):
-                # src: "'model.stages.1.spans.1.ctc_downsample.projection_layer.weight', 'model.stages.1.spans.1.ctc_downsample.projection_layer.bias', 'model.stages.1.spans.1.ctc_norm.weight', 'model.stages.1.spans.1.ctc_norm.bias', 'model.stages.1.spans.1.ctc_head.weight', 'model.stages.1.spans.1.stages.1.spans.1.ctc_head.weight'"
-                # tgt: "'model.stages.2.spans.0.ctc_downsample.projection_layer.weight', 'model.stages.2.spans.0.ctc_downsample.projection_layer.bias', 'model.stages.2.spans.0.ctc_norm.weight', 'model.stages.2.spans.0.ctc_norm.bias', 'model.stages.2.spans.0.ctc_head.weight'])"
-                k_new = k.replace("stages.1.spans.1.", "stages.2.spans.0.")
-                state_dict[k_new] = state_dict[k]
-                print(f"[MSD] {k} -> {k_new}")
-                del state_dict[k]
+            else:
+                for map_key, src_prefix, tgt_prefix in self.map_list:
+                    if map_key in k:
+                        k_new = k.replace(src_prefix, tgt_prefix)
+                        state_dict[k_new] = state_dict[k]
+                        print(f"[MSD] {k} -> {k_new}")
+                        del state_dict[k]
+                        break
+                
+                # if (any(["ctc_head" in k, "ctc_downsample" in k, "ctc_norm" in k])):
+                # # src: "'model.stages.1.spans.1.ctc_downsample.projection_layer.weight', 'model.stages.1.spans.1.ctc_downsample.projection_layer.bias', 'model.stages.1.spans.1.ctc_norm.weight', 'model.stages.1.spans.1.ctc_norm.bias', 'model.stages.1.spans.1.ctc_head.weight', 'model.stages.1.spans.1.stages.1.spans.1.ctc_head.weight'"
+                # # tgt: "'model.stages.2.spans.0.ctc_downsample.projection_layer.weight', 'model.stages.2.spans.0.ctc_downsample.projection_layer.bias', 'model.stages.2.spans.0.ctc_norm.weight', 'model.stages.2.spans.0.ctc_norm.bias', 'model.stages.2.spans.0.ctc_head.weight'])"
+                # k_new = k.replace("stages.1.spans.1.", "stages.2.spans.0.")
+                # state_dict[k_new] = state_dict[k]
+                # print(f"[MSD] {k} -> {k_new}")
+                # del state_dict[k]

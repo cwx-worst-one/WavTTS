@@ -9,7 +9,7 @@ from recipes.umm.models.voc_modules.pitch_predictor.inference import PerceptualP
 from recipes.umm.models.voc_modules.pitch_predictor import pitch_utils
 from recipes.umm.utils.mel_utils import torch_wav2spec
 
-
+ 
 def f0_normalize(f0):
     _f0 = f0.clone()
     f0 = torch.log1p(f0)
@@ -55,6 +55,7 @@ class F0_VUV_Head(BaseStage):
                                             use_bn=config.get("use_bn", True),
                                             stride=config.get("upsample_strides", None),
                                             pad=config.get("upsample_pads", None),)
+        self.f0_vuv_head_input_key = config.get('f0_vuv_head_input_key', 'latent')
 
     def pad_audio(self, x):
         rate = int(self.config.sample_rate / self.config.frame_rate)
@@ -94,9 +95,9 @@ class F0_VUV_Head(BaseStage):
         f0, vuv = self.get_feature(batch['audio'])
 
         if self.f0_vuv_norm is not None:
-            latent = self.f0_vuv_norm(batch['latent'])
+            latent = self.f0_vuv_norm(batch[self.f0_vuv_head_input_key])
         else:
-            latent = batch['latent']
+            latent = batch[self.f0_vuv_head_input_key]
 
         f0_vuv_out = self.f0_vuv_head(latent)
         f0_out = f0_vuv_out[:, :, 0:1].squeeze(-1)
@@ -134,8 +135,9 @@ class F0_VUV_Head_Pitchpdt(BaseStage):
         # the pl_module handles loading the pretrained state_dict of perceptual pitch predictor
         self.pitch_pdt = PerceptualPitchPredictor()
             
+        self.stereo = True if task == "stereo_f0_vuv" else False
         # This head reconstructs the f0_hz and vuv signals from a mel-160 spectrogram
-        self.f0_vuv_head = Conv2dUpsampling(config.hidden_size, 2,
+        self.f0_vuv_head = Conv2dUpsampling(config.hidden_size, 2 * 2 if self.stereo else 2,
                                             use_bn=config.get("use_bn", True),
                                             stride=config.get("upsample_strides", None),
                                             pad=config.get("upsample_pads", None))
@@ -144,6 +146,7 @@ class F0_VUV_Head_Pitchpdt(BaseStage):
         self.mel_160_transform = lambda x: torch_wav2spec(
             x, num_mels=160, sample_rate=config.sample_rate
         )
+        self.f0_vuv_head_input_key = config.get('f0_vuv_head_input_key', 'latent')
             
     def pad_audio(self, x):
         rate = int(self.config.sample_rate / self.config.frame_rate)
@@ -183,7 +186,10 @@ class F0_VUV_Head_Pitchpdt(BaseStage):
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
     def get_feature(self, x):
-        wav = x.squeeze(dim=1).float()
+        if self.stereo:
+            wav = x.reshape(-1, x.shape[-1])
+        else:
+            wav = x.squeeze(dim=1).float()
         wav = self.pad_audio(wav)
         return wav
 
@@ -192,7 +198,7 @@ class F0_VUV_Head_Pitchpdt(BaseStage):
         # This is mel-160 required by the pre-trained pitch detector
         mel_160 = self.mel_160_transform(x)
         mel_len = batch['mel_len']
-        latent = batch["latent"]
+        latent = batch[self.f0_vuv_head_input_key]
         
         # This is pitch_detector logic.
         pd_output = self.pitch_pdt.forward(
@@ -209,6 +215,11 @@ class F0_VUV_Head_Pitchpdt(BaseStage):
         vuv = vuv.unsqueeze(2)
 
         f0_vuv_out = self.f0_vuv_head(latent)
+        if self.stereo:
+            B, T = f0_vuv_out.shape[:2]
+            f0_vuv_out = f0_vuv_out.reshape(B, T, 2, -1)
+            f0_vuv_out = f0_vuv_out.transpose(1, 2).reshape(B * 2, T, -1)
+
         f0_out = f0_vuv_out[:, :, 0:1]
         vuv_out = f0_vuv_out[:, :, 1:]
         # sometimes f0_gt, vuv_gt is 1 timestep longer than f0_out, vuv_out

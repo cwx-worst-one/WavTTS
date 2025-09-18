@@ -57,6 +57,17 @@ def init_stage3(hpath, local_rank, requires=[], cache_dir=None):
     return_dict = {"Stage3": Stage3}
     return return_dict
 
+def init_stage2(hpath, local_rank, requires=[], cache_dir=None):
+    """Init function for standard Stage3 UMM backbone."""
+    from recipes.umm2.modules.stages.stage2 import Stage2
+
+    device = torch.device(f"cuda:{local_rank}")
+    loader = ModelLoader(hpath, requires=requires, cache_dir=cache_dir, device=device)
+    model = loader.load_model(Stage2)
+    stage2 = model["pl_module"]
+    return_dict = {"Stage3": stage2}
+    return return_dict
+
 def init_stage3_window_attn(hpath, local_rank, requires=[], cache_dir=None):
     """Init function for standard Stage3 UMM backbone."""
     from recipes.umm2.modules.stages.stage3 import Stage3
@@ -100,15 +111,21 @@ if __name__ == "__main__":
 
     # # 50Hz stage2
     # ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/stage2/50Hz_lr2e-4_cyc200k_bs5_fixall/checkpoints/step=0255000.ckpt"
+
+    # dual decoder
+    # v1 | mono | Acoustic/RP-RVQ2x14bit/Mel | Semantic/RP-VQ13bit/Chroma/F0/CTC
+    ckpt_path = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/stage3/lite_fused_dualdec_SD6AD12_orth1_sep_FixedSf0crmCTCRP13bit_AmelRP2x14bit_bucket1680k/checkpoints/step=0085000.ckpt"
+
     cache_dir = "./module_cache/umm2/"
     local_rank = 0
 
     # requires = ["loss", "token", "latent"] # stage3 / stage4
     # requires = ["loss", "token", "latent", "tag"] #  stage4
     # requires = ["latent"]   # stage2
-    requires = ["token"]
-    model = init_stage3(ckpt_path, local_rank, requires=requires, cache_dir=cache_dir)
-
+    requires = ["loss", "token"]
+    # model = init_stage3(ckpt_path, local_rank, requires=requires, cache_dir=cache_dir)
+    model = init_stage2(ckpt_path, local_rank, requires=requires, cache_dir=cache_dir)
+    model = model["Stage3"]
     
     # chunk-wise inference (recommended)
     print("======= chunk-wise inference =======")
@@ -128,8 +145,10 @@ if __name__ == "__main__":
 
     chunk_tokens = chunk_output_dict["token"]
     full_tokens = full_output_dict["token"]
+    
+    for i in range(chunk_tokens.shape[-1]):
+        with open(f"test_chunk_R{i}.txt", "w") as f:
+            f.writelines("\n".join(chunk_tokens[0][:,i].cpu().reshape(-1).numpy().astype(str).tolist()))
 
-    with open("test_chunk_R1.txt", "w") as f:
-        f.writelines("\n".join(chunk_tokens[0][:,0].cpu().reshape(-1).numpy().astype(str).tolist()))
     with open("test_full_R1.txt", "w") as f:
         f.writelines("\n".join(full_tokens[0][:,0].cpu().reshape(-1).numpy().astype(str).tolist()))

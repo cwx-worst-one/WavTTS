@@ -96,15 +96,15 @@ class Stage2DiT(Stage2):
         # wav = B x CH x L
         model: SACodecModuleUMM = self.requires["sacodec"]
         latents = model.get_latents(wav) # B L D
-        latents = model.normalize_features(latents, self.bn_config["bn_norm_mean"], self.bn_config['bn_norm_std'])
+        # latents = model.normalize_features(latents, self.bn_config["bn_norm_mean"], self.bn_config['bn_norm_std'])
         return latents
     
     @torch.no_grad()
     def sacodec_embs_to_wav(self, latents, overlap_len=1):
         model: SACodecModuleUMM = self.requires["sacodec"]
         if isinstance(latents, list):
-            latents = [model.denormalize_features(latent, self.bn_config["bn_norm_mean"], self.bn_config['bn_norm_std']).transpose(1, 2)
-                       for latent in latents]# B D L -> B L D
+            # latents = [model.denormalize_features(latent, self.bn_config["bn_norm_mean"], self.bn_config['bn_norm_std']).transpose(1, 2) for latent in latents]
+            latents = [latent.transpose(1, 2) for latent in latents]# B D L -> B L D
             audio_hat = [model.decode_latents(latent) for latent in latents]
 
             if overlap_len == 0:
@@ -133,7 +133,7 @@ class Stage2DiT(Stage2):
             return chunks
 
         else:
-            latents = model.denormalize_features(latents, self.bn_config["bn_norm_mean"], self.bn_config['bn_norm_std'])
+            # latents = model.denormalize_features(latents, self.bn_config["bn_norm_mean"], self.bn_config['bn_norm_std'])
             latents = latents.transpose(1, 2) # B D L -> B L D
             audio_hat = model.decode_latents(latents)
         
@@ -157,6 +157,7 @@ class Stage2DiT(Stage2):
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
     def prepare_msr_wav(self, batch):
+        stereo_24k = self.model.stereo if hasattr(self.model, "stereo") else False
         if isinstance(batch, list):
             new_batch = {
                 "wav_24k": pad_sequence([item["wav_24k"][0] for item in batch], batch_first=True, ),
@@ -167,16 +168,16 @@ class Stage2DiT(Stage2):
             batch = new_batch
         
         if "wav_24k" in batch and "wav" in batch:
-            wav_24k_mono, wav_44k1_stereo = batch["wav_24k"], batch["wav"]
-            wav_len_key = "wav_lens"
+            wav_24k, wav_44k1_stereo = batch["wav_24k"], batch["wav"]
+            wav_len_key, wav_24k_len_key = "wav_lens", "wav_24k_lens"
         elif "audio_24000" in batch and "audio_44100" in batch:
-            wav_24k_mono, wav_44k1_stereo = batch["audio_24000"], batch["audio_44100"]
-            wav_len_key = "audio_44100_length"
+            wav_24k, wav_44k1_stereo = batch["audio_24000"], batch["audio_44100"]
+            wav_len_key, wav_24k_len_key = "audio_44100_length", "audio_24000_length"
         else:
-            raise ValueError(f"wav_24k_mono and wav_44k1_stereo not found in batch, {batch.keys()}")
+            raise ValueError(f"wav_24k and wav_44k1_stereo not found in batch, {batch.keys()}")
 
-        if wav_24k_mono.dim() == 3:
-            wav_24k_mono = wav_24k_mono[:, 0]   # stereo 24k -> mono 24k
+        if wav_24k.dim() == 3 and not stereo_24k:
+            wav_24k = wav_24k[:, 0]   # stereo 24k -> mono 24k
 
         sample_rate1, sample_rate2 = self.config.sample_rate, self.bn_config["sample_rate"]
         frame_rate1, frame_rate2 = self.config.frame_rate, self.bn_config["bn_frame_rate"]
@@ -184,11 +185,11 @@ class Stage2DiT(Stage2):
 
         hop_length1, hop_length2 = self.config.hop_length, self.bn_config["hop_size"]
         mel_frame_rate = sample_rate1 // hop_length1    # 100
-        if wav_24k_mono.size(-1) % rate1 > 0:
-            wav_pad_len = rate1 - (wav_24k_mono.size(-1) % rate1)
-            wav_24k_mono = F.pad(wav_24k_mono, (0, wav_pad_len), "constant", 0)
+        if wav_24k.size(-1) % rate1 > 0:
+            wav_pad_len = rate1 - (wav_24k.size(-1) % rate1)
+            wav_24k = F.pad(wav_24k, (0, wav_pad_len), "constant", 0)
 
-        frame1 = self.get_nframe(wav_24k_mono.size(-1), hop_length1)     # mel frame_rate: 100
+        frame1 = self.get_nframe(wav_24k.size(-1), hop_length1)     # mel frame_rate: 100
         # target_frame2 = frame1 // 2                       # sacodec frame_rate: 50
         target_wav2_len = round(frame1 / mel_frame_rate * sample_rate2)
         if target_wav2_len > wav_44k1_stereo.size(-1):
@@ -199,11 +200,11 @@ class Stage2DiT(Stage2):
         frame2 = round(wav_44k1_stereo.size(-1) / sample_rate2 * self.bn_config["bn_frame_rate"])
 
         if frame1 / mel_frame_rate != frame2 / self.bn_config["bn_frame_rate"]:
-            wav_24k_mono = F.pad(wav_24k_mono, (0, int(60*sample_rate1) - wav_24k_mono.size(-1)), "constant", 0)
+            wav_24k = F.pad(wav_24k, (0, int(60*sample_rate1) - wav_24k.size(-1)), "constant", 0)
             wav_44k1_stereo = F.pad(wav_44k1_stereo, (0, int(60*sample_rate2) - wav_44k1_stereo.size(-1)), "constant", 0)
         
-        batch["audio"] = wav_24k_mono
-        batch["audio_length"] = batch["audio_24000_length"] # required by rmpad version
+        batch["audio"] = wav_24k
+        batch["audio_length"] = batch[wav_24k_len_key] # required by rmpad version
         batch["audio_44100"] = wav_44k1_stereo
         return batch, wav_len_key
 

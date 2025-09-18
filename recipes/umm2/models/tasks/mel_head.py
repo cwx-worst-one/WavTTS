@@ -26,23 +26,23 @@ class Mel_Head(BaseStage):
         self.config = config
         self.use_conv = use_conv
         
-
+        self.stereo = True if task == "stereo_mel" else False
         norm_flag = config.get("head_output_norm", False)
         self.mel_norm = None
         if norm_flag:
             self.mel_norm = nn.LayerNorm(config.hidden_size)
 
+        self.n_mels = config.n_mels
         if use_conv:
             self.mel_head = Conv2dUpsampling(
                 config.hidden_size, 
-                config.n_mels, 
+                config.n_mels * 2 if self.stereo else config.n_mels, 
                 use_bn=config.get("use_bn", True),
                 stride=config.get("upsample_strides", None),
                 pad=config.get("upsample_pads", None),
             )
         else:
             time_pool_length = int(config.sample_rate//config.hop_length//config.frame_rate)
-            self.n_mels = config.n_mels
             self.mel_head = nn.Sequential(
                 nn.Linear(config.hidden_size, config.hidden_size//2),
                 nn.ReLU(),
@@ -80,7 +80,10 @@ class Mel_Head(BaseStage):
         else:
             latent = latent
 
-        mel_out = self.mel_head(latent)
+        mel_out = self.mel_head(latent) 
+        if self.stereo:
+            mel_out = mel_out.reshape(mel_out.shape[0], mel_out.shape[1], 2, self.n_mels)
+            mel_out = mel_out.transpose(1, 2).reshape(mel_out.shape[0]*2, mel_out.shape[1], self.n_mels)
 
         if self.use_conv:
             flops = self.mel_head.get_flops(*latent.shape)  

@@ -32,23 +32,23 @@ class Chroma_Head(BaseStage):
             n_chroma=config.n_chroma,
             normalized=False,
         )
-
+        self.stereo = True if task == "stereo_chroma" else False
         norm_flag = config.get("head_output_norm", False)
         self.chroma_norm = None
         if norm_flag:
             self.chroma_norm = nn.LayerNorm(config.hidden_size)
 
+        self.n_chroma = config.n_chroma
         if use_conv:
             self.chroma_head = Conv2dUpsampling(
                 config.hidden_size, 
-                config.n_chroma, 
+                config.n_chroma * 2 if self.stereo else config.n_chroma, 
                 use_bn=config.get("use_bn", True),
                 stride=config.get("upsample_strides", None),
                 pad=config.get("upsample_pads", None),
             )
         else:
             time_pool_length = int(config.sample_rate//config.hop_length//config.frame_rate)
-            self.n_chroma = config.n_chroma
             self.chroma_head = nn.Sequential(
                 nn.Linear(config.hidden_size, config.hidden_size//2),
                 nn.ReLU(),
@@ -56,6 +56,7 @@ class Chroma_Head(BaseStage):
                 nn.Linear(config.hidden_size//2, config.n_chroma * time_pool_length),
             )
         self.chroma_loss_fn = STFTLoss(reduction=reduction)
+        self.chroma_head_input_key = config.get('chroma_head_input_key', 'latent')
 
     def pad_audio(self, x):
         rate = int(self.config.sample_rate / self.config.frame_rate)
@@ -83,29 +84,36 @@ class Chroma_Head(BaseStage):
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)
     def get_feature(self, x):
-        wav = x.squeeze(dim=1).float()
+        # x: [B, 2, nsample]
+        if self.stereo:
+            wav = x.reshape(-1, x.shape[-1])
+        else:
+            wav = x.squeeze(dim=1).float()
         wav = self.pad_audio(wav)
         chroma = self.chroma_transform(wav)[:, :, :-1].transpose(1, 2)
         chroma = nn.functional.normalize(chroma, p=2, dim=-1)
         return chroma
 
     def forward(self, batch):
-        
         chroma = self.get_feature(batch['audio'])
         chroma_len = batch['mel_len'] # suppose we alread have wav_lenn in batch
-        latent = batch['latent']
+        latent = batch[self.chroma_head_input_key]
 
         if self.chroma_norm is not None:
             latent = self.chroma_norm(latent)
         else:
             latent = latent
         chroma_out = self.chroma_head(latent)
+        if self.stereo:
+            chroma_out = chroma_out.reshape(chroma_out.shape[0], chroma_out.shape[1], 2, self.n_chroma)
+            chroma_out = chroma_out.transpose(1, 2).reshape(chroma_out.shape[0]*2, chroma_out.shape[1], self.n_chroma)
+
         if self.use_conv:
             flops = self.chroma_head.get_flops(*latent.shape)  
         else: 
             flops = 0  # neglect flops
             chroma_out = rearrange(chroma_out, "b t (c f) -> b (t c) f", f=self.n_chroma)   # c = time_pool_length
-        
+
         metric_dict = self.get_metrics(chroma, chroma_out, chroma_len)
         loss = metric_dict["loss"] * self.loss_weight
 
