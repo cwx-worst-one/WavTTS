@@ -520,7 +520,6 @@ class BestRQTokenEmbedder(TokenEmbedder):
             add_eos=add_eos,
             with_sos=with_sos,
             with_eos=with_eos,
-            *kwargs,
         )
         if chunk_size is not None and store_hidden_states:
             raise ValueError(
@@ -548,6 +547,9 @@ class BestRQTokenEmbedder(TokenEmbedder):
         if self.with_sos ^ self.with_eos:
             raise ValueError("Both with_sos and with_eos should both be True or False")
         self.varlen = varlen
+
+        self.frame_rate = kwargs.get("frame_rate", 25)
+        self.chunk_overlap_secs = kwargs.get("chunk_overlap_secs", 0.0)
 
     def get_tokens(self, requires, input_audio, **kwargs) -> torch.Tensor:
         if self.store_hidden_states:
@@ -619,35 +621,53 @@ class BestRQTokenEmbedder(TokenEmbedder):
                 # else:
                 #     raise NotImplementedError(f"{self.slice_method} is not implemented as audio slice method")
 
-                st = 0
-                while st < n_samples:
-                    _st, _et = int(st * self.sample_rate), int(
-                        (st + chunk_size) * self.sample_rate
-                    )
-                    # merge the tail if the remaining chunk is too short (< 1s)
+                left_ctx_sec = self.chunk_overlap_secs
+                right_ctx_sec = self.chunk_overlap_secs
+
+                left_ctx_samples = int(left_ctx_sec * self.sample_rate)
+                right_ctx_samples = int(right_ctx_sec * self.sample_rate)
+
+                st = 0.0 
+                target_ids = []
+                while True:
+                    base_st = int(st * self.sample_rate)
+                    base_et = int((st + chunk_size) * self.sample_rate)
+
                     if (
-                        n_samples - _et < self.sample_rate * 1
-                        or batch[self.item_key][..., _et:].shape[-1] < self.sample_rate * 1
+                        n_samples - base_et < self.sample_rate * 1
+                        or batch[self.item_key][..., base_et:].shape[-1] < self.sample_rate * 1
                     ):
-                        _et = n_samples
-                    target_audio = batch[self.item_key][...,_st:_et]
-                    wav_length = []
+                        base_et = n_samples
+
+                    _st = max(0, base_st - left_ctx_samples)
+                    _et = min(n_samples, base_et + right_ctx_samples)
+                    target_audio_ext = batch[self.item_key][..., _st:_et]
+
+                    wav_length_ext = []
                     for audio_length in batch['audio_length']:
-                        if _st > audio_length:
-                            wav_length.append(0)
+                        if _st >= audio_length:
+                            wav_length_ext.append(0)
                         else:
                             valid_et = min(_et, audio_length)
-                            wav_length.append(valid_et - _st)
-                    wav_length = torch.LongTensor(wav_length).to(target_audio.device)
-                    _target_id = self.tokenize(
-                        requires, 
-                        target_audio,
-                        wav_length=wav_length if self.varlen else None,
-                        ).to(device)
-                    target_ids.append(_target_id)
-                    if _et >= n_samples:
+                            wav_length_ext.append(max(0, valid_et - _st))
+                    wav_length_ext = torch.LongTensor(wav_length_ext).to(target_audio_ext.device)
+
+                    target_ids_ext = self.tokenize(
+                        requires,
+                        target_audio_ext,
+                        wav_length=wav_length_ext if self.varlen else None,
+                    ).to(device)
+
+                    left_st = int((base_st - _st) / self.sample_rate) * self.frame_rate
+                    valid_len = int((base_et - base_st) / self.sample_rate) * self.frame_rate
+
+                    base_tokens = target_ids_ext[..., left_st:left_st + valid_len]
+                    target_ids.append(base_tokens)
+                    
+                    if base_et >= n_samples:
                         break
-                    st += chunk_size
+                    
+                    st += chunk_size        
                 target_ids = torch.cat(target_ids, dim=-1)
 
         target_lengths = batch[self.length_key].to(device)
@@ -656,7 +676,7 @@ class BestRQTokenEmbedder(TokenEmbedder):
         if self.with_sos and self.with_eos:
             target_ids = F.pad(target_ids, (1, 1))
             target_ids[:, 0] = self.sos_id
-            eos_indices = (target_lengths + 1).unsqueeze(1)  # set last index to EOS
+            eos_indices = (target_lengths + 0).unsqueeze(1)  # set last index to EOS
             target_ids.scatter_(1, eos_indices, self.eos_id)
             target_lengths = target_lengths + 2  # +2 for eos and sos
 

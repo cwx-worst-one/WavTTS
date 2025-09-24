@@ -99,7 +99,8 @@ def _init_cached_mulan(hpath, local_rank, cache_dir=None, version="149", prefix=
         raise KeyError(f"Not a valid mulan version. {version}")
     if cache_dir is not None:
         os.makedirs(cache_dir, exist_ok=True)
-
+        
+    device = torch.device(f"cuda:{local_rank}")
     if hpath.startswith("hdfs://"):
         local_path = f"{cache_dir}/{os.path.basename(hpath)}"
         with local_zero_first():
