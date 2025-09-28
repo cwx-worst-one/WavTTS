@@ -66,10 +66,10 @@ ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.79
 ARG BUMI_VERSION=25.9.0.61
-ARG LSDP_VERSION=25.9.0.2
+ARG LSDP_VERSION=25.9.0.14
 ARG TRITON_VERSION=1.0.0.216
 ARG OMNIDISPATCHER_VERSION=1.0.0.65
-ARG LITEDATALOADER_VERSION=1.0.0.48
+ARG LITEDATALOADER_VERSION=1.0.0.86
 ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.51
 # https://github.com/facebookresearch/xformers.git:6425fd0
 ARG XFORMERS_VERSION=1.0.0.15
@@ -686,7 +686,7 @@ RUN pip3 install --no-cache-dir --no-deps \
 # Install omnidispatcher omnistore
 RUN pip3 install --no-cache-dir \
         http://luban-source.byted.org/repository/scm/seed.speech.OmniDispatcher_$OMNIDISPATCHER_VERSION.tar.gz \
-        byted-omnistore==1.0.9rc12
+        byted-omnistore==1.0.9rc24
 
 RUN pip3 install --no-cache-dir \
         http://luban-source.byted.org/repository/scm/seed.speech.lite_dataloader_$LITEDATALOADER_VERSION.tar.gz
@@ -799,6 +799,8 @@ RUN mkdir -p /tmp/py_triton && \
     pip3 uninstall -y byted-triton && \
     pip3 install --no-cache-dir --no-deps byted_triton*.whl && \
     rm -rf /tmp/py_triton /root/.cache
+
+RUN pip3 install https://luban-source.byted.org/repository/scm/data.aml.lego_ops_th24_cu124_cudnn920_abi0_sdist_1.0.0.115.tar.gz --no-deps
 
 # Samantha-specific settings.
 COPY ./scripts/samantha.bashrc /etc/samantha.bashrc
