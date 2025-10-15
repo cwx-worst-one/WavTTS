@@ -666,19 +666,22 @@ class BestRQTokenEmbedder(TokenEmbedder):
                     
                     if base_et >= n_samples:
                         break
-                    
-                    st += chunk_size        
-                target_ids = torch.cat(target_ids, dim=-1)
+                    st += chunk_size
+                target_ids = torch.cat(target_ids, dim=1)
 
         target_lengths = batch[self.length_key].to(device)
 
         # add sos and eos id
         if self.with_sos and self.with_eos:
-            target_ids = F.pad(target_ids, (1, 1))
+            if target_ids.ndim == 2:    # VQ tokens, [B, T]
+                target_ids = F.pad(target_ids, (1, 1))
+                eos_indices = (target_lengths + 0).unsqueeze(1)  # set last index to EOS
+            elif target_ids.ndim == 3:  # Hierarical tokens, [B, T, R]
+                target_ids = F.pad(target_ids, (0, 0, 1, 1))
+                eos_indices = (target_lengths + 0).unsqueeze(1).unsqueeze(1).repeat(1, 1, target_ids.shape[-1])  # set last index to EOS
             target_ids[:, 0] = self.sos_id
-            eos_indices = (target_lengths + 0).unsqueeze(1)  # set last index to EOS
             target_ids.scatter_(1, eos_indices, self.eos_id)
-            target_lengths = target_lengths + 2  # +2 for eos and sos
+            target_lengths = target_lengths + 1  # +1 for eos (rewrite the last index) and sos
 
         return target_ids, target_lengths
 
@@ -699,7 +702,7 @@ class BestRQTokenEmbedder(TokenEmbedder):
             }
         ]
 
-
+# @qinxin: deprecated
 class BestRQMultiTokenEmbedder(BestRQTokenEmbedder):
     def __init__(
         self,
@@ -1199,6 +1202,106 @@ class BestRQMultiTokenEmbedder(BestRQTokenEmbedder):
                 "token_length": target_lengths,
             }
         ]
+
+
+# @qinxin: support RVQ/splitVQ/HUQ-style hierarical tokens, with shape [T, R]
+class BestRQHierarchicalTokenEmbedder(BestRQTokenEmbedder):
+    def __init__(
+        self,
+        vocab_size: int = 32_768,
+        embedding_dim: int = 1024,
+        add_sos: bool = False,
+        add_eos: bool = False,
+        with_sos: bool = False,
+        with_eos: bool = False,
+        chunk_size: Optional[int] = None,
+        store_hidden_states: bool = False,
+        sample_rate: int = 24000,
+        slice_method: Optional[str] = "even",
+        chunk_dur: float = 60.0,
+        item_key: str = "target_audio",
+        length_key: str = "target_audio_length",
+        varlen: bool = True,
+        # for hierarchical token
+        codebook_tie: bool = False,
+        codebook_depth: Optional[list[int]] = [1, 1],
+        token_embed_dim: Optional[int] = None,
+        null_placeholder: bool = False,
+        **kwargs,
+    ):
+        BestRQTokenEmbedder.__init__(self, vocab_size, embedding_dim, add_sos, add_eos, with_sos, with_eos,
+        chunk_size=chunk_size, store_hidden_states=store_hidden_states, sample_rate=sample_rate, slice_method=slice_method, 
+        chunk_dur=chunk_dur, item_key=item_key, length_key=length_key, varlen=varlen)
+
+        self.token_embed_dim = token_embed_dim
+        self.null_placeholder = null_placeholder
+        self.codebook_tie = codebook_tie
+        self.codebook_tie_flag = False
+
+        if isinstance(codebook_depth, list):
+            self.R, self.input_R = codebook_depth[0], codebook_depth[1]
+        else:
+            self.R = codebook_depth
+            self.input_R = self.R
+
+        self.vocab_size += 1
+        self.null_id = self.vocab_size - 1
+
+        # Embedder: token2embedding (long->float, [1]->[1, 32]) for each R
+        self.embedder = nn.ModuleList([])
+        for r in range(self.R):
+            self.embedder.append(nn.Embedding(self.vocab_size, token_embed_dim))
+            
+        self.vocab_size = vocab_size # override vocab_size
+
+        if self.codebook_tie:
+            self.embedder_symbol = nn.Embedding(2+self.null_placeholder, embedding_dim, padding_idx=2)
+
+
+    def get_sos_embed(self, batch_size: int) -> torch.Tensor:
+        if self.codebook_tie:
+            return self.embedder_symbol(self.get_sos_token(batch_size) - self.vocab_size)
+        else:
+            return self.embedder[0](self.get_sos_token(batch_size))
+
+    def get_eos_embed(self, batch_size: int) -> torch.Tensor:
+        if self.codebook_tie:
+            return self.embedder_symbol(self.get_eos_token(batch_size) - self.vocab_size)
+        else:
+            return self.embedder[0](self.get_sos_token(batch_size))
+    
+    def tie_codebook(self, requires):
+        """
+        Tie embedder weight with tokenizer codebook.
+        """
+        if "UMM2_stage2" in requires:    # RVQ
+            model = requires["UMM2_stage2"].model
+            tokenizer_codebook = [model.stages[0].insert_modules[0].rvq.RVQ[i].embedding.weight
+                                for i in range(self.R)]
+        elif "Stage3DE" in requires:   # Dual encoder RVQ
+            model = requires["Stage3DE"].model
+            tokenizer_codebook = []
+            tokenizer_codebook.append(model.stages[0].insert_modules[0].vq.embedding.weight)    # R0
+            for i in range(self.R - 1):
+                tokenizer_codebook.append(model.stages[-1].quantization.RVQ[i].embedding.weight) # R1 - R
+        elif "melVAE" in requires:
+            model = requires["melVAE"]
+            tokenizer_codebook = []
+            if hasattr(model, "rvq"):
+                tokenizer_codebook = [model.rvq.RVQ[i].embedding.weight for i in range(self.R)]
+            elif hasattr(model, "uq"):
+                raise NotImplementedError("cotrain tokenizer with uq not supported")
+            
+        if isinstance(self.embedder, nn.ModuleList):
+            for i in range(len(self.embedder)):
+                tokenizer_codebook_vocab_size = tokenizer_codebook[i].shape[0]
+                # [codebook_size, token_embed_dim]
+                self.embedder[i].weight.data[:tokenizer_codebook_vocab_size].copy_(tokenizer_codebook[i])
+                self.embedder[i].weight.data[tokenizer_codebook_vocab_size:].fill_(0)
+                self.embedder[i].weight.requires_grad = False
+        self.codebook_tie_flag = True
+        print("[Codebook tie] tie embedder weight with tokenizer codebook.")
+
 
 
 class TokenXvalEmbedder(TokenEmbedder):

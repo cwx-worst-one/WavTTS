@@ -709,7 +709,7 @@ class DiffusionU2SInfer(LightningModule):
         assert self.infer_type in ["ar-diffusion-vocoder", "diffusion-vocoder"]
 
         def batching(container, data):
-            if data is None or data == "":
+            if data is None or data is "":
                 if container is not None:
                     raise ValueError("try to batching data 'None'")
             else:
@@ -1321,26 +1321,31 @@ class ChunkInfer2(DiffusionU2SInfer):
             )
             padding_value = self.token_config["token_padding"]
             syn_umm_token_lens = [
-                syn_umm_token.shape[-1] for syn_umm_token in batched_syn_umm_token
+                syn_umm_token.shape[1] for syn_umm_token in batched_syn_umm_token
             ]
             max_syn_umm_token_len = max(syn_umm_token_lens)
             syn_wavlens = [
                 syn_umm_token_len * (self.bn_config["sample_rate"]  // self.umm_frame_rate)
                 for syn_umm_token_len in syn_umm_token_lens
             ]
+            pad_shape = [[0, max_syn_umm_token_len - syn_umm_token_len]
+                         for syn_umm_token_len in syn_umm_token_lens]
+            if batched_syn_umm_token[0].ndim == 3:  # hierarchical tokens
+                pad_shape = [[0, 0, 0, max_syn_umm_token_len - syn_umm_token_len]
+                             for syn_umm_token_len in syn_umm_token_lens]
             batched_syn_umm_token = torch.stack(
                 [
                     F.pad(
-                        syn_umm_token,
-                        [0, max_syn_umm_token_len - syn_umm_token.shape[-1]],
+                        batched_syn_umm_token[b],
+                        pad_shape[b], 
                         "constant",
                         padding_value,
                     )
-                    for syn_umm_token in batched_syn_umm_token
+                    for b in range(len(batched_syn_umm_token))
                 ],
                 dim=0,
             )
-            if batched_syn_umm_token.ndim == 3:
+            if batched_syn_umm_token.ndim >= 3:
                 batched_syn_umm_token = batched_syn_umm_token.squeeze(1)
             inputs["scale"] = batched_scale
             inputs["syn_wavlen"] = syn_wavlens
@@ -1604,9 +1609,12 @@ class ChunkInfer2(DiffusionU2SInfer):
         )
         token_pad_len = aligned_token_len - token_len
         if token_pad_len > 0:
+            pad_shape = [0, token_pad_len]
+            if inputs["all_token"].ndim == 3:
+                pad_shape = [0, 0, 0, token_pad_len]
             inputs["all_token"] = F.pad(
                 inputs["all_token"],
-                [0, token_pad_len],
+                pad_shape,
                 mode="constant",
                 value=self.token_config["token_padding"],
             )

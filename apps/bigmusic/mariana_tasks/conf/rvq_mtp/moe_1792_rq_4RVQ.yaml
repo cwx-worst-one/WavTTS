@@ -1,0 +1,55 @@
+---
+
+vocab_size: 16_384
+embedding_dim: 1152
+pattern: 2D-delay    # choices: {2D-delay, 2D-parallel}
+group: 2
+encoder: fc       # choices: {fc (mlp), skip, sum}
+codebook_depth: [2, 2]
+token_embed_dim: 32
+quantizer_dropout: 0.1
+condition_dropout: 0.0
+condition_merge_method: concat
+use_lm_head_output: True
+
+decoder:
+    model_type: !applyref:os.getenv ["mtp_decoder_type", "RQ_transformer"] # choices: {fc, context_fc, transformer, RQ_transformer, ARQ_transformer}
+    encoder_dim: 1792
+    hp: !new:transformers.GPT2Config
+        vocab_size: 1 # placeholder. Embedding table gets removed on load
+        max_position_embeddings: 0
+        use_cache: False
+        n_positions: 0  # No absolute position embedding
+        num_logits: !ref <decoder[encoder_dim]> 
+        n_embd: !ref <decoder[encoder_dim]>
+        n_layer: 3
+        n_head: 16
+        n_inner: 4352
+        use_rms_norm: True
+        activation_function: "swiglu"
+        resid_pdrop: 0.0
+        embd_pdrop: 0.0
+        attn_pdrop: 0.0
+        layer_norm_epsilon: 1e-6
+        initializer_range: 0.02
+        rescale_prenorm_residual: False
+        rms_norm: True
+        rotary_emb_fraction: 1.0
+        rotary_emb_interleaved: True
+        rotary_emb_compat: "default" #"byteformer"
+        tie_word_embeddings: False
+        qkv_proj_bias: False
+        out_proj_bias: False
+        mlp_fc1_bias: False
+        mlp_fc2_bias: False
+        use_flash_attn: True
+        fused_bias_fc: True
+        fused_mlp: False
+        fused_dropout_add_ln: True
+        residual_in_fp32: True
+        flashattn_version: 2.3
+    output_dim: !applyref:operator.mul
+        - !ref <vocab_size> + 2   # +2 for EOS, SOS
+        - !ref <group>
+# criterion: !name:samantha.criterion.masked_loss.MaskedCELoss
+criterion: !name:torch.nn.CrossEntropyLoss

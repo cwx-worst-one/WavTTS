@@ -63,16 +63,18 @@ class SemanticInferenceModule(pl.LightningModule):
         network_cfg['use_flash_attn_kvcache'] = True # infer with flash attn
         network_cfg['gpt_use_fused_block'] = False  # bigop not support infer
         network_cfg['use_llm_bf16'] = True
-
         inference_cfg = copy.deepcopy(_inference_config)
         inference_cfg.update(self.extra_params.get("inference", {}))
-
+        kwargs = {}
+        if self.extra_params.get("emb_cls_name", None):
+            kwargs['emb_cls_name'] = self.extra_params.get("emb_cls_name")
         self.semantic_module = semantic_class(
             emb_path=self.extra_params.get("emb_path"),
             llm_path=self.extra_params.get("llm_path"),
             partial_pretrain=self.extra_params.get("partial_pretrain"),
             network = CruiseConfig(dict(network_cfg)),
             inference = CruiseConfig(dict(inference_cfg)),
+            **kwargs
         )
         self.requires = {}
         self.predict_step_seed: Optional[int] = self.extra_params.get("predict_step_seed")
@@ -113,7 +115,6 @@ class SemanticInferenceModule(pl.LightningModule):
             eos_id = self.semantic_module.emb.target_embedder.eos_id
         else:
             eos_id = eos_id - batch.get("text_codebook_size", 0)
-
         semantic_samples, eos_index_list = process_eos_indexes(
             raw_semantic_samples,
             eos_id,

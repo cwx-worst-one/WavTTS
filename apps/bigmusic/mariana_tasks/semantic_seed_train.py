@@ -34,7 +34,8 @@ from mariana.utils.audio.audio_logger import AudioLogger
 from mariana.models.audio.weight_init import ModuleInitializer
 from samantha.criterion.masked_loss import sequence_mask
 from apps.bigmusic.mariana_tasks.semantic_modules import SemanticEmbModule as SemanticEmbModuleLegacy
-from apps.bigmusic.mariana_tasks.semantic_emb_module import SemanticEmbModule
+from apps.bigmusic.mariana_tasks.semantic_emb_module import SemanticEmbModuleMtp, SemanticEmbModuleHierarchicalMtp
+from apps.bigmusic.mariana_tasks.mtp_module import MultiTokenPredictionModule
 from apps.bigmusic.mariana_tasks.utils.speech_data_collect_callback import SpeechDataCollectCallback, MusicTrainMeter
 from mariana.models.audio.gpt2_audio import (
     GPT2LMHeadModel,
@@ -190,14 +191,15 @@ _m8_network_config = {
     "return_moe_metric": False,
 
     # semantic emb config,
-    'emb_config_path': 'apps/bigmusic/mariana_tasks/conf/v5_emb.yaml',
+    # 'emb_config_path': 'apps/bigmusic/mariana_tasks/conf/v5_emb.yaml',
     # Refactored emb config
-    # 'emb_config_path': 'apps/bigmusic/mariana_tasks/conf/v5_semantic_embedder.yaml',
+    'emb_config_path': 'apps/bigmusic/mariana_tasks/conf/v5_semantic_embedder.yaml',
     'emb_config':{
         'extra_params': {
             'bpe_tokenizer_path': 'bbpe155k-v6.4.3-ml.pret'
         }
-    }
+    },
+    'mtp_config_path': '',
 }
 
 _inference_config = {
@@ -223,21 +225,24 @@ def _get_local_path(hdfs_path, cache_dir="."):
 
 
 class GenerationConfig:
-    def __init__(self, hp, **kwargs):
+    def __init__(self, hp, original_batch_size, cfg_batch_size, **kwargs):
         # basic
         self.duration = hp.duration
         self.skip_sos = hp.get('skip_sos', False)
         self.frame_rate = hp.get('semantic_frame_rate', 25)
 
-        # forward
-        self.use_cache = kwargs.get("use_cache", False)
-        self.use_cuda_graph = kwargs.get("use_cuda_graph", False)
-        self.cuda_graph_max_bsz = kwargs.get("cuda_graph_max_bsz", 1)
-        self.cuda_graph_max_seqlen = kwargs.get("cuda_graph_max_seqlen", 1024)
-
         # cfg
         self.use_controller_cfg = hp.get('use_controller_cfg', False)
         self.controller_cfg_gamma = hp.get('controller_cfg_gamma', 3)
+        self.n_cfg_path = 0
+        if self.use_controller_cfg:
+            self.n_cfg_path = cfg_batch_size // original_batch_size
+
+        # forward
+        self.use_cache = kwargs.get("use_cache", True)
+        self.use_cuda_graph = kwargs.get("use_cuda_graph", True)
+        self.cuda_graph_max_bsz = kwargs.get("cuda_graph_max_bsz", hp.get('beam_size', 1) * original_batch_size * (self.n_cfg_path + 1))
+        self.cuda_graph_max_seqlen = kwargs.get("cuda_graph_max_seqlen", 1024)
 
         # sampling
         self.temperature = hp.semantic_temperature
@@ -382,6 +387,7 @@ class SemanticLlmModel(CruiseModule):
             ddp_gate=False,
             weighted_loss: CruiseConfig = CruiseConfig(dict(_weighted_loss_config)),
             inference: CruiseConfig = CruiseConfig(dict(_inference_config)),
+            emb_cls_name = "SemanticEmbModule",
     ):
         super().__init__()
         self.save_hparams()
@@ -420,7 +426,8 @@ class SemanticLlmModel(CruiseModule):
             else:
                 raise ValueError("emb_config_path is not provided")
             # TODO (Yilin): Remove `SemanticEmbModuleLegacy` after it's no longer used.
-            emb_cls = SemanticEmbModuleLegacy if 'input_embedders' in hps.get('extra_params', {}) else SemanticEmbModule
+            # emb_cls = SemanticEmbModuleLegacy if 'input_embedders' in hps.get('extra_params', {}) else SemanticEmbModule
+            emb_cls = globals()[emb_cls_name]
             self.emb = emb_cls(**hps)
             self.gpt2 = GPT2LMHeadModel(self.hparams)
             if DIST_ENV.local_rank == 0 and self.hparams.network.get("init_weight", False):
@@ -994,18 +1001,10 @@ class SemanticLlmModel(CruiseModule):
 
         target_loss_mask = training_inputs['target_loss_mask'][:, 1:]
         target_ids = training_inputs['token_ids'][:, 1:] * target_loss_mask  # set non-target ids to 0 to avoid OOB
-        if self.emb.is_token_input():
-            token_ids = training_inputs['token_ids'][:, :-1]
-            seq_len = training_inputs['token_ids'].shape[1]
-            shifted_input_mask = sequence_mask(token_length, seq_len, device="cuda")[:, 1:]
-            input_ids_rmpad, _, cu_seqlens_q, max_seqlen_q = unpad_input(token_ids.contiguous(), shifted_input_mask)
-
-            input_embeds_rmpad = self.gpt2.transformer.wte(input_ids_rmpad.squeeze(1))
-        else:
-            input_token_embeds = training_inputs['token_embeds'][:, :-1]
-            seq_len = training_inputs['token_embeds'].shape[1]
-            shifted_input_mask = sequence_mask(token_length, seq_len, device="cuda")[:, 1:]
-            input_embeds_rmpad, _, cu_seqlens_q, max_seqlen_q = unpad_input(input_token_embeds.contiguous(), shifted_input_mask)
+        input_token_embeds = training_inputs['token_embeds'][:, :-1]
+        seq_len = training_inputs['token_embeds'].shape[1]
+        shifted_input_mask = sequence_mask(token_length, seq_len, device="cuda")[:, 1:]
+        input_embeds_rmpad, _, cu_seqlens_q, max_seqlen_q = unpad_input(input_token_embeds.contiguous(), shifted_input_mask)
 
         # TODO: Activations offload, Context parallel.
         if self.hparams.network.balance_llm:
@@ -1243,7 +1242,7 @@ class SemanticLlmModel(CruiseModule):
 
         return fwd_flops, bwd_flops, out_shape
 
-    def capture_cuda_graph(self, max_batch_size, max_seqlen):
+    def capture_cuda_graph(self, max_batch_size, max_seqlen, return_hidden_states=False):
         """
         Create kvcache and capture CUDA graph for inference. LLM part only.
         """
@@ -1262,7 +1261,7 @@ class SemanticLlmModel(CruiseModule):
 
         # forward for decode phase with inputs_embeds
         @torch.inference_mode()
-        def fwd_func(inputs_embeds, inputs_embeds_mask, cache_seqlens, past_key_values):
+        def fwd_func(inputs_embeds, inputs_embeds_mask, cache_seqlens, past_key_values, return_hidden_states=False):
             hidden_states = gpt2.transformer(
                 inputs_embeds=inputs_embeds,
                 inputs_embeds_mask=inputs_embeds_mask,
@@ -1271,6 +1270,8 @@ class SemanticLlmModel(CruiseModule):
                 use_cache=True,
                 phase="decode",
             )["last_hidden_state"]
+            if return_hidden_states:
+                return hidden_states
             if gpt2.lm_head is not None:
                 logits = gpt2.lm_head(hidden_states)
             else:
@@ -1287,13 +1288,13 @@ class SemanticLlmModel(CruiseModule):
         inputs_embeds_mask = torch.zeros(max_batch_size, 1, dtype=torch.bool, device=device)
         cache_seqlens = torch.zeros(max_batch_size, dtype=torch.int32, device=device)
         with torch.cuda.stream(capture_stream):
-            fwd_func(inputs_embeds, inputs_embeds_mask, cache_seqlens, self.past_key_values)
+            fwd_func(inputs_embeds, inputs_embeds_mask, cache_seqlens, self.past_key_values, return_hidden_states)
         torch.cuda.current_stream().wait_stream(capture_stream)
         torch.cuda.synchronize()
         DIST_ENV.barrier()
         # Capture the forward pass.
         with torch.cuda.graph(self.graph):
-            logits = fwd_func(inputs_embeds, inputs_embeds_mask, cache_seqlens, self.past_key_values)
+            logits = fwd_func(inputs_embeds, inputs_embeds_mask, cache_seqlens, self.past_key_values, return_hidden_states)
         torch.cuda.synchronize()
         DIST_ENV.barrier()
         # Save the input and output buffers.
@@ -1428,15 +1429,6 @@ class SemanticLlmModel(CruiseModule):
 
     @torch.no_grad()
     def predict(self, batch, hp, beam=1):
-        if self.emb.is_token_input():
-            raise NotImplementedError("token input has derapcated, please use bpe module")
-
-        # prepare config
-        config = GenerationConfig(
-            hp=hp,
-            **self.hparams.inference,
-        )
-
         # prepare emb results and init cfg batch
         model_input = self.emb.predict_emb(
             batch=batch,
@@ -1446,6 +1438,14 @@ class SemanticLlmModel(CruiseModule):
         original_batch_size = model_input['original_batch_size']
         exclude_ids = model_input['exclude_ids']
         inputs_embeds = model_input['inputs_embeds']
+
+        # prepare config
+        config = GenerationConfig(
+            hp=hp,
+            original_batch_size=original_batch_size,
+            cfg_batch_size = model_input.get('cfg_batch_size', 0),
+            **self.hparams.inference,
+        )
 
         frame_rate = config.frame_rate
         slice_dur = batch['slice_duration'].ceil().int()
@@ -1467,10 +1467,10 @@ class SemanticLlmModel(CruiseModule):
             num_tokens_max = num_tokens
             num_tokens = torch.empty(original_batch_size, dtype=torch.int32).fill_(num_tokens_max)
 
-        n_cfg_path = 0
-        if config.use_controller_cfg:
-            cfg_batch_size = model_input['cfg_batch_size']
-            n_cfg_path = cfg_batch_size // original_batch_size
+        # n_cfg_path = 0
+        # if config.use_controller_cfg:
+        #     cfg_batch_size = model_input['cfg_batch_size']
+        #     n_cfg_path = cfg_batch_size // original_batch_size
 
         batch_size = inputs_embeds.size(0)
         logits_processor = LogitsProcessor(config)
@@ -1503,7 +1503,7 @@ class SemanticLlmModel(CruiseModule):
             logits = output['logits'].float()[:, -1:, :]
 
             # cfg
-            logits = logits_processor.apply_cfg(logits, batch_size, n_cfg_path)
+            logits = logits_processor.apply_cfg(logits, batch_size, config.n_cfg_path)
 
             # sob
             if token_buffer:
@@ -1525,7 +1525,7 @@ class SemanticLlmModel(CruiseModule):
             # get next input embedding
             predict_token_emb = self.emb.target_embedder.embedder(predict_token)
             if config.use_controller_cfg:
-                predict_token_emb = predict_token_emb.repeat(n_cfg_path + 1, 1, 1)
+                predict_token_emb = predict_token_emb.repeat(config.n_cfg_path + 1, 1, 1)
 
             # update cache
             if config.use_cache:

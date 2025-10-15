@@ -73,3 +73,59 @@ def init_umm2(hpath, local_rank, pl_module_string="recipes.umm2.modules.stages.s
         device = torch.device(f"cuda:{local_rank}")
     )
     return {"UMM2_stage2": model}
+
+
+def load_example_audio(audio_path=None):
+    if audio_path is None:
+        # audio_path = "/mnt/bn/music-llm-nas-lq/qinxin/bak/inp071.generated.wav"
+        # if not os.path.exists(audio_path):
+        #     audio_path = "/mnt/hdfs/qinxin.025/testset/token2wav/inp071.generated.wav"
+        # if not os.path.exists(audio_path):
+        os.system("hdfs dfs -get hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/testset/token2wav/inp071.generated.wav .")
+        audio_path = "inp071.generated.wav"
+
+    audio, sr = torchaudio.load(audio_path)
+    if sr != 24000:
+        audio = torchaudio.functional.resample(audio, sr, 24000)
+
+    audio = audio[0].unsqueeze(0).unsqueeze(1).cuda()   # [B, 1, T]
+    print("audio duration", audio.shape[-1] / 24000)
+
+    return audio
+
+if __name__ == "__main__":
+    # RVQ4 (after umm2 refactor)
+    # hpath = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/stage3/2025072916_UMM-stage3_64GPU_fused_attnmask_model_RVQRP3_14bit/checkpoints/step=0080000.ckpt"
+    # RVQ4 (before umm2 refactor)
+    hpath = "hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/qinxin.025/logs/RVQ/RVQ_RP_4x16384_lr3e-5_30k_bs5_a100/checkpoints/step=0200000.ckpt"
+    local_rank = 0
+    model_dict = init_umm2(hpath=hpath, local_rank=local_rank,)
+    requires = ["token"] #, "loss"]
+    model = model_dict["UMM2_stage2"]
+
+
+    audio = load_example_audio()
+    # chunk-wise inference (recommended)
+    print("======= chunk-wise inference =======")
+    chunk_output_dict = model.wav2requires(audio, requires=requires, slice_method="max", chunk_size=45)
+    for k in chunk_output_dict.keys():
+        print(k)
+        print(chunk_output_dict[k].shape if isinstance(chunk_output_dict[k], torch.Tensor) and chunk_output_dict[k].ndim > 1 else chunk_output_dict[k])
+    print(chunk_output_dict["token"])
+
+    # full-length inference (not recommended)
+    print("======= full-length inference =======")
+    full_output_dict = model.wav2requires(audio, requires=requires, slice_method="full", chunk_size=None)
+    for k in full_output_dict.keys():
+        print(k)
+        print(full_output_dict[k].shape if isinstance(full_output_dict[k], torch.Tensor) and full_output_dict[k].ndim > 1 else full_output_dict[k])
+    print(full_output_dict["token"])
+
+    chunk_tokens = chunk_output_dict["token"]
+    with open("test1_chunk.txt", "w") as f:
+        f.writelines("\n".join(chunk_tokens[0].cpu().reshape(-1).numpy().astype(str).tolist()))
+
+    full_tokens = full_output_dict["token"]
+    with open("test1_full.txt", "w") as f:
+        f.writelines("\n".join(full_tokens[0].cpu().reshape(-1).numpy().astype(str).tolist()))
+

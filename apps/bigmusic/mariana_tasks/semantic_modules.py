@@ -872,10 +872,9 @@ class SemanticEmbModule(torch.nn.Module):
         token_ids = [torch.cat(t, dim=0) for t in token_ids]
         token_ids_pad = pad_sequence(token_ids, batch_first=True, padding_value=0).long()
         batch_seq_length = token_ids_pad.shape[1]
-        if not self.is_token_input():
-            token_embeds = zip(*[i['token_embeds'] for i in prefix_inputs + target_inputs])
-            token_embeds = [torch.cat(t, dim=0) for t in token_embeds]
-            token_embeds_pad = pad_sequence(token_embeds, batch_first=True, padding_value=0)
+        token_embeds = zip(*[i['token_embeds'] for i in prefix_inputs + target_inputs])
+        token_embeds = [torch.cat(t, dim=0) for t in token_embeds]
+        token_embeds_pad = pad_sequence(token_embeds, batch_first=True, padding_value=0)
 
         prefix_length = torch.vstack([i['token_length'] for i in prefix_inputs]).sum(dim=0)
         target_length = torch.vstack([i['token_length'] for i in target_inputs]).sum(dim=0)
@@ -896,8 +895,7 @@ class SemanticEmbModule(torch.nn.Module):
             'target_length': target_length,
             'token_length': prefix_length + target_length,
         }
-        if not self.is_token_input():
-            out_dict['token_embeds'] = token_embeds_pad
+        out_dict['token_embeds'] = token_embeds_pad
         return out_dict
 
     def load_from_pretrained(self, pretrained_path=None):
@@ -1106,52 +1104,9 @@ class SemanticEmbModule(torch.nn.Module):
         #     batch.pop(k, None)
         return batch_cfg
 
-    # flag to distinguish token and emb branch
-    def is_token_input(self):
-        return len(self.input_embedders) == 1 and any('bpe' == emb_type for emb_type, _ in self.input_embedders.items())
-
 
     @torch.no_grad()
     def predict(self, batch, hp, beam=1, rl_training=False):
-        if self.is_token_input():
-            return self.predict_token(batch, hp)
-        else:
-            return self.predict_emb(batch, hp, beam, rl_training)
-            
-    @torch.no_grad()
-    def predict_token(self, batch, hp, beam=1, rl_training=False):
-        use_controller_cfg = hp.get('use_controller_cfg', False)
-        assert use_controller_cfg == False, "predict_token not support use_controller_cfg"
-        assert rl_training == False, "predict_token not support rl_training"
-        assert beam == 1, "predict_token not support beam > 1"
-        
-        prefix_inputs = self.prepare_prefix_inputs(batch)
-
-        token_ids = zip(*[i['token_ids'] for i in prefix_inputs])
-        token_ids = [torch.cat(t, dim=0) for t in token_ids]
-        token_ids = pad_sequence(token_ids, batch_first=True, padding_value=0)
-        prefix_length = torch.vstack([i['token_length'] for i in prefix_inputs]).sum(dim=0).int()
-
-        batch["prefix_length"] = prefix_length
-
-        # (shuo): copy from BaseContinuousEmbedModule.predict()
-        batch_size, seq_len = token_ids.size()
-        original_batch_size = batch_size  
-
-        sos_tokens = self.target_embedder.get_sos_token(batch_size)
-        sos_tokens += self.text_codebook_size    
-        model_input = { 
-            "token_ids": torch.cat([token_ids, sos_tokens], dim=1)
-            }  
-        model_input['cfg_batch_size'] = None
-        model_input['original_batch_size'] = original_batch_size
-        model_input['prefix_length'] = prefix_length
-        model_input['exclude_ids'] = [self.target_embedder.eos_id + self.text_codebook_size]
-
-        return model_input
-    
-    @torch.no_grad()
-    def predict_emb(self, batch, hp, beam=1, rl_training=False):
         is_varlen_prefix = self.extra_params.varlen_lyrics_prefix        
         # if is_varlen_prefix: assert self.infer_batch_size(batch) == 1
 

@@ -268,8 +268,11 @@ class HierarchicalTokenEmbedder(nn.Module):
         return 0
 
     def forward(self, token):
-        B = token.size(0)
+        B, _, H = token.size
         if self.token_aggregation == "concat":
+            if H < self.n_token_hierarchy:
+                token = F.pad(token, (0, self.n_token_hierarchy - H), value=self.padding_idx)
+                
             if self.training and torch.rand(1) < 0.1:   # apply quantizer dropout 
                 # random replace [R:] layer with pad id
                 quantizer_dropout_R = torch.randint(self.n_token_hierarchy, size=(B,)) + 1   # values can be {0,...R-1}+1
@@ -284,7 +287,7 @@ class HierarchicalTokenEmbedder(nn.Module):
 
         elif self.token_aggregation == "sum":
             token_embeds = []
-            for h in range(self.n_token_hierarchy):
+            for h in range(min(H, self.n_token_hierarchy)):
                 token_embeds.append(self.token_embedding[h](token[..., h]))
             token_embeds = torch.stack(token_embeds, dim=-1)  # [B, T, D, H]
             token_embeds = token_embeds.cumsum(dim=-1) # [B, T, D, H]
