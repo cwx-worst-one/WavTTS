@@ -17,7 +17,6 @@ from apps.mariana.mariana.data.audio.multitask_datamodule import AudioMultiTaskD
 from apps.bigmusic.mariana_tasks.semantic_seed_train import (
     SemanticLlmCLI,
     _m8_network_config,
-    _inference_config,
 )
 from apps.bigmusic.mariana_tasks.semantic_seed_train_bpe import (
     SemanticLlmModelBpe,
@@ -39,7 +38,7 @@ class SemanticLlmModelMultitaskBpe(SemanticLlmModelBpe):
             partial_pretrain='',
             hybrid_shard_group_size=-1,
             ddp_gate=False,
-            inference: CruiseConfig = CruiseConfig(dict(_inference_config))):
+            inference: CruiseConfig = CruiseConfig({})):
         super().__init__(
             network=network,
             emb_path=emb_path,

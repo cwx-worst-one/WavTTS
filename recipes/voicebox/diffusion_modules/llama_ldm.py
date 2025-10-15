@@ -268,7 +268,7 @@ class HierarchicalTokenEmbedder(nn.Module):
         return 0
 
     def forward(self, token):
-        B, _, H = token.size
+        B, _, H = token.size()
         if self.token_aggregation == "concat":
             if H < self.n_token_hierarchy:
                 token = F.pad(token, (0, self.n_token_hierarchy - H), value=self.padding_idx)

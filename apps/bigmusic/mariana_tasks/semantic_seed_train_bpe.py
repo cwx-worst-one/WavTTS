@@ -16,7 +16,6 @@ from apps.bigmusic.mariana_tasks.semantic_seed_train import (
     SemanticLlmModel,
     SemanticLlmTrainer,
     _m8_network_config,
-    _inference_config,
     _weighted_loss_config,
     _get_skip_meter_name,
 )
@@ -49,7 +48,7 @@ class SemanticLlmModelBpe(SemanticLlmModel):
             hybrid_shard_group_size=-1,
             ddp_gate=False,
             weighted_loss: CruiseConfig = CruiseConfig(dict(_weighted_loss_config)),
-            inference: CruiseConfig = CruiseConfig(dict(_inference_config))):
+            inference: CruiseConfig = CruiseConfig({})):
         super().__init__(
             network=network,
             emb_path=emb_path,

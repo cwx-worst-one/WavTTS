@@ -10,7 +10,7 @@ from recipes.bigmusic.lightning.semantic_modules import process_eos_indexes, tru
 import logging
 from cruise import CruiseConfig
 
-from apps.bigmusic.mariana_tasks.semantic_seed_train import _m8_network_config, _inference_config
+from apps.bigmusic.mariana_tasks.semantic_seed_train import _m8_network_config
 from apps.bigmusic.umm.diffusion.requires.model_initializer import run_diffusion_vocoder_batch
 import torch
 
@@ -63,8 +63,8 @@ class SemanticInferenceModule(pl.LightningModule):
         network_cfg['use_flash_attn_kvcache'] = True # infer with flash attn
         network_cfg['gpt_use_fused_block'] = False  # bigop not support infer
         network_cfg['use_llm_bf16'] = True
-        inference_cfg = copy.deepcopy(_inference_config)
-        inference_cfg.update(self.extra_params.get("inference", {}))
+        
+        inference_cfg = self.extra_params.get("inference", {})
         kwargs = {}
         if self.extra_params.get("emb_cls_name", None):
             kwargs['emb_cls_name'] = self.extra_params.get("emb_cls_name")

@@ -202,13 +202,6 @@ _m8_network_config = {
     'mtp_config_path': '',
 }
 
-_inference_config = {
-    "use_cache": True,
-    "use_cuda_graph": True,
-    "cuda_graph_max_bsz": 2,
-    "cuda_graph_max_seqlen": 10240,
-}
-
 _weighted_loss_config = {
     'enabled': False,
     'segment_ratio': [0.1, 0.1],
@@ -242,7 +235,7 @@ class GenerationConfig:
         self.use_cache = kwargs.get("use_cache", True)
         self.use_cuda_graph = kwargs.get("use_cuda_graph", True)
         self.cuda_graph_max_bsz = kwargs.get("cuda_graph_max_bsz", hp.get('beam_size', 1) * original_batch_size * (self.n_cfg_path + 1))
-        self.cuda_graph_max_seqlen = kwargs.get("cuda_graph_max_seqlen", 1024)
+        self.cuda_graph_max_seqlen = kwargs.get("cuda_graph_max_seqlen", 10240)
 
         # sampling
         self.temperature = hp.semantic_temperature
@@ -386,7 +379,7 @@ class SemanticLlmModel(CruiseModule):
             hybrid_shard_group_size=-1,
             ddp_gate=False,
             weighted_loss: CruiseConfig = CruiseConfig(dict(_weighted_loss_config)),
-            inference: CruiseConfig = CruiseConfig(dict(_inference_config)),
+            inference: CruiseConfig = CruiseConfig({}),
             emb_cls_name = "SemanticEmbModule",
     ):
         super().__init__()
