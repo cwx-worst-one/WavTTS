@@ -604,7 +604,7 @@ class SemanticLlmModel(CruiseModule):
         if self.local_llm_path and DIST_ENV.local_rank == 0:
             state_dict = _partial_load_from_checkpoint(
                 self.local_llm_path,
-                rename_params={'gpt.': '', 'gpt2': ''},
+                rename_params={'gpt.': '', 'gpt2.': ''},
                 map_location='cpu',
                 mmap=True,
             )
