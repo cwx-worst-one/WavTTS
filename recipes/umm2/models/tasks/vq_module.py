@@ -199,7 +199,7 @@ class VQ(BaseStage):
                 hidden_states + torch.randn_like(hidden_states) * noise_scale
             )
             self.cnt.add_(1)
-
+            
         if "e_scale" in inspect.getfullargspec(self.vq.forward).args:
             e_scale = 0.
             if self.training and hasattr(self, "cnt") and self.cnt < 30000:

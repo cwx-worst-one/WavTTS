@@ -113,7 +113,7 @@ class Chroma_Head(BaseStage):
         else: 
             flops = 0  # neglect flops
             chroma_out = rearrange(chroma_out, "b t (c f) -> b (t c) f", f=self.n_chroma)   # c = time_pool_length
-
+            
         metric_dict = self.get_metrics(chroma, chroma_out, chroma_len)
         loss = metric_dict["loss"] * self.loss_weight
 

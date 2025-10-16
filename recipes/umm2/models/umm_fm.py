@@ -992,9 +992,8 @@ class UMMModified(BaseStage):
         batch['flops'] = flops * 3  # extra 2x for backward.
         batch['attn_mask'] = feature_mask
 
-        vq_output_dict['vq_ids'] = vq_output_dict['vq_ids'][:, 0:seqlen]
-        
         if vq_output_dict:
+            vq_output_dict['vq_ids'] = vq_output_dict['vq_ids'][:, 0:seqlen]
             batch.update(vq_output_dict)
         
         return batch 

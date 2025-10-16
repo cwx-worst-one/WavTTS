@@ -5,3 +5,4 @@
 [submodule "apps/mariana"]
 	path = apps/mariana
 	url = git@code.byted.org:seed/mariana.git
+    

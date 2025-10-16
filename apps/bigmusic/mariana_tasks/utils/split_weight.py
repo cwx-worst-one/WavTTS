@@ -53,7 +53,6 @@ def split(
 
                 text_llm_state_dict[new_k] = v
                 print('add ', new_k, v.shape, v.dtype, ' to llm weight')
-
             elif "module.emb." in k:
                 new_key = k.replace('module.emb.', '')
                 encoder_state_dict[new_key] = v
@@ -62,7 +61,14 @@ def split(
                     mulan_key = new_key.replace("mulan_music", "mulan_text")
                     encoder_state_dict[mulan_key] = v.clone()
                     print('add ', mulan_key, v.shape, v.dtype, ' to encoder weight')
-
+            elif "module.audio_encoder." in k:
+                new_key = k.replace('module.audio_encoder.', '')
+                encoder_state_dict[new_key] = v
+                print('add ', new_k, v.shape, v.dtype, ' to audio encoder')
+            elif "module.audio_adapter" in k:
+                new_key = k.replace('module.audio_adapter.', '')
+                encoder_state_dict[new_key] = v
+                print('add ', new_k, v.shape, v.dtype, ' to audio encoder')
             else:
                 print('drop ', k, v.shape, v.dtype)
 

@@ -109,7 +109,6 @@ def _get_data_distribution(data):
             return f"top_5={dict(most_common)}, unique_values={total_unique}"
         else:
             return dict(counter)
-
     except Exception as e:
         return f"error_analyzing: {str(e)[:50]}"
 
@@ -137,7 +136,6 @@ def test_item(yaml_file, test_number=100, inspect_keys=["genre_primary_tag"]):
     output_items = []
 
     batch_count = 0
-
     # Process items until we have enough batches
     with tqdm.tqdm(total=test_number, desc="Collecting batches") as pbar:
         while batch_count < test_number:

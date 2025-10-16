@@ -66,6 +66,7 @@ from samantha.dataio.bigmusic.transforms.tags import (  # transform_tags,
 )
 from samantha.dataio.bigmusic.transforms.utils import *
 from samantha.dataio.bigmusic.transforms.utterance import UttError, parse_utterances
+from samantha.utils.hdfs_tools import hdfs_open
 
 logger = AudioLogger()
 
@@ -538,7 +539,12 @@ class StandardMetaParser(MusicMetaRWTransform):
             meta_list, weight_list = [], []
             for meta_type, weight in zip(self.meta_types, self.meta_weights):
                 meta = standard_meta[meta_type][k]
-                if meta is None or len(meta) == 0:
+                try:
+                    if meta is None or len(meta) == 0:
+                        continue
+                except Exception as e:
+                    # logger.error(f"[float error] {meta} - {type(meta)}")
+                    logger.debug(f"[float error] {meta} - {type(meta)} - {e}")
                     continue
                 meta_list.append(meta)
                 weight_list.append(weight)
@@ -3808,4 +3814,342 @@ class UtteranceSegmentSamplerRandom:
             results.append({"start": start_time, "end": end_time, "text": ""})
         item[self.out_key] = results
 
+        return item
+
+
+class FixedAudioCut:
+    def __init__(
+        self, in_key="audio", out_key="audio", start=0.0, sample_rate=24000, duration=30
+    ):
+        self.in_key = in_key
+        self.out_key = out_key
+        self.start = start
+        self.sample_rate = sample_rate
+        self.duration = duration
+
+    def __call__(self, item, **_kwargs):
+        if item is None or self.in_key not in item:
+            return None
+        start = int(self.start * self.sample_rate)
+        end = start + int(self.duration * self.sample_rate)
+        item[self.out_key] = item[self.in_key][0, start:end]
+        item["audio_shape"] = item[self.out_key].shape[-1]
+        return item
+
+
+class FrontAudioCut:
+    def __init__(self, in_key="audio", out_key="audio", sample_rate=24000, duration=60):
+        self.in_key = in_key
+        self.out_key = out_key
+        self.sample_rate = sample_rate
+        self.duration = duration
+
+    def __call__(self, item, **_kwargs):
+        if item is None or self.in_key not in item:
+            return None
+        audio = item[self.in_key]
+        desired_samples = int(self.duration * self.sample_rate)
+        item[self.out_key] = audio[:, :desired_samples]
+        item["audio_shape"] = item[self.out_key].shape[-1]
+        item["audio_range"] = [0, self.duration]
+        return item
+
+
+class FilterByUttid:
+    def __init__(self, in_key="uttid", filter_list_file=None, **kwargs):
+        self.key = in_key
+        self.black_list = self._get_list(filter_list_file)
+
+    def _get_list(self, filter_list_file):
+        if filter_list_file is None:
+            return set()
+        with hdfs_open(filter_list_file, "r") as f:
+            blk_lst = [line.rstrip() for line in f.readlines()]
+            logger.info(
+                f"Reading {filter_list_file} Number of black_list: {len(blk_lst)}"
+            )
+        return set(blk_lst)
+
+    def __call__(self, item, **_kwargs):
+        if item is None or self.key not in item:
+            logger.warning(
+                f"No uttid. Skip this data. {item.get('__dataset_name__', 'dataset unknown')}"
+            )
+            return None
+        if item[self.key] in self.black_list:
+            logger.warning(
+                f"In black_list. Skip this data. {item.get('__dataset_name__', 'dataset unknown')},{item[self.key]}"
+            )
+            return None
+        return item
+
+
+class SectionedLyrics:
+    """
+    Convert the meta to an MIR interleaved lyrics string
+    """
+
+    def __init__(
+        self,
+        in_key: str = "meta",
+        field: str = "sectioned_lyrics",
+        prompt: str = "",
+        inference=False,
+        **kwargs,
+    ):
+        self.in_key = in_key
+        self.moe_bos = "<[BOS_never_used_51bce0c785ca2f68081bfa7d91973934]>"
+        self.moe_eos = "<[EOS_never_used_51bce0c785ca2f68081bfa7d91973934]>"
+        self.prompt = prompt
+        self.inference = inference
+        self.field = field
+
+    def _make_inputs(self, prompt: str) -> List[Dict[str, str]]:
+        return [
+            {"text": f"{self.moe_bos}user\n{prompt}", "loss_mask": 0},
+            {"text": "<audio>", "loss_mask": 0},
+            {"audio": "<WAV>", "loss_mask": 0},  # Extract feature on the fly
+            {"text": "</audio>", "loss_mask": 0},
+            {"text": f"{self.moe_eos}{self.moe_bos}assistant\n", "loss_mask": 0},
+        ]
+
+    def __call__(self, item, **kwargs) -> list:
+        uttid = item.get("uttid", "unknown")
+        if not item:
+            uttid = (
+                item.get("uttid", "unknown") if isinstance(item, dict) else "unknown"
+            )
+            logger.debug(f"{uttid} does not contain payloads!")
+            return None
+        if self.in_key not in item and self.inference:
+            response = " "
+            uttid = item.get("uttid", "unknown")
+            logger.debug(f"{uttid} doe not contain metadata, skip")
+            return None
+        else:
+            if isinstance(item, dict) and self.in_key in item:
+                meta = item[self.in_key]
+            else:
+                meta = json.loads(item[self.in_key])
+            response = meta[self.field]
+            if not self.inference:  # only training state filter
+                if len(response) > 3000:
+                    uttid = item.get("uttid", "unknown")
+                    logger.warning(f"{uttid} sectioned lyrics is too long, skip")
+                    return None
+
+        item["output"] = [{"text": response + self.moe_eos, "loss_mask": 1}]
+        item["mir"] = item["label"] = response
+        item["inputs"] = self._make_inputs(self.prompt)
+        texts = [d.get("text", "") for d in item["inputs"] if "text" in d]
+        try:
+            audio_start_index = texts.index("<audio>")
+            audio_end_index = texts.index("</audio>")
+            # prefix: includes <audio>
+            prefix_string = "".join(texts[: audio_start_index + 1])
+            # suffix: includes </audio>
+            suffix_string = "".join(texts[audio_end_index:])
+        except ValueError:
+            logger.warning(f"{uttid} does not contain <audio> or </audio>, skip")
+            return None
+        output_string = "".join(d["text"] for d in item["output"] if "text" in d)
+        item["prefix_string"] = prefix_string
+        item["suffix_string"] = suffix_string
+        item["output_string"] = output_string
+        return item
+
+
+def _parse_gemini_v2(gemini_v2: dict) -> dict:
+    if not gemini_v2:
+        return {}
+    gemini_meta = {}
+    gemini_meta["genre"] = gemini_v2.get("genre", {}).get("primary", [])
+    gemini_meta["genre_extra"] = gemini_v2.get("genre", {}).get("additional", [])
+    gemini_meta["mood"] = gemini_v2.get("mood", {}).get("keywords", [])
+    gemini_meta["language"] = gemini_v2.get("language", [])
+    gemini_meta["tempo"] = gemini_v2.get("musical_features", {}).get(
+        "tempo_keywords", {}
+    ).get("tempo", []) + gemini_v2.get("musical_features", {}).get(
+        "tempo_keywords", {}
+    ).get(
+        "BPM", []
+    )
+    try:
+        gemini_meta["gender"] = [
+            gender
+            for keyword in gemini_v2.get("musical_features", {})
+            .get("vocal", {})
+            .get("keywords", [])
+            for gender in keyword.get("gender", [])
+        ]
+    except Exception as e:
+        logger.debug(
+            f"[gender error] {gemini_v2.get('musical_features', {}).get('vocal', {})} - {e}"
+        )
+        pass
+    gemini_meta["scene"] = gemini_v2.get("scene", {}).get("keywords", [])
+    scene_phrases = gemini_v2.get("scene", {}).get("phrases", [])
+    # remove tailing .
+    scene_phrases = [phrase.rstrip(".") for phrase in scene_phrases]
+    gemini_meta["scene_phrase"] = scene_phrases
+    gemini_meta["timbre"] = [
+        timbre
+        for keyword in gemini_v2.get("musical_features", {})
+        .get("vocal", {})
+        .get("keywords", [])
+        for timbre in keyword.get("timbre", [])
+    ]
+    gemini_meta["instrument"] = (
+        gemini_v2.get("musical_features", {}).get("instruments", {}).get("keywords", [])
+    )
+    gemini_meta["era"] = gemini_v2.get("additional", {}).get("era_style", [])
+    # arrangement_keywords = gemini_v2.get('musical_features', {}).get("arrangement", {}).get("keywords", [])
+    # gemini_meta['arrangement'] = arrangement_keywords
+    gemini_meta["melody"] = (
+        gemini_v2.get("musical_features", {}).get("melody", {}).get("keywords", [])
+    )
+    gemini_meta["rhythm"] = (
+        gemini_v2.get("musical_features", {}).get("rhythm", {}).get("keywords", [])
+    )
+    gemini_meta["key"] = gemini_v2.get("musical_features", {}).get("key", [])
+    gemini_meta["imagery"] = gemini_v2.get("abstract_descriptors", {}).get(
+        "imagery", []
+    )
+    gemini_meta["synesthesia_tags"] = gemini_v2.get("abstract_descriptors", {}).get(
+        "synesthesia_tags", []
+    )
+    gemini_meta["vibe"] = gemini_v2.get("abstract_descriptors", {}).get("vibe", [])
+    gemini_meta["audio_features"] = gemini_v2.get("audio_features", {}).get(
+        "audio_feature_keywords", []
+    )
+    gemini_meta["additional"] = gemini_v2.get("additional", {}).get("features", [])
+    gemini_meta["description"] = gemini_v2.get("description", {}).get(
+        "global_description", []
+    )
+    gemini_meta["description_long"] = gemini_v2.get("description", {}).get(
+        "global_description_long", []
+    )
+    return gemini_meta
+
+
+class MusicUnderstandingSchemaParserV2:
+    def __init__(
+        self,
+        prompt: str = "What are the tags for the following music?",
+        in_key: str = "standard_meta",
+        last_key: list = [],  # NEW: Key to always place at the end
+        drop_text_rate: float = 0.0,
+        inference: bool = False,
+        random_input: bool = True,
+        sentence_pattern: Optional[str] = "This audio's {key} is {value}.",
+    ):
+        self.prompt = prompt
+        self.in_key = in_key
+        self.last_key = last_key  # NEW: Store the last_key
+        self.drop_text_rate = drop_text_rate
+        self.inference = inference
+        self.random_input = random_input
+        self.sentence_pattern = sentence_pattern
+        self.moe_bos = "<[BOS_never_used_51bce0c785ca2f68081bfa7d91973934]>"
+        self.moe_eos = "<[EOS_never_used_51bce0c785ca2f68081bfa7d91973934]>"
+
+    def _parse_response(
+        self, data_item: Dict[str, Union[List[str], str]]
+    ) -> List[Dict[str, str]]:
+        raise NotImplementedError
+        return None
+
+    def _parse_response_random(
+        self, data_item: Dict[str, Union[List[str], str]]
+    ) -> List[Dict[str, str]]:  # MODIFIED
+        """
+        Parses data into a list of dicts. Shuffles all keys except for `last_key`,
+        which is always placed at the end.
+        """
+        # import pdb; pdb.set_trace()
+        parsed_gemini_meta = _parse_gemini_v2(data_item)
+        items_to_shuffle = []
+        last_item_data = []
+        # Separate the last_key from the others
+        for key, value in parsed_gemini_meta.items():
+            if self.last_key and key in self.last_key:
+                last_item_data.append((key, value))
+            else:
+                items_to_shuffle.append((key, value))
+        random.shuffle(items_to_shuffle)
+        final_ordered_items = items_to_shuffle
+        if last_item_data:
+            final_ordered_items.extend(last_item_data)
+        # Process all items into the final format
+        output_dicts = []
+        for key, value in final_ordered_items:
+            # import pdb; pdb.set_trace()
+            if isinstance(value, list):
+                # For list values, also shuffle their contents
+                processed_value = ",".join(random.sample(value, k=len(value)))
+            else:
+                processed_value = str(value)
+            output_dicts.append({"key": key, "value": processed_value})
+
+        return output_dicts
+
+    def _format_output(self, kv_dicts: List[Dict[str, str]]) -> str:
+        """
+        Formats a list of {'key': key, 'value': value} dicts.
+        """
+        if self.sentence_pattern is None:
+            lines = [f"{item['key']}:{item['value']}" for item in kv_dicts]
+            return "".join(lines)
+        sentences = [
+            self.sentence_pattern.format(key=item["key"], value=item["value"])
+            for item in kv_dicts
+        ]
+        return "".join(sentences)
+
+    def _make_inputs(self, prompt: str) -> List[Dict[str, str]]:
+        return [
+            {"text": f"{self.moe_bos}user\n{prompt}", "loss_mask": 0},
+            {"text": "<audio>", "loss_mask": 0},
+            {"audio": "<WAV>", "loss_mask": 0},
+            {"text": "</audio>", "loss_mask": 0},
+            {"text": f"{self.moe_eos}{self.moe_bos}assistant\n", "loss_mask": 0},
+        ]
+
+    def __call__(self, item: Dict, **_kwargs) -> Optional[Dict]:
+        if not item:
+            uttid = (
+                item.get("uttid", "unknown") if isinstance(item, dict) else "unknown"
+            )
+            logger.debug(f"{uttid} is not correct!")
+            return None
+        if self.in_key not in item and self.inference:
+            response = " "
+        else:
+            kv_dicts = []
+            if self.random_input:
+                kv_dicts = self._parse_response_random(item[self.in_key])
+            else:
+                kv_dicts = self._parse_response(item[self.in_key])
+
+            if not kv_dicts and not self.inference:
+                uttid = item.get("uttid", "unknown")
+                logger.info(f"'{uttid}' doesn't have any required tags, skipping.")
+                return None
+            response = self._format_output(kv_dicts)
+        item["output"] = [{"text": response + self.moe_eos, "loss_mask": 1}]
+        item["inputs"] = self._make_inputs(self.prompt)
+        texts = [d.get("text", "") for d in item["inputs"] if "text" in d]
+        try:
+            audio_start_index = texts.index("<audio>")
+            audio_end_index = texts.index("</audio>")
+            prefix_string = "".join(texts[: audio_start_index + 1])
+            suffix_string = "".join(texts[audio_end_index:])
+        except ValueError:
+            uttid = item.get("uttid", "unknown")
+            logger.warning(f"{uttid} does not contain <audio> or </audio>, skip")
+            return None
+        output_string = "".join(d["text"] for d in item["output"] if "text" in d)
+        item["prefix_string"] = prefix_string
+        item["suffix_string"] = suffix_string
+        item["output_string"] = output_string
         return item

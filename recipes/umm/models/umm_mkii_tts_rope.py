@@ -236,6 +236,29 @@ class Stage2TTSRope(Stage2):
         result = self._get_hidden_state(hidden_states, position_embeddings)
         return result #result["vq_ids"]
 
+    def forward_with_audio(self, wav_input, wav_length=None, normalize=True):
+        # No support for attention mask for now
+        mel = self.audio_transform(wav_input, normalize=normalize)
+        flops = self.audio_encoder.get_flops(*mel.shape)
+        audio_feature = self.audio_encoder(mel)
+
+        hidden_states = self.encoder_input_dropout(audio_feature)
+        position_embeddings = self.embed_positions(hidden_states)
+        flops += self.encoder_layers[0].get_flops(*hidden_states.shape[0:2]) * len(
+            self.encoder_layers
+        )
+        for layer in self.encoder_layers:
+            hidden_states = layer(
+                hidden_states, position_embeddings=position_embeddings
+            )
+
+        output_dict = {
+            "hidden_states": hidden_states,
+            "mask": None,
+            "flops": flops * 3,
+        }
+        return output_dict
+
 
 class Stage3TTSRope(Stage2TTSRope):
     def __init__(self, config):
@@ -369,6 +392,8 @@ class Stage3TTSRope(Stage2TTSRope):
         # add the codebook stats
         output_dict.update(codebook_distance_stats)
         return output_dict
+
+    
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(enabled=False)

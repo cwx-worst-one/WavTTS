@@ -74,6 +74,7 @@ __pycache__
 *.jsonl
 *.zip
 *.bin
+*.txt
 
 # logs
 /**/cruise_logs
@@ -130,3 +131,5 @@ recipes/leadsheet
 scripts_usr
 .deploy_cache
 output
+
+stats_*

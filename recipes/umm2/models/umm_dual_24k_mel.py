@@ -243,7 +243,7 @@ class DualTokenizerModel(PipelineModel):
         quant_out_dict.update({
             "position_embeddings": stage1_enc_out_dict["position_embeddings"],
         })
-
+        
         # dict_keys(['latent'])
         dec_out_dict = stage1.decoder(quant_out_dict)
         # dict_keys(['spec_out'])
