@@ -34,7 +34,11 @@ from mariana.utils.audio.audio_logger import AudioLogger
 from mariana.models.audio.weight_init import ModuleInitializer
 from samantha.criterion.masked_loss import sequence_mask
 from apps.bigmusic.mariana_tasks.semantic_modules import SemanticEmbModule as SemanticEmbModuleLegacy
-from apps.bigmusic.mariana_tasks.semantic_emb_module import SemanticEmbModuleMtp, SemanticEmbModuleHierarchicalMtp
+from apps.bigmusic.mariana_tasks.semantic_emb_module import (
+    SemanticEmbModule,
+    SemanticEmbModuleMtp, 
+    SemanticEmbModuleHierarchicalMtp,
+)
 from apps.bigmusic.mariana_tasks.mtp_module import MultiTokenPredictionModule
 from apps.bigmusic.mariana_tasks.utils.speech_data_collect_callback import SpeechDataCollectCallback, MusicTrainMeter
 from mariana.models.audio.gpt2_audio import (
