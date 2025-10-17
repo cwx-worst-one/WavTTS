@@ -145,18 +145,18 @@ def metric_abs(pred, anno):
     return abs(float(pred) - float(anno))
 
 def parse_pred_result(pred_text):
-    # # pattern = r"This audio's ([^ ]+) is (.*?)(?=This audio's|$)"
-    # pattern = r"\[(\w+):\s*([^\]]+)\]"
-    # matches = re.findall(pattern, pred_text, re.DOTALL)
-    # pred_data_song = {}
-    # for key, value in matches:
-    #     value = value.strip().rstrip(".")
-    #     if key not in ["description", "description_long"]:
-    #         value = [v.strip() for v in value.split(",")]
-    #     else:
-    #         value = [value]
-    #     pred_data_song[key] = value
-    pred_data_song = json.loads(pred_text)
+    # pattern = r"This audio's ([^ ]+) is (.*?)(?=This audio's|$)"
+    pattern = r"\[(\w+):\s*([^\]]+)\]"
+    matches = re.findall(pattern, pred_text, re.DOTALL)
+    pred_data_song = {}
+    for key, value in matches:
+        value = value.strip().rstrip(".")
+        if key not in ["description", "description_long"]:
+            value = [v.strip() for v in value.split(",")]
+        else:
+            value = [value]
+        pred_data_song[key] = value
+    # pred_data_song = json.loads(pred_text)
     return pred_data_song
 
 def is_number(s):
@@ -414,19 +414,7 @@ def run():
 
         # parse and evaluate
         anno_data_song.pop('url', None)
-
-        import ast
-        try:
-            pred_data_song = ast.literal_eval(pred_text)
-        except Exception as e:
-            print("Error parsing string:", e)
-            data_dict = None
-
-        with open("ttmpt.json", "w") as f:
-            json.dump(pred_data_song, f)
-
-       
-        pred_data_song = _parse_gemini_v2(pred_data_song)
+        pred_data_song =  parse_pred_result(pred_text)
         result = evaluate(pred_data_song, anno_data_song)
 
         # update row
