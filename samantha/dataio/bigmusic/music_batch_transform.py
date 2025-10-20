@@ -817,14 +817,60 @@ class TokenCoffCollate:
             lyrics_pos = [
                 torch.as_tensor(item[self.in_key][self.pos_key]) for item in batch_list
             ]
+
+            safe_lyrics_pos = []
+            for tensor, lyrics_token in zip(lyrics_pos, lyrics_tokens):
+                if not isinstance(tensor, torch.Tensor) or tensor.dim() != 2:
+                    tensor = (
+                        torch.ones(
+                            lyrics_token.shape[0],
+                            3,
+                            dtype=torch.int32,
+                            device=lyrics_token.device,
+                        )
+                        * -1
+                    )
+                safe_lyrics_pos.append(tensor)
+
             if self.max_phone_len > 0:
                 padded_pos = self._pad_or_truncate(
-                    lyrics_pos, self.max_phone_len, padding_value=-1
+                    safe_lyrics_pos, self.max_phone_len, padding_value=-1
                 )
             else:
-                padded_pos = pad_sequence(
-                    lyrics_pos, batch_first=True, padding_value=-1
+                try:
+                    padded_pos = pad_sequence(
+                        safe_lyrics_pos, batch_first=True, padding_value=-1
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Error padding pos tensor {[tensor.shape for tensor in safe_lyrics_pos]=}: {e} "
+                    )
+                    padded_pos = (
+                        torch.ones(
+                            padded_tokens.shape[0],
+                            padded_tokens.shape[1],
+                            3,
+                            dtype=torch.int32,
+                            device=safe_lyrics_pos[0].device,
+                        )
+                        * -1
+                    )
+
+            if padded_pos.dim() != 3:
+                logger.error(
+                    f"Error shape pos tensor {[tensor.shape for tensor in safe_lyrics_pos]=} {padded_pos.shape=}"
                 )
+                padded_pos = (
+                    torch.ones(
+                        padded_tokens.shape[0],
+                        padded_tokens.shape[1],
+                        3,
+                        dtype=torch.int32,
+                        device=safe_lyrics_pos[0].device,
+                    )
+                    * -1
+                )
+            # logger.info(f"TokenCoffCollate {padded_pos.shape=}")
             batch_out[self.pos_output_key] = padded_pos
 
 

@@ -1663,7 +1663,12 @@ class TokenXvalPosEmbedder(TokenXvalEmbedder):
         batch_size = lyrics_tokens.shape[0]
         lyrics_token_length = batch[self.length_key]
         lyrics_coffs = batch.get(self.coff_key, torch.ones_like(lyrics_tokens))
-        lyrics_pos = batch.get(self.pos_key, torch.ones_like(lyrics_tokens).unsqueeze(-1) * self.blank_id)
+        lyrics_pos = batch.get(self.pos_key, torch.stack([torch.ones_like(lyrics_tokens) * self.blank_id]*3, dim=-1))
+
+        if torch.is_tensor(lyrics_pos) and len(lyrics_pos.shape) != 3:
+            lyrics_pos = torch.stack([torch.ones_like(lyrics_tokens) * self.blank_id]*3, dim=-1)
+            logger.warning(f"TokenXvalPosEmbedder invalid lyrics_pos {lyrics_pos}")
+
         result = self.embed(
             token_ids=lyrics_tokens,
             token_wise_multiplication=lyrics_coffs, 
