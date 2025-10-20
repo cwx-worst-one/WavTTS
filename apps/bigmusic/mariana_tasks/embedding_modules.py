@@ -624,14 +624,14 @@ class BestRQTokenEmbedder(TokenEmbedder):
                 left_ctx_sec = self.chunk_overlap_secs
                 right_ctx_sec = self.chunk_overlap_secs
 
-                left_ctx_samples = int(left_ctx_sec * self.sample_rate)
-                right_ctx_samples = int(right_ctx_sec * self.sample_rate)
+                left_ctx_samples = math.ceil(left_ctx_sec * self.sample_rate)
+                right_ctx_samples = math.ceil(right_ctx_sec * self.sample_rate)
 
                 st = 0.0 
                 target_ids = []
                 while True:
-                    base_st = int(st * self.sample_rate)
-                    base_et = int((st + chunk_size) * self.sample_rate)
+                    base_st = math.ceil(st * self.sample_rate)
+                    base_et = math.ceil((st + chunk_size) * self.sample_rate)
 
                     if (
                         n_samples - base_et < self.sample_rate * 1
@@ -658,8 +658,8 @@ class BestRQTokenEmbedder(TokenEmbedder):
                         wav_length=wav_length_ext if self.varlen else None,
                     ).to(device)
 
-                    left_st = int((base_st - _st) / self.sample_rate) * self.frame_rate
-                    valid_len = int((base_et - base_st) / self.sample_rate) * self.frame_rate
+                    left_st = math.ceil((base_st - _st) / self.sample_rate) * self.frame_rate
+                    valid_len = math.ceil((base_et - base_st) / self.sample_rate) * self.frame_rate
 
                     base_tokens = target_ids_ext[..., left_st:left_st + valid_len]
                     target_ids.append(base_tokens)
