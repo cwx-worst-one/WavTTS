@@ -60,11 +60,11 @@ ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
 ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.79
-ARG BUMI_VERSION=25.8.0.62
-ARG LSDP_VERSION=25.8.0.33
+ARG BUMI_VERSION=25.10.0.23
+ARG LSDP_VERSION=25.10.0.35
 ARG OMNIDISPATCHER_VERSION=1.0.0.53
-ARG LITEDATALOADER_VERSION=1.0.0.39
-ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.51
+ARG LITEDATALOADER_VERSION=1.0.0.100
+ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.64
 # https://github.com/facebookresearch/xformers.git:6425fd0
 ARG XFORMERS_VERSION=1.0.0.15
 # https://github.com/google-research/bleurt.git:cebe7e6
@@ -737,14 +737,14 @@ RUN \
     rm -rf /tmp/py_pkg.speech_evals
 
 # install flash_attn_plus
-#RUN \
-#    mkdir -p /tmp/py_mariana_fmha_plus && \
-#    cd /tmp/py_mariana_fmha_plus && \
-#    wget http://luban-source.byted.org/repository/scm/data.speech.flash_attn_plus_$MARIANA_FMHA_PLUS_VERSION.tar.gz && \
-#    tar -zxf data.speech.flash_attn_plus_$MARIANA_FMHA_PLUS_VERSION.tar.gz && \
-#    pip3 install --no-cache-dir --no-deps fmha_plus*.whl && \
-#    python3 -m fmha_plus.setup_lib --sudo && \
-#    rm -rf /tmp/py_mariana_fmha_plus
+RUN \
+    mkdir -p /tmp/py_mariana_fmha_plus && \
+    cd /tmp/py_mariana_fmha_plus && \
+    wget http://luban-source.byted.org/repository/scm/data.speech.flash_attn_plus_$MARIANA_FMHA_PLUS_VERSION.tar.gz && \
+    tar -zxf data.speech.flash_attn_plus_$MARIANA_FMHA_PLUS_VERSION.tar.gz && \
+    pip3 install --no-cache-dir --no-deps fmha_plus*.whl && \
+    python3 -m fmha_plus.setup_lib --sudo && \
+    rm -rf /tmp/py_mariana_fmha_plus
 
 # install xformers
 #RUN mkdir -p /tmp/py_xformers && \
@@ -785,7 +785,7 @@ RUN mkdir -p /tmp/py_bleurt && \
 #    pip3 install --no-cache-dir --no-deps apex*.whl && \
 #    rm -rf /tmp/py_apex
 
-RUN apt install libxml2 libsnappy-dev libunwind-dev && \
+RUN apt-get install libxml2 libsnappy-dev libunwind-dev -y && \
         pip3 install flash-attn
 
 RUN pip3 install eventlet -U && \
