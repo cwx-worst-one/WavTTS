@@ -4153,3 +4153,140 @@ class MusicUnderstandingSchemaParserV2:
         item["suffix_string"] = suffix_string
         item["output_string"] = output_string
         return item
+
+
+class MusicScoringSchemaParser:
+    def __init__(
+        self,
+        prompt: str = "What is the rating for the following music?",
+        in_key: str = "standard_meta",
+        last_key: Optional[str] = None,  # NEW: Key to always place at the end
+        inference: bool = False,
+        random_input: bool = True,
+        sentence_pattern: Optional[str] = "This audio's {key} is {value}.",
+    ):
+        self.prompt = prompt
+        self.in_key = in_key
+        self.last_key = last_key  # NEW: Store the last_key
+        self.inference = inference
+        self.random_input = random_input
+        self.sentence_pattern = sentence_pattern
+        self.moe_bos = "<[BOS_never_used_51bce0c785ca2f68081bfa7d91973934]>"
+        self.moe_eos = "<[EOS_never_used_51bce0c785ca2f68081bfa7d91973934]>"
+
+    def _parse_response_random(
+        self, data_item: Dict[str, Union[List[str], str]]
+    ) -> List[Dict[str, str]]:  # MODIFIED
+        """
+        Parses data into a list of dicts. Shuffles all keys except for `last_key`,
+        which is always placed at the end.
+        """
+        # 1001 Rating
+        # rating_data = data_item['audio_tags']['music_rating']
+        rating_data = data_item["raw"]["music_rating"]
+        if isinstance(rating_data, list):
+            rating_score = int(rating_data[0])
+        elif isinstance(rating_data, str):
+
+            def str_to_int(s: str) -> int:
+                # Remove brackets if they exist, then convert to int
+                return int(s.strip("[]"))
+
+            rating_score = str_to_int(rating_data)
+        elif isinstance(rating_data, int):
+            rating_score = rating_data
+        else:
+            logger.warning(
+                f"music_rating is not correct! rating_data: {rating_data}, type: {type(rating_data)}"
+            )
+            rating_score = 0
+
+        # import pdb; pdb.set_trace()
+        rating_str = "Y" if rating_score >= 4 else "N"
+        output_dicts = []
+        output_dicts.append({"key": "rating", "value": rating_str})
+        return output_dicts
+
+    def _format_output(self, kv_dicts: List[Dict[str, str]]) -> str:
+        """
+        Formats a list of {'key': key, 'value': value} dicts.
+        """
+        if self.sentence_pattern is None:
+            lines = [f"{item['key']}:{item['value']}" for item in kv_dicts]
+            return "\n".join(lines)
+
+        sentences = [
+            self.sentence_pattern.format(key=item["key"], value=item["value"])
+            for item in kv_dicts
+        ]
+        return "\n".join(sentences)
+
+    def _make_inputs(self, prompt: str) -> List[Dict[str, str]]:
+        return [
+            {"text": f"{self.moe_bos}user\n{prompt}", "loss_mask": 0},
+            {"text": "<audio>", "loss_mask": 0},
+            {"audio": "<WAV>", "loss_mask": 0},
+            {"text": "</audio>", "loss_mask": 0},
+            {"text": f"{self.moe_eos}{self.moe_bos}assistant\n", "loss_mask": 0},
+        ]
+
+    def __call__(self, item: Dict, **_kwargs) -> Optional[Dict]:
+        if not item:
+            uttid = (
+                item.get("uttid", "unknown") if isinstance(item, dict) else "unknown"
+            )
+            logger.debug(f"{uttid} is not correct!")
+            return None
+
+        if self.in_key not in item and self.inference:
+            response = " "
+        else:
+            kv_dicts = self._parse_response_random(item[self.in_key])
+
+            if not kv_dicts and not self.inference:
+                uttid = item.get("uttid", "unknown")
+                logger.info(f"'{uttid}' doesn't have any required tags, skipping.")
+                return None
+
+            response = self._format_output(kv_dicts)
+
+        item["output"] = [{"text": response + self.moe_eos, "loss_mask": 1}]
+        item["inputs"] = self._make_inputs(self.prompt)
+        texts = [d.get("text", "") for d in item["inputs"] if "text" in d]
+
+        try:
+            audio_start_index = texts.index("<audio>")
+            audio_end_index = texts.index("</audio>")
+            prefix_string = "".join(texts[: audio_start_index + 1])
+            suffix_string = "".join(texts[audio_end_index:])
+        except ValueError:
+            uttid = item.get("uttid", "unknown")
+            logger.warning(f"{uttid} does not contain <audio> or </audio>, skip")
+            return None
+
+        output_string = "".join(d["text"] for d in item["output"] if "text" in d)
+
+        item["prefix_string"] = prefix_string
+        item["suffix_string"] = suffix_string
+        item["output_string"] = output_string
+
+        return item
+
+
+class MusicUnderstandingInferParser:
+    """
+    Predict purpose only
+    """
+
+    def __init__(self, prompt: str):
+        self.prompt = prompt
+        self.moe_bos = "<[BOS_never_used_51bce0c785ca2f68081bfa7d91973934]>"
+        self.moe_eos = "<[EOS_never_used_51bce0c785ca2f68081bfa7d91973934]>"
+
+    def __call__(self, item: Dict, **_kwargs) -> Optional[Dict]:
+        if not item:
+            return None
+
+        item["prefix_string"] = f"{self.moe_bos}user\n{self.prompt}<audio>"
+        item["suffix_string"] = f"</audio>{self.moe_eos}{self.moe_bos}assistant\n"
+        return item

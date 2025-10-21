@@ -1,9 +1,9 @@
 import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 import torch
-import wandb
 from PIL import Image
 
+import wandb
 from samantha.transforms.audio import plot_spectrogram
 
 

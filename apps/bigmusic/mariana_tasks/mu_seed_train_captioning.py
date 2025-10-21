@@ -1496,10 +1496,18 @@ class SemanticLlmModel(CruiseModule):
             
             # Create individual records for each item in the batch
             for i in range(batch_size):
+                # record = {
+                #     'uttid': batch['uttid'][i] if i < len(batch['uttid']) else None,
+                #     'audio_tags': batch['audio_tags'][i] if i < len(batch['audio_tags']) else None,
+                #     # 'url': batch['url'][i] if i < len(batch['url']) else None,
+                #     'scores': batch['scores'][i] if i < len(batch['scores']) else None,
+                #     'predict_results': batch['predict_results'][i] if i < len(batch['predict_results']) else None
+                # }
                 record = {
                     'uttid': batch['uttid'][i] if i < len(batch['uttid']) else None,
                     'audio_tags': batch['audio_tags'][i] if i < len(batch['audio_tags']) else None,
-                    # 'url': batch['url'][i] if i < len(batch['url']) else None,
+                    'raw': batch['raw'][i] if i < len(batch['raw']) else None,
+                    'url': batch['url'][i] if i < len(batch['url']) else None,
                     'scores': batch['scores'][i] if i < len(batch['scores']) else None,
                     'predict_results': batch['predict_results'][i] if i < len(batch['predict_results']) else None
                 }
