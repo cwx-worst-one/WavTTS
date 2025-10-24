@@ -65,8 +65,8 @@ ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
 ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.79
-ARG BUMI_VERSION=25.10.0.8
-ARG LSDP_VERSION=25.10.0.7
+ARG BUMI_VERSION=25.10.0.24
+ARG LSDP_VERSION=25.10.0.88
 ARG TRITON_VERSION=1.0.0.216
 ARG OMNIDISPATCHER_VERSION=1.0.0.65
 ARG LITEDATALOADER_VERSION=1.0.0.96
@@ -193,7 +193,7 @@ RUN pip3 install \
         byted_encrypted_hdfs==0.7.2 \
         bytedance.ckpt_io_metrics==0.0.22 \
         bytedance-context==0.7.1 \
-        bytedance.easycycle==1.1.62 \
+        bytedance.easycycle==1.1.66 \
         bytedance.hdfs-stdenv==0.0.39 \
         bytedance-metrics==0.5.2 \
         bytedance.modelhub==0.0.78 \
