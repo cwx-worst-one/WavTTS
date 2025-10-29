@@ -391,6 +391,7 @@ class ModelArgs:
 
     bias: bool = False
     use_unet_style_skip_connect: bool = False
+    use_residual: bool = True
     target_type: str = "velocity"
     use_prompt: bool = True
 
@@ -725,16 +726,12 @@ class LlamaDiffusion(nn.Module):
 
         pred_v = self.postnet(pred_v)
 
-        if self.target_type == "rectified-flow":
-            if self.hp.use_unet_style_skip_connect:
-                pred = pred_v + residual
-        elif self.target_type == "velocity":
-            if self.hp.use_unet_style_skip_connect:
-                pred = pred_v + residual
+        if self.hp.use_residual and self.target_type in ["rectified-flow", "velocity"]:
+            pred_v = pred_v + residual
         elif self.target_type == "x0":
-            pred = betas * residual + alphas * pred_v
+            pred_v = betas * residual + alphas * pred_v
 
-        return pred.transpose(1, 2), target.transpose(1, 2)
+        return pred_v.transpose(1, 2), target.transpose(1, 2)
 
     def _forward(
         self, x, local_cond, text_embed, timesteps, infer_params: InferenceParams = None
@@ -753,12 +750,9 @@ class LlamaDiffusion(nn.Module):
 
         pred_v = self.postnet(pred_v)
 
-        if self.target_type == "velocity" or self.target_type == "rectified-flow":
-            if self.hp.use_unet_style_skip_connect:
-                pred = pred_v + residual
-        else:
-            raise NotImplementedError
-        return pred
+        if self.hp.use_residual and self.target_type in ["rectified-flow", "velocity"]:
+            pred_v = pred_v + residual
+        return pred_v
 
     def clear_infer_params(self, t, total_frame=None, bs=1, text_cfg=1.0, mem_efficient=False):
         if total_frame is None:
