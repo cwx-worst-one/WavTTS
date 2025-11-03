@@ -65,11 +65,11 @@ ARG ASR_EVAL_TOOL_VERSION=1.0.0.125
 ARG SPEECH_EVALS_VERSION=1.0.0.34
 ARG I18N_TEXT_FORMAT_VERSION=1.0.0.112
 ARG S3A_VERSION=1.0.0.79
-ARG BUMI_VERSION=25.10.0.24
-ARG LSDP_VERSION=25.10.0.88
+ARG BUMI_VERSION=25.10.0.29
+ARG LSDP_VERSION=25.10.0.104
 ARG TRITON_VERSION=1.0.0.216
 ARG OMNIDISPATCHER_VERSION=1.0.0.65
-ARG LITEDATALOADER_VERSION=1.0.0.96
+ARG LITEDATALOADER_VERSION=1.0.0.123
 ARG MARIANA_FMHA_PLUS_VERSION=1.0.0.51
 # https://github.com/facebookresearch/xformers.git:6425fd0
 ARG XFORMERS_VERSION=1.0.0.15
@@ -438,7 +438,7 @@ RUN pip3 install \
         orjson==3.10.7 \
         overrides==7.7.0 \
         packaging==24.1 \
-        paddlepaddle==2.6.0 \
+        paddlepaddle==2.6.2 \
         pandas==1.5.3 \
         pandocfilters==1.5.1 \
         paramiko==3.5.1 \
