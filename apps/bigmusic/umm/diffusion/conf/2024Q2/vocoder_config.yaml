@@ -15,7 +15,7 @@ cache_dir: ".module_cache/vocoder"
   chunk_size: !apply:samantha.utils.envs.getenv_int ["vocoder_chunk_size", 4]
   major_version: v1
   vocoder_model: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
-    checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/44.1k_stereo_zh_latent=128_hz=49_kl=1e-6_dataid_2196/checkpoints/last-EMA.ckpt
+    checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/andrew.shaw/vocoder/44.1k_stereo_zh_latent=128_hz=49_kl=1e-6_dataid_2196/checkpoints/last-EMA.ckpt
     version: 44.1k_vocal
     adapt_hopper: True
     cache_dir: !ref <cache_dir>/44.1k_vocal
@@ -35,7 +35,7 @@ cache_dir: ".module_cache/vocoder"
   sample_rate: 44100
   major_version: v1
   vocoder_model: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
-    checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/44.1k_stereo_zh_latent=64_hz=49_kl=1e-6_v2_freq=2_finetune/checkpoints/last-EMA.ckpt
+    checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/andrew.shaw/vocoder/44.1k_stereo_zh_latent=64_hz=49_kl=1e-6_v2_freq=2_finetune/checkpoints/last-EMA.ckpt
     version: 44.1k_sa
     adapt_hopper: True
     cache_dir: !ref <cache_dir>/44.1k_sa
@@ -55,7 +55,7 @@ cache_dir: ".module_cache/vocoder"
   sample_rate: 24000
   major_version: v1
   vocoder_model: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
-    checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/soundstream-step=374999-val_sdr=12.9557.ckpt
+    checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/andrew.shaw/vocoder/soundstream-step=374999-val_sdr=12.9557.ckpt
     version: 24k_125hz_dim32_baseline
     adapt_hopper: True
     cache_dir: !ref <cache_dir>/24k_125hz_dim32_baseline
@@ -75,7 +75,7 @@ cache_dir: ".module_cache/vocoder"
   sample_rate: 32000
   major_version: v1
   vocoder_model: !name:recipes.diffusion.models.vocoder_model.utils.init_vocoder
-      checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/wtl/vocoder/32k_stereo_latent=128_hz=40_kl=1e-5_dataid_2196/checkpoints/soundstream-step=870000-val_sdr=11.9673-EMA.ckpt
+      checkpoint_path: hdfs://haruna/home/byte_data_seed/lf_lq/speech/user/andrew.shaw/vocoder/32k_stereo_latent=128_hz=40_kl=1e-5_dataid_2196/checkpoints/soundstream-step=870000-val_sdr=11.9673-EMA.ckpt
       version: "32k"
       adapt_hopper: True
       cache_dir: !ref <cache_dir>/32k
