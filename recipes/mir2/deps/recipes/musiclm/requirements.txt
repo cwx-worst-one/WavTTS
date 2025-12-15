@@ -1,9 +1,0 @@
---index-url https://bytedpypi.byted.org/simple
-einops
-scipy==1.7.3
-torch_complex==0.4.3
-vector_quantize_pytorch==1.1.2
-encodec==0.1.1
-byted-frechet-audio-distance==0.2.1
-matplotlib
-librosa

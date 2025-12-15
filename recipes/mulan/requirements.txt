@@ -1,4 +1,0 @@
---index-url https://bytedpypi.byted.org/simple
-pyloudnorm==0.1.1
-rotary-embedding-torch
-torch_complex==0.4.3

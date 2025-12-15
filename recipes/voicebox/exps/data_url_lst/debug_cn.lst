@@ -1,6 +1,0 @@
-hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/supervised_trainset/history/bigasr/zhiyuan_office_en_20h/package/wav_1.0_web_dataset_6/data/*.tar
-hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/supervised_trainset/history/bigasr/zhiyuan_office_zh_50h/package/wav_1.0_web_dataset_7/data/*.tar
-hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/supervised_trainset/history/bigasr/edu_huiting_child_zh_cn_1000h/package/wav_1.0_web_dataset_6/data/*.tar
-hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/supervised_trainset/history/bigasr/edu_datatang_child_zh_cn_2000h/package/wav_1.0_web_dataset_6/data/*.tar
-hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/supervised_trainset/history/bigasr/douyin_video_cs_1300h/package/wav_1.0_web_dataset_6/data/*.tar
-hdfs://haruna/home/byte_data_seed/lf_lq/speech/data/supervised_trainset/history/bigasr/video_caption_douyin_zh_en_mixed_2kh/package/wav_1.0_web_dataset_6/data/*.tar

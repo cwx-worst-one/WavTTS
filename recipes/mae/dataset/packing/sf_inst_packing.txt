@@ -1,1 +1,0 @@
-See https://code.byted.org/qiqi.he/InstLoc/blob/mulan_tag/mp_infer_packing.py

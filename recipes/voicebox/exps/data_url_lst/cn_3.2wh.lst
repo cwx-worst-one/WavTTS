@@ -1,5 +1,0 @@
-hdfs://haruna/home/byte_data_seed/lf_lq/speech/data_store/BigTTS/ds=tts_zh_Sbigspeech_P1/package/wav_1.0_web_dataset_2/data/part=*/*.tar
-hdfs://haruna/home/byte_data_seed/lf_lq/speech/data_store/BigTTS/tts_Lmand_Sxiaoyuzhou_F6.1_D0-10_P1/package/wav_1.0_web_dataset_2/data/part=*/*.tar
-hdfs://haruna/home/byte_data_seed/lf_lq/speech/data_store/BigTTS/tts_Lmand_Sxiaoyuzhou_F6.1_D10-100_P1/package/wav_1.0_web_dataset_2/data/part=*/*.tar
-hdfs://haruna/home/byte_data_seed/lf_lq/speech/data_store/BigTTS/tts_Lmand_Sximalaya_F6.1_D10-100_P1/package/wav_1.0_web_dataset_2/data/part=*/*.tar
-hdfs://haruna/home/byte_data_seed/lf_lq/speech/data_store/BigTTS/tts_Lmand_Sximalaya_F6.1_D0-10_P1/package/wav_1.0_web_dataset_2/data/part=*/*.tar

@@ -1,7 +1,0 @@
---index-url https://bytedpypi.byted.org/simple
-torch_complex
-librosa
-pydub
-pydantic==1.10.2
-tensorboard==2.10
-rotary-embedding-torch

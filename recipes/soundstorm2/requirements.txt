@@ -1,6 +1,0 @@
---index-url https://bytedpypi.byted.org/simple
-einops
-torch_complex==0.4.3
-hyperpyyaml==1.2.1
-gradio==3.33.1
-# descript-audio-codec==1.0.0

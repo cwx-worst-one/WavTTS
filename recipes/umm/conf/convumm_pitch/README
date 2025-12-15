@@ -1,8 +1,0 @@
-19JUN2024 @hanoihantrakul
-These experiments were conducted by Hanoi Hantrakul in 
-JUN2024 to explore how perceptual and supervised pitch 
-signals could encode better melodic and pitch information
-in the ConvUMM models. The intention was to give these models
-to Yiqing Lu and have him use these models for the SVS task.
-This is because better melody encoding will be more apparent
-with the SVS task compared to full mix vocal music generation.

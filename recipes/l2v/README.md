@@ -1,1 +1,0 @@
-# Code has been moved to recipes/bigmusic. Lyrics processingscripts have been kept for reference

@@ -1,8 +1,0 @@
-torch_complex==0.4.3
-rotary-embedding-torch
-soft-moe-pytorch
-fsspec==2023.6.0
-ruamel.yaml==0.17.28
-pyloudnorm
-phonemizer
-thop

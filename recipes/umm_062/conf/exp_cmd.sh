@@ -1,1 +1,0 @@
- bash launch.sh fit -c recipes/umm/conf/umm_stage3_40hz_16384.yaml --config.ctc_zero_infinity True --run_opts.version umm_stage3_dw20-3-2_wordpiece_vq16384x32_ll --run_opts.hdfs_log_dir hdfs://haruna/home/byte_speech_sv/zhuo.chen1/umm/log --config.vq_codebook_size 16384 --config.vq_codebook_dim 32 --run_opts.log_dir logs

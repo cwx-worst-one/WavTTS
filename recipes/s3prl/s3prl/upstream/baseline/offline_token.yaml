@@ -1,5 +1,0 @@
-offline:
-  use_lookup: true
-  vocab_size: 16385  # add a padding value
-  input_dim: 768
-  downsample_rate: 1

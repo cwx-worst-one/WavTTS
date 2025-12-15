@@ -1,1 +1,0 @@
-# This recipe is only for *BigTTS*'s inference, please go to `recipes/umm` to get latest code for *BigMusic* development.

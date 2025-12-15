@@ -1,2 +1,0 @@
-POT
-torchdiffeq

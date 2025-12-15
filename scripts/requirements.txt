@@ -1,3 +1,0 @@
---index-url https://bytedpypi.byted.org/simple
-transformers==4.29.2
-torch-tb-profiler==0.4.1

@@ -1,3 +1,0 @@
-*.ckpt
-result
-s3prl/downstream/a2o-vc-vcc2020/data/stats/*
