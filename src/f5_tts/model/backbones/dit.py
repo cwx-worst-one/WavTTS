@@ -119,9 +119,35 @@ class TextEmbedding(nn.Module):
 
 
 class InputEmbedding(nn.Module):
-    def __init__(self, mel_dim, text_dim, out_dim):
+    def __init__(
+        self,
+        mel_dim,
+        text_dim,
+        out_dim,
+        use_audio_proj: bool = False,
+        audio_proj_dim: int | None = None,
+        audio_proj_hidden: int | None = None,
+    ):
         super().__init__()
-        self.proj = nn.Linear(mel_dim * 2 + text_dim, out_dim)
+
+        self.use_audio_proj = use_audio_proj
+        
+        if not use_audio_proj:
+            self.proj = nn.Linear(mel_dim * 2 + text_dim, out_dim)
+        else:
+            audio_proj_dim = out_dim if audio_proj_dim is None else audio_proj_dim
+            audio_proj_hidden = audio_proj_dim if audio_proj_hidden is None else audio_proj_hidden
+
+            self.x_proj = nn.Sequential(
+                nn.Linear(mel_dim, audio_proj_hidden, bias=False),
+                nn.Linear(audio_proj_hidden, audio_proj_dim),  # bias=True by default
+            )
+            self.cond_proj = nn.Sequential(
+                nn.Linear(mel_dim, audio_proj_hidden, bias=False),
+                nn.Linear(audio_proj_hidden, audio_proj_dim),
+            )
+
+            self.fuse = nn.Linear(audio_proj_dim * 2 + text_dim, out_dim)
         self.conv_pos_embed = ConvPositionEmbedding(dim=out_dim)
 
     def forward(
@@ -132,12 +158,18 @@ class InputEmbedding(nn.Module):
         drop_audio_cond=False,
         audio_mask: bool["b n"] | None = None,
     ):
-        if drop_audio_cond:  # cfg for cond audio
+        if drop_audio_cond:
             cond = torch.zeros_like(cond)
 
-        x = self.proj(torch.cat((x, cond, text_embed), dim=-1))
-        x = self.conv_pos_embed(x, mask=audio_mask) + x
-        return x
+        if not self.use_audio_proj:
+            h = self.proj(torch.cat((x, cond, text_embed), dim=-1))
+        else:
+            x_h = self.x_proj(x)
+            c_h = self.cond_proj(cond)
+            h = self.fuse(torch.cat((x_h, c_h, text_embed), dim=-1))
+
+        h = self.conv_pos_embed(h, mask=audio_mask) + h
+        return h
 
 
 # Transformer backbone using DiT blocks
@@ -165,6 +197,9 @@ class DiT(nn.Module):
         attn_mask_enabled=False,
         long_skip_connection=False,
         checkpoint_activations=False,
+        use_audio_proj: bool = False,
+        audio_proj_dim: int | None = None,
+        audio_proj_hidden: int | None = None,
     ):
         super().__init__()
 
@@ -179,7 +214,12 @@ class DiT(nn.Module):
             conv_layers=conv_layers,
         )
         self.text_cond, self.text_uncond = None, None  # text cache
-        self.input_embed = InputEmbedding(mel_dim, text_dim, dim)
+        self.input_embed = InputEmbedding(
+            mel_dim, text_dim, dim,
+            use_audio_proj=use_audio_proj,
+            audio_proj_dim=audio_proj_dim,
+            audio_proj_hidden=audio_proj_hidden,
+        )
 
         self.rotary_embed = RotaryEmbedding(dim_head)
 

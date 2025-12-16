@@ -36,6 +36,9 @@ model:
     attn_backend: torch  # torch | flash_attn
     attn_mask_enabled: False
     checkpoint_activations: False  # recompute activations and save memory for extra compute
+    use_audio_proj: True
+    audio_proj_dim: 1024
+    audio_proj_hidden: 768
   mel_spec:
     target_sample_rate: 24000
     n_mel_channels: 240   # equal to wav_frame_len in F5-TTS_wav
