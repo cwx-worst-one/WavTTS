@@ -22,7 +22,7 @@ def deal_with_audio_dir(audio_dir):
     for line in audio_lists:
         text_path = line.with_suffix(".normalized.txt")
         text = open(text_path, "r").read().strip()
-        duration = sf.info(line).duration
+        duration = sf.info(str(line)).duration
         if duration < 0.4 or duration > 30:
             continue
         sub_result.append({"audio_path": str(line), "text": text, "duration": duration})
@@ -84,7 +84,7 @@ if __name__ == "__main__":
     tokenizer = "char"  # "pinyin" | "char"
 
     SUB_SET = ["train-clean-100", "train-clean-360", "train-other-500"]
-    dataset_dir = "/inspire/hdd/global_user/chenwenxi-253108120142/data/libritts/v1"
+    dataset_dir = "/mnt/bn/jdy-lq-5/chenwenxi/data/LibriTTS"
     dataset_name = f"LibriTTS_{'_'.join(SUB_SET)}_{tokenizer}".replace("train-clean-", "").replace("train-other-", "")
     save_dir = str(files("f5_tts").joinpath("../../")) + f"/data/{dataset_name}"
     print(f"\nPrepare for {dataset_name}, will save to {save_dir}\n")
@@ -94,4 +94,4 @@ if __name__ == "__main__":
     # For LibriTTS_100_360_500_char, vocab size is: 78
     # For LibriTTS_100_360_500_char, total 554.09 hours
 
-# python /inspire/hdd/global_user/chenwenxi-253108120142/code/F5-TTS/src/f5_tts/train/datasets/prepare_libritts.py
+# python /mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav/src/f5_tts/train/datasets/prepare_libritts.py

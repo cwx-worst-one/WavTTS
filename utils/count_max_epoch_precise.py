@@ -9,9 +9,9 @@ train_dataset = load_dataset("LibriTTS_100_360_500", "char")
 sampler = SequentialSampler(train_dataset)
 
 gpus = 8
-batch_size_per_gpu = 19200
+batch_size_per_gpu = 51200
 max_samples_per_gpu = 64
-max_updates = 600000    # 600k or 800k
+max_updates = 400000    # 600k or 800k
 
 batch_sampler = DynamicBatchSampler(
     sampler,
