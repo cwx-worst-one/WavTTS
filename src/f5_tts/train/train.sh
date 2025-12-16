@@ -3,14 +3,24 @@
 # export CUDA_VISIBLE_DEVICES=0
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 # export WANDB_MODE=disabled
+export WANDB_API_KEY="406faa59cf62a3646fa3479a7e133c4cf5a77100"
 export HF_ENDPOINT=https://hf-mirror.com
-export MASTER_ADDR=127.0.0.1
+export MASTER_ADDR="127.0.0.1"
 export MASTER_PORT=$((30000 + RANDOM % 30000))
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
-CONFIG_NAME="F5TTS_v1_Small"     # F5TTS_v1_Small, F5TTS_v1_Base, F5TTS_v1_Base_wav
-EXP_NAME="F5TTS_v1_Small_8gpus_bf16"            # debug_wav, debug_mel
+# accelerate config
+num_processes=8
+num_machines=1
+mixed_precision=bf16
+
+# training config
+batch_size_per_gpu=51200
+num_workers=32
+
+CONFIG_NAME="F5TTS_v1_Base"     # F5TTS_v1_Small, F5TTS_v1_Base, F5TTS_v1_Base_wav
+EXP_NAME="${CONFIG_NAME}-${num_processes}gpus-${mixed_precision}-${batch_size_per_gpu}sample_per_gpu"            # debug_wav, debug_mel
 OUTDIR="/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/${EXP_NAME}"
 
 # log config
@@ -20,17 +30,8 @@ LOG_FILE="${LOG_DIR}/train_$(date +%Y%m%d_%H%M%S).log"
 
 exec > >(tee -a ${LOG_FILE}) 2>&1
 echo "Log file: ${LOG_FILE}"
-
-# accelerate config
-num_processes=8
-num_machines=1
-mixed_precision=bf16
-
-# training config
-batch_size_per_gpu=51200
-num_workers=16
-
 echo "MASTER_PORT=${MASTER_PORT}"
+echo "Exp Name: ${EXP_NAME}"
 
 # python -m debugpy --listen 5678 --wait-for-client src/f5_tts/train/train.py \
 accelerate launch --main_process_port ${MASTER_PORT} --num_processes ${num_processes} --num_machines ${num_machines} --mixed_precision ${mixed_precision} --dynamo_backend no src/f5_tts/train/train.py \
