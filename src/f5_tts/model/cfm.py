@@ -48,6 +48,13 @@ class CFM(nn.Module):
         mel_spec_kwargs: dict = dict(),
         frac_lengths_mask: tuple[float, float] = (0.7, 1.0),
         vocab_char_map: dict[str:int] | None = None,
+        prediction: str = "flow",       # "flow" | "x_pred"
+        loss_space: str = "flow",       # "flow" | "v"
+        t_sampling: str = "uniform",    # "uniform" | "logistic_normal"
+        P_mean: float = 0.0,
+        P_std: float = 1.0,
+        t_eps: float = 1e-4,
+        noise_scale: float = 1.0,
     ):
         super().__init__()
 
@@ -85,6 +92,15 @@ class CFM(nn.Module):
         # vocab map for tokenization
         self.vocab_char_map = vocab_char_map
 
+        # enhanced flow model settings
+        self.prediction = prediction
+        self.loss_space = loss_space
+        self.t_sampling = t_sampling
+        self.P_mean = P_mean
+        self.P_std = P_std
+        self.t_eps = t_eps
+        self.noise_scale = noise_scale
+
     @property
     def device(self):
         return next(self.parameters()).device
@@ -115,6 +131,23 @@ class CFM(nn.Module):
             frame_lens = (lens + L - 1) // L  # ceil
 
         return frames, frame_lens, pad_len
+    
+    def _sample_time(self, batch: int, dtype, device):
+        if self.t_sampling == "uniform":
+            return torch.rand((batch,), dtype=dtype, device=device)
+        elif self.t_sampling == "logistic_normal":
+            # JiT: t = sigmoid(N(P_mean, P_std))
+            z = torch.randn((batch,), device=device, dtype=dtype) * self.P_std + self.P_mean
+            return torch.sigmoid(z)
+        else:
+            raise ValueError(f"Unknown t_sampling: {self.t_sampling}")
+
+    def _x_to_v(self, x_pred, z, t):
+        # v_pred = (x_pred - z) / (1 - t)
+        denom = (1.0 - t).clamp_min(self.t_eps)
+        while denom.ndim < z.ndim:
+            denom = denom.unsqueeze(-1)
+        return (x_pred - z) / denom
 
     @torch.no_grad()
     def sample(
@@ -199,33 +232,31 @@ class CFM(nn.Module):
         def fn(t, x):
             # at each step, conditioning is fixed
             # step_cond = torch.where(cond_mask, cond, torch.zeros_like(cond))
+            def to_v(pred_x_or_v):
+                if self.prediction == "flow":
+                    return pred_x_or_v
+                else:  # x_pred
+                    return self._x_to_v(pred_x_or_v, x, t)
 
             # predict flow (cond)
             if cfg_strength < 1e-5:
                 pred = self.transformer(
-                    x=x,
-                    cond=step_cond,
-                    text=text,
-                    time=t,
-                    mask=mask,
-                    drop_audio_cond=False,
-                    drop_text=False,
-                    cache=True,
+                    x=x, cond=step_cond, text=text, time=t, mask=mask,
+                    drop_audio_cond=False, drop_text=False, cache=True,
                 )
-                return pred
+                return to_v(pred)
 
             # predict flow (cond and uncond), for classifier-free guidance
             pred_cfg = self.transformer(
-                x=x,
-                cond=step_cond,
-                text=text,
-                time=t,
-                mask=mask,
-                cfg_infer=True,
-                cache=True,
+                x=x, cond=step_cond, text=text, time=t, mask=mask,
+                cfg_infer=True, cache=True,
             )
             pred, null_pred = torch.chunk(pred_cfg, 2, dim=0)
-            return pred + (pred - null_pred) * cfg_strength
+            v_cond = to_v(pred)
+            v_uncond = to_v(null_pred)
+
+            # standard CFG in v-space (Ho & Salimans style)
+            return v_cond + (v_cond - v_uncond) * cfg_strength
 
         # noise input
         # to make sure batch inference result is same with different batch size, and for sure single inference
@@ -234,7 +265,7 @@ class CFM(nn.Module):
         for dur in duration:
             if exists(seed):
                 torch.manual_seed(seed)
-            y0.append(torch.randn(dur, self.num_channels, device=self.device, dtype=step_cond.dtype))
+            y0.append(torch.randn(dur, self.num_channels, device=self.device, dtype=step_cond.dtype) * self.noise_scale)
         y0 = pad_sequence(y0, padding_value=0, batch_first=True)
 
         t_start = 0
@@ -259,7 +290,7 @@ class CFM(nn.Module):
         out = sampled
         out = torch.where(cond_mask, cond, out)
 
-        if exists(vocoder):
+        if exists(vocoder) and not self.wav_input_only:
             out = out.permute(0, 2, 1)
             out = vocoder(out)
             
@@ -317,10 +348,10 @@ class CFM(nn.Module):
         x1 = inp
 
         # x0 is gaussian noise
-        x0 = torch.randn_like(x1)
+        x0 = torch.randn_like(x1) * self.noise_scale
 
         # time step
-        time = torch.rand((batch,), dtype=dtype, device=self.device)
+        time = self._sample_time(batch, dtype=dtype, device=self.device)
         # TODO. noise_scheduler
 
         # sample xt (φ_t(x) in the paper)
@@ -340,12 +371,28 @@ class CFM(nn.Module):
             drop_text = False
 
         # apply mask will use more memory; might adjust batchsize or batchsampler long sequence threshold
-        pred = self.transformer(
-            x=φ, cond=cond, text=text, time=time, drop_audio_cond=drop_audio_cond, drop_text=drop_text, mask=mask
+        raw_pred = self.transformer(
+            x=φ, cond=cond, text=text, time=time,
+            drop_audio_cond=drop_audio_cond, drop_text=drop_text, mask=mask
         )
 
-        # flow matching loss
-        loss = F.mse_loss(pred, flow, reduction="none")
-        loss = loss[rand_span_mask]
+        # interpret prediction
+        if self.prediction == "flow":
+            v_pred = raw_pred
+        elif self.prediction == "x_pred":
+            x_pred = raw_pred
+            v_pred = self._x_to_v(x_pred, φ, time)
+        else:
+            raise ValueError(f"Unknown prediction: {self.prediction}")
 
-        return loss.mean(), cond, pred
+        # loss space
+        if self.loss_space == "flow":
+            loss = F.mse_loss(v_pred, flow, reduction="none")
+        elif self.loss_space == "v":
+            # v-loss (same target flow, but v_pred computed from x_pred)
+            loss = F.mse_loss(v_pred, flow, reduction="none")
+        else:
+            raise ValueError(f"Unknown loss_space: {self.loss_space}")
+
+        loss = loss[rand_span_mask]
+        return loss.mean(), cond, v_pred

@@ -35,6 +35,7 @@ endpoints/
 dfsmnln_online/
 dfsmnln_online_pretrain/
 exp/
+runs/
 stress_eval/
 tensorboard/
 falconclaw-data/

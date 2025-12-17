@@ -21,6 +21,7 @@ def main(model_cfg):
     tokenizer = model_cfg.model.tokenizer
     mel_spec_type = model_cfg.model.mel_spec.mel_spec_type
     wav_input = model_cfg.model.wav_input if "wav_input" in model_cfg.model else False
+    cfm_kwargs = getattr(model_cfg.model, "cfm", {}) or {}
 
     exp_name = model_cfg.ckpts.exp_name
     wandb_resume_id = None
@@ -37,6 +38,7 @@ def main(model_cfg):
         transformer=model_cls(**model_arc, text_num_embeds=vocab_size, mel_dim=model_cfg.model.mel_spec.n_mel_channels),
         mel_spec_kwargs=model_cfg.model.mel_spec,
         vocab_char_map=vocab_char_map,
+        **cfm_kwargs,
     )
     
     save_dir = model_cfg.ckpts.save_dir

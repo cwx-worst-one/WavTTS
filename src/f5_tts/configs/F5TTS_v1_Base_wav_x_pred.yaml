@@ -23,6 +23,14 @@ model:
   tokenizer_path: null  # if 'custom' tokenizer, define the path want to use (should be vocab.txt)
   backbone: DiT
   wav_input: True
+  cfm:
+    prediction: x_pred         # flow | x_pred
+    loss_space: v         # flow | v   (x_pred 模式下一般用 v)
+    t_sampling: uniform      # uniform | logistic_normal
+    P_mean: 0.0
+    P_std: 1.0
+    t_eps: 1.0e-4
+    noise_scale: 1.0
   arch:
     dim: 1024
     depth: 22
