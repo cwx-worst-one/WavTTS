@@ -389,8 +389,12 @@ class CFM(nn.Module):
         if self.loss_space == "flow":
             loss = F.mse_loss(v_pred, flow, reduction="none")
         elif self.loss_space == "v":
-            # v-loss (same target flow, but v_pred computed from x_pred)
-            loss = F.mse_loss(v_pred, flow, reduction="none")
+            # v-loss (same target flow, but v_pred computed from x_pred) & use clamp_min
+            denom = (1.0 - time).clamp_min(self.t_eps)
+            while denom.ndim < φ.ndim:
+                denom = denom.unsqueeze(-1)
+            target = (x1 - φ) / denom
+            loss = F.mse_loss(v_pred, target, reduction="none")
         else:
             raise ValueError(f"Unknown loss_space: {self.loss_space}")
 
