@@ -244,6 +244,8 @@ def load_model(
     ode_method=ode_method,
     use_ema=True,
     device=device,
+    cfm_kwargs=None,
+    mel_spec_kwargs=None,
 ):
     if vocab_file == "":
         vocab_file = str(files("f5_tts").joinpath("infer/examples/vocab.txt"))
@@ -253,21 +255,25 @@ def load_model(
     print("token : ", tokenizer)
     print("model : ", ckpt_path, "\n")
 
-    vocab_char_map, vocab_size = get_tokenizer(vocab_file, tokenizer)
-    model = CFM(
-        transformer=model_cls(**model_cfg, text_num_embeds=vocab_size, mel_dim=n_mel_channels),
-        mel_spec_kwargs=dict(
+    if mel_spec_kwargs is None:
+        mel_spec_kwargs = dict(
             n_fft=n_fft,
             hop_length=hop_length,
             win_length=win_length,
             n_mel_channels=n_mel_channels,
             target_sample_rate=target_sample_rate,
             mel_spec_type=mel_spec_type,
-        ),
+        )
+
+    vocab_char_map, vocab_size = get_tokenizer(vocab_file, tokenizer)
+    model = CFM(
+        transformer=model_cls(**model_cfg, text_num_embeds=vocab_size, mel_dim=mel_spec_kwargs.get("n_mel_channels", n_mel_channels)),
+        mel_spec_kwargs=mel_spec_kwargs,
         odeint_kwargs=dict(
             method=ode_method,
         ),
         vocab_char_map=vocab_char_map,
+        **cfm_kwargs,
     ).to(device)
 
     dtype = torch.float32 if mel_spec_type == "bigvgan" else None
@@ -458,10 +464,25 @@ def infer_batch_process(
     rms = torch.sqrt(torch.mean(torch.square(audio)))
     if rms < target_rms:
         audio = audio * target_rms / rms
+
     if sr != target_sample_rate:
         resampler = torchaudio.transforms.Resample(sr, target_sample_rate)
         audio = resampler(audio)
+
     audio = audio.to(device)
+
+    is_wav_only = bool(getattr(model_obj, "wav_input_only", False))
+
+    if is_wav_only:
+        frame_len = int(getattr(model_obj, "wav_frame_len", getattr(model_obj, "num_channels", 240)))
+        ref_len_samples = audio.shape[-1]
+        ref_full_frames = ref_len_samples // frame_len
+        ref_len_aligned = max(ref_full_frames * frame_len, frame_len)
+        audio = audio[..., :ref_len_aligned]
+        ref_audio_len = ref_len_aligned // frame_len
+    else:
+        # mel mode: ref length in hops (frames)
+        ref_audio_len = audio.shape[-1] // hop_length
 
     generated_waves = []
     spectrograms = []
@@ -478,9 +499,11 @@ def infer_batch_process(
         text_list = [ref_text + gen_text]
         final_text_list = convert_char_to_pinyin(text_list)
 
-        ref_audio_len = audio.shape[-1] // hop_length
         if fix_duration is not None:
-            duration = int(fix_duration * target_sample_rate / hop_length)
+            if is_wav_only:
+                duration = int(fix_duration * target_sample_rate / frame_len)  # frames
+            else:
+                duration = int(fix_duration * target_sample_rate / hop_length)
         else:
             # Calculate duration
             ref_text_len = len(ref_text.encode("utf-8"))
@@ -489,36 +512,66 @@ def infer_batch_process(
 
         # inference
         with torch.inference_mode():
-            generated, _ = model_obj.sample(
-                cond=audio,
-                text=final_text_list,
-                duration=duration,
-                steps=nfe_step,
-                cfg_strength=cfg_strength,
-                sway_sampling_coef=sway_sampling_coef,
-            )
-            del _
+            if is_wav_only:
+                generated, _ = model_obj.sample(
+                    cond=audio,                       # [1, N]
+                    text=final_text_list,
+                    duration=duration,                # frames
+                    steps=nfe_step,
+                    cfg_strength=cfg_strength,
+                    sway_sampling_coef=sway_sampling_coef,
+                    vocoder=None,
+                )
+                del _
 
-            generated = generated.to(torch.float32)  # generated mel spectrogram
-            generated = generated[:, ref_audio_len:, :]
-            generated = generated.permute(0, 2, 1)
-            if mel_spec_type == "vocos":
-                generated_wave = vocoder.decode(generated)
-            elif mel_spec_type == "bigvgan":
-                generated_wave = vocoder(generated)
-            if rms < target_rms:
-                generated_wave = generated_wave * rms / target_rms
+                generated = generated.to(torch.float32)  # [1, N_total]
+                # cut prompt part (aligned)
+                cut = ref_audio_len * frame_len
+                generated_wave = generated[0, cut:].contiguous()
 
-            # wav -> numpy
-            generated_wave = generated_wave.squeeze().cpu().numpy()
+                if rms < target_rms:
+                    generated_wave = generated_wave * rms / target_rms
 
-            if streaming:
-                for j in range(0, len(generated_wave), chunk_size):
-                    yield generated_wave[j : j + chunk_size], target_sample_rate
+                generated_wave = generated_wave.cpu().numpy()
+
+                if streaming:
+                    for j in range(0, len(generated_wave), chunk_size):
+                        yield generated_wave[j : j + chunk_size], target_sample_rate
+                else:
+                    yield generated_wave, None  # no mel spec
+            
             else:
-                generated_cpu = generated[0].cpu().numpy()
-                del generated
-                yield generated_wave, generated_cpu
+                generated, _ = model_obj.sample(
+                    cond=audio,
+                    text=final_text_list,
+                    duration=duration,
+                    steps=nfe_step,
+                    cfg_strength=cfg_strength,
+                    sway_sampling_coef=sway_sampling_coef,
+                )
+                del _
+
+                generated = generated.to(torch.float32)  # generated mel spectrogram
+                generated = generated[:, ref_audio_len:, :]
+                generated = generated.permute(0, 2, 1)
+
+                if mel_spec_type == "vocos":
+                    generated_wave = vocoder.decode(generated)
+                elif mel_spec_type == "bigvgan":
+                    generated_wave = vocoder(generated)
+                if rms < target_rms:
+                    generated_wave = generated_wave * rms / target_rms
+
+                # wav -> numpy
+                generated_wave = generated_wave.squeeze().cpu().numpy()
+
+                if streaming:
+                    for j in range(0, len(generated_wave), chunk_size):
+                        yield generated_wave[j : j + chunk_size], target_sample_rate
+                else:
+                    generated_cpu = generated[0].cpu().numpy()
+                    del generated
+                    yield generated_wave, generated_cpu
 
     if streaming:
         for gen_text in progress.tqdm(gen_text_batches) if progress is not None else gen_text_batches:
@@ -573,7 +626,7 @@ def infer_batch_process(
                     final_wave = new_wave
 
             # Create a combined spectrogram
-            combined_spectrogram = np.concatenate(spectrograms, axis=1)
+            combined_spectrogram = np.concatenate(spectrograms, axis=1) if len(spectrograms) > 0 and spectrograms[0] is not None else None
 
             yield final_wave, target_sample_rate, combined_spectrogram
 

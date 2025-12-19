@@ -23,10 +23,10 @@ model:
   tokenizer_path: null  # if 'custom' tokenizer, define the path want to use (should be vocab.txt)
   backbone: DiT
   arch:
-    dim: 1024
-    depth: 22
+    dim: 1152
+    depth: 28
     heads: 16
-    ff_mult: 2
+    ff_mult: 4
     text_dim: 512
     text_mask_padding: True
     qk_norm: null  # null | rms_norm

@@ -131,8 +131,8 @@ parser.add_argument(
 parser.add_argument(
     "--vocoder_name",
     type=str,
-    choices=["vocos", "bigvgan"],
-    help=f"Used vocoder name: vocos | bigvgan, default {mel_spec_type}",
+    choices=["vocos", "bigvgan", "no_vocoder"],
+    help=f"Used vocoder name: vocos | bigvgan | no_vocoder, default {mel_spec_type}",
 )
 parser.add_argument(
     "--target_rms",
@@ -257,10 +257,15 @@ if vocoder_name == "vocos":
     vocoder_local_path = "../checkpoints/vocos-mel-24khz"
 elif vocoder_name == "bigvgan":
     vocoder_local_path = "../checkpoints/bigvgan_v2_24khz_100band_256x"
+elif vocoder_name == "no_vocoder":
+    vocoder = None
+else:
+    raise ValueError(f"Unknown vocoder name: {vocoder_name}")
 
-vocoder = load_vocoder(
-    vocoder_name=vocoder_name, is_local=load_vocoder_from_local, local_path=vocoder_local_path, device=device
-)
+if vocoder_name != "no_vocoder":
+    vocoder = load_vocoder(
+        vocoder_name=vocoder_name, is_local=load_vocoder_from_local, local_path=vocoder_local_path, device=device
+    )
 
 
 # load TTS model
@@ -270,6 +275,7 @@ model_cfg = OmegaConf.load(
 )
 model_cls = get_class(f"f5_tts.model.{model_cfg.model.backbone}")
 model_arc = model_cfg.model.arch
+cfm_kwargs = getattr(model_cfg.model, "cfm", {}) or {}
 
 repo_name, ckpt_step, ckpt_type = "F5-TTS", 1250000, "safetensors"
 
@@ -292,7 +298,7 @@ if not ckpt_file:
 
 print(f"Using {model}...")
 ema_model = load_model(
-    model_cls, model_arc, ckpt_file, mel_spec_type=vocoder_name, vocab_file=vocab_file, device=device
+    model_cls, model_arc, ckpt_file, mel_spec_type=vocoder_name, vocab_file=vocab_file, device=device, cfm_kwargs=cfm_kwargs, mel_spec_kwargs=model_cfg.model.mel_spec
 )
 
 
