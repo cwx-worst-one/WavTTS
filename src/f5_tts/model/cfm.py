@@ -19,7 +19,7 @@ from torch import nn
 from torch.nn.utils.rnn import pad_sequence
 from torchdiffeq import odeint
 
-from f5_tts.model.modules import MelSpec
+from f5_tts.model.modules import MelSpec, MelSpectrogramLoss
 from f5_tts.model.utils import (
     default,
     exists,
@@ -55,6 +55,9 @@ class CFM(nn.Module):
         P_std: float = 1.0,
         t_eps: float = 1e-4,
         noise_scale: float = 1.0,
+        use_aux_mel_loss: bool = False,
+        aux_mel_loss_weight: float = 0.0,
+        sample_rate: int = 24000,
     ):
         super().__init__()
 
@@ -100,6 +103,24 @@ class CFM(nn.Module):
         self.P_std = P_std
         self.t_eps = t_eps
         self.noise_scale = noise_scale
+
+        # aux mel loss
+        self.use_aux_mel_loss = use_aux_mel_loss
+        if self.use_aux_mel_loss and self.wav_input_only:
+            self.aux_mel_loss = MelSpectrogramLoss(
+                sample_rate=sample_rate,
+                n_mels=[5, 10, 20, 40, 80, 160, 320],
+                window_lengths=[32, 64, 128, 256, 512, 1024, 2048],
+                mel_fmin=[0, 0, 0, 0, 0, 0, 0],
+                mel_fmax=[None] * 7,
+                pow=1.0,
+                clamp_eps=1e-5,
+                mag_weight=0.0,    # As per config
+                log_weight=1.0,    # As per config
+                weight=aux_mel_loss_weight
+            )
+        else:
+            self.aux_mel_loss = None
 
     @property
     def device(self):
@@ -344,7 +365,7 @@ class CFM(nn.Module):
         if exists(mask):
             rand_span_mask &= mask
 
-        # mel is x1
+        # mel / raw wave is x1
         x1 = inp
 
         # x0 is gaussian noise
@@ -399,4 +420,22 @@ class CFM(nn.Module):
             raise ValueError(f"Unknown loss_space: {self.loss_space}")
 
         loss = loss[rand_span_mask]
-        return loss.mean(), cond, v_pred
+        flow_loss = loss.mean()
+        total_loss = flow_loss
+
+        if self.use_aux_mel_loss and self.aux_mel_loss is not None and self.wav_input_only:
+            B = x1.shape[0]
+            x1_flat = x1.reshape(B, -1)
+            x1_pred_flat = x_pred.reshape(B, -1)
+
+            aux_mel_loss = self.aux_mel_loss(x1_pred_flat, x1_flat)
+            total_loss = total_loss + aux_mel_loss
+
+        loss_dict = {
+            "total_loss": total_loss,
+            "flow_loss": flow_loss,
+            "aux_mel_loss": aux_mel_loss if self.use_aux_mel_loss else None,
+            "repa_loss": None,
+        }
+
+        return total_loss, cond, v_pred, loss_dict

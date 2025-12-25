@@ -18,15 +18,24 @@ optim:
   bnb_optimizer: False  # use bnb 8bit AdamW optimizer or not
 
 model:
-  name: F5TTS_v1_Base  # model name
+  name: F5TTS_v1_Base_wav  # model name
   tokenizer: char  # tokenizer type
   tokenizer_path: null  # if 'custom' tokenizer, define the path want to use (should be vocab.txt)
   backbone: DiT
+  wav_input: True
+  cfm:
+    prediction: x_pred         # flow | x_pred
+    loss_space: v         # flow | v   (x_pred 模式下一般用 v)
+    t_sampling: uniform      # uniform | logistic_normal
+    P_mean: 0.0
+    P_std: 1.0
+    t_eps: 0.02
+    noise_scale: 1.0
   arch:
-    dim: 1152
-    depth: 28
+    dim: 1024
+    depth: 22
     heads: 16
-    ff_mult: 4
+    ff_mult: 2
     text_dim: 512
     text_mask_padding: True
     qk_norm: null  # null | rms_norm
@@ -35,13 +44,18 @@ model:
     attn_backend: torch  # torch | flash_attn
     attn_mask_enabled: False
     checkpoint_activations: False  # recompute activations and save memory for extra compute
+    use_audio_proj: True
+    audio_proj_dim: 1024
+    audio_proj_hidden: 768
   mel_spec:
     target_sample_rate: 24000
-    n_mel_channels: 100
+    n_mel_channels: 240   # equal to wav_frame_len in F5-TTS_wav
     hop_length: 256
     win_length: 1024
     n_fft: 1024
-    mel_spec_type: vocos  # vocos | bigvgan
+    mel_spec_type: no_vocoder  # vocos | bigvgan | no_vocoder
+    return_wav_only: True
+    wav_frame_len: 240  # 240 @24k = 100Hz
   vocoder:
     is_local: False  # use local offline ckpt or not
     local_path: null  # local vocoder path

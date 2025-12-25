@@ -375,7 +375,7 @@ class Trainer:
                         dur_loss = self.duration_predictor(mel_spec, lens=batch.get("durations"))
                         self.accelerator.log({"duration loss": dur_loss.item()}, step=global_update)
 
-                    loss, cond, pred = self.model(
+                    loss, cond, pred, loss_dict = self.model(
                         inp, text=text_inputs, lens=inp_lengths, noise_scheduler=self.noise_scheduler
                     )
                     self.accelerator.backward(loss)
@@ -399,9 +399,19 @@ class Trainer:
                     self.accelerator.log(
                         {"loss": loss.item(), "lr": self.scheduler.get_last_lr()[0]}, step=global_update
                     )
+
+                    if loss_dict["aux_mel_loss"] is not None:
+                        self.accelerator.log({"aux_mel_loss": loss_dict["aux_mel_loss"].item()}, step=global_update)
+                    if loss_dict["repa_loss"] is not None:
+                        self.accelerator.log({"repa_loss": loss_dict["repa_loss"].item()}, step=global_update)
+
                     if self.logger == "tensorboard":
                         self.writer.add_scalar("loss", loss.item(), global_update)
                         self.writer.add_scalar("lr", self.scheduler.get_last_lr()[0], global_update)
+                        if loss_dict["aux_mel_loss"] is not None:
+                            self.writer.add_scalar("aux_mel_loss", loss_dict["aux_mel_loss"].item(), global_update)
+                        if loss_dict["repa_loss"] is not None:
+                            self.writer.add_scalar("repa_loss", loss_dict["repa_loss"].item(), global_update)
 
                 if global_update % self.last_per_updates == 0 and self.accelerator.sync_gradients:
                     self.save_checkpoint(global_update, last=True)

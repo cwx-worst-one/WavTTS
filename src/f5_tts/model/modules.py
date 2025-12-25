@@ -785,3 +785,89 @@ class TimestepEmbedding(nn.Module):
         time_hidden = time_hidden.to(timestep.dtype)
         time = self.time_mlp(time_hidden)  # b d
         return time
+
+# auxiliary loss for mel spectrogram
+class MelSpectrogramLoss(nn.Module):
+    """
+    General PyTorch implementation of the Multi-Scale Mel Spectrogram Loss from DAC.
+    Reference: https://github.com/descriptinc/lyrebird-audiotools
+    """
+    def __init__(
+        self,
+        sample_rate: int = 24000,
+        n_mels: List[int] = [5, 10, 20, 40, 80, 160, 320],
+        window_lengths: List[int] = [32, 64, 128, 256, 512, 1024, 2048],
+        mel_fmin: List[float] = [0, 0, 0, 0, 0, 0, 0],
+        mel_fmax: List[Optional[float]] = [None, None, None, None, None, None, None],
+        pow: float = 1.0,
+        clamp_eps: float = 1e-5,
+        mag_weight: float = 0.0,
+        log_weight: float = 1.0,
+        weight: float = 1.0,
+    ):
+        super().__init__()
+        self.sample_rate = sample_rate
+        self.weight = weight
+        self.mag_weight = mag_weight
+        self.log_weight = log_weight
+        self.pow = pow
+        self.clamp_eps = clamp_eps
+        
+        assert len(n_mels) == len(window_lengths), "n_mels and window_lengths must have the same length"
+        
+        self.mel_transforms = nn.ModuleList()
+        
+        for i, (nm, wl) in enumerate(zip(n_mels, window_lengths)):
+            fmin = mel_fmin[i] if i < len(mel_fmin) else 0.0
+            fmax = mel_fmax[i] if i < len(mel_fmax) else None
+            
+            # DAC default logic: hop_length = window_length // 4
+            hop_length = wl // 4
+            
+            transform = torchaudio.transforms.MelSpectrogram(
+                sample_rate=sample_rate,
+                n_fft=wl,        # using window_length as n_fft usually
+                win_length=wl,
+                hop_length=hop_length,
+                n_mels=nm,
+                f_min=fmin,
+                f_max=fmax,
+                power=1.0,       # computing Magnitude Mel (power=1.0) initially
+                normalized=True, # consistent with most modern TTS vocoders
+                center=True,
+                pad_mode="reflect"
+            )
+            self.mel_transforms.append(transform)
+
+    def forward(self, x_pred: torch.Tensor, x_true: torch.Tensor):
+        """
+        Args:
+            x_pred: [B, T] or [B, 1, T] Estimated Waveform
+            x_true: [B, T] or [B, 1, T] Ground Truth Waveform
+        Returns:
+            Weighted scalar loss
+        """
+        # Ensure correct shape [B, T] for torchaudio, or [B, 1, T] is also fine but usually squeeze
+        if x_pred.ndim == 3 and x_pred.shape[1] == 1:
+            x_pred = x_pred.squeeze(1)
+        if x_true.ndim == 3 and x_true.shape[1] == 1:
+            x_true = x_true.squeeze(1)
+            
+        total_loss = 0.0
+        
+        for mel_transform in self.mel_transforms:
+            x_mels = mel_transform(x_pred)
+            y_mels = mel_transform(x_true)
+            
+            # 1. Log Magnitude Loss
+            # Formula: L1( log10(x^pow + eps), log10(y^pow + eps) )
+            if self.log_weight > 0:
+                x_log = x_mels.clamp(min=self.clamp_eps).pow(self.pow).log10()
+                y_log = y_mels.clamp(min=self.clamp_eps).pow(self.pow).log10()
+                total_loss += self.log_weight * F.l1_loss(x_log, y_log)
+            
+            # 2. Linear Magnitude Loss
+            if self.mag_weight > 0:
+                total_loss += self.mag_weight * F.l1_loss(x_mels, y_mels)
+                
+        return total_loss * self.weight
