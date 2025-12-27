@@ -216,3 +216,6 @@ def get_epss_timesteps(n, device, dtype):
     if not t:
         return torch.linspace(0, 1, n + 1, device=device, dtype=dtype)
     return dt * torch.tensor(t, device=device, dtype=dtype)
+
+def masked_mean(x, mask):
+    return (x * mask).sum() / mask.sum()

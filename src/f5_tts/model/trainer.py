@@ -366,6 +366,9 @@ class Trainer:
                     mel_lengths = batch["mel_lengths"]
                     wav = batch["wav"]
                     wav_lengths = batch["wav_lengths"]
+                    text_lengths = batch["text_lengths"]
+                    ssl_feature = [batch["ssl_feature"]] if "ssl_feature" in batch else None
+                    ssl_feature_lengths = batch["ssl_feature_lengths"] if "ssl_feature_lengths" in batch else None
                     
                     inp = mel_spec if not self.wav_input else wav
                     inp_lengths = mel_lengths if not self.wav_input else wav_lengths
@@ -376,7 +379,8 @@ class Trainer:
                         self.accelerator.log({"duration loss": dur_loss.item()}, step=global_update)
 
                     loss, cond, pred, loss_dict = self.model(
-                        inp, text=text_inputs, lens=inp_lengths, noise_scheduler=self.noise_scheduler
+                        inp, text=text_inputs, lens=inp_lengths, noise_scheduler=self.noise_scheduler,
+                        text_lens=text_lengths, zs=ssl_feature, zs_lens=ssl_feature_lengths,
                     )
                     self.accelerator.backward(loss)
 
@@ -393,7 +397,14 @@ class Trainer:
 
                     global_update += 1
                     progress_bar.update(1)
-                    progress_bar.set_postfix(update=str(global_update), loss=loss.item())
+                    progress_bar.set_postfix(
+                        update=str(global_update), 
+                        aux_mel_loss=loss_dict["aux_mel_loss"].item(),
+                        aux_ctc_loss=loss_dict["aux_ctc_loss"].item(),
+                        aux_ssl_feature_loss=loss_dict["aux_ssl_feature_loss"].item(),
+                        flow_loss=loss_dict["flow_loss"].item(),
+                        loss=loss.item()
+                    )
 
                 if self.accelerator.is_local_main_process:
                     self.accelerator.log(
@@ -402,16 +413,20 @@ class Trainer:
 
                     if loss_dict["aux_mel_loss"] is not None:
                         self.accelerator.log({"aux_mel_loss": loss_dict["aux_mel_loss"].item()}, step=global_update)
-                    if loss_dict["repa_loss"] is not None:
-                        self.accelerator.log({"repa_loss": loss_dict["repa_loss"].item()}, step=global_update)
-
+                    if loss_dict["aux_ssl_feature_loss"] is not None:
+                        self.accelerator.log({"aux_ssl_feature_loss": loss_dict["aux_ssl_feature_loss"].item()}, step=global_update)
+                    if loss_dict["aux_ctc_loss"] is not None:
+                        self.accelerator.log({"aux_ctc_loss": loss_dict["aux_ctc_loss"].item()}, step=global_update)
+                    
                     if self.logger == "tensorboard":
                         self.writer.add_scalar("loss", loss.item(), global_update)
                         self.writer.add_scalar("lr", self.scheduler.get_last_lr()[0], global_update)
                         if loss_dict["aux_mel_loss"] is not None:
                             self.writer.add_scalar("aux_mel_loss", loss_dict["aux_mel_loss"].item(), global_update)
-                        if loss_dict["repa_loss"] is not None:
-                            self.writer.add_scalar("repa_loss", loss_dict["repa_loss"].item(), global_update)
+                        if loss_dict["aux_ssl_feature_loss"] is not None:
+                            self.writer.add_scalar("aux_ssl_feature_loss", loss_dict["aux_ssl_feature_loss"].item(), global_update)
+                        if loss_dict["aux_ctc_loss"] is not None:
+                            self.writer.add_scalar("aux_ctc_loss", loss_dict["aux_ctc_loss"].item(), global_update)
 
                 if global_update % self.last_per_updates == 0 and self.accelerator.sync_gradients:
                     self.save_checkpoint(global_update, last=True)

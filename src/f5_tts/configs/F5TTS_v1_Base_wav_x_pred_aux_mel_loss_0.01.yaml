@@ -31,6 +31,9 @@ model:
     P_std: 1.0
     t_eps: 0.02
     noise_scale: 1.0
+    use_aux_mel_loss: True
+    aux_mel_loss_weight: 0.01
+    sample_rate: 24000
   arch:
     dim: 1024
     depth: 22

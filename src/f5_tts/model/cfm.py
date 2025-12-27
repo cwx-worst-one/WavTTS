@@ -28,6 +28,7 @@ from f5_tts.model.utils import (
     list_str_to_idx,
     list_str_to_tensor,
     mask_from_frac_lengths,
+    masked_mean,
 )
 
 
@@ -58,6 +59,10 @@ class CFM(nn.Module):
         use_aux_mel_loss: bool = False,
         aux_mel_loss_weight: float = 0.0,
         sample_rate: int = 24000,
+        use_aux_ctc_loss: bool = False,
+        aux_ctc_loss_weight: float = 0.0,
+        use_aux_ssl_feature_loss: bool = False,
+        aux_ssl_feature_loss_weight: float = 0.0,
     ):
         super().__init__()
 
@@ -121,6 +126,11 @@ class CFM(nn.Module):
             )
         else:
             self.aux_mel_loss = None
+
+        self.use_aux_ctc_loss = use_aux_ctc_loss
+        self.aux_ctc_loss_weight = aux_ctc_loss_weight
+        self.use_aux_ssl_feature_loss = use_aux_ssl_feature_loss
+        self.aux_ssl_feature_loss_weight = aux_ssl_feature_loss_weight
 
     @property
     def device(self):
@@ -261,14 +271,14 @@ class CFM(nn.Module):
 
             # predict flow (cond)
             if cfg_strength < 1e-5:
-                pred = self.transformer(
+                pred, *_ = self.transformer(
                     x=x, cond=step_cond, text=text, time=t, mask=mask,
                     drop_audio_cond=False, drop_text=False, cache=True,
                 )
                 return to_v(pred)
 
             # predict flow (cond and uncond), for classifier-free guidance
-            pred_cfg = self.transformer(
+            pred_cfg, *_ = self.transformer(
                 x=x, cond=step_cond, text=text, time=t, mask=mask,
                 cfg_infer=True, cache=True,
             )
@@ -333,6 +343,9 @@ class CFM(nn.Module):
         *,
         lens: int["b"] | None = None,
         noise_scheduler: str | None = None,
+        zs: list[float["b n d"]],
+        zs_lens: list[int["b"]],
+        text_lens: int["b"] | None = None,
     ):
         # handle raw wave
         if inp.ndim == 2:
@@ -392,9 +405,10 @@ class CFM(nn.Module):
             drop_text = False
 
         # apply mask will use more memory; might adjust batchsize or batchsampler long sequence threshold
-        raw_pred = self.transformer(
+        raw_pred, zs_tilde, zs_tilde_ctc = self.transformer(
             x=φ, cond=cond, text=text, time=time,
-            drop_audio_cond=drop_audio_cond, drop_text=drop_text, mask=mask
+            drop_audio_cond=drop_audio_cond, drop_text=drop_text, mask=mask,
+            zs_lens=zs_lens, lens=lens,
         )
 
         # interpret prediction
@@ -423,6 +437,7 @@ class CFM(nn.Module):
         flow_loss = loss.mean()
         total_loss = flow_loss
 
+        aux_mel_loss = torch.tensor(0.0, device=device)
         if self.use_aux_mel_loss and self.aux_mel_loss is not None and self.wav_input_only:
             B = x1.shape[0]
             x1_flat = x1.reshape(B, -1)
@@ -431,11 +446,36 @@ class CFM(nn.Module):
             aux_mel_loss = self.aux_mel_loss(x1_pred_flat, x1_flat)
             total_loss = total_loss + aux_mel_loss
 
+        aux_ssl_feature_loss = torch.tensor(0.0, device=device)
+        if self.use_aux_ssl_feature_loss and self.aux_ssl_feature_loss_weight > 0.0:
+            for i, (z, z_tilde_and_z_len) in enumerate(zip(zs, zs_tilde)):
+                z_tilde, z_lens = z_tilde_and_z_len
+                z_mask = lens_to_mask(z_lens, length=z.shape[1]).float()
+                for j, (z_j, z_tilde_j) in enumerate(zip(z, z_tilde)):
+                    cos_sim = F.cosine_similarity(z_j, z_tilde_j, dim=-1)
+                    aux_ssl_feature_loss += masked_mean(-cos_sim, z_mask[j])
+            aux_ssl_feature_loss /= len(zs) * batch
+            total_loss = total_loss + self.aux_ssl_feature_loss_weight * aux_ssl_feature_loss
+
+        aux_ctc_loss = torch.tensor(0.0, device=device)
+        if self.use_aux_ctc_loss and self.aux_ctc_loss_weight > 0.0:
+            for i, z_tilde_and_z_len_ctc in enumerate(zs_tilde_ctc):
+                z_tilde_ctc, z_lens_ctc = z_tilde_and_z_len_ctc
+                log_probs = z_tilde_ctc.transpose(1, 0).log_softmax(-1)
+                aux_ctc_loss += F.ctc_loss(
+                    log_probs, text, z_lens_ctc, text_lens,
+                    blank=self.transformer.text_embed.text_embed.num_embeddings,
+                    reduction="mean", zero_infinity=True,  # Ignore loss if log(0) happens
+                )
+            aux_ctc_loss /= len(zs_tilde_ctc)
+            total_loss = total_loss + self.aux_ctc_loss_weight * aux_ctc_loss
+
         loss_dict = {
             "total_loss": total_loss,
             "flow_loss": flow_loss,
-            "aux_mel_loss": aux_mel_loss if self.use_aux_mel_loss else None,
-            "repa_loss": None,
+            "aux_mel_loss": aux_mel_loss,
+            "aux_ssl_feature_loss": aux_ssl_feature_loss,
+            "aux_ctc_loss": aux_ctc_loss,
         }
 
         return total_loss, cond, v_pred, loss_dict
