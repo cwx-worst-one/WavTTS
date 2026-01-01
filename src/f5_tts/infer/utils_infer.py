@@ -49,7 +49,8 @@ tempfile_kwargs = {"delete_on_close": False} if sys.version_info >= (3, 12) else
 
 # -----------------------------------------
 
-target_sample_rate = 24000
+target_sample_rate = 24000  # 16000, 24000
+use_bfloat16 = True # True, False
 n_mel_channels = 100
 hop_length = 256
 win_length = 1024
@@ -513,15 +514,28 @@ def infer_batch_process(
         # inference
         with torch.inference_mode():
             if is_wav_only:
-                generated, _ = model_obj.sample(
-                    cond=audio,                       # [1, N]
-                    text=final_text_list,
-                    duration=duration,                # frames
-                    steps=nfe_step,
-                    cfg_strength=cfg_strength,
-                    sway_sampling_coef=sway_sampling_coef,
-                    vocoder=None,
-                )
+                if use_bfloat16:
+                    audio_bf16 = audio.to(torch.bfloat16)
+                    with torch.autocast("cuda", dtype=torch.bfloat16):
+                        generated, _ = model_obj.sample(
+                            cond=audio_bf16,
+                            text=final_text_list,
+                            duration=duration,
+                            steps=nfe_step,
+                            cfg_strength=cfg_strength,
+                            sway_sampling_coef=sway_sampling_coef,
+                            vocoder=None,
+                        )
+                else:
+                    generated, _ = model_obj.sample(
+                        cond=audio,
+                        text=final_text_list,
+                        duration=duration,
+                        steps=nfe_step,
+                        cfg_strength=cfg_strength,
+                        sway_sampling_coef=sway_sampling_coef,
+                        vocoder=None,
+                    )
                 del _
 
                 generated = generated.to(torch.float32)  # [1, N_total]

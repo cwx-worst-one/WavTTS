@@ -5,9 +5,9 @@ export HF_ENDPOINT=https://hf-mirror.com
 export MASTER_ADDR="127.0.0.1"
 
 # model config
-model_name="F5TTS_v1_Base_wav_proj_input_768_1024"
-model_dir="/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/F5TTS_v1_Base_wav_proj_input_768_1024-8gpus-bf16-38400sample_per_gpu"
-training_step="400000"
+model_name="F5TTS_v1_Large_wav_x_pred_proj_input"
+model_dir="/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/F5TTS_v1_Large_wav_x_pred_proj_input-8gpus-bf16-19200sample_per_gpu-t_eps_0.02-proj_input_768_1024"
+training_step="850000"
 model_cfg="${model_dir}/.hydra/config.yaml"
 ckpt_file="${model_dir}/ckpts/model_${training_step}.pt"
 vocab_file="/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav/data/LibriTTS_100_360_500_char/vocab.txt"
