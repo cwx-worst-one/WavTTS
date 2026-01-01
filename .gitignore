@@ -97,6 +97,8 @@ scripts/weekly_test/Dolphin*.md
 assets/
 # data/
 video/
+seedtts_testset/
+test-clean/
 
 # log directory
 log/

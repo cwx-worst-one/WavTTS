@@ -1,15 +1,23 @@
 #!/bin/bash
 set -e
 export PYTHONWARNINGS="ignore::UserWarning,ignore::FutureWarning"
+export MASTER_ADDR="127.0.0.1"
+export MASTER_PORT=53721
+export HF_ENDPOINT=https://hf-mirror.com
 
 # Configuration parameters
 MODEL_NAME="F5TTS_v1_Base"
-SEEDS=(0 1 2)
+# SEEDS=(0 1 2)
+SEEDS=(0)
 CKPTSTEPS=(1250000)
-TASKS=("seedtts_test_zh" "seedtts_test_en" "ls_pc_test_clean")
+# TASKS=("seedtts_test_zh" "seedtts_test_en" "ls_pc_test_clean")
+# TASKS=("seedtts_test_zh" "seedtts_test_en")
+TASKS=("ls_pc_test_clean")
 LS_TEST_CLEAN_PATH="data/LibriSpeech/test-clean"
-GPUS="[0,1,2,3,4,5,6,7]"
+# GPUS="[0,1,2,3,4,5,6,7]"
+GPUS="[0,1]"
 OFFLINE_MODE=false
+CKPT_PATH="/mnt/bn/jdy-lq-5/chenwenxi/models/F5-TTS/F5TTS_v1_Base/model_1250000.safetensors"
 
 # Parse arguments
 if [ $OFFLINE_MODE = true ]; then
@@ -83,10 +91,10 @@ for ckptstep in "${CKPTSTEPS[@]}"; do
         
         # Execute each infer task sequentially
         for task in "${TASKS[@]}"; do
-            echo ">>>>>>>> Executing infer task: accelerate launch src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n \"${MODEL_NAME}\" -t \"${task}\" -c ${ckptstep} $LOCAL"
+            echo ">>>>>>>> Executing infer task: accelerate launch src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n \"${MODEL_NAME}\" -t \"${task}\" -c ${ckptstep} $LOCAL --ckpt_path \"${CKPT_PATH}\""
             
             # Execute infer task (foreground execution, wait for completion)
-            accelerate launch src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL
+            accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}"
             
             # If not infer-only mode, launch corresponding eval task
             if [ "$INFER_ONLY" = false ]; then
@@ -114,3 +122,5 @@ for ckptstep in "${CKPTSTEPS[@]}"; do
 done
 
 echo "======== All tasks completed!"
+
+# bash src/f5_tts/eval/eval_infer_batch.sh

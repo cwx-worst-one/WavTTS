@@ -53,6 +53,7 @@ def main():
     )
 
     parser.add_argument("--local", action="store_true", help="Use local vocoder checkpoint directory")
+    parser.add_argument("--ckpt_path", default=None, type=str)
 
     args = parser.parse_args()
 
@@ -153,20 +154,21 @@ def main():
         vocab_char_map=vocab_char_map,
     ).to(device)
 
-    ckpt_prefix = rel_path + f"/ckpts/{exp_name}/model_{ckpt_step}"
-    if os.path.exists(ckpt_prefix + ".pt"):
-        ckpt_path = ckpt_prefix + ".pt"
-    elif os.path.exists(ckpt_prefix + ".safetensors"):
-        ckpt_path = ckpt_prefix + ".safetensors"
-    else:
-        print("Loading from self-organized training checkpoints rather than released pretrained.")
-        ckpt_prefix = rel_path + f"/{model_cfg.ckpts.save_dir}/model_{ckpt_step}"
-        if os.path.exists(ckpt_prefix + ".pt"):
-            ckpt_path = ckpt_prefix + ".pt"
-        elif os.path.exists(ckpt_prefix + ".safetensors"):
-            ckpt_path = ckpt_prefix + ".safetensors"
-        else:
-            raise ValueError("The checkpoint does not exist or cannot be found in given location.")
+    # ckpt_prefix = rel_path + f"/ckpts/{exp_name}/model_{ckpt_step}"
+    # if os.path.exists(ckpt_prefix + ".pt"):
+    #     ckpt_path = ckpt_prefix + ".pt"
+    # elif os.path.exists(ckpt_prefix + ".safetensors"):
+    #     ckpt_path = ckpt_prefix + ".safetensors"
+    # else:
+    #     print("Loading from self-organized training checkpoints rather than released pretrained.")
+    #     ckpt_prefix = rel_path + f"/{model_cfg.ckpts.save_dir}/model_{ckpt_step}"
+    #     if os.path.exists(ckpt_prefix + ".pt"):
+    #         ckpt_path = ckpt_prefix + ".pt"
+    #     elif os.path.exists(ckpt_prefix + ".safetensors"):
+    #         ckpt_path = ckpt_prefix + ".safetensors"
+    #     else:
+    #         raise ValueError("The checkpoint does not exist or cannot be found in given location.")
+    ckpt_path = args.ckpt_path
 
     dtype = torch.float32 if mel_spec_type == "bigvgan" else None
     model = load_checkpoint(model, ckpt_path, device, dtype=dtype, use_ema=use_ema)
