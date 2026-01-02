@@ -112,6 +112,8 @@ def main():
     )
 
     # -------------------------------------------------#
+    wav_input_only = bool(model_cfg.model.get("wav_input", False))
+    wav_frame_len = int(model_cfg.model.mel_spec.get("wav_frame_len", 240))
 
     prompts_all = get_inference_prompt(
         metainfo,
@@ -124,6 +126,8 @@ def main():
         target_rms=target_rms,
         use_truth_duration=use_truth_duration,
         infer_batch_size=infer_batch_size,
+        wav_input_only=wav_input_only,
+        wav_frame_len=wav_frame_len,
     )
 
     # Vocoder model
@@ -132,26 +136,38 @@ def main():
         vocoder_local_path = "../checkpoints/charactr/vocos-mel-24khz"
     elif mel_spec_type == "bigvgan":
         vocoder_local_path = "../checkpoints/bigvgan_v2_24khz_100band_256x"
+    elif mel_spec_type == "no_vocoder":
+        vocoder_local_path = None
+
     vocoder = load_vocoder(vocoder_name=mel_spec_type, is_local=local, local_path=vocoder_local_path)
 
     # Tokenizer
     vocab_char_map, vocab_size = get_tokenizer(dataset_name, tokenizer)
 
-    # Model
-    model = CFM(
-        transformer=model_cls(**model_arc, text_num_embeds=vocab_size, mel_dim=n_mel_channels),
-        mel_spec_kwargs=dict(
+    # mel spectrogram type
+    mel_spec_kwargs = model_cfg.model.mel_spec
+    if mel_spec_kwargs is None:
+        mel_spec_kwargs = dict(
             n_fft=n_fft,
             hop_length=hop_length,
             win_length=win_length,
             n_mel_channels=n_mel_channels,
             target_sample_rate=target_sample_rate,
             mel_spec_type=mel_spec_type,
-        ),
+        )
+
+    # CFM kwargs
+    cfm_kwargs = getattr(model_cfg.model, "cfm", {}) or {}
+
+    # Model
+    model = CFM(
+        transformer=model_cls(**model_arc, text_num_embeds=vocab_size, mel_dim=n_mel_channels),
+        mel_spec_kwargs=mel_spec_kwargs,
         odeint_kwargs=dict(
             method=ode_method,
         ),
         vocab_char_map=vocab_char_map,
+        **cfm_kwargs,
     ).to(device)
 
     # ckpt_prefix = rel_path + f"/ckpts/{exp_name}/model_{ckpt_step}"
@@ -189,29 +205,39 @@ def main():
 
             # Inference
             with torch.inference_mode():
-                generated, _ = model.sample(
-                    cond=ref_mels,
-                    text=final_text_list,
-                    duration=total_mel_lens,
-                    lens=ref_mel_lens,
-                    steps=nfe_step,
-                    cfg_strength=cfg_strength,
-                    sway_sampling_coef=sway_sampling_coef,
-                    no_ref_audio=no_ref_audio,
-                    seed=seed,
-                )
-                # Final result
-                for i, gen in enumerate(generated):
-                    gen = gen[ref_mel_lens[i] : total_mel_lens[i], :].unsqueeze(0)
-                    gen_mel_spec = gen.permute(0, 2, 1).to(torch.float32)
-                    if mel_spec_type == "vocos":
-                        generated_wave = vocoder.decode(gen_mel_spec).cpu()
-                    elif mel_spec_type == "bigvgan":
-                        generated_wave = vocoder(gen_mel_spec).squeeze(0).cpu()
+                with torch.autocast("cuda", dtype=torch.bfloat16):
+                    generated, _ = model.sample(
+                        cond=ref_mels,
+                        text=final_text_list,
+                        duration=total_mel_lens,
+                        steps=nfe_step,
+                        cfg_strength=cfg_strength,
+                        sway_sampling_coef=sway_sampling_coef,
+                        no_ref_audio=no_ref_audio,
+                        seed=seed,
+                    )
+                    # Final result
+                    for i, gen in enumerate(generated):
+                        if wav_input_only:
+                            start_idx = ref_mel_lens[i].item() * wav_frame_len
+                            end_idx = total_mel_lens[i].item() * wav_frame_len
+                            gen = gen[start_idx : end_idx].unsqueeze(0)
 
-                    if ref_rms_list[i] < target_rms:
-                        generated_wave = generated_wave * ref_rms_list[i] / target_rms
-                    torchaudio.save(f"{output_dir}/{utts[i]}.wav", generated_wave, target_sample_rate)
+                        else:
+                            gen = gen[ref_mel_lens[i] : total_mel_lens[i], :].unsqueeze(0)
+                            gen_mel_spec = gen.permute(0, 2, 1).to(torch.float32)
+
+                        if mel_spec_type == "vocos":
+                            generated_wave = vocoder.decode(gen_mel_spec).cpu()
+                        elif mel_spec_type == "bigvgan":
+                            generated_wave = vocoder(gen_mel_spec).squeeze(0).cpu()
+                        elif mel_spec_type == "no_vocoder":
+                            generated_wave = gen.squeeze(0).cpu()
+
+                        if ref_rms_list[i] < target_rms:
+                            generated_wave = generated_wave * ref_rms_list[i] / target_rms
+
+                        torchaudio.save(f"{output_dir}/{utts[i]}.wav", generated_wave, target_sample_rate)
 
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:

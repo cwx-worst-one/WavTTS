@@ -4,12 +4,14 @@ export PYTHONWARNINGS="ignore::UserWarning,ignore::FutureWarning"
 export MASTER_ADDR="127.0.0.1"
 export MASTER_PORT=53721
 export HF_ENDPOINT=https://hf-mirror.com
+# export CUDA_VISIBLE_DEVICES="0,1"
+export CUDA_VISIBLE_DEVICES="1"
 
 # Configuration parameters
-MODEL_NAME="F5TTS_v1_Base"
+MODEL_NAME="F5TTS_v1_Small"
 # SEEDS=(0 1 2)
 SEEDS=(0)
-CKPTSTEPS=(1250000)
+CKPTSTEPS=(250000)
 # TASKS=("seedtts_test_zh" "seedtts_test_en" "ls_pc_test_clean")
 # TASKS=("seedtts_test_zh" "seedtts_test_en")
 TASKS=("ls_pc_test_clean")
@@ -17,7 +19,10 @@ LS_TEST_CLEAN_PATH="data/LibriSpeech/test-clean"
 # GPUS="[0,1,2,3,4,5,6,7]"
 GPUS="[0,1]"
 OFFLINE_MODE=false
-CKPT_PATH="/mnt/bn/jdy-lq-5/chenwenxi/models/F5-TTS/F5TTS_v1_Base/model_1250000.safetensors"
+CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/F5TTS_v1_Small-8gpus-bf16-38400sample_per_gpu
+CKPT_PATH="${CKPT_PATH_DIR}/ckpts/model_${CKPTSTEPS}.pt"
+
+DEBUG=false  # true, false
 
 # Parse arguments
 if [ $OFFLINE_MODE = true ]; then
@@ -25,7 +30,7 @@ if [ $OFFLINE_MODE = true ]; then
 else
     LOCAL=""
 fi
-INFER_ONLY=false
+INFER_ONLY=true  # true, false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --infer-only)
@@ -94,7 +99,13 @@ for ckptstep in "${CKPTSTEPS[@]}"; do
             echo ">>>>>>>> Executing infer task: accelerate launch src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n \"${MODEL_NAME}\" -t \"${task}\" -c ${ckptstep} $LOCAL --ckpt_path \"${CKPT_PATH}\""
             
             # Execute infer task (foreground execution, wait for completion)
-            accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}"
+            if [ "$DEBUG" = false ]; then
+                accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}"
+            fi
+
+            if [ "$DEBUG" = true ]; then
+                python -m debugpy --listen 127.0.0.1:56789 --wait-for-client src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}"
+            fi
             
             # If not infer-only mode, launch corresponding eval task
             if [ "$INFER_ONLY" = false ]; then
