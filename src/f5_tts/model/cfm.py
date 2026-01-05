@@ -63,6 +63,7 @@ class CFM(nn.Module):
         aux_ctc_loss_weight: float = 0.0,
         use_aux_ssl_feature_loss: bool = False,
         aux_ssl_feature_loss_weight: float = 0.0,
+        latents_scale: float = 1.0,
     ):
         super().__init__()
 
@@ -108,6 +109,7 @@ class CFM(nn.Module):
         self.P_std = P_std
         self.t_eps = t_eps
         self.noise_scale = noise_scale
+        self.latents_scale = latents_scale
 
         # aux mel loss
         self.use_aux_mel_loss = use_aux_mel_loss
@@ -212,6 +214,7 @@ class CFM(nn.Module):
                 assert cond.shape[-1] == self.num_channels
 
         cond = cond.to(next(self.parameters()).dtype)
+        cond = cond * self.latents_scale
 
         batch, cond_seq_len, device = *cond.shape[:2], cond.device
         if not exists(lens):
@@ -319,7 +322,10 @@ class CFM(nn.Module):
 
         sampled = trajectory[-1]
         out = sampled
-        out = torch.where(cond_mask, cond, out)
+
+        out = out / self.latents_scale
+        cond_unscaled = cond / self.latents_scale
+        out = torch.where(cond_mask, cond_unscaled, out)
 
         if exists(vocoder) and not self.wav_input_only:
             out = out.permute(0, 2, 1)
@@ -381,6 +387,8 @@ class CFM(nn.Module):
         # mel / raw wave is x1
         x1 = inp
 
+        x1 = x1 * self.latents_scale
+
         # x0 is gaussian noise
         x0 = torch.randn_like(x1) * self.noise_scale
 
@@ -437,13 +445,15 @@ class CFM(nn.Module):
         flow_loss = loss.mean()
         total_loss = flow_loss
 
-        aux_mel_loss = torch.tensor(0.0, device=device)
+        aux_mel_loss = torch.tensor(0.0, device=device)     # fixme: 这里的aux_mel_loss只针对x-pred的情况
         if self.use_aux_mel_loss and self.aux_mel_loss is not None and self.wav_input_only:
             B = x1.shape[0]
             x1_flat = x1.reshape(B, -1)
             x1_pred_flat = x_pred.reshape(B, -1)
+            x1_flat_unscaled = x1_flat / self.latents_scale
+            x1_pred_flat_unscaled = x1_pred_flat / self.latents_scale
 
-            aux_mel_loss = self.aux_mel_loss(x1_pred_flat, x1_flat)
+            aux_mel_loss = self.aux_mel_loss(x1_pred_flat_unscaled, x1_flat_unscaled)
             total_loss = total_loss + aux_mel_loss
 
         aux_ssl_feature_loss = torch.tensor(0.0, device=device)

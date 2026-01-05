@@ -4,14 +4,14 @@ export PYTHONWARNINGS="ignore::UserWarning,ignore::FutureWarning"
 export MASTER_ADDR="127.0.0.1"
 export MASTER_PORT=53721
 export HF_ENDPOINT=https://hf-mirror.com
-# export CUDA_VISIBLE_DEVICES="0,1"
-export CUDA_VISIBLE_DEVICES="1"
+export CUDA_VISIBLE_DEVICES="0,1"
+# export CUDA_VISIBLE_DEVICES="1"
 
 # Configuration parameters
-MODEL_NAME="F5TTS_v1_Small"
+MODEL_NAME="F5TTS_v1_Large_wav_x_pred_proj_input"
 # SEEDS=(0 1 2)
 SEEDS=(0)
-CKPTSTEPS=(250000)
+CKPTSTEPS=(550000)
 # TASKS=("seedtts_test_zh" "seedtts_test_en" "ls_pc_test_clean")
 # TASKS=("seedtts_test_zh" "seedtts_test_en")
 TASKS=("ls_pc_test_clean")
@@ -19,7 +19,7 @@ LS_TEST_CLEAN_PATH="data/LibriSpeech/test-clean"
 # GPUS="[0,1,2,3,4,5,6,7]"
 GPUS="[0,1]"
 OFFLINE_MODE=false
-CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/F5TTS_v1_Small-8gpus-bf16-38400sample_per_gpu
+CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/F5TTS_v1_Large_wav_x_pred_proj_input-8gpus-bf16-19200sample_per_gpu-t_eps_0.02-proj_input_768_1024
 CKPT_PATH="${CKPT_PATH_DIR}/ckpts/model_${CKPTSTEPS}.pt"
 
 DEBUG=false  # true, false

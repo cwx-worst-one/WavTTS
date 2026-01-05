@@ -9,9 +9,11 @@ export HTTP_PROXY=http://sys-proxy-rd-relay.byted.org:8118
 export http_proxy=http://sys-proxy-rd-relay.byted.org:8118
 export https_proxy=http://sys-proxy-rd-relay.byted.org:8118
 
-eval_metric=("sim")  # wer, sim, utmos
+eval_metric=("wer sim utmos")  # wer, sim, utmos
 
-gen_wav_dir=/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav/results/F5TTS_v1_Base_1250000/ls_pc_test_clean/seed0_euler_nfe32_vocos_ss-1_cfg2.0_speed1.0
+dataset="ls_pc_test_clean"
+output_dir=/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav/results/F5TTS_v1_Large_wav_x_pred_proj_input_550000
+gen_wav_dir=${output_dir}/${dataset}/seed0_euler_nfe32_no_vocoder_ss-1_cfg2.0_speed1.0   # seed0_euler_nfe32_vocos_ss, seed0_euler_nfe32_no_vocoder_ss
 GPUS="[0,1]"
 LS_TEST_CLEAN_PATH="data/LibriSpeech/test-clean"
 LOCAL=""
