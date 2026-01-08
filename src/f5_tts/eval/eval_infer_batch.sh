@@ -8,10 +8,10 @@ export CUDA_VISIBLE_DEVICES="0,1"
 # export CUDA_VISIBLE_DEVICES="1"
 
 # Configuration parameters
-MODEL_NAME="F5TTS_v1_Base_wav_x_pred_ctc_0.02_mel_0.01"
+MODEL_NAME="F5TTS_v1_Base_wav_x_pred_proj_input_16k"
 # SEEDS=(0 1 2)
 SEEDS=(0)
-CKPTSTEPS=(550000)
+CKPTSTEPS=(500000)
 # TASKS=("seedtts_test_zh" "seedtts_test_en" "ls_pc_test_clean")
 # TASKS=("seedtts_test_zh" "seedtts_test_en")
 TASKS=("ls_pc_test_clean")
@@ -19,7 +19,7 @@ LS_TEST_CLEAN_PATH="data/LibriSpeech/test-clean"
 # GPUS="[0,1,2,3,4,5,6,7]"
 GPUS="[0,1]"
 OFFLINE_MODE=false
-CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/F5TTS_v1_Base_wav_x_pred_ctc_0.02_mel_0.01_768_1024-8gpus-bf16-38400sample_per_gpu
+CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/F5TTS_v1_Base_wav_x_pred_proj_input_16k-8gpus-bf16-38400sample_per_gpu-t_eps_0.02-proj_input_768_1024
 CKPT_PATH="${CKPT_PATH_DIR}/ckpts/model_${CKPTSTEPS}.pt"
 
 DEBUG=false  # true, false
