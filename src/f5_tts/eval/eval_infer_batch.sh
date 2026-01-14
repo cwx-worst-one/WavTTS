@@ -8,10 +8,10 @@ export CUDA_VISIBLE_DEVICES="0,1"
 # export CUDA_VISIBLE_DEVICES="1"
 
 # Configuration parameters
-MODEL_NAME="F5TTS_v1_Base_wav_x_pred_proj_input_16k"
+MODEL_NAME="F5TTS_v1_Base_wav_x_pred_proj_input"
 # SEEDS=(0 1 2)
 SEEDS=(0)
-CKPTSTEPS=(500000)
+CKPTSTEPS=(550000)
 # TASKS=("seedtts_test_zh" "seedtts_test_en" "ls_pc_test_clean")
 # TASKS=("seedtts_test_zh" "seedtts_test_en")
 TASKS=("ls_pc_test_clean")
@@ -19,8 +19,10 @@ LS_TEST_CLEAN_PATH="data/LibriSpeech/test-clean"
 # GPUS="[0,1,2,3,4,5,6,7]"
 GPUS="[0,1]"
 OFFLINE_MODE=false
-CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/F5TTS_v1_Base_wav_x_pred_proj_input_16k-8gpus-bf16-38400sample_per_gpu-t_eps_0.02-proj_input_768_1024
+CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/F5TTS_v1_Base_wav_x_pred_proj_input-8gpus-bf16-38400sample_per_gpu-t_eps_0.02-proj_input_768_1024
 CKPT_PATH="${CKPT_PATH_DIR}/ckpts/model_${CKPTSTEPS}.pt"
+
+nfe_step=64
 
 DEBUG=false  # true, false
 
@@ -57,7 +59,7 @@ execute_eval_tasks() {
     local seed=$2
     local task_name=$3
     
-    local gen_wav_dir="results/${MODEL_NAME}_${ckptstep}/${task_name}/seed${seed}_euler_nfe32_vocos_ss-1_cfg2.0_speed1.0"
+    local gen_wav_dir="results/${MODEL_NAME}/${ckptstep}/${task_name}/seed${seed}_euler_nfe32_vocos_ss-1_cfg2.0_speed1.0"
     
     echo ">>>>>>>> Starting eval task: ckptstep=${ckptstep}, seed=${seed}, task=${task_name}"
     
@@ -100,7 +102,7 @@ for ckptstep in "${CKPTSTEPS[@]}"; do
             
             # Execute infer task (foreground execution, wait for completion)
             if [ "$DEBUG" = false ]; then
-                accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}"
+                accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}" --nfe_step ${nfe_step}
             fi
 
             if [ "$DEBUG" = true ]; then

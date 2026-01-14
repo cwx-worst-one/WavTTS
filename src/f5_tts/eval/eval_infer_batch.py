@@ -43,7 +43,7 @@ def main():
     parser.add_argument("-n", "--expname", required=True)
     parser.add_argument("-c", "--ckptstep", default=1250000, type=int)
 
-    parser.add_argument("-nfe", "--nfestep", default=32, type=int)
+    parser.add_argument("-nfe", "--nfe_step", default=32, type=int)
     parser.add_argument("-o", "--odemethod", default="euler")
     parser.add_argument("-ss", "--swaysampling", default=-1, type=float)
 
@@ -61,7 +61,7 @@ def main():
     exp_name = args.expname
     ckpt_step = args.ckptstep
 
-    nfe_step = args.nfestep
+    nfe_step = args.nfe_step
     ode_method = args.odemethod
     sway_sampling_coef = args.swaysampling
 
@@ -103,7 +103,7 @@ def main():
     # path to save genereted wavs
     output_dir = (
         f"{rel_path}/"
-        f"results/{exp_name}_{ckpt_step}/{testset}/"
+        f"results/{exp_name}/{ckpt_step}/{testset}/"
         f"seed{seed}_{ode_method}_nfe{nfe_step}_{mel_spec_type}"
         f"{f'_ss{sway_sampling_coef}' if sway_sampling_coef else ''}"
         f"_cfg{cfg_strength}_speed{speed}"
