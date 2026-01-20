@@ -394,7 +394,6 @@ class CFM(nn.Module):
 
         # time step
         time = self._sample_time(batch, dtype=dtype, device=self.device)
-        # TODO. noise_scheduler
 
         # sample xt (φ_t(x) in the paper)
         t = time.unsqueeze(-1).unsqueeze(-1)

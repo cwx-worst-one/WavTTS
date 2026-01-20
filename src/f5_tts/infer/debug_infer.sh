@@ -17,12 +17,12 @@ ref_audio="infer/examples/basic/basic_ref_en.wav"
 ref_text="Some call me nature, others call me mother nature."
 gen_text="I don't really care what you call me. I've been a silent spectator, watching species evolve, empires rise and fall. But always remember, I am mighty and enduring."
 output_dir="src/f5_tts/infer/debug/${model_name}_output"
-nfe_step="50"
+nfe_step="32"
 output_file="${training_step}_nfe_${nfe_step}.wav"
 
 
-# python -m debugpy --listen 127.0.0.1:56789 src/f5_tts/infer/infer_cli.py \
-python src/f5_tts/infer/infer_cli.py \
+# python src/f5_tts/infer/infer_cli.py \
+python -m debugpy --listen 127.0.0.1:56789 src/f5_tts/infer/infer_cli.py \
     --model_cfg "$model_cfg" \
     --ckpt_file "$ckpt_file" \
     --ref_audio "$ref_audio" \
