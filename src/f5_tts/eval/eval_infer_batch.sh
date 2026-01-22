@@ -8,7 +8,7 @@ export CUDA_VISIBLE_DEVICES="0,1"
 # export CUDA_VISIBLE_DEVICES="1"
 
 # Configuration parameters
-MODEL_NAME="F5TTS_v1_Large_wav_x_pred_scale_aux_mel"
+MODEL_NAME="F5TTS_v1_Large_wav_x_pred_aux_mel"
 # SEEDS=(0 1 2)
 SEEDS=(0)
 CKPTSTEPS=(900000)
@@ -19,7 +19,7 @@ LS_TEST_CLEAN_PATH="data/LibriSpeech/test-clean"
 # GPUS="[0,1,2,3,4,5,6,7]"
 GPUS="[0,1]"
 OFFLINE_MODE=false
-CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/F5TTS_v1_Large_wav_x_pred_scale_aux_mel-8gpus-bf16-19200sample_per_gpu
+CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/F5TTS_v1_Large_wav_x_pred_aux_mel-8gpus-bf16-19200sample_per_gpu
 CKPT_PATH="${CKPT_PATH_DIR}/ckpts/model_${CKPTSTEPS}.pt"
 
 nfe_step=32

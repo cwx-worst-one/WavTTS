@@ -16,10 +16,10 @@ num_machines=1
 mixed_precision=bf16
 
 # training config
-batch_size_per_gpu=25600        # 19200, 25600, 38400, 51200
+batch_size_per_gpu=19200        # 19200, 25600, 38400, 51200
 num_workers=1
 
-CONFIG_NAME="F5TTS_v1_Base_wav_x_pred_scale_noise_schedule_0_8_16k"     # F5TTS_v1_Small, F5TTS_v1_Base, F5TTS_v1_Base_wav, F5TTS_v1_Base_wav_proj_input, F5TTS_v1_Base_wav_x_pred, F5TTS_v1_Small_mel_x_pred, F5TTS_v1_Base_wav_x_pred_proj_input
+CONFIG_NAME="F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k"     # F5TTS_v1_Small, F5TTS_v1_Base, F5TTS_v1_Base_wav, F5TTS_v1_Base_wav_proj_input, F5TTS_v1_Base_wav_x_pred, F5TTS_v1_Small_mel_x_pred, F5TTS_v1_Base_wav_x_pred_proj_input
 # EXP_NAME="${CONFIG_NAME}-${num_processes}gpus-${mixed_precision}-${batch_size_per_gpu}sample_per_gpu"            
 EXP_NAME="debug_wav_x_pred_scale_aux_mel"   # debug_wav, debug_mel, debug_wav_proj_input, debug_wav_x_pred,
 OUTDIR="/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/${EXP_NAME}"
