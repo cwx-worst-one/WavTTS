@@ -19,6 +19,7 @@ from f5_tts.eval.utils_eval import (
     get_inference_prompt,
     get_librispeech_test_clean_metainfo,
     get_seedtts_testset_metainfo,
+    get_libritts_custom_metainfo,
 )
 from f5_tts.infer.utils_infer import load_checkpoint, load_vocoder
 from f5_tts.model import CFM
@@ -99,6 +100,17 @@ def main():
     elif testset == "seedtts_test_en":
         metalst = rel_path + "/data/seedtts_testset/en/meta.lst"
         metainfo = get_seedtts_testset_metainfo(metalst)
+
+    elif testset == "libritts_train_clean_100_cross_sentence":
+        metalst = rel_path + "/data/LibriTTS/train-clean-100-cross-sentence.meta.lst"
+        libritts_base_path = rel_path + "/data/LibriTTS/train-clean-100-cross-sentence/"
+        metainfo = get_libritts_custom_metainfo(metalst, libritts_base_path)
+
+    elif testset == "libritts_train_clean_100_same_sentence":
+        metalst = rel_path + "/data/LibriTTS/train-clean-100-same-sentence.meta.lst"
+        libritts_base_path = rel_path + "/data/LibriTTS/train-clean-100-same-sentence/"
+        metainfo = get_libritts_custom_metainfo(metalst, libritts_base_path)
+        
 
     # path to save genereted wavs
     output_dir = (

@@ -54,7 +54,7 @@ model:
   mel_spec:
     target_sample_rate: 16000
     n_mel_channels: 160   # equal to wav_frame_len in F5-TTS_wav
-    hop_length: 256
+    hop_length: 160  # 240 @24k = 100Hz or 160 @16k = 100Hz
     win_length: 1024
     n_fft: 1024
     mel_spec_type: no_vocoder  # vocos | bigvgan | no_vocoder
