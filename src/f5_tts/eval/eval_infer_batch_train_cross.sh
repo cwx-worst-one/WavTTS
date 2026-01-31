@@ -8,10 +8,10 @@ export CUDA_VISIBLE_DEVICES="0,1,2,3"
 # export CUDA_VISIBLE_DEVICES="0"
 
 # Configuration parameters
-MODEL_NAME="F5TTS_v1_Small"
+MODEL_NAME="F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k"
 # SEEDS=(0 1 2)
 SEEDS=(0)
-CKPTSTEPS=(300000)
+CKPTSTEPS=(550000)  # 550000, 700000, 900000
 # TASKS=("seedtts_test_zh" "seedtts_test_en" "ls_pc_test_clean")
 # TASKS=("seedtts_test_zh" "seedtts_test_en")
 TASKS=("libritts_train_clean_100_cross_sentence")
@@ -20,7 +20,7 @@ LS_TEST_CLEAN_PATH="data/LibriSpeech/test-clean"
 GPUS="[0,1,2,3]"
 # GPUS="[0]"
 OFFLINE_MODE=false
-CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/F5TTS_v1_Small-8gpus-bf16-38400sample_per_gpu
+CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k-8gpus-bf16-19200sample_per_gpu
 CKPT_PATH="${CKPT_PATH_DIR}/ckpts/model_${CKPTSTEPS}.pt"
 
 nfe_step=32

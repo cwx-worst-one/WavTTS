@@ -55,7 +55,7 @@ def main():
     gen_wav_dir = args.gen_wav_dir
 
     if args.task == "ls_pc_test_clean":
-        metalst = rel_path + "/data/librispeech_pc_test_clean.lst"
+        metalst = rel_path + "/data/librispeech_pc_test_clean_cross_sentence.lst"
     elif args.task == "libritts_train_clean_100_cross_sentence":
         metalst = rel_path + "/data/LibriTTS/train-clean-100-cross-sentence.meta.lst"
     elif args.task == "libritts_train_clean_100_same_sentence":
