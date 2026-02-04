@@ -4,7 +4,7 @@ hydra:
 
 datasets:
   name: Emilia_ZH_EN  # dataset name
-  batch_size_per_gpu: 19200  # 8 GPUs, 8 * 38400 = 307200
+  batch_size_per_gpu: 25600  # 8 GPUs, 8 * 38400 = 307200
   batch_size_type: frame  # frame | sample
   max_samples: 64  # max sequences per batch if use frame-wise batch_size. we set 32 for small models, 64 for base models
   num_workers: 16
@@ -18,7 +18,7 @@ optim:
   bnb_optimizer: False  # use bnb 8bit AdamW optimizer or not
 
 model:
-  name: F5TTS_v1_Huge_wav  # model name
+  name: F5TTS_v1_Base_wav  # model name
   tokenizer: pinyin  # tokenizer type
   tokenizer_path: null  # if 'custom' tokenizer, define the path want to use (should be vocab.txt)
   backbone: DiT
@@ -36,10 +36,10 @@ model:
     aux_mel_loss_weight: 0.0
     sample_rate: 16000
   arch:
-    dim: 1280
-    depth: 32
+    dim: 1024
+    depth: 22
     heads: 16
-    ff_mult: 4
+    ff_mult: 2
     text_dim: 512
     text_mask_padding: True
     qk_norm: null  # null | rms_norm
