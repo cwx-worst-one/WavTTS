@@ -400,8 +400,8 @@ class Trainer:
                     progress_bar.set_postfix(
                         update=str(global_update), 
                         aux_mel_loss=loss_dict["aux_mel_loss"].item(),
-                        aux_ctc_loss=loss_dict["aux_ctc_loss"].item(),
-                        aux_ssl_feature_loss=loss_dict["aux_ssl_feature_loss"].item(),
+                        repa_ctc_loss=loss_dict["repa_ctc_loss"].item(),
+                        repa_ssl_feature_loss=loss_dict["repa_ssl_feature_loss"].item(),
                         flow_loss=loss_dict["flow_loss"].item(),
                         loss=loss.item()
                     )
@@ -413,20 +413,20 @@ class Trainer:
 
                     if loss_dict["aux_mel_loss"] is not None:
                         self.accelerator.log({"aux_mel_loss": loss_dict["aux_mel_loss"].item()}, step=global_update)
-                    if loss_dict["aux_ssl_feature_loss"] is not None:
-                        self.accelerator.log({"aux_ssl_feature_loss": loss_dict["aux_ssl_feature_loss"].item()}, step=global_update)
-                    if loss_dict["aux_ctc_loss"] is not None:
-                        self.accelerator.log({"aux_ctc_loss": loss_dict["aux_ctc_loss"].item()}, step=global_update)
+                    if loss_dict["repa_ssl_feature_loss"] is not None:
+                        self.accelerator.log({"repa_ssl_feature_loss": loss_dict["repa_ssl_feature_loss"].item()}, step=global_update)
+                    if loss_dict["repa_ctc_loss"] is not None:
+                        self.accelerator.log({"repa_ctc_loss": loss_dict["repa_ctc_loss"].item()}, step=global_update)
                     
                     if self.logger == "tensorboard":
                         self.writer.add_scalar("loss", loss.item(), global_update)
                         self.writer.add_scalar("lr", self.scheduler.get_last_lr()[0], global_update)
                         if loss_dict["aux_mel_loss"] is not None:
                             self.writer.add_scalar("aux_mel_loss", loss_dict["aux_mel_loss"].item(), global_update)
-                        if loss_dict["aux_ssl_feature_loss"] is not None:
-                            self.writer.add_scalar("aux_ssl_feature_loss", loss_dict["aux_ssl_feature_loss"].item(), global_update)
-                        if loss_dict["aux_ctc_loss"] is not None:
-                            self.writer.add_scalar("aux_ctc_loss", loss_dict["aux_ctc_loss"].item(), global_update)
+                        if loss_dict["repa_ssl_feature_loss"] is not None:
+                            self.writer.add_scalar("repa_ssl_feature_loss", loss_dict["repa_ssl_feature_loss"].item(), global_update)
+                        if loss_dict["repa_ctc_loss"] is not None:
+                            self.writer.add_scalar("repa_ctc_loss", loss_dict["repa_ctc_loss"].item(), global_update)
 
                 if global_update % self.last_per_updates == 0 and self.accelerator.sync_gradients:
                     self.save_checkpoint(global_update, last=True)

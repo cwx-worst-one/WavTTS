@@ -31,10 +31,10 @@ model:
     P_std: 1.0
     t_eps: 0.02
     noise_scale: 1.0
-    use_aux_ctc_loss: True
-    aux_ctc_loss_weight: 0.02
-    use_aux_ssl_feature_loss: True
-    aux_ssl_feature_loss_weight: 0.1
+    use_repa_ctc_loss: True
+    repa_ctc_loss_weight: 0.02
+    use_repa_ssl_feature_loss: True
+    repa_ssl_feature_loss_weight: 0.1
     use_aux_mel_loss: True
     aux_mel_loss_weight: 0.01
     sample_rate: 24000
