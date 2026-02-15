@@ -211,7 +211,7 @@ if __name__ == "__main__":
     polyphone = True
 
     langs = ["ZH", "EN"]
-    dataset_dir = "/inspire/hdd/global_user/chenwenxi-253108120142/data/emilia/fc71e07"
+    dataset_dir = "/inspire/hdd/global_user/chenxie-25019/wenxichen/data/emilia/fc71e07"
     dataset_name = f"Emilia_{'_'.join(langs)}_{tokenizer}"
     save_dir = str(files("f5_tts").joinpath("../../")) + f"/data/{dataset_name}"
     print(f"\nPrepare for {dataset_name}, will save to {save_dir}\n")

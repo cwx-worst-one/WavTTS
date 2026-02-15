@@ -249,7 +249,16 @@ def main():
                         if ref_rms_list[i] < target_rms:
                             generated_wave = generated_wave * ref_rms_list[i] / target_rms
 
-                        torchaudio.save(f"{output_dir}/{utts[i]}.wav", generated_wave, target_sample_rate)
+                        wave_to_save = generated_wave.to(torch.float32).cpu()
+
+                        if wave_to_save.ndim == 1:
+                            wave_to_save = wave_to_save.unsqueeze(0)
+                        elif wave_to_save.ndim > 2:
+                            wave_to_save = wave_to_save.squeeze()
+                            if wave_to_save.ndim == 1:
+                                wave_to_save = wave_to_save.unsqueeze(0)
+
+                        torchaudio.save(f"{output_dir}/{utts[i]}.wav", wave_to_save, target_sample_rate)
 
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
