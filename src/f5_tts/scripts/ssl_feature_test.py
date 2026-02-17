@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from transformers import AutoFeatureExtractor, AutoModel
+from transformers import AutoFeatureExtractor, AutoModel, Wav2Vec2FeatureExtractor, Wav2Vec2Model
 
 # ================= 配置参数 =================
 # 模型路径 (可以是HuggingFace ID或本地路径)
@@ -25,6 +25,8 @@ def main():
         print(f"Error loading model: {e}")
         return
     print("Model loaded successfully.")
+    
+    print("The sampling rate expected by the model is:", feature_extractor.sampling_rate)
 
     # Shape: (num_samples,)
     num_samples = SAMPLE_RATE * DURATION_SEC

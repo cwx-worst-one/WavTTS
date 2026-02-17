@@ -139,3 +139,5 @@ stats_*
 
 Emilia_ZH_EN_pinyin/
 LibriSpeech-test-clean/
+LibriTTS_100_360_500_char/duration.json
+LibriTTS_100_360_500_char/raw.arrow

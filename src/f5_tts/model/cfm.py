@@ -19,7 +19,7 @@ from torch import nn
 from torch.nn.utils.rnn import pad_sequence
 from torchdiffeq import odeint
 
-from f5_tts.model.modules import MelSpec, MelSpectrogramLoss
+from f5_tts.model.modules import MelSpec, MelSpectrogramLoss, HubertFeatureLoss
 from f5_tts.model.utils import (
     default,
     exists,
@@ -64,6 +64,10 @@ class CFM(nn.Module):
         use_repa_ssl_feature_loss: bool = False,
         repa_ssl_feature_loss_weight: float = 0.0,
         latents_scale: float = 1.0,
+        use_aux_hubert_loss: bool = False,
+        aux_hubert_loss_weight: float = 1.0,
+        aux_hubert_model_path: str = "facebook/hubert-large-ll60k",
+        aux_hubert_layer_index: int = -1,
     ):
         super().__init__()
 
@@ -128,6 +132,18 @@ class CFM(nn.Module):
             )
         else:
             self.aux_mel_loss = None
+            
+        self.use_aux_hubert_loss = use_aux_hubert_loss
+        self.aux_hubert_loss_weight = aux_hubert_loss_weight
+        if self.use_aux_hubert_loss and self.wav_input_only:
+            self.aux_hubert_loss = HubertFeatureLoss(
+                model_path=aux_hubert_model_path,
+                layer_index=aux_hubert_layer_index,
+                source_sample_rate=sample_rate,  # Defined in CFM init args
+                weight=aux_hubert_loss_weight
+            )
+        else:
+            self.aux_hubert_loss = None
 
         self.use_repa_ctc_loss = use_repa_ctc_loss
         self.repa_ctc_loss_weight = repa_ctc_loss_weight
@@ -449,11 +465,24 @@ class CFM(nn.Module):
             B = x1.shape[0]
             x1_flat = x1.reshape(B, -1)
             x1_pred_flat = x_pred.reshape(B, -1)
+            
             x1_flat_unscaled = x1_flat / self.latents_scale
             x1_pred_flat_unscaled = x1_pred_flat / self.latents_scale
 
             aux_mel_loss = self.aux_mel_loss(x1_pred_flat_unscaled, x1_flat_unscaled)
             total_loss = total_loss + aux_mel_loss
+            
+        aux_hubert_loss = torch.tensor(0.0, device=device)
+        if self.use_aux_hubert_loss and self.aux_hubert_loss is not None and self.wav_input_only:
+            B = x1.shape[0]
+            x1_flat = x1.reshape(B, -1)
+            x1_pred_flat = x_pred.reshape(B, -1)
+            
+            x1_flat_unscaled = x1_flat / self.latents_scale
+            x1_pred_flat_unscaled = x1_pred_flat / self.latents_scale
+            
+            aux_hubert_loss = self.aux_hubert_loss(x1_pred_flat_unscaled, x1_flat_unscaled)
+            total_loss = total_loss + aux_hubert_loss
 
         repa_ssl_feature_loss = torch.tensor(0.0, device=device)
         if self.use_repa_ssl_feature_loss and self.repa_ssl_feature_loss_weight > 0.0:
@@ -483,6 +512,7 @@ class CFM(nn.Module):
             "total_loss": total_loss,
             "flow_loss": flow_loss,
             "aux_mel_loss": aux_mel_loss,
+            "aux_hubert_loss": aux_hubert_loss,
             "repa_ssl_feature_loss": repa_ssl_feature_loss,
             "repa_ctc_loss": repa_ctc_loss,
         }
