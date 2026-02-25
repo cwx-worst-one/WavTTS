@@ -65,7 +65,7 @@ def main():
             asr_ckpt_dir = "../checkpoints/Systran/faster-whisper-large-v3"
     else:
         asr_ckpt_dir = ""  # auto download to cache dir
-    wavlm_ckpt_dir = "../checkpoints/UniSpeech/wavlm_large_finetune.pth"
+    wavlm_ckpt_dir = "/inspire/hdd/global_user/chenxie-25019/wenxichen/models/wavlm/wavlm_large_finetune.pth"
 
     # --------------------------------------------------------------------------
 
