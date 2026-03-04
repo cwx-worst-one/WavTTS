@@ -9,7 +9,8 @@ export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
 # export CUDA_VISIBLE_DEVICES="1"
 
 # Configuration parameters
-MODEL_NAME="F5TTS_v1_Huge_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k"
+# MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_aux_mel_hubert_noise_schedule_0_8_16k
+MODEL_NAME=F5TTS_v1_Huge_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k
 # SEEDS=(0 1 2)
 SEEDS=(0)
 CKPTSTEPS=(1000000)  # 550000, 700000, 900000
@@ -26,6 +27,7 @@ OFFLINE_MODE=false
 CKPT_PATH_DIR=/inspire/hdd/global_user/chenxie-25019/wenxichen/exp/f5_tts/F5TTS_v1_Huge_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k-8gpus-bf16-22400frames_per_gpu
 CKPT_PATH="${CKPT_PATH_DIR}/ckpts/model_${CKPTSTEPS}.pt"
 
+cfg_strength=3.0
 nfe_step=32
 swaysampling=-1   # -1: enable, 0: disable
 
@@ -64,7 +66,7 @@ execute_eval_tasks() {
     local seed=$2
     local task_name=$3
     
-    local gen_wav_dir="results/${MODEL_NAME}/${ckptstep}/${task_name}/seed${seed}_euler_nfe32_vocos_ss-1_cfg2.0_speed1.0"
+    local gen_wav_dir="results/${MODEL_NAME}/${ckptstep}/${task_name}/seed${seed}_euler_nfe32_vocos_ss-1_cfg${cfg_strength}_speed1.0"
     
     echo ">>>>>>>> Starting eval task: ckptstep=${ckptstep}, seed=${seed}, task=${task_name}"
     
@@ -103,15 +105,15 @@ for ckptstep in "${CKPTSTEPS[@]}"; do
         
         # Execute each infer task sequentially
         for task in "${TASKS[@]}"; do
-            echo ">>>>>>>> Executing infer task: accelerate launch src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n \"${MODEL_NAME}\" -t \"${task}\" -c ${ckptstep} $LOCAL --ckpt_path \"${CKPT_PATH}\""
+            echo ">>>>>>>> Executing infer task: accelerate launch src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n \"${MODEL_NAME}\" -t \"${task}\" -c ${ckptstep} $LOCAL --ckpt_path \"${CKPT_PATH}\""  --cfg_strength ${cfg_strength} --nfe_step ${nfe_step} --swaysampling ${swaysampling}
             
             # Execute infer task (foreground execution, wait for completion)
             if [ "$DEBUG" = false ]; then
-                accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}" --nfe_step ${nfe_step} --swaysampling ${swaysampling}
+                accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}" --nfe_step ${nfe_step} --swaysampling ${swaysampling} --cfg_strength ${cfg_strength}
             fi
 
             if [ "$DEBUG" = true ]; then
-                python -m debugpy --listen 127.0.0.1:56789 --wait-for-client src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}"
+                python -m debugpy --listen 127.0.0.1:56789 --wait-for-client src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}" --nfe_step ${nfe_step} --swaysampling ${swaysampling} --cfg_strength ${cfg_strength}
             fi
             
             # If not infer-only mode, launch corresponding eval task

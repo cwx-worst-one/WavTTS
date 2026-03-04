@@ -55,6 +55,7 @@ def main():
 
     parser.add_argument("--local", action="store_true", help="Use local vocoder checkpoint directory")
     parser.add_argument("--ckpt_path", default=None, type=str)
+    parser.add_argument("--cfg_strength", default=2.0, type=float)
 
     args = parser.parse_args()
 
@@ -69,7 +70,7 @@ def main():
     testset = args.testset
 
     infer_batch_size = 1  # max frames. 1 for ddp single inference (recommended)
-    cfg_strength = 2.0
+    cfg_strength = args.cfg_strength
     speed = 1.0
     use_truth_duration = False
     no_ref_audio = False
