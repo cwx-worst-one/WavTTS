@@ -68,6 +68,8 @@ class CFM(nn.Module):
         aux_hubert_loss_weight: float = 1.0,
         aux_hubert_model_path: str = "facebook/hubert-large-ll60k",
         aux_hubert_layer_index: int = -1,
+        frontend_type: str = "reshape",  # "reshape" | "conv"
+        frontend_cfg: dict | None = None,
     ):
         super().__init__()
 
@@ -79,6 +81,8 @@ class CFM(nn.Module):
         # wav-only switch + frame_len (won't be passed into MelSpec)
         self.wav_input_only = bool(mel_spec_kwargs.pop("return_wav_only", False))
         self.wav_frame_len = int(mel_spec_kwargs.pop("wav_frame_len", 240))  # e.g., 240 @24k = 100Hz
+        self.frontend_type = frontend_type
+        self.frontend_cfg = dict(frontend_cfg) if frontend_cfg is not None else {}
 
         # mel spec
         if self.wav_input_only:
@@ -100,7 +104,8 @@ class CFM(nn.Module):
             self.transformer.set_wav_frontend_config(
                 wav_input_only=self.wav_input_only,
                 wav_frame_len=self.wav_frame_len,
-                frontend_type="reshape",
+                frontend_type=self.frontend_type,
+                frontend_cfg=self.frontend_cfg,
             )
 
         # conditional flow related

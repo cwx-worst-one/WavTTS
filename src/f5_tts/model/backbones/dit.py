@@ -16,6 +16,7 @@ from torch import nn
 from torch.nn.utils.rnn import pad_sequence
 from x_transformers.x_transformers import RotaryEmbedding
 
+from f5_tts.model.backbones.wav_frontend import WavConvFrontendBackend
 from f5_tts.model.modules import (
     AdaLayerNorm_Final,
     ConvNeXtV2Block,
@@ -307,19 +308,47 @@ class DiT(nn.Module):
         wav_input_only: bool,
         wav_frame_len: int,
         frontend_type: str = "reshape",
+        frontend_cfg: dict | None = None,
     ):
         self.wav_input_only = bool(wav_input_only)
         self.wav_frame_len = int(wav_frame_len)
         self.wav_frontend_type = frontend_type
+        frontend_cfg = frontend_cfg or {}
         if self.wav_input_only and self.wav_frontend_type not in {"reshape", "conv"}:
             raise ValueError(f"Unknown wav_frontend_type: {self.wav_frontend_type}")
 
-        # TODO: conv front/back-end will be added in a later iteration.
-        if self.wav_input_only and self.wav_frontend_type == "reshape" and self.wav_frame_len != self.proj_out.out_features:
+        if not self.wav_input_only:
+            self.wav_frontend_conv = None
+            self.wav_backend_conv = None
+            return
+
+        if self.wav_frontend_type == "reshape" and self.wav_frame_len != self.proj_out.out_features:
             raise ValueError(
                 f"wav_frame_len ({self.wav_frame_len}) must equal mel_dim/proj_out.out_features ({self.proj_out.out_features}) "
                 "for reshape wav front-end."
             )
+        if self.wav_frontend_type == "reshape":
+            self.wav_frontend_conv = None
+            self.wav_backend_conv = None
+            return
+
+        conv_frontend = WavConvFrontendBackend(
+            model_dim=self.proj_out.out_features,
+            encoder_dim=int(frontend_cfg.get("encoder_dim", 64)),
+            encoder_rates=tuple(frontend_cfg.get("encoder_rates", (2, 4, 5, 4))),
+            latent_dim=int(frontend_cfg.get("latent_dim", 256)),
+            decoder_dim=int(frontend_cfg.get("decoder_dim", 1024)),
+            decoder_rates=tuple(frontend_cfg.get("decoder_rates", tuple(reversed(frontend_cfg.get("encoder_rates", (2, 4, 5, 4)))))),
+        )
+
+        if conv_frontend.hop_length != self.wav_frame_len:
+            raise ValueError(
+                f"Conv frontend hop_length ({conv_frontend.hop_length}) must match wav_frame_len ({self.wav_frame_len}). "
+                "Please adjust encoder_rates or wav_frame_len in config."
+            )
+
+        self.wav_frontend_conv = conv_frontend
+        self.wav_backend_conv = None
 
     def _wav_to_tokens(
         self,
@@ -328,8 +357,12 @@ class DiT(nn.Module):
         lens: torch.Tensor | None = None,
     ):
         assert wav.ndim == 2, f"Expected [B, N] wav input, got {tuple(wav.shape)}"
+        if self.wav_frontend_type == "conv":
+            if self.wav_frontend_conv is None:
+                raise RuntimeError("Conv wav front-end is not initialized.")
+            return self.wav_frontend_conv.encode(wav, mask=mask, lens=lens)
         if self.wav_frontend_type != "reshape":
-            raise NotImplementedError("Only reshape wav front-end is implemented for now.")
+            raise NotImplementedError(f"Unknown wav front-end type: {self.wav_frontend_type}")
 
         bsz, num_samples = wav.shape
         frame_len = self.wav_frame_len
@@ -353,8 +386,13 @@ class DiT(nn.Module):
         return tokens, token_mask, token_lens
 
     def _tokens_to_wav(self, tokens: torch.Tensor, target_num_samples: int):
+        if self.wav_frontend_type == "conv":
+            conv_backend = self.wav_backend_conv if self.wav_backend_conv is not None else self.wav_frontend_conv
+            if conv_backend is None:
+                raise RuntimeError("Conv wav back-end is not initialized.")
+            return conv_backend.decode(tokens, target_num_samples=target_num_samples)
         if self.wav_frontend_type != "reshape":
-            raise NotImplementedError("Only reshape wav back-end is implemented for now.")
+            raise NotImplementedError(f"Unknown wav back-end type: {self.wav_frontend_type}")
         wav = tokens.reshape(tokens.shape[0], -1)
         return wav[:, :target_num_samples]
 

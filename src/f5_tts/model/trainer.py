@@ -24,6 +24,46 @@ from f5_tts.model.utils import default, exists
 
 
 class Trainer:
+    @staticmethod
+    def _format_params_in_mb(count: int) -> str:
+        return f"{count / 1e6:,.3f}M / {count / 1e9:,.6f}B"
+
+    @staticmethod
+    def _count_model_params(model: torch.nn.Module) -> tuple[int, int, int]:
+        total = 0
+        trainable = 0
+        frozen = 0
+        for param in model.parameters():
+            numel = param.numel()
+            total += numel
+            if param.requires_grad:
+                trainable += numel
+            else:
+                frozen += numel
+        return total, trainable, frozen
+
+    def _print_model_param_summary(self, model: torch.nn.Module):
+        total, trainable, frozen = self._count_model_params(model)
+        trainable_ratio = (trainable / total * 100.0) if total > 0 else 0.0
+        frozen_ratio = (frozen / total * 100.0) if total > 0 else 0.0
+
+        table_width = 76
+        print("\n" + "=" * table_width)
+        print("Model Parameter Summary".center(table_width))
+        print("-" * table_width)
+        print(f"{'Type':<12}{'Count':>18}{'Scale (M / B)':>30}{'Ratio':>16}")
+        print("-" * table_width)
+        print(
+            f"{'Total':<12}{total:>18,}{self._format_params_in_mb(total):>30}{'100.00%':>16}"
+        )
+        print(
+            f"{'Trainable':<12}{trainable:>18,}{self._format_params_in_mb(trainable):>30}{f'{trainable_ratio:.2f}%':>16}"
+        )
+        print(
+            f"{'Frozen':<12}{frozen:>18,}{self._format_params_in_mb(frozen):>30}{f'{frozen_ratio:.2f}%':>16}"
+        )
+        print("=" * table_width)
+
     def __init__(
         self,
         model: CFM,
@@ -104,6 +144,7 @@ class Trainer:
         if self.is_main:
             self.ema_model = EMA(model, include_online_model=False, **ema_kwargs)
             self.ema_model.to(self.accelerator.device)
+            self._print_model_param_summary(self.model)
 
             print(f"Using logger: {logger}")
             if grad_accumulation_steps > 1:

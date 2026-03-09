@@ -21,8 +21,8 @@ mixed_precision=bf16
 batch_size_per_gpu=12800        # 19200, 22400, 25600, 38400, 51200
 num_workers=16
 
-CONFIG_NAME="F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k"
-EXP_NAME="debug_wav_x_pred_scale_noise_schedule_0_8_16k_Large_aux_loss"   # debug_wav, debug_mel, debug_wav_proj_input, debug_wav_x_pred,
+CONFIG_NAME="F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k_conv_frontend"
+EXP_NAME="debug_wav_x_pred_scale_noise_schedule_0_8_16k_Large_aux_loss_conv"   # debug_wav, debug_mel, debug_wav_proj_input, debug_wav_x_pred, F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k, F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k_conv_frontend
 OUTDIR="/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/${EXP_NAME}"
 
 # log config
