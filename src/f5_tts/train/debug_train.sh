@@ -3,11 +3,12 @@
 # export CUDA_VISIBLE_DEVICES=0
 # export CUDA_VISIBLE_DEVICES=0,1
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export WANDB_MODE=offline
+export WANDB_MODE=disabled
 export WANDB_API_KEY="406faa59cf62a3646fa3479a7e133c4cf5a77100"
 export HF_ENDPOINT=https://hf-mirror.com
 export MASTER_ADDR="127.0.0.1"
 export MASTER_PORT=47896
+export DEBUG_PORT=56789
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
@@ -20,10 +21,9 @@ mixed_precision=bf16
 batch_size_per_gpu=12800        # 19200, 22400, 25600, 38400, 51200
 num_workers=16
 
-CONFIG_NAME="F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k"     # F5TTS_v1_Small, F5TTS_v1_Base, F5TTS_v1_Base_wav, F5TTS_v1_Base_wav_proj_input, F5TTS_v1_Base_wav_x_pred, F5TTS_v1_Small_mel_x_pred, F5TTS_v1_Base_wav_x_pred_proj_input
-# EXP_NAME="${CONFIG_NAME}-${num_processes}gpus-${mixed_precision}-${batch_size_per_gpu}sample_per_gpu"            
+CONFIG_NAME="F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k"
 EXP_NAME="debug_wav_x_pred_scale_noise_schedule_0_8_16k_Large_aux_loss"   # debug_wav, debug_mel, debug_wav_proj_input, debug_wav_x_pred,
-OUTDIR="/inspire/hdd/global_user/chenwenxi-253108120142/exp/f5_tts/${EXP_NAME}"
+OUTDIR="/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/${EXP_NAME}"
 
 # log config
 LOG_DIR="${OUTDIR}/logs"
@@ -36,7 +36,7 @@ echo "MASTER_PORT=${MASTER_PORT}"
 echo "Exp Name: ${EXP_NAME}"
 
 # accelerate launch --main_process_port ${MASTER_PORT} --num_processes ${num_processes} --num_machines ${num_machines} --mixed_precision ${mixed_precision} --dynamo_backend no src/f5_tts/train/train.py \
-python -m debugpy --listen 5678 --wait-for-client src/f5_tts/train/train.py \
+python -m debugpy --listen ${MASTER_ADDR}:${DEBUG_PORT} --wait-for-client src/f5_tts/train/train.py \
     --config-name "${CONFIG_NAME}.yaml" \
     ++hydra.run.dir=${OUTDIR} \
     ++ckpts.save_dir="${OUTDIR}/ckpts" \
@@ -45,4 +45,4 @@ python -m debugpy --listen 5678 --wait-for-client src/f5_tts/train/train.py \
     ++datasets.num_workers=${num_workers}
 
 
-# bash /inspire/hdd/global_user/chenxie-25019/wenxichen/code/F5_TTS_wav/src/f5_tts/train/debug_train.sh
+# bash /mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav/src/f5_tts/train/debug_train.sh

@@ -96,6 +96,13 @@ class CFM(nn.Module):
         self.transformer = transformer
         self.dim = transformer.dim
 
+        if hasattr(self.transformer, "set_wav_frontend_config"):
+            self.transformer.set_wav_frontend_config(
+                wav_input_only=self.wav_input_only,
+                wav_frame_len=self.wav_frame_len,
+                frontend_type="reshape",
+            )
+
         # conditional flow related
         self.sigma = sigma
 
@@ -154,33 +161,6 @@ class CFM(nn.Module):
     def device(self):
         return next(self.parameters()).device
     
-    def _wav_to_frames(self, wav: torch.Tensor, lens: torch.Tensor | None):
-        """
-        wav:  [B, N]
-        lens: [B] (in samples) or None
-        return:
-        frames:      [B, T, frame_len]
-        frame_lens:  [B] (in frames)
-        pad_len:     int (pad at tail in samples)
-        """
-        assert wav.ndim == 2
-        B, N = wav.shape
-        L = self.wav_frame_len
-
-        pad_len = (L - (N % L)) % L
-        if pad_len > 0:
-            wav = F.pad(wav, (0, pad_len), value=0.0)
-
-        frames = wav.view(B, -1, L)  # [B, T, L]
-
-        if lens is None:
-            frame_lens = torch.full((B,), frames.size(1), device=wav.device, dtype=torch.long)
-        else:
-            lens = lens.to(device=wav.device, dtype=torch.long)
-            frame_lens = (lens + L - 1) // L  # ceil
-
-        return frames, frame_lens, pad_len
-    
     def _sample_time(self, batch: int, dtype, device):
         if self.t_sampling == "uniform":
             return torch.rand((batch,), dtype=dtype, device=device)
@@ -223,7 +203,7 @@ class CFM(nn.Module):
 
         if cond.ndim == 2:
             if self.wav_input_only:
-                cond, lens, _ = self._wav_to_frames(cond, lens)
+                cond = cond
             else:
                 cond = self.mel_spec(cond)
                 cond = cond.permute(0, 2, 1)
@@ -232,6 +212,7 @@ class CFM(nn.Module):
         cond = cond.to(next(self.parameters()).dtype)
         cond = cond * self.latents_scale
 
+        wav_mode = self.wav_input_only and cond.ndim == 2
         batch, cond_seq_len, device = *cond.shape[:2], cond.device
         if not exists(lens):
             lens = torch.full((batch,), cond_seq_len, device=device, dtype=torch.long)
@@ -252,28 +233,39 @@ class CFM(nn.Module):
         if isinstance(duration, int):
             duration = torch.full((batch,), duration, device=device, dtype=torch.long)
 
+        # keep legacy max_duration semantics for wav path: 4096 means 4096 frame-tokens.
+        max_duration_limit = max_duration * self.wav_frame_len if wav_mode else max_duration
         duration = torch.maximum(
             torch.maximum((text != -1).sum(dim=-1), lens) + 1, duration
         )  # duration at least text/audio prompt length plus one token, so something is generated
-        duration = duration.clamp(max=max_duration)
+        duration = duration.clamp(max=max_duration_limit)
         max_duration = duration.amax()
 
         # duplicate test corner for inner time step oberservation
         if duplicate_test:
-            test_cond = F.pad(cond, (0, 0, cond_seq_len, max_duration - 2 * cond_seq_len), value=0.0)
+            if wav_mode:
+                test_cond = F.pad(cond, (cond_seq_len, max_duration - 2 * cond_seq_len), value=0.0)
+            else:
+                test_cond = F.pad(cond, (0, 0, cond_seq_len, max_duration - 2 * cond_seq_len), value=0.0)
 
-        cond = F.pad(cond, (0, 0, 0, max_duration - cond_seq_len), value=0.0)
+        if wav_mode:
+            cond = F.pad(cond, (0, max_duration - cond_seq_len), value=0.0)
+        else:
+            cond = F.pad(cond, (0, 0, 0, max_duration - cond_seq_len), value=0.0)
         if no_ref_audio:
             cond = torch.zeros_like(cond)
 
         cond_mask = F.pad(cond_mask, (0, max_duration - cond_mask.shape[-1]), value=False)
-        cond_mask = cond_mask.unsqueeze(-1)
-        step_cond = torch.where(
-            cond_mask, cond, torch.zeros_like(cond)
-        )  # allow direct control (cut cond audio) with lens passed in
+        if wav_mode:
+            step_cond = torch.where(cond_mask, cond, torch.zeros_like(cond))
+        else:
+            cond_mask = cond_mask.unsqueeze(-1)
+            step_cond = torch.where(
+                cond_mask, cond, torch.zeros_like(cond)
+            )  # allow direct control (cut cond audio) with lens passed in
 
         if batch > 1:
-            mask = lens_to_mask(duration)
+            mask = lens_to_mask(duration, length=max_duration)
         else:  # save memory and speed up, as single inference need no mask currently
             mask = None
 
@@ -315,7 +307,10 @@ class CFM(nn.Module):
         for dur in duration:
             if exists(seed):
                 torch.manual_seed(seed)
-            y0.append(torch.randn(dur, self.num_channels, device=self.device, dtype=step_cond.dtype) * self.noise_scale)
+            if wav_mode:
+                y0.append(torch.randn(dur, device=self.device, dtype=step_cond.dtype) * self.noise_scale)
+            else:
+                y0.append(torch.randn(dur, self.num_channels, device=self.device, dtype=step_cond.dtype) * self.noise_scale)
         y0 = pad_sequence(y0, padding_value=0, batch_first=True)
 
         t_start = 0
@@ -349,11 +344,9 @@ class CFM(nn.Module):
             
         # ---- wav-only: flatten frames back to waveform (trim to duration*frame_len) ----
         if self.wav_input_only:
-            L = self.wav_frame_len
             wav_list = []
-            out_flat = out.reshape(batch, -1)  # [B, max_duration*L]
             for b in range(batch):
-                wav_list.append(out_flat[b, : duration[b].item() * L])
+                wav_list.append(out[b, : duration[b].item()])
             out = pad_sequence(wav_list, batch_first=True, padding_value=0.0)  # [B, N]
 
         return out, trajectory
@@ -372,7 +365,7 @@ class CFM(nn.Module):
         # handle raw wave
         if inp.ndim == 2:
             if self.wav_input_only:
-                inp, lens, _ = self._wav_to_frames(inp, lens)
+                inp = inp
             else:
                 inp = self.mel_spec(inp)
                 inp = inp.permute(0, 2, 1)
@@ -412,12 +405,18 @@ class CFM(nn.Module):
         time = self._sample_time(batch, dtype=dtype, device=self.device)
 
         # sample xt (φ_t(x) in the paper)
-        t = time.unsqueeze(-1).unsqueeze(-1)
+        if inp.ndim == 2:
+            t = time.unsqueeze(-1)
+        else:
+            t = time.unsqueeze(-1).unsqueeze(-1)
         φ = (1 - t) * x0 + t * x1
         flow = x1 - x0
 
         # only predict what is within the random mask span for infilling
-        cond = torch.where(rand_span_mask[..., None], torch.zeros_like(x1), x1)
+        if inp.ndim == 2:
+            cond = torch.where(rand_span_mask, torch.zeros_like(x1), x1)
+        else:
+            cond = torch.where(rand_span_mask[..., None], torch.zeros_like(x1), x1)
 
         # transformer and cfg training with a drop rate
         drop_audio_cond = random() < self.audio_drop_prob  # p_drop in voicebox paper
@@ -462,24 +461,16 @@ class CFM(nn.Module):
 
         aux_mel_loss = torch.tensor(0.0, device=device)     # fixme: 这里的aux_mel_loss只针对x-pred的情况
         if self.use_aux_mel_loss and self.aux_mel_loss is not None and self.wav_input_only:
-            B = x1.shape[0]
-            x1_flat = x1.reshape(B, -1)
-            x1_pred_flat = x_pred.reshape(B, -1)
-            
-            x1_flat_unscaled = x1_flat / self.latents_scale
-            x1_pred_flat_unscaled = x1_pred_flat / self.latents_scale
+            x1_flat_unscaled = x1 / self.latents_scale
+            x1_pred_flat_unscaled = x_pred / self.latents_scale
 
             aux_mel_loss = self.aux_mel_loss(x1_pred_flat_unscaled, x1_flat_unscaled)
             total_loss = total_loss + aux_mel_loss
             
         aux_hubert_loss = torch.tensor(0.0, device=device)
         if self.use_aux_hubert_loss and self.aux_hubert_loss is not None and self.wav_input_only:
-            B = x1.shape[0]
-            x1_flat = x1.reshape(B, -1)
-            x1_pred_flat = x_pred.reshape(B, -1)
-            
-            x1_flat_unscaled = x1_flat / self.latents_scale
-            x1_pred_flat_unscaled = x1_pred_flat / self.latents_scale
+            x1_flat_unscaled = x1 / self.latents_scale
+            x1_pred_flat_unscaled = x_pred / self.latents_scale
             
             aux_hubert_loss = self.aux_hubert_loss(x1_pred_flat_unscaled, x1_flat_unscaled)
             total_loss = total_loss + aux_hubert_loss

@@ -138,8 +138,8 @@ def get_inference_prompt(
         frame_len = wav_frame_len
 
     if wav_input_only:
-        min_tokens = min_secs * target_sample_rate // frame_len
-        max_tokens = max_secs * target_sample_rate // frame_len
+        min_tokens = min_secs * target_sample_rate
+        max_tokens = max_secs * target_sample_rate
     else:
         min_tokens = min_secs * target_sample_rate // hop_length
         max_tokens = max_secs * target_sample_rate // hop_length
@@ -191,7 +191,7 @@ def get_inference_prompt(
             ref_audio = ref_audio[..., :ref_len_aligned]
 
             ref_feat = ref_audio  # [1, T_aligned]
-            ref_feat_len = ref_len_aligned // frame_len  # prompt frames
+            ref_feat_len = ref_len_aligned  # prompt samples
 
             if use_truth_duration:
                 gt_audio, gt_sr = torchaudio.load(gt_wav)
@@ -201,7 +201,7 @@ def get_inference_prompt(
                     resampler = torchaudio.transforms.Resample(gt_sr, target_sample_rate)
                     gt_audio = resampler(gt_audio)
 
-                total_len = ref_feat_len + int(gt_audio.shape[-1] / frame_len / speed)
+                total_len = ref_feat_len + int(gt_audio.shape[-1] / speed)
             else:
                 ref_text_len = len(prompt_text.encode("utf-8"))
                 gen_text_len = len(gt_text.encode("utf-8"))
@@ -232,7 +232,7 @@ def get_inference_prompt(
         assert infer_batch_size > 0, "infer_batch_size should be greater than 0."
         
         if wav_input_only:
-            approx_secs = total_len * frame_len // target_sample_rate
+            approx_secs = total_len // target_sample_rate
         else:
             approx_secs = total_len * hop_length // target_sample_rate
 

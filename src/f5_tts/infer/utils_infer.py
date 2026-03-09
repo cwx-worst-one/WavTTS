@@ -480,7 +480,7 @@ def infer_batch_process(
         ref_full_frames = ref_len_samples // frame_len
         ref_len_aligned = max(ref_full_frames * frame_len, frame_len)
         audio = audio[..., :ref_len_aligned]
-        ref_audio_len = ref_len_aligned // frame_len
+        ref_audio_len = ref_len_aligned
     else:
         # mel mode: ref length in hops (frames)
         ref_audio_len = audio.shape[-1] // hop_length
@@ -502,7 +502,7 @@ def infer_batch_process(
 
         if fix_duration is not None:
             if is_wav_only:
-                duration = int(fix_duration * target_sample_rate / frame_len)  # frames
+                duration = int(fix_duration * target_sample_rate)  # samples
             else:
                 duration = int(fix_duration * target_sample_rate / hop_length)
         else:
@@ -540,7 +540,7 @@ def infer_batch_process(
 
                 generated = generated.to(torch.float32)  # [1, N_total]
                 # cut prompt part (aligned)
-                cut = ref_audio_len * frame_len
+                cut = ref_audio_len
                 generated_wave = generated[0, cut:].contiguous()
 
                 if rms < target_rms:

@@ -282,6 +282,14 @@ class DiT(nn.Module):
 
         self.initialize_weights()
 
+        # wav front/back-end processing.
+        # default keeps mel path unchanged; CFM will configure this in wav-only mode.
+        self.wav_input_only = False
+        self.wav_frame_len = mel_dim
+        self.wav_frontend_type = "reshape"  # placeholder: "reshape" | "conv"
+        self.wav_frontend_conv = None
+        self.wav_backend_conv = None
+
     def initialize_weights(self):
         # Zero-out AdaLN layers in DiT blocks:
         for block in self.transformer_blocks:
@@ -293,6 +301,62 @@ class DiT(nn.Module):
         nn.init.constant_(self.norm_out.linear.bias, 0)
         nn.init.constant_(self.proj_out.weight, 0)
         nn.init.constant_(self.proj_out.bias, 0)
+
+    def set_wav_frontend_config(
+        self,
+        wav_input_only: bool,
+        wav_frame_len: int,
+        frontend_type: str = "reshape",
+    ):
+        self.wav_input_only = bool(wav_input_only)
+        self.wav_frame_len = int(wav_frame_len)
+        self.wav_frontend_type = frontend_type
+        if self.wav_input_only and self.wav_frontend_type not in {"reshape", "conv"}:
+            raise ValueError(f"Unknown wav_frontend_type: {self.wav_frontend_type}")
+
+        # TODO: conv front/back-end will be added in a later iteration.
+        if self.wav_input_only and self.wav_frontend_type == "reshape" and self.wav_frame_len != self.proj_out.out_features:
+            raise ValueError(
+                f"wav_frame_len ({self.wav_frame_len}) must equal mel_dim/proj_out.out_features ({self.proj_out.out_features}) "
+                "for reshape wav front-end."
+            )
+
+    def _wav_to_tokens(
+        self,
+        wav: torch.Tensor,
+        mask: torch.Tensor | None = None,
+        lens: torch.Tensor | None = None,
+    ):
+        assert wav.ndim == 2, f"Expected [B, N] wav input, got {tuple(wav.shape)}"
+        if self.wav_frontend_type != "reshape":
+            raise NotImplementedError("Only reshape wav front-end is implemented for now.")
+
+        bsz, num_samples = wav.shape
+        frame_len = self.wav_frame_len
+        pad_len = (frame_len - (num_samples % frame_len)) % frame_len
+
+        if pad_len > 0:
+            wav = F.pad(wav, (0, pad_len), value=0.0)
+            if mask is not None:
+                mask = F.pad(mask, (0, pad_len), value=False)
+
+        tokens = wav.view(bsz, -1, frame_len)
+
+        token_mask = None
+        if mask is not None:
+            token_mask = mask.view(bsz, -1, frame_len).any(dim=-1)
+
+        token_lens = None
+        if lens is not None:
+            token_lens = (lens.to(dtype=torch.long, device=wav.device) + frame_len - 1) // frame_len
+
+        return tokens, token_mask, token_lens
+
+    def _tokens_to_wav(self, tokens: torch.Tensor, target_num_samples: int):
+        if self.wav_frontend_type != "reshape":
+            raise NotImplementedError("Only reshape wav back-end is implemented for now.")
+        wav = tokens.reshape(tokens.shape[0], -1)
+        return wav[:, :target_num_samples]
 
     def ckpt_wrapper(self, module):
         # https://github.com/chuanyangjin/fast-DiT/blob/main/models.py
@@ -348,11 +412,11 @@ class DiT(nn.Module):
 
     def forward(
         self,
-        x: float["b n d"],  # nosied input audio
-        cond: float["b n d"],  # masked cond audio
+        x: float["b n d"] | float["b nw"],  # nosied input audio
+        cond: float["b n d"] | float["b nw"],  # masked cond audio
         text: int["b nt"],  # text
         time: float["b"] | float[""],  # time step
-        mask: bool["b n"] | None = None,
+        mask: bool["b n"] | bool["b nw"] | None = None,
         drop_audio_cond: bool = False,  # cfg for cond audio
         drop_text: bool = False,  # cfg for text
         cfg_infer: bool = False,  # cfg inference, pack cond & uncond forward
@@ -360,6 +424,18 @@ class DiT(nn.Module):
         zs_lens: list[int["b"]] | None = None,
         lens: int["b"] | None = None,
     ):
+        wav_mode = self.wav_input_only and x.ndim == 2
+        if self.wav_input_only and (x.ndim != cond.ndim):
+            raise ValueError(f"In wav_input_only mode, x and cond must have same ndim, got {x.ndim} and {cond.ndim}.")
+
+        target_num_samples = None
+        if wav_mode:
+            target_num_samples = x.shape[1]
+            x, token_mask, token_lens = self._wav_to_tokens(x, mask=mask, lens=lens)
+            cond, _, _ = self._wav_to_tokens(cond, mask=None, lens=None)
+            mask = token_mask
+            lens = token_lens
+
         batch, seq_len = x.shape[0], x.shape[1]
         if time.ndim == 0:
             time = time.repeat(batch)
@@ -408,5 +484,8 @@ class DiT(nn.Module):
 
         x = self.norm_out(x, t)
         output = self.proj_out(x)
+
+        if wav_mode:
+            output = self._tokens_to_wav(output, target_num_samples=target_num_samples)
 
         return output, zs_speech, zs_text

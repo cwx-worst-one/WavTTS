@@ -232,8 +232,8 @@ def main():
                     # Final result
                     for i, gen in enumerate(generated):
                         if wav_input_only:
-                            start_idx = ref_mel_lens[i].item() * wav_frame_len
-                            end_idx = total_mel_lens[i].item() * wav_frame_len
+                            start_idx = ref_mel_lens[i].item()
+                            end_idx = total_mel_lens[i].item()
                             gen = gen[start_idx : end_idx].unsqueeze(0)
 
                         else:

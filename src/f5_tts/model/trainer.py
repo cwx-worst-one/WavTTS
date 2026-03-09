@@ -470,20 +470,17 @@ class Trainer:
                                 ref_wav_len = wav_lengths[0].item()
                                 ref_wav = wav[0][:ref_wav_len].unsqueeze(0).to(self.accelerator.device)  # [1, N]
 
-                                frame_len = unwrap.wav_frame_len
-                                ref_frames = (ref_wav_len + frame_len - 1) // frame_len
-
                                 generated, _ = unwrap.sample(
                                     cond=ref_wav,                   # [1, N]
                                     text=infer_text,
-                                    duration=ref_frames * 2,
+                                    duration=ref_wav_len * 2,
                                     steps=nfe_step,
                                     cfg_strength=cfg_strength,
                                     sway_sampling_coef=sway_sampling_coef,
                                 )
                                 generated = generated.to(torch.float32).cpu()  # [1, N_total]
 
-                                cut = ref_frames * frame_len
+                                cut = ref_wav_len
                                 gen_audio = generated[:, cut:]  # [1, N_gen]
                                 ref_audio = ref_wav.cpu()       # [1, N_ref]
 
