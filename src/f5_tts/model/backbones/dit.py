@@ -17,6 +17,7 @@ from torch.nn.utils.rnn import pad_sequence
 from x_transformers.x_transformers import RotaryEmbedding
 
 from f5_tts.model.backbones.conv_mlp import ChannelLastConv1d, ConvMLP, ConvMLPOutProjection
+from f5_tts.model.backbones.wav_patch_embed import WavPatchEmbedV1FrontendBackend
 from f5_tts.model.backbones.wav_frontend import WavConvFrontendBackend
 from f5_tts.model.modules import (
     AdaLayerNorm_Final,
@@ -362,7 +363,7 @@ class DiT(nn.Module):
         # default keeps mel path unchanged; CFM will configure this in wav-only mode.
         self.wav_input_only = False
         self.wav_frame_len = mel_dim
-        self.wav_frontend_type = "reshape"  # placeholder: "reshape" | "conv"
+        self.wav_frontend_type = "reshape"  # placeholder: "reshape" | "conv" | "embed_v1"
         self.wav_frontend_conv = None
         self.wav_backend_conv = None
 
@@ -402,7 +403,7 @@ class DiT(nn.Module):
         self.wav_frame_len = int(wav_frame_len)
         self.wav_frontend_type = frontend_type
         frontend_cfg = frontend_cfg or {}
-        if self.wav_input_only and self.wav_frontend_type not in {"reshape", "conv"}:
+        if self.wav_input_only and self.wav_frontend_type not in {"reshape", "conv", "embed_v1"}:
             raise ValueError(f"Unknown wav_frontend_type: {self.wav_frontend_type}")
 
         if not self.wav_input_only:
@@ -417,6 +418,23 @@ class DiT(nn.Module):
             )
         if self.wav_frontend_type == "reshape":
             self.wav_frontend_conv = None
+            self.wav_backend_conv = None
+            return
+
+        if self.wav_frontend_type == "embed_v1":
+            embed_frontend = WavPatchEmbedV1FrontendBackend(
+                model_dim=self.proj_out_dim,
+                out_dim=int(frontend_cfg.get("out_dim", self.proj_out_dim)),
+                kernel_size=int(frontend_cfg.get("kernel_size", 400)),
+                stride=int(frontend_cfg.get("stride", self.wav_frame_len)),
+                padding=frontend_cfg.get("padding"),
+            )
+            if embed_frontend.hop_length != self.wav_frame_len:
+                raise ValueError(
+                    f"embed_v1 stride/hop_length ({embed_frontend.hop_length}) must match wav_frame_len ({self.wav_frame_len}). "
+                    "Please adjust stride or wav_frame_len in config."
+                )
+            self.wav_frontend_conv = embed_frontend
             self.wav_backend_conv = None
             return
 
@@ -445,9 +463,9 @@ class DiT(nn.Module):
         lens: torch.Tensor | None = None,
     ):
         assert wav.ndim == 2, f"Expected [B, N] wav input, got {tuple(wav.shape)}"
-        if self.wav_frontend_type == "conv":
+        if self.wav_frontend_type in {"conv", "embed_v1"}:
             if self.wav_frontend_conv is None:
-                raise RuntimeError("Conv wav front-end is not initialized.")
+                raise RuntimeError(f"{self.wav_frontend_type} wav front-end is not initialized.")
             return self.wav_frontend_conv.encode(wav, mask=mask, lens=lens)
         if self.wav_frontend_type != "reshape":
             raise NotImplementedError(f"Unknown wav front-end type: {self.wav_frontend_type}")
@@ -474,10 +492,10 @@ class DiT(nn.Module):
         return tokens, token_mask, token_lens
 
     def _tokens_to_wav(self, tokens: torch.Tensor, target_num_samples: int):
-        if self.wav_frontend_type == "conv":
+        if self.wav_frontend_type in {"conv", "embed_v1"}:
             conv_backend = self.wav_backend_conv if self.wav_backend_conv is not None else self.wav_frontend_conv
             if conv_backend is None:
-                raise RuntimeError("Conv wav back-end is not initialized.")
+                raise RuntimeError(f"{self.wav_frontend_type} wav back-end is not initialized.")
             return conv_backend.decode(tokens, target_num_samples=target_num_samples)
         if self.wav_frontend_type != "reshape":
             raise NotImplementedError(f"Unknown wav back-end type: {self.wav_frontend_type}")
