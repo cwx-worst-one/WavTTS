@@ -16,6 +16,7 @@ from torch import nn
 from torch.nn.utils.rnn import pad_sequence
 from x_transformers.x_transformers import RotaryEmbedding
 
+from f5_tts.model.backbones.conv_mlp import ChannelLastConv1d, ConvMLP, ConvMLPOutProjection
 from f5_tts.model.backbones.wav_frontend import WavConvFrontendBackend
 from f5_tts.model.modules import (
     AdaLayerNorm_Final,
@@ -130,25 +131,66 @@ class InputEmbedding(nn.Module):
         use_audio_proj: bool = False,
         audio_proj_dim: int | None = None,
         audio_proj_hidden: int | None = None,
+        audio_proj_type: str = "linear",  # "linear" | "conv_mlp"
+        audio_proj_conv_kernel_size: int = 7,
+        audio_proj_conv_padding: int = 3,
+        audio_proj_conv_multiple_of: int = 256,
     ):
         super().__init__()
 
         self.use_audio_proj = use_audio_proj
-        
+        self.audio_proj_type = audio_proj_type
+
         if not use_audio_proj:
             self.proj = nn.Linear(mel_dim * 2 + text_dim, out_dim)
         else:
             audio_proj_dim = out_dim if audio_proj_dim is None else audio_proj_dim
-            audio_proj_hidden = audio_proj_dim if audio_proj_hidden is None else audio_proj_hidden
-
-            self.x_proj = nn.Sequential(
-                nn.Linear(mel_dim, audio_proj_hidden, bias=False),
-                nn.Linear(audio_proj_hidden, audio_proj_dim),  # bias=True by default
-            )
-            self.cond_proj = nn.Sequential(
-                nn.Linear(mel_dim, audio_proj_hidden, bias=False),
-                nn.Linear(audio_proj_hidden, audio_proj_dim),
-            )
+            if audio_proj_type == "linear":
+                audio_proj_hidden = audio_proj_dim if audio_proj_hidden is None else audio_proj_hidden
+                self.x_proj = nn.Sequential(
+                    nn.Linear(mel_dim, audio_proj_hidden, bias=False),
+                    nn.Linear(audio_proj_hidden, audio_proj_dim),
+                )
+                self.cond_proj = nn.Sequential(
+                    nn.Linear(mel_dim, audio_proj_hidden, bias=False),
+                    nn.Linear(audio_proj_hidden, audio_proj_dim),
+                )
+            elif audio_proj_type == "conv_mlp":
+                conv_hidden = audio_proj_dim * 4 if audio_proj_hidden is None else audio_proj_hidden
+                self.x_proj = nn.Sequential(
+                    ChannelLastConv1d(
+                        mel_dim,
+                        audio_proj_dim,
+                        kernel_size=audio_proj_conv_kernel_size,
+                        padding=audio_proj_conv_padding,
+                    ),
+                    nn.SELU(),
+                    ConvMLP(
+                        audio_proj_dim,
+                        conv_hidden,
+                        kernel_size=audio_proj_conv_kernel_size,
+                        padding=audio_proj_conv_padding,
+                        multiple_of=audio_proj_conv_multiple_of,
+                    ),
+                )
+                self.cond_proj = nn.Sequential(
+                    ChannelLastConv1d(
+                        mel_dim,
+                        audio_proj_dim,
+                        kernel_size=audio_proj_conv_kernel_size,
+                        padding=audio_proj_conv_padding,
+                    ),
+                    nn.SELU(),
+                    ConvMLP(
+                        audio_proj_dim,
+                        conv_hidden,
+                        kernel_size=audio_proj_conv_kernel_size,
+                        padding=audio_proj_conv_padding,
+                        multiple_of=audio_proj_conv_multiple_of,
+                    ),
+                )
+            else:
+                raise ValueError(f"Unknown audio_proj_type: {audio_proj_type}")
 
             self.fuse = nn.Linear(audio_proj_dim * 2 + text_dim, out_dim)
         self.conv_pos_embed = ConvPositionEmbedding(dim=out_dim)
@@ -169,6 +211,8 @@ class InputEmbedding(nn.Module):
         else:
             x_h = self.x_proj(x)
             c_h = self.cond_proj(cond)
+            # c_global = c_h.mean(dim=1, keepdim=True) # TODO: maybe 提升音色信息注入
+            # c_h = c_h + c_global
             h = self.fuse(torch.cat((x_h, c_h, text_embed), dim=-1))
 
         h = self.conv_pos_embed(h, mask=audio_mask) + h
@@ -203,6 +247,15 @@ class DiT(nn.Module):
         use_audio_proj: bool = False,
         audio_proj_dim: int | None = None,
         audio_proj_hidden: int | None = None,
+        audio_proj_type: str = "linear",  # "linear" | "conv_mlp"
+        audio_proj_conv_kernel_size: int = 7,
+        audio_proj_conv_padding: int = 3,
+        audio_proj_conv_multiple_of: int = 256,
+        proj_out_type: str = "linear",  # "linear" | "final_conv" | "conv_mlp"
+        proj_out_hidden: int | None = None,
+        proj_out_kernel_size: int = 7,
+        proj_out_padding: int = 3,
+        proj_out_multiple_of: int = 256,
         text_align_depth=-1,
         speech_align_depth=-1,
         z_dim=[1024],
@@ -226,6 +279,10 @@ class DiT(nn.Module):
             use_audio_proj=use_audio_proj,
             audio_proj_dim=audio_proj_dim,
             audio_proj_hidden=audio_proj_hidden,
+            audio_proj_type=audio_proj_type,
+            audio_proj_conv_kernel_size=audio_proj_conv_kernel_size,
+            audio_proj_conv_padding=audio_proj_conv_padding,
+            audio_proj_conv_multiple_of=audio_proj_conv_multiple_of,
         )
 
         self.rotary_embed = RotaryEmbedding(dim_head)
@@ -252,7 +309,25 @@ class DiT(nn.Module):
         self.long_skip_connection = nn.Linear(dim * 2, dim, bias=False) if long_skip_connection else None
 
         self.norm_out = AdaLayerNorm_Final(dim)  # final modulation
-        self.proj_out = nn.Linear(dim, mel_dim)
+        self.proj_out_dim = mel_dim
+        if proj_out_type == "linear":
+            self.proj_out = nn.Linear(dim, mel_dim)
+            self.proj_out_output_layer = self.proj_out
+        elif proj_out_type == "final_conv":
+            self.proj_out = ChannelLastConv1d(dim, mel_dim, kernel_size=proj_out_kernel_size, padding=proj_out_padding)
+            self.proj_out_output_layer = self.proj_out
+        elif proj_out_type == "conv_mlp":
+            self.proj_out = ConvMLPOutProjection(
+                dim,
+                mel_dim,
+                hidden_dim=proj_out_hidden,
+                kernel_size=proj_out_kernel_size,
+                padding=proj_out_padding,
+                multiple_of=proj_out_multiple_of,
+            )
+            self.proj_out_output_layer = self.proj_out.output_layer
+        else:
+            raise ValueError(f"Unknown proj_out_type: {proj_out_type}")
 
         # set alignment depth
         self.text_align_depth = text_align_depth
@@ -292,6 +367,18 @@ class DiT(nn.Module):
         self.wav_backend_conv = None
 
     def initialize_weights(self):
+        # def _basic_init(module):
+        #     if isinstance(module, nn.Linear):
+        #         torch.nn.init.xavier_uniform_(module.weight)
+        #         if module.bias is not None:
+        #             nn.init.constant_(module.bias, 0)
+
+        # self.apply(_basic_init)
+
+        # # Initialize timestep embedding MLP:
+        # nn.init.normal_(self.t_embed.mlp[0].weight, std=0.02)
+        # nn.init.normal_(self.t_embed.mlp[2].weight, std=0.02)
+
         # Zero-out AdaLN layers in DiT blocks:
         for block in self.transformer_blocks:
             nn.init.constant_(block.attn_norm.linear.weight, 0)
@@ -300,8 +387,9 @@ class DiT(nn.Module):
         # Zero-out output layers:
         nn.init.constant_(self.norm_out.linear.weight, 0)
         nn.init.constant_(self.norm_out.linear.bias, 0)
-        nn.init.constant_(self.proj_out.weight, 0)
-        nn.init.constant_(self.proj_out.bias, 0)
+        nn.init.constant_(self.proj_out_output_layer.weight, 0)
+        if self.proj_out_output_layer.bias is not None:
+            nn.init.constant_(self.proj_out_output_layer.bias, 0)
 
     def set_wav_frontend_config(
         self,
@@ -322,9 +410,9 @@ class DiT(nn.Module):
             self.wav_backend_conv = None
             return
 
-        if self.wav_frontend_type == "reshape" and self.wav_frame_len != self.proj_out.out_features:
+        if self.wav_frontend_type == "reshape" and self.wav_frame_len != self.proj_out_dim:
             raise ValueError(
-                f"wav_frame_len ({self.wav_frame_len}) must equal mel_dim/proj_out.out_features ({self.proj_out.out_features}) "
+                f"wav_frame_len ({self.wav_frame_len}) must equal mel_dim/proj_out_dim ({self.proj_out_dim}) "
                 "for reshape wav front-end."
             )
         if self.wav_frontend_type == "reshape":
@@ -333,7 +421,7 @@ class DiT(nn.Module):
             return
 
         conv_frontend = WavConvFrontendBackend(
-            model_dim=self.proj_out.out_features,
+            model_dim=self.proj_out_dim,
             encoder_dim=int(frontend_cfg.get("encoder_dim", 64)),
             encoder_rates=tuple(frontend_cfg.get("encoder_rates", (2, 4, 5, 4))),
             latent_dim=int(frontend_cfg.get("latent_dim", 256)),

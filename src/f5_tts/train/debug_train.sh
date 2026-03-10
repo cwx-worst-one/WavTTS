@@ -13,7 +13,7 @@ export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
 # accelerate config
-num_processes=1     # 1, 8
+num_processes=8     # 1, 8
 num_machines=1
 mixed_precision=bf16
 
@@ -21,8 +21,8 @@ mixed_precision=bf16
 batch_size_per_gpu=12800        # 19200, 22400, 25600, 38400, 51200
 num_workers=16
 
-CONFIG_NAME="F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k_conv_frontend"
-EXP_NAME="debug_wav_x_pred_scale_noise_schedule_0_8_16k_Large_aux_loss_conv"   # debug_wav, debug_mel, debug_wav_proj_input, debug_wav_x_pred, F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k, F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k_conv_frontend
+CONFIG_NAME="F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k_audio_convmlp_inout"
+EXP_NAME="debug_test"   # debug_wav, debug_mel, debug_wav_proj_input, debug_wav_x_pred, F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k, F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k_conv_frontend
 OUTDIR="/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/${EXP_NAME}"
 
 # log config
@@ -35,8 +35,8 @@ echo "Log file: ${LOG_FILE}"
 echo "MASTER_PORT=${MASTER_PORT}"
 echo "Exp Name: ${EXP_NAME}"
 
-# accelerate launch --main_process_port ${MASTER_PORT} --num_processes ${num_processes} --num_machines ${num_machines} --mixed_precision ${mixed_precision} --dynamo_backend no src/f5_tts/train/train.py \
-python -m debugpy --listen ${MASTER_ADDR}:${DEBUG_PORT} --wait-for-client src/f5_tts/train/train.py \
+# python -m debugpy --listen ${MASTER_ADDR}:${DEBUG_PORT} --wait-for-client src/f5_tts/train/train.py \
+accelerate launch --main_process_port ${MASTER_PORT} --num_processes ${num_processes} --num_machines ${num_machines} --mixed_precision ${mixed_precision} --dynamo_backend no src/f5_tts/train/train.py \
     --config-name "${CONFIG_NAME}.yaml" \
     ++hydra.run.dir=${OUTDIR} \
     ++ckpts.save_dir="${OUTDIR}/ckpts" \
