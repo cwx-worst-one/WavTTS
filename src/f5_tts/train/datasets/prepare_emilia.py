@@ -108,39 +108,68 @@ out_en = {
 en_filters = ["ا", "い", "て"]
 
 
-def deal_with_audio_dir(audio_dir):
+def _iter_metadata_objs(audio_dir: Path):
+    """
+    Support both Emilia legacy layout (one shard-level .jsonl) and
+    per-utterance json layout (many *.json under each shard directory).
+    """
     audio_jsonl = audio_dir.with_suffix(".jsonl")
+    if audio_jsonl.exists():
+        with open(audio_jsonl, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    yield json.loads(line)
+        return
+
+    for meta_json in sorted(audio_dir.glob("*.json")):
+        with open(meta_json, "r", encoding="utf-8") as f:
+            yield json.load(f)
+
+
+def _resolve_audio_path(audio_dir: Path, wav_rel: str) -> Path:
+    wav_rel_path = Path(wav_rel)
+    candidates = [
+        audio_dir.parent / wav_rel_path,      # legacy: lang_root / obj["wav"]
+        audio_dir / wav_rel_path,             # shard / relative/path
+        audio_dir / wav_rel_path.name,        # shard / basename (your current layout)
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return candidates[-1]
+
+
+def deal_with_audio_dir(audio_dir):
     sub_result, durations = [], []
     vocab_set = set()
     bad_case_zh = 0
     bad_case_en = 0
-    with open(audio_jsonl, "r") as f:
-        lines = f.readlines()
-        for line in tqdm(lines, desc=f"{audio_jsonl.stem}"):
-            obj = json.loads(line)
-            text = obj["text"]
-            if obj["language"] == "zh":
-                if obj["wav"].split("/")[1] in out_zh or any(f in text for f in zh_filters) or repetition_found(text):
-                    bad_case_zh += 1
-                    continue
-                else:
-                    text = text.translate(
-                        str.maketrans({",": "，", "!": "！", "?": "？"})
-                    )  # not "。" cuz much code-switched
-            if obj["language"] == "en":
-                if (
-                    obj["wav"].split("/")[1] in out_en
-                    or any(f in text for f in en_filters)
-                    or repetition_found(text, length=4)
-                ):
-                    bad_case_en += 1
-                    continue
-            if tokenizer == "pinyin":
-                text = convert_char_to_pinyin([text], polyphone=polyphone)[0]
-            duration = obj["duration"]
-            sub_result.append({"audio_path": str(audio_dir.parent / obj["wav"]), "text": text, "duration": duration})
-            durations.append(duration)
-            vocab_set.update(list(text))
+    for obj in tqdm(_iter_metadata_objs(audio_dir), desc=f"{audio_dir.name}"):
+        text = obj["text"]
+        if obj["language"] == "zh":
+            if obj["wav"].split("/")[1] in out_zh or any(f in text for f in zh_filters) or repetition_found(text):
+                bad_case_zh += 1
+                continue
+            else:
+                text = text.translate(
+                    str.maketrans({",": "，", "!": "！", "?": "？"})
+                )  # not "。" cuz much code-switched
+        if obj["language"] == "en":
+            if (
+                obj["wav"].split("/")[1] in out_en
+                or any(f in text for f in en_filters)
+                or repetition_found(text, length=4)
+            ):
+                bad_case_en += 1
+                continue
+        if tokenizer == "pinyin":
+            text = convert_char_to_pinyin([text], polyphone=polyphone)[0]
+        duration = obj["duration"]
+        audio_path = _resolve_audio_path(audio_dir, obj["wav"])
+        sub_result.append({"audio_path": str(audio_path), "text": text, "duration": duration})
+        durations.append(duration)
+        vocab_set.update(list(text))
     return sub_result, durations, vocab_set, bad_case_zh, bad_case_en
 
 
@@ -211,7 +240,7 @@ if __name__ == "__main__":
     polyphone = True
 
     langs = ["ZH", "EN"]
-    dataset_dir = "/inspire/hdd/global_user/chenxie-25019/wenxichen/data/emilia/fc71e07"
+    dataset_dir = "/mnt/bn/jdy-lq-5/chenwenxi/data/emilia"
     dataset_name = f"Emilia_{'_'.join(langs)}_{tokenizer}"
     save_dir = str(files("f5_tts").joinpath("../../")) + f"/data/{dataset_name}"
     print(f"\nPrepare for {dataset_name}, will save to {save_dir}\n")
