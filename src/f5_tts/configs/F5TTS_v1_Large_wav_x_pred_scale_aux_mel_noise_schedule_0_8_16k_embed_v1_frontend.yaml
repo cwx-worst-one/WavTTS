@@ -3,7 +3,7 @@ hydra:
     dir: ckpts/${model.name}_${model.mel_spec.mel_spec_type}_${model.tokenizer}_${datasets.name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
 
 datasets:
-  name: LibriTTS_100_360_500  # dataset name
+  name: Emilia_ZH_EN  # dataset name
   batch_size_per_gpu: 19200  # 8 GPUs, 8 * 38400 = 307200
   batch_size_type: frame  # frame | sample
   max_samples: 64  # max sequences per batch if use frame-wise batch_size. we set 32 for small models, 64 for base models
@@ -19,7 +19,7 @@ optim:
 
 model:
   name: F5TTS_v1_Large_wav_embed_v1  # model name
-  tokenizer: char  # tokenizer type
+  tokenizer: pinyin  # tokenizer type
   tokenizer_path: null  # if 'custom' tokenizer, define the path want to use (should be vocab.txt)
   backbone: DiT
   wav_input: True
@@ -33,8 +33,9 @@ model:
     noise_scale: 1.0
     latents_scale: 10.0
     use_aux_mel_loss: True
-    aux_mel_loss_weight: 0.1
+    aux_mel_loss_weight: 0.05
     sample_rate: 16000
+    use_aux_hubert_loss: False
     frontend_type: embed_v1
     frontend_cfg:
       out_dim: 160

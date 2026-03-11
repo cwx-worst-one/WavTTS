@@ -18,7 +18,7 @@ optim:
   bnb_optimizer: False  # use bnb 8bit AdamW optimizer or not
 
 model:
-  name: F5TTS_v1_Large_wav  # model name
+  name: F5TTS_v1_Large_wav_embed_v1  # model name
   tokenizer: pinyin  # tokenizer type
   tokenizer_path: null  # if 'custom' tokenizer, define the path want to use (should be vocab.txt)
   backbone: DiT
@@ -35,7 +35,16 @@ model:
     use_aux_mel_loss: True
     aux_mel_loss_weight: 0.05
     sample_rate: 16000
-    use_aux_hubert_loss: False
+    use_aux_hubert_loss: True
+    aux_hubert_loss_weight: 0.2
+    aux_hubert_model_path: "/mnt/bn/jdy-lq-5/chenwenxi/models/hubert/hubert-base-ls960"  # hubert-large-ls960-ft | hubert-base-ls960-ft
+    frontend_type: embed_v1
+    frontend_cfg:
+      out_dim: 160
+      kernel_size: 400
+      stride: 160
+      # default padding = (kernel_size - stride) // 2
+      # padding: 120
   arch:
     dim: 1152
     depth: 28

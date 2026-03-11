@@ -18,7 +18,7 @@ optim:
   bnb_optimizer: False  # use bnb 8bit AdamW optimizer or not
 
 model:
-  name: F5TTS_v1_Large_wav  # model name
+  name: F5TTS_v1_Large_wav_audio_convmlp_inout  # model name
   tokenizer: pinyin  # tokenizer type
   tokenizer_path: null  # if 'custom' tokenizer, define the path want to use (should be vocab.txt)
   backbone: DiT
@@ -35,7 +35,9 @@ model:
     use_aux_mel_loss: True
     aux_mel_loss_weight: 0.05
     sample_rate: 16000
-    use_aux_hubert_loss: False
+    use_aux_hubert_loss: True
+    aux_hubert_loss_weight: 0.2
+    aux_hubert_model_path: "/mnt/bn/jdy-lq-5/chenwenxi/models/hubert/hubert-base-ls960"  # hubert-large-ls960-ft | hubert-base-ls960-ft
   arch:
     dim: 1152
     depth: 28
@@ -50,8 +52,17 @@ model:
     attn_mask_enabled: False
     checkpoint_activations: False  # recompute activations and save memory for extra compute
     use_audio_proj: True
-    audio_proj_dim: 1024
-    audio_proj_hidden: 768
+    audio_proj_type: conv_mlp  # linear | conv_mlp
+    audio_proj_dim: 512
+    audio_proj_hidden: 2048
+    audio_proj_conv_kernel_size: 7
+    audio_proj_conv_padding: 3
+    audio_proj_conv_multiple_of: 256
+    proj_out_type: final_conv  # linear | final_conv | conv_mlp
+    proj_out_kernel_size: 7
+    proj_out_padding: 3
+    # proj_out_multiple_of: 256
+    # proj_out_hidden: 4608
   mel_spec:
     target_sample_rate: 16000
     n_mel_channels: 160   # equal to wav_frame_len in F5-TTS_wav

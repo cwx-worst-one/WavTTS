@@ -453,6 +453,8 @@ class Trainer:
                         {"loss": loss.item(), "lr": self.scheduler.get_last_lr()[0]}, step=global_update
                     )
 
+                    if loss_dict["flow_loss"] is not None:
+                        self.accelerator.log({"flow_loss": loss_dict["flow_loss"].item()}, step=global_update)
                     if loss_dict["aux_mel_loss"] is not None:
                         self.accelerator.log({"aux_mel_loss": loss_dict["aux_mel_loss"].item()}, step=global_update)
                     if loss_dict["aux_hubert_loss"] is not None:
@@ -465,6 +467,8 @@ class Trainer:
                     if self.logger == "tensorboard":
                         self.writer.add_scalar("loss", loss.item(), global_update)
                         self.writer.add_scalar("lr", self.scheduler.get_last_lr()[0], global_update)
+                        if loss_dict["flow_loss"] is not None:
+                            self.writer.add_scalar("flow_loss", loss_dict["flow_loss"].item(), global_update)
                         if loss_dict["aux_mel_loss"] is not None:
                             self.writer.add_scalar("aux_mel_loss", loss_dict["aux_mel_loss"].item(), global_update)
                         if loss_dict["aux_hubert_loss"] is not None:
