@@ -58,6 +58,7 @@ class CFM(nn.Module):
         noise_scale: float = 1.0,
         use_aux_mel_loss: bool = False,
         aux_mel_loss_weight: float = 0.0,
+        aux_mel_loss_start_t: float = 0.0,
         sample_rate: int = 24000,
         use_repa_ctc_loss: bool = False,
         repa_ctc_loss_weight: float = 0.0,
@@ -66,6 +67,7 @@ class CFM(nn.Module):
         latents_scale: float = 1.0,
         use_aux_hubert_loss: bool = False,
         aux_hubert_loss_weight: float = 1.0,
+        aux_hubert_loss_start_t: float = 0.0,
         aux_hubert_model_path: str = "facebook/hubert-large-ll60k",
         aux_hubert_layer_index: int = -1,
         frontend_type: str = "reshape",  # "reshape" | "conv"
@@ -129,6 +131,7 @@ class CFM(nn.Module):
 
         # aux mel loss
         self.use_aux_mel_loss = use_aux_mel_loss
+        self.aux_mel_loss_start_t = aux_mel_loss_start_t
         if self.use_aux_mel_loss and self.wav_input_only:
             self.aux_mel_loss = MelSpectrogramLoss(
                 sample_rate=sample_rate,
@@ -147,6 +150,7 @@ class CFM(nn.Module):
             
         self.use_aux_hubert_loss = use_aux_hubert_loss
         self.aux_hubert_loss_weight = aux_hubert_loss_weight
+        self.aux_hubert_loss_start_t = aux_hubert_loss_start_t
         if self.use_aux_hubert_loss and self.wav_input_only:
             self.aux_hubert_loss = HubertFeatureLoss(
                 model_path=aux_hubert_model_path,
@@ -466,19 +470,23 @@ class CFM(nn.Module):
 
         aux_mel_loss = torch.tensor(0.0, device=device)     # fixme: 这里的aux_mel_loss只针对x-pred的情况
         if self.use_aux_mel_loss and self.aux_mel_loss is not None and self.wav_input_only:
-            x1_flat_unscaled = x1 / self.latents_scale
-            x1_pred_flat_unscaled = x_pred / self.latents_scale
+            aux_mel_mask = time > self.aux_mel_loss_start_t
+            if aux_mel_mask.any():
+                x1_flat_unscaled = x1[aux_mel_mask] / self.latents_scale
+                x1_pred_flat_unscaled = x_pred[aux_mel_mask] / self.latents_scale
 
-            aux_mel_loss = self.aux_mel_loss(x1_pred_flat_unscaled, x1_flat_unscaled)
-            total_loss = total_loss + aux_mel_loss
+                aux_mel_loss = self.aux_mel_loss(x1_pred_flat_unscaled, x1_flat_unscaled)
+                total_loss = total_loss + aux_mel_loss
             
         aux_hubert_loss = torch.tensor(0.0, device=device)
         if self.use_aux_hubert_loss and self.aux_hubert_loss is not None and self.wav_input_only:
-            x1_flat_unscaled = x1 / self.latents_scale
-            x1_pred_flat_unscaled = x_pred / self.latents_scale
-            
-            aux_hubert_loss = self.aux_hubert_loss(x1_pred_flat_unscaled, x1_flat_unscaled)
-            total_loss = total_loss + aux_hubert_loss
+            aux_hubert_mask = time > self.aux_hubert_loss_start_t
+            if aux_hubert_mask.any():
+                x1_flat_unscaled = x1[aux_hubert_mask] / self.latents_scale
+                x1_pred_flat_unscaled = x_pred[aux_hubert_mask] / self.latents_scale
+                
+                aux_hubert_loss = self.aux_hubert_loss(x1_pred_flat_unscaled, x1_flat_unscaled)
+                total_loss = total_loss + aux_hubert_loss
 
         repa_ssl_feature_loss = torch.tensor(0.0, device=device)
         if self.use_repa_ssl_feature_loss and self.repa_ssl_feature_loss_weight > 0.0:
