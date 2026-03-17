@@ -5,26 +5,26 @@ export MASTER_ADDR="127.0.0.1"
 export MASTER_PORT=53721
 export HF_ENDPOINT=https://hf-mirror.com
 export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
+# export CUDA_VISIBLE_DEVICES="1,2,3,4,5,6,7"
 # export CUDA_VISIBLE_DEVICES="0,1,2,3"
 # export CUDA_VISIBLE_DEVICES="1"
 
 # Configuration parameters
 # MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_aux_mel_hubert_noise_schedule_0_8_16k
-MODEL_NAME=F5TTS_v1_Huge_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k
+MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k_audio_convmlp_inout
 # SEEDS=(0 1 2)
 SEEDS=(0)
-CKPTSTEPS=(1000000)  # 550000, 700000, 900000
+CKPTSTEPS=(450000)  # 550000, 700000, 900000
 # TASKS=("seedtts_test_zh" "seedtts_test_en" "ls_pc_test_clean")
-TASKS=("seedtts_test_zh" "seedtts_test_en")
-# TASKS=("ls_pc_test_clean")
-# TASKS=("seedtts_test_zh")
-# TASKS=("seedtts_test_en")
+# TASKS=("seedtts_test_zh" "seedtts_test_en")
+TASKS=("seedtts_test_zh_hard")
 LS_TEST_CLEAN_PATH="data/LibriSpeech-test-clean"
 GPUS="[0,1,2,3,4,5,6,7]"
+# GPUS="[1,2,3,4,5,6,7]"
 # GPUS="[0,1,2,3]"
-# GPUS="[0,1]"
+# GPUS="[0]"
 OFFLINE_MODE=false
-CKPT_PATH_DIR=/inspire/hdd/global_user/chenxie-25019/wenxichen/exp/f5_tts/F5TTS_v1_Huge_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k-8gpus-bf16-22400frames_per_gpu
+CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/emilia/F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k_audio_convmlp_inout-emilia-8gpus-19200sample_per_gpu-bf16
 CKPT_PATH="${CKPT_PATH_DIR}/ckpts/model_${CKPTSTEPS}.pt"
 
 cfg_strength=3.0

@@ -98,6 +98,10 @@ def main():
         metalst = rel_path + "/data/seedtts_testset/zh/meta.lst"
         metainfo = get_seedtts_testset_metainfo(metalst)
 
+    elif testset == "seedtts_test_zh_hard":
+        metalst = rel_path + "/data/seedtts_testset/zh/hardcase.lst"
+        metainfo = get_seedtts_testset_metainfo(metalst)
+
     elif testset == "seedtts_test_en":
         metalst = rel_path + "/data/seedtts_testset/en/meta.lst"
         metainfo = get_seedtts_testset_metainfo(metalst)
