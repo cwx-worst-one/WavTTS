@@ -11,10 +11,10 @@ export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
 
 # Configuration parameters
 # MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_aux_mel_hubert_noise_schedule_0_8_16k
-MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k_audio_convmlp_inout
+MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_aux_mel_hubert_noise_schedule_0_8_16k_audio_convmlp_inout_embed_v1_frontend
 # SEEDS=(0 1 2)
 SEEDS=(0)
-CKPTSTEPS=(550000)  # 550000, 700000, 900000
+CKPTSTEPS=(450000)  # 550000, 700000, 900000
 # TASKS=("seedtts_test_zh" "seedtts_test_en" "ls_pc_test_clean")
 TASKS=("seedtts_test_zh" "seedtts_test_en")
 # TASKS=("seedtts_test_zh_hard")
@@ -24,7 +24,7 @@ GPUS="[0,1,2,3,4,5,6,7]"
 # GPUS="[0,1,2,3]"
 # GPUS="[0]"
 OFFLINE_MODE=false
-CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/emilia/F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k_audio_convmlp_inout-emilia-8gpus-19200sample_per_gpu-bf16
+CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/emilia/F5TTS_v1_Large_wav_x_pred_scale_aux_mel_hubert_noise_schedule_0_8_16k_audio_convmlp_inout_embed_v1_frontend-emilia-8gpus-19200sample_per_gpu-bf16
 CKPT_PATH="${CKPT_PATH_DIR}/ckpts/model_${CKPTSTEPS}.pt"
 
 cfg_strength=3.0
