@@ -19,6 +19,7 @@ from torch import nn
 from torch.nn.utils.rnn import pad_sequence
 from torchdiffeq import odeint
 
+from f5_tts.model.eres2net_loss import ERes2NetFeatureLoss
 from f5_tts.model.modules import MelSpec, MelSpectrogramLoss, HubertFeatureLoss
 from f5_tts.model.utils import (
     default,
@@ -70,6 +71,13 @@ class CFM(nn.Module):
         aux_hubert_loss_start_t: float = 0.0,
         aux_hubert_model_path: str = "facebook/hubert-large-ll60k",
         aux_hubert_layer_index: int = -1,
+        use_aux_eres2net_loss: bool = False,
+        aux_eres2net_loss_weight: float = 1.0,
+        aux_eres2net_loss_start_t: float = 0.0,
+        aux_eres2net_model_path: str = "",
+        aux_eres2net_target_sample_rate: int = 16000,
+        aux_eres2net_feat_dim: int = 80,
+        aux_eres2net_embedding_size: int = 192,
         frontend_type: str = "reshape",  # "reshape" | "conv"
         frontend_cfg: dict | None = None,
     ):
@@ -160,6 +168,21 @@ class CFM(nn.Module):
             )
         else:
             self.aux_hubert_loss = None
+
+        self.use_aux_eres2net_loss = use_aux_eres2net_loss
+        self.aux_eres2net_loss_weight = aux_eres2net_loss_weight
+        self.aux_eres2net_loss_start_t = aux_eres2net_loss_start_t
+        if self.use_aux_eres2net_loss and self.wav_input_only:
+            self.aux_eres2net_loss = ERes2NetFeatureLoss(
+                model_path=aux_eres2net_model_path,
+                source_sample_rate=sample_rate,
+                target_sample_rate=aux_eres2net_target_sample_rate,
+                feat_dim=aux_eres2net_feat_dim,
+                embedding_size=aux_eres2net_embedding_size,
+                weight=aux_eres2net_loss_weight,
+            )
+        else:
+            self.aux_eres2net_loss = None
 
         self.use_repa_ctc_loss = use_repa_ctc_loss
         self.repa_ctc_loss_weight = repa_ctc_loss_weight
@@ -488,6 +511,16 @@ class CFM(nn.Module):
                 aux_hubert_loss = self.aux_hubert_loss(x1_pred_flat_unscaled, x1_flat_unscaled)
                 total_loss = total_loss + aux_hubert_loss
 
+        aux_eres2net_loss = torch.tensor(0.0, device=device)
+        if self.use_aux_eres2net_loss and self.aux_eres2net_loss is not None and self.wav_input_only:
+            aux_eres2net_mask = time > self.aux_eres2net_loss_start_t
+            if aux_eres2net_mask.any():
+                x1_flat_unscaled = x1[aux_eres2net_mask] / self.latents_scale
+                x1_pred_flat_unscaled = x_pred[aux_eres2net_mask] / self.latents_scale
+
+                aux_eres2net_loss = self.aux_eres2net_loss(x1_pred_flat_unscaled, x1_flat_unscaled)
+                total_loss = total_loss + aux_eres2net_loss
+
         repa_ssl_feature_loss = torch.tensor(0.0, device=device)
         if self.use_repa_ssl_feature_loss and self.repa_ssl_feature_loss_weight > 0.0:
             for i, (z, z_tilde_and_z_len) in enumerate(zip(zs, zs_tilde)):
@@ -517,6 +550,7 @@ class CFM(nn.Module):
             "flow_loss": flow_loss,
             "aux_mel_loss": aux_mel_loss,
             "aux_hubert_loss": aux_hubert_loss,
+            "aux_eres2net_loss": aux_eres2net_loss,
             "repa_ssl_feature_loss": repa_ssl_feature_loss,
             "repa_ctc_loss": repa_ctc_loss,
         }

@@ -20,7 +20,7 @@ mixed_precision=bf16
 batch_size_per_gpu=19200        # 19200, 22400, 25600, 38400, 51200
 num_workers=16
 
-CONFIG_NAME="F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k_emilia"
+CONFIG_NAME="F5TTS_v1_Large_wav_x_pred_scale_aux_mel_hubert_eres2net_noise_schedule_0_8_16k"
 EXP_NAME="debug_test"   # debug_wav, debug_mel, debug_wav_proj_input, debug_wav_x_pred, F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k, F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k_conv_frontend
 OUTDIR="/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/${EXP_NAME}"
 DATASET_NAME="LibriTTS_100_360_500"
@@ -35,6 +35,7 @@ exec > >(tee -a ${LOG_FILE}) 2>&1
 echo "Log file: ${LOG_FILE}"
 echo "MASTER_PORT=${MASTER_PORT}"
 echo "Exp Name: ${EXP_NAME}"
+echo "CONFIG_NAME=${CONFIG_NAME}"
 
 # python -m debugpy --listen ${MASTER_ADDR}:${DEBUG_PORT} --wait-for-client src/f5_tts/train/train.py \
 accelerate launch --main_process_port ${MASTER_PORT} --num_processes ${num_processes} --num_machines ${num_machines} --mixed_precision ${mixed_precision} --dynamo_backend no src/f5_tts/train/train.py \

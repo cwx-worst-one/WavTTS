@@ -442,6 +442,7 @@ class Trainer:
                         update=str(global_update), 
                         aux_mel_loss=loss_dict["aux_mel_loss"].item(),
                         aux_hubert_loss=loss_dict["aux_hubert_loss"].item(),
+                        aux_eres2net_loss=loss_dict["aux_eres2net_loss"].item(),
                         repa_ctc_loss=loss_dict["repa_ctc_loss"].item(),
                         repa_ssl_feature_loss=loss_dict["repa_ssl_feature_loss"].item(),
                         flow_loss=loss_dict["flow_loss"].item(),
@@ -459,6 +460,8 @@ class Trainer:
                         self.accelerator.log({"aux_mel_loss": loss_dict["aux_mel_loss"].item()}, step=global_update)
                     if loss_dict["aux_hubert_loss"] is not None:
                         self.accelerator.log({"aux_hubert_loss": loss_dict["aux_hubert_loss"].item()}, step=global_update)
+                    if loss_dict["aux_eres2net_loss"] is not None:
+                        self.accelerator.log({"aux_eres2net_loss": loss_dict["aux_eres2net_loss"].item()}, step=global_update)
                     if loss_dict["repa_ssl_feature_loss"] is not None:
                         self.accelerator.log({"repa_ssl_feature_loss": loss_dict["repa_ssl_feature_loss"].item()}, step=global_update)
                     if loss_dict["repa_ctc_loss"] is not None:
@@ -473,6 +476,8 @@ class Trainer:
                             self.writer.add_scalar("aux_mel_loss", loss_dict["aux_mel_loss"].item(), global_update)
                         if loss_dict["aux_hubert_loss"] is not None:
                             self.writer.add_scalar("aux_hubert_loss", loss_dict["aux_hubert_loss"].item(), global_update)
+                        if loss_dict["aux_eres2net_loss"] is not None:
+                            self.writer.add_scalar("aux_eres2net_loss", loss_dict["aux_eres2net_loss"].item(), global_update)
                         if loss_dict["repa_ssl_feature_loss"] is not None:
                             self.writer.add_scalar("repa_ssl_feature_loss", loss_dict["repa_ssl_feature_loss"].item(), global_update)
                         if loss_dict["repa_ctc_loss"] is not None:
