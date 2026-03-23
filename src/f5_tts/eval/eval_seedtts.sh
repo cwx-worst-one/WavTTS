@@ -15,13 +15,13 @@ eval_metric=("wer sim utmos")
 # eval_metric=("sim")
 
 lang="zh"  # en, zh, zh_hard
-ckpt_step=450000    # 550000, 700000, 900000
+ckpt_step=700000    # 550000, 700000, 900000, 1000000
 nfe_step=32
 cfg_strength=3.0
-output_dir=/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav/results/F5TTS_v1_Large_wav_x_pred_scale_aux_mel_hubert_noise_schedule_0_8_16k_audio_convmlp_inout_embed_v1_frontend/${ckpt_step}
+output_dir=/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav/results/F5TTS_v1_Large_wav_x_pred_scale_aux_mel_hubert_noise_schedule_0_8_16k_embed_v1_frontend/${ckpt_step}
 gen_wav_dir=${output_dir}/seedtts_test_${lang}/seed0_euler_nfe${nfe_step}_no_vocoder_ss-1.0_cfg${cfg_strength}_speed1.0   # _vocos_ss, _no_vocoder_ss
-# GPUS="[0,1,2,3,4,5,6,7]"
-GPUS="[0,1,2,3]"
+GPUS="[0,1,2,3,4,5,6,7]"
+# GPUS="[0,1,2,3]"
 # GPUS="[0,1]"
 
 LOCAL=""
