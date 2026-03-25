@@ -11,10 +11,10 @@ export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
 
 # Configuration parameters
 # MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_aux_mel_hubert_noise_schedule_0_8_16k
-MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_aux_mel_hubert_noise_schedule_0_8_16k_embed_v1_frontend
+MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k_emilia
 # SEEDS=(0 1 2)
 SEEDS=(0)
-CKPTSTEPS=(700000)  # 550000, 700000, 900000, 1000000
+CKPTSTEPS=(1200000)  # 200000, 550000, 700000, 900000, 1000000, 1200000
 # TASKS=("seedtts_test_zh" "seedtts_test_en" "ls_pc_test_clean")
 TASKS=("seedtts_test_zh" "seedtts_test_en")
 # TASKS=("seedtts_test_en")
@@ -24,8 +24,7 @@ GPUS="[0,1,2,3,4,5,6,7]"
 # GPUS="[0,1,2,3]"
 # GPUS="[0]"
 OFFLINE_MODE=false
-CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/emilia/F5TTS_v1_Large_wav_x_pred_scale_aux_mel_hubert_noise_schedule_0_8_16k_embed_v1_frontend-emilia-8gpus-19200sample_per_gpu-bf16
-CKPT_PATH="${CKPT_PATH_DIR}/ckpts/model_${CKPTSTEPS}.pt"
+CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/emilia/F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k_emilia-emilia-8gpus-19200sample_per_gpu-bf16
 
 cfg_strength=3.0
 nfe_step=32
@@ -93,7 +92,14 @@ execute_eval_tasks() {
 
 # Main execution loop
 for ckptstep in "${CKPTSTEPS[@]}"; do
+    CKPT_PATH="${CKPT_PATH_DIR}/ckpts/model_${ckptstep}.pt"
+    if [ ! -f "${CKPT_PATH}" ]; then
+        echo "======== Checkpoint not found: ${CKPT_PATH}"
+        exit 1
+    fi
+
     echo "======== Processing ckptstep: ${ckptstep}"
+    echo "======== Using checkpoint: ${CKPT_PATH}"
     
     for seed in "${SEEDS[@]}"; do
         echo "-------- Processing seed: ${seed}"

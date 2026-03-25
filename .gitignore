@@ -134,10 +134,11 @@ recipes/leadsheet
 scripts_usr
 .deploy_cache
 output
+src/f5_tts/train/runs_emilia/
 
 stats_*
 
 Emilia_ZH_EN_pinyin/
 LibriSpeech-test-clean/
-LibriTTS_100_360_500_char/duration.json
-LibriTTS_100_360_500_char/raw.arrow
+data/LibriTTS_100_360_500_char/duration.json
+data/LibriTTS_100_360_500_char/raw.arrow
