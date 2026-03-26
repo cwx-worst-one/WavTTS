@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 export WANDB_MODE=disabled
 export WANDB_API_KEY="406faa59cf62a3646fa3479a7e133c4cf5a77100"
 export HF_ENDPOINT=https://hf-mirror.com
@@ -12,16 +12,16 @@ export MKL_NUM_THREADS=1
 export NCCL_DEBUG=WARN
 
 # accelerate config
-num_processes=1     # 1, 8
+num_processes=4     # 1, 4, 8
 num_machines=1
 mixed_precision=bf16
 
 # training config
-batch_size_per_gpu=19200        # 19200, 22400, 25600, 38400, 51200
+batch_size_per_gpu=6400        # 19200, 22400, 25600, 38400, 51200
 num_workers=16
 
-CONFIG_NAME="F5TTS_v1_Large_wav_x_pred_scale_aux_mel_hubert_eres2net_noise_schedule_0_8_16k"
-EXP_NAME="debug_test"   # debug_wav, debug_mel, debug_wav_proj_input, debug_wav_x_pred, F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k, F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k_conv_frontend
+CONFIG_NAME="F5TTS_v1_Base_wav_x_pred_scale_5_aux_mel_noise_schedule_0_8_16k"
+EXP_NAME="debug_test"
 OUTDIR="/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/${EXP_NAME}"
 DATASET_NAME="LibriTTS_100_360_500"
 tokenizer="char"
@@ -49,4 +49,4 @@ accelerate launch --main_process_port ${MASTER_PORT} --num_processes ${num_proce
     ++model.tokenizer=${tokenizer}
 
 
-# bash /mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav/src/f5_tts/train/speed_test.sh
+# bash src/f5_tts/train/speed_test.sh
