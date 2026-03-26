@@ -58,6 +58,9 @@ class CFM(nn.Module):
         P_std: float = 1.0,
         t_eps: float = 1e-4,
         noise_scale: float = 1.0,
+        flow_loss_weight: float = 1.0,
+        use_time_weighted_aux_perceptual_loss: bool = False,
+        aux_perceptual_time_weight_power: float = 2.0,
         use_aux_mel_loss: bool = False,
         aux_mel_loss_weight: float = 0.0,
         aux_mel_loss_start_t: float = 0.0,
@@ -137,6 +140,9 @@ class CFM(nn.Module):
         self.t_eps = t_eps
         self.noise_scale = noise_scale
         self.latents_scale = latents_scale
+        self.flow_loss_weight = flow_loss_weight
+        self.use_time_weighted_aux_perceptual_loss = use_time_weighted_aux_perceptual_loss
+        self.aux_perceptual_time_weight_power = aux_perceptual_time_weight_power
 
         # aux mel loss
         self.use_aux_mel_loss = use_aux_mel_loss
@@ -509,7 +515,11 @@ class CFM(nn.Module):
 
         loss = loss[rand_span_mask]
         flow_loss = loss.mean()
-        total_loss = flow_loss
+        total_loss = flow_loss * self.flow_loss_weight
+
+        aux_time_weight = None
+        if self.use_time_weighted_aux_perceptual_loss:
+            aux_time_weight = ((1.0 - time).clamp_min(self.t_eps)).pow(-self.aux_perceptual_time_weight_power)
 
         aux_mel_loss = torch.tensor(0.0, device=device)     # fixme: 这里的aux_mel_loss只针对x-pred的情况
         if self.use_aux_mel_loss and self.aux_mel_loss is not None and self.wav_input_only:
@@ -525,6 +535,7 @@ class CFM(nn.Module):
                     x1_flat_unscaled,
                     frame_mask=rand_span_mask_aux,
                     frame_lengths=lens_aux,
+                    time_weight=(aux_time_weight[aux_mel_mask] if aux_time_weight is not None else None),
                 )
                 total_loss = total_loss + aux_mel_loss
             
@@ -535,7 +546,11 @@ class CFM(nn.Module):
                 x1_flat_unscaled = x1[aux_hubert_mask] / self.latents_scale
                 x1_pred_flat_unscaled = x_pred[aux_hubert_mask] / self.latents_scale
                 
-                aux_hubert_loss = self.aux_hubert_loss(x1_pred_flat_unscaled, x1_flat_unscaled)
+                aux_hubert_loss = self.aux_hubert_loss(
+                    x1_pred_flat_unscaled,
+                    x1_flat_unscaled,
+                    time_weight=(aux_time_weight[aux_hubert_mask] if aux_time_weight is not None else None),
+                )
                 total_loss = total_loss + aux_hubert_loss
 
         aux_eres2net_loss = torch.tensor(0.0, device=device)
@@ -545,7 +560,11 @@ class CFM(nn.Module):
                 x1_flat_unscaled = x1[aux_eres2net_mask] / self.latents_scale
                 x1_pred_flat_unscaled = x_pred[aux_eres2net_mask] / self.latents_scale
 
-                aux_eres2net_loss = self.aux_eres2net_loss(x1_pred_flat_unscaled, x1_flat_unscaled)
+                aux_eres2net_loss = self.aux_eres2net_loss(
+                    x1_pred_flat_unscaled,
+                    x1_flat_unscaled,
+                    time_weight=(aux_time_weight[aux_eres2net_mask] if aux_time_weight is not None else None),
+                )
                 total_loss = total_loss + aux_eres2net_loss
 
         repa_ssl_feature_loss = torch.tensor(0.0, device=device)

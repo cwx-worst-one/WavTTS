@@ -274,7 +274,7 @@ class ERes2NetFeatureLoss(nn.Module):
         feats = feats.to(wav.device)
         return self.speaker_model(feats)
 
-    def forward(self, x_pred: torch.Tensor, x_true: torch.Tensor) -> torch.Tensor:
+    def forward(self, x_pred: torch.Tensor, x_true: torch.Tensor, time_weight: torch.Tensor | None = None) -> torch.Tensor:
         # x_pred, x_true: [B, T] or [B, 1, T]
         if x_pred.ndim == 3:
             x_pred = x_pred.squeeze(1)
@@ -290,4 +290,9 @@ class ERes2NetFeatureLoss(nn.Module):
         emb_pred = self._to_embedding(x_pred.float())
 
         cos_sim = F.cosine_similarity(emb_pred, emb_true, dim=-1)
-        return (1.0 - cos_sim.mean()) * self.weight
+        per_sample_loss = 1.0 - cos_sim
+        if time_weight is not None:
+            loss = (per_sample_loss * time_weight).mean()
+        else:
+            loss = per_sample_loss.mean()
+        return loss * self.weight

@@ -846,6 +846,7 @@ class MelSpectrogramLoss(nn.Module):
         x_true: torch.Tensor,
         frame_mask: torch.Tensor | None = None,
         frame_lengths: torch.Tensor | None = None,
+        time_weight: torch.Tensor | None = None,
     ):
         """
         Args:
@@ -904,19 +905,41 @@ class MelSpectrogramLoss(nn.Module):
                 x_log = x_mels.clamp(min=self.clamp_eps).pow(self.pow).log10()
                 y_log = y_mels.clamp(min=self.clamp_eps).pow(self.pow).log10()
                 if mel_mask is None:
-                    total_loss += self.log_weight * F.l1_loss(x_log, y_log)
+                    diff = (x_log - y_log).abs().mean(dim=(1, 2))
                 else:
-                    diff = (x_log - y_log).abs()
-                    total_loss += self.log_weight * diff.masked_select(mel_mask).mean()
+                    diff_full = (x_log - y_log).abs()
+                    diff = []
+                    for i in range(diff_full.shape[0]):
+                        m = mel_mask[i]
+                        if m.any():
+                            diff.append(diff_full[i].masked_select(m).mean())
+                        else:
+                            diff.append(diff_full.new_tensor(0.0))
+                    diff = torch.stack(diff, dim=0)
+                if time_weight is not None:
+                    total_loss += self.log_weight * (diff * time_weight).mean()
+                else:
+                    total_loss += self.log_weight * diff.mean()
             
             # 2. Linear Magnitude Loss
             if self.mag_weight > 0:
                 if mel_mask is None:
-                    total_loss += self.mag_weight * F.l1_loss(x_mels, y_mels)
+                    diff = (x_mels - y_mels).abs().mean(dim=(1, 2))
                 else:
-                    diff = (x_mels - y_mels).abs()
-                    total_loss += self.mag_weight * diff.masked_select(mel_mask).mean()
-                
+                    diff_full = (x_mels - y_mels).abs()
+                    diff = []
+                    for i in range(diff_full.shape[0]):
+                        m = mel_mask[i]
+                        if m.any():
+                            diff.append(diff_full[i].masked_select(m).mean())
+                        else:
+                            diff.append(diff_full.new_tensor(0.0))
+                    diff = torch.stack(diff, dim=0)
+                if time_weight is not None:
+                    total_loss += self.mag_weight * (diff * time_weight).mean()
+                else:
+                    total_loss += self.mag_weight * diff.mean()
+
         return total_loss * self.weight
 
     @staticmethod
@@ -1093,7 +1116,7 @@ class HubertFeatureLoss(nn.Module):
         else:
             self.resampler = None
 
-    def forward(self, x_pred: torch.Tensor, x_true: torch.Tensor):
+    def forward(self, x_pred: torch.Tensor, x_true: torch.Tensor, time_weight: torch.Tensor | None = None):
         # x_pred, x_true: [B, T] or [B, 1, T]        
         if x_pred.ndim == 3:
             x_pred = x_pred.squeeze(1)
@@ -1129,6 +1152,10 @@ class HubertFeatureLoss(nn.Module):
         feats_true = feats_true[:, :min_len, :]
 
         cos_sim = F.cosine_similarity(feats_pred, feats_true, dim=-1)
-        loss = 1.0 - cos_sim.mean()
+        per_sample_loss = 1.0 - cos_sim.mean(dim=-1)
+        if time_weight is not None:
+            loss = (per_sample_loss * time_weight).mean()
+        else:
+            loss = per_sample_loss.mean()
 
         return loss * self.weight
