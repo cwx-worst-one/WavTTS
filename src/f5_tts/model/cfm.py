@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from random import random
 from typing import Callable
+import math
 
 import torch
 import torch.nn.functional as F
@@ -155,6 +156,17 @@ class CFM(nn.Module):
             )
         else:
             self.aux_mel_loss = None
+
+        self.mel_align_to = 1
+        if self.wav_input_only and self.aux_mel_loss is not None and hasattr(self.aux_mel_loss, "mel_transforms"):
+            hop_lengths = [int(m.hop_length) for m in self.aux_mel_loss.mel_transforms]
+            if len(hop_lengths) > 0:
+                lcm_hop = hop_lengths[0]
+                for h in hop_lengths[1:]:
+                    lcm_hop = math.lcm(lcm_hop, h)
+                # rand_span_mask is on raw waveform sample axis in wav_input_only mode,
+                # so alignment should also be in sample units.
+                self.mel_align_to = max(1, lcm_hop)
             
         self.use_aux_hubert_loss = use_aux_hubert_loss
         self.aux_hubert_loss_weight = aux_hubert_loss_weight
@@ -420,7 +432,15 @@ class CFM(nn.Module):
 
         # get a random span to mask out for training conditionally
         frac_lengths = torch.zeros((batch,), device=self.device).float().uniform_(*self.frac_lengths_mask)
-        rand_span_mask = mask_from_frac_lengths(lens, frac_lengths)
+        if self.wav_input_only and self.aux_mel_loss is not None:
+            rand_span_mask = MelSpectrogramLoss._aligned_random_span_mask(
+                lengths=lens,
+                frac_lengths=frac_lengths,
+                align_to=self.mel_align_to,
+                max_length=seq_len,
+            )
+        else:
+            rand_span_mask = mask_from_frac_lengths(lens, frac_lengths)
 
         if exists(mask):
             rand_span_mask &= mask
@@ -498,7 +518,14 @@ class CFM(nn.Module):
                 x1_flat_unscaled = x1[aux_mel_mask] / self.latents_scale
                 x1_pred_flat_unscaled = x_pred[aux_mel_mask] / self.latents_scale
 
-                aux_mel_loss = self.aux_mel_loss(x1_pred_flat_unscaled, x1_flat_unscaled)
+                rand_span_mask_aux = rand_span_mask[aux_mel_mask]
+                lens_aux = lens[aux_mel_mask]
+                aux_mel_loss = self.aux_mel_loss(
+                    x1_pred_flat_unscaled,
+                    x1_flat_unscaled,
+                    frame_mask=rand_span_mask_aux,
+                    frame_lengths=lens_aux,
+                )
                 total_loss = total_loss + aux_mel_loss
             
         aux_hubert_loss = torch.tensor(0.0, device=device)

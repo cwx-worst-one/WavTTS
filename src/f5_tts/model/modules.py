@@ -840,7 +840,13 @@ class MelSpectrogramLoss(nn.Module):
             )
             self.mel_transforms.append(transform)
 
-    def forward(self, x_pred: torch.Tensor, x_true: torch.Tensor):
+    def forward(
+        self,
+        x_pred: torch.Tensor,
+        x_true: torch.Tensor,
+        frame_mask: torch.Tensor | None = None,
+        frame_lengths: torch.Tensor | None = None,
+    ):
         """
         Args:
             x_pred: [B, T] or [B, 1, T] Estimated Waveform
@@ -854,24 +860,145 @@ class MelSpectrogramLoss(nn.Module):
         if x_true.ndim == 3 and x_true.shape[1] == 1:
             x_true = x_true.squeeze(1)
             
-        total_loss = 0.0
+        total_loss = x_pred.new_tensor(0.0)
+
+        use_mask = frame_mask is not None
+        if use_mask:
+            span_starts, span_ends = self._get_span_bounds_from_mask(frame_mask, frame_lengths)
+            span_starts = span_starts.to(device=x_pred.device)
+            span_ends = span_ends.to(device=x_pred.device)
         
         for mel_transform in self.mel_transforms:
             x_mels = mel_transform(x_pred)
             y_mels = mel_transform(x_true)
+
+            mel_mask = None
+            if use_mask:
+                hop = int(mel_transform.hop_length)
+                mel_t = x_mels.shape[-1]
+                mel_mask = torch.zeros(
+                    (x_mels.shape[0], mel_t),
+                    device=x_mels.device,
+                    dtype=torch.bool,
+                )
+                for i in range(x_mels.shape[0]):
+                    s = int(span_starts[i].item())
+                    e = int(span_ends[i].item())
+                    if e <= s:
+                        continue
+                    ms = s // hop
+                    me = (e + hop - 1) // hop
+                    ms = max(0, min(ms, mel_t))
+                    me = max(0, min(me, mel_t))
+                    if me > ms:
+                        mel_mask[i, ms:me] = True
+
+                if not mel_mask.any():
+                    continue
+
+                mel_mask = mel_mask.unsqueeze(1)
             
             # 1. Log Magnitude Loss
             # Formula: L1( log10(x^pow + eps), log10(y^pow + eps) )
             if self.log_weight > 0:
                 x_log = x_mels.clamp(min=self.clamp_eps).pow(self.pow).log10()
                 y_log = y_mels.clamp(min=self.clamp_eps).pow(self.pow).log10()
-                total_loss += self.log_weight * F.l1_loss(x_log, y_log)
+                if mel_mask is None:
+                    total_loss += self.log_weight * F.l1_loss(x_log, y_log)
+                else:
+                    diff = (x_log - y_log).abs()
+                    total_loss += self.log_weight * diff.masked_select(mel_mask).mean()
             
             # 2. Linear Magnitude Loss
             if self.mag_weight > 0:
-                total_loss += self.mag_weight * F.l1_loss(x_mels, y_mels)
+                if mel_mask is None:
+                    total_loss += self.mag_weight * F.l1_loss(x_mels, y_mels)
+                else:
+                    diff = (x_mels - y_mels).abs()
+                    total_loss += self.mag_weight * diff.masked_select(mel_mask).mean()
                 
         return total_loss * self.weight
+
+    @staticmethod
+    def _get_span_bounds_from_mask(mask: torch.Tensor, lengths: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+        """Convert boolean frame mask [B, T] into per-sample [start, end) bounds.
+
+        This helper assumes one contiguous masked span per sample (matching current
+        random-span masking strategy). If a sample has no masked frame, start=end=0.
+        """
+        if mask.dtype != torch.bool:
+            mask = mask.bool()
+
+        bsz, t = mask.shape
+        device = mask.device
+
+        if lengths is None:
+            lengths = torch.full((bsz,), t, device=device, dtype=torch.long)
+        else:
+            lengths = lengths.to(device=device, dtype=torch.long)
+
+        starts = torch.zeros((bsz,), device=device, dtype=torch.long)
+        ends = torch.zeros((bsz,), device=device, dtype=torch.long)
+
+        for i in range(bsz):
+            li = int(lengths[i].item())
+            row = mask[i, :li]
+            idx = row.nonzero(as_tuple=False).squeeze(-1)
+            if idx.numel() == 0:
+                continue
+            starts[i] = idx[0]
+            ends[i] = idx[-1] + 1
+
+        return starts, ends
+
+    @staticmethod
+    def _aligned_random_span_mask(
+        lengths: torch.Tensor,
+        frac_lengths: torch.Tensor,
+        align_to: int,
+        max_length: int | None = None,
+    ) -> torch.Tensor:
+        """Sample one contiguous mask span per sample with boundary alignment.
+
+        Args:
+            lengths: [B] valid sequence lengths in model frames.
+            frac_lengths: [B] desired masked length fraction.
+            align_to: span start/end alignment in model frames.
+            max_length: optional mask width. If None, use lengths.max().
+        Returns:
+            bool mask with shape [B, max_length].
+        """
+        assert align_to >= 1
+        device = lengths.device
+        lengths = lengths.to(dtype=torch.long)
+        frac_lengths = frac_lengths.to(device=device, dtype=torch.float32)
+
+        max_len = int(lengths.max().item()) if max_length is None else int(max_length)
+        mask = torch.zeros((lengths.shape[0], max_len), device=device, dtype=torch.bool)
+
+        for i in range(lengths.shape[0]):
+            li = int(lengths[i].item())
+            if li <= 0:
+                continue
+
+            target = int((frac_lengths[i].item() * li))
+            target = max(1, min(target, li))
+
+            span_len = ((target + align_to - 1) // align_to) * align_to
+            span_len = min(span_len, li)
+
+            max_start = li - span_len
+            if max_start <= 0:
+                start = 0
+            else:
+                candidate = torch.randint(0, max_start + 1, (1,), device=device).item()
+                start = (candidate // align_to) * align_to
+                start = min(start, max_start)
+
+            end = start + span_len
+            mask[i, start:end] = True
+
+        return mask
 
 class SpeechAlignMLP(nn.Module):
     def __init__(
