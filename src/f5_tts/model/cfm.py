@@ -21,7 +21,7 @@ from torch.nn.utils.rnn import pad_sequence
 from torchdiffeq import odeint
 
 from f5_tts.model.eres2net_loss import ERes2NetFeatureLoss
-from f5_tts.model.modules import MelSpec, MelSpectrogramLoss, HubertFeatureLoss
+from f5_tts.model.modules import MelSpec, MelSpectrogramLoss, HubertFeatureLoss, SpecScalingLoss
 from f5_tts.model.utils import (
     default,
     exists,
@@ -52,13 +52,20 @@ class CFM(nn.Module):
         frac_lengths_mask: tuple[float, float] = (0.7, 1.0),
         vocab_char_map: dict[str:int] | None = None,
         prediction: str = "flow",       # "flow" | "x_pred"
-        loss_space: str = "flow",       # "flow" | "v"
+        loss_space: str = "flow",       # "flow" | "v" | "x" | "spec_scaled"
         t_sampling: str = "uniform",    # "uniform" | "logistic_normal"
         P_mean: float = 0.0,
         P_std: float = 1.0,
         t_eps: float = 1e-4,
         noise_scale: float = 1.0,
         flow_loss_weight: float = 1.0,
+        spec_loss_n_filters: int = 256,
+        spec_loss_n_fft: int = 1024,
+        spec_loss_hop_length: int = 256,
+        spec_loss_power: float = 0.5,
+        spec_loss_eps: float = 1e-7,
+        spec_loss_scale_min: float = 1e-2,
+        spec_loss_scale_max: float = 1e2,
         use_time_weighted_aux_perceptual_loss: bool = False,
         aux_perceptual_time_weight_power: float = 2.0,
         use_aux_mel_loss: bool = False,
@@ -143,6 +150,18 @@ class CFM(nn.Module):
         self.flow_loss_weight = flow_loss_weight
         self.use_time_weighted_aux_perceptual_loss = use_time_weighted_aux_perceptual_loss
         self.aux_perceptual_time_weight_power = aux_perceptual_time_weight_power
+        self.spec_scaled_loss = None
+        if self.wav_input_only and self.loss_space == "spec_scaled":
+            self.spec_scaled_loss = SpecScalingLoss(
+                sample_rate=sample_rate,
+                n_filters=spec_loss_n_filters,
+                n_fft=spec_loss_n_fft,
+                hop_length=spec_loss_hop_length,
+                loss_power=spec_loss_power,
+                loss_eps=spec_loss_eps,
+                loss_scale_min=spec_loss_scale_min,
+                loss_scale_max=spec_loss_scale_max,
+            )
 
         # aux mel loss
         self.use_aux_mel_loss = use_aux_mel_loss
@@ -163,16 +182,22 @@ class CFM(nn.Module):
         else:
             self.aux_mel_loss = None
 
-        self.mel_align_to = 1
+        self.mask_align_to = 1
+        alignments = []
         if self.wav_input_only and self.aux_mel_loss is not None and hasattr(self.aux_mel_loss, "mel_transforms"):
             hop_lengths = [int(m.hop_length) for m in self.aux_mel_loss.mel_transforms]
             if len(hop_lengths) > 0:
                 lcm_hop = hop_lengths[0]
                 for h in hop_lengths[1:]:
                     lcm_hop = math.lcm(lcm_hop, h)
-                # rand_span_mask is on raw waveform sample axis in wav_input_only mode,
-                # so alignment should also be in sample units.
-                self.mel_align_to = max(1, lcm_hop)
+                alignments.append(lcm_hop)
+        if self.wav_input_only and self.loss_space == "spec_scaled" and self.spec_scaled_loss is not None:
+            alignments.append(int(self.spec_scaled_loss.hop_length))
+        if len(alignments) > 0:
+            lcm_align = alignments[0]
+            for a in alignments[1:]:
+                lcm_align = math.lcm(lcm_align, a)
+            self.mask_align_to = max(1, lcm_align)
             
         self.use_aux_hubert_loss = use_aux_hubert_loss
         self.aux_hubert_loss_weight = aux_hubert_loss_weight
@@ -438,11 +463,11 @@ class CFM(nn.Module):
 
         # get a random span to mask out for training conditionally
         frac_lengths = torch.zeros((batch,), device=self.device).float().uniform_(*self.frac_lengths_mask)
-        if self.wav_input_only and self.aux_mel_loss is not None:
+        if self.wav_input_only and self.mask_align_to > 1:
             rand_span_mask = MelSpectrogramLoss._aligned_random_span_mask(
                 lengths=lens,
                 frac_lengths=frac_lengths,
-                align_to=self.mel_align_to,
+                align_to=self.mask_align_to,
                 max_length=seq_len,
             )
         else:
@@ -494,6 +519,7 @@ class CFM(nn.Module):
         # interpret prediction
         if self.prediction == "flow":
             v_pred = raw_pred
+            x_pred = φ + (1.0 - t) * v_pred
         elif self.prediction == "x_pred":
             x_pred = raw_pred
             v_pred = self._x_to_v(x_pred, φ, time)
@@ -510,11 +536,27 @@ class CFM(nn.Module):
                 denom = denom.unsqueeze(-1)
             target = (x1 - φ) / denom
             loss = F.mse_loss(v_pred, target, reduction="none")
+        elif self.loss_space == "x":
+            loss = F.mse_loss(x_pred, x1, reduction="none")
+        elif self.loss_space == "spec_scaled":
+            if not self.wav_input_only or self.spec_scaled_loss is None:
+                raise ValueError("loss_space='spec_scaled' only supports wav_input_only mode.")
+            x1_unscaled = x1 / self.latents_scale
+            x_pred_unscaled = x_pred / self.latents_scale
+            main_loss = self.spec_scaled_loss(
+                x_pred_unscaled,
+                x1_unscaled,
+                frame_mask=rand_span_mask,
+                frame_lengths=lens,
+            )
         else:
             raise ValueError(f"Unknown loss_space: {self.loss_space}")
 
-        loss = loss[rand_span_mask]
-        flow_loss = loss.mean()
+        if self.loss_space == "spec_scaled":
+            flow_loss = main_loss
+        else:
+            loss = loss[rand_span_mask]
+            flow_loss = loss.mean()
         total_loss = flow_loss * self.flow_loss_weight
 
         aux_time_weight = None

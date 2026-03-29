@@ -34,6 +34,7 @@ model:
     flow_loss_weight: 0.0
     latents_scale: 5.0
     use_time_weighted_aux_perceptual_loss: True
+    aux_perceptual_time_weight_power: 2.0
     use_aux_mel_loss: True
     aux_mel_loss_weight: 0.05
     sample_rate: 16000

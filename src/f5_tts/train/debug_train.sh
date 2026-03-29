@@ -7,7 +7,7 @@ export WANDB_MODE=disabled
 export WANDB_API_KEY="406faa59cf62a3646fa3479a7e133c4cf5a77100"
 export HF_ENDPOINT=https://hf-mirror.com
 export MASTER_ADDR="127.0.0.1"
-export MASTER_PORT=47896
+export MASTER_PORT=47899
 export DEBUG_PORT=56789
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
@@ -22,7 +22,7 @@ mixed_precision=bf16
 batch_size_per_gpu=19200        # 19200, 22400, 25600, 38400, 51200
 num_workers=16
 
-CONFIG_NAME="F5TTS_v1_Base_wav_x_pred_scale_5_aux_mel_noise_schedule_0_8_16k"
+CONFIG_NAME="F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_noise_schedule_0_8_16k_spec_scaled_loss" # F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_fix_mel_loss
 EXP_NAME="debug_test"   # debug_wav, debug_mel, debug_wav_proj_input, debug_wav_x_pred, F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k, F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k_conv_frontend
 OUTDIR="/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/${EXP_NAME}"
 DEBUG_MODE=False     # True, False

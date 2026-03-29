@@ -1023,6 +1023,117 @@ class MelSpectrogramLoss(nn.Module):
 
         return mask
 
+
+class SpecScalingLoss(nn.Module):
+    """Flow2GAN-style spectrogram-scaled reconstruction loss for raw waveform."""
+
+    def __init__(
+        self,
+        sample_rate: int = 24000,
+        n_filters: int = 256,
+        n_fft: int = 1024,
+        hop_length: int = 256,
+        power: float = 2.0,
+        loss_power: float = 0.5,
+        loss_eps: float = 1e-7,
+        loss_scale_min: float = 1e-2,
+        loss_scale_max: float = 1e2,
+        weight: float = 1.0,
+    ):
+        super().__init__()
+        self.hop_length = hop_length
+        self.loss_power = loss_power
+        self.loss_eps = loss_eps
+        self.loss_scale_min = loss_scale_min
+        self.loss_scale_max = loss_scale_max
+        self.weight = weight
+
+        self.spectrogram = torchaudio.transforms.Spectrogram(
+            n_fft=n_fft,
+            win_length=n_fft,
+            hop_length=hop_length,
+            power=power,
+            normalized=False,
+            center=True,
+            pad_mode="reflect",
+            onesided=True,
+        )
+        fb = torchaudio.functional.linear_fbanks(
+            n_freqs=n_fft // 2 + 1,
+            f_min=0.0,
+            f_max=float(sample_rate // 2),
+            n_filter=n_filters,
+            sample_rate=sample_rate,
+        )
+        self.register_buffer("fb", fb)
+
+    def _linear_spec(self, x: torch.Tensor) -> torch.Tensor:
+        spec = self.spectrogram(x)
+        return torch.matmul(spec.transpose(-1, -2), self.fb).transpose(-1, -2)
+
+    def forward(
+        self,
+        x_pred: torch.Tensor,
+        x_true: torch.Tensor,
+        frame_mask: torch.Tensor | None = None,
+        frame_lengths: torch.Tensor | None = None,
+        time_weight: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if x_pred.ndim == 3 and x_pred.shape[1] == 1:
+            x_pred = x_pred.squeeze(1)
+        if x_true.ndim == 3 and x_true.shape[1] == 1:
+            x_true = x_true.squeeze(1)
+
+        err = x_pred - x_true
+        gt_spec = self._linear_spec(x_true)
+        err_spec = self._linear_spec(err)
+        scaled_err = err_spec * ((gt_spec + self.loss_eps) ** (-self.loss_power)).clamp(
+            min=self.loss_scale_min,
+            max=self.loss_scale_max,
+        )
+
+        spec_mask = None
+        if frame_mask is not None:
+            span_starts, span_ends = MelSpectrogramLoss._get_span_bounds_from_mask(frame_mask, frame_lengths)
+            span_starts = span_starts.to(device=x_pred.device)
+            span_ends = span_ends.to(device=x_pred.device)
+
+            spec_t = err_spec.shape[-1]
+            spec_mask = torch.zeros((err_spec.shape[0], spec_t), device=x_pred.device, dtype=torch.bool)
+            for i in range(err_spec.shape[0]):
+                s = int(span_starts[i].item())
+                e = int(span_ends[i].item())
+                if e <= s:
+                    continue
+                ss = s // self.hop_length
+                se = (e + self.hop_length - 1) // self.hop_length
+                ss = max(0, min(ss, spec_t))
+                se = max(0, min(se, spec_t))
+                if se > ss:
+                    spec_mask[i, ss:se] = True
+
+            if not spec_mask.any():
+                return scaled_err.new_tensor(0.0)
+
+            spec_mask = spec_mask.unsqueeze(1)
+
+        if spec_mask is None:
+            per_sample = scaled_err.mean(dim=(1, 2))
+        else:
+            per_sample = []
+            for i in range(scaled_err.shape[0]):
+                m = spec_mask[i].expand_as(scaled_err[i])
+                if m.any():
+                    per_sample.append(scaled_err[i].masked_select(m).mean())
+                else:
+                    per_sample.append(scaled_err.new_tensor(0.0))
+            per_sample = torch.stack(per_sample, dim=0)
+
+        if time_weight is not None:
+            return (per_sample * time_weight).mean() * self.weight
+
+        return per_sample.mean() * self.weight
+
 class SpeechAlignMLP(nn.Module):
     def __init__(
         self,
