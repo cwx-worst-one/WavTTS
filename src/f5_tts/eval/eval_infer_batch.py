@@ -56,6 +56,20 @@ def main():
     parser.add_argument("--local", action="store_true", help="Use local vocoder checkpoint directory")
     parser.add_argument("--ckpt_path", default=None, type=str)
     parser.add_argument("--cfg_strength", default=2.0, type=float)
+    parser.add_argument("--cfg_scale_interval_min", default=0.0, type=float)
+    parser.add_argument("--cfg_scale_interval_max", default=1.0, type=float)
+    parser.add_argument(
+        "--load_dtype",
+        default="fp32",
+        choices=["bf16", "fp16", "fp32"],
+        help="Model checkpoint load precision. Default fp32 for more stable weight loading.",
+    )
+    parser.add_argument(
+        "--infer_dtype",
+        default="bf16",
+        choices=["bf16", "fp16", "fp32"],
+        help="Inference precision: bf16/fp16 for autocast mixed precision, fp32 to disable autocast.",
+    )
 
     args = parser.parse_args()
 
@@ -68,12 +82,21 @@ def main():
     sway_sampling_coef = args.swaysampling
 
     testset = args.testset
+    load_dtype_name = args.load_dtype
+    infer_dtype_name = args.infer_dtype
 
     infer_batch_size = 1  # max frames. 1 for ddp single inference (recommended)
     cfg_strength = args.cfg_strength
+    cfg_scale_interval = (args.cfg_scale_interval_min, args.cfg_scale_interval_max)
     speed = 1.0
     use_truth_duration = False
     no_ref_audio = False
+
+    amp_dtype_map = {
+        "bf16": torch.bfloat16,
+        "fp16": torch.float16,
+    }
+    autocast_dtype = amp_dtype_map.get(infer_dtype_name)
 
     model_cfg = OmegaConf.load(str(files("f5_tts").joinpath(f"configs/{exp_name}.yaml")))
     model_cls = get_class(f"f5_tts.model.{model_cfg.model.backbone}")
@@ -123,7 +146,8 @@ def main():
         f"results/{exp_name}/{ckpt_step}/{testset}/"
         f"seed{seed}_{ode_method}_nfe{nfe_step}_{mel_spec_type}"
         f"{f'_ss{sway_sampling_coef}' if sway_sampling_coef else ''}"
-        f"_cfg{cfg_strength}_speed{speed}"
+        f"_cfg{cfg_strength}_speed{speed}_load-{load_dtype_name}_infer-{infer_dtype_name}"
+        f"_cfgitv{cfg_scale_interval[0]}-{cfg_scale_interval[1]}"
         f"{'_gt-dur' if use_truth_duration else ''}"
         f"{'_no-ref-audio' if no_ref_audio else ''}"
     )
@@ -203,8 +227,10 @@ def main():
     #         raise ValueError("The checkpoint does not exist or cannot be found in given location.")
     ckpt_path = args.ckpt_path
 
-    dtype = torch.float32 if mel_spec_type == "bigvgan" else None
-    model = load_checkpoint(model, ckpt_path, device, dtype=dtype, use_ema=use_ema)
+    load_dtype = amp_dtype_map.get(load_dtype_name, torch.float32)
+    if mel_spec_type == "bigvgan":
+        load_dtype = torch.float32
+    model = load_checkpoint(model, ckpt_path, device, dtype=load_dtype, use_ema=use_ema)
 
     if not os.path.exists(output_dir) and accelerator.is_main_process:
         os.makedirs(output_dir)
@@ -222,13 +248,14 @@ def main():
 
             # Inference
             with torch.inference_mode():
-                with torch.autocast("cuda", dtype=torch.bfloat16):
+                with torch.autocast("cuda", dtype=autocast_dtype, enabled=autocast_dtype is not None):
                     generated, _ = model.sample(
                         cond=ref_mels,
                         text=final_text_list,
                         duration=total_mel_lens,
                         steps=nfe_step,
                         cfg_strength=cfg_strength,
+                        cfg_scale_interval=cfg_scale_interval,
                         sway_sampling_coef=sway_sampling_coef,
                         no_ref_audio=no_ref_audio,
                         seed=seed,

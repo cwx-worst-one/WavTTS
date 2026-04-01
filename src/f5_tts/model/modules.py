@@ -834,8 +834,8 @@ class MelSpectrogramLoss(nn.Module):
                 f_min=fmin,
                 f_max=fmax,
                 power=1.0,       # computing Magnitude Mel (power=1.0) initially
-                normalized=True, # consistent with most modern TTS vocoders
-                center=True,
+                normalized=False, # NOTE: update normalized=False in new version
+                center=True,     # 可以改成 false
                 pad_mode="reflect"
             )
             self.mel_transforms.append(transform)
@@ -862,6 +862,11 @@ class MelSpectrogramLoss(nn.Module):
             x_true = x_true.squeeze(1)
             
         total_loss = x_pred.new_tensor(0.0)
+
+        # FIXME: 如果不更新梯度，则 uncomment 下面的代码
+        # if self.training:
+        #     # Break exact-zero outputs so mel/STFT loss can propagate gradients at startup.
+        #     x_pred = x_pred + torch.randn_like(x_pred) * 1e-7
 
         use_mask = frame_mask is not None
         if use_mask:
@@ -901,7 +906,10 @@ class MelSpectrogramLoss(nn.Module):
             
             # 1. Log Magnitude Loss
             # Formula: L1( log10(x^pow + eps), log10(y^pow + eps) )
+            # FIXME: 如果梯度不更新，则 uncomment 下面的代码
             if self.log_weight > 0:
+                # x_log = (x_mels + self.clamp_eps).pow(self.pow).log10()
+                # y_log = (y_mels + self.clamp_eps).pow(self.pow).log10()
                 x_log = x_mels.clamp(min=self.clamp_eps).pow(self.pow).log10()
                 y_log = y_mels.clamp(min=self.clamp_eps).pow(self.pow).log10()
                 if mel_mask is None:

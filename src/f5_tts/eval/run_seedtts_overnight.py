@@ -25,16 +25,6 @@ class Combo:
     task: str
     mel_spec_type: str
 
-    @property
-    def gen_wav_dir(self) -> Path:
-        return (
-            RESULTS_ROOT_DEFAULT
-            / self.exp_name
-            / str(self.ckpt_step)
-            / self.task
-            / f'seed0_euler_nfe32_{self.mel_spec_type}_ss-1.0_cfg3.0_speed1.0'
-        )
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Overnight SeedTTS infer+eval runner for Emilia ckpts (10w steps).')
@@ -48,9 +38,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--swaysampling', type=float, default=-1.0)
     parser.add_argument('--eval-gpus', type=str, default='[0,1,2,3,4,5,6,7]')
     parser.add_argument('--master-port', type=int, default=53721)
+    parser.add_argument('--cfg-scale-interval-min', type=float, default=0.0)
+    parser.add_argument('--cfg-scale-interval-max', type=float, default=1.0)
     parser.add_argument('--local', action='store_true')
     parser.add_argument('--infer-only', action='store_true')
     parser.add_argument('--eval-only', action='store_true')
+    parser.add_argument('--load-dtype', type=str, default='fp32', choices=['bf16', 'fp16', 'fp32'])
+    parser.add_argument('--infer-dtype', type=str, default='bf16', choices=['bf16', 'fp16', 'fp32'])
     parser.add_argument('--force', action='store_true', help='Force rerun infer+eval even if result files exist.')
     parser.add_argument('--continue-on-error', action='store_true', default=True)
     parser.add_argument('--stop-on-error', action='store_true')
@@ -145,7 +139,11 @@ def run_combo(combo: Combo, args: argparse.Namespace, env: dict) -> dict:
         / combo.exp_name
         / str(combo.ckpt_step)
         / combo.task
-        / f'seed{args.seed}_euler_nfe{args.nfe_step}_{combo.mel_spec_type}_ss{args.swaysampling}_cfg{args.cfg_strength}_speed1.0'
+        / (
+            f'seed{args.seed}_euler_nfe{args.nfe_step}_{combo.mel_spec_type}_ss{args.swaysampling}'
+            f'_cfg{args.cfg_strength}_speed1.0_load-{args.load_dtype}_infer-{args.infer_dtype}'
+            f'_cfgitv{args.cfg_scale_interval_min}-{args.cfg_scale_interval_max}'
+        )
     )
     status = {
         'exp_name': combo.exp_name,
@@ -183,6 +181,10 @@ def run_combo(combo: Combo, args: argparse.Namespace, env: dict) -> dict:
             '--nfe_step', str(args.nfe_step),
             '--swaysampling', str(args.swaysampling),
             '--cfg_strength', str(args.cfg_strength),
+            '--cfg_scale_interval_min', str(args.cfg_scale_interval_min),
+            '--cfg_scale_interval_max', str(args.cfg_scale_interval_max),
+            '--load_dtype', args.load_dtype,
+            '--infer_dtype', args.infer_dtype,
         ] + local_flag
         rc = run_cmd(infer_cmd, env)
         status['infer'] = 'ok' if rc == 0 else f'fail({rc})'

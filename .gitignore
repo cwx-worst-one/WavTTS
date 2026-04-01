@@ -76,6 +76,7 @@ __pycache__
 *.zip
 *.bin
 *.txt
+!doc/*.txt
 
 # logs
 /**/cruise_logs

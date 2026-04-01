@@ -39,6 +39,8 @@ class HFDataset(Dataset):
             mel_spec_type=mel_spec_type,
         )
 
+        self._resamplers = {}
+
     def get_frame_len(self, index):
         row = self.data[index]
         audio = row["audio"]["array"]
@@ -63,8 +65,9 @@ class HFDataset(Dataset):
         audio_tensor = torch.from_numpy(audio).float()
 
         if sample_rate != self.target_sample_rate:
-            resampler = torchaudio.transforms.Resample(sample_rate, self.target_sample_rate)
-            audio_tensor = resampler(audio_tensor)
+            if sample_rate not in self._resamplers:
+                self._resamplers[sample_rate] = torchaudio.transforms.Resample(sample_rate, self.target_sample_rate)
+            audio_tensor = self._resamplers[sample_rate](audio_tensor)
 
         audio_tensor = audio_tensor.unsqueeze(0)  # 't -> 1 t')
 
@@ -113,6 +116,8 @@ class CustomDataset(Dataset):
         self.wav_dataset_root = wav_dataset_root
         self.ssl_feature_dataset_root = ssl_feature_dataset_root
 
+        self._resamplers = {}
+
         if not preprocessed_mel and not return_wav_only:
             self.mel_spectrogram = default(
                 mel_spec_module,
@@ -160,8 +165,11 @@ class CustomDataset(Dataset):
 
             # resample if necessary
             if source_sample_rate != self.target_sample_rate:
-                resampler = torchaudio.transforms.Resample(source_sample_rate, self.target_sample_rate)
-                audio = resampler(audio)
+                if source_sample_rate not in self._resamplers:
+                    self._resamplers[source_sample_rate] = torchaudio.transforms.Resample(
+                        source_sample_rate, self.target_sample_rate
+                    )
+                audio = self._resamplers[source_sample_rate](audio)
 
             # to mel spectrogram
             if not self.return_wav_only:

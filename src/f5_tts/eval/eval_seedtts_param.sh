@@ -20,8 +20,9 @@ nfe_step="${NFE_STEP_OVERRIDE:-32}"
 cfg_strength="${CFG_STRENGTH_OVERRIDE:-3.0}"
 output_dir="${OUTPUT_DIR_OVERRIDE:-/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav/results/F5TTS_v1_Large_wav_x_pred_scale_aux_mel_hubert_noise_schedule_0_8_16k_audio_convmlp_inout/${ckpt_step}}"
 gen_wav_dir="${GEN_WAV_DIR_OVERRIDE:-${output_dir}/seedtts_test_${lang}/seed0_euler_nfe${nfe_step}_no_vocoder_ss-1.0_cfg${cfg_strength}_speed1.0}"   # _vocos_ss, _no_vocoder_ss
-GPUS="${GPUS_OVERRIDE:-[0,1,2,3,4,5,6,7]}"
-# GPUS="[0,1,2,3]"
+# GPUS="${GPUS_OVERRIDE:-[0,1,2,3,4,5,6,7]}"
+# GPUS="${GPUS_OVERRIDE:-[0,1,3,4,5,6,7]}"
+GPUS="[0,1,2,3]"
 # GPUS="[0,1]"
 
 LOCAL=""

@@ -13,13 +13,15 @@ REPO_ROOT=$(cd "${SCRIPT_DIR}/../../.." && pwd)
 RESULTS_ROOT="${RESULTS_ROOT:-${REPO_ROOT}/results}"
 
 MODELS=(
-    # "F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k_emilia"
-    # "F5TTS_v1_Large_wav_x_pred_scale_aux_mel_hubert_noise_schedule_0_8_16k_start_t_0_3"
+    "F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_fix_mel_loss"
+    "F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_mel_only_time_weighted_o1"
+    "F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_time_weighted_p1"
+    "F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_time_weighted"
+    "F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_mel_only_time_weighted_o2"
 )
 
 STEPS=(
     200000
-    400000
 )
 
 TASKS=(

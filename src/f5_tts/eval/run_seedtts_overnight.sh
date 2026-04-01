@@ -41,3 +41,6 @@ LOG_FILE="${SUMMARY_DIR}/overnight_run_$(date +%Y%m%d_%H%M%S).log"
 } 2>&1 | tee -a "${LOG_FILE}"
 
 echo "[INFO] log saved to ${LOG_FILE}"
+
+
+# bash src/f5_tts/eval/run_seedtts_overnight.sh

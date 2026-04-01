@@ -263,6 +263,7 @@ class CFM(nn.Module):
         lens: int["b"] | None = None,
         steps=32,
         cfg_strength=1.0,
+        cfg_scale_interval=(0.0, 1.0),
         sway_sampling_coef=None,
         seed: int | None = None,
         max_duration=4096,
@@ -372,8 +373,11 @@ class CFM(nn.Module):
             v_cond = to_v(pred)
             v_uncond = to_v(null_pred)
 
-            # standard CFG in v-space (Ho & Salimans style)
-            return v_cond + (v_cond - v_uncond) * cfg_strength
+            # CFG with interval control
+            low, high = cfg_scale_interval
+            apply_cfg = (t < high) and ((low == 0.0) or (t > low))
+            cfg_scale = cfg_strength if apply_cfg else 0.0
+            return v_cond + (v_cond - v_uncond) * cfg_scale
 
         # noise input
         # to make sure batch inference result is same with different batch size, and for sure single inference
@@ -397,9 +401,9 @@ class CFM(nn.Module):
             steps = int(steps * (1 - t_start))
 
         if t_start == 0 and use_epss:  # use Empirically Pruned Step Sampling for low NFE
-            t = get_epss_timesteps(steps, device=self.device, dtype=step_cond.dtype)
+            t = get_epss_timesteps(steps, device=self.device, dtype=torch.float32)
         else:
-            t = torch.linspace(t_start, 1, steps + 1, device=self.device, dtype=step_cond.dtype)
+            t = torch.linspace(t_start, 1, steps + 1, device=self.device, dtype=torch.float32)
         if sway_sampling_coef is not None:
             t = t + sway_sampling_coef * (torch.cos(torch.pi / 2 * t) - 1 + t)
 

@@ -11,10 +11,11 @@ export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
 
 # Configuration parameters
 # MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_aux_mel_hubert_noise_schedule_0_8_16k
-MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k_emilia
+MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_time_weighted
+MEL_SPEC_TYPE="no_vocoder"
 # SEEDS=(0 1 2)
 SEEDS=(0)
-CKPTSTEPS=(1200000)  # 200000, 550000, 700000, 900000, 1000000, 1200000
+CKPTSTEPS=(400000)  # 200000, 400000, 550000, 700000, 900000, 1000000, 1200000
 # TASKS=("seedtts_test_zh" "seedtts_test_en" "ls_pc_test_clean")
 TASKS=("seedtts_test_zh" "seedtts_test_en")
 # TASKS=("seedtts_test_en")
@@ -24,11 +25,15 @@ GPUS="[0,1,2,3,4,5,6,7]"
 # GPUS="[0,1,2,3]"
 # GPUS="[0]"
 OFFLINE_MODE=false
-CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/emilia/F5TTS_v1_Large_wav_x_pred_scale_aux_mel_noise_schedule_0_8_16k_emilia-emilia-8gpus-19200sample_per_gpu-bf16
+CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/emilia/F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_time_weighted-emilia-8gpus-19200sample_per_gpu-bf16
 
 cfg_strength=3.0
+cfg_interval_min=0.0
+cfg_interval_max=1.0
 nfe_step=32
 swaysampling=-1   # -1: enable, 0: disable
+LOAD_DTYPE="fp32"   # bf16, fp16, fp32
+INFER_DTYPE="bf16"  # bf16, fp16, fp32
 
 DEBUG=false  # true, false
 
@@ -45,6 +50,14 @@ while [[ $# -gt 0 ]]; do
             INFER_ONLY=true
             shift
             ;;
+        --load-dtype)
+            LOAD_DTYPE="$2"
+            shift 2
+            ;;
+        --infer-dtype)
+            INFER_DTYPE="$2"
+            shift 2
+            ;;
         *)
             echo "======== Unknown parameter: $1"
             exit 1
@@ -52,12 +65,26 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+for dtype_name in "$LOAD_DTYPE" "$INFER_DTYPE"; do
+    case "$dtype_name" in
+        bf16|fp16|fp32)
+            ;;
+        *)
+            echo "======== Invalid dtype: ${dtype_name}. Expected one of: bf16, fp16, fp32"
+            exit 1
+            ;;
+    esac
+done
+
 echo "======== Starting F5-TTS batch evaluation task..."
+echo "======== Load dtype: ${LOAD_DTYPE}"
+echo "======== Infer dtype: ${INFER_DTYPE}"
 if [ "$INFER_ONLY" = true ]; then
     echo "======== Mode: Execute infer tasks only"
 else
     echo "======== Mode: Execute full pipeline (infer + eval)"
 fi
+
 
 # Function: Execute eval tasks
 execute_eval_tasks() {
@@ -65,9 +92,9 @@ execute_eval_tasks() {
     local seed=$2
     local task_name=$3
     
-    local gen_wav_dir="results/${MODEL_NAME}/${ckptstep}/${task_name}/seed${seed}_euler_nfe32_vocos_ss-1_cfg${cfg_strength}_speed1.0"
+    local gen_wav_dir="results/${MODEL_NAME}/${ckptstep}/${task_name}/seed${seed}_euler_nfe${nfe_step}_${MEL_SPEC_TYPE}_ss${swaysampling}_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}_cfgitv${cfg_interval_min}-${cfg_interval_max}"
     
-    echo ">>>>>>>> Starting eval task: ckptstep=${ckptstep}, seed=${seed}, task=${task_name}"
+    echo ">>>>>>>> Starting eval task: ckptstep=${ckptstep}, seed=${seed}, task=${task_name}, gen_wav_dir=${gen_wav_dir}"
     
     case $task_name in
         "seedtts_test_zh")
@@ -111,15 +138,15 @@ for ckptstep in "${CKPTSTEPS[@]}"; do
         
         # Execute each infer task sequentially
         for task in "${TASKS[@]}"; do
-            echo ">>>>>>>> Executing infer task: accelerate launch src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n \"${MODEL_NAME}\" -t \"${task}\" -c ${ckptstep} $LOCAL --ckpt_path \"${CKPT_PATH}\""  --cfg_strength ${cfg_strength} --nfe_step ${nfe_step} --swaysampling ${swaysampling}
+            echo ">>>>>>>> Executing infer task: accelerate launch src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n \"${MODEL_NAME}\" -t \"${task}\" -c ${ckptstep} $LOCAL --ckpt_path \"${CKPT_PATH}\" --cfg_strength ${cfg_strength} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}"
             
             # Execute infer task (foreground execution, wait for completion)
             if [ "$DEBUG" = false ]; then
-                accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}" --nfe_step ${nfe_step} --swaysampling ${swaysampling} --cfg_strength ${cfg_strength}
+                accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}" --nfe_step ${nfe_step} --swaysampling ${swaysampling} --cfg_strength ${cfg_strength} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
             fi
 
             if [ "$DEBUG" = true ]; then
-                python -m debugpy --listen 127.0.0.1:56789 --wait-for-client src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}" --nfe_step ${nfe_step} --swaysampling ${swaysampling} --cfg_strength ${cfg_strength}
+                python -m debugpy --listen 127.0.0.1:56789 --wait-for-client src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}" --nfe_step ${nfe_step} --swaysampling ${swaysampling} --cfg_strength ${cfg_strength} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
             fi
             
             # If not infer-only mode, launch corresponding eval task
