@@ -18,7 +18,7 @@ num_machines=1
 mixed_precision=bf16
 
 # training config
-batch_size_per_gpu=19200
+batch_size_per_gpu=15360
 num_workers=16
 
 DATASET_NAME="emilia"
