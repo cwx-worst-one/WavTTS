@@ -11,7 +11,7 @@ export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
 
 # Configuration parameters
 # MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_aux_mel_hubert_noise_schedule_0_8_16k
-MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_mel_only_time_weighted_o1
+MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_mel_only
 MEL_SPEC_TYPE="no_vocoder"
 # SEEDS=(0 1 2)
 SEEDS=(0)
@@ -25,13 +25,15 @@ GPUS="[0,1,2,3,4,5,6,7]"
 # GPUS="[0,1,2,3]"
 # GPUS="[0]"
 OFFLINE_MODE=false
-CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/emilia/F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_mel_only_time_weighted_o1_fix_gradient0-emilia-8gpus-19200sample_per_gpu-bf16
+CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/emilia/F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_mel_only_fix_gradient0-emilia-8gpus-19200sample_per_gpu-bf16
 
 cfg_strength=3.0
 cfg_interval_min=0.0
 cfg_interval_max=1.0
 nfe_step=32
+timestep_mapping="power"   # sway_sampling, power
 swaysampling=-1   # -1: enable, 0: disable
+timestep_power=3.0
 LOAD_DTYPE="fp32"   # bf16, fp16, fp32
 INFER_DTYPE="bf16"  # bf16, fp16, fp32
 
@@ -58,6 +60,14 @@ while [[ $# -gt 0 ]]; do
             INFER_DTYPE="$2"
             shift 2
             ;;
+        --timestep-mapping)
+            timestep_mapping="$2"
+            shift 2
+            ;;
+        --timestep-power)
+            timestep_power="$2"
+            shift 2
+            ;;
         *)
             echo "======== Unknown parameter: $1"
             exit 1
@@ -79,6 +89,10 @@ done
 echo "======== Starting F5-TTS batch evaluation task..."
 echo "======== Load dtype: ${LOAD_DTYPE}"
 echo "======== Infer dtype: ${INFER_DTYPE}"
+echo "======== Timestep mapping: ${timestep_mapping}"
+if [ "${timestep_mapping}" = "power" ]; then
+    echo "======== Timestep power: ${timestep_power}"
+fi
 if [ "$INFER_ONLY" = true ]; then
     echo "======== Mode: Execute infer tasks only"
 else
@@ -92,7 +106,14 @@ execute_eval_tasks() {
     local seed=$2
     local task_name=$3
     
-    local gen_wav_dir="results/${MODEL_NAME}/${ckptstep}/${task_name}/seed${seed}_euler_nfe${nfe_step}_${MEL_SPEC_TYPE}_ss${swaysampling}_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}_cfgitv${cfg_interval_min}-${cfg_interval_max}"
+    local gen_wav_dir="results/${MODEL_NAME}/${ckptstep}/${task_name}/seed${seed}_euler_nfe${nfe_step}_${MEL_SPEC_TYPE}"
+    if [ "${timestep_mapping}" = "sway_sampling" ] && [ "${swaysampling}" != "0" ]; then
+        gen_wav_dir+="_ss${swaysampling}"
+    fi
+    if [ "${timestep_mapping}" = "power" ]; then
+        gen_wav_dir+="_power${timestep_power}"
+    fi
+    gen_wav_dir+="_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}_cfgitv${cfg_interval_min}-${cfg_interval_max}"
     
     echo ">>>>>>>> Starting eval task: ckptstep=${ckptstep}, seed=${seed}, task=${task_name}, gen_wav_dir=${gen_wav_dir}"
     
@@ -138,15 +159,15 @@ for ckptstep in "${CKPTSTEPS[@]}"; do
         
         # Execute each infer task sequentially
         for task in "${TASKS[@]}"; do
-            echo ">>>>>>>> Executing infer task: accelerate launch src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n \"${MODEL_NAME}\" -t \"${task}\" -c ${ckptstep} $LOCAL --ckpt_path \"${CKPT_PATH}\" --cfg_strength ${cfg_strength} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}"
+            echo ">>>>>>>> Executing infer task: accelerate launch src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n \"${MODEL_NAME}\" -t \"${task}\" -c ${ckptstep} $LOCAL --ckpt_path \"${CKPT_PATH}\" --cfg_strength ${cfg_strength} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}"
             
             # Execute infer task (foreground execution, wait for completion)
             if [ "$DEBUG" = false ]; then
-                accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}" --nfe_step ${nfe_step} --swaysampling ${swaysampling} --cfg_strength ${cfg_strength} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
+                accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}" --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --cfg_strength ${cfg_strength} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
             fi
 
             if [ "$DEBUG" = true ]; then
-                python -m debugpy --listen 127.0.0.1:56789 --wait-for-client src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}" --nfe_step ${nfe_step} --swaysampling ${swaysampling} --cfg_strength ${cfg_strength} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
+                python -m debugpy --listen 127.0.0.1:56789 --wait-for-client src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}" --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --cfg_strength ${cfg_strength} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
             fi
             
             # If not infer-only mode, launch corresponding eval task

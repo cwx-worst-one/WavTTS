@@ -47,6 +47,8 @@ def main():
     parser.add_argument("-nfe", "--nfe_step", default=32, type=int)
     parser.add_argument("-o", "--odemethod", default="euler")
     parser.add_argument("-ss", "--swaysampling", default=-1, type=float)
+    parser.add_argument("--timestep_mapping", default="sway_sampling", choices=["sway_sampling", "power"])
+    parser.add_argument("--timestep_power", default=None, type=float)
 
     parser.add_argument("-t", "--testset", required=True)
     parser.add_argument(
@@ -80,6 +82,11 @@ def main():
     nfe_step = args.nfe_step
     ode_method = args.odemethod
     sway_sampling_coef = args.swaysampling
+    timestep_mapping = args.timestep_mapping
+    timestep_power = args.timestep_power
+
+    if timestep_mapping == "power" and timestep_power is None:
+        raise ValueError("--timestep_power must be provided when --timestep_mapping power is used")
 
     testset = args.testset
     load_dtype_name = args.load_dtype
@@ -145,7 +152,8 @@ def main():
         f"{rel_path}/"
         f"results/{exp_name}/{ckpt_step}/{testset}/"
         f"seed{seed}_{ode_method}_nfe{nfe_step}_{mel_spec_type}"
-        f"{f'_ss{sway_sampling_coef}' if sway_sampling_coef else ''}"
+        f"{f'_ss{sway_sampling_coef}' if timestep_mapping == 'sway_sampling' and sway_sampling_coef else ''}"
+        f"{f'_power{timestep_power}' if timestep_mapping == 'power' else ''}"
         f"_cfg{cfg_strength}_speed{speed}_load-{load_dtype_name}_infer-{infer_dtype_name}"
         f"_cfgitv{cfg_scale_interval[0]}-{cfg_scale_interval[1]}"
         f"{'_gt-dur' if use_truth_duration else ''}"
@@ -258,6 +266,9 @@ def main():
                         cfg_strength=cfg_strength,
                         cfg_scale_interval=cfg_scale_interval,
                         sway_sampling_coef=sway_sampling_coef,
+                        timestep_mapping=timestep_mapping,
+                        timestep_power=timestep_power,
+                        use_epss=timestep_mapping == "sway_sampling",
                         no_ref_audio=no_ref_audio,
                         seed=seed,
                     )

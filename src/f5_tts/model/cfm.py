@@ -265,6 +265,8 @@ class CFM(nn.Module):
         cfg_strength=1.0,
         cfg_scale_interval=(0.0, 1.0),
         sway_sampling_coef=None,
+        timestep_mapping="sway_sampling",
+        timestep_power=None,
         seed: int | None = None,
         max_duration=4096,
         vocoder: Callable[[float["b d n"]], float["b nw"]] | None = None,
@@ -400,12 +402,22 @@ class CFM(nn.Module):
             y0 = (1 - t_start) * y0 + t_start * test_cond
             steps = int(steps * (1 - t_start))
 
+        use_epss = use_epss and timestep_mapping == "sway_sampling"
+
         if t_start == 0 and use_epss:  # use Empirically Pruned Step Sampling for low NFE
             t = get_epss_timesteps(steps, device=self.device, dtype=torch.float32)
         else:
             t = torch.linspace(t_start, 1, steps + 1, device=self.device, dtype=torch.float32)
-        if sway_sampling_coef is not None:
-            t = t + sway_sampling_coef * (torch.cos(torch.pi / 2 * t) - 1 + t)
+
+        if timestep_mapping == "sway_sampling":
+            if sway_sampling_coef is not None:
+                t = t + sway_sampling_coef * (torch.cos(torch.pi / 2 * t) - 1 + t)
+        elif timestep_mapping == "power":
+            if timestep_power is None:
+                raise ValueError("timestep_power must be provided when timestep_mapping='power'")
+            t = t.pow(timestep_power)
+        else:
+            raise ValueError(f"Unknown timestep_mapping: {timestep_mapping}")
 
         trajectory = odeint(fn, y0, t, **self.odeint_kwargs)
         self.transformer.clear_cache()
