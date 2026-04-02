@@ -150,6 +150,7 @@ def main():
         f"_cfgitv{cfg_scale_interval[0]}-{cfg_scale_interval[1]}"
         f"{'_gt-dur' if use_truth_duration else ''}"
         f"{'_no-ref-audio' if no_ref_audio else ''}"
+        f"_target_rms{target_rms}"
     )
 
     # -------------------------------------------------#

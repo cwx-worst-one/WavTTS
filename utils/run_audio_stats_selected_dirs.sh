@@ -4,22 +4,15 @@ set -euo pipefail
 # Run torchaudio stats for a configurable directory list.
 # You can add/remove directories in ROOT_DIRS below.
 
+OUTPUT_REPORT_NAME="audio_stats_details_libritts_100.txt"
+
 PROJECT_ROOT="/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav_mel_dev"
 PY_SCRIPT="$PROJECT_ROOT/utils/audio_stats_torchaudio.py"
-OUTPUT_REPORT="$PROJECT_ROOT/doc/audio_stats_details.txt"
+OUTPUT_REPORT="$PROJECT_ROOT/doc/$OUTPUT_REPORT_NAME"
 RELATIVE_TO="/mnt/bn/jdy-lq-5/chenwenxi/data"
 
 ROOT_DIRS=(
-  "/mnt/bn/jdy-lq-5/chenwenxi/data/emilia/EN/EN-B000000"
-  "/mnt/bn/jdy-lq-5/chenwenxi/data/emilia/EN/EN-B000001"
-  "/mnt/bn/jdy-lq-5/chenwenxi/data/emilia/EN/EN-B000002"
-  "/mnt/bn/jdy-lq-5/chenwenxi/data/emilia/EN/EN-B000003"
-  "/mnt/bn/jdy-lq-5/chenwenxi/data/emilia/EN/EN-B000004"
-  "/mnt/bn/jdy-lq-5/chenwenxi/data/emilia/ZH/ZH-B000000"
-  "/mnt/bn/jdy-lq-5/chenwenxi/data/emilia/ZH/ZH-B000001"
-  "/mnt/bn/jdy-lq-5/chenwenxi/data/emilia/ZH/ZH-B000002"
-  "/mnt/bn/jdy-lq-5/chenwenxi/data/emilia/ZH/ZH-B000003"
-  "/mnt/bn/jdy-lq-5/chenwenxi/data/emilia/ZH/ZH-B000004"
+  "/mnt/bn/jdy-lq-5/chenwenxi/data/LibriTTS/train-clean-100"
 )
 
 AUDIO_FIND_EXPR=(

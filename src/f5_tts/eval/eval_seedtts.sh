@@ -15,16 +15,17 @@ export https_proxy=http://sys-proxy-rd-relay.byted.org:8118
 eval_metric=("wer sim utmos")
 # eval_metric=("sim")
 
-MODEL_NAME="F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_time_weighted"
+MODEL_NAME="F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_fix_mel_loss"
 MEL_SPEC_TYPE="no_vocoder"
 langs=("en" "zh")        # "en" "zh" "zh_hard"
-ckpt_step=400000    # 200000, 400000, 550000, 700000, 900000, 1000000, 1100000
+ckpt_step=550000    # 200000, 400000, 550000, 700000, 900000, 1000000, 1100000
 seed=0
 nfe_step=32
 cfg_strength=3.0
 cfg_interval_min=0.0
 cfg_interval_max=1.0
 swaysampling=-1.0
+target_rms=0.1
 LOAD_DTYPE="fp32"
 INFER_DTYPE="bf16"
 RESULTS_ROOT=/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav_mel_dev/results
@@ -35,7 +36,7 @@ GPUS="[0,1,2,3]"
 LOCAL=""
 
 output_dir=${RESULTS_ROOT}/${MODEL_NAME}/${ckpt_step}
-gen_wav_subdir=seed${seed}_euler_nfe${nfe_step}_${MEL_SPEC_TYPE}_ss${swaysampling}_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}_cfgitv${cfg_interval_min}-${cfg_interval_max}
+gen_wav_subdir=seed${seed}_euler_nfe${nfe_step}_${MEL_SPEC_TYPE}_ss${swaysampling}_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}_cfgitv${cfg_interval_min}-${cfg_interval_max}_target_rms${target_rms}   # _vocos_ss, _no_vocoder_ss, _speed1.0_load-fp32_infer-bf16, _speed1.0
 
 for lang in "${langs[@]}"; do
     gen_wav_dir=${output_dir}/seedtts_test_${lang}/${gen_wav_subdir}

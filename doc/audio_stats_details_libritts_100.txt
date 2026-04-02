@@ -1,0 +1,5596 @@
+# torchaudio.load & resample(16k) statistics report
+Generated at: 2026-04-02 11:41:49
+Target sample rate: 16000
+Total discovered files: 33236
+
+## 1) Overall
+[OVERALL]
+  files_ok      : 33236
+  files_failed  : 0
+  loaded_mean   : -0.0003221403
+  loaded_std    : 0.0678352134
+  res16k_mean   : -0.0003222898
+  res16k_std    : 0.0673910041
+  loaded_samples: 4647308118
+  res16k_samples: 3098209750
+
+## 2) Per-directory
+[LibriTTS/train-clean-100/103/1241]
+  files_ok      : 66
+  files_failed  : 0
+  loaded_mean   : -0.0000835026
+  loaded_std    : 0.0326175080
+  res16k_mean   : -0.0000835418
+  res16k_std    : 0.0321210049
+  loaded_samples: 4371851
+  res16k_samples: 2914583
+
+[LibriTTS/train-clean-100/1034/121119]
+  files_ok      : 30
+  files_failed  : 0
+  loaded_mean   : -0.0070978592
+  loaded_std    : 0.0893782609
+  res16k_mean   : -0.0071011313
+  res16k_std    : 0.0893771405
+  loaded_samples: 2790717
+  res16k_samples: 1860487
+
+[LibriTTS/train-clean-100/1040/133433]
+  files_ok      : 134
+  files_failed  : 0
+  loaded_mean   : 0.0000005426
+  loaded_std    : 0.0491168529
+  res16k_mean   : 0.0000005438
+  res16k_std    : 0.0490405422
+  loaded_samples: 10070179
+  res16k_samples: 6713477
+
+[LibriTTS/train-clean-100/1069/133699]
+  files_ok      : 108
+  files_failed  : 0
+  loaded_mean   : -0.0000010201
+  loaded_std    : 0.0974730804
+  res16k_mean   : -0.0000010236
+  res16k_std    : 0.0958300644
+  loaded_samples: 13076640
+  res16k_samples: 8717780
+
+[LibriTTS/train-clean-100/1069/133709]
+  files_ok      : 4
+  files_failed  : 0
+  loaded_mean   : -0.0000033582
+  loaded_std    : 0.0717329348
+  res16k_mean   : -0.0000033467
+  res16k_std    : 0.0704868887
+  loaded_samples: 804240
+  res16k_samples: 536161
+
+[LibriTTS/train-clean-100/1081/128618]
+  files_ok      : 8
+  files_failed  : 0
+  loaded_mean   : -0.0252583975
+  loaded_std    : 0.0907988750
+  res16k_mean   : -0.0252700438
+  res16k_std    : 0.0907812872
+  loaded_samples: 306240
+  res16k_samples: 204160
+
+[LibriTTS/train-clean-100/1088/129236]
+  files_ok      : 127
+  files_failed  : 0
+  loaded_mean   : -0.0000521640
+  loaded_std    : 0.0498947644
+  res16k_mean   : -0.0000521887
+  res16k_std    : 0.0496759714
+  loaded_samples: 22268165
+  res16k_samples: 14845471
+
+[LibriTTS/train-clean-100/1088/134315]
+  files_ok      : 163
+  files_failed  : 0
+  loaded_mean   : -0.0000329850
+  loaded_std    : 0.0360339407
+  res16k_mean   : -0.0000329999
+  res16k_std    : 0.0359150346
+  loaded_samples: 17261767
+  res16k_samples: 11507864
+
+[LibriTTS/train-clean-100/1088/134318]
+  files_ok      : 71
+  files_failed  : 0
+  loaded_mean   : -0.0000390133
+  loaded_std    : 0.0567111452
+  res16k_mean   : -0.0000390296
+  res16k_std    : 0.0565918629
+  loaded_samples: 6308640
+  res16k_samples: 4205760
+
+[LibriTTS/train-clean-100/1098/133695]
+  files_ok      : 121
+  files_failed  : 0
+  loaded_mean   : 0.0000019419
+  loaded_std    : 0.0771696841
+  res16k_mean   : 0.0000019462
+  res16k_std    : 0.0760629532
+  loaded_samples: 19668749
+  res16k_samples: 13112529
+
+[LibriTTS/train-clean-100/1116/132847]
+  files_ok      : 68
+  files_failed  : 0
+  loaded_mean   : -0.0000005848
+  loaded_std    : 0.0390211924
+  res16k_mean   : -0.0000005852
+  res16k_std    : 0.0386645790
+  loaded_samples: 9162959
+  res16k_samples: 6108646
+
+[LibriTTS/train-clean-100/1116/132851]
+  files_ok      : 56
+  files_failed  : 0
+  loaded_mean   : -0.0000162710
+  loaded_std    : 0.0477414471
+  res16k_mean   : -0.0000162765
+  res16k_std    : 0.0470691162
+  loaded_samples: 7734958
+  res16k_samples: 5156644
+
+[LibriTTS/train-clean-100/1116/137572]
+  files_ok      : 112
+  files_failed  : 0
+  loaded_mean   : -0.0000001260
+  loaded_std    : 0.0199987739
+  res16k_mean   : -0.0000001274
+  res16k_std    : 0.0197187430
+  loaded_samples: 16307993
+  res16k_samples: 10872017
+
+[LibriTTS/train-clean-100/118/121721]
+  files_ok      : 2
+  files_failed  : 0
+  loaded_mean   : 0.0000100511
+  loaded_std    : 0.0619137784
+  res16k_mean   : 0.0000100665
+  res16k_std    : 0.0619058846
+  loaded_samples: 95520
+  res16k_samples: 63680
+
+[LibriTTS/train-clean-100/118/124588]
+  files_ok      : 13
+  files_failed  : 0
+  loaded_mean   : -0.0001130069
+  loaded_std    : 0.0821148442
+  res16k_mean   : -0.0001130587
+  res16k_std    : 0.0821203250
+  loaded_samples: 1140240
+  res16k_samples: 760160
+
+[LibriTTS/train-clean-100/118/47824]
+  files_ok      : 208
+  files_failed  : 0
+  loaded_mean   : -0.0000001015
+  loaded_std    : 0.0762768364
+  res16k_mean   : -0.0000001009
+  res16k_std    : 0.0762464067
+  loaded_samples: 13962716
+  res16k_samples: 9308509
+
+[LibriTTS/train-clean-100/1183/124566]
+  files_ok      : 38
+  files_failed  : 0
+  loaded_mean   : 0.0000713312
+  loaded_std    : 0.0429647678
+  res16k_mean   : 0.0000713561
+  res16k_std    : 0.0375427775
+  loaded_samples: 1195920
+  res16k_samples: 797280
+
+[LibriTTS/train-clean-100/1183/128659]
+  files_ok      : 35
+  files_failed  : 0
+  loaded_mean   : 0.0000815988
+  loaded_std    : 0.0594969153
+  res16k_mean   : 0.0000816475
+  res16k_std    : 0.0529754969
+  loaded_samples: 3337198
+  res16k_samples: 2224800
+
+[LibriTTS/train-clean-100/1183/133255]
+  files_ok      : 56
+  files_failed  : 0
+  loaded_mean   : 0.0000780177
+  loaded_std    : 0.0497472744
+  res16k_mean   : 0.0000780560
+  res16k_std    : 0.0435199412
+  loaded_samples: 5320083
+  res16k_samples: 3546727
+
+[LibriTTS/train-clean-100/1183/133256]
+  files_ok      : 64
+  files_failed  : 0
+  loaded_mean   : 0.0000349406
+  loaded_std    : 0.0494341343
+  res16k_mean   : 0.0000349723
+  res16k_std    : 0.0470575450
+  loaded_samples: 6219357
+  res16k_samples: 4146241
+
+[LibriTTS/train-clean-100/1235/135883]
+  files_ok      : 5
+  files_failed  : 0
+  loaded_mean   : 0.0000586567
+  loaded_std    : 0.0521930813
+  res16k_mean   : 0.0000586825
+  res16k_std    : 0.0521336461
+  loaded_samples: 947520
+  res16k_samples: 631680
+
+[LibriTTS/train-clean-100/1235/135884]
+  files_ok      : 29
+  files_failed  : 0
+  loaded_mean   : -0.0002142938
+  loaded_std    : 0.0585356811
+  res16k_mean   : -0.0002143944
+  res16k_std    : 0.0585035475
+  loaded_samples: 7392238
+  res16k_samples: 4928160
+
+[LibriTTS/train-clean-100/1246/124548]
+  files_ok      : 45
+  files_failed  : 0
+  loaded_mean   : 0.0000305589
+  loaded_std    : 0.0341181467
+  res16k_mean   : 0.0000305704
+  res16k_std    : 0.0334163009
+  loaded_samples: 6456957
+  res16k_samples: 4304640
+
+[LibriTTS/train-clean-100/1246/124550]
+  files_ok      : 42
+  files_failed  : 0
+  loaded_mean   : -0.0885797037
+  loaded_std    : 0.0579571061
+  res16k_mean   : -0.0886208602
+  res16k_std    : 0.0578346321
+  loaded_samples: 8844485
+  res16k_samples: 5896328
+
+[LibriTTS/train-clean-100/1246/135815]
+  files_ok      : 80
+  files_failed  : 0
+  loaded_mean   : 0.0000171980
+  loaded_std    : 0.0565124897
+  res16k_mean   : 0.0000172041
+  res16k_std    : 0.0561799977
+  loaded_samples: 9042481
+  res16k_samples: 6028324
+
+[LibriTTS/train-clean-100/125/121124]
+  files_ok      : 90
+  files_failed  : 0
+  loaded_mean   : -0.0000018189
+  loaded_std    : 0.0586897172
+  res16k_mean   : -0.0000018191
+  res16k_std    : 0.0574154337
+  loaded_samples: 8474661
+  res16k_samples: 5649796
+
+[LibriTTS/train-clean-100/125/121342]
+  files_ok      : 44
+  files_failed  : 0
+  loaded_mean   : 0.0000440648
+  loaded_std    : 0.0293701652
+  res16k_mean   : 0.0000440854
+  res16k_std    : 0.0283853816
+  loaded_samples: 3313201
+  res16k_samples: 2208811
+
+[LibriTTS/train-clean-100/1263/138246]
+  files_ok      : 71
+  files_failed  : 0
+  loaded_mean   : -0.0000022572
+  loaded_std    : 0.0638450727
+  res16k_mean   : -0.0000022598
+  res16k_std    : 0.0637122396
+  loaded_samples: 12100553
+  res16k_samples: 8067041
+
+[LibriTTS/train-clean-100/1263/139804]
+  files_ok      : 48
+  files_failed  : 0
+  loaded_mean   : -0.0000023099
+  loaded_std    : 0.0712440256
+  res16k_mean   : -0.0000023097
+  res16k_std    : 0.0710294454
+  loaded_samples: 6980161
+  res16k_samples: 4653445
+
+[LibriTTS/train-clean-100/1263/141777]
+  files_ok      : 102
+  files_failed  : 0
+  loaded_mean   : 0.0000015038
+  loaded_std    : 0.0587138835
+  res16k_mean   : 0.0000015047
+  res16k_std    : 0.0584874488
+  loaded_samples: 14024644
+  res16k_samples: 9349773
+
+[LibriTTS/train-clean-100/1334/135589]
+  files_ok      : 121
+  files_failed  : 0
+  loaded_mean   : 0.0000307871
+  loaded_std    : 0.0560432950
+  res16k_mean   : 0.0000308037
+  res16k_std    : 0.0548562801
+  loaded_samples: 18327622
+  res16k_samples: 12218442
+
+[LibriTTS/train-clean-100/1355/39947]
+  files_ok      : 168
+  files_failed  : 0
+  loaded_mean   : -0.0000030206
+  loaded_std    : 0.0705129099
+  res16k_mean   : -0.0000030212
+  res16k_std    : 0.0700246050
+  loaded_samples: 37630531
+  res16k_samples: 25087069
+
+[LibriTTS/train-clean-100/1363/135842]
+  files_ok      : 2
+  files_failed  : 0
+  loaded_mean   : 0.1171930729
+  loaded_std    : 0.1173033965
+  res16k_mean   : 0.1172465691
+  res16k_std    : 0.1172791655
+  loaded_samples: 78960
+  res16k_samples: 52640
+
+[LibriTTS/train-clean-100/1363/139304]
+  files_ok      : 76
+  files_failed  : 0
+  loaded_mean   : -0.0000010494
+  loaded_std    : 0.0601532102
+  res16k_mean   : -0.0000010496
+  res16k_std    : 0.0600805576
+  loaded_samples: 14040238
+  res16k_samples: 9360163
+
+[LibriTTS/train-clean-100/1447/130550]
+  files_ok      : 6
+  files_failed  : 0
+  loaded_mean   : 0.0004507623
+  loaded_std    : 0.0264816358
+  res16k_mean   : 0.0004509821
+  res16k_std    : 0.0263899209
+  loaded_samples: 510240
+  res16k_samples: 340160
+
+[LibriTTS/train-clean-100/1447/17506]
+  files_ok      : 79
+  files_failed  : 0
+  loaded_mean   : -0.0000008029
+  loaded_std    : 0.0581292442
+  res16k_mean   : -0.0000008001
+  res16k_std    : 0.0577010912
+  loaded_samples: 10491841
+  res16k_samples: 6994562
+
+[LibriTTS/train-clean-100/1455/134435]
+  files_ok      : 11
+  files_failed  : 0
+  loaded_mean   : -0.0001021047
+  loaded_std    : 0.0607531285
+  res16k_mean   : -0.0001021536
+  res16k_std    : 0.0601880839
+  loaded_samples: 879122
+  res16k_samples: 586085
+
+[LibriTTS/train-clean-100/1455/138263]
+  files_ok      : 19
+  files_failed  : 0
+  loaded_mean   : -0.0000681305
+  loaded_std    : 0.0566183397
+  res16k_mean   : -0.0000681647
+  res16k_std    : 0.0561278972
+  loaded_samples: 1778638
+  res16k_samples: 1185761
+
+[LibriTTS/train-clean-100/150/126107]
+  files_ok      : 15
+  files_failed  : 0
+  loaded_mean   : 0.0296295713
+  loaded_std    : 0.0557282093
+  res16k_mean   : 0.0296432785
+  res16k_std    : 0.0544157511
+  loaded_samples: 1102080
+  res16k_samples: 734721
+
+[LibriTTS/train-clean-100/150/126112]
+  files_ok      : 16
+  files_failed  : 0
+  loaded_mean   : 0.0247504853
+  loaded_std    : 0.0433306257
+  res16k_mean   : 0.0247619346
+  res16k_std    : 0.0420986056
+  loaded_samples: 917761
+  res16k_samples: 611841
+
+[LibriTTS/train-clean-100/150/132655]
+  files_ok      : 3
+  files_failed  : 0
+  loaded_mean   : 0.0002493179
+  loaded_std    : 0.0464678540
+  res16k_mean   : 0.0002494249
+  res16k_std    : 0.0459508176
+  loaded_samples: 98880
+  res16k_samples: 65920
+
+[LibriTTS/train-clean-100/1502/122615]
+  files_ok      : 74
+  files_failed  : 0
+  loaded_mean   : 0.0069042128
+  loaded_std    : 0.0708525088
+  res16k_mean   : 0.0069074166
+  res16k_std    : 0.0708242931
+  loaded_samples: 13029616
+  res16k_samples: 8686426
+
+[LibriTTS/train-clean-100/1502/122619]
+  files_ok      : 81
+  files_failed  : 0
+  loaded_mean   : 0.0028639665
+  loaded_std    : 0.0715596859
+  res16k_mean   : 0.0028652955
+  res16k_std    : 0.0715396179
+  loaded_samples: 14341211
+  res16k_samples: 9560827
+
+[LibriTTS/train-clean-100/1553/140047]
+  files_ok      : 49
+  files_failed  : 0
+  loaded_mean   : 0.0000464805
+  loaded_std    : 0.0430646797
+  res16k_mean   : 0.0000465036
+  res16k_std    : 0.0416263290
+  loaded_samples: 10067516
+  res16k_samples: 6711683
+
+[LibriTTS/train-clean-100/1553/140048]
+  files_ok      : 95
+  files_failed  : 0
+  loaded_mean   : 0.0000566927
+  loaded_std    : 0.0605732793
+  res16k_mean   : 0.0000567164
+  res16k_std    : 0.0592017857
+  loaded_samples: 11874001
+  res16k_samples: 7916005
+
+[LibriTTS/train-clean-100/1578/140045]
+  files_ok      : 27
+  files_failed  : 0
+  loaded_mean   : -0.0000092417
+  loaded_std    : 0.0462492906
+  res16k_mean   : -0.0000092451
+  res16k_std    : 0.0462484120
+  loaded_samples: 3228000
+  res16k_samples: 2152002
+
+[LibriTTS/train-clean-100/1578/140049]
+  files_ok      : 43
+  files_failed  : 0
+  loaded_mean   : 0.0000069006
+  loaded_std    : 0.0815844388
+  res16k_mean   : 0.0000069091
+  res16k_std    : 0.0815825049
+  loaded_samples: 3693121
+  res16k_samples: 2462084
+
+[LibriTTS/train-clean-100/1578/6379]
+  files_ok      : 47
+  files_failed  : 0
+  loaded_mean   : -0.0001602534
+  loaded_std    : 0.0794477964
+  res16k_mean   : -0.0001603069
+  res16k_std    : 0.0793517352
+  loaded_samples: 1872481
+  res16k_samples: 1248326
+
+[LibriTTS/train-clean-100/1594/135914]
+  files_ok      : 38
+  files_failed  : 0
+  loaded_mean   : 0.0005311025
+  loaded_std    : 0.0339175728
+  res16k_mean   : 0.0005313511
+  res16k_std    : 0.0332972504
+  loaded_samples: 8910970
+  res16k_samples: 5940656
+
+[LibriTTS/train-clean-100/1624/142933]
+  files_ok      : 109
+  files_failed  : 0
+  loaded_mean   : 0.0000005158
+  loaded_std    : 0.0674524878
+  res16k_mean   : 0.0000005188
+  res16k_std    : 0.0668973899
+  loaded_samples: 11724237
+  res16k_samples: 7816163
+
+[LibriTTS/train-clean-100/1624/168623]
+  files_ok      : 32
+  files_failed  : 0
+  loaded_mean   : 0.0000039188
+  loaded_std    : 0.0802581370
+  res16k_mean   : 0.0000039286
+  res16k_std    : 0.0782954932
+  loaded_samples: 5186638
+  res16k_samples: 3457761
+
+[LibriTTS/train-clean-100/163/122947]
+  files_ok      : 2
+  files_failed  : 0
+  loaded_mean   : 0.0000355818
+  loaded_std    : 0.0374638685
+  res16k_mean   : 0.0000355912
+  res16k_std    : 0.0374577027
+  loaded_samples: 159361
+  res16k_samples: 106241
+
+[LibriTTS/train-clean-100/1737/142396]
+  files_ok      : 10
+  files_failed  : 0
+  loaded_mean   : 0.0000437166
+  loaded_std    : 0.0554903078
+  res16k_mean   : 0.0000437346
+  res16k_std    : 0.0504164782
+  loaded_samples: 1550400
+  res16k_samples: 1033600
+
+[LibriTTS/train-clean-100/1737/142397]
+  files_ok      : 17
+  files_failed  : 0
+  loaded_mean   : 0.0000491278
+  loaded_std    : 0.0540487372
+  res16k_mean   : 0.0000491521
+  res16k_std    : 0.0495109230
+  loaded_samples: 2645518
+  res16k_samples: 1763682
+
+[LibriTTS/train-clean-100/1737/146161]
+  files_ok      : 16
+  files_failed  : 0
+  loaded_mean   : -0.0000086526
+  loaded_std    : 0.0539372599
+  res16k_mean   : -0.0000086504
+  res16k_std    : 0.0441785395
+  loaded_samples: 3617520
+  res16k_samples: 2411680
+
+[LibriTTS/train-clean-100/1737/148989]
+  files_ok      : 9
+  files_failed  : 0
+  loaded_mean   : -0.0000246407
+  loaded_std    : 0.0645182325
+  res16k_mean   : -0.0000246770
+  res16k_std    : 0.0495202485
+  loaded_samples: 1207681
+  res16k_samples: 805121
+
+[LibriTTS/train-clean-100/1743/142912]
+  files_ok      : 65
+  files_failed  : 0
+  loaded_mean   : 0.0000214354
+  loaded_std    : 0.0601628715
+  res16k_mean   : 0.0000214511
+  res16k_std    : 0.0592232762
+  loaded_samples: 7024078
+  res16k_samples: 4682720
+
+[LibriTTS/train-clean-100/1743/142913]
+  files_ok      : 53
+  files_failed  : 0
+  loaded_mean   : -0.0000096103
+  loaded_std    : 0.0737412992
+  res16k_mean   : -0.0000096102
+  res16k_std    : 0.0734935525
+  loaded_samples: 4442400
+  res16k_samples: 2961600
+
+[LibriTTS/train-clean-100/1743/142914]
+  files_ok      : 81
+  files_failed  : 0
+  loaded_mean   : 0.0000184369
+  loaded_std    : 0.0491612210
+  res16k_mean   : 0.0000184447
+  res16k_std    : 0.0486123282
+  loaded_samples: 7885917
+  res16k_samples: 5257280
+
+[LibriTTS/train-clean-100/1841/150351]
+  files_ok      : 73
+  files_failed  : 0
+  loaded_mean   : -0.0000012580
+  loaded_std    : 0.0530329048
+  res16k_mean   : -0.0000012601
+  res16k_std    : 0.0500601611
+  loaded_samples: 12749764
+  res16k_samples: 8499849
+
+[LibriTTS/train-clean-100/1841/159771]
+  files_ok      : 126
+  files_failed  : 0
+  loaded_mean   : -0.0000004995
+  loaded_std    : 0.0587826452
+  res16k_mean   : -0.0000005015
+  res16k_std    : 0.0558811100
+  loaded_samples: 12175438
+  res16k_samples: 8116967
+
+[LibriTTS/train-clean-100/1841/179183]
+  files_ok      : 61
+  files_failed  : 0
+  loaded_mean   : -0.0000290011
+  loaded_std    : 0.0799451630
+  res16k_mean   : -0.0000290149
+  res16k_std    : 0.0764885324
+  loaded_samples: 10740239
+  res16k_samples: 7160165
+
+[LibriTTS/train-clean-100/1867/148436]
+  files_ok      : 69
+  files_failed  : 0
+  loaded_mean   : 0.0000661810
+  loaded_std    : 0.0490550053
+  res16k_mean   : 0.0000662106
+  res16k_std    : 0.0481862219
+  loaded_samples: 4806240
+  res16k_samples: 3204163
+
+[LibriTTS/train-clean-100/1867/154071]
+  files_ok      : 53
+  files_failed  : 0
+  loaded_mean   : 0.0000707063
+  loaded_std    : 0.0500000934
+  res16k_mean   : 0.0000707352
+  res16k_std    : 0.0489757229
+  loaded_samples: 4147677
+  res16k_samples: 2765126
+
+[LibriTTS/train-clean-100/1867/154075]
+  files_ok      : 110
+  files_failed  : 0
+  loaded_mean   : 0.0000758642
+  loaded_std    : 0.0554932538
+  res16k_mean   : 0.0000759018
+  res16k_std    : 0.0540577324
+  loaded_samples: 8402639
+  res16k_samples: 5601766
+
+[LibriTTS/train-clean-100/1898/145702]
+  files_ok      : 13
+  files_failed  : 0
+  loaded_mean   : -0.0003928715
+  loaded_std    : 0.0496875105
+  res16k_mean   : -0.0003930475
+  res16k_std    : 0.0486954526
+  loaded_samples: 1730160
+  res16k_samples: 1153440
+
+[LibriTTS/train-clean-100/1898/145715]
+  files_ok      : 4
+  files_failed  : 0
+  loaded_mean   : -0.0005232841
+  loaded_std    : 0.0298438497
+  res16k_mean   : -0.0005235261
+  res16k_std    : 0.0287640014
+  loaded_samples: 1014240
+  res16k_samples: 676161
+
+[LibriTTS/train-clean-100/1898/145720]
+  files_ok      : 2
+  files_failed  : 0
+  loaded_mean   : 0.0000219612
+  loaded_std    : 0.0502368208
+  res16k_mean   : 0.0000219691
+  res16k_std    : 0.0502201589
+  loaded_samples: 249840
+  res16k_samples: 166560
+
+[LibriTTS/train-clean-100/1898/145724]
+  files_ok      : 19
+  files_failed  : 0
+  loaded_mean   : -0.0004248414
+  loaded_std    : 0.0483852590
+  res16k_mean   : -0.0004250324
+  res16k_std    : 0.0474808653
+  loaded_samples: 3545038
+  res16k_samples: 2363359
+
+[LibriTTS/train-clean-100/19/198]
+  files_ok      : 10
+  files_failed  : 0
+  loaded_mean   : -0.0000701365
+  loaded_std    : 0.0604381119
+  res16k_mean   : -0.0000701391
+  res16k_std    : 0.0603180240
+  loaded_samples: 794161
+  res16k_samples: 529441
+
+[LibriTTS/train-clean-100/19/227]
+  files_ok      : 6
+  files_failed  : 0
+  loaded_mean   : -0.0000997196
+  loaded_std    : 0.0783600192
+  res16k_mean   : -0.0000997691
+  res16k_std    : 0.0782936518
+  loaded_samples: 754559
+  res16k_samples: 503040
+
+[LibriTTS/train-clean-100/1926/143879]
+  files_ok      : 12
+  files_failed  : 0
+  loaded_mean   : 0.0000591121
+  loaded_std    : 0.0416127021
+  res16k_mean   : 0.0000591386
+  res16k_std    : 0.0409805388
+  loaded_samples: 2851201
+  res16k_samples: 1900802
+
+[LibriTTS/train-clean-100/1926/147979]
+  files_ok      : 38
+  files_failed  : 0
+  loaded_mean   : 0.0001021948
+  loaded_std    : 0.0542026487
+  res16k_mean   : 0.0001022415
+  res16k_std    : 0.0535276662
+  loaded_samples: 4110481
+  res16k_samples: 2740328
+
+[LibriTTS/train-clean-100/1926/147987]
+  files_ok      : 35
+  files_failed  : 0
+  loaded_mean   : 0.0000728644
+  loaded_std    : 0.0419472472
+  res16k_mean   : 0.0000729031
+  res16k_std    : 0.0414464783
+  loaded_samples: 3718561
+  res16k_samples: 2479041
+
+[LibriTTS/train-clean-100/196/122150]
+  files_ok      : 42
+  files_failed  : 0
+  loaded_mean   : 0.0000008587
+  loaded_std    : 0.0425519498
+  res16k_mean   : 0.0000008596
+  res16k_std    : 0.0424203991
+  loaded_samples: 9187197
+  res16k_samples: 6124802
+
+[LibriTTS/train-clean-100/196/122152]
+  files_ok      : 52
+  files_failed  : 0
+  loaded_mean   : 0.0000010597
+  loaded_std    : 0.0504919512
+  res16k_mean   : 0.0000010592
+  res16k_std    : 0.0503601817
+  loaded_samples: 9301201
+  res16k_samples: 6200803
+
+[LibriTTS/train-clean-100/196/122159]
+  files_ok      : 91
+  files_failed  : 0
+  loaded_mean   : 0.0000006925
+  loaded_std    : 0.0500363489
+  res16k_mean   : 0.0000006927
+  res16k_std    : 0.0499362371
+  loaded_samples: 10093203
+  res16k_samples: 6728809
+
+[LibriTTS/train-clean-100/1963/142393]
+  files_ok      : 56
+  files_failed  : 0
+  loaded_mean   : -0.0000083292
+  loaded_std    : 0.1342018320
+  res16k_mean   : -0.0000083322
+  res16k_std    : 0.1341829048
+  loaded_samples: 10546081
+  res16k_samples: 7030728
+
+[LibriTTS/train-clean-100/1963/142776]
+  files_ok      : 25
+  files_failed  : 0
+  loaded_mean   : -0.0000050515
+  loaded_std    : 0.0467610517
+  res16k_mean   : -0.0000050532
+  res16k_std    : 0.0455741881
+  loaded_samples: 3703919
+  res16k_samples: 2469280
+
+[LibriTTS/train-clean-100/1963/147036]
+  files_ok      : 36
+  files_failed  : 0
+  loaded_mean   : 0.0000459453
+  loaded_std    : 0.0572996149
+  res16k_mean   : 0.0000459740
+  res16k_std    : 0.0562474034
+  loaded_samples: 1524241
+  res16k_samples: 1016161
+
+[LibriTTS/train-clean-100/1970/10594]
+  files_ok      : 22
+  files_failed  : 0
+  loaded_mean   : 0.0012757349
+  loaded_std    : 0.0733084302
+  res16k_mean   : 0.0012763462
+  res16k_std    : 0.0731731030
+  loaded_samples: 1477199
+  res16k_samples: 984801
+
+[LibriTTS/train-clean-100/1970/26100]
+  files_ok      : 74
+  files_failed  : 0
+  loaded_mean   : -0.0000020230
+  loaded_std    : 0.0703502130
+  res16k_mean   : -0.0000020307
+  res16k_std    : 0.0702679747
+  loaded_samples: 6796557
+  res16k_samples: 4531040
+
+[LibriTTS/train-clean-100/1970/28415]
+  files_ok      : 106
+  files_failed  : 0
+  loaded_mean   : -0.0000020824
+  loaded_std    : 0.0722752805
+  res16k_mean   : -0.0000020861
+  res16k_std    : 0.0721545262
+  loaded_samples: 9933586
+  res16k_samples: 6622398
+
+[LibriTTS/train-clean-100/198/126831]
+  files_ok      : 15
+  files_failed  : 0
+  loaded_mean   : -0.0061234557
+  loaded_std    : 0.0392426949
+  res16k_mean   : -0.0061262766
+  res16k_std    : 0.0391990130
+  loaded_samples: 872881
+  res16k_samples: 581923
+
+[LibriTTS/train-clean-100/198/129977]
+  files_ok      : 2
+  files_failed  : 0
+  loaded_mean   : -0.0602636087
+  loaded_std    : 0.1901370322
+  res16k_mean   : -0.0602914531
+  res16k_std    : 0.1900383094
+  loaded_samples: 49920
+  res16k_samples: 33280
+
+[LibriTTS/train-clean-100/198/209]
+  files_ok      : 14
+  files_failed  : 0
+  loaded_mean   : 0.0001149490
+  loaded_std    : 0.0431384101
+  res16k_mean   : 0.0001150015
+  res16k_std    : 0.0426076946
+  loaded_samples: 1487999
+  res16k_samples: 992001
+
+[LibriTTS/train-clean-100/1992/141719]
+  files_ok      : 13
+  files_failed  : 0
+  loaded_mean   : 0.0000003938
+  loaded_std    : 0.0649750297
+  res16k_mean   : 0.0000004036
+  res16k_std    : 0.0640257326
+  loaded_samples: 2416321
+  res16k_samples: 1610881
+
+[LibriTTS/train-clean-100/200/124139]
+  files_ok      : 47
+  files_failed  : 0
+  loaded_mean   : 0.0000010134
+  loaded_std    : 0.0249413376
+  res16k_mean   : 0.0000010136
+  res16k_std    : 0.0249395113
+  loaded_samples: 7506238
+  res16k_samples: 5004164
+
+[LibriTTS/train-clean-100/200/124140]
+  files_ok      : 52
+  files_failed  : 0
+  loaded_mean   : -0.0000013086
+  loaded_std    : 0.0382970680
+  res16k_mean   : -0.0000013092
+  res16k_std    : 0.0382922010
+  loaded_samples: 6743279
+  res16k_samples: 4495520
+
+[LibriTTS/train-clean-100/200/126784]
+  files_ok      : 92
+  files_failed  : 0
+  loaded_mean   : 0.0000018513
+  loaded_std    : 0.0176723656
+  res16k_mean   : 0.0000018522
+  res16k_std    : 0.0176720744
+  loaded_samples: 19653366
+  res16k_samples: 13102267
+
+[LibriTTS/train-clean-100/2002/139469]
+  files_ok      : 84
+  files_failed  : 0
+  loaded_mean   : 0.0000321987
+  loaded_std    : 0.0698168281
+  res16k_mean   : 0.0000322146
+  res16k_std    : 0.0692572368
+  loaded_samples: 20434088
+  res16k_samples: 13622742
+
+[LibriTTS/train-clean-100/2007/132570]
+  files_ok      : 17
+  files_failed  : 0
+  loaded_mean   : 0.0001241295
+  loaded_std    : 0.0605566660
+  res16k_mean   : 0.0001241971
+  res16k_std    : 0.0591868174
+  loaded_samples: 2181121
+  res16k_samples: 1454083
+
+[LibriTTS/train-clean-100/2007/149877]
+  files_ok      : 35
+  files_failed  : 0
+  loaded_mean   : 0.0001217660
+  loaded_std    : 0.0525953982
+  res16k_mean   : 0.0001218227
+  res16k_std    : 0.0520948048
+  loaded_samples: 4023366
+  res16k_samples: 2682250
+
+[LibriTTS/train-clean-100/201/122255]
+  files_ok      : 64
+  files_failed  : 0
+  loaded_mean   : -0.0000839927
+  loaded_std    : 0.0563106992
+  res16k_mean   : -0.0000840326
+  res16k_std    : 0.0557052501
+  loaded_samples: 9225596
+  res16k_samples: 6150408
+
+[LibriTTS/train-clean-100/201/127786]
+  files_ok      : 8
+  files_failed  : 0
+  loaded_mean   : -0.0001522475
+  loaded_std    : 0.0685063049
+  res16k_mean   : -0.0001523262
+  res16k_std    : 0.0682328940
+  loaded_samples: 1583041
+  res16k_samples: 1055362
+
+[LibriTTS/train-clean-100/2092/145706]
+  files_ok      : 100
+  files_failed  : 0
+  loaded_mean   : -0.0000006999
+  loaded_std    : 0.0483377097
+  res16k_mean   : -0.0000007003
+  res16k_std    : 0.0483388195
+  loaded_samples: 24076825
+  res16k_samples: 16051236
+
+[LibriTTS/train-clean-100/2092/145709]
+  files_ok      : 32
+  files_failed  : 0
+  loaded_mean   : -0.0000002218
+  loaded_std    : 0.0714822887
+  res16k_mean   : -0.0000002220
+  res16k_std    : 0.0714670424
+  loaded_samples: 7359840
+  res16k_samples: 4906560
+
+[LibriTTS/train-clean-100/211/122425]
+  files_ok      : 34
+  files_failed  : 0
+  loaded_mean   : -0.0224150474
+  loaded_std    : 0.0489241596
+  res16k_mean   : -0.0224252956
+  res16k_std    : 0.0482064632
+  loaded_samples: 1489682
+  res16k_samples: 993130
+
+[LibriTTS/train-clean-100/211/122442]
+  files_ok      : 36
+  files_failed  : 0
+  loaded_mean   : -0.0179796881
+  loaded_std    : 0.0503336914
+  res16k_mean   : -0.0179878815
+  res16k_std    : 0.0492687854
+  loaded_samples: 1406641
+  res16k_samples: 937770
+
+[LibriTTS/train-clean-100/2136/5140]
+  files_ok      : 36
+  files_failed  : 0
+  loaded_mean   : -0.0000175646
+  loaded_std    : 0.0772973419
+  res16k_mean   : -0.0000175751
+  res16k_std    : 0.0769536465
+  loaded_samples: 6847678
+  res16k_samples: 4565123
+
+[LibriTTS/train-clean-100/2136/5143]
+  files_ok      : 75
+  files_failed  : 0
+  loaded_mean   : -0.0000188134
+  loaded_std    : 0.0775373186
+  res16k_mean   : -0.0000188249
+  res16k_std    : 0.0772599838
+  loaded_samples: 7778153
+  res16k_samples: 5185444
+
+[LibriTTS/train-clean-100/2136/5147]
+  files_ok      : 57
+  files_failed  : 0
+  loaded_mean   : -0.0000184763
+  loaded_std    : 0.0837506153
+  res16k_mean   : -0.0000184820
+  res16k_std    : 0.0835382883
+  loaded_samples: 7740957
+  res16k_samples: 5160643
+
+[LibriTTS/train-clean-100/2159/179154]
+  files_ok      : 6
+  files_failed  : 0
+  loaded_mean   : 0.0001647712
+  loaded_std    : 0.0514210775
+  res16k_mean   : 0.0001648410
+  res16k_std    : 0.0507040110
+  loaded_samples: 395039
+  res16k_samples: 263360
+
+[LibriTTS/train-clean-100/2159/179156]
+  files_ok      : 1
+  files_failed  : 0
+  loaded_mean   : -0.0004155308
+  loaded_std    : 0.0365851977
+  res16k_mean   : -0.0004157272
+  res16k_std    : 0.0362557622
+  loaded_samples: 94080
+  res16k_samples: 62720
+
+[LibriTTS/train-clean-100/2159/179157]
+  files_ok      : 1
+  files_failed  : 0
+  loaded_mean   : -0.0001266814
+  loaded_std    : 0.0882121378
+  res16k_mean   : -0.0001267395
+  res16k_std    : 0.0881763588
+  loaded_samples: 51120
+  res16k_samples: 34080
+
+[LibriTTS/train-clean-100/2182/181173]
+  files_ok      : 63
+  files_failed  : 0
+  loaded_mean   : -0.0000010666
+  loaded_std    : 0.0714459619
+  res16k_mean   : -0.0000010664
+  res16k_std    : 0.0713286445
+  loaded_samples: 6885110
+  res16k_samples: 4590082
+
+[LibriTTS/train-clean-100/2182/181183]
+  files_ok      : 59
+  files_failed  : 0
+  loaded_mean   : -0.0000008631
+  loaded_std    : 0.0579656860
+  res16k_mean   : -0.0000008628
+  res16k_std    : 0.0578858941
+  loaded_samples: 7102320
+  res16k_samples: 4734882
+
+[LibriTTS/train-clean-100/2196/170151]
+  files_ok      : 48
+  files_failed  : 0
+  loaded_mean   : -0.0000020162
+  loaded_std    : 0.0551051473
+  res16k_mean   : -0.0000020169
+  res16k_std    : 0.0548245546
+  loaded_samples: 10376399
+  res16k_samples: 6917603
+
+[LibriTTS/train-clean-100/2196/170379]
+  files_ok      : 44
+  files_failed  : 0
+  loaded_mean   : -0.0000011232
+  loaded_std    : 0.0671955379
+  res16k_mean   : -0.0000011238
+  res16k_std    : 0.0669998927
+  loaded_samples: 9757919
+  res16k_samples: 6505281
+
+[LibriTTS/train-clean-100/2196/174172]
+  files_ok      : 16
+  files_failed  : 0
+  loaded_mean   : 0.0000048745
+  loaded_std    : 0.0565448134
+  res16k_mean   : 0.0000048723
+  res16k_std    : 0.0559904241
+  loaded_samples: 1607520
+  res16k_samples: 1071682
+
+[LibriTTS/train-clean-100/226/122538]
+  files_ok      : 53
+  files_failed  : 0
+  loaded_mean   : 0.0040610059
+  loaded_std    : 0.0400543630
+  res16k_mean   : 0.0040628882
+  res16k_std    : 0.0393863274
+  loaded_samples: 6000241
+  res16k_samples: 4000164
+
+[LibriTTS/train-clean-100/226/131532]
+  files_ok      : 1
+  files_failed  : 0
+  loaded_mean   : 0.0066511603
+  loaded_std    : 0.0797389047
+  res16k_mean   : 0.0066537733
+  res16k_std    : 0.0796560127
+  loaded_samples: 11519
+  res16k_samples: 7680
+
+[LibriTTS/train-clean-100/226/131533]
+  files_ok      : 2
+  files_failed  : 0
+  loaded_mean   : 0.0056388640
+  loaded_std    : 0.0483251660
+  res16k_mean   : 0.0056414952
+  res16k_std    : 0.0482857438
+  loaded_samples: 95040
+  res16k_samples: 63360
+
+[LibriTTS/train-clean-100/2289/152253]
+  files_ok      : 31
+  files_failed  : 0
+  loaded_mean   : 0.0000412983
+  loaded_std    : 0.0398237021
+  res16k_mean   : 0.0000413202
+  res16k_std    : 0.0374430819
+  loaded_samples: 4795679
+  res16k_samples: 3197120
+
+[LibriTTS/train-clean-100/2289/152254]
+  files_ok      : 45
+  files_failed  : 0
+  loaded_mean   : 0.0000376933
+  loaded_std    : 0.0482046800
+  res16k_mean   : 0.0000377062
+  res16k_std    : 0.0462447594
+  loaded_samples: 6545279
+  res16k_samples: 4363521
+
+[LibriTTS/train-clean-100/2289/152257]
+  files_ok      : 36
+  files_failed  : 0
+  loaded_mean   : 0.0000308391
+  loaded_std    : 0.0305146858
+  res16k_mean   : 0.0000308508
+  res16k_std    : 0.0294228764
+  loaded_samples: 5777282
+  res16k_samples: 3851524
+
+[LibriTTS/train-clean-100/2289/152258]
+  files_ok      : 58
+  files_failed  : 0
+  loaded_mean   : 0.0000448540
+  loaded_std    : 0.0460999453
+  res16k_mean   : 0.0000448702
+  res16k_std    : 0.0443980211
+  loaded_samples: 6224159
+  res16k_samples: 4149444
+
+[LibriTTS/train-clean-100/229/130880]
+  files_ok      : 114
+  files_failed  : 0
+  loaded_mean   : 0.0000605092
+  loaded_std    : 0.0613990847
+  res16k_mean   : 0.0000605377
+  res16k_std    : 0.0613343679
+  loaded_samples: 13469509
+  res16k_samples: 8979694
+
+[LibriTTS/train-clean-100/233/155990]
+  files_ok      : 86
+  files_failed  : 0
+  loaded_mean   : 0.0001162147
+  loaded_std    : 0.0444709566
+  res16k_mean   : 0.0001162684
+  res16k_std    : 0.0444416323
+  loaded_samples: 22949987
+  res16k_samples: 15300012
+
+[LibriTTS/train-clean-100/2384/152900]
+  files_ok      : 26
+  files_failed  : 0
+  loaded_mean   : -0.0000099650
+  loaded_std    : 0.0704945613
+  res16k_mean   : -0.0000099730
+  res16k_std    : 0.0702364379
+  loaded_samples: 3849841
+  res16k_samples: 2566566
+
+[LibriTTS/train-clean-100/2391/145015]
+  files_ok      : 85
+  files_failed  : 0
+  loaded_mean   : -0.0000006484
+  loaded_std    : 0.0642665378
+  res16k_mean   : -0.0000006478
+  res16k_std    : 0.0640608696
+  loaded_samples: 17084885
+  res16k_samples: 11389944
+
+[LibriTTS/train-clean-100/2416/152137]
+  files_ok      : 121
+  files_failed  : 0
+  loaded_mean   : -0.0123236111
+  loaded_std    : 0.0564928023
+  res16k_mean   : -0.0123293215
+  res16k_std    : 0.0560905578
+  loaded_samples: 18003132
+  res16k_samples: 12002112
+
+[LibriTTS/train-clean-100/2416/152139]
+  files_ok      : 170
+  files_failed  : 0
+  loaded_mean   : -0.0061924388
+  loaded_std    : 0.0566003184
+  res16k_mean   : -0.0061953110
+  res16k_std    : 0.0563585713
+  loaded_samples: 21917778
+  res16k_samples: 14611875
+
+[LibriTTS/train-clean-100/2436/2476]
+  files_ok      : 46
+  files_failed  : 0
+  loaded_mean   : 0.0000078348
+  loaded_std    : 0.0513698569
+  res16k_mean   : 0.0000078321
+  res16k_std    : 0.0509791749
+  loaded_samples: 2843039
+  res16k_samples: 1895360
+
+[LibriTTS/train-clean-100/2436/2477]
+  files_ok      : 35
+  files_failed  : 0
+  loaded_mean   : 0.0000176445
+  loaded_std    : 0.0559653356
+  res16k_mean   : 0.0000176580
+  res16k_std    : 0.0555098319
+  loaded_samples: 1535759
+  res16k_samples: 1023841
+
+[LibriTTS/train-clean-100/2436/2481]
+  files_ok      : 121
+  files_failed  : 0
+  loaded_mean   : -0.0001590194
+  loaded_std    : 0.0675794327
+  res16k_mean   : -0.0001590947
+  res16k_std    : 0.0673959864
+  loaded_samples: 6428886
+  res16k_samples: 4285931
+
+[LibriTTS/train-clean-100/248/130652]
+  files_ok      : 4
+  files_failed  : 0
+  loaded_mean   : 0.0001894134
+  loaded_std    : 0.0364572351
+  res16k_mean   : 0.0001893372
+  res16k_std    : 0.0336342897
+  loaded_samples: 157679
+  res16k_samples: 105120
+
+[LibriTTS/train-clean-100/248/130697]
+  files_ok      : 1
+  files_failed  : 0
+  loaded_mean   : 0.0004593157
+  loaded_std    : 0.0923688791
+  res16k_mean   : 0.0004596248
+  res16k_std    : 0.0846124977
+  loaded_samples: 35040
+  res16k_samples: 23360
+
+[LibriTTS/train-clean-100/250/140277]
+  files_ok      : 16
+  files_failed  : 0
+  loaded_mean   : 0.0000094314
+  loaded_std    : 0.0336353097
+  res16k_mean   : 0.0000094347
+  res16k_std    : 0.0334414305
+  loaded_samples: 4675200
+  res16k_samples: 3116800
+
+[LibriTTS/train-clean-100/250/142276]
+  files_ok      : 68
+  files_failed  : 0
+  loaded_mean   : 0.0000012214
+  loaded_std    : 0.0582495448
+  res16k_mean   : 0.0000012242
+  res16k_std    : 0.0576544633
+  loaded_samples: 14789530
+  res16k_samples: 9859698
+
+[LibriTTS/train-clean-100/250/142286]
+  files_ok      : 111
+  files_failed  : 0
+  loaded_mean   : -0.0000553675
+  loaded_std    : 0.0625233814
+  res16k_mean   : -0.0000553935
+  res16k_std    : 0.0624692872
+  loaded_samples: 12546959
+  res16k_samples: 8364650
+
+[LibriTTS/train-clean-100/2514/149482]
+  files_ok      : 53
+  files_failed  : 0
+  loaded_mean   : -0.0000018283
+  loaded_std    : 0.0734862313
+  res16k_mean   : -0.0000018288
+  res16k_std    : 0.0734658672
+  loaded_samples: 13107849
+  res16k_samples: 8738577
+
+[LibriTTS/train-clean-100/2518/154825]
+  files_ok      : 25
+  files_failed  : 0
+  loaded_mean   : -0.0000006703
+  loaded_std    : 0.0451273826
+  res16k_mean   : -0.0000006693
+  res16k_std    : 0.0449838686
+  loaded_samples: 3913684
+  res16k_samples: 2609125
+
+[LibriTTS/train-clean-100/2518/154826]
+  files_ok      : 22
+  files_failed  : 0
+  loaded_mean   : -0.0000006803
+  loaded_std    : 0.0507667096
+  res16k_mean   : -0.0000006819
+  res16k_std    : 0.0506317103
+  loaded_samples: 4204325
+  res16k_samples: 2802886
+
+[LibriTTS/train-clean-100/254/12312]
+  files_ok      : 10
+  files_failed  : 0
+  loaded_mean   : -0.0000009397
+  loaded_std    : 0.0764965317
+  res16k_mean   : -0.0000009367
+  res16k_std    : 0.0761187906
+  loaded_samples: 1470240
+  res16k_samples: 980160
+
+[LibriTTS/train-clean-100/254/145458]
+  files_ok      : 25
+  files_failed  : 0
+  loaded_mean   : -0.0000005583
+  loaded_std    : 0.0675471774
+  res16k_mean   : -0.0000005582
+  res16k_std    : 0.0675316982
+  loaded_samples: 7034640
+  res16k_samples: 4689760
+
+[LibriTTS/train-clean-100/254/27760]
+  files_ok      : 46
+  files_failed  : 0
+  loaded_mean   : 0.0000001512
+  loaded_std    : 0.0609714291
+  res16k_mean   : 0.0000001512
+  res16k_std    : 0.0607464435
+  loaded_samples: 7788481
+  res16k_samples: 5192325
+
+[LibriTTS/train-clean-100/26/495]
+  files_ok      : 30
+  files_failed  : 0
+  loaded_mean   : -0.0000453896
+  loaded_std    : 0.0589093842
+  res16k_mean   : -0.0000454142
+  res16k_std    : 0.0572750728
+  loaded_samples: 9086163
+  res16k_samples: 6057447
+
+[LibriTTS/train-clean-100/26/496]
+  files_ok      : 32
+  files_failed  : 0
+  loaded_mean   : -0.0000443841
+  loaded_std    : 0.0566728306
+  res16k_mean   : -0.0000444085
+  res16k_std    : 0.0556984336
+  loaded_samples: 13702087
+  res16k_samples: 9134733
+
+[LibriTTS/train-clean-100/2691/156745]
+  files_ok      : 9
+  files_failed  : 0
+  loaded_mean   : -0.0000340061
+  loaded_std    : 0.0733507124
+  res16k_mean   : -0.0000340172
+  res16k_std    : 0.0732719465
+  loaded_samples: 1159202
+  res16k_samples: 772802
+
+[LibriTTS/train-clean-100/2691/156750]
+  files_ok      : 20
+  files_failed  : 0
+  loaded_mean   : -0.0000004348
+  loaded_std    : 0.0708739375
+  res16k_mean   : -0.0000004324
+  res16k_std    : 0.0708391984
+  loaded_samples: 2963758
+  res16k_samples: 1975842
+
+[LibriTTS/train-clean-100/2691/156755]
+  files_ok      : 38
+  files_failed  : 0
+  loaded_mean   : -0.0000490862
+  loaded_std    : 0.0674068510
+  res16k_mean   : -0.0000491096
+  res16k_std    : 0.0673781305
+  loaded_samples: 7727038
+  res16k_samples: 5151362
+
+[LibriTTS/train-clean-100/27/123349]
+  files_ok      : 39
+  files_failed  : 0
+  loaded_mean   : 0.0000772697
+  loaded_std    : 0.0337612415
+  res16k_mean   : 0.0000773040
+  res16k_std    : 0.0331813254
+  loaded_samples: 7468564
+  res16k_samples: 4979049
+
+[LibriTTS/train-clean-100/27/124992]
+  files_ok      : 44
+  files_failed  : 0
+  loaded_mean   : 0.0000668613
+  loaded_std    : 0.0302461981
+  res16k_mean   : 0.0000668928
+  res16k_std    : 0.0298807608
+  loaded_samples: 9379686
+  res16k_samples: 6253134
+
+[LibriTTS/train-clean-100/2764/36616]
+  files_ok      : 2
+  files_failed  : 0
+  loaded_mean   : 0.0007648613
+  loaded_std    : 0.0467243540
+  res16k_mean   : 0.0007651836
+  res16k_std    : 0.0463070297
+  loaded_samples: 42239
+  res16k_samples: 28160
+
+[LibriTTS/train-clean-100/2817/142371]
+  files_ok      : 29
+  files_failed  : 0
+  loaded_mean   : -0.0000135451
+  loaded_std    : 0.0462900841
+  res16k_mean   : -0.0000135476
+  res16k_std    : 0.0455235174
+  loaded_samples: 4469041
+  res16k_samples: 2979363
+
+[LibriTTS/train-clean-100/2817/142380]
+  files_ok      : 35
+  files_failed  : 0
+  loaded_mean   : -0.0000156621
+  loaded_std    : 0.0410584121
+  res16k_mean   : -0.0000156722
+  res16k_std    : 0.0406022733
+  loaded_samples: 5519282
+  res16k_samples: 3679524
+
+[LibriTTS/train-clean-100/2836/5354]
+  files_ok      : 134
+  files_failed  : 0
+  loaded_mean   : 0.0000165131
+  loaded_std    : 0.0645140837
+  res16k_mean   : 0.0000165208
+  res16k_std    : 0.0621007542
+  loaded_samples: 15239520
+  res16k_samples: 10159695
+
+[LibriTTS/train-clean-100/2836/5355]
+  files_ok      : 148
+  files_failed  : 0
+  loaded_mean   : -0.0000106079
+  loaded_std    : 0.0690047453
+  res16k_mean   : -0.0000106056
+  res16k_std    : 0.0666869425
+  loaded_samples: 15558476
+  res16k_samples: 10372336
+
+[LibriTTS/train-clean-100/2843/152918]
+  files_ok      : 117
+  files_failed  : 0
+  loaded_mean   : -0.0000006214
+  loaded_std    : 0.0418072868
+  res16k_mean   : -0.0000006220
+  res16k_std    : 0.0416993053
+  loaded_samples: 20670274
+  res16k_samples: 13780208
+
+[LibriTTS/train-clean-100/289/121665]
+  files_ok      : 4
+  files_failed  : 0
+  loaded_mean   : -0.0000171730
+  loaded_std    : 0.1167039119
+  res16k_mean   : -0.0000171717
+  res16k_std    : 0.1154220736
+  loaded_samples: 348240
+  res16k_samples: 232160
+
+[LibriTTS/train-clean-100/2893/139310]
+  files_ok      : 107
+  files_failed  : 0
+  loaded_mean   : -0.0001088859
+  loaded_std    : 0.0459862227
+  res16k_mean   : -0.0001089368
+  res16k_std    : 0.0458171814
+  loaded_samples: 10408084
+  res16k_samples: 6938729
+
+[LibriTTS/train-clean-100/2893/139322]
+  files_ok      : 74
+  files_failed  : 0
+  loaded_mean   : -0.0001476830
+  loaded_std    : 0.0571171824
+  res16k_mean   : -0.0001477504
+  res16k_std    : 0.0569096005
+  loaded_samples: 10672792
+  res16k_samples: 7115203
+
+[LibriTTS/train-clean-100/2910/131096]
+  files_ok      : 68
+  files_failed  : 0
+  loaded_mean   : -0.0000161942
+  loaded_std    : 0.0558227679
+  res16k_mean   : -0.0000162006
+  res16k_std    : 0.0558251225
+  loaded_samples: 13058160
+  res16k_samples: 8705447
+
+[LibriTTS/train-clean-100/2911/12359]
+  files_ok      : 17
+  files_failed  : 0
+  loaded_mean   : -0.0000040878
+  loaded_std    : 0.0719913024
+  res16k_mean   : -0.0000040917
+  res16k_std    : 0.0719514454
+  loaded_samples: 3304080
+  res16k_samples: 2202720
+
+[LibriTTS/train-clean-100/2911/15045]
+  files_ok      : 20
+  files_failed  : 0
+  loaded_mean   : -0.0000036592
+  loaded_std    : 0.0675279933
+  res16k_mean   : -0.0000036616
+  res16k_std    : 0.0674828158
+  loaded_samples: 4278479
+  res16k_samples: 2852320
+
+[LibriTTS/train-clean-100/2911/15084]
+  files_ok      : 13
+  files_failed  : 0
+  loaded_mean   : 0.0000136549
+  loaded_std    : 0.0768348321
+  res16k_mean   : 0.0000136624
+  res16k_std    : 0.0767958287
+  loaded_samples: 2370720
+  res16k_samples: 1580480
+
+[LibriTTS/train-clean-100/2911/7601]
+  files_ok      : 88
+  files_failed  : 0
+  loaded_mean   : -0.0000030848
+  loaded_std    : 0.0681463307
+  res16k_mean   : -0.0000030857
+  res16k_std    : 0.0680945978
+  loaded_samples: 8729750
+  res16k_samples: 5819844
+
+[LibriTTS/train-clean-100/2952/407]
+  files_ok      : 43
+  files_failed  : 0
+  loaded_mean   : 0.0008462501
+  loaded_std    : 0.0625786960
+  res16k_mean   : 0.0008466471
+  res16k_std    : 0.0623675868
+  loaded_samples: 6508558
+  res16k_samples: 4339040
+
+[LibriTTS/train-clean-100/2952/408]
+  files_ok      : 57
+  files_failed  : 0
+  loaded_mean   : 0.0000704104
+  loaded_std    : 0.0603344791
+  res16k_mean   : 0.0000704429
+  res16k_std    : 0.0600551163
+  loaded_samples: 8541839
+  res16k_samples: 5694560
+
+[LibriTTS/train-clean-100/2952/410]
+  files_ok      : 109
+  files_failed  : 0
+  loaded_mean   : 0.0007771796
+  loaded_std    : 0.0510534212
+  res16k_mean   : 0.0007775410
+  res16k_std    : 0.0507587819
+  loaded_samples: 14328490
+  res16k_samples: 9552347
+
+[LibriTTS/train-clean-100/298/126790]
+  files_ok      : 39
+  files_failed  : 0
+  loaded_mean   : 0.0000695191
+  loaded_std    : 0.0394192760
+  res16k_mean   : 0.0000695502
+  res16k_std    : 0.0392852797
+  loaded_samples: 4984813
+  res16k_samples: 3323216
+
+[LibriTTS/train-clean-100/298/126791]
+  files_ok      : 46
+  files_failed  : 0
+  loaded_mean   : 0.0000864284
+  loaded_std    : 0.0525919860
+  res16k_mean   : 0.0000864785
+  res16k_std    : 0.0524176880
+  loaded_samples: 5685837
+  res16k_samples: 3790565
+
+[LibriTTS/train-clean-100/2989/138028]
+  files_ok      : 26
+  files_failed  : 0
+  loaded_mean   : -0.0106876482
+  loaded_std    : 0.0570863216
+  res16k_mean   : -0.0106926027
+  res16k_std    : 0.0569276669
+  loaded_samples: 4724161
+  res16k_samples: 3149447
+
+[LibriTTS/train-clean-100/2989/138035]
+  files_ok      : 33
+  files_failed  : 0
+  loaded_mean   : -0.0105031361
+  loaded_std    : 0.0554088002
+  res16k_mean   : -0.0105080099
+  res16k_std    : 0.0552012246
+  loaded_samples: 7760873
+  res16k_samples: 5173923
+
+[LibriTTS/train-clean-100/302/123504]
+  files_ok      : 15
+  files_failed  : 0
+  loaded_mean   : -0.0000542820
+  loaded_std    : 0.0630722994
+  res16k_mean   : -0.0000543064
+  res16k_std    : 0.0597310302
+  loaded_samples: 3775200
+  res16k_samples: 2516802
+
+[LibriTTS/train-clean-100/302/123516]
+  files_ok      : 34
+  files_failed  : 0
+  loaded_mean   : 0.0001270770
+  loaded_std    : 0.0702071064
+  res16k_mean   : 0.0001271315
+  res16k_std    : 0.0684960348
+  loaded_samples: 7647839
+  res16k_samples: 5098561
+
+[LibriTTS/train-clean-100/302/123523]
+  files_ok      : 19
+  files_failed  : 0
+  loaded_mean   : 0.0000241240
+  loaded_std    : 0.0685611359
+  res16k_mean   : 0.0000241469
+  res16k_std    : 0.0651099949
+  loaded_samples: 3449760
+  res16k_samples: 2299841
+
+[LibriTTS/train-clean-100/307/127535]
+  files_ok      : 18
+  files_failed  : 0
+  loaded_mean   : -0.0001129476
+  loaded_std    : 0.1656510057
+  res16k_mean   : -0.0001129684
+  res16k_std    : 0.1650196223
+  loaded_samples: 925435
+  res16k_samples: 616959
+
+[LibriTTS/train-clean-100/307/127539]
+  files_ok      : 2
+  files_failed  : 0
+  loaded_mean   : -0.0000157765
+  loaded_std    : 0.1642097314
+  res16k_mean   : -0.0000157445
+  res16k_std    : 0.1631643120
+  loaded_samples: 108000
+  res16k_samples: 72000
+
+[LibriTTS/train-clean-100/311/124404]
+  files_ok      : 6
+  files_failed  : 0
+  loaded_mean   : 0.0000801191
+  loaded_std    : 0.0350489155
+  res16k_mean   : 0.0000801544
+  res16k_std    : 0.0349130966
+  loaded_samples: 2010960
+  res16k_samples: 1340642
+
+[LibriTTS/train-clean-100/3112/9554]
+  files_ok      : 19
+  files_failed  : 0
+  loaded_mean   : -0.0014236810
+  loaded_std    : 0.0965962593
+  res16k_mean   : -0.0014243467
+  res16k_std    : 0.0958310261
+  loaded_samples: 2959440
+  res16k_samples: 1972960
+
+[LibriTTS/train-clean-100/3112/9555]
+  files_ok      : 48
+  files_failed  : 0
+  loaded_mean   : -0.0014818286
+  loaded_std    : 0.0853646417
+  res16k_mean   : -0.0014825161
+  res16k_std    : 0.0847826253
+  loaded_samples: 7231207
+  res16k_samples: 4820818
+
+[LibriTTS/train-clean-100/3168/173564]
+  files_ok      : 40
+  files_failed  : 0
+  loaded_mean   : -0.0000053163
+  loaded_std    : 0.0661439649
+  res16k_mean   : -0.0000053142
+  res16k_std    : 0.0656333673
+  loaded_samples: 5134558
+  res16k_samples: 3423040
+
+[LibriTTS/train-clean-100/3168/173565]
+  files_ok      : 44
+  files_failed  : 0
+  loaded_mean   : 0.0001077918
+  loaded_std    : 0.0581630133
+  res16k_mean   : 0.0001078382
+  res16k_std    : 0.0569647229
+  loaded_samples: 7314960
+  res16k_samples: 4876645
+
+[LibriTTS/train-clean-100/32/21625]
+  files_ok      : 11
+  files_failed  : 0
+  loaded_mean   : 0.0000003027
+  loaded_std    : 0.0654176890
+  res16k_mean   : 0.0000003010
+  res16k_std    : 0.0635990188
+  loaded_samples: 1851840
+  res16k_samples: 1234560
+
+[LibriTTS/train-clean-100/32/21631]
+  files_ok      : 33
+  files_failed  : 0
+  loaded_mean   : -0.0000006728
+  loaded_std    : 0.0538810077
+  res16k_mean   : -0.0000006690
+  res16k_std    : 0.0528060404
+  loaded_samples: 2873520
+  res16k_samples: 1915680
+
+[LibriTTS/train-clean-100/32/21634]
+  files_ok      : 19
+  files_failed  : 0
+  loaded_mean   : 0.0000007644
+  loaded_std    : 0.0611534453
+  res16k_mean   : 0.0000007559
+  res16k_std    : 0.0597624828
+  loaded_samples: 2008800
+  res16k_samples: 1339200
+
+[LibriTTS/train-clean-100/32/4137]
+  files_ok      : 64
+  files_failed  : 0
+  loaded_mean   : 0.0000009220
+  loaded_std    : 0.0628613924
+  res16k_mean   : 0.0000009228
+  res16k_std    : 0.0626644495
+  loaded_samples: 10367995
+  res16k_samples: 6912002
+
+[LibriTTS/train-clean-100/3214/167602]
+  files_ok      : 35
+  files_failed  : 0
+  loaded_mean   : -0.0000259560
+  loaded_std    : 0.0750525480
+  res16k_mean   : -0.0000259653
+  res16k_std    : 0.0750413661
+  loaded_samples: 2120880
+  res16k_samples: 1413921
+
+[LibriTTS/train-clean-100/3214/167606]
+  files_ok      : 11
+  files_failed  : 0
+  loaded_mean   : 0.0017800871
+  loaded_std    : 0.0699365134
+  res16k_mean   : 0.0017809209
+  res16k_std    : 0.0682772294
+  loaded_samples: 687120
+  res16k_samples: 458080
+
+[LibriTTS/train-clean-100/322/124146]
+  files_ok      : 13
+  files_failed  : 0
+  loaded_mean   : -0.0001235696
+  loaded_std    : 0.0934384012
+  res16k_mean   : -0.0001236474
+  res16k_std    : 0.0923069823
+  loaded_samples: 1199757
+  res16k_samples: 799840
+
+[LibriTTS/train-clean-100/322/124147]
+  files_ok      : 5
+  files_failed  : 0
+  loaded_mean   : 0.0000379506
+  loaded_std    : 0.0549069377
+  res16k_mean   : 0.0000379667
+  res16k_std    : 0.0538896397
+  loaded_samples: 210720
+  res16k_samples: 140482
+
+[LibriTTS/train-clean-100/3235/11599]
+  files_ok      : 21
+  files_failed  : 0
+  loaded_mean   : -0.0000002369
+  loaded_std    : 0.0896539788
+  res16k_mean   : -0.0000002438
+  res16k_std    : 0.0892162309
+  loaded_samples: 2442960
+  res16k_samples: 1628640
+
+[LibriTTS/train-clean-100/3235/28433]
+  files_ok      : 53
+  files_failed  : 0
+  loaded_mean   : 0.0000003448
+  loaded_std    : 0.0851867559
+  res16k_mean   : 0.0000003463
+  res16k_std    : 0.0850269135
+  loaded_samples: 12868805
+  res16k_samples: 8579208
+
+[LibriTTS/train-clean-100/3235/28452]
+  files_ok      : 36
+  files_failed  : 0
+  loaded_mean   : 0.0000007107
+  loaded_std    : 0.0767114650
+  res16k_mean   : 0.0000007127
+  res16k_std    : 0.0765921443
+  loaded_samples: 8708400
+  res16k_samples: 5805600
+
+[LibriTTS/train-clean-100/3240/131231]
+  files_ok      : 70
+  files_failed  : 0
+  loaded_mean   : -0.0000014908
+  loaded_std    : 0.0670805595
+  res16k_mean   : -0.0000014911
+  res16k_std    : 0.0670552989
+  loaded_samples: 12836893
+  res16k_samples: 8557941
+
+[LibriTTS/train-clean-100/3240/131232]
+  files_ok      : 60
+  files_failed  : 0
+  loaded_mean   : -0.0000023066
+  loaded_std    : 0.0679258398
+  res16k_mean   : -0.0000023077
+  res16k_std    : 0.0679054054
+  loaded_samples: 10654083
+  res16k_samples: 7102732
+
+[LibriTTS/train-clean-100/3242/67153]
+  files_ok      : 63
+  files_failed  : 0
+  loaded_mean   : -0.0000019099
+  loaded_std    : 0.0674776399
+  res16k_mean   : -0.0000019118
+  res16k_std    : 0.0674493966
+  loaded_samples: 10088156
+  res16k_samples: 6725442
+
+[LibriTTS/train-clean-100/3242/67168]
+  files_ok      : 18
+  files_failed  : 0
+  loaded_mean   : -0.0000003853
+  loaded_std    : 0.0700923206
+  res16k_mean   : -0.0000003864
+  res16k_std    : 0.0700707576
+  loaded_samples: 2052720
+  res16k_samples: 1368481
+
+[LibriTTS/train-clean-100/3242/8112]
+  files_ok      : 81
+  files_failed  : 0
+  loaded_mean   : -0.0000116619
+  loaded_std    : 0.0796842020
+  res16k_mean   : -0.0000116662
+  res16k_std    : 0.0796486904
+  loaded_samples: 4672799
+  res16k_samples: 3115206
+
+[LibriTTS/train-clean-100/3259/158083]
+  files_ok      : 167
+  files_failed  : 0
+  loaded_mean   : -0.0000010369
+  loaded_std    : 0.0595357146
+  res16k_mean   : -0.0000010349
+  res16k_std    : 0.0593618775
+  loaded_samples: 18148833
+  res16k_samples: 12099258
+
+[LibriTTS/train-clean-100/332/128985]
+  files_ok      : 10
+  files_failed  : 0
+  loaded_mean   : -0.0001897126
+  loaded_std    : 0.0585464535
+  res16k_mean   : -0.0001898021
+  res16k_std    : 0.0583651953
+  loaded_samples: 2506802
+  res16k_samples: 1671203
+
+[LibriTTS/train-clean-100/3374/298025]
+  files_ok      : 23
+  files_failed  : 0
+  loaded_mean   : -0.0002528030
+  loaded_std    : 0.0540213398
+  res16k_mean   : -0.0002529175
+  res16k_std    : 0.0524896169
+  loaded_samples: 5462160
+  res16k_samples: 3641440
+
+[LibriTTS/train-clean-100/3374/298026]
+  files_ok      : 34
+  files_failed  : 0
+  loaded_mean   : -0.0000647732
+  loaded_std    : 0.0512676022
+  res16k_mean   : -0.0000648022
+  res16k_std    : 0.0500047288
+  loaded_samples: 8488323
+  res16k_samples: 5658884
+
+[LibriTTS/train-clean-100/3374/298032]
+  files_ok      : 16
+  files_failed  : 0
+  loaded_mean   : -0.0000150718
+  loaded_std    : 0.0613256594
+  res16k_mean   : -0.0000150834
+  res16k_std    : 0.0600684412
+  loaded_samples: 3992158
+  res16k_samples: 2661441
+
+[LibriTTS/train-clean-100/3436/172162]
+  files_ok      : 47
+  files_failed  : 0
+  loaded_mean   : -0.0000071033
+  loaded_std    : 0.0549161058
+  res16k_mean   : -0.0000071066
+  res16k_std    : 0.0546603346
+  loaded_samples: 9725278
+  res16k_samples: 6483525
+
+[LibriTTS/train-clean-100/3436/172171]
+  files_ok      : 50
+  files_failed  : 0
+  loaded_mean   : -0.0000030368
+  loaded_std    : 0.0712703273
+  res16k_mean   : -0.0000030375
+  res16k_std    : 0.0706490069
+  loaded_samples: 8558156
+  res16k_samples: 5705444
+
+[LibriTTS/train-clean-100/3440/171006]
+  files_ok      : 4
+  files_failed  : 0
+  loaded_mean   : 0.0036585890
+  loaded_std    : 0.0525388454
+  res16k_mean   : 0.0036603957
+  res16k_std    : 0.0515675730
+  loaded_samples: 166320
+  res16k_samples: 110880
+
+[LibriTTS/train-clean-100/3440/171009]
+  files_ok      : 61
+  files_failed  : 0
+  loaded_mean   : 0.0037155189
+  loaded_std    : 0.0644629911
+  res16k_mean   : 0.0037172415
+  res16k_std    : 0.0642358740
+  loaded_samples: 8010967
+  res16k_samples: 5340656
+
+[LibriTTS/train-clean-100/3486/166424]
+  files_ok      : 76
+  files_failed  : 0
+  loaded_mean   : -0.0000005833
+  loaded_std    : 0.0321062092
+  res16k_mean   : -0.0000005820
+  res16k_std    : 0.0319664866
+  loaded_samples: 5247119
+  res16k_samples: 3498085
+
+[LibriTTS/train-clean-100/3486/166446]
+  files_ok      : 160
+  files_failed  : 0
+  loaded_mean   : 0.0007497655
+  loaded_std    : 0.2020375259
+  res16k_mean   : 0.0007501071
+  res16k_std    : 0.2008973259
+  loaded_samples: 18537125
+  res16k_samples: 12358117
+
+[LibriTTS/train-clean-100/3526/175658]
+  files_ok      : 16
+  files_failed  : 0
+  loaded_mean   : 0.0020248594
+  loaded_std    : 0.0518721204
+  res16k_mean   : 0.0020258106
+  res16k_std    : 0.0488381855
+  loaded_samples: 3324484
+  res16k_samples: 2216325
+
+[LibriTTS/train-clean-100/3526/176651]
+  files_ok      : 27
+  files_failed  : 0
+  loaded_mean   : 0.0017469219
+  loaded_std    : 0.0456655269
+  res16k_mean   : 0.0017477216
+  res16k_std    : 0.0370788283
+  loaded_samples: 5942400
+  res16k_samples: 3961600
+
+[LibriTTS/train-clean-100/3526/176653]
+  files_ok      : 93
+  files_failed  : 0
+  loaded_mean   : 0.0008540471
+  loaded_std    : 0.0320795479
+  res16k_mean   : 0.0008544446
+  res16k_std    : 0.0307943619
+  loaded_samples: 12451680
+  res16k_samples: 8301130
+
+[LibriTTS/train-clean-100/3607/135982]
+  files_ok      : 1
+  files_failed  : 0
+  loaded_mean   : 0.0074524363
+  loaded_std    : 0.1320140474
+  res16k_mean   : 0.0074558623
+  res16k_std    : 0.1319307986
+  loaded_samples: 30000
+  res16k_samples: 20000
+
+[LibriTTS/train-clean-100/3607/29116]
+  files_ok      : 154
+  files_failed  : 0
+  loaded_mean   : -0.0001731881
+  loaded_std    : 0.0555689022
+  res16k_mean   : -0.0001732737
+  res16k_std    : 0.0551635657
+  loaded_samples: 11716801
+  res16k_samples: 7811209
+
+[LibriTTS/train-clean-100/3664/11714]
+  files_ok      : 46
+  files_failed  : 0
+  loaded_mean   : 0.0000120715
+  loaded_std    : 0.0607387950
+  res16k_mean   : 0.0000120777
+  res16k_std    : 0.0607009188
+  loaded_samples: 7868637
+  res16k_samples: 5245761
+
+[LibriTTS/train-clean-100/3664/178355]
+  files_ok      : 68
+  files_failed  : 0
+  loaded_mean   : 0.0000026293
+  loaded_std    : 0.0835213476
+  res16k_mean   : 0.0000026305
+  res16k_std    : 0.0834825121
+  loaded_samples: 11857673
+  res16k_samples: 7905122
+
+[LibriTTS/train-clean-100/3664/178366]
+  files_ok      : 61
+  files_failed  : 0
+  loaded_mean   : 0.0000012763
+  loaded_std    : 0.0837337732
+  res16k_mean   : 0.0000012762
+  res16k_std    : 0.0836871717
+  loaded_samples: 11473435
+  res16k_samples: 7648959
+
+[LibriTTS/train-clean-100/3699/175950]
+  files_ok      : 13
+  files_failed  : 0
+  loaded_mean   : -0.0000045705
+  loaded_std    : 0.0936410731
+  res16k_mean   : -0.0000045720
+  res16k_std    : 0.0935809278
+  loaded_samples: 3507600
+  res16k_samples: 2338400
+
+[LibriTTS/train-clean-100/3699/19401]
+  files_ok      : 16
+  files_failed  : 0
+  loaded_mean   : 0.0000569810
+  loaded_std    : 0.0873296437
+  res16k_mean   : 0.0000570111
+  res16k_std    : 0.0872215481
+  loaded_samples: 2078160
+  res16k_samples: 1385441
+
+[LibriTTS/train-clean-100/3699/19402]
+  files_ok      : 10
+  files_failed  : 0
+  loaded_mean   : -0.0000193200
+  loaded_std    : 0.0826182508
+  res16k_mean   : -0.0000193270
+  res16k_std    : 0.0823910668
+  loaded_samples: 2964719
+  res16k_samples: 1976481
+
+[LibriTTS/train-clean-100/3699/47246]
+  files_ok      : 21
+  files_failed  : 0
+  loaded_mean   : 0.0000000853
+  loaded_std    : 0.1075615228
+  res16k_mean   : 0.0000000829
+  res16k_std    : 0.1072397989
+  loaded_samples: 5716561
+  res16k_samples: 3811042
+
+[LibriTTS/train-clean-100/3723/171115]
+  files_ok      : 5
+  files_failed  : 0
+  loaded_mean   : 0.0000030025
+  loaded_std    : 0.0627300466
+  res16k_mean   : 0.0000029997
+  res16k_std    : 0.0623950920
+  loaded_samples: 178320
+  res16k_samples: 118880
+
+[LibriTTS/train-clean-100/3723/171631]
+  files_ok      : 1
+  files_failed  : 0
+  loaded_mean   : -0.0000179554
+  loaded_std    : 0.0619790651
+  res16k_mean   : -0.0000179605
+  res16k_std    : 0.0609241758
+  loaded_samples: 423360
+  res16k_samples: 282240
+
+[LibriTTS/train-clean-100/374/180298]
+  files_ok      : 82
+  files_failed  : 0
+  loaded_mean   : -0.0000233322
+  loaded_std    : 0.0611673014
+  res16k_mean   : -0.0000233427
+  res16k_std    : 0.0611361307
+  loaded_samples: 15124090
+  res16k_samples: 10082737
+
+[LibriTTS/train-clean-100/374/180299]
+  files_ok      : 87
+  files_failed  : 0
+  loaded_mean   : -0.0000327427
+  loaded_std    : 0.0608079964
+  res16k_mean   : -0.0000327576
+  res16k_std    : 0.0607758975
+  loaded_samples: 10965124
+  res16k_samples: 7310093
+
+[LibriTTS/train-clean-100/3807/4923]
+  files_ok      : 6
+  files_failed  : 0
+  loaded_mean   : 0.0002531411
+  loaded_std    : 0.1416512352
+  res16k_mean   : 0.0002532637
+  res16k_std    : 0.1416597784
+  loaded_samples: 375840
+  res16k_samples: 250560
+
+[LibriTTS/train-clean-100/3830/12529]
+  files_ok      : 57
+  files_failed  : 0
+  loaded_mean   : -0.0000011353
+  loaded_std    : 0.0610238178
+  res16k_mean   : -0.0000011354
+  res16k_std    : 0.0609192345
+  loaded_samples: 7626479
+  res16k_samples: 5084323
+
+[LibriTTS/train-clean-100/3830/12530]
+  files_ok      : 78
+  files_failed  : 0
+  loaded_mean   : 0.0000012044
+  loaded_std    : 0.0636193126
+  res16k_mean   : 0.0000012053
+  res16k_std    : 0.0632009165
+  loaded_samples: 12867840
+  res16k_samples: 8578573
+
+[LibriTTS/train-clean-100/3830/12531]
+  files_ok      : 68
+  files_failed  : 0
+  loaded_mean   : 0.0000142283
+  loaded_std    : 0.0527735340
+  res16k_mean   : 0.0000142341
+  res16k_std    : 0.0526246808
+  loaded_samples: 8910237
+  res16k_samples: 5940161
+
+[LibriTTS/train-clean-100/3830/12535]
+  files_ok      : 64
+  files_failed  : 0
+  loaded_mean   : 0.0000134850
+  loaded_std    : 0.0445132820
+  res16k_mean   : 0.0000134899
+  res16k_std    : 0.0442286361
+  loaded_samples: 8753516
+  res16k_samples: 5835679
+
+[LibriTTS/train-clean-100/3857/180923]
+  files_ok      : 30
+  files_failed  : 0
+  loaded_mean   : -0.0001167662
+  loaded_std    : 0.0616580912
+  res16k_mean   : -0.0001168194
+  res16k_std    : 0.0611737156
+  loaded_samples: 7363920
+  res16k_samples: 4909280
+
+[LibriTTS/train-clean-100/3857/182315]
+  files_ok      : 55
+  files_failed  : 0
+  loaded_mean   : -0.0001677527
+  loaded_std    : 0.0702904549
+  res16k_mean   : -0.0001678282
+  res16k_std    : 0.0692194380
+  loaded_samples: 9356881
+  res16k_samples: 6237924
+
+[LibriTTS/train-clean-100/3857/182317]
+  files_ok      : 59
+  files_failed  : 0
+  loaded_mean   : -0.0001788812
+  loaded_std    : 0.0655005274
+  res16k_mean   : -0.0001789681
+  res16k_std    : 0.0644663444
+  loaded_samples: 7597919
+  res16k_samples: 5065283
+
+[LibriTTS/train-clean-100/3879/173592]
+  files_ok      : 129
+  files_failed  : 0
+  loaded_mean   : -0.0000042386
+  loaded_std    : 0.0715661850
+  res16k_mean   : -0.0000042401
+  res16k_std    : 0.0715788043
+  loaded_samples: 21349000
+  res16k_samples: 14232698
+
+[LibriTTS/train-clean-100/3879/174923]
+  files_ok      : 134
+  files_failed  : 0
+  loaded_mean   : -0.0000036524
+  loaded_std    : 0.0665606968
+  res16k_mean   : -0.0000036545
+  res16k_std    : 0.0665715005
+  loaded_samples: 17792412
+  res16k_samples: 11861629
+
+[LibriTTS/train-clean-100/39/121914]
+  files_ok      : 19
+  files_failed  : 0
+  loaded_mean   : 0.0002452626
+  loaded_std    : 0.0667828038
+  res16k_mean   : 0.0002453500
+  res16k_std    : 0.0654193110
+  loaded_samples: 797285
+  res16k_samples: 531527
+
+[LibriTTS/train-clean-100/39/121915]
+  files_ok      : 6
+  files_failed  : 0
+  loaded_mean   : 0.0000609936
+  loaded_std    : 0.0279998097
+  res16k_mean   : 0.0000610268
+  res16k_std    : 0.0274640660
+  loaded_samples: 565438
+  res16k_samples: 376960
+
+[LibriTTS/train-clean-100/39/121916]
+  files_ok      : 6
+  files_failed  : 0
+  loaded_mean   : 0.0002017446
+  loaded_std    : 0.0519668811
+  res16k_mean   : 0.0002018456
+  res16k_std    : 0.0506443711
+  loaded_samples: 632639
+  res16k_samples: 421760
+
+[LibriTTS/train-clean-100/3947/13260]
+  files_ok      : 1
+  files_failed  : 0
+  loaded_mean   : -0.0000659906
+  loaded_std    : 0.0971703713
+  res16k_mean   : -0.0000659765
+  res16k_std    : 0.0971397876
+  loaded_samples: 25200
+  res16k_samples: 16800
+
+[LibriTTS/train-clean-100/3947/13262]
+  files_ok      : 7
+  files_failed  : 0
+  loaded_mean   : -0.0000488685
+  loaded_std    : 0.0888833428
+  res16k_mean   : -0.0000488804
+  res16k_std    : 0.0888606796
+  loaded_samples: 378240
+  res16k_samples: 252160
+
+[LibriTTS/train-clean-100/3982/178459]
+  files_ok      : 147
+  files_failed  : 0
+  loaded_mean   : 0.0000035544
+  loaded_std    : 0.0536164260
+  res16k_mean   : 0.0000035561
+  res16k_std    : 0.0534252274
+  loaded_samples: 14249523
+  res16k_samples: 9499700
+
+[LibriTTS/train-clean-100/3982/182255]
+  files_ok      : 58
+  files_failed  : 0
+  loaded_mean   : 0.0000207579
+  loaded_std    : 0.0455494828
+  res16k_mean   : 0.0000207658
+  res16k_std    : 0.0453561700
+  loaded_samples: 8248562
+  res16k_samples: 5499054
+
+[LibriTTS/train-clean-100/3983/5331]
+  files_ok      : 82
+  files_failed  : 0
+  loaded_mean   : -0.0000100978
+  loaded_std    : 0.0672874768
+  res16k_mean   : -0.0000100993
+  res16k_std    : 0.0668936086
+  loaded_samples: 5405276
+  res16k_samples: 3603530
+
+[LibriTTS/train-clean-100/3983/5371]
+  files_ok      : 77
+  files_failed  : 0
+  loaded_mean   : -0.0000105793
+  loaded_std    : 0.0738869843
+  res16k_mean   : -0.0000105885
+  res16k_std    : 0.0734220599
+  loaded_samples: 5329921
+  res16k_samples: 3553287
+
+[LibriTTS/train-clean-100/40/121026]
+  files_ok      : 248
+  files_failed  : 0
+  loaded_mean   : -0.0000344176
+  loaded_std    : 0.0399008698
+  res16k_mean   : -0.0000344330
+  res16k_std    : 0.0398945033
+  loaded_samples: 35322630
+  res16k_samples: 23548488
+
+[LibriTTS/train-clean-100/40/222]
+  files_ok      : 95
+  files_failed  : 0
+  loaded_mean   : -0.0000590867
+  loaded_std    : 0.0619100228
+  res16k_mean   : -0.0000591138
+  res16k_std    : 0.0618853733
+  loaded_samples: 15207117
+  res16k_samples: 10138093
+
+[LibriTTS/train-clean-100/4014/186175]
+  files_ok      : 12
+  files_failed  : 0
+  loaded_mean   : -0.0002827951
+  loaded_std    : 0.0744378855
+  res16k_mean   : -0.0002829831
+  res16k_std    : 0.0743327838
+  loaded_samples: 647279
+  res16k_samples: 431520
+
+[LibriTTS/train-clean-100/4014/186176]
+  files_ok      : 10
+  files_failed  : 0
+  loaded_mean   : -0.0000890009
+  loaded_std    : 0.0660921982
+  res16k_mean   : -0.0000890425
+  res16k_std    : 0.0660871045
+  loaded_samples: 692640
+  res16k_samples: 461760
+
+[LibriTTS/train-clean-100/4014/186179]
+  files_ok      : 3
+  files_failed  : 0
+  loaded_mean   : -0.0001823609
+  loaded_std    : 0.0758646001
+  res16k_mean   : -0.0001823825
+  res16k_std    : 0.0757972144
+  loaded_samples: 102961
+  res16k_samples: 68641
+
+[LibriTTS/train-clean-100/4014/186183]
+  files_ok      : 18
+  files_failed  : 0
+  loaded_mean   : -0.0000408916
+  loaded_std    : 0.0592567126
+  res16k_mean   : -0.0000408980
+  res16k_std    : 0.0588229725
+  loaded_samples: 2149920
+  res16k_samples: 1433282
+
+[LibriTTS/train-clean-100/4018/103416]
+  files_ok      : 118
+  files_failed  : 0
+  loaded_mean   : -0.0000046577
+  loaded_std    : 0.0799889415
+  res16k_mean   : -0.0000046556
+  res16k_std    : 0.0799135756
+  loaded_samples: 9822473
+  res16k_samples: 6548326
+
+[LibriTTS/train-clean-100/4018/107312]
+  files_ok      : 47
+  files_failed  : 0
+  loaded_mean   : -0.0000026851
+  loaded_std    : 0.0698253006
+  res16k_mean   : -0.0000026846
+  res16k_std    : 0.0696983798
+  loaded_samples: 5088951
+  res16k_samples: 3392640
+
+[LibriTTS/train-clean-100/4018/107338]
+  files_ok      : 46
+  files_failed  : 0
+  loaded_mean   : -0.0000047478
+  loaded_std    : 0.0793780692
+  res16k_mean   : -0.0000047499
+  res16k_std    : 0.0792179608
+  loaded_samples: 8067595
+  res16k_samples: 5378401
+
+[LibriTTS/train-clean-100/403/126855]
+  files_ok      : 26
+  files_failed  : 0
+  loaded_mean   : 0.0014426731
+  loaded_std    : 0.0676920302
+  res16k_mean   : 0.0014433431
+  res16k_std    : 0.0676212208
+  loaded_samples: 2730481
+  res16k_samples: 1820325
+
+[LibriTTS/train-clean-100/403/128339]
+  files_ok      : 11
+  files_failed  : 0
+  loaded_mean   : 0.0020833232
+  loaded_std    : 0.0889498987
+  res16k_mean   : 0.0020842859
+  res16k_std    : 0.0888629854
+  loaded_samples: 1109521
+  res16k_samples: 739681
+
+[LibriTTS/train-clean-100/403/216]
+  files_ok      : 5
+  files_failed  : 0
+  loaded_mean   : 0.0024435714
+  loaded_std    : 0.1025055921
+  res16k_mean   : 0.0024447058
+  res16k_std    : 0.1024635866
+  loaded_samples: 265200
+  res16k_samples: 176800
+
+[LibriTTS/train-clean-100/405/130894]
+  files_ok      : 148
+  files_failed  : 0
+  loaded_mean   : 0.0000279102
+  loaded_std    : 0.0635437404
+  res16k_mean   : 0.0000279230
+  res16k_std    : 0.0630603698
+  loaded_samples: 18846972
+  res16k_samples: 12564675
+
+[LibriTTS/train-clean-100/405/130895]
+  files_ok      : 81
+  files_failed  : 0
+  loaded_mean   : 0.0000071217
+  loaded_std    : 0.0603279255
+  res16k_mean   : 0.0000071231
+  res16k_std    : 0.0598576402
+  loaded_samples: 14081286
+  res16k_samples: 9387537
+
+[LibriTTS/train-clean-100/4051/10927]
+  files_ok      : 59
+  files_failed  : 0
+  loaded_mean   : -0.0000688973
+  loaded_std    : 0.0602908680
+  res16k_mean   : -0.0000689412
+  res16k_std    : 0.0560748853
+  loaded_samples: 7075441
+  res16k_samples: 4716961
+
+[LibriTTS/train-clean-100/4051/11217]
+  files_ok      : 42
+  files_failed  : 0
+  loaded_mean   : -0.0001042552
+  loaded_std    : 0.0598064562
+  res16k_mean   : -0.0001043198
+  res16k_std    : 0.0555487916
+  loaded_samples: 6537599
+  res16k_samples: 4358402
+
+[LibriTTS/train-clean-100/4051/11218]
+  files_ok      : 72
+  files_failed  : 0
+  loaded_mean   : -0.0000525407
+  loaded_std    : 0.0576454260
+  res16k_mean   : -0.0000525643
+  res16k_std    : 0.0504783247
+  loaded_samples: 10611129
+  res16k_samples: 7074096
+
+[LibriTTS/train-clean-100/4088/158077]
+  files_ok      : 82
+  files_failed  : 0
+  loaded_mean   : -0.0000687921
+  loaded_std    : 0.0586467790
+  res16k_mean   : -0.0000688219
+  res16k_std    : 0.0578004461
+  loaded_samples: 9650193
+  res16k_samples: 6433489
+
+[LibriTTS/train-clean-100/4088/158079]
+  files_ok      : 37
+  files_failed  : 0
+  loaded_mean   : -0.0000001128
+  loaded_std    : 0.0540949703
+  res16k_mean   : -0.0000001157
+  res16k_std    : 0.0529966175
+  loaded_samples: 3201368
+  res16k_samples: 2134257
+
+[LibriTTS/train-clean-100/412/126975]
+  files_ok      : 235
+  files_failed  : 0
+  loaded_mean   : -0.0000197188
+  loaded_std    : 0.0770252800
+  res16k_mean   : -0.0000197278
+  res16k_std    : 0.0770534345
+  loaded_samples: 41112248
+  res16k_samples: 27408230
+
+[LibriTTS/train-clean-100/4137/11701]
+  files_ok      : 142
+  files_failed  : 0
+  loaded_mean   : -0.0000092277
+  loaded_std    : 0.0650017069
+  res16k_mean   : -0.0000092341
+  res16k_std    : 0.0643699193
+  loaded_samples: 12851525
+  res16k_samples: 8567694
+
+[LibriTTS/train-clean-100/4137/11702]
+  files_ok      : 137
+  files_failed  : 0
+  loaded_mean   : -0.0000313200
+  loaded_std    : 0.0629666957
+  res16k_mean   : -0.0000313353
+  res16k_std    : 0.0627776369
+  loaded_samples: 13354557
+  res16k_samples: 8903055
+
+[LibriTTS/train-clean-100/4160/11549]
+  files_ok      : 57
+  files_failed  : 0
+  loaded_mean   : 0.0000104357
+  loaded_std    : 0.0619113832
+  res16k_mean   : 0.0000104402
+  res16k_std    : 0.0618065559
+  loaded_samples: 7198560
+  res16k_samples: 4799045
+
+[LibriTTS/train-clean-100/4160/11550]
+  files_ok      : 74
+  files_failed  : 0
+  loaded_mean   : -0.0000010332
+  loaded_std    : 0.0638423347
+  res16k_mean   : -0.0000010343
+  res16k_std    : 0.0637273478
+  loaded_samples: 8920079
+  res16k_samples: 5946723
+
+[LibriTTS/train-clean-100/4160/14187]
+  files_ok      : 70
+  files_failed  : 0
+  loaded_mean   : -0.0000010716
+  loaded_std    : 0.0565590014
+  res16k_mean   : -0.0000010706
+  res16k_std    : 0.0564301505
+  loaded_samples: 9099842
+  res16k_samples: 6066565
+
+[LibriTTS/train-clean-100/4195/17507]
+  files_ok      : 79
+  files_failed  : 0
+  loaded_mean   : 0.0000014179
+  loaded_std    : 0.0714893678
+  res16k_mean   : 0.0000014189
+  res16k_std    : 0.0713282582
+  loaded_samples: 8037122
+  res16k_samples: 5358086
+
+[LibriTTS/train-clean-100/4195/186236]
+  files_ok      : 76
+  files_failed  : 0
+  loaded_mean   : 0.0000027279
+  loaded_std    : 0.0636523531
+  res16k_mean   : 0.0000027293
+  res16k_std    : 0.0635213543
+  loaded_samples: 6603360
+  res16k_samples: 4402240
+
+[LibriTTS/train-clean-100/4195/186237]
+  files_ok      : 88
+  files_failed  : 0
+  loaded_mean   : -0.0000006708
+  loaded_std    : 0.0709159412
+  res16k_mean   : -0.0000006705
+  res16k_std    : 0.0707047713
+  loaded_samples: 7998480
+  res16k_samples: 5332323
+
+[LibriTTS/train-clean-100/4195/186238]
+  files_ok      : 91
+  files_failed  : 0
+  loaded_mean   : -0.0000014158
+  loaded_std    : 0.0633225189
+  res16k_mean   : -0.0000014153
+  res16k_std    : 0.0631330093
+  loaded_samples: 6610800
+  res16k_samples: 4407203
+
+[LibriTTS/train-clean-100/4214/7146]
+  files_ok      : 170
+  files_failed  : 0
+  loaded_mean   : 0.0000552088
+  loaded_std    : 0.0806056135
+  res16k_mean   : 0.0000552341
+  res16k_std    : 0.0805649056
+  loaded_samples: 17053429
+  res16k_samples: 11368985
+
+[LibriTTS/train-clean-100/426/122819]
+  files_ok      : 3
+  files_failed  : 0
+  loaded_mean   : 0.0203983258
+  loaded_std    : 0.0798699199
+  res16k_mean   : 0.0204077561
+  res16k_std    : 0.0796458327
+  loaded_samples: 125520
+  res16k_samples: 83680
+
+[LibriTTS/train-clean-100/426/122821]
+  files_ok      : 45
+  files_failed  : 0
+  loaded_mean   : 0.0001052767
+  loaded_std    : 0.0675129914
+  res16k_mean   : 0.0001053277
+  res16k_std    : 0.0674774507
+  loaded_samples: 3683761
+  res16k_samples: 2455844
+
+[LibriTTS/train-clean-100/426/122822]
+  files_ok      : 24
+  files_failed  : 0
+  loaded_mean   : 0.0000965365
+  loaded_std    : 0.0588324223
+  res16k_mean   : 0.0000965777
+  res16k_std    : 0.0588017678
+  loaded_samples: 1748160
+  res16k_samples: 1165442
+
+[LibriTTS/train-clean-100/4267/287369]
+  files_ok      : 80
+  files_failed  : 0
+  loaded_mean   : -0.0000001172
+  loaded_std    : 0.0717050304
+  res16k_mean   : -0.0000001169
+  res16k_std    : 0.0715220798
+  loaded_samples: 11358234
+  res16k_samples: 7572162
+
+[LibriTTS/train-clean-100/4267/72637]
+  files_ok      : 69
+  files_failed  : 0
+  loaded_mean   : -0.0000002662
+  loaded_std    : 0.0680273542
+  res16k_mean   : -0.0000002667
+  res16k_std    : 0.0677577005
+  loaded_samples: 8612640
+  res16k_samples: 5741769
+
+[LibriTTS/train-clean-100/4267/78186]
+  files_ok      : 39
+  files_failed  : 0
+  loaded_mean   : -0.0000023766
+  loaded_std    : 0.0699240446
+  res16k_mean   : -0.0000023791
+  res16k_std    : 0.0696115732
+  loaded_samples: 7163759
+  res16k_samples: 4775841
+
+[LibriTTS/train-clean-100/4297/13006]
+  files_ok      : 154
+  files_failed  : 0
+  loaded_mean   : 0.0000016355
+  loaded_std    : 0.0634802926
+  res16k_mean   : 0.0000016396
+  res16k_std    : 0.0562901347
+  loaded_samples: 16290494
+  res16k_samples: 10860351
+
+[LibriTTS/train-clean-100/4297/13009]
+  files_ok      : 134
+  files_failed  : 0
+  loaded_mean   : 0.0000004710
+  loaded_std    : 0.0574665426
+  res16k_mean   : 0.0000004695
+  res16k_std    : 0.0569915697
+  loaded_samples: 18047059
+  res16k_samples: 12031400
+
+[LibriTTS/train-clean-100/4340/15220]
+  files_ok      : 111
+  files_failed  : 0
+  loaded_mean   : 0.0000008388
+  loaded_std    : 0.0483536038
+  res16k_mean   : 0.0000008392
+  res16k_std    : 0.0480938960
+  loaded_samples: 17034734
+  res16k_samples: 11356511
+
+[LibriTTS/train-clean-100/4362/15663]
+  files_ok      : 141
+  files_failed  : 0
+  loaded_mean   : 0.0000004490
+  loaded_std    : 0.0665917520
+  res16k_mean   : 0.0000004503
+  res16k_std    : 0.0664943878
+  loaded_samples: 35064055
+  res16k_samples: 23376073
+
+[LibriTTS/train-clean-100/4397/15666]
+  files_ok      : 23
+  files_failed  : 0
+  loaded_mean   : 0.0000130271
+  loaded_std    : 0.0643227364
+  res16k_mean   : 0.0000130351
+  res16k_std    : 0.0642502211
+  loaded_samples: 4569600
+  res16k_samples: 3046400
+
+[LibriTTS/train-clean-100/4397/15668]
+  files_ok      : 34
+  files_failed  : 0
+  loaded_mean   : 0.0000184575
+  loaded_std    : 0.0569237147
+  res16k_mean   : 0.0000184663
+  res16k_std    : 0.0568736871
+  loaded_samples: 9615837
+  res16k_samples: 6410561
+
+[LibriTTS/train-clean-100/4397/15678]
+  files_ok      : 52
+  files_failed  : 0
+  loaded_mean   : 0.0000115710
+  loaded_std    : 0.0623344083
+  res16k_mean   : 0.0000115763
+  res16k_std    : 0.0623003031
+  loaded_samples: 12214566
+  res16k_samples: 8143049
+
+[LibriTTS/train-clean-100/4406/16882]
+  files_ok      : 81
+  files_failed  : 0
+  loaded_mean   : -0.0001870152
+  loaded_std    : 0.0637964164
+  res16k_mean   : -0.0001871011
+  res16k_std    : 0.0628773384
+  loaded_samples: 14466007
+  res16k_samples: 9644024
+
+[LibriTTS/train-clean-100/4406/16883]
+  files_ok      : 110
+  files_failed  : 0
+  loaded_mean   : 0.0000242051
+  loaded_std    : 0.0519561433
+  res16k_mean   : 0.0000242163
+  res16k_std    : 0.0512131521
+  loaded_samples: 17840860
+  res16k_samples: 11893932
+
+[LibriTTS/train-clean-100/4441/76250]
+  files_ok      : 39
+  files_failed  : 0
+  loaded_mean   : 0.0001173321
+  loaded_std    : 0.0839137590
+  res16k_mean   : 0.0001173780
+  res16k_std    : 0.0838378207
+  loaded_samples: 1504559
+  res16k_samples: 1003041
+
+[LibriTTS/train-clean-100/4441/76262]
+  files_ok      : 24
+  files_failed  : 0
+  loaded_mean   : 0.0001400763
+  loaded_std    : 0.0914223987
+  res16k_mean   : 0.0001401309
+  res16k_std    : 0.0911663735
+  loaded_samples: 1232399
+  res16k_samples: 821600
+
+[LibriTTS/train-clean-100/4441/76263]
+  files_ok      : 62
+  files_failed  : 0
+  loaded_mean   : 0.0001696313
+  loaded_std    : 0.0936592882
+  res16k_mean   : 0.0001697090
+  res16k_std    : 0.0934864744
+  loaded_samples: 2625116
+  res16k_samples: 1750082
+
+[LibriTTS/train-clean-100/446/123501]
+  files_ok      : 62
+  files_failed  : 0
+  loaded_mean   : -0.0001180202
+  loaded_std    : 0.0567560541
+  res16k_mean   : -0.0001180747
+  res16k_std    : 0.0567362371
+  loaded_samples: 16565758
+  res16k_samples: 11043848
+
+[LibriTTS/train-clean-100/446/123502]
+  files_ok      : 46
+  files_failed  : 0
+  loaded_mean   : 0.0000630009
+  loaded_std    : 0.0562077049
+  res16k_mean   : 0.0000630306
+  res16k_std    : 0.0561015396
+  loaded_samples: 10141681
+  res16k_samples: 6761124
+
+[LibriTTS/train-clean-100/4481/17498]
+  files_ok      : 40
+  files_failed  : 0
+  loaded_mean   : 0.0003617677
+  loaded_std    : 0.0707981173
+  res16k_mean   : 0.0003619305
+  res16k_std    : 0.0689854890
+  loaded_samples: 3868317
+  res16k_samples: 2578884
+
+[LibriTTS/train-clean-100/4481/17499]
+  files_ok      : 33
+  files_failed  : 0
+  loaded_mean   : 0.0009397200
+  loaded_std    : 0.0776653922
+  res16k_mean   : 0.0009401384
+  res16k_std    : 0.0753555369
+  loaded_samples: 1639199
+  res16k_samples: 1092804
+
+[LibriTTS/train-clean-100/458/126290]
+  files_ok      : 12
+  files_failed  : 0
+  loaded_mean   : -0.0013233957
+  loaded_std    : 0.0783336823
+  res16k_mean   : -0.0013240107
+  res16k_std    : 0.0782003227
+  loaded_samples: 1885200
+  res16k_samples: 1256800
+
+[LibriTTS/train-clean-100/458/126294]
+  files_ok      : 7
+  files_failed  : 0
+  loaded_mean   : -0.0012727974
+  loaded_std    : 0.0790964747
+  res16k_mean   : -0.0012733963
+  res16k_std    : 0.0790401180
+  loaded_samples: 1262160
+  res16k_samples: 841440
+
+[LibriTTS/train-clean-100/458/126305]
+  files_ok      : 3
+  files_failed  : 0
+  loaded_mean   : -0.0008559065
+  loaded_std    : 0.0758222289
+  res16k_mean   : -0.0008563062
+  res16k_std    : 0.0757224778
+  loaded_samples: 759360
+  res16k_samples: 506240
+
+[LibriTTS/train-clean-100/460/172357]
+  files_ok      : 50
+  files_failed  : 0
+  loaded_mean   : 0.0000027251
+  loaded_std    : 0.0629403641
+  res16k_mean   : 0.0000027246
+  res16k_std    : 0.0629168929
+  loaded_samples: 8921280
+  res16k_samples: 5947520
+
+[LibriTTS/train-clean-100/460/172359]
+  files_ok      : 183
+  files_failed  : 0
+  loaded_mean   : 0.0000007411
+  loaded_std    : 0.0445863625
+  res16k_mean   : 0.0000007414
+  res16k_std    : 0.0445687532
+  loaded_samples: 22027503
+  res16k_samples: 14685039
+
+[LibriTTS/train-clean-100/4640/19187]
+  files_ok      : 45
+  files_failed  : 0
+  loaded_mean   : -0.0000006411
+  loaded_std    : 0.0674502007
+  res16k_mean   : -0.0000006428
+  res16k_std    : 0.0668516678
+  loaded_samples: 5472706
+  res16k_samples: 3648479
+
+[LibriTTS/train-clean-100/4640/19188]
+  files_ok      : 69
+  files_failed  : 0
+  loaded_mean   : 0.0000009771
+  loaded_std    : 0.0568983609
+  res16k_mean   : 0.0000009778
+  res16k_std    : 0.0564633012
+  loaded_samples: 8417522
+  res16k_samples: 5611690
+
+[LibriTTS/train-clean-100/4640/19189]
+  files_ok      : 25
+  files_failed  : 0
+  loaded_mean   : 0.0000016953
+  loaded_std    : 0.0663682214
+  res16k_mean   : 0.0000016944
+  res16k_std    : 0.0658128304
+  loaded_samples: 3793674
+  res16k_samples: 2529120
+
+[LibriTTS/train-clean-100/4680/16026]
+  files_ok      : 152
+  files_failed  : 0
+  loaded_mean   : -0.0000036109
+  loaded_std    : 0.0730460887
+  res16k_mean   : -0.0000036117
+  res16k_std    : 0.0730047858
+  loaded_samples: 12473742
+  res16k_samples: 8315849
+
+[LibriTTS/train-clean-100/4680/16041]
+  files_ok      : 61
+  files_failed  : 0
+  loaded_mean   : -0.0000010768
+  loaded_std    : 0.0576836750
+  res16k_mean   : -0.0000010771
+  res16k_std    : 0.0575642777
+  loaded_samples: 9423598
+  res16k_samples: 6282403
+
+[LibriTTS/train-clean-100/4680/16042]
+  files_ok      : 71
+  files_failed  : 0
+  loaded_mean   : -0.0000006411
+  loaded_std    : 0.0634599697
+  res16k_mean   : -0.0000006411
+  res16k_std    : 0.0633287377
+  loaded_samples: 9978231
+  res16k_samples: 6652164
+
+[LibriTTS/train-clean-100/4788/294466]
+  files_ok      : 58
+  files_failed  : 0
+  loaded_mean   : -0.0000648924
+  loaded_std    : 0.0803838900
+  res16k_mean   : -0.0000649229
+  res16k_std    : 0.0803752230
+  loaded_samples: 6052083
+  res16k_samples: 4034727
+
+[LibriTTS/train-clean-100/4788/91208]
+  files_ok      : 27
+  files_failed  : 0
+  loaded_mean   : -0.0000028677
+  loaded_std    : 0.0681914316
+  res16k_mean   : -0.0000028678
+  res16k_std    : 0.0681534351
+  loaded_samples: 6468962
+  res16k_samples: 4312642
+
+[LibriTTS/train-clean-100/4788/94904]
+  files_ok      : 35
+  files_failed  : 0
+  loaded_mean   : -0.0000004889
+  loaded_std    : 0.0724948103
+  res16k_mean   : -0.0000004897
+  res16k_std    : 0.0724733492
+  loaded_samples: 9033598
+  res16k_samples: 6022402
+
+[LibriTTS/train-clean-100/481/123719]
+  files_ok      : 1
+  files_failed  : 0
+  loaded_mean   : 0.0000457617
+  loaded_std    : 0.0820704032
+  res16k_mean   : 0.0000457708
+  res16k_std    : 0.0820602601
+  loaded_samples: 105840
+  res16k_samples: 70560
+
+[LibriTTS/train-clean-100/481/123720]
+  files_ok      : 12
+  files_failed  : 0
+  loaded_mean   : 0.0000822321
+  loaded_std    : 0.0675528867
+  res16k_mean   : 0.0000822698
+  res16k_std    : 0.0674723384
+  loaded_samples: 1213922
+  res16k_samples: 809283
+
+[LibriTTS/train-clean-100/4813/248638]
+  files_ok      : 41
+  files_failed  : 0
+  loaded_mean   : 0.0000809190
+  loaded_std    : 0.0699907097
+  res16k_mean   : 0.0000809576
+  res16k_std    : 0.0697895185
+  loaded_samples: 10763512
+  res16k_samples: 7175683
+
+[LibriTTS/train-clean-100/4813/248641]
+  files_ok      : 36
+  files_failed  : 0
+  loaded_mean   : 0.0000815609
+  loaded_std    : 0.0584392255
+  res16k_mean   : 0.0000815997
+  res16k_std    : 0.0583022698
+  loaded_samples: 7580640
+  res16k_samples: 5053764
+
+[LibriTTS/train-clean-100/4830/25898]
+  files_ok      : 50
+  files_failed  : 0
+  loaded_mean   : 0.0000014680
+  loaded_std    : 0.0566853711
+  res16k_mean   : 0.0000014686
+  res16k_std    : 0.0566839641
+  loaded_samples: 9282477
+  res16k_samples: 6188323
+
+[LibriTTS/train-clean-100/4830/25904]
+  files_ok      : 45
+  files_failed  : 0
+  loaded_mean   : 0.0000030090
+  loaded_std    : 0.0603242724
+  res16k_mean   : 0.0000030101
+  res16k_std    : 0.0603152332
+  loaded_samples: 10880636
+  res16k_samples: 7253761
+
+[LibriTTS/train-clean-100/4853/27670]
+  files_ok      : 1
+  files_failed  : 0
+  loaded_mean   : -0.0000273578
+  loaded_std    : 0.0617488852
+  res16k_mean   : -0.0000273245
+  res16k_std    : 0.0602728122
+  loaded_samples: 52560
+  res16k_samples: 35040
+
+[LibriTTS/train-clean-100/4853/27671]
+  files_ok      : 2
+  files_failed  : 0
+  loaded_mean   : -0.0000188760
+  loaded_std    : 0.0729963179
+  res16k_mean   : -0.0000188803
+  res16k_std    : 0.0727164882
+  loaded_samples: 438000
+  res16k_samples: 292000
+
+[LibriTTS/train-clean-100/4853/29413]
+  files_ok      : 17
+  files_failed  : 0
+  loaded_mean   : -0.0000043781
+  loaded_std    : 0.0708847151
+  res16k_mean   : -0.0000043842
+  res16k_std    : 0.0705846547
+  loaded_samples: 1445518
+  res16k_samples: 963680
+
+[LibriTTS/train-clean-100/4859/22176]
+  files_ok      : 7
+  files_failed  : 0
+  loaded_mean   : -0.0000078903
+  loaded_std    : 0.0539396139
+  res16k_mean   : -0.0000078876
+  res16k_std    : 0.0536043318
+  loaded_samples: 359040
+  res16k_samples: 239360
+
+[LibriTTS/train-clean-100/4859/26870]
+  files_ok      : 55
+  files_failed  : 0
+  loaded_mean   : -0.0000024226
+  loaded_std    : 0.0544212051
+  res16k_mean   : -0.0000024252
+  res16k_std    : 0.0539119997
+  loaded_samples: 6763920
+  res16k_samples: 4509280
+
+[LibriTTS/train-clean-100/4859/29340]
+  files_ok      : 6
+  files_failed  : 0
+  loaded_mean   : -0.0000468895
+  loaded_std    : 0.0544976261
+  res16k_mean   : -0.0000469124
+  res16k_std    : 0.0541814420
+  loaded_samples: 1176000
+  res16k_samples: 784000
+
+[LibriTTS/train-clean-100/4898/20016]
+  files_ok      : 47
+  files_failed  : 0
+  loaded_mean   : 0.0000447036
+  loaded_std    : 0.0751574038
+  res16k_mean   : 0.0000447234
+  res16k_std    : 0.0751336969
+  loaded_samples: 11808243
+  res16k_samples: 7872167
+
+[LibriTTS/train-clean-100/4898/28461]
+  files_ok      : 46
+  files_failed  : 0
+  loaded_mean   : 0.0000812187
+  loaded_std    : 0.0640284101
+  res16k_mean   : 0.0000812567
+  res16k_std    : 0.0640152415
+  loaded_samples: 12870487
+  res16k_samples: 8580333
+
+[LibriTTS/train-clean-100/5022/29405]
+  files_ok      : 190
+  files_failed  : 0
+  loaded_mean   : 0.0000014832
+  loaded_std    : 0.0691613281
+  res16k_mean   : 0.0000014843
+  res16k_std    : 0.0686474397
+  loaded_samples: 19479639
+  res16k_samples: 12986474
+
+[LibriTTS/train-clean-100/5022/29411]
+  files_ok      : 139
+  files_failed  : 0
+  loaded_mean   : 0.0000366383
+  loaded_std    : 0.0619956104
+  res16k_mean   : 0.0000366519
+  res16k_std    : 0.0615356932
+  loaded_samples: 13127289
+  res16k_samples: 8751551
+
+[LibriTTS/train-clean-100/5049/25947]
+  files_ok      : 6
+  files_failed  : 0
+  loaded_mean   : 0.0001930932
+  loaded_std    : 0.0487866531
+  res16k_mean   : 0.0001931841
+  res16k_std    : 0.0487872129
+  loaded_samples: 421439
+  res16k_samples: 280962
+
+[LibriTTS/train-clean-100/5104/33406]
+  files_ok      : 115
+  files_failed  : 0
+  loaded_mean   : -0.0000014373
+  loaded_std    : 0.0661021604
+  res16k_mean   : -0.0000014387
+  res16k_std    : 0.0660686013
+  loaded_samples: 8485443
+  res16k_samples: 5656975
+
+[LibriTTS/train-clean-100/5104/33407]
+  files_ok      : 76
+  files_failed  : 0
+  loaded_mean   : -0.0000004220
+  loaded_std    : 0.0712262702
+  res16k_mean   : -0.0000004202
+  res16k_std    : 0.0711723222
+  loaded_samples: 4937030
+  res16k_samples: 3291362
+
+[LibriTTS/train-clean-100/5163/18515]
+  files_ok      : 97
+  files_failed  : 0
+  loaded_mean   : -0.0000033570
+  loaded_std    : 0.0504024367
+  res16k_mean   : -0.0000033594
+  res16k_std    : 0.0503121299
+  loaded_samples: 12284402
+  res16k_samples: 8189610
+
+[LibriTTS/train-clean-100/5163/39921]
+  files_ok      : 126
+  files_failed  : 0
+  loaded_mean   : -0.0000127487
+  loaded_std    : 0.0614777585
+  res16k_mean   : -0.0000127542
+  res16k_std    : 0.0613356785
+  loaded_samples: 14292721
+  res16k_samples: 9528492
+
+[LibriTTS/train-clean-100/5192/19396]
+  files_ok      : 2
+  files_failed  : 0
+  loaded_mean   : 0.0075373314
+  loaded_std    : 0.0870010942
+  res16k_mean   : 0.0075408261
+  res16k_std    : 0.0869690616
+  loaded_samples: 87360
+  res16k_samples: 58240
+
+[LibriTTS/train-clean-100/5322/7678]
+  files_ok      : 59
+  files_failed  : 0
+  loaded_mean   : 0.0000006007
+  loaded_std    : 0.0452903524
+  res16k_mean   : 0.0000005998
+  res16k_std    : 0.0451911187
+  loaded_samples: 12188871
+  res16k_samples: 8125921
+
+[LibriTTS/train-clean-100/5322/7679]
+  files_ok      : 85
+  files_failed  : 0
+  loaded_mean   : 0.0000008977
+  loaded_std    : 0.0531524278
+  res16k_mean   : 0.0000008965
+  res16k_std    : 0.0530788522
+  loaded_samples: 11922725
+  res16k_samples: 7948486
+
+[LibriTTS/train-clean-100/5322/7680]
+  files_ok      : 119
+  files_failed  : 0
+  loaded_mean   : -0.0000010481
+  loaded_std    : 0.0483551784
+  res16k_mean   : -0.0000010474
+  res16k_std    : 0.0482914795
+  loaded_samples: 13168796
+  res16k_samples: 8779202
+
+[LibriTTS/train-clean-100/5339/14133]
+  files_ok      : 54
+  files_failed  : 0
+  loaded_mean   : -0.0000007369
+  loaded_std    : 0.0727724985
+  res16k_mean   : -0.0000007354
+  res16k_std    : 0.0718437621
+  loaded_samples: 9396256
+  res16k_samples: 6264181
+
+[LibriTTS/train-clean-100/5339/14134]
+  files_ok      : 114
+  files_failed  : 0
+  loaded_mean   : -0.0000006268
+  loaded_std    : 0.0741151193
+  res16k_mean   : -0.0000006286
+  res16k_std    : 0.0733947773
+  loaded_samples: 16963441
+  res16k_samples: 11308984
+
+[LibriTTS/train-clean-100/5390/24512]
+  files_ok      : 19
+  files_failed  : 0
+  loaded_mean   : -0.0000000792
+  loaded_std    : 0.0699117751
+  res16k_mean   : -0.0000000807
+  res16k_std    : 0.0699235104
+  loaded_samples: 3330240
+  res16k_samples: 2220163
+
+[LibriTTS/train-clean-100/5390/30096]
+  files_ok      : 13
+  files_failed  : 0
+  loaded_mean   : 0.0000009490
+  loaded_std    : 0.0898640282
+  res16k_mean   : 0.0000009488
+  res16k_std    : 0.0898182875
+  loaded_samples: 828478
+  res16k_samples: 552319
+
+[LibriTTS/train-clean-100/5390/30102]
+  files_ok      : 8
+  files_failed  : 0
+  loaded_mean   : 0.0000076441
+  loaded_std    : 0.1035011784
+  res16k_mean   : 0.0000076397
+  res16k_std    : 0.1034838366
+  loaded_samples: 559441
+  res16k_samples: 372961
+
+[LibriTTS/train-clean-100/5393/19218]
+  files_ok      : 148
+  files_failed  : 0
+  loaded_mean   : -0.0000074649
+  loaded_std    : 0.0674487847
+  res16k_mean   : -0.0000074684
+  res16k_std    : 0.0674047943
+  loaded_samples: 12133709
+  res16k_samples: 8089173
+
+[LibriTTS/train-clean-100/5393/19219]
+  files_ok      : 192
+  files_failed  : 0
+  loaded_mean   : 0.0000080085
+  loaded_std    : 0.0609556222
+  res16k_mean   : 0.0000080117
+  res16k_std    : 0.0609152636
+  loaded_samples: 20757389
+  res16k_samples: 13838296
+
+[LibriTTS/train-clean-100/5456/24741]
+  files_ok      : 13
+  files_failed  : 0
+  loaded_mean   : -0.0000603838
+  loaded_std    : 0.0650036366
+  res16k_mean   : -0.0000604128
+  res16k_std    : 0.0649820581
+  loaded_samples: 3099601
+  res16k_samples: 2066401
+
+[LibriTTS/train-clean-100/5456/58161]
+  files_ok      : 4
+  files_failed  : 0
+  loaded_mean   : -0.0000812259
+  loaded_std    : 0.0805295417
+  res16k_mean   : -0.0000812574
+  res16k_std    : 0.0801553889
+  loaded_samples: 885600
+  res16k_samples: 590400
+
+[LibriTTS/train-clean-100/5456/62014]
+  files_ok      : 11
+  files_failed  : 0
+  loaded_mean   : 0.0000087048
+  loaded_std    : 0.0693404819
+  res16k_mean   : 0.0000087096
+  res16k_std    : 0.0693085279
+  loaded_samples: 1206241
+  res16k_samples: 804161
+
+[LibriTTS/train-clean-100/5456/62043]
+  files_ok      : 24
+  files_failed  : 0
+  loaded_mean   : 0.0000084805
+  loaded_std    : 0.0763881297
+  res16k_mean   : 0.0000084846
+  res16k_std    : 0.0763092280
+  loaded_samples: 2447519
+  res16k_samples: 1631680
+
+[LibriTTS/train-clean-100/5463/39173]
+  files_ok      : 27
+  files_failed  : 0
+  loaded_mean   : 0.0000308602
+  loaded_std    : 0.0533163500
+  res16k_mean   : 0.0000308740
+  res16k_std    : 0.0530256774
+  loaded_samples: 2614564
+  res16k_samples: 1743046
+
+[LibriTTS/train-clean-100/5463/39174]
+  files_ok      : 20
+  files_failed  : 0
+  loaded_mean   : -0.0000108706
+  loaded_std    : 0.0437752675
+  res16k_mean   : -0.0000108739
+  res16k_std    : 0.0434378655
+  loaded_samples: 2045038
+  res16k_samples: 1363360
+
+[LibriTTS/train-clean-100/5514/19192]
+  files_ok      : 39
+  files_failed  : 0
+  loaded_mean   : -0.0000130487
+  loaded_std    : 0.0647165328
+  res16k_mean   : -0.0000130549
+  res16k_std    : 0.0643234743
+  loaded_samples: 6611040
+  res16k_samples: 4407362
+
+[LibriTTS/train-clean-100/5514/19193]
+  files_ok      : 83
+  files_failed  : 0
+  loaded_mean   : -0.0000017408
+  loaded_std    : 0.0650613921
+  res16k_mean   : -0.0000017429
+  res16k_std    : 0.0649241882
+  loaded_samples: 9711599
+  res16k_samples: 6474407
+
+[LibriTTS/train-clean-100/5561/39621]
+  files_ok      : 76
+  files_failed  : 0
+  loaded_mean   : -0.0027746546
+  loaded_std    : 0.2108993892
+  res16k_mean   : -0.0027759394
+  res16k_std    : 0.2106474426
+  loaded_samples: 7692718
+  res16k_samples: 5128483
+
+[LibriTTS/train-clean-100/5561/41615]
+  files_ok      : 96
+  files_failed  : 0
+  loaded_mean   : -0.0008234061
+  loaded_std    : 0.0586477039
+  res16k_mean   : -0.0008237885
+  res16k_std    : 0.0585352730
+  loaded_samples: 10066560
+  res16k_samples: 6711050
+
+[LibriTTS/train-clean-100/5561/41616]
+  files_ok      : 101
+  files_failed  : 0
+  loaded_mean   : -0.0000482271
+  loaded_std    : 0.0598288685
+  res16k_mean   : -0.0000482502
+  res16k_std    : 0.0597895054
+  loaded_samples: 9472566
+  res16k_samples: 6315048
+
+[LibriTTS/train-clean-100/5652/19215]
+  files_ok      : 49
+  files_failed  : 0
+  loaded_mean   : -0.0001396755
+  loaded_std    : 0.0532207075
+  res16k_mean   : -0.0001397400
+  res16k_std    : 0.0528861367
+  loaded_samples: 5609524
+  res16k_samples: 3739692
+
+[LibriTTS/train-clean-100/5652/39938]
+  files_ok      : 38
+  files_failed  : 0
+  loaded_mean   : 0.0000429184
+  loaded_std    : 0.0588904287
+  res16k_mean   : 0.0000429391
+  res16k_std    : 0.0584693598
+  loaded_samples: 8108878
+  res16k_samples: 5405929
+
+[LibriTTS/train-clean-100/5678/43301]
+  files_ok      : 15
+  files_failed  : 0
+  loaded_mean   : 0.0000261607
+  loaded_std    : 0.0726353877
+  res16k_mean   : 0.0000261709
+  res16k_std    : 0.0724027208
+  loaded_samples: 2692321
+  res16k_samples: 1794881
+
+[LibriTTS/train-clean-100/5678/43302]
+  files_ok      : 94
+  files_failed  : 0
+  loaded_mean   : -0.0000131240
+  loaded_std    : 0.0730471640
+  res16k_mean   : -0.0000131270
+  res16k_std    : 0.0729201721
+  loaded_samples: 6728884
+  res16k_samples: 4485926
+
+[LibriTTS/train-clean-100/5678/43303]
+  files_ok      : 65
+  files_failed  : 0
+  loaded_mean   : 0.0000363409
+  loaded_std    : 0.0777051974
+  res16k_mean   : 0.0000363610
+  res16k_std    : 0.0775945732
+  loaded_samples: 4155121
+  res16k_samples: 2770086
+
+[LibriTTS/train-clean-100/5688/41232]
+  files_ok      : 1
+  files_failed  : 0
+  loaded_mean   : -0.0004110348
+  loaded_std    : 0.0781611667
+  res16k_mean   : -0.0004112482
+  res16k_std    : 0.0781385216
+  loaded_samples: 25920
+  res16k_samples: 17280
+
+[LibriTTS/train-clean-100/5703/47198]
+  files_ok      : 69
+  files_failed  : 0
+  loaded_mean   : -0.0000139333
+  loaded_std    : 0.0736863605
+  res16k_mean   : -0.0000139391
+  res16k_std    : 0.0736931428
+  loaded_samples: 8394956
+  res16k_samples: 5596645
+
+[LibriTTS/train-clean-100/5703/47212]
+  files_ok      : 42
+  files_failed  : 0
+  loaded_mean   : -0.0000051101
+  loaded_std    : 0.1289562067
+  res16k_mean   : -0.0000051124
+  res16k_std    : 0.1289812445
+  loaded_samples: 7960319
+  res16k_samples: 5306885
+
+[LibriTTS/train-clean-100/5750/100289]
+  files_ok      : 98
+  files_failed  : 0
+  loaded_mean   : -0.0000007187
+  loaded_std    : 0.0865978430
+  res16k_mean   : -0.0000007188
+  res16k_std    : 0.0865753130
+  loaded_samples: 18367930
+  res16k_samples: 12245306
+
+[LibriTTS/train-clean-100/5750/35690]
+  files_ok      : 1
+  files_failed  : 0
+  loaded_mean   : -0.0000046197
+  loaded_std    : 0.0616983799
+  res16k_mean   : -0.0000046168
+  res16k_std    : 0.0616824619
+  loaded_samples: 117599
+  res16k_samples: 78400
+
+[LibriTTS/train-clean-100/5778/12761]
+  files_ok      : 41
+  files_failed  : 0
+  loaded_mean   : 0.0000009224
+  loaded_std    : 0.0696860578
+  res16k_mean   : 0.0000009256
+  res16k_std    : 0.0694481337
+  loaded_samples: 10022638
+  res16k_samples: 6681761
+
+[LibriTTS/train-clean-100/5778/54535]
+  files_ok      : 76
+  files_failed  : 0
+  loaded_mean   : 0.0000001211
+  loaded_std    : 0.1047124864
+  res16k_mean   : 0.0000001187
+  res16k_std    : 0.1044079018
+  loaded_samples: 12299036
+  res16k_samples: 8199362
+
+[LibriTTS/train-clean-100/5789/57158]
+  files_ok      : 50
+  files_failed  : 0
+  loaded_mean   : -0.0000070615
+  loaded_std    : 0.0661817111
+  res16k_mean   : -0.0000070652
+  res16k_std    : 0.0660797402
+  loaded_samples: 5497200
+  res16k_samples: 3664804
+
+[LibriTTS/train-clean-100/5789/57195]
+  files_ok      : 22
+  files_failed  : 0
+  loaded_mean   : -0.0000066869
+  loaded_std    : 0.0771285052
+  res16k_mean   : -0.0000066863
+  res16k_std    : 0.0769486536
+  loaded_samples: 2206077
+  res16k_samples: 1470721
+
+[LibriTTS/train-clean-100/5789/70653]
+  files_ok      : 12
+  files_failed  : 0
+  loaded_mean   : -0.0000145573
+  loaded_std    : 0.0645445262
+  res16k_mean   : -0.0000145652
+  res16k_std    : 0.0643230104
+  loaded_samples: 1682160
+  res16k_samples: 1121441
+
+[LibriTTS/train-clean-100/5808/48608]
+  files_ok      : 24
+  files_failed  : 0
+  loaded_mean   : -0.0000085203
+  loaded_std    : 0.0639828813
+  res16k_mean   : -0.0000085252
+  res16k_std    : 0.0638695768
+  loaded_samples: 5017438
+  res16k_samples: 3344962
+
+[LibriTTS/train-clean-100/5808/54425]
+  files_ok      : 127
+  files_failed  : 0
+  loaded_mean   : -0.0000060822
+  loaded_std    : 0.0924646465
+  res16k_mean   : -0.0000060842
+  res16k_std    : 0.0921987389
+  loaded_samples: 12930968
+  res16k_samples: 8620659
+
+[LibriTTS/train-clean-100/5867/48852]
+  files_ok      : 188
+  files_failed  : 0
+  loaded_mean   : -0.0000204052
+  loaded_std    : 0.0586393904
+  res16k_mean   : -0.0000204149
+  res16k_std    : 0.0585958183
+  loaded_samples: 20537068
+  res16k_samples: 13691413
+
+[LibriTTS/train-clean-100/587/41611]
+  files_ok      : 4
+  files_failed  : 0
+  loaded_mean   : 0.0016914588
+  loaded_std    : 0.0686044056
+  res16k_mean   : 0.0016921937
+  res16k_std    : 0.0648299627
+  loaded_samples: 170639
+  res16k_samples: 113760
+
+[LibriTTS/train-clean-100/587/41619]
+  files_ok      : 7
+  files_failed  : 0
+  loaded_mean   : 0.0018005413
+  loaded_std    : 0.0618051777
+  res16k_mean   : 0.0018013719
+  res16k_std    : 0.0580288667
+  loaded_samples: 864480
+  res16k_samples: 576320
+
+[LibriTTS/train-clean-100/587/54108]
+  files_ok      : 83
+  files_failed  : 0
+  loaded_mean   : 0.0000002865
+  loaded_std    : 0.0290630886
+  res16k_mean   : 0.0000002870
+  res16k_std    : 0.0271133642
+  loaded_samples: 10467598
+  res16k_samples: 6978407
+
+[LibriTTS/train-clean-100/60/121082]
+  files_ok      : 117
+  files_failed  : 0
+  loaded_mean   : -0.0001738579
+  loaded_std    : 0.0396520519
+  res16k_mean   : -0.0001739392
+  res16k_std    : 0.0396344193
+  loaded_samples: 16485852
+  res16k_samples: 10990598
+
+[LibriTTS/train-clean-100/6000/55211]
+  files_ok      : 108
+  files_failed  : 0
+  loaded_mean   : -0.0000008586
+  loaded_std    : 0.0714253748
+  res16k_mean   : -0.0000008590
+  res16k_std    : 0.0711263183
+  loaded_samples: 9390966
+  res16k_samples: 6260656
+
+[LibriTTS/train-clean-100/6000/86686]
+  files_ok      : 22
+  files_failed  : 0
+  loaded_mean   : 0.0000033908
+  loaded_std    : 0.0513295897
+  res16k_mean   : 0.0000033925
+  res16k_std    : 0.0511411718
+  loaded_samples: 2182800
+  res16k_samples: 1455200
+
+[LibriTTS/train-clean-100/6019/3185]
+  files_ok      : 126
+  files_failed  : 0
+  loaded_mean   : 0.0000008643
+  loaded_std    : 0.0694220759
+  res16k_mean   : 0.0000008648
+  res16k_std    : 0.0694126467
+  loaded_samples: 29714386
+  res16k_samples: 19809624
+
+[LibriTTS/train-clean-100/6064/300880]
+  files_ok      : 143
+  files_failed  : 0
+  loaded_mean   : -0.0001074993
+  loaded_std    : 0.0614663183
+  res16k_mean   : -0.0001075471
+  res16k_std    : 0.0613860770
+  loaded_samples: 11607601
+  res16k_samples: 7738406
+
+[LibriTTS/train-clean-100/6064/56165]
+  files_ok      : 102
+  files_failed  : 0
+  loaded_mean   : 0.0000288681
+  loaded_std    : 0.0557961921
+  res16k_mean   : 0.0000288818
+  res16k_std    : 0.0555453128
+  loaded_samples: 10877766
+  res16k_samples: 7251852
+
+[LibriTTS/train-clean-100/6064/56168]
+  files_ok      : 47
+  files_failed  : 0
+  loaded_mean   : 0.0000323044
+  loaded_std    : 0.0572395111
+  res16k_mean   : 0.0000323222
+  res16k_std    : 0.0569611853
+  loaded_samples: 7808397
+  res16k_samples: 5205600
+
+[LibriTTS/train-clean-100/6078/54007]
+  files_ok      : 117
+  files_failed  : 0
+  loaded_mean   : -0.0000041599
+  loaded_std    : 0.0691662572
+  res16k_mean   : -0.0000041629
+  res16k_std    : 0.0690383600
+  loaded_samples: 16329604
+  res16k_samples: 10886421
+
+[LibriTTS/train-clean-100/6078/54013]
+  files_ok      : 67
+  files_failed  : 0
+  loaded_mean   : -0.0000509932
+  loaded_std    : 0.0580483313
+  res16k_mean   : -0.0000510158
+  res16k_std    : 0.0578776822
+  loaded_samples: 9892816
+  res16k_samples: 6595223
+
+[LibriTTS/train-clean-100/6081/41997]
+  files_ok      : 60
+  files_failed  : 0
+  loaded_mean   : -0.0000021669
+  loaded_std    : 0.0723321385
+  res16k_mean   : -0.0000021679
+  res16k_std    : 0.0723219623
+  loaded_samples: 9092881
+  res16k_samples: 6061923
+
+[LibriTTS/train-clean-100/6081/41998]
+  files_ok      : 50
+  files_failed  : 0
+  loaded_mean   : 0.0000005457
+  loaded_std    : 0.0717479483
+  res16k_mean   : 0.0000005451
+  res16k_std    : 0.0717468463
+  loaded_samples: 8398799
+  res16k_samples: 5599202
+
+[LibriTTS/train-clean-100/6081/42010]
+  files_ok      : 42
+  files_failed  : 0
+  loaded_mean   : 0.0000018012
+  loaded_std    : 0.0746184538
+  res16k_mean   : 0.0000018033
+  res16k_std    : 0.0746057502
+  loaded_samples: 5994237
+  res16k_samples: 3996160
+
+[LibriTTS/train-clean-100/6147/34605]
+  files_ok      : 157
+  files_failed  : 0
+  loaded_mean   : -0.0000004028
+  loaded_std    : 0.0597111593
+  res16k_mean   : -0.0000004018
+  res16k_std    : 0.0595639004
+  loaded_samples: 16734967
+  res16k_samples: 11156666
+
+[LibriTTS/train-clean-100/6147/34606]
+  files_ok      : 75
+  files_failed  : 0
+  loaded_mean   : 0.0000004158
+  loaded_std    : 0.0558511779
+  res16k_mean   : 0.0000004160
+  res16k_std    : 0.0557608301
+  loaded_samples: 7579928
+  res16k_samples: 5053295
+
+[LibriTTS/train-clean-100/6147/34607]
+  files_ok      : 125
+  files_failed  : 0
+  loaded_mean   : -0.0000007226
+  loaded_std    : 0.0547802480
+  res16k_mean   : -0.0000007235
+  res16k_std    : 0.0546643562
+  loaded_samples: 12430564
+  res16k_samples: 8287054
+
+[LibriTTS/train-clean-100/6181/216552]
+  files_ok      : 106
+  files_failed  : 0
+  loaded_mean   : 0.0000074377
+  loaded_std    : 0.0655112018
+  res16k_mean   : 0.0000074413
+  res16k_std    : 0.0654841120
+  loaded_samples: 21950885
+  res16k_samples: 14633948
+
+[LibriTTS/train-clean-100/6209/34599]
+  files_ok      : 82
+  files_failed  : 0
+  loaded_mean   : -0.0000248674
+  loaded_std    : 0.0928907776
+  res16k_mean   : -0.0000248817
+  res16k_std    : 0.0927806422
+  loaded_samples: 9352564
+  res16k_samples: 6235046
+
+[LibriTTS/train-clean-100/6209/34600]
+  files_ok      : 77
+  files_failed  : 0
+  loaded_mean   : -0.0000132507
+  loaded_std    : 0.0593838020
+  res16k_mean   : -0.0000132552
+  res16k_std    : 0.0592205489
+  loaded_samples: 9702724
+  res16k_samples: 6468490
+
+[LibriTTS/train-clean-100/6209/34601]
+  files_ok      : 299
+  files_failed  : 0
+  loaded_mean   : -0.0000213040
+  loaded_std    : 0.0786865152
+  res16k_mean   : -0.0000213166
+  res16k_std    : 0.0784239228
+  loaded_samples: 27455549
+  res16k_samples: 18303767
+
+[LibriTTS/train-clean-100/625/132112]
+  files_ok      : 6
+  files_failed  : 0
+  loaded_mean   : -0.0000190477
+  loaded_std    : 0.0664956012
+  res16k_mean   : -0.0000190665
+  res16k_std    : 0.0665098035
+  loaded_samples: 404161
+  res16k_samples: 269441
+
+[LibriTTS/train-clean-100/625/132118]
+  files_ok      : 2
+  files_failed  : 0
+  loaded_mean   : 0.0000029708
+  loaded_std    : 0.0711209973
+  res16k_mean   : 0.0000029722
+  res16k_std    : 0.0711303339
+  loaded_samples: 392640
+  res16k_samples: 261760
+
+[LibriTTS/train-clean-100/6272/70168]
+  files_ok      : 74
+  files_failed  : 0
+  loaded_mean   : -0.0000142440
+  loaded_std    : 0.0554834262
+  res16k_mean   : -0.0000142505
+  res16k_std    : 0.0554746083
+  loaded_samples: 9140878
+  res16k_samples: 6093924
+
+[LibriTTS/train-clean-100/6272/70171]
+  files_ok      : 86
+  files_failed  : 0
+  loaded_mean   : -0.0000116171
+  loaded_std    : 0.0462421438
+  res16k_mean   : -0.0000116228
+  res16k_std    : 0.0462338308
+  loaded_samples: 10323840
+  res16k_samples: 6882566
+
+[LibriTTS/train-clean-100/6272/70191]
+  files_ok      : 62
+  files_failed  : 0
+  loaded_mean   : -0.0008840825
+  loaded_std    : 0.0639326513
+  res16k_mean   : -0.0008844934
+  res16k_std    : 0.0639131329
+  loaded_samples: 7217516
+  res16k_samples: 4811681
+
+[LibriTTS/train-clean-100/6367/65536]
+  files_ok      : 145
+  files_failed  : 0
+  loaded_mean   : -0.0000015247
+  loaded_std    : 0.1176419537
+  res16k_mean   : -0.0000015240
+  res16k_std    : 0.1170358341
+  loaded_samples: 20659447
+  res16k_samples: 13772991
+
+[LibriTTS/train-clean-100/6367/74004]
+  files_ok      : 96
+  files_failed  : 0
+  loaded_mean   : 0.0000003622
+  loaded_std    : 0.0689878010
+  res16k_mean   : 0.0000003622
+  res16k_std    : 0.0688415067
+  loaded_samples: 9782406
+  res16k_samples: 6521613
+
+[LibriTTS/train-clean-100/6385/220959]
+  files_ok      : 51
+  files_failed  : 0
+  loaded_mean   : 0.0000008204
+  loaded_std    : 0.0698027743
+  res16k_mean   : 0.0000008219
+  res16k_std    : 0.0686393697
+  loaded_samples: 11671918
+  res16k_samples: 7781284
+
+[LibriTTS/train-clean-100/6385/34655]
+  files_ok      : 66
+  files_failed  : 0
+  loaded_mean   : -0.0010613486
+  loaded_std    : 0.0613713646
+  res16k_mean   : -0.0010618434
+  res16k_std    : 0.0607471549
+  loaded_samples: 6800637
+  res16k_samples: 4533760
+
+[LibriTTS/train-clean-100/6385/34669]
+  files_ok      : 69
+  files_failed  : 0
+  loaded_mean   : 0.0000200254
+  loaded_std    : 0.0631675168
+  res16k_mean   : 0.0000200354
+  res16k_std    : 0.0628786486
+  loaded_samples: 9602398
+  res16k_samples: 6401601
+
+[LibriTTS/train-clean-100/6415/100596]
+  files_ok      : 111
+  files_failed  : 0
+  loaded_mean   : -0.0000007418
+  loaded_std    : 0.0671149571
+  res16k_mean   : -0.0000007420
+  res16k_std    : 0.0671059136
+  loaded_samples: 13260712
+  res16k_samples: 8840485
+
+[LibriTTS/train-clean-100/6415/111615]
+  files_ok      : 66
+  files_failed  : 0
+  loaded_mean   : 0.0000006462
+  loaded_std    : 0.0924220233
+  res16k_mean   : 0.0000006464
+  res16k_std    : 0.0922587988
+  loaded_samples: 11928241
+  res16k_samples: 7952164
+
+[LibriTTS/train-clean-100/6415/116629]
+  files_ok      : 119
+  files_failed  : 0
+  loaded_mean   : -0.0000006524
+  loaded_std    : 0.0665078667
+  res16k_mean   : -0.0000006532
+  res16k_std    : 0.0664648065
+  loaded_samples: 13242476
+  res16k_samples: 8828328
+
+[LibriTTS/train-clean-100/6437/66172]
+  files_ok      : 60
+  files_failed  : 0
+  loaded_mean   : -0.0000058510
+  loaded_std    : 0.0692759113
+  res16k_mean   : -0.0000058540
+  res16k_std    : 0.0691170688
+  loaded_samples: 11820717
+  res16k_samples: 7880484
+
+[LibriTTS/train-clean-100/6437/66173]
+  files_ok      : 102
+  files_failed  : 0
+  loaded_mean   : -0.0000067190
+  loaded_std    : 0.0735628845
+  res16k_mean   : -0.0000067232
+  res16k_std    : 0.0734514032
+  loaded_samples: 16415518
+  res16k_samples: 10943693
+
+[LibriTTS/train-clean-100/6454/107462]
+  files_ok      : 41
+  files_failed  : 0
+  loaded_mean   : -0.0000146931
+  loaded_std    : 0.0845317315
+  res16k_mean   : -0.0000146994
+  res16k_std    : 0.0845455466
+  loaded_samples: 8277600
+  res16k_samples: 5518402
+
+[LibriTTS/train-clean-100/6454/120342]
+  files_ok      : 59
+  files_failed  : 0
+  loaded_mean   : -0.0000158105
+  loaded_std    : 0.0826414253
+  res16k_mean   : -0.0000158179
+  res16k_std    : 0.0826543293
+  loaded_samples: 10374004
+  res16k_samples: 6916005
+
+[LibriTTS/train-clean-100/6454/93938]
+  files_ok      : 50
+  files_failed  : 0
+  loaded_mean   : -0.0000096696
+  loaded_std    : 0.0817383716
+  res16k_mean   : -0.0000096744
+  res16k_std    : 0.0817484489
+  loaded_samples: 11475361
+  res16k_samples: 7650243
+
+[LibriTTS/train-clean-100/6476/57446]
+  files_ok      : 101
+  files_failed  : 0
+  loaded_mean   : 0.0000891073
+  loaded_std    : 0.0687547498
+  res16k_mean   : 0.0000891487
+  res16k_std    : 0.0687517527
+  loaded_samples: 16511054
+  res16k_samples: 11007391
+
+[LibriTTS/train-clean-100/6476/96661]
+  files_ok      : 55
+  files_failed  : 0
+  loaded_mean   : 0.0003555618
+  loaded_std    : 0.1626898223
+  res16k_mean   : 0.0003557270
+  res16k_std    : 0.1626949708
+  loaded_samples: 9301919
+  res16k_samples: 6201282
+
+[LibriTTS/train-clean-100/6529/62554]
+  files_ok      : 114
+  files_failed  : 0
+  loaded_mean   : -0.0001484620
+  loaded_std    : 0.0601410733
+  res16k_mean   : -0.0001485312
+  res16k_std    : 0.0600990377
+  loaded_samples: 14962082
+  res16k_samples: 9974739
+
+[LibriTTS/train-clean-100/6529/62556]
+  files_ok      : 68
+  files_failed  : 0
+  loaded_mean   : -0.0003460594
+  loaded_std    : 0.0739434934
+  res16k_mean   : -0.0003462172
+  res16k_std    : 0.0738691032
+  loaded_samples: 4482959
+  res16k_samples: 2988651
+
+[LibriTTS/train-clean-100/6531/61334]
+  files_ok      : 111
+  files_failed  : 0
+  loaded_mean   : -0.0000008452
+  loaded_std    : 0.0550563391
+  res16k_mean   : -0.0000008464
+  res16k_std    : 0.0548589530
+  loaded_samples: 19105184
+  res16k_samples: 12736818
+
+[LibriTTS/train-clean-100/6563/285357]
+  files_ok      : 50
+  files_failed  : 0
+  loaded_mean   : -0.0000030998
+  loaded_std    : 0.0696593828
+  res16k_mean   : -0.0000031014
+  res16k_std    : 0.0696476700
+  loaded_samples: 9507362
+  res16k_samples: 6338243
+
+[LibriTTS/train-clean-100/6563/63821]
+  files_ok      : 3
+  files_failed  : 0
+  loaded_mean   : -0.0000820890
+  loaded_std    : 0.0657338598
+  res16k_mean   : -0.0000821206
+  res16k_std    : 0.0657379641
+  loaded_samples: 238800
+  res16k_samples: 159200
+
+[LibriTTS/train-clean-100/669/129061]
+  files_ok      : 87
+  files_failed  : 0
+  loaded_mean   : -0.0000249241
+  loaded_std    : 0.0820684348
+  res16k_mean   : -0.0000249368
+  res16k_std    : 0.0819778650
+  loaded_samples: 17419451
+  res16k_samples: 11612982
+
+[LibriTTS/train-clean-100/669/129074]
+  files_ok      : 107
+  files_failed  : 0
+  loaded_mean   : 0.0000528120
+  loaded_std    : 0.1010720134
+  res16k_mean   : 0.0000528378
+  res16k_std    : 0.1009001081
+  loaded_samples: 20756375
+  res16k_samples: 13837611
+
+[LibriTTS/train-clean-100/6818/68772]
+  files_ok      : 66
+  files_failed  : 0
+  loaded_mean   : -0.0000010514
+  loaded_std    : 0.0572500436
+  res16k_mean   : -0.0000010525
+  res16k_std    : 0.0570361517
+  loaded_samples: 12906958
+  res16k_samples: 8604646
+
+[LibriTTS/train-clean-100/6818/76332]
+  files_ok      : 81
+  files_failed  : 0
+  loaded_mean   : -0.0000020981
+  loaded_std    : 0.0616068752
+  res16k_mean   : -0.0000020983
+  res16k_std    : 0.0615052956
+  loaded_samples: 9966236
+  res16k_samples: 6644166
+
+[LibriTTS/train-clean-100/6836/61803]
+  files_ok      : 50
+  files_failed  : 0
+  loaded_mean   : 0.0000010002
+  loaded_std    : 0.0704385907
+  res16k_mean   : 0.0000009984
+  res16k_std    : 0.0702681458
+  loaded_samples: 6785039
+  res16k_samples: 4523364
+
+[LibriTTS/train-clean-100/6836/61804]
+  files_ok      : 42
+  files_failed  : 0
+  loaded_mean   : -0.0000015018
+  loaded_std    : 0.0744519626
+  res16k_mean   : -0.0000015030
+  res16k_std    : 0.0740968492
+  loaded_samples: 9284400
+  res16k_samples: 6189602
+
+[LibriTTS/train-clean-100/6836/76549]
+  files_ok      : 30
+  files_failed  : 0
+  loaded_mean   : -0.0000011781
+  loaded_std    : 0.0844458261
+  res16k_mean   : -0.0000011794
+  res16k_std    : 0.0842695965
+  loaded_samples: 9918478
+  res16k_samples: 6612324
+
+[LibriTTS/train-clean-100/6848/252322]
+  files_ok      : 16
+  files_failed  : 0
+  loaded_mean   : -0.0001412100
+  loaded_std    : 0.0731064341
+  res16k_mean   : -0.0001412743
+  res16k_std    : 0.0727380937
+  loaded_samples: 2336401
+  res16k_samples: 1557602
+
+[LibriTTS/train-clean-100/6848/252323]
+  files_ok      : 22
+  files_failed  : 0
+  loaded_mean   : -0.0001531494
+  loaded_std    : 0.0617083351
+  res16k_mean   : -0.0001532201
+  res16k_std    : 0.0612597388
+  loaded_samples: 3780722
+  res16k_samples: 2520484
+
+[LibriTTS/train-clean-100/6848/76049]
+  files_ok      : 54
+  files_failed  : 0
+  loaded_mean   : -0.0001245845
+  loaded_std    : 0.0637166793
+  res16k_mean   : -0.0001246471
+  res16k_std    : 0.0635883989
+  loaded_samples: 7124874
+  res16k_samples: 4749921
+
+[LibriTTS/train-clean-100/6880/216547]
+  files_ok      : 80
+  files_failed  : 0
+  loaded_mean   : 0.0000256615
+  loaded_std    : 0.0716180271
+  res16k_mean   : 0.0000256741
+  res16k_std    : 0.0715285940
+  loaded_samples: 20807526
+  res16k_samples: 13871701
+
+[LibriTTS/train-clean-100/6925/80680]
+  files_ok      : 9
+  files_failed  : 0
+  loaded_mean   : -0.0001032401
+  loaded_std    : 0.0839944318
+  res16k_mean   : -0.0001033010
+  res16k_std    : 0.0836842034
+  loaded_samples: 539043
+  res16k_samples: 359363
+
+[LibriTTS/train-clean-100/696/92939]
+  files_ok      : 55
+  files_failed  : 0
+  loaded_mean   : 0.0000002155
+  loaded_std    : 0.0765985847
+  res16k_mean   : 0.0000002150
+  res16k_std    : 0.0764459049
+  loaded_samples: 8883599
+  res16k_samples: 5922403
+
+[LibriTTS/train-clean-100/696/93314]
+  files_ok      : 199
+  files_failed  : 0
+  loaded_mean   : 0.0000563360
+  loaded_std    : 0.0615457534
+  res16k_mean   : 0.0000563636
+  res16k_std    : 0.0614644603
+  loaded_samples: 22829538
+  res16k_samples: 15219727
+
+[LibriTTS/train-clean-100/7059/77897]
+  files_ok      : 73
+  files_failed  : 0
+  loaded_mean   : 0.0000018511
+  loaded_std    : 0.0525758945
+  res16k_mean   : 0.0000018515
+  res16k_std    : 0.0524005915
+  loaded_samples: 9805440
+  res16k_samples: 6536962
+
+[LibriTTS/train-clean-100/7059/77900]
+  files_ok      : 45
+  files_failed  : 0
+  loaded_mean   : 0.0000030714
+  loaded_std    : 0.0513560057
+  res16k_mean   : 0.0000030724
+  res16k_std    : 0.0509982662
+  loaded_samples: 7092957
+  res16k_samples: 4728641
+
+[LibriTTS/train-clean-100/7059/88364]
+  files_ok      : 53
+  files_failed  : 0
+  loaded_mean   : 0.0000035881
+  loaded_std    : 0.0647179605
+  res16k_mean   : 0.0000035906
+  res16k_std    : 0.0640957141
+  loaded_samples: 9738240
+  res16k_samples: 6492162
+
+[LibriTTS/train-clean-100/7067/76047]
+  files_ok      : 128
+  files_failed  : 0
+  loaded_mean   : -0.0000015564
+  loaded_std    : 0.0579667980
+  res16k_mean   : -0.0000015566
+  res16k_std    : 0.0575202287
+  loaded_samples: 13148876
+  res16k_samples: 8765934
+
+[LibriTTS/train-clean-100/7067/76048]
+  files_ok      : 175
+  files_failed  : 0
+  loaded_mean   : -0.0000170769
+  loaded_std    : 0.0634080076
+  res16k_mean   : -0.0000170842
+  res16k_std    : 0.0632297546
+  loaded_samples: 21292092
+  res16k_samples: 14194751
+
+[LibriTTS/train-clean-100/7078/271888]
+  files_ok      : 198
+  files_failed  : 0
+  loaded_mean   : -0.0000840447
+  loaded_std    : 0.0727974921
+  res16k_mean   : -0.0000840895
+  res16k_std    : 0.0665115542
+  loaded_samples: 23534648
+  res16k_samples: 15689808
+
+[LibriTTS/train-clean-100/7113/86041]
+  files_ok      : 61
+  files_failed  : 0
+  loaded_mean   : -0.0000010153
+  loaded_std    : 0.0670277786
+  res16k_mean   : -0.0000010163
+  res16k_std    : 0.0666360510
+  loaded_samples: 13095136
+  res16k_samples: 8730109
+
+[LibriTTS/train-clean-100/7148/82991]
+  files_ok      : 6
+  files_failed  : 0
+  loaded_mean   : -0.0000039734
+  loaded_std    : 0.0741033663
+  res16k_mean   : -0.0000039926
+  res16k_std    : 0.0726051133
+  loaded_samples: 859920
+  res16k_samples: 573281
+
+[LibriTTS/train-clean-100/7178/34644]
+  files_ok      : 112
+  files_failed  : 0
+  loaded_mean   : 0.0000007292
+  loaded_std    : 0.0651890625
+  res16k_mean   : 0.0000007287
+  res16k_std    : 0.0650072768
+  loaded_samples: 14019359
+  res16k_samples: 9346262
+
+[LibriTTS/train-clean-100/7178/34645]
+  files_ok      : 178
+  files_failed  : 0
+  loaded_mean   : 0.0000004743
+  loaded_std    : 0.0602796452
+  res16k_mean   : 0.0000004740
+  res16k_std    : 0.0601378943
+  loaded_samples: 25638977
+  res16k_samples: 17092693
+
+[LibriTTS/train-clean-100/7190/90542]
+  files_ok      : 152
+  files_failed  : 0
+  loaded_mean   : -0.0000299751
+  loaded_std    : 0.0427257885
+  res16k_mean   : -0.0000299890
+  res16k_std    : 0.0427299847
+  loaded_samples: 14041923
+  res16k_samples: 9361306
+
+[LibriTTS/train-clean-100/7190/90543]
+  files_ok      : 173
+  files_failed  : 0
+  loaded_mean   : -0.0000096517
+  loaded_std    : 0.0834431255
+  res16k_mean   : -0.0000096565
+  res16k_std    : 0.0834338214
+  loaded_samples: 18160815
+  res16k_samples: 12107238
+
+[LibriTTS/train-clean-100/7226/86964]
+  files_ok      : 56
+  files_failed  : 0
+  loaded_mean   : -0.0000615775
+  loaded_std    : 0.0720293810
+  res16k_mean   : -0.0000616054
+  res16k_std    : 0.0719280276
+  loaded_samples: 13254000
+  res16k_samples: 8836005
+
+[LibriTTS/train-clean-100/7226/86965]
+  files_ok      : 40
+  files_failed  : 0
+  loaded_mean   : -0.0000083623
+  loaded_std    : 0.0554302361
+  res16k_mean   : -0.0000083669
+  res16k_std    : 0.0553544282
+  loaded_samples: 9081357
+  res16k_samples: 6054244
+
+[LibriTTS/train-clean-100/7264/92310]
+  files_ok      : 29
+  files_failed  : 0
+  loaded_mean   : -0.0000133355
+  loaded_std    : 0.0779210806
+  res16k_mean   : -0.0000133423
+  res16k_std    : 0.0778632372
+  loaded_samples: 4811040
+  res16k_samples: 3207360
+
+[LibriTTS/train-clean-100/7264/92314]
+  files_ok      : 24
+  files_failed  : 0
+  loaded_mean   : -0.0000091135
+  loaded_std    : 0.0688658160
+  res16k_mean   : -0.0000091175
+  res16k_std    : 0.0688307557
+  loaded_samples: 4389840
+  res16k_samples: 2926560
+
+[LibriTTS/train-clean-100/7264/92316]
+  files_ok      : 23
+  files_failed  : 0
+  loaded_mean   : -0.0000087006
+  loaded_std    : 0.0688813093
+  res16k_mean   : -0.0000087049
+  res16k_std    : 0.0688362586
+  loaded_samples: 2688721
+  res16k_samples: 1792482
+
+[LibriTTS/train-clean-100/7278/104730]
+  files_ok      : 14
+  files_failed  : 0
+  loaded_mean   : -0.0000529067
+  loaded_std    : 0.0653789942
+  res16k_mean   : -0.0000529321
+  res16k_std    : 0.0652266638
+  loaded_samples: 3063125
+  res16k_samples: 2042086
+
+[LibriTTS/train-clean-100/7278/246956]
+  files_ok      : 36
+  files_failed  : 0
+  loaded_mean   : -0.0000008256
+  loaded_std    : 0.0634905967
+  res16k_mean   : -0.0000008280
+  res16k_std    : 0.0624318812
+  loaded_samples: 7225685
+  res16k_samples: 4817129
+
+[LibriTTS/train-clean-100/7278/91083]
+  files_ok      : 46
+  files_failed  : 0
+  loaded_mean   : 0.0000024160
+  loaded_std    : 0.0701240447
+  res16k_mean   : 0.0000024183
+  res16k_std    : 0.0701272261
+  loaded_samples: 7030316
+  res16k_samples: 4686882
+
+[LibriTTS/train-clean-100/730/358]
+  files_ok      : 27
+  files_failed  : 0
+  loaded_mean   : -0.0002228674
+  loaded_std    : 0.0747078297
+  res16k_mean   : -0.0002229719
+  res16k_std    : 0.0746107008
+  loaded_samples: 4677359
+  res16k_samples: 3118241
+
+[LibriTTS/train-clean-100/730/359]
+  files_ok      : 34
+  files_failed  : 0
+  loaded_mean   : -0.0002655908
+  loaded_std    : 0.0802159620
+  res16k_mean   : -0.0002657115
+  res16k_std    : 0.0800664356
+  loaded_samples: 4753202
+  res16k_samples: 3168805
+
+[LibriTTS/train-clean-100/730/360]
+  files_ok      : 19
+  files_failed  : 0
+  loaded_mean   : -0.0002658412
+  loaded_std    : 0.0755834591
+  res16k_mean   : -0.0002659666
+  res16k_std    : 0.0754782044
+  loaded_samples: 3517922
+  res16k_samples: 2345282
+
+[LibriTTS/train-clean-100/7302/86814]
+  files_ok      : 96
+  files_failed  : 0
+  loaded_mean   : 0.0000024363
+  loaded_std    : 0.0755489621
+  res16k_mean   : 0.0000024382
+  res16k_std    : 0.0737271152
+  loaded_samples: 13017840
+  res16k_samples: 8678576
+
+[LibriTTS/train-clean-100/7302/86815]
+  files_ok      : 78
+  files_failed  : 0
+  loaded_mean   : 0.0000281548
+  loaded_std    : 0.0713139816
+  res16k_mean   : 0.0000281701
+  res16k_std    : 0.0694172374
+  loaded_samples: 11619368
+  res16k_samples: 7746261
+
+[LibriTTS/train-clean-100/7312/92432]
+  files_ok      : 21
+  files_failed  : 0
+  loaded_mean   : 0.0000033360
+  loaded_std    : 0.0907178989
+  res16k_mean   : 0.0000033368
+  res16k_std    : 0.0897732630
+  loaded_samples: 4402320
+  res16k_samples: 2934880
+
+[LibriTTS/train-clean-100/7367/86737]
+  files_ok      : 176
+  files_failed  : 0
+  loaded_mean   : -0.0000839003
+  loaded_std    : 0.0456233285
+  res16k_mean   : -0.0000839415
+  res16k_std    : 0.0449870139
+  loaded_samples: 27712319
+  res16k_samples: 18474922
+
+[LibriTTS/train-clean-100/7402/59171]
+  files_ok      : 83
+  files_failed  : 0
+  loaded_mean   : 0.0000151311
+  loaded_std    : 0.0597903697
+  res16k_mean   : 0.0000151418
+  res16k_std    : 0.0597793264
+  loaded_samples: 13118152
+  res16k_samples: 8745444
+
+[LibriTTS/train-clean-100/7402/90848]
+  files_ok      : 130
+  files_failed  : 0
+  loaded_mean   : 0.0000163274
+  loaded_std    : 0.0662011354
+  res16k_mean   : 0.0000163358
+  res16k_std    : 0.0661959150
+  loaded_samples: 18879841
+  res16k_samples: 12586581
+
+[LibriTTS/train-clean-100/7447/91186]
+  files_ok      : 122
+  files_failed  : 0
+  loaded_mean   : 0.0000014005
+  loaded_std    : 0.0683074285
+  res16k_mean   : 0.0000014004
+  res16k_std    : 0.0681259434
+  loaded_samples: 29477278
+  res16k_samples: 19651551
+
+[LibriTTS/train-clean-100/7447/91187]
+  files_ok      : 65
+  files_failed  : 0
+  loaded_mean   : 0.0005021484
+  loaded_std    : 0.0780527869
+  res16k_mean   : 0.0005023814
+  res16k_std    : 0.0779140625
+  loaded_samples: 16598396
+  res16k_samples: 11065606
+
+[LibriTTS/train-clean-100/7505/258958]
+  files_ok      : 81
+  files_failed  : 0
+  loaded_mean   : -0.0000010442
+  loaded_std    : 0.0684396797
+  res16k_mean   : -0.0000010457
+  res16k_std    : 0.0680787429
+  loaded_samples: 15623045
+  res16k_samples: 10415375
+
+[LibriTTS/train-clean-100/7505/258964]
+  files_ok      : 75
+  files_failed  : 0
+  loaded_mean   : -0.0000002379
+  loaded_std    : 0.0705798064
+  res16k_mean   : -0.0000002370
+  res16k_std    : 0.0702367741
+  loaded_samples: 18367452
+  res16k_samples: 12244981
+
+[LibriTTS/train-clean-100/7505/83618]
+  files_ok      : 52
+  files_failed  : 0
+  loaded_mean   : -0.0000011016
+  loaded_std    : 0.0733636329
+  res16k_mean   : -0.0000011067
+  res16k_std    : 0.0729905069
+  loaded_samples: 8914077
+  res16k_samples: 5942726
+
+[LibriTTS/train-clean-100/7511/102419]
+  files_ok      : 97
+  files_failed  : 0
+  loaded_mean   : -0.0000010802
+  loaded_std    : 0.0667741994
+  res16k_mean   : -0.0000010799
+  res16k_std    : 0.0666611179
+  loaded_samples: 12648718
+  res16k_samples: 8432487
+
+[LibriTTS/train-clean-100/7511/102420]
+  files_ok      : 100
+  files_failed  : 0
+  loaded_mean   : -0.0000008051
+  loaded_std    : 0.0711433154
+  res16k_mean   : -0.0000008059
+  res16k_std    : 0.0710445744
+  loaded_samples: 13485123
+  res16k_samples: 8990089
+
+[LibriTTS/train-clean-100/7517/100429]
+  files_ok      : 33
+  files_failed  : 0
+  loaded_mean   : -0.0000057777
+  loaded_std    : 0.0765504681
+  res16k_mean   : -0.0000057774
+  res16k_std    : 0.0762226435
+  loaded_samples: 6358560
+  res16k_samples: 4239040
+
+[LibriTTS/train-clean-100/7517/100437]
+  files_ok      : 47
+  files_failed  : 0
+  loaded_mean   : 0.0000000022
+  loaded_std    : 0.0686721002
+  res16k_mean   : 0.0000000014
+  res16k_std    : 0.0682713274
+  loaded_samples: 9861120
+  res16k_samples: 6574081
+
+[LibriTTS/train-clean-100/7517/100442]
+  files_ok      : 41
+  files_failed  : 0
+  loaded_mean   : 0.0000028552
+  loaded_std    : 0.0757022748
+  res16k_mean   : 0.0000028617
+  res16k_std    : 0.0749075050
+  loaded_samples: 7181040
+  res16k_samples: 4787361
+
+[LibriTTS/train-clean-100/7635/105409]
+  files_ok      : 49
+  files_failed  : 0
+  loaded_mean   : 0.0000006329
+  loaded_std    : 0.0655024340
+  res16k_mean   : 0.0000006335
+  res16k_std    : 0.0642255860
+  loaded_samples: 5053685
+  res16k_samples: 3369131
+
+[LibriTTS/train-clean-100/7635/105661]
+  files_ok      : 3
+  files_failed  : 0
+  loaded_mean   : 0.0000049377
+  loaded_std    : 0.0603774399
+  res16k_mean   : 0.0000049645
+  res16k_std    : 0.0587496275
+  loaded_samples: 386640
+  res16k_samples: 257760
+
+[LibriTTS/train-clean-100/7780/274562]
+  files_ok      : 71
+  files_failed  : 0
+  loaded_mean   : 0.0000005455
+  loaded_std    : 0.0706290975
+  res16k_mean   : 0.0000005461
+  res16k_std    : 0.0706090862
+  loaded_samples: 16713840
+  res16k_samples: 11142573
+
+[LibriTTS/train-clean-100/7794/295947]
+  files_ok      : 51
+  files_failed  : 0
+  loaded_mean   : 0.0000051226
+  loaded_std    : 0.0773668051
+  res16k_mean   : 0.0000051296
+  res16k_std    : 0.0758200705
+  loaded_samples: 8938080
+  res16k_samples: 5958724
+
+[LibriTTS/train-clean-100/7794/295948]
+  files_ok      : 20
+  files_failed  : 0
+  loaded_mean   : 0.0000028253
+  loaded_std    : 0.0797867715
+  res16k_mean   : 0.0000028266
+  res16k_std    : 0.0785921955
+  loaded_samples: 4607520
+  res16k_samples: 3071680
+
+[LibriTTS/train-clean-100/7794/295955]
+  files_ok      : 47
+  files_failed  : 0
+  loaded_mean   : 0.0000020068
+  loaded_std    : 0.0741904109
+  res16k_mean   : 0.0000020113
+  res16k_std    : 0.0725404709
+  loaded_samples: 10250639
+  res16k_samples: 6833765
+
+[LibriTTS/train-clean-100/78/368]
+  files_ok      : 56
+  files_failed  : 0
+  loaded_mean   : 0.0000641223
+  loaded_std    : 0.0666487739
+  res16k_mean   : 0.0000641519
+  res16k_std    : 0.0663749341
+  loaded_samples: 10687445
+  res16k_samples: 7124972
+
+[LibriTTS/train-clean-100/78/369]
+  files_ok      : 193
+  files_failed  : 0
+  loaded_mean   : 0.0000878203
+  loaded_std    : 0.0817169147
+  res16k_mean   : 0.0000878579
+  res16k_std    : 0.0814059220
+  loaded_samples: 31083447
+  res16k_samples: 20722353
+
+[LibriTTS/train-clean-100/7800/283478]
+  files_ok      : 84
+  files_failed  : 0
+  loaded_mean   : -0.0000033744
+  loaded_std    : 0.0792023201
+  res16k_mean   : -0.0000033771
+  res16k_std    : 0.0790235509
+  loaded_samples: 10477674
+  res16k_samples: 6985122
+
+[LibriTTS/train-clean-100/7800/283492]
+  files_ok      : 86
+  files_failed  : 0
+  loaded_mean   : -0.0000023180
+  loaded_std    : 0.0810608989
+  res16k_mean   : -0.0000023175
+  res16k_std    : 0.0809456637
+  loaded_samples: 11064242
+  res16k_samples: 7376164
+
+[LibriTTS/train-clean-100/7800/283493]
+  files_ok      : 100
+  files_failed  : 0
+  loaded_mean   : -0.0000058774
+  loaded_std    : 0.0807821890
+  res16k_mean   : -0.0000058804
+  res16k_std    : 0.0806364408
+  loaded_samples: 11091597
+  res16k_samples: 7394405
+
+[LibriTTS/train-clean-100/7859/102518]
+  files_ok      : 6
+  files_failed  : 0
+  loaded_mean   : 0.0000020937
+  loaded_std    : 0.0715160023
+  res16k_mean   : 0.0000020941
+  res16k_std    : 0.0714246549
+  loaded_samples: 1310400
+  res16k_samples: 873601
+
+[LibriTTS/train-clean-100/7859/102519]
+  files_ok      : 40
+  files_failed  : 0
+  loaded_mean   : -0.0000004253
+  loaded_std    : 0.0701591188
+  res16k_mean   : -0.0000004229
+  res16k_std    : 0.0699791516
+  loaded_samples: 7844875
+  res16k_samples: 5229923
+
+[LibriTTS/train-clean-100/7859/102521]
+  files_ok      : 10
+  files_failed  : 0
+  loaded_mean   : 0.0000009552
+  loaded_std    : 0.0656160918
+  res16k_mean   : 0.0000009589
+  res16k_std    : 0.0655484155
+  loaded_samples: 1850400
+  res16k_samples: 1233601
+
+[LibriTTS/train-clean-100/8014/112586]
+  files_ok      : 13
+  files_failed  : 0
+  loaded_mean   : -0.0000042022
+  loaded_std    : 0.0697686441
+  res16k_mean   : -0.0000042030
+  res16k_std    : 0.0696419100
+  loaded_samples: 2191920
+  res16k_samples: 1461280
+
+[LibriTTS/train-clean-100/8014/112602]
+  files_ok      : 35
+  files_failed  : 0
+  loaded_mean   : -0.0000014662
+  loaded_std    : 0.0737924449
+  res16k_mean   : -0.0000014665
+  res16k_std    : 0.0733347738
+  loaded_samples: 6063358
+  res16k_samples: 4042240
+
+[LibriTTS/train-clean-100/8014/280382]
+  files_ok      : 9
+  files_failed  : 0
+  loaded_mean   : -0.0000037828
+  loaded_std    : 0.0618881195
+  res16k_mean   : -0.0000037827
+  res16k_std    : 0.0615277844
+  loaded_samples: 1398720
+  res16k_samples: 932480
+
+[LibriTTS/train-clean-100/8051/118101]
+  files_ok      : 42
+  files_failed  : 0
+  loaded_mean   : 0.0000004826
+  loaded_std    : 0.0709656159
+  res16k_mean   : 0.0000004828
+  res16k_std    : 0.0709609086
+  loaded_samples: 7221601
+  res16k_samples: 4814402
+
+[LibriTTS/train-clean-100/8051/119902]
+  files_ok      : 67
+  files_failed  : 0
+  loaded_mean   : -0.0000023407
+  loaded_std    : 0.0776227799
+  res16k_mean   : -0.0000023415
+  res16k_std    : 0.0776105243
+  loaded_samples: 9667922
+  res16k_samples: 6445285
+
+[LibriTTS/train-clean-100/8051/295385]
+  files_ok      : 22
+  files_failed  : 0
+  loaded_mean   : -0.0000013526
+  loaded_std    : 0.0682137148
+  res16k_mean   : -0.0000013516
+  res16k_std    : 0.0681188965
+  loaded_samples: 6981360
+  res16k_samples: 4654240
+
+[LibriTTS/train-clean-100/8063/274112]
+  files_ok      : 40
+  files_failed  : 0
+  loaded_mean   : 0.0000081358
+  loaded_std    : 0.0977406146
+  res16k_mean   : 0.0000081377
+  res16k_std    : 0.0976729012
+  loaded_samples: 2002808
+  res16k_samples: 1335218
+
+[LibriTTS/train-clean-100/8063/274115]
+  files_ok      : 24
+  files_failed  : 0
+  loaded_mean   : -0.0000032233
+  loaded_std    : 0.0742702015
+  res16k_mean   : -0.0000032271
+  res16k_std    : 0.0742257345
+  loaded_samples: 1731597
+  res16k_samples: 1154401
+
+[LibriTTS/train-clean-100/8063/274116]
+  files_ok      : 15
+  files_failed  : 0
+  loaded_mean   : 0.0000002423
+  loaded_std    : 0.1109230150
+  res16k_mean   : 0.0000002444
+  res16k_std    : 0.1108665310
+  loaded_samples: 1563842
+  res16k_samples: 1042562
+
+[LibriTTS/train-clean-100/8063/274117]
+  files_ok      : 17
+  files_failed  : 0
+  loaded_mean   : 0.0000023456
+  loaded_std    : 0.0914959575
+  res16k_mean   : 0.0000023483
+  res16k_std    : 0.0914350145
+  loaded_samples: 1653362
+  res16k_samples: 1102242
+
+[LibriTTS/train-clean-100/8088/284756]
+  files_ok      : 378
+  files_failed  : 0
+  loaded_mean   : 0.0000001616
+  loaded_std    : 0.0491152243
+  res16k_mean   : 0.0000001611
+  res16k_std    : 0.0487063537
+  loaded_samples: 40567772
+  res16k_samples: 27045282
+
+[LibriTTS/train-clean-100/8095/274345]
+  files_ok      : 41
+  files_failed  : 0
+  loaded_mean   : -0.0000024670
+  loaded_std    : 0.0628387616
+  res16k_mean   : -0.0000024693
+  res16k_std    : 0.0626968268
+  loaded_samples: 11275916
+  res16k_samples: 7517282
+
+[LibriTTS/train-clean-100/8095/274346]
+  files_ok      : 41
+  files_failed  : 0
+  loaded_mean   : -0.0000016185
+  loaded_std    : 0.0641959759
+  res16k_mean   : -0.0000016196
+  res16k_std    : 0.0640714146
+  loaded_samples: 10017368
+  res16k_samples: 6678255
+
+[LibriTTS/train-clean-100/8095/274348]
+  files_ok      : 8
+  files_failed  : 0
+  loaded_mean   : -0.0000002031
+  loaded_std    : 0.0682737109
+  res16k_mean   : -0.0000002039
+  res16k_std    : 0.0680811711
+  loaded_samples: 2605920
+  res16k_samples: 1737280
+
+[LibriTTS/train-clean-100/8098/275181]
+  files_ok      : 61
+  files_failed  : 0
+  loaded_mean   : 0.0000016277
+  loaded_std    : 0.0761534669
+  res16k_mean   : 0.0000016279
+  res16k_std    : 0.0761673442
+  loaded_samples: 8613121
+  res16k_samples: 5742084
+
+[LibriTTS/train-clean-100/8098/278252]
+  files_ok      : 61
+  files_failed  : 0
+  loaded_mean   : -0.0000002360
+  loaded_std    : 0.0720770454
+  res16k_mean   : -0.0000002362
+  res16k_std    : 0.0720886605
+  loaded_samples: 8577840
+  res16k_samples: 5718564
+
+[LibriTTS/train-clean-100/8098/278278]
+  files_ok      : 61
+  files_failed  : 0
+  loaded_mean   : -0.0000000025
+  loaded_std    : 0.0844134897
+  res16k_mean   : -0.0000000029
+  res16k_std    : 0.0844266208
+  loaded_samples: 9403201
+  res16k_samples: 6268803
+
+[LibriTTS/train-clean-100/8108/274318]
+  files_ok      : 87
+  files_failed  : 0
+  loaded_mean   : 0.0000000944
+  loaded_std    : 0.0676720753
+  res16k_mean   : 0.0000000959
+  res16k_std    : 0.0674873973
+  loaded_samples: 15593761
+  res16k_samples: 10395852
+
+[LibriTTS/train-clean-100/8108/280354]
+  files_ok      : 53
+  files_failed  : 0
+  loaded_mean   : -0.0000050523
+  loaded_std    : 0.0647704693
+  res16k_mean   : -0.0000050552
+  res16k_std    : 0.0645441465
+  loaded_samples: 8902557
+  res16k_samples: 5935041
+
+[LibriTTS/train-clean-100/8108/280359]
+  files_ok      : 34
+  files_failed  : 0
+  loaded_mean   : -0.0000081147
+  loaded_std    : 0.0663142447
+  res16k_mean   : -0.0000081204
+  res16k_std    : 0.0660813294
+  loaded_samples: 5938081
+  res16k_samples: 3958721
+
+[LibriTTS/train-clean-100/8123/275193]
+  files_ok      : 45
+  files_failed  : 0
+  loaded_mean   : 0.0000759796
+  loaded_std    : 0.0706488920
+  res16k_mean   : 0.0000760155
+  res16k_std    : 0.0704666694
+  loaded_samples: 10214640
+  res16k_samples: 6809760
+
+[LibriTTS/train-clean-100/8123/275209]
+  files_ok      : 79
+  files_failed  : 0
+  loaded_mean   : -0.0000003986
+  loaded_std    : 0.0727369386
+  res16k_mean   : -0.0000004006
+  res16k_std    : 0.0725435294
+  loaded_samples: 11061119
+  res16k_samples: 7374085
+
+[LibriTTS/train-clean-100/8123/275216]
+  files_ok      : 124
+  files_failed  : 0
+  loaded_mean   : 0.0000013306
+  loaded_std    : 0.0636079708
+  res16k_mean   : 0.0000013327
+  res16k_std    : 0.0634773892
+  loaded_samples: 15376322
+  res16k_samples: 10250898
+
+[LibriTTS/train-clean-100/8226/274369]
+  files_ok      : 39
+  files_failed  : 0
+  loaded_mean   : -0.0000000831
+  loaded_std    : 0.0761964560
+  res16k_mean   : -0.0000000804
+  res16k_std    : 0.0759417936
+  loaded_samples: 9811939
+  res16k_samples: 6541302
+
+[LibriTTS/train-clean-100/8226/274371]
+  files_ok      : 35
+  files_failed  : 0
+  loaded_mean   : -0.0000007443
+  loaded_std    : 0.0711811220
+  res16k_mean   : -0.0000007456
+  res16k_std    : 0.0709772831
+  loaded_samples: 7434728
+  res16k_samples: 4956496
+
+[LibriTTS/train-clean-100/8238/274553]
+  files_ok      : 72
+  files_failed  : 0
+  loaded_mean   : 0.0000008777
+  loaded_std    : 0.0511638957
+  res16k_mean   : 0.0000008800
+  res16k_std    : 0.0506870590
+  loaded_samples: 16679768
+  res16k_samples: 11119862
+
+[LibriTTS/train-clean-100/8238/283452]
+  files_ok      : 69
+  files_failed  : 0
+  loaded_mean   : 0.0000012568
+  loaded_std    : 0.0532209601
+  res16k_mean   : 0.0000012625
+  res16k_std    : 0.0529476812
+  loaded_samples: 13860712
+  res16k_samples: 9240483
+
+[LibriTTS/train-clean-100/83/11691]
+  files_ok      : 84
+  files_failed  : 0
+  loaded_mean   : -0.0000014168
+  loaded_std    : 0.0619321187
+  res16k_mean   : -0.0000014169
+  res16k_std    : 0.0618946819
+  loaded_samples: 7296247
+  res16k_samples: 4864171
+
+[LibriTTS/train-clean-100/83/3054]
+  files_ok      : 7
+  files_failed  : 0
+  loaded_mean   : -0.0000918381
+  loaded_std    : 0.0610429370
+  res16k_mean   : -0.0000918799
+  res16k_std    : 0.0610102245
+  loaded_samples: 2127120
+  res16k_samples: 1418080
+
+[LibriTTS/train-clean-100/83/9960]
+  files_ok      : 101
+  files_failed  : 0
+  loaded_mean   : -0.0000809848
+  loaded_std    : 0.0461389093
+  res16k_mean   : -0.0000810230
+  res16k_std    : 0.0461121061
+  loaded_samples: 12192233
+  res16k_samples: 8128172
+
+[LibriTTS/train-clean-100/831/130739]
+  files_ok      : 77
+  files_failed  : 0
+  loaded_mean   : 0.0000009419
+  loaded_std    : 0.0822327370
+  res16k_mean   : 0.0000009423
+  res16k_std    : 0.0822466216
+  loaded_samples: 10940165
+  res16k_samples: 7293454
+
+[LibriTTS/train-clean-100/831/130746]
+  files_ok      : 156
+  files_failed  : 0
+  loaded_mean   : 0.0000011817
+  loaded_std    : 0.0821271018
+  res16k_mean   : 0.0000011848
+  res16k_std    : 0.0821374910
+  loaded_samples: 12760803
+  res16k_samples: 8507224
+
+[LibriTTS/train-clean-100/8312/279790]
+  files_ok      : 93
+  files_failed  : 0
+  loaded_mean   : 0.0000051304
+  loaded_std    : 0.0588518078
+  res16k_mean   : 0.0000051333
+  res16k_std    : 0.0588592812
+  loaded_samples: 17482804
+  res16k_samples: 11655218
+
+[LibriTTS/train-clean-100/8312/279791]
+  files_ok      : 110
+  files_failed  : 0
+  loaded_mean   : 0.0000016711
+  loaded_std    : 0.0540248338
+  res16k_mean   : 0.0000016718
+  res16k_std    : 0.0540309761
+  loaded_samples: 20747995
+  res16k_samples: 13832011
+
+[LibriTTS/train-clean-100/8324/286681]
+  files_ok      : 60
+  files_failed  : 0
+  loaded_mean   : 0.0000003207
+  loaded_std    : 0.0643845100
+  res16k_mean   : 0.0000003210
+  res16k_std    : 0.0640018144
+  loaded_samples: 6699600
+  res16k_samples: 4466400
+
+[LibriTTS/train-clean-100/8324/286682]
+  files_ok      : 84
+  files_failed  : 0
+  loaded_mean   : -0.0000018460
+  loaded_std    : 0.0686277325
+  res16k_mean   : -0.0000018492
+  res16k_std    : 0.0681251222
+  loaded_samples: 11007842
+  res16k_samples: 7338572
+
+[LibriTTS/train-clean-100/8324/286683]
+  files_ok      : 71
+  files_failed  : 0
+  loaded_mean   : -0.0000034087
+  loaded_std    : 0.0719720280
+  res16k_mean   : -0.0000034154
+  res16k_std    : 0.0714087924
+  loaded_samples: 11536563
+  res16k_samples: 7691044
+
+[LibriTTS/train-clean-100/839/130898]
+  files_ok      : 62
+  files_failed  : 0
+  loaded_mean   : -0.0364113862
+  loaded_std    : 0.0472071681
+  res16k_mean   : -0.0364282720
+  res16k_std    : 0.0471421880
+  loaded_samples: 10535528
+  res16k_samples: 7023698
+
+[LibriTTS/train-clean-100/8419/286667]
+  files_ok      : 73
+  files_failed  : 0
+  loaded_mean   : 0.0000000297
+  loaded_std    : 0.0534497807
+  res16k_mean   : 0.0000000301
+  res16k_std    : 0.0513112830
+  loaded_samples: 9085441
+  res16k_samples: 6056961
+
+[LibriTTS/train-clean-100/8419/286676]
+  files_ok      : 68
+  files_failed  : 0
+  loaded_mean   : -0.0000017347
+  loaded_std    : 0.0554999768
+  res16k_mean   : -0.0000017378
+  res16k_std    : 0.0533867872
+  loaded_samples: 7908960
+  res16k_samples: 5272640
+
+[LibriTTS/train-clean-100/8419/293469]
+  files_ok      : 55
+  files_failed  : 0
+  loaded_mean   : 0.0000007157
+  loaded_std    : 0.0523053110
+  res16k_mean   : 0.0000007209
+  res16k_std    : 0.0506187540
+  loaded_samples: 7020720
+  res16k_samples: 4680480
+
+[LibriTTS/train-clean-100/8419/293473]
+  files_ok      : 48
+  files_failed  : 0
+  loaded_mean   : -0.0000009289
+  loaded_std    : 0.0558537884
+  res16k_mean   : -0.0000009309
+  res16k_std    : 0.0536545062
+  loaded_samples: 5556960
+  res16k_samples: 3704640
+
+[LibriTTS/train-clean-100/8425/246962]
+  files_ok      : 1
+  files_failed  : 0
+  loaded_mean   : 0.0000386930
+  loaded_std    : 0.0513281554
+  res16k_mean   : 0.0000387115
+  res16k_std    : 0.0513335130
+  loaded_samples: 35040
+  res16k_samples: 23360
+
+[LibriTTS/train-clean-100/8425/287387]
+  files_ok      : 1
+  files_failed  : 0
+  loaded_mean   : 0.0000000433
+  loaded_std    : 0.0480393374
+  res16k_mean   : 0.0000000455
+  res16k_std    : 0.0480112053
+  loaded_samples: 21120
+  res16k_samples: 14080
+
+[LibriTTS/train-clean-100/8425/291444]
+  files_ok      : 1
+  files_failed  : 0
+  loaded_mean   : 0.0000195002
+  loaded_std    : 0.0606664178
+  res16k_mean   : 0.0000194940
+  res16k_std    : 0.0606765158
+  loaded_samples: 28320
+  res16k_samples: 18880
+
+[LibriTTS/train-clean-100/8425/292520]
+  files_ok      : 9
+  files_failed  : 0
+  loaded_mean   : -0.0000047828
+  loaded_std    : 0.0700535760
+  res16k_mean   : -0.0000047878
+  res16k_std    : 0.0698225689
+  loaded_samples: 2490000
+  res16k_samples: 1660000
+
+[LibriTTS/train-clean-100/8465/246940]
+  files_ok      : 45
+  files_failed  : 0
+  loaded_mean   : -0.0000014770
+  loaded_std    : 0.0691824227
+  res16k_mean   : -0.0000014788
+  res16k_std    : 0.0685262247
+  loaded_samples: 6323280
+  res16k_samples: 4215520
+
+[LibriTTS/train-clean-100/8465/246942]
+  files_ok      : 20
+  files_failed  : 0
+  loaded_mean   : 0.0000007813
+  loaded_std    : 0.0705764010
+  res16k_mean   : 0.0000007804
+  res16k_std    : 0.0697467036
+  loaded_samples: 3752160
+  res16k_samples: 2501440
+
+[LibriTTS/train-clean-100/8465/246943]
+  files_ok      : 35
+  files_failed  : 0
+  loaded_mean   : 0.0000122123
+  loaded_std    : 0.0758287006
+  res16k_mean   : 0.0000122179
+  res16k_std    : 0.0749505303
+  loaded_samples: 5160720
+  res16k_samples: 3440480
+
+[LibriTTS/train-clean-100/8465/246947]
+  files_ok      : 69
+  files_failed  : 0
+  loaded_mean   : 0.0000013654
+  loaded_std    : 0.0741860178
+  res16k_mean   : 0.0000013670
+  res16k_std    : 0.0735709413
+  loaded_samples: 6658080
+  res16k_samples: 4438720
+
+[LibriTTS/train-clean-100/8468/286673]
+  files_ok      : 93
+  files_failed  : 0
+  loaded_mean   : -0.0000004998
+  loaded_std    : 0.0748667827
+  res16k_mean   : -0.0000005005
+  res16k_std    : 0.0747667038
+  loaded_samples: 12618231
+  res16k_samples: 8412163
+
+[LibriTTS/train-clean-100/8468/294887]
+  files_ok      : 44
+  files_failed  : 0
+  loaded_mean   : 0.0000003936
+  loaded_std    : 0.0792258641
+  res16k_mean   : 0.0000003922
+  res16k_std    : 0.0791142228
+  loaded_samples: 9490806
+  res16k_samples: 6327207
+
+[LibriTTS/train-clean-100/8468/295198]
+  files_ok      : 74
+  files_failed  : 0
+  loaded_mean   : -0.0000020746
+  loaded_std    : 0.0697007881
+  res16k_mean   : -0.0000020736
+  res16k_std    : 0.0695747358
+  loaded_samples: 9873114
+  res16k_samples: 6582083
+
+[LibriTTS/train-clean-100/8580/287363]
+  files_ok      : 75
+  files_failed  : 0
+  loaded_mean   : -0.0000016256
+  loaded_std    : 0.0866903812
+  res16k_mean   : -0.0000016292
+  res16k_std    : 0.0863542803
+  loaded_samples: 10241762
+  res16k_samples: 6827843
+
+[LibriTTS/train-clean-100/8580/287364]
+  files_ok      : 119
+  files_failed  : 0
+  loaded_mean   : 0.0000015806
+  loaded_std    : 0.0817176233
+  res16k_mean   : 0.0000015780
+  res16k_std    : 0.0812274211
+  loaded_samples: 12537851
+  res16k_samples: 8358578
+
+[LibriTTS/train-clean-100/8609/262281]
+  files_ok      : 124
+  files_failed  : 0
+  loaded_mean   : 0.0000010891
+  loaded_std    : 0.0440942146
+  res16k_mean   : 0.0000010850
+  res16k_std    : 0.0440276326
+  loaded_samples: 9179516
+  res16k_samples: 6119684
+
+[LibriTTS/train-clean-100/8609/283227]
+  files_ok      : 69
+  files_failed  : 0
+  loaded_mean   : 0.0000003898
+  loaded_std    : 0.0495700398
+  res16k_mean   : 0.0000003881
+  res16k_std    : 0.0495358347
+  loaded_samples: 7191853
+  res16k_samples: 4794576
+
+[LibriTTS/train-clean-100/8629/261139]
+  files_ok      : 60
+  files_failed  : 0
+  loaded_mean   : -0.0000010330
+  loaded_std    : 0.0594189193
+  res16k_mean   : -0.0000010338
+  res16k_std    : 0.0592494644
+  loaded_samples: 9884160
+  res16k_samples: 6589451
+
+[LibriTTS/train-clean-100/8629/261140]
+  files_ok      : 29
+  files_failed  : 0
+  loaded_mean   : -0.0000012527
+  loaded_std    : 0.0620773586
+  res16k_mean   : -0.0000012541
+  res16k_std    : 0.0619600409
+  loaded_samples: 3628320
+  res16k_samples: 2418883
+
+[LibriTTS/train-clean-100/8630/305212]
+  files_ok      : 71
+  files_failed  : 0
+  loaded_mean   : 0.0000017780
+  loaded_std    : 0.0707747378
+  res16k_mean   : 0.0000017797
+  res16k_std    : 0.0705015438
+  loaded_samples: 12307195
+  res16k_samples: 8204803
+
+[LibriTTS/train-clean-100/8630/305213]
+  files_ok      : 77
+  files_failed  : 0
+  loaded_mean   : 0.0000000825
+  loaded_std    : 0.0713870073
+  res16k_mean   : 0.0000000820
+  res16k_std    : 0.0711090301
+  loaded_samples: 13678807
+  res16k_samples: 9119212
+
+[LibriTTS/train-clean-100/87/121553]
+  files_ok      : 146
+  files_failed  : 0
+  loaded_mean   : 0.0000094692
+  loaded_std    : 0.0662446822
+  res16k_mean   : 0.0000094735
+  res16k_std    : 0.0659057021
+  loaded_samples: 24640338
+  res16k_samples: 16426926
+
+[LibriTTS/train-clean-100/8747/293952]
+  files_ok      : 185
+  files_failed  : 0
+  loaded_mean   : 0.0000005085
+  loaded_std    : 0.0489456491
+  res16k_mean   : 0.0000005091
+  res16k_std    : 0.0480086283
+  loaded_samples: 17443466
+  res16k_samples: 11629019
+
+[LibriTTS/train-clean-100/8770/295462]
+  files_ok      : 51
+  files_failed  : 0
+  loaded_mean   : -0.0000142767
+  loaded_std    : 0.0872931799
+  res16k_mean   : -0.0000142784
+  res16k_std    : 0.0868729617
+  loaded_samples: 8717996
+  res16k_samples: 5812005
+
+[LibriTTS/train-clean-100/8770/295463]
+  files_ok      : 35
+  files_failed  : 0
+  loaded_mean   : -0.0000150182
+  loaded_std    : 0.0909067327
+  res16k_mean   : -0.0000150179
+  res16k_std    : 0.0904591548
+  loaded_samples: 5224326
+  res16k_samples: 3482888
+
+[LibriTTS/train-clean-100/8770/295465]
+  files_ok      : 54
+  files_failed  : 0
+  loaded_mean   : -0.0000135140
+  loaded_std    : 0.0891227595
+  res16k_mean   : -0.0000135183
+  res16k_std    : 0.0884543576
+  loaded_samples: 7446478
+  res16k_samples: 4964328
+
+[LibriTTS/train-clean-100/8797/294123]
+  files_ok      : 105
+  files_failed  : 0
+  loaded_mean   : 0.0000002652
+  loaded_std    : 0.0714779331
+  res16k_mean   : 0.0000002657
+  res16k_std    : 0.0712874750
+  loaded_samples: 12921370
+  res16k_samples: 8614266
+
+[LibriTTS/train-clean-100/8838/298545]
+  files_ok      : 161
+  files_failed  : 0
+  loaded_mean   : 0.0000089687
+  loaded_std    : 0.0631945693
+  res16k_mean   : 0.0000089727
+  res16k_std    : 0.0631656448
+  loaded_samples: 15501116
+  res16k_samples: 10334107
+
+[LibriTTS/train-clean-100/8838/298546]
+  files_ok      : 117
+  files_failed  : 0
+  loaded_mean   : 0.0000084269
+  loaded_std    : 0.0697661631
+  res16k_mean   : 0.0000084299
+  res16k_std    : 0.0697591894
+  loaded_samples: 14820479
+  res16k_samples: 9880338
+
+[LibriTTS/train-clean-100/887/123289]
+  files_ok      : 102
+  files_failed  : 0
+  loaded_mean   : -0.0000006976
+  loaded_std    : 0.0685378255
+  res16k_mean   : -0.0000006976
+  res16k_std    : 0.0684325983
+  loaded_samples: 10464711
+  res16k_samples: 6976481
+
+[LibriTTS/train-clean-100/887/123290]
+  files_ok      : 63
+  files_failed  : 0
+  loaded_mean   : -0.0000009732
+  loaded_std    : 0.0589730121
+  res16k_mean   : -0.0000009745
+  res16k_std    : 0.0588440597
+  loaded_samples: 7928400
+  res16k_samples: 5285600
+
+[LibriTTS/train-clean-100/887/123291]
+  files_ok      : 52
+  files_failed  : 0
+  loaded_mean   : -0.0000008920
+  loaded_std    : 0.0508909680
+  res16k_mean   : -0.0000008931
+  res16k_std    : 0.0507837191
+  loaded_samples: 7716718
+  res16k_samples: 5144481
+
+[LibriTTS/train-clean-100/89/218]
+  files_ok      : 12
+  files_failed  : 0
+  loaded_mean   : 0.0000027252
+  loaded_std    : 0.0724141402
+  res16k_mean   : 0.0000027231
+  res16k_std    : 0.0721580980
+  loaded_samples: 1645915
+  res16k_samples: 1097280
+
+[LibriTTS/train-clean-100/89/219]
+  files_ok      : 10
+  files_failed  : 0
+  loaded_mean   : 0.0000027099
+  loaded_std    : 0.0760589842
+  res16k_mean   : 0.0000027354
+  res16k_std    : 0.0757650785
+  loaded_samples: 845040
+  res16k_samples: 563361
+
+[LibriTTS/train-clean-100/8975/270782]
+  files_ok      : 68
+  files_failed  : 0
+  loaded_mean   : 0.0000025403
+  loaded_std    : 0.0523598452
+  res16k_mean   : 0.0000025404
+  res16k_std    : 0.0490673697
+  loaded_samples: 14700243
+  res16k_samples: 9800178
+
+[LibriTTS/train-clean-100/909/131041]
+  files_ok      : 30
+  files_failed  : 0
+  loaded_mean   : -0.0000496625
+  loaded_std    : 0.0707283132
+  res16k_mean   : -0.0000496858
+  res16k_std    : 0.0707032478
+  loaded_samples: 7913281
+  res16k_samples: 5275521
+
+[LibriTTS/train-clean-100/909/131044]
+  files_ok      : 12
+  files_failed  : 0
+  loaded_mean   : -0.0000812267
+  loaded_std    : 0.0748330254
+  res16k_mean   : -0.0000812682
+  res16k_std    : 0.0748098519
+  loaded_samples: 2609280
+  res16k_samples: 1739520
+
+[LibriTTS/train-clean-100/909/131045]
+  files_ok      : 16
+  files_failed  : 0
+  loaded_mean   : -0.0000810167
+  loaded_std    : 0.0820494406
+  res16k_mean   : -0.0000810543
+  res16k_std    : 0.0820379245
+  loaded_samples: 4199518
+  res16k_samples: 2799681
+
+[LibriTTS/train-clean-100/911/128684]
+  files_ok      : 66
+  files_failed  : 0
+  loaded_mean   : 0.0000008677
+  loaded_std    : 0.0375528404
+  res16k_mean   : 0.0000008678
+  res16k_std    : 0.0374400905
+  loaded_samples: 14000156
+  res16k_samples: 9333453
+
+[LibriTTS/train-clean-100/911/130578]
+  files_ok      : 9
+  files_failed  : 0
+  loaded_mean   : 0.0000003480
+  loaded_std    : 0.0391147416
+  res16k_mean   : 0.0000003474
+  res16k_std    : 0.0390269415
+  loaded_samples: 2104320
+  res16k_samples: 1402880
