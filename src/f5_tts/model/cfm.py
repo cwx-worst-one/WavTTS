@@ -56,6 +56,7 @@ class CFM(nn.Module):
         t_sampling: str = "uniform",    # "uniform" | "logistic_normal"
         P_mean: float = 0.0,
         P_std: float = 1.0,
+        time_shift: float = 1.0,
         t_eps: float = 1e-4,
         noise_scale: float = 1.0,
         flow_loss_weight: float = 1.0,
@@ -144,6 +145,7 @@ class CFM(nn.Module):
         self.t_sampling = t_sampling
         self.P_mean = P_mean
         self.P_std = P_std
+        self.time_shift = time_shift
         self.t_eps = t_eps
         self.noise_scale = noise_scale
         self.latents_scale = latents_scale
@@ -238,13 +240,18 @@ class CFM(nn.Module):
     
     def _sample_time(self, batch: int, dtype, device):
         if self.t_sampling == "uniform":
-            return torch.rand((batch,), dtype=dtype, device=device)
+            t = torch.rand((batch,), dtype=dtype, device=device)
         elif self.t_sampling == "logistic_normal":
             # JiT: t = sigmoid(N(P_mean, P_std))
             z = torch.randn((batch,), device=device, dtype=dtype) * self.P_std + self.P_mean
-            return torch.sigmoid(z)
+            t = torch.sigmoid(z)
         else:
             raise ValueError(f"Unknown t_sampling: {self.t_sampling}")
+
+        if self.time_shift != 1.0:
+            t = t / (t + self.time_shift * (1 - t))
+
+        return t
 
     def _x_to_v(self, x_pred, z, t):
         # v_pred = (x_pred - z) / (1 - t)

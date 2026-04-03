@@ -14,7 +14,7 @@ export MKL_NUM_THREADS=1
 export NCCL_DEBUG=WARN
 
 # accelerate config
-num_processes=8     # 1, 8
+num_processes=1     # 1, 8
 num_machines=1
 mixed_precision=bf16
 
@@ -22,10 +22,10 @@ mixed_precision=bf16
 batch_size_per_gpu=19200        # 19200, 22400, 25600, 38400, 51200
 num_workers=16
 
-CONFIG_NAME="F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_05_noise_schedule_0_8_16k_80hz" # F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_fix_mel_loss, F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_time_weighted_p1, F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_mel_only_time_weighted_o1
+CONFIG_NAME="F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_05_noise_schedule_mean_0_std_1_shift_6_16k" # F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_fix_mel_loss, F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_time_weighted_p1, F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_mel_only_time_weighted_o1
 EXP_NAME="debug_test"
 OUTDIR="/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/${EXP_NAME}"
-DEBUG_MODE=False     # True, False
+DEBUG_MODE=True     # True, False
 DATASET_NAME="LibriTTS_100_360_500"     # LibriTTS_100_360_500, Emilia_ZH_EN
 tokenizer="char"                        # char, pinyin
 

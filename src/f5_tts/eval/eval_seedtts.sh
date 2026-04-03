@@ -15,29 +15,28 @@ export https_proxy=http://sys-proxy-rd-relay.byted.org:8118
 eval_metric=("wer sim utmos")
 # eval_metric=("sim")
 
-MODEL_NAME="F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_mel_only"
 langs=("en" "zh")        # "en" "zh" "zh_hard"
-ckpt_step=200000    # 200000, 400000, 550000, 700000, 900000, 1000000, 1100000
+ckpt_step=550000    # 200000, 400000, 550000, 700000, 900000, 1000000, 1100000
 seed=0
-nfe_step=32
+nfe_step=48         # 32, 48
 cfg_strength=3.0
 cfg_interval_min=0.0
 cfg_interval_max=1.0
-timestep_mapping="power"
+timestep_mapping="power"    # power, sway_sampling
 swaysampling=-1.0
 timestep_power=3.0
 target_rms=0.1
 LOAD_DTYPE="fp32"
 INFER_DTYPE="bf16"
 MEL_SPEC_TYPE="no_vocoder"
-RESULTS_ROOT=/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav_mel_dev/results/F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_mel_only
+RESULTS_ROOT=/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav_mel_dev/results/F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_fix_mel_loss
 # GPUS="[0,1,2,3,4,5,6,7]"
 GPUS="[0,1,2,3]"
 # GPUS="[0,1]"
 
 LOCAL=""
 
-output_dir=${RESULTS_ROOT}/${MODEL_NAME}/${ckpt_step}
+output_dir=${RESULTS_ROOT}/${ckpt_step}
 gen_wav_subdir=seed${seed}_euler_nfe${nfe_step}_${MEL_SPEC_TYPE}
 if [[ "${timestep_mapping}" == "sway_sampling" && "${swaysampling}" != "0" ]]; then
     gen_wav_subdir+="_ss${swaysampling}"
