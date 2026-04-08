@@ -30,8 +30,8 @@ accelerator = Accelerator()
 device = f"cuda:{accelerator.process_index}"
 
 
-use_ema = True
-target_rms = 0.1
+use_ema = True      # True, False
+target_rms = 0.1    # 0.1, 0.12
 
 
 rel_path = str(files("f5_tts").joinpath("../../"))
@@ -159,6 +159,7 @@ def main():
         f"{'_gt-dur' if use_truth_duration else ''}"
         f"{'_no-ref-audio' if no_ref_audio else ''}"
         f"_target_rms{target_rms}"
+        f"{f'_no_ema' if not use_ema else ''}"
     )
 
     # -------------------------------------------------#

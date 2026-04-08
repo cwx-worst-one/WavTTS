@@ -16,23 +16,24 @@ eval_metric=("wer sim utmos")
 # eval_metric=("sim")
 
 langs=("en" "zh")        # "en" "zh" "zh_hard"
-ckpt_step=550000    # 200000, 400000, 550000, 700000, 900000, 1000000, 1100000
+ckpt_step=1000000    # 200000, 400000, 550000, 700000, 900000, 1000000, 1100000
 seed=0
-nfe_step=48         # 32, 48
+nfe_step=50         # 32, 50
 cfg_strength=3.0
 cfg_interval_min=0.0
 cfg_interval_max=1.0
 timestep_mapping="power"    # power, sway_sampling
 swaysampling=-1.0
-timestep_power=3.0
+timestep_power=5.0
 target_rms=0.1
+use_ema=true                # true, false
 LOAD_DTYPE="fp32"
 INFER_DTYPE="bf16"
 MEL_SPEC_TYPE="no_vocoder"
 RESULTS_ROOT=/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav_mel_dev/results/F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_fix_mel_loss
 # GPUS="[0,1,2,3,4,5,6,7]"
-GPUS="[0,1,2,3]"
-# GPUS="[0,1]"
+# GPUS="[0,1,2,3]"
+GPUS="[0,1]"
 
 LOCAL=""
 
@@ -45,6 +46,11 @@ if [[ "${timestep_mapping}" == "power" ]]; then
     gen_wav_subdir+="_power${timestep_power}"
 fi
 gen_wav_subdir+="_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}_cfgitv${cfg_interval_min}-${cfg_interval_max}_target_rms${target_rms}"   # _vocos_ss, _no_vocoder_ss, _speed1.0_load-fp32_infer-bf16, _speed1.0
+
+if [[ "${use_ema}" == "false" ]]; then
+    gen_wav_subdir+="_no_ema"
+fi
+
 
 for lang in "${langs[@]}"; do
     gen_wav_dir=${output_dir}/seedtts_test_${lang}/${gen_wav_subdir}

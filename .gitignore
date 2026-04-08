@@ -137,6 +137,7 @@ scripts_usr
 output
 # src/f5_tts/train/runs_emilia/
 .venv/
+.codex
 
 stats_*
 
