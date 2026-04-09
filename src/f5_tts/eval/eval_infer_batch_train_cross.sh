@@ -25,6 +25,7 @@ CKPT_PATH="${CKPT_PATH_DIR}/ckpts/model_${CKPTSTEPS}.pt"
 
 nfe_step=32
 swaysampling=-1   # -1: enable, 0: disable
+shift="1.0"
 
 DEBUG=false  # true, false
 
@@ -104,7 +105,7 @@ for ckptstep in "${CKPTSTEPS[@]}"; do
             
             # Execute infer task (foreground execution, wait for completion)
             if [ "$DEBUG" = false ]; then
-                accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}" --nfe_step ${nfe_step} --swaysampling ${swaysampling}
+                accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}" --nfe_step ${nfe_step} --swaysampling ${swaysampling} --shift ${shift}
             fi
 
             if [ "$DEBUG" = true ]; then

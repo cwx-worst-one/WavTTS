@@ -18,8 +18,8 @@ SEEDS=(0)
 CKPTSTEPS=(1000000)  # 200000, 400000, 550000, 700000, 900000, 1000000, 1200000
 # TASKS=("seedtts_test_zh" "seedtts_test_en" "ls_pc_test_clean")
 # TASKS=("seedtts_test_zh" "seedtts_test_en")
-# TASKS=("seedtts_test_en")
-TASKS=("seedtts_test_zh")
+TASKS=("seedtts_test_en")
+# TASKS=("seedtts_test_zh")
 LS_TEST_CLEAN_PATH="data/LibriSpeech-test-clean"
 GPUS="[0,1,2,3,4,5,6,7]"
 # GPUS="[1,2,3,4,5,6,7]"
@@ -32,9 +32,10 @@ cfg_strength=3.0
 cfg_interval_min=0.0
 cfg_interval_max=1.0
 nfe_step=50
-timestep_mapping="power"   # sway_sampling, power
-swaysampling=-1   # -1: enable, 0: disable
+timestep_mapping="power"   # uniform, sway_sampling, power
+swaysampling=-1
 timestep_power=5.0
+shift="2.0"
 LOAD_DTYPE="fp32"   # bf16, fp16, fp32
 INFER_DTYPE="bf16"  # bf16, fp16, fp32
 
@@ -69,6 +70,10 @@ while [[ $# -gt 0 ]]; do
             timestep_power="$2"
             shift 2
             ;;
+        --shift)
+            shift="$2"
+            shift 2
+            ;;
         *)
             echo "======== Unknown parameter: $1"
             exit 1
@@ -94,6 +99,9 @@ echo "======== Timestep mapping: ${timestep_mapping}"
 if [ "${timestep_mapping}" = "power" ]; then
     echo "======== Timestep power: ${timestep_power}"
 fi
+if [ "${shift}" != "1.0" ]; then
+    echo "======== Shift: ${shift}"
+fi
 if [ "$INFER_ONLY" = true ]; then
     echo "======== Mode: Execute infer tasks only"
 else
@@ -108,11 +116,17 @@ execute_eval_tasks() {
     local task_name=$3
     
     local gen_wav_dir="results/${MODEL_NAME}/${ckptstep}/${task_name}/seed${seed}_euler_nfe${nfe_step}_${MEL_SPEC_TYPE}"
+    if [ "${timestep_mapping}" = "uniform" ]; then
+        gen_wav_dir+="_uniform"
+    fi
     if [ "${timestep_mapping}" = "sway_sampling" ] && [ "${swaysampling}" != "0" ]; then
         gen_wav_dir+="_ss${swaysampling}"
     fi
     if [ "${timestep_mapping}" = "power" ]; then
         gen_wav_dir+="_power${timestep_power}"
+    fi
+    if [ "${shift}" != "1.0" ]; then
+        gen_wav_dir+="_shift${shift}"
     fi
     gen_wav_dir+="_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}_cfgitv${cfg_interval_min}-${cfg_interval_max}"
     
@@ -160,15 +174,15 @@ for ckptstep in "${CKPTSTEPS[@]}"; do
         
         # Execute each infer task sequentially
         for task in "${TASKS[@]}"; do
-            echo ">>>>>>>> Executing infer task: accelerate launch src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n \"${MODEL_NAME}\" -t \"${task}\" -c ${ckptstep} $LOCAL --ckpt_path \"${CKPT_PATH}\" --cfg_strength ${cfg_strength} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}"
+            echo ">>>>>>>> Executing infer task: accelerate launch src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n \"${MODEL_NAME}\" -t \"${task}\" -c ${ckptstep} $LOCAL --ckpt_path \"${CKPT_PATH}\" --cfg_strength ${cfg_strength} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --shift ${shift} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}"
             
             # Execute infer task (foreground execution, wait for completion)
             if [ "$DEBUG" = false ]; then
-                accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}" --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --cfg_strength ${cfg_strength} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
+                accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}" --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --shift ${shift} --cfg_strength ${cfg_strength} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
             fi
 
             if [ "$DEBUG" = true ]; then
-                python -m debugpy --listen 127.0.0.1:56789 --wait-for-client src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}" --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --cfg_strength ${cfg_strength} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
+                python -m debugpy --listen 127.0.0.1:56789 --wait-for-client src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" $LOCAL --ckpt_path "${CKPT_PATH}" --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --shift ${shift} --cfg_strength ${cfg_strength} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
             fi
             
             # If not infer-only mode, launch corresponding eval task

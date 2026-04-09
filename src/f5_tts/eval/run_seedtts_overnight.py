@@ -36,6 +36,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--nfe-step', type=int, default=32)
     parser.add_argument('--cfg-strength', type=float, default=3.0)
     parser.add_argument('--swaysampling', type=float, default=-1.0)
+    parser.add_argument('--timestep-mapping', type=str, default='sway_sampling', choices=['uniform', 'sway_sampling', 'power'])
+    parser.add_argument('--timestep-power', type=float, default=None)
+    parser.add_argument('--shift', type=float, default=1.0)
     parser.add_argument('--eval-gpus', type=str, default='[0,1,2,3,4,5,6,7]')
     parser.add_argument('--master-port', type=int, default=53721)
     parser.add_argument('--cfg-scale-interval-min', type=float, default=0.0)
@@ -134,17 +137,17 @@ def run_cmd(cmd: List[str], env: dict) -> int:
 
 def run_combo(combo: Combo, args: argparse.Namespace, env: dict) -> dict:
     # keep result path consistent with eval_infer_batch.py
-    gen_wav_dir = (
-        args.results_root
-        / combo.exp_name
-        / str(combo.ckpt_step)
-        / combo.task
-        / (
-            f'seed{args.seed}_euler_nfe{args.nfe_step}_{combo.mel_spec_type}_ss{args.swaysampling}'
-            f'_cfg{args.cfg_strength}_speed1.0_load-{args.load_dtype}_infer-{args.infer_dtype}'
-            f'_cfgitv{args.cfg_scale_interval_min}-{args.cfg_scale_interval_max}'
-        )
+    dir_suffix = (
+        f'seed{args.seed}_euler_nfe{args.nfe_step}_{combo.mel_spec_type}'
+        f"{'_uniform' if args.timestep_mapping == 'uniform' else ''}"
+        f"{f'_ss{args.swaysampling}' if args.timestep_mapping == 'sway_sampling' and args.swaysampling else ''}"
+        f"{f'_power{args.timestep_power}' if args.timestep_mapping == 'power' else ''}"
+        f"{f'_shift{args.shift}' if args.shift != 1.0 else ''}"
+        f'_cfg{args.cfg_strength}_speed1.0_load-{args.load_dtype}_infer-{args.infer_dtype}'
+        f'_cfgitv{args.cfg_scale_interval_min}-{args.cfg_scale_interval_max}'
+        f'_target_rms0.1'
     )
+    gen_wav_dir = args.results_root / combo.exp_name / str(combo.ckpt_step) / combo.task / dir_suffix
     status = {
         'exp_name': combo.exp_name,
         'step': combo.ckpt_step,
@@ -180,12 +183,17 @@ def run_combo(combo: Combo, args: argparse.Namespace, env: dict) -> dict:
             '--ckpt_path', str(combo.ckpt_path),
             '--nfe_step', str(args.nfe_step),
             '--swaysampling', str(args.swaysampling),
+            '--timestep_mapping', args.timestep_mapping,
             '--cfg_strength', str(args.cfg_strength),
             '--cfg_scale_interval_min', str(args.cfg_scale_interval_min),
             '--cfg_scale_interval_max', str(args.cfg_scale_interval_max),
             '--load_dtype', args.load_dtype,
             '--infer_dtype', args.infer_dtype,
-        ] + local_flag
+        ]
+        if args.timestep_mapping == 'power':
+            infer_cmd.extend(['--timestep_power', str(args.timestep_power)])
+        infer_cmd.extend(['--shift', str(args.shift)])
+        infer_cmd += local_flag
         rc = run_cmd(infer_cmd, env)
         status['infer'] = 'ok' if rc == 0 else f'fail({rc})'
         if rc != 0:

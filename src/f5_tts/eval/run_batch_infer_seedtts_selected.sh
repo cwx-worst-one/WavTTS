@@ -31,6 +31,9 @@ SEED="${SEED:-0}"
 NFE_STEP="${NFE_STEP:-32}"
 CFG_STRENGTH="${CFG_STRENGTH:-3.0}"
 SWAYSAMPLING="${SWAYSAMPLING:--1.0}"
+TIMESTEP_MAPPING="${TIMESTEP_MAPPING:-sway_sampling}"
+TIMESTEP_POWER="${TIMESTEP_POWER:-}"
+SHIFT="${SHIFT:-1.0}"
 LOAD_DTYPE="${LOAD_DTYPE:-fp32}"
 INFER_DTYPE="${INFER_DTYPE:-bf16}"
 MASTER_PORT_BASE="${MASTER_PORT_BASE:-54721}"
@@ -54,6 +57,9 @@ Options:
   --nfe-step N              ODE steps，默认: ${NFE_STEP}
   --cfg-strength X          CFG 强度，默认: ${CFG_STRENGTH}
   --swaysampling X          sway sampling，默认: ${SWAYSAMPLING}
+  --timestep-mapping NAME   timestep mapping，默认: ${TIMESTEP_MAPPING}
+  --timestep-power X        power mapping 参数
+  --shift X                 推理采样 shift 参数
   --load-dtype TYPE         加载权重 dtype，默认: ${LOAD_DTYPE}
   --infer-dtype TYPE        推理 dtype，默认: ${INFER_DTYPE}
   --master-port-base PORT   起始端口，每个 combo 自动 +index，默认: ${MASTER_PORT_BASE}
@@ -106,6 +112,18 @@ while [[ $# -gt 0 ]]; do
             ;;
         --swaysampling)
             SWAYSAMPLING="$2"
+            shift 2
+            ;;
+        --timestep-mapping)
+            TIMESTEP_MAPPING="$2"
+            shift 2
+            ;;
+        --timestep-power)
+            TIMESTEP_POWER="$2"
+            shift 2
+            ;;
+        --shift)
+            SHIFT="$2"
             shift 2
             ;;
         --load-dtype)
@@ -233,8 +251,24 @@ print(m.group(1).strip().strip('"').strip("'"))
 PY
 )
 
-    printf '%s/results/%s/%s/%s/seed%s_euler_nfe%s_%s_ss%s_cfg%s_speed1.0' \
-        "${REPO_ROOT}" "${exp_name}" "${step}" "${task}" "${SEED}" "${NFE_STEP}" "${mel_spec_type}" "${SWAYSAMPLING}" "${CFG_STRENGTH}"
+    local suffix="seed${SEED}_euler_nfe${NFE_STEP}_${mel_spec_type}"
+    if [[ "${TIMESTEP_MAPPING}" == "uniform" ]]; then
+        suffix+="_uniform"
+    fi
+    if [[ "${TIMESTEP_MAPPING}" == "sway_sampling" && "${SWAYSAMPLING}" != "0" ]]; then
+        suffix+="_ss${SWAYSAMPLING}"
+    fi
+    if [[ "${TIMESTEP_MAPPING}" == "power" ]]; then
+        suffix+="_power${TIMESTEP_POWER}"
+    fi
+    if [[ "${SHIFT}" != "1.0" ]]; then
+        suffix+="_shift${SHIFT}"
+    fi
+    suffix+="_cfg${CFG_STRENGTH}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}"
+    suffix+="_cfgitv0.0-1.0_target_rms0.1"
+
+    printf '%s/results/%s/%s/%s/%s' \
+        "${REPO_ROOT}" "${exp_name}" "${step}" "${task}" "${suffix}"
 }
 
 combo_idx=0
@@ -314,15 +348,17 @@ for model_name in "${MODELS[@]}"; do
                 --ckpt_path "${ckpt_path}"
                 --nfe_step "${NFE_STEP}"
                 --swaysampling "${SWAYSAMPLING}"
+                --timestep_mapping "${TIMESTEP_MAPPING}"
                 --cfg_strength "${CFG_STRENGTH}"
+                --load_dtype "${LOAD_DTYPE}"
+                --infer_dtype "${INFER_DTYPE}"
             )
 
-            if [[ "${LOAD_DTYPE}" != "fp32" ]]; then
-                echo "[WARN] eval_infer_batch.py 当前未使用 --load-dtype 参数，已忽略: ${LOAD_DTYPE}"
+            if [[ "${TIMESTEP_MAPPING}" == "power" ]]; then
+                cmd+=(--timestep_power "${TIMESTEP_POWER}")
             fi
-            if [[ "${INFER_DTYPE}" != "bf16" ]]; then
-                echo "[WARN] eval_infer_batch.py 当前未使用 --infer-dtype 参数，已忽略: ${INFER_DTYPE}"
-            fi
+
+            cmd+=(--shift "${SHIFT}")
 
             if [[ "${LOCAL_FLAG}" -eq 1 ]]; then
                 cmd+=(--local)

@@ -274,6 +274,7 @@ class CFM(nn.Module):
         sway_sampling_coef=None,
         timestep_mapping="sway_sampling",
         timestep_power=None,
+        shift=1.0,
         seed: int | None = None,
         max_duration=4096,
         vocoder: Callable[[float["b d n"]], float["b nw"]] | None = None,
@@ -416,7 +417,9 @@ class CFM(nn.Module):
         else:
             t = torch.linspace(t_start, 1, steps + 1, device=self.device, dtype=torch.float32)
 
-        if timestep_mapping == "sway_sampling":
+        if timestep_mapping == "uniform":
+            pass
+        elif timestep_mapping == "sway_sampling":
             if sway_sampling_coef is not None:
                 t = t + sway_sampling_coef * (torch.cos(torch.pi / 2 * t) - 1 + t)
         elif timestep_mapping == "power":
@@ -425,6 +428,10 @@ class CFM(nn.Module):
             t = t.pow(timestep_power)
         else:
             raise ValueError(f"Unknown timestep_mapping: {timestep_mapping}")
+
+        effective_shift = shift
+        if effective_shift != 1.0:
+            t = t / (t + effective_shift * (1 - t))
 
         trajectory = odeint(fn, y0, t, **self.odeint_kwargs)
         self.transformer.clear_cache()
