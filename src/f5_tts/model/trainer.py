@@ -263,6 +263,13 @@ class Trainer:
                 f"{self.checkpoint_path}/{latest_checkpoint}", weights_only=True, map_location="cpu"
             )
 
+        if self.is_main:
+            print("=" * 80)
+            print("Resume training: found checkpoint and loading state")
+            print(f"Checkpoint directory: {self.checkpoint_path}")
+            print(f"Checkpoint file: {latest_checkpoint}")
+            print("=" * 80)
+
         # patch for backward compatibility, 305e3ea
         for key in ["ema_model.mel_spec.mel_stft.mel_scale.fb", "ema_model.mel_spec.mel_stft.spectrogram.window"]:
             if key in checkpoint["ema_model_state_dict"]:
@@ -289,6 +296,8 @@ class Trainer:
             if self.scheduler:
                 self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
             update = checkpoint["update"]
+            if self.is_main:
+                print(f"Resume mode: full-state resume (model + optimizer + scheduler), update={update}")
         else:
             checkpoint["model_state_dict"] = {
                 k.replace("ema_model.", ""): v
@@ -297,6 +306,8 @@ class Trainer:
             }
             self.accelerator.unwrap_model(self.model).load_state_dict(checkpoint["model_state_dict"])
             update = 0
+            if self.is_main:
+                print("Resume mode: pretrained-weight init only, update=0")
 
         del checkpoint
         gc.collect()

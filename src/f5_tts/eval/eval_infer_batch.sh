@@ -11,14 +11,14 @@ export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
 
 # Configuration parameters
 # MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_aux_mel_hubert_noise_schedule_0_8_16k
-MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_fix_mel_loss
+MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_2_noise_schedule_0_8_16k
 MEL_SPEC_TYPE="no_vocoder"
 # SEEDS=(0 1 2)
 SEEDS=(0)
-CKPTSTEPS=(1000000)  # 200000, 400000, 550000, 700000, 900000, 1000000, 1200000
+CKPTSTEPS=(700000)  # 200000, 400000, 550000, 700000, 900000, 1000000, 1200000
 # TASKS=("seedtts_test_zh" "seedtts_test_en" "ls_pc_test_clean")
-# TASKS=("seedtts_test_zh" "seedtts_test_en")
-TASKS=("seedtts_test_en")
+TASKS=("seedtts_test_zh" "seedtts_test_en")
+# TASKS=("seedtts_test_en")
 # TASKS=("seedtts_test_zh")
 LS_TEST_CLEAN_PATH="data/LibriSpeech-test-clean"
 GPUS="[0,1,2,3,4,5,6,7]"
@@ -26,7 +26,7 @@ GPUS="[0,1,2,3,4,5,6,7]"
 # GPUS="[0,1,2,3]"
 # GPUS="[0]"
 OFFLINE_MODE=false
-CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/emilia/F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_fix_mel_loss-emilia-8gpus-19200sample_per_gpu-bf16
+CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/emilia/F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_2_noise_schedule_0_8_16k-emilia-8gpus-19200sample_per_gpu-bf16
 
 cfg_strength=3.0
 cfg_interval_min=0.0
@@ -34,8 +34,8 @@ cfg_interval_max=1.0
 nfe_step=50
 timestep_mapping="power"   # uniform, sway_sampling, power
 swaysampling=-1
-timestep_power=5.0
-shift="2.0"
+timestep_power=2.0
+shift="7.0"
 LOAD_DTYPE="fp32"   # bf16, fp16, fp32
 INFER_DTYPE="bf16"  # bf16, fp16, fp32
 

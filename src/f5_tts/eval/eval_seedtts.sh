@@ -15,9 +15,9 @@ export https_proxy=http://sys-proxy-rd-relay.byted.org:8118
 eval_metric=("wer sim utmos")
 # eval_metric=("sim")
 
-# langs=("en" "zh")        # "en" "zh" "zh_hard"
-langs=("en")
-ckpt_step=1000000    # 200000, 400000, 550000, 700000, 900000, 1000000, 1100000
+langs=("en" "zh")        # "en" "zh" "zh_hard"
+# langs=("en")
+ckpt_step=700000    # 200000, 400000, 550000, 700000, 900000, 1000000, 1100000
 seed=0
 nfe_step=50         # 32, 50
 cfg_strength=3.0
@@ -32,10 +32,10 @@ use_ema=true                # true, false
 LOAD_DTYPE="fp32"
 INFER_DTYPE="bf16"
 MEL_SPEC_TYPE="no_vocoder"
-RESULTS_ROOT=/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav_mel_dev/results/F5TTS_v1_Large_wav_x_pred_scale_5_aux_mel_no_hubert_noise_schedule_0_8_16k_fix_mel_loss
-# GPUS="[0,1,2,3,4,5,6,7]"
+RESULTS_ROOT=/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav_mel_dev/results/F5TTS_v1_Large_wav_x_pred_scale_8_no_aux_mel_noise_schedule_0_8_16k
+GPUS="[0,1,2,3,4,5,6,7]"
 # GPUS="[0,1,2,3]"
-GPUS="[0,1]"
+# GPUS="[0,1]"
 
 LOCAL=""
 
