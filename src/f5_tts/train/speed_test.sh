@@ -12,15 +12,15 @@ export MKL_NUM_THREADS=1
 export NCCL_DEBUG=WARN
 
 # accelerate config
-num_processes=4     # 1, 4, 8
+num_processes=1     # 1, 4, 8
 num_machines=1
 mixed_precision=bf16
 
 # training config
-batch_size_per_gpu=6400        # 19200, 22400, 25600, 38400, 51200
+batch_size_per_gpu=9600        # 19200, 22400, 25600, 38400, 51200
 num_workers=16
 
-CONFIG_NAME="F5TTS_v1_Base_wav_x_pred_scale_5_aux_mel_noise_schedule_0_8_16k"
+CONFIG_NAME="F5TTS_v1_Ultra_wav_x_pred_scale_8_aux_mel_w_0_05_noise_schedule_0_8_16k"
 EXP_NAME="debug_test"
 OUTDIR="/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/${EXP_NAME}"
 DATASET_NAME="LibriTTS_100_360_500"
