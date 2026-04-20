@@ -46,6 +46,7 @@ class CFM(nn.Module):
         ),
         audio_drop_prob=0.3,
         cond_drop_prob=0.2,
+        joint_cond_drop_prob=0.0,
         num_channels=None,
         mel_spec_module: nn.Module | None = None,
         mel_spec_kwargs: dict = dict(),
@@ -117,6 +118,7 @@ class CFM(nn.Module):
         # classifier-free guidance
         self.audio_drop_prob = audio_drop_prob
         self.cond_drop_prob = cond_drop_prob
+        self.joint_cond_drop_prob = joint_cond_drop_prob
 
         # transformer
         self.transformer = transformer
@@ -532,12 +534,17 @@ class CFM(nn.Module):
             cond = torch.where(rand_span_mask[..., None], torch.zeros_like(x1), x1)
 
         # transformer and cfg training with a drop rate
-        drop_audio_cond = random() < self.audio_drop_prob  # p_drop in voicebox paper
-        if random() < self.cond_drop_prob:  # p_uncond in voicebox paper
-            drop_audio_cond = True
-            drop_text = True
+        if self.joint_cond_drop_prob > 0.0:
+            joint_drop = random() < self.joint_cond_drop_prob
+            drop_audio_cond = joint_drop
+            drop_text = joint_drop
         else:
-            drop_text = False
+            drop_audio_cond = random() < self.audio_drop_prob  # p_drop in voicebox paper
+            if random() < self.cond_drop_prob:  # p_uncond in voicebox paper
+                drop_audio_cond = True
+                drop_text = True
+            else:
+                drop_text = False
 
         # apply mask will use more memory; might adjust batchsize or batchsampler long sequence threshold
         raw_pred, zs_tilde, zs_tilde_ctc = self.transformer(
