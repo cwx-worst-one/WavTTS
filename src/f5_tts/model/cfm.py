@@ -276,6 +276,8 @@ class CFM(nn.Module):
         sway_sampling_coef=None,
         timestep_mapping="sway_sampling",
         timestep_power=None,
+        timestep_logistic_normal_loc=0.0,
+        timestep_logistic_normal_scale=1.0,
         shift=1.0,
         seed: int | None = None,
         max_duration=4096,
@@ -428,6 +430,11 @@ class CFM(nn.Module):
             if timestep_power is None:
                 raise ValueError("timestep_power must be provided when timestep_mapping='power'")
             t = t.pow(timestep_power)
+        elif timestep_mapping == "logistic_normal":
+            timestep_quantiles = torch.arange(steps + 1, device=self.device, dtype=torch.float32) / steps
+            timestep_normal = torch.distributions.Normal(0.0, 1.0)
+            timestep_latents = timestep_normal.icdf(timestep_quantiles)
+            t = torch.sigmoid(timestep_logistic_normal_loc + timestep_logistic_normal_scale * timestep_latents)
         else:
             raise ValueError(f"Unknown timestep_mapping: {timestep_mapping}")
 
@@ -600,7 +607,7 @@ class CFM(nn.Module):
         if self.use_time_weighted_aux_perceptual_loss:
             aux_time_weight = ((1.0 - time).clamp_min(self.t_eps)).pow(-self.aux_perceptual_time_weight_power)
 
-        aux_mel_loss = torch.tensor(0.0, device=device)     # fixme: 这里的aux_mel_loss只针对x-pred的情况
+        aux_mel_loss = torch.tensor(0.0, device=device)
         if self.use_aux_mel_loss and self.aux_mel_loss is not None and self.wav_input_only:
             aux_mel_mask = time > self.aux_mel_loss_start_t
             if aux_mel_mask.any():

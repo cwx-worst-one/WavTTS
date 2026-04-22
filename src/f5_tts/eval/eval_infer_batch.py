@@ -47,8 +47,10 @@ def main():
     parser.add_argument("-nfe", "--nfe_step", default=32, type=int)
     parser.add_argument("-o", "--odemethod", default="euler")
     parser.add_argument("-ss", "--swaysampling", default=-1, type=float)
-    parser.add_argument("--timestep_mapping", default="sway_sampling", choices=["uniform", "sway_sampling", "power"])
+    parser.add_argument("--timestep_mapping", default="sway_sampling", choices=["uniform", "sway_sampling", "power", "logistic_normal"])
     parser.add_argument("--timestep_power", default=None, type=float)
+    parser.add_argument("--timestep_logistic_normal_loc", default=0.0, type=float)
+    parser.add_argument("--timestep_logistic_normal_scale", default=1.0, type=float)
     parser.add_argument("--shift", default=1.0, type=float)
 
     parser.add_argument("-t", "--testset", required=True)
@@ -58,6 +60,12 @@ def main():
 
     parser.add_argument("--local", action="store_true", help="Use local vocoder checkpoint directory")
     parser.add_argument("--ckpt_path", default=None, type=str)
+    parser.add_argument(
+        "--result_expname",
+        default=None,
+        type=str,
+        help="Optional result directory name override. Defaults to --expname.",
+    )
     parser.add_argument("--cfg_strength", default=2.0, type=float)
     parser.add_argument("--cfg_scale_interval_min", default=0.0, type=float)
     parser.add_argument("--cfg_scale_interval_max", default=1.0, type=float)
@@ -78,6 +86,7 @@ def main():
 
     seed = args.seed
     exp_name = args.expname
+    result_exp_name = args.result_expname or exp_name
     ckpt_step = args.ckptstep
 
     nfe_step = args.nfe_step
@@ -85,6 +94,8 @@ def main():
     sway_sampling_coef = args.swaysampling
     timestep_mapping = args.timestep_mapping
     timestep_power = args.timestep_power
+    timestep_logistic_normal_loc = args.timestep_logistic_normal_loc
+    timestep_logistic_normal_scale = args.timestep_logistic_normal_scale
     shift = args.shift
 
     if timestep_mapping == "power" and timestep_power is None:
@@ -152,11 +163,12 @@ def main():
     # path to save genereted wavs
     output_dir = (
         f"{rel_path}/"
-        f"results/{exp_name}/{ckpt_step}/{testset}/"
+        f"results/{result_exp_name}/{ckpt_step}/{testset}/"
         f"seed{seed}_{ode_method}_nfe{nfe_step}_{mel_spec_type}"
         f"{'_uniform' if timestep_mapping == 'uniform' else ''}"
         f"{f'_ss{sway_sampling_coef}' if timestep_mapping == 'sway_sampling' and sway_sampling_coef else ''}"
         f"{f'_power{timestep_power}' if timestep_mapping == 'power' else ''}"
+        f"{f'_lnloc{timestep_logistic_normal_loc}_lnscale{timestep_logistic_normal_scale}' if timestep_mapping == 'logistic_normal' else ''}"
         f"{f'_shift{shift}' if shift != 1.0 else ''}"
         f"_cfg{cfg_strength}_speed{speed}_load-{load_dtype_name}_infer-{infer_dtype_name}"
         f"_cfgitv{cfg_scale_interval[0]}-{cfg_scale_interval[1]}"
@@ -273,6 +285,8 @@ def main():
                         sway_sampling_coef=sway_sampling_coef,
                         timestep_mapping=timestep_mapping,
                         timestep_power=timestep_power,
+                        timestep_logistic_normal_loc=timestep_logistic_normal_loc,
+                        timestep_logistic_normal_scale=timestep_logistic_normal_scale,
                         shift=shift,
                         use_epss=timestep_mapping == "sway_sampling",
                         no_ref_audio=no_ref_audio,

@@ -15,17 +15,19 @@ export https_proxy=http://sys-proxy-rd-relay.byted.org:8118
 eval_metric=("wer sim utmos")
 # eval_metric=("sim")
 
-langs=("en" "zh")        # "en" "zh" "zh_hard"
+langs=("zh" "en")        # "en" "zh" "zh_hard"
 # langs=("en")
-ckpt_step=400000    # 200000, 400000, 550000, 700000, 900000, 1000000, 1100000
+ckpt_step=550000    # 200000, 400000, 550000, 700000, 900000, 1000000, 1100000
 seed=0
 nfe_step=50         # 32, 50
 cfg_strength=3.0
 cfg_interval_min=0.0
 cfg_interval_max=1.0
-timestep_mapping="power"    # uniform, power, sway_sampling
+timestep_mapping="power"    # uniform, power, sway_sampling, logistic_normal
 swaysampling=-1.0
 timestep_power=2.0
+timestep_logistic_normal_loc=-0.8
+timestep_logistic_normal_scale=0.8
 shift="7.0"
 target_rms=0.1
 use_ema=true                # true, false
@@ -49,6 +51,9 @@ if [[ "${timestep_mapping}" == "sway_sampling" && "${swaysampling}" != "0" ]]; t
 fi
 if [[ "${timestep_mapping}" == "power" ]]; then
     gen_wav_subdir+="_power${timestep_power}"
+fi
+if [[ "${timestep_mapping}" == "logistic_normal" ]]; then
+    gen_wav_subdir+="_lnloc${timestep_logistic_normal_loc}_lnscale${timestep_logistic_normal_scale}"
 fi
 if [[ "${shift}" != "1.0" ]]; then
     gen_wav_subdir+="_shift${shift}"
