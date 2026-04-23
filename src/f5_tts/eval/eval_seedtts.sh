@@ -34,10 +34,11 @@ use_ema=true                # true, false
 LOAD_DTYPE="fp32"
 INFER_DTYPE="bf16"
 MEL_SPEC_TYPE="no_vocoder"
-RESULTS_ROOT=/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav_mel_dev/results/F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_05_noise_schedule_0_8_16k_lr_decay
+RESULTS_ROOT=/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav_mel_dev/results/F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_05_noise_schedule_0_8_16k_16gpus
 # GPUS="[0,1,2,3,4,5,6,7]"
 GPUS="[0,1,2,3]"
 # GPUS="[0,1]"
+# GPUS="[0]"
 
 LOCAL=""
 
