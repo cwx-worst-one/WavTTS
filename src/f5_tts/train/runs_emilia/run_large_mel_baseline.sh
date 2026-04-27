@@ -3,9 +3,10 @@
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export WANDB_API_KEY="406faa59cf62a3646fa3479a7e133c4cf5a77100"
 export WANDB_BASE_URL=https://api.bandw.top
-export HTTP_PROXY=http://sys-proxy-rd-relay.byted.org:8118
-export http_proxy=http://sys-proxy-rd-relay.byted.org:8118
-export https_proxy=http://sys-proxy-rd-relay.byted.org:8118
+# export HTTP_PROXY=http://sys-proxy-rd-relay.byted.org:8118
+# export HTTPS_PROXY=http://sys-proxy-rd-relay.byted.org:8118
+# export http_proxy=http://sys-proxy-rd-relay.byted.org:8118
+# export https_proxy=http://sys-proxy-rd-relay.byted.org:8118
 export HF_ENDPOINT=https://hf-mirror.com
 export MASTER_PORT=49099
 export OMP_NUM_THREADS=1
