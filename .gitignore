@@ -154,6 +154,7 @@ data/LibriTTS_100_360_500_char/raw.arrow
 
 # local dataset symlinks
 /data/Emilia_ZH_EN_pinyin
+/data/Emilia_ZH_EN_hdfs_pinyin
 /data/LibriSpeech
 /data/LibriTTS_100_360_500_char
 /data/seedtts_testset
