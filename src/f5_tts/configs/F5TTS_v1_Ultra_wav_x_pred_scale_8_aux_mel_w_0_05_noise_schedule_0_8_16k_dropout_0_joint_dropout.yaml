@@ -35,6 +35,7 @@ model:
     use_aux_mel_loss: True
     aux_mel_loss_weight: 0.05
     sample_rate: 16000
+    joint_cond_drop_prob: 0.1
   arch:
     dim: 1536
     depth: 36
