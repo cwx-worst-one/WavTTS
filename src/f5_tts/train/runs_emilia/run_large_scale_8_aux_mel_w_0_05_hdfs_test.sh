@@ -41,6 +41,9 @@ echo "Exp Name: ${EXP_NAME}"
 accelerate launch --main_process_port ${MASTER_PORT} --num_processes ${num_processes} --num_machines ${num_machines} --mixed_precision ${mixed_precision} --dynamo_backend no src/f5_tts/train/train.py \
     --config-name "${CONFIG_NAME}.yaml" \
     ++hydra.run.dir=${OUTDIR} \
+    hydra.output_subdir=null \
+    hydra/job_logging=disabled \
+    ++ckpts.log_samples=False \
     ++ckpts.save_dir="${OUTDIR}/ckpts" \
     ++ckpts.exp_name=${EXP_NAME} \
     ++datasets.batch_size_per_gpu=${batch_size_per_gpu} \
