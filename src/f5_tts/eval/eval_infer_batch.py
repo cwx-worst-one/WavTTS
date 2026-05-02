@@ -200,7 +200,7 @@ def main():
     # Vocoder model
     local = args.local
     if mel_spec_type == "vocos":
-        vocoder_local_path = "../checkpoints/charactr/vocos-mel-24khz"
+        vocoder_local_path = "/mnt/bn/jdy-lq-5/chenwenxi/models/Vocoder/vocos-mel-24khz"
     elif mel_spec_type == "bigvgan":
         vocoder_local_path = "../checkpoints/bigvgan_v2_24khz_100band_256x"
     elif mel_spec_type == "no_vocoder":
