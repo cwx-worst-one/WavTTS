@@ -262,6 +262,38 @@ class CFM(nn.Module):
             denom = denom.unsqueeze(-1)
         return (x_pred - z) / denom
 
+    def _odeint_heun(self, fn, y0, t):
+        """Heun solver with a final Euler step, following JiT's sampler style."""
+        if len(t) < 2:
+            return y0.unsqueeze(0)
+
+        ys = [y0]
+        y = y0
+
+        # Predictor-corrector for all but the last interval.
+        for i in range(len(t) - 2):
+            t_i = t[i]
+            t_next = t[i + 1]
+            dt = t_next - t_i
+
+            self.transformer.clear_cache()
+            v_i = fn(t_i, y)
+            y_euler = y + dt * v_i
+
+            self.transformer.clear_cache()
+            v_next = fn(t_next, y_euler)
+
+            y = y + dt * 0.5 * (v_i + v_next)
+            ys.append(y)
+
+        # Final step uses Euler to avoid evaluating fn at t=1.
+        self.transformer.clear_cache()
+        y = y + (t[-1] - t[-2]) * fn(t[-2], y)
+        ys.append(y)
+
+        self.transformer.clear_cache()
+        return torch.stack(ys)
+
     @torch.no_grad()
     def sample(
         self,
@@ -442,7 +474,11 @@ class CFM(nn.Module):
         if effective_shift != 1.0:
             t = t / (t + effective_shift * (1 - t))
 
-        trajectory = odeint(fn, y0, t, **self.odeint_kwargs)
+        ode_method = self.odeint_kwargs.get("method", "euler")
+        if ode_method == "heun":
+            trajectory = self._odeint_heun(fn, y0, t)
+        else:
+            trajectory = odeint(fn, y0, t, **self.odeint_kwargs)
         self.transformer.clear_cache()
 
         sampled = trajectory[-1]

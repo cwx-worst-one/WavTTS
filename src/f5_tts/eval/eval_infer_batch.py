@@ -45,7 +45,7 @@ def main():
     parser.add_argument("-c", "--ckptstep", default=1250000, type=int)
 
     parser.add_argument("-nfe", "--nfe_step", default=32, type=int)
-    parser.add_argument("-o", "--odemethod", default="euler")
+    parser.add_argument("-o", "--odemethod", default="euler", choices=["euler", "heun"])
     parser.add_argument("-ss", "--swaysampling", default=-1, type=float)
     parser.add_argument("--timestep_mapping", default="sway_sampling", choices=["uniform", "sway_sampling", "power", "logistic_normal"])
     parser.add_argument("--timestep_power", default=None, type=float)
