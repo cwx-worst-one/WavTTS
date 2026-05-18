@@ -35,12 +35,12 @@ cfg_interval_min=0.0
 cfg_interval_max=1.0
 nfe_step=50         # 16, 32, 50
 ode_method="euler"  # euler, heun
-timestep_mapping="sway_sampling"   # uniform, sway_sampling, power, logistic_normal
+timestep_mapping="power"   # uniform, sway_sampling, power, logistic_normal
 swaysampling=-1
 timestep_power=2.0
 timestep_logistic_normal_loc=-0.8
 timestep_logistic_normal_scale=0.8
-shift="1.0"         # 1.0, 7.0
+shift="5.0"         # 1.0, 7.0
 LOAD_DTYPE="fp32"   # bf16, fp16, fp32
 INFER_DTYPE="bf16"  # bf16, fp16, fp32
 
