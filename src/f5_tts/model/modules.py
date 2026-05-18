@@ -805,14 +805,29 @@ class MelSpectrogramLoss(nn.Module):
         mag_weight: float = 0.0,
         log_weight: float = 1.0,
         weight: float = 1.0,
+        normalized: bool = False,
+        use_energy_scaling: bool = False,
+        energy_power: float = 1.0,
+        energy_scale_min: float = 0.1,
+        energy_scale_max: float = 50.0,
+        energy_scale_eps: float = 1e-5,
+        apply_scale_to_log: bool = False,
     ):
         super().__init__()
         self.sample_rate = sample_rate
         self.weight = weight
         self.mag_weight = mag_weight
         self.log_weight = log_weight
+        self.normalized = normalized
         self.pow = pow
         self.clamp_eps = clamp_eps
+
+        self.use_energy_scaling = use_energy_scaling
+        self.energy_power = energy_power
+        self.energy_scale_min = energy_scale_min
+        self.energy_scale_max = energy_scale_max
+        self.energy_scale_eps = energy_scale_eps
+        self.apply_scale_to_log = apply_scale_to_log
         
         assert len(n_mels) == len(window_lengths), "n_mels and window_lengths must have the same length"
         
@@ -834,7 +849,7 @@ class MelSpectrogramLoss(nn.Module):
                 f_min=fmin,
                 f_max=fmax,
                 power=1.0,       # computing Magnitude Mel (power=1.0) initially
-                normalized=False, # NOTE: update normalized=False in new version
+                normalized=normalized,
                 center=True,     # 可以改成 false
                 pad_mode="reflect"
             )
@@ -878,6 +893,15 @@ class MelSpectrogramLoss(nn.Module):
             x_mels = mel_transform(x_pred)
             y_mels = mel_transform(x_true)
 
+            if self.use_energy_scaling:
+                # scale 越大，表示该区域越安静，需要施加更大的 loss 权重
+                spec_scale = (y_mels + self.energy_scale_eps) ** (-self.energy_power)
+                spec_scale = spec_scale.clamp(min=self.energy_scale_min, max=self.energy_scale_max)
+                # 重要：切断梯度，因为我们只把它当作一个空间权重矩阵来用
+                spec_scale = spec_scale.detach()
+            else:
+                spec_scale = 1.0
+
             mel_mask = None
             if use_mask:
                 hop = int(mel_transform.hop_length)
@@ -912,10 +936,15 @@ class MelSpectrogramLoss(nn.Module):
                 # y_log = (y_mels + self.clamp_eps).pow(self.pow).log10()
                 x_log = x_mels.clamp(min=self.clamp_eps).pow(self.pow).log10()
                 y_log = y_mels.clamp(min=self.clamp_eps).pow(self.pow).log10()
+
+                diff_full = (x_log - y_log).abs()
+
+                if self.use_energy_scaling and self.apply_scale_to_log:
+                    diff_full = diff_full * spec_scale
+
                 if mel_mask is None:
-                    diff = (x_log - y_log).abs().mean(dim=(1, 2))
+                    diff = diff_full.mean(dim=(1, 2))
                 else:
-                    diff_full = (x_log - y_log).abs()
                     diff = []
                     for i in range(diff_full.shape[0]):
                         m = mel_mask[i]
@@ -924,6 +953,7 @@ class MelSpectrogramLoss(nn.Module):
                         else:
                             diff.append(diff_full.new_tensor(0.0))
                     diff = torch.stack(diff, dim=0)
+
                 if time_weight is not None:
                     total_loss += self.log_weight * (diff * time_weight).mean()
                 else:
@@ -931,10 +961,11 @@ class MelSpectrogramLoss(nn.Module):
             
             # 2. Linear Magnitude Loss
             if self.mag_weight > 0:
+                diff_full = (x_mels - y_mels).abs() * spec_scale
+
                 if mel_mask is None:
-                    diff = (x_mels - y_mels).abs().mean(dim=(1, 2))
+                    diff = diff_full.mean(dim=(1, 2))
                 else:
-                    diff_full = (x_mels - y_mels).abs()
                     diff = []
                     for i in range(diff_full.shape[0]):
                         m = mel_mask[i]

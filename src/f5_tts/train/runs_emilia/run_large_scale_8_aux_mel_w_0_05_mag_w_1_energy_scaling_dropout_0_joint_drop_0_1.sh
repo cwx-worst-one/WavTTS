@@ -22,7 +22,7 @@ batch_size_per_gpu=19200
 num_workers=16
 
 DATASET_NAME="emilia"
-CONFIG_NAME="F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1"
+CONFIG_NAME="F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_05_mag_w_1_energy_scaling_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1"
 EXP_NAME="${CONFIG_NAME}-${DATASET_NAME}-${num_processes}gpus-${batch_size_per_gpu}sample_per_gpu-${mixed_precision}"
 OUTDIR="/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/${DATASET_NAME}/${EXP_NAME}"
 
@@ -45,4 +45,4 @@ accelerate launch --main_process_port ${MASTER_PORT} --num_processes ${num_proce
     ++datasets.num_workers=${num_workers}
 
 # cd /mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav_mel_dev
-# bash /mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav_mel_dev/src/f5_tts/train/runs_emilia/run_large_scale_8_aux_mel_w_0_05_dropout_0_joint_drop_0_1.sh
+# bash /mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav_mel_dev/src/f5_tts/train/runs_emilia/run_large_scale_8_aux_mel_w_0_05_mag_w_1_energy_scaling_dropout_0_joint_drop_0_1.sh

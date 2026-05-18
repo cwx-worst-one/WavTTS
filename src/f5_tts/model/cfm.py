@@ -73,6 +73,17 @@ class CFM(nn.Module):
         use_aux_mel_loss: bool = False,
         aux_mel_loss_weight: float = 0.0,
         aux_mel_loss_start_t: float = 0.0,
+        aux_mel_loss_masked: bool = True,
+        aux_mel_normalized: bool = False,
+        align_mask_to_aux_mel: bool = True,
+        aux_mel_mag_weight: float = 0.0,
+        aux_mel_log_weight: float = 1.0,
+        aux_mel_use_energy_scaling: bool = False,
+        aux_mel_energy_power: float = 1.0,
+        aux_mel_energy_scale_min: float = 0.1,
+        aux_mel_energy_scale_max: float = 50.0,
+        aux_mel_energy_scale_eps: float = 1e-5,
+        aux_mel_apply_scale_to_log: bool = False,
         sample_rate: int = 24000,
         use_repa_ctc_loss: bool = False,
         repa_ctc_loss_weight: float = 0.0,
@@ -170,6 +181,9 @@ class CFM(nn.Module):
         # aux mel loss
         self.use_aux_mel_loss = use_aux_mel_loss
         self.aux_mel_loss_start_t = aux_mel_loss_start_t
+        self.aux_mel_loss_masked = aux_mel_loss_masked
+        self.aux_mel_normalized = aux_mel_normalized
+        self.align_mask_to_aux_mel = align_mask_to_aux_mel
         if self.use_aux_mel_loss and self.wav_input_only:
             self.aux_mel_loss = MelSpectrogramLoss(
                 sample_rate=sample_rate,
@@ -179,16 +193,28 @@ class CFM(nn.Module):
                 mel_fmax=[None] * 7,
                 pow=1.0,
                 clamp_eps=1e-5,
-                mag_weight=0.0,    # As per config
-                log_weight=1.0,    # As per config
-                weight=aux_mel_loss_weight
+                mag_weight=aux_mel_mag_weight,
+                log_weight=aux_mel_log_weight,
+                weight=aux_mel_loss_weight,
+                normalized=aux_mel_normalized,
+                use_energy_scaling=aux_mel_use_energy_scaling,
+                energy_power=aux_mel_energy_power,
+                energy_scale_min=aux_mel_energy_scale_min,
+                energy_scale_max=aux_mel_energy_scale_max,
+                energy_scale_eps=aux_mel_energy_scale_eps,
+                apply_scale_to_log=aux_mel_apply_scale_to_log,
             )
         else:
             self.aux_mel_loss = None
 
         self.mask_align_to = 1
         alignments = []
-        if self.wav_input_only and self.aux_mel_loss is not None and hasattr(self.aux_mel_loss, "mel_transforms"):
+        if (
+            self.align_mask_to_aux_mel
+            and self.wav_input_only
+            and self.aux_mel_loss is not None
+            and hasattr(self.aux_mel_loss, "mel_transforms")
+        ):
             hop_lengths = [int(m.hop_length) for m in self.aux_mel_loss.mel_transforms]
             if len(hop_lengths) > 0:
                 lcm_hop = hop_lengths[0]
@@ -319,6 +345,7 @@ class CFM(nn.Module):
         duplicate_test=False,
         t_inter=0.1,
         edit_mask=None,
+        infer_x_pred_clip: float | None = None,
     ):
         self.eval()
         # raw wave
@@ -396,6 +423,16 @@ class CFM(nn.Module):
         def fn(t, x):
             # at each step, conditioning is fixed
             # step_cond = torch.where(cond_mask, cond, torch.zeros_like(cond))
+            def maybe_clip_x_pred(pred_x_or_v):
+                if (
+                    infer_x_pred_clip is not None
+                    and infer_x_pred_clip > 0
+                    and self.prediction == "x_pred"
+                    and self.wav_input_only
+                ):
+                    return pred_x_or_v.clamp(min=-infer_x_pred_clip, max=infer_x_pred_clip)
+                return pred_x_or_v
+
             def to_v(pred_x_or_v):
                 if self.prediction == "flow":
                     return pred_x_or_v
@@ -408,6 +445,7 @@ class CFM(nn.Module):
                     x=x, cond=step_cond, text=text, time=t, mask=mask,
                     drop_audio_cond=False, drop_text=False, cache=True,
                 )
+                pred = maybe_clip_x_pred(pred)
                 return to_v(pred)
 
             # predict flow (cond and uncond), for classifier-free guidance
@@ -415,6 +453,8 @@ class CFM(nn.Module):
                 x=x, cond=step_cond, text=text, time=t, mask=mask,
                 cfg_infer=True, cache=True,
             )
+            pred_cfg = maybe_clip_x_pred(pred_cfg)
+
             pred, null_pred = torch.chunk(pred_cfg, 2, dim=0)
             v_cond = to_v(pred)
             v_uncond = to_v(null_pred)
@@ -650,14 +690,19 @@ class CFM(nn.Module):
                 x1_flat_unscaled = x1[aux_mel_mask] / self.latents_scale
                 x1_pred_flat_unscaled = x_pred[aux_mel_mask] / self.latents_scale
 
-                rand_span_mask_aux = rand_span_mask[aux_mel_mask]
-                lens_aux = lens[aux_mel_mask]
+                aux_mel_kwargs = {
+                    "time_weight": (aux_time_weight[aux_mel_mask] if aux_time_weight is not None else None),
+                }
+                if self.aux_mel_loss_masked:
+                    aux_mel_kwargs.update(
+                        frame_mask=rand_span_mask[aux_mel_mask],
+                        frame_lengths=lens[aux_mel_mask],
+                    )
+
                 aux_mel_loss = self.aux_mel_loss(
                     x1_pred_flat_unscaled,
                     x1_flat_unscaled,
-                    frame_mask=rand_span_mask_aux,
-                    frame_lengths=lens_aux,
-                    time_weight=(aux_time_weight[aux_mel_mask] if aux_time_weight is not None else None),
+                    **aux_mel_kwargs,
                 )
                 total_loss = total_loss + aux_mel_loss
             

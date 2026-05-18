@@ -15,9 +15,9 @@ export https_proxy=http://sys-proxy-rd-relay.byted.org:8118
 eval_metric=("wer sim utmos")
 # eval_metric=("sim")
 
-langs=("zh" "en")        # "en" "zh" "zh_hard"
-# langs=("en")
-ckpt_step=400000    # 200000, 400000, 600000, 800000, 1000000, 1200000
+# langs=("zh" "en")        # "en" "zh" "zh_hard"
+langs=("en")
+ckpt_steps=(600000 800000)    # 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000, 1500000, 1600000
 seed=0
 nfe_step=50         # 32, 50, 100
 ode_method="euler"   # euler, heun
@@ -35,7 +35,7 @@ use_ema=true                # true, false
 LOAD_DTYPE="fp32"
 INFER_DTYPE="bf16"
 MEL_SPEC_TYPE="no_vocoder"  # vocos, no_vocoder
-RESULTS_ROOT=/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav_mel_dev/results/F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_05_noise_schedule_uniform_16k
+RESULTS_ROOT=/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav_mel_dev/results/F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_05_noise_schedule_no_shift_16k
 # GPUS="[0,1,2,3,4,5,6,7]"
 GPUS="[0,1,2,3]"
 # GPUS="[0,1]"
@@ -43,7 +43,6 @@ GPUS="[0,1,2,3]"
 
 LOCAL=""
 
-output_dir=${RESULTS_ROOT}/${ckpt_step}
 gen_wav_subdir=seed${seed}_${ode_method}_nfe${nfe_step}_${MEL_SPEC_TYPE}
 if [[ "${timestep_mapping}" == "uniform" ]]; then
     gen_wav_subdir+="_uniform"
@@ -67,29 +66,34 @@ if [[ "${use_ema}" == "false" ]]; then
 fi
 
 
-for lang in "${langs[@]}"; do
-    gen_wav_dir=${output_dir}/seedtts_test_${lang}/${gen_wav_subdir}
-    echo "[INFO] evaluating ${gen_wav_dir}"
+for ckpt_step in "${ckpt_steps[@]}"; do
+    output_dir=${RESULTS_ROOT}/${ckpt_step}
+    echo "[INFO] processing ckpt_step=${ckpt_step}"
 
-    if [[ ! -d "${gen_wav_dir}" ]]; then
-        echo "[ERROR] generated wav dir not found: ${gen_wav_dir}" >&2
-        exit 1
-    fi
+    for lang in "${langs[@]}"; do
+        gen_wav_dir=${output_dir}/seedtts_test_${lang}/${gen_wav_subdir}
+        echo "[INFO] evaluating ${gen_wav_dir}"
 
-    if [[ " ${eval_metric[@]} " =~ " wer " ]]; then
-        python src/f5_tts/eval/eval_seedtts_testset.py \
-            -e wer -l "$lang" -g "$gen_wav_dir" -n "$GPUS" $LOCAL
-    fi
+        if [[ ! -d "${gen_wav_dir}" ]]; then
+            echo "[ERROR] generated wav dir not found: ${gen_wav_dir}" >&2
+            exit 1
+        fi
 
-    if [[ " ${eval_metric[@]} " =~ " sim " ]]; then
-        python src/f5_tts/eval/eval_seedtts_testset.py \
-            -e sim -l "$lang" -g "$gen_wav_dir" -n "$GPUS" $LOCAL
-    fi
+        if [[ " ${eval_metric[@]} " =~ " wer " ]]; then
+            python src/f5_tts/eval/eval_seedtts_testset.py \
+                -e wer -l "$lang" -g "$gen_wav_dir" -n "$GPUS" $LOCAL
+        fi
 
-    if [[ " ${eval_metric[@]} " =~ " utmos " ]]; then
-        python src/f5_tts/eval/eval_utmos.py \
-            --audio_dir "$gen_wav_dir"
-    fi
+        if [[ " ${eval_metric[@]} " =~ " sim " ]]; then
+            python src/f5_tts/eval/eval_seedtts_testset.py \
+                -e sim -l "$lang" -g "$gen_wav_dir" -n "$GPUS" $LOCAL
+        fi
+
+        if [[ " ${eval_metric[@]} " =~ " utmos " ]]; then
+            python src/f5_tts/eval/eval_utmos.py \
+                --audio_dir "$gen_wav_dir"
+        fi
+    done
 done
 
 # bash src/f5_tts/eval/eval_seedtts.sh

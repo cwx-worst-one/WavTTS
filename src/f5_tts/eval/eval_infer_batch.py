@@ -57,9 +57,39 @@ def main():
     parser.add_argument(
         "-p", "--librispeech_test_clean_path", default=f"{rel_path}/data/LibriSpeech/test-clean", type=str
     )
+    parser.add_argument(
+        "--ljspeech_inset_meta",
+        default=f"{rel_path}/data/ljspeech_inset_test_9s.lst",
+        type=str,
+        help="Metadata list for ljspeech_inset_test_9s. Format: ref_utt ref_dur ref_txt gen_utt gen_dur gen_txt.",
+    )
+    parser.add_argument(
+        "--ljspeech_wav_dir",
+        default="/mnt/bn/jdy-lq-5/chenwenxi/data/ljspeech/LJSpeech-1.1/wavs",
+        type=str,
+        help="Directory containing original LJSpeech wavs. Only used when truth duration is enabled.",
+    )
 
     parser.add_argument("--local", action="store_true", help="Use local vocoder checkpoint directory")
     parser.add_argument("--ckpt_path", default=None, type=str)
+    parser.add_argument(
+        "--output_dir",
+        default=None,
+        type=str,
+        help="Optional directory to save generated wavs. Defaults to the standard results/... directory.",
+    )
+    parser.add_argument(
+        "--fixed_prompt_wav",
+        default=None,
+        type=str,
+        help="Use one fixed prompt wav for all samples instead of each test sample's prompt wav.",
+    )
+    parser.add_argument(
+        "--fixed_prompt_text",
+        default=None,
+        type=str,
+        help="Text corresponding to --fixed_prompt_wav. Required when --fixed_prompt_wav is set.",
+    )
     parser.add_argument(
         "--result_expname",
         default=None,
@@ -67,6 +97,15 @@ def main():
         help="Optional result directory name override. Defaults to --expname.",
     )
     parser.add_argument("--cfg_strength", default=2.0, type=float)
+    parser.add_argument(
+        "--infer_x_pred_clip",
+        default=None,
+        type=float,
+        help=(
+            "Optional inference-time clamp for wav-only x_pred predictions in latent scale. "
+            "Use <= 0 or omit to disable. A typical value is model.cfm.latents_scale, e.g. 8.0."
+        ),
+    )
     parser.add_argument("--cfg_scale_interval_min", default=0.0, type=float)
     parser.add_argument("--cfg_scale_interval_max", default=1.0, type=float)
     parser.add_argument(
@@ -107,6 +146,9 @@ def main():
 
     infer_batch_size = 1  # max frames. 1 for ddp single inference (recommended)
     cfg_strength = args.cfg_strength
+    infer_x_pred_clip = args.infer_x_pred_clip
+    if infer_x_pred_clip is not None and infer_x_pred_clip <= 0:
+        infer_x_pred_clip = None
     cfg_scale_interval = (args.cfg_scale_interval_min, args.cfg_scale_interval_max)
     speed = 1.0
     use_truth_duration = False
@@ -158,25 +200,61 @@ def main():
         metalst = rel_path + "/data/LibriTTS/train-clean-100-same-sentence.meta.lst"
         libritts_base_path = rel_path + "/data/LibriTTS/train-clean-100-same-sentence/"
         metainfo = get_libritts_custom_metainfo(metalst, libritts_base_path)
+
+    elif testset == "ljspeech_inset_test_9s":
+        metalst = args.ljspeech_inset_meta
+        if not os.path.exists(metalst):
+            raise FileNotFoundError(f"LJSpeech inset metadata not found: {metalst}")
+
+        metainfo = []
+        with open(metalst, "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) < 6:
+                    continue
+                ref_utt, _ref_dur, ref_txt, gen_utt, _gen_dur, gen_txt = parts[:6]
+                ref_wav = os.path.join(args.ljspeech_wav_dir, ref_utt + ".wav")
+                gen_wav = os.path.join(args.ljspeech_wav_dir, gen_utt + ".wav")
+                metainfo.append((gen_utt, ref_txt, ref_wav, " " + gen_txt, gen_wav))
+
+    else:
+        raise ValueError(f"Unknown testset: {testset}")
+
+    if (args.fixed_prompt_wav is None) != (args.fixed_prompt_text is None):
+        raise ValueError("--fixed_prompt_wav and --fixed_prompt_text must be set together")
+
+    if args.fixed_prompt_wav is not None:
+        if not os.path.exists(args.fixed_prompt_wav):
+            raise FileNotFoundError(f"Fixed prompt wav not found: {args.fixed_prompt_wav}")
+        fixed_prompt_wav = args.fixed_prompt_wav
+        fixed_prompt_text = args.fixed_prompt_text
+        metainfo = [
+            (utt, fixed_prompt_text, fixed_prompt_wav, gt_text, gt_wav)
+            for utt, _prompt_text, _prompt_wav, gt_text, gt_wav in metainfo
+        ]
         
 
     # path to save genereted wavs
-    output_dir = (
-        f"{rel_path}/"
-        f"results/{result_exp_name}/{ckpt_step}/{testset}/"
-        f"seed{seed}_{ode_method}_nfe{nfe_step}_{mel_spec_type}"
-        f"{'_uniform' if timestep_mapping == 'uniform' else ''}"
-        f"{f'_ss{sway_sampling_coef}' if timestep_mapping == 'sway_sampling' and sway_sampling_coef else ''}"
-        f"{f'_power{timestep_power}' if timestep_mapping == 'power' else ''}"
-        f"{f'_lnloc{timestep_logistic_normal_loc}_lnscale{timestep_logistic_normal_scale}' if timestep_mapping == 'logistic_normal' else ''}"
-        f"{f'_shift{shift}' if shift != 1.0 else ''}"
-        f"_cfg{cfg_strength}_speed{speed}_load-{load_dtype_name}_infer-{infer_dtype_name}"
-        f"_cfgitv{cfg_scale_interval[0]}-{cfg_scale_interval[1]}"
-        f"{'_gt-dur' if use_truth_duration else ''}"
-        f"{'_no-ref-audio' if no_ref_audio else ''}"
-        f"_target_rms{target_rms}"
-        f"{f'_no_ema' if not use_ema else ''}"
-    )
+    if args.output_dir is not None:
+        output_dir = args.output_dir
+    else:
+        output_dir = (
+            f"{rel_path}/"
+            f"results/{result_exp_name}/{ckpt_step}/{testset}/"
+            f"seed{seed}_{ode_method}_nfe{nfe_step}_{mel_spec_type}"
+            f"{'_uniform' if timestep_mapping == 'uniform' else ''}"
+            f"{f'_ss{sway_sampling_coef}' if timestep_mapping == 'sway_sampling' and sway_sampling_coef else ''}"
+            f"{f'_power{timestep_power}' if timestep_mapping == 'power' else ''}"
+            f"{f'_lnloc{timestep_logistic_normal_loc}_lnscale{timestep_logistic_normal_scale}' if timestep_mapping == 'logistic_normal' else ''}"
+            f"{f'_shift{shift}' if shift != 1.0 else ''}"
+            f"_cfg{cfg_strength}_speed{speed}_load-{load_dtype_name}_infer-{infer_dtype_name}"
+            f"_cfgitv{cfg_scale_interval[0]}-{cfg_scale_interval[1]}"
+            f"{f'_xpredclip{infer_x_pred_clip}' if infer_x_pred_clip is not None else ''}"
+            f"{'_gt-dur' if use_truth_duration else ''}"
+            f"{'_no-ref-audio' if no_ref_audio else ''}"
+            f"_target_rms{target_rms}"
+            f"{f'_no_ema' if not use_ema else ''}"
+        )
 
     # -------------------------------------------------#
     wav_input_only = bool(model_cfg.model.get("wav_input", False))
@@ -291,6 +369,7 @@ def main():
                         use_epss=timestep_mapping == "sway_sampling",
                         no_ref_audio=no_ref_audio,
                         seed=seed,
+                        infer_x_pred_clip=infer_x_pred_clip,
                     )
                     # Final result
                     for i, gen in enumerate(generated):

@@ -16,7 +16,7 @@ eval_metric=("wer sim utmos")  # wer, sim, utmos
 # eval_metric=("utmos")  # wer, sim, utmos
 
 dataset="ls_pc_test_clean"  # ls_pc_test_clean, libritts_train_clean_100_cross_sentence, libritts_train_clean_100_same_sentence
-ckpt_step=1600000    # 200000, 400000, 550000, 700000, 900000, 1000000, 1100000
+ckpt_step=1500000    # 200000, 400000, 550000, 700000, 900000, 1000000, 1100000
 seed=0
 nfe_step=50         # 32, 50
 cfg_strength=3.0
@@ -33,7 +33,7 @@ use_ema=true                # true, false
 LOAD_DTYPE="fp32"
 INFER_DTYPE="bf16"
 MEL_SPEC_TYPE="no_vocoder"
-RESULTS_ROOT=/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav_mel_dev/results/F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_05_noise_schedule_0_8_16k
+RESULTS_ROOT=/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav_mel_dev/results/F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1
 # GPUS="[0,1,2,3,4,5,6,7]"
 GPUS="[0,1,2,3]"
 # GPUS="[0,1]"
