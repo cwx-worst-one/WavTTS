@@ -28,7 +28,8 @@ git clone <your-wavtts-repo-url>
 cd WavTTS_final_release
 
 # Install PyTorch first. The previously used environment used torch 2.9.1 / torchaudio 2.9.1.
-pip install torch==2.9.1 torchaudio==2.9.1 ema-pytorch==0.7.9 torchcodec==0.9.1 torchdiffeq==0.2.5
+# pip install torch==2.9.1 torchaudio==2.9.1 ema-pytorch==0.7.9 torchcodec==0.9.1 torchdiffeq==0.2.5
+pip install torch==2.9.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu128
 
 # Install editable version of WavTTS
 pip install -e .

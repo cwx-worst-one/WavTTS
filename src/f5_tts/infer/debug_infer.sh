@@ -1,38 +1,48 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Debug inference launcher for the current WavTTS waveform checkpoint.
+# Override any variable from the shell, for example:
+#   CKPT_FILE=/path/to/model.pt NFE_STEP=16 bash src/f5_tts/infer/debug_infer.sh
 
 export CUDA_VISIBLE_DEVICES=0
-export HF_ENDPOINT=https://hf-mirror.com
 export MASTER_ADDR="127.0.0.1"
 
-# model config
-model_name="F5TTS_v1_Large_wav_x_pred_scale_aux_mel"
-model_dir="/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/F5TTS_v1_Large_wav_x_pred_scale_aux_mel-8gpus-bf16-19200sample_per_gpu"
-training_step="550000"
-model_cfg="${model_dir}/.hydra/config.yaml"
-ckpt_file="${model_dir}/ckpts/model_${training_step}.pt"
-vocab_file="/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav/data/LibriTTS_100_360_500_char/vocab.txt"
-vocoder_name="no_vocoder"       # vocos, bigvgan, no_vocoder
+CACHE_ROOT="/tmp/wavtts_debug"
+mkdir -p "${CACHE_ROOT}/matplotlib" "${CACHE_ROOT}/numba"
+export MPLCONFIGDIR="${CACHE_ROOT}/matplotlib"
+export NUMBA_CACHE_DIR="${CACHE_ROOT}/numba"
 
-ref_audio="infer/examples/basic/basic_ref_en.wav"
-ref_text="Some call me nature, others call me mother nature."
-gen_text="I don't really care what you call me. I've been a silent spectator, watching species evolve, empires rise and fall. But always remember, I am mighty and enduring."
-output_dir="src/f5_tts/infer/debug/${model_name}_output"
-nfe_step="32"
-output_file="${training_step}_nfe_${nfe_step}.wav"
+MODEL_NAME="WavTTS_scale_8_16k_1000000"
+MODEL_CFG="src/f5_tts/configs/WavTTS_scale_8_16k.yaml"
+CKPT_FILE="/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/emilia/F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1-emilia-8gpus-19200sample_per_gpu-bf16/ckpts/model_1000000.pt"
+VOCAB_FILE="data/Emilia_ZH_EN_pinyin/vocab.txt"
+VOCODER_NAME="no_vocoder"
 
+REF_AUDIO="tests/test_zh_ref.wav"
+REF_TEXT="我拽起裤腿鞋袜未脱就踏进了溪流。"
+GEN_TEXT="导航开始，全程二十五分钟，预计需要十二分钟。"
+OUTPUT_DIR="tests/debug/${MODEL_NAME}_output"
+NFE_STEP="50"
+OUTPUT_FILE="model_1000000_nfe_${NFE_STEP}.wav"
+DEVICE="cuda"
 
-# python src/f5_tts/infer/infer_cli.py \
-python -m debugpy --listen 127.0.0.1:56789 src/f5_tts/infer/infer_cli.py \
-    --model_cfg "$model_cfg" \
-    --ckpt_file "$ckpt_file" \
-    --ref_audio "$ref_audio" \
-    --ref_text "$ref_text" \
-    --gen_text "$gen_text" \
-    --nfe_step "$nfe_step" \
-    --output_dir "$output_dir" \
-    --output_file "$output_file" \
-    --vocab_file "$vocab_file" \
-    --vocoder_name "$vocoder_name" \
- 
+mkdir -p "${OUTPUT_DIR}"
+
+export PYTHONPATH="$(pwd)/src${PYTHONPATH:+:${PYTHONPATH}}"
+
+# python -m debugpy --listen 127.0.0.1:56789 src/f5_tts/infer/infer_cli.py \
+.venv/bin/python src/f5_tts/infer/infer_cli.py \
+    --model_cfg "${MODEL_CFG}" \
+    --ckpt_file "${CKPT_FILE}" \
+    --ref_audio "${REF_AUDIO}" \
+    --ref_text "${REF_TEXT}" \
+    --gen_text "${GEN_TEXT}" \
+    --nfe_step "${NFE_STEP}" \
+    --output_dir "${OUTPUT_DIR}" \
+    --output_file "${OUTPUT_FILE}" \
+    --vocab_file "${VOCAB_FILE}" \
+    --vocoder_name "${VOCODER_NAME}" \
+    --device "${DEVICE}"
 
 # bash src/f5_tts/infer/debug_infer.sh

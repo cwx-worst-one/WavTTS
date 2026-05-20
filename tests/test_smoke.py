@@ -12,7 +12,7 @@ def test_main_config_loads_waveform_training_baseline():
 
     config_path = Path(
         "src/f5_tts/configs/"
-        "F5TTS_v1_Large_wav_x_pred_scale_9_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1.yaml"
+        "WavTTS_scale_9_16k.yaml"
     )
     cfg = OmegaConf.load(config_path)
 
