@@ -20,21 +20,31 @@
 
 ---
 
-## 建议的测试与 `.venv` 策略
+## 建议的测试与环境策略
 
 这类仓库清理工作，**不要在阶段 0 就立刻安装整套依赖**。更合理的方式是：
 
-- **阶段 1（结构审计）之前**：先不建 `.venv`，只做只读审计。
-- **阶段 2（建立验证基线）开始前**：创建项目本地 `.venv`，用于记录“改造前基线”。
-- **阶段 3 之后**：只要涉及 CLI、import、配置或入口脚本改动，就在 `.venv` 中重复做最小验证。
-- **阶段 15（最终验证）**：使用同一个 `.venv` 做完整回归；如果依赖有明显变更，再额外新建一次干净环境复验安装流程。
+- **阶段 1（结构审计）之前**：先不安装完整依赖，只做只读审计。
+- **阶段 2（建立验证基线）开始前**：创建或激活固定环境，用于记录“改造前基线”。
+- **阶段 3 之后**：只要涉及 CLI、import、配置或入口脚本改动，就在同一个固定环境中重复做最小验证。
+- **阶段 15（最终验证）**：使用同一个固定环境做完整回归；如果依赖有明显变更，再额外新建一次干净环境复验安装流程。
 
 推荐原因：
 - 审计阶段不需要为大型依赖付出时间成本。
 - 进入“验证基线”阶段后，需要一个固定环境来判断问题是“仓库原本就有”还是“改动引入的”。
-- 把 `.venv` 建在仓库内，便于团队统一约定，也便于把 `.venv/` 明确加入 `.gitignore`。
+- 本项目依赖 PyTorch / torchaudio / torchcodec 等音频和深度学习包，conda 更适合管理 Python 版本、平台差异和 CUDA / Metal / CPU 依赖组合。
+- 同时支持 `.venv`，用于没有 conda、只做轻量 import / compile / 文档清理验证，或团队成员已有 Python 版本管理方案的场景。
 
-建议在 **阶段 2 开始时** 执行：
+推荐在 **阶段 2 开始时** 使用 conda：
+
+```bash
+conda create -n wavtts python=3.10
+conda activate wavtts
+python -m pip install --upgrade pip setuptools wheel
+pip install -e .
+```
+
+如果使用 `.venv`，建议：
 
 ```bash
 python3 -m venv .venv
@@ -43,11 +53,9 @@ python -m pip install --upgrade pip setuptools wheel
 pip install -e .
 ```
 
-如果本项目依赖 PyTorch / CUDA 版本需要手动匹配，则建议改成：
+如果本项目依赖 PyTorch / CUDA 版本需要手动匹配，则建议在所选环境中先安装匹配版本的 torch / torchaudio，再安装项目本体：
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
 python -m pip install --upgrade pip setuptools wheel
 # 先按机器环境安装匹配版本的 torch / torchaudio
 # 再安装项目本体
@@ -57,13 +65,11 @@ pip install -e .
 如果安装 `pip install -e .` 代价太高，也可以先做一个轻量基线：
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
 python -m pip install --upgrade pip setuptools wheel
 python -m compileall .
 ```
 
-但从当前仓库形态看，`pyproject.toml` 已存在，后续又一定会检查脚本入口和 import，因此**阶段 2 建 `.venv` 并尝试 editable install 是更合适的默认方案**。
+但从当前仓库形态看，`pyproject.toml` 已存在，后续又一定会检查脚本入口和 import，因此**阶段 2 使用固定环境并尝试 editable install 是更合适的默认方案**。
 
 ---
 
@@ -139,28 +145,33 @@ rg --files
 
 ## 阶段 2：建立验证基线
 
-目标：在正式修改前确认当前仓库哪些流程真实可运行，并从这里开始建立 `.venv`。
+目标：在正式修改前确认当前仓库哪些流程真实可运行，并从这里开始固定验证环境。
 
-- [x] 创建仓库本地 `.venv`。
-- [x] 将 `.venv/` 加入 `.gitignore`（如果尚未忽略）。
+- [x] 创建或确认固定验证环境，推荐 conda `wavtts`，也支持仓库本地 `.venv`。
 - [x] 记录当前可用的安装方式。
 - [x] 记录当前可用的 import 测试。
 - [x] 记录当前可用的最小推理命令。
-- [ ] 记录当前可用的训练或模型初始化命令。
-- [ ] 如果没有测试，新增最小 smoke tests：
-  - [ ] import 测试
-  - [ ] 配置加载测试
-  - [ ] 模型初始化测试
-- [ ] 确认 `python -m compileall .` 当前状态。
-- [ ] 确认 `pytest` 当前状态（如果项目已有测试）。
+- [x] 记录当前可用的训练或模型初始化命令。
+- [x] 如果没有测试，新增最小 smoke tests：
+  - [x] import 测试
+  - [x] 配置加载测试
+  - [x] 模型初始化测试
+- [x] 确认 `python -m compileall .` 当前状态。
+- [x] 确认 `pytest` 当前状态（如果项目已有测试）：conda `wavtts` 环境已安装 `pytest`，`python -m pytest tests` 通过。
 - [x] 确认 `pip install -e .` 当前状态。
-- [ ] 记录哪些失败是“仓库原有问题”，哪些是“环境缺失导致”。
+- [x] 记录哪些失败是“仓库原有问题”，哪些是“环境缺失导致”：`pytest` 未安装属于环境缺失；`librosa` / `numba` 和 Matplotlib 缓存目录问题已通过包初始化默认缓存目录规避。
 
 建议顺序：
 
 ```bash
+# 方案 A：conda
+conda create -n wavtts python=3.10
+conda activate wavtts
+
+# 方案 B：.venv
 python3 -m venv .venv
 source .venv/bin/activate
+
 python -m pip install --upgrade pip setuptools wheel
 pip install -e .
 python -m compileall .
@@ -185,7 +196,7 @@ pytest
 - [ ] 保留必要的 acknowledgement，明确说明项目基于 F5-TTS 修改。
 - [ ] 暂时不修改 `f5_tts` 包名。
 - [ ] 暂时不修改核心模型类名。
-- [ ] 在 `.venv` 中复跑最小 import / help 验证。
+- [ ] 在固定环境中复跑最小 import / help 验证。
 
 ---
 
@@ -203,7 +214,7 @@ pytest
 - [ ] 修改 README / examples 中的旧命令。
 - [ ] 决定是否保留旧的 `f5-tts_*` 命令别名。
 - [ ] 如果保留旧别名，标记为 deprecated。
-- [ ] 在 `.venv` 中重新安装或刷新 editable install。
+- [ ] 在固定环境中重新安装或刷新 editable install。
 - [ ] 运行 CLI help 测试。
 
 ---
@@ -223,7 +234,7 @@ pytest
 - [ ] 如需兼容，新增 `f5_tts` compatibility shim。
 - [ ] 验证 `import wavtts`。
 - [ ] 验证旧 import 是否按预期可用或不可用。
-- [ ] 在 `.venv` 中重新执行 `pip install -e .` 后再验证。
+- [ ] 在固定环境中重新执行 `pip install -e .` 后再验证。
 
 ---
 
@@ -426,7 +437,7 @@ rg "F5|f5|F5-TTS|f5_tts|E2|e2|ablation|baseline"
 
 - [ ] Commit 1：添加本计划和仓库审计记录。
 - [ ] Commit 2：README / docs 初步 WavTTS 命名。
-- [ ] Commit 3：建立 `.venv`、补充 smoke tests、记录验证基线。
+- [ ] Commit 3：建立固定验证环境、补充 smoke tests、记录验证基线。
 - [ ] Commit 4：CLI 命令迁移。
 - [ ] Commit 5：Python 包名迁移。
 - [ ] Commit 6：模型类名和内部命名迁移。
@@ -446,6 +457,8 @@ rg "F5|f5|F5-TTS|f5_tts|E2|e2|ablation|baseline"
    - [x] 检查并整理 `src/f5_tts/train/train.py`、主线 shell 脚本、README 中训练命令是否一致。
    - [x] 去掉主线脚本里的个人环境变量、私有路径、硬编码代理和敏感信息。
    - [x] 把当前主线 config 对应的训练脚本整理成可公开复用的版本，新增 `src/f5_tts/train/run_main_train.sh`。
+   - [x] 将 LibriTTS 保留配置对应脚本整理成 `src/f5_tts/train/run_train_libritts.sh`。
+   - [x] 删除旧实验脚本目录 `src/f5_tts/train/run_libritts/` 和 `src/f5_tts/train/runs_emilia/`。
 
 2. **补最小 smoke tests**
    - 增加至少 3 个最小测试：`import f5_tts`、配置文件可加载、训练入口可完成参数解析/模型初始化的最小检查。
@@ -460,3 +473,7 @@ rg "F5|f5|F5-TTS|f5_tts|E2|e2|ablation|baseline"
 | 日期 | 阶段 | 变更摘要 | 验证结果 | 备注 |
 | --- | --- | --- | --- | --- |
 | 2026-05-20 | 阶段 0-3 / 阶段 2 基线 | 收紧 README、移除 Gradio 入口、重建 `.venv`、预装 torch 2.9.1 / torchaudio 2.9.1、完成 `pip install -e .`、补 `src/f5_tts/__init__.py`、新增公开训练脚本 `src/f5_tts/train/run_main_train.sh` | `import f5_tts` 通过，editable install 通过，CLI help 可启动（有 matplotlib 缓存目录警告） | 下一步聚焦最小 smoke tests 与训练主线进一步清理 |
+| 2026-05-20 | 环境策略调整 | 后续同时支持 conda 和 `.venv`，推荐 conda 作为深度学习依赖默认环境 | 当前工作区未发现 `.venv`，仍需在选定固定环境中重新记录基线 | 下一步先补 smoke tests，再用固定环境复跑安装、import、配置加载和 CLI help |
+| 2026-05-20 | 阶段 2 基线 | 使用 conda `wavtts` 复跑基线，新增 `tests/test_smoke.py`，新增 `dev` optional dependency，给包初始化设置默认 `NUMBA_CACHE_DIR` / `MPLCONFIGDIR` | `import f5_tts`、主配置加载、toy waveform CFM/DiT 初始化、`python tests/test_smoke.py`、`python -m compileall -q tests src/f5_tts`、`f5-tts_infer-cli --help`、`python -m pytest tests` 通过 | 下一步可进入第一轮低风险清理和 CLI help 文案 WavTTS 化 |
+| 2026-05-20 | 阶段 8 / 配置清理 | 清理 `src/f5_tts/configs`，只保留 7 个指定配置文件，删除实验配置子目录 | `python -m pytest tests` 通过，剩余配置清单已确认 | 下一步同步训练脚本和文档中的配置引用，避免引用已删除配置 |
+| 2026-05-20 | 阶段 10 / 训练入口整理 | 将 LibriTTS 保留脚本上移并重写为 `src/f5_tts/train/run_train_libritts.sh`，删除旧 `run_libritts/` 和 `runs_emilia/` 实验脚本目录，更新 README 训练脚本列表 | `bash -n` 检查两个公开训练脚本通过，`python -m pytest tests` 通过，`python -m compileall -q tests src/f5_tts` 通过 | 下一步继续清理训练文档、CLI help 文案和已删除入口引用 |

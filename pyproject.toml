@@ -45,6 +45,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+dev = [
+    "pytest",
+]
 eval = [
     "faster_whisper==0.10.1",
     "funasr",

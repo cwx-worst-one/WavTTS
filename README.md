@@ -81,8 +81,8 @@ bash src/f5_tts/train/run_main_train.sh
 ### Related training scripts
 
 - `src/f5_tts/train/run_main_train.sh`
+- `src/f5_tts/train/run_train_libritts.sh`
 - `src/f5_tts/train/train.py`
-- `src/f5_tts/train/runs_emilia/run_large_scale_9_aux_mel_w_0_05_dropout_0_joint_drop_0_1.sh`
 
 ### Example overrides
 
@@ -92,6 +92,12 @@ BATCH_SIZE_PER_GPU=19200 \
 OUTPUT_ROOT=./exp/nar_wav_tts \
 MASTER_PORT=29500 \
 bash src/f5_tts/train/run_main_train.sh
+```
+
+For the retained LibriTTS configuration:
+
+```bash
+bash src/f5_tts/train/run_train_libritts.sh
 ```
 
 ### Notes
