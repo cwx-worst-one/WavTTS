@@ -443,9 +443,9 @@ rg "F5|f5|F5-TTS|f5_tts|E2|e2|ablation|baseline"
 ## 接下来 3 个直接执行动作
 
 1. **收紧训练主线路径**
-   - 检查并整理 `src/f5_tts/train/train.py`、主线 shell 脚本、README 中训练命令是否一致。
-   - 去掉主线脚本里的个人环境变量、私有路径、硬编码代理和敏感信息。
-   - 把当前主线 config 对应的训练脚本整理成可公开复用的版本。
+   - [x] 检查并整理 `src/f5_tts/train/train.py`、主线 shell 脚本、README 中训练命令是否一致。
+   - [x] 去掉主线脚本里的个人环境变量、私有路径、硬编码代理和敏感信息。
+   - [x] 把当前主线 config 对应的训练脚本整理成可公开复用的版本，新增 `src/f5_tts/train/run_main_train.sh`。
 
 2. **补最小 smoke tests**
    - 增加至少 3 个最小测试：`import f5_tts`、配置文件可加载、训练入口可完成参数解析/模型初始化的最小检查。
@@ -459,4 +459,4 @@ rg "F5|f5|F5-TTS|f5_tts|E2|e2|ablation|baseline"
 
 | 日期 | 阶段 | 变更摘要 | 验证结果 | 备注 |
 | --- | --- | --- | --- | --- |
-| 2026-05-20 | 阶段 0-3 / 阶段 2 基线 | 收紧 README、移除 Gradio 入口、重建 `.venv`、预装 torch 2.9.1 / torchaudio 2.9.1、完成 `pip install -e .`、补 `src/f5_tts/__init__.py` | `import f5_tts` 通过，editable install 通过，CLI help 可启动（有 matplotlib 缓存目录警告） | 下一步聚焦训练主线路径与最小 smoke tests |
+| 2026-05-20 | 阶段 0-3 / 阶段 2 基线 | 收紧 README、移除 Gradio 入口、重建 `.venv`、预装 torch 2.9.1 / torchaudio 2.9.1、完成 `pip install -e .`、补 `src/f5_tts/__init__.py`、新增公开训练脚本 `src/f5_tts/train/run_main_train.sh` | `import f5_tts` 通过，editable install 通过，CLI help 可启动（有 matplotlib 缓存目录警告） | 下一步聚焦最小 smoke tests 与训练主线进一步清理 |

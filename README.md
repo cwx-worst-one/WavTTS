@@ -2,6 +2,8 @@
 
 WavTTS is a training-first fork derived from F5-TTS, focused on the waveform-based training path used in this repository.
 
+At the current cleanup stage, the repository branding is `WavTTS`, while some internal package paths, config names, and CLI commands still retain legacy `f5_tts` / `F5-TTS` naming for compatibility.
+
 Current maintenance priority:
 - training
 - CLI inference
@@ -34,7 +36,7 @@ pip install -e .
 
 ### Docker image
 
-TODO
+Docker / Triton runtime support is currently not a maintenance priority in this repository snapshot. The training and CLI inference paths are the primary supported workflows.
 
 ### Current main training config
 
@@ -47,6 +49,8 @@ src/f5_tts/configs/F5TTS_v1_Large_wav_x_pred_scale_9_aux_mel_w_0_05_noise_schedu
 ## Inference
 
 This repository currently prioritizes CLI inference.
+
+During the current transition period, the exposed CLI command remains `f5-tts_infer-cli` for compatibility.
 
 ```bash
 # Run with flags
@@ -71,20 +75,31 @@ Training is the main supported workflow.
 ### Main entry
 
 ```bash
-python src/f5_tts/train/train.py --config-name F5TTS_v1_Large_wav_x_pred_scale_9_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1
+bash src/f5_tts/train/run_main_train.sh
 ```
 
 ### Related training scripts
 
+- `src/f5_tts/train/run_main_train.sh`
 - `src/f5_tts/train/train.py`
 - `src/f5_tts/train/runs_emilia/run_large_scale_9_aux_mel_w_0_05_dropout_0_joint_drop_0_1.sh`
-- `src/f5_tts/train/runs_emilia/run_large_scale_9_aux_mel_w_0_05_dropout_0_joint_drop_0_1_hdfs.sh`
+
+### Example overrides
+
+```bash
+NUM_PROCESSES=8 \
+BATCH_SIZE_PER_GPU=19200 \
+OUTPUT_ROOT=./exp/nar_wav_tts \
+MASTER_PORT=29500 \
+bash src/f5_tts/train/run_main_train.sh
+```
 
 ### Notes
 
 - Gradio-based finetuning is not a current maintenance priority.
 - Evaluation scripts remain in the repository, but they are not part of the current cleanup priority.
 - Docker and Triton runtime support are intentionally not documented as the primary path for now.
+- This repository remains a derived work of F5-TTS, so legacy names may still appear in configs, scripts, and compatibility-facing interfaces during the cleanup process.
 
 ## Acknowledgements
 

@@ -10,12 +10,12 @@ export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
 # export CUDA_VISIBLE_DEVICES="1"
 
 # Configuration parameters
-MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_9_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1
+MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1
 RESULT_MODEL_NAME="${MODEL_NAME}"
 MEL_SPEC_TYPE="no_vocoder"  # no_vocoder, vocos
 # SEEDS=(0 1 2)
 SEEDS=(0)
-CKPTSTEPS=(200000)  # 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000, 1500000, 1600000
+CKPTSTEPS=(1500000)  # 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000, 1500000, 1600000
 # TASKS=("seedtts_test_zh" "seedtts_test_en" "ls_pc_test_clean")
 # TASKS=("seedtts_test_zh" "seedtts_test_en")
 TASKS=("seedtts_test_en")
@@ -27,7 +27,7 @@ GPUS="[0,1,2,3,4,5,6,7]"
 # GPUS="[0]"
 TRAIN_GPU_TAG="8gpus"   # 8gpus, 16gpus, 32gpus
 OFFLINE_MODE=false       # true, false
-CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/emilia/F5TTS_v1_Large_wav_x_pred_scale_9_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1-emilia-8gpus-19200sample_per_gpu-bf16
+CKPT_PATH_DIR=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/emilia/F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1-emilia-8gpus-19200sample_per_gpu-bf16
 
 cfg_strength=3.0
 infer_x_pred_clip=  # empty or <=0 means disabled; set to latents scale, e.g. 8.0, to enable x_pred clamp
@@ -40,7 +40,7 @@ swaysampling=-1
 timestep_power=2.0
 timestep_logistic_normal_loc=-0.8
 timestep_logistic_normal_scale=0.8
-shift="5.0"         # 1.0, 7.0
+shift="1.0"         # 1.0, 7.0
 LOAD_DTYPE="fp32"   # bf16, fp16, fp32
 INFER_DTYPE="bf16"  # bf16, fp16, fp32
 
