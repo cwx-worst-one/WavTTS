@@ -59,8 +59,6 @@ class CFM(nn.Module):
         t_eps: float = 1e-4,
         noise_scale: float = 1.0,
         flow_loss_weight: float = 1.0,
-        use_time_weighted_aux_perceptual_loss: bool = False,
-        aux_perceptual_time_weight_power: float = 2.0,
         use_aux_mel_loss: bool = False,
         aux_mel_loss_weight: float = 0.0,
         aux_mel_loss_start_t: float = 0.0,
@@ -77,8 +75,6 @@ class CFM(nn.Module):
         aux_mel_apply_scale_to_log: bool = False,
         sample_rate: int = 24000,
         latents_scale: float = 1.0,
-        frontend_type: str = "reshape",  # "reshape" | "conv"
-        frontend_cfg: dict | None = None,
     ):
         super().__init__()
 
@@ -90,9 +86,6 @@ class CFM(nn.Module):
         # wav-only switch + frame_len (won't be passed into MelSpec)
         self.wav_input_only = bool(mel_spec_kwargs.pop("return_wav_only", False))
         self.wav_frame_len = int(mel_spec_kwargs.pop("wav_frame_len", 240))  # e.g., 240 @24k = 100Hz
-        self.frontend_type = frontend_type
-        self.frontend_cfg = dict(frontend_cfg) if frontend_cfg is not None else {}
-
         # mel spec
         if self.wav_input_only:
             self.mel_spec = None
@@ -114,8 +107,6 @@ class CFM(nn.Module):
             self.transformer.set_wav_frontend_config(
                 wav_input_only=self.wav_input_only,
                 wav_frame_len=self.wav_frame_len,
-                frontend_type=self.frontend_type,
-                frontend_cfg=self.frontend_cfg,
             )
 
         # conditional flow related
@@ -139,8 +130,6 @@ class CFM(nn.Module):
         self.latents_scale = latents_scale
         self.target_sample_rate = sample_rate
         self.flow_loss_weight = flow_loss_weight
-        self.use_time_weighted_aux_perceptual_loss = use_time_weighted_aux_perceptual_loss
-        self.aux_perceptual_time_weight_power = aux_perceptual_time_weight_power
         # aux mel loss
         self.use_aux_mel_loss = use_aux_mel_loss
         self.aux_mel_loss_start_t = aux_mel_loss_start_t
@@ -590,10 +579,6 @@ class CFM(nn.Module):
         flow_loss = loss.mean()
         total_loss = flow_loss * self.flow_loss_weight
 
-        aux_time_weight = None
-        if self.use_time_weighted_aux_perceptual_loss:
-            aux_time_weight = ((1.0 - time).clamp_min(self.t_eps)).pow(-self.aux_perceptual_time_weight_power)
-
         aux_mel_loss = torch.tensor(0.0, device=device)
         if self.use_aux_mel_loss and self.aux_mel_loss is not None and self.wav_input_only:
             aux_mel_mask = time > self.aux_mel_loss_start_t
@@ -601,9 +586,7 @@ class CFM(nn.Module):
                 x1_flat_unscaled = x1[aux_mel_mask] / self.latents_scale
                 x1_pred_flat_unscaled = x_pred[aux_mel_mask] / self.latents_scale
 
-                aux_mel_kwargs = {
-                    "time_weight": (aux_time_weight[aux_mel_mask] if aux_time_weight is not None else None),
-                }
+                aux_mel_kwargs = {}
                 if self.aux_mel_loss_masked:
                     aux_mel_kwargs.update(
                         frame_mask=rand_span_mask[aux_mel_mask],

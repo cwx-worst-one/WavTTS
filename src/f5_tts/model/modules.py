@@ -861,7 +861,6 @@ class MelSpectrogramLoss(nn.Module):
         x_true: torch.Tensor,
         frame_mask: torch.Tensor | None = None,
         frame_lengths: torch.Tensor | None = None,
-        time_weight: torch.Tensor | None = None,
     ):
         """
         Args:
@@ -954,10 +953,7 @@ class MelSpectrogramLoss(nn.Module):
                             diff.append(diff_full.new_tensor(0.0))
                     diff = torch.stack(diff, dim=0)
 
-                if time_weight is not None:
-                    total_loss += self.log_weight * (diff * time_weight).mean()
-                else:
-                    total_loss += self.log_weight * diff.mean()
+                total_loss += self.log_weight * diff.mean()
             
             # 2. Linear Magnitude Loss
             if self.mag_weight > 0:
@@ -974,10 +970,7 @@ class MelSpectrogramLoss(nn.Module):
                         else:
                             diff.append(diff_full.new_tensor(0.0))
                     diff = torch.stack(diff, dim=0)
-                if time_weight is not None:
-                    total_loss += self.mag_weight * (diff * time_weight).mean()
-                else:
-                    total_loss += self.mag_weight * diff.mean()
+                total_loss += self.mag_weight * diff.mean()
 
         return total_loss * self.weight
 

@@ -297,7 +297,7 @@ prediction=x_pred
 loss_space=v
 use_aux_mel_loss=True
 mel_spec_type=no_vocoder
-frontend_type=reshape
+frontend_type=reshape（已固定为默认 reshape，相关配置分支已删除）
 target_sample_rate=16000
 wav_frame_len=160
 ```
@@ -316,7 +316,7 @@ wav_frame_len=160
 - `speech_align_depth`（已删除）
 - `text_align_depth`（已删除）
 - `SpeechAlignMLP` / `TextAlignMLP` 相关训练分支（已删除）
-- 多种 wav frontend：`conv` / `embed_v1` / `embed_v2`
+- 多种 wav frontend：`conv` / `embed_v1` / `embed_v2`（已删除，固定 reshape）
 - 与当前 wav-only 主线无关的 mel/vocoder 分支
 - 旧 eval / speech_edit / finetune 中的 mel-only 假设
 
@@ -431,9 +431,19 @@ f5-tts_infer-cli = "wavtts.infer.infer_cli:main"
 | `loss_space="spec_scaled"` | 否 | 已删除 |
 | SSL feature loading / `ssl_feature_*` | 否 | 已删除 |
 | `speech_align_depth` / `text_align_depth` | 否 | 已删除 |
-| wav frontend `conv/embed_v1/embed_v2` | 否，当前默认 `reshape` | 暂缓；确认不用后删除 |
+| wav frontend `conv/embed_v1/embed_v2` | 否，当前默认 `reshape` | 已删除，固定默认 reshape |
 | `vocos` / `bigvgan` mel 推理 | 主线不用；eval/speech_edit 仍引用 | 暂缓，因 eval/speech_edit 先保留 |
 | `speech_edit.py` | 主线不用 | 保留，不改 |
 | `eval/` | 主线不用，但后续要用 | 保留，不改 |
 
-阶段 3 当前进度：已删除 `HubertFeatureLoss` / `use_aux_hubert_loss`、`ERes2NetFeatureLoss` / `use_aux_eres2net_loss`、REPA 对齐损失相关代码、`loss_space="spec_scaled"` / `SpecScalingLoss`，以及 dataset/collate 中的 SSL feature loading。下一步建议继续评估 wav frontend `conv/embed_v1/embed_v2` 是否删除。
+阶段 3 当前进度：已删除 `HubertFeatureLoss` / `use_aux_hubert_loss`、`ERes2NetFeatureLoss` / `use_aux_eres2net_loss`、REPA 对齐损失相关代码、`loss_space="spec_scaled"` / `SpecScalingLoss`、dataset/collate 中的 SSL feature loading、time-weighted aux perceptual loss，以及 wav frontend `conv/embed_v1/embed_v2` 消融分支；当前固定使用默认 reshape。
+
+
+#### wav frontend 清理结果
+
+已固定为默认 reshape，并处理：
+
+- `src/f5_tts/model/cfm.py`：删除 `frontend_type` / `frontend_cfg` 参数和传递，只保留 `wav_frame_len`。
+- `src/f5_tts/model/backbones/dit.py`：删除 `conv` / `embed_v1` / `embed_v2` 分支，`set_wav_frontend_config` 只配置 reshape。
+- 删除未再引用的 `src/f5_tts/model/backbones/wav_frontend.py` 与 `src/f5_tts/model/backbones/wav_patch_embed.py`。
+- 当前配置本身没有显式 frontend 字段，无需改 yaml。
