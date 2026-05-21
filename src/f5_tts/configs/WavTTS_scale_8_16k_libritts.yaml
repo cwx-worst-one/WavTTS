@@ -1,6 +1,6 @@
 hydra:
   run:
-    dir: ckpts/${model.name}_${model.mel_spec.mel_spec_type}_${model.tokenizer}_${datasets.name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: ckpts/${model.name}_${model.tokenizer}_${datasets.name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
 
 datasets:
   name: LibriTTS_100_360_500  # dataset name
@@ -58,12 +58,7 @@ model:
     hop_length: 160       # 160 for 16k, 240 for 24k
     win_length: 1024
     n_fft: 1024
-    mel_spec_type: no_vocoder  # vocos | bigvgan | no_vocoder
-    return_wav_only: True
     wav_frame_len: 160  # 240 @24k = 100Hz
-  vocoder:
-    is_local: False  # use local offline ckpt or not
-    local_path: null  # local vocoder path
 
 ckpts:
   logger: wandb  # wandb | tensorboard | null
@@ -71,5 +66,5 @@ ckpts:
   save_per_updates: 50000  # save checkpoint per updates 50000
   keep_last_n_checkpoints: -1  # -1 to keep all, 0 to not save intermediate, > 0 to keep last N checkpoints
   last_per_updates: 5000  # save last checkpoint per updates 5000
-  exp_name: ${model.name}_${model.mel_spec.mel_spec_type}_${model.tokenizer}_${datasets.name}
-  save_dir: ckpts/${model.name}_${model.mel_spec.mel_spec_type}_${model.tokenizer}_${datasets.name}
+  exp_name: ${model.name}_${model.tokenizer}_${datasets.name}
+  save_dir: ckpts/${model.name}_${model.tokenizer}_${datasets.name}

@@ -118,7 +118,7 @@ src/f5_tts/configs/WavTTS_scale_8_16k.yaml
 - `f5_tts` 包名迁移暂缓。
 - checkpoint 兼容策略暂缓最终决定。
 - `eval/` 暂时保留，不做大删。
-- `api.py` / socket / finetune / speech_edit 入口暂不作为主线维护。
+- `api.py` / socket / finetune / speech_edit 入口已从主线删除。
 - README、train README、infer README 等文档后续统一修。
 
 ---
@@ -196,7 +196,6 @@ python3 -m venv .venv
    - 先处理 CLI / API / finetune 中明显引用已删除配置的分支。
 
 4. **决定是否保留以下入口**
-   - `src/f5_tts/infer/speech_edit.py`
 
 5. **收紧 pyproject / CLI entry point**
    - 后续新增 WavTTS CLI entry point。
@@ -261,7 +260,6 @@ python3 -m venv .venv
 
 正式改名前，先决定以下入口是否维护：
 
-- `src/f5_tts/infer/speech_edit.py`
 - `src/f5_tts/eval/`
 
 已删除旧入口：
@@ -296,7 +294,6 @@ wav_input_only=True
 prediction=x_pred
 loss_space=v
 use_aux_mel_loss=True
-mel_spec_type=no_vocoder
 frontend_type=reshape（已固定为默认 reshape，相关配置分支已删除）
 target_sample_rate=16000
 wav_frame_len=160
@@ -324,7 +321,7 @@ wav_frame_len=160
 - `flow_loss_weight`（已删除，固定主 loss 权重为 1）
 - `noise_scale`（已删除，固定标准正态噪声 scale=1）
 - 与当前 wav-only 主线无关的 mel/vocoder 分支
-- 旧 eval / speech_edit / finetune 中的 mel-only 假设
+- 旧 eval / finetune 中的 mel-only 假设
 
 #### 删除策略
 
@@ -426,7 +423,7 @@ f5-tts_infer-cli = "wavtts.infer.infer_cli:main"
 
 ## 阶段 3 只读扫描结果：消融/实验分支
 
-当前 `WavTTS_scale_*_16k.yaml` 配置没有启用下列实验分支；主线配置只使用 `mel_spec_type: no_vocoder`。
+当前 `WavTTS_scale_*_16k.yaml` 配置没有启用下列实验分支；主线已固定为 wav-only。
 
 | 分支/模块 | 当前配置使用 | 建议 |
 | --- | --- | --- |
@@ -438,8 +435,8 @@ f5-tts_infer-cli = "wavtts.infer.infer_cli:main"
 | SSL feature loading / `ssl_feature_*` | 否 | 已删除 |
 | `speech_align_depth` / `text_align_depth` | 否 | 已删除 |
 | wav frontend `conv/embed_v1/embed_v2` | 否，当前默认 `reshape` | 已删除，固定默认 reshape |
-| `vocos` / `bigvgan` mel 推理 | 主线不用；eval/speech_edit 仍引用 | 暂缓，因 eval/speech_edit 先保留 |
-| `speech_edit.py` | 主线不用 | 保留，不改 |
+| `vocos` / `bigvgan` mel 推理 | 主线不用 | 主线已删除，README/旧脚本后续清理 |
+| `speech_edit.py` | 主线不用 | 已删除 |
 | `eval/` | 主线不用，但后续要用 | 保留，不改 |
 
 阶段 3 当前进度：已删除 `HubertFeatureLoss` / `use_aux_hubert_loss`、`ERes2NetFeatureLoss` / `use_aux_eres2net_loss`、REPA 对齐损失相关代码、`loss_space="spec_scaled"` / `SpecScalingLoss`、dataset/collate 中的 SSL feature loading、time-weighted aux perceptual loss、`aux_mel_loss_start_t`、aux mel loss energy scaling、aux mel normalized/mag-log/align 开关，以及 wav frontend `conv/embed_v1/embed_v2` 消融分支；当前固定使用默认 reshape，`CFM.sample_rate` 默认 16000，aux mel 固定为 masked log-mel loss，主 flow loss 权重固定为 1，noise scale 固定为 1。
@@ -457,7 +454,7 @@ f5-tts_infer-cli = "wavtts.infer.infer_cli:main"
 
 #### 下一步候选：删除旧 mel/vocoder F5-TTS 路径
 
-目标：WavTTS 主线只保留 raw waveform / `no_vocoder`，不再支持 mel 输入和外部 vocoder。建议分阶段做，避免一次性影响 eval/speech_edit。
+目标：WavTTS 主线只保留 raw waveform / `no_vocoder`，不再支持 mel 输入和外部 vocoder。
 
 建议处理范围：
 
@@ -479,7 +476,12 @@ f5-tts_infer-cli = "wavtts.infer.infer_cli:main"
    - 主推理与 batch eval 固定返回 waveform，CLI 不再暴露 vocoder 参数。
 
 5. configs / deps
-   - `WavTTS_scale_*_16k.yaml` 删除 `mel_spec_type: no_vocoder` 和 `vocoder:` 配置；保留音频几何字段或改名为 `audio:`。
-   - `pyproject.toml` 可删除 `vocos` 依赖；BigVGAN third_party 路径可后续清理。
+   - 已从 `WavTTS_scale_*_16k.yaml` 删除 `mel_spec_type: no_vocoder`、`return_wav_only` 和 `vocoder:` 配置；暂保留音频几何字段。
+   - 已从 `pyproject.toml` 删除 `vocos` 依赖；BigVGAN third_party 路径可后续清理。
 
-暂缓：`eval/` 和 `speech_edit.py` 之前说后续还要用，建议最后单独改成 wav-only 后再删除 mel/vocoder 兼容。
+`speech_edit.py` 已删除；eval batch 已改为 wav-only。
+
+
+#### MelSpec 清理结果
+
+已删除 `modules.py` 中旧 `MelSpec`、`get_vocos_mel_spectrogram`、`get_bigvgan_mel_spectrogram` 以及 librosa mel cache；`eval/utils_eval.py` 已固定 wav-only prompt 处理。`MelSpectrogramLoss` 保留用于 waveform aux loss。

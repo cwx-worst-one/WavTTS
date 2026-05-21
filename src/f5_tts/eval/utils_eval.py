@@ -5,12 +5,10 @@ import string
 from pathlib import Path
 
 import torch
-import torch.nn.functional as F
 import torchaudio
 from tqdm import tqdm
 
 from f5_tts.eval.ecapa_tdnn import ECAPA_TDNN_SMALL
-from f5_tts.model.modules import MelSpec
 from f5_tts.model.utils import convert_char_to_pinyin
 
 
@@ -85,18 +83,6 @@ def get_libritts_custom_metainfo(metalst, libritts_base_path):
     return metainfo
 
 
-# padded to max length mel batch
-def padded_mel_batch(ref_mels):
-    max_mel_length = torch.LongTensor([mel.shape[-1] for mel in ref_mels]).amax()
-    padded_ref_mels = []
-    for mel in ref_mels:
-        padded_ref_mel = F.pad(mel, (0, max_mel_length - mel.shape[-1]), value=0)
-        padded_ref_mels.append(padded_ref_mel)
-    padded_ref_mels = torch.stack(padded_ref_mels)
-    padded_ref_mels = padded_ref_mels.permute(0, 2, 1)
-    return padded_ref_mels
-
-
 def padded_wav_batch(wavs):
     """
     wavs: list[Tensor], each [1, T]
@@ -118,47 +104,25 @@ def get_inference_prompt(
     tokenizer="pinyin",
     polyphone=True,
     target_sample_rate=24000,
-    n_fft=1024,
-    win_length=1024,
-    n_mel_channels=100,
-    hop_length=256,
-    mel_spec_type="vocos",
     target_rms=0.1,
     use_truth_duration=False,
     infer_batch_size=1,
     num_buckets=200,
     min_secs=3,
     max_secs=40,
-    wav_input_only=False,
-    wav_frame_len=240,
+    wav_frame_len=160,
 ):
     prompts_all = []
 
-    if wav_input_only:
-        frame_len = wav_frame_len
-
-    if wav_input_only:
-        min_tokens = min_secs * target_sample_rate
-        max_tokens = max_secs * target_sample_rate
-    else:
-        min_tokens = min_secs * target_sample_rate // hop_length
-        max_tokens = max_secs * target_sample_rate // hop_length
+    frame_len = wav_frame_len
+    min_tokens = min_secs * target_sample_rate
+    max_tokens = max_secs * target_sample_rate
 
     batch_accum = [0] * num_buckets
     utts, ref_rms_list, ref_feats, ref_feat_lens, total_feat_lens, final_text_list = (
         [[] for _ in range(num_buckets)] for _ in range(6)
     )
 
-    mel_spectrogram = None
-    if not wav_input_only:
-        mel_spectrogram = MelSpec(
-            n_fft=n_fft,
-            hop_length=hop_length,
-            win_length=win_length,
-            n_mel_channels=n_mel_channels,
-            target_sample_rate=target_sample_rate,
-            mel_spec_type=mel_spec_type,
-        )
 
     for utt, prompt_text, prompt_wav, gt_text, gt_wav in tqdm(metainfo, desc="Processing prompts..."):
         # Audio
@@ -184,57 +148,32 @@ def get_inference_prompt(
         else:
             text_list = text
 
-        if wav_input_only:
-            ref_len_samples = ref_audio.shape[-1]
-            ref_full_frames = ref_len_samples // frame_len
-            ref_len_aligned = max(ref_full_frames * frame_len, frame_len)
-            ref_audio = ref_audio[..., :ref_len_aligned]
+        ref_len_samples = ref_audio.shape[-1]
+        ref_full_frames = ref_len_samples // frame_len
+        ref_len_aligned = max(ref_full_frames * frame_len, frame_len)
+        ref_audio = ref_audio[..., :ref_len_aligned]
 
-            ref_feat = ref_audio  # [1, T_aligned]
-            ref_feat_len = ref_len_aligned  # prompt samples
+        ref_feat = ref_audio  # [1, T_aligned]
+        ref_feat_len = ref_len_aligned  # prompt samples
 
-            if use_truth_duration:
-                gt_audio, gt_sr = torchaudio.load(gt_wav)
-                if gt_audio.shape[0] > 1:
-                    gt_audio = torch.mean(gt_audio, dim=0, keepdim=True)
-                if gt_sr != target_sample_rate:
-                    resampler = torchaudio.transforms.Resample(gt_sr, target_sample_rate)
-                    gt_audio = resampler(gt_audio)
+        if use_truth_duration:
+            gt_audio, gt_sr = torchaudio.load(gt_wav)
+            if gt_audio.shape[0] > 1:
+                gt_audio = torch.mean(gt_audio, dim=0, keepdim=True)
+            if gt_sr != target_sample_rate:
+                resampler = torchaudio.transforms.Resample(gt_sr, target_sample_rate)
+                gt_audio = resampler(gt_audio)
 
-                total_len = ref_feat_len + int(gt_audio.shape[-1] / speed)
-            else:
-                ref_text_len = len(prompt_text.encode("utf-8"))
-                gen_text_len = len(gt_text.encode("utf-8"))
-                total_len = ref_feat_len + int(ref_feat_len / ref_text_len * gen_text_len / speed)
-
+            total_len = ref_feat_len + int(gt_audio.shape[-1] / speed)
         else:
-            # to mel spectrogram
-            ref_mel = mel_spectrogram(ref_audio)
-            ref_mel = ref_mel.squeeze(0)
-            ref_feat = ref_mel
-            ref_feat_len = ref_feat.shape[-1]
-
-            if use_truth_duration:
-                gt_audio, gt_sr = torchaudio.load(gt_wav)
-                if gt_sr != target_sample_rate:
-                    resampler = torchaudio.transforms.Resample(gt_sr, target_sample_rate)
-                    gt_audio = resampler(gt_audio)
-                total_len = ref_feat_len + int(gt_audio.shape[-1] / hop_length / speed)
-
-                # # test vocoder resynthesis
-                # ref_audio = gt_audio
-            else:
-                ref_text_len = len(prompt_text.encode("utf-8"))
-                gen_text_len = len(gt_text.encode("utf-8"))
-                total_len = ref_feat_len + int(ref_feat_len / ref_text_len * gen_text_len / speed)
+            ref_text_len = len(prompt_text.encode("utf-8"))
+            gen_text_len = len(gt_text.encode("utf-8"))
+            total_len = ref_feat_len + int(ref_feat_len / ref_text_len * gen_text_len / speed)
 
         # deal with batch
         assert infer_batch_size > 0, "infer_batch_size should be greater than 0."
         
-        if wav_input_only:
-            approx_secs = total_len // target_sample_rate
-        else:
-            approx_secs = total_len * hop_length // target_sample_rate
+        approx_secs = total_len // target_sample_rate
 
         assert min_secs <= approx_secs <= max_secs, (
             f"Audio {utt} has duration {approx_secs}s out of range [{min_secs}, {max_secs}]."
@@ -257,7 +196,7 @@ def get_inference_prompt(
                 (
                     utts[bucket_i],
                     ref_rms_list[bucket_i],
-                    padded_mel_batch(ref_feats[bucket_i]) if not wav_input_only else padded_wav_batch(ref_feats[bucket_i]),
+                    padded_wav_batch(ref_feats[bucket_i]),
                     ref_feat_lens[bucket_i],
                     total_feat_lens[bucket_i],
                     final_text_list[bucket_i],
@@ -280,7 +219,7 @@ def get_inference_prompt(
                 (
                     utts[bucket_i],
                     ref_rms_list[bucket_i],
-                    padded_mel_batch(ref_feats[bucket_i]) if not wav_input_only else padded_wav_batch(ref_feats[bucket_i]),
+                    padded_wav_batch(ref_feats[bucket_i]),
                     ref_feat_lens[bucket_i],
                     total_feat_lens[bucket_i],
                     final_text_list[bucket_i],

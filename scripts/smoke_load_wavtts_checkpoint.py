@@ -45,7 +45,6 @@ def main():
         model_cls,
         cfg.model.arch,
         str(ckpt),
-        mel_spec_type=cfg.model.mel_spec.mel_spec_type,
         vocab_file=str(vocab),
         device=args.device,
         cfm_kwargs=cfm_kwargs,

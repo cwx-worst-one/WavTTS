@@ -168,9 +168,6 @@ def main():
 
     target_sample_rate = model_cfg.model.mel_spec.target_sample_rate
     n_mel_channels = model_cfg.model.mel_spec.n_mel_channels
-    hop_length = model_cfg.model.mel_spec.hop_length
-    win_length = model_cfg.model.mel_spec.win_length
-    n_fft = model_cfg.model.mel_spec.n_fft
 
     if testset == "ls_pc_test_clean":
         metalst = rel_path + "/data/librispeech_pc_test_clean_cross_sentence.lst"
@@ -262,13 +259,9 @@ def main():
         speed=speed,
         tokenizer=tokenizer,
         target_sample_rate=target_sample_rate,
-        n_mel_channels=n_mel_channels,
-        hop_length=hop_length,
-        mel_spec_type="no_vocoder",
         target_rms=target_rms,
         use_truth_duration=use_truth_duration,
         infer_batch_size=infer_batch_size,
-        wav_input_only=True,
         wav_frame_len=wav_frame_len,
     )
 
@@ -279,12 +272,8 @@ def main():
     mel_spec_kwargs = model_cfg.model.mel_spec
     if mel_spec_kwargs is None:
         mel_spec_kwargs = dict(
-            n_fft=n_fft,
-            hop_length=hop_length,
-            win_length=win_length,
             n_mel_channels=n_mel_channels,
             target_sample_rate=target_sample_rate,
-            mel_spec_type="no_vocoder",
         )
 
     # CFM kwargs

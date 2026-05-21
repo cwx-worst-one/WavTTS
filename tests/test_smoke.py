@@ -18,8 +18,6 @@ def test_main_config_loads_waveform_training_baseline():
 
     assert cfg.model.wav_input is True
     assert cfg.model.cfm.prediction == "x_pred"
-    assert cfg.model.mel_spec.mel_spec_type == "no_vocoder"
-    assert cfg.model.mel_spec.return_wav_only is True
     assert cfg.model.mel_spec.wav_frame_len == 160
 
 
@@ -44,8 +42,6 @@ def test_waveform_cfm_toy_model_initializes():
             "hop_length": 8,
             "win_length": 32,
             "n_fft": 32,
-            "mel_spec_type": "no_vocoder",
-            "return_wav_only": True,
             "wav_frame_len": 8,
         },
         vocab_char_map={" ": 0},
