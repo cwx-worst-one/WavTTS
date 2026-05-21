@@ -29,7 +29,6 @@ from f5_tts.model.utils import (
     list_str_to_idx,
     list_str_to_tensor,
     mask_from_frac_lengths,
-    masked_mean,
 )
 
 
@@ -84,10 +83,6 @@ class CFM(nn.Module):
         aux_mel_energy_scale_eps: float = 1e-5,
         aux_mel_apply_scale_to_log: bool = False,
         sample_rate: int = 24000,
-        use_repa_ctc_loss: bool = False,
-        repa_ctc_loss_weight: float = 0.0,
-        use_repa_ssl_feature_loss: bool = False,
-        repa_ssl_feature_loss_weight: float = 0.0,
         latents_scale: float = 1.0,
         frontend_type: str = "reshape",  # "reshape" | "conv"
         frontend_cfg: dict | None = None,
@@ -217,11 +212,6 @@ class CFM(nn.Module):
                 lcm_align = math.lcm(lcm_align, a)
             self.mask_align_to = max(1, lcm_align)
             
-        self.use_repa_ctc_loss = use_repa_ctc_loss
-        self.repa_ctc_loss_weight = repa_ctc_loss_weight
-        self.use_repa_ssl_feature_loss = use_repa_ssl_feature_loss
-        self.repa_ssl_feature_loss_weight = repa_ssl_feature_loss_weight
-
     @property
     def device(self):
         return next(self.parameters()).device
@@ -508,9 +498,6 @@ class CFM(nn.Module):
         *,
         lens: int["b"] | None = None,
         noise_scheduler: str | None = None,
-        zs: list[float["b n d"]],
-        zs_lens: list[int["b"]],
-        text_lens: int["b"] | None = None,
     ):
         # handle raw wave
         if inp.ndim == 2:
@@ -590,10 +577,10 @@ class CFM(nn.Module):
                 drop_text = False
 
         # apply mask will use more memory; might adjust batchsize or batchsampler long sequence threshold
-        raw_pred, zs_tilde, zs_tilde_ctc = self.transformer(
+        raw_pred, *_ = self.transformer(
             x=φ, cond=cond, text=text, time=time,
             drop_audio_cond=drop_audio_cond, drop_text=drop_text, mask=mask,
-            zs_lens=zs_lens, lens=lens,
+            lens=lens,
         )
 
         # interpret prediction
@@ -666,36 +653,10 @@ class CFM(nn.Module):
                 )
                 total_loss = total_loss + aux_mel_loss
             
-        repa_ssl_feature_loss = torch.tensor(0.0, device=device)
-        if self.use_repa_ssl_feature_loss and self.repa_ssl_feature_loss_weight > 0.0:
-            for i, (z, z_tilde_and_z_len) in enumerate(zip(zs, zs_tilde)):
-                z_tilde, z_lens = z_tilde_and_z_len
-                z_mask = lens_to_mask(z_lens, length=z.shape[1]).float()
-                for j, (z_j, z_tilde_j) in enumerate(zip(z, z_tilde)):
-                    cos_sim = F.cosine_similarity(z_j, z_tilde_j, dim=-1)
-                    repa_ssl_feature_loss += masked_mean(-cos_sim, z_mask[j])
-            repa_ssl_feature_loss /= len(zs) * batch
-            total_loss = total_loss + self.repa_ssl_feature_loss_weight * repa_ssl_feature_loss
-
-        repa_ctc_loss = torch.tensor(0.0, device=device)
-        if self.use_repa_ctc_loss and self.repa_ctc_loss_weight > 0.0:
-            for i, z_tilde_and_z_len_ctc in enumerate(zs_tilde_ctc):
-                z_tilde_ctc, z_lens_ctc = z_tilde_and_z_len_ctc
-                log_probs = z_tilde_ctc.transpose(1, 0).log_softmax(-1)
-                repa_ctc_loss += F.ctc_loss(
-                    log_probs, text, z_lens_ctc, text_lens,
-                    blank=self.transformer.text_embed.text_embed.num_embeddings,
-                    reduction="mean", zero_infinity=True,  # Ignore loss if log(0) happens
-                )
-            repa_ctc_loss /= len(zs_tilde_ctc)
-            total_loss = total_loss + self.repa_ctc_loss_weight * repa_ctc_loss
-
         loss_dict = {
             "total_loss": total_loss,
             "flow_loss": flow_loss,
             "aux_mel_loss": aux_mel_loss,
-            "repa_ssl_feature_loss": repa_ssl_feature_loss,
-            "repa_ctc_loss": repa_ctc_loss,
         }
 
         return total_loss, cond, v_pred, loss_dict

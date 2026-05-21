@@ -26,8 +26,6 @@ from f5_tts.model.modules import (
     DiTBlock,
     TimestepEmbedding,
     precompute_freqs_cis,
-    SpeechAlignMLP,
-    TextAlignMLP,
 )
 
 
@@ -257,10 +255,6 @@ class DiT(nn.Module):
         proj_out_kernel_size: int = 7,
         proj_out_padding: int = 3,
         proj_out_multiple_of: int = 256,
-        text_align_depth=-1,
-        speech_align_depth=-1,
-        z_dim=[1024],
-        align_mlp_dim=2048,
     ):
         super().__init__()
 
@@ -329,31 +323,6 @@ class DiT(nn.Module):
             self.proj_out_output_layer = self.proj_out.output_layer
         else:
             raise ValueError(f"Unknown proj_out_type: {proj_out_type}")
-
-        # set alignment depth
-        self.text_align_depth = text_align_depth
-        self.speech_align_depth = speech_align_depth
-
-        if text_align_depth > 0:
-            z_dim_text = [self.text_embed.text_embed.num_embeddings + 1]
-            self.text_align_layers = nn.ModuleList(
-                [
-                    TextAlignMLP([2, 1], in_channels=self.dim, channels=align_mlp_dim, out_channels=z_dim)
-                    for z_dim in z_dim_text
-                ]
-            )
-        else:
-            self.text_align_layers = None
-
-        if speech_align_depth > 0:
-            self.speech_align_layers = nn.ModuleList(
-                [
-                    SpeechAlignMLP([1, 1], in_channels=self.dim, channels=align_mlp_dim, out_channels=z_dim)
-                    for z_dim in z_dim
-                ]
-            )
-        else:
-            self.speech_align_layers = None
 
         self.checkpoint_activations = checkpoint_activations
 
@@ -582,7 +551,6 @@ class DiT(nn.Module):
         drop_text: bool = False,  # cfg for text
         cfg_infer: bool = False,  # cfg inference, pack cond & uncond forward
         cache: bool = False,
-        zs_lens: list[int["b"]] | None = None,
         lens: int["b"] | None = None,
     ):
         wav_mode = self.wav_input_only and x.ndim == 2
@@ -624,21 +592,12 @@ class DiT(nn.Module):
         if self.long_skip_connection is not None:
             residual = x
             
-        zs_speech = []
-        zs_text = []
-
         for i, block in enumerate(self.transformer_blocks):
             if self.checkpoint_activations:
                 # https://pytorch.org/docs/stable/checkpoint.html#torch.utils.checkpoint.checkpoint
                 x = torch.utils.checkpoint.checkpoint(self.ckpt_wrapper(block), x, t, mask, rope, use_reentrant=False)
             else:
                 x = block(x, t, mask=mask, rope=rope)
-
-            if self.training:
-                if zs_lens is not None and (i + 1) == self.speech_align_depth:
-                    zs_speech = [proj(x, zs_lens) for proj in self.speech_align_layers]
-                if lens is not None and (i + 1) == self.text_align_depth:
-                    zs_text = [proj(x, lens) for proj in self.text_align_layers]
 
         if self.long_skip_connection is not None:
             x = self.long_skip_connection(torch.cat((x, residual), dim=-1))
@@ -649,4 +608,4 @@ class DiT(nn.Module):
         if wav_mode:
             output = self._tokens_to_wav(output, target_num_samples=target_num_samples)
 
-        return output, zs_speech, zs_text
+        return output, None, None

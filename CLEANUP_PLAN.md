@@ -308,14 +308,14 @@ wav_frame_len=160
 
 - `use_aux_hubert_loss`
 - `use_aux_eres2net_loss`
-- `use_repa_ctc_loss`
-- `use_repa_ssl_feature_loss`
+- `use_repa_ctc_loss`（已删除）
+- `use_repa_ssl_feature_loss`（已删除）
 - `loss_space="spec_scaled"`
 - SSL feature loading / `ssl_feature_dataset_root`
 - `load_ssl_features`
-- `speech_align_depth`
-- `text_align_depth`
-- `SpeechAlignMLP` / `TextAlignMLP` 相关训练分支
+- `speech_align_depth`（已删除）
+- `text_align_depth`（已删除）
+- `SpeechAlignMLP` / `TextAlignMLP` 相关训练分支（已删除）
 - 多种 wav frontend：`conv` / `embed_v1` / `embed_v2`
 - 与当前 wav-only 主线无关的 mel/vocoder 分支
 - 旧 eval / speech_edit / finetune 中的 mel-only 假设
@@ -426,14 +426,14 @@ f5-tts_infer-cli = "wavtts.infer.infer_cli:main"
 | --- | --- | --- |
 | `use_aux_hubert_loss` | 否 | 已删除 |
 | `use_aux_eres2net_loss` | 否 | 已删除 |
-| `use_repa_ctc_loss` | 否 | 候选删除 |
-| `use_repa_ssl_feature_loss` | 否 | 候选删除 |
+| `use_repa_ctc_loss` | 否 | 已删除 |
+| `use_repa_ssl_feature_loss` | 否 | 已删除 |
 | `loss_space="spec_scaled"` | 否 | 候选删除 |
 | SSL feature loading / `ssl_feature_*` | 否 | 候选删除 |
-| `speech_align_depth` / `text_align_depth` | 否 | 候选删除 |
+| `speech_align_depth` / `text_align_depth` | 否 | 已删除 |
 | wav frontend `conv/embed_v1/embed_v2` | 否，当前默认 `reshape` | 暂缓；确认不用后删除 |
 | `vocos` / `bigvgan` mel 推理 | 主线不用；eval/speech_edit 仍引用 | 暂缓，因 eval/speech_edit 先保留 |
 | `speech_edit.py` | 主线不用 | 保留，不改 |
 | `eval/` | 主线不用，但后续要用 | 保留，不改 |
 
-已删除 `HubertFeatureLoss` / `use_aux_hubert_loss`，以及 `ERes2NetFeatureLoss` / `use_aux_eres2net_loss`。建议下一步继续从 **REPA / SSL feature 相关代码** 开始删除，因为当前配置完全不用，且会影响 dataset/trainer/cfm 多处逻辑。
+阶段 3 当前进度：已删除 `HubertFeatureLoss` / `use_aux_hubert_loss`、`ERes2NetFeatureLoss` / `use_aux_eres2net_loss`，以及 REPA 对齐损失相关的 `use_repa_*`、`speech_align_depth` / `text_align_depth`、`SpeechAlignMLP` / `TextAlignMLP`。下一步建议继续检查 dataset/trainer 中残留的 SSL feature loading。
