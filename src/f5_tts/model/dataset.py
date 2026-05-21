@@ -155,7 +155,7 @@ def load_dataset(
     tokenizer: str = "pinyin",
     dataset_type: str = "CustomDataset",
     audio_type: str = "raw",
-    mel_spec_kwargs: dict = dict(),
+    waveform_kwargs: dict = dict(),
 ) -> CustomDataset:
     """
     WavTTS only supports raw waveform datasets.
@@ -178,7 +178,7 @@ def load_dataset(
         with open(f"{rel_data_path}/duration.json", "r", encoding="utf-8") as f:
             data_dict = json.load(f)
         durations = data_dict["duration"]
-        train_dataset = CustomDataset(train_dataset, durations=durations, **mel_spec_kwargs)
+        train_dataset = CustomDataset(train_dataset, durations=durations, **waveform_kwargs)
 
     elif dataset_type == "CustomDatasetPath":
         try:
@@ -189,7 +189,7 @@ def load_dataset(
         with open(f"{dataset_name}/duration.json", "r", encoding="utf-8") as f:
             data_dict = json.load(f)
         durations = data_dict["duration"]
-        train_dataset = CustomDataset(train_dataset, durations=durations, **mel_spec_kwargs)
+        train_dataset = CustomDataset(train_dataset, durations=durations, **waveform_kwargs)
 
     else:
         raise ValueError(f"Unsupported dataset_type for WavTTS wav-only training: {dataset_type}")

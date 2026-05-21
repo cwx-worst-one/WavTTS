@@ -43,7 +43,7 @@ class CFM(nn.Module):
         audio_drop_prob=0.3,
         cond_drop_prob=0.2,
         joint_cond_drop_prob=0.0,
-        mel_spec_kwargs: dict = dict(),
+        waveform_kwargs: dict = dict(),
         frac_lengths_mask: tuple[float, float] = (0.7, 1.0),
         vocab_char_map: dict[str:int] | None = None,
         prediction: str = "flow",       # "flow" | "x_pred"
@@ -64,10 +64,10 @@ class CFM(nn.Module):
         self.frac_lengths_mask = frac_lengths_mask
         
         # wav input
-        mel_spec_kwargs = dict(mel_spec_kwargs)
+        waveform_kwargs = dict(waveform_kwargs)
         self.wav_input_only = True
         self.mel_spec = None
-        self.wav_frame_len = int(mel_spec_kwargs.pop("wav_frame_len", 160))
+        self.wav_frame_len = int(waveform_kwargs.pop("wav_frame_len", 160))
         self.num_channels = self.wav_frame_len
 
         # classifier-free guidance

@@ -46,10 +46,10 @@ tempfile_kwargs = {"delete_on_close": False} if sys.version_info >= (3, 12) else
 
 # -----------------------------------------
 
-target_sample_rate = 16000  # WavTTS waveform default; mel legacy paths may override from model/config
+target_sample_rate = 16000  # WavTTS waveform default
 use_bfloat16 = True  # True, False
-n_mel_channels = 100
-hop_length = 256
+wav_frame_len = 160
+hop_length = 160
 win_length = 1024
 n_fft = 1024
 target_rms = 0.1
@@ -198,7 +198,7 @@ def load_model(
     use_ema=True,
     device=device,
     cfm_kwargs=None,
-    mel_spec_kwargs=None,
+    waveform_kwargs=None,
 ):
     if vocab_file == "":
         vocab_file = str(files("f5_tts").joinpath("infer/examples/vocab.txt"))
@@ -208,12 +208,12 @@ def load_model(
     print("token : ", tokenizer)
     print("model : ", ckpt_path, "\n")
 
-    if mel_spec_kwargs is None:
-        mel_spec_kwargs = dict(
+    if waveform_kwargs is None:
+        waveform_kwargs = dict(
             n_fft=n_fft,
             hop_length=hop_length,
             win_length=win_length,
-            n_mel_channels=n_mel_channels,
+            wav_frame_len=wav_frame_len,
             target_sample_rate=target_sample_rate,
         )
 
@@ -222,9 +222,9 @@ def load_model(
         transformer=model_cls(
             **model_cfg,
             text_num_embeds=vocab_size,
-            mel_dim=mel_spec_kwargs.get("n_mel_channels", n_mel_channels),
+            wav_frame_len=waveform_kwargs.get("wav_frame_len", wav_frame_len),
         ),
-        mel_spec_kwargs=mel_spec_kwargs,
+        waveform_kwargs=waveform_kwargs,
         odeint_kwargs=dict(
             method=ode_method,
         ),
@@ -233,8 +233,8 @@ def load_model(
     ).to(device)
 
     # Keep inference-time audio geometry available even when CFM is wav-only and has no MelSpec module.
-    model.target_sample_rate = int(mel_spec_kwargs.get("target_sample_rate", target_sample_rate))
-    model.hop_length = int(mel_spec_kwargs.get("hop_length", hop_length))
+    model.target_sample_rate = int(waveform_kwargs.get("target_sample_rate", target_sample_rate))
+    model.hop_length = int(waveform_kwargs.get("hop_length", hop_length))
 
     model = load_checkpoint(model, ckpt_path, device, dtype=None, use_ema=use_ema)
 

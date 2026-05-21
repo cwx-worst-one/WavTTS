@@ -48,12 +48,12 @@ def main():
         vocab_file=str(vocab),
         device=args.device,
         cfm_kwargs=cfm_kwargs,
-        mel_spec_kwargs=cfg.model.mel_spec,
+        waveform_kwargs=cfg.model.waveform,
     )
 
     assert model.wav_input_only is True
-    assert model.wav_frame_len == int(cfg.model.mel_spec.wav_frame_len)
-    assert model.num_channels == int(cfg.model.mel_spec.wav_frame_len)
+    assert model.wav_frame_len == int(cfg.model.waveform.wav_frame_len)
+    assert model.num_channels == int(cfg.model.waveform.wav_frame_len)
     assert model.mel_spec is None
 
     total = sum(p.numel() for p in model.parameters())
@@ -64,7 +64,7 @@ def main():
 
     if args.sample:
         # Keep this intentionally short: the full model is large, so this is a functional smoke only.
-        sr = int(cfg.model.mel_spec.target_sample_rate)
+        sr = int(cfg.model.waveform.target_sample_rate)
         ref_len = model.wav_frame_len * 4
         duration = model.wav_frame_len * 6
         ref = torch.zeros(1, ref_len, device=args.device)

@@ -110,6 +110,12 @@ src/f5_tts/configs/WavTTS_scale_8_16k.yaml
   - CUDA autocast 只在 CUDA 可用时启用。
   - wav-only 参考音频按 `wav_frame_len` 对齐。
 - [x] 在 `CFM` 中保存 `target_sample_rate`，方便 wav-only 推理获取音频几何信息。
+- [x] 清理 WavTTS 配置音频几何命名：
+  - `model.mel_spec` 改为 `model.waveform`。
+  - 删除配置中的 `n_mel_channels`，统一用 `wav_frame_len` 表示 waveform frame 维度。
+  - 训练、推理、eval batch、smoke 脚本改为读取 `model.waveform`。
+- [x] 清理主线 DiT 维度命名：`mel_dim` 参数改为 `wav_frame_len`，调用侧同步更新。
+- [x] 删除未使用的 legacy backbone：`UNetT`；`MMDiT` 与 modules 中对应实现先保留不动。
 
 ---
 
@@ -476,10 +482,21 @@ f5-tts_infer-cli = "wavtts.infer.infer_cli:main"
    - 主推理与 batch eval 固定返回 waveform，CLI 不再暴露 vocoder 参数。
 
 5. configs / deps
-   - 已从 `WavTTS_scale_*_16k.yaml` 删除 `mel_spec_type: no_vocoder`、`return_wav_only` 和 `vocoder:` 配置；暂保留音频几何字段。
+   - 已从 `WavTTS_scale_*_16k.yaml` 删除 `mel_spec_type: no_vocoder`、`return_wav_only` 和 `vocoder:` 配置；音频几何字段已收敛到 `model.waveform`。
    - 已从 `pyproject.toml` 删除 `vocos` 依赖；BigVGAN third_party 路径可后续清理。
 
 `speech_edit.py` 已删除；eval batch 已改为 wav-only。
+
+
+#### Config 命名清理结果
+
+已将 WavTTS 主线配置从 mel-centric 命名收敛为 waveform-centric：
+
+- `model.mel_spec` -> `model.waveform`。
+- 配置中不再保留 `n_mel_channels`，统一用 `wav_frame_len` 表示 waveform frame 维度。
+- `train.py` / `infer_cli.py` / `utils_infer.py` / `eval_infer_batch.py` / smoke 脚本已同步读取 `model.waveform`。
+- 主线 `DiT` 内部和调用侧的 `mel_dim` 参数已改为 `wav_frame_len`。
+- legacy `UNetT` 已删除；`MMDiT` 先保留，当前 WavTTS 主线仍使用 `DiT`。
 
 
 #### MelSpec 清理结果

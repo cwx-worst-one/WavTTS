@@ -33,8 +33,8 @@ def main(model_cfg):
 
     # set model
     model = CFM(
-        transformer=model_cls(**model_arc, text_num_embeds=vocab_size, mel_dim=model_cfg.model.mel_spec.n_mel_channels),
-        mel_spec_kwargs=model_cfg.model.mel_spec,
+        transformer=model_cls(**model_arc, text_num_embeds=vocab_size, wav_frame_len=model_cfg.model.waveform.wav_frame_len),
+        waveform_kwargs=model_cfg.model.waveform,
         vocab_char_map=vocab_char_map,
         **cfm_kwargs,
     )
@@ -69,7 +69,7 @@ def main(model_cfg):
         model_cfg_dict=OmegaConf.to_container(model_cfg, resolve=True),
     )
 
-    train_dataset = load_dataset(model_cfg.datasets.name, tokenizer, mel_spec_kwargs=model_cfg.model.mel_spec)
+    train_dataset = load_dataset(model_cfg.datasets.name, tokenizer, waveform_kwargs=model_cfg.model.waveform)
     trainer.train(
         train_dataset,
         num_workers=model_cfg.datasets.num_workers,

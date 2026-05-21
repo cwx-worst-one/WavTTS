@@ -257,7 +257,13 @@ if not ckpt_file:
 
 print(f"Using {model}...")
 ema_model = load_model(
-    model_cls, model_arc, ckpt_file, vocab_file=vocab_file, device=device, cfm_kwargs=cfm_kwargs, mel_spec_kwargs=model_cfg.model.mel_spec
+    model_cls,
+    model_arc,
+    ckpt_file,
+    vocab_file=vocab_file,
+    device=device,
+    cfm_kwargs=cfm_kwargs,
+    waveform_kwargs=model_cfg.model.waveform,
 )
 
 

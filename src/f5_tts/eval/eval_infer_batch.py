@@ -166,8 +166,8 @@ def main():
     dataset_name = model_cfg.datasets.name
     tokenizer = model_cfg.model.tokenizer
 
-    target_sample_rate = model_cfg.model.mel_spec.target_sample_rate
-    n_mel_channels = model_cfg.model.mel_spec.n_mel_channels
+    target_sample_rate = model_cfg.model.waveform.target_sample_rate
+    wav_frame_len = model_cfg.model.waveform.wav_frame_len
 
     if testset == "ls_pc_test_clean":
         metalst = rel_path + "/data/librispeech_pc_test_clean_cross_sentence.lst"
@@ -252,7 +252,7 @@ def main():
         )
 
     # -------------------------------------------------#
-    wav_frame_len = int(model_cfg.model.mel_spec.get("wav_frame_len", 160))
+    wav_frame_len = int(model_cfg.model.waveform.get("wav_frame_len", 160))
 
     prompts_all = get_inference_prompt(
         metainfo,
@@ -268,11 +268,11 @@ def main():
     # Tokenizer
     vocab_char_map, vocab_size = get_tokenizer(dataset_name, tokenizer)
 
-    # mel spectrogram type
-    mel_spec_kwargs = model_cfg.model.mel_spec
-    if mel_spec_kwargs is None:
-        mel_spec_kwargs = dict(
-            n_mel_channels=n_mel_channels,
+    # waveform geometry
+    waveform_kwargs = model_cfg.model.waveform
+    if waveform_kwargs is None:
+        waveform_kwargs = dict(
+            wav_frame_len=wav_frame_len,
             target_sample_rate=target_sample_rate,
         )
 
@@ -281,8 +281,8 @@ def main():
 
     # Model
     model = CFM(
-        transformer=model_cls(**model_arc, text_num_embeds=vocab_size, mel_dim=n_mel_channels),
-        mel_spec_kwargs=mel_spec_kwargs,
+        transformer=model_cls(**model_arc, text_num_embeds=vocab_size, wav_frame_len=wav_frame_len),
+        waveform_kwargs=waveform_kwargs,
         odeint_kwargs=dict(
             method=ode_method,
         ),

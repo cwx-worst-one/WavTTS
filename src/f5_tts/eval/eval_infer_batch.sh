@@ -34,7 +34,7 @@ swaysampling=-1
 timestep_power=2.0
 timestep_logistic_normal_loc=-0.8
 timestep_logistic_normal_scale=0.8
-shift="3.0"         # 1.0, 7.0
+shift="2.0"         # 1.0, 7.0
 LOAD_DTYPE="fp32"   # bf16, fp16, fp32
 INFER_DTYPE="bf16"  # bf16, fp16, fp32
 

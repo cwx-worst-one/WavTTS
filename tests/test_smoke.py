@@ -18,7 +18,7 @@ def test_main_config_loads_waveform_training_baseline():
 
     assert cfg.model.wav_input is True
     assert cfg.model.cfm.prediction == "x_pred"
-    assert cfg.model.mel_spec.wav_frame_len == 160
+    assert cfg.model.waveform.wav_frame_len == 160
 
 
 def test_waveform_cfm_toy_model_initializes():
@@ -29,16 +29,15 @@ def test_waveform_cfm_toy_model_initializes():
         depth=1,
         heads=2,
         dim_head=8,
-        mel_dim=8,
+        wav_frame_len=8,
         text_num_embeds=16,
         text_dim=8,
         ff_mult=2,
     )
     model = CFM(
         transformer=transformer,
-        mel_spec_kwargs={
+        waveform_kwargs={
             "target_sample_rate": 16000,
-            "n_mel_channels": 8,
             "hop_length": 8,
             "win_length": 32,
             "n_fft": 32,

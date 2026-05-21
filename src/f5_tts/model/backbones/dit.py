@@ -122,7 +122,7 @@ class TextEmbedding(nn.Module):
 class InputEmbedding(nn.Module):
     def __init__(
         self,
-        mel_dim,
+        wav_frame_len,
         text_dim,
         out_dim,
         use_audio_proj: bool = False,
@@ -139,24 +139,24 @@ class InputEmbedding(nn.Module):
         self.audio_proj_type = audio_proj_type
 
         if not use_audio_proj:
-            self.proj = nn.Linear(mel_dim * 2 + text_dim, out_dim)
+            self.proj = nn.Linear(wav_frame_len * 2 + text_dim, out_dim)
         else:
             audio_proj_dim = out_dim if audio_proj_dim is None else audio_proj_dim
             if audio_proj_type == "linear":
                 audio_proj_hidden = audio_proj_dim if audio_proj_hidden is None else audio_proj_hidden
                 self.x_proj = nn.Sequential(
-                    nn.Linear(mel_dim, audio_proj_hidden, bias=False),
+                    nn.Linear(wav_frame_len, audio_proj_hidden, bias=False),
                     nn.Linear(audio_proj_hidden, audio_proj_dim),
                 )
                 self.cond_proj = nn.Sequential(
-                    nn.Linear(mel_dim, audio_proj_hidden, bias=False),
+                    nn.Linear(wav_frame_len, audio_proj_hidden, bias=False),
                     nn.Linear(audio_proj_hidden, audio_proj_dim),
                 )
             elif audio_proj_type == "conv_mlp":
                 conv_hidden = audio_proj_dim * 4 if audio_proj_hidden is None else audio_proj_hidden
                 self.x_proj = nn.Sequential(
                     ChannelLastConv1d(
-                        mel_dim,
+                        wav_frame_len,
                         audio_proj_dim,
                         kernel_size=audio_proj_conv_kernel_size,
                         padding=audio_proj_conv_padding,
@@ -172,7 +172,7 @@ class InputEmbedding(nn.Module):
                 )
                 self.cond_proj = nn.Sequential(
                     ChannelLastConv1d(
-                        mel_dim,
+                        wav_frame_len,
                         audio_proj_dim,
                         kernel_size=audio_proj_conv_kernel_size,
                         padding=audio_proj_conv_padding,
@@ -229,7 +229,7 @@ class DiT(nn.Module):
         dim_head=64,
         dropout=0.1,
         ff_mult=4,
-        mel_dim=100,
+        wav_frame_len=160,
         text_num_embeds=256,
         text_dim=None,
         text_mask_padding=True,
@@ -258,7 +258,7 @@ class DiT(nn.Module):
 
         self.time_embed = TimestepEmbedding(dim)
         if text_dim is None:
-            text_dim = mel_dim
+            text_dim = wav_frame_len
         self.text_embed = TextEmbedding(
             text_num_embeds,
             text_dim,
@@ -268,7 +268,7 @@ class DiT(nn.Module):
         )
         self.text_cond, self.text_uncond = None, None  # text cache
         self.input_embed = InputEmbedding(
-            mel_dim, text_dim, dim,
+            wav_frame_len, text_dim, dim,
             use_audio_proj=use_audio_proj,
             audio_proj_dim=audio_proj_dim,
             audio_proj_hidden=audio_proj_hidden,
@@ -302,17 +302,17 @@ class DiT(nn.Module):
         self.long_skip_connection = nn.Linear(dim * 2, dim, bias=False) if long_skip_connection else None
 
         self.norm_out = AdaLayerNorm_Final(dim)  # final modulation
-        self.proj_out_dim = mel_dim
+        self.proj_out_dim = wav_frame_len
         if proj_out_type == "linear":
-            self.proj_out = nn.Linear(dim, mel_dim)
+            self.proj_out = nn.Linear(dim, wav_frame_len)
             self.proj_out_output_layer = self.proj_out
         elif proj_out_type == "final_conv":
-            self.proj_out = ChannelLastConv1d(dim, mel_dim, kernel_size=proj_out_kernel_size, padding=proj_out_padding)
+            self.proj_out = ChannelLastConv1d(dim, wav_frame_len, kernel_size=proj_out_kernel_size, padding=proj_out_padding)
             self.proj_out_output_layer = self.proj_out
         elif proj_out_type == "conv_mlp":
             self.proj_out = ConvMLPOutProjection(
                 dim,
-                mel_dim,
+                wav_frame_len,
                 hidden_dim=proj_out_hidden,
                 kernel_size=proj_out_kernel_size,
                 padding=proj_out_padding,
@@ -329,7 +329,7 @@ class DiT(nn.Module):
         # wav front/back-end processing.
         # default keeps mel path unchanged; CFM will configure this in wav-only mode.
         self.wav_input_only = False
-        self.wav_frame_len = mel_dim
+        self.wav_frame_len = wav_frame_len
 
     def initialize_weights(self):
         # def _basic_init(module):
@@ -366,7 +366,7 @@ class DiT(nn.Module):
 
         if self.wav_input_only and self.wav_frame_len != self.proj_out_dim:
             raise ValueError(
-                f"wav_frame_len ({self.wav_frame_len}) must equal mel_dim/proj_out_dim ({self.proj_out_dim}) "
+                f"wav_frame_len ({self.wav_frame_len}) must equal proj_out_dim ({self.proj_out_dim}) "
                 "for reshape wav front-end."
             )
 
