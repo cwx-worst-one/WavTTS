@@ -1,23 +1,18 @@
 # WavTTS Cleanup Plan
 
-本计划记录当前仓库从 F5-TTS 派生代码整理为 WavTTS 的维护状态。现在重点不是完整改名，而是先把训练主线、配置、入口脚本和验证基线收紧。
+本计划记录当前仓库从 F5-TTS 派生代码整理为 WavTTS 的维护状态。当前重点仍然不是一次性完整改名，而是先把 **wav-only 训练主线、CLI 推理、配置、入口脚本和验证基线** 收紧。
 
 ---
 
 ## 当前原则
 
 - 先保持可运行，再继续删除和改名。
-- README / 说明文档暂时少动，后续统一重写。
-- `f5_tts` 包名和 `F5TTS` 模型名暂时保留，避免一次性破坏 import、checkpoint 和配置加载。
+- `f5_tts` 包名暂时保留，避免一次性破坏 import、checkpoint 和配置加载。
+- `F5TTS` / `E2TTS` 等旧模型命名残留暂缓分类处理，但训练/推理主线优先使用 `WavTTS_*` 配置名。
+- README / train README / infer README 等文档后续统一重写，避免清理过程中反复改同一批说明。
 - `LICENSE`、citation、acknowledgement 后续单独整理，不能直接删除原 F5-TTS 合规信息。
-- 每轮清理后至少运行：
-
-```bash
-conda run -n wavtts python -m pytest tests
-conda run -n wavtts python -m compileall -q tests src/f5_tts
-```
-
-如果不用 conda，也可以在固定 `.venv` 中执行同样命令。
+- 默认开发环境使用项目 `.venv`；重型真实推理/训练脚本不放进默认 smoke baseline。
+- Bash 脚本变量按项目习惯使用直接赋值，例如 `CONFIG_NAME="WavTTS_scale_9_16k"`，不使用 `${VAR:-default}` 形式。
 
 ---
 
@@ -31,120 +26,185 @@ conda run -n wavtts python -m compileall -q tests src/f5_tts
 - `src/f5_tts/train/run_main_train.sh`
 - `src/f5_tts/train/run_train_libritts.sh`
 
-### 配置
-
-`src/f5_tts/configs/` 只保留以下 7 个配置：
-
-- `F5TTS_Base.yaml`
-- `F5TTS_v1_Base.yaml`
-- `F5TTS_v1_Large_mel_baseline.yaml`
-- `F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1.yaml`
-- `F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1_LibriTTS.yaml`
-- `F5TTS_v1_Large_wav_x_pred_scale_9_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1.yaml`
-- `F5TTS_v1_Large_wav_x_pred_scale_10_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1.yaml`
-
-当前主训练配置是：
+当前主训练 launcher 默认配置：
 
 ```text
-src/f5_tts/configs/F5TTS_v1_Large_wav_x_pred_scale_9_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1.yaml
+src/f5_tts/configs/WavTTS_scale_9_16k.yaml
 ```
+
+LibriTTS launcher 默认配置：
+
+```text
+src/f5_tts/configs/WavTTS_scale_8_16k_libritts.yaml
+```
+
+### 配置
+
+`src/f5_tts/configs/` 当前保留 wav-only 主线配置：
+
+- `WavTTS_scale_8_16k.yaml`
+- `WavTTS_scale_8_16k_libritts.yaml`
+- `WavTTS_scale_9_16k.yaml`
+- `WavTTS_scale_10_16k.yaml`
+
+旧 F5-TTS mel/base 配置已从当前维护集合移除；如后续需要 mel baseline，可从历史提交恢复或单独建立 legacy 配置。
 
 ### 推理与评测
 
-- CLI inference 暂时保留。
-- `src/f5_tts/eval/` 暂时保留。
+- CLI inference 保留并优先支持 wav-only / `no_vocoder` 路径。
+- `src/f5_tts/infer/debug_infer.sh` 默认使用已有 WavTTS checkpoint 做真实推理验证。
+- `src/f5_tts/eval/` 暂时保留，但不是当前清理重点。
 - Gradio / Web demo 不再维护。
 - TensorRT / Triton runtime 不再维护。
 
-### 测试
+当前 debug 推理 checkpoint：
 
-已新增最小 smoke tests：
+```text
+/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/emilia/F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1-emilia-8gpus-19200sample_per_gpu-bf16/ckpts/model_1000000.pt
+```
 
+对应配置：
+
+```text
+src/f5_tts/configs/WavTTS_scale_8_16k.yaml
+```
+
+### 测试 / 验证脚本
+
+轻量 smoke baseline：
+
+- `scripts/check_baseline.sh`
 - `tests/test_smoke.py`
+- `tests/test_waveform_dataset_collate.py`
 
-覆盖内容：
+真实 checkpoint 加载脚本：
 
-- `import f5_tts`
-- 主配置加载
-- toy waveform CFM/DiT 初始化
+- `scripts/smoke_load_wavtts_checkpoint.py`
+
+注意：默认 baseline 不跑模型 forward/sample，避免耗时或卡住；真实模型加载/推理由单独脚本手动执行。
 
 ---
 
-## 已完成清理
+## 已完成清理与更新
 
-- [x] 建立 conda `wavtts` 验证环境。
+- [x] 建立 WavTTS cleanup 计划。
 - [x] 新增 `dev` optional dependency：`pytest`。
 - [x] 给包初始化设置默认 `NUMBA_CACHE_DIR` / `MPLCONFIGDIR`，规避本地缓存目录不可写导致的 import / CLI help 问题。
-- [x] 补充 smoke tests。
-- [x] 清理 configs，只保留 7 个指定配置。
-- [x] 删除旧实验配置子目录。
+- [x] 补充轻量 smoke tests。
+- [x] 清理 configs，并将 wav-only 主线配置重命名为 `WavTTS_scale_*_16k.yaml`。
 - [x] 新增并整理 `run_main_train.sh`。
 - [x] 将 LibriTTS launcher 整理为 `run_train_libritts.sh`。
+- [x] 更新训练 launcher 默认配置名：`WavTTS_scale_9_16k` / `WavTTS_scale_8_16k_libritts`。
+- [x] 更新 `src/f5_tts/infer/debug_infer.sh`，默认加载 `model_1000000.pt` 进行 WavTTS 推理验证。
 - [x] 删除旧 `run_libritts/` 和 `runs_emilia/` 实验脚本目录。
 - [x] 删除 Gradio 实现文件。
 - [x] 删除 TensorRT / Triton runtime 目录。
 - [x] 删除 SSL feature extraction 相关实验脚本。
 - [x] 删除 `speed_test.sh` 等非主线脚本。
+- [x] 从 `debug_train.sh` 移除真实 `WANDB_API_KEY`，避免密钥泄露。
+- [x] 基于可用环境整理精简依赖计划：`requirements/wavtts-good-min.txt` / `requirements/wavtts-good-constraints.txt`。
+- [x] 修正 `src/f5_tts/infer/utils_infer.py` wav-only 推理细节：
+  - 默认 sample rate 改为 16k。
+  - `no_vocoder` 直接返回 `None`。
+  - 从模型/config 读取 `target_sample_rate` 和 `hop_length`。
+  - CUDA autocast 只在 CUDA 可用时启用。
+  - wav-only 参考音频按 `wav_frame_len` 对齐。
+- [x] 在 `CFM` 中保存 `target_sample_rate`，方便 wav-only 推理获取音频几何信息。
 
 ---
 
 ## 暂不处理
 
-- README、train README、infer README 等文档后续统一修。
 - `f5_tts` 包名迁移暂缓。
-- `F5TTS` / `E2TTS` 命名残留暂缓分类处理。
 - checkpoint 兼容策略暂缓最终决定。
 - `eval/` 暂时保留，不做大删。
-
----
-
-## 下一步建议
-
-1. **检查当前删除后的断链**
-   - 扫描已删除文件名和目录名：
-
-```bash
-rg "infer_gradio|finetune_gradio|triton_trtllm|extract_ssl_features|ssl_feature_test|speed_test|run_libritts|runs_emilia" .
-```
-
-2. **清理非文档代码里的旧模型分支**
-   - 重点看 `E2TTS_Base`、`F5TTS_Small`、`F5TTS_v1_Small`、`F5TTS_v1_Ultra`。
-   - 先处理 CLI / API / finetune 中明显引用已删除配置的分支。
-
-3. **决定是否保留以下入口**
-   - `src/f5_tts/api.py`
-   - `src/f5_tts/socket_server.py`
-   - `src/f5_tts/socket_client.py`
-   - `src/f5_tts/infer/speech_edit.py`
-   - `src/f5_tts/train/finetune_cli.py`
-   - `src/f5_tts/train/debug_train.sh`
-
-4. **收紧 pyproject**
-   - 后续新增 WavTTS CLI entry point。
-   - 旧 `f5-tts_*` 命令是否保留为兼容别名，需要单独决定。
-
-5. **最后统一文档**
-   - README 类文件最后重写，避免清理过程中反复改同一批说明。
+- `api.py` / socket / finetune / speech_edit 入口暂不作为主线维护。
+- README、train README、infer README 等文档后续统一修。
 
 ---
 
 ## 当前验证基线
 
-每次提交前建议运行：
+每次提交前建议运行轻量 baseline：
 
 ```bash
-conda run -n wavtts python -m pytest tests
-conda run -n wavtts python -m compileall -q tests src/f5_tts
+bash scripts/check_baseline.sh
+```
+
+等价核心检查：
+
+```bash
+PYTHONPATH=src .venv/bin/python tests/test_smoke.py
+PYTHONPATH=src .venv/bin/python tests/test_waveform_dataset_collate.py
+PYTHONPATH=src .venv/bin/python -m compileall -q tests src/f5_tts
 bash -n src/f5_tts/train/run_main_train.sh
 bash -n src/f5_tts/train/run_train_libritts.sh
+bash -n src/f5_tts/infer/debug_infer.sh
 ```
 
-如改动 CLI / import / pyproject，额外运行：
+如改动 CLI / import / 推理依赖，额外运行：
 
 ```bash
-conda run -n wavtts f5-tts_infer-cli --help
-pip install -e .
+PYTHONPATH=src .venv/bin/python src/f5_tts/infer/infer_cli.py --help
+PYTHONPATH=src .venv/bin/python -c "import f5_tts.infer.utils_infer; print('ok')"
 ```
+
+真实 checkpoint 加载验证：
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/smoke_load_wavtts_checkpoint.py
+```
+
+真实推理验证：
+
+```bash
+bash src/f5_tts/infer/debug_infer.sh
+```
+
+---
+
+## 环境建议
+
+当前可用环境以 `/mnt/bn/jdy-lq-5/chenwenxi/code/wavtts_good_env_freeze.txt` 为参考。由于 `pyproject.toml` 中部分依赖范围较宽，直接 `pip install -e .` 可能导致依赖版本漂移。
+
+推荐安装流程：
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip setuptools wheel
+.venv/bin/python -m pip install -r requirements/wavtts-good-min.txt -c requirements/wavtts-good-constraints.txt
+.venv/bin/python -m pip install -e . --no-deps
+```
+
+重点：editable 安装最后使用 `--no-deps`，避免重新拉取不兼容的新版本依赖。
+
+---
+
+## 下一步建议
+
+1. **验证并继续收紧 wav-only CLI 推理**
+   - 运行 `debug_infer.sh` 确认 `model_1000000.pt` 可以稳定生成 wav。
+   - 如有问题，优先定位 `infer_cli.py` 与 `utils_infer.py` 的 wav-only 路径。
+
+2. **重写 `debug_train.sh`**
+   - 改为公开可复用 debug 训练脚本。
+   - 使用 `WavTTS_scale_8_16k` 或 `WavTTS_scale_9_16k`。
+   - 移除私有绝对路径、HF mirror、debugpy、旧配置名等。
+
+3. **清理非文档代码里的旧模型分支**
+   - 重点看 `E2TTS_Base`、`F5TTS_Small`、`F5TTS_v1_Small`、`F5TTS_v1_Ultra`。
+   - 先处理 CLI / API / finetune 中明显引用已删除配置的分支。
+
+4. **决定是否保留以下入口**
+   - `src/f5_tts/infer/speech_edit.py`
+
+5. **收紧 pyproject / CLI entry point**
+   - 后续新增 WavTTS CLI entry point。
+   - 旧 `f5-tts_*` 命令是否保留为兼容别名，需要单独决定。
+
+6. **最后统一文档**
+   - README 类文件最后重写。
+   - 保留必要 F5-TTS acknowledgement / license / citation 信息。
 
 ---
 
@@ -152,7 +212,206 @@ pip install -e .
 
 | 日期 | 内容 | 验证 |
 | --- | --- | --- |
-| 2026-05-20 | 建立 smoke tests 和 conda 验证基线 | `pytest tests`、`compileall` 通过 |
-| 2026-05-20 | 清理 configs，只保留 7 个配置 | `pytest tests` 通过 |
+| 2026-05-20 | 建立 smoke tests 和验证基线 | `pytest tests`、`compileall` 通过 |
+| 2026-05-20 | 清理 configs，只保留主线配置 | `pytest tests` 通过 |
 | 2026-05-20 | 整理训练 launcher，删除旧实验 launcher 目录 | `bash -n`、`pytest tests`、`compileall` 通过 |
-| 2026-05-20 | 删除 Gradio、Triton runtime、SSL feature extraction、speed/path/HDFS 辅助脚本 | 待最终复跑并提交 |
+| 2026-05-20 | 删除 Gradio、Triton runtime、SSL feature extraction、speed/path/HDFS 辅助脚本 | 已提交到 WavTTS `final-release` |
+| 2026-05-21 | 将 wav-only 配置重命名为 `WavTTS_scale_*_16k`，更新训练/推理 debug 入口 | `bash -n` 通过 |
+| 2026-05-21 | 修正 `utils_infer.py` wav-only/no_vocoder/16k 推理逻辑，`CFM` 保存 `target_sample_rate` | `py_compile` 与轻量 import 通过 |
+| 2026-05-21 | 阶段 1 主链稳定确认：baseline、debug inference、训练 launcher 均可用 | 用户本地验证通过 |
+| 2026-05-21 | 阶段 2 开始：删除旧 `api.py`、socket server/client、`finetune_cli.py`，移除 finetune CLI entry point | `bash -n` / `py_compile` 通过 |
+
+---
+
+## 后续阶段规划：正式改名与消融代码删减
+
+### 总体顺序
+
+后续不要立即全局改名。推荐顺序是：
+
+```text
+阶段 1：稳定 WavTTS 主链
+阶段 2：收敛 legacy 入口
+阶段 3：删除/迁移消融实验代码
+阶段 4：正式 f5_tts -> wavtts 改名
+阶段 5：统一文档、license、citation、README
+```
+
+原因：如果先改包名，旧入口、旧实验分支和消融代码都会扩大改名范围，增加无效迁移成本。先删减主线外代码，再改名更稳。
+
+---
+
+### 阶段 1：稳定 WavTTS 主链
+
+目标：确保当前 wav-only 主线可训练、可推理。
+
+必须确认：
+
+- `src/f5_tts/infer/debug_infer.sh` 可以使用 `model_1000000.pt` 稳定生成 wav。
+- `src/f5_tts/train/run_main_train.sh` 指向 `WavTTS_scale_9_16k`，至少能正常进入 model / dataloader 初始化。
+- `src/f5_tts/train/run_train_libritts.sh` 不再引用旧配置名。
+- `scripts/check_baseline.sh` 稳定通过。
+- `src/f5_tts/infer/utils_infer.py` 的 wav-only / `no_vocoder` / 16k sample rate 路径稳定。
+
+当前状态：阶段 1 已完成，下一步进入阶段 2（收敛 legacy 入口）。
+
+---
+
+### 阶段 2：收敛 legacy 入口
+
+正式改名前，先决定以下入口是否维护：
+
+- `src/f5_tts/infer/speech_edit.py`
+- `src/f5_tts/eval/`
+
+已删除旧入口：
+
+- `src/f5_tts/api.py`
+- `src/f5_tts/socket_server.py`
+- `src/f5_tts/socket_client.py`
+- `src/f5_tts/train/finetune_cli.py`
+
+建议策略：
+
+- 当前 WavTTS 主线只维护：
+  - `train/`
+  - `infer_cli.py`
+  - `model/`
+  - `dataset.py`
+  - `configs/WavTTS_*.yaml`
+  - `scripts/`
+- 不维护的入口移动到 `legacy/`，或在文件头明确标注 legacy。
+- 暂时保留的入口不要阻塞主线改名，但必须避免引用已删除配置。
+
+---
+
+### 阶段 3：删除/迁移消融实验代码
+
+在正式改包名前，先收敛模型和训练代码的实验开关。
+
+#### WavTTS v0 主线建议保留
+
+```text
+wav_input_only=True
+prediction=x_pred
+loss_space=v
+use_aux_mel_loss=True
+mel_spec_type=no_vocoder
+frontend_type=reshape
+target_sample_rate=16000
+wav_frame_len=160
+```
+
+#### 候选删除或迁移到 legacy 的实验分支
+
+以下内容后续需要逐项确认是否仍被当前配置使用：
+
+- `use_aux_hubert_loss`
+- `use_aux_eres2net_loss`
+- `use_repa_ctc_loss`
+- `use_repa_ssl_feature_loss`
+- `loss_space="spec_scaled"`
+- SSL feature loading / `ssl_feature_dataset_root`
+- `load_ssl_features`
+- `speech_align_depth`
+- `text_align_depth`
+- `SpeechAlignMLP` / `TextAlignMLP` 相关训练分支
+- 多种 wav frontend：`conv` / `embed_v1` / `embed_v2`
+- 与当前 wav-only 主线无关的 mel/vocoder 分支
+- 旧 eval / speech_edit / finetune 中的 mel-only 假设
+
+#### 删除策略
+
+不要一次性大删。建议先做一个清单：
+
+```bash
+rg "use_aux_hubert|use_aux_eres2net|use_repa|ssl_feature|spec_scaled|speech_align|text_align|frontend_type|embed_v1|embed_v2" src/f5_tts
+```
+
+然后按以下顺序处理：
+
+1. 确认当前 `WavTTS_scale_*_16k.yaml` 是否还引用该分支。
+2. 如果主线配置不使用，先标注为 legacy 或拆到单独文件。
+3. 运行轻量 baseline。
+4. 再删除相关 import / class / config 字段。
+5. 每次只删除一个类别，避免难以定位回归。
+
+---
+
+### 阶段 4：正式改名 `f5_tts` -> `wavtts`
+
+正式改名建议满足以下条件后开始：
+
+- `debug_infer.sh` 已使用 `model_1000000.pt` 跑通。
+- `run_main_train.sh` 至少能启动到 dataloader/model init。
+- legacy 入口去留已经确定。
+- 消融实验代码至少完成第一轮删减或迁移。
+
+#### 改名范围
+
+1. 包目录：
+
+```text
+src/f5_tts/ -> src/wavtts/
+```
+
+2. 保留兼容 shim：
+
+```text
+src/f5_tts/__init__.py
+```
+
+临时兼容旧 import：
+
+```python
+from wavtts import *
+```
+
+3. CLI entry points：
+
+新增 WavTTS 命令：
+
+```toml
+wavtts-infer = "wavtts.infer.infer_cli:main"
+wavtts-train = "wavtts.train.train:main"
+```
+
+旧命令可短期保留为兼容别名：
+
+```toml
+f5-tts_infer-cli = "wavtts.infer.infer_cli:main"
+```
+
+4. 配置路径和脚本路径：
+
+- `configs/WavTTS_*.yaml` 保留。
+- 所有训练/推理脚本改为 `wavtts` import 路径。
+- checkpoint 加载需要确认 key 不受包名影响。
+
+#### 暂不急着改的名称
+
+以下名称可以最后处理：
+
+- `CFM`
+- `DiT`
+- checkpoint 内部 key
+- 历史论文 citation 中的 F5-TTS 名称
+
+---
+
+### 阶段 5：文档统一
+
+最后统一修改：
+
+- `README.md`
+- `src/f5_tts/train/README.md` 或迁移后的 train README
+- `src/f5_tts/infer/README.md` 或迁移后的 infer README
+- `CLEANUP_PLAN.md`
+- installation / environment docs
+- acknowledgement / license / citation
+
+要求：
+
+- 明确 WavTTS 是 waveform-first fork。
+- 说明仍兼容部分 F5-TTS checkpoint/import 的过渡策略。
+- 不删除原 F5-TTS 合规信息。

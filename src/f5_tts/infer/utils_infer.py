@@ -49,8 +49,8 @@ tempfile_kwargs = {"delete_on_close": False} if sys.version_info >= (3, 12) else
 
 # -----------------------------------------
 
-target_sample_rate = 24000  # 16000, 24000
-use_bfloat16 = True # True, False
+target_sample_rate = 16000  # WavTTS waveform default; mel legacy paths may override from model/config
+use_bfloat16 = True  # True, False
 n_mel_channels = 100
 hop_length = 256
 win_length = 1024
@@ -103,6 +103,8 @@ def chunk_text(text, max_chars=135):
 
 # load vocoder
 def load_vocoder(vocoder_name="vocos", is_local=False, local_path="", device=device, hf_cache_dir=None):
+    if vocoder_name == "no_vocoder":
+        return None
     if vocoder_name == "vocos":
         # vocoder = Vocos.from_pretrained("charactr/vocos-mel-24khz").to(device)
         if is_local:
@@ -228,7 +230,8 @@ def load_checkpoint(model, ckpt_path, device: str, dtype=None, use_ema=True):
         model.load_state_dict(checkpoint["model_state_dict"])
 
     del checkpoint
-    torch.cuda.empty_cache()
+    if "cuda" in str(device) and torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     return model.to(device)
 
@@ -268,7 +271,11 @@ def load_model(
 
     vocab_char_map, vocab_size = get_tokenizer(vocab_file, tokenizer)
     model = CFM(
-        transformer=model_cls(**model_cfg, text_num_embeds=vocab_size, mel_dim=mel_spec_kwargs.get("n_mel_channels", n_mel_channels)),
+        transformer=model_cls(
+            **model_cfg,
+            text_num_embeds=vocab_size,
+            mel_dim=mel_spec_kwargs.get("n_mel_channels", n_mel_channels),
+        ),
         mel_spec_kwargs=mel_spec_kwargs,
         odeint_kwargs=dict(
             method=ode_method,
@@ -276,6 +283,10 @@ def load_model(
         vocab_char_map=vocab_char_map,
         **cfm_kwargs,
     ).to(device)
+
+    # Keep inference-time audio geometry available even when CFM is wav-only and has no MelSpec module.
+    model.target_sample_rate = int(mel_spec_kwargs.get("target_sample_rate", target_sample_rate))
+    model.hop_length = int(mel_spec_kwargs.get("hop_length", hop_length))
 
     dtype = torch.float32 if mel_spec_type == "bigvgan" else None
     model = load_checkpoint(model, ckpt_path, device, dtype=dtype, use_ema=use_ema)
@@ -439,6 +450,28 @@ def infer_process(
 # infer batches
 
 
+def _model_audio_sample_rate(model_obj):
+    if hasattr(model_obj, "target_sample_rate"):
+        return int(model_obj.target_sample_rate)
+    mel_spec = getattr(model_obj, "mel_spec", None)
+    if mel_spec is not None and hasattr(mel_spec, "target_sample_rate"):
+        return int(mel_spec.target_sample_rate)
+    return int(target_sample_rate)
+
+
+def _model_hop_length(model_obj):
+    if hasattr(model_obj, "hop_length"):
+        return int(model_obj.hop_length)
+    mel_spec = getattr(model_obj, "mel_spec", None)
+    if mel_spec is not None and hasattr(mel_spec, "hop_length"):
+        return int(mel_spec.hop_length)
+    return int(hop_length)
+
+
+def _supports_cuda_autocast(device):
+    return use_bfloat16 and device is not None and "cuda" in str(device) and torch.cuda.is_available()
+
+
 def infer_batch_process(
     ref_audio,
     ref_text,
@@ -462,28 +495,36 @@ def infer_batch_process(
     if audio.shape[0] > 1:
         audio = torch.mean(audio, dim=0, keepdim=True)
 
-    rms = torch.sqrt(torch.mean(torch.square(audio)))
+    model_sample_rate = _model_audio_sample_rate(model_obj)
+    model_hop_length = _model_hop_length(model_obj)
+
+    rms = torch.sqrt(torch.mean(torch.square(audio))).clamp_min(1e-8)
     if rms < target_rms:
         audio = audio * target_rms / rms
 
-    if sr != target_sample_rate:
-        resampler = torchaudio.transforms.Resample(sr, target_sample_rate)
+    if sr != model_sample_rate:
+        resampler = torchaudio.transforms.Resample(sr, model_sample_rate)
         audio = resampler(audio)
 
     audio = audio.to(device)
 
     is_wav_only = bool(getattr(model_obj, "wav_input_only", False))
+    if mel_spec_type == "no_vocoder" and not is_wav_only:
+        raise ValueError("mel_spec_type='no_vocoder' requires a wav-only WavTTS model.")
 
     if is_wav_only:
         frame_len = int(getattr(model_obj, "wav_frame_len", getattr(model_obj, "num_channels", 240)))
         ref_len_samples = audio.shape[-1]
         ref_full_frames = ref_len_samples // frame_len
         ref_len_aligned = max(ref_full_frames * frame_len, frame_len)
-        audio = audio[..., :ref_len_aligned]
+        if ref_len_aligned > ref_len_samples:
+            audio = torch.nn.functional.pad(audio, (0, ref_len_aligned - ref_len_samples), value=0.0)
+        else:
+            audio = audio[..., :ref_len_aligned]
         ref_audio_len = ref_len_aligned
     else:
         # mel mode: ref length in hops (frames)
-        ref_audio_len = audio.shape[-1] // hop_length
+        ref_audio_len = audio.shape[-1] // model_hop_length
 
     generated_waves = []
     spectrograms = []
@@ -502,9 +543,9 @@ def infer_batch_process(
 
         if fix_duration is not None:
             if is_wav_only:
-                duration = int(fix_duration * target_sample_rate)  # samples
+                duration = int(fix_duration * model_sample_rate)  # samples
             else:
-                duration = int(fix_duration * target_sample_rate / hop_length)
+                duration = int(fix_duration * model_sample_rate / model_hop_length)
         else:
             # Calculate duration
             ref_text_len = len(ref_text.encode("utf-8"))
@@ -514,9 +555,9 @@ def infer_batch_process(
         # inference
         with torch.inference_mode():
             if is_wav_only:
-                if use_bfloat16:
+                if _supports_cuda_autocast(device):
                     audio_bf16 = audio.to(torch.bfloat16)
-                    with torch.autocast("cuda", dtype=torch.bfloat16):
+                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                         generated, _ = model_obj.sample(
                             cond=audio_bf16,
                             text=final_text_list,
@@ -550,7 +591,7 @@ def infer_batch_process(
 
                 if streaming:
                     for j in range(0, len(generated_wave), chunk_size):
-                        yield generated_wave[j : j + chunk_size], target_sample_rate
+                        yield generated_wave[j : j + chunk_size], model_sample_rate
                 else:
                     yield generated_wave, None  # no mel spec
             
@@ -581,7 +622,7 @@ def infer_batch_process(
 
                 if streaming:
                     for j in range(0, len(generated_wave), chunk_size):
-                        yield generated_wave[j : j + chunk_size], target_sample_rate
+                        yield generated_wave[j : j + chunk_size], model_sample_rate
                 else:
                     generated_cpu = generated[0].cpu().numpy()
                     del generated
@@ -613,7 +654,7 @@ def infer_batch_process(
                     next_wave = generated_waves[i]
 
                     # Calculate cross-fade samples, ensuring it does not exceed wave lengths
-                    cross_fade_samples = int(cross_fade_duration * target_sample_rate)
+                    cross_fade_samples = int(cross_fade_duration * model_sample_rate)
                     cross_fade_samples = min(cross_fade_samples, len(prev_wave), len(next_wave))
 
                     if cross_fade_samples <= 0:
@@ -642,10 +683,10 @@ def infer_batch_process(
             # Create a combined spectrogram
             combined_spectrogram = np.concatenate(spectrograms, axis=1) if len(spectrograms) > 0 and spectrograms[0] is not None else None
 
-            yield final_wave, target_sample_rate, combined_spectrogram
+            yield final_wave, model_sample_rate, combined_spectrogram
 
         else:
-            yield None, target_sample_rate, None
+            yield None, model_sample_rate, None
 
 
 # remove silence from generated wav

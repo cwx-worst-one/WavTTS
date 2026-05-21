@@ -162,6 +162,7 @@ class CFM(nn.Module):
         self.t_eps = t_eps
         self.noise_scale = noise_scale
         self.latents_scale = latents_scale
+        self.target_sample_rate = sample_rate
         self.flow_loss_weight = flow_loss_weight
         self.use_time_weighted_aux_perceptual_loss = use_time_weighted_aux_perceptual_loss
         self.aux_perceptual_time_weight_power = aux_perceptual_time_weight_power
