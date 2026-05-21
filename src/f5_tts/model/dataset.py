@@ -4,7 +4,6 @@ from importlib.resources import files
 import torch
 import torch.nn.functional as F
 import torchaudio
-import numpy as np
 from datasets import Dataset as Dataset_
 from datasets import load_from_disk
 from torch import nn
@@ -98,9 +97,6 @@ class CustomDataset(Dataset):
         mel_spec_module: nn.Module | None = None,
         return_wav_only: bool = False,
         wav_frame_len: int = 240,
-        load_ssl_features: bool = False,
-        wav_dataset_root: str = None,
-        ssl_feature_dataset_root: str = None,
     ):
         self.data = custom_dataset
         self.durations = durations
@@ -112,9 +108,6 @@ class CustomDataset(Dataset):
         self.preprocessed_mel = preprocessed_mel
         self.return_wav_only = return_wav_only
         self.wav_frame_len = wav_frame_len
-        self.load_ssl_features = load_ssl_features
-        self.wav_dataset_root = wav_dataset_root
-        self.ssl_feature_dataset_root = ssl_feature_dataset_root
 
         self._resamplers = {}
 
@@ -178,18 +171,10 @@ class CustomDataset(Dataset):
             else:
                 mel_spec = None
 
-            # load ssl features
-            if self.load_ssl_features:
-                ssl_feature_path = audio_path.replace(self.wav_dataset_root, self.ssl_feature_dataset_root).replace(".wav", ".npy")
-                ssl_feature = torch.from_numpy(np.load(ssl_feature_path))
-            else:
-                ssl_feature = None
-
         return {
             "mel_spec": mel_spec,
             "wav": audio.squeeze(0) if self.return_wav_only else None,
             "text": text,
-            "ssl_feature": ssl_feature,
         }
 
 
@@ -377,24 +362,6 @@ def collate_fn(batch):
         mel_specs = None
         mel_lengths = None
 
-    ssl_features = [item["ssl_feature"] for item in batch]
-    has_ssl_feature = ssl_features[0] is not None
-    if has_ssl_feature:
-        ssl_feature_lengths = torch.LongTensor([s.shape[0] for s in ssl_features])
-        max_ssl_feature_len = ssl_feature_lengths.max().item()
-
-        padded_ssl_features = []
-        for s in ssl_features:
-            pad_len = max_ssl_feature_len - s.shape[0]
-            padded_ssl_features.append(
-                F.pad(s, (0, 0, 0, pad_len), value=0.0)
-            )
-
-        ssl_features = torch.stack(padded_ssl_features)  # [B, T_ssl, d_ssl]
-    else:
-        ssl_features = None
-        ssl_feature_lengths = None
-
     return dict(
         text=text,
         text_lengths=text_lengths,
@@ -402,6 +369,4 @@ def collate_fn(batch):
         wav_lengths=wav_lengths,
         mel=mel_specs,
         mel_lengths=mel_lengths,
-        ssl_feature=ssl_features,
-        ssl_feature_lengths=ssl_feature_lengths,
     )

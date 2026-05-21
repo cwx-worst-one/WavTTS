@@ -9,13 +9,11 @@ def test_collate_fn_pads_waveform_only_batches():
             "text": "hello",
             "wav": torch.ones(11),
             "mel_spec": None,
-            "ssl_feature": None,
         },
         {
             "text": "world!",
             "wav": torch.arange(7, dtype=torch.float32),
             "mel_spec": None,
-            "ssl_feature": None,
         },
     ]
 
@@ -27,8 +25,6 @@ def test_collate_fn_pads_waveform_only_batches():
     assert out["wav_lengths"].tolist() == [11, 7]
     assert out["mel"] is None
     assert out["mel_lengths"] is None
-    assert out["ssl_feature"] is None
-    assert out["ssl_feature_lengths"] is None
     assert torch.allclose(out["wav"][1, 7:], torch.zeros(4))
 
 
