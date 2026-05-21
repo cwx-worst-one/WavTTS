@@ -321,6 +321,8 @@ wav_frame_len=160
 - aux mel loss energy scaling（已删除）
 - aux mel loss normalized/mag-log/align 开关（已删除，固定 masked log-mel loss）
 - `CFM.sample_rate` 默认值已改为 16000
+- `flow_loss_weight`（已删除，固定主 loss 权重为 1）
+- `noise_scale`（已删除，固定标准正态噪声 scale=1）
 - 与当前 wav-only 主线无关的 mel/vocoder 分支
 - 旧 eval / speech_edit / finetune 中的 mel-only 假设
 
@@ -440,7 +442,7 @@ f5-tts_infer-cli = "wavtts.infer.infer_cli:main"
 | `speech_edit.py` | 主线不用 | 保留，不改 |
 | `eval/` | 主线不用，但后续要用 | 保留，不改 |
 
-阶段 3 当前进度：已删除 `HubertFeatureLoss` / `use_aux_hubert_loss`、`ERes2NetFeatureLoss` / `use_aux_eres2net_loss`、REPA 对齐损失相关代码、`loss_space="spec_scaled"` / `SpecScalingLoss`、dataset/collate 中的 SSL feature loading、time-weighted aux perceptual loss、`aux_mel_loss_start_t`、aux mel loss energy scaling、aux mel normalized/mag-log/align 开关，以及 wav frontend `conv/embed_v1/embed_v2` 消融分支；当前固定使用默认 reshape，`CFM.sample_rate` 默认 16000，aux mel 固定为 masked log-mel loss。
+阶段 3 当前进度：已删除 `HubertFeatureLoss` / `use_aux_hubert_loss`、`ERes2NetFeatureLoss` / `use_aux_eres2net_loss`、REPA 对齐损失相关代码、`loss_space="spec_scaled"` / `SpecScalingLoss`、dataset/collate 中的 SSL feature loading、time-weighted aux perceptual loss、`aux_mel_loss_start_t`、aux mel loss energy scaling、aux mel normalized/mag-log/align 开关，以及 wav frontend `conv/embed_v1/embed_v2` 消融分支；当前固定使用默认 reshape，`CFM.sample_rate` 默认 16000，aux mel 固定为 masked log-mel loss，主 flow loss 权重固定为 1，noise scale 固定为 1。
 
 
 #### wav frontend 清理结果

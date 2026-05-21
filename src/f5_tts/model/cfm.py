@@ -57,8 +57,6 @@ class CFM(nn.Module):
         P_std: float = 1.0,
         time_shift: float = 1.0,
         t_eps: float = 1e-4,
-        noise_scale: float = 1.0,
-        flow_loss_weight: float = 1.0,
         use_aux_mel_loss: bool = False,
         aux_mel_loss_weight: float = 0.0,
         aux_mel_loss_masked: bool = True,
@@ -115,10 +113,8 @@ class CFM(nn.Module):
         self.P_std = P_std
         self.time_shift = time_shift
         self.t_eps = t_eps
-        self.noise_scale = noise_scale
         self.latents_scale = latents_scale
         self.target_sample_rate = sample_rate
-        self.flow_loss_weight = flow_loss_weight
         # aux mel loss
         self.use_aux_mel_loss = use_aux_mel_loss
         self.aux_mel_loss_masked = aux_mel_loss_masked
@@ -366,9 +362,9 @@ class CFM(nn.Module):
             if exists(seed):
                 torch.manual_seed(seed)
             if wav_mode:
-                y0.append(torch.randn(dur, device=self.device, dtype=step_cond.dtype) * self.noise_scale)
+                y0.append(torch.randn(dur, device=self.device, dtype=step_cond.dtype))
             else:
-                y0.append(torch.randn(dur, self.num_channels, device=self.device, dtype=step_cond.dtype) * self.noise_scale)
+                y0.append(torch.randn(dur, self.num_channels, device=self.device, dtype=step_cond.dtype))
         y0 = pad_sequence(y0, padding_value=0, batch_first=True)
 
         t_start = 0
@@ -487,7 +483,7 @@ class CFM(nn.Module):
         x1 = x1 * self.latents_scale
 
         # x0 is gaussian noise
-        x0 = torch.randn_like(x1) * self.noise_scale
+        x0 = torch.randn_like(x1)
 
         # time step
         time = self._sample_time(batch, dtype=dtype, device=self.device)
@@ -553,7 +549,7 @@ class CFM(nn.Module):
 
         loss = loss[rand_span_mask]
         flow_loss = loss.mean()
-        total_loss = flow_loss * self.flow_loss_weight
+        total_loss = flow_loss
 
         aux_mel_loss = torch.tensor(0.0, device=device)
         if self.use_aux_mel_loss and self.aux_mel_loss is not None and self.wav_input_only:

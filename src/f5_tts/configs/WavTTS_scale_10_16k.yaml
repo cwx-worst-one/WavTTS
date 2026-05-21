@@ -30,7 +30,6 @@ model:
     P_mean: -0.8
     P_std: 0.8
     t_eps: 0.02
-    noise_scale: 1.0
     latents_scale: 10.0
     use_aux_mel_loss: True
     aux_mel_loss_weight: 0.05
