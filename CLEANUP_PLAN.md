@@ -415,3 +415,25 @@ f5-tts_infer-cli = "wavtts.infer.infer_cli:main"
 - 明确 WavTTS 是 waveform-first fork。
 - 说明仍兼容部分 F5-TTS checkpoint/import 的过渡策略。
 - 不删除原 F5-TTS 合规信息。
+
+---
+
+## 阶段 3 只读扫描结果：消融/实验分支
+
+当前 `WavTTS_scale_*_16k.yaml` 配置没有启用下列实验分支；主线配置只使用 `mel_spec_type: no_vocoder`。
+
+| 分支/模块 | 当前配置使用 | 建议 |
+| --- | --- | --- |
+| `use_aux_hubert_loss` | 否 | 已删除 |
+| `use_aux_eres2net_loss` | 否 | 已删除 |
+| `use_repa_ctc_loss` | 否 | 候选删除 |
+| `use_repa_ssl_feature_loss` | 否 | 候选删除 |
+| `loss_space="spec_scaled"` | 否 | 候选删除 |
+| SSL feature loading / `ssl_feature_*` | 否 | 候选删除 |
+| `speech_align_depth` / `text_align_depth` | 否 | 候选删除 |
+| wav frontend `conv/embed_v1/embed_v2` | 否，当前默认 `reshape` | 暂缓；确认不用后删除 |
+| `vocos` / `bigvgan` mel 推理 | 主线不用；eval/speech_edit 仍引用 | 暂缓，因 eval/speech_edit 先保留 |
+| `speech_edit.py` | 主线不用 | 保留，不改 |
+| `eval/` | 主线不用，但后续要用 | 保留，不改 |
+
+已删除 `HubertFeatureLoss` / `use_aux_hubert_loss`，以及 `ERes2NetFeatureLoss` / `use_aux_eres2net_loss`。建议下一步继续从 **REPA / SSL feature 相关代码** 开始删除，因为当前配置完全不用，且会影响 dataset/trainer/cfm 多处逻辑。
