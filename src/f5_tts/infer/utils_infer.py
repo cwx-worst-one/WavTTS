@@ -2,12 +2,11 @@
 # Make adjustments inside functions, and consider both gradio and cli scripts if need to change func output format
 import os
 import sys
+
 from concurrent.futures import ThreadPoolExecutor
 
 
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"  # for MPS device compatibility
-sys.path.append(f"{os.path.dirname(os.path.abspath(__file__))}/../../third_party/BigVGAN/")
-
 import hashlib
 import re
 import tempfile
@@ -23,10 +22,8 @@ import numpy as np
 import torch
 import torchaudio
 import tqdm
-from huggingface_hub import hf_hub_download
 from pydub import AudioSegment, silence
 from transformers import pipeline
-from vocos import Vocos
 
 from f5_tts.model import CFM
 from f5_tts.model.utils import convert_char_to_pinyin, get_tokenizer
@@ -55,7 +52,6 @@ n_mel_channels = 100
 hop_length = 256
 win_length = 1024
 n_fft = 1024
-mel_spec_type = "vocos"
 target_rms = 0.1
 cross_fade_duration = 0.15
 ode_method = "euler"
@@ -100,52 +96,6 @@ def chunk_text(text, max_chars=135):
 
     return chunks
 
-
-# load vocoder
-def load_vocoder(vocoder_name="vocos", is_local=False, local_path="", device=device, hf_cache_dir=None):
-    if vocoder_name == "no_vocoder":
-        return None
-    if vocoder_name == "vocos":
-        # vocoder = Vocos.from_pretrained("charactr/vocos-mel-24khz").to(device)
-        if is_local:
-            print(f"Load vocos from local path {local_path}")
-            config_path = f"{local_path}/config.yaml"
-            model_path = f"{local_path}/pytorch_model.bin"
-        else:
-            print("Download Vocos from huggingface charactr/vocos-mel-24khz")
-            repo_id = "charactr/vocos-mel-24khz"
-            config_path = hf_hub_download(repo_id=repo_id, cache_dir=hf_cache_dir, filename="config.yaml")
-            model_path = hf_hub_download(repo_id=repo_id, cache_dir=hf_cache_dir, filename="pytorch_model.bin")
-        vocoder = Vocos.from_hparams(config_path)
-        state_dict = torch.load(model_path, map_location="cpu", weights_only=True)
-        from vocos.feature_extractors import EncodecFeatures
-
-        if isinstance(vocoder.feature_extractor, EncodecFeatures):
-            encodec_parameters = {
-                "feature_extractor.encodec." + key: value
-                for key, value in vocoder.feature_extractor.encodec.state_dict().items()
-            }
-            state_dict.update(encodec_parameters)
-        vocoder.load_state_dict(state_dict)
-        vocoder = vocoder.eval().to(device)
-    elif vocoder_name == "bigvgan":
-        try:
-            from third_party.BigVGAN import bigvgan
-        except ImportError:
-            print("You need to follow the README to init submodule and change the BigVGAN source code.")
-        if is_local:
-            # download generator from https://huggingface.co/nvidia/bigvgan_v2_24khz_100band_256x/tree/main
-            vocoder = bigvgan.BigVGAN.from_pretrained(local_path, use_cuda_kernel=False)
-        else:
-            vocoder = bigvgan.BigVGAN.from_pretrained(
-                "nvidia/bigvgan_v2_24khz_100band_256x", use_cuda_kernel=False, cache_dir=hf_cache_dir
-            )
-
-        vocoder.remove_weight_norm()
-        vocoder = vocoder.eval().to(device)
-    else:
-        vocoder = None
-    return vocoder
 
 
 # load asr pipeline
@@ -243,7 +193,6 @@ def load_model(
     model_cls,
     model_cfg,
     ckpt_path,
-    mel_spec_type=mel_spec_type,
     vocab_file="",
     ode_method=ode_method,
     use_ema=True,
@@ -266,7 +215,6 @@ def load_model(
             win_length=win_length,
             n_mel_channels=n_mel_channels,
             target_sample_rate=target_sample_rate,
-            mel_spec_type=mel_spec_type,
         )
 
     vocab_char_map, vocab_size = get_tokenizer(vocab_file, tokenizer)
@@ -288,8 +236,7 @@ def load_model(
     model.target_sample_rate = int(mel_spec_kwargs.get("target_sample_rate", target_sample_rate))
     model.hop_length = int(mel_spec_kwargs.get("hop_length", hop_length))
 
-    dtype = torch.float32 if mel_spec_type == "bigvgan" else None
-    model = load_checkpoint(model, ckpt_path, device, dtype=dtype, use_ema=use_ema)
+    model = load_checkpoint(model, ckpt_path, device, dtype=None, use_ema=use_ema)
 
     return model
 
@@ -404,8 +351,6 @@ def infer_process(
     ref_text,
     gen_text,
     model_obj,
-    vocoder,
-    mel_spec_type=mel_spec_type,
     show_info=print,
     progress=tqdm,
     target_rms=target_rms,
@@ -432,8 +377,6 @@ def infer_process(
             ref_text,
             gen_text_batches,
             model_obj,
-            vocoder,
-            mel_spec_type=mel_spec_type,
             progress=progress,
             target_rms=target_rms,
             cross_fade_duration=cross_fade_duration,
@@ -453,19 +396,7 @@ def infer_process(
 def _model_audio_sample_rate(model_obj):
     if hasattr(model_obj, "target_sample_rate"):
         return int(model_obj.target_sample_rate)
-    mel_spec = getattr(model_obj, "mel_spec", None)
-    if mel_spec is not None and hasattr(mel_spec, "target_sample_rate"):
-        return int(mel_spec.target_sample_rate)
     return int(target_sample_rate)
-
-
-def _model_hop_length(model_obj):
-    if hasattr(model_obj, "hop_length"):
-        return int(model_obj.hop_length)
-    mel_spec = getattr(model_obj, "mel_spec", None)
-    if mel_spec is not None and hasattr(mel_spec, "hop_length"):
-        return int(mel_spec.hop_length)
-    return int(hop_length)
 
 
 def _supports_cuda_autocast(device):
@@ -477,8 +408,6 @@ def infer_batch_process(
     ref_text,
     gen_text_batches,
     model_obj,
-    vocoder,
-    mel_spec_type="vocos",
     progress=tqdm,
     target_rms=0.1,
     cross_fade_duration=0.15,
@@ -496,7 +425,6 @@ def infer_batch_process(
         audio = torch.mean(audio, dim=0, keepdim=True)
 
     model_sample_rate = _model_audio_sample_rate(model_obj)
-    model_hop_length = _model_hop_length(model_obj)
 
     rms = torch.sqrt(torch.mean(torch.square(audio))).clamp_min(1e-8)
     if rms < target_rms:
@@ -508,26 +436,17 @@ def infer_batch_process(
 
     audio = audio.to(device)
 
-    is_wav_only = bool(getattr(model_obj, "wav_input_only", False))
-    if mel_spec_type == "no_vocoder" and not is_wav_only:
-        raise ValueError("mel_spec_type='no_vocoder' requires a wav-only WavTTS model.")
-
-    if is_wav_only:
-        frame_len = int(getattr(model_obj, "wav_frame_len", getattr(model_obj, "num_channels", 240)))
-        ref_len_samples = audio.shape[-1]
-        ref_full_frames = ref_len_samples // frame_len
-        ref_len_aligned = max(ref_full_frames * frame_len, frame_len)
-        if ref_len_aligned > ref_len_samples:
-            audio = torch.nn.functional.pad(audio, (0, ref_len_aligned - ref_len_samples), value=0.0)
-        else:
-            audio = audio[..., :ref_len_aligned]
-        ref_audio_len = ref_len_aligned
+    frame_len = int(getattr(model_obj, "wav_frame_len", getattr(model_obj, "num_channels", 160)))
+    ref_len_samples = audio.shape[-1]
+    ref_full_frames = ref_len_samples // frame_len
+    ref_len_aligned = max(ref_full_frames * frame_len, frame_len)
+    if ref_len_aligned > ref_len_samples:
+        audio = torch.nn.functional.pad(audio, (0, ref_len_aligned - ref_len_samples), value=0.0)
     else:
-        # mel mode: ref length in hops (frames)
-        ref_audio_len = audio.shape[-1] // model_hop_length
+        audio = audio[..., :ref_len_aligned]
+    ref_audio_len = ref_len_aligned
 
     generated_waves = []
-    spectrograms = []
 
     if len(ref_text[-1].encode("utf-8")) == 1:
         ref_text = ref_text + " "
@@ -542,10 +461,7 @@ def infer_batch_process(
         final_text_list = convert_char_to_pinyin(text_list)
 
         if fix_duration is not None:
-            if is_wav_only:
-                duration = int(fix_duration * model_sample_rate)  # samples
-            else:
-                duration = int(fix_duration * model_sample_rate / model_hop_length)
+            duration = int(fix_duration * model_sample_rate)  # samples
         else:
             # Calculate duration
             ref_text_len = len(ref_text.encode("utf-8"))
@@ -554,47 +470,17 @@ def infer_batch_process(
 
         # inference
         with torch.inference_mode():
-            if is_wav_only:
-                if _supports_cuda_autocast(device):
-                    audio_bf16 = audio.to(torch.bfloat16)
-                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                        generated, _ = model_obj.sample(
-                            cond=audio_bf16,
-                            text=final_text_list,
-                            duration=duration,
-                            steps=nfe_step,
-                            cfg_strength=cfg_strength,
-                            sway_sampling_coef=sway_sampling_coef,
-                            vocoder=None,
-                        )
-                else:
+            if _supports_cuda_autocast(device):
+                audio_bf16 = audio.to(torch.bfloat16)
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                     generated, _ = model_obj.sample(
-                        cond=audio,
+                        cond=audio_bf16,
                         text=final_text_list,
                         duration=duration,
                         steps=nfe_step,
                         cfg_strength=cfg_strength,
                         sway_sampling_coef=sway_sampling_coef,
-                        vocoder=None,
                     )
-                del _
-
-                generated = generated.to(torch.float32)  # [1, N_total]
-                # cut prompt part (aligned)
-                cut = ref_audio_len
-                generated_wave = generated[0, cut:].contiguous()
-
-                if rms < target_rms:
-                    generated_wave = generated_wave * rms / target_rms
-
-                generated_wave = generated_wave.cpu().numpy()
-
-                if streaming:
-                    for j in range(0, len(generated_wave), chunk_size):
-                        yield generated_wave[j : j + chunk_size], model_sample_rate
-                else:
-                    yield generated_wave, None  # no mel spec
-            
             else:
                 generated, _ = model_obj.sample(
                     cond=audio,
@@ -604,29 +490,22 @@ def infer_batch_process(
                     cfg_strength=cfg_strength,
                     sway_sampling_coef=sway_sampling_coef,
                 )
-                del _
+            del _
 
-                generated = generated.to(torch.float32)  # generated mel spectrogram
-                generated = generated[:, ref_audio_len:, :]
-                generated = generated.permute(0, 2, 1)
+            generated = generated.to(torch.float32)  # [1, N_total]
+            cut = ref_audio_len
+            generated_wave = generated[0, cut:].contiguous()
 
-                if mel_spec_type == "vocos":
-                    generated_wave = vocoder.decode(generated)
-                elif mel_spec_type == "bigvgan":
-                    generated_wave = vocoder(generated)
-                if rms < target_rms:
-                    generated_wave = generated_wave * rms / target_rms
+            if rms < target_rms:
+                generated_wave = generated_wave * rms / target_rms
 
-                # wav -> numpy
-                generated_wave = generated_wave.squeeze().cpu().numpy()
+            generated_wave = generated_wave.cpu().numpy()
 
-                if streaming:
-                    for j in range(0, len(generated_wave), chunk_size):
-                        yield generated_wave[j : j + chunk_size], model_sample_rate
-                else:
-                    generated_cpu = generated[0].cpu().numpy()
-                    del generated
-                    yield generated_wave, generated_cpu
+            if streaming:
+                for j in range(0, len(generated_wave), chunk_size):
+                    yield generated_wave[j : j + chunk_size], model_sample_rate
+            else:
+                yield generated_wave, None
 
     if streaming:
         for gen_text in progress.tqdm(gen_text_batches) if progress is not None else gen_text_batches:
@@ -640,7 +519,6 @@ def infer_batch_process(
                 if result:
                     generated_wave, generated_mel_spec = next(result)
                     generated_waves.append(generated_wave)
-                    spectrograms.append(generated_mel_spec)
 
         if generated_waves:
             if cross_fade_duration <= 0:
@@ -680,10 +558,7 @@ def infer_batch_process(
 
                     final_wave = new_wave
 
-            # Create a combined spectrogram
-            combined_spectrogram = np.concatenate(spectrograms, axis=1) if len(spectrograms) > 0 and spectrograms[0] is not None else None
-
-            yield final_wave, model_sample_rate, combined_spectrogram
+            yield final_wave, model_sample_rate, None
 
         else:
             yield None, model_sample_rate, None

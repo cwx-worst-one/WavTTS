@@ -17,7 +17,7 @@ eval_metric=("wer sim utmos")
 
 # langs=("zh" "en")        # "en" "zh" "zh_hard"
 langs=("en")
-ckpt_steps=(1500000)    # 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000, 1500000, 1600000
+ckpt_steps=(600000)    # 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000, 1500000, 1600000
 seed=0
 nfe_step=50         # 32, 50, 100
 ode_method="euler"   # euler, heun
@@ -29,13 +29,12 @@ swaysampling=-1.0
 timestep_power=2.0
 timestep_logistic_normal_loc=-0.8
 timestep_logistic_normal_scale=0.8
-shift="1.0"
+shift="3.0"
 target_rms=0.1
 use_ema=true                # true, false
 LOAD_DTYPE="fp32"
 INFER_DTYPE="bf16"
-MEL_SPEC_TYPE="no_vocoder"  # vocos, no_vocoder
-RESULTS_ROOT=/mnt/bn/jdy-lq-5/chenwenxi/code/WavTTS_final_release/results/WavTTS_scale_8_16k
+RESULTS_ROOT=/mnt/bn/jdy-lq-5/chenwenxi/code/WavTTS_final_release/results/WavTTS_scale_9_16k
 GPUS="[0,1,2,3,4,5,6,7]"
 # GPUS="[0,1,2,3]"
 # GPUS="[0,1]"
@@ -43,7 +42,7 @@ GPUS="[0,1,2,3,4,5,6,7]"
 
 LOCAL=""
 
-gen_wav_subdir=seed${seed}_${ode_method}_nfe${nfe_step}_${MEL_SPEC_TYPE}
+gen_wav_subdir=seed${seed}_${ode_method}_nfe${nfe_step}_wav
 if [[ "${timestep_mapping}" == "uniform" ]]; then
     gen_wav_subdir+="_uniform"
 fi

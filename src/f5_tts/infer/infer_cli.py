@@ -21,8 +21,6 @@ from f5_tts.infer.utils_infer import (
     fix_duration,
     infer_process,
     load_model,
-    load_vocoder,
-    mel_spec_type,
     nfe_step,
     preprocess_ref_audio_text,
     remove_silence_for_generated_wav,
@@ -124,17 +122,6 @@ parser.add_argument(
     help="To remove long silence found in ouput",
 )
 parser.add_argument(
-    "--load_vocoder_from_local",
-    action="store_true",
-    help="To load vocoder from local dir, default to ../checkpoints/vocos-mel-24khz",
-)
-parser.add_argument(
-    "--vocoder_name",
-    type=str,
-    choices=["vocos", "bigvgan", "no_vocoder"],
-    help=f"Used vocoder name: vocos | bigvgan | no_vocoder, default {mel_spec_type}",
-)
-parser.add_argument(
     "--target_rms",
     type=float,
     help=f"Target output speech loudness normalization value, default {target_rms}",
@@ -210,9 +197,6 @@ if save_chunk and use_legacy_text:
     )
 
 remove_silence = args.remove_silence or config.get("remove_silence", False)
-load_vocoder_from_local = args.load_vocoder_from_local or config.get("load_vocoder_from_local", False)
-
-vocoder_name = args.vocoder_name or config.get("vocoder_name", mel_spec_type)
 target_rms = args.target_rms or config.get("target_rms", target_rms)
 cross_fade_duration = args.cross_fade_duration or config.get("cross_fade_duration", cross_fade_duration)
 nfe_step = args.nfe_step or config.get("nfe_step", nfe_step)
@@ -251,22 +235,6 @@ if save_chunk:
         os.makedirs(output_chunk_dir)
 
 
-# load vocoder
-
-if vocoder_name == "vocos":
-    vocoder_local_path = "../checkpoints/vocos-mel-24khz"
-elif vocoder_name == "bigvgan":
-    vocoder_local_path = "../checkpoints/bigvgan_v2_24khz_100band_256x"
-elif vocoder_name == "no_vocoder":
-    vocoder = None
-else:
-    raise ValueError(f"Unknown vocoder name: {vocoder_name}")
-
-if vocoder_name != "no_vocoder":
-    vocoder = load_vocoder(
-        vocoder_name=vocoder_name, is_local=load_vocoder_from_local, local_path=vocoder_local_path, device=device
-    )
-
 
 # load TTS model
 
@@ -279,17 +247,8 @@ cfm_kwargs = getattr(model_cfg.model, "cfm", {}) or {}
 
 repo_name, ckpt_step, ckpt_type = "F5-TTS", 1250000, "safetensors"
 
-if model != "F5TTS_Base":
-    assert vocoder_name == model_cfg.model.mel_spec.mel_spec_type
-
 # override for previous models
-if model == "F5TTS_Base":
-    if vocoder_name == "vocos":
-        ckpt_step = 1200000
-    elif vocoder_name == "bigvgan":
-        model = "F5TTS_Base_bigvgan"
-        ckpt_type = "pt"
-elif model == "E2TTS_Base":
+if model == "E2TTS_Base":
     repo_name = "E2-TTS"
     ckpt_step = 1200000
 
@@ -298,7 +257,7 @@ if not ckpt_file:
 
 print(f"Using {model}...")
 ema_model = load_model(
-    model_cls, model_arc, ckpt_file, mel_spec_type=vocoder_name, vocab_file=vocab_file, device=device, cfm_kwargs=cfm_kwargs, mel_spec_kwargs=model_cfg.model.mel_spec
+    model_cls, model_arc, ckpt_file, vocab_file=vocab_file, device=device, cfm_kwargs=cfm_kwargs, mel_spec_kwargs=model_cfg.model.mel_spec
 )
 
 
@@ -347,8 +306,6 @@ def main():
             ref_text_,
             gen_text_,
             ema_model,
-            vocoder,
-            mel_spec_type=vocoder_name,
             target_rms=target_rms,
             cross_fade_duration=cross_fade_duration,
             nfe_step=nfe_step,

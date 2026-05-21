@@ -19,8 +19,6 @@ def main(model_cfg):
     model_cls = hydra.utils.get_class(f"f5_tts.model.{model_cfg.model.backbone}")
     model_arc = model_cfg.model.arch
     tokenizer = model_cfg.model.tokenizer
-    mel_spec_type = model_cfg.model.mel_spec.mel_spec_type
-    wav_input = model_cfg.model.wav_input if "wav_input" in model_cfg.model else False
     cfm_kwargs = getattr(model_cfg.model, "cfm", {}) or {}
 
     exp_name = model_cfg.ckpts.exp_name
@@ -68,11 +66,7 @@ def main(model_cfg):
         last_per_updates=model_cfg.ckpts.last_per_updates,
         log_samples=model_cfg.ckpts.log_samples,
         bnb_optimizer=model_cfg.optim.bnb_optimizer,
-        mel_spec_type=mel_spec_type,
-        is_local_vocoder=model_cfg.model.vocoder.is_local,
-        local_vocoder_path=model_cfg.model.vocoder.local_path,
         model_cfg_dict=OmegaConf.to_container(model_cfg, resolve=True),
-        wav_input=wav_input,
     )
 
     train_dataset = load_dataset(model_cfg.datasets.name, tokenizer, mel_spec_kwargs=model_cfg.model.mel_spec)

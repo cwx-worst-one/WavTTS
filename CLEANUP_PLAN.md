@@ -453,3 +453,33 @@ f5-tts_infer-cli = "wavtts.infer.infer_cli:main"
 - `src/f5_tts/model/backbones/dit.py`：删除 `conv` / `embed_v1` / `embed_v2` 分支，`set_wav_frontend_config` 只配置 reshape。
 - 删除未再引用的 `src/f5_tts/model/backbones/wav_frontend.py` 与 `src/f5_tts/model/backbones/wav_patch_embed.py`。
 - 当前配置本身没有显式 frontend 字段，无需改 yaml。
+
+
+#### 下一步候选：删除旧 mel/vocoder F5-TTS 路径
+
+目标：WavTTS 主线只保留 raw waveform / `no_vocoder`，不再支持 mel 输入和外部 vocoder。建议分阶段做，避免一次性影响 eval/speech_edit。
+
+建议处理范围：
+
+1. `src/f5_tts/model/cfm.py`
+   - 固定 `wav_input_only=True`，删除非 wav 分支。
+   - 删除 `MelSpec` 构建、`self.mel_spec`、`vocoder` 参数和 vocoder decode。
+   - 保留 `MelSpectrogramLoss`，因为它仍作为 waveform aux loss 使用。
+
+2. `src/f5_tts/model/dataset.py`
+   - 已删除 `HFDataset` 与 preprocessed/mel dataset 路径。
+   - `CustomDataset` / `collate_fn` 固定只返回 wav，不再返回 mel / mel_lengths。
+
+3. `src/f5_tts/train/train.py` 与 `src/f5_tts/model/trainer.py`
+   - 已删除 `wav_input` 开关、`mel_spec_type`、vocoder 初始化和 mel logging 分支。
+   - 训练输入固定使用 `batch["wav"]` / `wav_lengths`。
+
+4. `src/f5_tts/infer/utils_infer.py` / `infer_cli.py` / `src/f5_tts/eval/eval_infer_batch.py`
+   - 已删除 `load_vocoder`、`vocoder_name`、`vocos/bigvgan` 分支。
+   - 主推理与 batch eval 固定返回 waveform，CLI 不再暴露 vocoder 参数。
+
+5. configs / deps
+   - `WavTTS_scale_*_16k.yaml` 删除 `mel_spec_type: no_vocoder` 和 `vocoder:` 配置；保留音频几何字段或改名为 `audio:`。
+   - `pyproject.toml` 可删除 `vocos` 依赖；BigVGAN third_party 路径可后续清理。
+
+暂缓：`eval/` 和 `speech_edit.py` 之前说后续还要用，建议最后单独改成 wav-only 后再删除 mel/vocoder 兼容。

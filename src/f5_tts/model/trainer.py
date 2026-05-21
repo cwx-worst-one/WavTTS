@@ -89,11 +89,7 @@ class Trainer:
         accelerate_kwargs: dict = dict(),
         ema_kwargs: dict = dict(),
         bnb_optimizer: bool = False,
-        mel_spec_type: str = "vocos",  # "vocos" | "bigvgan"
-        is_local_vocoder: bool = False,  # use local path vocoder
-        local_vocoder_path: str = "",  # local vocoder path
         model_cfg_dict: dict = dict(),  # training config
-        wav_input: bool = False,
     ):
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
 
@@ -165,15 +161,9 @@ class Trainer:
         self.grad_accumulation_steps = grad_accumulation_steps
         self.max_grad_norm = max_grad_norm
 
-        # mel vocoder config
-        self.vocoder_name = mel_spec_type
-        self.is_local_vocoder = is_local_vocoder
-        self.local_vocoder_path = local_vocoder_path
-
         self.noise_scheduler = noise_scheduler
 
         self.duration_predictor = duration_predictor
-        self.wav_input = wav_input
 
         if bnb_optimizer:
             import bitsandbytes as bnb
@@ -315,12 +305,9 @@ class Trainer:
 
     def train(self, train_dataset: Dataset, num_workers=16, resumable_with_seed: int = None):
         if self.log_samples:
-            from f5_tts.infer.utils_infer import cfg_strength, load_vocoder, nfe_step, sway_sampling_coef
+            from f5_tts.infer.utils_infer import cfg_strength, nfe_step, sway_sampling_coef
 
-            vocoder = load_vocoder(
-                vocoder_name=self.vocoder_name, is_local=self.is_local_vocoder, local_path=self.local_vocoder_path
-            )
-            target_sample_rate = self.accelerator.unwrap_model(self.model).mel_spec.target_sample_rate if self.accelerator.unwrap_model(self.model).mel_spec else train_dataset.target_sample_rate
+            target_sample_rate = train_dataset.target_sample_rate
             log_samples_path = f"{self.checkpoint_path}/samples"
             os.makedirs(log_samples_path, exist_ok=True)
 
@@ -414,22 +401,17 @@ class Trainer:
             for batch in current_dataloader:
                 with self.accelerator.accumulate(self.model):
                     text_inputs = batch["text"]
-                    mel_spec = batch["mel"].permute(0, 2, 1) if batch["mel"] is not None else None
-                    mel_lengths = batch["mel_lengths"]
                     wav = batch["wav"]
                     wav_lengths = batch["wav_lengths"]
                     text_lengths = batch["text_lengths"]
-                    
-                    inp = mel_spec if not self.wav_input else wav
-                    inp_lengths = mel_lengths if not self.wav_input else wav_lengths
 
                     # TODO. add duration predictor training
                     if self.duration_predictor is not None and self.accelerator.is_local_main_process:
-                        dur_loss = self.duration_predictor(mel_spec, lens=batch.get("durations"))
+                        dur_loss = self.duration_predictor(wav, lens=batch.get("durations"))
                         self.accelerator.log({"duration loss": dur_loss.item()}, step=global_update)
 
                     loss, cond, pred, loss_dict = self.model(
-                        inp, text=text_inputs, lens=inp_lengths, noise_scheduler=self.noise_scheduler,
+                        wav, text=text_inputs, lens=wav_lengths, noise_scheduler=self.noise_scheduler,
                     )
                     self.accelerator.backward(loss)
 
@@ -485,42 +467,22 @@ class Trainer:
                         ]
                         
                         with torch.inference_mode():
-                            if not self.wav_input:
-                                ref_mel_len = mel_lengths[0]
-                                generated, _ = unwrap.sample(
-                                    cond=mel_spec[0][:ref_mel_len].unsqueeze(0),
-                                    text=infer_text,
-                                    duration=ref_mel_len * 2,
-                                    steps=nfe_step,
-                                    cfg_strength=cfg_strength,
-                                    sway_sampling_coef=sway_sampling_coef,
-                                )
-                                generated = generated.to(torch.float32)
-                                gen_mel_spec = generated[:, ref_mel_len:, :].permute(0, 2, 1).to(self.accelerator.device)
-                                ref_mel_spec = batch["mel"][0].unsqueeze(0)
-                                if self.vocoder_name == "vocos":
-                                    gen_audio = vocoder.decode(gen_mel_spec).cpu()
-                                    ref_audio = vocoder.decode(ref_mel_spec).cpu()
-                                elif self.vocoder_name == "bigvgan":
-                                    gen_audio = vocoder(gen_mel_spec).squeeze(0).cpu()
-                                    ref_audio = vocoder(ref_mel_spec).squeeze(0).cpu()
-                            else:
-                                ref_wav_len = wav_lengths[0].item()
-                                ref_wav = wav[0][:ref_wav_len].unsqueeze(0).to(self.accelerator.device)  # [1, N]
+                            ref_wav_len = wav_lengths[0].item()
+                            ref_wav = wav[0][:ref_wav_len].unsqueeze(0).to(self.accelerator.device)  # [1, N]
 
-                                generated, _ = unwrap.sample(
-                                    cond=ref_wav,                   # [1, N]
-                                    text=infer_text,
-                                    duration=ref_wav_len * 2,
-                                    steps=nfe_step,
-                                    cfg_strength=cfg_strength,
-                                    sway_sampling_coef=sway_sampling_coef,
-                                )
-                                generated = generated.to(torch.float32).cpu()  # [1, N_total]
+                            generated, _ = unwrap.sample(
+                                cond=ref_wav,                   # [1, N]
+                                text=infer_text,
+                                duration=ref_wav_len * 2,
+                                steps=nfe_step,
+                                cfg_strength=cfg_strength,
+                                sway_sampling_coef=sway_sampling_coef,
+                            )
+                            generated = generated.to(torch.float32).cpu()  # [1, N_total]
 
-                                cut = ref_wav_len
-                                gen_audio = generated[:, cut:]  # [1, N_gen]
-                                ref_audio = ref_wav.cpu()       # [1, N_ref]
+                            cut = ref_wav_len
+                            gen_audio = generated[:, cut:]  # [1, N_gen]
+                            ref_audio = ref_wav.cpu()       # [1, N_ref]
 
                         torchaudio.save(
                             f"{log_samples_path}/update_{global_update}_gen.wav", gen_audio, target_sample_rate

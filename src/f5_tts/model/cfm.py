@@ -11,7 +11,6 @@ d - dimension
 from __future__ import annotations
 
 from random import random
-from typing import Callable
 import math
 
 import torch
@@ -20,9 +19,8 @@ from torch import nn
 from torch.nn.utils.rnn import pad_sequence
 from torchdiffeq import odeint
 
-from f5_tts.model.modules import MelSpec, MelSpectrogramLoss
+from f5_tts.model.modules import MelSpectrogramLoss
 from f5_tts.model.utils import (
-    default,
     exists,
     get_epss_timesteps,
     lens_to_mask,
@@ -45,8 +43,6 @@ class CFM(nn.Module):
         audio_drop_prob=0.3,
         cond_drop_prob=0.2,
         joint_cond_drop_prob=0.0,
-        num_channels=None,
-        mel_spec_module: nn.Module | None = None,
         mel_spec_kwargs: dict = dict(),
         frac_lengths_mask: tuple[float, float] = (0.7, 1.0),
         vocab_char_map: dict[str:int] | None = None,
@@ -69,17 +65,10 @@ class CFM(nn.Module):
         
         # wav input
         mel_spec_kwargs = dict(mel_spec_kwargs)
-
-        # wav-only switch + frame_len (won't be passed into MelSpec)
-        self.wav_input_only = bool(mel_spec_kwargs.pop("return_wav_only", False))
-        self.wav_frame_len = int(mel_spec_kwargs.pop("wav_frame_len", 240))  # e.g., 240 @24k = 100Hz
-        # mel spec
-        if self.wav_input_only:
-            self.mel_spec = None
-            self.num_channels = self.wav_frame_len
-        else:
-            self.mel_spec = default(mel_spec_module, MelSpec(**mel_spec_kwargs))
-            self.num_channels = default(num_channels, self.mel_spec.n_mel_channels)
+        self.wav_input_only = True
+        self.mel_spec = None
+        self.wav_frame_len = int(mel_spec_kwargs.pop("wav_frame_len", 160))
+        self.num_channels = self.wav_frame_len
 
         # classifier-free guidance
         self.audio_drop_prob = audio_drop_prob
@@ -228,7 +217,6 @@ class CFM(nn.Module):
         shift=1.0,
         seed: int | None = None,
         max_duration=4096,
-        vocoder: Callable[[float["b d n"]], float["b nw"]] | None = None,
         use_epss=True,
         no_ref_audio=False,
         duplicate_test=False,
@@ -238,19 +226,13 @@ class CFM(nn.Module):
     ):
         self.eval()
         # raw wave
-
-        if cond.ndim == 2:
-            if self.wav_input_only:
-                cond = cond
-            else:
-                cond = self.mel_spec(cond)
-                cond = cond.permute(0, 2, 1)
-                assert cond.shape[-1] == self.num_channels
+        if cond.ndim != 2:
+            raise ValueError(f"WavTTS expects raw waveform conditioning [B, N], got {tuple(cond.shape)}")
 
         cond = cond.to(next(self.parameters()).dtype)
         cond = cond * self.latents_scale
 
-        wav_mode = self.wav_input_only and cond.ndim == 2
+        wav_mode = True
         batch, cond_seq_len, device = *cond.shape[:2], cond.device
         if not exists(lens):
             lens = torch.full((batch,), cond_seq_len, device=device, dtype=torch.long)
@@ -272,7 +254,7 @@ class CFM(nn.Module):
             duration = torch.full((batch,), duration, device=device, dtype=torch.long)
 
         # keep legacy max_duration semantics for wav path: 4096 means 4096 frame-tokens.
-        max_duration_limit = max_duration * self.wav_frame_len if wav_mode else max_duration
+        max_duration_limit = max_duration * self.wav_frame_len
         duration = torch.maximum(
             torch.maximum((text != -1).sum(dim=-1), lens) + 1, duration
         )  # duration at least text/audio prompt length plus one token, so something is generated
@@ -281,26 +263,14 @@ class CFM(nn.Module):
 
         # duplicate test corner for inner time step oberservation
         if duplicate_test:
-            if wav_mode:
-                test_cond = F.pad(cond, (cond_seq_len, max_duration - 2 * cond_seq_len), value=0.0)
-            else:
-                test_cond = F.pad(cond, (0, 0, cond_seq_len, max_duration - 2 * cond_seq_len), value=0.0)
+            test_cond = F.pad(cond, (cond_seq_len, max_duration - 2 * cond_seq_len), value=0.0)
 
-        if wav_mode:
-            cond = F.pad(cond, (0, max_duration - cond_seq_len), value=0.0)
-        else:
-            cond = F.pad(cond, (0, 0, 0, max_duration - cond_seq_len), value=0.0)
+        cond = F.pad(cond, (0, max_duration - cond_seq_len), value=0.0)
         if no_ref_audio:
             cond = torch.zeros_like(cond)
 
         cond_mask = F.pad(cond_mask, (0, max_duration - cond_mask.shape[-1]), value=False)
-        if wav_mode:
-            step_cond = torch.where(cond_mask, cond, torch.zeros_like(cond))
-        else:
-            cond_mask = cond_mask.unsqueeze(-1)
-            step_cond = torch.where(
-                cond_mask, cond, torch.zeros_like(cond)
-            )  # allow direct control (cut cond audio) with lens passed in
+        step_cond = torch.where(cond_mask, cond, torch.zeros_like(cond))
 
         if batch > 1:
             mask = lens_to_mask(duration, length=max_duration)
@@ -317,7 +287,6 @@ class CFM(nn.Module):
                     infer_x_pred_clip is not None
                     and infer_x_pred_clip > 0
                     and self.prediction == "x_pred"
-                    and self.wav_input_only
                 ):
                     return pred_x_or_v.clamp(min=-infer_x_pred_clip, max=infer_x_pred_clip)
                 return pred_x_or_v
@@ -361,10 +330,7 @@ class CFM(nn.Module):
         for dur in duration:
             if exists(seed):
                 torch.manual_seed(seed)
-            if wav_mode:
-                y0.append(torch.randn(dur, device=self.device, dtype=step_cond.dtype))
-            else:
-                y0.append(torch.randn(dur, self.num_channels, device=self.device, dtype=step_cond.dtype))
+            y0.append(torch.randn(dur, device=self.device, dtype=step_cond.dtype))
         y0 = pad_sequence(y0, padding_value=0, batch_first=True)
 
         t_start = 0
@@ -417,16 +383,11 @@ class CFM(nn.Module):
         cond_unscaled = cond / self.latents_scale
         out = torch.where(cond_mask, cond_unscaled, out)
 
-        if exists(vocoder) and not self.wav_input_only:
-            out = out.permute(0, 2, 1)
-            out = vocoder(out)
-            
-        # ---- wav-only: flatten frames back to waveform (trim to duration*frame_len) ----
-        if self.wav_input_only:
-            wav_list = []
-            for b in range(batch):
-                wav_list.append(out[b, : duration[b].item()])
-            out = pad_sequence(wav_list, batch_first=True, padding_value=0.0)  # [B, N]
+        # ---- wav-only: trim to generated waveform duration ----
+        wav_list = []
+        for b in range(batch):
+            wav_list.append(out[b, : duration[b].item()])
+        out = pad_sequence(wav_list, batch_first=True, padding_value=0.0)  # [B, N]
 
         return out, trajectory
 
@@ -439,13 +400,8 @@ class CFM(nn.Module):
         noise_scheduler: str | None = None,
     ):
         # handle raw wave
-        if inp.ndim == 2:
-            if self.wav_input_only:
-                inp = inp
-            else:
-                inp = self.mel_spec(inp)
-                inp = inp.permute(0, 2, 1)
-                assert inp.shape[-1] == self.num_channels
+        if inp.ndim != 2:
+            raise ValueError(f"WavTTS expects raw waveform input [B, N], got {tuple(inp.shape)}")
 
         batch, seq_len, dtype, device, _σ1 = *inp.shape[:2], inp.dtype, self.device, self.sigma
 
@@ -464,7 +420,7 @@ class CFM(nn.Module):
 
         # get a random span to mask out for training conditionally
         frac_lengths = torch.zeros((batch,), device=self.device).float().uniform_(*self.frac_lengths_mask)
-        if self.wav_input_only and self.mask_align_to > 1:
+        if self.mask_align_to > 1:
             rand_span_mask = MelSpectrogramLoss._aligned_random_span_mask(
                 lengths=lens,
                 frac_lengths=frac_lengths,
@@ -489,18 +445,12 @@ class CFM(nn.Module):
         time = self._sample_time(batch, dtype=dtype, device=self.device)
 
         # sample xt (φ_t(x) in the paper)
-        if inp.ndim == 2:
-            t = time.unsqueeze(-1)
-        else:
-            t = time.unsqueeze(-1).unsqueeze(-1)
+        t = time.unsqueeze(-1)
         φ = (1 - t) * x0 + t * x1
         flow = x1 - x0
 
         # only predict what is within the random mask span for infilling
-        if inp.ndim == 2:
-            cond = torch.where(rand_span_mask, torch.zeros_like(x1), x1)
-        else:
-            cond = torch.where(rand_span_mask[..., None], torch.zeros_like(x1), x1)
+        cond = torch.where(rand_span_mask, torch.zeros_like(x1), x1)
 
         # transformer and cfg training with a drop rate
         if self.joint_cond_drop_prob > 0.0:
@@ -552,7 +502,7 @@ class CFM(nn.Module):
         total_loss = flow_loss
 
         aux_mel_loss = torch.tensor(0.0, device=device)
-        if self.use_aux_mel_loss and self.aux_mel_loss is not None and self.wav_input_only:
+        if self.use_aux_mel_loss and self.aux_mel_loss is not None:
             x1_flat_unscaled = x1 / self.latents_scale
             x1_pred_flat_unscaled = x_pred / self.latents_scale
 

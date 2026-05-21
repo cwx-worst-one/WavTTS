@@ -17,7 +17,6 @@ MODEL_NAME="WavTTS_scale_8_16k_1000000"
 MODEL_CFG="src/f5_tts/configs/WavTTS_scale_8_16k.yaml"
 CKPT_FILE="/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/emilia/F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1-emilia-8gpus-19200sample_per_gpu-bf16/ckpts/model_1000000.pt"
 VOCAB_FILE="data/Emilia_ZH_EN_pinyin/vocab.txt"
-VOCODER_NAME="no_vocoder"
 
 REF_AUDIO="tests/test_zh_ref.wav"
 REF_TEXT="我拽起裤腿鞋袜未脱就踏进了溪流。"
@@ -42,7 +41,6 @@ export PYTHONPATH="$(pwd)/src${PYTHONPATH:+:${PYTHONPATH}}"
     --output_dir "${OUTPUT_DIR}" \
     --output_file "${OUTPUT_FILE}" \
     --vocab_file "${VOCAB_FILE}" \
-    --vocoder_name "${VOCODER_NAME}" \
     --device "${DEVICE}"
 
 # bash src/f5_tts/infer/debug_infer.sh

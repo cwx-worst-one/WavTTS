@@ -6,80 +6,9 @@ import torch.nn.functional as F
 import torchaudio
 from datasets import Dataset as Dataset_
 from datasets import load_from_disk
-from torch import nn
 from torch.utils.data import Dataset, Sampler
 from tqdm import tqdm
 
-from f5_tts.model.modules import MelSpec
-from f5_tts.model.utils import default
-
-
-class HFDataset(Dataset):
-    def __init__(
-        self,
-        hf_dataset: Dataset,
-        target_sample_rate=24_000,
-        n_mel_channels=100,
-        hop_length=256,
-        n_fft=1024,
-        win_length=1024,
-        mel_spec_type="vocos",
-    ):
-        self.data = hf_dataset
-        self.target_sample_rate = target_sample_rate
-        self.hop_length = hop_length
-
-        self.mel_spectrogram = MelSpec(
-            n_fft=n_fft,
-            hop_length=hop_length,
-            win_length=win_length,
-            n_mel_channels=n_mel_channels,
-            target_sample_rate=target_sample_rate,
-            mel_spec_type=mel_spec_type,
-        )
-
-        self._resamplers = {}
-
-    def get_frame_len(self, index):
-        row = self.data[index]
-        audio = row["audio"]["array"]
-        sample_rate = row["audio"]["sampling_rate"]
-        return audio.shape[-1] / sample_rate * self.target_sample_rate / self.hop_length
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, index):
-        row = self.data[index]
-        audio = row["audio"]["array"]
-
-        # logger.info(f"Audio shape: {audio.shape}")
-
-        sample_rate = row["audio"]["sampling_rate"]
-        duration = audio.shape[-1] / sample_rate
-
-        if duration > 30 or duration < 0.3:
-            return self.__getitem__((index + 1) % len(self.data))
-
-        audio_tensor = torch.from_numpy(audio).float()
-
-        if sample_rate != self.target_sample_rate:
-            if sample_rate not in self._resamplers:
-                self._resamplers[sample_rate] = torchaudio.transforms.Resample(sample_rate, self.target_sample_rate)
-            audio_tensor = self._resamplers[sample_rate](audio_tensor)
-
-        audio_tensor = audio_tensor.unsqueeze(0)  # 't -> 1 t')
-
-        mel_spec = self.mel_spectrogram(audio_tensor)
-
-        mel_spec = mel_spec.squeeze(0)  # '1 d t -> d t'
-
-        text = row["text"]
-
-        return dict(
-            mel_spec=mel_spec,
-            text=text,
-        )
 
 
 class CustomDataset(Dataset):
@@ -87,42 +16,18 @@ class CustomDataset(Dataset):
         self,
         custom_dataset: Dataset,
         durations=None,
-        target_sample_rate=24_000,
-        hop_length=256,
-        n_mel_channels=100,
-        n_fft=1024,
-        win_length=1024,
-        mel_spec_type="vocos",
-        preprocessed_mel=False,
-        mel_spec_module: nn.Module | None = None,
-        return_wav_only: bool = False,
-        wav_frame_len: int = 240,
+        target_sample_rate=16_000,
+        hop_length=160,
+        wav_frame_len: int = 160,
+        **_,
     ):
         self.data = custom_dataset
         self.durations = durations
         self.target_sample_rate = target_sample_rate
         self.hop_length = hop_length
-        self.n_fft = n_fft
-        self.win_length = win_length
-        self.mel_spec_type = mel_spec_type
-        self.preprocessed_mel = preprocessed_mel
-        self.return_wav_only = return_wav_only
         self.wav_frame_len = wav_frame_len
 
         self._resamplers = {}
-
-        if not preprocessed_mel and not return_wav_only:
-            self.mel_spectrogram = default(
-                mel_spec_module,
-                MelSpec(
-                    n_fft=n_fft,
-                    hop_length=hop_length,
-                    win_length=win_length,
-                    n_mel_channels=n_mel_channels,
-                    target_sample_rate=target_sample_rate,
-                    mel_spec_type=mel_spec_type,
-                ),
-            )
 
     def get_frame_len(self, index):
         if (
@@ -147,33 +52,22 @@ class CustomDataset(Dataset):
 
             index = (index + 1) % len(self.data)
 
-        if self.preprocessed_mel:
-            mel_spec = torch.tensor(row["mel_spec"])
-        else:
-            audio, source_sample_rate = torchaudio.load(audio_path)
+        audio, source_sample_rate = torchaudio.load(audio_path)
 
-            # make sure mono input
-            if audio.shape[0] > 1:
-                audio = torch.mean(audio, dim=0, keepdim=True)
+        # make sure mono input
+        if audio.shape[0] > 1:
+            audio = torch.mean(audio, dim=0, keepdim=True)
 
-            # resample if necessary
-            if source_sample_rate != self.target_sample_rate:
-                if source_sample_rate not in self._resamplers:
-                    self._resamplers[source_sample_rate] = torchaudio.transforms.Resample(
-                        source_sample_rate, self.target_sample_rate
-                    )
-                audio = self._resamplers[source_sample_rate](audio)
-
-            # to mel spectrogram
-            if not self.return_wav_only:
-                mel_spec = self.mel_spectrogram(audio)
-                mel_spec = mel_spec.squeeze(0)  # '1 d t -> d t'
-            else:
-                mel_spec = None
+        # resample if necessary
+        if source_sample_rate != self.target_sample_rate:
+            if source_sample_rate not in self._resamplers:
+                self._resamplers[source_sample_rate] = torchaudio.transforms.Resample(
+                    source_sample_rate, self.target_sample_rate
+                )
+            audio = self._resamplers[source_sample_rate](audio)
 
         return {
-            "mel_spec": mel_spec,
-            "wav": audio.squeeze(0) if self.return_wav_only else None,
+            "wav": audio.squeeze(0),
             "text": text,
         }
 
@@ -261,37 +155,30 @@ def load_dataset(
     tokenizer: str = "pinyin",
     dataset_type: str = "CustomDataset",
     audio_type: str = "raw",
-    mel_spec_module: nn.Module | None = None,
     mel_spec_kwargs: dict = dict(),
-) -> CustomDataset | HFDataset:
+) -> CustomDataset:
     """
-    dataset_type    - "CustomDataset" if you want to use tokenizer name and default data path to load for train_dataset
-                    - "CustomDatasetPath" if you just want to pass the full path to a preprocessed dataset without relying on tokenizer
+    WavTTS only supports raw waveform datasets.
+    dataset_type:
+      - "CustomDataset": use tokenizer name and default data path
+      - "CustomDatasetPath": pass the full path to a prepared dataset
     """
 
     print("Loading dataset ...")
 
+    if audio_type != "raw":
+        raise ValueError("WavTTS only supports raw waveform datasets; audio_type must be 'raw'.")
+
     if dataset_type == "CustomDataset":
         rel_data_path = str(files("f5_tts").joinpath(f"../../data/{dataset_name}_{tokenizer}"))
-        if audio_type == "raw":
-            try:
-                train_dataset = load_from_disk(f"{rel_data_path}/raw")
-            except:  # noqa: E722
-                train_dataset = Dataset_.from_file(f"{rel_data_path}/raw.arrow")
-            preprocessed_mel = False
-        elif audio_type == "mel":
-            train_dataset = Dataset_.from_file(f"{rel_data_path}/mel.arrow")
-            preprocessed_mel = True
+        try:
+            train_dataset = load_from_disk(f"{rel_data_path}/raw")
+        except:  # noqa: E722
+            train_dataset = Dataset_.from_file(f"{rel_data_path}/raw.arrow")
         with open(f"{rel_data_path}/duration.json", "r", encoding="utf-8") as f:
             data_dict = json.load(f)
         durations = data_dict["duration"]
-        train_dataset = CustomDataset(
-            train_dataset,
-            durations=durations,
-            preprocessed_mel=preprocessed_mel,
-            mel_spec_module=mel_spec_module,
-            **mel_spec_kwargs,
-        )
+        train_dataset = CustomDataset(train_dataset, durations=durations, **mel_spec_kwargs)
 
     elif dataset_type == "CustomDatasetPath":
         try:
@@ -302,19 +189,10 @@ def load_dataset(
         with open(f"{dataset_name}/duration.json", "r", encoding="utf-8") as f:
             data_dict = json.load(f)
         durations = data_dict["duration"]
-        train_dataset = CustomDataset(
-            train_dataset, durations=durations, preprocessed_mel=preprocessed_mel, **mel_spec_kwargs
-        )
+        train_dataset = CustomDataset(train_dataset, durations=durations, **mel_spec_kwargs)
 
-    elif dataset_type == "HFDataset":
-        print(
-            "Should manually modify the path of huggingface dataset to your need.\n"
-            + "May also the corresponding script cuz different dataset may have different format."
-        )
-        pre, post = dataset_name.split("_")
-        train_dataset = HFDataset(
-            load_dataset(f"{pre}/{pre}", split=f"train.{post}", cache_dir=str(files("f5_tts").joinpath("../../data"))),
-        )
+    else:
+        raise ValueError(f"Unsupported dataset_type for WavTTS wav-only training: {dataset_type}")
 
     return train_dataset
 
@@ -344,29 +222,10 @@ def collate_fn(batch):
         wavs = None
         wav_lengths = None
     
-    mel_specs = [item["mel_spec"] for item in batch]
-    has_mel = mel_specs[0] is not None
-    if has_mel:
-        mel_lengths = torch.LongTensor([m.shape[-1] for m in mel_specs])
-        max_mel_len = mel_lengths.max().item()
-
-        padded_mels = []
-        for m in mel_specs:
-            pad_len = max_mel_len - m.shape[-1]
-            padded_mels.append(
-                F.pad(m, (0, pad_len), value=0.0)
-            )
-
-        mel_specs = torch.stack(padded_mels)  # [B, n_mel, T_mel]
-    else:
-        mel_specs = None
-        mel_lengths = None
 
     return dict(
         text=text,
         text_lengths=text_lengths,
         wav=wavs,
         wav_lengths=wav_lengths,
-        mel=mel_specs,
-        mel_lengths=mel_lengths,
     )

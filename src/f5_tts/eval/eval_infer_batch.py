@@ -21,7 +21,7 @@ from f5_tts.eval.utils_eval import (
     get_seedtts_testset_metainfo,
     get_libritts_custom_metainfo,
 )
-from f5_tts.infer.utils_infer import load_checkpoint, load_vocoder
+from f5_tts.infer.utils_infer import load_checkpoint
 from f5_tts.model import CFM
 from f5_tts.model.utils import get_tokenizer
 
@@ -70,7 +70,6 @@ def main():
         help="Directory containing original LJSpeech wavs. Only used when truth duration is enabled.",
     )
 
-    parser.add_argument("--local", action="store_true", help="Use local vocoder checkpoint directory")
     parser.add_argument("--ckpt_path", default=None, type=str)
     parser.add_argument(
         "--output_dir",
@@ -167,7 +166,6 @@ def main():
     dataset_name = model_cfg.datasets.name
     tokenizer = model_cfg.model.tokenizer
 
-    mel_spec_type = model_cfg.model.mel_spec.mel_spec_type
     target_sample_rate = model_cfg.model.mel_spec.target_sample_rate
     n_mel_channels = model_cfg.model.mel_spec.n_mel_channels
     hop_length = model_cfg.model.mel_spec.hop_length
@@ -241,7 +239,7 @@ def main():
         output_dir = (
             f"{rel_path}/"
             f"results/{result_exp_name}/{ckpt_step}/{testset}/"
-            f"seed{seed}_{ode_method}_nfe{nfe_step}_{mel_spec_type}"
+            f"seed{seed}_{ode_method}_nfe{nfe_step}_wav"
             f"{'_uniform' if timestep_mapping == 'uniform' else ''}"
             f"{f'_ss{sway_sampling_coef}' if timestep_mapping == 'sway_sampling' and sway_sampling_coef else ''}"
             f"{f'_power{timestep_power}' if timestep_mapping == 'power' else ''}"
@@ -257,8 +255,7 @@ def main():
         )
 
     # -------------------------------------------------#
-    wav_input_only = bool(model_cfg.model.get("wav_input", False))
-    wav_frame_len = int(model_cfg.model.mel_spec.get("wav_frame_len", 240))
+    wav_frame_len = int(model_cfg.model.mel_spec.get("wav_frame_len", 160))
 
     prompts_all = get_inference_prompt(
         metainfo,
@@ -267,24 +264,13 @@ def main():
         target_sample_rate=target_sample_rate,
         n_mel_channels=n_mel_channels,
         hop_length=hop_length,
-        mel_spec_type=mel_spec_type,
+        mel_spec_type="no_vocoder",
         target_rms=target_rms,
         use_truth_duration=use_truth_duration,
         infer_batch_size=infer_batch_size,
-        wav_input_only=wav_input_only,
+        wav_input_only=True,
         wav_frame_len=wav_frame_len,
     )
-
-    # Vocoder model
-    local = args.local
-    if mel_spec_type == "vocos":
-        vocoder_local_path = "/mnt/bn/jdy-lq-5/chenwenxi/models/Vocoder/vocos-mel-24khz"
-    elif mel_spec_type == "bigvgan":
-        vocoder_local_path = "../checkpoints/bigvgan_v2_24khz_100band_256x"
-    elif mel_spec_type == "no_vocoder":
-        vocoder_local_path = None
-
-    vocoder = load_vocoder(vocoder_name=mel_spec_type, is_local=local, local_path=vocoder_local_path)
 
     # Tokenizer
     vocab_char_map, vocab_size = get_tokenizer(dataset_name, tokenizer)
@@ -298,7 +284,7 @@ def main():
             win_length=win_length,
             n_mel_channels=n_mel_channels,
             target_sample_rate=target_sample_rate,
-            mel_spec_type=mel_spec_type,
+            mel_spec_type="no_vocoder",
         )
 
     # CFM kwargs
@@ -332,8 +318,6 @@ def main():
     ckpt_path = args.ckpt_path
 
     load_dtype = amp_dtype_map.get(load_dtype_name, torch.float32)
-    if mel_spec_type == "bigvgan":
-        load_dtype = torch.float32
     model = load_checkpoint(model, ckpt_path, device, dtype=load_dtype, use_ema=use_ema)
 
     if not os.path.exists(output_dir) and accelerator.is_main_process:
@@ -373,21 +357,9 @@ def main():
                     )
                     # Final result
                     for i, gen in enumerate(generated):
-                        if wav_input_only:
-                            start_idx = ref_mel_lens[i].item()
-                            end_idx = total_mel_lens[i].item()
-                            gen = gen[start_idx : end_idx].unsqueeze(0)
-
-                        else:
-                            gen = gen[ref_mel_lens[i] : total_mel_lens[i], :].unsqueeze(0)
-                            gen_mel_spec = gen.permute(0, 2, 1).to(torch.float32)
-
-                        if mel_spec_type == "vocos":
-                            generated_wave = vocoder.decode(gen_mel_spec).cpu()
-                        elif mel_spec_type == "bigvgan":
-                            generated_wave = vocoder(gen_mel_spec).squeeze(0).cpu()
-                        elif mel_spec_type == "no_vocoder":
-                            generated_wave = gen.squeeze(0).cpu()
+                        start_idx = ref_mel_lens[i].item()
+                        end_idx = total_mel_lens[i].item()
+                        generated_wave = gen[start_idx:end_idx].cpu()
 
                         if ref_rms_list[i] < target_rms:
                             generated_wave = generated_wave * ref_rms_list[i] / target_rms
