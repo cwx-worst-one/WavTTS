@@ -34,11 +34,6 @@ model:
     latents_scale: 10.0
     use_aux_mel_loss: True
     aux_mel_loss_weight: 0.05
-    aux_mel_loss_masked: True
-    aux_mel_normalized: False
-    align_mask_to_aux_mel: True
-    aux_mel_mag_weight: 0.0
-    aux_mel_log_weight: 1.0
     sample_rate: 16000
     joint_cond_drop_prob: 0.1
   arch:

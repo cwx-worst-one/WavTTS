@@ -802,17 +802,11 @@ class MelSpectrogramLoss(nn.Module):
         mel_fmax: List[Optional[float]] = [None, None, None, None, None, None, None],
         pow: float = 1.0,
         clamp_eps: float = 1e-5,
-        mag_weight: float = 0.0,
-        log_weight: float = 1.0,
         weight: float = 1.0,
-        normalized: bool = False,
     ):
         super().__init__()
         self.sample_rate = sample_rate
         self.weight = weight
-        self.mag_weight = mag_weight
-        self.log_weight = log_weight
-        self.normalized = normalized
         self.pow = pow
         self.clamp_eps = clamp_eps
 
@@ -837,8 +831,8 @@ class MelSpectrogramLoss(nn.Module):
                 f_min=fmin,
                 f_max=fmax,
                 power=1.0,       # computing Magnitude Mel (power=1.0) initially
-                normalized=normalized,
-                center=True,     # 可以改成 false
+                normalized=False,
+                center=True,
                 pad_mode="reflect"
             )
             self.mel_transforms.append(transform)
@@ -906,47 +900,29 @@ class MelSpectrogramLoss(nn.Module):
 
                 mel_mask = mel_mask.unsqueeze(1)
             
-            # 1. Log Magnitude Loss
+            # Log Magnitude Loss
             # Formula: L1( log10(x^pow + eps), log10(y^pow + eps) )
             # FIXME: 如果梯度不更新，则 uncomment 下面的代码
-            if self.log_weight > 0:
-                # x_log = (x_mels + self.clamp_eps).pow(self.pow).log10()
-                # y_log = (y_mels + self.clamp_eps).pow(self.pow).log10()
-                x_log = x_mels.clamp(min=self.clamp_eps).pow(self.pow).log10()
-                y_log = y_mels.clamp(min=self.clamp_eps).pow(self.pow).log10()
+            # x_log = (x_mels + self.clamp_eps).pow(self.pow).log10()
+            # y_log = (y_mels + self.clamp_eps).pow(self.pow).log10()
+            x_log = x_mels.clamp(min=self.clamp_eps).pow(self.pow).log10()
+            y_log = y_mels.clamp(min=self.clamp_eps).pow(self.pow).log10()
 
-                diff_full = (x_log - y_log).abs()
+            diff_full = (x_log - y_log).abs()
 
-                if mel_mask is None:
-                    diff = diff_full.mean(dim=(1, 2))
-                else:
-                    diff = []
-                    for i in range(diff_full.shape[0]):
-                        m = mel_mask[i]
-                        if m.any():
-                            diff.append(diff_full[i].masked_select(m).mean())
-                        else:
-                            diff.append(diff_full.new_tensor(0.0))
-                    diff = torch.stack(diff, dim=0)
+            if mel_mask is None:
+                diff = diff_full.mean(dim=(1, 2))
+            else:
+                diff = []
+                for i in range(diff_full.shape[0]):
+                    m = mel_mask[i]
+                    if m.any():
+                        diff.append(diff_full[i].masked_select(m).mean())
+                    else:
+                        diff.append(diff_full.new_tensor(0.0))
+                diff = torch.stack(diff, dim=0)
 
-                total_loss += self.log_weight * diff.mean()
-            
-            # 2. Linear Magnitude Loss
-            if self.mag_weight > 0:
-                diff_full = (x_mels - y_mels).abs()
-
-                if mel_mask is None:
-                    diff = diff_full.mean(dim=(1, 2))
-                else:
-                    diff = []
-                    for i in range(diff_full.shape[0]):
-                        m = mel_mask[i]
-                        if m.any():
-                            diff.append(diff_full[i].masked_select(m).mean())
-                        else:
-                            diff.append(diff_full.new_tensor(0.0))
-                    diff = torch.stack(diff, dim=0)
-                total_loss += self.mag_weight * diff.mean()
+            total_loss += diff.mean()
 
         return total_loss * self.weight
 

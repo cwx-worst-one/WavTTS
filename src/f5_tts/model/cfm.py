@@ -62,10 +62,6 @@ class CFM(nn.Module):
         use_aux_mel_loss: bool = False,
         aux_mel_loss_weight: float = 0.0,
         aux_mel_loss_masked: bool = True,
-        aux_mel_normalized: bool = False,
-        align_mask_to_aux_mel: bool = True,
-        aux_mel_mag_weight: float = 0.0,
-        aux_mel_log_weight: float = 1.0,
         sample_rate: int = 16000,
         latents_scale: float = 1.0,
     ):
@@ -126,8 +122,6 @@ class CFM(nn.Module):
         # aux mel loss
         self.use_aux_mel_loss = use_aux_mel_loss
         self.aux_mel_loss_masked = aux_mel_loss_masked
-        self.aux_mel_normalized = aux_mel_normalized
-        self.align_mask_to_aux_mel = align_mask_to_aux_mel
         if self.use_aux_mel_loss and self.wav_input_only:
             self.aux_mel_loss = MelSpectrogramLoss(
                 sample_rate=sample_rate,
@@ -137,10 +131,7 @@ class CFM(nn.Module):
                 mel_fmax=[None] * 7,
                 pow=1.0,
                 clamp_eps=1e-5,
-                mag_weight=aux_mel_mag_weight,
-                log_weight=aux_mel_log_weight,
                 weight=aux_mel_loss_weight,
-                normalized=aux_mel_normalized,
             )
         else:
             self.aux_mel_loss = None
@@ -148,8 +139,7 @@ class CFM(nn.Module):
         self.mask_align_to = 1
         alignments = []
         if (
-            self.align_mask_to_aux_mel
-            and self.wav_input_only
+            self.wav_input_only
             and self.aux_mel_loss is not None
             and hasattr(self.aux_mel_loss, "mel_transforms")
         ):
