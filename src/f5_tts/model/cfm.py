@@ -61,19 +61,12 @@ class CFM(nn.Module):
         flow_loss_weight: float = 1.0,
         use_aux_mel_loss: bool = False,
         aux_mel_loss_weight: float = 0.0,
-        aux_mel_loss_start_t: float = 0.0,
         aux_mel_loss_masked: bool = True,
         aux_mel_normalized: bool = False,
         align_mask_to_aux_mel: bool = True,
         aux_mel_mag_weight: float = 0.0,
         aux_mel_log_weight: float = 1.0,
-        aux_mel_use_energy_scaling: bool = False,
-        aux_mel_energy_power: float = 1.0,
-        aux_mel_energy_scale_min: float = 0.1,
-        aux_mel_energy_scale_max: float = 50.0,
-        aux_mel_energy_scale_eps: float = 1e-5,
-        aux_mel_apply_scale_to_log: bool = False,
-        sample_rate: int = 24000,
+        sample_rate: int = 16000,
         latents_scale: float = 1.0,
     ):
         super().__init__()
@@ -132,7 +125,6 @@ class CFM(nn.Module):
         self.flow_loss_weight = flow_loss_weight
         # aux mel loss
         self.use_aux_mel_loss = use_aux_mel_loss
-        self.aux_mel_loss_start_t = aux_mel_loss_start_t
         self.aux_mel_loss_masked = aux_mel_loss_masked
         self.aux_mel_normalized = aux_mel_normalized
         self.align_mask_to_aux_mel = align_mask_to_aux_mel
@@ -149,12 +141,6 @@ class CFM(nn.Module):
                 log_weight=aux_mel_log_weight,
                 weight=aux_mel_loss_weight,
                 normalized=aux_mel_normalized,
-                use_energy_scaling=aux_mel_use_energy_scaling,
-                energy_power=aux_mel_energy_power,
-                energy_scale_min=aux_mel_energy_scale_min,
-                energy_scale_max=aux_mel_energy_scale_max,
-                energy_scale_eps=aux_mel_energy_scale_eps,
-                apply_scale_to_log=aux_mel_apply_scale_to_log,
             )
         else:
             self.aux_mel_loss = None
@@ -581,24 +567,22 @@ class CFM(nn.Module):
 
         aux_mel_loss = torch.tensor(0.0, device=device)
         if self.use_aux_mel_loss and self.aux_mel_loss is not None and self.wav_input_only:
-            aux_mel_mask = time > self.aux_mel_loss_start_t
-            if aux_mel_mask.any():
-                x1_flat_unscaled = x1[aux_mel_mask] / self.latents_scale
-                x1_pred_flat_unscaled = x_pred[aux_mel_mask] / self.latents_scale
+            x1_flat_unscaled = x1 / self.latents_scale
+            x1_pred_flat_unscaled = x_pred / self.latents_scale
 
-                aux_mel_kwargs = {}
-                if self.aux_mel_loss_masked:
-                    aux_mel_kwargs.update(
-                        frame_mask=rand_span_mask[aux_mel_mask],
-                        frame_lengths=lens[aux_mel_mask],
-                    )
-
-                aux_mel_loss = self.aux_mel_loss(
-                    x1_pred_flat_unscaled,
-                    x1_flat_unscaled,
-                    **aux_mel_kwargs,
+            aux_mel_kwargs = {}
+            if self.aux_mel_loss_masked:
+                aux_mel_kwargs.update(
+                    frame_mask=rand_span_mask,
+                    frame_lengths=lens,
                 )
-                total_loss = total_loss + aux_mel_loss
+
+            aux_mel_loss = self.aux_mel_loss(
+                x1_pred_flat_unscaled,
+                x1_flat_unscaled,
+                **aux_mel_kwargs,
+            )
+            total_loss = total_loss + aux_mel_loss
             
         loss_dict = {
             "total_loss": total_loss,
