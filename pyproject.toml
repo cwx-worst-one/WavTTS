@@ -54,9 +54,9 @@ dev = [
     "pytest",
 ]
 eval = [
-    "faster_whisper==0.10.1",
+    "faster_whisper",
     "funasr",
-    "jiwer",
+    "jiwer==3.1.0",
     "modelscope",
     "zhconv",
     "zhon",
@@ -67,4 +67,3 @@ Homepage = "https://github.com/cwx-worst-one/WavTTS"
 
 [project.scripts]
 "wavtts_infer-cli" = "wavtts.infer.infer_cli:main"
-"f5-tts_infer-cli" = "f5_tts.infer.infer_cli:main"

@@ -2,7 +2,7 @@
 
 WavTTS is a training-first fork derived from F5-TTS, focused on the waveform-based training path used in this repository.
 
-At the current cleanup stage, the repository branding is `WavTTS`, while some internal package paths, config names, and CLI commands still retain legacy `f5_tts` / `F5-TTS` naming for compatibility.
+The main Python package is now `wavtts`; legacy `src/f5_tts` package paths and `f5-tts_*` CLI aliases have been removed.
 
 Current maintenance priority:
 - training
@@ -44,30 +44,30 @@ Docker / Triton runtime support is currently not a maintenance priority in this 
 The current primary training config for this repository is:
 
 ```text
-src/f5_tts/configs/F5TTS_v1_Large_wav_x_pred_scale_9_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1.yaml
+src/wavtts/configs/WavTTS_scale_9_16k.yaml
 ```
 
 ## Inference
 
 This repository currently prioritizes CLI inference.
 
-During the current transition period, the exposed CLI command remains `f5-tts_infer-cli` for compatibility.
+The primary CLI command is `wavtts_infer-cli`.
 
 ```bash
 # Run with flags
-f5-tts_infer-cli --model F5TTS_v1_Base \
+wavtts_infer-cli --model WavTTS_scale_8_16k \
   --ref_audio "provide_prompt_wav_path_here.wav" \
   --ref_text "The content, subtitle or transcription of reference audio." \
   --gen_text "Some text you want TTS model generate for you."
 
 # Run with default setting
-f5-tts_infer-cli
+wavtts_infer-cli
 
 # Or with your own .toml file
-f5-tts_infer-cli -c custom.toml
+wavtts_infer-cli -c custom.toml
 ```
 
-For more details, see `src/f5_tts/infer/`.
+For more details, see `src/wavtts/infer/`.
 
 ## Training
 
@@ -76,14 +76,14 @@ Training is the main supported workflow.
 ### Main entry
 
 ```bash
-bash src/f5_tts/train/run_main_train.sh
+bash src/wavtts/train/run_main_train.sh
 ```
 
 ### Related training scripts
 
-- `src/f5_tts/train/run_main_train.sh`
-- `src/f5_tts/train/run_train_libritts.sh`
-- `src/f5_tts/train/train.py`
+- `src/wavtts/train/run_main_train.sh`
+- `src/wavtts/train/run_train_libritts.sh`
+- `src/wavtts/train/train.py`
 
 ### Example overrides
 
@@ -92,13 +92,13 @@ NUM_PROCESSES=8 \
 BATCH_SIZE_PER_GPU=19200 \
 OUTPUT_ROOT=./exp/nar_wav_tts \
 MASTER_PORT=29500 \
-bash src/f5_tts/train/run_main_train.sh
+bash src/wavtts/train/run_main_train.sh
 ```
 
 For the retained LibriTTS configuration:
 
 ```bash
-bash src/f5_tts/train/run_train_libritts.sh
+bash src/wavtts/train/run_train_libritts.sh
 ```
 
 ### Notes
@@ -106,7 +106,7 @@ bash src/f5_tts/train/run_train_libritts.sh
 - Gradio-based finetuning is not a current maintenance priority.
 - Evaluation scripts remain in the repository, but they are not part of the current cleanup priority.
 - Docker and Triton runtime support are intentionally not documented as the primary path for now.
-- This repository remains a derived work of F5-TTS, so legacy names may still appear in configs, scripts, and compatibility-facing interfaces during the cleanup process.
+- This repository remains a derived work of F5-TTS, so historical checkpoint paths and acknowledgements may still contain F5-TTS names.
 
 ## Acknowledgements
 

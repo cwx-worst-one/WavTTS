@@ -135,7 +135,7 @@ recipes/leadsheet
 scripts_usr
 .deploy_cache
 output
-# src/f5_tts/train/runs_emilia/
+# src/wavtts/train/runs_emilia/
 .venv/
 .codex
 

@@ -13,7 +13,7 @@ export http_proxy=http://sys-proxy-rd-relay.byted.org:8118
 export https_proxy=http://sys-proxy-rd-relay.byted.org:8118
 
 eval_metric=("wer sim utmos")
-# eval_metric=("sim")
+# eval_metric=("wer")
 
 # langs=("zh" "en")        # "en" "zh" "zh_hard"
 langs=("en")

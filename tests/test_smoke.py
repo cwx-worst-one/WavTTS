@@ -2,10 +2,8 @@ from pathlib import Path
 
 
 def test_import_package():
-    import f5_tts
     import wavtts
 
-    assert f5_tts.__doc__ == "WavTTS package."
     assert wavtts.__doc__ == "WavTTS package."
 
 

@@ -7,7 +7,7 @@
 ## 当前原则
 
 - 先保持可运行，再继续删除和改名。
-- `src/wavtts` 已作为新包目录引入；`src/f5_tts` 暂时保留兼容，避免一次性破坏历史脚本、import 和配置加载。
+- `src/wavtts` 已作为主包目录；旧 `src/f5_tts` 已删除，不再保留兼容入口。
 - `F5TTS` / `E2TTS` 等旧模型命名残留暂缓分类处理，但训练/推理主线优先使用 `WavTTS_*` 配置名。
 - README / train README / infer README 等文档后续统一重写，避免清理过程中反复改同一批说明。
 - `LICENSE`、citation、acknowledgement 后续单独整理，不能直接删除原 F5-TTS 合规信息。
@@ -22,25 +22,25 @@
 
 保留训练主线和两个公开 launcher：
 
-- `src/f5_tts/train/train.py`
-- `src/f5_tts/train/run_main_train.sh`
-- `src/f5_tts/train/run_train_libritts.sh`
+- `src/wavtts/train/train.py`
+- `src/wavtts/train/run_main_train.sh`
+- `src/wavtts/train/run_train_libritts.sh`
 
 当前主训练 launcher 默认配置：
 
 ```text
-src/f5_tts/configs/WavTTS_scale_9_16k.yaml
+src/wavtts/configs/WavTTS_scale_9_16k.yaml
 ```
 
 LibriTTS launcher 默认配置：
 
 ```text
-src/f5_tts/configs/WavTTS_scale_8_16k_libritts.yaml
+src/wavtts/configs/WavTTS_scale_8_16k_libritts.yaml
 ```
 
 ### 配置
 
-`src/f5_tts/configs/` 当前保留 wav-only 主线配置：
+`src/wavtts/configs/` 当前保留 wav-only 主线配置：
 
 - `WavTTS_scale_8_16k.yaml`
 - `WavTTS_scale_8_16k_libritts.yaml`
@@ -52,8 +52,8 @@ src/f5_tts/configs/WavTTS_scale_8_16k_libritts.yaml
 ### 推理与评测
 
 - CLI inference 保留并优先支持 wav-only / `no_vocoder` 路径。
-- `src/f5_tts/infer/debug_infer.sh` 默认使用已有 WavTTS checkpoint 做真实推理验证。
-- `src/f5_tts/eval/` 暂时保留，但不是当前清理重点。
+- `src/wavtts/infer/debug_infer.sh` 默认使用已有 WavTTS checkpoint 做真实推理验证。
+- `src/wavtts/eval/` 暂时保留，但不是当前清理重点。
 - Gradio / Web demo 不再维护。
 - TensorRT / Triton runtime 不再维护。
 
@@ -66,7 +66,7 @@ src/f5_tts/configs/WavTTS_scale_8_16k_libritts.yaml
 对应配置：
 
 ```text
-src/f5_tts/configs/WavTTS_scale_8_16k.yaml
+src/wavtts/configs/WavTTS_scale_8_16k.yaml
 ```
 
 ### 测试 / 验证脚本
@@ -95,7 +95,7 @@ src/f5_tts/configs/WavTTS_scale_8_16k.yaml
 - [x] 新增并整理 `run_main_train.sh`。
 - [x] 将 LibriTTS launcher 整理为 `run_train_libritts.sh`。
 - [x] 更新训练 launcher 默认配置名：`WavTTS_scale_9_16k` / `WavTTS_scale_8_16k_libritts`。
-- [x] 更新 `src/f5_tts/infer/debug_infer.sh`，默认加载 `model_1000000.pt` 进行 WavTTS 推理验证。
+- [x] 更新 `src/wavtts/infer/debug_infer.sh`，默认加载 `model_1000000.pt` 进行 WavTTS 推理验证。
 - [x] 删除旧 `run_libritts/` 和 `runs_emilia/` 实验脚本目录。
 - [x] 删除 Gradio 实现文件。
 - [x] 删除 TensorRT / Triton runtime 目录。
@@ -103,7 +103,7 @@ src/f5_tts/configs/WavTTS_scale_8_16k.yaml
 - [x] 删除 `speed_test.sh` 等非主线脚本。
 - [x] 从 `debug_train.sh` 移除真实 `WANDB_API_KEY`，避免密钥泄露。
 - [x] 基于可用环境整理精简依赖计划：`requirements/wavtts-good-min.txt` / `requirements/wavtts-good-constraints.txt`。
-- [x] 修正 `src/f5_tts/infer/utils_infer.py` wav-only 推理细节：
+- [x] 修正 `src/wavtts/infer/utils_infer.py` wav-only 推理细节：
   - 默认 sample rate 改为 16k。
   - `no_vocoder` 直接返回 `None`。
   - 从模型/config 读取 `target_sample_rate`。
@@ -128,20 +128,21 @@ src/f5_tts/configs/WavTTS_scale_8_16k.yaml
 - [x] 清理 `dit.py` 注释/局部变量和 `count_max_epoch.py` 中的 mel 命名残留。
 - [x] 删除 `CFM.self.mel_spec = None` 占位属性。
 - [x] 删除旧 `mel_spec.mel_stft.*` checkpoint key 兼容清理逻辑；当前 WavTTS checkpoint 不包含这些 key。
-- [x] 更新 `pyproject.toml` 发布元信息为 WavTTS，并新增 `wavtts_infer-cli` console script；旧 `f5-tts_infer-cli` 暂保留兼容。
+- [x] 更新 `pyproject.toml` 发布元信息为 WavTTS，并新增 `wavtts_infer-cli` console script。
 - [x] 删除 DiT 中未使用的 `audio_proj_type=conv_mlp` 和 `proj_out_type=final_conv/conv_mlp` 分支；输出投影固定为 linear。
 - [x] 清理推理采样分支：ODE 固定 Euler，删除 Heun 特殊路径；删除 inference `logistic_normal` timestep mapping。
 - [x] 删除 `cfg_scale_interval` 推理开关；CFG 在 `cfg_strength > 0` 时全程生效。
 - [x] 清理旧 fixed-prompt/LS eval shell 中已废弃的 Heun/logistic-normal 参数，并删除 eval batch 的隐藏兼容参数。
 - [x] 新增 `src/wavtts/` 包目录作为 WavTTS 主入口镜像，内部 import / 脚本路径已迁到 `wavtts` / `src/wavtts`。
-- [x] `src/f5_tts/` 暂时保留为 legacy 兼容目录。
+- [x] `src/f5_tts/` legacy 目录已删除。
 - [x] baseline 增加 `wavtts` import、compile 和新目录脚本语法检查。
+- [x] baseline 默认入口切到 `src/wavtts`，不再检查 `src/f5_tts`。
 
 ---
 
 ## 暂不处理
 
-- `src/wavtts` 新包目录已开始迁移；`src/f5_tts` 暂时保留兼容，后续验证充分后再删除或降级为兼容层。
+- `src/f5_tts` 已删除；后续不再维护旧包名兼容。
 - checkpoint 兼容策略暂缓最终决定。
 - `eval/` 暂时保留，不做大删。
 - `api.py` / socket / finetune / speech_edit 入口已从主线删除。
@@ -162,10 +163,7 @@ bash scripts/check_baseline.sh
 ```bash
 PYTHONPATH=src .venv/bin/python tests/test_smoke.py
 PYTHONPATH=src .venv/bin/python tests/test_waveform_dataset_collate.py
-PYTHONPATH=src .venv/bin/python -m compileall -q tests src/f5_tts src/wavtts
-bash -n src/f5_tts/train/run_main_train.sh
-bash -n src/f5_tts/train/run_train_libritts.sh
-bash -n src/f5_tts/infer/debug_infer.sh
+PYTHONPATH=src .venv/bin/python -m compileall -q tests src/wavtts
 bash -n src/wavtts/train/run_main_train.sh
 bash -n src/wavtts/train/run_train_libritts.sh
 bash -n src/wavtts/infer/debug_infer.sh
@@ -228,7 +226,7 @@ python3 -m venv .venv
 
 5. **收紧 pyproject / CLI entry point**
    - 后续新增 WavTTS CLI entry point。
-   - 旧 `f5-tts_*` 命令是否保留为兼容别名，需要单独决定。
+   - 旧 `f5-tts_*` 命令不再保留，统一使用 `wavtts_*`。
 
 6. **最后统一文档**
    - README 类文件最后重写。
@@ -275,13 +273,13 @@ python3 -m venv .venv
 
 必须确认：
 
-- `src/f5_tts/infer/debug_infer.sh` 可以使用 `model_1000000.pt` 稳定生成 wav。
-- `src/f5_tts/train/run_main_train.sh` 指向 `WavTTS_scale_9_16k`，至少能正常进入 model / dataloader 初始化。
-- `src/f5_tts/train/run_train_libritts.sh` 不再引用旧配置名。
+- `src/wavtts/infer/debug_infer.sh` 可以使用 `model_1000000.pt` 稳定生成 wav。
+- `src/wavtts/train/run_main_train.sh` 指向 `WavTTS_scale_9_16k`，至少能正常进入 model / dataloader 初始化。
+- `src/wavtts/train/run_train_libritts.sh` 不再引用旧配置名。
 - `scripts/check_baseline.sh` 稳定通过。
-- `src/f5_tts/infer/utils_infer.py` 的 wav-only / `no_vocoder` / 16k sample rate 路径稳定。
+- `src/wavtts/infer/utils_infer.py` 的 wav-only / `no_vocoder` / 16k sample rate 路径稳定。
 
-当前状态：阶段 1 已完成，下一步进入阶段 2（收敛 legacy 入口）。
+当前状态：阶段 1 已完成；旧 `src/f5_tts` 已删除，主入口统一为 `src/wavtts`。
 
 ---
 
@@ -289,14 +287,14 @@ python3 -m venv .venv
 
 正式改名前，先决定以下入口是否维护：
 
-- `src/f5_tts/eval/`
+- `src/wavtts/eval/`
 
 已删除旧入口：
 
-- `src/f5_tts/api.py`
-- `src/f5_tts/socket_server.py`
-- `src/f5_tts/socket_client.py`
-- `src/f5_tts/train/finetune_cli.py`
+- `src/wavtts/api.py`
+- `src/wavtts/socket_server.py`
+- `src/wavtts/socket_client.py`
+- `src/wavtts/train/finetune_cli.py`
 
 建议策略：
 
@@ -357,7 +355,7 @@ wav_frame_len=160
 不要一次性大删。建议先做一个清单：
 
 ```bash
-rg "use_aux_hubert|use_aux_eres2net|use_repa|ssl_feature|spec_scaled|speech_align|text_align|frontend_type|embed_v1|embed_v2" src/f5_tts
+rg "use_aux_hubert|use_aux_eres2net|use_repa|ssl_feature|spec_scaled|speech_align|text_align|frontend_type|embed_v1|embed_v2" src/wavtts
 ```
 
 然后按以下顺序处理：
@@ -390,14 +388,7 @@ src/f5_tts/ -> src/wavtts/
 2. 保留兼容 shim：
 
 ```text
-src/f5_tts/__init__.py
-```
-
-临时兼容旧 import：
-
-```python
-from wavtts import *
-```
+不再保留 `src/f5_tts/__init__.py` shim。
 
 3. CLI entry points：
 
@@ -408,11 +399,7 @@ wavtts-infer = "wavtts.infer.infer_cli:main"
 wavtts-train = "wavtts.train.train:main"
 ```
 
-旧命令可短期保留为兼容别名：
-
-```toml
-f5-tts_infer-cli = "wavtts.infer.infer_cli:main"
-```
+旧 `f5-tts_*` 命令不再保留。
 
 4. 配置路径和脚本路径：
 
@@ -436,8 +423,8 @@ f5-tts_infer-cli = "wavtts.infer.infer_cli:main"
 最后统一修改：
 
 - `README.md`
-- `src/f5_tts/train/README.md` 或迁移后的 train README
-- `src/f5_tts/infer/README.md` 或迁移后的 infer README
+- `src/wavtts/train/README.md` 或迁移后的 train README
+- `src/wavtts/infer/README.md` 或迁移后的 infer README
 - `CLEANUP_PLAN.md`
 - installation / environment docs
 - acknowledgement / license / citation
@@ -475,9 +462,9 @@ f5-tts_infer-cli = "wavtts.infer.infer_cli:main"
 
 已固定为默认 reshape，并处理：
 
-- `src/f5_tts/model/cfm.py`：删除 `frontend_type` / `frontend_cfg` 参数和传递，只保留 `wav_frame_len`。
-- `src/f5_tts/model/backbones/dit.py`：删除 `conv` / `embed_v1` / `embed_v2` 分支，固定 reshape waveform tokenization。
-- 删除未再引用的 `src/f5_tts/model/backbones/wav_frontend.py` 与 `src/f5_tts/model/backbones/wav_patch_embed.py`。
+- `src/wavtts/model/cfm.py`：删除 `frontend_type` / `frontend_cfg` 参数和传递，只保留 `wav_frame_len`。
+- `src/wavtts/model/backbones/dit.py`：删除 `conv` / `embed_v1` / `embed_v2` 分支，固定 reshape waveform tokenization。
+- 删除未再引用的 `src/wavtts/model/backbones/wav_frontend.py` 与 `src/wavtts/model/backbones/wav_patch_embed.py`。
 - 当前配置本身没有显式 frontend 字段，无需改 yaml。
 
 
@@ -487,20 +474,20 @@ f5-tts_infer-cli = "wavtts.infer.infer_cli:main"
 
 建议处理范围：
 
-1. `src/f5_tts/model/cfm.py`
+1. `src/wavtts/model/cfm.py`
    - 固定 `raw waveform only`，删除非 wav 分支。
    - 删除 `MelSpec` 构建、`self.mel_spec`、`vocoder` 参数和 vocoder decode。
    - 保留 `MelSpectrogramLoss`，因为它仍作为 waveform aux loss 使用。
 
-2. `src/f5_tts/model/dataset.py`
+2. `src/wavtts/model/dataset.py`
    - 已删除 `HFDataset` 与 preprocessed/mel dataset 路径。
    - `CustomDataset` / `collate_fn` 固定只返回 wav，不再返回 mel / mel_lengths。
 
-3. `src/f5_tts/train/train.py` 与 `src/f5_tts/model/trainer.py`
+3. `src/wavtts/train/train.py` 与 `src/wavtts/model/trainer.py`
    - 已删除 `wav_input` 开关、`mel_spec_type`、vocoder 初始化和 mel logging 分支。
    - 训练输入固定使用 `batch["wav"]` / `wav_lengths`。
 
-4. `src/f5_tts/infer/utils_infer.py` / `infer_cli.py` / `src/f5_tts/eval/eval_infer_batch.py`
+4. `src/wavtts/infer/utils_infer.py` / `infer_cli.py` / `src/wavtts/eval/eval_infer_batch.py`
    - 已删除 `load_vocoder`、`vocoder_name`、`vocos/bigvgan` 分支。
    - 主推理与 batch eval 固定返回 waveform，CLI 不再暴露 vocoder 参数。
 
